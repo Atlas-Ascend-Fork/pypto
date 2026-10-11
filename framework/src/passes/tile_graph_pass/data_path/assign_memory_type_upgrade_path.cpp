@@ -16,6 +16,7 @@
 #include "assign_memory_type.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "passes/pass_log/pass_log.h"
 #include "passes/tile_graph_pass/data_path/memory_path_utils.h"
@@ -31,6 +32,46 @@
     } while (0)
 
 namespace npu::tile_fwk {
+
+namespace {
+// 二维 matmul tile 用 CheckUBTileShape 分形校验 (前两维 16 对齐)；
+// conv 多维 tile 用末维 (W) 对齐校验，两者分开判断
+bool CheckUBTileShapeByRank(const LogicalTensorPtr& tensor)
+{
+    return (tensor != nullptr && tensor->GetShape().size() > SHAPE_DIM2) ?
+               MemoryPathUtils::CheckUBConvTileLastDimAligned(tensor) :
+               MemoryPathUtils::CheckUBTileShape(tensor);
+}
+
+// ND 全量元素数: 全部维度乘积
+size_t ShapeNumel(const Shape& shape)
+{
+    size_t elems = 1;
+    for (auto dim : shape) {
+        elems *= static_cast<size_t>(dim);
+    }
+    return elems;
+}
+
+// L0C 分形 (外轴, 内轴) 按物理布局取值: 二维 matmul tile 即 (M, N); conv 多维 tile (NCHW/NCDHW)
+// 对应 M = 除 C 外全部维度乘积 (N·D·H·W), N = C 维, 与 ConstrucCopyOutTile 的 L0C (M, N) 映射一致;
+// 只取末两维会丢失 N/C/D 前导维, 导致容量估算严重偏小
+std::pair<size_t, size_t> GetNzOuterInnerAxes(const Shape& shape)
+{
+    constexpr size_t kConvChannelIdx = 1;
+    if (shape.size() == SHAPE_DIM2) {
+        return {static_cast<size_t>(shape[0]), static_cast<size_t>(shape[1])};
+    }
+    size_t outer = 1;
+    for (size_t i = 0; i < shape.size(); ++i) {
+        if (i == kConvChannelIdx) {
+            continue;
+        }
+        outer *= static_cast<size_t>(shape[i]);
+    }
+    return {outer, static_cast<size_t>(shape[kConvChannelIdx])};
+}
+} // namespace
 
 Status AssignMemoryType::ApplyPlatformPathUpgradeRules(Function& function)
 {
@@ -332,8 +373,9 @@ Status AssignMemoryType::ProcessL0C2UBSmallToLarge(Function& function)
         if (op.GetOpcode() != Opcode::OP_SLICE) {
             continue;
         }
+        // conv 多维 tile 放开 2 维限制 (requireMatrixShape=false)，对齐校验按维数分派
         RETURN_IF_NOT_SUCCESS(TryUpgradeSliceContractPath(op, MemoryType::MEM_L0C, MemoryType::MEM_UB,
-                                                          "ProcessL0C2UBSmallToLarge", true, true, false));
+                                                          "ProcessL0C2UBSmallToLarge", false, true, false));
     }
     return SUCCESS;
 }
@@ -344,8 +386,9 @@ Status AssignMemoryType::ProcessL0C2UBLargeToSmall(Function& function)
         if (op.GetOpcode() != Opcode::OP_CONTRACT) {
             continue;
         }
+        // conv 多维 tile 放开 2 维限制 (requireMatrixShape=false)，对齐校验按维数分派
         RETURN_IF_NOT_SUCCESS(TryUpgradeSingleContractSlicePath(op, MemoryType::MEM_L0C, MemoryType::MEM_UB,
-                                                                "ProcessL0C2UBLargeToSmall", true, true, false));
+                                                                "ProcessL0C2UBLargeToSmall", false, true, false));
     }
     return SUCCESS;
 }
@@ -600,7 +643,7 @@ Status AssignMemoryType::TryUpgradeSliceContractPath(Operation& sliceOp, MemoryT
         if (requireMatrixShape && input->GetShape().size() != kMatrixShapeDimCount) {
             return SUCCESS;
         }
-        if (checkUbTileShape && !MemoryPathUtils::CheckUBTileShape(input)) {
+        if (checkUbTileShape && !CheckUBTileShapeByRank(input)) {
             return SUCCESS;
         }
         if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_L1 &&
@@ -668,7 +711,7 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
     // fit. UB residency holds both the ND original and the NZ copy, L0C residency holds NZ only.
     // The same-memory path is exempt: its caller already checks the middle against the
     // assemble-output UB limit and the middle carries no NZ copy there.
-    if (sourceType != targetType && middle->GetShape().size() == kMatrixShapeDimCount) {
+    if (sourceType != targetType && middle->GetShape().size() >= kMatrixShapeDimCount) {
         if (sourceType == MemoryType::MEM_UB) {
             const size_t ubLimit = static_cast<size_t>(
                 Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) * UB_THRESHOLD_NORMAL);
@@ -735,7 +778,7 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
         if (!shapeCompatible) {
             return SUCCESS;
         }
-        if (checkUbTileShape && !MemoryPathUtils::CheckUBTileShape(output)) {
+        if (checkUbTileShape && !CheckUBTileShapeByRank(output)) {
             return SUCCESS;
         }
         if (checkUb2L1Constraints) {
@@ -756,10 +799,14 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
 size_t AssignMemoryType::CalcNzAlignedSize(const LogicalTensorPtr& tensor) const
 {
     constexpr int64_t kC0AlignBytes = 32;
+    const auto& shape = tensor->GetShape();
+    if (shape.size() < 2) {
+        return 0;
+    }
     DataType dtype = tensor->Datatype();
     int64_t bytes = BytesOf(dtype);
-    size_t outer = tensor->GetShape()[0];
-    size_t inner = tensor->GetShape()[1];
+    // 外轴/内轴按 L0C 物理布局取值: conv 多维 tile 为 (N·D·H·W, C), 二维 matmul tile 为 (M, N)
+    auto [outer, inner] = GetNzOuterInnerAxes(shape);
     // 外轴对齐：INT8/FP8 对齐到 32，其他对齐到 16
     size_t outerAlign = (dtype == DT_INT8 || dtype == DT_UINT8 || dtype == DT_FP8) ? 32 : 16;
     // 内轴对齐：C0 size = 32 / 元素字节数
@@ -779,12 +826,17 @@ size_t AssignMemoryType::CalcNzAlignedSize(const LogicalTensorPtr& tensor) const
 size_t AssignMemoryType::CalcNZTensorSize(const LogicalTensorPtr& tensor) const
 {
     constexpr int64_t kAlignBytes = 4;
+    const auto& shape = tensor->GetShape();
+    if (shape.size() < 2) {
+        return 0;
+    }
     int64_t bytes = BytesOf(tensor->Datatype());
-    size_t ndSize = tensor->GetShape()[0] * tensor->GetShape()[1] * static_cast<size_t>(bytes);
+    // ND 为全量元素数 (全部维度乘积): conv 多维 tile 不能只取末两维, 否则丢失 N/C/D 前导维
+    size_t numel = ShapeNumel(shape);
+    size_t ndSize = numel * static_cast<size_t>(bytes);
     size_t nzSize = CalcNzAlignedSize(tensor);
-    // ND + NZ 同时存在，需要两者之和；C0 无法推导时退化为仅 ND 大小
     if (nzSize == 0) {
-        return tensor->GetShape()[0] * tensor->GetShape()[1] * static_cast<size_t>(bytes > 0 ? bytes : kAlignBytes);
+        return numel * static_cast<size_t>(bytes > 0 ? bytes : kAlignBytes);
     }
     return ndSize + nzSize;
 }
@@ -792,13 +844,16 @@ size_t AssignMemoryType::CalcNZTensorSize(const LogicalTensorPtr& tensor) const
 size_t AssignMemoryType::CalcNzStorageSize(const LogicalTensorPtr& tensor) const
 {
     constexpr int64_t kAlignBytes = 4;
+    const auto& shape = tensor->GetShape();
+    if (shape.size() < 2) {
+        return 0;
+    }
     int64_t bytes = BytesOf(tensor->Datatype());
     size_t nzSize = CalcNzAlignedSize(tensor);
-    // C0 无法推导时退化为原始 ND 格式大小作为 fallback
     if (nzSize == 0) {
-        return tensor->GetShape()[0] * tensor->GetShape()[1] * static_cast<size_t>(bytes > 0 ? bytes : kAlignBytes);
+        // C0 无法推导时退化为 ND 全量大小 (全部维度乘积)
+        return ShapeNumel(shape) * static_cast<size_t>(bytes > 0 ? bytes : kAlignBytes);
     }
-    // 仅 NZ 布局大小
     return nzSize;
 }
 } // namespace npu::tile_fwk

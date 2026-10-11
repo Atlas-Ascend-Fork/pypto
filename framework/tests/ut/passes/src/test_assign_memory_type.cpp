@@ -1269,6 +1269,159 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallOversizedMiddleDdrFallback)
     Platform::Instance().ReloadMemoryPaths("2201");
 }
 
+// 负向用例（A5 + slice 新路径, conv 4 维 tile）：middle [1,64,64,64] fp32 按 L0C 物理布局
+// (M = N·H·W = 4096, N = C = 64) 的 NZ 大小为 4097*64*4 = 1048832B，超出 L0C 容量门限 262144B，
+// 必须回落 DDR；若误按末两维 (H,W) 估算 (65*64*4 = 16640B) 会错误放行升级。
+TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallConv4DOversizedMiddleDdrFallback)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    Platform::Instance().ReloadMemoryPaths("3510");
+    auto currFunctionPtr = std::make_shared<Function>(
+        Program::GetInstance(), "TestL0C2UBLargeToSmallConv4DOversizedMiddleDdrFallback",
+        "TestL0C2UBLargeToSmallConv4DOversizedMiddleDdrFallback", nullptr);
+    ASSERT_NE(currFunctionPtr, nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("TestL0C2UBLargeToSmallConv4DOversizedMiddleDdrFallback",
+                                                   currFunctionPtr);
+
+    std::vector<int64_t> shapeIn = {NUM_1, NUM_64, NUM_16, NUM_64};
+    std::vector<int64_t> shapeMiddle = {NUM_1, NUM_64, NUM_64, NUM_64};
+    auto dynShapeIn = CreateTestConstIntVector(shapeIn);
+    auto dynShapeMiddle = CreateTestConstIntVector(shapeMiddle);
+    auto convL0cOut = IRBuilder().CreateTensorVar(DT_FP32, shapeIn, dynShapeIn);
+    convL0cOut->SetMemoryTypeBoth(MemoryType::MEM_L0C, true);
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, shapeMiddle, dynShapeMiddle);
+    constexpr int64_t sliceNum = NUM_64 / NUM_16;
+    std::vector<std::shared_ptr<LogicalTensor>> ubOuts;
+    for (int64_t i = 0; i < sliceNum; i++) {
+        ubOuts.push_back(IRBuilder().CreateTensorVar(DT_FP32, shapeIn, dynShapeIn));
+    }
+
+    // 单 contract 将 [1,64,16,64] 的 L0C 输入写入超大 middle [1,64,64,64]，middle 仅被 slice 消费
+    auto& contractOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_CONTRACT, {convL0cOut}, {middle});
+    contractOp.SetOpAttribute(
+        std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{0, 0, 0, 0}));
+    for (int64_t i = 0; i < sliceNum; i++) {
+        auto& sliceOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_SLICE, {middle}, {ubOuts[i]});
+        sliceOp.SetOpAttribute(
+            std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, i * NUM_16, 0}, MemoryType::MEM_UB));
+    }
+
+    AssignMemoryType assignMemoryType;
+    ASSERT_EQ(assignMemoryType.RunOnFunction(*currFunctionPtr), SUCCESS);
+
+    EXPECT_EQ(middle->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(CountMemoryPath(currFunctionPtr.get(), MemoryType::MEM_L0C, MemoryType::MEM_UB), 0);
+    EXPECT_GE(CountMemoryPath(currFunctionPtr.get(), MemoryType::MEM_L0C, MemoryType::MEM_DEVICE_DDR), 1);
+    // 升级被拒后 slice 输出同样回落 DDR: 通用路径对 conv 多维 tile 不做 DDR→UB 直通推断,
+    // 整条链落在 DDR, 不存在 DDR→UB 通路
+    for (const auto& ubOut : ubOuts) {
+        EXPECT_EQ(ubOut->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+// 负向用例（A5 + slice 新路径, conv 5 维 tile, D > 1）：middle [1,32,2,64,64] fp32 按 L0C 物理布局
+// (M = N·D·H·W = 8192, N = C = 32) 的 NZ 大小为 8193*32*4 = 1048704B，超出 L0C 容量门限 262144B，
+// 必须回落 DDR；末两维估算同样只有 16640B，会错误放行。
+TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallConv5DOversizedMiddleDdrFallback)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    Platform::Instance().ReloadMemoryPaths("3510");
+    auto currFunctionPtr = std::make_shared<Function>(
+        Program::GetInstance(), "TestL0C2UBLargeToSmallConv5DOversizedMiddleDdrFallback",
+        "TestL0C2UBLargeToSmallConv5DOversizedMiddleDdrFallback", nullptr);
+    ASSERT_NE(currFunctionPtr, nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("TestL0C2UBLargeToSmallConv5DOversizedMiddleDdrFallback",
+                                                   currFunctionPtr);
+
+    std::vector<int64_t> shapeIn = {NUM_1, NUM_32, NUM_2, NUM_16, NUM_64};
+    std::vector<int64_t> shapeMiddle = {NUM_1, NUM_32, NUM_2, NUM_64, NUM_64};
+    auto dynShapeIn = CreateTestConstIntVector(shapeIn);
+    auto dynShapeMiddle = CreateTestConstIntVector(shapeMiddle);
+    auto convL0cOut = IRBuilder().CreateTensorVar(DT_FP32, shapeIn, dynShapeIn);
+    convL0cOut->SetMemoryTypeBoth(MemoryType::MEM_L0C, true);
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, shapeMiddle, dynShapeMiddle);
+    constexpr int64_t sliceNum = NUM_64 / NUM_16;
+    std::vector<std::shared_ptr<LogicalTensor>> ubOuts;
+    for (int64_t i = 0; i < sliceNum; i++) {
+        ubOuts.push_back(IRBuilder().CreateTensorVar(DT_FP32, shapeIn, dynShapeIn));
+    }
+
+    // 单 contract 将 [1,32,2,16,64] 的 L0C 输入写入超大 middle [1,32,2,64,64]，middle 仅被 slice 消费
+    auto& contractOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_CONTRACT, {convL0cOut}, {middle});
+    contractOp.SetOpAttribute(
+        std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{0, 0, 0, 0, 0}));
+    for (int64_t i = 0; i < sliceNum; i++) {
+        auto& sliceOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_SLICE, {middle}, {ubOuts[i]});
+        sliceOp.SetOpAttribute(
+            std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0, i * NUM_16, 0}, MemoryType::MEM_UB));
+    }
+
+    AssignMemoryType assignMemoryType;
+    ASSERT_EQ(assignMemoryType.RunOnFunction(*currFunctionPtr), SUCCESS);
+
+    EXPECT_EQ(middle->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(CountMemoryPath(currFunctionPtr.get(), MemoryType::MEM_L0C, MemoryType::MEM_UB), 0);
+    EXPECT_GE(CountMemoryPath(currFunctionPtr.get(), MemoryType::MEM_L0C, MemoryType::MEM_DEVICE_DDR), 1);
+    // 升级被拒后 slice 输出同样回落 DDR: 通用路径对 conv 多维 tile 不做 DDR→UB 直通推断,
+    // 整条链落在 DDR, 不存在 DDR→UB 通路
+    for (const auto& ubOut : ubOuts) {
+        EXPECT_EQ(ubOut->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+// 正向用例（A5 + slice 新路径, conv 4 维 tile）：middle [1,16,16,16] fp16 的 NZ 大小 257*16*2 = 8224B
+// 可被容量容纳，small-to-large 升级应正常生效：middle 驻留 UB，contract 形成 L0C→UB 通路，
+// 保证容量修复不会误拒正常 conv 多维 tile。
+TEST_F(AssignMemoryTypeTest, TestL0C2UBSmallToLargeConv4DMiddleUpgrade)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    Platform::Instance().ReloadMemoryPaths("3510");
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(),
+                                                      "TestL0C2UBSmallToLargeConv4DMiddleUpgrade",
+                                                      "TestL0C2UBSmallToLargeConv4DMiddleUpgrade", nullptr);
+    ASSERT_NE(currFunctionPtr, nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("TestL0C2UBSmallToLargeConv4DMiddleUpgrade", currFunctionPtr);
+
+    std::vector<int64_t> shapeIn = {NUM_1, NUM_16, NUM_8, NUM_16};
+    std::vector<int64_t> shapeMiddle = {NUM_1, NUM_16, NUM_16, NUM_16};
+    auto dynShapeIn = CreateTestConstIntVector(shapeIn);
+    auto dynShapeMiddle = CreateTestConstIntVector(shapeMiddle);
+    auto convL0cOut = IRBuilder().CreateTensorVar(DT_FP16, shapeIn, dynShapeIn);
+    convL0cOut->SetMemoryTypeBoth(MemoryType::MEM_L0C, true);
+    auto middle = IRBuilder().CreateTensorVar(DT_FP16, shapeMiddle, dynShapeMiddle);
+    constexpr int64_t sliceNum = NUM_16 / NUM_8;
+    std::vector<std::shared_ptr<LogicalTensor>> ubOuts;
+    for (int64_t i = 0; i < sliceNum; i++) {
+        ubOuts.push_back(IRBuilder().CreateTensorVar(DT_FP16, shapeIn, dynShapeIn));
+    }
+
+    // 单 contract 将 [1,16,8,16] 的 L0C 输入写入 middle [1,16,16,16]，middle 仅被 slice 消费
+    auto& contractOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_CONTRACT, {convL0cOut}, {middle});
+    contractOp.SetOpAttribute(
+        std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{0, 0, 0, 0}));
+    for (int64_t i = 0; i < sliceNum; i++) {
+        auto& sliceOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_SLICE, {middle}, {ubOuts[i]});
+        sliceOp.SetOpAttribute(
+            std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, i * NUM_8, 0}, MemoryType::MEM_UB));
+    }
+
+    AssignMemoryType assignMemoryType;
+    ASSERT_EQ(assignMemoryType.RunOnFunction(*currFunctionPtr), SUCCESS);
+
+    EXPECT_EQ(middle->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(CountMemoryPath(currFunctionPtr.get(), MemoryType::MEM_L0C, MemoryType::MEM_UB), 1);
+    EXPECT_EQ(CountMemoryPath(currFunctionPtr.get(), MemoryType::MEM_L0C, MemoryType::MEM_DEVICE_DDR), 0);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
 // 负向用例（A5 + slice 新路径）：UB2L1 large-to-small 的 middle 由 2 个 contract 产生（fan-in）时，
 // 不再走 UB→L1 直通升级，middle 回落 DDR。大搬小只能单 contract：多 contract 时 middle 侧带各
 // 自 to-offset、slice 侧带 from-offset，双侧 offset 底层直通路径无法处理。middle 大小可被 UB

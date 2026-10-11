@@ -48,6 +48,7 @@ bool IsMatmulOpcode(Opcode opcode)
     return kMatmulOps.count(opcode) > 0;
 }
 
+bool IsL0CLayoutProducer(Opcode opcode) { return IsMatmulOpcode(opcode) || opcode == Opcode::OP_TRANS_FORMAT_L0C; }
 Operation* GetSingleProducer(const LogicalTensorPtr& tensor)
 {
     if (tensor == nullptr || tensor->GetProducers().size() != 1) {
@@ -62,7 +63,7 @@ bool IsMatmulBackedContractInput(const LogicalTensorPtr& contractInput)
     if (inputProducer == nullptr) {
         return false;
     }
-    if (IsMatmulOpcode(inputProducer->GetOpcode())) {
+    if (IsL0CLayoutProducer(inputProducer->GetOpcode())) {
         return true;
     }
     if (inputProducer->GetOpcode() != Opcode::OP_SLICE || inputProducer->GetIOperands().size() != 1) {
@@ -74,7 +75,7 @@ bool IsMatmulBackedContractInput(const LogicalTensorPtr& contractInput)
         return false;
     }
     auto* sourceOp = GetSingleProducer(materializeOp->GetIOperands().front());
-    return sourceOp != nullptr && IsMatmulOpcode(sourceOp->GetOpcode());
+    return sourceOp != nullptr && IsL0CLayoutProducer(sourceOp->GetOpcode());
 }
 
 bool IsSupportedViewAssembleCascade(Opcode viewOpcode, Opcode assembleOpcode)
@@ -2257,7 +2258,7 @@ bool RemoveRedundantOpUtils::ShouldSkipContractMultiSlice(
     // contain additional entries while an A_MUL_B result is still one of the producers.
     const auto& producers = contractInput->GetProducers();
     const bool hasMatmulProducer = std::any_of(producers.begin(), producers.end(), [](const Operation* producer) {
-        return producer != nullptr && IsMatmulOpcode(producer->GetOpcode());
+        return producer != nullptr && IsL0CLayoutProducer(producer->GetOpcode());
     });
     // Keep a contract-slice chain materialized when the contract consumes an A_MUL_B result.  The
     // contract may currently have only one slice consumer (for example, after fanout splitting), so
