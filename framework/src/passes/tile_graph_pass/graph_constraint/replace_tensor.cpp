@@ -386,6 +386,33 @@ Status ReplaceTensor::PostCheck(Function& function)
     return SUCCESS;
 }
 
+void ReplaceTensor::BuildRawMagicTensorIndex(Function& function)
+{
+    rawMagicTensors_.clear();
+    // 与 GetTensorsByRawMagic 保持一致，按原始 rawmagic 分组；GetTensorsGroupedByRawMagic 使用有效值。
+    for (const auto& tensor : GraphUtils::GetAllTensors(function)) {
+        if (tensor->tensor != nullptr) {
+            rawMagicTensors_[tensor->tensor->rawmagic].insert(tensor);
+        }
+    }
+}
+
+void ReplaceTensor::SetRawTensor(const LogicalTensorPtr& tensor, const std::shared_ptr<RawTensor>& rawTensor)
+{
+    if (tensor == nullptr) {
+        return;
+    }
+    if (tensor->tensor == nullptr || rawTensor == nullptr || tensor->tensor->rawmagic != rawTensor->rawmagic) {
+        if (tensor->tensor != nullptr) {
+            rawMagicTensors_[tensor->tensor->rawmagic].erase(tensor);
+        }
+        if (rawTensor != nullptr) {
+            rawMagicTensors_[rawTensor->rawmagic].insert(tensor);
+        }
+    }
+    tensor->tensor = rawTensor;
+}
+
 void ReplaceTensor::UniteTensor(Function& function, UnionFind& uf)
 {
     for (const auto& op : function.Operations()) {
@@ -406,9 +433,9 @@ void ReplaceTensor::UniteTensor(Function& function, UnionFind& uf)
         }
         // 新图表达下, 多个assemble写入不同logical tensor但共享同一rawMagic(同一地址)。
         // 需要将同rawMagic的兄弟logical tensor也union到同一组, 保证FindBaseTensor统一选base。
-        if (op.GetOpcode() == Opcode::OP_ASSEMBLE) {
+        if (op.GetOpcode() == Opcode::OP_ASSEMBLE && op.GetOOperands().front()->tensor != nullptr) {
             auto assembleOut = op.GetOOperands().front();
-            for (const auto& sibling : TensorUtils::GetSameRawMagicLogicalTensors(function, assembleOut)) {
+            for (const auto& sibling : rawMagicTensors_[assembleOut->tensor->rawmagic]) {
                 if (sibling != nullptr && sibling->GetMagic() != assembleOut->GetMagic()) {
                     uf.Unite(assembleOut, sibling);
                 }
@@ -499,7 +526,7 @@ Status ReplaceTensor::ForwardView(Operation* op, LogicalTensorPtr& rootTensor, F
         return FAILED;
     }
     processedOp.insert(op->GetOpMagic());
-    op->GetOOperands()[0]->tensor = rootTensor->tensor;
+    SetRawTensor(op->GetOOperands()[0], rootTensor->tensor);
     forwardOps.insert(op->GetOpMagic());
     forRoots.push(op->GetOOperands()[0]);
     if (!function.IsFromOutCast(op->GetOOperands()[0])) {
@@ -544,7 +571,7 @@ Status ReplaceTensor::ForwardInplaceOp(Operation* op, LogicalTensorPtr& rootTens
                              op->GetOpcodeStr().c_str(), op->GetOpMagic(), tensorIn->GetMagic(), tensorOut->GetMagic());
             return SUCCESS;
         }
-        tensorOut->tensor = tensorIn->tensor;
+        SetRawTensor(tensorOut, tensorIn->tensor);
         forwardOps.insert(op->GetOpMagic());
         forRoots.push(tensorOut);
         tensorOut->UpdateOffset(tensorIn->GetOffset());
@@ -614,7 +641,7 @@ Status ReplaceTensor::ForwardAssemble(Operation* op, LogicalTensorPtr& rootTenso
         }
         // 保存原始 rawMagic, 因为 tensor 指针替换后 rawmagic 会变, 需按原始值查找兄弟
         int origRawMagic = assembleOut->tensor->rawmagic;
-        assembleOut->tensor = assembleIn->tensor;
+        SetRawTensor(assembleOut, assembleIn->tensor);
         forwardOps.insert(op->GetOpMagic());
         // 新图表达下, Assemble的输出是assemble输出(共享rawMagic), 需同步兄弟并继续遍历
         SyncSiblingAssembleOutput(function, assembleOut, origRawMagic);
@@ -645,7 +672,7 @@ Status ReplaceTensor::ForwardCopyOut(Operation* op, LogicalTensorPtr& rootTensor
     if (!function.IsFromOutCast(outTensor)) {
         function.UpdateLinkMap(outTensor, inTensor);
     }
-    outTensor->tensor = rootTensor->tensor;
+    SetRawTensor(outTensor, rootTensor->tensor);
     outTensor->UpdateOffset(rootTensor->GetOffset());
     forRoots.push(outTensor);
     return SUCCESS;
@@ -665,7 +692,7 @@ Status ReplaceTensor::ForwardInputIdx(Operation* op, LogicalTensorPtr& rootTenso
     if (!function.IsFromOutCast(outTensor)) {
         function.UpdateLinkMap(outTensor, inTensor);
     }
-    outTensor->tensor = rootTensor->tensor;
+    SetRawTensor(outTensor, rootTensor->tensor);
     const bool isScatterInplace = op->GetOpcode() == Opcode::OP_SCATTER_INPLACE ||
                                   op->GetOpcode() == Opcode::OP_SCATTER_ELEMENT_INPLACE;
     const auto oldOffset = outTensor->GetOffset();
@@ -720,7 +747,7 @@ Status ReplaceTensor::BackwardInplaceOp(Operation* op, LogicalTensorPtr& rootTen
         processedOp.insert(op->GetOpMagic());
         // 保存原始 rawMagic, 因为 tensor 指针替换后 rawmagic 会变, 需按原始值查找兄弟
         int origRawMagic = tensorIn->tensor->rawmagic;
-        tensorIn->tensor = tensorOut->tensor;
+        SetRawTensor(tensorIn, tensorOut->tensor);
         backwardOps.insert(op->GetOpMagic());
         backRoots.push(tensorIn);
         tensorOut->UpdateOffset(tensorIn->GetOffset());
@@ -739,7 +766,7 @@ Status ReplaceTensor::BackwardView(Operation* op, LogicalTensorPtr& rootTensor, 
     backRoots.push(viewIn);
     // 保存原始 rawMagic, 因为 tensor 指针替换后 rawmagic 会变, 需按原始值查找兄弟
     int origRawMagic = viewIn->tensor->rawmagic;
-    viewIn->tensor = viewOut->tensor;
+    SetRawTensor(viewIn, viewOut->tensor);
     backwardOps.insert(op->GetOpMagic());
     // 新图表达下, view的输入可能是assemble输出(共享rawMagic), 需同步兄弟并继续遍历
     SyncSiblingAssembleOutput(function, viewIn, origRawMagic);
@@ -778,7 +805,7 @@ Status ReplaceTensor::BackwardAssemble(Operation* op, LogicalTensorPtr& rootTens
     if (BackUpdateAssemble(op) == FAILED) {
         return FAILED;
     }
-    op->GetIOperands()[0]->tensor = rootTensor->tensor;
+    SetRawTensor(op->GetIOperands()[0], rootTensor->tensor);
     if (FoldL0C2UBCopyOffset(op) == FAILED) {
         return FAILED;
     }
@@ -811,7 +838,7 @@ Status ReplaceTensor::BackwardInputIdx(Operation* op, LogicalTensorPtr& rootTens
     if (!function.IsFromOutCast(outTensor)) {
         function.UpdateLinkMap(outTensor, inTensor);
     }
-    inTensor->tensor = rootTensor->tensor;
+    SetRawTensor(inTensor, rootTensor->tensor);
     inTensor->UpdateOffset(rootTensor->GetOffset());
     forRoots.push(inTensor);
     return SUCCESS;
@@ -863,19 +890,25 @@ Status ReplaceTensor::ForwardProcess(Function& function)
     return SUCCESS;
 }
 
-void ReplaceTensor::SyncSiblingAssembleOutput(Function& function, const LogicalTensorPtr& tensor, int origRawMagic)
+void ReplaceTensor::SyncSiblingAssembleOutput(Function&, const LogicalTensorPtr& tensor, int origRawMagic)
 {
     if (tensor == nullptr || tensor->tensor == nullptr) {
         return;
     }
     int rawMagic = (origRawMagic >= 0) ? origRawMagic : tensor->tensor->rawmagic;
     // 只处理 assemble 输出: 检查同 rawMagic 的兄弟 logical tensor
-    for (const auto& sibling : GraphUtils::GetTensorsByRawMagic(function, rawMagic)) {
+    auto it = rawMagicTensors_.find(rawMagic);
+    if (it == rawMagicTensors_.end()) {
+        return;
+    }
+    // Updating a sibling can move it to another rawMagic group.
+    const auto siblings = it->second;
+    for (const auto& sibling : siblings) {
         if (sibling == nullptr || sibling->GetMagic() == tensor->GetMagic()) {
             continue;
         }
         // 同步 tensor 指针(与当前 tensor 保持一致)
-        sibling->tensor = tensor->tensor;
+        SetRawTensor(sibling, tensor->tensor);
         // push 到 backRoots 和 forRoots, 使兄弟的 producer/consumer 链路继续被遍历
         backRoots.push(sibling);
         forRoots.push(sibling);
@@ -1049,6 +1082,7 @@ void ReplaceTensor::ProcessHubAssembleOp(Function& function, Operation& hubOp, O
                          hubInputMemType, hubOutputMemType, assembleOutputMemType);
         return;
     }
+    // RunOnFunction 在处理 HUB 前已清空 rawMagicTensors_。
     hubInput->tensor = assembleOutput->tensor;
     auto assembleOpAttribute = std::dynamic_pointer_cast<AssembleOpAttribute>(assembleOp.GetOpAttribute());
     if (assembleOpAttribute == nullptr) {
@@ -1583,6 +1617,7 @@ Status ReplaceTensor::RunOnFunction(Function& function)
     if (InsertNeedCopy(function) == FAILED) {
         return FAILED;
     }
+    BuildRawMagicTensorIndex(function);
     auto tensorToOrderIndex = BuildTensorOrderIndexMap(function);
     UnionFind uf(tensorToOrderIndex);
     UniteTensor(function, uf);
@@ -1606,6 +1641,8 @@ Status ReplaceTensor::RunOnFunction(Function& function)
             }
         }
     }
+
+    rawMagicTensors_.clear();
 
     // Some tensor replacements (for example L0C2UB offset folding) bypass an
     // obsolete Assemble operation by marking it deleted.  The replacement

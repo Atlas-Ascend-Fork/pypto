@@ -741,6 +741,48 @@ TEST_F(CommonOperationEliminateTest, PreserveAssembleAsSideEffectOperation)
     EXPECT_EQ(dep.GetConsumers(assembleToken).count(assemble2Stmt), 1);
 }
 
+TEST_F(CommonOperationEliminateTest, MergeInputTokensWithoutResultTokenRewrites)
+{
+    ComputationalGraphBuilder graph;
+    BuildRedundantAbsGraph(graph);
+    auto* producer1 = graph.GetOp("ABS1");
+    auto* producer2 = graph.GetOp("ABS2");
+    auto* consumer = graph.GetOp("MUL");
+    auto* function = graph.GetFunction();
+    ASSERT_NE(producer1, nullptr);
+    ASSERT_NE(producer2, nullptr);
+    ASSERT_NE(consumer, nullptr);
+    ASSERT_NE(function, nullptr);
+
+    auto inputToken1 = MakeToken("input_token1");
+    auto inputToken2 = MakeToken("input_token2");
+    producer1->tokens_ = {inputToken1};
+    producer2->tokens_ = {inputToken2};
+    consumer->tokens_ = {inputToken1};
+    auto& dependency = function->GetVarDependency();
+    dependency.AddConsumer(inputToken1, ToStmtPtr(producer1));
+    dependency.AddConsumer(inputToken2, ToStmtPtr(producer2));
+    dependency.AddConsumer(inputToken1, ToStmtPtr(consumer));
+
+    CommonOperationEliminate coe;
+    ASSERT_EQ(coe.Run(*function, "", "", 0), SUCCESS);
+
+    auto* keptProducer = FindKeptAbsProducer(*function);
+    ASSERT_NE(keptProducer, nullptr);
+    EXPECT_TRUE(keptProducer->result_token_.empty());
+    EXPECT_EQ(keptProducer->tokens_.size(), 2U);
+    EXPECT_EQ(std::count(keptProducer->tokens_.begin(), keptProducer->tokens_.end(), inputToken1), 1);
+    EXPECT_EQ(std::count(keptProducer->tokens_.begin(), keptProducer->tokens_.end(), inputToken2), 1);
+    ASSERT_EQ(consumer->tokens_.size(), 1U);
+    EXPECT_EQ(consumer->tokens_.front(), inputToken1);
+    EXPECT_EQ(dependency.GetConsumers(inputToken1).size(), 2U);
+    EXPECT_EQ(dependency.GetConsumers(inputToken2).size(), 1U);
+    EXPECT_EQ(dependency.GetConsumers(inputToken1).count(ToStmtPtr(keptProducer)), 1U);
+    EXPECT_EQ(dependency.GetConsumers(inputToken2).count(ToStmtPtr(keptProducer)), 1U);
+    EXPECT_EQ(dependency.GetConsumers(inputToken1).count(ToStmtPtr(consumer)), 1U);
+    EXPECT_EQ(function->Operations().size(), 2U);
+}
+
 TEST_F(CommonOperationEliminateTest, MergeProducerInputTokensAfterMerge)
 {
     ComputationalGraphBuilder G;

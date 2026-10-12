@@ -281,6 +281,9 @@ void UpdateMergedProducerTokens(Function& function, const std::vector<Operation*
 
 void RewriteFunctionTokenInputs(Function& function, const std::vector<TokenRewritePair>& tokenRewritePairs)
 {
+    if (tokenRewritePairs.empty()) {
+        return;
+    }
     for (auto op : function.Operations(true).DuplicatedOpList()) {
         std::vector<pypto::ir::VarPtr> rewrittenTokens;
         if (op != nullptr && BuildRewrittenTokenInputs(*op, tokenRewritePairs, rewrittenTokens)) {

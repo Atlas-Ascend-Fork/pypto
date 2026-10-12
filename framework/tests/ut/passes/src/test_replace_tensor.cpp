@@ -169,6 +169,90 @@ public:
     void TearDown() override {}
 };
 
+TEST_F(ReplaceTensorTest, RawMagicIndexTracksRepeatedSiblingMigration)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "SiblingMigration", "SiblingMigration", nullptr);
+    std::vector<int64_t> shape = {kNumEight, kNumEight};
+    std::vector<int64_t> offset = {kNumZero, kNumZero};
+    auto rawA = std::make_shared<RawTensor>(DT_FP32, shape);
+    auto rawB = std::make_shared<RawTensor>(DT_FP32, shape);
+    auto rawC = std::make_shared<RawTensor>(DT_FP32, shape);
+    auto makeTensor = [&](const std::shared_ptr<RawTensor>& raw) {
+        return IRBuilder().CreateTensorVar(raw, offset, shape, CreateTestConstIntVector(shape));
+    };
+    auto first = makeTensor(rawA);
+    auto sibling = makeTensor(rawA);
+    auto existing = makeTensor(rawB);
+    auto output = makeTensor(rawC);
+    function->inCasts_ = {first, sibling};
+    function->outCasts_ = {output};
+    PassOperationUtils::AddOperation(*function, Opcode::OP_ABS, {existing}, {output});
+
+    ReplaceTensor pass;
+    pass.BuildRawMagicTensorIndex(*function);
+    auto checkIndex = [&]() {
+        for (const auto& raw : {rawA, rawB, rawC}) {
+            EXPECT_EQ(pass.rawMagicTensors_[raw->rawmagic], GraphUtils::GetTensorsByRawMagic(*function, raw->rawmagic));
+        }
+    };
+    checkIndex();
+    pass.SetRawTensor(first, rawB);
+    pass.SyncSiblingAssembleOutput(*function, first, rawA->rawmagic);
+    EXPECT_EQ(sibling->tensor, rawB);
+    EXPECT_EQ(pass.backRoots.size(), 1U);
+    checkIndex();
+
+    pass.SetRawTensor(first, rawC);
+    pass.SyncSiblingAssembleOutput(*function, first, rawB->rawmagic);
+    EXPECT_EQ(sibling->tensor, rawC);
+    EXPECT_EQ(existing->tensor, rawC);
+    EXPECT_EQ(pass.backRoots.size(), 3U);
+    EXPECT_EQ(pass.forRoots.size(), 3U);
+    checkIndex();
+
+    Function another(Program::GetInstance(), "OtherFunction", "OtherFunction", nullptr);
+    another.inCasts_ = {makeTensor(rawA)};
+    pass.BuildRawMagicTensorIndex(another);
+    ASSERT_EQ(pass.rawMagicTensors_.size(), 1U);
+    EXPECT_EQ(pass.rawMagicTensors_.at(rawA->rawmagic), GraphUtils::GetTensorsByRawMagic(another, rawA->rawmagic));
+}
+
+TEST_F(ReplaceTensorTest, UniteTensorSkipsAssembleOutputWithoutRawTensor)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "NullRawAssemble", "NullRawAssemble", nullptr);
+    std::vector<int64_t> shape = {kNumEight, kNumEight};
+    std::vector<int64_t> offset = {kNumZero, kNumZero};
+    auto rawA = std::make_shared<RawTensor>(DT_FP32, shape);
+    auto rawB = std::make_shared<RawTensor>(DT_FP32, shape);
+    auto makeTensor = [&](const std::shared_ptr<RawTensor>& raw) {
+        return IRBuilder().CreateTensorVar(raw, offset, shape, CreateTestConstIntVector(shape));
+    };
+    auto assembleIn = makeTensor(rawA);
+    auto assembleOut = makeTensor(rawB);
+    auto output = makeTensor(rawA);
+    function->inCasts_ = {assembleIn};
+    function->outCasts_ = {output};
+    PassOperationUtils::AddOperation(*function, Opcode::OP_ASSEMBLE, {assembleIn}, {assembleOut});
+    PassOperationUtils::AddOperation(*function, Opcode::OP_ABS, {assembleOut}, {output});
+    // 构图完成后解除assemble输出的raw绑定, 模拟尚未绑定raw tensor的半构建状态
+    assembleOut->tensor = nullptr;
+
+    ReplaceTensor pass;
+    pass.BuildRawMagicTensorIndex(*function);
+    EXPECT_EQ(pass.rawMagicTensors_.find(rawB->rawmagic), pass.rawMagicTensors_.end());
+    auto group = pass.rawMagicTensors_.find(rawA->rawmagic);
+    ASSERT_NE(group, pass.rawMagicTensors_.end());
+    EXPECT_EQ(group->second.count(assembleOut), 0U);
+    auto tensorToOrderIndex = pass.BuildTensorOrderIndexMap(*function);
+    UnionFind uf(tensorToOrderIndex);
+    EXPECT_NO_THROW(pass.UniteTensor(*function, uf));
+    // assemble自身的inplace union不受空raw兄弟守卫影响
+    EXPECT_EQ(uf.Find(assembleOut), uf.Find(assembleIn));
+
+    assembleOut->tensor = rawB;
+    EXPECT_NO_THROW(pass.UniteTensor(*function, uf));
+}
+
 TEST_F(ReplaceTensorTest, TestViewAssemble)
 {
     auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "TestViewAssemble", "TestViewAssemble",

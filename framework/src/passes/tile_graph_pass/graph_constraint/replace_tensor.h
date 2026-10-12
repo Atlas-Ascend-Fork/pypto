@@ -26,6 +26,7 @@
 #include "interface/function/function.h"
 #include "interface/tensor/irbuilder.h"
 #include "passes/pass_utils/pass_utils.h"
+#include "passes/pass_utils/graph_utils.h"
 #include "interface/configs/config_manager.h"
 
 namespace npu {
@@ -146,6 +147,8 @@ private:
                                        std::unordered_map<Operation*, LogicalTensorPtr>& visited);
     Status RefactorViewConnectForReplace(Function& function);
     void UniteTensor(Function& function, UnionFind& uf);
+    void BuildRawMagicTensorIndex(Function& function);
+    void SetRawTensor(const LogicalTensorPtr& tensor, const std::shared_ptr<RawTensor>& rawTensor);
 
     Status AlignCopyInConsumer(std::shared_ptr<LogicalTensor> tensorGm) const;
     Status AlignCopyOutProducer(std::shared_ptr<LogicalTensor> tensorGm) const;
@@ -206,6 +209,8 @@ private:
     std::unordered_set<int> processedOp;
     std::unordered_set<int> backwardOps;
     std::unordered_set<int> forwardOps;
+    // Valid only between InsertNeedCopy and the end of forward/backward traversal.
+    RawMagicTensorMap rawMagicTensors_;
     IRBuilder irBuilder_;
 };
 } // namespace tile_fwk
