@@ -298,6 +298,30 @@ bool RegionsOverlap(const RegionMapping& lhs, const RegionMapping& rhs)
     return true;
 }
 
+// 两个 offset+shape 描述的 N 维区域是否重叠。任一维相离或区域为空（shape==0）则不重叠；
+// 动态轴（shape<0，-1 表示该维编译期范围未知）无法证明相离，与 rank 不一致一样保守视为
+// 重叠（调用方应放弃改写）。注意：本函数的调用路径（MatchContractSliceContract）只校验了
+// offset 具体性，未校验 shape 具体性，动态 shape 必须在此保守处理。
+bool IsOffsetRegionOverlap(const std::vector<int64_t>& offsetA, const std::vector<int64_t>& shapeA,
+                           const std::vector<int64_t>& offsetB, const std::vector<int64_t>& shapeB)
+{
+    if (offsetA.size() != shapeA.size() || offsetB.size() != shapeB.size() || offsetA.size() != offsetB.size()) {
+        return true;
+    }
+    for (size_t idx = 0; idx < offsetA.size(); ++idx) {
+        if (shapeA[idx] == 0 || shapeB[idx] == 0) {
+            return false;
+        }
+        if (shapeA[idx] < 0 || shapeB[idx] < 0) {
+            return true;
+        }
+        if (offsetA[idx] + shapeA[idx] <= offsetB[idx] || offsetB[idx] + shapeB[idx] <= offsetA[idx]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool TryCalculateVolume(const std::vector<int64_t>& shape, uint64_t& volume)
 {
     volume = 1;
@@ -1705,30 +1729,27 @@ Status RemoveRedundantOpUtils::ProcessContractSliceImpl(Function& function, std:
     return SUCCESS;
 }
 
-// ===== 收窄守卫（临时）：仅处理 matmul 输出侧场景 =====
-// middle 的 producers 必须全是单输入单输出 CONTRACT，且每个 CONTRACT 的输入直接产自
-// matmul（A_MUL_B/A_MULACC_B）。非 matmul 来源的 CONTRACT→SLICE→CONTRACT 结构保持原状；
-// 验证充分后删除本函数中的 matmul 检查即可放开到通用 CONTRACT 来源。
-bool RemoveRedundantOpUtils::IsMatmulBackedContractProducers(
+// ===== 来源守卫：CONTRACT₁ 输入不得产自 view/assemble 类 op =====
+// middle 的 producers 必须全是单输入 CONTRACT 且带 assemble 属性；同时每个 CONTRACT 输入的
+// 生产者不得包含 view-like（VIEW/SLICE）或 assemble-like（ASSEMBLE/CONTRACT）op：
+// SLICE/VIEW 前缀会使消除后产生新的 slice→contract 级联，转嫁给下游需 32B 对齐防护的
+// offset 合成折叠；CONTRACT/ASSEMBLE 前缀会形成嵌套三明治，并可能跨越 L0C 物化边界。
+// 除此之外的来源（计算 op 输出、无生产者的图入参等）均放行。
+bool RemoveRedundantOpUtils::HasEligibleContractProducers(
     const std::set<Operation*, LogicalTensor::CompareOp>& producers)
 {
     if (producers.empty()) {
         return false;
     }
     for (auto* producer : producers) {
-        if (producer == nullptr || producer->GetOpcode() != Opcode::OP_CONTRACT ||
+        if (producer == nullptr || producer->IsDeleted() || producer->GetOpcode() != Opcode::OP_CONTRACT ||
             producer->GetIOperands().size() != 1 || producer->GetIOperands().front() == nullptr ||
             GetAssembleAttr(*producer) == nullptr) {
             return false;
         }
-        const auto& inputProducers = producer->GetIOperands().front()->GetProducers();
-        if (inputProducers.empty()) {
-            return false;
-        }
-        for (auto* inputProducer : inputProducers) {
+        for (auto* inputProducer : producer->GetIOperands().front()->GetProducers()) {
             if (inputProducer == nullptr || inputProducer->IsDeleted() ||
-                (inputProducer->GetOpcode() != Opcode::OP_A_MUL_B &&
-                 inputProducer->GetOpcode() != Opcode::OP_A_MULACC_B)) {
+                IsViewLikeOpcode(inputProducer->GetOpcode()) || IsAssembleLikeOpcode(inputProducer->GetOpcode())) {
                 return false;
             }
         }
@@ -1737,7 +1758,8 @@ bool RemoveRedundantOpUtils::IsMatmulBackedContractProducers(
 }
 
 // 匹配 CONTRACT₁ → SLICE → CONTRACT₂ 三明治（整块匹配）：SLICE 从 middle 切出的区域与
-// 某个 CONTRACT₁ 的写入区域完全重合（shape/validshape/offset 均相同）。
+// 某个 CONTRACT₁ 的写入区域完全重合（类型/shape/validshape/offset 均相同），且其余
+// producer 的写入区域与该读取区域不重叠（写入偏移不可信时保守放弃）。
 // 匹配成功时输出该 CONTRACT₁，否则返回 false。
 bool RemoveRedundantOpUtils::MatchContractSliceContract(Operation& sliceOp, Operation*& matchedProducer)
 {
@@ -1747,7 +1769,7 @@ bool RemoveRedundantOpUtils::MatchContractSliceContract(Operation& sliceOp, Oper
     auto tile = sliceOp.GetOOperands().front();
     if (sliceAttr == nullptr || sliceAttr->GetFromOffset().size() != middle->GetShape().size() ||
         !IsConcreteDynOffsetConsistent(sliceAttr->GetFromOffset(), sliceAttr->GetFromDynOffset()) ||
-        !IsMatmulBackedContractProducers(middle->GetProducers())) {
+        !HasEligibleContractProducers(middle->GetProducers())) {
         return false;
     }
     const auto& tileConsumers = tile->GetConsumers();
@@ -1761,16 +1783,24 @@ bool RemoveRedundantOpUtils::MatchContractSliceContract(Operation& sliceOp, Oper
     for (auto* producer : middle->GetProducers()) {
         auto contractAttr = GetAssembleAttr(*producer);
         auto producerInput = producer->GetIOperands().front();
-        if (!IsConcreteDynOffsetConsistent(contractAttr->GetToOffset(), contractAttr->GetToDynOffset()) ||
-            !IsEqualShapeWithDynShape(producerInput, tile) ||
-            contractAttr->GetToOffset() != sliceAttr->GetFromOffset()) {
+        if (!IsConcreteDynOffsetConsistent(contractAttr->GetToOffset(), contractAttr->GetToDynOffset())) {
+            return false;
+        }
+        if (contractAttr->GetToOffset() == sliceAttr->GetFromOffset() && IsSameTensorTypeAndRank(producerInput, tile) &&
+            IsEqualShapeWithDynShape(producerInput, tile)) {
+            if (matchedProducer != nullptr) {
+                ambiguous = true;
+                break;
+            }
+            matchedProducer = producer;
             continue;
         }
-        if (matchedProducer != nullptr) {
-            ambiguous = true;
-            break;
+        // 未匹配 producer 的写入区域一旦与 SLICE 读取区域重叠，切回的数据可能被其覆盖，
+        // 此时无法安全地将下游 CONTRACT 重接到匹配 producer 的输入。
+        if (IsOffsetRegionOverlap(contractAttr->GetToOffset(), producerInput->GetShape(), sliceAttr->GetFromOffset(),
+                                  tile->GetShape())) {
+            return false;
         }
-        matchedProducer = producer;
     }
     return matchedProducer != nullptr && !ambiguous;
 }
@@ -1800,7 +1830,7 @@ Status RemoveRedundantOpUtils::ProcessContractSliceContract(Function& function, 
     std::vector<LogicalTensorPtr> eliminatedMiddles;
     auto opList = function.Operations().DuplicatedOpList();
     for (auto* op : opList) {
-        if (op == nullptr || op->GetOpcode() != Opcode::OP_SLICE || op->GetIOperands().size() != 1 ||
+        if (op == nullptr || op->IsDeleted() || op->GetOpcode() != Opcode::OP_SLICE || op->GetIOperands().size() != 1 ||
             op->GetOOperands().size() != 1) {
             continue;
         }

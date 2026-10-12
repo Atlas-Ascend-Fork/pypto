@@ -4400,10 +4400,11 @@ TEST_F(TestRemoveRedundantOpPass, ContractSliceContractOverlappingProducersKept)
     EXPECT_EQ(g.consumerContract->GetIOperands().front(), g.tile);
 }
 
-// Non-matmul cube producer: the narrowed guard keeps the sandwich untouched.
-TEST_F(TestRemoveRedundantOpPass, ContractSliceContractNonMatmulBackedKept)
+// Compute-op producer: the source guard only rejects view/assemble-like prefixes, so the
+// sandwich is eliminated exactly like the matmul-backed case.
+TEST_F(TestRemoveRedundantOpPass, ContractSliceContractComputeOpBackedEliminated)
 {
-    auto function = std::make_shared<Function>(Program::GetInstance(), "TestCscNonMatmul", "TestCscNonMatmul", nullptr);
+    auto function = std::make_shared<Function>(Program::GetInstance(), "TestCscComputeOp", "TestCscComputeOp", nullptr);
     ASSERT_NE(function, nullptr);
     function->SetGraphType(GraphType::TENSOR_GRAPH);
     auto g = BuildCscSandwich(*function, Opcode::OP_ADD, {kNumZero, kNumZero}, {1, kNumExpSix}, true, false);
@@ -4411,10 +4412,108 @@ TEST_F(TestRemoveRedundantOpPass, ContractSliceContractNonMatmulBackedKept)
     std::vector<Operation*> newOps;
     bool operationUpdated = false;
     ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
-    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumThree);
-    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumOne);
+    EXPECT_TRUE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumOne);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumZero);
     ASSERT_EQ(g.consumerContract->GetIOperands().size(), 1UL);
-    EXPECT_EQ(g.consumerContract->GetIOperands().front(), g.tile);
+    EXPECT_EQ(g.consumerContract->GetIOperands().front(), g.matmulOut);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_ADD), kNumTwo);
+}
+
+// A view-like producer in front of the producer contract keeps the sandwich: folding would hand
+// a new slice->contract cascade to the downstream view-assemble folding.  The extra ADD consumer
+// of middle keeps the dedicated slice-contract-slice pass away from this chain.
+TEST_F(TestRemoveRedundantOpPass, ContractSliceContractSliceBackedKept)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "TestCscSliceBacked", "TestCscSliceBacked",
+                                               nullptr);
+    ASSERT_NE(function, nullptr);
+    function->SetGraphType(GraphType::TENSOR_GRAPH);
+    constexpr int64_t kCols = kNumExpSix;
+    constexpr int64_t kMiddleCols = kNumExpSeven;
+
+    auto upstream = IRBuilder().CreateTensorVar(DT_FP32, {2, kCols}, CreateTestConstIntVector({2, kCols}));
+    auto sliced = IRBuilder().CreateTensorVar(DT_FP32, {1, kCols}, CreateTestConstIntVector({1, kCols}));
+    std::vector<int64_t> fromOffset{kNumOne, kNumZero};
+    auto fromDynOffset = SymbolicScalar::FromConcrete(fromOffset);
+    auto slicedValid = GetViewValidShape(upstream->GetDynValidShape(), fromOffset, fromDynOffset, {1, kCols});
+    auto& producerSlice = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_SLICE, {upstream}, {sliced});
+    producerSlice.SetOpAttribute(std::make_shared<ViewOpAttribute>(fromOffset, fromDynOffset, slicedValid));
+
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, {1, kMiddleCols}, CreateTestConstIntVector({1, kMiddleCols}));
+    auto& producerContract = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {sliced}, {middle});
+    producerContract.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{kNumZero, kNumZero}));
+
+    auto bias = IRBuilder().CreateTensorVar(DT_FP32, {1, kMiddleCols}, CreateTestConstIntVector({1, kMiddleCols}));
+    auto addOut = IRBuilder().CreateTensorVar(DT_FP32, {1, kMiddleCols}, CreateTestConstIntVector({1, kMiddleCols}));
+    IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_ADD, {middle, bias}, {addOut});
+
+    auto tile = IRBuilder().CreateTensorVar(DT_FP32, {1, kCols}, CreateTestConstIntVector({1, kCols}));
+    std::vector<int64_t> cutOffset{kNumZero, kNumZero};
+    auto cutDynOffset = SymbolicScalar::FromConcrete(cutOffset);
+    auto tileValid = GetViewValidShape(middle->GetDynValidShape(), cutOffset, cutDynOffset, {1, kCols});
+    auto& cut = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_SLICE, {middle}, {tile});
+    cut.SetOpAttribute(std::make_shared<ViewOpAttribute>(cutOffset, cutDynOffset, tileValid));
+
+    auto out = IRBuilder().CreateTensorVar(DT_FP32, {1, kMiddleCols}, CreateTestConstIntVector({1, kMiddleCols}));
+    auto& consumerContract = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {tile}, {out});
+    consumerContract.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{kNumZero, kNumZero}));
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumTwo);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumTwo);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_ADD), kNumOne);
+    ASSERT_EQ(consumerContract.GetIOperands().size(), 1UL);
+    EXPECT_EQ(consumerContract.GetIOperands().front(), tile);
+}
+
+// An assemble-like producer in front of the producer contract keeps the sandwich: nested
+// contract chains must not be folded by the sandwich elimination.  The second producer keeps
+// the generic contract-multi-slice pass away from middle (no unique layout owner).
+TEST_F(TestRemoveRedundantOpPass, ContractSliceContractContractBackedKept)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "TestCscContractBacked", "TestCscContractBacked",
+                                               nullptr);
+    ASSERT_NE(function, nullptr);
+    function->SetGraphType(GraphType::TENSOR_GRAPH);
+    constexpr int64_t kCols = kNumExpSix;
+    constexpr int64_t kMiddleCols = kNumExpSeven;
+
+    auto upstream = IRBuilder().CreateTensorVar(DT_FP32, {1, kCols}, CreateTestConstIntVector({1, kCols}));
+    auto contractOut = IRBuilder().CreateTensorVar(DT_FP32, {1, kCols}, CreateTestConstIntVector({1, kCols}));
+    auto& prefixContract = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {upstream}, {contractOut});
+    prefixContract.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{kNumZero, kNumZero}));
+
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, {1, kMiddleCols}, CreateTestConstIntVector({1, kMiddleCols}));
+    auto& producerContract = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {contractOut}, {middle});
+    producerContract.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{kNumZero, kNumZero}));
+
+    auto input2 = IRBuilder().CreateTensorVar(DT_FP32, {1, kCols}, CreateTestConstIntVector({1, kCols}));
+    auto& producerContract2 = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {input2}, {middle});
+    producerContract2.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{kNumZero, kNumExpSix}));
+
+    auto tile = IRBuilder().CreateTensorVar(DT_FP32, {1, kCols}, CreateTestConstIntVector({1, kCols}));
+    std::vector<int64_t> cutOffset{kNumZero, kNumZero};
+    auto cutDynOffset = SymbolicScalar::FromConcrete(cutOffset);
+    auto tileValid = GetViewValidShape(middle->GetDynValidShape(), cutOffset, cutDynOffset, {1, kCols});
+    auto& cut = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_SLICE, {middle}, {tile});
+    cut.SetOpAttribute(std::make_shared<ViewOpAttribute>(cutOffset, cutDynOffset, tileValid));
+
+    auto out = IRBuilder().CreateTensorVar(DT_FP32, {1, kMiddleCols}, CreateTestConstIntVector({1, kMiddleCols}));
+    auto& consumerContract = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {tile}, {out});
+    consumerContract.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{kNumZero, kNumZero}));
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumFour);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumOne);
+    ASSERT_EQ(consumerContract.GetIOperands().size(), 1UL);
+    EXPECT_EQ(consumerContract.GetIOperands().front(), tile);
 }
 
 // A slice region spanning two producer regions is not a full-block match: nothing is eliminated.
@@ -4468,4 +4567,57 @@ TEST_F(TestRemoveRedundantOpPass, ContractSliceContractMiddleStillUsedKeepsProdu
     EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumThree);
     EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumOne);
     EXPECT_EQ(g.consumerContract->GetIOperands().front(), g.matmulOut);
+}
+
+// 未匹配 producer 的输入 shape 含动态轴（-1）时，其写入范围编译期未知，无法证明与 SLICE
+// 读取区域不相交，IsOffsetRegionOverlap 保守视为重叠并放弃整条链的消除。
+TEST_F(TestRemoveRedundantOpPass, ContractSliceContractDynamicSiblingShapeKept)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "TestCscDynShape", "TestCscDynShape", nullptr);
+    ASSERT_NE(function, nullptr);
+    function->SetGraphType(GraphType::TENSOR_GRAPH);
+    const std::vector<int64_t> tileShape{kNumOne, kNumExpSix};
+    const std::vector<int64_t> dynShape{kNumNegOne, kNumExpSix};
+    const std::vector<int64_t> middleShape{kNumOne, kNumExpSeven};
+    const std::vector<int64_t> zeroOffset{kNumZero, kNumZero};
+    const std::vector<int64_t> siblingOffset{kNumZero, kNumExpSix};
+
+    auto inA = IRBuilder().CreateTensorVar(DT_FP32, tileShape, CreateTestConstIntVector(tileShape));
+    auto inB = IRBuilder().CreateTensorVar(DT_FP32, std::vector<int64_t>{kNumExpSix, kNumExpSix},
+                                           CreateTestConstIntVector(std::vector<int64_t>{kNumExpSix, kNumExpSix}));
+    auto input1 = IRBuilder().CreateTensorVar(DT_FP32, tileShape, CreateTestConstIntVector(tileShape));
+    PassOperationUtils::AddOperation(*function, Opcode::OP_ADD, {inA, inB}, {input1});
+
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, middleShape, CreateTestConstIntVector(middleShape));
+    PassOperationUtils::AddOperation(*function, Opcode::OP_CONTRACT, {input1}, {middle}, [&zeroOffset](Operation& op) {
+        op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset));
+    });
+
+    auto dynInput = IRBuilder().CreateTensorVar(DT_FP32, dynShape, CreateTestConstIntVector(dynShape));
+    PassOperationUtils::AddOperation(
+        *function, Opcode::OP_CONTRACT, {dynInput}, {middle},
+        [&siblingOffset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(siblingOffset)); });
+
+    auto tile = IRBuilder().CreateTensorVar(DT_FP32, tileShape, CreateTestConstIntVector(tileShape));
+    auto cutDynOffset = SymbolicScalar::FromConcrete(zeroOffset);
+    auto tileValid = GetViewValidShape(middle->GetDynValidShape(), zeroOffset, cutDynOffset, tileShape);
+    PassOperationUtils::AddOperation(
+        *function, Opcode::OP_SLICE, {middle}, {tile}, [&zeroOffset, &cutDynOffset, &tileValid](Operation& op) {
+            op.SetOpAttribute(std::make_shared<ViewOpAttribute>(zeroOffset, cutDynOffset, tileValid));
+        });
+
+    auto out = IRBuilder().CreateTensorVar(DT_FP32, middleShape, CreateTestConstIntVector(middleShape));
+    auto& consumerContract = PassOperationUtils::AddOperation(
+        *function, Opcode::OP_CONTRACT, {tile}, {out},
+        [&zeroOffset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset)); });
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumThree);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumOne);
+    ASSERT_EQ(consumerContract.GetIOperands().size(), 1UL);
+    EXPECT_EQ(consumerContract.GetIOperands().front(), tile);
 }

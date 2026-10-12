@@ -63,7 +63,7 @@ private:
     Status ProcessSliceContractSlice(Function& function, std::vector<Operation*>& newOps, bool& operationUpdated);
     Status ProcessContractSliceContract(Function& function, bool& operationUpdated);
     static bool MatchContractSliceContract(Operation& sliceOp, Operation*& matchedProducer);
-    static bool IsMatmulBackedContractProducers(const std::set<Operation*, LogicalTensor::CompareOp>& producers);
+    static bool HasEligibleContractProducers(const std::set<Operation*, LogicalTensor::CompareOp>& producers);
     static void EraseOrphanMiddleProducers(const LogicalTensorPtr& middle);
     Status ProcessMultiContractSingleSlice(Function& function, bool& operationUpdated);
     Status ProcessSingleContractMultiSlice(Function& function, std::vector<Operation*>& newOps, bool& operationUpdated);
