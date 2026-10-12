@@ -652,6 +652,8 @@ inline constexpr char kMemorySpaceMat[] = "Mat";
 inline constexpr char kMemorySpaceLeft[] = "Left";
 inline constexpr char kMemorySpaceRight[] = "Right";
 inline constexpr char kMemorySpaceAcc[] = "Acc";
+inline constexpr char kMemorySpaceScaleLeft[] = "ScaleLeft";
+inline constexpr char kMemorySpaceScaleRight[] = "ScaleRight";
 
 // Buffer capacity (bytes) of ``space`` for ``arch``, read from the platform
 // ini shipped with the package. Returns 0 when the arch or space key is not

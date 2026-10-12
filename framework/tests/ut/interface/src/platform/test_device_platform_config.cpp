@@ -383,6 +383,12 @@ TEST_F(TestDevicePlatformConfig, SetMemoryLimitL0MxSizeIniOrDefault)
     Platform::Instance().SetMemoryLimit(INIParser());
 }
 
+TEST_F(TestDevicePlatformConfig, GetMemoryLimitForArchReadsL0MxSize)
+{
+    EXPECT_EQ(GetMemoryLimitForArch(NPUArch::DAV_3510, kMemorySpaceScaleLeft), 4096UL);
+    EXPECT_EQ(GetMemoryLimitForArch(NPUArch::DAV_3510, kMemorySpaceScaleRight), 4096UL);
+}
+
 // HasKey probes optional keys quietly, without reporting errors for missing section/key.
 TEST_F(TestDevicePlatformConfig, HasKeyProbesOptionalSpecQuietly)
 {

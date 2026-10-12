@@ -383,8 +383,9 @@ size_t GetMemoryLimitForArch(NPUArch arch, const std::string& space)
     }
     // Space key (kMemorySpace*) -> ini key.
     static const std::unordered_map<std::string, std::string> spaceKeys = {
-        {kMemorySpaceVec, ubSize},    {kMemorySpaceMat, l1Size},  {kMemorySpaceLeft, l0aSize},
-        {kMemorySpaceRight, l0bSize}, {kMemorySpaceAcc, l0cSize},
+        {kMemorySpaceVec, ubSize},           {kMemorySpaceMat, l1Size},  {kMemorySpaceLeft, l0aSize},
+        {kMemorySpaceRight, l0bSize},        {kMemorySpaceAcc, l0cSize}, {kMemorySpaceScaleLeft, l0aMxSize},
+        {kMemorySpaceScaleRight, l0bMxSize},
     };
     const auto keyIt = spaceKeys.find(space);
     if (keyIt == spaceKeys.end()) {
