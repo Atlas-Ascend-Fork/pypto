@@ -288,13 +288,12 @@ void DevControlFlowCache::DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uin
         }
     }
     for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
-        for (uint32_t i = 0; i < npu::tile_fwk::NUM_LOCAL_GROUPS; i++) {
-            auto* matrix = base->drcoRootFuncList->localReadyMatrixArray[ct][i];
-            if (matrix == nullptr) {
-                continue;
-            }
-            (void)memset_s(matrix->taskList, sizeof(matrix->taskList), 0, sizeof(matrix->taskList));
+        auto* matrix = base->drcoRootFuncList->localReadyMatrixArray[ct];
+        if (matrix == nullptr) {
+            continue;
         }
+        // 定长矩阵：整块清零行区（含未用行/槽，覆盖所有可能残留的任务）
+        (void)memset_s(matrix->rowList, sizeof(matrix->rowList), 0, sizeof(matrix->rowList));
     }
     // 槽内为 stitch 节点指针，复位为 nullptr，避免 cache 重放后残留悬空指针
     auto* stitchNodeMatrix = base->drcoRootFuncList->stitchNodeMatrix;
@@ -1343,9 +1342,7 @@ void DevControlFlowCache::RelocDrcoRootFuncList(RelocRange& relocCtrlCache, Relo
             }
         }
         for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
-            for (uint32_t i = 0; i < npu::tile_fwk::NUM_LOCAL_GROUPS; i++) {
-                relocCtrlCache.Reloc(drcoRootFuncList->localReadyMatrixArray[ct][i]);
-            }
+            relocCtrlCache.Reloc(drcoRootFuncList->localReadyMatrixArray[ct]);
         }
         relocCtrlCache.Reloc(drcoRootFuncList->stitchNodeMatrix);
         // 基址与 stitch 节点指针同域，走同一平移；slot 内偏移相对基址，平移不变

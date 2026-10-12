@@ -177,6 +177,11 @@ INLINE uint32_t DrcoAtomicExchToU32(__gm__ uint32_t* ptr, uint32_t value)
     return static_cast<uint32_t>(atomicExch(ptr, value));
 }
 
+INLINE uint64_t DrcoAtomicExchToU64(__gm__ uint64_t* ptr, uint64_t value)
+{
+    return static_cast<uint64_t>(atomicExch(ptr, value));
+}
+
 using DrcoDeviceTask = npu::tile_fwk::DrcoDeviceTask;
 using DrcoDeviceTaskReadyQueue = npu::tile_fwk::DrcoDeviceTaskReadyQueue;
 using DrcoLocalReadyQueue = npu::tile_fwk::DrcoLocalReadyQueue;
@@ -221,7 +226,7 @@ INLINE uint32_t BlockDescValidCoreNum(BlockDesc desc, bool isAiv)
 // fetch 循环每轮开头直取，省 push/pop 矩阵探测往返；波内实测容量 1 即饱和）
 constexpr uint32_t SELF_QUEUE_SIZE = 1;
 
-// fetch 批取大小（与 LOCAL_GROUP_SIZE/矩阵维度解耦）：批量 pop 上限。实测波内单列
+// fetch 批取大小（与 LOCAL_GROUP_SIZE/矩阵维度解耦）：批量 pop 上限。实测波内单行
 // 多数时刻可取任务数 < 矩阵维度，批上限过大只是放宽并发上限并不加速命中——取小值
 // 减小批内串行执行尾长，让任务更快回到调度（取到即走），也缩短 deferred 批尾 resolve 链
 constexpr uint32_t DRCO_FETCH_BATCH_SIZE = 4;
@@ -242,10 +247,10 @@ struct DrcoEntryState {
     __gm__ DrcoDeviceTaskReadyQueue* deviceTaskReadyQueue;
     uint8_t lastMixResourceType;
 
-    // readymatrix push 游标按类型独立（AIC/AIV/MIX 互不干扰）；stitch 节点 push 不经此游标
-    uint32_t readyMatrixPushGroupIndex[npu::tile_fwk::DRCO_QUEUE_MAX];
-    uint32_t readyMatrixPushColIdx[npu::tile_fwk::DRCO_QUEUE_MAX];
-    uint32_t readyMatrixPopRowIndex;
+    // readymatrix push 消费者行游标按类型独立（AIC/AIV/MIX 互不干扰，静态后继散射带按类型锚定/刷新）；
+    // stitch 节点 push 不经此游标；合并矩阵无分组、pop 侧无游标（整字读清即状态）——push 行游标
+    // 种子为绝对值，使用处按目标矩阵 validCoreNum 取模（合并矩阵每类型有效行数不同）
+    uint32_t readyMatrixPushRowIdx[npu::tile_fwk::DRCO_QUEUE_MAX];
     uint32_t selfReadyQueueSize;
     uint32_t selfReadyQueue[SELF_QUEUE_SIZE];
     // SSBuf 段（__ssbuf__ 专用地址空间，段基址 0 合法）上的 MIX C2V 通信状态
@@ -388,73 +393,77 @@ INLINE T DrcoAtomicResolveDependOnce(__gm__ T* ptr)
     return static_cast<T>(atomicAdd(ptr, DEC));
 }
 
-// ==================== LocalReadyMatrix 原语：push 遍历一行 / pop 遍历一列 ====================
-
-INLINE uint32_t DrcoLocalReadyMatrixGetRowIdx(uint32_t localIdx) { return localIdx % npu::tile_fwk::LOCAL_GROUP_SIZE; }
+// ==================== LocalReadyMatrix 原语：push 逐槽 u32 CAS 写 / pop 整字 u64 exch 读清 ====================
 
 // 类型内本地编号：blockIdx < nrValidAic（AIC 核）为 blockIdx，否则（AIV 核）为 blockIdx - nrValidAic。
-// LocalQueue/LocalMatrix 统一按此编号索引：group = 本地编号 / N，行/列 = 本地编号 % N
+// LocalQueue 仍按分组索引（group = 本地编号 / LOCAL_GROUP_SIZE）；
+// LocalMatrix 合并为每类型单实例，行 = 本地编号本身
 INLINE uint32_t DrcoGetCoreTypedIdx(uint32_t blockIdx, uint32_t nrValidAic)
 {
     return blockIdx < nrValidAic ? blockIdx : blockIdx - nrValidAic;
 }
 
-// 遍历 rowIdx 行的有效列 [0, validCoreNum)，依次 CAS 写入多个任务，返回实际写入个数；
-// 每个 CAS 成功的任务记录 EVENT_PUSH_LOCAL(groupIdx) 事件（打点写入的 group）
-// 写入流程 4：多余的任务依次写到后续核的矩阵，具体行由 coreIdx % N 决定；只写有效列，无主列不写
-// 列起点 = push 核身份散列 +1（(localIdx+1) % validCoreNum）：撞进同矩阵同行的核列起点错开，
-// 摊平低列号槽位的 CAS 冲突热点；+1 跳过 push 核自己的列——selfQueue 直通期间本核
-// 无暇 pop 本列（列私有模型），首批任务直接落到邻近核列由空闲核取走；validCoreNum==0 禁写早退
-INLINE uint32_t DrcoLocalReadyMatrixPushBatch(DrcoEntryState* state, __gm__ DrcoLocalReadyMatrix* matrix,
-                                              uint32_t groupIdx, uint32_t rowIdx, uint32_t* readyTaskList, uint32_t n,
-                                              bool* rowExhausted, uint32_t queueType)
+// 消费者行 row（行 = 类型内本地编号）的第 wordIdx 个 u64 字：行内槽连续，
+// 行 64B 对齐保证字 8B 对齐
+INLINE __gm__ uint64_t* DrcoLocalReadyMatrixWord(__gm__ DrcoLocalReadyMatrix* matrix, uint32_t wordIdx, uint32_t row)
 {
-    uint32_t validCoreNum = matrix->validCoreNum;
+    return reinterpret_cast<__gm__ uint64_t*>(&matrix->rowList[row].taskList[wordIdx * 2]);
+}
+
+// 遍历深度环 × 消费者行环：起始深度列 = push 核身份散列（typedBlockIdx % colNum，本深度
+// 写满换下一深度），消费者行游标跨批持久且按类型独立（state->readyMatrixPushRowIdx
+// [queueType]，种子 = 本地编号 + 1
+// 跳过本行——行私有模型下本行唯一消费者是自己，selfQueue 直通期间本核无暇 pop 本行，
+// 首批任务落邻近行由空闲核取走；静态后继散射带锚定/刷新亦按类型经此游标）；逐槽
+// u32 CAS（0→任务）一槽一原子、槽间独立，pop 侧按包含该槽的
+// u64 整字 exch 读清——跨位宽 RMW 在 L2 按地址串行化，互不丢任务；
+// validCoreNum == 0 禁写由调用方早退保证；每个 CAS 成功的任务记录 EVENT_PUSH_LOCAL(消费者) 事件
+INLINE uint32_t DrcoLocalReadyMatrixPushBatch(DrcoEntryState* state, __gm__ DrcoLocalReadyMatrix* matrix,
+                                              uint32_t typedBlockIdx, uint32_t* readyTaskList, uint32_t n,
+                                              uint32_t queueType)
+{
+    uint32_t colNum = matrix->colNum;
+    uint32_t rowCnt = matrix->validCoreNum;
     uint32_t pushed = 0;
-    uint32_t col = state->readyMatrixPushColIdx[queueType] % validCoreNum;
-    for (; col < validCoreNum && pushed < n; col++) {
-        uint32_t prev = DrcoAtomicCasToU32(&matrix->taskList[rowIdx][col], 0, DRCO_ENCODE_TASK(readyTaskList[pushed]));
-        if (prev == 0) {
-            TraceEvent(state, readyTaskList[pushed], EVENT_PUSH_LOCAL(groupIdx));
-            pushed++;
+    uint32_t row = state->readyMatrixPushRowIdx[queueType] % rowCnt;
+    for (uint32_t r = 0; r < colNum && pushed < n; r++) {
+        uint32_t colIdx = (typedBlockIdx + r) % colNum;
+        for (uint32_t i = 0; i < rowCnt && pushed < n; i++, row = (row + 1) % rowCnt) {
+            __gm__ uint32_t* slot = &matrix->rowList[row].taskList[colIdx];
+            if (DrcoAtomicCasToU32(slot, 0, DRCO_ENCODE_TASK(readyTaskList[pushed])) == 0) {
+                TraceEvent(state, readyTaskList[pushed], EVENT_PUSH_LOCAL(row));
+                pushed++;
+            }
         }
     }
-    state->readyMatrixPushColIdx[queueType] = col;
-    *rowExhausted = (col >= validCoreNum);
+    state->readyMatrixPushRowIdx[queueType] = row;
     return pushed;
 }
 
-// 遍历 colIdx 整列，把所有待执行任务依次 pop 出来，原子 exch(task -> 0) 读清一体，返回非 0
-// 即独占该任务（安全性：每槽仅本列主一个 popper、push 侧只 CAS 空槽，读清无需二次校验）；
-// 从 state->matrixRowIndex（核本地游标，前一次 pop 结束处）起环形扫描，摊平重复扫描开销。
-// 列扫描批量化：dcci 必须逐槽精确地址失效（dcci(SINGLE_CACHE_LINE) 的失效粒度按地址所在
-// sector 生效，隔行 dcci 无法覆盖同线的相邻行，残留过期 L1 副本会永久饿死该行任务——
-// mix_aic 507015 挂死实证）；失效后普通读探测，仅非零槽才发 xchg 独占——空列从 rowCnt 次
-// 原子 RMW 降为 rowCnt 次 dcci（本地缓存操作，无总线 RMW 写流量）+ rowCnt 次读。
-// 一致性：槽位只有列主人写 0（push 侧仅 CAS 0→task，steal 关闭），读到非零后 xchg 必取回
-// 同一任务；读到 0 只是本轮快照未含新 push，下轮逐槽 dcci 补收。
-// 每核只 pop 自己固定的一列（colIdx = 本地编号 % N），单游标即该列游标；
-// maxCount 限制本次最多取出的个数；游标保存为最后扫描行的下一行，未扫到的行下次优先
-INLINE uint32_t DrcoLocalReadyMatrixPopColTasks(DrcoEntryState* state, __gm__ DrcoLocalReadyMatrix* matrix,
-                                                uint32_t colIdx, uint32_t* outTaskList, uint32_t maxCount)
+// 消费者本行（行内槽连续）整字 u64 exch 读清：一次原子取相邻 2 任务，读清一体即独占
+// （安全性：每行仅本行主一个 popper、push 侧只 CAS 空槽，读清无需二次校验）；
+// maxCount 限制本次最多取出的任务数，整字粒度取数可能超出 1 个（最后一个字贡献 2 个
+// 任务），调用方数组按 DRCO_MATRIX_COL_MAX 定尺寸即可覆盖；无游标——字即状态，
+INLINE uint32_t DrcoLocalReadyMatrixPopRowTasks(__gm__ DrcoLocalReadyMatrix* matrix, uint32_t rowIdx,
+                                                uint32_t* outTaskList, uint32_t maxCount)
 {
-    constexpr uint32_t rowCnt = npu::tile_fwk::LOCAL_GROUP_SIZE;
+    uint32_t wordCnt = matrix->colNum >> 1;
     uint32_t count = 0;
-    uint32_t start = state->readyMatrixPopRowIndex;
-    uint32_t next = start;
-    for (uint32_t i = 0; i < rowCnt && count < maxCount; i++) {
-        uint32_t row = (start + i) % rowCnt;
-        next = (row + 1) % rowCnt;
-        if (DrcoGmLoad(&matrix->taskList[row][colIdx]) == 0) {
+    for (uint32_t i = 0; i < wordCnt && count < maxCount; i++) {
+        __gm__ uint64_t* word = DrcoLocalReadyMatrixWord(matrix, i, rowIdx);
+        if (DrcoGmLoad(word) == 0) {
             continue;
         }
-        uint32_t taskId = DrcoAtomicExchToU32(&matrix->taskList[row][colIdx], 0);
-        if (taskId == 0) {
-            continue;
+        uint64_t old = DrcoAtomicExchToU64(word, 0);
+        uint32_t lo = static_cast<uint32_t>(old & 0xFFFFFFFFULL);
+        uint32_t hi = static_cast<uint32_t>(old >> 32);
+        if (lo != 0) {
+            outTaskList[count++] = DRCO_DECODE_TASK(lo);
         }
-        outTaskList[count++] = DRCO_DECODE_TASK(taskId);
+        if (hi != 0) {
+            outTaskList[count++] = DRCO_DECODE_TASK(hi);
+        }
     }
-    state->readyMatrixPopRowIndex = next;
     return count;
 }
 
@@ -554,10 +563,10 @@ INLINE __gm__ DrcoLocalReadyQueue* DrcoRootFuncListGetLocalReadyQueue(
 }
 
 INLINE __gm__ DrcoLocalReadyMatrix* DrcoRootFuncListGetLocalReadyMatrix(
-    __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList, uint32_t readyMatrixCoreType, uint32_t groupIdx)
+    __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList, uint32_t readyMatrixCoreType)
 {
-    if (readyMatrixCoreType < npu::tile_fwk::DRCO_QUEUE_MAX && groupIdx < npu::tile_fwk::NUM_LOCAL_GROUPS) {
-        return rootFuncList->localReadyMatrixArray[readyMatrixCoreType][groupIdx];
+    if (readyMatrixCoreType < npu::tile_fwk::DRCO_QUEUE_MAX) {
+        return rootFuncList->localReadyMatrixArray[readyMatrixCoreType];
     }
     return nullptr;
 }
@@ -611,45 +620,17 @@ INLINE __gm__ DrcoLocalReadyQueue* DrcoDynFuncDataListGetIdleQueue(__gm__ npu::t
     return nullptr;
 }
 
-INLINE uint32_t DrcoDynFuncDataListPushMatrixBatch(DrcoEntryState* state,
-                                                   __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
-                                                   uint32_t succCoreType, uint32_t groupCount, uint32_t rowIdx,
-                                                   uint32_t* succTaskIdList, uint32_t succTaskIdListSize)
-{
-    uint32_t pushed = 0;
-    uint32_t groupIndex = state->readyMatrixPushGroupIndex[succCoreType];
-    uint32_t nextGroupIndex = groupIndex;
-    for (uint32_t i = 0; i < groupCount && pushed < succTaskIdListSize; i++) {
-        uint32_t groupIdx = (groupIndex + i) % groupCount;
-        __gm__ DrcoLocalReadyMatrix* matrix = DrcoRootFuncListGetLocalReadyMatrix(rootFuncList, succCoreType, groupIdx);
-        if (matrix == nullptr) {
-            continue;
-        }
-        bool rowExhausted = false;
-        pushed += DrcoLocalReadyMatrixPushBatch(state, matrix, groupIdx, rowIdx, &succTaskIdList[pushed],
-                                                succTaskIdListSize - pushed, &rowExhausted, succCoreType);
-        nextGroupIndex = rowExhausted ? (groupIdx + 1) % groupCount : groupIdx;
-    }
-    state->readyMatrixPushGroupIndex[succCoreType] = nextGroupIndex;
-    return pushed;
-}
-
 INLINE uint32_t DrcoDynFuncDataListPushBatchLocalMatrix(DrcoEntryState* state,
                                                         __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                                         uint32_t* succTaskIdList, uint32_t succTaskIdListSize,
-                                                        uint32_t succCoreType, uint32_t groupCount,
-                                                        uint32_t typedBlockIdx)
+                                                        uint32_t succCoreType, uint32_t typedBlockIdx)
 {
-    uint32_t rowIdx = DrcoLocalReadyMatrixGetRowIdx(typedBlockIdx);
-
-    uint32_t pushed = 0;
-    for (int i = 0; i < LOCAL_GROUP_SIZE && pushed < succTaskIdListSize; i++) {
-        uint32_t oncePushed = DrcoDynFuncDataListPushMatrixBatch(state, rootFuncList, succCoreType, groupCount,
-                                                                 (rowIdx + i) % npu::tile_fwk::LOCAL_GROUP_SIZE,
-                                                                 succTaskIdList + pushed, succTaskIdListSize - pushed);
-        pushed += oncePushed;
+    __gm__ DrcoLocalReadyMatrix* matrix = DrcoRootFuncListGetLocalReadyMatrix(rootFuncList, succCoreType);
+    if (matrix == nullptr || matrix->validCoreNum == 0) {
+        return 0;
     }
-    return pushed;
+    return DrcoLocalReadyMatrixPushBatch(state, matrix, typedBlockIdx, succTaskIdList, succTaskIdListSize,
+                                         succCoreType);
 }
 
 INLINE void DrcoDynFuncDataListPushBatchLocalQueue(DrcoEntryState* state,
@@ -710,14 +691,15 @@ INLINE void DrcoDynFuncDataListPushBatch(DrcoEntryState* state, __gm__ npu::tile
                                          uint32_t* succTaskIdList, uint32_t succTaskIdListSize, uint32_t succCoreType)
 {
     BlockDesc blockDesc = state->blockDesc;
-    uint32_t groupCount = state->ctx.drcoGroupEnd[succCoreType] - state->ctx.drcoGroupBeg[succCoreType];
     uint32_t typedBlockIdx = BlockDescTypedBlockIdx(blockDesc);
 
     uint32_t pushed = DrcoDynFuncDataListPushBatchLocalMatrix(state, rootFuncList, succTaskIdList, succTaskIdListSize,
-                                                              succCoreType, groupCount, typedBlockIdx);
+                                                              succCoreType, typedBlockIdx);
     succTaskIdListSize -= pushed;
 
     if (succTaskIdListSize > 0) {
+        // 溢出到本类型 local ready queue（仍按组分池）
+        uint32_t groupCount = state->ctx.drcoGroupEnd[succCoreType] - state->ctx.drcoGroupBeg[succCoreType];
         DrcoDynFuncDataListPushBatchLocalQueue(state, rootFuncList, succTaskIdList + pushed, succTaskIdListSize,
                                                succCoreType, groupCount, typedBlockIdx);
     }
@@ -995,13 +977,10 @@ INLINE void DrcoResolveStaticSuccNodeTasks(DrcoEntryState* state, __gm__ npu::ti
     if (node->coreType == DRCO_CORE_TYPE) {
         uint32_t typedIdx = BlockDescTypedBlockIdx(state->blockDesc);
         uint32_t nodeQueue = DrcoStaticSuccNodeQueueType(node->coreType);
-        // seed 该类型游标 = 域内下一核 self+1（整体换算 (group,col)，跨组进位 + 域尾绕回；
-        // 旧公式在组内末核会回绕指向 T-1，首任务撞前核/自身列串行），succList 连续落
-        // self+1..self+k 形成任务带
-        uint32_t groupCnt = state->ctx.drcoGroupEnd[nodeQueue] - state->ctx.drcoGroupBeg[nodeQueue];
-        uint32_t next = (typedIdx + 1) % (groupCnt * npu::tile_fwk::LOCAL_GROUP_SIZE);
-        state->readyMatrixPushGroupIndex[nodeQueue] = next / npu::tile_fwk::LOCAL_GROUP_SIZE;
-        state->readyMatrixPushColIdx[nodeQueue] = next % npu::tile_fwk::LOCAL_GROUP_SIZE;
+        // seed 该类型消费者行游标 = 域内下一核 self+1（合并矩阵行 = 类型内本地编号，种子为绝对值、
+        // 使用处按目标矩阵 validCoreNum 取模；旧公式在组内末核会回绕指向 T-1，首任务撞前核/自身行
+        // 串行），succList 连续落 self+1..self+k 形成任务带
+        state->readyMatrixPushRowIdx[nodeQueue] = typedIdx + 1;
     }
     DrcoResolveEncodedSuccList(state, rootFuncList, funcIdx, node->succList, 0, node->succSize, hubStack, hubStackTop,
                                succTaskIdListCoreList, succTaskIdListSizeCoreList);
@@ -1063,15 +1042,15 @@ INLINE static bool DrcoStaticSuccNodeMatrixTryPush(DrcoEntryState* state, __gm__
     return false;
 }
 
-// 刷新 readymatrix push 游标 = succNodeStarts 终值（散射带平铺的下一位置，换算与锚点
-// 合成式互逆）：不刷新则本核后续 push 从旧锚点起，与排队中的散射带任务重叠
+// 刷新 readymatrix push 消费者行游标 = succNodeStarts 终值（散射带平铺的下一位置；合并矩阵行 =
+// 类型内本地编号 = 行域内扁平位置，无需换算）：不刷新则本核后续 push 从旧
+// 锚点起，与排队中的散射带任务重叠
 INLINE static void DrcoSyncSuccNodePushCursor(DrcoEntryState* state, const uint32_t succNodeStarts[],
                                               const uint8_t succNodeAnchored[])
 {
     for (uint32_t q = 0; q < npu::tile_fwk::DRCO_QUEUE_MAX; q++) {
         if (succNodeAnchored[q] != 0) {
-            state->readyMatrixPushGroupIndex[q] = succNodeStarts[q] / npu::tile_fwk::LOCAL_GROUP_SIZE;
-            state->readyMatrixPushColIdx[q] = succNodeStarts[q] % npu::tile_fwk::LOCAL_GROUP_SIZE;
+            state->readyMatrixPushRowIdx[q] = succNodeStarts[q];
         }
     }
 }
@@ -1179,10 +1158,8 @@ INLINE static void DrcoResolveStaticSuccNodes(
         if (succNodeAnchored[nodeQueue] == 0) {
             uint32_t rangeBegin = 0;
             DrcoStaticSuccNodeRowRange(nodes[n].coreType, state->ctx.aicCoreNum, rangeBegin, succNodeRanges[nodeQueue]);
-            uint32_t anchorGroup = state->readyMatrixPushGroupIndex[nodeQueue];
-            uint32_t anchorCol = state->readyMatrixPushColIdx[nodeQueue] % npu::tile_fwk::LOCAL_GROUP_SIZE;
-            succNodeStarts[nodeQueue] = (anchorGroup * npu::tile_fwk::LOCAL_GROUP_SIZE + anchorCol) %
-                                        succNodeRanges[nodeQueue];
+            // 合并矩阵消费者行游标即域内扁平位置（种子可能为绝对值，域内绕接）
+            succNodeStarts[nodeQueue] = state->readyMatrixPushRowIdx[nodeQueue] % succNodeRanges[nodeQueue];
             succNodeAnchored[nodeQueue] = 1;
         }
         uint32_t start = succNodeStarts[nodeQueue];
@@ -1366,27 +1343,8 @@ INLINE __gm__ DrcoLocalReadyQueue* TryGetOtherLocalQue(__gm__ npu::tile_fwk::Drc
     return nullptr;
 }
 
-// LocalMatrix 版 TryGetOtherLocalQue：找其他 group 中自己列还有任务的矩阵（窃取）
-INLINE __gm__ DrcoLocalReadyMatrix* TryGetOtherLocalMatrix(__gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
-                                                           uint32_t coreType, uint32_t groupIdx, uint32_t colIdx)
-{
-    for (uint32_t g = 1; g < npu::tile_fwk::NUM_LOCAL_GROUPS; g++) {
-        uint32_t victim = (groupIdx + g) % npu::tile_fwk::NUM_LOCAL_GROUPS;
-        __gm__ DrcoLocalReadyMatrix* matrix = DrcoRootFuncListGetLocalReadyMatrix(rootFuncList, coreType, victim);
-        if (matrix == nullptr) {
-            continue;
-        }
-        for (uint32_t row = 0; row < npu::tile_fwk::LOCAL_GROUP_SIZE; row++) {
-            if (DrcoAtomicLoad(&matrix->taskList[row][colIdx]) != 0) {
-                return matrix;
-            }
-        }
-    }
-    return nullptr;
-}
-
 // 消费核 pop 本行 stitch 节点：原子 exch(value -> 0) 读清一体即独占（每槽仅本行主一个
-// popper、push 侧只 CAS 空槽）。slot 为 u32（编码见 aikernel_device_task.h）：stitch 链
+// popper、push 侧只 CAS 空槽，读清无需二次校验）。slot 为 u32（编码见 aikernel_device_task.h）：stitch 链
 // 节点按 2 的幂子链头接力；静态后继节点按 funcId 索引 funcData、节点区基址 + 下标还原
 // 节点后整节点解依赖（无子链语义，不走 tree relay）
 INLINE void DrcoStitchNodeMatrixPopResolve(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
@@ -1458,11 +1416,9 @@ INLINE void DrcoHubTaskMatrixPopResolve(DrcoEntryState* state, __gm__ npu::tile_
     }
 }
 
-INLINE bool DrcoDynFuncDataListFetchTaskMixHubC2VReadyQueue(DrcoEntryState* state,
-                                                            __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
-                                                            uint32_t& resultCoreType,
-                                                            uint32_t resultTaskIdList[LOCAL_GROUP_SIZE],
-                                                            uint32_t& resultTaskIdCount, uint32_t blockIdx)
+INLINE bool DrcoDynFuncDataListFetchTaskMixHubC2VReadyQueue(
+    DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList, uint32_t& resultCoreType,
+    uint32_t resultTaskIdList[npu::tile_fwk::DRCO_MATRIX_COL_MAX], uint32_t& resultTaskIdCount, uint32_t blockIdx)
 {
     if (IS_AIV) {
         uint32_t bodyTaskId = 0;
@@ -1479,12 +1435,11 @@ INLINE bool DrcoDynFuncDataListFetchTaskMixHubC2VReadyQueue(DrcoEntryState* stat
 INLINE bool DrcoDynFuncDataListFetchTaskLocalReadyMatrix(DrcoEntryState* state,
                                                          __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                                          uint32_t& resultCoreType,
-                                                         uint32_t resultTaskIdList[LOCAL_GROUP_SIZE],
+                                                         uint32_t resultTaskIdList[npu::tile_fwk::DRCO_MATRIX_COL_MAX],
                                                          uint32_t& resultTaskIdCount,
-                                                         __gm__ DrcoLocalReadyMatrix* localReadyMatrix, uint32_t colIdx)
+                                                         __gm__ DrcoLocalReadyMatrix* localReadyMatrix, uint32_t rowIdx)
 {
-    uint32_t count = DrcoLocalReadyMatrixPopColTasks(state, localReadyMatrix, colIdx, resultTaskIdList,
-                                                     DRCO_FETCH_BATCH_SIZE);
+    uint32_t count = DrcoLocalReadyMatrixPopRowTasks(localReadyMatrix, rowIdx, resultTaskIdList, DRCO_FETCH_BATCH_SIZE);
     if (count > 0) {
         resultTaskIdCount = count;
         resultCoreType = DRCO_CORE_TYPE;
@@ -1498,7 +1453,7 @@ INLINE bool DrcoDynFuncDataListFetchTaskLocalReadyMatrix(DrcoEntryState* state,
 INLINE bool DrcoDynFuncDataListFetchTaskLocalReadyQueue([[maybe_unused]] DrcoEntryState* state,
                                                         __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                                         uint32_t queueCoreType, uint32_t& resultCoreType,
-                                                        uint32_t resultTaskIdList[LOCAL_GROUP_SIZE],
+                                                        uint32_t resultTaskIdList[npu::tile_fwk::DRCO_MATRIX_COL_MAX],
                                                         uint32_t& resultTaskIdCount, uint32_t groupIdx)
 {
     __gm__ DrcoLocalReadyQueue* localReadyQueue = DrcoRootFuncListGetLocalReadyQueue(rootFuncList, queueCoreType,
@@ -1518,20 +1473,21 @@ INLINE bool DrcoDynFuncDataListFetchTaskLocalReadyQueue([[maybe_unused]] DrcoEnt
     return false;
 }
 
-// mixhub 与 AIC/AIV 同模型消费：从 MIX 行取任务（组区间/列号均按 AIC 核的类型内编号，消费者
-// 为 AIC），先 pop 本组 matrix 自己的列，再取本组 MIX queue；取出后不执行
+// mixhub 与 AIC/AIV 同模型消费：从 MIX 矩阵取任务（行号按 AIC 核的类型内编号，消费者
+// 为 AIC），先 pop 合并 matrix 自己的行，再取本组 MIX queue；取出后不执行
 // leaf，仅由 ExecDrcoReadyQueueTaskOnce 经 ResolveHubMixTask 解依赖派发（AIC 后继就地执行、
 // AIV 后继 C2V 投递配对 AIV）
 INLINE bool DrcoDynFuncDataListFetchTaskMixHub(DrcoEntryState* state,
                                                __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
-                                               uint32_t& resultCoreType, uint32_t resultTaskIdList[LOCAL_GROUP_SIZE],
-                                               uint32_t& resultTaskIdCount, uint32_t groupIdx, uint32_t colIdx)
+                                               uint32_t& resultCoreType,
+                                               uint32_t resultTaskIdList[npu::tile_fwk::DRCO_MATRIX_COL_MAX],
+                                               uint32_t& resultTaskIdCount, uint32_t groupIdx, uint32_t rowIdx)
 {
     if (IS_AIC) {
-        __gm__ DrcoLocalReadyMatrix* mixMatrix = DrcoRootFuncListGetLocalReadyMatrix(
-            rootFuncList, npu::tile_fwk::DRCO_QUEUE_MIX, groupIdx);
-        if (mixMatrix != nullptr) {
-            uint32_t count = DrcoLocalReadyMatrixPopColTasks(state, mixMatrix, colIdx, resultTaskIdList,
+        __gm__ DrcoLocalReadyMatrix* mixMatrix = DrcoRootFuncListGetLocalReadyMatrix(rootFuncList,
+                                                                                     npu::tile_fwk::DRCO_QUEUE_MIX);
+        if (mixMatrix != nullptr && mixMatrix->validCoreNum > static_cast<uint32_t>(rowIdx)) {
+            uint32_t count = DrcoLocalReadyMatrixPopRowTasks(mixMatrix, rowIdx, resultTaskIdList,
                                                              DRCO_FETCH_BATCH_SIZE);
             if (count > 0) {
                 resultTaskIdCount = count;
@@ -1547,7 +1503,8 @@ INLINE bool DrcoDynFuncDataListFetchTaskMixHub(DrcoEntryState* state,
 }
 
 INLINE bool DrcyDynFuncDataListFetchSelfQueue(DrcoEntryState* state, uint32_t& resultCoreType,
-                                              uint32_t resultTaskIdList[LOCAL_GROUP_SIZE], uint32_t& resultTaskIdCount)
+                                              uint32_t resultTaskIdList[npu::tile_fwk::DRCO_MATRIX_COL_MAX],
+                                              uint32_t& resultTaskIdCount)
 {
     // selfReadyQueue 优先消费：resolve 收尾时直通到本核 selfReadyQueue 的同类型就绪后继，
     // fetch 开头一次性全部取走执行；消费即清空，直通任务照常走 TaskOnce 执行与计数，
@@ -1568,17 +1525,18 @@ INLINE bool DrcyDynFuncDataListFetchSelfQueue(DrcoEntryState* state, uint32_t& r
 
 INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
                                              __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
-                                             uint32_t& resultCoreType, uint32_t resultTaskIdList[LOCAL_GROUP_SIZE])
+                                             uint32_t& resultCoreType,
+                                             uint32_t resultTaskIdList[npu::tile_fwk::DRCO_MATRIX_COL_MAX])
 {
     TraceEvent(state, 0xffffffff, EVENT_FETCH_START());
     BlockDesc blockDesc = state->blockDesc;
     uint32_t blockIdx = BlockDescBlockIdx(blockDesc);
     uint32_t typedBlockIdx = BlockDescTypedBlockIdx(blockDesc);
-    uint32_t groupIdx = typedBlockIdx / npu::tile_fwk::LOCAL_GROUP_SIZE;
+    uint32_t groupIdx = typedBlockIdx / npu::tile_fwk::LOCAL_GROUP_SIZE; // local queue 仍按分组
 
-    __gm__ DrcoLocalReadyMatrix* localReadyMatrix = DrcoRootFuncListGetLocalReadyMatrix(rootFuncList, DRCO_CORE_TYPE,
-                                                                                        groupIdx);
-    uint32_t colIdx = DrcoLocalReadyMatrixGetRowIdx(typedBlockIdx);
+    __gm__ DrcoLocalReadyMatrix* localReadyMatrix = DrcoRootFuncListGetLocalReadyMatrix(rootFuncList, DRCO_CORE_TYPE);
+    // 合并矩阵：行 = 类型内本地编号本身
+    uint32_t rowIdx = typedBlockIdx;
     // finishFlag 每类型共享一个：本类型全部核经 DrcoGmLoad（含 dcci 失效读）轮询同一 flag
     __gm__ uint32_t* devTaskFinishFlag = &rootFuncList->devTaskFinishFlagList.flag[DRCO_CORE_TYPE].devTaskFinishFlag;
     // 对方类型完成 flag。
@@ -1625,11 +1583,11 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
                 break;
             }
             if (DrcoDynFuncDataListFetchTaskMixHub(state, rootFuncList, resultCoreType, resultTaskIdList,
-                                                   resultTaskIdCount, groupIdx, colIdx)) {
+                                                   resultTaskIdCount, groupIdx, rowIdx)) {
                 break;
             }
             if (DrcoDynFuncDataListFetchTaskLocalReadyMatrix(state, rootFuncList, resultCoreType, resultTaskIdList,
-                                                             resultTaskIdCount, localReadyMatrix, colIdx)) {
+                                                             resultTaskIdCount, localReadyMatrix, rowIdx)) {
                 break;
             }
             if (DrcoDynFuncDataListFetchTaskLocalReadyQueue(state, rootFuncList, DRCO_CORE_TYPE, resultCoreType,
@@ -1825,7 +1783,7 @@ INLINE void ExecDrcoReadyQueueTaskOnce(DrcoEntryState* state, __gm__ npu::tile_f
 INLINE void ExecDrcoReadyQueueTasks(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                     __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue)
 {
-    uint32_t taskIdList[LOCAL_GROUP_SIZE];
+    uint32_t taskIdList[npu::tile_fwk::DRCO_MATRIX_COL_MAX];
 
     uint32_t outCoreType = 0;
     uint32_t taskCount = DrcoDynFuncDataListFetchTask(state, rootFuncList, outCoreType, taskIdList);
@@ -1894,15 +1852,12 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
             continue;
         }
 
-        state.readyMatrixPopRowIndex = 0;
-        // readymatrix push 游标按类型独立：各类型种子 = 本核 (group, col+1)，+1 跳过本核列
-        // （列私有模型下首波任务落本列会被执行中的自己扣住）；异类型游标仅作起点散列
-        // （advisory，实际值由该类型推送推进）
+        // readymatrix push 消费者行游标按类型独立：种子 = 本核类型内编号 + 1（绝对值，使用处按
+        // 目标矩阵 validCoreNum 取模），+1 跳过本核行——行私有模型下本行唯一消费者是自己，
+        // producer 常因 selfQueue 直通/当前批执行无暇 pop 本行，首波任务落本行会被扣住
+        // （实测跳行 -24%）；异类型游标仅作起点散列（advisory，实际值由该类型推送推进）
         for (uint32_t q = 0; q < npu::tile_fwk::DRCO_QUEUE_MAX; q++) {
-            state.readyMatrixPushGroupIndex[q] = BlockDescTypedBlockIdx(state.blockDesc) /
-                                                 npu::tile_fwk::LOCAL_GROUP_SIZE;
-            state.readyMatrixPushColIdx[q] = (BlockDescTypedBlockIdx(state.blockDesc) + 1) %
-                                             npu::tile_fwk::LOCAL_GROUP_SIZE;
+            state.readyMatrixPushRowIdx[q] = BlockDescTypedBlockIdx(state.blockDesc) + 1;
         }
 
         state.selfReadyQueueSize = 0;

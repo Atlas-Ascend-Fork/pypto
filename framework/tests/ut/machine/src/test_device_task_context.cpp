@@ -985,12 +985,28 @@ TEST_F(TestDeviceTaskContext, InitReadyQueues_EnableAicoreResolve_CreatesDrcoRoo
     for (uint32_t i = 0; i < npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE; ++i) {
         EXPECT_NE(dyntask->drcoRootFuncList->perCorePendingQueueArray[i], nullptr);
     }
-    // 三行（AIC/AIV/MIX）local queue/matrix 均全组分配：MIX 行承载 HUB_MIX 后继
-    // （mixhub 与 AIC/AIV 同模型 batch push 多组分布），消费者为 AIC（validCoreNum 同 AIC 行）
+    // 三行（AIC/AIV/MIX）local queue 均全组分配：MIX 行承载 HUB_MIX 后继
+    // （mixhub 与 AIC/AIV 同模型 batch push 多组分布），消费者为 AIC
     for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ++ct) {
         for (uint32_t i = 0; i < npu::tile_fwk::NUM_LOCAL_GROUPS; ++i) {
             EXPECT_NE(dyntask->drcoRootFuncList->localReadyQueueArray[ct][i], nullptr);
-            EXPECT_NE(dyntask->drcoRootFuncList->localReadyMatrixArray[ct][i], nullptr);
+        }
+    }
+    // 三行（AIC/AIV/MIX）合并版 local matrix 各单实例分配（定长 cacheline 行隔离布局）：
+    // 有效消费者行数 = 类型内核数（AIC/MIX: nrValidAic，AIV: 2*nrValidAic），每行列数（缓冲深度）按解依赖扇出自适应
+    const uint32_t expectValidCoreNums[npu::tile_fwk::DRCO_QUEUE_MAX] = {4U * 2U, 4U, 4U};
+    for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ++ct) {
+        auto* matrix = dyntask->drcoRootFuncList->localReadyMatrixArray[ct];
+        ASSERT_NE(matrix, nullptr);
+        EXPECT_EQ(matrix->validCoreNum, expectValidCoreNums[ct]);
+        EXPECT_EQ(matrix->colNum % 2U, 0U);
+        EXPECT_GE(matrix->colNum, npu::tile_fwk::DRCO_MATRIX_COL_DEFAULT);
+        EXPECT_LE(matrix->colNum, npu::tile_fwk::DRCO_MATRIX_COL_MAX);
+        // 全部槽位由构造函数清零（定长 N×M 行区 + 尾部 colNum/validCoreNum 元数据）
+        for (uint32_t r = 0; r < npu::tile_fwk::DrcoLocalReadyMatrix::RowSize; ++r) {
+            for (uint32_t c = 0; c < npu::tile_fwk::DrcoLocalReadyMatrix::ColSize; ++c) {
+                EXPECT_EQ(matrix->rowList[r].taskList[c], 0U);
+            }
         }
     }
     // 全核共享 stitch 节点矩阵：行 = 全局 blockIdx，初始全空

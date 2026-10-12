@@ -147,38 +147,57 @@ struct DrcoLocalReadyQueue {
 #endif
 };
 
-// 组大小 = 组内核数 = 矩阵行列维度。LGS=4：矩阵 4×4=64B 单 cacheline，且 PopColTasks 的
-// dcci 读探测把空列扫描从 rowCnt 次原子 RMW 降为本地缓存操作——8×8 时代为摊平 CAS 竞争
-// 的 cacheline 扩散不再必要，缩回 4 同时将每次 pop 的扫描行数减半
+// 队列分组大小 = 组内核数（localReadyQueueArray 按 4 核一组分池；LocalMatrix 已合并为
+// 每类型单实例，不再使用分组）
 constexpr uint32_t LOCAL_GROUP_SIZE = 4;
 
-// LocalMatrix: 组内 N*N 通信矩阵（N = LOCAL_GROUP_SIZE，与 localReadyQueueArray 的分组一一对应）。
-// 数组按类型内本地编号索引：AIC 核（blockIdx < nrValidAic）group = blockIdx / N，
-// AIV 核 group = (blockIdx - nrValidAic) / N；行/列 = 本地编号 % N。
-// push 依次遍历自己的一行，pop 依次遍历自己的一列，无游标；slot == 0 表示空闲，非 0 为编码后的任务。
-// validCoreNum：本组内该类型核数（host 分配时写入）——列 [0, validCoreNum) 均有消费者核，
-// push 只写这些列；0 表示本组无该类型核，禁止写入
-template <typename T, unsigned N>
-struct DrcoLocalReadyMatrixBase {
-    enum { Size = N };
+// 合并版 LocalMatrix：每类型单实例（AIC/AIV/MIX 各一），行 = 消费者（类型内本地编号，
+// AIC/MIX: blockIdx ∈ [0, nrValidAic)，AIV: blockIdx - nrValidAic）：push 逐槽 u32 CAS
+// 写入（0→任务），pop 先 dcci 失效读探测（空字跳过整字原子，省空转 RMW 写流量）、
+// 非零字 u64 exch 整字读清（一次原子取相邻 2 任务）；行私有 64B 布局下逐字 dcci 保证
+// L1 可见性，亦无"提示字与数据分离"的滞留窗口。
+// 行内 taskList[M] 槽连续（列 = 缓冲深度）：每消费者可囤 colNum 个就绪任务，整矩阵
+// 容量 = colNum × validCoreNum，超出溢出到 local ready queue；colNum 恒为偶数
+// （pop 整字 exch 需相邻两槽 8B 对齐），host 按解依赖扇出统计在
+// [DRCO_MATRIX_COL_DEFAULT, DRCO_MATRIX_COL_MAX] 内选定（≤ ColSize）。
+// slot 语义：0 = 空闲，非 0 为 DRCO_ENCODE_TASK 编码的任务
+constexpr uint32_t DRCO_MATRIX_COL_DEFAULT = 4;
+constexpr uint32_t DRCO_MATRIX_COL_MAX = 8;
+static_assert(DRCO_MATRIX_COL_DEFAULT % 2 == 0 && DRCO_MATRIX_COL_MAX % 2 == 0,
+              "matrix colNum must be even for u64 word exch alignment");
+
+constexpr uint32_t CACHE_LINE_SIZE = 64;
+
+// 就绪矩阵通用布局：行 = 消费者（行数上限 N），每行 taskList[M] 槽为该消费者的缓冲深度，
+// 行按 cacheline 对齐 + 尾部填充独占整数个 64B——消费者行间的原子 RMW 不共享 cacheline；
+// 行首 64B 对齐保证行内槽对 8B 对齐（pop 整字 u64 exch 前提；slab 池分配恒 64B 对齐）；
+// 实际列数 colNum（每行缓冲深度）/ 有效行数 validCoreNum 由 host 分配时写入尾部
+// （validCoreNum = 0 表示本类型无核，禁止写入）
+template <typename T, unsigned N, unsigned M>
+struct DrcoGlobalReadyMatrixBase {
+    enum { RowSize = N, ColSize = M };
     typedef T ElementType;
 
-    uint32_t validCoreNum;
-    uint8_t pad[64 - sizeof(uint32_t)];
+    struct alignas(CACHE_LINE_SIZE) Row {
+        T taskList[M];
+        uint8_t pad[(sizeof(T) * M + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE * CACHE_LINE_SIZE - sizeof(T) * M];
+    } rowList[N];
 
-    T taskList[N][N];
+    uint32_t colNum;
+    uint32_t validCoreNum;
+
 #ifdef __TILE_FWK_HOST__
-    explicit DrcoLocalReadyMatrixBase(uint32_t validCoreCount) : validCoreNum(validCoreCount)
+    DrcoGlobalReadyMatrixBase(uint32_t colCount, uint32_t validCoreCount)
+        : colNum(colCount), validCoreNum(validCoreCount)
     {
         for (uint32_t i = 0; i < N; i++) {
-            for (uint32_t j = 0; j < N; j++) {
-                taskList[i][j] = 0;
+            for (uint32_t j = 0; j < M; j++) {
+                rowList[i].taskList[j] = 0;
             }
         }
     }
 #endif
 };
-using DrcoLocalReadyMatrix = DrcoLocalReadyMatrixBase<LeafTaskId, LOCAL_GROUP_SIZE>;
 
 #define DRCO_ENCODE_TASK(task) ((task) + 1)
 #define DRCO_DECODE_TASK(task) ((task) - 1)

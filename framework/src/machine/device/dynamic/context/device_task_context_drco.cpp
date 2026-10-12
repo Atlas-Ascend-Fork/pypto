@@ -52,7 +52,6 @@ void DeviceTaskContext::InitDrcoRootFuncList(DynDeviceTask* dyntask)
         rootFuncList->perCorePendingQueueArray[i] = perCoreQueue;
     }
     uint32_t nrValidAic = devProg_->devArgs.nrValidAic;
-    constexpr uint32_t groupSize = npu::tile_fwk::LOCAL_GROUP_SIZE;
     uint32_t localSize = sizeof(npu::tile_fwk::DrcoLocalReadyQueue);
     localSize += queueCapacity * sizeof(npu::tile_fwk::LeafTaskId);
     for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
@@ -64,26 +63,20 @@ void DeviceTaskContext::InitDrcoRootFuncList(DynDeviceTask* dyntask)
             rootFuncList->localReadyQueueArray[ct][i] = localQueue;
         }
     }
-    // LocalMatrix 分配：数组按类型内本地编号索引（AIC 本地编号 = blockIdx ∈ [0, nrValidAic)，
-    // AIV 本地编号 = blockIdx - nrValidAic ∈ [0, 2*nrValidAic)），组内本地编号 [i*N, (i+1)*N)
-    // 连续映射到列 [0, N)；validCoreNum = 该组内该类型核数，尾组不足 N 时为剩余数，
-    // 天然构成列 [0, validCoreNum) 前缀（无 MIX 边界组问题）
-    auto matrixValidCoreNum = [groupSize](uint32_t groupIdx, uint32_t coreCount) -> uint32_t {
-        uint32_t valid = coreCount > groupIdx * groupSize ? coreCount - groupIdx * groupSize : 0;
-        return valid > groupSize ? groupSize : valid;
-    };
+    // LocalMatrix 分配（每类型单实例，定长 cacheline 行隔离布局：push 逐槽 u32 CAS /
+    // pop 整字 u64 exch）：行 = 类型内本地编号（AIC 本地编号 = blockIdx ∈ [0, nrValidAic)，
+    // AIV 本地编号 = blockIdx - nrValidAic ∈ [0, 2*nrValidAic)，MIX 行承载 HUB_MIX 后继、
+    // 消费者为 AIC，validCoreNum 同 AIC 行）；
+    // 每行列数 colNum（缓冲深度）按解依赖扇出自适应：rootFuncMaxCallOpsize（单任务最大直接后继数）
+    // > 默认深度时加深到上限，容量 = colNum × validCoreNum，超出溢出 local ready queue
+    uint32_t matrixColNum = devProg_->rootFuncMaxCallOpsize > npu::tile_fwk::DRCO_MATRIX_COL_DEFAULT ?
+                                npu::tile_fwk::DRCO_MATRIX_COL_MAX :
+                                npu::tile_fwk::DRCO_MATRIX_COL_DEFAULT;
+    const uint32_t matrixValidCoreNums[npu::tile_fwk::DRCO_QUEUE_MAX] = {nrValidAic * 2, nrValidAic, nrValidAic};
     for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
-        for (uint32_t i = 0; i < npu::tile_fwk::NUM_LOCAL_GROUPS; i++) {
-            uint32_t validCoreNum = 0;
-            if (ct == npu::tile_fwk::DRCO_QUEUE_AIC || ct == npu::tile_fwk::DRCO_QUEUE_MIX) {
-                validCoreNum = matrixValidCoreNum(i, nrValidAic);
-            } else if (ct == npu::tile_fwk::DRCO_QUEUE_AIV) {
-                validCoreNum = matrixValidCoreNum(i, nrValidAic * 2);
-            }
-            auto* localMatrix = workspace_->AllocateDrcoLocalReadyMatrix(sizeof(npu::tile_fwk::DrcoLocalReadyMatrix));
-            new (localMatrix) npu::tile_fwk::DrcoLocalReadyMatrix(validCoreNum);
-            rootFuncList->localReadyMatrixArray[ct][i] = localMatrix;
-        }
+        auto* localMatrix = workspace_->AllocateDrcoLocalReadyMatrix(sizeof(npu::tile_fwk::DrcoLocalReadyMatrix));
+        new (localMatrix) npu::tile_fwk::DrcoLocalReadyMatrix(matrixColNum, matrixValidCoreNums[ct]);
+        rootFuncList->localReadyMatrixArray[ct] = localMatrix;
     }
     // 全局共享 stitch 节点矩阵（单实例）：行 = 全局 blockIdx（AIC [0,nrValidAic) + AIV
     // [nrValidAic,3*nrValidAic)），任何核可 push 任意行、每核只 pop 自己行；

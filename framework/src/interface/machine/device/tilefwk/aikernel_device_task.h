@@ -72,6 +72,13 @@ constexpr uint32_t MAX_AICORE_NUM_FOR_QUEUE = 108;
 constexpr uint32_t NUM_LOCAL_GROUPS = (MAX_AICORE_NUM_FOR_QUEUE + LOCAL_GROUP_SIZE - 1) / LOCAL_GROUP_SIZE;
 constexpr uint32_t NUM_CORE_TYPES = 2;
 
+// 合并版 LocalMatrix：行 = 消费者（类型内本地编号，行数上限 MAX_AICORE_NUM_FOR_QUEUE，
+// 覆盖 AIV 的 2*nrValidAic），每行列数上限 DRCO_MATRIX_COL_MAX、实际 colNum 运行时自适应；
+// 定长 cacheline 行隔离布局（见 DrcoGlobalReadyMatrixBase）
+using DrcoLocalReadyMatrix = DrcoGlobalReadyMatrixBase<LeafTaskId, MAX_AICORE_NUM_FOR_QUEUE, DRCO_MATRIX_COL_MAX>;
+static_assert(alignof(DrcoLocalReadyMatrix) == CACHE_LINE_SIZE,
+              "local ready matrix rows must stay cacheline aligned for u64 word exch");
+
 struct DynFuncHeader {
     uint64_t seqNo;
     uint32_t funcNum;
@@ -210,7 +217,9 @@ struct DrcoDevTaskCountList {
 struct DrcoRootFuncList {
     __gm__ PerCorePendingQueue* perCorePendingQueueArray[MAX_AICORE_NUM_FOR_QUEUE];
     __gm__ DrcoLocalReadyQueue* localReadyQueueArray[DRCO_QUEUE_MAX][NUM_LOCAL_GROUPS];
-    __gm__ DrcoLocalReadyMatrix* localReadyMatrixArray[DRCO_QUEUE_MAX][NUM_LOCAL_GROUPS];
+    // 合并版 LocalMatrix：每类型单实例（行 = 类型内本地编号，cacheline 行隔离：push 逐槽
+    // u32 CAS / pop 整字 u64 exch）
+    __gm__ DrcoLocalReadyMatrix* localReadyMatrixArray[DRCO_QUEUE_MAX];
     // 全核共享 stitch 节点矩阵：行 = 全局 blockIdx（AIC [0,nrValidAic) + AIV [nrValidAic,3*nrValidAic)），
     // 任何核可 push 任意行、每核只 pop 自己行——AIC/AIV 空闲侧可帮忙展开忙侧的 defer 节点
     // （节点展开类型无关：盲减 + 按 succCoreType 路由），消除分池时"一边排队一边空转"

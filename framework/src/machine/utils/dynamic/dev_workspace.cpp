@@ -1093,9 +1093,9 @@ uint32_t DeviceWorkspaceAllocator::LocalReadyQueSlabMemObjSize()
 
 uint32_t DeviceWorkspaceAllocator::LocalReadyMatrixSlabMemObjSize()
 {
-    // LOCAL_READY_MATRIX 池承载 local ready matrix（N×N 槽位数组，随 LOCAL_GROUP_SIZE 增大）、
-    // 全局共享 stitch 节点矩阵与 hub 任务矩阵（108 行 × 64B cacheline 对齐行），
-    // 注册 objSize 取三者最大值
+    // LOCAL_READY_MATRIX 池承载合并版 local ready matrix（定长：MAX_AICORE_NUM_FOR_QUEUE 行消费者
+    // × DRCO_MATRIX_COL_MAX 列/每行缓冲深度，cacheline 对齐填充行）、全局共享 stitch 节点
+    // 矩阵与 hub 任务矩阵（108 行 × 64B cacheline 对齐行），注册 objSize 取三者最大值
     uint32_t localMatrixSize = sizeof(npu::tile_fwk::DrcoLocalReadyMatrix);
     uint32_t stitchMatrixSize = sizeof(npu::tile_fwk::DrcoGlobalStitchNodeMatrix);
     uint32_t hubMatrixSize = sizeof(npu::tile_fwk::DrcoGlobalHubTaskMatrix);
