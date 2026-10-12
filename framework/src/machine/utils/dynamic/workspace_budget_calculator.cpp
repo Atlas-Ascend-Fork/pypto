@@ -454,7 +454,7 @@ StitchDepthConfig ResolveStitchDepthConfig(WorkspaceDesc& desc, const RuntimeWor
     config.preciseWorkspaceEnabled = 0;
     FillStitchFunctionNumPerPool(desc.stitchFunctionNumPerPool, config.kEff);
     WriteWorkspaceUnitConfig(desc, MaxRootInnerUnitBytes(desc), MaxExclusiveOutcastUnitBytes(desc),
-                             desc.totalAssembleOutcastSlot, 0);
+                             desc.maxRootAssembleOutcastSlot, 0);
     BuildTensorWorkspaceFromDescriptor(desc, config.kEff);
     return config;
 }
