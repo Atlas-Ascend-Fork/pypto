@@ -236,29 +236,6 @@ TEST_F(ReduceCopyTest, TestCase2)
     EXPECT_EQ(function->GetTotalSubGraphCount(), Num3);
 }
 
-TEST_F(ReduceCopyTest, PreserveOriginalSubgraphId)
-{
-    ComputationalGraphBuilder G;
-    BuildMatmulAddsGraph(G);
-    Function* function = G.GetFunction();
-    ASSERT_NE(function, nullptr);
-    auto* add11 = G.GetOp("add11");
-    ASSERT_NE(add11, nullptr);
-    const int64_t add11SubgraphId = static_cast<int64_t>(add11->GetSubgraphID());
-    auto* add14 = G.GetOp("add14");
-    ASSERT_NE(add14, nullptr);
-    const int64_t add14SubgraphId = static_cast<int64_t>(add14->GetSubgraphID());
-    function->paramConfigs_.autoMixPartition = 1;
-    ReduceCopyMerge merger;
-    EXPECT_EQ(merger.RunOnFunction(*function), SUCCESS);
-
-    int64_t preSubgraphId = -1;
-    ASSERT_TRUE(add11->GetAttr(OpAttributeKey::reduceCopyPreSubgraphId, preSubgraphId));
-    EXPECT_EQ(preSubgraphId, add11SubgraphId);
-    ASSERT_TRUE(add14->GetAttr(OpAttributeKey::reduceCopyPreSubgraphId, preSubgraphId));
-    EXPECT_EQ(preSubgraphId, add14SubgraphId);
-}
-
 TEST_F(ReduceCopyTest, TestCase3)
 {
     ComputationalGraphBuilder G;

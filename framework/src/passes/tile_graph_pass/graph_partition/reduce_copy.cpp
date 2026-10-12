@@ -138,9 +138,6 @@ Status ReduceCopyMerge::RunOnFunction(Function& function)
             APASS_LOG_ERROR_F(Elements::Operation, "Current op subgraphID not in ReduceCopy subgraph update record.");
             return FAILED;
         }
-        if (op.HasAttr(OpAttributeKey::isCube) && (op.GetBoolAttribute(OpAttributeKey::isCube) == false)) {
-            op.SetAttr(OpAttributeKey::reduceCopyPreSubgraphId, static_cast<int64_t>(src));
-        }
         op.UpdateSubgraphID(output.subgraphIdUpdated[src]);
     }
     MergeInput mergeInputTmp;

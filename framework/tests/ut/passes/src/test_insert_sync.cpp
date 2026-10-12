@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 #include "symbolic_scalar_test_utils.h"
 #include "computational_graph_builder.h"
+#include "pass_test_utils.h"
 #include "tilefwk/platform.h"
 #include "interface/operation/attribute.h"
 #include "interface/tensor/irbuilder.h"
@@ -989,18 +990,7 @@ static void VerifyBarAll(const std::vector<Operation*>& ops, size_t idx)
     VerifySyncOp(ops[idx], Opcode::OP_BAR_ALL, AIVCore::UNSPECIFIED);
 }
 
-class ScopedNPUArchForInsertSyncTest {
-public:
-    explicit ScopedNPUArchForInsertSyncTest(NPUArch arch) : oldArch_(Platform::Instance().GetSoc().GetNPUArch())
-    {
-        Platform::Instance().GetSoc().SetNPUArch(arch);
-    }
-
-    ~ScopedNPUArchForInsertSyncTest() { Platform::Instance().GetSoc().SetNPUArch(oldArch_); }
-
-private:
-    NPUArch oldArch_;
-};
+// 平台架构切换统一使用公共工具 NpuArchScope(见 pass_test_utils.h)
 
 static Operation& CreateAtomicScopeSyncOp(Function& func, Opcode opcode)
 {
@@ -1268,7 +1258,7 @@ TEST_F(InsertSyncTest, TestEnableDebugAllAic)
 // 单条 wait-like 同步（OP_SYNC_DST）被移动到 cluster 前
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesSingleWaitBeforeCluster)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestMoveWaitBeforeCluster");
     (void)root;
     auto ts = MakeTensors(IS_NUM4, {IS_NUM8, IS_NUM16});
@@ -1290,7 +1280,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesSingleWaitBeforeCluster)
 // 单条 set-like 同步（OP_SYNC_SRC）被移动到 cluster 后
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesSingleSetAfterCluster)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestMoveSetAfterCluster");
     (void)root;
     auto ts = MakeTensors(IS_NUM4, {IS_NUM8, IS_NUM16});
@@ -1312,7 +1302,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesSingleSetAfterCluster)
 // OP_BAR_V 不可移动，出现在 cluster 内时失败
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeRejectsBarVInCluster)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestRejectBarV");
     (void)root;
     auto ts = MakeTensors(IS_NUM4, {IS_NUM8, IS_NUM16});
@@ -1332,7 +1322,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeRejectsBarVInCluster)
 // CV eventId 耗尽兜底 force 序列（BAR_ALL 等）落在 cluster 内时，该 cluster 整体不再调整 op 顺序
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeSkipsForceSyncOps)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestSkipForceSyncOps");
     (void)root;
     auto ts = MakeTensors(IS_NUM4, {IS_NUM8, IS_NUM16});
@@ -1362,7 +1352,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeSkipsForceSyncOps)
 // 非 force 序列的 immovable sync（BAR_ALL）落在同核 cluster 内时报错
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeRejectsBarAllInCluster)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestRejectBarAll");
     (void)root;
     auto ts = MakeTensors(IS_NUM4, {IS_NUM8, IS_NUM16});
@@ -1382,7 +1372,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeRejectsBarAllInCluster)
 // cluster 内连续 sync op（不配对）允许移动，各自移到对应边界
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesConsecutiveUnpairedSyncOps)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestConsecutiveSync");
     (void)root;
     auto ts = MakeTensors(IS_NUM5, {IS_NUM8, IS_NUM16});
@@ -1418,7 +1408,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesConsecutiveUnpairedSyncOps)
 // cluster 内的核间同步 set（OP_CV_SYNC_SRC）可移动，移到 cluster 后
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesCvSetAfterCluster)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestMoveCvSetAfterCluster");
     (void)root;
     auto ts = MakeTensors(IS_NUM4, {IS_NUM8, IS_NUM16});
@@ -1446,7 +1436,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesCvSetAfterCluster)
 // cluster 内的核间同步 wait（OP_CV_SYNC_DST）可移动，移到 cluster 前
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesCvWaitBeforeCluster)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestMoveCvWaitBeforeCluster");
     (void)root;
     auto ts = MakeTensors(IS_NUM4, {IS_NUM8, IS_NUM16});
@@ -1477,7 +1467,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesCvWaitBeforeCluster)
 // -> V wait C wait C set V set）互等死锁，须报错拒绝
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeRejectsPairedCvSetWaitInSameCluster)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestRejectPairedCvSetWait");
     (void)root;
     auto ts = MakeTensors(IS_NUM5, {IS_NUM8, IS_NUM16});
@@ -1511,7 +1501,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeRejectsPairedCvSetWaitInSameCluste
 // 同一 cluster 内先 wait 后 set 的 CV 同步（相同 eventId）不报错，wait 移前 set 移后，相对顺序保持
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesCvWaitBeforeSetInSameCluster)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestMoveCvWaitBeforeSet");
     (void)root;
     auto ts = MakeTensors(IS_NUM5, {IS_NUM8, IS_NUM16});
@@ -1546,7 +1536,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesCvWaitBeforeSetInSameCluster)
 // cluster 内 CV set/wait eventId 不同，不配对，各自移动
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesUnpairedCvSetAndWaitIndependently)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestMoveUnpairedCvSetWait");
     (void)root;
     auto ts = MakeTensors(IS_NUM5, {IS_NUM8, IS_NUM16});
@@ -1581,7 +1571,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesUnpairedCvSetAndWaitIndepende
 // CV 同步与普通同步 eventId 相同时不跨域配对，各自移动
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeCvAndRegularSyncSameEventIdNoPairing)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestCvRegularSameEventId");
     (void)root;
     auto ts = MakeTensors(IS_NUM5, {IS_NUM8, IS_NUM16});
@@ -1616,7 +1606,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeCvAndRegularSyncSameEventIdNoPairi
 // 非 A5 平台不做后处理
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeNoopsOnNonA5)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_2201);
+    NpuArchScope scopedArch(NPUArch::DAV_2201);
     auto [root, leaf] = SetupDebugFunc("TestNoopNonA5");
     (void)root;
     auto ts = MakeTensors(IS_NUM4, {IS_NUM8, IS_NUM16});
@@ -1636,7 +1626,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeNoopsOnNonA5)
 // 同一 cluster 内出现配对的 set/wait（相同 eventId + pipe 互换匹配）时失败
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeRejectsPairedSetWaitInSameCluster)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestRejectPairedSetWait");
     (void)root;
     auto ts = MakeTensors(IS_NUM5, {IS_NUM8, IS_NUM16});
@@ -1674,7 +1664,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeRejectsPairedSetWaitInSameCluster)
 // cluster 内同时出现不配对的 set 和 wait（不同 eventId），各自移动到两侧，不报错
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesUnpairedSetAndWaitIndependently)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestMoveUnpairedSetWait");
     (void)root;
     auto ts = MakeTensors(IS_NUM5, {IS_NUM8, IS_NUM16});
@@ -1713,7 +1703,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesUnpairedSetAndWaitIndependent
 // 多个 cluster 各自独立处理，互不干扰
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeHandlesMultipleClustersIndependently)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestMultiCluster");
     (void)root;
     auto ts = MakeTensors(IS_NUM8, {IS_NUM8, IS_NUM16});
@@ -1748,7 +1738,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeHandlesMultipleClustersIndependent
 // 无 atomic scope op 时不做任何处理
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeNoopsWithoutAtomicScope)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestNoopNoScope");
     (void)root;
     auto ts = MakeTensors(IS_NUM4, {IS_NUM8, IS_NUM16});
@@ -1767,7 +1757,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeNoopsWithoutAtomicScope)
 // 两个相邻 cluster（中间无非 cluster op），各自 set/wait sync 移到各自 cluster 边界
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeHandlesAdjacentClusters)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestAdjacentClusters");
     (void)root;
     auto ts = MakeTensors(IS_NUM8, {IS_NUM8, IS_NUM16});
@@ -1820,7 +1810,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeHandlesAdjacentClusters)
 // 同一 cluster 内多条 sync 指令，移动后保持原始相对顺序
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopePreservesSyncOrderWithinCluster)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestPreserveSyncOrder");
     (void)root;
     auto ts = MakeTensors(IS_NUM6, {IS_NUM8, IS_NUM16});
@@ -1874,7 +1864,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopePreservesSyncOrderWithinCluster)
 // 本核 sync 正常挪动，外来 op 保持原位
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeSkipsForeignCoreOps)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestSkipForeignCoreOps");
     (void)root;
     auto ts = MakeTensors(IS_NUM6, {IS_NUM8, IS_NUM16});
@@ -1908,7 +1898,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeSkipsForeignCoreOps)
 // 窗口内夹带同核 scope=-1 op（如用户 scope cluster 内未压实的搬运）：整 cluster 跳过调整而非报错
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeSkipsClusterWithUnscopedOpInside)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestUnscopedInside");
     (void)root;
     auto ts = MakeTensors(IS_NUM16, {IS_NUM8, IS_NUM16});
@@ -1934,7 +1924,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeSkipsClusterWithUnscopedOpInside)
 // 用户设置的 atomic_scope（scopeId < VF_CLUSTER_ID_START）：前序处理直接跳过，不收集不检测，VF 簇正常调整
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeSkipsUserScopedClusters)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestSkipUserScope");
     (void)root;
     auto ts = MakeTensors(IS_NUM6, {IS_NUM8, IS_NUM16});
@@ -1967,7 +1957,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeSkipsUserScopedClusters)
 // cluster 区间内交错另一核（AIV1）的 sync op，不收集不挪动、保持原位，本核 sync 正常挪动
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeSkipsForeignCoreSyncs)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestSkipForeignCoreSyncs");
     (void)root;
     auto ts = MakeTensors(IS_NUM4, {IS_NUM8, IS_NUM16});
@@ -2141,7 +2131,7 @@ static void VerifyHasSyncBetween(const std::vector<Operation*>& ops, Operation* 
 // exp/add/sub 设为同一 cluster，copy_in(b)→add 的 sync 会落在 cluster 内部
 TEST_F(InsertSyncTest, EndToEndSyncMovedToClusterBoundary)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [rootFuncPtr, leafFuncPtr] = CreateRootAndLeaf("E2EBoundary");
 
     auto ubA = MakeUbTensor(0, IS_NUM99);
@@ -2179,7 +2169,7 @@ TEST_F(InsertSyncTest, EndToEndSyncMovedToClusterBoundary)
 // cluster A: exp,add  cluster B: sqrt,cast  相邻
 TEST_F(InsertSyncTest, EndToEndAdjacentClustersSyncMovedIndependently)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [rootFuncPtr, leafFuncPtr] = CreateRootAndLeaf("E2EAdj");
 
     auto ubA = MakeUbTensor(0, IS_NUM99);
@@ -2224,7 +2214,7 @@ TEST_F(InsertSyncTest, EndToEndAdjacentClustersSyncMovedIndependently)
 // 3510: AIV 同流水(PIPE_MTE3, assemble/COPY_OUT 场景)数据依赖必须生成 OP_BAR_M, 不能丢弃
 TEST_F(InsertSyncTest, TestGenSyncOpAivSameMte3PipeOn3510GeneratesBarM)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestGenSyncAivMte3");
     auto ts = MakeTensors(IS_NUM2, {IS_NUM8, IS_NUM16});
     Operation& op = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_ADD, {ts[0]}, {ts[1]});
@@ -2243,7 +2233,7 @@ TEST_F(InsertSyncTest, TestGenSyncOpAivSameMte3PipeOn3510GeneratesBarM)
 // lite(3113): AIV 同流水(PIPE_MTE3)数据依赖同样必须生成 OP_BAR_M, 不能丢弃
 TEST_F(InsertSyncTest, TestGenSyncOpAivSameMte3PipeOnLiteGeneratesBarM)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3113);
+    NpuArchScope scopedArch(NPUArch::DAV_3113);
     auto [root, leaf] = SetupDebugFunc("TestGenSyncAivMte3Lite");
     auto ts = MakeTensors(IS_NUM2, {IS_NUM8, IS_NUM16});
     Operation& op = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_ADD, {ts[0]}, {ts[1]});
@@ -2257,7 +2247,7 @@ TEST_F(InsertSyncTest, TestGenSyncOpAivSameMte3PipeOnLiteGeneratesBarM)
 // 3510: AIV V->V 同步维持原行为, 不生成同步 op
 TEST_F(InsertSyncTest, TestGenSyncOpAivVVPipeOn3510KeepsSkip)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestGenSyncAivV3510");
     auto ts = MakeTensors(IS_NUM2, {IS_NUM8, IS_NUM16});
     Operation& op = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_ADD, {ts[0]}, {ts[1]});
@@ -2270,7 +2260,7 @@ TEST_F(InsertSyncTest, TestGenSyncOpAivVVPipeOn3510KeepsSkip)
 // 非 3510 非 lite(2201): AIV V->V 仍生成 OP_BAR_V(原有行为)
 TEST_F(InsertSyncTest, TestGenSyncOpAivVVPipeOn2201GeneratesBarV)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_2201);
+    NpuArchScope scopedArch(NPUArch::DAV_2201);
     auto [root, leaf] = SetupDebugFunc("TestGenSyncAivV2201");
     auto ts = MakeTensors(IS_NUM2, {IS_NUM8, IS_NUM16});
     Operation& op = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_ADD, {ts[0]}, {ts[1]});
@@ -2284,7 +2274,7 @@ TEST_F(InsertSyncTest, TestGenSyncOpAivVVPipeOn2201GeneratesBarV)
 // isSet=true: 源头侧不生成同步 op(原有行为)
 TEST_F(InsertSyncTest, TestGenSyncOpAivSamePipeSetSideNoop)
 {
-    ScopedNPUArchForInsertSyncTest scopedArch(NPUArch::DAV_3510);
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
     auto [root, leaf] = SetupDebugFunc("TestGenSyncAivSetSide");
     auto ts = MakeTensors(IS_NUM2, {IS_NUM8, IS_NUM16});
     Operation& op = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_ADD, {ts[0]}, {ts[1]});

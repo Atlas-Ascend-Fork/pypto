@@ -16,6 +16,7 @@
 #include "common_operation_eliminate_utils.h"
 
 #include <algorithm>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -26,6 +27,7 @@
 #include "passes/pass_utils/dead_operation_eliminate.h"
 #include "passes/pass_utils/graph_utils.h"
 #include "passes/pass_utils/pass_utils.h"
+#include "tilefwk/platform.h"
 
 #define MODULE_NAME "CommonOperationEliminateUtils"
 
@@ -516,7 +518,7 @@ Status CommonOperationEliminateUtils::Process(Function& function)
     function.SortOperations(SortOperationsMode::LIGHTWEIGHT);
     std::vector<LogicalTensorPtr> sequence;
     auto tensorProducerMap = GetTensorProducers(function, sequence);
-    mixSubgraphIds_ = GetMixSubgraphIds(function);
+    AnalyzeMixSubgraphs(function);
     function_ = &function;
     tensorsByRawMagic_ = GraphUtils::GetTensorsGroupedByRawMagic(function);
     processedRawMagicTensors_.clear();
@@ -854,6 +856,70 @@ void CommonOperationEliminateUtils::UpdateInternalTensorCoreFlag(
     }
 }
 
+std::unordered_map<Operation*, int> CommonOperationEliminateUtils::BuildAivConnectedComponents(
+    const std::vector<Operation*>& aivOps)
+{
+    std::unordered_map<Operation*, int> opToIndex;
+    for (auto* op : aivOps) {
+        opToIndex.emplace(op, static_cast<int>(opToIndex.size()));
+    }
+    std::vector<int> parent(aivOps.size());
+    std::iota(parent.begin(), parent.end(), 0);
+    const auto findRoot = [&parent](int x) {
+        while (parent[x] != x) {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        return x;
+    };
+    for (size_t i = 0; i < aivOps.size(); ++i) {
+        Operation* producer = aivOps[i];
+        for (const auto& output : producer->GetOOperands()) {
+            if (output == nullptr) {
+                continue;
+            }
+            for (auto* consumer : output->GetConsumers()) {
+                auto it = opToIndex.find(consumer);
+                if (it == opToIndex.end() || consumer->GetSubgraphID() != producer->GetSubgraphID()) {
+                    continue;
+                }
+                const int rootA = findRoot(static_cast<int>(i));
+                const int rootB = findRoot(it->second);
+                if (rootA != rootB) {
+                    parent[rootA] = rootB;
+                }
+            }
+        }
+    }
+    std::unordered_map<Operation*, int> branchOfOp;
+    int nextBranchId = 0;
+    std::unordered_map<int, int> rootToBranchId;
+    for (size_t i = 0; i < aivOps.size(); ++i) {
+        const int root = findRoot(static_cast<int>(i));
+        if (rootToBranchId.emplace(root, nextBranchId).second) {
+            ++nextBranchId;
+        }
+        branchOfOp[aivOps[i]] = rootToBranchId[root];
+    }
+    return branchOfOp;
+}
+
+std::unordered_map<Operation*, int> CommonOperationEliminateUtils::BuildAivBranchMap(
+    Function& function, const std::unordered_set<int>& mixSubgraphIds)
+{
+    if (Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_3510 || mixSubgraphIds.empty()) {
+        return {};
+    }
+    std::vector<Operation*> aivOps;
+    for (auto* op : function.Operations(true).DuplicatedOpList()) {
+        if (op != nullptr && mixSubgraphIds.count(op->GetSubgraphID()) != 0 &&
+            OpcodeManager::Inst().GetCoreType(op->GetOpcode()) == OpCoreType::AIV) {
+            aivOps.push_back(op);
+        }
+    }
+    return BuildAivConnectedComponents(aivOps);
+}
+
 std::unordered_set<int> CommonOperationEliminateUtils::GetMixSubgraphIds(Function& function) const
 {
     constexpr uint32_t kAicTensorFlag = 1U;
@@ -883,6 +949,12 @@ std::unordered_set<int> CommonOperationEliminateUtils::GetMixSubgraphIds(Functio
         result.insert(entry.first);
     }
     return result;
+}
+
+void CommonOperationEliminateUtils::AnalyzeMixSubgraphs(Function& function)
+{
+    mixSubgraphIds_ = GetMixSubgraphIds(function);
+    aivBranchOfOp_ = BuildAivBranchMap(function, mixSubgraphIds_);
 }
 
 MemoryType CommonOperationEliminateUtils::GetAssembleInputMemoryType(Operation* consumer,
@@ -1068,6 +1140,51 @@ bool CommonOperationEliminateUtils::WouldExposeMixInternalTensorAfterMerge(
     return false;
 }
 
+bool CommonOperationEliminateUtils::ShouldSkipCrossBranchMerge(const LogicalTensorPtr& oldTensor,
+                                                               const LogicalTensorPtr& newTensor,
+                                                               const std::vector<Operation*>& oldProducers,
+                                                               const std::vector<Operation*>& newProducers) const
+{
+    if (aivBranchOfOp_.empty() || oldTensor == nullptr || newTensor == nullptr ||
+        oldTensor->GetMemoryTypeOriginal() != MemoryType::MEM_UB ||
+        newTensor->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
+        return false;
+    }
+    const auto allProducersAiv = [](const std::vector<Operation*>& producers) {
+        for (auto* op : producers) {
+            if (op == nullptr || OpcodeManager::Inst().GetCoreType(op->GetOpcode()) != OpCoreType::AIV) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!allProducersAiv(oldProducers) || !allProducersAiv(newProducers)) {
+        return false;
+    }
+    // 全未覆盖 = 门对该合并对无输入, 放行; 覆盖混现或多 branch = 保守跳过
+    std::unordered_set<int> branchIds;
+    bool hasUnanalyzed = false;
+    const auto collectBranchIds = [this, &branchIds, &hasUnanalyzed](const std::vector<Operation*>& producers) {
+        for (auto* op : producers) {
+            auto it = aivBranchOfOp_.find(op);
+            if (it == aivBranchOfOp_.end()) {
+                hasUnanalyzed = true;
+            } else {
+                branchIds.insert(it->second);
+            }
+        }
+    };
+    collectBranchIds(oldProducers);
+    collectBranchIds(newProducers);
+    if (branchIds.empty() || (!hasUnanalyzed && branchIds.size() == 1)) {
+        return false;
+    }
+    APASS_LOG_DEBUG_F(Elements::Operation,
+                      "Skip eliminating Tensor[%d]: cross-branch AIV merge (branchIds=%zu, hasUnanalyzed=%d).",
+                      oldTensor->GetMagic(), branchIds.size(), hasUnanalyzed ? 1 : 0);
+    return true;
+}
+
 bool CommonOperationEliminateUtils::TensorProducersMerge(
     Function& function, const LogicalTensorPtr orderedTensor, std::unordered_set<Operation*>& cacheProducers,
     const std::unordered_map<LogicalTensorPtr, std::vector<Operation*>>& tensorProducerMap,
@@ -1121,6 +1238,9 @@ bool CommonOperationEliminateUtils::TensorProducersMerge(
             Elements::Operation,
             "Skip eliminating Tensor[%d] to avoid exposing mix subgraph internal Tensor[%d] to other subgraphs.",
             oldTensor->GetMagic(), newTensor->GetMagic());
+        return false;
+    }
+    if (ShouldSkipCrossBranchMerge(oldTensor, newTensor, oldBucketProducers, existOp.second)) {
         return false;
     }
     if (!UpdateConnection(function, oldTensor, newTensor, oldBucketProducers, existOp.second)) {

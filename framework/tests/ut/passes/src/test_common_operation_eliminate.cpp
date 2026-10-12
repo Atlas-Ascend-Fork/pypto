@@ -18,10 +18,12 @@
 #include "ir/span.h"
 #include "ir/type.h"
 #include "tilefwk/tilefwk.h"
+#include "tilefwk/platform.h"
 #include "interface/inner/tilefwk.h"
 #include "passes/pass_mgr/pass_manager.h"
 #include "interface/configs/config_manager.h"
 #include "computational_graph_builder.h"
+#include "pass_test_utils.h"
 #include "passes/tile_graph_pass/graph_partition/common_operation_eliminate.h"
 #include "symbolic_scalar_test_utils.h"
 #include <algorithm>
@@ -367,37 +369,174 @@ TEST_F(CommonOperationEliminateTest, IgnoreDifferentSubgraph)
     EXPECT_EQ(function->Operations().size(), validOpNum);
 }
 
-TEST_F(CommonOperationEliminateTest, RespectReduceCopyPreSubgraphId)
+// ============================================================================
+// branch 门: DAV_3510 mix 子图内 AIV op 的连通分量(branch)判定
+namespace {
+// 骨架图(所有 op 同属 sg0, t1 为公共输入):
+//   ABS1(t1)→t2(UB)→MUL1→t4        ABS2(t1)→t3(UB)→MUL2→t5
+//   [connectBranches]  ADD1(t4,t5)→t6   —— 把两条 AIV 链连通为同 branch
+//   [includeAicOp]     tRA→VIEW1→tA(L0A); A_MUL_B(tA,tB)→tC(L0C)   —— AIC 侧链
+// includeAicOp 时 tA 为内部 L0A 张量, sg0 命中张量流口径的 GetMixSubgraphIds。
+void BuildBranchGateGraph(ComputationalGraphBuilder& G, bool includeAicOp, bool connectBranches)
 {
-    ComputationalGraphBuilder G;
-    std::vector<std::string> tensorNames{"t1", "t2", "t3", "t4"};
-    std::vector<Opcode> opCodes{Opcode::OP_ABS, Opcode::OP_ABS, Opcode::OP_MUL};
-    std::vector<std::vector<std::string>> ioperands{{"t1"}, {"t1"}, {"t2", "t3"}};
-    std::vector<std::vector<std::string>> ooperands{{"t2"}, {"t3"}, {"t4"}};
-    std::vector<std::string> opNames{"ABS1", "ABS2", "MUL"};
-    EXPECT_EQ(G.AddTensors(DataType::DT_FP32, {16, 16}, tensorNames), true);
+    std::vector<std::string> tensorNames{"t1", "t2", "t3", "t4", "t5"};
+    std::vector<MemoryType> memTypes{MEM_DEVICE_DDR, MEM_UB, MEM_UB, MEM_DEVICE_DDR, MEM_DEVICE_DDR};
+    std::vector<std::string> incasts{"t1"};
+    if (connectBranches) {
+        tensorNames.push_back("t6");
+        memTypes.push_back(MEM_DEVICE_DDR);
+    }
+    if (includeAicOp) {
+        tensorNames.push_back("tRA");
+        tensorNames.push_back("tA");
+        tensorNames.push_back("tB");
+        tensorNames.push_back("tC");
+        memTypes.push_back(MEM_DEVICE_DDR);
+        memTypes.push_back(MEM_L0A);
+        memTypes.push_back(MEM_L0B);
+        memTypes.push_back(MEM_L0C);
+        incasts.push_back("tRA");
+        incasts.push_back("tB");
+    }
+    EXPECT_EQ(G.AddTensors(DataType::DT_FP32, {16, 16}, memTypes, tensorNames), true);
+    std::vector<Opcode> opCodes{Opcode::OP_ABS, Opcode::OP_ABS, Opcode::OP_MUL, Opcode::OP_MUL};
+    std::vector<std::vector<std::string>> ioperands{{"t1"}, {"t1"}, {"t2"}, {"t3"}};
+    std::vector<std::vector<std::string>> ooperands{{"t2"}, {"t3"}, {"t4"}, {"t5"}};
+    std::vector<std::string> opNames{"ABS1", "ABS2", "MUL1", "MUL2"};
+    if (connectBranches) {
+        opCodes.push_back(Opcode::OP_ADD);
+        ioperands.push_back({"t4", "t5"});
+        ooperands.push_back({"t6"});
+        opNames.push_back("ADD1");
+    }
+    if (includeAicOp) {
+        opCodes.push_back(Opcode::OP_VIEW);
+        ioperands.push_back({"tRA"});
+        ooperands.push_back({"tA"});
+        opNames.push_back("VIEW1");
+        opCodes.push_back(Opcode::OP_A_MUL_B);
+        ioperands.push_back({"tA", "tB"});
+        ooperands.push_back({"tC"});
+        opNames.push_back("MATMUL");
+    }
     EXPECT_EQ(G.AddOps(opCodes, ioperands, ooperands, opNames, true), true);
-    EXPECT_EQ(G.SetInCast({"t1"}), true);
-    EXPECT_EQ(G.SetOutCast({"t4"}), true);
-    auto* abs1 = G.GetOp("ABS1");
-    auto* abs2 = G.GetOp("ABS2");
-    auto* mul = G.GetOp("MUL");
-    ASSERT_NE(abs1, nullptr);
-    ASSERT_NE(abs2, nullptr);
-    ASSERT_NE(mul, nullptr);
-    // The current subgraph id is identical; only the ReduceCopy source subgraph id differs.
-    abs1->UpdateSubgraphID(0);
-    abs1->SetAttr(OpAttributeKey::reduceCopyPreSubgraphId, static_cast<int64_t>(0));
-    abs2->UpdateSubgraphID(0);
-    abs2->SetAttr(OpAttributeKey::reduceCopyPreSubgraphId, static_cast<int64_t>(1));
-    mul->UpdateSubgraphID(0);
-    EXPECT_NE(abs1->DumpAttr().find(OpAttributeKey::reduceCopyPreSubgraphId), std::string::npos);
-    EXPECT_NE(abs2->DumpAttr().find(OpAttributeKey::reduceCopyPreSubgraphId), std::string::npos);
+    for (const auto& opName : opNames) {
+        G.GetOp(opName)->UpdateSubgraphID(0);
+    }
+    EXPECT_EQ(G.SetInCast(incasts), true);
+    std::vector<std::string> outcasts;
+    if (connectBranches) {
+        outcasts.push_back("t6");
+    } else {
+        outcasts.push_back("t4");
+        outcasts.push_back("t5");
+    }
+    if (includeAicOp) {
+        outcasts.push_back("tC");
+    }
+    EXPECT_EQ(G.SetOutCast(outcasts), true);
+}
+} // namespace
+
+// mix 子图内两条 AIV 消费链不连通(分属不同 branch): 等价 ABS 对不允许合并
+TEST_F(CommonOperationEliminateTest, SkipCrossBranchMergeInMixSubgraph)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    ComputationalGraphBuilder G;
+    BuildBranchGateGraph(G, /*includeAicOp=*/true, /*connectBranches=*/false);
     Function* function = G.GetFunction();
     ASSERT_NE(function, nullptr);
     CommonOperationEliminate COE;
     EXPECT_EQ(COE.Run(*function, "", "", 0), SUCCESS);
+    // ABS1 + ABS2 + MUL1 + MUL2 + VIEW1 + MATMUL 全部保留
+    EXPECT_EQ(function->Operations().size(), 6);
+}
+
+// mix 子图内 ADD1 把两条 AIV 链连通(同 branch): 等价 ABS 对正常合并。
+// ABS2 消除后 MUL2 的输入重定向为 t2, 与 MUL1 完全等价, 级联消除。
+TEST_F(CommonOperationEliminateTest, EliminateDupOpsInSameBranchOfMixSubgraph)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    ComputationalGraphBuilder G;
+    BuildBranchGateGraph(G, /*includeAicOp=*/true, /*connectBranches=*/true);
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    CommonOperationEliminate COE;
+    EXPECT_EQ(COE.Run(*function, "", "", 0), SUCCESS);
+    // ABS1 + MUL1 + ADD1 + VIEW1 + MATMUL (ABS2/MUL2 被合并消除)
+    EXPECT_EQ(function->Operations().size(), 5);
+}
+
+// 非 mix 子图(无 AIC 侧链, 不满足张量流口径): branch 分析不启用, 门不生效,
+// 等价 ABS 对按普通 CSE 规则正常合并。
+TEST_F(CommonOperationEliminateTest, EliminateDupOpsInNonMixSubgraphOnDav3510)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    ComputationalGraphBuilder G;
+    BuildBranchGateGraph(G, /*includeAicOp=*/false, /*connectBranches=*/true);
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    CommonOperationEliminate COE;
+    EXPECT_EQ(COE.Run(*function, "", "", 0), SUCCESS);
+    // ABS1 + MUL1 + ADD1 (ABS2/MUL2 被合并消除)
     EXPECT_EQ(function->Operations().size(), 3);
+}
+
+// 张量流口径不命中的形态(tA/tB 为 incast, 无内部 AIC 类张量): branch 门不生效,
+// 等价 ABS 对按普通 CSE 规则正常合并。真实图中两口径等价(核私有张量不跨子图边界)。
+TEST_F(CommonOperationEliminateTest, EliminateDupOpsWhenTensorFlowCriterionMisses)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    ComputationalGraphBuilder G;
+    std::vector<std::string> tensorNames{"t1", "t2", "t3", "t4", "t5", "tA", "tB", "tC"};
+    std::vector<MemoryType> memTypes{MEM_DEVICE_DDR, MEM_UB,  MEM_UB,  MEM_DEVICE_DDR,
+                                     MEM_DEVICE_DDR, MEM_L0A, MEM_L0B, MEM_L0C};
+    EXPECT_EQ(G.AddTensors(DataType::DT_FP32, {16, 16}, memTypes, tensorNames), true);
+    std::vector<Opcode> opCodes{Opcode::OP_ABS, Opcode::OP_ABS, Opcode::OP_MUL, Opcode::OP_MUL, Opcode::OP_A_MUL_B};
+    std::vector<std::vector<std::string>> ioperands{{"t1"}, {"t1"}, {"t2"}, {"t3"}, {"tA", "tB"}};
+    std::vector<std::vector<std::string>> ooperands{{"t2"}, {"t3"}, {"t4"}, {"t5"}, {"tC"}};
+    std::vector<std::string> opNames{"ABS1", "ABS2", "MUL1", "MUL2", "MATMUL"};
+    EXPECT_EQ(G.AddOps(opCodes, ioperands, ooperands, opNames, true), true);
+    for (const auto& opName : opNames) {
+        G.GetOp(opName)->UpdateSubgraphID(0);
+    }
+    EXPECT_EQ(G.SetInCast({"t1", "tA", "tB"}), true);
+    EXPECT_EQ(G.SetOutCast({"t4", "t5", "tC"}), true);
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    CommonOperationEliminate COE;
+    EXPECT_EQ(COE.Run(*function, "", "", 0), SUCCESS);
+    // 门不生效: ABS 对正常合并; MUL 对因输出 t4/t5 为 outcast 按既有规则不参与合并
+    EXPECT_EQ(function->Operations().size(), 4);
+}
+
+// mix 子图内 AIC 等价对(输入同为 tA/tB): producer 非 AIV, 门不启用, 正常合并;
+// CONVERT 对输出为 outcast, 按既有规则不参与合并
+TEST_F(CommonOperationEliminateTest, EliminateDupAicOpsInMixSubgraph)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    ComputationalGraphBuilder G;
+    std::vector<std::string> tensorNames{"t1", "t9", "t10", "tA", "tB", "tC1", "tC2", "tD1", "tD2"};
+    std::vector<MemoryType> memTypes{MEM_DEVICE_DDR, MEM_UB,  MEM_DEVICE_DDR, MEM_L0A,       MEM_L0B,
+                                     MEM_L0C,        MEM_L0C, MEM_DEVICE_DDR, MEM_DEVICE_DDR};
+    EXPECT_EQ(G.AddTensors(DataType::DT_FP32, {16, 16}, memTypes, tensorNames), true);
+    std::vector<Opcode> opCodes{Opcode::OP_ABS,     Opcode::OP_MUL,     Opcode::OP_A_MUL_B,
+                                Opcode::OP_A_MUL_B, Opcode::OP_CONVERT, Opcode::OP_CONVERT};
+    std::vector<std::vector<std::string>> ioperands{{"t1"}, {"t9"}, {"tA", "tB"}, {"tA", "tB"}, {"tC1"}, {"tC2"}};
+    std::vector<std::vector<std::string>> ooperands{{"t9"}, {"t10"}, {"tC1"}, {"tC2"}, {"tD1"}, {"tD2"}};
+    std::vector<std::string> opNames{"ABS1", "MUL9", "MATMUL1", "MATMUL2", "CONVERT1", "CONVERT2"};
+    EXPECT_EQ(G.AddOps(opCodes, ioperands, ooperands, opNames, true), true);
+    for (const auto& opName : opNames) {
+        G.GetOp(opName)->UpdateSubgraphID(0);
+    }
+    EXPECT_EQ(G.SetInCast({"t1", "tA", "tB"}), true);
+    EXPECT_EQ(G.SetOutCast({"t10", "tD1", "tD2"}), true);
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    CommonOperationEliminate COE;
+    EXPECT_EQ(COE.Run(*function, "", "", 0), SUCCESS);
+    // ABS1 + MUL9 + MATMUL1 + CONVERT1 + CONVERT2 (MATMUL2 被合并消除)
+    EXPECT_EQ(function->Operations().size(), 5);
 }
 
 TEST_F(CommonOperationEliminateTest, EliminateDupOpsWithDifferentGraphMergeHashOrder)

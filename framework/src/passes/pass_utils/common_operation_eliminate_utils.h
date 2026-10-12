@@ -62,6 +62,15 @@ private:
     void UpdateInternalTensorCoreFlag(const LogicalTensorPtr& tensor,
                                       std::unordered_map<int, uint32_t>& subgraphCoreFlags) const;
     std::unordered_set<int> GetMixSubgraphIds(Function& function) const;
+    // mix 子图分析: mixSubgraphIds_(供 WouldExpose 门) + aivBranchOfOp_(供 branch 门, 仅 DAV_3510)
+    void AnalyzeMixSubgraphs(Function& function);
+    std::unordered_map<Operation*, int> BuildAivBranchMap(Function& function,
+                                                          const std::unordered_set<int>& mixSubgraphIds);
+    // aivOps 按直接数据依赖边(AIV→AIV, 同子图)的连通分量, op -> 分量 id
+    std::unordered_map<Operation*, int> BuildAivConnectedComponents(const std::vector<Operation*>& aivOps);
+    bool ShouldSkipCrossBranchMerge(const LogicalTensorPtr& oldTensor, const LogicalTensorPtr& newTensor,
+                                    const std::vector<Operation*>& oldProducers,
+                                    const std::vector<Operation*>& newProducers) const;
     MemoryType GetAssembleInputMemoryType(Operation* consumer, const LogicalTensorPtr& input) const;
     MemoryType GetAssembleOutputMemoryType(Operation* consumer) const;
     bool HasSameMemoryAssembleUse(const LogicalTensorPtr& tensor, std::unordered_set<int>& visitedTensorMagics) const;
@@ -94,6 +103,8 @@ private:
 
     std::unordered_map<uint64_t, std::pair<LogicalTensorPtr, std::vector<Operation*>>> hashCache_;
     std::unordered_set<int> mixSubgraphIds_;
+    // op -> AIV 连通分量 id。空表 = branch 门不生效
+    std::unordered_map<Operation*, int> aivBranchOfOp_;
     Function* function_ = nullptr;
     RawMagicTensorMap tensorsByRawMagic_;
     // A RawTensor bucket is processed once, including all of its logical tensors.

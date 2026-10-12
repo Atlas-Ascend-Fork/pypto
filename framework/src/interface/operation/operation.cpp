@@ -114,7 +114,6 @@ const std::string OpAttributeKey::vecMergeHashOrder = "vec_merge_hashOrder";
 const std::string OpAttributeKey::vecMergeSubgraphCount = "vec_merge_subgraphCount";
 const std::string OpAttributeKey::atomicAdd = "op_attr_atomic_add";
 const std::string OpAttributeKey::splitMN = "op_attr_splitMN";
-const std::string OpAttributeKey::reduceCopyPreSubgraphId = "reduce_copy_pre_subgraph_id";
 const std::string OpAttributeKey::postK = "POST_K";
 const std::string OpAttributeKey::postM = "POST_M";
 const std::string OpAttributeKey::postN = "POST_N";
