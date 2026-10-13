@@ -355,6 +355,7 @@ class ExpressionParserMixin:
         elif isinstance(value, int):
             return make_const_int(value, span=span)
         elif isinstance(value, float):
+            check_fits_dtype(value, DataType.DEFAULT_CONST_FLOAT, subject="float constant", span=span)
             return ir.ConstFloat(value, DataType.DEFAULT_CONST_FLOAT, span)
         elif isinstance(value, str):
             return value

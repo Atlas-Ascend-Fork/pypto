@@ -21,7 +21,7 @@ from pypto.pypto_impl import ir
 from pypto.pypto_impl.ir import DataType
 
 from ..._errors import InvalidOperation, InvalidType, InvalidVal, PyptoProError, RuntimeFailure, message_of
-from .diagnostics import make_const_int
+from .diagnostics import check_fits_dtype, make_const_int
 
 if TYPE_CHECKING:
     from ._span_tracker import SpanTracker
@@ -253,6 +253,7 @@ class ExprEvaluator:
         if isinstance(value, int):
             return make_const_int(value, span=span)
         if isinstance(value, float):
+            check_fits_dtype(value, DataType.DEFAULT_CONST_FLOAT, subject="float constant", span=span)
             return ir.ConstFloat(value, DataType.DEFAULT_CONST_FLOAT, span)
         if isinstance(value, ir.Expr):
             return value

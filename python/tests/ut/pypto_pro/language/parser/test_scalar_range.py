@@ -10,12 +10,13 @@
 # -----------------------------------------------------------------------------------------------------------
 """Range validation of numeric literals on their way into the IR.
 
-Two bounds are enforced, and they are deliberately different:
+Three bounds are enforced, and they are deliberately different:
 
   * The **storage band** ``[INT64_MIN, UINT64_MAX]`` applies wherever an integer materialises into
     ``ir.ConstInt``. Arbitrary precision stays legal before that point -- the parser evaluates
-    intermediates in Python -- and floats have no such band at all, because the front end and
-    ``ir.ConstFloat`` are both doubles.
+    intermediates in Python.
+  * A finite bare float literal or closure value materialises as ``DEFAULT_CONST_FLOAT`` and must
+    fit that dtype instead of silently becoming infinity.
   * The **API fit** check rejects a literal scalar operand the operator's element dtype could not
     represent. It reads the dtype from the operand, never from the literal, since a bare literal
     carries the uncommitted INDEX / FP32 placeholder.
@@ -33,6 +34,7 @@ import pytest
 
 _N, _M = 1, 64
 _TILE_SIZE = _N * _M * 4
+_OUT_OF_RANGE_FLOAT = 1e60
 
 
 def _arange_body(dtype, scalar):
@@ -414,6 +416,24 @@ def test_literal_written_in_the_kernel_source_is_accepted_when_it_fits():
     _assert_scalar_operand(program, "vf.adds", 300)
 
 
+def test_bare_float_literal_assignment_is_checked():
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        _scalar = 1e60
+
+    with pytest.raises(OutOfRange, match=r"float constant must be representable in fp32"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_closure_float_assignment_is_checked():
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        _scalar = _OUT_OF_RANGE_FLOAT
+
+    with pytest.raises(OutOfRange, match=r"float constant must be representable in fp32"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
 # ---------------------------------------------------------------------------
 # The block tile-scalar chokepoint (pl.add / pl.sub / ... with a scalar rhs)
 # ---------------------------------------------------------------------------
@@ -515,7 +535,7 @@ def test_type_changing_op_checks_the_scalar_against_the_source_dtype():
 
 @pytest.mark.soc("950")
 def test_type_changing_op_still_rejects_a_value_the_source_dtype_cannot_hold():
-    with pytest.raises(OutOfRange, match=r"vf\.muls_cast: scalar operand must be representable in fp32"):
+    with pytest.raises(OutOfRange, match=r"float constant must be representable in fp32"):
         _parse_with_body(pl.DT_FP32, _muls_cast_body(1e300))
 
 
