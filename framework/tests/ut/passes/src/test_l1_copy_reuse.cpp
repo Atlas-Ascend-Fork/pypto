@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <climits>
 #include "symbolic_scalar_test_utils.h"
 #include "interface/function/function.h"
 #include "tilefwk/tilefwk.h"
@@ -876,6 +877,141 @@ TEST_F(L1CopyInReuseTest, ByFuncL1ReuseDefaultOneNoMerge)
     EXPECT_EQ(LCRM.RunOnFunction(*function), SUCCESS);
     EXPECT_EQ(function->GetTotalSubGraphCount(), subGraphNum);
 }
+
+// ===== Merge Count Validation Tests =====
+// Merge count values must be in [1, INT_MAX]: 0, negative and >INT_MAX values are rejected
+// at compile time for every key type ("DEFAULT" / "func{magic}_{order}" / hashOrder integer
+// keys / semantic-label keys) of cube_l1_reuse_setting and cube_nbuffer_setting.
+static constexpr int64_t kMergeCountExceedsIntMax = static_cast<int64_t>(INT_MAX) + 1;
+
+// Config entry that receives the merge count under test. The entry also decides the companion
+// configs: the merge kind not under test is pinned to its "skip" value (count = 1) so the
+// expected status is attributable to the value under test alone; the semantic-label entries
+// keep both merge kinds enabled so the label-override collection path actually runs.
+enum class MergeCountEntry {
+    kCubeNBufferByFuncDefault,   // cubeNBufferSettingByFunc["DEFAULT"]
+    kCubeL1ReuseByFuncDefault,   // cubeL1ReuseSettingByFunc["DEFAULT"] (raw, side-encoded value)
+    kCubeL1ReuseByFuncKey,       // cubeL1ReuseSettingByFunc["func{magic}_0"]
+    kCubeL1ReuseGlobalDefault,   // cubeL1ReuseSetting[-1] (raw, side-encoded value)
+    kCubeL1ReuseGlobalHashOrder, // cubeL1ReuseSetting[0] (non-default hashOrder key)
+    kCubeNBufferGlobalDefault,   // cubeNBufferSetting[-1]
+    kCubeL1ReuseByLabel,         // cubeL1ReuseSettingByLabel["CubeLabel"]
+    kCubeNBufferByLabel          // cubeNBufferSettingByLabel["CubeLabel"]
+};
+
+struct MergeCountValidationParam {
+    const char* name;
+    MergeCountEntry entry;
+    int64_t value;
+    Status expected;
+};
+
+class L1CopyInReuseMergeCountTest : public L1CopyInReuseTest,
+                                    public testing::WithParamInterface<MergeCountValidationParam> {};
+
+static void SetMergeCountConfigs(Function& function, const MergeCountValidationParam& param)
+{
+    switch (param.entry) {
+        case MergeCountEntry::kCubeNBufferByFuncDefault:
+            function.paramConfigs_.cubeL1ReuseSettingByFunc = {{"DEFAULT", 1}};
+            function.paramConfigs_.cubeNBufferSettingByFunc = {{"DEFAULT", param.value}};
+            break;
+        case MergeCountEntry::kCubeL1ReuseByFuncDefault:
+            function.paramConfigs_.cubeL1ReuseSettingByFunc = {{"DEFAULT", param.value}};
+            function.paramConfigs_.cubeNBufferSettingByFunc = {{"DEFAULT", 1}};
+            break;
+        case MergeCountEntry::kCubeL1ReuseByFuncKey:
+            function.paramConfigs_.cubeL1ReuseSettingByFunc = {
+                {"func" + std::to_string(function.GetFuncMagic()) + "_0", param.value}};
+            function.paramConfigs_.cubeNBufferSettingByFunc = {{"DEFAULT", 1}};
+            break;
+        case MergeCountEntry::kCubeL1ReuseGlobalDefault:
+            function.paramConfigs_.cubeL1ReuseSetting = {{-1, param.value}};
+            function.paramConfigs_.cubeNBufferSettingByFunc = {{"DEFAULT", 1}};
+            break;
+        case MergeCountEntry::kCubeL1ReuseGlobalHashOrder:
+            // Key 0 is the L1Reuse hashOrder shared by subgraphs 1..19 in InitGraphBuilder graphs.
+            function.paramConfigs_.cubeL1ReuseSetting = {{0, param.value}};
+            function.paramConfigs_.cubeNBufferSettingByFunc = {{"DEFAULT", 1}};
+            break;
+        case MergeCountEntry::kCubeNBufferGlobalDefault:
+            function.paramConfigs_.cubeL1ReuseSetting = {{-1, 1}};
+            function.paramConfigs_.cubeNBufferSetting = {{-1, param.value}};
+            break;
+        case MergeCountEntry::kCubeL1ReuseByLabel:
+            function.paramConfigs_.cubeL1ReuseSetting = {{-1, 2}};
+            function.paramConfigs_.cubeL1ReuseSettingByLabel = {{"CubeLabel", param.value}};
+            function.paramConfigs_.cubeNBufferSetting = {{-1, 4}};
+            break;
+        case MergeCountEntry::kCubeNBufferByLabel:
+            function.paramConfigs_.cubeL1ReuseSetting = {{-1, 2}};
+            function.paramConfigs_.cubeNBufferSetting = {{-1, 4}};
+            function.paramConfigs_.cubeNBufferSettingByLabel = {{"CubeLabel", param.value}};
+            break;
+        default:
+            break;
+    }
+}
+
+TEST_P(L1CopyInReuseMergeCountTest, ValidateMergeCountConfig)
+{
+    const auto& param = GetParam();
+    ComputationalGraphBuilder G;
+    std::vector<int64_t> tileShape{16, 16};
+    const int subGraphNum = 20;
+    InitGraphBuilder(G, tileShape, subGraphNum);
+
+    if (param.entry == MergeCountEntry::kCubeL1ReuseByLabel || param.entry == MergeCountEntry::kCubeNBufferByLabel) {
+        auto cubeLabel = std::make_shared<SemanticLabel>("CubeLabel", __FILE__, __LINE__);
+        for (int i = 1; i <= 3; i++) {
+            G.GetOp("EXP_" + std::to_string(i))->SetSemanticLabel(cubeLabel);
+        }
+    }
+    Function* function = G.GetFunction();
+    SetMergeCountConfigs(*function, param);
+    function->SetTotalSubGraphCount(subGraphNum);
+    L1CopyInReuseMerge LCRM;
+    EXPECT_EQ(LCRM.RunOnFunction(*function), param.expected);
+}
+
+static std::string MergeCountTestName(const testing::TestParamInfo<MergeCountValidationParam>& info)
+{
+    return info.param.name;
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MergeCountValidation, L1CopyInReuseMergeCountTest,
+    testing::Values(
+        // cube_nbuffer_setting, ByFunc "DEFAULT" key.
+        MergeCountValidationParam{"NBufferByFuncDefaultZero", MergeCountEntry::kCubeNBufferByFuncDefault, 0, FAILED},
+        MergeCountValidationParam{"NBufferByFuncDefaultNegative", MergeCountEntry::kCubeNBufferByFuncDefault, -1,
+                                  FAILED},
+        MergeCountValidationParam{"NBufferByFuncDefaultExceedsIntMax", MergeCountEntry::kCubeNBufferByFuncDefault,
+                                  kMergeCountExceedsIntMax, FAILED},
+        // INT_MAX itself is a valid value: the merge count is capped by mgCopyInUpperBound
+        // internally, so compilation must succeed.
+        MergeCountValidationParam{"NBufferByFuncDefaultBoundaryIntMax", MergeCountEntry::kCubeNBufferByFuncDefault,
+                                  static_cast<int64_t>(INT_MAX), SUCCESS},
+        // cube_l1_reuse_setting, ByFunc keys: a raw value >INT_MAX would silently decode to
+        // value % L1_REUSE_SIDE_BASE, so it is rejected before side decoding; the
+        // func{magic}_{order} branch rejects 0.
+        MergeCountValidationParam{"L1ReuseByFuncDefaultRawExceedsIntMax", MergeCountEntry::kCubeL1ReuseByFuncDefault,
+                                  kMergeCountExceedsIntMax, FAILED},
+        MergeCountValidationParam{"L1ReuseByFuncKeyZero", MergeCountEntry::kCubeL1ReuseByFuncKey, 0, FAILED},
+        // cube_l1_reuse_setting, integer keys: -1 (default) and a non-default hashOrder key.
+        MergeCountValidationParam{"L1ReuseGlobalDefaultRawExceedsIntMax", MergeCountEntry::kCubeL1ReuseGlobalDefault,
+                                  kMergeCountExceedsIntMax, FAILED},
+        MergeCountValidationParam{"L1ReuseGlobalHashOrderZero", MergeCountEntry::kCubeL1ReuseGlobalHashOrder, 0,
+                                  FAILED},
+        // cube_nbuffer_setting, integer -1 (default) key.
+        MergeCountValidationParam{"NBufferGlobalDefaultExceedsIntMax", MergeCountEntry::kCubeNBufferGlobalDefault,
+                                  kMergeCountExceedsIntMax, FAILED},
+        // semantic-label keys of both settings.
+        MergeCountValidationParam{"L1ReuseLabelZero", MergeCountEntry::kCubeL1ReuseByLabel, 0, FAILED},
+        MergeCountValidationParam{"NBufferLabelNegative", MergeCountEntry::kCubeNBufferByLabel, -5, FAILED},
+        MergeCountValidationParam{"NBufferLabelExceedsIntMax", MergeCountEntry::kCubeNBufferByLabel,
+                                  kMergeCountExceedsIntMax, FAILED}),
+    MergeCountTestName);
 
 } // namespace tile_fwk
 } // namespace npu

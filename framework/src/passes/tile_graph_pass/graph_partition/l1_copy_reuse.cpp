@@ -15,6 +15,7 @@
 
 #include "l1_copy_reuse.h"
 #include <algorithm>
+#include <climits>
 
 #include "interface/configs/config_manager_ng.h"
 #include "interface/tensor/irbuilder.h"
@@ -75,17 +76,30 @@ void L1CopyInReuseRunner::BuildTopoHashAndMaxInputColors(const OperationsViewer&
     }
 }
 
+static std::string ConfigKeyToStr(const std::string& key) { return key; }
+
+static std::string ConfigKeyToStr(int64_t key) { return std::to_string(key); }
+
 // cubeL1ReuseSetting packs (count, side) into one int as side * L1_REUSE_SIDE_BASE + count
 // (side 0=auto/1=left/2=right). Split a raw config map into a pure merge-count map (consumed
 // by the existing logic) and a matrix-side map (only 1/2 are kept). side=0 / count-only
 // values pass through unchanged, so legacy int configs are fully backward compatible.
+// Raw values exceeding INT_MAX are rejected here: after decoding, such a value would silently
+// shrink to value % L1_REUSE_SIDE_BASE and be applied as a valid-looking merge count.
 template <typename K>
-static void DecodeL1ReuseSide(const std::map<K, int64_t>& raw, std::map<K, int64_t>& countMap,
-                              std::map<K, int64_t>& sideMap)
+static Status DecodeL1ReuseSide(const std::map<K, int64_t>& raw, std::map<K, int64_t>& countMap,
+                                std::map<K, int64_t>& sideMap)
 {
     countMap.clear();
     sideMap.clear();
     for (const auto& [key, value] : raw) {
+        if (value > static_cast<int64_t>(INT_MAX)) {
+            APASS_LOG_ERROR_F(Elements::Config,
+                              "Invalid merge count for key '%s' in cube_l1_reuse_setting: value=%ld, please set "
+                              "value not exceeding the INT_MAX %d.",
+                              ConfigKeyToStr(key).c_str(), value, INT_MAX);
+            return FAILED;
+        }
         int64_t side = value / L1_REUSE_SIDE_BASE;
         int64_t count = value % L1_REUSE_SIDE_BASE;
         countMap[key] = count;
@@ -93,6 +107,7 @@ static void DecodeL1ReuseSide(const std::map<K, int64_t>& raw, std::map<K, int64
             sideMap[key] = side;
         }
     }
+    return SUCCESS;
 }
 
 inline std::vector<uint64_t> GetGMInputFeature(const Operation& op)
@@ -441,9 +456,10 @@ Status L1CopyInReuseRunner::ApplyByFuncConfig(int currentFuncMagic,
 {
     auto defaultIt = configMapByFunc.find(FUNC_HASH_ORDER_DEFAULT_KEY);
     if (defaultIt != configMapByFunc.end()) {
-        if (defaultIt->second < 1) {
-            APASS_LOG_ERROR_F(Elements::Config, "Invalid merge count for DEFAULT: merge count=%ld, please check.",
-                              static_cast<long>(defaultIt->second));
+        if (defaultIt->second < 1 || defaultIt->second > static_cast<int64_t>(INT_MAX)) {
+            APASS_LOG_ERROR_F(Elements::Config,
+                              "Invalid merge count for DEFAULT: merge count=%ld, please set merge count in [1, %d].",
+                              static_cast<long>(defaultIt->second), INT_MAX);
             return FAILED;
         }
         int defaultVal = static_cast<int>(defaultIt->second);
@@ -464,10 +480,11 @@ Status L1CopyInReuseRunner::ApplyByFuncConfig(int currentFuncMagic,
             continue;
         }
         if (funcMagic == currentFuncMagic) {
-            if (entry.second < 1) {
+            if (entry.second < 1 || entry.second > static_cast<int64_t>(INT_MAX)) {
                 APASS_LOG_ERROR_F(Elements::Config,
-                                  "Invalid merge count for func hashOrder %s: merge count=%ld, please check.",
-                                  entry.first.c_str(), entry.second);
+                                  "Invalid merge count for func hashOrder %s: merge count=%ld, please set merge "
+                                  "count in [1, %d].",
+                                  entry.first.c_str(), entry.second, INT_MAX);
                 return FAILED;
             }
             resultMap[localOrder] = static_cast<int>(entry.second);
@@ -482,10 +499,11 @@ Status L1CopyInReuseRunner::ApplyGlobalConfig(const std::map<int64_t, int64_t>& 
     auto defaultEntry = configMap.find(-1);
     int defaultValue = -1;
     if (defaultEntry != configMap.end()) {
-        if (defaultEntry->second < 1) {
+        if (defaultEntry->second < 1 || defaultEntry->second > static_cast<int64_t>(INT_MAX)) {
             APASS_LOG_ERROR_F(Elements::Config,
-                              "Invalid default merge count for %s: Default merge count=%ld, please check.",
-                              configName.c_str(), static_cast<long>(defaultEntry->second));
+                              "Invalid default merge count for %s: Default merge count=%ld, please set merge count "
+                              "in [1, %d].",
+                              configName.c_str(), static_cast<long>(defaultEntry->second), INT_MAX);
             return FAILED;
         }
         defaultValue = defaultEntry->second;
@@ -512,9 +530,11 @@ Status L1CopyInReuseRunner::ApplyGlobalConfig(const std::map<int64_t, int64_t>& 
                              configName.c_str());
             continue;
         }
-        if (entry.second < 1) {
-            APASS_LOG_ERROR_F(Elements::Config, "Invalid merge count for hashOrder %d: merge count=%ld, please check.",
-                              hashOrderKey, static_cast<long>(entry.second));
+        if (entry.second < 1 || entry.second > static_cast<int64_t>(INT_MAX)) {
+            APASS_LOG_ERROR_F(Elements::Config,
+                              "Invalid merge count for hashOrder %d: merge count=%ld, please set merge count in "
+                              "[1, %d].",
+                              hashOrderKey, static_cast<long>(entry.second), INT_MAX);
             return FAILED;
         }
         resultMap[hashOrderKey] = static_cast<int>(entry.second);
@@ -847,6 +867,13 @@ Status L1CopyInReuseRunner::CollectL1ReuseLabelOverrides(const OperationsViewer&
 {
     auto labelToColors = BuildLabelToColorsMap(opOriList);
     for (const auto& [label, mergeNum] : labelMap) {
+        if (mergeNum < 1 || mergeNum > static_cast<int64_t>(INT_MAX)) {
+            APASS_LOG_ERROR_F(Elements::Config,
+                              "Invalid merge count for semantic label '%s' in cube_l1_reuse_setting: merge count=%ld, "
+                              "please set merge count in [1, %d].",
+                              label.c_str(), static_cast<long>(mergeNum), INT_MAX);
+            return FAILED;
+        }
         auto it = labelToColors.find(label);
         if (it == labelToColors.end()) {
             APASS_LOG_WARN_F(
@@ -908,6 +935,13 @@ Status L1CopyInReuseRunner::CollectCubeNBufferLabelOverrides(const OperationsVie
 {
     auto labelToColors = BuildLabelToColorsMap(opOriList);
     for (const auto& [label, mergeNum] : numDBMapByLabel_) {
+        if (mergeNum < 1 || mergeNum > static_cast<int64_t>(INT_MAX)) {
+            APASS_LOG_ERROR_F(Elements::Config,
+                              "Invalid merge count for semantic label '%s' in cube_nbuffer_setting: merge count=%ld, "
+                              "please set merge count in [1, %d].",
+                              label.c_str(), static_cast<long>(mergeNum), INT_MAX);
+            return FAILED;
+        }
         auto it = labelToColors.find(label);
         if (it == labelToColors.end()) {
             APASS_LOG_WARN_F(
@@ -1032,18 +1066,27 @@ void L1CopyInReuseRunner::CubeMergeProcess(std::vector<std::vector<int>>& colorN
     }
 }
 
-void L1CopyInReuseRunner::ConfigureRunSettings(Function& func)
+Status L1CopyInReuseRunner::ConfigureRunSettings(Function& func)
 {
     mgCopyInUpperBound_ = func.paramConfigs_.sgMgCopyInUpperBound;
-    DecodeL1ReuseSide(func.paramConfigs_.cubeL1ReuseSetting, numLRMap_, numLRSideMap_);
-    DecodeL1ReuseSide(func.paramConfigs_.cubeL1ReuseSettingByFunc, numLRMapByFunc_, numLRSideMapByFunc_);
-    DecodeL1ReuseSide(func.paramConfigs_.cubeL1ReuseSettingByLabel, numLRMapByLabel_, numLRSideMapByLabel_);
+    if (DecodeL1ReuseSide(func.paramConfigs_.cubeL1ReuseSetting, numLRMap_, numLRSideMap_) == FAILED) {
+        return FAILED;
+    }
+    if (DecodeL1ReuseSide(func.paramConfigs_.cubeL1ReuseSettingByFunc, numLRMapByFunc_, numLRSideMapByFunc_) ==
+        FAILED) {
+        return FAILED;
+    }
+    if (DecodeL1ReuseSide(func.paramConfigs_.cubeL1ReuseSettingByLabel, numLRMapByLabel_, numLRSideMapByLabel_) ==
+        FAILED) {
+        return FAILED;
+    }
     numDBMap_ = func.paramConfigs_.cubeNBufferSetting;
     numDBMapByFunc_ = func.paramConfigs_.cubeNBufferSettingByFunc;
     numDBMapByLabel_ = func.paramConfigs_.cubeNBufferSettingByLabel;
     L1ReuseMode_ = GetModeBySetting(numLRMap_, numLRMapByFunc_);
     cubeNBufferMode_ = GetModeBySetting(numDBMap_, numDBMapByFunc_);
     APASS_LOG_INFO_F(Elements::Operation, "Param Setting mgCopyInUpperBound %d.", mgCopyInUpperBound_);
+    return SUCCESS;
 }
 
 void L1CopyInReuseRunner::LogL1ReuseHashOverview(const Function& func) const
@@ -1119,7 +1162,10 @@ Status L1CopyInReuseRunner::Run(Function& func, int color, std::vector<std::vect
     GetColorHash(func, opOriList, hashTileOp, hashColor, colorNode);
     LogL1ReuseHashOverview(func);
     auto colorCopyIn = GetCopyIn(opOriList, color, colorNode);
-    ConfigureRunSettings(func);
+    if (ConfigureRunSettings(func) == FAILED) {
+        APASS_LOG_ERROR_F(Elements::Config, "ConfigureRunSettings failed; Please check the merge count config.");
+        return FAILED;
+    }
     if (RunL1ReusePhase(func, color, colorNode, colorCopyIn, hashColor, opOriList) == FAILED) {
         return FAILED;
     }

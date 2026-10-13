@@ -116,7 +116,7 @@ private:
                              const std::string& configName);
     void HashUpdate(Function& func, int color, const std::vector<uint64_t>& hashColor, OperationsViewer& opOriList,
                     std::vector<std::vector<int>>& colorNode);
-    void ConfigureRunSettings(Function& func);
+    Status ConfigureRunSettings(Function& func);
     void LogL1ReuseHashOverview(const Function& func) const;
     Status RunL1ReusePhase(Function& func, int color, std::vector<std::vector<int>>& colorNode,
                            std::vector<int>& colorCopyIn, std::vector<uint64_t>& hashColor,

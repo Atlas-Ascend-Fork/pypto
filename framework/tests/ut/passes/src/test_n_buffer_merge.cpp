@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 #include "symbolic_scalar_test_utils.h"
+#include <climits>
 #include "interface/function/function.h"
 #include "tilefwk/tilefwk.h"
 #include "tilefwk/platform.h"
@@ -249,6 +250,11 @@ TEST_F(NBufferMergeTest, TestMode2AndVecNBufferSettingValueMoreThanMaxValue)
     EXPECT_EQ(TestNBufferMergeWithDifferentVecBufferSetting({{-1, 4}, {1, INT64_MAX}}), FAILED);
 }
 
+TEST_F(NBufferMergeTest, TestMode2AndVecNBufferSettingDefaultValueLessThanMinValue)
+{
+    EXPECT_EQ(TestNBufferMergeWithDifferentVecBufferSetting({{-1, 0}}), FAILED);
+}
+
 TEST_F(NBufferMergeTest, TestMode2AndNoDefaultValue)
 {
     EXPECT_EQ(TestNBufferMergeWithDifferentVecBufferSetting({{0, 2}}), SUCCESS);
@@ -357,6 +363,36 @@ TEST_F(NBufferMergeTest, TestSemanticLabelSettingNotFound)
     NBufferMerge NBM;
     EXPECT_EQ(NBM.RunOnFunction(*function), SUCCESS);
 }
+
+// Semantic-label merge count values must be in [1, INT_MAX]:
+// 0 / negative / >INT_MAX values are rejected at compile time.
+class NBufferMergeLabelMergeCountTest : public NBufferMergeTest, public testing::WithParamInterface<int64_t> {};
+
+TEST_P(NBufferMergeLabelMergeCountTest, TestSemanticLabelInvalidMergeCount)
+{
+    std::vector<int64_t> tileShape{16, 16};
+    const int mgVecParallelLb = 3;
+    const int subGraphNum = 4;
+    ComputationalGraphBuilder G;
+    Function* function = BuildFunctionWithSubgraphs(G, tileShape, subGraphNum);
+
+    auto vecLabel = std::make_shared<SemanticLabel>("VecLabel", __FILE__, __LINE__);
+    for (int i = 1; i <= 2; i++) {
+        std::string strID = std::to_string(i);
+        G.GetOp("ABS_" + strID)->SetSemanticLabel(vecLabel);
+        G.GetOp("EXP_" + strID)->SetSemanticLabel(vecLabel);
+    }
+
+    function->paramConfigs_.vecNBufferSetting = {{-1, 4}};
+    function->paramConfigs_.vecNBufferSettingByLabel = {{"VecLabel", GetParam()}};
+    function->paramConfigs_.mgVecParallelLb = mgVecParallelLb;
+    function->SetTotalSubGraphCount(subGraphNum + 1);
+    NBufferMerge NBM;
+    EXPECT_EQ(NBM.RunOnFunction(*function), FAILED);
+}
+
+INSTANTIATE_TEST_SUITE_P(SemanticLabelInvalidMergeCount, NBufferMergeLabelMergeCountTest,
+                         testing::Values(0, static_cast<int64_t>(INT_MAX) + 1));
 
 // ===== ByFunc Integration Tests =====
 TEST_F(NBufferMergeTest, ByFuncMergeDefaultTwo)

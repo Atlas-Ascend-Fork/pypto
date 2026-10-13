@@ -665,6 +665,13 @@ Status NBufferMerge::CollectSemanticLabelOverrides(const OperationsViewer& opOri
     // hashMergeNum is keyed by colorHashValue in auto modes, by hashOrder in manual modes.
     bool useHashValueAsKey = (vecNBuffermode_ == autoMerge || vecNBuffermode_ == autoMulityInOutMerge);
     for (const auto& [label, mergeNum] : vecNBufferSettingByLabel_) {
+        if (mergeNum < 1 || mergeNum > static_cast<int64_t>(INT_MAX)) {
+            APASS_LOG_ERROR_F(Elements::Config,
+                              "Invalid merge count for semantic label '%s' in vec_nbuffer_setting: merge count=%ld, "
+                              "please set merge count in [1, %d].",
+                              label.c_str(), static_cast<long>(mergeNum), INT_MAX);
+            return FAILED;
+        }
         auto it = labelToColors.find(label);
         if (it == labelToColors.end()) {
             APASS_LOG_WARN_F(
@@ -833,8 +840,15 @@ Status NBufferMerge::CheckVecNBufferSettingForManualMerge()
         return FAILED;
     }
     for (const auto& pair : vecNBufferSetting_) {
+        if (pair.second <= 0 || pair.second > static_cast<int64_t>(INT_MAX)) {
+            APASS_LOG_ERROR_F(Elements::Config,
+                              "The value %ld of the key %ld in VEC_NBUFFER_SETTING is incorrect; Please set values of "
+                              "VEC_NBUFFER_SETTING more than 0 and not exceeding the INT_MAX %d.",
+                              pair.second, pair.first, INT_MAX);
+            return FAILED;
+        }
         if (pair.first == VEC_NBUFFER_SETTING_DEFAULT_MERGE_NUM_KEY) {
-            continue;
+            continue; // 默认键无 hashOrder，仅跳过存在性检查，不跳过取值检查
         }
         bool found = false;
         for (const auto& [hashVal, order] : hashOrder_) {
@@ -849,13 +863,6 @@ Status NBufferMerge::CheckVecNBufferSettingForManualMerge()
                 Elements::Config,
                 "The VEC_NBUFFER_SETTING key %ld is invalid; This hashOrder does not exist in current graph.",
                 pair.first);
-        }
-        if (pair.second <= 0 || pair.second > static_cast<int64_t>(INT_MAX)) {
-            APASS_LOG_ERROR_F(Elements::Config,
-                              "The value %ld of the key %ld in VEC_NBUFFER_SETTING is incorrect; Please set values of "
-                              "VEC_NBUFFER_SETTING more than 0 and not exceeding the INT_MAX %d.",
-                              pair.second, pair.first, INT_MAX);
-            return FAILED;
         }
     }
     return SUCCESS;
