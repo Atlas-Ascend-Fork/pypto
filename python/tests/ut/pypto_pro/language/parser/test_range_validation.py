@@ -383,6 +383,16 @@ def test_no_args_still_rejected():
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
+def test_more_than_three_args_rejected():
+    @pl.jit(auto_mutex=False)
+    def kernel(x: pl.Tensor[[64], pl.DT_FP32]):
+        for _ in pl.range(0, 10, 1, 2):  # type: ignore[call-arg]
+            pl.system.bar_all()
+
+    with pytest.raises(InvalidArgument, match=r"accepts at most 3 arguments, got 4"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
 def test_keyword_args_still_rejected():
     @pl.jit(auto_mutex=False)
     def kernel(x: pl.Tensor[[64], pl.DT_FP32]):

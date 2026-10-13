@@ -1039,6 +1039,13 @@ class ControlFlowParserMixin:
                 hint="Provide at least the stop value: pl.range(10) or pl.range(0, 10)",
             )
 
+        if len(call.args) > 3:
+            raise InvalidArgument(
+                f"pl.range() accepts at most 3 arguments, got {len(call.args)}",
+                span=self.span_tracker.get_span(call),
+                hint="Use: pl.range(stop), pl.range(start, stop), or pl.range(start, stop, step)",
+            )
+
         start = 0
         step = 1
 
