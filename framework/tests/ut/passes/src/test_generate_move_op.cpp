@@ -503,7 +503,7 @@ TEST_F(GenerateMoveOpPassTest, L1TOL0)
     ssBefore << "Before_GenerateMoveOp";
 
     // Call the pass
-    ConvertInserter inserter;
+    ConvertInserter inserter(AssignMemoryTypeMode::SLICE_CONTRACT);
     inserter.CreateMoveOpForConvert(convert_op1);
     inserter.CreateMoveOpForConvert(convert_op2);
     GenerateMoveOp generateMoveOp;

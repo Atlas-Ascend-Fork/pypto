@@ -27,6 +27,7 @@
 #include "tilefwk/tilefwk.h"
 #include "tilefwk/platform.h"
 #include "interface/inner/tilefwk.h"
+#include "passes/tile_graph_pass/data_path/assign_memory_type_mode.h"
 
 namespace npu {
 namespace tile_fwk {
@@ -44,8 +45,10 @@ struct ConvertOpInfo {
 
 class ConvertInserter {
 public:
-    ConvertInserter() = default;
+    explicit ConvertInserter(AssignMemoryTypeMode mode) : mode_(mode) {}
     ~ConvertInserter() = default;
+
+    AssignMemoryTypeMode GetMode() const { return mode_; }
 
     std::vector<ConvertOpInfo> converts;
     std::unordered_map<int, std::shared_ptr<RawTensor>> oldRawToNewRaw;
@@ -115,8 +118,8 @@ public:
     bool SkipOperand(const std::shared_ptr<LogicalTensor>& oOperand,
                      const std::unordered_set<int>& visitedTensor) const;
 
-    // 检查tensor生产者是否都是contract
-    bool IsAllProducerContract(const std::shared_ptr<LogicalTensor>& oOperand) const;
+    // 检查tensor生产者是否都是当前模式的搬出操作
+    bool IsAllProducerMoveOut(const std::shared_ptr<LogicalTensor>& oOperand) const;
 
     // 检查tensor所有的消费者是否都是有效的move-like消费者
     bool IsAllMoveConsumersValid(Function& function, const std::set<Operation*, OpMagicComparator>& consumers) const;
@@ -136,11 +139,11 @@ public:
     std::shared_ptr<LogicalTensor> CreateTensorLikeForConvert(const std::shared_ptr<LogicalTensor>& input,
                                                               MemoryType outputMemoryType) const;
 
-    // 构造convert转slice时使用的ViewOpAttribute
-    std::shared_ptr<ViewOpAttribute> BuildSliceAttrForConvert(const Operation& op, MemoryType to) const;
+    // 构造convert转搬入操作时使用的ViewOpAttribute
+    std::shared_ptr<ViewOpAttribute> BuildMoveInAttrForConvert(const Operation& op, MemoryType to) const;
 
-    // 构造convert转contract时使用的AssembleOpAttribute
-    std::shared_ptr<AssembleOpAttribute> BuildContractAttrForConvert(const Operation& op, MemoryType from) const;
+    // 构造convert转搬出操作时使用的AssembleOpAttribute
+    std::shared_ptr<AssembleOpAttribute> BuildMoveOutAttrForConvert(const Operation& op, MemoryType from) const;
 
     // graph重连
     void GraphReconnect(const std::shared_ptr<LogicalTensor>& oOperand, std::shared_ptr<LogicalTensor> output,
@@ -176,6 +179,9 @@ public:
     // 构造转换路径
     Status ProcessConvertPath(const Operation& op, const std::shared_ptr<LogicalTensor>& oOperand,
                               MemoryType requiredMemoryType, std::vector<MemoryType>& paths);
+
+private:
+    AssignMemoryTypeMode mode_;
 };
 static constexpr int MATMUL_DIM_NUM = 2;
 static constexpr int L0C2L1_DIM1_SHAPE_RESTICT = 16; // l0c2l1要求输入的外轴（第一轴）元素数量必须是16的倍数

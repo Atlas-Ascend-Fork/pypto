@@ -76,6 +76,10 @@ private:
 
     bool HasParallelDifferentConsumerRequirement(const LogicalTensorPtr& tensor, MemoryType targetType) const;
 
+    bool HasParallelDifferentConsumerRequirementStandard(const LogicalTensorPtr& tensor, MemoryType targetType) const;
+
+    bool HasParallelDifferentConsumerRequirementLegacy(const LogicalTensorPtr& tensor, MemoryType targetType) const;
+
     bool HasDifferentConsumerRequirement(const LogicalTensorPtr& tensor, MemoryType targetType) const;
 
     Status InferAssembleMemoryType(Function& function, Operation& operation,
@@ -114,8 +118,8 @@ private:
 
     Status InferViewTypeMemoryType(Operation& operation);
 
-    Status TryInferViewTypeFromProducerSlice(Operation& operation, const LogicalTensorPtr& input,
-                                             const LogicalTensorPtr& output, MemoryType targetType, bool& handled);
+    Status TryInferViewTypeFromProducerMoveIn(Operation& operation, const LogicalTensorPtr& input,
+                                              const LogicalTensorPtr& output, MemoryType targetType, bool& handled);
 
     Status CanKeepContractProducersInUb(const LogicalTensorPtr& tensor, bool& canKeep);
 
@@ -132,7 +136,11 @@ private:
 
     Status ApplyOversizedLocalBufferFallback(Operation& operation);
 
-    Status DowngradeOversizedSliceInputRequirement(Operation& operation);
+    Status ApplyOversizedLocalBufferFallbackStandard(Operation& operation);
+
+    Status ApplyOversizedLocalBufferFallbackLegacy(Operation& operation);
+
+    Status DowngradeOversizedMoveInInputRequirement(Operation& operation);
 
     Status ApplyPlatformPathUpgradeRules(Function& function);
 
@@ -150,13 +158,13 @@ private:
 
     Status MarkA5SimtGatherElement(Function& function);
 
-    Status FallbackSameMemoryMoveOps(Function& function);
+    Status NormalizeViewAssembleOpcodes(Function& function);
 
     Status ResolveUnalignedUbSlices(Function& function);
 
     Status ProcessL0C2L1SmallToLarge(Function& function);
     Status ProcessL0C2L1LargeToSmall(Function& function);
-    bool CheckConsumerSliceShapeMultiple(const LogicalTensorPtr& output, const LogicalTensorPtr& input);
+    bool CheckConsumerMoveInShapeMultiple(const LogicalTensorPtr& output, const LogicalTensorPtr& input);
     bool AreAllSliceConsumerShapesPreserved(const LogicalTensorPtr& tensor) const;
     Status ProcessL0C2UBSmallToLarge(Function& function);
     Status ProcessL0C2UBLargeToSmall(Function& function);
@@ -186,8 +194,61 @@ private:
     size_t CalcNzStorageSize(const LogicalTensorPtr& tensor) const;
     size_t CalcNzAlignedSize(const LogicalTensorPtr& tensor) const;
     Status CalcLineOffset(const Shape& shape, const Offset& offset, int64_t& lineOffset) const;
-    Status RunOnFunctionLegacy(Function& function);
-    ConvertInserter inserter;
+
+    Status AssignConfirmedMemoryTypesLegacy(Function& function);
+    Status AssignViewAttrMemoryTypeLegacy(Operation& operation);
+    Status AssignAssembleAttrMemoryTypeLegacy(Operation& operation);
+    Status InferUncertainMemoryTypesLegacy(Function& function);
+    Status InferViewMemoryTypeLegacy(Operation& operation);
+    Status InferViewOutputFromRequirement(const LogicalTensorPtr& output, MemoryType& outputOriginal);
+    Status InferViewKnownInputOutput(Operation& operation, const LogicalTensorPtr& input, MemoryType inputOriginal,
+                                     MemoryType outputOriginal);
+    Status InferViewKnownInputUnknownOutput(Operation& operation, const LogicalTensorPtr& input,
+                                            const LogicalTensorPtr& output, MemoryType inputOriginal);
+    bool TryHandleUnalignedView(Operation& operation, const LogicalTensorPtr& input, MemoryType inputOriginal,
+                                MemoryType outputOriginal);
+    bool IsViewFromOffsetAligned(Operation& operation) const;
+    bool HasDynOffsetViewAndReshape(Operation& operation, const LogicalTensorPtr& output) const;
+    bool HasTransDataConsumer(const LogicalTensorPtr& tensor) const;
+    bool HasPermuteProducerAndTransDataDownstream(const LogicalTensorPtr& input, const LogicalTensorPtr& output) const;
+    Status InferAssembleMemoryTypeLegacy(Function& function, Operation& operation,
+                                         std::unordered_set<LogicalTensorPtr>& inferredAssembleOutputs);
+    Status InferAssembleMemoryTypeLegacy(Operation& operation);
+    Status AssignAssembleToOutCastRequirement(Operation& operation);
+    Status InferAssembleOutputMemoryType(const LogicalTensorPtr& output);
+    bool HasAssembleInputOutputElementCountMismatch(const LogicalTensorPtr& output) const;
+    Status TryInferAssembleOutputByTempOriginal(const LogicalTensorPtr& output, MemoryType tempOriginal, bool& handled);
+    bool AreAssembleDirectPathsSupported(const LogicalTensorPtr& output, MemoryType targetOriginal);
+    Status ApplyAssembleDirectOutputOriginal(const LogicalTensorPtr& output, MemoryType targetOriginal);
+    Status SyncAssembleInputRequirementAndAttr(Operation& operation, MemoryType fallbackType,
+                                               const std::string& reason);
+    Status ApplyAssembleDdrOutputWithInputOriginals(const LogicalTensorPtr& output, const std::string& originalReason,
+                                                    const std::string& inputReason);
+    Status FillAssembleInputRequirementsFromOriginal(const LogicalTensorPtr& output, const std::string& reason);
+    Status TryInferAssembleOutputByProducerCandidate(const LogicalTensorPtr& output, bool& handled);
+    MemoryType InferAssembleProducerCandidate(const LogicalTensorPtr& output, bool& hasConflict) const;
+    Status ApplyAssembleProducerCandidate(const LogicalTensorPtr& output, MemoryType producerCandidate);
+    MemoryType InferAssembleTempOriginal(const LogicalTensorPtr& output) const;
+    bool AreAllConsumersL1Views(const LogicalTensorPtr& output) const;
+    bool IsAssembleToOffsetAlignedLegacy(Operation& operation, const LogicalTensorPtr& output);
+    Status InferReshapeMemoryTypeLegacy(Operation& operation);
+    bool KeepSplitReshapeUbLegacy(Operation& operation, const LogicalTensorPtr& input, const LogicalTensorPtr& output);
+    Status ApplyPlatformPathFallbackRules(Function& function);
+    bool AreAllConsumerRequirements(const LogicalTensorPtr& tensor, MemoryType memoryType) const;
+    void DowngradeConsumerRequirements(const LogicalTensorPtr& tensor, MemoryType fromType);
+    void ProcessL0C2L1SmallToLargeLegacy(Function& function);
+    void ProcessL0C2L1LargeToSmallLegacy(Function& function);
+    void ProcessL0C2UBSmallToLargeLegacy(Function& function);
+    void ProcessL0C2UBLargeToSmallLegacy(Function& function);
+    void ProcessUB2L1SmallToLargeLegacy(Function& function);
+    void ProcessUB2L1LargeToSmallLegacy(Function& function);
+    void ProcessShapeTransportFallback(Function& function);
+    bool IsAllowedTransport(const LogicalTensorPtr& prodOut, const LogicalTensorPtr& consIn) const;
+    size_t CalcNZTensorSizeLegacy(const LogicalTensorPtr& tensor) const;
+    int64_t CalcLineOffsetLegacy(const Shape& shape, const Offset& offset) const;
+    bool IsSliceMode() const { return mode_ == AssignMemoryTypeMode::SLICE_CONTRACT; }
+    AssignMemoryTypeMode mode_ = AssignMemoryTypeMode::SLICE_CONTRACT;
+    ConvertInserter inserter{mode_};
     AssignMemoryTypeChecker checker;
 };
 static constexpr double UB_THRESHOLD_ASSEMBLE = 0.35;

@@ -335,11 +335,17 @@ Status AssignMemoryType::ProcessL0C2L1LargeToSmall(Function& function)
     return SUCCESS;
 }
 
-bool AssignMemoryType::CheckConsumerSliceShapeMultiple(const LogicalTensorPtr& output, const LogicalTensorPtr& input)
+bool AssignMemoryType::CheckConsumerMoveInShapeMultiple(const LogicalTensorPtr& output, const LogicalTensorPtr& input)
 {
     for (auto& consumerOp : output->GetConsumers()) {
-        if (consumerOp->GetOpcode() == Opcode::OP_SLICE &&
-            !MemoryPathUtils::IsDimMultiple(consumerOp->GetOOperands().front()->GetShape(), input->GetShape())) {
+        if (!IsModeMoveIn(mode_, consumerOp->GetOpcode())) {
+            continue;
+        }
+        if (!IsSliceMode()) {
+            // VIEW is defined as a single-input/single-output operation.
+            ASSERT(consumerOp->GetOOperands().size() == 1) << "VIEW should have 1 output";
+        }
+        if (!MemoryPathUtils::IsDimMultiple(consumerOp->GetOOperands().front()->GetShape(), input->GetShape())) {
             return false;
         }
     }
@@ -410,12 +416,13 @@ bool AssignMemoryType::ShouldSkipUB2L1SmallToLarge(const LogicalTensorPtr& iOper
 {
     const size_t UB_LIMIT = static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) *
                                                 UB_THRESHOLD_NORMAL);
-    if (CalcNZTensorSize(iOperand) > UB_LIMIT) {
+    size_t tensorSize = IsSliceMode() ? CalcNZTensorSize(iOperand) : CalcNZTensorSizeLegacy(iOperand);
+    if (tensorSize > UB_LIMIT) {
         return true;
     }
     // 检查 consumer slice 是否有 copy_in_mode=0 属性
     for (auto& consumerOp : oOperand->GetConsumers()) {
-        if (consumerOp->GetOpcode() == Opcode::OP_SLICE) {
+        if (IsModeMoveIn(mode_, consumerOp->GetOpcode())) {
             int64_t copyInModeValue = 0;
             if (consumerOp->GetAttr<int64_t>("op_attr_copy_in_mode", copyInModeValue) && copyInModeValue == 0) {
                 return true;
@@ -665,7 +672,7 @@ Status AssignMemoryType::TryUpgradeSliceContractPath(Operation& sliceOp, MemoryT
         }
         if (HasParallelDifferentConsumerRequirement(input, targetType) ||
             !MemoryPathUtils::IsDimMultiple(middle->GetShape(), input->GetShape()) ||
-            !CheckConsumerSliceShapeMultiple(middle, input) ||
+            !CheckConsumerMoveInShapeMultiple(middle, input) ||
             !MemoryPathUtils::IsDimMultiple(target->GetShape(), input->GetShape())) {
             return SUCCESS;
         }

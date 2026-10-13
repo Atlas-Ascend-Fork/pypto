@@ -21,7 +21,6 @@
 #include <map>
 #include <set>
 #include <string>
-#include <type_traits>
 #include <unordered_set>
 #include <vector>
 
@@ -32,12 +31,13 @@
 #include "interface/tensor/logical_tensor.h"
 #include "passes/pass_log/pass_log.h"
 #include "passes/pass_utils/checker_utils.h"
+#include "passes/tile_graph_pass/data_path/assign_memory_type_mode.h"
 #include "tilefwk/data_type.h"
 #include "tilefwk/tilefwk.h"
 
-// 本头文件内的公共函数从 AssignMemoryType 与 legacy::AssignMemoryType 两版本中完全一致的实现提取而来。
-// APASS_LOG_* 宏展开依赖 MODULE_NAME：当前包含本头文件的 4 个 TU（assign_memory_type*.cpp、
-// convert_op_inserter*.cpp）均在包含本头文件之后定义了相同的 MODULE_NAME "AssignMemoryType"，
+// 本头文件内的公共函数从 AssignMemoryType 的两种模式中完全一致的实现提取而来。
+// APASS_LOG_* 宏展开依赖 MODULE_NAME：当前包含本头文件的 3 个 TU（assign_memory_type*.cpp、
+// convert_op_inserter.cpp）均在包含本头文件之后定义了相同的 MODULE_NAME "AssignMemoryType"，
 // 此处兜底定义保证宏展开结果与拆分前完全一致，日志输出不变。
 #ifndef MODULE_NAME
 #define MODULE_NAME "AssignMemoryType"
@@ -88,7 +88,7 @@ public:
 
     // ==================== 以下为 AssignMemoryType（含 legacy）两版本完全一致的公共实现 ====================
     // 非模板函数定义在 memory_path_utils.cpp；依赖 inserter 的函数以模板形式内联定义，
-    // InserterT 分别为 ConvertInserter / legacy::ConvertInserter（二者被依赖方法实现完全一致）。
+    // InserterT 当前为两种模式下共用的 ConvertInserter。
 
     static Status GetFirstInputOutputIfOpcode(Operation& operation, Opcode expectedOpcode, const std::string& action,
                                               LogicalTensorPtr& input, LogicalTensorPtr& output, bool& shouldHandle);
@@ -270,7 +270,7 @@ public:
         auto self = operation.iOperand[0];
         auto output = operation.oOperand[0];
         MemoryType memoryType = self->GetMemoryTypeOriginal();
-        if constexpr (std::is_same_v<InserterT, ConvertInserter>) {
+        if (inserter.GetMode() == AssignMemoryTypeMode::SLICE_CONTRACT) {
             // A slice directly from an input remains in GM while Scatter overwrites it.
             auto scatterSliceFromIncast = [&]() {
                 if (self->GetConsumers().empty()) {
@@ -643,7 +643,7 @@ public:
     }
 
 private:
-    // 与 assign_memory_type.h / assign_memory_type_legacy.h 中的同名常量保持一致（拆分副本）
+    // 与 assign_memory_type.h 中的同名常量保持一致（拆分副本）
     static constexpr double UB_THRESHOLD_ASSEMBLE = 0.35;
     static constexpr double UB_THRESHOLD_NORMAL = 1.0;
     static constexpr double L1_THRESHOLD = 0.5;

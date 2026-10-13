@@ -3735,4 +3735,81 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBShapeTransportEndToEndByFunctionMacro)
     Platform::Instance().ReloadMemoryPaths("2201");
 }
 
+// slice_contract 模式：incast(DDR) --VIEW(to=UB)--> EXP --VIEW(部分读取)--> outcast(DDR)。
+// 第二个 VIEW 输出直连 outcast，同时承担"搬出"与"部分读取"两种语义，违反 VIEW 语义，
+// FixViewAssembleSemanticMismatch 给其输入追加 DDR requirement 制造 UB vs DDR 冲突，
+// 最终拆分为 EXP 后插入的 CONTRACT（UB→DDR 搬出）+ 原 VIEW（DDR→DDR 部分读取）。
+// 第一个 VIEW 输入 DDR 输出 UB，表达搬入语义，被 NormalizeViewAssembleOpcodes 归一化为 SLICE。
+TEST_F(AssignMemoryTypeTest, ViewPartialReadToOutcastSplitsViewAndContract)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    auto function = std::make_shared<Function>(Program::GetInstance(), "ViewPartialReadToOutcastSplitsViewAndContract",
+                                               "ViewPartialReadToOutcastSplitsViewAndContract", nullptr);
+    ASSERT_NE(function, nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("ViewPartialReadToOutcastSplitsViewAndContract", function);
+
+    const Shape fullShape{NUM_64, NUM_64};
+    const Shape partialShape{NUM_32, NUM_64};
+    const auto fullValidShape = CreateTestConstIntVector(fullShape);
+    const auto partialValidShape = CreateTestConstIntVector(partialShape);
+    IRBuilder builder;
+    auto incast = builder.CreateTensorVar(DT_FP16, fullShape, fullValidShape);
+    auto viewIn = builder.CreateTensorVar(DT_FP16, fullShape, fullValidShape);
+    auto expOut = builder.CreateTensorVar(DT_FP16, fullShape, fullValidShape);
+    auto outcast = builder.CreateTensorVar(DT_FP16, partialShape, partialValidShape);
+
+    auto& viewInOp = builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {incast}, {viewIn});
+    viewInOp.SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, MemoryType::MEM_UB));
+    builder.CreateTensorOpStmt(*function, Opcode::OP_EXP, {viewIn}, {expOut});
+    auto& viewOutOp = builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {expOut}, {outcast});
+    viewOutOp.SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, MemoryType::MEM_UB));
+
+    function->inCasts_ = {incast};
+    function->outCasts_ = {outcast};
+
+    AssignMemoryType assignMemoryType;
+    ASSERT_EQ(assignMemoryType.RunOnFunction(*function), SUCCESS);
+    ASSERT_EQ(assignMemoryType.PostCheck(*function), SUCCESS);
+
+    int sliceNum = 0;
+    int contractNum = 0;
+    int viewNum = 0;
+    Operation* contractOp = nullptr;
+    for (const auto& op : function->Operations()) {
+        std::cout << op.GetOpcodeStr() << " " << op.GetOpMagic() << ":";
+        for (const auto& input : op.GetIOperands()) {
+            std::cout << " [i " << input->GetMagic() << " " << BriefMemoryTypeToString(input->GetMemoryTypeOriginal())
+                      << "]";
+        }
+        for (const auto& output : op.GetOOperands()) {
+            std::cout << " [o " << output->GetMagic() << " " << BriefMemoryTypeToString(output->GetMemoryTypeOriginal())
+                      << "]";
+        }
+        std::cout << std::endl;
+        switch (op.GetOpcode()) {
+            case Opcode::OP_SLICE:
+                sliceNum++;
+                break;
+            case Opcode::OP_CONTRACT:
+                contractNum++;
+                contractOp = const_cast<Operation*>(&op);
+                break;
+            case Opcode::OP_VIEW:
+                viewNum++;
+                break;
+            default:
+                break;
+        }
+    }
+    EXPECT_EQ(sliceNum, 1) << "First VIEW should be normalized to SLICE because it expresses move-in (DDR to UB).";
+    EXPECT_EQ(contractNum, 1) << "A CONTRACT should be inserted after EXP to move data out to DDR.";
+    EXPECT_EQ(viewNum, 1) << "Second VIEW should remain a VIEW that partially reads within DDR.";
+    ASSERT_NE(contractOp, nullptr);
+    EXPECT_EQ(contractOp->GetIOperands().front()->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(contractOp->GetOOperands().front()->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(expOut->GetConsumers().size(), 1);
+    EXPECT_EQ((*expOut->GetConsumers().begin())->GetOpcode(), Opcode::OP_CONTRACT);
+    EXPECT_EQ(outcast->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+}
+
 } // namespace npu

@@ -14,7 +14,6 @@
  */
 
 #include "assign_memory_type.h"
-#include "assign_memory_type_legacy.h"
 
 #include <algorithm>
 #include <set>
@@ -45,21 +44,24 @@
 namespace npu::tile_fwk {
 Status AssignMemoryType::RunOnFunction(Function& function)
 {
+    mode_ = config::EnableSlice() ? AssignMemoryTypeMode::SLICE_CONTRACT : AssignMemoryTypeMode::VIEW_ASSEMBLE;
+    inserter = ConvertInserter(mode_);
     APASS_LOG_INFO_F(Elements::Function, "===> Start AssignMemoryType.");
-    if (!config::EnableSlice()) {
-        RETURN_IF_NOT_SUCCESS(RunOnFunctionLegacy(function));
-        return MarkA5SimtGatherElement(function);
-    }
     function.SortOperations(SortOperationsMode::LIGHTWEIGHT);
-    RETURN_IF_NOT_SUCCESS(AssignConfirmedMemoryTypes(function));
-    RETURN_IF_NOT_SUCCESS(InferUncertainMemoryTypes(function));
+    if (IsSliceMode()) {
+        RETURN_IF_NOT_SUCCESS(AssignConfirmedMemoryTypes(function));
+        RETURN_IF_NOT_SUCCESS(InferUncertainMemoryTypes(function));
+    } else {
+        RETURN_IF_NOT_SUCCESS(AssignConfirmedMemoryTypesLegacy(function));
+        RETURN_IF_NOT_SUCCESS(InferUncertainMemoryTypesLegacy(function));
+    }
     RETURN_IF_NOT_SUCCESS(ResolveMemoryUnknowns(function));
     RETURN_IF_NOT_SUCCESS(ResolveInconsistentRawTensorMemoryTypes(function));
     RETURN_IF_NOT_SUCCESS(SyncViewAssembleMemoryAttrs(function));
     RETURN_IF_NOT_SUCCESS(FixViewAssembleSemanticMismatch(function));
     RETURN_IF_NOT_SUCCESS(ResolveUnalignedUbSlices(function));
     RETURN_IF_NOT_SUCCESS(InsertConvertOpsAndInferShape(function));
-    RETURN_IF_NOT_SUCCESS(FallbackSameMemoryMoveOps(function));
+    RETURN_IF_NOT_SUCCESS(NormalizeViewAssembleOpcodes(function));
     RETURN_IF_NOT_SUCCESS(MemoryPathUtils::SyncTensorToBe(function));
     RETURN_IF_NOT_SUCCESS(MarkA5SimtGatherElement(function));
     APASS_LOG_INFO_F(Elements::Function, "===> End AssignMemoryType.");
@@ -109,7 +111,7 @@ Status AssignMemoryType::AssignMatmulInputRequirements(Operation& operation)
             MemoryType requirement = MemoryType::MEM_DEVICE_DDR;
             if (OpChecker::check(producerOp, OpChecker::CalcTypeChecker(OpCalcType::MATMUL))) {
                 requirement = MemoryType::MEM_L0C;
-            } else if (producerOpcode == Opcode::OP_SLICE) {
+            } else if (IsModeMoveIn(mode_, producerOpcode)) {
                 auto viewOpAttribute = std::dynamic_pointer_cast<ViewOpAttribute>(producerOp->GetOpAttribute());
                 if (viewOpAttribute == nullptr) {
                     APASS_LOG_ERROR_F(Elements::Operation,
@@ -251,7 +253,7 @@ Status AssignMemoryType::AssignAssembleAttrMemoryType(Operation& operation)
     return FAILED;
 }
 
-// l0c2ub pattern: batchmatmul case: cube op -> contract(s) -> reshape op -> slice(s)/contract(s) -> vector
+// l0c2ub pattern: batchmatmul case: cube op -> move-out(s) -> reshape op -> move op(s) -> vector
 bool AssignMemoryType::IsReshapeCubeToVecL0C2UBPattern(Operation& op)
 {
     if (op.GetOpcode() != npu::tile_fwk::Opcode::OP_RESHAPE) {
@@ -269,7 +271,7 @@ bool AssignMemoryType::IsReshapeCubeToVecL0C2UBPattern(Operation& op)
     }
 
     for (auto& producer : producers) {
-        bool isProducerContract = producer->GetOpcode() == npu::tile_fwk::Opcode::OP_CONTRACT;
+        bool isProducerMoveOut = IsModeMoveOut(mode_, producer->GetOpcode());
         bool isProducerProducerAllCube = false;
 
         std::vector<bool> isProducerProducerCube;
@@ -282,13 +284,12 @@ bool AssignMemoryType::IsReshapeCubeToVecL0C2UBPattern(Operation& op)
         isProducerProducerAllCube = !isProducerProducerCube.empty() &&
                                     std::all_of(isProducerProducerCube.begin(), isProducerProducerCube.end(),
                                                 [](bool val) { return val == true; });
-        if (!isProducerContract || !isProducerProducerAllCube) {
+        if (!isProducerMoveOut || !isProducerProducerAllCube) {
             isL0C2UBPattern = false;
         }
     }
     for (auto& consumer : consumers) {
-        bool isConsumerSliceContract = consumer->GetOpcode() == npu::tile_fwk::Opcode::OP_SLICE ||
-                                       consumer->GetOpcode() == npu::tile_fwk::Opcode::OP_CONTRACT;
+        bool isConsumerMoveOp = IsModeMoveOp(mode_, consumer->GetOpcode());
         bool isConsumerConsumerAllVector = false;
 
         std::vector<bool> isConsumerConsumerVector;
@@ -300,7 +301,7 @@ bool AssignMemoryType::IsReshapeCubeToVecL0C2UBPattern(Operation& op)
         isConsumerConsumerAllVector = !isConsumerConsumerVector.empty() &&
                                       std::all_of(isConsumerConsumerVector.begin(), isConsumerConsumerVector.end(),
                                                   [](bool val) { return val == true; });
-        if (!isConsumerSliceContract || !isConsumerConsumerAllVector) {
+        if (!isConsumerMoveOp || !isConsumerConsumerAllVector) {
             isL0C2UBPattern = false;
         }
     }
@@ -343,39 +344,35 @@ bool AssignMemoryType::IsReshapeVecToCubeUB2L1ProducerPattern(
     const std::set<Operation*, LogicalTensor::CompareOp>& producers)
 {
     for (auto& producer : producers) {
-        bool isProducerDepth1SliceContract = producer->GetOpcode() == npu::tile_fwk::Opcode::OP_SLICE ||
-                                             producer->GetOpcode() == npu::tile_fwk::Opcode::OP_CONTRACT;
+        bool isProducerDepth1MoveOp = IsModeMoveOp(mode_, producer->GetOpcode());
         bool isProducerDepth2AllVector = false;
-        bool isProducerDepth2AllSliceContract = false;
+        bool isProducerDepth2AllMoveOp = false;
         bool isProducerDepth3AllVector = false;
 
         std::vector<bool> isProducerDepth2Vector;
-        std::vector<bool> isProducerDepth2SliceContract;
+        std::vector<bool> isProducerDepth2MoveOp;
         std::vector<bool> isProducerDepth3Vector;
         for (auto& producerIOperand : producer->iOperand) {
             for (auto& producerProducer : producerIOperand->GetProducers()) {
                 isProducerDepth2Vector.push_back(producerProducer->GetCoreType() == CoreType::AIV);
-                isProducerDepth2SliceContract.push_back(
-                    producerProducer->GetOpcode() == npu::tile_fwk::Opcode::OP_SLICE ||
-                    producerProducer->GetOpcode() == npu::tile_fwk::Opcode::OP_CONTRACT);
+                isProducerDepth2MoveOp.push_back(IsModeMoveOp(mode_, producerProducer->GetOpcode()));
                 MemoryPathUtils::CollectProducerAIVFlags(producerProducer, isProducerDepth3Vector);
             }
         }
         isProducerDepth2AllVector = !isProducerDepth2Vector.empty() &&
                                     std::all_of(isProducerDepth2Vector.begin(), isProducerDepth2Vector.end(),
                                                 [](bool val) { return val; });
-        isProducerDepth2AllSliceContract = !isProducerDepth2SliceContract.empty() &&
-                                           std::all_of(isProducerDepth2SliceContract.begin(),
-                                                       isProducerDepth2SliceContract.end(),
-                                                       [](bool val) { return val; });
+        isProducerDepth2AllMoveOp = !isProducerDepth2MoveOp.empty() &&
+                                    std::all_of(isProducerDepth2MoveOp.begin(), isProducerDepth2MoveOp.end(),
+                                                [](bool val) { return val; });
         isProducerDepth3AllVector = !isProducerDepth3Vector.empty() &&
                                     std::all_of(isProducerDepth3Vector.begin(), isProducerDepth3Vector.end(),
                                                 [](bool val) { return val; });
         // currently only support the following patterns:
         // 1. vector op -> slice(s)/contract(s) -> reshape op
         // 2. vector op -> slice(s)/contract(s) -> slice(s)/contract(s) -> reshape op
-        if (!((isProducerDepth1SliceContract && isProducerDepth2AllSliceContract && isProducerDepth3AllVector) ||
-              (isProducerDepth1SliceContract && isProducerDepth2AllVector))) {
+        if (!((isProducerDepth1MoveOp && isProducerDepth2AllMoveOp && isProducerDepth3AllVector) ||
+              (isProducerDepth1MoveOp && isProducerDepth2AllVector))) {
             return false;
         }
     }
@@ -386,25 +383,25 @@ bool AssignMemoryType::IsReshapeVecToCubeUB2L1ConsumerPattern(
     const std::set<Operation*, LogicalTensor::CompareOp>& consumers)
 {
     for (auto& consumer : consumers) {
-        bool isConsumerDepth1Slice = consumer->GetOpcode() == npu::tile_fwk::Opcode::OP_SLICE;
-        bool isConsumerDepth2AllSlice = false;
+        bool isConsumerDepth1MoveIn = IsModeMoveIn(mode_, consumer->GetOpcode());
+        bool isConsumerDepth2AllMoveIn = false;
         bool isConsumerDepth3AllCube = false;
 
-        std::vector<bool> isConsumerDepth2Slice;
+        std::vector<bool> isConsumerDepth2MoveIn;
         std::vector<bool> isConsumerDepth3Cube;
         for (auto& consumerOOperand : consumer->oOperand) {
             for (auto& consumerConsumer : consumerOOperand->GetConsumers()) {
-                isConsumerDepth2Slice.push_back(consumerConsumer->GetOpcode() == npu::tile_fwk::Opcode::OP_SLICE);
+                isConsumerDepth2MoveIn.push_back(IsModeMoveIn(mode_, consumerConsumer->GetOpcode()));
                 MemoryPathUtils::CollectConsumerAICFlags(consumerConsumer, isConsumerDepth3Cube);
             }
         }
-        isConsumerDepth2AllSlice = !isConsumerDepth2Slice.empty() &&
-                                   std::all_of(isConsumerDepth2Slice.begin(), isConsumerDepth2Slice.end(),
-                                               [](bool val) { return val; });
+        isConsumerDepth2AllMoveIn = !isConsumerDepth2MoveIn.empty() &&
+                                    std::all_of(isConsumerDepth2MoveIn.begin(), isConsumerDepth2MoveIn.end(),
+                                                [](bool val) { return val; });
         isConsumerDepth3AllCube = !isConsumerDepth3Cube.empty() &&
                                   std::all_of(isConsumerDepth3Cube.begin(), isConsumerDepth3Cube.end(),
                                               [](bool val) { return val; });
-        if (!isConsumerDepth1Slice || !isConsumerDepth2AllSlice || !isConsumerDepth3AllCube) {
+        if (!isConsumerDepth1MoveIn || !isConsumerDepth2AllMoveIn || !isConsumerDepth3AllCube) {
             return false;
         }
     }
@@ -723,13 +720,20 @@ bool AssignMemoryType::TryHandleSpecialDirectMemoryPath(Operation& operation, Me
 
 // 特殊进阶数据通路，不满足特定条件时回退到通过DDR搬运：L0C2L1, L0C2UB, UB2L1
 
-bool AssignMemoryType::HasParallelDifferentConsumerRequirement(const LogicalTensorPtr& tensor,
-                                                               MemoryType targetType) const
+bool AssignMemoryType::HasParallelDifferentConsumerRequirementStandard(const LogicalTensorPtr& tensor,
+                                                                       MemoryType targetType) const
 {
     if (tensor == nullptr || tensor->GetConsumers().size() <= 1) {
         return false;
     }
     return HasDifferentConsumerRequirement(tensor, targetType);
+}
+
+bool AssignMemoryType::HasParallelDifferentConsumerRequirement(const LogicalTensorPtr& tensor,
+                                                               MemoryType targetType) const
+{
+    return IsSliceMode() ? HasParallelDifferentConsumerRequirementStandard(tensor, targetType) :
+                           HasParallelDifferentConsumerRequirementLegacy(tensor, targetType);
 }
 
 bool AssignMemoryType::HasDifferentConsumerRequirement(const LogicalTensorPtr& tensor, MemoryType targetType) const
@@ -901,9 +905,17 @@ void AssignMemoryType::PropagateMemoryTypeToRawTensorSiblings(
 
 Status AssignMemoryType::ResolveInconsistentRawTensorMemoryTypes(Function& function)
 {
+    auto isMoveOutOutput = [](const LogicalTensorPtr& tensor) {
+        if (tensor == nullptr) {
+            return false;
+        }
+        return std::any_of(tensor->GetProducers().begin(), tensor->GetProducers().end(), [](const auto* producer) {
+            return producer != nullptr && IsAssembleLike(producer->GetOpcode());
+        });
+    };
     std::unordered_set<int64_t> visitedRawMagic;
     for (auto& op : function.Operations()) {
-        if (op.GetOpcode() != Opcode::OP_ASSEMBLE) {
+        if (!IsAssembleLike(op.GetOpcode())) {
             continue;
         }
         if (op.oOperand.empty() || op.oOperand.front() == nullptr) {
@@ -922,20 +934,13 @@ Status AssignMemoryType::ResolveInconsistentRawTensorMemoryTypes(Function& funct
             continue;
         }
         MemoryType firstType = MemoryType::MEM_UNKNOWN;
-        bool hasAssembleOutput = false;
+        bool hasMoveOutOutput = false;
         bool inconsistent = false;
         for (const auto& sibling : siblings) {
-            bool isAssembleOutput = false;
-            for (auto* producer : sibling->GetProducers()) {
-                if (producer != nullptr && producer->GetOpcode() == Opcode::OP_ASSEMBLE) {
-                    isAssembleOutput = true;
-                    break;
-                }
-            }
-            if (!isAssembleOutput) {
+            if (!isMoveOutOutput(sibling)) {
                 continue;
             }
-            hasAssembleOutput = true;
+            hasMoveOutOutput = true;
             MemoryType siblingType = sibling->GetMemoryTypeOriginal();
             if (siblingType == MemoryType::MEM_UNKNOWN) {
                 continue;
@@ -947,20 +952,13 @@ Status AssignMemoryType::ResolveInconsistentRawTensorMemoryTypes(Function& funct
                 break;
             }
         }
-        if (hasAssembleOutput && inconsistent) {
+        if (hasMoveOutOutput && inconsistent) {
             APASS_LOG_WARN_F(Elements::Tensor,
-                             "Inconsistent memory types detected on rawMagic %ld across assemble outputs, "
+                             "Inconsistent memory types detected on rawMagic %ld across assemble/contract outputs, "
                              "falling back to DDR.",
                              static_cast<long>(rawMagic));
             for (const auto& sibling : siblings) {
-                bool isAssembleOutput = false;
-                for (auto* producer : sibling->GetProducers()) {
-                    if (producer != nullptr && producer->GetOpcode() == Opcode::OP_ASSEMBLE) {
-                        isAssembleOutput = true;
-                        break;
-                    }
-                }
-                if (isAssembleOutput) {
+                if (isMoveOutOutput(sibling)) {
                     MemoryPathUtils::ForceSetOriginal(sibling, MemoryType::MEM_DEVICE_DDR,
                                                       "ResolveInconsistentRawTensorMemoryTypes");
                 }
@@ -1152,16 +1150,16 @@ Status AssignMemoryType::InferViewTypeMemoryType(Operation& operation)
     }
     MemoryType targetType = outputRequirement != MemoryType::MEM_UNKNOWN ? outputRequirement : outputOriginal;
     bool handled = false;
-    RETURN_IF_NOT_SUCCESS(TryInferViewTypeFromProducerSlice(operation, input, output, targetType, handled));
+    RETURN_IF_NOT_SUCCESS(TryInferViewTypeFromProducerMoveIn(operation, input, output, targetType, handled));
     if (handled) {
         return SUCCESS;
     }
     return MemoryPathUtils::InferViewTypeInput(inserter, operation, input, output, targetType);
 }
 
-Status AssignMemoryType::TryInferViewTypeFromProducerSlice(Operation& operation, const LogicalTensorPtr& input,
-                                                           const LogicalTensorPtr& output, MemoryType targetType,
-                                                           bool& handled)
+Status AssignMemoryType::TryInferViewTypeFromProducerMoveIn(Operation& operation, const LogicalTensorPtr& input,
+                                                            const LogicalTensorPtr& output, MemoryType targetType,
+                                                            bool& handled)
 {
     handled = false;
     auto& producers = input->GetProducers();
@@ -1169,30 +1167,33 @@ Status AssignMemoryType::TryInferViewTypeFromProducerSlice(Operation& operation,
         return SUCCESS;
     }
     auto producer = *producers.begin();
-    if (producer == nullptr || producer->GetOpcode() != Opcode::OP_SLICE) {
+    if (producer == nullptr || !IsModeMoveIn(mode_, producer->GetOpcode())) {
         return SUCCESS;
     }
     handled = true;
     if (producer->iOperand.empty()) {
+        const char* opcodeName = IsSliceMode() ? "OP_SLICE" : "OP_VIEW";
         APASS_LOG_ERROR_F(Elements::Operation,
-                          "Infer OP_VIEW_TYPE[%d] memory type failed because producer OP_SLICE[%d] input is empty.",
-                          operation.GetOpMagic(), producer->GetOpMagic());
+                          "Infer OP_VIEW_TYPE[%d] memory type failed because producer %s[%d] input is empty.",
+                          operation.GetOpMagic(), opcodeName, producer->GetOpMagic());
         return FAILED;
     }
-    auto sliceInput = producer->iOperand.front();
-    MemoryType sliceInputRequirement = inserter.GetRequirementOrUnknown(sliceInput, *producer);
-    if (sliceInputRequirement == MemoryType::MEM_UNKNOWN) {
-        sliceInputRequirement = sliceInput->GetMemoryTypeOriginal();
+    auto moveInput = producer->iOperand.front();
+    MemoryType moveInputRequirement = inserter.GetRequirementOrUnknown(moveInput, *producer);
+    if (moveInputRequirement == MemoryType::MEM_UNKNOWN) {
+        moveInputRequirement = moveInput->GetMemoryTypeOriginal();
     }
-    if (targetType != MemoryType::MEM_UNKNOWN && CanUseDirectViewPath(*producer, sliceInputRequirement, targetType)) {
-        MemoryPathUtils::ForceSetOriginal(input, targetType, "InferViewTypeProducerSlice");
-        MemoryPathUtils::ForceSetRequirement(inserter, input, operation, targetType, "InferViewTypeProducerSlice");
-        MemoryPathUtils::ForceSetOriginal(output, targetType, "InferViewTypeProducerSlice");
+    const char* reason = IsSliceMode() ? "InferViewTypeProducerSlice" : "InferViewTypeProducerView";
+    const char* fallbackReason = IsSliceMode() ? "InferViewTypeProducerSliceFallback" :
+                                                 "InferViewTypeProducerViewFallback";
+    if (targetType != MemoryType::MEM_UNKNOWN && CanUseDirectViewPath(*producer, moveInputRequirement, targetType)) {
+        MemoryPathUtils::ForceSetOriginal(input, targetType, reason);
+        MemoryPathUtils::ForceSetRequirement(inserter, input, operation, targetType, reason);
+        MemoryPathUtils::ForceSetOriginal(output, targetType, reason);
         return SUCCESS;
     }
-    MemoryPathUtils::ForceSetRequirement(inserter, input, operation, MemoryType::MEM_DEVICE_DDR,
-                                         "InferViewTypeProducerSliceFallback");
-    MemoryPathUtils::ForceSetOriginal(output, MemoryType::MEM_DEVICE_DDR, "InferViewTypeProducerSliceFallback");
+    MemoryPathUtils::ForceSetRequirement(inserter, input, operation, MemoryType::MEM_DEVICE_DDR, fallbackReason);
+    MemoryPathUtils::ForceSetOriginal(output, MemoryType::MEM_DEVICE_DDR, fallbackReason);
     return SUCCESS;
 }
 
@@ -1329,14 +1330,20 @@ Status AssignMemoryType::HasNonZeroSliceFromOffset(const LogicalTensorPtr& tenso
 
 Status AssignMemoryType::ApplyOversizedLocalBufferFallback(Function& function)
 {
-    const size_t ubStrictThreshold = static_cast<size_t>(
-        Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) * UB_THRESHOLD_ASSEMBLE);
+    const size_t ubThreshold = static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) *
+                                                   UB_THRESHOLD_ASSEMBLE);
     const size_t ubNormalThreshold = static_cast<size_t>(
         Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) * UB_THRESHOLD_NORMAL);
     const size_t l1Threshold = static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_L1) *
                                                    L1_THRESHOLD);
-    APASS_LOG_INFO_F(Elements::Function, "Memory threshold: UB strict %zu, UB normal %zu, L1 %zu.", ubStrictThreshold,
-                     ubNormalThreshold, l1Threshold);
+    if (IsSliceMode()) {
+        APASS_LOG_INFO_F(Elements::Function, "Memory threshold: UB strict %zu, UB normal %zu, L1 %zu.", ubThreshold,
+                         ubNormalThreshold, l1Threshold);
+    } else {
+        APASS_LOG_INFO_F(Elements::Function,
+                         "Memory threshold: UB assemble %zu bytes, UB normal %zu bytes, L1 %zu bytes.", ubThreshold,
+                         ubNormalThreshold, l1Threshold);
+    }
     for (auto& op : function.Operations()) {
         RETURN_IF_NOT_SUCCESS(ApplyOversizedLocalBufferFallback(op));
     }
@@ -1344,6 +1351,12 @@ Status AssignMemoryType::ApplyOversizedLocalBufferFallback(Function& function)
 }
 
 Status AssignMemoryType::ApplyOversizedLocalBufferFallback(Operation& operation)
+{
+    return IsSliceMode() ? ApplyOversizedLocalBufferFallbackStandard(operation) :
+                           ApplyOversizedLocalBufferFallbackLegacy(operation);
+}
+
+Status AssignMemoryType::ApplyOversizedLocalBufferFallbackStandard(Operation& operation)
 {
     auto opcode = operation.GetOpcode();
     if (opcode != Opcode::OP_SLICE && opcode != Opcode::OP_CONTRACT) {
@@ -1397,14 +1410,15 @@ Status AssignMemoryType::ApplyOversizedLocalBufferFallback(Operation& operation)
         APASS_LOG_DEBUG_F(Elements::Operation, "Force OP_SLICE[%d] output tensor[%d] to DDR by size limit.",
                           operation.GetOpMagic(), output->GetMagic());
     }
-    return DowngradeOversizedSliceInputRequirement(operation);
+    return DowngradeOversizedMoveInInputRequirement(operation);
 }
 
-Status AssignMemoryType::DowngradeOversizedSliceInputRequirement(Operation& operation)
+Status AssignMemoryType::DowngradeOversizedMoveInInputRequirement(Operation& operation)
 {
+    const char* opcodeName = IsSliceMode() ? "OP_SLICE" : "OP_VIEW";
     if (operation.iOperand.empty() || operation.iOperand.front() == nullptr) {
         APASS_LOG_ERROR_F(Elements::Operation,
-                          "Apply oversized fallback for OP_SLICE[%d] failed because of invalid input operand.",
+                          "Apply oversized fallback for %s[%d] failed because of invalid input operand.", opcodeName,
                           operation.GetOpMagic());
         return FAILED;
     }
@@ -1413,10 +1427,10 @@ Status AssignMemoryType::DowngradeOversizedSliceInputRequirement(Operation& oper
     if (!MemoryPathUtils::IsOversizedLocalBuffer(input, inputType, false, true)) {
         return SUCCESS;
     }
-    MemoryPathUtils::ForceSetRequirement(inserter, input, operation, MemoryType::MEM_DEVICE_DDR,
-                                         "ApplyOversizedSliceInputFallback");
-    APASS_LOG_DEBUG_F(Elements::Operation, "Force OP_SLICE[%d] input tensor[%d] requirement to DDR by size limit.",
-                      operation.GetOpMagic(), input->GetMagic());
+    const char* reason = IsSliceMode() ? "ApplyOversizedSliceInputFallback" : "ApplyOversizedViewInputFallback";
+    MemoryPathUtils::ForceSetRequirement(inserter, input, operation, MemoryType::MEM_DEVICE_DDR, reason);
+    APASS_LOG_DEBUG_F(Elements::Operation, "Force %s[%d] input tensor[%d] requirement to DDR by size limit.",
+                      opcodeName, operation.GetOpMagic(), input->GetMagic());
     return SUCCESS;
 }
 
@@ -1598,42 +1612,52 @@ Status AssignMemoryType::ResolveUnalignedUbSlices(Function& function)
     return SUCCESS;
 }
 
-Status AssignMemoryType::FallbackSameMemoryMoveOps(Function& function)
+Status AssignMemoryType::NormalizeViewAssembleOpcodes(Function& function)
 {
+    if (!IsSliceMode()) {
+        return SUCCESS;
+    }
     for (auto& operation : function.Operations()) {
         auto opcode = operation.GetOpcode();
-        if (opcode != Opcode::OP_SLICE && opcode != Opcode::OP_CONTRACT) {
+        bool isViewFamily = opcode == Opcode::OP_VIEW || opcode == Opcode::OP_SLICE;
+        bool isAssembleFamily = opcode == Opcode::OP_ASSEMBLE || opcode == Opcode::OP_CONTRACT;
+        if (!isViewFamily && !isAssembleFamily) {
             continue;
         }
         if (operation.iOperand.empty() || operation.oOperand.empty() || operation.iOperand.front() == nullptr ||
             operation.oOperand.front() == nullptr) {
             APASS_LOG_ERROR_F(Elements::Operation,
-                              "Fallback same-memory move op %s[%d] failed because operand is invalid.",
+                              "Normalize view/assemble opcode for %s[%d] failed because operand is invalid.",
                               operation.GetOpcodeStr().c_str(), operation.GetOpMagic());
             return FAILED;
         }
         MemoryType inputType = operation.iOperand.front()->GetMemoryTypeOriginal();
         MemoryType outputType = operation.oOperand.front()->GetMemoryTypeOriginal();
-        if (inputType == MemoryType::MEM_UNKNOWN || inputType != outputType) {
+        if (inputType == MemoryType::MEM_UNKNOWN || outputType == MemoryType::MEM_UNKNOWN) {
             continue;
         }
-        if (opcode == Opcode::OP_SLICE) {
+        Opcode normalizedOpcode;
+        if (isViewFamily) {
+            normalizedOpcode = inputType == outputType ? Opcode::OP_VIEW : Opcode::OP_SLICE;
             auto viewOpAttribute = std::dynamic_pointer_cast<ViewOpAttribute>(operation.GetOpAttribute());
             if (viewOpAttribute != nullptr) {
                 viewOpAttribute->SetToType(outputType);
             }
-            operation.SetOpCode(Opcode::OP_VIEW);
         } else {
+            normalizedOpcode = inputType == outputType ? Opcode::OP_ASSEMBLE : Opcode::OP_CONTRACT;
             auto assembleOpAttribute = std::dynamic_pointer_cast<AssembleOpAttribute>(operation.GetOpAttribute());
             if (assembleOpAttribute != nullptr) {
                 assembleOpAttribute->SetFromType(inputType);
             }
-            operation.SetOpCode(Opcode::OP_ASSEMBLE);
         }
-        APASS_LOG_DEBUG_F(Elements::Operation,
-                          "Fallback same-memory move op %s[%d] to %s because input and output are both %s.",
-                          opcode == Opcode::OP_SLICE ? "OP_SLICE" : "OP_CONTRACT", operation.GetOpMagic(),
-                          operation.GetOpcodeStr().c_str(), BriefMemoryTypeToString(inputType).c_str());
+        if (opcode == normalizedOpcode) {
+            continue;
+        }
+        std::string opcodeBeforeNormalization = operation.GetOpcodeStr();
+        operation.SetOpCode(normalizedOpcode);
+        APASS_LOG_DEBUG_F(Elements::Operation, "Normalize %s[%d] to %s because input is %s and output is %s.",
+                          opcodeBeforeNormalization.c_str(), operation.GetOpMagic(), operation.GetOpcodeStr().c_str(),
+                          BriefMemoryTypeToString(inputType).c_str(), BriefMemoryTypeToString(outputType).c_str());
     }
     return SUCCESS;
 }
@@ -1695,12 +1719,6 @@ Status AssignMemoryType::CalcLineOffset(const Shape& shape, const Offset& offset
     return SUCCESS;
 }
 
-Status AssignMemoryType::RunOnFunctionLegacy(Function& function)
-{
-    legacy::AssignMemoryType legacyAssignMemoryType;
-    return legacyAssignMemoryType.RunLegacy(function);
-}
-
 Status AssignMemoryType::FixViewAssembleSemanticMismatch(Function& function)
 {
     for (auto& op : function.Operations(false)) {
@@ -1712,33 +1730,36 @@ Status AssignMemoryType::FixViewAssembleSemanticMismatch(Function& function)
         if (input == nullptr || output == nullptr) {
             continue;
         }
-        MemoryType inputOriginal = input->GetMemoryTypeOriginal();
+        MemoryType inputRequirement = inserter.GetRequirementOrUnknown(input, op);
         MemoryType outputOriginal = output->GetMemoryTypeOriginal();
-        if (inputOriginal == MemoryType::MEM_UNKNOWN || outputOriginal == MemoryType::MEM_UNKNOWN) {
+        if (inputRequirement == MemoryType::MEM_UNKNOWN || outputOriginal == MemoryType::MEM_UNKNOWN) {
             continue;
         }
         if (op.GetOpcode() == Opcode::OP_VIEW) {
-            // VIEW 表达搬入语义；当 output==DDR 且 input!=DDR 时语义违反，
+            // VIEW 表达搬入语义；当 output==DDR 且 input requirement!=DDR 时语义违反，
             // 需要在 VIEW 之前插入 ASSEMBLE(local→DDR)。
             // 给 input 增加 DDR requirement（指向 VIEW 自身），制造 local vs DDR 冲突。
-            if (outputOriginal == MemoryType::MEM_DEVICE_DDR && inputOriginal != MemoryType::MEM_DEVICE_DDR) {
+            if (outputOriginal == MemoryType::MEM_DEVICE_DDR && inputRequirement != MemoryType::MEM_DEVICE_DDR) {
                 inserter.UpdateTensorTobeMap(input, op, MemoryType::MEM_DEVICE_DDR, "FixViewSemanticMismatch");
                 APASS_LOG_INFO_F(
                     Elements::Operation,
-                    "VIEW[%d] output=DDR input=%s, add DDR requirement on input[%d] to trigger ASSEMBLE insertion.",
-                    op.GetOpMagic(), BriefMemoryTypeToString(inputOriginal).c_str(), input->GetMagic());
+                    "VIEW[%d] output=DDR input requirement=%s, update input[%d] requirement to DDR to trigger "
+                    "ASSEMBLE insertion.",
+                    op.GetOpMagic(), BriefMemoryTypeToString(inputRequirement).c_str(), input->GetMagic());
             }
         } else if (op.GetOpcode() == Opcode::OP_ASSEMBLE) {
-            // ASSEMBLE 表达搬出语义；当 input==DDR 且 output!=DDR 时语义违反，
+            // ASSEMBLE 表达搬出语义；当 input requirement==DDR 且 output!=DDR 时语义违反，
             // 需要在 ASSEMBLE 之前插入 VIEW(DDR→local)。
             // 给 input 增加 output memType requirement（指向 ASSEMBLE 自身），制造 DDR vs local 冲突。
-            if (inputOriginal == MemoryType::MEM_DEVICE_DDR && outputOriginal != MemoryType::MEM_DEVICE_DDR) {
+            if (inputRequirement == MemoryType::MEM_DEVICE_DDR && outputOriginal != MemoryType::MEM_DEVICE_DDR) {
                 inserter.UpdateTensorTobeMap(input, op, outputOriginal, "FixAssembleSemanticMismatch");
+                RETURN_IF_NOT_SUCCESS(SyncAssembleMemoryAttr(op));
                 APASS_LOG_INFO_F(
                     Elements::Operation,
-                    "ASSEMBLE[%d] input=DDR output=%s, add %s requirement on input[%d] to trigger VIEW insertion.",
-                    op.GetOpMagic(), BriefMemoryTypeToString(outputOriginal).c_str(),
-                    BriefMemoryTypeToString(outputOriginal).c_str(), input->GetMagic());
+                    "ASSEMBLE[%d] input requirement=DDR output=%s, update input[%d] requirement to %s to trigger "
+                    "VIEW insertion.",
+                    op.GetOpMagic(), BriefMemoryTypeToString(outputOriginal).c_str(), input->GetMagic(),
+                    BriefMemoryTypeToString(outputOriginal).c_str());
             }
         }
     }

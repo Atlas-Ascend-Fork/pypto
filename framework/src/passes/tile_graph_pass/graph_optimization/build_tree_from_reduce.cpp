@@ -28,7 +28,6 @@
 #include "interface/tensor/irbuilder.h"
 #include "passes/pass_log/pass_log.h"
 #include "passes/tile_graph_pass/data_path/convert_op_inserter.h"
-#include "passes/tile_graph_pass/data_path/convert_op_inserter_legacy.h"
 #include "passes/pass_utils/infer_shape_utils.h"
 #include "passes/pass_utils/pass_operation_utils.h"
 #include "passes/pass_utils/pass_attr_defs.h"
@@ -680,15 +679,10 @@ Status BuildTreeFromReducePass::RunOnFunction(Function& function)
         function.EraseOperations(true);
         function.SortOperations(SortOperationsMode::LIGHTWEIGHT);
         Status memoryStatus = SUCCESS;
-        // Slice mode generates OP_SLICE/OP_CONTRACT conversion paths.  The
-        // legacy mode must keep generating OP_VIEW/OP_ASSEMBLE paths.
-        if (config::EnableSlice()) {
-            ConvertInserter inserter;
-            memoryStatus = FinalizeBuildTreeMemory(function, rewriteInfo, inserter);
-        } else {
-            legacy::ConvertInserter inserter;
-            memoryStatus = FinalizeBuildTreeMemory(function, rewriteInfo, inserter);
-        }
+        AssignMemoryTypeMode mode = config::EnableSlice() ? AssignMemoryTypeMode::SLICE_CONTRACT :
+                                                            AssignMemoryTypeMode::VIEW_ASSEMBLE;
+        ConvertInserter inserter(mode);
+        memoryStatus = FinalizeBuildTreeMemory(function, rewriteInfo, inserter);
         if (memoryStatus != SUCCESS) {
             APASS_LOG_ERROR_F(Elements::Function, "BuildTree memory repair failed.");
             return FAILED;
