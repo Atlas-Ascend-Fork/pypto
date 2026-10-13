@@ -29,8 +29,8 @@ Tensor Rsqrt(const Tensor& self, PrecisionType precisionType)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Rsqrt");
 
-    std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "Rsqrt");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_RSQRT);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "Rsqrt");
 
     auto castSelf = self.GetStorage();
     if (self.GetDataType() != DataType::DT_FP32) {
@@ -57,8 +57,8 @@ Tensor Sqrt(const Tensor& self, PrecisionType precisionType)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Sqrt");
 
-    std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "Sqrt");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SQRT);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "Sqrt");
 
     auto [result, op] = TensorUnaryOperationWithOp<UnaryOpType::SQRT>(*Program::GetInstance().GetCurrentFunction(),
                                                                       self.GetStorage());
@@ -71,8 +71,8 @@ Tensor Relu(const Tensor& self)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Relu");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_RELU);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "Relu");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_RELU);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "Relu");
     RETURN_CALL(UnaryOperation<UnaryOpType::RELU>, *Program::GetInstance().GetCurrentFunction(), self.GetStorage());
 }
 
@@ -81,8 +81,8 @@ Tensor Reciprocal(const Tensor& operand, PrecisionType precisionType)
     DECLARE_TRACER();
     CheckTensorFormat(operand.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Reciprocal");
 
-    std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
-    CheckTensorDataType(operand.GetStorage(), supportedTypes, "Reciprocal");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_RECIPROCAL);
+    CheckTensorDataTypeCombination({operand.GetDataType()}, combinations, "Reciprocal");
 
     auto [result, op] = TensorUnaryOperationWithOp<UnaryOpType::RECIPROCAL>(
         *Program::GetInstance().GetCurrentFunction(), operand.GetStorage());
@@ -95,8 +95,8 @@ Tensor Abs(const Tensor& self)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Abs");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ABS);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "Abs");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ABS);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "Abs");
     RETURN_CALL(UnaryOperation<UnaryOpType::ABS>, *Program::GetInstance().GetCurrentFunction(), self.GetStorage());
 }
 
@@ -113,8 +113,8 @@ Tensor Neg(const Tensor& self)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Neg");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_NEG);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "NEG");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_NEG);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "NEG");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "NEG");
     CheckTensorShapeSize(self.GetStorage(), "NEG");
 
@@ -254,8 +254,8 @@ Tensor Round(const Tensor& self, const int& decimals)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Round");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ROUND);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "ROUND");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ROUND);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "ROUND");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "ROUND");
     CheckTensorShapeSize(self.GetStorage(), "ROUND");
 

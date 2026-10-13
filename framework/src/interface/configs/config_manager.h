@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <type_traits>
 #include <set>
+#include <vector>
 #include <unordered_map>
 #include <unordered_set>
 #include <mutex>
@@ -125,6 +126,10 @@ struct InternalGlobalConfig {
     std::string logFile;
 };
 
+// 算子支持的输入数据类型组合：外层为全部合法组合，内层为某一种组合下各输入槽位的数据类型。
+// 槽位顺序与算子输入的声明顺序一致；DT_BOTTOM 表示该槽位为可选/任意（对应 JSON 中的空串 ""）。
+using OpInputDtypeCombinations = std::vector<std::vector<DataType>>;
+
 class ConfigManager {
 public:
     static ConfigManager& Instance();
@@ -139,15 +144,14 @@ public:
 
     const InternalGlobalConfig& GetInternalConfig() const { return globalConfigs_; }
     void SetInternalConfig(const InternalGlobalConfig& globalConfig) { globalConfigs_ = globalConfig; }
-
     const std::unordered_map<NPUArch,
-                             std::unordered_map<std::string, std::unordered_map<Opcode, std::unordered_set<DataType>>>>&
+                             std::unordered_map<std::string, std::unordered_map<Opcode, OpInputDtypeCombinations>>>&
     GetPlatformSupportedOpDtypesMap() const
     {
         return platformSupportedOpDtypesMap_;
     }
 
-    const std::unordered_set<DataType>& GetOpSupportedInputDtypes(const Opcode& opcode);
+    const OpInputDtypeCombinations& GetOpSupportedInputDtypes(const Opcode& opcode);
 
     template <typename T>
     auto GetPlatformConfig(const std::string& key, const T& defaultValue)
@@ -258,10 +262,8 @@ private:
     nlohmann::json originJson_;
     bool logRotationEnabled_ = true;
     std::once_flag platformSupportedOpDtypesLoaded_;
-    std::unordered_map<NPUArch,
-                       std::unordered_map<std::string, std::unordered_map<Opcode, std::unordered_set<DataType>>>>
+    std::unordered_map<NPUArch, std::unordered_map<std::string, std::unordered_map<Opcode, OpInputDtypeCombinations>>>
         platformSupportedOpDtypesMap_;
-
     ConfigManager();
 
     ~ConfigManager() = default;

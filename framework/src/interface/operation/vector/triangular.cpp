@@ -75,8 +75,8 @@ void TiledTriUL(Function& function, const TileShape& tileShape, const TriULPara&
 
 void CheckTriULOperationParams(const Tensor& input, const std::string& opName)
 {
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_TRIUL);
-    CheckTensorDataType(input.GetStorage(), supportedTypes, opName);
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_TRIUL);
+    CheckTensorDataTypeCombination({input.GetDataType()}, combinations, opName);
     CheckTensorDimRange(input.GetStorage(), NUM_VALUE_2, NUM_VALUE_5, opName);
     CheckTensorShapeSize(input.GetStorage(), opName);
 }

@@ -154,12 +154,10 @@ void TensorScatterElementS(Function& function, const ScatterElementSPara& scatte
 static void CheckScatterElementSParamsInvalid(const Tensor& self, const Tensor& indices, const Element& src, int axis,
                                               const ScatterMode reduce)
 {
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SCATTER_ELEMENT);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "SCATTER");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SCATTER_ELEMENT);
+    CheckTensorDataTypeCombination({self.GetDataType(), indices.GetDataType()}, combinations, "SCATTER");
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, src.GetDataType() == self.GetDataType())
         << "Scatter scalar dtype must match self dtype";
-    std::unordered_set<DataType> indexSupportedTypes = {DT_INT32, DT_INT64};
-    CheckTensorDataType(indices.GetStorage(), indexSupportedTypes, "SCATTER");
     std::vector<LogicalTensorPtr> tensors = {self.GetStorage(), indices.GetStorage()};
     CheckTensorsDimConsistency(tensors, "SCATTER");
     CheckTensorsFormatConsistency(self.GetStorage(), indices.GetStorage(), "SCATTER");
@@ -374,11 +372,9 @@ void TensorScatter(Function& function, const ScatterPara& scatterPara)
 static void CheckScatterParamsInvalid(const Tensor& self, const Tensor& indices, const Tensor& src, int axis,
                                       const ScatterMode reduce)
 {
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SCATTER);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "SCATTER");
-    CheckTensorsDataTypeConsistency(self.GetStorage(), src.GetStorage(), "SCATTER");
-    std::unordered_set<DataType> indexSupportedTypes = {DT_INT32, DT_INT64};
-    CheckTensorDataType(indices.GetStorage(), indexSupportedTypes, "SCATTER");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SCATTER);
+    CheckTensorDataTypeCombination({self.GetDataType(), indices.GetDataType(), src.GetDataType()}, combinations,
+                                   "SCATTER");
     std::vector<LogicalTensorPtr> tensors = {self.GetStorage(), indices.GetStorage(), src.GetStorage()};
     CheckTensorsDimConsistency(tensors, "SCATTER");
     CheckTensorsFormatConsistency(self.GetStorage(), indices.GetStorage(), "SCATTER");

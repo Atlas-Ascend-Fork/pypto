@@ -435,8 +435,8 @@ Tensor Amax(const Tensor& self, int axis, bool keepDim)
 {
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Amax");
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ROWMAX_SINGLE);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "AMAX");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ROWMAX_SINGLE);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "AMAX");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "AMAX");
     CheckTensorShapeSize(self.GetStorage(), "AMAX");
     axis = NormalizeAndValidateReductionAxis(self, axis);
@@ -507,8 +507,8 @@ Tensor Amin(const Tensor& self, int axis, bool keepDim)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Amin");
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Amax");
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ROWMIN_SINGLE);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "AMIN");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ROWMIN_SINGLE);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "AMIN");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "AMIN");
     CheckTensorShapeSize(self.GetStorage(), "AMIN");
     axis = NormalizeAndValidateReductionAxis(self, axis);
@@ -527,8 +527,8 @@ Tensor Sum(const Tensor& self, int axis, bool keepDim)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Sum");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ROWSUM_SINGLE);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "SUM");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ROWSUM_SINGLE);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "SUM");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "SUM");
     CheckTensorShapeSize(self.GetStorage(), "SUM");
     axis = NormalizeAndValidateReductionAxis(self, axis);

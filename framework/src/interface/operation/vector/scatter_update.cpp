@@ -272,8 +272,6 @@ static void CheckScatterUpdateInput(const Tensor& input)
 
 static void CheckScatterUpdateIndex(const Tensor& index)
 {
-    std::unordered_set<DataType> indexSupportedTypes = {DT_INT64, DT_INT32, DT_INT16};
-    CheckTensorDataType(index.GetStorage(), indexSupportedTypes, "SCATTERUPDATE");
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, index.GetShape().size() == NUM_VALUE_2 &&
                                                   index.GetShape(NUM_VALUE_0) != NUM_VALUE_0 &&
                                                   index.GetShape(NUM_VALUE_1) != NUM_VALUE_0)
@@ -282,9 +280,9 @@ static void CheckScatterUpdateIndex(const Tensor& index)
 
 static void CheckScatterUpdateInvalid(const Tensor& dst, const Tensor& index, const Tensor& src)
 {
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SCATTER_UPDATE);
-    CheckTensorDataType(dst.GetStorage(), supportedTypes, "SCATTERUPDATE");
-    CheckTensorsDataTypeConsistency(dst.GetStorage(), src.GetStorage(), "SCATTERUPDATE");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SCATTER_UPDATE);
+    CheckTensorDataTypeCombination({dst.GetDataType(), index.GetDataType(), src.GetDataType()}, combinations,
+                                   "SCATTERUPDATE");
     std::vector<LogicalTensorPtr> tensors = {dst.GetStorage(), src.GetStorage()};
     CheckTensorsDimConsistency(tensors, "SCATTERUPDATE");
     CheckScatterUpdateIndex(index);

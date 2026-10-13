@@ -72,8 +72,8 @@ Tensor Full(const Element& src, DataType dtype, const std::vector<int64_t>& dstS
             std::vector<SymbolicScalar> validShape)
 {
     DECLARE_TRACER();
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_VEC_DUP);
-    CheckTensorDataType(dtype, supportedTypes, "FULL");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_VEC_DUP);
+    CheckTensorDataTypeCombination({dtype}, combinations, "FULL");
     CheckDstShapeDimRange(dstShape, 1, NUM_VALUE_4, "FULL");
     CheckDstShapeSize(dstShape, "FULL");
     if (validShape.empty()) {
@@ -88,8 +88,8 @@ Tensor Full(const SymbolicScalar& dynSrc, DataType dtype, const std::vector<int6
             std::vector<SymbolicScalar> validShape)
 {
     DECLARE_TRACER();
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_VEC_DUP);
-    CheckTensorDataType(dtype, supportedTypes, "FULL");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_VEC_DUP);
+    CheckTensorDataTypeCombination({dtype}, combinations, "FULL");
     CheckDstShapeDimRange(dstShape, 1, NUM_VALUE_4, "FULL");
     CheckDstShapeSize(dstShape, "FULL");
     if (validShape.empty()) {

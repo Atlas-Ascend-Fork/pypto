@@ -2057,8 +2057,8 @@ void TiledGatherInUB(Function& function, const TileShape& tileShape, const Logic
 Tensor experimental::GatherInUB(const Tensor& params, const Tensor& indices, const Tensor& blockTable, int blockSize,
                                 int axis)
 {
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_GATHER_IN_UB);
-    CheckTensorDataType(params.GetStorage(), supportedTypes, "GatherInUB");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_GATHER_IN_UB);
+    CheckTensorDataTypeCombination({params.GetDataType()}, combinations, "GatherInUB");
 
     CheckTensorDimRange(params.GetStorage(), NUM_VALUE_2, NUM_VALUE_2, "GatherInUB params");
     CheckTensorDimRange(indices.GetStorage(), NUM_VALUE_2, NUM_VALUE_2, "GatherInUB indices");

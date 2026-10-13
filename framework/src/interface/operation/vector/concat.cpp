@@ -18,6 +18,7 @@
 #include "interface/utils/operator_tracer.h"
 #include "tilefwk/error_code.h"
 #include "tilefwk/platform.h"
+#include "interface/configs/config_manager.h"
 
 namespace npu::tile_fwk {
 
@@ -34,9 +35,8 @@ void InnerConcatNew(Function& function, const LogicalTensorPtr& operand, const L
 
 void CheckCat(const std::vector<Tensor>& tensors, int axis)
 {
-    std::unordered_set<DataType> supportedTypes = {DT_INT8, DT_UINT8, DT_INT16, DT_UINT16, DT_INT32, DT_UINT32,
-                                                   DT_FP16, DT_FP32,  DT_BF16,  DT_INT64,  DT_UINT64};
-    CheckTensorDataType(tensors[0].GetStorage(), supportedTypes, "CAT");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_CONCAT);
+    CheckTensorDataTypeCombination({tensors[0].GetDataType()}, combinations, "CAT");
     CheckAxisRange(tensors[0], axis);
     std::vector<LogicalTensorPtr> tensorPtrs;
     for (auto tensor : tensors) {

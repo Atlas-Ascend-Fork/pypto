@@ -198,8 +198,8 @@ Tensor Expand(const Tensor& self, const std::vector<int64_t>& dstShape, std::vec
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Expand");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_EXPAND);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "EXPAND");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_EXPAND);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "EXPAND");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "EXPAND");
     CheckTensorShapeSize(self.GetStorage(), "EXPAND");
     CheckDstShapeSize(dstShape, "EXPAND");

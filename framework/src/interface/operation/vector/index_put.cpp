@@ -17,6 +17,7 @@
 #include "passes/pass_utils/graph_utils.h"
 #include "interface/function/function.h"
 #include "interface/program/program.h"
+#include "interface/configs/config_manager.h"
 #include "interface/operation/operation_common.h"
 #include "interface/operation/vector/gather_mask_common.h"
 #include "tensor_transformation.h"
@@ -125,15 +126,11 @@ void TensorIndexPut(Function& function, const LogicalTensorPtr& self, const Logi
 
 static void CheckIndexPutParamsInvalid(const Tensor& self, const std::vector<Tensor>& indices, const Tensor& values)
 {
-    std::unordered_set<DataType> supportedTypes = {DT_INT8,  DT_UINT8,  DT_INT16, DT_UINT16, DT_INT32, DT_UINT32,
-                                                   DT_INT64, DT_UINT64, DT_BF16,  DT_FP16,   DT_FP32};
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "INDEXPUT");
-    CheckTensorsDataTypeConsistency(self.GetStorage(), values.GetStorage(), "INDEXPUT");
-    std::unordered_set<DataType> indexSupportedTypes = {DT_INT8,  DT_UINT8,  DT_INT16, DT_UINT16,
-                                                        DT_INT32, DT_UINT32, DT_INT64, DT_UINT64};
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_INDEX_PUT);
     int indicesShape = -1;
     for (size_t i = 0; i < indices.size(); i++) {
-        CheckTensorDataType(indices[i].GetStorage(), indexSupportedTypes, "INDEXPUT");
+        CheckTensorDataTypeCombination({self.GetDataType(), indices[i].GetDataType(), values.GetDataType()},
+                                       combinations, "INDEXPUT");
         CheckTensorDimRange(indices[i].GetStorage(), 1, 1, "INDEXPUT");
         if (indicesShape == -1) {
             indicesShape = indices[i].GetShape()[0];

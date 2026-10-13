@@ -283,9 +283,8 @@ Tensor Compare(const Tensor& self, const Tensor& other, OpType op, OutType mode)
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Compare");
     CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Compare");
 
-    CheckTensorsDataTypeConsistency(self.GetStorage(), other.GetStorage(), "COMPARE");
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_CMP);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "COMPARE");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_CMP);
+    CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "COMPARE");
     CheckTensorNonEmpty(self.GetStorage(), "COMPARE");
     CheckTensorNonEmpty(other.GetStorage(), "COMPARE");
     CheckBinaryInputTensors(self.GetStorage(), other.GetStorage(), "COMPARE");
@@ -297,8 +296,8 @@ Tensor Compare(const Tensor& self, const Element& other, OpType op, OutType mode
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Compare");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_CMPS);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "COMPARE");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_CMPS);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "COMPARE");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "COMPARE");
     CheckTensorShapeSize(self.GetStorage(), "COMPARE");
     CheckTensorNonEmpty(self.GetStorage(), "COMPARE");
@@ -310,8 +309,8 @@ Tensor Compare(const Element& self, const Tensor& other, OpType op, OutType mode
     DECLARE_TRACER();
     CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Compare");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_CMPS);
-    CheckTensorDataType(other.GetStorage(), supportedTypes, "COMPARE");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_CMPS);
+    CheckTensorDataTypeCombination({other.GetDataType()}, combinations, "COMPARE");
     CheckTensorDimRange(other.GetStorage(), 1, NUM_VALUE_4, "COMPARE");
     CheckTensorShapeSize(other.GetStorage(), "COMPARE");
     CheckTensorNonEmpty(other.GetStorage(), "COMPARE");

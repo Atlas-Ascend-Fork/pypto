@@ -112,6 +112,9 @@ void
 
 - 多核切K约束
 
+    <!-- npu="x90,9030" id6 -->
+    - Kirin9030/KirinX90处理器系列产品不支持多核切K（`enable_split_k`）。
+    <!-- end id6 -->
     - `pypto.matmul`支持2维/3维/4维矩阵多核切K。
     - `pypto.scaled_mm`仅支持2维矩阵多核切K，3维/4维矩阵不支持。
     - 多核切K场景只支持out\_dtype数据类型为DT\_FP32或DT\_INT32。

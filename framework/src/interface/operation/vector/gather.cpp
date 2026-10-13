@@ -165,11 +165,9 @@ LogicalTensorPtr TensorGatherOperation(Function& function, const LogicalTensorPt
 
 void CheckGatherParamsInvalid(const Tensor& params, const Tensor& indices, int axis, const std::string& opName)
 {
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_GATHER);
-    CheckTensorDataType(params.GetStorage(), supportedTypes, opName);
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_GATHER);
+    CheckTensorDataTypeCombination({params.GetDataType(), indices.GetDataType()}, combinations, opName);
     CheckFp8ArchSupport(params, opName);
-    std::unordered_set<DataType> indexSupportedTypes = {DT_INT32, DT_INT64};
-    CheckTensorDataType(indices.GetStorage(), indexSupportedTypes, opName);
     CheckTensorDimRange(params.GetStorage(), 1, NUM_VALUE_4, opName);
     CheckTensorDimRange(indices.GetStorage(), 1, NUM_VALUE_2, opName);
     CheckTensorShapeSize(params.GetStorage(), opName);
@@ -294,10 +292,8 @@ Tensor GatherElements(const Tensor& params, const Tensor& indices, int axis)
         CHECK(VectorErrorCode::ERR_PARAM_INVALID, indices.GetShape()[i] <= params.GetShape()[i])
             << "The shape of params and indices should be equal";
     }
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_GATHER_ELEMENT);
-    CheckTensorDataType(params.GetStorage(), supportedTypes, "GATHERELEMENTS");
-    std::unordered_set<DataType> indexSupportedTypes = {DT_INT32, DT_INT64};
-    CheckTensorDataType(indices.GetStorage(), indexSupportedTypes, "GATHERELEMENTS");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_GATHER_ELEMENT);
+    CheckTensorDataTypeCombination({params.GetDataType(), indices.GetDataType()}, combinations, "GATHERELEMENTS");
     CheckTensorDimRange(params.GetStorage(), 1, NUM_VALUE_5, "GATHERELEMENTS");
     CheckTensorShapeSize(params.GetStorage(), "GATHERELEMENTS");
     CheckTensorShapeSize(indices.GetStorage(), "GATHERELEMENTS");

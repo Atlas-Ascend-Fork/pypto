@@ -51,10 +51,10 @@ neg(input: Tensor) -> Tensor
    - Atlas A2系列产品：DT_FP32，DT_FP16，DT_BF16，DT_INT32，DT_INT16。
    <!-- end id6 -->
    <!-- npu="9030" id9 -->
-   - Kirin9030处理器系列产品：DT_FP16，DT_FP32。
+   - Kirin9030处理器系列产品：DT_INT16，DT_INT32，DT_FP16，DT_FP32。
    <!-- end id9 -->
    <!-- npu="x90" id10 -->
-   - KirinX90处理器系列产品：DT_FP16，DT_FP32。
+   - KirinX90处理器系列产品：DT_INT16，DT_INT32，DT_FP16，DT_FP32。
    <!-- end id10 -->
 2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 

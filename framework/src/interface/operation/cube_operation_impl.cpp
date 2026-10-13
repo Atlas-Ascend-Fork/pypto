@@ -603,6 +603,26 @@ void CheckA5BiasParam(const Tensor& operand2, bool transB, const MatmulExtendPar
     CheckBiasShapeParam(operand2, transB, param);
 }
 
+void CheckLiteNPUBiasParam(const Tensor& operand2, bool transB, const MatmulExtendParam& param = {})
+{
+    if (param.biasTensor.GetStorage() == nullptr) {
+        return;
+    }
+    DataType inDtype = operand2.GetDataType();
+    if (inDtype == DataType::DT_FP16) {
+        DataType expectedBiasType = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3113) ?
+                                        DataType::DT_FP16 :
+                                        DataType::DT_FP32;
+        CHECK(ExternalError::INVALID_TYPE, param.biasTensor.GetDataType() == expectedBiasType)
+            << "When input tensor is DT_FP16, Kirin bias must be DT_FP16 on Kirin9030 or DT_FP32 on KirinX90, got "
+            << DataType2String(param.biasTensor.GetDataType());
+    } else if (inDtype == DataType::DT_INT8) {
+        CHECK(ExternalError::INVALID_TYPE, param.biasTensor.GetDataType() == DataType::DT_INT32)
+            << "When input tensor is DT_INT8, bias must be DT_INT32.";
+    }
+    CheckBiasShapeParam(operand2, transB, param);
+}
+
 void CheckFixpipeParam(const Tensor& operand2, DataType outDtype, bool transB, const MatmulExtendParam& param = {})
 {
     DataType inDtype = operand2.GetDataType();
@@ -731,6 +751,20 @@ void CheckOperandDtype(DataType outType, const Tensor& operand1, const Tensor& o
     CHECK(ExternalError::INVALID_TYPE, isOperand1Fp8 || (operand1Dtype == operand2Dtype))
         << "input dataType must be consistent. operand1 dataType: " << DataType2String(operand1Dtype)
         << ", operand2 dataType: " << DataType2String(operand2Dtype);
+
+    if (IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
+        const bool isFp16Input = (operand1Dtype == DataType::DT_FP16);
+        const bool isInt8Input = (operand1Dtype == DataType::DT_INT8);
+        CHECK(ExternalError::INVALID_TYPE, isFp16Input || isInt8Input)
+            << "Kirin matmul only supports DT_FP16 or DT_INT8 input, got " << DataType2String(operand1Dtype);
+        if (isFp16Input) {
+            CHECK(ExternalError::INVALID_TYPE, outType == DataType::DT_FP16)
+                << "Kirin matmul with DT_FP16 input only supports DT_FP16 output, got " << DataType2String(outType);
+        } else {
+            CHECK(ExternalError::INVALID_TYPE, outType == DataType::DT_INT32)
+                << "Kirin matmul with DT_INT8 input only supports DT_INT32 output, got " << DataType2String(outType);
+        }
+    }
 }
 
 void CheckNullptr(const Tensor& operand1, const Tensor& operand2)
@@ -739,11 +773,31 @@ void CheckNullptr(const Tensor& operand1, const Tensor& operand2)
     CHECK(MatmulErrorCode::ERR_RUNTIME_NULLPTR, operand2.GetStorage() != nullptr) << "B Tensor cannot be null";
 }
 
+void CheckLiteNPUMatmulParam(const Tensor& operand1, const Tensor& operand2, const MatmulAttrParam& attrParam,
+                             const MatmulExtendParam& param)
+{
+    CHECK(ExternalError::INVALID_FORMAT, operand1.Format() == TileOpFormat::TILEOP_ND)
+        << "Kirin matmul does not support TILEOP_NZ input format.";
+    CHECK(ExternalError::INVALID_FORMAT, operand2.Format() == TileOpFormat::TILEOP_ND)
+        << "Kirin matmul does not support TILEOP_NZ input format.";
+    CHECK(ExternalError::INVALID_FORMAT, !attrParam.isCMatrixNZ) << "Kirin matmul does not support c_matrix_nz.";
+    CHECK(ExternalError::INVALID_OPERATION, param.scaleTensor.GetStorage() == nullptr)
+        << "Kirin matmul does not support scale_tensor.";
+    CHECK(ExternalError::INVALID_OPERATION, fabs(param.scaleValue) < EPSILON) << "Kirin matmul does not support scale.";
+    CHECK(ExternalError::INVALID_OPERATION, param.reluType == ReLuType::NoReLu)
+        << "Kirin matmul does not support relu_type.";
+    CHECK(ExternalError::INVALID_OPERATION, param.transMode == TransMode::CAST_NONE)
+        << "Kirin matmul does not support trans_mode.";
+}
+
 Status CheckMatmulOperands(DataType outType, const Tensor& operand1, const Tensor& operand2,
                            const MatmulAttrParam& attrParam, const MatmulExtendParam& param = {})
 {
     MATMUL_LOGD("Begin Matmul Operand Legality Check.\n");
     CheckNullptr(operand1, operand2);
+    if (IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
+        CheckLiteNPUMatmulParam(operand1, operand2, attrParam, param);
+    }
     // dtype valid check
     CheckOperandDtype(outType, operand1, operand2);
     // shape valid check
@@ -764,6 +818,8 @@ Status CheckMatmulOperands(DataType outType, const Tensor& operand1, const Tenso
     CheckDynValidShapeDim(param.scaleTensor, "scaleTensor");
     if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) {
         CheckA5BiasParam(operand2, attrParam.transB, param);
+    } else if (IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
+        CheckLiteNPUBiasParam(operand2, attrParam.transB, param);
     } else {
         CheckBiasParam(operand2, attrParam.transB, param);
     }

@@ -124,8 +124,8 @@ Tensor Sign(const Tensor& self)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Sign");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SIGN);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "SIGN");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SIGN);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "SIGN");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "SIGN");
     CheckTensorShapeSize(self.GetStorage(), "SIGN");
     RETURN_CALL(SignOperation, *Program::GetInstance().GetCurrentFunction(), self.GetStorage());

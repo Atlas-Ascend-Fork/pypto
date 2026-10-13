@@ -470,10 +470,9 @@ Tensor Where(const Tensor& condition, const Tensor& input, const Tensor& other)
     CheckTensorFormat(input.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
     CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
 
-    static const std::unordered_set<DataType> conditionTypes = {DT_BOOL, DT_UINT8};
-    CheckTensorDataType(condition.GetStorage(), conditionTypes, "WHERE");
-    const auto& inputTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_WHERE_TT);
-    CheckTensorDataType(input.GetStorage(), inputTypes, "WHERE");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_WHERE_TT);
+    CheckTensorDataTypeCombination({condition.GetDataType(), input.GetDataType(), other.GetDataType()}, combinations,
+                                   "WHERE");
     CheckTensorDimRange(condition.GetStorage(), 1, NUM_VALUE_4, "WHERE");
     CheckTensorShapeSize(condition.GetStorage(), "WHERE");
     CheckTensorShapeSize(input.GetStorage(), "WHERE");
@@ -491,10 +490,8 @@ Tensor Where(const Tensor& condition, const Tensor& input, const Element& otherV
     CheckTensorFormat(condition.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
     CheckTensorFormat(input.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
 
-    static const std::unordered_set<DataType> conditionTypes = {DT_BOOL, DT_UINT8};
-    CheckTensorDataType(condition.GetStorage(), conditionTypes, "WHERE");
-    const auto& inputTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_WHERE_TS);
-    CheckTensorDataType(input.GetStorage(), inputTypes, "WHERE");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_WHERE_TS);
+    CheckTensorDataTypeCombination({condition.GetDataType(), input.GetDataType()}, combinations, "WHERE");
     CheckTensorDimRange(condition.GetStorage(), 1, NUM_VALUE_4, "WHERE");
     CheckTensorShapeSize(condition.GetStorage(), "WHERE");
     CheckTensorShapeSize(input.GetStorage(), "WHERE");
@@ -509,10 +506,8 @@ Tensor Where(const Tensor& condition, const Element& inputValue, const Tensor& o
     CheckTensorFormat(condition.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
     CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
 
-    static const std::unordered_set<DataType> conditionTypes = {DT_BOOL, DT_UINT8};
-    CheckTensorDataType(condition.GetStorage(), conditionTypes, "WHERE");
-    const auto& inputTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_WHERE_ST);
-    CheckTensorDataType(other.GetStorage(), inputTypes, "WHERE");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_WHERE_ST);
+    CheckTensorDataTypeCombination({condition.GetDataType(), other.GetDataType()}, combinations, "WHERE");
     CheckTensorDimRange(condition.GetStorage(), 1, NUM_VALUE_4, "WHERE");
     CheckTensorShapeSize(condition.GetStorage(), "WHERE");
     CheckTensorShapeSize(other.GetStorage(), "WHERE");
@@ -526,8 +521,8 @@ Tensor Where(const Tensor& condition, const Element& inputValue, const Element& 
     DECLARE_TRACER();
     CheckTensorFormat(condition.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
 
-    static const std::unordered_set<DataType> conditionTypes = {DT_BOOL, DT_UINT8};
-    CheckTensorDataType(condition.GetStorage(), conditionTypes, "WHERE");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_WHERE_SS);
+    CheckTensorDataTypeCombination({condition.GetDataType()}, combinations, "WHERE");
     CheckTensorDimRange(condition.GetStorage(), 1, NUM_VALUE_4, "WHERE");
     CheckTensorShapeSize(condition.GetStorage(), "WHERE");
     RETURN_CALL(WhereOperation, *Program::GetInstance().GetCurrentFunction(), condition, inputValue, otherValue);

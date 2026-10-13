@@ -83,10 +83,10 @@ result ：Tensor，Shape由输入的广播得到，详细广播场景可看上�
    - Atlas A2系列产品：DT_INT32，DT_INT16，DT_FP16，DT_FP32，DT_BF16
    <!-- end id6 -->
    <!-- npu="9030" id9 -->
-   - Kirin9030处理器系列产品：DT_FP16，DT_FP32
+   - Kirin9030处理器系列产品：DT_INT16，DT_INT32，DT_FP16，DT_FP32
    <!-- end id9 -->
    <!-- npu="x90" id10 -->
-   - KirinX90处理器系列产品：DT_FP16，DT_FP32
+   - KirinX90处理器系列产品：DT_INT16，DT_INT32，DT_FP16，DT_FP32
    <!-- end id10 -->
 4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 

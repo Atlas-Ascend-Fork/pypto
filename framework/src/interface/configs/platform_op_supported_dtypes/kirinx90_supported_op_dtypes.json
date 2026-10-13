@@ -2,217 +2,742 @@
     "npu_arch": 3003,
     "ops": {
         "ABS": {
-            "input_dtypes": [
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "ADD": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16",
+                    "int16"
+                ],
+                [
+                    "int32",
+                    "int32"
+                ],
+                [
+                    "fp16",
+                    "fp16"
+                ],
+                [
+                    "float32",
+                    "float32"
+                ]
             ]
         },
         "ADDS": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16"
+                ],
+                [
+                    "int32"
+                ],
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "CMP": {
-            "input_dtypes": [
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "fp16",
+                    "fp16"
+                ],
+                [
+                    "float32",
+                    "float32"
+                ]
             ]
         },
         "CMPS": {
-            "input_dtypes": [
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
+            ]
+        },
+        "CONCAT": {
+            "input_tensors_dtype_combinations": [
+                [
+                    "int8"
+                ],
+                [
+                    "int16"
+                ],
+                [
+                    "int32"
+                ],
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "DIV": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "fp16",
+                    "fp16"
+                ],
+                [
+                    "float32",
+                    "float32"
+                ]
             ]
         },
         "DIVS": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
-        "EXPAND": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+        "EXP": {
+            "input_tensors_dtype_combinations": [
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
+            ]
+        },
+        "INDEX_PUT": {
+            "input_tensors_dtype_combinations": [
+                [
+                    "int8",
+                    "int8",
+                    "int8"
+                ],
+                [
+                    "int8",
+                    "int16",
+                    "int8"
+                ],
+                [
+                    "int8",
+                    "int32",
+                    "int8"
+                ],
+                [
+                    "int8",
+                    "int64",
+                    "int8"
+                ],
+                [
+                    "int8",
+                    "uint8",
+                    "int8"
+                ],
+                [
+                    "int8",
+                    "uint16",
+                    "int8"
+                ],
+                [
+                    "int8",
+                    "uint32",
+                    "int8"
+                ],
+                [
+                    "int8",
+                    "uint64",
+                    "int8"
+                ],
+                [
+                    "int16",
+                    "int8",
+                    "int16"
+                ],
+                [
+                    "int16",
+                    "int16",
+                    "int16"
+                ],
+                [
+                    "int16",
+                    "int32",
+                    "int16"
+                ],
+                [
+                    "int16",
+                    "int64",
+                    "int16"
+                ],
+                [
+                    "int16",
+                    "uint8",
+                    "int16"
+                ],
+                [
+                    "int16",
+                    "uint16",
+                    "int16"
+                ],
+                [
+                    "int16",
+                    "uint32",
+                    "int16"
+                ],
+                [
+                    "int16",
+                    "uint64",
+                    "int16"
+                ],
+                [
+                    "int32",
+                    "int8",
+                    "int32"
+                ],
+                [
+                    "int32",
+                    "int16",
+                    "int32"
+                ],
+                [
+                    "int32",
+                    "int32",
+                    "int32"
+                ],
+                [
+                    "int32",
+                    "int64",
+                    "int32"
+                ],
+                [
+                    "int32",
+                    "uint8",
+                    "int32"
+                ],
+                [
+                    "int32",
+                    "uint16",
+                    "int32"
+                ],
+                [
+                    "int32",
+                    "uint32",
+                    "int32"
+                ],
+                [
+                    "int32",
+                    "uint64",
+                    "int32"
+                ],
+                [
+                    "fp16",
+                    "int8",
+                    "fp16"
+                ],
+                [
+                    "fp16",
+                    "int16",
+                    "fp16"
+                ],
+                [
+                    "fp16",
+                    "int32",
+                    "fp16"
+                ],
+                [
+                    "fp16",
+                    "int64",
+                    "fp16"
+                ],
+                [
+                    "fp16",
+                    "uint8",
+                    "fp16"
+                ],
+                [
+                    "fp16",
+                    "uint16",
+                    "fp16"
+                ],
+                [
+                    "fp16",
+                    "uint32",
+                    "fp16"
+                ],
+                [
+                    "fp16",
+                    "uint64",
+                    "fp16"
+                ],
+                [
+                    "float32",
+                    "int8",
+                    "float32"
+                ],
+                [
+                    "float32",
+                    "int16",
+                    "float32"
+                ],
+                [
+                    "float32",
+                    "int32",
+                    "float32"
+                ],
+                [
+                    "float32",
+                    "int64",
+                    "float32"
+                ],
+                [
+                    "float32",
+                    "uint8",
+                    "float32"
+                ],
+                [
+                    "float32",
+                    "uint16",
+                    "float32"
+                ],
+                [
+                    "float32",
+                    "uint32",
+                    "float32"
+                ],
+                [
+                    "float32",
+                    "uint64",
+                    "float32"
+                ]
             ]
         },
         "MAXIMUM": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16",
+                    "int16"
+                ],
+                [
+                    "int32",
+                    "int32"
+                ],
+                [
+                    "fp16",
+                    "fp16"
+                ],
+                [
+                    "float32",
+                    "float32"
+                ]
             ]
         },
         "MAXS": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16"
+                ],
+                [
+                    "int32"
+                ],
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "MINIMUM": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16",
+                    "int16"
+                ],
+                [
+                    "int32",
+                    "int32"
+                ],
+                [
+                    "fp16",
+                    "fp16"
+                ],
+                [
+                    "float32",
+                    "float32"
+                ]
             ]
         },
         "MINS": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16"
+                ],
+                [
+                    "int32"
+                ],
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "MUL": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16",
+                    "int16"
+                ],
+                [
+                    "int32",
+                    "int32"
+                ],
+                [
+                    "fp16",
+                    "fp16"
+                ],
+                [
+                    "float32",
+                    "float32"
+                ]
             ]
         },
         "MULS": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16"
+                ],
+                [
+                    "int32"
+                ],
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "NEG": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16"
+                ],
+                [
+                    "int32"
+                ],
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
+            ]
+        },
+        "RECIPROCAL": {
+            "input_tensors_dtype_combinations": [
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "ROWMAX_SINGLE": {
-            "input_dtypes": [
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "ROWMIN_SINGLE": {
-            "input_dtypes": [
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "ROWSUM_SINGLE": {
-            "input_dtypes": [
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int32"
+                ],
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
+            ]
+        },
+        "RSQRT": {
+            "input_tensors_dtype_combinations": [
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
+            ]
+        },
+        "SQRT": {
+            "input_tensors_dtype_combinations": [
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "SUB": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16",
+                    "int16"
+                ],
+                [
+                    "int32",
+                    "int32"
+                ],
+                [
+                    "fp16",
+                    "fp16"
+                ],
+                [
+                    "float32",
+                    "float32"
+                ]
             ]
         },
         "SUBS": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16"
+                ],
+                [
+                    "int32"
+                ],
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "TRANSPOSE_MOVEIN": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16"
+                ],
+                [
+                    "int32"
+                ],
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "TRANSPOSE_MOVEOUT": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16"
+                ],
+                [
+                    "int32"
+                ],
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "TRANSPOSE_VNCHWCONV": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int16"
+                ],
+                [
+                    "int32"
+                ],
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "VEC_DUP": {
-            "input_dtypes": [
-                "int8",
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "int8"
+                ],
+                [
+                    "int16"
+                ],
+                [
+                    "int32"
+                ],
+                [
+                    "fp16"
+                ],
+                [
+                    "float32"
+                ]
             ]
         },
         "WHERE_SS": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "bool"
+                ],
+                [
+                    "uint8"
+                ]
             ]
         },
         "WHERE_ST": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "bool",
+                    "int16"
+                ],
+                [
+                    "bool",
+                    "int32"
+                ],
+                [
+                    "bool",
+                    "fp16"
+                ],
+                [
+                    "bool",
+                    "float32"
+                ],
+                [
+                    "uint8",
+                    "int16"
+                ],
+                [
+                    "uint8",
+                    "int32"
+                ],
+                [
+                    "uint8",
+                    "fp16"
+                ],
+                [
+                    "uint8",
+                    "float32"
+                ]
             ]
         },
         "WHERE_TS": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "bool",
+                    "int16"
+                ],
+                [
+                    "bool",
+                    "int32"
+                ],
+                [
+                    "bool",
+                    "fp16"
+                ],
+                [
+                    "bool",
+                    "float32"
+                ],
+                [
+                    "uint8",
+                    "int16"
+                ],
+                [
+                    "uint8",
+                    "int32"
+                ],
+                [
+                    "uint8",
+                    "fp16"
+                ],
+                [
+                    "uint8",
+                    "float32"
+                ]
             ]
         },
         "WHERE_TT": {
-            "input_dtypes": [
-                "int16",
-                "int32",
-                "fp16",
-                "float32"
+            "input_tensors_dtype_combinations": [
+                [
+                    "bool",
+                    "int16",
+                    "int16"
+                ],
+                [
+                    "bool",
+                    "int32",
+                    "int32"
+                ],
+                [
+                    "bool",
+                    "fp16",
+                    "fp16"
+                ],
+                [
+                    "bool",
+                    "float32",
+                    "float32"
+                ],
+                [
+                    "uint8",
+                    "int16",
+                    "int16"
+                ],
+                [
+                    "uint8",
+                    "int32",
+                    "int32"
+                ],
+                [
+                    "uint8",
+                    "fp16",
+                    "fp16"
+                ],
+                [
+                    "uint8",
+                    "float32",
+                    "float32"
+                ]
             ]
         }
     }

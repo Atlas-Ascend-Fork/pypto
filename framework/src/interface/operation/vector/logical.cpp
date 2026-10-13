@@ -103,8 +103,8 @@ Tensor LogicalNot(const Tensor& self)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "LogicalNot");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_LOGICALNOT);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "LOGICALNOT");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_LOGICALNOT);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "LOGICALNOT");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "LOGICALNOT");
     CheckTensorShapeSize(self.GetStorage(), "LOGICALNOT");
     RETURN_CALL(LogicalNotOperation, *Program::GetInstance().GetCurrentFunction(), self.GetStorage());

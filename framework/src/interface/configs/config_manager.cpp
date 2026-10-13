@@ -59,7 +59,7 @@ static DataType StringToDataType(const std::string& str)
 
 static bool IsValidNPUArch(NPUArch arch) { return NPUArchToString(arch) != "UNKNOWN_NPU_ARCH"; }
 
-constexpr const char* kSupportedInputDtypesKey = "input_dtypes";
+constexpr const char* kSupportedInputTensorDtypeCombinationsKey = "input_tensors_dtype_combinations";
 
 ConfigManager::ConfigManager() { Initialize(); }
 
@@ -174,14 +174,22 @@ void ConfigManager::LoadPlatformSupportedOpDtypes()
                 if (!catIt.value().is_array()) {
                     continue;
                 }
-                std::unordered_set<DataType> dtypes;
-                for (const auto& dtypeItem : catIt.value()) {
-                    DataType dtype = StringToDataType(dtypeItem.get<std::string>());
-                    if (dtype != DataType::DT_BOTTOM) {
-                        dtypes.insert(dtype);
+                OpInputDtypeCombinations combinations;
+                const auto& value = catIt.value();
+                for (const auto& combinationItem : value) {
+                    if (!combinationItem.is_array()) {
+                        continue;
                     }
+                    std::vector<DataType> combination;
+                    combination.reserve(combinationItem.size());
+                    for (const auto& dtypeItem : combinationItem) {
+                        bool isEmpty = dtypeItem.is_string() && dtypeItem.get<std::string>().empty();
+                        combination.push_back(isEmpty ? DataType::DT_BOTTOM :
+                                                        StringToDataType(dtypeItem.get<std::string>()));
+                    }
+                    combinations.push_back(std::move(combination));
                 }
-                platformSupportedOpDtypesMap_[arch][catIt.key()][opcode] = dtypes;
+                platformSupportedOpDtypesMap_[arch][catIt.key()][opcode] = std::move(combinations);
             }
         }
     }
@@ -196,39 +204,41 @@ void ConfigManager::DumpPlatformSupportedOpDtypes() const
     for (const auto& [arch, categories] : platformSupportedOpDtypesMap_) {
         FE_LOGI("platformSupportedOpDtypesMap arch=%s:", NPUArchToString(arch).c_str());
         for (const auto& [category, opMap] : categories) {
-            for (const auto& [opcode, dtypes] : opMap) {
-                std::string dtypesStr;
-                for (const auto& dtype : dtypes) {
-                    dtypesStr += DataType2String(dtype);
-                    dtypesStr += " ";
+            for (const auto& [opcode, combinations] : opMap) {
+                for (size_t i = 0; i < combinations.size(); ++i) {
+                    std::string dtypesStr;
+                    for (const auto& dtype : combinations[i]) {
+                        dtypesStr += (dtype == DataType::DT_BOTTOM) ? "*" : DataType2String(dtype);
+                        dtypesStr += " ";
+                    }
+                    FE_LOGI("  category=%s opcode=%s combination=%zu dtypes={%s}", category.c_str(),
+                            OpcodeManager::Inst().GetOpcodeStr(opcode).c_str(), i, dtypesStr.c_str());
                 }
-                FE_LOGI("  category=%s opcode=%s dtypes={%s}", category.c_str(),
-                        OpcodeManager::Inst().GetOpcodeStr(opcode).c_str(), dtypesStr.c_str());
             }
         }
     }
 }
 
-const std::unordered_set<DataType>& ConfigManager::GetOpSupportedInputDtypes(const Opcode& opcode)
+const OpInputDtypeCombinations& ConfigManager::GetOpSupportedInputDtypes(const Opcode& opcode)
 {
     std::call_once(platformSupportedOpDtypesLoaded_, [this]() {
         LoadPlatformSupportedOpDtypes();
         DumpPlatformSupportedOpDtypes();
     });
 
-    static const std::unordered_set<DataType> kEmptyDtypes;
+    static const OpInputDtypeCombinations kEmptyCombinations;
     NPUArch arch = Platform::Instance().GetSoc().GetNPUArch();
     auto archIt = platformSupportedOpDtypesMap_.find(arch);
     if (archIt == platformSupportedOpDtypesMap_.end()) {
-        return kEmptyDtypes;
+        return kEmptyCombinations;
     }
-    auto kindIt = archIt->second.find(kSupportedInputDtypesKey);
+    auto kindIt = archIt->second.find(kSupportedInputTensorDtypeCombinationsKey);
     if (kindIt == archIt->second.end()) {
-        return kEmptyDtypes;
+        return kEmptyCombinations;
     }
     auto opIt = kindIt->second.find(opcode);
     if (opIt == kindIt->second.end()) {
-        return kEmptyDtypes;
+        return kEmptyCombinations;
     }
     return opIt->second;
 }

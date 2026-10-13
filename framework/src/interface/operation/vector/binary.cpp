@@ -108,10 +108,8 @@ Tensor Add(const Tensor& self, const Tensor& other)
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Add");
     CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Add");
 
-    CheckTensorsDataTypeConsistency(self.GetStorage(), other.GetStorage(), "ADD");
-
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ADD);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "ADD");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ADD);
+    CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "ADD");
     CheckInt64Broadcast(self.GetStorage(), other.GetStorage(), "ADD");
     RETURN_CALL(BinaryOperation<BinaryOpType::ADD>, *Program::GetInstance().GetCurrentFunction(), self, other);
 }
@@ -122,10 +120,8 @@ Tensor Sub(const Tensor& self, const Tensor& other)
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Sub");
     CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Sub");
 
-    CheckTensorsDataTypeConsistency(self.GetStorage(), other.GetStorage(), "SUB");
-
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SUB);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "SUB");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SUB);
+    CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "SUB");
     CheckInt64Broadcast(self.GetStorage(), other.GetStorage(), "SUB");
     RETURN_CALL(BinaryOperation<BinaryOpType::SUB>, *Program::GetInstance().GetCurrentFunction(), self, other);
 }
@@ -136,10 +132,8 @@ Tensor Mul(const Tensor& self, const Tensor& other)
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Mul");
     CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Mul");
 
-    CheckTensorsDataTypeConsistency(self.GetStorage(), other.GetStorage(), "MUL");
-
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MUL);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "MUL");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MUL);
+    CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "MUL");
     CheckInt64Broadcast(self.GetStorage(), other.GetStorage(), "MUL");
     RETURN_CALL(BinaryOperation<BinaryOpType::MUL>, *Program::GetInstance().GetCurrentFunction(), self, other);
 }
@@ -150,11 +144,9 @@ Tensor Div(const Tensor& self, const Tensor& other, PrecisionType precisionType)
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Div");
     CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Div");
 
-    CheckTensorsDataTypeConsistency(self.GetStorage(), other.GetStorage(), "DIV");
-
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_DIV);
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_DIV);
+    CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "DIV");
     auto isDivSupportedInt = [](DataType dt) { return dt == DT_INT16 || dt == DT_INT32 || dt == DT_INT64; };
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "DIV");
 
     if (isDivSupportedInt(self.GetDataType())) {
         Tensor castSelf = Cast(self, DT_FP32, CastMode::CAST_NONE, SaturationMode::ON);
@@ -201,9 +193,8 @@ Tensor Remainder(const Tensor& self, const Tensor& other, PrecisionType precisio
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Remainder");
     CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Remainder");
 
-    CheckTensorsDataTypeConsistency(self.GetStorage(), other.GetStorage(), "REM");
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_REM);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "REM");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_REM);
+    CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "REM");
     CheckInt64Broadcast(self.GetStorage(), other.GetStorage(), "REM");
     auto selfDtype = self.GetDataType();
     bool isA5Architecture = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510);
@@ -228,10 +219,8 @@ Tensor Maximum(const Tensor& operand1, const Tensor& operand2)
     CheckTensorFormat(operand1.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Maximum");
     CheckTensorFormat(operand2.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Maximum");
 
-    CheckTensorsDataTypeConsistency(operand1.GetStorage(), operand2.GetStorage(), "MAXIMUM");
-
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MAXIMUM);
-    CheckTensorDataType(operand1.GetStorage(), supportedTypes, "MAXIMUM");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MAXIMUM);
+    CheckTensorDataTypeCombination({operand1.GetDataType(), operand2.GetDataType()}, combinations, "MAXIMUM");
     CheckInt64Broadcast(operand1.GetStorage(), operand2.GetStorage(), "MAXIMUM");
     RETURN_CALL(BinaryOperation<BinaryOpType::MAXIMUM>, *Program::GetInstance().GetCurrentFunction(), operand1,
                 operand2);
@@ -243,10 +232,8 @@ Tensor Minimum(const Tensor& operand1, const Tensor& operand2)
     CheckTensorFormat(operand1.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Minimum");
     CheckTensorFormat(operand2.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Minimum");
 
-    CheckTensorsDataTypeConsistency(operand1.GetStorage(), operand2.GetStorage(), "MINIMUM");
-
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MINIMUM);
-    CheckTensorDataType(operand1.GetStorage(), supportedTypes, "MINIMUM");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MINIMUM);
+    CheckTensorDataTypeCombination({operand1.GetDataType(), operand2.GetDataType()}, combinations, "MINIMUM");
     CheckInt64Broadcast(operand1.GetStorage(), operand2.GetStorage(), "MINIMUM");
     RETURN_CALL(BinaryOperation<BinaryOpType::MINIMUM>, *Program::GetInstance().GetCurrentFunction(), operand1,
                 operand2);
@@ -337,11 +324,8 @@ Tensor FloorDiv(const Tensor& self, const Tensor& other)
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "FLOORDIV");
     CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "FLOORDIV");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_FLOORDIV);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "FLOORDIV");
-    CheckTensorDataType(other.GetStorage(), supportedTypes, "FLOORDIV");
-
-    CheckTensorsDataTypeConsistency(self.GetStorage(), other.GetStorage(), "FLOORDIV");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_FLOORDIV);
+    CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "FLOORDIV");
     RETURN_CALL(BinaryOperation<BinaryOpType::FLOORDIV>, *Program::GetInstance().GetCurrentFunction(), self, other);
 }
 

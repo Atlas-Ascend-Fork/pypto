@@ -229,6 +229,38 @@ void CheckTensorDataType(const LogicalTensorPtr& tensor, const std::unordered_se
     CheckTensorDataType(dtype, supportedTypes, opName);
 }
 
+void CheckTensorDataTypeCombination(const std::vector<DataType>& actualTypes,
+                                    const std::vector<std::vector<DataType>>& combinations, const std::string& opName)
+{
+    for (const auto& combination : combinations) {
+        if (combination.size() != actualTypes.size()) {
+            continue;
+        }
+        bool matched = true;
+        for (size_t i = 0; i < combination.size(); ++i) {
+            if (combination[i] == DataType::DT_BOTTOM) {
+                continue;
+            }
+            if (combination[i] != actualTypes[i]) {
+                matched = false;
+                break;
+            }
+        }
+        if (matched) {
+            return;
+        }
+    }
+    std::ostringstream oss;
+    for (size_t i = 0; i < actualTypes.size(); ++i) {
+        if (i != 0) {
+            oss << ", ";
+        }
+        oss << DataType2String(actualTypes[i]);
+    }
+    CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, false)
+        << "Data type combination (" << oss.str() << ") is not supported for op: " << opName;
+}
+
 void CheckTensorFormat(const LogicalTensorPtr& tensor, const std::unordered_set<TileOpFormat>& unsupportedFormats,
                        const std::string& opName)
 {

@@ -84,6 +84,17 @@ def get_opcodes(operation: str) -> list:
     return OP_TO_OPCODES.get(operation.lower(), [operation.upper()])
 
 
+def _flatten_input_dtypes(input_dtypes) -> list:
+    """将组合枚举（嵌套列表，空串表示可选槽位）展平为去重的 dtype 字符串列表。"""
+    flat = []
+    for item in input_dtypes:
+        if isinstance(item, list):
+            flat.extend(d for d in item if d)
+        elif item:
+            flat.append(item)
+    return list(dict.fromkeys(flat))
+
+
 def check_dtype(pypto_root: Path, operation: str, dtypes: list) -> dict:
     config_dir = load_config_dir(pypto_root)
     opcodes = get_opcodes(operation)
@@ -102,7 +113,10 @@ def check_dtype(pypto_root: Path, operation: str, dtypes: list) -> dict:
             per_arch[arch] = {}
             continue
         ops = (data.get("ops") or {})
-        per_arch[arch] = {op: ops.get(op, {}).get("input_dtypes", []) for op in opcodes}
+        per_arch[arch] = {
+            op: _flatten_input_dtypes(ops.get(op, {}).get("input_tensors_dtype_combinations", []))
+            for op in opcodes
+        }
         if any(op in ops for op in opcodes):
             matched_files.append(filename)
 

@@ -304,8 +304,8 @@ Tensor Add(const Tensor& self, const Element& other)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Add");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ADDS);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "ADD");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ADDS);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "ADD");
     RETURN_CALL(BinaryOperationScalar<BinaryOpType::ADD>, *Program::GetInstance().GetCurrentFunction(),
                 self.GetStorage(), other);
 }
@@ -315,8 +315,8 @@ Tensor Sub(const Tensor& self, const Element& other)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Sub");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SUBS);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "SUB");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SUBS);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "SUB");
     RETURN_CALL(BinaryOperationScalar<BinaryOpType::SUB>, *Program::GetInstance().GetCurrentFunction(),
                 self.GetStorage(), other);
 }
@@ -326,8 +326,8 @@ Tensor Mul(const Tensor& self, const Element& other)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Mul");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MULS);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "MUL");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MULS);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "MUL");
     RETURN_CALL(BinaryOperationScalar<BinaryOpType::MUL>, *Program::GetInstance().GetCurrentFunction(),
                 self.GetStorage(), other);
 }
@@ -337,11 +337,11 @@ Tensor Div(const Tensor& self, const Element& other, PrecisionType precisionType
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Div");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_DIVS);
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_DIVS);
     auto isDivSupportedInt = [](DataType dt) { return dt == DT_INT16 || dt == DT_INT32 || dt == DT_INT64; };
     auto isDivSupportedFloat = [](DataType dt) { return dt == DT_FP16 || dt == DT_FP32 || dt == DT_BF16; };
     auto isDivSupportedScalar = [&](DataType dt) { return isDivSupportedFloat(dt) || isDivSupportedInt(dt); };
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "DIV");
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "DIV");
 
     if (isDivSupportedInt(self.GetDataType())) {
         CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, isDivSupportedInt(other.GetDataType()))
@@ -393,8 +393,8 @@ Tensor Remainder(const Tensor& self, const Element& other, PrecisionType precisi
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Remainder");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_REMS);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "REM");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_REMS);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "REM");
     auto selfDtype = self.GetDataType();
     Element castOther = CastScalarToDtype(other, selfDtype);
     bool isA5Architecture = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510);
@@ -417,8 +417,8 @@ Tensor Remainder(const Element& self, const Tensor& other, PrecisionType precisi
     DECLARE_TRACER();
     CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Remainder");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_REMRS);
-    CheckTensorDataType(other.GetStorage(), supportedTypes, "REM");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_REMRS);
+    CheckTensorDataTypeCombination({other.GetDataType()}, combinations, "REM");
     auto otherDtype = other.GetDataType();
     Element castSelf = CastScalarToDtype(self, otherDtype);
     bool isA5Architecture = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510);
@@ -443,8 +443,8 @@ Tensor BitwiseAnd(const Tensor& self, const Element& other)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseAnd");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISEANDS);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "BITWISEAND");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISEANDS);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "BITWISEAND");
     RETURN_CALL(BinaryOperationScalar<BinaryOpType::BITWISEAND>, *Program::GetInstance().GetCurrentFunction(),
                 self.GetStorage(), other);
 }
@@ -454,8 +454,8 @@ Tensor BitwiseOr(const Tensor& self, const Element& other)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseOr");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISEORS);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "BITWISEOR");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISEORS);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "BITWISEOR");
     RETURN_CALL(BinaryOperationScalar<BinaryOpType::BITWISEOR>, *Program::GetInstance().GetCurrentFunction(),
                 self.GetStorage(), other);
 }
@@ -465,8 +465,8 @@ Tensor BitwiseXor(const Tensor& self, const Element& other)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseXor");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISEXORS);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "BITWISEXOR");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISEXORS);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "BITWISEXOR");
     RETURN_CALL(BinaryOperationScalar<BinaryOpType::BITWISEXOR>, *Program::GetInstance().GetCurrentFunction(),
                 self.GetStorage(), other);
 }
@@ -476,8 +476,8 @@ Tensor Maximum(const Tensor& operand1, const Element& operand2)
     DECLARE_TRACER();
     CheckTensorFormat(operand1.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Maximum");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MAXS);
-    CheckTensorDataType(operand1.GetStorage(), supportedTypes, "MAX");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MAXS);
+    CheckTensorDataTypeCombination({operand1.GetDataType()}, combinations, "MAX");
     RETURN_CALL(BinaryOperationScalar<BinaryOpType::MAX>, *Program::GetInstance().GetCurrentFunction(),
                 operand1.GetStorage(), operand2);
 }
@@ -487,8 +487,8 @@ Tensor Minimum(const Tensor& operand1, const Element& operand2)
     DECLARE_TRACER();
     CheckTensorFormat(operand1.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Minimum");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MINS);
-    CheckTensorDataType(operand1.GetStorage(), supportedTypes, "MIN");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MINS);
+    CheckTensorDataTypeCombination({operand1.GetDataType()}, combinations, "MIN");
     RETURN_CALL(BinaryOperationScalar<BinaryOpType::MIN>, *Program::GetInstance().GetCurrentFunction(),
                 operand1.GetStorage(), operand2);
 }
@@ -537,8 +537,8 @@ Tensor FloorDiv(const Tensor& self, const Element& other)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "FLOORDIV");
 
-    const auto& supportedTypes = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_FLOORDIVS);
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "FLOORDIV");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_FLOORDIVS);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "FLOORDIV");
     CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, other.GetDataType() == self.GetDataType())
         << "Scalar dtype incorrect. Scalar dtype should be same as self dtype, self dtype is: "
         << DataType2String(self.GetDataType()) << ", actual scalar dtype is: " << DataType2String(other.GetDataType());

@@ -110,6 +110,22 @@ void CheckCastTypeSupport(DataType srcType, DataType dstType, const std::string&
                 << "A5 architecture does not support cast from " << npu::tile_fwk::DataType2String(srcType) << " to "
                 << npu::tile_fwk::DataType2String(dstType) << " in " << opName;
         }
+    } else if (IsLiteNPU(arch)) {
+        // Kirin9030/KirinX90 架构支持的转换
+        std::unordered_map<DataType, std::unordered_set<DataType>> liteNPUSupportedConversions = {
+            {DT_FP32, {DT_FP16, DT_INT32, DT_INT16}},
+            {DT_FP16, {DT_FP32, DT_INT32, DT_INT16, DT_INT8, DT_UINT8}},
+            {DT_INT32, {DT_FP32}},
+            {DT_INT16, {DT_FP32, DT_FP16}},
+            {DT_UINT8, {DT_FP16}},
+            {DT_INT8, {DT_FP16}}};
+
+        if (liteNPUSupportedConversions.count(srcType) == 0 ||
+            liteNPUSupportedConversions[srcType].count(dstType) == 0) {
+            CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, false)
+                << "Kirin architecture does not support cast from " << npu::tile_fwk::DataType2String(srcType) << " to "
+                << npu::tile_fwk::DataType2String(dstType) << " in " << opName;
+        }
     } else {
         // A2A3 架构支持的转换（其他架构也按A2A3处理）
         std::unordered_map<DataType, std::unordered_set<DataType>> a2a3SupportedConversions = {

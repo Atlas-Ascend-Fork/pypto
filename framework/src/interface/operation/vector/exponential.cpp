@@ -20,6 +20,7 @@
 #include "interface/utils/operator_tracer.h"
 #include "passes/pass_utils/graph_utils.h"
 #include "tilefwk/error_code.h"
+#include "interface/configs/config_manager.h"
 
 namespace npu::tile_fwk {
 
@@ -28,8 +29,8 @@ Tensor Exp(const Tensor& self, PrecisionType precisionType)
     DECLARE_TRACER();
     CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Exp");
 
-    std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "Exp");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_EXP);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "Exp");
 
     auto [result, op] = TensorUnaryOperationWithOp<UnaryOpType::EXP>(*Program::GetInstance().GetCurrentFunction(),
                                                                      self.GetStorage());
