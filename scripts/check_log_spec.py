@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 
 SKILL_FILE = ".agents/skills/pypto-log-check/SKILL.md"
 RULES_FILE = ".agents/skills/pypto-log-check/references/log-rules.md"
@@ -70,6 +71,22 @@ HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 DEFAULT_TIMEOUT = 300
 
+# Marker the reviewed agent emits after loading the rules, so the hook can
+# relay that phase in real time.
+SKILL_LOADED_MARKER = "SKILL_LOADED"
+BANNER_RE = re.compile(r"^>\s*\S+\s*·\s*(?P<model>\S+)")
+
+# Broad gate: only pay for an agent call when an added line looks like it could
+# be a runtime log/print statement.  Over-inclusive on purpose to avoid misses.
+LOG_SIGNAL_RE = re.compile(
+    r"(?i)("
+    r"log\w*\s*\(|logger\s*\.|logging\s*\.|"
+    r"print\w*\s*\(|printf\s*\(|fprintf\s*\(|fputs\s*\(|fwrite\s*\(|"
+    r"std::cout|std::cerr|cout\s*<<|cerr\s*<<|console\.log\s*\(|"
+    r"warn\w*\s*\(|error\w*\s*\(|fatal\w*\s*\(|trace\w*\s*\(|report\w*\s*\(|dump\w*\s*\("
+    r")"
+)
+
 
 def log(message):
     print(f"[log-spec] {message}", file=sys.stderr)
@@ -108,8 +125,8 @@ def in_scan_scope(path):
     )
 
 
-def added_lines(path):
-    """Return the line numbers added to *path* by the staged diff."""
+def staged_added(path):
+    """Return (added line numbers, added line texts) for *path*'s staged diff."""
     result = subprocess.run(
         ["git", "diff", "--cached", "-U0", "--", path],
         capture_output=True,
@@ -117,13 +134,27 @@ def added_lines(path):
         check=False,
     )
     lines = set()
+    texts = []
     for line in result.stdout.splitlines():
         match = HUNK_RE.match(line)
         if match:
             start = int(match.group(1))
             count = 1 if match.group(2) is None else int(match.group(2))
             lines.update(range(start, start + count))
-    return lines
+        elif line.startswith("+") and not line.startswith("+++"):
+            texts.append(line[1:])
+    return lines, texts
+
+
+def staged_diff(files, context=4):
+    """Return the staged diff (with context) for *files*."""
+    result = subprocess.run(
+        ["git", "diff", "--cached", f"-U{context}", "--"] + files,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout
 
 
 FINDING_SCHEMA = (
@@ -133,19 +164,38 @@ FINDING_SCHEMA = (
 )
 
 
-def build_prompt(files):
-    file_list = "\n".join(f"- {path}" for path in files)
+def build_prompt(files, allowed_lines, diff_text):
+    index = "\n".join(
+        f"- {path}: 新增行 {', '.join(str(n) for n in sorted(allowed_lines[path]))}"
+        for path in files
+    )
+    with open(SKILL_FILE, encoding="utf-8") as handle:
+        skill = handle.read()
+    with open(RULES_FILE, encoding="utf-8") as handle:
+        rules = handle.read()
     return f"""你是 CANN 日志规范评测器，正在 git pre-commit 钩子中运行，工作目录是仓库根目录。
 
-执行步骤：
-1. 读取 `{SKILL_FILE}` 和唯一规则来源 `{RULES_FILE}`，规则、严重级和判定尺度全部以 log-rules.md 为准，
-不要凭记忆补充或删减规则。
-2. 只评测本次提交涉及的下列文件：
-{file_list}
-   读取每个文件的完整内容作为上下文，识别其中全部运行时日志/打印语句，再按规则表逐条审查。
-3. 只发现问题，不要修改任何文件，不要执行仓库中的脚本或命令，不要评测清单之外的文件。
-4. 遵守 log-rules.md 的"全局判定尺度"，宁缺毋滥，不报风格类建议。
+【硬性约束】严禁使用任何工具、严禁读取任何文件、严禁执行任何命令；下面已提供全部所需信息，
+请直接完成评测并只输出结果。读取文件会产生额外的多轮调用并拖慢提交，务必避免。
 
+===== 规则（唯一来源 {RULES_FILE}，逐字提供，判定以此为准） =====
+{rules}
+
+===== 评测方法（{SKILL_FILE}） =====
+{skill}
+
+===== 本次提交：新增行与 staged diff =====
+涉及文件及新增行号：
+{index}
+
+staged diff（仅新增行需评测）：
+```diff
+{diff_text}
+```
+
+===== 输出 =====
+读完规则后先输出一行 {SKILL_LOADED_MARKER}，然后完成评测。
+只评测上述新增行中的运行时日志/打印语句，行号使用新文件的绝对行号，遵守规则文件的"全局判定尺度"。
 最后只输出一段 JSON，包裹在下面两行标记之间，标记之外不要有其它内容：
 {BEGIN_MARKER}
 {FINDING_SCHEMA}
@@ -155,29 +205,66 @@ def build_prompt(files):
 """
 
 
-def run_agent(agent, prompt, timeout):
-    """Return the agent stdout, or None when the call failed."""
+def report_progress(line, state):
+    """Relay agent progress markers to the user as each phase completes."""
+    text = ANSI_RE.sub("", line).strip()
+    if not text:
+        return
+    if state["model"] is None:
+        match = BANNER_RE.match(text)
+        if match:
+            state["model"] = match.group("model")
+            log(f"步骤 2/4：当前模型 = {state['model']}")
+            return
+    if not state["skill"] and SKILL_LOADED_MARKER in text:
+        state["skill"] = True
+        log(f"步骤 3/4：skill 加载成功（{SKILL_FILE} + {RULES_FILE}）")
+        log(f"步骤 4/4：评测 {state['files']} 个文件 ...")
+
+
+def run_agent(agent, prompt, timeout, state):
+    """Stream the agent output, relaying progress; return it or None on failure."""
     argv = AGENT_COMMANDS[agent](prompt)
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             argv,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=timeout,
-            check=False,
+            bufsize=1,
         )
-    except subprocess.TimeoutExpired:
-        log(f"{agent} 超过 {timeout}s 未返回，跳过日志规范检查。")
-        return None
     except OSError as exc:
         log(f"{agent} 调用失败（{exc}），跳过日志规范检查。")
         return None
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip().splitlines()
-        tail = detail[-1] if detail else "无输出"
-        log(f"{agent} 返回码 {result.returncode}（{tail}），跳过日志规范检查。")
+
+    collected = []
+
+    def reader():
+        try:
+            for line in process.stdout:
+                collected.append(line)
+                report_progress(line, state)
+        except (OSError, ValueError):
+            pass
+
+    thread = threading.Thread(target=reader, daemon=True)
+    thread.start()
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        log(f"{agent} 超过 {timeout}s 未返回，跳过日志规范检查。")
         return None
-    return result.stdout
+    finally:
+        thread.join(timeout=5)
+
+    if process.returncode != 0:
+        detail = "".join(collected).strip().splitlines()
+        tail = detail[-1] if detail else "无输出"
+        log(f"{agent} 返回码 {process.returncode}（{tail}），跳过日志规范检查。")
+        return None
+    return "".join(collected)
 
 
 def parse_findings(output):
@@ -253,26 +340,34 @@ def main():
     files = [path for path in args.files if in_scan_scope(path)]
     if not files:
         return 0
-    if not os.path.exists(RULES_FILE):
-        log(f"未找到规则文件 {RULES_FILE}，跳过日志规范检查。")
+    if not os.path.exists(RULES_FILE) or not os.path.exists(SKILL_FILE):
+        log("未找到规则或 skill 文件，跳过日志规范检查。")
         return 0
 
+    log("步骤 1/4：检测本地 agent CLI ...")
     agent = select_agent()
     if agent is None:
         return 0
 
-    allowed_lines = {path: added_lines(path) for path in files}
-    allowed_lines = {path: lines for path, lines in allowed_lines.items() if lines}
-    if not allowed_lines:
+    staged = {path: staged_added(path) for path in files}
+    staged = {path: value for path, value in staged.items()
+              if value[0] and any(LOG_SIGNAL_RE.search(text) for text in value[1])}
+    if not staged:
+        log("本次新增行未检测到日志/打印语句，跳过 agent 评测。")
         return 0
 
-    files = sorted(allowed_lines)
+    files = sorted(staged)
+    allowed_lines = {path: lines for path, (lines, _) in staged.items()}
     timeout = int(os.environ.get("PYPTO_LOG_CHECK_TIMEOUT", DEFAULT_TIMEOUT))
-    log(f"使用 {agent} 评测 {len(files)} 个文件的日志规范，最长等待 {timeout}s ...")
+    log(f"步骤 1/4：agent = {agent} 可用，待评测 {len(files)} 个文件，最长等待 {timeout}s")
 
-    output = run_agent(agent, build_prompt(files), timeout)
+    diff_text = staged_diff(files)
+    state = {"model": None, "skill": False, "files": len(files)}
+    output = run_agent(agent, build_prompt(files, allowed_lines, diff_text), timeout, state)
     if output is None:
         return 0
+    if not state["skill"]:
+        log("提示：未捕获到 skill 加载标记，agent 可能未按步骤加载 skill。")
 
     findings = parse_findings(output)
     if findings is None:
