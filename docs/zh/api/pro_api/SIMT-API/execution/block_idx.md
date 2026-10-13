@@ -34,7 +34,7 @@ pypto_pro.language.simt.block_idx() -> Any
 
 ## 返回值说明
 
-返回三维线程块坐标对象，通过block.x、block.y和block.z读取各维坐标，每个分量均为DT_UINT32类型的Scalar。当前线程块网格仅使用X维，block.x的范围为[0, grid_dim().x)，block.y和block.z均为0。
+返回三维线程块坐标元组对象，通过block.x、block.y和block.z读取各维坐标，每个分量均为DT_UINT32类型的Scalar。当前线程块网格仅使用X维，block.x的范围为[0, grid_dim().x)，block.y和block.z均为0。
 
 ## 调用示例
 

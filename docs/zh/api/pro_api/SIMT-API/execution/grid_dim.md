@@ -34,7 +34,7 @@ pypto_pro.language.simt.grid_dim() -> Any
 
 ## 返回值说明
 
-返回三维线程块网格尺寸对象，通过grid.x、grid.y和grid.z读取各维大小，每个分量均为DT_UINT32类型的Scalar。当前线程块网格仅使用X维，grid.x为外层Kernel的Vector执行域逻辑Block数量，grid.y和grid.z均为1。
+返回三维线程块网格尺寸元组对象，通过grid.x、grid.y和grid.z读取各维大小，每个分量均为DT_UINT32类型的Scalar。当前线程块网格仅使用X维，grid.x为外层Kernel的Vector执行域逻辑Block数量，grid.y和grid.z均为1。
 
 ## 调用示例
 
