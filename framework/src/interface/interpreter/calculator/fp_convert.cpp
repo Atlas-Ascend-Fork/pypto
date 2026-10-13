@@ -517,8 +517,7 @@ static uint8_t EncodeFp4NibbleNearest(float v, float (*decodeFn)(uint8_t))
 static uint8_t EncodeFp4E2M1Nibble(float v) { return EncodeFp4NibbleNearest(v, DecodeFp4E2M1Nibble); }
 
 static constexpr std::array<float, 16> kFp4E1M2DecodeTable = {
-    0.0f,  0.125f,  0.25f,  0.375f,  1.0f,  1.25f,  1.5f,  1.75f,
-    -0.0f, -0.125f, -0.25f, -0.375f, -1.0f, -1.25f, -1.5f, -1.75f,
+    0.0f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, -0.0f, -0.25f, -0.5f, -0.75f, -1.0f, -1.25f, -1.5f, -1.75f,
 };
 
 static float DecodeFp4E1M2Nibble(uint8_t nib) { return kFp4E1M2DecodeTable[static_cast<size_t>(nib & 0x0F)]; }

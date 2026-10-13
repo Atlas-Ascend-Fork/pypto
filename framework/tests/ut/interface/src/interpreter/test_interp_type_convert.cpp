@@ -328,7 +328,7 @@ TEST_F(InterpTypeConvertTest, Fp4E2M1PackedDecodeToFp32)
 // FP4 E1M2 packed (DT_FP4_E1M2): verify nibble decode order and value mapping.
 TEST_F(InterpTypeConvertTest, Fp4E1M2PackedDecodeToFp32)
 {
-    // 0x14: high=1 -> E1M2 e=0,m=1 -> 0.125
+    // 0x14: high=1 -> E1M2 e=0,m=1 -> 0.25
     //       low=4  -> E1M2 e=1,m=0 -> 1.0
     // 0xFC: high=15-> sign=1,e=1,m=3 -> -1.75
     //       low=12 -> sign=1,e=1,m=0 -> -1.0
@@ -336,7 +336,7 @@ TEST_F(InterpTypeConvertTest, Fp4E1M2PackedDecodeToFp32)
     auto src = makeTensorData(DT_FP4_E1M2, {4}, packed);
     auto out = makeTensorData(DT_FP32, {4}, 0.0f);
     calc::Cast(out, src);
-    const std::vector<float> goldenVals = {0.125f, 1.0f, -1.75f, -1.0f};
+    const std::vector<float> goldenVals = {0.25f, 1.0f, -1.75f, -1.0f};
     auto golden = makeTensorData(DT_FP32, {4}, goldenVals);
     ASSERT_ALLCLOSE_ATOL(out, golden, 1e-6f);
 }
