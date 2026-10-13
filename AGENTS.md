@@ -2,13 +2,14 @@
 
 ## 项目概述
 
-本仓库为华为昇腾 AI 处理器高性能编程框架 **PyPTO（CANN）** 的源码仓。此处的 agent 与 skill 面向 **PyPTO 框架自身的开发与维护**，覆盖框架调试与错误定位、编译期 Pass 分析、环境配置、以及 PR / Issue 流程。
+本仓库为华为昇腾 AI 处理器高性能编程框架 **PyPTO（CANN）** 的源码仓。此处的 agent 与 skill 面向 **PyPTO 框架自身的开发与维护**，覆盖框架调试与错误定位、编译期 Pass 分析、环境配置、文档质量检视、以及 PR / Issue 流程。
 
 ### 核心功能
 
 - PyPTO 框架的调试、错误定位与 Pass 模块分析
 - 环境安装与依赖问题诊断
 - 规范化的 PR / Issue 创建与修复流程
+- docs/ 文档质量自检与 Committer 检视
 
 ---
 
@@ -52,3 +53,4 @@
 | 安装 / 修复环境 | skill `pypto-environment-setup` |
 | 创建 / 修复 PR、创建 Issue | skill `pypto-pr-creator` / `pypto-pr-fixer` / `pypto-issue-creator` |
 | 检视 machine 侧代码、提交行级 review 意见 | skill `pypto-machine-code-review` |
+| 自检 / 检视 docs/ 文档质量 | skill `pypto-doc-reviewer` |

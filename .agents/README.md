@@ -1,6 +1,6 @@
 # PyPTO Agent Skills
 
-面向 PyPTO 框架开发与维护的专家技能集，覆盖**框架调试与错误定位、编译期 Pass 分析、环境配置、PR / Issue 流程**。同时支持 [opencode](https://opencode.ai) 与 [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)：opencode 自动发现 `.agents/skills/` 与 `.opencode/agents/`，Claude Code 按下方 [Claude Code 配置](#claude-code-配置) 一次性迁移。
+面向 PyPTO 框架开发与维护的专家技能集，覆盖**框架调试与错误定位、编译期 Pass 分析、环境配置、PR / Issue 流程、文档质量检视**。同时支持 [opencode](https://opencode.ai) 与 [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)：opencode 自动发现 `.agents/skills/` 与 `.opencode/agents/`，Claude Code 按下方 [Claude Code 配置](#claude-code-配置) 一次性迁移。
 
 ## Skills
 
@@ -31,6 +31,7 @@
 | [`pypto-pr-creator`](skills/pypto-pr-creator/SKILL.md) | 创建/更新 `cann/pypto` PR：fork 校验、Git 认证、upstream 同步、commit 检查、CLA |
 | [`pypto-pr-fixer`](skills/pypto-pr-fixer/SKILL.md) | 修复 PyPTO PR 的 CodeCheck CI 失败与 review 评论 |
 | [`pypto-issue-creator`](skills/pypto-issue-creator/SKILL.md) | 创建结构化 GitCode Issue：Bug、Feature、Doc、Question 等 |
+| [`pypto-doc-reviewer`](skills/pypto-doc-reviewer/SKILL.md) | docs/ 文档质量检查：开发者提交 PR 前自检、Committer 行级检视（五维度规则） |
 | [`pypto-fracture-point-detector`](skills/pypto-fracture-point-detector/SKILL.md) | 识别框架/文档断裂点，产出可转化为 Issue 的报告 |
 | [`pypto-skill-reviewer`](skills/pypto-skill-reviewer/SKILL.md) | 审计 skill 目录的质量与最佳实践合规性，并打分 |
 | [`pypto-skill-validation-prompt`](skills/pypto-skill-validation-prompt/SKILL.md) | 为任意 skill 生成校验提示词，验证产物是否匹配自身声明 |
