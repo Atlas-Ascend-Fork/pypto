@@ -61,30 +61,44 @@ def _snake_visit_name(node: ast.AST) -> str:
     return f"visit_{''.join(chars)}"
 
 
-def _infer_return_types_from_body(body: ir.Stmt) -> list[ir.Type] | None:
-    """Extract return types from the first value-returning ReturnStmt in a function body.
-
-    Recurses into control-flow bodies so a helper that returns a value from a branch,
-    while an earlier branch does a void return, still resolves its result type.
-    """
+def _infer_return_types_from_body(
+    body: ir.Stmt,
+    func_name: str,
+    inferred: list[ir.Type] | None = None,
+) -> list[ir.Type] | None:
+    """Infer one return signature and reject conflicting value-returning paths."""
     if isinstance(body, ir.ReturnStmt):
         if body.value:
-            return [value.type for value in body.value]
-        return None
+            actual = [value.type for value in body.value]
+            if inferred is None:
+                return actual
+            consistent = len(actual) == len(inferred) and all(
+                ir.structural_equal(reference, current, enable_auto_mapping=False)
+                for reference, current in zip(inferred, actual)
+            )
+            if not consistent:
+                reference_text = ", ".join(str(return_type) for return_type in inferred)
+                actual_text = ", ".join(str(return_type) for return_type in actual)
+                raise InvalidType(
+                    f"Function '{func_name}' has inconsistent return types across return paths: "
+                    f"{reference_text} and {actual_text}",
+                    span=body.span,
+                    hint="Make every value-returning path return the same type.",
+                    parser_retry=True,
+                )
+        return inferred
     if isinstance(body, ir.SeqStmts):
         for stmt in body.stmts:
-            result = _infer_return_types_from_body(stmt)
-            if result is not None:
-                return result
+            inferred = _infer_return_types_from_body(stmt, func_name, inferred)
+        return inferred
     if isinstance(body, ir.IfStmt):
         for branch in (body.then_body, body.else_body):
             if branch is not None:
-                result = _infer_return_types_from_body(branch)
-                if result is not None:
-                    return result
+                inferred = _infer_return_types_from_body(branch, func_name, inferred)
+        return inferred
     if isinstance(body, (ir.ForStmt, ir.WhileStmt)):
-        return _infer_return_types_from_body(body.body)
-    return None
+        return _infer_return_types_from_body(body.body, func_name, inferred)
+    return inferred
 
 
 class ASTParser(
@@ -445,7 +459,7 @@ class ASTParser(
 
         self.scope_manager.exit_scope()
         result = f.get_result()
-        inferred = (_infer_return_types_from_body(result.body) if result.body else None) or []
+        inferred = (_infer_return_types_from_body(result.body, func_name) if result.body else None) or []
         if func_def.returns is not None:
             # tuple[...] resolves to a single TupleType, matching a `return a, b`
             # body (one MakeTuple expr), so a tuple return is one return type.
