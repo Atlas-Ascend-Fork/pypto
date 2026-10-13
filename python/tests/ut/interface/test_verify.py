@@ -21,7 +21,6 @@ def _to_device_tensor_data(tensor: torch.Tensor, shape=None, dtype=pypto.DT_FP32
     return pypto.pypto_impl.DeviceTensorData(dtype, tensor.data_ptr(), target_shape)
 
 
-@pytest.mark.skip(reason="Verify not supported")
 def test_verify_dynamic_ops_assemble():
     s = 32
     n = 2
@@ -48,6 +47,29 @@ def test_verify_dynamic_ops_assemble():
             pypto.assemble(t2a, [0, 0], out)
             pypto.assemble(t2b, [s, 0], out)
             pypto.pass_verify_save(out, "tensor_out_idx$idx", idx=idx)
+
+
+def test_set_verify_options_loads_calculator(monkeypatch):
+    from pypto._build_online import BuildOnlineCalculatorManager
+
+    load_calls = []
+    monkeypatch.setattr(
+        BuildOnlineCalculatorManager,
+        "build_and_load_calculator",
+        lambda self: load_calls.append(1),
+    )
+    original_options = pypto.get_verify_options()
+    try:
+        pypto.set_verify_options(enable_pass_verify=True)
+        assert len(load_calls) == 1
+
+        pypto.set_verify_options(enable_pass_verify=True, _skip_calculator_load=True)
+        assert len(load_calls) == 1
+
+        pypto.set_verify_options(enable_pass_verify=False)
+        assert len(load_calls) == 1
+    finally:
+        pypto.set_verify_options(**original_options)
 
 
 def test_set_verify_data_dtype_mismatch_intercept():

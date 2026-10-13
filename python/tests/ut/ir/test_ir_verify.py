@@ -10,7 +10,6 @@ import torch
 
 import pypto
 from pypto import ir, pil
-from pypto._build_online import BuildOnlineCalculatorManager
 
 verify_options = {
     "enable_pass_verify": True,
@@ -71,8 +70,6 @@ def test_ir_verify():
     original_options = pypto.get_verify_options()
     pypto.set_verify_options(**verify_options)
     try:
-        BuildOnlineCalculatorManager().build_and_load_calculator()
-
         _run_dce(foo, golden, x, y, z)
     finally:
         pypto.set_verify_options(**original_options)

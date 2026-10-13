@@ -73,7 +73,6 @@ def _force_950_platform(request):
 def _host_verify_no_device_memcpy(monkeypatch):
     """Wire verify data from CPU tensors; skip CopyToHost (needs NPU context)."""
     import pypto
-    from pypto._build_online import BuildOnlineCalculatorManager
     import pypto.frontend.parser.entry as entry
     import pypto.pil.compile_pipeline as compile_pipeline
     import pypto.runtime as runtime
@@ -81,7 +80,6 @@ def _host_verify_no_device_memcpy(monkeypatch):
     def setup_verify_data_host(pto_tensors):
         if not pypto.get_verify_options().get("enable_pass_verify"):
             return
-        BuildOnlineCalculatorManager().build_and_load_calculator()
         host_tensors = list(pto_tensors)
         runtime._pto_verify_datas.set_keepalive_data(host_tensors)
         pypto.pypto_impl.SetVerifyData(

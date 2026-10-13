@@ -515,6 +515,7 @@ def set_verify_options(
     pass_verify_save_tensor_dir: Optional[str] = None,
     pass_verify_pass_filter: Optional[List[str]] = None,
     pass_verify_error_tol: Optional[List[float]] = None,
+    _skip_calculator_load: bool = False,
 ) -> None:
     """
     Set verify options.
@@ -535,14 +536,24 @@ def set_verify_options(
 
     pass_verify_error_tol : List
         Customize atol and rtol.
+
+    _skip_calculator_load : bool
+        Internal. Skip loading the online calculator; used by the JIT path,
+        where setup_verify_data() loads it at compile time.
     """
     if pass_verify_pass_filter == []:
         pass_verify_pass_filter = ["no_verify"]
     if pass_verify_error_tol is None or len(pass_verify_error_tol) != 2:
         pass_verify_error_tol = [1e-3, 1e-3]
     pass_verify_error_tol = [float(x) for x in pass_verify_error_tol]
-    options_dict = {k: v for k, v in locals().items() if v is not None}
+    options_dict = {k: v for k, v in locals().items() if v is not None and not k.startswith("_")}
     set_options(verify_options=options_dict)
+    if options_dict.get("enable_pass_verify") and not _skip_calculator_load:
+        # Non-JIT callers (e.g. pypto.function recording, IR pipeline) have no setup_verify_data()
+        # hook, so load the calculator here to make enabling pass verify self-contained.
+        from ._build_online import BuildOnlineCalculatorManager
+
+        BuildOnlineCalculatorManager().build_and_load_calculator()
 
 
 def get_verify_options() -> Dict[str, Union[str, int, List[int], Dict[int, int]]]:

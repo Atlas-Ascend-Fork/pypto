@@ -1063,7 +1063,7 @@ class JitCallableWrapper:
             options_dict = {k: v for k, v in self._runtime_options.items() if v is not None}
             pypto.set_options(runtime_options=options_dict)
         if self._verify_options:
-            pypto.set_verify_options(**self._verify_options)
+            pypto.set_verify_options(**self._verify_options, _skip_calculator_load=True)
         if self._debug_options:
             pypto.set_debug_options(**self._debug_options)
         # Follow torch_npu deterministic level 0/1/2 (same idea as TorchAir / aclnn).

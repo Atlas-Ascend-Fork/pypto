@@ -101,11 +101,11 @@ PyPTO在计算图编译的各Pass阶段拥有完整的中间表示，可翻译�
 主要特性及使用场景：
 
 - Tensor Graph校验：用于校验算子代码、框架前端处理的正确性。基于用户提供的基准（golden）输入输出数据，与Tensor Graph模拟计算的最终结果对比检测整体计算的正确性。常用于以下情况：
-    - 当用户存在可用的算子基准（golden）输入、输出数据时，可先使能粗检特性粗略排除算子代码、框架前端处理是否引入差异。
+    - 当用户存在可用的算子基准（golden）输入、输出数据时，可先开启粗检特性粗略排除算子代码、框架前端处理是否引入差异。
 
 - Pass阶段校验：用于自检Pass的正确性。基于各Pass模拟计算的结果，对比检测Pass正确性及异常计算节点。常用于以下情况：
-    - 当用户算子精度刚刚出现问题且没有明确方向，可先使能自检特性排除Pass处理阶段是否引入潜在错误。
-    - 当用户大致明确某个Pass出问题时，使能自检特性获取该Pass及前序Pass的模拟计算中间数据，对比数据找出潜在出问题的计算操作。
+    - 当用户算子精度刚刚出现问题且没有明确方向，可先开启自检特性排除Pass处理阶段是否引入潜在错误。
+    - 当用户大致明确某个Pass出问题时，开启自检特性获取该Pass及前序Pass的模拟计算中间数据，对比数据找出潜在出问题的计算操作。
 
 - 中间结果分析：指定单个计算结果，保存到文件或者以可读形式打印到输出、日志。
     - 当Tensor Graph校验失败时，可使用pass_verify_print/pass_verify_save特性打印、保存模拟计算的中间数据，对比数据找出潜在出问题的计算操作。
@@ -160,11 +160,27 @@ PyPTO在计算图编译的各Pass阶段拥有完整的中间表示，可翻译�
 
     | 参数名 | 类型 | 默认值 | 说明 |
     |--------|------|--------|------|
-    | `enable_pass_verify` | bool | False | 总体使能开关，决定所有`pass_verify_*`选项和接口是否生效。必须设置为`True`才能使其他参数生效 |
-    | `pass_verify_save_tensor` | bool | False | 是否将模拟计算数据存盘。设置为`True`时会在`{work_path}/output/output_*/`目录下生成`verify_*`目录 |
-    | `pass_verify_save_tensor_dir` | str | "{RUNNING_DIR}/output/output_{TS}" | 检测结果及数据的保存路径。可指定绝对路径 |
-    | `pass_verify_pass_filter` | List[str] | 空 | 配置待自检的Pass名称列表。不指定则默认校验所有pass；指定`"all"`则校验所有pass；指定`[]`不校验pass只校验tensor_graph |
+    | `enable_pass_verify` | bool | False | 总开关，决定所有`pass_verify_*`选项和接口是否生效。必须设置为`True`才能使其他参数生效 |
+    | `pass_verify_save_tensor` | bool | False | 是否将模拟计算的逐算子中间数据额外存盘。校验结果目录`{work_path}/output/output_*/verify/`在开启校验后即生成，与该开关无关 |
+    | `pass_verify_save_tensor_dir` | str | "{RUNNING_DIR}/output/output_{TS}" | 检测结果及数据的保存路径，结果文件生成在该路径下的`verify/`子目录中。可指定绝对路径 |
+    | `pass_verify_pass_filter` | List[str] | [ExpandFunction, ProcessAtomic, L1CopyInReuseMerge, InferDynShape, PreGraphProcess, InferParamIndex, CodegenPreproc] | 配置待自检的Pass名称列表。不指定则默认校验上述列表中的pass；指定`"all"`则校验所有pass；指定`[]`不校验pass只校验tensor_graph |
     | `pass_verify_error_tol` | List[float] | [1e-3, 1e-3] | 精度对比的容差配置。第一个值为相对误差容差（rtol），第二个值为绝对误差容差（atol） |
+
+    **非JIT场景使用方式**
+
+    非JIT场景（例如直接通过`pypto.function`录制函数，或走IR编译流程）无需额外操作：`pypto.set_verify_options(enable_pass_verify=True)`在开启的同时会自动加载模拟计算库（首次调用会在线编译，依赖torch环境，耗时较长）。JIT场景由框架在算子编译时自动加载，两种方式的使用完全一致。
+
+    ```python
+    import pypto
+
+    pypto.set_verify_options(enable_pass_verify=True)
+
+    with pypto.function("main", t0, t1, out):
+        pypto.set_vec_tile_shapes(32, 32)
+        ...
+    ```
+
+    > 说明：golden数据仍通过`pypto.set_verify_golden_data`设置（见步骤2），结果查看方式与JIT场景一致。非JIT场景的参考用例见`python/tests/ut/interface/test_verify.py`（`pypto.function`录制）与`python/tests/ut/ir/test_ir_verify.py`（IR流程）。
 
 2. 设置golden数据（可选）
 
@@ -214,14 +230,14 @@ PyPTO在计算图编译的各Pass阶段拥有完整的中间表示，可翻译�
 
 4. 查看校验结果。
 
-    默认情况下，校验结果**不会**打印到终端，而是写入 `{work_path}/output/output_*/verify_*/interpreter.log`。执行结束后可用以下命令查看：
+    默认情况下，校验结果**不会**打印到终端，而是写入`{work_path}/output/output_*/verify/interpreter.log`。执行结束后可用以下命令查看：
 
     ```bash
-    # 查看最新 verify 目录中的 interpreter.log
-    cat $(ls -td output/output_*/verify_* 2>/dev/null | head -n 1)/interpreter.log
+    # 查看最新verify目录中的interpreter.log
+    cat $(ls -td output/output_*/verify 2>/dev/null | head -n 1)/interpreter.log
     ```
 
-    日志中 `[EVENT]` 行表示通过（PASS）或跳过（NO\_COMPARE），`[ERROR]` 行表示未通过（FAILED）。典型内容如下：
+    日志中`[EVENT]`行表示通过（PASS）或跳过（NO\_COMPARE），`[ERROR]`行表示未通过（FAILED）。典型内容如下：
 
     ```text
     [2025-mm-dd HH:MM:SS][EVENT][tid:12345] tensor_graph Verify for 3 data view list index 0 result NO_COMPARE
@@ -230,12 +246,12 @@ PyPTO在计算图编译的各Pass阶段拥有完整的中间表示，可翻译�
     [2025-mm-dd HH:MM:SS][EVENT][tid:12345] function_TENSOR_loop_0_Unroll1_PATH0_hiddenfunc0_8_Pass_00_ExpandFunction Verify for 1 data view list index 0 result PASS
     ...
     [2025-mm-dd HH:MM:SS][EVENT][tid:12345] function_TENSOR_loop_0_Unroll1_PATH0_hiddenfunc0_8_Pass_36_CodegenPreproc Verify for 1 data view list index 0 result PASS
-    [2025-mm-dd HH:MM:SS][ERROR][tid:12345] [VERIFY]:ErrCode: 0xB4001U! function_TENSOR_loop_0_Unroll1_PATH0_hiddenfunc0_8_Pass_09_SplitLargeFanoutTensor Verify for 1 data view list index 0 result FAILED
+    [2025-mm-dd HH:MM:SS][ERROR][tid:12345] ErrCode: FB4001! Enum: VerifyResultScene::VERIFY_RESULT_MISMATCH function_TENSOR_loop_0_Unroll1_PATH0_hiddenfunc0_8_Pass_09_SplitLargeFanoutTensor Verify for 1 data view list index 0 result FAILED
     ```
 
-    如需同时将日志镜像到终端，可设置环境变量 `ASCEND_SLOG_PRINT_TO_STDOUT=1` 后重新执行用例。
+    如需同时将日志镜像到终端，可设置环境变量`ASCEND_SLOG_PRINT_TO_STDOUT=1`后重新执行用例。
 
-5. 执行结束后，在`{work_path}/output/output_*/`目录（*代表时间戳）下生成`verify_*`目录，存放检测结果文件与日志。
+5. 执行结束后，在`{work_path}/output/output_*/`目录（*代表时间戳）下生成`verify/`目录，存放检测结果文件与日志。
 
     ```text
     ├── tensor_graph # 保存前端初始计算图模拟计算后的中间数据，作为基础数据
@@ -244,15 +260,15 @@ PyPTO在计算图编译的各Pass阶段拥有完整的中间表示，可翻译�
     ├── verify_graph_data_metainfo.csv # 结果报告，保存中间数据元信息及对应数据文件名
     ├── verify_graph_result_brief.csv # 精度比对摘要（PASS/FAIL/NO_COMPARE、误差统计等）
     ├── verify_graph_result_brief.log # 精度比对异常详情（失败项、异常路径、错误明细）
-    ├── interpreter.log # 校验结果与 interpreter 执行日志（默认记录 ERROR / EVENT，含 PASS / FAIL / NO_COMPARE）
+    ├── interpreter.log # 校验结果与interpreter执行日志（默认记录ERROR / EVENT，含PASS / FAIL / NO_COMPARE）
     ├── Pass_{PASS_SEQ}_{PASS_NAME} # 保存中间pass计算图模拟计算后的中间数据，作为待测数据
     │   ├── *.data
     │   └── ...
     ```
 
-    其中，`verify_graph_result_brief.log`和`interpreter.log`位于同一个`verify_*`目录下：
+    其中，`verify_graph_result_brief.log`和`interpreter.log`位于同一个`verify/`目录下：
     - `verify_graph_result_brief.log`：偏向校验结果摘要与异常明细（对比失败、异常路径）。
-    - `interpreter.log`：校验 PASS / FAIL / NO\_COMPARE 结果及 interpreter 执行过程日志（见步骤 4）；默认仅 ERROR / EVENT 级别落盘，不输出到终端。
+    - `interpreter.log`：校验PASS / FAIL / NO\_COMPARE结果及interpreter执行过程日志（见步骤4）；默认仅ERROR / EVENT级别落盘，不输出到终端。
 
 6. 后续处理建议。
 
@@ -393,14 +409,14 @@ output/output_*/dump_tensor_*/device_{deviceId}/
 **使用方法：**
 
 ```bash
-# 基本用法（未使能enable_pass_verify，不进行验证）
+# 基本用法（未开启enable_pass_verify，不进行验证）
 python3 tools/verifier/parse_dump_tensors.py \
     --dump_tensor_path output/output_20260101120000/dump_tensor_20260101120000/device_0
 
 # 带验证的用法（需先开启enable_pass_verify并运行算子）
 python3 tools/verifier/parse_dump_tensors.py \
     --dump_tensor_path output/output_20260101120000/dump_tensor_20260101120000/device_0 \
-    --verify_path output/output_20260101120000/verify_20260101120000
+    --verify_path output/output_20260101120000/verify
 ```
 
 **参数说明：**
@@ -420,7 +436,7 @@ output/output_*/dump_tensor_*/device_0/
     └── verify_task_result_cmp~{pass_full_name}~{timestamp}.csv  # 对比验证结果报告
 ```
 
-> 注：`ioflag` 使用 `i`（输入）或 `o`（输出）；`pass_full_name` 为自动检测到的 Pass 全名（如 `Pass_36_CodegenPreproc`）。
+> 注：`ioflag`使用`i`（输入）或`o`（输出）；`pass_full_name`为自动检测到的Pass全名（如`Pass_36_CodegenPreproc`）。
 
 **verify_task_result_cmp~{pass_full_name}~{timestamp}.csv字段说明：**
 
@@ -518,7 +534,7 @@ def kernel(...):
 
 ### Dump数据输出路径
 
-执行结束后，在`{work_path}/output/output_*/`目录（*代表时间戳）下生成`verify_*`目录，存放模拟计算数据与检测结果文件：
+执行结束后，在`{work_path}/output/output_*/`目录（*代表时间戳）下生成`verify/`目录，存放模拟计算数据与检测结果文件：
 
 ```text
 ├── tensor_graph                                   # 保存前端初始计算图模拟计算后的中间数据，作为基础数据
@@ -530,7 +546,7 @@ def kernel(...):
 ├── verify_graph_data_metainfo.csv                 # 结果报告，保存中间数据元信息及对应数据文件名
 ├── verify_graph_result_brief.csv                  # 精度比对摘要（PASS/FAIL/NO_COMPARE、误差统计等）
 ├── verify_graph_result_brief.log                  # 精度比对异常详情（失败项、异常路径、错误明细）
-└── interpreter.log                                # 校验结果与 interpreter 执行日志
+└── interpreter.log                                # 校验结果与interpreter执行日志
 ```
 
 ### 数据处理工具
@@ -575,7 +591,7 @@ python3 tools/verifier/pass_compare.py \
 **输出文件：**
 
 ```text
-output/output_*/verify_*/
+output/output_*/verify/
 ├── verify_graph_result_cmp~Pass_{NN}_{GoldenPass}~Pass_{NN}_{OutputPass}~{timestamp}.csv  # 对比验证结果报告
 └── verify_graph_result_cmp~Pass_{NN}_{GoldenPass}~Pass_{NN}_{OutputPass}~{timestamp}.DETAIL/  # 逐tensor差异明细（仅对比失败时生成）
     └── {tensor_filename}.csv
@@ -682,7 +698,7 @@ output/output_*/verify_*/
 2. **Pass排序**：自动确保序号大的pass作为待测pass（B>）、序号小的pass作为golden pass（A>），如需交换则同步交换verify路径
 3. **匹配键选择**：根据pass序号自动选择匹配键
    - 两个pass都 >= ExpandFunction：使用`:magic`匹配
-   - 待测pass >= InferParamIndex 且 golden pass在[ExpandFunction, InferParamIndex)区间：使用`ROOT_CALL:rawmagic`匹配（仅匹配COPY_IN/COPY_OUT操作）
+   - 待测pass >= InferParamIndex且golden pass在[ExpandFunction, InferParamIndex)区间：使用`ROOT_CALL:rawmagic`匹配（仅匹配COPY_IN/COPY_OUT操作）
    - 两个pass都 >= InferParamIndex：启用leaf function匹配逻辑（额外校验`ROOT_CALL:opmagic`）
 4. **分组匹配**：按`PATH_FUNC:func_magicname`和`LOOP_INFO`分组，在相同分组内按匹配键寻找tensor对
    - codegen模式下COPY_IN操作通过`INPUT:rawmagic`匹配
@@ -699,7 +715,7 @@ output/output_*/verify_*/
 支持整网中算子级别的输入输出上板dump的能力。
 
 <!-- npu="x90,9030" id4 -->
-### 限制说明：
+### 限制说明
 
 - 产品支持情况：
     <!-- npu="9030" id9 -->
