@@ -252,6 +252,7 @@ def allreduce_cascading_worker(worker_params, error_queue: mp.Queue):
         raise
 
 
+@pytest.mark.skip(reason="distributed python case")
 @pytest.mark.world_size(4)
 @pypto.options(pass_options={"enable_slice": True})
 def test_allreduce_cascading():

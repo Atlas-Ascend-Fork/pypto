@@ -46,7 +46,6 @@ def _helper_one_step(state: pypto.Tensor, _is_tail: bool) -> None:
 
 
 @pypto.frontend.jit(
-    new_ir=True,
     runtime_options={"run_mode": pypto.RunMode.NPU},
 )
 def helper_move_view_loop_carry_kernel(
@@ -62,7 +61,6 @@ def helper_move_view_loop_carry_kernel(
 
 
 @pypto.frontend.jit(
-    new_ir=True,
     runtime_options={"run_mode": pypto.RunMode.NPU},
 )
 def helper_move_view_loop_carry_ifelse_kernel(

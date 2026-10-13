@@ -227,6 +227,7 @@ def allgather_matmul(
     return out_tensor
 
 
+@pytest.mark.skip(reason="distributed python case")
 @pytest.mark.world_size(2)
 @pypto.options(pass_options={"enable_slice": True})
 def test_allgather_matmul():

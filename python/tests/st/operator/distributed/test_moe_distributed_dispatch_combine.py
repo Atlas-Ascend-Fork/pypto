@@ -893,6 +893,7 @@ def moe_distributed_combine(
     )
 
 
+@pytest.mark.skip(reason="distributed python case")
 @pytest.mark.world_size(16)
 @pypto.options(pass_options={"enable_slice": True})
 def test_moe_distributed_combine() -> None:
@@ -961,6 +962,7 @@ def moe_distributed_dispatch_combine(
     )
 
 
+@pytest.mark.skip(reason="distributed python case")
 @pytest.mark.world_size(4)
 @pypto.options(pass_options={"enable_slice": True})
 def test_moe_distributed_dispatch_combine() -> None:

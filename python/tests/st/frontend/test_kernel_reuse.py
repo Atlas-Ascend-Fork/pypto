@@ -33,7 +33,7 @@ def kernel_with_dynamic(
         out[idx:idx + 1, :] = temp + 1
 
 
-@pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU}, new_ir=True)
+@pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.NPU})
 def kernel_with_inplace_reshape(
     scale: pypto.Tensor([pypto.STATIC, pypto.STATIC]),
     out: pypto.Tensor([pypto.STATIC, pypto.STATIC]),

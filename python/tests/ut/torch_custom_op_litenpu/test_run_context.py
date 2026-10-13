@@ -110,15 +110,14 @@ def test_collect_decorator_options_tracks_jit_signature():
     } <= collected
 
     # Re-decorates the SAME function with non-default values and reads them back, proving a scalar and
-    # a dict option survive with the author's VALUE, not just their key (new_ir=False is the control:
-    # the jit default is True). run_mode is pinned because with none, _set_run_mode auto-detects NPU
-    # from ASCEND_HOME_PATH and raises off-box, which would fail this option-only assertion.
+    # a dict option survive with the author's VALUE, not just their key. run_mode is pinned because with
+    # none, _set_run_mode auto-detects NPU from ASCEND_HOME_PATH and raises off-box, which would fail this
+    # option-only assertion.
     probe = pypto.frontend.jit(
-        new_ir=False, debug_options={"runtime_debug_mode": True},
+        debug_options={"runtime_debug_mode": True},
         runtime_options={"run_mode": pypto.RunMode.SIM},
     )(samples.direct_add_kernel_erased._original_func)
     probe_options = _run._collect_decorator_options(probe)
-    assert probe_options["new_ir"] is False
     assert probe_options["debug_options"] == {"runtime_debug_mode": True}
 
 

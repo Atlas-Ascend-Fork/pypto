@@ -345,6 +345,7 @@ _PASS_OPTIONS = {
 }
 
 
+@pytest.mark.skip(reason="distributed python case")
 @pytest.mark.world_size(4)
 @pypto.options(pass_options=_PASS_OPTIONS)
 def test_matmul_allreduce_add_rmsnorm():

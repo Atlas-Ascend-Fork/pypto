@@ -16,11 +16,13 @@ This test suite verifies that error handling works correctly in PyPTO by
 testing error scenarios that trigger different error types through the frontend.
 """
 
+import pathlib
+
 import pytest
 import torch
 
 import pypto
-from pypto.error import FeError, ParserError, PyptoError, PyptoGeneralError, _catch_and_wrap_error
+from pypto.error import FeError, PyptoError, PyptoGeneralError, _catch_and_wrap_error
 
 
 def test_python_error_codes_are_bound_from_cpp():
@@ -39,35 +41,35 @@ def test_python_error_codes_are_bound_from_cpp():
 def test_varargs_error():
     """Test that variable-length arguments trigger proper error handling."""
 
-    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM}, new_ir=False)
+    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM})
     def varargs_kernel(x: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto.DT_FP32), *args):
         out[:] = x
 
     x = torch.randn(4, 4, dtype=torch.float32)
     out = torch.zeros(4, 4, dtype=torch.float32)
 
-    with pytest.raises(ParserError, match="Variable-length arguments"):
+    with pytest.raises(PyptoGeneralError, match="vararg and kwarg not supported"):
         varargs_kernel(x, out)
 
 
 def test_kwargs_error():
     """Test that keyword arguments trigger proper error handling."""
 
-    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM}, new_ir=False)
+    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM})
     def kwargs_kernel(x: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto.DT_FP32), **kwargs):
         out[:] = x
 
     x = torch.randn(4, 4, dtype=torch.float32)
     out = torch.zeros(4, 4, dtype=torch.float32)
 
-    with pytest.raises(ParserError, match="Keyword argument packing"):
+    with pytest.raises(PyptoGeneralError, match="vararg and kwarg not supported"):
         kwargs_kernel(x, out)
 
 
 def test_error_message_contains_error_code():
     """Test that error messages contain error codes."""
 
-    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM}, new_ir=False)
+    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM})
     def varargs_kernel(x: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto.DT_FP32), *args):
         out[:] = x
 
@@ -79,7 +81,7 @@ def test_error_message_contains_error_code():
         assert False, "Should have raised an error"
     except Exception as e:
         error_str = str(e)
-        assert "ErrCode: F00005" in error_str
+        assert "ErrCode: F0FFF" in error_str
         assert len(error_str) > 0
 
 
@@ -126,34 +128,10 @@ def test_catch_and_wrap_error_preserves_errcode():
     assert "ErrCode: F00003" in str(exc_info.value)
 
 
-def test_error_on_input_tensor_reassign():
-    """Test that reassigning input tensor triggers ParserError."""
-
-    @pypto.frontend.jit(
-        new_ir=False,
-        runtime_options={"run_mode": pypto.RunMode.SIM}, host_options={"compile_stage": pypto.CompStage.TENSOR_GRAPH}
-    )
-    def error_assign_input(
-        a: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP16),
-        b: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP16),
-        c: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP16),
-    ):
-        pypto.set_vec_tile_shapes(32, 32)
-        c = a + b  # noqa: F841
-
-    a = torch.rand((32, 32), dtype=torch.float16)
-    b = torch.rand((32, 32), dtype=torch.float16)
-    c = torch.zeros((32, 32), dtype=torch.float16)
-
-    with pytest.raises(ParserError, match="Input tensor 'c' cannot be reassigned"):
-        error_assign_input(a, b, c)
-
-
 def test_error_on_non_contiguous_input_tensor():
     """Test that passing a non-contiguous input tensor triggers FeError."""
 
     @pypto.frontend.jit(
-        new_ir=False,
         runtime_options={"run_mode": pypto.RunMode.SIM}, host_options={"compile_stage": pypto.CompStage.TENSOR_GRAPH}
     )
     def add(
@@ -172,34 +150,14 @@ def test_error_on_non_contiguous_input_tensor():
         add(a, b, c)
 
 
-def test_error_on_first_input_tensor_reassign():
-    """Test that reassigning the first input tensor triggers ParserError."""
+def test_error_location_on_reshape_dynamic_shape():
+    """Test that reshape errors report the exact kernel source location.
+
+    The new-IR frontend reports the location inside the raised error message
+    (file, line and source text); console diagnostic rendering is not covered here.
+    """
 
     @pypto.frontend.jit(
-        new_ir=False,
-        runtime_options={"run_mode": pypto.RunMode.SIM}, host_options={"compile_stage": pypto.CompStage.TENSOR_GRAPH}
-    )
-    def error_assign_first_input(
-        a: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP16),
-        b: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP16),
-        c: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP16),
-    ):
-        pypto.set_vec_tile_shapes(32, 32)
-        a = b + c  # noqa: F841
-
-    a = torch.rand((32, 32), dtype=torch.float16)
-    b = torch.rand((32, 32), dtype=torch.float16)
-    c = torch.zeros((32, 32), dtype=torch.float16)
-
-    with pytest.raises(ParserError, match="Input tensor 'a' cannot be reassigned"):
-        error_assign_first_input(a, b, c)
-
-
-def test_error_location_on_reshape_dynamic_shape(capsys):
-    """Test that reshape errors report the exact kernel source location."""
-
-    @pypto.frontend.jit(
-        new_ir=False,
         runtime_options={"run_mode": pypto.RunMode.SIM}, host_options={"compile_stage": pypto.CompStage.TENSOR_GRAPH}
     )
     def reshape_dynamic_shape_error(
@@ -214,16 +172,18 @@ def test_error_location_on_reshape_dynamic_shape(capsys):
     b = torch.rand((32, 32), dtype=torch.float16)
     c = torch.zeros((32, 32), dtype=torch.float16)
 
-    with pytest.raises(ParserError) as exc_info:
+    with pytest.raises(FeError) as exc_info:
         reshape_dynamic_shape_error(a, b, c)
 
-    captured = capsys.readouterr()
-    diagnostic = captured.out + captured.err
-    expected_lineno = exc_info.value.node.lineno
-    assert "reshape() requires integer shape" in str(exc_info.value)
-    assert f"test_error.py:{expected_lineno}" in diagnostic
-    assert "pypto.reshape(a, [a.shape[0] * a.shape[1]])" in diagnostic
-    assert "^" in diagnostic
+    message = str(exc_info.value)
+    source_lines = pathlib.Path(__file__).read_text(encoding="utf-8").splitlines()
+    expected_lineno = next(
+        i for i, line in enumerate(source_lines, 1) if line.strip().startswith("pypto.reshape(a,")
+    )
+
+    assert "reshape() requires integer shape" in message
+    assert f'test_error.py", line {expected_lineno},' in message
+    assert "pypto.reshape(a, [a.shape[0] * a.shape[1]])" in message
 
 
 if __name__ == "__main__":

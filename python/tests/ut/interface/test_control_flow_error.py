@@ -14,13 +14,13 @@ import pytest
 import torch
 
 import pypto
-from pypto.error import ParserError
+from pypto.error import PyptoGeneralError
 
 
 def test_return_statement_error():
     """Test that return statements in kernel functions raise ParserError."""
 
-    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM}, new_ir=False)
+    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM})
     def kernel_with_return(x: pypto.Tensor([4, 4], pypto.DT_FP32), out: pypto.Tensor([4, 4], pypto.DT_FP32)):
         out[:] = x
         return out
@@ -28,14 +28,15 @@ def test_return_statement_error():
     x = torch.randn(4, 4, dtype=torch.float32)
     out = torch.zeros(4, 4, dtype=torch.float32)
 
-    with pytest.raises(ParserError, match="Return statements are not allowed"):
+    with pytest.raises(PyptoGeneralError,
+        match="Unsupported syntax <class 'ast.Return'>: return statement in entry point"):
         kernel_with_return(x, out)
 
 
 def test_return_nested_in_if_error():
     """Test that return statements nested in if structures raise ParserError."""
 
-    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM}, new_ir=False)
+    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM})
     def kernel_with_return_in_if(
         x: pypto.Tensor([4, 4], pypto.DT_FP32),
         flag: pypto.Tensor([], pypto.DT_INT32),
@@ -50,14 +51,15 @@ def test_return_nested_in_if_error():
     flag = torch.tensor(1, dtype=torch.int32)
     out = torch.zeros(4, 4, dtype=torch.float32)
 
-    with pytest.raises(ParserError, match="Return statements are not allowed"):
+    with pytest.raises(PyptoGeneralError,
+        match="Unsupported syntax <class 'ast.Return'>: return statement in entry point"):
         kernel_with_return_in_if(x, flag, out)
 
 
 def test_return_nested_in_for_error():
     """Test that return statements nested in for loops raise ParserError."""
 
-    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM}, new_ir=False)
+    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM})
     def kernel_with_return_in_for(x: pypto.Tensor([4, 4], pypto.DT_FP32), out: pypto.Tensor([4, 4], pypto.DT_FP32)):
         for i in range(4):
             out[i, :] = x[i, :]
@@ -68,32 +70,35 @@ def test_return_nested_in_for_error():
     x = torch.randn(4, 4, dtype=torch.float32)
     out = torch.zeros(4, 4, dtype=torch.float32)
 
-    with pytest.raises(ParserError, match="Return statements are not allowed"):
+    with pytest.raises(PyptoGeneralError,
+        match="Unsupported syntax <class 'ast.Return'>: return statement in entry point"):
         kernel_with_return_in_for(x, out)
 
 
 def test_break_statement_error():
     """Test that break statements in loops raise ParserError."""
 
-    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM}, new_ir=False)
+    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM})
     def kernel_with_break(x: pypto.Tensor([4, 4], pypto.DT_FP32), out: pypto.Tensor([4, 4], pypto.DT_FP32)):
-        for i in range(4):
+        for i in pypto.loop(4):
             if i == 2:
                 break
 
     x = torch.randn(4, 4, dtype=torch.float32)
     out = torch.zeros(4, 4, dtype=torch.float32)
 
-    with pytest.raises(ParserError, match="Break is not supported by the PTO parser"):
+    with pytest.raises(
+        PyptoGeneralError,
+        match="Unsupported syntax <class 'ast.Break'>: break is not supported in pypto.loop"):
         kernel_with_break(x, out)
 
 
 def test_continue_statement_error():
     """Test that continue statements in loops raise ParserError."""
 
-    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM}, new_ir=False)
+    @pypto.frontend.jit(runtime_options={"run_mode": pypto.RunMode.SIM})
     def kernel_with_continue(x: pypto.Tensor([4, 4], pypto.DT_FP32), out: pypto.Tensor([4, 4], pypto.DT_FP32)):
-        for i in range(4):
+        for i in pypto.loop(4):
             if i % 2 == 0:
                 continue
             out[i, :] = x[i, :]
@@ -101,7 +106,9 @@ def test_continue_statement_error():
     x = torch.randn(4, 4, dtype=torch.float32)
     out = torch.zeros(4, 4, dtype=torch.float32)
 
-    with pytest.raises(ParserError, match="Continue is not supported by the PTO parser"):
+    with pytest.raises(
+        PyptoGeneralError,
+        match="Unsupported syntax <class 'ast.Continue'>: continue is not supported in pypto.loop"):
         kernel_with_continue(x, out)
 
 
