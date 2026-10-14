@@ -19,7 +19,7 @@
 ## 函数原型
 
 ```python
-store(tile, src, count)
+store(tile, src, count=None, /)
 ```
 
 ## 参数说明

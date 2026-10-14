@@ -219,13 +219,12 @@ def test_tile_type_with_a_runtime_shape_rejected():
 
     @pl.jit(auto_mutex=True)
     def k(a: pl.Tensor[[pl.DYNAMIC, 128], pl.DT_FP16]):
-        # A tuple (not a list) skips the TileType compile-time check, so the
-        # runtime dimension survives into the TileType.
+        # Tuple shapes must be checked for compile-time dimensions just like lists.
         tt = pl.TileType(shape=(a.shape[0], 128), dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat)
         db = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[0, 1])
         pl.load(db.next(), a, [0, 0])
 
-    with pytest.raises(InvalidVal, match="make_tile_group.. tile shape must contain compile-time integers"):
+    with pytest.raises(InvalidType, match="must be a compile-time integer"):
         _parse_kernel(k)
 
 

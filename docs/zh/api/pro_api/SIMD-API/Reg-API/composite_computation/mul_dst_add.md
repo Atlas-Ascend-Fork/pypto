@@ -27,7 +27,7 @@ dst寄存器既被读取（作为被乘数）又被写入（存储结果），�
 ## 函数原型
 
 ```python
-mul_dst_add(src0, src1, preg, mode: Optional[MergeMode] = None) -> dst
+mul_dst_add(src0, src1, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

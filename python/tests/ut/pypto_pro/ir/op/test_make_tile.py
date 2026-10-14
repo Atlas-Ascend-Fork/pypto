@@ -510,8 +510,8 @@ def test_sub_byte_tile_reserves_packed_bytes():
     assert f"memref_size={64 * 64 // 2}" in _kernel_ir(k)
 
 
-def test_a_tile_type_with_a_runtime_shape_cannot_derive_its_size():
-    """A tuple shape skips the TileType const check, so make_tile_expr reports it."""
+def test_tile_type_rejects_a_runtime_tuple_shape():
+    """Tuple shapes must obey the same compile-time check as list shapes."""
 
     @pl.jit
     def k(x: pl.Tensor[[pl.DYNAMIC, 64], pl.DT_FP16]):
@@ -519,8 +519,23 @@ def test_a_tile_type_with_a_runtime_shape_cannot_derive_its_size():
         t = pl.make_tile(tt, addr=0)
         pl.load(t, x, [0, 0])
 
-    with pytest.raises(InvalidOperation, match="cannot derive its byte span"):
+    with pytest.raises(InvalidType, match="must be a compile-time integer"):
         _parse_kernel(k)
+
+
+def test_tile_type_accepts_a_constant_tuple_shape_and_valid_shape():
+    @pl.jit
+    def k(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+        tt = pl.TileType(
+            shape=(64, 64),
+            dtype=pl.DT_FP16,
+            target_memory=pl.MemorySpace.Vec,
+            valid_shape=(32, 32),
+        )
+        t = pl.make_tile(tt, addr=0)
+        pl.load(t, x, [0, 0])
+
+    assert f"memref_size={64 * 64 * 2}" in _kernel_ir(k)
 
 
 # ---------------------------------------------------------------------------

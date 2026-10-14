@@ -20,7 +20,7 @@
 
 ```python
 pypto_pro.language.simt.cast(
-    value: Scalar,
+    value: Union[int, float],
     dtype: DType,
     *,
     mode: RoundMode = pl.RoundMode.CAST_NONE,
@@ -31,7 +31,7 @@ pypto_pro.language.simt.cast(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| value | 输入 | 源操作数，Scalar类型，支持DT_FP16、DT_BF16、DT_FP32、DT_INT8、DT_INT16、DT_INT32、DT_INT64、DT_UINT8、DT_UINT16、DT_UINT32和DT_UINT64。Tensor或Tile元素需通过下标访问后传入。 |
+| value | 输入 | 源操作数，整型或浮点型常量，或相应类型的运行时标量表达式，支持DT_FP16、DT_BF16、DT_FP32、DT_INT8、DT_INT16、DT_INT32、DT_INT64、DT_UINT8、DT_UINT16、DT_UINT32和DT_UINT64。Tensor或Tile元素需通过下标访问后传入。 |
 | dtype | 输入 | 目的数据类型，DType类型，支持的数据类型转换见下表。 |
 | mode | 输入 | 可选，舍入模式，[RoundMode](../../SIMD-API/basic_data_structures/RoundMode.md)类型，默认值为pypto_pro.language.RoundMode.CAST_NONE。各数据类型转换支持的舍入模式见下表。 |
 

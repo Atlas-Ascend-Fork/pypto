@@ -21,7 +21,7 @@ $$dst_i = -src_i$$
 ## 函数原型
 
 ```python
-neg(src, preg, mode: Optional[MergeMode] = None) -> dst
+neg(src, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

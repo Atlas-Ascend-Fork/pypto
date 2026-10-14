@@ -21,7 +21,7 @@
 ```python
 pypto_pro.language.expands(
     out: Tile,
-    scalar: Scalar,
+    scalar: Union[int, float],
 ) -> None
 ```
 

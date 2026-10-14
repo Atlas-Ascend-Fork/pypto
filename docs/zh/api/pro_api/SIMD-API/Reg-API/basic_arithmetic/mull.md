@@ -29,7 +29,7 @@ $$dst\_hi_i = \lfloor (src0_i \times src1_i) / 2^{bit} \rfloor$$
 ## 函数原型
 
 ```python
-mull(src0, src1, preg) -> (dst_lo, dst_hi)
+mull(src0, src1, preg, /) -> (dst_lo, dst_hi)
 ```
 
 ## 参数说明

@@ -32,9 +32,9 @@ width将一个Warp划分为若干连续的逻辑子组，每个子组独立交�
 
 ```python
 pypto_pro.language.simt.warp_shfl(
-    value: Scalar,
-    src_lane: Union[Scalar, int],
-    width: Union[Scalar, int] = 32,
+    value: Union[int, float],
+    src_lane: int,
+    width: int = 32,
 ) -> Scalar
 ```
 
@@ -43,8 +43,8 @@ pypto_pro.language.simt.warp_shfl(
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
 | value | 输入 | 当前Lane用于交换的标量值，支持DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_BF16和DT_FP32。每个Lane可以传入不同的值。 |
-| src_lane | 输入 | 源Lane在逻辑子组内的编号。整数常量或DT_INT32类型的Scalar，取值范围为[0, 31]。当src_lane大于等于width时，使用src_lane % width得到实际的逻辑Lane ID。不同Lane可以传入不同的src_lane。src_lane指定的目标Lane必须处于当前活跃线程集合中，否则读取结果未定义。 |
-| width | 输入 | 逻辑子组宽度。整数常量或DT_INT32类型的Scalar，可取1、2、4、8、16或32，默认值为32。width小于32时，一个Warp被划分为多个连续且等宽的逻辑子组。可按位置或使用width关键字传入，但不能同时使用两种方式。 |
+| src_lane | 输入 | 源Lane在逻辑子组内的编号。整型常量或DT_INT32类型的运行时整型标量表达式，取值范围为[0, 31]。当src_lane大于等于width时，使用src_lane % width得到实际的逻辑Lane ID。不同Lane可以传入不同的src_lane。src_lane指定的目标Lane必须处于当前活跃线程集合中，否则读取结果未定义。 |
+| width | 输入 | 逻辑子组宽度。整型常量或DT_INT32类型的运行时整型标量表达式，可取1、2、4、8、16或32，默认值为32。width小于32时，一个Warp被划分为多个连续且等宽的逻辑子组。可按位置或使用width关键字传入，但不能同时使用两种方式。 |
 
 ## 约束说明
 

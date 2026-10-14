@@ -23,7 +23,7 @@ dcci只处理缓存状态，不等价于流水同步、跨核事件或内存屏�
 ```python
 pypto_pro.language.system.dcci(
     target: Union[Tensor, Tile],
-    offset: Optional[Union[int, Sequence[int], Expr]] = None,
+    offset: Optional[Union[Sequence[int], int]] = None,
     *,
     cache_line: CacheLine = pypto_pro.language.CacheLine.ENTIRE_DATA_CACHE,
     dst: DcciDst = pypto_pro.language.DcciDst.AUTO,

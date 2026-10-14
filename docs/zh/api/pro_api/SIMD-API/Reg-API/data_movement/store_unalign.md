@@ -57,7 +57,7 @@
 ## 函数原型
 
 ```python
-store_unalign(tile, src, align_reg, stride=None, post_update: bool = False)
+store_unalign(tile, src, align_reg, stride=None, /, *, post_update: bool = False)
 ```
 
 ## 参数说明

@@ -34,7 +34,7 @@ $$
 ## 函数原型
 
 ```python
-shift_right(src, shift, preg, mode: Optional[MergeMode] = None) -> dst
+shift_right(src, shift, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

@@ -19,7 +19,7 @@
 ## 函数原型
 
 ```python
-squeeze_store_unalign_post(tile, align_reg)
+squeeze_store_unalign_post(tile, align_reg, /)
 ```
 
 ## 参数说明

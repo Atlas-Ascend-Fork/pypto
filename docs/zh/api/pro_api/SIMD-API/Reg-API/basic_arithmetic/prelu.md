@@ -21,7 +21,7 @@ $$dst_i = \begin{cases} src_i & src_i \geq 0 \\ src_i \times slope_i & src_i < 0
 ## 函数原型
 
 ```python
-prelu(src, slope, preg, mode: Optional[MergeMode] = None) -> dst
+prelu(src, slope, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

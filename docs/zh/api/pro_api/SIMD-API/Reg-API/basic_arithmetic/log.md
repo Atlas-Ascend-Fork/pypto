@@ -21,7 +21,7 @@ $$dst_i = \log(src_i)$$
 ## 函数原型
 
 ```python
-log(src, preg, mode: Optional[MergeMode] = None, precision: Optional[bool] = None) -> dst
+log(src, preg, /, *, mode: Optional[MergeMode] = None, precision: Optional[bool] = None) -> dst
 ```
 
 ## 参数说明

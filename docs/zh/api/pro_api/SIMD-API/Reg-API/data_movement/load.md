@@ -19,7 +19,7 @@
 ## 函数原型
 
 ```python
-load(tile, stride) -> dst
+load(tile, stride=None, /) -> dst
 ```
 
 ## 参数说明

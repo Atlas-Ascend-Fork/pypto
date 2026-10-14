@@ -29,7 +29,7 @@ Carry flag（进位标志）用于表示加法进位，若src0、src1、carry_sr
 ## 函数原型
 
 ```python
-addc(src0, src1, carry_src, preg) -> (carry, dst)
+addc(src0, src1, carry_src, preg, /) -> (carry, dst)
 ```
 
 ## 参数说明

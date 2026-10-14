@@ -61,7 +61,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def create_mask(pattern: Optional[MaskPattern] = None,
+    def create_mask(*, pattern: Optional[MaskPattern] = None,
                     dtype: Optional[DType] = None):
         """Create and initialize a VF predicate mask register.
 
@@ -85,7 +85,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def update_mask(scalar, dtype: Optional[DType] = None):
+    def update_mask(scalar, /, *, dtype: Optional[DType] = None):
         """Update a VF mask register from a scalar value.
 
         Sets the mask register bits according to the scalar value.  The scalar
@@ -103,7 +103,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def full(src, preg=None, dtype: Optional[DType] = None,
+    def full(src, preg=None, /, *, dtype: Optional[DType] = None,
              mode: Optional[MergeMode] = None,
              pos: Optional[DuplicatePos] = None):
         """Broadcast a scalar or vector-source element into all lanes of a VF register.
@@ -134,7 +134,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def load_align(tile, offset=None, dist: Optional[LoadDist] = None,
+    def load_align(tile, offset=None, /, *, dist: Optional[LoadDist] = None,
                    dtype: Optional[DType] = None, post_update: bool = False,
                    block_stride=None, repeat_stride=None,
                    data_copy_mode: Optional[DataCopyMode] = None):
@@ -180,7 +180,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def store_align(tile, src, preg=None, offset=None, dist: Optional[StoreDist] = None,
+    def store_align(tile, src, preg=None, offset=None, /, *, dist: Optional[StoreDist] = None,
                     data_copy_mode: Optional[DataCopyMode] = None,
                     block_stride=None, repeat_stride=None,
                     post_update: bool = False):
@@ -228,7 +228,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def store_unalign(tile, src, align_reg, stride=None,
+    def store_unalign(tile, src, align_reg, stride=None, /, *,
                       post_update: bool = False):
         """Store unaligned data from a VF register to UB (vstus/vstu instruction).
 
@@ -251,7 +251,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def store_unalign_post(tile, align_reg, stride,
+    def store_unalign_post(tile, align_reg, stride, /, *,
                            post_update: bool = False):
         """Complete an unaligned store sequence (vstas/vsta instruction).
 
@@ -272,7 +272,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def squeeze_store_unalign(tile, src, align_reg):
+    def squeeze_store_unalign(tile, src, align_reg, /):
         """Squeeze-based unaligned store (vstur instruction).
 
         Reads the valid byte count from the AR register (written by
@@ -288,7 +288,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def squeeze_store_unalign_post(tile, align_reg):
+    def squeeze_store_unalign_post(tile, align_reg, /):
         """Complete a squeeze-based unaligned store sequence (vstar instruction).
 
         Reads the remaining byte count from the AR register. Must be
@@ -313,7 +313,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def mem_bar(mode: Optional[MemBarMode] = None):
+    def mem_bar(*, mode: Optional[MemBarMode] = None):
         """Insert a VF memory barrier (maps to AscendC ``LocalMemBar<src,dst>``).
 
         Orders memory ops of the ``src`` kind before those of the ``dst`` kind.
@@ -336,7 +336,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def max(src0, src1, preg, mode: Optional[MergeMode] = None):
+    def max(src0, src1, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Element-wise maximum of two source registers.
 
         For each lane ``i`` where ``mask[i]`` is active, compares the
@@ -360,7 +360,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def add(src0, src1, preg, mode: Optional[MergeMode] = None):
+    def add(src0, src1, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Element-wise addition of two source registers.
 
         For each lane ``i`` where ``mask[i]`` is active, computes the sum of
@@ -388,7 +388,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def sub(src0, src1, preg, mode: Optional[MergeMode] = None):
+    def sub(src0, src1, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Element-wise subtraction of two source registers.
 
         For each lane ``i`` where ``mask[i]`` is active, subtracts ``src1[i]``
@@ -411,7 +411,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def mul(src0, src1, preg, mode: Optional[MergeMode] = None):
+    def mul(src0, src1, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Element-wise multiplication of two source registers.
 
         For each lane ``i`` where ``mask[i]`` is active, computes the product
@@ -435,7 +435,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def div(src0, src1, preg, mode: Optional[MergeMode] = None,
+    def div(src0, src1, preg, /, *, mode: Optional[MergeMode] = None,
             precision: Optional[bool] = None):
         r"""Element-wise division of two source registers.
 
@@ -463,7 +463,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def muls(src, scalar, preg, mode: Optional[MergeMode] = None):
+    def muls(src, scalar, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Multiply all elements by a scalar.
 
         For each lane ``i`` where ``mask[i]`` is active, multiplies ``src[i]``
@@ -487,7 +487,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def mul_add_dst(src0, src1, preg, mode: Optional[MergeMode] = None):
+    def mul_add_dst(src0, src1, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Fused multiply-add into destination.
 
         For each lane ``i`` where ``mask[i]`` is active, multiplies ``src0[i]``
@@ -512,7 +512,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def and_(src0, src1, preg, mode: Optional[MergeMode] = None):
+    def and_(src0, src1, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Element-wise bitwise AND of two source registers.
 
         For each lane ``i`` where ``mask[i]`` is active, computes the bitwise
@@ -536,7 +536,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def or_(src0, src1, preg, mode: Optional[MergeMode] = None):
+    def or_(src0, src1, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Element-wise bitwise OR of two source registers.
 
         For each lane ``i`` where ``mask[i]`` is active, computes the bitwise
@@ -560,8 +560,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def xor(src0, src1, preg, mode: Optional[MergeMode] = None,
-            dtype: Optional[DType] = None):
+    def xor(src0, src1, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Element-wise bitwise XOR of two source registers.
 
         For each lane ``i`` where ``mask[i]`` is active, computes the bitwise
@@ -577,7 +576,6 @@ class Vf:
 
         Kwargs:
             mode: ``pl.MergeMode.ZEROING`` (default). MERGING mode is not supported on current device.
-            dtype: Data type for type-specific variants (e.g. ``pl.DT_UINT16``)
 
         Returns:
             Destination register (``RegTensor``) holding the element-wise
@@ -586,7 +584,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def reduce_sum(src, preg, datablock: bool = False,
+    def reduce_sum(src, preg, /, *, datablock: bool = False,
                    merge_mode: Optional[MergeMode] = None):
         r"""In-register sum reduction across all lanes (vcadd / vcgadd).
 
@@ -610,7 +608,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def reduce_max(src, preg, datablock: bool = False,
+    def reduce_max(src, preg, /, *, datablock: bool = False,
                    merge_mode: Optional[MergeMode] = None):
         r"""In-register max reduction across all lanes (vcmax / vcgmax).
 
@@ -634,7 +632,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def reduce_min(src, preg, datablock: bool = False,
+    def reduce_min(src, preg, /, *, datablock: bool = False,
                    merge_mode: Optional[MergeMode] = None):
         r"""In-register min reduction across all lanes (vcmin / vcgmin).
 
@@ -658,7 +656,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def ln(src, preg, mode: Optional[MergeMode] = None,
+    def ln(src, preg, /, *, mode: Optional[MergeMode] = None,
            precision: Optional[bool] = None):
         r"""Natural logarithm of each element.
 
@@ -687,7 +685,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def exp_sub(src0, src1, preg, layout: Optional[CastLayout] = None, dtype: Optional[DType] = None):
+    def exp_sub(src0, src1, preg, /, *, layout: Optional[CastLayout] = None, dtype: Optional[DType] = None):
         r"""Fused exp-subtract for numerical stability.
 
         For each lane ``i`` where ``mask[i]`` is active, subtracts ``max_val[i]``
@@ -715,7 +713,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def astype(src, preg, dtype: DType,
+    def astype(src, preg, /, *, dtype: DType,
                layout: Optional[CastLayout] = None,
                round_mode: Optional[VFRoundMode] = None,
                saturate: Optional[SaturateMode] = None,
@@ -762,7 +760,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def de_interleave(src0, src1, dtype: Optional[DType] = None):
+    def de_interleave(src0, src1, /, *, dtype: Optional[DType] = None):
         r"""De-interleave: split even/odd elements into two registers.
 
         Given two interleaved source registers, extracts the even-indexed
@@ -792,7 +790,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def select(src0, src1, preg):
+    def select(src0, src1, preg, /):
         r"""Conditional select between two source registers.
 
         For each lane ``i``, selects ``src_true[i]`` when ``mask[i]`` is active
@@ -815,7 +813,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def shift_left(src, shift, preg, mode: Optional[MergeMode] = None):
+    def shift_left(src, shift, preg, /, *, mode: Optional[MergeMode] = None):
         """Left shift: ``dst[i] = src[i] << shift``
 
         The shift amount may be a scalar (all lanes shifted by the same amount,
@@ -844,7 +842,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def shift_right(src, shift, preg, mode: Optional[MergeMode] = None):
+    def shift_right(src, shift, preg, /, *, mode: Optional[MergeMode] = None):
         """Right shift: ``dst[i] = src[i] >> shift``
 
         The shift amount may be a scalar (all lanes shifted by the same amount,
@@ -875,7 +873,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def histograms(src, preg, bin_type: Optional[BinType] = None,
+    def histograms(src, preg, /, *, bin_type: Optional[BinType] = None,
                    hist_type: Optional[HistType] = None):
         """Histogram accumulation (chistv2/dhistv2 instruction).
 
@@ -902,7 +900,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def eq(src0, src1, preg):
+    def eq(src0, src1, preg, /):
         """Element-wise equality comparison.
 
         Compares two source elements and writes the result to the
@@ -921,7 +919,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def ne(src0, src1, preg):
+    def ne(src0, src1, preg, /):
         """Element-wise not-equal comparison.
 
         Args:
@@ -935,7 +933,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def lt(src0, src1, preg):
+    def lt(src0, src1, preg, /):
         """Element-wise less-than comparison.
 
         Args:
@@ -949,7 +947,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def gt(src0, src1, preg):
+    def gt(src0, src1, preg, /):
         """Element-wise greater-than comparison.
 
         Args:
@@ -963,7 +961,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def le(src0, src1, preg):
+    def le(src0, src1, preg, /):
         """Element-wise less-or-equal comparison.
 
         Args:
@@ -977,7 +975,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def ge(src0, src1, preg):
+    def ge(src0, src1, preg, /):
         """Element-wise greater-or-equal comparison.
 
         Args:
@@ -991,7 +989,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def squeeze(src, preg, gather_mode: Optional[SqueezeMode] = None):
+    def squeeze(src, preg, /, *, gather_mode: Optional[SqueezeMode] = None):
         """Squeeze mask to index register (vsqz instruction).
 
         Converts active mask bits into a packed index sequence in the
@@ -1012,7 +1010,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def arange(start, dtype: DType,
+    def arange(start, dtype: DType, *,
                index_order: Optional[IndexOrder] = None):
         r"""Generate an index sequence starting from ``start`` (vci instruction).
 
@@ -1041,7 +1039,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def gather(src, index, preg=None,
+    def gather(src, index, preg=None, /, *,
                data_copy_mode: Optional[DataCopyMode] = None):
         r"""Gather elements by index.
 
@@ -1080,7 +1078,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def log(src, preg, mode: Optional[MergeMode] = None,
+    def log(src, preg, /, *, mode: Optional[MergeMode] = None,
             precision: Optional[bool] = None):
         r"""Natural logarithm (alias for :func:`vf.ln`).
 
@@ -1107,7 +1105,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def min(src0, src1, preg, mode: Optional[MergeMode] = None):
+    def min(src0, src1, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Element-wise minimum of two source registers.
 
         For each lane ``i`` where ``mask[i]`` is active, compares the
@@ -1131,7 +1129,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def exp(src, preg, mode: Optional[MergeMode] = None,
+    def exp(src, preg, /, *, mode: Optional[MergeMode] = None,
             precision: Optional[bool] = None):
         r"""Exponential function of each element.
 
@@ -1159,7 +1157,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def abs(src, preg, mode: Optional[MergeMode] = None):
+    def abs(src, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Element-wise absolute value.
 
         For each lane ``i`` where ``mask[i]`` is active, computes the absolute
@@ -1181,7 +1179,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def not_(src, preg, mode: Optional[MergeMode] = None):
+    def not_(src, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Element-wise bitwise NOT.
 
         For each lane ``i`` where ``mask[i]`` is active, computes the bitwise
@@ -1204,7 +1202,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def sqrt(src, preg, mode: Optional[MergeMode] = None,
+    def sqrt(src, preg, /, *, mode: Optional[MergeMode] = None,
              precision: Optional[bool] = None):
         r"""Square root of each element.
 
@@ -1233,7 +1231,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def relu(src, preg, mode: Optional[MergeMode] = None):
+    def relu(src, preg, /, *, mode: Optional[MergeMode] = None):
         r"""ReLU activation.
 
         For each lane ``i`` where ``mask[i]`` is active, writes ``src[i]`` to
@@ -1255,7 +1253,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def neg(src, preg, mode: Optional[MergeMode] = None):
+    def neg(src, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Element-wise negation.
 
         For each lane ``i`` where ``mask[i]`` is active, computes the
@@ -1277,7 +1275,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def adds(src, scalar, preg, mode: Optional[MergeMode] = None):
+    def adds(src, scalar, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Add scalar to each element.
 
         For each lane ``i`` where ``mask[i]`` is active, adds the scalar value
@@ -1300,7 +1298,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def mins(src, scalar, preg, mode: Optional[MergeMode] = None):
+    def mins(src, scalar, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Element-wise minimum with scalar.
 
         For each lane ``i`` where ``mask[i]`` is active, compares ``src[i]``
@@ -1323,7 +1321,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def maxs(src, scalar, preg, mode: Optional[MergeMode] = None):
+    def maxs(src, scalar, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Element-wise maximum with scalar.
 
         For each lane ``i`` where ``mask[i]`` is active, compares ``src[i]``
@@ -1346,7 +1344,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def leaky_relu(src, scalar, preg, mode: Optional[MergeMode] = None):
+    def leaky_relu(src, scalar, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Leaky ReLU activation.
 
         For each lane ``i`` where ``mask[i]`` is active, writes ``src[i]`` to
@@ -1371,7 +1369,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def interleave(src0, src1, dtype: Optional[DType] = None):
+    def interleave(src0, src1, /, *, dtype: Optional[DType] = None):
         r"""Interleave two registers: combine even/odd elements.
 
         Interleaves elements from ``src0`` and ``src1`` so that ``src0``
@@ -1402,7 +1400,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def pair_reduce_sum(src, preg, mode: Optional[MergeMode] = None):
+    def pair_reduce_sum(src, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Pairwise reduction sum.
 
         For each pair of adjacent elements, adds them together and writes the
@@ -1423,7 +1421,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def abs_sub(src0, src1, preg, mode: Optional[MergeMode] = None):
+    def abs_sub(src0, src1, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Absolute difference of two source registers.
 
         For each lane ``i`` where ``mask[i]`` is active, computes the absolute
@@ -1447,7 +1445,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def axpy(src, scalar, preg, mode: Optional[MergeMode] = None):
+    def axpy(src, scalar, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Fused AXPY: multiply src by scalar and add to dst.
 
         For each lane ``i`` where ``mask[i]`` is active, multiplies ``src[i]``
@@ -1472,7 +1470,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def bit_cast(src, *, dtype: DType):
+    def bit_cast(src, /, *, dtype: DType):
         r"""Bitwise type reinterpretation of a register.
 
         Returns a view of ``src`` reinterpreted as the target ``dtype``,
@@ -1509,7 +1507,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def mul_dst_add(src0, src1, preg, mode: Optional[MergeMode] = None):
+    def mul_dst_add(src0, src1, preg, /, *, mode: Optional[MergeMode] = None):
         r"""Multiply-dst-add: multiply dst by src0, then add src1.
 
         For each lane ``i`` where ``mask[i]`` is active, multiplies ``dst[i]``
@@ -1534,7 +1532,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def pack(src, part: Optional[PackPart] = None,
+    def pack(src, /, *, part: Optional[PackPart] = None,
              dtype: Optional[DType] = None):
         r"""Pack/narrow data type (e.g. u32->u16, u16->u8).
 
@@ -1559,7 +1557,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def unpack(src, part: Optional[PackPart] = None,
+    def unpack(src, /, *, part: Optional[PackPart] = None,
                dtype: Optional[DType] = None):
         """Unpack/widen data type (e.g. u8->u16, u16->u32).
 
@@ -1579,7 +1577,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def prelu(src, slope, preg, mode: Optional[MergeMode] = None):
+    def prelu(src, slope, preg, /, *, mode: Optional[MergeMode] = None):
         """Parametric ReLU with per-element slope register.
 
         ``dst[i] = src[i] if src[i] >= 0 else src[i] * slope[i]``
@@ -1603,7 +1601,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def mull(src0, src1, preg):
+    def mull(src0, src1, preg, /):
         """Long multiply: 32x32->64, output split into lo/hi register pair.
 
         Multiplies two 32-bit registers and produces 64-bit result split
@@ -1625,7 +1623,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def addc(src0, src1, carry_src, preg):
+    def addc(src0, src1, carry_src, preg, /):
         """Add with carry (vaddcs): ``carry_out, dst = src0 + src1 + carry_in``
 
         Used for multi-word (e.g. 64-bit) arithmetic on 32-bit registers.
@@ -1646,7 +1644,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def subc(src0, src1, borrow_src, preg):
+    def subc(src0, src1, borrow_src, preg, /):
         """Subtract with borrow (vsubcs): ``borrow_out, dst = src0 - src1 - borrow_in``
 
         Used for multi-word (e.g. 64-bit) arithmetic on 32-bit registers.
@@ -1679,7 +1677,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def load_unalign_pre(align_reg, tile):
+    def load_unalign_pre(align_reg, tile, /):
         """Setup unaligned load (vldas instruction).
 
         Initializes the alignment state for subsequent unaligned loads.
@@ -1691,7 +1689,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def load_unalign(align_reg, tile, stride=None):
+    def load_unalign(align_reg, tile, stride=None, /):
         """Unaligned load from UB to register (vldus instruction).
 
         Loads data from an unaligned UB address. Passing the optional stride
@@ -1710,7 +1708,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def scatter(tile, src, index, preg):
+    def scatter(tile, src, index, preg, /):
         """Scatter store by index (vscatter instruction).
 
         Writes register elements to non-contiguous UB locations specified
@@ -1725,7 +1723,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def unsqueeze(preg):
+    def unsqueeze(preg, /):
         """Unsqueeze mask bits into a register (vusqz instruction).
 
         Expands each mask bit into the corresponding register lane
@@ -1741,7 +1739,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def get_mask_spr(width: MaskWidth = MaskWidth.B32):
+    def get_mask_spr(*, width: MaskWidth = MaskWidth.B32):
         """Get mask from special purpose register (movp_b32/movp_b16).
 
         Reads the {MASK1, MASK0} SPR set by SetVectorMask and converts it
@@ -1759,7 +1757,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def log2(src, preg, mode: Optional[MergeMode] = None,
+    def log2(src, preg, /, *, mode: Optional[MergeMode] = None,
              precision: Optional[bool] = None):
         r"""Base-2 logarithm of each element.
 
@@ -1787,7 +1785,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def log10(src, preg, mode: Optional[MergeMode] = None,
+    def log10(src, preg, /, *, mode: Optional[MergeMode] = None,
               precision: Optional[bool] = None):
         r"""Base-10 logarithm of each element.
 
@@ -1815,7 +1813,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def muls_cast(src, scalar, preg, dtype: DType,
+    def muls_cast(src, scalar, preg, /, *, dtype: DType,
                   layout: Optional[CastLayout] = None):
         r"""Multiply by scalar then cast.
 
@@ -1841,7 +1839,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def load(tile, stride=None):
+    def load(tile, stride=None, /):
         """Unified load (vldas+vldus, matches AscendC Load interface).
 
         Simple load from UB to register. Passing stride as 3rd positional
@@ -1858,7 +1856,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def store(tile, src, count=None):
+    def store(tile, src, count=None, /):
         """Unified store (vstus+vstas, matches AscendC Store interface).
 
         Simple store from register to UB.
@@ -1871,7 +1869,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def truncate(src, preg, mode: Optional[MergeMode] = None):
+    def truncate(src, preg, /, *, mode: Optional[MergeMode] = None):
         """Truncate to integer (round toward zero): ``dst[i] = trunc(src[i])``
 
         Maps to hardware ``vtrc`` with ROUND_Z mode.
@@ -1890,7 +1888,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def mask_gen_with_reg_tensor(src, offset: Optional[int] = None):
+    def mask_gen_with_reg_tensor(src, /, *, offset: Optional[int] = None):
         """Generate mask from a register tensor bit at a given offset (movvp instruction).
 
         Converts a bit in a register element into a mask predicate.
@@ -1907,8 +1905,8 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def create_addr_reg(stride0, stride1=None, stride2=None, stride3=None,
-                        dtype: Optional[DType] = None):
+    def create_addr_reg(stride0, stride1=None, stride2=None, stride3=None, /,
+                        *, dtype: Optional[DType] = None):
         """Create an address offset register for aligned load/store (CreateAddrReg).
 
         Returns an ``AddrReg`` that can be passed to ``vf.load_align`` /
@@ -1938,7 +1936,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def move(src, preg=None, mode: Optional[MergeMode] = None):
+    def move(src, preg=None, /, *, mode: Optional[MergeMode] = None):
         r"""Move/copy register elements (vmov for RegTensor, pmov for MaskReg).
 
         For RegTensor: copies valid elements from src to dst; masked-out

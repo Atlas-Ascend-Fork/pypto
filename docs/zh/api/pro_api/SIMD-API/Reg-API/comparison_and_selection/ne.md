@@ -23,7 +23,7 @@ $$dstReg_i = \begin{cases} 1 & \text{if } src0_i \neq src1_i \\ 0 & \text{otherw
 ## 函数原型
 
 ```python
-ne(src0, src1, preg) -> dst_mask
+ne(src0, src1, preg, /) -> dst_mask
 ```
 
 ## 参数说明

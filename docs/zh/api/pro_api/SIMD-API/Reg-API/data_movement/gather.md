@@ -37,7 +37,7 @@
 ## 函数原型
 
 ```python
-gather(src, index, preg, data_copy_mode: Optional[DataCopyMode] = None) -> dst
+gather(src, index, preg=None, /, *, data_copy_mode: Optional[DataCopyMode] = None) -> dst
 ```
 
 ## 参数说明

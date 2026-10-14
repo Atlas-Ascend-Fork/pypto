@@ -31,5 +31,5 @@ import pypto_pro.language as pl
 
 @pl.vector_function
 def vf_kernel():
-    dst = vf.arange(start=0, order=pl.IndexOrder.INCREASE_ORDER)
+    dst = vf.arange(0, dtype=pl.DT_INT32, index_order=pl.IndexOrder.INCREASE_ORDER)
 ```

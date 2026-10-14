@@ -21,7 +21,7 @@ $$dst_i = \max(src_i, scalar)$$
 ## 函数原型
 
 ```python
-maxs(src, scalar, preg, mode: Optional[MergeMode] = None) -> dst
+maxs(src, scalar, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

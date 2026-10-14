@@ -22,7 +22,7 @@
 ## 函数原型
 
 ```python
-full(src, preg, dtype: Optional[DType] = None, mode: Optional[MergeMode] = None, pos: Optional[DuplicatePos] = None) -> dst
+full(src, preg=None, /, *, dtype: Optional[DType] = None, mode: Optional[MergeMode] = None, pos: Optional[DuplicatePos] = None) -> dst
 ```
 
 ## 参数说明

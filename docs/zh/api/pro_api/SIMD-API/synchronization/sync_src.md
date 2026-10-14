@@ -23,7 +23,7 @@ pypto_pro.language.system.sync_src(
     *,
     set_pipe: PipeType,
     wait_pipe: PipeType,
-    event_id: Union[int, Scalar],
+    event_id: int,
 ) -> None
 ```
 
@@ -33,7 +33,7 @@ pypto_pro.language.system.sync_src(
 |---|---|---|
 | set_pipe | 输入 | pypto_pro.language.PipeType枚举值，表示源流水，即发送同步事件的流水。必须指定一条具体流水，不支持pypto_pro.language.PipeType.ALL。支持的流水组合见约束说明。 |
 | wait_pipe | 输入 | pypto_pro.language.PipeType枚举值，表示目的流水，即等待同步事件的流水。必须指定一条与set_pipe不同的具体流水，不支持pypto_pro.language.PipeType.ALL。支持的流水组合见约束说明。 |
-| event_id | 输入 | 事件ID。支持Python int、结果为整数的常量表达式或整数类型的运行时Scalar，不支持bool，取值范围为[0, 7]。 |
+| event_id | 输入 | 事件ID。支持整型常量、结果为整数的常量表达式或运行时整型标量表达式，不支持bool，取值范围为[0, 7]。 |
 
 ## 约束说明
 

@@ -28,7 +28,7 @@ what a user writes.
 
 from __future__ import annotations
 
-from typing import List, Optional, Union
+from typing import Optional, Sequence, Union
 
 from pypto.ir import CacheLine, CrossCoreSyncMode, DcciDst, PipeType, SyncCoreType
 
@@ -190,7 +190,7 @@ class System:
     @_api_decl
     def dcci(
         target: Union[Tensor, Tile],
-        offset: Optional[Union[int, List[int]]] = None,
+        offset: Optional[Union[Sequence[int], int]] = None,
         *,
         cache_line: CacheLine = CacheLine.ENTIRE_DATA_CACHE,
         dst: DcciDst = DcciDst.AUTO,

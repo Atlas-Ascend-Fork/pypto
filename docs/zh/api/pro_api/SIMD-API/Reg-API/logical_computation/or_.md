@@ -21,7 +21,7 @@ $$dstReg_i = srcReg0_i \;|\; srcReg1_i$$
 ## 函数原型
 
 ```python
-or_(src0, src1, preg, mode: Optional[MergeMode] = None) -> dst
+or_(src0, src1, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

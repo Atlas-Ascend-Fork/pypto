@@ -23,7 +23,7 @@
 ## 函数原型
 
 ```python
-update_mask(scalar, dtype: Optional[DType] = None) -> preg
+update_mask(scalar, /, *, dtype: Optional[DType] = None) -> preg
 ```
 
 ## 参数说明

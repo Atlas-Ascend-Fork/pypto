@@ -20,8 +20,8 @@
 
 ```python
 pypto_pro.language.min(
-    lhs: Scalar,
-    rhs: Scalar,
+    lhs: Union[int, float],
+    rhs: Union[int, float],
     /,
 ) -> Scalar
 ```

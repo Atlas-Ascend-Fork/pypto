@@ -34,7 +34,7 @@ class CastLayout(enum.Enum):
 import pypto_pro.language as pl
 
 @pl.vector_function
-def vf_kernel():
-    dst = vf.astype(src, dtype=pl.DT_INT8, layout=pl.CastLayout.ZERO,
+def vf_kernel(src, preg):
+    dst = vf.astype(src, preg, dtype=pl.DT_INT8, layout=pl.CastLayout.ZERO,
                     round_mode=pl.VFRoundMode.CAST_RINT, saturate=pl.SaturateMode.OFF)
 ```

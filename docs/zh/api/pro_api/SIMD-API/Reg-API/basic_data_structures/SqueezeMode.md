@@ -30,6 +30,6 @@ class SqueezeMode(enum.Enum):
 import pypto_pro.language as pl
 
 @pl.vector_function
-def vf_kernel():
-    dst = vf.squeeze(src, preg, mode=pl.SqueezeMode.STORE_REG)
+def vf_kernel(src, preg):
+    dst = vf.squeeze(src, preg, gather_mode=pl.SqueezeMode.STORE_REG)
 ```

@@ -29,7 +29,7 @@
 ## 函数原型
 
 ```python
-bit_cast(src, dtype: DType) -> dst
+bit_cast(src, /, *, dtype: DType) -> dst
 ```
 
 ## 参数说明

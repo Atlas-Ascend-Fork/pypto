@@ -22,9 +22,9 @@ $$result = lhs \times rhs + addend$$
 
 ```python
 pypto_pro.language.simt.fma(
-    lhs: Scalar,
-    rhs: Scalar,
-    addend: Scalar,
+    lhs: float,
+    rhs: float,
+    addend: float,
 ) -> Scalar
 ```
 
@@ -32,9 +32,9 @@ pypto_pro.language.simt.fma(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| lhs | 输入 | 源操作数（乘数），Scalar类型，支持DT_FP16、DT_BF16和DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
-| rhs | 输入 | 源操作数（乘数），Scalar类型，数据类型必须与lhs一致。Tensor或Tile元素需通过下标访问后传入。 |
-| addend | 输入 | 源操作数（加数），Scalar类型，数据类型必须与lhs和rhs一致。Tensor或Tile元素需通过下标访问后传入。 |
+| lhs | 输入 | 源操作数（乘数），浮点型常量或运行时浮点标量表达式，支持DT_FP16、DT_BF16和DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
+| rhs | 输入 | 源操作数（乘数），浮点型常量或运行时浮点标量表达式，数据类型必须与lhs一致。Tensor或Tile元素需通过下标访问后传入。 |
+| addend | 输入 | 源操作数（加数），浮点型常量或运行时浮点标量表达式，数据类型必须与lhs和rhs一致。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 

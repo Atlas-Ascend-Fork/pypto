@@ -947,6 +947,104 @@ def test_an_offset_is_accepted_however_the_caller_spelled_it():
     kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
+@pytest.mark.parametrize(
+    ("as_keyword", "expected_value"),
+    [(False, "a bool scalar"), (True, "bool")],
+)
+def test_an_offset_rejects_bool_in_either_call_form(as_keyword, expected_value):
+    """Unlike ordinary ``int``, an Offset must not treat bool as an integer."""
+
+    if as_keyword:
+
+        @pl.jit
+        def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+            tile = pl.make_tile(_tile_type(), addr=0)
+            pl.load(tile, x, offsets=True)
+
+    else:
+
+        @pl.jit
+        def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+            tile = pl.make_tile(_tile_type(), addr=0)
+            pl.load(tile, x, True)
+
+    rendered = _render(kernel)
+    assert isinstance(rendered.error, InvalidType)
+    assert rendered.head["reason"] == f"pl.load: offsets expects Offset, got {expected_value}"
+    assert rendered.caret_under() == "True"
+
+
+@pytest.mark.parametrize("as_keyword", [False, True])
+def test_load_offset_rejects_scalar_int(as_keyword):
+    if as_keyword:
+
+        @pl.jit
+        def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+            tile = pl.make_tile(_tile_type(), addr=0)
+            pl.load(tile, x, offsets=1)
+
+    else:
+
+        @pl.jit
+        def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+            tile = pl.make_tile(_tile_type(), addr=0)
+            pl.load(tile, x, 1)
+
+    rendered = _render(kernel)
+    assert isinstance(rendered.error, InvalidType)
+    expected_value = "int" if as_keyword else "a int64 scalar"
+    assert rendered.head["reason"] == f"pl.load: offsets expects Offset, got {expected_value}"
+    assert rendered.caret_under() == "1"
+
+
+@pytest.mark.parametrize(
+    ("as_keyword", "expected_value"),
+    [(False, "a bool scalar"), (True, "bool")],
+)
+def test_dcci_offset_rejects_bool_in_either_call_form(as_keyword, expected_value):
+    if as_keyword:
+
+        @pl.jit
+        def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+            pl.system.dcci(x, offset=True)
+
+    else:
+
+        @pl.jit
+        def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+            pl.system.dcci(x, True)
+
+    rendered = _render(kernel)
+    assert isinstance(rendered.error, InvalidType)
+    assert rendered.head["reason"] == (
+        f"pl.system.dcci: offset expects Optional[Union[Sequence[int], int]], got {expected_value}"
+    )
+    assert rendered.caret_under() == "True"
+
+
+@pytest.mark.parametrize("as_keyword", [False, True])
+def test_move_offset_requires_a_sequence(as_keyword):
+    if as_keyword:
+
+        @pl.jit
+        def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+            tile = pl.make_tile(_tile_type(), addr=0)
+            pl.move(tile, tile, offset=1)
+
+    else:
+
+        @pl.jit
+        def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+            tile = pl.make_tile(_tile_type(), addr=0)
+            pl.move(tile, tile, 1)
+
+    rendered = _render(kernel)
+    assert isinstance(rendered.error, InvalidType)
+    expected_value = "int" if as_keyword else "a int64 scalar"
+    assert rendered.head["reason"] == f"pl.move: offset expects Optional[Offset], got {expected_value}"
+    assert rendered.caret_under() == "1"
+
+
 def test_an_int_parameter_accepts_the_scalar_a_loop_index_parses_into():
     """``offset: int`` is what the user writes; a loop index is an int to them too."""
 
@@ -1043,7 +1141,7 @@ def test_dump_offsets_name_the_axes_so_a_word_is_refused():
         pl.dump_data(tile, offsets="row")
 
     rendered = _render(kernel)
-    assert rendered.head["reason"] == "pl.dump_data: offsets expects Optional[List[int]], got str"
+    assert rendered.head["reason"] == "pl.dump_data: offsets expects Optional[Offset], got str"
     assert rendered.caret_under() == '"row"'
 
 

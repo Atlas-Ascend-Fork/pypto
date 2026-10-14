@@ -22,8 +22,8 @@ $$result = \operatorname{atan2}(y, x)$$
 
 ```python
 pypto_pro.language.simt.atan2(
-    y: Scalar,
-    x: Scalar,
+    y: float,
+    x: float,
 ) -> Scalar
 ```
 
@@ -31,8 +31,8 @@ pypto_pro.language.simt.atan2(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| y | 输入 | 纵坐标，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
-| x | 输入 | 横坐标，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
+| y | 输入 | 纵坐标，浮点型常量或运行时浮点标量表达式，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
+| x | 输入 | 横坐标，浮点型常量或运行时浮点标量表达式，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 

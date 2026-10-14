@@ -21,7 +21,7 @@ $$dstReg_i = srcReg_i \times scalar$$
 ## 函数原型
 
 ```python
-muls(src, scalar, preg, mode: Optional[MergeMode] = None) -> dst
+muls(src, scalar, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

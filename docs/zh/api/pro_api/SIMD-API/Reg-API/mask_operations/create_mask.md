@@ -65,7 +65,7 @@ mask_reg的总位宽为256 bit，其粒度由dtype参数决定；每个数据元
 ## 函数原型
 
 ```python
-create_mask(pattern: Optional[MaskPattern] = None, dtype: Optional[DType] = None) -> preg
+create_mask(*, pattern: Optional[MaskPattern] = None, dtype: Optional[DType] = None) -> preg
 ```
 
 ## 参数说明

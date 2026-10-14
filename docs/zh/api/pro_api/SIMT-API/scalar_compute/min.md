@@ -22,8 +22,8 @@ $$result = \min(lhs, rhs)$$
 
 ```python
 pypto_pro.language.simt.min(
-    lhs: Scalar,
-    rhs: Scalar,
+    lhs: Union[int, float],
+    rhs: Union[int, float],
 ) -> Scalar
 ```
 
@@ -31,8 +31,8 @@ pypto_pro.language.simt.min(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| lhs | 输入 | 源操作数，Scalar类型，支持DT_FP16、DT_BF16、DT_FP32、DT_INT8、DT_INT16、DT_INT32、DT_INT64、DT_UINT8、DT_UINT16、DT_UINT32和DT_UINT64。Tensor或Tile元素需通过下标访问后传入。 |
-| rhs | 输入 | 源操作数，Scalar类型，数据类型必须与lhs一致。Tensor或Tile元素需通过下标访问后传入。 |
+| lhs | 输入 | 源操作数，整型或浮点型常量，或相应类型的运行时标量表达式，支持DT_FP16、DT_BF16、DT_FP32、DT_INT8、DT_INT16、DT_INT32、DT_INT64、DT_UINT8、DT_UINT16、DT_UINT32和DT_UINT64。Tensor或Tile元素需通过下标访问后传入。 |
+| rhs | 输入 | 源操作数，整型或浮点型常量，或相应类型的运行时标量表达式，数据类型必须与lhs一致。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 

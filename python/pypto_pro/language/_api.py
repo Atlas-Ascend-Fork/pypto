@@ -29,7 +29,7 @@ import builtins
 from contextlib import contextmanager
 import functools
 import inspect
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional, Sequence, Union
 
 from pypto.ir import (
     AccPhase,
@@ -55,10 +55,9 @@ TileGroup = Any
 Tensor = Any
 Scalar = Any
 DType = Any
-# An offset may name one axis or all of them, so a bare int is a valid spelling.
-# A shape or a stride always names every axis, so it is always a sequence.
-Offset = Union[List[int], int]
-Shape = List[int]
+# Block offsets name one coordinate per axis and are therefore sequences.
+Offset = Sequence[int]
+Shape = Sequence[int]
 Struct = Any  # a variable built by pl.struct(...)
 
 # ---------------------------------------------------------------------------
@@ -89,7 +88,14 @@ def _api_decl(func):
 
 
 @_api_decl
-def load(dst_tile: Tile, src_tensor: Tensor, /, offsets: Offset, *, order: Optional[List[int]] = None) -> None:
+def load(
+    dst_tile: Tile,
+    src_tensor: Tensor,
+    /,
+    offsets: Offset,
+    *,
+    order: Optional[List[int]] = None,
+) -> None:
     """Load data from GM Tensor into on-chip Tile by absolute element coordinates.
 
     Args:
@@ -348,10 +354,10 @@ def insert(
     dst_tile: Tile,
     src_tile: Tile,
     /,
-    offset: List[int],
+    offset: Offset,
     *,
     relu_pre_mode: Optional[ReluPreMode] = None,
-    scale: Optional[Union[float, Scalar, Tile]] = None,
+    scale: Optional[Union[int, float, Tile]] = None,
     phase: Optional[STPhase] = None,
 ) -> None:
     """Insert a small Tile into a larger Tile at the given 2-D offset (TINSERT).
@@ -442,7 +448,7 @@ def div(out: Tile, lhs: Tile, rhs: Union[Tile, int, float]) -> None:
 
 
 @_api_decl
-def rem(out: Tile, lhs: Tile, rhs: Union[Tile, Scalar]) -> None:
+def rem(out: Tile, lhs: Tile, rhs: Union[Tile, int, float]) -> None:
     """Element-wise remainder (truncation semantics): ``out = lhs % rhs``
 
     Supports both tile-tile and tile-scalar operations:
@@ -465,7 +471,7 @@ def and_(out: Tile, lhs: Tile, rhs: Union[Tile, int]) -> None:
 
 
 @_api_decl
-def or_(out: Tile, lhs: Tile, rhs: Union[Tile, Scalar]) -> None:
+def or_(out: Tile, lhs: Tile, rhs: Union[Tile, int]) -> None:
     """Element-wise bitwise OR: ``out = lhs | rhs``
 
     Supports both tile-tile and tile-scalar operations:
@@ -475,7 +481,7 @@ def or_(out: Tile, lhs: Tile, rhs: Union[Tile, Scalar]) -> None:
 
 
 @_api_decl
-def shl(out: Tile, lhs: Tile, rhs: Union[Tile, Scalar]) -> None:
+def shl(out: Tile, lhs: Tile, rhs: Union[Tile, int]) -> None:
     """Element-wise left shift: ``out = lhs << rhs``
 
     Supports both tile-tile and tile-scalar operations:
@@ -485,7 +491,7 @@ def shl(out: Tile, lhs: Tile, rhs: Union[Tile, Scalar]) -> None:
 
 
 @_api_decl
-def shr(out: Tile, lhs: Tile, rhs: Union[Tile, Scalar]) -> None:
+def shr(out: Tile, lhs: Tile, rhs: Union[Tile, int]) -> None:
     """Element-wise right shift: ``out = lhs >> rhs``
 
     Supports both tile-tile and tile-scalar operations:
@@ -495,7 +501,7 @@ def shr(out: Tile, lhs: Tile, rhs: Union[Tile, Scalar]) -> None:
 
 
 @_api_decl
-def xor(out: Tile, lhs: Tile, rhs: Union[Tile, Scalar], tmp: Tile) -> None:
+def xor(out: Tile, lhs: Tile, rhs: Union[Tile, int], tmp: Tile) -> None:
     """Element-wise bitwise XOR: ``out = lhs ^ rhs``
 
     Args:
@@ -1152,7 +1158,7 @@ def set_validshape(tile: "Tile | TileGroup", /, shape: Shape) -> None:
     """
 
 @_api_decl
-def reinterpret(tile: "Tile | TileGroup", /, *, dtype: DType = None, shape: Shape = None,
+def reinterpret(tile: "Tile | TileGroup", /, *, dtype: Optional[DType] = None, shape: Optional[Shape] = None,
                 layout: Optional[TensorLayout] = None) -> "Tile | TileGroup":
     """Reinterpret a Tile or tile_group's dtype/shape/layout metadata without data movement.
 
@@ -1255,7 +1261,7 @@ def printf(format_str: str, *args, loc: bool = False) -> None:
 @_api_decl
 def dump_data(
     data: Union[Tensor, Tile],
-    offsets: Optional[List[int]] = None,
+    offsets: Optional[Offset] = None,
     shapes: Optional[Shape] = None,
     *,
     workspace: Optional[Tensor] = None,
@@ -1636,6 +1642,8 @@ def make_tile_group(*, type: TileType, addrs: int | list,
 # ===================================================================
 
 
+# The constructor returns the concrete descriptor; the alias avoids colliding
+# with this declaration's public name.
 @_api_decl
 def TileType(  # noqa: N802 -- the user writes pl.TileType(...), a class constructor
     *,
@@ -1647,7 +1655,7 @@ def TileType(  # noqa: N802 -- the user writes pl.TileType(...), a class constru
     fractal: Optional[int] = None,
     pad: Optional[Union[TilePad, int]] = None,
     compact: Optional[int] = None,
-) -> Any:
+) -> TileType:
     """Describe a tile: its shape, dtype, memory space and layout.
 
     A TileType carries everything about a tile except where it lives, which

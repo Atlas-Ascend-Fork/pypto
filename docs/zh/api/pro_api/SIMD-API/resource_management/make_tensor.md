@@ -27,8 +27,8 @@
 ```python
 pypto_pro.language.make_tensor(
     ptr: Union[Ptr, Tensor],
-    shape: Sequence[Union[int, Scalar]],
-    stride: Optional[Sequence[Union[int, Scalar]]] = None,
+    shape: Sequence[int],
+    stride: Optional[Sequence[int]] = None,
     dtype: Optional[DataType] = None,
 ) -> Tensor
 ```
@@ -38,8 +38,8 @@ pypto_pro.language.make_tensor(
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
 | ptr | 输入 | 用于构造Tensor视图的地址对象，Ptr或Tensor类型。创建的Tensor视图与源对象共享数据地址。 |
-| shape | 输入 | Tensor形状，Sequence[int或Scalar]类型，每一维可以是整型常量或运行时整型Scalar表达式。 |
-| stride | 输入 | Tensor步长，Sequence[int或Scalar]类型，可选，单位为元素。显式传入时，长度必须与shape的维数相同，元素[i0, i1, ...]相对ptr的元素偏移为i0 × stride[0] + i1 × stride[1] + ...。省略时自动生成连续行主序stride。对于亚字节数据类型，最内层维必须连续，即最后一项stride必须为1。 |
+| shape | 输入 | Tensor形状，整数序列（列表或元组）；每一维可以是整型常量或运行时整型标量表达式。 |
+| stride | 输入 | Tensor步长，可选的整数序列（列表或元组），单位为元素；每一项可以是整型常量或运行时整型标量表达式。显式传入时，长度必须与shape的维数相同，元素[i0, i1, ...]相对ptr的元素偏移为i0 × stride[0] + i1 × stride[1] + ...。省略时自动生成连续行主序stride。对于亚字节数据类型，最内层维必须连续，即最后一项stride必须为1。 |
 | dtype | 输入 | Tensor元素类型，[DataType](../basic_data_structures/DataType.md)类型，可选。传入时按该类型解释源地址；省略时沿用源指针或源Tensor的数据类型。 |
 
 ## 约束说明

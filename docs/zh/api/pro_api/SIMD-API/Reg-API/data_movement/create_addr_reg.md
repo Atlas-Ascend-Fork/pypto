@@ -21,7 +21,7 @@ vf.create_addr_reg用于创建地址偏移量寄存器（AddrReg），在多维�
 ## 函数原型
 
 ```python
-create_addr_reg(stride0, stride1=None, stride2=None, stride3=None, dtype: Optional[DType] = None) -> a_reg
+create_addr_reg(stride0, stride1=None, stride2=None, stride3=None, /, *, dtype: Optional[DType] = None) -> a_reg
 ```
 
 ## 参数说明

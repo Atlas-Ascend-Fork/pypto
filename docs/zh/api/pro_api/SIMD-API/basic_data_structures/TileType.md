@@ -38,10 +38,10 @@ pypto_pro.language.TileType(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| shape | 输入 | Tile各维大小，如[64, 128]。长度为2的编译期常量整数列表，各维大小须为正整数；仅支持二维Tile。对齐及分形布局约束由使用该TileType的具体API检查。 |
+| shape | 输入 | Tile各维大小，如[64, 128]。长度为2的编译期常量整数序列（列表或元组），各维大小须为正整数；仅支持二维Tile。对齐及分形布局约束由使用该TileType的具体API检查。 |
 | dtype | 输入 | 元素的数据类型，[pypto_pro.language.DataType](DataType.md)类型。 |
 | target_memory | 输入 | 目标内存空间，[pypto_pro.language.MemorySpace](MemorySpace.md)枚举值，默认为UB。 |
-| valid_shape | 输入 | 可选，有效形状（处理尾块/非满块场景）。编译期常量整数列表或None（默认）。<br>- 具体整数（如[32, 64]）：编译期确定有效形状。<br>- None（默认）：等同于[-1, -1]（动态模式）。<br>- [-1, -1]：运行时动态设置有效形状，配合pypto_pro.language.set_validshape使用。 |
+| valid_shape | 输入 | 可选，有效形状（处理尾块/非满块场景）。编译期常量整数序列（列表或元组）或None（默认）。<br>- 具体整数（如[32, 64]）：编译期确定有效形状。<br>- None（默认）：等同于[-1, -1]（动态模式）。<br>- [-1, -1]：运行时动态设置有效形状，配合pypto_pro.language.set_validshape使用。 |
 | layout | 输入 | 可选，排布方式，[pypto_pro.language.TensorLayout](TensorLayout.md)枚举值或None（默认）。不指定时按内存空间取默认值（详见[约束说明](#约束说明)）。L1 Buffer未指定layout时使用NZ，也可以显式指定ZN；数据类型为DT_UINT64或DT_INT64时，还可以显式指定ND。BiasTable Buffer默认且仅支持ND；L0A_MX Buffer仅支持ZZ，L0B_MX Buffer仅支持NN；UB的可用布局由具体Tile API约束。 |
 | fractal | 输入 | 可选，分形大小，整数或None（默认）。L0C Buffer中的FP32/INT32 Tile在未指定时自动设为1024；L1 Buffer中layout为ZZ或NN的DT_FP8E8M0 Tile及L0A_MX Buffer/L0B_MX Buffer中的Tile默认且仅支持fractal=32；其他取值要求由具体Tile API决定。 |
 | pad | 输入 | 可选，填充模式，支持[pypto_pro.language.TilePad](TilePad.md)类型或int类型。当为int类型时取值范围为[0, 3]：<br>- 0：不填充。<br>- 1：补零。<br>- 2：补最大值。<br>- 3：补最小值。<br>非法值报ValueError，非法类型报TypeError。 |

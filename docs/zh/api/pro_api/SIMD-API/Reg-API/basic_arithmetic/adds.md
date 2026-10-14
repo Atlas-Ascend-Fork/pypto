@@ -21,7 +21,7 @@ $$dst_i = src_i + scalar$$
 ## 函数原型
 
 ```python
-adds(src, scalar, preg, mode: Optional[MergeMode] = None) -> dst
+adds(src, scalar, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

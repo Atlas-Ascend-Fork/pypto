@@ -42,7 +42,7 @@
 ## 函数原型
 
 ```python
-mem_bar(mode: Optional[MemBarMode] = None)
+mem_bar(*, mode: Optional[MemBarMode] = None)
 ```
 
 ## 参数说明

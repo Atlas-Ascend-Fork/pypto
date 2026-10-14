@@ -21,7 +21,7 @@ $$dstReg_i = \begin{cases} srcTrueReg_i & \text{if } mask_i = 1 \\ srcFalseReg_i
 ## 函数原型
 
 ```python
-select(src0, src1, preg) -> dst
+select(src0, src1, preg, /) -> dst
 ```
 
 ## 参数说明

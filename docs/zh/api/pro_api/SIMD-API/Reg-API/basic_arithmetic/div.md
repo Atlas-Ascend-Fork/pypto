@@ -21,7 +21,7 @@ $$dstReg_i = srcReg0_i \div srcReg1_i$$
 ## 函数原型
 
 ```python
-div(src0, src1, preg, mode: Optional[MergeMode] = None, precision: Optional[bool] = None) -> dst
+div(src0, src1, preg, /, *, mode: Optional[MergeMode] = None, precision: Optional[bool] = None) -> dst
 ```
 
 ## 参数说明

@@ -21,7 +21,7 @@ $$dstReg_i = srcReg0_i \;\&\; srcReg1_i$$
 ## 函数原型
 
 ```python
-and_(src0, src1, preg, mode: Optional[MergeMode] = None) -> dst
+and_(src0, src1, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

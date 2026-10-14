@@ -26,8 +26,8 @@ $$result = lhs - \operatorname{trunc}(lhs / rhs) \times rhs$$
 
 ```python
 pypto_pro.language.simt.fmod(
-    lhs: Scalar,
-    rhs: Scalar,
+    lhs: float,
+    rhs: float,
 ) -> Scalar
 ```
 
@@ -35,8 +35,8 @@ pypto_pro.language.simt.fmod(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| lhs | 输入 | 被除数，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
-| rhs | 输入 | 除数，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
+| lhs | 输入 | 被除数，浮点型常量或运行时浮点标量表达式，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
+| rhs | 输入 | 除数，浮点型常量或运行时浮点标量表达式，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 

@@ -21,7 +21,7 @@ $$dst_i = \max(src0_i, src1_i)$$
 ## 函数原型
 
 ```python
-max(src0, src1, preg, mode: Optional[MergeMode] = None) -> dst
+max(src0, src1, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

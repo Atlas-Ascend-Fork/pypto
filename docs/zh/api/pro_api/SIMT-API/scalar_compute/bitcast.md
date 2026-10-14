@@ -20,7 +20,7 @@
 
 ```python
 pypto_pro.language.simt.bitcast(
-    value: Scalar,
+    value: Union[int, float],
     dtype: DType,
 ) -> Scalar
 ```
@@ -29,7 +29,7 @@ pypto_pro.language.simt.bitcast(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| value | 输入 | 源操作数，Scalar类型。Tensor或Tile元素需通过下标访问后传入。 |
+| value | 输入 | 源操作数，整型或浮点型常量，或相应类型的运行时标量表达式。Tensor或Tile元素需通过下标访问后传入。 |
 | dtype | 输入 | 目的数据类型，DType类型，支持的数据类型转换见下表。 |
 
 各源数据类型支持的目的数据类型如下：

@@ -21,7 +21,7 @@ $$dstReg_i = \sim srcReg_i$$
 ## 函数原型
 
 ```python
-not_(src, preg, mode: Optional[MergeMode] = None) -> dst
+not_(src, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

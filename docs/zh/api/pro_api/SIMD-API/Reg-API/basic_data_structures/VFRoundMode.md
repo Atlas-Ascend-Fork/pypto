@@ -50,6 +50,6 @@ class VFRoundMode(enum.Enum):
 import pypto_pro.language as pl
 
 @pl.vector_function
-def vf_kernel():
-    dst = vf.astype(src, dtype=pl.DT_INT32, round_mode=pl.VFRoundMode.CAST_FLOOR)
+def vf_kernel(src, preg):
+    dst = vf.astype(src, preg, dtype=pl.DT_INT32, round_mode=pl.VFRoundMode.CAST_FLOOR)
 ```

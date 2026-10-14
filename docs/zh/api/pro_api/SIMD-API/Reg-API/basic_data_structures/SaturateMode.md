@@ -41,6 +41,6 @@ class SaturateMode(enum.Enum):
 import pypto_pro.language as pl
 
 @pl.vector_function
-def vf_kernel():
-    dst = vf.astype(src, dtype=pl.DT_INT8, saturate=pl.SaturateMode.ON)
+def vf_kernel(src, preg):
+    dst = vf.astype(src, preg, dtype=pl.DT_INT8, saturate=pl.SaturateMode.ON)
 ```

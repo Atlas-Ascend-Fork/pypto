@@ -21,7 +21,7 @@ $$dstReg_i = srcReg_{2i} + srcReg_{2i+1}$$
 ## 函数原型
 
 ```python
-pair_reduce_sum(src, preg, mode: Optional[MergeMode] = None) -> dst
+pair_reduce_sum(src, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

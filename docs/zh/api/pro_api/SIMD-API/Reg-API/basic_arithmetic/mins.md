@@ -21,7 +21,7 @@ $$dst_i = \min(src_i, scalar)$$
 ## 函数原型
 
 ```python
-mins(src, scalar, preg, mode: Optional[MergeMode] = None) -> dst
+mins(src, scalar, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

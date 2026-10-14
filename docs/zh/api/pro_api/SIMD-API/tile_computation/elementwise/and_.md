@@ -14,7 +14,7 @@
 
 ## 功能说明
 
-两个操作数对应位置逐元素按位与。支持Tile-Tile和Tile-Scalar两种模式，其中Scalar为标量。
+两个操作数对应位置逐元素按位与。支持Tile-Tile和Tile-Scalar两种模式，其中后者的rhs为标量。
 
 - **Tile-Tile模式**：对lhs和rhs对应位置的元素执行按位与，将结果写入out。
 - **Tile-Scalar模式**：对lhs中的每个元素和rhs标量执行按位与，将结果写入out。
@@ -25,7 +25,7 @@
 pypto_pro.language.and_(
     out: Tile,
     lhs: Tile,
-    rhs: Union[Tile, Scalar],
+    rhs: Union[Tile, int],
 ) -> None
 ```
 
@@ -35,7 +35,7 @@ pypto_pro.language.and_(
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存储空间为UB，采用row-major布局，存放逐元素按位与的结果。支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32和DT_UINT32。Tile-Tile模式下可与lhs为同一Tile，实现原地计算。 |
 | lhs | 输入 | 源操作数（左操作数），Tile类型，存储空间为UB，采用row-major布局。数据类型和valid_shape须与out一致。 |
-| rhs | 输入 | 源操作数（右操作数），支持Tile或Scalar类型，两种模式均支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32和DT_UINT32。传入Tile时执行Tile-Tile计算，Tile的存储空间为UB，采用row-major布局，数据类型和valid_shape须与out、lhs一致；传入Scalar时执行Tile-Scalar计算，取值须在out数据类型的可表示范围内，整数常量按Scalar处理。 |
+| rhs | 输入 | 源操作数（右操作数），支持Tile、整型常量或运行时整型标量表达式，两种模式均支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32和DT_UINT32。传入Tile时执行Tile-Tile计算，Tile的存储空间为UB，采用row-major布局，数据类型和valid_shape须与out、lhs一致；传入标量时执行Tile-Scalar计算，取值须在out数据类型的可表示范围内，整数常量按标量处理。 |
 
 ## 约束说明
 

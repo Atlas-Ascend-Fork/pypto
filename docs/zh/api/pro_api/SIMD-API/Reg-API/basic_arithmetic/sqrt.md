@@ -21,7 +21,7 @@ $$dst_i = (src_i)^{1/2}$$
 ## 函数原型
 
 ```python
-sqrt(src, preg, mode: Optional[MergeMode] = None, precision: Optional[bool] = None) -> dst
+sqrt(src, preg, /, *, mode: Optional[MergeMode] = None, precision: Optional[bool] = None) -> dst
 ```
 
 ## 参数说明

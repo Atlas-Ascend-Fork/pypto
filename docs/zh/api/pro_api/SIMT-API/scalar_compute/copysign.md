@@ -20,8 +20,8 @@
 
 ```python
 pypto_pro.language.simt.copysign(
-    magnitude: Scalar,
-    sign: Scalar,
+    magnitude: float,
+    sign: float,
 ) -> Scalar
 ```
 
@@ -29,8 +29,8 @@ pypto_pro.language.simt.copysign(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| magnitude | 输入 | 提供绝对值的源操作数，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
-| sign | 输入 | 符号选择操作数，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
+| magnitude | 输入 | 提供绝对值的源操作数，浮点型常量或运行时浮点标量表达式，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
+| sign | 输入 | 符号选择操作数，浮点型常量或运行时浮点标量表达式，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 

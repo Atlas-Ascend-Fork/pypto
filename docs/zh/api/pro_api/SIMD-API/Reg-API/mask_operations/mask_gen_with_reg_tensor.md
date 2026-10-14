@@ -40,7 +40,7 @@
 ## 函数原型
 
 ```python
-mask_gen_with_reg_tensor(src, offset: Optional[int] = None) -> dst
+mask_gen_with_reg_tensor(src, /, *, offset: Optional[int] = None) -> dst
 ```
 
 ## 参数说明

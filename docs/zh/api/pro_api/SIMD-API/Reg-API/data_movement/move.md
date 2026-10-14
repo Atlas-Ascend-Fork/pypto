@@ -24,7 +24,7 @@
 ## 函数原型
 
 ```python
-move(src, preg, mode: Optional[MergeMode] = None) -> dst
+move(src, preg=None, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

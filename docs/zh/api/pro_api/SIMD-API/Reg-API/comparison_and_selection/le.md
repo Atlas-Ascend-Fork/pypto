@@ -23,7 +23,7 @@ $$dstReg_i = \begin{cases} 1 & \text{if } src0_i \leq src1_i \\ 0 & \text{otherw
 ## 函数原型
 
 ```python
-le(src0, src1, preg) -> dst_mask
+le(src0, src1, preg, /) -> dst_mask
 ```
 
 ## 参数说明

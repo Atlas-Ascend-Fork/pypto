@@ -20,7 +20,7 @@
 
 ```python
 pypto_pro.language.simt.warp_reduce_max(
-    value: Scalar,
+    value: Union[int, float],
 ) -> Scalar
 ```
 

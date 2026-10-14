@@ -23,10 +23,10 @@ pypto_pro.language.insert(
     dst_tile: Tile,
     src_tile: Tile,
     /,
-    offset: List[int],
+    offset: Sequence[int],
     *,
     relu_pre_mode: Optional[ReluPreMode] = None,
-    scale: Optional[Union[float, Scalar, Tile]] = None,
+    scale: Optional[Union[int, float, Tile]] = None,
     phase: Optional[STPhase] = None,
 ) -> None
 ```
@@ -37,9 +37,9 @@ pypto_pro.language.insert(
 |---|---|---|
 | dst_tile | 输出 | 目的操作数，Tile类型；L0C Buffer → L1 Buffer路径必须使用NZ布局，首地址必须32字节对齐。支持的数据类型和分形组合详见[约束说明](#约束说明)。 |
 | src_tile | 输入 | 源操作数，Tile类型，支持的数据类型和分形组合详见[约束说明](#约束说明)。 |
-| offset | 输入 | 位置偏移，List[int]类型，长度必须为2，格式为[row, col]，单位为元素个数。源Tile的左上角对齐到目标Tile的offset位置；row和col必须是非负整数或运行时整数表达式，并满足row + src行数 ≤ dst行数、col + src列数 ≤ dst列数。 |
+| offset | 输入 | 位置偏移，整数序列（列表或元组），长度必须为2，格式为[row, col]，单位为元素个数。源Tile的左上角对齐到目标Tile的offset位置；row和col必须是非负整数或运行时整数表达式，并满足row + src行数 ≤ dst行数、col + src列数 ≤ dst列数。 |
 | relu_pre_mode | 输入 | 可选；L0C Buffer → L1 Buffer搬运时是否开启随路ReLU操作，[pypto_pro.language.ReluPreMode](../basic_data_structures/ReluPreMode.md)类型。其他路径不支持。 |
-| scale | 输入 | 可选，仅用于L0C Buffer → L1 Buffer搬运，设置随路量化参数。数据在搬出L0C Buffer时由Fixpipe乘以该比例并转换到目的数据类型。不同的传入形式会影响量化粒度，支持如下类型：<br>- **float类型**：直接传入固定值（如scale = 2.0），适用于整块Tile使用同一比例。<br>- **Scalar类型**：量化比例在运行时确定，需按数据类型传值。<br>&nbsp;&nbsp;- DT_FP32：直接传原始比例值（如0.5）。<br>&nbsp;&nbsp;- DT_INT32、DT_INT64：传预编码的float32位模式转成的整数（如struct.pack("!f", 0.5)）。<br>- **Tile类型**：每列使用独立比例，需满足以下要求：<br>&nbsp;&nbsp;- 目标存储区域必须为Fixpipe Buffer。<br>&nbsp;&nbsp;- shape为[1, N]（列量化），N必须是16的倍数且N ≤ 512。<br>&nbsp;&nbsp;- dtype为DT_INT64。<br>&nbsp;&nbsp;- 目的操作数的Tile数据类型为DT_INT8时，Fixpipe Buffer中的Tile每个DT_INT64元素的bit46需置1，用于选择有符号量化；未置位时L0C Buffer中的负值会被按无符号解读。<br>&nbsp;&nbsp;- 用户需要先把比例数据从GM搬到L1 Buffer，再搬到Fixpipe Buffer，并完成MTE1→FIX同步。 |
+| scale | 输入 | 可选，仅用于L0C Buffer → L1 Buffer搬运，设置随路量化参数。数据在搬出L0C Buffer时由Fixpipe乘以该比例并转换到目的数据类型。不同的传入形式会影响量化粒度，支持如下类型：<br>- **整型或浮点型常量**：先按数值转换为浮点值，再编码为FP32位模式（如scale = 2与scale = 2.0的编码结果相同），适用于整块Tile使用同一比例。<br>- **运行时标量表达式**：量化比例在运行时确定，需按数据类型传值。<br>&nbsp;&nbsp;- DT_FP32：直接传原始比例值（如0.5）。<br>&nbsp;&nbsp;- DT_INT32、DT_INT64：传预编码的float32位模式转成的整数（如0.5对应的位模式整数0x3F000000）。<br>- **Tile类型**：每列使用独立比例，需满足以下要求：<br>&nbsp;&nbsp;- 目标存储区域必须为Fixpipe Buffer。<br>&nbsp;&nbsp;- shape为[1, N]（列量化），N必须是16的倍数且N ≤ 512。<br>&nbsp;&nbsp;- dtype为DT_INT64。<br>&nbsp;&nbsp;- 目的操作数的Tile数据类型为DT_INT8时，Fixpipe Buffer中的Tile每个DT_INT64元素的bit46需置1，用于选择有符号量化；未置位时L0C Buffer中的负值会被按无符号解读。<br>&nbsp;&nbsp;- 用户需要先把比例数据从GM搬到L1 Buffer，再搬到Fixpipe Buffer，并完成MTE1→FIX同步。 |
 | phase | 输入 | 可选，L0C Buffer → L1 Buffer搬运时是否启用unit_flag同步，详见[Cube计算进阶](../../../../guide/programming_guide/pro/advanced_programming/cube_computation_advanced_usage.md)。 |
 
 ## 约束说明

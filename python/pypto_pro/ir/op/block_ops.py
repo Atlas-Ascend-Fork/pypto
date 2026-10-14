@@ -3956,14 +3956,14 @@ def _parse_tile_type_call(self, call: ast.Call):
         # (which is hoisted to the function prologue, above where the var is even
         # defined). Reject it here with a clear error; use pl.set_validshape() for
         # a runtime valid shape.
-        if kw.arg in ("shape", "valid_shape") and isinstance(kw.value, ast.List):
+        if kw.arg in ("shape", "valid_shape") and isinstance(kw.value, (ast.List, ast.Tuple)):
             kwargs[kw.arg] = [
                 self.require_const_value(
                     self.parse_expression(elt),
                     elt,
                     expects="integer",
-                    hint="A constant list kwarg (e.g. TileType shape/valid_shape) must be compile-time "
-                    "constants; use pl.set_validshape() for a runtime valid shape.",
+                    hint="A constant shape sequence (list or tuple, e.g. TileType shape/valid_shape) must "
+                    "contain compile-time constants; use pl.set_validshape() for a runtime valid shape.",
                     check=_is_int,
                 )
                 for elt in kw.value.elts

@@ -233,7 +233,7 @@ _LEAF_TYPES: dict[str, tuple[type, ...]] = {
     # loop bound -- is the builder's judgement, not this gate's.
     "Scalar": (_IntScalar, _FloatScalar, _BoolScalar, int, float, bool),
     "Shape": (ir.TupleType, list, tuple),
-    "Offset": (ir.TupleType, list, tuple, _IntScalar, int),
+    "Offset": (ir.TupleType, list, tuple),
     # Python counts a bool as an int -- isinstance(True, int), min(True, 2) -- and
     # a declaration written in Python's own vocabulary says the same thing here.
     "int": (_IntScalar, _BoolScalar, int, bool),
@@ -330,9 +330,13 @@ def accepted_types(annotation: str, declared: Callable) -> tuple[type, ...] | No
         branches = _split_outside_brackets(text, "|")
     else:
         branches = [text]
+    # An offset may be expressed as per-axis coordinates or as one scalar element
+    # offset (for example, system.dcci). Keep bool out of that scalar branch even
+    # though a plain ``int`` annotation follows Python's bool-is-an-int rule.
+    offset_union = "int" in branches and any(_SEQUENCE_FORM.match(branch) for branch in branches)
     pooled: tuple[type, ...] = ()
     for branch in branches:
-        types = _leaf_types(branch, declared)
+        types = (_IntScalar, int) if offset_union and branch == "int" else _leaf_types(branch, declared)
         if types is None:
             return None
         pooled += types

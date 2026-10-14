@@ -19,7 +19,7 @@
 ## 函数原型
 
 ```python
-xor(src0, src1, preg, mode: Optional[MergeMode] = None) -> dst
+xor(src0, src1, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

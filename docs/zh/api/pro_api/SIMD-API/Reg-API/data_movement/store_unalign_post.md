@@ -19,7 +19,7 @@
 ## 函数原型
 
 ```python
-store_unalign_post(tile, align_reg, stride, post_update: bool = False)
+store_unalign_post(tile, align_reg, stride, /, *, post_update: bool = False)
 ```
 
 ## 参数说明

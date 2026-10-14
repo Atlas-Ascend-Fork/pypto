@@ -19,7 +19,7 @@
 ## 函数原型
 
 ```python
-pypto_pro.language.axpy(out: Tile, src: Tile, alpha: Scalar, /) -> None
+pypto_pro.language.axpy(out: Tile, src: Tile, alpha: Union[int, float], /) -> None
 ```
 
 ## 参数说明
@@ -28,7 +28,7 @@ pypto_pro.language.axpy(out: Tile, src: Tile, alpha: Scalar, /) -> None
 |---|---|---|
 | out | 输入/输出 | 目的操作数，Tile类型，存储空间为UB，数据类型为DT_FP16或DT_FP32，数据类型、形状和有效形状须与src一致。运算前保存累加初值，运算后保存计算结果。 |
 | src | 输入 | 源操作数，Tile类型，存储空间为UB，数据类型为DT_FP16或DT_FP32，形状和有效形状须与out一致。 |
-| alpha | 输入 | 缩放系数，float或Scalar类型，可为编译期常量或运行时浮点Scalar，数据类型必须与src的数据类型一致。 |
+| alpha | 输入 | 缩放系数，整型或浮点型常量，或与src元素类型一致的运行时标量表达式，数据类型必须与src的数据类型一致。 |
 
 ## 约束说明
 

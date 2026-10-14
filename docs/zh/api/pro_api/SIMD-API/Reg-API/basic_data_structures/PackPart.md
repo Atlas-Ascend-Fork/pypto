@@ -30,6 +30,6 @@ class PackPart(enum.Enum):
 import pypto_pro.language as pl
 
 @pl.vector_function
-def vf_kernel():
-    dst = vf.pack(src0, src1, preg, part=pl.PackPart.LOWER)
+def vf_kernel(src):
+    dst = vf.pack(src, part=pl.PackPart.LOWER, dtype=pl.DT_UINT8)
 ```

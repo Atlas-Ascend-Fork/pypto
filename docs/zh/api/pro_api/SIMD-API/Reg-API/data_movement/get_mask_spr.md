@@ -24,7 +24,7 @@
 ## 函数原型
 
 ```python
-get_mask_spr(width: MaskWidth = MaskWidth.B32) -> preg
+get_mask_spr(*, width: MaskWidth = MaskWidth.B32) -> preg
 ```
 
 ## 参数说明

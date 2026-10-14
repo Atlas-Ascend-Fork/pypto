@@ -23,7 +23,7 @@
 ## 函数原型
 
 ```python
-scatter(tile, src, index, preg)
+scatter(tile, src, index, preg, /)
 ```
 
 ## 参数说明

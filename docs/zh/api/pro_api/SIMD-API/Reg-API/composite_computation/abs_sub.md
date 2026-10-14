@@ -25,7 +25,7 @@ $$
 ## 函数原型
 
 ```python
-abs_sub(src0, src1, preg, mode: Optional[MergeMode] = None) -> dst
+abs_sub(src0, src1, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

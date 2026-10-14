@@ -29,7 +29,7 @@ mask_reg由vf.create_mask或vf.update_mask产生，作为mask_reg类型的参数
 ## 函数原型
 
 ```python
-unsqueeze(preg) -> dst
+unsqueeze(preg, /) -> dst
 ```
 
 ## 参数说明

@@ -19,7 +19,7 @@
 ## 函数原型
 
 ```python
-pypto_pro.language.setval(container: Tile | Tensor, offset: int, value: Scalar) -> None
+pypto_pro.language.setval(container: Tile | Tensor, offset: int, value: Union[int, float]) -> None
 ```
 
 ## 参数说明

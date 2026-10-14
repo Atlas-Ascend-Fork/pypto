@@ -48,7 +48,7 @@ vf.astype用于数据类型精度转换，将源操作数数据类型转换成�
 ## 函数原型
 
 ```python
-astype(src, preg, dtype: DType, layout: Optional[CastLayout] = None, round_mode: Optional[VFRoundMode] = None, saturate: Optional[SaturateMode] = None, mode: Optional[MergeMode] = None) -> dst
+astype(src, preg, /, *, dtype: DType, layout: Optional[CastLayout] = None, round_mode: Optional[VFRoundMode] = None, saturate: Optional[SaturateMode] = None, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

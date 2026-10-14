@@ -27,7 +27,7 @@ reg_tensor求和归约：将源寄存器src中的所有有效元素（preg选中
 ## 函数原型
 
 ```python
-reduce_sum(src, preg, datablock: bool = False, merge_mode: Optional[MergeMode] = None)
+reduce_sum(src, preg, /, *, datablock: bool = False, merge_mode: Optional[MergeMode] = None)
 ```
 
 ## 参数说明

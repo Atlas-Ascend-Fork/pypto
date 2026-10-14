@@ -23,7 +23,7 @@ $$dstReg_i = \begin{cases} 1 & \text{if } src0_i = src1_i \\ 0 & \text{otherwise
 ## 函数原型
 
 ```python
-eq(src0, src1, preg) -> dst_mask
+eq(src0, src1, preg, /) -> dst_mask
 ```
 
 ## 参数说明

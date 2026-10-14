@@ -19,7 +19,7 @@
 ## 函数原型
 
 ```python
-load_unalign_pre(align_reg, tile)
+load_unalign_pre(align_reg, tile, /)
 ```
 
 ## 参数说明

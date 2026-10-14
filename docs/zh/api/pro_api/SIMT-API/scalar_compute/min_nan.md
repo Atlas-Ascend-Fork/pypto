@@ -20,8 +20,8 @@
 
 ```python
 pypto_pro.language.simt.min_nan(
-    lhs: Scalar,
-    rhs: Scalar,
+    lhs: float,
+    rhs: float,
 ) -> Scalar
 ```
 
@@ -29,8 +29,8 @@ pypto_pro.language.simt.min_nan(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| lhs | 输入 | 源操作数，Scalar类型，支持DT_FP16和DT_BF16，数据类型必须与其他源操作数一致。Tensor或Tile元素需通过下标访问后传入。 |
-| rhs | 输入 | 源操作数，Scalar类型，支持DT_FP16和DT_BF16，数据类型必须与其他源操作数一致。Tensor或Tile元素需通过下标访问后传入。 |
+| lhs | 输入 | 源操作数，浮点型常量或运行时浮点标量表达式，支持DT_FP16和DT_BF16，数据类型必须与其他源操作数一致。Tensor或Tile元素需通过下标访问后传入。 |
+| rhs | 输入 | 源操作数，浮点型常量或运行时浮点标量表达式，支持DT_FP16和DT_BF16，数据类型必须与其他源操作数一致。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 

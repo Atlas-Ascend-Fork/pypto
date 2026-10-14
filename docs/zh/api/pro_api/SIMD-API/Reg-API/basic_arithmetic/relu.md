@@ -21,7 +21,7 @@ $$dst_i = \max(0, src_i)$$
 ## 函数原型
 
 ```python
-relu(src, preg, mode: Optional[MergeMode] = None) -> dst
+relu(src, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

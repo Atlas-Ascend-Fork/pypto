@@ -14,7 +14,7 @@
 
 ## 功能说明
 
-两个操作数对应位置逐元素做加法。支持Tile-Tile和Tile-Scalar两种模式，其中Scalar为标量；同时支持原地计算。
+两个操作数对应位置逐元素做加法。支持Tile-Tile和Tile-Scalar两种模式，其中后者的rhs为标量；同时支持原地计算。
 
 - **Tile-Tile模式**：对lhs和rhs对应位置的元素求和，将结果写入out。
 - **Tile-Scalar模式**：将lhs中的每个元素与rhs标量相加，将结果写入out。
@@ -25,7 +25,7 @@
 pypto_pro.language.add(
     out: Tile,
     lhs: Tile,
-    rhs: Union[Tile, Scalar],
+    rhs: Union[Tile, int, float],
 ) -> None
 ```
 
@@ -35,7 +35,7 @@ pypto_pro.language.add(
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存放逐元素加法的结果。数据类型与lhs一致，支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_BF16和DT_FP32。可与lhs或Tile类型的rhs为同一Tile，实现原地计算。 |
 | lhs | 输入 | 左操作数，Tile类型。数据类型与out一致。 |
-| rhs | 输入 | 右操作数，Tile或Scalar类型。传入Tile时执行Tile-Tile计算，数据类型与out一致，且shape与out、lhs一致；传入Scalar时执行Tile-Scalar计算。 |
+| rhs | 输入 | 右操作数，Tile、整型或浮点型常量，或相应类型的运行时标量表达式。传入Tile时执行Tile-Tile计算，数据类型与out一致，且shape与out、lhs一致；传入标量时执行Tile-Scalar计算。 |
 
 ## 约束说明
 

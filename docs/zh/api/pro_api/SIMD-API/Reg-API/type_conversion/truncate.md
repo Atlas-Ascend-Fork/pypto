@@ -25,7 +25,7 @@ $$dstReg_i = \text{trunc}(srcReg_i)$$
 ## 函数原型
 
 ```python
-truncate(src, preg, mode: Optional[MergeMode] = None) -> dst
+truncate(src, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

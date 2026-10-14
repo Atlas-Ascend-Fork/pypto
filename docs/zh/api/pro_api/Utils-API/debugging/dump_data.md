@@ -32,8 +32,8 @@ Tile通过[pypto_pro.language.make_tile](../../SIMD-API/resource_management/make
 ```python
 pypto_pro.language.dump_data(
     data: Union[Tensor, Tile],
-    offsets: Optional[List[int]] = None,
-    shapes: Optional[List[int]] = None,
+    offsets: Optional[Sequence[int]] = None,
+    shapes: Optional[Sequence[int]] = None,
     *,
     workspace: Optional[Tensor] = None,
     loc: bool = False,
@@ -46,8 +46,8 @@ pypto_pro.language.dump_data(
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
 | data | 输入 | 要打印的数据，必须是Tensor（TensorType）或Tile（TileType），其他类型报TypeError。Tensor暂不支持pypto_pro.language.DT_FP4、pypto_pro.language.DT_FP4E2M1和pypto_pro.language.DT_FP4E1M2类型。 |
-| offsets | 输入 | 可选，窗口起始偏移（各维）。取值为由整型常量或运行时整型标量表达式组成的序列，长度须等于数据的维数；须与shapes同时提供或同时为None。Tile窗口当前仅支持二维Tile。offsets和shapes均为None时打印全部数据。 |
-| shapes | 输入 | 可选，窗口大小（各维）。取值为由整型常量或运行时整型标量表达式组成的序列，长度须等于数据的维数；须与offsets同时提供或同时为None。其中编译期常量必须大于0；Tensor窗口模式还要求最内维stride为编译期常量1。NZ Tensor窗口须保持完整分形：M shape按16对齐，N shape和offset按C0对齐；前导维按batch逐个打印。Tile窗口要求二维且Tile物理shape为编译期常量。 |
+| offsets | 输入 | 可选，窗口起始偏移（各维）。取值为由整型常量或运行时整型标量表达式组成的序列（列表或元组），长度须等于数据的维数；须与shapes同时提供或同时为None。Tile窗口当前仅支持二维Tile。offsets和shapes均为None时打印全部数据。 |
+| shapes | 输入 | 可选，窗口大小（各维）。取值为由整型常量或运行时整型标量表达式组成的序列（列表或元组），长度须等于数据的维数；须与offsets同时提供或同时为None。其中编译期常量必须大于0；Tensor窗口模式还要求最内维stride为编译期常量1。NZ Tensor窗口须保持完整分形：M shape按16对齐，N shape和offset按C0对齐；前导维按batch逐个打印。Tile窗口要求二维且Tile物理shape为编译期常量。 |
 | workspace | 输入 | 可选，GM上的临时Tensor，仅用于L0C Buffer中Tile的中转打印。仅当data为L0C Buffer中的Tile时有效；Tensor传入该参数会报ValueError，其他内存空间的Tile会报错。必须是与Tile dtype相同的GM TensorType，容量至少能容纳完整物理Tile。 |
 | loc | 输入 | 可选，是否在输出前打印源文件/行号，取值为True或False（默认）。 |
 | flag | 输入 | 可选，字符串标签，必须是编译时常量，不能是运行时变量。提供时在dump输出前单独打印一行标记`=== [flag] <flag> ===`，用于区分多个dump点的输出。 |

@@ -23,7 +23,7 @@
 ```python
 pypto_pro.language.fill_index(
     out: Tile,
-    start: Union[int, Scalar],
+    start: Union[int, float],
 ) -> None
 ```
 

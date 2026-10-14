@@ -31,7 +31,7 @@
 ## 函数原型
 
 ```python
-pack(src, part: Optional[PackPart] = None, dtype: Optional[DType] = None) -> dst
+pack(src, /, *, part: Optional[PackPart] = None, dtype: Optional[DType] = None) -> dst
 ```
 
 ## 参数说明

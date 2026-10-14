@@ -22,7 +22,7 @@
 ## 函数原型
 
 ```python
-arange(start, dtype: DType, index_order: Optional[IndexOrder] = None) -> dst
+arange(start, dtype: DType, *, index_order: Optional[IndexOrder] = None) -> dst
 ```
 
 ## 参数说明

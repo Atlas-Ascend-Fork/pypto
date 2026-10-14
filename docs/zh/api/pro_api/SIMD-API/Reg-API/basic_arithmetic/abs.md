@@ -33,7 +33,7 @@
 ## 函数原型
 
 ```python
-abs(src, preg, mode: Optional[MergeMode] = None) -> dst
+abs(src, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

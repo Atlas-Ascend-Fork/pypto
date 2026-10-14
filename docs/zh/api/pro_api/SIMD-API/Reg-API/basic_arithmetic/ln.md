@@ -21,7 +21,7 @@ $$dst_i = \ln(src_i)$$
 ## 函数原型
 
 ```python
-ln(src, preg, mode: Optional[MergeMode] = None, precision: Optional[bool] = None) -> dst
+ln(src, preg, /, *, mode: Optional[MergeMode] = None, precision: Optional[bool] = None) -> dst
 ```
 
 ## 参数说明

@@ -22,7 +22,7 @@
 pypto_pro.language.system.wait_cross_core(
     *,
     pipe: PipeType,
-    event_id: Union[int, Scalar],
+    event_id: int,
     sync_mode: CrossCoreSyncMode = pypto_pro.language.CrossCoreSyncMode.INTRA_BLOCK,
 ) -> None
 ```
@@ -32,7 +32,7 @@ pypto_pro.language.system.wait_cross_core(
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
 | pipe | 输入 | [pypto_pro.language.PipeType](../basic_data_structures/PipeType.md)枚举值，表示等待期间被阻塞的硬件流水。接口只阻塞该流水中尚未下发的后续指令，已经下发的指令仍可继续执行。等待完成后，该流水才能继续执行后续指令。对于INTER_BLOCK、INTER_SUBBLOCK、INTRA_BLOCK和UNICAST_BLOCK，pipe均支持M、V、MTE1、MTE2、MTE3、FIX和S，不支持ALL。wait_cross_core的pipe用于指定等待期间被阻塞的流水，无需与配对的pypto_pro.language.system.set_cross_core的pipe相同。 |
-| event_id | 输入 | 核间同步事件ID。支持Python整型常量或运行时整数Scalar表达式。Python整型常量当前只能取0～15。动态表达式须由调用方保证运行时取值合法：INTER_BLOCK、INTER_SUBBLOCK、INTRA_BLOCK取0～15；UNICAST_BLOCK在AIV侧取0～15，在AIC侧取0～31。UNICAST_BLOCK中，AIV0发送的0～15与AIC等待的0～15配对，AIV1发送的0～15与AIC等待的16～31配对；AIC发送的0～15与AIV0等待的0～15配对，AIC发送的16～31与AIV1等待的0～15配对。事件ID的计数器、复用、SET顺序、SyncAll占用冲突及自动流水编排冲突等约束，参见[pypto_pro.language.system.set_cross_core](set_cross_core.md#参数说明)。 |
+| event_id | 输入 | 核间同步事件ID。支持整型常量或运行时整型标量表达式。整型常量当前只能取0～15。动态表达式须由调用方保证运行时取值合法：INTER_BLOCK、INTER_SUBBLOCK、INTRA_BLOCK取0～15；UNICAST_BLOCK在AIV侧取0～15，在AIC侧取0～31。UNICAST_BLOCK中，AIV0发送的0～15与AIC等待的0～15配对，AIV1发送的0～15与AIC等待的16～31配对；AIC发送的0～15与AIV0等待的0～15配对，AIC发送的16～31与AIV1等待的0～15配对。事件ID的计数器、复用、SET顺序、SyncAll占用冲突及自动流水编排冲突等约束，参见[pypto_pro.language.system.set_cross_core](set_cross_core.md#参数说明)。 |
 | sync_mode | 输入 | 核间同步模式，用于指定参与同步的核以及SET/WAIT信号的配对方式。须与配对的pypto_pro.language.system.set_cross_core使用相同模式，取值参见[pypto_pro.language.CrossCoreSyncMode](../basic_data_structures/CrossCoreSyncMode.md)。 |
 
 ## 约束说明

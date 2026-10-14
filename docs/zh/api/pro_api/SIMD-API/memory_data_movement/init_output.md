@@ -26,7 +26,7 @@ pypto_pro.language.init_output(
     *,
     offset: int = 0,
     size: int,
-    value: Union[int, float, Scalar] = 0,
+    value: Union[int, float] = 0,
 ) -> None
 ```
 
@@ -35,9 +35,9 @@ pypto_pro.language.init_output(
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
 | tensor | 输出 | 目的操作数，Tensor类型，存储空间为GM。支持的数据类型为DT_UINT8、DT_INT8、DT_UINT16、DT_INT16、DT_BF16、DT_FP16、DT_UINT32、DT_INT32、DT_FP32、DT_UINT64、DT_INT64；layout支持ND、NZ，offset和size按Tensor的物理元素计数，layout不影响填充语义。 |
-| offset | 输入 | 可选，元素级偏移，int或Scalar类型，表示从Tensor起始地址开始的偏移量，单位为元素个数，默认`0`。<br>- 非负整数，不支持浮点。<br>- 与size之和不得超过Tensor总元素数。<br>- 支持传入运行时标量（如循环变量、shape表达式）。 |
-| size | 输入 | 待初始化的元素个数，int或Scalar类型，单位为元素个数。<br>- 正整数，不支持浮点。<br>- 支持传入运行时标量。 |
-| value | 输入 | 可选，填充值，int、float或Scalar类型，默认`0`。<br>- 支持整型或浮点型常量（如`0`、`0.0`）、[pypto_pro.language.const](../../Utils-API/python_syntax_sugar/const.md)构造的标量，以及运行时标量表达式。<br>- 类型须与tensor元素类型兼容；整型字面量须能被tensor的数据类型表示。 |
+| offset | 输入 | 可选，元素级偏移，整型常量或运行时整型标量表达式，表示从Tensor起始地址开始的偏移量，单位为元素个数，默认`0`。<br>- 非负整数，不支持浮点。<br>- 与size之和不得超过Tensor总元素数。<br>- 支持传入运行时标量（如循环变量、shape表达式）。 |
+| size | 输入 | 待初始化的元素个数，整型常量或运行时整型标量表达式，单位为元素个数。<br>- 正整数，不支持浮点。<br>- 支持传入运行时标量。 |
+| value | 输入 | 可选，填充值，整型或浮点型常量，或相应类型的运行时标量表达式，默认`0`。<br>- 支持整型或浮点型常量（如`0`、`0.0`）、[pypto_pro.language.const](../../Utils-API/python_syntax_sugar/const.md)构造的标量，以及运行时标量表达式。<br>- 类型须与tensor元素类型兼容；整型字面量须能被tensor的数据类型表示。 |
 
 ## 约束说明
 

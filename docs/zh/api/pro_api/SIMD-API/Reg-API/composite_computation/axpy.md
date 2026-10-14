@@ -23,7 +23,7 @@ $$
 ## 函数原型
 
 ```python
-axpy(src, scalar, preg, mode: Optional[MergeMode] = None) -> dst
+axpy(src, scalar, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明

@@ -32,7 +32,7 @@ pypto_pro.language.reinterpret(
     /,
     *,
     dtype: Optional[DType] = None,
-    shape: Optional[List[int]] = None,
+    shape: Optional[Sequence[int]] = None,
     layout: Optional[TensorLayout] = None,
 ) -> Union[Tile, TileGroup]
 ```
@@ -43,7 +43,7 @@ pypto_pro.language.reinterpret(
 | ------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | tile   | 输入      | 待重声明的对象，Tile或TileGroup类型。源Tile必须已绑定编译期可确定的Buffer地址；新别名与源对象复用同一地址和大小，不执行数据搬运或类型转换。 |
 | dtype  | 输入      | 目标数据类型，[pypto_pro.language.DataType](../basic_data_structures/DataType.md)类型，可选，省略时继承原dtype。指定dtype时必须同时指定shape，且Tile基地址必须按新dtype的元素字节数对齐。 |
-| shape  | 输入      | 目标形状，List[int]类型，可选，必须是非空的编译期整数列表，省略时继承原shape。新shape与dtype决定的存储占用不得超过原Tile的Buffer大小；运行时有效形状应使用pypto_pro.language.set_validshape设置。 |
+| shape  | 输入      | 目标形状，可选，必须是非空的编译期整数序列（列表或元组），省略时继承原shape。新shape与dtype决定的存储占用不得超过原Tile的Buffer大小；运行时有效形状应使用pypto_pro.language.set_validshape设置。 |
 | layout | 输入      | 目标数据排布，[pypto_pro.language.TensorLayout](../basic_data_structures/TensorLayout.md)类型，可选，省略时继承原layout。调用方必须确保Buffer中的物理数据确实符合新layout。 |
 
 ## 约束说明

@@ -20,8 +20,8 @@
 
 ```python
 pypto_pro.language.simt.nextafter(
-    value: Scalar,
-    direction: Scalar,
+    value: float,
+    direction: float,
 ) -> Scalar
 ```
 
@@ -29,8 +29,8 @@ pypto_pro.language.simt.nextafter(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| value | 输入 | 起始值，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
-| direction | 输入 | 目标方向，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
+| value | 输入 | 起始值，浮点型常量或运行时浮点标量表达式，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
+| direction | 输入 | 目标方向，浮点型常量或运行时浮点标量表达式，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 

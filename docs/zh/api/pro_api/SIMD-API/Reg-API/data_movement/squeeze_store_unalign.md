@@ -23,7 +23,7 @@
 ## 函数原型
 
 ```python
-squeeze_store_unalign(tile, src, align_reg)
+squeeze_store_unalign(tile, src, align_reg, /)
 ```
 
 ## 参数说明

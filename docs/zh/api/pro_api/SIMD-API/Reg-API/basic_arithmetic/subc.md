@@ -23,7 +23,7 @@ Borrow flag（借位标志）用于表示减法借位，减法运算在硬件底
 ## 函数原型
 
 ```python
-subc(src0, src1, borrow_src, preg) -> (borrow, dst)
+subc(src0, src1, borrow_src, preg, /) -> (borrow, dst)
 ```
 
 ## 参数说明

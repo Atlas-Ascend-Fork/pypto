@@ -24,7 +24,7 @@
 pypto_pro.language.system.set_cross_core(
     *,
     pipe: PipeType,
-    event_id: Union[int, Scalar],
+    event_id: int,
     sync_mode: CrossCoreSyncMode = pypto_pro.language.CrossCoreSyncMode.INTRA_BLOCK,
 ) -> None
 ```
@@ -34,7 +34,7 @@ pypto_pro.language.system.set_cross_core(
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
 | pipe | 输入 | [pypto_pro.language.PipeType](../basic_data_structures/PipeType.md)枚举值，表示发送信号所在的硬件流水。该流水中的前序指令完成后，SET才生效。sync_mode为INTER_BLOCK、INTER_SUBBLOCK或INTRA_BLOCK时，可取M、V、MTE1、MTE2、MTE3、FIX，不支持S和ALL；sync_mode为UNICAST_BLOCK时还可取S，但仍不支持ALL。该值可以与配对的pypto_pro.language.system.wait_cross_core的pipe不同。 |
-| event_id | 输入 | 核间同步事件ID。支持Python整型常量或运行时整数Scalar表达式。Python整型常量当前只能取0～15。动态表达式须由调用方保证运行时取值合法：INTER_BLOCK、INTER_SUBBLOCK、INTRA_BLOCK取0～15；UNICAST_BLOCK在AIV侧取0～15，在AIC侧取0～31。UNICAST_BLOCK中，AIV0发送的0～15与AIC等待的0～15配对，AIV1发送的0～15与AIC等待的16～31配对；AIC发送的0～15与AIV0等待的0～15配对，AIC发送的16～31与AIV1等待的0～15配对。每个事件ID对应的计数器取值范围为0～15；同一事件的信号未被WAIT消费时，连续发送超过15次SET会触发异常并中断执行。对于INTER_BLOCK、INTER_SUBBLOCK和INTRA_BLOCK，同一核复用事件ID或将同一事件ID用于不同同步模式前，必须完成该事件ID在前一同步过程中的所有SET和WAIT。与[pypto_pro.language.system.sync_all](sync_all.md#约束说明)同时使用时，须避开HARD模式占用的事件ID；使用自动流水编排时，还应避免与其分配的事件ID冲突。同一核连续发送多个SET时，不保证不同事件ID之间的生效顺序；存在先后依赖时，应先完成前一组SET/WAIT。 |
+| event_id | 输入 | 核间同步事件ID。支持整型常量或运行时整型标量表达式。整型常量当前只能取0～15。动态表达式须由调用方保证运行时取值合法：INTER_BLOCK、INTER_SUBBLOCK、INTRA_BLOCK取0～15；UNICAST_BLOCK在AIV侧取0～15，在AIC侧取0～31。UNICAST_BLOCK中，AIV0发送的0～15与AIC等待的0～15配对，AIV1发送的0～15与AIC等待的16～31配对；AIC发送的0～15与AIV0等待的0～15配对，AIC发送的16～31与AIV1等待的0～15配对。每个事件ID对应的计数器取值范围为0～15；同一事件的信号未被WAIT消费时，连续发送超过15次SET会触发异常并中断执行。对于INTER_BLOCK、INTER_SUBBLOCK和INTRA_BLOCK，同一核复用事件ID或将同一事件ID用于不同同步模式前，必须完成该事件ID在前一同步过程中的所有SET和WAIT。与[pypto_pro.language.system.sync_all](sync_all.md#约束说明)同时使用时，须避开HARD模式占用的事件ID；使用自动流水编排时，还应避免与其分配的事件ID冲突。同一核连续发送多个SET时，不保证不同事件ID之间的生效顺序；存在先后依赖时，应先完成前一组SET/WAIT。 |
 | sync_mode | 输入 | 核间同步模式，用于指定参与同步的核以及SET/WAIT信号的配对方式。须与配对的pypto_pro.language.system.wait_cross_core使用相同模式，取值参见[pypto_pro.language.CrossCoreSyncMode](../basic_data_structures/CrossCoreSyncMode.md)。 |
 
 ## 约束说明

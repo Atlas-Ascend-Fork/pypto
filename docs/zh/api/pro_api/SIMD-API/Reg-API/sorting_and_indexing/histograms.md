@@ -35,7 +35,7 @@
 ## 函数原型
 
 ```python
-histograms(src, preg, bin_type: Optional[BinType] = None, hist_type: Optional[HistType] = None)
+histograms(src, preg, /, *, bin_type: Optional[BinType] = None, hist_type: Optional[HistType] = None)
 ```
 
 ## 参数说明

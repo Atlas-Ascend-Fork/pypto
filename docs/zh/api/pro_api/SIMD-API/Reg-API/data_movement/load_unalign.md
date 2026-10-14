@@ -62,7 +62,7 @@
 ## 函数原型
 
 ```python
-load_unalign(align_reg, tile, stride) -> dst
+load_unalign(align_reg, tile, stride=None, /) -> dst
 ```
 
 ## 参数说明

@@ -23,7 +23,7 @@ $$
 ## 函数原型
 
 ```python
-muls_cast(src, scalar, preg, dtype: DType, layout: Optional[CastLayout] = None) -> dst
+muls_cast(src, scalar, preg, /, *, dtype: DType, layout: Optional[CastLayout] = None) -> dst
 ```
 
 ## 参数说明

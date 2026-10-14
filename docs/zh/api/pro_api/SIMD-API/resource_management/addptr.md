@@ -21,7 +21,7 @@
 ## 函数原型
 
 ```python
-pypto_pro.language.addptr(ptr: Ptr, offset: Union[int, Scalar]) -> Ptr
+pypto_pro.language.addptr(ptr: Ptr, offset: int) -> Ptr
 ```
 
 ## 参数说明
@@ -29,7 +29,7 @@ pypto_pro.language.addptr(ptr: Ptr, offset: Union[int, Scalar]) -> Ptr
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
 | ptr | 输入 | 输入指针，Ptr类型。返回的新指针与ptr的数据类型相同。元素位宽必须不少于8 bit；亚字节数据类型不支持指针算术，可先通过make_ptr重解释为DT_UINT8等字节可寻址类型。 |
-| offset | 输入 | 指针偏移量，int或Scalar类型，单位为元素。编译器根据指针的数据类型换算实际字节偏移，偏移后的地址必须仍位于原workspace范围内。 |
+| offset | 输入 | 指针偏移量，整型常量或运行时整型标量表达式，单位为元素。编译器根据指针的数据类型换算实际字节偏移，偏移后的地址必须仍位于原workspace范围内。 |
 
 ## 约束说明
 

@@ -27,7 +27,7 @@ $$dstReg_j = srcReg_{idx_j}, \quad j \in \{0, 1, \ldots, count\_active - 1\}$$
 ## 函数原型
 
 ```python
-squeeze(src, preg, gather_mode: Optional[SqueezeMode] = None) -> dst
+squeeze(src, preg, /, *, gather_mode: Optional[SqueezeMode] = None) -> dst
 ```
 
 ## 参数说明

@@ -21,7 +21,7 @@ $$dst_i = e^{src_i}$$
 ## 函数原型
 
 ```python
-exp(src, preg, mode: Optional[MergeMode] = None, precision: Optional[bool] = None) -> dst
+exp(src, preg, /, *, mode: Optional[MergeMode] = None, precision: Optional[bool] = None) -> dst
 ```
 
 ## 参数说明

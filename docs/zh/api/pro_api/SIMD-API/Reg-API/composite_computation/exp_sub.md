@@ -31,7 +31,7 @@ $$
 ## 函数原型
 
 ```python
-exp_sub(src0, src1, preg, layout: Optional[CastLayout] = None, dtype: Optional[DType] = None) -> dst
+exp_sub(src0, src1, preg, /, *, layout: Optional[CastLayout] = None, dtype: Optional[DType] = None) -> dst
 ```
 
 ## 参数说明

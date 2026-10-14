@@ -25,7 +25,7 @@ $$dstReg0_{2i} = srcReg0_i, \quad dstReg1_{2i+1} = srcReg1_i$$
 ## 函数原型
 
 ```python
-interleave(src0, src1, dtype: Optional[DType] = None) -> (dst0, dst1)
+interleave(src0, src1, /, *, dtype: Optional[DType] = None) -> (dst0, dst1)
 ```
 
 ## 参数说明

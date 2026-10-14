@@ -22,8 +22,8 @@
 
 ```python
 pypto_pro.language.simt.mul_hi(
-    lhs: Scalar,
-    rhs: Scalar,
+    lhs: int,
+    rhs: int,
 ) -> Scalar
 ```
 
@@ -31,8 +31,8 @@ pypto_pro.language.simt.mul_hi(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| lhs | 输入 | 左操作数，Scalar类型，支持DT_INT32、DT_UINT32、DT_INT64和DT_UINT64。Tensor或Tile元素需通过下标访问后传入。 |
-| rhs | 输入 | 右操作数，Scalar类型，数据类型必须与lhs一致。Tensor或Tile元素需通过下标访问后传入。 |
+| lhs | 输入 | 左操作数，整型常量或运行时整型标量表达式，支持DT_INT32、DT_UINT32、DT_INT64和DT_UINT64。Tensor或Tile元素需通过下标访问后传入。 |
+| rhs | 输入 | 右操作数，整型常量或运行时整型标量表达式，数据类型必须与lhs一致。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 

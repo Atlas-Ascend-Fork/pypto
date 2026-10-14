@@ -22,7 +22,7 @@ $$result = \arcsin(value)$$
 
 ```python
 pypto_pro.language.simt.asin(
-    value: Scalar,
+    value: float,
 ) -> Scalar
 ```
 
@@ -30,7 +30,7 @@ pypto_pro.language.simt.asin(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| value | 输入 | 源操作数，Scalar类型，仅支持DT_FP32，有限实数定义域为$[-1, 1]$。Tensor或Tile元素需通过下标访问后传入。 |
+| value | 输入 | 源操作数，浮点型常量或运行时浮点标量表达式，仅支持DT_FP32，有限实数定义域为$[-1, 1]$。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 

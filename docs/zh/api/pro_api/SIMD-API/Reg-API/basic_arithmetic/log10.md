@@ -23,7 +23,7 @@ $$dst_i = \log_{10}(src_i)$$
 ## 函数原型
 
 ```python
-log10(src, preg, mode: Optional[MergeMode] = None, precision: Optional[bool] = None) -> dst
+log10(src, preg, /, *, mode: Optional[MergeMode] = None, precision: Optional[bool] = None) -> dst
 ```
 
 ## 参数说明
