@@ -248,6 +248,12 @@ struct DrcoRootFuncList {
     alignas(64) DrcoDevTaskCountList devTaskCountList;
     alignas(64) DrcoDevTaskFinishFlagList devTaskFinishFlagList;
     alignas(64) uint8_t pad[64];
+
+    // 全局 col 游标（每 core 类型一份，该类型全部 push 核共享）：push 时按批原子认领连续
+    // colIdx，colIdx -> (groupIdx = colIdx / N, col = colIdx % N)，即任务依次落到相邻消费核，
+    // 跨所有组/列铺开；colIdx 达到本类型核数（groupCount * N）后回绕。追加在结构体末尾，
+    // 不改变既有字段偏移。
+    alignas(64) uint32_t readyMatrixPushCol[DRCO_QUEUE_MAX];
 };
 
 #ifdef __TILE_FWK_HOST__

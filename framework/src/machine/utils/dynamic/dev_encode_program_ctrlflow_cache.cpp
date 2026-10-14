@@ -310,6 +310,9 @@ void DevControlFlowCache::DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uin
     base->drcoRootFuncList->devTaskFinished = 0;
     auto* finishFlagList = &base->drcoRootFuncList->devTaskFinishFlagList;
     (void)memset_s(reinterpret_cast<uint8_t*>(finishFlagList), sizeof(*finishFlagList), 0, sizeof(*finishFlagList));
+    for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
+        base->drcoRootFuncList->readyMatrixPushCol[ct] = 0; // 重放复位全局 col 游标
+    }
 }
 
 void DevControlFlowCache::ReadyQueueDataPingPongRestore(DynDeviceTaskBase* base)

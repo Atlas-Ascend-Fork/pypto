@@ -410,6 +410,9 @@ INLINE __gm__ uint64_t* DrcoLocalReadyMatrixWord(__gm__ DrcoLocalReadyMatrix* ma
     return reinterpret_cast<__gm__ uint64_t*>(&matrix->rowList[row].taskList[wordIdx * 2]);
 }
 
+INLINE __gm__ DrcoLocalReadyMatrix* DrcoRootFuncListGetLocalReadyMatrix(
+    __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList, uint32_t readyMatrixCoreType);
+
 // 遍历深度环 × 消费者行环：起始深度列 = push 核身份散列（typedBlockIdx % colNum，本深度
 // 写满换下一深度），消费者行游标跨批持久且按类型独立（state->readyMatrixPushRowIdx
 // [queueType]，种子 = 本地编号 + 1
@@ -418,25 +421,37 @@ INLINE __gm__ uint64_t* DrcoLocalReadyMatrixWord(__gm__ DrcoLocalReadyMatrix* ma
 // u32 CAS（0→任务）一槽一原子、槽间独立，pop 侧按包含该槽的
 // u64 整字 exch 读清——跨位宽 RMW 在 L2 按地址串行化，互不丢任务；
 // validCoreNum == 0 禁写由调用方早退保证；每个 CAS 成功的任务记录 EVENT_PUSH_LOCAL(消费者) 事件
-INLINE uint32_t DrcoLocalReadyMatrixPushBatch(DrcoEntryState* state, __gm__ DrcoLocalReadyMatrix* matrix,
-                                              uint32_t typedBlockIdx, uint32_t* readyTaskList, uint32_t n,
-                                              uint32_t queueType)
+INLINE uint32_t DrcoLocalReadyMatrixPushBatch(DrcoEntryState* state,
+                                              __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                              uint32_t typedBlockIdx, uint32_t* succTaskIdList,
+                                              uint32_t succTaskIdListSize, uint32_t queueType)
 {
+    __gm__ DrcoLocalReadyMatrix* matrix = DrcoRootFuncListGetLocalReadyMatrix(rootFuncList, queueType);
+    if (matrix == nullptr || matrix->validCoreNum == 0) {
+        return 0;
+    }
+    // 当前的matrix 有多少行
     uint32_t colNum = matrix->colNum;
     uint32_t rowCnt = matrix->validCoreNum;
+    __gm__ uint32_t* rowCursor = &rootFuncList->readyMatrixPushCol[queueType];
+    // succTaskIdListSize <=6 不会溢出；即便回绕，% coreCount 仍给合法核
+    uint32_t base = DrcoAtomicAddToU32(rowCursor, succTaskIdListSize) % rowCnt;
+    uint32_t matrixColIdx = typedBlockIdx % colNum;
     uint32_t pushed = 0;
-    uint32_t row = state->readyMatrixPushRowIdx[queueType] % rowCnt;
-    for (uint32_t r = 0; r < colNum && pushed < n; r++) {
-        uint32_t colIdx = (typedBlockIdx + r) % colNum;
-        for (uint32_t i = 0; i < rowCnt && pushed < n; i++, row = (row + 1) % rowCnt) {
-            __gm__ uint32_t* slot = &matrix->rowList[row].taskList[colIdx];
-            if (DrcoAtomicCasToU32(slot, 0, DRCO_ENCODE_TASK(readyTaskList[pushed])) == 0) {
-                TraceEvent(state, readyTaskList[pushed], EVENT_PUSH_LOCAL(row));
-                pushed++;
-            }
+    for (uint32_t i = 0; i < succTaskIdListSize; i++) {
+        uint32_t rowIdx = base + i;
+        if (rowIdx >= rowCnt) {
+            rowIdx -= rowCnt;
         }
+        // 依据 行idx 计算在本次matrix 中行 列
+        uint32_t matrixRowIdx = rowIdx % rowCnt;
+        if (DrcoAtomicCasToU32(&matrix->rowList[matrixRowIdx].taskList[matrixColIdx], 0,
+                               DRCO_ENCODE_TASK(succTaskIdList[i])) != 0) {
+            break; // 从本任务起（list[pushed..]）整体溢出去队列
+        }
+        TraceEvent(state, succTaskIdList[i], EVENT_PUSH_LOCAL(rowIdx));
+        pushed++;
     }
-    state->readyMatrixPushRowIdx[queueType] = row;
     return pushed;
 }
 
@@ -625,11 +640,7 @@ INLINE uint32_t DrcoDynFuncDataListPushBatchLocalMatrix(DrcoEntryState* state,
                                                         uint32_t* succTaskIdList, uint32_t succTaskIdListSize,
                                                         uint32_t succCoreType, uint32_t typedBlockIdx)
 {
-    __gm__ DrcoLocalReadyMatrix* matrix = DrcoRootFuncListGetLocalReadyMatrix(rootFuncList, succCoreType);
-    if (matrix == nullptr || matrix->validCoreNum == 0) {
-        return 0;
-    }
-    return DrcoLocalReadyMatrixPushBatch(state, matrix, typedBlockIdx, succTaskIdList, succTaskIdListSize,
+    return DrcoLocalReadyMatrixPushBatch(state, rootFuncList, typedBlockIdx, succTaskIdList, succTaskIdListSize,
                                          succCoreType);
 }
 
@@ -1042,6 +1053,23 @@ INLINE static bool DrcoStaticSuccNodeMatrixTryPush(DrcoEntryState* state, __gm__
     return false;
 }
 
+// 认领本表该队列类型的散射行起点：统计本表该类型非 HUB 节点数（1 节点 1 行），
+// 经全局游标 readyMatrixPushCol 原子占位后域内绕接——与矩阵 push 共用同一串行序列，
+// 直通项固定落在这些行上，两通道行账统一、互不踩行
+INLINE static uint32_t DrcoStaticSuccNodeClaimRows(__gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                                   __gm__ npu::tile_fwk::DevAscendFunctionStaticSuccNode* nodes,
+                                                   uint16_t staticSuccNodeSize, uint32_t nodeQueue, uint32_t rangeSize)
+{
+    uint32_t nodeCnt = 0;
+    for (uint32_t m = 0; m < staticSuccNodeSize; m++) {
+        if (nodes[m].coreType != static_cast<uint32_t>(npu::tile_fwk::CoreType::HUB) &&
+            DrcoStaticSuccNodeQueueType(nodes[m].coreType) == nodeQueue) {
+            nodeCnt++;
+        }
+    }
+    return DrcoAtomicAddToU32(&rootFuncList->readyMatrixPushCol[nodeQueue], nodeCnt) % rangeSize;
+}
+
 // 刷新 readymatrix push 消费者行游标 = succNodeStarts 终值（散射带平铺的下一位置；合并矩阵行 =
 // 类型内本地编号 = 行域内扁平位置，无需换算）：不刷新则本核后续 push 从旧
 // 锚点起，与排队中的散射带任务重叠
@@ -1158,18 +1186,19 @@ INLINE static void DrcoResolveStaticSuccNodes(
         if (succNodeAnchored[nodeQueue] == 0) {
             uint32_t rangeBegin = 0;
             DrcoStaticSuccNodeRowRange(nodes[n].coreType, state->ctx.aicCoreNum, rangeBegin, succNodeRanges[nodeQueue]);
-            // 合并矩阵消费者行游标即域内扁平位置（种子可能为绝对值，域内绕接）
-            succNodeStarts[nodeQueue] = state->readyMatrixPushRowIdx[nodeQueue] % succNodeRanges[nodeQueue];
+            // 散射与矩阵 push 共用同一全局游标控制：按本表该类型节点数占位（1 节点 1 行），
+            // 直通项固定落在这些行上 → 两通道的行账统一，互不踩行
+            succNodeStarts[nodeQueue] = DrcoStaticSuccNodeClaimRows(rootFuncList, nodes, staticSuccNodeSize, nodeQueue,
+                                                                    succNodeRanges[nodeQueue]);
             succNodeAnchored[nodeQueue] = 1;
         }
         uint32_t start = succNodeStarts[nodeQueue];
         if (!DrcoStaticSuccNodeMatrixTryPush(state, matrix, &nodes[n], funcIdx, succNodeIndex + n, start)) {
             DrcoResolveStaticSuccNodeTasks(state, rootFuncList, funcIdx, &nodes[n], hubStack, hubStackTop,
                                            succTaskIdListCoreList, succTaskIdListSizeCoreList);
-        } else {
-            // start 已被推进到占用行 +1；再偏移 succSize-1 恰好越过本节点任务带
-            succNodeStarts[nodeQueue] = (start + nodes[n].succSize - 1) % succNodeRanges[nodeQueue];
         }
+        // 下一节点固定取认领序列的下一位（与认领行严格对齐，不用扫描推进值）
+        succNodeStarts[nodeQueue] = (succNodeStarts[nodeQueue] + 1) % succNodeRanges[nodeQueue];
     }
     // 循环结束仍未刷新（无 HUB 节点）则补一次：本核后续 push 同样避开散射带
     if (!succCursorSynced) {

@@ -101,6 +101,9 @@ void DeviceTaskContext::InitDrcoRootFuncList(DynDeviceTask* dyntask)
     rootFuncList->totalTaskCount = dyntask->devTask.coreFunctionCnt;
     rootFuncList->devTaskFinished = 0;
     new (&rootFuncList->devTaskFinishFlagList) npu::tile_fwk::DrcoDevTaskFinishFlagList();
+    for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
+        rootFuncList->readyMatrixPushCol[ct] = 0; // 全局 col 游标起点
+    }
 }
 
 void DeviceTaskContext::DispatchReadyQueueToCores(DynDeviceTask* dyntask, DevAscendProgram* devProg)
