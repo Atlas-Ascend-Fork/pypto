@@ -19,7 +19,7 @@ IR = _GOLDEN_DIR / "test_merge_pass4.pypto"
 
 
 def test_merge_pass4():
-    """A loop between two ifs splits the region: each side is tree-built independently, loop stays single."""
+    """The inner loop sinks into the first if; following ifs simplify under each branch's condition."""
 
     def foo(x, y, z):
         pypto.set_vec_tile_shapes(16, 16)
@@ -30,7 +30,7 @@ def test_merge_pass4():
                 a = xv + yv
             else:
                 a = xv - yv
-            for j in pypto.loop(2):  # inner loop in the middle -> barrier (self-contained)
+            for j in pypto.loop(2):
                 pypto.assemble(a, [j * 16, 0], z)
             if i == 1:
                 c = a + yv

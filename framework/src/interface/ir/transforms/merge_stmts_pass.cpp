@@ -37,9 +37,9 @@ using utils::VarExprMap;
 
 constexpr char kLoopCondsAttr[] = "_loop_conds";
 
-class RawDefCollector : public IRVisitor {
+class RawDefCollector : public utils::DefVarCollector {
 public:
-    using IRVisitor::VisitStmt_;
+    using utils::DefVarCollector::VisitStmt_;
 
     bool DefinesRaw(const Var* var) const { return rawDefs_.count(var) > 0; }
 
@@ -56,7 +56,16 @@ public:
                 viewDefs_.erase(var.get());
             }
         }
-        IRVisitor::VisitStmt_(op);
+        utils::DefVarCollector::VisitStmt_(op);
+    }
+
+    void VisitStmt_(const ForStmtPtr& loop) override
+    {
+        defs.insert(loop->loopVar_);
+        for (const auto& arg : loop->iterArgs_) {
+            defs.insert(arg->iterVar_);
+        }
+        utils::DefVarCollector::VisitStmt_(loop);
     }
 
 private:
@@ -71,7 +80,7 @@ struct BranchClassification {
     std::vector<SymbolicScalar> elseConds;
 };
 
-StmtPtr SubstituteStmt(StmtPtr stmt, VarExprMap& varMap, std::unordered_set<VarPtr>& clonedVars)
+StmtPtr SubstituteTensorStmt(StmtPtr stmt, VarExprMap& varMap, std::unordered_set<VarPtr>& clonedVars)
 {
     if (!stmt || varMap.empty()) {
         return stmt;
@@ -88,42 +97,49 @@ StmtPtr SubstituteStmt(StmtPtr stmt, VarExprMap& varMap, std::unordered_set<VarP
         return stmt;
     }
 
-    bool changed = false;
+    bool attrChanged = false;
     for (auto& attr : op->GetDynamicAttributeList()) {
         auto& s = attr.get();
         if (s.SubstituteVars(varMap).Raw() != s.Raw()) {
-            changed = true;
+            attrChanged = true;
             break;
         }
     }
-    if (!changed) {
-        return stmt;
-    }
 
+    // Result dynvalidshape is tensor metadata, not an op attribute. VIEW stores the
+    // branch symbol in toValidShape/fromOffset (attributes); A_MUL_B/ADD/CAST only
+    // keep it on the result tensor. Skipping the shape walk leaves the outer if's
+    // yield vars (q_offset/kv_offset) dangling after the loop is sunk into the if.
     std::vector<VarPtr> newResults;
     newResults.reserve(op->result_.size());
+    bool resultChanged = false;
     for (auto& var : op->result_) {
         auto lt = std::dynamic_pointer_cast<const LogicalTensor>(var);
         if (!lt) {
             newResults.push_back(var);
             continue;
         }
-        bool needsClone = false;
-        auto ltMut = std::const_pointer_cast<LogicalTensor>(lt);
-        for (auto& shape : ltMut->GetDynValidShape()) {
-            if (shape.SubstituteVars(varMap).Raw() != shape.Raw()) {
-                needsClone = true;
-                break;
-            }
+        auto shape = lt->GetDynValidShape();
+        bool shapeChanged = false;
+        for (auto& dim : shape) {
+            auto substituted = dim.SubstituteVars(varMap);
+            shapeChanged = shapeChanged || substituted.Raw() != dim.Raw();
+            dim = substituted;
         }
-        if (needsClone) {
-            auto resultClone = lt->Clone();
+        if (shapeChanged) {
+            auto resultClone = lt->Clone(true);
+            AsLogicalTensor(resultClone)->UpdateDynValidShape(shape);
             varMap[var] = resultClone;
             clonedVars.insert(var);
             newResults.push_back(resultClone);
+            resultChanged = true;
         } else {
             newResults.push_back(var);
         }
+    }
+
+    if (!attrChanged && !resultChanged) {
+        return stmt;
     }
 
     std::vector<ExprPtr> newArgs;
@@ -142,6 +158,127 @@ StmtPtr SubstituteStmt(StmtPtr stmt, VarExprMap& varMap, std::unordered_set<VarP
     return cloned;
 }
 
+// Substitute nested tensor metadata as well as IR expressions. Clones made inside a
+// body are local to that body; they must not leak into a sibling branch or past a loop.
+class SunkStmtSubstitutor : public IRMutator {
+public:
+    using IRMutator::VisitExpr_;
+    using IRMutator::VisitStmt_;
+
+    SunkStmtSubstitutor(VarExprMap& varMap, std::unordered_set<VarPtr>& clonedVars)
+        : varMap_(varMap), clonedVars_(clonedVars)
+    {}
+
+private:
+    ExprPtr VisitExpr_(const VarPtr& var) override { return LookupVarInExpr(var, varMap_); }
+
+    ExprPtr VisitExpr_(const ScalarExprPtr& op) override
+    {
+        auto ss = SymbolicScalar::FromExpr(op);
+        if (!ss.IsValid()) {
+            return op;
+        }
+        auto substituted = ss.SubstituteVars(varMap_);
+        if (substituted.Raw().get() == ss.Raw().get()) {
+            return op;
+        }
+        auto expr = substituted.AsExpr();
+        return expr ? expr : op;
+    }
+
+    StmtPtr VisitStmt_(const TensorOpStmtPtr& op) override { return SubstituteTensorStmt(op, varMap_, clonedVars_); }
+
+    StmtPtr VisitScopedBody(const SeqStmtsPtr& body)
+    {
+        auto localMap = varMap_;
+        auto localClones = clonedVars_;
+        return SunkStmtSubstitutor(localMap, localClones).VisitStmt(body);
+    }
+
+    // Return vars are definitions. Dyn valid shape is tensor metadata, so the base
+    // visitor leaves symbols such as an outer branch's width on a nested if result.
+    StmtPtr VisitStmt_(const IfStmtPtr& ifStmt) override
+    {
+        auto condition = VisitExpr(ifStmt->condition_);
+        auto thenBody = VisitScopedBody(ifStmt->thenBody_);
+        std::optional<StmtPtr> elseBody;
+        if (ifStmt->elseBody_) {
+            elseBody = VisitScopedBody(*ifStmt->elseBody_);
+        }
+        auto returns = ifStmt->returnVars_;
+        for (auto& var : returns) {
+            var = SubstituteTensorVar(var);
+        }
+        return std::make_shared<IfStmt>(condition, thenBody, elseBody, std::move(returns), ifStmt->span_);
+    }
+
+    StmtPtr VisitStmt_(const ForStmtPtr& loop) override
+    {
+        auto loopVar = As<Var>(VisitExpr(loop->loopVar_));
+        auto start = VisitExpr(loop->start_);
+        auto stop = VisitExpr(loop->stop_);
+        auto step = VisitExpr(loop->step_);
+        auto attrs = loop->attrs_;
+        for (auto& [key, value] : attrs) {
+            if (key == kLoopCondsAttr) {
+                for (auto& cond : std::any_cast<std::vector<SymbolicScalar>&>(value)) {
+                    cond = cond.SubstituteVars(varMap_);
+                }
+            }
+        }
+        auto savedMap = varMap_;
+        auto savedClones = clonedVars_;
+        auto iterArgs = loop->iterArgs_;
+        for (auto& arg : iterArgs) {
+            auto initValue = VisitExpr(arg->initValue_);
+            arg = std::make_shared<IterArg>(SubstituteTensorVar(arg->iterVar_), initValue);
+        }
+        auto body = VisitStmt(loop->body_);
+        varMap_ = std::move(savedMap);
+        clonedVars_ = std::move(savedClones);
+        // Loop results remain visible to statements following the loop.
+        auto returns = loop->returnVars_;
+        for (auto& var : returns) {
+            var = SubstituteTensorVar(var);
+        }
+        return std::make_shared<ForStmt>(loopVar, start, stop, step, iterArgs, body, returns, loop->span_, attrs);
+    }
+
+    VarPtr SubstituteTensorVar(const VarPtr& var)
+    {
+        auto result = As<Var>(LookupVarInExpr(var, varMap_));
+        auto tensor = AsLogicalTensor(result);
+        if (!tensor) {
+            return result;
+        }
+        auto shape = tensor->GetDynValidShape();
+        bool changed = false;
+        for (auto& dim : shape) {
+            auto substituted = dim.SubstituteVars(varMap_);
+            changed = changed || substituted.Raw() != dim.Raw();
+            dim = substituted;
+        }
+        if (changed) {
+            result = tensor->Clone(true);
+            AsLogicalTensor(result)->UpdateDynValidShape(shape);
+            varMap_[var] = result;
+            clonedVars_.insert(var);
+        }
+        return result;
+    }
+
+    VarExprMap& varMap_;
+    std::unordered_set<VarPtr>& clonedVars_;
+};
+
+StmtPtr SubstituteStmt(StmtPtr stmt, VarExprMap& varMap, std::unordered_set<VarPtr>& clonedVars)
+{
+    if (!stmt || varMap.empty()) {
+        return stmt;
+    }
+    return SunkStmtSubstitutor(varMap, clonedVars).VisitStmt(stmt);
+}
+
 void BuildYieldVarMap(IfStmtPtr ifStmt, SeqStmtsPtr body, VarExprMap& varMap)
 {
     if (body->stmts_.empty() || ifStmt->returnVars_.empty()) {
@@ -151,24 +288,6 @@ void BuildYieldVarMap(IfStmtPtr ifStmt, SeqStmtsPtr body, VarExprMap& varMap)
     if (auto yieldStmt = As<YieldStmt>(lastStmt)) {
         for (size_t i = 0; i < ifStmt->returnVars_.size() && i < yieldStmt->value_.size(); ++i) {
             varMap[ifStmt->returnVars_[i]] = yieldStmt->value_[i];
-        }
-    }
-}
-
-void BuildYieldVarMap(ForStmtPtr forStmt, VarExprMap& varMap)
-{
-    if (forStmt->body_->stmts_.empty() || forStmt->returnVars_.empty()) {
-        return;
-    }
-    auto& lastStmt = forStmt->body_->stmts_.back();
-    if (auto c = As<ContinueStmt>(lastStmt)) {
-        for (size_t i = 0; i < forStmt->returnVars_.size() && i < c->value_.size(); ++i) {
-            varMap[forStmt->returnVars_[i]] = c->value_[i];
-        }
-    }
-    if (auto y = As<YieldStmt>(lastStmt)) {
-        for (size_t i = 0; i < forStmt->returnVars_.size() && i < y->value_.size(); ++i) {
-            varMap[forStmt->returnVars_[i]] = y->value_[i];
         }
     }
 }
@@ -215,9 +334,9 @@ void ExtendYieldMap(const StmtPtr& s, VarExprMap& yieldMap)
 {
     if (auto ifStmt = As<IfStmt>(s)) {
         BuildYieldVarMap(ifStmt, ifStmt->thenBody_, yieldMap);
-    } else if (auto forStmt = As<ForStmt>(s)) {
-        BuildYieldVarMap(forStmt, yieldMap);
     }
+    // A retained loop exposes only its return vars, including its initial values when
+    // it executes zero times. Its continue/yield operands are local to the loop body.
 }
 
 std::vector<ExprPtr> ExtractYieldValues(SeqStmtsPtr body)
@@ -408,13 +527,15 @@ private:
                                                     const VarPtrSet& liveOut) const
     {
         auto& elseBody = *optElse;
-        auto thenDefs = utils::CollectDefinedVars(thenBody);
-        auto elseDefs = utils::CollectDefinedVars(elseBody);
+        RawDefCollector collector;
+        RawDefCollector elseCollector;
+        collector.VisitStmt(thenBody);
+        elseCollector.VisitStmt(elseBody);
 
         VarExprMap cloneMap;
         std::vector<VarPtr> varList;
-        for (auto& v : thenDefs) {
-            if (elseDefs.count(v) && !IsExternalVar(v->name_) && !liveOut.count(v.get())) {
+        for (auto& v : collector.defs) {
+            if (elseCollector.defs.count(v) && !IsExternalVar(v->name_) && !liveOut.count(v.get())) {
                 varList.push_back(v);
             }
         }
@@ -424,9 +545,6 @@ private:
         for (auto& v : varList) {
             cloneMap[v] = v->Clone();
         }
-
-        RawDefCollector collector;
-        collector.VisitStmt(thenBody);
 
         std::unordered_map<int, std::shared_ptr<RawTensor>> cloneRaw;
         for (auto& v : varList) {
@@ -448,8 +566,9 @@ private:
         }
 
         std::vector<StmtPtr> newElseStmts;
+        std::unordered_set<VarPtr> clonedVars;
         for (auto& s : elseBody->stmts_) {
-            newElseStmts.push_back(SubstituteVars(s, cloneMap));
+            newElseStmts.push_back(SubstituteStmt(s, cloneMap, clonedVars));
         }
         return std::make_shared<SeqStmts>(newElseStmts, elseBody->span_);
     }
@@ -633,10 +752,10 @@ private:
         return result;
     }
 
-    // Driver: split `seq` into barrier-free segments at Yield/Continue/For/While, segment-merge each,
+    // Driver: split `seq` into segments at terminators/While, segment-merge each,
     // rewrite the trailing terminator's cloned refs and apply survivor substitutions, then rebuild
-    // compound stmts recursively (RebuildMergedStmts). For/While are barriers; their bodies merge
-    // when RebuildMergedStmts recurses into them. `afterUses` are the vars referenced after this
+    // compound stmts recursively (RebuildMergedStmts). A For can sink into an earlier If;
+    // FoldLeadingStmts keeps it from moving into a later If. `afterUses` are the vars referenced after this
     // sequence; they (and the sequence's own suffix refs) make up the live-out set that protects
     // escaping vars from being cloned into else branches.
     SeqStmtsPtr Process(SeqStmtsPtr seq, const std::vector<SymbolicScalar>& condPath, const VarPtrSet& afterUses) const
@@ -647,8 +766,7 @@ private:
         VarExprMap substMap;
 
         for (auto& stmt : seq->stmts_) {
-            // yield/continue/return are block terminators. while/for is dynamic loop could not be merged also
-            if (IsA<YieldStmt>(stmt) || IsA<ContinueStmt>(stmt) || IsA<ReturnStmt>(stmt) || IsA<ForStmt>(stmt) ||
+            if (IsA<YieldStmt>(stmt) || IsA<ContinueStmt>(stmt) || IsA<ReturnStmt>(stmt) || IsA<BreakStmt>(stmt) ||
                 IsA<WhileStmt>(stmt)) {
                 MergeSegment(segment, condPath, merged, cloneMap, substMap);
                 merged.push_back(stmt);
