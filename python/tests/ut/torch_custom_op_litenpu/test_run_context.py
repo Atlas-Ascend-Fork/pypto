@@ -84,7 +84,6 @@ def test_rewrap_direct_preserves_author_options():
     assert w._pass_options == src._pass_options
     assert w._verify_options == src._verify_options
     assert w._debug_options == src._debug_options
-    assert w._use_new_ir == src._use_new_ir
 
 
 def test_collect_decorator_options_tracks_jit_signature():
@@ -106,7 +105,7 @@ def test_collect_decorator_options_tracks_jit_signature():
     assert collected == expected
     assert {
         "host_options", "codegen_options", "pass_options", "runtime_options",
-        "verify_options", "debug_options", "new_ir",
+        "verify_options", "debug_options",
     } <= collected
 
     # Re-decorates the SAME function with non-default values and reads them back, proving a scalar and

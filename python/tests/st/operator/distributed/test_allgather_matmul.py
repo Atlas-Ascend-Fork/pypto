@@ -33,7 +33,7 @@ from torch._subclasses import fake_tensor
 import pypto
 
 
-@pypto.frontend.jit(new_ir=False)
+@pypto.frontend.jit()
 def allgather_matmul_kernel(
     in_tensor: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     matmul_weight: pypto.Tensor(),

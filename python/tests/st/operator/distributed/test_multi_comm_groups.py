@@ -105,7 +105,7 @@ def _perform_allreduce(input_tensor, stage_params):
     return all_reduce_out_bf16
 
 
-@pypto.frontend.jit(new_ir=False)
+@pypto.frontend.jit()
 def allreduce_cascading_kernel(
     in_tensor: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),
     out_tensor: pypto.Tensor([pypto.DYNAMIC, ...], pypto.DT_BF16),

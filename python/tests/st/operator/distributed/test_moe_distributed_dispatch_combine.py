@@ -480,7 +480,7 @@ def moe_distributed_dispatch_kernel(
     count_size = 8
     total_send_tasks = batch_size * topk
 
-    @pypto.frontend.jit(new_ir=False)
+    @pypto.frontend.jit()
     def kernel(
         x: pypto.Tensor([batch_size, hidden_size], data_type, format=pypto.TileOpFormat.TILEOP_ND),
         expert_ids: pypto.Tensor([batch_size, topk], pypto.DT_INT32, format=pypto.TileOpFormat.TILEOP_ND),
@@ -762,7 +762,7 @@ def moe_distributed_combine_kernel(
 
     stitch_function_max_num = 128 if batch_size in (1, 8) else 10
 
-    @pypto.frontend.jit(new_ir=False, runtime_options={"stitch_function_max_num": stitch_function_max_num})
+    @pypto.frontend.jit(runtime_options={"stitch_function_max_num": stitch_function_max_num})
     def kernel(
         expand_x: pypto.Tensor([row, hidden_size], data_type, format=pypto.TileOpFormat.TILEOP_ND),
         assist_info_for_combine: pypto.Tensor([row, 3], pypto.DT_INT32, format=pypto.TileOpFormat.TILEOP_ND),

@@ -39,7 +39,7 @@ from pypto.frontend.parser.diagnostics import Source
 from pypto.frontend.parser.parser import NestedFunctionMarker, Parser
 from pypto.logging import log_debug
 from pypto.pil.compile_pipeline import compile_new_ir
-from pypto.runtime import _pto_verify_datas, setup_verify_data
+from pypto.runtime import _pto_verify_datas, setup_verify_data  # noqa: F401
 
 # Only one build_kernel() at a time: recording mutates interpreter-wide state (the C++ Program
 # singleton, the jit_scope stack). Reentrant so a nested call hits the parser's error, not a deadlock.
@@ -243,7 +243,6 @@ class JitCallableWrapper:
         verify_options: Optional[dict[str, Any]] = None,
         debug_options: Optional[dict[str, Any]] = None,
         captured_locals: Optional[dict[str, Any]] = None,
-        new_ir: bool = True,
     ):
         """Initialize the JIT callable wrapper with compilation and runtime configurations.
 
@@ -270,8 +269,6 @@ class JitCallableWrapper:
         captured_locals : Optional[dict[str, Any]], optional
             Local variables captured from the original function's scope (copied to a new dict
             to prevent external modification). Defaults to None.
-        new_ir : bool, optional
-            Whether to compile through the new IR pipeline. Defaults to False.
         """
         self._pto_function = pto_function
         self._original_func = original_func
@@ -287,7 +284,6 @@ class JitCallableWrapper:
         self._pass_options = None if pass_options is None else dict(pass_options)
         self._verify_options = None if verify_options is None else dict(verify_options)
         self._debug_options = None if debug_options is None else dict(debug_options)
-        self._use_new_ir = new_ir
 
         self._set_run_mode()
         self.kwargs = None
@@ -500,36 +496,7 @@ class JitCallableWrapper:
             When provided, tensors are torch tensors and will be converted to PTO via from_torch
             using name/dynamic_axis/dtype from each tensor_def. When None, tensors are PTO tensors.
         """
-        if self._use_new_ir:
-            self.compile_new(tensors, tensor_defs)
-            return
-
-        if tensor_defs is not None:
-            self._check_input_defs_match_tensors(tensors, tensor_defs)
-            args = self._convert_tensors_with_metadata(tensors, tensor_defs)
-        else:
-            args = tensors
-
-        # Re-create parser for compilation
-        self._parser = self._create_parser()
-        self._parser.parse()
-        self._parser.input_pto_tensor = args
-
-        # Set options AFTER OperatorBegin() to match @pypto.frontend.jit behavior
-
-        self._set_config_option()
-
-        # Initialize backend for compilation
-        setup_verify_data(args)
-
-        # Bind dynamic dimensions from concrete inputs
-        self._parser.bind_dynamic_dims_to_input_tensors()
-
-        # Execute the deferred parsing (happens on first __call__)
-        self._pto_function = self._parser.execute()
-
-        # Reset golden data after compilation
-        _pto_verify_datas.reset()
+        self.compile_new(tensors, tensor_defs)
 
     def _parse_call_args(self, args: tuple, kwargs: dict) -> tuple[list, dict[str, Any], list]:
         """Parse *args and **kwargs into in_tensors and non_tensor_values.
@@ -1243,7 +1210,6 @@ def jit(
     runtime_options: Optional[dict[str, Any]] = None,
     verify_options: Optional[dict[str, Any]] = None,
     debug_options: Optional[dict[str, Any]] = None,
-    new_ir: bool = True,
     create_new_logical_tensor: bool = False,
 ) -> Union[Callable, Callable[[Callable], JitCallableWrapper]]:
     """JIT decorator for compiling Python functions to PTO IR.
@@ -1270,8 +1236,6 @@ def jit(
         Options to configure the verify.
     debug_options : Optional[dict[str, Any]], optional
         Options to configure the debug.
-    new_ir : bool, optional
-        Whether to compile through the new IR pipeline. Defaults to False.
 
     Returns
     -------
@@ -1329,7 +1293,6 @@ def jit(
             verify_options=verify_options,
             debug_options=debug_options,
             captured_locals=captured_locals,
-            new_ir=new_ir,
         )
         wrapper._create_new_logical_tensor = create_new_logical_tensor
         return wrapper
