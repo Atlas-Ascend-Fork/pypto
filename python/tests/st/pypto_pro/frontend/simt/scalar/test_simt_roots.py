@@ -108,7 +108,9 @@ def simt_sqrt_all_dtypes(
 def test_sqrt_all_supported_dtypes():
     torch.npu.set_device(ST_DEVICE)
     values = torch.linspace(0.25, 16.0, ELEMENTS)
-    values[:5] = torch.tensor([0.0, -0.0, torch.finfo(torch.float32).tiny, 1.0, float("inf")])
+    values[:6] = torch.tensor(
+        [0.0, -0.0, torch.finfo(torch.float32).tiny / 2, torch.finfo(torch.float32).tiny, 1.0, float("inf")]
+    )
     values = values.reshape(1, ELEMENTS).to(torch.float32)
     sources = tuple(values.to(dtype) for dtype in (torch.float16, torch.bfloat16, torch.float32))
     outputs = tuple(torch.empty_like(source, device=ST_DEVICE) for source in sources)
@@ -121,7 +123,10 @@ def test_sqrt_all_supported_dtypes():
             torch.float32: (1e-5, 1e-6),
         }[source.dtype]
         expected = torch.sqrt(source.float()).to(source.dtype)
-        torch.testing.assert_close(output.cpu(), expected, rtol=rtol, atol=atol, equal_nan=True)
+        actual = output.cpu()
+        torch.testing.assert_close(actual, expected, rtol=rtol, atol=atol, equal_nan=True)
+        if source.dtype == torch.float32:
+            torch.testing.assert_close(actual[0, 2], expected[0, 2], rtol=1e-5, atol=0)
 
 # -------------------------------------------------- rsqrt --------------------------------------------------
 
@@ -210,7 +215,9 @@ def simt_rsqrt_all_dtypes(
 def test_rsqrt_all_supported_dtypes():
     torch.npu.set_device(ST_DEVICE)
     values = torch.linspace(0.25, 16.0, ELEMENTS)
-    values[:5] = torch.tensor([0.0, -0.0, torch.finfo(torch.float32).tiny, 1.0, float("inf")])
+    values[:6] = torch.tensor(
+        [0.0, -0.0, torch.finfo(torch.float32).tiny / 2, torch.finfo(torch.float32).tiny, 1.0, float("inf")]
+    )
     values = values.reshape(1, ELEMENTS).to(torch.float32)
     sources = tuple(values.to(dtype) for dtype in (torch.float16, torch.bfloat16, torch.float32))
     outputs = tuple(torch.empty_like(source, device=ST_DEVICE) for source in sources)

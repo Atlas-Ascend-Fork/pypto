@@ -182,11 +182,11 @@ def test_fp32_scalar_math_codegen_maps_native_cce_intrinsics():
         "__fma(",
     ):
         assert intrinsic in cpp
-    assert "1.0f / __sqrtf(" in cpp
-    assert "__expf(" in cpp and "0.6931471805599453f" in cpp
-    assert "__logf(1.0f +" in cpp
-    assert "__logf(2.0f)" in cpp
-    assert "1.0f - (2.0f / (__expf(2.0f *" in cpp
+    assert "1.0f / ({float __sqrt_x" in cpp
+    assert "__exp2_exp_poly" in cpp
+    assert "__log1p_reduced_poly" in cpp
+    assert "__log2_log2_hi" in cpp
+    assert "__tanh_abs_x >= 0.60000002384185791016f" in cpp
     assert "__fabsf(__t)" in cpp
     assert "float __t = __fma(" not in cpp
     assert "__t = __fma(__t, 0.0f, __t);" in cpp
@@ -212,7 +212,7 @@ def test_fp16_scalar_math_codegen_maps_cce_intrinsics_without_asc_headers():
         "__cvt_half<",
     ):
         assert intrinsic in cpp
-    assert "(half)1.0 / __sqrtf(" in cpp
+    assert "1.0f / ({float __sqrt_x" in cpp
     assert "__cvt_half<ROUND::A," in cpp
     assert "simt_api/asc_fp16.h" not in cpp
 

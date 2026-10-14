@@ -243,7 +243,7 @@ TypePtr DeduceSimtBitcastType(const std::vector<ExprPtr>& args,
     return std::make_shared<ScalarType>(target_dtype);
 }
 
-bool IsSimtAtomicDtype(const DataType& dtype, std::initializer_list<DataType> supported_dtypes)
+bool IsDtypeInList(const DataType& dtype, std::initializer_list<DataType> supported_dtypes)
 {
     for (const auto& supported_dtype : supported_dtypes) {
         if (dtype == supported_dtype) {
@@ -268,7 +268,7 @@ TypePtr DeduceSimtAtomicType(const std::string& op_name, size_t operand_count,
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, tile_type || tensor_type)
         << op_name << " container must be a Tile or Tensor";
     DataType dtype = tile_type ? tile_type->dtype_ : tensor_type->dtype_;
-    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsSimtAtomicDtype(dtype, tile_type ? ub_dtypes : gm_dtypes))
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsDtypeInList(dtype, tile_type ? ub_dtypes : gm_dtypes))
         << op_name << " does not support dtype " << dtype.ToString() << " on " << (tile_type ? "UB Tile" : "GM Tensor");
 
     auto offset_type = As<ScalarType>(args[1]->GetType());
@@ -284,7 +284,7 @@ TypePtr DeduceSimtAtomicType(const std::string& op_name, size_t operand_count,
             << op_name << " operand " << i << " dtype must match target dtype " << dtype.ToString() << ", but got "
             << operand_type->dtype_.ToString();
     }
-    if (IsSimtAtomicDtype(dtype, no_result_dtypes)) {
+    if (IsDtypeInList(dtype, no_result_dtypes)) {
         return GetNoneType();
     }
     return std::make_shared<ScalarType>(dtype);
@@ -333,10 +333,9 @@ ScalarTypePtr DeduceSimtWarpShuffleCommonType(const std::string& op_name, const 
 
     auto value_type = As<ScalarType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, value_type) << op_name << " value must be a scalar";
-    PRO_IR_CHECK(
-        ExternalError::NOT_IMPLEMENTED_ERROR,
-        IsSimtAtomicDtype(value_type->dtype_, {DataType::INT32, DataType::UINT32, DataType::INT64, DataType::UINT64,
-                                               DataType::FP16, DataType::BF16, DataType::FP32}))
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR,
+                 IsDtypeInList(value_type->dtype_, {DataType::INT32, DataType::UINT32, DataType::INT64,
+                                                    DataType::UINT64, DataType::FP16, DataType::BF16, DataType::FP32}))
         << op_name << " supports only INT32, UINT32, INT64, UINT64, FP16, BF16, and FP32 values, got "
         << value_type->dtype_.ToString();
 
@@ -424,7 +423,7 @@ TypePtr DeduceSimtMathType(const std::string& op_name, size_t operand_count,
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar_type) << op_name << " operand " << i << " must be a scalar";
         if (i == 0) {
             dtype = scalar_type->dtype_;
-            PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsSimtAtomicDtype(dtype, supported_dtypes))
+            PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsDtypeInList(dtype, supported_dtypes))
                 << op_name << " supports only " << FormatSupportedDtypes(supported_dtypes) << ", got "
                 << dtype.ToString();
         } else {
@@ -695,7 +694,7 @@ REGISTER_OP("simt.bitcast")
             })
 
 REGISTER_SIMT_MATH_UNARY_OP("abs", "Compute the absolute value of one supported scalar", std::nullopt, DataType::FP16,
-                            DataType::BF16, DataType::FP32, DataType::INT64);
+                            DataType::BF16, DataType::FP32, DataType::INT32, DataType::INT64);
 REGISTER_SIMT_MATH_UNARY_OP("sqrt", "Compute the square root of one floating-point scalar", std::nullopt,
                             DataType::FP16, DataType::BF16, DataType::FP32);
 REGISTER_SIMT_MATH_UNARY_OP("rsqrt", "Compute the reciprocal square root of one floating-point scalar", std::nullopt,

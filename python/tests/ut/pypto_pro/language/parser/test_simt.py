@@ -14,13 +14,13 @@
 import ast
 
 from pypto_pro._errors import (
-    CommonExternal,
     InvalidArgument,
     InvalidOperation,
     InvalidShape,
     InvalidVal,
     NameNotFound,
     NotSupported,
+    OutOfRange,
     PyptoProError,
 )
 import pypto_pro.language as pl
@@ -516,7 +516,7 @@ def test_simt_launch_rejects_threads_above_bound():
         with pl.section_vector():
             _tile_add[288](dst, src, n, delta)
 
-    with pytest.raises(CommonExternal, match="exceed"):
+    with pytest.raises(OutOfRange, match="exceed"):
         too_many_threads.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
@@ -529,7 +529,7 @@ def test_simt_launch_rejects_runtime_tuple_component():
         with pl.section_vector():
             _tile_add[8, 4, n](dst, src, n, delta)
 
-    with pytest.raises(CommonExternal, match=r"compile-time integers.*\[1, 2048\]"):
+    with pytest.raises(InvalidShape, match=r"compile-time integers.*\[1, 2048\]"):
         runtime_dimension.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
@@ -549,7 +549,7 @@ def test_simt_launch_rejects_thread_count_above_hardware_limit():
         with pl.section_vector():
             wide_function[2048, 2]()
 
-    with pytest.raises(CommonExternal, match="must not exceed 2048"):
+    with pytest.raises(OutOfRange, match="must not exceed 2048"):
         too_wide.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 

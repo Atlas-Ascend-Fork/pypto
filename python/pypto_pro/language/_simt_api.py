@@ -209,7 +209,7 @@ class Simt:
     @staticmethod
     @_api_decl
     def abs(value: Union[int, float]) -> Scalar:
-        """Return the absolute value of a FP16, BF16, FP32, or INT64 Scalar."""
+        """Return the absolute value of a FP16, BF16, FP32, INT32, or INT64 Scalar."""
 
     @staticmethod
     @_api_decl

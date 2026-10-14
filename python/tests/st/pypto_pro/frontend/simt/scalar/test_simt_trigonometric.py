@@ -112,6 +112,7 @@ def test_sin_all_supported_dtypes():
     angles[:10] = torch.tensor(
         [-0.0, 0.0, -3.14159265, 3.14159265, -314.159265, 314.159265, -10000.0, 10000.0, float("-inf"), float("inf")]
     )
+    angles[10:14] = torch.tensor([0.2093505859375, -0.2093505859375, 300.0, -300.0])
     values = angles.reshape(1, ELEMENTS).to(torch.float32)
     sources = tuple(values.to(dtype) for dtype in (torch.float16, torch.bfloat16, torch.float32))
     outputs = tuple(torch.empty_like(source, device=ST_DEVICE) for source in sources)
@@ -125,6 +126,9 @@ def test_sin_all_supported_dtypes():
         }[source.dtype]
         expected = torch.sin(source.float()).to(source.dtype)
         torch.testing.assert_close(output.cpu(), expected, rtol=rtol, atol=atol, equal_nan=True)
+    # Check the corrected half results exactly at rounding-sensitive inputs.
+    expected_bits = torch.tensor([0x32A7, 0xB2A7, 0xBBFF, 0x3BFF], dtype=torch.int32).to(torch.int16)
+    torch.testing.assert_close(outputs[0].cpu().view(torch.int16)[0, 10:14], expected_bits, rtol=0, atol=0)
 
 # --------------------------------------------------- cos ---------------------------------------------------
 
@@ -216,6 +220,7 @@ def test_cos_all_supported_dtypes():
     angles[:10] = torch.tensor(
         [-0.0, 0.0, -3.14159265, 3.14159265, -314.159265, 314.159265, -10000.0, 10000.0, float("-inf"), float("inf")]
     )
+    angles[10:12] = torch.tensor([0.0584716796875, -0.0584716796875])
     values = angles.reshape(1, ELEMENTS).to(torch.float32)
     sources = tuple(values.to(dtype) for dtype in (torch.float16, torch.bfloat16, torch.float32))
     outputs = tuple(torch.empty_like(source, device=ST_DEVICE) for source in sources)
@@ -229,6 +234,9 @@ def test_cos_all_supported_dtypes():
         }[source.dtype]
         expected = torch.cos(source.float()).to(source.dtype)
         torch.testing.assert_close(output.cpu(), expected, rtol=rtol, atol=atol, equal_nan=True)
+    # Both input signs must produce the same corrected half result.
+    expected_bits = torch.tensor([0x3BFD, 0x3BFD], dtype=torch.int16)
+    torch.testing.assert_close(outputs[0].cpu().view(torch.int16)[0, 10:12], expected_bits, rtol=0, atol=0)
 
 # --------------------------------------------------- tan ---------------------------------------------------
 

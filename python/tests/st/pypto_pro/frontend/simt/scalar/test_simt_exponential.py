@@ -10,7 +10,9 @@
 
 """A5 system tests for SIMT scalar exponential interfaces."""
 
+from decimal import Decimal, localcontext
 import os
+import struct
 
 import pypto_pro.language as pl
 import pytest
@@ -108,7 +110,20 @@ def simt_exp_all_dtypes(
 def test_exp_all_supported_dtypes():
     torch.npu.set_device(ST_DEVICE)
     values = torch.linspace(-3.0, 3.0, ELEMENTS).reshape(1, ELEMENTS)
-    values[0, :8] = torch.tensor([float("-inf"), -104.0, -88.0, -1.0e-7, 0.0, 1.0e-7, 88.0, float("inf")])
+    values[0, :10] = torch.tensor(
+        [
+            float("-inf"),
+            -104.0,
+            -88.0,
+            0.007297515869140625,
+            0.0226898193359375,
+            -1.0e-7,
+            0.0,
+            1.0e-7,
+            88.0,
+            float("inf"),
+        ]
+    )
     sources = tuple(values.to(dtype) for dtype in (torch.float16, torch.bfloat16, torch.float32))
     outputs = tuple(torch.empty_like(source, device=ST_DEVICE) for source in sources)
     simt_exp_all_dtypes(*(source.to(ST_DEVICE) for source in sources), *outputs)
@@ -120,7 +135,20 @@ def test_exp_all_supported_dtypes():
             torch.float32: (1e-5, 1e-6),
         }[source.dtype]
         expected = torch.exp(source.float()).to(source.dtype)
-        torch.testing.assert_close(output.cpu(), expected, rtol=rtol, atol=atol)
+        actual = output.cpu()
+        torch.testing.assert_close(actual, expected, rtol=rtol, atol=atol)
+        if source.dtype == torch.float16:
+            # Round the high-precision reference directly to IEEE FP16, without an FP32 intermediate.
+            with localcontext() as context:
+                context.prec = 80
+                expected_bits = [
+                    struct.unpack("<h", struct.pack("<e", float(Decimal.from_float(value).exp())))[0]
+                    for value in source[0, 3:5].tolist()
+                ]
+            expected_exact = torch.tensor(expected_bits, dtype=torch.int16)
+            assert torch.equal(actual[0, 3:5].view(torch.int16), expected_exact)
+        elif source.dtype == torch.float32:
+            torch.testing.assert_close(actual[0, 2], expected[0, 2], rtol=1e-5, atol=0)
 
 # -------------------------------------------------- exp2 ---------------------------------------------------
 
@@ -209,7 +237,19 @@ def simt_exp2_all_dtypes(
 def test_exp2_all_supported_dtypes():
     torch.npu.set_device(ST_DEVICE)
     values = torch.linspace(-3.0, 3.0, ELEMENTS).reshape(1, ELEMENTS)
-    values[0, :8] = torch.tensor([float("-inf"), -150.0, -126.0, -1.0e-7, 0.0, 1.0e-7, 127.0, float("inf")])
+    values[0, :9] = torch.tensor(
+        [
+            float("-inf"),
+            -150.0,
+            -126.0,
+            0.000704288482666015625,
+            -1.0e-7,
+            0.0,
+            1.0e-7,
+            127.0,
+            float("inf"),
+        ]
+    )
     sources = tuple(values.to(dtype) for dtype in (torch.float16, torch.bfloat16, torch.float32))
     outputs = tuple(torch.empty_like(source, device=ST_DEVICE) for source in sources)
     simt_exp2_all_dtypes(*(source.to(ST_DEVICE) for source in sources), *outputs)
@@ -221,7 +261,21 @@ def test_exp2_all_supported_dtypes():
             torch.float32: (1e-5, 1e-6),
         }[source.dtype]
         expected = torch.exp2(source.float()).to(source.dtype)
-        torch.testing.assert_close(output.cpu(), expected, rtol=rtol, atol=atol)
+        actual = output.cpu()
+        torch.testing.assert_close(actual, expected, rtol=rtol, atol=atol)
+        if source.dtype == torch.float16:
+            # Round the high-precision reference directly to IEEE FP16, without an FP32 intermediate.
+            with localcontext() as context:
+                context.prec = 80
+                log2 = Decimal(2).ln()
+                expected_bits = [
+                    struct.unpack(
+                        "<h", struct.pack("<e", float((Decimal.from_float(value) * log2).exp()))
+                    )[0]
+                    for value in source[0, 3:4].tolist()
+                ]
+            expected_exact = torch.tensor(expected_bits, dtype=torch.int16)
+            assert torch.equal(actual[0, 3:4].view(torch.int16), expected_exact)
 
 # -------------------------------------------------- exp10 --------------------------------------------------
 

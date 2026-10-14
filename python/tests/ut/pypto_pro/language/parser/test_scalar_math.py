@@ -16,7 +16,7 @@ Operation-level pl.simt scalar math tests parse a captured kernel through
 same parser entry as production kernels.
 """
 
-from pypto_pro._errors import CommonExternal, InvalidArgument, InvalidOperation, InvalidVal
+from pypto_pro._errors import InvalidArgument, InvalidOperation, InvalidType, NotSupported
 import pypto_pro.language as pl
 import pytest
 
@@ -206,21 +206,21 @@ def test_scalar_math_rejects_unsupported_dtype_and_mixed_operands():
     def unsupported_log1p(value):
         value[0, 0] = pl.simt.log1p(value[0, 0])
 
-    with pytest.raises(CommonExternal, match="supports only fp32"):
+    with pytest.raises(NotSupported, match="supports only fp32"):
         _parse_tile_function(unsupported_log1p, [([1, 32], pl.DT_FP16)])
 
     @pl.vector_function(mode="simt")
     def unsupported_exp(value):
         value[0, 0] = pl.simt.exp(value[0, 0])
 
-    with pytest.raises(CommonExternal, match="supports only fp16, bfloat16, fp32"):
+    with pytest.raises(NotSupported, match="supports only fp16, bfloat16, fp32"):
         _parse_tile_function(unsupported_exp, [([1, 32], pl.DT_INT32)])
 
     @pl.vector_function(mode="simt")
     def mixed_min(lhs, rhs):
         lhs[0, 0] = pl.simt.min(lhs[0, 0], rhs[0, 0])
 
-    with pytest.raises(CommonExternal, match="same dtype"):
+    with pytest.raises(InvalidType, match="same dtype"):
         _parse_tile_function(mixed_min, [([1, 32], pl.DT_FP16), ([1, 32], pl.DT_FP32)])
 
 
@@ -229,11 +229,11 @@ def test_scalar_math_rejects_tile_operand():
     def unsupported(value):
         _ = pl.simt.sqrt(value)
 
-    with pytest.raises(InvalidVal, match="must be a scalar expression"):
+    with pytest.raises(InvalidType, match="must be a scalar expression"):
         _parse_tile_function(unsupported, [([1, 32], pl.DT_FP32)])
 
 
-def test_scalar_math_rejects_wrong_arity_and_keywords():
+def test_scalar_math_rejects_wrong_arity_and_accepts_keywords():
     with pytest.raises(InvalidArgument, match="missing a required argument: 'addend'"):
 
         @pl.vector_function(mode="simt", max_threads=1)
@@ -247,18 +247,37 @@ def test_scalar_math_rejects_wrong_arity_and_keywords():
 
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
-    with pytest.raises(InvalidArgument, match="requires exactly 1 positional argument"):
+    @pl.vector_function(mode="simt", max_threads=1)
+    def keyword_argument(value: pl.DT_FP32):
+        _test_result = pl.simt.exp(value=value)
 
-        @pl.vector_function(mode="simt", max_threads=1)
-        def keyword_argument(value: pl.DT_FP32):
-            _test_result = pl.simt.exp(value=value)
+    @pl.jit(auto_mutex=False)
+    def kernel(value: pl.DT_FP32):
+        with pl.section_vector():
+            keyword_argument[1](value)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert "simt.exp(" in str(program.get_function(keyword_argument.__name__))
+
+
+def test_simt_operations_reject_argument_unpacking_at_common_entry():
+    @pl.vector_function(mode="simt", max_threads=1)
+    def positional_unpacking(value: pl.DT_FP32):
+        _test_result = pl.simt.exp(*(value,))
+
+    @pl.vector_function(mode="simt", max_threads=1)
+    def keyword_unpacking(value: pl.DT_FP32):
+        _test_result = pl.simt.exp(**{"value": value})
+
+    for function in (positional_unpacking, keyword_unpacking):
 
         @pl.jit(auto_mutex=False)
         def kernel(value: pl.DT_FP32):
             with pl.section_vector():
-                keyword_argument[1](value)
+                function[1](value)
 
-        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+        with pytest.raises(InvalidArgument, match="does not support argument unpacking"):
+            kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
 def test_batch1_scalar_math_is_available_in_simt_functions():
@@ -375,12 +394,12 @@ def test_new_scalar_math_rejects_mixed_binary_and_unsupported_unary_dtype():
     def mixed_nextafter(lhs, rhs):
         _ = pl.simt.nextafter(lhs[0, 0], rhs[0, 0])
 
-    with pytest.raises(CommonExternal, match="same dtype"):
+    with pytest.raises(InvalidType, match="same dtype"):
         _parse_tile_function(mixed_nextafter, [([1, 16], pl.DT_FP32), ([1, 16], pl.DT_FP16)])
 
     @pl.vector_function(mode="simt")
     def invalid_signbit(value):
         _ = pl.simt.signbit(value[0, 0])
 
-    with pytest.raises(CommonExternal, match="supports only fp32"):
+    with pytest.raises(NotSupported, match="supports only fp32"):
         _parse_tile_function(invalid_signbit, [([1, 16], pl.DT_FP16)])

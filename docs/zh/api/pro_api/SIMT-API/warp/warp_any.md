@@ -34,7 +34,7 @@ pypto_pro.language.simt.warp_any(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| predicate | 输入 | 当前Lane参与投票的条件值，Scalar类型，支持DT_BOOL和DT_INT32。值为0表示假，非0表示真。不同Lane可以传入不同的条件值。必须按位置传入，不接受关键字参数。 |
+| predicate | 输入 | 当前Lane参与投票的条件值，Scalar类型，支持DT_BOOL和DT_INT32。值为0表示假，非0表示真。不同Lane可以传入不同的条件值。 |
 
 ## 约束说明
 

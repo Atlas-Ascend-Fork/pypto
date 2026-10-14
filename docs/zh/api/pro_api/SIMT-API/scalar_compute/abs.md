@@ -30,7 +30,7 @@ pypto_pro.language.simt.abs(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| value | 输入 | 源操作数，Scalar类型，支持DT_FP16、DT_BF16、DT_FP32和DT_INT64。Tensor或Tile元素需通过下标访问后传入。 |
+| value | 输入 | 源操作数，Scalar类型，支持DT_FP16、DT_BF16、DT_FP32、DT_INT32和DT_INT64。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 
@@ -39,6 +39,14 @@ pypto_pro.language.simt.abs(
 ## 返回值说明
 
 返回源操作数的绝对值，数据类型与输入一致。
+
+对于DT_FP16和DT_BF16输入，仅清除符号位，其余位保持不变：
+
+| value取值 | 返回值 |
+|---|---|
+| ±0 | +0 |
+| ±Inf | +Inf |
+| NaN | 清除符号位后的NaN，保留载荷及其余位 |
 
 ## 调用示例
 

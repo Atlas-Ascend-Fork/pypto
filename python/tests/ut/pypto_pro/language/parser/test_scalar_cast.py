@@ -17,7 +17,7 @@ same parser entry as production kernels.
 """
 
 from pypto_pro import ir
-from pypto_pro._errors import CommonExternal, InvalidArgument, InvalidOperation, InvalidType, InvalidVal
+from pypto_pro._errors import InvalidArgument, InvalidOperation, InvalidType, InvalidVal, NotSupported
 import pypto_pro.language as pl
 import pytest
 
@@ -54,7 +54,7 @@ def test_simt_cast_is_available_inside_simt_helper():
 
 
 def test_simt_cast_rejects_unsupported_dtype_pair():
-    with pytest.raises(CommonExternal, match=r"pl\.simt\.cast\(\) does not support"):
+    with pytest.raises(NotSupported, match=r"pl\.simt\.cast\(\) does not support"):
 
         @pl.vector_function(mode="simt", max_threads=1)
         def unsupported(value: pl.DT_FP16):
@@ -69,7 +69,7 @@ def test_simt_cast_rejects_unsupported_dtype_pair():
 
 
 def test_simt_cast_rejects_odd_rounding_for_bfloat16():
-    with pytest.raises(CommonExternal, match=r"pl\.simt\.cast\(\) does not support"):
+    with pytest.raises(NotSupported, match=r"pl\.simt\.cast\(\) does not support"):
 
         @pl.vector_function(mode="simt", max_threads=1)
         def unsupported_mode(value: pl.DT_FP32):
@@ -159,5 +159,20 @@ def test_simt_cast_rejects_unexpected_keyword():
         def kernel(value: pl.DT_FP32):
             with pl.section_vector():
                 unexpected_keyword[1](value)
+
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_simt_bitcast_preserves_invalid_type_error():
+    with pytest.raises(InvalidType, match="same bit width"):
+
+        @pl.vector_function(mode="simt", max_threads=1)
+        def invalid_bit_width(value: pl.DT_FP16):
+            _test_result = pl.simt.bitcast(value, pl.DT_UINT32)
+
+        @pl.jit(auto_mutex=False)
+        def kernel(value: pl.DT_FP16):
+            with pl.section_vector():
+                invalid_bit_width[1](value)
 
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)

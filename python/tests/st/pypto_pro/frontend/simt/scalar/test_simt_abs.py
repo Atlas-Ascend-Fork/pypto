@@ -27,16 +27,19 @@ def abs_all_dtypes(
     src_fp16,
     src_bf16,
     src_fp32,
+    src_int32,
     src_int64,
     out_fp16,
     out_bf16,
     out_fp32,
+    out_int32,
     out_int64,
 ):
     tid = pl.simt.linear_thread_idx()
     out_fp16[0, tid] = pl.simt.abs(src_fp16[0, tid])
     out_bf16[0, tid] = pl.simt.abs(src_bf16[0, tid])
     out_fp32[0, tid] = pl.simt.abs(src_fp32[0, tid])
+    out_int32[0, tid] = pl.simt.abs(src_int32[0, tid])
     out_int64[0, tid] = pl.simt.abs(src_int64[0, tid])
 
 
@@ -45,10 +48,12 @@ def simt_abs_all_dtypes(
     src_fp16: pl.Tensor[[1, ELEMENTS], pl.DT_FP16],
     src_bf16: pl.Tensor[[1, ELEMENTS], pl.DT_BF16],
     src_fp32: pl.Tensor[[1, ELEMENTS], pl.DT_FP32],
+    src_int32: pl.Tensor[[1, ELEMENTS], pl.DT_INT32],
     src_int64: pl.Tensor[[1, ELEMENTS], pl.DT_INT64],
     out_fp16: pl.Tensor[[1, ELEMENTS], pl.DT_FP16],
     out_bf16: pl.Tensor[[1, ELEMENTS], pl.DT_BF16],
     out_fp32: pl.Tensor[[1, ELEMENTS], pl.DT_FP32],
+    out_int32: pl.Tensor[[1, ELEMENTS], pl.DT_INT32],
     out_int64: pl.Tensor[[1, ELEMENTS], pl.DT_INT64],
 ):
     src_fp16_tile_group = pl.make_tile_group(
@@ -116,10 +121,12 @@ def simt_abs_all_dtypes(
             src_fp16_tile,
             src_bf16_tile,
             src_fp32_tile,
+            src_int32,
             src_int64_tile,
             out_fp16_tile,
             out_bf16_tile,
             out_fp32_tile,
+            out_int32,
             out_int64_tile,
         )
         pl.store(out_fp16, out_fp16_tile, [0, 0])
@@ -134,14 +141,29 @@ def test_abs_all_supported_dtypes():
     fp32 = torch.linspace(-8.0, 8.0, ELEMENTS).reshape(1, ELEMENTS)
     fp32[0, :6] = torch.tensor([-0.0, 0.0, float("-inf"), float("inf"), float("nan"), -1.0])
     float_sources = (fp32.to(torch.float16), fp32.to(torch.bfloat16), fp32)
+    # Preserve raw NaN payloads (including signaling NaNs), signed zeros and subnormals.
+    low_precision_bits = torch.tensor(
+        [
+            0x8000, 0x0000, 0x0001, 0x8001, 0x03FF, 0x83FF,
+            0x7C00, 0xFC00, 0x7C01, 0xFC01, 0x7E01, 0xFE01, 0x7FFF, 0xFFFF,
+            0x7F80, 0xFF80, 0x7F81, 0xFF81, 0x7FC1, 0xFFC1,
+        ],
+        dtype=torch.int32,
+    ).to(torch.int16)
+    for source in float_sources[:2]:
+        source.view(torch.int16)[0, :low_precision_bits.numel()] = low_precision_bits
+    int32_source = (torch.arange(ELEMENTS, dtype=torch.int32) - 32).reshape(1, ELEMENTS)
     int64_source = (torch.arange(ELEMENTS, dtype=torch.int64) - 32).reshape(1, ELEMENTS)
     float_outputs = tuple(torch.empty_like(source, device=ST_DEVICE) for source in float_sources)
+    int32_output = torch.empty_like(int32_source, device=ST_DEVICE)
     int64_output = torch.empty_like(int64_source, device=ST_DEVICE)
 
     simt_abs_all_dtypes(
         *(source.to(ST_DEVICE) for source in float_sources),
+        int32_source.to(ST_DEVICE),
         int64_source.to(ST_DEVICE),
         *float_outputs,
+        int32_output,
         int64_output,
     )
     torch.npu.synchronize()
@@ -154,5 +176,10 @@ def test_abs_all_supported_dtypes():
             torch.float32: (1e-5, 1e-6),
         }[source.dtype]
         torch.testing.assert_close(output.cpu(), expected, rtol=rtol, atol=atol, equal_nan=True)
+        if source.dtype in (torch.float16, torch.bfloat16):
+            # Only the sign bit changes, even for NaNs.
+            expected_bits = source.view(torch.int16) & 0x7FFF
+            torch.testing.assert_close(output.cpu().view(torch.int16), expected_bits, rtol=0, atol=0)
+    torch.testing.assert_close(int32_output.cpu(), torch.abs(int32_source), rtol=0, atol=0)
     torch.testing.assert_close(int64_output.cpu(), torch.abs(int64_source), rtol=0, atol=0)
     assert not torch.signbit(float_outputs[2].cpu()[0, 0]).item()

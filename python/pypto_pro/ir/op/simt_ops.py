@@ -29,13 +29,18 @@ from ..._errors import (
     InvalidVal,
     NotSupported,
     error_class_of_spec_message,
-    message_of,
 )
 from .._utils import _get_span_or_capture, _normalize_expr
 from ._op_registry import op_impl
 
 _DIM3_FIELDS = ("x", "y", "z")
 _DIM3_CONTEXT_NAME = "dim3_context"
+
+
+def _create_simt_call(op_name: str, *operands: Expr, span: Span | None) -> Call:
+    """Create an IR call for a SIMT operation without attributes."""
+    actual_span = _get_span_or_capture(span)
+    return _ir_core.create_op_call(f"simt.{op_name}", list(operands), {}, actual_span)
 
 
 def _make_dim3_components(op_name: str, span: Span) -> list[Call]:
@@ -50,123 +55,112 @@ def _make_dim3_context(op_name: str, span: Span | None = None) -> Expr:
 
 def linear_thread_idx(span: Span | None = None) -> Call:
     """Return the x-major flattened thread index within the current block."""
-    actual_span = _get_span_or_capture(span)
-    return _ir_core.create_op_call("simt.linear_thread_idx", [], {}, actual_span)
+    return _create_simt_call("linear_thread_idx", span=span)
 
 
 def warp_size(span: Span | None = None) -> Call:
     """Return the target SIMT warp size."""
-    actual_span = _get_span_or_capture(span)
-    return _ir_core.create_op_call("simt.warp_size", [], {}, actual_span)
+    return _create_simt_call("warp_size", span=span)
 
 
 def syncthreads(span: Span | None = None) -> Call:
     """Build a block-wide SIMT thread barrier."""
-    actual_span = _get_span_or_capture(span)
-    return _ir_core.create_op_call("simt.syncthreads", [], {}, actual_span)
+    return _create_simt_call("syncthreads", span=span)
 
 
 def threadfence_block(span: Span | None = None) -> Call:
     """Build a block-scoped SIMT memory fence."""
-    actual_span = _get_span_or_capture(span)
-    return _ir_core.create_op_call("simt.threadfence_block", [], {}, actual_span)
+    return _create_simt_call("threadfence_block", span=span)
 
 
 def threadfence(span: Span | None = None) -> Call:
     """Build a device-scoped SIMT memory fence."""
-    actual_span = _get_span_or_capture(span)
-    return _ir_core.create_op_call("simt.threadfence", [], {}, actual_span)
-
-
-def _create_warp_call(op_name: str, *operands: Expr, span: Span | None) -> Call:
-    """Create an IR call for one warp-level SIMT operation."""
-    actual_span = _get_span_or_capture(span)
-    return _ir_core.create_op_call(f"simt.{op_name}", list(operands), {}, actual_span)
+    return _create_simt_call("threadfence", span=span)
 
 
 def lane_id(span: Span | None = None) -> Call:
     """Return the current lane index in the warp."""
-    return _create_warp_call("lane_id", span=span)
+    return _create_simt_call("lane_id", span=span)
 
 
 def lanemask_eq(span: Span | None = None) -> Call:
     """Return a mask containing only the current lane bit."""
-    return _create_warp_call("lanemask_eq", span=span)
+    return _create_simt_call("lanemask_eq", span=span)
 
 
 def lanemask_le(span: Span | None = None) -> Call:
     """Return a mask containing lanes up to and including the current lane."""
-    return _create_warp_call("lanemask_le", span=span)
+    return _create_simt_call("lanemask_le", span=span)
 
 
 def lanemask_lt(span: Span | None = None) -> Call:
     """Return a mask containing lanes below the current lane."""
-    return _create_warp_call("lanemask_lt", span=span)
+    return _create_simt_call("lanemask_lt", span=span)
 
 
 def lanemask_ge(span: Span | None = None) -> Call:
     """Return a mask containing lanes at or above the current lane."""
-    return _create_warp_call("lanemask_ge", span=span)
+    return _create_simt_call("lanemask_ge", span=span)
 
 
 def lanemask_gt(span: Span | None = None) -> Call:
     """Return a mask containing lanes above the current lane."""
-    return _create_warp_call("lanemask_gt", span=span)
+    return _create_simt_call("lanemask_gt", span=span)
 
 
 def warp_all(predicate: Expr, span: Span | None = None) -> Call:
     """Return whether every active lane satisfies predicate."""
-    return _create_warp_call("warp_all", predicate, span=span)
+    return _create_simt_call("warp_all", predicate, span=span)
 
 
 def warp_any(predicate: Expr, span: Span | None = None) -> Call:
     """Return whether any active lane satisfies predicate."""
-    return _create_warp_call("warp_any", predicate, span=span)
+    return _create_simt_call("warp_any", predicate, span=span)
 
 
 def warp_ballot(predicate: Expr, span: Span | None = None) -> Call:
     """Return the active-lane predicate bit mask."""
-    return _create_warp_call("warp_ballot", predicate, span=span)
+    return _create_simt_call("warp_ballot", predicate, span=span)
 
 
 def warp_active_mask(span: Span | None = None) -> Call:
     """Return the currently active lane mask."""
-    return _create_warp_call("warp_active_mask", span=span)
+    return _create_simt_call("warp_active_mask", span=span)
 
 
 def warp_shfl(value: Expr, src_lane: Expr, width: Expr, span: Span | None = None) -> Call:
     """Read a scalar from one source lane in the logical subgroup."""
-    return _create_warp_call("warp_shfl", value, src_lane, width, span=span)
+    return _create_simt_call("warp_shfl", value, src_lane, width, span=span)
 
 
 def warp_shfl_up(value: Expr, delta: Expr, width: Expr, span: Span | None = None) -> Call:
     """Read a scalar from a lower-numbered lane in the logical subgroup."""
-    return _create_warp_call("warp_shfl_up", value, delta, width, span=span)
+    return _create_simt_call("warp_shfl_up", value, delta, width, span=span)
 
 
 def warp_shfl_down(value: Expr, delta: Expr, width: Expr, span: Span | None = None) -> Call:
     """Read a scalar from a higher-numbered lane in the logical subgroup."""
-    return _create_warp_call("warp_shfl_down", value, delta, width, span=span)
+    return _create_simt_call("warp_shfl_down", value, delta, width, span=span)
 
 
 def warp_shfl_xor(value: Expr, lane_mask: Expr, width: Expr, span: Span | None = None) -> Call:
     """Read a scalar from the lane selected by XOR with lane_mask."""
-    return _create_warp_call("warp_shfl_xor", value, lane_mask, width, span=span)
+    return _create_simt_call("warp_shfl_xor", value, lane_mask, width, span=span)
 
 
 def warp_reduce_add(value: Expr, span: Span | None = None) -> Call:
     """Reduce a scalar sum across active lanes."""
-    return _create_warp_call("warp_reduce_add", value, span=span)
+    return _create_simt_call("warp_reduce_add", value, span=span)
 
 
 def warp_reduce_max(value: Expr, span: Span | None = None) -> Call:
     """Reduce a scalar maximum across active lanes."""
-    return _create_warp_call("warp_reduce_max", value, span=span)
+    return _create_simt_call("warp_reduce_max", value, span=span)
 
 
 def warp_reduce_min(value: Expr, span: Span | None = None) -> Call:
     """Reduce a scalar minimum across active lanes."""
-    return _create_warp_call("warp_reduce_min", value, span=span)
+    return _create_simt_call("warp_reduce_min", value, span=span)
 
 
 def cast(
@@ -196,317 +190,294 @@ def bitcast(value: Expr, dtype: _ir_core.DataType, span: Span | None = None) -> 
     )
 
 
-def _create_math_call(op_name: str, *operands: Expr, span: Span | None) -> Call:
-    """Create an IR call for one explicit SIMT scalar math operation."""
-    actual_span = _get_span_or_capture(span)
-    return _ir_core.create_op_call(f"simt.{op_name}", list(operands), {}, actual_span)
-
-
 def abs(value: Expr, span: Span | None = None) -> Call:
     """Build a supported scalar absolute-value call."""
-    return _create_math_call("abs", value, span=span)
+    return _create_simt_call("abs", value, span=span)
 
 
 def min(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
     """Build a same-dtype scalar minimum call."""
-    return _create_math_call("min", lhs, rhs, span=span)
+    return _create_simt_call("min", lhs, rhs, span=span)
 
 
 def max(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
     """Build a same-dtype scalar maximum call."""
-    return _create_math_call("max", lhs, rhs, span=span)
+    return _create_simt_call("max", lhs, rhs, span=span)
 
 
 def sqrt(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar square-root call."""
-    return _create_math_call("sqrt", value, span=span)
+    return _create_simt_call("sqrt", value, span=span)
 
 
 def rsqrt(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar reciprocal-square-root call."""
-    return _create_math_call("rsqrt", value, span=span)
+    return _create_simt_call("rsqrt", value, span=span)
 
 
 def exp(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar exponential call."""
-    return _create_math_call("exp", value, span=span)
+    return _create_simt_call("exp", value, span=span)
 
 
 def exp2(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar base-two exponential call."""
-    return _create_math_call("exp2", value, span=span)
+    return _create_simt_call("exp2", value, span=span)
 
 
 def log(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar natural-logarithm call."""
-    return _create_math_call("log", value, span=span)
+    return _create_simt_call("log", value, span=span)
 
 
 def log2(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar base-two logarithm call."""
-    return _create_math_call("log2", value, span=span)
+    return _create_simt_call("log2", value, span=span)
 
 
 def log1p(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 scalar log-one-plus call."""
-    return _create_math_call("log1p", value, span=span)
+    return _create_simt_call("log1p", value, span=span)
 
 
 def sin(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar sine call."""
-    return _create_math_call("sin", value, span=span)
+    return _create_simt_call("sin", value, span=span)
 
 
 def cos(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar cosine call."""
-    return _create_math_call("cos", value, span=span)
+    return _create_simt_call("cos", value, span=span)
 
 
 def tanh(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar hyperbolic-tangent call."""
-    return _create_math_call("tanh", value, span=span)
+    return _create_simt_call("tanh", value, span=span)
 
 
 def rint(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar round-to-nearest-even call."""
-    return _create_math_call("rint", value, span=span)
+    return _create_simt_call("rint", value, span=span)
 
 
 def round(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar round-half-away-from-zero call."""
-    return _create_math_call("round", value, span=span)
+    return _create_simt_call("round", value, span=span)
 
 
 def floor(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar floor call."""
-    return _create_math_call("floor", value, span=span)
+    return _create_simt_call("floor", value, span=span)
 
 
 def ceil(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar ceiling call."""
-    return _create_math_call("ceil", value, span=span)
+    return _create_simt_call("ceil", value, span=span)
 
 
 def trunc(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar truncate-toward-zero call."""
-    return _create_math_call("trunc", value, span=span)
+    return _create_simt_call("trunc", value, span=span)
 
 
 def isnan(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar NaN-classification call."""
-    return _create_math_call("isnan", value, span=span)
+    return _create_simt_call("isnan", value, span=span)
 
 
 def isinf(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar infinity-classification call."""
-    return _create_math_call("isinf", value, span=span)
+    return _create_simt_call("isinf", value, span=span)
 
 
 def isfinite(value: Expr, span: Span | None = None) -> Call:
     """Build an FP16 or FP32 scalar finiteness-classification call."""
-    return _create_math_call("isfinite", value, span=span)
+    return _create_simt_call("isfinite", value, span=span)
 
 
 def popcount(value: Expr, span: Span | None = None) -> Call:
     """Build an unsigned scalar population count with an INT32 result."""
-    return _create_math_call("popcount", value, span=span)
+    return _create_simt_call("popcount", value, span=span)
 
 
 def mul_hi(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
     """Build a same-dtype integer multiply-high call."""
-    return _create_math_call("mul_hi", lhs, rhs, span=span)
+    return _create_simt_call("mul_hi", lhs, rhs, span=span)
 
 
 def exp10(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar base-ten exponential call."""
-    return _create_math_call("exp10", value, span=span)
+    return _create_simt_call("exp10", value, span=span)
 
 
 def log10(value: Expr, span: Span | None = None) -> Call:
     """Build a floating-point scalar base-ten logarithm call."""
-    return _create_math_call("log10", value, span=span)
+    return _create_simt_call("log10", value, span=span)
 
 
 def rcp(value: Expr, span: Span | None = None) -> Call:
     """Build an FP16 or BF16 scalar reciprocal call."""
-    return _create_math_call("rcp", value, span=span)
+    return _create_simt_call("rcp", value, span=span)
 
 
 def tan(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 scalar tangent call."""
-    return _create_math_call("tan", value, span=span)
+    return _create_simt_call("tan", value, span=span)
 
 
 def atan(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 scalar arc-tangent call."""
-    return _create_math_call("atan", value, span=span)
+    return _create_simt_call("atan", value, span=span)
 
 
 def expm1(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 scalar exponential-minus-one call."""
-    return _create_math_call("expm1", value, span=span)
+    return _create_simt_call("expm1", value, span=span)
 
 
 def logb(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 scalar unbiased-exponent call."""
-    return _create_math_call("logb", value, span=span)
+    return _create_simt_call("logb", value, span=span)
 
 
 def cosh(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 scalar hyperbolic-cosine call."""
-    return _create_math_call("cosh", value, span=span)
+    return _create_simt_call("cosh", value, span=span)
 
 
 def acos(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 scalar arc-cosine call."""
-    return _create_math_call("acos", value, span=span)
+    return _create_simt_call("acos", value, span=span)
 
 
 def sinh(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 scalar hyperbolic-sine call."""
-    return _create_math_call("sinh", value, span=span)
+    return _create_simt_call("sinh", value, span=span)
 
 
 def asin(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 scalar arc-sine call."""
-    return _create_math_call("asin", value, span=span)
+    return _create_simt_call("asin", value, span=span)
 
 
 def cbrt(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 scalar cube-root call."""
-    return _create_math_call("cbrt", value, span=span)
+    return _create_simt_call("cbrt", value, span=span)
 
 
 def max_nan(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
     """Build an FP16 or BF16 maximum call that propagates NaN."""
-    return _create_math_call("max_nan", lhs, rhs, span=span)
+    return _create_simt_call("max_nan", lhs, rhs, span=span)
 
 
 def min_nan(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
     """Build an FP16 or BF16 minimum call that propagates NaN."""
-    return _create_math_call("min_nan", lhs, rhs, span=span)
+    return _create_simt_call("min_nan", lhs, rhs, span=span)
 
 
 def atan2(y: Expr, x: Expr, span: Span | None = None) -> Call:
     """Build an FP32 quadrant-aware arc-tangent call."""
-    return _create_math_call("atan2", y, x, span=span)
+    return _create_simt_call("atan2", y, x, span=span)
 
 
 def copysign(magnitude: Expr, sign: Expr, span: Span | None = None) -> Call:
     """Build an FP32 sign-selection call."""
-    return _create_math_call("copysign", magnitude, sign, span=span)
+    return _create_simt_call("copysign", magnitude, sign, span=span)
 
 
 def nextafter(value: Expr, direction: Expr, span: Span | None = None) -> Call:
     """Build an FP32 next-representable-value call."""
-    return _create_math_call("nextafter", value, direction, span=span)
+    return _create_simt_call("nextafter", value, direction, span=span)
 
 
 def tanpi(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 tangent-of-pi-multiple call."""
-    return _create_math_call("tanpi", value, span=span)
+    return _create_simt_call("tanpi", value, span=span)
 
 
 def atanh(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 inverse-hyperbolic-tangent call."""
-    return _create_math_call("atanh", value, span=span)
+    return _create_simt_call("atanh", value, span=span)
 
 
 def cospi(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 cosine-of-pi-multiple call."""
-    return _create_math_call("cospi", value, span=span)
+    return _create_simt_call("cospi", value, span=span)
 
 
 def acosh(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 inverse-hyperbolic-cosine call."""
-    return _create_math_call("acosh", value, span=span)
+    return _create_simt_call("acosh", value, span=span)
 
 
 def sinpi(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 sine-of-pi-multiple call."""
-    return _create_math_call("sinpi", value, span=span)
+    return _create_simt_call("sinpi", value, span=span)
 
 
 def asinh(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 inverse-hyperbolic-sine call."""
-    return _create_math_call("asinh", value, span=span)
+    return _create_simt_call("asinh", value, span=span)
 
 
 def rcbrt(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32 reciprocal-cube-root call."""
-    return _create_math_call("rcbrt", value, span=span)
+    return _create_simt_call("rcbrt", value, span=span)
 
 
 def ilogb(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32-to-INT32 unbiased-exponent call."""
-    return _create_math_call("ilogb", value, span=span)
+    return _create_simt_call("ilogb", value, span=span)
 
 
 def signbit(value: Expr, span: Span | None = None) -> Call:
     """Build an FP32-to-INT32 sign-bit call."""
-    return _create_math_call("signbit", value, span=span)
+    return _create_simt_call("signbit", value, span=span)
 
 
 def fmod(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
     """Build an FP32 remainder call with a quotient truncated toward zero."""
-    return _create_math_call("fmod", lhs, rhs, span=span)
+    return _create_simt_call("fmod", lhs, rhs, span=span)
 
 
 def fma(lhs: Expr, rhs: Expr, addend: Expr, span: Span | None = None) -> Call:
     """Build a same-dtype floating-point fused multiply-add call."""
-    return _create_math_call("fma", lhs, rhs, addend, span=span)
-
-
-def _create_atomic_call(
-    op_name: str,
-    container: Expr,
-    offset: Expr,
-    *operands: Expr,
-    span: Span | None,
-) -> Call:
-    """Create an IR call for one SIMT atomic operation."""
-    actual_span = _get_span_or_capture(span)
-    return _ir_core.create_op_call(
-        f"simt.{op_name}",
-        [container, offset, *operands],
-        {},
-        actual_span,
-    )
+    return _create_simt_call("fma", lhs, rhs, addend, span=span)
 
 
 def atomic_add(container: Expr, offset: Expr, value: Expr, span: Span | None = None) -> Call:
     """Build an atomic add on one element of a SIMT Tile or Tensor."""
-    return _create_atomic_call("atomic_add", container, offset, value, span=span)
+    return _create_simt_call("atomic_add", container, offset, value, span=span)
 
 
 def atomic_sub(container: Expr, offset: Expr, value: Expr, span: Span | None = None) -> Call:
     """Build an atomic subtract on one element of a SIMT Tile or Tensor."""
-    return _create_atomic_call("atomic_sub", container, offset, value, span=span)
+    return _create_simt_call("atomic_sub", container, offset, value, span=span)
 
 
 def atomic_exch(container: Expr, offset: Expr, value: Expr, span: Span | None = None) -> Call:
     """Build an atomic exchange on one element of a SIMT Tile or Tensor."""
-    return _create_atomic_call("atomic_exch", container, offset, value, span=span)
+    return _create_simt_call("atomic_exch", container, offset, value, span=span)
 
 
 def atomic_max(container: Expr, offset: Expr, value: Expr, span: Span | None = None) -> Call:
     """Build an atomic maximum on one element of a SIMT Tile or Tensor."""
-    return _create_atomic_call("atomic_max", container, offset, value, span=span)
+    return _create_simt_call("atomic_max", container, offset, value, span=span)
 
 
 def atomic_min(container: Expr, offset: Expr, value: Expr, span: Span | None = None) -> Call:
     """Build an atomic minimum on one element of a SIMT Tile or Tensor."""
-    return _create_atomic_call("atomic_min", container, offset, value, span=span)
+    return _create_simt_call("atomic_min", container, offset, value, span=span)
 
 
 def atomic_inc(container: Expr, offset: Expr, limit: Expr, span: Span | None = None) -> Call:
     """Build an atomic wrapping increment on one SIMT counter element."""
-    return _create_atomic_call("atomic_inc", container, offset, limit, span=span)
+    return _create_simt_call("atomic_inc", container, offset, limit, span=span)
 
 
 def atomic_dec(container: Expr, offset: Expr, limit: Expr, span: Span | None = None) -> Call:
     """Build an atomic wrapping decrement on one SIMT counter element."""
-    return _create_atomic_call("atomic_dec", container, offset, limit, span=span)
+    return _create_simt_call("atomic_dec", container, offset, limit, span=span)
 
 
 def atomic_cas(
@@ -517,22 +488,22 @@ def atomic_cas(
     span: Span | None = None,
 ) -> Call:
     """Build an atomic compare-and-swap on one SIMT element."""
-    return _create_atomic_call("atomic_cas", container, offset, compare, value, span=span)
+    return _create_simt_call("atomic_cas", container, offset, compare, value, span=span)
 
 
 def atomic_and(container: Expr, offset: Expr, value: Expr, span: Span | None = None) -> Call:
     """Build an atomic bitwise AND on one SIMT element."""
-    return _create_atomic_call("atomic_and", container, offset, value, span=span)
+    return _create_simt_call("atomic_and", container, offset, value, span=span)
 
 
 def atomic_or(container: Expr, offset: Expr, value: Expr, span: Span | None = None) -> Call:
     """Build an atomic bitwise OR on one SIMT element."""
-    return _create_atomic_call("atomic_or", container, offset, value, span=span)
+    return _create_simt_call("atomic_or", container, offset, value, span=span)
 
 
 def atomic_xor(container: Expr, offset: Expr, value: Expr, span: Span | None = None) -> Call:
     """Build an atomic bitwise XOR on one SIMT element."""
-    return _create_atomic_call("atomic_xor", container, offset, value, span=span)
+    return _create_simt_call("atomic_xor", container, offset, value, span=span)
 
 
 def launch(
@@ -561,21 +532,51 @@ def launch(
     )
 
 
-def _validate_simt_body_op(parser: Any, call: ast.Call, _kwargs: dict[str, Any]) -> None:
-    """Validate the common source constraints of a SIMT body operation."""
+def _validate_simt_call(
+    parser: Any,
+    call: ast.Call,
+    op_name: str,
+    *,
+    hint: str = 'Move SIMT-context-dependent logic into @pl.vector_function(mode="simt").',
+) -> Span:
+    """Validate the source-level constraints shared by regular ``simt.*`` APIs."""
 
     span = parser.span_tracker.get_span(call)
-    op_name = parser._extract_op_name(call.func)
+    unpacked = next((argument for argument in call.args if isinstance(argument, ast.Starred)), None)
+    if unpacked is None:
+        keyword = next((keyword for keyword in call.keywords if keyword.arg is None), None)
+        unpacked = keyword.value if keyword is not None else None
+    if unpacked is not None:
+        raise InvalidArgument(
+            f"pl.{op_name}() does not support argument unpacking",
+            span=parser.span_tracker.get_span(unpacked),
+        )
     if parser._current_func_type not in (_ir_core.FunctionType.SimtVF, _ir_core.FunctionType.SimtCallee):
         raise InvalidOperation(
             f"pl.{op_name}() can only be used inside a SIMT function",
             span=span,
-            hint="Move SIMT-context-dependent logic into @pl.vector_function(mode=\"simt\").",
+            hint=hint,
         )
+    return span
+
+
+def _validate_simt_body_op(parser: Any, call: ast.Call, _kwargs: dict[str, Any]) -> None:
+    """Validate the common source constraints of a no-argument SIMT body operation."""
+
+    op_name = parser._extract_op_name(call.func)
+    span = _validate_simt_call(parser, call, op_name)
     if call.args:
         raise InvalidArgument(f"pl.{op_name}() does not accept positional arguments", span=span)
     if call.keywords:
         raise InvalidArgument(f"pl.{op_name}() does not accept keyword arguments", span=span)
+
+
+def _simt_argument_node(call: ast.Call, position: int, name: str) -> ast.expr:
+    """Return one argument node after the public declaration has bound the call."""
+
+    if position < len(call.args):
+        return call.args[position]
+    return next(keyword.value for keyword in call.keywords if keyword.arg == name)
 
 
 def _parse_dim3_context(parser: Any, call: ast.Call, op_name: str) -> Expr:
@@ -710,8 +711,11 @@ def _parse_simt_launch(parser: Any, call: ast.Call, local_name: str, callee_temp
     parser._validate_simt_function_arguments(callee, launch_args, call.args, span)
     try:
         result = launch(callee, threads=tuple(thread_dims), args=launch_args, span=span)
-    except RuntimeError as error:
-        raise CommonExternal(message_of(error), span=span, parser_retry=True) from error
+    except (ValueError, RuntimeError) as error:
+        message = str(error)
+        raise (error_class_of_spec_message(message) or CommonExternal)(
+            message, span=span, parser_retry=True
+        ) from error
     parser.requires_simt = True
     return result
 
@@ -727,19 +731,6 @@ def _numeric_literal_value(node: ast.expr) -> int | float | None:
     ):
         return node.operand.value if isinstance(node.op, ast.UAdd) else -node.operand.value
     return None
-
-
-def _validate_warp_scope(parser: Any, call: ast.Call, op_name: str) -> Span:
-    """Validate that one warp call appears in a SIMT function."""
-
-    span = parser.span_tracker.get_span(call)
-    if parser._current_func_type not in (_ir_core.FunctionType.SimtVF, _ir_core.FunctionType.SimtCallee):
-        raise InvalidOperation(
-            f"pl.{op_name}() can only be used inside a SIMT function",
-            span=span,
-            hint='Move warp-level logic into @pl.vector_function(mode="simt").',
-        )
-    return span
 
 
 def _parse_warp_scalar(
@@ -786,19 +777,16 @@ def _parse_warp_predicate_call(
 ) -> Expr:
     """Parse one warp vote operation."""
 
-    span = _validate_warp_scope(parser, call, op_name)
-    if len(call.args) != 1 or call.keywords:
-        raise InvalidArgument(
-            f"pl.{op_name}() requires exactly one positional predicate argument",
-            span=span,
-        )
-    predicate = _parse_warp_scalar(parser, op_name, "predicate", call.args[0], _ir_core.DataType.INT32)
+    span = _validate_simt_call(parser, call, op_name)
+    predicate_node = _simt_argument_node(call, 0, "predicate")
+    predicate = _parse_warp_scalar(parser, op_name, "predicate", predicate_node, _ir_core.DataType.INT32)
     try:
         return builder(predicate, span=span)
     except (ValueError, RuntimeError) as error:
         message = str(error)
-        wrapper = error_class_of_spec_message(message) or CommonExternal
-        raise wrapper(message, span=span, parser_retry=True) from error
+        raise (error_class_of_spec_message(message) or CommonExternal)(
+            message, span=span, parser_retry=True
+        ) from error
 
 
 def _register_warp_predicate_parser(op_name: str, builder: Callable[..., Call]) -> None:
@@ -824,26 +812,17 @@ def _parse_warp_shuffle_call(
 ) -> Expr:
     """Parse one warp shuffle operation, including its optional width."""
 
-    span = _validate_warp_scope(parser, call, op_name)
-    width_keywords = [keyword for keyword in call.keywords if keyword.arg == "width"]
-    invalid_keyword = any(keyword.arg != "width" for keyword in call.keywords)
-    if len(call.args) not in (2, 3) or invalid_keyword or len(width_keywords) > 1:
-        raise InvalidArgument(
-            f"pl.{op_name}() requires value, {control_name}, and an optional width",
-            span=span,
-        )
-    if len(call.args) == 3 and width_keywords:
-        raise InvalidArgument(
-            f"pl.{op_name}() width cannot be provided both positionally and by keyword",
-            span=span,
-        )
+    span = _validate_simt_call(parser, call, op_name)
+    width_keyword = next((keyword for keyword in call.keywords if keyword.arg == "width"), None)
 
-    value = _parse_warp_scalar(parser, op_name, "value", call.args[0])
-    control = _parse_warp_scalar(parser, op_name, control_name, call.args[1], control_dtype)
+    value_node = _simt_argument_node(call, 0, "value")
+    control_node = _simt_argument_node(call, 1, control_name)
+    value = _parse_warp_scalar(parser, op_name, "value", value_node)
+    control = _parse_warp_scalar(parser, op_name, control_name, control_node, control_dtype)
     if len(call.args) == 3:
         width = _parse_warp_scalar(parser, op_name, "width", call.args[2], _ir_core.DataType.INT32)
-    elif width_keywords:
-        width = _parse_warp_scalar(parser, op_name, "width", width_keywords[0].value, _ir_core.DataType.INT32)
+    elif width_keyword is not None:
+        width = _parse_warp_scalar(parser, op_name, "width", width_keyword.value, _ir_core.DataType.INT32)
     else:
         width = _ir_core.ConstInt(32, _ir_core.DataType.INT32, span)
 
@@ -851,8 +830,9 @@ def _parse_warp_shuffle_call(
         return builder(value, control, width, span=span)
     except (ValueError, RuntimeError) as error:
         message = str(error)
-        wrapper = error_class_of_spec_message(message) or CommonExternal
-        raise wrapper(message, span=span, parser_retry=True) from error
+        raise (error_class_of_spec_message(message) or CommonExternal)(
+            message, span=span, parser_retry=True
+        ) from error
 
 
 def _register_warp_shuffle_parser(
@@ -907,25 +887,10 @@ def _parse_atomic_call(
 ) -> Expr:
     """Parse one ``pl.simt.atomic_*`` call without loading its target."""
 
-    span = parser.span_tracker.get_span(call)
-    if parser._current_func_type not in (_ir_core.FunctionType.SimtVF, _ir_core.FunctionType.SimtCallee):
-        raise InvalidOperation(
-            f"pl.{op_name}() can only be used inside a SIMT function",
-            span=span,
-            hint="Move SIMT-context-dependent logic into @pl.vector_function(mode=\"simt\").",
-        )
+    span = _validate_simt_call(parser, call, op_name)
 
     short_name = op_name[len("simt."):]
-    expected_args = 1 + len(operand_names)
-    if len(call.args) != expected_args or call.keywords:
-        signature = ", ".join(("target", *operand_names))
-        raise InvalidArgument(
-            f"pl.simt.{short_name}() requires exactly {expected_args} positional arguments",
-            span=span,
-            hint=f"Use pl.simt.{short_name}({signature}).",
-        )
-
-    target_node = call.args[0]
+    target_node = _simt_argument_node(call, 0, "target")
     if not isinstance(target_node, ast.Subscript):
         raise InvalidVal(
             f"pl.simt.{short_name}() target must be a direct Tile or Tensor subscript",
@@ -955,54 +920,46 @@ def _parse_atomic_call(
     target_span = parser.span_tracker.get_span(target_node)
     offset = parser._parse_scalar_subscript_index(container, target_node.slice, target_span)
     operands = [
-        _parse_atomic_operand(parser, op_name, operand_name, operand_node, dtype)
-        for operand_name, operand_node in zip(operand_names, call.args[1:])
+        _parse_atomic_operand(
+            parser,
+            op_name,
+            operand_name,
+            _simt_argument_node(call, index, operand_name),
+            dtype,
+        )
+        for index, operand_name in enumerate(operand_names, start=1)
     ]
     try:
         return builder(container, offset, *operands, span=span)
-    except RuntimeError as exc:
-        raise CommonExternal(message_of(exc), span=span, parser_retry=True) from exc
+    except (ValueError, RuntimeError) as error:
+        message = str(error)
+        raise (error_class_of_spec_message(message) or CommonExternal)(
+            message, span=span, parser_retry=True
+        ) from error
 
 
 @op_impl("simt.cast")
 def _parse_simt_cast(parser: Any, call: ast.Call) -> Expr:
     """Parse ``pl.simt.cast`` while preserving its scalar-specific diagnostics."""
 
-    span = parser.span_tracker.get_span(call)
-    if parser._current_func_type not in (_ir_core.FunctionType.SimtVF, _ir_core.FunctionType.SimtCallee):
-        raise InvalidOperation(
-            "pl.simt.cast() can only be used inside a SIMT function",
-            span=span,
-            hint="Move SIMT-context-dependent logic into @pl.vector_function(mode=\"simt\").",
-        )
-
-    if len(call.args) != 2:
-        raise InvalidArgument(
-            f"pl.simt.cast() requires exactly 2 positional arguments, got {len(call.args)}",
-            span=span,
-            hint="Use pl.simt.cast(value, pl.DT_FP32, mode=pl.RoundMode.CAST_RINT).",
-        )
+    span = _validate_simt_call(parser, call, "simt.cast")
 
     mode_keywords = [kw for kw in call.keywords if kw.arg == "mode"]
-    if len(mode_keywords) != len(call.keywords) or len(mode_keywords) > 1:
-        raise InvalidArgument(
-            "pl.simt.cast() only accepts one optional keyword argument: mode",
-            span=span,
-        )
-
-    value = parser.parse_expression(call.args[0])
+    value_node = _simt_argument_node(call, 0, "value")
+    value = parser.parse_expression(value_node)
     if not isinstance(value, Expr) or not isinstance(value.type, _ir_core.ScalarType):
         raise InvalidType(
             "pl.simt.cast() value must be a scalar expression",
-            span=parser.span_tracker.get_span(call.args[0]),
+            span=parser.span_tracker.get_span(value_node),
             parser_retry=True,
         )
 
-    dtype = parser.parse_expression(call.args[1])
+    dtype_node = _simt_argument_node(call, 1, "dtype")
+    dtype = parser.parse_expression(dtype_node)
     if not isinstance(dtype, _ir_core.DataType):
         raise InvalidType(
             "pl.simt.cast() dtype must be a pl.DT_* value",
-            span=parser.span_tracker.get_span(call.args[1]),
+            span=parser.span_tracker.get_span(dtype_node),
             parser_retry=True,
         )
 
@@ -1018,157 +975,143 @@ def _parse_simt_cast(parser: Any, call: ast.Call) -> Expr:
 
     try:
         return cast(value, dtype, mode, span)
-    except (ValueError, RuntimeError) as err:
-        message = str(err).replace("simt.cast", "pl.simt.cast()")
-        raise CommonExternal(message, span=span, parser_retry=True) from err
+    except (ValueError, RuntimeError) as error:
+        message = str(error).replace("simt.cast", "pl.simt.cast()")
+        raise (error_class_of_spec_message(message) or CommonExternal)(
+            message, span=span, parser_retry=True
+        ) from error
 
 
 @op_impl("simt.bitcast")
 def _parse_simt_bitcast(parser: Any, call: ast.Call) -> Expr:
     """Parse ``pl.simt.bitcast`` with scalar and dtype validation."""
 
-    span = parser.span_tracker.get_span(call)
-    if parser._current_func_type not in (
-        _ir_core.FunctionType.SimtVF,
-        _ir_core.FunctionType.SimtCallee,
-    ):
-        raise InvalidOperation(
-            "pl.simt.bitcast() can only be used inside a SIMT function",
-            span=span,
-            hint="Move SIMT-context-dependent logic into @pl.vector_function(mode=\"simt\").",
-        )
+    span = _validate_simt_call(parser, call, "simt.bitcast")
 
-    if call.keywords:
-        raise InvalidArgument("pl.simt.bitcast() does not accept keyword arguments", span=span)
-    if len(call.args) != 2:
-        raise InvalidArgument(
-            f"pl.simt.bitcast() requires exactly 2 positional arguments, got {len(call.args)}",
-            span=span,
-            hint="Use pl.simt.bitcast(value, pl.DT_UINT32).",
-        )
-
-    value = parser.parse_expression(call.args[0])
+    value_node = _simt_argument_node(call, 0, "value")
+    value = parser.parse_expression(value_node)
     if not isinstance(value, Expr) or not isinstance(value.type, _ir_core.ScalarType):
         raise InvalidType(
             "pl.simt.bitcast() value must be a scalar expression",
-            span=parser.span_tracker.get_span(call.args[0]),
+            span=parser.span_tracker.get_span(value_node),
             parser_retry=True,
         )
 
-    dtype = parser.parse_expression(call.args[1])
+    dtype_node = _simt_argument_node(call, 1, "dtype")
+    dtype = parser.parse_expression(dtype_node)
     if not isinstance(dtype, _ir_core.DataType):
         raise InvalidType(
             "pl.simt.bitcast() dtype must be a pl.DT_* value",
-            span=parser.span_tracker.get_span(call.args[1]),
+            span=parser.span_tracker.get_span(dtype_node),
             parser_retry=True,
         )
 
     try:
         return bitcast(value, dtype, span)
-    except (ValueError, RuntimeError) as err:
-        message = str(err).replace("simt.bitcast", "pl.simt.bitcast()")
-        raise CommonExternal(message, span=span, parser_retry=True) from err
+    except (ValueError, RuntimeError) as error:
+        message = str(error).replace("simt.bitcast", "pl.simt.bitcast()")
+        raise (error_class_of_spec_message(message) or CommonExternal)(
+            message, span=span, parser_retry=True
+        ) from error
 
 
 def _parse_scalar_math(
     parser: Any,
     op_name: str,
     call: ast.Call,
-    expected_args: int,
     builder: Callable[..., Call],
 ) -> Expr:
 
     short_name = op_name[len("simt."):]
-    span = parser.span_tracker.get_span(call)
-    if parser._current_func_type not in (_ir_core.FunctionType.SimtVF, _ir_core.FunctionType.SimtCallee):
-        raise InvalidOperation(
-            f"pl.{op_name}() can only be used inside a SIMT function",
-            span=span,
-            hint="Move SIMT-context-dependent logic into @pl.vector_function(mode=\"simt\").",
-        )
-    if len(call.args) != expected_args or call.keywords:
-        raise InvalidArgument(
-            f"pl.simt.{short_name}() requires exactly {expected_args} positional argument"
-            f"{'s' if expected_args != 1 else ''}",
-            span=span,
-        )
+    span = _validate_simt_call(parser, call, op_name)
     args = [parser.parse_expression(arg) for arg in call.args]
-    for index, (arg, arg_node) in enumerate(zip(args, call.args)):
+    kwargs = {keyword.arg: parser.parse_expression(keyword.value) for keyword in call.keywords}
+    parsed_arguments = [
+        (arg, arg_node, f"argument {index + 1}")
+        for index, (arg, arg_node) in enumerate(zip(args, call.args))
+    ]
+    parsed_arguments.extend(
+        (kwargs[keyword.arg], keyword.value, f"argument '{keyword.arg}'") for keyword in call.keywords
+    )
+    for arg, arg_node, argument_label in parsed_arguments:
         if not isinstance(arg, Expr) or not isinstance(arg.type, _ir_core.ScalarType):
-            raise InvalidVal(
-                f"pl.simt.{short_name}() argument {index + 1} must be a scalar expression",
+            raise InvalidType(
+                f"pl.simt.{short_name}() {argument_label} must be a scalar expression",
                 span=parser.span_tracker.get_span(arg_node),
                 hint="Subscript a Tile or Tensor first to obtain one scalar element.",
                 parser_retry=True,
             )
     try:
-        return builder(*args, span=span)
-    except (ValueError, RuntimeError) as err:
-        raise CommonExternal(message_of(err), span=span, parser_retry=True) from err
+        return builder(*args, **kwargs, span=span)
+    except (ValueError, RuntimeError) as error:
+        message = str(error)
+        raise (error_class_of_spec_message(message) or CommonExternal)(
+            message, span=span, parser_retry=True
+        ) from error
 
 
-def _register_scalar_math_parser(op_name: str, expected_args: int, builder: Callable[..., Call]) -> None:
+def _register_scalar_math_parser(op_name: str, builder: Callable[..., Call]) -> None:
     """Register one SIMT scalar-math op using the shared parser."""
 
     @op_impl(op_name)
     def _parser_impl(parser: Any, call: ast.Call) -> Expr:
-        return _parse_scalar_math(parser, op_name, call, expected_args, builder)
+        return _parse_scalar_math(parser, op_name, call, builder)
 
 
-_register_scalar_math_parser("simt.abs", 1, abs)
-_register_scalar_math_parser("simt.min", 2, min)
-_register_scalar_math_parser("simt.max", 2, max)
-_register_scalar_math_parser("simt.sqrt", 1, sqrt)
-_register_scalar_math_parser("simt.rsqrt", 1, rsqrt)
-_register_scalar_math_parser("simt.exp", 1, exp)
-_register_scalar_math_parser("simt.exp2", 1, exp2)
-_register_scalar_math_parser("simt.log", 1, log)
-_register_scalar_math_parser("simt.log2", 1, log2)
-_register_scalar_math_parser("simt.log1p", 1, log1p)
-_register_scalar_math_parser("simt.sin", 1, sin)
-_register_scalar_math_parser("simt.cos", 1, cos)
-_register_scalar_math_parser("simt.tanh", 1, tanh)
-_register_scalar_math_parser("simt.rint", 1, rint)
-_register_scalar_math_parser("simt.round", 1, round)
-_register_scalar_math_parser("simt.floor", 1, floor)
-_register_scalar_math_parser("simt.ceil", 1, ceil)
-_register_scalar_math_parser("simt.trunc", 1, trunc)
-_register_scalar_math_parser("simt.isnan", 1, isnan)
-_register_scalar_math_parser("simt.isinf", 1, isinf)
-_register_scalar_math_parser("simt.isfinite", 1, isfinite)
-_register_scalar_math_parser("simt.popcount", 1, popcount)
-_register_scalar_math_parser("simt.mul_hi", 2, mul_hi)
-_register_scalar_math_parser("simt.exp10", 1, exp10)
-_register_scalar_math_parser("simt.log10", 1, log10)
-_register_scalar_math_parser("simt.rcp", 1, rcp)
-_register_scalar_math_parser("simt.tan", 1, tan)
-_register_scalar_math_parser("simt.atan", 1, atan)
-_register_scalar_math_parser("simt.expm1", 1, expm1)
-_register_scalar_math_parser("simt.logb", 1, logb)
-_register_scalar_math_parser("simt.cosh", 1, cosh)
-_register_scalar_math_parser("simt.acos", 1, acos)
-_register_scalar_math_parser("simt.sinh", 1, sinh)
-_register_scalar_math_parser("simt.asin", 1, asin)
-_register_scalar_math_parser("simt.cbrt", 1, cbrt)
-_register_scalar_math_parser("simt.max_nan", 2, max_nan)
-_register_scalar_math_parser("simt.min_nan", 2, min_nan)
-_register_scalar_math_parser("simt.atan2", 2, atan2)
-_register_scalar_math_parser("simt.copysign", 2, copysign)
-_register_scalar_math_parser("simt.nextafter", 2, nextafter)
-_register_scalar_math_parser("simt.tanpi", 1, tanpi)
-_register_scalar_math_parser("simt.atanh", 1, atanh)
-_register_scalar_math_parser("simt.cospi", 1, cospi)
-_register_scalar_math_parser("simt.acosh", 1, acosh)
-_register_scalar_math_parser("simt.sinpi", 1, sinpi)
-_register_scalar_math_parser("simt.asinh", 1, asinh)
-_register_scalar_math_parser("simt.rcbrt", 1, rcbrt)
-_register_scalar_math_parser("simt.ilogb", 1, ilogb)
-_register_scalar_math_parser("simt.signbit", 1, signbit)
-_register_scalar_math_parser("simt.fmod", 2, fmod)
-_register_scalar_math_parser("simt.fma", 3, fma)
-_register_scalar_math_parser("simt.warp_reduce_add", 1, warp_reduce_add)
-_register_scalar_math_parser("simt.warp_reduce_max", 1, warp_reduce_max)
-_register_scalar_math_parser("simt.warp_reduce_min", 1, warp_reduce_min)
+_register_scalar_math_parser("simt.abs", abs)
+_register_scalar_math_parser("simt.min", min)
+_register_scalar_math_parser("simt.max", max)
+_register_scalar_math_parser("simt.sqrt", sqrt)
+_register_scalar_math_parser("simt.rsqrt", rsqrt)
+_register_scalar_math_parser("simt.exp", exp)
+_register_scalar_math_parser("simt.exp2", exp2)
+_register_scalar_math_parser("simt.log", log)
+_register_scalar_math_parser("simt.log2", log2)
+_register_scalar_math_parser("simt.log1p", log1p)
+_register_scalar_math_parser("simt.sin", sin)
+_register_scalar_math_parser("simt.cos", cos)
+_register_scalar_math_parser("simt.tanh", tanh)
+_register_scalar_math_parser("simt.rint", rint)
+_register_scalar_math_parser("simt.round", round)
+_register_scalar_math_parser("simt.floor", floor)
+_register_scalar_math_parser("simt.ceil", ceil)
+_register_scalar_math_parser("simt.trunc", trunc)
+_register_scalar_math_parser("simt.isnan", isnan)
+_register_scalar_math_parser("simt.isinf", isinf)
+_register_scalar_math_parser("simt.isfinite", isfinite)
+_register_scalar_math_parser("simt.popcount", popcount)
+_register_scalar_math_parser("simt.mul_hi", mul_hi)
+_register_scalar_math_parser("simt.exp10", exp10)
+_register_scalar_math_parser("simt.log10", log10)
+_register_scalar_math_parser("simt.rcp", rcp)
+_register_scalar_math_parser("simt.tan", tan)
+_register_scalar_math_parser("simt.atan", atan)
+_register_scalar_math_parser("simt.expm1", expm1)
+_register_scalar_math_parser("simt.logb", logb)
+_register_scalar_math_parser("simt.cosh", cosh)
+_register_scalar_math_parser("simt.acos", acos)
+_register_scalar_math_parser("simt.sinh", sinh)
+_register_scalar_math_parser("simt.asin", asin)
+_register_scalar_math_parser("simt.cbrt", cbrt)
+_register_scalar_math_parser("simt.max_nan", max_nan)
+_register_scalar_math_parser("simt.min_nan", min_nan)
+_register_scalar_math_parser("simt.atan2", atan2)
+_register_scalar_math_parser("simt.copysign", copysign)
+_register_scalar_math_parser("simt.nextafter", nextafter)
+_register_scalar_math_parser("simt.tanpi", tanpi)
+_register_scalar_math_parser("simt.atanh", atanh)
+_register_scalar_math_parser("simt.cospi", cospi)
+_register_scalar_math_parser("simt.acosh", acosh)
+_register_scalar_math_parser("simt.sinpi", sinpi)
+_register_scalar_math_parser("simt.asinh", asinh)
+_register_scalar_math_parser("simt.rcbrt", rcbrt)
+_register_scalar_math_parser("simt.ilogb", ilogb)
+_register_scalar_math_parser("simt.signbit", signbit)
+_register_scalar_math_parser("simt.fmod", fmod)
+_register_scalar_math_parser("simt.fma", fma)
+_register_scalar_math_parser("simt.warp_reduce_add", warp_reduce_add)
+_register_scalar_math_parser("simt.warp_reduce_max", warp_reduce_max)
+_register_scalar_math_parser("simt.warp_reduce_min", warp_reduce_min)
 
 
 @op_impl("simt.atomic_add")

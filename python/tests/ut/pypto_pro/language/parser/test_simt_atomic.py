@@ -16,7 +16,7 @@ delayed ``pl.vector_function(mode="simt")`` parsing so their types are inferred 
 arguments.
 """
 
-from pypto_pro._errors import CommonExternal, InvalidType, InvalidVal, NotSupported
+from pypto_pro._errors import InvalidType, InvalidVal, NotSupported
 import pypto_pro.language as pl
 import pytest
 
@@ -337,7 +337,7 @@ def test_atomic_add_requires_exact_value_dtype():
     def mismatched_value(dst, value: pl.DT_UINT32):
         pl.simt.atomic_add(dst[0, 0], value)
 
-    with pytest.raises(CommonExternal, match="operand 0 dtype must match target dtype"):
+    with pytest.raises(InvalidType, match="operand 0 dtype must match target dtype"):
         _parse_tile_scalar_function(mismatched_value, pl.DT_INT32, pl.DT_UINT32)
 
 
@@ -388,7 +388,7 @@ def test_atomic_cas_requires_exact_compare_dtype():
     ):
         pl.simt.atomic_cas(dst[0, 0], compare, value)
 
-    with pytest.raises(CommonExternal, match="operand 0 dtype must match target dtype"):
+    with pytest.raises(InvalidType, match="operand 0 dtype must match target dtype"):
         _parse_tile_compare_function(mismatched_compare, pl.DT_INT32)
 
 
@@ -397,7 +397,7 @@ def test_atomic_bitwise_rejects_fp32_target():
     def float_bitwise(dst, value: pl.DT_FP32):
         pl.simt.atomic_or(dst[0, 0], value)
 
-    with pytest.raises(CommonExternal, match="atomic_or.*does not support dtype.*UB Tile"):
+    with pytest.raises(NotSupported, match="atomic_or.*does not support dtype.*UB Tile"):
         _parse_tile_scalar_function(float_bitwise, pl.DT_FP32, pl.DT_FP32)
 
 
@@ -406,7 +406,7 @@ def test_atomic_counter_rejects_signed_target():
     def signed_counter(dst, limit: pl.DT_INT32):
         pl.simt.atomic_inc(dst[0, 0], limit)
 
-    with pytest.raises(CommonExternal, match="atomic_inc.*does not support dtype.*UB Tile"):
+    with pytest.raises(NotSupported, match="atomic_inc.*does not support dtype.*UB Tile"):
         _parse_tile_scalar_function(signed_counter, pl.DT_INT32, pl.DT_INT32)
 
 

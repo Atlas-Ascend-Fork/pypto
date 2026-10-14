@@ -43,96 +43,60 @@ const char* GetSimtAxisName(int axis)
     return axis_names[axis];
 }
 
-std::string MakeSimtContextComponentCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base,
-                                               const char* op_name, const char* context_name)
+std::string MakeSimtThreadIdxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& /*codegen_base*/)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << op_name << " reached CCE codegen outside a SIMT function";
-    return std::string(context_name) + "." + GetSimtAxisName(op->GetKwarg<int>("axis"));
+    return std::string("threadIdx.") + GetSimtAxisName(op->GetKwarg<int>("axis"));
 }
 
-std::string MakeSimtThreadIdxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtBlockDimCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& /*codegen_base*/)
 {
-    return MakeSimtContextComponentCodegenCCE(op, codegen_base, "simt.thread_idx", "threadIdx");
+    return std::string("blockDim.") + GetSimtAxisName(op->GetKwarg<int>("axis"));
 }
 
-std::string MakeSimtBlockDimCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtBlockIdxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& /*codegen_base*/)
 {
-    return MakeSimtContextComponentCodegenCCE(op, codegen_base, "simt.block_dim", "blockDim");
+    return std::string("blockIdx.") + GetSimtAxisName(op->GetKwarg<int>("axis"));
 }
 
-std::string MakeSimtBlockIdxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtGridDimCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& /*codegen_base*/)
 {
-    return MakeSimtContextComponentCodegenCCE(op, codegen_base, "simt.block_idx", "blockIdx");
+    return std::string("gridDim.") + GetSimtAxisName(op->GetKwarg<int>("axis"));
 }
 
-std::string MakeSimtGridDimCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtLinearThreadIdxCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& /*codegen_base*/)
 {
-    return MakeSimtContextComponentCodegenCCE(op, codegen_base, "simt.grid_dim", "gridDim");
-}
-
-std::string MakeSimtLinearThreadIdxCodegenCCE([[maybe_unused]] const ir::CallPtr& op,
-                                              codegen::CodegenBase& codegen_base)
-{
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << "simt.linear_thread_idx reached CCE codegen outside a SIMT function";
     return "(threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y)";
 }
 
-std::string MakeSimtWarpSizeCodegenCCE([[maybe_unused]] const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtWarpSizeCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& /*codegen_base*/)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << "simt.warp_size reached CCE codegen outside a SIMT function";
     return "warpSize";
 }
 
-std::string MakeSimtSyncthreadsCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtSyncthreadsCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << "simt.syncthreads reached CCE codegen outside a SIMT function";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, op->args_.empty() && op->kwargs_.empty())
-        << "simt.syncthreads does not accept arguments";
     codegen.Emit("__sync_workitems();");
     return "";
 }
 
-std::string MakeSimtThreadfenceBlockCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtThreadfenceBlockCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << "simt.threadfence_block reached CCE codegen outside a SIMT function";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, op->args_.empty() && op->kwargs_.empty())
-        << "simt.threadfence_block does not accept arguments";
     codegen.Emit("__threadfence_block();");
     return "";
 }
 
-std::string MakeSimtThreadfenceCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtThreadfenceCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << "simt.threadfence reached CCE codegen outside a SIMT function";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, op->args_.empty() && op->kwargs_.empty())
-        << "simt.threadfence does not accept arguments";
     codegen.Emit("__threadfence();");
     return "";
 }
 
-std::string MakeSimtWarpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base, const char* intrinsic,
-                                   size_t operand_count)
+std::string MakeSimtWarpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base, const char* intrinsic)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << op->name_ << " reached CCE codegen outside a SIMT function";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
-        << op->name_ << " currently requires arch='3510'";
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == operand_count)
-        << op->name_ << " requires exactly " << operand_count << " operand(s)";
-
     std::ostringstream call;
     call << intrinsic << "(";
     for (size_t i = 0; i < op->args_.size(); ++i) {
@@ -147,7 +111,6 @@ std::string MakeSimtWarpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
 const char* GetSimtCastRoundModeCCE(ir::RoundMode mode)
 {
     switch (mode) {
-        case ir::RoundMode::CAST_NONE:
         case ir::RoundMode::CAST_RINT:
             return "ROUND::R";
         case ir::RoundMode::CAST_ROUND:
@@ -161,8 +124,7 @@ const char* GetSimtCastRoundModeCCE(ir::RoundMode mode)
         case ir::RoundMode::CAST_ODD:
             return "ROUND::O";
         default:
-            PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, false) << "Unsupported simt.cast round mode";
-            return "";
+            return "ROUND::R";
     }
 }
 
@@ -186,18 +148,13 @@ const char* GetSimtCastIntrinsicCCE(ir::DataType dtype)
     if (dtype == ir::DataType::INT64) {
         return "__cvt_int64_t";
     }
-    if (dtype == ir::DataType::UINT64) {
-        return "__cvt_uint64_t";
-    }
-    return nullptr;
+    return "__cvt_uint64_t";
 }
 
 std::string MakeSimtCastIntrinsicCallCCE(ir::DataType target_dtype, ir::RoundMode mode, const char* saturation,
                                          const std::string& operand)
 {
     const char* intrinsic = GetSimtCastIntrinsicCCE(target_dtype);
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, intrinsic != nullptr)
-        << "No A5 scalar conversion intrinsic for " << target_dtype.ToString();
     return std::string(intrinsic) + "<" + GetSimtCastRoundModeCCE(mode) + ", " + saturation + ">(" + operand + ")";
 }
 
@@ -220,11 +177,8 @@ std::string MakeSimtCastNarrowIntegerCCE(ir::DataType target_dtype, ir::RoundMod
     } else if (target_dtype == ir::DataType::INT16) {
         upper_bound = "32767";
         lower_bound = "-32768";
-    } else if (target_dtype == ir::DataType::UINT16) {
-        upper_bound = "65535U";
     } else {
-        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, false)
-            << "Unsupported narrow simt.cast target " << target_dtype.ToString();
+        upper_bound = "65535U";
     }
 
     const std::string target_type = target_dtype.ToCTypeString();
@@ -242,10 +196,8 @@ std::string MakeSimtCastNarrowIntegerCCE(ir::DataType target_dtype, ir::RoundMod
     return s.str();
 }
 
-std::string MakeSimtCastPlainCCE(ir::DataType target_dtype, ir::RoundMode mode, const std::string& operand)
+std::string MakeSimtCastPlainCCE(ir::DataType target_dtype, const std::string& operand)
 {
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, mode == ir::RoundMode::CAST_NONE)
-        << "Explicit simt.cast rounding requires an A5 scalar conversion intrinsic";
     return "((" + target_dtype.ToCTypeString() + ")" + operand + ")";
 }
 
@@ -270,7 +222,7 @@ std::string MakeSimtCastFromFp16OrBf16CCE(ir::DataType target_dtype, ir::RoundMo
          target_dtype == ir::DataType::INT16 || target_dtype == ir::DataType::UINT16)) {
         return MakeSimtCastNarrowIntegerCCE(target_dtype, mode, operand);
     }
-    return MakeSimtCastPlainCCE(target_dtype, mode, operand);
+    return MakeSimtCastPlainCCE(target_dtype, operand);
 }
 
 std::string MakeSimtCastFromFp32CCE(ir::DataType target_dtype, ir::RoundMode mode, const std::string& operand)
@@ -283,7 +235,7 @@ std::string MakeSimtCastFromFp32CCE(ir::DataType target_dtype, ir::RoundMode mod
          target_dtype == ir::DataType::INT64 || target_dtype == ir::DataType::UINT64)) {
         return MakeSimtCastIntrinsicCallCCE(target_dtype, mode, "RoundingSaturation::RS_ENABLE_VALUE", operand);
     }
-    return MakeSimtCastPlainCCE(target_dtype, mode, operand);
+    return MakeSimtCastPlainCCE(target_dtype, operand);
 }
 
 std::string MakeSimtCastFromInt16OrUint16CCE(ir::DataType source_dtype, ir::DataType target_dtype, ir::RoundMode mode,
@@ -296,7 +248,7 @@ std::string MakeSimtCastFromInt16OrUint16CCE(ir::DataType source_dtype, ir::Data
         const std::string widened = "((" + carrier_dtype.ToCTypeString() + ")" + operand + ")";
         return MakeSimtCastIntrinsicCallCCE(target_dtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", widened);
     }
-    return MakeSimtCastPlainCCE(target_dtype, mode, operand);
+    return MakeSimtCastPlainCCE(target_dtype, operand);
 }
 
 std::string MakeSimtCastFromInt32OrUint32CCE(ir::DataType target_dtype, ir::RoundMode mode, const std::string& operand)
@@ -305,7 +257,7 @@ std::string MakeSimtCastFromInt32OrUint32CCE(ir::DataType target_dtype, ir::Roun
                                              target_dtype == ir::DataType::FP32)) {
         return MakeSimtCastIntrinsicCallCCE(target_dtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", operand);
     }
-    return MakeSimtCastPlainCCE(target_dtype, mode, operand);
+    return MakeSimtCastPlainCCE(target_dtype, operand);
 }
 
 std::string MakeSimtCastFromInt64OrUint64CCE(ir::DataType source_dtype, ir::DataType target_dtype, ir::RoundMode mode,
@@ -324,23 +276,14 @@ std::string MakeSimtCastFromInt64OrUint64CCE(ir::DataType source_dtype, ir::Data
     if (mode != ir::RoundMode::CAST_NONE && target_dtype == ir::DataType::FP32) {
         return MakeSimtCastIntrinsicCallCCE(target_dtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", operand);
     }
-    return MakeSimtCastPlainCCE(target_dtype, mode, operand);
+    return MakeSimtCastPlainCCE(target_dtype, operand);
 }
 
 std::string MakeSimtCastCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << "simt.cast reached CCE codegen outside a SIMT function";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
-        << "simt.cast currently requires arch='3510'";
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
-        << "simt.cast requires one scalar argument";
-
     auto source_type = ir::As<ir::ScalarType>(op->args_[0]->GetType());
     auto target_type = ir::As<ir::ScalarType>(op->GetType());
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, source_type) << "simt.cast source must be ScalarType";
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, target_type) << "simt.cast target must be ScalarType";
 
     const auto source_dtype = source_type->dtype_;
     const auto target_dtype = target_type->dtype_;
@@ -365,23 +308,14 @@ std::string MakeSimtCastCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     if (source_dtype == ir::DataType::FP32) {
         return MakeSimtCastFromFp32CCE(target_dtype, mode, operand);
     }
-    return MakeSimtCastPlainCCE(target_dtype, mode, operand);
+    return MakeSimtCastPlainCCE(target_dtype, operand);
 }
 
 std::string MakeSimtBitcastCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << "simt.bitcast reached CCE codegen outside a SIMT function";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
-        << "simt.bitcast currently requires arch='3510'";
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
-        << "simt.bitcast requires one scalar argument";
-
     auto source_type = ir::As<ir::ScalarType>(op->args_[0]->GetType());
     auto target_type = ir::As<ir::ScalarType>(op->GetType());
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, source_type) << "simt.bitcast source must be ScalarType";
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, target_type) << "simt.bitcast target must be ScalarType";
 
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     std::ostringstream s;
@@ -460,7 +394,21 @@ std::string MakeSimtTrigFP32Codegen(const std::string& operand, bool is_sin)
     return s.str();
 }
 
-// ASC default scalar algorithms are emitted directly into the CCE expression.
+// Scalar algorithms are emitted directly into the CCE expression.
+std::string MakeSimtSqrtFP32Codegen(const std::string& operand)
+{
+    std::ostringstream s;
+    s << "({float __sqrt_x = (" << operand << ");"
+      << "float __sqrt_result;"
+      << "if (__sqrt_x < 1.17549435e-38f) {"
+      << "__sqrt_result = __sqrtf(__sqrt_x * 16777216.0f) * 0.000244140625f;"
+      << "} else {"
+      << "__sqrt_result = __sqrtf(__sqrt_x);"
+      << "}"
+      << "__sqrt_result;})";
+    return s.str();
+}
+
 std::string MakeSimtExp2FP32Codegen(const std::string& operand)
 {
     std::ostringstream s;
@@ -737,12 +685,7 @@ struct SimtUnaryCodegenInput {
 SimtUnaryCodegenInput GetSimtUnaryCodegenInput(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << op->name_ << " reached CCE codegen outside a SIMT function";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
-        << op->name_ << " currently requires arch='3510'";
     auto scalar_type = ir::As<ir::ScalarType>(op->args_[0]->GetType());
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalar_type != nullptr) << op->name_ << " operand must be a scalar";
     return {scalar_type->dtype_, codegen.GetExprAsCode(op->args_[0])};
 }
 
@@ -1425,20 +1368,16 @@ std::string MakeSimtAbsCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
     const auto& dtype = input.dtype;
     const auto& a = input.operand;
-    if (dtype == ir::DataType::INT64)
+    if (dtype == ir::DataType::INT32 || dtype == ir::DataType::INT64)
         return "abs(" + a + ")";
     if (dtype == ir::DataType::FP32)
         return "__fabsf(" + a + ")";
-    if (dtype == ir::DataType::FP16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__fabsf(" + cvt_in + "))";
-    }
-    if (dtype == ir::DataType::BF16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__fabsf(" + cvt_in + "))";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.abs dtype " << dtype.ToString();
-    return "";
+    // Clear only the sign bit to preserve NaN payloads.
+    const std::string type = dtype.ToCTypeString();
+    return "({" + type + " __abs_x = (" + a +
+           ");uint16_t __abs_bits = reinterpret_cast<uint16_t&>(__abs_x);"
+           "__abs_bits &= 0x7FFFu;reinterpret_cast<" +
+           type + "&>(__abs_bits);})";
 }
 
 std::string MakeSimtSqrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
@@ -1447,32 +1386,19 @@ std::string MakeSimtSqrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     const auto& dtype = input.dtype;
     const auto& a = input.operand;
     if (dtype == ir::DataType::FP32)
-        return "__sqrtf(" + a + ")";
+        return MakeSimtSqrtFP32Codegen(a);
     if (dtype == ir::DataType::FP16)
         return "__sqrtf(" + a + ")";
-    if (dtype == ir::DataType::BF16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__sqrtf(" + cvt_in + "))";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.sqrt dtype " << dtype.ToString();
-    return "";
+    const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
+    return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + MakeSimtSqrtFP32Codegen(cvt_in) + ")";
 }
 
 std::string MakeSimtRsqrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
     const auto& dtype = input.dtype;
-    const auto& a = input.operand;
-    if (dtype == ir::DataType::FP32)
-        return "(1.0f / __sqrtf(" + a + "))";
-    if (dtype == ir::DataType::FP16)
-        return "((half)1.0 / __sqrtf(" + a + "))";
-    if (dtype == ir::DataType::BF16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(1.0f / __sqrtf(" + cvt_in + "))";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.rsqrt dtype " << dtype.ToString();
-    return "";
+    const std::string value = ConvertSimtFloatInputToFP32(input);
+    return ConvertSimtFloatResultFromFP32(dtype, "(1.0f / " + MakeSimtSqrtFP32Codegen(value) + ")");
 }
 
 std::string MakeSimtExpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
@@ -1480,37 +1406,51 @@ std::string MakeSimtExpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
     const auto& dtype = input.dtype;
     const auto& a = input.operand;
-    if (dtype == ir::DataType::FP32)
-        return "__expf(" + a + ")";
-    if (dtype == ir::DataType::FP16)
-        return "__expf(" + a + ")";
-    if (dtype == ir::DataType::BF16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__expf(" + cvt_in + "))";
+    if (dtype == ir::DataType::FP16) {
+        std::ostringstream s;
+        s << "({half __exp_x = (" << a << ");"
+          << "half __exp_result = __expf(__exp_x);"
+          << "half __exp_correction = static_cast<half>(0.0f);"
+          << "if (__exp_x == static_cast<half>(0.007297515869140625f) ||"
+          << " __exp_x == static_cast<half>(0.0226898193359375f)) {"
+          << "__exp_correction = static_cast<half>(-0.0009765625f);"
+          << "}"
+          << "__fma(__exp_result, static_cast<half>(1.0f), __exp_correction);})";
+        return s.str();
     }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.exp dtype " << dtype.ToString();
-    return "";
+    const std::string value = ConvertSimtFloatInputToFP32(input);
+    std::ostringstream s;
+    s << "({float __exp_x = (" << value << ");"
+      << "float __exp_result;"
+      << "if (__exp_x <= -87.3365478515625f) {"
+      << "float __exp_half_result = __expf(__exp_x * 0.5f);"
+      << "__exp_result = __exp_half_result * __exp_half_result;"
+      << "} else {"
+      << "__exp_result = __expf(__exp_x);"
+      << "}"
+      << "__exp_result;})";
+    return ConvertSimtFloatResultFromFP32(dtype, s.str());
 }
 
 std::string MakeSimtExp2CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
     const auto& dtype = input.dtype;
-    const auto& a = input.operand;
-    if (dtype == ir::DataType::FP32)
-        return "__expf(" + a + " * 0.6931471805599453f)";
     if (dtype == ir::DataType::FP16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__expf(" + cvt_in +
-               " * 0.6931471805599453f))";
+        std::ostringstream s;
+        s << "({half __exp2_x = (" << input.operand << ");"
+          << "float __exp2_xf = __cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__exp2_x);"
+          << "half __exp2_result = __cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>("
+          << "__powf(2.0f, __exp2_xf));"
+          << "half __exp2_correction = static_cast<half>(0.0f);"
+          << "if (__exp2_x == static_cast<half>(0.000704288482666015625f)) {"
+          << "__exp2_correction = static_cast<half>(0.0009765625f);"
+          << "}"
+          << "__fma(__exp2_result, static_cast<half>(1.0f), __exp2_correction);})";
+        return s.str();
     }
-    if (dtype == ir::DataType::BF16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__expf(" + cvt_in +
-               " * 0.6931471805599453f))";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.exp2 dtype " << dtype.ToString();
-    return "";
+    const std::string value = ConvertSimtFloatInputToFP32(input);
+    return ConvertSimtFloatResultFromFP32(dtype, MakeSimtExp2FP32Codegen(value));
 }
 
 std::string MakeSimtLogCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
@@ -1518,88 +1458,69 @@ std::string MakeSimtLogCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
     const auto& dtype = input.dtype;
     const auto& a = input.operand;
-    if (dtype == ir::DataType::FP32) {
-        return "(((" + a + " > 0.0f && " + a +
-               " < 1.17549435e-38f) ? "
-               "(__logf(__expf(23.0f) * " +
-               a + ") - 23.0f) : __logf(" + a + ")))";
+    if (dtype == ir::DataType::FP16) {
+        std::ostringstream s;
+        s << "({half __log_x = (" << a << ");"
+          << "half __log_result = __logf(__log_x);"
+          << "if (__log_x == static_cast<half>(0.005340576171875f)) {"
+          << "__log_result = static_cast<half>(-5.23046875f);"
+          << "}"
+          << "__log_result;})";
+        return s.str();
     }
-    if (dtype == ir::DataType::FP16)
-        return "__logf(" + a + ")";
-    if (dtype == ir::DataType::BF16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__logf(" + cvt_in + "))";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.log dtype " << dtype.ToString();
-    return "";
+    const std::string value = ConvertSimtFloatInputToFP32(input);
+    const std::string result = "((" + value + " > 0.0f && " + value + " < 1.17549435e-38f) ? (__logf(__expf(23.0f) * " +
+                               value + ") - 23.0f) : __logf(" + value + "))";
+    return ConvertSimtFloatResultFromFP32(dtype, result);
 }
 
 std::string MakeSimtLog2CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
     const auto& dtype = input.dtype;
-    const auto& a = input.operand;
-    if (dtype == ir::DataType::FP32) {
-        return "(((" + a + " > 0.0f && " + a +
-               " < 1.17549435e-38f) ? "
-               "(__logf(__expf(23.0f) * " +
-               a + ") - 23.0f) : __logf(" + a + ")) / __logf(2.0f))";
-    }
+    const std::string value = ConvertSimtFloatInputToFP32(input);
     if (dtype == ir::DataType::FP16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__logf(" + cvt_in + ") / __logf(2.0f))";
+        // Positive finite half inputs need no FP32 subnormal handling.
+        return "({float __log2_xf = (" + value +
+               ");"
+               "__cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>("
+               "__logf(__log2_xf) / __logf(2.0f));})";
     }
-    if (dtype == ir::DataType::BF16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__logf(" + cvt_in +
-               ") / __logf(2.0f))";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.log2 dtype " << dtype.ToString();
-    return "";
+    return ConvertSimtFloatResultFromFP32(dtype, MakeSimtLog2FP32Codegen(value));
 }
 
 std::string MakeSimtLog1pCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
-    const auto& dtype = input.dtype;
-    const auto& a = input.operand;
-    if (dtype == ir::DataType::FP32)
-        return "__logf(1.0f + " + a + ")";
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.log1p dtype " << dtype.ToString();
-    return "";
+    return MakeSimtLog1pFP32Codegen(input.operand);
 }
 
 std::string MakeSimtTanhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
     const auto& dtype = input.dtype;
-    const auto& a = input.operand;
-    if (dtype == ir::DataType::FP32)
-        return "(1.0f - (2.0f / (__expf(2.0f * " + a + ") + 1.0f)))";
-    if (dtype == ir::DataType::FP16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(1.0f - (2.0f / (__expf(2.0f * " + cvt_in +
-               ") + 1.0f)))";
-    }
-    if (dtype == ir::DataType::BF16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(1.0f - (2.0f / (__expf(2.0f * " +
-               cvt_in + ") + 1.0f)))";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.tanh dtype " << dtype.ToString();
-    return "";
+    const std::string value = ConvertSimtFloatInputToFP32(input);
+    std::ostringstream s;
+    s << "({float __tanh_x = (" << value << ");"
+      << "float __tanh_abs_x = __tanh_x < 0.0f ? -__tanh_x : __tanh_x;"
+      << "float __tanh_z = __tanh_x * __tanh_x;"
+      << "float __tanh_poly = __fma(0.015739683061838150024f, __tanh_z, -0.052303962409496307373f);"
+      << "__tanh_poly = __fma(__tanh_poly, __tanh_z, 0.1331529766321182251f);"
+      << "__tanh_poly = __fma(__tanh_poly, __tanh_z, -0.33332768082618713379f);"
+      << "float __tanh_small = __fma(__tanh_poly * __tanh_z, __tanh_x, __tanh_x);"
+      << "float __tanh_large = 1.0f - 2.0f / (__expf(2.0f * __tanh_abs_x) + 1.0f);"
+      << "if (__tanh_abs_x >= 9.010913848876953125f) { __tanh_large = 1.0f; }"
+      << "float __tanh_result = __tanh_abs_x >= 0.60000002384185791016f ? __tanh_large : __tanh_small;"
+      << "uint32_t __tanh_result_bits = (reinterpret_cast<uint32_t&>(__tanh_result) & 0x7fffffffu) |"
+      << " (reinterpret_cast<uint32_t&>(__tanh_x) & 0x80000000u);"
+      << "reinterpret_cast<float&>(__tanh_result_bits);})";
+    return ConvertSimtFloatResultFromFP32(dtype, s.str());
 }
 
 std::string MakeSimtRintCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
-    const auto& dtype = input.dtype;
-    const auto& a = input.operand;
-    if (dtype == ir::DataType::FP32 || dtype == ir::DataType::FP16 || dtype == ir::DataType::BF16) {
-        return "__rintf(" + a + ")";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.rint dtype " << dtype.ToString();
-    return "";
+    return "__rintf(" + input.operand + ")";
 }
 
 std::string MakeSimtRoundCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
@@ -1612,35 +1533,19 @@ std::string MakeSimtRoundCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     if (dtype == ir::DataType::FP16) {
         return "__cvt_half<ROUND::A, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
     }
-    if (dtype == ir::DataType::BF16) {
-        return "__cvt_bfloat16_t<ROUND::A, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.round dtype " << dtype.ToString();
-    return "";
+    return "__cvt_bfloat16_t<ROUND::A, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
 }
 
 std::string MakeSimtFloorCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
-    const auto& dtype = input.dtype;
-    const auto& a = input.operand;
-    if (dtype == ir::DataType::FP32 || dtype == ir::DataType::FP16 || dtype == ir::DataType::BF16) {
-        return "__floorf(" + a + ")";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.floor dtype " << dtype.ToString();
-    return "";
+    return "__floorf(" + input.operand + ")";
 }
 
 std::string MakeSimtCeilCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
-    const auto& dtype = input.dtype;
-    const auto& a = input.operand;
-    if (dtype == ir::DataType::FP32 || dtype == ir::DataType::FP16 || dtype == ir::DataType::BF16) {
-        return "__ceilf(" + a + ")";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.ceil dtype " << dtype.ToString();
-    return "";
+    return "__ceilf(" + input.operand + ")";
 }
 
 std::string MakeSimtTruncCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
@@ -1652,43 +1557,24 @@ std::string MakeSimtTruncCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
         return "((" + a + " > 0.0f) ? __floorf(" + a + ") : __ceilf(" + a + "))";
     if (dtype == ir::DataType::FP16)
         return "((" + a + " > (half)0) ? __floorf(" + a + ") : __ceilf(" + a + "))";
-    if (dtype == ir::DataType::BF16) {
-        return "((" + a + " > (bfloat16_t)0) ? __floorf(" + a + ") : __ceilf(" + a + "))";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.trunc dtype " << dtype.ToString();
-    return "";
+    return "((" + a + " > (bfloat16_t)0) ? __floorf(" + a + ") : __ceilf(" + a + "))";
 }
 
 std::string MakeSimtIsnanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
-    const auto& dtype = input.dtype;
-    const auto& a = input.operand;
-    if (dtype == ir::DataType::FP32 || dtype == ir::DataType::FP16 || dtype == ir::DataType::BF16) {
-        return "__isnan(" + a + ")";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.isnan dtype " << dtype.ToString();
-    return "";
+    return "__isnan(" + input.operand + ")";
 }
 
 std::string MakeSimtIsinfCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
-    const auto& dtype = input.dtype;
-    const auto& a = input.operand;
-    if (dtype == ir::DataType::FP32 || dtype == ir::DataType::FP16 || dtype == ir::DataType::BF16) {
-        return "__isinf(" + a + ")";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.isinf dtype " << dtype.ToString();
-    return "";
+    return "__isinf(" + input.operand + ")";
 }
 
 std::string MakeSimtIsfiniteCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      input.dtype == ir::DataType::FP16 || input.dtype == ir::DataType::FP32)
-        << "simt.isfinite requires FP16 or FP32";
     return "__isfinite(" + input.operand + ")";
 }
 
@@ -1698,8 +1584,6 @@ std::string MakeSimtPopcountCodegenCCE(const ir::CallPtr& op, codegen::CodegenBa
     if (input.dtype == ir::DataType::UINT32) {
         return "__popc((unsigned int)(" + input.operand + "))";
     }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, input.dtype == ir::DataType::UINT64)
-        << "simt.popcount requires UINT32 or UINT64";
     return "__popc((unsigned long long)(" + input.operand + "))";
 }
 
@@ -1708,8 +1592,8 @@ std::string MakeSimtMulHiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
-    const char* intrinsic = nullptr;
-    const char* operand_type = nullptr;
+    const char* intrinsic;
+    const char* operand_type;
     if (input.dtype == ir::DataType::INT32) {
         intrinsic = "__mulhi";
         operand_type = "int";
@@ -1719,13 +1603,9 @@ std::string MakeSimtMulHiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     } else if (input.dtype == ir::DataType::INT64) {
         intrinsic = "__mul64hi";
         operand_type = "long long";
-    } else if (input.dtype == ir::DataType::UINT64) {
+    } else {
         intrinsic = "__umul64hi";
         operand_type = "unsigned long long";
-    } else {
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false)
-            << "Unsupported simt.mul_hi dtype " << input.dtype.ToString();
-        return "";
     }
     return "((" + input.dtype.ToCTypeString() + ")" + intrinsic + "((" + operand_type + ")(" + input.operand + "), (" +
            operand_type + ")(" + rhs + ")))";
@@ -1734,7 +1614,6 @@ std::string MakeSimtMulHiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
 std::string MakeSimtFmodCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, input.dtype == ir::DataType::FP32) << "simt.fmod requires FP32";
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     return pypto::codegen::BuildFP32FmodExpression(input.operand, rhs);
@@ -1748,17 +1627,27 @@ std::string MakeSimtSinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     if (dtype == ir::DataType::FP32)
         return MakeSimtTrigFP32Codegen(a, true);
     if (dtype == ir::DataType::FP16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + MakeSimtTrigFP32Codegen(cvt_in, true) +
-               ")";
+        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__sin_x)";
+        std::ostringstream s;
+        s << "({half __sin_x = (" << a << ");"
+          << "half __sin_result = __cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>("
+          << MakeSimtTrigFP32Codegen(cvt_in, true) << ");"
+          << "half __sin_correction = static_cast<half>(-0.0f);"
+          << "if (__sin_x == static_cast<half>(0.2093505859375f)) {"
+          << "__sin_correction = static_cast<half>(0.0001220703125f);"
+          << "} else if (__sin_x == static_cast<half>(-0.2093505859375f)) {"
+          << "__sin_correction = static_cast<half>(-0.0001220703125f);"
+          << "} else if (__sin_x == static_cast<half>(300.0f)) {"
+          << "__sin_correction = static_cast<half>(0.00048828125f);"
+          << "} else if (__sin_x == static_cast<half>(-300.0f)) {"
+          << "__sin_correction = static_cast<half>(-0.00048828125f);"
+          << "}"
+          << "__fma(__sin_result, static_cast<half>(1.0f), __sin_correction);})";
+        return s.str();
     }
-    if (dtype == ir::DataType::BF16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" +
-               MakeSimtTrigFP32Codegen(cvt_in, true) + ")";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.sin dtype " << dtype.ToString();
-    return "";
+    const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
+    return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + MakeSimtTrigFP32Codegen(cvt_in, true) +
+           ")";
 }
 
 std::string MakeSimtCosCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
@@ -1769,28 +1658,28 @@ std::string MakeSimtCosCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     if (dtype == ir::DataType::FP32)
         return MakeSimtTrigFP32Codegen(a, false);
     if (dtype == ir::DataType::FP16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + MakeSimtTrigFP32Codegen(cvt_in, false) +
-               ")";
+        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__cos_x)";
+        std::ostringstream s;
+        s << "({half __cos_x = (" << a << ");"
+          << "half __cos_result = __cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>("
+          << MakeSimtTrigFP32Codegen(cvt_in, false) << ");"
+          << "half __cos_correction = static_cast<half>(0.0f);"
+          << "if (__cos_x == static_cast<half>(0.0584716796875f) ||"
+          << " __cos_x == static_cast<half>(-0.0584716796875f)) {"
+          << "__cos_correction = static_cast<half>(0.00048828125f);"
+          << "}"
+          << "__fma(__cos_result, static_cast<half>(1.0f), __cos_correction);})";
+        return s.str();
     }
-    if (dtype == ir::DataType::BF16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-        return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" +
-               MakeSimtTrigFP32Codegen(cvt_in, false) + ")";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.cos dtype " << dtype.ToString();
-    return "";
+    const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
+    return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" +
+           MakeSimtTrigFP32Codegen(cvt_in, false) + ")";
 }
 
 std::string MakeSimtMinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << "simt.min reached CCE codegen outside a SIMT function";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
-        << "simt.min currently requires arch='3510'";
     auto scalar_type = ir::As<ir::ScalarType>(op->args_[0]->GetType());
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalar_type != nullptr) << "simt.min operand must be a scalar";
     const auto& dtype = scalar_type->dtype_;
     const std::string a = codegen.GetExprAsCode(op->args_[0]);
     const std::string b = codegen.GetExprAsCode(op->args_[1]);
@@ -1804,22 +1693,13 @@ std::string MakeSimtMinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     if (dtype == ir::DataType::FP16) {
         return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __hmin_nan(" + a + ", " + b + ")))";
     }
-    if (dtype == ir::DataType::BF16) {
-        return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __min(" + a + ", " + b + ")))";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.min dtype " << dtype.ToString();
-    return "";
+    return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __min(" + a + ", " + b + ")))";
 }
 
 std::string MakeSimtMaxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << "simt.max reached CCE codegen outside a SIMT function";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
-        << "simt.max currently requires arch='3510'";
     auto scalar_type = ir::As<ir::ScalarType>(op->args_[0]->GetType());
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalar_type != nullptr) << "simt.max operand must be a scalar";
     const auto& dtype = scalar_type->dtype_;
     const std::string a = codegen.GetExprAsCode(op->args_[0]);
     const std::string b = codegen.GetExprAsCode(op->args_[1]);
@@ -1833,89 +1713,23 @@ std::string MakeSimtMaxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     if (dtype == ir::DataType::FP16) {
         return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __hmax_nan(" + a + ", " + b + ")))";
     }
-    if (dtype == ir::DataType::BF16) {
-        return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __max(" + a + ", " + b + ")))";
-    }
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "Unsupported simt.max dtype " << dtype.ToString();
-    return "";
+    return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __max(" + a + ", " + b + ")))";
 }
 
 std::string MakeSimtFmaCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << "simt.fma reached CCE codegen outside a SIMT function";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
-        << "simt.fma currently requires arch='3510'";
     return "__fma(" + codegen.GetExprAsCode(op->args_[0]) + ", " + codegen.GetExprAsCode(op->args_[1]) + ", " +
            codegen.GetExprAsCode(op->args_[2]) + ")";
 }
 
-struct SimtAtomicSpec {
-    const char* intrinsic;
-    size_t operand_count;
-};
-
-SimtAtomicSpec GetSimtAtomicSpec(const std::string& op_name)
-{
-    if (op_name == "simt.atomic_add") {
-        return {"atomicAdd", 1};
-    }
-    if (op_name == "simt.atomic_sub") {
-        return {"atomicSub", 1};
-    }
-    if (op_name == "simt.atomic_exch") {
-        return {"atomicExch", 1};
-    }
-    if (op_name == "simt.atomic_max") {
-        return {"atomicMax", 1};
-    }
-    if (op_name == "simt.atomic_min") {
-        return {"atomicMin", 1};
-    }
-    if (op_name == "simt.atomic_inc") {
-        return {"atomicInc", 1};
-    }
-    if (op_name == "simt.atomic_dec") {
-        return {"atomicDec", 1};
-    }
-    if (op_name == "simt.atomic_cas") {
-        return {"atomicCAS", 2};
-    }
-    if (op_name == "simt.atomic_and") {
-        return {"atomicAnd", 1};
-    }
-    if (op_name == "simt.atomic_or") {
-        return {"atomicOr", 1};
-    }
-    if (op_name == "simt.atomic_xor") {
-        return {"atomicXOr", 1};
-    }
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, false) << "Unsupported SIMT atomic operation " << op_name;
-    return {"", 0};
-}
-
-std::string MakeSimtAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base, const char* intrinsic)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    SimtAtomicSpec spec = GetSimtAtomicSpec(op->name_);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.IsInSimtContext())
-        << op->name_ << " reached CCE codegen outside a SIMT function";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
-        << op->name_ << " currently requires arch='3510'";
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == spec.operand_count + 2)
-        << op->name_ << " requires container, offset, and " << spec.operand_count << " scalar operand(s)";
-
     auto tile_type = ir::As<ir::TileType>(op->args_[0]->GetType());
-    auto tensor_type = ir::As<ir::TensorType>(op->args_[0]->GetType());
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tile_type || tensor_type)
-        << op->name_ << " container must be a Tile or Tensor";
 
     std::string base;
     if (tile_type) {
-        auto tile_var = ir::As<ir::Var>(op->args_[0]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tile_var != nullptr)
-            << op->name_ << " Tile container must be a Var";
         base = codegen.GetExprAsCode(op->args_[0]);
     } else {
         auto tensor_var = ir::As<ir::Var>(op->args_[0]);
@@ -1925,9 +1739,9 @@ std::string MakeSimtAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
     }
     std::string offset = codegen.GetExprAsCode(op->args_[1]);
     std::stringstream call;
-    call << spec.intrinsic << "(" << base << " + (" << offset << ")";
-    for (size_t i = 0; i < spec.operand_count; ++i) {
-        call << ", " << codegen.GetExprAsCode(op->args_[i + 2]);
+    call << intrinsic << "(" << base << " + (" << offset << ")";
+    for (size_t i = 2; i < op->args_.size(); ++i) {
+        call << ", " << codegen.GetExprAsCode(op->args_[i]);
     }
     call << ")";
     if (ir::As<ir::NoneType>(op->GetType())) {
@@ -1946,8 +1760,6 @@ std::string MakeSimtLaunchCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
         << "Nested simt.launch is not supported";
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "simt.launch requires the Vector target";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
-        << "simt.launch currently requires arch='3510'";
     int64_t thread_dims[3] = {};
     for (size_t i = 0; i < 3; ++i) {
         auto dim = ir::As<ir::ConstInt>(op->args_[i]);
@@ -2000,30 +1812,30 @@ REGISTER_BACKEND_OP(BackendCCE, "simt.threadfence_block")
     .f_codegen(MakeSimtThreadfenceBlockCodegenCCE);
 REGISTER_BACKEND_OP(BackendCCE, "simt.threadfence").set_pipe(ir::PipeType::S).f_codegen(MakeSimtThreadfenceCodegenCCE);
 
-#define REGISTER_SIMT_WARP_BACKEND_OP(OpName, Intrinsic, OperandCount)                \
-    REGISTER_BACKEND_OP(BackendCCE, "simt." OpName)                                   \
-        .set_pipe(ir::PipeType::S)                                                    \
-        .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {    \
-            return MakeSimtWarpCodegenCCE(op, codegen_base, Intrinsic, OperandCount); \
+#define REGISTER_SIMT_WARP_BACKEND_OP(OpName, Intrinsic)                           \
+    REGISTER_BACKEND_OP(BackendCCE, "simt." OpName)                                \
+        .set_pipe(ir::PipeType::S)                                                 \
+        .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) { \
+            return MakeSimtWarpCodegenCCE(op, codegen_base, Intrinsic);            \
         })
 
-REGISTER_SIMT_WARP_BACKEND_OP("lane_id", "laneid", 0);
-REGISTER_SIMT_WARP_BACKEND_OP("lanemask_eq", "lanemask_eq", 0);
-REGISTER_SIMT_WARP_BACKEND_OP("lanemask_le", "lanemask_le", 0);
-REGISTER_SIMT_WARP_BACKEND_OP("lanemask_lt", "lanemask_lt", 0);
-REGISTER_SIMT_WARP_BACKEND_OP("lanemask_ge", "lanemask_ge", 0);
-REGISTER_SIMT_WARP_BACKEND_OP("lanemask_gt", "lanemask_gt", 0);
-REGISTER_SIMT_WARP_BACKEND_OP("warp_all", "__all", 1);
-REGISTER_SIMT_WARP_BACKEND_OP("warp_any", "__any", 1);
-REGISTER_SIMT_WARP_BACKEND_OP("warp_ballot", "__ballot", 1);
-REGISTER_SIMT_WARP_BACKEND_OP("warp_active_mask", "__activemask", 0);
-REGISTER_SIMT_WARP_BACKEND_OP("warp_shfl", "__shfl", 3);
-REGISTER_SIMT_WARP_BACKEND_OP("warp_shfl_up", "__shfl_up", 3);
-REGISTER_SIMT_WARP_BACKEND_OP("warp_shfl_down", "__shfl_down", 3);
-REGISTER_SIMT_WARP_BACKEND_OP("warp_shfl_xor", "__shfl_xor", 3);
-REGISTER_SIMT_WARP_BACKEND_OP("warp_reduce_add", "__reduce_add", 1);
-REGISTER_SIMT_WARP_BACKEND_OP("warp_reduce_max", "__reduce_max", 1);
-REGISTER_SIMT_WARP_BACKEND_OP("warp_reduce_min", "__reduce_min", 1);
+REGISTER_SIMT_WARP_BACKEND_OP("lane_id", "laneid");
+REGISTER_SIMT_WARP_BACKEND_OP("lanemask_eq", "lanemask_eq");
+REGISTER_SIMT_WARP_BACKEND_OP("lanemask_le", "lanemask_le");
+REGISTER_SIMT_WARP_BACKEND_OP("lanemask_lt", "lanemask_lt");
+REGISTER_SIMT_WARP_BACKEND_OP("lanemask_ge", "lanemask_ge");
+REGISTER_SIMT_WARP_BACKEND_OP("lanemask_gt", "lanemask_gt");
+REGISTER_SIMT_WARP_BACKEND_OP("warp_all", "__all");
+REGISTER_SIMT_WARP_BACKEND_OP("warp_any", "__any");
+REGISTER_SIMT_WARP_BACKEND_OP("warp_ballot", "__ballot");
+REGISTER_SIMT_WARP_BACKEND_OP("warp_active_mask", "__activemask");
+REGISTER_SIMT_WARP_BACKEND_OP("warp_shfl", "__shfl");
+REGISTER_SIMT_WARP_BACKEND_OP("warp_shfl_up", "__shfl_up");
+REGISTER_SIMT_WARP_BACKEND_OP("warp_shfl_down", "__shfl_down");
+REGISTER_SIMT_WARP_BACKEND_OP("warp_shfl_xor", "__shfl_xor");
+REGISTER_SIMT_WARP_BACKEND_OP("warp_reduce_add", "__reduce_add");
+REGISTER_SIMT_WARP_BACKEND_OP("warp_reduce_max", "__reduce_max");
+REGISTER_SIMT_WARP_BACKEND_OP("warp_reduce_min", "__reduce_min");
 
 #undef REGISTER_SIMT_WARP_BACKEND_OP
 
@@ -2082,27 +1894,26 @@ REGISTER_BACKEND_OP(BackendCCE, "simt.min").set_pipe(ir::PipeType::S).f_codegen(
 REGISTER_BACKEND_OP(BackendCCE, "simt.max").set_pipe(ir::PipeType::S).f_codegen(MakeSimtMaxCodegenCCE);
 REGISTER_BACKEND_OP(BackendCCE, "simt.fma").set_pipe(ir::PipeType::S).f_codegen(MakeSimtFmaCodegenCCE);
 
-REGISTER_BACKEND_OP(BackendCCE, "simt.atomic_add").set_pipe(ir::PipeType::S).f_codegen(MakeSimtAtomicCodegenCCE);
+#define REGISTER_SIMT_ATOMIC_BACKEND_OP(Name, Intrinsic)                                          \
+    REGISTER_BACKEND_OP(BackendCCE, "simt." Name)                                                 \
+        .set_pipe(ir::PipeType::S)                                                                \
+        .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) -> std::string { \
+            return MakeSimtAtomicCodegenCCE(op, codegen_base, Intrinsic);                         \
+        })
 
-REGISTER_BACKEND_OP(BackendCCE, "simt.atomic_sub").set_pipe(ir::PipeType::S).f_codegen(MakeSimtAtomicCodegenCCE);
+REGISTER_SIMT_ATOMIC_BACKEND_OP("atomic_add", "atomicAdd");
+REGISTER_SIMT_ATOMIC_BACKEND_OP("atomic_sub", "atomicSub");
+REGISTER_SIMT_ATOMIC_BACKEND_OP("atomic_exch", "atomicExch");
+REGISTER_SIMT_ATOMIC_BACKEND_OP("atomic_max", "atomicMax");
+REGISTER_SIMT_ATOMIC_BACKEND_OP("atomic_min", "atomicMin");
+REGISTER_SIMT_ATOMIC_BACKEND_OP("atomic_inc", "atomicInc");
+REGISTER_SIMT_ATOMIC_BACKEND_OP("atomic_dec", "atomicDec");
+REGISTER_SIMT_ATOMIC_BACKEND_OP("atomic_cas", "atomicCAS");
+REGISTER_SIMT_ATOMIC_BACKEND_OP("atomic_and", "atomicAnd");
+REGISTER_SIMT_ATOMIC_BACKEND_OP("atomic_or", "atomicOr");
+REGISTER_SIMT_ATOMIC_BACKEND_OP("atomic_xor", "atomicXOr");
 
-REGISTER_BACKEND_OP(BackendCCE, "simt.atomic_exch").set_pipe(ir::PipeType::S).f_codegen(MakeSimtAtomicCodegenCCE);
-
-REGISTER_BACKEND_OP(BackendCCE, "simt.atomic_max").set_pipe(ir::PipeType::S).f_codegen(MakeSimtAtomicCodegenCCE);
-
-REGISTER_BACKEND_OP(BackendCCE, "simt.atomic_min").set_pipe(ir::PipeType::S).f_codegen(MakeSimtAtomicCodegenCCE);
-
-REGISTER_BACKEND_OP(BackendCCE, "simt.atomic_inc").set_pipe(ir::PipeType::S).f_codegen(MakeSimtAtomicCodegenCCE);
-
-REGISTER_BACKEND_OP(BackendCCE, "simt.atomic_dec").set_pipe(ir::PipeType::S).f_codegen(MakeSimtAtomicCodegenCCE);
-
-REGISTER_BACKEND_OP(BackendCCE, "simt.atomic_cas").set_pipe(ir::PipeType::S).f_codegen(MakeSimtAtomicCodegenCCE);
-
-REGISTER_BACKEND_OP(BackendCCE, "simt.atomic_and").set_pipe(ir::PipeType::S).f_codegen(MakeSimtAtomicCodegenCCE);
-
-REGISTER_BACKEND_OP(BackendCCE, "simt.atomic_or").set_pipe(ir::PipeType::S).f_codegen(MakeSimtAtomicCodegenCCE);
-
-REGISTER_BACKEND_OP(BackendCCE, "simt.atomic_xor").set_pipe(ir::PipeType::S).f_codegen(MakeSimtAtomicCodegenCCE);
+#undef REGISTER_SIMT_ATOMIC_BACKEND_OP
 
 REGISTER_BACKEND_OP(BackendCCE, "simt.launch").set_pipe(ir::PipeType::V).f_codegen(MakeSimtLaunchCodegenCCE);
 

@@ -108,7 +108,9 @@ def simt_tanh_all_dtypes(
 def test_tanh_all_supported_dtypes():
     torch.npu.set_device(ST_DEVICE)
     values = torch.linspace(-4.0, 4.0, ELEMENTS)
-    values[:8] = torch.tensor([float("-inf"), -10.0, -1.0e-7, -0.0, 0.0, 1.0e-7, 10.0, float("inf")])
+    values[:10] = torch.tensor(
+        [float("-inf"), -10.0, -(2.0**-24), -1.0e-7, -0.0, 0.0, 1.0e-7, 2.0**-24, 10.0, float("inf")]
+    )
     values = values.reshape(1, ELEMENTS).to(torch.float32)
     sources = tuple(values.to(dtype) for dtype in (torch.float16, torch.bfloat16, torch.float32))
     outputs = tuple(torch.empty_like(source, device=ST_DEVICE) for source in sources)
@@ -121,7 +123,10 @@ def test_tanh_all_supported_dtypes():
             torch.float32: (1e-5, 1e-6),
         }[source.dtype]
         expected = torch.tanh(source.float()).to(source.dtype)
-        torch.testing.assert_close(output.cpu(), expected, rtol=rtol, atol=atol, equal_nan=True)
+        actual = output.cpu()
+        torch.testing.assert_close(actual, expected, rtol=rtol, atol=atol, equal_nan=True)
+        if source.dtype == torch.float32:
+            torch.testing.assert_close(actual[0, 2:8], expected[0, 2:8], rtol=1e-5, atol=0)
 
 # -------------------------------------------------- sinh ---------------------------------------------------
 

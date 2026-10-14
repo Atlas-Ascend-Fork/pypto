@@ -40,8 +40,8 @@ pypto_pro.language.simt.warp_shfl_xor(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| value | 输入 | 当前Lane用于交换的标量值，支持DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_BF16和DT_FP32。每个Lane可以传入不同的值。必须按位置传入。 |
-| lane_mask | 输入 | 与当前逻辑Lane ID执行按位异或的掩码。整数常量或DT_INT32类型的Scalar，取值范围为[0, 31]，并且必须小于width。必须按位置传入。异或后选中的目标Lane必须处于当前活跃线程集合中，否则读取结果未定义。 |
+| value | 输入 | 当前Lane用于交换的标量值，支持DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_BF16和DT_FP32。每个Lane可以传入不同的值。 |
+| lane_mask | 输入 | 与当前逻辑Lane ID执行按位异或的掩码。整数常量或DT_INT32类型的Scalar，取值范围为[0, 31]，并且必须小于width。异或后选中的目标Lane必须处于当前活跃线程集合中，否则读取结果未定义。 |
 | width | 输入 | 逻辑子组宽度。整数常量或DT_INT32类型的Scalar，可取1、2、4、8、16或32，默认值为32。width小于32时，一个Warp被划分为多个连续且等宽的逻辑子组。可按位置或使用width关键字传入，但不能同时使用两种方式。 |
 
 ## 约束说明

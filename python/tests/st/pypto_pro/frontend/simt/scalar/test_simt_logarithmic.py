@@ -110,7 +110,20 @@ def simt_log_all_dtypes(
 def test_log_all_supported_dtypes():
     torch.npu.set_device(ST_DEVICE)
     values = torch.linspace(0.125, 8.0, ELEMENTS)
-    values[:8] = torch.tensor([-1.0, -0.0, 0.0, torch.finfo(torch.float32).tiny, 1.0e-7, 1.0, 2.0, float("inf")])
+    values[:10] = torch.tensor(
+        [
+            -1.0,
+            -0.0,
+            0.0,
+            torch.finfo(torch.float32).tiny / 2,
+            torch.finfo(torch.float32).tiny,
+            0.005340576171875,
+            1.0e-7,
+            1.0,
+            2.0,
+            float("inf"),
+        ]
+    )
     values = values.reshape(1, ELEMENTS).to(torch.float32)
     sources = tuple(values.to(dtype) for dtype in (torch.float16, torch.bfloat16, torch.float32))
     outputs = tuple(torch.empty_like(source, device=ST_DEVICE) for source in sources)
@@ -123,7 +136,18 @@ def test_log_all_supported_dtypes():
             torch.float32: (1e-5, 1e-6),
         }[source.dtype]
         expected = torch.log(source.float()).to(source.dtype)
-        torch.testing.assert_close(output.cpu(), expected, rtol=rtol, atol=atol, equal_nan=True)
+        actual = output.cpu()
+        torch.testing.assert_close(actual, expected, rtol=rtol, atol=atol, equal_nan=True)
+        if source.dtype == torch.float16:
+            # Round the high-precision reference directly to IEEE FP16, without an FP32 intermediate.
+            with localcontext() as context:
+                context.prec = 80
+                expected_bits = [
+                    struct.unpack("<h", struct.pack("<e", float(Decimal.from_float(value).ln())))[0]
+                    for value in source[0, 5:6].tolist()
+                ]
+            expected_exact = torch.tensor(expected_bits, dtype=torch.int16)
+            assert torch.equal(actual[0, 5:6].view(torch.int16), expected_exact)
 
 # -------------------------------------------------- log2 ---------------------------------------------------
 
@@ -265,12 +289,17 @@ def simt_log1p_fp32(
 def test_log1p_supported_dtype():
     torch.npu.set_device(ST_DEVICE)
     values = torch.linspace(-0.75, 8.0, ELEMENTS)
-    values[:8] = torch.tensor([-1.0, -0.0, 0.0, -1.0e-7, 1.0e-7, -(2.0**-20), 2.0**-20, 1.0])
+    values[:10] = torch.tensor(
+        [-1.0, -0.0, 0.0, -(2.0**-24), 2.0**-24, -1.0e-7, 1.0e-7, -(2.0**-20), 2.0**-20, 1.0]
+    )
     source = values.to(torch.float32).reshape(1, -1)
     output = torch.empty_like(source, device=ST_DEVICE)
     simt_log1p_fp32(source.to(ST_DEVICE), output)
     torch.npu.synchronize()
-    torch.testing.assert_close(output.cpu(), torch.log1p(source), rtol=2e-5, atol=1e-6)
+    actual = output.cpu()
+    expected = torch.log1p(source)
+    torch.testing.assert_close(actual, expected, rtol=2e-5, atol=1e-6)
+    torch.testing.assert_close(actual[0, 3:9], expected[0, 3:9], rtol=2e-5, atol=0)
 
 # -------------------------------------------------- log10 --------------------------------------------------
 
