@@ -652,6 +652,8 @@ inline constexpr char kMemorySpaceMat[] = "Mat";
 inline constexpr char kMemorySpaceLeft[] = "Left";
 inline constexpr char kMemorySpaceRight[] = "Right";
 inline constexpr char kMemorySpaceAcc[] = "Acc";
+inline constexpr char kMemorySpaceScaling[] = "Scaling";
+inline constexpr char kMemorySpaceBias[] = "Bias";
 inline constexpr char kMemorySpaceScaleLeft[] = "ScaleLeft";
 inline constexpr char kMemorySpaceScaleRight[] = "ScaleRight";
 
