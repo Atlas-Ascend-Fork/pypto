@@ -163,13 +163,13 @@ INLINE void PipeSyncPre(uint8_t mixResourceType, uint8_t lastMixResourceType)
     wait_intra_block(PIPE_S, EVENT_ID15); // PIPE_S阻塞后续指令下发，避免与后续的CCE指令EventId冲突
 #else
     if (mixResourceType == static_cast<uint8_t>(MixResourceType::MIX_1C2V)) {
-        set_intra_block(PIPE_S, EVENT_ID15);                       // 作用于Vec0
-        set_intra_block(PIPE_S, EVENT_ID15 + EVENT_NUMS_PER_AIV);  // 作用与Vec1
         wait_intra_block(PIPE_S, EVENT_ID15);                      // 等待Vec0
         wait_intra_block(PIPE_S, EVENT_ID15 + EVENT_NUMS_PER_AIV); // 等待Vec1
+        set_intra_block(PIPE_S, EVENT_ID15);                       // 作用于Vec0
+        set_intra_block(PIPE_S, EVENT_ID15 + EVENT_NUMS_PER_AIV);  // 作用与Vec1
     } else {
-        set_intra_block(PIPE_S, EVENT_ID15);  // 作用于Vec0
         wait_intra_block(PIPE_S, EVENT_ID15); // 等待Vec0
+        set_intra_block(PIPE_S, EVENT_ID15);  // 作用于Vec0
     }
 #endif
 }
