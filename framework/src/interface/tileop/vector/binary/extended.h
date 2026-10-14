@@ -219,8 +219,8 @@ TILEOP void TPow(T0 dst, T1 src0, T2 src1, T3 tmp)
         constexpr auto src0TileW = TileOp::GetTensorTileShapeDim<T1, DIM_5TH, MAX_DIMS>();
         constexpr auto src1TileH = TileOp::GetTensorTileShapeDim<T2, DIM_4TH, MAX_DIMS>();
         constexpr auto src1TileW = TileOp::GetTensorTileShapeDim<T2, DIM_5TH, MAX_DIMS>();
-        constexpr auto computeTileH = src0TileH;
-        constexpr auto computeTileW = src0TileW;
+        constexpr auto computeTileH = dstTileH;
+        constexpr auto computeTileW = dstTileW;
         constexpr auto dataTypeSize = sizeof(typename T0::Type);
         constexpr auto floatSlot = computeTileH * computeTileW * dataTypeSize; // bytes, 32B-aligned
         constexpr auto BITS_PER_BYTE = TileOp::BITS_PER_BYTE;

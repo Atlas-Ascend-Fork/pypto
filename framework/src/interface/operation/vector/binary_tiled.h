@@ -111,6 +111,11 @@ void AddTiledBinaryOperation(Function& function, const TileShape& tileShape, Log
             }
             op->SetAttribute(OpAttributeKey::brcOperand, brcOperand);
         }
+        if (opName == "POW" && result->Datatype() == DT_FP32 &&
+            Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_2201) {
+            std::vector<bool> dimMap(op->iOperand.size(), true);
+            op->SetAttr(OpAttributeKey::rowPad, dimMap);
+        }
     }
     if constexpr (T == BinaryOpType::DIV || T == BinaryOpType::MOD || T == BinaryOpType::POW ||
                   T == BinaryOpType::REM) {
