@@ -16,7 +16,6 @@
 #include "machine/runtime/runner/device_perf.h"
 #include "tilefwk/pypto_fwk_log.h"
 #include "adapter/api/runtime_api.h"
-#include "interface/configs/config_manager.h"
 #include "machine/runtime/runner/dump_device_perf.h"
 #include "machine/runtime/runner/runtime_utils.h"
 #include "machine/runtime/memory_utils/memory_pool.h"
@@ -164,21 +163,6 @@ int DevicePerf::SetDebugEnable(const ToSubMachineConfig& profLevelConfig)
     MACHINE_LOGD("Set debug enable aicore 0 devPtr: %p", perfData_[0]);
     g_isInitPerfData = true;
     return 0;
-}
-
-bool DevicePerf::RunPrepare() const
-{
-    bool ret = true;
-    if (config::IsRuntimeDebugAllEnabled() || ENABLE_PERF_TRACE) {
-        for (uint32_t i = 0; i < GetPerfDataSize(); i++) {
-            ret = RuntimeMemcpyDirect(
-                      (reinterpret_cast<uint8_t*>(args_.sharedBuffer + sizeof(uint64_t) * SHAK_BUF_DFX_DATA_INDEX)) +
-                          i * SHARED_BUFFER_SIZE,
-                      sizeof(uint64_t), reinterpret_cast<const uint8_t*>(&perfData_[i]), sizeof(uint64_t),
-                      RtMemcpyKind::HOST_TO_DEVICE) == RT_SUCCESS;
-        }
-    }
-    return ret;
 }
 
 void DevicePerf::StartMachinePerfTraceDumpThread()

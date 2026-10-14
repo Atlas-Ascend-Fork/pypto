@@ -27,7 +27,6 @@ public:
     DevicePerf();
     ~DevicePerf();
     void InitAndStartDumpThread(const DeviceArgs& args);
-    bool RunPrepare() const;
     void ResetPerData() const;
     void SyncProfData(bool debugEnable);
     int SetDebugEnable(const ToSubMachineConfig& profLevelConfig);

@@ -104,19 +104,6 @@ TEST(DevicePerfTest, ResetPerData_WithPerfData)
     perf.ResetPerData();
 }
 
-TEST(DevicePerfTest, RunPrepare_DebugMode)
-{
-    DevicePerf perf;
-    DeviceArgs args{};
-    args.nrAic = 1;
-    args.nrAiv = 0;
-    args.sharedBuffer = 0x1000;
-    perf.args_ = args;
-    perf.perfData_.push_back(nullptr);
-    bool result = perf.RunPrepare();
-    EXPECT_TRUE(result);
-}
-
 TEST(DevicePerfTest, ResetMetrics_WithAicpuPerfAddr)
 {
     DevicePerf perf;
