@@ -218,8 +218,8 @@ TILEOP void ErfCompute(T0 dst, T1 tmp, T2 src)
                 pto::TASSIGN(src0Tile,
                              (uint64_t)(src.GetAddr() + GenTileOffset(src, tileOffsets) * sizeof(typename T2::Type)));
                 pto::TASSIGN(tmp0Tile, (uint64_t)(tmp.GetAddr()));
-                pto::TASSIGN(tmp2Tile, (uint64_t)(tmp.GetAddr() + TMP2_SLOT * tileW * tileH * sizeof(float)));
-                pto::TASSIGN(tmp3Tile, (uint64_t)(tmp.GetAddr() + tileW * tileH * sizeof(float)));
+                pto::TASSIGN(tmp2Tile, (uint64_t)(tmp.GetAddr() + TMP2_SLOT * tileW * shape3 * sizeof(float)));
+                pto::TASSIGN(tmp3Tile, (uint64_t)(tmp.GetAddr() + tileW * shape3 * sizeof(float)));
 #ifdef __DAV_V220
                 ErfPadeCompute(dstTile, tmp0Tile, tmp3Tile, tmp2Tile, src0Tile);
 #else
@@ -408,9 +408,9 @@ TILEOP void TErfc(T0 dst, T1 tmp, T2 src)
                 AssignElementwiseOperandExecTile(srcExecTile, src, tileOffsets);
 
                 pto::TASSIGN(tmpCompBuf1, (uint64_t)(tmp.GetAddr()));
-                pto::TASSIGN(tmpCompBuf2, (uint64_t)(tmp.GetAddr() + 1 * tileW * tileH * dstTypeSize));
-                pto::TASSIGN(tmpCompBuf3, (uint64_t)(tmp.GetAddr() + TMP_BUFFER3_SLOT * tileW * tileH * dstTypeSize));
-                pto::TASSIGN(tmpCompBuf4, (uint64_t)(tmp.GetAddr() + TMP_BUFFER4_SLOT * tileW * tileH * dstTypeSize));
+                pto::TASSIGN(tmpCompBuf2, (uint64_t)(tmp.GetAddr() + 1 * tileW * shape3 * dstTypeSize));
+                pto::TASSIGN(tmpCompBuf3, (uint64_t)(tmp.GetAddr() + TMP_BUFFER3_SLOT * tileW * shape3 * dstTypeSize));
+                pto::TASSIGN(tmpCompBuf4, (uint64_t)(tmp.GetAddr() + TMP_BUFFER4_SLOT * tileW * shape3 * dstTypeSize));
 
                 ErfcClip(dstTile, srcExecTile);
                 ErfcPreCompute(dstTile, dstTile, tmpCompBuf1);

@@ -202,8 +202,8 @@ TILEOP void TTanh(T0 dst, T1 src, T3 tmp)
     constexpr auto tmpTileW = (computeTileW + alignFp32 - 1) / alignFp32 * alignFp32;
     constexpr auto cmpTileW = (computeTileW / alignFp32 + TileOp::BLOCK_SIZE - 1) / TileOp::BLOCK_SIZE *
                               TileOp::BLOCK_SIZE;
-    constexpr auto tmpOffset = computeTileH * tmpTileW;
-    constexpr auto cmpOffset = computeTileH * cmpTileW;
+    auto tmpOffset = dstShape3 * tmpTileW;
+    auto cmpOffset = dstShape3 * cmpTileW;
     constexpr size_t FP32_CMP_SLOT = 2;
     constexpr size_t CAST_TMP3_SLOT = 2;
     constexpr size_t CAST_TMP4_SLOT = 3;

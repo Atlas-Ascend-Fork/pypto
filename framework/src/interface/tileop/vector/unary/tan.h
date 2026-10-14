@@ -227,7 +227,7 @@ TILEOP void Ttan(T0 dst, T1 src, T2 tmp)
     Tmp7Tile tmp7Tile(srcExecShape3, srcExecShape4);
     Tmp8Tile tmp8Tile(srcExecShape3, srcExecShape4);
 
-    constexpr auto tmpFp32TileSize = srcTileH * tmpTileW32Bit * sizeof(float);
+    auto tmpFp32TileSize = dstShape3 * tmpTileW32Bit * sizeof(float);
     constexpr size_t TMP2_SLOT = 2;
     constexpr size_t TMP3_SLOT = 3;
     constexpr size_t TMP4_SLOT = 4;

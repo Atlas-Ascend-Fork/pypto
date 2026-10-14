@@ -65,21 +65,21 @@ TILEOP void TGcd(T0 dst, T1 src0, T2 src1, T3 temp)
     //   f/fb: 两个 f32 槽（近似商与 refine 除法）
     //   之后依次为：冻结掩码、修正掩码、TSEL tmp（256B+64B 保护带）
     // 计算槽按 CalcType 位宽（int8/uint8 输入为 int16），f32 槽与掩码固定大小
-    constexpr auto calcStride = tileH * tileW * sizeof(CalcType);
-    constexpr auto floatBytes = tileH * tileW * sizeof(float);
-    constexpr auto maskBytes = tileH * maskCols;
+    auto calcStride = shape3 * tileW * sizeof(CalcType);
+    auto floatBytes = shape3 * tileW * sizeof(float);
+    auto maskBytes = shape3 * maskCols;
     constexpr size_t R_SLOT = 2;
     constexpr size_t Q_SLOT = 3;
     constexpr size_t SCRATCH_SLOT = 4;
     constexpr size_t AUX_SLOT = 5;
     constexpr size_t FLOAT_SLOT = 6;
-    constexpr auto fBase = FLOAT_SLOT * calcStride;
-    constexpr auto fbBase = fBase + floatBytes;
-    constexpr auto maskBase = fbBase + floatBytes;
-    constexpr auto bNegBase = maskBase + maskBytes;
-    constexpr auto oppBase = bNegBase + maskBytes;
-    constexpr auto fixMaskBase = oppBase + maskBytes;
-    constexpr auto selTmpBase = fixMaskBase + maskBytes;
+    auto fBase = FLOAT_SLOT * calcStride;
+    auto fbBase = fBase + floatBytes;
+    auto maskBase = fbBase + floatBytes;
+    auto bNegBase = maskBase + maskBytes;
+    auto oppBase = bNegBase + maskBytes;
+    auto fixMaskBase = oppBase + maskBytes;
+    auto selTmpBase = fixMaskBase + maskBytes;
 
     CalcTile aTile(shape3, shape4);
     CalcTile bTile(shape3, shape4);

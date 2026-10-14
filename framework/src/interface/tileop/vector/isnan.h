@@ -84,13 +84,13 @@ TILEOP void TIsNan(T0 dst, T1 src, T2 tmp)
     // The operation layer always reserves three FP32-sized blocks plus one 32-byte scalar block,
     // laid out back to back. We mirror that fixed layout here regardless of dtype: the cast block is
     // simply left unused for fp16/fp32. Keeping the layout dtype-independent keeps both sides in sync.
-    constexpr size_t blockBytes = srcTileH * tmpTileW * sizeof(float);
+    size_t blockBytes = shape3 * tmpTileW * sizeof(float);
     constexpr size_t castOffset = 0;
-    constexpr size_t maskOffset = blockBytes;
+    size_t maskOffset = blockBytes;
     constexpr size_t RESULT_SLOT = 2;
     constexpr size_t SCALAR_TMP_SLOT = 3;
-    constexpr size_t resultOffset = RESULT_SLOT * blockBytes;
-    constexpr size_t scalarTmpOffset = SCALAR_TMP_SLOT * blockBytes;
+    size_t resultOffset = RESULT_SLOT * blockBytes;
+    size_t scalarTmpOffset = SCALAR_TMP_SLOT * blockBytes;
 
     using DstTile = pto::Tile<pto::TileType::Vec, uint8_t, dstTileH, dstTileW, pto::BLayout::RowMajor, -1, -1>;
     using SrcTile = pto::Tile<pto::TileType::Vec, typename T1::Type, srcTileH, srcTileW, pto::BLayout::RowMajor, -1,

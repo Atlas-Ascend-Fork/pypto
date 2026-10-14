@@ -173,7 +173,7 @@ TILEOP void TAsinAcosImpl(T0 dst, T1 src, T2 tmp)
     DataTileDefine tmp2Tile(shape3, shape4); // shared reduced argument
     MaskTileDefine maskTile(shape3, shape4);
 
-    constexpr size_t tmpStride = tileH * tileW * dstTypeSize;
+    size_t tmpStride = shape3 * tileW * dstTypeSize;
     constexpr size_t TMP2_SLOT = 2;
     constexpr size_t MASK_SLOT = 3;
     pto::TASSIGN(tmp0Tile, (uint64_t)(tmp.GetAddr() + 0 * tmpStride));
@@ -230,8 +230,7 @@ TILEOP void TASinh(T0 dst, T1 src, T2 tmp)
     constexpr float CONST_COMPARE_VALUE_MAX = 3.4028235e34f;
     constexpr float CONST_LOG_TWO_VALUE = 6.93147180559945286227e-01f;
 
-    constexpr auto tileShapeSize = TileOp::GetAnyAxisMergeResult<
-        DIM_1ST, Std::tuple_size<typename T0::TileShape>::value, typename T0::TileShape>();
+    auto tileShapeSize = dstShape0 * dstShape1 * dstShape2 * dstShape3 * tileW;
 
     using DataTileDefine = pto::Tile<pto::TileType::Vec, typename T0::Type, tileH, tileW, pto::BLayout::RowMajor, -1,
                                      -1>;
@@ -344,8 +343,7 @@ TILEOP void TACosh(T0 dst, T1 src, T2 tmp)
     constexpr auto tileW = TileOp::GetTensorTileShapeDim<T0, DIM_5TH, MAX_DIMS>();
     constexpr auto dstTypeSize = sizeof(typename T0::Type);
 
-    constexpr auto tileShapeSize = TileOp::GetAnyAxisMergeResult<
-        DIM_1ST, Std::tuple_size<typename T0::TileShape>::value, typename T0::TileShape>();
+    auto tileShapeSize = dstShape0 * dstShape1 * dstShape2 * dstShape3 * tileW;
 
     using DataTileDefine = pto::Tile<pto::TileType::Vec, typename T0::Type, tileH, tileW, pto::BLayout::RowMajor, -1,
                                      -1>;

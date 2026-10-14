@@ -36,8 +36,7 @@ TILEOP void TAtanh(T0 dst, T1 src, T2 tmp)
     constexpr auto tileW = TileOp::GetTensorTileShapeDim<T0, DIM_5TH, MAX_DIMS>();
     constexpr auto dstTypeSize = sizeof(typename T0::Type);
 
-    constexpr auto tileShapeSize = TileOp::GetAnyAxisMergeResult<
-        DIM_1ST, Std::tuple_size<typename T0::TileShape>::value, typename T0::TileShape>();
+    auto tileShapeSize = dstShape0 * dstShape1 * dstShape2 * dstShape3 * tileW;
 
     using DataTileDefine = pto::Tile<pto::TileType::Vec, typename T0::Type, tileH, tileW, pto::BLayout::RowMajor, -1,
                                      -1>;

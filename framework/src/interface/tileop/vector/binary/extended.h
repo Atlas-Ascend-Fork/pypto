@@ -222,14 +222,14 @@ TILEOP void TPow(T0 dst, T1 src0, T2 src1, T3 tmp)
         constexpr auto computeTileH = dstTileH;
         constexpr auto computeTileW = dstTileW;
         constexpr auto dataTypeSize = sizeof(typename T0::Type);
-        constexpr auto floatSlot = computeTileH * computeTileW * dataTypeSize; // bytes, 32B-aligned
+        auto floatSlot = dstShape3 * computeTileW * dataTypeSize; // bytes, 32B-aligned
         constexpr auto BITS_PER_BYTE = TileOp::BITS_PER_BYTE;
         constexpr auto MASK_ALIGNMENT = TileOp::BLOCK_SIZE;
         constexpr auto MASK_COUNT = 2;
         constexpr auto maskCols = ((computeTileW + BITS_PER_BYTE - 1) / BITS_PER_BYTE + MASK_ALIGNMENT - 1) /
                                   MASK_ALIGNMENT * MASK_ALIGNMENT;
-        constexpr auto maskSlot = computeTileH * maskCols; // bytes
-        constexpr auto maskBase = MASK_COUNT * floatSlot;
+        auto maskSlot = dstShape3 * maskCols; // bytes
+        auto maskBase = MASK_COUNT * floatSlot;
         using DstDataTile = pto::Tile<pto::TileType::Vec, float, dstTileH, dstTileW, pto::BLayout::RowMajor, -1, -1>;
         using Src0DataTile = pto::Tile<pto::TileType::Vec, float, src0TileH, src0TileW, pto::BLayout::RowMajor, -1, -1>;
         using Src1DataTile = pto::Tile<pto::TileType::Vec, float, src1TileH, src1TileW, pto::BLayout::RowMajor, -1, -1>;

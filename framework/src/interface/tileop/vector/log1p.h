@@ -91,10 +91,10 @@ TILEOP void TLog1p(T0 dst, T1 src, T2 tmp)
                 auto srcOffset = GenTileOffset(src, tileOffsets);
                 pto::TASSIGN(dstTile, (uint64_t)(dst.GetAddr() + dstOffset * dataTypeSize));
                 pto::TASSIGN(srcTile, (uint64_t)(src.GetAddr() + srcOffset * dataTypeSize));
-                pto::TASSIGN(tmp0Tile, (uint64_t)(tmp.GetAddr() + 0 * tileH * tileW * dataTypeSize));
-                pto::TASSIGN(tmp1Tile, (uint64_t)(tmp.GetAddr() + 1 * tileH * tileW * dataTypeSize));
-                pto::TASSIGN(tmp2Tile, (uint64_t)(tmp.GetAddr() + TMP2_SLOT * tileH * tileW * dataTypeSize));
-                pto::TASSIGN(maskTile, (uint64_t)(tmp.GetAddr() + MASK_SLOT * tileH * tileW * dataTypeSize));
+                pto::TASSIGN(tmp0Tile, (uint64_t)(tmp.GetAddr() + 0 * shape3 * tileW * dataTypeSize));
+                pto::TASSIGN(tmp1Tile, (uint64_t)(tmp.GetAddr() + 1 * shape3 * tileW * dataTypeSize));
+                pto::TASSIGN(tmp2Tile, (uint64_t)(tmp.GetAddr() + TMP2_SLOT * shape3 * tileW * dataTypeSize));
+                pto::TASSIGN(maskTile, (uint64_t)(tmp.GetAddr() + MASK_SLOT * shape3 * tileW * dataTypeSize));
                 TLog1pTileImpl(dstTile, srcTile, tmp0Tile, tmp1Tile, tmp2Tile, maskTile);
             }
         }

@@ -95,7 +95,6 @@ TILEOP void TAtan(DST dst, TMP tmp, SRC src)
 {
     size_t dstShape[MAX_DIMS];
     AtanGetShape(dst, dstShape);
-    constexpr auto tileH = TileOp::GetTensorTileShapeDim<DST, DIM_4TH, MAX_DIMS>();
     constexpr auto tileW = TileOp::GetTensorTileShapeDim<DST, DIM_5TH, MAX_DIMS>();
     constexpr auto cmpTileW = ((tileW + AtanConstants::NUM_VALUE_8 - 1) / AtanConstants::NUM_VALUE_8 +
                                AtanConstants::NUM_VALUE_32 - 1) /
@@ -114,8 +113,8 @@ TILEOP void TAtan(DST dst, TMP tmp, SRC src)
                 dstTile.Assign(dst, dstOffset);
                 AssignElementwiseOperandExecTile(srcExecTile, src, dstOffset);
                 auto tmp1Offset = GenTileOffset(dst, dstOffset) * AtanConstants::NUM_VALUE_3;
-                auto tmp2Offset = tmp1Offset + tileH * tileW;
-                auto cmpOffset = tmp2Offset + tileH * tileW;
+                auto tmp2Offset = tmp1Offset + dstShape[DIM_4TH] * tileW;
+                auto cmpOffset = tmp2Offset + dstShape[DIM_4TH] * tileW;
                 tmp1Tile.Assign(tmp.GetAddr(), tmp1Offset);
                 tmp2Tile.Assign(tmp.GetAddr(), tmp2Offset);
                 pto::TASSIGN(cmpTile, tmp.GetAddr() + cmpOffset * sizeof(typename DST::Type));
@@ -237,9 +236,9 @@ TILEOP void TAtan2(DST dst, SRC0 src0, SRC1 src1, TMP tmp)
                 pto::TASSIGN(dstUIntTile, dst.GetAddr() + tileOffset * dstDtypeSize);
                 pto::TASSIGN(dstHalfTile, dst.GetAddr() + tileOffset * dstDtypeSize);
                 auto tmp1Offset = tileOffset * AtanConstants::NUM_VALUE_4;
-                auto tmp2Offset = tmp1Offset + tileH * tileW;
-                auto tmp3Offset = tmp2Offset + tileH * tileW;
-                auto cmpOffset = tmp3Offset + tileH * tileW;
+                auto tmp2Offset = tmp1Offset + dstShape[DIM_4TH] * tileW;
+                auto tmp3Offset = tmp2Offset + dstShape[DIM_4TH] * tileW;
+                auto cmpOffset = tmp3Offset + dstShape[DIM_4TH] * tileW;
                 tmp1Tile.Assign(tmp.GetAddr(), tmp1Offset);
                 tmp2Tile.Assign(tmp.GetAddr(), tmp2Offset);
                 tmp3Tile.Assign(tmp.GetAddr(), tmp3Offset);

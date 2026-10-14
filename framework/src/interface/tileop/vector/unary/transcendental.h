@@ -263,8 +263,7 @@ TILEOP void TSinh(T0 dst, T1 src, T2 tmp)
     constexpr auto tileW = TileOp::GetTensorTileShapeDim<T0, DIM_5TH, MAX_DIMS>();
     constexpr auto dstTypeSize = sizeof(typename T0::Type);
 
-    constexpr auto tileShapeSize = TileOp::GetAnyAxisMergeResult<
-        DIM_1ST, Std::tuple_size<typename T0::TileShape>::value, typename T0::TileShape>();
+    auto tileShapeSize = dstShape0 * dstShape1 * dstShape2 * dstShape3 * tileW;
 
     using DstTileDefine = pto::Tile<pto::TileType::Vec, typename T0::Type, tileH, tileW, pto::BLayout::RowMajor, -1,
                                     -1>;
@@ -406,8 +405,7 @@ TILEOP void TCosh(T0 dst, T1 src, T2 tmp)
     constexpr auto tileH = TileOp::GetTensorTileShapeDim<T0, DIM_4TH, MAX_DIMS>();
     constexpr auto tileW = TileOp::GetTensorTileShapeDim<T0, DIM_5TH, MAX_DIMS>();
     constexpr auto dstTypeSize = sizeof(typename T0::Type);
-    constexpr auto tileShapeSize = TileOp::GetAnyAxisMergeResult<
-        DIM_1ST, Std::tuple_size<typename T0::TileShape>::value, typename T0::TileShape>();
+    auto tileShapeSize = dstShape0 * dstShape1 * dstShape2 * dstShape3 * tileW;
 
     using DataTileDefine = pto::Tile<pto::TileType::Vec, typename T0::Type, tileH, tileW, pto::BLayout::RowMajor, -1,
                                      -1>;
@@ -633,9 +631,9 @@ TILEOP void TrigCompute(T0 dst, T1 tmp, T2 src)
                 pto::TASSIGN(dstTile, (uint64_t)(dst.GetAddr() + GenTileOffset(dst, tileOffsets) * dstTypeSize));
                 AssignElementwiseOperandExecTile(srcExecTile, src, tileOffsets);
                 pto::TASSIGN(tmp0Tile, (uint64_t)(tmp.GetAddr()));
-                pto::TASSIGN(tmp1Tile, (uint64_t)(tmp.GetAddr() + tileW * tileH * dstTypeSize));
-                pto::TASSIGN(tmp2Tile, (uint64_t)(tmp.GetAddr() + TMP2_SLOT * tileW * tileH * dstTypeSize));
-                pto::TASSIGN(tmp3Tile, (uint64_t)(tmp.GetAddr() + tileW * tileH * dstTypeSize));
+                pto::TASSIGN(tmp1Tile, (uint64_t)(tmp.GetAddr() + tileW * shape3 * dstTypeSize));
+                pto::TASSIGN(tmp2Tile, (uint64_t)(tmp.GetAddr() + TMP2_SLOT * tileW * shape3 * dstTypeSize));
+                pto::TASSIGN(tmp3Tile, (uint64_t)(tmp.GetAddr() + tileW * shape3 * dstTypeSize));
 
                 reduceKCompute<op>(dstTile, tmp0Tile, tmp1Tile, tmp2Tile, srcExecTile);
                 SyncV();

@@ -676,7 +676,7 @@ TILEOP void TDigamma(T0 dst, T1 tmp, T2 src)
 
     constexpr auto tileH = TileOp::GetTensorTileShapeDim<T0, DIM_4TH, MAX_DIMS>();
     constexpr auto tileW = TileOp::GetTensorTileShapeDim<T0, DIM_5TH, MAX_DIMS>();
-    constexpr auto tileSize = tileH * tileW * sizeof(float);
+    auto tileSize = shape3 * tileW * sizeof(float);
     using DataTile = pto::Tile<pto::TileType::Vec, float, tileH, tileW, pto::BLayout::RowMajor, -1, -1>;
     using TmpMaskTile = pto::Tile<pto::TileType::Vec, uint8_t, tileH, tileW * TileOp::NUM_VALUE_4,
                                   pto::BLayout::RowMajor, -1, -1>;
