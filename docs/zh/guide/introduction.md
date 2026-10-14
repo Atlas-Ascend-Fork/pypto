@@ -1,28 +1,53 @@
 # PyPTO简介
 
-PyPTO（发音：pai p-t-o）是CANN推出的一款面向AI加速器的高效算子编程框架，采用PTO（Parallel Tensor/Tile Operation）编程范式，旨在简化算子开发流程，同时保留高性能计算能力。PyPTO提供PyPTO Tensor和PyPTO Pro两种编程方式，开发者可以根据算子开发效率、性能调优需求和硬件控制粒度进行选择。
+PyPTO（发音：pai p-t-o）是CANN推出的一款面向AI加速器的高效算子编程框架，旨在简化算子开发流程，同时保留高性能计算能力。PyPTO 采用PTO（Parallel Tensor/Tile Operation，并行张量/块操作）为编程理念，可同时支持两类编程模型：面向Tensor计算的Tensor编程模型，以及面向Tile操作的Tile编程模型。在框架层面，PyPTO通过"PyPTO Tensor"开发模式来支撑Tensor编程模型，通过"PyPTO Pro"开发模式来支撑Tile编程模型。开发者可以根据算子开发效率、性能调优需求和硬件控制粒度进行选择。
 
-| 编程方式 | 核心差异 | 适用场景 |
-| --- | --- | --- |
-| PyPTO Tensor | 采用Tensor级编程和MPMD（Multiple Program Multiple Data，多程序多数据）执行模型。开发者主要描述计算逻辑，由编译器完成Tile切分、内存分配、任务调度和代码生成，抽象层次较高。 | 适合希望以接近数学表达式的方式快速开发算子的开发者，以及通用深度学习算子、大模型组件和动态Shape等场景。 |
-| PyPTO Pro | 采用Kernel级编程和SPMD（Single Program Multiple Data，单程序多数据）执行模型。开发者可显式控制多核分工、数据搬运、Tile计算和流水编排，硬件控制粒度更细。 | 适合熟悉硬件架构、需要精细调优的开发者，以及Cube与Vector融合、复杂流水和追求极致性能的算子场景。 |
+| 开发模式 | 编程模型 | 执行模型 | 核心差异 | 适用场景 |
+| --- | --- | --- | --- | --- |
+| PyPTO Tensor | 面向 Tensor 计算的 Tensor 编程模型 |  MPMD（Multiple Program Multiple Data，多程序多数据） | 开发者主要描述计算逻辑，由编译器完成Tile切分、内存分配、任务调度和代码生成，抽象层次较高。 | 适合希望以接近数学表达式的方式快速开发算子的开发者，以及通用深度学习算子、大模型组件和动态Shape等场景。 |
+| PyPTO Pro | 面向 Tile 操作的 Tile 编程模型 |  SPMD（Single Program Multiple Data，单程序多数据） | 开发者可显式控制多核分工、数据搬运、Tile计算和流水编排，硬件控制粒度更细。 | 适合熟悉硬件架构、需要精细调优的开发者，以及Cube与Vector融合、复杂流水和追求极致性能的算子场景。 |
+
+## 整体架构
+
+![](./figures/pypto_architecture.png)
+
+PyPTO整体架构如上图所示，PyPTO是构建在PTO ISA上的算子编程框架，包括：
+- 编译时框架，用来将用户编写的算子，转换为高性能的二进制代码。组成包括：
+    - Frontend（PyPTO Tensor和PyPTO Pro）：提供用户编程接口。
+    - 编译优化阶段，组成包括：
+        - PyPTO IR：提供PyPTO的中间表示（Intermediate Representation）。
+        - Operation：提供类似指令的基本操作功能。
+        - Pass：IR变换框架，为PyPTO Tensor提供图编译，为PyPTO Pro提供编译功能。
+    - CodeGen：生成二进制代码。
+- 运行时框架，用来实现二进制代码高效的调度执行。运行时框架主要包括多层级的Machine组件。
+
+为了方便开发者调试调优，PyPTO编程框架还提供了工具链，包括：
+- IDE：提供可视化的调试调优能力。
+- 精度工具：用于定位精度问题。
+- 仿真工具：用于实现在缺少硬件条件下的仿真。
 
 ## PyPTO Tensor
 
-### 核心架构
+### 工作流
 
-PyPTO Tensor采用分层架构，从用户接口到底层硬件执行包括以下层次：
+PyPTO Tensor从用户接口到底层硬件执行包括以下阶段：
 
-![](./figures/tensor/pypto_architecture.png)
+```mermaid
+graph TD
+    A["<span style='display:block; width:500px'><b>用户接口（User Interface）</b></span>Tensor API、Control Flow API、配置API"] -->
+    B["<span style='display:block; width:500px'><b>计算图编译（Compute Graph Compile）</b></span>Tensor Graph、Tile Graph、Block Graph、Execute Graph"] -->
+    C["<span style='display:block; width:500px'><b>代码生成（Code Generation）</b></span>多维Tile计算代码、动态控制流代码"] -->
+    D["<span style='display:block; width:500px'><b>调度执行（Scheduling, Execution）</b></span>MPMD调度、动态控制流"]
+```
 
-- **用户接口层**：提供Python风格的Tensor编程接口，开发者可以直接表达计算逻辑，无需关注底层硬件指令。
-- **计算图编译层**：通过模块化Pass完成多层级计算图的转换与优化。
+- **用户接口**：提供Python风格的Tensor编程接口，开发者可以直接表达计算逻辑、控制流和配置优化选项，无需关注底层硬件指令。
+- **计算图编译**：通过模块化Pass完成多层级计算图的转换与优化。
     - Tensor Graph面向算法表达，描述高层Tensor计算。
     - Tile Graph将Tensor计算展开为硬件感知的Tile计算，并进行布局变换、内存类型分配和数据搬运等优化。
     - Block Graph将Tile图切分为可并行执行的计算子图，并进行乱序调度、内存复用和同步点插入等优化。
     - Execute Graph整合计算子图及其依赖关系，形成最终执行图。
-- **代码生成层**：根据Execute Graph生成PTO虚拟指令代码，并进一步编译为目标平台代码。
-- **调度执行层**：将可执行代码以MPMD方式调度到设备处理器核，并负责依赖关系和控制流的执行。
+- **代码生成**：根据Execute Graph动态控制流代码，根据Block Graph生成多维Tile计算代码，并进一步编译为目标平台代码。
+- **调度执行**：将可执行代码以MPMD方式调度到设备处理器核，并负责依赖关系和动态控制流的执行。
 
 ### 核心特性
 
@@ -53,25 +78,35 @@ PyPTO Tensor以“算法表达与硬件执行解耦”为主要设计理念。�
 <!-- npu="910b" id3 -->
 - Atlas A2系列产品：支持
 <!-- end id3 -->
+<!-- npu="9030" id7 -->
+- Kirin9030处理器系列产品：支持
+<!-- end id7 -->
+<!-- npu="x90" id8 -->
+- KirinX90处理器系列产品：支持
+<!-- end id8 -->
 
 ## PyPTO Pro
 
-### 核心架构
+### 工作流
 
 PyPTO Pro是面向AI Core Kernel开发的Python DSL，接口分为[SIMD API](../api/pro_api/SIMD-API/index.md)、[SIMT API](../api/pro_api/SIMT-API/index.md)和[Utils API](../api/pro_api/Utils-API/index.md)。SIMD API覆盖Tile计算、Reg计算、Cube计算以及数据搬运、资源管理和同步控制；SIMT API用于逐线程计算；Utils API提供Python语法辅助与调试能力。
 
-**图1 PyPTO Pro总体架构**
-
-![PyPTO Pro总体架构](figures/pro/architecture_pypto_pro.png)
+```mermaid
+graph TD
+    A["<span style='display:block; width:500px'><b>用户接口（User Interface）</b></span>SIMD API（Tile API、Reg API、Cube API）、SIMT API"] -->
+    B["<span style='display:block; width:500px'><b>编译（Compile）</b></span>Tile操作序列"] -->
+    C["<span style='display:block; width:500px'><b>代码生成（Code Generation）</b></span>二维Tile计算代码、Host侧Launcher代码"] -->
+    D["<span style='display:block; width:500px'><b>调度执行（Launch, Execution）</b></span>SPMD执行，Kernel函数加载"]
+```
 
 开发者在[Kernel核函数](programming_guide/pro/development/kernel_function.md)中声明参数和执行域，组织GM与片上Buffer之间的数据搬运，并选择Tile、Reg、Cube或SIMT计算方式。使用`@pypto_pro.language.jit()`声明的Kernel在首次启动时触发编译，之后可在相同编译签名下复用编译结果。
 
 编译与执行过程包括以下阶段：
 
-1. **前端解析**：绑定Kernel参数和启动配置，解析函数体并生成PyPTO IR。
-2. **IR优化与代码生成**：对PyPTO IR进行校验和转换，由CCE CodeGen生成目标代码及Host侧Launcher。
-3. **编译与加载**：编译并加载当前Kernel的JIT产物；相同编译签名可在当前进程中复用。
-4. **任务下发**：Launcher将Kernel提交到指定Stream，由AI Core执行。
+1. **用户接口**：绑定Kernel参数和启动配置。
+2. **编译**：解析函数体，生成Tile操作序列，并且对Tile操作序列进行优化。
+3. **代码生成**：由CCE CodeGen生成目标代码，同时生成Host侧Launcher。
+4. **调度执行**：Launcher将Kernel的JIT产物提交到指定Stream，由AI Core以SPMD方式执行。
 
 ### 核心特性
 
@@ -101,3 +136,9 @@ PyPTO Pro让开发者用Python编写Kernel，同时保留对硬件执行方式�
 <!-- npu="910b" id6 -->
 - Atlas A2系列产品：不支持
 <!-- end id6 -->
+<!-- npu="9030" id9 -->
+- Kirin9030处理器系列产品：不支持
+<!-- end id9 -->
+<!-- npu="x90" id10 -->
+- KirinX90处理器系列产品：不支持
+<!-- end id10 -->
