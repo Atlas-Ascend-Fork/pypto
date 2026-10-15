@@ -5,7 +5,7 @@
 算子执行时出现如下报错：
 
 ```text
-2025-12-18 10:33:06.107 E | [ExpandFunction][Function][ERROR]: FUnction[TENSOR_b_loop_Unroll1_PATH0_hiddenfunc0] ExpandFunction failed: Tile shape size 1 is not matched the output shape size 2.
+2025-12-18 10:33:06.107 E | [ExpandFunction][Function][ERROR]: Function[TENSOR_b_loop_Unroll1_PATH0_hiddenfunc0] ExpandFunction failed: Tile shape size 1 is not matched the output shape size 2.
 2025-12-18 10:33:06.107 E | Run pass [ExpandFunction] failed.
 2025-12-18 10:33:06.107 E | Run pass <ExpandFunction> failed
 ```
