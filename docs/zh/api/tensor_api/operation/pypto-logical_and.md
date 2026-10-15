@@ -45,7 +45,11 @@ logical_and(input: Tensor, other: Tensor) -> Tensor
 ## 约束说明
 
 1. TileShape与input、other维度保持一致；
-2. 由于存在临时内存使用，TileShape大小有额外约束，假设TileShape为[a,b,c,d]，那么a*b*c*d*sizeof(input) + a*b*c*d*sizeof(other) + a*b*c*d*sizeof(BOOL) + 1.1875KB < 可用内存上限。
+2. 在综合考虑输入、输出及临时存储空间占用的前提下，TileShape大小需满足额外约束条件。假设TileShape为[a,b,c,d]，记$d_{align}=CeilAlign(d, 32)$，$E=c*d_{align}+CeilAlign(d_{align},128)-d_{align}$，$M=CeilAlign(\lceil d_{align}/8 \rceil, 32)$，$compute\_dtype$为计算精度（input或other任一为DT_FP32/DT_BF16/DT_INT32时为DT_FP32，否则为DT_FP16），则总的UB空间占用为：
+   $$
+   a*b*c*d*(sizeof(input)+sizeof(other)+sizeof(DT\_BOOL)) + 2*E*sizeof(compute\_dtype) + max(c*M, E*sizeof(DT\_FP16)) + 32 <= UB
+   $$
+   其中当$compute\_dtype$为DT_FP16时，$E*sizeof(DT\_FP16)$项取0。
 3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例

@@ -119,15 +119,25 @@ void TiledLogicalAndOperation(Function& function, const TileShape& tileShape, si
         auto resultTile = result->View(function, resultTileInfo.shape, resultTileInfo.offset);
 
         constexpr size_t ALIGN_SIZE = NUM_VALUE_32;
-        const int64_t element_per_chunk = NUM_VALUE_64;
-        int64_t vcmp_bits_size = (element_per_chunk + NUM_VALUE_7) / NUM_VALUE_8;
-        size_t float_array_size = element_per_chunk * SHAPE_DIM4;
-        size_t half_array_size = element_per_chunk * SHAPE_DIM2;
-        size_t vcmpBitResult_size = ((vcmp_bits_size + ALIGN_SIZE - 1) / ALIGN_SIZE) * ALIGN_SIZE;
-        size_t aligned_float_array_size = ((float_array_size + ALIGN_SIZE - 1) / ALIGN_SIZE) * ALIGN_SIZE;
-        size_t aligned_half_array_size = ((half_array_size + ALIGN_SIZE - 1) / ALIGN_SIZE) * ALIGN_SIZE;
-        size_t total_bytes = vcmpBitResult_size + NUM_VALUE_4 * aligned_float_array_size + aligned_half_array_size +
-                             ALIGN_SIZE * NUM_VALUE_2;
+        auto needsFloat = [](DataType dtype) { return dtype == DT_FP32 || dtype == DT_BF16 || dtype == DT_INT32; };
+        auto compute_dtype = needsFloat(input0.tensor.GetDataType()) || needsFloat(input1.tensor.GetDataType()) ?
+                                 DT_FP32 :
+                                 DT_FP16;
+        const auto& vecTile = tileShape.GetVecTile().tile;
+        auto tileDims = vecTile.size();
+        int64_t tileH = tileDims >= NUM_VALUE_2 ? vecTile[tileDims - NUM_VALUE_2] : 1;
+        // Keep the row strides and shared mask/conversion storage in sync with TLogicalAnd.
+        int64_t tmpW = AlignUp(vecTile.back(), ALIGN_SIZE);
+        auto compareElems = REPEAT_BYTE / BytesOf(DT_FP16);
+        int64_t bufferElems = tileH * tmpW + AlignUp(tmpW, compareElems) - tmpW;
+        int64_t maskW = AlignUp((tmpW + NUM_VALUE_7) / NUM_VALUE_8, ALIGN_SIZE);
+        int64_t compute_array_size = bufferElems * BytesOf(compute_dtype);
+        int64_t half_array_size = compute_dtype == DT_FP32 ? bufferElems * BytesOf(DT_FP16) : 0;
+        int64_t total_bytes = NUM_VALUE_2 * compute_array_size + std::max(tileH * maskW, half_array_size) + ALIGN_SIZE;
+        if (!ConfigManager::Instance().GetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true)) {
+            // The legacy CCE implementation still uses fixed 64-element buffers.
+            total_bytes = NUM_VALUE_64 * (NUM_VALUE_4 * BytesOf(DT_FP32) + BytesOf(DT_FP16)) + NUM_VALUE_3 * ALIGN_SIZE;
+        }
         std::vector<int64_t> tmp_shape({static_cast<int64_t>(total_bytes)});
         auto tmp_tensor = std::make_shared<LogicalTensor>(function, DT_UINT8, tmp_shape);
 

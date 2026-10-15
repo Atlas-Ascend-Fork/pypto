@@ -524,8 +524,9 @@ void LogicalAndInferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>
 {
     ElewiseInferFunc(op, outValidShapes);
     outValidShapes.erase(outValidShapes.begin() + 1, outValidShapes.end());
-    const int64_t COUNT_SIZE = NUM_VALUE_64;
-    outValidShapes.push_back({COUNT_SIZE * NUM_VALUE_5 + COUNT_SIZE / NUM_VALUE_8 + 1});
+    if (op->GetOOperands().size() > 1) {
+        outValidShapes.push_back({SymbolicScalar(op->GetOOperands()[1]->GetShape()[0])});
+    }
 }
 REGISTER_INFER_SHAPE_FUNC(OP_LOGICALAND, Opcode::OP_LOGICALAND, LogicalAndInferFunc);
 

@@ -62,25 +62,25 @@ TILEOP void TanhFP32(DstTile dstTile, SrcTile srcTile, TmpTile tmpTile, TmpTile 
     pto::TABS(tmpTile, srcTile);
     SyncV();
 
-    pto::TMINS(srcTile, srcTile, static_cast<T>(TANH_CLIP_VALUE));
-    SyncV();
-
-    pto::TMULS(srcTile, srcTile, static_cast<T>(TANH_TWO));
-    SyncV();
-
-    pto::TEXP(srcTile, srcTile);
-    SyncV();
-
-    pto::TADDS(tmpTile2, srcTile, static_cast<T>(-1.0f));
-    SyncV();
-
-    pto::TADDS(srcTile, srcTile, static_cast<T>(1.0f));
-    SyncV();
-
-    pto::TDIV(tmpTile2, tmpTile2, srcTile);
-    SyncV();
-
     pto::TCMPS(cmpTile, tmpTile, static_cast<T>(TANH_THRESHOLD), pto::CmpMode::LT);
+    SyncV();
+
+    pto::TMINS(tmpTile, srcTile, static_cast<T>(TANH_CLIP_VALUE));
+    SyncV();
+
+    pto::TMULS(tmpTile, tmpTile, static_cast<T>(TANH_TWO));
+    SyncV();
+
+    pto::TEXP(tmpTile, tmpTile);
+    SyncV();
+
+    pto::TADDS(tmpTile2, tmpTile, static_cast<T>(-1.0f));
+    SyncV();
+
+    pto::TADDS(tmpTile, tmpTile, static_cast<T>(1.0f));
+    SyncV();
+
+    pto::TDIV(tmpTile2, tmpTile2, tmpTile);
     SyncV();
 
     pto::TSEL(dstTile, cmpTile, dstTile, tmpTile2, startAddrUBTile);

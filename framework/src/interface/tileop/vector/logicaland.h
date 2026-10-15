@@ -23,14 +23,15 @@
 #include "utils/tile_tensor.h"
 
 template <typename Type>
-using CVT_TYPE = std::conditional_t<
-    std::is_same_v<Type, float> || std::is_same_v<Type, int32_t> || std::is_same_v<Type, int64_t>, float, half>;
+using CVT_TYPE = std::conditional_t<std::is_same_v<Type, float> || std::is_same_v<Type, bfloat16_t> ||
+                                        std::is_same_v<Type, int32_t> || std::is_same_v<Type, int64_t>,
+                                    float, half>;
 
 template <typename T, typename U>
 using FINAL_TYPE = std::conditional_t<std::is_same_v<CVT_TYPE<T>, CVT_TYPE<U>>, CVT_TYPE<T>, float>;
 
 template <typename T, typename U, typename Cvt>
-TILEOP T& StandardizedSrcTile([[maybe_unused]] T& dst, U& src, Cvt& cvt)
+TILEOP auto& StandardizedSrcTile([[maybe_unused]] T& dst, U& src, Cvt& cvt)
 {
     if constexpr (std::is_same_v<typename T::DType, typename U::DType>) {
         return src;
@@ -47,19 +48,20 @@ TILEOP T& StandardizedSrcTile([[maybe_unused]] T& dst, U& src, Cvt& cvt)
 }
 
 template <typename T, typename U, typename R, typename V>
-TILEOP void CalculateLogicalTile(T& dst, U& src, U& zeros, U& ones, R& res, V& startAddrUBTile)
+TILEOP void CalculateLogicalTile(T& dst, U& src, R& res, V& startAddrUBTile)
 {
-    pto::TCMP(res, src, zeros, pto::CmpMode::EQ);
+    pto::TCMPS(res, src, static_cast<typename U::DType>(0), pto::CmpMode::EQ);
     SyncV();
-    pto::TSEL(dst, res, zeros, ones, startAddrUBTile);
+    // EQ selects the original zero; every nonzero value selects scalar one.
+    pto::TSELS(dst, res, src, startAddrUBTile, static_cast<typename U::DType>(1));
 }
 
 template <typename T, typename U, typename R, typename Cvt, typename V>
-TILEOP void CalculateSrcLogicalTile(T& dst, U& src, T& zeros, T& ones, R& res, Cvt& cvt, V& startAddrUBTile)
+TILEOP void CalculateSrcLogicalTile(T& dst, U& src, R& res, Cvt& cvt, V& startAddrUBTile)
 {
     auto tile = StandardizedSrcTile(dst, src, cvt);
     SyncV();
-    CalculateLogicalTile(dst, tile, zeros, ones, res, startAddrUBTile);
+    CalculateLogicalTile(dst, tile, res, startAddrUBTile);
 }
 
 template <typename T, typename U, typename TMP>
@@ -77,20 +79,15 @@ TILEOP void SelectLogicalResult(T& dst, U& src1, U& src2, TMP& tmp)
 }
 
 template <typename T, typename U1, typename U2, typename L, typename Res, typename Cvt, typename V>
-TILEOP void LogicalAndImpl(T& dst, U1& src1, U2& src2, L& tmp1, L& tmp2, L& ones, L& zeros, Res& res1, Res& res2,
-                           Cvt& cvt, V& startAddrUBTile)
+TILEOP void LogicalAndImpl(T& dst, U1& src1, U2& src2, L& tmp1, L& tmp2, Res& res, Cvt& cvt, V& startAddrUBTile)
 {
-    CalculateSrcLogicalTile(tmp1, src1, zeros, ones, res1, cvt, startAddrUBTile);
+    CalculateSrcLogicalTile(tmp1, src1, res, cvt, startAddrUBTile);
     SyncV();
-    CalculateSrcLogicalTile(tmp2, src2, zeros, ones, res2, cvt, startAddrUBTile);
+    CalculateSrcLogicalTile(tmp2, src2, res, cvt, startAddrUBTile);
     SyncV();
     SelectLogicalResult(dst, tmp1, tmp2, cvt);
-}
-
-TILEOP uint64_t GenTmpTileAddr(uint64_t addr, uint64_t offset)
-{
-    uintptr_t start = reinterpret_cast<uintptr_t>(addr + offset);
-    return (start + TileOp::BLOCK_SIZE - 1) & ~(TileOp::BLOCK_SIZE - 1);
+    // Finish reading cvt before the next tile reuses it.
+    SyncV();
 }
 
 template <typename T0, typename T1, typename T2, typename T3>
@@ -104,108 +101,57 @@ TILEOP void TLogicalAnd(T0 dst, T1 src1, T2 src2, T3 tmp)
     auto dstShape4 = dstLayout.template GetShapeDim<DIM_5TH, MAX_DIMS>();
 
     using DType = FINAL_TYPE<typename T1::Type, typename T2::Type>;
-    constexpr auto COUNT_MAX = 64;
-    constexpr auto CMP_BYTE_SIZE = (COUNT_MAX + TileOp::BITS_PER_BYTE - 1) / TileOp::BITS_PER_BYTE;
-    constexpr auto TMP_OFFSET = sizeof(DType) * COUNT_MAX;
+    constexpr auto tileH = TileOp::GetTensorTileShapeDim<T0, DIM_4TH, MAX_DIMS>();
+    constexpr auto tileW = TileOp::GetTensorTileShapeDim<T0, DIM_5TH, MAX_DIMS>();
+    constexpr auto alignElems = TileOp::BLOCK_SIZE / sizeof(typename T0::Type);
+    constexpr auto tmpW = (tileW + alignElems - 1) / alignElems * alignElems;
+    // TCMP reads full repeats. Pad the allocation tail, not every row.
+    constexpr auto compareElems = TileOp::REPEAT_BYTE / sizeof(half);
+    constexpr auto tailElems = (tmpW + compareElems - 1) / compareElems * compareElems - tmpW;
+    constexpr auto bufferElems = tileH * tmpW + tailElems;
+    constexpr auto maskBytesPerRow = (tmpW + TileOp::BITS_PER_BYTE - 1) / TileOp::BITS_PER_BYTE;
+    constexpr auto maskW = (maskBytesPerRow + TileOp::BLOCK_SIZE - 1) / TileOp::BLOCK_SIZE * TileOp::BLOCK_SIZE;
+    constexpr auto maskBytes = tileH * maskW;
+    constexpr auto dataBytes = bufferElems * sizeof(DType);
+    constexpr auto cvtBytes = std::is_same_v<DType, float> ? bufferElems * sizeof(half) : 0;
+    constexpr auto sharedBytes = maskBytes > cvtBytes ? maskBytes : cvtBytes;
+    constexpr auto selectTmpCols = TileOp::BLOCK_SIZE / sizeof(uint32_t);
 
-    using DstTileTensor = TileTensor<typename T0::Type, LocalLayout2Dim<1, COUNT_MAX>, Hardware::UB>;
-    using Src1TileTensor = TileTensor<typename T1::Type, LocalLayout2Dim<1, COUNT_MAX>, Hardware::UB>;
-    using Src2TileTensor = TileTensor<typename T2::Type, LocalLayout2Dim<1, COUNT_MAX>, Hardware::UB>;
-    using TmpTileTensor = TileTensor<DType, LocalLayout2Dim<1, COUNT_MAX>, Hardware::UB>;
-    using CvtTileTensor = TileTensor<half, LocalLayout2Dim<1, COUNT_MAX>, Hardware::UB>;
-    using StartAddrUBTile = TileTensor<uint8_t, LocalLayout2Dim<1, TileOp::BLOCK_SIZE>, Hardware::UB>;
-    // Tile shape of pto tile must 32 byte align
-    constexpr auto CMP_TILE = ((CMP_BYTE_SIZE + TileOp::BLOCK_SIZE - 1) / TileOp::BLOCK_SIZE) * TileOp::BLOCK_SIZE;
-    using CmpBitsTileTensor = TileTensor<uint8_t, StaticLayout2Dim<1, CMP_BYTE_SIZE, 1, CMP_TILE>, Hardware::UB>;
+    using TmpTile = pto::Tile<pto::TileType::Vec, DType, tileH, tmpW, pto::BLayout::RowMajor, -1, -1>;
+    using CvtTile = pto::Tile<pto::TileType::Vec, half, tileH, tmpW, pto::BLayout::RowMajor, -1, -1>;
+    using MaskTile = pto::Tile<pto::TileType::Vec, uint8_t, tileH, maskW, pto::BLayout::RowMajor, -1, -1>;
+    using SelectTmpTile = pto::Tile<pto::TileType::Vec, uint32_t, 1, selectTmpCols, pto::BLayout::RowMajor, -1, -1>;
 
-    using DstTile = PtoTile<DstTileTensor>;
-    using Src1Tile = PtoTile<Src1TileTensor>;
-    using Src2Tile = PtoTile<Src2TileTensor>;
-    using TmpTile = PtoTile<TmpTileTensor>;
-    using CvtTile = PtoTile<CvtTileTensor>;
-    using SauTile = PtoTile<StartAddrUBTile>;
+    auto dstTile = PtoTile<T0>(dst);
+    auto src1Tile = MakeElementwiseOperandExecTile(dst, src1);
+    auto src2Tile = MakeElementwiseOperandExecTile(dst, src2);
+    TmpTile tmp1Tile(dstShape3, dstShape4);
+    TmpTile tmp2Tile(dstShape3, dstShape4);
+    CvtTile cvtTile(dstShape3, dstShape4);
+    auto validMaskCols = (dstShape4 + TileOp::BITS_PER_BYTE - 1) / TileOp::BITS_PER_BYTE;
+    MaskTile cmpTile(dstShape3, validMaskCols);
+    SelectTmpTile selectTmpTile(1, selectTmpCols);
 
-    auto cmp1Addr = (uint64_t)tmp.GetAddr();
-    auto cmp2Addr = GenTmpTileAddr(cmp1Addr, CMP_BYTE_SIZE);
-    auto zeroAddr = GenTmpTileAddr(cmp2Addr, CMP_BYTE_SIZE);
-    auto oneAddr = GenTmpTileAddr(zeroAddr, TMP_OFFSET);
-    auto tmp1Addr = GenTmpTileAddr(oneAddr, TMP_OFFSET);
-    auto tmp2Addr = GenTmpTileAddr(tmp1Addr, TMP_OFFSET);
-    auto sauAddr = GenTmpTileAddr(tmp2Addr, TMP_OFFSET);
-    auto cvtAddr = GenTmpTileAddr(sauAddr, TileOp::BLOCK_SIZE);
-
-    auto cmp1Tile = PtoTile<CmpBitsTileTensor>(cmp1Addr);
-    auto cmp2Tile = PtoTile<CmpBitsTileTensor>(cmp2Addr);
-
-    auto numLoop = dstShape4 / COUNT_MAX;
-    auto remainAfterLoop = dstShape4 % COUNT_MAX;
-
-    auto validCols = numLoop > 0 ? COUNT_MAX : remainAfterLoop;
-    auto loopDstTile = DstTile(1, validCols);
-    auto loopSrc1Tile = Src1Tile(1, validCols);
-    auto loopSrc2Tile = Src2Tile(1, validCols);
-    auto loopTmp1Tile = TmpTile(1, validCols, tmp1Addr);
-    auto loopTmp2Tile = TmpTile(1, validCols, tmp2Addr);
-    auto loopOneTile = TmpTile(1, validCols, oneAddr);
-    auto loopZeroTile = TmpTile(1, validCols, zeroAddr);
-    auto loopCvtTile = CvtTile(1, validCols, cvtAddr);
-    auto startAddrUBTile = SauTile(1, TileOp::BLOCK_SIZE, sauAddr);
-
-    auto remainDstTile = loopDstTile;
-    auto remainSrc1Tile = loopSrc1Tile;
-    auto remainSrc2Tile = loopSrc2Tile;
-    auto remainOneTile = loopOneTile;
-    auto remainZeroTile = loopZeroTile;
-    auto remainTmp1Tile = loopTmp1Tile;
-    auto remainTmp2Tile = loopTmp2Tile;
-    auto remainCvtTile = loopCvtTile;
-
-    if (numLoop > 0 && remainAfterLoop > 0) {
-        remainDstTile = DstTile(1, remainAfterLoop);
-        remainSrc1Tile = Src1Tile(1, remainAfterLoop);
-        remainSrc2Tile = Src2Tile(1, remainAfterLoop);
-        remainOneTile = TmpTile(1, remainAfterLoop, oneAddr);
-        remainZeroTile = TmpTile(1, remainAfterLoop, zeroAddr);
-        remainTmp1Tile = TmpTile(1, remainAfterLoop, tmp1Addr);
-        remainTmp2Tile = TmpTile(1, remainAfterLoop, tmp2Addr);
-        remainCvtTile = CvtTile(1, remainAfterLoop, cvtAddr);
-    }
-
-    if (numLoop > 0) {
-        pto::TEXPANDS(loopOneTile.Data(), 1.0);
-        pto::TEXPANDS(loopZeroTile.Data(), 0.0);
-    } else if (remainAfterLoop > 0) {
-        pto::TEXPANDS(remainOneTile.Data(), 1.0);
-        pto::TEXPANDS(remainZeroTile.Data(), 0.0);
-    }
+    // Keep this layout in sync with TiledLogicalAndOperation.
+    auto tmp1Addr = (uint64_t)tmp.GetAddr();
+    auto tmp2Addr = tmp1Addr + dataBytes;
+    auto sharedAddr = tmp2Addr + dataBytes;
+    auto selectTmpAddr = sharedAddr + sharedBytes;
+    pto::TASSIGN(tmp1Tile, tmp1Addr);
+    pto::TASSIGN(tmp2Tile, tmp2Addr);
+    // Each comparison follows conversion; the final conversion follows both selections.
+    pto::TASSIGN(cmpTile, sharedAddr);
+    pto::TASSIGN(cvtTile, std::is_same_v<DType, float> ? sharedAddr : tmp1Addr);
+    pto::TASSIGN(selectTmpTile, selectTmpAddr);
 
     for (LoopVar n0Index = 0; n0Index < dstShape0; ++n0Index) {
         for (LoopVar n1Index = 0; n1Index < dstShape1; ++n1Index) {
             for (LoopVar n2Index = 0; n2Index < dstShape2; ++n2Index) {
-                for (LoopVar n3Index = 0; n3Index < dstShape3; ++n3Index) {
-                    auto tileOffsets = TileOffset4Dim(n0Index, n1Index, n2Index, n3Index);
-                    auto dstOffset = GenTileOffset(dst, tileOffsets);
-                    auto src1Offset = GenTileOffset(src1, tileOffsets);
-                    auto src2Offset = GenTileOffset(src2, tileOffsets);
-                    for (LoopVar j = 0; j < numLoop; j++) {
-                        loopDstTile.Assign(dst.GetAddr(), dstOffset + j * COUNT_MAX);
-                        loopSrc1Tile.Assign(src1.GetAddr(), src1Offset + j * COUNT_MAX);
-                        loopSrc2Tile.Assign(src2.GetAddr(), src2Offset + j * COUNT_MAX);
-                        LogicalAndImpl(loopDstTile.Data(), loopSrc1Tile.Data(), loopSrc2Tile.Data(),
-                                       loopTmp1Tile.Data(), loopTmp2Tile.Data(), loopOneTile.Data(),
-                                       loopZeroTile.Data(), cmp1Tile.Data(), cmp2Tile.Data(), loopCvtTile.Data(),
-                                       startAddrUBTile.Data());
-                    }
-                    if (remainAfterLoop > 0) {
-                        remainDstTile.Assign(dst.GetAddr(), dstOffset + numLoop * COUNT_MAX);
-                        remainSrc1Tile.Assign(src1.GetAddr(), src1Offset + numLoop * COUNT_MAX);
-                        remainSrc2Tile.Assign(src2.GetAddr(), src2Offset + numLoop * COUNT_MAX);
-                        LogicalAndImpl(remainDstTile.Data(), remainSrc1Tile.Data(), remainSrc2Tile.Data(),
-                                       remainTmp1Tile.Data(), remainTmp2Tile.Data(), remainOneTile.Data(),
-                                       remainZeroTile.Data(), cmp1Tile.Data(), cmp2Tile.Data(), remainCvtTile.Data(),
-                                       startAddrUBTile.Data());
-                    }
-                }
+                auto tileOffsets = TileOffset(n0Index, n1Index, n2Index);
+                dstTile.Assign(dst, tileOffsets);
+                AssignElementwiseOperandExecTile(src1Tile, src1, tileOffsets);
+                AssignElementwiseOperandExecTile(src2Tile, src2, tileOffsets);
+                LogicalAndImpl(dstTile.Data(), src1Tile, src2Tile, tmp1Tile, tmp2Tile, cmpTile, cvtTile, selectTmpTile);
             }
         }
     }
