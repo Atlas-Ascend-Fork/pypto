@@ -117,7 +117,10 @@ class TaskInfo:
         return report
 
     def get_task_name(self):
-        return f"{self.formal_name()}-{self.root_index}-{self.psg_id_within_static}({self.color_label})"
+        seq_no = self.task_id >> 32
+        func_id = (self.task_id >> 16) & ((1 << 10) - 1)
+        oper_idx = self.task_id & ((1 << 16) - 1)
+        return f"{seq_no}-{func_id}-{self.root_index}-{oper_idx}-{self.psg_id_within_static}({self.color_label})"
 
     def get_task_wait_schedule_time(self):
         if self.is_fake:
