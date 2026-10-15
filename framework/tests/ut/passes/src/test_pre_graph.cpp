@@ -1366,6 +1366,99 @@ TEST_F(PreGraphTest, TestRemoveViewSingleReshapeInsertAxisNormalizesCopyIn)
     CompareOpImmediateVector(copyAttr->GetRawShape(), {1, 128, 128});
 }
 
+TEST_F(PreGraphTest, TestRemoveViewSingleReshapeSkipsNonCopyInConsumerThenContinues)
+{
+    ComputationalGraphBuilder G;
+    // 目标链(先创建): VIEW -> RESHAPE -> COPYIN, 应被正常消除。
+    // 两条链相互独立, 拓扑排序后后创建的skip链的RESHAPE先被遍历,
+    // 从而验证skip链被跳过后循环仍继续处理目标链(修复前遇非CopyIn消费者会直接return中断)
+    G.AddTensor(DataType::DT_FP16, {64, 128}, MemoryType::MEM_DEVICE_DDR, "target_view_input");
+    G.GetTensor("target_view_input")->tensor->UpdateRawShape({128, 128});
+    G.AddTensor(DataType::DT_FP16, {64, 128}, MemoryType::MEM_DEVICE_DDR, "target_reshape_input");
+    G.AddTensor(DataType::DT_FP16, {1, 64, 128}, MemoryType::MEM_DEVICE_DDR, "target_reshape_output");
+    G.AddTensor(DataType::DT_FP16, {1, 64, 128}, MemoryType::MEM_UB, "target_copy_dst");
+    G.AddOp(Opcode::OP_VIEW, {"target_view_input"}, {"target_reshape_input"}, "TARGET_VIEW");
+    G.GetOp("TARGET_VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{32, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"target_reshape_input"}, {"target_reshape_output"}, "TARGET_RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"target_reshape_output"}, {"target_copy_dst"}, "TARGET_COPYIN");
+    auto targetCopyAttr = std::static_pointer_cast<CopyOpAttribute>(G.GetOp("TARGET_COPYIN")->GetOpAttribute());
+
+    // 跳过链(后创建): VIEW -> RESHAPE -> COPYIN/ABS, RESHAPE输出含非CopyIn消费者, 应整链保持原状
+    G.AddTensor(DataType::DT_FP16, {64, 128}, MemoryType::MEM_DEVICE_DDR, "skip_view_input");
+    G.GetTensor("skip_view_input")->tensor->UpdateRawShape({128, 128});
+    G.AddTensor(DataType::DT_FP16, {64, 128}, MemoryType::MEM_DEVICE_DDR, "skip_reshape_input");
+    G.AddTensor(DataType::DT_FP16, {1, 64, 128}, MemoryType::MEM_DEVICE_DDR, "skip_reshape_output");
+    G.AddTensor(DataType::DT_FP16, {1, 64, 128}, MemoryType::MEM_UB, "skip_copy_dst");
+    G.AddTensor(DataType::DT_FP16, {1, 64, 128}, "skip_abs_dst");
+    G.AddOp(Opcode::OP_VIEW, {"skip_view_input"}, {"skip_reshape_input"}, "SKIP_VIEW");
+    G.GetOp("SKIP_VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{32, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"skip_reshape_input"}, {"skip_reshape_output"}, "SKIP_RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"skip_reshape_output"}, {"skip_copy_dst"}, "SKIP_COPYIN");
+    auto skipCopyAttr = std::static_pointer_cast<CopyOpAttribute>(G.GetOp("SKIP_COPYIN")->GetOpAttribute());
+    G.AddOp(Opcode::OP_ABS, {"skip_reshape_output"}, {"skip_abs_dst"}, "SKIP_ABS");
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessView(*G.GetFunction()), SUCCESS);
+
+    // 跳过链: RESHAPE输出存在非CopyIn消费者, 整链保持原状
+    EXPECT_FALSE(G.GetOp("SKIP_VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("SKIP_RESHAPE")->GetIOperands().front(), G.GetTensor("skip_reshape_input"));
+    EXPECT_EQ(G.GetTensor("skip_reshape_output")->tensor->GetRawShape(), (std::vector<int64_t>{1, 64, 128}));
+    CompareOpImmediateVector(skipCopyAttr->GetFromOffset(), {0, 0});
+
+    // 目标链: 不受跳过链影响, VIEW被正常消除
+    EXPECT_TRUE(G.GetOp("TARGET_VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("TARGET_RESHAPE")->GetIOperands().front(), G.GetTensor("target_view_input"));
+    EXPECT_EQ(G.GetTensor("target_reshape_output")->tensor->GetRawShape(), (std::vector<int64_t>{1, 128, 128}));
+    CompareOpImmediateVector(targetCopyAttr->GetFromOffset(), {0, 32, 0});
+    CompareOpImmediateVector(targetCopyAttr->GetRawShape(), {1, 128, 128});
+}
+
+TEST_F(PreGraphTest, TestRemoveViewSingleReshapeSkipsCalcInfoFailureThenContinues)
+{
+    ComputationalGraphBuilder G;
+    // 目标链(先创建): VIEW -> RESHAPE -> COPYIN, 应被正常消除(构图顺序说明见上一用例)
+    G.AddTensor(DataType::DT_FP16, {64, 128}, MemoryType::MEM_DEVICE_DDR, "target_view_input");
+    G.GetTensor("target_view_input")->tensor->UpdateRawShape({128, 128});
+    G.AddTensor(DataType::DT_FP16, {64, 128}, MemoryType::MEM_DEVICE_DDR, "target_reshape_input");
+    G.AddTensor(DataType::DT_FP16, {1, 64, 128}, MemoryType::MEM_DEVICE_DDR, "target_reshape_output");
+    G.AddTensor(DataType::DT_FP16, {1, 64, 128}, MemoryType::MEM_UB, "target_copy_dst");
+    G.AddOp(Opcode::OP_VIEW, {"target_view_input"}, {"target_reshape_input"}, "TARGET_VIEW");
+    G.GetOp("TARGET_VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{32, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"target_reshape_input"}, {"target_reshape_output"}, "TARGET_RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"target_reshape_output"}, {"target_copy_dst"}, "TARGET_COPYIN");
+    auto targetCopyAttr = std::static_pointer_cast<CopyOpAttribute>(G.GetOp("TARGET_COPYIN")->GetOpAttribute());
+
+    // 跳过链(后创建): VIEW输入的raw shape为{10000}, 总元素数不能被RESHAPE输出尺寸整除,
+    // CalculateViewReshapeInfo计算失败, 该链应被跳过且不中断后续处理
+    G.AddTensor(DataType::DT_FP16, {64, 128}, MemoryType::MEM_DEVICE_DDR, "skip_view_input");
+    G.GetTensor("skip_view_input")->tensor->UpdateRawShape({10000});
+    G.AddTensor(DataType::DT_FP16, {64, 128}, MemoryType::MEM_DEVICE_DDR, "skip_reshape_input");
+    G.AddTensor(DataType::DT_FP16, {1, 64, 128}, MemoryType::MEM_DEVICE_DDR, "skip_reshape_output");
+    G.AddTensor(DataType::DT_FP16, {1, 64, 128}, MemoryType::MEM_UB, "skip_copy_dst");
+    G.AddOp(Opcode::OP_VIEW, {"skip_view_input"}, {"skip_reshape_input"}, "SKIP_VIEW");
+    G.GetOp("SKIP_VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"skip_reshape_input"}, {"skip_reshape_output"}, "SKIP_RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"skip_reshape_output"}, {"skip_copy_dst"}, "SKIP_COPYIN");
+    auto skipCopyAttr = std::static_pointer_cast<CopyOpAttribute>(G.GetOp("SKIP_COPYIN")->GetOpAttribute());
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessView(*G.GetFunction()), SUCCESS);
+
+    // 跳过链: raw shape计算失败, 整链保持原状
+    EXPECT_FALSE(G.GetOp("SKIP_VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("SKIP_RESHAPE")->GetIOperands().front(), G.GetTensor("skip_reshape_input"));
+    EXPECT_EQ(G.GetTensor("skip_reshape_output")->tensor->GetRawShape(), (std::vector<int64_t>{1, 64, 128}));
+    CompareOpImmediateVector(skipCopyAttr->GetFromOffset(), {0, 0});
+
+    // 目标链: 不受跳过链影响, VIEW被正常消除
+    EXPECT_TRUE(G.GetOp("TARGET_VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("TARGET_RESHAPE")->GetIOperands().front(), G.GetTensor("target_view_input"));
+    EXPECT_EQ(G.GetTensor("target_reshape_output")->tensor->GetRawShape(), (std::vector<int64_t>{1, 128, 128}));
+    CompareOpImmediateVector(targetCopyAttr->GetFromOffset(), {0, 32, 0});
+    CompareOpImmediateVector(targetCopyAttr->GetRawShape(), {1, 128, 128});
+}
+
 TEST_F(PreGraphTest, TestRemoveRedundantAssemble)
 {
     ComputationalGraphBuilder G;

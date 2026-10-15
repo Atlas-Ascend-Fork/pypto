@@ -825,9 +825,17 @@ Status RemoveRedundantAssemble::RemoveViewSingleReshape(Function& function) cons
         if (producerOp == nullptr || producers.size() != 1 || producerOp->GetOpcode() != Opcode::OP_VIEW)
             continue;
         auto viewInput = producerOp->GetIOperands().front();
+        bool allConsumersCopyIn = true;
         for (auto reshapeConsumer : reshapeOp.GetOOperands().front()->GetConsumers()) {
-            if (!IsCopyIn(reshapeConsumer->GetOpcode()))
-                return SUCCESS;
+            if (!IsCopyIn(reshapeConsumer->GetOpcode())) {
+                allConsumersCopyIn = false;
+                break;
+            }
+        }
+        if (!allConsumersCopyIn) {
+            APASS_LOG_INFO_F(Elements::Operation, "Skip RESHAPE op %d as output has non-CopyIn consumer.",
+                             reshapeOp.GetOpMagic());
+            continue;
         }
         auto opAttr = std::dynamic_pointer_cast<ViewOpAttribute>(producerOp->GetOpAttribute());
         if (opAttr == nullptr) {
@@ -836,7 +844,9 @@ Status RemoveRedundantAssemble::RemoveViewSingleReshape(Function& function) cons
         }
         ViewReshapeInfo reshapeInfo;
         if (!CalculateViewReshapeInfo(reshapeOp, viewInput, *opAttr, reshapeInfo)) {
-            return SUCCESS;
+            APASS_LOG_INFO_F(Elements::Operation, "Skip RESHAPE op %d as view reshape info calculation failed.",
+                             reshapeOp.GetOpMagic());
+            continue;
         }
         // Shape and offset details were calculated by the helper above.
         APASS_LOG_DEBUG_F(Elements::Operation, "Process View[%d] Tensor[%d]: newRawshape: %s, newOffset: %s.",
