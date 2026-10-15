@@ -202,6 +202,16 @@ struct DrcoGlobalReadyMatrixBase {
 #define DRCO_ENCODE_TASK(task) ((task) + 1)
 #define DRCO_DECODE_TASK(task) ((task) - 1)
 
+struct PerCoreMiddleQueue {
+    uint32_t headTaskId;
+    uint32_t size;
+    LeafTaskId taskList[0];
+#ifdef __TILE_FWK_HOST__
+    PerCoreMiddleQueue() : headTaskId(0), size(0) {}
+    void UnsafeEnqueue(LeafTaskId task) { taskList[size++] = task; }
+#endif
+};
+
 } // namespace npu::tile_fwk
 
 #endif

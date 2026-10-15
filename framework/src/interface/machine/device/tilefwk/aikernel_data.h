@@ -92,6 +92,8 @@ const uint32_t TASKID_DRCO_SUCC_SPECIAL_SHIFT = TASKID_TASK_BITS + TASKID_FUNC_B
 const uint32_t TASKID_DRCO_SUCC_SPECIAL_MASK = 0x3f;
 
 constexpr uint32_t DRCO_SUCC_SPECIAL_PERCORE_SKIP_RESOLVE = 0x3f;
+constexpr uint32_t DRCO_SUCC_SPECIAL_MQ_MEMBER = 0x3c;
+constexpr uint32_t DRCO_SUCC_SPECIAL_MQ_MEMBER_HUB = 0x3a;
 
 /* DRCO-only: successor-table pairing. Entry bits 16-28 are free in the drco-encoded succ table
  * (entries are per-func opIdx, not full taskIds). Bit16 on an entry marks "this entry and the next
@@ -158,6 +160,7 @@ INLINE uint32_t ParallelDevTaskModifyFlag(uint64_t highRegValue)
     return (highRegValue >> REG_VAL_DEVTASK_ID_BITS) & REG_VAL_PARALLEL_DEVTASK_CTX_MODIFYFLAG_MASK;
 }
 
+constexpr int32_t DRCO_MIDDLE_QUEUE_GATE_OPEN = 0xff;
 } // namespace npu::tile_fwk
 
 #endif

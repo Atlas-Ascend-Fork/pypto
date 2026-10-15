@@ -17,6 +17,170 @@
 
 namespace npu::tile_fwk::dynamic {
 
+namespace {
+
+// 收编门槛与静态缓冲容量：后继数不足门槛或超容量均回退老路径（fast path 是纯优化，
+// 回退语义安全；容量按大扇出头上限留一倍余量）
+constexpr uint32_t MQ_MIN_SUCC = 16;
+constexpr uint32_t MQ_MAX_SUCC = 2048;
+
+// per-func predCount 数组基址缓存：双基址解码（与设备侧 DrcoGetCurrentRootFuncData 同
+// 编码），按目标函数单项缓存——同头成员通常集中在同一目标函数，命中率极高
+struct PredArrCache {
+    uint64_t metadataBase = 0;
+    uint64_t controlFlowCacheBase = 0;
+    uint32_t funcCached = 0xFFFFFFFFu;
+    int32_t* arrCached = nullptr;
+};
+
+// 收集 op 的全量直接后继到 succBuf：dep graph 条目为本函数 opIdx（无 funcIdx 位，须用
+// 头的 funcIdx 重组完整 taskId）、stitch 条目为跨函数完整 taskId（两者编码不同，见
+// DumpTopo 同款解码）；大扇出头的后继可全挂 stitch 链（dep graph 为空）。粗过滤（dep
+// 后继数 + stitch 空判）先行——绝大多数 op 两者皆小，免展开直接返回 0。返回后继数，
+// 超静态容量返回 0（回退老路径）
+uint32_t CollectDirectSuccessors(DevAscendFunction* devFunc, DevAscendFunctionDuppedData* duppedData, uint32_t headFunc,
+                                 int32_t op, uint32_t* succBuf)
+{
+    size_t depSuccSize = 0;
+    const uint32_t* depSuccs = devFunc->GetOperationDepGraphSuccAddr(static_cast<int>(op), depSuccSize);
+    const auto& stitch = duppedData->GetOperationStitch(static_cast<int>(op), true);
+    if (depSuccSize < MQ_MIN_SUCC && stitch.IsNull()) {
+        return 0;
+    }
+    uint32_t cnt = 0;
+    for (size_t k = 0; k < depSuccSize; k++) {
+        if (cnt >= MQ_MAX_SUCC) {
+            return 0; // 超静态容量：回退老路径
+        }
+        succBuf[cnt++] = npu::tile_fwk::MakeTaskID(headFunc, depSuccs[k] & TASKID_FROM_CTRL_TOPO_MASK);
+    }
+    for (auto* n = stitch.Head(); n != nullptr; n = n->Next()) {
+        const uint32_t nodeSize = n->Size();
+        for (uint32_t i = 0; i < nodeSize; i++) {
+            if (cnt >= MQ_MAX_SUCC) {
+                return 0;
+            }
+            succBuf[cnt++] = n->At(i) & TASKID_FROM_CTRL_TOPO_MASK;
+        }
+    }
+    return cnt;
+}
+
+// HUB 搬入防御判定：编码侧会把"HUB 后继的后继表"整体搬入其唯一前驱头的解依赖表
+// （dev_encode.cpp hubExpanded：HUB 本体表清空、边只在头表中解，HUB 链上按唯一前驱
+// 奇偶交替展开保证每边恰搬一次）。middleQueue 跳过头 resolve 会使这些搬入边永不被解
+// → 搬入目标 predCount 永不归零 → 挂死（HUB 成员消费侧 resolve 到的是空表，搬入边
+// 物理上只存在于头表中）。
+// 理论上可把搬入后继一并收编（全量做单前驱校验），但 hubExpanded 的展开
+// 判定依赖编码期的唯一前驱链奇偶标记，host 精确复刻对齐成本高、且校验集扩大拖慢
+// Host 热路径——保守处理：头后继中存在会被搬入展开的 HUB（自身有后继）即整体拒绝，
+// 该头交老路径/主线散射
+bool IsRelocatedHubSuccessor(DynDeviceTask* dyntask, uint32_t succFunc, uint32_t succOp)
+{
+    DevAscendFunction* hubFunc = dyntask->dynFuncDataCacheList[succFunc].devFunc;
+    size_t hubDepSucc = 0;
+    (void)hubFunc->GetOperationDepGraphSuccAddr(static_cast<int>(succOp), hubDepSucc);
+    auto* duppedData = dyntask->dynFuncDataCacheList[succFunc].duppedData;
+    const bool hubStitchEmpty = duppedData == nullptr ||
+                                duppedData->GetOperationStitch(static_cast<int>(succOp), true).IsNull();
+    return hubDepSucc > 0 || !hubStitchEmpty;
+}
+
+// 满覆盖 + 成员资格校验，合格成员原地压实（写位恒 ≤ 读位，免二次缓冲）：
+// ① 全部后继唯一前驱 = 头（predCount==1，老路径永不发射，零哨兵前提）；② 核类型
+// ∈ {AIC, AIV, HUB}——HUB_MIX 是 wrap 组头不可直接执行（老路径由 AIC 核经
+// ResolveHubMixTask 解析 + C2V 派发），AICPU/GMATOMIC/MIX 同理不走 leaf 消费；
+// ③ HUB 成员须未被搬入展开（见 IsRelocatedHubSuccessor）。任一不满足返回 0（整体拒绝）
+uint32_t CollectEligibleMembers(DynDeviceTask* dyntask, uint64_t funcCount, PredArrCache& cache,
+                                const uint32_t* succBuf, uint32_t succCnt, uint32_t* memberTask, uint32_t* memberCt)
+{
+    uint32_t memberCnt = 0;
+    for (uint32_t k = 0; k < succCnt; k++) {
+        const uint32_t succTask = succBuf[k] & TASKID_FROM_CTRL_TOPO_MASK;
+        const uint32_t succFunc = npu::tile_fwk::FuncID(succTask);
+        const uint32_t succOp = npu::tile_fwk::TaskID(succTask);
+        if (succFunc >= funcCount) {
+            return 0;
+        }
+        if (succFunc != cache.funcCached) {
+            cache.funcCached = succFunc;
+            const uint32_t offset = static_cast<uint32_t>(
+                dyntask->dynFuncDataList->GetDrcoRootFuncData(succFunc).funcDynamicDataOffset);
+            const uint64_t base = (offset & 0x80000000u) ? cache.metadataBase : cache.controlFlowCacheBase;
+            cache.arrCached = reinterpret_cast<int32_t*>(base + (offset & 0x7fffffffu));
+        }
+        if (cache.arrCached[succOp] != 1) {
+            return 0;
+        }
+        const int sct = dyntask->cceBinary[dyntask->dynFuncDataCacheList[succFunc].calleeList[succOp]].coreType;
+        if (sct != static_cast<int>(CoreType::AIC) && sct != static_cast<int>(CoreType::AIV) &&
+            sct != static_cast<int>(CoreType::HUB)) {
+            return 0;
+        }
+        if (sct == static_cast<int>(CoreType::HUB) && IsRelocatedHubSuccessor(dyntask, succFunc, succOp)) {
+            return 0;
+        }
+        memberTask[memberCnt] = succTask;
+        memberCt[memberCnt] = static_cast<uint32_t>(sct);
+        memberCnt++;
+    }
+    return memberCnt;
+}
+
+// 一解多直通成员撒核 + 入队：① 按核类型分组顺序轮转（AIC 组 [0, nrValidAic)、AIV 组
+// [nrValidAic, 3*nrValidAic)）——顺序轮转保证每核至多 ⌈n/核数⌉ 个，避免取模撞核把长
+// 成员波尾拉串行；② 容量校验（任一核超 queueCapacity 返回 false，由调用方回退注册走
+// 老路径——失败发生在入队之前，无半途状态）；③ 入队打标（单槽 0，懒分配精确尺寸，
+// leaf 打 MQ_MEMBER / hub 打 MQ_MEMBER_HUB；stitch 条目自带的 ct 位与 special 位段
+// 重叠，入队前先清位段再打标，否则设备侧 ct 解码错乱）
+bool SpreadMiddleQueueMembers(npu::tile_fwk::DrcoRootFuncList* rootFuncList, DeviceWorkspaceAllocator* workspace,
+                              const uint32_t* memberTask, const uint32_t* memberCt, uint32_t memberCnt,
+                              uint32_t headFlat, uint32_t slot, uint32_t nrValidAic, uint32_t queueCapacity)
+{
+    uint32_t memberCore[MQ_MAX_SUCC];
+    uint32_t perCore[3 * npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE];
+    for (uint32_t c = 0; c < 3 * nrValidAic; c++) {
+        perCore[c] = 0;
+    }
+    uint32_t aicSeq = 0;
+    uint32_t aivSeq = 0;
+    for (uint32_t mi = 0; mi < memberCnt; mi++) {
+        memberCore[mi] = (memberCt[mi] == static_cast<uint32_t>(CoreType::AIC)) ?
+                             (aicSeq++ % nrValidAic) :
+                             nrValidAic + ((aivSeq++) % (2 * nrValidAic));
+    }
+    for (uint32_t mi = 0; mi < memberCnt; mi++) {
+        perCore[memberCore[mi]]++;
+    }
+    for (uint32_t c = 0; c < 3 * nrValidAic; c++) {
+        if (perCore[c] > queueCapacity) {
+            return false;
+        }
+    }
+    constexpr uint32_t specialShift = npu::tile_fwk::TASKID_DRCO_SUCC_SPECIAL_SHIFT;
+    auto* perCoreMiddleQueueArray = rootFuncList->perCoreMiddleQueueArray;
+    for (uint32_t mi = 0; mi < memberCnt; mi++) {
+        const uint32_t coreIdx = memberCore[mi];
+        if (perCoreMiddleQueueArray[coreIdx][slot] == nullptr) {
+            const uint32_t middleSize = sizeof(npu::tile_fwk::PerCoreMiddleQueue) +
+                                        perCore[coreIdx] * sizeof(npu::tile_fwk::LeafTaskId);
+            auto* middleQueue = reinterpret_cast<npu::tile_fwk::PerCoreMiddleQueue*>(
+                workspace->AllocatePerCorePendingQueue(middleSize));
+            new (middleQueue) npu::tile_fwk::PerCoreMiddleQueue();
+            perCoreMiddleQueueArray[coreIdx][slot] = middleQueue;
+        }
+        auto* middleQueue = perCoreMiddleQueueArray[coreIdx][slot];
+        middleQueue->headTaskId = headFlat;
+        const uint32_t memberSpecial = (memberCt[mi] == static_cast<uint32_t>(CoreType::HUB)) ?
+                                           npu::tile_fwk::DRCO_SUCC_SPECIAL_MQ_MEMBER_HUB :
+                                           npu::tile_fwk::DRCO_SUCC_SPECIAL_MQ_MEMBER;
+        middleQueue->UnsafeEnqueue((memberTask[mi] & ~(0x3Fu << specialShift)) | (memberSpecial << specialShift));
+    }
+    return true;
+}
+
+} // namespace
+
 void DeviceTaskContext::InitDrcoRootFuncList(DynDeviceTask* dyntask)
 {
     auto* rootFuncList = reinterpret_cast<npu::tile_fwk::DrcoRootFuncList*>(
@@ -314,6 +478,75 @@ void DeviceTaskContext::BuildDrcoRootFuncData(DynFuncData* dyndata, DrcoRootFunc
     for (uint32_t i = 0; i < duppedData->GetStitchSize(); i++) {
         duppedData->GetStitch(i).EncodeStitchNodes();
     }
+}
+
+bool DeviceTaskContext::TryHeadReleaseFastPath(DynDeviceTask* dyntask, DevAscendProgram* devProg)
+{
+    // 一解多直通：头的执行逻辑不变（初始就绪走正常分发、运行期 fire 走矩阵），仅当头的
+    // 全部直接后继唯一前驱=头（满覆盖零哨兵）且数量达门槛时，把后继预放入各核
+    // middleQueue 并注册头（完成点命中注册表 → 写 predCount=0xff 开门并跳过 resolve 展开，
+    // 省掉单核串行 push 大扇出后继到矩阵的分发）；成员执行后正常 resolve（第二层起走
+    // 老路径），hub 成员不可执行只 resolve。随 DRCO 总开关生效（调用点 enableAicoreResolve_ 块内）
+    const uint32_t nrValidAic = devProg->devArgs.nrValidAic;
+    const uint32_t queueCapacity = dyntask->devTask.coreFunctionCnt;
+    auto* rootFuncList = dyntask->drcoRootFuncList;
+    const uint64_t funcCount = dyntask->dynFuncDataCacheListSize;
+    PredArrCache predCache{reinterpret_cast<uint64_t>(rootFuncList->metadataBase),
+                           reinterpret_cast<uint64_t>(rootFuncList->controlFlowCacheBase)};
+    uint32_t succBuf[MQ_MAX_SUCC]; // 收集缓冲兼成员压实缓冲（写位恒 ≤ 读位）
+    uint32_t memberCt[MQ_MAX_SUCC];
+    uint32_t regionApplied = 0;
+    for (uint64_t f = 0; f < funcCount; f++) {
+        DevAscendFunction* devFunc = dyntask->dynFuncDataCacheList[f].devFunc;
+        const int32_t opSize = static_cast<int32_t>(devFunc->GetOperationSize());
+        auto* duppedData = dyntask->dynFuncDataCacheList[f].duppedData;
+        if (opSize <= 0 || duppedData == nullptr) {
+            continue;
+        }
+        for (int32_t o = 0; o < opSize; o++) {
+            // 槽满即止（regionApplied 只增不减，槽满后候选头已无槽可入）
+            if (regionApplied >= npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM) {
+                continue;
+            }
+            const uint32_t succCnt = CollectDirectSuccessors(devFunc, duppedData, static_cast<uint32_t>(f), o, succBuf);
+            if (succCnt < MQ_MIN_SUCC) {
+                continue;
+            }
+            const uint32_t memberCnt = CollectEligibleMembers(dyntask, funcCount, predCache, succBuf, succCnt, succBuf,
+                                                              memberCt);
+            if (memberCnt == 0) {
+                continue;
+            }
+            // 头注册（头调度不动；完成点命中 → 写 0xff 开门并跳过整个 resolve）
+            if (rootFuncList->mqRegionHeadCount >= npu::tile_fwk::DrcoRootFuncList::DRCO_MQ_REGION_MAX) {
+                continue;
+            }
+            const uint32_t headFlat = npu::tile_fwk::MakeTaskID(static_cast<uint32_t>(f), static_cast<uint32_t>(o));
+            const uint32_t regionIdx = rootFuncList->mqRegionHeadCount;
+            rootFuncList->mqRegionHeadList[rootFuncList->mqRegionHeadCount++] = headFlat;
+            uint32_t aicLeafCnt = 0;
+            uint32_t aivLeafCnt = 0;
+            for (uint32_t mi = 0; mi < memberCnt; mi++) {
+                if (memberCt[mi] == static_cast<uint32_t>(CoreType::AIC)) {
+                    aicLeafCnt++;
+                } else if (memberCt[mi] == static_cast<uint32_t>(CoreType::AIV)) {
+                    aivLeafCnt++;
+                }
+            }
+            rootFuncList->mqRegionLeafCountAic[regionIdx] = aicLeafCnt;
+            rootFuncList->mqRegionLeafCountAiv[regionIdx] = aivLeafCnt;
+
+            // 撒核 + 入队。slot = regionApplied（候选序）：同 devTask 多头各自独立槽位/
+            // 独立门——共享单槽会 headTaskId 互相覆盖，后入队头开门时放行未完成头的成员
+            if (!SpreadMiddleQueueMembers(rootFuncList, workspace_, succBuf, memberCt, memberCnt, headFlat,
+                                          regionApplied, nrValidAic, queueCapacity)) {
+                rootFuncList->mqRegionHeadCount--; // 容量不足回退本次注册
+                continue;
+            }
+            regionApplied++;
+        }
+    }
+    return regionApplied > 0;
 }
 
 } // namespace npu::tile_fwk::dynamic

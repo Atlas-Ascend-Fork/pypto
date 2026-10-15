@@ -214,6 +214,9 @@ struct DrcoDevTaskCountList {
 #endif
 };
 
+// per-core middleQueue 槽位数：P1 单槽使用（多 region 时每槽承载一个区域队列）；可按需调整
+constexpr uint32_t DRCO_MIDDLE_QUEUE_SLOT_NUM = 2;
+
 struct DrcoRootFuncList {
     __gm__ PerCorePendingQueue* perCorePendingQueueArray[MAX_AICORE_NUM_FOR_QUEUE];
     __gm__ DrcoLocalReadyQueue* localReadyQueueArray[DRCO_QUEUE_MAX][NUM_LOCAL_GROUPS];
@@ -247,6 +250,15 @@ struct DrcoRootFuncList {
     alignas(64) uint32_t devTaskFinished;
     alignas(64) DrcoDevTaskCountList devTaskCountList;
     alignas(64) DrcoDevTaskFinishFlagList devTaskFinishFlagList;
+    __gm__ PerCoreMiddleQueue* perCoreMiddleQueueArray[MAX_AICORE_NUM_FOR_QUEUE][DRCO_MIDDLE_QUEUE_SLOT_NUM];
+    static constexpr uint32_t DRCO_MQ_REGION_MAX = 128;
+    static constexpr uint32_t DRCO_MQ_REGION_FLAT_MASK = 0x03FFFFFFu;
+    uint32_t mqRegionHeadCount{0};
+    uint32_t mqRegionHeadList[DRCO_MQ_REGION_MAX];
+    // 每 region 的 leaf 成员数（按核型拆分，撒核期由 host 写入）：开门核一次性代加，
+    // 替代每成员核逐个原子加（16 路同计数器风暴，case3 实测 4~8us）
+    uint32_t mqRegionLeafCountAic[DRCO_MQ_REGION_MAX];
+    uint32_t mqRegionLeafCountAiv[DRCO_MQ_REGION_MAX];
     alignas(64) uint8_t pad[64];
 
     // 全局 col 游标（每 core 类型一份，该类型全部 push 核共享）：push 时按批原子认领连续

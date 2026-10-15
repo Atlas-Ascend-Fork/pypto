@@ -570,6 +570,11 @@ int DeviceTaskContext::BuildDeviceTaskDataAndReadyQueue(DynDeviceTask* dyntask, 
 
     if (enableAicoreResolve_) {
         DrcoRefreshSpecialTaskId(dyntask);
+        // 一层直通只收编后继到 middleQueue + 注册头，不预放置任何任务——Dispatch 必须照常
+        // 执行（就绪任务经 perCoreQueue 分发，其计数靠构建期 Precount 预记；跳过 Dispatch
+        // 会使回放期 DrcoReadyQueueDataRestore 镜像分发的任务执行后无计数，executedCount
+        // 恒差 readyTotal → finishFlag 永不置位 → 120s 超时）
+        (void)TryHeadReleaseFastPath(dyntask, devProg);
         DispatchReadyQueueToCores(dyntask, devProg);
         DispatchDieReadyQueueToCores(dyntask, devProg);
         npu::tile_fwk::DrcoRootFuncListPrecountPerCoreTasks(dyntask->drcoRootFuncList, devProg->devArgs.nrValidAic,

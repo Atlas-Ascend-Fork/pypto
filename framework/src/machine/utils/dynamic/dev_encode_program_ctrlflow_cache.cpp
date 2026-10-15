@@ -215,6 +215,9 @@ void DevControlFlowCache::ReadyQueueDataBackup(DynDeviceTaskBase* base)
         }
     }
 
+    // middleQueue 无需备份：录制期 slab 内容随工作区镜像直接对设备可见（队列内容为
+    // 只读不变量，设备消费状态记核本地）；加 backup/Restore 反而引入坏副本/坏尺寸
+    // 覆盖风险
     base->readyQueueBackup = readyQueueBackup;
 }
 
@@ -230,7 +233,8 @@ void DevControlFlowCache::DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uin
         dst->tail = 0;
         dst->size = 0;
     }
-
+    // middleQueue 回放无需恢复：队列内容只读不变量（设备不写回 GM），slab 镜像跨轮有效
+    // ——与 v2（9a6f7a7ff）验证通过的形态一致；v3 曾加 backup/Restore 回退（见 Backup 注释）
     const uint32_t nrAivCores = nrValidAic * 2;
     ReadyCoreFunctionQueue* aivQueue = base->readyQueue[0];
     ReadyCoreFunctionQueue* aicQueue = base->readyQueue[1];
@@ -1337,6 +1341,9 @@ void DevControlFlowCache::RelocDrcoRootFuncList(RelocRange& relocCtrlCache, Relo
     if (drcoRootFuncList != nullptr) {
         for (size_t i = 0; i < npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE; i++) {
             relocCtrlCache.Reloc(drcoRootFuncList->perCorePendingQueueArray[i]);
+            for (size_t sl = 0; sl < npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM; sl++) {
+                relocCtrlCache.RelocNullable(drcoRootFuncList->perCoreMiddleQueueArray[i][sl]);
+            }
         }
 
         for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {

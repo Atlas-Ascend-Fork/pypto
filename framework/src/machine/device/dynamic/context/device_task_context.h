@@ -69,6 +69,7 @@ private:
     int BuildDynFuncData(DynDeviceTask* dyntask, uint32_t taskId, DevAscendFunctionDupped* stitchedList,
                          uint64_t stitchedSize);
     void DrcoRefreshSpecialTaskId(DynDeviceTask* dyntask);
+    bool TryHeadReleaseFastPath(DynDeviceTask* dyntask, DevAscendProgram* devProg);
     void BuildDrcoRootFuncData(DynFuncData* dyndata, DrcoRootFuncData* rootFuncData,
                                DevAscendFunctionDupped& stitchedFunc);
 
