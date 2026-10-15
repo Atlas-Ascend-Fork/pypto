@@ -1139,7 +1139,7 @@ TEST(BackendCceOpsTest, BlockSubviewUsesRegisteredAddressAndResultTarget)
         tile->GetType(), ir::Span::Unknown());
     auto* info = BackendCCE::Instance().GetOpInfo("block.subview");
     ASSERT_NE(info, nullptr);
-    EXPECT_EQ(info->pipe, ir::PipeType::MTE2);
+    EXPECT_EQ(info->pipe, ir::PipeType::S);
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.SetTileAddress("tile", "0x200");
@@ -1147,10 +1147,11 @@ TEST(BackendCceOpsTest, BlockSubviewUsesRegisteredAddressAndResultTarget)
     EXPECT_EQ(info->codegen_func(call, codegen), "view");
 
     auto generated = codegen.GetEmittedCode();
-    EXPECT_NE(generated.find("TASSIGN(view, 0x200 + ((3)*32+(0))*2)"), std::string::npos);
+    EXPECT_NE(generated.find("pto::GetTileOffset<std::remove_reference_t<decltype(tile)>>(3, 0)"), std::string::npos);
     EXPECT_NE(generated.find("view.SetValidShape(8, 12)"), std::string::npos);
     EXPECT_TRUE(codegen.HasTileAddress("view"));
-    EXPECT_EQ(codegen.GetTileAddress("view"), "0x200 + ((3)*32+(0))*2");
+    EXPECT_EQ(codegen.GetTileAddress("view"),
+              "0x200 + ((pto::GetTileOffset<std::remove_reference_t<decltype(tile)>>(3, 0))*16/8)");
 }
 
 TEST(BackendCceOpsTest, BlockSubviewUsesDynamicTileGroupAddressAndGeneratedName)
@@ -1170,7 +1171,7 @@ TEST(BackendCceOpsTest, BlockSubviewUsesDynamicTileGroupAddressAndGeneratedName)
 
     EXPECT_EQ(result, "tiles_index__view_0");
     auto generated = codegen.GetEmittedCode();
-    EXPECT_NE(generated.find("TASSIGN(tiles_index__view_0, (uint64_t)tiles[index].data() + ((5)*32+(0))*2)"),
+    EXPECT_NE(generated.find("pto::GetTileOffset<std::remove_reference_t<decltype(tiles[index])>>(5, 0)"),
               std::string::npos);
     EXPECT_NE(generated.find("tiles_index__view_0.SetValidShape(4, 7)"), std::string::npos);
 }
@@ -1194,7 +1195,8 @@ TEST(BackendCceOpsTest, BlockSubviewFallsBackToMemRefAddress)
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.SetCurrentResultTarget("memref_view");
     EXPECT_EQ(info->codegen_func(call, codegen), "memref_view");
-    EXPECT_NE(codegen.GetEmittedCode().find("TASSIGN(memref_view, 0x180 + ((2)*16+(0))*4)"), std::string::npos);
+    EXPECT_NE(codegen.GetEmittedCode().find("pto::GetTileOffset<std::remove_reference_t<decltype(tile)>>(2, 0)"),
+              std::string::npos);
 }
 
 TEST(BackendCceOpsTest, BlockSubviewInVFSectionReturnsPointerArithmetic)
@@ -1210,7 +1212,30 @@ TEST(BackendCceOpsTest, BlockSubviewInVFSectionReturnsPointerArithmetic)
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.SetInVFSection(true);
-    EXPECT_EQ(info->codegen_func(call, codegen), "(vf_tile_ptr_0 + (7)*32+(0))");
+    EXPECT_EQ(info->codegen_func(call, codegen),
+              "(vf_tile_ptr_0 + pto::GetTileOffset<std::remove_reference_t<decltype(tile)>>(7, 0))");
+    EXPECT_TRUE(codegen.GetEmittedCode().empty());
+}
+
+TEST(BackendCceOpsTest, BlockSubviewInVFSectionUsesNzElementOffset)
+{
+    auto nz_hw = ir::HardwareInfo(ir::TileLayout::col_major, ir::TileLayout::row_major, 512);
+    auto tile_type = std::make_shared<const ir::TileType>(
+        std::vector<int64_t>{32, 32}, ir::DataType::FP16, std::optional<ir::MemRefPtr>(std::nullopt),
+        std::optional<ir::TileView>(std::nullopt), std::optional<ir::HardwareInfo>(nz_hw));
+    auto tile = MakeVar("tile", tile_type);
+    auto call = std::make_shared<const ir::Call>(
+        "block.subview",
+        std::vector<ir::ExprPtr>{tile, MakeTuple({MakeConstInt(16), MakeConstInt(16)}),
+                                 MakeTuple({MakeConstInt(16), MakeConstInt(16)})},
+        tile_type, ir::Span::Unknown());
+    const auto* info = BackendCCE::Instance().GetOpInfo("block.subview");
+    ASSERT_NE(info, nullptr);
+
+    TestableCCECodegen codegen(ir::SectionKind::Vector);
+    codegen.SetInVFSection(true);
+    EXPECT_EQ(info->codegen_func(call, codegen),
+              "(vf_tile_ptr_0 + pto::GetTileOffset<std::remove_reference_t<decltype(tile)>>(16, 16))");
     EXPECT_TRUE(codegen.GetEmittedCode().empty());
 }
 
@@ -1233,7 +1258,8 @@ TEST(BackendCceOpsTest, BlockSubviewUsesDnElementOffset)
     codegen.SetTileAddress("tile", "0x200");
     codegen.SetCurrentResultTarget("view");
     EXPECT_EQ(info->codegen_func(call, codegen), "view");
-    EXPECT_NE(codegen.GetEmittedCode().find("TASSIGN(view, 0x200 + ((5)*16+(3))*2)"), std::string::npos);
+    EXPECT_NE(codegen.GetEmittedCode().find("pto::GetTileOffset<std::remove_reference_t<decltype(tile)>>(3, 5)"),
+              std::string::npos);
 }
 
 TEST(BackendCceOpsTest, BlockSubviewInVFSectionSupportsScalarOffset)

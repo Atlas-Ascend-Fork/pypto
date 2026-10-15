@@ -11,7 +11,7 @@
 
 """Parser validation tests for Tile subscript access."""
 
-from pypto_pro._errors import InvalidOperation, InvalidShape, InvalidType, InvalidVal, OutOfRange
+from pypto_pro._errors import InvalidFormat, InvalidOperation, InvalidShape, InvalidType, InvalidVal, OutOfRange
 import pypto_pro.language as pl
 import pytest
 
@@ -20,6 +20,10 @@ from pypto.pypto_impl import ir
 
 def _parse_vector_kernel(kernel) -> None:
     kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def _parse_cube_kernel(kernel) -> None:
+    kernel.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
 
 
 def test_tile_subscript_rejects_negative_constant_index():
@@ -128,5 +132,80 @@ def test_tile_slice_with_dynamic_valid_shape():
         with pl.section_vector():
             pl.set_validshape(tile, [rows, cols])
             _sub = tile[1:, :]
+
+    _parse_vector_kernel(kernel)
+
+
+def test_nz_tile_slice_accepts_fractal_aligned_start():
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, layout=pl.NZ
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            _sub = tile[16:32, 16:32]
+
+    _parse_vector_kernel(kernel)
+
+
+def test_zn_tile_slice_accepts_fractal_aligned_start():
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.ZN
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_cube():
+            _sub = tile[16:32, 16:32]
+
+    _parse_cube_kernel(kernel)
+
+
+@pytest.mark.parametrize(
+    ("memory_space", "layout"),
+    [
+        (pl.MemorySpace.Left, pl.NZ),
+        (pl.MemorySpace.Right, pl.ZN),
+    ],
+)
+def test_l0a_l0b_tile_slice_is_not_supported(memory_space, layout):
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[32, 32], dtype=pl.DT_FP16, target_memory=memory_space, layout=layout
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_cube():
+            _sub = tile[16:32, 16:32]
+
+    with pytest.raises(InvalidFormat, match="Tile slice supports Vec ND/DN/NZ, Mat ND/DN/NZ/ZN, and Acc NZ tiles"):
+        _parse_cube_kernel(kernel)
+
+
+@pytest.mark.parametrize(("row_start", "col_start"), [(1, 16), (16, 1)])
+def test_nz_tile_slice_rejects_unaligned_start(row_start, col_start):
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, layout=pl.NZ
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            _sub = tile[row_start:32, col_start:32]
+
+    with pytest.raises(InvalidShape, match=r"NZ Tile slice start must align to \[16, 16\]"):
+        _parse_vector_kernel(kernel)
+
+
+def test_nz_tile_slice_accepts_dynamic_start():
+    @pl.jit(auto_mutex=False)
+    def kernel(row_start: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, layout=pl.NZ
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            _sub = tile[row_start:32, 16:32]
 
     _parse_vector_kernel(kernel)

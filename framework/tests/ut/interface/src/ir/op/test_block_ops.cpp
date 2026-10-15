@@ -371,10 +371,11 @@ TEST_F(BlockOpsMemoryTest, Subview_TilePreservesPhysicalTypeAndMemRef)
 
     auto result_type = As<TileType>(call->GetType());
     ASSERT_NE(result_type, nullptr);
-    EXPECT_EQ(result_type.get(), source_type.get());
+    EXPECT_NE(result_type.get(), source_type.get());
     EXPECT_EQ(result_type->dtype_, source_type->dtype_);
     EXPECT_EQ(result_type->shape_, source_type->shape_);
     EXPECT_EQ(result_type->memref_, source_type->memref_);
+    EXPECT_FALSE(result_type->tileView_.has_value());
 }
 
 TEST_F(BlockOpsMemoryTest, Subview_WrongArgCount_Throws)

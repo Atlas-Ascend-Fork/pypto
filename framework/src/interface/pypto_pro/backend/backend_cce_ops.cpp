@@ -1865,7 +1865,7 @@ REGISTER_BACKEND_OP(BackendCCE, "block.tile_valid_shape")
     .f_codegen(MakeTileValidShapeCodegenCCE);
 
 // ============================================================================
-// block.subview - tile/tensor sub-view with offset and new shape.
+// block.subview - Tile sub-view with offset and new shape.
 //
 // Tile in VF section: returns pointer arithmetic expression.
 // Tile in non-VF section: emits TASSIGN with new shape, returns the new tile
@@ -1877,36 +1877,29 @@ static std::string MakeBlockSubviewCodegenCCE(const ir::CallPtr& op, codegen::Co
 
     auto tile_type = ir::As<ir::TileType>(op->args_[0]->GetType());
     auto offset_tuple = ir::As<ir::MakeTuple>(op->args_[1]);
-    bool is_tuple = (offset_tuple != nullptr);
+    const bool is_vf = codegen.IsInVFSection();
 
-    int64_t rows = tile_type->shape_.size() >= 1 ? codegen.GetConstIntValue(tile_type->shape_[0]) : 1;
-    int64_t cols = tile_type->shape_.size() >= 2 ? codegen.GetConstIntValue(tile_type->shape_[1]) : 1;
-    const auto& hw = tile_type->hardwareInfo_.value();
-
-    // Element offset: DN (col-major) col*rows+row; ND (row-major) row*cols+col.
-    std::string elem_off;
-    if (is_tuple) {
-        auto row_expr = codegen.GetExprAsCode(offset_tuple->elements_[0]);
-        auto col_expr = codegen.GetExprAsCode(offset_tuple->elements_[1]);
-        if (hw.blayout == ir::TileLayout::col_major) { // DN
-            elem_off = "(" + col_expr + ")*" + std::to_string(rows) + "+(" + row_expr + ")";
-        } else { // ND
-            elem_off = "(" + row_expr + ")*" + std::to_string(cols) + "+(" + col_expr + ")";
-        }
+    // VF also uses block.subview for tile + linear_offset.
+    if (offset_tuple == nullptr) {
+        CHECK(is_vf) << "block.subview offset must be a 2D tuple outside VF linear-offset access";
+        const std::string base_ptr = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/false);
+        return "(" + base_ptr + " + (" + codegen.GetExprAsCode(op->args_[1]) + "))";
     }
 
-    // VF section: pointer arithmetic (element offset), no tile descriptor.
-    if (codegen.IsInVFSection()) {
-        std::string base_ptr = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/false);
-        if (!is_tuple) {
-            return "(" + base_ptr + " + (" + codegen.GetExprAsCode(op->args_[1]) + "))";
-        }
+    const std::string row_expr = codegen.GetExprAsCode(offset_tuple->elements_[0]);
+    const std::string col_expr = codegen.GetExprAsCode(offset_tuple->elements_[1]);
+    const std::string base_tile = codegen.GetExprAsCode(op->args_[0]);
+    const std::string elem_off = "pto::GetTileOffset<std::remove_reference_t<decltype(" + base_tile + ")>>(" +
+                                 row_expr + ", " + col_expr + ")";
+
+    // VF only needs pointer arithmetic and does not create a Tile descriptor.
+    if (is_vf) {
+        const std::string base_ptr = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/false);
         return "(" + base_ptr + " + " + elem_off + ")";
     }
 
-    std::string base_tile = codegen.GetExprAsCode(op->args_[0]);
-    int elem_bytes = std::max(1, static_cast<int>(tile_type->dtype_.GetBit() / 8));
-    std::string byte_offset_expr = "(" + elem_off + ")*" + std::to_string(elem_bytes);
+    const int dtype_bits = static_cast<int>(tile_type->dtype_.GetBit());
+    const std::string byte_offset_expr = "((" + elem_off + ")*" + std::to_string(dtype_bits) + "/8)";
 
     // Resolve base address: tile_addresses_ → .data() → memref addr
     std::string base_addr;
@@ -1930,7 +1923,7 @@ static std::string MakeBlockSubviewCodegenCCE(const ir::CallPtr& op, codegen::Co
     std::string vs_col = codegen.GetExprAsCode(shape_tuple->elements_[1]);
 
     // Build type with original shape (preserves row_stride) but WITHOUT tileView_,
-    // so valid_shape template params are -1 (dynamic).  This is required because
+    // so valid_shape template params are -1 (dynamic). This is required because
     // subview calls SetValidShape at runtime, which only works when the template
     // valid_shape params are DYNAMIC (-1).
     std::vector<int64_t> dims;
@@ -1939,7 +1932,7 @@ static std::string MakeBlockSubviewCodegenCCE(const ir::CallPtr& op, codegen::Co
     }
     int64_t tile_rows = dims.size() >= 1 ? dims[0] : 1;
     int64_t tile_cols = dims.size() >= 2 ? dims[1] : 1;
-    auto subview_type = tile_type;
+    auto subview_type = ir::As<ir::TileType>(op->GetType());
     std::string type_str = codegen.GetTypeConverter().ConvertTileType(subview_type, tile_rows, tile_cols);
 
     // Sanitize base_tile into a valid C++ identifier prefix
@@ -1951,8 +1944,7 @@ static std::string MakeBlockSubviewCodegenCCE(const ir::CallPtr& op, codegen::Co
                                 (base_tile_id + "_view_" + std::to_string(codegen.GetTileOffsetCounter())) :
                                 codegen.GetCurrentResultTarget();
 
-    // Emit: declare tile, TASSIGN offset address, then SetValidShape (must be
-    // after TASSIGN — TASSIGN overwrites the constructor's valid_shape).
+    // Emit a dynamic-valid-shape Tile descriptor for the sub-window.
     std::string temp_addr = base_addr + " + " + byte_offset_expr;
     codegen.Emit(type_str + " " + temp_name + "(" + vs_row + ", " + vs_col + ");");
     codegen.Emit("TASSIGN(" + temp_name + ", " + temp_addr + ");");
@@ -1963,7 +1955,7 @@ static std::string MakeBlockSubviewCodegenCCE(const ir::CallPtr& op, codegen::Co
 }
 
 REGISTER_BACKEND_OP(BackendCCE, "block.subview")
-    .set_pipe(ir::PipeType::MTE2)
+    .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
         return MakeBlockSubviewCodegenCCE(op, codegen_base);
     });

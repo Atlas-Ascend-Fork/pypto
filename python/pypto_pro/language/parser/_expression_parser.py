@@ -1278,6 +1278,8 @@ class ExpressionParserMixin:
         - If slice end exceeds tile shape → clamp to the tile shape.
         - If slice exceeds tile valid_shape → clamp to (valid_shape - start).
         """
+        from pypto_pro.ir.op.block_ops import _tile_layout, block_ir_op
+
         container_type = container_expr.type
         shape = container_type.shape
 
@@ -1307,26 +1309,23 @@ class ExpressionParserMixin:
             )
 
         if isinstance(container_type, ir.TileType):
-            memref = getattr(container_type, 'memref', None)
-            mem_space = getattr(memref, 'memory_space', None) if memref is not None else None
-            hw_info = getattr(container_type, 'hardware_info', None)
-            blayout = getattr(hw_info, 'blayout', None) if hw_info is not None else None
-            slayout = getattr(hw_info, 'slayout', None) if hw_info is not None else None
-            is_nd = (
-                blayout is not None
-                and blayout.name == 'row_major'
-                and slayout is not None
-                and slayout.name == 'none_box'
-            )
-            is_dn = (
-                blayout is not None
-                and blayout.name == 'col_major'
-                and slayout is not None
-                and slayout.name == 'none_box'
-            )
-            if mem_space is None or mem_space.name != 'Vec' or not (is_nd or is_dn):
+            memref = container_type.memref
+            mem_space = memref.memory_space if memref is not None else None
+            hw_info = container_type.hardware_info
+            layout = _tile_layout(container_type)
+            allowed_layouts = {
+                ir.MemorySpace.Vec: {ir.TensorLayout.ND, ir.TensorLayout.DN, ir.TensorLayout.NZ},
+                ir.MemorySpace.Mat: {
+                    ir.TensorLayout.ND,
+                    ir.TensorLayout.DN,
+                    ir.TensorLayout.NZ,
+                    ir.TensorLayout.ZN,
+                },
+                ir.MemorySpace.Acc: {ir.TensorLayout.NZ},
+            }
+            if layout not in allowed_layouts.get(mem_space, set()):
                 raise InvalidFormat(
-                    "Tile slice is only supported on UB (Vec) tiles with ND/DN layout",
+                    "Tile slice supports Vec ND/DN/NZ, Mat ND/DN/NZ/ZN, and Acc NZ tiles",
                     span=span,
                     hint="Use pl.load with offset or pl.move with offset for unsupported tiles",
                 )
@@ -1434,9 +1433,30 @@ class ExpressionParserMixin:
 
             new_shape_exprs.append(size)
 
+        if isinstance(container_type, ir.TileType) and layout in (ir.TensorLayout.NZ, ir.TensorLayout.ZN):
+            start_values = [_const_int_value(start) for start in dim_starts]
+            dtype_bits = int(container_type.dtype.get_bit())
+            c0 = 256 // dtype_bits
+            fractal = hw_info.fractal
+            if mem_space == ir.MemorySpace.Acc or fractal == 1024:
+                inner_rows, inner_cols = 16, 16
+            elif layout == ir.TensorLayout.NZ:
+                inner_rows, inner_cols = 16, c0
+            else:
+                inner_rows, inner_cols = c0, 16
+
+            row_start, col_start = start_values
+            row_unaligned = row_start is not None and row_start % inner_rows != 0
+            col_unaligned = col_start is not None and col_start % inner_cols != 0
+            if row_unaligned or col_unaligned:
+                raise InvalidShape(
+                    f"{mem_space.name} {layout.name} Tile slice start must align to "
+                    f"[{inner_rows}, {inner_cols}], got [{row_start}, {col_start}]",
+                    span=span,
+                )
+
         # Pass [row_start, col_start] as a tuple; codegen computes the byte offset
         # according to the tile's layout (ND row-major, DN col-major, NZ fractal).
-        from pypto_pro.ir.op.block_ops import block_ir_op
         shape_tuple = ir.MakeTuple(new_shape_exprs, span)
         offset_tuple = ir.MakeTuple([dim_starts[0], dim_starts[1]], span)
         view_expr = ir.create_op_call(

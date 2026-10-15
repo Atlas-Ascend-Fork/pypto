@@ -59,6 +59,7 @@ _DESCRIPTOR_ONLY_OPS: frozenset[str] = frozenset(
     {
         "make_tile_group",  # Declares storage metadata; does not access tile data.
         "set_validshape",
+        "subview",
     }
 )
 

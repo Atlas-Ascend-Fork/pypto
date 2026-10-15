@@ -390,7 +390,10 @@ TypePtr DeduceSubViewType([[maybe_unused]] const std::vector<ExprPtr>& args,
         << "block.subview requires exactly 3 arguments (container, offset, valid_shape), but got " << args.size();
     auto container_type = args[0]->GetType();
     if (auto tile_type = As<TileType>(container_type)) {
-        return tile_type;
+        // A subview keeps the source Tile's physical storage description, but its
+        // runtime SetValidShape must not be overridden by a source tile_view.
+        return std::make_shared<const TileType>(tile_type->shape_, tile_type->dtype_, tile_type->memref_, std::nullopt,
+                                                tile_type->hardwareInfo_);
     }
 
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, false)

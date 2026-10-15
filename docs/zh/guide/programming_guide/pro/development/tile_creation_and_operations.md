@@ -212,7 +212,27 @@ previous_tile = double_buffer.previous()
 first_tile = double_buffer[0]
 ```
 
-对同一个TileGroup交替调用next()时，需要保证调用顺序与Kernel的流水迭代一致。仅需固定访问某一块Tile时，使用current()或下标访问，避免无意改变轮转位置。。
+对同一个TileGroup交替调用next()时，需要保证调用顺序与Kernel的流水迭代一致。仅需固定访问某一块Tile时，使用current()或下标访问，避免无意改变轮转位置。
+
+## 创建Tile子视图
+
+二维slice会创建与原Tile共享存储的子视图，不复制数据。子视图保留原Tile的物理shape、dtype、内存空间和layout，并根据slice范围设置自己的有效形状：
+
+```python
+sub_tile = tile[row_start:row_end, col_start:col_end]
+```
+
+slice必须为二维，step仅支持1，起止位置不支持负数。各内存空间支持的layout及起点对齐要求如下，不支持ZZ和NN布局：
+
+| 内存空间 | 支持的layout | 起点对齐 |
+|:---|:---|:---|
+| UB | ND、DN、NZ | ND/DN无要求；NZ：行16、列C0 |
+| L1 Buffer | ND、DN、NZ、ZN | ND/DN无要求；NZ：行16、列C0；ZN：行C0、列16 |
+| L0C Buffer | NZ | 行列均16 |
+
+NZ/ZN子视图起点须按上表对齐，C0由dtype决定。前端仅检查编译期常量，运行时起点由调用方保证对齐。
+
+L0A Buffer、L0B Buffer、L0A_MX Buffer和L0B_MX Buffer均暂不支持Tile子视图。
 
 ## 设置Tile的有效形状
 
@@ -229,7 +249,7 @@ tail_type = pl.TileType(
 )
 ```
 
-需要表示部分维度为固定有效大小时，可显式指定valid_shape，例如[64, -1]。取得具体Tile后，使用pypto_pro.language.set_validshape设置本次访问的有效范围；每一维必须大于0且不能超过Tile对应维度：
+只有TileType省略valid_shape或将各维均指定为-1时，才能在取得具体Tile后使用pypto_pro.language.set_validshape设置本次访问的有效范围；每一维必须大于0且不能超过Tile对应维度：
 
 ```python
 import pypto_pro.language as pl

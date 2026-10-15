@@ -16,6 +16,7 @@ from pypto_pro import ir
 from pypto_pro._errors import (
     InvalidArgument,
     InvalidFormat,
+    InvalidOperation,
     InvalidShape,
     InvalidTile,
     InvalidType,
@@ -338,6 +339,18 @@ def test_load_with_dynamic_valid_shape():
     ir_str = _program_ir(main)
     assert "block.load" in ir_str
     assert "block.set_validshape" in ir_str
+
+
+def test_set_validshape_rejects_static_declared_valid_shape():
+    with pytest.raises(InvalidOperation, match="cannot modify a TileType with static valid_shape"):
+
+        @pl.jit(auto_mutex=False)
+        def main(rows: pl.DT_INT64, cols: pl.DT_INT64):
+            tile_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, valid_shape=[32, 32])
+            tile = pl.make_tile(tile_type, addr=0)
+            pl.set_validshape(tile, [rows, cols])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
 def test_insert_with_offset_sequence():

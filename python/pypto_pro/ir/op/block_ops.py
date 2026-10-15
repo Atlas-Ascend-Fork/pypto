@@ -1095,12 +1095,20 @@ def _validate_validshape_bounds(
     valid_shape: Sequence[int | Expr] | _ir_core.MakeTuple,
     span: Span | None = None,
 ) -> None:
-    """Validate that valid_shape dimensions are positive and do not exceed the tile shape.
+    """Validate that a Tile supports runtime valid-shape updates and that dimensions are in bounds.
 
     Checks are performed only when both the valid_shape value and the corresponding
     tile shape dimension are compile-time integer constants. Symbolic shapes are
     deferred to runtime/hardware validation.
     """
+    tile_type = getattr(tile, "type", None)
+    if isinstance(tile_type, _IRTileType) and tile_type.tile_view is not None:
+        if any(isinstance(dim, ConstInt) and dim.value != -1 for dim in tile_type.tile_view.valid_shape):
+            raise InvalidOperation(
+                "set_validshape cannot modify a TileType with static valid_shape; "
+                "omit valid_shape or declare valid_shape=[-1, -1]"
+            )
+
     if isinstance(valid_shape, _ir_core.MakeTuple):
         return  # already normalized — caller should validate before normalization
 
@@ -1111,7 +1119,6 @@ def _validate_validshape_bounds(
         return
 
     # Reuse _tile_shape_ints to extract compile-time tile shape
-    tile_type = getattr(tile, "type", None)
     tile_shape: list[int] | None = None
     if isinstance(tile_type, _IRTileType):
         tile_shape = _tile_shape_ints(tile_type)
