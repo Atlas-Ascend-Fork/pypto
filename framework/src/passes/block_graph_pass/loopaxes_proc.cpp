@@ -47,12 +47,31 @@ void SetOpDynLoopEnd(Operation* op)
                      op->GetOpMagic());
 }
 
+bool IsReduceAxisInLoopTile(const Operation& op)
+{
+    if (!op.HasAttribute(OP_ATTR_PREFIX + "AXIS")) {
+        return true;
+    }
+    const auto& inputs = op.GetIOperands();
+    if (inputs.empty()) {
+        return false;
+    }
+    auto axis = op.GetIntAttribute(OP_ATTR_PREFIX + "AXIS");
+    const auto& srcShape = inputs.front()->GetShape();
+    return axis >= static_cast<int64_t>(srcShape.size()) - static_cast<int64_t>(MIN_SHAPE_DIM);
+}
+
 bool NeedClearStatus(const Operation& op)
 {
     auto opCode = op.GetOpcode();
     if (SUPPORT_VF_FUSE_OPS.find(opCode) == SUPPORT_VF_FUSE_OPS.end()) {
         APASS_LOG_DEBUG_F(Elements::Operation, "%d %s doesn't support VF fuse", op.GetOpMagic(),
                           op.GetOpcodeStr().c_str());
+        return true;
+    }
+    if (!IsReduceAxisInLoopTile(op)) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "%d %s reduce axis is not within last 2 dims, doesn't support VF fuse",
+                          op.GetOpMagic(), op.GetOpcodeStr().c_str());
         return true;
     }
     return false;

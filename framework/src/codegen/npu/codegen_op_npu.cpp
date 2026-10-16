@@ -26,10 +26,8 @@ namespace npu::tile_fwk {
 std::unordered_map<Opcode, std::set<int>> SKIP_PROC_PRARAM_IDX_IN_LOOP = {
     // scene: reduce for last axis
     // Parameter at 1st index (after numbering by CodeGenOp::Init) is used as temp buffer which is reused in loop body.
-    {Opcode::OP_ROWSUM_SINGLE, {ID1}},
-    {Opcode::OP_ROWMAX_SINGLE, {ID1}},
-    {Opcode::OP_ROWMIN_SINGLE, {ID1}},
-    {Opcode::OP_ROWPROD_SINGLE, {ID1}},
+    {Opcode::OP_ROWSUM_SINGLE, {ID1}},  {Opcode::OP_ROWMAX_SINGLE, {ID1}}, {Opcode::OP_ROWMIN_SINGLE, {ID1}},
+    {Opcode::OP_ROWPROD_SINGLE, {ID1}}, {Opcode::OP_ROWSUMLINE, {ID1}},
 };
 
 CodeGenOpNPU::CodeGenOpNPU(const CodeGenOpNPUCtx& ctx)

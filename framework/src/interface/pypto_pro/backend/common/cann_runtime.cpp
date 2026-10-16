@@ -25,6 +25,7 @@ static constexpr uint32_t kBufSize = 64;
 
 CannRuntime::CannRuntime()
 {
+#ifdef BUILD_WITH_CANN
     // Try ASCEND_CANN_PACKAGE_PATH first, then fall back to system library path
     const char* cann_path = std::getenv("ASCEND_CANN_PACKAGE_PATH");
     if (cann_path != nullptr) {
@@ -42,6 +43,7 @@ CannRuntime::CannRuntime()
     } else if (soc_spec_func_ == nullptr) {
         IR_LOGW() << "rtGetSocSpec not found in libruntime.so; SoC specs will use hardcoded defaults.";
     }
+#endif
 }
 
 CannRuntime::~CannRuntime()

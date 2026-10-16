@@ -1460,6 +1460,7 @@ std::unordered_set<Opcode> SUPPORT_VF_FUSE_OPS{
     Opcode::OP_MINIMUM,
     Opcode::OP_ROWSUM_SINGLE,
     Opcode::OP_ROWMAX_SINGLE,
+    Opcode::OP_ROWSUMLINE,
     Opcode::OP_ONLINE_SOFTMAX,
     Opcode::OP_ONLINE_SOFTMAX_UPDATE,
     Opcode::OP_ROWMIN_SINGLE,

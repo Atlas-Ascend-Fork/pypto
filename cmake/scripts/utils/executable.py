@@ -167,16 +167,24 @@ class Exec:
         act_env.update(envs)  # Environment variables specified at function call time
         cwd = str(self.file.parent)
         ts = datetime.now(tz=timezone.utc)
-        ret = subprocess.run(
-            shlex.split(cmd),
-            env=act_env,
-            cwd=cwd,
-            timeout=self.timeout,
-            capture_output=capture_output,
-            check=check,
-            text=True,
-            encoding='utf-8',
-        )
+        try:
+            ret = subprocess.run(
+                shlex.split(cmd),
+                env=act_env,
+                cwd=cwd,
+                timeout=self.timeout,
+                capture_output=capture_output,
+                check=check,
+                text=True,
+                encoding='utf-8',
+            )
+        except subprocess.CalledProcessError as e:
+            # 透出被捕获的 stdout/stderr(如 ASAN/LSAN 报告), 便于 CI 日志定位真实失败原因
+            logging.error(
+                "Execute failed(retcode=%s): %s\n--- stdout ---\n%s\n--- stderr ---\n%s",
+                e.returncode, e.cmd, e.stdout, e.stderr,
+            )
+            raise
         return ret, cmd, datetime.now(tz=timezone.utc) - ts
 
     def _get_run_cmd(self, params: Optional[List[str]] = None) -> str:
