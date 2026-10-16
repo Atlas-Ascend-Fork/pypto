@@ -649,10 +649,21 @@ static DrcoStaticSuccPlan BuildDrcoStaticSuccPlan(
         }
     }
     std::vector<uint8_t> candidate(n, 0);
+    auto predChainEarlyResolved = [&](size_t p) -> bool {
+        size_t cur = p;
+        while (GetCallOpCoreType(cur, callList, calleeHashIndexDict, cceCodeInfoList) ==
+                   static_cast<uint32_t>(CoreType::HUB) &&
+               uniquePred[cur] >= 0) {
+            cur = static_cast<size_t>(uniquePred[cur]);
+        }
+        return GetCallOpCoreType(cur, callList, calleeHashIndexDict, cceCodeInfoList) ==
+                   static_cast<uint32_t>(CoreType::HUB) &&
+               uniquePred[cur] == -1;
+    };
     for (size_t h = 0; h < n; h++) {
         candidate[h] = (GetCallOpCoreType(h, callList, calleeHashIndexDict, cceCodeInfoList) ==
                             static_cast<uint32_t>(CoreType::HUB) &&
-                        uniquePred[h] >= 0) ?
+                        uniquePred[h] >= 0 && !predChainEarlyResolved(static_cast<size_t>(uniquePred[h]))) ?
                            1 :
                            0;
     }
