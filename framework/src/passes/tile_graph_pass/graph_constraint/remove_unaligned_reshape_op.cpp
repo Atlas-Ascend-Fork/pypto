@@ -520,7 +520,7 @@ void RemoveUnalignedReshape::GetPathBetweenSingleCopyOutAndReshape(
         }
         for (auto producerOp : producers) {
             auto opcode = producerOp->GetOpcode();
-            if (opcode == Opcode::OP_COPY_OUT) {
+            if (opcode == Opcode::OP_COPY_OUT || OpcodeManager::Inst().IsReshapeCopyOut(opcode)) {
                 std::pair<Operation*, LogicalTensorPtr> producerTensor = std::make_pair(producerOp, input);
                 toCopyProducerTensor.push_back(producerTensor);
                 if (input->GetConsumers().size() > 1) {
@@ -770,11 +770,9 @@ void RemoveUnalignedReshape::FindAllProducerCopyOuts(LogicalTensorPtr tensor, st
     }
     for (auto producerOp : producers) {
         auto opcode = producerOp->GetOpcode();
-        if (opcode == Opcode::OP_COPY_OUT) {
+        // 已被其他共享输入的reshape转换过的reshapecopyout仍是合法生产者，避免误走无copyout的兜底路径
+        if (opcode == Opcode::OP_COPY_OUT || OpcodeManager::Inst().IsReshapeCopyOut(opcode)) {
             AddUniqueOperation(copyOutOps, producerOp);
-            continue;
-        }
-        if (opcode == Opcode::OP_RESHAPE_COPY_OUT) {
             continue;
         }
 
@@ -794,7 +792,8 @@ void RemoveUnalignedReshape::CollectRawCopyOuts(Function& function, LogicalTenso
     }
     const auto rawMagic = reshapeInput->GetRawMagic();
     for (auto& op : function.Operations()) {
-        if (op.GetOpcode() != Opcode::OP_COPY_OUT || op.GetOOperands().empty()) {
+        if ((op.GetOpcode() != Opcode::OP_COPY_OUT && !OpcodeManager::Inst().IsReshapeCopyOut(op.GetOpcode())) ||
+            op.GetOOperands().empty()) {
             continue;
         }
         auto output = op.GetOOperands().front();

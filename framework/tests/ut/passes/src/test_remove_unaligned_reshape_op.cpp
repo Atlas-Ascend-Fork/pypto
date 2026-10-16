@@ -90,6 +90,31 @@ std::shared_ptr<CopyOpAttribute> CreateUbCopyOutAttr(const std::vector<int64_t>&
                                              OpImmediate::Specified(shape), std::vector<npu::tile_fwk::OpImmediate>());
 }
 
+LogicalTensorPtr CreateTestTensor(MemoryType memType, const std::vector<int64_t>& shape)
+{
+    auto tensor = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    tensor->SetMemoryTypeBoth(memType, true);
+    return tensor;
+}
+
+std::shared_ptr<CopyOpAttribute> CreateUbToTensorCopyOutAttr(const LogicalTensorPtr& ubTensor,
+                                                             const LogicalTensorPtr& destTensor)
+{
+    return std::make_shared<CopyOpAttribute>(ubTensor->GetMemoryTypeOriginal(),
+                                             OpImmediate::Specified(destTensor->GetTensorOffset()),
+                                             OpImmediate::Specified(destTensor->GetShape()),
+                                             OpImmediate::Specified(destTensor->GetRawTensor()->GetDynRawShape()));
+}
+
+std::shared_ptr<CopyOpAttribute> CreateTensorToMemCopyInAttr(const LogicalTensorPtr& srcTensor,
+                                                             const LogicalTensorPtr& destTensor)
+{
+    return std::make_shared<CopyOpAttribute>(OpImmediate::Specified(srcTensor->GetTensorOffset()),
+                                             destTensor->GetMemoryTypeOriginal(),
+                                             OpImmediate::Specified(srcTensor->GetShape()),
+                                             OpImmediate::Specified(srcTensor->GetRawTensor()->GetDynRawShape()));
+}
+
 BranchReshapeTensors CreateBranchReshapeTensors(DataType dataType, const std::vector<int64_t>& inShape,
                                                 const std::vector<int64_t>& reshapeShape,
                                                 const std::vector<int64_t>& outShape)
@@ -267,6 +292,61 @@ SiblingCopyInReshapeGraph BuildDDRReshapeGraphWithSiblingCopyIn(const std::share
     currFunctionPtr->outCasts_.push_back(outcast);
     currFunctionPtr->outCasts_.push_back(siblingOutcast);
     return {&copyOutOp, &outputCopyInOp, &siblingCopyInOp};
+}
+
+// in - COPYIN - UB1 - COPYOUT - reshapeInput(DDR) - RESHAPE - reshapeOutput1 - COPYIN - L1 - COPYOUT - out1
+//                           |- COPYOUT -|          - RESHAPE - reshapeOutput2 - COPYIN - L1 - COPYOUT - out2
+struct MutiReshapeShareCopyOutGraph {
+    Operation* copyOutOp1;
+    Operation* copyOutOp2;
+    Operation* reshapeOp2;
+    Operation* copyInOp1;
+    Operation* copyInOp2;
+    LogicalTensorPtr reshapeInput;
+};
+
+MutiReshapeShareCopyOutGraph BuildMutiReshapeShareCopyOutGraph(const std::shared_ptr<Function>& currFunctionPtr)
+{
+    // 2024*32*4B超过UB限额，复现兜底路径按整输入中转UB时超UB的场景
+    std::vector<int64_t> inShape = {2024, 32};
+    std::vector<int64_t> reshapeShape = {1012, 64};
+    auto incast = CreateTestTensor(MemoryType::MEM_DEVICE_DDR, inShape);
+    auto ubTensor1 = CreateTestTensor(MemoryType::MEM_UB, inShape);
+    auto ubTensor2 = CreateTestTensor(MemoryType::MEM_UB, inShape);
+    auto reshapeInput = CreateTestTensor(MemoryType::MEM_DEVICE_DDR, inShape);
+    reshapeInput->UpdateDynValidShape({CreateTestScalarVar("Input_0_Dim_0"), CreateTestScalarVar("Input_0_Dim_1")});
+    auto reshapeOutput1 = CreateTestTensor(MemoryType::MEM_DEVICE_DDR, reshapeShape);
+    reshapeOutput1->UpdateDynValidShape({CreateTestScalarVar("Input_1_Dim_0"), CreateTestScalarVar("Input_1_Dim_1")});
+    auto reshapeOutput2 = CreateTestTensor(MemoryType::MEM_DEVICE_DDR, reshapeShape);
+    reshapeOutput2->UpdateDynValidShape({CreateTestScalarVar("Input_2_Dim_0"), CreateTestScalarVar("Input_2_Dim_1")});
+    auto l1Tensor1 = CreateTestTensor(MemoryType::MEM_L1, reshapeShape);
+    auto l1Tensor2 = CreateTestTensor(MemoryType::MEM_L1, reshapeShape);
+    auto outcast1 = CreateTestTensor(MemoryType::MEM_DEVICE_DDR, reshapeShape);
+    auto outcast2 = CreateTestTensor(MemoryType::MEM_DEVICE_DDR, reshapeShape);
+
+    PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_IN, {incast}, {ubTensor1});
+    PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_IN, {incast}, {ubTensor2});
+    auto& copyOutOp1 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_OUT, {ubTensor1},
+                                                        {reshapeInput});
+    copyOutOp1.SetOpAttribute(CreateUbToTensorCopyOutAttr(ubTensor1, reshapeInput));
+    auto& copyOutOp2 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_OUT, {ubTensor2},
+                                                        {reshapeInput});
+    copyOutOp2.SetOpAttribute(CreateUbToTensorCopyOutAttr(ubTensor2, reshapeInput));
+    PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_RESHAPE, {reshapeInput}, {reshapeOutput1});
+    auto& reshapeOp2 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_RESHAPE, {reshapeInput},
+                                                        {reshapeOutput2});
+    auto& copyInOp1 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_IN, {reshapeOutput1},
+                                                       {l1Tensor1});
+    copyInOp1.SetOpAttribute(CreateTensorToMemCopyInAttr(reshapeOutput1, l1Tensor1));
+    auto& copyInOp2 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_IN, {reshapeOutput2},
+                                                       {l1Tensor2});
+    copyInOp2.SetOpAttribute(CreateTensorToMemCopyInAttr(reshapeOutput2, l1Tensor2));
+    PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_OUT, {l1Tensor1}, {outcast1});
+    PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_OUT, {l1Tensor2}, {outcast2});
+    currFunctionPtr->inCasts_.push_back(incast);
+    currFunctionPtr->outCasts_.push_back(outcast1);
+    currFunctionPtr->outCasts_.push_back(outcast2);
+    return {&copyOutOp1, &copyOutOp2, &reshapeOp2, &copyInOp1, &copyInOp2, reshapeInput};
 }
 
 inline void ConstructGraphWithCopyInAndReshape(std::shared_ptr<Function>& currFunctionPtr,
@@ -1309,6 +1389,32 @@ TEST_F(TestRemoveUnalignedReshapeOp, TestCopyToReshapeCopyOnL0CToL1)
     auto copyInAttr = std::dynamic_pointer_cast<CopyOpAttribute>(copyInOp.GetOpAttribute());
     ASSERT_NE(copyInAttr, nullptr);
     EXPECT_FALSE(copyInAttr->GetFromDynValidShape().empty());
+}
+
+// 两个动态非对齐DDR reshape共享同一份copyout生产者：首个reshape把copyout转为reshapecopyout后，
+// 第二个reshape不能误判"生产者无copyout"而走HandleNoCopyOutInProducer兜底（输入超UB时会导致
+// 其下游copyin未转成L1_RESHAPE_COPY_IN）
+TEST_F(TestRemoveUnalignedReshapeOp, TestMutiReshapeShareCopyOutProducersOnDDR)
+{
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(),
+                                                      "TestMutiReshapeShareCopyOutProducersOnDDR",
+                                                      "TestMutiReshapeShareCopyOutProducersOnDDR", nullptr);
+    EXPECT_TRUE(currFunctionPtr != nullptr);
+    auto graph = BuildMutiReshapeShareCopyOutGraph(currFunctionPtr);
+
+    RemoveUnalignedReshape removeUnalignedReshapeOpTest;
+    int curSize = currFunctionPtr->Operations().size();
+    EXPECT_EQ(removeUnalignedReshapeOpTest.RunOnFunction(*currFunctionPtr), SUCCESS);
+    EXPECT_EQ(currFunctionPtr->Operations().size(), curSize);
+    EXPECT_EQ(graph.copyOutOp1->GetOpcode(), Opcode::OP_RESHAPE_COPY_OUT);
+    EXPECT_EQ(graph.copyOutOp2->GetOpcode(), Opcode::OP_RESHAPE_COPY_OUT);
+    EXPECT_EQ(graph.copyInOp1->GetOpcode(), Opcode::OP_L1_RESHAPE_COPY_IN);
+    EXPECT_EQ(graph.copyInOp2->GetOpcode(), Opcode::OP_L1_RESHAPE_COPY_IN);
+    EXPECT_EQ(graph.reshapeOp2->GetIOperands().front(), graph.reshapeInput);
+
+    auto copyInAttr2 = std::dynamic_pointer_cast<CopyOpAttribute>(graph.copyInOp2->GetOpAttribute());
+    ASSERT_NE(copyInAttr2, nullptr);
+    EXPECT_FALSE(copyInAttr2->GetFromDynValidShape().empty());
 }
 
 TEST_F(TestRemoveUnalignedReshapeOp, TestSiblingCopyInConsumerToReshapeCopyInOnUB)
