@@ -141,7 +141,9 @@ void TiledLogicalAndOperation(Function& function, const TileShape& tileShape, si
         std::vector<int64_t> tmp_shape({static_cast<int64_t>(total_bytes)});
         auto tmp_tensor = std::make_shared<LogicalTensor>(function, DT_UINT8, tmp_shape);
 
-        function.AddOperation(Opcode::OP_LOGICALAND, {tile0, tile1}, {resultTile, tmp_tensor});
+        auto& op = function.AddOperation(Opcode::OP_LOGICALAND, {tile0, tile1}, {resultTile, tmp_tensor});
+        std::vector<bool> inputRowPad = {tile0->Datatype() == compute_dtype, tile1->Datatype() == compute_dtype};
+        op.SetAttr(OpAttributeKey::rowPad, inputRowPad);
         return;
     }
 

@@ -105,16 +105,15 @@ TILEOP void TLogicalAnd(T0 dst, T1 src1, T2 src2, T3 tmp)
     constexpr auto tileW = TileOp::GetTensorTileShapeDim<T0, DIM_5TH, MAX_DIMS>();
     constexpr auto alignElems = TileOp::BLOCK_SIZE / sizeof(typename T0::Type);
     constexpr auto tmpW = (tileW + alignElems - 1) / alignElems * alignElems;
-    // TCMP reads full repeats. Pad the allocation tail, not every row.
     constexpr auto compareElems = TileOp::REPEAT_BYTE / sizeof(half);
     constexpr auto tailElems = (tmpW + compareElems - 1) / compareElems * compareElems - tmpW;
-    constexpr auto bufferElems = tileH * tmpW + tailElems;
+    auto bufferElems = dstShape3 * tmpW + tailElems;
     constexpr auto maskBytesPerRow = (tmpW + TileOp::BITS_PER_BYTE - 1) / TileOp::BITS_PER_BYTE;
     constexpr auto maskW = (maskBytesPerRow + TileOp::BLOCK_SIZE - 1) / TileOp::BLOCK_SIZE * TileOp::BLOCK_SIZE;
-    constexpr auto maskBytes = tileH * maskW;
-    constexpr auto dataBytes = bufferElems * sizeof(DType);
-    constexpr auto cvtBytes = std::is_same_v<DType, float> ? bufferElems * sizeof(half) : 0;
-    constexpr auto sharedBytes = maskBytes > cvtBytes ? maskBytes : cvtBytes;
+    auto maskBytes = dstShape3 * maskW;
+    auto dataBytes = bufferElems * sizeof(DType);
+    auto cvtBytes = std::is_same_v<DType, float> ? bufferElems * sizeof(half) : 0;
+    auto sharedBytes = maskBytes > cvtBytes ? maskBytes : cvtBytes;
     constexpr auto selectTmpCols = TileOp::BLOCK_SIZE / sizeof(uint32_t);
 
     using TmpTile = pto::Tile<pto::TileType::Vec, DType, tileH, tmpW, pto::BLayout::RowMajor, -1, -1>;
