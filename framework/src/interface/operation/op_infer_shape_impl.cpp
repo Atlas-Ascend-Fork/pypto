@@ -1051,10 +1051,16 @@ std::vector<SymbolicScalar> InferSrcGmValidShapeForFmap3D(const std::vector<Symb
 {
     SymbolicScalar alignedCin = l1TileShape[2] * SymbolicScalar(c0);
     SymbolicScalar srcGmCin = alignedCin;
+    // N(batch)/D 维需按 view 有效范围裁剪: 尾块平面 (n_sub/d_sub 超出有效 batch/d 数) 不得读 GM,
+    // 否则 TLoadConv 以满幅窗口从越界偏移读取 (如 batch 偏移超出 tensor 末尾触发 aicore error)。
+    SymbolicScalar srcGmN = l1TileShape[0];
+    SymbolicScalar srcGmD = l1TileShape[1];
     if (gmInputValidShape.size() >= SHAPE_DIM4 && fromOffset.size() >= SHAPE_DIM4) {
         srcGmCin = (gmInputValidShape[1] - fromOffset[1]).Min(alignedCin);
+        srcGmN = (gmInputValidShape[0] - fromOffset[0]).Min(l1TileShape[0]).Max(0);
+        srcGmD = (gmInputValidShape[2] - fromOffset[2]).Min(l1TileShape[1]).Max(0);
     }
-    return {l1TileShape[0], srcGmCin, l1TileShape[1], l1TileShape[3], l1TileShape[4]};
+    return {srcGmN, srcGmCin, srcGmD, l1TileShape[3], l1TileShape[4]};
 }
 
 std::vector<SymbolicScalar> InferSrcGmValidShapeForFmap2D(const std::vector<SymbolicScalar>& l1TileShape,
@@ -1063,10 +1069,13 @@ std::vector<SymbolicScalar> InferSrcGmValidShapeForFmap2D(const std::vector<Symb
 {
     SymbolicScalar alignedCin = l1TileShape[1] * SymbolicScalar(c0);
     SymbolicScalar srcGmCin = alignedCin;
+    // N(batch) 维需按 view 有效范围裁剪, 避免 batch 尾块满幅越界读 GM。
+    SymbolicScalar srcGmN = l1TileShape[0];
     if (gmInputValidShape.size() >= SHAPE_DIM4 && fromOffset.size() >= SHAPE_DIM4) {
         srcGmCin = (gmInputValidShape[1] - fromOffset[1]).Min(alignedCin);
+        srcGmN = (gmInputValidShape[0] - fromOffset[0]).Min(l1TileShape[0]).Max(0);
     }
-    return {l1TileShape[0], srcGmCin, l1TileShape[2], l1TileShape[3]};
+    return {srcGmN, srcGmCin, l1TileShape[2], l1TileShape[3]};
 }
 
 std::vector<SymbolicScalar> InferSrcGmValidShapeForWeight(Operation* op, const std::vector<SymbolicScalar>& l1TileShape,
@@ -1186,6 +1195,25 @@ void L1CopyInConvInferFunc(Operation* op, std::vector<std::vector<SymbolicScalar
     }
     if (!srcGmValidShape.empty()) {
         op->SetAttribute(OpAttributeKey::srcGmConvValidShape, srcGmValidShape);
+        // 取交: 尾块越界平面的 tile valid 收缩为 0, TLOAD 依 dst tile 形状决定拷贝量, 从而不读 GM。
+        if (isFmap && copyInMode == COPY_MOD_DN2NZ && srcGmValidShape.size() >= SHAPE_DIM4) {
+            outShape[0] = srcGmValidShape[0].Min(outShape[0]);
+            const bool maskDepth = isConv3D && l1TileShape.size() == SHAPE_DIM6 && srcGmValidShape.size() >= SHAPE_DIM5;
+            if (maskDepth) {
+                outShape[1] = srcGmValidShape[2].Min(outShape[1]);
+            }
+            for (auto& validShape : outValidShapes) {
+                if (validShape.size() == outShape.size()) {
+                    validShape[0] = outShape[0];
+                    if (maskDepth && validShape.size() > 1) {
+                        validShape[1] = outShape[1];
+                    }
+                }
+            }
+            // COA 的 valid 槽位取自 copyAttr 的 ToDynValidShape, 需同步掩码, 使 CCE 侧
+            // tile 形状参数(GET_PARAM_VALID_SHAPE)逐平面收缩为 0, 阻断越界 GM 读。
+            copyAttr->SetToDynValidShape(OpImmediate::Specified(outShape));
+        }
     }
 }
 

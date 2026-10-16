@@ -384,11 +384,15 @@ void ExecuteOpL1CopyInConv(ExecuteOperationContext* ctx)
         if (is3d != 0) {
             // dst L1 NDC1HWC0 [n, d, c1, h, w, c0] -> src GM NCDHW [n, cin, dk, h, w]
             int64_t alignedCin = os[0x2] * os[os.size() - 1];
-            srcShape = {os[0], std::min(gs[1] - fromOffset[1], alignedCin), os[1], os[3], os[4]};
+            // N/D 维按 GM 剩余范围裁剪, 尾块越界平面 (offset 超出 tensor) 不读 GM
+            int64_t validN = std::max(int64_t(0), std::min(gs[0] - fromOffset[0], os[0]));
+            int64_t validD = std::max(int64_t(0), std::min(gs[2] - fromOffset[2], os[1]));
+            srcShape = {validN, std::min(gs[1] - fromOffset[1], alignedCin), validD, os[3], os[4]};
         } else {
             // dst L1 NC1HWC0 [n, c1, h, w, c0] -> src GM NCHW [n, cin, h, w]
             int64_t alignedCin = os[1] * os[os.size() - 1];
-            srcShape = {os[0], std::min(gs[1] - fromOffset[1], alignedCin), os[0x2], os[3]};
+            int64_t validN = std::max(int64_t(0), std::min(gs[0] - fromOffset[0], os[0]));
+            srcShape = {validN, std::min(gs[1] - fromOffset[1], alignedCin), os[0x2], os[3]};
         }
     } else {
         // Weight ND view: [n, cin, (dk,) kh, kw], derived from the L1 NZ tile [k/cin0, nBlocks, n0, cin0] and
