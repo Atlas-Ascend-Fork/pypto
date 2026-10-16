@@ -223,7 +223,8 @@ bool CanMergeViewToCopyIn(const Operation& viewOp, std::vector<Operation*>& copy
         return false;
     }
     for (auto* consumer : viewOutput->GetConsumers()) {
-        if (consumer == nullptr || consumer->GetOpcode() != Opcode::OP_COPY_IN ||
+        if (consumer == nullptr ||
+            (consumer->GetOpcode() != Opcode::OP_COPY_IN && consumer->GetOpcode() != Opcode::OP_L1_COPY_IN_CONV) ||
             consumer->GetIOperands().size() != 1 || consumer->GetOOperands().size() != 1) {
             return false;
         }
@@ -263,7 +264,10 @@ Status RemoveRedundantAssemble::ProcessViewToCopyIn(Function& function) const
         for (size_t idx = 0; idx < copyIns.size(); ++idx) {
             auto& copyIn = *copyIns[idx];
             auto copyOutput = copyIn.GetOOperands().front();
-            auto copyShape = OpImmediate::Specified(copyOutput->GetShape());
+            // L1_COPY_IN_CONV 的 attr 约定 shape 为源窗口形状（与 rawShape 同维），其余 CopyIn 沿用输出 shape
+            auto copyShape = copyIn.GetOpcode() == Opcode::OP_L1_COPY_IN_CONV ?
+                                 OpImmediate::Specified(copyIn.GetIOperands().front()->GetShape()) :
+                                 OpImmediate::Specified(copyOutput->GetShape());
             auto rawShape = OpImmediate::Specified(viewInput->tensor->GetDynRawShape());
             auto toDynValidShape = OpImmediate::Specified(copyOutput->GetDynValidShape());
             auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(copyIn.GetOpAttribute());

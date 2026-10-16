@@ -2571,6 +2571,32 @@ TEST_F(PreGraphTest, MutiConsumerDeleteSingleAssemble)
     EXPECT_EQ(function->Operations().size(), operationSize - 1);
 }
 
+TEST_F(PreGraphTest, TestMergeViewToL1CopyInConvOffset)
+{
+    ComputationalGraphBuilder G;
+    G.AddTensor(DataType::DT_FP16, {16, 16}, MemoryType::MEM_DEVICE_DDR, "view_input");
+    G.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_DEVICE_DDR, "view_output");
+    G.AddTensor(DataType::DT_FP16, {4, 4}, MemoryType::MEM_UB, "copy_output");
+    G.AddOp(Opcode::OP_VIEW, {"view_input"}, {"view_output"}, "VIEW");
+    G.GetOp("VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{2, 3}));
+    G.AddOp(Opcode::OP_L1_COPY_IN_CONV, {"view_output"}, {"copy_output"}, "L1COPYINCONV");
+    std::vector<OpImmediate> shapeImm = OpImmediate::Specified({8, 8});
+    auto copyAttr = std::make_shared<CopyOpAttribute>(OpImmediate::Specified({4, 5}), MemoryType::MEM_UB, shapeImm,
+                                                      shapeImm);
+    G.GetOp("L1COPYINCONV")->SetOpAttribute(copyAttr);
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessViewToCopyIn(*G.GetFunction()), SUCCESS);
+
+    EXPECT_TRUE(G.GetOp("VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("L1COPYINCONV")->GetIOperands().front(), G.GetTensor("view_input"));
+    CompareOpImmediateVector(copyAttr->GetFromOffset(), {6, 8});
+    // L1_COPY_IN_CONV 的 attr 约定 shape 为源窗口形状（输入 view shape），而非输出 shape
+    CompareOpImmediateVector(copyAttr->GetShape(), {8, 8});
+    CompareOpImmediateVector(copyAttr->GetRawShape(), {16, 16});
+    CompareOpImmediateVector(copyAttr->GetToDynValidShape(), {4, 4});
+}
+
 /*
 maybeCycle
 incast -> COPYIN -> COPYOUT -> ASSEMBLE ->         midOut -> COPYIN -> COPYOUT -> outcast
