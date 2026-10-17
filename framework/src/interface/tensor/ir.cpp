@@ -41,18 +41,6 @@ std::string DumpTensorVar(const VarPtr& var)
     return var->name_ + "@" + std::to_string(t->tensor->memoryId);
 }
 
-std::map<std::string, std::any> CollectTensorOpAttrs(const TensorOpStmtPtr& top)
-{
-    std::map<std::string, std::any> attrs;
-
-    auto op = std::dynamic_pointer_cast<Operation>(std::const_pointer_cast<TensorOpStmt>(top));
-    if (op && op->GetOpAttribute()) {
-        auto opAttr = op->GetOpAttribute();
-        opAttr->CollectAttrs(attrs);
-    }
-    return attrs;
-}
-
 std::optional<int> GetVarMemoryId(const Var* var)
 {
     auto tensor = dynamic_cast<const LogicalTensor*>(var);

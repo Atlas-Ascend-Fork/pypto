@@ -409,7 +409,7 @@ def test_basic_stmt():
     func = ir.Function("test_func", [x], [st], assign_x, span)
     assert str(func) == "\n".join(
         [
-            "function test_func incast(int32_t %x) outcast(int32_t) #type(Opaque) #entry(false) {",
+            "function test_func incast(int32_t %x) outcast(int32_t) #entry(false) #type(Opaque) {",
             "    int32_t %x = 42;",
             "}",
         ]
@@ -417,7 +417,7 @@ def test_basic_stmt():
     helper_func = ir.Function("helper", [x], [st], ir.YieldStmt([x], span), span, ir.FunctionType.Helper)
     assert str(helper_func) == "\n".join(
         [
-            "function helper incast(int32_t %x) outcast(int32_t) #type(Helper) #entry(false) {",
+            "function helper incast(int32_t %x) outcast(int32_t) #entry(false) #type(Helper) {",
             "    yield %x;",
             "}",
         ]
@@ -429,10 +429,10 @@ def test_basic_stmt():
     assert str(prog) == "\n".join(
         [
             "program #entry() {",
-            "    function test_func incast(int32_t %x) outcast(int32_t) #type(Opaque) #entry(false) {",
+            "    function test_func incast(int32_t %x) outcast(int32_t) #entry(false) #type(Opaque) {",
             "        int32_t %x = 42;",
             "    }",
-            "    function test_func2 incast(int32_t %x) outcast(int32_t) #type(Opaque) #entry(false) {",
+            "    function test_func2 incast(int32_t %x) outcast(int32_t) #entry(false) #type(Opaque) {",
             "        int32_t %x = 42;",
             "    }",
             "}",

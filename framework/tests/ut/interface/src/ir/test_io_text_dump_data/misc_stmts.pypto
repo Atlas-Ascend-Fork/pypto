@@ -1,5 +1,5 @@
 program #entry(misc_stmts) {
-    function misc_stmts incast(int32_t %a) outcast() #type(Opaque) #entry(true) {
+    function misc_stmts incast(int32_t %a) outcast() #entry(true) #type(Opaque) {
         myop(%a);
         break;
         continue;

@@ -1,5 +1,5 @@
 program #entry(cond) {
-    function cond incast() outcast(int32_t) #type(Opaque) #entry(true) {
+    function cond incast() outcast(int32_t) #entry(true) #type(Opaque) {
         if true then {
             return 1;
         } else {

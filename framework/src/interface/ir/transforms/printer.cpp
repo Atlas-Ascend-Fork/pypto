@@ -944,7 +944,7 @@ void IRPrinter::VisitStmt_(const TensorOpStmtPtr& op)
         }
         stream_ << "]";
     } else {
-        auto attrs = CollectTensorOpAttrs(op);
+        auto attrs = GetOperationAttrDict(op);
         if (!attrs.empty()) {
             stream_ << ", attrs=[";
             bool need_comma = false;

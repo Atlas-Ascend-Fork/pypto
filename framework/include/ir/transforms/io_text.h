@@ -17,6 +17,7 @@
 #ifndef PYPTO_IR_TRANSFORMS_IO_TEXT_H_
 #define PYPTO_IR_TRANSFORMS_IO_TEXT_H_
 
+#include <map>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -498,9 +499,6 @@ private:
     void PrintVarDefList(const std::vector<VarPtr>& varList, const std::vector<VarPtr>& tokenList = {});
     void PrintIterArgs(const std::vector<IterArgPtr>& iterArgs);
 
-    void PrintIntListAttr(const std::string& key, const std::vector<int64_t>& vals);
-    void PrintSymbolicScalarListAttr(const std::string& key, const std::vector<npu::tile_fwk::SymbolicScalar>& vals);
-
     void PrintType(const TypePtr& type);
     void PrintShape(const std::vector<ExprPtr>& shape);
     void PrintExprList(const std::vector<ExprPtr>& exprs);
@@ -508,6 +506,12 @@ private:
     void PrintAttrValue(const std::string& key, const std::any& value);
     void PrintAttr(const std::string& key, const std::any& value);
     void PrintDataArray(const std::vector<int64_t>& vals);
+    // Attr is the leaf layer of the traversal: nodes carrying attrs hand their
+    // attr dict to PrintAttrDict, which dispatches value formatting.
+    void PrintAttrDict(const std::map<std::string, std::any>& attrDict);
+    static std::map<std::string, std::any> GetTensorAttrDict(const VarPtr& var);
+    static std::map<std::string, std::any> GetFunctionAttrDict(const FunctionPtr& func);
+    void PrintScalarExpr(const std::shared_ptr<const npu::tile_fwk::RawSymbolicScalar>& ptr);
     template <typename T>
     void PrintAttr(const std::string& key, const T& value)
     {

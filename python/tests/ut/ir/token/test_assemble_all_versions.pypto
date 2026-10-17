@@ -1,22 +1,22 @@
 program #entry(foo) {
-    function foo incast(v0_logical_tensor %src@0 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]), v0_logical_tensor %out@1 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16])) outcast() #type(Orchestration) #entry(true) {
-        v0_logical_tensor %out_1@1 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]), v0_logical_tensor %out_3@7 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]), v0_logical_tensor %out_5@7 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]) = !10000 CALL(%src@0) token();
+    function foo incast(v0_logical_tensor %src@0 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %out@1 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16])) outcast() #entry(true) #type(Orchestration) {
+        v0_logical_tensor %out_1@1 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %out_3@7 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %out_5@7 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10000 CALL(%src@0) token();
         return %src@0, %out_5@7;
     }
-    function foo_PATH0_6 incast(v0_logical_tensor %src_3@10 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]), v0_logical_tensor %out_1@12 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]), v0_logical_tensor %out_3@12 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]), v0_logical_tensor %out_5@12 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16])) outcast() #type(InCore) #entry(false) {
-        v0_logical_tensor %INCAST_LOCAL_BUF0_0@11 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]) = !10001 VIEW(%src_3@10) token() #fromOffset([0, 0]) #toValidShape([16, 16]);
-        v0_logical_tensor %OUTCAST_LOCAL_BUF0@13 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]), v0_logical_tensor %OUTCAST_LOCAL_BUF1@15 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]), v0_logical_tensor %OUTCAST_LOCAL_BUF2@17 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]) = !10000 CALL(%INCAST_LOCAL_BUF0_0@11) token();
-        v0_logical_tensor %out_1@12 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]) = !10002 ASSEMBLE(%OUTCAST_LOCAL_BUF0@13) token() #toOffset([0, 0]);
-        v0_logical_tensor %out_3@12 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]) = !10003 ASSEMBLE(%OUTCAST_LOCAL_BUF1@15) token() #toOffset([0, 0]);
-        v0_logical_tensor %out_5@12 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]) = !10004 ASSEMBLE(%OUTCAST_LOCAL_BUF2@17) token() #toOffset([0, 0]);
+    function foo_PATH0_6 incast(v0_logical_tensor %src_3@10 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %out_1@12 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %out_3@12 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %out_5@12 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16])) outcast() #entry(false) #type(InCore) {
+        v0_logical_tensor %INCAST_LOCAL_BUF0_0@11 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10001 VIEW(%src_3@10) token() #fromOffset([0, 0]) #toValidShape([16, 16]);
+        v0_logical_tensor %OUTCAST_LOCAL_BUF0@13 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %OUTCAST_LOCAL_BUF1@15 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %OUTCAST_LOCAL_BUF2@17 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10000 CALL(%INCAST_LOCAL_BUF0_0@11) token();
+        v0_logical_tensor %out_1@12 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10002 ASSEMBLE(%OUTCAST_LOCAL_BUF0@13) token() #toOffset([0, 0]);
+        v0_logical_tensor %out_3@12 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10003 ASSEMBLE(%OUTCAST_LOCAL_BUF1@15) token() #toOffset([0, 0]);
+        v0_logical_tensor %out_5@12 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10004 ASSEMBLE(%OUTCAST_LOCAL_BUF2@17) token() #toOffset([0, 0]);
     }
-    function foo_PATH0_hiddenfunc_4 incast(v0_logical_tensor %src_1@5 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]), v0_logical_tensor %out_1@7 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]), v0_logical_tensor %out_3@7 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]), v0_logical_tensor %out_5@7 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16])) outcast() #type(InCore) #entry(false) {
-        v0_logical_tensor %INCAST_LOCAL_BUF0@6 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]) = !10006 VIEW(%src_1@5) token() #fromOffset([0, 0]) #toValidShape([16, 16]);
-        v0_logical_tensor %$0@2 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]) = !10000 ADDS(%INCAST_LOCAL_BUF0@6) token();
-        v0_logical_tensor %out_1@7 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]) = !10001 ASSEMBLE(%$0@2) token() #toOffset([0, 0]);
-        v0_logical_tensor %$1@3 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]) = !10002 ADDS(%INCAST_LOCAL_BUF0@6) token();
-        v0_logical_tensor %out_3@7 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]) = !10003 ASSEMBLE(%$1@3) token() #toOffset([0, 0]);
-        v0_logical_tensor %$2@4 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]) = !10004 ADDS(%INCAST_LOCAL_BUF0@6) token();
-        v0_logical_tensor %out_5@7 #dtype(float) #shape([16, 16]) #offset([0, 0]) #dynvalidshape([16, 16]) = !10005 ASSEMBLE(%$2@4) token() #toOffset([0, 0]);
+    function foo_PATH0_hiddenfunc_4 incast(v0_logical_tensor %src_1@5 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %out_1@7 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %out_3@7 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %out_5@7 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16])) outcast() #entry(false) #type(InCore) {
+        v0_logical_tensor %INCAST_LOCAL_BUF0@6 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10006 VIEW(%src_1@5) token() #fromOffset([0, 0]) #toValidShape([16, 16]);
+        v0_logical_tensor %$0@2 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10000 ADDS(%INCAST_LOCAL_BUF0@6) token();
+        v0_logical_tensor %out_1@7 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10001 ASSEMBLE(%$0@2) token() #toOffset([0, 0]);
+        v0_logical_tensor %$1@3 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10002 ADDS(%INCAST_LOCAL_BUF0@6) token();
+        v0_logical_tensor %out_3@7 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10003 ASSEMBLE(%$1@3) token() #toOffset([0, 0]);
+        v0_logical_tensor %$2@4 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10004 ADDS(%INCAST_LOCAL_BUF0@6) token();
+        v0_logical_tensor %out_5@7 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10005 ASSEMBLE(%$2@4) token() #toOffset([0, 0]);
     }
 }

@@ -1,5 +1,5 @@
 program #entry(simple) {
-    function simple incast(int32_t %x) outcast(int32_t) #type(Opaque) #entry(true) {
+    function simple incast(int32_t %x) outcast(int32_t) #entry(true) #type(Opaque) {
         int32_t %y = 42;
         return %y;
     }

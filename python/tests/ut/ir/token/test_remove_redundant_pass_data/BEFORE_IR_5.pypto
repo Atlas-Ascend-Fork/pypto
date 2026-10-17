@@ -1,10 +1,10 @@
-function foo incast(v0_logical_tensor %a@0 #dtype(float) #shape([129, 128]) #offset([0, 0]) #dynvalidshape([129, 128]), v0_logical_tensor %aux@1 #dtype(float) #shape([129, 128]) #offset([0, 0]) #dynvalidshape([129, 128]), v0_logical_tensor %out@2 #dtype(float) #shape([129, 128]) #offset([0, 0]) #dynvalidshape([129, 128])) outcast() #type(Opaque) #entry(false) {
-    v0_logical_tensor %$0@3 #dtype(float) #shape([64, 128]) #offset([0, 0]) #dynvalidshape([64, 128]), token %$0_w = !10000 VEC_DUP() token();
-    v0_logical_tensor %aux_1@1 #dtype(float) #shape([129, 128]) #offset([0, 0]) #dynvalidshape([129, 128]), token %aux_1_w, token %$0_r = !10001 ASSEMBLE(%$0@3) token(%$0_w) #toOffset([0, 0]);
-    v0_logical_tensor %$1@4 #dtype(float) #shape([129, 128]) #offset([0, 0]) #dynvalidshape([129, 128]), token %$1_w, token %aux_1_r = !10002 ADDS(%aux_1@1) token(%aux_1_w);
-    v0_logical_tensor %$2@5 #dtype(float) #shape([64, 128]) #offset([0, 0]) #dynvalidshape([64, 128]), token %$2_w = !10003 VEC_DUP() token();
-    v0_logical_tensor %aux_3@1 #dtype(float) #shape([129, 128]) #offset([0, 0]) #dynvalidshape([129, 128]), token %aux_3_w, token %$2_r = !10004 ASSEMBLE(%$2@5) token(%$2_w, %aux_1_r) #toOffset([64, 0]);
-    v0_logical_tensor %$3@6 #dtype(float) #shape([129, 128]) #offset([0, 0]) #dynvalidshape([129, 128]), token %$3_w, token %$1_r, token %aux_3_r = !10005 ADD(%$1@4, %aux_3@1) token(%$1_w, %aux_3_w);
-    v0_logical_tensor %out_1@2 #dtype(float) #shape([129, 128]) #offset([0, 0]) #dynvalidshape([129, 128]), token %out_1_w, token %$3_r = !10006 ASSEMBLE(%$3@6) token(%$3_w) #toOffset([0, 0]);
+function foo incast(v0_logical_tensor %a@0 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]), v0_logical_tensor %aux@1 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]), v0_logical_tensor %out@2 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128])) outcast() #entry(false) #type(Opaque) {
+    v0_logical_tensor %$0@3 #dtype(float) #dynvalidshape([64, 128]) #offset([0, 0]) #shape([64, 128]), token %$0_w = !10000 VEC_DUP() token();
+    v0_logical_tensor %aux_1@1 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]), token %aux_1_w, token %$0_r = !10001 ASSEMBLE(%$0@3) token(%$0_w) #toOffset([0, 0]);
+    v0_logical_tensor %$1@4 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]), token %$1_w, token %aux_1_r = !10002 ADDS(%aux_1@1) token(%aux_1_w);
+    v0_logical_tensor %$2@5 #dtype(float) #dynvalidshape([64, 128]) #offset([0, 0]) #shape([64, 128]), token %$2_w = !10003 VEC_DUP() token();
+    v0_logical_tensor %aux_3@1 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]), token %aux_3_w, token %$2_r = !10004 ASSEMBLE(%$2@5) token(%$2_w, %aux_1_r) #toOffset([64, 0]);
+    v0_logical_tensor %$3@6 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]), token %$3_w, token %$1_r, token %aux_3_r = !10005 ADD(%$1@4, %aux_3@1) token(%$1_w, %aux_3_w);
+    v0_logical_tensor %out_1@2 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]), token %out_1_w, token %$3_r = !10006 ASSEMBLE(%$3@6) token(%$3_w) #toOffset([0, 0]);
     return %a@0, %aux_3@1, %out_1@2;
 }

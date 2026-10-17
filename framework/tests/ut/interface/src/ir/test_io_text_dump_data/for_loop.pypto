@@ -1,5 +1,5 @@
 program #entry(loop) {
-    function loop incast() outcast(int32_t) #type(Opaque) #entry(true) {
+    function loop incast() outcast(int32_t) #entry(true) #type(Opaque) {
         for %i inrange 0, 10, 1 iter { } {
             int32_t %s = ((cast int64_t %s) add %i);
         }

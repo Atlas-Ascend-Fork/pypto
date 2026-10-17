@@ -39,7 +39,6 @@ public:
     virtual Json DumpDynJson() = 0;
     virtual void LoadJson(const Json& attrJson) = 0;
     virtual std::shared_ptr<OpAttribute> Clone() const = 0;
-    virtual void CollectAttrs(std::map<std::string, std::any>&) const {}
 
     virtual ~OpAttribute() = default;
 };
@@ -246,18 +245,6 @@ public:
 
     static std::shared_ptr<ViewOpAttribute> DeserializeFrom(const Json& attrJson, [[maybe_unused]] Function* function);
 
-    void CollectAttrs(std::map<std::string, std::any>& attrs) const override
-    {
-        if (!fromDynOffset_.empty()) {
-            attrs["fromOffset"] = fromDynOffset_;
-        } else {
-            attrs["fromOffset"] = fromOffset_;
-        }
-        if (!toDynValidShape_.empty()) {
-            attrs["toValidShape"] = toDynValidShape_;
-        }
-    }
-
 private:
     MemoryType to_;
     Offset fromOffset_;
@@ -301,18 +288,6 @@ public:
 
     static std::shared_ptr<AssembleOpAttribute> DeserializeFrom(const Json& attrJson,
                                                                 [[maybe_unused]] Function* function);
-
-    void CollectAttrs(std::map<std::string, std::any>& attrs) const override
-    {
-        if (!toDynOffset_.empty()) {
-            attrs["toOffset"] = toDynOffset_;
-        } else {
-            attrs["toOffset"] = toOffset_;
-        }
-        if (!fromDynValidShape_.empty()) {
-            attrs["fromValidShape"] = fromDynValidShape_;
-        }
-    }
 
 private:
     MemoryType from_;

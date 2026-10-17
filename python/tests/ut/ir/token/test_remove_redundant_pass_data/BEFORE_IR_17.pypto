@@ -1,6 +1,6 @@
-function foo_two_views incast(v0_logical_tensor %io@0 #dtype(float) #shape([32, 16]) #offset([0, 0]) #dynvalidshape([32, 16]), v0_logical_tensor %src@1 #dtype(float) #shape([8, 16]) #offset([0, 0]) #dynvalidshape([8, 16])) outcast() #type(Opaque) #entry(false) {
-    v0_logical_tensor %View_io@2 #dtype(float) #shape([8, 16]) #offset([0, 0]) #dynvalidshape([8, 16]), token %View_io_w, token %io_r = !10000 VIEW(%io@0) token() #fromOffset([0, 0]) #toValidShape([8, 16]);
-    v0_logical_tensor %View_io_0@3 #dtype(float) #shape([8, 16]) #offset([0, 0]) #dynvalidshape([8, 16]), token %View_io_0_w, token %io_r = !10001 VIEW(%io@0) token() #fromOffset([16, 0]) #toValidShape([8, 16]);
-    v0_logical_tensor %io_1@0 #dtype(float) #shape([32, 16]) #offset([0, 0]) #dynvalidshape([32, 16]), token %io_1_w, token %src_r = !10002 ASSEMBLE(%src@1) token(%io_r) #toOffset([16, 0]);
+function foo_two_views incast(v0_logical_tensor %io@0 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), v0_logical_tensor %src@1 #dtype(float) #dynvalidshape([8, 16]) #offset([0, 0]) #shape([8, 16])) outcast() #entry(false) #type(Opaque) {
+    v0_logical_tensor %View_io@2 #dtype(float) #dynvalidshape([8, 16]) #offset([0, 0]) #shape([8, 16]), token %View_io_w, token %io_r = !10000 VIEW(%io@0) token() #fromOffset([0, 0]) #toValidShape([8, 16]);
+    v0_logical_tensor %View_io_0@3 #dtype(float) #dynvalidshape([8, 16]) #offset([0, 0]) #shape([8, 16]), token %View_io_0_w, token %io_r = !10001 VIEW(%io@0) token() #fromOffset([16, 0]) #toValidShape([8, 16]);
+    v0_logical_tensor %io_1@0 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), token %io_1_w, token %src_r = !10002 ASSEMBLE(%src@1) token(%io_r) #toOffset([16, 0]);
     return %io_1@0, %src@1;
 }

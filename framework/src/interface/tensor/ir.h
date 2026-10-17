@@ -21,7 +21,7 @@
 namespace pypto::ir {
 std::string DumpScalarExpr(const ScalarExprPtr& op);
 std::string DumpTensorVar(const VarPtr& tensor);
-std::map<std::string, std::any> CollectTensorOpAttrs(const TensorOpStmtPtr& ptr);
+std::map<std::string, std::any> GetOperationAttrDict(const TensorOpStmtPtr& ptr);
 
 // Returns the underlying allocation id of a tensor Var, used for alias-aware
 // liveness analysis (inplace transforms such as RESHAPE alias the same allocation).
