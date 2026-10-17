@@ -193,22 +193,35 @@ struct DrcoDevTaskFinishFlagList {
 #endif
 };
 
-// leaf task 完成计数表：承接原 DrcoGlobalReadyQueue 的 executedCount/size 计数职责，
-// 内嵌 DrcoRootFuncList（不再独立分配）；每 coreType 一项、独占 cacheline，
-// 仅 executedCount 加到 size 的最后一次累加方广播 devTaskFinishFlagList
+// 动态 leaf 分片计数：每 coreType 一组分片（各占独立 cacheline）
+constexpr uint32_t DRCO_COUNT_SHARD_NUM = 2;
+
+// leaf task 完成计数表：承接原 DrcoGlobalReadyQueue 的 staticExecCount/size 计数职责，
+// 内嵌 DrcoRootFuncList（不再独立分配）；每 coreType 一项、独占 cacheline。
+// 完成判定 = Σ分片(设备侧动态原子加) >= size - staticExecCount(host 预累加的静态 per-core
+// pending)：动态计数分片后各核只加自己的分片，把 64 路单点原子争抢降到 ~64/NUM 路
 struct DrcoDevTaskCountList {
     struct CoreTypeCount {
-        uint32_t size;          // 本 coreType leaf task 总数，host 初始化后只读
-        uint32_t executedCount; // leaf 计数：host 派发时预累加 per-core pending 数 + 设备侧原子加
+        uint32_t size;            // 本 coreType leaf task 总数，host 初始化后只读
+        uint32_t staticExecCount; // 静态计数：host 派发时预累加 per-core pending 数（设备侧只读）
         uint8_t pad[64 - 2 * sizeof(uint32_t)];
     };
+    // 动态 leaf 计数分片：核只写自己分片，完成判定侧 dcci 读全部求和
+    struct CountShard {
+        uint32_t value;
+        uint8_t pad[64 - sizeof(uint32_t)];
+    };
     CoreTypeCount count[DRCO_QUEUE_MAX];
+    CountShard shardExecCount[DRCO_QUEUE_MAX][DRCO_COUNT_SHARD_NUM];
 #ifdef __TILE_FWK_HOST__
     DrcoDevTaskCountList()
     {
         for (uint32_t ct = 0; ct < DRCO_QUEUE_MAX; ct++) {
             count[ct].size = 0;
-            count[ct].executedCount = 0;
+            count[ct].staticExecCount = 0;
+            for (uint32_t s = 0; s < DRCO_COUNT_SHARD_NUM; s++) {
+                shardExecCount[ct][s].value = 0;
+            }
         }
     }
 #endif
@@ -282,12 +295,12 @@ inline void DrcoRootFuncListPrecountPerCoreTasks(DrcoRootFuncList* rootFuncList,
         }
         // 核归属与设备侧 DrcoGetCoreTypedIdx 一致：编号 < nrValidAic 为 AIC，其余为 AIV
         uint32_t coreType = (i < nrValidAic) ? DRCO_QUEUE_AIC : DRCO_QUEUE_AIV;
-        rootFuncList->devTaskCountList.count[coreType].executedCount += queue->size;
+        rootFuncList->devTaskCountList.count[coreType].staticExecCount += queue->size;
     }
     for (uint32_t ct = 0; ct < DRCO_QUEUE_MAX; ct++) {
         DrcoDevTaskCountList::CoreTypeCount* cnt = &rootFuncList->devTaskCountList.count[ct];
-        executedBackup[ct] = cnt->executedCount;
-        if (cnt->executedCount >= cnt->size) {
+        executedBackup[ct] = cnt->staticExecCount;
+        if (cnt->staticExecCount >= cnt->size) {
             rootFuncList->devTaskFinishFlagList.flag[ct].devTaskFinishFlag = 1;
         }
         finishFlagBackup[ct] = rootFuncList->devTaskFinishFlagList.flag[ct].devTaskFinishFlag;
@@ -295,11 +308,11 @@ inline void DrcoRootFuncListPrecountPerCoreTasks(DrcoRootFuncList* rootFuncList,
 }
 
 // cache 重放侧恢复构建期备份的 precount；须在 DrcoReadyQueueDataRestore 的计数复位之后
-inline void DrcoRootFuncListRestorePrecount(DrcoRootFuncList* rootFuncList, const uint32_t* executedCount,
+inline void DrcoRootFuncListRestorePrecount(DrcoRootFuncList* rootFuncList, const uint32_t* staticExecCount,
                                             const uint32_t* finishFlag)
 {
     for (uint32_t ct = 0; ct < DRCO_QUEUE_MAX; ct++) {
-        rootFuncList->devTaskCountList.count[ct].executedCount = executedCount[ct];
+        rootFuncList->devTaskCountList.count[ct].staticExecCount = staticExecCount[ct];
         rootFuncList->devTaskFinishFlagList.flag[ct].devTaskFinishFlag = finishFlag[ct];
     }
 }

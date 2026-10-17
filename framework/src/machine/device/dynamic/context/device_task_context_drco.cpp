@@ -204,7 +204,7 @@ void DeviceTaskContext::InitDrcoRootFuncList(DynDeviceTask* dyntask)
             }
         }
     }
-    // 完成计数表内嵌 rootFuncList（承接原全局队列的 executedCount/size），MIX 恒为 0
+    // 完成计数表内嵌 rootFuncList（承接原全局队列的 staticExecCount/size），MIX 恒为 0
     new (&rootFuncList->devTaskCountList) npu::tile_fwk::DrcoDevTaskCountList();
     rootFuncList->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIC].size = aicTaskCnt;
     rootFuncList->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIV].size = aivTaskCnt;

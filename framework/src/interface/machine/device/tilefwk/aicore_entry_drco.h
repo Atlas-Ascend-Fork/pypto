@@ -268,6 +268,10 @@ struct DrcoEntryState {
     // P2 区域头注册表核本地副本
     uint32_t mqRegionHeadCount;
     uint32_t mqRegionHeads[npu::tile_fwk::DrcoRootFuncList::DRCO_MQ_REGION_MAX];
+    // 期望动态计数 = 本 devTask 本 coreType 的 leaf 总数(size) - host 静态预累加计数(staticExecCount)
+    // （devTask 内不变）：入口缓存一次，热路径完成判定用 Σ分片 >= 该值；动态计数走分片，
+    // 避免对热 staticExecCount/size 行反复 dcci
+    uint32_t drcoCountDynExpect{0};
 
     // control flow cache 基址（设备地址）：recording 阶段 predCount/succStitchList 落在 cache 数据区，
     // funcDynamicDataOffset（base 标记 = 0）以此为原点还原指针
@@ -391,8 +395,8 @@ INLINE __gm__ int32_t* DrcoTaskPredCountAddr(DrcoEntryState* state, uint32_t tas
 // 开门同时由本核一次性代加该 region 的 leaf 总数（按核型拆账，host 撒核期写入）——替代
 // 原消费侧每核逐个原子加（16 路同计数器风暴，case3 实测 4~8us）。写序恒为 0xff → add →
 // flag：退出路径据此做"flag 置位 ⇒ 门已全开"的双检（见 fetch 循环退出分支）
-INLINE void DrcoNotifyTaskExecutedAddType(__gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList, uint32_t queueType,
-                                          uint32_t addCount);
+INLINE void DrcoNotifyTaskExecutedAddType(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                          uint32_t queueType, uint32_t addCount);
 INLINE bool DrcoMqRegionHeadTryOpen(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                     uint32_t taskId)
 {
@@ -404,9 +408,9 @@ INLINE bool DrcoMqRegionHeadTryOpen(DrcoEntryState* state, __gm__ npu::tile_fwk:
     for (uint32_t i = 0; i < count; i++) {
         if (state->mqRegionHeads[i] == flat) {
             DrcoGmStore(DrcoTaskPredCountAddr(state, taskId), npu::tile_fwk::DRCO_MIDDLE_QUEUE_GATE_OPEN);
-            DrcoNotifyTaskExecutedAddType(rootFuncList, npu::tile_fwk::DRCO_QUEUE_AIC,
+            DrcoNotifyTaskExecutedAddType(state, rootFuncList, npu::tile_fwk::DRCO_QUEUE_AIC,
                                           DrcoGmLoad(&rootFuncList->mqRegionLeafCountAic[i]));
-            DrcoNotifyTaskExecutedAddType(rootFuncList, npu::tile_fwk::DRCO_QUEUE_AIV,
+            DrcoNotifyTaskExecutedAddType(state, rootFuncList, npu::tile_fwk::DRCO_QUEUE_AIV,
                                           DrcoGmLoad(&rootFuncList->mqRegionLeafCountAiv[i]));
             return true;
         }
@@ -621,30 +625,47 @@ INLINE uint32_t DrcoLocalReadyQueueGetFirstTask(__gm__ DrcoLocalReadyQueue* queu
 
 // ==================== RootFuncList 原语 ====================
 
-// leaf task 计数并广播完成：累加本 coreType 计数表 executedCount
-// 仅加到 size 的最后一次累加方置 1 本 coreType 的 devTaskFinishFlag
+// leaf task 计数并广播完成：累加本 coreType 动态分片
+// 仅当 Σ分片达期望动态计数的最后一次累加方置 1 本 coreType 的 devTaskFinishFlag
 // 本类型全部核经 DrcoGmLoad（含 dcci 失效）轮询同一标志
-INLINE void DrcoNotifyTaskExecutedAdd([[maybe_unused]] DrcoEntryState* state,
-                                      __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList, uint32_t addCount)
+INLINE void DrcoNotifyTaskExecutedAdd(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                      uint32_t addCount)
 {
-    __gm__ npu::tile_fwk::DrcoDevTaskCountList::CoreTypeCount* cnt = &rootFuncList->devTaskCountList
-                                                                          .count[DRCO_CORE_TYPE];
-    if (DrcoAtomicAddToU32(&cnt->executedCount, addCount) + addCount < DrcoGmLoad(&cnt->size)) {
+    // 动态 leaf 计数分片累加：各核只加自己分片（按类型内编号散列），避免 64 路单点原子争抢
+    uint32_t shardIdx = BlockDescTypedBlockIdx(state->blockDesc) % npu::tile_fwk::DRCO_COUNT_SHARD_NUM;
+    DrcoAtomicAddToU32(&rootFuncList->devTaskCountList.shardExecCount[DRCO_CORE_TYPE][shardIdx].value, addCount);
+    // 完成判定 = Σ分片 >= 期望动态计数（size - host 静态预累加，入口缓存）；各分片走 dcci 读。
+    // 最后一次使分片和达期望值的累加方在本核 add 之后读全部分片；若因可见性读漏，fetch 空转侧
+    // DrcoTryFinishByShardCount 会补判（避免漏判挂死）。空类型由 host 在 precount 阶段直接置位
+    uint32_t total = 0;
+    for (uint32_t s = 0; s < npu::tile_fwk::DRCO_COUNT_SHARD_NUM; s++) {
+        total += DrcoGmLoad(&rootFuncList->devTaskCountList.shardExecCount[DRCO_CORE_TYPE][s].value);
+    }
+    if (total < state->drcoCountDynExpect) {
         return;
     }
     DrcoGmStore(&rootFuncList->devTaskFinishFlagList.flag[DRCO_CORE_TYPE].devTaskFinishFlag, uint32_t(1));
 }
 
 // 同上，目标计数器由参数指定（开门核代加场景：需替两种核型的成员分别记账，
-// DRCO_CORE_TYPE 是编译期宏无法跨型，故参数化）
-INLINE void DrcoNotifyTaskExecutedAddType(__gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList, uint32_t queueType,
-                                          uint32_t addCount)
+// DRCO_CORE_TYPE 是编译期宏无法跨型，故参数化）；跨型无核本地缓存，期望动态计数由 GM
+// size/静态预累加直读合成（非热路径），动态量同走分片——staticExecCount 设备侧只读，
+// 代加若写回 staticExecCount 会游离在完成判定（Σ分片 >= 期望值）之外而漏判挂死
+INLINE void DrcoNotifyTaskExecutedAddType(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                          uint32_t queueType, uint32_t addCount)
 {
     if (addCount == 0) {
         return;
     }
-    __gm__ npu::tile_fwk::DrcoDevTaskCountList::CoreTypeCount* cnt = &rootFuncList->devTaskCountList.count[queueType];
-    if (DrcoAtomicAddToU32(&cnt->executedCount, addCount) + addCount < DrcoGmLoad(&cnt->size)) {
+    uint32_t shardIdx = BlockDescTypedBlockIdx(state->blockDesc) % npu::tile_fwk::DRCO_COUNT_SHARD_NUM;
+    DrcoAtomicAddToU32(&rootFuncList->devTaskCountList.shardExecCount[queueType][shardIdx].value, addCount);
+    uint32_t expect = DrcoGmLoad(&rootFuncList->devTaskCountList.count[queueType].size) -
+                      DrcoGmLoad(&rootFuncList->devTaskCountList.count[queueType].staticExecCount);
+    uint32_t total = 0;
+    for (uint32_t s = 0; s < npu::tile_fwk::DRCO_COUNT_SHARD_NUM; s++) {
+        total += DrcoGmLoad(&rootFuncList->devTaskCountList.shardExecCount[queueType][s].value);
+    }
+    if (total < expect) {
         return;
     }
     DrcoGmStore(&rootFuncList->devTaskFinishFlagList.flag[queueType].devTaskFinishFlag, uint32_t(1));
@@ -1620,6 +1641,24 @@ INLINE bool DrcyDynFuncDataListFetchSelfQueue(DrcoEntryState* state, uint32_t& r
     return false;
 }
 
+// 分片完成判定兜底：Σ分片 >= 期望动态计数（size - 静态预累加）时置本类型完成 flag。
+// 分片计数下，最后一个 add 的核在其它核 add 尚未全局可见时可能读漏，若此后无人再读即漏判挂死；
+// fetch 空转路径每轮调用本函数补判，保证任一空转核读到全局总和即置位（不会漏判）
+INLINE void DrcoTryFinishByShardCount(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList)
+{
+    __gm__ uint32_t* flag = &rootFuncList->devTaskFinishFlagList.flag[DRCO_CORE_TYPE].devTaskFinishFlag;
+    if (DrcoGmLoad(flag) != 0) {
+        return;
+    }
+    uint32_t total = 0;
+    for (uint32_t s = 0; s < npu::tile_fwk::DRCO_COUNT_SHARD_NUM; s++) {
+        total += DrcoGmLoad(&rootFuncList->devTaskCountList.shardExecCount[DRCO_CORE_TYPE][s].value);
+    }
+    if (total >= state->drcoCountDynExpect) {
+        DrcoGmStore(flag, uint32_t(1));
+    }
+}
+
 INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
                                              __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                              uint32_t& resultCoreType,
@@ -1705,6 +1744,9 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
                 break;
             }
         } // 本类型未完成（帮忙模式跳过 leaf 消费）
+
+        // 本轮未取到任务：分片完成判定兜底，避免分片计数读漏导致完成 flag 永不置位而挂死
+        DrcoTryFinishByShardCount(state, rootFuncList);
     }
     TraceEvent(state, 0xffffffff, EVENT_FETCH_END());
     return resultTaskIdCount;
@@ -1933,7 +1975,7 @@ INLINE void ExecDrcoPerCoreTasks(DrcoEntryState* state, __gm__ npu::tile_fwk::Pe
 // hub_mix 节点，经 ResolveHubMixTask 解析后就地执行其唯一 AIC 后继（编码侧
 // ValidateWrapGroupConsistency 断言每个 wrap 组恒为 1 AIC + 1~2 AIV，hub_mix 恒有 AIC 后继）、
 // AIV 后继经 C2V 环投递配对 AIV——MIX 批的 taskId 原位覆写为实际执行的 AIC 后继，供调用方
-// 统一 resolve。executedCount 由调用方在执行循环前整批累加（notify before run）：计数到
+// 统一 resolve。动态完成计数由调用方在执行循环前整批累加（notify before run）：计数到
 // size 即本类型所有 leaf 已被认领，末批执行期间其它核可并行退出 fetch 自旋，消除整批
 // 执行完才广播的尾部空隙
 INLINE void ExecDrcoReadyQueueTaskOnce(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
@@ -1946,7 +1988,7 @@ INLINE void ExecDrcoReadyQueueTaskOnce(DrcoEntryState* state, __gm__ npu::tile_f
         uint32_t aicTaskId = ResolveHubMixTask(state, rootFuncList, taskId, state->ssbuf->mixHubC2VReadyQueue);
         if (aicTaskId == static_cast<uint32_t>(AICORE_TASK_INIT)) {
             // 无 AIC 后继：V 后继已在 ResolveHubMixTask 内经 C2V 派发完毕，hub_mix 节点
-            // 自身非可执行 leaf（不计入 executedCount），无事可做
+            // 自身非可执行 leaf（不计入完成计数），无事可做
             return;
         }
         DRCO_LOG(&state->ctx, "MIX exec=%u", aicTaskId);
@@ -2024,6 +2066,10 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
         __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList = deviceTask->drcoRootFuncList;
         state.ctx.lastTaskFinishCycle = 0;
         state.isExectedLeafTask = false;
+        // size 与静态预累加 staticExecCount 只读且 devTask 内不变：入口一次性 dcci 读入并合成
+        // 期望动态计数，热路径完成判定用缓存值（动态计数走分片），不再反复 dcci 该行
+        state.drcoCountDynExpect = DrcoGmLoad(&rootFuncList->devTaskCountList.count[DRCO_CORE_TYPE].size) -
+                                   DrcoGmLoad(&rootFuncList->devTaskCountList.count[DRCO_CORE_TYPE].staticExecCount);
 
         __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue = DrcoGmLoad(
             &rootFuncList->perCorePendingQueueArray[BlockDescBlockIdx(state.blockDesc)]);

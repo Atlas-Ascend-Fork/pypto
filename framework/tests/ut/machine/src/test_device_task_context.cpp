@@ -977,10 +977,10 @@ TEST_F(TestDeviceTaskContext, InitReadyQueues_EnableAicoreResolve_CreatesDrcoRoo
     ASSERT_NE(dyntask->drcoRootFuncList, nullptr);
     EXPECT_EQ(dyntask->drcoRootFuncList->totalTaskCount, 16U);
     EXPECT_EQ(dyntask->drcoRootFuncList->devTaskFinished, 0U);
-    // 完成计数表内嵌 rootFuncList：mock 无函数缓存，各 coreType size/executedCount 均为 0
+    // 完成计数表内嵌 rootFuncList：mock 无函数缓存，各 coreType size/staticExecCount 均为 0
     for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ++ct) {
         EXPECT_EQ(dyntask->drcoRootFuncList->devTaskCountList.count[ct].size, 0U);
-        EXPECT_EQ(dyntask->drcoRootFuncList->devTaskCountList.count[ct].executedCount, 0U);
+        EXPECT_EQ(dyntask->drcoRootFuncList->devTaskCountList.count[ct].staticExecCount, 0U);
     }
     for (uint32_t i = 0; i < npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE; ++i) {
         EXPECT_NE(dyntask->drcoRootFuncList->perCorePendingQueueArray[i], nullptr);
@@ -1241,8 +1241,8 @@ TEST_F(TestDeviceTaskContext, DispatchReadyQueueToCores_PrecountPerCoreExecutedC
     npu::tile_fwk::DrcoRootFuncListPrecountPerCoreTasks(root, devProg.devArgs.nrValidAic, dyntask->drcoPrecountExecuted,
                                                         dyntask->drcoPrecountFinishFlag);
 
-    EXPECT_EQ(root->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIC].executedCount, 2U);
-    EXPECT_EQ(root->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIV].executedCount, 3U);
+    EXPECT_EQ(root->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIC].staticExecCount, 2U);
+    EXPECT_EQ(root->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIV].staticExecCount, 3U);
     EXPECT_EQ(root->devTaskFinishFlagList.flag[npu::tile_fwk::DRCO_QUEUE_AIC].devTaskFinishFlag, 1U);
     EXPECT_EQ(root->devTaskFinishFlagList.flag[npu::tile_fwk::DRCO_QUEUE_AIV].devTaskFinishFlag, 0U);
     // MIX 恒为空类型（size == 0）：预累加即置完成 flag（对应原空队列通知置 flag 行为）

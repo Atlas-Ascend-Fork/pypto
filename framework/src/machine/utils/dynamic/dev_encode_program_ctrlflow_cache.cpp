@@ -274,7 +274,11 @@ void DevControlFlowCache::DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uin
 
     __sync_synchronize();
     for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
-        base->drcoRootFuncList->devTaskCountList.count[ct].executedCount = 0;
+        base->drcoRootFuncList->devTaskCountList.count[ct].staticExecCount = 0;
+        // 动态分片计数复位（cache 重放不残留上次运行的动态 leaf 计数）
+        for (uint32_t s = 0; s < npu::tile_fwk::DRCO_COUNT_SHARD_NUM; s++) {
+            base->drcoRootFuncList->devTaskCountList.shardExecCount[ct][s].value = 0;
+        }
     }
     // 就绪队列复位按各队列自身容量清理（MIX 行容量 = coreFunctionCnt + HUB_MIX op 数，
     // 大于 coreFunctionCnt）；三行（AIC/AIV/MIX）均全组分配
