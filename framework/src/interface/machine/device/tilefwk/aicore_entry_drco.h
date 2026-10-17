@@ -488,9 +488,10 @@ INLINE __gm__ DrcoLocalReadyMatrix* DrcoRootFuncListGetLocalReadyMatrix(
     __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList, uint32_t readyMatrixCoreType);
 
 // 全类型 push 核共享全局行游标 rootFuncList->readyMatrixPushCol[queueType]：按批原子认领连续行
-// （一次 atomicAdd，无需 CAS 重试），列 = push 核身份散列（typedBlockIdx % colNum）；逐槽 u32 CAS
-// （0→任务）一槽一原子、槽间独立，pop 侧按包含该槽的 u64 整字 exch 读清——跨位宽 RMW 在 L2
-// 按地址串行化，互不丢任务；validCoreNum == 0 禁写由调用方早退保证；
+// （一次 atomicAdd，无需 CAS 重试），起始深度列 = push 核身份散列（typedBlockIdx % colNum），该槽
+// 被占则沿深度环换下一列重试，本行 colNum 个深度全满才从本任务起（list[pushed..]）整体溢出去
+// 队列；逐槽 u32 CAS（0→任务）一槽一原子、槽间独立，pop 侧按包含该槽的 u64 整字 exch 读清
+// ——跨位宽 RMW 在 L2 按地址串行化，互不丢任务；validCoreNum == 0 禁写由调用方早退保证；
 // 每个 CAS 成功的任务记录 EVENT_PUSH_LOCAL(消费者行) 事件
 INLINE uint32_t DrcoLocalReadyMatrixPushBatch(DrcoEntryState* state,
                                               __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
@@ -507,7 +508,8 @@ INLINE uint32_t DrcoLocalReadyMatrixPushBatch(DrcoEntryState* state,
     __gm__ uint32_t* rowCursor = &rootFuncList->readyMatrixPushCol[queueType];
     // succTaskIdListSize <=6 不会溢出；即便回绕，% coreCount 仍给合法核
     uint32_t base = DrcoAtomicAddToU32(rowCursor, succTaskIdListSize) % rowCnt;
-    uint32_t matrixColIdx = typedBlockIdx % colNum;
+    // 起始深度列 = 推送核身份散列；该槽被占则沿深度环换下一列重试
+    uint32_t matrixColStart = typedBlockIdx % colNum;
     uint32_t pushed = 0;
     for (uint32_t i = 0; i < succTaskIdListSize; i++) {
         uint32_t rowIdx = base + i;
@@ -516,9 +518,21 @@ INLINE uint32_t DrcoLocalReadyMatrixPushBatch(DrcoEntryState* state,
         }
         // 依据 行idx 计算在本次matrix 中行 列
         uint32_t matrixRowIdx = rowIdx % rowCnt;
-        if (DrcoAtomicCasToU32(&matrix->rowList[matrixRowIdx].taskList[matrixColIdx], 0,
-                               DRCO_ENCODE_TASK(succTaskIdList[i])) != 0) {
-            break; // 从本任务起（list[pushed..]）整体溢出去队列
+        uint32_t matrixColIdx = matrixColStart;
+        bool slotPushed = false;
+        for (uint32_t k = 0; k < colNum; k++) {
+            if (DrcoAtomicCasToU32(&matrix->rowList[matrixRowIdx].taskList[matrixColIdx], 0,
+                                   DRCO_ENCODE_TASK(succTaskIdList[i])) == 0) {
+                slotPushed = true;
+                break;
+            }
+            if (++matrixColIdx == colNum) {
+                matrixColIdx = 0; // 深度环回绕
+            }
+        }
+        if (!slotPushed) {
+            // 本行 colNum 个深度全占（消费侧未及时排空）：从本任务起（list[pushed..]）整体溢出去队列
+            break;
         }
         TraceEvent(state, succTaskIdList[i], EVENT_PUSH_LOCAL(rowIdx));
         pushed++;
