@@ -17,10 +17,10 @@ import numpy as np
 import pytest
 import torch
 
-from kirin.common import check_nan, compare_cos
+from kirin.common import check_nan, compare_cos, generated_cpp_contains
 import pypto
 
-TEST_CASES_4INPUT = [
+TEST_CASES_MUL_MATMUL_FUSION = [
     # kernel_name: name of the kernel
     # shape_a: first input tensor shape
     # shape_b: second input tensor shape
@@ -37,7 +37,7 @@ TEST_CASES_4INPUT = [
         (16, 16),
         (16, 16),
         ([16, 16], [16, 16], [16, 16]),
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="mul_matmul",
     ),
     pytest.param(
@@ -48,7 +48,7 @@ TEST_CASES_4INPUT = [
         (16, 16),
         (16, 16),
         ([16, 16], [16, 16], [16, 16]),
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="matmul_mul",
     ),
     pytest.param(
@@ -59,7 +59,7 @@ TEST_CASES_4INPUT = [
         (1, 1, 1, 128),
         (1, 1, 1, 64),
         ([16, 16], [64, 128], [64, 128]),
-        marks=[],
+        marks=[pytest.mark.skip()],
         id="matmul_mul_with_reshape_001",
     ),
     pytest.param(
@@ -81,7 +81,7 @@ TEST_CASES_4INPUT = [
         (1, 16, 1, 128),
         (1, 1, 1, 64),
         ([16, 16], [64, 128], [64, 128]),
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="matmul_mul_with_reshape_003",
     ),
     pytest.param(
@@ -103,7 +103,7 @@ TEST_CASES_4INPUT = [
         (1, 1, 1, 128),
         (1, 1, 1, 64),
         ([16, 16], [64, 128], [64, 128]),
-        marks=[],
+        marks=[pytest.mark.skip()],
         id="mul_matmul_with_reshape_002",
     ),
     pytest.param(
@@ -114,7 +114,7 @@ TEST_CASES_4INPUT = [
         (1, 16, 1, 128),
         (1, 1, 1, 64),
         ([16, 16], [64, 128], [64, 128]),
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="mul_matmul_with_reshape_003",
     ),
 ]
@@ -232,7 +232,7 @@ def create_attention_kernels(soc_version):
         p.values[0]: _make_4input_kernel(
             soc_version, p.values[0], p.values[1], p.values[2], p.values[3], p.values[4], p.values[5], p.values[6]
         )
-        for p in TEST_CASES_4INPUT
+        for p in TEST_CASES_MUL_MATMUL_FUSION
     }
 
     kernels_attention = {
@@ -278,13 +278,17 @@ def _compute_golden_attention(op_type, q, k, v, attn_mask):
     return torch.transpose(attention_res, 1, 2)
 
 
-def run_4input_test(kernels, op_type, shapes):
+def run_mul_matmul_fusion_test(kernels, op_type, shapes):
     a = torch.rand(shapes[0], dtype=torch.float16, device="cpu")
     b = torch.rand(shapes[1], dtype=torch.float16, device="cpu")
     c = torch.rand(shapes[2], dtype=torch.float16, device="cpu")
     out = torch.rand(shapes[3], dtype=torch.float16, device="cpu")
 
     kernels[op_type](a, b, c, out)
+
+    expected_copy = "TCopyUB2L1" if "mul_matmul" in op_type else "TCopyL0C2UB"
+    assert generated_cpp_contains(expected_copy), f"{op_type}: generated cpp missing '{expected_copy}'"
+
     golden = _compute_golden_4input(op_type, a, b, c)
 
     check_nan(out, name=op_type)

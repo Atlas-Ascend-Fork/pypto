@@ -19,11 +19,15 @@
 #include "tilefwk/error.h"
 #include "tilefwk/error_code.h"
 #include "tilefwk/pypto_fwk_log.h"
+#include "tilefwk/platform.h"
 
 namespace npu::tile_fwk {
 
 ExprBatchGenerator::ExprBatchGenerator(const std::string& outputDir, int devRootKey, size_t totalExprs)
-    : outputDir_(outputDir), devRootKey_(devRootKey), totalExprs_(totalExprs)
+    : outputDir_(outputDir),
+      devRootKey_(devRootKey),
+      totalExprs_(totalExprs),
+      dumpEnabled_(!IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch()))
 {
     CalculateBatches();
 }
@@ -38,6 +42,9 @@ void ExprBatchGenerator::HeaderFileBegin(std::ostringstream& out) const
 
 void ExprBatchGenerator::HeaderFileEnd(std::ostringstream& out) const
 {
+    if (!dumpEnabled_) {
+        return;
+    }
     std::string headerPath = outputDir_ + "/control_flow_expr_table.h";
     std::ofstream header(headerPath);
     if (!header.is_open()) {
@@ -98,6 +105,9 @@ void ExprBatchGenerator::GenerateBatchFile(SymbolicExpressionTable* exprTable, s
                                            std::vector<std::string>& exprSrcFiles, int indent, int devRootKey,
                                            const GetInputCse* getInputCse)
 {
+    if (!dumpEnabled_) {
+        return;
+    }
     for (auto& batch : batches_) {
         std::string filePath = outputDir_ + "/" + batch.fileName;
         std::ofstream out(filePath);
@@ -430,6 +440,9 @@ void ExprBatchGenerator::CalculateBatches()
 }
 void ExprBatchGenerator::GenerateLinkScript() const
 {
+    if (!dumpEnabled_) {
+        return;
+    }
     std::string scriptFile = outputDir_ + "/merge.link";
     std::ofstream file(scriptFile);
     if (!file.is_open()) {

@@ -54,7 +54,7 @@ TEST_CASES = [
         pypto.DT_FP16,
         (1, 3072),
         (64, 3072),
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="001",
     ),
     pytest.param(

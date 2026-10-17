@@ -13,6 +13,8 @@
 Test cast codegen - common functions for Kirin9030 and KirinX90
 """
 
+import logging
+
 import numpy as np
 import pytest
 import torch
@@ -20,6 +22,8 @@ import torch
 from kirin.common import check_nan, compare_cos
 import pypto
 from pypto import CastMode, SaturationMode
+
+logger = logging.getLogger(__name__)
 
 _all_f16_uint16 = np.arange(0x0000, 0x10000, dtype=np.uint16)
 _all_f16_values = _all_f16_uint16.view(np.float16)
@@ -162,7 +166,11 @@ def _cast_to_integer(float_arr, effective_mode, out_np_dtype, saturation_mode):
     cast_fn = _INT_CAST_DISPATCH.get(effective_mode)
     if cast_fn is None:
         raise ValueError(f"Unknown mode: {effective_mode}")
-    converted = cast_fn(float_arr)
+    # Cast through int64 first: numpy's float -> (unsigned) integer cast of out-of-range
+    # values (e.g. negative -> uint8) is undefined and yields 0 / SIMD-dependent results,
+    # whereas int64 -> (unsigned) integer is a well-defined two's-complement wrap that
+    # matches PyTorch (and the NPU) semantics for SaturationMode::OFF.
+    converted = cast_fn(float_arr).astype(np.int64)
     if saturation_mode == "ON" and np.issubdtype(out_np_dtype, np.integer):
         info = np.iinfo(out_np_dtype)
         converted = np.clip(converted, info.min, info.max)
@@ -269,7 +277,17 @@ TEST_CASES = [
     # cast_mode: rounding mode
     # sat_mode: saturation mode
     # marks: pytest marks
-    pytest.param("cast_kernel_001", "FP16", "FP32", (50,), (112,), "CAST_NONE", "OFF", marks=[], id="001"),
+    pytest.param(
+        "cast_kernel_001",
+        "FP16",
+        "FP32",
+        (50,),
+        (112,),
+        "CAST_NONE",
+        "OFF",
+        marks=[pytest.mark.skip()],
+        id="001",
+    ),
     pytest.param(
         "cast_kernel_002", "INT32", "FP32", (100,), (100,), "CAST_RINT", "ON", marks=[pytest.mark.skip()], id="002"
     ),
@@ -386,7 +404,7 @@ TEST_CASES = [
         (3, 2, 3, 139),
         "CAST_NONE",
         "OFF",
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="014",
     ),
     pytest.param(
@@ -469,6 +487,23 @@ TEST_CASES = [
 ]
 
 
+def compare_integer(a, out, golden):
+    """Log mismatch detail and assert equality for integer cast outputs."""
+    out_np = out.cpu().numpy()
+    golden_np = golden.cpu().numpy()
+    mismatch = out_np != golden_np
+    n_mismatch = int(mismatch.sum())
+    logger.info("mismatched elements: %d / %d (%.3f%%)", n_mismatch, out_np.size, 100.0 * n_mismatch / out_np.size)
+    if n_mismatch:
+        diff = out_np.astype(np.int64) - golden_np.astype(np.int64)
+        logger.info("max absolute difference: %d", int(np.abs(diff[mismatch]).max()))
+        a_np = a.detach().cpu().numpy()
+        for idx in np.argwhere(mismatch)[:8]:
+            t = tuple(idx)
+            logger.info("mismatch idx=%s in=%s golden=%d npu=%d", t, a_np[t], int(golden_np[t]), int(out_np[t]))
+    np.testing.assert_array_equal(out_np, golden_np)
+
+
 def run_cast_test(kernels, kernel_name, in_dtype_str, out_dtype_str, shape, cast_mode_str, sat_mode_str):
     """Run a single cast kernel test with given kernels dict."""
     in_dtype_pypto, in_dtype_torch = _DTYPE_MAP[in_dtype_str]
@@ -485,7 +520,7 @@ def run_cast_test(kernels, kernel_name, in_dtype_str, out_dtype_str, shape, cast
 
     check_nan(out, name=kernel_name)
     if out_dtype_torch in (torch.int8, torch.int16, torch.int32, torch.uint8):
-        np.testing.assert_array_equal(out.cpu(), golden.cpu())
+        compare_integer(a, out, golden)
     else:
         cos_val = abs(compare_cos(out.numpy(), golden.numpy()))
         if cos_val < 0.9999:

@@ -1079,8 +1079,13 @@ static void CompileDyndevFunction(Function* function, FunctionCache& cache, [[ma
                                                             (hasAicoreKernelLink ? aicoreKernelStepCount : 0) +
                                                             encodeStepCount);
     uint64_t tilingKey = OpInfoManager::GetInstance().GetOpTilingKey();
+    const bool isLiteNPU = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
     std::string aicpuDirPath = config::GetEmitPath("kernel_aicpu");
-    npu::tile_fwk::CreateDir(aicpuDirPath, true);
+    // LiteNPU (Kirin) is a static kernel without an AICPU: the host/device control-flow binary is neither
+    // needed nor executed, so skip generating and compiling it entirely.
+    if (!isLiteNPU) {
+        npu::tile_fwk::CreateDir(aicpuDirPath, true);
+    }
     const std::string expName = "expression_" + std::to_string(tilingKey) + ".h";
     std::vector<std::string> exprSrcFiles;
     ValDependTensorMeta valDependTensorMeta;
@@ -1091,12 +1096,13 @@ static void CompileDyndevFunction(Function* function, FunctionCache& cache, [[ma
     RunBuildControlFlowStage(irBackendCtx, cache, linker, function, attr, expName, exprSrcFiles, valDependTensorMeta,
                              controlFlowSource, expressionSource);
 
-    std::string expressionFilePath = aicpuDirPath + "/" + expName;
-    if (IsNeedDumpAicpuKernel(expressionFilePath)) {
-        SaveFile(expressionFilePath, expressionSource);
+    if (!isLiteNPU) {
+        std::string expressionFilePath = aicpuDirPath + "/" + expName;
+        if (IsNeedDumpAicpuKernel(expressionFilePath)) {
+            SaveFile(expressionFilePath, expressionSource);
+        }
+        RunCompileControlFlowStage(function, attr, aicpuDirPath, controlFlowSource, expressionSource, exprSrcFiles);
     }
-
-    RunCompileControlFlowStage(function, attr, aicpuDirPath, controlFlowSource, expressionSource, exprSrcFiles);
 
     std::map<uint64_t, Function*> leafDict;
     RunCodeGenStage(attr, leafDict);

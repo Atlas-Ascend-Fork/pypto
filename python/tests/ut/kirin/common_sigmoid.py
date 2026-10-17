@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import torch
 
-from kirin.common import check_nan, compare_cos
+from kirin.common import check_nan, compare_cos, generated_cpp_contains
 import pypto
 
 
@@ -56,7 +56,7 @@ TEST_CASES = [
         pypto.DT_FP16,
         (100,),
         (100,),
-        marks=[],
+        marks=[pytest.mark.skip()],
         id="002"
     ),
     pytest.param(
@@ -81,7 +81,7 @@ TEST_CASES = [
         "sigmoid_kernel_fp16_005",
         torch.float16,
         pypto.DT_FP16,
-        (1, 2, 32),
+        (1, 2, 80),
         (2, 4, 160),
         marks=[pytest.mark.skip()],
         id="005",
@@ -173,7 +173,7 @@ TEST_CASES = [
         pypto.DT_FP16,
         (3, 3, 5, 32),
         (6, 3, 5, 141),
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="015",
     ),
     pytest.param(
@@ -302,6 +302,10 @@ def run_sigmoid_test(kernels, kernel_name, dtype, shape):
     output = torch.rand(shape, dtype=dtype, device="cpu")
 
     kernels[kernel_name](input_, output)
+
+    if dtype == torch.float16:
+        assert not generated_cpp_contains("float", expect_absent=True), \
+            f"{kernel_name}: generated cpp unexpectedly contains 'float'"
 
     expect = torch.sigmoid(input_)
     check_nan(output, name=kernel_name)

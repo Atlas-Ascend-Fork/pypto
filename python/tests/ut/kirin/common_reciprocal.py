@@ -46,7 +46,15 @@ TEST_CASES = [
     # - pypto_dtype: pypto data type (DT_FP16, DT_FP32, etc.)
     # - tile_shapes: tile shape for pypto kernel
     # - shape: input tensor shape
-    pytest.param("reciprocal_kernel_001", torch.float16, pypto.DT_FP16, (50,), (112,), marks=[], id="001"),
+    pytest.param(
+        "reciprocal_kernel_001",
+        torch.float16,
+        pypto.DT_FP16,
+        (50,),
+        (112,),
+        marks=[pytest.mark.skip()],
+        id="001",
+    ),
     pytest.param(
         "reciprocal_kernel_002", torch.float16, pypto.DT_FP16, (100,), (100,), marks=[pytest.mark.skip()], id="002"
     ),
@@ -125,7 +133,7 @@ TEST_CASES = [
         pypto.DT_FP32,
         (2, 2, 3, 32),
         (4, 2, 6, 135),
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="012",
     ),
     pytest.param(

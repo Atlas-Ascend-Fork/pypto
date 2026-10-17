@@ -65,7 +65,7 @@ void TuneSyncForVF::GenPipeOpMap(Function* subGraphFunc)
     for (auto& op : oriOpList) {
         auto opcfg = OpcodeManager::Inst().GetTileOpCfg(op->GetOpcode());
         ps.AdjustOpCfg(opcfg, *op);
-        if (opcfg.coreType_ != CoreType::AIV) {
+        if (opcfg.coreType_ != CoreType::AIV && !Platform::Instance().GetSoc().GetCoreWrap().IsCVMix()) {
             continue;
         }
         auto& startVec = pipeOpMap[opcfg.pipeIdStart_];
@@ -417,6 +417,10 @@ Status TuneSyncForVF::RunOnFunction(Function& function)
 {
     if (!config::GetPassGlobalConfig(KEY_ENABLE_VF, false)) {
         APASS_LOG_DEBUG_F(Elements::Function, "TuneSyncForVF is skipped for ENABLE_VF is false.");
+        return SUCCESS;
+    }
+    if (config::GetPassGlobalConfig<bool>(KEY_ENABLE_PIPE_ALL, false)) {
+        APASS_LOG_DEBUG_F(Elements::Function, "TuneSyncForVF is skipped for ENABLE_PIPE_ALL is true.");
         return SUCCESS;
     }
     int64_t tunevfMode = config::GetPassOption<int64_t>(SG_SET_TUNEVF_MODE);

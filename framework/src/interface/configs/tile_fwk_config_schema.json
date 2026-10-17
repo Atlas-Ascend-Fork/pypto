@@ -1029,6 +1029,13 @@
                                 "en": "CV fusion switch, performing Cube/Vector hybrid computation fusion to enhance hardware utilization and computational performance through co-scheduling."
                             }
                         },
+                        "enable_pipe_all": {
+                            "type": "boolean",
+                            "label": {
+                                "zh": "全量PIPE_ALL同步调试开关，在InsertSync Pass中于相邻算子之间插入OP_BAR_ALL全同步屏障，用于精度定位中隔离数据同步问题。",
+                                "en": "Full PIPE_ALL sync debug switch. Inserts OP_BAR_ALL full-sync barriers between adjacent ops in the InsertSync pass to isolate data synchronization issues during precision debugging."
+                            }
+                        },
                         "pass_thread_num": {
                             "type": "integer",
                             "label": {

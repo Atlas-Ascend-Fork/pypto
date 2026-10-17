@@ -50,7 +50,16 @@ TEST_CASES = [
     #   [6] dim0, [7] dim1: axes to transpose.
     #   id="NNN"          : pytest test id, zero-padded to 3 digits.
     pytest.param(
-        "transpose_kernel_fp16", torch.float16, pypto.DT_FP16, (1, 16), [...], (2, 3), 0, 1, marks=[], id="001"
+        "transpose_kernel_fp16",
+        torch.float16,
+        pypto.DT_FP16,
+        (1, 16),
+        [...],
+        (2, 3),
+        0,
+        1,
+        marks=[pytest.mark.skip()],
+        id="001",
     ),
     pytest.param(
         "transpose_kernel_fp16",
@@ -121,7 +130,7 @@ TEST_CASES = [
         (2, 3, 4, 5, 6),
         3,
         4,
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="007",
     ),
     pytest.param(

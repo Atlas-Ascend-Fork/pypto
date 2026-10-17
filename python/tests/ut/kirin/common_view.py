@@ -83,7 +83,16 @@ TEST_CASES = [
     # - view_shape: output tensor shape (view result)
     # - offsets: slice offsets for the view operation
     pytest.param(
-        "view_kernel_fp16", torch.float16, pypto.DT_FP16, (2, 16), [4, 8], (4, 8), (4, 4), [0, 4], marks=[], id="001"
+        "view_kernel_fp16",
+        torch.float16,
+        pypto.DT_FP16,
+        (2, 16),
+        [4, 8],
+        (4, 8),
+        (4, 4),
+        [0, 4],
+        marks=[pytest.mark.skip()],
+        id="001",
     ),
     pytest.param(
         "view_kernel_fp16_002",
@@ -166,7 +175,7 @@ TEST_CASES = [
         (2, 2, 2, 4),
         (2, 2, 2, 2),
         [0, 0, 0, 2],
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="008",
     ),
     pytest.param(

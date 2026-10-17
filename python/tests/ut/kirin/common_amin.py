@@ -43,7 +43,17 @@ TEST_CASES = [
     # shape_out: output tensor shape (result of amin along dim)
     # dim: dimension to reduce over
     # marks: pytest marks
-    pytest.param("amin_kernel_fp16_001", torch.float16, pypto.DT_FP16, (48,), (112,), (1,), -1, marks=[], id="001"),
+    pytest.param(
+        "amin_kernel_fp16_001",
+        torch.float16,
+        pypto.DT_FP16,
+        (48,),
+        (112,),
+        (1,),
+        -1,
+        marks=[pytest.mark.skip()],
+        id="001",
+    ),
     pytest.param(
         "amin_kernel_fp16_002",
         torch.float16,
@@ -217,7 +227,7 @@ TEST_CASES = [
         (6, 3, 5, 141),
         (6, 1, 5, 141),
         1,
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="017",
     ),
     pytest.param(

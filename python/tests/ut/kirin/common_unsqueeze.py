@@ -53,7 +53,16 @@ TEST_CASES = [
     # - shape_out: output tensor shape (with unsqueezed dimension)
     # - dim: dimension index to unsqueeze
     pytest.param(
-        "unsqueeze_kernel_fp16", torch.float16, pypto.DT_FP16, (16,), [2], (2,), (1, 2), 0, marks=[], id="001"
+        "unsqueeze_kernel_fp16",
+        torch.float16,
+        pypto.DT_FP16,
+        (16,),
+        [2],
+        (2,),
+        (1, 2),
+        0,
+        marks=[pytest.mark.skip()],
+        id="001",
     ),
     pytest.param(
         "unsqueeze_kernel_fp16_002",
@@ -100,7 +109,7 @@ TEST_CASES = [
         (2, 3, 4, 5),
         (2, 3, 4, 1, 5),
         3,
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="005",
     ),
     pytest.param(

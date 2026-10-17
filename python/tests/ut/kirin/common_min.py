@@ -52,7 +52,7 @@ TEST_CASES = [
         (2, 2, 32, 32),
         (2, 2, 32, 32),
         None,
-        marks=[],
+        marks=[pytest.mark.skip()],
         id="001",
     ),
     pytest.param(
@@ -466,7 +466,7 @@ TEST_CASES = [
         "min_kernel_fp32_001",
         torch.float32,
         pypto.DT_FP32,
-        (16, 16, 8, 8),
+        (8, 8, 8, 8),
         (16, 16, 16, 16),
         None,
         0.5,
@@ -646,7 +646,7 @@ TEST_CASES = [
         (4, 4, 1, 1),
         (4, 4, 4, 4),
         None,
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="055",
     ),
 ]

@@ -481,6 +481,7 @@ public:
 
 private:
     Status RunOnFunction(Function& function) override;
+    void InsertPipeAll(Function* subGraphFunc);
     void InsertCvPipeAll(Function* subGraphFunc);
     void InsertCvSyncOps(Function* subGraphFunc, std::vector<Operation*>& newOpList);
     Status GenNewOpList(Function* subGraphFunc, std::vector<Operation*>& opListNew);

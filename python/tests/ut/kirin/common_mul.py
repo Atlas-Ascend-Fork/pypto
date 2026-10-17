@@ -57,7 +57,17 @@ TEST_CASES = [
     # shape_b: second input tensor shape (or None)
     # scalar_val: scalar value for mul (or None)
     # marks: pytest marks
-    pytest.param("mul_kernel_001", torch.int32, pypto.DT_INT32, (200,), (160,), (160,), None, marks=[], id="001"),
+    pytest.param(
+        "mul_kernel_001",
+        torch.int32,
+        pypto.DT_INT32,
+        (200,),
+        (160,),
+        (160,),
+        None,
+        marks=[pytest.mark.skip()],
+        id="001",
+    ),
     pytest.param(
         "mul_kernel_002",
         torch.int16,
@@ -470,11 +480,11 @@ TEST_CASES = [
         "mul_kernel_042",
         torch.float16,
         pypto.DT_FP16,
-        (5, 7, 15, 5),
+        (11, 8, 15, 9),
         (22, 16, 1, 18),
         (22, 16, 13, 1),
         None,
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="042",
     ),
     pytest.param(

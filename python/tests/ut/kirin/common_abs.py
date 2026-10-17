@@ -41,7 +41,7 @@ TEST_CASES = [
     # tile_shapes: tile shape for pypto kernel
     # shape: input tensor shape
     # marks: pytest marks
-    pytest.param("abs_kernel_001", torch.float16, pypto.DT_FP16, (50,), (112,), marks=[], id="001"),
+    pytest.param("abs_kernel_001", torch.float16, pypto.DT_FP16, (50,), (112,), marks=[pytest.mark.skip()], id="001"),
     pytest.param("abs_kernel_002", torch.float16, pypto.DT_FP16, (100,), (100,), marks=[pytest.mark.skip()], id="002"),
     pytest.param(
         "abs_kernel_003", torch.float32, pypto.DT_FP32, (2, 32), (4, 128), marks=[pytest.mark.skip()], id="003"
@@ -121,7 +121,7 @@ TEST_CASES = [
         pypto.DT_FP16,
         (3, 3, 5, 32),
         (6, 3, 5, 141),
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="015",
     ),
 ]

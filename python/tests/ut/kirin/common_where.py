@@ -53,7 +53,15 @@ TEST_CASES = [
     # - shape_other: y tensor shape (values selected when condition is False, None if scalar)
     # - shape_condition: condition tensor shape
     pytest.param(
-        "where_kernel_fp16_001", torch.float16, pypto.DT_FP16, (1, 64), (2, 64), (2, 64), (2, 1), marks=[], id="001"
+        "where_kernel_fp16_001",
+        torch.float16,
+        pypto.DT_FP16,
+        (1, 64),
+        (2, 64),
+        (2, 64),
+        (2, 1),
+        marks=[pytest.mark.skip()],
+        id="001",
     ),
     pytest.param(
         "where_kernel_fp16_002",
@@ -217,7 +225,7 @@ TEST_CASES = [
         (2, 2, 1, 40),
         (2, 2, 24, 40),
         (2, 2, 24, 1),
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="016",
     ),
     pytest.param(

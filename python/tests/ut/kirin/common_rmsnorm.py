@@ -16,7 +16,7 @@ Test rmsnorm codegen - common functions for Kirin9030 and KirinX90
 import pytest
 import torch
 
-from kirin.common import check_nan, compare_cos
+from kirin.common import check_nan, compare_cos, generated_cpp_contains
 import pypto
 
 
@@ -82,7 +82,7 @@ TEST_CASES = [
         (2, 32),
         (2, 32),
         False,
-        marks=[],
+        marks=[pytest.mark.skip()],
         id="003",
     ),
     pytest.param(
@@ -408,7 +408,7 @@ TEST_CASES = [
         (1, 1, 64, 128),
         (1, 2, 64, 2048),
         False,
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="037",
     ),
     pytest.param(
@@ -467,6 +467,10 @@ def run_rmsnorm_test(kernels, kernel_name, dtype, shape, has_gamma):
     else:
         kernels[kernel_name](a, out)
         golden = _compute_golden_rmsnorm(a)
+
+    if dtype == torch.float16:
+        assert not generated_cpp_contains("float", expect_absent=True), \
+            f"{kernel_name}: generated cpp unexpectedly contains 'float'"
 
     check_nan(out, name=kernel_name)
     cos_val = abs(compare_cos(out.numpy(), golden.numpy()))

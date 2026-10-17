@@ -50,7 +50,17 @@ TEST_CASES = [
     # - shape_input: input tensor shape
     # - shape_out: output tensor shape (result of sum along dim)
     # - dim: dimension to sum along (-1, 0, 1, or 2)
-    pytest.param("sum_kernel_fp32_001", torch.float32, pypto.DT_FP32, (48,), (112,), (1,), -1, marks=[], id="001"),
+    pytest.param(
+        "sum_kernel_fp32_001",
+        torch.float32,
+        pypto.DT_FP32,
+        (48,),
+        (112,),
+        (1,),
+        -1,
+        marks=[pytest.mark.skip()],
+        id="001",
+    ),
     pytest.param(
         "sum_kernel_fp32_002",
         torch.float32,
@@ -235,7 +245,7 @@ TEST_CASES = [
         (6, 3, 5, 141),
         (6, 3, 1, 141),
         2,
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="018",
     ),
 ]

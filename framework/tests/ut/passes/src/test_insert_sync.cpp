@@ -2350,6 +2350,49 @@ TEST_F(InsertSyncTest, TestCvHardSyncWithBoundary)
     EXPECT_TRUE(hasHardSync) << "CV boundary exists, 1C2V hard sync should be inserted";
 }
 
+// ENABLE_PIPE_ALL 全同步调试开关：InsertSyncMainLoop 直接走 InsertPipeAll，
+// 在相邻非 RESHAPE/VIEW/VIEW_TYPE/ASSEMBLE op 之间插入 OP_BAR_ALL。
+TEST_F(InsertSyncTest, TestInsertPipeAll)
+{
+    config::SetPassGlobalConfig(KEY_ENABLE_PIPE_ALL, true);
+    auto [root, leaf] = SetupDebugFunc("TestPipeAll");
+    auto ts = MakeTensors(IS_NUM7, {IS_NUM8, IS_NUM16});
+    (void)IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_ADD, {ts[0], ts[1]}, {ts[2]});
+    (void)IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_RESHAPE, {ts[2]}, {ts[3]});
+    (void)IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_VIEW, {ts[3]}, {ts[4]});
+    (void)IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_CAST, {ts[4]}, {ts[5]});
+    (void)IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_EXP, {ts[5]}, {ts[6]});
+    InsertSync syncPass;
+    syncPass.RunOnFunction(*root);
+    // 原始 op 列表保持不变
+    EXPECT_EQ(leaf->oriOpList.size(), static_cast<size_t>(IS_NUM5));
+    // ADD BAR_ALL RESHAPE VIEW CAST BAR_ALL EXP
+    auto ops = leaf->Operations(false).DuplicatedOpList();
+    EXPECT_EQ(ops.size(), static_cast<size_t>(IS_NUM7));
+    EXPECT_EQ(ops[0]->GetOpcode(), Opcode::OP_ADD);
+    EXPECT_EQ(ops[IS_NUM1]->GetOpcode(), Opcode::OP_BAR_ALL);
+    EXPECT_EQ(ops[IS_NUM2]->GetOpcode(), Opcode::OP_RESHAPE);
+    EXPECT_EQ(ops[IS_NUM3]->GetOpcode(), Opcode::OP_VIEW);
+    EXPECT_EQ(ops[IS_NUM4]->GetOpcode(), Opcode::OP_CAST);
+    EXPECT_EQ(ops[IS_NUM5]->GetOpcode(), Opcode::OP_BAR_ALL);
+    EXPECT_EQ(ops[IS_NUM6]->GetOpcode(), Opcode::OP_EXP);
+}
+
+// ENABLE_PIPE_ALL 边界：单 op 无相邻 op，不插入任何 OP_BAR_ALL。
+TEST_F(InsertSyncTest, TestInsertPipeAllSingleOp)
+{
+    config::SetPassGlobalConfig(KEY_ENABLE_PIPE_ALL, true);
+    auto [root, leaf] = SetupDebugFunc("TestPipeAllSingle");
+    auto ts = MakeTensors(IS_NUM2, {IS_NUM8, IS_NUM16});
+    (void)IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_ADD, {ts[0]}, {ts[1]});
+    InsertSync syncPass;
+    syncPass.RunOnFunction(*root);
+    EXPECT_EQ(leaf->oriOpList.size(), static_cast<size_t>(IS_NUM1));
+    auto ops = leaf->Operations(false).DuplicatedOpList();
+    EXPECT_EQ(ops.size(), static_cast<size_t>(IS_NUM1));
+    EXPECT_EQ(ops[0]->GetOpcode(), Opcode::OP_ADD);
+}
+
 } // namespace tile_fwk
 } // namespace npu
 

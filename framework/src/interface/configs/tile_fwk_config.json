@@ -119,6 +119,7 @@
             "enable_binary_cache": false,
             "enable_pass_configs": true,
             "enable_cv_fuse": false,
+            "enable_pipe_all": false,
             "pass_thread_num": 1,
             "vf_opt_mark_for": false,
             "enable_vf": true,

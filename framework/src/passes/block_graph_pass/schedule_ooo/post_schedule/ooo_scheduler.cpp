@@ -896,8 +896,19 @@ Status OoOScheduler::SeqSchedule()
     UpdateIssueExecOrder();
     state_.originalNumTotalIssues = state_.orderedOps.size();
     size_t pcIdx = 0;
+    // pcIdx 可能因 spill 重排而回退, 仅靠 size 兜底(orderedOps.size() > 3x) 无法发现"不死增长但规模不涨"的
+    // 死循环; 用绝对迭代次数兜底, 正常一轮调度迭代次数远低于该上限。
+    size_t iterCnt = 0;
+    const size_t iterGuard = state_.originalNumTotalIssues * MAX_NUM_TOTAL_ISSUES_RATIO * MAX_NUM_TOTAL_ISSUES_RATIO +
+                             MAX_NUM_TOTAL_ISSUES_RATIO;
     LOG_SCOPE_BEGIN(tGenSpillSchedule, Elements::Function, "SeqSchedule");
     while (pcIdx < state_.orderedOps.size()) {
+        if (++iterCnt > iterGuard) {
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Spill dead-loop in SeqSchedule: pcIdx=%zu, orderedOps=%zu, original=%zu, iter=%zu.",
+                              pcIdx, state_.orderedOps.size(), state_.originalNumTotalIssues, iterCnt);
+            return FAILED;
+        }
         auto op = state_.orderedOps[pcIdx];
         if (state_.IsDualDstAlloc(op) && state_.schedInfoMap[op].isRetired) {
             pcIdx += 1;

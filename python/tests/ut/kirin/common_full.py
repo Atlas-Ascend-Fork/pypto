@@ -43,7 +43,16 @@ TEST_CASES = [
     # shape: output tensor shape
     # fill_value: scalar value to fill the output tensor
     # marks: pytest marks
-    pytest.param("full_kernel_001", torch.float16, pypto.DT_FP16, (120,), (112,), 2.0, marks=[], id="001"),
+    pytest.param(
+        "full_kernel_001",
+        torch.float16,
+        pypto.DT_FP16,
+        (120,),
+        (112,),
+        2.0,
+        marks=[pytest.mark.skip()],
+        id="001",
+    ),
     pytest.param(
         "full_kernel_002", torch.float32, pypto.DT_FP32, (50,), (100,), 2.0, marks=[pytest.mark.skip()], id="002"
     ),
@@ -130,7 +139,7 @@ TEST_CASES = [
         (3, 3, 30, 20),
         (6, 9, 21, 10),
         2,
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="015",
     ),
     pytest.param(

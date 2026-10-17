@@ -37,9 +37,9 @@ def _make_pad_kernel(soc_version, name, dtype, tile_shapes, padding, pad_value):
 # Per-entry layout (matches the parametrize() arglist in the callers):
 #   [0] kernel_name, [1] torch_dtype, [2] pypto_dtype, [3] tile_shapes,
 #   [4] in_shape, [5] padding, [6] pad_value
-# NOTE(PR): only the four-side case id=044 is enabled; the rest are marked _SKIP
+# NOTE(PR): only the 4D full-split case id=042 is enabled; the rest are marked _SKIP
 # until the full matrix is re-enabled.
-_SKIP = pytest.mark.skip(reason="temporarily disabled; only the four-side case 044 is enabled")
+_SKIP = pytest.mark.skip(reason="temporarily disabled; only the 4D full-split case 042 is enabled")
 TEST_CASES = [
     # ---------------- 1D (001~004) ----------------
     # 001 [1D right] tile > output -> single tile
@@ -551,7 +551,7 @@ TEST_CASES = [
         (2, 2, 16, 16),
         (0, 8, 0, 8),
         9.0,
-        marks=[_SKIP],
+        marks=[],
         id="042",
     ),
     # ---------------- 4D boundary (043~045) ----------------
@@ -576,7 +576,7 @@ TEST_CASES = [
         (4, 2, 32, 48),
         (5, 16, 7, 8),
         0.0,
-        marks=[],
+        marks=[pytest.mark.skip()],
         id="044",
     ),
     # 045 pad >> input -> many pure-pad tiles

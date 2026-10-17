@@ -109,9 +109,15 @@ def main():
             found = re.findall(r'extern\s+"C".*?void\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(', handle.read())
         symbols.update(found)
 
-    print("ENTRY_NAME=%s" % names.pop())
+    # The LiteNPU simulator writes to the same stdout and some releases emit a
+    # `tick : N` line with no trailing newline. Break the line before printing the
+    # marker so it always starts its own line: the test scans for lines that begin
+    # with "ENTRY_NAME=".
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    print("ENTRY_NAME=%s" % names.pop(), flush=True)
     for symbol in sorted(symbols):
-        print("CCE_SYMBOL=%s" % symbol)
+        print("CCE_SYMBOL=%s" % symbol, flush=True)
     return 0
 
 

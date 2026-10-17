@@ -14,27 +14,27 @@ Test attention codegen for KirinX90
 """
 
 from kirin.common_attention import (
-    TEST_CASES_4INPUT,
     TEST_CASES_ATTENTION,
+    TEST_CASES_MUL_MATMUL_FUSION,
     create_attention_kernels,
-    run_4input_test,
     run_attention_test,
+    run_mul_matmul_fusion_test,
 )
 import pytest
 
 KERNELS = create_attention_kernels("KirinX90")
 
 
-@pytest.mark.parametrize("op_type,a_shape,b_shape,c_shape,out_shape,vec_tile,cube_tile", TEST_CASES_4INPUT)
-def test_attention_4input(op_type, a_shape, b_shape, c_shape, out_shape, vec_tile, cube_tile):
+@pytest.mark.parametrize("op_type,a_shape,b_shape,c_shape,out_shape,vec_tile,cube_tile", TEST_CASES_MUL_MATMUL_FUSION)
+def test_mul_matmul_fusion(op_type, a_shape, b_shape, c_shape, out_shape, vec_tile, cube_tile):
     shapes = (a_shape, b_shape, c_shape, out_shape)
-    run_4input_test(KERNELS, op_type, shapes)
+    run_mul_matmul_fusion_test(KERNELS, op_type, shapes)
 
 
 @pytest.mark.parametrize(
     "op_type,q_shape,k_shape,v_shape,attn_mask_shape,output_shape,vec_tile,cube_tile", TEST_CASES_ATTENTION
 )
-def test_attention_5input(op_type, q_shape, k_shape, v_shape, attn_mask_shape, output_shape, vec_tile, cube_tile):
+def test_attention(op_type, q_shape, k_shape, v_shape, attn_mask_shape, output_shape, vec_tile, cube_tile):
     shapes = (q_shape, k_shape, v_shape, attn_mask_shape, output_shape)
     run_attention_test(KERNELS, op_type, shapes)
 

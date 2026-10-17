@@ -114,6 +114,7 @@ private:
     std::string outputDir_;
     int devRootKey_;
     size_t totalExprs_;
+    bool dumpEnabled_;
     std::vector<ExprBatchInfo> batches_;
 };
 

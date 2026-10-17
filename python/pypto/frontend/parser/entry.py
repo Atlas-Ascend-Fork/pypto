@@ -665,7 +665,16 @@ class JitCallableWrapper:
             pypto_impl.LaunchKernelTorch(self, _current_stream(), torch_tensors, tensor_defs)
         else:
             cann_is_configed: bool = bool(os.environ.get("ASCEND_HOME_PATH"))
-            if pypto.get_global_config("simulation.accuracy_level") == 2 and cann_is_configed:
+            # Kirin9030/KirinX90 (LiteNPU) are static kernels without an AICPU control-flow binary, so the
+            # cost-model SIM path (which runs the control-flow machine) is not applicable. Route them to the
+            # static ESL-model launch instead, which reaches DoLaunch -> EslModelLiteLaunch.
+            is_lite_npu = (
+                self._codegen_options is not None
+                and self._codegen_options.get("soc_version") in ("Kirin9030", "KirinX90")
+            )
+            if cann_is_configed and (
+                pypto.get_global_config("simulation.accuracy_level") == 2 or is_lite_npu
+            ):
                 with pypto.options("jit_scope"):
                     self._set_config_option()
                     get_torch_npu()

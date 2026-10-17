@@ -57,7 +57,17 @@ TEST_CASES = [
     # shape_b: second input tensor shape (or None)
     # scalar_val: scalar value for div (or None)
     # marks: pytest marks
-    pytest.param("div_kernel_001", torch.float32, pypto.DT_FP32, (200,), (160,), (160,), None, marks=[], id="001"),
+    pytest.param(
+        "div_kernel_001",
+        torch.float32,
+        pypto.DT_FP32,
+        (200,),
+        (160,),
+        (160,),
+        None,
+        marks=[pytest.mark.skip()],
+        id="001",
+    ),
     pytest.param(
         "div_kernel_002",
         torch.float32,
@@ -375,7 +385,7 @@ TEST_CASES = [
         (1, 11, 13, 17),
         (21, 11, 13, 17),
         None,
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="033",
     ),
     pytest.param(
@@ -415,7 +425,7 @@ TEST_CASES = [
         "div_kernel_037",
         torch.float32,
         pypto.DT_FP32,
-        (10, 12, 15, 6),
+        (10, 12, 15, 15),
         (21, 11, 13, 17),
         (1, 1, 13, 17),
         None,
@@ -448,7 +458,7 @@ TEST_CASES = [
         "div_kernel_040",
         torch.float16,
         pypto.DT_FP16,
-        (25, 11, 5, 3),
+        (25, 11, 5, 15),
         (25, 1, 1, 17),
         (25, 11, 15, 17),
         None,
@@ -470,7 +480,7 @@ TEST_CASES = [
         "div_kernel_042",
         torch.float16,
         pypto.DT_FP16,
-        (5, 7, 15, 5),
+        (11, 8, 15, 9),
         (22, 16, 1, 18),
         (22, 16, 13, 1),
         None,

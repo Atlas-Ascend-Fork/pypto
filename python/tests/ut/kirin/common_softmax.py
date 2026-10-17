@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import torch
 
-from kirin.common import check_nan, compare_cos
+from kirin.common import check_nan, compare_cos, generated_cpp_contains
 import pypto
 
 
@@ -70,7 +70,7 @@ TEST_CASES = [
         pypto.DT_FP16,
         (2, 32),
         (4, 128),
-        marks=[],
+        marks=[pytest.mark.skip()],
         id="003"
     ),
     pytest.param(
@@ -86,7 +86,7 @@ TEST_CASES = [
         "softmax_kernel_fp16_005",
         torch.float16,
         pypto.DT_FP16,
-        (1, 2, 32),
+        (1, 2, 80),
         (2, 4, 160),
         marks=[pytest.mark.skip()],
         id="005",
@@ -131,7 +131,7 @@ TEST_CASES = [
         "softmax_kernel_fp16_010",
         torch.float16,
         pypto.DT_FP16,
-        (1, 1, 1, 128),
+        (1, 1, 2, 128),
         (5, 2, 4, 130),
         marks=[pytest.mark.skip()],
         id="010",
@@ -151,7 +151,7 @@ TEST_CASES = [
         pypto.DT_FP16,
         (2, 2, 3, 32),
         (4, 2, 6, 135),
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="012",
     ),
     pytest.param(
@@ -307,6 +307,10 @@ def run_softmax_test(kernels, kernel_name, dtype, shape):
     output = torch.rand(shape, dtype=dtype, device="cpu")
 
     kernels[kernel_name](input_, output)
+
+    if dtype == torch.float16:
+        assert not generated_cpp_contains("float", expect_absent=True), \
+            f"{kernel_name}: generated cpp unexpectedly contains 'float'"
 
     expect = torch.softmax(input_, dim=-1)
     check_nan(output, name=kernel_name)

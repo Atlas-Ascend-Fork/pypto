@@ -57,7 +57,17 @@ TEST_CASES = [
     # shape_in1: second input tensor shape (or None)
     # scalar_val: scalar value to subtract (or None)
     # marks: pytest marks
-    pytest.param("sub_kernel_001", torch.int32, pypto.DT_INT32, (200,), (160,), (160,), None, marks=[], id="001"),
+    pytest.param(
+        "sub_kernel_001",
+        torch.int32,
+        pypto.DT_INT32,
+        (200,),
+        (160,),
+        (160,),
+        None,
+        marks=[pytest.mark.skip()],
+        id="001",
+    ),
     pytest.param(
         "sub_kernel_002",
         torch.int16,
@@ -463,7 +473,7 @@ TEST_CASES = [
         (22, 1, 13, 1),
         (22, 16, 13, 18),
         None,
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="041",
     ),
     pytest.param(

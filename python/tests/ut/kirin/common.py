@@ -8,10 +8,14 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
+import glob
 import logging
+import os
 
 import numpy as np
 import torch
+
+import pypto
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +38,34 @@ def compare_cos(input_1, input_2):
         cos = ab / (aa * bb)
     logger.info("cosine similarity: %s", cos)
     return cos
+
+
+def generated_cpp_contains(keyword, expect_absent=False):
+    """Return True if the generated kernel cpp under LogTopFolder()/kernel_aicore contains ``keyword``.
+
+    Logging is expectation-aware: by default a missing keyword is logged as a
+    warning; when ``expect_absent`` is True, an unexpected match is logged as a
+    warning instead.
+    """
+    kernel_dir = os.path.join(pypto.pypto_impl.LogTopFolder(), "kernel_aicore")
+    logger.info("generated_cpp_contains: searching '%s' under %s", keyword, kernel_dir)
+    if not os.path.isdir(kernel_dir):
+        logger.warning("generated_cpp_contains: kernel_aicore dir does not exist: %s", kernel_dir)
+        return False
+    for path in glob.glob(os.path.join(kernel_dir, "*.cpp")):
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            if keyword in handle.read():
+                if expect_absent:
+                    logger.warning("generated_cpp_contains: unexpectedly found '%s' in %s", keyword,
+                                   os.path.basename(path))
+                else:
+                    logger.info("generated_cpp_contains: found '%s' in %s", keyword, os.path.basename(path))
+                return True
+    if expect_absent:
+        logger.info("generated_cpp_contains: '%s' not found (as expected)", keyword)
+    else:
+        logger.warning("generated_cpp_contains: '%s' not found in any generated cpp", keyword)
+    return False
 
 
 def check_nan(tensor, name=""):

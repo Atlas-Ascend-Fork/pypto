@@ -35,20 +35,20 @@ def pypto_assemble_in_torch(source, target, offsets=None):
         target[tuple(slices)] = source
 
 
-def make_single_assemble_kernel(soc_version, name, dtype, tile_shapes, offsets):
+def make_single_assemble_kernel(soc_version, name, dtype, tile_shapes, offsets, parallel=False):
     @pypto.frontend.jit(codegen_options={"soc_version": soc_version}, runtime_options={"run_mode": pypto.RunMode.SIM})
     def kernel(
         input_: pypto.Tensor([...], dtype),
         output: pypto.Tensor([...], dtype),
     ):
         pypto.set_vec_tile_shapes(*tile_shapes)
-        pypto.assemble(input_, offsets, output)
+        pypto.assemble(input_, offsets, output, parallel=parallel)
 
     kernel.__name__ = name
     return kernel
 
 
-def make_double_assemble_kernel(soc_version, name, dtype, tile_shapes, offsets_list):
+def make_double_assemble_kernel(soc_version, name, dtype, tile_shapes, offsets_list, parallel=False):
     @pypto.frontend.jit(codegen_options={"soc_version": soc_version}, runtime_options={"run_mode": pypto.RunMode.SIM})
     def kernel(
         input1: pypto.Tensor([...], dtype),
@@ -56,7 +56,7 @@ def make_double_assemble_kernel(soc_version, name, dtype, tile_shapes, offsets_l
         output: pypto.Tensor([...], dtype),
     ):
         pypto.set_vec_tile_shapes(*tile_shapes)
-        pypto.assemble([(input1, offsets_list[0]), (input2, offsets_list[1])], output, parallel=True)
+        pypto.assemble([(input1, offsets_list[0]), (input2, offsets_list[1])], output, parallel=parallel)
 
     kernel.__name__ = name
     return kernel
@@ -89,7 +89,15 @@ TEST_CASES = [
     # offsets_or_offsets_list: single offset list for single-input, tuple of two for double-input
     # marks: pytest marks
     pytest.param(
-        "assemble_kernel_fp16", torch.float16, pypto.DT_FP16, (1, 16), (2, 2), (4, 4), ([0, 0],), marks=[], id="001"
+        "assemble_kernel_fp16",
+        torch.float16,
+        pypto.DT_FP16,
+        (1, 16),
+        (2, 2),
+        (4, 4),
+        ([0, 0],),
+        marks=[pytest.mark.skip()],
+        id="001",
     ),
     pytest.param(
         "assemble_kernel_fp16_002",
@@ -154,7 +162,7 @@ TEST_CASES = [
         (2, 2, 2, 2),
         (3, 3, 3, 3),
         ([0, 0, 0, 0],),
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="007",
     ),
     pytest.param(
@@ -596,6 +604,21 @@ def run_assemble_test(kernels, kernel_name, dtype, input_shape, output_shape, of
         raise AssertionError(f"{kernel_name}: cos_value {cos_value} < 0.9999")
 
 
+def _compute_input2_shape(kernel_name, input_shape, output_shape, offsets1, offsets2):
+    if "multi_shape" in kernel_name:
+        return tuple(
+            max(offsets1[d] + input_shape[d], offsets2[d] + output_shape[d]) for d in range(len(input_shape))
+        )
+    return input_shape
+
+
+def _regions_overlap(offsets1, shape1, offsets2, shape2):
+    return all(
+        max(offsets1[d], offsets2[d]) < min(offsets1[d] + shape1[d], offsets2[d] + shape2[d])
+        for d in range(len(shape1))
+    )
+
+
 def create_test_assemble_module(soc_version):
     """Create a test module for assemble with specified soc_version."""
 
@@ -605,12 +628,19 @@ def create_test_assemble_module(soc_version):
         tile_shapes = p.values[3]
         offsets_or_offsets_list = p.values[6]
         if _is_double_input_offsets(offsets_or_offsets_list):
-            return make_double_assemble_kernel(soc_version, kernel_name, dtype, tile_shapes, offsets_or_offsets_list)
+            offsets1, offsets2 = offsets_or_offsets_list
+            input_shape = p.values[4]
+            output_shape = p.values[5]
+            input2_shape = _compute_input2_shape(kernel_name, input_shape, output_shape, offsets1, offsets2)
+            parallel = not _regions_overlap(offsets1, input_shape, offsets2, input2_shape)
+            return make_double_assemble_kernel(
+                soc_version, kernel_name, dtype, tile_shapes, offsets_or_offsets_list, parallel
+            )
         else:
             offsets = (
                 offsets_or_offsets_list[0] if isinstance(offsets_or_offsets_list, tuple) else offsets_or_offsets_list
             )
-            return make_single_assemble_kernel(soc_version, kernel_name, dtype, tile_shapes, offsets)
+            return make_single_assemble_kernel(soc_version, kernel_name, dtype, tile_shapes, offsets, True)
 
     kernels = {p.values[0]: _make_kernel(p) for p in TEST_CASES}
     return kernels, lambda: run_assemble_test(kernels, None, None, None, None, None)

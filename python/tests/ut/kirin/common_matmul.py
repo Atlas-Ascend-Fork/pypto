@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import torch
 
-from kirin.common import check_nan, compare_cos
+from kirin.common import check_nan, compare_cos, generated_cpp_contains
 import pypto
 
 DTYPE_MAP = {
@@ -106,7 +106,7 @@ TEST_CASES = [
         None,
         False,
         False,
-        marks=[],
+        marks=[pytest.mark.skip()],
         id="001",
     ),
     pytest.param(
@@ -225,7 +225,7 @@ TEST_CASES = [
         None,
         False,
         False,
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="008",
     ),
     pytest.param(
@@ -327,7 +327,7 @@ TEST_CASES = [
         None,
         True,
         True,
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="014",
     ),
     pytest.param("matmul_s8s8_gemv_001", torch.int8, torch.int32,
@@ -339,7 +339,7 @@ TEST_CASES = [
                  pypto.DT_INT8, pypto.DT_INT32,
                  (1, 1024), (64, 1024), (1, 64),
                  ([32, 32], [32, 32], [32, 32]),
-                 False, None, False, True, marks=[], id="016"),
+                 False, None, False, True, marks=[pytest.mark.skip()], id="016"),
     pytest.param("matmul_s8s8_gemv_003", torch.int8, torch.int32,
                  pypto.DT_INT8, pypto.DT_INT32,
                  (3, 1, 130), (3, 130, 32), (3, 1, 32),
@@ -364,7 +364,7 @@ TEST_CASES = [
                  pypto.DT_INT8, pypto.DT_INT32,
                  (2, 2, 1, 1024), (2, 2, 1024, 32), (2, 2, 1, 32),
                  ([32, 32], [32, 32], [32, 32]),
-                 False, None, False, False, marks=[pytest.mark.skip()], id="021"),
+                 False, None, False, False, marks=[], id="021"),
     pytest.param("matmul_s8s8_gemv_008", torch.int8, torch.int32,
                  pypto.DT_INT8, pypto.DT_INT32,
                  (3, 1, 130), (3, 130, 32), (3, 1, 32),
@@ -445,7 +445,7 @@ TEST_CASES = [
                  pypto.DT_FP16, pypto.DT_FP16,
                  (2, 3, 1, 64), (2, 3, 64, 64), (2, 3, 1, 64),
                  ([32, 32], [32, 32], [32, 32]),
-                 False, None, False, False, marks=[pytest.mark.skip()], id="037"),
+                 False, None, False, False, marks=[], id="037"),
     pytest.param("matmul_fp16_gemv_011", torch.float16, torch.float16,
                  pypto.DT_FP16, pypto.DT_FP16,
                  (1, 150), (150, 60), (1, 60),
@@ -608,6 +608,10 @@ def run_matmul_test(
             golden_c = a_new.to(torch.int32) @ b_new.to(torch.int32)
         else:
             golden_c = a_new @ b_new
+
+    is_gemv = not a_trans and len(shape_a) >= 2 and shape_a[-2] == 1
+    if is_gemv:
+        assert generated_cpp_contains("TGEMV"), f"{kernel_name}: generated cpp missing 'TGEMV'"
 
     check_nan(c, name=kernel_name)
     cos_value = compare_cos(np.array(c.cpu()), np.array(golden_c.cpu()))

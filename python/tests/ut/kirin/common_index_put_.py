@@ -122,7 +122,7 @@ TEST_CASES = [
         (4,),
         2,
         False,
-        marks=[],
+        marks=[pytest.mark.skip()],
         id="001",
     ),
     pytest.param(
@@ -276,7 +276,7 @@ TEST_CASES = [
         (5,),
         32,
         False,
-        marks=[pytest.mark.skip()],
+        marks=[],
         id="012",
     ),
 ]

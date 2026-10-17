@@ -174,6 +174,15 @@ TEST_F(TuneSyncForVFTest, TestSkip)
     EXPECT_EQ(tuneSync.RunOnFunction(*rootFuncPtr.get()), SUCCESS);
 }
 
+TEST_F(TuneSyncForVFTest, TestPipeAllSkip)
+{
+    config::SetPassGlobalConfig(KEY_ENABLE_PIPE_ALL, true);
+    auto rootFuncPtr = std::make_shared<Function>(Program::GetInstance(), "TestPipeAllSkip", "TestPipeAllSkip",
+                                                  nullptr);
+    TuneSyncForVF tuneSync;
+    EXPECT_EQ(tuneSync.RunOnFunction(*rootFuncPtr.get()), SUCCESS);
+}
+
 TEST_F(TuneSyncForVFTest, TestErrorLogPaths)
 {
     auto rootFuncPtr = std::make_shared<Function>(Program::GetInstance(), "TestErrorPaths", "TestErrorPaths", nullptr);
