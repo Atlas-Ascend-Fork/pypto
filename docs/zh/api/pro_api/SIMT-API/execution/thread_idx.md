@@ -34,7 +34,7 @@ pypto_pro.language.simt.thread_idx() -> Any
 
 ## 返回值说明
 
-返回三维线程坐标对象thread，通过thread.x、thread.y和thread.z读取各维坐标，每个分量均为DT_UINT32类型的Scalar。三个分量的取值范围依次为[0, block_dim().x)、[0, block_dim().y)和[0, block_dim().z)。
+返回三维线程坐标元组对象thread，通过thread.x、thread.y和thread.z读取各维坐标，每个分量均为DT_UINT32类型的Scalar。三个分量的取值范围依次为[0, block_dim().x)、[0, block_dim().y)和[0, block_dim().z)。
 
 ## 调用示例
 

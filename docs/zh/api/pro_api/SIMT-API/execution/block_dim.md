@@ -34,7 +34,7 @@ pypto_pro.language.simt.block_dim() -> Any
 
 ## 返回值说明
 
-返回三维线程块尺寸对象。线程块尺寸由外层JIT Kernel调用`simt_func[threads](...)`时通过方括号中的`threads`设置。通过dimensions.x、dimensions.y和dimensions.z读取各维大小，每个分量均为DT_UINT32类型的Scalar。
+返回三维线程块尺寸元组对象。线程块尺寸由外层JIT Kernel调用`simt_func[threads](...)`时通过方括号中的`threads`设置。通过dimensions.x、dimensions.y和dimensions.z读取各维大小，每个分量均为DT_UINT32类型的Scalar。
 
 ## 调用示例
 

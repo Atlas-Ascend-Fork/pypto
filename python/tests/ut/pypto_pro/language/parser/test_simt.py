@@ -17,6 +17,7 @@ from pypto_pro._errors import (
     InvalidArgument,
     InvalidOperation,
     InvalidShape,
+    InvalidType,
     InvalidVal,
     NameNotFound,
     NotSupported,
@@ -619,6 +620,29 @@ def test_simt_callee_rejects_return_incompatible_with_annotation():
             entry[32](value)
 
     with pytest.raises(InvalidVal, match="Return 'bad_return' annotated as"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_simt_callee_rejects_inconsistent_return_types_across_paths():
+    @pl.vector_function(mode="simt")
+    def inconsistent_return(condition: pl.DT_BOOL, integer: pl.DT_INT32, floating: pl.DT_FP32):
+        if condition:
+            return integer
+        return floating
+
+    @pl.vector_function(mode="simt", max_threads=32)
+    def entry(condition: pl.DT_BOOL, integer: pl.DT_INT32, floating: pl.DT_FP32):
+        inconsistent_return(condition, integer, floating)
+
+    @pl.jit
+    def kernel(condition: pl.DT_BOOL, integer: pl.DT_INT32, floating: pl.DT_FP32):
+        with pl.section_vector():
+            entry[32](condition, integer, floating)
+
+    with pytest.raises(
+        InvalidType,
+        match="Function 'inconsistent_return' has inconsistent return types across return paths",
+    ):
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
