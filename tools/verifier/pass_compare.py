@@ -591,6 +591,9 @@ class PassComparator:
         for path in paths:
             df_path = df_pass[df_pass["PATH_FUNC:func_magicname"] == path]
             loop_info_list = df_path["LOOP_INFO"].dropna().unique()
+            if len(loop_info_list) == 0:
+                loop_info_list = ["NA"]
+                df_path["LOOP_INFO"] = df_path["LOOP_INFO"].fillna("NA")
 
             for loop_info in loop_info_list:
                 df_loop = df_path[df_path["LOOP_INFO"] == loop_info]
