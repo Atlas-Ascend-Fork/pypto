@@ -53,6 +53,8 @@ struct WorkspaceDesc {
 
         uint64_t rootMaxExclusiveOutcastMem{0};
         int64_t rootMaxExclusiveOutcastIdx{-1};
+        // root 的 outcast 条目数:WAW(一槽多写)形态下可超过 totalSlot
+        uint64_t outcastNum{0};
     };
 
     std::vector<WorkspacePerRootFunctionDesc> rootFuncDescList;

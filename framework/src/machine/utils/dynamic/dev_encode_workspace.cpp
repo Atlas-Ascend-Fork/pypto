@@ -307,8 +307,17 @@ void ApplyStitchDepthConfig(DevAscendProgram* devProg, WorkspaceDesc& wsDesc, co
     CopyStitchFunctionNumPerPool(workspacePool.stitchFunctionNumPerPool, wsDesc.stitchFunctionNumPerPool);
     workspacePool.preciseWorkspaceEnabled = wsDesc.config.preciseWorkspaceEnabled;
     devProg->stitchMaxFunctionNum = config.stitchMaxFunctionNum;
-    devProg->memBudget.tensor.runtimeOutcastPoolSize = totalSlot * (config.runtimeOutcastPoolDepth + 1) *
-                                                       devProg->GetParallelism();
+    // 池容量需按"单 root 最大 outcast 需求"定界:普通数据流每 slot 每代 task 至多一写,
+    // outcast 数 ≤ totalSlot;WAW(一槽多写)下单 root 的 outcast 数可超过 totalSlot,
+    // 仅按 slot 数定容会让最大 root 在空 DeviceTask 预检时放不下(F73001)。
+    // max(totalSlot, maxRootOutcastNum) 保证最坏单 root 可独立放入,(depth+1) 保留
+    // 相邻 device task 的在途重叠代数
+    uint64_t maxRootOutcastNum = 0;
+    for (const auto& rootMem : wsDesc.rootFuncDescList) {
+        maxRootOutcastNum = std::max(maxRootOutcastNum, rootMem.outcastNum);
+    }
+    devProg->memBudget.tensor.runtimeOutcastPoolSize = std::max(totalSlot, maxRootOutcastNum) *
+                                                       (config.runtimeOutcastPoolDepth + 1) * devProg->GetParallelism();
 }
 
 void LogWorkspaceEncodeSummary(int kMin, const DevAscendProgram& devProg, const StitchDepthConfig& depthConfig,
@@ -529,6 +538,8 @@ static void ProcessDevFunctionOutcasts(WorkspaceDesc::WorkspacePerRootFunctionDe
         }
     }
     rootNeedAllocAssembleSlotCount = static_cast<uint64_t>(rootNeedAllocAssembleSlots.size());
+    // 记录 per-root outcast 数,供 outcast 池容量按最坏单 root 需求定界
+    rootMem.outcastNum = devFunc->GetOutcastSize();
     rootMem.rootMaxExclusiveOutcastMem = maxStaticMemReq;
     rootMem.rootMaxExclusiveOutcastIdx = maxStaticMemReqIdx;
     rootMem.rootInnerSpilledRawMem = devFunc->rootInnerTensorWsMemoryRequirement;
