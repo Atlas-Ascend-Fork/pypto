@@ -24,7 +24,7 @@ DN (DecN) mode differences vs standard ND mode:
 
 Reference: fa_performance_dn_kernel.cpp
 
-Copied from ../fa/test_fa_serial_dn_auto.py. The calculation logic is unchanged;
+Copied from ../auto_pipeline/test_fa_ub.py. The calculation logic is unchanged;
 all make_tile_group calls use whole-kernel mutex_ids="auto" with matching depth.
 """
 

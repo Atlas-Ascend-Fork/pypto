@@ -47,10 +47,10 @@ ATOL = 1e-2
 def _generated(kernel) -> str:
     """The transformed kernel as source, the way the framework hands it to codegen."""
     kd = kernel.to_kernel_def()
-    if_const_map, var_types = probe_kernel_facts(kd, None)
+    if_const_map, var_types, arg_types, field_types = probe_kernel_facts(kd, None)
     tree = transform_pipeline(
         kd._func_def, kd._closure_vars, kd._pipeline,
-        if_const_map=if_const_map, var_types=var_types,
+        if_const_map=if_const_map, var_types=var_types, arg_types=arg_types, field_types=field_types,
         tilingkey_consts=kd._tilingkey_consts, datatype_consts=kd._datatype_consts,
     )
     return ast.unparse(tree)

@@ -41,17 +41,29 @@ def stage1(ki, a, b_l1, a_l1_db, left_db, right_db, acc_db, mm1_vec_db):
 > [!NOTE]说明
 >
 > - stage函数不能嵌套stage，也不能有返回值；stage调用的普通函数不能返回Tile或Tile Group。
-> - stage函数有结构体参数时，需要使用`pypto_pro.language.struct()`声明，不支持`pypto_pro.language.struct_array()`。
+> - stage函数的参数支持标量（整数、浮点、布尔）、定长一维标量数组、Tensor、Tile、Tile Group、普通元组、`pypto_pro.language.make_tuple()`的返回值，以及`pypto_pro.language.struct()`声明的结构体。结构体的字段只支持标量和定长一维标量数组。不支持`pypto_pro.language.struct_array()`。`pypto_pro.language.make_tuple()`和普通元组中的值需要在流水循环外确定，循环内不随迭代变化。
 
 ### 声明跨核共享Buffer
 
-跨核共享Buffer使用make_tile_group接口进行声明。`mutex_ids`与`fwd_ids`、`bwd_ids`作用于不同范围：`mutex_ids`用于管理核内Tile槽位的流水同步和地址复用，`fwd_ids`、`bwd_ids`用于Cube与Vector之间的数据交接。声明了`fwd_ids`或`bwd_ids`，且该Buffer分别被Cube stage和Vector stage使用时，框架才将其识别为跨核共享Buffer，并插入相应的核间同步。
+跨核共享Buffer分为两类：一类使用每个核私有的UB或L1，通过make_tile_group接口声明；另一类使用所有核共享的GM（workspace），通过[pypto_pro.language.make_tensor](../../../../api/pro_api/SIMD-API/resource_management/make_tensor.md)接口声明。两类Buffer的核间同步规则完全相同，差别只在于Buffer本身如何分配，分别见下面两节。本节将轮转使用的每个位置统称为slot：UB和L1中一个slot就是一块Tile，GM中一个slot是按`depth`等分出的一段连续空间。
 
-`mutex_ids`需要为Buffer中的每个Tile配置一个id，因此其数量与Tile数一致。`fwd_ids`和`bwd_ids`的数量不要求始终与Tile数一致：可以为每个Tile分别配置一个id，也可以只配置一个由所有Tile共用的id。共用一个核间同步id会使不同Tile之间的交接串行化，能够减少同步id占用，但可能降低流水并行度。
+`mutex_ids`与`fwd_ids`、`bwd_ids`作用于不同范围：`mutex_ids`用于管理核内Tile的流水同步和地址复用，仅UB和L1需要配置；`fwd_ids`、`bwd_ids`用于Cube与Vector之间的数据交接。声明了`fwd_ids`或`bwd_ids`，且该Buffer分别被Cube stage和Vector stage使用时，框架才将其识别为跨核共享Buffer，并插入相应的核间同步。
 
-其中`fwd_ids`为正向同步（生产者写完通知消费者），生产者stage之后插入set、消费者stage之前插入wait；`bwd_ids`为反向同步（消费者用完通知生产者可以覆写），消费者stage之后插入set、生产者stage之前插入wait。只配置`fwd_ids`时，仅保证消费者读到的是生产者写完的数据，不保证生产者下一轮覆写时消费者已经读完。每次迭代使用的Tile按Tile数轮转；核间同步id则按`ids[迭代序号 % len(ids)]`轮转，因此二者的轮转周期可以不同。
+`fwd_ids`和`bwd_ids`的数量不要求始终与slot数一致：可以为每个slot分别配置一个id，也可以只配置一个由所有slot共用的id。共用一个核间同步id会使不同slot之间的交接串行化，能够减少同步id占用，但可能降低流水并行度。
 
-`target_memory`仅声明Buffer所在的物理存储空间，不表示是否跨核。跨核共享Buffer支持UB和L1。下面的`mm1_vec_db`是Cube stage将计算结果交给Vector stage的示例；在后文完整示例中，`p_mat_db`由Vector stage写入后交给Cube stage读取。两者的跨核关系都由stage的生产者/消费者关系以及`fwd_ids`、`bwd_ids`确定。
+其中`fwd_ids`为正向同步（生产者写完通知消费者），生产者stage之后插入set、消费者stage之前插入wait；`bwd_ids`为反向同步（消费者用完通知生产者可以覆写），消费者stage之后插入set、生产者stage之前插入wait。只配置`fwd_ids`时，仅保证消费者读到的是生产者写完的数据，不保证生产者下一轮覆写时消费者已经读完。每次迭代使用的slot按slot数轮转；核间同步id则按`ids[迭代序号 % len(ids)]`轮转，因此二者的轮转周期可以不同。
+
+> [!NOTE]说明
+>
+> - 跨核Buffer和核内Buffer的声明需要写在kernel函数体内，不能写在stage内，也不能写在stage调用的普通函数中。
+> - 一个跨核Buffer需要恰好被相邻的两个stage使用，两个stage分别位于Cube和Vector上，并构成一对一的生产者和消费者关系。需要把数据送到更后面的stage时，应逐级交接。
+> - `fwd_ids`和`bwd_ids`的取值范围为0～15，只能直接写编译期常量整数列表，或使用kernel外绑定到整数列表的变量，不支持切片、拼接、函数调用等表达式。ID数量需要等于slot数或等于1；等于1时所有slot共用同一个同步ID，可能降低性能。
+> - 跨核Buffer的slot需要随迭代顺序轮转。按stage在主循环中的书写顺序编号（与第一个stage位于Cube还是Vector无关），写该Buffer的stage编号为奇数时至少需要2个slot，为偶数时至少需要`preload`个slot；slot数不足时会在编译期报错，并提示所需的最小slot数。
+> - 在空间充足时，可以分配多于下限的slot，并根据实测结果判断是否有性能收益。调整slot数时，需要同步调整`fwd_ids`和`bwd_ids`的数量以及Buffer占用的空间；核间同步ID配置为所有slot共用的单个ID时除外。
+
+#### 使用UB或L1
+
+`mutex_ids`需要为Buffer中的每个Tile配置一个id，因此其数量与Tile数一致。`target_memory`仅声明Buffer所在的物理存储空间，不表示是否跨核；make_tile_group声明的跨核共享Buffer支持UB和L1。下面的`mm1_vec_db`是Cube stage将计算结果交给Vector stage的示例；在后文完整示例中，`p_mat_db`由Vector stage写入后交给Cube stage读取。两者的跨核关系都由stage的生产者/消费者关系以及`fwd_ids`、`bwd_ids`确定。
 
 ```python
 import pypto_pro.language as pl
@@ -67,12 +79,38 @@ mm1_vec_db = pl.make_tile_group(
 
 > [!NOTE]说明
 >
-> - 跨核Buffer和核内Buffer的`make_tile_group`声明需要写在kernel函数体内，不能写在stage调用的普通函数中；跨核Buffer仅支持UB和L1 Buffer。
-> - 一个跨核Buffer需要恰好被相邻的两个stage使用，两个stage分别位于Cube和Vector上，并构成一对一的生产者和消费者关系。需要把数据送到更后面的stage时，应逐级交接。
-> - `fwd_ids`和`bwd_ids`的取值范围为0～15，只能直接写编译期常量整数列表，或使用kernel外绑定到整数列表的变量，不支持切片、拼接、函数调用等表达式。ID数量需要等于Tile数或等于1；等于1时所有Tile共用同一个同步ID，可能降低性能。
 > - 复用地址时最多允许两块Buffer复用，双方的Tile数和`mutex_ids`需要一致；`mutex_ids`不同不能形成地址互斥。
-> - 跨核Buffer的Tile需要随迭代顺序轮转。按stage在主循环中的书写顺序编号（与第一个stage位于Cube还是Vector无关），写该Buffer的stage编号为奇数时至少需要2个Tile，为偶数时至少需要`preload`个Tile；Tile数不足时会在编译期报错，并提示所需的最小Tile数。
-> - 在空间充足时，可以分配多于下限的Tile，并根据实测结果判断是否有性能收益。调整Tile数时，需要同步调整`mutex_ids`、`fwd_ids`和`bwd_ids`的数量以及Buffer占用的地址空间；核间同步ID配置为所有Tile共用的单个ID时除外。
+> - 调整Tile数时，还需要同步调整`mutex_ids`的数量和Buffer占用的地址空间。
+
+#### 使用GM
+
+核私有的UB和L1空间不足时，可以用GM交接数据。在make_tensor上增加`depth`、`fwd_ids`、`bwd_ids`，框架即将该Tensor视图识别为跨核共享Buffer。
+
+`shape`与`stride`描述**单个slot**，`depth`为slot数量。第k个slot相对声明位置的元素偏移为k × 单个slot的元素数，其中单个slot的元素数为`max(shape[i] × stride[i])`，省略`stride`时为`shape`各维的乘积。框架在每个stage调用点按本拍的任务号选出对应slot再传入stage，因此stage函数体按单个slot编写，与UB、L1中取出单个Tile后的写法一致。
+
+GM由所有核共享，而UB和L1是每个核私有的，因此GM需要为每个核划分独立的区域，并把该区域的偏移写在声明的首地址上，框架计算的slot偏移会叠加在该首地址之上。Cube与Vector需要使用同一个核号，因此核号需要除以Vector的子核数。
+
+```python
+import pypto_pro.language as pl
+
+# 每个核占用WS_PER_CORE字节，其中前GM_DEPTH个slot给mm1_gm
+core_id = pl.get_block_idx() // pl.get_subblock_num()
+ws_core = pl.addptr(ws, core_id * WS_PER_CORE)
+mm1_gm = pl.make_tensor(
+    ws_core, [TILE, TILE], dtype=pl.DT_FP32,
+    depth=2,
+    fwd_ids=[0, 1],
+    bwd_ids=[2, 3],
+)
+```
+
+> [!NOTE]说明
+>
+> - `depth`必须为正的编译期整数；配置了`fwd_ids`或`bwd_ids`时必须配置`depth`。未开启自动流水时这三个参数会被忽略。
+> - `shape`和`stride`需要写成列表：可以直接写列表，也可以使用kernel函数体内或kernel外绑定到列表的变量。各维的值可以是运行时整型表达式，此时slot的偏移在运行时计算。无法解析成列表时会在编译期报错，因为此时维数未知，无法确定单个slot的大小。
+> - GM跨核Buffer没有`mutex_ids`，不需要配置。
+> - 与Tile不同，GM不支持切片子视图，stage函数体内通过load和store的元素坐标访问slot中的数据，详见[Tensor创建和操作](../development/tensor_creation_and_operations.md#tensor与tile之间的数据搬运)。
+> - GM跨核Buffer不支持地址复用。
 
 ### 编写主循环
 
@@ -130,7 +168,7 @@ for kj in pl.range(0, M_ITER):        # 第二条流水
 
 **建议流程**：先配置**preload=0**执行，确认串行版本精度正确，再逐步调大preload开启流水。调大preload的同时，需按[声明跨核共享Buffer](#声明跨核共享buffer)后的说明检查各跨核Buffer的Tile数是否够用。多个流水循环时可以只把其中一条配成0（如preload=[0, 2]），单独验证这条流水的串行精度。
 
-调优时应同时观察`preload`和Buffer Tile数对性能的影响。如果增大`preload`或增加Tile后性能没有提升，可将Tile数减少到当前`preload`对应的最小值，以节省片上存储空间；减少后仍需满足[声明跨核共享Buffer](#声明跨核共享buffer)后说明中的Tile数下限，并重新验证精度和性能。
+调优时应同时观察`preload`和Buffer Tile数对性能的影响。如果增大`preload`或增加Tile后性能没有提升，可将Tile数减少到当前`preload`对应的最小值，以节省片上存储空间；减少后仍需满足[声明跨核共享Buffer](#声明跨核共享buffer)后说明中的slot数下限，并重新验证精度和性能。
 
 > [!NOTE]说明
 >
@@ -341,15 +379,15 @@ def test_pipeline_demo_kernel():
 
 下图对应上述完整示例的`N_ITER=4`和`preload=2`配置。`sN·iM`表示stage N正在处理第M次迭代；两个AIV执行相同的Vector stage，分别处理M方向的一半，因此合并画在一条Vector泳道中。方框宽度和空隙用于示意各stage的耗时与等待关系，不表示真实执行周期。
 
-跨核同步ID按逻辑迭代对应的Buffer槽位轮转，不按AIV编号分配。以`mm1_vec_db`为例，`stage1(i0)`通过Forward ID 0通知`stage2(i0)`，`stage1(i1)`通过Forward ID 1通知`stage2(i1)`；后续`i2`和`i3`分别复用槽位0和槽位1。两个AIV执行同一次Vector stage时，使用的是该迭代对应的同一个跨核事件；默认`INTRA_BLOCK`同步模式负责AIC与两个AIV之间的交接。
+跨核同步ID按逻辑迭代对应的Buffer slot轮转，不按AIV编号分配。以`mm1_vec_db`为例，`stage1(i0)`通过Forward ID 0通知`stage2(i0)`，`stage1(i1)`通过Forward ID 1通知`stage2(i1)`；后续`i2`和`i3`分别复用slot 0和slot 1。两个AIV执行同一次Vector stage时，使用的是该迭代对应的同一个跨核事件；默认`INTRA_BLOCK`同步模式负责AIC与两个AIV之间的交接。
 
 **图2 完整示例在preload=2时的执行顺序与同步关系**
 
 ![自动CV并行流水完整示例的流水与同步关系](../../../figures/pro/pro_auto_parallel_pipeline_example.svg "自动CV并行流水完整示例的流水与同步关系")
 
 - **并行preload**：填充阶段先让前级stage处理两个迭代。进入稳态后，Cube侧交错执行`stage1(i+2)`和`stage3(i)`，Vector侧交错执行`stage2(i+2)`和`stage4(i)`，AIC与AIV同时处理不同迭代的数据。主循环结束后，编译器继续排空已经进入流水的`stage3`和`stage4`任务。
-- **核间同步**：编译器根据跨核Buffer的`fwd_ids`和`bwd_ids`自动插入`set_cross_core`和`wait_cross_core`。`mm1_vec_db`使用Forward ID 0/1和Backward ID 2/3，`p_mat_db`使用Forward ID 4/5和Backward ID 6/7，`out_vec_db`使用Forward ID 8/9和Backward ID 10/11。Forward事件保证消费者等待数据写完，Backward事件保证生产者等待消费者使用完毕后再覆写对应槽位。
-- **核内同步**：`auto_mutex=True`根据各Tile Group的`mutex_ids`管理同一AIC或AIV内部不同流水单元对Tile的读写、槽位轮转和地址复用。`mutex_ids`负责核内同步，`fwd_ids`和`bwd_ids`负责AIC与AIV之间的数据交接，两者的作用范围不同。
+- **核间同步**：编译器根据跨核Buffer的`fwd_ids`和`bwd_ids`自动插入`set_cross_core`和`wait_cross_core`。`mm1_vec_db`使用Forward ID 0/1和Backward ID 2/3，`p_mat_db`使用Forward ID 4/5和Backward ID 6/7，`out_vec_db`使用Forward ID 8/9和Backward ID 10/11。Forward事件保证消费者等待数据写完，Backward事件保证生产者等待消费者使用完毕后再覆写对应slot。
+- **核内同步**：`auto_mutex=True`根据各Tile Group的`mutex_ids`管理同一AIC或AIV内部不同流水单元对Tile的读写、slot轮转和地址复用。`mutex_ids`负责核内同步，`fwd_ids`和`bwd_ids`负责AIC与AIV之间的数据交接，两者的作用范围不同。
 
 本示例的`mm1_vec_db`和`out_vec_db`分别由奇数编号的stage1、stage3写入，因此至少需要2个Tile；`p_mat_db`由偶数编号的stage2写入，Tile数不能小于`preload`。当前`preload=2`，所以三块跨核Buffer均配置为2个Tile。
 

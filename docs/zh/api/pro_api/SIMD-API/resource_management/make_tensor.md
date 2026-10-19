@@ -30,6 +30,10 @@ pypto_pro.language.make_tensor(
     shape: Sequence[int],
     stride: Optional[Sequence[int]] = None,
     dtype: Optional[DataType] = None,
+    *,
+    depth: Optional[int] = None,
+    fwd_ids: Optional[Sequence[int]] = None,
+    bwd_ids: Optional[Sequence[int]] = None,
 ) -> Tensor
 ```
 
@@ -41,11 +45,15 @@ pypto_pro.language.make_tensor(
 | shape | 输入 | Tensor形状，整数序列（列表或元组）；每一维可以是整型常量或运行时整型标量表达式。 |
 | stride | 输入 | Tensor步长，可选的整数序列（列表或元组），单位为元素；每一项可以是整型常量或运行时整型标量表达式。显式传入时，长度必须与shape的维数相同，元素[i0, i1, ...]相对ptr的元素偏移为i0 × stride[0] + i1 × stride[1] + ...。省略时自动生成连续行主序stride。对于亚字节数据类型，最内层维必须连续，即最后一项stride必须为1。 |
 | dtype | 输入 | Tensor元素类型，[DataType](../basic_data_structures/DataType.md)类型，可选。传入时按该类型解释源地址；省略时沿用源指针或源Tensor的数据类型。 |
+| depth | 输入 | 仅用于[自动CV并行流水](../../../../guide/programming_guide/pro/advanced_programming/auto_parallel_pipeline.md)，表示作为核间buffer时的slot数，int类型，可选，必须为正的编译期整数。指定fwd_ids或bwd_ids时必须指定。未开启自动流水时忽略。 |
+| fwd_ids | 输入 | 仅用于[自动CV并行流水](../../../../guide/programming_guide/pro/advanced_programming/auto_parallel_pipeline.md)，表示核间正向同步的event id，Sequence[int]类型，可选。未开启自动流水时忽略。 |
+| bwd_ids | 输入 | 仅用于[自动CV并行流水](../../../../guide/programming_guide/pro/advanced_programming/auto_parallel_pipeline.md)，表示核间反向同步的event id，Sequence[int]类型，可选。未开启自动流水时忽略。 |
 
 ## 约束说明
 
 - 创建的Tensor只是地址视图。调用方必须保证shape、stride和dtype描述的所有访问均落在源对象的合法内存范围内，并满足dtype的地址对齐要求。
 - stride还用于load和store的起始地址换算及GM搬运描述，必须满足对应搬运接口的能力范围；通用load和store主要用于末维连续的二维搬运。
+- 创建的Tensor不支持切片子视图（例如`view[0:32, :]`）。访问其中一部分数据时，通过load和store的元素坐标定位，或先用[pypto_pro.language.addptr](addptr.md)偏移地址再创建新视图。
 
 ## 返回值说明
 

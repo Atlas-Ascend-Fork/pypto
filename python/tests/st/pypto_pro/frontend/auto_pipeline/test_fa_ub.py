@@ -11,6 +11,9 @@
 
 """FlashAttention performance kernel using PyPTO IR manual (non-SSA) mode — DN mode.
 
+The two cross-core handovers go through UB; test_fa_gm hands the same data over
+through GM instead.
+
 DN (DecN) mode differences vs standard ND mode:
   - compute_qk: K x Q^T (left/right swapped vs Q x K^T),
                 Q loaded with is_transpose=True -> L1 shape [TD, TS] layout=pl.ZN,
@@ -43,7 +46,7 @@ ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 #  Configuration — change QK_PRELOAD to tune pre-compute depth
 # ================================================================
 QK_PRELOAD = 2  # How many KV tiles to pre-compute QK ahead
-FIFO_SIZE = QK_PRELOAD + 1  # Exp-corr FIFO depth (avoids read/write collision)
+FIFO_DEPTH = QK_PRELOAD + 1  # the `% 3` the reduction FIFOs rotate on
 
 # ================================================================
 #  Tile dimensions and constants
@@ -117,7 +120,6 @@ VA_END = VA_EC2 + VB_RED
 assert VA_END <= 248 * 1024, f"VEC overflow: {VA_END} > {248 * 1024}"
 
 
-PV_CORE_STRIDE = 2 * FIFO_SIZE * TS
 
 
 # ================================================================
@@ -459,14 +461,11 @@ def compute_gu(
 
 
 @pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=2))
-def fa_perf_tkv_preload_dn_kernel(
+def fa_ub_auto_pipeline_kernel(
     q: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP16],
     k: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP16],
     v: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP16],
     o: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP16],
-    qk_buf: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    p_buf: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP16],
-    pv_buf: pl.Tensor[[48 * PV_CORE_STRIDE, pl.DYNAMIC], pl.DT_FP32],
 ):
 
     sq_dim = q.shape[0]
@@ -663,14 +662,11 @@ def test_fa_perf():
         k_t = torch.rand((skv, d), device=device, dtype=torch.float16)
         v_t = torch.rand((skv, d), device=device, dtype=torch.float16)
         o_t = torch.zeros((sq, d), device=device, dtype=torch.float16)
-        qk_t = torch.zeros((sq * FIFO_SIZE, skv), device=device, dtype=torch.float32)
-        p_t = torch.zeros((sq * FIFO_SIZE, skv), device=device, dtype=torch.float16)
-        pv_t = torch.zeros((48 * PV_CORE_STRIDE, d), device=device, dtype=torch.float32)
         qk_ref, x_exp_ref, o_ref = flash_attention_ref(q_t, k_t, v_t, d)
         prev_diff = None
         for i in range(20):
             o_t.zero_()
-            fa_perf_tkv_preload_dn_kernel[None, num_cores](q_t, k_t, v_t, o_t, qk_t, p_t, pv_t)
+            fa_ub_auto_pipeline_kernel[None, num_cores](q_t, k_t, v_t, o_t)
             torch.npu.synchronize()
             diff = (o_t - o_ref).abs().max().item()
             logging.info("  run %s: max|diff|=%.6f", i, diff)
@@ -683,7 +679,7 @@ def test_fa_perf():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    logging.info("FA perf DN: double-buffer + QK pre-compute (QK_PRELOAD=%s, FIFO=%s)", QK_PRELOAD, FIFO_SIZE)
+    logging.info("FA perf DN: double-buffer + QK pre-compute (QK_PRELOAD=%s, FIFO=%s)", QK_PRELOAD, FIFO_DEPTH)
     logging.info("%s", '=' * 60)
     test_fa_perf()
     logging.info("\nAll FlashAttention DN tests passed!")

@@ -33,8 +33,17 @@ from pypto_pro.language.parser._op_pipeline import (
     op_accesses_buffer,
 )
 
-from ..._errors import InvalidArgument, InvalidOperation, InvalidType, InvalidVal, NotSupported, OutOfRange, span_of
-from ._astutil import call_name, slot_accessor
+from ..._errors import (
+    InvalidArgument,
+    InvalidOperation,
+    InvalidType,
+    InvalidVal,
+    NotSupported,
+    OutOfRange,
+    current_span,
+    span_of,
+)
+from ._astutil import call_name, eval_const, gm_slot_size, slot_accessor, spans_in_function, stmt_header
 
 # Highest usable cross-core event id: a hardware limit. Shared with _sync_graph, which
 # allocates from the same pool for address-reuse edges.
@@ -72,6 +81,13 @@ def _is_make_tile_group(call: ast.Call) -> bool:
     return _get_ctor_name(call) == "make_tile_group"
 
 
+def _is_gm_buffer_decl(call: ast.Call) -> bool:
+    """True if call is pl.make_tensor(...) carrying fwd_ids or bwd_ids."""
+    return _get_ctor_name(call) == "make_tensor" and any(
+        kw.arg in ("fwd_ids", "bwd_ids") for kw in call.keywords
+    )
+
+
 @dataclass
 class CrossCoreBuffer:
     """A cross-core NBuffer's configuration (from kernel-body declaration)."""
@@ -83,6 +99,7 @@ class CrossCoreBuffer:
     # already spoken for, including those given by name.
     fwd_ids: tuple[int, ...] = ()
     bwd_ids: tuple[int, ...] = ()
+    decl: BufferDecl | None = None  # the declaration this buffer comes from
 
     @property
     def fwd_id_count(self) -> int:
@@ -122,6 +139,9 @@ class CrossCoreSyncContext:
     mutex_ids: dict = field(default_factory=dict)
     # buffer name -> static TileGroup depth. AUTO uses this before IDs are planned.
     slot_counts: dict = field(default_factory=dict)
+    # buffer name -> the statement declaring it, so an error about the buffer can point
+    # at where the user wrote it.
+    decl_stmts: dict = field(default_factory=dict)
     # Address-overlapping buffer pairs: [(buf_a, buf_b), ...] (same memory, ranges intersect)
     addr_overlaps: list = field(default_factory=list)
     # Address-reuse sync is derived from the graph on demand, not stored here — see
@@ -148,8 +168,9 @@ class AccessScanTables:
     all_buffer_memory: dict
     # Every declared tile group's name, so a call-site argument can be recognised as a group.
     group_names: set
-    # Slot variables taken in the KERNEL body (`cur_k = k_db.next()`) -> buffer. Read only
-    # by build_binding_map, to resolve a call-site actual argument.
+    # Slot variables taken in the KERNEL body (`cur_k = k_db.next()`) -> buffer, plus each GM
+    # buffer mapped to itself: its slot is taken at the stage call, so the name passed is
+    # the buffer's own. Read only by build_binding_map, to resolve a call-site actual argument.
     kernel_slot_to_buffer: dict
     # tuple variable -> {field: source variable}, the one hop that rejoins a tile to its
     # group when the kernel bundles groups with pl.make_tuple.
@@ -175,15 +196,18 @@ class AccessScanTables:
 
 
 @dataclass
-class TileGroupDecl:
-    """One ``x = pl.make_tile_group(...)`` statement, as written.
+class BufferDecl:
+    """One buffer declaration statement, as written: ``x = pl.make_tile_group(...)`` for a
+    core's own UB or L1, or ``x = pl.make_tensor(...)`` carrying fwd_ids/bwd_ids for GM,
+    which every core shares.
 
     Purely syntactic: the ``_node`` fields are unevaluated AST, and each scan below decides
-    for itself what to do when a value will not resolve.
+    for itself what to do when a value will not resolve. Fields the declaring call does not
+    have are None.
 
     Two things are resolved here rather than per reader: ``type_node`` is the
     ``pl.TileType(...)`` call itself even when the source wrote a variable bound to it, and
-    ``memory`` is ``target_memory`` read off that node by pattern matching.
+    ``memory`` is ``target_memory`` read off that node by pattern matching, or DDR for GM.
     """
 
     names: list[str]  # every variable this statement binds (targets that are plain Names)
@@ -194,19 +218,28 @@ class TileGroupDecl:
     fwd_ids_node: ast.expr | None
     bwd_ids_node: ast.expr | None
     memory: MemorySpace | None  # target_memory, or None when it does not resolve
+    stmt: ast.Assign | None = None  # the declaration statement, for errors about it
+    shape_node: ast.expr | None = None  # GM only: the shape of one slot
+    stride_node: ast.expr | None = None  # GM only
 
 
-def scan_tile_group_decls(kernel_func_def: ast.FunctionDef) -> list[TileGroupDecl]:
-    """Every ``pl.make_tile_group(...)`` declaration in the kernel body, in AST order.
+def scan_buffer_decls(kernel_func_def: ast.FunctionDef) -> list[BufferDecl]:
+    """Every buffer declaration in the kernel body, in AST order.
 
     The one pass over the kernel body that all buffer-declaration scans share.
     """
-    tile_types = _scan_tile_type_decls(kernel_func_def)
-    decls: list[TileGroupDecl] = []
+    tile_types = _scan_bindings(kernel_func_def, _is_tile_type_call)
+    lists = _scan_bindings(kernel_func_def, _is_list_literal)
+    decls: list[BufferDecl] = []
     for node in ast.walk(kernel_func_def):
         if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)):
             continue
         call = node.value
+        if _is_gm_buffer_decl(call):
+            decl = _gm_buffer_decl(node, lists)
+            if decl is not None:
+                decls.append(decl)
+            continue
         if not _is_make_tile_group(call):
             continue
         written = {kw.arg: kw.value for kw in call.keywords if kw.arg}
@@ -215,7 +248,7 @@ def scan_tile_group_decls(kernel_func_def: ast.FunctionDef) -> list[TileGroupDec
         if isinstance(type_node, ast.Name) and type_node.id in tile_types:
             type_node = tile_types[type_node.id]
         decls.append(
-            TileGroupDecl(
+            BufferDecl(
                 names=[t.id for t in node.targets if isinstance(t, ast.Name)],
                 type_node=type_node,
                 addrs_node=written.get("addrs"),
@@ -225,22 +258,52 @@ def scan_tile_group_decls(kernel_func_def: ast.FunctionDef) -> list[TileGroupDec
                 bwd_ids_node=written.get("bwd_ids"),
                 # target_memory is a keyword of the TILE TYPE, not of make_tile_group.
                 memory=_tile_type_memory(type_node),
+                stmt=node,
             )
         )
     return decls
 
 
-def _scan_tile_type_decls(kernel_func_def: ast.FunctionDef) -> dict[str, ast.Call]:
-    """``{name: the pl.TileType(...) call it was bound to}`` in the kernel body.
+def _gm_buffer_decl(node: ast.Assign, lists: dict[str, ast.expr]) -> BufferDecl | None:
+    """The declaration a GM buffer statement makes, or None when it does not bind to the
+    declared signature."""
+    call = node.value
+    keywords = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+    try:
+        written = _language_api.make_tensor.bind_declared(*call.args, **keywords).arguments
+    except TypeError:
+        return None
+    return BufferDecl(
+        names=[t.id for t in node.targets if isinstance(t, ast.Name)],
+        type_node=None,
+        addrs_node=None,
+        mutex_ids_node=None,
+        depth_node=written.get("depth"),
+        fwd_ids_node=written.get("fwd_ids"),
+        bwd_ids_node=written.get("bwd_ids"),
+        memory=MemorySpace.DDR,
+        stmt=node,
+        # `shape=s` -> the list `s` was bound to.
+        shape_node=_resolve_name(written.get("shape"), lists),
+        stride_node=_resolve_name(written.get("stride"), lists),
+    )
 
-    One hop, which is all the spelling needs. An unresolved name simply leaves
-    ``kwargs["type"]`` as it was.
+
+def _resolve_name(node: ast.expr | None, bindings: dict[str, ast.expr]) -> ast.expr | None:
+    """The value a name was bound to, or ``node`` itself when it is not such a name."""
+    if isinstance(node, ast.Name) and node.id in bindings:
+        return bindings[node.id]
+    return node
+
+
+def _scan_bindings(kernel_func_def: ast.FunctionDef, accepts) -> dict[str, ast.expr]:
+    """``{name: the value it was bound to}`` in the kernel body, for values ``accepts`` takes.
+
+    One hop, which is all the spellings need. An unresolved name is left as written.
     """
-    result: dict[str, ast.Call] = {}
+    result: dict[str, ast.expr] = {}
     for node in ast.walk(kernel_func_def):
-        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)):
-            continue
-        if _get_ctor_name(node.value) != "TileType":
+        if not (isinstance(node, ast.Assign) and accepts(node.value)):
             continue
         for target in node.targets:
             if isinstance(target, ast.Name):
@@ -248,39 +311,36 @@ def _scan_tile_type_decls(kernel_func_def: ast.FunctionDef) -> dict[str, ast.Cal
     return result
 
 
-def scan_all_tile_group_names(decls: list[TileGroupDecl]) -> set[str]:
+def _is_tile_type_call(node: ast.expr) -> bool:
+    return isinstance(node, ast.Call) and _get_ctor_name(node) == "TileType"
+
+
+def _is_list_literal(node: ast.expr) -> bool:
+    return isinstance(node, (ast.List, ast.Tuple))
+
+
+def scan_all_tile_group_names(decls: list[BufferDecl]) -> set[str]:
     """Every variable bound directly to a ``pl.make_tile_group(...)`` result.
 
     Independent of mutex_ids and cross-core ids: a group whose ids do not resolve statically
     is still a group, and callers that recognise slot selection must not miss it.
     """
-    return {name for decl in decls for name in decl.names}
+    return {name for decl in decls if decl.memory != MemorySpace.DDR for name in decl.names}
 
 
-def scan_all_buffer_memory(decls: list[TileGroupDecl]) -> dict[str, MemorySpace]:
-    """Return every make_tile_group declaration's memory by buffer variable name."""
+def scan_all_buffer_memory(decls: list[BufferDecl]) -> dict[str, MemorySpace]:
+    """Return every declared buffer's memory by buffer variable name."""
     return {name: decl.memory for decl in decls if decl.memory is not None for name in decl.names}
 
 
-def _eval_const(node: ast.expr, closure_vars: dict):
-    """Evaluate a constant expression node using closure_vars as namespace.
-    Returns the value, or None if it cannot be evaluated (e.g. references a
-    runtime variable)."""
-    try:
-        code = compile(ast.Expression(body=node), "<addr>", "eval")
-        return eval(code, {"__builtins__": {}}, dict(closure_vars))
-    except Exception:
-        return None
-
-
-def scan_buffer_slot_counts(decls: list[TileGroupDecl], closure_vars: dict) -> dict[str, int]:
+def scan_buffer_slot_counts(decls: list[BufferDecl], closure_vars: dict) -> dict[str, int]:
     """Return each structurally valid TileGroup's static slot count."""
     result: dict[str, int] = {}
     for decl in decls:
         mutex_node = decl.mutex_ids_node
         depth_node = decl.depth_node
-        mutex_ids = _eval_const(mutex_node, closure_vars) if mutex_node is not None else None
-        depth = _eval_const(depth_node, closure_vars) if depth_node is not None else None
+        mutex_ids = eval_const(mutex_node, closure_vars) if mutex_node is not None else None
+        depth = eval_const(depth_node, closure_vars) if depth_node is not None else None
         if depth_node is not None:
             if isinstance(depth, bool) or not isinstance(depth, int) or depth <= 0:
                 continue
@@ -310,8 +370,8 @@ def _tile_type_slot_size(type_call: ast.Call, closure_vars: dict) -> int | None:
             dtype_node = kw.value
     if shape_node is None or dtype_node is None:
         return None
-    shape = _eval_const(shape_node, closure_vars)
-    dtype = _eval_const(dtype_node, closure_vars)
+    shape = eval_const(shape_node, closure_vars)
+    dtype = eval_const(dtype_node, closure_vars)
     if not isinstance(shape, (list, tuple)) or dtype is None:
         return None
     elems = 1
@@ -324,7 +384,7 @@ def _tile_type_slot_size(type_call: ast.Call, closure_vars: dict) -> int | None:
     return elems * ((bits + 7) // 8)
 
 
-def scan_buffer_addr_ranges(decls: list[TileGroupDecl], closure_vars: dict) -> dict:
+def scan_buffer_addr_ranges(decls: list[BufferDecl], closure_vars: dict) -> dict:
     """Compute each buffer's per-slot address ranges from its declaration.
 
     Returns: name -> (memory, [(start, end), ...] per slot).
@@ -350,9 +410,9 @@ def scan_buffer_addr_ranges(decls: list[TileGroupDecl], closure_vars: dict) -> d
             continue
 
         slot_size = _tile_type_slot_size(type_node, closure_vars)
-        mutex_ids = _eval_const(mutex_node, closure_vars) if mutex_node is not None else None
-        depth = _eval_const(depth_node, closure_vars) if depth_node is not None else None
-        addrs = _eval_const(addrs_node, closure_vars)
+        mutex_ids = eval_const(mutex_node, closure_vars) if mutex_node is not None else None
+        depth = eval_const(depth_node, closure_vars) if depth_node is not None else None
+        addrs = eval_const(addrs_node, closure_vars)
         if slot_size is None or addrs is None:
             continue
         if mutex_ids != "auto" and mutex_ids is not None and not isinstance(mutex_ids, (list, tuple)):
@@ -381,7 +441,7 @@ def scan_buffer_addr_ranges(decls: list[TileGroupDecl], closure_vars: dict) -> d
     return result
 
 
-def scan_buffer_mutex_ids(decls: list[TileGroupDecl], closure_vars: dict) -> dict:
+def scan_buffer_mutex_ids(decls: list[BufferDecl], closure_vars: dict) -> dict:
     """Each buffer's mutex_ids. Returns name -> tuple of ids.
 
     Needed to check that buffers sharing an address also share their locks: a mutex locks
@@ -393,7 +453,7 @@ def scan_buffer_mutex_ids(decls: list[TileGroupDecl], closure_vars: dict) -> dic
         mutex_node = decl.mutex_ids_node
         if mutex_node is None:
             continue
-        mutex_ids = _eval_const(mutex_node, closure_vars)
+        mutex_ids = eval_const(mutex_node, closure_vars)
         if not isinstance(mutex_ids, (list, tuple)):
             continue
         for name in decl.names:
@@ -401,7 +461,7 @@ def scan_buffer_mutex_ids(decls: list[TileGroupDecl], closure_vars: dict) -> dic
     return result
 
 
-def detect_addr_overlaps(addr_ranges: dict, cross_core_names: set) -> list:
+def detect_addr_overlaps(addr_ranges: dict, cross_core_names: set, decl_stmts: dict | None = None) -> list:
     """Detect address-overlapping buffer pairs relevant to cross-core sync.
 
     Two buffers overlap if they share the same MemorySpace and any of their slot
@@ -444,7 +504,8 @@ def detect_addr_overlaps(addr_ranges: dict, cross_core_names: set) -> list:
                     raise InvalidArgument(
                         f"pipeline: address-overlapping buffers '{a}' and '{b}' have "
                         f"different slot counts ({len(ranges_a)} vs {len(ranges_b)}). "
-                        f"Overlapping buffers must have the same number of slots."
+                        f"Overlapping buffers must have the same number of slots.",
+                        span=span_of((decl_stmts or {}).get(a)),
                     )
                 overlaps.append((a, b))
                 overlap_partners.setdefault(a, set()).add(b)
@@ -455,13 +516,14 @@ def detect_addr_overlaps(addr_ranges: dict, cross_core_names: set) -> list:
             raise NotSupported(
                 f"pipeline: buffer '{buf}' has overlapping addresses with multiple "
                 f"buffers {sorted(partners)}. Only pairwise address overlap is "
-                f"supported (at most 2 buffers may share a region)."
+                f"supported (at most 2 buffers may share a region).",
+                span=span_of((decl_stmts or {}).get(buf)),
             )
     return overlaps
 
 
 def scan_cross_core_buffers(
-    decls: list[TileGroupDecl], closure_vars: dict
+    decls: list[BufferDecl], closure_vars: dict
 ) -> tuple[dict[str, CrossCoreBuffer], list]:
     """Pick out the cross-core tile-group declarations (those carrying fwd/bwd ids).
 
@@ -486,6 +548,8 @@ def scan_cross_core_buffers(
         bufname = decl.names[0] if decl.names else "<tile_group>"
 
         _validate_buffer_memory(decl, bufname)
+        if decl.memory == MemorySpace.DDR:
+            _validate_gm_layout(decl, bufname, closure_vars)
         fwd_ids, bwd_ids = _validate_ids(fwd_node, bwd_node, bufname, closure_vars)
         fwd_node, bwd_node = _lift_literal_ids(fwd_node, bwd_node, bufname, lifted_ids)
 
@@ -495,18 +559,44 @@ def scan_cross_core_buffers(
                 bwd_ids_node=bwd_node,
                 fwd_ids=fwd_ids,
                 bwd_ids=bwd_ids,
+                decl=decl,
             )
 
     return result, lifted_ids
 
 
-def _validate_buffer_memory(decl: TileGroupDecl, bufname: str) -> None:
+def _validate_buffer_memory(decl: BufferDecl, bufname: str) -> None:
     """L8: Validate that a make_tile_group call declares a resolvable memory space."""
     if decl.memory is None:
         raise InvalidVal(
             f"pipeline: cross-core buffer '{bufname}' has no resolvable memory space. "
             f"Its make_tile_group(type=pl.TileType(..., target_memory=pl.MemorySpace.X)) "
-            f"must set target_memory to a literal pl.MemorySpace.<X>."
+            f"must set target_memory to a literal pl.MemorySpace.<X>.",
+            span=span_of(decl.stmt),
+        )
+
+
+def _validate_gm_layout(decl: BufferDecl, bufname: str, closure_vars: dict) -> None:
+    """A GM buffer needs a static slot count and a slot size the transform can compute."""
+    depth = eval_const(decl.depth_node, closure_vars) if decl.depth_node is not None else None
+    if isinstance(depth, bool) or not isinstance(depth, int) or depth <= 0:
+        raise InvalidVal(
+            f"pipeline: GM buffer '{bufname}' needs depth=<positive compile-time int> next to "
+            f"its fwd_ids/bwd_ids: it is the number of slots the buffer rotates through.",
+            span=span_of(decl.stmt),
+        )
+    if gm_slot_size(decl.shape_node, decl.stride_node, closure_vars) is None:
+        bad, node = "shape", decl.shape_node
+        if gm_slot_size(decl.shape_node, None, closure_vars) is not None:
+            bad, node = "stride", decl.stride_node
+        raise InvalidVal(
+            f"pipeline: cannot determine the slot size of GM buffer '{bufname}': its {bad} "
+            f"`{ast.unparse(node)}` is neither a list nor a name bound to one, so the number of "
+            f"dimensions is unknown. Write one entry per dimension, as in "
+            f"pl.make_tensor(ws, [TM, K], depth=2, fwd_ids=[0, 1], bwd_ids=[2, 3]), or bind that "
+            f"list to a name in the kernel body or at module level. The entries may be runtime "
+            f"values such as [tiling.m, K]; only the list itself has to be known at compile time.",
+            span=span_of(decl.stmt),
         )
 
 
@@ -525,7 +615,8 @@ def _validate_ids(fwd_node, bwd_node, bufname: str, closure_vars: dict) -> tuple
         if not ids:
             raise InvalidVal(
                 f"pipeline: cross-core buffer '{bufname}' {label} is empty. Drop the "
-                f"keyword if this buffer needs no sync in that direction."
+                f"keyword if this buffer needs no sync in that direction.",
+                span=span_of(node),
             )
         # Cross-core event ids are a hardware resource limited to 0..15; an out-of-range id only
         # fails once the kernel runs on device, so reject it where the source is known.
@@ -533,7 +624,8 @@ def _validate_ids(fwd_node, bwd_node, bufname: str, closure_vars: dict) -> tuple
         if bad:
             raise OutOfRange(
                 f"pipeline: cross-core buffer '{bufname}' {label} contains out-of-range "
-                f"event id(s) {bad}; cross-core event ids must be in 0..{MAX_EVENT_ID}."
+                f"event id(s) {bad}; cross-core event ids must be in 0..{MAX_EVENT_ID}.",
+                span=span_of(node),
             )
         resolved.append(tuple(ids))
     return resolved[0], resolved[1]
@@ -779,13 +871,13 @@ def _reject_tile_returning_function(func_def: ast.FunctionDef, bindings: dict, s
                     held = group
         if held is not None:
             raise NotSupported(
-                f"pipeline: '{func_def.name}' returns `{ast.unparse(value)}` (line "
-                f"{node.lineno}), a tile or tile group. The scan follows a buffer by the "
+                f"pipeline: '{func_def.name}' returns `{ast.unparse(value)}`, "
+                f"a tile or tile group. The scan follows a buffer by the "
                 f"name it is bound to — a parameter, or a slot taken from one — and a "
                 f"returned value arrives under a name of the caller's own that resolves to "
                 f"nothing, so the ops the caller runs on it get no synchronisation.\n"
                 f"Pass the buffer in as an argument instead.",
-                span=span_of(node),
+                span=span_of(value),
             )
 
 
@@ -817,14 +909,16 @@ def _scan_stmts(stmts: list, bindings: dict, slot_to_buffer: dict, tables: Acces
             # or already on this chain.
             if callee is None or name in seen:
                 continue
-            _reject_tile_group_decl(callee, name)
-            _scan_function(
-                callee,
-                _bind_callee_params(callee, node.args, bindings, slot_to_buffer),
-                tables,
-                out,
-                seen | {name},
-            )
+            # The callee's tree is its own; its nodes resolve against it, not the caller's.
+            with spans_in_function(tables.closure_vars.get(name)):
+                _reject_buffer_decl(callee, name)
+                _scan_function(
+                    callee,
+                    _bind_callee_params(callee, node.args, bindings, slot_to_buffer),
+                    tables,
+                    out,
+                    seen | {name},
+                )
 
 
 def reject_buffer_access_outside_stages(loop_body: list, tables: AccessScanTables, group_names: set) -> None:
@@ -845,18 +939,19 @@ def reject_buffer_access_outside_stages(loop_body: list, tables: AccessScanTable
     bindings.update({var: (buf, False) for var, buf in tables.kernel_slot_to_buffer.items()})
     for stmt in loop_body:
         touched: list = []
-        _scan_stmts([stmt], bindings, dict(tables.kernel_slot_to_buffer), tables, touched, set())
+        with current_span(span_of(stmt_header(stmt))):
+            _scan_stmts([stmt], bindings, dict(tables.kernel_slot_to_buffer), tables, touched, set())
         if not touched:
             continue
         buffers = sorted({access[0] for access in touched})
         raise InvalidOperation(
-            f"pipeline: the statement at line {stmt.lineno} touches buffer(s) {buffers} that "
+            f"pipeline: the statement `{ast.unparse(stmt).splitlines()[0]}` touches buffer(s) {buffers} that "
             f"cross-core sync tracks, but it is not inside a stage. Only a stage's accesses "
             f"are scanned, and the wait/set the transform emits sit around the stage call, "
             f"so this access would get no synchronisation at all.\n"
             f"Move it into a stage. Work on a buffer that no cross-core handover involves "
             f"may stay here.",
-            span=span_of(stmt),
+            span=span_of(stmt_header(stmt)),
         )
 
 
@@ -879,22 +974,24 @@ def _bind_callee_params(callee: ast.FunctionDef, call_args: list, bindings: dict
     return result
 
 
-def _reject_tile_group_decl(func_def: ast.FunctionDef, name: str) -> None:
-    """A tile group must be declared in the kernel body, not in a function it calls.
+def _reject_buffer_decl(func_def: ast.FunctionDef, name: str, is_stage: bool = False) -> None:
+    """A buffer must be declared in the kernel body, not in a stage or a function it calls.
 
     Every table the transform keys on is indexed by the variable name the declaration binds,
-    and scan_tile_group_decls fills them from the kernel body alone — so a group declared in
-    a helper is in none of them and its accesses are silently dropped.
+    and scan_buffer_decls fills them from the kernel body alone — so a buffer declared
+    anywhere else is in none of them and its accesses are silently dropped.
     """
+    what = f"stage '{name}'" if is_stage else f"'{name}', a function called from a stage,"
     for node in ast.walk(func_def):
-        if isinstance(node, ast.Call) and _is_make_tile_group(node):
+        if isinstance(node, ast.Call) and (_is_make_tile_group(node) or _is_gm_buffer_decl(node)):
             raise InvalidOperation(
-                f"pipeline: '{name}' declares a tile group with pl.make_tile_group(), but it "
-                f"is a function called from a stage. Tile groups must be declared in the "
-                f"kernel body — the transform identifies every buffer by the name its "
-                f"declaration binds there, so one declared here is invisible to the sync it "
-                f"needs.\nMove the declaration into the kernel and pass the group in.",
-                span=span_of(func_def),
+                f"pipeline: {what} declares a buffer with `{ast.unparse(node.func)}()`. "
+                f"Buffers must be declared in the kernel body — the transform identifies every "
+                f"buffer by the name its declaration binds there, so one declared here is in "
+                f"none of its tables: fwd_ids/bwd_ids on it are ignored, and an address it "
+                f"shares with another buffer gets no sync.\n"
+                f"Move the declaration into the kernel and pass the buffer in.",
+                span=span_of(node),
             )
 
 
@@ -932,7 +1029,7 @@ def _reject_untabled_op(node: ast.Call, op_name: str, stage_slot_to_buffer: dict
         return
     likely = ["W"] + ["R"] * (len(node.args) - 1)
     raise InvalidArgument(
-        f"pipeline: `pl.{op_name}` at line {node.lineno} touches buffer(s) "
+        f"pipeline: `{ast.unparse(node)}` touches buffer(s) "
         f"{sorted(set(touched))} that cross-core sync tracks, but _BLOCK_OP_TILE_ROLES has "
         f"no entry for it, so the scan cannot tell which arguments it reads and which it "
         f"writes — and which way a wait/set goes depends on exactly that.\n"
@@ -983,10 +1080,10 @@ def _handle_tile_subscript(
     node: ast.Subscript, is_aug_target: bool, stage_slot_to_buffer: dict,
     tables: AccessScanTables, out: list
 ) -> None:
-    """Record ``tile[i, j]`` / ``tile[i, j] = v`` — one scalar element, on the S pipe.
+    """Record ``buf[i, j]`` / ``buf[i]`` / ``buf[i] = v`` — one scalar element, on the S pipe.
 
-    Non-tuple indices are skipped: the parser requires the index count to equal the
-    container's rank, so those shapes do not compile in the first place.
+    The index count equals the container's rank, so a rank-1 GM view takes a single index
+    and a tile takes a tuple.
 
     A sub-view (a slice among the indices) is not an element access — see _is_subview — and
     a group subscript (``group[i]``) selects a slot, which needs no test since only tiles
@@ -994,7 +1091,7 @@ def _handle_tile_subscript(
     """
     if not isinstance(node.value, ast.Name):
         return
-    if _is_subview(node) or not isinstance(node.slice, ast.Tuple):
+    if _is_subview(node):
         return
     buf = stage_slot_to_buffer.get(node.value.id)
     if not tables.tracks(buf):
@@ -1077,43 +1174,65 @@ def scan_stage_accesses(
             and the scan yields nothing — name-collision guessing is not done.
         tables: the kernel-level lookup tables (see AccessScanTables).
     """
+    _reject_buffer_decl(stage_func_def, stage_func_def.name, is_stage=True)
     bindings = build_binding_map(stage_func_def, call_args, tables)
     if not bindings:
         return []
 
-    group_param_names = {p for p, (_b, ig) in bindings.items() if ig}
-    _validate_slot_accessors(stage_func_def, group_param_names)
+    group_params = {p: b for p, (b, ig) in bindings.items() if ig}
+    _validate_slot_accessors(stage_func_def, group_params, tables.cross_buffers)
 
     accesses: list = []
     _scan_function(stage_func_def, bindings, tables, accesses, {stage_func_def.name})
     return accesses
 
 
-def _validate_slot_accessors(stage_func_def: ast.FunctionDef, group_param_names: set[str]) -> None:
-    """L10: cross-core buffer slot accessors must be `slot = param.next()` / `slot = param[i]` form.
+def _enclosing_statements(func_def: ast.FunctionDef) -> dict[int, ast.stmt]:
+    """``{id(node): the innermost statement containing it}`` for every node under *func_def*."""
+    owner: dict[int, ast.stmt] = {}
 
-    group_param_names: formal params that carry a cross-core buffer GROUP (the ones
-    the body calls .next()/.current()/.previous() on, or subscripts)."""
+    def walk(node, stmt):
+        for child in ast.iter_child_nodes(node):
+            here = child if isinstance(child, ast.stmt) else stmt
+            owner[id(child)] = here
+            walk(child, here)
+
+    walk(func_def, None)
+    return owner
+
+
+def _validate_slot_accessors(
+    stage_func_def: ast.FunctionDef, group_params: dict[str, str], cross_buffers: dict
+) -> None:
+    """L10: buffer slot accessors must be `slot = param.next()` / `slot = param[i]` form.
+
+    group_params: formal params that carry a buffer GROUP, mapped to the buffer declared
+    in the kernel. Local groups are checked alongside cross-core ones: an op's pipe
+    follows the memory spaces of all its tiles, so either kind has to resolve by name."""
     accessor_rhs_ids = set()
     for node in ast.walk(stage_func_def):
-        sa = _get_slot_accessor_assignment(node, group_param_names)
+        sa = _get_slot_accessor_assignment(node, set(group_params))
         if sa is not None:
             accessor_rhs_ids.add(id(node.value))
+    owner = _enclosing_statements(stage_func_def)
     for node in ast.walk(stage_func_def):
         if not isinstance(node, (ast.Call, ast.Subscript)):
             continue
         group_name = _slot_accessor_group_name(node)
-        if group_name is None or group_name not in group_param_names:
+        if group_name is None or group_name not in group_params:
             continue
         if id(node) in accessor_rhs_ids:
             continue
         accessor = "[...]" if isinstance(node, ast.Subscript) else f".{node.func.attr}()"
+        kind = "cross-core" if group_params[group_name] in cross_buffers else "local"
+        stmt = owner.get(id(node))
+        where = f" in `{ast.unparse(stmt).splitlines()[0]}`" if stmt is not None else ""
         raise NotSupported(
-            f"pipeline: cross-core buffer group '{group_name}' slot accessor "
-            f"`{accessor}` must be assigned to a simple variable "
-            f"(`slot = {group_name}{accessor}`); inline/chained/"
-            f"tuple-unpack forms are not supported.",
-            span=span_of(stage_func_def),
+            f"pipeline: stage '{stage_func_def.name}' takes a slot from {kind} buffer group "
+            f"'{group_name}'{where}. A slot pick must stand alone as "
+            f"`slot = {group_name}{accessor}`; inline, chained and tuple-unpack forms are "
+            f"not supported.",
+            span=span_of(stmt),
         )
 
 
@@ -1219,10 +1338,11 @@ def _resolve_event_ids(node: ast.expr, bufname: str, label: str, closure_vars: d
 
 
 def _tile_arg_buffer(arg: ast.expr, stage_slot_to_buffer: dict[str, str]) -> str | None:
-    """The buffer behind a bare slot variable argument, or None.
-
-    ``group.next()`` returns a bare tile, so op args are plain Names (``pl.move(left, cur_k)``).
+    """The buffer behind a slot variable argument, bare (``pl.move(left, cur_k)``) or as a
+    sub-view written inline (``pl.load(t, cur_k[0:32, :], ...)``), or None.
     """
+    while _is_subview(arg):
+        arg = arg.value
     if isinstance(arg, ast.Name):
         return stage_slot_to_buffer.get(arg.id)
     return None
@@ -1245,7 +1365,7 @@ def _block_op_pipe(
         if src_mem is None or dst_mem is None:
             unresolved = "destination" if dst_mem is None else "source"
             raise InvalidOperation(
-                f"pipeline: cannot determine the pipe of `pl.{op_name}` at line {call.lineno}, "
+                f"pipeline: cannot determine the pipe of `{ast.unparse(call)}`, "
                 f"because its {unresolved} tile does not resolve to a declared tile group. "
                 f"The move touches a cross-core buffer, so its pipe decides where the sync "
                 f"goes. A tile reached through an aggregate (e.g. `tile_groups.x.next()`) is "
@@ -1257,7 +1377,7 @@ def _block_op_pipe(
         src_mem = _arg_memory(call.args[1] if len(call.args) > 1 else None, stage_slot_to_buffer, all_buffer_memory)
         if src_mem is None:
             raise InvalidOperation(
-                f"pipeline: cannot determine the pipe of `pl.{op_name}` at line {call.lineno}, "
+                f"pipeline: cannot determine the pipe of `{ast.unparse(call)}`, "
                 f"because its source tile does not resolve to a declared tile group. The store "
                 f"touches a cross-core buffer, so its pipe decides where the sync goes. A tile "
                 f"reached through an aggregate (e.g. `tile_groups.x.next()`) is not yet traced; "
@@ -1268,7 +1388,7 @@ def _block_op_pipe(
     pipe = get_op_pipe(op_name)
     if pipe is None:
         raise InvalidOperation(
-            f"pipeline: `pl.{op_name}` at line {call.lineno} touches a cross-core buffer, but "
+            f"pipeline: `{ast.unparse(call)}` touches a cross-core buffer, but "
             f"no pipe is registered for it, so the sync has nowhere to go. Register the op's "
             f"pipe (see get_op_pipe) or keep the cross-core buffer out of this op.",
             span=span_of(call),
@@ -1450,7 +1570,7 @@ def _record_vf_call_role(
             continue
         if roles is None:
             raise NotSupported(
-                f"pipeline: `vf.{op}` at line {call.lineno}, in vector function "
+                f"pipeline: `{ast.unparse(call)}`, in vector function "
                 f"'{vf_name}', is handed buffer '{tile_params[param]}' (as '{param}'), but "
                 f"_VF_OP_TILE_ROLES has no entry for it, so the scan cannot tell whether it "
                 f"reads or writes the tile — and which way a cross-core wait/set goes "
@@ -1497,7 +1617,9 @@ def _scan_vf_roles(
             continue
         vf_op = _vf_op_of(resolve_op_name(node.func, closure_vars))
         if vf_op is not None:
-            _record_vf_call_role(node, vf_op, vf_func_def.name, param_names, aliases, tile_params, result)
+            # The node is in the VF's own tree, so it resolves against that tree.
+            with spans_in_function(closure_vars.get(vf_func_def.name)):
+                _record_vf_call_role(node, vf_op, vf_func_def.name, param_names, aliases, tile_params, result)
             continue
         callee_def = _nested_vf_def(node, vf_func_defs)
         if callee_def is None or callee_def.name in path:

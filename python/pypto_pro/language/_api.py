@@ -1699,6 +1699,10 @@ def make_tensor(
     shape: Shape,
     stride: Optional[Shape] = None,
     dtype: Optional[DType] = None,
+    *,
+    depth: int | None = None,
+    fwd_ids: list[int] | tuple[int, ...] | None = None,
+    bwd_ids: list[int] | tuple[int, ...] | None = None,
 ) -> Tensor:
     """Create a Tensor view over a raw pointer or an existing Tensor.
 
@@ -1707,4 +1711,9 @@ def make_tensor(
         shape: Shape of the view per axis
         stride: Optional stride per axis; contiguous when omitted
         dtype: Optional element type for the view
+        depth: Number of slots when used as a cross-core buffer
+        fwd_ids: Optional cross-core event IDs (0..15) marking this view as a
+            producer->consumer channel for the automatic pipeline transform. One per slot
+        bwd_ids: Optional cross-core event IDs for the consumer->producer
+            direction. Same shape as ``fwd_ids``
     """

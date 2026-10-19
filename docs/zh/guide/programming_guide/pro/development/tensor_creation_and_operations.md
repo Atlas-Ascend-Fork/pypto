@@ -92,6 +92,8 @@ pypto_pro.language.make_tensor(
 
 ptr可以是pypto_pro.language.Ptr或已有Tensor。新Tensor与源对象共享同一段GM地址；make_tensor不申请内存，也不复制或重排数据。
 
+make_tensor还支持`depth`、`fwd_ids`、`bwd_ids`三个可选参数，用于把一段workspace声明为Cube与Vector之间的跨核共享Buffer，仅在[自动CV并行流水](../advanced_programming/auto_parallel_pipeline.md)场景下生效，未开启自动流水时忽略。
+
 ### 创建连续Tensor视图
 
 省略stride时，框架根据shape生成连续的行主序stride：
@@ -200,6 +202,7 @@ with pl.section_vector():
 
 - load和store使用Tensor中的元素坐标定位搬运起点。
 - load_tile和store_tile按Tile网格坐标定位数据块。
+- Tensor不支持切片子视图（例如`tensor[0:32, :]`）。访问其中一部分数据时，通过load和store的元素坐标定位，或先用addptr偏移地址再用make_tensor创建新视图。
 - 搬运范围、stride、layout和尾块受具体搬运接口约束；编译期可确定的非法参数由框架检查，动态访问范围由调用方保证。
 
 Tensor只描述GM数据视图；Tile的创建、片上地址和缓冲区管理请参考[Tile创建和操作](tile_creation_and_operations.md)，Tile上的矢量计算请参考[Tile计算](vector_computation/tile_computation.md)，矩阵计算请参考[Cube计算](cube_computation.md)。

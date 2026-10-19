@@ -162,8 +162,8 @@ _BLOCK_OP_TILE_ROLES: dict[str, list] = {
     "getval": ["R", None],  # getval(container, offset) -> scalar
     "setval": ["W", None, None],  # setval(container, offset, value)
     # ===== Data movement =====
-    "load": ["W"],  # load(out, tensor, offsets, ...)
-    "load_tile": ["W"],
+    "load": ["W", "R"],  # load(out, tensor, offsets, ...)
+    "load_tile": ["W", "R"],
     "store": ["W", "R"],  # store(out, tile, offsets, ...)
     "store_tile": ["W", "R"],
     "move": ["W", "R", "R", "R"],  # move(out, src, [offset], [scale])

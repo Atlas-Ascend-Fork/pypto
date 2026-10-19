@@ -33,6 +33,10 @@ def make_tensor(
     stride: Sequence[int | Expr] | _ir_core.MakeTuple | None = None,
     dtype: DataType | None = None,
     span: Span | None = None,
+    *,
+    depth: int | None = None,
+    fwd_ids: Sequence[int] | None = None,
+    bwd_ids: Sequence[int] | None = None,
 ) -> Call:
     """Create a tensor view from a raw pointer or an existing tensor.
 
@@ -57,6 +61,9 @@ def make_tensor(
             from the source pointer/tensor's element type; if given, the view is
             created with this dtype (the source is reinterpreted as ``dtype``).
         span: Optional source span for debugging (auto-captured if not provided)
+        depth: Read by the automatic pipeline transform only; not part of the IR
+        fwd_ids: Read by the automatic pipeline transform only; not part of the IR
+        bwd_ids: Read by the automatic pipeline transform only; not part of the IR
 
     Returns:
         Call expression creating a tensor view with the given shape and strides

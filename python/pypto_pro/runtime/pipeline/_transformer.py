@@ -15,6 +15,8 @@ import ast
 import copy
 from dataclasses import dataclass
 
+from pypto.pypto_impl.ir import MemorySpace
+
 from ..._errors import CommonInner, KeyNotFound, NotSupported, span_of
 from ._analyzer import PipelineInfo, analyze_pipeline, buffers_touched
 from ._astutil import (
@@ -22,10 +24,12 @@ from ._astutil import (
     PL_STRUCT_ARG,
     PL_TASK_ID_FIELD,
     call_name,
+    gm_slot_size,
     slot_accessor,
     slot_index_field,
     task_id_var,
 )
+from ._cross_core_scanner import BufferDecl
 from ._stage import is_pipeline_stage
 from ._sync_graph import SyncPlan, build_graph, plan_sync, sites_for
 from ._validate import validate_names
@@ -260,7 +264,8 @@ def _insert_sync_into_loop_body(body: list[ast.stmt], sync: SyncPlan, info: Pipe
         if stage is None or not isinstance(stmt, ast.With):
             continue
         pre, post = _sync_stmts_for(_sites_for_stage(sync, stage), index_expr)
-        stmt.body[0:1] = pre + stmt.body[0:1] + post
+        slots = _select_gm_slots(stmt.body[0].value, index_expr, info)
+        stmt.body[0:1] = pre + slots + stmt.body[0:1] + post
 
 
 def _emit_prefire_and_drain(sync: SyncPlan) -> tuple[list[ast.stmt], list[ast.stmt]]:
@@ -305,6 +310,8 @@ def transform_pipeline(
     config: PipelineConfig,
     if_const_map: dict | None = None,
     var_types: dict | None = None,
+    arg_types: dict | None = None,
+    field_types: dict | None = None,
     tilingkey_consts: dict | None = None,
     datatype_consts: dict | None = None,
 ) -> ast.FunctionDef:
@@ -314,8 +321,9 @@ def transform_pipeline(
         func_def: The kernel function's AST (will not be mutated; a copy is made)
         closure_vars: Closure variables (contains stage functions, module constants)
         config: Pipeline configuration (depth, dump_generated, etc.)
-        var_types: {name: IR type class name} from the parser probe; decides how each
-            stage argument reaches its stage (see _derive_ctx_fields).
+        var_types: {name: (IR type class name, scalar dtype or None)} from the parser probe.
+        arg_types: {(lineno, col_offset): its parsed type} for call arguments.
+        field_types: {(struct variable, field name): the field's IR type}.
         if_const_map: {(lineno, col_offset) of test: (is_const, value)} for every ``if``
             in the kernel body, produced by a probe parse (reuses the parser's constant
             folding).
@@ -345,7 +353,7 @@ def transform_pipeline(
     # Analyze the serial structure. Everything about whether this kernel is legal is settled
     # in there, so what comes back is a shape that can be emitted: one PipelineInfo per
     # pipeline loop, in source order.
-    infos = analyze_pipeline(new_func, closure_vars, config, var_types)
+    infos = analyze_pipeline(new_func, closure_vars, config, var_types, arg_types, field_types)
     preloads = [config.preload_of(info.loop_index) for info in infos]
 
     # Arrangement first, for every loop, because the names below depend on the delays it
@@ -431,8 +439,8 @@ def _prune_if(if_stmt: ast.If, stage_func_names: set, if_const_map: dict) -> lis
         # branch is unsupported (dynamic dispatch of stages).
         if _branch_contains_stage(if_stmt, stage_func_names):
             raise NotSupported(
-                f"pipeline (CB3): branch condition '{ast.unparse(if_stmt.test)}' at line "
-                f"{if_stmt.test.lineno} wraps a stage call but is not a compile-time "
+                f"pipeline (CB3): branch condition '{ast.unparse(if_stmt.test)}' "
+                f"wraps a stage call but is not a compile-time "
                 "constant. Dynamic branch stages are unsupported; use a compile-time "
                 "constant condition (e.g. a tiling-key field) or insert sync manually.",
                 span=span_of(if_stmt.test),
@@ -614,7 +622,10 @@ def _compute_delays(info, preload: int):
         stage_count = core_stage_count.get(core)
         last_delay = core_last_delay.get(core)
         if stage_count is None or last_delay is None:
-            raise NotSupported(f"Unsupported pipeline section kind: {core}")
+            raise NotSupported(
+                f"pipeline (internal): section kind '{core}' is neither cube nor vector, "
+                f"which the analyzer should have refused. Please report."
+            )
 
         if stage_count == 0:
             # First stage of this core
@@ -744,6 +755,13 @@ def _transform_body(
     )
 
 
+def _field_init(info: PipelineInfo, field_name: str) -> ast.expr:
+    """The initializer a ctx field is declared with. The two bookkeeping fields are integers."""
+    if field_name in info.ctx_sources:
+        return info.ctx_sources[field_name][2]
+    return ast.Constant(value=0)
+
+
 def _build_declarations(info: PipelineInfo, depth: int, sync: SyncPlan) -> list[ast.stmt]:
     """The full pipeline's pre-loop declarations: `_pl_ctx_arr`, `_pl_task_id`, the lifted
     event-id variables and the outer-slot rotation counters.
@@ -753,7 +771,7 @@ def _build_declarations(info: PipelineInfo, depth: int, sync: SyncPlan) -> list[
     """
     stmts = []
 
-    keywords = [ast.keyword(arg=f, value=ast.Constant(value=0)) for f in info.ctx_fields]
+    keywords = [ast.keyword(arg=f, value=_field_init(info, f)) for f in info.ctx_fields]
     ctx_call = ast.Call(
         func=ast.Attribute(value=ast.Name(id="pl", ctx=ast.Load()), attr="struct_array", ctx=ast.Load()),
         args=[ast.Constant(value=depth), ast.Constant(value=_ctx_struct_name(info.loop_index))],
@@ -858,15 +876,21 @@ def _build_pipeline_loop(
     # 3. Snapshot every ctx field, before every stage, so each beat hands all its stages one
     #    consistent set of values.
     new_body.extend(_build_ctx_field_fills(info))
-    # 4. The stage chain, then whatever the user wrote after it — that part prepares the next
-    #    iteration, so this beat's snapshot above must not see it.
+    # 4. The stage chain. Nothing sits between stages, so every statement after the first
+    #    stage belongs to the tail (zone 3).
     for item in ordered_body[first_stage:]:
         if isinstance(item, tuple):
             new_body.extend(_build_stage_call(info.stages[item[1]], item[1], info, depth, sync))
-        else:
-            new_body.append(item)
-    # 5. task_id increment (frame-level iteration counter, after all stage calls)
+    # 5. task_id increment, before the tail. The beat is committed once its stages are
+    #    dispatched: the slot is taken and its ctx snapshotted, and a delayed stage consumes
+    #    it on a later beat. The counter must advance even when the tail is skipped, or the
+    #    next beat re-picks the same slot and overwrites a ctx still waiting to be consumed.
     new_body.append(_build_counter_incr(task_id_var(info.loop_index)))
+    # 6. Whatever the user wrote after the last stage, in place. It prepares the next
+    #    iteration, so this beat's snapshot above must not see it.
+    for item in ordered_body[first_stage:]:
+        if not isinstance(item, tuple):
+            new_body.append(item)
 
     new_for.body = new_body
     return [new_for]
@@ -984,7 +1008,7 @@ def _build_ctx_field_fills(info: PipelineInfo) -> list[ast.stmt]:
             # Field and variable share a name only while the kernel holds a single pipeline.
             source, sections = ast.Name(id=task_id_var(info.loop_index), ctx=ast.Load()), set()
         elif field_name in info.ctx_sources:
-            source, sections = info.ctx_sources[field_name]
+            source, sections, _init = info.ctx_sources[field_name]
         else:
             raise KeyNotFound(
                 f"pipeline (internal): ctx field '{field_name}' has no source — fields are "
@@ -1068,6 +1092,62 @@ def _build_stage_args(stage, arg_mapping: list, ctx_var: str, info: PipelineInfo
     return new_args
 
 
+def _gm_buffers(info: PipelineInfo) -> dict:
+    """``{name: BufferDecl}`` for the GM buffers that rotate through more than one slot."""
+    return {
+        name: buf.decl
+        for name, buf in info.sync.buffers.items()
+        if buf.decl is not None and buf.decl.memory == MemorySpace.DDR and info.sync.slot_counts.get(name, 1) > 1
+    }
+
+
+def _gm_slot_var(name: str) -> str:
+    """The variable holding a GM buffer's slot for one stage call."""
+    return f"_pl_gm_{name}"
+
+
+def _select_gm_slots(call: ast.Call, index_expr: ast.expr, info: PipelineInfo) -> list[ast.stmt]:
+    """Hand a stage call the slot of each GM buffer its task uses, in place.
+
+    Each argument naming such a buffer is replaced by ``_pl_gm_<name>``; the returned
+    statements bind it to slot ``index_expr % depth``.
+    """
+    gm = _gm_buffers(info)
+    stmts = []
+    for pos, arg in enumerate(call.args):
+        if not (isinstance(arg, ast.Name) and arg.id in gm):
+            continue
+        stmts.append(_build_gm_slot_assign(arg.id, gm[arg.id], index_expr, info))
+        call.args[pos] = ast.Name(id=_gm_slot_var(arg.id), ctx=ast.Load())
+    return stmts
+
+
+def _build_gm_slot_assign(name: str, decl: BufferDecl, index_expr: ast.expr, info: PipelineInfo) -> ast.Assign:
+    """``_pl_gm_<name> = pl.make_tensor(pl.addptr(pl.make_ptr(<name>), k * size), shape[, stride])``."""
+
+    def pl_call(fn: str, args: list) -> ast.Call:
+        return ast.Call(
+            func=ast.Attribute(value=ast.Name(id="pl", ctx=ast.Load()), attr=fn, ctx=ast.Load()),
+            args=args,
+            keywords=[],
+        )
+
+    slot_idx = ast.BinOp(
+        left=copy.deepcopy(index_expr), op=ast.Mod(), right=ast.Constant(value=info.sync.slot_counts[name])
+    )
+    size = gm_slot_size(decl.shape_node, decl.stride_node, info.closure_vars)
+    offset = ast.BinOp(left=slot_idx, op=ast.Mult(), right=size)
+    ptr = pl_call("addptr", [pl_call("make_ptr", [ast.Name(id=name, ctx=ast.Load())]), offset])
+    layout = [copy.deepcopy(decl.shape_node)]
+    if decl.stride_node is not None:
+        layout.append(copy.deepcopy(decl.stride_node))
+    return ast.Assign(
+        targets=[ast.Name(id=_gm_slot_var(name), ctx=ast.Store())],
+        value=pl_call("make_tensor", [ptr, *layout]),
+        lineno=0,
+    )
+
+
 def _wrap_in_section(section_kind: str, body: list[ast.stmt]) -> ast.With:
     """Wrap statements in `with pl.section_<kind>():`."""
     section_call = ast.Call(
@@ -1082,7 +1162,9 @@ def _wrap_in_section(section_kind: str, body: list[ast.stmt]) -> ast.With:
     )
 
 
-def _build_guarded_stage_body(stage, call_expr: ast.Call, ctx_var: str, sync: SyncPlan) -> list[ast.stmt]:
+def _build_guarded_stage_body(
+    stage, call_expr: ast.Call, ctx_var: str, sync: SyncPlan, info: PipelineInfo
+) -> list[ast.stmt]:
     """Build sync + stage-call statements that run under the ctx validity guard."""
     index_expr = ast.Attribute(
         value=ast.Name(id=ctx_var, ctx=ast.Load()),
@@ -1094,8 +1176,9 @@ def _build_guarded_stage_body(stage, call_expr: ast.Call, ctx_var: str, sync: Sy
     # same-buffer and address-reuse alike (see _sync_graph.plan_sync_sites).
     sites = _sites_for_stage(sync, stage)
     auto_pre, auto_post = _sync_stmts_for(sites, index_expr)
+    slots = _select_gm_slots(call_expr, index_expr, info)
 
-    return [*auto_pre, ast.Expr(value=call_expr, lineno=0), *auto_post]
+    return [*auto_pre, *slots, ast.Expr(value=call_expr, lineno=0), *auto_post]
 
 
 def _wrap_stage_section(stage, guarded_body: list[ast.stmt], ctx_var: str) -> ast.With:
@@ -1143,7 +1226,7 @@ def _build_stage_call(
     # guard: a fill or drain beat carries no task, so letting its wait/set run would consume
     # permits belonging to a later real one. The event-id index reads `<ctx_var>._pl_task_id`,
     # the task THIS stage is handling, not the beat number.
-    guarded_body = _build_guarded_stage_body(stage, call_expr, ctx_var, sync)
+    guarded_body = _build_guarded_stage_body(stage, call_expr, ctx_var, sync, info)
     stmts.append(_wrap_stage_section(stage, guarded_body, ctx_var))
 
     return stmts

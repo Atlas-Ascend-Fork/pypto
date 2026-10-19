@@ -15,9 +15,9 @@ from types import SimpleNamespace
 import pypto_pro.language as pl
 from pypto_pro.runtime.pipeline._cross_core_scanner import (
     scan_buffer_addr_ranges,
+    scan_buffer_decls,
     scan_buffer_mutex_ids,
     scan_buffer_slot_counts,
-    scan_tile_group_decls,
 )
 from pypto_pro.runtime.pipeline._sync_graph import _slot_count
 
@@ -34,7 +34,7 @@ def kernel():
         addrs=256, mutex_ids=[4, 5])
 """
     )
-    decls = scan_tile_group_decls(module.body[0])
+    decls = scan_buffer_decls(module.body[0])
     closure_vars = {"pl": pl}
 
     mutex_ids = scan_buffer_mutex_ids(decls, closure_vars)

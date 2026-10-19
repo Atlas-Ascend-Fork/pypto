@@ -47,5 +47,17 @@ def build_generated_file_source(
     indent = " " * col_offset
     new_block = [indent + ln if ln else ln for ln in new_func_src.split("\n")]
     result = orig_lines[:start] + new_block + orig_lines[end:]
+    text = "\n".join(result) if isinstance(result, list) else result
 
-    return "\n".join(result) if isinstance(result, list) else result
+    # Reparsed so every node carries its position in this text. The transformed tree's
+    # generated statements have none, and the parse that follows reports errors against
+    # this file.
+    reparsed = ast.parse(text)
+    # Found by position as well as by name: the kernel may be nested in a factory function,
+    # and two factories may each hold one of the same name.
+    span = range(start + 1, start + 1 + len(new_block))
+    func_def = next(
+        n for n in ast.walk(reparsed)
+        if isinstance(n, ast.FunctionDef) and n.name == fd.name and n.lineno in span
+    )
+    return text, func_def

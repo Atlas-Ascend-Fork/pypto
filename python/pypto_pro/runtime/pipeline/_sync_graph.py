@@ -52,7 +52,7 @@ import ast
 from dataclasses import dataclass, field
 import logging
 
-from ..._errors import InvalidOperation, InvalidVal, OutOfRange
+from ..._errors import InvalidOperation, InvalidVal, OutOfRange, span_of
 from ._cross_core_scanner import MAX_EVENT_ID
 from ._validate import validate_sync
 
@@ -78,6 +78,7 @@ class Access:
     role: str  # "W" / "R"
     pipe: str
     region: int = -1
+    source_stmt: object = None  # the stage call this access belongs to, for errors about it
 
     def __str__(self) -> str:
         return f"{self.stage}({self.buffer} {self.role} {self.pipe})"
@@ -196,7 +197,10 @@ def collect_accesses(info) -> list:
             if (buf_name, role, pipe) in seen:
                 continue
             seen.add((buf_name, role, pipe))
-            out.append(Access(seq, idx, stage.func_name, stage.section_kind, buf_name, role, pipe))
+            out.append(Access(
+                seq, idx, stage.func_name, stage.section_kind, buf_name, role, pipe,
+                source_stmt=stage.call_node or stage.source_stmt,
+            ))
             seq += 1
     return out
 
@@ -220,7 +224,7 @@ def build_graph(info, schedule: list) -> SyncGraph:
     touched = {a.buffer for a in accesses}
     regions = build_regions(info.sync.addr_overlaps, touched)
     accesses = [
-        Access(a.seq, a.stage_idx, a.stage, a.section, a.buffer, a.role, a.pipe, regions[a.buffer])
+        Access(a.seq, a.stage_idx, a.stage, a.section, a.buffer, a.role, a.pipe, regions[a.buffer], a.source_stmt)
         for a in accesses
     ]
 
@@ -639,7 +643,8 @@ def plan_sync_sites(graph: SyncGraph, event_ids: dict) -> list:
             raise InvalidOperation(
                 f"pipeline: address reuse requires {edge.src} to finish before {edge.dst}, "
                 f"but within one task the stage order runs them the other way round. "
-                f"Reorder the stages, or stop sharing the address."
+                f"Reorder the stages, or stop sharing the address.",
+                span=span_of(edge.dst.source_stmt),
             )
         # A negative skew means the consumer waits on a task that has not run yet. Letting those
         # tail waits through needs a guard answering "does the partner task still exist?", which
@@ -656,7 +661,8 @@ def plan_sync_sites(graph: SyncGraph, event_ids: dict) -> list:
                 f"than one level.\n"
                 f"A lower `preload` often removes the skew (the stages then sit closer "
                 f"together in the schedule); otherwise stop sharing the address between "
-                f"'{edge.src.buffer}' and '{edge.dst.buffer}', or reorder the stages."
+                f"'{edge.src.buffer}' and '{edge.dst.buffer}', or reorder the stages.",
+                span=span_of(edge.dst.source_stmt),
             )
         # Both ends share a lane, keyed by task % slot_count, so the skew must be a whole
         # number of rotations — guards and `% slot_count` id indexing both rely on it.
@@ -664,7 +670,8 @@ def plan_sync_sites(graph: SyncGraph, event_ids: dict) -> list:
             raise InvalidVal(
                 f"pipeline: sync edge {edge.src} -> {edge.dst} has task offset {skew}, "
                 f"which is not a multiple of its {slot_count} slots. Guards and event-id "
-                f"pairing assume whole-rotation skew."
+                f"pairing assume whole-rotation skew.",
+                span=span_of(edge.dst.source_stmt),
             )
         sites.append(
             SyncSite(

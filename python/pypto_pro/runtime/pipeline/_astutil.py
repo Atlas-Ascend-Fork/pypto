@@ -21,6 +21,8 @@ accessor" for every module that asks. Add nothing here that needs a sibling.
 from __future__ import annotations
 
 import ast
+import contextlib
+import copy
 import inspect
 import textwrap
 
@@ -126,12 +128,101 @@ def is_vf_function(func_def: ast.FunctionDef) -> bool:
     return False
 
 
+def stmt_header(stmt: ast.stmt) -> ast.AST:
+    """The part of ``stmt`` that names it without its body: the condition of an ``if`` or
+    ``while``, the iterable of a ``for``, the context of a ``with``. Any other statement is
+    returned as is.
+    """
+    if isinstance(stmt, (ast.If, ast.While)):
+        return stmt.test
+    if isinstance(stmt, ast.For):
+        return stmt.iter
+    if isinstance(stmt, ast.With) and stmt.items:
+        return stmt.items[0].context_expr
+    return stmt
+
+
+def eval_const(node: ast.expr, closure_vars: dict):
+    """Evaluate a constant expression node using closure_vars as namespace.
+    Returns the value, or None if it cannot be evaluated (e.g. references a
+    runtime variable)."""
+    try:
+        code = compile(ast.Expression(body=node), "<addr>", "eval")
+        return eval(code, {"__builtins__": {}}, dict(closure_vars))
+    except Exception:
+        return None
+
+
+def gm_slot_size(shape: ast.expr, stride: ast.expr | None, consts: dict) -> ast.expr | None:
+    """Elements one slot of a GM buffer spans: ``max(shape[i] * stride[i])``, or
+    ``prod(shape)`` without a stride.
+
+    A constant when it evaluates statically; None when shape or stride is neither written
+    as a list nor resolvable from ``consts``.
+    """
+    dims = _list_elts(shape, consts)
+    steps = _list_elts(stride, consts) if stride is not None else None
+    if dims is None or (stride is not None and steps is None):
+        return None
+    if steps is None:
+        size = dims[0]
+        for dim in dims[1:]:
+            size = ast.BinOp(left=size, op=ast.Mult(), right=dim)
+    else:
+        spans = [ast.BinOp(left=d, op=ast.Mult(), right=st) for d, st in zip(dims, steps)]
+        size = spans[0]
+        for span in spans[1:]:
+            size = ast.Call(func=ast.Name(id="max", ctx=ast.Load()), args=[size, span], keywords=[])
+    size = ast.fix_missing_locations(copy.deepcopy(size))
+    value = eval_const(size, {**consts, "max": max})
+    if isinstance(value, int) and not isinstance(value, bool):
+        return ast.Constant(value=value)
+    return size
+
+
+def _list_elts(node: ast.expr, consts: dict) -> list | None:
+    """The elements of a list written literally, or of one ``consts`` resolves it to."""
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return node.elts
+    value = eval_const(node, consts)
+    if isinstance(value, (list, tuple)) and value:
+        return [ast.Constant(value=v) for v in value]
+    return None
+
+
+@contextlib.contextmanager
+def spans_in_function(fn):
+    """Publish a span resolver for the tree :func:`get_funcdef` builds from *fn*.
+
+    That tree carries the line numbers of the real file, while a kernel's tree is parsed
+    from a dedented snippet and its resolver adds the kernel's offset back. Resolving a
+    node of *fn*'s body with the kernel's resolver would add that offset a second time,
+    so the body is given a resolver that adds none. Yields unchanged when *fn* has no
+    reachable source, leaving the ambient resolver in place.
+    """
+    from pypto_pro._errors import source_lines_of, span_source
+    from pypto_pro.language.parser._span_tracker import SpanTracker
+
+    try:
+        source_file = inspect.getsourcefile(fn) if fn is not None else None
+        lines, _start = inspect.getsourcelines(fn) if source_file else ([], 0)
+    except (OSError, TypeError):
+        source_file = None
+    if not source_file:
+        yield
+        return
+    # get_funcdef dedents before parsing, so columns need the definition's own indent back.
+    indent = len(lines[0]) - len(lines[0].lstrip()) if lines else 0
+    tracker = SpanTracker(source_file, source_lines_of(source_file) or [], 0, indent)
+    with span_source(tracker.get_span):
+        yield
+
+
 def get_funcdef(fn) -> ast.FunctionDef | None:
     """The ``ast.FunctionDef`` for a Python function object, or None.
 
     Line numbers are shifted to the ones in the real file: re-parsing a source snippet numbers
-    it from 1, and every diagnostic naming a node inside a stage body reports what this
-    returns.
+    it from 1.
     """
     if fn is None:
         return None
