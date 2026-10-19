@@ -1037,6 +1037,14 @@ SymbolicScalar CreateGetTensorDataCall(IRBuilder& builder, int ioType, int ioTyp
     return handler(builder.CreateConstInt(0), builder.CreateConstInt(ioType), builder.CreateConstInt(ioTypeIndex), addr,
                    builder.CreateConstInt(0));
 }
+
+// 未锚定变体：address为immediate占位符(未经Pass_30 depend链回填)，下标不在函数IO空间
+SymbolicScalar CreateUnanchoredGetTensorDataCall(IRBuilder& builder, int ioType, int ioTypeIndex)
+{
+    SymbolicScalar handler(AddRuntimePrefix("GetTensorDataInt32Dim1"));
+    return handler(builder.CreateConstInt(0), builder.CreateConstInt(ioType), builder.CreateConstInt(ioTypeIndex),
+                   builder.CreateConstInt(0), builder.CreateConstInt(0));
+}
 } // namespace
 
 // CollectGetTensorDataIncasts：MixSubgraphSplit值依赖补回的看护用例
@@ -1213,6 +1221,276 @@ TEST_F(MixSubgraphSplitTest, TestPerLeafIncastOutcastAfterSplit)
     EXPECT_TRUE(leafContains(vectorIncasts, originalIncasts[1])) << "Vector leaf should hold propagated incast2";
     EXPECT_TRUE(leafContains(vectorIncasts, originalIncasts[2])) << "Vector leaf should own incast3";
     EXPECT_TRUE(leafContains(vectorOutcasts, originalOutcasts[0])) << "Vector leaf should own outcast1";
+}
+
+namespace {
+// 拆分前场景：基础mix子图(C/V两组件) + 追加的符号源incast + 携带(INCAST,N)引用的VEC_DUP op + call op
+struct GtdSplitScene {
+    std::shared_ptr<Function> rootFunc;
+    std::shared_ptr<Function> mixFunc;
+    std::shared_ptr<LogicalTensor> gtdIncast;
+    int oldIncastIdx = -1;
+    Operation* gtdOp = nullptr;
+};
+
+SymbolicScalar BuildAnchoredIncastGtdCall(IRBuilder& builder, int incastIdx)
+{
+    return CreateGetTensorDataCall(builder, GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST, incastIdx);
+}
+
+GtdSplitScene CreateGtdSplitScene(SymbolicScalar (*buildCall)(IRBuilder&, int) = BuildAnchoredIncastGtdCall)
+{
+    GtdSplitScene scene;
+    scene.rootFunc = CreateTestRootFunction();
+    FunctionHash mixFuncHash;
+    scene.mixFunc = CreateMixSubgraph(scene.rootFunc, mixFuncHash);
+    // 追加第4个incast，并在C scope放置携带GetTensorData(INCAST,N)引用的VEC_DUP op
+    const std::vector<int64_t> shape = {MS_NUM16, MS_NUM16};
+    scene.gtdIncast = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    scene.oldIncastIdx = static_cast<int>(scene.mixFunc->inCasts_.size());
+    scene.mixFunc->inCasts_.push_back(scene.gtdIncast);
+    auto internal = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto output = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    IRBuilder builder;
+    auto& gtdOp = IRBuilder().CreateTensorOpStmt(*scene.mixFunc, Opcode::OP_VEC_DUP, {internal}, {output});
+    gtdOp.SetAttribute(OpAttributeKey::dynScalar, buildCall(builder, scene.oldIncastIdx));
+    gtdOp.UpdateInternalSubgraphID(0);
+    gtdOp.SetAttr(OpAttributeKey::isCube, true);
+    scene.gtdOp = &gtdOp;
+    const uint64_t mixProgramId = 100;
+    auto& callOp = CreateCallOp(scene.rootFunc, mixProgramId, mixFuncHash);
+    (void)callOp;
+    return scene;
+}
+
+// 取op符号中首个GetTensorData调用的address操作数
+RawSymbolicScalarPtr GetFirstGtdAddressOperand(Operation& op)
+{
+    for (const auto& [index, callList] : GetTensorDataDict(op.GetDynamicAttributeList())) {
+        (void)index;
+        for (const auto& call : callList) {
+            return call->GetExpressionOperandList()[GET_TENSOR_DATA_OPERAND_INDEX_ADDRESS];
+        }
+    }
+    return nullptr;
+}
+
+// 定位包含指定op的leaf（op指针在拆分迁移中保持不变）
+Function* FindLeafHostingOp(Function& rootFunc, Operation* op)
+{
+    for (const auto& [progId, func] : rootFunc.programs_) {
+        (void)progId;
+        for (auto& curOp : func->Operations(false)) {
+            if (&curOp == op) {
+                return func;
+            }
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
+// 拆分后op中的(INCAST,N)引用须重映射为所在leaf的incast下标且address不变
+TEST_F(MixSubgraphSplitTest, TestGetTensorDataIORemappedAfterSplit)
+{
+    GtdSplitScene scene = CreateGtdSplitScene();
+
+    // 拆分前：引用指向原Mix函数的incast下标
+    auto usageBefore = GetTensorDataUsage(scene.gtdOp->GetDynamicAttributeList());
+    ASSERT_EQ(usageBefore.size(), 1) << "Sanity: op should carry exactly one GetTensorData usage before split";
+    EXPECT_EQ(usageBefore.count({GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST, scene.oldIncastIdx}), 1);
+    auto addressBefore = GetFirstGtdAddressOperand(*scene.gtdOp);
+    ASSERT_NE(addressBefore, nullptr);
+
+    MixSubgraphSplit splitter;
+    ASSERT_EQ(splitter.RunOnFunction(*scene.rootFunc), SUCCESS) << "MixSubgraphSplit should succeed";
+
+    // 定位包含该op的leaf，其incast持有被引用张量且下标与原Mix函数不同
+    Function* hostLeaf = FindLeafHostingOp(*scene.rootFunc, scene.gtdOp);
+    ASSERT_NE(hostLeaf, nullptr) << "The op with GetTensorData reference should be moved into a new leaf";
+    const auto& leafIncasts = hostLeaf->GetIncast();
+    auto incastIt = std::find(leafIncasts.begin(), leafIncasts.end(), scene.gtdIncast);
+    ASSERT_NE(incastIt, leafIncasts.end()) << "Leaf should own the GetTensorData-referenced incast";
+    const int newIncastIdx = static_cast<int>(std::distance(leafIncasts.begin(), incastIt));
+    ASSERT_NE(newIncastIdx, scene.oldIncastIdx) << "Test setup: new index should differ from original mix-func index";
+
+    // 重映射后：op符号指向该leaf自己的incast下标，address操作数保持不变（设备端按COA address取数）
+    auto usageAfter = GetTensorDataUsage(scene.gtdOp->GetDynamicAttributeList());
+    ASSERT_EQ(usageAfter.size(), 1) << "Remap should not change the usage count";
+    EXPECT_EQ(usageAfter.count({GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST, newIncastIdx}), 1)
+        << "GetTensorData incast index should be remapped to the owning leaf's incast list";
+    auto addressAfter = GetFirstGtdAddressOperand(*scene.gtdOp);
+    ASSERT_NE(addressAfter, nullptr);
+    EXPECT_EQ(addressAfter, addressBefore) << "Address operand should be preserved by the remap";
+}
+
+// 未锚定符号(address为immediate占位符)：跳过不改写，拆分正常完成
+TEST_F(MixSubgraphSplitTest, TestGetTensorDataRemapSkipsUnanchoredSymbol)
+{
+    GtdSplitScene scene = CreateGtdSplitScene([](IRBuilder& builder, int incastIdx) {
+        return CreateUnanchoredGetTensorDataCall(builder, GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST, incastIdx);
+    });
+
+    MixSubgraphSplit splitter;
+    ASSERT_EQ(splitter.RunOnFunction(*scene.rootFunc), SUCCESS);
+
+    // 符号随op迁入leaf后保持原样(下标未被改写)
+    auto usage = GetTensorDataUsage(scene.gtdOp->GetDynamicAttributeList());
+    EXPECT_EQ(usage.count({GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST, scene.oldIncastIdx}), 1);
+}
+
+// OUTCAST属未锚定残留绑定：跳过不改写
+TEST_F(MixSubgraphSplitTest, TestGetTensorDataRemapSkipsOutcastSymbol)
+{
+    GtdSplitScene scene = CreateGtdSplitScene([](IRBuilder& builder, int incastIdx) {
+        return CreateGetTensorDataCall(builder, GET_TENSOR_DATA_OPERAND_IOTYPE_OUTCAST, incastIdx);
+    });
+
+    MixSubgraphSplit splitter;
+    ASSERT_EQ(splitter.RunOnFunction(*scene.rootFunc), SUCCESS);
+
+    auto usage = GetTensorDataUsage(scene.gtdOp->GetDynamicAttributeList());
+    EXPECT_EQ(usage.count({GET_TENSOR_DATA_OPERAND_IOTYPE_OUTCAST, scene.oldIncastIdx}), 1);
+}
+
+// 已锚定符号旧下标越界：下标语义未知，须编译期报错而非静默保留
+TEST_F(MixSubgraphSplitTest, TestGetTensorDataRemapFailsOnOutOfRangeIndex)
+{
+    GtdSplitScene scene = CreateGtdSplitScene([](IRBuilder& builder, int incastIdx) {
+        (void)incastIdx;
+        // 指向原Mix函数incast列表(4项)之外的固定下标
+        return CreateGetTensorDataCall(builder, GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST, 99);
+    });
+
+    MixSubgraphSplit splitter;
+    ASSERT_EQ(splitter.RunOnFunction(*scene.rootFunc), FAILED);
+}
+
+// 符号仅由tensor dvs承载(analyzer的attr扫描不可见)，源incast不进新leaf：解析失败须报错
+TEST_F(MixSubgraphSplitTest, TestGetTensorDataRemapFailsWhenLeafMissesSourceIncast)
+{
+    auto rootFuncPtr = CreateTestRootFunction();
+    FunctionHash mixFuncHash;
+    auto mixFuncPtr = CreateMixSubgraph(rootFuncPtr, mixFuncHash);
+    const std::vector<int64_t> shape = {MS_NUM16, MS_NUM16};
+
+    // 追加不被任何op消费的源incast；符号放进carrier的dvs，carrier由vector scope的普通op消费
+    auto gtdIncast = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    const int oldIncastIdx = static_cast<int>(mixFuncPtr->inCasts_.size());
+    mixFuncPtr->inCasts_.push_back(gtdIncast);
+    IRBuilder builder;
+    auto dvsCarrier = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    dvsCarrier->UpdateDynValidShape(
+        {CreateGetTensorDataCall(builder, GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST, oldIncastIdx)});
+    auto carrierOut = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto& carrierOp = IRBuilder().CreateTensorOpStmt(*mixFuncPtr, Opcode::OP_ABS, {dvsCarrier}, {carrierOut});
+    carrierOp.UpdateInternalSubgraphID(1);
+
+    const uint64_t mixProgramId = 100;
+    auto& callOp = CreateCallOp(rootFuncPtr, mixProgramId, mixFuncHash);
+    (void)callOp;
+
+    MixSubgraphSplit splitter;
+    ASSERT_EQ(splitter.RunOnFunction(*rootFuncPtr), FAILED);
+}
+
+// 共享张量场景：两leaf共享的carrier dvs带符号引用，改写后下标仍须解析回源张量
+TEST_F(MixSubgraphSplitTest, TestGetTensorDataSharedTensorDvsRemappedToSource)
+{
+    auto rootFuncPtr = CreateTestRootFunction();
+    FunctionHash mixFuncHash;
+    auto mixFuncPtr = CreateMixSubgraph(rootFuncPtr, mixFuncHash);
+    const std::vector<int64_t> shape = {MS_NUM16, MS_NUM16};
+
+    auto gtdIncast = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    const int oldIncastIdx = static_cast<int>(mixFuncPtr->inCasts_.size());
+    mixFuncPtr->inCasts_.push_back(gtdIncast);
+
+    // carrier的dvs携带锚定的(INCAST, oldIncastIdx)引用；carrier与gtdIncast均被两个组件消费
+    IRBuilder builder;
+    auto carrier = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    carrier->UpdateDynValidShape(
+        {CreateGetTensorDataCall(builder, GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST, oldIncastIdx)});
+    for (int componentId = 0; componentId < 2; componentId++) {
+        auto tmp = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        auto& consumeOp = IRBuilder().CreateTensorOpStmt(*mixFuncPtr, Opcode::OP_ABS, {carrier, gtdIncast}, {tmp});
+        consumeOp.UpdateInternalSubgraphID(componentId);
+        consumeOp.SetAttr(OpAttributeKey::isCube, componentId == 0);
+    }
+
+    const uint64_t mixProgramId = 100;
+    auto& callOp = CreateCallOp(rootFuncPtr, mixProgramId, mixFuncHash);
+    (void)callOp;
+
+    MixSubgraphSplit splitter;
+    ASSERT_EQ(splitter.RunOnFunction(*rootFuncPtr), SUCCESS);
+
+    // 改写后carrier dvs中的下标必须仍能解析到某个新leaf中的gtdIncast
+    auto usage = GetTensorDataUsage(std::vector<std::reference_wrapper<SymbolicScalar>>(
+        carrier->GetDynValidShape().begin(), carrier->GetDynValidShape().end()));
+    ASSERT_EQ(usage.size(), 1);
+    const auto& finalBinding = *usage.begin();
+    EXPECT_EQ(finalBinding.first, GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST);
+    bool resolvesToSource = false;
+    for (const auto& [progId, func] : rootFuncPtr->programs_) {
+        (void)progId;
+        if (func == nullptr) {
+            continue;
+        }
+        std::shared_ptr<LogicalTensor> gtdCopy = gtdIncast;
+        if (func->GetIncastIndex(gtdCopy) == finalBinding.second) {
+            resolvesToSource = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(resolvesToSource) << "remapped index " << finalBinding.second
+                                  << " should resolve to the source incast in a split leaf";
+}
+
+// DynParamTable表内条目随拆分克隆进新leaf，须重映射到所在leaf的incast下标
+TEST_F(MixSubgraphSplitTest, TestGetTensorDataDynParamTableRemappedAfterSplit)
+{
+    GtdSplitScene scene = CreateGtdSplitScene();
+    // 在原Mix函数的DynParamTable登记携带(INCAST, oldIncastIdx)引用的符号维
+    IRBuilder builder;
+    scene.mixFunc->GetMutableDynParam("dim_0").dim = CreateGetTensorDataCall(
+        builder, GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST, scene.oldIncastIdx);
+
+    MixSubgraphSplit splitter;
+    ASSERT_EQ(splitter.RunOnFunction(*scene.rootFunc), SUCCESS);
+
+    // 定位符号携带op所在leaf, 其表内条目应指向该leaf自己的incast下标
+    Function* hostLeaf = FindLeafHostingOp(*scene.rootFunc, scene.gtdOp);
+    ASSERT_NE(hostLeaf, nullptr);
+    const auto& leafIncasts = hostLeaf->GetIncast();
+    auto incastIt = std::find(leafIncasts.begin(), leafIncasts.end(), scene.gtdIncast);
+    ASSERT_NE(incastIt, leafIncasts.end()) << "Leaf should own the GetTensorData-referenced incast";
+    const int newIncastIdx = static_cast<int>(std::distance(leafIncasts.begin(), incastIt));
+    ASSERT_NE(newIncastIdx, scene.oldIncastIdx) << "Test setup: new index should differ from mix-func index";
+
+    const auto& leafTable = hostLeaf->GetDynParamTable();
+    auto entryIt = leafTable.find("dim_0");
+    ASSERT_NE(entryIt, leafTable.end()) << "Cloned leaf should carry the dyn param table entry";
+    ASSERT_TRUE(entryIt->second.dim.IsValid());
+    bool foundRemapped = false;
+    for (const auto& [index, callList] : GetTensorDataDict(entryIt->second.dim)) {
+        (void)index;
+        for (const auto& call : callList) {
+            const auto& operandList = call->GetExpressionOperandList();
+            if (!operandList[GET_TENSOR_DATA_OPERAND_INDEX_IOTYPE]->IsImmediate() ||
+                !operandList[GET_TENSOR_DATA_OPERAND_INDEX_IOTYPE_INDEX]->IsImmediate()) {
+                continue;
+            }
+            EXPECT_EQ(static_cast<int>(operandList[GET_TENSOR_DATA_OPERAND_INDEX_IOTYPE]->GetImmediateValue()),
+                      GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST);
+            EXPECT_EQ(static_cast<int>(operandList[GET_TENSOR_DATA_OPERAND_INDEX_IOTYPE_INDEX]->GetImmediateValue()),
+                      newIncastIdx);
+            foundRemapped = true;
+            break;
+        }
+        break;
+    }
+    EXPECT_TRUE(foundRemapped) << "dyn param table entry should carry the remapped (ioType, ioTypeIndex)";
 }
 
 // outcast反向传播条件：source已有incast（依赖已建立）时不再传播；

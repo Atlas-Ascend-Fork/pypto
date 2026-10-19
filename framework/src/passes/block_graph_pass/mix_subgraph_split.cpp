@@ -420,6 +420,10 @@ Status MixSubgraphSplit::ProcessLeafFunction(Function& rootFunc, const MixSubgra
         // 应用最终的依赖到leaf functions（外部依赖）
         APASS_LOG_INFO_F(Elements::Function, "Applying final dependencies to leaf functions...");
         ApplyFinalDependencies(newFunctions, analyzerOutput->allIncasts, analyzerOutput->allOutcasts);
+        // op迁移到新leaf后，重映射GetTensorData符号的(ioType, ioTypeIndex)到新leaf自己的incast下标
+        if (RemapGetTensorDataIO(originalMixFunc, newFunctions) != SUCCESS) {
+            return FAILED;
+        }
         // 记录到全局（仅本地function）
         RecordSplitResult(originalMixFunc, newFunctions, newProgramIDs, components, mixId, analyzerOutput);
         subgraphToFunction = analyzerOutput->subgraphToFunction;
@@ -617,6 +621,223 @@ void MixSubgraphSplit::ApplyOutcastDependencies(Function* leafFunc, int componen
         APASS_LOG_DEBUG_F(Elements::Tensor, "Component %d: Added outcast - tensor %d (opMagic=%d, operandIdx=%d)",
                           componentId, param.tensor->GetRawMagic(), param.opMagic, param.operandIdx);
     }
+}
+
+namespace {
+// GetTensorData调用当前的(ioType, ioTypeIndex, address)信息
+struct GetTensorDataCallInfo {
+    int ioType{-1};
+    int ioTypeIndex{-1};
+    SymbolicScalar address;
+};
+
+// 收集单个符号中GetTensorData调用信息，按tensorDataIndex记录（同一index的io信息相同，取首个有效调用）
+void CollectGetTensorDataCallFromScalar(const SymbolicScalar& scalar, std::map<int, GetTensorDataCallInfo>& callInfos)
+{
+    for (const auto& [tensorDataIndex, callList] : GetTensorDataDict(scalar)) {
+        if (callInfos.count(tensorDataIndex) > 0) {
+            continue;
+        }
+        for (const auto& call : callList) {
+            const auto& operandList = call->GetExpressionOperandList();
+            if (operandList.size() <= GET_TENSOR_DATA_OPERAND_INDEX_ADDRESS ||
+                !operandList[GET_TENSOR_DATA_OPERAND_INDEX_IOTYPE]->IsImmediate() ||
+                !operandList[GET_TENSOR_DATA_OPERAND_INDEX_IOTYPE_INDEX]->IsImmediate()) {
+                continue;
+            }
+            GetTensorDataCallInfo info;
+            info.ioType = static_cast<int>(operandList[GET_TENSOR_DATA_OPERAND_INDEX_IOTYPE]->GetImmediateValue());
+            info.ioTypeIndex = static_cast<int>(
+                operandList[GET_TENSOR_DATA_OPERAND_INDEX_IOTYPE_INDEX]->GetImmediateValue());
+            if (info.ioType != GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST &&
+                info.ioType != GET_TENSOR_DATA_OPERAND_IOTYPE_OUTCAST) {
+                continue;
+            }
+            info.address = SymbolicScalar(operandList[GET_TENSOR_DATA_OPERAND_INDEX_ADDRESS]);
+            callInfos[tensorDataIndex] = info;
+            break;
+        }
+    }
+}
+
+// 收集函数内所有GetTensorData调用信息，扫描范围与Function::GetTensorDataRefreshIO的改写范围保持一致：
+// op动态属性、incast/outcast/op操作数tensor的dvs与dynOffset、DynParamTable
+void CollectGetTensorDataCalls(Function& func, std::map<int, GetTensorDataCallInfo>& callInfos)
+{
+    for (auto& op : func.Operations(false)) {
+        for (auto& attr : op.GetDynamicAttributeList()) {
+            CollectGetTensorDataCallFromScalar(attr.get(), callInfos);
+        }
+    }
+    // 指针作有序容器key会带来遍历顺序不确定，改用vector保持插入序，unordered_set仅做去重
+    std::vector<std::shared_ptr<LogicalTensor>> tensorList;
+    std::unordered_set<LogicalTensor*> visitedTensors;
+    auto appendTensor = [&tensorList, &visitedTensors](const std::shared_ptr<LogicalTensor>& tensor) {
+        if (tensor == nullptr || !visitedTensors.insert(tensor.get()).second) {
+            return;
+        }
+        tensorList.push_back(tensor);
+    };
+    for (auto& incast : func.GetIncast()) {
+        appendTensor(incast);
+    }
+    for (auto& outcast : func.GetOutcast()) {
+        appendTensor(outcast);
+    }
+    for (auto& op : func.Operations(false)) {
+        for (auto& iOperand : op.GetIOperands()) {
+            appendTensor(iOperand);
+        }
+        for (auto& oOperand : op.GetOOperands()) {
+            appendTensor(oOperand);
+        }
+    }
+    for (auto& tensor : tensorList) {
+        for (auto& shape : tensor->GetDynValidShape()) {
+            CollectGetTensorDataCallFromScalar(shape, callInfos);
+        }
+        for (auto& offset : tensor->GetDynOffset()) {
+            CollectGetTensorDataCallFromScalar(offset, callInfos);
+        }
+    }
+    for (auto& [name, info] : func.GetDynParamTable()) {
+        (void)name;
+        if (info.dim.IsValid()) {
+            CollectGetTensorDataCallFromScalar(info.dim, callInfos);
+        }
+    }
+}
+
+// 判断张量是否同时被其它新leaf持有：其dvs被任一leaf改写后对其它leaf不再成立
+bool IsTensorHeldByOtherLeaf(const std::shared_ptr<LogicalTensor>& tensor, const std::vector<Function*>& newFunctions,
+                             size_t currentLeafIdx)
+{
+    for (size_t j = 0; j < newFunctions.size(); j++) {
+        if (j == currentLeafIdx || newFunctions[j] == nullptr) {
+            continue;
+        }
+        std::shared_ptr<LogicalTensor> tensorCopy = tensor;
+        if (newFunctions[j]->GetIncastIndex(tensorCopy) != INVALID_IOINDEX ||
+            newFunctions[j]->GetOutcastIndex(tensorCopy) != INVALID_IOINDEX) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 张量的dvs/dynOffset是否携带指定集合内的GetTensorData符号
+bool TensorDvsCarriesAnyIndex(const std::shared_ptr<LogicalTensor>& tensor, const GetTensorDataIODescDict& iodescDict)
+{
+    for (const auto& shape : tensor->GetDynValidShape()) {
+        for (const auto& [index, callList] : GetTensorDataDict(shape)) {
+            (void)callList;
+            if (iodescDict.count(index) > 0) {
+                return true;
+            }
+        }
+    }
+    for (const auto& offset : tensor->GetDynOffset()) {
+        for (const auto& [index, callList] : GetTensorDataDict(offset)) {
+            (void)callList;
+            if (iodescDict.count(index) > 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+} // namespace
+
+// op迁入新leaf后，其GetTensorData符号的(ioType, ioTypeIndex)仍指向原Mix函数下标，verify解释器
+// 按新leaf的I/O视图取数会越界，此处重映射到新leaf自己的incast下标；设备端宏忽略下标仅按address取数
+Status MixSubgraphSplit::RemapGetTensorDataIO(Function* originalMixFunc,
+                                              const std::vector<Function*>& newFunctions) const
+{
+    if (originalMixFunc == nullptr) {
+        return SUCCESS;
+    }
+    const auto& originalIncasts = originalMixFunc->GetIncast();
+    // 两阶段：先对全部新leaf完成收集再逐leaf改写——leaf间共享LogicalTensor且RefreshIO就地改写，
+    // 边收集边改写会使后处理的leaf把已改写下标误当原Mix函数下标解析
+    std::vector<std::map<int, GetTensorDataCallInfo>> leafCallInfos(newFunctions.size());
+    for (size_t i = 0; i < newFunctions.size(); i++) {
+        if (newFunctions[i] != nullptr) {
+            CollectGetTensorDataCalls(*newFunctions[i], leafCallInfos[i]);
+        }
+    }
+    for (size_t i = 0; i < newFunctions.size(); i++) {
+        Function* newFunc = newFunctions[i];
+        if (newFunc == nullptr || leafCallInfos[i].empty()) {
+            continue;
+        }
+        GetTensorDataIODescDict iodescDict;
+        for (const auto& [tensorDataIndex, callInfo] : leafCallInfos[i]) {
+            // 锚定校验：address为COA参数地址调用⟺符号经Pass_30 depend链锚定到本函数IO空间；
+            // immediate占位符=未锚定，其下标不在原Mix函数下标空间，跳过不改写
+            if (callInfo.address.IsImmediate()) {
+                APASS_LOG_WARN_F(
+                    Elements::Tensor,
+                    "GetTensorData index %d of function %s is not anchored to function IO space, skip remap",
+                    tensorDataIndex, originalMixFunc->GetRawName().c_str());
+                continue;
+            }
+            // Pass_30锚定构造上只写INCAST绑定，OUTCAST属未锚定残留，跳过
+            if (callInfo.ioType != GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST) {
+                APASS_LOG_WARN_F(Elements::Tensor,
+                                 "GetTensorData index %d of function %s has unexpected ioType %d, skip remap",
+                                 tensorDataIndex, originalMixFunc->GetRawName().c_str(), callInfo.ioType);
+                continue;
+            }
+            if (callInfo.ioTypeIndex < 0 || static_cast<size_t>(callInfo.ioTypeIndex) >= originalIncasts.size()) {
+                APASS_LOG_ERROR_F(Elements::Tensor, "GetTensorData index %d has invalid incast index %d of function %s",
+                                  tensorDataIndex, callInfo.ioTypeIndex, originalMixFunc->GetRawName().c_str());
+                return FAILED;
+            }
+            auto tensor = originalIncasts[callInfo.ioTypeIndex];
+            if (tensor == nullptr) {
+                APASS_LOG_WARN_F(Elements::Tensor,
+                                 "GetTensorData index %d of function %s resolves to null incast tensor, skip remap",
+                                 tensorDataIndex, originalMixFunc->GetRawName().c_str());
+                continue;
+            }
+            int newIncastIndex = newFunc->GetIncastIndex(tensor);
+            if (newIncastIndex == INVALID_IOINDEX) {
+                // 已锚定符号的源张量不在新leaf，旧下标语义未知，编译期报错
+                APASS_LOG_ERROR_F(
+                    Elements::Tensor, "GetTensorData incast tensor %d of function %s not found in new leaf %s",
+                    tensor->GetRawMagic(), originalMixFunc->GetRawName().c_str(), newFunc->GetRawName().c_str());
+                return FAILED;
+            }
+            if (newIncastIndex == callInfo.ioTypeIndex) {
+                continue;
+            }
+            iodescDict[tensorDataIndex] = GetTensorDataIODesc(callInfo.ioType, newIncastIndex, callInfo.address);
+        }
+        if (iodescDict.empty()) {
+            continue;
+        }
+        newFunc->GetTensorDataRefreshIO(iodescDict);
+        // DynParamTable随拆分整表克隆进新leaf且经EvaluateDynParam求值，但RefreshIO的改写
+        // 范围不含此载体，须在此单独按下标重写
+        for (const auto& [name, info] : newFunc->GetDynParamTable()) {
+            if (info.dim.IsValid()) {
+                newFunc->GetMutableDynParam(name).dim = GetTensorDataFillIO(iodescDict, info.dim);
+            }
+        }
+        APASS_LOG_INFO_F(Elements::Tensor, "Remapped %zu GetTensorData symbol(s) to function %s", iodescDict.size(),
+                         newFunc->GetRawName().c_str());
+        for (auto& tensor : newFunc->GetIncast()) {
+            if (tensor == nullptr || !TensorDvsCarriesAnyIndex(tensor, iodescDict) ||
+                !IsTensorHeldByOtherLeaf(tensor, newFunctions, i)) {
+                continue;
+            }
+            APASS_LOG_WARN_F(Elements::Tensor,
+                             "Tensor %d is shared by multiple split leaves, its dvs/dynOffset remapped for leaf %s "
+                             "may not hold for other leaves",
+                             tensor->GetRawMagic(), newFunc->GetRawName().c_str());
+        }
+    }
+    return SUCCESS;
 }
 
 void MixSubgraphSplit::DeleteOriginalMixCallOps(Function& rootFunc, const std::vector<Operation*>& callOpsToDelete)

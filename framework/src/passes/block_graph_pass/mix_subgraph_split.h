@@ -168,6 +168,10 @@ private:
     void ApplyOutcastDependencies(Function* leafFunc, int componentId,
                                   const std::vector<SimpleTensorParam>& outcastParams) const;
 
+    // 将新leaf中GetTensorData符号的(ioType, ioTypeIndex)重映射到所在leaf的incast下标；
+    // 未锚定/OUTCAST跳过，解析失败返回FAILED
+    Status RemapGetTensorDataIO(Function* originalMixFunc, const std::vector<Function*>& newFunctions) const;
+
     static std::atomic<uint64_t> globalNextMixId_;
     static constexpr uint64_t INVALID_PROGRAM_ID = static_cast<uint64_t>(-1);
 };
