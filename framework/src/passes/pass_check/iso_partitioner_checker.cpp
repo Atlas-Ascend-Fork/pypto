@@ -90,7 +90,7 @@ Status GraphPartitionChecker::PostOperationCheck(Function& function)
         if (isStartNodeInSubgraph) {
             APASS_LOG_DEBUG_F(Elements::Operation, "Operation (opmagic: %d) is start node in subgraph.",
                               op.GetOpMagic());
-            if (IsAssembleLike(op.GetOpcode()) || op.GetOpcode() == Opcode::OP_COPY_OUT) {
+            if ((IsAssembleLike(op.GetOpcode()) || op.GetOpcode() == Opcode::OP_COPY_OUT) && op.tokens_.empty()) {
                 APASS_LOG_ERROR_F(
                     Elements::Operation,
                     "Operation (opmagic: %d) is the start node of the subgraph, opcode should not be %s.%s",

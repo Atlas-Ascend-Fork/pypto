@@ -1683,6 +1683,48 @@ void AddReverseTokenDependency(Function& function, Operation& producer, Operatio
     consumer.tokens_.push_back(token);
 }
 
+void CheckWriteStartRequiresInputToken(Opcode opcode)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {16, 16},
+                                 {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_DEVICE_DDR},
+                                 {"input", "middle", "output"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ABS, {"input"}, {"middle"}, "producer"));
+    ASSERT_TRUE(graph.AddOp(opcode, {"middle"}, {"output"}, "write"));
+    auto* function = graph.GetFunction();
+    auto* producer = graph.GetOp("producer");
+    auto* write = graph.GetOp("write");
+    producer->UpdateSubgraphID(0);
+    write->UpdateSubgraphID(1);
+    function->SetTotalSubGraphCount(2);
+
+    GraphPartition pass;
+    EXPECT_EQ(pass.PostCheck(*function), FAILED);
+
+    auto resultToken = IRBuilder().CreateTokenVar(ir::Span::Unknown());
+    write->result_token_ = {resultToken};
+    function->GetVarDependency().AddProducer(resultToken, ToGraphPartitionStmt(*write));
+    EXPECT_EQ(pass.PostCheck(*function), FAILED);
+
+    AddReverseTokenDependency(*function, *producer, *write);
+    EXPECT_EQ(pass.PostCheck(*function), SUCCESS);
+}
+
+TEST_F(GraphPartitionTest, PostCheckContractStartRequiresInputToken)
+{
+    CheckWriteStartRequiresInputToken(Opcode::OP_CONTRACT);
+}
+
+TEST_F(GraphPartitionTest, PostCheckAssembleStartRequiresInputToken)
+{
+    CheckWriteStartRequiresInputToken(Opcode::OP_ASSEMBLE);
+}
+
+TEST_F(GraphPartitionTest, PostCheckCopyOutStartRequiresInputToken)
+{
+    CheckWriteStartRequiresInputToken(Opcode::OP_COPY_OUT);
+}
+
 TEST_F(GraphPartitionTest, PreservesAcyclicTokenConnectedSubgraphs)
 {
     ComputationalGraphBuilder G;
