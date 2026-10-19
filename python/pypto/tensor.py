@@ -566,6 +566,8 @@ class Tensor:
             if isinstance(k, (int, SymbolicScalar)):
                 if isinstance(k, int) and k < 0:
                     k = size + k
+                elif isinstance(k, SymbolicScalar) and k.is_concrete() and k.concrete() < 0:
+                    k = size + k.concrete()
                 normalized.append(k)
                 continue
             start, stop, step = k.start, k.stop, k.step

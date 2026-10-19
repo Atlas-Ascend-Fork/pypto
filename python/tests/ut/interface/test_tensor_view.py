@@ -183,3 +183,14 @@ def test_view_validshape_dimension_mismatch():
         with pypto.function("VIEW_VALIDSHAPE_DIM_MISMATCH", x):
             pypto.set_vec_tile_shapes(4, 8)
             pypto.view(x, view_shape, offset, valid_shape=valid_shape)
+
+
+def test_tensor_negative_symbolic_index():
+    """Normalize concrete negative SymbolicScalar indices and preserve dynamic ones."""
+    index = pypto.SymbolicScalar(-1)
+    normalized = pypto.Tensor._negative_index_to_positive((index,), [4])
+    dynamic_index = pypto.SymbolicScalar("i")
+    normalized_dynamic = pypto.Tensor._negative_index_to_positive((dynamic_index,), [4])
+
+    assert normalized == (3,)
+    assert normalized_dynamic[0] is dynamic_index
