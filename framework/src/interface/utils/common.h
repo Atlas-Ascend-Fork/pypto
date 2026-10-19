@@ -474,12 +474,18 @@ inline bool IsPtoDataDumpEnabled()
     return result;
 }
 
-// 判断环境变量 ENABLE_AICORE_RESOLVE 是否为 true
+// DRCO 架构默认支持判定：仅 DAV_3510（dav-c310 系列）返回 true，平台信息不可用时保守返回 false
+bool IsDrcoArchSupported();
+
+// 判断环境变量 ENABLE_AICORE_RESOLVE 是否开启（显式 true/false 优先；未设置时按芯片架构默认）
 inline bool IsAicoreResolveEnabled()
 {
     static const bool result = []() {
         std::string value = GetEnvVar("ENABLE_AICORE_RESOLVE", true, true);
-        return (value == "true");
+        if (value == "true" || value == "false") {
+            return value == "true";
+        }
+        return IsDrcoArchSupported();
     }();
 
     return result;

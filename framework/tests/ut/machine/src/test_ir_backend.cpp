@@ -675,8 +675,14 @@ TEST_F(TestSuite_IrBackend, VisitForStmtForControlFlow_AllCases)
                                    ctx.controlFlowOss, ctx.expressionOss, ctx.exprHeaderOss, 1, "expr",
                                    ctx.exprSrcFiles, ctx.meta);
         auto output = ctx.controlFlowOss.str();
-        EXPECT_TRUE(output.find("RUNTIME_FUNCKEY_PARALLEL_FOR_BEGIN") != std::string::npos);
-        EXPECT_TRUE(output.find("RUNTIME_FUNCKEY_PARALLEL_FOR_END") != std::string::npos);
+        // DRCO(ENABLE_AICORE_RESOLVE) 开启时 GetDeviceSchedParallelism 强制为 1，不输出 PARALLEL_FOR 标记
+        if (config::GetDeviceSchedParallelism() > 1) {
+            EXPECT_TRUE(output.find("RUNTIME_FUNCKEY_PARALLEL_FOR_BEGIN") != std::string::npos);
+            EXPECT_TRUE(output.find("RUNTIME_FUNCKEY_PARALLEL_FOR_END") != std::string::npos);
+        } else {
+            EXPECT_TRUE(output.find("RUNTIME_FUNCKEY_PARALLEL_FOR_BEGIN") == std::string::npos);
+            EXPECT_TRUE(output.find("RUNTIME_FUNCKEY_PARALLEL_FOR_END") == std::string::npos);
+        }
     }
     {
         DynFuncFixture dynFixture;

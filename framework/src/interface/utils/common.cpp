@@ -15,6 +15,8 @@
 
 #include "interface/utils/common.h"
 
+#include "tilefwk/platform.h"
+
 #include <sys/types.h>
 #include <unistd.h>
 #include <sys/wait.h>
@@ -195,6 +197,16 @@ int SafeExecCommand(const std::vector<std::string>& args)
         return WEXITSTATUS(status);
     }
     return -1;
+}
+
+bool IsDrcoArchSupported()
+{
+    try {
+        return Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510;
+    } catch (...) {
+        // 平台信息不可用（如无 ini 配置）时保守关闭
+        return false;
+    }
 }
 
 } // namespace npu::tile_fwk
