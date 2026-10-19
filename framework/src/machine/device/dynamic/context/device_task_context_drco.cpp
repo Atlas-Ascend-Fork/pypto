@@ -21,8 +21,8 @@ namespace {
 
 // 收编门槛与静态缓冲容量：后继数不足门槛或超容量均回退老路径（fast path 是纯优化，
 // 回退语义安全；容量按大扇出头上限留一倍余量）
-constexpr uint32_t MQ_MIN_SUCC = 16;
-constexpr uint32_t MQ_MAX_SUCC = 2048;
+constexpr uint32_t MIDDLE_QUEUE_MIN_SUCC = 16;
+constexpr uint32_t MIDDLE_QUEUE_MAX_SUCC = 2048;
 
 // per-func predCount 数组基址缓存：双基址解码（与设备侧 DrcoGetCurrentRootFuncData 同
 // 编码），按目标函数单项缓存——同头成员通常集中在同一目标函数，命中率极高
@@ -44,12 +44,12 @@ uint32_t CollectDirectSuccessors(DevAscendFunction* devFunc, DevAscendFunctionDu
     size_t depSuccSize = 0;
     const uint32_t* depSuccs = devFunc->GetOperationDepGraphSuccAddr(static_cast<int>(op), depSuccSize);
     const auto& stitch = duppedData->GetOperationStitch(static_cast<int>(op), true);
-    if (depSuccSize < MQ_MIN_SUCC && stitch.IsNull()) {
+    if (depSuccSize < MIDDLE_QUEUE_MIN_SUCC && stitch.IsNull()) {
         return 0;
     }
     uint32_t cnt = 0;
     for (size_t k = 0; k < depSuccSize; k++) {
-        if (cnt >= MQ_MAX_SUCC) {
+        if (cnt >= MIDDLE_QUEUE_MAX_SUCC) {
             return 0; // 超静态容量：回退老路径
         }
         succBuf[cnt++] = npu::tile_fwk::MakeTaskID(headFunc, depSuccs[k] & TASKID_FROM_CTRL_TOPO_MASK);
@@ -57,7 +57,7 @@ uint32_t CollectDirectSuccessors(DevAscendFunction* devFunc, DevAscendFunctionDu
     for (auto* n = stitch.Head(); n != nullptr; n = n->Next()) {
         const uint32_t nodeSize = n->Size();
         for (uint32_t i = 0; i < nodeSize; i++) {
-            if (cnt >= MQ_MAX_SUCC) {
+            if (cnt >= MIDDLE_QUEUE_MAX_SUCC) {
                 return 0;
             }
             succBuf[cnt++] = n->At(i) & TASKID_FROM_CTRL_TOPO_MASK;
@@ -137,7 +137,7 @@ bool SpreadMiddleQueueMembers(npu::tile_fwk::DrcoRootFuncList* rootFuncList, Dev
                               const uint32_t* memberTask, const uint32_t* memberCt, uint32_t memberCnt,
                               uint32_t headFlat, uint32_t slot, uint32_t nrValidAic, uint32_t queueCapacity)
 {
-    uint32_t memberCore[MQ_MAX_SUCC];
+    uint32_t memberCore[MIDDLE_QUEUE_MAX_SUCC];
     uint32_t perCore[3 * npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE];
     for (uint32_t c = 0; c < 3 * nrValidAic; c++) {
         perCore[c] = 0;
@@ -189,6 +189,15 @@ void DeviceTaskContext::InitDrcoRootFuncList(DynDeviceTask* dyntask)
             workspace_->SlabAlloc(sizeof(npu::tile_fwk::DrcoRootFuncList), WsAicpuSlabMemType::DYN_FUNC_DATA))
             .ptr);
     dyntask->drcoRootFuncList = rootFuncList;
+    // middleQueue 懒分配数组 + 区域注册表计数：rootFuncList 整体不清零（reinterpret_cast
+    // 分配，默认成员初始化不执行），未赋值槽位残留 workspace 旧数据指针（设备侧仅判非空即
+    // 解引用 → taskId 越界，AIV aicore 271，MxQuantize 实证）；mqRegionHeadCount 残留上一
+    // devTask 的合法值（slab 复用）更凶——当前图注册追加在陈旧列表后，设备侧 TryOpen 撞
+    // 陈旧头即假命中，非头任务被写 0xff + 陈旧叶计数入账 → executedCount 污染。分配点建立
+    // nullptr/0 契约（谁分配谁初始化）。
+    (void)memset_s(rootFuncList->perCoreMiddleQueueArray, sizeof(rootFuncList->perCoreMiddleQueueArray), 0,
+                   sizeof(rootFuncList->perCoreMiddleQueueArray));
+    rootFuncList->middleQueueRegionHeadCount = 0;
     uint32_t queueCapacity = dyntask->devTask.coreFunctionCnt;
     uint32_t aicTaskCnt = 0;
     uint32_t aivTaskCnt = 0;
@@ -493,8 +502,8 @@ bool DeviceTaskContext::TryHeadReleaseFastPath(DynDeviceTask* dyntask, DevAscend
     const uint64_t funcCount = dyntask->dynFuncDataCacheListSize;
     PredArrCache predCache{reinterpret_cast<uint64_t>(rootFuncList->metadataBase),
                            reinterpret_cast<uint64_t>(rootFuncList->controlFlowCacheBase)};
-    uint32_t succBuf[MQ_MAX_SUCC]; // 收集缓冲兼成员压实缓冲（写位恒 ≤ 读位）
-    uint32_t memberCt[MQ_MAX_SUCC];
+    uint32_t succBuf[MIDDLE_QUEUE_MAX_SUCC]; // 收集缓冲兼成员压实缓冲（写位恒 ≤ 读位）
+    uint32_t memberCt[MIDDLE_QUEUE_MAX_SUCC];
     uint32_t regionApplied = 0;
     for (uint64_t f = 0; f < funcCount; f++) {
         DevAscendFunction* devFunc = dyntask->dynFuncDataCacheList[f].devFunc;
@@ -509,7 +518,7 @@ bool DeviceTaskContext::TryHeadReleaseFastPath(DynDeviceTask* dyntask, DevAscend
                 continue;
             }
             const uint32_t succCnt = CollectDirectSuccessors(devFunc, duppedData, static_cast<uint32_t>(f), o, succBuf);
-            if (succCnt < MQ_MIN_SUCC) {
+            if (succCnt < MIDDLE_QUEUE_MIN_SUCC) {
                 continue;
             }
             const uint32_t memberCnt = CollectEligibleMembers(dyntask, funcCount, predCache, succBuf, succCnt, succBuf,
@@ -518,12 +527,13 @@ bool DeviceTaskContext::TryHeadReleaseFastPath(DynDeviceTask* dyntask, DevAscend
                 continue;
             }
             // 头注册（头调度不动；完成点命中 → 写 0xff 开门并跳过整个 resolve）
-            if (rootFuncList->mqRegionHeadCount >= npu::tile_fwk::DrcoRootFuncList::DRCO_MQ_REGION_MAX) {
+            if (rootFuncList->middleQueueRegionHeadCount >=
+                npu::tile_fwk::DrcoRootFuncList::DRCO_MIDDLE_QUEUE_REGION_MAX) {
                 continue;
             }
             const uint32_t headFlat = npu::tile_fwk::MakeTaskID(static_cast<uint32_t>(f), static_cast<uint32_t>(o));
-            const uint32_t regionIdx = rootFuncList->mqRegionHeadCount;
-            rootFuncList->mqRegionHeadList[rootFuncList->mqRegionHeadCount++] = headFlat;
+            const uint32_t regionIdx = rootFuncList->middleQueueRegionHeadCount;
+            rootFuncList->middleQueueRegionHeadList[rootFuncList->middleQueueRegionHeadCount++] = headFlat;
             uint32_t aicLeafCnt = 0;
             uint32_t aivLeafCnt = 0;
             for (uint32_t mi = 0; mi < memberCnt; mi++) {
@@ -533,14 +543,14 @@ bool DeviceTaskContext::TryHeadReleaseFastPath(DynDeviceTask* dyntask, DevAscend
                     aivLeafCnt++;
                 }
             }
-            rootFuncList->mqRegionLeafCountAic[regionIdx] = aicLeafCnt;
-            rootFuncList->mqRegionLeafCountAiv[regionIdx] = aivLeafCnt;
+            rootFuncList->middleQueueRegionLeafCountAic[regionIdx] = aicLeafCnt;
+            rootFuncList->middleQueueRegionLeafCountAiv[regionIdx] = aivLeafCnt;
 
             // 撒核 + 入队。slot = regionApplied（候选序）：同 devTask 多头各自独立槽位/
             // 独立门——共享单槽会 headTaskId 互相覆盖，后入队头开门时放行未完成头的成员
             if (!SpreadMiddleQueueMembers(rootFuncList, workspace_, succBuf, memberCt, memberCnt, headFlat,
                                           regionApplied, nrValidAic, queueCapacity)) {
-                rootFuncList->mqRegionHeadCount--; // 容量不足回退本次注册
+                rootFuncList->middleQueueRegionHeadCount--; // 容量不足回退本次注册
                 continue;
             }
             regionApplied++;
