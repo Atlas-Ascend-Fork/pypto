@@ -10,12 +10,12 @@
 
 /*!
  * \file test_device_perf.cpp
- * \brief UT for machine/runtime/runner/device_perf.cpp
+ * \brief UT for machine/runtime/runner/fed_prof.cpp
  */
 
 #include <gtest/gtest.h>
 #define private public
-#include "machine/runtime/runner/device_perf.h"
+#include "machine/runtime/runner/fed_prof.h"
 #undef private
 #include "interface/configs/config_manager.h"
 #include "tilefwk/aicpu_common.h"
@@ -25,119 +25,121 @@ using namespace npu::tile_fwk;
 TEST(DevicePerfTest, AllPerfOps_NoCrash)
 {
     {
-        DevicePerf perf;
+        FedProf perf;
     }
 
-    DevicePerf perf;
-    DeviceArgs args;
+    FedProf perf;
+    FedProfDeviceArgs args;
     args.nrAic = 2;
     args.nrAiv = 4;
     perf.args_ = args;
-    EXPECT_EQ(perf.GetPerfDataSize(), 2u + 4u + 1u);
+    EXPECT_EQ(perf.GetCoreCount(), 2u + 4u + 1u);
 
-    perf.SyncProfData(false);
-    perf.ResetMetrics(0);
-    perf.ResetMetrics(999);
-    perf.ReleasePerfData();
-    EXPECT_TRUE(perf.perfData_.empty());
+    perf.PerCoreProfSync(false);
+    perf.PerCoreProfResetMetadata(0);
+    perf.PerCoreProfResetMetadata(999);
+    perf.PerCoreProfReleaseData();
+    EXPECT_EQ(perf.perCoreProfDevAddr_, 0u);
 
-    perf.StopMachinePerfTraceDumpThread();
-    perf.StartMachinePerfTraceDumpThread();
+    perf.AicpuProfDumpThreadStop();
+    perf.AicpuProfDumpThreadStart();
     EXPECT_FALSE(perf.dumpThread_.joinable());
 }
 
-TEST(DevicePerfTest, ResetMetrics_EmptyPerfData)
+TEST(DevicePerfTest, ResetMetadata_EmptyPerfData)
 {
-    DevicePerf perf;
-    perf.ResetMetrics(0);
+    FedProf perf;
+    perf.PerCoreProfResetMetadata(0);
 }
 
-TEST(DevicePerfTest, ResetMetrics_IndexOutOfRange)
+TEST(DevicePerfTest, ResetMetadata_IndexOutOfRange)
 {
-    DevicePerf perf;
-    perf.perfData_.push_back(nullptr);
-    perf.ResetMetrics(5);
+    FedProf perf;
+    perf.perCoreProfDevAddr_ = 0x1000;
+    perf.PerCoreProfResetMetadata(5);
+    perf.perCoreProfDevAddr_ = 0;
 }
 
-TEST(DevicePerfTest, SyncProfData_DebugDisabled)
+TEST(DevicePerfTest, SyncData_DebugDisabled)
 {
-    DevicePerf perf;
-    perf.SyncProfData(false);
+    FedProf perf;
+    perf.PerCoreProfSync(false);
 }
 
-TEST(DevicePerfTest, ReleasePerfData_NullPtrs)
+TEST(DevicePerfTest, ReleaseData_NullPtrs)
 {
-    DevicePerf perf;
-    perf.perfData_.push_back(nullptr);
-    perf.perfData_.push_back(nullptr);
-    perf.ReleasePerfData();
-    EXPECT_TRUE(perf.perfData_.empty());
+    FedProf perf;
+    perf.perCoreProfDevAddr_ = 0;
+    perf.PerCoreProfReleaseData();
+    EXPECT_EQ(perf.perCoreProfDevAddr_, 0u);
 }
 
-TEST(DevicePerfTest, GetPerfDataSize_Default)
+TEST(DevicePerfTest, GetCoreCount_Default)
 {
-    DevicePerf perf;
-    DeviceArgs args{};
+    FedProf perf;
+    FedProfDeviceArgs args{};
     args.nrAic = 0;
     args.nrAiv = 0;
     perf.args_ = args;
-    EXPECT_EQ(perf.GetPerfDataSize(), 1u);
+    EXPECT_EQ(perf.GetCoreCount(), 1u);
 }
 
 TEST(DevicePerfTest, StartMachinePerfTraceDumpThread_ZeroAddr)
 {
-    DevicePerf perf;
-    perf.args_.aicpuPerfAddr = 0;
-    perf.StartMachinePerfTraceDumpThread();
+    FedProf perf;
+    perf.aicpuProfDevAddr_ = 0;
+    perf.AicpuProfDumpThreadStart();
     EXPECT_FALSE(perf.dumpThread_.joinable());
 }
 
-TEST(DevicePerfTest, ResetPerData_WithPerfData)
+TEST(DevicePerfTest, ResetData_WithPerfData)
 {
-    DevicePerf perf;
-    DeviceArgs args{};
+    FedProf perf;
+    FedProfDeviceArgs args{};
     args.nrAic = 1;
     args.nrAiv = 0;
     perf.args_ = args;
-    perf.perfData_.push_back(nullptr);
-    perf.perfData_.push_back(nullptr);
-    perf.ResetPerData();
+    perf.perCoreProfDevAddr_ = 0x1000;
+    perf.PerCoreProfResetData();
+    perf.perCoreProfDevAddr_ = 0;
 }
 
-TEST(DevicePerfTest, ResetMetrics_WithAicpuPerfAddr)
+TEST(DevicePerfTest, ResetMetadata_WithAicpuPerfAddr)
 {
-    DevicePerf perf;
-    DeviceArgs args{};
+    FedProf perf;
+    FedProfDeviceArgs args{};
     args.nrAic = 1;
     args.nrAiv = 0;
-    args.aicpuPerfAddr = 0x2000;
     perf.args_ = args;
-    perf.perfData_.push_back(nullptr);
-    perf.ResetMetrics(0);
-    EXPECT_TRUE(perf.isPerfDataInited_);
+    perf.aicpuProfDevAddr_ = 0x2000;
+    perf.perCoreProfDevAddr_ = 0x1000;
+    perf.PerCoreProfResetMetadata(0);
+    EXPECT_TRUE(perf.perCoreProfDataInited_);
+    perf.perCoreProfDevAddr_ = 0;
 }
 
-TEST(DevicePerfTest, ResetMetrics_WithAicpuPerfAddr_AlreadyInited)
+TEST(DevicePerfTest, ResetMetadata_WithAicpuPerfAddr_AlreadyInited)
 {
-    DevicePerf perf;
-    DeviceArgs args{};
+    FedProf perf;
+    FedProfDeviceArgs args{};
     args.nrAic = 1;
     args.nrAiv = 0;
-    args.aicpuPerfAddr = 0x2000;
     perf.args_ = args;
-    perf.perfData_.push_back(nullptr);
-    perf.isPerfDataInited_ = true;
-    perf.ResetMetrics(0);
+    perf.aicpuProfDevAddr_ = 0x2000;
+    perf.perCoreProfDevAddr_ = 0x1000;
+    perf.perCoreProfDataInited_ = true;
+    perf.PerCoreProfResetMetadata(0);
+    perf.perCoreProfDevAddr_ = 0;
 }
 
-TEST(DevicePerfTest, ResetMetrics_WithoutAicpuPerfAddr)
+TEST(DevicePerfTest, ResetMetadata_WithoutAicpuPerfAddr)
 {
-    DevicePerf perf;
-    DeviceArgs args{};
+    FedProf perf;
+    FedProfDeviceArgs args{};
     args.nrAic = 1;
     args.nrAiv = 0;
-    args.aicpuPerfAddr = 0;
     perf.args_ = args;
-    perf.perfData_.push_back(nullptr);
-    perf.ResetMetrics(0);
+    perf.perCoreProfDevAddr_ = 0x1000;
+    perf.PerCoreProfResetMetadata(0);
+    perf.perCoreProfDevAddr_ = 0;
 }

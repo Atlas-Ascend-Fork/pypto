@@ -270,7 +270,7 @@ TEST_F(DeviceLauncherNpuTest, RunPreSync_NullStreams)
 TEST_F(DeviceLauncherNpuTest, SetDevPerfAddr_DebugEnable)
 {
     ToSubMachineConfig machinConfig;
-    auto& perf = DevicePerf::GetInstance();
+    auto& perf = FedProf::GetInstance();
     uint8_t sharedBuf[1024] = {0};
     if (perf.args_.sharedBuffer == 0) {
         perf.args_.sharedBuffer = reinterpret_cast<uint64_t>(sharedBuf);
@@ -283,7 +283,7 @@ TEST_F(DeviceLauncherNpuTest, SetDevPerfAddr_DebugEnable)
 TEST_F(DeviceLauncherNpuTest, SetDevPerfAddr_CaptureMode)
 {
     ToSubMachineConfig machinConfig;
-    auto& perf = DevicePerf::GetInstance();
+    auto& perf = FedProf::GetInstance();
     uint8_t sharedBuf[1024] = {0};
     if (perf.args_.sharedBuffer == 0) {
         perf.args_.sharedBuffer = reinterpret_cast<uint64_t>(sharedBuf);

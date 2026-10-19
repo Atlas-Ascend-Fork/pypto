@@ -347,7 +347,7 @@ private:
             rc = DeviceLauncher::DynamicLaunchSynchronize(GetContextScheStream(), GetContextCtrlStream(), aicoreStream);
             EXPECT_EQ(rc, 0);
             bool debugEnable = config::GetDebugOption<int64_t>(CFG_RUNTIME_DBEUG_MODE) == CFG_DEBUG_ALL;
-            DevicePerf::GetInstance().SyncProfData(debugEnable);
+            FedProf::GetInstance().PerCoreProfSync(debugEnable);
         }
         CopyBackInOut(memoryHelper, inputs, outputs);
         if (IsDumpTensorEnable()) {

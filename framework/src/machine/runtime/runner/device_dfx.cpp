@@ -17,6 +17,7 @@
 #include "tilefwk/pypto_fwk_log.h"
 #include "tilefwk/error_code.h"
 #include "interface/utils/common.h"
+#include "machine/runtime/runner/fed_prof.h"
 #include "machine/runtime/runner/runtime_utils.h"
 #include "machine/runtime/memory_utils/memory_pool.h"
 #include "machine/device/dynamic/device_common.h"
@@ -28,18 +29,6 @@ __attribute__((weak)) int drvDeviceGetPhyIdByIndex(uint32_t logicDevId, uint32_t
 }
 
 namespace npu::tile_fwk {
-
-void DeviceDfx::InitAicpuPerfAddr(DeviceArgs& args)
-{
-    if (GetEnvVar("DUMP_DEVICE_PERF") == "true") {
-        auto aicpuDevPtr = DevMallocWithAlignSize(MAX_ROUND_NUM * sizeof(MetricPerf), TWO_MB_HUGE_PAGE_FLAGS);
-        if (aicpuDevPtr == nullptr) {
-            MACHINE_LOGW("Aicpu perf addr malloc failed");
-        } else {
-            args.aicpuPerfAddr = npu::tile_fwk::dynamic::PtrToValue(aicpuDevPtr);
-        }
-    }
-}
 
 void DeviceDfx::InitDevDfxArgs(const bool isPerfTrace, DevDfxArgs& devDfxArg)
 {
@@ -67,10 +56,11 @@ void DeviceDfx::InitDevDfxArgs(const bool isPerfTrace, DevDfxArgs& devDfxArg)
 
 bool DeviceDfx::Init(DeviceArgs& args)
 {
-    InitAicpuPerfAddr(args);
+    args.aicpuProfAddr = FedProf::GetInstance().AicpuProfAllocateData();
+    args.perCoreProfAddr = FedProf::GetInstance().PerCoreProfAllocateData(args.nrAic, args.nrAiv);
 
     DevDfxArgs dfxArgs;
-    InitDevDfxArgs(args.aicpuPerfAddr != 0, dfxArgs);
+    InitDevDfxArgs(args.aicpuProfAddr != 0, dfxArgs);
     args.devDfxArgAddr = reinterpret_cast<uint64_t>(CopyDataToDevice(&dfxArgs, sizeof(DevDfxArgs)));
     if (args.devDfxArgAddr == 0) {
         MACHINE_LOGE(DevCommonErr::ALLOC_FAILED, "Fail to copy dfx info from host to device.");

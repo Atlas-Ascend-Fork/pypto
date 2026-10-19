@@ -78,7 +78,7 @@ TEST(PerfEvtMgrTest, SingletonAndProfControl)
     EXPECT_EQ(&inst1, &inst2);
 
     EXPECT_FALSE(inst1.GetIsOpenProf());
-    inst1.SetIsOpenProf(true, 0x1000);
+    inst1.SetIsOpenProf(true, reinterpret_cast<FedProfAicpuProf*>(0x1000));
     EXPECT_TRUE(inst1.GetIsOpenProf());
     inst1.SetIsOpenProf(false);
     EXPECT_FALSE(inst1.GetIsOpenProf());
@@ -112,10 +112,10 @@ TEST(PerfEvtMgrTest, RepeatPuts_AndPerfTrace)
 TEST(PerfEvtMgrTest, SetIsOpenProf_ExceedMaxTurn)
 {
     auto& mgr = PerfEvtMgr::Instance();
-    for (uint32_t i = 0; i < MAX_ROUND_NUM + 1; ++i) {
+    for (uint32_t i = 0; i < FED_PROF_DEV_TASK_MAX_COUNT + 1; ++i) {
         mgr.AddCtrlTurn();
     }
-    mgr.SetIsOpenProf(true, 0x2000);
+    mgr.SetIsOpenProf(true, reinterpret_cast<FedProfAicpuProf*>(0x2000));
     EXPECT_FALSE(mgr.GetIsOpenProf());
 }
 

@@ -168,7 +168,7 @@ std::string CodeGenNPU::GenFuncHeader(Function& topFunc, CompileInfo& compileInf
     funcHeader << kernelName;
     // kernel func param
     funcHeader << "(" << GM_PARAM_TYPE_FOR_DYN
-               << "* param, int64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ TaskStat* taskStat)";
+               << "* param, int64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ FedProfLeafTaskProf* taskStat)";
     auto funcDec = funcHeader.str() + ";";
     compileInfo.SetFuncDeclare(funcDec);
     funcHeader << " {\n";

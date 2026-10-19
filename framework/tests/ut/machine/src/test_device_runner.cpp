@@ -21,7 +21,7 @@
 #include "tilefwk/platform.h"
 #include "interface/inner/tilefwk.h"
 #include "machine/runtime/runner/host_prof.h"
-#include "machine/runtime/runner/device_perf.h"
+#include "machine/runtime/runner/fed_prof.h"
 #include "machine/runtime/runner/pmu_common.h"
 #include "machine/utils/machine_ws_intf.h"
 #define private public
@@ -80,20 +80,20 @@ TEST_F(TestDeviceRunner, test_ini_proflevel)
     if (AdprofReportAdditionalInfo != nullptr) {
         AdprofReportAdditionalInfo(0, 0, 0);
     }
-    toSubMachineConfig.profConfig.Add(ProfConfig::OFF);
+    toSubMachineConfig.profConfig.Add(FedProfFlag::OFF);
     std::unique_ptr<DeviceArgs> devArgs = std::make_unique<DeviceArgs>();
     devArgs->toSubMachineConfig = toSubMachineConfig;
     prof.ProfInit(devArgs.get());
-    toSubMachineConfig.profConfig.Remove(ProfConfig::OFF);
-    toSubMachineConfig.profConfig.Add(ProfConfig::AICPU_FUNC);
+    toSubMachineConfig.profConfig.Remove(FedProfFlag::OFF);
+    toSubMachineConfig.profConfig.Add(FedProfFlag::AICPU_FUNC);
     devArgs->toSubMachineConfig = toSubMachineConfig;
     prof.ProfInit(devArgs.get());
-    toSubMachineConfig.profConfig.Remove(ProfConfig::AICPU_FUNC);
-    toSubMachineConfig.profConfig.Add(ProfConfig::AICORE_TIME);
+    toSubMachineConfig.profConfig.Remove(FedProfFlag::AICPU_FUNC);
+    toSubMachineConfig.profConfig.Add(FedProfFlag::AICORE_TIME);
     devArgs->toSubMachineConfig = toSubMachineConfig;
     prof.ProfInit(devArgs.get());
-    toSubMachineConfig.profConfig.Remove(ProfConfig::AICORE_TIME);
-    toSubMachineConfig.profConfig.Add(ProfConfig::AICORE_PMU);
+    toSubMachineConfig.profConfig.Remove(FedProfFlag::AICORE_TIME);
+    toSubMachineConfig.profConfig.Add(FedProfFlag::AICORE_PMU);
     devArgs->toSubMachineConfig = toSubMachineConfig;
     int64_t* pmuEventAddrs = (int64_t*)calloc(10, sizeof(int64_t));
     if (pmuEventAddrs == nullptr) {
@@ -104,12 +104,12 @@ TEST_F(TestDeviceRunner, test_ini_proflevel)
     prof.ProfInit(devArgs.get());
     prof.ProfStart();
     int32_t aicoreId = 0;
-    TaskStat* taskStat = new TaskStat();
-    taskStat->seqNo = 1;
-    taskStat->subGraphId = 0;
+    FedProfLeafTaskProf* taskStat = new FedProfLeafTaskProf();
+    taskStat->devTaskIdx = 1;
+    taskStat->leafFuncIdx = 0;
     taskStat->taskId = 0;
-    taskStat->execStart = 0;
-    taskStat->execEnd = 1;
+    taskStat->timestampStart = 0;
+    taskStat->timestampEnd = 1;
     taskStat->waitEventNum = 0;
     taskStat->setEventNum = 0;
     taskStat->perfDataBaseAddr = 0;
@@ -132,37 +132,37 @@ TEST_F(TestDeviceRunner, test_create_proflevel)
         AiCoreManagerPtr = std::make_unique<npu::tile_fwk::dynamic::AiCoreManager>(status);
     npu::tile_fwk::dynamic::AiCoreProf prof(*AiCoreManagerPtr);
 
-    ProfConfig config0;
+    FedProfFlag config0;
     EXPECT_TRUE(config0.Empty());
     EXPECT_EQ(npu::tile_fwk::dynamic::CreateProfLevel(config0), npu::tile_fwk::dynamic::PROF_LEVEL_OFF);
-    ProfConfig config1;
-    config1.Add(ProfConfig::AICORE_PMU);
+    FedProfFlag config1;
+    config1.Add(FedProfFlag::AICORE_PMU);
     EXPECT_EQ(npu::tile_fwk::dynamic::CreateProfLevel(config1), npu::tile_fwk::dynamic::PROF_LEVEL_FUNC_LOG_PMU);
     EXPECT_FALSE(config1.Empty());
-    ProfConfig config2;
-    config2.Add(ProfConfig::AICORE_TIME);
+    FedProfFlag config2;
+    config2.Add(FedProfFlag::AICORE_TIME);
     EXPECT_EQ(npu::tile_fwk::dynamic::CreateProfLevel(config2), npu::tile_fwk::dynamic::PROF_LEVEL_FUNC_LOG);
-    ProfConfig config3;
-    config3.Add(ProfConfig::AICPU_FUNC);
+    FedProfFlag config3;
+    config3.Add(FedProfFlag::AICPU_FUNC);
     EXPECT_EQ(npu::tile_fwk::dynamic::CreateProfLevel(config3), npu::tile_fwk::dynamic::PROF_LEVEL_FUNC);
-    EXPECT_TRUE(config3.Contains(ProfConfig::AICPU_FUNC));
+    EXPECT_TRUE(config3.Contains(FedProfFlag::AICPU_FUNC));
 
-    ProfConfig config4 = config2 | config3;
+    FedProfFlag config4 = config2 | config3;
     EXPECT_EQ(config4.value, 0x3);
-    ProfConfig config5 = ProfConfig::AICPU_FUNC | ProfConfig::AICORE_TIME;
-    EXPECT_TRUE(config5.Overlaps(ProfConfig::AICPU_FUNC));
-    EXPECT_TRUE(config5.Overlaps(ProfConfig::AICORE_TIME));
-    EXPECT_FALSE(config5.Overlaps(ProfConfig::AICORE_PMU));
+    FedProfFlag config5 = FedProfFlag::AICPU_FUNC | FedProfFlag::AICORE_TIME;
+    EXPECT_TRUE(config5.Overlaps(FedProfFlag::AICPU_FUNC));
+    EXPECT_TRUE(config5.Overlaps(FedProfFlag::AICORE_TIME));
+    EXPECT_FALSE(config5.Overlaps(FedProfFlag::AICORE_PMU));
 
-    ProfConfig config6 = ProfConfig::AICPU_FUNC | ProfConfig::AICORE_TIME;
-    config6.Remove(ProfConfig::AICPU_FUNC);
-    EXPECT_EQ(config6.value, ProfConfig::AICORE_TIME);
+    FedProfFlag config6 = FedProfFlag::AICPU_FUNC | FedProfFlag::AICORE_TIME;
+    config6.Remove(FedProfFlag::AICPU_FUNC);
+    EXPECT_EQ(config6.value, FedProfFlag::AICORE_TIME);
 
-    config6.Remove(ProfConfig::AICORE_TIME);
+    config6.Remove(FedProfFlag::AICORE_TIME);
     EXPECT_EQ(config6.value, 0);
 
     ToSubMachineConfig config7;
-    EXPECT_EQ(config7.profConfig.value, ProfConfig::OFF);
+    EXPECT_EQ(config7.profConfig.value, FedProfFlag::OFF);
 }
 
 TEST_F(TestDeviceRunner, KernelLaunchInfo_Constructor)
@@ -188,9 +188,9 @@ TEST_F(TestDeviceRunner, DevicePerf_SetDebugEnable)
     uint8_t sharedBuf[1024] = {0};
     DeviceArgs devArgs{};
     devArgs.sharedBuffer = reinterpret_cast<uint64_t>(sharedBuf);
-    DevicePerf::GetInstance().InitAndStartDumpThread(devArgs);
-    DevicePerf::GetInstance().SetDebugEnable(machinConfig);
-    DevicePerf::GetInstance().InitAndStartDumpThread(DeviceArgs{});
+    FedProf::GetInstance().InitAndStartDumpThread(devArgs);
+    FedProf::GetInstance().SetDebugEnable(machinConfig);
+    FedProf::GetInstance().InitAndStartDumpThread(DeviceArgs{});
     unsetenv("ENABLE_AICORE_RESOLVE");
 }
 

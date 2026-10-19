@@ -130,6 +130,7 @@ def test_not_control_cores():
 
 
 @pytest.mark.soc("910")
+@pytest.mark.skip(reason="Swimlane should always show all aicore")
 @pypto.options(pass_options={"enable_slice": False})
 def test_rts_stream_control_cores():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -143,6 +144,7 @@ def test_rts_stream_control_cores():
 
 
 @pytest.mark.soc("910")
+@pytest.mark.skip(reason="Swimlane should always show all aicore")
 @pypto.options(pass_options={"enable_slice": False})
 def test_rts_device_control_cores():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -155,6 +157,7 @@ def test_rts_device_control_cores():
 
 
 @pytest.mark.soc("910")
+@pytest.mark.skip(reason="Swimlane should always show all aicore")
 @pypto.options(pass_options={"enable_slice": False})
 def test_rts_device_stream_control_cores():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))

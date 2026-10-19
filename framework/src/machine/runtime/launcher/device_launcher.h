@@ -34,7 +34,7 @@
 #include "machine/runtime/memory_utils/device_memory_utils.h"
 #include "machine/runtime/distributed/distributed_context.h"
 #include "machine/runtime/runner/host_prof.h"
-#include "machine/runtime/runner/device_perf.h"
+#include "machine/runtime/runner/fed_prof.h"
 #include "machine/runtime/runner/load_aicpu_op.h"
 #include "machine/runtime/launcher/device_launcher_types.h"
 #include "machine/runtime/launcher/launcher_router.h"
@@ -258,13 +258,13 @@ public:
     static void FillSwimLaneEnableInfo(ToSubMachineConfig& toSubMachineConfig)
     {
         if (config::GetPlatformConfig(KEY_ENABLE_PROF_FUNC, false)) {
-            toSubMachineConfig.profConfig.Add(ProfConfig::AICPU_FUNC);
+            toSubMachineConfig.profConfig.Add(FedProfFlag::AICPU_FUNC);
         }
         if (config::GetPlatformConfig(KEY_ENABLE_PROF_AICORE_TIME, false) || config::IsRuntimeDebugAllEnabled()) {
-            toSubMachineConfig.profConfig.Add(ProfConfig::AICORE_TIME);
+            toSubMachineConfig.profConfig.Add(FedProfFlag::AICORE_TIME);
         }
         if (config::GetPlatformConfig(KEY_ENABLE_PROF_AICORE_PMU, false)) {
-            toSubMachineConfig.profConfig.Add(ProfConfig::AICORE_PMU);
+            toSubMachineConfig.profConfig.Add(FedProfFlag::AICORE_PMU);
         }
     }
 

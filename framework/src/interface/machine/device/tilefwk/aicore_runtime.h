@@ -417,7 +417,7 @@ INLINE int32_t GetTensorDataInt32(CoreFuncParam* ctx, uint64_t address)
 
 #define RT_FUNCTION(name)                                                                                \
     extern "C"[aicore] void name(CoreFuncParam* param, int64_t GMStackBase, __gm__ int64_t* hcclContext, \
-                                 __gm__ TaskStat* taskStat)
+                                 __gm__ FedProfLeafTaskProf* taskStat)
 #define RT_OPERATION(opcode, ...) RT_OPERATION_##opcode(__VA_ARGS__)
 #define RT_OPERATION_MACRO(opcode, ...) RT_OPERATION_MACRO_##opcode(__VA_ARGS__)
 #define RT_DECL_TYPE_TILE(name, primType, space, dim, ...) \

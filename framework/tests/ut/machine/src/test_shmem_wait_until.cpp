@@ -314,7 +314,7 @@ void PrepareTasks(uint32_t tileOpCount, npu::tile_fwk::Distributed::ShmemWaitUnt
 void RunTests(uint32_t tileOpCount, npu::tile_fwk::Distributed::ShmemWaitUntilImpl* shmemWaitUntil,
               uint32_t parallelIdx = 0)
 {
-    TaskStat* taskStat{nullptr};
+    FedProfLeafTaskProf* taskStat{nullptr};
     for (uint32_t taskId = 0; taskId < tileOpCount; ++taskId) {
         shmemWaitUntil->EnqueueOp(taskId, parallelIdx, taskStat);
         shmemWaitUntil->PollCompleted(nullptr, parallelIdx);

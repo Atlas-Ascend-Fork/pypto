@@ -76,18 +76,15 @@ inline bool InitAicoreModelMetrics(DeviceMemoryTy& devMem, DevAscendProgram* dev
         devProg->devArgs.sharedBuffer = 0;
         return false;
     }
-    const size_t metricSize = sizeof(Metrics) + static_cast<size_t>(MAX_DFX_TASK_NUM_PER_CORE) * sizeof(TaskStat);
-    for (uint32_t i = 0; i < totalCoreNum; ++i) {
-        auto* args = reinterpret_cast<KernelArgs*>(sharedBuffer + static_cast<size_t>(i) * SHARED_BUFFER_SIZE);
-        auto* metric = devMem.AllocZero(metricSize, nullptr);
-        if (metric == nullptr) {
-            MACHINE_LOGE(DevCommonErr::ALLOC_FAILED, "Alloc aicore model host metric failed, size=%zu bytes, coreId=%u",
-                         metricSize, i);
-            devProg->devArgs.sharedBuffer = 0;
-            return false;
-        }
-        args->shakeBuffer[SHAK_BUF_DFX_DATA_INDEX] = static_cast<int64_t>(reinterpret_cast<uintptr_t>(metric));
+    const size_t metricSize = static_cast<size_t>(totalCoreNum) *
+                              static_cast<size_t>(FED_PROF_PER_CORE_PROF_ALIGNED_SIZE);
+    auto* metric = devMem.AllocZero(metricSize, nullptr);
+    if (metric == nullptr) {
+        MACHINE_LOGE(DevCommonErr::ALLOC_FAILED, "Alloc aicore model host metric failed, size=%zu bytes", metricSize);
+        devProg->devArgs.perCoreProfAddr = 0;
+        return false;
     }
+    devProg->devArgs.perCoreProfAddr = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(metric));
     return true;
 }
 

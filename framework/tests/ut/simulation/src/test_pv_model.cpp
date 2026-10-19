@@ -34,9 +34,9 @@ TEST(PvModelTest, TestAddGlobalAttr)
     }
 
     std::string code = R"!!!(
-[aicore] void TENSOR_Matmul_T_root_3_0(__gm__ GMTensorInfo* param, uint64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ TaskStat* taskStat) {
+[aicore] void TENSOR_Matmul_T_root_3_0(__gm__ GMTensorInfo* param, uint64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ FedProfLeafTaskProf* taskStat) {
 }
-[aicore] void TENSOR_Matmul_T_root_3_1(__gm__ GMTensorInfo* param, uint64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ TaskStat* taskStat) {
+[aicore] void TENSOR_Matmul_T_root_3_1(__gm__ GMTensorInfo* param, uint64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ FedProfLeafTaskProf* taskStat) {
 }
 )!!!";
 
@@ -57,9 +57,9 @@ TEST(PvModelTest, TestAddGlobalAttr)
     ifile.close();
 
     std::string expect = R"!!!(
-extern "C" __global__ [aicore] void TENSOR_Matmul_T_root_3_0(__gm__ GMTensorInfo* param, uint64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ TaskStat* taskStat) {
+extern "C" __global__ [aicore] void TENSOR_Matmul_T_root_3_0(__gm__ GMTensorInfo* param, uint64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ FedProfLeafTaskProf* taskStat) {
 }
-extern "C" __global__ [aicore] void TENSOR_Matmul_T_root_3_1(__gm__ GMTensorInfo* param, uint64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ TaskStat* taskStat) {
+extern "C" __global__ [aicore] void TENSOR_Matmul_T_root_3_1(__gm__ GMTensorInfo* param, uint64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ FedProfLeafTaskProf* taskStat) {
 }
 
 )!!!";
@@ -80,7 +80,7 @@ TEST(PvModelTest, TestDynCodegen)
 {
     std::string org = R"!!!(
 #include "TileOpImpl.h"
-[aicore] void TENSOR_PATH0_4_0(CoreFuncParam *param, int64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ TaskStat *taskStat) {
+[aicore] void TENSOR_PATH0_4_0(CoreFuncParam *param, int64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ FedProfLeafTaskProf *taskStat) {
 }
 )!!!";
     std::string srcFile("TENSOR_PATH0_4_0.cpp");
@@ -98,17 +98,17 @@ TEST(PvModelTest, TestDynCodegen)
     file.close();
     std::string expect = R"!!!(#include "TileOpImpl.h"
 
-extern "C" [aicore] void TENSOR_PATH0_4_0(CoreFuncParam* param, int64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ TaskStat* taskStat);
+extern "C" [aicore] void TENSOR_PATH0_4_0(CoreFuncParam* param, int64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ FedProfLeafTaskProf* taskStat);
 
 
 extern "C" __global__ [aicore] void PvModelKernelEntry(__gm__ npu::tile_fwk::DynFuncHeader *funcHeader, __gm__ uint64_t *opAttrs) {
     __gm__ npu::tile_fwk::DynFuncData *funcData = (__gm__ npu::tile_fwk::DynFuncData*)(funcHeader + 1);
     CoreFuncParam param = {funcData, funcHeader, opAttrs, funcData->exprTbl};
-    TENSOR_PATH0_4_0(&param, funcHeader->stackWorkSpaceAddr, (__gm__ int64_t *)funcHeader->startArgs->commContexts, (__gm__ TaskStat*)NULL);
+    TENSOR_PATH0_4_0(&param, funcHeader->stackWorkSpaceAddr, (__gm__ int64_t *)funcHeader->startArgs->commContexts, (__gm__ FedProfLeafTaskProf*)NULL);
 }
 
 
-[aicore] void TENSOR_PATH0_4_0(CoreFuncParam *param, int64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ TaskStat *taskStat) {
+[aicore] void TENSOR_PATH0_4_0(CoreFuncParam *param, int64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ FedProfLeafTaskProf *taskStat) {
 }
 )!!!";
     EXPECT_EQ(expect, content);

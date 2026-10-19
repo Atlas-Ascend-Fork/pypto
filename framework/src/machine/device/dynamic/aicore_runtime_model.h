@@ -104,11 +104,11 @@ public:
     bool TryHandShakeByGm(volatile KernelArgs* arg, int64_t dotStatus, int32_t& phyId) override
     {
         volatile int64_t* shakeBuffer = arg->shakeBuffer;
-        if ((*shakeBuffer & 0xFFFFFFFF) != AICORE_SAY_HELLO) {
+        if ((shakeBuffer[0] & 0xFFFFFFFF) != AICORE_SAY_HELLO) {
             return false;
         }
         arg->taskEntry.reserved[0] = static_cast<uint32_t>(dotStatus);
-        phyId = (*shakeBuffer >> NUM_THIRTY_TWO) & AICORE_COREID_MASK;
+        phyId = (shakeBuffer[0] >> NUM_THIRTY_TWO) & AICORE_COREID_MASK;
         arg->waveBufferCpuToCore[CPU_TO_CORE_SHAK_BUF_GOODBYE_INDEX] = 0;
         return true;
     }

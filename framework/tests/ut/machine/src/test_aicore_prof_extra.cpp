@@ -103,8 +103,8 @@ struct ProfPmuTestEnv {
         prof->profReportAdditionalInfoFunc_ = MockReportFunc;
         prof->profLevel_ = PROF_LEVEL_FUNC_LOG_PMU;
 
-        ProfConfig profConfig;
-        profConfig.Add(ProfConfig::AICORE_PMU);
+        FedProfFlag profConfig;
+        profConfig.Add(FedProfFlag::AICORE_PMU);
         DeviceArgs devArgs{};
         devArgs.toSubMachineConfig.profConfig = profConfig;
         devArgs.archInfo = arch;
@@ -124,10 +124,10 @@ struct ProfPmuTestEnv {
 TEST(AicoreProfExtraTest, ProfGetLog_SingleEntry)
 {
     ProfLogTestEnv env;
-    TaskStat stat{};
+    FedProfLeafTaskProf stat{};
     stat.taskId = 1;
-    stat.execStart = 100;
-    stat.execEnd = 200;
+    stat.timestampStart = 100;
+    stat.timestampEnd = 200;
 
     env.prof->ProfGetLog(0, &stat);
 }
@@ -135,10 +135,10 @@ TEST(AicoreProfExtraTest, ProfGetLog_SingleEntry)
 TEST(AicoreProfExtraTest, ProfGetLog_FillAndFlush)
 {
     ProfLogTestEnv env;
-    TaskStat stat{};
+    FedProfLeafTaskProf stat{};
     stat.taskId = 1;
-    stat.execStart = 0;
-    stat.execEnd = 1;
+    stat.timestampStart = 0;
+    stat.timestampEnd = 1;
 
     for (uint32_t i = 0; i < env.prof->logDataMaxNum_; i++) {
         stat.taskId = static_cast<int32_t>(i);
@@ -149,9 +149,9 @@ TEST(AicoreProfExtraTest, ProfGetLog_FillAndFlush)
 TEST(AicoreProfExtraTest, ProfGetLog_MultipleBelowMax)
 {
     ProfLogTestEnv env;
-    TaskStat stat{};
-    stat.execStart = 0;
-    stat.execEnd = 1;
+    FedProfLeafTaskProf stat{};
+    stat.timestampStart = 0;
+    stat.timestampEnd = 1;
 
     for (uint32_t i = 0; i < env.prof->logDataMaxNum_ - 1; i++) {
         stat.taskId = static_cast<int32_t>(i);
@@ -162,10 +162,10 @@ TEST(AicoreProfExtraTest, ProfGetLog_MultipleBelowMax)
 TEST(AicoreProfExtraTest, ProfStopLog_WithData)
 {
     ProfLogTestEnv env;
-    TaskStat stat{};
+    FedProfLeafTaskProf stat{};
     stat.taskId = 1;
-    stat.execStart = 0;
-    stat.execEnd = 1;
+    stat.timestampStart = 0;
+    stat.timestampEnd = 1;
     env.prof->ProfGetLog(0, &stat);
 
     env.prof->ProfStop();
@@ -407,19 +407,19 @@ TEST(AicoreProfExtraTest, AsmCntvc)
 
 TEST(AicoreProfExtraTest, CreateProfLevel_AllBranches)
 {
-    ProfConfig cfg1;
-    cfg1.Add(ProfConfig::AICORE_PMU);
+    FedProfFlag cfg1;
+    cfg1.Add(FedProfFlag::AICORE_PMU);
     EXPECT_EQ(CreateProfLevel(cfg1), PROF_LEVEL_FUNC_LOG_PMU);
 
-    ProfConfig cfg2;
-    cfg2.Add(ProfConfig::AICORE_TIME);
+    FedProfFlag cfg2;
+    cfg2.Add(FedProfFlag::AICORE_TIME);
     EXPECT_EQ(CreateProfLevel(cfg2), PROF_LEVEL_FUNC_LOG);
 
-    ProfConfig cfg3;
-    cfg3.Add(ProfConfig::AICPU_FUNC);
+    FedProfFlag cfg3;
+    cfg3.Add(FedProfFlag::AICPU_FUNC);
     EXPECT_EQ(CreateProfLevel(cfg3), PROF_LEVEL_FUNC);
 
-    ProfConfig cfg4;
+    FedProfFlag cfg4;
     EXPECT_EQ(CreateProfLevel(cfg4), PROF_LEVEL_OFF);
 }
 
@@ -479,10 +479,10 @@ TEST(AicoreProfExtraTest, ProfStop_WithLogDataEnabled)
     ProfLogTestEnv env;
     AdprofGuard guard(true, true);
 
-    TaskStat stat{};
+    FedProfLeafTaskProf stat{};
     stat.taskId = 1;
-    stat.execStart = 0;
-    stat.execEnd = 1;
+    stat.timestampStart = 0;
+    stat.timestampEnd = 1;
     env.prof->ProfGetLog(0, &stat);
     EXPECT_EQ(env.prof->logHead_[0]->cnt, 1u);
 
@@ -502,10 +502,10 @@ TEST(AicoreProfExtraTest, ProfGetLog_Enabled)
     ProfLogTestEnv env;
     AdprofGuard guard(true, true);
 
-    TaskStat stat{};
+    FedProfLeafTaskProf stat{};
     stat.taskId = 42;
-    stat.execStart = 100;
-    stat.execEnd = 200;
+    stat.timestampStart = 100;
+    stat.timestampEnd = 200;
     env.prof->ProfGetLog(0, &stat);
     EXPECT_EQ(env.prof->logHead_[0]->cnt, 1u);
     EXPECT_EQ(env.prof->taskCnt_, 1u);
@@ -516,9 +516,9 @@ TEST(AicoreProfExtraTest, ProfGetLog_FillAndFlushEnabled)
     ProfLogTestEnv env;
     AdprofGuard guard(true, true);
 
-    TaskStat stat{};
-    stat.execStart = 0;
-    stat.execEnd = 1;
+    FedProfLeafTaskProf stat{};
+    stat.timestampStart = 0;
+    stat.timestampEnd = 1;
     for (uint32_t i = 0; i < env.prof->logDataMaxNum_; i++) {
         stat.taskId = static_cast<int32_t>(i);
         env.prof->ProfGetLog(0, &stat);
@@ -531,9 +531,9 @@ TEST(AicoreProfExtraTest, ProfGetLog_MultipleBelowMaxEnabled)
     ProfLogTestEnv env;
     AdprofGuard guard(true, true);
 
-    TaskStat stat{};
-    stat.execStart = 0;
-    stat.execEnd = 1;
+    FedProfLeafTaskProf stat{};
+    stat.timestampStart = 0;
+    stat.timestampEnd = 1;
     for (uint32_t i = 0; i < env.prof->logDataMaxNum_ - 1; i++) {
         stat.taskId = static_cast<int32_t>(i);
         env.prof->ProfGetLog(0, &stat);
@@ -667,7 +667,7 @@ TEST(AicoreProfExtraTest, ProfInit_WithAdprofReport)
     aicoreMng->aicpuIdx_ = 0;
     auto prof = std::make_unique<AiCoreProf>(*aicoreMng);
 
-    ProfConfig profConfig;
+    FedProfFlag profConfig;
     DeviceArgs devArgs{};
     devArgs.toSubMachineConfig.profConfig = profConfig;
     devArgs.archInfo = ArchInfo::DAV_2201;
@@ -687,7 +687,7 @@ TEST(AicoreProfExtraTest, ProfInit_WithoutAdprofReport)
     aicoreMng->aicpuIdx_ = 0;
     auto prof = std::make_unique<AiCoreProf>(*aicoreMng);
 
-    ProfConfig profConfig;
+    FedProfFlag profConfig;
     DeviceArgs devArgs{};
     devArgs.toSubMachineConfig.profConfig = profConfig;
     devArgs.archInfo = ArchInfo::DAV_2201;

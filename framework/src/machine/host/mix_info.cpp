@@ -22,9 +22,9 @@ using json = nlohmann::json;
 namespace npu {
 namespace tile_fwk {
 namespace mix_info {
-constexpr uint32_t AVG_EVENTS_PER_TASK = 16;
-constexpr int MAX_DFX_TASK_NUM_PER_CORE = 10000;
-constexpr uint32_t MAX_TOTAL_EVENT_NUMS = AVG_EVENTS_PER_TASK * MAX_DFX_TASK_NUM_PER_CORE;
+constexpr uint32_t FED_PROF_LEAF_TASK_MIX_SYNC_EVENT_AVG_COUNT = 16;
+constexpr int FED_PROF_LEAF_TASK_MAX_COUNT = 10000;
+constexpr uint32_t MAX_TOTAL_EVENT_NUMS = FED_PROF_LEAF_TASK_MIX_SYNC_EVENT_AVG_COUNT * FED_PROF_LEAF_TASK_MAX_COUNT;
 
 int GetMixInfoEventId(const Operation& op)
 {

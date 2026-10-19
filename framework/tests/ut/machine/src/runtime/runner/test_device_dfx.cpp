@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 #define private public
 #include "machine/runtime/runner/device_dfx.h"
+#include "machine/runtime/runner/fed_prof.h"
 #undef private
 
 using namespace npu::tile_fwk;
@@ -32,9 +33,7 @@ TEST(DeviceDfxTest, Singleton_AndInitDevDfxArgs)
 
 TEST(DeviceDfxTest, InitAicpuPerfAddr_NoEnvVar)
 {
-    auto& dfx = DeviceDfx::GetInstance();
     DeviceArgs args{};
-    args.aicpuPerfAddr = 0;
-    dfx.InitAicpuPerfAddr(args);
-    EXPECT_EQ(args.aicpuPerfAddr, 0u);
+    args.aicpuProfAddr = FedProf::GetInstance().AicpuProfAllocateData();
+    EXPECT_EQ(args.aicpuProfAddr, 0u);
 }

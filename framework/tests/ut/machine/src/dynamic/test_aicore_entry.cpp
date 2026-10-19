@@ -94,7 +94,7 @@ struct MultipleCore : ThreadAicoreEmulation {
     static void StartKernelEntry(std::shared_ptr<MultipleCore> aicore) { aicore->WaitAndStartKernelEntry(); }
 
     virtual void AicoreCallSubFuncTask(uint64_t funcIdx, CoreFuncParam* param, int64_t gmStackAddr,
-                                       __gm__ int64_t* hcclContext, TaskStat* taskStat) override
+                                       __gm__ int64_t* hcclContext, FedProfLeafTaskProf* taskStat) override
     {
         UNUSED(funcIdx);
         UNUSED(param);

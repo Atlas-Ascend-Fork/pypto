@@ -347,7 +347,9 @@ if (ENABLE_FEATURE_PYTHON_FRONT_END)
         )
         install(FILES
                     framework/src/interface/machine/device/tilefwk/aicpu_common.h
-                    framework/src/interface/machine/device/tilefwk/aicpu_perf.h
+                    framework/src/interface/machine/device/tilefwk/aikernel_profile_aicpu.h
+                    framework/src/interface/machine/device/tilefwk/aikernel_profile.h
+                    framework/src/interface/machine/device/tilefwk/aikernel_launch.h
                     framework/src/interface/machine/device/tilefwk/aikernel_data.h
                     framework/src/interface/machine/device/tilefwk/aikernel_define.h
                     framework/src/interface/machine/device/tilefwk/aikernel_device_task.h
@@ -471,7 +473,8 @@ if (ENABLE_FEATURE_PYTHON_FRONT_END)
                 COMPONENT pypto
         )
         install(FILES
-                    framework/src/machine/runtime/runner/device_perf.h
+                    framework/src/machine/runtime/runner/fed_prof.h
+                    framework/src/machine/runtime/runner/fed_prof_io_json.h
                     framework/src/machine/runtime/runner/load_aicpu_op.h
                     framework/src/machine/runtime/runner/host_prof.h
                     framework/src/machine/runtime/runner/runtime_agent.h

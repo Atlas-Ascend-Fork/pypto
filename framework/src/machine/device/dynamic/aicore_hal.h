@@ -52,6 +52,7 @@ public:
     {
         aicoreProf_ = aicoreProf;
         sharedBuffer_ = deviceArgs->sharedBuffer;
+        perCoreProfAddr_ = deviceArgs->perCoreProfAddr;
         regAddrs_ = reinterpret_cast<int64_t*>(deviceArgs->coreRegAddr);
         regNum_ = deviceArgs->nrAic + deviceArgs->nrAiv;
         freq_ = GetFreq() / (NSEC_PER_SEC / NSEC_PER_USEC);
@@ -243,54 +244,57 @@ public:
 
     inline int& GetPhyIdByBlockId(int coreIdx) { return blockIdToPhyCoreId_[coreIdx]; }
 
-    Metrics* GetMetrics(int coreIdx)
+    FedProfPerCoreProf* GetPerCoreProf(int coreIdx)
     {
-        volatile KernelArgs* arg = reinterpret_cast<KernelArgs*>(sharedBuffer_ + coreIdx * SHARED_BUFFER_SIZE);
-        volatile Metrics* metric = reinterpret_cast<Metrics*>(arg->shakeBuffer[SHAK_BUF_DFX_DATA_INDEX]);
-        DEV_INFO("aicoreIdx=%d host alloc metric memory: %p.", coreIdx, metric);
-        if (metric == nullptr) {
+        volatile FedProfPerCoreProf* prof = nullptr;
+        if (perCoreProfAddr_ != 0) {
+            prof = reinterpret_cast<volatile FedProfPerCoreProf*>(perCoreProfAddr_ +
+                                                                  coreIdx * FED_PROF_PER_CORE_PROF_ALIGNED_SIZE);
+        }
+        DEV_INFO("aicoreIdx=%d host alloc metric memory: %p.", coreIdx, prof);
+        if (prof == nullptr) {
             DEV_ERROR(DevCommonErr::NULLPTR, "#sche.prof.aicore.getaddr: aicoreIdx=%d null metric.", coreIdx);
             return nullptr;
         }
 
         TIMEOUT_CHECK_INIT(archInfo_, TIMEOUT_DISPATCH);
-        volatile int stopFlag = metric->isMetricStop;
-        while (stopFlag != 1) {
+        volatile int isProfFinish = prof->status.isProfFinish;
+        while (isProfFinish != 1) {
             __PYPTO_TIMEOUT_CHECK_EXIT_ONLY(DevCommonErr::NULLPTR, return nullptr,
                                             "#sche.prof.aicore.wait_finish: wait metrics done.");
-            stopFlag = metric->isMetricStop;
+            isProfFinish = prof->status.isProfFinish;
         }
 
-        return reinterpret_cast<Metrics*>(arg->shakeBuffer[SHAK_BUF_DFX_DATA_INDEX]);
+        return const_cast<FedProfPerCoreProf*>(prof);
     }
 
     int DumpTaskProf(int coreIdx, CoreType coreType)
     {
-        Metrics* metric = GetMetrics(coreIdx);
-        if (metric == nullptr) {
+        FedProfPerCoreProf* prof = GetPerCoreProf(coreIdx);
+        if (prof == nullptr) {
             return DEVICE_MACHINE_ERROR;
         }
-        metric->coreType = static_cast<int16_t>(coreType);
+        prof->status.coreType = static_cast<int16_t>(coreType);
         DEV_VERBOSE_DEBUG("Dump core %d coreType[%s] prof data , task cnt %ld, metric:%p.", coreIdx,
-                          coreType == CoreType::AIC ? "AIC" : "AIV", metric->taskCount, metric);
-        for (int i = 0; i < metric->taskCount; i++) {
-            volatile TaskStat* stat = &metric->tasks[i];
-            aicoreProf_->ProfGetLog(coreIdx, &(metric)->tasks[i]);
-            DEV_VERBOSE_DEBUG("  Dump prof for task %d, execstart: %ld execend :%ld.", stat->taskId, stat->execStart,
-                              stat->execEnd);
+                          coreType == CoreType::AIC ? "AIC" : "AIV", prof->status.leafTaskCount, prof);
+        for (int i = 0; i < prof->status.leafTaskCount; i++) {
+            volatile FedProfLeafTaskProf* stat = &prof->leafTaskProfList[i];
+            aicoreProf_->ProfGetLog(coreIdx, &(prof)->leafTaskProfList[i]);
+            DEV_VERBOSE_DEBUG("  Dump prof for task %d, execstart: %ld execend :%ld.", stat->taskId,
+                              stat->timestampStart, stat->timestampEnd);
         }
         return 0;
     }
 
     int SetAicorePerfTrace(int coreIdx, CoreType coreType, int16_t aicpuIdx)
     {
-        Metrics* metric = GetMetrics(coreIdx);
-        if (metric == nullptr) {
+        FedProfPerCoreProf* prof = GetPerCoreProf(coreIdx);
+        if (prof == nullptr) {
             return DEVICE_MACHINE_ERROR;
         }
-        metric->coreType = static_cast<int16_t>(coreType);
+        prof->status.coreType = static_cast<int16_t>(coreType);
         DEV_VERBOSE_DEBUG("Aicore %d coreType[%s]", coreIdx, coreType == CoreType::AIC ? "AIC" : "AIV");
-        metric->scheCpuIdx = aicpuIdx;
+        prof->status.scheCpuIdx = aicpuIdx;
         return 0;
     }
 
@@ -332,13 +336,13 @@ public:
             auto args = reinterpret_cast<KernelArgs*>((static_cast<uint64_t>(sharedBuffer_)) +
                                                       SHARED_BUFFER_SIZE * coreIdx);
             volatile int64_t* shakeBuffer = args->shakeBuffer;
-            if ((*shakeBuffer & 0xFFFFFFFF) != AICORE_SAY_HELLO) {
+            if ((shakeBuffer[0] & 0xFFFFFFFF) != AICORE_SAY_HELLO) {
                 return false;
             }
 
             args_[coreIdx] = args;
             args->taskEntry.reserved[0] = static_cast<uint32_t>(dotStatus);
-            GetPhyIdByBlockId(coreIdx) = (*shakeBuffer >> NUM_THIRTY_TWO) & AICORE_COREID_MASK;
+            GetPhyIdByBlockId(coreIdx) = (shakeBuffer[0] >> NUM_THIRTY_TWO) & AICORE_COREID_MASK;
             if (isNeedWriteRegForFastPath_) {
                 WriteReg32(coreIdx, REG_SPR_FAST_PATH_ENABLE, REG_SPR_FAST_PATH_OPEN);
             }
@@ -484,6 +488,7 @@ private:
     }
 
     int64_t sharedBuffer_;
+    uint64_t perCoreProfAddr_{0};
     int64_t* regAddrs_{nullptr};
     int aicStart_{0};
     int aicEnd_{0};

@@ -28,7 +28,7 @@
 #include "securec.h"
 #include "tilefwk/device_error_code.h"
 #include "machine/utils/device_log.h"
-#include "interface/machine/device/tilefwk/aicpu_perf.h"
+#include "interface/machine/device/tilefwk/aikernel_profile_aicpu.h"
 #include "interface/machine/device/tilefwk/aicpu_common.h"
 
 #ifndef CONFIG_MAX_DEVICE_TASK_NUM

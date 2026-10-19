@@ -127,7 +127,7 @@ INLINE uint32_t RefreshParallelDevTaskByModifyFlag(ExecuteContext* ctx, uint32_t
     return 0;
 }
 
-INLINE uint32_t RefreshParallelDevTask(ExecuteContext* ctx, __gm__ Metrics* metric, uint32_t& lastRegHighVal)
+INLINE uint32_t RefreshParallelDevTask(ExecuteContext* ctx, __gm__ FedProfPerCoreProf* metric, uint32_t& lastRegHighVal)
 {
     uint32_t newRegHighVal = GetRegHighValue(ctx->args, lastRegHighVal);
     if (newRegHighVal == 0) {
@@ -143,7 +143,7 @@ INLINE uint32_t RefreshParallelDevTask(ExecuteContext* ctx, __gm__ Metrics* metr
     dcci((__gm__ void*)0, ENTIRE_DATA_CACHE, CACHELINE_OUT);
 
     // start new devtask
-    PerfTraceRecord(ctx->SeqNo(), ctx->aicoreDevTaskMetric.devTaskMetric, PERF_TRACE_CORE_DEV_TASK_RCV_MODEL);
+    FedProfDevTaskProfRecord(ctx->SeqNo(), ctx->devTaskProfStatus.devTaskProf, PERF_TRACE_CORE_DEV_TASK_RCV_MODEL);
     ctx->lastTaskFinishCycle = 0;
     (void)metric;
     return 0;

@@ -9,12 +9,12 @@
  */
 
 /*!
- * \file aicpu_perf.h
+ * \file aikernel_profile_aicpu.h
  * \brief
  */
 
-#ifndef AICPU_PREF_H
-#define AICPU_PREF_H
+#ifndef AIKERNEL_PROFILE_AICPU_H
+#define AIKERNEL_PROFILE_AICPU_H
 
 #include <cstdint>
 

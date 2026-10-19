@@ -26,7 +26,6 @@ public:
     int DumpAicoreLog();
 
 private:
-    void InitAicpuPerfAddr(DeviceArgs& args);
     void InitDevDfxArgs(bool isPerfTrace, DevDfxArgs& devDfxArg);
     int InitAicorePrint(const DeviceArgs& args);
     AicorePrintHostManager aicorePrintMgr_;

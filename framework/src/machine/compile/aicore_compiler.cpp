@@ -249,7 +249,8 @@ std::string GenSubFuncCall(std::map<uint64_t, Function*>& leafDict, CoreType cor
     }
     // Define call sub func inline function.
     code << "__attribute__((always_inline)) inline __aicore__ void CallSubFuncTask(uint64_t funcIdx, ";
-    code << "CoreFuncParam *param, int64_t gmStackAddr, __gm__ int64_t *hcclContext, __gm__ TaskStat* taskStat) {\n";
+    code << "CoreFuncParam *param, int64_t gmStackAddr, __gm__ int64_t *hcclContext, __gm__ FedProfLeafTaskProf* "
+            "taskStat) {\n";
     code << "    switch (funcIdx) {\n";
     for (const auto& iter : idxNameMap) {
         MACHINE_LOGD("Call sub func id[%d], kernel_name[%s].", iter.first, iter.second.c_str());

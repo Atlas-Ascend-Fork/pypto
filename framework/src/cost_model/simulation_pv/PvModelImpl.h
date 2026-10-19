@@ -106,14 +106,14 @@ public:
         auto name = ExtractFunctionName(content);
 
         std::string decName = R"!!!(
-extern "C" [aicore] void {KernelName}(CoreFuncParam* param, int64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ TaskStat* taskStat);
+extern "C" [aicore] void {KernelName}(CoreFuncParam* param, int64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ FedProfLeafTaskProf* taskStat);
 
 )!!!";
         std::string entry = R"!!!(
 extern "C" __global__ [aicore] void PvModelKernelEntry(__gm__ npu::tile_fwk::DynFuncHeader *funcHeader, __gm__ uint64_t *opAttrs) {
     __gm__ npu::tile_fwk::DynFuncData *funcData = (__gm__ npu::tile_fwk::DynFuncData*)(funcHeader + 1);
     CoreFuncParam param = {funcData, funcHeader, opAttrs, funcData->exprTbl};
-    {KernelName}(&param, funcHeader->stackWorkSpaceAddr, (__gm__ int64_t *)funcHeader->startArgs->commContexts, (__gm__ TaskStat*)NULL);
+    {KernelName}(&param, funcHeader->stackWorkSpaceAddr, (__gm__ int64_t *)funcHeader->startArgs->commContexts, (__gm__ FedProfLeafTaskProf*)NULL);
 }
 
 )!!!";

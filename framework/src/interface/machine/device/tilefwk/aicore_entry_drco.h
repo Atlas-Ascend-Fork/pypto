@@ -240,7 +240,7 @@ constexpr uint32_t HUB_STACK_SIZE = DRCO_FETCH_BATCH_SIZE + 4;
 struct DrcoEntryState {
     BlockDesc blockDesc;
     __gm__ KernelArgs* args;
-    __gm__ Metrics* metric;
+    __gm__ FedProfPerCoreProf* metric;
     ExecuteContext ctx;
     __gm__ npu::tile_fwk::RuntimeDataRingBufferHeadData* runtimeDataRingBufferHeadData;
     __gm__ npu::tile_fwk::DevStartArgsBase* base;
@@ -939,7 +939,7 @@ INLINE void DrcoResolveDependOnce(DrcoEntryState* state, __gm__ npu::tile_fwk::D
             DrcoFlushBatchTasks(state, rootFuncList, succTaskIdListCoreList, succTaskIdListSizeCoreList);
         }
     } else {
-        RecordMetricHubStatistic(&state->ctx, succTaskId, npu::tile_fwk::FuncID(succTaskId));
+        FedProfLeafTaskProfRecordMix(&state->ctx, succTaskId, npu::tile_fwk::FuncID(succTaskId));
         // hubStack == nullptr（消费核 pop 路径）或栈满：改投全核共享 hub 矩阵，被任意核
         // fetch 时 pop 就地解依赖（不执行不计数）；own-type 队列因此只含可执行 leaf
         if (hubStack != nullptr && hubStackTop + 1 < HUB_STACK_SIZE) {
@@ -1798,12 +1798,15 @@ INLINE void InitDrcoEntry(DrcoEntryState* state, int64_t cfgdata)
     state->blockDesc = BlockDescCreate(blockIdx, typedBlockIdx, devArgs->nrValidAic, devArgs->nrValidAic * 2);
     state->args = (__gm__ KernelArgs*)(devArgs->sharedBuffer +
                                        BlockDescBlockIdx(state->blockDesc) * SHARED_BUFFER_SIZE);
-    __gm__ Metrics* metric = (__gm__ Metrics*)(state->args->shakeBuffer[SHAK_BUF_DFX_DATA_INDEX]);
+    __gm__ FedProfPerCoreProf* metric = (__gm__ FedProfPerCoreProf*)(devArgs->perCoreProfAddr +
+                                                                     BlockDescBlockIdx(state->blockDesc) *
+                                                                         FED_PROF_PER_CORE_PROF_ALIGNED_SIZE);
     state->metric = metric;
     state->ctx.args = state->args;
     state->ctx.blockIdx = BlockDescBlockIdx(state->blockDesc);
+    state->ctx.perCoreProf = metric;
     __gm__ DevDfxArgs* devDfxAddr = (__gm__ DevDfxArgs*)devArgs->devDfxArgAddr;
-    state->ctx.aicoreDevTaskMetric.devTaskMetricEnable = devDfxAddr->isOpenPerfTrace != 0;
+    state->ctx.devTaskProfStatus.profEnabled = devDfxAddr->isOpenPerfTrace != 0;
     state->ctx.profLevel = devDfxAddr->profLevel;
     state->ctx.aicCoreNum = devArgs->nrValidAic;
     // 各 coreType 活跃组区间是本 kernel 生命周期内的不变量，入口一次算好供全部热路径查表
@@ -1817,17 +1820,17 @@ INLINE void InitDrcoEntry(DrcoEntryState* state, int64_t cfgdata)
         aicoreLogLevel = static_cast<uint8_t>(devDfxAddr->logLevel);
     }
 #endif
-    if (state->ctx.aicoreDevTaskMetric.devTaskMetricEnable && metric->turnNum < MAX_ROUND_NUM) {
-        uint64_t round = metric->turnNum;
-        state->ctx.aicoreDevTaskMetric.devTaskMetric = &(metric->aicoreDevTaskInfo[round]);
-        PerfTraceRecord(INVALID_DEV_TASK_ID, state->ctx.aicoreDevTaskMetric.devTaskMetric, PERF_TRACE_CORE_BEGIN,
-                        start);
+    if (state->ctx.devTaskProfStatus.profEnabled && metric->status.currLaunchRound < FED_PROF_DEV_TASK_MAX_COUNT) {
+        uint64_t round = metric->status.currLaunchRound;
+        state->ctx.devTaskProfStatus.devTaskProf = &(metric->aicoreDevTaskInfo[round]);
+        FedProfDevTaskProfRecord(INVALID_DEV_TASK_ID, state->ctx.devTaskProfStatus.devTaskProf, PERF_TRACE_CORE_BEGIN,
+                                 start);
     }
 
     set_mask_norm();
     state->lastMixResourceType = static_cast<uint8_t>(MixResourceType::MIX_UNKNOWN);
 
-    PerfTraceRecord(INVALID_DEV_TASK_ID, state->ctx.aicoreDevTaskMetric.devTaskMetric, PERF_TRACE_CORE_INIT);
+    FedProfDevTaskProfRecord(INVALID_DEV_TASK_ID, state->ctx.devTaskProfStatus.devTaskProf, PERF_TRACE_CORE_INIT);
 
     InitCtx(&state->ctx, metric, nullptr, aicoreLogLevel);
 
@@ -1908,8 +1911,8 @@ INLINE void ExecLeafFunction(DrcoEntryState* state, uint32_t taskId)
 INLINE void PerfDevTaskFirstLeafTask(DrcoEntryState* state)
 {
     if (!state->isExectedLeafTask) {
-        PerfTraceRecord(state->ctx.SeqNo(), state->ctx.aicoreDevTaskMetric.devTaskMetric,
-                        PERF_TRACE_CORE_DEV_TASK_WAIT_RCV_FIRST_LEAF_TASK);
+        FedProfDevTaskProfRecord(state->ctx.SeqNo(), state->ctx.devTaskProfStatus.devTaskProf,
+                                 PERF_TRACE_CORE_DEV_TASK_WAIT_RCV_FIRST_LEAF_TASK);
         state->isExectedLeafTask = true;
     }
 }

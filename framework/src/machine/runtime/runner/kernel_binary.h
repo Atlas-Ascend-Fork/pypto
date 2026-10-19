@@ -31,7 +31,7 @@
 #include "adapter/api/runtime_define.h"
 #include "adapter/api/acl_define.h"
 #include "machine/runtime/runner/host_prof.h"
-#include "machine/runtime/runner/device_perf.h"
+#include "machine/runtime/runner/fed_prof.h"
 
 namespace npu::tile_fwk::dynamic {
 

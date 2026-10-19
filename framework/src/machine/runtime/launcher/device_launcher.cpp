@@ -172,8 +172,8 @@ int DeviceLauncher::RunWithProfile(RtStream aicoreStream, RtStream aicpuStream, 
         if (rc < 0) {
             return rc;
         }
-        DevicePerf::GetInstance().SyncProfData(true);
-        DevicePerf::GetInstance().ResetPerData();
+        FedProf::GetInstance().PerCoreProfSync(true);
+        FedProf::GetInstance().PerCoreProfResetData();
     }
     return 0;
 }
@@ -466,7 +466,7 @@ int DeviceLauncher::SetDevPerfAddr(const bool debugEnable, const bool isCaptureM
         if (isCaptureMode) {
             ExchangeCaptureModeRelax();
         }
-        ret = DevicePerf::GetInstance().SetDebugEnable(profLevelConfig);
+        ret = FedProf::GetInstance().SetDebugEnable(profLevelConfig);
         if (isCaptureMode) {
             ExchangeCaptureModeGlobal();
         }
@@ -575,7 +575,7 @@ int DeviceLauncher::LaunchAicoreKernel(AclRtStream aicoreStream, void* kernel, R
         }
     }
     if (debugEnable) {
-        DevicePerf::GetInstance().SyncProfData(debugEnable);
+        FedProf::GetInstance().PerCoreProfSync(debugEnable);
         ASSERT(DevCommonErr::PARAM_CHECK_FAILED, DevMemoryPool::Instance().CheckAllSentinels());
     }
     if (IsPtoDataDumpEnabled()) {

@@ -8,14 +8,18 @@
 #include <fstream>
 #include <filesystem>
 
-#include "machine/runtime/runner/dump_device_perf.h"
+#define private public
+#include "machine/runtime/runner/fed_prof.h"
+#undef private
 #include "tilefwk/aicpu_common.h"
+#include "machine/device/dynamic/device_utils.h"
 #include "interface/configs/config_manager.h"
 #include "nlohmann/json.hpp"
 using json = nlohmann::json;
 
 namespace npu::tile_fwk::dynamic {
-extern json BuildSyncEventsJson(const TaskStat& taskStat, const uint8_t* perfDataPtr);
+extern void FedProfPerCoreMixSyncEventDumpJsonList(json& mixSyncEventArray, const FedProfLeafTaskProf& taskStat,
+                                                   const FedProfPerCoreProf* perCoreProf);
 } // namespace npu::tile_fwk::dynamic
 
 using namespace npu::tile_fwk;
@@ -25,29 +29,29 @@ class DumpDevicePerfTest : public testing::Test {};
 
 TEST_F(DumpDevicePerfTest, DumpDevTaskPerfData_EmptyPerfData)
 {
-    DeviceArgs args{};
-    std::vector<void*> perfData;
-    DumpDevTaskPerfData(args, perfData, false);
+    FedProf perf;
+    perf.AicpuProfMaybeDumpSwimlane(false);
     SUCCEED();
 }
 
 TEST_F(DumpDevicePerfTest, DumpDevTaskPerfData_EnvNotSet)
 {
-    DeviceArgs args{};
-    std::vector<void*> perfData(1, nullptr);
-    DumpDevTaskPerfData(args, perfData, false);
+    FedProf perf;
+    perf.perCoreProfDevAddr_ = 0;
+    perf.AicpuProfMaybeDumpSwimlane(false);
     SUCCEED();
 }
 
 TEST_F(DumpDevicePerfTest, BuildSyncEventsJson_NoEvents)
 {
-    TaskStat stat{};
+    FedProfLeafTaskProf stat{};
     stat.setEventNum = 0;
     stat.waitEventNum = 0;
     stat.setEventAddr = 0;
     stat.waitEventAddr = 0;
     std::vector<uint8_t> buf(256, 0);
-    json result = BuildSyncEventsJson(stat, buf.data());
+    json result;
+    FedProfPerCoreMixSyncEventDumpJsonList(result, stat, reinterpret_cast<FedProfPerCoreProf*>(buf.data()));
     EXPECT_TRUE(result.empty());
 }
 
@@ -58,12 +62,13 @@ TEST_F(DumpDevicePerfTest, BuildSyncEventsJson_SetEventsOnly)
     setEventArea[0] = 100;
     setEventArea[1] = 0;
     setEventArea[2] = 300;
-    TaskStat stat{};
+    FedProfLeafTaskProf stat{};
     stat.setEventNum = 3;
     stat.waitEventNum = 0;
     stat.setEventAddr = 64;
     stat.waitEventAddr = 512;
-    json result = BuildSyncEventsJson(stat, buf.data());
+    json result;
+    FedProfPerCoreMixSyncEventDumpJsonList(result, stat, reinterpret_cast<FedProfPerCoreProf*>(buf.data()));
     EXPECT_EQ(result.size(), 2u);
     EXPECT_EQ(result[0]["type"], "CV_SYNC_SET");
     EXPECT_EQ(result[0]["idx"], 0);
@@ -78,12 +83,13 @@ TEST_F(DumpDevicePerfTest, BuildSyncEventsJson_WaitEventsOnly)
     uint64_t* waitEventArea = reinterpret_cast<uint64_t*>(buf.data() + 256);
     waitEventArea[0] = 200;
     waitEventArea[1] = 400;
-    TaskStat stat{};
+    FedProfLeafTaskProf stat{};
     stat.setEventNum = 0;
     stat.waitEventNum = 2;
     stat.setEventAddr = 0;
     stat.waitEventAddr = 256;
-    json result = BuildSyncEventsJson(stat, buf.data());
+    json result;
+    FedProfPerCoreMixSyncEventDumpJsonList(result, stat, reinterpret_cast<FedProfPerCoreProf*>(buf.data()));
     EXPECT_EQ(result.size(), 2u);
     EXPECT_EQ(result[0]["type"], "CV_SYNC_WAIT");
     EXPECT_EQ(result[0]["time"], 200u);
@@ -98,12 +104,13 @@ TEST_F(DumpDevicePerfTest, BuildSyncEventsJson_MixedAndSorted)
     setArea[0] = 500;
     waitArea[0] = 100;
     waitArea[1] = 300;
-    TaskStat stat{};
+    FedProfLeafTaskProf stat{};
     stat.setEventNum = 1;
     stat.waitEventNum = 2;
     stat.setEventAddr = 128;
     stat.waitEventAddr = 512;
-    json result = BuildSyncEventsJson(stat, buf.data());
+    json result;
+    FedProfPerCoreMixSyncEventDumpJsonList(result, stat, reinterpret_cast<FedProfPerCoreProf*>(buf.data()));
     EXPECT_EQ(result.size(), 3u);
     EXPECT_EQ(result[0]["time"], 100u);
     EXPECT_EQ(result[0]["type"], "CV_SYNC_WAIT");
@@ -116,53 +123,55 @@ TEST_F(DumpDevicePerfTest, BuildSyncEventsJson_MixedAndSorted)
 TEST_F(DumpDevicePerfTest, BuildSyncEventsJson_AllZeroTimestamps)
 {
     std::vector<uint8_t> buf(1024, 0);
-    TaskStat stat{};
+    FedProfLeafTaskProf stat{};
     stat.setEventNum = 3;
     stat.waitEventNum = 2;
     stat.setEventAddr = 0;
     stat.waitEventAddr = 256;
-    json result = BuildSyncEventsJson(stat, buf.data());
+    json result;
+    FedProfPerCoreMixSyncEventDumpJsonList(result, stat, reinterpret_cast<FedProfPerCoreProf*>(buf.data()));
     EXPECT_TRUE(result.empty());
 }
 
 TEST_F(DumpDevicePerfTest, DumpAicoreTaskExectInfo_Basic)
 {
-    DeviceArgs args{};
+    FedProfDeviceArgs args{};
     args.nrAic = 1;
     args.nrAiv = 1;
     args.nrValidAic = 1;
     args.nrAicpu = 2;
 
-    std::vector<uint8_t> buffer1(PERF_DATA_TOTAL_SIZE, 0);
-    std::vector<uint8_t> buffer2(PERF_DATA_TOTAL_SIZE, 0);
-    std::vector<uint8_t> buffer3(PERF_DATA_TOTAL_SIZE, 0);
-    std::vector<void*> perfData = {buffer1.data(), buffer2.data(), buffer3.data()};
+    std::vector<uint8_t> buffers(3 * FED_PROF_PER_CORE_PROF_ALIGNED_SIZE, 0);
 
-    DumpAicoreTaskExectInfo(args, perfData);
+    FedProf perf;
+    perf.args_ = args;
+    perf.perCoreProfDevAddr_ = PtrToValue(buffers.data());
+    perf.PerCoreProfDumpSwimlane();
+    perf.perCoreProfDevAddr_ = 0;
     SUCCEED();
 }
 
 TEST_F(DumpDevicePerfTest, DumpAicoreTaskExectInfo_MultipleBlocks)
 {
-    DeviceArgs args{};
+    FedProfDeviceArgs args{};
     args.nrAic = 2;
     args.nrAiv = 2;
     args.nrValidAic = 2;
     args.nrAicpu = 3;
 
-    std::vector<std::vector<uint8_t>> buffers(7, std::vector<uint8_t>(PERF_DATA_TOTAL_SIZE, 0));
-    std::vector<void*> perfData;
-    for (auto& buf : buffers) {
-        perfData.push_back(buf.data());
-    }
+    std::vector<uint8_t> buffers(7 * FED_PROF_PER_CORE_PROF_ALIGNED_SIZE, 0);
 
-    DumpAicoreTaskExectInfo(args, perfData);
+    FedProf perf;
+    perf.args_ = args;
+    perf.perCoreProfDevAddr_ = PtrToValue(buffers.data());
+    perf.PerCoreProfDumpSwimlane();
+    perf.perCoreProfDevAddr_ = 0;
     SUCCEED();
 }
 
 TEST_F(DumpDevicePerfTest, DumpAicoreTaskExectInfo_WithSwimlaneFiles)
 {
-    DeviceArgs args{};
+    FedProfDeviceArgs args{};
     args.nrAic = 1;
     args.nrAiv = 1;
     args.nrValidAic = 1;
@@ -183,12 +192,13 @@ TEST_F(DumpDevicePerfTest, DumpAicoreTaskExectInfo_WithSwimlaneFiles)
     dynTopo << "dummy topo";
     dynTopo.close();
 
-    std::vector<uint8_t> buffer1(PERF_DATA_TOTAL_SIZE, 0);
-    std::vector<uint8_t> buffer2(PERF_DATA_TOTAL_SIZE, 0);
-    std::vector<uint8_t> buffer3(PERF_DATA_TOTAL_SIZE, 0);
-    std::vector<void*> perfData = {buffer1.data(), buffer2.data(), buffer3.data()};
+    std::vector<uint8_t> buffers(3 * FED_PROF_PER_CORE_PROF_ALIGNED_SIZE, 0);
 
-    DumpAicoreTaskExectInfo(args, perfData);
+    FedProf perf;
+    perf.args_ = args;
+    perf.perCoreProfDevAddr_ = PtrToValue(buffers.data());
+    perf.PerCoreProfDumpSwimlane();
+    perf.perCoreProfDevAddr_ = 0;
 
     std::filesystem::remove(programJsonPath);
     std::filesystem::remove(dynTopoPath);

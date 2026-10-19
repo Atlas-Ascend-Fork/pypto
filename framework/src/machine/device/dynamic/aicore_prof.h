@@ -58,7 +58,7 @@ struct PyptoProfDataparam {
     int32_t coreIdx;
     uint32_t subGraphId;
     uint32_t taskId;
-    const struct TaskStat* taskStat;
+    const struct FedProfLeafTaskProf* taskStat;
 };
 
 struct PyPtoMsprofCommandHandleParams {
@@ -245,7 +245,7 @@ struct MsprofAicpuPyPtoPmuData {
     uint32_t pmuCnt9{0};
 };
 
-// !!注意和 TaskStat 前面的数据区保持一致
+// !!注意和 FedProfLeafTaskProf 前面的数据区保持一致
 struct MsprofAicpuPyPtoLogData {
     int16_t seqNo;
     int16_t subGraphId;
@@ -269,7 +269,7 @@ using MsprofAicpuPyPtoPmuHead = struct MsprofAicpuPyPtoHead;
 using MsprofAicpuPyPtoLogHead = struct MsprofAicpuPyPtoHead;
 
 bool ProfCheckLevel(uint64_t feature);
-AiCoreProfLevel CreateProfLevel(ProfConfig profConfig);
+AiCoreProfLevel CreateProfLevel(FedProfFlag profConfig);
 
 class AiCoreProf {
 public:
@@ -293,7 +293,7 @@ public:
     void ProfStartPmu();
     void ProfStopPmu();
     void ProfGetPmu(int32_t coreIdx, uint32_t subGraphId, uint32_t taskId, uint64_t taskCtrlTaskId);
-    void ProfGetLog(int32_t coreIdx, const struct TaskStat* taskStat);
+    void ProfGetLog(int32_t coreIdx, const struct FedProfLeafTaskProf* taskStat);
 
 private:
     struct PmuCtrlAddrs {

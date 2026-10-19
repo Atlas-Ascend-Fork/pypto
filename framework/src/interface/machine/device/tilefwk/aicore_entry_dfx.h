@@ -34,14 +34,15 @@ enum DFX_STAGE_STATUS {
     STAGE_GET_FUNCDATA_STOP = 16
 };
 
-struct AicoreDevTaskMetric {
-    bool devTaskMetricEnable{false};
-    __gm__ AicoreMetric* devTaskMetric{nullptr};
+struct FedProfDevTaskProfStatus {
+    bool profEnabled{false};
+    __gm__ FedProfDevTaskProf* devTaskProf{nullptr};
 };
 
 struct ExecuteContext {
     __gm__ KernelArgs* args;
     int32_t blockIdx;
+    __gm__ FedProfPerCoreProf* perCoreProf{nullptr};
     volatile __gm__ ParallelDevTask* parallelDevTask{nullptr};
     uint32_t curLeafTaskParallelIdx{0};
     uint32_t seqNo{0};
@@ -58,7 +59,7 @@ struct ExecuteContext {
     } cachedDevTasks[npu::tile_fwk::SCH_DEVTASK_MAX_PARALLELISM];
     CachedDevTask* cachedDevTaskCurr;
     uint64_t lastTaskFinishCycle{0};
-    AicoreDevTaskMetric aicoreDevTaskMetric;
+    FedProfDevTaskProfStatus devTaskProfStatus;
 #if ENABLE_AICORE_PRINT
     AicoreLogger logger;
 #endif
@@ -97,61 +98,63 @@ INLINE void SetWarningStatus(__gm__ KernelArgs* args, int64_t val)
     dcci(args->dfxBuffer, SINGLE_CACHE_LINE, CACHELINE_OUT);
 }
 
-INLINE void PerfTraceRecord(uint32_t devTaskId, __gm__ AicoreMetric* metric, AicorePerfTrace type, uint64_t cycle = 0)
+INLINE void FedProfDevTaskProfRecord(uint32_t devTaskId, __gm__ FedProfDevTaskProf* devTaskProf,
+                                     FedProfPerfTraceKind type, uint64_t cycle = 0)
 {
-    if (metric != nullptr) {
-        uint64_t cnt = metric->cnt;
-        if (cnt < PERF_TRACE_CORE_MAX * PERF_TRACE_INST_MAX_NUM_EVERY_TYPE) {
-            __gm__ AicoreDevTaskPerf* perf = &(metric->aicoreEveryDevTypeTimeStamp[cnt]);
+    if (devTaskProf != nullptr) {
+        uint64_t cnt = devTaskProf->cnt;
+        if (cnt < PERF_TRACE_CORE_KIND_MAX * PERF_TRACE_CORE_PER_KIND_MAX_COUNT) {
+            __gm__ FedProfDevTaskCoreEvent* perf = &(devTaskProf->aicoreEveryDevTypeTimeStamp[cnt]);
             perf->type = static_cast<uint64_t>(type);
-            perf->aicoreDevTimeStamp = (cycle == 0) ? get_sys_cnt() : cycle;
+            perf->timestamp = (cycle == 0) ? get_sys_cnt() : cycle;
             perf->devTaskIdx = static_cast<uint64_t>(devTaskId);
 
-            metric->cnt = cnt + 1;
+            devTaskProf->cnt = cnt + 1;
         }
     }
 }
 
-INLINE void FlushMetricStatistic(__gm__ volatile KernelArgs* args)
+INLINE void FedProfPerCoreProfFlush(__gm__ volatile FedProfPerCoreProf* perCoreProf)
 {
-    __gm__ volatile Metrics* m = (__gm__ volatile Metrics*)(args->shakeBuffer[SHAK_BUF_DFX_DATA_INDEX]);
-    if (m == nullptr) {
+    if (perCoreProf == nullptr) {
         return;
     }
 
-    for (uint32_t i = 0; i < m->taskCount; i++) {
-        dcci(&m->tasks[i], SINGLE_CACHE_LINE, CACHELINE_OUT);
+    for (uint32_t i = 0; i < perCoreProf->status.leafTaskCount; i++) {
+        dcci(&perCoreProf->leafTaskProfList[i], SINGLE_CACHE_LINE, CACHELINE_OUT);
     }
 
-    m->isMetricStop = 1;
-    dcci(m, SINGLE_CACHE_LINE, CACHELINE_OUT);
+    perCoreProf->status.isProfFinish = 1;
+    dcci(perCoreProf, SINGLE_CACHE_LINE, CACHELINE_OUT);
     dcci((__gm__ void*)0, ENTIRE_DATA_CACHE, CACHELINE_OUT);
 }
 
-INLINE void AddMetricStatistic(ExecuteContext* ctx, uint32_t seqNo, uint32_t taskId, int32_t subGraphId, int64_t t1)
+INLINE void FedProfLeafTaskProfRecord(ExecuteContext* ctx, uint32_t seqNo, uint32_t taskId, int32_t subGraphId,
+                                      int64_t t1)
 {
-    auto m = (__gm__ Metrics*)(ctx->args->shakeBuffer[SHAK_BUF_DFX_DATA_INDEX]);
-    if (m && m->taskCount < MAX_DFX_TASK_NUM_PER_CORE) {
-        m->tasks[m->taskCount].subGraphId = subGraphId;
-        m->tasks[m->taskCount].seqNo = seqNo;
-        m->tasks[m->taskCount].taskId = taskId & TASKID_FROM_CTRL_TOPO_MASK;
-        m->tasks[m->taskCount].execStart = t1;
+    auto perCoreProf = ctx->perCoreProf;
+    if (perCoreProf && perCoreProf->status.leafTaskCount < FED_PROF_LEAF_TASK_MAX_COUNT) {
+        perCoreProf->leafTaskProfList[perCoreProf->status.leafTaskCount].leafFuncIdx = subGraphId;
+        perCoreProf->leafTaskProfList[perCoreProf->status.leafTaskCount].devTaskIdx = seqNo;
+        perCoreProf->leafTaskProfList[perCoreProf->status.leafTaskCount].taskId = taskId & TASKID_FROM_CTRL_TOPO_MASK;
+        perCoreProf->leafTaskProfList[perCoreProf->status.leafTaskCount].timestampStart = t1;
         ctx->lastTaskFinishCycle = get_sys_cnt();
-        m->tasks[m->taskCount].execEnd = ctx->lastTaskFinishCycle;
-        m->taskCount++;
+        perCoreProf->leafTaskProfList[perCoreProf->status.leafTaskCount].timestampEnd = ctx->lastTaskFinishCycle;
+        perCoreProf->status.leafTaskCount++;
     }
 }
 
-INLINE void RecordMetricHubStatistic(ExecuteContext* ctx, uint32_t taskId, int32_t subGraphId)
+INLINE void FedProfLeafTaskProfRecordMix(ExecuteContext* ctx, uint32_t taskId, int32_t subGraphId)
 {
     if (unlikely(ctx->profLevel == PRO_LEVEL2 || ctx->profLevel == PRO_LEVEL1)) {
 #ifdef __DAV_V310
         // set mix event info for new taskstat
-        auto m = (__gm__ Metrics*)(ctx->args->shakeBuffer[SHAK_BUF_DFX_DATA_INDEX]);
-        if (m && m->taskCount < MAX_DFX_TASK_NUM_PER_CORE) {
-            __gm__ TaskStat* taskStat = &m->tasks[m->taskCount];
-            __gm__ TaskStat* prevTask = &m->tasks[m->taskCount - 1]; // hub task wont be first taskStat
-            taskStat->perfDataBaseAddr = reinterpret_cast<uint64_t>(m);
+        auto perCoreProf = ctx->perCoreProf;
+        if (perCoreProf && perCoreProf->status.leafTaskCount < FED_PROF_LEAF_TASK_MAX_COUNT) {
+            __gm__ FedProfLeafTaskProf* taskStat = &perCoreProf->leafTaskProfList[perCoreProf->status.leafTaskCount];
+            __gm__ FedProfLeafTaskProf* prevTask = &perCoreProf->leafTaskProfList[perCoreProf->status.leafTaskCount -
+                                                                                  1]; // hub task wont be first taskStat
+            taskStat->perfDataBaseAddr = reinterpret_cast<uint64_t>(perCoreProf);
             taskStat->setEventAddr = prevTask->setEventAddr + prevTask->setEventNum * sizeof(uint64_t);
             taskStat->waitEventAddr = prevTask->waitEventAddr + prevTask->waitEventNum * sizeof(uint64_t);
             taskStat->setEventNum = 0;
@@ -159,26 +162,26 @@ INLINE void RecordMetricHubStatistic(ExecuteContext* ctx, uint32_t taskId, int32
         }
 #endif
         int64_t t1 = get_sys_cnt();
-        AddMetricStatistic(ctx, ctx->SeqNo(), taskId, subGraphId, t1);
+        FedProfLeafTaskProfRecord(ctx, ctx->SeqNo(), taskId, subGraphId, t1);
     }
 }
 
-INLINE void DfxProcWhenCoreExit(ExecuteContext* ctx, __gm__ KernelArgs* args, __gm__ Metrics* metric)
+INLINE void DfxProcWhenCoreExit(ExecuteContext* ctx, __gm__ KernelArgs* args, __gm__ FedProfPerCoreProf* metric)
 {
-    PerfTraceRecord(INVALID_DEV_TASK_ID, ctx->aicoreDevTaskMetric.devTaskMetric, PERF_TRACE_CORE_WAIT_EXIT_NOTIFY);
+    FedProfDevTaskProfRecord(INVALID_DEV_TASK_ID, ctx->devTaskProfStatus.devTaskProf, PERF_TRACE_CORE_WAIT_EXIT_NOTIFY);
     if (unlikely(args->taskEntry.reserved[0] == PRO_LEVEL2 || args->taskEntry.reserved[0] == PRO_LEVEL1 ||
-                 ctx->aicoreDevTaskMetric.devTaskMetricEnable)) {
-        metric->turnNum++;
-        FlushMetricStatistic(args);
+                 ctx->devTaskProfStatus.profEnabled)) {
+        metric->status.currLaunchRound++;
+        FedProfPerCoreProfFlush(metric);
     }
 }
 
-INLINE void DfxProcWhenDevTaskStop(ExecuteContext* ctx, __gm__ KernelArgs* args, __gm__ Metrics* metric,
+INLINE void DfxProcWhenDevTaskStop(ExecuteContext* ctx, __gm__ KernelArgs* args, __gm__ FedProfPerCoreProf* metric,
                                    bool isExectedTask = false)
 {
     if (isExectedTask) {
-        PerfTraceRecord(ctx->SeqNo(), ctx->aicoreDevTaskMetric.devTaskMetric, PERF_TRACE_CORE_DEV_TASK_LEAF_TASK_EXEC,
-                        ctx->lastTaskFinishCycle);
+        FedProfDevTaskProfRecord(ctx->SeqNo(), ctx->devTaskProfStatus.devTaskProf,
+                                 PERF_TRACE_CORE_DEV_TASK_LEAF_TASK_EXEC, ctx->lastTaskFinishCycle);
     }
 
     (void)metric;

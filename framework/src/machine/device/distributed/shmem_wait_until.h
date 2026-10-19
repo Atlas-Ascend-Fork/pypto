@@ -45,7 +45,7 @@ struct SignalTileOp {
     int32_t* addr_{nullptr};
     int32_t expectedSum_{0};
     bool resetSignal_{false};
-    TaskStat* profData_{nullptr};
+    FedProfLeafTaskProf* profData_{nullptr};
 };
 
 struct ShmemWaitUntilCache {
@@ -121,7 +121,7 @@ public:
             SignalTileOp* task = queue_[actualIndex];
             if (task->PollCompleted()) {
                 if (task->profData_ != nullptr) {
-                    task->profData_->execEnd = dynamic::GetCycles();
+                    task->profData_->timestampEnd = dynamic::GetCycles();
                 }
                 int32_t ret = processor(task);
                 if (ret != dynamic::DEVICE_MACHINE_OK) {
@@ -155,7 +155,7 @@ public:
         cachePtr_[parallelIdx] = cache;
     }
 
-    inline int32_t EnqueueOp(uint64_t taskId, uint32_t parallelIdx = 0, TaskStat* taskStat = nullptr)
+    inline int32_t EnqueueOp(uint64_t taskId, uint32_t parallelIdx = 0, FedProfLeafTaskProf* taskStat = nullptr)
     {
         SignalTileOp* task = FindTask(taskId, cachePtr_[parallelIdx]);
         if (task == nullptr) {
@@ -166,7 +166,7 @@ public:
         if (taskStat != nullptr) {
             task->profData_ = taskStat;
             task->profData_->taskId = static_cast<int32_t>(taskId);
-            task->profData_->execStart = dynamic::GetCycles();
+            task->profData_->timestampStart = dynamic::GetCycles();
         }
         return runingTaskQueue_[parallelIdx].Enqueue(task);
     }

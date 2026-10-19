@@ -161,16 +161,17 @@ struct PerfEvtMgr {
 
     bool GetIsOpenProf() { return isOpenProf_; }
 
-    void SetIsOpenProf(bool isOpenProf, uint64_t aicpuPerf = 0)
+    void SetIsOpenProf(bool isOpenProf, FedProfAicpuProf* aicpuProf = nullptr)
     {
-        if (ctrlTurn_ >= MAX_ROUND_NUM) {
-            aicpuPerf_ = 0;
+        if (ctrlTurn_ >= FED_PROF_DEV_TASK_MAX_COUNT) {
+            aicpuProf_ = nullptr;
             isOpenProf_ = false;
-            DEV_WARN("Aicpu perf info more than maxTurnNum=%u, some info would be lost", MAX_ROUND_NUM);
+            DEV_WARN("Aicpu perf info is more than maxTurnNum=%u, current=%u, some info would be lost",
+                     FED_PROF_DEV_TASK_MAX_COUNT, ctrlTurn_);
             return;
         }
         isOpenProf_ = isOpenProf;
-        aicpuPerf_ = aicpuPerf;
+        aicpuProf_ = aicpuProf;
     }
 
     void AddCtrlTurn() { ctrlTurn_++; }
@@ -225,15 +226,15 @@ struct PerfEvtMgr {
 
     void PerfTrace(uint32_t type, uint32_t tid, uint64_t cycle)
     {
-        if (unlikely(tid >= MAX_USED_AICPU_NUM || aicpuPerf_ == 0)) {
+        if (unlikely(tid >= MAX_USED_AICPU_NUM || aicpuProf_ == nullptr)) {
             return;
         }
 
-        MetricPerf* aicpuMetrics = (MetricPerf*)(aicpuPerf_ + (tid == 0 ? ctrlTurn_ : schTurn_) * sizeof(MetricPerf));
+        FedProfAicpuProf* aicpuProf = aicpuProf_ + (tid == 0 ? ctrlTurn_ : schTurn_);
 
         if (IsDevTaskType(type)) {
             uint32_t idx = DEVTASK_PERF_ARRY_INDEX(type);
-            DevTaskPerf& perfSlot = aicpuMetrics->devTaskPerfs[tid][idx];
+            FedProfLaunchDevTaskProf& perfSlot = aicpuProf->devTaskPerfs[tid][idx];
             uint64_t& devCnt = perfSlot.cnt;
             if (unlikely(devCnt >= PERF_TRACE_COUNT_DEVTASK_MAX_NUM)) {
                 DEV_EVENT("Dev task num larger than: %u, the excess part will not be recorded",
@@ -244,7 +245,7 @@ struct PerfEvtMgr {
             perfSlot.timeStamp[devCnt] = cycle == 0 ? static_cast<uint64_t>(GetCycles()) : cycle;
             devCnt++;
         } else {
-            aicpuMetrics->perfAicpuTrace[tid][type] = cycle == 0 ? static_cast<uint64_t>(GetCycles()) : cycle;
+            aicpuProf->perfAicpuTrace[tid][type] = cycle == 0 ? static_cast<uint64_t>(GetCycles()) : cycle;
         }
     }
 
@@ -259,7 +260,7 @@ private:
 private:
     Counter counters[PERF_EVT_MAX];
     bool isOpenProf_{false};
-    uint64_t aicpuPerf_{0};
+    FedProfAicpuProf* aicpuProf_{nullptr};
     uint32_t ctrlTurn_{0};
     uint32_t schTurn_{0};
 };

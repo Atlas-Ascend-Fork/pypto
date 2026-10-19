@@ -23,13 +23,13 @@ constexpr uint32_t PYPTO_PROF_COMMANDHANDLE_TYPE_START = 1;
 } // namespace
 
 namespace npu::tile_fwk::dynamic {
-AiCoreProfLevel CreateProfLevel(ProfConfig profConfig)
+AiCoreProfLevel CreateProfLevel(FedProfFlag profConfig)
 {
-    if (profConfig.Contains(ProfConfig::AICORE_PMU)) {
+    if (profConfig.Contains(FedProfFlag::AICORE_PMU)) {
         return PROF_LEVEL_FUNC_LOG_PMU;
-    } else if (profConfig.Contains(ProfConfig::AICORE_TIME)) {
+    } else if (profConfig.Contains(FedProfFlag::AICORE_TIME)) {
         return PROF_LEVEL_FUNC_LOG;
-    } else if (profConfig.Contains(ProfConfig::AICPU_FUNC)) {
+    } else if (profConfig.Contains(FedProfFlag::AICPU_FUNC)) {
         return PROF_LEVEL_FUNC;
     }
     return PROF_LEVEL_OFF;
@@ -215,7 +215,7 @@ inline void AiCoreProf::ProfStopLog()
     });
 }
 
-void AiCoreProf::ProfGetLog(int32_t coreIdx, const struct TaskStat* taskStat)
+void AiCoreProf::ProfGetLog(int32_t coreIdx, const struct FedProfLeafTaskProf* taskStat)
 {
     if (!ProfCheckLevel(PROF_TASK_TIME_L2)) {
         return;
@@ -229,7 +229,7 @@ void AiCoreProf::ProfGetLog(int32_t coreIdx, const struct TaskStat* taskStat)
         logMsg.dataLen += logDataSize_;
         logHead->cnt++;
         DEV_DEBUG("aicore profiling gen log mesg, taskid: %d core id: %d, task start: %ld, end: %ld.", taskStat->taskId,
-                  coreIdx, taskStat->execStart, taskStat->execEnd);
+                  coreIdx, taskStat->timestampStart, taskStat->timestampEnd);
     } else if (logHead->cnt == logDataMaxNum_ - 1) {
         DevMemcpyS(
             reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(logData_[coreIdx]) + logDataSize_ * logHead->cnt),

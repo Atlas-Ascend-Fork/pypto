@@ -15,6 +15,9 @@
  */
 
 #include <gtest/gtest.h>
+#define private public
+#include "machine/runtime/launcher/device_launcher.h"
+#undef private
 #include "test_machine_common.h"
 
 struct DeviceLauncherHostTest : UnitTestBase {
@@ -282,7 +285,7 @@ TEST_F(DeviceLauncherHostTest, RunWithProfile_AllModes_ReturnZero)
 TEST_F(DeviceLauncherHostTest, MiscNoOpFunctions_NoCrash)
 {
     ToSubMachineConfig machinConfig;
-    auto& perf = DevicePerf::GetInstance();
+    auto& perf = FedProf::GetInstance();
     uint8_t sharedBuf[1024] = {0};
     if (perf.args_.sharedBuffer == 0) {
         perf.args_.sharedBuffer = reinterpret_cast<uint64_t>(sharedBuf);

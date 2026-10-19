@@ -186,13 +186,12 @@ INLINE void PipeSync()
 #endif
 }
 
-INLINE void HandshakeClient(volatile __gm__ int64_t* shakeBuf)
+INLINE void HandshakeClient(volatile __gm__ int64_t* shakeBuffer)
 {
     set_cond(AICORE_TASK_INIT);
-    volatile __gm__ int64_t* hello = shakeBuf;
-    *hello = (int64_t)get_coreid() << 32 | AICORE_SAY_HELLO;
+    shakeBuffer[0] = (int64_t)get_coreid() << 32 | AICORE_SAY_HELLO;
     Barrier();
-    dcci(hello, SINGLE_CACHE_LINE, CACHELINE_OUT);
+    dcci(shakeBuffer, SINGLE_CACHE_LINE, CACHELINE_OUT);
     Barrier();
 }
 
@@ -221,20 +220,20 @@ INLINE void PmuTestEnd(uint32_t profLevel)
 #endif
 }
 
-INLINE __gm__ TaskStat* InitTaskStat(ExecuteContext* ctx)
+INLINE __gm__ FedProfLeafTaskProf* InitTaskStat(ExecuteContext* ctx)
 {
-    __gm__ TaskStat* taskStat = nullptr;
+    __gm__ FedProfLeafTaskProf* taskStat = nullptr;
     (void)ctx;
 #ifdef __DAV_V310
     if (unlikely(ctx->profLevel >= PRO_LEVEL1)) {
-        auto m = (__gm__ Metrics*)(ctx->args->shakeBuffer[SHAK_BUF_DFX_DATA_INDEX]);
-        taskStat = &m->tasks[m->taskCount];
+        auto m = ctx->perCoreProf;
+        taskStat = &m->leafTaskProfList[m->status.leafTaskCount];
         taskStat->perfDataBaseAddr = reinterpret_cast<uint64_t>(m);
-        if (m->taskCount == 0) {
-            taskStat->setEventAddr = PERF_DATA_BASE_SIZE;
-            taskStat->waitEventAddr = PERF_DATA_BASE_SIZE + SET_WAIT_EVENT_DATA_SIZE;
+        if (m->status.leafTaskCount == 0) {
+            taskStat->setEventAddr = FED_PROF_PER_CORE_TASK_PROF_SIZE;
+            taskStat->waitEventAddr = FED_PROF_PER_CORE_TASK_PROF_SIZE + FED_PROF_DEV_TASK_MIX_SYNC_EVENT_COUNT;
         } else {
-            __gm__ TaskStat* prevTask = &m->tasks[m->taskCount - 1];
+            __gm__ FedProfLeafTaskProf* prevTask = &m->leafTaskProfList[m->status.leafTaskCount - 1];
             taskStat->setEventAddr = prevTask->setEventAddr + prevTask->setEventNum * sizeof(uint64_t);
             taskStat->waitEventAddr = prevTask->waitEventAddr + prevTask->waitEventNum * sizeof(uint64_t);
         }
@@ -281,7 +280,7 @@ INLINE void ExecDynCoreFunctionKernel(ExecuteContext* ctx, uint32_t taskId, uint
 #else
     int64_t gmStackAddr = cachedTask.header->stackWorkSpaceAddr + ctx->blockIdx * cachedTask.header->stackWorkSpaceSize;
 #endif
-    __gm__ TaskStat* taskStat = nullptr;
+    __gm__ FedProfLeafTaskProf* taskStat = nullptr;
     taskStat = InitTaskStat(ctx);
 
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
@@ -296,16 +295,17 @@ INLINE void ExecDynCoreFunctionKernel(ExecuteContext* ctx, uint32_t taskId, uint
     PipeSync();
     SetStatus(ctx->args, STAGE_FINISH_PIPE_SYNC);
     if (unlikely(ctx->profLevel == PRO_LEVEL2 || ctx->profLevel == PRO_LEVEL1)) {
-        AddMetricStatistic(ctx, ctx->SeqNo(), taskId, opAttrs[0], t1);
+        FedProfLeafTaskProfRecord(ctx, ctx->SeqNo(), taskId, opAttrs[0], t1);
     }
 }
 #endif
 
-INLINE void InitCtx(ExecuteContext* ctx, __gm__ Metrics* metric, volatile __gm__ ParallelDevTask* prallelDevTask,
+INLINE void InitCtx(ExecuteContext* ctx, __gm__ FedProfPerCoreProf* metric,
+                    volatile __gm__ ParallelDevTask* prallelDevTask,
                     uint8_t logLevel = static_cast<uint8_t>(AicoreLogLevel::NONE))
 {
     ctx->curLeafTaskParallelIdx = 0; // default init first devtask
-    PerfTraceRecord(ctx->SeqNo(), ctx->aicoreDevTaskMetric.devTaskMetric, PERF_TRACE_CORE_DEV_TASK_RCV_MODEL);
+    FedProfDevTaskProfRecord(ctx->SeqNo(), ctx->devTaskProfStatus.devTaskProf, PERF_TRACE_CORE_DEV_TASK_RCV_MODEL);
     ctx->parallelDevTask = prallelDevTask;
 #if ENABLE_AICORE_PRINT
     auto buffer = reinterpret_cast<__gm__ uint8_t*>(ctx->args->dfxBuffer[SHAK_BUF_PRINT_BUFFER_INDEX]);
@@ -374,22 +374,25 @@ INLINE void KernelEntry(int64_t ffts_addr, int64_t inputs, int64_t outputs, int6
 #endif
     auto devArgs = (DeviceArgs*)cfgdata;
     __gm__ KernelArgs* args = (__gm__ KernelArgs*)(devArgs->sharedBuffer + blockIdx * SHARED_BUFFER_SIZE);
-    __gm__ Metrics* metric = (__gm__ Metrics*)(args->shakeBuffer[SHAK_BUF_DFX_DATA_INDEX]);
+    __gm__ FedProfPerCoreProf* perCoreProf = (__gm__ FedProfPerCoreProf*)(devArgs->perCoreProfAddr +
+                                                                          blockIdx *
+                                                                              FED_PROF_PER_CORE_PROF_ALIGNED_SIZE);
     ExecuteContext ctx = {};
     ctx.args = args;
     ctx.blockIdx = blockIdx;
+    ctx.perCoreProf = perCoreProf;
     __gm__ DevDfxArgs* devDfxAddr = (__gm__ DevDfxArgs*)devArgs->devDfxArgAddr;
-    ctx.aicoreDevTaskMetric.devTaskMetricEnable = devDfxAddr->isOpenPerfTrace != 0;
+    ctx.devTaskProfStatus.profEnabled = devDfxAddr->isOpenPerfTrace != 0;
     uint8_t aicoreLogLevel = static_cast<uint8_t>(AicoreLogLevel::NONE);
 #if ENABLE_AICORE_PRINT
     if (devDfxAddr->logLevel >= 0) {
         aicoreLogLevel = static_cast<uint8_t>(devDfxAddr->logLevel);
     }
 #endif
-    if (ctx.aicoreDevTaskMetric.devTaskMetricEnable && metric->turnNum < MAX_ROUND_NUM) {
-        uint64_t round = metric->turnNum;
-        ctx.aicoreDevTaskMetric.devTaskMetric = &(metric->aicoreDevTaskInfo[round]);
-        PerfTraceRecord(INVALID_DEV_TASK_ID, ctx.aicoreDevTaskMetric.devTaskMetric, PERF_TRACE_CORE_BEGIN, start);
+    if (ctx.devTaskProfStatus.profEnabled && perCoreProf->status.currLaunchRound < FED_PROF_DEV_TASK_MAX_COUNT) {
+        uint64_t round = perCoreProf->status.currLaunchRound;
+        ctx.devTaskProfStatus.devTaskProf = &(perCoreProf->aicoreDevTaskInfo[round]);
+        FedProfDevTaskProfRecord(INVALID_DEV_TASK_ID, ctx.devTaskProfStatus.devTaskProf, PERF_TRACE_CORE_BEGIN, start);
     }
 
     bool isFirstTask = true;
@@ -402,24 +405,24 @@ INLINE void KernelEntry(int64_t ffts_addr, int64_t inputs, int64_t outputs, int6
     uint32_t lastRegHighVal = 0;
     uint8_t lastMixResourceType = static_cast<uint8_t>(MixResourceType::MIX_UNKNOWN);
 
-    PerfTraceRecord(INVALID_DEV_TASK_ID, ctx.aicoreDevTaskMetric.devTaskMetric, PERF_TRACE_CORE_INIT);
+    FedProfDevTaskProfRecord(INVALID_DEV_TASK_ID, ctx.devTaskProfStatus.devTaskProf, PERF_TRACE_CORE_INIT);
 
     volatile __gm__ ParallelDevTask* parallelDevTask = GetCoreFunctionData(&ctx);
     if (parallelDevTask == nullptr) {
-        DfxProcWhenCoreExit(&ctx, args, metric);
+        DfxProcWhenCoreExit(&ctx, args, perCoreProf);
         return; // no data exit
     }
-    InitCtx(&ctx, metric, parallelDevTask, aicoreLogLevel);
+    InitCtx(&ctx, perCoreProf, parallelDevTask, aicoreLogLevel);
     AICORE_TIMEOUT_CHECK_BEGIN(t0, loop_count);
     while (true) {
         AICORE_TIMEOUT_CHECK_RETURN_VOID(t0, loop_count, AICORE_LEAF_TASK_RUN_TIMEOUT, STAGE_RUN_LEAFTASK_TIMEOUT);
 
         curTaskIdx = GetNextLeafTask(lastTaskIdx, args);
         if (curTaskIdx == AICORE_TASK_STOP) {
-            DfxProcWhenDevTaskStop(&ctx, args, metric, !isFirstTask);
+            DfxProcWhenDevTaskStop(&ctx, args, perCoreProf, !isFirstTask);
             SetStatus(args, STAGE_CORE_EXIT);
             WaitWaveSignal(args); // no data exit
-            DfxProcWhenCoreExit(&ctx, args, metric);
+            DfxProcWhenCoreExit(&ctx, args, perCoreProf);
             return;
         }
         if (curTaskIdx == AICORE_TASK_ABNORMAL_STOP) {
@@ -429,12 +432,12 @@ INLINE void KernelEntry(int64_t ffts_addr, int64_t inputs, int64_t outputs, int6
         }
 
         if (npu::tile_fwk::DevTaskDcciFlag(curTaskIdx) == 1) {
-            DfxProcWhenDevTaskStop(&ctx, args, metric, !isFirstTask); // perf trace stop last devtask
+            DfxProcWhenDevTaskStop(&ctx, args, perCoreProf, !isFirstTask); // perf trace stop last devtask
 
             ctx.curLeafTaskParallelIdx = npu::tile_fwk::ParallelIndex(curTaskIdx);
 
             // need dcci new prallel devtask
-            uint32_t ret = RefreshParallelDevTask(&ctx, metric, lastRegHighVal);
+            uint32_t ret = RefreshParallelDevTask(&ctx, perCoreProf, lastRegHighVal);
             if (ret == AICORE_TASK_ABNORMAL_STOP) {
                 return;
             }
@@ -446,8 +449,8 @@ INLINE void KernelEntry(int64_t ffts_addr, int64_t inputs, int64_t outputs, int6
         ctx.curLeafTaskParallelIdx = npu::tile_fwk::ParallelIndex(curTaskIdx);
 
         if (isFirstTask) {
-            PerfTraceRecord(ctx.SeqNo(), ctx.aicoreDevTaskMetric.devTaskMetric,
-                            PERF_TRACE_CORE_DEV_TASK_WAIT_RCV_FIRST_LEAF_TASK);
+            FedProfDevTaskProfRecord(ctx.SeqNo(), ctx.devTaskProfStatus.devTaskProf,
+                                     PERF_TRACE_CORE_DEV_TASK_WAIT_RCV_FIRST_LEAF_TASK);
             isFirstTask = false;
             ctx.profLevel = args->taskEntry.reserved[0];
             ctx.lastTaskFinishCycle = 0;

@@ -53,6 +53,7 @@ public:
     inline void InitDeviceArgs(DeviceArgs* deviceArgs)
     {
         sharedBuffer_ = deviceArgs->sharedBuffer;
+        perCoreProfAddr_ = deviceArgs->perCoreProfAddr;
         aicNum_ = deviceArgs->nrAic;
         aivNum_ = deviceArgs->nrAiv;
         archInfo_ = deviceArgs->archInfo;
@@ -68,9 +69,9 @@ public:
             shmemWaitUntil_.LoadCache(cache, parallelIdx);
             DEV_INFO("MachineFlow: cache loaded successfully for parallelIdx=%u", parallelIdx);
 
-            if (profSwitch) {
-                KernelArgs* args = (KernelArgs*)(sharedBuffer_ + (aicNum_ + aivNum_) * SHARED_BUFFER_SIZE);
-                aicpuTaskStat_ = (Metrics*)(args->shakeBuffer[SHAK_BUF_DFX_DATA_INDEX]);
+            if (profSwitch && perCoreProfAddr_ != 0) {
+                aicpuTaskStat_ = (FedProfPerCoreProf*)(perCoreProfAddr_ +
+                                                       (aicNum_ + aivNum_) * FED_PROF_PER_CORE_PROF_ALIGNED_SIZE);
             }
             return DEVICE_MACHINE_OK;
         }
@@ -141,10 +142,10 @@ private:
         auto taskType = GetTaskType(taskId, deviceTask);
         DEV_VERBOSE_DEBUG("Dispatch aicpu task %lu.", taskId);
         if (taskType < TaskType::TASK_TYPE_NUM) {
-            TaskStat* taskStat = nullptr;
+            FedProfLeafTaskProf* taskStat = nullptr;
             if (aicpuTaskStat_ != nullptr) {
-                taskStat = &(aicpuTaskStat_->tasks[aicpuTaskStat_->taskCount]);
-                ++aicpuTaskStat_->taskCount;
+                taskStat = &(aicpuTaskStat_->leafTaskProfList[aicpuTaskStat_->status.leafTaskCount]);
+                ++aicpuTaskStat_->status.leafTaskCount;
             }
             ret = shmemWaitUntil_.EnqueueOp(taskId, parallelIdx, taskStat);
         }
@@ -153,7 +154,8 @@ private:
 
     ArchInfo archInfo_{ArchInfo::DAV_2201};
     npu::tile_fwk::Distributed::ShmemWaitUntilImpl shmemWaitUntil_;
-    Metrics* aicpuTaskStat_{nullptr};
+    FedProfPerCoreProf* aicpuTaskStat_{nullptr};
+    uint64_t perCoreProfAddr_{0};
     uint64_t sharedBuffer_{0};
     uint32_t aicNum_{0};
     uint32_t aivNum_{0};

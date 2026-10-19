@@ -18,7 +18,7 @@
 #include "vector.h"
 #include "allocator/allocators.h"
 #include "tilefwk/core_func_data.h"
-#include "interface/machine/device/tilefwk/aicpu_perf.h"
+#include "interface/machine/device/tilefwk/aikernel_profile_aicpu.h"
 #include "machine/utils/dynamic/spsc_queue.h"
 #include "dev_encode_program_ctrlflow_cache.h"
 

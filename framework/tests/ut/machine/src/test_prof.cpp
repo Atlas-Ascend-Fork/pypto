@@ -154,18 +154,18 @@ protected:
 
         void RunProfTest(int iterations = 8)
         {
-            ProfConfig profConfig;
+            FedProfFlag profConfig;
             std::unique_ptr<DeviceArgs> devArgs = std::make_unique<DeviceArgs>();
             devArgs->corePmuRegAddr = reinterpret_cast<int64_t>(regAddrs);
             prof->ProfInit(devArgs.get());
             prof->ProfStart();
 
             int32_t aicoreId = 0;
-            TaskStat* taskStat = new TaskStat();
+            FedProfLeafTaskProf* taskStat = new FedProfLeafTaskProf();
             taskStat->taskId = 0;
-            taskStat->execEnd = 1;
-            taskStat->execStart = 0;
-            taskStat->subGraphId = 0;
+            taskStat->timestampEnd = 1;
+            taskStat->timestampStart = 0;
+            taskStat->leafFuncIdx = 0;
             for (int i = 0; i < iterations; i++) {
                 prof->ProfGetLog(aicoreId, taskStat);
             }
@@ -189,9 +189,9 @@ TEST_F(TestPro, test_prof_start_pmu_dav2201)
     PmuTestEnv env(0x6000);
     env.SetupPmuEvents(8);
 
-    ProfConfig profConfig;
+    FedProfFlag profConfig;
     std::unique_ptr<DeviceArgs> devArgs = std::make_unique<DeviceArgs>();
-    profConfig.Add(ProfConfig::AICORE_PMU);
+    profConfig.Add(FedProfFlag::AICORE_PMU);
     devArgs->toSubMachineConfig.profConfig = profConfig;
     env.prof->ProfInit(devArgs.get());
     env.prof->ProfInitPmu(env.regAddrsArr, env.pmuEventAddrsArr);
@@ -205,9 +205,9 @@ TEST_F(TestPro, test_prof_start_pmu_dav3510)
     PmuTestEnv env(0x9000);
     env.SetupPmuEvents(10);
 
-    ProfConfig profConfig;
+    FedProfFlag profConfig;
     std::unique_ptr<DeviceArgs> devArgs = std::make_unique<DeviceArgs>();
-    profConfig.Add(ProfConfig::AICORE_PMU);
+    profConfig.Add(FedProfFlag::AICORE_PMU);
     devArgs->toSubMachineConfig.profConfig = profConfig;
     devArgs->archInfo = ArchInfo::DAV_3510;
     env.prof->ProfInit(devArgs.get());
