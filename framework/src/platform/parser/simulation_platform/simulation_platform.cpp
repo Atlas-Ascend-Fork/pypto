@@ -50,6 +50,7 @@ const std::unordered_map<std::string, std::string> legacyDevicePlatformMap = {
     {"ASCEND_950PR_9589", "Ascend950PR_9589"},
     {"KIRIN_9030", "Kirin9030"},
     {"KIRIN_X90", "KirinX90"},
+    {"KIRIN_9050", "Kirin9050"},
 };
 
 std::string NormalizeLegacyDevicePlatform(const std::string& platform)

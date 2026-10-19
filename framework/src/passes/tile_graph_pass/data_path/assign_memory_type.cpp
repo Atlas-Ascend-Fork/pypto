@@ -410,7 +410,8 @@ bool AssignMemoryType::IsReshapeVecToCubeUB2L1ConsumerPattern(
 
 Status AssignMemoryType::InferReshapeL0C2UBAndUB2L1PatternLiteNPU(Operation& op)
 {
-    if (!IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
+    const NPUArch npuArch = Platform::Instance().GetSoc().GetNPUArch();
+    if (!IsLiteNPU(npuArch)) {
         return SUCCESS;
     }
 
@@ -419,16 +420,20 @@ Status AssignMemoryType::InferReshapeL0C2UBAndUB2L1PatternLiteNPU(Operation& op)
     auto& producers = input->GetProducers();
     auto& consumers = output->GetConsumers();
 
-    // l0c2ub pattern: batchmatmul case: cube op -> contract(s) -> reshape op -> slice(s)/contract(s) -> vector
+    // kirin9050(DAV_5101) 无 L0C buffer：cube 输出驻留 L1，l0c2ub pattern 改写为 l12ub
+    const MemoryType cubeOutputMemType = npuArch == NPUArch::DAV_5101 ? MemoryType::MEM_L1 : MemoryType::MEM_L0C;
+
+    // l0c2ub(l12ub on kirin9050) pattern: batchmatmul case:
+    // cube op -> contract(s) -> reshape op -> slice(s)/contract(s) -> vector
     if (IsReshapeCubeToVecL0C2UBPattern(op) && MemoryPathUtils::FitsTensorInUb(input) &&
         inserter.IsL0C2UbSupportedDtype(input)) {
         for (auto& producer : producers) {
             auto& producerInput = producer->iOperand.front();
             auto& producerOutput = producer->oOperand.front();
 
-            // set producer contract input to L0C
-            producerInput->SetMemoryTypeOriginal(MemoryType::MEM_L0C, true);
-            inserter.UpdateTensorTobeMap(producerInput, *producer, MemoryType::MEM_L0C);
+            // set producer contract input to L0C (L1 on kirin9050, which has no L0C buffer)
+            producerInput->SetMemoryTypeOriginal(cubeOutputMemType, true);
+            inserter.UpdateTensorTobeMap(producerInput, *producer, cubeOutputMemType);
 
             // set producer output to be UB
             producerOutput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
@@ -441,6 +446,11 @@ Status AssignMemoryType::InferReshapeL0C2UBAndUB2L1PatternLiteNPU(Operation& op)
         for (auto& consumer : consumers) {
             inserter.UpdateTensorTobeMap(output, *consumer, MemoryType::MEM_UB);
         }
+        return SUCCESS;
+    }
+
+    // ub2l1 pattern 依赖 L0A 中转路径，kirin9050 无 L0A，不适用
+    if (npuArch == NPUArch::DAV_5101) {
         return SUCCESS;
     }
 

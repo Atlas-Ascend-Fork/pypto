@@ -60,6 +60,7 @@ size_t ScheduleState::CalcTensorMemoryPaddingSize(LogicalTensorPtr tensor)
     const std::map<NPUArch, int> platformToVLBytesMap{
         {NPUArch::DAV_3113, 256}, // kirin9030
         {NPUArch::DAV_3003, 256}, // kirinx90
+        {NPUArch::DAV_5101, 64}   // kirin9050
     };
 
     size_t platformVLBytes = 128; // default 128 bytes

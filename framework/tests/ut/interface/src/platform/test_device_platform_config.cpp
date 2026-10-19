@@ -58,6 +58,7 @@ TEST_F(TestDevicePlatformConfig, StringToDPlatformAllMappings)
     EXPECT_EQ(StringToDPlatform("Ascend950PR_9589"), DPlatform::ASCEND_950PR_9589);
     EXPECT_EQ(StringToDPlatform("Kirin9030"), DPlatform::KIRIN_9030);
     EXPECT_EQ(StringToDPlatform("KirinX90"), DPlatform::KIRIN_X90);
+    EXPECT_EQ(StringToDPlatform("Kirin9050"), DPlatform::KIRIN_9050);
 }
 
 TEST_F(TestDevicePlatformConfig, StringToDPlatformUnknown)
@@ -74,6 +75,7 @@ TEST_F(TestDevicePlatformConfig, StringToDPlatformLegacyFormatCompat)
     EXPECT_EQ(StringToDPlatform("ASCEND_910B2"), DPlatform::ASCEND_910B2);
     EXPECT_EQ(StringToDPlatform("ASCEND_950PR_9579"), DPlatform::ASCEND_950PR_9579);
     EXPECT_EQ(StringToDPlatform("KIRIN_9030"), DPlatform::KIRIN_9030);
+    EXPECT_EQ(StringToDPlatform("KIRIN_9050"), DPlatform::KIRIN_9050);
     EXPECT_EQ(StringToDPlatform("ASCEND_910_9363"), DPlatform::ASCEND_910_9363);
     EXPECT_EQ(StringToDPlatform("ASCEND_950DT_9581X"), DPlatform::ASCEND_950DT_9581X);
     // Legacy enum values whose names did not match the actual chip bin.
@@ -96,6 +98,7 @@ TEST_F(TestDevicePlatformConfig, DPlatformToNPUArchMapping)
     EXPECT_EQ(DPlatformToNPUArch(DPlatform::ASCEND_950PR_9589), NPUArch::DAV_3510);
     EXPECT_EQ(DPlatformToNPUArch(DPlatform::KIRIN_9030), NPUArch::DAV_3113);
     EXPECT_EQ(DPlatformToNPUArch(DPlatform::KIRIN_X90), NPUArch::DAV_3003);
+    EXPECT_EQ(DPlatformToNPUArch(DPlatform::KIRIN_9050), NPUArch::DAV_5101);
     EXPECT_EQ(DPlatformToNPUArch(DPlatform::UNKNOWN_DEVICE), NPUArch::DAV_UNKNOWN);
 }
 

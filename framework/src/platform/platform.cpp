@@ -46,7 +46,7 @@ constexpr size_t kDefaultL0mxSize = 2 * 1024;
 
 const std::unordered_map<std::string, NPUArch> npuArchMap = {
     {"1001", NPUArch::DAV_1001}, {"2201", NPUArch::DAV_2201}, {"3003", NPUArch::DAV_3003},
-    {"3113", NPUArch::DAV_3113}, {"3510", NPUArch::DAV_3510},
+    {"3113", NPUArch::DAV_3113}, {"3510", NPUArch::DAV_3510}, {"5101", NPUArch::DAV_5101},
 };
 
 NPUArch StringToNPUArch(const std::string& npuArch)

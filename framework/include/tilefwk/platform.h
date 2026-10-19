@@ -45,6 +45,7 @@ enum class DPlatform {
     ASCEND_950PR_9589,
     KIRIN_9030,
     KIRIN_X90,
+    KIRIN_9050,
 
     UNKNOWN_DEVICE,
 };
@@ -65,6 +66,7 @@ inline DPlatform StringToDPlatform(std::string platform)
         {"Ascend950PR_9589", DPlatform::ASCEND_950PR_9589},
         {"Kirin9030", DPlatform::KIRIN_9030},
         {"KirinX90", DPlatform::KIRIN_X90},
+        {"Kirin9050", DPlatform::KIRIN_9050},
         // Deprecated device_platform formats, kept for compatibility. Legacy values whose names did not
         // match the actual chip bin are mapped to the real soc_version of the ini they used to load:
         // ASCEND_950DT_9579 -> Ascend950DT_9572, ASCEND_950PR_9582 -> Ascend950PR_9589.
@@ -83,6 +85,7 @@ inline DPlatform StringToDPlatform(std::string platform)
         {"ASCEND_950PR_9589", DPlatform::ASCEND_950PR_9589},
         {"KIRIN_9030", DPlatform::KIRIN_9030},
         {"KIRIN_X90", DPlatform::KIRIN_X90},
+        {"KIRIN_9050", DPlatform::KIRIN_9050},
     };
 
     if (mappings.count(platform) != 0) {
@@ -385,7 +388,15 @@ public:
     AivCore& GetAIVCore() { return core_wrap_.GetAIVCore(); }
 };
 
-enum class NPUArch { DAV_1001 = 1001, DAV_2201 = 2201, DAV_3510 = 3510, DAV_3003 = 3003, DAV_3113 = 3113, DAV_UNKNOWN };
+enum class NPUArch {
+    DAV_1001 = 1001,
+    DAV_2201 = 2201,
+    DAV_3510 = 3510,
+    DAV_3003 = 3003,
+    DAV_3113 = 3113,
+    DAV_5101 = 5101,
+    DAV_UNKNOWN
+};
 
 inline std::string NPUArchToString(NPUArch npu_arch)
 {
@@ -400,12 +411,17 @@ inline std::string NPUArchToString(NPUArch npu_arch)
             return "DAV_3003";
         case NPUArch::DAV_3113:
             return "DAV_3113";
+        case NPUArch::DAV_5101:
+            return "DAV_5101";
         default:
             return "UNKNOWN_NPU_ARCH";
     }
 }
 
-inline bool IsLiteNPU(NPUArch arch) { return arch == NPUArch::DAV_3113 || arch == NPUArch::DAV_3003; }
+inline bool IsLiteNPU(NPUArch arch)
+{
+    return arch == NPUArch::DAV_3113 || arch == NPUArch::DAV_3003 || arch == NPUArch::DAV_5101;
+}
 
 // NPU_ARCH (core architecture) of each standard soc_version, consistent with the NpuArch key
 // in CANN platform_config ini, e.g. Ascend950PR_9589 -> 3510, Ascend910B2 -> 2201.
@@ -429,6 +445,8 @@ inline NPUArch DPlatformToNPUArch(DPlatform platform)
             return NPUArch::DAV_3113;
         case DPlatform::KIRIN_X90:
             return NPUArch::DAV_3003;
+        case DPlatform::KIRIN_9050:
+            return NPUArch::DAV_5101;
         default:
             return NPUArch::DAV_UNKNOWN;
     }

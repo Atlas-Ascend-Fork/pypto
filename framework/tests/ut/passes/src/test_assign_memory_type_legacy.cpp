@@ -2029,6 +2029,91 @@ TEST_F(LegacyAssignMemoryTypeTest, TestL0C2UBParallelDdrFallback)
     Platform::Instance().ReloadMemoryPaths("2201");
 }
 
+// kirin9050(DAV_5101) 无 L0C buffer：l0c2ub pattern 改写为 l12ub，
+// cube 输出驻留 L1，assemble/reshape/view 下游全部驻留 UB
+TEST_F(LegacyAssignMemoryTypeTest, TestL12UBPatternKirin9050)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_5101);
+    Platform::Instance().ReloadMemoryPaths("5101");
+
+    ComputationalGraphBuilder G;
+    Shape shape{NUM_64, NUM_64};
+    Shape reshapeShape{NUM_128, NUM_32};
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_DEVICE_DDR, "input_a");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_DEVICE_DDR, "input_b");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_UNKNOWN, "matmul_out");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_UNKNOWN, "assemble_out");
+    G.AddTensor(DataType::DT_FP16, reshapeShape, MemoryType::MEM_UNKNOWN, "reshape_out");
+    G.AddTensor(DataType::DT_FP16, reshapeShape, MemoryType::MEM_UNKNOWN, "view_out");
+    G.AddTensor(DataType::DT_FP16, reshapeShape, MemoryType::MEM_UNKNOWN, "exp_out");
+
+    G.AddOp(Opcode::OP_A_MUL_B, {"input_a", "input_b"}, {"matmul_out"}, "matmul");
+    G.AddOp(Opcode::OP_ASSEMBLE, {"matmul_out"}, {"assemble_out"}, "assemble");
+    G.GetOp("assemble")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{0, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"assemble_out"}, {"reshape_out"}, "reshape");
+    G.AddOp(Opcode::OP_VIEW, {"reshape_out"}, {"view_out"}, "view");
+    G.GetOp("view")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, MemoryType::MEM_UB));
+    G.AddOp(Opcode::OP_EXP, {"view_out"}, {"exp_out"}, "exp");
+
+    G.SetInCast({"input_a", "input_b"});
+    G.SetOutCast({"exp_out"});
+
+    Function* function = G.GetFunction();
+    AssignMemoryType assignMemoryType;
+    ASSERT_EQ(assignMemoryType.RunOnFunction(*function), SUCCESS);
+    ASSERT_EQ(assignMemoryType.PostCheck(*function), SUCCESS);
+
+    EXPECT_EQ(G.GetTensor("matmul_out")->GetMemoryTypeOriginal(), MemoryType::MEM_L1);
+    EXPECT_EQ(G.GetTensor("assemble_out")->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(G.GetTensor("reshape_out")->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(G.GetTensor("view_out")->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+// kirin9030(DAV_3113) 回归保护：l0c2ub pattern 保持 cube 输出驻留 L0C 的原行为
+TEST_F(LegacyAssignMemoryTypeTest, TestL0C2UBPatternKirin9030)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3113);
+    Platform::Instance().ReloadMemoryPaths("3113");
+
+    ComputationalGraphBuilder G;
+    Shape shape{NUM_64, NUM_64};
+    Shape reshapeShape{NUM_128, NUM_32};
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_DEVICE_DDR, "input_a");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_DEVICE_DDR, "input_b");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_UNKNOWN, "matmul_out");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_UNKNOWN, "assemble_out");
+    G.AddTensor(DataType::DT_FP16, reshapeShape, MemoryType::MEM_UNKNOWN, "reshape_out");
+    G.AddTensor(DataType::DT_FP16, reshapeShape, MemoryType::MEM_UNKNOWN, "view_out");
+    G.AddTensor(DataType::DT_FP16, reshapeShape, MemoryType::MEM_UNKNOWN, "exp_out");
+
+    G.AddOp(Opcode::OP_A_MUL_B, {"input_a", "input_b"}, {"matmul_out"}, "matmul");
+    G.AddOp(Opcode::OP_ASSEMBLE, {"matmul_out"}, {"assemble_out"}, "assemble");
+    G.GetOp("assemble")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{0, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"assemble_out"}, {"reshape_out"}, "reshape");
+    G.AddOp(Opcode::OP_VIEW, {"reshape_out"}, {"view_out"}, "view");
+    G.GetOp("view")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, MemoryType::MEM_UB));
+    G.AddOp(Opcode::OP_EXP, {"view_out"}, {"exp_out"}, "exp");
+
+    G.SetInCast({"input_a", "input_b"});
+    G.SetOutCast({"exp_out"});
+
+    Function* function = G.GetFunction();
+    AssignMemoryType assignMemoryType;
+    ASSERT_EQ(assignMemoryType.RunOnFunction(*function), SUCCESS);
+    ASSERT_EQ(assignMemoryType.PostCheck(*function), SUCCESS);
+
+    EXPECT_EQ(G.GetTensor("matmul_out")->GetMemoryTypeOriginal(), MemoryType::MEM_L0C);
+    EXPECT_EQ(G.GetTensor("assemble_out")->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(G.GetTensor("reshape_out")->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(G.GetTensor("view_out")->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
 TEST_F(LegacyAssignMemoryTypeTest, TestUB2L1SmallToLarge)
 {
     // 设置 A5 平台
