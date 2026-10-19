@@ -233,6 +233,8 @@ std::string CodeGenLiteNPU::GetCoreArch([[maybe_unused]] const CompileInfo& comp
         return "dav-l311";
     } else if (platform_ == NPUArch::DAV_3003) {
         return "dav-l300";
+    } else if (platform_ == NPUArch::DAV_5101) {
+        return "dav-l510";
     } else {
         return "dav-l311";
     }

@@ -19,7 +19,7 @@ def is_lite_npu() -> bool:
     soc_version = ""
     if "soc_version" in codegen_options:
         soc_version = codegen_options["soc_version"]
-    return soc_version in ["Kirin9030", "KirinX90"]
+    return soc_version in ["Kirin9030", "KirinX90", "Kirin9050"]
 
 
 def sigmoid(input: Tensor) -> Tensor:

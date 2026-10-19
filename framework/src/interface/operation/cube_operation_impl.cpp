@@ -610,11 +610,12 @@ void CheckLiteNPUBiasParam(const Tensor& operand2, bool transB, const MatmulExte
     }
     DataType inDtype = operand2.GetDataType();
     if (inDtype == DataType::DT_FP16) {
-        DataType expectedBiasType = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3113) ?
-                                        DataType::DT_FP16 :
-                                        DataType::DT_FP32;
+        const NPUArch npuArch = Platform::Instance().GetSoc().GetNPUArch();
+        DataType expectedBiasType = (npuArch == NPUArch::DAV_3113 || npuArch == NPUArch::DAV_5101) ? DataType::DT_FP16 :
+                                                                                                     DataType::DT_FP32;
         CHECK(ExternalError::INVALID_TYPE, param.biasTensor.GetDataType() == expectedBiasType)
-            << "When input tensor is DT_FP16, Kirin bias must be DT_FP16 on Kirin9030 or DT_FP32 on KirinX90, got "
+            << "When input tensor is DT_FP16, Kirin bias must be DT_FP16 on Kirin9030/Kirin9050 or DT_FP32 on "
+               "KirinX90, got "
             << DataType2String(param.biasTensor.GetDataType());
     } else if (inDtype == DataType::DT_INT8) {
         CHECK(ExternalError::INVALID_TYPE, param.biasTensor.GetDataType() == DataType::DT_INT32)
