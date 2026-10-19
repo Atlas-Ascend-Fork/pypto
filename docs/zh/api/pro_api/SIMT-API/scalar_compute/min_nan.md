@@ -34,8 +34,8 @@ pypto_pro.language.simt.min_nan(
 
 ## 约束说明
 
-1. 只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT函数中调用。
-2. 两个输入必须同为DT_FP16或同为DT_BF16。
+- 只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT函数中调用。
+- 两个输入必须同为DT_FP16或同为DT_BF16。
 
 ## 返回值说明
 
