@@ -68,3 +68,31 @@ TEST_F(TestAssembleNewLogicalTensor, LegacyWritesOriginalDest)
 
     EXPECT_EQ(dst.GetStorage(false)->magic, origMagic) << "Legacy Assemble should not create a new version";
 }
+
+TEST_F(TestAssembleNewLogicalTensor, AtomicRMWCreatesVersionedDest)
+{
+    IRContext::Get().SetAssembleNewLogicalTensor(true);
+    TileShape::Current().SetVecTile(16, 16);
+
+    Tensor src(DT_FP32, {16, 16}, "src");
+    Tensor dst(DT_FP32, {32, 16}, "dst");
+    auto origMagic = dst.GetStorage(false)->magic;
+
+    FUNCTION("TestAtomicNewLT") { AtomicRMW(src, {SymbolicScalar(0), SymbolicScalar(0)}, dst, AtomicRMWMode::ADD); }
+
+    EXPECT_NE(dst.GetStorage(false)->magic, origMagic) << "AtomicRMW should create a new LogicalTensor version";
+}
+
+TEST_F(TestAssembleNewLogicalTensor, LegacyAtomicRMWWritesOriginalDest)
+{
+    IRContext::Get().SetAssembleNewLogicalTensor(false);
+    TileShape::Current().SetVecTile(16, 16);
+
+    Tensor src(DT_FP32, {16, 16}, "src");
+    Tensor dst(DT_FP32, {32, 16}, "dst");
+    auto origMagic = dst.GetStorage(false)->magic;
+
+    FUNCTION("TestAtomicLegacy") { AtomicRMW(src, {SymbolicScalar(0), SymbolicScalar(0)}, dst, AtomicRMWMode::ADD); }
+
+    EXPECT_EQ(dst.GetStorage(false)->magic, origMagic) << "Legacy AtomicRMW should not create a new version";
+}

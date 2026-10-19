@@ -1620,7 +1620,19 @@ void AtomicRMW(const Tensor& t, const std::vector<SymbolicScalar>& dynOffset, Te
     auto& func = *Program::GetInstance().GetCurrentFunction();
     auto offset = SymbolicScalar::Concrete(dynOffset, 0);
 
+    if (IRContext::Get().AssembleNewLogicalTensor()) {
+        std::vector<ir::VarPtr> tokens;
+        auto newDest = dest.GetStorage(false)->NextVersion(func, tokens);
+        auto& op = func.AddOperation(Opcode::OP_ATOMIC_RMW, {t.GetStorage()}, {newDest});
+        op.SetAssembleOpAttribute(offset, dynOffset);
+        op.SetAttribute(OpAttributeKey::rmwMode, (int)mode);
+        Program::GetInstance().GetTensorSlotManager()->TensorWrite(dest, SlotProperty::ASSEMBLE_DST);
+        dest = Tensor(newDest);
+        return;
+    }
+
     Tensor res(t.GetDataType(), t.GetShape(), "", t.Format());
+    (void)res;
     auto& op = func.AddOperation(Opcode::OP_ATOMIC_RMW, {t.GetStorage()}, {dest.GetStorage()});
     op.SetAssembleOpAttribute(offset, dynOffset);
     op.SetAttribute(OpAttributeKey::rmwMode, (int)mode);

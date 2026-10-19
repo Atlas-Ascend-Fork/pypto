@@ -197,16 +197,9 @@ TEST_F(TestRemoveRedundantTokenPass, DisjointAtomicResultsMergeIntoLiveAtomicRes
     ProgramBuilder p;
     p.BeginFunction("DisjointAtomicResults", {source, output});
 
-    auto& function = *Program::GetInstance().GetCurrentFunction();
-    std::vector<ir::VarPtr> tokens;
-    auto firstAtomicOutput = output.GetStorage(false)->NextVersion(function, tokens);
-    auto firstAtomicDest = Tensor(firstAtomicOutput);
-    AtomicRMW(source, {0, 0}, firstAtomicDest, AtomicRMWMode::ADD);
-
-    auto secondAtomicOutput = firstAtomicOutput->NextVersion(function, tokens);
-    auto secondAtomicDest = Tensor(secondAtomicOutput);
-    AtomicRMW(source, {8, 0}, secondAtomicDest, AtomicRMWMode::ADD);
-    (void)Add(secondAtomicDest, secondAtomicDest);
+    AtomicRMW(source, {0, 0}, output, AtomicRMWMode::ADD);
+    AtomicRMW(source, {8, 0}, output, AtomicRMWMode::ADD);
+    (void)Add(output, output);
 
     auto result = pypto::ir::pass::RemoveRedundantTokenPass()(p.EndFunction());
 

@@ -438,3 +438,28 @@ def test_shared_view_keeps_overlap():
     )
     check_snapshot(before_remove, BEFORE_IR_17)
     check_snapshot(after_remove, IR_17)
+
+
+BEFORE_IR_18 = _GOLDEN_DIR / "BEFORE_IR_18.pypto"
+
+
+IR_18 = _GOLDEN_DIR / "IR_18.pypto"
+
+
+def test_atomic_add_prior_read_keeps_consumed_version():
+    """An unread atomic version merges forward; a consumed version stays before the next atomic write."""
+    def foo(src, aux, out):
+        pypto.atomic_add(src, [0, 0], aux)
+        pypto.atomic_add(src, [16, 0], aux)
+        value = aux + 1.0
+        pypto.atomic_add(src, [0, 0], aux)
+        pypto.assemble(value + aux, [0, 0], out)
+
+    before_remove, after_remove = _run_passes(
+        foo,
+        _tensor((8, 16), "src"),
+        _tensor((32, 16), "aux"),
+        _tensor((32, 16), "out"),
+    )
+    check_snapshot(before_remove, BEFORE_IR_18)
+    check_snapshot(after_remove, IR_18)
