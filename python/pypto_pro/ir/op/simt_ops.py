@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Callable, Sequence
+import inspect
 from typing import Any
 
 from pypto.pypto_impl import ir as _ir_core
@@ -255,14 +256,18 @@ def tanh(value: Expr, span: Span | None = None) -> Call:
     return _create_simt_call("tanh", value, span=span)
 
 
-def rint(value: Expr, span: Span | None = None) -> Call:
-    """Build a floating-point scalar round-to-nearest-even call."""
-    return _create_simt_call("rint", value, span=span)
+def rint(value: Expr, *, dtype: _ir_core.DataType | None = None, span: Span | None = None) -> Call:
+    """Build a scalar round-to-nearest-even call with an optional result dtype."""
+    actual_span = _get_span_or_capture(span)
+    target_type = value.type.dtype if dtype is None else dtype
+    return _ir_core.create_op_call("simt.rint", [value], {"target_type": target_type}, actual_span)
 
 
-def round(value: Expr, span: Span | None = None) -> Call:
-    """Build a floating-point scalar round-half-away-from-zero call."""
-    return _create_simt_call("round", value, span=span)
+def round(value: Expr, *, dtype: _ir_core.DataType | None = None, span: Span | None = None) -> Call:
+    """Build a scalar round-half-away-from-zero call with an optional result dtype."""
+    actual_span = _get_span_or_capture(span)
+    target_type = value.type.dtype if dtype is None else dtype
+    return _ir_core.create_op_call("simt.round", [value], {"target_type": target_type}, actual_span)
 
 
 def floor(value: Expr, span: Span | None = None) -> Call:
@@ -1015,6 +1020,226 @@ def _parse_simt_bitcast(parser: Any, call: ast.Call) -> Expr:
         ) from error
 
 
+def brev(value: Expr, span: Span | None = None) -> Call:
+    """Build a UINT32 or UINT64 bit-reversal call."""
+    return _create_simt_call("brev", value, span=span)
+
+
+def byte_perm(lhs: Expr, rhs: Expr, selector: Expr, span: Span | None = None) -> Call:
+    """Build a UINT32 byte-permutation call."""
+    return _create_simt_call("byte_perm", lhs, rhs, selector, span=span)
+
+
+def clz(value: Expr, span: Span | None = None) -> Call:
+    """Build an INT32 or INT64 leading-zero count call."""
+    return _create_simt_call("clz", value, span=span)
+
+
+def cyl_bessel_i0(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 order-zero modified-Bessel call."""
+    return _create_simt_call("cyl_bessel_i0", value, span=span)
+
+
+def cyl_bessel_i1(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 order-one modified-Bessel call."""
+    return _create_simt_call("cyl_bessel_i1", value, span=span)
+
+
+def equ(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build an unordered FP16 or BF16 equality comparison call."""
+    return _create_simt_call("equ", lhs, rhs, span=span)
+
+
+def erf(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 error-function call."""
+    return _create_simt_call("erf", value, span=span)
+
+
+def erfc(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 complementary-error-function call."""
+    return _create_simt_call("erfc", value, span=span)
+
+
+def erfcinv(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 inverse-complementary-error-function call."""
+    return _create_simt_call("erfcinv", value, span=span)
+
+
+def erfcx(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 scaled-complementary-error-function call."""
+    return _create_simt_call("erfcx", value, span=span)
+
+
+def erfinv(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 inverse-error-function call."""
+    return _create_simt_call("erfinv", value, span=span)
+
+
+def fdim(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 positive-difference call."""
+    return _create_simt_call("fdim", lhs, rhs, span=span)
+
+
+def ffs(value: Expr, span: Span | None = None) -> Call:
+    """Build an INT32 or INT64 first-set-bit call."""
+    return _create_simt_call("ffs", value, span=span)
+
+
+def fma_relu(lhs: Expr, rhs: Expr, addend: Expr, span: Span | None = None) -> Call:
+    """Build an FP16 or BF16 fused multiply-add with ReLU call."""
+    return _create_simt_call("fma_relu", lhs, rhs, addend, span=span)
+
+
+def geu(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build an unordered FP16 or BF16 greater-or-equal comparison call."""
+    return _create_simt_call("geu", lhs, rhs, span=span)
+
+
+def gtu(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build an unordered FP16 or BF16 greater-than comparison call."""
+    return _create_simt_call("gtu", lhs, rhs, span=span)
+
+
+def hadd(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build a signed or unsigned integer average call."""
+    return _create_simt_call("hadd", lhs, rhs, span=span)
+
+
+def hypot(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 overflow-resistant hypotenuse call."""
+    return _create_simt_call("hypot", lhs, rhs, span=span)
+
+
+def j0(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 order-zero Bessel-J call."""
+    return _create_simt_call("j0", value, span=span)
+
+
+def j1(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 order-one Bessel-J call."""
+    return _create_simt_call("j1", value, span=span)
+
+
+def jn(order: Expr, value: Expr, span: Span | None = None) -> Call:
+    """Build an integer-order FP32 Bessel-J call."""
+    return _create_simt_call("jn", order, value, span=span)
+
+
+def ldexp(value: Expr, exponent: Expr, span: Span | None = None) -> Call:
+    """Build an FP32/INT32 power-of-two scaling call."""
+    return _create_simt_call("ldexp", value, exponent, span=span)
+
+
+def leu(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build an unordered FP16 or BF16 less-or-equal comparison call."""
+    return _create_simt_call("leu", lhs, rhs, span=span)
+
+
+def lgamma(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 log-absolute-Gamma call."""
+    return _create_simt_call("lgamma", value, span=span)
+
+
+def ltu(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build an unordered FP16 or BF16 less-than comparison call."""
+    return _create_simt_call("ltu", lhs, rhs, span=span)
+
+
+def mul24(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build a signed or unsigned low-24-bit multiplication call."""
+    return _create_simt_call("mul24", lhs, rhs, span=span)
+
+
+def mul_i32_to_i64(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build a widening INT32 or UINT32 multiplication call."""
+    return _create_simt_call("mul_i32_to_i64", lhs, rhs, span=span)
+
+
+def norm3d(x: Expr, y: Expr, z: Expr, span: Span | None = None) -> Call:
+    """Build an overflow-resistant three-dimensional FP32 norm call."""
+    return _create_simt_call("norm3d", x, y, z, span=span)
+
+
+def norm4d(x: Expr, y: Expr, z: Expr, w: Expr, span: Span | None = None) -> Call:
+    """Build an overflow-resistant four-dimensional FP32 norm call."""
+    return _create_simt_call("norm4d", x, y, z, w, span=span)
+
+
+def normcdf(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 standard-normal-CDF call."""
+    return _create_simt_call("normcdf", value, span=span)
+
+
+def normcdfinv(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 inverse-standard-normal-CDF call."""
+    return _create_simt_call("normcdfinv", value, span=span)
+
+
+def pow(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 power call."""
+    return _create_simt_call("pow", lhs, rhs, span=span)
+
+
+def remainder(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 nearest-even remainder call."""
+    return _create_simt_call("remainder", lhs, rhs, span=span)
+
+
+def rhadd(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build a signed or unsigned upward-rounded integer average call."""
+    return _create_simt_call("rhadd", lhs, rhs, span=span)
+
+
+def rhypot(lhs: Expr, rhs: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 reciprocal-hypotenuse call."""
+    return _create_simt_call("rhypot", lhs, rhs, span=span)
+
+
+def rnorm3d(x: Expr, y: Expr, z: Expr, span: Span | None = None) -> Call:
+    """Build a reciprocal three-dimensional FP32 norm call."""
+    return _create_simt_call("rnorm3d", x, y, z, span=span)
+
+
+def rnorm4d(x: Expr, y: Expr, z: Expr, w: Expr, span: Span | None = None) -> Call:
+    """Build a reciprocal four-dimensional FP32 norm call."""
+    return _create_simt_call("rnorm4d", x, y, z, w, span=span)
+
+
+def sad(lhs: Expr, rhs: Expr, addend: Expr, span: Span | None = None) -> Call:
+    """Build a signed or unsigned sum-of-absolute-difference call."""
+    return _create_simt_call("sad", lhs, rhs, addend, span=span)
+
+
+def saturate(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 saturate-to-unit-interval call."""
+    return _create_simt_call("saturate", value, span=span)
+
+
+def scalbn(value: Expr, exponent: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 power-of-two scaling call with an INT32 or INT64 exponent."""
+    return _create_simt_call("scalbn", value, exponent, span=span)
+
+
+def tgamma(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 Gamma-function call."""
+    return _create_simt_call("tgamma", value, span=span)
+
+
+def y0(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 order-zero Bessel-Y call."""
+    return _create_simt_call("y0", value, span=span)
+
+
+def y1(value: Expr, span: Span | None = None) -> Call:
+    """Build an FP32 order-one Bessel-Y call."""
+    return _create_simt_call("y1", value, span=span)
+
+
+def yn(order: Expr, value: Expr, span: Span | None = None) -> Call:
+    """Build an integer-order FP32 Bessel-Y call."""
+    return _create_simt_call("yn", order, value, span=span)
+
+
 def _parse_scalar_math(
     parser: Any,
     op_name: str,
@@ -1026,17 +1251,18 @@ def _parse_scalar_math(
     span = _validate_simt_call(parser, call, op_name)
     args = [parser.parse_expression(arg) for arg in call.args]
     kwargs = {keyword.arg: parser.parse_expression(keyword.value) for keyword in call.keywords}
+    parameter_names = tuple(inspect.signature(builder).parameters)
     parsed_arguments = [
-        (arg, arg_node, f"argument {index + 1}")
+        (arg, arg_node, parameter_names[index])
         for index, (arg, arg_node) in enumerate(zip(args, call.args))
     ]
     parsed_arguments.extend(
-        (kwargs[keyword.arg], keyword.value, f"argument '{keyword.arg}'") for keyword in call.keywords
+        (kwargs[keyword.arg], keyword.value, keyword.arg) for keyword in call.keywords
     )
-    for arg, arg_node, argument_label in parsed_arguments:
+    for arg, arg_node, parameter_name in parsed_arguments:
         if not isinstance(arg, Expr) or not isinstance(arg.type, _ir_core.ScalarType):
             raise InvalidType(
-                f"pl.simt.{short_name}() {argument_label} must be a scalar expression",
+                f"pl.simt.{short_name}() {parameter_name} must be a scalar expression",
                 span=parser.span_tracker.get_span(arg_node),
                 hint="Subscript a Tile or Tensor first to obtain one scalar element.",
                 parser_retry=True,
@@ -1050,12 +1276,63 @@ def _parse_scalar_math(
         ) from error
 
 
+def _parse_rint_round(
+    parser: Any,
+    op_name: str,
+    call: ast.Call,
+    builder: Callable[..., Call],
+) -> Expr:
+    """Parse ``rint`` or ``round`` with an optional result dtype."""
+
+    short_name = op_name[len("simt."):]
+    span = _validate_simt_call(parser, call, op_name)
+    value_node = _simt_argument_node(call, 0, "value")
+    value = parser.parse_expression(value_node)
+    if not isinstance(value, Expr) or not isinstance(value.type, _ir_core.ScalarType):
+        raise InvalidType(
+            f"pl.simt.{short_name}() value must be a scalar expression",
+            span=parser.span_tracker.get_span(value_node),
+            hint="Subscript a Tile or Tensor first to obtain one scalar element.",
+            parser_retry=True,
+        )
+
+    dtype = None
+    dtype_keyword = next((keyword for keyword in call.keywords if keyword.arg == "dtype"), None)
+    if dtype_keyword is not None:
+        parsed_dtype = parser.resolve_single_kwarg("dtype", dtype_keyword.value)
+        if isinstance(parsed_dtype, Expr) and isinstance(parsed_dtype.type, _ir_core.NoneType):
+            parsed_dtype = None
+        if parsed_dtype is not None and not isinstance(parsed_dtype, _ir_core.DataType):
+            raise InvalidType(
+                f"pl.simt.{short_name}() dtype must be a pl.DT_* value",
+                span=parser.span_tracker.get_span(dtype_keyword.value),
+                parser_retry=True,
+            )
+        dtype = parsed_dtype
+
+    try:
+        return builder(value, dtype=dtype, span=span)
+    except (ValueError, RuntimeError) as error:
+        message = str(error)
+        raise (error_class_of_spec_message(message) or CommonExternal)(message, span=span, parser_retry=True) from error
+
+
 def _register_scalar_math_parser(op_name: str, builder: Callable[..., Call]) -> None:
     """Register one SIMT scalar-math op using the shared parser."""
 
     @op_impl(op_name)
     def _parser_impl(parser: Any, call: ast.Call) -> Expr:
         return _parse_scalar_math(parser, op_name, call, builder)
+
+
+@op_impl("simt.rint")
+def _parse_simt_rint(parser: Any, call: ast.Call) -> Expr:
+    return _parse_rint_round(parser, "simt.rint", call, rint)
+
+
+@op_impl("simt.round")
+def _parse_simt_round(parser: Any, call: ast.Call) -> Expr:
+    return _parse_rint_round(parser, "simt.round", call, round)
 
 
 _register_scalar_math_parser("simt.abs", abs)
@@ -1071,8 +1348,6 @@ _register_scalar_math_parser("simt.log1p", log1p)
 _register_scalar_math_parser("simt.sin", sin)
 _register_scalar_math_parser("simt.cos", cos)
 _register_scalar_math_parser("simt.tanh", tanh)
-_register_scalar_math_parser("simt.rint", rint)
-_register_scalar_math_parser("simt.round", round)
 _register_scalar_math_parser("simt.floor", floor)
 _register_scalar_math_parser("simt.ceil", ceil)
 _register_scalar_math_parser("simt.trunc", trunc)
@@ -1107,6 +1382,50 @@ _register_scalar_math_parser("simt.asinh", asinh)
 _register_scalar_math_parser("simt.rcbrt", rcbrt)
 _register_scalar_math_parser("simt.ilogb", ilogb)
 _register_scalar_math_parser("simt.signbit", signbit)
+_register_scalar_math_parser("simt.brev", brev)
+_register_scalar_math_parser("simt.byte_perm", byte_perm)
+_register_scalar_math_parser("simt.clz", clz)
+_register_scalar_math_parser("simt.cyl_bessel_i0", cyl_bessel_i0)
+_register_scalar_math_parser("simt.cyl_bessel_i1", cyl_bessel_i1)
+_register_scalar_math_parser("simt.equ", equ)
+_register_scalar_math_parser("simt.erf", erf)
+_register_scalar_math_parser("simt.erfc", erfc)
+_register_scalar_math_parser("simt.erfcinv", erfcinv)
+_register_scalar_math_parser("simt.erfcx", erfcx)
+_register_scalar_math_parser("simt.erfinv", erfinv)
+_register_scalar_math_parser("simt.fdim", fdim)
+_register_scalar_math_parser("simt.ffs", ffs)
+_register_scalar_math_parser("simt.fma_relu", fma_relu)
+_register_scalar_math_parser("simt.geu", geu)
+_register_scalar_math_parser("simt.gtu", gtu)
+_register_scalar_math_parser("simt.hadd", hadd)
+_register_scalar_math_parser("simt.hypot", hypot)
+_register_scalar_math_parser("simt.j0", j0)
+_register_scalar_math_parser("simt.j1", j1)
+_register_scalar_math_parser("simt.jn", jn)
+_register_scalar_math_parser("simt.ldexp", ldexp)
+_register_scalar_math_parser("simt.leu", leu)
+_register_scalar_math_parser("simt.lgamma", lgamma)
+_register_scalar_math_parser("simt.ltu", ltu)
+_register_scalar_math_parser("simt.mul24", mul24)
+_register_scalar_math_parser("simt.mul_i32_to_i64", mul_i32_to_i64)
+_register_scalar_math_parser("simt.norm3d", norm3d)
+_register_scalar_math_parser("simt.norm4d", norm4d)
+_register_scalar_math_parser("simt.normcdf", normcdf)
+_register_scalar_math_parser("simt.normcdfinv", normcdfinv)
+_register_scalar_math_parser("simt.pow", pow)
+_register_scalar_math_parser("simt.remainder", remainder)
+_register_scalar_math_parser("simt.rhadd", rhadd)
+_register_scalar_math_parser("simt.rhypot", rhypot)
+_register_scalar_math_parser("simt.rnorm3d", rnorm3d)
+_register_scalar_math_parser("simt.rnorm4d", rnorm4d)
+_register_scalar_math_parser("simt.sad", sad)
+_register_scalar_math_parser("simt.saturate", saturate)
+_register_scalar_math_parser("simt.scalbn", scalbn)
+_register_scalar_math_parser("simt.tgamma", tgamma)
+_register_scalar_math_parser("simt.y0", y0)
+_register_scalar_math_parser("simt.y1", y1)
+_register_scalar_math_parser("simt.yn", yn)
 _register_scalar_math_parser("simt.fmod", fmod)
 _register_scalar_math_parser("simt.fma", fma)
 _register_scalar_math_parser("simt.warp_reduce_add", warp_reduce_add)

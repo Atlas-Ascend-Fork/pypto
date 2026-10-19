@@ -527,3 +527,90 @@ def test_rint_all_supported_dtypes():
     for source, output in zip(sources, outputs):
         expected = torch.round(source.float())
         torch.testing.assert_close(output.cpu(), expected.to(source.dtype), rtol=0, atol=0)
+
+# ---------------------------------------------------- rint to int64 ---------------------------------------------------
+
+@pl.vector_function(mode="simt", max_threads=ELEMENTS)
+def rint_int64_tile(src_tile, out_tile):
+    tid = pl.simt.linear_thread_idx()
+    out_tile[0, tid] = pl.simt.rint(src_tile[0, tid], dtype=pl.DT_INT64)
+
+
+@pl.jit(auto_mutex=True)
+def simt_rint_int64_tile(
+    src: pl.Tensor[[1, ELEMENTS], pl.DT_FP32],
+    out: pl.Tensor[[1, ELEMENTS], pl.DT_INT64],
+):
+    src_tile_group = pl.make_tile_group(
+        type=pl.TileType(shape=[1, ELEMENTS], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addrs=0x0000,
+        mutex_ids="auto",
+        depth=1,
+    )
+    src_tile = src_tile_group.current()
+    out_tile_group = pl.make_tile_group(
+        type=pl.TileType(shape=[1, ELEMENTS], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec),
+        addrs=0x0400,
+        mutex_ids="auto",
+        depth=1,
+    )
+    out_tile = out_tile_group.current()
+    with pl.section_vector():
+        pl.load(src_tile, src, [0, 0])
+        rint_int64_tile[ELEMENTS](src_tile, out_tile)
+        pl.store(out, out_tile, [0, 0])
+
+
+@pytest.mark.soc("950")
+def test_rint_fp32_to_int64_with_tile_operands():
+    torch.npu.set_device(ST_DEVICE)
+    base = torch.tensor([-3.5, -2.5, -1.5, -0.5, 0.5, 1.5, 2.5, 3.5], dtype=torch.float32)
+    source = base.repeat(ELEMENTS // base.numel()).reshape(1, ELEMENTS)
+    output = torch.empty(source.shape, dtype=torch.int64, device=ST_DEVICE)
+    simt_rint_int64_tile(source.to(ST_DEVICE), output)
+    torch.npu.synchronize()
+    torch.testing.assert_close(output.cpu(), torch.round(source).to(torch.int64), rtol=0, atol=0)
+
+# --------------------------------------------------- round to int64 --------------------------------------------------
+
+@pl.vector_function(mode="simt", max_threads=ELEMENTS)
+def round_int64_tile(src_tile, out_tile):
+    tid = pl.simt.linear_thread_idx()
+    out_tile[0, tid] = pl.simt.round(src_tile[0, tid], dtype=pl.DT_INT64)
+
+
+@pl.jit(auto_mutex=True)
+def simt_round_int64_tile(
+    src: pl.Tensor[[1, ELEMENTS], pl.DT_FP32],
+    out: pl.Tensor[[1, ELEMENTS], pl.DT_INT64],
+):
+    src_tile_group = pl.make_tile_group(
+        type=pl.TileType(shape=[1, ELEMENTS], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addrs=0x0000,
+        mutex_ids="auto",
+        depth=1,
+    )
+    src_tile = src_tile_group.current()
+    out_tile_group = pl.make_tile_group(
+        type=pl.TileType(shape=[1, ELEMENTS], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec),
+        addrs=0x0400,
+        mutex_ids="auto",
+        depth=1,
+    )
+    out_tile = out_tile_group.current()
+    with pl.section_vector():
+        pl.load(src_tile, src, [0, 0])
+        round_int64_tile[ELEMENTS](src_tile, out_tile)
+        pl.store(out, out_tile, [0, 0])
+
+
+@pytest.mark.soc("950")
+def test_round_fp32_to_int64_with_tile_operands():
+    torch.npu.set_device(ST_DEVICE)
+    base = torch.tensor([-3.5, -2.5, -1.5, -0.5, 0.5, 1.5, 2.5, 3.5], dtype=torch.float32)
+    source = base.repeat(ELEMENTS // base.numel()).reshape(1, ELEMENTS)
+    output = torch.empty(source.shape, dtype=torch.int64, device=ST_DEVICE)
+    simt_round_int64_tile(source.to(ST_DEVICE), output)
+    expected = torch.where(source >= 0.0, torch.floor(source + 0.5), torch.ceil(source - 0.5)).to(torch.int64)
+    torch.npu.synchronize()
+    torch.testing.assert_close(output.cpu(), expected, rtol=0, atol=0)

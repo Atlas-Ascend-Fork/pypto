@@ -282,14 +282,24 @@ ir::ProgramPtr MakeSimtScalarOpsProgram()
     std::size_t result_index = 0;
     const std::vector<std::string> dtype_specific_unary_ops = {
         "simt.abs", "simt.sqrt", "simt.rsqrt", "simt.exp",   "simt.exp2",  "simt.log",   "simt.log2",
-        "simt.sin", "simt.cos",  "simt.tanh",  "simt.round", "simt.trunc", "simt.exp10", "simt.log10",
+        "simt.sin", "simt.cos",  "simt.tanh",  "simt.trunc", "simt.exp10", "simt.log10",
     };
     for (const auto& op_name : dtype_specific_unary_ops) {
         AppendRegisteredResult(simt_stmts, result_index, op_name, {fp32_value});
         AppendRegisteredResult(simt_stmts, result_index, op_name, {fp16_value});
         AppendRegisteredResult(simt_stmts, result_index, op_name, {bf16_value});
     }
-    for (const auto& op_name : {"simt.rint", "simt.floor", "simt.ceil", "simt.isnan", "simt.isinf"}) {
+    for (const auto& op_name : {"simt.rint", "simt.round"}) {
+        AppendRegisteredResult(simt_stmts, result_index, op_name, {fp16_value},
+                               Kwargs{{"target_type", ir::DataType::FP16}});
+        AppendRegisteredResult(simt_stmts, result_index, op_name, {bf16_value},
+                               Kwargs{{"target_type", ir::DataType::BF16}});
+        AppendRegisteredResult(simt_stmts, result_index, op_name, {fp32_value},
+                               Kwargs{{"target_type", ir::DataType::FP32}});
+        AppendRegisteredResult(simt_stmts, result_index, op_name, {fp32_value},
+                               Kwargs{{"target_type", ir::DataType::INT64}});
+    }
+    for (const auto& op_name : {"simt.floor", "simt.ceil", "simt.isnan", "simt.isinf"}) {
         AppendRegisteredResult(simt_stmts, result_index, op_name, {fp32_value});
     }
     AppendRegisteredResult(simt_stmts, result_index, "simt.log1p", {fp32_value});
@@ -606,6 +616,8 @@ TEST(CCESimtCodegenTest, GeneratesRegisteredSynchronizationScalarCastAndMathOper
         "__log1p_reduced_poly",
         "__rintf(",
         "__roundf(",
+        "__cvt_int64_t<ROUND::R, RoundingSaturation::RS_ENABLE_VALUE>(",
+        "__cvt_int64_t<ROUND::A, RoundingSaturation::RS_ENABLE_VALUE>(",
         "__floorf(",
         "__ceilf(",
         "__isnan(",

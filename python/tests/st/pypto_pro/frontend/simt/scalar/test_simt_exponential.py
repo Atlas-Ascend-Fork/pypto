@@ -435,3 +435,167 @@ def test_expm1_fp32_with_tile_operands():
     torch.testing.assert_close(actual[:, 16:32], expected[:, 16:32], rtol=2e-5, atol=0.0, equal_nan=True)
     torch.testing.assert_close(actual[:, 32:], expected[:, 32:], rtol=2e-5, atol=2e-6)
     assert torch.equal(actual[:, 7:9].view(torch.int32), source[:, 7:9].view(torch.int32))
+
+
+# --------------------------------------------------- pow ---------------------------------------------------
+
+
+@pl.vector_function(mode="simt", max_threads=ELEMENTS)
+def pow_fp32(lhs, rhs, out):
+    tid = pl.simt.linear_thread_idx()
+    out[0, tid] = pl.simt.pow(lhs[0, tid], rhs[0, tid])
+
+
+@pl.jit(auto_mutex=True)
+def simt_pow_tile(
+    lhs: pl.Tensor[[1, ELEMENTS], pl.DT_FP32],
+    rhs: pl.Tensor[[1, ELEMENTS], pl.DT_FP32],
+    out: pl.Tensor[[1, ELEMENTS], pl.DT_FP32],
+):
+    lhs_group = pl.make_tile_group(
+        type=pl.TileType(shape=[1, ELEMENTS], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addrs=0x0000,
+        mutex_ids="auto",
+        depth=1,
+    )
+    rhs_group = pl.make_tile_group(
+        type=pl.TileType(shape=[1, ELEMENTS], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addrs=0x0400,
+        mutex_ids="auto",
+        depth=1,
+    )
+    out_group = pl.make_tile_group(
+        type=pl.TileType(shape=[1, ELEMENTS], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addrs=0x0800,
+        mutex_ids="auto",
+        depth=1,
+    )
+    lhs_tile = lhs_group.current()
+    rhs_tile = rhs_group.current()
+    out_tile = out_group.current()
+    with pl.section_vector():
+        pl.load(lhs_tile, lhs, [0, 0])
+        pl.load(rhs_tile, rhs, [0, 0])
+        pow_fp32[ELEMENTS](lhs_tile, rhs_tile, out_tile)
+        pl.store(out, out_tile, [0, 0])
+
+
+@pytest.mark.soc("950")
+def test_pow_fp32_with_tile_operands():
+    torch.npu.set_device(ST_DEVICE)
+    lhs = torch.linspace(0.25, 4.0, ELEMENTS, dtype=torch.float32).reshape(1, ELEMENTS)
+    rhs = torch.linspace(-8.0, 8.0, ELEMENTS, dtype=torch.float32).reshape(1, ELEMENTS)
+    # Near-one bases, large exponents, subnormal inputs/results and range boundaries.
+    cases = [
+        (1.0 + 2.0**-23, 2.0**23),
+        (1.0 + 2.0**-23, -(2.0**23)),
+        (1.0 - 2.0**-24, 2.0**24),
+        (1.0 - 2.0**-24, -(2.0**24)),
+        (1.0001, 100000.0),
+        (1.0001, -100000.0),
+        (2.0**-149, 1.0),
+        (2.0**-149, 0.5),
+        (2.0**-126, 0.75),
+        (2.0, -149.0),
+        (2.0, -150.0),
+        (2.0, -126.0),
+        (2.0, 127.0),
+        (2.0, 128.0),
+        (2.0, 200.0),
+        (2.0, -200.0),
+        (-2.0, 3.0),
+        (-2.0, -3.0),
+        (-2.0, 4.0),
+        (-2.0, -4.0),
+        (-2.0, -149.0),
+        (-2.0, 129.0),
+        (-2.0, -151.0),
+        (-0.5, -129.0),
+    ]
+    inputs = torch.tensor(cases, dtype=torch.float32)
+    lhs[0, :len(cases)] = inputs[:, 0]
+    rhs[0, :len(cases)] = inputs[:, 1]
+    expected = torch.pow(lhs.to(torch.float64), rhs.to(torch.float64)).to(torch.float32)
+    output = torch.empty_like(lhs, device=ST_DEVICE)
+    simt_pow_tile(lhs.to(ST_DEVICE), rhs.to(ST_DEVICE), output)
+    torch.npu.synchronize()
+    actual = output.cpu()
+    torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-45)
+    signed = (expected == 0.0) | torch.isinf(expected)
+    assert torch.equal(torch.signbit(actual[signed]), torch.signbit(expected[signed]))
+
+
+@pytest.mark.soc("950")
+def test_pow_fp32_special_values_with_tile_operands():
+    torch.npu.set_device(ST_DEVICE)
+    inf, nan = float("inf"), float("nan")
+    # Explicit powf special-value expectations, including exception precedence and signed zero.
+    cases = [
+        (nan, 0.0, 1.0),
+        (nan, -0.0, 1.0),
+        (1.0, nan, 1.0),
+        (1.0, inf, 1.0),
+        (1.0, -inf, 1.0),
+        (-1.0, inf, 1.0),
+        (-1.0, -inf, 1.0),
+        (0.0, 0.0, 1.0),
+        (-0.0, -0.0, 1.0),
+        (inf, 0.0, 1.0),
+        (-inf, -0.0, 1.0),
+        (0.0, 3.0, 0.0),
+        (-0.0, 3.0, -0.0),
+        (-0.0, 2.0, 0.0),
+        (0.0, -3.0, inf),
+        (-0.0, -3.0, -inf),
+        (-0.0, -2.0, inf),
+        (-0.0, 0.5, 0.0),
+        (-0.0, -0.5, inf),
+        (inf, 3.0, inf),
+        (-inf, 3.0, -inf),
+        (-inf, 2.0, inf),
+        (inf, -3.0, 0.0),
+        (-inf, -3.0, -0.0),
+        (-inf, -2.0, 0.0),
+        (-inf, 0.5, inf),
+        (-inf, -0.5, 0.0),
+        (0.0, nan, nan),
+        (-0.0, nan, nan),
+        (inf, nan, nan),
+        (-inf, nan, nan),
+        (nan, inf, nan),
+        (nan, -inf, nan),
+        (nan, nan, nan),
+        (nan, 2.0, nan),
+        (2.0, nan, nan),
+        (-1.0, nan, nan),
+        (-2.0, 0.5, nan),
+        (-2.0, -0.5, nan),
+        (2.0, inf, inf),
+        (2.0, -inf, 0.0),
+        (0.5, inf, 0.0),
+        (0.5, -inf, inf),
+        (-2.0, inf, inf),
+        (-2.0, -inf, 0.0),
+        (-0.5, inf, 0.0),
+        (-0.5, -inf, inf),
+        (-1.0, 16777215.0, -1.0),
+        (-1.0, 16777216.0, 1.0),
+        (-1.0, -16777215.0, -1.0),
+        (-1.0, -16777216.0, 1.0),
+        (-0.0, inf, 0.0),
+        (-0.0, -inf, inf),
+        (-inf, inf, inf),
+        (-inf, -inf, 0.0),
+    ]
+    cases += [(2.0, 3.0, 8.0)] * (ELEMENTS - len(cases))
+    values = torch.tensor(cases, dtype=torch.float32)
+    lhs = values[:, 0].reshape(1, ELEMENTS).contiguous()
+    rhs = values[:, 1].reshape(1, ELEMENTS).contiguous()
+    expected = values[:, 2].reshape(1, ELEMENTS)
+    output = torch.empty_like(lhs, device=ST_DEVICE)
+    simt_pow_tile(lhs.to(ST_DEVICE), rhs.to(ST_DEVICE), output)
+    torch.npu.synchronize()
+    actual = output.cpu()
+    torch.testing.assert_close(actual, expected, rtol=0.0, atol=0.0, equal_nan=True)
+    signed = (expected == 0.0) | torch.isinf(expected)
+    assert torch.equal(torch.signbit(actual[signed]), torch.signbit(expected[signed]))

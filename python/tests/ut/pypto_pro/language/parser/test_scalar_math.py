@@ -99,9 +99,7 @@ def test_scalar_math_is_available_in_simt_functions():
         transformed = pl.simt.exp2(pl.simt.exp(transformed))
         transformed = pl.simt.log2(pl.simt.log(pl.simt.log1p(transformed)))
         transformed = pl.simt.tanh(pl.simt.cos(pl.simt.sin(transformed)))
-        transformed = pl.simt.trunc(
-            pl.simt.floor(pl.simt.ceil(pl.simt.round(pl.simt.rint(transformed))))
-        )
+        transformed = pl.simt.trunc(pl.simt.floor(pl.simt.ceil(pl.simt.round(pl.simt.rint(transformed)))))
         classified = pl.simt.isnan(transformed) or pl.simt.isinf(transformed)
         if classified:
             transformed = value
@@ -183,9 +181,7 @@ def test_scalar_math_supports_int64_abs_and_integer_min_max():
         dst[0, 0] = pl.simt.abs(src[0, 0])
         dst[0, 1] = pl.simt.max(pl.simt.min(src[0, 0], src[0, 1]), src[0, 0])
 
-    function_ir = str(
-        _parse_tile_function(integer_math, [([1, 32], pl.DT_INT64), ([1, 32], pl.DT_INT64)])
-    )
+    function_ir = str(_parse_tile_function(integer_math, [([1, 32], pl.DT_INT64), ([1, 32], pl.DT_INT64)]))
     assert "simt.abs(" in function_ir
     assert "simt.min(" in function_ir
     assert "simt.max(" in function_ir
@@ -218,9 +214,9 @@ def test_scalar_math_rejects_unsupported_dtype_and_mixed_operands():
 
     @pl.vector_function(mode="simt")
     def mixed_min(lhs, rhs):
-        lhs[0, 0] = pl.simt.min(lhs[0, 0], rhs[0, 0])
+        lhs[0, 0] = pl.simt.min(rhs=rhs[0, 0], lhs=lhs[0, 0])
 
-    with pytest.raises(InvalidType, match="same dtype"):
+    with pytest.raises(InvalidType, match=r"same dtype, got fp16 and fp32"):
         _parse_tile_function(mixed_min, [([1, 32], pl.DT_FP16), ([1, 32], pl.DT_FP32)])
 
 
@@ -229,7 +225,7 @@ def test_scalar_math_rejects_tile_operand():
     def unsupported(value):
         _ = pl.simt.sqrt(value)
 
-    with pytest.raises(InvalidType, match="must be a scalar expression"):
+    with pytest.raises(InvalidType, match=r"pl\.simt\.sqrt\(\) value must be a scalar expression"):
         _parse_tile_function(unsupported, [([1, 32], pl.DT_FP32)])
 
 
@@ -392,9 +388,9 @@ def test_selected_nan_binary_and_exponent_math_is_available_in_simt_functions():
 def test_new_scalar_math_rejects_mixed_binary_and_unsupported_unary_dtype():
     @pl.vector_function(mode="simt")
     def mixed_nextafter(lhs, rhs):
-        _ = pl.simt.nextafter(lhs[0, 0], rhs[0, 0])
+        _ = pl.simt.nextafter(direction=rhs[0, 0], value=lhs[0, 0])
 
-    with pytest.raises(InvalidType, match="same dtype"):
+    with pytest.raises(InvalidType, match=r"same dtype, got fp32 and fp16"):
         _parse_tile_function(mixed_nextafter, [([1, 16], pl.DT_FP32), ([1, 16], pl.DT_FP16)])
 
     @pl.vector_function(mode="simt")
@@ -403,3 +399,196 @@ def test_new_scalar_math_rejects_mixed_binary_and_unsupported_unary_dtype():
 
     with pytest.raises(NotSupported, match="supports only fp32"):
         _parse_tile_function(invalid_signbit, [([1, 16], pl.DT_FP16)])
+
+
+def test_batch2_scalar_math_is_available_in_simt_functions():
+    @pl.vector_function(mode="simt", max_threads=1)
+    def batch2_math(
+        signed32: pl.DT_INT32,
+        unsigned32: pl.DT_UINT32,
+        signed64: pl.DT_INT64,
+        unsigned64: pl.DT_UINT64,
+    ):
+        _reverse32 = pl.simt.brev(unsigned32)
+        _reverse64 = pl.simt.brev(unsigned64)
+        _clz32 = pl.simt.clz(signed32)
+        _clz64 = pl.simt.clz(signed64)
+        _ffs32 = pl.simt.ffs(signed32)
+        _ffs64 = pl.simt.ffs(signed64)
+        _bytes = pl.simt.byte_perm(unsigned32, unsigned32, unsigned32)
+        _signed_sad = pl.simt.sad(signed32, signed32, unsigned32)
+        _unsigned_sad = pl.simt.sad(unsigned32, unsigned32, unsigned32)
+        _signed_mul24 = pl.simt.mul24(signed32, signed32)
+        _unsigned_mul24 = pl.simt.mul24(unsigned32, unsigned32)
+        _signed_average = pl.simt.hadd(signed32, signed32)
+        _unsigned_average = pl.simt.hadd(unsigned32, unsigned32)
+        _signed_rounded = pl.simt.rhadd(signed32, signed32)
+        _unsigned_rounded = pl.simt.rhadd(unsigned32, unsigned32)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(
+        signed32: pl.DT_INT32,
+        unsigned32: pl.DT_UINT32,
+        signed64: pl.DT_INT64,
+        unsigned64: pl.DT_UINT64,
+    ):
+        with pl.section_vector():
+            batch2_math[1](signed32, unsigned32, signed64, unsigned64)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function_ir = str(program.get_function(batch2_math.__name__))
+    for name in (
+        "brev",
+        "clz",
+        "ffs",
+        "byte_perm",
+        "sad",
+        "mul24",
+        "hadd",
+        "rhadd",
+    ):
+        assert f"simt.{name}(" in function_ir
+
+
+def test_batch3_low_precision_math_is_available_in_simt_functions():
+    @pl.vector_function(mode="simt")
+    def batch3_low_precision(src, dst, flags):
+        lhs = src[0, 0]
+        rhs = src[0, 1]
+        dst[0, 0] = pl.simt.fma_relu(lhs, rhs, lhs)
+        flags[0, 0] = pl.simt.equ(lhs, rhs)
+        flags[0, 1] = pl.simt.leu(lhs, rhs)
+        flags[0, 2] = pl.simt.geu(lhs, rhs)
+        flags[0, 3] = pl.simt.ltu(lhs, rhs)
+        flags[0, 4] = pl.simt.gtu(lhs, rhs)
+
+    for dtype in (pl.DT_FP16, pl.DT_BF16):
+        function_ir = str(
+            _parse_tile_function(
+                batch3_low_precision,
+                [([1, 16], dtype), ([1, 16], dtype), ([1, 32], pl.DT_BOOL)],
+            )
+        )
+        for name in ("fma_relu", "equ", "leu", "geu", "ltu", "gtu"):
+            assert f"simt.{name}(" in function_ir
+
+
+def test_batch3_fp32_binary_math_is_available_in_simt_functions():
+    @pl.vector_function(mode="simt", max_threads=1)
+    def batch3_fp32(lhs: pl.DT_FP32, rhs: pl.DT_FP32):
+        _hypot = pl.simt.hypot(lhs, rhs)
+        _rhypot = pl.simt.rhypot(lhs, rhs)
+        _fdim = pl.simt.fdim(lhs, rhs)
+        _remainder = pl.simt.remainder(lhs, rhs)
+        _pow = pl.simt.pow(lhs, rhs)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(lhs: pl.DT_FP32, rhs: pl.DT_FP32):
+        with pl.section_vector():
+            batch3_fp32[1](lhs, rhs)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function_ir = str(program.get_function(batch3_fp32.__name__))
+    for name in ("hypot", "rhypot", "fdim", "remainder", "pow"):
+        assert f"simt.{name}(" in function_ir
+
+
+def test_recognized_special_math_is_available_in_simt_functions():
+    @pl.vector_function(mode="simt", max_threads=1)
+    def special_math(value: pl.DT_FP32, order: pl.DT_INT32, long_exponent: pl.DT_INT64):
+        _ldexp = pl.simt.ldexp(value, order)
+        _scalbn = pl.simt.scalbn(value, order)
+        _scalbn_long = pl.simt.scalbn(value, long_exponent)
+        _norm3d = pl.simt.norm3d(value, value, value)
+        _rnorm3d = pl.simt.rnorm3d(value, value, value)
+        _norm4d = pl.simt.norm4d(value, value, value, value)
+        _rnorm4d = pl.simt.rnorm4d(value, value, value, value)
+        _erf = pl.simt.erf(value)
+        _erfc = pl.simt.erfc(value)
+        _erfinv = pl.simt.erfinv(value)
+        _erfcinv = pl.simt.erfcinv(value)
+        _erfcx = pl.simt.erfcx(value)
+        _tgamma = pl.simt.tgamma(value)
+        _lgamma = pl.simt.lgamma(value)
+        _normcdf = pl.simt.normcdf(value)
+        _normcdfinv = pl.simt.normcdfinv(value)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(value: pl.DT_FP32, order: pl.DT_INT32, long_exponent: pl.DT_INT64):
+        with pl.section_vector():
+            special_math[1](value, order, long_exponent)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function_ir = str(program.get_function(special_math.__name__))
+    for name in (
+        "ldexp",
+        "scalbn",
+        "norm3d",
+        "rnorm3d",
+        "norm4d",
+        "rnorm4d",
+        "erf",
+        "erfc",
+        "erfinv",
+        "erfcinv",
+        "erfcx",
+        "tgamma",
+        "lgamma",
+        "normcdf",
+        "normcdfinv",
+    ):
+        assert f"simt.{name}(" in function_ir
+
+
+def test_mul_i32_to_i64_is_available_in_simt_functions():
+    @pl.vector_function(mode="simt", max_threads=1)
+    def widening_multiply(signed32: pl.DT_INT32, unsigned32: pl.DT_UINT32):
+        _signed_product = pl.simt.mul_i32_to_i64(signed32, signed32)
+        _unsigned_product = pl.simt.mul_i32_to_i64(unsigned32, unsigned32)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(signed32: pl.DT_INT32, unsigned32: pl.DT_UINT32):
+        with pl.section_vector():
+            widening_multiply[1](signed32, unsigned32)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function_ir = str(program.get_function(widening_multiply.__name__))
+    assert function_ir.count("simt.mul_i32_to_i64(") == 2
+
+
+def test_bessel_rounding_and_saturate_ops_are_available_in_simt_functions():
+    @pl.vector_function(mode="simt", max_threads=1)
+    def bessel_rounding_and_saturate_ops(value: pl.DT_FP32, order: pl.DT_INT32):
+        _jn = pl.simt.jn(order, value)
+        _yn = pl.simt.yn(order, value)
+        _rint_i64 = pl.simt.rint(value, dtype=pl.DT_INT64)
+        _round_i64 = pl.simt.round(value, dtype=pl.DT_INT64)
+        _i0 = pl.simt.cyl_bessel_i0(value)
+        _i1 = pl.simt.cyl_bessel_i1(value)
+        _j0 = pl.simt.j0(value)
+        _j1 = pl.simt.j1(value)
+        _y0 = pl.simt.y0(value)
+        _y1 = pl.simt.y1(value)
+        _saturate = pl.simt.saturate(value)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(value: pl.DT_FP32, order: pl.DT_INT32):
+        with pl.section_vector():
+            bessel_rounding_and_saturate_ops[1](value, order)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function_ir = str(program.get_function(bessel_rounding_and_saturate_ops.__name__))
+    for name in (
+        "jn",
+        "yn",
+        "rint",
+        "round",
+        "cyl_bessel_i0",
+        "cyl_bessel_i1",
+        "j0",
+        "j1",
+        "y0",
+        "y1",
+        "saturate",
+    ):
+        assert f"simt.{name}(" in function_ir

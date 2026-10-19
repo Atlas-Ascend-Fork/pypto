@@ -451,5 +451,159 @@ TEST(SimtOpsTest, RejectsInvalidLaunchArgumentAbi)
                                        Kwargs{{"callee", std::string("simt_entry")}, {"max_threads", 1}}, Sp()),
                  npu::tile_fwk::Error);
 }
+TEST(SimtOpsTest, Batch2MathTypeDeductionContracts)
+{
+    auto& registry = OpRegistry::GetInstance();
+    auto expect_result = [&registry](const std::string& name, const std::vector<ExprPtr>& args, DataType result_dtype) {
+        auto call = registry.Create(name, args, Sp());
+        auto type = As<ScalarType>(call->GetType());
+        ASSERT_NE(type, nullptr);
+        EXPECT_EQ(type->dtype_, result_dtype);
+    };
+
+    auto i32 = MakeScalarVar("i32", DataType::INT32);
+    auto u32 = MakeScalarVar("u32", DataType::UINT32);
+    auto i64 = MakeScalarVar("i64", DataType::INT64);
+    auto u64 = MakeScalarVar("u64", DataType::UINT64);
+    expect_result("simt.brev", {u32}, DataType::UINT32);
+    expect_result("simt.brev", {u64}, DataType::UINT64);
+    expect_result("simt.clz", {i32}, DataType::INT32);
+    expect_result("simt.clz", {i64}, DataType::INT32);
+    expect_result("simt.ffs", {i32}, DataType::INT32);
+    expect_result("simt.ffs", {i64}, DataType::INT32);
+    expect_result("simt.byte_perm", {u32, u32, u32}, DataType::UINT32);
+    expect_result("simt.sad", {i32, i32, u32}, DataType::UINT32);
+    expect_result("simt.sad", {u32, u32, u32}, DataType::UINT32);
+    for (const auto& name : {"simt.mul24", "simt.hadd", "simt.rhadd"}) {
+        expect_result(name, {i32, i32}, DataType::INT32);
+        expect_result(name, {u32, u32}, DataType::UINT32);
+    }
+
+    EXPECT_THROW((void)registry.Create("simt.brev", {i32}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.sad", {i32, i32, i32}, Sp()), npu::tile_fwk::Error);
+}
+
+TEST(SimtOpsTest, Batch3MathTypeDeductionContracts)
+{
+    auto& registry = OpRegistry::GetInstance();
+    auto expect_result = [&registry](const std::string& name, const std::vector<ExprPtr>& args, DataType result_dtype) {
+        auto call = registry.Create(name, args, Sp());
+        auto type = As<ScalarType>(call->GetType());
+        ASSERT_NE(type, nullptr);
+        EXPECT_EQ(type->dtype_, result_dtype);
+    };
+
+    auto fp16 = MakeScalarVar("fp16", DataType::FP16);
+    auto bf16 = MakeScalarVar("bf16", DataType::BF16);
+    auto fp32 = MakeScalarVar("fp32", DataType::FP32);
+    expect_result("simt.fma_relu", {fp16, fp16, fp16}, DataType::FP16);
+    expect_result("simt.fma_relu", {bf16, bf16, bf16}, DataType::BF16);
+    for (const auto& name : {"simt.equ", "simt.leu", "simt.geu", "simt.ltu", "simt.gtu"}) {
+        expect_result(name, {fp16, fp16}, DataType::BOOL);
+        expect_result(name, {bf16, bf16}, DataType::BOOL);
+    }
+    for (const auto& name : {"simt.hypot", "simt.rhypot", "simt.fdim", "simt.remainder"}) {
+        expect_result(name, {fp32, fp32}, DataType::FP32);
+    }
+
+    EXPECT_THROW((void)registry.Create("simt.fma_relu", {fp32, fp32, fp32}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.equ", {fp16, bf16}, Sp()), npu::tile_fwk::Error);
+}
+
+TEST(SimtOpsTest, RecognizedSpecialMathTypeDeductionContracts)
+{
+    auto& registry = OpRegistry::GetInstance();
+    auto expect_result = [&registry](const std::string& name, const std::vector<ExprPtr>& args, DataType result_dtype) {
+        auto type = As<ScalarType>(registry.Create(name, args, Sp())->GetType());
+        ASSERT_NE(type, nullptr) << name;
+        EXPECT_EQ(type->dtype_, result_dtype) << name;
+    };
+
+    auto fp32 = MakeScalarVar("fp32", DataType::FP32);
+    auto i32 = MakeScalarVar("i32", DataType::INT32);
+    auto i64 = MakeScalarVar("i64", DataType::INT64);
+    for (const auto& name : {
+             "simt.erf",
+             "simt.erfc",
+             "simt.erfinv",
+             "simt.erfcinv",
+             "simt.erfcx",
+             "simt.tgamma",
+             "simt.lgamma",
+             "simt.normcdf",
+             "simt.normcdfinv",
+         }) {
+        expect_result(name, {fp32}, DataType::FP32);
+    }
+    expect_result("simt.ldexp", {fp32, i32}, DataType::FP32);
+    expect_result("simt.scalbn", {fp32, i32}, DataType::FP32);
+    expect_result("simt.scalbn", {fp32, i64}, DataType::FP32);
+    for (const auto& name : {"simt.norm3d", "simt.rnorm3d"}) {
+        expect_result(name, {fp32, fp32, fp32}, DataType::FP32);
+    }
+    for (const auto& name : {"simt.norm4d", "simt.rnorm4d"}) {
+        expect_result(name, {fp32, fp32, fp32, fp32}, DataType::FP32);
+    }
+
+    EXPECT_THROW((void)registry.Create("simt.scalbn", {fp32, fp32}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.norm4d", {fp32, fp32, fp32}, Sp()), npu::tile_fwk::Error);
+}
+
+TEST(SimtOpsTest, MulI32ToI64TypeDeductionContracts)
+{
+    auto& registry = OpRegistry::GetInstance();
+    auto i32 = MakeScalarVar("i32", DataType::INT32);
+    auto u32 = MakeScalarVar("u32", DataType::UINT32);
+
+    auto signed_type = As<ScalarType>(registry.Create("simt.mul_i32_to_i64", {i32, i32}, Sp())->GetType());
+    auto unsigned_type = As<ScalarType>(registry.Create("simt.mul_i32_to_i64", {u32, u32}, Sp())->GetType());
+    ASSERT_NE(signed_type, nullptr);
+    ASSERT_NE(unsigned_type, nullptr);
+    EXPECT_EQ(signed_type->dtype_, DataType::INT64);
+    EXPECT_EQ(unsigned_type->dtype_, DataType::UINT64);
+    EXPECT_THROW((void)registry.Create("simt.mul_i32_to_i64", {i32, u32}, Sp()), npu::tile_fwk::Error);
+}
+
+TEST(SimtOpsTest, BesselRoundingAndSaturateTypeDeductionContracts)
+{
+    auto& registry = OpRegistry::GetInstance();
+    auto expect_result = [&registry](const std::string& name, const std::vector<ExprPtr>& args, DataType result_dtype) {
+        auto type = As<ScalarType>(registry.Create(name, args, Sp())->GetType());
+        ASSERT_NE(type, nullptr) << name;
+        EXPECT_EQ(type->dtype_, result_dtype) << name;
+    };
+    auto expect_rounding_result = [&registry](const std::string& name, DataType input_dtype, DataType result_dtype) {
+        auto value = MakeScalarVar("value", input_dtype);
+        auto type = As<ScalarType>(
+            registry.Create(name, {value}, Kwargs{{"target_type", result_dtype}}, Sp())->GetType());
+        ASSERT_NE(type, nullptr) << name;
+        EXPECT_EQ(type->dtype_, result_dtype) << name;
+    };
+
+    auto fp32 = MakeScalarVar("fp32", DataType::FP32);
+    auto i32 = MakeScalarVar("i32", DataType::INT32);
+    for (const auto& name : {
+             "simt.cyl_bessel_i0",
+             "simt.cyl_bessel_i1",
+             "simt.j0",
+             "simt.j1",
+             "simt.y0",
+             "simt.y1",
+             "simt.saturate",
+         }) {
+        expect_result(name, {fp32}, DataType::FP32);
+    }
+    expect_result("simt.jn", {i32, fp32}, DataType::FP32);
+    expect_result("simt.yn", {i32, fp32}, DataType::FP32);
+    for (const auto& name : {"simt.rint", "simt.round"}) {
+        expect_rounding_result(name, DataType::FP16, DataType::FP16);
+        expect_rounding_result(name, DataType::BF16, DataType::BF16);
+        expect_rounding_result(name, DataType::FP32, DataType::FP32);
+        expect_rounding_result(name, DataType::FP32, DataType::INT64);
+    }
+
+    EXPECT_THROW((void)registry.Create("simt.jn", {fp32, i32}, Sp()), npu::tile_fwk::Error);
+}
+
 } // namespace ir
 } // namespace pypto

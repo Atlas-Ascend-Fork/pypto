@@ -409,6 +409,16 @@ std::string MakeSimtSqrtFP32Codegen(const std::string& operand)
     return s.str();
 }
 
+std::string MakeSimtLogFP32Codegen(const std::string& operand)
+{
+    std::ostringstream s;
+    s << "({float __log_x = (" << operand << "), __log_result;"
+      << "if (__log_x > 0.0f && __log_x < 1.17549435e-38f) {"
+      << "__log_result = __logf(__expf(23.0f) * __log_x) - 23.0f; }"
+      << "else { __log_result = __logf(__log_x); } __log_result;})";
+    return s.str();
+}
+
 std::string MakeSimtExp2FP32Codegen(const std::string& operand)
 {
     std::ostringstream s;
@@ -1520,7 +1530,12 @@ std::string MakeSimtTanhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
 std::string MakeSimtRintCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
-    return "__rintf(" + input.operand + ")";
+    const auto& a = input.operand;
+    const auto result_dtype = ir::As<ir::ScalarType>(op->GetType())->dtype_;
+    if (result_dtype == ir::DataType::INT64) {
+        return "__cvt_int64_t<ROUND::R, RoundingSaturation::RS_ENABLE_VALUE>(" + a + ")";
+    }
+    return "__rintf(" + a + ")";
 }
 
 std::string MakeSimtRoundCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
@@ -1528,6 +1543,10 @@ std::string MakeSimtRoundCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
     const auto& dtype = input.dtype;
     const auto& a = input.operand;
+    const auto result_dtype = ir::As<ir::ScalarType>(op->GetType())->dtype_;
+    if (result_dtype == ir::DataType::INT64) {
+        return "__cvt_int64_t<ROUND::A, RoundingSaturation::RS_ENABLE_VALUE>(" + a + ")";
+    }
     if (dtype == ir::DataType::FP32)
         return "__roundf(" + a + ")";
     if (dtype == ir::DataType::FP16) {
@@ -1791,6 +1810,1481 @@ std::string MakeSimtLaunchCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
 
 } // namespace
 
+std::string MakeSimtBrevCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    const char* cpp_type = dtype == ir::DataType::UINT32 ? "unsigned int" : "unsigned long long";
+    return "__brev((" + std::string(cpp_type) + ")(" + operand + "))";
+}
+
+std::string MakeSimtClzCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    const char* cpp_type = dtype == ir::DataType::INT32 ? "int" : "long long";
+    return "__clz((" + std::string(cpp_type) + ")(" + operand + "))";
+}
+
+std::string MakeSimtFfsCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    const char* cpp_type = dtype == ir::DataType::INT32 ? "int" : "long long";
+    return "__ffs((" + std::string(cpp_type) + ")(" + operand + "))";
+}
+
+std::string MakeSimtBytePermCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
+    const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
+    const std::string selector = codegen.GetExprAsCode(op->args_[2]);
+    return "__byte_perm((unsigned int)(" + lhs + "), (unsigned int)(" + rhs + "), (unsigned int)(" + selector + "))";
+}
+
+std::string MakeSimtSadCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
+    const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
+    const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
+    const std::string addend = codegen.GetExprAsCode(op->args_[2]);
+    const char* intrinsic = dtype == ir::DataType::INT32 ? "__sad" : "__usad";
+    const char* operand_type = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
+    return std::string(intrinsic) + "((" + operand_type + ")(" + lhs + "), (" + operand_type + ")(" + rhs +
+           "), (unsigned int)(" + addend + "))";
+}
+
+std::string MakeSimtMul24CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
+    const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
+    const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
+    const char* intrinsic = dtype == ir::DataType::INT32 ? "__mul24" : "__umul24";
+    const char* operand_type = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
+    return std::string(intrinsic) + "((" + operand_type + ")(" + lhs + "), (" + operand_type + ")(" + rhs + "))";
+}
+
+std::string MakeSimtHaddCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
+    const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
+    const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
+    const char* intrinsic = dtype == ir::DataType::INT32 ? "__hadd" : "__uhadd";
+    const char* operand_type = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
+    return std::string(intrinsic) + "((" + operand_type + ")(" + lhs + "), (" + operand_type + ")(" + rhs + "))";
+}
+
+std::string MakeSimtRhaddCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
+    const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
+    const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
+    const char* intrinsic = dtype == ir::DataType::INT32 ? "__rhadd" : "__urhadd";
+    const char* operand_type = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
+    return std::string(intrinsic) + "((" + operand_type + ")(" + lhs + "), (" + operand_type + ")(" + rhs + "))";
+}
+
+std::string MakeSimtFmaReluCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
+    const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
+    const std::string addend = codegen.GetExprAsCode(op->args_[2]);
+    return "__hfma_relu((" + lhs + "), (" + rhs + "), (" + addend + "))";
+}
+
+std::string MakeSimtUnorderedCompareCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base,
+                                               const char* intrinsic)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
+    const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
+    return std::string(intrinsic) + "((" + lhs + "), (" + rhs + "))";
+}
+
+std::string MakeSimtEquCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegen_base, "__hequ");
+}
+
+std::string MakeSimtLeuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegen_base, "__hleu");
+}
+
+std::string MakeSimtGeuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegen_base, "__hgeu");
+}
+
+std::string MakeSimtLtuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegen_base, "__hltu");
+}
+
+std::string MakeSimtGtuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegen_base, "__hgtu");
+}
+
+std::string MakeSimtNormSqrtFP32Codegen(const std::string& operand)
+{
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "); uint32_t __xb = reinterpret_cast<uint32_t&>(__x);"
+      << "bool __slow = (__xb - 0x0d000000u) > 0x727fffffu; float __r = __x;"
+      << "if (!__slow) { float __inv = 1.0f / __sqrtf(__x); float __product = __x * __inv;"
+      << "__inv *= 0.5f; float __residual = __fma(-__product, __product, __x);"
+      << "__r = __fma(__residual, __inv, __product); }"
+      << "else { uint32_t __magnitude = __xb & 0x7fffffffu;"
+      << "if (__magnitude == 0u) { __r = __x; }"
+      << "else if (__x < 0.0f) { uint32_t __nan = 0x7fffffffu; __r = reinterpret_cast<float&>(__nan); }"
+      << "else if (__isnan(__x)) { __r = __x + 1.0f; }"
+      << "else if (__magnitude == 0x7f800000u) { __r = __x; }"
+      << "else { float __scaled = __fma(__x, 1.84467440737095516160e+19f, 0.0f);"
+      << "float __inv = 1.0f / __sqrtf(__scaled); float __product = __scaled * __inv;"
+      << "__inv *= 0.5f; float __residual = __fma(__product, -__product, __scaled);"
+      << "__r = __fma(__residual, __inv, __product) * 2.3283064365386962891e-10f; } } __r;})";
+    return s.str();
+}
+
+std::string MakeSimtHypotCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
+    const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
+    const std::string sqrt_scaled = MakeSimtNormSqrtFP32Codegen("__square_sum");
+    std::ostringstream s;
+    s << "({float __x = __fabsf(" << lhs << "), __y = __fabsf(" << rhs << ");"
+      << "uint32_t __xb = reinterpret_cast<uint32_t&>(__x), __yb = reinterpret_cast<uint32_t&>(__y);"
+      << "bool __x_greater = __xb > __yb; uint32_t __max_bits = __x_greater ? __xb : __yb;"
+      << "uint32_t __min_bits = __x_greater ? __yb : __xb;"
+      << "float __max = reinterpret_cast<float&>(__max_bits), __min = reinterpret_cast<float&>(__min_bits);"
+      << "uint32_t __bucket = __max_bits & 0xfe000000u, __scale_bits = 0x7e800000u - __bucket;"
+      << "float __scale = reinterpret_cast<float&>(__scale_bits);"
+      << "float __scaled_min = __min * __scale, __scaled_max = __max * __scale;"
+      << "float __square_sum = __fma(__scaled_max, __scaled_max, __scaled_min * __scaled_min);"
+      << "float __sqrt_scaled = " << sqrt_scaled << ";"
+      << "uint32_t __restore_bits = __bucket | 0x00800000u;"
+      << "float __result = __max != 0.0f ? reinterpret_cast<float&>(__restore_bits) * __sqrt_scaled : __max;"
+      << "if (__min_bits == 0x7f800000u) {"
+      << "uint32_t __inf = 0x7f800000u; __result = reinterpret_cast<float&>(__inf); } __result;})";
+    return s.str();
+}
+
+std::string MakeSimtPowCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
+    const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
+    std::ostringstream s;
+    s << "({float __x = (" << lhs << "), __y = (" << rhs << ");"
+      << "float __abs_x = __fabsf(__x), __abs_y = __fabsf(__y);"
+      << "bool __normal = __abs_x >= 1.17549435e-38f;"
+      << "float __log_input = __normal ? __abs_x : __abs_x * 16777216.0f;"
+      << "float __exponent_base = __normal ? 0.0f : -24.0f;"
+      << "uint32_t __input_bits = reinterpret_cast<uint32_t&>(__log_input);"
+      << "uint32_t __reduction_bits = (__input_bits - 0x3F3504F3U) & 0xFF800000U;"
+      << "uint32_t __mantissa_bits = __input_bits - __reduction_bits;"
+      << "float __mantissa = reinterpret_cast<float&>(__mantissa_bits);"
+      << "float __exponent_part = __fma(__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>("
+      << "static_cast<int32_t>(__reduction_bits)), 1.1920928955078125e-07f, __exponent_base);"
+      << "float __mantissa_minus_one = __mantissa - 1.0f;"
+      << "float __reciprocal = 1.0f / (__mantissa + 1.0f);"
+      << "float __reduced_hi = __reciprocal * (__mantissa_minus_one + __mantissa_minus_one);"
+      << "float __reduced_square = __reduced_hi * __reduced_hi;"
+      << "float __log_poly = __fma(__reduced_square, 0.0006568862590938807f, 0.0032181653659790754318f);"
+      << "__log_poly = __fma(__reduced_square, __log_poly, 0.018033718690276145935f);"
+      << "__log_poly = __fma(__reduced_square, __log_poly, 0.12022458761930465698f);"
+      << "__log_poly = __reduced_square * __log_poly;"
+      << "float __log2_hi = __fma(__reduced_hi, 1.4426950216293334961f, __exponent_part);"
+      << "float __reduced_err = __mantissa_minus_one - __reduced_hi;"
+      << "__reduced_err = __fma(__mantissa_minus_one, -__reduced_hi, __reduced_err + __reduced_err);"
+      << "float __reduced_lo = __reciprocal * __reduced_err;"
+      << "float __log2_lo = __exponent_part - __log2_hi;"
+      << "__log2_lo = __fma(__reduced_hi, 1.4426950216293334961f, __log2_lo);"
+      << "__log2_lo = __fma(__reduced_lo, 1.4426950216293334961f, __log2_lo);"
+      << "__log2_lo = __fma(__reduced_hi, 1.9251366722983220825e-08f, __log2_lo);"
+      << "__log2_lo = __fma(__reduced_lo, __log_poly * 3.0f, __log2_lo);"
+      << "__log2_lo = __fma(__reduced_hi, __log_poly, __log2_lo);"
+      << "float __log2_abs_x = __log2_hi + __log2_lo;"
+      << "float __product_hi = __log2_abs_x * __y;"
+      << "float __product_lo = __fma(__log2_abs_x, __y, -__product_hi);"
+      << "__product_lo = __fma(__log2_lo - (__log2_abs_x - __log2_hi), __y, __product_lo);"
+      << "float __rounded = __roundf(__product_hi);"
+      << "float __fraction = (__product_hi - __rounded) + __product_lo;"
+      << "int32_t __exponent = __cvt_int32_t<ROUND::Z, RoundingSaturation::RS_ENABLE_VALUE>(__rounded);"
+      << "float __exp_poly = __fma(__fraction, 0.00015239251661114395f, 0.0013391353422775864601f);"
+      << "__exp_poly = __fma(__fraction, __exp_poly, 0.0096188392490148544312f);"
+      << "__exp_poly = __fma(__fraction, __exp_poly, 0.055503588169813156128f);"
+      << "__exp_poly = __fma(__fraction, __exp_poly, 0.24022644758224487305f);"
+      << "__exp_poly = __fma(__fraction, __exp_poly, 0.69314718246459960938f);"
+      << "__exp_poly = __fma(__fraction, __exp_poly, 1.0f);"
+      << "uint32_t __scale_hi_bits = __rounded > 0.0f ? 0x7F000000U : 0x02000000U;"
+      << "uint32_t __scale_adjust = __rounded > 0.0f ? 0U : 0x83000000U;"
+      << "uint32_t __scale_lo_bits = (static_cast<uint32_t>(__exponent) << 23) - __scale_adjust;"
+      << "float __result = __exp_poly * reinterpret_cast<float&>(__scale_hi_bits);"
+      << "__result = __result * reinterpret_cast<float&>(__scale_lo_bits);"
+      << "if (__fabsf(__product_hi) > 152.0f) { __result = __product_hi >= 0.0f ? __builtin_inff() : 0.0f; }"
+      << "float __half_y = __y * 0.5f;"
+      << "float __half_trunc = __half_y > 0.0f ? __floorf(__half_y) : __ceilf(__half_y);"
+      << "bool __y_is_odd_int = __fabsf(__y - (__half_trunc + __half_trunc)) == 1.0f;"
+      << "if (__x < 0.0f) {"
+      << "if (__floorf(__y) != __y) { uint32_t __nan = 0x7fffffffU; __result = reinterpret_cast<float&>(__nan); }"
+      << "else if (__y_is_odd_int) { __result = -__result; } }"
+      << "bool __x_is_zero_or_inf = __x == 0.0f || __abs_x == __builtin_inff();"
+      << "bool __y_is_inf = __abs_y == __builtin_inff();"
+      << "if (__y == 0.0f || __x == 1.0f) { __result = 1.0f; }"
+      << "else if (__x_is_zero_or_inf && __isnan(__y)) { __result = __x + __y; }"
+      << "else if (__x_is_zero_or_inf) { float __special = __x + __x;"
+      << "if (__y < 0.0f) { uint32_t __sign = reinterpret_cast<uint32_t&>(__x) & 0x80000000U;"
+      << "uint32_t __special_bits = (__abs_x == __builtin_inff() ? 0U : 0x7f800000U) | __sign;"
+      << "__special = reinterpret_cast<float&>(__special_bits); }"
+      << "__result = __y_is_odd_int ? __special : __fabsf(__special); }"
+      << "else if (__y_is_inf && __isnan(__x)) { __result = __x + __y; }"
+      << "else if (__y_is_inf && __x == -1.0f) { __result = 1.0f; }"
+      << "else if (__y_is_inf) {"
+      << "bool __result_is_inf = (__abs_x > 1.0f && __y > 0.0f) || (__abs_x < 1.0f && __y < 0.0f);"
+      << "__result = __result_is_inf ? __builtin_inff() : 0.0f; }"
+      << "else if (__isnan(__x) || __isnan(__y)) { __result = __x + __y; } __result;})";
+    return s.str();
+}
+
+std::string MakeSimtRhypotCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
+    const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
+    std::ostringstream s;
+    s << "({float __x = __fabsf(" << lhs << "), __y = __fabsf(" << rhs << ");"
+      << "uint32_t __xb = reinterpret_cast<uint32_t&>(__x), __yb = reinterpret_cast<uint32_t&>(__y);"
+      << "uint32_t __min_bits = __xb < __yb ? __xb : __yb, __max_bits = __xb > __yb ? __xb : __yb;"
+      << "float __min = reinterpret_cast<float&>(__min_bits), __max = reinterpret_cast<float&>(__max_bits);"
+      << "uint32_t __scale_bits = 0x7e800000u - (__max_bits & 0xfe000000u);"
+      << "float __scale = reinterpret_cast<float&>(__scale_bits);"
+      << "float __scaled_min = __min * __scale, __scaled_max = __max * __scale;"
+      << "float __square_sum = __fma(__scaled_max, __scaled_max, __scaled_min * __scaled_min);"
+      << "float __result = (1.0f / __sqrtf(__square_sum)) * __scale;"
+      << "if (__min_bits == 0x7f800000u) { __result = 0.0f; } __result;})";
+    return s.str();
+}
+
+std::string MakeSimtFdimCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
+    const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
+    std::ostringstream s;
+    s << "({float __x = (" << lhs << "), __y = (" << rhs << ");"
+      << "uint32_t __xb = reinterpret_cast<uint32_t&>(__x), __yb = reinterpret_cast<uint32_t&>(__y);"
+      << "(__xb & 0x7fffffffu) > 0x7f800000u ? __x : ((__yb & 0x7fffffffu) > 0x7f800000u ? __y : "
+      << "(__x > __y ? __x - __y : 0.0f));})";
+    return s.str();
+}
+
+std::string MakeSimtRemainderCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
+    const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
+    // Binary long division computes fmod and the quotient's low bit. The low bit
+    // resolves exact half-way cases using the IEEE nearest-even quotient rule.
+    std::ostringstream s;
+    s << "({float __x = (" << lhs << "), __y = (" << rhs << ");"
+      << "uint32_t __ux = reinterpret_cast<uint32_t&>(__x), __uy = reinterpret_cast<uint32_t&>(__y);"
+      << "uint32_t __sign = __ux & 0x80000000u, __ax = __ux & 0x7fffffffu, __ay = __uy & 0x7fffffffu;"
+      << "uint32_t __result = __ux;"
+      << "if (__ay == 0u || __ax >= 0x7f800000u || __ay > 0x7f800000u) { __result = 0x7fffffffu; }"
+      << "else if (__ax != 0u) { int __ex = (int)(__ax >> 23), __ey = (int)(__ay >> 23);"
+      << "uint32_t __mx = __ax & 0x007fffffu, __my = __ay & 0x007fffffu;"
+      << "if (__ex == 0) { __ex = 1; while (__mx < 0x00800000u) { __mx <<= 1; --__ex; } }"
+      << "else { __mx |= 0x00800000u; }"
+      << "if (__ey == 0) { __ey = 1; while (__my < 0x00800000u) { __my <<= 1; --__ey; } }"
+      << "else { __my |= 0x00800000u; }"
+      << "bool __encode = false; if (__ex < __ey) {"
+      << "if (__ex == __ey - 1 && __mx > __my) { __mx = (__my << 1) - __mx; __sign ^= 0x80000000u; "
+      << "__encode = true; } }"
+      << "else { while (__ex > __ey) { if (__mx >= __my) { __mx -= __my; } __mx <<= 1; --__ex; }"
+      << "bool __quotient_odd = false; if (__mx >= __my) { __mx -= __my; __quotient_odd = true; }"
+      << "if (__mx == 0u) { __result = __sign; } else {"
+      << "uint32_t __twice = __mx << 1; if (__twice > __my || (__twice == __my && __quotient_odd)) {"
+      << "__mx = __my - __mx; __sign ^= 0x80000000u; } __encode = true; } }"
+      << "if (__encode) { while (__mx < 0x00800000u) { __mx <<= 1; --__ex; }"
+      << "if (__ex > 0) { __result = (__mx & 0x007fffffu) | ((uint32_t)__ex << 23); }"
+      << "else { __result = __mx >> (1 - __ex); } __result |= __sign; } }"
+      << "reinterpret_cast<float&>(__result);})";
+    return s.str();
+}
+
+std::string MakeSimtNorm3dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string x = codegen.GetExprAsCode(op->args_[0]);
+    const std::string y = codegen.GetExprAsCode(op->args_[1]);
+    const std::string z = codegen.GetExprAsCode(op->args_[2]);
+    const std::string sqrt_scaled = MakeSimtNormSqrtFP32Codegen("__square_sum");
+    std::ostringstream s;
+    s << "({float __a = __fabsf(" << x << "), __b = __fabsf(" << y << "), __c = __fabsf(" << z << ");"
+      << "float __max_ab = __isnan(__a) ? __b : (__isnan(__b) ? __a : __fmaxf(__a, __b));"
+      << "float __max = __isnan(__max_ab) ? __c : (__isnan(__c) ? __max_ab : __fmaxf(__max_ab, __c));"
+      << "float __middle = __isnan(__max_ab) ? __c : (__isnan(__c) ? __max_ab : __fminf(__max_ab, __c));"
+      << "float __min = __isnan(__a) ? __b : (__isnan(__b) ? __a : __fminf(__a, __b));"
+      << "uint32_t __max_bits = reinterpret_cast<uint32_t&>(__max), __bucket = __max_bits & 0xfe000000u;"
+      << "uint32_t __scale_bits = 0x7e800000u - __bucket; float __scale = reinterpret_cast<float&>(__scale_bits);"
+      << "float __scaled_middle = __middle * __scale, __scaled_min = __min * __scale;"
+      << "float __scaled_max = __max * __scale, __square_sum = __scaled_middle * __scaled_middle;"
+      << "__square_sum = __fma(__scaled_min, __scaled_min, __square_sum);"
+      << "__square_sum = __fma(__scaled_max, __scaled_max, __square_sum);"
+      << "float __sqrt_scaled = " << sqrt_scaled << ", __sum = __a + __b + __c, __result = __sum;"
+      << "if (__sum > __max) { uint32_t __restore_bits = __bucket | 0x00800000u;"
+      << "__result = reinterpret_cast<float&>(__restore_bits) * __sqrt_scaled; }"
+      << "if (__max_bits == 0x7f800000u) {"
+      << "uint32_t __inf = 0x7f800000u; __result = reinterpret_cast<float&>(__inf); } __result;})";
+    return s.str();
+}
+
+std::string MakeSimtRnorm3dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string x = codegen.GetExprAsCode(op->args_[0]);
+    const std::string y = codegen.GetExprAsCode(op->args_[1]);
+    const std::string z = codegen.GetExprAsCode(op->args_[2]);
+    std::ostringstream s;
+    s << "({float __a = __fabsf(" << x << "), __b = __fabsf(" << y << "), __c = __fabsf(" << z << ");"
+      << "uint32_t __ab = reinterpret_cast<uint32_t&>(__a), __bb = reinterpret_cast<uint32_t&>(__b), "
+      << "__cb = reinterpret_cast<uint32_t&>(__c); float __result;"
+      << "if (__ab == 0x7f800000u || __bb == 0x7f800000u || __cb == 0x7f800000u) { __result = 0.0f; }"
+      << "else if (__ab > 0x7f800000u || __bb > 0x7f800000u || __cb > 0x7f800000u) {"
+      << "__result = __builtin_inff() / __builtin_inff(); }"
+      << "else { float __max_ab = __fmaxf(__a, __b), __min = __fminf(__a, __b);"
+      << "float __max = __fmaxf(__c, __max_ab), __middle = __fminf(__c, __max_ab);"
+      << "uint32_t __max_bits = reinterpret_cast<uint32_t&>(__max);"
+      << "uint32_t __scale_bits = 0x7e800000u - (__max_bits & 0xfe000000u);"
+      << "float __scale = reinterpret_cast<float&>(__scale_bits);"
+      << "float __scaled_min = __min * __scale, __scaled_middle = __middle * __scale;"
+      << "float __scaled_max = __max * __scale, __square_sum = __scaled_middle * __scaled_middle;"
+      << "__square_sum = __fma(__scaled_min, __scaled_min, __square_sum);"
+      << "__square_sum = __fma(__scaled_max, __scaled_max, __square_sum);"
+      << "bool __subnormal = __fabsf(__square_sum) < 1.17549435e-38f;"
+      << "if (__subnormal) { __square_sum *= 16777216.0f; }"
+      << "if (__square_sum == 0.0f) { uint32_t __inf = 0x7f800000u; __result = reinterpret_cast<float&>(__inf); }"
+      << "else { float __inv = 1.0f / __sqrtf(__square_sum);"
+      << "__inv *= __fma(-0.5f * __square_sum, __inv * __inv, 1.5f);"
+      << "if (__subnormal) { __inv *= 4096.0f; } __result = __scale * __inv; } } __result;})";
+    return s.str();
+}
+
+std::string MakeSimtNorm4dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string x = codegen.GetExprAsCode(op->args_[0]);
+    const std::string y = codegen.GetExprAsCode(op->args_[1]);
+    const std::string z = codegen.GetExprAsCode(op->args_[2]);
+    const std::string w = codegen.GetExprAsCode(op->args_[3]);
+    const std::string sqrt_scaled = MakeSimtNormSqrtFP32Codegen("__square_sum");
+    std::ostringstream s;
+    s << "({float __a = __fabsf(" << x << "), __b = __fabsf(" << y << "), __c = __fabsf(" << z << "), __d = __fabsf("
+      << w << ");"
+      << "float __max_ab = __isnan(__a) ? __b : (__isnan(__b) ? __a : __fmaxf(__a, __b));"
+      << "float __max_abc = __isnan(__max_ab) ? __c : (__isnan(__c) ? __max_ab : __fmaxf(__max_ab, __c));"
+      << "float __max = __isnan(__max_abc) ? __d : (__isnan(__d) ? __max_abc : __fmaxf(__max_abc, __d));"
+      << "float __term3 = __isnan(__max_abc) ? __d : (__isnan(__d) ? __max_abc : __fminf(__max_abc, __d));"
+      << "float __term2 = __isnan(__max_ab) ? __c : (__isnan(__c) ? __max_ab : __fminf(__max_ab, __c));"
+      << "float __term0 = __isnan(__a) ? __b : (__isnan(__b) ? __a : __fminf(__a, __b));"
+      << "uint32_t __max_bits = reinterpret_cast<uint32_t&>(__max), __bucket = __max_bits & 0xfe000000u;"
+      << "uint32_t __scale_bits = 0x7e800000u - __bucket; float __scale = reinterpret_cast<float&>(__scale_bits);"
+      << "float __scaled3 = __term3 * __scale, __scaled2 = __term2 * __scale;"
+      << "float __scaled0 = __term0 * __scale, __scaled_max = __max * __scale;"
+      << "float __square_sum = __scaled3 * __scaled3;"
+      << "__square_sum = __fma(__scaled2, __scaled2, __square_sum);"
+      << "__square_sum = __fma(__scaled0, __scaled0, __square_sum);"
+      << "__square_sum = __fma(__scaled_max, __scaled_max, __square_sum);"
+      << "float __sqrt_scaled = " << sqrt_scaled << ", __sum = __a + __b + __d + __c, __result = __sum;"
+      << "if (__sum > __max) { uint32_t __restore_bits = __bucket | 0x00800000u;"
+      << "__result = reinterpret_cast<float&>(__restore_bits) * __sqrt_scaled; }"
+      << "if (__max_bits == 0x7f800000u) {"
+      << "uint32_t __inf = 0x7f800000u; __result = reinterpret_cast<float&>(__inf); } __result;})";
+    return s.str();
+}
+
+std::string MakeSimtRnorm4dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string x = codegen.GetExprAsCode(op->args_[0]);
+    const std::string y = codegen.GetExprAsCode(op->args_[1]);
+    const std::string z = codegen.GetExprAsCode(op->args_[2]);
+    const std::string w = codegen.GetExprAsCode(op->args_[3]);
+    std::ostringstream s;
+    s << "({float __a = __fabsf(" << x << "), __b = __fabsf(" << y << "), __c = __fabsf(" << z << "), __d = __fabsf("
+      << w << ");"
+      << "uint32_t __ab = reinterpret_cast<uint32_t&>(__a), __bb = reinterpret_cast<uint32_t&>(__b), "
+      << "__cb = reinterpret_cast<uint32_t&>(__c), __db = reinterpret_cast<uint32_t&>(__d); float __result;"
+      << "if (__ab == 0x7f800000u || __bb == 0x7f800000u || __cb == 0x7f800000u || __db == 0x7f800000u) {"
+      << "__result = 0.0f; }"
+      << "else if (__ab > 0x7f800000u || __bb > 0x7f800000u || __cb > 0x7f800000u || __db > 0x7f800000u) {"
+      << "__result = __builtin_inff() / __builtin_inff(); }"
+      << "else { float __max_ab = __fmaxf(__a, __b), __min = __fminf(__a, __b);"
+      << "float __max_abc = __fmaxf(__c, __max_ab), __max = __fmaxf(__d, __max_abc);"
+      << "float __second = __fminf(__d, __max_abc), __third = __fminf(__c, __max_ab);"
+      << "uint32_t __max_bits = reinterpret_cast<uint32_t&>(__max);"
+      << "uint32_t __scale_bits = 0x7e800000u - (__max_bits & 0xfe000000u);"
+      << "float __scale = reinterpret_cast<float&>(__scale_bits);"
+      << "float __scaled_min = __min * __scale, __scaled_second = __second * __scale;"
+      << "float __scaled_third = __third * __scale, __scaled_max = __max * __scale;"
+      << "float __square_sum = __scaled_second * __scaled_second;"
+      << "__square_sum = __fma(__scaled_third, __scaled_third, __square_sum);"
+      << "__square_sum = __fma(__scaled_min, __scaled_min, __square_sum);"
+      << "__square_sum = __fma(__scaled_max, __scaled_max, __square_sum);"
+      << "bool __subnormal = __fabsf(__square_sum) < 1.17549435e-38f;"
+      << "if (__subnormal) { __square_sum *= 16777216.0f; }"
+      << "if (__square_sum == 0.0f) { uint32_t __inf = 0x7f800000u; __result = reinterpret_cast<float&>(__inf); }"
+      << "else { float __inv = 1.0f / __sqrtf(__square_sum);"
+      << "__inv *= __fma(-0.5f * __square_sum, __inv * __inv, 1.5f);"
+      << "if (__subnormal) { __inv *= 4096.0f; } __result = __scale * __inv; } } __result;})";
+    return s.str();
+}
+
+std::string MakeSimtLdexpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string value = codegen.GetExprAsCode(op->args_[0]);
+    const std::string exponent = codegen.GetExprAsCode(op->args_[1]);
+    std::ostringstream s;
+    s << "({float __x = (" << value << "); int32_t __n = (int32_t)(" << exponent << ");"
+      << "int64_t __abs_n = __n < 0 ? -(int64_t)__n : (int64_t)__n; float __result;"
+      << "if (__abs_n >= 101) { uint32_t __exp_bits = (uint32_t)(__n + 508);"
+      << "uint32_t __q = __exp_bits >> 2, __r = __exp_bits - (__q << 2);"
+      << "uint32_t __scale_q_bits = __q << 23, __scale_qr_bits = (__q + __r) << 23;"
+      << "float __scale_q = reinterpret_cast<float&>(__scale_q_bits);"
+      << "float __temp = __x * reinterpret_cast<float&>(__scale_qr_bits);"
+      << "__temp *= __scale_q; __temp *= __scale_q; __temp *= __scale_q; __result = __temp; }"
+      << "else { uint32_t __scale_bits = (uint32_t)(__n + 127) << 23;"
+      << "__result = __x * reinterpret_cast<float&>(__scale_bits); }"
+      << "uint32_t __xb = reinterpret_cast<uint32_t&>(__x);"
+      << "if (__n > 278) { uint32_t __inf = (__xb & 0x80000000u) | 0x7f800000u;"
+      << "__result = reinterpret_cast<float&>(__inf); }"
+      << "if (__n < -278) { uint32_t __zero = __xb & 0x80000000u;"
+      << "__result = reinterpret_cast<float&>(__zero); }"
+      << "uint32_t __magnitude = __xb & 0x7fffffffu;"
+      << "if (__magnitude == 0u || __magnitude >= 0x7f800000u || __n == 0) { __result = __x; } __result;})";
+    return s.str();
+}
+
+std::string MakeSimtScalbnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string value = codegen.GetExprAsCode(op->args_[0]);
+    const std::string exponent = codegen.GetExprAsCode(op->args_[1]);
+    const auto exponent_dtype = ir::As<ir::ScalarType>(op->args_[1]->GetType())->dtype_;
+    std::ostringstream s;
+    s << "({float __x = (" << value << "); int32_t __n;";
+    if (exponent_dtype == ir::DataType::INT64) {
+        s << "int64_t __long_n = (int64_t)(" << exponent << ");"
+          << "if (__long_n > 278) { __n = 278; } else if (__long_n < -278) { __n = -278; }"
+          << "else { __n = (int32_t)__long_n; }";
+    } else {
+        s << "__n = (int32_t)(" << exponent << ");";
+    }
+    s << "int32_t __clamped = __n > 278 ? 278 : __n; __clamped = __clamped < -278 ? -278 : __clamped;"
+      << "uint32_t __scale_bits = 0u, __split_bits = 0x3f800000u;"
+      << "if (__clamped >= 101 || __clamped <= -101) { int32_t __biased = __clamped + 508;"
+      << "int32_t __split = (int32_t)((uint32_t)__biased >> 2); int32_t __residual = __biased - __split * 3;"
+      << "__split_bits = (uint32_t)__split << 23; __scale_bits = (uint32_t)__residual << 23; }"
+      << "else { __scale_bits = (uint32_t)(__clamped + 127) << 23; }"
+      << "float __result = reinterpret_cast<float&>(__scale_bits) * __x;"
+      << "float __split_scale = reinterpret_cast<float&>(__split_bits);"
+      << "__result = __split_scale * __result; __result = __split_scale * __result;"
+      << "__result = __split_scale * __result; __result;})";
+    return s.str();
+}
+
+std::string MakeSimtGammaLnFP32Codegen(const std::string& operand)
+{
+    std::ostringstream s;
+    s << "({float __gamma_ln_x = (" << operand << "), __gamma_ln_offset = 0.0f;"
+      << "if (__gamma_ln_x < 1.17549435e-38f) { __gamma_ln_offset = -23.0f;"
+      << "__gamma_ln_x *= 8388608.0f; }"
+      << "uint32_t __gamma_ln_bits = reinterpret_cast<uint32_t&>(__gamma_ln_x);"
+      << "int32_t __gamma_ln_exp_bits = ((int32_t)__gamma_ln_bits - 1059760811) & -8388608;"
+      << "uint32_t __gamma_ln_mantissa_bits = __gamma_ln_bits - (uint32_t)__gamma_ln_exp_bits;"
+      << "float __gamma_ln_mantissa = reinterpret_cast<float&>(__gamma_ln_mantissa_bits) - 1.0f;"
+      << "float __gamma_ln_exponent = __fma((float)__gamma_ln_exp_bits, 1.1920929e-07f, __gamma_ln_offset);"
+      << "float __gamma_ln_result = -0.130188569f;"
+      << "__gamma_ln_result = __fma(__gamma_ln_result, __gamma_ln_mantissa, 0.140846103f);"
+      << "__gamma_ln_result = __fma(__gamma_ln_result, __gamma_ln_mantissa, -0.121486276f);"
+      << "__gamma_ln_result = __fma(__gamma_ln_result, __gamma_ln_mantissa, 0.139806107f);"
+      << "__gamma_ln_result = __fma(__gamma_ln_result, __gamma_ln_mantissa, -0.166842356f);"
+      << "__gamma_ln_result = __fma(__gamma_ln_result, __gamma_ln_mantissa, 0.200122997f);"
+      << "__gamma_ln_result = __fma(__gamma_ln_result, __gamma_ln_mantissa, -0.249996692f);"
+      << "__gamma_ln_result = __fma(__gamma_ln_result, __gamma_ln_mantissa, 0.333331823f);"
+      << "__gamma_ln_result = __fma(__gamma_ln_result, __gamma_ln_mantissa, -0.5f);"
+      << "__gamma_ln_result = __gamma_ln_mantissa * __gamma_ln_result;"
+      << "__gamma_ln_result = __fma(__gamma_ln_result, __gamma_ln_mantissa, __gamma_ln_mantissa);"
+      << "__gamma_ln_result = __fma(__gamma_ln_exponent, 0.693147182f, __gamma_ln_result);"
+      << "if (__gamma_ln_bits >= 0x7f800000u || __gamma_ln_x == 0.0f) {"
+      << "__gamma_ln_result = __fma(__gamma_ln_x, __builtin_inff(), __builtin_inff()); }"
+      << "__gamma_ln_result;})";
+    return s.str();
+}
+
+std::string MakeSimtLgammaSinpiFP32Codegen(const std::string& operand)
+{
+    std::ostringstream s;
+    s << "({float __gamma_sinpi_x = (" << operand << "), __gamma_sinpi_double_x = __gamma_sinpi_x * 2.0f;"
+      << "float __gamma_sinpi_nearest = __rintf(__gamma_sinpi_double_x);"
+      << "int32_t __gamma_sinpi_quadrant = (int32_t)__gamma_sinpi_nearest;"
+      << "float __gamma_sinpi_reduced = __fma(-__gamma_sinpi_nearest, 0.5f, __gamma_sinpi_x);"
+      << "float __gamma_sinpi_arg = __gamma_sinpi_reduced * 3.14159274f;"
+      << "float __gamma_sinpi_square = __gamma_sinpi_arg * __gamma_sinpi_arg, __gamma_sinpi_result;"
+      << "if ((__gamma_sinpi_quadrant & 1) != 0) {"
+      << "__gamma_sinpi_result = __fma(2.42795795e-05f, __gamma_sinpi_square, -0.00138878601f);"
+      << "__gamma_sinpi_result = __fma(__gamma_sinpi_result, __gamma_sinpi_square, 0.0416667275f);"
+      << "__gamma_sinpi_result = __fma(__gamma_sinpi_result, __gamma_sinpi_square, -0.49999997f);"
+      << "float __gamma_sinpi_square_copy = __fma(__gamma_sinpi_square, 1.0f, 0.0f);"
+      << "__gamma_sinpi_result = __fma(__gamma_sinpi_result, __gamma_sinpi_square_copy, 1.0f); }"
+      << "else { __gamma_sinpi_result = __fma(-0.000195746587f, __gamma_sinpi_square, 0.00833270326f);"
+      << "__gamma_sinpi_result = __fma(__gamma_sinpi_result, __gamma_sinpi_square, -0.166666627f);"
+      << "float __gamma_sinpi_cube = __fma(__gamma_sinpi_square, __gamma_sinpi_arg, 0.0f);"
+      << "__gamma_sinpi_result = __fma(__gamma_sinpi_result, __gamma_sinpi_cube, __gamma_sinpi_arg); }"
+      << "if ((__gamma_sinpi_quadrant & 2) != 0) {"
+      << "__gamma_sinpi_result = __fma(__gamma_sinpi_result, -1.0f, 0.0f); } __gamma_sinpi_result;})";
+    return s.str();
+}
+
+std::string MakeSimtTgammaCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "), __abs_input = __fabsf(__x), __result;"
+      << "if (__abs_input < 1.5f) { float __reduced = __x;"
+      << "if (__x != 0.0f) { __reduced = __x - __rintf(__x); }"
+      << "float __poly = __fma(__reduced, -0.00107286567799747f, 0.007111053448170424f);"
+      << "__poly = __fma(__poly, __reduced, -0.009643718600273132f);"
+      << "__poly = __fma(__poly, __reduced, -0.04218018800020218f);"
+      << "__poly = __fma(__poly, __reduced, 0.16654090583324432f);"
+      << "__poly = __fma(__poly, __reduced, -0.04200365021824837f);"
+      << "__poly = __fma(__poly, __reduced, -0.6558781862258911f);"
+      << "__poly = __fma(__poly, __reduced, 0.5772156715393066f);"
+      << "float __scale = __x < -0.5f ? __x : 1.0f;"
+      << "if (__x <= 0.5f) { __scale *= __reduced; }"
+      << "float __denominator = __fma(__scale * __poly, __reduced, __scale);"
+      << "if (__fabsf(__denominator) < 1.17549435e-38f && __denominator != 0.0f) {"
+      << "uint32_t __denominator_bits = reinterpret_cast<uint32_t&>(__denominator);"
+      << "int32_t __frexp_exponent = (int32_t)((__denominator_bits & 0x7f800000u) >> 23);"
+      << "float __mantissa = (float)(__denominator_bits & 0x007fffffu) / 8388608.0f;"
+      << "if (__frexp_exponent == 0) { while (__mantissa < 0.5f) { __mantissa *= 2.0f; --__frexp_exponent; } }"
+      << "else { __mantissa = __mantissa * 0.5f + 0.5f; }"
+      << "if ((__denominator_bits & 0x80000000u) != 0u) { __mantissa = -__mantissa; }"
+      << "int32_t __ldexp_exponent = 126 - __frexp_exponent; float __reciprocal = 1.0f / __mantissa;"
+      << "if (__ldexp_exponent >= 101) { uint32_t __biased = (uint32_t)(__ldexp_exponent + 508);"
+      << "uint32_t __quotient = __biased >> 2, __remainder = __biased - (__quotient << 2);"
+      << "uint32_t __scale_bits = __quotient << 23, __combined_bits = (__quotient + __remainder) << 23;"
+      << "float __split_scale = reinterpret_cast<float&>(__scale_bits);"
+      << "__result = __reciprocal * reinterpret_cast<float&>(__combined_bits);"
+      << "__result *= __split_scale; __result *= __split_scale; __result *= __split_scale; }"
+      << "else { uint32_t __scale_bits = (uint32_t)(__ldexp_exponent + 127) << 23;"
+      << "__result = __reciprocal * reinterpret_cast<float&>(__scale_bits); } }"
+      << "else { __result = 1.0f / __denominator; } }"
+      << "else { float __abs_x = __abs_input > 41.099998474121094f ? 41.099998474121094f : __abs_input;"
+      << "bool __normal = __abs_x >= 1.17549435e-38f;"
+      << "float __log_input = __normal ? __abs_x : __abs_x * 16777216.0f;"
+      << "float __exponent_base = __normal ? 0.0f : -24.0f;"
+      << "uint32_t __log_bits = reinterpret_cast<uint32_t&>(__log_input);"
+      << "uint32_t __reduction_bits = (__log_bits - 0x3f3504f3u) & 0xff800000u;"
+      << "uint32_t __mantissa_bits = __log_bits - __reduction_bits;"
+      << "float __mantissa = reinterpret_cast<float&>(__mantissa_bits);"
+      << "float __exponent_part = __fma(__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__reduction_bits),"
+      << "1.1920928955078125e-07f, __exponent_base);"
+      << "float __mantissa_minus_one = __mantissa - 1.0f, __reciprocal = 1.0f / (__mantissa + 1.0f);"
+      << "float __reduced_hi = __reciprocal * (__mantissa_minus_one + __mantissa_minus_one);"
+      << "float __reduced_square = __reduced_hi * __reduced_hi;"
+      << "float __log_poly = __fma(__reduced_square, 0.0006568862590938807f, 0.0032181653659790754f);"
+      << "__log_poly = __fma(__reduced_square, __log_poly, 0.018033718690276146f);"
+      << "__log_poly = __fma(__reduced_square, __log_poly, 0.12022458761930466f);"
+      << "__log_poly *= __reduced_square;"
+      << "float __log_rounded = __fma(__reduced_hi, 1.4426950216293335f, __exponent_part);"
+      << "float __reduced_err = __mantissa_minus_one - __reduced_hi;"
+      << "__reduced_err = __fma(__mantissa_minus_one, -__reduced_hi, __reduced_err + __reduced_err);"
+      << "float __reduced_lo = __reciprocal * __reduced_err;"
+      << "float __log_diff = __exponent_part - __log_rounded;"
+      << "__log_diff = __fma(__reduced_hi, 1.4426950216293335f, __log_diff);"
+      << "__log_diff = __fma(__reduced_lo, 1.4426950216293335f, __log_diff);"
+      << "__log_diff = __fma(__reduced_hi, 1.925963033500011e-08f, __log_diff);"
+      << "__log_diff = __fma(__reduced_lo, __log_poly * 3.0f, __log_diff);"
+      << "__log_diff = __fma(__reduced_hi, __log_poly, __log_diff);"
+      << "float __log_x = __log_rounded + __log_diff;"
+      << "float __log_round_err = __log_diff - (__log_x - __log_rounded);"
+      << "float __abs_minus_half = __abs_x - 0.5f;"
+      << "float __log_mul_hi = __log_x * __abs_minus_half;"
+      << "float __exp_mul_hi = __abs_x * 1.4426950216293335f;"
+      << "float __exponent_hi = __log_mul_hi - __exp_mul_hi;"
+      << "float __log_mul_err = __fma(__log_x, __abs_minus_half, -__log_mul_hi);"
+      << "__log_mul_err = __fma(__log_round_err, __abs_minus_half, __log_mul_err);"
+      << "float __exp_mul_err = __fma(__abs_x, 1.4426950216293335f, -__exp_mul_hi);"
+      << "__exp_mul_err = __fma(__abs_x, 1.925963033500011e-08f, __exp_mul_err);"
+      << "float __exp_sum_hi = __exp_mul_hi + __exponent_hi;"
+      << "float __exponent_round_err = __exponent_hi - __exp_sum_hi;"
+      << "float __log_mul_round_err = __log_mul_hi - __exp_sum_hi;"
+      << "float __exp_mul_round_err = -__exp_mul_hi - __exponent_round_err;"
+      << "float __exponent_lo = __log_mul_round_err + __exp_mul_round_err;"
+      << "__exponent_lo += __log_mul_err - __exp_mul_err;"
+      << "float __offset = __abs_x > 33.0f ? 48.0f : 0.0f;"
+      << "if (__x < 0.0f) { __exponent_hi = __offset - __exponent_hi; __exponent_lo = -__exponent_lo; }"
+      << "float __rounded_exponent = __roundf(__exponent_hi);"
+      << "float __exp2_fraction = __exponent_hi - __rounded_exponent + __exponent_lo;"
+      << "int32_t __exp2_exponent = __cvt_int32_t<ROUND::Z, RoundingSaturation::RS_ENABLE_VALUE>(__rounded_exponent);"
+      << "float __exp2_poly = __fma(__exp2_fraction, 0.00015239251661114395f, 0.0013391353422775865f);"
+      << "__exp2_poly = __fma(__exp2_fraction, __exp2_poly, 0.009618839249014854f);"
+      << "__exp2_poly = __fma(__exp2_fraction, __exp2_poly, 0.055503588169813156f);"
+      << "__exp2_poly = __fma(__exp2_fraction, __exp2_poly, 0.24022644758224487f);"
+      << "__exp2_poly = __fma(__exp2_fraction, __exp2_poly, 0.6931471824645996f);"
+      << "__exp2_poly = __fma(__exp2_fraction, __exp2_poly, 1.0f);"
+      << "bool __positive_exponent = __rounded_exponent > 0.0f;"
+      << "uint32_t __scale_hi_bits = __positive_exponent ? 0x7f000000u : 0x02000000u;"
+      << "uint32_t __scale_adjust = __positive_exponent ? 0u : 0x83000000u;"
+      << "uint32_t __scale_lo_bits = ((uint32_t)__exp2_exponent << 23) - __scale_adjust;"
+      << "float __exp2_value = __exp2_poly * reinterpret_cast<float&>(__scale_hi_bits);"
+      << "__exp2_value *= reinterpret_cast<float&>(__scale_lo_bits);"
+      << "if (__fabsf(__exponent_hi) > 152.0f) {"
+      << "__exp2_value = __exponent_hi >= 0.0f ? __builtin_inff() : 0.0f; }"
+      << "float __leading = __exp2_value * 2.5066282749176025f;"
+      << "float __inv_abs = 1.0f / __abs_x;"
+      << "float __correction = __fma(0.000068413915f, __inv_abs, -0.000050603266f);"
+      << "__correction = __fma(__correction, __inv_abs, -0.00042276637f);"
+      << "__correction = __fma(__correction, __inv_abs, 0.0009921414f);"
+      << "__correction = __fma(__correction, __inv_abs, -0.00027855476f);"
+      << "__correction = __fma(__correction, __inv_abs, -0.002674901f);"
+      << "__correction = __fma(__correction, __inv_abs, 0.0034718033f);"
+      << "__correction = __fma(__correction, __inv_abs, 0.08333334f);"
+      << "__correction = __fma(__correction, __inv_abs, 0.0f);"
+      << "if (__x > 0.0f) { __result = __fma(__leading, __correction, __leading); }"
+      << "else { __correction += 1.0f; float __two_abs = __abs_x + __abs_x;"
+      << "int32_t __quadrant = __cvt_int32_t<ROUND::R, RoundingSaturation::RS_ENABLE_VALUE>(__two_abs);"
+      << "float __rounded_two_abs = __cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__quadrant);"
+      << "bool __use_cos = (__quadrant & 1) != 0;"
+      << "float __reduced_arg = __fma(__rounded_two_abs, -0.5f, __abs_x);"
+      << "float __reduced_square = __reduced_arg * __reduced_arg, __sinpi;"
+      << "if (__use_cos) { __sinpi = __fma(__reduced_square, 0.22686031460762024f, -1.3345603942871094f);"
+      << "__sinpi = __fma(__reduced_square, __sinpi, 4.058692455291748f);"
+      << "__sinpi = __fma(__reduced_square, __sinpi, -4.934802055358887f);"
+      << "__sinpi = __fma(__reduced_square, __sinpi, 1.0f); }"
+      << "else { __sinpi = __fma(__reduced_square, -0.5924802422523499f, 2.5501441955566406f);"
+      << "__sinpi = __fma(__reduced_square, __sinpi, -5.167719841003418f);"
+      << "__sinpi = __fma(__sinpi, __reduced_arg * __reduced_square, __reduced_arg * 3.1415927410125732f); }"
+      << "if ((__quadrant & 2) != 0) { __sinpi = -__sinpi; }"
+      << "float __denominator_product = __correction * __x;"
+      << "float __product = __denominator_product * __sinpi;"
+      << "float __product_error = __fma(__denominator_product, __sinpi, -__product);"
+      << "float __reciprocal_product = 1.0f / __product;"
+      << "__result = __fma(__leading, __reciprocal_product,"
+      << "-__leading * __reciprocal_product * __product_error * __reciprocal_product);"
+      << "__result *= 0.5f; if (__abs_x > 33.0f) { __result *= 3.5527136e-15f; } } }"
+      << "float __truncated = __x > 0.0f ? __floorf(__x) : __ceilf(__x);"
+      << "if (__truncated == __x && __x < 0.0f) { __result = __builtin_inff() / __builtin_inff(); }"
+      << "if (__x < -41.099998474121094f && __truncated != __x && (((int32_t)__truncated & 1) != 0)) {"
+      << "__result = 0.0f; }"
+      << "if (__isnan(__x)) { __result = __x; }"
+      << "if (__x == __builtin_inff()) { __result = __builtin_inff(); }"
+      << "if (__x == -__builtin_inff()) { __result = __builtin_inff() / __builtin_inff(); }"
+      << "if (__x == 0.0f) { __result = 1.0f / __x; } __result;})";
+    return s.str();
+}
+
+std::string MakeSimtLgammaCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    const std::string small_log = MakeSimtGammaLnFP32Codegen("__small_value");
+    const std::string large_log = MakeSimtGammaLnFP32Codegen("__abs_x");
+    const std::string sinpi = MakeSimtLgammaSinpiFP32Codegen("__abs_x");
+    const std::string reflection_log = MakeSimtGammaLnFP32Codegen("__abs_x * __fabsf(__sinpi)");
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "), __abs_x = __fabsf(__x), __result = 0.0f;"
+      << "if (__isinf(__abs_x)) { __result = __abs_x; }"
+      << "else if (__abs_x < 0.7f) { float __small_value = __fma(0.0035875155f, __abs_x, -0.0054712854f);"
+      << "__small_value = __fma(__small_value, __abs_x, -0.044627126f);"
+      << "__small_value = __fma(__small_value, __abs_x, 0.1673177f);"
+      << "__small_value = __fma(__small_value, __abs_x, -0.04213598f);"
+      << "__small_value = __fma(__small_value, __abs_x, -0.6558673f);"
+      << "__small_value = __fma(__small_value, __abs_x, 0.5772154f);"
+      << "__small_value = __fma(__small_value, __abs_x, 0.0f);"
+      << "__small_value = __fma(__small_value, __abs_x, __abs_x);"
+      << "__result = -(" << small_log << ");"
+      << "if (__small_value == 0.0f) { __result = __builtin_inff(); } }"
+      << "else if (__abs_x < 1.5f) { float __one_minus_x = 1.0f - __abs_x;"
+      << "__result = __fma(0.045882664f, __one_minus_x, 0.10373967f);"
+      << "__result = __fma(__result, __one_minus_x, 0.122803635f);"
+      << "__result = __fma(__result, __one_minus_x, 0.12752421f);"
+      << "__result = __fma(__result, __one_minus_x, 0.14321668f);"
+      << "__result = __fma(__result, __one_minus_x, 0.16934357f);"
+      << "__result = __fma(__result, __one_minus_x, 0.20740793f);"
+      << "__result = __fma(__result, __one_minus_x, 0.2705875f);"
+      << "__result = __fma(__result, __one_minus_x, 0.40068542f);"
+      << "__result = __fma(__result, __one_minus_x, 0.82246696f);"
+      << "__result = __fma(__result, __one_minus_x, 0.5772157f);"
+      << "__result = __fma(__result, __one_minus_x, 0.0f); }"
+      << "else if (__abs_x < 3.0f) { float __x_minus_two = __abs_x - 2.0f;"
+      << "__result = __fma(0.0000495984932f, __x_minus_two, -0.00022089484f);"
+      << "__result = __fma(__result, __x_minus_two, 0.000541314250f);"
+      << "__result = __fma(__result, __x_minus_two, -0.00120451697f);"
+      << "__result = __fma(__result, __x_minus_two, 0.00288425176f);"
+      << "__result = __fma(__result, __x_minus_two, -0.00738275796f);"
+      << "__result = __fma(__result, __x_minus_two, 0.0205813199f);"
+      << "__result = __fma(__result, __x_minus_two, -0.0673524886f);"
+      << "__result = __fma(__result, __x_minus_two, 0.322467029f);"
+      << "__result = __fma(__result, __x_minus_two, 0.42278432f);"
+      << "__result = __fma(__result, __abs_x, -__result - __result); }"
+      << "else if (__abs_x < 7.8f) { float __x_minus_three = __abs_x - 3.0f;"
+      << "float __numerator = __fma(-748.8903f, __x_minus_three, -12349.742f);"
+      << "__numerator = __fma(__numerator, __x_minus_three, -41061.375f);"
+      << "__numerator = __fma(__numerator, __x_minus_three, -48310.664f);"
+      << "__numerator = __fma(__numerator, __x_minus_three, -143033.4f);"
+      << "float __denominator = __fma(1.0f, __x_minus_three, -259.25097f);"
+      << "__denominator = __fma(__denominator, __x_minus_three, -10777.18f);"
+      << "__denominator = __fma(__denominator, __x_minus_three, -92685.05f);"
+      << "__denominator = __fma(__denominator, __x_minus_three, -206353.58f);"
+      << "__result = __fma(__numerator, 1.0f / __denominator, __x_minus_three); }"
+      << "else { float __inv_abs_x = 1.0f / __abs_x, __inv_square = __inv_abs_x * __inv_abs_x;"
+      << "float __correction = __fma(0.00077783066f, __inv_square, -0.0027776553f);"
+      << "__correction = __fma(__correction, __inv_square, 0.083333276f);"
+      << "__correction = __fma(__correction, __inv_abs_x, 0.0f);"
+      << "float __half_log_product = (" << large_log << ") * 0.5f * (__abs_x - 0.5f);"
+      << "__result = __half_log_product - __abs_x + __half_log_product + __correction + 0.9189385f; }"
+      << "if (__x < 0.0f) { if (__floorf(__abs_x) == __abs_x) { __result = __builtin_inff(); }"
+      << "else if (__abs_x < 9.9999996e-20f) { __result = -(" << large_log << "); }"
+      << "else { float __sinpi = " << sinpi << "; float __reflection_log = " << reflection_log << ";"
+      << "float __reflection = 1.14472985f - __reflection_log; __result = __fma(__reflection, 1.0f, -__result); } }"
+      << "__result;})";
+    return s.str();
+}
+
+std::string MakeSimtErfOpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    const std::string exp2 = MakeSimtExp2FP32Codegen("__exponent");
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "), __a = __fabsf(__x), __r;"
+      << "if (__a >= 1.00296f) {"
+      << "float __p = __fma(__a, 0.000112198715f, -0.0013275252f);"
+      << "__p = __fma(__a, __p, 0.008396535f); __p = __fma(__a, __p, -0.040246583f);"
+      << "__p = __fma(__a, __p, 0.15950431f); __p = __fma(__a, __p, 0.9129177f);"
+      << "__p = __fma(__a, __p, 0.62906002f); float __exponent = __fma(__p, -__a, -__a);"
+      << "float __adjusted = 1.0f - (" << exp2 << ");"
+      << "uint32_t __result_bits = (reinterpret_cast<uint32_t&>(__x) & 0x80000000u) |"
+      << " reinterpret_cast<uint32_t&>(__adjusted); __r = reinterpret_cast<float&>(__result_bits); }"
+      << "else { float __z = __x * __x;"
+      << "float __p = __fma(__z, 0.000084834944f, -0.00082130916f);"
+      << "__p = __fma(__z, __p, 0.005213489f); __p = __fma(__z, __p, -0.026868773f);"
+      << "__p = __fma(__z, __p, 0.11284005f); __p = __fma(__z, __p, -0.37612664f);"
+      << "__p = __fma(__z, __p, 0.12837915f); __r = __fma(__p, __x, __x); } __r;})";
+    return s.str();
+}
+
+std::string MakeSimtErfcOpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "), __a = __fabsf(__x);"
+      << "float __term1 = __a - 4.0f, __term2 = __a + 4.0f, __inv_term2 = 1.0f / __term2;"
+      << "float __y = __term1 * __inv_term2, __z = __y + 1.0f;"
+      << "float __numerator = __fma(-4.0f, __z, __a), __tmp = __fma(-__y, __a, __numerator);"
+      << "float __w = __fma(__inv_term2, __tmp, __y);"
+      << "float __poly = __fma(0.0008912170887924731f, __w, 0.00704578822478652f);"
+      << "__poly = __fma(__poly, __w, -0.015866896137595177f);"
+      << "__poly = __fma(__poly, __w, 0.03642962500452995f);"
+      << "__poly = __fma(__poly, __w, -0.06664343178272247f);"
+      << "__poly = __fma(__poly, __w, 0.09381452947854996f);"
+      << "__poly = __fma(__poly, __w, -0.10099056363105774f);"
+      << "__poly = __fma(__poly, __w, 0.06809400022029877f);"
+      << "__poly = __fma(__poly, __w, 0.015377387404441833f);"
+      << "__poly = __fma(__poly, __w, -0.1396210789680481f);"
+      << "__poly = __fma(__poly, __w, 1.2329951524734497f);"
+      << "float __denominator = __fma(2.0f, __a, 1.0f), __inv_denominator = 1.0f / __denominator;"
+      << "float __q = __poly * __inv_denominator, __t = __fma(__a, __q * -2.0f, __poly);"
+      << "float __v = __fma(__t - __q, __inv_denominator, __q);"
+      << "float __square = __a * __a, __negative_square = -__square;"
+      << "float __scaled = __negative_square * 1.4426950216293335f, __integer = __ceilf(__scaled);"
+      << "float __abs_integer = __fabsf(__integer);"
+      << "uint32_t __clamped_bits = (reinterpret_cast<uint32_t&>(__integer) & 0x80000000u) | 0x42fc0000u;"
+      << "float __safe_integer = __abs_integer > 126.0f ? reinterpret_cast<float&>(__clamped_bits) : __integer;"
+      << "float __remainder = __fma(__safe_integer, -0.6931471824645996f, __negative_square);"
+      << "__remainder = __fma(__safe_integer, 1.9046542121259336e-09f, __remainder);"
+      << "float __exponent_arg = __remainder * 1.4426950216293335f;"
+      << "float __exponent_base = __safe_integer + 12583039.0f;"
+      << "uint32_t __exponent_bits = reinterpret_cast<uint32_t&>(__exponent_base) << 23;"
+      << "float __exp_value = __powf(2.0f, __exponent_arg) * reinterpret_cast<float&>(__exponent_bits);"
+      << "float __residual = __fma(-__a, __a, __square);"
+      << "float __result = __v * __fma(__exp_value, __residual, __exp_value);"
+      << "if (__a > 10.055000305175781f) { __result = 0.0f; }"
+      << "if (__x < 0.0f) { __result = 2.0f - __result; } __result;})";
+    return s.str();
+}
+
+std::string MakeSimtErfinvCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    const std::string log2 = MakeSimtLog2FP32Codegen("__temp");
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "), __opposite = -__x;"
+      << "float __temp = __fma(__x, __opposite, 1.0f), __log2_temp = " << log2 << ", __w = -__log2_temp, __r;"
+      << "if (__log2_temp < -8.2f) { float __s = 1.0f / __sqrtf(__w);"
+      << "float __p = __fma(__s, -0.5899144f, -0.6630042f);"
+      << "__p = __fma(__s, __p, 1.5970111f); __p = __fma(__s, __p, -0.67521554f);"
+      << "__p = __fma(__s, __p, -0.09522479f); __p = __fma(__s, __p, 0.83535343f);"
+      << "float __term = (1.0f / __s) * __p; uint32_t __rb = reinterpret_cast<uint32_t&>(__term) | "
+      << "(reinterpret_cast<uint32_t&>(__x) & 0x80000000u); __r = reinterpret_cast<float&>(__rb); }"
+      << "else { float __p = __fma(__w, -2.5172708e-10f, 9.427429e-9f);"
+      << "__p = __fma(__w, __p, -1.2054752e-7f); __p = __fma(__w, __p, 2.1697005e-7f);"
+      << "__p = __fma(__w, __p, 8.0621484e-6f); __p = __fma(__w, __p, -3.1675492e-5f);"
+      << "__p = __fma(__w, __p, -0.0007743631f); __p = __fma(__w, __p, 0.005546588f);"
+      << "__p = __fma(__w, __p, 0.16082023f); __p = __fma(__w, __p, 0.8862269f);"
+      << "__r = __p * __x; } __r;})";
+    return s.str();
+}
+
+std::string MakeSimtErfcinvCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    const std::string central_log2 = MakeSimtLog2FP32Codegen("__product");
+    const std::string tail_log2 = MakeSimtLog2FP32Codegen("__selected");
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "), __opposite = -__x, __term = 2.0f - __x, __r;"
+      << "if (__x <= 1.9966f && __x >= 0.0034f) { float __product = __term * __x;"
+      << "float __w = -(" << central_log2 << ");"
+      << "float __p = __fma(__w, -2.5172708e-10f, 9.427429e-9f);"
+      << "__p = __fma(__w, __p, -1.2054752e-7f); __p = __fma(__w, __p, 2.1697005e-7f);"
+      << "__p = __fma(__w, __p, 8.0621484e-6f); __p = __fma(__w, __p, -3.1675492e-5f);"
+      << "__p = __fma(__w, __p, -0.0007743631f); __p = __fma(__w, __p, 0.005546588f);"
+      << "__p = __fma(__w, __p, 0.16082023f); __p = __fma(__w, __p, 0.8862269f);"
+      << "__r = __fma(__p, __opposite, __p); }"
+      << "else { bool __high = __x > 1.0f; float __selected = __high ? __term : __x;"
+      << "float __w = -(" << tail_log2 << "), __s = 1.0f / __sqrtf(__w);"
+      << "float __p = __fma(__s, -63.113224f, 127.48469f);"
+      << "__p = __fma(__s, __p, -114.10568f); __p = __fma(__s, __p, 60.325786f);"
+      << "__p = __fma(__s, __p, -21.789892f); __p = __fma(__s, __p, 6.467409f);"
+      << "__p = __fma(__s, __p, -1.8329474f); __p = __fma(__s, __p, -0.030327774f);"
+      << "__p = __fma(__s, __p, 0.83287745f);"
+      << "__r = __p * (__high ? -(1.0f / __s) : (1.0f / __s)); } __r;})";
+    return s.str();
+}
+
+std::string MakeSimtErfcxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    const std::string exp2 = MakeSimtExp2FP32Codegen("__exp_arg");
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "), __r;"
+      << "if (__x < -9.43f) { uint32_t __inf = 0x7f800000u; __r = reinterpret_cast<float&>(__inf); }"
+      << "else { float __a = __fabsf(__x); if (__a < 10.055f) {"
+      << "float __term1 = __a - 4.0f, __term2 = __a + 4.0f, __inv_term2 = 1.0f / __term2;"
+      << "float __w = __term1 * __inv_term2, __z = __w + 1.0f;"
+      << "float __numerator = __fma(-4.0f, __z, __a);"
+      << "float __tmp = __fma(-__w, __a, __numerator); __w = __fma(__inv_term2, __tmp, __w);"
+      << "float __poly = __fma(0.0008912171f, __w, 0.007045788f);"
+      << "__poly = __fma(__poly, __w, -0.015866896f); __poly = __fma(__poly, __w, 0.036429625f);"
+      << "__poly = __fma(__poly, __w, -0.06664343f); __poly = __fma(__poly, __w, 0.09381453f);"
+      << "__poly = __fma(__poly, __w, -0.10099056f); __poly = __fma(__poly, __w, 0.068094f);"
+      << "__poly = __fma(__poly, __w, 0.015377387f); __poly = __fma(__poly, __w, -0.13962108f);"
+      << "__poly = __fma(__poly, __w, 1.2329951f); float __term3 = __fma(2.0f, __a, 1.0f);"
+      << "float __inv_term3 = 1.0f / __term3, __q = __poly * __inv_term3;"
+      << "float __t = __fma(__a, __q * -2.0f, __poly), __u = __t - __q;"
+      << "__r = __fma(__u, __inv_term3, __q); if (!(__x > 0.0f)) {"
+      << "float __x_sq = __a * __a, __neg_x_sq = -__x_sq, __term4 = __fma(__a, __a, __neg_x_sq);"
+      << "float __term5 = __fma(__x_sq, 0.00572498f, 0.5f);"
+      << "__term5 = __fminf(__term5, __builtin_inff());"
+      << "float __term6 = __fma(__term5, 252.0f, 12582913.0f);"
+      << "float __term7 = __term6 - 12583039.0f;"
+      << "float __term8 = __fma(__x_sq, 1.442695f, -__term7);"
+      << "float __exp_arg = __fma(__x_sq, 1.925963e-8f, __term8);"
+      << "uint32_t __exponent = reinterpret_cast<uint32_t&>(__term6) << 23;"
+      << "float __exponent_scale = reinterpret_cast<float&>(__exponent), __term9_exp = " << exp2
+      << "; float __scaled_exp = __term9_exp * __exponent_scale;"
+      << "float __exp_approx = __fma(__term9_exp, __exponent_scale, __scaled_exp);"
+      << "float __final_exp = __fma(__exp_approx, __term4, __exp_approx);"
+      << "__r = __isinf(__exp_approx) ? __exp_approx : (__final_exp - __r); } }"
+      << "else { float __scaled_x = __a * 0.25f, __reciprocal = 0.25f / __scaled_x;"
+      << "float __w = __reciprocal * __reciprocal;"
+      << "float __poly = __fma(6.5625f, __w, -1.875f); __poly = __fma(__poly, __w, 0.75f);"
+      << "__poly = __fma(__poly, __w, -0.5f); __poly = __fma(__poly, __w, 1.0f);"
+      << "__r = (__reciprocal * 0.5641896f) * __poly; } } __r;})";
+    return s.str();
+}
+
+std::string MakeSimtNormcdfCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    const std::string exp2 = MakeSimtExp2FP32Codegen("__exp_residual * 1.4426950216293335f");
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "), __abs_x = __fabsf(__x);"
+      << "uint32_t __xb = reinterpret_cast<uint32_t&>(__x);"
+      << "uint32_t __clamped_bits = (__xb & 0x80000000u) | 0x41680000u;"
+      << "float __clamped_x = __abs_x > 14.5f ? reinterpret_cast<float&>(__clamped_bits) : __x;"
+      << "bool __ge_neg_one = !(__clamped_x < -1.0f);"
+      << "float __z_hi = __clamped_x * -0.70710676908493041992f;"
+      << "float __z_comp = __fma(__clamped_x, -0.70710676908493041992f, -__z_hi);"
+      << "float __z_lo = __fma(__clamped_x, -1.2101617485882343317e-08f, __z_comp);"
+      << "float __z = __z_hi + __z_lo, __abs_z = __fabsf(__z); bool __z_nonnegative = !(__z < 0.0f);"
+      << "float __inv_abs_z_plus_4 = 1.0f / (__abs_z + 4.0f);"
+      << "float __q = (__abs_z - 4.0f) * __inv_abs_z_plus_4;"
+      << "float __q_residual = __fma(__q + 1.0f, -4.0f, __abs_z);"
+      << "__q_residual = __fma(__abs_z, -__q, __q_residual);"
+      << "__q = __fma(__inv_abs_z_plus_4, __q_residual, __q);"
+      << "float __z_square = __z * __z, __scaled_exp = __z_square * -1.4426950216293335f;"
+      << "float __exp_k = __scaled_exp > 0.0f ? __floorf(__scaled_exp) : __ceilf(__scaled_exp);"
+      << "float __abs_exp_k = __fabsf(__exp_k);"
+      << "uint32_t __limited_bits = (reinterpret_cast<uint32_t&>(__exp_k) & 0x80000000u) | 0x42fc0000u;"
+      << "float __exp_k_limited = __abs_exp_k > 126.0f ? reinterpret_cast<float&>(__limited_bits) : __exp_k;"
+      << "float __exp_residual = __fma(__exp_k_limited, -0.6931471824645996f, -__z_square);"
+      << "__exp_residual = __fma(__exp_k_limited, 1.9046542121259336e-09f, __exp_residual);"
+      << "float __exp2_residual = " << exp2 << ";"
+      << "uint32_t __exp_scale_bits = (uint32_t)__cvt_int32_t<ROUND::Z,"
+      << " RoundingSaturation::RS_ENABLE_VALUE>(__exp_k_limited + 12583039.0f) << 23;"
+      << "float __exp_scale = reinterpret_cast<float&>(__exp_scale_bits);"
+      << "float __square_residual = __fma(-__abs_z, __abs_z, __z_square);"
+      << "float __exp_term = __fma(__exp_scale, __square_residual, __exp_scale) * __exp2_residual;"
+      << "float __poly = __fma(__q, 0.0008912170887924731f, 0.00704578822478652f);"
+      << "__poly = __fma(__q, __poly, -0.015866896137595177f);"
+      << "__poly = __fma(__q, __poly, 0.03642962500452995f);"
+      << "__poly = __fma(__q, __poly, -0.06664343178272247f);"
+      << "__poly = __fma(__q, __poly, 0.09381452947854996f);"
+      << "__poly = __fma(__q, __poly, -0.10099056363105774f);"
+      << "__poly = __fma(__q, __poly, 0.06809400022029877f);"
+      << "__poly = __fma(__q, __poly, 0.015377387404441833f);"
+      << "__poly = __fma(__q, __poly, -0.1396210789680481f);"
+      << "__poly = __fma(__q, __poly, 1.2329951524734497f);"
+      << "float __inv_two_abs_z_plus_1 = 1.0f / __fma(__abs_z, 2.0f, 1.0f);"
+      << "float __rational = __poly * __inv_two_abs_z_plus_1;"
+      << "float __rational_err = __fma(__abs_z, __rational * -2.0f, __poly);"
+      << "__rational_err = -__rational + __rational_err;"
+      << "__rational = __fma(__inv_two_abs_z_plus_1, __rational_err, __rational);"
+      << "float __erfc_value = __rational * __exp_term;"
+      << "if (__abs_z > 10.055000305175781f) { __erfc_value = 0.0f; }"
+      << "if (!__z_nonnegative) { __erfc_value = 2.0f - __erfc_value; }"
+      << "if (!__ge_neg_one) { float __correction_scale = __z * -2.0f * __erfc_value;"
+      << "__erfc_value = __fma(__z_hi - __z + __z_lo, __correction_scale, __erfc_value); }"
+      << "__erfc_value * 0.5f;})";
+    return s.str();
+}
+
+std::string MakeSimtNormcdfinvCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    const std::string central_log2 = MakeSimtLog2FP32Codegen("__product");
+    const std::string tail_log2 = MakeSimtLog2FP32Codegen("__selected");
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "), __double_x = __x + __x;"
+      << "float __opposite = -__double_x, __term = 2.0f - __double_x, __r;"
+      << "if (__double_x >= 0.0034f && __double_x <= 1.9966f) { float __product = __term * __double_x;"
+      << "float __w = -(" << central_log2 << ");"
+      << "float __p = __fma(-2.51727084e-10f, __w, 9.42742862e-09f);"
+      << "__p = __fma(__p, __w, -1.20547526e-07f); __p = __fma(__p, __w, 2.16970051e-07f);"
+      << "__p = __fma(__p, __w, 8.06214848e-06f); __p = __fma(__p, __w, -3.16754922e-05f);"
+      << "__p = __fma(__p, __w, -0.000774363114f); __p = __fma(__p, __w, 0.00554658799f);"
+      << "__p = __fma(__p, __w, 0.160820231f); __p = __fma(__p, __w, 0.886226892f);"
+      << "__r = __fma(__p, __opposite, __p); }"
+      << "else { float __selected = __double_x <= 1.0f ? __double_x : __term;"
+      << "float __w = 1.0f / __sqrtf(-(" << tail_log2 << "));"
+      << "float __p = __fma(-63.113224f, __w, 127.484688f);"
+      << "__p = __fma(__p, __w, -114.105682f); __p = __fma(__p, __w, 60.3257866f);"
+      << "__p = __fma(__p, __w, -21.7898922f); __p = __fma(__p, __w, 6.46740913f);"
+      << "__p = __fma(__p, __w, -1.83294737f); __p = __fma(__p, __w, -0.0303277746f);"
+      << "__p = __fma(__p, __w, 0.832877457f); float __inv_w = 1.0f / __w;"
+      << "if (__double_x > 1.0f) { __inv_w = -__inv_w; } __r = __p * __inv_w; }"
+      << "__fma(__r, -1.41421354f, 0.0f);})";
+    return s.str();
+}
+
+std::string MakeSimtBesselMiddleTrigFP32Codegen(const std::string& alpha, bool is_sin)
+{
+    std::ostringstream s;
+    s << "({float __bessel_alpha = (" << alpha << "); __bessel_alpha = __bessel_alpha * 0.0f + __bessel_alpha;"
+      << "int64_t __bessel_q = (int64_t)(__bessel_alpha * 0.63661975f);"
+      << "__bessel_alpha = __fma((float)__bessel_q, -1.5707964f, __bessel_alpha);"
+      << "__bessel_alpha = __fma((float)__bessel_q, 4.371139e-8f, __bessel_alpha);"
+      << "int64_t __bessel_q2 = (int64_t)(__bessel_alpha * 0.63661975f);"
+      << "__bessel_alpha = __fma((float)__bessel_q2, -1.5707964f, __bessel_alpha);"
+      << "int32_t __bessel_quadrant = (int32_t)((__bessel_q + __bessel_q2) % 4);"
+      << "if (__bessel_quadrant < 0) { __bessel_quadrant += 4; }"
+      << "float __bessel_reduced = __bessel_alpha - 0.7853982f;"
+      << "float __bessel_square = __bessel_reduced * __bessel_reduced;"
+      << "float __bessel_cos = __fma(2.44677067e-5f, __bessel_square, -1.38877297e-3f);"
+      << "__bessel_cos = __fma(__bessel_cos, __bessel_square, 4.16666567e-2f);"
+      << "__bessel_cos = __fma(__bessel_cos, __bessel_square, -5.0e-1f);"
+      << "__bessel_cos = __fma(__bessel_cos, __bessel_square, 1.0f);"
+      << "float __bessel_sin = __fma(2.86567956e-6f, __bessel_square, -1.98559923e-4f);"
+      << "__bessel_sin = __fma(__bessel_sin, __bessel_square, 8.33338592e-3f);"
+      << "__bessel_sin = __fma(__bessel_sin, __bessel_square, -1.66666672e-1f);"
+      << "float __bessel_cube = __fma(__bessel_reduced, __bessel_square, 0.0f);"
+      << "__bessel_sin = __fma(__bessel_sin, __bessel_cube, __bessel_reduced);"
+      << "if ((__bessel_quadrant & 2) != 0) { __bessel_sin = -__bessel_sin; __bessel_cos = -__bessel_cos; }";
+    if (is_sin) {
+        s << "if ((__bessel_quadrant & 1) != 0) { __bessel_sin = __bessel_cos; } __bessel_sin;";
+    } else {
+        s << "if ((__bessel_quadrant & 1) != 0) { __bessel_cos = -__bessel_sin; } __bessel_cos;";
+    }
+    s << "})";
+    return s.str();
+}
+
+std::string MakeSimtBesselHugeCosFP32Codegen(const std::string& alpha, const std::string& phase_shift)
+{
+    const std::string cos_value = MakeSimtTrigFP32Codegen("__bessel_reduced - (" + phase_shift + ")", false);
+    std::ostringstream s;
+    s << "({float __bessel_alpha = (" << alpha << "), __bessel_reduced = __bessel_alpha;"
+      << "int32_t __bessel_quadrant = 0; if (__bessel_alpha >= 105615.0f) {"
+      << "uint32_t __bessel_bits = reinterpret_cast<uint32_t&>(__bessel_alpha);"
+      << "int32_t __bessel_exp = (int32_t)(((__bessel_bits & 0x7f800000u) >> 23) - 127);"
+      << "uint32_t __bessel_table_index = (uint32_t)__bessel_exp >> 5;"
+      << "const uint32_t __bessel_table[] = {0x517cc1b7u, 0x27220a94u, 0xfe13abe8u,"
+      << "0xfa9a6ee0u, 0x6db14accu, 0x9e21c820u};"
+      << "uint32_t __bessel_hi = __bessel_table_index ? __bessel_table[__bessel_table_index - 1] : 0u;"
+      << "uint32_t __bessel_mid = __bessel_table[__bessel_table_index];"
+      << "uint32_t __bessel_lo = __bessel_table[__bessel_table_index + 1];"
+      << "uint32_t __bessel_last = __bessel_table[__bessel_table_index + 2];"
+      << "int32_t __bessel_remainder_exp = (uint32_t)__bessel_exp & 0x1f;"
+      << "if (__bessel_remainder_exp != 0) {"
+      << "__bessel_hi = (__bessel_hi << __bessel_remainder_exp) |"
+      << " (__bessel_mid >> (32 - __bessel_remainder_exp));"
+      << "__bessel_mid = (__bessel_mid << __bessel_remainder_exp) |"
+      << " (__bessel_lo >> (32 - __bessel_remainder_exp));"
+      << "__bessel_lo = (__bessel_lo << __bessel_remainder_exp) |"
+      << " (__bessel_last >> (32 - __bessel_remainder_exp)); }"
+      << "uint32_t __bessel_mantissa_bits = (__bessel_bits & 0x007fffffu) | 0x4f000000u;"
+      << "uint32_t __bessel_mantissa = (uint32_t)reinterpret_cast<float&>(__bessel_mantissa_bits);"
+      << "uint64_t __bessel_product = (uint64_t)__bessel_mantissa * __bessel_lo;"
+      << "__bessel_product = (uint64_t)__bessel_mantissa * __bessel_mid + (__bessel_product >> 32);"
+      << "__bessel_product = ((uint64_t)(__bessel_mantissa * __bessel_hi) << 32) + __bessel_product;"
+      << "__bessel_quadrant = (int32_t)(__bessel_product >> 62);"
+      << "__bessel_product &= 0x3fffffffffffffffull;"
+      << "if ((__bessel_product & 0x2000000000000000ull) != 0) {"
+      << "__bessel_product -= 0x4000000000000000ull; ++__bessel_quadrant; }"
+      << "int64_t __bessel_pi = (int64_t)__bessel_product; float __bessel_hi_part = (float)__bessel_pi;"
+      << "__bessel_pi -= (int64_t)__bessel_hi_part; float __bessel_lo_part = (float)__bessel_pi;"
+      << "__bessel_reduced = (__bessel_hi_part + __bessel_lo_part) * 3.4061215800865545e-19f;"
+      << "__bessel_quadrant &= 3;"
+      << "__bessel_reduced += (float)__bessel_quadrant * 1.5707963705062866f; }" << cos_value << ";})";
+    return s.str();
+}
+
+std::string MakeSimtJ0Codegen(const std::string& operand)
+{
+    const std::string middle_value = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", false);
+    const std::string huge_cos_value = MakeSimtBesselHugeCosFP32Codegen("__alpha", "0.7853981852531433f");
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "), __a = __fabsf(__x), __r; uint32_t __ab = reinterpret_cast<uint32_t&>(__a);"
+      << "if (__ab > 0x7f800000u) { __r = __x; }"
+      << "else if (__ab == 0x7f800000u) { __r = 0.0f; }"
+      << "else if (__a <= 8.0f) { float __d1 = (__a - 2.4048254f) - 1.087059e-7f;"
+      << "float __p = 9.619266247e-13f; __p = __fma(__p, __d1, 5.702105547e-12f);"
+      << "__p = __fma(__p, __d1, -4.398487105e-10f); __p = __fma(__p, __d1, 4.604940853e-10f);"
+      << "__p = __fma(__p, __d1, 5.847321173e-08f); __p = __fma(__p, __d1, 2.084518856e-09f);"
+      << "__p = __fma(__p, __d1, -5.452075416e-06f); __p = __fma(__p, __d1, -7.342953250e-06f);"
+      << "__p = __fma(__p, __d1, 3.017067874e-04f); __p = __fma(__p, __d1, 7.739535477e-04f);"
+      << "__p = __fma(__p, __d1, -7.283463700e-03f); __p = __fma(__p, __d1, -2.666820353e-02f);"
+      << "float __d2 = (__a - 5.520078f) + 7.1934145e-8f;"
+      << "float __d3 = (__a - 8.653728f) - 3.8147791e-7f; __r = __p * __d1 * __d2 * __d3; }"
+      << "else if (__a <= 1.0e13f) { float __inv = 1.0f / __a, __inv2 = __inv * __inv;"
+      << "float __beta = __fma(5.848699569702148f, __inv2, -0.5428466796875f);"
+      << "__beta = __fma(__beta, __inv2, 0.103515625f);"
+      << "__beta = __fma(__beta, __inv2, -0.0625f); __beta = __fma(__beta, __inv2, 1.0f);"
+      << "float __alpha = __fma(1.6380658830915178f, __inv2, -0.2095703125f);"
+      << "__alpha = __fma(__alpha, __inv2, 0.06510416666666666f);"
+      << "__alpha = __fma(__alpha, __inv2, -0.125f); __alpha = __fma(__alpha, __inv, __a);"
+      << "__r = __beta * (1.0f / __sqrtf(__a)) * 0.7978846f * (" << middle_value << "); }"
+      << "else { float __inv = 1.0f / __a, __inv2 = __inv * __inv;"
+      << "float __alpha_poly = __fma(__inv2, 1.139649510383606f, -0.20532675087451935f);"
+      << "__alpha_poly = __fma(__inv2, __alpha_poly, 0.06509173661470413f);"
+      << "__alpha_poly = __fma(__inv2, __alpha_poly, -0.1249999925494194f);"
+      << "float __alpha = __fma(__inv, __alpha_poly, __a);"
+      << "float __beta = __fma(__inv2, 3.359287977218628f, -0.5145226716995239f);"
+      << "__beta = __fma(__inv2, __beta, 0.10337056964635849f);"
+      << "__beta = __fma(__inv2, __beta, -0.062499724328517914f);"
+      << "__beta = __fma(__inv2, __beta, 1.0f);"
+      << "__r = __beta * (1.0f / __sqrtf(__a)) * 0.7978845834732056f * (" << huge_cos_value << "); } __r;})";
+    return s.str();
+}
+
+std::string MakeSimtJ1Codegen(const std::string& operand)
+{
+    const std::string middle_value = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", true);
+    const std::string huge_cos_value = MakeSimtBesselHugeCosFP32Codegen("__alpha", "2.356194496154785f");
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "), __a = __fabsf(__x), __r; uint32_t __ab = reinterpret_cast<uint32_t&>(__a);"
+      << "if (__ab > 0x7f800000u) { __r = __x; }"
+      << "else if (__a == 0.0f || __ab == 0x7f800000u) { __r = 0.0f; }"
+      << "else if (__a <= 8.0f) { float __d1 = (__a - 3.831706f) + 7.685059e-8f;"
+      << "float __p = 9.206492556e-14f; __p = __fma(__p, __d1, 9.126927192e-13f);"
+      << "__p = __fma(__p, __d1, -2.641634001e-11f); __p = __fma(__p, __d1, -2.014359882e-10f);"
+      << "__p = __fma(__p, __d1, 4.525844770e-09f); __p = __fma(__p, __d1, 2.701145918e-08f);"
+      << "__p = __fma(__p, __d1, -5.348958058e-07f); __p = __fma(__p, __d1, -2.360248564e-06f);"
+      << "__p = __fma(__p, __d1, 4.121127279e-05f); __p = __fma(__p, __d1, 1.191702295e-04f);"
+      << "__p = __fma(__p, __d1, -1.807559530e-03f); __p = __fma(__p, __d1, -2.554892713e-03f);"
+      << "__p = __fma(__p, __d1, 3.301389139e-02f);"
+      << "float __d2 = (__a - 7.015587f) + 1.8321172e-7f; __r = __p * __d1 * __d2 * __a; }"
+      << "else if (__a <= 1.0e13f) { float __inv = 1.0f / __a, __inv2 = __inv * __inv;"
+      << "float __beta = __fma(-7.739953994751f, __inv2, 0.8052978515625f);"
+      << "__beta = __fma(__beta, __inv2, -0.193359375f);"
+      << "__beta = __fma(__beta, __inv2, 0.1875f); __beta = __fma(__beta, __inv2, 1.0f);"
+      << "float __alpha = __fma(-2.3693978445870534f, __inv2, 0.3708984375f);"
+      << "__alpha = __fma(__alpha, __inv2, -0.1640625f);"
+      << "__alpha = __fma(__alpha, __inv2, 0.375f); __alpha = __fma(__alpha, __inv, __a);"
+      << "__r = __beta * (1.0f / __sqrtf(__a)) * 0.7978846f * (" << middle_value << "); }"
+      << "else { float __inv = 1.0f / __a, __inv2 = __inv * __inv;"
+      << "float __alpha_poly = __fma(__inv2, -1.5799448490142822f, 0.36148586869239807f);"
+      << "__alpha_poly = __fma(__inv2, __alpha_poly, -0.164012610912323f);"
+      << "__alpha_poly = __fma(__inv2, __alpha_poly, 0.37499991059303284f);"
+      << "float __alpha = __fma(__inv, __alpha_poly, __a);"
+      << "float __beta = __fma(__inv2, 4.087306499481201f, 0.7498765587806702f);"
+      << "__beta = __fma(__inv2, __beta, -0.1929156482219696f);"
+      << "__beta = __fma(__inv2, __beta, 0.18749825656414032f);"
+      << "__beta = __fma(__inv2, __beta, 1.0f);"
+      << "__r = __beta * (1.0f / __sqrtf(__a)) * 0.7978845834732056f * (" << huge_cos_value << "); }"
+      << "if (__ab <= 0x7f800000u && (reinterpret_cast<uint32_t&>(__x) & 0x80000000u)) { __r = -__r; } __r;})";
+    return s.str();
+}
+
+std::string MakeSimtY0Codegen(const std::string& operand)
+{
+    const std::string middle_value = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", true);
+    const std::string huge_cos_value = MakeSimtBesselHugeCosFP32Codegen("__alpha", "2.356194496154785f");
+    const std::string log_value = MakeSimtLogFP32Codegen("__x");
+    std::ostringstream s;
+    s << "({float __x = (" << operand
+      << "), __r; uint32_t __b = reinterpret_cast<uint32_t&>(__x), __a = __b & 0x7fffffffu;"
+      << "if (__a > 0x7f800000u) { __r = __x; }"
+      << "else if (__x < 0.0f) { __r = __builtin_inff() / __builtin_inff(); }"
+      << "else if (__a == 0u) { uint32_t __ninf = 0xff800000u; __r = reinterpret_cast<float&>(__ninf); }"
+      << "else if (__a == 0x7f800000u) { __r = 0.0f; }"
+      << "else if (__x < 0.5f) { float __j0_input = __x; float __p = 7.977247951e-04f; __p = __fma(__p, __x, "
+         "-1.652431533e-02f);"
+      << "__p = __fma(__p, __x, 1.196180186e-04f); __p = __fma(__p, __x, 1.775911068e-01f);"
+      << "__p = __fma(__p, __x, 7.436880598e-07f); __p = __fma(__p, __x, -7.380430393e-02f);"
+      << "__r = 0.636619772367f * (" << MakeSimtJ0Codegen("__j0_input") << ") * (" << log_value << ") + __p; }"
+      << "else if (__x < 2.197141326f) { float __d = (__x - 0.893576980f) + 1.33579787e-8f;"
+      << "float __p = -4.485103697e-03f; __p = __fma(__p, __d, 3.231012427e-02f);"
+      << "__p = __fma(__p, __d, -1.014045593e-01f); __p = __fma(__p, __d, 1.847167541e-01f);"
+      << "__p = __fma(__p, __d, -2.253558856e-01f); __p = __fma(__p, __d, 2.147535120e-01f);"
+      << "__p = __fma(__p, __d, -1.959638733e-01f); __p = __fma(__p, __d, 1.944536283e-01f);"
+      << "__p = __fma(__p, __d, -2.040570397e-01f); __p = __fma(__p, __d, 2.190628354e-01f);"
+      << "__p = __fma(__p, __d, -2.261730477e-01f); __p = __fma(__p, __d, 2.205519494e-01f);"
+      << "__p = __fma(__p, __d, -4.920781667e-01f); __p = __fma(__p, __d, 8.794208015e-01f); __r = __p * __d; }"
+      << "else if (__x < 8.0f) { float __d3 = (__x - 7.08605099f) - 7.30581178e-8f;"
+      << "float __p = 8.146675423e-11f; __p = __fma(__p, __d3, 1.030741112e-09f);"
+      << "__p = __fma(__p, __d3, 1.610027889e-09f); __p = __fma(__p, __d3, 1.063494888e-08f);"
+      << "__p = __fma(__p, __d3, 6.693347461e-07f); __p = __fma(__p, __d3, 7.816005861e-07f);"
+      << "__p = __fma(__p, __d3, -4.836658731e-05f); __p = __fma(__p, __d3, 1.049324298e-05f);"
+      << "__p = __fma(__p, __d3, 2.142965752e-03f); __p = __fma(__p, __d3, -3.385610246e-03f);"
+      << "__p = __fma(__p, __d3, -3.743254148e-02f); __p = __fma(__p, __d3, 9.592770584e-02f);"
+      << "float __d2 = (__x - 3.95767832f) - 1.01291178e-7f; __r = __p * __d2 * __d3; }"
+      << "else if (__x <= 1.0e13f) { float __inv = 1.0f / __x, __inv2 = __inv * __inv;"
+      << "float __beta = __fma(5.848699569702148f, __inv2, -0.5428466796875f);"
+      << "__beta = __fma(__beta, __inv2, 0.103515625f); __beta = __fma(__beta, __inv2, -0.0625f);"
+      << "__beta = __fma(__beta, __inv2, 1.0f);"
+      << "float __alpha = __fma(1.6380658830915178f, __inv2, -0.2095703125f);"
+      << "__alpha = __fma(__alpha, __inv2, 0.06510416666666666f); __alpha = __fma(__alpha, __inv2, -0.125f);"
+      << "__alpha = __fma(__alpha, __inv, __x);"
+      << "__r = __beta * (1.0f / __sqrtf(__x)) * 0.7978846f * (" << middle_value << "); }"
+      << "else { float __inv = 1.0f / __x, __inv2 = __inv * __inv;"
+      << "float __alpha_poly = __fma(__inv2, 1.1000176668167114f, -0.2039303183555603f);"
+      << "__alpha_poly = __fma(__inv2, __alpha_poly, 0.06507780402898788f);"
+      << "__alpha_poly = __fma(__inv2, __alpha_poly, -0.12499996274709702f);"
+      << "float __alpha = __fma(__inv, __alpha_poly, __x);"
+      << "float __beta = __fma(__inv2, -0.39924582839012146f, 0.10197055339813232f);"
+      << "__beta = __fma(__inv2, __beta, -0.06249268725514412f);"
+      << "__beta = __fma(__inv2, __beta, 1.0f);"
+      << "__r = __beta * (1.0f / __sqrtf(__x)) * 0.7978845834732056f * (" << huge_cos_value << "); } __r;})";
+    return s.str();
+}
+
+std::string MakeSimtY1Codegen(const std::string& operand)
+{
+    const std::string middle_value = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", false);
+    const std::string huge_cos_value = MakeSimtBesselHugeCosFP32Codegen("__alpha", "3.9269907474517822f");
+    const std::string log_value = MakeSimtLogFP32Codegen("__x");
+    std::ostringstream s;
+    s << "({float __x = (" << operand
+      << "), __r; uint32_t __b = reinterpret_cast<uint32_t&>(__x), __a = __b & 0x7fffffffu;"
+      << "if (__a > 0x7f800000u) { __r = __x; }"
+      << "else if (__x < 0.0f) { __r = __builtin_inff() / __builtin_inff(); }"
+      << "else if (__a == 0u) { uint32_t __ninf = 0xff800000u; __r = reinterpret_cast<float&>(__ninf); }"
+      << "else if (__a == 0x7f800000u) { __r = 0.0f; }"
+      << "else if (__x < 1.2f) { float __j1_input = __x; float __p = 2.798307076e-04f; __p = __fma(__p, __x, "
+         "-3.402886792e-03f);"
+      << "__p = __fma(__p, __x, 3.643335439e-04f); __p = __fma(__p, __x, 5.419222886e-02f);"
+      << "__p = __fma(__p, __x, 3.339972037e-05f); __p = __fma(__p, __x, -1.960600316e-01f);"
+      << "__p = __fma(__p, __x, 6.24278e-08f); __r = 0.636619772367f * (" << MakeSimtJ1Codegen("__j1_input") << ") * ("
+      << log_value << ") - 0.636619772367f / __x + __p; }"
+      << "else if (__x < 3.0f) { float __d = (__x - 2.19714141f) + 8.28892723e-8f;"
+      << "float __p = -7.210192066e-05f; __p = __fma(__p, __d, 6.665645689e-05f);"
+      << "__p = __fma(__p, __d, -3.106003176e-05f); __p = __fma(__p, __d, 2.276838750e-04f);"
+      << "__p = __fma(__p, __d, -5.566432475e-04f); __p = __fma(__p, __d, 1.068050095e-03f);"
+      << "__p = __fma(__p, __d, -2.582285756e-03f); __p = __fma(__p, __d, 7.422557063e-03f);"
+      << "__p = __fma(__p, __d, -4.799279782e-03f); __p = __fma(__p, __d, -3.285740200e-02f);"
+      << "__p = __fma(__p, __d, -1.185144993e-01f); __p = __fma(__p, __d, 5.207864124e-01f); __r = __p * __d; }"
+      << "else if (__x < 8.0f) { float __d2 = (__x - 5.42968082f) - 2.16514351e-7f;"
+      << "float __p = -4.575132868e-10f; __p = __fma(__p, __d2, 4.435273368e-09f);"
+      << "__p = __fma(__p, __d2, 3.963341878e-08f); __p = __fma(__p, __d2, -4.231424306e-07f);"
+      << "__p = __fma(__p, __d2, -4.201841643e-06f); __p = __fma(__p, __d2, 3.316061621e-05f);"
+      << "__p = __fma(__p, __d2, 2.516106023e-04f); __p = __fma(__p, __d2, -1.369325160e-03f);"
+      << "__p = __fma(__p, __d2, -8.495834725e-03f); __p = __fma(__p, __d2, 2.404736994e-02f);"
+      << "__p = __fma(__p, __d2, 1.074804589e-01f);"
+      << "float __d3 = (__x - 8.59600544f) - 4.28572861e-7f; __r = __p * __d2 * __d3; }"
+      << "else if (__x <= 1.0e13f) { float __inv = 1.0f / __x, __inv2 = __inv * __inv;"
+      << "float __beta = __fma(-7.739953994751f, __inv2, 0.8052978515625f);"
+      << "__beta = __fma(__beta, __inv2, -0.193359375f); __beta = __fma(__beta, __inv2, 0.1875f);"
+      << "__beta = __fma(__beta, __inv2, 1.0f);"
+      << "float __alpha = __fma(-2.3693978445870534f, __inv2, 0.3708984375f);"
+      << "__alpha = __fma(__alpha, __inv2, -0.1640625f); __alpha = __fma(__alpha, __inv2, 0.375f);"
+      << "__alpha = __fma(__alpha, __inv, __x);"
+      << "__r = -__beta * (1.0f / __sqrtf(__x)) * 0.7978846f * (" << middle_value << "); }"
+      << "else { float __inv = 1.0f / __x, __inv2 = __inv * __inv;"
+      << "float __alpha_poly = __fma(__inv2, -1.7881368398666382f, 0.36611685156822205f);"
+      << "__alpha_poly = __fma(__inv2, __alpha_poly, -0.1640450656414032f);"
+      << "__alpha_poly = __fma(__inv2, __alpha_poly, 0.3749999701976776f);"
+      << "float __alpha = __fma(__inv, __alpha_poly, __x);"
+      << "float __beta = __fma(__inv2, 0.6503810882568359f, -0.1920607089996338f);"
+      << "__beta = __fma(__inv2, __beta, 0.18749521672725677f);"
+      << "__beta = __fma(__inv2, __beta, 1.0f);"
+      << "__r = __beta * (1.0f / __sqrtf(__x)) * 0.7978845834732056f * (" << huge_cos_value << "); } __r;})";
+    return s.str();
+}
+
+std::string MakeSimtJnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string order = codegen.GetExprAsCode(op->args_[0]);
+    const std::string value = codegen.GetExprAsCode(op->args_[1]);
+    const std::string asymptotic_sin_x = MakeSimtTrigFP32Codegen("__ax", true);
+    const std::string asymptotic_cos_x = MakeSimtTrigFP32Codegen("__ax", false);
+    const std::string asymptotic_sin_phase = MakeSimtTrigFP32Codegen("__phase", true);
+    const std::string asymptotic_cos_phase = MakeSimtTrigFP32Codegen("__phase", false);
+    const std::string asymptotic_sqrt = MakeSimtSqrtFP32Codegen("__amplitude_argument");
+    const std::string series_log = MakeSimtLogFP32Codegen("__log_input");
+    std::ostringstream s;
+    s << "({int32_t __n = (int32_t)(" << order << "); float __x = (" << value
+      << "), __r; uint32_t __xb = reinterpret_cast<uint32_t&>(__x), __a = __xb & 0x7fffffffu;"
+      << "if (__n == 0) { float __j0_input = __x; __r = " << MakeSimtJ0Codegen("__j0_input") << "; }"
+      << "else if (__n == 1) { float __j1_input = __x; __r = " << MakeSimtJ1Codegen("__j1_input") << "; }"
+      << "else if (__n < 0 || __a > 0x7f800000u) { __r = __builtin_inff() / __builtin_inff(); }"
+      << "else if (__a == 0u || __a == 0x7f800000u) { __r = 0.0f; }"
+      << "else { float __ax = __fabsf(__x); float __sign = ((__xb & 0x80000000u) && (__n & 1)) ? -1.0f : 1.0f;"
+      << "if ((float)__n < __ax * 0.1f) { float __mu = (float)(4 * __n * __n);"
+      << "float __denom = 4.0f * __ax, __denom2 = __denom * __denom;"
+      << "float __phase = (__mu - 1.0f) / (2.0f * __denom); __denom *= __denom2;"
+      << "__phase += (__mu - 1.0f) * (__mu - 25.0f) / (6.0f * __denom); __denom *= __denom2;"
+      << "__phase += (__mu - 1.0f) * (__mu * __mu - 114.0f * __mu + 1073.0f) / (5.0f * __denom);"
+      << "float __txq = 2.0f * __ax; __txq *= __txq;"
+      << "float __amp_term = 1.0f + (__mu - 1.0f) / (2.0f * __txq);"
+      << "__amp_term += 3.0f * (__mu - 1.0f) * (__mu - 9.0f) / (__txq * __txq * 8.0f);"
+      << "float __amplitude_argument = __amp_term * 2.0f / (3.1415927410125732f * __ax);"
+      << "float __amplitude = " << asymptotic_sqrt << ";"
+      << "float __sin_x = " << asymptotic_sin_x << ", __cos_x = " << asymptotic_cos_x << ";"
+      << "float __sin_phase = " << asymptotic_sin_phase << ", __cos_phase = " << asymptotic_cos_phase << ";"
+      << "float __offset = (float)__n / 2.0f + 0.25f, __offset_two = __offset + __offset;"
+      << "int32_t __offset_quadrant = __cvt_int32_t<ROUND::R, RoundingSaturation::RS_ENABLE_VALUE>(__offset_two);"
+      << "float __offset_rounded = __cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__offset_quadrant);"
+      << "float __offset_reduced = __fma(-__offset_rounded, 0.5f, __offset);"
+      << "float __offset_square = __offset_reduced * __offset_reduced;"
+      << "float __offset_sin_poly = __fma(__offset_square, -0.5924802422523499f, 2.5501441955566406f);"
+      << "__offset_sin_poly = __fma(__offset_square, __offset_sin_poly, -5.167719841003418f);"
+      << "float __offset_sin_base = __fma(__offset_sin_poly, __offset_reduced * __offset_square,"
+      << "__offset_reduced * 3.1415927410125732f);"
+      << "float __offset_cos_base = __fma(__offset_square, 0.22686031460762024f, -1.3345603942871094f);"
+      << "__offset_cos_base = __fma(__offset_square, __offset_cos_base, 4.058692455291748f);"
+      << "__offset_cos_base = __fma(__offset_square, __offset_cos_base, -4.934802055358887f);"
+      << "__offset_cos_base = __fma(__offset_square, __offset_cos_base, 1.0f);"
+      << "float __offset_sin = (__offset_quadrant & 1) != 0 ? __offset_cos_base : __offset_sin_base;"
+      << "float __offset_cos = (__offset_quadrant & 1) != 0 ? __offset_sin_base : __offset_cos_base;"
+      << "if ((__offset_quadrant & 2) != 0) { __offset_sin = -__offset_sin; }"
+      << "if (((__offset_quadrant + 1) & 2) != 0) { __offset_cos = -__offset_cos; }"
+      << "if (__fabsf(__offset) > 16777216.0f) { __offset_sin = 0.0f; __offset_cos = 1.0f; }"
+      << "float __sin_combined = __cos_phase * (__cos_x * __offset_cos + __sin_x * __offset_sin)"
+      << " - __sin_phase * (__sin_x * __offset_cos - __cos_x * __offset_sin);"
+      << "__r = __sign * __sin_combined * __amplitude; }"
+      << "else if ((float)__n < __ax) { float __prev = " << MakeSimtJ0Codegen("__ax")
+      << ", __current = " << MakeSimtJ1Codegen("__ax") << "; for (int32_t __k = 1; __k < __n; ++__k) {"
+      << "float __next = 2.0f * (float)__k * __current / __ax - __prev; __prev = __current; __current = __next; }"
+      << "__r = __sign * __current; }"
+      << "else if ((float)__n > __ax * __ax / 10.0f) { float __log_input = __ax / 2.0f;"
+      << "float __prefix = (float)__n * (" << series_log << ");"
+      << "for (int32_t __i = 2; __i <= __n; ++__i) { __log_input = (float)__i;"
+      << "__prefix -= (" << series_log << "); }"
+      << "if (__prefix <= -87.3365478515625f) { float __half_prefix = __expf(__prefix * 0.5f);"
+      << "__prefix = __half_prefix * __half_prefix; } else { __prefix = __expf(__prefix); }"
+      << "float __mult = __ax * 0.5f; __mult *= -__mult;"
+      << "float __term = 1.0f, __sum = 0.0f; for (int32_t __i = 1; __i <= 14; ++__i) {"
+      << "__sum += __term; __term *= __mult / ((float)__i * (float)(__i + __n)); }"
+      << "__r = __sign * __prefix * __sum; }"
+      << "else { int32_t __count = __n + 30; float __prev = 1.0e-30f, __current = 0.0f;"
+      << "float __sum = 0.0f, __scale = 1.0f, __answer = 0.0f;"
+      << "for (int32_t __k = __count - 1; __k >= 0; --__k) { float __factor = 2.0f * (float)(__k + 1) / __ax;"
+      << "if (__factor > 1.0f && __fabsf(__current) > 1.152921504606847e18f) {"
+      << "__prev /= 1.152921504606847e18f; __sum /= 1.152921504606847e18f;"
+      << "__scale /= 1.152921504606847e18f; __current /= 1.152921504606847e18f; }"
+      << "float __next = __factor * __current - __prev; if ((__k & 1) == 0) { __sum += 2.0f * __next; }"
+      << "if (__k == __n) { __answer = __next / __scale; } __prev = __current; __current = __next; }"
+      << "__sum -= __current; __r = __sign * (__answer / __sum) * __scale; } } __r;})";
+    return s.str();
+}
+
+std::string MakeSimtYnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string order = codegen.GetExprAsCode(op->args_[0]);
+    const std::string value = codegen.GetExprAsCode(op->args_[1]);
+    const std::string asymptotic_sin_x = MakeSimtTrigFP32Codegen("__x", true);
+    const std::string asymptotic_cos_x = MakeSimtTrigFP32Codegen("__x", false);
+    const std::string asymptotic_sin_shift = MakeSimtTrigFP32Codegen("__phase_shift - __phase", true);
+    const std::string asymptotic_cos_shift = MakeSimtTrigFP32Codegen("__phase_shift - __phase", false);
+    const std::string asymptotic_sqrt = MakeSimtSqrtFP32Codegen("__amplitude_argument");
+    std::ostringstream s;
+    s << "({int32_t __n = (int32_t)(" << order << "); float __x = (" << value
+      << "), __r, __yn_input = __x; uint32_t __a = reinterpret_cast<uint32_t&>(__x) & 0x7fffffffu;"
+      << "if (__n < 0 || __x < 0.0f || __a > 0x7f800000u) { __r = __builtin_inff() / __builtin_inff(); }"
+      << "else if (__a == 0u) { uint32_t __ni = 0xff800000u; __r = reinterpret_cast<float&>(__ni); }"
+      << "else if (__a == 0x7f800000u) { __r = 0.0f; }"
+      << "else if (__n == 0) { __r = " << MakeSimtY0Codegen("__yn_input") << "; }"
+      << "else if (__n == 1) { __r = " << MakeSimtY1Codegen("__yn_input") << "; }"
+      << "else if (__x > (float)__n * 10.0f) { float __mu = (float)(4 * __n * __n);"
+      << "float __denom = 4.0f * __x, __denom2 = __denom * __denom;"
+      << "float __phase = (__mu - 1.0f) / (2.0f * __denom); __denom *= __denom2;"
+      << "__phase += (__mu - 1.0f) * (__mu - 25.0f) / (6.0f * __denom); __denom *= __denom2;"
+      << "__phase += (__mu - 1.0f) * (__mu * __mu - 114.0f * __mu + 1073.0f) / (5.0f * __denom);"
+      << "float __txq = 2.0f * __x; __txq *= __txq;"
+      << "float __amp_term = 1.0f + (__mu - 1.0f) / (2.0f * __txq);"
+      << "__amp_term += 3.0f * (__mu - 1.0f) * (__mu - 9.0f) / (__txq * __txq * 8.0f);"
+      << "__amp_term += 15.0f * (__mu - 1.0f) * (__mu - 9.0f) * (__mu - 25.0f) /"
+      << " (__txq * __txq * __txq * 48.0f);"
+      << "float __amplitude_argument = __amp_term * 2.0f / (3.1415927410125732f * __x);"
+      << "float __amplitude = " << asymptotic_sqrt << ";"
+      << "float __phase_shift = (float)__n * 3.1415927410125732f / 2.0f + 0.7853981852531433f;"
+      << "float __sin_x = " << asymptotic_sin_x << ", __cos_x = " << asymptotic_cos_x << ";"
+      << "float __sin_shift = " << asymptotic_sin_shift << ", __cos_shift = " << asymptotic_cos_shift << ";"
+      << "__r = (__sin_x * __cos_shift - __cos_x * __sin_shift) * __amplitude; }"
+      << "else { bool __invalid = false; float __inv = 1.0f / __x;"
+      << "__inv = __fma(__inv, __fma(-__x, __inv, 1.0f), __inv); float __two_over_x = __fma(__inv, 2.0f, 0.0f);"
+      << "if (!__isfinite(__two_over_x)) { __invalid = true; }"
+      << "float __prev = " << MakeSimtY0Codegen("__yn_input") << ", __current = " << MakeSimtY1Codegen("__yn_input")
+      << "; if (!__isfinite(__prev) || !__isfinite(__current)) { __invalid = true; } float __scale = 1.0f;"
+      << "for (int32_t __k = 1; __k < __n; ++__k) { float __mult = __fma((float)__k, __two_over_x, 0.0f);"
+      << "float __next = __fma(__mult, __current, -__prev); if (!__isfinite(__next)) { __invalid = true; }"
+      << "__prev = __current; __current = __next; if (__fabsf(__current) > 1.0e30f) {"
+      << "float __inv_current = 1.0f / __fabsf(__current); __prev *= __inv_current;"
+      << "__current *= __inv_current; __scale *= __inv_current; } } __r = __current / __scale;"
+      << "if (!__isfinite(__r)) { __invalid = true; } if (__invalid) { uint32_t __ninf = 0xff800000u;"
+      << "__r = reinterpret_cast<float&>(__ninf); } } __r;})";
+    return s.str();
+}
+
+std::string MakeSimtCylBesselI0CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "), __a = __fabsf(__x), __r; uint32_t __ab = reinterpret_cast<uint32_t&>(__a);"
+      << "if (__ab == 0x7f800000u) { __r = __a; }"
+      << "else if (__a >= 9.0f) { float __inv = 1.0f / __a;"
+      << "float __p = __fma(__inv, 0.34872168f, -0.0054563344f);"
+      << "__p = __fma(__inv, __p, 0.033347155f); __p = __fma(__inv, __p, 0.027889195f);"
+      << "__p = __fma(__inv, __p, 0.04987063f); __p = __fma(__inv, __p, 0.39894226f);"
+      << "__p *= 1.0f / __sqrtf(__a); float __e = __expf(__a * 0.5f);"
+      << "__r = __p * (__e - 1.0f) * (__e + 1.0f) + __p; }"
+      << "else { float __square = __a * __a;"
+      << "float __p = __fma(__square, 1.551427e-19f, 1.4492505e-17f);"
+      << "__p = __fma(__square, __p, 1.0687647e-14f); __p = __fma(__square, __p, 2.3349575e-12f);"
+      << "__p = __fma(__square, __p, 4.7306625e-10f); __p = __fma(__square, __p, 6.7778003e-8f);"
+      << "__p = __fma(__square, __p, 6.7820783e-6f); __p = __fma(__square, __p, 0.00043402583f);"
+      << "__p = __fma(__square, __p, 0.015625f); __p = __fma(__square, __p, 0.25f);"
+      << "__r = __fma(__square, __p, 1.0f); } __r;})";
+    return s.str();
+}
+
+std::string MakeSimtCylBesselI1CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    std::ostringstream s;
+    s << "({float __x = (" << operand << "), __a = __fabsf(__x), __r; uint32_t __ab = reinterpret_cast<uint32_t&>(__a);"
+      << "if (__ab == 0x7f800000u || __ab > 0x7f800000u) { __r = __ab == 0x7f800000u ? __x : __a; }"
+      << "else if (__a >= 8.085f) { float __inv = 1.0f / __a;"
+      << "float __p = __fma(__inv, -0.5028813f, 0.028471555f);"
+      << "__p = __fma(__inv, __p, -0.04873671f); __p = __fma(__inv, __p, -0.04641596f);"
+      << "__p = __fma(__inv, __p, -0.14960973f); __p = __fma(__inv, __p, 0.39894232f);"
+      << "__p *= 1.0f / __sqrtf(__a); float __e = __expf(__a * 0.5f);"
+      << "__r = __p * (__e - 1.0f) * (__e + 1.0f) + __p;"
+      << "if (reinterpret_cast<uint32_t&>(__x) & 0x80000000u) { __r = -__r; } }"
+      << "else { float __square = __x * __x;"
+      << "float __p = __fma(__square, 2.7848253e-18f, 3.4224707e-16f);"
+      << "__p = __fma(__square, __p, 1.6258002e-13f); __p = __fma(__square, __p, 3.3142173e-11f);"
+      << "__p = __fma(__square, __p, 5.6632734e-9f); __p = __fma(__square, __p, 6.780027e-7f);"
+      << "__p = __fma(__square, __p, 0.00005425474f); __p = __fma(__square, __p, 0.002604162f);"
+      << "__p = __fma(__square, __p, 0.0625f); __p = __fma(__square, __p, 0.5f);"
+      << "__r = __p * __x; } __r;})";
+    return s.str();
+}
+
+std::string MakeSimtJ0CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    return MakeSimtJ0Codegen(operand);
+}
+
+std::string MakeSimtJ1CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    return MakeSimtJ1Codegen(operand);
+}
+
+std::string MakeSimtY0CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    return MakeSimtY0Codegen(operand);
+}
+
+std::string MakeSimtY1CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    return MakeSimtY1Codegen(operand);
+}
+
+std::string MakeSimtSaturateCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const std::string operand = codegen.GetExprAsCode(op->args_[0]);
+    return "__saturatef((float)(" + operand + "))";
+}
+
+std::string MakeSimtMulI32ToI64CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto input_type = ir::As<ir::ScalarType>(op->args_[0]->GetType());
+    const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
+    const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
+    if (input_type->dtype_ == ir::DataType::INT32) {
+        return "__mul_i32toi64((int)(" + lhs + "), (int)(" + rhs + "))";
+    }
+    return "__mul_i32toi64((unsigned int)(" + lhs + "), (unsigned int)(" + rhs + "))";
+}
+
 REGISTER_BACKEND_OP(BackendCCE, "simt.thread_idx").set_pipe(ir::PipeType::S).f_codegen(MakeSimtThreadIdxCodegenCCE);
 
 REGISTER_BACKEND_OP(BackendCCE, "simt.block_dim").set_pipe(ir::PipeType::S).f_codegen(MakeSimtBlockDimCodegenCCE);
@@ -1887,6 +3381,100 @@ REGISTER_BACKEND_OP(BackendCCE, "simt.asinh").set_pipe(ir::PipeType::S).f_codege
 REGISTER_BACKEND_OP(BackendCCE, "simt.rcbrt").set_pipe(ir::PipeType::S).f_codegen(MakeSimtRcbrtCodegenCCE);
 REGISTER_BACKEND_OP(BackendCCE, "simt.ilogb").set_pipe(ir::PipeType::S).f_codegen(MakeSimtIlogbCodegenCCE);
 REGISTER_BACKEND_OP(BackendCCE, "simt.signbit").set_pipe(ir::PipeType::S).f_codegen(MakeSimtSignbitCodegenCCE);
+REGISTER_BACKEND_OP(BackendCCE, "simt.brev").set_pipe(ir::PipeType::S).f_codegen(MakeSimtBrevCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.byte_perm").set_pipe(ir::PipeType::S).f_codegen(MakeSimtBytePermCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.clz").set_pipe(ir::PipeType::S).f_codegen(MakeSimtClzCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.cyl_bessel_i0")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtCylBesselI0CodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.cyl_bessel_i1")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtCylBesselI1CodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.equ").set_pipe(ir::PipeType::S).f_codegen(MakeSimtEquCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.erf").set_pipe(ir::PipeType::S).f_codegen(MakeSimtErfOpCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.erfc").set_pipe(ir::PipeType::S).f_codegen(MakeSimtErfcOpCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.erfcinv").set_pipe(ir::PipeType::S).f_codegen(MakeSimtErfcinvCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.erfcx").set_pipe(ir::PipeType::S).f_codegen(MakeSimtErfcxCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.erfinv").set_pipe(ir::PipeType::S).f_codegen(MakeSimtErfinvCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.fdim").set_pipe(ir::PipeType::S).f_codegen(MakeSimtFdimCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.ffs").set_pipe(ir::PipeType::S).f_codegen(MakeSimtFfsCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.fma_relu").set_pipe(ir::PipeType::S).f_codegen(MakeSimtFmaReluCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.geu").set_pipe(ir::PipeType::S).f_codegen(MakeSimtGeuCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.gtu").set_pipe(ir::PipeType::S).f_codegen(MakeSimtGtuCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.hadd").set_pipe(ir::PipeType::S).f_codegen(MakeSimtHaddCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.hypot").set_pipe(ir::PipeType::S).f_codegen(MakeSimtHypotCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.j0").set_pipe(ir::PipeType::S).f_codegen(MakeSimtJ0CodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.j1").set_pipe(ir::PipeType::S).f_codegen(MakeSimtJ1CodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.jn").set_pipe(ir::PipeType::S).f_codegen(MakeSimtJnCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.ldexp").set_pipe(ir::PipeType::S).f_codegen(MakeSimtLdexpCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.leu").set_pipe(ir::PipeType::S).f_codegen(MakeSimtLeuCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.lgamma").set_pipe(ir::PipeType::S).f_codegen(MakeSimtLgammaCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.ltu").set_pipe(ir::PipeType::S).f_codegen(MakeSimtLtuCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.mul24").set_pipe(ir::PipeType::S).f_codegen(MakeSimtMul24CodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.mul_i32_to_i64")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtMulI32ToI64CodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.norm3d").set_pipe(ir::PipeType::S).f_codegen(MakeSimtNorm3dCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.norm4d").set_pipe(ir::PipeType::S).f_codegen(MakeSimtNorm4dCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.normcdf").set_pipe(ir::PipeType::S).f_codegen(MakeSimtNormcdfCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.normcdfinv").set_pipe(ir::PipeType::S).f_codegen(MakeSimtNormcdfinvCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.pow").set_pipe(ir::PipeType::S).f_codegen(MakeSimtPowCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.remainder").set_pipe(ir::PipeType::S).f_codegen(MakeSimtRemainderCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.rhadd").set_pipe(ir::PipeType::S).f_codegen(MakeSimtRhaddCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.rhypot").set_pipe(ir::PipeType::S).f_codegen(MakeSimtRhypotCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.rnorm3d").set_pipe(ir::PipeType::S).f_codegen(MakeSimtRnorm3dCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.rnorm4d").set_pipe(ir::PipeType::S).f_codegen(MakeSimtRnorm4dCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.sad").set_pipe(ir::PipeType::S).f_codegen(MakeSimtSadCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.saturate").set_pipe(ir::PipeType::S).f_codegen(MakeSimtSaturateCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.scalbn").set_pipe(ir::PipeType::S).f_codegen(MakeSimtScalbnCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.tgamma").set_pipe(ir::PipeType::S).f_codegen(MakeSimtTgammaCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.y0").set_pipe(ir::PipeType::S).f_codegen(MakeSimtY0CodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.y1").set_pipe(ir::PipeType::S).f_codegen(MakeSimtY1CodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.yn").set_pipe(ir::PipeType::S).f_codegen(MakeSimtYnCodegenCCE);
+
 REGISTER_BACKEND_OP(BackendCCE, "simt.fmod").set_pipe(ir::PipeType::S).f_codegen(MakeSimtFmodCodegenCCE);
 REGISTER_BACKEND_OP(BackendCCE, "simt.sin").set_pipe(ir::PipeType::S).f_codegen(MakeSimtSinCodegenCCE);
 REGISTER_BACKEND_OP(BackendCCE, "simt.cos").set_pipe(ir::PipeType::S).f_codegen(MakeSimtCosCodegenCCE);

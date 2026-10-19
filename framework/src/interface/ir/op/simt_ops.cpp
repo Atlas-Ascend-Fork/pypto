@@ -410,12 +410,10 @@ TypePtr DeduceSimtWarpShflXorType(const std::string& op_name, const std::vector<
 
 TypePtr DeduceSimtMathType(const std::string& op_name, size_t operand_count,
                            std::initializer_list<DataType> supported_dtypes, const std::vector<ExprPtr>& args,
-                           const std::vector<std::pair<std::string, std::any>>& kwargs,
                            std::optional<DataType> result_dtype = std::nullopt)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == operand_count)
         << op_name << " requires exactly " << operand_count << " scalar operand(s)";
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << op_name << " does not accept keyword arguments";
 
     DataType dtype = DataType::BOOL;
     for (size_t i = 0; i < args.size(); ++i) {
@@ -433,6 +431,29 @@ TypePtr DeduceSimtMathType(const std::string& op_name, size_t operand_count,
         }
     }
     return std::make_shared<ScalarType>(result_dtype.value_or(dtype));
+}
+
+TypePtr DeduceSimtRintRoundType(const std::string& op_name, const std::vector<ExprPtr>& args,
+                                const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << op_name << " requires exactly one scalar operand";
+    auto source_type = As<ScalarType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, source_type) << op_name << " value must be a scalar";
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR,
+                 IsDtypeInList(source_type->dtype_, {DataType::FP16, DataType::BF16, DataType::FP32}))
+        << op_name << " value supports only fp16, bf16, and fp32, got " << source_type->dtype_.ToString();
+
+    DataType target_dtype = GetOpKwarg<DataType>(kwargs, "target_type");
+    if (target_dtype == DataType::INT64) {
+        PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, source_type->dtype_ == DataType::FP32)
+            << op_name << " supports dtype=int64 only for an fp32 value, got value=" << source_type->dtype_.ToString();
+        return std::make_shared<ScalarType>(DataType::INT64);
+    }
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, target_dtype == source_type->dtype_)
+        << op_name << " does not support value=" << source_type->dtype_.ToString()
+        << " with dtype=" << target_dtype.ToString();
+    return std::make_shared<ScalarType>(target_dtype);
 }
 
 TypePtr DeduceSimtLaunchType(const std::vector<ExprPtr>& args,
@@ -503,6 +524,70 @@ TypePtr DeduceSimtLaunchType(const std::vector<ExprPtr>& args,
 }
 
 } // namespace
+
+TypePtr DeduceSimtSadType(const std::vector<ExprPtr>& args,
+                          const std::vector<std::pair<std::string, std::any>>& /*kwargs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3) << "simt.sad requires exactly 3 scalar operands";
+    auto lhs_type = As<ScalarType>(args[0]->GetType());
+    auto rhs_type = As<ScalarType>(args[1]->GetType());
+    auto addend_type = As<ScalarType>(args[2]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, lhs_type) << "simt.sad lhs must be a scalar";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, rhs_type) << "simt.sad rhs must be a scalar";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, addend_type) << "simt.sad addend must be a scalar";
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR,
+                 lhs_type->dtype_ == DataType::INT32 || lhs_type->dtype_ == DataType::UINT32)
+        << "simt.sad lhs supports only int32, uint32, got " << lhs_type->dtype_.ToString();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, rhs_type->dtype_ == lhs_type->dtype_)
+        << "simt.sad lhs and rhs must have the same dtype, got lhs=" << lhs_type->dtype_.ToString()
+        << ", rhs=" << rhs_type->dtype_.ToString();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, addend_type->dtype_ == DataType::UINT32)
+        << "simt.sad addend must be uint32, got " << addend_type->dtype_.ToString();
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtMathSignature(const std::string& op_name, std::initializer_list<DataType> operand_dtypes,
+                                DataType result_dtype, const std::vector<ExprPtr>& args)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == operand_dtypes.size())
+        << op_name << " requires exactly " << operand_dtypes.size() << " scalar operand(s)";
+    size_t index = 0;
+    for (const auto& expected_dtype : operand_dtypes) {
+        auto scalar_type = As<ScalarType>(args[index]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar_type)
+            << op_name << " operand " << index << " must be a scalar";
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar_type->dtype_ == expected_dtype)
+            << op_name << " operand " << index << " must be " << expected_dtype.ToString() << ", got "
+            << scalar_type->dtype_.ToString();
+        ++index;
+    }
+    return std::make_shared<ScalarType>(result_dtype);
+}
+
+TypePtr DeduceSimtScalbnType(const std::vector<ExprPtr>& args,
+                             const std::vector<std::pair<std::string, std::any>>& /*kwargs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2) << "simt.scalbn requires exactly 2 scalar operands";
+    auto value_type = As<ScalarType>(args[0]->GetType());
+    auto exponent_type = As<ScalarType>(args[1]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, value_type) << "simt.scalbn value must be a scalar";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, exponent_type) << "simt.scalbn exponent must be a scalar";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, value_type->dtype_ == DataType::FP32)
+        << "simt.scalbn value must be fp32, got " << value_type->dtype_.ToString();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE,
+                 exponent_type->dtype_ == DataType::INT32 || exponent_type->dtype_ == DataType::INT64)
+        << "simt.scalbn exponent must be int32 or int64, got " << exponent_type->dtype_.ToString();
+    return std::make_shared<ScalarType>(DataType::FP32);
+}
+
+TypePtr DeduceSimtMulI32ToI64Type(const std::vector<ExprPtr>& args,
+                                  const std::vector<std::pair<std::string, std::any>>& /*kwargs*/)
+{
+    DeduceSimtMathType("simt.mul_i32_to_i64", 2, {DataType::INT32, DataType::UINT32}, args);
+    auto input_type = As<ScalarType>(args[0]->GetType());
+    DataType result_dtype = input_type->dtype_ == DataType::INT32 ? DataType::INT64 : DataType::UINT64;
+    return std::make_shared<ScalarType>(result_dtype);
+}
 
 REGISTER_OP("simt.thread_idx")
     .set_op_category("SimtOp")
@@ -651,16 +736,16 @@ REGISTER_OP("simt.warp_shfl_xor")
         return DeduceSimtWarpShflXorType("simt.warp_shfl_xor", args, kwargs);
     });
 
-#define REGISTER_SIMT_WARP_REDUCE_OP(OpName, Description)                                                              \
-    REGISTER_OP("simt." OpName)                                                                                        \
-        .set_op_category("SimtOp")                                                                                     \
-        .set_description(Description)                                                                                  \
-        .add_argument("value", "Scalar value to reduce")                                                               \
-        .f_deduce_type([](const std::vector<ExprPtr>& args,                                                            \
-                          const std::vector<std::pair<std::string, std::any>>& kwargs) {                               \
-            return DeduceSimtMathType(                                                                                 \
-                "simt." OpName, 1, {DataType::INT32, DataType::UINT32, DataType::FP16, DataType::FP32}, args, kwargs); \
-        })
+#define REGISTER_SIMT_WARP_REDUCE_OP(OpName, Description)                                                             \
+    REGISTER_OP("simt." OpName)                                                                                       \
+        .set_op_category("SimtOp")                                                                                    \
+        .set_description(Description)                                                                                 \
+        .add_argument("value", "Scalar value to reduce")                                                              \
+        .f_deduce_type(                                                                                               \
+            [](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {   \
+                return DeduceSimtMathType("simt." OpName, 1,                                                          \
+                                          {DataType::INT32, DataType::UINT32, DataType::FP16, DataType::FP32}, args); \
+            })
 
 REGISTER_SIMT_WARP_REDUCE_OP("warp_reduce_add", "Reduce a scalar sum across active lanes");
 REGISTER_SIMT_WARP_REDUCE_OP("warp_reduce_max", "Reduce a scalar maximum across active lanes");
@@ -683,14 +768,14 @@ REGISTER_OP("simt.bitcast")
     .set_attr<DataType>("target_type")
     .f_deduce_type(DeduceSimtBitcastType);
 
-#define REGISTER_SIMT_MATH_UNARY_OP(OpName, Description, ResultDtype, ...)                                      \
-    REGISTER_OP("simt." OpName)                                                                                 \
-        .set_op_category("SimtOp")                                                                              \
-        .set_description(Description)                                                                           \
-        .add_argument("value", "Scalar operand")                                                                \
-        .f_deduce_type(                                                                                         \
-            [](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) { \
-                return DeduceSimtMathType("simt." OpName, 1, {__VA_ARGS__}, args, kwargs, ResultDtype);         \
+#define REGISTER_SIMT_MATH_UNARY_OP(OpName, Description, ResultDtype, ...)                                          \
+    REGISTER_OP("simt." OpName)                                                                                     \
+        .set_op_category("SimtOp")                                                                                  \
+        .set_description(Description)                                                                               \
+        .add_argument("value", "Scalar operand")                                                                    \
+        .f_deduce_type(                                                                                             \
+            [](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) { \
+                return DeduceSimtMathType("simt." OpName, 1, {__VA_ARGS__}, args, ResultDtype);                     \
             })
 
 REGISTER_SIMT_MATH_UNARY_OP("abs", "Compute the absolute value of one supported scalar", std::nullopt, DataType::FP16,
@@ -713,10 +798,6 @@ REGISTER_SIMT_MATH_UNARY_OP("sin", "Compute the sine of one floating-point scala
 REGISTER_SIMT_MATH_UNARY_OP("cos", "Compute the cosine of one floating-point scalar", std::nullopt, DataType::FP16,
                             DataType::BF16, DataType::FP32);
 REGISTER_SIMT_MATH_UNARY_OP("tanh", "Compute the hyperbolic tangent of one floating-point scalar", std::nullopt,
-                            DataType::FP16, DataType::BF16, DataType::FP32);
-REGISTER_SIMT_MATH_UNARY_OP("rint", "Round one floating-point scalar to the nearest integer value", std::nullopt,
-                            DataType::FP16, DataType::BF16, DataType::FP32);
-REGISTER_SIMT_MATH_UNARY_OP("round", "Round one floating-point scalar halfway away from zero", std::nullopt,
                             DataType::FP16, DataType::BF16, DataType::FP32);
 REGISTER_SIMT_MATH_UNARY_OP("floor", "Round one floating-point scalar downward", std::nullopt, DataType::FP16,
                             DataType::BF16, DataType::FP32);
@@ -759,16 +840,42 @@ REGISTER_SIMT_MATH_UNARY_OP("rcbrt", "Compute the reciprocal cube root of an FP3
                             DataType::FP32);
 REGISTER_SIMT_MATH_UNARY_OP("ilogb", "Return the unbiased exponent of an FP32 scalar", DataType::INT32, DataType::FP32);
 REGISTER_SIMT_MATH_UNARY_OP("signbit", "Return the sign bit of an FP32 scalar", DataType::INT32, DataType::FP32);
+REGISTER_SIMT_MATH_UNARY_OP("brev", "Reverse all bits of one UINT32 or UINT64 scalar", std::nullopt, DataType::UINT32,
+                            DataType::UINT64);
+
+REGISTER_SIMT_MATH_UNARY_OP("clz", "Count leading zeros in one INT32 or INT64 scalar", DataType::INT32, DataType::INT32,
+                            DataType::INT64);
+
+REGISTER_SIMT_MATH_UNARY_OP("ffs", "Find the first set bit in one INT32 or INT64 scalar", DataType::INT32,
+                            DataType::INT32, DataType::INT64);
 
 #undef REGISTER_SIMT_MATH_UNARY_OP
+
+REGISTER_OP("simt.rint")
+    .set_op_category("SimtOp")
+    .set_description("Round one floating-point scalar to nearest-even with a selectable result dtype")
+    .add_argument("value", "Floating-point scalar operand")
+    .set_attr<DataType>("target_type")
+    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceSimtRintRoundType("simt.rint", args, kwargs);
+    });
+
+REGISTER_OP("simt.round")
+    .set_op_category("SimtOp")
+    .set_description("Round one floating-point scalar halfway away from zero with a selectable result dtype")
+    .add_argument("value", "Floating-point scalar operand")
+    .set_attr<DataType>("target_type")
+    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceSimtRintRoundType("simt.round", args, kwargs);
+    });
 
 REGISTER_OP("simt.popcount")
     .set_op_category("SimtOp")
     .set_description("Count set bits in a UINT32 or UINT64 scalar, returning INT32")
     .add_argument("value", "Unsigned scalar operand")
-    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceSimtMathType("simt.popcount", 1, {DataType::UINT32, DataType::UINT64}, args, kwargs,
-                                  DataType::INT32);
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.popcount", 1, {DataType::UINT32, DataType::UINT64}, args, DataType::INT32);
     });
 
 REGISTER_OP("simt.mul_hi")
@@ -776,9 +883,10 @@ REGISTER_OP("simt.mul_hi")
     .set_description("Compute the high half of the full product of two same-dtype integers")
     .add_argument("lhs", "Left scalar operand")
     .add_argument("rhs", "Right scalar operand")
-    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
         return DeduceSimtMathType("simt.mul_hi", 2,
-                                  {DataType::INT32, DataType::UINT32, DataType::INT64, DataType::UINT64}, args, kwargs);
+                                  {DataType::INT32, DataType::UINT32, DataType::INT64, DataType::UINT64}, args);
     });
 
 REGISTER_OP("simt.max_nan")
@@ -786,8 +894,9 @@ REGISTER_OP("simt.max_nan")
     .set_description("Select the maximum FP16 or BF16 scalar and propagate NaN")
     .add_argument("lhs", "Left scalar operand")
     .add_argument("rhs", "Right scalar operand")
-    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceSimtMathType("simt.max_nan", 2, {DataType::FP16, DataType::BF16}, args, kwargs);
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.max_nan", 2, {DataType::FP16, DataType::BF16}, args);
     });
 
 REGISTER_OP("simt.min_nan")
@@ -795,44 +904,316 @@ REGISTER_OP("simt.min_nan")
     .set_description("Select the minimum FP16 or BF16 scalar and propagate NaN")
     .add_argument("lhs", "Left scalar operand")
     .add_argument("rhs", "Right scalar operand")
-    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceSimtMathType("simt.min_nan", 2, {DataType::FP16, DataType::BF16}, args, kwargs);
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.min_nan", 2, {DataType::FP16, DataType::BF16}, args);
     });
 
 REGISTER_OP("simt.atan2")
     .set_op_category("SimtOp")
     .set_description("Compute the quadrant-aware arc tangent of two FP32 scalars")
-    .add_argument("lhs", "Left scalar operand")
-    .add_argument("rhs", "Right scalar operand")
-    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceSimtMathType("simt.atan2", 2, {DataType::FP32}, args, kwargs);
+    .add_argument("y", "Y-coordinate scalar operand")
+    .add_argument("x", "X-coordinate scalar operand")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.atan2", 2, {DataType::FP32}, args);
     });
 
 REGISTER_OP("simt.copysign")
     .set_op_category("SimtOp")
     .set_description("Select the magnitude and sign of two FP32 scalars")
-    .add_argument("lhs", "Left scalar operand")
-    .add_argument("rhs", "Right scalar operand")
-    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceSimtMathType("simt.copysign", 2, {DataType::FP32}, args, kwargs);
+    .add_argument("magnitude", "Magnitude scalar operand")
+    .add_argument("sign", "Sign scalar operand")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.copysign", 2, {DataType::FP32}, args);
     });
 
 REGISTER_OP("simt.nextafter")
     .set_op_category("SimtOp")
     .set_description("Return the next FP32 value toward another FP32 scalar")
+    .add_argument("value", "Starting input scalar value")
+    .add_argument("direction", "Input scalar value to move toward")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.nextafter", 2, {DataType::FP32}, args);
+    });
+
+REGISTER_OP("simt.byte_perm")
+    .set_op_category("SimtOp")
+    .set_description("Select four bytes from two UINT32 scalars according to a UINT32 selector")
+    .add_argument("lhs", "Low four source bytes")
+    .add_argument("rhs", "High four source bytes")
+    .add_argument("selector", "Byte selector")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.byte_perm", 3, {DataType::UINT32}, args);
+    });
+
+REGISTER_OP("simt.equ")
+    .set_op_category("SimtOp")
+    .set_description("Compare equal or unordered FP16 or BF16 scalars")
     .add_argument("lhs", "Left scalar operand")
     .add_argument("rhs", "Right scalar operand")
-    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceSimtMathType("simt.nextafter", 2, {DataType::FP32}, args, kwargs);
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.equ", 2, {DataType::FP16, DataType::BF16}, args, DataType::BOOL);
     });
+
+REGISTER_OP("simt.fma_relu")
+    .set_op_category("SimtOp")
+    .set_description("Fused-multiply-add three FP16 or BF16 scalars and clamp negative results to zero")
+    .add_argument("lhs", "Left multiplication operand")
+    .add_argument("rhs", "Right multiplication operand")
+    .add_argument("addend", "Addition operand")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.fma_relu", 3, {DataType::FP16, DataType::BF16}, args);
+    });
+
+REGISTER_OP("simt.geu")
+    .set_op_category("SimtOp")
+    .set_description("Compare greater-or-equal or unordered FP16 or BF16 scalars")
+    .add_argument("lhs", "Left scalar operand")
+    .add_argument("rhs", "Right scalar operand")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.geu", 2, {DataType::FP16, DataType::BF16}, args, DataType::BOOL);
+    });
+
+REGISTER_OP("simt.gtu")
+    .set_op_category("SimtOp")
+    .set_description("Compare greater-than or unordered FP16 or BF16 scalars")
+    .add_argument("lhs", "Left scalar operand")
+    .add_argument("rhs", "Right scalar operand")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.gtu", 2, {DataType::FP16, DataType::BF16}, args, DataType::BOOL);
+    });
+
+REGISTER_OP("simt.hadd")
+    .set_op_category("SimtOp")
+    .set_description("Average two same-dtype 32-bit integers without intermediate overflow")
+    .add_argument("lhs", "Left scalar operand")
+    .add_argument("rhs", "Right scalar operand")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.hadd", 2, {DataType::INT32, DataType::UINT32}, args);
+    });
+
+REGISTER_OP("simt.jn")
+    .set_op_category("SimtOp")
+    .set_description("Compute an integer-order FP32 Bessel function of the first kind")
+    .add_argument("order", "Nonnegative INT32 order")
+    .add_argument("value", "FP32 scalar operand")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathSignature("simt.jn", {DataType::INT32, DataType::FP32}, DataType::FP32, args);
+    });
+
+REGISTER_OP("simt.ldexp")
+    .set_op_category("SimtOp")
+    .set_description("Scale an FP32 scalar by two raised to an INT32 exponent")
+    .add_argument("value", "FP32 scalar operand")
+    .add_argument("exponent", "INT32 exponent")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathSignature("simt.ldexp", {DataType::FP32, DataType::INT32}, DataType::FP32, args);
+    });
+
+REGISTER_OP("simt.leu")
+    .set_op_category("SimtOp")
+    .set_description("Compare less-or-equal or unordered FP16 or BF16 scalars")
+    .add_argument("lhs", "Left scalar operand")
+    .add_argument("rhs", "Right scalar operand")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.leu", 2, {DataType::FP16, DataType::BF16}, args, DataType::BOOL);
+    });
+
+REGISTER_OP("simt.ltu")
+    .set_op_category("SimtOp")
+    .set_description("Compare less-than or unordered FP16 or BF16 scalars")
+    .add_argument("lhs", "Left scalar operand")
+    .add_argument("rhs", "Right scalar operand")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.ltu", 2, {DataType::FP16, DataType::BF16}, args, DataType::BOOL);
+    });
+
+REGISTER_OP("simt.mul24")
+    .set_op_category("SimtOp")
+    .set_description("Multiply the low 24 bits of two same-dtype 32-bit integers")
+    .add_argument("lhs", "Left scalar operand")
+    .add_argument("rhs", "Right scalar operand")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.mul24", 2, {DataType::INT32, DataType::UINT32}, args);
+    });
+
+REGISTER_OP("simt.mul_i32_to_i64")
+    .set_op_category("SimtOp")
+    .set_description("Multiply two same-dtype 32-bit integers and return the full 64-bit product")
+    .add_argument("lhs", "Left scalar operand")
+    .add_argument("rhs", "Right scalar operand")
+    .f_deduce_type(DeduceSimtMulI32ToI64Type);
+
+REGISTER_OP("simt.norm3d")
+    .set_op_category("SimtOp")
+    .set_description("Compute the Euclidean norm of three FP32 scalars")
+    .add_argument("x", "First FP32 component")
+    .add_argument("y", "Second FP32 component")
+    .add_argument("z", "Third FP32 component")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.norm3d", 3, {DataType::FP32}, args);
+    });
+
+REGISTER_OP("simt.norm4d")
+    .set_op_category("SimtOp")
+    .set_description("Compute the Euclidean norm of four FP32 scalars")
+    .add_argument("x", "First FP32 component")
+    .add_argument("y", "Second FP32 component")
+    .add_argument("z", "Third FP32 component")
+    .add_argument("w", "Fourth FP32 component")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.norm4d", 4, {DataType::FP32}, args);
+    });
+
+REGISTER_OP("simt.rhadd")
+    .set_op_category("SimtOp")
+    .set_description("Compute the upward-rounded average of two same-dtype 32-bit integers")
+    .add_argument("lhs", "Left scalar operand")
+    .add_argument("rhs", "Right scalar operand")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.rhadd", 2, {DataType::INT32, DataType::UINT32}, args);
+    });
+
+REGISTER_OP("simt.rnorm3d")
+    .set_op_category("SimtOp")
+    .set_description("Compute the reciprocal norm of three FP32 scalars")
+    .add_argument("x", "First FP32 component")
+    .add_argument("y", "Second FP32 component")
+    .add_argument("z", "Third FP32 component")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.rnorm3d", 3, {DataType::FP32}, args);
+    });
+
+REGISTER_OP("simt.rnorm4d")
+    .set_op_category("SimtOp")
+    .set_description("Compute the reciprocal norm of four FP32 scalars")
+    .add_argument("x", "First FP32 component")
+    .add_argument("y", "Second FP32 component")
+    .add_argument("z", "Third FP32 component")
+    .add_argument("w", "Fourth FP32 component")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.rnorm4d", 4, {DataType::FP32}, args);
+    });
+
+REGISTER_OP("simt.sad")
+    .set_op_category("SimtOp")
+    .set_description("Add a UINT32 scalar to the absolute difference of two INT32 or UINT32 scalars")
+    .add_argument("lhs", "Left difference operand")
+    .add_argument("rhs", "Right difference operand")
+    .add_argument("addend", "UINT32 addend")
+    .f_deduce_type(DeduceSimtSadType);
+
+REGISTER_OP("simt.scalbn")
+    .set_op_category("SimtOp")
+    .set_description("Scale an FP32 scalar by two raised to an INT32 or INT64 exponent")
+    .add_argument("value", "FP32 scalar operand")
+    .add_argument("exponent", "INT32 or INT64 exponent")
+    .f_deduce_type(DeduceSimtScalbnType);
+
+REGISTER_OP("simt.yn")
+    .set_op_category("SimtOp")
+    .set_description("Compute an integer-order FP32 Bessel function of the second kind")
+    .add_argument("order", "Nonnegative INT32 order")
+    .add_argument("value", "Positive FP32 scalar operand")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathSignature("simt.yn", {DataType::INT32, DataType::FP32}, DataType::FP32, args);
+    });
+
+#define REGISTER_SIMT_FP32_UNARY_OP(OpName, Description)                                                            \
+    REGISTER_OP("simt." OpName)                                                                                     \
+        .set_op_category("SimtOp")                                                                                  \
+        .set_description(Description)                                                                               \
+        .add_argument("value", "FP32 scalar operand")                                                               \
+        .f_deduce_type(                                                                                             \
+            [](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) { \
+                return DeduceSimtMathType("simt." OpName, 1, {DataType::FP32}, args);                               \
+            })
+
+REGISTER_SIMT_FP32_UNARY_OP("cyl_bessel_i0", "Compute the order-zero modified cylindrical Bessel function");
+
+REGISTER_SIMT_FP32_UNARY_OP("cyl_bessel_i1", "Compute the order-one modified cylindrical Bessel function");
+
+REGISTER_SIMT_FP32_UNARY_OP("erf", "Compute the error function of an FP32 scalar");
+
+REGISTER_SIMT_FP32_UNARY_OP("erfc", "Compute the complementary error function of an FP32 scalar");
+
+REGISTER_SIMT_FP32_UNARY_OP("erfcinv", "Compute the inverse complementary error function of an FP32 scalar");
+
+REGISTER_SIMT_FP32_UNARY_OP("erfcx", "Compute the scaled complementary error function of an FP32 scalar");
+
+REGISTER_SIMT_FP32_UNARY_OP("erfinv", "Compute the inverse error function of an FP32 scalar");
+
+REGISTER_SIMT_FP32_UNARY_OP("j0", "Compute the order-zero Bessel function of the first kind");
+
+REGISTER_SIMT_FP32_UNARY_OP("j1", "Compute the order-one Bessel function of the first kind");
+
+REGISTER_SIMT_FP32_UNARY_OP("lgamma", "Compute log absolute Gamma of an FP32 scalar");
+
+REGISTER_SIMT_FP32_UNARY_OP("normcdf", "Compute the standard normal cumulative distribution of an FP32 scalar");
+
+REGISTER_SIMT_FP32_UNARY_OP("normcdfinv", "Compute the inverse standard normal cumulative distribution");
+
+REGISTER_SIMT_FP32_UNARY_OP("saturate", "Clamp an FP32 scalar to the unit interval and map NaN to zero");
+
+REGISTER_SIMT_FP32_UNARY_OP("tgamma", "Compute the Gamma function of an FP32 scalar");
+
+REGISTER_SIMT_FP32_UNARY_OP("y0", "Compute the order-zero Bessel function of the second kind");
+
+REGISTER_SIMT_FP32_UNARY_OP("y1", "Compute the order-one Bessel function of the second kind");
+
+#undef REGISTER_SIMT_FP32_UNARY_OP
+
+#define REGISTER_SIMT_FP32_BINARY_OP(OpName, Description)                                                           \
+    REGISTER_OP("simt." OpName)                                                                                     \
+        .set_op_category("SimtOp")                                                                                  \
+        .set_description(Description)                                                                               \
+        .add_argument("lhs", "Left scalar operand")                                                                 \
+        .add_argument("rhs", "Right scalar operand")                                                                \
+        .f_deduce_type(                                                                                             \
+            [](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) { \
+                return DeduceSimtMathType("simt." OpName, 2, {DataType::FP32}, args);                               \
+            })
+
+REGISTER_SIMT_FP32_BINARY_OP("fdim", "Compute the positive difference of two FP32 scalars");
+
+REGISTER_SIMT_FP32_BINARY_OP("hypot", "Compute an overflow-resistant FP32 hypotenuse");
+
+REGISTER_SIMT_FP32_BINARY_OP("pow", "Raise an FP32 base to an FP32 exponent");
+
+REGISTER_SIMT_FP32_BINARY_OP("remainder", "Compute the FP32 remainder using a nearest-even quotient");
+
+REGISTER_SIMT_FP32_BINARY_OP("rhypot", "Compute the reciprocal of an FP32 hypotenuse");
+
+#undef REGISTER_SIMT_FP32_BINARY_OP
 
 REGISTER_OP("simt.fmod")
     .set_op_category("SimtOp")
     .set_description("Compute an FP32 remainder with a quotient truncated toward zero")
     .add_argument("lhs", "Dividend")
     .add_argument("rhs", "Divisor")
-    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceSimtMathType("simt.fmod", 2, {DataType::FP32}, args, kwargs);
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.fmod", 2, {DataType::FP32}, args);
     });
 
 REGISTER_OP("simt.min")
@@ -840,12 +1221,13 @@ REGISTER_OP("simt.min")
     .set_description("Compute the minimum of two same-dtype supported scalars")
     .add_argument("lhs", "Left scalar operand")
     .add_argument("rhs", "Right scalar operand")
-    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
         return DeduceSimtMathType(
             "simt.min", 2,
             {DataType::FP16, DataType::BF16, DataType::FP32, DataType::INT8, DataType::INT16, DataType::INT32,
              DataType::INT64, DataType::UINT8, DataType::UINT16, DataType::UINT32, DataType::UINT64},
-            args, kwargs);
+            args);
     });
 
 REGISTER_OP("simt.max")
@@ -853,12 +1235,13 @@ REGISTER_OP("simt.max")
     .set_description("Compute the maximum of two same-dtype supported scalars")
     .add_argument("lhs", "Left scalar operand")
     .add_argument("rhs", "Right scalar operand")
-    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
         return DeduceSimtMathType(
             "simt.max", 2,
             {DataType::FP16, DataType::BF16, DataType::FP32, DataType::INT8, DataType::INT16, DataType::INT32,
              DataType::INT64, DataType::UINT8, DataType::UINT16, DataType::UINT32, DataType::UINT64},
-            args, kwargs);
+            args);
     });
 
 REGISTER_OP("simt.fma")
@@ -867,8 +1250,9 @@ REGISTER_OP("simt.fma")
     .add_argument("lhs", "Left multiplication operand")
     .add_argument("rhs", "Right multiplication operand")
     .add_argument("addend", "Scalar addend")
-    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceSimtMathType("simt.fma", 3, {DataType::FP16, DataType::BF16, DataType::FP32}, args, kwargs);
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& /*kwargs*/) {
+        return DeduceSimtMathType("simt.fma", 3, {DataType::FP16, DataType::BF16, DataType::FP32}, args);
     });
 
 REGISTER_OP("simt.atomic_add")
