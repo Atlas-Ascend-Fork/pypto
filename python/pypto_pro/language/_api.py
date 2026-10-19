@@ -780,11 +780,14 @@ def matmul(
 def matmul_acc(
     dst_tile: Tile, acc_tile: Tile, lhs_tile: Tile, rhs_tile: Tile, /, *, phase: Optional[AccPhase] = None
 ) -> None:
-    """Accumulating matrix multiply: ``dst = acc + lhs @ rhs`` (K-dim block accumulation).
+    """In-place accumulating matrix multiply: ``dst += lhs @ rhs``.
+
+    ``acc_tile`` must be the same Tile as ``dst_tile``. Initialize it with
+    ``matmul`` before the first accumulating operation; this operation does not zero it.
 
     Args:
-        dst_tile: Destination Tile (L0C, output)
-        acc_tile: Accumulator Tile (existing value to add to)
+        dst_tile: Accumulator Tile (L0C, input/output)
+        acc_tile: Must be the same Tile as dst_tile
         lhs_tile: Left matrix Tile (L0A)
         rhs_tile: Right matrix Tile (L0B)
         phase: Optional — ``pl.AccPhase.Partial`` or ``pl.AccPhase.Final``
@@ -816,11 +819,14 @@ def matmul_mx_acc(
     dst_tile: Tile, acc_tile: Tile, lhs_tile: Tile, rhs_tile: Tile, /, scale_a: Tile, scale_b: Tile,
     *, phase: Optional[AccPhase] = None
 ) -> None:
-    """MX matmul with accumulation: ``dst = acc + lhs @ rhs``
+    """In-place MX matmul with accumulation: ``dst += scaled_lhs @ scaled_rhs``.
+
+    ``acc_tile`` must be the same Tile as ``dst_tile``. Initialize it with
+    ``matmul_mx`` before the first accumulating operation; this operation does not zero it.
 
     Args:
-        dst_tile: Destination Tile (L0C, output, FP32)
-        acc_tile: Accumulator Tile (existing value to add to)
+        dst_tile: Accumulator Tile (L0C, input/output, FP32)
+        acc_tile: Must be the same Tile as dst_tile
         lhs_tile: Left matrix Tile (L0A, FP8/FP4)
         rhs_tile: Right matrix Tile (L0B, FP8/FP4)
         scale_a: Left scale Tile (ScaleLeft, E8M0)

@@ -170,10 +170,10 @@ _BLOCK_OP_TILE_ROLES: dict[str, list] = {
     "insert": ["W", "R", None, None, "R"],  # insert(out, src, row, col, [scale])
     # ===== Matmul =====
     "matmul": ["W", "R", "R"],  # matmul(out, lhs, rhs)
-    "matmul_acc": ["W", "RW", "R", "R"],  # matmul_acc(out, acc, lhs, rhs)
+    "matmul_acc": ["RW", "R", "R", "R"],  # matmul_acc(out, acc, lhs, rhs)
     "matmul_bias": ["W", "R", "R", "R"],  # matmul_bias(out, lhs, rhs, bias)
     "matmul_mx": ["W", "R", "R", "R", "R"],  # matmul_mx(out, lhs, rhs, scale_a, scale_b)
-    "matmul_mx_acc": ["W", "RW", "R", "R", "R", "R"],  # matmul_mx_acc(out, acc, lhs, rhs, scale_a, scale_b)
+    "matmul_mx_acc": ["RW", "R", "R", "R", "R", "R"],  # matmul_mx_acc(out, acc, lhs, rhs, scale_a, scale_b)
     "gemv": ["W", "R", "R"],
     "gemv_acc": ["W", "RW", "R", "R"],
     "gemv_bias": ["W", "R", "R", "R"],

@@ -14,13 +14,13 @@
 
 ## 功能说明
 
-在已有累加器值上累加一次带分组量化系数的矩阵乘结果：
+在dst_tile已有累加器值上原地累加一次带分组量化系数的矩阵乘结果：
 
 $$
 C_{M \times N} = \left(\mathrm{scale\_a}_{M \times (K/32)} \otimes A_{M \times K}\right) \times \left(\mathrm{scale\_b}_{(K/32) \times N} \otimes B_{K \times N}\right) + C_{M \times N}
 $$
 
-其中，⊗表示广播乘法，A、B沿K维度每连续32个元素分别共享scale_a、scale_b中的一个量化系数。
+其中，C表示dst_tile，A、B分别表示lhs_tile、rhs_tile，⊗表示广播乘法。A、B沿K维度每连续32个元素分别共享scale_a、scale_b中的一个量化系数。
 
 ## 函数原型
 
@@ -42,8 +42,8 @@ pypto_pro.language.matmul_mx_acc(
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| dst_tile | 输出 | 目的操作数，Tile类型，存储空间为L0C Buffer，形状为[M, N]，数据类型为DT_FP32，layout必须为NZ。 |
-| acc_tile | 输入 | 源操作数（已有累加结果），Tile类型，存储空间为L0C Buffer，数据类型为DT_FP32，layout必须为NZ，形状必须与dst_tile一致。通常与dst_tile使用同一Tile实现原地累加；其内容应由此前的matmul_mx或matmul_mx_acc初始化。 |
+| dst_tile | 输入/输出 | 累加器操作数（原地累加结果），Tile类型，存储空间为L0C Buffer，形状为[M, N]，数据类型为DT_FP32，layout必须为NZ。 |
+| acc_tile | 输入 | 累加器参数，Tile类型，存储空间为L0C Buffer，形状为[M, N]，数据类型为DT_FP32，layout必须为NZ。 |
 | lhs_tile | 输入 | 源操作数（A，左矩阵），Tile类型，存储空间为L0A Buffer，形状为[M, K]，数据类型支持DT_FP8E4M3FN、DT_FP8E5M2、DT_FP4E2M1和DT_FP4E1M2，layout必须为NZ，K必须与rhs_tile的K维一致且为64的倍数。 |
 | rhs_tile | 输入 | 源操作数（B，右矩阵），Tile类型，存储空间为L0B Buffer，形状为[K, N]，数据类型支持DT_FP8E4M3FN、DT_FP8E5M2、DT_FP4E2M1和DT_FP4E1M2。与lhs_tile的数据类型可以不同，但必须同时选自DT_FP8E4M3FN、DT_FP8E5M2，或同时选自DT_FP4E2M1、DT_FP4E1M2。layout必须为ZN，K必须与lhs_tile的K维一致且为64的倍数。 |
 | scale_a | 输入 | 源操作数（左量化系数矩阵），Tile类型，位于L0A_MX Buffer，数据类型为DT_FP8E8M0，形状为[M, K/32]，layout默认且仅支持ZZ，fractal默认且仅支持32。每个量化系数对应A矩阵K方向连续32个元素。 |
@@ -51,6 +51,8 @@ pypto_pro.language.matmul_mx_acc(
 | phase | 输入 | K维分块累加阶段，[pypto_pro.language.AccPhase](../basic_data_structures/AccPhase.md)类型，可选，用于控制矩阵计算与L0C Buffer数据搬出之间的UnitFlag同步。与[pypto_pro.language.STPhase](../basic_data_structures/STPhase.md)的配合方式见[Cube计算进阶](../../../../guide/programming_guide/pro/advanced_programming/cube_computation_advanced_usage.md)。 |
 
 ## 约束说明
+
+- dst_tile和acc_tile必须为同一个Tile。
 
 - 量化系数Tile与A/B矩阵Tile必须满足以下硬件地址关系：
 
@@ -61,7 +63,7 @@ pypto_pro.language.matmul_mx_acc(
 
   硬件根据A/B矩阵首地址定位scale_a/scale_b。使用多组L0A/L0B Tile时，每组地址均须满足上述关系。
 
-- 矩阵乘累加操作时，acc_tile应调用[matmul_mx](matmul_mx.md)建立初始结果，后续再调用本接口进行累加操作。
+- 矩阵乘累加操作前，应调用[pypto_pro.language.matmul_mx](matmul_mx.md)初始化dst_tile，后续再调用本接口进行原地累加。
 
 ## 返回值说明
 
