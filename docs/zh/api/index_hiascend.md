@@ -503,6 +503,7 @@
       - [pypto_pro.language.get_block_num](pro_api/SIMD-API/system_variables/get_block_num.md)
       - [pypto_pro.language.get_subblock_idx](pro_api/SIMD-API/system_variables/get_subblock_idx.md)
       - [pypto_pro.language.get_subblock_num](pro_api/SIMD-API/system_variables/get_subblock_num.md)
+      - [pypto_pro.language.get_cycle](pro_api/SIMD-API/system_variables/index.md)
     - [转置与元素读写](pro_api/SIMD-API/transpose_and_element_access/index.md)
       - [pypto_pro.language.fill_index](pro_api/SIMD-API/transpose_and_element_access/fill_index.md)
       - [pypto_pro.language.getval](pro_api/SIMD-API/transpose_and_element_access/getval.md)

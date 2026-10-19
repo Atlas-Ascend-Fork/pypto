@@ -778,6 +778,18 @@ def test_get_block_idx_without_prefix():
     assert "get_block_idx" in _program_ir(main)
 
 
+def test_get_cycle_without_prefix():
+    @pl.jit(auto_mutex=False)
+    def main(output: pl.Tensor[[1], pl.DT_INT64]):
+        _ = pl.get_cycle()
+        _test_result = output
+
+    main_program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    main = main_program.get_function(main.__name__)
+
+    assert "get_cycle" in _program_ir(main)
+
+
 def test_set_validshape_tile_group_4buf():
     @pl.jit(auto_mutex=False)
     def main(

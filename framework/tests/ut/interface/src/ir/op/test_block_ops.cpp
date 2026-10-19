@@ -81,6 +81,22 @@ TEST_F(BlockOpsMemoryTest, GetSubblockNum_NoArgs_ReturnsInt64Scalar)
     EXPECT_EQ(rt->dtype_, DataType::INT64);
 }
 
+TEST_F(BlockOpsMemoryTest, GetCycle_NoArgs_ReturnsInt64Scalar)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto call = reg.Create("get_cycle", {}, Sp());
+    ASSERT_NE(call, nullptr);
+    auto rt = As<ScalarType>(call->GetType());
+    ASSERT_NE(rt, nullptr);
+    EXPECT_EQ(rt->dtype_, DataType::INT64);
+}
+
+TEST_F(BlockOpsMemoryTest, GetCycle_WithArgs_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    EXPECT_THROW((void)reg.Create("get_cycle", {MakeScalarVar("x", DataType::INT32)}, Sp()), npu::tile_fwk::Error);
+}
+
 TEST_F(BlockOpsMemoryTest, GetBlockIdx_WithArgs_Throws)
 {
     auto& reg = OpRegistry::GetInstance();

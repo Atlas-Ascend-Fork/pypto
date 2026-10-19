@@ -938,6 +938,20 @@ REGISTER_BACKEND_OP(BackendCCE, "get_spr")
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) { return MakeGetSprCodegenCCE(op, codegen); });
 
+// Helper function for get_cycle (reads the system cycle counter via get_sys_cnt())
+static std::string MakeGetCycleCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    (void)codegen_base;
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 0) << "get_cycle requires no arguments";
+    return "(int64_t)(get_sys_cnt())";
+}
+
+REGISTER_BACKEND_OP(BackendCCE, "get_cycle")
+    .set_pipe(ir::PipeType::V)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeGetCycleCodegenCCE(op, codegen);
+    });
+
 // ============================================================================
 // Saturation flag (CTRL register bit manipulation)
 // ============================================================================

@@ -152,7 +152,7 @@ Block 算子面向硬件优化的 block 级编程，作用于 tile，并遵循**
 
 - **block 作用域查询与 SPR**（`block_ops/memory.cpp`，无命名空间前缀）：
   `get_block_idx`、`get_block_num`、`get_subblock_idx`、`get_subblock_num`、`get_spr`、
-  `set_saturation_flag`
+  `get_cycle`、`set_saturation_flag`
 - **数据搬运**（`block_ops/out_memory.cpp`）：
   `block.load`、`block.store`、`block.move`、`block.move_fp`、`block.insert`、`block.ub_copy`
 - **逐元素与 gather**（`block_ops/out_elementwise.cpp`）：

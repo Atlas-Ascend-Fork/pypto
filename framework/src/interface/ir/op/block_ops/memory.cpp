@@ -269,6 +269,18 @@ REGISTER_OP("get_spr")
         return std::make_shared<ScalarType>(DataType::INT64);
     });
 
+REGISTER_OP("get_cycle")
+    .set_op_category("LanguageOp")
+    .set_description("Read the device system cycle counter (get_sys_cnt instruction). "
+                     "Use differences between two reads to measure elapsed cycles; "
+                     "counter frequency differs by chip.")
+    .no_argument()
+    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0) << "get_cycle requires no arguments";
+        return std::make_shared<ScalarType>(DataType::INT64);
+    });
+
 REGISTER_OP("set_saturation_flag")
     .set_op_category("LanguageOp")
     .set_description("Set saturation flag in CTRL special purpose register.")

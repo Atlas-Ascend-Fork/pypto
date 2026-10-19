@@ -159,7 +159,7 @@ follow the explicit-output convention: the destination tile is the first argumen
 
 - **Block-scope queries and SPR** (`block_ops/memory.cpp`, no namespace prefix):
   `get_block_idx`, `get_block_num`, `get_subblock_idx`, `get_subblock_num`, `get_spr`,
-  `set_saturation_flag`
+  `get_cycle`, `set_saturation_flag`
 - **Data movement** (`block_ops/out_memory.cpp`):
   `block.load`, `block.store`, `block.move`, `block.move_fp`, `block.insert`, `block.ub_copy`
 - **Element-wise and gather** (`block_ops/out_elementwise.cpp`):

@@ -579,6 +579,7 @@ register_table(
         "get_block_num": OpSpec(ir_name="get_block_num", parse_args=False, parse_kwargs=False),
         "get_subblock_num": OpSpec(ir_name="get_subblock_num", parse_args=False, parse_kwargs=False),
         "get_spr": OpSpec(ir_name="get_spr", parse_args=False, parse_kwargs=False),
+        "get_cycle": OpSpec(ir_name="get_cycle", parse_args=False, parse_kwargs=False),
         # args + kwargs
         "system.dcci": OpSpec(builder=dcci),
     }

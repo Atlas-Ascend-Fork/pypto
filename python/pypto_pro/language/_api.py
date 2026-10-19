@@ -1490,6 +1490,22 @@ def get_spr() -> int:
 
 
 @_api_decl
+def get_cycle() -> int:
+    """Read the device system cycle counter (get_sys_cnt instruction).
+
+    Returns the current value of the AI Core system counter. The counter
+    frequency differs by chip (e.g. 50MHz on A2/A3, 1000MHz on A5), so use
+    differences between two reads to measure elapsed cycles.
+
+    ``get_sys_cnt()`` is an ``__aicore__`` instruction and cannot be used
+    inside ``@pl.vector_function``. Call this in the ``@pl.jit`` kernel body.
+
+    Returns:
+        int64_t scalar value of the system cycle counter
+    """
+
+
+@_api_decl
 def set_saturation_flag(*, mode: SaturationFlagMode, enable: bool) -> None:
     """Set the saturation flag in the CTRL special purpose register.
 

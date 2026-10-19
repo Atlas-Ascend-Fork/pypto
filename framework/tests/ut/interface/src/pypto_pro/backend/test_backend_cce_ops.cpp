@@ -212,6 +212,23 @@ TEST(BackendCceOpsTest, GetSpr)
     EXPECT_EQ(info->codegen_func(call, codegen), "get_ar()");
 }
 
+TEST(BackendCceOpsTest, GetCycle)
+{
+    auto int_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
+    auto result = MakeVar("cycle", int_type);
+    auto call = std::make_shared<const ir::Call>("get_cycle", std::vector<ir::ExprPtr>{}, int_type,
+                                                 ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
+
+    codegen::CCECodegen codegen(ir::SectionKind::Vector);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    EXPECT_NE(generated.find("(int64_t)(get_sys_cnt())"), std::string::npos);
+
+    const auto* info = BackendCCE::Instance().GetOpInfo("get_cycle");
+    ASSERT_NE(info, nullptr);
+    EXPECT_EQ(info->pipe, ir::PipeType::V);
+}
+
 TEST(BackendCceOpsTest, GetSubBlockIdx)
 {
     auto int_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
