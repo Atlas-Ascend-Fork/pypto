@@ -395,6 +395,7 @@ enum class NPUArch {
     DAV_3003 = 3003,
     DAV_3113 = 3113,
     DAV_5101 = 5101,
+    DAV_9201 = 9201,
     DAV_UNKNOWN
 };
 
@@ -413,6 +414,8 @@ inline std::string NPUArchToString(NPUArch npu_arch)
             return "DAV_3113";
         case NPUArch::DAV_5101:
             return "DAV_5101";
+        case NPUArch::DAV_9201:
+            return "DAV_9201";
         default:
             return "UNKNOWN_NPU_ARCH";
     }

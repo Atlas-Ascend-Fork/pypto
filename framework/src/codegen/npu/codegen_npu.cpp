@@ -587,8 +587,11 @@ void CodeGenNPU::BuildArchOptions(std::ostringstream& oss, const CompileInfo& co
     if (platform_ == NPUArch::DAV_2201) {
         compileOpts.emplace_back("-D__DAV_V220");
         compileOpts.emplace_back("-DMEMORY_BASE");
-    } else {
+    } else if (platform_ == NPUArch::DAV_3510) {
         compileOpts.emplace_back("-D__DAV_V310");
+        compileOpts.emplace_back("-DREGISTER_BASE");
+    } else if (platform_ == NPUArch::DAV_9201) {
+        compileOpts.emplace_back("-D__DAV_V920");
         compileOpts.emplace_back("-DREGISTER_BASE");
     }
 
@@ -596,7 +599,7 @@ void CodeGenNPU::BuildArchOptions(std::ostringstream& oss, const CompileInfo& co
     std::string coreArch = GetCoreArch(compileInfo);
     compileOpts.emplace_back("--cce-aicore-arch=" + coreArch);
 
-    if (platform_ == NPUArch::DAV_3510 && !compileInfo.IsCube()) {
+    if ((platform_ == NPUArch::DAV_3510 || platform_ == NPUArch::DAV_9201) && !compileInfo.IsCube()) {
         compileOpts.emplace_back("--cce-long-scbz=true");
     }
 
@@ -621,7 +624,7 @@ void CodeGenNPU::BuildIncludes(std::ostringstream& oss) const
 
 void CodeGenNPU::AppendVFOptions(std::ostringstream& oss, NPUArch platform, bool isCube)
 {
-    if (platform != NPUArch::DAV_3510) {
+    if (platform != NPUArch::DAV_3510 && platform != NPUArch::DAV_9201) {
         return;
     }
 
@@ -665,9 +668,11 @@ std::string CodeGenNPU::GetCoreArch(const CompileInfo& compileInfo) const
     bool isCude = compileInfo.IsCube();
     if (platform_ == NPUArch::DAV_2201) {
         return isCude ? "dav-c220-cube" : "dav-c220-vec";
-    } else {
-        return isCude ? "dav-c310-cube" : "dav-c310-vec";
     }
+    if (platform_ == NPUArch::DAV_9201) {
+        return isCude ? "dav-920r1-cube" : "dav-920r1-vec";
+    }
+    return isCude ? "dav-c310-cube" : "dav-c310-vec";
 }
 
 int CodeGenNPU::DoCompileCmd(const std::string& compileCmd) const

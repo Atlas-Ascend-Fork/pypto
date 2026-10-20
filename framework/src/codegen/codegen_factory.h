@@ -35,7 +35,7 @@ public:
     static std::shared_ptr<CodeGenCCE> GetCodeGenCCE(const CodeGenCtx& ctx)
     {
         auto platform = Platform::Instance().GetSoc().GetNPUArch();
-        if (platform == NPUArch::DAV_2201 || platform == NPUArch::DAV_3510) {
+        if (platform == NPUArch::DAV_2201 || platform == NPUArch::DAV_3510 || platform == NPUArch::DAV_9201) {
             return std::make_shared<CodeGenCloudNPU>(ctx);
         } else if (IsLiteNPU(platform)) {
             return std::make_shared<CodeGenLiteNPU>(ctx);

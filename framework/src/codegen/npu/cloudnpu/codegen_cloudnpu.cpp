@@ -64,7 +64,7 @@ void CodeGenCloudNPU::BuildIncludes(std::ostringstream& oss) const
 
 bool CodeGenCloudNPU::IsEnablePMUTrace() const
 {
-    if (platform_ != NPUArch::DAV_3510) {
+    if (platform_ != NPUArch::DAV_3510 && platform_ != NPUArch::DAV_9201) {
         return false;
     }
     return config::GetCodeGenOption<bool>(ENABLE_PMU_TRACE);
