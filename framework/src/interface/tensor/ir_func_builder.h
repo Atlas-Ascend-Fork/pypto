@@ -55,6 +55,9 @@ private:
     std::unordered_map<LogicalTensorPtr, Function*> tensorDefineFunc_;
     std::unordered_map<LogicalTensorPtr, Function*> tensorConstructFunc_;
 
+    // Rebuild producer/consumer links from irFunc's body ops (its tensors must not be shared with other functions).
+    static void RebuildProducerConsumerLinks(const ir::FunctionPtr& irFunc);
+
     void InitDynFunc(const ir::FunctionPtr& irFunc);
     void FinalizeDynFunc(const ir::FunctionPtr& irFunc);
     void CollectInOutCastFromReturn();

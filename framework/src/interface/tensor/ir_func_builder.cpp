@@ -28,6 +28,9 @@
 #include "ir/kind_traits.h"
 #include "ir/type.h"
 #include "ir/transforms/base/mutator.h"
+#include "ir/transforms/utils/stmt_utils.h"
+
+#include <functional>
 
 using namespace pypto;
 
@@ -138,8 +141,62 @@ RootFunctionBuilder::RootFunctionBuilder(Function* parentFunc)
     : program_(Program::GetInstance()), parentFunc_(parentFunc)
 {}
 
+void RootFunctionBuilder::RebuildProducerConsumerLinks(const ir::FunctionPtr& irFunc)
+{
+    std::unordered_set<npu::tile_fwk::Operation*> bodyOps;
+    std::unordered_set<LogicalTensor*> linkedTensors;
+    std::function<void(const std::vector<ir::StmtPtr>&)> collectFromStmts = [&](const std::vector<ir::StmtPtr>& stmts) {
+        for (const auto& stmt : stmts) {
+            auto op = std::dynamic_pointer_cast<npu::tile_fwk::Operation>(std::const_pointer_cast<ir::Stmt>(stmt));
+            if (op != nullptr) {
+                bodyOps.insert(op.get());
+                for (auto& inputTensor : op->GetIOperands()) {
+                    if (inputTensor != nullptr) {
+                        linkedTensors.insert(inputTensor.get());
+                    }
+                }
+                for (auto& outputTensor : op->GetOOperands()) {
+                    if (outputTensor != nullptr) {
+                        linkedTensors.insert(outputTensor.get());
+                    }
+                }
+            } else if (auto forStmt = std::dynamic_pointer_cast<const ir::ForStmt>(stmt)) {
+                collectFromStmts(pypto::ir::utils::FlattenBody(forStmt->body_));
+            } else if (auto ifStmt = std::dynamic_pointer_cast<const ir::IfStmt>(stmt)) {
+                collectFromStmts(pypto::ir::utils::FlattenBody(ifStmt->thenBody_));
+                if (ifStmt->elseBody_.has_value()) {
+                    collectFromStmts(pypto::ir::utils::FlattenBody(*ifStmt->elseBody_));
+                }
+            } else if (auto whileStmt = std::dynamic_pointer_cast<const ir::WhileStmt>(stmt)) {
+                collectFromStmts(pypto::ir::utils::FlattenBody(whileStmt->body_));
+            } else if (auto sectionStmt = std::dynamic_pointer_cast<const ir::SectionStmt>(stmt)) {
+                collectFromStmts(pypto::ir::utils::FlattenBody(sectionStmt->body_));
+            }
+        }
+    };
+    collectFromStmts(pypto::ir::utils::FlattenBody(irFunc->body_));
+
+    for (auto* linkedTensor : linkedTensors) {
+        linkedTensor->GetProducers().clear();
+        linkedTensor->GetConsumers().clear();
+    }
+    for (auto* bodyOp : bodyOps) {
+        for (auto& inputTensor : bodyOp->GetIOperands()) {
+            if (inputTensor != nullptr) {
+                inputTensor->AddConsumer(bodyOp);
+            }
+        }
+        for (auto& outputTensor : bodyOp->GetOOperands()) {
+            if (outputTensor != nullptr) {
+                outputTensor->AddProducer(bodyOp);
+            }
+        }
+    }
+}
+
 std::shared_ptr<Function> RootFunctionBuilder::Build(const ir::FunctionPtr& irFunc)
 {
+    RebuildProducerConsumerLinks(irFunc);
     InitDynFunc(irFunc);
     auto stmtsWithCall = TransformBody(irFunc->body_);
     dynFunc_->body_ = ir::SeqStmts::Wrap(stmtsWithCall, irFunc->span_);
