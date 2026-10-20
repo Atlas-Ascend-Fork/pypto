@@ -1055,12 +1055,16 @@ std::vector<SymbolicScalar> InferSrcGmValidShapeForFmap3D(const std::vector<Symb
     // 否则 TLoadConv 以满幅窗口从越界偏移读取 (如 batch 偏移超出 tensor 末尾触发 aicore error)。
     SymbolicScalar srcGmN = l1TileShape[0];
     SymbolicScalar srcGmD = l1TileShape[1];
+    SymbolicScalar srcGmH = l1TileShape[3];
+    SymbolicScalar srcGmW = l1TileShape[4];
     if (gmInputValidShape.size() >= SHAPE_DIM4 && fromOffset.size() >= SHAPE_DIM4) {
         srcGmCin = (gmInputValidShape[1] - fromOffset[1]).Min(alignedCin);
         srcGmN = (gmInputValidShape[0] - fromOffset[0]).Min(l1TileShape[0]).Max(0);
         srcGmD = (gmInputValidShape[2] - fromOffset[2]).Min(l1TileShape[1]).Max(0);
+        srcGmH = (gmInputValidShape[3] - fromOffset[3]).Min(l1TileShape[3]).Max(0);
+        srcGmW = (gmInputValidShape[4] - fromOffset[4]).Min(l1TileShape[4]).Max(0);
     }
-    return {srcGmN, srcGmCin, srcGmD, l1TileShape[3], l1TileShape[4]};
+    return {srcGmN, srcGmCin, srcGmD, srcGmH, srcGmW};
 }
 
 std::vector<SymbolicScalar> InferSrcGmValidShapeForFmap2D(const std::vector<SymbolicScalar>& l1TileShape,
@@ -1071,11 +1075,15 @@ std::vector<SymbolicScalar> InferSrcGmValidShapeForFmap2D(const std::vector<Symb
     SymbolicScalar srcGmCin = alignedCin;
     // N(batch) 维需按 view 有效范围裁剪, 避免 batch 尾块满幅越界读 GM。
     SymbolicScalar srcGmN = l1TileShape[0];
+    SymbolicScalar srcGmH = l1TileShape[2];
+    SymbolicScalar srcGmW = l1TileShape[3];
     if (gmInputValidShape.size() >= SHAPE_DIM4 && fromOffset.size() >= SHAPE_DIM4) {
         srcGmCin = (gmInputValidShape[1] - fromOffset[1]).Min(alignedCin);
         srcGmN = (gmInputValidShape[0] - fromOffset[0]).Min(l1TileShape[0]).Max(0);
+        srcGmH = (gmInputValidShape[2] - fromOffset[2]).Min(l1TileShape[2]).Max(0);
+        srcGmW = (gmInputValidShape[3] - fromOffset[3]).Min(l1TileShape[3]).Max(0);
     }
-    return {srcGmN, srcGmCin, l1TileShape[2], l1TileShape[3]};
+    return {srcGmN, srcGmCin, srcGmH, srcGmW};
 }
 
 std::vector<SymbolicScalar> InferSrcGmValidShapeForWeight(Operation* op, const std::vector<SymbolicScalar>& l1TileShape,
