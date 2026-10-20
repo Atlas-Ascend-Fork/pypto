@@ -29,6 +29,7 @@ namespace npu::tile_fwk {
 class ConfigScope;
 class Function;
 class LogicalTensor;
+class RawTensor;
 class Program;
 class TensorSlotManager;
 class TensorSlotScope;
@@ -49,6 +50,8 @@ private:
     Function* parentFunc_;
     std::shared_ptr<Function> dynFunc_;
     LogicalTensors logicalParams_;
+    std::unordered_map<const RawTensor*, LogicalTensorPtr> loopInputs_;
+    std::unordered_map<Function*, std::unordered_set<LogicalTensorPtr>> extraIncasts_;
     std::unordered_set<LogicalTensorPtr> consumedTensors_;
     std::unordered_set<LogicalTensorPtr> paramTensors_;
     std::unordered_map<std::string, int> loopNameCounters_;
@@ -74,6 +77,8 @@ private:
 
     std::shared_ptr<Function> CreateHiddenFunc(const ir::SeqStmtsPtr& seq, const std::string& loopVarName);
     std::pair<LogicalTensors, LogicalTensors> FinalizeHiddenFunc(Function* hiddenFunc, const ir::StmtPtr& placeholder);
+    void BindExtraIncastStorage(Function* hiddenFunc, const LogicalTensors& originalIncasts,
+                                const LogicalTensors& hiddenInArgs, const LogicalTensors& hiddenOutArgs);
     void AddHiddenFuncValueDepend(Function* hiddenFunc);
     void CreateAndFinalizePathFunc(Function* pathFunc, Function* hiddenFunc, const LogicalTensors& hiddenInArgs,
                                    const LogicalTensors& hiddenOutArgs, const ir::StmtPtr& placeholder);

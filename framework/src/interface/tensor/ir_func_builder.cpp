@@ -96,12 +96,20 @@ private:
                 }
             }
         }
+        auto savedLoopInputs = builder_.loopInputs_;
+        // Use the current iteration's parameter, not the first iteration's initial value.
+        for (const auto& iterArg : forStmt->iterArgs_) {
+            if (auto tensor = AsLogicalTensor(iterArg->iterVar_)) {
+                builder_.loopInputs_[tensor->tensor.get()] = tensor;
+            }
+        }
         auto savedLoopVarName = loopVarName_;
         loopVarName_ = IRContext::Get().GetOriginName(forStmt->loopVar_);
         int unrollTimes = forStmt->GetAttr<int>("unroll_times", 1);
         loopVarName_ += "_Unroll" + std::to_string(unrollTimes);
         auto transformedBody = VisitStmt(forStmt->body_);
         loopVarName_ = savedLoopVarName;
+        builder_.loopInputs_ = std::move(savedLoopInputs);
         return std::make_shared<ir::ForStmt>(forStmt->loopVar_, forStmt->start_, forStmt->stop_, forStmt->step_,
                                              forStmt->iterArgs_, transformedBody, forStmt->returnVars_, forStmt->span_,
                                              forStmt->attrs_);
@@ -421,10 +429,21 @@ void RootFunctionBuilder::ComputeIncast(Function& pathFunc,
                   return lhs->GetMagic() < rhs->GetMagic();
               });
     std::unordered_set<std::shared_ptr<LogicalTensor>> incastPtrs;
+    std::unordered_set<const RawTensor*> inputRaws;
     for (auto& input : sortedInputs) {
         if (definedOutputs.find(input) == definedOutputs.end() && incastPtrs.find(input) == incastPtrs.end()) {
             incastPtrs.insert(input);
             pathFunc.AddOriginIncast(input);
+            inputRaws.insert(input->tensor.get());
+        }
+    }
+    // Append loop storage inputs in the same stable order, deduplicated by raw.
+    for (const auto& input : sortedInputs) {
+        auto entry = loopInputs_.find(input->tensor.get());
+        if (entry != loopInputs_.end() && inputRaws.insert(entry->first).second) {
+            pathFunc.AddOriginIncast(entry->second);
+            extraIncasts_[&pathFunc].insert(entry->second);
+            program_.GetTensorSlotManager()->SetSameSlot(entry->second, input);
         }
     }
 }
@@ -653,6 +672,29 @@ void RootFunctionBuilder::CreateAndFinalizePathFunc(Function* pathFunc, Function
     program_.GetFunctionCache().Insert(pathFunc->GetFunctionHash(), *pathFunc);
 }
 
+void RootFunctionBuilder::BindExtraIncastStorage(Function* hiddenFunc, const LogicalTensors& originalIncasts,
+                                                 const LogicalTensors& hiddenInArgs,
+                                                 const LogicalTensors& hiddenOutArgs)
+{
+    // Keep the entry VIEW, but bind extra loop inputs to the corresponding output storage.
+    const auto& extraIncasts = extraIncasts_[hiddenFunc];
+    for (size_t idx = 0; idx < hiddenInArgs.size(); ++idx) {
+        if (!extraIncasts.count(originalIncasts[idx])) {
+            continue;
+        }
+        auto incast = hiddenFunc->GetIncast()[idx];
+        for (size_t outIdx = 0; outIdx < hiddenOutArgs.size(); ++outIdx) {
+            if (hiddenInArgs[idx]->tensor == hiddenOutArgs[outIdx]->tensor) {
+                auto output = hiddenFunc->GetOutcast()[outIdx];
+                incast->tensor = output->tensor;
+                hiddenFunc->SetSameMemId(incast, output);
+            }
+        }
+        program_.GetTensorSlotManager()->SetSameSlot(originalIncasts[idx], incast);
+    }
+    extraIncasts_.erase(hiddenFunc);
+}
+
 std::pair<LogicalTensors, LogicalTensors> RootFunctionBuilder::FinalizeHiddenFunc(Function* hiddenFunc,
                                                                                   const ir::StmtPtr& placeholder)
 {
@@ -663,8 +705,11 @@ std::pair<LogicalTensors, LogicalTensors> RootFunctionBuilder::FinalizeHiddenFun
     BuildPathFuncSlotScope(hiddenFunc, hiddenScope, hiddenFunc->GetOriginIncast(), hiddenFunc->GetOriginOutcast());
 
     hiddenFunc->CreateTensorDataImportOp();
+    auto originalIncasts = hiddenFunc->GetOriginIncast();
     auto hiddenInArgs = hiddenFunc->MakeIncasts(hiddenScope);
     auto hiddenOutArgs = hiddenFunc->MakeOutcasts(hiddenScope);
+
+    BindExtraIncastStorage(hiddenFunc, originalIncasts, hiddenInArgs, hiddenOutArgs);
     for (size_t idx = 0; idx < hiddenFunc->GetOutcast().size(); idx++) {
         if (hiddenScope->partialUpdateOutcastDict.count(hiddenFunc->GetOutcast()[idx])) {
             hiddenScope->ioslot.partialUpdateOutcastList.push_back(idx);

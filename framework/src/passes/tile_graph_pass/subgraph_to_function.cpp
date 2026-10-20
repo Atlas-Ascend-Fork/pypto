@@ -513,7 +513,10 @@ void SubgraphToFunction::RecordEsgIncastOutcast(Function& function)
                         continue;
                     }
                     const auto& incast = *actualIncast;
-                    outcast->tensor->actualRawmagic = incast->GetRawMagic();
+                    // // Shared storage already addresses the input buffer; do not create a self alias.
+                    if (outcast->GetRawTensor() != incast->GetRawTensor()) {
+                        outcast->tensor->actualRawmagic = incast->GetRawMagic();
+                    }
                     subFuncInvokeInfos[i].RecordTensorArg(k, incast->GetRawMagic(), incast->GetOffset(),
                                                           incast->GetShape(), incast->tensor->rawshape,
                                                           incast->Datatype(), false, incast, op->GetOpMagic());

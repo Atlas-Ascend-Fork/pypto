@@ -40,7 +40,7 @@ class StitchConfig:
     seed: int = 42
 
 
-@pypto.frontend.jit()
+@pypto.frontend.jit(create_new_logical_tensor=True)
 def write_read_write_kernel_2(
     a: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8),
     b: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8),
@@ -124,7 +124,7 @@ def _run(cfg: StitchConfig):
     return out.cpu().numpy(), golden
 
 
-@pypto.options(pass_options={"enable_slice": False})
+@pypto.options(pass_options={"enable_slice": True})
 def test_stitch_outcast_consumer():
     cfg = StitchConfig(128, 256, 128, 128, 128, [64, 64], [64, 128], [128, 128])
     result, golden = _run(cfg)

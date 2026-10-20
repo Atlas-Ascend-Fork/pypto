@@ -65,10 +65,11 @@ def test_war_conflict():
     out_slot = slot_info['out']
     for name, func in prog.functions.items():
         if "_hiddenfunc" in name:
-            outs = [x.name for x in func.params if x.name.startswith("out")]
+            # Includes one loop-entry incast and the outcasts.
+            out_params = [x.name for x in func.params if x.name.startswith("out")]
             if "Unroll1" in name:
-                assert len(outs) == 2
-                assert set(slot_info[x] for x in outs) == {out_slot}
+                assert len(out_params) == 3  # 1 incast + 2 outcasts
+                assert set(slot_info[x] for x in out_params) == {out_slot}
             elif "Unroll2" in name:
-                assert len(outs) == 3
-                assert set(slot_info[x] for x in outs) == {out_slot}
+                assert len(out_params) == 4  # 1 incast + 3 outcasts
+                assert set(slot_info[x] for x in out_params) == {out_slot}
