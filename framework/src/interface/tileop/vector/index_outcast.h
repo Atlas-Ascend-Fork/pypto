@@ -21,7 +21,7 @@
 template <typename T0, typename T1, typename T2, int srcrawShape1, int srcTileH, int srcTileW, int src1SAligned,
           typename DstDtype, typename SrcDtype, typename IdxDtype>
 TILEOP void TIndexOutcastMode2(T0 dst, T1 src, T2 src1, unsigned b, unsigned s, unsigned srcShape3, unsigned srcShape4,
-                               uint64_t offset)
+                               uint64_t offset, unsigned dstShape4)
 {
     set_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
     wait_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
@@ -39,7 +39,7 @@ TILEOP void TIndexOutcastMode2(T0 dst, T1 src, T2 src1, unsigned b, unsigned s, 
         for (LoopVar j = 0; j < s; ++j) {
             int64_t targetRow = static_cast<int64_t>(*dstIdx);
             if (targetRow >= 0) {
-                __gm__ DstDtype* curDst = dstBase + targetRow * srcShape4;
+                __gm__ DstDtype* curDst = dstBase + targetRow * dstShape4;
                 using SrcTileDefine = pto::Tile<pto::TileType::Vec, SrcDtype, srcTileH, srcTileW,
                                                 pto::BLayout::RowMajor, -1, -1>;
                 SrcTileDefine srcTile(srcShape3, srcShape4);
@@ -93,7 +93,7 @@ TILEOP void TIndexOutcast(T0 dst, T1 src, T2 src1, C coordinate)
     constexpr int FULL_ROW_CACHE_MODE = 2;
     if constexpr (cacheMode == FULL_ROW_CACHE_MODE) {
         TIndexOutcastMode2<T0, T1, T2, srcrawShape1, srcTileH, srcTileW, src1SAligned, DstDtype, SrcDtype, IdxDtype>(
-            dst, src, src1, src1Shape3, src1Shape4, srcShape3, srcShape4, offset);
+            dst, src, src1, src1Shape3, src1Shape4, srcShape3, srcShape4, offset, dstShape4);
         return;
     }
 

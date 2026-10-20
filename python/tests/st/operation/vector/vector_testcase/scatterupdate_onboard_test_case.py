@@ -89,4 +89,42 @@ SCATTERUPDATE_ONBOARD_TESTS = [
         'params': {},
         'source_case_index': 1,
     },
+    {
+        'case_index': 2,
+        'case_name': 'ScatterUpdate_test_3',
+        'operation': 'ScatterUpdate',
+        'input_tensors': [
+            {
+                'name': 'input0',
+                'shape': (1, 1, 1, 64),
+                'dtype': 'fp32',
+                'format': 'ND',
+                'need_trans': False,
+                'data_range': {'min': -10, 'max': 10},
+            },
+            {
+                'name': 'input1',
+                'shape': (1, 1),
+                'dtype': 'int64',
+                'format': 'ND',
+                'need_trans': False,
+                'data_range': {'min': 0, 'max': 2},
+            },
+            {
+                'name': 'input2',
+                'shape': (2, 1, 1, 64),
+                'dtype': 'fp32',
+                'format': 'ND',
+                'need_trans': False,
+                'data_range': {'min': 0, 'max': 0},
+            },
+        ],
+        'output_tensors': [
+            {'name': 'output0', 'shape': (2, 1, 1, 64), 'dtype': 'fp32', 'format': 'ND', 'need_trans': False}
+        ],
+        'view_shape': (1, 1, 1, 64),
+        'tile_shape': (1, 1, 1, 32),
+        'params': {},
+        'source_case_index': 0,
+    },
 ]

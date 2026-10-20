@@ -27,8 +27,13 @@ void SetCopyAttr::ProcessSpecialMTEOperation(Operation& op) const
     if ((inputTensor == nullptr) || (outputTensor == nullptr)) {
         return;
     }
+    /* OP_INDEX_PUT/OP_INDEX_ADD 的offset信息在第一个输入张量中 */
     if (op.GetOpcode() == Opcode::OP_INDEX_PUT || op.GetOpcode() == Opcode::OP_INDEX_ADD) {
         outputTensor = inputTensor;
+    }
+    /* OP_INDEX_OUTCAST 的offset信息在第三个输入张量中 */
+    if (op.GetOpcode() == Opcode::OP_INDEX_OUTCAST && op.GetStringAttribute(OpAttributeKey::cacheMode) == "PA_BSND") {
+        outputTensor = op.iOperand[2];
     }
     /* transpose datamove 输入和输出的shape不相同 */
     op.SetOpAttribute(std::make_shared<CopyOpAttribute>(

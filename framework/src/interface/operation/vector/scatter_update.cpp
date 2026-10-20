@@ -145,10 +145,9 @@ void TiledScatterUpdateFor2Dims(Function& function, const TileShape& tileShape, 
     int64_t s = index->shape[1];
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, s != 0) << "1 dim of index is zero.";
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, tileBS != 0) << "0 dim of tileshape is zero.";
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, tileD != 0) << "1 dim of tileshape is zero.";
     CHECK(VectorErrorCode::ERR_CONFIG_TILE, (tileBS <= s && s % tileBS == 0) || (tileBS > s && tileBS % s == 0))
         << "tileshape 0 is invalid, tileshape(" << tileBS << ", " << tileD << ")";
-    CHECK(VectorErrorCode::ERR_CONFIG_TILE, tileD == src->shape[NUM_VALUE_1])
-        << "The tileD and src shape[0] should be equal";
     int64_t tileB = CeilDiv(tileBS, s);
     int64_t tileS = tileBS < s ? tileBS : s;
     int64_t bsOffset = 0;
@@ -161,7 +160,8 @@ void TiledScatterUpdateFor2Dims(Function& function, const TileShape& tileShape, 
                 auto srcTile = src->View(
                     function, {std::min(src->shape[0] - bsOffset, tileBS), std::min(src->shape[1] - j, tileD)},
                     {bsOffset, j});
-                auto& op = function.AddOperation("TILE_INDEX_OUTCAST", {srcTile, indexTile, dst}, {result});
+                auto dstTile = dst->View(function, {dst->shape[0], std::min(dst->shape[1] - j, tileD)}, {0, j});
+                auto& op = function.AddOperation("TILE_INDEX_OUTCAST", {srcTile, indexTile, dstTile}, {result});
                 op.SetAttribute("axis", axis);
                 op.SetAttribute(OpAttributeKey::panzBlockSize, blockSize);
                 op.SetAttribute(OpAttributeKey::cacheMode, cacheMode);
@@ -180,6 +180,10 @@ void TiledScatterUpdateFor4Dims(Function& function, const TileShape& tileShape, 
     int64_t tileS = vecTile[NUM_VALUE_1];
     int64_t tileN = vecTile[NUM_VALUE_2];
     int64_t tileD = vecTile[NUM_VALUE_3];
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, tileB != 0) << "0 dim of tileshape is zero.";
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, tileS != 0) << "1 dim of tileshape is zero.";
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, tileN != 0) << "2 dim of tileshape is zero.";
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, tileD != 0) << "3 dim of tileshape is zero.";
     for (int64_t i = 0; i < src->shape[0]; i += tileB) {
         for (int64_t j = 0; j < src->shape[1]; j += tileS) {
             auto indexTile = index->View(
@@ -191,7 +195,11 @@ void TiledScatterUpdateFor4Dims(Function& function, const TileShape& tileShape, 
                         {std::min(src->shape[0] - i, tileB), std::min(src->shape[1] - j, tileS),
                          std::min(src->shape[NUM_VALUE_2] - n, tileN), std::min(src->shape[NUM_VALUE_3] - d, tileD)},
                         {i, j, n, d});
-                    auto& op = function.AddOperation("TILE_INDEX_OUTCAST", {srcTile, indexTile, dst}, {result});
+                    auto dstTile = dst->View(function,
+                                             {dst->shape[0], dst->shape[1], dst->shape[NUM_VALUE_2],
+                                              std::min(dst->shape[NUM_VALUE_3] - d, tileD)},
+                                             {0, 0, 0, d});
+                    auto& op = function.AddOperation("TILE_INDEX_OUTCAST", {srcTile, indexTile, dstTile}, {result});
                     op.SetAttribute("axis", axis);
                     op.SetAttribute(OpAttributeKey::panzBlockSize, blockSize);
                     op.SetAttribute(OpAttributeKey::cacheMode, cacheMode);
