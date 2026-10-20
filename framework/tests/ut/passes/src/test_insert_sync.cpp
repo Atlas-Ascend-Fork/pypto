@@ -1405,6 +1405,41 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesConsecutiveUnpairedSyncOps)
     ExpectOpListEq(opList, {&wait, &add, &midExp, &cast, &set});
 }
 
+// 反向 pipe 对复用同一 eventId（V->MTE2 set 与 MTE2->V wait）是两个无关事件，不构成配对，允许调整
+TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeAllowsOppositeDirectionSameEventId)
+{
+    NpuArchScope scopedArch(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("TestAllowOppositeDirection");
+    (void)root;
+    auto ts = MakeTensors(IS_NUM5, {IS_NUM8, IS_NUM16});
+    auto& add = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_ADD, {ts[0], ts[1]}, {ts[2]});
+    auto& midExp = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_EXP, {ts[2]}, {ts[3]});
+    auto& cast = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_CAST, {ts[3]}, {ts[4]});
+    // set: V->MTE2, eventId=6（V 产出通知 MTE2 搬运）
+    // wait: MTE2->V, eventId=6（V 等 MTE2 搬运就绪）—— 反向对独立分配 eventid，数值相同只是复用
+    std::vector<std::shared_ptr<LogicalTensor>> emptyInput;
+    std::vector<std::shared_ptr<LogicalTensor>> emptyOutput;
+    Operation& set = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_SYNC_SRC, emptyInput, emptyOutput);
+    set.syncQueue_ = {PipeType::PIPE_V, PipeType::PIPE_MTE2, CoreType::AIV, CoreType::AIV,
+                      IS_NUM6,          AIVCore::AIV0,       AIVCore::AIV0};
+    set.SetAIVCore(AIVCore::AIV0);
+    Operation& wait = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_SYNC_DST, emptyInput, emptyOutput);
+    wait.syncQueue_ = {PipeType::PIPE_MTE2, PipeType::PIPE_V, CoreType::AIV, CoreType::AIV, IS_NUM6,
+                       AIVCore::AIV0,       AIVCore::AIV0};
+    wait.SetAIVCore(AIVCore::AIV0);
+    add.SetAtomicScopeId(VF_SCOPE_A);
+    midExp.SetAtomicScopeId(VF_SCOPE_A);
+    cast.SetAtomicScopeId(VF_SCOPE_A);
+    add.SetAIVCore(AIVCore::AIV0);
+    midExp.SetAIVCore(AIVCore::AIV0);
+    cast.SetAIVCore(AIVCore::AIV0);
+    std::vector<Operation*> opList = {&add, &set, &midExp, &wait, &cast};
+
+    InsertSync syncPass;
+    EXPECT_EQ(syncPass.AdjustSyncByAtomicScope(opList, {}), SUCCESS);
+    ExpectOpListEq(opList, {&wait, &add, &midExp, &cast, &set});
+}
+
 // cluster 内的核间同步 set（OP_CV_SYNC_SRC）可移动，移到 cluster 后
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeMovesCvSetAfterCluster)
 {
@@ -1623,7 +1658,7 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeNoopsOnNonA5)
     ExpectOpListEq(opList, {&add, &wait, &cast});
 }
 
-// 同一 cluster 内出现配对的 set/wait（相同 eventId + pipe 互换匹配）时失败
+// 同一 cluster 内出现配对的 set/wait（同一 (setPipe, waitPipe, eventId) 三元组）时失败
 TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeRejectsPairedSetWaitInSameCluster)
 {
     NpuArchScope scopedArch(NPUArch::DAV_3510);
@@ -1633,11 +1668,8 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeRejectsPairedSetWaitInSameCluster)
     auto& add = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_ADD, {ts[0], ts[1]}, {ts[2]});
     auto& midExp = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_EXP, {ts[2]}, {ts[3]});
     auto& cast = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_CAST, {ts[3]}, {ts[4]});
-    // set: pipeId_=PIPE_V, trigPipeId_=PIPE_MTE2, eventId_=3
-    // wait: pipeId_=PIPE_MTE2, trigPipeId_=PIPE_V, eventId_=3
-    // 配对条件：set.pipeId_ == wait.trigPipeId_ (PIPE_V == PIPE_V)
-    //           set.trigPipeId_ == wait.pipeId_ (PIPE_MTE2 == PIPE_MTE2)
-    //           eventId 相同 (3 == 3)
+    // 同一对 set/wait: 两端 syncQueue_ 均按 {set.pipe, wait.pipe} 构造 (GenSyncOp),
+    // codegen 生成 set_flag(V, MTE2, 3) / wait_flag(V, MTE2, 3), 三元组完全一致
     std::vector<std::shared_ptr<LogicalTensor>> emptyInput;
     std::vector<std::shared_ptr<LogicalTensor>> emptyOutput;
     Operation& setOp = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_SYNC_SRC, emptyInput, emptyOutput);
@@ -1645,8 +1677,8 @@ TEST_F(InsertSyncTest, AdjustSyncByAtomicScopeRejectsPairedSetWaitInSameCluster)
                         IS_NUM3,          AIVCore::AIV0,       AIVCore::AIV0};
     setOp.SetAIVCore(AIVCore::AIV0);
     Operation& waitOp = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_SYNC_DST, emptyInput, emptyOutput);
-    waitOp.syncQueue_ = {PipeType::PIPE_MTE2, PipeType::PIPE_V, CoreType::AIV, CoreType::AIV, IS_NUM3,
-                         AIVCore::AIV0,       AIVCore::AIV0};
+    waitOp.syncQueue_ = {PipeType::PIPE_V, PipeType::PIPE_MTE2, CoreType::AIV, CoreType::AIV,
+                         IS_NUM3,          AIVCore::AIV0,       AIVCore::AIV0};
     waitOp.SetAIVCore(AIVCore::AIV0);
     add.SetAtomicScopeId(VF_SCOPE_A);
     midExp.SetAtomicScopeId(VF_SCOPE_A);

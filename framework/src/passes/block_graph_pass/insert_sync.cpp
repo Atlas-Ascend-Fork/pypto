@@ -2059,22 +2059,12 @@ bool InsertSync::IsImmovableSync(Opcode opcode)
            opcode == Opcode::OP_BAR_ALL || opcode == Opcode::OP_BAR_V || opcode == Opcode::OP_BAR_M;
 }
 
-InsertSync::SyncSignature InsertSync::MakeSyncSignature(int eventId, PipeType setPipe, PipeType waitPipe)
+InsertSync::SyncSignature InsertSync::GetSyncSignature(int eventId, PipeType setPipe, PipeType waitPipe)
 {
     // 位布局：低 8 bit 为 waitPipe，次 8 bit 为 setPipe，其余高位为 eventId。
     constexpr int PIPE_FIELD_BITS = 8;
     return (static_cast<uint64_t>(eventId) << (2 * PIPE_FIELD_BITS)) |
            (static_cast<uint64_t>(setPipe) << PIPE_FIELD_BITS) | static_cast<uint64_t>(waitPipe);
-}
-
-InsertSync::SyncSignature InsertSync::GetSyncSignature(const OpSyncQueue& sq, bool isSet)
-{
-    // set 签名: (eventId, pipeId_, trigPipeId_) = (eventId, setPipe, waitPipe)
-    // wait 反签名: (eventId, trigPipeId_, pipeId_) = (eventId, setPipe, waitPipe)（互换 pipe）
-    if (isSet) {
-        return MakeSyncSignature(sq.eventId_, sq.pipeId_, sq.trigPipeId_);
-    }
-    return MakeSyncSignature(sq.eventId_, sq.trigPipeId_, sq.pipeId_);
 }
 
 // Pass 1: 确定 cluster 范围（只看非 sync op 的 scopeId），O(N)
@@ -2160,17 +2150,25 @@ Status InsertSync::ValidateAndCollectClusterSyncOps(const std::vector<Operation*
         // 前、set 挪到 cluster 后，会与原位配对端形成顺序颠倒（如 V set C wait C set V wait 挪动后
         // 变为 V wait C wait C set V set）互等死锁，须报错拒绝调整。普通 SYNC_SRC/DST 为同核跨
         // pipe 同步，配对可能同簇出现，签名检查同理保留。
+        // 单趟正序扫描即充分：InjectSync 按产出/消费位置插入 sync，产出者恒先于消费者，真配对的
+        // set 必先于 wait 出现；同簇内 wait 先于同签名 set 出现时二者必属 eventid 复用的两个不同
+        // 对（前一对的 wait 已把 eventid 归还池中），wait 挪前、set 挪后仍保持各对自己内部的
+        // set->wait 顺序，合法放行。
         if (op->GetOpcode() == Opcode::OP_SYNC_DST) {
-            if (ci.setSignatures.count(GetSyncSignature(op->syncQueue_, false)) > 0) {
+            if (ci.setSignatures.count(GetSyncSignature(op->syncQueue_.eventId_, op->syncQueue_.pipeId_,
+                                                        op->syncQueue_.trigPipeId_)) > 0) {
                 APASS_LOG_ERROR_F(Elements::Operation,
-                                  "AdjustSyncByAtomicScope failed: paired set/wait (eventId=%d) in cluster %d.",
-                                  op->syncQueue_.eventId_, scopeId);
+                                  "AdjustSyncByAtomicScope failed: paired set/wait (eventId=%d, setPipe=%s, "
+                                  "waitPipe=%s) in cluster %d.",
+                                  op->syncQueue_.eventId_, GetPipeTypeDict().Find(op->syncQueue_.pipeId_).c_str(),
+                                  GetPipeTypeDict().Find(op->syncQueue_.trigPipeId_).c_str(), scopeId);
                 return FAILED;
             }
             ci.waitSyncs.push_back(op);
         } else if (op->GetOpcode() == Opcode::OP_SYNC_SRC) {
             ci.setSyncs.push_back(op);
-            ci.setSignatures.insert(GetSyncSignature(op->syncQueue_, true));
+            ci.setSignatures.insert(
+                GetSyncSignature(op->syncQueue_.eventId_, op->syncQueue_.pipeId_, op->syncQueue_.trigPipeId_));
         } else if (op->GetOpcode() == Opcode::OP_CV_SYNC_DST) {
             if (ci.cvSetEventIds.count(op->syncQueue_.eventId_) > 0) {
                 APASS_LOG_ERROR_F(Elements::Operation,

@@ -495,9 +495,11 @@ private:
     static bool IsImmovableSync(Opcode opcode);
     // 配对签名：(eventId, setPipe, waitPipe) 编码为 uint64
     using SyncSignature = uint64_t;
-    static SyncSignature MakeSyncSignature(int eventId, PipeType setPipe, PipeType waitPipe);
-    // isSet=true 返回 set 签名，isSet=false 返回 wait 的反签名（用于配对查找）
-    static SyncSignature GetSyncSignature(const OpSyncQueue& sq, bool isSet);
+    static SyncSignature GetSyncSignature(int eventId, PipeType setPipe, PipeType waitPipe);
+    // 配对标识 = 硬件事件三元组 (eventId, setPipe, waitPipe)：GenSyncOp 对 OP_SYNC_SRC/OP_SYNC_DST
+    // 均按 {set.pipe, wait.pipe} 写入 syncQueue_，codegen 的 set_flag/wait_flag 用相同参数序
+    // (PrintSyncInSingleKernel 只换助记符)，故 set/wait 两侧取同一签名；eventId 由 freeEventId_
+    // 按有序 pipe 对 (PipePairEx) 分池，反向 pipe 对同号属复用而非同对。
     // cluster 信息
     struct ClusterInfo {
         size_t firstIdx{SIZE_MAX};
