@@ -9,11 +9,11 @@
  */
 
 /*!
- * \file fed_prof_aicpu_prof.cpp
+ * \file fed_prof_manager_aicpu.cpp
  * \brief
  */
 
-#include "machine/runtime/runner/fed_prof.h"
+#include "machine/runtime/runner/fed_prof_manager.h"
 #include "machine/runtime/runner/fed_prof_io_json.h"
 
 #include <cstdlib>
@@ -42,59 +42,31 @@ constexpr uint32_t AICPU_NUM_OF_RUN_AICPU_TASKS = 1;
 } // namespace npu::tile_fwk::dynamic
 
 namespace npu::tile_fwk {
-uint64_t FedProf::AicpuProfAllocateData()
-{
-    if (aicpuProfAllocated_) {
-        return aicpuProfDevAddr_;
-    }
-    if (GetEnvVar("DUMP_DEVICE_PERF") == "true") {
-        auto aicpuDevPtr = DevMallocWithAlignSize(FED_PROF_DEV_TASK_MAX_COUNT * sizeof(FedProfAicpuProf),
-                                                  TWO_MB_HUGE_PAGE_FLAGS);
-        if (aicpuDevPtr == nullptr) {
-            MACHINE_LOGW("Aicpu prof addr malloc failed");
-            return 0;
-        }
-        aicpuProfDevAddr_ = dynamic::PtrToValue(aicpuDevPtr);
-        aicpuProfAllocated_ = true;
-    }
-    return aicpuProfDevAddr_;
-}
 
-void FedProf::AicpuProfDumpThreadStart()
+void FedProfManager::AicpuProfDumpThreadStart()
 {
-    if (aicpuProfDevAddr_ == 0) {
+    if (AicpuProfDevAddr() == 0) {
         return;
     }
     if (dumpThread_.joinable()) {
         return;
     }
     dumpThreadStopFlag_.store(false);
-    dumpThread_ = std::thread(&FedProf::AicpuProfDumpThreadEntry, this);
+    dumpThread_ = std::thread(&FedProfManager::AicpuProfDumpThreadEntry, this);
     MACHINE_LOGI("Dump thread started");
 }
 
-void FedProf::AicpuProfDumpThreadStop()
+void FedProfManager::AicpuProfDumpThreadStop()
 {
     if (!dumpThread_.joinable()) {
         return;
     }
     dumpThreadStopFlag_.store(true);
-    if (dumpThread_.joinable()) {
-        dumpThread_.join();
-    }
+    dumpThread_.join();
     MACHINE_LOGD("Dump thread stopped");
-
-    if (aicpuProfDevAddr_ != 0) {
-        void* ptr = npu::tile_fwk::dynamic::ValueToPtr(aicpuProfDevAddr_);
-        if (ptr != nullptr) {
-            RuntimeFree(ptr);
-            aicpuProfDevAddr_ = 0;
-            aicpuProfAllocated_ = false;
-        }
-    }
 }
 
-void FedProf::AicpuProfDumpThreadEntry()
+void FedProfManager::AicpuProfDumpThreadEntry()
 {
     MACHINE_LOGD("Dump thread starts to dump machine perf trace data");
     int32_t deviceId = static_cast<int32_t>(args_.deviceId);
@@ -109,17 +81,16 @@ void FedProf::AicpuProfDumpThreadEntry()
     AicpuProfMaybeDumpSwimlane(true);
 }
 
-void FedProf::AicpuProfMaybeDumpSwimlane(bool isLast)
+void FedProfManager::AicpuProfMaybeDumpSwimlane(bool isLast)
 {
-    if (GetEnvVar("DUMP_DEVICE_PERF") == "true" && perCoreProfDevAddr_ != 0) {
-        uint64_t freq = (args_.archInfo == ArchInfo::DAV_2201) ? dynamic::FREQ_DAV_2201 : dynamic::FREQ_DAV_3510;
-        AicpuProfDumpSwimlane(freq, isLast);
+    if (GetEnvVar("DUMP_DEVICE_PERF") == "true" && PerCoreProfDevAddr() != 0) {
+        AicpuProfDumpSwimlane(isLast);
     }
 }
 
-int64_t FedProf::AicpuProfDumpSwimlaneCheck(bool isLast)
+int64_t FedProfManager::AicpuProfDumpSwimlaneCheck(bool isLast)
 {
-    void* devPtr = dynamic::ValueToPtr(perCoreProfDevAddr_);
+    void* devPtr = dynamic::ValueToPtr(PerCoreProfDevAddr());
     size_t dataSize = FED_PROF_PER_CORE_PROF_SIZE;
     std::vector<uint8_t> hostBuffer(dataSize);
     auto memcpyRet = NormalizedRtMemcpy(hostBuffer.data(), dataSize, devPtr, dataSize, RtMemcpyKind::DEVICE_TO_HOST);
@@ -140,28 +111,29 @@ int64_t FedProf::AicpuProfDumpSwimlaneCheck(bool isLast)
     return currLaunchRound;
 }
 
-void FedProf::AicpuProfDumpSwimlane(uint32_t freq, bool isLast)
+void FedProfManager::AicpuProfDumpSwimlane(bool isLast)
 {
     int64_t currLaunchRound = AicpuProfDumpSwimlaneCheck(isLast);
     if (currLaunchRound <= 0) {
         return;
     }
-    uint32_t blockNum = args_.GetBlockNum();
-    std::vector<FedProfPerCoreProf*> perCoreProfList(blockNum);
-    std::vector<std::vector<uint8_t>> hostBufferList(blockNum);
-    PerCoreProfCopyToHost(blockNum, perCoreProfList, hostBufferList);
+    FedProfLaunchArgs launchArgs{lastDumpRound, static_cast<uint32_t>(currLaunchRound)};
+    std::vector<uint8_t> perCoreHostBuffer;
+    std::vector<FedProfDataBase*> perCoreDataList;
+    profList_[FED_PROF_PER_CORE_PROF]->DeviceDataGet(perCoreHostBuffer, perCoreDataList, args_, FedProfLaunchArgs{});
 
     json launchObjList = json::array();
-    std::vector<FedProfAicpuProf> aicpuProfList;
-    AicpuProfCopyToHost(currLaunchRound, aicpuProfList);
-    dynamic::FedProfLaunchAicpuDumpJson(launchObjList, args_.nrAicpu, args_.scheCpuNum, freq, currLaunchRound,
-                                        lastDumpRound, aicpuProfList);
-    dynamic::FedProfLaunchAicoreDumpJson(launchObjList, blockNum, args_.nrValidAic, freq, currLaunchRound,
-                                         lastDumpRound, perCoreProfList);
+    std::vector<uint8_t> aicpuHostBuffer;
+    std::vector<FedProfDataBase*> aicpuDataList;
+    profList_[FED_PROF_AICPU_PROF]->DeviceDataGet(aicpuHostBuffer, aicpuDataList, args_, launchArgs);
+    profList_[FED_PROF_AICPU_PROF]->DumpJson(launchObjList, aicpuHostBuffer, aicpuDataList, args_, launchArgs);
+    auto* perCoreProf = static_cast<FedProfPerCoreProfHolder*>(profList_[FED_PROF_PER_CORE_PROF].get());
+    perCoreProf->DumpJsonAicpuProf(launchObjList, perCoreHostBuffer, perCoreDataList, args_, launchArgs);
+    profList_[FED_PROF_AICPU_PROF]->DeviceDataClear();
     AicpuProfDumpSwimlaneDraw(launchObjList, currLaunchRound);
 }
 
-void FedProf::AicpuProfDumpSwimlaneDraw(const json& launchObjList, uint32_t currLaunchRound)
+void FedProfManager::AicpuProfDumpSwimlaneDraw(const json& launchObjList, uint32_t currLaunchRound)
 {
     std::string aicpuPerfilePath = config::LogTopFolder() + "/machine_trace_perf_data_" +
                                    std::to_string(lastDumpRound) + ".json";

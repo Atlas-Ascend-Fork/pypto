@@ -17,7 +17,7 @@
 #include "tilefwk/pypto_fwk_log.h"
 #include "tilefwk/error_code.h"
 #include "interface/utils/common.h"
-#include "machine/runtime/runner/fed_prof.h"
+#include "machine/runtime/runner/fed_prof_manager.h"
 #include "machine/runtime/runner/runtime_utils.h"
 #include "machine/runtime/memory_utils/memory_pool.h"
 #include "machine/device/dynamic/device_common.h"
@@ -56,12 +56,16 @@ void DeviceDfx::InitDevDfxArgs(const bool isPerfTrace, DevDfxArgs& devDfxArg)
 
 bool DeviceDfx::Init(DeviceArgs& args)
 {
-    args.aicpuProfAddr = FedProf::GetInstance().AicpuProfAllocateData();
-    args.perCoreProfAddr = FedProf::GetInstance().PerCoreProfAllocateData(args.nrAic, args.nrAiv);
+    FedProfManager::GetInstance().InitDeviceArgs(args);
+    for (uint32_t kind = FED_PROF_PER_CORE_PROF; kind < FED_PROF_KIND_MAX; kind++) {
+        args.fedProfAddrList[kind] = FedProfManager::GetInstance().DeviceDataAllocate(static_cast<FedProfKind>(kind));
+    }
 
     DevDfxArgs dfxArgs;
-    InitDevDfxArgs(args.aicpuProfAddr != 0, dfxArgs);
+    InitDevDfxArgs(args.fedProfAddrList[FED_PROF_AICPU_PROF] != 0, dfxArgs);
     args.devDfxArgAddr = reinterpret_cast<uint64_t>(CopyDataToDevice(&dfxArgs, sizeof(DevDfxArgs)));
+    // Init again to refresh devDfxArgAddr
+    FedProfManager::GetInstance().InitDeviceArgs(args);
     if (args.devDfxArgAddr == 0) {
         MACHINE_LOGE(DevCommonErr::ALLOC_FAILED, "Fail to copy dfx info from host to device.");
         return false;

@@ -35,6 +35,6 @@ void FedProfLaunchAicpuDevTaskDumpJson(uint32_t tid, uint32_t type, json& devTas
                                        const uint32_t& turnIdx);
 void FedProfLaunchAicpuDumpJson(json& launchObjList, uint32_t nrAicpu, uint32_t scheCpuNum, const uint32_t& freq,
                                 const uint32_t& currLaunchRound, const uint32_t& lastDumpRound,
-                                const std::vector<FedProfAicpuProf>& hostBufferList);
+                                const std::vector<FedProfAicpuProf*>& aicpuProfList);
 } // namespace npu::tile_fwk::dynamic
 #endif

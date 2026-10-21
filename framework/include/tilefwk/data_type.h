@@ -23,10 +23,6 @@
 #include <unordered_map>
 #include <cstdint>
 
-#ifndef UNUSED
-#define UNUSED(n) (void)(n)
-#endif
-
 namespace npu::tile_fwk {
 const std::unordered_map<size_t, size_t> BLOCK_PADDING_DIM = {{1, 32}, {2, 16}, {4, 8}, {8, 4}};
 

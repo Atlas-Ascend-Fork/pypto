@@ -11,7 +11,7 @@
 #include <gtest/gtest.h>
 #define private public
 #include "machine/runtime/runner/device_dfx.h"
-#include "machine/runtime/runner/fed_prof.h"
+#include "machine/runtime/runner/fed_prof_manager.h"
 #undef private
 
 using namespace npu::tile_fwk;
@@ -34,6 +34,6 @@ TEST(DeviceDfxTest, Singleton_AndInitDevDfxArgs)
 TEST(DeviceDfxTest, InitAicpuPerfAddr_NoEnvVar)
 {
     DeviceArgs args{};
-    args.aicpuProfAddr = FedProf::GetInstance().AicpuProfAllocateData();
-    EXPECT_EQ(args.aicpuProfAddr, 0u);
+    args.fedProfAddrList[FED_PROF_AICPU_PROF] = FedProfManager::GetInstance().DeviceDataAllocate(FED_PROF_AICPU_PROF);
+    EXPECT_EQ(args.fedProfAddrList[FED_PROF_AICPU_PROF], 0u);
 }

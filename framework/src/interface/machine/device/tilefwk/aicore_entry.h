@@ -374,9 +374,9 @@ INLINE void KernelEntry(int64_t ffts_addr, int64_t inputs, int64_t outputs, int6
 #endif
     auto devArgs = (DeviceArgs*)cfgdata;
     __gm__ KernelArgs* args = (__gm__ KernelArgs*)(devArgs->sharedBuffer + blockIdx * SHARED_BUFFER_SIZE);
-    __gm__ FedProfPerCoreProf* perCoreProf = (__gm__ FedProfPerCoreProf*)(devArgs->perCoreProfAddr +
-                                                                          blockIdx *
-                                                                              FED_PROF_PER_CORE_PROF_ALIGNED_SIZE);
+    __gm__ FedProfPerCoreProf*
+        perCoreProf = (__gm__ FedProfPerCoreProf*)(devArgs->fedProfAddrList[FED_PROF_PER_CORE_PROF] +
+                                                   blockIdx * FED_PROF_PER_CORE_PROF_ALIGNED_SIZE);
     ExecuteContext ctx = {};
     ctx.args = args;
     ctx.blockIdx = blockIdx;

@@ -9,10 +9,11 @@
 #include <filesystem>
 
 #define private public
-#include "machine/runtime/runner/fed_prof.h"
+#include "machine/runtime/runner/fed_prof_manager.h"
 #undef private
 #include "tilefwk/aicpu_common.h"
 #include "machine/device/dynamic/device_utils.h"
+#include "machine/runtime/memory_utils/memory_pool.h"
 #include "interface/configs/config_manager.h"
 #include "nlohmann/json.hpp"
 using json = nlohmann::json;
@@ -29,15 +30,14 @@ class DumpDevicePerfTest : public testing::Test {};
 
 TEST_F(DumpDevicePerfTest, DumpDevTaskPerfData_EmptyPerfData)
 {
-    FedProf perf;
+    FedProfManager perf;
     perf.AicpuProfMaybeDumpSwimlane(false);
     SUCCEED();
 }
 
 TEST_F(DumpDevicePerfTest, DumpDevTaskPerfData_EnvNotSet)
 {
-    FedProf perf;
-    perf.perCoreProfDevAddr_ = 0;
+    FedProfManager perf;
     perf.AicpuProfMaybeDumpSwimlane(false);
     SUCCEED();
 }
@@ -143,11 +143,14 @@ TEST_F(DumpDevicePerfTest, DumpAicoreTaskExectInfo_Basic)
 
     std::vector<uint8_t> buffers(3 * FED_PROF_PER_CORE_PROF_ALIGNED_SIZE, 0);
 
-    FedProf perf;
+    setenv("DUMP_DEVICE_PERF", "true", 1);
+    FedProfManager perf;
     perf.args_ = args;
-    perf.perCoreProfDevAddr_ = PtrToValue(buffers.data());
+    uint64_t perCoreProfAddr = perf.DeviceDataAllocate(FED_PROF_PER_CORE_PROF);
+    NormalizedRtMemcpy(dynamic::ValueToPtr(perCoreProfAddr), buffers.size(), buffers.data(), buffers.size(),
+                       RtMemcpyKind::HOST_TO_DEVICE);
     perf.PerCoreProfDumpSwimlane();
-    perf.perCoreProfDevAddr_ = 0;
+    unsetenv("DUMP_DEVICE_PERF");
     SUCCEED();
 }
 
@@ -159,13 +162,16 @@ TEST_F(DumpDevicePerfTest, DumpAicoreTaskExectInfo_MultipleBlocks)
     args.nrValidAic = 2;
     args.nrAicpu = 3;
 
-    std::vector<uint8_t> buffers(7 * FED_PROF_PER_CORE_PROF_ALIGNED_SIZE, 0);
+    std::vector<uint8_t> buffers(5 * FED_PROF_PER_CORE_PROF_ALIGNED_SIZE, 0);
 
-    FedProf perf;
+    setenv("DUMP_DEVICE_PERF", "true", 1);
+    FedProfManager perf;
     perf.args_ = args;
-    perf.perCoreProfDevAddr_ = PtrToValue(buffers.data());
+    uint64_t perCoreProfAddr = perf.DeviceDataAllocate(FED_PROF_PER_CORE_PROF);
+    NormalizedRtMemcpy(dynamic::ValueToPtr(perCoreProfAddr), buffers.size(), buffers.data(), buffers.size(),
+                       RtMemcpyKind::HOST_TO_DEVICE);
     perf.PerCoreProfDumpSwimlane();
-    perf.perCoreProfDevAddr_ = 0;
+    unsetenv("DUMP_DEVICE_PERF");
     SUCCEED();
 }
 
@@ -194,11 +200,14 @@ TEST_F(DumpDevicePerfTest, DumpAicoreTaskExectInfo_WithSwimlaneFiles)
 
     std::vector<uint8_t> buffers(3 * FED_PROF_PER_CORE_PROF_ALIGNED_SIZE, 0);
 
-    FedProf perf;
+    setenv("DUMP_DEVICE_PERF", "true", 1);
+    FedProfManager perf;
     perf.args_ = args;
-    perf.perCoreProfDevAddr_ = PtrToValue(buffers.data());
+    uint64_t perCoreProfAddr = perf.DeviceDataAllocate(FED_PROF_PER_CORE_PROF);
+    NormalizedRtMemcpy(dynamic::ValueToPtr(perCoreProfAddr), buffers.size(), buffers.data(), buffers.size(),
+                       RtMemcpyKind::HOST_TO_DEVICE);
     perf.PerCoreProfDumpSwimlane();
-    perf.perCoreProfDevAddr_ = 0;
+    unsetenv("DUMP_DEVICE_PERF");
 
     std::filesystem::remove(programJsonPath);
     std::filesystem::remove(dynTopoPath);

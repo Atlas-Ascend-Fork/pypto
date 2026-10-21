@@ -53,7 +53,7 @@ public:
     inline void InitDeviceArgs(DeviceArgs* deviceArgs)
     {
         sharedBuffer_ = deviceArgs->sharedBuffer;
-        perCoreProfAddr_ = deviceArgs->perCoreProfAddr;
+        perCoreProfAddr_ = deviceArgs->fedProfAddrList[FED_PROF_PER_CORE_PROF];
         aicNum_ = deviceArgs->nrAic;
         aivNum_ = deviceArgs->nrAiv;
         archInfo_ = deviceArgs->archInfo;

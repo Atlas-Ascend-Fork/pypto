@@ -164,7 +164,7 @@ void FedProfLaunchAicpuDevTaskDumpJson(uint32_t tid, uint32_t type, json& devTas
 
 void FedProfLaunchAicpuDumpJson(json& launchObjList, uint32_t nrAicpu, uint32_t scheCpuNum, const uint32_t& freq,
                                 const uint32_t& currLaunchRound, const uint32_t& lastDumpRound,
-                                const std::vector<FedProfAicpuProf>& hostBufferList)
+                                const std::vector<FedProfAicpuProf*>& aicpuProfList)
 {
     for (uint32_t i = 0; i < nrAicpu - 1; i++) {
         json aicpu;
@@ -179,7 +179,7 @@ void FedProfLaunchAicpuDumpJson(json& launchObjList, uint32_t nrAicpu, uint32_t 
         aicpu["freq"] = freq;
         json aicpuDevTasks = json::array();
         for (uint32_t launchIndex = lastDumpRound; launchIndex < currLaunchRound; launchIndex++) {
-            const FedProfAicpuProf* aicpuMetric = &hostBufferList[launchIndex];
+            const FedProfAicpuProf* aicpuMetric = aicpuProfList[launchIndex - lastDumpRound];
             for (uint32_t type = 0; type < PERF_TRACE_MAX; type++) {
                 if (IsDevTaskType(type)) {
                     FedProfLaunchAicpuDevTaskDumpJson(i, type, aicpuDevTasks, aicpuMetric, launchIndex);

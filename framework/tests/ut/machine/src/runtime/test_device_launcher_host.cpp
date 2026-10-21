@@ -285,7 +285,7 @@ TEST_F(DeviceLauncherHostTest, RunWithProfile_AllModes_ReturnZero)
 TEST_F(DeviceLauncherHostTest, MiscNoOpFunctions_NoCrash)
 {
     ToSubMachineConfig machinConfig;
-    auto& perf = FedProf::GetInstance();
+    auto& perf = FedProfManager::GetInstance();
     uint8_t sharedBuf[1024] = {0};
     if (perf.args_.sharedBuffer == 0) {
         perf.args_.sharedBuffer = reinterpret_cast<uint64_t>(sharedBuf);

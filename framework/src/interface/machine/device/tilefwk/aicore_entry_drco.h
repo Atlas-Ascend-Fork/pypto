@@ -1798,7 +1798,7 @@ INLINE void InitDrcoEntry(DrcoEntryState* state, int64_t cfgdata)
     state->blockDesc = BlockDescCreate(blockIdx, typedBlockIdx, devArgs->nrValidAic, devArgs->nrValidAic * 2);
     state->args = (__gm__ KernelArgs*)(devArgs->sharedBuffer +
                                        BlockDescBlockIdx(state->blockDesc) * SHARED_BUFFER_SIZE);
-    __gm__ FedProfPerCoreProf* metric = (__gm__ FedProfPerCoreProf*)(devArgs->perCoreProfAddr +
+    __gm__ FedProfPerCoreProf* metric = (__gm__ FedProfPerCoreProf*)(devArgs->fedProfAddrList[FED_PROF_PER_CORE_PROF] +
                                                                      BlockDescBlockIdx(state->blockDesc) *
                                                                          FED_PROF_PER_CORE_PROF_ALIGNED_SIZE);
     state->metric = metric;

@@ -15,7 +15,7 @@
 
 #include <gtest/gtest.h>
 #define private public
-#include "machine/runtime/runner/fed_prof.h"
+#include "machine/runtime/runner/fed_prof_manager.h"
 #undef private
 #include "interface/configs/config_manager.h"
 #include "tilefwk/aicpu_common.h"
@@ -25,10 +25,10 @@ using namespace npu::tile_fwk;
 TEST(DevicePerfTest, AllPerfOps_NoCrash)
 {
     {
-        FedProf perf;
+        FedProfManager perf;
     }
 
-    FedProf perf;
+    FedProfManager perf;
     FedProfDeviceArgs args;
     args.nrAic = 2;
     args.nrAiv = 4;
@@ -36,10 +36,10 @@ TEST(DevicePerfTest, AllPerfOps_NoCrash)
     EXPECT_EQ(perf.GetCoreCount(), 2u + 4u + 1u);
 
     perf.PerCoreProfSync(false);
-    perf.PerCoreProfResetMetadata(0);
-    perf.PerCoreProfResetMetadata(999);
+    perf.PerCoreProfResetMetadata(false);
+    perf.PerCoreProfResetMetadata(true);
     perf.PerCoreProfReleaseData();
-    EXPECT_EQ(perf.perCoreProfDevAddr_, 0u);
+    EXPECT_EQ(perf.PerCoreProfDevAddr(), 0u);
 
     perf.AicpuProfDumpThreadStop();
     perf.AicpuProfDumpThreadStart();
@@ -48,35 +48,35 @@ TEST(DevicePerfTest, AllPerfOps_NoCrash)
 
 TEST(DevicePerfTest, ResetMetadata_EmptyPerfData)
 {
-    FedProf perf;
-    perf.PerCoreProfResetMetadata(0);
+    FedProfManager perf;
+    perf.PerCoreProfResetMetadata(false);
 }
 
-TEST(DevicePerfTest, ResetMetadata_IndexOutOfRange)
+TEST(DevicePerfTest, ResetMetadata_MultipleLaunch)
 {
-    FedProf perf;
-    perf.perCoreProfDevAddr_ = 0x1000;
-    perf.PerCoreProfResetMetadata(5);
-    perf.perCoreProfDevAddr_ = 0;
+    setenv("DUMP_DEVICE_PERF", "true", 1);
+    FedProfManager perf;
+    perf.DeviceDataAllocate(FED_PROF_PER_CORE_PROF);
+    perf.PerCoreProfResetMetadata(true);
+    unsetenv("DUMP_DEVICE_PERF");
 }
 
 TEST(DevicePerfTest, SyncData_DebugDisabled)
 {
-    FedProf perf;
+    FedProfManager perf;
     perf.PerCoreProfSync(false);
 }
 
 TEST(DevicePerfTest, ReleaseData_NullPtrs)
 {
-    FedProf perf;
-    perf.perCoreProfDevAddr_ = 0;
+    FedProfManager perf;
     perf.PerCoreProfReleaseData();
-    EXPECT_EQ(perf.perCoreProfDevAddr_, 0u);
+    EXPECT_EQ(perf.PerCoreProfDevAddr(), 0u);
 }
 
 TEST(DevicePerfTest, GetCoreCount_Default)
 {
-    FedProf perf;
+    FedProfManager perf;
     FedProfDeviceArgs args{};
     args.nrAic = 0;
     args.nrAiv = 0;
@@ -86,60 +86,47 @@ TEST(DevicePerfTest, GetCoreCount_Default)
 
 TEST(DevicePerfTest, StartMachinePerfTraceDumpThread_ZeroAddr)
 {
-    FedProf perf;
-    perf.aicpuProfDevAddr_ = 0;
+    FedProfManager perf;
     perf.AicpuProfDumpThreadStart();
     EXPECT_FALSE(perf.dumpThread_.joinable());
 }
 
 TEST(DevicePerfTest, ResetData_WithPerfData)
 {
-    FedProf perf;
+    setenv("DUMP_DEVICE_PERF", "true", 1);
+    FedProfManager perf;
     FedProfDeviceArgs args{};
     args.nrAic = 1;
     args.nrAiv = 0;
     perf.args_ = args;
-    perf.perCoreProfDevAddr_ = 0x1000;
+    perf.DeviceDataAllocate(FED_PROF_PER_CORE_PROF);
     perf.PerCoreProfResetData();
-    perf.perCoreProfDevAddr_ = 0;
+    unsetenv("DUMP_DEVICE_PERF");
 }
 
 TEST(DevicePerfTest, ResetMetadata_WithAicpuPerfAddr)
 {
-    FedProf perf;
+    setenv("DUMP_DEVICE_PERF", "true", 1);
+    FedProfManager perf;
     FedProfDeviceArgs args{};
     args.nrAic = 1;
     args.nrAiv = 0;
     perf.args_ = args;
-    perf.aicpuProfDevAddr_ = 0x2000;
-    perf.perCoreProfDevAddr_ = 0x1000;
-    perf.PerCoreProfResetMetadata(0);
-    EXPECT_TRUE(perf.perCoreProfDataInited_);
-    perf.perCoreProfDevAddr_ = 0;
-}
-
-TEST(DevicePerfTest, ResetMetadata_WithAicpuPerfAddr_AlreadyInited)
-{
-    FedProf perf;
-    FedProfDeviceArgs args{};
-    args.nrAic = 1;
-    args.nrAiv = 0;
-    perf.args_ = args;
-    perf.aicpuProfDevAddr_ = 0x2000;
-    perf.perCoreProfDevAddr_ = 0x1000;
-    perf.perCoreProfDataInited_ = true;
-    perf.PerCoreProfResetMetadata(0);
-    perf.perCoreProfDevAddr_ = 0;
+    perf.DeviceDataAllocate(FED_PROF_PER_CORE_PROF);
+    perf.DeviceDataAllocate(FED_PROF_AICPU_PROF);
+    perf.PerCoreProfResetMetadata(true);
+    unsetenv("DUMP_DEVICE_PERF");
 }
 
 TEST(DevicePerfTest, ResetMetadata_WithoutAicpuPerfAddr)
 {
-    FedProf perf;
+    setenv("DUMP_DEVICE_PERF", "true", 1);
+    FedProfManager perf;
     FedProfDeviceArgs args{};
     args.nrAic = 1;
     args.nrAiv = 0;
     perf.args_ = args;
-    perf.perCoreProfDevAddr_ = 0x1000;
-    perf.PerCoreProfResetMetadata(0);
-    perf.perCoreProfDevAddr_ = 0;
+    perf.DeviceDataAllocate(FED_PROF_PER_CORE_PROF);
+    perf.PerCoreProfResetMetadata(false);
+    unsetenv("DUMP_DEVICE_PERF");
 }

@@ -117,19 +117,18 @@ struct DeviceArgs {
     uint64_t taskId : 52;       // initial task id
     uint64_t taskData;          // initial task data
     uint64_t taskWastTime{0};
-    uint64_t aicpuSoBin{0};                // server so Bin
-    uint64_t aicpuSoLen{0};                // server so len
-    uint64_t deviceId{0};                  // for device copy fileName
-    uint64_t runtimeDataRingBufferAddr{0}; // DevStartArgs addr
-    uint64_t dynamicCellMatchAddr{0};      // standalone metadata pool for dynamic cell match
-    uint64_t dynamicCellMatchCapacity{0};  // allocated bytes for dynamicCellMatchAddr
-    uint32_t hostPid{0};                   // for dump tensor
-    uint32_t scheCpuNum{0};                // sche cpu num calc by host
-    uint32_t enableCtrl : 2;               // if enable builtin ctrl
-    uint32_t validGetPgMask : 30;          // mark pgmask is invalid
-    uint64_t perCoreProfAddr{0};           // per core prof addr
-    uint64_t aicpuProfAddr{0};             // aicpuPer Gm addr
-    uint64_t devDfxArgAddr{0};             // devDfx
+    uint64_t aicpuSoBin{0};                        // server so Bin
+    uint64_t aicpuSoLen{0};                        // server so len
+    uint64_t deviceId{0};                          // for device copy fileName
+    uint64_t runtimeDataRingBufferAddr{0};         // DevStartArgs addr
+    uint64_t dynamicCellMatchAddr{0};              // standalone metadata pool for dynamic cell match
+    uint64_t dynamicCellMatchCapacity{0};          // allocated bytes for dynamicCellMatchAddr
+    uint32_t hostPid{0};                           // for dump tensor
+    uint32_t scheCpuNum{0};                        // sche cpu num calc by host
+    uint32_t enableCtrl : 2;                       // if enable builtin ctrl
+    uint32_t validGetPgMask : 30;                  // mark pgmask is invalid
+    uint64_t fedProfAddrList[FED_PROF_KIND_MAX]{}; // FedProf Gm addr list, indexed by FedProfKind
+    uint64_t devDfxArgAddr{0};                     // devDfx
     uint64_t GetBlockNum() const { return nrValidAic * (nrAiv / nrAic + 1); }
     uint32_t die0MaxCpuid{0};
     uint32_t launchSchedAicpuNum{7};    // user configures the number of launch schedules for aicpu

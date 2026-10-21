@@ -33,7 +33,8 @@
 #include "utils/file_utils.h"
 #include "tilefwk/aicpu_common.h"
 #include "machine/device/dynamic/device_utils.h"
-#include "machine/runtime/runner/fed_prof.h"
+#include "machine/runtime/memory_utils/memory_pool.h"
+#include "machine/runtime/runner/fed_prof_manager.h"
 #undef private
 using namespace npu::tile_fwk;
 
@@ -76,7 +77,7 @@ TEST_F(TestDynamicDeviceRunner, TestInitArgs)
     args.nrAic = 2;
     args.nrAiv = 2;
     args.nrValidAic = args.nrAic;
-    npu::tile_fwk::FedProf::GetInstance().PerCoreProfSync(false);
+    npu::tile_fwk::FedProfManager::GetInstance().PerCoreProfSync(false);
 }
 
 TEST_F(TestDynamicDeviceRunner, test_pypto_kernel_server_null)
@@ -120,22 +121,23 @@ TEST_F(TestDynamicDeviceRunner, DISABLED_test_dump_device_perf)
     aicpuMetPer->devTaskPerfs[1][0].timeStamp[0] = 2;
     aicpuMetPer->devTaskPerfs[2][0].cnt = 1;
     aicpuMetPer->devTaskPerfs[2][0].timeStamp[0] = 3;
-    devKernelArgs.aicpuProfAddr = npu::tile_fwk::dynamic::PtrToValue(static_cast<void*>(aicpuMetPer.get()));
+    devKernelArgs.fedProfAddrList[FED_PROF_AICPU_PROF] = npu::tile_fwk::dynamic::PtrToValue(
+        static_cast<void*>(aicpuMetPer.get()));
 
     npu::tile_fwk::FedProfDeviceArgs profArgs(devKernelArgs);
-    auto& prof = npu::tile_fwk::FedProf::GetInstance();
+    auto& prof = npu::tile_fwk::FedProfManager::GetInstance();
     prof.args_ = profArgs;
-    prof.perCoreProfDevAddr_ = npu::tile_fwk::dynamic::PtrToValue(metricStorage.data());
+    uint64_t perCoreProfAddr = prof.DeviceDataAllocate(FED_PROF_PER_CORE_PROF);
+    uint64_t aicpuProfAddr = prof.DeviceDataAllocate(FED_PROF_AICPU_PROF);
+    NormalizedRtMemcpy(npu::tile_fwk::dynamic::ValueToPtr(perCoreProfAddr), metricStorage.size(), metricStorage.data(),
+                       metricStorage.size(), RtMemcpyKind::HOST_TO_DEVICE);
+    NormalizedRtMemcpy(npu::tile_fwk::dynamic::ValueToPtr(aicpuProfAddr), sizeof(FedProfAicpuProf), aicpuMetPer.get(),
+                       sizeof(FedProfAicpuProf), RtMemcpyKind::HOST_TO_DEVICE);
     prof.PerCoreProfDumpSwimlane();
-    prof.perCoreProfDevAddr_ = 0;
     std::string jsonPath = npu::tile_fwk::config::LogTopFolder() + "/tilefwk_L1_prof_data.json";
     EXPECT_EQ(IsPathExist(jsonPath), true);
     setenv("DUMP_DEVICE_PERF", "true", 1);
-    prof.perCoreProfDevAddr_ = npu::tile_fwk::dynamic::PtrToValue(metricStorage.data());
-    prof.aicpuProfDevAddr_ = npu::tile_fwk::dynamic::PtrToValue(static_cast<void*>(aicpuMetPer.get()));
     prof.AicpuProfMaybeDumpSwimlane(true);
-    prof.aicpuProfDevAddr_ = 0;
-    prof.perCoreProfDevAddr_ = 0;
     jsonPath = npu::tile_fwk::config::LogTopFolder() + "/machine_runtime_operator_trace.json";
     unsetenv("DUMP_DEVICE_PERF");
     EXPECT_EQ(IsPathExist(jsonPath), false);
@@ -145,7 +147,7 @@ TEST_F(TestDynamicDeviceRunner, test_launch_init)
 {
     DeviceKernelArgs pyptoKernelArgs;
     DeviceArgs devKernelArgs;
-    devKernelArgs.aicpuProfAddr = 1;
+    devKernelArgs.fedProfAddrList[FED_PROF_AICPU_PROF] = 1;
     pyptoKernelArgs.parameter.runMode = RUN_SPLITTED_STREAM_CTRL;
     pyptoKernelArgs.cfgdata = static_cast<int64_t*>(static_cast<void*>(&devKernelArgs));
     auto ret = DynTileFwkBackendKernelServer(&pyptoKernelArgs);

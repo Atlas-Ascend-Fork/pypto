@@ -19,6 +19,14 @@
 #include <cstdint>
 #include "aikernel_profile_aicpu.h"
 
+enum FedProfKind {
+    FED_PROF_PER_CORE_PROF,
+    FED_PROF_AICPU_PROF,
+    FED_PROF_KIND_MAX,
+};
+
+struct FedProfDataBase {};
+
 template <typename DerivedType, typename UnderlyingType>
 class BitFlag {
 public:
@@ -121,7 +129,7 @@ struct FedProfPerCoreStatus {
 };
 constexpr uint32_t FED_PROF_PER_CORE_STATUS_SIZE = sizeof(FedProfPerCoreStatus);
 
-struct FedProfPerCoreProf {
+struct FedProfPerCoreProf : public FedProfDataBase {
     FedProfPerCoreStatus status;
     FedProfDevTaskProf aicoreDevTaskInfo[FED_PROF_DEV_TASK_MAX_COUNT];
     FedProfLeafTaskProf leafTaskProfList[];
@@ -132,7 +140,7 @@ struct FedProfLaunchDevTaskProf {
     uint64_t timeStamp[npu::tile_fwk::dynamic::PERF_TRACE_COUNT_DEVTASK_MAX_NUM] = {0};
 };
 
-struct FedProfAicpuProf {
+struct FedProfAicpuProf : public FedProfDataBase {
     uint64_t perfAicpuTrace[npu::tile_fwk::dynamic::MAX_USED_AICPU_NUM][npu::tile_fwk::dynamic::PERF_TRACE_MAX] = {{0}};
     FedProfLaunchDevTaskProf devTaskPerfs[npu::tile_fwk::dynamic::MAX_USED_AICPU_NUM]
                                          [npu::tile_fwk::dynamic::DEVTASK_PERF_TYPE_NUM];

@@ -70,8 +70,9 @@ extern "C" __attribute__((visibility("default"))) int DynTileFwkBackendKernelSer
         return -1;
     }
     auto devArgs = PtrToPtr<int64_t, DeviceArgs>(kargs->cfgdata);
-    if (devArgs->aicpuProfAddr != 0) {
-        PerfEvtMgr::Instance().SetIsOpenProf(true, reinterpret_cast<FedProfAicpuProf*>(devArgs->aicpuProfAddr));
+    if (devArgs->fedProfAddrList[FED_PROF_AICPU_PROF] != 0) {
+        PerfEvtMgr::Instance().SetIsOpenProf(
+            true, reinterpret_cast<FedProfAicpuProf*>(devArgs->fedProfAddrList[FED_PROF_AICPU_PROF]));
     }
     AiCoreProf::RegDevProf();
 #endif

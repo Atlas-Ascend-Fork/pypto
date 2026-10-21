@@ -81,10 +81,11 @@ inline bool InitAicoreModelMetrics(DeviceMemoryTy& devMem, DevAscendProgram* dev
     auto* metric = devMem.AllocZero(metricSize, nullptr);
     if (metric == nullptr) {
         MACHINE_LOGE(DevCommonErr::ALLOC_FAILED, "Alloc aicore model host metric failed, size=%zu bytes", metricSize);
-        devProg->devArgs.perCoreProfAddr = 0;
+        devProg->devArgs.fedProfAddrList[FED_PROF_PER_CORE_PROF] = 0;
         return false;
     }
-    devProg->devArgs.perCoreProfAddr = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(metric));
+    devProg->devArgs.fedProfAddrList[FED_PROF_PER_CORE_PROF] = static_cast<uint64_t>(
+        reinterpret_cast<uintptr_t>(metric));
     return true;
 }
 

@@ -34,7 +34,7 @@
 #include "machine/runtime/memory_utils/device_memory_utils.h"
 #include "machine/runtime/distributed/distributed_context.h"
 #include "machine/runtime/runner/host_prof.h"
-#include "machine/runtime/runner/fed_prof.h"
+#include "machine/runtime/runner/fed_prof_manager.h"
 #include "machine/runtime/runner/load_aicpu_op.h"
 #include "machine/runtime/launcher/device_launcher_types.h"
 #include "machine/runtime/launcher/launcher_router.h"

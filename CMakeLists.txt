@@ -473,7 +473,8 @@ if (ENABLE_FEATURE_PYTHON_FRONT_END)
                 COMPONENT pypto
         )
         install(FILES
-                    framework/src/machine/runtime/runner/fed_prof.h
+                    framework/src/machine/runtime/runner/fed_prof_manager.h
+                    framework/src/machine/runtime/runner/fed_prof_holder.h
                     framework/src/machine/runtime/runner/fed_prof_io_json.h
                     framework/src/machine/runtime/runner/load_aicpu_op.h
                     framework/src/machine/runtime/runner/host_prof.h

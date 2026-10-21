@@ -30,7 +30,7 @@
 #include "interface/configs/config_manager.h"
 #include "interface/machine/host/perf_analysis.h"
 #include "machine/runtime/runner/host_prof.h"
-#include "machine/runtime/runner/fed_prof.h"
+#include "machine/runtime/runner/fed_prof_manager.h"
 #include "machine/runtime/runner/runtime_agent.h"
 #include "machine/runtime/runner/device_error_tracking.h"
 #include "machine/runtime/runner/device_exception_dump.h"
@@ -640,7 +640,7 @@ void KernelBinary::InitDeviceArgs()
                 MACHINE_LOGE(DevCommonErr::GET_HANDLE_FAILED, "Get builtInOp Funchandle failed\n");
                 ASSERT(false);
             }
-            FedProf::GetInstance().InitAndStartDumpThread(g_deviceArgs);
+            FedProfManager::GetInstance().AicpuProfDumpThreadStart();
             AdumpRegExceptionDump();
         }
     });
@@ -658,15 +658,16 @@ void KernelBinary::InitMetaData(DeviceArgs& devArgs)
     devArgs.corePmuAddr = g_deviceArgs.corePmuAddr;
     devArgs.taskWastTime = g_deviceArgs.taskWastTime;
     devArgs.pmuEventAddr = g_deviceArgs.pmuEventAddr;
-    devArgs.perCoreProfAddr = g_deviceArgs.perCoreProfAddr;
-    devArgs.aicpuProfAddr = g_deviceArgs.aicpuProfAddr;
+    for (uint32_t kind = FED_PROF_PER_CORE_PROF; kind < FED_PROF_KIND_MAX; kind++) {
+        devArgs.fedProfAddrList[kind] = g_deviceArgs.fedProfAddrList[kind];
+    }
     devArgs.devDfxArgAddr = g_deviceArgs.devDfxArgAddr;
 }
 
 bool KernelBinary::GetEnableDumpDevPref()
 {
     InitDeviceArgs();
-    return g_deviceArgs.aicpuProfAddr != 0;
+    return g_deviceArgs.fedProfAddrList[FED_PROF_AICPU_PROF] != 0;
 }
 
 } // namespace npu::tile_fwk::dynamic

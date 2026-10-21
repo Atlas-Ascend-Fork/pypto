@@ -21,7 +21,7 @@
 #include "tilefwk/platform.h"
 #include "interface/inner/tilefwk.h"
 #include "machine/runtime/runner/host_prof.h"
-#include "machine/runtime/runner/fed_prof.h"
+#include "machine/runtime/runner/fed_prof_manager.h"
 #include "machine/runtime/runner/pmu_common.h"
 #include "machine/utils/machine_ws_intf.h"
 #define private public
@@ -188,9 +188,10 @@ TEST_F(TestDeviceRunner, DevicePerf_SetDebugEnable)
     uint8_t sharedBuf[1024] = {0};
     DeviceArgs devArgs{};
     devArgs.sharedBuffer = reinterpret_cast<uint64_t>(sharedBuf);
-    FedProf::GetInstance().InitAndStartDumpThread(devArgs);
-    FedProf::GetInstance().SetDebugEnable(machinConfig);
-    FedProf::GetInstance().InitAndStartDumpThread(DeviceArgs{});
+    FedProfManager::GetInstance().InitDeviceArgs(devArgs);
+    FedProfManager::GetInstance().AicpuProfDumpThreadStart();
+    FedProfManager::GetInstance().SetDebugEnable(machinConfig);
+    FedProfManager::GetInstance().InitDeviceArgs(DeviceArgs{});
     unsetenv("ENABLE_AICORE_RESOLVE");
 }
 

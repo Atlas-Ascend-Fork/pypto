@@ -52,7 +52,7 @@ public:
     {
         aicoreProf_ = aicoreProf;
         sharedBuffer_ = deviceArgs->sharedBuffer;
-        perCoreProfAddr_ = deviceArgs->perCoreProfAddr;
+        perCoreProfAddr_ = deviceArgs->fedProfAddrList[FED_PROF_PER_CORE_PROF];
         regAddrs_ = reinterpret_cast<int64_t*>(deviceArgs->coreRegAddr);
         regNum_ = deviceArgs->nrAic + deviceArgs->nrAiv;
         freq_ = GetFreq() / (NSEC_PER_SEC / NSEC_PER_USEC);
