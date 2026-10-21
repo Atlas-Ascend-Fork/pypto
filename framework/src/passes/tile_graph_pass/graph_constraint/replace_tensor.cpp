@@ -849,7 +849,12 @@ Status ReplaceTensor::ForwardProcess(Function& function)
     while (!forRoots.empty()) {
         auto rootTensor = forRoots.front();
         forRoots.pop();
-        for (auto& consumerOp : rootTensor->GetConsumers()) {
+        // 防御性快照：现查 Forward* 各 helper（SetRawTensor/UpdateLinkMap/UpdateOffset/入队）
+        // 均不改写 rootTensor 的 consumer 集合，无已知失效路径，此处防患未然。
+        // 快照语义：仅保证遍历入口时集合内的元素被完整处理；循环中新加入集合的 consumer
+        // 本轮不被访问（现状下无 helper 在遍历中加 consumer，行为与裸遍历一致）
+        auto consumersSnapshot = rootTensor->GetConsumers();
+        for (auto& consumerOp : consumersSnapshot) {
             if (processedOp.find(consumerOp->GetOpMagic()) != processedOp.end()) {
                 continue;
             }
@@ -920,7 +925,12 @@ Status ReplaceTensor::BackwardProcess(Function& function)
     while (!backRoots.empty()) {
         auto rootTensor = backRoots.front();
         backRoots.pop();
-        for (auto& producerOp : rootTensor->GetProducers()) {
+        // 遍历中 BackwardAssemble→FoldL0C2UBCopyOffset 会经 UpdateOperandBeforeRemoveOp
+        // 的 RemoveProducer 删除集合中当前遍历元素，先做快照避免迭代器失效导致的 segfault。
+        // 快照语义：仅保证遍历入口时集合内的元素被完整处理；循环中新加入集合的 producer
+        // 本轮不被访问（现状下新增者为 L0C_COPY_UB，不在 Backward 处理范围）
+        auto producersSnapshot = rootTensor->GetProducers();
+        for (auto& producerOp : producersSnapshot) {
             if (processedOp.find(producerOp->GetOpMagic()) != processedOp.end()) {
                 continue;
             }

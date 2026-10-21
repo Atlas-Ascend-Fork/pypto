@@ -1116,6 +1116,97 @@ TEST_F(ReplaceTensorTest, FoldL0C2UBCopyOffsetForDualAssemble)
     EXPECT_EQ(pass.PostCheck(*currFunctionPtr), SUCCESS);
 }
 
+// Dual assemble L0C2UB fold: output tensor's dynValidShape must stay [128,128] (not [64,128]).
+// The dynValidShape assertion is deterministic. The traversal-snapshot fix is exercised here,
+// but iterator invalidation is UB: it only manifests deterministically under ASan/debug builds.
+TEST_F(ReplaceTensorTest, FoldL0C2UBCopyOffsetPreservesAssembledValidShape)
+{
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "FoldPreserveValidShape",
+                                                      "FoldPreserveValidShape", nullptr);
+    ASSERT_TRUE(currFunctionPtr != nullptr);
+    const std::vector<int64_t> l0cShape = {64, 128};
+    const std::vector<int64_t> bigShape = {128, 128};
+    const std::vector<int64_t> offset0 = {kNumZero, kNumZero};
+    const std::vector<int64_t> offset1 = {kNumZero, 64};
+
+    auto l0a1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, l0cShape, CreateTestConstIntVector(l0cShape));
+    auto l0b1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, l0cShape, CreateTestConstIntVector(l0cShape));
+    auto l0a2 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, l0cShape, CreateTestConstIntVector(l0cShape));
+    auto l0b2 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, l0cShape, CreateTestConstIntVector(l0cShape));
+    auto l0cRaw1 = std::make_shared<RawTensor>(DT_FP32, l0cShape);
+    auto l0cRaw2 = std::make_shared<RawTensor>(DT_FP32, l0cShape);
+    auto l0c1 = npu::tile_fwk::IRBuilder().CreateTensorVar(l0cRaw1, offset0, l0cShape,
+                                                           CreateTestConstIntVector(l0cShape));
+    auto l0c2 = npu::tile_fwk::IRBuilder().CreateTensorVar(l0cRaw2, offset0, l0cShape,
+                                                           CreateTestConstIntVector(l0cShape));
+    l0c1->SetMemoryTypeBoth(MemoryType::MEM_L0C);
+    l0c2->SetMemoryTypeBoth(MemoryType::MEM_L0C);
+    auto ub1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, l0cShape, CreateTestConstIntVector(l0cShape));
+    auto ub2 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, l0cShape, CreateTestConstIntVector(l0cShape));
+    ub1->SetMemoryTypeBoth(MemoryType::MEM_UB);
+    ub2->SetMemoryTypeBoth(MemoryType::MEM_UB);
+    ub1->UpdateDynValidShape(CreateTestConstIntVector(l0cShape));
+    ub2->UpdateDynValidShape(CreateTestConstIntVector(l0cShape));
+    auto ubBigRaw = std::make_shared<RawTensor>(DT_FP32, bigShape);
+    auto ubBig = npu::tile_fwk::IRBuilder().CreateTensorVar(ubBigRaw, offset0, bigShape,
+                                                            CreateTestConstIntVector(bigShape));
+    ubBig->SetMemoryTypeBoth(MemoryType::MEM_UB);
+    auto mulIn = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, bigShape, CreateTestConstIntVector(bigShape));
+    auto mulOut = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, bigShape, CreateTestConstIntVector(bigShape));
+
+    // 构图：A_MUL_B → L0C_COPY_UB → ASSEMBLE(×2, 不同 toOffset) → 大 tensor → MUL
+    PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_A_MUL_B, {l0a1, l0b1}, {l0c1});
+    PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_A_MUL_B, {l0a2, l0b2}, {l0c2});
+    auto& copyOp1 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_L0C_COPY_UB, {l0c1}, {ub1});
+    auto& copyOp2 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_L0C_COPY_UB, {l0c2}, {ub2});
+    auto& assOp1 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_ASSEMBLE, {ub1}, {ubBig});
+    auto& assOp2 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_ASSEMBLE, {ub2}, {ubBig});
+    PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_MUL, {ubBig, mulIn}, {mulOut});
+
+    // AddOperation(OP_ASSEMBLE) 触发 InferShape 会强制覆盖输出的 dynValidShape 为输入形状,
+    // 必须在所有 AddOperation 之后再设置 assemble 输出的正确有效形状(多块并集)
+    ubBig->UpdateDynValidShape(CreateTestConstIntVector(bigShape));
+
+    auto makeCopyAttr = [&l0cShape, &offset0](Operation& op) {
+        auto attr = std::make_shared<CopyOpAttribute>(
+            OpImmediate::Specified(offset0), MemoryType::MEM_UB, OpImmediate::Specified(l0cShape),
+            OpImmediate::Specified(l0cShape), OpImmediate::Specified(CreateTestConstIntVector(l0cShape)));
+        attr->SetToOffset(OpImmediate::Specified(offset0));
+        op.SetOpAttribute(attr);
+        op.SetAttr(OpAttributeKey::localCopyLocalMode, static_cast<int64_t>(Matrix::CopyMode::EXTRACT));
+    };
+    makeCopyAttr(copyOp1);
+    makeCopyAttr(copyOp2);
+    assOp1.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, offset1));
+    assOp2.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, offset0));
+    const auto assOp1Magic = assOp1.GetOpMagic();
+    const auto assOp2Magic = assOp2.GetOpMagic();
+
+    ReplaceTensor pass;
+    EXPECT_EQ(pass.RunOnFunction(*currFunctionPtr), SUCCESS);
+
+    bool assemble1Present = false;
+    bool assemble2Present = false;
+    for (const auto& op : currFunctionPtr->Operations()) {
+        assemble1Present = assemble1Present || op.GetOpMagic() == assOp1Magic;
+        assemble2Present = assemble2Present || op.GetOpMagic() == assOp2Magic;
+    }
+    EXPECT_FALSE(assemble1Present);
+    EXPECT_FALSE(assemble2Present);
+    EXPECT_EQ(copyOp1.GetIntAttribute(OpAttributeKey::localCopyLocalMode),
+              static_cast<int64_t>(Matrix::CopyMode::INSERT));
+    EXPECT_EQ(copyOp2.GetIntAttribute(OpAttributeKey::localCopyLocalMode),
+              static_cast<int64_t>(Matrix::CopyMode::INSERT));
+
+    const auto& bigValid = ubBig->GetDynValidShape();
+    ASSERT_EQ(bigValid.size(), bigShape.size());
+    for (size_t i = 0; i < bigShape.size(); i++) {
+        ASSERT_TRUE(bigValid[i].ConcreteValid());
+        EXPECT_EQ(bigValid[i].Concrete(), bigShape[i]);
+    }
+    EXPECT_EQ(pass.PostCheck(*currFunctionPtr), SUCCESS);
+}
+
 // 场景：copy 输出同时被 ASSEMBLE 和普通算子（MUL）消费，consumers 非唯一触发跳过守卫
 TEST_F(ReplaceTensorTest, FoldL0C2UBCopyOffsetSkipForMultiConsumer)
 {

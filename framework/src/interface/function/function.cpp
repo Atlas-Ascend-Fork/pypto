@@ -3824,7 +3824,9 @@ void Function::UpdateOperandBeforeRemoveOp(Operation& op, const bool keepOutTens
             outputTensor->RemoveProducer(op);
             for (auto& producer : inputTensor->GetProducers()) {
                 outputTensor->AddProducer(*producer);
-                if (!inputTensor->GetDynValidShape().empty()) {
+                // 仅在“输入张量取代输出”时复用输入的有效形状。keepOutTensor 时保留的是输出张量，
+                // 其有效形状应保持；若用输入覆盖会破坏“输出跨多块并集”的语义(如 Assemble 折叠)。
+                if (!keepOutTensor && !inputTensor->GetDynValidShape().empty()) {
                     outputTensor->UpdateDynValidShape(inputTensor->GetDynValidShape());
                 }
                 producer->ReplaceOutputOperand(inputTensor, outputTensor);
