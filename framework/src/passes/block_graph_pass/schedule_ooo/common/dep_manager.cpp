@@ -229,16 +229,42 @@ void DependencyManager::HandleScaleOpDependency(Operation* op, MemoryType memTyp
     }
 }
 
+Operation* UniqueSkipProducer(Operation* op)
+{
+    Operation* skipProducer = nullptr;
+    size_t skipCnt = 0;
+    for (auto* producer : op->GetInputOperand(0)->GetProducers()) {
+        if (producer != nullptr && IsSkipOp(*producer)) {
+            skipProducer = producer;
+            ++skipCnt;
+        }
+    }
+    // 截断而不终止流程: 该形状实测 0 例, 调用方按链到此为止继续。
+    if (skipCnt > 1) {
+        APASS_LOG_WARN_F(Elements::Operation, "%s[%d] input has %zu skip producers, skip chain is truncated.",
+                         op->GetOpcodeStr().c_str(), op->GetOpMagic(), skipCnt);
+        return nullptr;
+    }
+    return skipProducer;
+}
+
+// skip op 永不 retire, 挂上去就是永不满足的边。岔口写者与链尾同内存, 都要等。
+// ProducerOps() 的 op 按 BelongTo 过滤且已 RegisterOp, 必在图内;
+// 穿过 skip op 上溯到的 op 可能在调度集合外, 需 HasOp 判断。
 void DependencyManager::AddProducerDependencies(Operation* op)
 {
     for (auto* producer : op->ProducerOps()) {
-        Operation* farthestSkip = SkipChain(producer);
-        if (farthestSkip == nullptr) {
+        const auto path = SkipChainPath(producer);
+        if (path.empty()) {
             AddDependency(producer, op);
             continue;
         }
-        for (auto* realProducer : farthestSkip->ProducerOps()) {
-            AddDependency(realProducer, op);
+        for (auto* link : path) {
+            for (auto* realProducer : link->ProducerOps()) {
+                if (!IsSkipOp(*realProducer) && HasOp(realProducer)) {
+                    AddDependency(realProducer, op);
+                }
+            }
         }
     }
 }

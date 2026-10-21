@@ -622,17 +622,31 @@ LogicalTensorPtr SpillEngine::WalkUpOneHop(Operation* writeOp, SpillPlan& plan)
     return source;
 }
 
-// Anchor the copyout to real writes, not to skip ops (aliases have no schedule state).
-// A non-skip write is itself the producer; a skip write reduces through SkipChain to the
-// writes feeding its chain tail.
+// skip op 没有调度状态, 既等不了也当不了 scale 供体, 所以锚点只认真写入者。
+// 入参 source 来自 WalkUpOneHop, 经 IsPureMove 筛过, 收到的写者都在 schedInfoMap 内。
+std::vector<Operation*> SpillEngine::CollectRealWrites(Operation* writeOp)
+{
+    const auto path = SkipChainPath(writeOp);
+    if (path.empty()) {
+        return {writeOp};
+    }
+    std::vector<Operation*> realProducers;
+    for (auto* link : path) {
+        for (auto* up : CollectDataWrites(link->GetInputOperand(0))) {
+            if (up != nullptr && !IsSkipOp(*up)) {
+                realProducers.push_back(up);
+            }
+        }
+    }
+    return realProducers;
+}
+
 std::vector<Operation*> SpillEngine::CollectSourceProducers(LogicalTensorPtr source)
 {
     std::set<Operation*, Operation::OperationComparator> seen;
     std::vector<Operation*> producers;
     for (auto* writeOp : CollectDataWrites(source)) {
-        Operation* chainTail = SkipChain(writeOp);
-        std::vector<Operation*> realProducers = chainTail == nullptr ? std::vector<Operation*>{writeOp} :
-                                                                       CollectDataWrites(chainTail->GetInputOperand(0));
+        const std::vector<Operation*> realProducers = CollectRealWrites(writeOp);
         for (auto* producer : realProducers) {
             if (seen.insert(producer).second) {
                 producers.push_back(producer);
@@ -653,9 +667,15 @@ std::vector<Operation*> SpillEngine::CollectDataWrites(LogicalTensorPtr tensor)
     return writes;
 }
 
-// 量化 scale 长在算出这块数据的那个写上 (matmul), 搬运 op 从来不带, 所以供体取生产者。
+// 量化 scale 长在算出这块数据的那个写上 (matmul), 搬运 op 从来不带。
+// 锚点含 skip 链上各节写者, 其中搬运 op 不带该属性, 故按属性挑而非取首个。
 Operation* SpillEngine::GetScaleDonor(const SpillSource& source)
 {
+    for (auto* producer : source.producerOps) {
+        if (producer != nullptr && producer->HasAttribute(OpAttributeKey::scaleValue)) {
+            return producer;
+        }
+    }
     return source.producerOps.empty() ? nullptr : source.producerOps.front();
 }
 

@@ -1143,8 +1143,7 @@ void OoOScheduler::InitSkipOps(Operation* op)
             while (pre != nullptr && IsSkipOp(*pre) &&
                    pre->GetOutputOperand(0)->GetMemoryTypeOriginal() < MemoryType::MEM_DEVICE_DDR) {
                 chain.push_back(pre);
-                const auto& upProducers = pre->GetInputOperand(0)->GetProducers();
-                pre = upProducers.empty() ? nullptr : *upProducers.begin();
+                pre = UniqueSkipProducer(pre);
             }
             for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
                 if (std::find(skipOps.begin(), skipOps.end(), *it) == skipOps.end()) {

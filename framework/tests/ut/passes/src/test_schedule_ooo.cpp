@@ -435,6 +435,61 @@ TEST_F(ScheduleOoOTest, TestDependenciesReshape)
     EXPECT_EQ(ooOScheduler.GetSkipOps(add).size(), 1UL);
 }
 
+// inplace 别名写让一张量既被 RESHAPE 重解释又被 ASSEMBLE 真写入, skip 链上溯会取错对象。
+//
+//   Copyin1 -> t2 -> Reshape1 --+
+//                               +-> t3 -> View1 -> t4 -> Add1
+//   Sub1 -> t5 -> Assemble1 ----+                   ^  ^
+//                                      Assemble2 ---+  |
+//                                        Copyin3 ------+
+//
+// skip op 一个都不上边, 链尾来源与两个岔口写者全要等到。
+TEST_F(ScheduleOoOTest, TestDependenciesForkedSkipChainProducers)
+{
+    ComputationalGraphBuilder subGraph;
+    std::vector<std::string> tensorNames{"t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10"};
+    std::vector<MemoryType> tensorMemTypes{
+        MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_UB,         MemoryType::MEM_UB, MemoryType::MEM_UB,
+        MemoryType::MEM_UB,         MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_UB, MemoryType::MEM_DEVICE_DDR,
+        MemoryType::MEM_UB,         MemoryType::MEM_UB};
+    std::vector<Opcode> opCodes{Opcode::OP_UB_ALLOC, Opcode::OP_UB_ALLOC, Opcode::OP_UB_ALLOC, Opcode::OP_UB_ALLOC,
+                                Opcode::OP_UB_ALLOC, Opcode::OP_COPY_IN,  Opcode::OP_RESHAPE,  Opcode::OP_SUB,
+                                Opcode::OP_ASSEMBLE, Opcode::OP_VIEW,     Opcode::OP_SUB,      Opcode::OP_ASSEMBLE,
+                                Opcode::OP_COPY_IN,  Opcode::OP_COPY_IN,  Opcode::OP_ADD};
+    std::vector<std::vector<std::string>> ioperands{
+        {}, {}, {}, {}, {}, {"t1"}, {"t2"}, {"t6"}, {"t5"}, {"t3"}, {"t8"}, {"t9"}, {"t1"}, {"t10"}, {"t4", "t4"}};
+    std::vector<std::vector<std::string>> ooperands{{"t2"}, {"t7"}, {"t5"}, {"t9"}, {"t10"}, {"t2"}, {"t3"}, {"t5"},
+                                                    {"t3"}, {"t4"}, {"t9"}, {"t4"}, {"t10"}, {"t4"}, {"t7"}};
+    std::vector<std::string> opNames{"Alloc1",  "Alloc2",    "Alloc3",  "Alloc4",    "Alloc5",
+                                     "Copyin1", "Reshape1",  "Sub1",    "Assemble1", "View1",
+                                     "Sub2",    "Assemble2", "Copyin2", "Copyin3",   "Add1"};
+    EXPECT_EQ(subGraph.AddTensors(DataType::DT_FP32, {16, 16}, tensorMemTypes, tensorNames, 0), true);
+    EXPECT_EQ(subGraph.AddOps(opCodes, ioperands, ooperands, opNames, true), true);
+    Function* function = subGraph.GetFunction();
+    EXPECT_NE(function, nullptr);
+
+    const int aliasMemId = subGraph.GetTensor("t2")->memoryrange.memId;
+    subGraph.GetTensor("t3")->memoryrange.memId = aliasMemId;
+    subGraph.GetTensor("t4")->memoryrange.memId = aliasMemId;
+
+    OoOScheduler ooOScheduler(*function);
+    EXPECT_EQ(ooOScheduler.Init(function->Operations().DuplicatedOpList()), SUCCESS);
+
+    Operation* add = subGraph.GetOp("Add1");
+    auto& preds = ooOScheduler.state_.depManager.GetPredecessors(add);
+    EXPECT_EQ(preds.count(subGraph.GetOp("Reshape1")), 0UL);
+    EXPECT_EQ(preds.count(subGraph.GetOp("View1")), 0UL);
+    EXPECT_GT(preds.count(subGraph.GetOp("Assemble1")), 0UL);
+    EXPECT_GT(preds.count(subGraph.GetOp("Assemble2")), 0UL);
+    EXPECT_GT(preds.count(subGraph.GetOp("Copyin1")), 0UL);
+    EXPECT_GT(preds.count(subGraph.GetOp("Copyin3")), 0UL);
+
+    std::vector<Operation*> skipOps = ooOScheduler.GetSkipOps(add);
+    EXPECT_EQ(skipOps.size(), 2UL);
+    EXPECT_TRUE(CheckSkipOps(skipOps, subGraph.GetOp("Reshape1")));
+    EXPECT_TRUE(CheckSkipOps(skipOps, subGraph.GetOp("View1")));
+}
+
 // copyin -> t2 -> reshape1 -> t3 -+-> reshape2 -> t4 -> add(t4, t4)
 //                                 +-> mul(t3, t3)
 // t3 是链中间的张量且有旁支消费者 mul: 克隆范围必须覆盖到链尾 reshape2, 且只动 add 那一支。

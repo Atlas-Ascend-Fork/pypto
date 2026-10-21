@@ -145,6 +145,7 @@ private:
     Status CollectWalkUpSources(LogicalTensorPtr spillTensor, SpillPlan& plan);
     LogicalTensorPtr WalkUpOneHop(Operation* writeOp, SpillPlan& plan);
     std::vector<Operation*> CollectDataWrites(LogicalTensorPtr tensor);
+    std::vector<Operation*> CollectRealWrites(Operation* writeOp);
     std::vector<Operation*> CollectSourceProducers(LogicalTensorPtr source);
     bool IsDataComplete(LogicalTensorPtr tensor);
     static Operation* GetScaleDonor(const SpillSource& source);

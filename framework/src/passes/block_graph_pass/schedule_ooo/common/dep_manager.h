@@ -32,10 +32,12 @@ inline bool IsSkipOp(const Operation& op)
     return opc == Opcode::OP_VIEW || opc == Opcode::OP_VIEW_TYPE || opc == Opcode::OP_RESHAPE;
 }
 
-// 沿 skip 链上溯的路径, from 自身在最前, 最远的 skip op 在最后; from 不是 skip op 时为空。
-// 只向生产者方向走: SSA 下每个张量的生产者唯一, 往回是单向的; 往消费者方向会分叉, 没有唯一穿透对象。
-// 跨函数处停止: buffer 不在同一作用域内分配。
-// 前置条件: skip op 单进单出 —— 只取 operand 0。新增 skip opcode 须先满足这一条, 否则这里会静默漏掉其余 operand。
+// inplace 别名写下生产者不唯一, 只跟 skip 那个。
+// 前置条件: skip op 单进单出, 只取 operand 0; 新增 skip opcode 须先满足, 否则静默漏其余 operand。
+// 多于一个 skip 生产者时截断, 截断处更深的真写入者收不到。
+Operation* UniqueSkipProducer(Operation* op);
+
+// from 在最前, 最远的 skip op 在最后; from 不是 skip op 时为空。跨函数处停止。
 inline std::vector<Operation*> SkipChainPath(Operation* from)
 {
     std::vector<Operation*> path;
@@ -44,11 +46,7 @@ inline std::vector<Operation*> SkipChainPath(Operation* from)
     }
     for (Operation* op = from; op != nullptr && IsSkipOp(*op) && op->BelongTo() == from->BelongTo();) {
         path.push_back(op);
-        const auto& nextOps = op->GetInputOperand(0)->GetProducers();
-        if (nextOps.size() != 1) {
-            break;
-        }
-        op = *nextOps.begin();
+        op = UniqueSkipProducer(op);
     }
     return path;
 }
