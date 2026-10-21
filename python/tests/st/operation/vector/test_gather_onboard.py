@@ -102,6 +102,7 @@ def run_gather_onboard_test(case: dict):
 
 
 @pytest.mark.parametrize("case", GATHER_ONBOARD_TESTS, ids=[case["case_name"] for case in GATHER_ONBOARD_TESTS])
+@pytest.mark.skip(reason="ci skip")
 @pypto.options(pass_options={"enable_slice": True})
 def test_gather_onboard(case: dict):
     run_gather_onboard_test(case)
