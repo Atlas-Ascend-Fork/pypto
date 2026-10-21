@@ -198,7 +198,7 @@ void TiledBinaryOperationScalar(Function& function, const TileShape& tileShape, 
             tmpOp.SetAttribute(OpAttributeKey::scalar, value);
             tmpOp.SetAttribute(OP_ATTR_PREFIX + "reverseOperand", reverseOperand);
             return;
-        } else if (opNameCode == Opcode::OP_GCDS) {
+        } else if (opNameCode == Opcode::OP_GCDS && Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_3510) {
             auto vecTile = tileShape.GetVecTile().tile;
             int64_t tileW = vecTile.empty() ? 1 : vecTile.back();
             int64_t tileH = vecTile.size() > 1 ? vecTile[vecTile.size() - NUM_VALUE_2] : 1;
@@ -219,6 +219,9 @@ void TiledBinaryOperationScalar(Function& function, const TileShape& tileShape, 
         auto& op = function.AddOperation(opNameCode, {inputTile1}, {resultTile});
         op.SetAttribute(OpAttributeKey::scalar, value);
         op.SetAttribute(OP_ATTR_PREFIX + "reverseOperand", reverseOperand);
+        if (opNameCode == Opcode::OP_GCDS && Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) {
+            op.SetAttribute(OP_ATTR_PREFIX + "requires_simt", true);
+        }
         if constexpr (T == BinaryOpType::DIV || T == BinaryOpType::MOD || T == BinaryOpType::POW) {
             op.SetAttribute(OpAttributeKey::precisionType, precisionType);
         }

@@ -182,7 +182,7 @@ CodeGenOpNPU::CodeGenOpNPU(const CodeGenOpNPUCtx& ctx)
           {Opcode::OP_BITWISEAND, [this]() { return GenBinaryOp(); }},
           {Opcode::OP_BITWISEOR, [this]() { return GenBinaryOp(); }},
           {Opcode::OP_EXPANDEXPDIF, [this]() { return GenBinaryOp(); }},
-          {Opcode::OP_GCD, [this]() { return GenBinaryOpWithTmp(); }},
+          {Opcode::OP_GCD, [this]() { return GenGcdOp(); }},
 
           // binary op: vector operations with tmp
           {Opcode::OP_MOD, [this]() { return GenBinaryOp(); }},
@@ -218,7 +218,7 @@ CodeGenOpNPU::CodeGenOpNPU(const CodeGenOpNPUCtx& ctx)
           {Opcode::OP_BITWISEORS, [this]() { return GenVectorScalarOp(); }},
           {Opcode::OP_BITWISERIGHTSHIFTS, [this]() { return GenVectorScalarOp(); }},
           {Opcode::OP_BITWISELEFTSHIFTS, [this]() { return GenVectorScalarOp(); }},
-          {Opcode::OP_GCDS, [this]() { return GenVectorScalarOpWithTmp(); }},
+          {Opcode::OP_GCDS, [this]() { return GenGcdScalarOp(); }},
 
           // binary op: vector scalar with tmp
           {Opcode::OP_MODS, [this]() { return GenVectorScalarOp(); }},

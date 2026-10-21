@@ -118,7 +118,8 @@ void OpcodeManager::RegisterVectorBinary()
                  TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_GCD, OpCoreType::AIV, "GCD", {MemoryType::MEM_UB, MemoryType::MEM_UB},
                  {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::TGcd", PIPE_V, PIPE_V, CoreType::AIV},
-                 OpCalcType::BROADCAST, {OpAttributeKey::inputCombineAxis}, TileShapeVerifier::Verify);
+                 OpCalcType::BROADCAST, {OpAttributeKey::inputCombineAxis, OP_ATTR_PREFIX + "requires_simt"},
+                 TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_S_ADD, OpCoreType::AIV, "S_ADD", {MemoryType::MEM_UB, MemoryType::MEM_UB},
                  {MemoryType::MEM_UB}, {"TileOp::TSadd", PIPE_S, PIPE_S, CoreType::AIV}, OpCalcType::BROADCAST,
                  {OpAttributeKey::inputCombineAxis});
@@ -226,12 +227,12 @@ void OpcodeManager::RegisterVectorBinary()
                  {OpAttributeKey::scalar, OP_ATTR_PREFIX + "reverseOperand", OpAttributeKey::inputCombineAxis,
                   OpAttributeKey::outputCombineAxis, OpAttributeKey::excludeBufferReuse},
                  TileShapeVerifier::Verify);
-    RegisterInfo(Opcode::OP_GCDS, OpCoreType::AIV, "GCDS", {MemoryType::MEM_UB},
-                 {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::TGcds", PIPE_V, PIPE_V, CoreType::AIV},
-                 OpCalcType::ELMWISE,
-                 {OpAttributeKey::scalar, OP_ATTR_PREFIX + "reverseOperand", OP_ATTR_PREFIX + "reverseOperand",
-                  OpAttributeKey::inputCombineAxis, OpAttributeKey::outputCombineAxis},
-                 TileShapeVerifier::Verify);
+    RegisterInfo(
+        Opcode::OP_GCDS, OpCoreType::AIV, "GCDS", {MemoryType::MEM_UB}, {MemoryType::MEM_UB, MemoryType::MEM_UB},
+        {"TileOp::TGcds", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::ELMWISE,
+        {OpAttributeKey::scalar, OP_ATTR_PREFIX + "reverseOperand", OP_ATTR_PREFIX + "reverseOperand",
+         OpAttributeKey::inputCombineAxis, OpAttributeKey::outputCombineAxis, OP_ATTR_PREFIX + "requires_simt"},
+        TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_S_ADDS, OpCoreType::AIV, "S_ADDS", {MemoryType::MEM_UB}, {MemoryType::MEM_UB},
                  {"TileOp::TSadds", PIPE_S, PIPE_S, CoreType::AIV}, OpCalcType::ELMWISE,
                  {OpAttributeKey::scalar, OP_ATTR_PREFIX + "reverseOperand", OpAttributeKey::inputCombineAxis,

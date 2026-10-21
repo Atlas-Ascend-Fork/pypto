@@ -290,6 +290,20 @@ std::string CodeGenOpNPU::GenBinaryOpWithTmp() const
     return oss.str();
 }
 
+std::string CodeGenOpNPU::GenGcdOp() const
+{
+    bool requiresSimt = false;
+    GetOpAttr(OP_ATTR_PREFIX + "requires_simt", requiresSimt);
+    return requiresSimt ? GenBinaryOp() : GenBinaryOpWithTmp();
+}
+
+std::string CodeGenOpNPU::GenGcdScalarOp() const
+{
+    bool requiresSimt = false;
+    GetOpAttr(OP_ATTR_PREFIX + "requires_simt", requiresSimt);
+    return requiresSimt ? GenVectorScalarOp() : GenVectorScalarOpWithTmp();
+}
+
 std::string CodeGenOpNPU::GenVectorScalarOpWithTmp() const
 {
     std::string dstTensor = QueryTileTensorNameByIdx(ToUnderlying(MIMOIdx::DST_IDX));

@@ -17,12 +17,20 @@
 #define TILEOP_TILE_OPERATOR_VEC_BINARY_GCD_H
 
 #include "utils/sync.h"
+#include "../gcd_simt.h"
 #include "../pto_tile.h"
 #include "utils/layout.h"
 #include "utils/tile_tensor.h"
 #include "../binary_brcinline.h"
 
 #define OP_TILE_OP_GCD TGcd
+#if defined(__DAV_V310)
+template <int... BrcOperands, typename T0, typename T1, typename T2>
+TILEOP void TGcd(T0 dst, T1 src0, T2 src1)
+{
+    TGcdSimt<BrcOperands...>(dst, src0, src1);
+}
+#else
 template <int... BrcOperands, typename T0, typename T1, typename T2, typename T3>
 TILEOP void TGcd(T0 dst, T1 src0, T2 src1, T3 temp)
 {
@@ -343,5 +351,6 @@ TILEOP void TGcd(T0 dst, T1 src0, T2 src1, T3 temp)
         }
     }
 }
+#endif
 
 #endif // TILEOP_TILE_OPERATOR_VEC_BINARY_GCD_H

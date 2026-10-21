@@ -16,11 +16,19 @@
 #define TILEOP_TILE_OPERATOR_VEC_BINARY_SCALAR_EXTENDED_H
 
 #include "utils/sync.h"
+#include "../gcd_simt.h"
 #include "../pto_tile.h"
 #include "utils/layout.h"
 #include "utils/tile_tensor.h"
 
 #define OP_TILE_OP_GCDS TGcdS
+#if defined(__DAV_V310)
+template <typename Scalar, typename T0, typename T1>
+TILEOP void TGcdS(T0 dst, T1 src0, Scalar src1)
+{
+    TGcdScalarSimt(dst, src0, src1);
+}
+#else
 template <typename Scalar, typename T0, typename T1, typename T2>
 TILEOP void TGcdS(T0 dst, T1 src0, Scalar src1, T2 temp)
 {
@@ -317,6 +325,7 @@ TILEOP void TGcdS(T0 dst, T1 src0, Scalar src1, T2 temp)
         }
     }
 }
+#endif
 
 template <BinaryScalarOp op, auto PrecisionType = 0, typename T0, typename T1, typename Scalar, typename T2>
 TILEOP void BinaryScalarTmpComputeImpl(T0 dst, T1 src0, Scalar src1, T2 tmp)
