@@ -34,6 +34,7 @@ struct DeviceRuntimeDataDesc {
     uint64_t generalAddr;
     uint64_t dynamicCellMatchAddr;
     uint64_t stitchPoolAddr;
+    uint64_t duppedStitchPoolAddr;
 };
 
 struct DevCtrlState {
@@ -84,6 +85,7 @@ struct DevStartArgs : DevStartArgsBase {
         deviceRuntimeDataDesc.generalAddr = base + devProg->GetDeviceRuntimeOffset().generalOffset;
         deviceRuntimeDataDesc.dynamicCellMatchAddr = devProg->devArgs.dynamicCellMatchAddr;
         deviceRuntimeDataDesc.stitchPoolAddr = base + devProg->GetDeviceRuntimeOffset().stitchPoolOffset;
+        deviceRuntimeDataDesc.duppedStitchPoolAddr = base + devProg->GetDeviceRuntimeOffset().duppedStitchPoolOffset;
     }
 
 public:

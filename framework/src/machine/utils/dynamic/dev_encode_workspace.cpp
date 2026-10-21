@@ -239,17 +239,27 @@ uint64_t CalcStitchWorkspace(DevAscendProgram& devProg, bool aicoreResolve)
                                             aicoreResolve ? DRCO_QUEUE_MAX + 2 : 0,
                                             aicoreResolve ? static_cast<uint32_t>(MAX_STITCH_FUNC_NUM) : 0};
     uint32_t slabSize = workspace.CalcStitchSlabMemObjmaxSize(slabCapacity);
-    uint64_t stitchPoolSize = slabSize << 4;
+    uint64_t stitchPoolSize = 0;
 
     for (size_t i = 0; i < CALC_STITCH_NUM; ++i) {
         if (slabCapacity[i] == 0) {
             continue;
         }
         uint32_t requiredSlabNum = ((objUsedNum[i] << 2) + slabCapacity[i] - 1) / slabCapacity[i];
-        stitchPoolSize += slabSize * requiredSlabNum;
+        stitchPoolSize += static_cast<uint64_t>(slabSize) * requiredSlabNum;
     }
     MACHINE_LOGD("[workspaceSize] Stitch pool size is %lu bytes, with slab size:%u bytes.", stitchPoolSize, slabSize);
     return (stitchPoolSize + SLAB_ALIGN_GRANULARITY) * devProg.GetParallelism();
+}
+
+uint64_t CalcDuppedStitchWorkspace(DevAscendProgram& devProg)
+{
+    DeviceWorkspaceAllocator workspace(&devProg);
+    uint32_t slabSize = workspace.CalcDuppedStitchSlabMemObjmaxSize();
+    uint64_t duppedStitchPoolSize = static_cast<uint64_t>(slabSize) << 2;
+    MACHINE_LOGD("[workspaceSize] Dupped stitch pool size is %lu bytes, with slab size:%u bytes.", duppedStitchPoolSize,
+                 slabSize);
+    return (duppedStitchPoolSize + SLAB_ALIGN_GRANULARITY) * devProg.GetParallelism();
 }
 
 uint64_t DumpTensorWorkspace()

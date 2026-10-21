@@ -95,6 +95,7 @@ struct DeviceRuntimeOffset {
     uint64_t deviceTaskReadyQueueOffset{0};
     uint64_t generalOffset{0};
     uint64_t stitchPoolOffset{0};
+    uint64_t duppedStitchPoolOffset{0};
     uint64_t size{0};
     uint64_t count{0};
 };

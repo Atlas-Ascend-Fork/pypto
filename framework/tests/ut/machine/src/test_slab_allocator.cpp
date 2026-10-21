@@ -385,3 +385,13 @@ TEST_F(SlabWsAllocatorTest, ObjAddressAlignment)
         EXPECT_EQ(addr % SLAB_ALIGN_GRANULARITY, 0u) << "obj " << i << " addr=" << addr << " not 64-byte aligned";
     }
 }
+
+TEST_F(SlabWsAllocatorTest, LimitMaxAllocatedCountAndAllocatedCount)
+{
+    allocator.RegistCache(0, 64);
+    EXPECT_GT(allocator.GetLimitMaxAllocatedCount(0), 0u);
+    EXPECT_EQ(allocator.GetAllocatedObjCount(0), 0u);
+    EXPECT_NE(allocator.Alloc(0), nullptr);
+    EXPECT_EQ(allocator.GetAllocatedObjCount(0), 1u);
+    EXPECT_EQ(allocator.GetUnPopAllocatedObjCount(0), 1u);
+}

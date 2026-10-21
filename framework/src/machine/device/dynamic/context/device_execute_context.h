@@ -153,6 +153,8 @@ struct DeviceExecuteContext {
     void SetErrorState(int errorState) { errorState_ = errorState; }
 
 private:
+    int SubmitIfDuppedStitchPoolInsufficient();
+
     static void* DeviceExecuteRuntimeCallRootAlloc(void* ctx_, uint64_t rootKey);
 
     static void* DeviceExecuteRuntimeCallRootStitch(void* ctx_, uint64_t rootKey);

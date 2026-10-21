@@ -37,7 +37,7 @@ enum class WsAicpuSlabMemType : uint8_t {
     LOCAL_READY_QUE,
     LOCAL_READY_MATRIX,
     PRED_COUNT,
-    DUPPED_STITCH, // stitch pool memory
+    DUPPED_STITCH, //  stitch pool for stitch edge
     SLAB_MEM_TYPE_BUTT
 };
 constexpr int SLAB_ALLOCATOR_MAX_CACHES = 16;
@@ -56,7 +56,7 @@ constexpr T AlignUpSlab(T n)
 struct StageAllocInfo {
     void* heads[SLAB_ALLOCATOR_MAX_CACHES];
     void* tails[SLAB_ALLOCATOR_MAX_CACHES];
-    uint32_t objCnt[SLAB_ALLOCATOR_MAX_CACHES];
+    uint32_t objCnt[SLAB_ALLOCATOR_MAX_CACHES]; // objs handed to this DeviceTask; Free subtracts this
     uint32_t objSizes[SLAB_ALLOCATOR_MAX_CACHES];
     uint32_t slabAlignSize{0};
     uint8_t* slabBase{nullptr};
@@ -73,14 +73,17 @@ private:
         SlabHeader* activeSlab{nullptr};
         SlabWsAllocator* allocator{nullptr};
 
-        // Per-cache allocation tracking
+        // Stage list: objs allocated since last Pop (current stitch window).
         void* stageAllocHead{nullptr};
         void* stageAllocTail{nullptr};
 
-        // Cache-level statistics
+        // Pages granted to this cache. Free does not return pages.
         uint32_t slabCount{0};
+        // Slots carved from granted pages. Not pool capacity; grows only on new page.
         uint32_t totalObjCount{0};
+        // Live objs not yet Free'd: in-flight (Pop'd to a DeviceTask) + current window.
         uint32_t allocatedObjCount{0};
+        // Current-window objs still on stage list. Alloc ++; Pop -> 0 (keepTail -> 1).
         uint32_t unPopAllocatedObjCount{0};
 
         SlabCache() {}
@@ -301,7 +304,7 @@ public:
         info.tails[cacheIdx] = temp;
         DEV_VERBOSE_DEBUG("Keep tail not pop %p \n", caches_[cacheIdx].stageAllocTail);
         caches_[cacheIdx].stageAllocHead = caches_[cacheIdx].stageAllocTail;
-        info.objCnt[cacheIdx] = caches_[cacheIdx].allocatedObjCount - 1;
+        info.objCnt[cacheIdx] = caches_[cacheIdx].unPopAllocatedObjCount - 1;
         caches_[cacheIdx].unPopAllocatedObjCount = 1;
     }
 
@@ -317,7 +320,7 @@ public:
             if (!keepTail || i != memType) {
                 caches_[i].stageAllocHead = nullptr;
                 caches_[i].stageAllocTail = nullptr;
-                info.objCnt[i] = caches_[i].allocatedObjCount;
+                info.objCnt[i] = caches_[i].unPopAllocatedObjCount;
                 caches_[i].unPopAllocatedObjCount = 0;
                 continue;
             }
@@ -390,9 +393,9 @@ public:
     /* ==================== DFX Statistics Methods ==================== */
     // Get allocator-level statistics
     struct AllocatorStats {
-        uint32_t totalSlabCount;
-        uint32_t allocatedSlabCount;
-        uint32_t freeSlabCount;
+        uint32_t totalSlabCount;     // pool page cap
+        uint32_t allocatedSlabCount; // pages handed out; not returned on Free
+        uint32_t freeSlabCount;      // totalSlabCount - allocatedSlabCount
         uint32_t slabSize;
         double usage;
     };
@@ -412,11 +415,11 @@ public:
     // Get cache-level statistics
     struct CacheStats {
         uint32_t objSize;
-        uint32_t slabCount;
-        uint32_t totalObjCount;
-        uint32_t allocatedObjCount;
-        uint32_t freeObjCount;
-        double usage;
+        uint32_t slabCount;         // pages granted to this cache
+        uint32_t totalObjCount;     // carved slots, not pool cap
+        uint32_t allocatedObjCount; // live objs (in-flight + window)
+        uint32_t freeObjCount;      // carved but not live
+        double usage;               // allocatedObjCount / totalObjCount
     };
 
     CacheStats GetCacheStats(uint32_t cacheType) const
@@ -435,6 +438,37 @@ public:
         stats.usage = cache.totalObjCount > 0 ? (static_cast<double>(cache.allocatedObjCount) / cache.totalObjCount) :
                                                 0.0;
         return stats;
+    }
+
+    // Live objs of cacheType (in-flight + current window). Submit limit reads this.
+    uint32_t GetAllocatedObjCount(uint32_t cacheType) const
+    {
+        if (cacheType >= SLAB_ALLOCATOR_MAX_CACHES) {
+            return 0;
+        }
+        return caches_[cacheType].allocatedObjCount;
+    }
+
+    // Current-window objs not yet Pop'd onto a DeviceTask.
+    uint32_t GetUnPopAllocatedObjCount(uint32_t cacheType) const
+    {
+        if (cacheType >= SLAB_ALLOCATOR_MAX_CACHES) {
+            return 0;
+        }
+        return caches_[cacheType].unPopAllocatedObjCount;
+    }
+
+    uint32_t GetLimitMaxAllocatedCount(uint32_t cacheType) const
+    {
+        if (cacheType >= SLAB_ALLOCATOR_MAX_CACHES) {
+            return 0;
+        }
+        const SlabCache& cache = caches_[cacheType];
+        if (cache.objSize == 0) {
+            return 0;
+        }
+        uint32_t objsPerSlab = CalcObjsPerSlab(slabAlignSize_, cache.objSize);
+        return static_cast<uint32_t>(static_cast<uint64_t>(totalSlabCount_) * objsPerSlab);
     }
 
     // Get statistics for all caches
@@ -517,10 +551,10 @@ private:
     int numCaches_{0};
 
     // Allocator-level statistics
-    uint32_t totalSlabCount_{0};
-    uint32_t allocatedSlabCount_{0};
-    uint32_t totalMemReq_{0};
-    uint32_t totalAllocNum_{0};
+    uint32_t totalSlabCount_{0};     // pool page cap = totalMemSize / slabAlignSize
+    uint32_t allocatedSlabCount_{0}; // pages handed out; not returned on Free
+    uint32_t totalMemReq_{0};        // cumulative Alloc payload bytes (DFX)
+    uint32_t totalAllocNum_{0};      // cumulative Alloc calls (DFX)
 };
 
 struct WsSlabStageAllocMem {
@@ -528,13 +562,15 @@ struct WsSlabStageAllocMem {
     std::atomic_bool* ctrlNotFreeFlag{nullptr};
     StageAllocInfo generalMetadataStageMem;
     StageAllocInfo stitchStageMem;
+    StageAllocInfo duppedStitchStageMem;
 
     WsSlabStageAllocMem() = default;
     WsSlabStageAllocMem(const WsSlabStageAllocMem& other)
         : canFree(other.canFree.load(std::memory_order_relaxed)),
           ctrlNotFreeFlag(other.ctrlNotFreeFlag),
           generalMetadataStageMem(other.generalMetadataStageMem),
-          stitchStageMem(other.stitchStageMem)
+          stitchStageMem(other.stitchStageMem),
+          duppedStitchStageMem(other.duppedStitchStageMem)
     {}
 
     WsSlabStageAllocMem& operator=(const WsSlabStageAllocMem& other)
@@ -544,6 +580,7 @@ struct WsSlabStageAllocMem {
             ctrlNotFreeFlag = other.ctrlNotFreeFlag;
             generalMetadataStageMem = other.generalMetadataStageMem;
             stitchStageMem = other.stitchStageMem;
+            duppedStitchStageMem = other.duppedStitchStageMem;
         }
         return *this;
     }
@@ -553,6 +590,7 @@ struct WsSlabStageAllocMem {
 #if SLAB_OBJ_MAGIC_VERIFY
         SlabWsAllocator::VerifyStageAllocMem(generalMetadataStageMem, "general");
         SlabWsAllocator::VerifyStageAllocMem(stitchStageMem, "stitch");
+        SlabWsAllocator::VerifyStageAllocMem(duppedStitchStageMem, "duppedStitch");
 #endif
     }
 };

@@ -407,3 +407,24 @@ TEST_F(DevWorkspaceTest, CalcAicpuMetaSlabAlloctorSlabPageSize_ReturnsValue)
     uint32_t pageSize = allocator.CalcAicpuMetaSlabAlloctorSlabPageSize(1024 * 1024);
     EXPECT_GT(pageSize, 0u);
 }
+
+TEST_F(DevWorkspaceTest, CalcDuppedStitchWorkspace_IsFourSlabs)
+{
+    DevAscendProgram prog{};
+    uint64_t size = CalcDuppedStitchWorkspace(prog);
+    uint32_t slabSize = prog.memBudget.metadata.duppedStitchSlabSize;
+    EXPECT_GE(slabSize, 1024u * 1024u);
+    EXPECT_EQ(size, (static_cast<uint64_t>(slabSize) << 2) + SLAB_ALIGN_GRANULARITY);
+}
+
+TEST_F(DevWorkspaceTest, DuppedStitchPoolReachedSubmitLimit_UsesEightyPercent)
+{
+    DuppedStitchPoolUsage usage;
+    usage.limitMaxAllocatedCount = 100;
+    usage.allocatedObjCount = 79;
+    EXPECT_FALSE(DeviceWorkspaceAllocator::DuppedStitchPoolReachedSubmitLimit(usage));
+    usage.allocatedObjCount = 80;
+    EXPECT_TRUE(DeviceWorkspaceAllocator::DuppedStitchPoolReachedSubmitLimit(usage));
+    usage.limitMaxAllocatedCount = 0;
+    EXPECT_FALSE(DeviceWorkspaceAllocator::DuppedStitchPoolReachedSubmitLimit(usage));
+}

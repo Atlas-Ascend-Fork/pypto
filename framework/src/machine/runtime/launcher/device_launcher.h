@@ -129,9 +129,14 @@ public:
 
         uint64_t generalSize = devProg->memBudget.metadata.general;
         uint64_t stitchPoolSize = devProg->memBudget.metadata.stitchPool;
-        MACHINE_LOGD("generalSize=%lu bytes, stitchPoolSize=%lu bytes, generalOffset=%#lx, stitchPoolOffset=%#lx.",
-                     generalSize, stitchPoolSize, devProg->deviceRuntimeOffset.generalOffset,
-                     devProg->deviceRuntimeOffset.stitchPoolOffset);
+        uint64_t duppedStitchPoolSize = devProg->memBudget.metadata.duppedStitchPool;
+        MACHINE_LOGD("runtimeDataRingBufferSize=%zu bytes slotSize=%zu count=%zu, generalSize=%lu bytes, "
+                     "stitchPoolSize=%lu bytes, duppedStitchPoolSize=%lu bytes, generalOffset=%#lx, "
+                     "stitchPoolOffset=%#lx, duppedStitchPoolOffset=%#lx.",
+                     runtimeDataRingBufferSize, runtimeDataSize, runtimeDataCount, generalSize, stitchPoolSize,
+                     duppedStitchPoolSize, devProg->deviceRuntimeOffset.generalOffset,
+                     devProg->deviceRuntimeOffset.stitchPoolOffset,
+                     devProg->deviceRuntimeOffset.duppedStitchPoolOffset);
         return;
     }
 

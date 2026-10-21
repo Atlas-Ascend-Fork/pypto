@@ -659,6 +659,7 @@ void DeviceWorkspaceAllocator::DumpMemoryUsage(const char* hint) const
     metadataAllocators_.general.DumpMemoryUsage(hint, "Metadata");
     metadataAllocators_.generalSlab.DumpMemoryUsage(hint, "Metadata slab allocator");
     metadataAllocators_.stitchSlab.DumpMemoryUsage(hint, "Metadata Stitch slab allocator");
+    metadataAllocators_.duppedStitchSlab.DumpMemoryUsage(hint, "Metadata DuppedStitch slab allocator");
 
     for (uint32_t i = 0; i < devProg_->GetParallelism(); i++) {
         DEV_MEM_DUMP("Parallel workspace %u.", i);
@@ -773,6 +774,38 @@ uint32_t DeviceWorkspaceAllocator::CalcStitchSlabMemObjmaxSize(uint32_t* slabCap
     return slabMemObjmaxSize;
 }
 
+uint32_t DeviceWorkspaceAllocator::CalcDuppedStitchSlabMemObjmaxSize()
+{
+    uint32_t objSize = DuppedStitchSlabMemObjSize();
+    uint32_t slabMemObjmaxSize = SlabWsAllocator::CalcSlotStride(objSize);
+    slabMemObjmaxSize = AlignUpSlab(slabMemObjmaxSize * ALLOC_NUM_ONE_SLAB + SlabWsAllocator::FirstObjBaseOffset());
+    slabMemObjmaxSize = std::max(slabMemObjmaxSize, static_cast<uint32_t>(2 * MEBI));
+    DEV_INFO("Dupped stitch slab size=%u bytes", slabMemObjmaxSize);
+    if (devProg_ != nullptr) {
+        devProg_->memBudget.metadata.duppedStitchSlabSize = slabMemObjmaxSize;
+    }
+    return slabMemObjmaxSize;
+}
+
+DuppedStitchPoolUsage DeviceWorkspaceAllocator::GetDuppedStitchPoolUsage() const
+{
+    const uint32_t cacheType = ToUnderlying(WsAicpuSlabMemType::DUPPED_STITCH);
+    DuppedStitchPoolUsage usage;
+    usage.allocatedObjCount = metadataAllocators_.duppedStitchSlab.GetAllocatedObjCount(cacheType);
+    usage.limitMaxAllocatedCount = metadataAllocators_.duppedStitchSlab.GetLimitMaxAllocatedCount(cacheType);
+    usage.currentWindowObjCount = metadataAllocators_.duppedStitchSlab.GetUnPopAllocatedObjCount(cacheType);
+    return usage;
+}
+
+bool DeviceWorkspaceAllocator::DuppedStitchPoolReachedSubmitLimit(const DuppedStitchPoolUsage& usage)
+{
+    if (usage.limitMaxAllocatedCount == 0) {
+        return false;
+    }
+    return static_cast<uint64_t>(usage.allocatedObjCount) * 100ULL >=
+           static_cast<uint64_t>(usage.limitMaxAllocatedCount) * DUPPED_STITCH_POOL_SUBMIT_LIMIT;
+}
+
 void DeviceWorkspaceAllocator::CalculateSlabCapacityPerType(uint32_t slabSize, uint32_t* slabCapacity,
                                                             uint32_t slabTypeNum)
 {
@@ -804,11 +837,7 @@ WsAllocation DeviceWorkspaceAllocator::SlabAlloc(uint32_t objSize, WsAicpuSlabMe
     uint64_t inner_start = GetCycles();
 
     do {
-        if (type < WsAicpuSlabMemType::COHERENT_SLAB_MEM_TYPE_BUTT) {
-            ptr = metadataAllocators_.generalSlab.Alloc(ToUnderlying(type));
-        } else if (type < WsAicpuSlabMemType::SLAB_MEM_TYPE_BUTT) {
-            ptr = metadataAllocators_.stitchSlab.Alloc(ToUnderlying(type));
-        }
+        ptr = GetSlabAllocator(type).Alloc(ToUnderlying(type));
         if (ptr != nullptr) {
             break;
         }
@@ -816,6 +845,7 @@ WsAllocation DeviceWorkspaceAllocator::SlabAlloc(uint32_t objSize, WsAicpuSlabMe
         if (submmitTaskQueue_.IsEmpty()) {
             metadataAllocators_.generalSlab.DumpMemoryStatusWhenAbnormal("SlabAlloc null");
             metadataAllocators_.stitchSlab.DumpMemoryStatusWhenAbnormal("SlabAlloc null");
+            metadataAllocators_.duppedStitchSlab.DumpMemoryStatusWhenAbnormal("SlabAlloc null");
             DEV_ERROR(WsErr::SLAB_ADD_CACHE_FAILED, "#workspace.init.check: Slab alloc null,type=%u,objsize=%u.",
                       ToUnderlying(type), objSize);
             DEV_ASSERT_MSG(WsErr::SLAB_ADD_CACHE_FAILED, false, "Slab alloc null,type=%u,objsize=%u.",
@@ -857,6 +887,7 @@ WsSlabStageAllocMem DeviceWorkspaceAllocator::SlabGetStageAllocMem(bool keepTail
                                                                                         ToUnderlying(keepType));
     stageMem.stitchStageMem = metadataAllocators_.stitchSlab.PopStageAllocMem(false,
                                                                               0); // not support keep alloc memory
+    stageMem.duppedStitchStageMem = metadataAllocators_.duppedStitchSlab.PopStageAllocMem(false, 0);
     return stageMem;
 }
 
@@ -865,6 +896,7 @@ void DeviceWorkspaceAllocator::DumpSlabUsageBeforeSubmit(uint32_t taskId, DynDev
     DEV_VERBOSE_DEBUG("[workspace.slab.usage] before submit devTask, taskId=%u, devTask=%p. ", taskId, devTask);
     metadataAllocators_.generalSlab.DumpSlabUsage("General metadata slab");
     metadataAllocators_.stitchSlab.DumpSlabUsage("Stitch pool slab");
+    metadataAllocators_.duppedStitchSlab.DumpSlabUsage("Dupped stitch pool slab");
 }
 
 void DeviceWorkspaceAllocator::SlabStageAllocMemSubmmit(DynDeviceTask* devTask)
@@ -903,6 +935,13 @@ void DeviceWorkspaceAllocator::InitMetadataAllocators(DevAscendProgram* devProg,
     InitAicpuStitchSlabAllocator(reinterpret_cast<void*>(stitchPoolAddr), devProg->memBudget.metadata.stitchPool);
     DEV_TRACE_DEBUG(CtrlEvent(none(), WorkspaceMetadataStitch(Range(
                                           stitchPoolAddr, stitchPoolAddr + devProg->memBudget.metadata.stitchPool))));
+
+    uint64_t duppedStitchPool = devProg->memBudget.metadata.duppedStitchPool;
+    uint64_t duppedStitchPoolAddr = devStartArgs->deviceRuntimeDataDesc.duppedStitchPoolAddr;
+    DEV_ASSERT_MSG(WsErr::WORKSPACE_INIT_PARAM_INVALID, duppedStitchPool <= UINT32_MAX,
+                   "Dupped stitch pool size %lu exceeds u32 limit", duppedStitchPool);
+    InitAicpuDuppedStitchSlabAllocator(reinterpret_cast<void*>(duppedStitchPoolAddr),
+                                       static_cast<uint32_t>(duppedStitchPool));
 
     uint64_t dynamicCellMatchSlotNum = devProg->memBudget.metadata.dynamicCellMatchSlotNum;
     uint64_t dynamicCellMatchSlotBytes = devProg->memBudget.metadata.maxDynamicCellMatchTableMem;
@@ -1147,7 +1186,7 @@ void DeviceWorkspaceAllocator::InitAicpuStitchSlabAllocator(void* memBase, uint3
     uint32_t slabSize = devProg_->memBudget.metadata.stitchSlabSize;
     metadataAllocators_.stitchSlab.Init(memBase, totalSize, slabSize, devProg_->devArgs.archInfo);
     for (size_t i = ToUnderlying(WsAicpuSlabMemType::COHERENT_SLAB_MEM_TYPE_BUTT) + 1;
-         i < ToUnderlying(WsAicpuSlabMemType::SLAB_MEM_TYPE_BUTT); ++i) {
+         i < ToUnderlying(WsAicpuSlabMemType::DUPPED_STITCH); ++i) {
         if ((slabMemObjSizeFunc[i] != nullptr) && ((this->*slabMemObjSizeFunc[i])() != 0)) {
             uint32_t objSize = (this->*slabMemObjSizeFunc[i])();
             DEV_ASSERT_MSG(WsErr::WORKSPACE_CAPACITY_INSUFFICIENT, slabSize > objSize, "slabSize=%u <= objSize=%u",
@@ -1158,23 +1197,36 @@ void DeviceWorkspaceAllocator::InitAicpuStitchSlabAllocator(void* memBase, uint3
     }
 }
 
+void DeviceWorkspaceAllocator::InitAicpuDuppedStitchSlabAllocator(void* memBase, uint32_t totalSize)
+{
+    DEV_ASSERT_MSG(WsErr::WORKSPACE_INIT_PARAM_INVALID, memBase != nullptr && totalSize > 0,
+                   "duppedStitch memBase %s null, totalSize=%u", memBase == nullptr ? "is" : "is not", totalSize);
+    uint32_t slabSize = devProg_->memBudget.metadata.duppedStitchSlabSize;
+    metadataAllocators_.duppedStitchSlab.Init(memBase, totalSize, slabSize, devProg_->devArgs.archInfo);
+    uint32_t objSize = DuppedStitchSlabMemObjSize();
+    DEV_ASSERT_MSG(WsErr::WORKSPACE_CAPACITY_INSUFFICIENT, slabSize > objSize, "duppedStitch slabSize=%u <= objSize=%u",
+                   slabSize, objSize);
+    const uint32_t cacheType = ToUnderlying(WsAicpuSlabMemType::DUPPED_STITCH);
+    [[maybe_unused]] bool registCacheRes = metadataAllocators_.duppedStitchSlab.RegistCache(cacheType, objSize);
+    DEV_ASSERT(WsErr::WORKSPACE_ALLOCATOR_REGIST_FAILED, registCacheRes);
+    DEV_INFO("Dupped stitch pool init: addr=%p size=%u slabSize=%u limitMaxAllocatedCount=%u submitLimit=%u.", memBase,
+             totalSize, slabSize, metadataAllocators_.duppedStitchSlab.GetLimitMaxAllocatedCount(cacheType),
+             DUPPED_STITCH_POOL_SUBMIT_LIMIT);
+}
+
 void DeviceWorkspaceAllocator::SlabTryDynAddCache(WsAicpuSlabMemType type, uint32_t objSize)
 {
-    if (type < WsAicpuSlabMemType::COHERENT_SLAB_MEM_TYPE_BUTT) {
-        if (!metadataAllocators_.generalSlab.ExistCache(ToUnderlying(type), objSize)) {
-            [[maybe_unused]] bool registCacheRes = metadataAllocators_.generalSlab.RegistCache(ToUnderlying(type),
-                                                                                               objSize);
-            DEV_ASSERT(WsErr::WORKSPACE_ALLOCATOR_REGIST_FAILED, registCacheRes);
-        }
-    } else if (type < WsAicpuSlabMemType::SLAB_MEM_TYPE_BUTT) {
-        if (!metadataAllocators_.stitchSlab.ExistCache(ToUnderlying(type), objSize)) {
-            [[maybe_unused]] bool registCacheRes = metadataAllocators_.stitchSlab.RegistCache(ToUnderlying(type),
-                                                                                              objSize);
-            DEV_ASSERT(WsErr::WORKSPACE_ALLOCATOR_REGIST_FAILED, registCacheRes);
-        }
-    } else {
-        DEV_ERROR(WsErr::SLAB_TYPE_INVALID, "#workspace.init.check: Invalid slab memory type: %u", (unsigned int)type);
+    if (type >= WsAicpuSlabMemType::SLAB_MEM_TYPE_BUTT) {
+        DEV_ERROR(WsErr::SLAB_TYPE_INVALID, "#workspace.init.check: Invalid slab memory type: %u",
+                  static_cast<unsigned int>(ToUnderlying(type)));
         DEV_ASSERT(WsErr::SLAB_TYPE_INVALID, false);
+        return;
+    }
+    SlabWsAllocator& allocator = GetSlabAllocator(type);
+    uint32_t cacheType = ToUnderlying(type);
+    if (!allocator.ExistCache(cacheType, objSize)) {
+        [[maybe_unused]] bool registCacheRes = allocator.RegistCache(cacheType, objSize);
+        DEV_ASSERT(WsErr::WORKSPACE_ALLOCATOR_REGIST_FAILED, registCacheRes);
     }
 }
 
@@ -1206,6 +1258,7 @@ bool DeviceWorkspaceAllocator::DeviceTaskMemTryRecycle()
             // recycle slab alloc memory
             metadataAllocators_.generalSlab.FreeStageAllocMem(deviceTask->taskStageAllocMem.generalMetadataStageMem);
             metadataAllocators_.stitchSlab.FreeStageAllocMem(deviceTask->taskStageAllocMem.stitchStageMem);
+            metadataAllocators_.duppedStitchSlab.FreeStageAllocMem(deviceTask->taskStageAllocMem.duppedStitchStageMem);
             continueNext = true;
             return true;
         }

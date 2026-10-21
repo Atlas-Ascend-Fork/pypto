@@ -3578,6 +3578,7 @@ static void EncodeProgramMetadataWorkspace(DevAscendProgram* base)
     const bool aicoreResolve = IsAicoreResolveEnabled() &&
                                config::GetRuntimeOption<int64_t>(CFG_RUN_MODE) != CFG_RUN_MODE_SIM;
     base->memBudget.metadata.stitchPool = CalcStitchWorkspace(*base, aicoreResolve);
+    base->memBudget.metadata.duppedStitchPool = CalcDuppedStitchWorkspace(*base);
 }
 
 static void FinalizeEncodedDevAscendProgram(Function* func, DevAscendProgram* base, uint64_t& offset,
@@ -3587,7 +3588,8 @@ static void FinalizeEncodedDevAscendProgram(Function* func, DevAscendProgram* ba
     base->workspaceSize = base->memBudget.Total();
     offset = base->GetSize();
     LogWorkspaceEncodeSummary(1, *base, depthConfig, runtimeCfg, wsDesc);
-    MACHINE_LOGD("StitchPool:%lu bytes, aicoreSpilled:%lu bytes.", base->memBudget.metadata.stitchPool,
+    MACHINE_LOGD("StitchPool:%lu bytes, DuppedStitchPool:%lu bytes, aicoreSpilled:%lu bytes.",
+                 base->memBudget.metadata.stitchPool, base->memBudget.metadata.duppedStitchPool,
                  base->memBudget.aicoreSpilled.Total());
     func->GetDyndevAttribute()->maxDynamicAssembleOutcastMem = wsDesc.maxDynamicAssembleOutcastMem;
     func->GetDyndevAttribute()->maxDynamicCellMatchTableMem = wsDesc.cellMatch.maxDynamicCellMatchTableMem;

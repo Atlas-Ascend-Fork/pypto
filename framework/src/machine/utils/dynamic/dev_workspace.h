@@ -30,6 +30,14 @@ namespace npu::tile_fwk::dynamic {
 inline constexpr int64_t TENSOR_ADDR_ALIGNMENT = 512;
 inline constexpr uint32_t SUBMMIT_TASK_QUE_SIZE = 512;
 constexpr int32_t ALLOC_NUM_ONE_SLAB = 4;
+// Submit when live DUPPED_STITCH slots reach this percent of the isolated pool.
+inline constexpr uint32_t DUPPED_STITCH_POOL_SUBMIT_LIMIT = 80;
+
+struct DuppedStitchPoolUsage {
+    uint32_t allocatedObjCount{0};      // live DUPPED_STITCH objs (in-flight + window)
+    uint32_t limitMaxAllocatedCount{0}; // isolated pool capacity in objects
+    uint32_t currentWindowObjCount{0};  // unPop count of the current stitch window
+};
 
 enum class FunctionMemoryAllocFailure : uint8_t {
     OK = 0,
@@ -373,6 +381,15 @@ public:
 
     uint32_t CalcStitchSlabMemObjmaxSize(uint32_t* slabCapacity);
 
+    uint32_t CalcDuppedStitchSlabMemObjmaxSize();
+
+    DuppedStitchPoolUsage GetDuppedStitchPoolUsage() const;
+
+    // True when live objs have reached submit limit. limitMaxAllocatedCount==0 -> false.
+    static bool DuppedStitchPoolReachedSubmitLimit(const DuppedStitchPoolUsage& usage);
+
+    bool ShouldSubmitForDuppedStitchPool() const;
+
     void CalculateSlabCapacityPerType(uint32_t slabSize, uint32_t* slabCapacity, uint32_t slabTypeNum);
     WsAllocation SlabAlloc(uint32_t objSize, WsAicpuSlabMemType type);
 
@@ -453,6 +470,25 @@ private:
     uint32_t CalcAicpuMetaSlabAlloctorSlabPageSize(uint32_t totalMemSize);
 
     void InitAicpuStitchSlabAllocator(void* memBase, uint32_t totalSize);
+
+    void InitAicpuDuppedStitchSlabAllocator(void* memBase, uint32_t totalSize);
+
+    SlabWsAllocator& GetSlabAllocator(WsAicpuSlabMemType type)
+    {
+        if (type < WsAicpuSlabMemType::COHERENT_SLAB_MEM_TYPE_BUTT) {
+            return metadataAllocators_.generalSlab;
+        }
+        if (type == WsAicpuSlabMemType::DUPPED_STITCH) {
+            return metadataAllocators_.duppedStitchSlab;
+        }
+        if (type < WsAicpuSlabMemType::SLAB_MEM_TYPE_BUTT) {
+            return metadataAllocators_.stitchSlab;
+        }
+        DEV_ERROR(WsErr::SLAB_TYPE_INVALID, "#workspace.init.check: Invalid slab memory type: %u",
+                  static_cast<unsigned int>(ToUnderlying(type)));
+        DEV_ASSERT(WsErr::SLAB_TYPE_INVALID, false);
+        return metadataAllocators_.stitchSlab;
+    }
 
     void SlabTryDynAddCache(WsAicpuSlabMemType type, uint32_t objSize);
 

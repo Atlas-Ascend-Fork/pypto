@@ -152,7 +152,7 @@ public:
 #endif
 };
 
-#define DYN_DEVICE_TASK_EXT_SIZE 0x400
+#define DYN_DEVICE_TASK_EXT_SIZE 0x600
 static_assert(sizeof(DynDeviceTask) < sizeof(DynDeviceTaskBase) + DYN_DEVICE_TASK_EXT_SIZE,
               "Invalid dyn device task extension");
 
@@ -282,6 +282,7 @@ static inline void FillDeviceRuntimeOffset(DevAscendProgram* devProg, uint64_t c
     offset.deviceTaskReadyQueueOffset = FillDeviceRuntimeSize(off, sizeof(npu::tile_fwk::DrcoDeviceTaskReadyQueue));
     offset.generalOffset = FillDeviceRuntimeSize(off, devProg->memBudget.metadata.general);
     offset.stitchPoolOffset = FillDeviceRuntimeSize(off, devProg->memBudget.metadata.stitchPool);
+    offset.duppedStitchPoolOffset = FillDeviceRuntimeSize(off, devProg->memBudget.metadata.duppedStitchPool);
     offset.size = off;
     offset.count = count;
 }

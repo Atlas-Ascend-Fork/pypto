@@ -100,13 +100,15 @@ struct DevAscendProgram {
             uint64_t general;
             uint64_t dynamicCellMatch{0};
             uint64_t stitchPool;
+            uint64_t duppedStitchPool{0};
             uint64_t maxDynamicCellMatchTableMem{0};
             uint64_t dynamicCellMatchSlotNum{0};
             uint64_t stitchCacheSize{0};
             uint32_t generalSlabSize;
             uint32_t stitchSlabSize;
+            uint32_t duppedStitchSlabSize{0};
 
-            uint64_t Total() const { return general + dynamicCellMatch + stitchPool; }
+            uint64_t Total() const { return general + dynamicCellMatch + stitchPool + duppedStitchPool; }
         } metadata;
         struct {
             uint64_t dumpTensor;

@@ -111,10 +111,12 @@ struct MetadataBreakdown {
     uint64_t generalBytes{0};
     uint64_t dynamicCellMatchBytes{0};
     uint64_t stitchPoolBytes{0};
+    uint64_t duppedStitchPoolBytes{0};
     uint64_t maxDynamicCellMatchTableBytes{0};
     uint64_t dynamicCellMatchSlotCount{0};
     uint32_t generalSlabSize{0};
     uint32_t stitchSlabSize{0};
+    uint32_t duppedStitchSlabSize{0};
 };
 
 struct MemoryOverviewState {
@@ -227,10 +229,12 @@ void WriteOverviewLocked()
         << "generalBytes=" << metadata.generalBytes << '\n'
         << "dynamicCellMatchBytes=" << metadata.dynamicCellMatchBytes << '\n'
         << "stitchPoolBytes=" << metadata.stitchPoolBytes << '\n'
+        << "duppedStitchPoolBytes=" << metadata.duppedStitchPoolBytes << '\n'
         << "maxDynamicCellMatchTableBytes=" << metadata.maxDynamicCellMatchTableBytes << '\n'
         << "dynamicCellMatchSlotCount=" << metadata.dynamicCellMatchSlotCount << '\n'
         << "generalSlabSize=" << metadata.generalSlabSize << '\n'
-        << "stitchSlabSize=" << metadata.stitchSlabSize << '\n';
+        << "stitchSlabSize=" << metadata.stitchSlabSize << '\n'
+        << "duppedStitchSlabSize=" << metadata.duppedStitchSlabSize << '\n';
 
     WriteTensorSummary(ofs, "rawTensorStatistics.largestGlobalTensor", state.largestGlobalTensor);
     WriteTensorSummary(ofs, "rawTensorStatistics.largestWorkspaceTensor", state.largestWorkspaceTensor);
@@ -449,10 +453,12 @@ void DumpMemoryOverview(const DevAscendProgram& devProg, Function* func, uint64_
     metadataBreakdown.generalBytes = metadata.general;
     metadataBreakdown.dynamicCellMatchBytes = metadata.dynamicCellMatch;
     metadataBreakdown.stitchPoolBytes = metadata.stitchPool;
+    metadataBreakdown.duppedStitchPoolBytes = metadata.duppedStitchPool;
     metadataBreakdown.maxDynamicCellMatchTableBytes = metadata.maxDynamicCellMatchTableMem;
     metadataBreakdown.dynamicCellMatchSlotCount = metadata.dynamicCellMatchSlotNum;
     metadataBreakdown.generalSlabSize = metadata.generalSlabSize;
     metadataBreakdown.stitchSlabSize = metadata.stitchSlabSize;
+    metadataBreakdown.duppedStitchSlabSize = metadata.duppedStitchSlabSize;
     WriteOverviewLocked();
 }
 

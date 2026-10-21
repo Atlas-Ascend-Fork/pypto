@@ -71,16 +71,20 @@ static void InitDeviceWorkspaceAllocatorForTest(DeviceWorkspaceAllocator& d, Dev
 {
     DevStartArgs args;
 
-    // Ensure stitch pool and general metadata are non-zero and large enough
-    devProg.memBudget.metadata.general = 1u << 18;         // 256KB
-    devProg.memBudget.metadata.stitchPool = 1u << 16;      // 64KB
-    devProg.memBudget.metadata.generalSlabSize = 1u << 15; // 32KB
-    devProg.memBudget.metadata.stitchSlabSize = 1u << 14;  // 16KB
+    // Ensure stitch / dupped-stitch pools and general metadata are non-zero and large enough
+    devProg.memBudget.metadata.general = 1u << 18;              // 256KB
+    devProg.memBudget.metadata.stitchPool = 1u << 16;           // 64KB
+    devProg.memBudget.metadata.duppedStitchPool = 1u << 14;     // 16KB
+    devProg.memBudget.metadata.generalSlabSize = 1u << 15;      // 32KB
+    devProg.memBudget.metadata.stitchSlabSize = 1u << 14;       // 16KB
+    devProg.memBudget.metadata.duppedStitchSlabSize = 1u << 12; // 4KB
 
     args.deviceRuntimeDataDesc.generalAddr = reinterpret_cast<uint64_t>(workspace.data());
     // Put stitch pool at an offset within the same workspace region
     args.deviceRuntimeDataDesc.stitchPoolAddr = reinterpret_cast<uint64_t>(workspace.data()) +
                                                 devProg.memBudget.metadata.general; // offset 256KB
+    args.deviceRuntimeDataDesc.duppedStitchPoolAddr = args.deviceRuntimeDataDesc.stitchPoolAddr +
+                                                      devProg.memBudget.metadata.stitchPool;
 
     devProg.devArgs.nrAic = 1;
     devProg.devArgs.nrAiv = 1;

@@ -526,6 +526,24 @@ int DeviceExecuteContext::ControlFlowCacheStopCache(uint64_t rootKey)
     return ret;
 }
 
+int DeviceExecuteContext::SubmitIfDuppedStitchPoolInsufficient()
+{
+    DuppedStitchPoolUsage usage = workspace.GetDuppedStitchPoolUsage();
+    const bool needSubmit = !stitchContext.Empty() &&
+                            DeviceWorkspaceAllocator::DuppedStitchPoolReachedSubmitLimit(usage);
+    if (!needSubmit) {
+        return DEVICE_MACHINE_OK;
+    }
+    uint32_t usedPercent = usage.limitMaxAllocatedCount == 0 ?
+                               0 :
+                               usage.allocatedObjCount * 100U / usage.limitMaxAllocatedCount;
+    DEV_INFO("[Stitch Finish] DuppedStitch pool limit. rootCount=%zu allocated=%u window=%u "
+             "limitMaxAllocatedCount=%u usedPercent=%u submitLimit=%u.",
+             stitchContext.Size(), usage.allocatedObjCount, usage.currentWindowObjCount, usage.limitMaxAllocatedCount,
+             usedPercent, DUPPED_STITCH_POOL_SUBMIT_LIMIT);
+    return SubmitToAicoreAndRecycleMemory(false);
+}
+
 void* DeviceExecuteContext::CallRootFunctionAlloc(uint64_t rootKey)
 {
     int ret = DEVICE_MACHINE_OK;
@@ -656,6 +674,10 @@ void* DeviceExecuteContext::CallRootFunctionStitch(uint64_t rootKey)
         if (unlikely(ret != DEVICE_MACHINE_OK)) {
             return RUNTIME_FUNCKEY_ERROR;
         }
+    }
+    ret = SubmitIfDuppedStitchPoolInsufficient();
+    if (unlikely(ret != DEVICE_MACHINE_OK)) {
+        return RUNTIME_FUNCKEY_ERROR;
     }
     PROF_STAGE_END(PERF_EVT_STAGE_STITCH, "stitch.after\n");
     DEV_TRACE_DEBUG(DEvent(taskId, DActStitchFinish(GetRuid(rootKey, true))));
