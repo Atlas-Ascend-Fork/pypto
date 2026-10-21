@@ -1746,6 +1746,41 @@ TEST_F(GraphPartitionTest, PreservesAcyclicTokenConnectedSubgraphs)
     EXPECT_EQ(G.GetFunction()->GetTotalSubGraphCount(), 2U);
 }
 
+TEST_F(GraphPartitionTest, KeepsUbToL1ContractWithProducerWhenSplittingCyclicSubgraphs)
+{
+    ComputationalGraphBuilder G;
+    const Shape shape{16, 16};
+    const std::vector<MemoryType> memoryTypes{MemoryType::MEM_UB,         MemoryType::MEM_UB,  MemoryType::MEM_L1,
+                                              MemoryType::MEM_L0A,        MemoryType::MEM_L0B, MemoryType::MEM_L0C,
+                                              MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_UB,  MemoryType::MEM_UB};
+    const std::vector<std::string> tensorNames{"input", "vectorOut", "l1", "a", "b", "l0c", "gm", "ub", "output"};
+    ASSERT_TRUE(G.AddTensors(DataType::DT_FP32, shape, memoryTypes, tensorNames, 0));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_ABS, {"input"}, {"vectorOut"}, "producer"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_CONTRACT, {"vectorOut"}, {"l1"}, "ubToL1"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_SLICE, {"l1"}, {"a"}, "l1ToL0a"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_A_MUL_B, {"a", "b"}, {"l0c"}, "cube"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_CONTRACT, {"l0c"}, {"gm"}, "copyOut"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_COPY_IN, {"gm"}, {"ub"}, "copyIn"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_EXP, {"ub"}, {"output"}, "consumer"));
+    for (const auto& name : {"producer", "ubToL1", "copyIn", "consumer"}) {
+        G.GetOp(name)->UpdateSubgraphID(0);
+    }
+    for (const auto& name : {"l1ToL0a", "cube", "copyOut"}) {
+        G.GetOp(name)->UpdateSubgraphID(1);
+    }
+    G.GetFunction()->SetTotalSubGraphCount(2);
+
+    ASSERT_EQ(FinalizePartitionWithTokenDependency(*G.GetFunction()), SUCCESS);
+
+    EXPECT_EQ(G.GetOp("producer")->GetSubgraphID(), G.GetOp("ubToL1")->GetSubgraphID());
+    EXPECT_EQ(G.GetOp("cube")->GetSubgraphID(), G.GetOp("copyOut")->GetSubgraphID());
+    EXPECT_NE(G.GetOp("producer")->GetSubgraphID(), G.GetOp("cube")->GetSubgraphID());
+    EXPECT_NE(G.GetOp("cube")->GetSubgraphID(), G.GetOp("consumer")->GetSubgraphID());
+    EXPECT_EQ(G.GetFunction()->GetTotalSubGraphCount(), 3U);
+    GraphPartition pass;
+    EXPECT_EQ(pass.PostCheck(*G.GetFunction()), SUCCESS);
+}
+
 TEST_F(GraphPartitionTest, SplitsLateLoweredAicAndAivOperationsWithinSameSubgraph)
 {
     ComputationalGraphBuilder G;

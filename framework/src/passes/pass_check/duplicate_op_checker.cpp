@@ -109,12 +109,12 @@ Status DuplicateOpChecker::PostCheckView(const Operation& op)
                     oOperand->magic);
                 return FAILED;
             }
-            if (consumer->GetOpcode() == Opcode::OP_VIEW) {
+            if (IsViewLike(consumer->GetOpcode())) {
                 continue;
             }
             consumerNum++;
         }
-        if (consumerNum == kNumTwo) {
+        if (consumerNum >= kNumTwo) {
             APASS_LOG_ERROR_F(Elements::Operation,
                               "There can not be more than one non-view node among its consumers for op[%d].%s",
                               op.opmagic, GetFormatBacktrace(op).c_str());

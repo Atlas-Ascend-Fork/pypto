@@ -648,6 +648,9 @@ Status SplitMixedCoreSubgraphs(Function& function, const std::unordered_set<int>
     }
     bool consumerAnchorChanged = false;
     if (inferPostLoweringCore) {
+        std::vector<std::set<int>> dependencyGraph;
+        std::vector<uint32_t> coreFlags;
+        bool dependencyGraphDirty = true;
         for (auto iter = sortedOperations.rbegin(); iter != sortedOperations.rend(); ++iter) {
             auto* op = *iter;
             if (!IsConsumerAnchoredPostLoweringMove(*op)) {
@@ -673,10 +676,25 @@ Status SplitMixedCoreSubgraphs(Function& function, const std::unordered_set<int>
                 HasAicAivConflict(splitCoreFlags[anchoredSubgraphId] | opCoreFlag)) {
                 continue;
             }
+            // Moving a copy past an intervening core segment can recreate a token dependency cycle.
+            if (dependencyGraphDirty) {
+                dependencyGraph = BuildSubgraphDependencyGraph(function);
+                coreFlags = CollectSubgraphCoreFlags(function, nextSubgraphId - 1, true);
+                dependencyGraphDirty = false;
+            }
+            const auto pathClosure = CollectPathClosure(dependencyGraph, op->GetSubgraphID(), anchoredSubgraphId);
+            uint32_t pathCoreFlags = opCoreFlag;
+            for (int subgraphId : pathClosure) {
+                pathCoreFlags |= coreFlags[subgraphId];
+            }
+            if (HasAicAivConflict(pathCoreFlags)) {
+                continue;
+            }
             op->UpdateSubgraphID(anchoredSubgraphId);
             assignedSubgraphIds[op] = anchoredSubgraphId;
             splitCoreFlags[anchoredSubgraphId] |= opCoreFlag;
             consumerAnchorChanged = true;
+            dependencyGraphDirty = true;
         }
     }
     if (consumerAnchorChanged) {
@@ -728,7 +746,8 @@ Status MergeCyclicSubgraphsOnce(Function& function, bool& changed)
         }
     }
     if (!mixedCoreCyclicSubgraphIds.empty()) {
-        if (SplitMixedCoreSubgraphs(function, mixedCoreCyclicSubgraphIds) != SUCCESS) {
+        // Infer the executing core of cross-memory moves and preserve their computation anchors.
+        if (SplitMixedCoreSubgraphs(function, mixedCoreCyclicSubgraphIds, true) != SUCCESS) {
             return FAILED;
         }
         changed = true;

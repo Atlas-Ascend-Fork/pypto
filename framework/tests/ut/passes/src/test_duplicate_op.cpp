@@ -248,6 +248,73 @@ TEST_F(TestDuplicateOpPass, DuplicateSliceUTest1)
     }
 }
 
+TEST_F(TestDuplicateOpPass, PostCheckViewConsumerCount)
+{
+    for (size_t consumerCount = 0; consumerCount <= 4; ++consumerCount) {
+        SCOPED_TRACE(consumerCount);
+        auto function = std::make_shared<Function>(Program::GetInstance(), "TestViewConsumers", "TestViewConsumers",
+                                                   nullptr);
+        const Shape shape{8, 16};
+        const std::vector<int64_t> offset{0, 0};
+        auto input = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        auto view = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        PassOperationUtils::AddOperation(*function, Opcode::OP_VIEW, {input}, {view}, [&offset, &view](Operation& op) {
+            op.SetOpAttribute(
+                std::make_shared<ViewOpAttribute>(offset, std::vector<SymbolicScalar>{}, view->GetDynValidShape()));
+        });
+        function->inCasts_.push_back(input);
+        if (consumerCount == 0) {
+            function->outCasts_.push_back(view);
+        }
+        for (size_t i = 0; i < consumerCount; ++i) {
+            auto output = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+            PassOperationUtils::AddOperation(*function, Opcode::OP_ABS, {view}, {output});
+            function->outCasts_.push_back(output);
+        }
+
+        DuplicateOp pass;
+        ASSERT_EQ(pass.PreCheck(*function), SUCCESS);
+        EXPECT_EQ(pass.PostCheck(*function), consumerCount < 2 ? SUCCESS : FAILED);
+        ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+        EXPECT_EQ(pass.PostCheck(*function), SUCCESS);
+    }
+}
+
+// A duplicated SLICE remains a view-like consumer of its upstream VIEW.
+TEST_F(TestDuplicateOpPass, DuplicateViewSliceConsumers)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "TestViewSlice", "TestViewSlice", nullptr);
+    std::vector<int64_t> inputShape = {8, 16};
+    std::vector<int64_t> sliceShape = {4, 16};
+    std::vector<int64_t> offset = {0, 0};
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, inputShape, CreateTestConstIntVector(inputShape));
+    auto view = IRBuilder().CreateTensorVar(DT_FP32, inputShape, CreateTestConstIntVector(inputShape));
+    auto slice = IRBuilder().CreateTensorVar(DT_FP32, sliceShape, CreateTestConstIntVector(sliceShape));
+    auto output1 = IRBuilder().CreateTensorVar(DT_FP32, sliceShape, CreateTestConstIntVector(sliceShape));
+    auto output2 = IRBuilder().CreateTensorVar(DT_FP32, sliceShape, CreateTestConstIntVector(sliceShape));
+    PassOperationUtils::AddOperation(*function, Opcode::OP_VIEW, {input}, {view}, [&offset, &view](Operation& op) {
+        op.SetOpAttribute(
+            std::make_shared<ViewOpAttribute>(offset, std::vector<SymbolicScalar>{}, view->GetDynValidShape()));
+    });
+    PassOperationUtils::AddOperation(*function, Opcode::OP_SLICE, {view}, {slice}, [&offset](Operation& op) {
+        op.SetOpAttribute(std::make_shared<ViewOpAttribute>(offset, MEM_VECTOR_REG, std::vector<SymbolicScalar>{}));
+    });
+    auto& exp = PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {slice}, {output1});
+    auto& sqrt = PassOperationUtils::AddOperation(*function, Opcode::OP_SQRT, {slice}, {output2});
+    function->inCasts_.push_back(input);
+    function->outCasts_.push_back(output1);
+    function->outCasts_.push_back(output2);
+
+    DuplicateOp pass;
+    ASSERT_EQ(pass.PreCheck(*function), SUCCESS);
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_VIEW), 1);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), 2);
+    EXPECT_NE(exp.GetInputOperand(0), sqrt.GetInputOperand(0));
+    EXPECT_EQ(view->GetConsumers().size(), 2);
+    EXPECT_EQ(pass.PostCheck(*function), SUCCESS);
+}
+
 /*
 TESTDuplicateViewAlternativeConsumer
 inCast{8,16}->view->ubTensor1{1,8,16}
