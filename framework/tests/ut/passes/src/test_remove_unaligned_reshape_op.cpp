@@ -1695,6 +1695,32 @@ TEST_F(TestRemoveUnalignedReshapeOp, TestRawIdClosureAcrossTensorVersionsPreserv
     EXPECT_TRUE(currFunctionPtr->GetVarDependency().HasConsumer(token, ToStmtPtr(currentCopyOut)));
 }
 
+TEST_F(TestRemoveUnalignedReshapeOp, TestTerminalDynamicReshapeSkipsPairedConversion)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "TestMetadataReshape", "TestMetadataReshape",
+                                               nullptr);
+    IRBuilder builder;
+    auto ub = builder.CreateTensorVar(DT_FP32, {8, 8}, CreateTestConstIntVector({8, 8}));
+    ub->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+    auto gm = builder.CreateTensorVar(DT_FP32, {-1, 8}, {CreateTestScalarVar("rows"), SymbolicScalar(8)});
+    gm->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+    auto alias = builder.CreateTensorVar(*function, gm->GetRawTensor(), {0, 0}, {-1, 16},
+                                         {CreateTestScalarVar("rows"), CreateTestScalarVar("cols")});
+    alias->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+    auto& copyOut = PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_OUT, {ub}, {gm});
+    PassOperationUtils::AddOperation(*function, Opcode::OP_RESHAPE, {gm}, {alias});
+    function->outCasts_.push_back(alias);
+    auto readUb = builder.CreateTensorVar(DT_FP32, {8, 8}, CreateTestConstIntVector({8, 8}));
+    readUb->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+    auto& copyIn = PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_IN, {gm}, {readUb});
+
+    RemoveUnalignedReshape pass;
+    EXPECT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    EXPECT_EQ(function->Operations().size(), 3);
+    EXPECT_EQ(copyOut.GetOpcode(), Opcode::OP_COPY_OUT);
+    EXPECT_EQ(copyIn.GetOpcode(), Opcode::OP_COPY_IN);
+}
+
 namespace {
 constexpr int64_t FOLD_RAW_ROWS = 285;
 constexpr int64_t FOLD_RAW_COLS = 64;

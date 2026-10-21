@@ -1459,6 +1459,41 @@ TEST_F(PreGraphTest, TestRemoveViewSingleReshapeSkipsCalcInfoFailureThenContinue
     CompareOpImmediateVector(targetCopyAttr->GetRawShape(), {1, 128, 128});
 }
 
+TEST_F(PreGraphTest, KeepParallelAssemblesWithSiblingCopyIn)
+{
+    ComputationalGraphBuilder graph;
+    graph.AddTensor(DT_FP32, {4, 4}, MEM_UB, "ub");
+    graph.AddTensor(DT_FP32, {4, 4}, MEM_DEVICE_DDR, "gm");
+    graph.AddTensor(DT_FP32, {8, 8}, MEM_DEVICE_DDR, "out1");
+    graph.AddTensor(DT_FP32, {8, 8}, MEM_DEVICE_DDR, "out2");
+    graph.AddTensor(DT_FP32, {4, 4}, MEM_UB, "read");
+    graph.GetTensor("gm")->tensor = graph.GetTensor("out1")->tensor;
+    graph.GetTensor("out2")->tensor = graph.GetTensor("out1")->tensor;
+    graph.AddOp(Opcode::OP_COPY_OUT, {"ub"}, {"gm"}, "writer");
+    auto copyAttr = std::make_shared<CopyOpAttribute>(MEM_UB, OpImmediate::Specified({0, 0}),
+                                                      OpImmediate::Specified({4, 4}), OpImmediate::Specified({4, 4}));
+    graph.GetOp("writer")->SetOpAttribute(copyAttr);
+    graph.AddOp(Opcode::OP_ASSEMBLE, {"gm"}, {"out1"}, "assemble1");
+    graph.AddOp(Opcode::OP_ASSEMBLE, {"gm"}, {"out2"}, "assemble2");
+    graph.GetOp("assemble1")
+        ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{2, 4}, CreateTestConstIntVector({2, 4})));
+    graph.GetOp("assemble2")
+        ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{4, 0}, CreateTestConstIntVector({4, 0})));
+    graph.AddOp(Opcode::OP_COPY_IN, {"gm"}, {"read"}, "reader");
+    graph.AddTensor(DT_FP32, {4, 16}, MEM_DEVICE_DDR, "final1");
+    graph.AddTensor(DT_FP32, {4, 16}, MEM_DEVICE_DDR, "final2");
+    graph.AddOp(Opcode::OP_RESHAPE, {"out1"}, {"final1"}, "reshape1");
+    graph.AddOp(Opcode::OP_RESHAPE, {"out2"}, {"final2"}, "reshape2");
+    graph.SetOutCast({"final1", "final2"});
+
+    RemoveRedundantAssemble pass;
+    ASSERT_EQ(pass.DeleteRedundantAssemble(*graph.GetFunction()), SUCCESS);
+    EXPECT_EQ(graph.GetFunction()->Operations().size(), 6);
+    EXPECT_EQ(graph.GetOp("reader")->GetIOperands().front(), graph.GetTensor("gm"));
+    CompareOpImmediateVector(copyAttr->GetToOffset(), {0, 0});
+    CompareOpImmediateVector(copyAttr->GetRawShape(), {4, 4});
+}
+
 TEST_F(PreGraphTest, TestRemoveRedundantAssemble)
 {
     ComputationalGraphBuilder G;

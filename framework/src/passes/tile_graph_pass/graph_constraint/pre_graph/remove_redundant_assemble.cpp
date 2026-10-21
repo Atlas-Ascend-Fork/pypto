@@ -1323,13 +1323,36 @@ Status RemoveRedundantAssemble::HanldeForSingleAssemble(Function& function, Logi
 {
     auto producersBackup = input->GetProducers();
     auto& consumers = input->GetConsumers();
-    auto cons = *consumers.begin();
-    if (consumers.size() == 1 && cons->GetOpcode() == Opcode::OP_ASSEMBLE) {
-        PassTokenUtils::MoveTokenDependencyBeforeRemoveOp(function, *cons);
-        cons->SetAsDeleted();
-        if (HandleCopyOutToAssemble(*cons, output, producersBackup) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Operation, "HandleCopyOutToAssemble for op:[%d] failed. %s", cons->GetOpMagic(),
-                              cons->GetOpcodeStr().c_str());
+    // Only fold the additional COPY_OUT -> ASSEMBLE -> RESHAPE -> OUTCAST pattern.
+    // The caller guarantees a single sibling ASSEMBLE. ReplaceTensor has already refreshed COPY_IN attributes.
+    const auto& outputConsumers = output->GetConsumers();
+    bool reshapeToOutcast = outputConsumers.size() == 1 &&
+                            (*outputConsumers.begin())->GetOpcode() == Opcode::OP_RESHAPE &&
+                            FunctionUtils::GetNodeType(*(*outputConsumers.begin())->GetOOperands().front(), function) ==
+                                NodeType::OUTCAST;
+    const auto& outputProducers = output->GetProducers();
+    bool rewireCopyIns = reshapeToOutcast && outputProducers.size() == 1 && *outputProducers.begin() == &op &&
+                         consumers.size() > 1 && input->GetRawMagic() == output->GetRawMagic() &&
+                         std::all_of(producersBackup.begin(), producersBackup.end(),
+                                     [](Operation* producer) { return IsCopyOut(producer->GetOpcode()); }) &&
+                         std::all_of(consumers.begin(), consumers.end(), [&op](Operation* consumer) {
+                             return consumer == &op || IsCopyIn(consumer->GetOpcode());
+                         });
+    if (consumers.size() == 1 || rewireCopyIns) {
+        PassTokenUtils::MoveTokenDependencyBeforeRemoveOp(function, op);
+        if (rewireCopyIns) {
+            auto consumersBackup = consumers;
+            for (auto* consumer : consumersBackup) {
+                if (consumer != &op) {
+                    // Preserve the absolute COPY_IN attributes refreshed by ReplaceTensor.
+                    consumer->ReplaceInput(output, input);
+                }
+            }
+        }
+        op.SetAsDeleted();
+        if (HandleCopyOutToAssemble(op, output, producersBackup) != SUCCESS) {
+            APASS_LOG_ERROR_F(Elements::Operation, "HandleCopyOutToAssemble for op:[%d] failed. %s", op.GetOpMagic(),
+                              op.GetOpcodeStr().c_str());
             return FAILED;
         }
         HandleForAssembleFromInOut(function, op, producersBackup);
