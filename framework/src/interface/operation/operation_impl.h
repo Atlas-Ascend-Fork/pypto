@@ -248,6 +248,7 @@ const std::string A_MUL_B_ACT_K = OP_ATTR_PREFIX + "act_k";
 const std::string A_MUL_B_ACT_N = OP_ATTR_PREFIX + "act_n";
 const std::string A_MUL_B_BIAS_ATTR = OP_ATTR_PREFIX + "has_bias";
 const std::string CONV_RELU_ATTR = OP_ATTR_PREFIX + "relu_type";
+const std::string CONV_SYM_PADDINGS_ATTR = OP_ATTR_PREFIX + "sym_paddings";
 const std::vector<int64_t> CONV2D_ATTR_DEFAULT_LIST = {1, 1};
 const std::vector<int64_t> CONV3D_ATTR_DEFAULT_LIST = {1, 1, 1};
 const std::vector<int64_t> CONV2D_PAD_ATTR_DEFAULT_LIST = {0, 0, 0, 0};
@@ -282,6 +283,9 @@ enum class CopyOutMode : int {
 
 struct ConvAttrParam {
     std::vector<int64_t> paddings = {0, 0, 0, 0};
+    // 非空表示符号(表达式)padding模式: 元素为SymbolicScalar表达式, 由kernel侧按tile计算后传入。
+    // 此模式下paddings(int64)统一按0处理, conv内部tile展开采用pad=0语义(view已从正确位置截取)。
+    std::vector<SymbolicScalar> symPaddings;
     std::vector<int64_t> strides = {1, 1};
     std::vector<int64_t> dilations = {1, 1};
     std::vector<int64_t> oriFmapShape = {0, 0, 0, 0};
@@ -392,6 +396,29 @@ struct ConvIterInfo {
     bool bL1UpadateFlag = false;
     bool isFirstK = false;
     bool isLastK = false;
+    // conv3d符号d-pad(表达式)模式: dk裁剪由运行时表达式承载, dkL1Size保持orgKd(kL0循环满额展开),
+    // 空block由L1 tile/L0A的valid表达式跳过(load3d不生成K行, mmad按validK=0跳过)。
+    // block b(前缀紧排) ↔ 窗口位置 symTmpKdHead + b
+    bool hasSymDkPad = false;
+    SymbolicScalar symDinL1Offset;   // 当前输出D slice窗口首行(view坐标, 可为负)
+    SymbolicScalar symTmpKdHead;     // 窗口头部处于pad的slice数
+    SymbolicScalar symDkReal;        // 窗口内真实数据slice数
+    SymbolicScalar symDkFirstSrcPos; // 首个真实slice的view坐标 = symDinL1Offset + symTmpKdHead*dilationD
+    SymbolicScalar symDkPosClampMax; // 空block src偏移钳制上限 = max(dataD - 1, 0)
+    // conv符号h/w-pad(表达式)多L1 tile模式: 逐L1 tile按窗口分解派生表达式,
+    // L1 tile窗口起点start = hL1OutOffset*stride与窗宽full = (houtL1Size-1)*stride+dilatedK均为编译期常量,
+    // 符号表达式随L1 tile循环展开逐轮更新传递:
+    //   padHead   = max(symPad - start, 0)                    该tile头部补零(img2col padTop/Left)
+    //   srcOffset = max(start - symPad, 0)                    GM搬运起点(view坐标)
+    //   valid     = max(0, min(full - padHead, data - srcOffset))  该tile真实数据量
+    //   padTail   = full - valid - padHead(img2col按公式补齐)
+    // 单L1 tile时start=0, padHead退化为kernel传入的整窗表达式, 与既有行为一致
+    SymbolicScalar symPadTopL1;   // 当前L1 tile头部pad(H轴, 窗口坐标)
+    SymbolicScalar symSrcOffsetH; // 当前L1 tile GM搬运H偏移(view坐标, >=0)
+    SymbolicScalar symValidHL1;   // 当前L1 tile H维真实数据量
+    SymbolicScalar symPadLeftL1;  // 当前L1 tile左pad(W轴, 窗口坐标)
+    SymbolicScalar symSrcOffsetW; // 当前L1 tile GM搬运W偏移(view坐标, >=0)
+    SymbolicScalar symValidWL1;   // 当前L1 tile W维真实数据量
     // load3dv2 params
     int64_t repeatStride = 0;
     int64_t repeatTime = 1;

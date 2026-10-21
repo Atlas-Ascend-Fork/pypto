@@ -80,6 +80,10 @@ TILEOP void TLoad3D(T& dst, U& src, const int64_t& mPos, const int64_t& kPos, co
     constexpr auto staticKL0 = Std::tuple_element<CONV_IDX_1, typename T::TileShape>::type::value;
     int64_t mL0 = GetConvShape<CONV_IDX_0>(dst);
     int64_t kL0 = GetConvShape<CONV_IDX_1>(dst);
+    if (kL0 == 0) {
+        // 符号d-pad空block: K维valid为0, 无K行可生成, 跳过img2col(L1内容残留, mmad按validK=0跳过)
+        return;
+    }
     using dstTensor = pto::TileLeft<typename T::Type, staticML0, staticKL0, -1, -1>;
     dstTensor l0(dstStride, kL0);
 

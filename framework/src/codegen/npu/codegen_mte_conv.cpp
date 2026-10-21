@@ -341,14 +341,36 @@ std::string CodeGenOpNPU::GenMemL1ToL0Load3D() const
         list.emplace_back(value);
     };
 
+    // 符号padding模式: pad属性以SymbolicScalar表达式存储, 生成运行时表达式参数;
+    // 否则回退到int64常量路径
+    SymbolicScalar symPadLeft;
+    SymbolicScalar symPadRight;
+    SymbolicScalar symPadTop;
+    SymbolicScalar symPadBottom;
+    bool hasSymPad = GetOpAttr(OpAttributeKey::symPaddingLeft, symPadLeft);
+    hasSymPad = GetOpAttr(OpAttributeKey::symPaddingRight, symPadRight) && hasSymPad;
+    hasSymPad = GetOpAttr(OpAttributeKey::symPaddingTop, symPadTop) && hasSymPad;
+    hasSymPad = GetOpAttr(OpAttributeKey::symPaddingBottom, symPadBottom) && hasSymPad;
+    if (hasSymPad) {
+        int64_t val = 0;
+        loadParams(paramList, OpAttributeKey::postM, val);
+        loadParams(paramList, OpAttributeKey::postK, val);
+        paramList.emplace_back(SymbolicExpressionTable::BuildExpression(symPadLeft));
+        paramList.emplace_back(SymbolicExpressionTable::BuildExpression(symPadRight));
+        paramList.emplace_back(SymbolicExpressionTable::BuildExpression(symPadTop));
+        paramList.emplace_back(SymbolicExpressionTable::BuildExpression(symPadBottom));
+        loadParams(paramList, OpAttributeKey::padValue, val);
+    } else {
+        int64_t val = 0;
+        loadParams(paramList, OpAttributeKey::postM, val);
+        loadParams(paramList, OpAttributeKey::postK, val);
+        loadParams(paramList, OpAttributeKey::paddingLeft, val);
+        loadParams(paramList, OpAttributeKey::paddingRight, val);
+        loadParams(paramList, OpAttributeKey::paddingTop, val);
+        loadParams(paramList, OpAttributeKey::paddingBottom, val);
+        loadParams(paramList, OpAttributeKey::padValue, val);
+    }
     int64_t val = 0;
-    loadParams(paramList, OpAttributeKey::postM, val);
-    loadParams(paramList, OpAttributeKey::postK, val);
-    loadParams(paramList, OpAttributeKey::paddingLeft, val);
-    loadParams(paramList, OpAttributeKey::paddingRight, val);
-    loadParams(paramList, OpAttributeKey::paddingTop, val);
-    loadParams(paramList, OpAttributeKey::paddingBottom, val);
-    loadParams(paramList, OpAttributeKey::padValue, val);
     loadParams(paramList, OpAttributeKey::filterH, val);
     loadParams(paramList, OpAttributeKey::filterW, val);
     loadParams(paramList, OpAttributeKey::dilationH, val);

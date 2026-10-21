@@ -370,6 +370,8 @@ INLINE int64_t RUNTIME_Min(int64_t input1, int64_t input2) { return input1 < inp
 
 INLINE int64_t RUNTIME_Max(int64_t input1, int64_t input2) { return input1 > input2 ? input1 : input2; }
 
+INLINE int64_t RUNTIME_TernaryOP(int64_t cond, int64_t lhs, int64_t rhs) { return cond ? lhs : rhs; }
+
 INLINE int64_t RUNTIME_Eq(int64_t input1, int64_t input2) { return input1 == input2; }
 
 INLINE int64_t RUNTIME_Ne(int64_t input1, int64_t input2) { return input1 != input2; }

@@ -146,6 +146,10 @@ public:
     static const std::string paddingRight;
     static const std::string paddingTop;
     static const std::string paddingBottom;
+    static const std::string symPaddingLeft;
+    static const std::string symPaddingRight;
+    static const std::string symPaddingTop;
+    static const std::string symPaddingBottom;
     static const std::string padValue;
     static const std::string repeatStride;
     static const std::string repeatTime;

@@ -73,6 +73,7 @@ void SetTensorOpAttr(Operation& op, const LogicalTensorPtr& inputTensor, const L
     op.SetAttribute(CONV_BIAS_ATTR, convAttrParam.hasBias);
     op.SetAttribute(CONV_GROUPS_ATTR, convAttrParam.groups);
     op.SetAttribute(CONV_PADDINGS_ATTR, convAttrParam.paddings);
+    op.SetAttribute(CONV_SYM_PADDINGS_ATTR, convAttrParam.symPaddings);
     op.SetAttribute(CONV_STRIDES_ATTR, convAttrParam.strides);
     op.SetAttribute(CONV_DILATIONS_ATTR, convAttrParam.dilations);
     op.SetAttribute(CONV_3D_FLAG, convAttrParam.isConv3D);
@@ -220,6 +221,12 @@ static void ConstructConv1DOperandReshape(Function* functionPtr, const Tensor& i
     std::vector<int64_t> fmap4DimShape{inputTensor.GetShape()[NCHW_N_IDX], inputTensor.GetShape()[NCHW_C_IDX], 1,
                                        inputTensor.GetShape()[NCHW_H_IDX]};
     Tensor fmap4DimTensor(inputTensor.GetStorage()->Datatype(), fmap4DimShape, "", inputTensor.Format());
+    // 传递fmap动态valid shape(3维NCL -> 4维NCHW, H维补1):
+    // 否则reshape后w维valid退化为静态, img2col padRight按静态窗口宽补零失效,
+    // 边界窗口读到L1残留数据(conv1d符号pad间歇性精度问题的根因)
+    std::vector<SymbolicScalar> fmapValidShape = inputTensor.GetValidShape();
+    fmap4DimTensor.GetStorage()->UpdateDynValidShape(
+        {fmapValidShape[NCL_N_IDX], fmapValidShape[NCL_C_IDX], SymbolicScalar(1), fmapValidShape[NCL_L_IDX]});
     TileShape::Current().SetVecTile(Conv::GetReshapeVecTile(vecTiles.fmapVecTile, true));
     auto& reshapeFmapOp = functionPtr->AddOperation(Opcode::OP_RESHAPE, {inputTensor.GetStorage()},
                                                     {fmap4DimTensor.GetStorage()});
@@ -308,6 +315,9 @@ void SetConvAttrParam(const Operation& op, ConvAttrParam& convAttrParam)
     convAttrParam.paddings = (op.HasAttr(CONV_PADDINGS_ATTR)) ? op.GetVectorIntAttribute(CONV_PADDINGS_ATTR) :
                              convAttrParam.isConv3D           ? CONV3D_ATTR_DEFAULT_LIST :
                                                                 CONV2D_PAD_ATTR_DEFAULT_LIST;
+    convAttrParam.symPaddings = (op.HasAttr(CONV_SYM_PADDINGS_ATTR)) ?
+                                    op.GetVectorSymbolicScalarAttribute(CONV_SYM_PADDINGS_ATTR) :
+                                    SymbolicScalar::FromConcrete(convAttrParam.paddings);
     convAttrParam.strides = (op.HasAttr(CONV_STRIDES_ATTR)) ? op.GetVectorIntAttribute(CONV_STRIDES_ATTR) :
                             convAttrParam.isConv3D          ? CONV3D_ATTR_DEFAULT_LIST :
                                                               CONV2D_ATTR_DEFAULT_LIST;
@@ -445,7 +455,7 @@ LogicalTensorPtr ConstructBiasTile(Function& function, const ConvGraphNodes& ten
 }
 
 void SetImg2ColAttr(Operation& load3dOpAl0, const ConvAttrParam& convAttrParam, ConvIterInfo& iterInfo,
-                    const ConvTileInfo& convTileInfo)
+                    const ConvTileInfo& convTileInfo, const LogicalTensorPtr& aL1TensorPtr)
 {
     int64_t strideH = convAttrParam.strides[0];
     int64_t strideW = convAttrParam.strides[1];
@@ -459,31 +469,53 @@ void SetImg2ColAttr(Operation& load3dOpAl0, const ConvAttrParam& convAttrParam, 
     load3dOpAl0.SetAttribute(OpAttributeKey::dilationW, dilationW);
     load3dOpAl0.SetAttribute(OpAttributeKey::filterH, convTileInfo.orgKh);
     load3dOpAl0.SetAttribute(OpAttributeKey::filterW, convTileInfo.orgKw);
-    // cal H padding
-    if (iterInfo.hL1InOffset >= 0) {
-        load3dOpAl0.SetAttribute(OpAttributeKey::paddingTop, 0);
-    } else {
-        load3dOpAl0.SetAttribute(OpAttributeKey::paddingTop, 0 - iterInfo.hL1InOffset);
+    // 统一padding承载(SymbolicScalar, 常量与符号同路径):
+    // - padTop/padLeft: 常量模式由框架按tile位置计算 max(0, -L1InOffset), 包装为concrete
+    //   SymbolicScalar; 符号模式取逐L1 tile窗口分解表达式(UpdateL1IterInfo按当前tile位置
+    //   从kernel整窗pad表达式派生: max(symPad - start, 0), 多L1 tile时各tile独立,
+    //   单tile时start=0退化为kernel原始表达式)。
+    // - padBottom/padRight: 统一按L1级满额窗宽公式补齐 fullL1 - L1Valid - padTop/Left。
+    //   注意窗宽为L1级(单L1 tile内所有L0 tile共享同一L1数据窗, pad语义相对L1数据):
+    //   常量模式下 L1Valid 为编译期clamped数据量, 结果与legacy逐tile计算等价;
+    //   符号模式下 L1Valid 为逐tile运行时表达式, img2col生成的m行列数恒等于
+    //   编译期curH/curW(与L0A/L0C fractal块排布一致), 越出有效数据的窗口落在img2col补零区,
+    //   多余m行/列由copy out的realM/realCutW截断。
+    uint32_t indexH = convAttrParam.isConv3D ? NCDHW_H_IDX : NCHW_H_IDX;
+    uint32_t indexW = convAttrParam.isConv3D ? NCDHW_W_IDX : NCHW_W_IDX;
+    SymbolicScalar l1ValidH = aL1TensorPtr->GetDynValidShape()[indexH];
+    SymbolicScalar l1ValidW = aL1TensorPtr->GetDynValidShape()[indexW];
+    SymbolicScalar fullH = (iterInfo.houtL1Size - 1) * strideH + dilatedKernelH;
+    SymbolicScalar fullW = (iterInfo.woutL1Size - 1) * strideW + dilatedKernelW;
+    const SymbolicScalar& kernelPadTop = convAttrParam.symPaddings[PAD_TOP_INDEX];
+    const SymbolicScalar& kernelPadLeft = convAttrParam.symPaddings[PAD_LEFT_INDEX];
+    SymbolicScalar symPadTop = kernelPadTop.ConcreteValid() ?
+                                   SymbolicScalar(iterInfo.hL1InOffset >= 0 ? 0 : -iterInfo.hL1InOffset) :
+                                   iterInfo.symPadTopL1;
+    SymbolicScalar symPadLeft = kernelPadLeft.ConcreteValid() ?
+                                    SymbolicScalar(iterInfo.wL1InOffset >= 0 ? 0 : -iterInfo.wL1InOffset) :
+                                    iterInfo.symPadLeftL1;
+    load3dOpAl0.SetAttribute(OpAttributeKey::symPaddingTop, symPadTop);
+    load3dOpAl0.SetAttribute(OpAttributeKey::symPaddingBottom, fullH - l1ValidH - symPadTop);
+    load3dOpAl0.SetAttribute(OpAttributeKey::symPaddingLeft, symPadLeft);
+    load3dOpAl0.SetAttribute(OpAttributeKey::symPaddingRight, fullW - l1ValidW - symPadLeft);
+    load3dOpAl0.SetAttribute(OpAttributeKey::padValue, 0);
+    // 解释器(SIM)等legacy消费方按int64属性读取padding: concrete pad时按legacy公式补写,
+    // 保证与统一承载改造前逐值等价; 符号pad为运行时表达式host侧无法物化, 不写legacy属性
+    if (kernelPadTop.ConcreteValid() && convAttrParam.symPaddings[PAD_BOTTOM_INDEX].ConcreteValid()) {
+        int64_t padTop = iterInfo.hL1InOffset >= 0 ? 0 : 0 - iterInfo.hL1InOffset;
+        load3dOpAl0.SetAttribute(OpAttributeKey::paddingTop, padTop);
+        int64_t hinAL1Used = (iterInfo.houtL1Size - 1) * strideH + dilatedKernelH;
+        int64_t hinBottomPadOffset = iterInfo.hL1InOffset + hinAL1Used;
+        int64_t padBottom = hinBottomPadOffset > convTileInfo.orgHin ? hinBottomPadOffset - convTileInfo.orgHin : 0;
+        load3dOpAl0.SetAttribute(OpAttributeKey::paddingBottom, padBottom);
     }
-    int64_t hinAL1Used = (iterInfo.houtL1Size - 1) * strideH + dilatedKernelH;
-    int64_t hinBottomPadOffset = iterInfo.hL1InOffset + hinAL1Used;
-    if (hinBottomPadOffset > convTileInfo.orgHin) {
-        load3dOpAl0.SetAttribute(OpAttributeKey::paddingBottom, hinBottomPadOffset - convTileInfo.orgHin);
-    } else {
-        load3dOpAl0.SetAttribute(OpAttributeKey::paddingBottom, 0);
-    }
-    // cal W padding
-    if (iterInfo.wL1InOffset >= 0) {
-        load3dOpAl0.SetAttribute(OpAttributeKey::paddingLeft, 0);
-    } else {
-        load3dOpAl0.SetAttribute(OpAttributeKey::paddingLeft, 0 - iterInfo.wL1InOffset);
-    }
-    int64_t winAL1Used = (iterInfo.woutL1Size - 1) * strideW + dilatedKernelW;
-    int64_t winRightPadOffset = iterInfo.wL1InOffset + winAL1Used;
-    if (winRightPadOffset > convTileInfo.orgWin) {
-        load3dOpAl0.SetAttribute(OpAttributeKey::paddingRight, winRightPadOffset - convTileInfo.orgWin);
-    } else {
-        load3dOpAl0.SetAttribute(OpAttributeKey::paddingRight, 0);
+    if (kernelPadLeft.ConcreteValid() && convAttrParam.symPaddings[PAD_RIGHT_INDEX].ConcreteValid()) {
+        int64_t padLeft = iterInfo.wL1InOffset >= 0 ? 0 : 0 - iterInfo.wL1InOffset;
+        load3dOpAl0.SetAttribute(OpAttributeKey::paddingLeft, padLeft);
+        int64_t winAL1Used = (iterInfo.woutL1Size - 1) * strideW + dilatedKernelW;
+        int64_t winRightPadOffset = iterInfo.wL1InOffset + winAL1Used;
+        int64_t padRight = winRightPadOffset > convTileInfo.orgWin ? winRightPadOffset - convTileInfo.orgWin : 0;
+        load3dOpAl0.SetAttribute(OpAttributeKey::paddingRight, padRight);
     }
     // cal postm postk
     int64_t mStartPt = iterInfo.hL0Offset * iterInfo.woutL1Size + iterInfo.wL0Offset;
@@ -550,7 +582,8 @@ static void CalFmapSrcGmInfo(const ConvTileInfo& convTileInfo, ConvIterInfo& ite
 
 void SetCopyInAL1Op(Operation& copyInOpAl1, const ConvTileInfo& convTileInfo, ConvIterInfo& iterInfo,
                     const ConvAttrParam& convAttrParam, const std::vector<int64_t>& dstAL1Shape,
-                    const std::vector<int64_t>& srcGmValidShape, const int64_t& srcCinOffset, bool hasTransFormatL1)
+                    const std::vector<int64_t>& srcGmValidShape, const int64_t& srcCinOffset, bool hasTransFormatL1,
+                    const std::vector<SymbolicScalar>& toDynValidShape = {})
 {
     copyInOpAl1.SetAttribute(OpAttributeKey::isConv, true);
     copyInOpAl1.SetAttribute(OpAttributeKey::filterH, convTileInfo.orgKh);
@@ -566,9 +599,47 @@ void SetCopyInAL1Op(Operation& copyInOpAl1, const ConvTileInfo& convTileInfo, Co
     std::vector<int64_t> srcGmShape;
     CalFmapSrcGmInfo(convTileInfo, iterInfo, convAttrParam, srcGmValidShape, srcCinOffset, srcGmOffset, srcGmShape);
     const auto& viewToShape = hasTransFormatL1 ? srcGmValidShape : dstAL1Shape;
-    auto viewAttr = std::make_shared<ViewOpAttribute>(srcGmOffset, MemoryType::MEM_L1,
-                                                      SymbolicScalar::FromConcrete(srcGmOffset),
-                                                      SymbolicScalar::FromConcrete(viewToShape));
+    std::vector<SymbolicScalar> srcGmOffsetExprs = SymbolicScalar::FromConcrete(srcGmOffset);
+    std::vector<SymbolicScalar> viewToDynValidShape = SymbolicScalar::FromConcrete(viewToShape);
+    if (!toDynValidShape.empty()) {
+        viewToDynValidShape = toDynValidShape;
+    }
+    if (convAttrParam.isConv3D && iterInfo.hasSymDkPad) {
+        // 符号d-pad: block b(前缀紧排) ↔ 窗口位置 symTmpKdHead + b。
+        // src偏移 = 首个真实slice位置 + b*dilationD(空block钳制到数据区内, 由valid=0跳过搬运);
+        // D维valid = clamp(symDkReal - b, 0, dkAL1Size), 尾部空block不搬运(避免越界读)。
+        int64_t blockBase = iterInfo.kL0Offset / convTileInfo.kPerGroup;
+        SymbolicScalar srcD = iterInfo.symDkFirstSrcPos + SymbolicScalar(blockBase * convAttrParam.dilations[NUM2]);
+        srcD = srcD.Max(SymbolicScalar(0)).Min(iterInfo.symDkPosClampMax);
+        SymbolicScalar blockValid = iterInfo.symDkReal.Sub(SymbolicScalar(blockBase))
+                                        .Min(SymbolicScalar(iterInfo.dkAL1Size))
+                                        .Max(SymbolicScalar(0));
+        uint32_t dIdx = IsArch32Platform() ? NDC1HWC0_D_IDX :
+                                             NCDHW_D_IDX; // arch32 NZ {n,d,c1,h,w,c0}; arch64 {n,c,d,h,w}
+        srcGmOffsetExprs[dIdx] = srcD;
+        viewToDynValidShape[dIdx] = blockValid;
+    }
+    // 符号h/w-pad(表达式)多L1 tile模式: GM搬运H/W偏移取逐tile窗口分解表达式
+    // (srcOffset = max(start - symPad, 0), start为本tile编译期窗口起点; 符号模式下
+    // int64 src_h/w_offset(=start, pad按0回退)不承载pad语义)
+    {
+        bool symPadH = !convAttrParam.symPaddings[PAD_TOP_INDEX].ConcreteValid() ||
+                       !convAttrParam.symPaddings[PAD_BOTTOM_INDEX].ConcreteValid();
+        bool symPadW = !convAttrParam.symPaddings[PAD_LEFT_INDEX].ConcreteValid() ||
+                       !convAttrParam.symPaddings[PAD_RIGHT_INDEX].ConcreteValid();
+        // H/W在srcGmOffset中的布局: conv2d {n,c,h,w}(idx 2/3)或arch32 {n,c1,h,w,0}(idx 2/3);
+        // conv3d {n,c,d,h,w}(idx 3/4)或arch32 {n,d,c1,h,w,0}(idx 3/4), 两种arch索引一致
+        uint32_t srcHIdx = convAttrParam.isConv3D ? NUM3 : NUM2;
+        uint32_t srcWIdx = convAttrParam.isConv3D ? NUM4 : NUM3;
+        if (symPadH) {
+            srcGmOffsetExprs[srcHIdx] = iterInfo.symSrcOffsetH;
+        }
+        if (symPadW) {
+            srcGmOffsetExprs[srcWIdx] = iterInfo.symSrcOffsetW;
+        }
+    }
+    auto viewAttr = std::make_shared<ViewOpAttribute>(srcGmOffset, MemoryType::MEM_L1, srcGmOffsetExprs,
+                                                      viewToDynValidShape);
     copyInOpAl1.SetOpAttribute(viewAttr);
     iterInfo.aL1UpadateFlag = false;
 }
@@ -611,7 +682,40 @@ static void ConstructFmapL1Tile(Function& function, const ConvGraphNodes& tensor
     dstAL1TensorPtr = std::make_shared<LogicalTensor>(function, tensorGraphNodes.fmapTensorPtr->Datatype(), dstAL1Shape,
                                                       SymbolicScalar::FromConcrete(dstAL1Shape),
                                                       tensorGraphNodes.fmapTensorPtr->Format(), "aL1Tensor");
-    dstAL1TensorPtr->UpdateDynValidShape(SymbolicScalar::FromConcrete(dstAL1Shape));
+    // 表达式pad方向: L1 fmap tile该方向动态有效尺寸取逐tile窗口分解的valid表达式
+    // (UpdateL1IterInfo按当前L1 tile位置派生, 多L1 tile时各tile独立; GM按valid搬运真实数据,
+    // 不足部分由img2col pad补零); 常量pad方向保持编译期clamped shape(legacy行为)
+    std::vector<SymbolicScalar> dstAL1DynValidShape = SymbolicScalar::FromConcrete(dstAL1Shape);
+    std::vector<SymbolicScalar> srcGmDynValidShape = SymbolicScalar::FromConcrete(srcGmValidShape);
+    {
+        // fmap输入: conv2d为NCHW(H/W=index NUM2/NUM3), conv3d为NCDHW(H/W=index NUM3/NUM4);
+        // dstAL1: conv2d为[1,cin1,h,w,c0](H/W=index NUM2/NUM3), conv3d为[1,dk,cin1,h,w,c0](H/W=index NUM3/NUM4)
+        size_t hIdx = convAttrParam.isConv3D ? NUM3 : NUM2;
+        size_t wIdx = convAttrParam.isConv3D ? NUM4 : NUM3;
+        bool symPadH = !convAttrParam.symPaddings[PAD_TOP_INDEX].ConcreteValid() ||
+                       !convAttrParam.symPaddings[PAD_BOTTOM_INDEX].ConcreteValid();
+        bool symPadW = !convAttrParam.symPaddings[PAD_LEFT_INDEX].ConcreteValid() ||
+                       !convAttrParam.symPaddings[PAD_RIGHT_INDEX].ConcreteValid();
+        if (symPadH) {
+            dstAL1DynValidShape[hIdx] = iterInfo.symValidHL1;
+            srcGmDynValidShape[hIdx] = iterInfo.symValidHL1;
+        }
+        if (symPadW) {
+            dstAL1DynValidShape[wIdx] = iterInfo.symValidWL1;
+            srcGmDynValidShape[wIdx] = iterInfo.symValidWL1;
+        }
+    }
+    if (convAttrParam.isConv3D && iterInfo.hasSymDkPad) {
+        // 符号d-pad: D维valid = clamp(symDkReal - blockBase, 0, dkAL1Size)
+        // (block b前缀紧排↔窗口位置symTmpKdHead+b, 尾部空block置0)
+        int64_t blockBase = iterInfo.kAL1BaseOffset / convTileInfo.kPerGroup;
+        SymbolicScalar blockValid = iterInfo.symDkReal.Sub(SymbolicScalar(blockBase))
+                                        .Min(SymbolicScalar(iterInfo.dkAL1Size))
+                                        .Max(SymbolicScalar(0));
+        dstAL1DynValidShape[1] = blockValid; // conv3d L1 tile [1, dk, cin1, h, w, c0]
+        srcGmDynValidShape[2] = blockValid;  // srcGm [1, cin, d, h, w]
+    }
+    dstAL1TensorPtr->UpdateDynValidShape(dstAL1DynValidShape);
 
     bool isArch32 = IsArch32Platform();
     if (isArch32) {
@@ -619,12 +723,12 @@ static void ConstructFmapL1Tile(Function& function, const ConvGraphNodes& tensor
                                                   {dstAL1TensorPtr});
         copyInOpAl1.SetAttribute(OpAttributeKey::isConv, true);
         SetCopyInAL1Op(copyInOpAl1, convTileInfo, iterInfo, convAttrParam, dstAL1Shape, srcGmValidShape, srcCinOffset,
-                       false);
+                       false, dstAL1DynValidShape);
     } else {
         auto viewL1TensorPtr = std::make_shared<LogicalTensor>(
             function, tensorGraphNodes.fmapTensorPtr->Datatype(), srcGmValidShape,
             SymbolicScalar::FromConcrete(srcGmValidShape), tensorGraphNodes.fmapTensorPtr->Format(), "viewL1Tensor");
-        viewL1TensorPtr->UpdateDynValidShape(SymbolicScalar::FromConcrete(srcGmValidShape));
+        viewL1TensorPtr->UpdateDynValidShape(srcGmDynValidShape);
 
         auto& sliceOpAl1 = function.AddOperation(config::GetSliceOpcode(), {tensorGraphNodes.fmapTensorPtr},
                                                  {viewL1TensorPtr});
@@ -668,14 +772,31 @@ LogicalTensorPtr ConstructFmapTile(Function& function, const ConvGraphNodes& ten
         SymbolicScalar::FromConcrete({iterInfo.mL0Size, iterInfo.kL0Size}), tensorGraphNodes.fmapTensorPtr->Format(),
         "aL0Tensor");
 
-    dstAL0TensorPtr->UpdateDynValidShape(
-        std::vector<SymbolicScalar>{convTileInfo.dynValidBatchL0 * convTileInfo.dynValidDoutL0 *
-                                        convTileInfo.dynValidHoutL0 * convTileInfo.dynValidWoutL0,
-                                    SymbolicScalar(iterInfo.kL0Size)});
+    // L0A validM 保持满额mL0: img2col生成满额窗宽m行, 越出有效输出的行落在补零区, 由copy out
+    // 按"输出有效M"截断。不可改成"输出有效M"(dynValid*L0乘积): 多维边界tile上有效行集合非前缀,
+    // 与mmad/copy-out行组织错位导致真机精度错误(groups=2实测FAILED); 解释器A_MUL_B要求的
+    // validM(A)==validM(C)由L0C侧同步取满额满足(见DoMmad/ConstrucCopyOutTile)。
+    std::vector<SymbolicScalar> dstAL0DynValidShape = SymbolicScalar::FromConcrete(dstAL0Shape);
+    if (convAttrParam.isConv3D && iterInfo.hasSymDkPad) {
+        // 符号d-pad: 空block(窗口位置越出真实数据)的chunk K维valid置0,
+        // load3d不生成K行(dst validK=0), mmad按validK=0跳过。chunk不跨D slice边界(kL0|kPerGroup)。
+        // 契约C3(kernel侧责任): 不得发起完全落在pad区的D tile(所有chunk的symDkReal-chunkBlock<=0)。
+        // 该场景下TMatmulImpl对validK==0且initMatrixC的首chunk走静态K特殊路径, 会对L0A/L0B
+        // 残留数据执行mmad产生垃圾C(设备侧mmad_impl.h为共享结构, 不在conv侧修改范围内)。
+        int64_t chunkBlock = iterInfo.kL0Offset / convTileInfo.kPerGroup;
+        dstAL0DynValidShape[1] = iterInfo.symDkReal.Sub(SymbolicScalar(chunkBlock))
+                                     .Max(SymbolicScalar(0))
+                                     .Min(SymbolicScalar(1)) *
+                                 SymbolicScalar(iterInfo.kL0Size);
+    }
+    dstAL0TensorPtr->UpdateDynValidShape(dstAL0DynValidShape);
 
     auto& load3dOpAl0 = function.AddOperation(Opcode::OP_LOAD3D_CONV, {dstAL1TensorPtr}, {dstAL0TensorPtr});
-    load3dOpAl0.SetAttribute("l0_tile_shape", SymbolicScalar::FromConcrete(dstAL0Shape));
-    SetImg2ColAttr(load3dOpAl0, convAttrParam, iterInfo, convTileInfo);
+    // l0_tile_shape驱动L0A运行时valid shape推导(L1ToL0ConvInferFunc):
+    // 符号d-pad时K维为valid表达式, 空block(chunk所在D slice越出真实数据)validK=0,
+    // load3d不生成K行(TLoad3D guard)且mmad按validK=0跳过(TMatmulImpl)
+    load3dOpAl0.SetAttribute("l0_tile_shape", dstAL0DynValidShape);
+    SetImg2ColAttr(load3dOpAl0, convAttrParam, iterInfo, convTileInfo, dstAL1TensorPtr);
 
     return dstAL0TensorPtr;
 }
@@ -740,9 +861,33 @@ void SetCopyInBL1Op(Operation& copyInOpBl1, const ConvTileInfo& convTileInfo, Co
     std::vector<int64_t> srcGmShape;
     CalWeightSrcGmInfo(convTileInfo, iterInfo, convAttrParam, srcGmValidShape, srcCinOffset, srcGmOffset, srcGmShape);
     const auto& viewToShape = hasTransFormatL1 ? srcGmValidShape : dstBL1Shape;
-    auto viewAttr = std::make_shared<ViewOpAttribute>(srcGmOffset, MemoryType::MEM_L1,
-                                                      SymbolicScalar::FromConcrete(srcGmOffset),
-                                                      SymbolicScalar::FromConcrete(viewToShape));
+    std::vector<SymbolicScalar> srcGmOffsetExprs = SymbolicScalar::FromConcrete(srcGmOffset);
+    std::vector<SymbolicScalar> viewToDynValidShape = SymbolicScalar::FromConcrete(viewToShape);
+    if (convAttrParam.isConv3D && iterInfo.hasSymDkPad) {
+        // 符号d-pad: block b(前缀紧排) ↔ weight slice symTmpKdHead + b(fmap丢弃头部pad slice, weight同步对齐)
+        int64_t blockBase = iterInfo.kL0Offset / convTileInfo.kPerGroup;
+        SymbolicScalar srcD = iterInfo.symTmpKdHead + SymbolicScalar(blockBase);
+        if (IsArch32Platform()) {
+            // arch32 NZ: D折叠进dim0平坦偏移; 钳制起始slice使整个载入窗口in-bounds
+            // (空block载入的是冗余weight数据, mmad按validK=0跳过, 结果不受影响)
+            int64_t cin1 = CeilDiv(srcGmValidShape[1], convTileInfo.cin0);
+            int64_t khxkw = convTileInfo.orgKh * convTileInfo.orgKw;
+            SymbolicScalar dClamped = srcD.Min(SymbolicScalar(convTileInfo.orgKd - iterInfo.dkBL1Size))
+                                          .Max(SymbolicScalar(0));
+            srcGmOffsetExprs[0] = ((SymbolicScalar(iterInfo.groupOffset * convTileInfo.orgKd) + dClamped) *
+                                       SymbolicScalar(cin1) +
+                                   SymbolicScalar(srcCinOffset / convTileInfo.cin0)) *
+                                  SymbolicScalar(khxkw);
+        } else {
+            // arch64: D为独立维度, offset对齐 + 尾部空block valid=0跳过搬运
+            srcGmOffsetExprs[2] = srcD;
+            viewToDynValidShape[2] = iterInfo.symDkReal.Sub(SymbolicScalar(blockBase))
+                                         .Min(SymbolicScalar(iterInfo.dkBL1Size))
+                                         .Max(SymbolicScalar(0));
+        }
+    }
+    auto viewAttr = std::make_shared<ViewOpAttribute>(srcGmOffset, MemoryType::MEM_L1, srcGmOffsetExprs,
+                                                      viewToDynValidShape);
     copyInOpBl1.SetOpAttribute(viewAttr);
     iterInfo.bL1UpadateFlag = false;
 }
@@ -894,6 +1039,10 @@ LogicalTensorPtr DoMmad(Function& function, const ConvAttrParam& convAttrParam, 
         mmadInputs = {tileGraphNodes.fmapTensorPtr, tileGraphNodes.weightTensorPtr, tileGraphNodes.cL0PartialSumPtr};
     }
 
+    // L0C validM 与 L0A 一致取满额(对齐后): 解释器A_MUL_B/A_MULACC_B按valid行数做torch
+    // matmul, 要求validM(A)==validM(C); 真机与golden的copy-out裁剪由l0cValidMN属性
+    // (输出有效M)驱动, 与tensor valid解耦, C满额不影响copy-out行为。
+    dstCL0DynValidShape[0] = SymbolicScalar(ConvAlignB(iterInfo.mL0Size, MKN_M_VALUE));
     if (iterInfo.isLastK) {
         mmadOutputs = {tileGraphNodes.resTensorPtr};
     } else {
@@ -991,7 +1140,11 @@ void ConstrucCopyOutTile(Function& function, const ConvAttrParam& convAttrParam,
         convTileInfo.dynValidCoutL0};
     bool isArch32 = IsArch32Platform();
 
-    resCl0TensorPtr->UpdateDynValidShape(dstCL0DynValidShape);
+    // copy-out源(L0C) tensor validM与L0A一致取满额: 解释器A_MUL_B/A_MULACC_B要求
+    // validM(A)==validM(C); l0cValidMN属性(dstCL0DynValidShape, 输出有效M)保持不变,
+    // 真机与golden的copy-out裁剪均由该属性驱动, 与tensor valid解耦。
+    resCl0TensorPtr->UpdateDynValidShape(std::vector<SymbolicScalar>{
+        SymbolicScalar(ConvAlignB(iterInfo.mL0Size, MKN_M_VALUE)), convTileInfo.dynValidCoutL0});
 
     int64_t cutW = std::min(iterInfo.woutL1Size - iterInfo.wL0Offset, convTileInfo.wL0);
     int64_t copyOutMode = static_cast<int64_t>(isArch32 ? CopyOutMode::COPY_MOD_NZ2NZ : CopyOutMode::COPY_MOD_NZ2DN);
@@ -1027,11 +1180,37 @@ void ConstrucCopyOutTile(Function& function, const ConvAttrParam& convAttrParam,
     contractOp.SetOpAttribute(assembleAttr);
 }
 
-void Cal3DDkL1Size(const ConvTileInfo& convTileInfo, ConvIterInfo& iterInfo, const ConvAttrParam& convAttrParam)
+void Cal3DDkL1Size(const ConvTileInfo& convTileInfo, ConvIterInfo& iterInfo, const ConvAttrParam& convAttrParam,
+                   const SymbolicScalar& dataDin)
 {
     // cal dk in L1, not support dk in L1 = 0 now, kerneld <= padd
     iterInfo.dkL1Size = 1;
     if (convAttrParam.isConv3D) {
+        iterInfo.hasSymDkPad = !convAttrParam.symPaddings.empty() &&
+                               (!convAttrParam.symPaddings[PAD_HEAD_INDEX].ConcreteValid() ||
+                                !convAttrParam.symPaddings[PAD_TAIL_INDEX].ConcreteValid());
+        if (iterInfo.hasSymDkPad) {
+            // 符号d-pad: dk裁剪表达式化, dkL1Size保持orgKd(编译期上限, kL0循环满额展开)。
+            // block b(前缀紧排) ↔ 窗口位置 symTmpKdHead + b; 空block由valid表达式跳过。
+            // dinL1Offset = doL1Offset*strideD - padDfTile(符号padDf按tile由kernel传入, view坐标, 可为负)
+            int64_t strideD = convAttrParam.strides[NUM2];
+            int64_t dilationD = convAttrParam.dilations[NUM2];
+            iterInfo.symDinL1Offset = iterInfo.doL1Offset * strideD - convAttrParam.symPaddings[PAD_HEAD_INDEX];
+            SymbolicScalar negOffset = SymbolicScalar(0) - iterInfo.symDinL1Offset;
+            iterInfo.symTmpKdHead = (iterInfo.symDinL1Offset < 0)
+                                        .Ternary((negOffset + (dilationD - 1)) / dilationD, SymbolicScalar(0));
+            SymbolicScalar dataDiff = dataDin - iterInfo.symDinL1Offset;
+            SymbolicScalar availEnd = (dataDiff > 0)
+                                          .Ternary((dataDiff + (dilationD - 1)) / dilationD, SymbolicScalar(0));
+            iterInfo.symDkReal = availEnd.Min(SymbolicScalar(convTileInfo.orgKd))
+                                     .Sub(iterInfo.symTmpKdHead)
+                                     .Max(SymbolicScalar(0));
+            iterInfo.symDkFirstSrcPos = iterInfo.symDinL1Offset + iterInfo.symTmpKdHead * dilationD;
+            iterInfo.symDkPosClampMax = (dataDin - 1).Max(SymbolicScalar(0));
+            iterInfo.dkL1Size = convTileInfo.orgKd;
+            iterInfo.dinL1Offset = 0;
+            return;
+        }
         iterInfo.dkL1Size = convTileInfo.orgKd;
         iterInfo.dinL1Offset = iterInfo.doL1Offset * convAttrParam.strides[NUM2] - convAttrParam.paddings[NUM4];
         int64_t srcDkOffset = iterInfo.dinL1Offset;
@@ -1050,7 +1229,8 @@ void Cal3DDkL1Size(const ConvTileInfo& convTileInfo, ConvIterInfo& iterInfo, con
     }
 }
 
-void UpdateL1IterInfo(const ConvTileInfo& convTileInfo, ConvIterInfo& iterInfo, const ConvAttrParam& convAttrParam)
+void UpdateL1IterInfo(const ConvTileInfo& convTileInfo, ConvIterInfo& iterInfo, const ConvAttrParam& convAttrParam,
+                      const SymbolicScalar& dataDin, const std::vector<SymbolicScalar>& fmapDynValidShape)
 {
     // update iterInfo L1
     // cal winL1Size
@@ -1075,6 +1255,24 @@ void UpdateL1IterInfo(const ConvTileInfo& convTileInfo, ConvIterInfo& iterInfo, 
     } else {
         iterInfo.hinL1Size = std::min(convTileInfo.orgHin - iterInfo.hL1InOffset, needHL1Size);
     }
+    // 符号h-pad(表达式)多L1 tile模式: 逐tile按窗口分解派生表达式(start为编译期常量,
+    // int64路径pad按0回退, hL1InOffset=start且hinL1Size=needHL1Size满额窗宽, 不承载pad语义):
+    //   padTop = max(symPadTop - start, 0); srcH = max(start - symPadTop, 0);
+    //   validH = max(0, min(needHL1Size - padTop, dataH - srcH))
+    // dataH为fmap输入view的H维动态valid(NZ布局: conv2d H=idx2, conv3d H=idx3)
+    bool symPadH = !convAttrParam.symPaddings[PAD_TOP_INDEX].ConcreteValid() ||
+                   !convAttrParam.symPaddings[PAD_BOTTOM_INDEX].ConcreteValid();
+    if (symPadH) {
+        SymbolicScalar startH(iterInfo.hL1OutOffset * convAttrParam.strides[0]);
+        const SymbolicScalar& kernelPadTop = convAttrParam.symPaddings[PAD_TOP_INDEX];
+        iterInfo.symPadTopL1 = kernelPadTop.Sub(startH).Max(SymbolicScalar(0));
+        iterInfo.symSrcOffsetH = startH.Sub(kernelPadTop).Max(SymbolicScalar(0));
+        size_t hIdx = convAttrParam.isConv3D ? NUM3 : NUM2;
+        iterInfo.symValidHL1 = SymbolicScalar(needHL1Size)
+                                   .Sub(iterInfo.symPadTopL1)
+                                   .Min(fmapDynValidShape[hIdx].Sub(iterInfo.symSrcOffsetH))
+                                   .Max(SymbolicScalar(0));
+    }
     // cal winL1Size
     iterInfo.woutL1Size = std::min(convTileInfo.orgWout - iterInfo.wL1OutOffset, convTileInfo.wAL1Out);
     iterInfo.wL1InOffset = iterInfo.wL1OutOffset * convAttrParam.strides[1] - convAttrParam.paddings[NUM2];
@@ -1097,9 +1295,23 @@ void UpdateL1IterInfo(const ConvTileInfo& convTileInfo, ConvIterInfo& iterInfo, 
     } else {
         iterInfo.winL1Size = std::min(convTileInfo.orgWin - iterInfo.wL1InOffset, needWL1Size);
     }
+    // 符号w-pad(表达式)多L1 tile模式: 同H轴逐tile窗口分解(W轴: conv2d W=idx3, conv3d W=idx4)
+    bool symPadW = !convAttrParam.symPaddings[PAD_LEFT_INDEX].ConcreteValid() ||
+                   !convAttrParam.symPaddings[PAD_RIGHT_INDEX].ConcreteValid();
+    if (symPadW) {
+        SymbolicScalar startW(iterInfo.wL1OutOffset * convAttrParam.strides[1]);
+        const SymbolicScalar& kernelPadLeft = convAttrParam.symPaddings[PAD_LEFT_INDEX];
+        iterInfo.symPadLeftL1 = kernelPadLeft.Sub(startW).Max(SymbolicScalar(0));
+        iterInfo.symSrcOffsetW = startW.Sub(kernelPadLeft).Max(SymbolicScalar(0));
+        size_t wIdx = convAttrParam.isConv3D ? NUM4 : NUM3;
+        iterInfo.symValidWL1 = SymbolicScalar(needWL1Size)
+                                   .Sub(iterInfo.symPadLeftL1)
+                                   .Min(fmapDynValidShape[wIdx].Sub(iterInfo.symSrcOffsetW))
+                                   .Max(SymbolicScalar(0));
+    }
     // cal nL1Size
     iterInfo.nL1Size = std::min(convTileInfo.coutPerGroup - iterInfo.nL1Offset, convTileInfo.nBL1);
-    Cal3DDkL1Size(convTileInfo, iterInfo, convAttrParam);
+    Cal3DDkL1Size(convTileInfo, iterInfo, convAttrParam, dataDin);
 }
 
 void UpdateL0IterInfo(const ConvTileInfo& convTileInfo, ConvIterInfo& iterInfo)
@@ -1197,6 +1409,12 @@ void IterOneBatchFunc(Function& function, ConvIterInfo& iterInfo, ConvTileInfo& 
                       const ConvAttrParam& convAttrParam, const ConvGraphNodes& tensorGraphNodes,
                       ConvGraphNodes& tileGraphNodes)
 {
+    // fmap操作数的D维valid(表达式): 符号d-pad时作为dk运行时裁剪的数据边界。
+    // conv3d操作数布局: arch32为NZ 6维{n, d, c1, h, w, c0}, D valid在idx 1;
+    // arch64为NCDHW 5维{n, c, d, h, w}, D valid在idx 2(与SetCopyInAL1Op的dIdx取法一致)
+    SymbolicScalar dataDinValid = tensorGraphNodes.fmapTensorPtr
+                                      ->GetDynValidShape()[IsArch32Platform() ? NUM1 : NCDHW_D_IDX];
+    const std::vector<SymbolicScalar>& fmapDynValidShape = tensorGraphNodes.fmapTensorPtr->GetDynValidShape();
     for (iterInfo.doL1Offset = 0; iterInfo.doL1Offset < convTileInfo.orgDout; iterInfo.doL1Offset += 1) {
         for (iterInfo.nL1Offset = 0; iterInfo.nL1Offset < convTileInfo.coutPerGroup;
              iterInfo.nL1Offset += convTileInfo.nBL1) {
@@ -1206,7 +1424,7 @@ void IterOneBatchFunc(Function& function, ConvIterInfo& iterInfo, ConvTileInfo& 
                 for (iterInfo.wL1OutOffset = 0; iterInfo.wL1OutOffset < convTileInfo.orgWout;
                      iterInfo.wL1OutOffset += convTileInfo.wAL1Out) {
                     iterInfo.aL1UpadateFlag = true;
-                    UpdateL1IterInfo(convTileInfo, iterInfo, convAttrParam);
+                    UpdateL1IterInfo(convTileInfo, iterInfo, convAttrParam, dataDinValid, fmapDynValidShape);
                     // iterate L0 buffer expand
                     IterL0ExpandFunc(function, iterInfo, convTileInfo, convAttrParam, tensorGraphNodes, tileGraphNodes);
                 }
@@ -1227,6 +1445,9 @@ void ConstructTileGraph(Function& function, const TileShape& tileShape, const st
     // save tile info
     ConvTileInfo convTileInfo;
     SetConvShapeInfo(tileShape, tensorGraphNodes, convAttrParam, convTileInfo);
+    // 符号h/w-pad已支持多L1 tile: UpdateL1IterInfo按每个L1 tile位置从kernel整窗pad表达式
+    // 逐轮派生pad/srcOffset/valid表达式(窗口分解), 经ViewOpAttribute(srcGmOffsetExprs)与
+    // img2col symPadding*属性传递至运行时, GM搬运与补零均按表达式执行
     // save iter info
     ConvIterInfo iterInfo;
     // set tile graph node info
@@ -1297,22 +1518,86 @@ std::vector<SymbolicScalar> GetResTensorDynValidShape(DataType outType, const Te
     return resTensorDynValidShape;
 }
 
+// 符号pad模式入口校验(P4, 调试级):
+// 1) 契约C1校验: kernel传入的fmap view须满足"静态shape=窗口全宽, valid=真实数据,
+//    valid+pad<=静态shape"。concrete轴做实值校验,
+//    符号轴无法在host侧求值, 由kernel侧保证(仅告警提示)。
+// 调用时机: rotate与conv1d插入之后, symPaddings布局已归一([hT,hB,wL,wR(,dF,dB)])。
+static void CheckSymPaddingContract(const Tensor& inputTensor, const ConvAttrParam& convAttrParam)
+{
+    const std::vector<SymbolicScalar>& symPaddings = convAttrParam.symPaddings;
+    bool hasSymPad = false;
+    for (const auto& pad : symPaddings) {
+        if (!pad.ConcreteValid()) {
+            hasSymPad = true;
+            break;
+        }
+    }
+    if (!hasSymPad) {
+        return; // legacy全concrete路径(如convbp经FromConcrete回退), 无契约要求
+    }
+    auto checkAxis = [&](uint32_t padHeadIdx, uint32_t padTailIdx, uint32_t dimIdx, const char* axisName) {
+        if (!symPaddings[padHeadIdx].ConcreteValid() || !symPaddings[padTailIdx].ConcreteValid()) {
+            return; // 符号轴host侧无法求值, 契约由kernel侧保证
+        }
+        int64_t padHead = symPaddings[padHeadIdx].Concrete();
+        int64_t padTail = symPaddings[padTailIdx].Concrete();
+        CHECK(ExternalError::INVALID_VAL, padHead >= 0 && padTail >= 0)
+            << "Invalid symbolic-mode " << axisName << " paddings:" << padHead << "," << padTail
+            << ", must be non-negative.";
+        // GetValidShape为SymbolicScalar承载: 元素为符号表达式(动态shape)或缺失时,
+        // host侧无法实值校验, 该轴契约由kernel侧保证(仅告警)
+        const std::vector<SymbolicScalar>& validShape = inputTensor.GetValidShape();
+        if (validShape.empty() || !validShape[dimIdx].ConcreteValid()) {
+            CONV_LOGW("Contract C1 on %s axis unverifiable on host, kernel-side responsibility.", axisName);
+            return;
+        }
+        int64_t valid = validShape[dimIdx].Concrete();
+        CHECK(ExternalError::INVALID_VAL, valid + padHead + padTail <= inputTensor.GetShape()[dimIdx])
+            << "Contract C1 violated on " << axisName << " axis: valid(" << valid << ") + pads(" << padHead << "+"
+            << padTail << ") exceeds static shape(" << inputTensor.GetShape()[dimIdx] << ").";
+    };
+    if (convAttrParam.isConv1D) {
+        // NCL输入: H轴pad为入口插入的concrete 0(无契约意义), 仅W轴(L)需要校验
+        checkAxis(PAD_LEFT_INDEX, PAD_RIGHT_INDEX, NCHW_H_IDX, "W");
+    } else if (convAttrParam.isConv3D) {
+        checkAxis(PAD_TOP_INDEX, PAD_BOTTOM_INDEX, NCDHW_H_IDX, "H");
+        checkAxis(PAD_LEFT_INDEX, PAD_RIGHT_INDEX, NCDHW_W_IDX, "W");
+        checkAxis(PAD_HEAD_INDEX, PAD_TAIL_INDEX, NCDHW_D_IDX, "D");
+    } else {
+        checkAxis(PAD_TOP_INDEX, PAD_BOTTOM_INDEX, NCHW_H_IDX, "H");
+        checkAxis(PAD_LEFT_INDEX, PAD_RIGHT_INDEX, NCHW_W_IDX, "W");
+    }
+    CONV_LOGW("Symbolic paddings rely on kernel-side contract C1: per axis, valid + pad <= static shape of the "
+              "fmap view (unverifiable on host for symbolic axes).");
+}
+
 Tensor Conv(DataType outType, const Tensor& inputTensor, const Tensor& weightTensor,
             const std::vector<int64_t>& strides, const std::vector<SymbolicScalar>& paddings,
             const std::vector<int64_t>& dilations, const ConvExtendParam& extendParam, const int64_t groups)
 {
+    // padding统一以SymbolicScalar承载(concrete/表达式均可), 归一常量与符号两条代码路径:
+    // - symPaddings: 原始padding(符号模式下为kernel侧按tile计算的表达式)
+    // - paddings(int64): Concrete提取(符号模式下非concrete回退0, 供编译期tile展开数学使用)
+    // conv3d d轴符号pad已支持: dk裁剪表达式化(Cal3DDkL1Size), 空block由valid表达式跳过
+    // (load3d dst validK=0不生成K行, mmad按L0A运行时validK=0跳过)
+    // Concrete语义: concrete元素取真值, 非concrete元素回退0(符号模式下pad由表达式路径处理)
     std::vector<int64_t> finalPaddings = SymbolicScalar::Concrete(paddings, 0);
     std::vector<int64_t> finalDilations = dilations;
     std::vector<int64_t> finalStrides = strides;
+    std::vector<SymbolicScalar> finalSymPaddings = paddings;
     if (dilations.size() == CONV3D_INPUT_DIM - NUM2 && strides.size() == CONV3D_INPUT_DIM - NUM2 &&
         paddings.size() == NUM2 * (CONV3D_INPUT_DIM - NUM2)) {
         finalDilations = rotateVector(dilations, 1);
         finalStrides = rotateVector(strides, 1);
         finalPaddings = rotateVector(SymbolicScalar::Concrete(paddings, 0), NUM2);
+        // conv3d参数重排(dhwdhw->hwdhwd), symPaddings同步rotate保持与paddings对齐(含符号元素)
+        std::rotate(finalSymPaddings.begin(), finalSymPaddings.begin() + NUM2, finalSymPaddings.end());
     }
     const Tensor& biasTensor = extendParam.biasTensor;
     // init and set attr
     ConvAttrParam convAttrParam(finalPaddings, finalStrides, finalDilations, groups);
+    convAttrParam.symPaddings = finalSymPaddings;
     convAttrParam.reluType = static_cast<int64_t>(extendParam.reluType);
     CheckConvOperands(outType, inputTensor, weightTensor, biasTensor, convAttrParam);
     std::vector<int64_t> resTensorShape = GetResTensorShape(outType, inputTensor, weightTensor, convAttrParam);
@@ -1320,9 +1605,12 @@ Tensor Conv(DataType outType, const Tensor& inputTensor, const Tensor& weightTen
                                                                                    convAttrParam);
     if (convAttrParam.isConv1D) {
         convAttrParam.paddings.insert(convAttrParam.paddings.begin(), NUM2, 0);
+        convAttrParam.symPaddings.insert(convAttrParam.symPaddings.begin(), NUM2, SymbolicScalar(0));
         convAttrParam.strides.insert(convAttrParam.strides.begin(), 1);
         convAttrParam.dilations.insert(convAttrParam.dilations.begin(), 1);
     }
+    // 符号pad契约校验(P4): 此时symPaddings已完成rotate/conv1d插入, 布局归一
+    CheckSymPaddingContract(inputTensor, convAttrParam);
     TileOpFormat outFormat = TileOpFormat::TILEOP_ND;
     if (IsArch32Platform()) {
         outFormat = convAttrParam.isConv3D ? TileOpFormat::TILEOP_NDC1HWC0 : TileOpFormat::TILEOP_NC1HWC0;

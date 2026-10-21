@@ -91,8 +91,10 @@ SymbolicScalar ConvComputeValidHo(const Tensor& inputTensor, const Tensor& weigh
     }
     std::vector<int64_t> paddings = attrParam.paddings;
     std::vector<int64_t> dilations = attrParam.dilations;
-    int64_t padTop = paddings[PAD_TOP_INDEX];
-    int64_t padBottom = paddings[PAD_BOTTOM_INDEX];
+    SymbolicScalar padTop = attrParam.symPaddings.empty() ? SymbolicScalar(paddings[PAD_TOP_INDEX]) :
+                                                            attrParam.symPaddings[PAD_TOP_INDEX];
+    SymbolicScalar padBottom = attrParam.symPaddings.empty() ? SymbolicScalar(paddings[PAD_BOTTOM_INDEX]) :
+                                                               attrParam.symPaddings[PAD_BOTTOM_INDEX];
     int64_t dilationH = dilations[PAD_STRIDE_H];
     SymbolicScalar hin = inputTensor.GetValidShape()[indexH];
     SymbolicScalar kh = weightTensor.GetValidShape()[indexH];
@@ -113,8 +115,10 @@ SymbolicScalar ConvComputeValidWo(const Tensor& inputTensor, const Tensor& weigh
     std::vector<int64_t> paddings = attrParam.paddings;
     std::vector<int64_t> dilations = attrParam.dilations;
     int64_t dilationW = dilations[indexAttr];
-    int64_t padLeft = paddings[2 * indexAttr];
-    int64_t padRight = paddings[2 * indexAttr + 1];
+    SymbolicScalar padLeft = attrParam.symPaddings.empty() ? SymbolicScalar(paddings[2 * indexAttr]) :
+                                                             attrParam.symPaddings[2 * indexAttr];
+    SymbolicScalar padRight = attrParam.symPaddings.empty() ? SymbolicScalar(paddings[2 * indexAttr + 1]) :
+                                                              attrParam.symPaddings[2 * indexAttr + 1];
     SymbolicScalar win = inputTensor.GetValidShape()[indexW];
     SymbolicScalar kw = weightTensor.GetValidShape()[indexW];
     SymbolicScalar cmpWo = (win + padLeft + padRight - dilationW * (kw - 1) - 1) / strideW + 1;
@@ -130,8 +134,11 @@ SymbolicScalar ConvComputeValidDo(const Tensor& inputTensor, const Tensor& weigh
     }
     std::vector<int64_t> paddings = attrParam.paddings;
     std::vector<int64_t> dilations = attrParam.dilations;
-    int64_t padHead = paddings[PAD_HEAD_INDEX];
-    int64_t padTail = paddings[PAD_TAIL_INDEX];
+    // d轴符号pad(rotate后symPaddings[4]/[5]=dF/dB)参与输出D valid计算
+    SymbolicScalar padHead = attrParam.symPaddings.empty() ? SymbolicScalar(paddings[PAD_HEAD_INDEX]) :
+                                                             attrParam.symPaddings[PAD_HEAD_INDEX];
+    SymbolicScalar padTail = attrParam.symPaddings.empty() ? SymbolicScalar(paddings[PAD_TAIL_INDEX]) :
+                                                             attrParam.symPaddings[PAD_TAIL_INDEX];
     int64_t dilationD = dilations[PAD_STRIDE_D];
     SymbolicScalar din = inputTensor.GetValidShape()[NCDHW_D_IDX];
     SymbolicScalar kd = weightTensor.GetValidShape()[NCDHW_D_IDX];
@@ -254,6 +261,16 @@ void CheckL0TileTiling(DataType outType, const ConvAttrParam& attrParam, const T
     CheckValueRange(tileN, "tileL0Info.tileN", NUM1, ConvAlignB(tileCout, MKN_N_VALUE));
     CHECK(ExternalError::INVALID_VAL, kAL1 % tileK == 0 && kBL1 % tileK == 0)
         << "Invalid tileK: " << tileK << ", must be a factor of both kAL1:" << kAL1 << " and kBL1:" << kBL1;
+    if (attrParam.isConv3D) {
+        // conv3d的L0 chunk按kPerGroup做D block分解(空block由valid表达式跳过, L1刷新依赖
+        // kL0Offset % kPerGroup == 0), 要求每个L0 chunk完整落在单个kPerGroup block内,
+        // 否则chunk validK跨block多算, mmad吃进垃圾K行
+        int64_t cin0Fmap = ALIGN_SIZE_32 / BytesOf(inputTensor.GetStorage()->Datatype());
+        int64_t kPerGroup = ConvAlignB(cin / groups, cin0Fmap) * kh * kw;
+        CHECK(ExternalError::INVALID_VAL, kPerGroup % tileK == 0)
+            << "Invalid tileK: " << tileK << ", must be a factor of kPerGroup:" << kPerGroup
+            << " (L0 chunk must not cross kPerGroup block boundary for conv3d).";
+    }
     Platform& platform = Platform::Instance();
     size_t l0aSize = platform.GetAICCore().GetMemorySize(MemoryType::MEM_L0A);
     size_t l0bSize = platform.GetAICCore().GetMemorySize(MemoryType::MEM_L0B);
