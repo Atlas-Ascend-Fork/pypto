@@ -1288,7 +1288,7 @@ void L0CCopyUBConvInferFunc(Operation* op, std::vector<std::vector<SymbolicScala
     SymbolicScalar validN = copyN.Min(tileShape[1]).Max(0);
     SymbolicScalar validW = realCutW.Min(tileShape.back());
     SymbolicScalar validRows = copyM.Min(tileShape[tileShape.size() - NUM2] * tileShape.back()).Max(0);
-    SymbolicScalar validH = validRows / validW;
+    SymbolicScalar validH = validRows / validW.Max(1);
     // INSERT (小搬大) 判定: 输出存在多个生产者, 或目的偏移非零 (多块拼入同一 tile)
     bool isInsertPath = output->GetProducers().size() > 1;
     if (!isInsertPath && copyAttr != nullptr) {
