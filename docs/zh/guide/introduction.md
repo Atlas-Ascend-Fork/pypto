@@ -9,7 +9,7 @@ PyPTO（发音：pai p-t-o）是CANN推出的一款面向AI加速器的高效算
 
 ## 整体架构
 
-![](./figures/pypto_architecture.png)
+![](./figures/pypto_architecture.svg)
 
 PyPTO整体架构如上图所示，PyPTO是构建在PTO ISA上的算子编程框架，包括：
 - 编译时框架，用来将用户编写的算子，转换为高性能的二进制代码。组成包括：
@@ -78,12 +78,6 @@ PyPTO Tensor以“算法表达与硬件执行解耦”为主要设计理念。�
 <!-- npu="910b" id3 -->
 - Atlas A2系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id7 -->
-- Kirin9030处理器系列产品：支持
-<!-- end id7 -->
-<!-- npu="x90" id8 -->
-- KirinX90处理器系列产品：支持
-<!-- end id8 -->
 
 ## PyPTO Pro
 
@@ -136,9 +130,3 @@ PyPTO Pro让开发者用Python编写Kernel，同时保留对硬件执行方式�
 <!-- npu="910b" id6 -->
 - Atlas A2系列产品：不支持
 <!-- end id6 -->
-<!-- npu="9030" id9 -->
-- Kirin9030处理器系列产品：不支持
-<!-- end id9 -->
-<!-- npu="x90" id10 -->
-- KirinX90处理器系列产品：不支持
-<!-- end id10 -->

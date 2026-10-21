@@ -6,7 +6,7 @@ Transformer凭借强大的注意力机制，具备卓越的序列建模能力，
 论文Gated Delta Networks: Improving Mamba2 with Delta Rule提出了Gated DeltaNet架构，通过结合门控机制和Delta更新规则，提升线性Transformer在长序列建模和信息检索任务中的表现。
 
 图1 Gated DeltaNet模型架构
-![图片说明](../../../figures/tensor/gdr_1.1.png)
+![图片说明](../../../figures/tensor/gdr_1.1.svg)
 
 ## 算子框架
 
