@@ -30,7 +30,8 @@ pypto_pro.language.simt.syncthreads() -> None
 
 - 只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT入口函数或辅助函数中调用。
 - 必须作为独立语句调用，不支持使用其结果参与表达式。
-- 当前线程块中的所有线程都必须执行到同一个syncthreads。不支持在运行时if、for或while控制流中调用，否则不同线程到达屏障的情况可能不一致。
+- 须保证当前线程块中的所有线程都能到达同一个syncthreads同步点，存在多个同步点时，所有线程都要执行这些同步点。
+- 在if、for或while等控制流中使用该接口时，须保证所有线程都能到达同步。例如，包含同步点的条件分支须由所有线程一致进入；循环中的同步点须由所有线程执行相同次数，避免部分线程因break、continue或提前return跳过同步点。
 - 该接口仅同步当前线程块中的线程，不同步不同线程块。
 
 ## 返回值说明

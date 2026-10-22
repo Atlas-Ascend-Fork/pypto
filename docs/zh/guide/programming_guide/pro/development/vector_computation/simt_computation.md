@@ -120,9 +120,26 @@ def copy_3d(
 
 Tensor/Tile须以完整对象传入，不支持元素、Slice或Tile Subview作为函数参数。元素位宽不得小于8 bit；具体Scalar计算和原子操作仍须满足各自的dtype矩阵。运行期索引不等于动态Tensor Shape，后者当前不支持。
 
-### 访问Tile的有效区域
+### SIMT函数中的Tile和Tensor读写
 
-以下入口处理形状为[2, 128]的Tile，调用方使用`add_valid[128, 2](...)`。线程坐标覆盖物理Shape，实际读写范围由valid_shape控制：
+SIMT函数均通过完整标量下标访问Tile或Tensor元素。以二维对象a为例：
+
+| 操作 | 表达方式 | 含义 |
+|---|---|---|
+| 读取 | value = a[row, col] | 读取一个元素，结果为Scalar。 |
+| 写入 | a[row, col] = value | 将Scalar写入一个元素。 |
+| 读取后写回 | a[row, col] = a[row, col] + delta | 读取、计算后写回；不具备原子性。 |
+
+### Tensor和Tile读写的有效区域
+
+当前SIMT对Tensor和Tile元素读写仅校验编译期常量下标是否越界，不会自动生成运行期边界判断。
+
+- 静态常量下标：前端能够求值为整数常量的下标，会按对应维度的Shape检查，负数或超出该维度范围的下标会报错。例如，Shape为[1, 64]时，a[0, 64]、a[1, 0]和a[0, -1]均会报错。
+- 动态下标：由运行期Scalar入参、Tensor元素、线程编号或其计算表达式得到的下标，前端不会推导其取值范围，由开发者保证其读写数据的有效性，可以在读写前显式添加0 <= index < Shape[axis]条件判断。
+
+访问Tile的有效数据还须保证下标小于对应维度的valid_shape；有效区域由外层Kernel设置并传入，SIMT不会自动按valid_shape限制读写。越界读写可能破坏相邻数据或引发执行异常。
+
+以下入口处理形状为[2, 128]的Tile入参data，通过data.valid_shape[0]和data.valid_shape[1]分别获取该Tile运行期的有效行数和有效列数，并通过条件判断将实际读写限制在有效区域内：
 
 ```python
 import pypto_pro.language as pl
@@ -134,8 +151,6 @@ def add_valid(data, delta: pl.DT_FP32):
     if row < data.valid_shape[0] and col < data.valid_shape[1]:
         data[row, col] = data[row, col] + delta
 ```
-
-有效区域由外层Kernel设置并传入。SIMT入口函数调用不会自动为Tensor/Tile元素读写添加边界判断。SIMT函数也不能创建Tile或调用pypto_pro.language.load、pypto_pro.language.store等块级搬运接口。
 
 ### 标量计算与类型转换
 
