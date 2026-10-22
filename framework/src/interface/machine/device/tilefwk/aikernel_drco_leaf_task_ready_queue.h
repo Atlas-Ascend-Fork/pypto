@@ -116,10 +116,94 @@ struct DrcoSsbufSPSCQueue {
 /* per core pending queue mechanism can be used in both codr and cudr */
 using DrcoMixHubC2VReadyQueue = DrcoSsbufSPSCQueue<6>;
 
+// 1C2V 组内 V→C 计数聚合与 C→V 完成镜像（ssbuf 段，仅 3510 有读写语义）：
+// vCount[2] = V0/V1 各自单写者计数（同组 C 读差值入 GM AIV 分片）；finishState = C 发布的
+// 完成镜像位域（FINISH_VECTOR = AIV 类型完成，V 跳过本类型 leaf 消费；FINISH_ALL = 双类型
+// 完成，V 全局退出）。写序 值 → DSB，读侧 volatile 防跨轮提升；复位由同组 C 在 devTask
+// 入口、EVENT_ID14 放行 V 之前执行（跨 devTask 不残留）
+struct DrcoWarpExecuteCount {
+    // finishState 位定义（C 单写者置位幂等；V 只读）
+    static constexpr uint32_t FINISH_VECTOR = 0x1; // AIV(vector) 类型完成镜像（V own-done 门控）
+    static constexpr uint32_t FINISH_ALL = 0x2;    // 双类型完成镜像（V 全局退出）
+
+    uint32_t vCount[2];
+    uint32_t finishState;
+#ifndef __TILE_FWK_HOST__
+    static inline void Init(DrcoWarpExecuteCount* addr)
+    {
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+        __ssbuf__ uint32_t* ptr = (__ssbuf__ uint32_t*)addr;
+        ptr[0] = 0;
+        ptr[1] = 0;
+        ptr[2] = 0;
+        __asm__ volatile("DSB #0");
+#else
+        (void)addr;
+#endif
+    }
+
+    // V 端调用：本核分片计数自增（单写者，普通读改写即可，无需 GM 原子）
+    static inline void VCountAdd(DrcoWarpExecuteCount* addr, uint32_t idx, uint32_t count)
+    {
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+        if (count == 0) {
+            return;
+        }
+        __ssbuf__ volatile uint32_t* ptr = (__ssbuf__ volatile uint32_t*)addr;
+        ptr[idx] += count;
+        __asm__ volatile("DSB #0");
+#else
+        (void)addr;
+        (void)idx;
+        (void)count;
+#endif
+    }
+
+    // C 端调用：读组内 V 计数
+    static inline uint32_t VCountLoad(DrcoWarpExecuteCount* addr, uint32_t idx)
+    {
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+        __ssbuf__ volatile uint32_t* ptr = (__ssbuf__ volatile uint32_t*)addr;
+        return ptr[idx];
+#else
+        (void)addr;
+        (void)idx;
+        return 0;
+#endif
+    }
+
+    // C 端调用：完成镜像位置位（幂等；bits 取 FINISH_VECTOR / FINISH_ALL，单调置位不清）
+    static inline void FinishPublish(DrcoWarpExecuteCount* addr, uint32_t bits)
+    {
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+        __ssbuf__ volatile uint32_t* ptr = (__ssbuf__ volatile uint32_t*)addr;
+        ptr[2] |= bits;
+        __asm__ volatile("DSB #0");
+#else
+        (void)addr;
+        (void)bits;
+#endif
+    }
+
+    // V 端调用：读完成镜像字（一轮一次，FINISH_VECTOR / FINISH_ALL 位复用）
+    static inline uint32_t FinishStateLoad(DrcoWarpExecuteCount* addr)
+    {
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+        __ssbuf__ volatile uint32_t* ptr = (__ssbuf__ volatile uint32_t*)addr;
+        return ptr[2];
+#else
+        (void)addr;
+        return 0;
+#endif
+    }
+#endif
+};
+
 // ssbuf 段（__ssbuf__ 专用地址空间，段基址 0 合法）上的 C2V 通信状态：
-// 每个 AIC 块两个 SPSC 队列（配对 V0/V1 各消费一个）
+// 每个 AIC 块两个 SPSC 队列（配对 V0/V1 各消费一个）+ warp 执行计数/完成镜像区
 struct DrcoSsbufState {
     DrcoMixHubC2VReadyQueue mixHubC2VReadyQueue[2];
+    DrcoWarpExecuteCount warpExecuteCount;
 };
 
 /* per core pending queue mechanism can be used in both codr and cudr */

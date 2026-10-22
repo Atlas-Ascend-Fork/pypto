@@ -279,6 +279,17 @@ struct DrcoEntryState {
     // （devTask 内不变）：入口缓存一次，热路径完成判定用 Σ分片 >= 该值；动态计数走分片，
     // 避免对热 staticExecCount/size 行反复 dcci
     uint32_t drcoCountDynExpect{0};
+    // C 端聚合状态核本地缓存（if (IS_AIC) 运行时门控，散落字段整合）：
+    //  · vectorCountDynExpect：AIV 期望动态计数（devTask 内不变，入口缓存）
+    //  · lastVCount：本组 V0/V1 计数快照
+    //  · vectorFinishPublished：FINISH_VECTOR 发布标记
+    //  · vectorFinishPollTick：完成判定轮询计数（降频兜底，每 devTask 复位保证首轮即判）
+    struct WarpAggState {
+        uint32_t vectorCountDynExpect{0};
+        uint32_t lastVCount[2]{0, 0};
+        bool vectorFinishPublished{false};
+        uint32_t vectorFinishPollTick{0};
+    } warpAggState;
 
     // control flow cache 基址（设备地址）：recording 阶段 predCount/succStitchList 落在 cache 数据区，
     // funcDynamicDataOffset（base 标记 = 0）以此为原点还原指针
@@ -500,12 +511,13 @@ INLINE __gm__ uint64_t* DrcoLocalReadyMatrixWord(__gm__ DrcoLocalReadyMatrix* ma
 INLINE __gm__ DrcoLocalReadyMatrix* DrcoRootFuncListGetLocalReadyMatrix(
     __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList, uint32_t readyMatrixCoreType);
 
-// 全类型 push 核共享全局行游标 rootFuncList->readyMatrixPushCol[queueType]：按批原子认领连续行
-// （一次 atomicAdd，无需 CAS 重试），起始深度列 = push 核身份散列（typedBlockIdx % colNum），该槽
-// 被占则沿深度环换下一列重试，本行 colNum 个深度全满才从本任务起（list[pushed..]）整体溢出去
-// 队列；逐槽 u32 CAS（0→任务）一槽一原子、槽间独立，pop 侧按包含该槽的 u64 整字 exch 读清
-// ——跨位宽 RMW 在 L2 按地址串行化，互不丢任务；validCoreNum == 0 禁写由调用方早退保证；
-// 每个 CAS 成功的任务记录 EVENT_PUSH_LOCAL(消费者行) 事件
+// 遍历深度环 × 消费者行环：任务行按全局游标 readyMatrixPushCol[queueType] 整批原子认领
+// 轮转分配（base = 认领起点 % rowCnt，批内相邻任务落相邻消费者核，跨所有组/列铺开）；
+// 起始深度列 = push 核身份散列（typedBlockIdx % colNum），当前列槽被占则沿深度环换下一
+// 列重试，本行 colNum 个深度全满才从本任务起（list[pushed..]）整体溢出去队列；
+// 逐槽 u32 CAS（0→任务）一槽一原子、槽间独立，pop 侧按包含该槽的
+// u64 整字 exch 读清——跨位宽 RMW 在 L2 按地址串行化，互不丢任务；
+// validCoreNum == 0 禁写由调用方早退保证；每个 CAS 成功的任务记录 EVENT_PUSH_LOCAL(消费者) 事件。
 INLINE uint32_t DrcoLocalReadyMatrixPushBatch(DrcoEntryState* state,
                                               __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                               uint32_t typedBlockIdx, uint32_t* succTaskIdList,
@@ -652,9 +664,53 @@ INLINE uint32_t DrcoLocalReadyQueueGetFirstTask(__gm__ DrcoLocalReadyQueue* queu
 
 // ==================== RootFuncList 原语 ====================
 
+// C 端聚合本组 V 计数（1C2V ssbuf 协议，if (IS_AIC) 运行时门控）：V 增量差值入账 GM AIV
+// 分片（不写 staticExecCount），代做 AIV 完成判定（Σ分片 >= 期望动态计数）并发布 FINISH_VECTOR
+// 镜像。调用点 = C 自身批加 + fetch 空转每轮，help 模式下也须持续——否则本组 V 末段增量永不
+// 入账、AIV flag 永不置位（挂死）。完成判定按需降频：有增量立即判（波尾零延迟）；无增量每
+// DRCO_VECTOR_FINISH_POLL_INTERVAL 次兜底复判一次（末次入账读漏、他组代加置 flag 均由兜底
+// 补察，最多晚 N-1 轮）
+constexpr uint32_t DRCO_VECTOR_FINISH_POLL_INTERVAL = 16;
+
+INLINE void DrcoAggregateVectorCount(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList)
+{
+    uint32_t v0 = npu::tile_fwk::DrcoWarpExecuteCount::VCountLoad(&state->ssbuf->warpExecuteCount, 0);
+    uint32_t v1 = npu::tile_fwk::DrcoWarpExecuteCount::VCountLoad(&state->ssbuf->warpExecuteCount, 1);
+    uint32_t delta = (v0 - state->warpAggState.lastVCount[0]) + (v1 - state->warpAggState.lastVCount[1]);
+    if (delta != 0) {
+        state->warpAggState.lastVCount[0] = v0;
+        state->warpAggState.lastVCount[1] = v1;
+        uint32_t shardIdx = BlockDescTypedBlockIdx(state->blockDesc) % npu::tile_fwk::DRCO_COUNT_SHARD_NUM;
+        DrcoAtomicAddToU32(
+            &rootFuncList->devTaskCountList.shardExecCount[npu::tile_fwk::DRCO_QUEUE_AIV][shardIdx].value, delta);
+    }
+    if (state->warpAggState.vectorFinishPublished) {
+        return;
+    }
+    if (delta == 0 && (state->warpAggState.vectorFinishPollTick++ & (DRCO_VECTOR_FINISH_POLL_INTERVAL - 1)) != 0) {
+        return;
+    }
+    // flag 已置位（他组 flush/开门代加/空类型预置）→ 仅需补发镜像
+    if (DrcoGmLoad(&rootFuncList->devTaskFinishFlagList.flag[npu::tile_fwk::DRCO_QUEUE_AIV].devTaskFinishFlag) == 0) {
+        uint32_t total = 0;
+        for (uint32_t s = 0; s < npu::tile_fwk::DRCO_COUNT_SHARD_NUM; s++) {
+            total += DrcoGmLoad(&rootFuncList->devTaskCountList.shardExecCount[npu::tile_fwk::DRCO_QUEUE_AIV][s].value);
+        }
+        if (total < state->warpAggState.vectorCountDynExpect) {
+            return;
+        }
+        DrcoGmStore(&rootFuncList->devTaskFinishFlagList.flag[npu::tile_fwk::DRCO_QUEUE_AIV].devTaskFinishFlag,
+                    uint32_t(1));
+    }
+    npu::tile_fwk::DrcoWarpExecuteCount::FinishPublish(&state->ssbuf->warpExecuteCount,
+                                                       npu::tile_fwk::DrcoWarpExecuteCount::FINISH_VECTOR);
+    state->warpAggState.vectorFinishPublished = true;
+}
+
 // leaf task 计数并广播完成：累加本 coreType 动态分片
 // 仅当 Σ分片达期望动态计数的最后一次累加方置 1 本 coreType 的 devTaskFinishFlag
 // 本类型全部核经 DrcoGmLoad（含 dcci 失效）轮询同一标志
+// 1C2V ssbuf 协议：V 端只写组内 ssbuf 分片（GM 原子/完成判定由同组 C 代做）；C 端追加聚合
 INLINE void DrcoNotifyTaskExecutedAdd(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                       uint32_t addCount)
 {
@@ -662,7 +718,18 @@ INLINE void DrcoNotifyTaskExecutedAdd(DrcoEntryState* state, __gm__ npu::tile_fw
         // MQ probe-break 空批：零值原子 RMW 仍占分片计数线串行 + 双分片 DCCI 读——波尾成员
         // 核对齐时实测 4.2us（头核走 KernelEntryDrco 直消费路径绕过本调用仅 0.39us）。
         // 完成判定不受影响：末次真实 add 判定，fetch 空转侧 DrcoTryFinishByShardCount 兜底
+        // （ssbuf 协议下由空转侧 DrcoAggregateVectorCount 聚合兜底）
         return;
+    }
+    if (IS_AIV) {
+        // V 端：只写本组 ssbuf 分片；计数时机与旧路径一致（fetch 后整批认领、notify before run）
+        npu::tile_fwk::DrcoWarpExecuteCount::VCountAdd(&state->ssbuf->warpExecuteCount, get_subblockid() == 1 ? 1u : 0u,
+                                                       addCount);
+        return;
+    }
+    if (IS_AIC) {
+        // C 端：先聚合本组 V 增量（幂等），自身批加走随后原逻辑
+        DrcoAggregateVectorCount(state, rootFuncList);
     }
     // 动态 leaf 计数分片累加：各核只加自己分片（按类型内编号散列），避免 64 路单点原子争抢
     uint32_t shardIdx = BlockDescTypedBlockIdx(state->blockDesc) % npu::tile_fwk::DRCO_COUNT_SHARD_NUM;
@@ -1707,6 +1774,7 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
     // 合并矩阵：行 = 类型内本地编号本身
     uint32_t rowIdx = typedBlockIdx;
     // finishFlag 每类型共享一个：本类型全部核经 DrcoGmLoad（含 dcci 失效读）轮询同一 flag
+    // （ssbuf 协议下 V 端改读 ssbuf 完成镜像，不走这两个 GM flag 指针）
     __gm__ uint32_t* devTaskFinishFlag = &rootFuncList->devTaskFinishFlagList.flag[DRCO_CORE_TYPE].devTaskFinishFlag;
     // 对方类型完成 flag。
     // 全局退出 = 两类型 flag 均置位；本类型先完成时进入帮忙模式（只扫共享 stitch 矩阵，
@@ -1731,9 +1799,21 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
         // 单侧完成不退出——继续循环扫共享 stitch 矩阵帮忙对侧，防对侧链节点落在己方行无人 pop。
         // 双检：顶部探针与 flag 读之间门可能新开+账凑齐（写序 0xff → add → flag），退出前
         // 再探一次未消费槽必命中，防成员核带任务退出（静默丢任务）
-        if (DrcoGmLoad(devTaskFinishFlag) != 0 && DrcoGmLoad(otherTaskFinishFlag) != 0) {
+        // V 端一轮一次读 ssbuf 完成镜像（FINISH_ALL / FINISH_VECTOR 位复用，无 GM dcci）；
+        // C 端 dcci 读 GM 双 flag
+        uint32_t ssbufFinishState = IS_AIV ? npu::tile_fwk::DrcoWarpExecuteCount::FinishStateLoad(
+                                                 &state->ssbuf->warpExecuteCount) :
+                                             0;
+        bool allTaskFinished = IS_AIV ? ((ssbufFinishState & npu::tile_fwk::DrcoWarpExecuteCount::FINISH_ALL) != 0) :
+                                        (DrcoGmLoad(devTaskFinishFlag) != 0 && DrcoGmLoad(otherTaskFinishFlag) != 0);
+        if (allTaskFinished) {
             if (DrcoMiddleQueueTryProbeGate(state, resultTaskIdCount)) {
                 break;
+            }
+            if (IS_AIC) {
+                // C 端：双 flag 确认无待消费任务后发布全局退出镜像，放行本组 V
+                npu::tile_fwk::DrcoWarpExecuteCount::FinishPublish(&state->ssbuf->warpExecuteCount,
+                                                                   npu::tile_fwk::DrcoWarpExecuteCount::FINISH_ALL);
             }
             resultTaskIdCount = static_cast<uint32_t>(AICORE_TASK_ALL_FINISH);
             break;
@@ -1757,8 +1837,10 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
 
         // 本类型 leaf 全部认领/执行完（flag 置位）后跳过本类型 leaf 矩阵/队列/mixhub 消费
         // （必然空，省 CAS 竞争——mixhub 任务的写入方即本类型核，全部完成后不再有新任务），
-        // 仅保留上方共享 stitch 矩阵扫描帮忙对侧展开
-        if (DrcoGmLoad(devTaskFinishFlag) == 0) {
+        // 仅保留上方共享 stitch 矩阵扫描帮忙对侧展开。V 端门控复用本轮镜像值，无 GM dcci
+        bool ownTypeFinished = IS_AIV ? ((ssbufFinishState & npu::tile_fwk::DrcoWarpExecuteCount::FINISH_VECTOR) != 0) :
+                                        DrcoGmLoad(devTaskFinishFlag) != 0;
+        if (!ownTypeFinished) {
             // middleQueue 探测已前置到循环顶部（任何模式必探）；此处不再重复
             if (DrcoDynFuncDataListFetchTaskMixHubC2VReadyQueue(state, rootFuncList, resultCoreType, resultTaskIdList,
                                                                 resultTaskIdCount, blockIdx)) {
@@ -1779,7 +1861,11 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
         } // 本类型未完成（帮忙模式跳过 leaf 消费）
 
         // 本轮未取到任务：分片完成判定兜底，避免分片计数读漏导致完成 flag 永不置位而挂死
-        DrcoTryFinishByShardCount(state, rootFuncList);
+        // （V 端无判定职责；C 端追加聚合，保证 help 模式下持续推进）
+        if (IS_AIC) {
+            DrcoTryFinishByShardCount(state, rootFuncList);
+            DrcoAggregateVectorCount(state, rootFuncList);
+        }
     }
     TraceEvent(state, 0xffffffff, EVENT_FETCH_END());
     return resultTaskIdCount;
@@ -2105,16 +2191,31 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
         state.ctx.lastTaskFinishCycle = 0;
         state.isExectedLeafTask = false;
         // size 与静态预累加 staticExecCount 只读且 devTask 内不变：入口一次性 dcci 读入并合成
-        // 期望动态计数，热路径完成判定用缓存值（动态计数走分片），不再反复 dcci 该行
-        state.drcoCountDynExpect = DrcoGmLoad(&rootFuncList->devTaskCountList.count[DRCO_CORE_TYPE].size) -
-                                   DrcoGmLoad(&rootFuncList->devTaskCountList.count[DRCO_CORE_TYPE].staticExecCount);
+        // 期望动态计数，热路径完成判定用缓存值（动态计数走分片），不再反复 dcci 该行。
+        // ssbuf 协议下 V 端无判定职责，不缓存；C 端另缓存 AIV 期望动态计数并复位聚合状态
+        // （快照须与随后 ssbuf 复位后的零值对齐；tick 复位保证每 devTask 首次空转聚合即判，
+        // 空类型预置 flag 及时补发镜像）
+        if (IS_AIC) {
+            state.drcoCountDynExpect = DrcoGmLoad(&rootFuncList->devTaskCountList.count[DRCO_CORE_TYPE].size) -
+                                       DrcoGmLoad(
+                                           &rootFuncList->devTaskCountList.count[DRCO_CORE_TYPE].staticExecCount);
+            state.warpAggState
+                .vectorCountDynExpect = DrcoGmLoad(
+                                            &rootFuncList->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIV].size) -
+                                        DrcoGmLoad(&rootFuncList->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIV]
+                                                        .staticExecCount);
+            state.warpAggState.lastVCount[0] = 0;
+            state.warpAggState.lastVCount[1] = 0;
+            state.warpAggState.vectorFinishPublished = false;
+            state.warpAggState.vectorFinishPollTick = 0;
+        }
 
         __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue = DrcoGmLoad(
             &rootFuncList->perCorePendingQueueArray[BlockDescBlockIdx(state.blockDesc)]);
         DRCO_DCCI_SINGLE_CACHE_LINE(perCoreQueue);
 
         // ssbuf 段基址（__ssbuf__ 专用地址空间，0 即段起点）：MIX C2V 通信区域，
-        // AIC 初始化 [0]/[1] 两个 SPSC 队列，AIV 按 subblockid 选中消费端
+        // AIC 初始化 [0]/[1] 两个 SPSC 队列与 V 计数/完成镜像区，AIV 按 subblockid 选中消费端
         state.ssbuf = reinterpret_cast<npu::tile_fwk::DrcoSsbufState*>(0);
 #if defined(__MIX__)
 #if defined(__AIV__)
@@ -2123,6 +2224,8 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
 #else
         npu::tile_fwk::DrcoMixHubC2VReadyQueue::Init(&state.ssbuf->mixHubC2VReadyQueue[0]);
         npu::tile_fwk::DrcoMixHubC2VReadyQueue::Init(&state.ssbuf->mixHubC2VReadyQueue[1]);
+        // V 计数/完成镜像复位：须在 set_intra_block 放行 V 之前（跨 devTask 不残留，V 只读不承担复位）
+        npu::tile_fwk::DrcoWarpExecuteCount::Init(&state.ssbuf->warpExecuteCount);
         set_intra_block(PIPE_S, EVENT_ID14);                      // 作用于Vec0
         set_intra_block(PIPE_S, EVENT_ID14 + EVENT_NUMS_PER_AIV); // 作用与Vec1
 #endif
