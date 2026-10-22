@@ -3,6 +3,7 @@
 English | [简体中文](./README.md)
 
 ## Latest Updates
+- 2026/10/15: Version 0.3.0 released (corresponding to CANN 9.2.0), debuting the Pro mode, supporting the Ascend 950PR&950DT series products and providing Tile-level fused operator development capabilities for performance experts; Tensor mode expressiveness is further enhanced, with continuous optimization of functionality and performance.
 - 2026/04/10: Version 0.2.0 released, changing frontend expression methods, improving ease of use, enhancing features and performance, refining module capabilities, and optimizing development experience and runtime efficiency.
 - 2026/03/30: Version v0.1.2 released, supporting cluster training scenarios, optimizing framework compilation performance and basic performance, and fixing known network integration issues.
 - 2026/03/09: Version v0.1.1 released, supporting a new frontend, further increasing API richness, and fixing some known issues.
