@@ -15,7 +15,14 @@ of surfacing as opaque device/runtime failures (bad addresses, zero/negative
 tile sizes, misaligned base-address expansion, ...).
 """
 
-from pypto_pro._errors import InvalidArgument, InvalidShape, InvalidType, InvalidVal, RuntimeFailure
+from pypto_pro._errors import (
+    InvalidArgument,
+    InvalidShape,
+    InvalidType,
+    InvalidVal,
+    NotSupported,
+    RuntimeFailure,
+)
 import pypto_pro.language as pl
 import pytest
 
@@ -156,6 +163,19 @@ def test_tile_type_bad_target_memory_rejected():
         pl.load(g.next(), x, [0])
 
     with pytest.raises(InvalidType, match="target_memory expects MemorySpace"):
+        _parse(k)
+
+
+def test_tile_type_ddr_target_memory_rejected():
+    # Tiles are compile-time on-chip buffers; DDR (off-chip GM) is accessed via
+    # pl.Tensor, so a DDR TileType is rejected instead of failing at codegen.
+    @pl.jit
+    def k(x: pl.Tensor[[64], pl.DT_FP16]):
+        tt = pl.TileType(shape=[64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.DDR)
+        g = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[0])
+        pl.load(g.next(), x, [0])
+
+    with pytest.raises(NotSupported, match="does not support MemorySpace.DDR"):
         _parse(k)
 
 

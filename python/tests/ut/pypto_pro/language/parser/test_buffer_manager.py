@@ -27,6 +27,10 @@ import pytest
 
 from pypto.pypto_impl import ir
 
+_GLOBAL_ADDR_BASE = 0x1000
+_GLOBAL_ADDR_STRIDE = 0x100
+_GLOBAL_ADDR_COUNT = 3
+
 
 def _ir_to_str(prog: ir.Program) -> str:
     return str(prog)
@@ -121,6 +125,25 @@ def test_discrete_addrs_list():
     ir_str = _ir_to_str(_parse_kernel(k))
     assert "memref_addr=" in ir_str
     assert "65536" in ir_str
+
+
+def test_discrete_addrs_list_comprehension_from_global_constants():
+    @pl.jit(auto_mutex=True)
+    def k(a: pl.Tensor[[1, 64], pl.DT_FP16]):
+        tt = pl.TileType(shape=[1, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        db = pl.make_tile_group(
+            type=tt,
+            addrs=[
+                _GLOBAL_ADDR_BASE + i * _GLOBAL_ADDR_STRIDE
+                for i in range(_GLOBAL_ADDR_COUNT)
+            ],
+            mutex_ids=[0, 1, 2],
+        )
+        pl.load(db.next(), a, [0, 0])
+
+    ir_str = _ir_to_str(_parse_kernel(k))
+    for i in range(_GLOBAL_ADDR_COUNT):
+        assert str(_GLOBAL_ADDR_BASE + i * _GLOBAL_ADDR_STRIDE) in ir_str
 
 
 def test_addrs_from_kernel_local_constant():

@@ -26,6 +26,8 @@ import copy
 import inspect
 import textwrap
 
+from pypto_pro.language.parser._expr_evaluator import ExprEvaluator
+
 # ---------------------------------------------------------------------------
 # Generated-code names
 #
@@ -147,8 +149,7 @@ def eval_const(node: ast.expr, closure_vars: dict):
     Returns the value, or None if it cannot be evaluated (e.g. references a
     runtime variable)."""
     try:
-        code = compile(ast.Expression(body=node), "<addr>", "eval")
-        return eval(code, {"__builtins__": {}}, dict(closure_vars))
+        return ExprEvaluator(closure_vars).eval_expr(node)
     except Exception:
         return None
 

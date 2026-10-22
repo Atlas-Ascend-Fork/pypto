@@ -104,7 +104,8 @@ class ExprEvaluator:
             # builtins (open, __import__, exec) but does not prevent calling methods on
             # objects the user placed in scope, which is by design.
             env = {**self.closure_vars, **self._local_const_values(node)}
-            return eval(code, {"__builtins__": _SAFE_BUILTINS}, env)
+            env["__builtins__"] = _SAFE_BUILTINS
+            return eval(code, env)
         except NameError as e:
             raise InvalidVal(
                 f"Cannot resolve expression '{expr_str}': {e}",

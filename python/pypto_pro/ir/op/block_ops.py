@@ -3826,6 +3826,12 @@ def _validate_tile_type_params(tt: "TileType") -> None:
             f"TileType target_memory must be a pl.MemorySpace value, got {tt.target_memory!r} "
             f"({type(tt.target_memory).__name__})."
         )
+    if tt.target_memory == MemorySpace.DDR:
+        raise NotSupported(
+            "TileType target_memory does not support MemorySpace.DDR: a tile is a compile-time "
+            "on-chip buffer, while DDR is off-chip GM.",
+            hint="Use an on-chip memory space, e.g. target_memory=pl.MemorySpace.Vec.",
+        )
 
     shape = _const_shape_ints(tt.shape)
     if shape is None:

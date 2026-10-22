@@ -439,9 +439,12 @@ def test_group_unaligned_slot_address_rejected():
 
         @pl.jit(auto_mutex=True)
         def k(a: pl.Tensor[[64, 64], pl.DT_FP16]):
-            tt = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.DDR)
+            # Scaling has no enforced address alignment, so addrs [2, 68] reach the
+            # reinterpret element-boundary check instead of the alignment check.
+            # Tiles stay within the 4K ScalingVbuffer capacity (addr + 2048 <= 4096).
+            tt = pl.TileType(shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Scaling)
             db = pl.make_tile_group(type=tt, addrs=[2, 68], mutex_ids=[0, 1])  # 2 % 4 != 0 for FP32
-            g2 = pl.reinterpret(db, shape=[32, 32], dtype=pl.DT_FP32)  # footprint 4096 <= 8192, addr 2 misaligned
+            g2 = pl.reinterpret(db, shape=[16, 16], dtype=pl.DT_FP32)  # footprint 1024 <= 2048, addr 2 misaligned
             c0 = g2.next()
             pl.load(c0, a, [0, 0])
 

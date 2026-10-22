@@ -46,3 +46,34 @@ def kernel():
     assert addr_ranges["auto_group"][1] == [(0, 128), (128, 256)]
     info = SimpleNamespace(sync=SimpleNamespace(slot_counts=slot_counts, addr_ranges=addr_ranges))
     assert _slot_count(info, "auto_group") == 2
+
+
+def test_scans_list_comprehensions_with_closure_constants():
+    module = ast.parse(
+        """
+def kernel():
+    manual_group = pl.make_tile_group(
+        type=pl.TileType(shape=[ROWS, COLS], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
+        addrs=[ADDR_BASE + i * ADDR_STRIDE for i in range(DEPTH)],
+        mutex_ids=[MUTEX_BASE + i for i in range(DEPTH)])
+"""
+    )
+    decls = scan_buffer_decls(module.body[0])
+    closure_vars = {
+        "pl": pl,
+        "ROWS": 16,
+        "COLS": 32,
+        "DEPTH": 3,
+        "ADDR_BASE": 0x1000,
+        "ADDR_STRIDE": 0x400,
+        "MUTEX_BASE": 4,
+    }
+
+    assert scan_buffer_mutex_ids(decls, closure_vars) == {"manual_group": (4, 5, 6)}
+    assert scan_buffer_slot_counts(decls, closure_vars) == {"manual_group": 3}
+    assert scan_buffer_addr_ranges(decls, closure_vars) == {
+        "manual_group": (
+            pl.MemorySpace.Vec,
+            [(0x1000, 0x1400), (0x1400, 0x1800), (0x1800, 0x1C00)],
+        )
+    }

@@ -48,6 +48,11 @@ def _parse_expr(code: str) -> ast.expr:
         ({"dims": [128, 64, 32]}, "dims[1]", 64),
         ({"dims": [128, 64, 32, 16]}, "dims[0:2]", [128, 64]),
         ({"a": 128, "b": 64}, "[a, b]", [128, 64]),
+        (
+            {"base": 64, "stride": 16, "count": 3},
+            "[base + i * stride for i in range(count)]",
+            [64, 80, 96],
+        ),
     ],
 )
 def test_eval_expr_supported_cases(closure_vars, expr, expected):
