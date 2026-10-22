@@ -100,7 +100,7 @@ void CodeGenNPU::GenInclude(const Function& topFunc, std::ostringstream& oss) co
 
     oss << "#include \"TileOpImpl.h\"\n";
     oss << "#include \"tilefwk/aicpu_common.h\"\n";
-    oss << "#include \"tilefwk/aicore_asc_debug.h\"\n\n";
+    oss << "#include \"tilefwk/aicore_pto_debug.h\"\n\n";
 }
 
 void CodeGenNPU::GenCommentBeforeFuncHeader(Function& subFunc, std::ostringstream& oss) const

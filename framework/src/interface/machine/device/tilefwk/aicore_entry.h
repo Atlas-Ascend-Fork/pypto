@@ -21,7 +21,7 @@
 #include "tilefwk/aicpu_common.h"
 #include "tilefwk/aicore_runtime.h"
 #include "tilefwk/aicore_print.h"
-#include "tilefwk/aicore_asc_debug.h"
+#include "tilefwk/aicore_pto_debug.h"
 #include "tilefwk/core_func_data.h"
 
 // device switch head file begin

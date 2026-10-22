@@ -9,11 +9,17 @@
  */
 
 /*!
- * \file aicore_asc_debug.h
- * \brief Umbrella header for AICore CANN asc_printf / asc_dump wrappers.
+ * \file common_types.h
+ * \brief PyPTO-vendored subset: AscendC::Hardware for dump position tags.
  */
+#ifndef IMPL_UTILS_COMMON_TYPES_H
+#define IMPL_UTILS_COMMON_TYPES_H
 
-#pragma once
+#include <cstdint>
+#include "sys_macros_impl.h"
 
-#include "tilefwk/aicore_asc_printf.h"
-#include "tilefwk/aicore_asc_dump.h"
+namespace AscendC {
+enum class Hardware : uint8_t { GM, UB, L1, L0A, L0B, L0C, BIAS, FIXBUF, MAX };
+} // namespace AscendC
+
+#endif // IMPL_UTILS_COMMON_TYPES_H

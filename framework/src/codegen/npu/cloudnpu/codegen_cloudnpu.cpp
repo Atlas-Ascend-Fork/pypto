@@ -47,19 +47,26 @@ void CodeGenCloudNPU::BuildIncludes(std::ostringstream& oss) const
     if (!IsAicorePrintEnabled()) {
         return;
     }
-    const char* ascendHome = std::getenv(ENV_ASCEND_HOME_PATH.c_str());
-    if (ascendHome == nullptr) {
-        return;
+    auto isPtoDebugRoot = [](const std::string& root) {
+        return IsPathExist(root + "/impl/utils/debug/pto_aicore_printf_impl.h") &&
+               IsPathExist(root + "/include/utils/debug/pto_dump.h");
+    };
+    std::string ptoDebugRoot = GetPyptoLibPath() + "/include/tilefwk/pto_debug";
+    if (!isPtoDebugRoot(ptoDebugRoot)) {
+        // Source-tree: .../codegen/npu/cloudnpu -> .../interface/machine/device/tilefwk/pto_debug
+        std::string srcDir(__FILE__);
+        const auto pos = srcDir.find_last_of('/');
+        if (pos != std::string::npos) {
+            srcDir.resize(pos);
+        }
+        ptoDebugRoot = srcDir + "/../../../interface/machine/device/tilefwk/pto_debug";
+        if (!isPtoDebugRoot(ptoDebugRoot)) {
+            return;
+        }
     }
-    const std::string ascRoot = std::string(ascendHome) + "/asc";
-    const std::string ascInclude = ascRoot + "/include";
-    if (!IsPathExist(ascInclude)) {
-        return;
-    }
-    // -DTILING_KEY_VAR=0: suppress ASC g_tilingKey strong defs across multi-TU leaf link.
-    oss << "-D__ENABLE_ASC_PRINTF__ -DTILING_KEY_VAR=0 "
-        << "-isystem " << QuoteShellArg(ascInclude) << " "
-        << "-isystem " << QuoteShellArg(ascRoot) << " ";
+    oss << "-D__ENABLE_PTO_PRINTF__ -DPYPTO_PTO_DEBUG=1 "
+        << "-I" << QuoteShellArg(ptoDebugRoot) << " "
+        << "-I" << QuoteShellArg(ptoDebugRoot + "/include") << " ";
 }
 
 bool CodeGenCloudNPU::IsEnablePMUTrace() const

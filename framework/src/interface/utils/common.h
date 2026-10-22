@@ -491,8 +491,8 @@ inline bool IsAicoreResolveEnabled()
     return result;
 }
 
-// Opt-in: enable AICore ASC printf/dump (aicore_asc_debug) at compile time.
-// When unset/false, leaf/mid kernels do not get -D__ENABLE_ASC_PRINTF__.
+// Opt-in: enable AICore pto printf/dump (aicore_pto_debug) at compile time.
+// When unset/false, leaf/mid kernels do not get -D__ENABLE_PTO_PRINTF__.
 inline bool IsAicorePrintEnabled()
 {
     static const bool result = []() {

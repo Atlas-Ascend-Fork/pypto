@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
@@ -16,8 +16,7 @@
 #ifndef AICORE_ENTRY_DRCO_H
 #define AICORE_ENTRY_DRCO_H
 
-// ASC printf 走上游 gating 头（opt-in：PYPTO_ENABLE_AICORE_PRINT=true)
-#include "tilefwk/aicore_asc_printf.h"
+#include "tilefwk/aicore_pto_debug.h"
 
 #ifdef __DAV_C310__
 

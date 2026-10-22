@@ -38,8 +38,6 @@ constexpr const size_t CMD_SIZE_4K = 4096;
 constexpr const char* BISHENG_PROGRAM_CMD = "bisheng";
 constexpr const char* BISHENG_LD_CMD = "ld.lld";
 constexpr const char* RUN_TO_LOG_SCRIPT_NAME = "run_to_log.sh";
-constexpr const char* ENV_ASCEND_HOME_PATH = "ASCEND_HOME_PATH";
-
 static std::string QuoteShellArg(const std::string& arg)
 {
     std::string escaped = "'";
@@ -84,26 +82,44 @@ static void LogBishengCompileFailure(const std::string& logPath)
     }
 }
 
-// Keep -Werror on the TU; -isystem treats ASC headers as system headers.
-static std::string BuildAscPrintfCompileFlags()
+static bool IsPtoDebugRoot(const std::string& root)
+{
+    return IsPathExist(root + "/impl/utils/debug/pto_aicore_printf_impl.h") &&
+           IsPathExist(root + "/include/utils/debug/pto_dump.h");
+}
+
+// Vendored under tilefwk/pto_debug (installed with device headers). No longer needs $ASCEND_HOME/asc.
+static std::string ResolvePtoDebugRoot()
+{
+    const std::string installed = GetPyptoLibPath() + "/include/tilefwk/pto_debug";
+    if (IsPtoDebugRoot(installed)) {
+        return installed;
+    }
+    // Source-tree fallback: .../machine/compile -> .../interface/machine/device/tilefwk/pto_debug
+    std::string srcDir(__FILE__);
+    const auto pos = srcDir.find_last_of('/');
+    if (pos != std::string::npos) {
+        srcDir.resize(pos);
+    }
+    const std::string fromSrc = srcDir + "/../../interface/machine/device/tilefwk/pto_debug";
+    if (IsPtoDebugRoot(fromSrc)) {
+        return fromSrc;
+    }
+    return "";
+}
+
+static std::string BuildPtoPrintfCompileFlags()
 {
     if (!IsAicorePrintEnabled()) {
         return "";
     }
-    const char* ascendHome = std::getenv(ENV_ASCEND_HOME_PATH);
-    if (ascendHome == nullptr) {
+    const std::string ptoDebugRoot = ResolvePtoDebugRoot();
+    if (ptoDebugRoot.empty()) {
         return "";
     }
-    const std::string ascRoot = std::string(ascendHome) + "/asc";
-    const std::string ascInclude = ascRoot + "/include";
-    if (!IsPathExist(ascInclude)) {
-        return "";
-    }
-    // -DTILING_KEY_VAR=0: new ASC sys_macros.h defines strong g_tilingKey unless TILING_KEY_VAR is
-    // preset; PyPTO links entry/mid/leaf multi-TU and would otherwise hit duplicate symbol. Same
-    // flag AscendC uses for multi-file kernels that do not need tiling-key vars.
-    return "-D__ENABLE_ASC_PRINTF__ -DTILING_KEY_VAR=0 -isystem " + QuoteShellArg(ascInclude) + " -isystem " +
-           QuoteShellArg(ascRoot) + " ";
+    // -I root for "impl/...", -I root/include for "utils/...". Vendored macros omit g_tilingKey.
+    return "-D__ENABLE_PTO_PRINTF__ -DPYPTO_PTO_DEBUG=1 -I" + QuoteShellArg(ptoDebugRoot) + " -I" +
+           QuoteShellArg(ptoDebugRoot + "/include") + " ";
 }
 } // namespace
 
@@ -168,7 +184,7 @@ static int CompileCoreMachine(const std::string& objFile, bool isCube, uint64_t 
     std::string ccecCmd;
     ccecCmd.resize(CMD_SIZE_4K);
     std::string includePath = GetPyptoLibPath() + "/../include/tile_fwk";
-    const std::string ascPrintfFlags = BuildAscPrintfCompileFlags();
+    const std::string ptoPrintfFlags = BuildPtoPrintfCompileFlags();
     constexpr const char* warningFlags = "-Wall -Werror";
     int ret = snprintf_s(ccecCmd.data(), CMD_SIZE_4K, CMD_SIZE_4K - 1,
                          "%s -c -O3 -g -x cce %s -std=c++17 "
@@ -198,7 +214,7 @@ static int CompileCoreMachine(const std::string& objFile, bool isCube, uint64_t 
                          BISHENG_PROGRAM_CMD, warningFlags, cc_opt.c_str(), simtCompileOption.c_str(),
                          std::to_string(tilingKey).c_str(), opType.c_str(), funcRawName.c_str(), headFile.c_str(),
                          requiresSimtMacro.c_str(), hasSubFunc.c_str(), coreType.c_str(), enableAicoreResolve.c_str(),
-                         ascPrintfFlags.c_str(), includePath.c_str(), includePath.c_str(), GetPyptoLibPath().c_str(),
+                         ptoPrintfFlags.c_str(), includePath.c_str(), includePath.c_str(), GetPyptoLibPath().c_str(),
                          GetPyptoLibPath().c_str(), objFile.c_str(), aicoreSrcFile.c_str(), davArch.c_str(),
                          enableMainBlock.c_str());
     if (ret < 0) {
