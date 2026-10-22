@@ -1,0 +1,3 @@
+interface:
+  display_name: "PyPTO Pro Code Review"
+  short_description: "逐条检视 PyPTO Pro 框架逻辑代码，排除 UT/ST，报告缺陷、违规与规则覆盖，支持 GitCode 行级意见"
