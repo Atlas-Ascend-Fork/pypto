@@ -52,7 +52,7 @@ pypto\_impl.RecordIfBranch: 返回一个条件分支对象，用于Python的if�
 def kernel():
     ...
     for s2_idx in pypto.loop(0, 10, 1, power_of_2(max_unroll_times), name="LOOP_L0_bIdx_mla_prolog", idx_name="b_idx"):
-        if pypto.cond(pypto.is_loop_end(s2_idx, bn_per_batch)):
+        if pypto.cond(pypto.is_loop_end(s2_idx)):
             ...
 
 # 使用装饰器，无需pypto.cond包装
@@ -60,6 +60,6 @@ def kernel():
 def kernel():
     ...
     for s2_idx in pypto.loop(0, 10, 1, power_of_2(max_unroll_times), name="LOOP_L0_bIdx_mla_prolog", idx_name="b_idx"):
-        if pypto.is_loop_end(s2_idx, bn_per_batch):
+        if pypto.is_loop_end(s2_idx):
             ...
 ```
