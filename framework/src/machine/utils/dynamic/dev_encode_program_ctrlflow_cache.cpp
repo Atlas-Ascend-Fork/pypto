@@ -109,6 +109,15 @@ void DevControlFlowCache::PredCountDataBackup(DynDeviceTaskBase* base)
                    dynDataBackup->predCountBackup, backupSize);
 
         BitmapDataBackup(dynDataCache, dynDataBackup);
+
+        if (base->drcoRootFuncList == nullptr) {
+            continue;
+        }
+        uint32_t pingOff = static_cast<uint32_t>(
+            dynFuncDataList->GetDrcoRootFuncData(static_cast<int>(dupIndex)).funcDynamicDataOffset);
+        if (!BackupDrcoPredCount(dynDataBackup, pingOff, duppedData->GetOperationSize())) {
+            return;
+        }
     }
 }
 
@@ -120,25 +129,6 @@ void DevControlFlowCache::PredCountPingPongSwap(DynDeviceTaskBase* base)
         DynFuncDataCache& dynDataCache = dynFuncDataCacheList->At(dupIndex);
         std::swap(dynDataCache.predCountPingPong[PRED_COUNT_PING], dynDataCache.predCountPingPong[PRED_COUNT_PONG]);
         dynDataCache.predCount = dynDataCache.predCountPingPong[PRED_COUNT_PING];
-    }
-}
-
-void DevControlFlowCache::DrcoPredCountDataRestore(DynDeviceTaskBase* base)
-{
-    DynFuncHeader* dynFuncDataList = base->GetDynFuncDataList();
-    DynFuncDataBackup* dynFuncDataBackupList = base->dynFuncDataBackupList;
-    uint64_t metadataBase = reinterpret_cast<uint64_t>(base->drcoRootFuncList->metadataBase);
-    uint64_t controlFlowCacheBase = reinterpret_cast<uint64_t>(base->drcoRootFuncList->controlFlowCacheBase);
-    for (size_t dupIndex = 0; dupIndex < dynFuncDataList->Size(); ++dupIndex) {
-        uint64_t funcDynamicDataOffset = dynFuncDataList->GetDrcoRootFuncData(dupIndex).funcDynamicDataOffset;
-        uint32_t predCountOffset = static_cast<uint32_t>(funcDynamicDataOffset);
-        uint64_t predCountBase = (predCountOffset & 0x80000000u) ? metadataBase : controlFlowCacheBase;
-        int32_t* drcoPredCount = reinterpret_cast<int32_t*>(predCountBase + (predCountOffset & 0x7fffffffu));
-        predcount_t* predCountBackup = dynFuncDataBackupList->At(dupIndex).predCountBackup;
-        uint32_t opSize = base->dynFuncDataCacheList->At(dupIndex).duppedData->GetOperationSize();
-        for (uint32_t i = 0; i < opSize; ++i) {
-            drcoPredCount[i] = static_cast<int32_t>(predCountBackup[i]);
-        }
     }
 }
 
@@ -173,6 +163,8 @@ void DevControlFlowCache::ReadyQueueDataBackup(DynDeviceTaskBase* base)
     if (readyQueueBackup == nullptr) {
         return;
     }
+    /* AllocateCache does not construct. Holes must stay null so replay skips them. */
+    (void)memset_s(readyQueueBackup, sizeof(ReadyQueueCache), 0, sizeof(ReadyQueueCache));
     readyQueueBackup->coreFunctionCnt = base->devTask.coreFunctionCnt;
     uint32_t readyTaskNum = 0;
     for (size_t i = 0; i < READY_QUEUE_SIZE; i++) {
@@ -198,128 +190,16 @@ void DevControlFlowCache::ReadyQueueDataBackup(DynDeviceTaskBase* base)
     }
     readyQueueBackup->readyTaskNum = readyTaskNum;
 
-    if (base->drcoRootFuncList != nullptr) {
-        for (size_t i = 0; i < npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE; i++) {
-            auto* src = base->drcoRootFuncList->perCorePendingQueueArray[i];
-            if (src == nullptr) {
-                continue;
-            }
-            size_t backupSize = sizeof(npu::tile_fwk::PerCorePendingQueue) +
-                                sizeof(npu::tile_fwk::LeafTaskId) * src->size;
-            auto* dst = reinterpret_cast<npu::tile_fwk::PerCorePendingQueue*>(AllocateCache(backupSize));
-            if (dst == nullptr) {
-                continue;
-            }
-            memcpy_s(dst, backupSize, src, backupSize);
-            readyQueueBackup->perCorePendingQueueList[i] = dst;
-        }
+    if (base->drcoRootFuncList != nullptr && !BackupDrcoPerCorePending(readyQueueBackup, base)) {
+        return;
     }
 
     // middleQueue 无需备份：录制期 slab 内容随工作区镜像直接对设备可见（队列内容为
     // 只读不变量，设备消费状态记核本地）；加 backup/Restore 反而引入坏副本/坏尺寸
     // 覆盖风险
     base->readyQueueBackup = readyQueueBackup;
-}
-
-void DevControlFlowCache::DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uint32_t nrValidAic)
-{
-    auto* perCorePendingQueueArray = base->drcoRootFuncList->perCorePendingQueueArray;
-    for (size_t i = 0; i < npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE; i++) {
-        auto* dst = perCorePendingQueueArray[i];
-        if (dst == nullptr) {
-            continue;
-        }
-        dst->head = 0;
-        dst->tail = 0;
-        dst->size = 0;
-    }
-    // middleQueue 回放无需恢复：队列内容只读不变量（设备不写回 GM），slab 镜像跨轮有效
-    // ——与 v2（9a6f7a7ff）验证通过的形态一致；v3 曾加 backup/Restore 回退（见 Backup 注释）
-    const uint32_t nrAivCores = nrValidAic * 2;
-    ReadyCoreFunctionQueue* aivQueue = base->readyQueue[0];
-    ReadyCoreFunctionQueue* aicQueue = base->readyQueue[1];
-    uint32_t wrapCoreIdx = 0;
-
-    // Restore wrap (mix) tasks: AIC task to core w, AIV tasks to paired vector cores.
-    // Mirrors DispatchReadyQueueToCores so mix-task dispatch is not lost on cache replay.
-    WrapInfoQueue* wrapQueue = reinterpret_cast<WrapInfoQueue*>(base->devTask.mixTaskData.readyWrapCoreFunctionQue);
-    if (wrapQueue != nullptr && nrValidAic > 0) {
-        constexpr uint8_t MIX_TYPE_1C2V = 2;
-        constexpr uint8_t MIX_TYPE_1C1V = 1;
-        for (uint8_t targetType : {MIX_TYPE_1C2V, MIX_TYPE_1C1V}) {
-            for (uint32_t idx = wrapQueue->head; idx < wrapQueue->tail; idx++) {
-                WrapInfo& info = wrapQueue->elem[idx];
-                if (info.mixResourceType != targetType) {
-                    continue;
-                }
-                uint32_t aicCore = wrapCoreIdx++ % nrValidAic;
-                uint32_t aiv0Core = nrValidAic + aicCore * 2;
-                perCorePendingQueueArray[aicCore]->UnsafeEnqueue(info.tasklist[WRAP_IDX_AIC]);
-                perCorePendingQueueArray[aiv0Core]->UnsafeEnqueue(info.tasklist[WRAP_IDX_AIV0]);
-                if (targetType == MIX_TYPE_1C2V) {
-                    perCorePendingQueueArray[aiv0Core + 1]->UnsafeEnqueue(info.tasklist[WRAP_IDX_AIV1]);
-                }
-            }
-        }
-    }
-
-    uint32_t aicIdx = wrapCoreIdx;
-    for (const auto* it = aicQueue->begin(); it != aicQueue->end(); ++it) {
-        perCorePendingQueueArray[aicIdx++ % nrValidAic]->UnsafeEnqueue(*it);
-    }
-    uint32_t aivIdx = wrapCoreIdx * 2;
-    for (const auto* it = aivQueue->begin(); it != aivQueue->end(); ++it) {
-        perCorePendingQueueArray[nrValidAic + (aivIdx++ % nrAivCores)]->UnsafeEnqueue(*it);
-    }
-
-    __sync_synchronize();
-    for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
-        base->drcoRootFuncList->devTaskCountList.count[ct].staticExecCount = 0;
-        // 动态分片计数复位（cache 重放不残留上次运行的动态 leaf 计数）
-        for (uint32_t s = 0; s < npu::tile_fwk::DRCO_COUNT_SHARD_NUM; s++) {
-            base->drcoRootFuncList->devTaskCountList.shardExecCount[ct][s].value = 0;
-        }
-    }
-    // 就绪队列复位按各队列自身容量清理（MIX 行容量 = coreFunctionCnt + HUB_MIX op 数，
-    // 大于 coreFunctionCnt）；三行（AIC/AIV/MIX）均全组分配
-    for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
-        for (uint32_t i = 0; i < npu::tile_fwk::NUM_LOCAL_GROUPS; i++) {
-            auto* dst = base->drcoRootFuncList->localReadyQueueArray[ct][i];
-            if (dst == nullptr) {
-                continue;
-            }
-            dst->head = 0;
-            dst->tail = 0;
-            uint32_t taskListSize = dst->size * sizeof(npu::tile_fwk::LeafTaskId);
-            (void)memset_s(reinterpret_cast<uint8_t*>(dst) + sizeof(DrcoLocalReadyQueue), taskListSize, 0,
-                           taskListSize);
-        }
-    }
-    for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
-        auto* matrix = base->drcoRootFuncList->localReadyMatrixArray[ct];
-        if (matrix == nullptr) {
-            continue;
-        }
-        // 定长矩阵：整块清零行区（含未用行/槽，覆盖所有可能残留的任务）
-        (void)memset_s(matrix->rowList, sizeof(matrix->rowList), 0, sizeof(matrix->rowList));
-    }
-    // 槽内为 stitch 节点指针，复位为 nullptr，避免 cache 重放后残留悬空指针
-    auto* stitchNodeMatrix = base->drcoRootFuncList->stitchNodeMatrix;
-    if (stitchNodeMatrix != nullptr) {
-        (void)memset_s(stitchNodeMatrix->stitchNodeList, sizeof(stitchNodeMatrix->stitchNodeList), 0,
-                       sizeof(stitchNodeMatrix->stitchNodeList));
-    }
-    // 兜底 hub 矩阵槽内存 taskId，复位为 0，避免 cache 重放后残留任务
-    auto* hubTaskMatrix = base->drcoRootFuncList->hubTaskMatrix;
-    if (hubTaskMatrix != nullptr) {
-        (void)memset_s(hubTaskMatrix->hubTaskList, sizeof(hubTaskMatrix->hubTaskList), 0,
-                       sizeof(hubTaskMatrix->hubTaskList));
-    }
-    base->drcoRootFuncList->devTaskFinished = 0;
-    auto* finishFlagList = &base->drcoRootFuncList->devTaskFinishFlagList;
-    (void)memset_s(reinterpret_cast<uint8_t*>(finishFlagList), sizeof(*finishFlagList), 0, sizeof(*finishFlagList));
-    for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
-        base->drcoRootFuncList->readyMatrixPushCol[ct] = 0; // 重放复位全局 col 游标
+    if (base->drcoRootFuncList != nullptr) {
+        BackupDrcoReplayShadow(base);
     }
 }
 
@@ -348,10 +228,15 @@ void DevControlFlowCache::ReadyQueueDataPingPongSwap(DynDeviceTaskBase* base, ui
         base->readyQueue[i]->FillFrom(readyQueueBackup->queueList[i], inactiveElem);
     }
 
-    // for aicore-resolve
-    if (base->drcoRootFuncList != nullptr) {
-        DrcoReadyQueueDataRestore(base, nrValidAic);
+    if (base->drcoRootFuncList == nullptr) {
+        return;
     }
+    /* Shadow is the fast path. A missing shadow falls back to the mainline rebuild. */
+    if (readyQueueBackup->drcoShadowReady != 0) {
+        DrcoShadowPingPongSwap(base);
+        return;
+    }
+    DrcoReadyQueueDataRestore(base, nrValidAic);
 }
 
 void DevControlFlowCache::DieReadyQueueDataBackup(DynDeviceTaskBase* base)
@@ -421,7 +306,7 @@ void DevControlFlowCache::DieReadyQueuePingPongRestore(DynDeviceTaskBase* base)
     }
 }
 
-void DevControlFlowCache::DieReadyQueuePingPongSwap(DynDeviceTaskBase* base, uint32_t nrValidAic)
+void DevControlFlowCache::DieReadyQueuePingPongSwap(DynDeviceTaskBase* base)
 {
     DieReadyQueueCache* dieReadyQueueBackup = base->dieReadyQueueBackup;
     if (dieReadyQueueBackup == nullptr) {
@@ -441,42 +326,6 @@ void DevControlFlowCache::DieReadyQueuePingPongSwap(DynDeviceTaskBase* base, uin
                                      dieReadyQueueBackup->pingElem[i];
         dieReadyQueue->FillFrom(dieReadyQueueBackup->queueList[i], inactiveElem);
     }
-
-    if (base->drcoRootFuncList == nullptr) {
-        return;
-    }
-    // for aicore-resolve
-    uint32_t nrAivCores = 2 * nrValidAic;
-    uint32_t halfAic = nrValidAic / 2;
-    uint32_t halfAiv = nrAivCores / 2;
-    // perCorePendingQueue: distribute die tasks, die0 to first-half cores, die1 to second-half cores
-    for (uint32_t dieId = 0; dieId < DIE_NUM; ++dieId) {
-        uint32_t aicCoreBase = dieId * halfAic;
-        uint32_t aicCoreCnt = (dieId == 0) ? halfAic : (nrValidAic - halfAic);
-        ReadyCoreFunctionQueue* dieAicQue = reinterpret_cast<ReadyCoreFunctionQueue*>(
-            base->devTask.dieReadyFunctionQue.readyDieAicCoreFunctionQue[dieId]);
-        if (dieAicQue != nullptr) {
-            uint32_t dieAicIdx = 0;
-            for (const auto* it = dieAicQue->begin(); it != dieAicQue->end(); ++it) {
-                uint32_t coreIdx = aicCoreBase + (dieAicIdx % aicCoreCnt);
-                base->drcoRootFuncList->perCorePendingQueueArray[coreIdx]->UnsafeEnqueue(*it);
-                dieAicIdx++;
-            }
-        }
-
-        uint32_t aivCoreBase = nrValidAic + dieId * halfAiv;
-        uint32_t aivCoreCnt = (dieId == 0) ? halfAiv : (nrAivCores - halfAiv);
-        ReadyCoreFunctionQueue* dieAivQue = reinterpret_cast<ReadyCoreFunctionQueue*>(
-            base->devTask.dieReadyFunctionQue.readyDieAivCoreFunctionQue[dieId]);
-        if (dieAivQue != nullptr) {
-            uint32_t dieAivIdx = 0;
-            for (const auto* it = dieAivQue->begin(); it != dieAivQue->end(); ++it) {
-                uint32_t coreIdx = aivCoreBase + (dieAivIdx % aivCoreCnt);
-                base->drcoRootFuncList->perCorePendingQueueArray[coreIdx]->UnsafeEnqueue(*it);
-                dieAivIdx++;
-            }
-        }
-    }
 }
 
 void DevControlFlowCache::MixTaskDataBackup(DynDeviceTaskBase* base)
@@ -488,6 +337,8 @@ void DevControlFlowCache::MixTaskDataBackup(DynDeviceTaskBase* base)
     if (mixTaskDataBackup == nullptr) {
         return;
     }
+    /* AllocateCache does not construct; zero before filling so failed paths stay null-safe. */
+    (void)memset_s(mixTaskDataBackup, sizeof(MixTaskDataCache), 0, sizeof(MixTaskDataCache));
     mixTaskDataBackup->wrapIdNum = base->devTask.mixTaskData.wrapIdNum;
     WrapInfoQueue* wrapInfoQueue = reinterpret_cast<WrapInfoQueue*>(base->devTask.mixTaskData.readyWrapCoreFunctionQue);
     size_t wrapInfoBackupSize = sizeof(WrapInfo) * wrapInfoQueue->capacity;
@@ -500,31 +351,63 @@ void DevControlFlowCache::MixTaskDataBackup(DynDeviceTaskBase* base)
     mixTaskDataBackup->queue.capacity = wrapInfoQueue->capacity;
     mixTaskDataBackup->queue.elem = wrapQueueBackupElem;
     DevMemcpyS(mixTaskDataBackup->queue.elem, wrapInfoBackupSize, wrapInfoQueue->elem, wrapInfoBackupSize);
+    /* Optional second working buffer. If OOM, leave ping/pong null and Swap falls back to memcpy. */
+    WrapInfo* pongElem = reinterpret_cast<WrapInfo*>(AllocateCache(wrapInfoBackupSize));
+    if (pongElem != nullptr) {
+        DevMemcpyS(pongElem, wrapInfoBackupSize, mixTaskDataBackup->queue.elem, wrapInfoBackupSize);
+        mixTaskDataBackup->pingElem = wrapInfoQueue->elem;
+        mixTaskDataBackup->pongElem = pongElem;
+    }
 
     constexpr size_t arrSize = sizeof(uint64_t) * MAX_STITCH_FUNC_NUM;
     DevMemcpyS(mixTaskDataBackup->opWrapList, arrSize, base->devTask.mixTaskData.opWrapList, arrSize);
 
+    /* Always publish backup once the immutable snapshot exists; Reloc dereferences this. */
     base->mixTaskDataBackup = mixTaskDataBackup;
 }
 
-void DevControlFlowCache::MixTaskDataRestore(DynDeviceTaskBase* base)
+void DevControlFlowCache::MixTaskDataPingPongSwap(DynDeviceTaskBase* base)
 {
-    if (base->mixTaskDataBackup == nullptr) {
+    MixTaskDataCache* mixTaskDataBackup = base->mixTaskDataBackup;
+    if (mixTaskDataBackup == nullptr || mixTaskDataBackup->queue.elem == nullptr) {
         return;
     }
-    MixTaskDataCache* mixTaskDataBackup = base->mixTaskDataBackup;
-    base->devTask.mixTaskData.wrapIdNum = mixTaskDataBackup->wrapIdNum;
-
     WrapInfoQueue* wrapInfoQueue = reinterpret_cast<WrapInfoQueue*>(base->devTask.mixTaskData.readyWrapCoreFunctionQue);
+    if (wrapInfoQueue == nullptr) {
+        return;
+    }
+    /* Same as legacy MixTaskDataRestore: wrapIdNum/opWrapList are read by sche and must match backup. */
+    base->devTask.mixTaskData.wrapIdNum = mixTaskDataBackup->wrapIdNum;
+    constexpr size_t arrSize = sizeof(uint64_t) * MAX_STITCH_FUNC_NUM;
+    DevMemcpyS(base->devTask.mixTaskData.opWrapList, arrSize, mixTaskDataBackup->opWrapList, arrSize);
     wrapInfoQueue->head = mixTaskDataBackup->queue.head;
     wrapInfoQueue->tail = mixTaskDataBackup->queue.tail;
     wrapInfoQueue->capacity = mixTaskDataBackup->queue.capacity;
+    size_t wrapInfoBackupSize = sizeof(WrapInfo) * mixTaskDataBackup->queue.capacity;
+    if (mixTaskDataBackup->pingElem != nullptr && mixTaskDataBackup->pongElem != nullptr) {
+        wrapInfoQueue->elem = (wrapInfoQueue->elem == mixTaskDataBackup->pingElem) ? mixTaskDataBackup->pongElem :
+                                                                                     mixTaskDataBackup->pingElem;
+    } else {
+        /* No ping-pong slot (cache OOM at backup): in-place memcpy like the old restore path. */
+        DevMemcpyS(wrapInfoQueue->elem, wrapInfoBackupSize, mixTaskDataBackup->queue.elem, wrapInfoBackupSize);
+    }
+}
 
-    size_t wrapInfoBackupSize = sizeof(WrapInfo) * wrapInfoQueue->capacity;
-    DevMemcpyS(wrapInfoQueue->elem, wrapInfoBackupSize, mixTaskDataBackup->queue.elem, wrapInfoBackupSize);
-
-    constexpr size_t arrSize = sizeof(uint64_t) * MAX_STITCH_FUNC_NUM;
-    DevMemcpyS(base->devTask.mixTaskData.opWrapList, arrSize, mixTaskDataBackup->opWrapList, arrSize);
+void DevControlFlowCache::MixTaskDataPingPongRestore(DynDeviceTaskBase* base)
+{
+    MixTaskDataCache* mixTaskDataBackup = base->mixTaskDataBackup;
+    if (mixTaskDataBackup == nullptr || mixTaskDataBackup->pingElem == nullptr ||
+        mixTaskDataBackup->pongElem == nullptr || mixTaskDataBackup->queue.elem == nullptr) {
+        return;
+    }
+    WrapInfoQueue* wrapInfoQueue = reinterpret_cast<WrapInfoQueue*>(base->devTask.mixTaskData.readyWrapCoreFunctionQue);
+    if (wrapInfoQueue == nullptr) {
+        return;
+    }
+    WrapInfo* inactive = (wrapInfoQueue->elem == mixTaskDataBackup->pingElem) ? mixTaskDataBackup->pongElem :
+                                                                                mixTaskDataBackup->pingElem;
+    size_t wrapInfoBackupSize = sizeof(WrapInfo) * mixTaskDataBackup->queue.capacity;
+    DevMemcpyS(inactive, wrapInfoBackupSize, mixTaskDataBackup->queue.elem, wrapInfoBackupSize);
 }
 
 void DevControlFlowCache::RelocBuildInputOutputDesc(
@@ -1175,6 +1058,10 @@ void DevControlFlowCache::MixTaskDataReloc(RelocRange& relocCtrlCache, RelocRang
     if (dynTaskBase->devTask.mixTaskData.wrapIdNum == 0) {
         return;
     }
+    /* RelocControlFlowCachePointer is not null-safe; skip when backup was never published. */
+    if (dynTaskBase->mixTaskDataBackup == nullptr) {
+        return;
+    }
 
     WrapInfoQueue* tmpWrapInfoQueue = reinterpret_cast<WrapInfoQueue*>(
         dynTaskBase->devTask.mixTaskData.readyWrapCoreFunctionQue);
@@ -1191,6 +1078,8 @@ void DevControlFlowCache::MixTaskDataReloc(RelocRange& relocCtrlCache, RelocRang
     WrapInfo*& wrapInfoBackupElemRef = mixTaskDataBackup->queue.elem;
     WrapInfo* wrapInfoBackupElem = RelocControlFlowCachePointer(wrapInfoBackupElemRef, relocCtrlCache);
     (void)wrapInfoBackupElem;
+    relocCtrlCache.RelocNullable(mixTaskDataBackup->pingElem);
+    relocCtrlCache.RelocNullable(mixTaskDataBackup->pongElem);
 
     for (uint32_t dupIndex = 0; dupIndex < dynFuncDataList->funcNum; dupIndex++) {
         relocProgram.Reloc(dynTaskBase->devTask.mixTaskData.opWrapList[dupIndex]);
@@ -1253,6 +1142,7 @@ void DevControlFlowCache::RelocDuppedDataAndDynFuncData(RelocRange& relocProgram
     relocCtrlCache.RelocNullable(dynDataCache->predCountPingPong[PRED_COUNT_PING]);
     relocCtrlCache.RelocNullable(dynDataCache->predCountPingPong[PRED_COUNT_PONG]);
     relocCtrlCache.RelocNullable(dynDataBackup->predCountBackup);
+    relocCtrlCache.RelocNullable(dynDataBackup->drcoPredCountImage);
     relocCtrlCache.RelocNullable(dynDataBackup->rawTensorAddrBackup);
     relocCtrlCache.RelocNullable(dynDataBackup->deadEndHubBitmapBackup);
     relocCtrlCache.RelocNullable(dynDataBackup->tailTaskBitmapBackup);
@@ -1290,11 +1180,7 @@ void DevControlFlowCache::TaskAddrRelocProgramAndCtrlCache(uint64_t srcProgram, 
             relocCtrlCache.RelocNullable(readyQueueBackup->pongElem[i]);
         }
 
-        for (size_t i = 0; i < npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE; i++) {
-            if (readyQueueBackup->perCorePendingQueueList[i] != nullptr) {
-                RelocControlFlowCachePointer(readyQueueBackup->perCorePendingQueueList[i], relocCtrlCache);
-            }
-        }
+        RelocDrcoReadyQueueBackup(relocCtrlCache, readyQueueBackup);
 
         DynFuncHeader*& dynFuncDataListRef = dynTaskBase->dynFuncDataList;
         DynFuncHeader* dynFuncDataList = RelocControlFlowCachePointer(dynFuncDataListRef, relocCtrlCache);
@@ -1331,40 +1217,6 @@ void DevControlFlowCache::TaskAddrRelocProgramAndCtrlCache(uint64_t srcProgram, 
             RelocDuppedDataAndDynFuncData(relocProgram, relocCtrlCache, duppedData, dynData, dynDataCache,
                                           dynDataBackup);
         }
-    }
-}
-
-void DevControlFlowCache::RelocDrcoRootFuncList(RelocRange& relocCtrlCache, RelocRange& relocProgram,
-                                                DynDeviceTaskBase* dynTaskBase)
-{
-    npu::tile_fwk::DrcoRootFuncList*& drcoRootFuncListRef = dynTaskBase->drcoRootFuncList;
-    npu::tile_fwk::DrcoRootFuncList* drcoRootFuncList = nullptr;
-    if (drcoRootFuncListRef != nullptr) {
-        drcoRootFuncList = RelocControlFlowCachePointer(drcoRootFuncListRef, relocCtrlCache);
-    }
-    if (drcoRootFuncList != nullptr) {
-        for (size_t i = 0; i < npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE; i++) {
-            relocCtrlCache.Reloc(drcoRootFuncList->perCorePendingQueueArray[i]);
-            for (size_t sl = 0; sl < npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM; sl++) {
-                relocCtrlCache.RelocNullable(drcoRootFuncList->perCoreMiddleQueueArray[i][sl]);
-            }
-        }
-
-        for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
-            for (uint32_t i = 0; i < npu::tile_fwk::NUM_LOCAL_GROUPS; i++) {
-                relocCtrlCache.Reloc(drcoRootFuncList->localReadyQueueArray[ct][i]);
-            }
-        }
-        for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
-            relocCtrlCache.Reloc(drcoRootFuncList->localReadyMatrixArray[ct]);
-        }
-        relocCtrlCache.Reloc(drcoRootFuncList->stitchNodeMatrix);
-        // 基址与 stitch 节点指针同域，走同一平移；slot 内偏移相对基址，平移不变
-        relocCtrlCache.Reloc(drcoRootFuncList->stitchNodeBase);
-        relocCtrlCache.Reloc(drcoRootFuncList->hubTaskMatrix);
-        relocCtrlCache.Reloc(drcoRootFuncList->metadataBase);
-        relocCtrlCache.Reloc(drcoRootFuncList->controlFlowCacheBase);
-        relocProgram.Reloc(drcoRootFuncList->programBase);
     }
 }
 

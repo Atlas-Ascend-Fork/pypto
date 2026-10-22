@@ -40,7 +40,28 @@ struct ReadyQueueCache {
     uint32_t* pingElem[READY_QUEUE_SIZE];
     uint32_t* pongElem[READY_QUEUE_SIZE];
 
+    /* per-core pending: list is the immutable snapshot; ping is the recording live queue; pong is the other working
+     * copy. */
     npu::tile_fwk::PerCorePendingQueue* perCorePendingQueueList[npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE]{};
+    npu::tile_fwk::PerCorePendingQueue* perCorePendingPing[npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE]{};
+    npu::tile_fwk::PerCorePendingQueue* perCorePendingPong[npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE]{};
+    npu::tile_fwk::DrcoLocalReadyQueue* localReadyCanon[npu::tile_fwk::DRCO_QUEUE_MAX]
+                                                       [npu::tile_fwk::NUM_LOCAL_GROUPS]{};
+    npu::tile_fwk::DrcoLocalReadyQueue* localReadyPing[npu::tile_fwk::DRCO_QUEUE_MAX]
+                                                      [npu::tile_fwk::NUM_LOCAL_GROUPS]{};
+    npu::tile_fwk::DrcoLocalReadyQueue* localReadyPong[npu::tile_fwk::DRCO_QUEUE_MAX]
+                                                      [npu::tile_fwk::NUM_LOCAL_GROUPS]{};
+    /* Merged local matrix: one instance per core type (matches DrcoRootFuncList). */
+    npu::tile_fwk::DrcoLocalReadyMatrix* localMatrixCanon[npu::tile_fwk::DRCO_QUEUE_MAX]{};
+    npu::tile_fwk::DrcoLocalReadyMatrix* localMatrixPing[npu::tile_fwk::DRCO_QUEUE_MAX]{};
+    npu::tile_fwk::DrcoLocalReadyMatrix* localMatrixPong[npu::tile_fwk::DRCO_QUEUE_MAX]{};
+    npu::tile_fwk::DrcoGlobalStitchNodeMatrix* stitchCanon{nullptr};
+    npu::tile_fwk::DrcoGlobalStitchNodeMatrix* stitchPing{nullptr};
+    npu::tile_fwk::DrcoGlobalStitchNodeMatrix* stitchPong{nullptr};
+    npu::tile_fwk::DrcoGlobalHubTaskMatrix* hubCanon{nullptr};
+    npu::tile_fwk::DrcoGlobalHubTaskMatrix* hubPing{nullptr};
+    npu::tile_fwk::DrcoGlobalHubTaskMatrix* hubPong{nullptr};
+    uint8_t drcoShadowReady{0};
 };
 
 struct DieReadyQueueCache {
@@ -54,9 +75,11 @@ struct DieReadyQueueCache {
 };
 
 struct MixTaskDataCache {
-    WrapInfoQueue queue;
+    WrapInfoQueue queue; /* queue.elem is the immutable WrapInfo snapshot */
     uint64_t wrapIdNum;
     uint64_t opWrapList[MAX_STITCH_FUNC_NUM];
+    WrapInfo* pingElem{nullptr}; /* recording-time live elem */
+    WrapInfo* pongElem{nullptr}; /* second working copy, filled at backup */
 };
 
 struct DynFuncDataCache {
@@ -88,6 +111,12 @@ struct DynFuncDataBackup {
     size_t bitmapByteSize;
 
     DynFuncDataWorkspaceAddressBackup workspaceAddressBackup;
+
+    /* DRCO metadata predcount ping-pong. Image is immutable int32 snapshot; offsets select the published buffer. */
+    int32_t* drcoPredCountImage;
+    uint32_t drcoPredCountPingOffset;
+    uint32_t drcoPredCountPongOffset;
+    uint32_t drcoPredCountBytes;
 
     const DynFuncDataBackup& At(size_t index) const { return this[index]; }
     DynFuncDataBackup& At(size_t index) { return this[index]; }
@@ -234,17 +263,17 @@ struct DevControlFlowCache {
     DevControlFlowCacheRuntime runtimeBackup;
 
     /* Filled in caching, true means some metadata is not cached. */
-    bool isRecordingStopped;
+    bool isRecordingStopped{false};
     /* Filled in caching */
-    uint64_t deviceTaskCount;
+    uint64_t deviceTaskCount{0};
     /* Filled in caching */
-    uint64_t rootTaskCount;
+    uint64_t rootTaskCount{0};
     /* Filled in caching */
-    uint64_t cacheDataOffset;
+    uint64_t cacheDataOffset{0};
     /* Filled in caching */
-    uint64_t deviceTaskSkippedCount;
+    uint64_t deviceTaskSkippedCount{0};
     /* Filled in caching */
-    uint64_t contextWorkspaceAddr;
+    uint64_t contextWorkspaceAddr{0};
     /* Filled in caching */
     DevRelocVector<DeviceTaskCache> deviceTaskCacheList;
 
@@ -415,6 +444,9 @@ struct DevControlFlowCache {
 
     void PredCountDataBackup(DynDeviceTaskBase* base);
 
+    /* Snapshot DRCO metadata predcount into an immutable image plus a cache-relative pong buffer. */
+    bool BackupDrcoPredCount(DynFuncDataBackup* dynDataBackup, uint32_t pingOff, uint32_t opSize);
+
     void PredCountPingPongSwap(DynDeviceTaskBase* base);
 
     void DrcoPredCountDataRestore(DynDeviceTaskBase* base);
@@ -431,15 +463,30 @@ struct DevControlFlowCache {
 
     void DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uint32_t nrValidAic);
 
+    /* Snapshot per-core pending queues into the ready-queue canon. Returns false if cache allocation fails. */
+    bool BackupDrcoPerCorePending(ReadyQueueCache* readyQueueBackup, DynDeviceTaskBase* base);
+
+    void BackupDrcoReplayShadow(DynDeviceTaskBase* base);
+
+    void DrcoShadowPingPongSwap(DynDeviceTaskBase* base);
+
+    void DrcoShadowPingPongRestore(DynDeviceTaskBase* base);
+
+    void DrcoPredCountPingPongSwap(DynDeviceTaskBase* base);
+
+    void DrcoPredCountPingPongRestore(DynDeviceTaskBase* base);
+
     void DieReadyQueueDataBackup(DynDeviceTaskBase* base);
 
-    void DieReadyQueuePingPongSwap(DynDeviceTaskBase* base, uint32_t nrValidAic);
+    void DieReadyQueuePingPongSwap(DynDeviceTaskBase* base);
 
     void DieReadyQueuePingPongRestore(DynDeviceTaskBase* base);
 
     void MixTaskDataBackup(DynDeviceTaskBase* base);
 
-    void MixTaskDataRestore(DynDeviceTaskBase* base);
+    void MixTaskDataPingPongSwap(DynDeviceTaskBase* base);
+
+    void MixTaskDataPingPongRestore(DynDeviceTaskBase* base);
 
     static void RelocBuildInputOutputDesc(std::unordered_map<uint64_t, AddressDescriptor>& cacheInputOutputDict,
                                           DevStartArgsBase* devStartArgs);
@@ -506,6 +553,7 @@ struct DevControlFlowCache {
                           DynFuncHeader* dynFuncDataList);
 
     void DieReadyQueueReloc(RelocRange& relocCtrlCache, DynDeviceTaskBase* dynTaskBase);
+    void RelocDrcoReadyQueueBackup(RelocRange& relocCtrlCache, ReadyQueueCache* readyQueueBackup);
     void RelocDrcoRootFuncList(RelocRange& relocCtrlCache, RelocRange& relocProgram, DynDeviceTaskBase* dynTaskBase);
     void RelocDuppedDataAndDynFuncData(RelocRange& relocProgram, RelocRange& relocCtrlCache,
                                        DevAscendFunctionDuppedData* duppedData, DynFuncData* dynData,

@@ -457,18 +457,170 @@ TEST(CtrlFlowCacheDrcoUt, ReadyQueueDataBackupRestore_WithDrco)
 
     ctrl.ReadyQueueDataBackup(dyntask.get());
     ASSERT_NE(dyntask->readyQueueBackup, nullptr);
+    ASSERT_EQ(dyntask->readyQueueBackup->drcoShadowReady, 1);
 
+    auto* recorded = drco.root.perCorePendingQueueArray[3];
     ctrl.ReadyQueueDataPingPongSwap(dyntask.get(), 4);
     SUCCEED();
 
     EXPECT_EQ(dyntask->devTask.coreFunctionCnt, 8U);
-    EXPECT_EQ(drco.root.perCorePendingQueueArray[0]->size, 1U);
-    uint32_t aivRouted = 0;
-    for (uint32_t i = 4; i < 4 + 8; ++i) {
-        aivRouted += drco.root.perCorePendingQueueArray[i]->size;
-    }
-    EXPECT_EQ(aivRouted, 2U);
+    // Replay publishes the backup-time snapshot (pong), not a fresh redistribute of the ready queues.
+    EXPECT_NE(drco.root.perCorePendingQueueArray[3], recorded);
+    EXPECT_EQ(drco.root.perCorePendingQueueArray[3]->size, 1U);
+    EXPECT_EQ(drco.root.perCorePendingQueueArray[3]->taskList[0], MakeTaskID(2, 0));
+    EXPECT_EQ(drco.root.perCorePendingQueueArray[0]->size, 0U);
     EXPECT_EQ(drco.root.devTaskFinished, 0U);
+
+    // Dirty the published image, then restore must refresh the inactive buffer from the canon.
+    drco.root.perCorePendingQueueArray[3]->size = 7;
+    drco.root.perCorePendingQueueArray[3]->taskList[0] = MakeTaskID(9, 9);
+    ctrl.DrcoShadowPingPongRestore(dyntask.get());
+    auto* backup = dyntask->readyQueueBackup;
+    auto* inactive = (drco.root.perCorePendingQueueArray[3] == backup->perCorePendingPing[3]) ?
+                         backup->perCorePendingPong[3] :
+                         backup->perCorePendingPing[3];
+    ASSERT_NE(inactive, nullptr);
+    EXPECT_EQ(inactive->size, 1U);
+    EXPECT_EQ(inactive->taskList[0], MakeTaskID(2, 0));
+}
+
+TEST(CtrlFlowCacheDrcoUt, DrcoPredCountPingPongRoundTrip)
+{
+    /* BackupDrcoPredCount stores pong as an offset from DevControlFlowCache::this, so the
+     * cache object must live at the front of the same blob that AllocateCache draws from. */
+    std::vector<uint8_t> blob(512 * 1024, 0);
+    auto* ctrl = new (blob.data()) DevControlFlowCache();
+    ctrl->cacheData = DevRelocVector<uint8_t>(static_cast<int>(blob.size()), blob.data());
+    ctrl->cacheDataOffset = (sizeof(DevControlFlowCache) + CFGCACHE_ALIGN - 1) / CFGCACHE_ALIGN * CFGCACHE_ALIGN;
+
+    DeviceWorkspaceAllocator workspace;
+    auto dyntask = std::make_unique<DynDeviceTask>(workspace);
+
+    auto* header = static_cast<DynFuncHeader*>(
+        ctrl->AllocateCache(sizeof(DynFuncHeader) + sizeof(DynFuncData) + sizeof(DrcoRootFuncData)));
+    header->seqNo = 0;
+    header->funcNum = 1;
+    header->funcSize = static_cast<uint32_t>(sizeof(DynFuncHeader) + sizeof(DynFuncData) + sizeof(DrcoRootFuncData));
+    dyntask->dynFuncDataList = header;
+
+    constexpr uint32_t kOpCount = 3;
+    std::array<uint8_t, 1024> dupBuf{};
+    auto* dupped = SetupDuppedData(dupBuf, kOpCount);
+    static std::array<uint8_t, 8192> devFuncBuf{};
+    DynFuncDataCache& cache = dyntask->dynFuncDataCacheList[0];
+    cache.duppedData = dupped;
+    cache.predCountPingPong[PRED_COUNT_PING] = dupped->GetOperationPredCountPingPong(PRED_COUNT_PING);
+    cache.predCountPingPong[PRED_COUNT_PONG] = dupped->GetOperationPredCountPingPong(PRED_COUNT_PONG);
+    cache.predCount = cache.predCountPingPong[PRED_COUNT_PING];
+    cache.devFunc = reinterpret_cast<DevAscendFunction*>(devFuncBuf.data());
+    cache.calleeList = nullptr;
+    dyntask->dynFuncDataBackupList[0] = DynFuncDataBackup{};
+
+    const predcount_t initVals[kOpCount] = {3, 1, 4};
+    for (uint32_t j = 0; j < kOpCount; ++j) {
+        dupped->GetOperationCurrPredCount(j) = initVals[j];
+    }
+
+    auto* ping = static_cast<int32_t*>(ctrl->AllocateCache(kOpCount * sizeof(int32_t)));
+    ASSERT_NE(ping, nullptr);
+    for (uint32_t j = 0; j < kOpCount; ++j) {
+        ping[j] = -1;
+    }
+    const uint32_t pingOff = static_cast<uint32_t>(reinterpret_cast<uint64_t>(ping) - reinterpret_cast<uint64_t>(ctrl));
+    header->GetDrcoRootFuncData(0).funcDynamicDataOffset = pingOff;
+
+    DrcoRootFuncList root{};
+    root.controlFlowCacheBase = ctrl;
+    root.metadataBase = ctrl;
+    dyntask->drcoRootFuncList = &root;
+
+    ctrl->PredCountDataBackup(dyntask.get());
+    DynFuncDataBackup& backup = dyntask->dynFuncDataBackupList[0];
+    ASSERT_NE(backup.drcoPredCountImage, nullptr);
+    ASSERT_NE(backup.drcoPredCountBytes, 0U);
+    EXPECT_EQ(backup.drcoPredCountPingOffset, pingOff);
+    EXPECT_NE(backup.drcoPredCountPongOffset, pingOff);
+    for (uint32_t j = 0; j < kOpCount; ++j) {
+        EXPECT_EQ(backup.drcoPredCountImage[j], static_cast<int32_t>(initVals[j]));
+    }
+
+    auto addrOf = [&](uint32_t off) -> int32_t* {
+        return reinterpret_cast<int32_t*>(reinterpret_cast<uint64_t>(ctrl) + (off & 0x7fffffffu));
+    };
+    auto currentOff = [&]() -> uint32_t {
+        return static_cast<uint32_t>(header->GetDrcoRootFuncData(0).funcDynamicDataOffset);
+    };
+
+    auto runLaunch = [&]() {
+        ctrl->DrcoPredCountPingPongSwap(dyntask.get());
+        int32_t* live = addrOf(currentOff());
+        for (uint32_t j = 0; j < kOpCount; ++j) {
+            EXPECT_EQ(live[j], static_cast<int32_t>(initVals[j]));
+            live[j] = -99;
+        }
+        ctrl->DrcoPredCountPingPongRestore(dyntask.get());
+        uint32_t inactiveOff = (currentOff() == backup.drcoPredCountPingOffset) ? backup.drcoPredCountPongOffset :
+                                                                                  backup.drcoPredCountPingOffset;
+        int32_t* inactive = addrOf(inactiveOff);
+        for (uint32_t j = 0; j < kOpCount; ++j) {
+            EXPECT_EQ(inactive[j], static_cast<int32_t>(initVals[j]));
+        }
+    };
+
+    runLaunch();
+    runLaunch();
+    runLaunch();
+}
+
+TEST(CtrlFlowCacheDrcoUt, MixTaskDataPingPongRoundTrip)
+{
+    DeviceWorkspaceAllocator workspace;
+    auto dyntask = std::make_unique<DynDeviceTask>(workspace);
+
+    constexpr uint32_t kWrapCap = 4;
+    WrapInfo wrapLive[kWrapCap]{};
+    wrapLive[0].wrapId = 7;
+    wrapLive[0].mixResourceType = 2;
+    wrapLive[0].tasklist[WRAP_IDX_AIC] = MakeTaskID(0, 11);
+    wrapLive[0].tasklist[WRAP_IDX_AIV0] = MakeTaskID(0, 12);
+    wrapLive[0].tasklist[WRAP_IDX_AIV1] = MakeTaskID(0, 13);
+    WrapInfoQueue wrapQueue{0, 1, kWrapCap, wrapLive, 0};
+    dyntask->devTask.mixTaskData.readyWrapCoreFunctionQue = reinterpret_cast<uint64_t>(&wrapQueue);
+    dyntask->devTask.mixTaskData.wrapIdNum = 1;
+    dyntask->devTask.mixTaskData.opWrapList[0] = 0xABCDu;
+
+    std::vector<uint8_t> cacheBuf;
+    DevControlFlowCache ctrl;
+    SetupCtrlCache(ctrl, cacheBuf);
+
+    ctrl.MixTaskDataBackup(dyntask.get());
+    ASSERT_NE(dyntask->mixTaskDataBackup, nullptr);
+    ASSERT_NE(dyntask->mixTaskDataBackup->pingElem, nullptr);
+    ASSERT_NE(dyntask->mixTaskDataBackup->pongElem, nullptr);
+    EXPECT_EQ(dyntask->mixTaskDataBackup->queue.elem[0].wrapId, 7U);
+
+    WrapInfo* lastElem = wrapQueue.elem;
+    auto runLaunch = [&]() {
+        ctrl.MixTaskDataPingPongSwap(dyntask.get());
+        EXPECT_NE(wrapQueue.elem, lastElem);
+        lastElem = wrapQueue.elem;
+        EXPECT_EQ(wrapQueue.head, 0U);
+        EXPECT_EQ(wrapQueue.tail, 1U);
+        EXPECT_EQ(wrapQueue.elem[0].wrapId, 7U);
+        EXPECT_EQ(dyntask->devTask.mixTaskData.opWrapList[0], 0xABCDu);
+
+        wrapQueue.elem[0].wrapId = 99;
+        wrapQueue.tail = 3;
+        ctrl.MixTaskDataPingPongRestore(dyntask.get());
+        WrapInfo* inactive = (wrapQueue.elem == dyntask->mixTaskDataBackup->pingElem) ?
+                                 dyntask->mixTaskDataBackup->pongElem :
+                                 dyntask->mixTaskDataBackup->pingElem;
+        EXPECT_EQ(inactive[0].wrapId, 7U);
+    };
+
+    runLaunch();
+    runLaunch();
+    runLaunch();
 }
 
 TEST(CtrlFlowCacheDrcoUt, DieReadyQueueDataBackupRestore_WithDrco)
@@ -501,13 +653,14 @@ TEST(CtrlFlowCacheDrcoUt, DieReadyQueueDataBackupRestore_WithDrco)
     ctrl.DieReadyQueueDataBackup(dyntask.get());
     ASSERT_NE(dyntask->dieReadyQueueBackup, nullptr);
 
-    ctrl.DieReadyQueuePingPongSwap(dyntask.get(), 4);
+    ctrl.DieReadyQueuePingPongSwap(dyntask.get());
     SUCCEED();
 
-    EXPECT_EQ(drco.root.perCorePendingQueueArray[0]->size, 1U);
-    EXPECT_EQ(drco.root.perCorePendingQueueArray[2]->size, 1U);
-    EXPECT_EQ(drco.root.perCorePendingQueueArray[4]->size, 1U);
-    EXPECT_EQ(drco.root.perCorePendingQueueArray[8]->size, 1U);
+    // Die elem ping-pong no longer re-enqueues into per-core queues; that image is swapped with the DRCO shadow.
+    EXPECT_EQ(drco.root.perCorePendingQueueArray[0]->size, 0U);
+    EXPECT_EQ(drco.root.perCorePendingQueueArray[2]->size, 0U);
+    EXPECT_EQ(drco.root.perCorePendingQueueArray[4]->size, 0U);
+    EXPECT_EQ(drco.root.perCorePendingQueueArray[8]->size, 0U);
 }
 
 TEST(CtrlFlowCacheDrcoUt, TaskAddrRelocProgramAndCtrlCache_WithDrco)

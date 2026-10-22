@@ -133,20 +133,17 @@ void DeviceExecuteContext::GELaunchRunCached(DevStartArgs* startArgs, PushTaskEn
                                                              startArgs->contextWorkspaceAddr, startArgs);
         devProg->ctrlFlowCacheAnchor->PredCountPingPongSwap(dynTask);
         if (startArgs->devProg->devArgs.enableAicoreResolve) {
-            devProg->ctrlFlowCacheAnchor->DrcoPredCountDataRestore(dynTask);
+            devProg->ctrlFlowCacheAnchor->DrcoPredCountPingPongSwap(dynTask);
         }
         // The Bitmap remains unchanged in the sche.
         // For the full cache scenario, BitmapDataRestoreTask only needs to be executed once.
         if (!fullCache || !devProg->ctrlFlowCacheAnchor->bitmapRestoreDone) {
             devProg->ctrlFlowCacheAnchor->BitmapDataRestoreTask(dynTask);
         }
+        devProg->ctrlFlowCacheAnchor->MixTaskDataPingPongSwap(dynTask);
+        /* Publishes the DRCO shadow and restores precount. Die swap only rebinds die elems. */
         devProg->ctrlFlowCacheAnchor->ReadyQueueDataPingPongSwap(dynTask, startArgs->nrValidAic);
-        devProg->ctrlFlowCacheAnchor->DieReadyQueuePingPongSwap(dynTask, startArgs->nrValidAic);
-        if (dynTask->drcoRootFuncList != nullptr) {
-            npu::tile_fwk::DrcoRootFuncListRestorePrecount(dynTask->drcoRootFuncList, dynTask->drcoPrecountExecuted,
-                                                           dynTask->drcoPrecountFinishFlag);
-        }
-        devProg->ctrlFlowCacheAnchor->MixTaskDataRestore(dynTask);
+        devProg->ctrlFlowCacheAnchor->DieReadyQueuePingPongSwap(dynTask);
         taskContext.UpdateReadyTaskNum(dynTask->readyQueueBackup->readyTaskNum);
 
         // dynamic devtask building need inherit cached last dev task parallinfo
@@ -173,6 +170,9 @@ void DeviceExecuteContext::PingPongRestoreAll(DevStartArgs* startArgs)
         devProg->ctrlFlowCacheAnchor->PredCountPingPongRestore(dynTask);
         devProg->ctrlFlowCacheAnchor->ReadyQueueDataPingPongRestore(dynTask);
         devProg->ctrlFlowCacheAnchor->DieReadyQueuePingPongRestore(dynTask);
+        devProg->ctrlFlowCacheAnchor->MixTaskDataPingPongRestore(dynTask);
+        devProg->ctrlFlowCacheAnchor->DrcoShadowPingPongRestore(dynTask);
+        devProg->ctrlFlowCacheAnchor->DrcoPredCountPingPongRestore(dynTask);
     }
     if (isFullCache) {
         devProg->ctrlFlowCacheAnchor->bitmapRestoreDone = true;

@@ -145,6 +145,7 @@ if (ENABLE_TILE_FWK_BUNDLE_STANDALONE)
             ${_FwkRoot}/machine/utils/dynamic/dev_encode_program.cpp
             ${_FwkRoot}/machine/utils/dynamic/dev_cell_match_dump.cpp
             ${_FwkRoot}/machine/utils/dynamic/dev_encode_program_ctrlflow_cache.cpp
+            ${_FwkRoot}/machine/utils/dynamic/dev_ctrlflow_cache_drco.cpp
             ${_FwkRoot}/machine/utils/dynamic/dev_workspace.cpp
             ${_FwkRoot}/machine/utils/dynamic/dev_encode.cpp
             ${_FwkRoot}/machine/utils/dynamic/dev_encode_workspace.cpp

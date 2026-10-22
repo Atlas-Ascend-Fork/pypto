@@ -23,6 +23,7 @@ file(GLOB _Device_Utils_Srcs
     ${PTO_FWK_SRC_ROOT}/framework/src/machine/utils/dynamic/dev_encode_program.cpp
     ${PTO_FWK_SRC_ROOT}/framework/src/machine/utils/dynamic/dev_cell_match_dump.cpp
     ${PTO_FWK_SRC_ROOT}/framework/src/machine/utils/dynamic/dev_encode_program_ctrlflow_cache.cpp
+    ${PTO_FWK_SRC_ROOT}/framework/src/machine/utils/dynamic/dev_ctrlflow_cache_drco.cpp
     ${PTO_FWK_SRC_ROOT}/framework/src/machine/utils/dynamic/dev_workspace.cpp
     ${PTO_FWK_SRC_ROOT}/framework/src/machine/simulation/aicore_hardware.cpp
 )
