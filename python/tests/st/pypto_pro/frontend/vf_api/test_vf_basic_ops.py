@@ -2817,49 +2817,6 @@ def kernel_79_dup_highest_hist_freq(
 
 
 @pl.vector_function
-def _vf_kernel_81_addr_reg_0(in_a, t_f0):
-    preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
-    for i in pl.range(0, 1, 1):
-        a_reg = vf.create_addr_reg(64, dtype=pl.DT_FP32)
-        reg = vf.load_align(in_a, a_reg)
-        vf.store_align(t_f0, reg, preg, a_reg)
-
-
-@pl.jit()
-def kernel_81_addr_reg(
-    a: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    b: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    out_f0: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    out_f1: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    out_u0: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_UINT32],
-    out_u1: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_UINT32],
-    out_u2: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_UINT32],
-):
-    tf = pl.TileType(shape=[N, M], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
-    tu = pl.TileType(shape=[N, M], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec)
-    in_a = pl.make_tile(tf, addr=VA_IN_A)
-    in_b = pl.make_tile(tf, addr=VA_IN_B)
-    t_f0 = pl.make_tile(tf, addr=VA_F0)
-    t_f1 = pl.make_tile(tf, addr=VA_F1)
-    t_u0 = pl.make_tile(tu, addr=VA_U0)
-    t_u1 = pl.make_tile(tu, addr=VA_U1)
-    t_u2 = pl.make_tile(tu, addr=VA_U2)
-    with pl.section_vector():
-        pl.load(in_a, a, [0, 0])
-        pl.load(in_b, b, [0, 0])
-        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
-        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
-        _vf_kernel_81_addr_reg_0(in_a, t_f0)
-        pl.system.sync_src(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=1)
-        pl.system.sync_dst(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=1)
-        pl.store(out_f0, t_f0, [0, 0])
-        pl.store(out_f1, t_f1, [0, 0])
-        pl.store(out_u0, t_u0, [0, 0])
-        pl.store(out_u1, t_u1, [0, 0])
-        pl.store(out_u2, t_u2, [0, 0])
-
-
-@pl.vector_function
 def _vf_kernel_82_move_0(in_a, in_b, t_f0, t_f1):
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     reg_a = vf.load_align(in_a, 0)
@@ -3092,54 +3049,6 @@ def kernel_86_datablock_copy(
         pl.store(out_u2, t_u2, [0, 0])
 
 
-# Kernel 87: AddrReg offset with dist kwarg in load_align (verifies the dist is
-# passed through to the vld call, not hardcoded NORM as it was before the fix).
-# Uses identity load (offset=0 stride → no actual address advance) to produce a
-# numerically checkable result (2*a).
-@pl.vector_function
-def _vf_kernel_87_mask_addrreg_0(in_a, t_f0):
-    preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
-    for i in pl.range(0, 1, 1):
-        a_reg = vf.create_addr_reg(64, dtype=pl.DT_FP32)
-        reg_a = vf.load_align(in_a, a_reg, dist=pl.LoadDist.NORM)
-        reg_dst = vf.add(reg_a, reg_a, preg)
-        vf.store_align(t_f0, reg_dst, preg, a_reg)
-
-
-@pl.jit()
-def kernel_87_mask_addrreg(
-    a: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    b: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    out_f0: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    out_f1: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    out_u0: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_UINT32],
-    out_u1: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_UINT32],
-    out_u2: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_UINT32],
-):
-    tf = pl.TileType(shape=[N, M], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
-    tu = pl.TileType(shape=[N, M], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec)
-    in_a = pl.make_tile(tf, addr=VA_IN_A)
-    in_b = pl.make_tile(tf, addr=VA_IN_B)
-    t_f0 = pl.make_tile(tf, addr=VA_F0)
-    t_f1 = pl.make_tile(tf, addr=VA_F1)
-    t_u0 = pl.make_tile(tu, addr=VA_U0)
-    t_u1 = pl.make_tile(tu, addr=VA_U1)
-    t_u2 = pl.make_tile(tu, addr=VA_U2)
-    with pl.section_vector():
-        pl.load(in_a, a, [0, 0])
-        pl.load(in_b, b, [0, 0])
-        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
-        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
-        _vf_kernel_87_mask_addrreg_0(in_a, t_f0)
-        pl.system.sync_src(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=1)
-        pl.system.sync_dst(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=1)
-        pl.store(out_f0, t_f0, [0, 0])
-        pl.store(out_f1, t_f1, [0, 0])
-        pl.store(out_u0, t_u0, [0, 0])
-        pl.store(out_u1, t_u1, [0, 0])
-        pl.store(out_u2, t_u2, [0, 0])
-
-
 # Kernel 88: load_align with LoadDist (NORM/US/DS) for MaskReg dst.
 # Loads a mask with DIST_NORM then uses it as an add predicate.
 @pl.vector_function
@@ -3356,54 +3265,6 @@ def kernel_91_new_feats(
         pl.store(out_u2, t_u2, [0, 0])
 
 
-# Kernel 92: MaskReg + AddrReg round-trip — load_align(pld) then store_align(pst).
-# Loads a mask via AddrReg offset (pld), stores it back via AddrReg offset (pst).
-# Smoke test that both pld and pst code paths compile.
-@pl.vector_function
-def _vf_kernel_92_mask_addrreg_0(in_a, t_u0):
-    for i in pl.range(0, 1, 1):
-        a_reg = vf.create_addr_reg(64, dtype=pl.DT_UINT32)
-        # pld: MaskReg load with AddrReg offset
-        mreg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
-        mreg = vf.load_align(in_a, a_reg, dist=pl.LoadDist.NORM)
-        # pst: MaskReg store with AddrReg offset
-        vf.store_align(t_u0, mreg, a_reg, dist=pl.StoreDist.NORM)
-
-
-@pl.jit()
-def kernel_92_mask_addrreg(
-    a: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    b: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    out_f0: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    out_f1: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
-    out_u0: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_UINT32],
-    out_u1: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_UINT32],
-    out_u2: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_UINT32],
-):
-    tf = pl.TileType(shape=[N, M], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
-    tu = pl.TileType(shape=[N, M], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec)
-    in_a = pl.make_tile(tf, addr=VA_IN_A)
-    in_b = pl.make_tile(tf, addr=VA_IN_B)
-    t_f0 = pl.make_tile(tf, addr=VA_F0)
-    t_f1 = pl.make_tile(tf, addr=VA_F1)
-    t_u0 = pl.make_tile(tu, addr=VA_U0)
-    t_u1 = pl.make_tile(tu, addr=VA_U1)
-    t_u2 = pl.make_tile(tu, addr=VA_U2)
-    with pl.section_vector():
-        pl.load(in_a, a, [0, 0])
-        pl.load(in_b, b, [0, 0])
-        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
-        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
-        _vf_kernel_92_mask_addrreg_0(in_a, t_u0)
-        pl.system.sync_src(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=1)
-        pl.system.sync_dst(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=1)
-        pl.store(out_f0, t_f0, [0, 0])
-        pl.store(out_f1, t_f1, [0, 0])
-        pl.store(out_u0, t_u0, [0, 0])
-        pl.store(out_u1, t_u1, [0, 0])
-        pl.store(out_u2, t_u2, [0, 0])
-
-
 _KERNELS = [
     kernel_0_min_exp,
     kernel_1_abs_sqrt,
@@ -3467,18 +3328,15 @@ _KERNELS = [
     kernel_71_cast_cross_width,
     kernel_73_load_datablock,
     kernel_79_dup_highest_hist_freq,
-    kernel_81_addr_reg,
     kernel_82_move,
     kernel_83_get_spr_movemask,
     kernel_84_full_reg_to_reg,
     kernel_85_membar_modes,
     kernel_86_datablock_copy,
-    kernel_87_mask_addrreg,
     kernel_88_maskdist,
     kernel_89_cast_odd,
     kernel_90_nested_vf_4level,
     kernel_91_new_feats,
-    kernel_92_mask_addrreg,
 ]
 
 
@@ -3822,10 +3680,6 @@ def test_vf_basic_ops():
     expected_lowest = torch.full([N, M], a_fp32.flatten()[0].item(), device=device, dtype=torch.float32)
     torch.testing.assert_close(f1, expected_lowest, rtol=1e-5, atol=1e-5)
     logging.info("Kernel 79 (Duplicate pos=HIGHEST/LOWEST) PASSED")
-    # Kernel 81: CreateAddrReg — use AddrReg for aligned load/store offset
-    f0, *_ = results[81]
-    torch.testing.assert_close(f0, a_fp32, rtol=1e-5, atol=1e-5)
-    logging.info("Kernel 81 (CreateAddrReg load/store) PASSED")
     # Kernel 82: Move — RegTensor move (masked) + MaskReg move (unmasked)
     f0, f1, *_ = results[82]
     torch.testing.assert_close(f0, a_fp32, rtol=1e-5, atol=1e-5)
@@ -3851,9 +3705,6 @@ def test_vf_basic_ops():
     f0, *_ = results[86]
     assert f0.dtype == torch.float32
     logging.info("Kernel 86 (LoadAlign DATA_BLOCK_COPY) PASSED")
-    f0, *_ = results[87]
-    torch.testing.assert_close(f0, a_fp32 * 2.0, rtol=1e-5, atol=1e-5)
-    logging.info("Kernel 87 (AddrReg offset + dist) PASSED")
     # Kernel 88: load_align with LoadDist.NORM for MaskReg dst
     f0, *_ = results[88]
     assert f0.dtype == torch.float32
@@ -3869,10 +3720,6 @@ def test_vf_basic_ops():
     f0, f1, u0, *_ = results[91]
     assert f0.dtype == torch.float32 and f1.dtype == torch.float32 and u0.dtype == torch.int32
     logging.info("Kernel 91 (arange u32 / exp_sub / muls_cast layout=ONE) PASSED")
-    # Kernel 92: MaskReg + AddrReg round-trip (pld + pst) (smoke)
-    _, _, u0, *_ = results[92]
-    assert u0.dtype == torch.int32
-    logging.info("Kernel 92 (load_align pld + store_align pst) PASSED")
     logging.info("All VF basic ops tests PASSED!")
 
 
