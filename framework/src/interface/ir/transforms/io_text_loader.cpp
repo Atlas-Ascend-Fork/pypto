@@ -67,6 +67,7 @@ public:
     {
         using R = std::pair<IRTextLexerTokenKind, std::regex>;
         rules_ = {
+            R{IRTextLexerTokenKind::TokString, std::regex(R"str("([^"\\\r\n]|\\["\\nrt0])*")str")},
             R{IRTextLexerTokenKind::TokVarName,
               std::regex(R"(%([A-Za-z_][A-Za-z0-9_.]*|[0-9]+)(@([A-Za-z_][A-Za-z0-9_.]*|[0-9]+))?)")},
             R{IRTextLexerTokenKind::TokAttrName, std::regex(R"(#[A-Za-z_][A-Za-z0-9_.]*)")},
@@ -928,9 +929,15 @@ StmtPtr IRTextParser::ParseStmtSection(const VarDefList&)
     return std::make_shared<SectionStmt>(kind, body, Span::Unknown());
 }
 
-StmtPtr IRTextParser::ParseStmtEval(const VarDefList&)
+StmtPtr IRTextParser::ParseStmtEval(const VarDefList& defVarList)
 {
+    const auto start = cur_;
     MUST_VALID(expr, ParseExpr());
+    // A result-less tensor op is distinguished from an eval call by token(...).
+    if (tokens_[start].kind == IRTextLexerTokenKind::TokIdent && CheckToken(IRTextLexerTokenKind::KwToken)) {
+        cur_ = start;
+        return ParseStmtTensorOrScalarOp(defVarList);
+    }
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunSemi));
     return std::make_shared<EvalStmt>(expr, Span::Unknown());
 }

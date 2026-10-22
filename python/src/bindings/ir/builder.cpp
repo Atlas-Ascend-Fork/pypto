@@ -578,6 +578,8 @@ void BindIRBuilder(py::module_& m)
             "Returns:\n"
             "    IterArg: The created iteration argument")
 
+        .def_static("set_current", &IRBuilder::SetCurrent, py::arg("builder"))
+        .def_static("current", &IRBuilder::CurrentIRBuilder, py::return_value_policy::reference)
         .def("emit_tensor_stmts", &IRBuilder::EmitTensorStmts, "Emit tensor statements.\n\n")
 
         .def("none", &IRBuilder::None, "Get the None value.\n\n")

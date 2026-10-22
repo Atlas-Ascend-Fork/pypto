@@ -48,7 +48,7 @@ namespace ir {
 /// Token produced by the IR text lexer.
 struct IRTextLexerToken {
     IRTextLexerTokenKind kind = IRTextLexerTokenKind::Invalid;
-    std::string text; // ident text, punct char, or string content (unquoted)
+    std::string text; // ident text, punct char, or quoted string lexeme
     int64_t intVal = 0;
     double floatVal = 0.0;
     size_t begin = 0; // byte offset of token start in source
@@ -247,6 +247,7 @@ protected:
     IRTextParserAttrValuePtr ParseAttrValueTrue();
     IRTextParserAttrValuePtr ParseAttrValueFalse();
     IRTextParserAttrValuePtr ParseAttrValueIdent();
+    IRTextParserAttrValuePtr ParseAttrValueString();
     IRTextParserAttrValuePtr ParseAttrValueList();
     IRTextParserAttrValuePtr ParseAttrValueExpr();
     IRTextParserAttrValuePtr ParseAttrValueRaw();

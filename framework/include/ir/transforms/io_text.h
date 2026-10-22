@@ -286,6 +286,7 @@ enum class IRTextLexerTokenKind {
 
     // Valuable
     TokIdent,
+    TokString,
     TokV0OpMagic,
     TokInt,
     TokFloat,

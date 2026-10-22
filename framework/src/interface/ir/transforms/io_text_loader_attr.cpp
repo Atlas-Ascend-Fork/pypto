@@ -15,6 +15,8 @@
 
 #include <any>
 #include <cstdint>
+#include <limits>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -26,9 +28,209 @@
 #include "interface/operation/opcode.h"
 #include "interface/operation/operation.h"
 #include "interface/tensor/logical_tensor.h"
+#include "tilefwk/tile_shape.h"
 
 namespace pypto {
 namespace ir {
+
+namespace {
+
+std::string DecodeString(const std::string& text)
+{
+    std::string value;
+    // The lexer has already validated the quotes and supported escape sequences.
+    for (size_t i = 1; i + 1 < text.size(); ++i) {
+        char c = text[i];
+        if (c == '\\') {
+            c = text[++i];
+            switch (c) {
+                case 'n':
+                    c = '\n';
+                    break;
+                case 'r':
+                    c = '\r';
+                    break;
+                case 't':
+                    c = '\t';
+                    break;
+                case '0':
+                    c = '\0';
+                    break;
+                default:
+                    break;
+            }
+        }
+        value.push_back(c);
+    }
+    return value;
+}
+
+// Flat IR-text layouts (fixed order; changing these changes the text format):
+// Cube: m[0..1], k[0..2], n[0..1], enableSplitK.
+// Conv: tileHin, tileHout, tileWin, tileWout, tileCinFmap, tileCinWeight,
+//       tileN, tileBatch (L1), tileH, tileW, tileK, tileN (L0), setL0Tile.
+// ConvBp: tileML1, tileKL1, tileNL1, tileML0, tileKL0, tileNL0.
+// Dist: row[0..2], col[0..2], rank[0..2], rankId.
+// Use int64_t to preserve dimension widths; bool fields are encoded as 0 or 1.
+// Conversion preserves stored values, including zero/default tiles; it does not call valid().
+constexpr std::size_t kCubeTileVectorSize = 8;
+constexpr std::size_t kConvTileVectorSize = 13;
+constexpr std::size_t kConvBpTileVectorSize = 6;
+constexpr std::size_t kDistTileVectorSize = 10;
+
+bool RequireSize(const std::vector<int64_t>& values, size_t expected, const char* typeName, std::string& error)
+{
+    if (values.size() == expected) {
+        return true;
+    }
+    error = std::string(typeName) + ": expected " + std::to_string(expected) + " int64 values, got " +
+            std::to_string(values.size());
+    return false;
+}
+
+bool RequireBool01(int64_t value, const char* typeName, const char* field, bool& out, std::string& error)
+{
+    if (value != 0 && value != 1) {
+        error = std::string(typeName) + ": " + field + " must be 0 or 1, got " + std::to_string(value);
+        return false;
+    }
+    out = value == 1;
+    return true;
+}
+
+bool RequireDistInt(int64_t value, const char* field, int& out, std::string& error)
+{
+    const int64_t kMin = std::numeric_limits<int>::min();
+    const int64_t kMax = std::numeric_limits<int>::max();
+    if (value < kMin || value > kMax) {
+        error = std::string("DistTile: ") + field + " does not fit in int";
+        return false;
+    }
+    out = static_cast<int>(value);
+    return true;
+}
+
+bool DecodeTile(const std::vector<int64_t>& values, CubeTile& out, std::string& error)
+{
+    if (!RequireSize(values, kCubeTileVectorSize, "CubeTile", error)) {
+        return false;
+    }
+    bool enableSplitK = false;
+    if (!RequireBool01(values[7], "CubeTile", "enableSplitK", enableSplitK, error)) {
+        return false;
+    }
+    CubeTile local;
+    local.m = {values[0], values[1]};
+    local.k = {values[2], values[3], values[4]};
+    local.n = {values[5], values[6]};
+    local.enableSplitK = enableSplitK;
+    out = local;
+    return true;
+}
+
+bool DecodeTile(const std::vector<int64_t>& values, ConvTile& out, std::string& error)
+{
+    if (!RequireSize(values, kConvTileVectorSize, "ConvTile", error)) {
+        return false;
+    }
+    bool setL0Tile = false;
+    if (!RequireBool01(values[12], "ConvTile", "setL0Tile", setL0Tile, error)) {
+        return false;
+    }
+    ConvTile local;
+    local.tileL1Info = {values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7]};
+    local.tileL0Info = {values[8], values[9], values[10], values[11]};
+    local.setL0Tile = setL0Tile;
+    out = local;
+    return true;
+}
+
+bool DecodeTile(const std::vector<int64_t>& values, ConvBpTile& out, std::string& error)
+{
+    if (!RequireSize(values, kConvBpTileVectorSize, "ConvBpTile", error)) {
+        return false;
+    }
+    ConvBpTile local;
+    local.tileL1Info = {values[0], values[1], values[2]};
+    local.tileL0Info = {values[3], values[4], values[5]};
+    out = local;
+    return true;
+}
+
+bool DecodeTile(const std::vector<int64_t>& values, DistTile& out, std::string& error)
+{
+    if (!RequireSize(values, kDistTileVectorSize, "DistTile", error)) {
+        return false;
+    }
+    const char* fields[] = {"row[0]", "row[1]",  "row[2]",  "col[0]",  "col[1]",
+                            "col[2]", "rank[0]", "rank[1]", "rank[2]", "rankId"};
+    int decoded[kDistTileVectorSize];
+    for (size_t i = 0; i < kDistTileVectorSize; ++i) {
+        if (!RequireDistInt(values[i], fields[i], decoded[i], error)) {
+            return false;
+        }
+    }
+    DistTile local;
+    for (size_t i = 0; i < MAX_DIST_DIM_SIZE; ++i) {
+        local.row[i] = decoded[i];
+        local.col[i] = decoded[MAX_DIST_DIM_SIZE + i];
+        local.rank[i] = decoded[2 * MAX_DIST_DIM_SIZE + i];
+    }
+    local.rankId = decoded[kDistTileVectorSize - 1];
+    out = local;
+    return true;
+}
+
+template <typename Tile>
+bool DecodeTypedTile(const std::vector<int64_t>& values, std::any& out, std::string& error)
+{
+    Tile tile;
+    if (!DecodeTile(values, tile, error)) {
+        return false;
+    }
+    out = tile;
+    return true;
+}
+
+using TileDecodeFn = bool (*)(const std::vector<int64_t>&, std::any&, std::string&);
+
+const std::unordered_map<std::string, TileDecodeFn> kTileAttrDecoders = {
+    {"cube_tile_shapes", &DecodeTypedTile<CubeTile>},
+    {"conv_tile_shapes", &DecodeTypedTile<ConvTile>},
+    {"convbp_tile_shapes", &DecodeTypedTile<ConvBpTile>},
+    {"dist_tile_shapes", &DecodeTypedTile<DistTile>},
+};
+
+// Leave other attributes unchanged. Tile attributes must be flat integer lists.
+bool DecodeTileAttr(const std::string& key, std::any& value, std::string& error)
+{
+    const auto it = kTileAttrDecoders.find(key);
+    if (it == kTileAttrDecoders.end()) {
+        return true;
+    }
+    const auto* list = std::any_cast<std::vector<std::any>>(&value);
+    if (list == nullptr) {
+        error = key + ": expected an integer list";
+        return false;
+    }
+    std::vector<int64_t> ints;
+    ints.reserve(list->size());
+    for (size_t i = 0; i < list->size(); ++i) {
+        const auto* element = std::any_cast<int64_t>(&(*list)[i]);
+        if (element == nullptr) {
+            error = key + ": expected int64 at index " + std::to_string(i);
+            return false;
+        }
+        ints.push_back(*element);
+    }
+    if (!it->second(ints, value, error)) {
+        error = key + ": " + error;
+        return false;
+    }
+    return true;
+}
+
+} // namespace
 
 // ---- Attr list:  #name(attr_value) { #name(attr_value) } ----
 IRTextParserStringPtr IRTextParser::ParseAttrName()
@@ -49,12 +251,42 @@ IRTextParserAttrDictPtr IRTextParser::ParseAttrDict()
         MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunLParen));
         MUST_VALID(val, ParseAttrValueRaw());
         MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunRParen));
-        result->data[key->data] = val->data;
+        std::any decoded = val->data;
+        std::string decodeError;
+        if (!DecodeTileAttr(key->data, decoded, decodeError)) {
+            return Error(decodeError);
+        }
+        result->data[key->data] = std::move(decoded);
     }
     return result;
 }
 
 namespace {
+
+// Nonempty lists of [key, integer] pairs become maps when all keys have the same type.
+// An empty list stays a vector; [] is also the spelling of an empty int list.
+template <typename Key>
+bool AsKeyMap(const std::vector<std::any>& values, std::map<Key, int64_t>& out)
+{
+    if (values.empty()) {
+        return false;
+    }
+    std::map<Key, int64_t> mapped;
+    for (const auto& value : values) {
+        const auto* pair = std::any_cast<std::vector<std::any>>(&value);
+        if (pair == nullptr || pair->size() != 2) {
+            return false;
+        }
+        const auto* key = std::any_cast<Key>(&(*pair)[0]);
+        const auto* mappedValue = std::any_cast<int64_t>(&(*pair)[1]);
+        if (key == nullptr || mappedValue == nullptr) {
+            return false;
+        }
+        mapped[*key] = *mappedValue;
+    }
+    out = std::move(mapped);
+    return true;
+}
 
 bool IsIntListAttr(const std::any& value)
 {
@@ -286,9 +518,15 @@ IRTextParserAttrValuePtr IRTextParser::ParseAttrValueIdent()
     return std::make_shared<IRTextParserAttrValuePtr::element_type>(data);
 }
 
+IRTextParserAttrValuePtr IRTextParser::ParseAttrValueString()
+{
+    auto value = DecodeString(tokens_[cur_++].text);
+    return std::make_shared<IRTextParserAttrValuePtr::element_type>(std::any(std::move(value)));
+}
+
 IRTextParserAttrValuePtr IRTextParser::ParseAttrValueList()
 {
-    // '[' [ attr_value { ',' attr_value } ] ']' -> std::vector<std::any>
+    // Nonempty lists of homogeneous key/integer pairs become maps; other lists remain vectors.
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunLBracket));
     std::vector<std::any> vals;
     if (!CheckToken(IRTextLexerTokenKind::PunRBracket)) {
@@ -298,8 +536,15 @@ IRTextParserAttrValuePtr IRTextParser::ParseAttrValueList()
         } while (CheckToken(IRTextLexerTokenKind::PunComma, true));
     }
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunRBracket));
-    std::any data = std::any(vals);
-    return std::make_shared<IRTextParserAttrValuePtr::element_type>(data);
+    std::map<int64_t, int64_t> intMap;
+    if (AsKeyMap(vals, intMap)) {
+        return std::make_shared<IRTextParserAttrValuePtr::element_type>(std::any(std::move(intMap)));
+    }
+    std::map<std::string, int64_t> stringMap;
+    if (AsKeyMap(vals, stringMap)) {
+        return std::make_shared<IRTextParserAttrValuePtr::element_type>(std::any(std::move(stringMap)));
+    }
+    return std::make_shared<IRTextParserAttrValuePtr::element_type>(std::any(std::move(vals)));
 }
 
 IRTextParserAttrValuePtr IRTextParser::ParseAttrValueExpr()
@@ -316,6 +561,7 @@ IRTextParserAttrValuePtr IRTextParser::ParseAttrValueRaw()
         {IRTextLexerTokenKind::TokInt, &IRTextParser::ParseAttrValueInt},
         {IRTextLexerTokenKind::TokFloat, &IRTextParser::ParseAttrValueFloat},
         {IRTextLexerTokenKind::TokIdent, &IRTextParser::ParseAttrValueIdent},
+        {IRTextLexerTokenKind::TokString, &IRTextParser::ParseAttrValueString},
         // dtype keywords (int32_t / float / bfloat16_t ...) are treated as ident-shaped attr values
         {IRTextLexerTokenKind::KwTypeBool, &IRTextParser::ParseAttrValueIdent},
         {IRTextLexerTokenKind::KwTypeInt8, &IRTextParser::ParseAttrValueIdent},

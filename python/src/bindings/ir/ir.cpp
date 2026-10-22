@@ -1406,6 +1406,13 @@ void BindStmt(py::module_& ir)
         py::arg("results"), py::arg("result_tokens"), py::arg("opcode"), py::arg("args"), py::arg("tokens"),
         py::arg("attrs"), py::arg("span"), "Create a tensor operation statement");
     BindFields<TensorOpStmt>(tensorop_stmt_class);
+    tensorop_stmt_class.def_property_readonly("attrs", [](const TensorOpStmt& stmt) {
+        py::dict attrs;
+        for (const auto& [key, value] : stmt.attrs_) {
+            attrs[py::str(key)] = pypto::AnyToPyObject(value);
+        }
+        return attrs;
+    });
 }
 
 void BindProgram(py::module_& ir)

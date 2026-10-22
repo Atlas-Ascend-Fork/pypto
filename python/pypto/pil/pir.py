@@ -242,18 +242,13 @@ class BuildContext(ir.IRBuilder):
         self.in_loop_unroll = False
 
     def __enter__(self):
-        self.parent = _current.build_context
-        _current.build_context = self
+        self.parent = ir.IRBuilder.current()
+        ir.IRBuilder.set_current(self)
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        _current.build_context = self.parent
-
-    @staticmethod
-    def current() -> "BuildContext":
-        if _current.build_context is None:
-            raise ValueError("BuildContext is not initialized")
-        return _current.build_context
+        ir.IRBuilder.set_current(self.parent)
+        self.parent = None
 
     @contextmanager
     def change_span(self, span: ir.Span):
@@ -328,7 +323,9 @@ class InsertPoint:
         self.ctx: BuildContext
 
     def __enter__(self):
-        self.ctx = BuildContext.current()
+        self.ctx = ir.IRBuilder.current()
+        if self.ctx is None:
+            raise ValueError("BuildContext is not initialized")
         self.ctx.set_insert_point(self.insert_point)
 
     def __exit__(self, exc_type, exc, tb):
@@ -603,7 +600,6 @@ def slot_write_inplace(obj) -> None:
 
 class _Current(threading.local):
     scope: Optional[Scope] = None
-    build_context: Optional[BuildContext] = None
     collector_block: Optional[Block] = None
 
 

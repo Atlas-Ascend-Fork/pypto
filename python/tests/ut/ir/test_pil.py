@@ -596,7 +596,7 @@ def test_nested_function_capture_tensor():
 
     a = pypto.Tensor((4, 4), dtype=pypto.DT_FP32)
     func = pil.compile(foo, a)
-    assert _opcode_set(func.body) == {'ADD'}
+    assert _opcode_set(func.body) == {'ADD', 'OP_CONFIG'}
 
 
 def test_nested_function_recursion():
@@ -1003,9 +1003,11 @@ def test_auto_pil_call():
     out = pypto.Tensor(shape=shape, dtype=pypto.DT_FP32, name="out")
 
     func = pil.compile(kernel, a, b, out)
-    assert isinstance(func.body[0], ir.ForStmt)
+    assert isinstance(func.body[0], ir.TensorOpStmt)
+    assert func.body[0].opcode == "OP_CONFIG"
     assert isinstance(func.body[1], ir.ForStmt)
-    assert isinstance(func.body[2], ir.ReturnStmt)
+    assert isinstance(func.body[2], ir.ForStmt)
+    assert isinstance(func.body[3], ir.ReturnStmt)
 
 
 def test_delete_statement():

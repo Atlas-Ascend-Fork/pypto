@@ -26,6 +26,8 @@ using namespace pypto;
 
 namespace npu::tile_fwk {
 
+thread_local IRBuilder* IRBuilder::currentIRBuilder_ = nullptr;
+
 IRContext& IRContext::Get()
 {
     static IRContext ctx;
@@ -287,6 +289,15 @@ ir::IterArgPtr IRBuilder::CreateIterArg(std::string name, ir::TypePtr type, ir::
 ir::IterArgPtr IRBuilder::CreateIterArg(ir::VarPtr var, ir::ExprPtr initValue)
 {
     return std::make_shared<ir::IterArg>(var, initValue);
+}
+
+void IRBuilder::EmitConfigOp(const std::map<std::string, std::any>& values)
+{
+    EmitTensorStmts();
+    Emit(std::make_shared<ir::TensorOpStmt>(
+        std::vector<ir::VarPtr>{}, std::vector<ir::VarPtr>{}, OpcodeManager::Inst().GetOpcodeStr(Opcode::OP_CONFIG),
+        std::vector<ir::ExprPtr>{}, std::vector<ir::VarPtr>{},
+        std::vector<std::pair<std::string, std::any>>(values.begin(), values.end()), ir::Span::Current()));
 }
 
 void IRBuilder::EmitTensorStmts()

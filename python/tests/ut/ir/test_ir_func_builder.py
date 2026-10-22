@@ -370,7 +370,9 @@ def test_create_tensor():
     prog = ir.Pass.aggressive_dce()(prog)
     func = prog.functions[compiled.name]
 
-    assert func.body[0].opcode == "TENSOR_ALLOC"
+    assert isinstance(func.body[0], ir.TensorOpStmt)
+    assert func.body[0].opcode == "OP_CONFIG"
+    assert func.body[1].opcode == "TENSOR_ALLOC"
 
     prog = ir.Pass.create_root_functions()(prog)
     _assert_func_counts(prog, 2)

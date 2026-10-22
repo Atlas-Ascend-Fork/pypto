@@ -9,6 +9,8 @@
  */
 #pragma once
 #include <any>
+#include <map>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -17,6 +19,8 @@
 namespace py = pybind11;
 
 namespace pypto {
+std::map<std::string, std::any> ConvertPyDictToCppMap(const py::dict& values);
+py::object AnyToPyObject(const std::any& value);
 void BindIR(py::module_& m);
 void BindError(py::module_& m);
 void BindLogging(py::module_& m);

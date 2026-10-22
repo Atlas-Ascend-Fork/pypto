@@ -259,6 +259,7 @@ enum class Opcode {
     OP_BLOCK_CALL,
     OP_PRINT,
     OP_NOP,
+    OP_CONFIG,
 
     OP_UB_ALLOC,
     OP_UB_COPY_IN,

@@ -1,5 +1,6 @@
 function foo incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %out@1 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16])) outcast() #entry(false) #type(Opaque) {
     v0_logical_tensor %out_7@4 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = if v0lt(0, cond) then {
+        OP_CONFIG() token() #vec_tile_shapes([16, 16]);
         v0_logical_tensor %out_5@1 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = for %loop_idx_21 inrange 0, 2, 1 iter { v0_logical_tensor %out_1@1 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = %out@1; } #parallel(false) #submit_before_loop(false) #_loop_conds([v0ge(loop_idx_21, 0), v0lt(loop_idx_21, 2)]) #_config_scope(Unsupported) #unroll_times(1) {
             v0_logical_tensor %View_x_2@2 #dtype(float) #dynvalidshape([8, 16]) #offset([0, 0]) #shape([16, 16]) = !10003 VIEW(%x@0) token() #fromOffset([0, 0]) #toValidShape([8, 16]);
             v0_logical_tensor %$0_0@3 #dtype(float) #dynvalidshape([8, 16]) #offset([0, 0]) #shape([16, 16]) = !10005 ADD(%View_x_2@2, %View_x_2@2) token();
@@ -8,6 +9,7 @@ function foo incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([16, 16]
         }
         yield %out_5@1;
     } else {
+        OP_CONFIG() token() #vec_tile_shapes([16, 16]);
         v0_logical_tensor %out_13@7 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = for %loop_idx_21_0 inrange 0, 2, 1 iter { v0_logical_tensor %out_9@5 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = %out@1; } #parallel(false) #submit_before_loop(false) #_loop_conds([v0ge(loop_idx_21_0, 0), v0lt(loop_idx_21_0, 2)]) #_config_scope(Unsupported) #unroll_times(1) {
             v0_logical_tensor %View_x_4@2 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10007 VIEW(%x@0) token() #fromOffset([0, 0]) #toValidShape([16, 16]);
             v0_logical_tensor %$0_1@3 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10009 ADD(%View_x_4@2, %View_x_4@2) token();

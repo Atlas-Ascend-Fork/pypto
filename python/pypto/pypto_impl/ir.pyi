@@ -2408,6 +2408,12 @@ class IRBuilder:
             The created iteration argument
         """
 
+    @staticmethod
+    def set_current(builder: Optional[IRBuilder]) -> None: ...
+
+    @staticmethod
+    def current() -> Optional[IRBuilder]: ...
+
     def emit_tensor_stmts(self):
         """Emit tensor statements.
 

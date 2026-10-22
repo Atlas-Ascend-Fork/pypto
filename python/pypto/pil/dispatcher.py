@@ -84,6 +84,7 @@ def dispatch_call(call: Call, scope: Scope, ctx: BuildContext):
         else:
             kwargs[k] = scope.resolve(v)
 
+    pypto_impl.SetSpan(call.span.filename, call.span.begin_line)
     func = callee if isinstance(callee, Function) else _get_or_compile(callee)
     if func is not None:
         ctx.call_stack.append(call.span)
@@ -109,7 +110,6 @@ def dispatch_call(call: Call, scope: Scope, ctx: BuildContext):
     if call.result is not None:
         scope.varmap[call.result.id] = ret
 
-    pypto_impl.SetSpan(call.span.filename, call.span.begin_line)
     ctx.emit_tensor_stmts()
     pypto_impl.ClearSpan()
 
@@ -206,7 +206,9 @@ def frame_rewrite(namemap: dict, caller: Scope, callee: Scope):
 
 def dispatch_block(block: Block, is_static: bool, rewriter=None):
     scope = Scope.current()
-    ctx = BuildContext.current()
+    ctx = pypto_impl.ir.IRBuilder.current()
+    if ctx is None:
+        raise ValueError("BuildContext is not initialized")
 
     prev_block = _current.collector_block
     _current.collector_block = block

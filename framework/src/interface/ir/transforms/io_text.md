@@ -17,7 +17,7 @@ function                ::= 'function' ident
 
 ```ebnf
 attr                    ::= attrname '(' attr_value ')';
-attr_value              ::= expr | ident | attr_value_list;
+attr_value              ::= expr | ident | string | attr_value_list;
 attr_value_list         ::= '[' [ attr_value { ',' attr_value } ] ']';
 attr_list               ::= { attr }
 ```
@@ -91,6 +91,7 @@ var_ref_list            ::= var_ref { ',' var_ref };
 
 ```ebnf
 ident                   ::= [A-Za-z_][A-Za-z0-9_]*;
+string                  ::= "([^"\\\r\n]|\\["\\nrt0])*";
 varname                 ::= '%' ( [A-Za-z_][A-Za-z0-9_.]* | [0-9]+ ) [ '@' ( [A-Za-z_][A-Za-z0-9_.]* | [0-9]+ ) ];
 attrname                ::= '#' [A-Za-z_][A-Za-z0-9_.]*;
 v0_tensor_opmagic       ::= '!' [0-9]+;

@@ -1,0 +1,9 @@
+function recording_contexts incast() outcast() #entry(false) #type(Opaque) {
+    {
+        OP_CONFIG() token() #vec_tile_shapes([16, 16]);
+        OP_CONFIG() token() #host.compile_timeout(1000);
+    }
+    {
+        OP_CONFIG() token() #vec_tile_shapes([8, 8]);
+    }
+}

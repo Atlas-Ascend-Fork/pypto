@@ -315,6 +315,10 @@ private:
 
     StmtPtr VisitStmt_(const TensorOpStmtPtr& op) override
     {
+        // Configuration recording does not participate in token inference yet.
+        if (op->opcode_ == "OP_CONFIG") {
+            return op;
+        }
         auto operation = std::dynamic_pointer_cast<const Operation>(op);
         // Inplace reshape only creates a storage alias and performs no memory access.
         if (operation && operation->GetOpcode() == npu::tile_fwk::Opcode::OP_RESHAPE &&

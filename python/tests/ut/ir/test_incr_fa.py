@@ -580,7 +580,7 @@ def test_incr_fa():
         kernel_config, tile_config,
     )
     ssa_verify(func)
-    b_stmt = func.body[4]
+    b_stmt = func.body[5]  # OP_CONFIG precedes the original statements.
     assert isinstance(b_stmt, ir.ForStmt)
     s1_stmt = b_stmt.body[0]
     assert isinstance(s1_stmt, ir.ForStmt)

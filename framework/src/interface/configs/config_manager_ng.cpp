@@ -27,6 +27,7 @@
 #include <nlohmann/json.hpp>
 
 #include "interface/utils/common.h"
+#include "interface/tensor/irbuilder.h"
 #include "utils/file_utils.h"
 #include "interface/utils/string_utils.h"
 
@@ -351,8 +352,13 @@ void ConfigScope::UpdateValueWithAny(const std::string& key, std::any value)
     std::stringstream oss;
     DumpValue(oss, key, value, "");
     FE_LOGD("Set option successfully: %s ", oss.str().c_str());
-    std::lock_guard<std::mutex> lock(mtx);
-    values_[key] = value;
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        values_[key] = value;
+    }
+    if (auto* builder = IRBuilder::CurrentIRBuilder()) {
+        builder->EmitConfigOp({{key, value}});
+    }
 }
 
 struct ConfigManagerImpl {

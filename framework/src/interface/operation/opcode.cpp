@@ -1229,6 +1229,7 @@ void OpcodeManager::RegisterCommon()
                  {"TileOp::AicpuCall", PIPE_S, PIPE_S, CoreType::AIC}, OpCalcType::SYS);
     RegisterInfo(Opcode::OP_AICPU_CALL_AIV, OpCoreType::ANY, "AICPU_CALL_AIV", {}, {},
                  {"TileOp::AicpuCall", PIPE_S, PIPE_S, CoreType::AIV}, OpCalcType::SYS);
+    RegisterInfo(Opcode::OP_CONFIG, OpCoreType::ANY, "OP_CONFIG", {}, {}, {}, OpCalcType::OTHER);
     RegisterInfo(Opcode::OP_NOP, OpCoreType::ANY, "NOP", {}, {}, {}, OpCalcType::OTHER);
 }
 

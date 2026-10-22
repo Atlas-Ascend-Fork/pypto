@@ -349,7 +349,11 @@ def test_dce_no_assemble_stmt():
     x = pypto.Tensor((-1, 32), pypto.DT_FP32, 'x')
     y = pypto.Tensor((-1, 32), pypto.DT_FP32, 'y')
     func = _run_dce(foo, x, y, 10)
-    assert len(func.body.stmts) == 1, "Expected only return stmt after DCE"
+    # OP_CONFIG keeps the loop alive; all dead computations are removed.
+    assert len(func.body.stmts) == 2  # For + Return
+    assert isinstance(func.body[1], ir.ReturnStmt)
+    assert [type(stmt) for stmt in func.body[0].body.stmts] == [ir.TensorOpStmt, ir.ContinueStmt]
+    assert func.body[0].body.stmts[0].opcode == "OP_CONFIG"
 
 
 def test_forstmt_attrs_and_step_name_preserved():
@@ -475,7 +479,7 @@ def test_dce_reshape_inplace4():
     y = pypto.Tensor((32, 32), pypto.DT_FP32)
     z = pypto.Tensor((32, 32), pypto.DT_FP32)
     func = _run_dce(foo, x, y, z)
-    for_stmt = func.body[1]
+    for_stmt = func.body[2]  # OP_CONFIG shifts the loop by one position.
     stmt3 = for_stmt.body[-1]
     assert isinstance(stmt3, ir.ContinueStmt)
     assert len(stmt3.value) == 2  # t0 and out both

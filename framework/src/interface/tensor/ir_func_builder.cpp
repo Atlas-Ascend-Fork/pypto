@@ -296,7 +296,8 @@ bool RootFunctionBuilder::IsPureTensorOpSeq(const ir::SeqStmtsPtr& seq)
         return false;
     }
     for (auto& stmt : seq->stmts_) {
-        if (stmt->GetKind() != ir::ObjectKind::TensorOpStmt) {
+        auto op = ir::As<ir::TensorOpStmt>(stmt);
+        if (!op || op->opcode_ == "OP_CONFIG") {
             return false;
         }
     }
@@ -308,6 +309,9 @@ std::vector<std::vector<ir::StmtPtr>> RootFunctionBuilder::SplitIntoTensorOpSegm
     std::vector<std::vector<ir::StmtPtr>> segments;
     std::vector<ir::StmtPtr> currentRun;
     for (auto& child : seq->stmts_) {
+        if (auto op = ir::As<ir::TensorOpStmt>(child); op && op->opcode_ == "OP_CONFIG") {
+            continue;
+        }
         if (child->GetKind() == ir::ObjectKind::TensorOpStmt) {
             currentRun.push_back(child);
         } else {

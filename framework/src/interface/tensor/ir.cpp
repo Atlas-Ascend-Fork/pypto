@@ -105,8 +105,8 @@ Pass pass::AggressiveDCE()
                 // TensorOpStmt: written to input slot cannot be removed
                 if (auto tensorOp = std::dynamic_pointer_cast<const TensorOpStmt>(stmt)) {
                     // pass_verify_print / pass_verify_save (OP_PRINT, IR opcode "OP_DUMP") have no
-                    // result tensors but are side-effect ops and must survive DCE.
-                    if (tensorOp->opcode_ == "OP_DUMP") {
+                    // result tensors but are side-effect ops and must survive DCE, as must OP_CONFIG.
+                    if (tensorOp->opcode_ == "OP_DUMP" || tensorOp->opcode_ == "OP_CONFIG") {
                         return false;
                     }
                     for (auto arg : tensorOp->result_) {

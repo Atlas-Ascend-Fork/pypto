@@ -144,6 +144,9 @@ class IRBuilder : public ir::IRBuilder {
 public:
     IRBuilder();
 
+    static IRBuilder* CurrentIRBuilder() { return currentIRBuilder_; }
+    static void SetCurrent(IRBuilder* builder) { currentIRBuilder_ = builder; }
+
     // Disable copying and moving since we have unique_ptr members
     IRBuilder(const IRBuilder&) = delete;
     IRBuilder& operator=(const IRBuilder&) = delete;
@@ -255,10 +258,12 @@ public:
     void Restore();
 
     void EmitTensorStmts();
+    void EmitConfigOp(const std::map<std::string, std::any>& values);
 
     ir::ExprPtr None();
 
 private:
+    static thread_local IRBuilder* currentIRBuilder_;
     IRContext& irContext_;
 };
 

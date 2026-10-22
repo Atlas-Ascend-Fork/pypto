@@ -13,11 +13,18 @@
 
 #include "gtest/gtest.h"
 
+#include <any>
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <typeinfo>
 #include <vector>
 
+#include <map>
+
 #include "core/dtype.h"
+#include "core/error.h"
+#include "tilefwk/tile_shape.h"
 #include "ir/expr.h"
 #include "ir/function.h"
 #include "ir/memref.h"
@@ -176,6 +183,268 @@ TEST_F(IoTextDumpRoundTripTest, TestForLoopRoundTrip)
     EXPECT_EQ(TextDump(loaded), dumped);
 }
 
+namespace {
+
+const std::any* FindAttr(const TensorOpStmt& op, const std::string& key)
+{
+    for (const auto& item : op.attrs_) {
+        if (item.first == key) {
+            return &item.second;
+        }
+    }
+    return nullptr;
+}
+
+std::string ConfigText(const std::string& key, const std::string& value)
+{
+    return "OP_CONFIG() token() #" + key + "(" + value + ");";
+}
+} // namespace
+
+TEST_F(IoTextDumpRoundTripTest, TestStringAttrRoundTrip)
+{
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {R"("")", ""},         {R"("hello world")", "hello world"},
+        {R"("true")", "true"}, {R"("false")", "false"},
+        {R"("3.14")", "3.14"}, {R"("#x([1]);")", "#x([1]);"},
+        {R"("\\n")", "\\n"},   {R"("x\0y")", std::string("x\0y", 3)},
+        {R"("123")", "123"},   {R"("if")", "if"},
+        {R"("中文")", "中文"}, {R"("a\"b\\c\n\r\t\0")", std::string("a\"b\\c\n\r\t\0", 9)},
+        {"DEFAULT", "DEFAULT"}};
+    for (const auto& [literal, expected] : cases) {
+        SCOPED_TRACE(literal);
+        std::string error;
+        const auto text = ConfigText("label", literal);
+        auto original = std::make_shared<TensorOpStmt>(
+            std::vector<VarPtr>{}, std::vector<VarPtr>{}, "OP_CONFIG", std::vector<ExprPtr>{}, std::vector<VarPtr>{},
+            std::vector<std::pair<std::string, std::any>>{{"label", expected}}, Sp());
+        EXPECT_EQ(TextDump(original), text);
+        auto loaded = TextLoadStmt(text, error);
+        ASSERT_TRUE(error.empty()) << error;
+        auto op = std::dynamic_pointer_cast<const TensorOpStmt>(loaded);
+        ASSERT_NE(op, nullptr);
+        const auto* value = FindAttr(*op, "label");
+        ASSERT_NE(value, nullptr);
+        ASSERT_EQ(value->type(), typeid(std::string));
+        EXPECT_EQ(std::any_cast<std::string>(*value), expected);
+        EXPECT_EQ(TextDump(loaded), text);
+    }
+    auto config = std::make_shared<TensorOpStmt>(
+        std::vector<VarPtr>{}, std::vector<VarPtr>{}, "OP_CONFIG", std::vector<ExprPtr>{}, std::vector<VarPtr>{},
+        std::vector<std::pair<std::string, std::any>>{{"labels", std::vector<std::string>{"", "a b", "true"}}}, Sp());
+    const auto text = ConfigText("labels", R"(["", "a b", "true"])");
+    EXPECT_EQ(TextDump(config), text);
+    std::string error;
+    auto loaded = TextLoadStmt(text, error);
+    ASSERT_NE(loaded, nullptr) << error;
+    EXPECT_EQ(TextDump(loaded), text);
+}
+
+TEST_F(IoTextDumpRoundTripTest, TestStringMapEscapedKeys)
+{
+    const std::map<std::string, int64_t> values{{"", 1}, {"true", 2}, {"a\"b\\c", 3}, {std::string("x\0y", 3), 4}};
+    auto config = std::make_shared<TensorOpStmt>(
+        std::vector<VarPtr>{}, std::vector<VarPtr>{}, "OP_CONFIG", std::vector<ExprPtr>{}, std::vector<VarPtr>{},
+        std::vector<std::pair<std::string, std::any>>{{"values", values}}, Sp());
+    const auto text = TextDump(config);
+    EXPECT_EQ(text, ConfigText("values", R"([["", 1], ["a\"b\\c", 3], ["true", 2], ["x\0y", 4]])"));
+    std::string error;
+    auto loaded = std::dynamic_pointer_cast<const TensorOpStmt>(TextLoadStmt(text, error));
+    ASSERT_NE(loaded, nullptr) << error;
+    const auto* attr = FindAttr(*loaded, "values");
+    ASSERT_NE(attr, nullptr);
+    const auto* decoded = std::any_cast<std::map<std::string, int64_t>>(attr);
+    ASSERT_NE(decoded, nullptr);
+    EXPECT_EQ(*decoded, values);
+}
+
+TEST_F(IoTextDumpRoundTripTest, TestInvalidStringAttr)
+{
+    for (const auto& literal :
+         {R"("unterminated)", R"("bad\q")", R"("bad\x41")", R"("trailing\)", "\"raw\nnewline\"", "\"raw\rreturn\""}) {
+        std::string error;
+        EXPECT_EQ(TextLoadStmt(ConfigText("label", literal), error), nullptr);
+        EXPECT_FALSE(error.empty());
+    }
+}
+
+TEST_F(IoTextDumpRoundTripTest, TestConfigOpRoundTrip)
+{
+    std::vector<std::pair<std::string, std::any>> attrs{
+        {"vec_tile_shapes", std::vector<int64_t>{16, 32}},
+        {"host.compile_timeout", int64_t{1000}},
+        {"pass.cube_nbuffer_setting", std::map<int64_t, int64_t>{{-1, 2}, {3, 4}}},
+        {"pass.cube_nbuffer_setting_by_func", std::map<std::string, int64_t>{{"DEFAULT", 4}, {"func8_0", 1}}}};
+    auto config = std::make_shared<TensorOpStmt>(std::vector<VarPtr>{}, std::vector<VarPtr>{}, "OP_CONFIG",
+                                                 std::vector<ExprPtr>{}, std::vector<VarPtr>{}, attrs, Sp());
+    std::string dumped = TextDump(config);
+    EXPECT_EQ(dumped.find("OP_CONFIG() token()"), 0);
+    EXPECT_NE(dumped.find("#pass.cube_nbuffer_setting([[-1, 2], [3, 4]])"), std::string::npos);
+    EXPECT_NE(dumped.find("#pass.cube_nbuffer_setting_by_func([[\"DEFAULT\", 4], [\"func8_0\", 1]])"),
+              std::string::npos);
+    std::string error;
+    auto loaded = TextLoadStmt(dumped, error);
+    ASSERT_TRUE(error.empty()) << error;
+    auto op = std::dynamic_pointer_cast<const TensorOpStmt>(loaded);
+    ASSERT_NE(op, nullptr);
+    EXPECT_EQ(op->opcode_, "OP_CONFIG");
+    EXPECT_TRUE(op->args_.empty());
+    EXPECT_TRUE(op->result_.empty());
+    EXPECT_TRUE(op->tokens_.empty());
+    EXPECT_TRUE(op->result_token_.empty());
+    const std::any* intSetting = FindAttr(*op, "pass.cube_nbuffer_setting");
+    const std::any* stringSetting = FindAttr(*op, "pass.cube_nbuffer_setting_by_func");
+    ASSERT_NE(intSetting, nullptr);
+    ASSERT_NE(stringSetting, nullptr);
+    EXPECT_EQ(intSetting->type(), typeid(std::map<int64_t, int64_t>));
+    EXPECT_EQ(stringSetting->type(), typeid(std::map<std::string, int64_t>));
+    EXPECT_EQ(TextDump(loaded), dumped);
+}
+
+TEST_F(IoTextDumpRoundTripTest, TestConfigMapDuplicateKeys)
+{
+    std::string error;
+    const std::string text = "OP_CONFIG() token() #ints([[3, 4], [-1, 2], [3, 8]]) "
+                             "#strings([[\"func8_0\", 1], [\"DEFAULT\", 4], [\"func8_0\", 2]]);";
+    auto loaded = TextLoadStmt(text, error);
+    ASSERT_TRUE(error.empty()) << error;
+    auto op = std::dynamic_pointer_cast<const TensorOpStmt>(loaded);
+    ASSERT_NE(op, nullptr);
+    const auto* ints = FindAttr(*op, "ints");
+    const auto* strings = FindAttr(*op, "strings");
+    ASSERT_NE(ints, nullptr);
+    ASSERT_NE(strings, nullptr);
+    using IntMap = std::map<int64_t, int64_t>;
+    using StringMap = std::map<std::string, int64_t>;
+    const auto* intMap = std::any_cast<IntMap>(ints);
+    const auto* stringMap = std::any_cast<StringMap>(strings);
+    ASSERT_NE(intMap, nullptr);
+    ASSERT_NE(stringMap, nullptr);
+    EXPECT_EQ(*intMap, (IntMap{{-1, 2}, {3, 8}}));
+    EXPECT_EQ(*stringMap, (StringMap{{"DEFAULT", 4}, {"func8_0", 2}}));
+    EXPECT_EQ(TextDump(loaded), "OP_CONFIG() token() #ints([[-1, 2], [3, 8]]) "
+                                "#strings([[\"DEFAULT\", 4], [\"func8_0\", 2]]);");
+}
+
+TEST_F(IoTextDumpRoundTripTest, TestConfigListsRemainVectors)
+{
+    // Empty, flat, malformed-pair and non-integer-pair lists must remain vectors.
+    for (const auto& value :
+         {"[]", "[16, 32]", "[[1, 2], [3]]", "[[1, true]]", "[[\"a b\", true]]", "[[\"a b\", 1], [2, 3]]"}) {
+        SCOPED_TRACE(value);
+        std::string error;
+        const auto text = ConfigText("values", value);
+        auto loaded = TextLoadStmt(text, error);
+        ASSERT_TRUE(error.empty()) << error;
+        auto op = std::dynamic_pointer_cast<const TensorOpStmt>(loaded);
+        ASSERT_NE(op, nullptr);
+        const auto* attr = FindAttr(*op, "values");
+        ASSERT_NE(attr, nullptr);
+        ASSERT_EQ(attr->type(), typeid(std::vector<std::any>));
+        EXPECT_EQ(TextDump(loaded), text);
+    }
+}
+
+TEST_F(IoTextDumpRoundTripTest, TestRejectsNestedAttrValues)
+{
+    for (const auto& value : {"4", "true", "[1, 2]"}) {
+        SCOPED_TRACE(value);
+        std::string error;
+        auto loaded = TextLoadStmt(ConfigText("settings", "#DEFAULT(" + std::string(value) + ")"), error);
+        EXPECT_EQ(loaded, nullptr);
+        EXPECT_FALSE(error.empty());
+    }
+}
+
+TEST_F(IoTextDumpRoundTripTest, TestTileConfigOpRoundTrip)
+{
+    CubeTile cube;
+    cube.m = {128, 128};
+    cube.k = {64, 64, 32};
+    cube.n = {128, 128};
+    cube.enableSplitK = true;
+
+    ConvTile conv;
+    conv.tileL1Info = {1, 1, 64, 64, 8, 8, 32, 1};
+    conv.setL0Tile = false;
+
+    ConvBpTile convBp;
+    convBp.tileL1Info = {16, 32, 64};
+    convBp.tileL0Info = {8, 16, 32};
+
+    DistTile dist;
+    dist.row = {1, 2, 3};
+    dist.col = {4, 5, 6};
+    dist.rank = {7, 8, 9};
+    dist.rankId = 0;
+
+    std::vector<std::pair<std::string, std::any>> attrs{
+        {"cube_tile_shapes", cube},
+        {"conv_tile_shapes", conv},
+        {"convbp_tile_shapes", convBp},
+        {"dist_tile_shapes", dist},
+    };
+    auto config = std::make_shared<TensorOpStmt>(std::vector<VarPtr>{}, std::vector<VarPtr>{}, "OP_CONFIG",
+                                                 std::vector<ExprPtr>{}, std::vector<VarPtr>{}, attrs, Sp());
+    const std::string dumped = TextDump(config);
+    EXPECT_NE(dumped.find("#cube_tile_shapes([128, 128, 64, 64, 32, 128, 128, 1])"), std::string::npos);
+    EXPECT_NE(dumped.find("#conv_tile_shapes([1, 1, 64, 64, 8, 8, 32, 1, 0, 0, 0, 0, 0])"), std::string::npos);
+    EXPECT_NE(dumped.find("#convbp_tile_shapes([16, 32, 64, 8, 16, 32])"), std::string::npos);
+    EXPECT_NE(dumped.find("#dist_tile_shapes([1, 2, 3, 4, 5, 6, 7, 8, 9, 0])"), std::string::npos);
+    EXPECT_EQ(dumped.find("CubeTile:"), std::string::npos);
+    EXPECT_EQ(dumped.find("ConvTile:"), std::string::npos);
+    EXPECT_EQ(dumped.find("ConvBpTile:"), std::string::npos);
+    EXPECT_EQ(dumped.find("DistTile:"), std::string::npos);
+
+    std::string error;
+    auto loaded = TextLoadStmt(dumped, error);
+    ASSERT_TRUE(error.empty()) << error;
+    EXPECT_EQ(TextDump(loaded), dumped);
+    auto op = std::dynamic_pointer_cast<const TensorOpStmt>(loaded);
+    ASSERT_NE(op, nullptr);
+
+    // Field layout is tested by IoTextTileTest; here verify typed IR restoration.
+    const auto* cubeValue = FindAttr(*op, "cube_tile_shapes");
+    const auto* convValue = FindAttr(*op, "conv_tile_shapes");
+    const auto* convBpValue = FindAttr(*op, "convbp_tile_shapes");
+    const auto* distValue = FindAttr(*op, "dist_tile_shapes");
+    ASSERT_NE(cubeValue, nullptr);
+    ASSERT_NE(convValue, nullptr);
+    ASSERT_NE(convBpValue, nullptr);
+    ASSERT_NE(distValue, nullptr);
+    EXPECT_EQ(cubeValue->type(), typeid(CubeTile));
+    EXPECT_EQ(convValue->type(), typeid(ConvTile));
+    EXPECT_EQ(convBpValue->type(), typeid(ConvBpTile));
+    EXPECT_EQ(distValue->type(), typeid(DistTile));
+}
+
+TEST_F(IoTextDumpRoundTripTest, TestTileConfigOpDecodeErrors)
+{
+    std::string error;
+    auto missing = TextLoadStmt(ConfigText("cube_tile_shapes", "[1, 2, 3, 4, 5, 6, 7]"), error);
+    EXPECT_EQ(missing, nullptr);
+    EXPECT_NE(error.find("cube_tile_shapes: CubeTile: expected 8 int64 values, got 7"), std::string::npos);
+    EXPECT_EQ(error.find("cube_tile_shapes: cube_tile_shapes:"), std::string::npos);
+
+    error.clear();
+    auto badBool = TextLoadStmt(ConfigText("cube_tile_shapes", "[1, 2, 3, 4, 5, 6, 7, 2]"), error);
+    EXPECT_EQ(badBool, nullptr);
+    EXPECT_NE(error.find("cube_tile_shapes: CubeTile: enableSplitK must be 0 or 1, got 2"), std::string::npos);
+
+    error.clear();
+    auto badL0Flag = TextLoadStmt(ConfigText("conv_tile_shapes", "[1, 1, 64, 64, 8, 8, 32, 1, 0, 0, 0, 0, 2]"), error);
+    EXPECT_EQ(badL0Flag, nullptr);
+    EXPECT_NE(error.find("conv_tile_shapes: ConvTile: setL0Tile must be 0 or 1, got 2"), std::string::npos);
+
+    error.clear();
+    auto nonInteger = TextLoadStmt(ConfigText("cube_tile_shapes", "[1, 1, 1, 1, 1, 1, 1, true]"), error);
+    EXPECT_EQ(nonInteger, nullptr);
+    EXPECT_NE(error.find("cube_tile_shapes: expected int64 at index 7"), std::string::npos);
+    error.clear();
+    EXPECT_EQ(TextLoadStmt(ConfigText("conv_tile_shapes", "true"), error), nullptr);
+    EXPECT_NE(error.find("conv_tile_shapes: expected an integer list"), std::string::npos);
+}
+
 // ---- Function round-trip ----
 TEST_F(IoTextDumpRoundTripTest, TestFunctionRoundTrip)
 {
@@ -194,6 +463,5 @@ TEST_F(IoTextDumpRoundTripTest, TestFunctionRoundTrip)
     EXPECT_TRUE(error.empty());
     EXPECT_EQ(TextDump(loaded), dumped);
 }
-
 } // namespace ir
 } // namespace pypto
