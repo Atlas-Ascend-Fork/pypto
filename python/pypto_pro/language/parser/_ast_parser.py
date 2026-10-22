@@ -170,6 +170,9 @@ class ASTParser(
         # Keep the Expr itself as the key. A bare id(expr) does not retain the
         # Python IR wrapper and can be reused by an unrelated expression.
         self._tile_mutex_meta: dict[ir.Expr, tuple[ir.MakeTuple, ir.MakeTuple]] = {}
+        # Slot provenance survives SSA bindings; a dynamic Tile's type alone describes slot 0.
+        self._tile_slot_source: dict[ir.Expr, ir.Expr] = {}
+        self._dynamic_slot_tiles: set[ir.Expr] = set()
         self.scope_manager = ScopeManager(strict_ssa=strict_ssa)
         self._tilingkey_consts = tilingkey_consts
         self._datatype_consts = datatype_consts
@@ -608,6 +611,10 @@ class ASTParser(
         mutex_meta = self._tile_mutex_meta.get(value_expr)
         if mutex_meta is not None:
             self._tile_mutex_meta[target] = mutex_meta
+        if value_expr in self._tile_slot_source:
+            self._tile_slot_source[target] = self._tile_slot_source[value_expr]
+        if value_expr in self._dynamic_slot_tiles:
+            self._dynamic_slot_tiles.add(target)
 
     def _validate_tiling_params(
         self,

@@ -76,9 +76,8 @@ using namespace pto;
 """
 
 
-# pl DataType -> the torch.dtype a tensor argument for that parameter must have (used to
-# validate tensor args against the kernel signature).
-_PL_DTYPE_TO_TORCH: dict[str, "torch.dtype"] = {}
+# pl DataType -> accepted torch storage dtypes for a tensor parameter.
+_PL_DTYPE_TO_TORCH: dict[str, tuple["torch.dtype", ...]] = {}
 
 # Sanitizer GM log budget for one launch (~1GB, split across all regions).
 # Each executing core owns one region laid out as [ctr u32, records...] and is
@@ -98,21 +97,42 @@ def _register_pl_dtype(pl_dtype: DataType, torch_name: str) -> None:
     """Map a pl dtype to the torch dtype named ``torch_name``, if this torch build has it."""
     torch_dtype = getattr(torch, torch_name, None)
     if torch_dtype is not None:
-        _PL_DTYPE_TO_TORCH[str(pl_dtype)] = torch_dtype
+        key = str(pl_dtype)
+        _PL_DTYPE_TO_TORCH[key] = (*_PL_DTYPE_TO_TORCH.get(key, ()), torch_dtype)
 
 
 for _pl_dtype, _torch_name in (
     (DataType.FP16, "float16"),
     (DataType.BF16, "bfloat16"),
     (DataType.FP32, "float32"),
+    (DataType.FP64, "float64"),
+    (DataType.INT4, "uint8"),
     (DataType.INT8, "int8"),
     (DataType.INT16, "int16"),
+    (DataType.INT16, "uint16"),
     (DataType.INT32, "int32"),
     (DataType.INT64, "int64"),
+    (DataType.UINT4, "uint8"),
     (DataType.UINT8, "uint8"),
+    (DataType.UINT16, "uint16"),
+    (DataType.UINT16, "int16"),
+    (DataType.UINT32, "uint32"),
+    (DataType.UINT32, "int32"),
     (DataType.UINT64, "uint64"),
     (DataType.BOOL, "bool"),
+    (DataType.FP4, "uint8"),
+    (DataType.FP4E2M1, "uint8"),
+    (DataType.FP4E2M1, "float4_e2m1fn_x2"),
+    (DataType.FP4E1M2, "uint8"),
+    (DataType.FP8E4M3FN, "uint8"),
+    (DataType.FP8E4M3FN, "float8_e4m3fn"),
+    (DataType.FP8E5M2, "uint8"),
+    (DataType.FP8E5M2, "float8_e5m2"),
+    (DataType.FP8E8M0, "uint8"),
+    (DataType.FP8E8M0, "float8_e8m0fnu"),
+    (DataType.HF4, "uint8"),
     (DataType.HF8, "uint8"),
+    (DataType.INDEX, "int64"),
 ):
     _register_pl_dtype(_pl_dtype, _torch_name)
 
@@ -466,8 +486,8 @@ def write_datatype_metadata(output_dir: str, metadata: dict | None) -> None:
 def _pack_factor(dtype: DataType | None) -> int:
     """How many elements of ``dtype`` torch reports as one storage unit along the packed axis.
 
-    A sub-byte dtype has no torch dtype of its own, so callers pass the packed storage buffer
-    (uint8, two fp4 per byte) and torch reports its shape in those storage units. pypto counts
+    Callers pass sub-byte arguments as a packed storage buffer (uint8 or a compatible packed
+    torch dtype, two fp4 per byte) and torch reports its shape in storage units. pypto counts
     elements everywhere, so the packed axis -- the innermost one, the only axis a sub-byte
     element can be packed along -- has to be scaled back up before a tensor argument is
     compared against its ParamSpec or fed to the dynamic ABI tail. Whole-byte dtypes are
@@ -482,7 +502,7 @@ def _pack_factor(dtype: DataType | None) -> int:
 
 
 def _pl_dtype_to_torch(dtype: DataType):
-    """Return the torch.dtype an argument for this pl DataType must have, or None if unknown."""
+    """Return accepted torch storage dtypes for this pl DataType, or None if unknown."""
     return _PL_DTYPE_TO_TORCH.get(str(dtype))
 
 
@@ -650,7 +670,7 @@ def _pack_tiling_arg(args: tuple) -> tuple:
 class _LaunchPlan:
     """Everything about a launch that depends only on the kernel's ParamSpecs.
 
-    Which parameter is a tensor, what torch dtype it must carry, which dimensions are
+    Which parameter is a tensor, what torch dtypes it may carry, which dimensions are
     compile-time constants, which are dynamic ABI variables, and the order those variables
     are appended in: none of that can change once the kernel is compiled, so it is resolved
     here exactly once and the hot path just walks flat tuples.
@@ -659,7 +679,7 @@ class _LaunchPlan:
         n_params: Expected argument count.
         has_tiling: Whether any parameter is a tiling struct (skips _pack_tiling_arg).
         slots: Per-parameter descriptors in ABI order. Tensor slots are
-            ``(True, index, name, torch_dtype | None, rank, const_dims, dyn_dims, pack)``
+            ``(True, index, name, torch_dtypes | None, rank, const_dims, dyn_dims, pack)``
             where ``rank`` is -1 for parameters whose shape is not checked (PTR, or no
             declared shape), ``dyn_dims`` lists the dimensions this parameter contributes
             to the dynamic ABI tail, and ``pack`` is the sub-byte packing factor from
@@ -798,7 +818,7 @@ def _build_launch_entry(compiled: "CompiledKernel"):
                 _validate_scalar_arg(index, arg, slot[2])
                 append(arg)
                 continue
-            _, _, name, expected_dtype, rank, consts, dyn_dims, pack = slot
+            _, _, name, expected_dtypes, rank, consts, dyn_dims, pack = slot
             if arg is None:
                 append(None)  # ctypes maps None to a null void*
                 if dyn_dims:
@@ -807,10 +827,10 @@ def _build_launch_entry(compiled: "CompiledKernel"):
             if not isinstance(arg, torch.Tensor):
                 raise InvalidType(f"arg[{index}] '{name}': expected torch.Tensor, got {type(arg).__name__}")
             if rank >= 0:
-                # torch.dtype values are singletons, so identity is enough and cheaper.
-                if expected_dtype is not None and arg.dtype is not expected_dtype:
+                if expected_dtypes is not None and arg.dtype not in expected_dtypes:
+                    expected = " or ".join(str(dtype) for dtype in expected_dtypes)
                     raise InvalidType(
-                        f"arg[{index}] '{name}': dtype mismatch — expected {expected_dtype}, got {arg.dtype}"
+                        f"arg[{index}] '{name}': dtype mismatch — expected {expected}, got {arg.dtype}"
                     )
                 # One .shape per tensor: reused for the positivity check, the rank check,
                 # the constant-dimension checks and this parameter's slice of the dynamic
@@ -2317,11 +2337,12 @@ class _TileJitKernel:
                 raise InvalidType(
                     f"Tensor parameter '{tensor_spec.parameter_name}' expected torch.Tensor, got {type(arg).__name__}"
                 )
-            expected_dtype = _pl_dtype_to_torch(tensor_spec.dtype)
-            if expected_dtype is not None and arg.dtype != expected_dtype:
+            expected_dtypes = _pl_dtype_to_torch(tensor_spec.dtype)
+            if expected_dtypes is not None and arg.dtype not in expected_dtypes:
+                expected = " or ".join(str(dtype) for dtype in expected_dtypes)
                 raise InvalidType(
                     f"Tensor parameter '{tensor_spec.parameter_name}' dtype mismatch: "
-                    f"expected {expected_dtype}, got {arg.dtype}"
+                    f"expected {expected}, got {arg.dtype}"
                 )
         return bound_signature
 

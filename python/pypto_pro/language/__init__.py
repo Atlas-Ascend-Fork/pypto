@@ -89,8 +89,11 @@ __all__ = [
     "ssbuf_load",
     # Binary element-wise (unified: tile-tile + tile-scalar)
     "add",
+    "adds",
     "sub",
+    "subs",
     "mul",
+    "muls",
     "div",
     "maximum",
     "minimum",
@@ -285,6 +288,7 @@ from ._api import (
     add,
     add_relu,
     add_relu_cast,
+    adds,
     and_,
     argmax,
     argmin,
@@ -347,6 +351,7 @@ from ._api import (
     mul,
     mul_add_dst,
     mul_cast,
+    muls,
     ne,
     neg,
     not_,
@@ -389,6 +394,7 @@ from ._api import (
     sub,
     sub_relu,
     sub_relu_cast,
+    subs,
     sum,
     transpose,
     trap,
@@ -432,14 +438,10 @@ DT_BOOL = DataType.BOOL
 def struct(*args: Any, **kwargs: Any) -> Any:
     """Create a compile-time struct grouping IR expressions for attribute access.
 
-    Two forms are accepted:
-      - Legacy: ``pl.struct(field=val, ...)`` — anonymous struct, fields-only.
-      - With name: ``pl.struct("StructName", field=val, ...)`` — explicit C++ struct
-        type name (preferred). The first positional argument must be a string literal
-        when used.
-    The runtime returns a ``SimpleNamespace``; the parser detects the call form
-    and lowers it through the new ``struct.create`` Expression op when invoked
-    inside a kernel body.
+    Inside a kernel, ``pl.struct("StructName", field=val, ...)`` requires exactly
+    one string-literal name. The parser lowers it to ``struct.create``.
+    This runtime helper also accepts fields without a name, but that form cannot
+    be parsed as a kernel struct.
     """
     if args:
         # Discard the leading name positionally at runtime; the parser uses the AST

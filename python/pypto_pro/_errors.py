@@ -28,6 +28,11 @@ from __future__ import annotations
 
 __all__ = [
     "PyptoProError",
+    "PyptoProWarning",
+    "CapacityUnknown",
+    "CheckSkipped",
+    "MutexMismatch",
+    "warn_check_skipped",
     "argument_span",
     "remembered_span",
     "source_lines_of",
@@ -62,6 +67,7 @@ import contextvars
 import os
 import re
 import sys
+import warnings
 
 from pypto.error import PyptoError
 from pypto.pypto_impl import ir
@@ -377,6 +383,44 @@ _PRIOR_CONTEXT_LINES = 2
 _FOLLOWING_CONTEXT_LINES = 2
 
 
+class PyptoProWarning(UserWarning):
+    """A located compile-time warning, filterable with Python's warning categories."""
+
+
+class CapacityUnknown(PyptoProWarning):
+    """An on-chip buffer capacity could not be queried, so its bounds were not checked."""
+
+
+class CheckSkipped(PyptoProWarning):
+    """An offset check was skipped; opt in with PYPTOPRO_INFO=skipped-checks or all."""
+
+
+class MutexMismatch(PyptoProWarning):
+    """Overlapping manually configured Tile buffers have no shared mutex ID."""
+
+
+_WARNING_REGISTRIES: dict[str, dict] = {}
+
+
+def _warn_located(message: str, category: type[Warning], span=None) -> None:
+    """Use the DSL span instead of a stacklevel through the parser's variable-depth calls."""
+    location = _normalize_span(span if span is not None else _CURRENT_SPAN.get()) or {}
+    filename = location.get("filename")
+    line = location.get("line") or location.get("begin_line")
+    if filename and line:
+        registry = _WARNING_REGISTRIES.setdefault(str(filename), {})
+        warnings.warn_explicit(message, category, str(filename), int(line), registry=registry)
+    else:
+        warnings.warn(message, category, stacklevel=3)
+
+
+def warn_check_skipped(message: str, span: ir.Span | None = None) -> None:
+    """Report skipped checks only when requested, without changing the validation result."""
+    categories = {part.strip() for part in os.environ.get("PYPTOPRO_INFO", "").split(",")}
+    if categories.intersection({"skipped-checks", "all"}):
+        _warn_located(message, CheckSkipped, span)
+
+
 class PyptoProError(PyptoError):
     """Base class for every pypto_pro error.
 
@@ -442,15 +486,19 @@ class PyptoProError(PyptoError):
         self.previous_span = _normalize_span(previous_span)
 
     def __str__(self) -> str:
+        return self.render()
+
+    def render(self, *, with_source: bool = True) -> str:
+        """Render the diagnostic and location, optionally omitting the quoted source."""
         parts = [super().__str__()]
-        self._append_location(parts)
+        self._append_location(parts, with_source=with_source)
         if self.hint:
             parts.append(f"  hint: {self.hint}")
         if self.note:
             parts.append(f"  note: {self.note}")
         return "\n".join(parts)
 
-    def _append_location(self, parts: list) -> None:
+    def _append_location(self, parts: list, *, with_source: bool = True) -> None:
         if not self.span:
             return
         filename = self.span.get("filename") or "<unknown>"
@@ -459,6 +507,8 @@ class PyptoProError(PyptoError):
             return
         column = self.span.get("column") or self.span.get("begin_column")
         parts.append(f"  --> {filename}:{line}:{column}")
+        if not with_source:
+            return
         if self.source_lines is None and self.span.get("filename"):
             # Not every entry point attaches the source (a pipeline probe parse
             # calls the parser directly), so read the file the span names.

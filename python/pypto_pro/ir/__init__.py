@@ -24,6 +24,8 @@ __all__ = [
     "TensorType",
     "TileType",
     "python_print",
+    "get_attributes",
+    "attributes_api_version",
     "VerificationMode",
     "VerificationLevel",
     "PassContext",

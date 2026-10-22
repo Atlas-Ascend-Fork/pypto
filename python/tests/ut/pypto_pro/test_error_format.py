@@ -286,7 +286,7 @@ def test_a_check_raised_inside_a_shared_helper_names_the_helper():
 def test_a_cpp_check_keeps_its_own_first_line_code_and_location():
     """A C++ check reaches Python whole: its file:line, its code, its DSL location.
 
-    ``adds`` declares no signature, so the type gate leaves its operands alone and
+    ``row_sum`` declares no signature, so the type gate leaves its operands alone and
     the C++ deduction is the one to refuse a Tensor where a Tile belongs.
     """
 
@@ -295,7 +295,7 @@ def test_a_cpp_check_keeps_its_own_first_line_code_and_location():
         tile_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         tile = pl.make_tile(tile_type, addr=0)
         pl.load(tile, x, [0, 0])
-        pl.adds(tile, x, 1)
+        pl.row_sum(tile, x, tile)
 
     rendered = _render(kernel)
     assert rendered.head, rendered.lines[0]
@@ -503,18 +503,18 @@ def test_more_cpp_checks_carry_their_own_source_and_the_qualified_enum():
     """Sampled across C++ files, since each macro call site renders its own head."""
 
     @pl.jit
-    def adds_from_a_tensor(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+    def row_sum_from_a_tensor(x: pl.Tensor[[64, 64], pl.DT_FP16]):
         tile_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         tile = pl.make_tile(tile_type, addr=0)
         pl.load(tile, x, [0, 0])
-        pl.adds(tile, x, 1)
+        pl.row_sum(tile, x, tile)
 
     @pl.jit
-    def adds_into_a_tensor(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+    def row_sum_into_a_tensor(x: pl.Tensor[[64, 64], pl.DT_FP16]):
         tile_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         tile = pl.make_tile(tile_type, addr=0)
         pl.load(tile, x, [0, 0])
-        pl.adds(x, tile, 1)
+        pl.row_sum(x, tile, tile)
 
     @pl.jit
     def rank_one_tile(x: pl.Tensor[[64, 64], pl.DT_FP16]):
@@ -522,7 +522,7 @@ def test_more_cpp_checks_carry_their_own_source_and_the_qualified_enum():
         pl.load(pl.make_tile(tile_type, addr=0), x, [0, 0])
 
     seen = set()
-    for kernel in (adds_from_a_tensor, adds_into_a_tensor, rank_one_tile):
+    for kernel in (row_sum_from_a_tensor, row_sum_into_a_tensor, rank_one_tile):
         rendered = _render(kernel)
         origin = rendered.head["origin"]
         # A check may expand in a .cpp or in a shared op header (the
@@ -1065,7 +1065,7 @@ def test_an_op_without_a_declaration_is_not_type_checked_either():
     def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
         tile = pl.make_tile(_tile_type(), addr=0)
         pl.load(tile, x, [0, 0])
-        pl.adds(tile, x, 1)
+        pl.row_sum(tile, x, tile)
 
     rendered = _render(kernel)
     # the C++ deduction is the one that refuses it, and says so in its own words

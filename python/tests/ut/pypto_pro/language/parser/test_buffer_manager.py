@@ -1057,5 +1057,6 @@ def test_make_tile_group_rejects_wrong_mutex_ids_container_type(mutex_ids):
         tt = pl.TileType(shape=[32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         pl.make_tile_group(type=tt, addrs=0, mutex_ids=mutex_ids)
 
-    with pytest.raises(InvalidType, match="mutex_ids must be a list, tuple, or None"):
+    with pytest.raises(InvalidType) as caught:
         _parse_kernel(k)
+    assert 'mutex_ids must be "auto", a list, tuple, or None' in caught.value.message

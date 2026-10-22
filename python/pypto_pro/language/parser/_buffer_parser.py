@@ -44,8 +44,10 @@ from ..._errors import (
     InvalidShape,
     InvalidType,
     InvalidVal,
+    MutexMismatch,
     OutOfRange,
     PyptoProError,
+    _warn_located,
     message_of,
 )
 from ._tuple_type_registry import TupleTypeKind
@@ -63,6 +65,36 @@ class BufferParserMixin:
     """make_tile_group DSL composite: parse pl.make_tile_group(...) into an IR named tuple."""
 
     # --- helpers --------------------------------------------------------------
+
+    def warn_manual_mutex_aliases(self) -> None:
+        """Check manual aliases after native AUTO validation, reusing group metadata."""
+        if not self._auto_mutex:
+            return
+        seen = set()
+        slots = []
+        for group, (_, mutex_ids, memory) in self.tile_group_meta.items():
+            if mutex_ids is None:
+                continue
+            tiles = group.type.types[self.named_fields(group).index("tiles")].types
+            for tile, row in zip(tiles, mutex_ids.elements):
+                if not all(isinstance(value, ir.ConstInt) for value in row.elements):
+                    continue
+                memref = tile.memref
+                if memref is None or memref in seen or not isinstance(memref.addr, ir.ConstInt):
+                    continue
+                seen.add(memref)
+                start = int(memref.addr.value)
+                end = start + int(memref.size)
+                ids = {int(value.value) for value in row.elements}
+                for other_memory, lo, hi, other_ids in slots:
+                    if memory == other_memory and start < hi and lo < end and not ids.intersection(other_ids):
+                        _warn_located(
+                            f"Tile buffers in {memory.name} overlap byte ranges [{start:#x}, {end:#x}) "
+                            f"(mutex IDs {sorted(ids)}) and [{lo:#x}, {hi:#x}) (mutex IDs {sorted(other_ids)}) "
+                            "without a shared mutex ID; auto_mutex will not order their accesses to the same bytes",
+                            MutexMismatch, group.span,
+                        )
+                slots.append((memory, start, end, ids))
 
     @staticmethod
     def _normalize_mutex_ids(mutex_ids, span: ir.Span) -> tuple[tuple[int, ...], ...]:
@@ -568,6 +600,8 @@ class BufferParserMixin:
         )
         self._tuple_idx_counter += 1
         tile_ir = ir.GetItemExpr(tiles, idx, span)
+        self._tile_slot_source[tile_ir] = tiles
+        self._dynamic_slot_tiles.add(tile_ir)
         if mutex_ids is not None:
             tile_id_irs = []
             for column in range(len(mutex_ids.elements[0].elements)):

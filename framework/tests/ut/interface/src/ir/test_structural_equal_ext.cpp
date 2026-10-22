@@ -232,6 +232,41 @@ TEST_F(IRStructEqTypeTest, TestTensorAndTileTypeEqual)
     EXPECT_FALSE(structural_equal(compactNullTile, compactNormalTile));
 }
 
+TEST_F(IRStructEqTypeTest, TestTileTypeMemoryReferencePresence)
+{
+    auto dim = std::make_shared<ConstInt>(16, DataType::INT64, Sp());
+    auto offset = std::make_shared<ConstInt>(0, DataType::INDEX, Sp());
+    MemRefPtr memref = std::make_shared<MemRef>(MemorySpace::Mat, offset, 1024, Sp());
+    auto known = std::make_shared<TileType>(std::vector<ExprPtr>{dim}, DataType::FP32, memref);
+    auto absent = std::make_shared<TileType>(std::vector<ExprPtr>{dim}, DataType::FP32);
+    auto null = std::make_shared<TileType>(std::vector<ExprPtr>{dim}, DataType::FP32,
+                                           std::optional<MemRefPtr>(MemRefPtr{}));
+    for (const auto& missing : {absent, null}) {
+        EXPECT_FALSE(structural_equal(known, missing));
+        EXPECT_FALSE(structural_equal(missing, known));
+        EXPECT_THROW(assert_structural_equal(known, missing), npu::tile_fwk::Error);
+    }
+    EXPECT_TRUE(structural_equal(absent, null));
+    EXPECT_TRUE(structural_equal(null, absent));
+    EXPECT_TRUE(structural_equal(null, null));
+}
+
+TEST_F(IRStructEqTypeTest, TestTileTypeMemorySpaceIgnoresAllocation)
+{
+    auto dim = std::make_shared<ConstInt>(16, DataType::INT64, Sp());
+    auto offset = std::make_shared<ConstInt>(0, DataType::INDEX, Sp());
+    auto otherOffset = std::make_shared<ConstInt>(4096, DataType::INDEX, Sp());
+    MemRefPtr mat = std::make_shared<MemRef>(MemorySpace::Mat, offset, 1024, Sp());
+    MemRefPtr otherMat = std::make_shared<MemRef>(MemorySpace::Mat, otherOffset, 2048, Sp());
+    MemRefPtr vec = std::make_shared<MemRef>(MemorySpace::Vec, offset, 1024, Sp());
+    auto lhs = std::make_shared<TileType>(std::vector<ExprPtr>{dim}, DataType::FP32, mat);
+    auto sameSpace = std::make_shared<TileType>(std::vector<ExprPtr>{dim}, DataType::FP32, otherMat);
+    auto otherSpace = std::make_shared<TileType>(std::vector<ExprPtr>{dim}, DataType::FP32, vec);
+    EXPECT_TRUE(structural_equal(lhs, sameSpace));
+    EXPECT_FALSE(structural_equal(lhs, otherSpace));
+    EXPECT_FALSE(structural_equal(otherSpace, lhs));
+}
+
 TEST_F(IRStructEqTypeTest, TestTupleAndOtherTypes)
 {
     auto s32 = std::make_shared<ScalarType>(DataType::INT32);

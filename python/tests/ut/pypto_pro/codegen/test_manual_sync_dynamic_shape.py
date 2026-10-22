@@ -244,14 +244,16 @@ def _barrier_kernel(
     x: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
     condition: pl.DT_BOOL,
 ):
-    with pl.section_vector():
+    with pl.section_cube():
         for _ in pl.range(0, x.shape[0]):
             pl.system.bar_mte1()
-            pl.system.bar_mte2()
-            pl.system.bar_mte3()
         if condition:
             pl.system.bar_m()
             pl.system.bar_fix()
+    with pl.section_vector():
+        for _ in pl.range(0, x.shape[0]):
+            pl.system.bar_mte2()
+            pl.system.bar_mte3()
         pl.system.bar_all()
         pl.system.bar_all()
         pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)

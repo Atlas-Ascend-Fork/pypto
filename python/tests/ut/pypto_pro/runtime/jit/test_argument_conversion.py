@@ -22,6 +22,7 @@ import sys
 from unittest.mock import MagicMock
 
 from pypto_pro._errors import InvalidShape
+from pypto_pro.language import STATIC, Tensor
 from pypto_pro.runtime.platform import NpuArch
 import pytest
 
@@ -522,10 +523,77 @@ def test_args_to_ctypes_no_dyn(launch):
 # Sub-byte dtypes (packed storage)
 # ---------------------------------------------------------------------------
 #
-# A sub-byte dtype has no torch dtype of its own, so the caller hands over a uint8
-# buffer holding two fp4 per byte and torch reports the innermost axis in those
+# A sub-byte argument uses uint8 or a compatible packed Torch dtype, holding two
+# fp4 per byte, and torch reports the innermost axis in those
 # storage units. ParamSpec and the kernel ABI count elements, so the launch plan
 # resolves a packing factor per parameter and the launch path scales that one axis.
+
+
+@pytest.fixture
+def validate_carrier(launch):
+    def _validate(stage, dtype, carrier):
+        if carrier is None:
+            pytest.skip("This Torch build does not provide the carrier dtype")
+        arg = _MockTensor([1, 32], carrier)
+        if stage == "compile":
+            def kernel(x: Tensor[[1, STATIC], dtype]):
+                pass
+            _jit._TileJitKernel(kernel, arch=NpuArch.DAV_3510)._bind_runtime_args((arg,))
+        else:
+            launch([_tensor_spec("x", dtype, [1, "K"])], (arg,))
+    return _validate
+
+
+@pytest.mark.parametrize("stage", ["compile", "launch"])
+@pytest.mark.parametrize("dtype,carrier", [
+    (DataType.INT4, torch.uint8),
+    (DataType.UINT4, torch.uint8),
+    (DataType.FP4, torch.uint8),
+    (DataType.FP4E2M1, torch.uint8),
+    (DataType.FP4E1M2, torch.uint8),
+    (DataType.HF4, torch.uint8),
+    (DataType.FP4E2M1, getattr(torch, "float4_e2m1fn_x2", None)),
+    (DataType.FP8E4M3FN, torch.uint8),
+    (DataType.FP8E4M3FN, getattr(torch, "float8_e4m3fn", None)),
+    (DataType.FP8E5M2, torch.uint8),
+    (DataType.FP8E5M2, getattr(torch, "float8_e5m2", None)),
+    (DataType.FP8E8M0, torch.uint8),
+    (DataType.FP8E8M0, getattr(torch, "float8_e8m0fnu", None)),
+    (DataType.UINT16, getattr(torch, "uint16", None)),
+    (DataType.UINT16, torch.int16),
+    (DataType.INT16, getattr(torch, "uint16", None)),
+    (DataType.UINT32, getattr(torch, "uint32", None)),
+    (DataType.UINT32, torch.int32),
+    (DataType.FP64, torch.float64),
+    (DataType.INDEX, torch.int64),
+])
+def test_tensor_carriers_are_accepted(validate_carrier, stage, dtype, carrier):
+    validate_carrier(stage, dtype, carrier)
+
+
+@pytest.mark.parametrize("stage", ["compile", "launch"])
+@pytest.mark.parametrize("dtype,carrier", [
+    (DataType.INT4, torch.float32),
+    (DataType.UINT4, torch.int8),
+    (DataType.FP4, getattr(torch, "uint32", None)),
+    (DataType.FP4E2M1, getattr(torch, "uint32", None)),
+    (DataType.FP4E1M2, getattr(torch, "uint32", None)),
+    (DataType.FP4E1M2, getattr(torch, "float4_e2m1fn_x2", None)),
+    (DataType.HF4, torch.int8),
+    (DataType.FP8E4M3FN, getattr(torch, "float8_e5m2", None)),
+    (DataType.FP8E5M2, getattr(torch, "float8_e4m3fn", None)),
+    (DataType.UINT16, torch.float32),
+    (DataType.UINT16, torch.int32),
+    (DataType.INT16, torch.int32),
+    (DataType.UINT32, torch.float32),
+    (DataType.UINT32, torch.int16),
+    (DataType.UINT32, torch.uint8),
+    (DataType.FP64, torch.float32),
+    (DataType.INDEX, torch.int32),
+])
+def test_wrong_tensor_carriers_raise(validate_carrier, stage, dtype, carrier):
+    with pytest.raises(TypeError, match="dtype mismatch"):
+        validate_carrier(stage, dtype, carrier)
 
 
 @pytest.mark.parametrize(

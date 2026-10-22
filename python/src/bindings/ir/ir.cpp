@@ -93,6 +93,19 @@ py::object AnyToPyObject(const std::any& value, const std::string& key)
     throw pypto::ir::TypeError("Attribute '" + key + "' has unsupported type");
 }
 
+// Snapshot all attributes, including list/expression metadata. Unknown types must not disappear.
+py::dict ReadAttributes(const std::vector<std::pair<std::string, std::any>>& attrs)
+{
+    py::dict result;
+    for (const auto& [key, value] : attrs) {
+        result[py::str(key)] = AnyToPyObject<int, int64_t, uint64_t, bool, float, double, std::string, DataType,
+                                             MemorySpace, TilePad, TensorLayout, PipeType, ExprPtr, std::vector<int>,
+                                             std::vector<int64_t>, std::vector<std::string>, std::vector<ExprPtr>>(
+            value, key);
+    }
+    return result;
+}
+
 template <typename T>
 std::vector<T> ConvertSequenceToVector(py::handle obj)
 {
@@ -1547,6 +1560,17 @@ void BindProgram(py::module_& ir)
 
 void BindHelpers(py::module_& ir)
 {
+    ir.attr("attributes_api_version") = 1;
+    ir.def(
+        "get_attributes", [](const CallPtr& node) { return ReadAttributes(node->kwargs_); }, py::arg("node"),
+        "Return every Call attribute; unsupported types raise TypeError");
+    ir.def(
+        "get_attributes", [](const FunctionPtr& node) { return ReadAttributes(node->attrs_); }, py::arg("node"),
+        "Return every Function attribute; unsupported types raise TypeError");
+    ir.def(
+        "get_attributes", [](const ForStmtPtr& node) { return ReadAttributes(node->attrs_); }, py::arg("node"),
+        "Return every ForStmt attribute; unsupported types raise TypeError");
+
     // operator functions for Var (wrapped in Python for span capture and normalization)
     ir.def("add", &MakeAdd, py::arg("lhs"), py::arg("rhs"), py::arg("span") = Span::Unknown(), "Addition operator");
     ir.def("sub", &MakeSub, py::arg("lhs"), py::arg("rhs"), py::arg("span") = Span::Unknown(), "Subtraction operator");

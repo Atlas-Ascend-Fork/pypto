@@ -7,6 +7,7 @@
 :titlesonly:
 
 functional_debugging
+frontend_diagnostics
 sanitizer
 performance_optimization
 ```

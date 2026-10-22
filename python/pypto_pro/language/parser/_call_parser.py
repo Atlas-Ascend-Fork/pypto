@@ -26,7 +26,16 @@ from pypto_pro.ir._utils import _is_int, _to_make_tuple
 from pypto_pro.ir.op._op_registry import _OP_REGISTRY
 from pypto_pro.ir.op.block_ops import block_ir_op
 
-from ..._errors import BadFd, InvalidArgument, InvalidOperation, InvalidShape, InvalidType, InvalidVal, NotSupported
+from ..._errors import (
+    BadFd,
+    InvalidArgument,
+    InvalidOperation,
+    InvalidShape,
+    InvalidType,
+    InvalidVal,
+    NotSupported,
+    current_span,
+)
 from .. import _api as _language_api
 from .._vf_api import Vf
 from . import _argument_checker
@@ -1069,11 +1078,47 @@ class CallParserMixin:
 
         self._check_declared_params(op_name, call, span)
 
-        op_func = _OP_REGISTRY.get(op_name)
-        if op_func is not None:
-            return op_func(self, call)
+        # Statements already publish a span; nested calls need their own argument locations.
+        with current_span(span, self.span_tracker.argument_spans(call)):
+            op_func = _OP_REGISTRY.get(op_name)
+            if op_func is not None:
+                return op_func(self, call)
+            return self._default_op_func(op_name, call)
 
-        return self._default_op_func(op_name, call)
+    def _mx_slot_addrs(self, value: ir.Expr) -> tuple[int, ...] | None:
+        source = self._tile_slot_source.get(value) if value in self._dynamic_slot_tiles else None
+        types = source.type.types if source is not None else (value.type,)
+        addresses = []
+        for tile_type in types:
+            memref = getattr(tile_type, "memref", None)
+            address = getattr(memref, "addr", None)
+            if not isinstance(address, ir.ConstInt):
+                return None
+            addresses.append(int(address.value))
+        return tuple(addresses)
+
+    def _check_mx_plane_slots(self, op_name: str, args: list, kwargs: dict, span: ir.Span) -> None:
+        """Check runtime slot layouts after operands have been parsed exactly once."""
+        first = 1 if op_name == "matmul_mx" else 2
+        for offset, role in enumerate(("scale_a", "scale_b")):
+            plane_index = first + 2 + offset
+            plane = args[plane_index] if len(args) > plane_index else kwargs[role]
+            data = args[first + offset]
+            if data not in self._dynamic_slot_tiles and plane not in self._dynamic_slot_tiles:
+                continue  # The builder already checks the selected static addresses.
+            data_addrs = self._mx_slot_addrs(data)
+            plane_addrs = self._mx_slot_addrs(plane)
+            if data_addrs is None or plane_addrs is None:
+                continue
+            expected = tuple(address >> 4 for address in data_addrs)
+            # A fixed plane may serve several slots that alias the same data address.
+            if plane_addrs != expected and not (len(set(expected)) == 1 and set(plane_addrs) == set(expected)):
+                raise InvalidVal(
+                    f"{op_name}: every slot of {role} must match its data slot address >> 4; "
+                    f"got {[hex(a) for a in plane_addrs]}, expected {[hex(a) for a in expected]}",
+                    span=span,
+                    hint="Pair runtime data/scale selections by slot; give the scale group explicit addresses",
+                )
 
     def _check_declared_params(self, op_name: str, call: ast.Call, span: ir.Span) -> None:
         """Check which parameters the call names and how many it passes, before evaluation."""
@@ -1098,6 +1143,14 @@ class CallParserMixin:
         the same restriction.
         """
         span = self.span_tracker.get_span(call)
+        if self.target == ir.SectionKind.Vector and op_name in {
+            "system.bar_m", "system.bar_mte1", "system.bar_fix"
+        }:
+            raise NotSupported(
+                f"pl.{op_name}() requires a Cube section; the current target is Vector",
+                span=span,
+                hint="Place the barrier with its Cube operations; use cross-core synchronization for a handover",
+            )
         if op_name.startswith("vf."):
             if self.inline_vf_depth == 0:
                 raise InvalidOperation(

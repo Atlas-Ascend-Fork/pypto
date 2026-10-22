@@ -6,12 +6,15 @@
 
 abs
 add
+adds
 and_
 div
 maximum
 mul
+muls
 neg
 relu
 sub
+subs
 xor
 ```

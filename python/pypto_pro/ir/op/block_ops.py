@@ -46,6 +46,7 @@ from pypto.pypto_impl.ir import TileType as _IRTileType  # IR-level TileType (C+
 from pypto_pro.ir._utils import _is_int, _normalize_expr, _to_make_tuple
 
 from ..._errors import (
+    CapacityUnknown,
     DynamicShapeUnsupported,
     InvalidArgument,
     InvalidFormat,
@@ -57,7 +58,9 @@ from ..._errors import (
     NotSupported,
     OutOfRange,
     PyptoProError,
+    _warn_located,
     message_of,
+    warn_check_skipped,
 )
 
 # NOTE: a DSL-descriptor dataclass named ``TileType`` is defined later in this
@@ -1093,7 +1096,6 @@ def _ir_col_sum(out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None) ->
 def _validate_validshape_bounds(
     tile: Expr,
     valid_shape: Sequence[int | Expr] | _ir_core.MakeTuple,
-    span: Span | None = None,
 ) -> None:
     """Validate that a Tile supports runtime valid-shape updates and that dimensions are in bounds.
 
@@ -1124,7 +1126,6 @@ def _validate_validshape_bounds(
         tile_shape = _tile_shape_ints(tile_type)
 
     dim_names = ("row", "col")
-    span_info = f" at {span}" if span else ""
 
     for i, vs in enumerate(valid_shape):
         dim_name = dim_names[i]
@@ -1134,7 +1135,7 @@ def _validate_validshape_bounds(
             if vs <= 0:
                 raise InvalidShape(
                     f"set_validshape {dim_name}={vs} must be positive "
-                    f"(got {vs}){span_info}. "
+                    f"(got {vs}). "
                     f"Valid shape dimensions must be >= 1."
                 )
 
@@ -1143,9 +1144,8 @@ def _validate_validshape_bounds(
                 ts_val = tile_shape[i]
                 if vs > ts_val:
                     raise OutOfRange(
-                        f"set_validshape {dim_name}={vs} exceeds tile {dim_name}={ts_val}"
-                        f"{span_info}. "
-                        f"Valid shape must be <= tile shape."
+                        f"set_validshape {dim_name}={vs} exceeds tile {dim_name}={ts_val}. "
+                        "Valid shape must be <= tile shape."
                     )
 
 
@@ -1156,7 +1156,7 @@ def _ir_set_validshape(
     span: Span | None = None,
 ) -> Expr:
     actual_span = span or _span()
-    _validate_validshape_bounds(tile, shape, actual_span)
+    _validate_validshape_bounds(tile, shape)
     shape_0, shape_1 = _normalize_2d_sequence(shape, "shape", actual_span)
     return _ir_core.create_op_call(block_ir_op("set_validshape"), [tile, shape_0, shape_1], {}, actual_span)
 
@@ -1582,6 +1582,7 @@ def _validate_offsets(
         if off_val is not None and off_val < 0:
             raise NotSupported(f"{op_name}: offsets[{i}] is {off_val}, negative offset is not allowed")
         if off_val is None:
+            warn_check_skipped(f"{op_name}: offsets[{i}] is dynamic; negative-offset and bounds checks were skipped")
             continue
         if access_size is not None:
             t_size = access_size
@@ -3548,15 +3549,15 @@ def _validate_tile_addr_alignment(
         return  # DDR / Scaling / Bias — no enforced alignment
     if addr % required != 0:
         mem_name = str(target_memory).replace("MemorySpace.", "")
-        span_info = f" at {span}" if span else ""
         raise InvalidTile(
             f"Tile address 0x{addr:05X} ({addr}) is not {required}-byte aligned "
-            f"for memory space {mem_name}{span_info}. "
-            f"Address must be a multiple of {required}."
+            f"for memory space {mem_name}. "
+            f"Address must be a multiple of {required}.",
+            span=span,
         )
 
 
-def _get_memory_capacity(target_memory: MemorySpace) -> int:
+def _get_memory_capacity(target_memory: MemorySpace, span: Span | None = None) -> int:
     """On-chip buffer capacity (bytes) for ``target_memory``.
 
     The target platform comes from the pypto_pro compile flow: ``pl.jit``
@@ -3573,14 +3574,16 @@ def _get_memory_capacity(target_memory: MemorySpace) -> int:
 
     arch = get_current_arch()
     cap = get_memory_limit(arch, target_memory.name)
-    if cap <= 0:
-        import logging
-
-        logging.getLogger(__name__).warning(
-            "Cannot determine %s capacity for arch %s; skipping tile capacity validation. "
-            "Check that pypto_impl is loaded and the arch maps to an installed platform ini.",
-            target_memory,
-            arch,
+    if cap <= 0 and target_memory in (
+        MemorySpace.Vec, MemorySpace.Mat, MemorySpace.Left, MemorySpace.Right,
+        MemorySpace.Acc, MemorySpace.Bias, MemorySpace.Scaling,
+        MemorySpace.ScaleLeft, MemorySpace.ScaleRight,
+    ):
+        _warn_located(
+            f"Cannot determine {target_memory.name} capacity for arch {arch}; tile capacity validation "
+            "was skipped. Check the installed platform ini and native bindings.",
+            CapacityUnknown,
+            span,
         )
     # The platform ini reports the software-usable UB size, which may be smaller
     # than the physical buffer (e.g., ub_size=253952 = 256K - 8K reserved). Tile
@@ -3606,25 +3609,24 @@ def _validate_tile_addr_capacity(
     compilation and triggers an AICore hardware trap (error 507015) at runtime.
     """
     mem_name = str(target_memory).replace("MemorySpace.", "")
-    span_info = f" at {span}" if span else ""
     if addr < 0:
         raise InvalidTile(
-            f"Tile addr {addr} is negative for memory space {mem_name}{span_info}. "
-            f"Address must be a non-negative integer."
+            f"Tile addr {addr} is negative for memory space {mem_name}. "
+            f"Address must be a non-negative integer.", span=span,
         )
     if size <= 0:
         raise InvalidTile(
-            f"Tile size {size} must be positive for memory space {mem_name}{span_info}."
+            f"Tile size {size} must be positive for memory space {mem_name}.", span=span,
         )
-    capacity = _get_memory_capacity(target_memory)
+    capacity = _get_memory_capacity(target_memory, span)
     if capacity <= 0:
         return
     end_addr = addr + size
     if end_addr > capacity:
         raise OutOfRange(
             f"Tile addr 0x{addr:X} + size {size} (0x{end_addr:X}) exceeds "
-            f"{mem_name} capacity 0x{capacity:X} ({capacity} bytes){span_info}. "
-            f"Use a smaller address so that addr + tile_size <= {capacity}."
+            f"{mem_name} capacity 0x{capacity:X} ({capacity} bytes). "
+            f"Use a smaller address so that addr + tile_size <= {capacity}.", span=span,
         )
 
 
@@ -3844,7 +3846,7 @@ def _validate_tile_type_params(tt: "TileType") -> None:
             raise InvalidShape(
                 f"TileType Bias tiles must have exactly 1 row (hardware Rows==1 constraint, "
                 f"see TMatmul.hpp/TMov.hpp), got shape {tt.shape!r} with {shape[0]} rows. "
-                f"Use shape=[1, N] for the Bias (L0B) tile."
+                f"Use shape=[1, N] for the Bias tile."
             )
 
     valid_shape = _const_shape_ints(tt.valid_shape)
@@ -3928,19 +3930,20 @@ def make_tile_expr(
     }
     kwargs = {k: v for k, v in kwargs.items() if v is not None}
     if addr is None:
-        raise InvalidVal(f"make_tile_expr() requires 'addr', but it is missing. {_MAKE_TILE_HINT}")
+        raise InvalidVal(f"make_tile_expr() requires 'addr', but it is missing. {_MAKE_TILE_HINT}", span=span)
     if size is None:
         try:
             size = tile_slot_size(shape_tuple, dtype)
         except PyptoProError as exc:
             raise InvalidOperation(
                 f"pl.make_tile() cannot derive its byte span from the tile type: {message_of(exc)}. "
-                "Use a static positive shape in pl.TileType."
+                "Use a static positive shape in pl.TileType.",
+                span=span,
             ) from exc
     if isinstance(addr, int):
-        _validate_tile_addr_alignment(addr, target_memory, actual_span)
+        _validate_tile_addr_alignment(addr, target_memory, span)
         if isinstance(size, int):
-            _validate_tile_addr_capacity(addr, size, target_memory, actual_span)
+            _validate_tile_addr_capacity(addr, size, target_memory, span)
     global mem_id
     mem_id += 1
     kwargs["memref_addr"] = addr
@@ -3998,12 +4001,11 @@ def _parse_make_tile(self, call: ast.Call) -> Expr:
     if len(call.args) > 1:
         raise InvalidArgument(
             f"pl.make_tile() takes 1 positional argument (the tile type) but {len(call.args)} were given",
-            span=span,
             hint="pass addr as a keyword, e.g. pl.make_tile(tile_type, addr=0x0)",
         )
 
     if not call.keywords:
-        raise InvalidVal("pl.make_tile() missing required keyword 'addr'", span=span, hint=_MAKE_TILE_HINT)
+        raise InvalidVal("pl.make_tile() missing required keyword 'addr'", hint=_MAKE_TILE_HINT)
     if len(call.keywords) != 1 or call.keywords[0].arg != "addr":
         unsupported = [kw.arg or "**kwargs" for kw in call.keywords if kw.arg != "addr"]
         raise InvalidArgument(
@@ -4033,10 +4035,6 @@ def _parse_make_tile(self, call: ast.Call) -> Expr:
 # ---------------------------------------------------------------------------
 
 
-def _span_msg(span: "Span | None") -> str:
-    return f" at {span}" if span else ""
-
-
 def _hw_attr(hw, field: str) -> "int | None":
     """One hardware_info field as an int, or None when unset/negative sentinel."""
     if hw is None:
@@ -4057,7 +4055,8 @@ def _reinterpret_footprint_check(shape: list[int], dtype: DataType, size: int, s
     if footprint > size:
         raise OutOfRange(
             f"reinterpret: new footprint {footprint} bytes exceeds the original buffer size {size} bytes; "
-            f"a reinterpretation may only reuse the buffer at the same size or smaller{_span_msg(span)}"
+            "a reinterpretation may only reuse the buffer at the same size or smaller",
+            span=span,
         )
 
 
@@ -4066,8 +4065,8 @@ def _reinterpret_align_check(addr: int, dtype: DataType, span: "Span | None") ->
     elem_bytes = max(1, (int(dtype.get_bit()) + 7) // 8)
     if addr % elem_bytes != 0:
         raise InvalidTile(
-            f"reinterpret: address 0x{addr:X} is not aligned to the new element size {elem_bytes} bytes"
-            f"{_span_msg(span)}"
+            f"reinterpret: address 0x{addr:X} is not aligned to the new element size {elem_bytes} bytes",
+            span=span,
         )
 
 
@@ -4100,12 +4099,13 @@ def _ir_reinterpret(
     """
     actual_span = span or _span()
     if not isinstance(src.type, _IRTileType):
-        raise InvalidType(f"reinterpret: expected a Tile, got {type(src.type).__name__}")
+        raise InvalidType(f"reinterpret: expected a Tile, got {type(src.type).__name__}", span=span)
     t = src.type
     memref = getattr(t, "memref", None)
     if memref is None:
         raise InvalidArgument(
-            f"reinterpret: source tile has no MemRef (bind it with pl.make_tile first){_span_msg(actual_span)}"
+            "reinterpret: source tile has no MemRef (bind it with pl.make_tile first)",
+            span=span,
         )
 
     old_shape = _static_shape_ints(t.shape, "reinterpret: source")
@@ -4118,9 +4118,9 @@ def _ir_reinterpret(
 
     addr = _memref_const_addr(memref, actual_span)
     if addr is None:
-        raise InvalidType(f"reinterpret: source tile address must be a compile-time constant{_span_msg(actual_span)}")
-    _reinterpret_align_check(addr, new_dtype, actual_span)
-    _reinterpret_footprint_check(new_shape, new_dtype, int(memref.size), actual_span)
+        raise InvalidType("reinterpret: source tile address must be a compile-time constant", span=span)
+    _reinterpret_align_check(addr, new_dtype, span)
+    _reinterpret_footprint_check(new_shape, new_dtype, int(memref.size), span)
 
     # Fresh MemRef at the same address & size (new memref_id); valid_shape
     # intentionally omitted so the new handle starts dynamic (-1).
@@ -4135,7 +4135,7 @@ def _ir_reinterpret(
         fractal=_hw_attr(hw, "fractal"),
         pad=_hw_attr(hw, "pad"),
         compact=_hw_attr(hw, "compact"),
-        span=actual_span,
+        span=span,
     )
 
 
@@ -4146,7 +4146,6 @@ def _parse_reinterpret(self, call: ast.Call) -> Expr:
     if len(call.args) != 1:
         raise InvalidArgument(
             f"pl.reinterpret() takes exactly 1 positional argument (a Tile or TileGroup), got {len(call.args)}",
-            span=span,
             hint="Usage: t2 = pl.reinterpret(tile, dtype=..., shape=..., layout=...)",
         )
     src = self.parse_expression(call.args[0])
@@ -4156,7 +4155,6 @@ def _parse_reinterpret(self, call: ast.Call) -> Expr:
     if kwargs.get("dtype") is None and kwargs.get("shape") is None and kwargs.get("layout") is None:
         raise InvalidType(
             "pl.reinterpret() requires at least one of dtype/shape/layout to override",
-            span=span,
             hint="e.g. pl.reinterpret(tile, shape=[64, 64], dtype=pl.DT_BF16)",
         )
 
@@ -4182,6 +4180,15 @@ def _parse_reinterpret(self, call: ast.Call) -> Expr:
     # check lives in _ir_reinterpret, which both branches go through.
     if self.is_tile_group(src):
         return self._build_reinterpreted_group(src, kwargs, span)
+
+    if src in self._dynamic_slot_tiles or (
+        isinstance(src, _ir_core.GetItemExpr) and not isinstance(src.slice, ConstInt)
+    ):
+        raise NotSupported(
+            "pl.reinterpret() cannot resolve the address of a Tile selected by a runtime slot index; "
+            "its static type would bind the view to slot 0",
+            hint="Reinterpret the whole TileGroup, then select the matching slot from that view",
+        )
 
     new_tile = _ir_reinterpret(src, shape=new_shape, dtype=kwargs.get("dtype"), layout=kwargs.get("layout"), span=span)
 
@@ -5027,7 +5034,9 @@ def _parse_matmul_mx(self, call: ast.Call) -> Expr:
     args = [self.parse_expression(arg) for arg in call.args]
     kwargs = self.parse_op_kwargs(call)
     self._check_declared_types("matmul_mx", call, args, kwargs, span)
-    return _ir_matmul_mx(*args, **kwargs, span=span)
+    result = _ir_matmul_mx(*args, **kwargs, span=span)
+    self._check_mx_plane_slots("matmul_mx", args, kwargs, span)
+    return result
 
 
 @op_impl("matmul_mx_acc")
@@ -5036,7 +5045,9 @@ def _parse_matmul_mx_acc(self, call: ast.Call) -> Expr:
     args = [self.parse_expression(arg) for arg in call.args]
     kwargs = self.parse_op_kwargs(call)
     self._check_declared_types("matmul_mx_acc", call, args, kwargs, span)
-    return _ir_matmul_mx_acc(*args, **kwargs, span=span)
+    result = _ir_matmul_mx_acc(*args, **kwargs, span=span)
+    self._check_mx_plane_slots("matmul_mx_acc", args, kwargs, span)
+    return result
 
 
 def _to_const_int(val: Any, span: Span | None = None) -> Expr:

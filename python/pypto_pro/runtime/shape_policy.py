@@ -404,6 +404,17 @@ class KernelSignatureSpec:
                 raise InvalidType(
                     f"Tensor parameter '{tensor.parameter_name}' must provide a shape, got {type(value).__name__}"
                 )
+            if (
+                tensor.dtype is not None
+                and tensor.dtype.get_bit() == 4
+                and isinstance(shape, Sequence)
+                and not isinstance(shape, (str, bytes))
+                and shape
+            ):
+                last = _validate_positive_int(
+                    shape[-1], tensor.parameter_name, len(shape) - 1, source="runtime dimension"
+                )
+                shape = tuple(shape[:-1]) + (last * 2,)
             shapes[tensor.parameter_name] = shape
         return self.bind_static_shapes(shapes)
 

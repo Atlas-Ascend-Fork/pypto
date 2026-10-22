@@ -28,7 +28,7 @@ def inline(fn: Callable) -> Callable:
 
     warnings.warn(
         "@pl.inline is deprecated and will be removed. "
-        "Use @pl.fn with type annotations, or pass the function as an annotated callable.",
+        "Call ordinary helpers inside @pl.jit; use @pl.vector_function for VF or SIMT helpers.",
         DeprecationWarning,
         stacklevel=2,
     )

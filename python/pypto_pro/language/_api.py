@@ -268,6 +268,11 @@ def init_output(
     automatically.  Must be called before Tile buffer allocation
     (``make_tile_group`` etc.).
 
+    The temporary UB tile starts at address 0 and occupies 8192 bytes for
+    8/16/32-bit types, or 512 bytes for 64-bit types, regardless of ``size``.
+    This op does not drain MTE3 before later UB reuse; synchronize MTE3 with
+    the subsequent reader/writer pipe before reusing that byte range.
+
     This op never emits a cross-core barrier (``pipe_barrier`` would only
     drain the calling core's pipes).  When the initialized GM data is
     consumed by other cores or the cube sub-core (e.g. a subsequent
@@ -405,6 +410,21 @@ def ssbuf_store(struct_var: Struct, offset: int, /) -> None:
 # - No implicit type promotion: all operands must have the same dtype.
 # - Supported dtypes: FP16, FP32, BF16 (op-dependent; FP8/FP4 are storage-only
 #   — use vf.astype to convert to/from FP32/BF16/FP16 for computation).
+
+
+@_api_decl
+def adds(out: Tile, lhs: Tile, rhs: Scalar) -> None:
+    """Elementwise scalar addition: ``out = lhs + rhs``."""
+
+
+@_api_decl
+def subs(out: Tile, lhs: Tile, rhs: Scalar) -> None:
+    """Elementwise scalar subtraction: ``out = lhs - rhs``."""
+
+
+@_api_decl
+def muls(out: Tile, lhs: Tile, rhs: Scalar) -> None:
+    """Elementwise scalar multiplication: ``out = lhs * rhs``."""
 
 
 @_api_decl
@@ -771,7 +791,7 @@ def matmul(
         dst_tile: Accumulator Tile (L0C, output)
         lhs_tile: Left matrix Tile (L0A)
         rhs_tile: Right matrix Tile (L0B)
-        bias_tile: Optional positional Bias Tile (L0B Bias area, shape [1, N], row-broadcast)
+        bias_tile: Optional positional Bias Tile (BiasTable buffer, shape [1, N], row-broadcast)
         phase: Optional — ``pl.AccPhase.Partial`` or ``pl.AccPhase.Final``
     """
 
@@ -1240,7 +1260,9 @@ def fill_index(out: Tile, start: Union[int, float]) -> None:
 
 @_api_decl
 def pto_assert(condition: bool, /, format_str: Optional[str] = None, *args, loc: bool = False) -> None:
-    """Runtime assert: abort if condition is false, optionally print error message.
+    """Log when the runtime condition is false; execution continues without a host exception.
+
+    Use ``pl.trap()`` when the kernel must abort.
 
     Args:
         condition: Scalar boolean condition (dtype must be BOOL)

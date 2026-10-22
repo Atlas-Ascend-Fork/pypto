@@ -346,8 +346,9 @@ def test_sync_all_rejects_workspaces_in_parser():
     def func(_jit_entry: pl.DT_INT64):
         pl.system.sync_all([0])
 
-    with pytest.raises(InvalidArgument, match="does not accept positional arguments"):
+    with pytest.raises(InvalidArgument) as caught:
         func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert "too many positional arguments" in caught.value.message
 
 
 def test_complex_integer_event_id_expression_is_accepted():

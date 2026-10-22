@@ -725,6 +725,18 @@ bool StructuralEqualImpl<AssertMode>::EqualType(const TypePtr& lhs, const TypePt
             if (!Equal(lhs_tile->shape_[i], rhs_tile->shape_[i]))
                 return false;
         }
+        // Buffer kind is part of a Tile's C++ type; address and size belong to the allocation.
+        const auto& lhs_memref = lhs_tile->memref_;
+        const auto& rhs_memref = rhs_tile->memref_;
+        const bool lhs_has_memref = lhs_memref && *lhs_memref;
+        const bool rhs_has_memref = rhs_memref && *rhs_memref;
+        if (lhs_has_memref != rhs_has_memref) {
+            return IRAssert({}, "TileType memory reference presence mismatch");
+        }
+        if (lhs_has_memref && (*lhs_memref)->memorySpace_ != (*rhs_memref)->memorySpace_) {
+            return IRAssert({}, "TileType memory space mismatch (", MemorySpaceToString((*lhs_memref)->memorySpace_),
+                            " != ", MemorySpaceToString((*rhs_memref)->memorySpace_), ")");
+        }
         // Compare tile_view
         if (lhs_tile->tileView_.has_value() != rhs_tile->tileView_.has_value()) {
             return IRAssert({}, "TileType tile_view presence mismatch");

@@ -234,8 +234,9 @@ def test_wrong_positional_count_raises():
         t = pl.make_tile(tt, addr=0)
         pl.load(pl.reinterpret(t, t, shape=[64, 64], dtype=pl.DT_BF16), x, [0, 0])
 
-    with pytest.raises(InvalidArgument, match="exactly 1 positional argument"):
+    with pytest.raises(InvalidArgument) as caught:
         _parse_kernel(k)
+    assert "too many positional arguments" in caught.value.message
 
 
 def test_dtype_without_shape_rejected_in_kernel():
@@ -314,9 +315,10 @@ def test_reinterpret_inside_nested_loops():
         tt = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         g = pl.make_tile_group(type=tt, addrs=[0x0000, 0x2000], mutex_ids=[0, 1])
         td = pl.DT_BF16
+        view = pl.reinterpret(g, shape=[shape_rows, shape_cols], dtype=td)
         for i in pl.range(0, a.shape[0], 64):
             for j in pl.range(0, a.shape[1], 64):
-                t2 = pl.reinterpret(g.next(), shape=[shape_rows, shape_cols], dtype=td)
+                t2 = view.next()
                 pl.load_tile(t2, a, [i, j])
                 pl.store_tile(out, t2, [i, j])
 
@@ -482,7 +484,7 @@ def test_slot_tile_reinterpret_keeps_mutex_binding():
     def k(a: pl.Tensor[[64, 64], pl.DT_FP16]):
         tt = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         db = pl.make_tile_group(type=tt, addrs=[0, 0x4000], mutex_ids=[5, 6])
-        t2 = pl.reinterpret(db.current(), shape=[64, 64], dtype=pl.DT_BF16)
+        t2 = pl.reinterpret(db[1], shape=[64, 64], dtype=pl.DT_BF16)
         pl.load(t2, a, [0, 0])
 
     ir_str = _kernel_ir(k)

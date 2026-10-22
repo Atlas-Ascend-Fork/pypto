@@ -255,8 +255,15 @@ class KernelDef:
         self,
         target: ir.SectionKind,
         bound_signature=None,
+        *,
+        observer=None,
     ) -> tuple[ir.Program, bool]:
-        """Parse a fresh target Program and report whether its target section was matched."""
+        """Parse a fresh target Program and report whether its target section was matched.
+
+        The invocation-local ``observer(program, parser)`` runs after AUTO mutex ID
+        resolution. Parser tables retain their parse-time metadata. The observer
+        must not mutate either object; its exceptions propagate to the caller.
+        """
         program_name = self._name if self._name is not None else self._func.__name__
 
         try:
@@ -353,6 +360,9 @@ class KernelDef:
                         str(exc),
                         span=span_of_spec_message(str(exc)) or mutex_id_manager.diagnostic_span,
                     ) from None
+            parser.warn_manual_mutex_aliases()
+            if observer is not None:
+                observer(program, parser)
             return program, parser.matched_target
 
         except PyptoProError as e:
