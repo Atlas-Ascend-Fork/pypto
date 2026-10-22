@@ -107,7 +107,7 @@ cannsim record 'python3 examples/00_hello_world/hello_world.py --run_mode sim' -
 $ cd /path/to/pypto
 $ pip show pypto
 Name: pypto
-Version: 0.2.1
+Version: 0.3.0
 
 # 如果未安装：
 $ python3 build_ci.py --clean --no_isolation

@@ -16,7 +16,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pypto"
-version = "0.2.1"
+version = "0.3.0"
 authors = [
     { name = "PyPTO Team", email = "pto@cann.osinfra.cn" }
 ]

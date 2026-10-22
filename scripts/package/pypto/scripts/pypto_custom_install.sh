@@ -95,9 +95,13 @@ custom_install() {
 
     comm_log "INFO" "install ${LOG_PKG_NAME} extension module begin..."
 
-    local pypto_whl_path="${PKG_INSTALL_PATH}/${PKG_ARCH_NAME}-linux/lib64/pypto-0.2.1-cp37-abi3-manylinux2014_${PKG_ARCH_NAME}.whl"
-    if [ ! -f "${pypto_whl_path}" ]; then
-        comm_log "ERROR" "ERR_NO:0x0080;ERR_DES:can not find ${LOG_PKG_NAME} whl package in ${PKG_INSTALL_PATH}/${PKG_ARCH_NAME}-linux/lib64/, pypto_whl_path=${pypto_whl_path}"
+    local pypto_whl_dir="${PKG_INSTALL_PATH}/${PKG_ARCH_NAME}-linux/lib64"
+    shopt -s nullglob
+    local pypto_whl_list=("${pypto_whl_dir}"/pypto-*.whl)
+    shopt -u nullglob
+    local pypto_whl_path="${pypto_whl_list[0]:-}"
+    if [ -z "${pypto_whl_path}" ] || [ ! -f "${pypto_whl_path}" ]; then
+        comm_log "ERROR" "ERR_NO:0x0080;ERR_DES:can not find ${LOG_PKG_NAME} whl package in ${pypto_whl_dir}, pypto_whl_path=${pypto_whl_path}"
         exit 1
     fi
 
