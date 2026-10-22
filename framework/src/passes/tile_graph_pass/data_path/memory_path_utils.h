@@ -115,7 +115,7 @@ public:
 
     static bool CheckUBTileShape(const LogicalTensorPtr& moveTensor);
 
-    static bool CheckUBConvTileLastDimAligned(const LogicalTensorPtr& moveTensor);
+    static bool CheckUBConvTileShape(const LogicalTensorPtr& moveTensor);
 
     static bool IsDimMultiple(const Shape& shape1, const Shape& shape2);
 

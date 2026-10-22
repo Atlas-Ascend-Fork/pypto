@@ -276,14 +276,14 @@ bool MemoryPathUtils::CheckUBTileShape(const LogicalTensorPtr& moveTensor)
     return false;
 }
 
-bool MemoryPathUtils::CheckUBConvTileLastDimAligned(const LogicalTensorPtr& moveTensor)
+bool MemoryPathUtils::CheckUBConvTileShape(const LogicalTensorPtr& moveTensor)
 {
     // 仅约束 conv 多维 tile 的末维 (W)；二维 matmul tile 的分形校验由 CheckUBTileShape 负责，分开判断
     if (moveTensor == nullptr || moveTensor->GetShape().size() <= SHAPE_DIM2) {
         return false;
     }
     const int64_t alignElems = (moveTensor->Datatype() == DataType::DT_INT8) ? INT8_ALIGN_SIZE : L0C_TILE_SIZE;
-    if (moveTensor->GetShape().back() % alignElems == 0) {
+    if (moveTensor->GetShape().back() % alignElems == 0 && moveTensor->GetShape()[1] % alignElems == 0) {
         return true;
     }
     APASS_LOG_DEBUG_F(Elements::Tensor,

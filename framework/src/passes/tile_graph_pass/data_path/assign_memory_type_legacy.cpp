@@ -989,7 +989,7 @@ void AssignMemoryType::ProcessL0C2UBSmallToLargeLegacy(Function& function)
             continue;
         }
         bool isConsumerOutputMultiple = CheckConsumerMoveInShapeMultiple(oOperand, iOperand);
-        bool isVecTileShapeValid = isConvTile ? MemoryPathUtils::CheckUBConvTileLastDimAligned(iOperand) :
+        bool isVecTileShapeValid = isConvTile ? MemoryPathUtils::CheckUBConvTileShape(iOperand) :
                                                 MemoryPathUtils::CheckUBTileShape(iOperand);
         bool canUseUb = !HasParallelDifferentConsumerRequirementLegacy(iOperand, MemoryType::MEM_UB) &&
                         AreAllConsumerRequirementsTowardsUb(inserter, oOperand) &&
@@ -1031,7 +1031,7 @@ void AssignMemoryType::ProcessL0C2UBLargeToSmallLegacy(Function& function)
         // conv 判定看 L0C 源 (producer 为 TRANS_FORMAT_L0C 且 rank 4/5), 对齐校验对象是 view 窗口 oOperand;
         // 非 conv 维持 CheckUBTileShape 前两维分形校验
         bool isConvTile = iOperand->GetMemoryTypeOriginal() == MEM_L0C && IsConvL0CTile(iOperand);
-        bool isVecTileShapeValid = isConvTile ? MemoryPathUtils::CheckUBConvTileLastDimAligned(oOperand) :
+        bool isVecTileShapeValid = isConvTile ? MemoryPathUtils::CheckUBConvTileShape(oOperand) :
                                                 MemoryPathUtils::CheckUBTileShape(oOperand);
         if (iOperand->GetMemoryTypeOriginal() == MEM_L0C &&
             HasParallelDifferentConsumerRequirementLegacy(iOperand, MemoryType::MEM_UB)) {

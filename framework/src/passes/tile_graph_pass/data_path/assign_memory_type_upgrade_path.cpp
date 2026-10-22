@@ -39,7 +39,7 @@ namespace {
 bool CheckUBTileShapeByRank(const LogicalTensorPtr& tensor)
 {
     return (tensor != nullptr && tensor->GetShape().size() > SHAPE_DIM2) ?
-               MemoryPathUtils::CheckUBConvTileLastDimAligned(tensor) :
+               MemoryPathUtils::CheckUBConvTileShape(tensor) :
                MemoryPathUtils::CheckUBTileShape(tensor);
 }
 

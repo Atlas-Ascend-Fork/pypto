@@ -25,6 +25,7 @@
 #include "interface/inner/tilefwk.h"
 #include "interface/configs/config_manager.h"
 #include "passes/tile_graph_pass/data_path/assign_memory_type.h"
+#include "passes/tile_graph_pass/data_path/memory_path_utils.h"
 #include "passes/pass_mgr/pass_manager.h"
 #include "computational_graph_builder.h"
 #include "interface/tensor/irbuilder.h"
@@ -1418,6 +1419,74 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBSmallToLargeConv4DMiddleUpgrade)
     EXPECT_EQ(middle->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
     EXPECT_EQ(CountMemoryPath(currFunctionPtr.get(), MemoryType::MEM_L0C, MemoryType::MEM_UB), 1);
     EXPECT_EQ(CountMemoryPath(currFunctionPtr.get(), MemoryType::MEM_L0C, MemoryType::MEM_DEVICE_DDR), 0);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+// 函数级用例: 直接看护 CheckUBConvTileShape 的对齐约束 —— conv 多维 tile 要求 dim-1 与末维
+// 均按 L0C_TILE_SIZE (16) 对齐, int8 按 INT8_ALIGN_SIZE (32) 对齐; 二维 tile 不属于 conv 分形校验。
+TEST_F(AssignMemoryTypeTest, TestCheckUBConvTileShapeDimAlignment)
+{
+    auto makeTensor = [](DataType dtype, const std::vector<int64_t>& shape) {
+        return IRBuilder().CreateTensorVar(dtype, shape, CreateTestConstIntVector(shape));
+    };
+    // dim-1 与末维均 16 对齐: 放行
+    EXPECT_TRUE(MemoryPathUtils::CheckUBConvTileShape(makeTensor(DT_FP16, {NUM_1, NUM_16, NUM_8, NUM_16})));
+    // dim-1 未 16 对齐 (末维对齐): 拒绝
+    EXPECT_FALSE(MemoryPathUtils::CheckUBConvTileShape(makeTensor(DT_FP16, {NUM_1, NUM_8, NUM_8, NUM_16})));
+    // 末维未 16 对齐 (dim-1 对齐): 拒绝
+    EXPECT_FALSE(MemoryPathUtils::CheckUBConvTileShape(makeTensor(DT_FP16, {NUM_1, NUM_16, NUM_8, NUM_8})));
+    // 二维 tile 不走 conv 分形校验
+    EXPECT_FALSE(MemoryPathUtils::CheckUBConvTileShape(makeTensor(DT_FP16, {NUM_16, NUM_16})));
+    // int8 按 32 元素对齐
+    EXPECT_TRUE(MemoryPathUtils::CheckUBConvTileShape(makeTensor(DT_INT8, {NUM_1, NUM_32, NUM_8, NUM_32})));
+    EXPECT_FALSE(MemoryPathUtils::CheckUBConvTileShape(makeTensor(DT_INT8, {NUM_1, NUM_16, NUM_8, NUM_32})));
+    EXPECT_FALSE(MemoryPathUtils::CheckUBConvTileShape(nullptr));
+}
+
+// 负向用例 (A5 + slice 新路径, conv 4 维 tile): dim-1 未 16 对齐 (末维对齐) 时 small-to-large
+// 升级被拒, middle 回落 DDR, 与 legacy 路径的拦截行为保持一致。
+TEST_F(AssignMemoryTypeTest, TestL0C2UBSmallToLargeConv4DDim1UnalignedDdrFallback)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    Platform::Instance().ReloadMemoryPaths("3510");
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(),
+                                                      "TestL0C2UBSmallToLargeConv4DDim1UnalignedDdrFallback",
+                                                      "TestL0C2UBSmallToLargeConv4DDim1UnalignedDdrFallback", nullptr);
+    ASSERT_NE(currFunctionPtr, nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("TestL0C2UBSmallToLargeConv4DDim1UnalignedDdrFallback",
+                                                   currFunctionPtr);
+
+    std::vector<int64_t> shapeIn = {NUM_1, NUM_8, NUM_8, NUM_16};
+    std::vector<int64_t> shapeMiddle = {NUM_1, NUM_8, NUM_16, NUM_16};
+    auto dynShapeIn = CreateTestConstIntVector(shapeIn);
+    auto dynShapeMiddle = CreateTestConstIntVector(shapeMiddle);
+    auto convL0cOut = IRBuilder().CreateTensorVar(DT_FP16, shapeIn, dynShapeIn);
+    convL0cOut->SetMemoryTypeBoth(MemoryType::MEM_L0C, true);
+    auto middle = IRBuilder().CreateTensorVar(DT_FP16, shapeMiddle, dynShapeMiddle);
+    constexpr int64_t sliceNum = NUM_16 / NUM_8;
+    std::vector<std::shared_ptr<LogicalTensor>> ubOuts;
+    for (int64_t i = 0; i < sliceNum; i++) {
+        ubOuts.push_back(IRBuilder().CreateTensorVar(DT_FP16, shapeIn, dynShapeIn));
+    }
+
+    // 单 contract 将 [1,8,8,16] 的 L0C 输入写入 middle [1,8,16,16], middle 仅被 slice 消费
+    auto& contractOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_CONTRACT, {convL0cOut}, {middle});
+    contractOp.SetOpAttribute(
+        std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{0, 0, 0, 0}));
+    for (int64_t i = 0; i < sliceNum; i++) {
+        auto& sliceOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_SLICE, {middle}, {ubOuts[i]});
+        sliceOp.SetOpAttribute(
+            std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, i * NUM_8, 0}, MemoryType::MEM_UB));
+    }
+
+    AssignMemoryType assignMemoryType;
+    ASSERT_EQ(assignMemoryType.RunOnFunction(*currFunctionPtr), SUCCESS);
+
+    EXPECT_EQ(middle->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(CountMemoryPath(currFunctionPtr.get(), MemoryType::MEM_L0C, MemoryType::MEM_UB), 0);
+    EXPECT_GE(CountMemoryPath(currFunctionPtr.get(), MemoryType::MEM_L0C, MemoryType::MEM_DEVICE_DDR), 1);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
     Platform::Instance().ReloadMemoryPaths("2201");
 }
