@@ -39,6 +39,7 @@
 #include <stdexcept>
 
 #include <algorithm>
+#include <numeric>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -1848,8 +1849,57 @@ struct EncodeDevAscendFunctionInfo {
         }
     }
 
+    // Topological emit order for useList only (callList / SortCallOpList unchanged).
+    // Kahn on callOpSuccDict: seed indeg-0 by callList index, then FIFO. Once per root.
+    std::vector<size_t> BuildCallListTopoEmitOrder()
+    {
+        const size_t n = callList.size();
+        std::vector<size_t> order;
+        order.reserve(n);
+        std::unordered_map<Operation*, size_t> opToIdx;
+        opToIdx.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            opToIdx[callList[i]] = i;
+        }
+        std::vector<int> indeg(n, 0);
+        std::vector<std::vector<size_t>> succIdx(n);
+        for (size_t i = 0; i < n; ++i) {
+            Operation* op = callList[i];
+            auto it = callOpSuccDict.find(op);
+            if (it == callOpSuccDict.end()) {
+                continue;
+            }
+            for (Operation* succ : it->second) {
+                auto sit = opToIdx.find(succ);
+                if (sit == opToIdx.end()) {
+                    continue;
+                }
+                size_t j = sit->second;
+                succIdx[i].push_back(j);
+                indeg[j]++;
+            }
+        }
+        std::queue<size_t> ready;
+        for (size_t i = 0; i < n; ++i) {
+            if (indeg[i] == 0) {
+                ready.push(i);
+            }
+        }
+        while (!ready.empty()) {
+            size_t u = ready.front();
+            ready.pop();
+            order.push_back(u);
+            for (size_t v : succIdx[u]) {
+                if (--indeg[v] == 0) {
+                    ready.push(v);
+                }
+            }
+        }
+        return order;
+    }
+
     void EncodeAnalysisOpUseOutCasts(const std::shared_ptr<LogicalTensor>& o, std::set<uint32_t>& allOutcastUseOpSet,
-                                     InoutOperationAttr& outcastOpAttr)
+                                     InoutOperationAttr& outcastOpAttr, const std::vector<size_t>& useListCallEmitOrder)
     {
         std::set<uint32_t> outcastUseOpSet;
         std::unordered_map<int, size_t> useListLastReadPos;
@@ -1857,7 +1907,7 @@ struct EncodeDevAscendFunctionInfo {
         bool useListHasDupRead = false;
         bool fullCoverHasDupRead = false;
         int dimSize = outcastOpAttr.dim;
-        for (size_t i = 0; i < callList.size(); i++) {
+        for (size_t i : useListCallEmitOrder) {
             auto& op = *callList[i];
             auto callAttr = dynamic_cast<CallOpAttribute*>(op.GetOpAttribute().get());
             std::vector<DevAscendFunctionCallOperandUse> useList;
@@ -1905,7 +1955,8 @@ struct EncodeDevAscendFunctionInfo {
         outcastOpAttrDict.insert({o, outcastOpAttr});
     }
 
-    void EncodeOutCasts(std::set<uint32_t>& allInOutcastUseOpSet, std::set<int>& noSuccOpSet)
+    void EncodeOutCasts(std::set<uint32_t>& allInOutcastUseOpSet, std::set<int>& noSuccOpSet,
+                        const std::vector<size_t>& useListCallEmitOrder)
     {
         for (auto& i : outcastList) {
             tensorList.Insert(i);
@@ -1915,7 +1966,7 @@ struct EncodeDevAscendFunctionInfo {
             auto dimSize = i->shape.size();
             outcastOpAttr.dim = dimSize;
             outcastOpAttr.cellMatchTableDesc = InitCellMatchTableDesc(i->GetShape(), std::vector<int64_t>(dimSize, 1));
-            EncodeAnalysisOpUseOutCasts(i, allInOutcastUseOpSet, outcastOpAttr);
+            EncodeAnalysisOpUseOutCasts(i, allInOutcastUseOpSet, outcastOpAttr, useListCallEmitOrder);
         }
 
         // Add edge from all stitchPolicyFullCoverProducerList's node to the single node
@@ -2575,8 +2626,9 @@ struct EncodeDevAscendFunctionInfo {
     {
         std::set<uint32_t> allInOutcastUseOpSet;
         std::set<int> noSuccOpSet;
+        std::vector<size_t> useListCallEmitOrder = BuildCallListTopoEmitOrder();
         EncodeIncasts(allInOutcastUseOpSet);
-        EncodeOutCasts(allInOutcastUseOpSet, noSuccOpSet);
+        EncodeOutCasts(allInOutcastUseOpSet, noSuccOpSet, useListCallEmitOrder);
 
         /*
          * As we need a reference of null, we use the 0-th element for the reference of null for

@@ -349,8 +349,8 @@ inline uint32_t CellMatchHandleFillEnhanceExec(int cellIndex, uint64_t* cellMatc
     uint64_t curTagId = CellMatchGetTagId(meta);
     uint32_t targetCount = 0, targetIndex = 0;
     if (maxCount == 0) {
-        DEV_VERBOSE_DEBUG("Op type %u not supported in cell[%d], maxCount=0", myOpType, cellIndex);
-        return static_cast<uint32_t>(CtrlErr::CELL_MATCH_OP_TYPE_NOT_SUPPORTED);
+        DEV_VERBOSE_DEBUG("Skip fill in cell[%d], opType=%u, maxCount=0", cellIndex, myOpType);
+        return 0;
     }
 
     if (CellMatchIsMutexOp(myOpType, curActiveOpType)) {
