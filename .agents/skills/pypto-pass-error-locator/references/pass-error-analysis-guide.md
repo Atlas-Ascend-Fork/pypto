@@ -715,10 +715,15 @@ sed -n '<line-15>,<line+15>p' <source_file>
 当前 Pass 报错说属性缺失，必须通过 `Before` 图来验证图的真实状态。
 
 ```bash
-# 针对算子或张量进行查询
+# 针对算子进行查询
 python3 scripts/computation_graph_analyzer.py \
   --json-path <before_json_path> \
-  --target-node <op_magic_or_tensor_name>
+  --op-magic <op_magic>
+
+# 针对张量进行查询
+python3 scripts/computation_graph_analyzer.py \
+  --json-path <before_json_path> \
+  --tensor-magic <tensor_magic>
 ```
 
 **交叉验证逻辑与防坑预警：**
