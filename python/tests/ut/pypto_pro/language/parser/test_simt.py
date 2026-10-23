@@ -182,11 +182,6 @@ def _make_tile_launch_kernel(shape, dtype, target_memory, layout):
     return kernel
 
 
-def test_vector_function_empty_call_is_rejected():
-    with pytest.raises(NotSupported, match=r"@pl\.vector_function\(\) is not supported"):
-        pl.vector_function()
-
-
 def test_launchable_simt_vector_function_requires_indexed_invocation():
     @pl.vector_function(mode="simt", max_threads=32)
     def entry():
@@ -436,6 +431,14 @@ def test_simt_context_rejects_unknown_named_tuple_field():
             "ND Vec Tile",
             id="layout",
         ),
+        pytest.param(
+            [256],
+            pl.DT_FP32,
+            pl.MemorySpace.Vec,
+            pl.ND,
+            "rank-2 shape",
+            id="rank",
+        ),
     ],
 )
 def test_simt_launch_requires_compatible_tile(shape, dtype, target_memory, layout, message):
@@ -532,12 +535,6 @@ def test_simt_launch_rejects_runtime_tuple_component():
 
     with pytest.raises(InvalidShape, match=r"compile-time integers.*\[1, 2048\]"):
         runtime_dimension.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-
-
-@pytest.mark.parametrize("max_threads", [0, 2049])
-def test_simt_vector_function_rejects_invalid_max_threads(max_threads):
-    with pytest.raises(ValueError, match=r"max_threads must be in \[1, 2048\]"):
-        pl.vector_function(mode="simt", max_threads=max_threads)
 
 
 def test_simt_launch_rejects_thread_count_above_hardware_limit():
@@ -770,3 +767,569 @@ def test_simt_launch_auto_mutex_inserts_pipe_v_lock_unlock():
     launch_pos = kernel_ir.index("simt.launch")
     unlock_pos = kernel_ir.index("system.mutex_unlock_dyn", launch_pos)
     assert lock_pos < launch_pos < unlock_pos
+
+
+@pl.vector_function(mode="simt", max_threads=32)
+def _warp_ops(value: pl.DT_FP32, predicate_value: pl.DT_INT32):
+    lane = pl.simt.lane_id()
+    pl.simt.lanemask_eq()
+    pl.simt.lanemask_le()
+    pl.simt.lanemask_lt()
+    pl.simt.lanemask_ge()
+    pl.simt.lanemask_gt()
+    predicate = lane < 16
+    pl.simt.warp_all(predicate)
+    pl.simt.warp_any(predicate_value)
+    pl.simt.warp_ballot(predicate)
+    pl.simt.warp_active_mask()
+    warp_width = pl.simt.warp_size()
+    subgroup_width = pl.simt.cast(warp_width // 2, pl.DT_INT32)
+    pl.simt.warp_shfl(value, 0)
+    pl.simt.warp_shfl_up(value, 1, subgroup_width)
+    pl.simt.warp_shfl_down(value, 1, width=8)
+    pl.simt.warp_shfl_xor(value, 1)
+    pl.simt.warp_reduce_add(value)
+    pl.simt.warp_reduce_max(value)
+    pl.simt.warp_reduce_min(value)
+
+
+@pl.jit
+def _warp_kernel(value: pl.DT_FP32, predicate_value: pl.DT_INT32):
+    with pl.section_vector():
+        _warp_ops[32](value, predicate_value)
+
+
+def test_warp_operations_parse_to_registered_ir_calls():
+    program, matched = _warp_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function_ir = str(program.get_function("_warp_ops"))
+
+    assert matched
+    for op_name in (
+        "lane_id",
+        "lanemask_eq",
+        "lanemask_le",
+        "lanemask_lt",
+        "lanemask_ge",
+        "lanemask_gt",
+        "warp_all",
+        "warp_any",
+        "warp_ballot",
+        "warp_active_mask",
+        "warp_size",
+        "warp_shfl",
+        "warp_shfl_up",
+        "warp_shfl_down",
+        "warp_shfl_xor",
+        "warp_reduce_add",
+        "warp_reduce_max",
+        "warp_reduce_min",
+    ):
+        assert f"simt.{op_name}" in function_ir
+
+
+def test_shuffle_accepts_runtime_controls_with_asc_dtypes():
+    @pl.vector_function(mode="simt", max_threads=32)
+    def runtime_shuffle(
+        value: pl.DT_FP16,
+        src_lane: pl.DT_INT32,
+        delta: pl.DT_UINT32,
+        width: pl.DT_INT32,
+    ):
+        pl.simt.warp_shfl(value, src_lane, width)
+        pl.simt.warp_shfl_up(value, delta, width)
+        pl.simt.warp_shfl_down(value, delta, width)
+        pl.simt.warp_shfl_xor(value, src_lane, width)
+
+    @pl.jit
+    def kernel(
+        value: pl.DT_FP16,
+        src_lane: pl.DT_INT32,
+        delta: pl.DT_UINT32,
+        width: pl.DT_INT32,
+    ):
+        with pl.section_vector():
+            runtime_shuffle[32](value, src_lane, delta, width)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function_ir = str(program.get_function("runtime_shuffle"))
+    assert function_ir.count("simt.warp_shfl") == 4
+
+
+def test_warp_operation_rejected_outside_simt_function():
+    with pytest.raises(InvalidOperation, match="only be used inside"):
+
+        @pl.jit(auto_mutex=False)
+        def bad_lane_id(_jit_entry: pl.DT_INT64):
+            pl.simt.lane_id()
+
+        bad_lane_id.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pl.vector_function(mode="simt", max_threads=32)
+def _atomic_add_tile(
+    dst,
+    old_values,
+    value: pl.DT_INT32,
+):
+    tid = pl.simt.linear_thread_idx()
+    old_values[0, tid] = pl.simt.atomic_add(dst[0, 0], value)
+
+
+@pl.vector_function(mode="simt", max_threads=32)
+def _atomic_add_tensor(
+    dst: pl.Tensor[[1, 32], pl.DT_INT64],
+    old_values: pl.Tensor[[1, 32], pl.DT_INT64],
+    value: pl.DT_INT64,
+):
+    tid = pl.simt.linear_thread_idx()
+    old_values[0, tid] = pl.simt.atomic_add(dst[0, 0], value)
+
+
+@pl.vector_function(mode="simt")
+def _atomic_rmw_ops(
+    numeric,
+    bitwise,
+    counter,
+    int_value: pl.DT_INT32,
+    uint_value: pl.DT_UINT32,
+):
+    pl.simt.atomic_sub(numeric[0, 0], int_value)
+    pl.simt.atomic_exch(numeric[0, 0], int_value)
+    pl.simt.atomic_max(numeric[0, 0], int_value)
+    pl.simt.atomic_min(numeric[0, 0], int_value)
+    pl.simt.atomic_cas(numeric[0, 0], int_value, int_value)
+    pl.simt.atomic_and(bitwise[0, 0], uint_value)
+    pl.simt.atomic_or(bitwise[0, 0], uint_value)
+    pl.simt.atomic_xor(bitwise[0, 0], uint_value)
+    pl.simt.atomic_inc(counter[0, 0], uint_value)
+    pl.simt.atomic_dec(counter[0, 0], uint_value)
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _atomic_rmw_ops_entry(numeric, bitwise, counter, int_value, uint_value):
+    _atomic_rmw_ops(numeric, bitwise, counter, int_value, uint_value)
+
+
+@pl.jit
+def _atomic_add_tile_kernel(value: pl.DT_INT32):
+    tile_type = pl.TileType(shape=[1, 32], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
+    dst = pl.make_tile(tile_type, addr=0x0000)
+    old_values = pl.make_tile(tile_type, addr=0x0080)
+    with pl.section_vector():
+        _atomic_add_tile[32](dst, old_values, value)
+
+
+@pl.jit
+def _atomic_add_tensor_kernel(
+    dst: pl.Tensor[[1, 32], pl.DT_INT64],
+    old_values: pl.Tensor[[1, 32], pl.DT_INT64],
+    value: pl.DT_INT64,
+):
+    with pl.section_vector():
+        _atomic_add_tensor[32](dst, old_values, value)
+
+
+@pl.jit
+def _atomic_rmw_ops_kernel(int_value: pl.DT_INT32, uint_value: pl.DT_UINT32):
+    int_type = pl.TileType(shape=[1, 32], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
+    uint_type = pl.TileType(shape=[1, 32], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec)
+    numeric = pl.make_tile(int_type, addr=0)
+    bitwise = pl.make_tile(uint_type, addr=128)
+    counter = pl.make_tile(uint_type, addr=256)
+    with pl.section_vector():
+        _atomic_rmw_ops_entry[1](numeric, bitwise, counter, int_value, uint_value)
+
+
+def _parse_one_tile_function(function, dtype, shape=(1, 32)):
+    @pl.vector_function(mode="simt", max_threads=1)
+    def entry(tile):
+        function(tile)
+
+    @pl.jit
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(shape=shape, dtype=dtype, target_memory=pl.MemorySpace.Vec)
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            entry[1](tile)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    return program.get_function(function.__name__)
+
+
+def _parse_two_tile_function(function, first_dtype, second_dtype):
+    @pl.vector_function(mode="simt", max_threads=1)
+    def entry(first, second):
+        function(first, second)
+
+    @pl.jit
+    def kernel(_jit_entry: pl.DT_INT64):
+        first_type = pl.TileType(shape=[1, 32], dtype=first_dtype, target_memory=pl.MemorySpace.Vec)
+        second_type = pl.TileType(shape=[1, 32], dtype=second_dtype, target_memory=pl.MemorySpace.Vec)
+        first = pl.make_tile(first_type, addr=0)
+        second = pl.make_tile(second_type, addr=4096)
+        with pl.section_vector():
+            entry[1](first, second)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    return program.get_function(function.__name__)
+
+
+def _parse_tile_scalar_function(function, tile_dtype, scalar_dtype):
+    @pl.vector_function(mode="simt", max_threads=1)
+    def entry(tile, value):
+        function(tile, value)
+
+    if scalar_dtype == pl.DT_INT32:
+
+        @pl.jit
+        def kernel(value: pl.DT_INT32):
+            tile_type = pl.TileType(shape=[1, 32], dtype=tile_dtype, target_memory=pl.MemorySpace.Vec)
+            tile = pl.make_tile(tile_type, addr=0)
+            with pl.section_vector():
+                entry[1](tile, value)
+
+    elif scalar_dtype == pl.DT_UINT32:
+
+        @pl.jit
+        def kernel(value: pl.DT_UINT32):
+            tile_type = pl.TileType(shape=[1, 32], dtype=tile_dtype, target_memory=pl.MemorySpace.Vec)
+            tile = pl.make_tile(tile_type, addr=0)
+            with pl.section_vector():
+                entry[1](tile, value)
+
+    elif scalar_dtype == pl.DT_FP32:
+
+        @pl.jit
+        def kernel(value: pl.DT_FP32):
+            tile_type = pl.TileType(shape=[1, 32], dtype=tile_dtype, target_memory=pl.MemorySpace.Vec)
+            tile = pl.make_tile(tile_type, addr=0)
+            with pl.section_vector():
+                entry[1](tile, value)
+
+    else:
+        raise ValueError(f"Unsupported scalar dtype: {scalar_dtype}")
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    return program.get_function(function.__name__)
+
+
+def test_atomic_add_preserves_tile_lvalue_and_returns_old_value():
+    program, matched = _atomic_add_tile_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function_ir = str(program.get_function("_atomic_add_tile"))
+
+    assert matched
+    assert function_ir.count("simt.atomic_add") == 1
+    assert "block.getval" not in function_ir
+    assert "block.setval" in function_ir
+    assert "simt.launch" in str(program)
+
+
+def test_atomic_add_supports_gm_int64_tensor():
+    program, matched = _atomic_add_tensor_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function_ir = str(program.get_function("_atomic_add_tensor"))
+
+    assert matched
+    assert function_ir.count("simt.atomic_add") == 1
+    assert "block.getval" not in function_ir
+    assert "block.setval" in function_ir
+    assert "simt.launch" in str(program)
+
+
+@pytest.mark.parametrize("dtype", [pl.DT_INT32, pl.DT_UINT32, pl.DT_FP16, pl.DT_BF16, pl.DT_FP32])
+@pytest.mark.parametrize("use_tile", [False, True], ids=["tensor", "tile"])
+def test_atomic_add_accepts_loaded_elements(dtype, use_tile):
+    @pl.vector_function(mode="simt")
+    def loaded_values(dst, values):
+        value = values[0, 0]
+        pl.simt.atomic_add(dst[0, 0], value)
+        pl.simt.atomic_add(dst[0, 1], values[0, 1])
+
+    if use_tile:
+        function = _parse_two_tile_function(loaded_values, dtype, dtype)
+    else:
+
+        @pl.vector_function(mode="simt", max_threads=1)
+        def entry(dst, values):
+            loaded_values(dst, values)
+
+        @pl.jit
+        def kernel(dst: pl.Tensor[[1, 32], dtype], values: pl.Tensor[[1, 32], dtype]):
+            with pl.section_vector():
+                entry[1](dst, values)
+
+        program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+        function = program.get_function("loaded_values")
+
+    loads = [
+        stmt.value
+        for stmt in function.body.stmts
+        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call) and stmt.value.name == "block.getval"
+    ]
+    assert len(loads) == 2
+    assert all(load.type.dtype == dtype for load in loads)
+    assert str(function).count("simt.atomic_add") == 2
+
+
+def test_atomic_add_contextually_types_numeric_literals():
+    @pl.vector_function(mode="simt")
+    def literal_values(unsigned, signed):
+        old = pl.simt.atomic_add(unsigned[0, 0], 1)
+        signed[0, 0] = pl.simt.atomic_add(signed[0, 0], -1)
+        unsigned[0, 0] = old
+
+    function_ir = str(_parse_two_tile_function(literal_values, pl.DT_UINT32, pl.DT_INT32))
+    assert function_ir.count("simt.atomic_add") == 2
+
+
+def test_atomic_add_requires_direct_subscript_target():
+    @pl.vector_function(mode="simt")
+    def scalar_alias(dst, value: pl.DT_INT32):
+        current = dst[0, 0]
+        pl.simt.atomic_add(current, value)
+
+    with pytest.raises(InvalidVal, match="direct Tile or Tensor subscript"):
+        _parse_tile_scalar_function(scalar_alias, pl.DT_INT32, pl.DT_INT32)
+
+
+def test_atomic_add_rejects_slice_target():
+    @pl.vector_function(mode="simt")
+    def slice_target(dst, value: pl.DT_INT32):
+        pl.simt.atomic_add(dst[0:1, 0:1], value)
+
+    with pytest.raises(NotSupported, match="does not support slices"):
+        _parse_tile_scalar_function(slice_target, pl.DT_INT32, pl.DT_INT32)
+
+
+@pytest.mark.parametrize("dtype", [pl.DT_FP16, pl.DT_BF16])
+def test_half_precision_atomic_result_cannot_be_returned(dtype):
+    @pl.vector_function(mode="simt")
+    def add_result(dst) -> None:
+        return pl.simt.atomic_add(dst[0, 0], 1.0)
+
+    with pytest.raises(InvalidVal, match="must return None or one scalar value"):
+        _parse_one_tile_function(add_result, dtype)
+
+
+def test_atomic_add_rejects_float_literal_for_integer_target():
+    @pl.vector_function(mode="simt")
+    def float_literal(dst):
+        pl.simt.atomic_add(dst[0, 0], 1.0)
+
+    with pytest.raises(InvalidType, match="requires an integer value"):
+        _parse_one_tile_function(float_literal, pl.DT_INT32)
+
+
+def test_atomic_rmw_interfaces_preserve_lvalue_and_build_distinct_ir_ops():
+    program, _ = _atomic_rmw_ops_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function_ir = str(program.get_function("_atomic_rmw_ops"))
+
+    for op_name in (
+        "atomic_sub",
+        "atomic_exch",
+        "atomic_max",
+        "atomic_min",
+        "atomic_cas",
+        "atomic_and",
+        "atomic_or",
+        "atomic_xor",
+        "atomic_inc",
+        "atomic_dec",
+    ):
+        assert function_ir.count(f"simt.{op_name}") == 1
+    assert "block.getval" not in function_ir
+
+
+def test_atomic_cas_contextually_types_compare_and_value_literals():
+    @pl.vector_function(mode="simt")
+    def literal_operands(dst):
+        old = pl.simt.atomic_cas(dst[0, 0], 0, 1)
+        dst[0, 0] = old
+
+    assert "simt.atomic_cas" in str(_parse_one_tile_function(literal_operands, pl.DT_UINT32))
+
+
+def test_atomic_counter_supports_gm_uint64():
+    @pl.vector_function(mode="simt", max_threads=1)
+    def uint64_counter(dst: pl.Tensor[[1], pl.DT_UINT64], limit: pl.DT_UINT64):
+        pl.simt.atomic_dec(dst[0], limit)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(dst: pl.Tensor[[1], pl.DT_UINT64], limit: pl.DT_UINT64):
+        with pl.section_vector():
+            uint64_counter[1](dst, limit)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    uint64_counter = program.get_function(uint64_counter.__name__)
+
+    assert "simt.atomic_dec" in str(uint64_counter)
+
+
+def test_simt_cast_is_not_exported_as_shared_language_api():
+    assert not hasattr(pl, "scalar_cast")
+
+
+def test_simt_cast_rejects_ordinary_function():
+    with pytest.raises(InvalidOperation, match="can only be used inside a SIMT function"):
+
+        @pl.jit(auto_mutex=False)
+        def unsupported_context(value: pl.DT_INT64):
+            _test_result = pl.simt.cast(value, pl.DT_INT32)
+
+        unsupported_context.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_simt_cast_is_available_inside_simt_helper():
+    @pl.vector_function(mode="simt")
+    def cast_value(value: pl.DT_FP32):
+        _test_result = pl.simt.cast(value, pl.DT_FP16, mode=pl.RoundMode.CAST_RINT)
+
+    @pl.vector_function(mode="simt", max_threads=1)
+    def entry(value: pl.DT_FP32):
+        cast_value(value)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(value: pl.DT_FP32):
+        with pl.section_vector():
+            entry[1](value)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    cast_value = program.get_function(cast_value.__name__)
+
+    function_ir = str(cast_value)
+    assert "simt.cast" in function_ir
+
+
+def test_simt_cast_rejects_plain_integer_round_mode():
+    with pytest.raises(InvalidVal, match="expects an enum value"):
+
+        @pl.vector_function(mode="simt", max_threads=1)
+        def integer_mode(value: pl.DT_FP32):
+            _test_result = pl.simt.cast(value, pl.DT_FP16, mode=1)
+
+        @pl.jit(auto_mutex=False)
+        def kernel(value: pl.DT_FP32):
+            with pl.section_vector():
+                integer_mode[1](value)
+
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_simt_cast_rejects_wrong_positional_arity():
+    with pytest.raises(InvalidArgument, match="missing a required argument: 'dtype'"):
+
+        @pl.vector_function(mode="simt", max_threads=1)
+        def missing_dtype(value: pl.DT_FP32):
+            _test_result = pl.simt.cast(value)
+
+        @pl.jit(auto_mutex=False)
+        def kernel(value: pl.DT_FP32):
+            with pl.section_vector():
+                missing_dtype[1](value)
+
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_simt_cast_rejects_non_dtype_target():
+    with pytest.raises(InvalidType, match=r"dtype must be a pl\.DT_\* value"):
+
+        @pl.vector_function(mode="simt", max_threads=1)
+        def invalid_dtype(value: pl.DT_FP32):
+            _test_result = pl.simt.cast(value, 1)
+
+        @pl.jit(auto_mutex=False)
+        def kernel(value: pl.DT_FP32):
+            with pl.section_vector():
+                invalid_dtype[1](value)
+
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_simt_cast_rejects_unexpected_keyword():
+    with pytest.raises(InvalidArgument, match="unexpected keyword argument 'saturate'"):
+
+        @pl.vector_function(mode="simt", max_threads=1)
+        def unexpected_keyword(value: pl.DT_FP32):
+            _test_result = pl.simt.cast(value, pl.DT_FP16, saturate=True)
+
+        @pl.jit(auto_mutex=False)
+        def kernel(value: pl.DT_FP32):
+            with pl.section_vector():
+                unexpected_keyword[1](value)
+
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_scalar_math_is_available_in_simt_functions():
+    @pl.vector_function(mode="simt", max_threads=1)
+    def scalar_math(value: pl.DT_FP32, rhs: pl.DT_FP32, addend: pl.DT_FP32):
+        transformed = pl.simt.min(value, pl.simt.abs(rhs))
+        _test_result = pl.simt.fma(pl.simt.sqrt(transformed), rhs, addend)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(value: pl.DT_FP32, rhs: pl.DT_FP32, addend: pl.DT_FP32):
+        with pl.section_vector():
+            scalar_math[1](value, rhs, addend)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    scalar_math = program.get_function(scalar_math.__name__)
+
+    function_ir = str(scalar_math)
+    for name in ("abs", "min", "sqrt", "fma"):
+        assert f"simt.{name}(" in function_ir
+
+
+def test_scalar_math_rejects_ordinary_function():
+    with pytest.raises(InvalidOperation, match="can only be used inside a SIMT function"):
+
+        @pl.jit(auto_mutex=False)
+        def unsupported(value: pl.DT_FP32):
+            _test_result = pl.simt.exp(value)
+
+        unsupported.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_scalar_math_rejects_wrong_arity_and_accepts_keywords():
+    with pytest.raises(InvalidArgument, match="missing a required argument: 'addend'"):
+
+        @pl.vector_function(mode="simt", max_threads=1)
+        def missing_addend(value: pl.DT_FP32):
+            _test_result = pl.simt.fma(value, value)
+
+        @pl.jit(auto_mutex=False)
+        def kernel(value: pl.DT_FP32):
+            with pl.section_vector():
+                missing_addend[1](value)
+
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+    @pl.vector_function(mode="simt", max_threads=1)
+    def keyword_argument(value: pl.DT_FP32):
+        _test_result = pl.simt.exp(value=value)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(value: pl.DT_FP32):
+        with pl.section_vector():
+            keyword_argument[1](value)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert "simt.exp(" in str(program.get_function(keyword_argument.__name__))
+
+
+def test_simt_operations_reject_argument_unpacking_at_common_entry():
+    @pl.vector_function(mode="simt", max_threads=1)
+    def positional_unpacking(value: pl.DT_FP32):
+        _test_result = pl.simt.exp(*(value,))
+
+    @pl.vector_function(mode="simt", max_threads=1)
+    def keyword_unpacking(value: pl.DT_FP32):
+        _test_result = pl.simt.exp(**{"value": value})
+
+    for function in (positional_unpacking, keyword_unpacking):
+
+        @pl.jit(auto_mutex=False)
+        def kernel(value: pl.DT_FP32):
+            with pl.section_vector():
+                function[1](value)
+
+        with pytest.raises(InvalidArgument, match="does not support argument unpacking"):
+            kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)

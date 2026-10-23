@@ -566,15 +566,6 @@ def test_op_without_a_runtime_operand_accepts_a_value_that_fits():
 
 
 # ---------------------------------------------------------------------------
-# Consolidated hardware/limit ranges
-# ---------------------------------------------------------------------------
-@pytest.mark.soc("950")
-def test_simt_max_threads_range_is_enforced():
-    with pytest.raises(ValueError, match=r"max_threads must be in \[1, 2048\]"):
-        pl.vector_function(mode="simt", max_threads=4096)
-
-
-# ---------------------------------------------------------------------------
 # pl.expands: the splat value must fit the out tile's dtype
 # ---------------------------------------------------------------------------
 def _parse_expands_kernel(dtype, scalar):

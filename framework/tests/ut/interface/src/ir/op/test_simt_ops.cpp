@@ -328,7 +328,7 @@ TEST(SimtOpsTest, BitcastRejectsMismatchedBitWidths)
     }
 }
 
-TEST(SimtOpsTest, Batch1MathTypeDeductionContracts)
+TEST(SimtOpsTest, TranscendentalUnaryMathTypeContracts)
 {
     auto& registry = OpRegistry::GetInstance();
     auto expect_unary_type = [&registry](const std::string& name, DataType input_dtype, DataType result_dtype) {
@@ -358,7 +358,7 @@ TEST(SimtOpsTest, Batch1MathTypeDeductionContracts)
                  npu::tile_fwk::Error);
 }
 
-TEST(SimtOpsTest, Batch4MathTypeDeductionContracts)
+TEST(SimtOpsTest, PiHyperbolicAndReciprocalCubeRootTypeContracts)
 {
     auto& registry = OpRegistry::GetInstance();
     auto expect_result = [&registry](const std::string& name, const std::vector<ExprPtr>& args, DataType result_dtype) {
@@ -451,7 +451,7 @@ TEST(SimtOpsTest, RejectsInvalidLaunchArgumentAbi)
                                        Kwargs{{"callee", std::string("simt_entry")}, {"max_threads", 1}}, Sp()),
                  npu::tile_fwk::Error);
 }
-TEST(SimtOpsTest, Batch2MathTypeDeductionContracts)
+TEST(SimtOpsTest, IntegerBitAndArithmeticTypeContracts)
 {
     auto& registry = OpRegistry::GetInstance();
     auto expect_result = [&registry](const std::string& name, const std::vector<ExprPtr>& args, DataType result_dtype) {
@@ -483,7 +483,7 @@ TEST(SimtOpsTest, Batch2MathTypeDeductionContracts)
     EXPECT_THROW((void)registry.Create("simt.sad", {i32, i32, i32}, Sp()), npu::tile_fwk::Error);
 }
 
-TEST(SimtOpsTest, Batch3MathTypeDeductionContracts)
+TEST(SimtOpsTest, LowPrecisionComparisonAndFp32BinaryTypeContracts)
 {
     auto& registry = OpRegistry::GetInstance();
     auto expect_result = [&registry](const std::string& name, const std::vector<ExprPtr>& args, DataType result_dtype) {

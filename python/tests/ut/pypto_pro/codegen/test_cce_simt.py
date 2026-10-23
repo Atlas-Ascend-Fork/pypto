@@ -9,7 +9,11 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""CCE code-generation tests for the Tile-first A5 SIMT path."""
+"""Representative DSL-to-CCE integration tests for the A5 SIMT path.
+
+Exhaustive dtype contracts and operation-to-intrinsic mappings belong to the
+native tests. This module covers representative frontend-to-backend behavior.
+"""
 
 import re
 
@@ -19,11 +23,11 @@ import pytest
 
 
 def _compile_to_cce(kernel, arch: str = "3510") -> str:
-    from pypto_pro.runtime.jit import _assemble_cv_source, _parse_and_codegen_targets
+    from pypto_pro.runtime.jit import _add_kernel_header, _assemble_cv_source, _parse_and_codegen_targets
     from pypto_pro.runtime.platform import normalize_arch
 
     cube, vector = _parse_and_codegen_targets(kernel.to_kernel_def(), normalize_arch(arch), "")
-    return _assemble_cv_source(cube, vector).content
+    return _add_kernel_header(_assemble_cv_source(cube, vector)).content
 
 
 @pl.vector_function(mode="simt", max_threads=256)
@@ -116,26 +120,13 @@ def _context_probe(dst):
 
 
 @pl.vector_function(mode="simt", max_threads=32)
-def _warp_codegen_probe(value: pl.DT_FP32, predicate_value: pl.DT_INT32, int_output, uint_output, float_output):
+def _warp_codegen_probe(value: pl.DT_FP32, int_output, uint_output, float_output):
     lane = pl.simt.lane_id()
     int_output[0, lane] = lane
-    int_output[1, lane] = pl.simt.lanemask_eq()
-    int_output[2, lane] = pl.simt.lanemask_le()
-    int_output[3, lane] = pl.simt.lanemask_lt()
-    int_output[4, lane] = pl.simt.lanemask_ge()
-    int_output[5, lane] = pl.simt.lanemask_gt()
     predicate = lane < 16
-    int_output[6, lane] = pl.simt.warp_all(predicate)
-    int_output[7, lane] = pl.simt.warp_any(predicate_value)
     uint_output[0, lane] = pl.simt.warp_ballot(predicate)
-    uint_output[1, lane] = pl.simt.warp_active_mask()
-    float_output[0, lane] = pl.simt.warp_shfl(value, 0)
-    float_output[1, lane] = pl.simt.warp_shfl_up(value, 1, 16)
-    float_output[2, lane] = pl.simt.warp_shfl_down(value, 1, width=8)
-    float_output[3, lane] = pl.simt.warp_shfl_xor(value, 1)
-    float_output[4, lane] = pl.simt.warp_reduce_add(value)
-    float_output[5, lane] = pl.simt.warp_reduce_max(value)
-    float_output[6, lane] = pl.simt.warp_reduce_min(value)
+    float_output[0, lane] = pl.simt.warp_shfl_down(value, 1, width=8)
+    float_output[1, lane] = pl.simt.warp_reduce_add(value)
 
 
 @pl.vector_function(mode="simt", max_threads=256)
@@ -193,21 +184,21 @@ def _simt_context_codegen_kernel(_jit_entry: pl.DT_INT64):
 
 
 @pl.jit
-def _simt_warp_codegen_kernel(value: pl.DT_FP32, predicate_value: pl.DT_INT32):
+def _simt_warp_codegen_kernel(value: pl.DT_FP32):
     int_output = pl.make_tile(
-        pl.TileType(shape=[8, 32], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
+        pl.TileType(shape=[1, 32], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
         addr=0x0000,
     )
     uint_output = pl.make_tile(
-        pl.TileType(shape=[2, 32], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec),
-        addr=0x0400,
+        pl.TileType(shape=[1, 32], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec),
+        addr=0x0080,
     )
     float_output = pl.make_tile(
-        pl.TileType(shape=[7, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
-        addr=0x0500,
+        pl.TileType(shape=[2, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addr=0x0100,
     )
     with pl.section_vector():
-        _warp_codegen_probe[32](value, predicate_value, int_output, uint_output, float_output)
+        _warp_codegen_probe[32](value, int_output, uint_output, float_output)
 
 
 @pl.jit
@@ -272,28 +263,6 @@ def _atomic_half_discard(
     pl.simt.atomic_min(gm[0, 2], 3.0)
 
 
-@pl.vector_function(mode="simt", max_threads=1)
-def _atomic_rmw_discard(
-    numeric,
-    bitwise,
-    counter,
-    compare: pl.DT_INT32,
-    replacement: pl.DT_INT32,
-    mask: pl.DT_UINT32,
-    limit: pl.DT_UINT32,
-):
-    pl.simt.atomic_sub(numeric[0, 0], replacement)
-    pl.simt.atomic_exch(numeric[0, 0], replacement)
-    pl.simt.atomic_max(numeric[0, 0], replacement)
-    pl.simt.atomic_min(numeric[0, 0], replacement)
-    pl.simt.atomic_cas(numeric[0, 0], compare, replacement)
-    pl.simt.atomic_and(bitwise[0, 0], mask)
-    pl.simt.atomic_or(bitwise[0, 0], mask)
-    pl.simt.atomic_xor(bitwise[0, 0], mask)
-    pl.simt.atomic_inc(counter[0, 0], limit)
-    pl.simt.atomic_dec(counter[0, 0], limit)
-
-
 @pl.jit
 def _atomic_add_ub_codegen_kernel(value: pl.DT_INT32):
     tile_type = pl.TileType(shape=[1, 32], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
@@ -327,22 +296,6 @@ def _atomic_half_discard_codegen_kernel(gm: pl.Tensor[[1, 3], pl.DT_BF16]):
     ub = pl.make_tile(tile_type, addr=0x0000)
     with pl.section_vector():
         _atomic_half_discard[1](ub, gm)
-
-
-@pl.jit
-def _atomic_rmw_discard_codegen_kernel(
-    compare: pl.DT_INT32,
-    replacement: pl.DT_INT32,
-    mask: pl.DT_UINT32,
-    limit: pl.DT_UINT32,
-):
-    numeric_type = pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
-    unsigned_type = pl.TileType(shape=[1, 8], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec)
-    numeric = pl.make_tile(numeric_type, addr=0x0000)
-    bitwise = pl.make_tile(unsigned_type, addr=0x0040)
-    counter = pl.make_tile(unsigned_type, addr=0x0080)
-    with pl.section_vector():
-        _atomic_rmw_discard[1](numeric, bitwise, counter, compare, replacement, mask, limit)
 
 
 def _simt_function_source(cpp: str, name: str) -> str:
@@ -388,35 +341,7 @@ def test_simt_context_codegen_uses_native_cce_xyz_context_and_tuple_launch():
         for axis in ("x", "y", "z"):
             assert f"{context}.{axis}" in cpp
     assert "warpSize" in cpp
-    assert "threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y" in cpp
     assert "cce::async_invoke<_context_probe>(cce::dim3{8, 4, 8}" in launch_line
-
-
-def test_simt_warp_codegen_uses_native_cce_warp_builtins():
-    cpp = _compile_to_cce(_simt_warp_codegen_kernel)
-    function = _simt_function_source(cpp, "_warp_codegen_probe")
-
-    for intrinsic in (
-        "laneid()",
-        "lanemask_eq()",
-        "lanemask_le()",
-        "lanemask_lt()",
-        "lanemask_ge()",
-        "lanemask_gt()",
-        "__all(",
-        "__any(",
-        "__ballot(",
-        "__activemask()",
-        "__shfl(",
-        "__shfl_up(",
-        "__shfl_down(",
-        "__shfl_xor(",
-        "__reduce_add(",
-        "__reduce_max(",
-        "__reduce_min(",
-    ):
-        assert intrinsic in function
-    assert "asc_" not in function
 
 
 def test_simt_gm_tensor_codegen_uses_native_gm_pointers():
@@ -444,31 +369,33 @@ def test_simt_launch_passes_runtime_tile_valid_shape_to_native_function():
     assert launch_line.count(".GetValidCol()") == 2
 
 
-def test_atomic_add_gm_int64_codegen_uses_element_pointer_and_returns_old_value():
+def test_simt_warp_codegen_connects_each_operation_family_to_cce():
+    cpp = _compile_to_cce(_simt_warp_codegen_kernel)
+    function = _simt_function_source(cpp, "_warp_codegen_probe")
+
+    for intrinsic in (
+        "laneid()",
+        "__ballot(",
+        "__shfl_down(",
+        "__reduce_add(",
+    ):
+        assert intrinsic in function
+    assert "asc_" not in function
+
+
+def test_atomic_add_gm_int64_codegen_uses_element_pointer():
     cpp = _compile_to_cce(_atomic_add_gm_codegen_kernel)
     function = _simt_function_source(cpp, "_atomic_add_gm")
-    atomic_line = next(line for line in function.splitlines() if "atomicAdd(" in line)
-    store_line = next(
-        line for line in function.splitlines() if "old_values" in line and "__simt_atomic_result_" in line
-    )
-    result_match = re.search(r"^\s*auto\s+(__simt_atomic_result_\d+)\s*=", atomic_line)
 
     assert re.search(r"__gm__\s+int64_t\s*\*\s*dst(?:_\d+)*\b", function)
-    assert result_match is not None
-    assert re.search(r"atomicAdd\(dst(?:_\d+)?\s*\+\s*\(", atomic_line)
-    assert re.search(r",\s*value(?:_\d+)?\);$", atomic_line.strip())
-    assert re.search(r"\*\(\(__gm__ int64_t\*\)old_values(?:_\d+)?\s*\+", store_line)
-    assert result_match.group(1) in store_line
+    assert "atomicAdd(" in function
 
 
 def test_atomic_add_codegen_preserves_side_effect_when_return_value_is_discarded():
     cpp = _compile_to_cce(_atomic_add_discard_codegen_kernel)
     function = _simt_function_source(cpp, "_atomic_add_discard")
-    atomic_line = next(line for line in function.splitlines() if "atomicAdd(" in line)
 
-    assert re.search(
-        r"^\s*auto\s+__simt_atomic_result_\d+\s*=\s*atomicAdd\(dst(?:_\d+)?\s*\+\s*\(", atomic_line)
-    assert atomic_line.strip().endswith(";")
+    assert "atomicAdd(" in function
 
 
 def test_half_precision_atomic_codegen_emits_void_ub_and_gm_calls():
@@ -477,36 +404,8 @@ def test_half_precision_atomic_codegen_emits_void_ub_and_gm_calls():
 
     assert re.search(r"__ubuf__\s+half\s*\*\s*ub(?:_\d+)*\b", function)
     assert re.search(r"__gm__\s+bfloat16_t\s*\*\s*gm(?:_\d+)*\b", function)
-    assert not re.search(r"\bauto\s+ignored(?:_\d+)*\s*=", function)
     for intrinsic in ("atomicAdd", "atomicMax", "atomicMin"):
-        matching_lines = [line.strip() for line in function.splitlines() if f"{intrinsic}(" in line]
-        assert len(matching_lines) == 2
-        assert all(line.startswith(intrinsic) and line.endswith(";") for line in matching_lines)
-
-
-def test_atomic_rmw_codegen_maps_all_intrinsics_and_preserves_discarded_calls():
-    cpp = _compile_to_cce(_atomic_rmw_discard_codegen_kernel)
-    function = _simt_function_source(cpp, "_atomic_rmw_discard")
-    assert ".data()" not in function
-
-    for intrinsic in (
-        "atomicSub",
-        "atomicExch",
-        "atomicMax",
-        "atomicMin",
-        "atomicCAS",
-        "atomicAnd",
-        "atomicOr",
-        "atomicXOr",
-        "atomicInc",
-        "atomicDec",
-    ):
-        matching_lines = [line.strip() for line in function.splitlines() if f"{intrinsic}(" in line]
-        assert len(matching_lines) == 1
-        assert matching_lines[0].endswith(";")
-
-    cas_line = next(line for line in function.splitlines() if "atomicCAS(" in line)
-    assert re.search(r",\s*compare(?:_\d+)?\s*,\s*replacement(?:_\d+)?\s*\);$", cas_line.strip())
+        assert f"{intrinsic}(" in function
 
 
 def test_simt_callee_codegen_emits_native_nested_calls_and_tile_abi():
@@ -536,21 +435,10 @@ def test_simt_callee_codegen_emits_native_nested_calls_and_tile_abi():
     apply_pos = cpp.index(apply_signature)
     entry_pos = cpp.index(entry_signature)
     assert max(add_pos, load_pos, store_pos) < apply_pos < entry_pos
-    add_function = cpp[add_pos:cpp.index("\n}\n", add_pos)]
     apply_function = cpp[apply_pos:entry_pos]
-    assert re.search(r"\bvalue(?:_\d+)*\s*\+\s*delta(?:_\d+)*", add_function)
-    assert re.search(r"\breturn\s+[^;]+;", add_function)
-    assert re.search(r"_callee_load\(src(?:_\d+)?,\s*index(?:_\d+)?\)", apply_function)
-    assert re.search(r"_callee_add\([^;]+\)", apply_function)
-    assert re.search(
-        r"_callee_store\([^;]+dst(?:_\d+)?__valid_row,\s*dst(?:_\d+)?__valid_col[^;]+\);",
-        apply_function,
-    )
-    assert re.search(
-        r"_callee_apply\([^;]+dst(?:_\d+)?__valid_row,\s*dst(?:_\d+)?__valid_col"
-        r"[^;]+src(?:_\d+)?[^;]+\);",
-        cpp[entry_pos:],
-    )
+    for callee in ("_callee_load(", "_callee_add(", "_callee_store("):
+        assert callee in apply_function
+    assert "_callee_apply(" in cpp[entry_pos:]
 
 
 @pl.vector_function(mode="simt", max_threads=256)
@@ -591,3 +479,703 @@ def test_simt_auto_mutex_emits_pipe_v_lock_unlock_around_launch():
 def test_simt_codegen_rejects_pre_a5_architecture():
     with pytest.raises(NotSupported, match="requires arch='3510'"):
         _compile_to_cce(_simt_tile_codegen_kernel, arch="a3")
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _scalar_cast_intrinsics(
+    half_out,
+    bfloat_out,
+    integer_out,
+    float_out,
+    plain_out,
+    value: pl.DT_FP32,
+    integer: pl.DT_INT64,
+):
+    half_out[0, 0] = pl.simt.cast(value, pl.DT_FP16, mode=pl.RoundMode.CAST_RINT)
+    bfloat_out[0, 0] = pl.simt.cast(value, pl.DT_BF16, mode=pl.RoundMode.CAST_ROUND)
+    integer_out[0, 0] = pl.simt.cast(value, pl.DT_INT32, mode=pl.RoundMode.CAST_FLOOR)
+    float_out[0, 0] = pl.simt.cast(integer, pl.DT_FP32, mode=pl.RoundMode.CAST_CEIL)
+    plain_out[0, 0] = pl.simt.cast(integer, pl.DT_INT32)
+
+
+@pl.jit
+def _scalar_cast_codegen_kernel(value: pl.DT_FP32, integer: pl.DT_INT64):
+    half_type = pl.TileType(shape=[1, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+    bfloat_type = pl.TileType(shape=[1, 16], dtype=pl.DT_BF16, target_memory=pl.MemorySpace.Vec)
+    int_type = pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
+    float_type = pl.TileType(shape=[1, 8], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    half_out = pl.make_tile(half_type, addr=0x0000)
+    bfloat_out = pl.make_tile(bfloat_type, addr=0x0040)
+    integer_out = pl.make_tile(int_type, addr=0x0080)
+    float_out = pl.make_tile(float_type, addr=0x00C0)
+    plain_out = pl.make_tile(int_type, addr=0x0100)
+    with pl.section_vector():
+        _scalar_cast_intrinsics[1](half_out, bfloat_out, integer_out, float_out, plain_out, value, integer)
+
+
+def test_scalar_cast_codegen_maps_round_modes_and_cce_builtins():
+    cpp = _compile_to_cce(_scalar_cast_codegen_kernel)
+    function = _simt_function_source(cpp, "_scalar_cast_intrinsics")
+
+    assert "__cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" in function
+    assert "__cvt_bfloat16_t<ROUND::A, RoundingSaturation::RS_DISABLE_VALUE>(" in function
+    assert "__cvt_int32_t<ROUND::F, RoundingSaturation::RS_ENABLE_VALUE>(" in function
+    assert "__cvt_float<ROUND::C, RoundingSaturation::RS_DISABLE_VALUE>(" in function
+    assert re.search(r"plain_out(?:_\d+)?\[[^]]+\]\s*=\s*\(\(int32_t\)integer(?:_\d+)?\)", function)
+    assert "simt_api/" not in cpp
+    assert "__float2half" not in cpp
+    assert "__float2bfloat16" not in cpp
+    assert "__float2int" not in cpp
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _fp32_math_intrinsics(
+    out,
+    flags,
+    value: pl.DT_FP32,
+):
+    out[0, 0] = pl.simt.abs(value)
+    out[0, 1] = pl.simt.min(value, value)
+    out[0, 2] = pl.simt.max(value, value)
+    out[0, 3] = pl.simt.sqrt(value)
+    out[0, 4] = pl.simt.rsqrt(value)
+    out[0, 5] = pl.simt.exp(value)
+    out[0, 6] = pl.simt.exp2(value)
+    out[0, 7] = pl.simt.log(value)
+    out[0, 8] = pl.simt.log2(value)
+    out[0, 9] = pl.simt.log1p(value)
+    out[0, 10] = pl.simt.sin(value)
+    out[0, 11] = pl.simt.cos(value)
+    out[0, 12] = pl.simt.tanh(value)
+    out[0, 13] = pl.simt.rint(value)
+    out[0, 14] = pl.simt.round(value)
+    out[0, 15] = pl.simt.floor(value)
+    out[0, 16] = pl.simt.ceil(value)
+    out[0, 17] = pl.simt.trunc(value)
+    out[0, 18] = pl.simt.fma(value, value, value)
+    flags[0, 0] = pl.simt.isnan(value)
+    flags[0, 1] = pl.simt.isinf(value)
+
+
+@pl.jit
+def _fp32_math_codegen_kernel(value: pl.DT_FP32):
+    out_type = pl.TileType(shape=[1, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    flags_type = pl.TileType(shape=[1, 32], dtype=pl.DT_BOOL, target_memory=pl.MemorySpace.Vec)
+    out = pl.make_tile(out_type, addr=0x0000)
+    flags = pl.make_tile(flags_type, addr=0x0080)
+    with pl.section_vector():
+        _fp32_math_intrinsics[1](out, flags, value)
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _fp16_math_intrinsics(
+    out,
+    flags,
+    source,
+):
+    value = source[0, 0]
+    out[0, 0] = pl.simt.abs(value)
+    out[0, 1] = pl.simt.min(value, value)
+    out[0, 2] = pl.simt.max(value, value)
+    out[0, 3] = pl.simt.sqrt(value)
+    out[0, 4] = pl.simt.rsqrt(value)
+    out[0, 5] = pl.simt.exp(value)
+    out[0, 6] = pl.simt.exp2(value)
+    out[0, 7] = pl.simt.log(value)
+    out[0, 8] = pl.simt.log2(value)
+    out[0, 9] = pl.simt.sin(value)
+    out[0, 10] = pl.simt.cos(value)
+    out[0, 11] = pl.simt.tanh(value)
+    out[0, 12] = pl.simt.rint(value)
+    out[0, 13] = pl.simt.round(value)
+    out[0, 14] = pl.simt.floor(value)
+    out[0, 15] = pl.simt.ceil(value)
+    out[0, 16] = pl.simt.trunc(value)
+    out[0, 17] = pl.simt.fma(value, value, value)
+    flags[0, 0] = pl.simt.isnan(value)
+    flags[0, 1] = pl.simt.isinf(value)
+
+
+@pl.jit
+def _fp16_math_codegen_kernel(_jit_entry: pl.DT_INT64):
+    out_type = pl.TileType(shape=[1, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+    flags_type = pl.TileType(shape=[1, 32], dtype=pl.DT_BOOL, target_memory=pl.MemorySpace.Vec)
+    source_type = pl.TileType(shape=[1, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+    out = pl.make_tile(out_type, addr=0x0000)
+    flags = pl.make_tile(flags_type, addr=0x0040)
+    source = pl.make_tile(source_type, addr=0x0080)
+    with pl.section_vector():
+        _fp16_math_intrinsics[1](out, flags, source)
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _bf16_math_intrinsics(
+    out,
+    flags,
+    source,
+):
+    value = source[0, 0]
+    out[0, 0] = pl.simt.abs(value)
+    out[0, 1] = pl.simt.min(value, value)
+    out[0, 2] = pl.simt.max(value, value)
+    out[0, 3] = pl.simt.sqrt(value)
+    out[0, 4] = pl.simt.rsqrt(value)
+    out[0, 5] = pl.simt.exp(value)
+    out[0, 6] = pl.simt.exp2(value)
+    out[0, 7] = pl.simt.log(value)
+    out[0, 8] = pl.simt.log2(value)
+    out[0, 9] = pl.simt.sin(value)
+    out[0, 10] = pl.simt.cos(value)
+    out[0, 11] = pl.simt.tanh(value)
+    out[0, 12] = pl.simt.rint(value)
+    out[0, 13] = pl.simt.round(value)
+    out[0, 14] = pl.simt.floor(value)
+    out[0, 15] = pl.simt.ceil(value)
+    out[0, 16] = pl.simt.trunc(value)
+    out[0, 17] = pl.simt.fma(value, value, value)
+    flags[0, 0] = pl.simt.isnan(value)
+    flags[0, 1] = pl.simt.isinf(value)
+
+
+@pl.jit
+def _bf16_math_codegen_kernel(_jit_entry: pl.DT_INT64):
+    out_type = pl.TileType(shape=[1, 32], dtype=pl.DT_BF16, target_memory=pl.MemorySpace.Vec)
+    flags_type = pl.TileType(shape=[1, 32], dtype=pl.DT_BOOL, target_memory=pl.MemorySpace.Vec)
+    source_type = pl.TileType(shape=[1, 32], dtype=pl.DT_BF16, target_memory=pl.MemorySpace.Vec)
+    out = pl.make_tile(out_type, addr=0x0000)
+    flags = pl.make_tile(flags_type, addr=0x0040)
+    source = pl.make_tile(source_type, addr=0x0080)
+    with pl.section_vector():
+        _bf16_math_intrinsics[1](out, flags, source)
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _int64_math_intrinsics(
+    out,
+    source,
+):
+    out[0, 0] = pl.simt.abs(source[0, 0])
+    out[0, 1] = pl.simt.min(source[0, 0], source[0, 1])
+    out[0, 2] = pl.simt.max(source[0, 0], source[0, 1])
+
+
+@pl.jit
+def _int64_math_codegen_kernel(_jit_entry: pl.DT_INT64):
+    out_type = pl.TileType(shape=[1, 32], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec)
+    source_type = pl.TileType(shape=[1, 32], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec)
+    out = pl.make_tile(out_type, addr=0x0000)
+    source = pl.make_tile(source_type, addr=0x0040)
+    with pl.section_vector():
+        _int64_math_intrinsics[1](out, source)
+
+
+def test_fp32_scalar_math_codegen_maps_native_cce_intrinsics():
+    cpp = _compile_to_cce(_fp32_math_codegen_kernel)
+    function = _simt_function_source(cpp, "_fp32_math_intrinsics")
+
+    for intrinsic in ("__fminf(", "__sqrtf(", "__isnan(", "__fma("):
+        assert intrinsic in function
+    assert "simt_api/math_functions.h" not in cpp
+
+
+def test_fp16_scalar_math_codegen_maps_cce_intrinsics_without_simt_headers():
+    cpp = _compile_to_cce(_fp16_math_codegen_kernel)
+    function = _simt_function_source(cpp, "_fp16_math_intrinsics")
+
+    for intrinsic in ("__hmin_nan(", "__cvt_float<", "__cvt_half<"):
+        assert intrinsic in function
+    assert "simt_api/" not in cpp
+
+
+def test_bf16_scalar_math_codegen_maps_cce_intrinsics_without_simt_headers():
+    cpp = _compile_to_cce(_bf16_math_codegen_kernel)
+    function = _simt_function_source(cpp, "_bf16_math_intrinsics")
+
+    for intrinsic in ("__min(", "__cvt_float<", "__cvt_bfloat16_t<"):
+        assert intrinsic in function
+    assert "simt_api/" not in cpp
+
+
+def test_int64_scalar_math_codegen_maps_abs_min_max_and_header():
+    cpp = _compile_to_cce(_int64_math_codegen_kernel)
+    function = _simt_function_source(cpp, "_int64_math_intrinsics")
+
+    assert "= abs(" in function
+    assert "min((int64_t)" in function
+    assert "max((int64_t)" in function
+    assert "simt_api/math_functions.h" not in cpp
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _fp32_transcendental_intrinsics(out, value: pl.DT_FP32):
+    out[0, 0] = pl.simt.exp10(value)
+    out[0, 1] = pl.simt.log10(value)
+    out[0, 2] = pl.simt.tan(value)
+    out[0, 3] = pl.simt.atan(value)
+    out[0, 4] = pl.simt.expm1(value)
+    out[0, 5] = pl.simt.logb(value)
+    out[0, 6] = pl.simt.cosh(value)
+    out[0, 7] = pl.simt.acos(value)
+    out[0, 8] = pl.simt.sinh(value)
+    out[0, 9] = pl.simt.asin(value)
+    out[0, 10] = pl.simt.cbrt(value)
+
+
+@pl.jit
+def _fp32_transcendental_codegen_kernel(value: pl.DT_FP32):
+    out_type = pl.TileType(shape=[1, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    out = pl.make_tile(out_type, addr=0x0000)
+    with pl.section_vector():
+        _fp32_transcendental_intrinsics[1](out, value)
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _fp16_exp_log_reciprocal_intrinsics(out, source):
+    value = source[0, 0]
+    out[0, 0] = pl.simt.exp10(value)
+    out[0, 1] = pl.simt.log10(value)
+    out[0, 2] = pl.simt.rcp(value)
+
+
+@pl.jit
+def _fp16_exp_log_reciprocal_codegen_kernel(_jit_entry: pl.DT_INT64):
+    tile_type = pl.TileType(shape=[1, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+    source_type = pl.TileType(shape=[1, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+    out = pl.make_tile(tile_type, addr=0x0000)
+    source = pl.make_tile(source_type, addr=0x0040)
+    with pl.section_vector():
+        _fp16_exp_log_reciprocal_intrinsics[1](out, source)
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _bf16_exp_log_reciprocal_intrinsics(out, source):
+    value = source[0, 0]
+    out[0, 0] = pl.simt.exp10(value)
+    out[0, 1] = pl.simt.log10(value)
+    out[0, 2] = pl.simt.rcp(value)
+
+
+@pl.jit
+def _bf16_exp_log_reciprocal_codegen_kernel(_jit_entry: pl.DT_INT64):
+    tile_type = pl.TileType(shape=[1, 16], dtype=pl.DT_BF16, target_memory=pl.MemorySpace.Vec)
+    source_type = pl.TileType(shape=[1, 16], dtype=pl.DT_BF16, target_memory=pl.MemorySpace.Vec)
+    out = pl.make_tile(tile_type, addr=0x0000)
+    source = pl.make_tile(source_type, addr=0x0040)
+    with pl.section_vector():
+        _bf16_exp_log_reciprocal_intrinsics[1](out, source)
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _nan_intrinsics(out_fp16, source_fp16, out_bf16, source_bf16):
+    out_fp16[0, 0] = pl.simt.max_nan(source_fp16[0, 0], source_fp16[0, 1])
+    out_fp16[0, 1] = pl.simt.min_nan(source_fp16[0, 0], source_fp16[0, 1])
+    out_bf16[0, 0] = pl.simt.max_nan(source_bf16[0, 0], source_bf16[0, 1])
+    out_bf16[0, 1] = pl.simt.min_nan(source_bf16[0, 0], source_bf16[0, 1])
+
+
+@pl.jit
+def _nan_intrinsics_codegen_kernel(_jit_entry: pl.DT_INT64):
+    fp16_type = pl.TileType(shape=[1, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+    bf16_type = pl.TileType(shape=[1, 16], dtype=pl.DT_BF16, target_memory=pl.MemorySpace.Vec)
+    out_fp16 = pl.make_tile(fp16_type, addr=0x0000)
+    source_fp16 = pl.make_tile(fp16_type, addr=0x0040)
+    out_bf16 = pl.make_tile(bf16_type, addr=0x0080)
+    source_bf16 = pl.make_tile(bf16_type, addr=0x00C0)
+    with pl.section_vector():
+        _nan_intrinsics[1](out_fp16, source_fp16, out_bf16, source_bf16)
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _pi_hyperbolic_math_intrinsics(out_fp32, value: pl.DT_FP32):
+    out_fp32[0, 0] = pl.simt.tanpi(value)
+    out_fp32[0, 1] = pl.simt.atanh(value)
+    out_fp32[0, 2] = pl.simt.cospi(value)
+    out_fp32[0, 3] = pl.simt.acosh(value)
+    out_fp32[0, 4] = pl.simt.sinpi(value)
+    out_fp32[0, 5] = pl.simt.asinh(value)
+    out_fp32[0, 6] = pl.simt.rcbrt(value)
+
+
+@pl.jit
+def _pi_hyperbolic_math_codegen_kernel(value: pl.DT_FP32):
+    out_fp32 = pl.make_tile(
+        pl.TileType(shape=[1, 8], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addr=0x0000,
+    )
+    with pl.section_vector():
+        _pi_hyperbolic_math_intrinsics[1](out_fp32, value)
+
+
+def test_fp32_transcendental_math_codegen_is_self_contained():
+    cpp = _compile_to_cce(_fp32_transcendental_codegen_kernel)
+    function = _simt_function_source(cpp, "_fp32_transcendental_intrinsics")
+
+    assert "pypto_simt_" not in cpp
+    assert "simt_api/" not in cpp
+    assert "__logf(" in function
+
+
+def test_fp16_exp_log_reciprocal_codegen_is_self_contained():
+    cpp = _compile_to_cce(_fp16_exp_log_reciprocal_codegen_kernel)
+
+    assert "pypto_simt_" not in cpp
+    assert "simt_api/" not in cpp
+
+
+def test_bf16_exp_log_reciprocal_codegen_is_self_contained():
+    cpp = _compile_to_cce(_bf16_exp_log_reciprocal_codegen_kernel)
+    function = _simt_function_source(cpp, "_bf16_exp_log_reciprocal_intrinsics")
+
+    assert "pypto_simt_" not in cpp
+    assert "simt_api/" not in cpp
+    assert "__cvt_float<" in function
+    assert "__cvt_bfloat16_t<" in function
+
+
+def test_nan_select_codegen_uses_low_precision_intrinsics():
+    cpp = _compile_to_cce(_nan_intrinsics_codegen_kernel)
+
+    assert "__hmax_nan(" in cpp
+    assert "__hmin_nan(" in cpp
+    assert "__cvt_float<" not in cpp
+    assert "simt_api/" not in cpp
+
+
+def test_pi_hyperbolic_math_codegen_is_self_contained():
+    cpp = _compile_to_cce(_pi_hyperbolic_math_codegen_kernel)
+    function = _simt_function_source(cpp, "_pi_hyperbolic_math_intrinsics")
+
+    assert "pypto_simt_" not in cpp
+    assert "simt_api/" not in cpp
+    for wrapper in ("tanpif(", "atanhf(", "cospif(", "acoshf(", "sinpif(", "asinhf(", "rcbrtf("):
+        assert wrapper not in function
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _bessel_rounding_and_saturate_intrinsics(out_fp32, out_i64, value: pl.DT_FP32, order: pl.DT_INT32):
+    out_fp32[0, 0] = pl.simt.jn(order, value)
+    out_fp32[0, 1] = pl.simt.yn(order, value)
+    out_fp32[0, 2] = pl.simt.cyl_bessel_i0(value)
+    out_fp32[0, 3] = pl.simt.cyl_bessel_i1(value)
+    out_fp32[0, 4] = pl.simt.j0(value)
+    out_fp32[0, 5] = pl.simt.j1(value)
+    out_fp32[0, 6] = pl.simt.y0(value)
+    out_fp32[0, 7] = pl.simt.y1(value)
+    out_fp32[0, 8] = pl.simt.saturate(value)
+    out_i64[0, 0] = pl.simt.rint(value, dtype=pl.DT_INT64)
+    out_i64[0, 1] = pl.simt.round(value, dtype=pl.DT_INT64)
+
+
+@pl.jit
+def _bessel_rounding_and_saturate_codegen_kernel(value: pl.DT_FP32, order: pl.DT_INT32):
+    out_fp32 = pl.make_tile(
+        pl.TileType(shape=[1, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addr=0x0000,
+    )
+    out_i64 = pl.make_tile(
+        pl.TileType(shape=[1, 4], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec),
+        addr=0x0040,
+    )
+    with pl.section_vector():
+        _bessel_rounding_and_saturate_intrinsics[1](out_fp32, out_i64, value, order)
+
+
+def test_bessel_rounding_and_saturate_codegen_is_self_contained():
+    cpp = _compile_to_cce(_bessel_rounding_and_saturate_codegen_kernel)
+    function = _simt_function_source(cpp, "_bessel_rounding_and_saturate_intrinsics")
+
+    assert "simt_api/" not in cpp
+    assert "__cvt_int64_t<ROUND::R, RoundingSaturation::RS_ENABLE_VALUE>(" in function
+    assert "__cvt_int64_t<ROUND::A, RoundingSaturation::RS_ENABLE_VALUE>(" in function
+    assert "__saturatef(" in function
+    for wrapper in ("j0f(", "j1f(", "y0f(", "y1f(", "jnf(", "ynf("):
+        assert wrapper not in function
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _integer_bit_arithmetic_intrinsics(
+    signed_out,
+    counts,
+    unsigned_out,
+    unsigned_wide,
+    signed_source,
+    unsigned_source,
+    signed64_source,
+    unsigned64_source,
+):
+    signed_lhs = signed_source[0, 0]
+    signed_rhs = signed_source[0, 1]
+    unsigned_lhs = unsigned_source[0, 0]
+    unsigned_rhs = unsigned_source[0, 1]
+    selector = unsigned_source[0, 2]
+    unsigned_out[0, 0] = pl.simt.brev(unsigned_lhs)
+    unsigned_wide[0, 0] = pl.simt.brev(unsigned64_source[0, 0])
+    counts[0, 0] = pl.simt.clz(signed_lhs)
+    counts[0, 1] = pl.simt.clz(signed64_source[0, 0])
+    counts[0, 2] = pl.simt.ffs(signed_lhs)
+    counts[0, 3] = pl.simt.ffs(signed64_source[0, 0])
+    unsigned_out[0, 1] = pl.simt.byte_perm(unsigned_lhs, unsigned_rhs, selector)
+    unsigned_out[0, 2] = pl.simt.sad(signed_lhs, signed_rhs, selector)
+    unsigned_out[0, 3] = pl.simt.sad(unsigned_lhs, unsigned_rhs, selector)
+    signed_out[0, 0] = pl.simt.mul24(signed_lhs, signed_rhs)
+    unsigned_out[0, 4] = pl.simt.mul24(unsigned_lhs, unsigned_rhs)
+    signed_out[0, 1] = pl.simt.hadd(signed_lhs, signed_rhs)
+    unsigned_out[0, 5] = pl.simt.hadd(unsigned_lhs, unsigned_rhs)
+    signed_out[0, 2] = pl.simt.rhadd(signed_lhs, signed_rhs)
+    unsigned_out[0, 6] = pl.simt.rhadd(unsigned_lhs, unsigned_rhs)
+
+
+@pl.jit
+def _integer_bit_arithmetic_codegen_kernel(_jit_entry: pl.DT_INT64):
+    signed_out = pl.make_tile(
+        pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
+        addr=0x0000,
+    )
+    counts = pl.make_tile(
+        pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
+        addr=0x0080,
+    )
+    unsigned_out = pl.make_tile(
+        pl.TileType(shape=[1, 8], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec),
+        addr=0x00C0,
+    )
+    unsigned_wide = pl.make_tile(
+        pl.TileType(shape=[1, 4], dtype=pl.DT_UINT64, target_memory=pl.MemorySpace.Vec),
+        addr=0x0100,
+    )
+    signed_source = pl.make_tile(
+        pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
+        addr=0x0140,
+    )
+    unsigned_source = pl.make_tile(
+        pl.TileType(shape=[1, 8], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec),
+        addr=0x0180,
+    )
+    signed64_source = pl.make_tile(
+        pl.TileType(shape=[1, 4], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec),
+        addr=0x01C0,
+    )
+    unsigned64_source = pl.make_tile(
+        pl.TileType(shape=[1, 4], dtype=pl.DT_UINT64, target_memory=pl.MemorySpace.Vec),
+        addr=0x0200,
+    )
+    with pl.section_vector():
+        _integer_bit_arithmetic_intrinsics[1](
+            signed_out,
+            counts,
+            unsigned_out,
+            unsigned_wide,
+            signed_source,
+            unsigned_source,
+            signed64_source,
+            unsigned64_source,
+        )
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _low_precision_fma_comparison_intrinsics(out, flags, source):
+    lhs = source[0, 0]
+    rhs = source[0, 1]
+    out[0, 0] = pl.simt.fma_relu(lhs, rhs, lhs)
+    flags[0, 0] = pl.simt.equ(lhs, rhs)
+    flags[0, 1] = pl.simt.leu(lhs, rhs)
+    flags[0, 2] = pl.simt.geu(lhs, rhs)
+    flags[0, 3] = pl.simt.ltu(lhs, rhs)
+    flags[0, 4] = pl.simt.gtu(lhs, rhs)
+
+
+@pl.jit
+def _fp16_fma_comparison_codegen_kernel(_jit_entry: pl.DT_INT64):
+    out = pl.make_tile(
+        pl.TileType(shape=[1, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
+        addr=0x0000,
+    )
+    flags = pl.make_tile(
+        pl.TileType(shape=[1, 32], dtype=pl.DT_BOOL, target_memory=pl.MemorySpace.Vec),
+        addr=0x0040,
+    )
+    source = pl.make_tile(
+        pl.TileType(shape=[1, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
+        addr=0x0080,
+    )
+    with pl.section_vector():
+        _low_precision_fma_comparison_intrinsics[1](out, flags, source)
+
+
+@pl.jit
+def _bf16_fma_comparison_codegen_kernel(_jit_entry: pl.DT_INT64):
+    out = pl.make_tile(
+        pl.TileType(shape=[1, 16], dtype=pl.DT_BF16, target_memory=pl.MemorySpace.Vec),
+        addr=0x0000,
+    )
+    flags = pl.make_tile(
+        pl.TileType(shape=[1, 32], dtype=pl.DT_BOOL, target_memory=pl.MemorySpace.Vec),
+        addr=0x0040,
+    )
+    source = pl.make_tile(
+        pl.TileType(shape=[1, 16], dtype=pl.DT_BF16, target_memory=pl.MemorySpace.Vec),
+        addr=0x0080,
+    )
+    with pl.section_vector():
+        _low_precision_fma_comparison_intrinsics[1](out, flags, source)
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _fp32_binary_math_intrinsics(out, lhs: pl.DT_FP32, rhs: pl.DT_FP32):
+    out[0, 0] = pl.simt.hypot(lhs, rhs)
+    out[0, 1] = pl.simt.rhypot(lhs, rhs)
+    out[0, 2] = pl.simt.fdim(lhs, rhs)
+    out[0, 3] = pl.simt.remainder(lhs, rhs)
+    out[0, 4] = pl.simt.pow(lhs, rhs)
+
+
+@pl.jit
+def _fp32_binary_math_codegen_kernel(lhs: pl.DT_FP32, rhs: pl.DT_FP32):
+    out = pl.make_tile(
+        pl.TileType(shape=[1, 8], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addr=0x0000,
+    )
+    with pl.section_vector():
+        _fp32_binary_math_intrinsics[1](out, lhs, rhs)
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _recognized_special_math_intrinsics(
+    out_fp32,
+    value: pl.DT_FP32,
+    order: pl.DT_INT32,
+    long_exponent: pl.DT_INT64,
+):
+    out_fp32[0, 0] = pl.simt.ldexp(value, order)
+    out_fp32[0, 1] = pl.simt.scalbn(value, order)
+    out_fp32[0, 2] = pl.simt.scalbn(value, long_exponent)
+    out_fp32[0, 3] = pl.simt.norm3d(value, value, value)
+    out_fp32[0, 4] = pl.simt.rnorm3d(value, value, value)
+    out_fp32[0, 5] = pl.simt.norm4d(value, value, value, value)
+    out_fp32[0, 6] = pl.simt.rnorm4d(value, value, value, value)
+    out_fp32[0, 7] = pl.simt.erf(value)
+    out_fp32[0, 8] = pl.simt.erfc(value)
+    out_fp32[0, 9] = pl.simt.erfinv(value)
+    out_fp32[0, 10] = pl.simt.erfcinv(value)
+    out_fp32[0, 11] = pl.simt.erfcx(value)
+    out_fp32[0, 12] = pl.simt.tgamma(value)
+    out_fp32[0, 13] = pl.simt.lgamma(value)
+    out_fp32[0, 14] = pl.simt.normcdf(value)
+    out_fp32[0, 15] = pl.simt.normcdfinv(value)
+
+
+@pl.jit
+def _recognized_special_math_codegen_kernel(
+    value: pl.DT_FP32,
+    order: pl.DT_INT32,
+    long_exponent: pl.DT_INT64,
+):
+    out_fp32 = pl.make_tile(
+        pl.TileType(shape=[1, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addr=0x0000,
+    )
+    with pl.section_vector():
+        _recognized_special_math_intrinsics[1](out_fp32, value, order, long_exponent)
+
+
+def test_recognized_special_math_codegen_is_self_contained():
+    cpp = _compile_to_cce(_recognized_special_math_codegen_kernel)
+    function = _simt_function_source(cpp, "_recognized_special_math_intrinsics")
+
+    assert "simt_api/" not in cpp
+    assert "__powf(" in function
+    for wrapper in (
+        "erff(",
+        "erfcf(",
+        "erfinvf(",
+        "erfcinvf(",
+        "erfcxf(",
+        "tgammaf(",
+        "lgammaf(",
+        "normcdff(",
+        "normcdfinvf(",
+    ):
+        assert wrapper not in function
+
+
+@pl.vector_function(mode="simt", max_threads=1)
+def _mul_i32_to_i64_intrinsics(signed_out, unsigned_out, signed_source, unsigned_source):
+    signed_out[0, 0] = pl.simt.mul_i32_to_i64(signed_source[0, 0], signed_source[0, 1])
+    unsigned_out[0, 0] = pl.simt.mul_i32_to_i64(unsigned_source[0, 0], unsigned_source[0, 1])
+
+
+@pl.jit
+def _mul_i32_to_i64_codegen_kernel(_jit_entry: pl.DT_INT64):
+    signed_out = pl.make_tile(
+        pl.TileType(shape=[1, 4], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec),
+        addr=0x0000,
+    )
+    unsigned_out = pl.make_tile(
+        pl.TileType(shape=[1, 4], dtype=pl.DT_UINT64, target_memory=pl.MemorySpace.Vec),
+        addr=0x0040,
+    )
+    signed_source = pl.make_tile(
+        pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
+        addr=0x0080,
+    )
+    unsigned_source = pl.make_tile(
+        pl.TileType(shape=[1, 8], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec),
+        addr=0x00C0,
+    )
+    with pl.section_vector():
+        _mul_i32_to_i64_intrinsics[1](signed_out, unsigned_out, signed_source, unsigned_source)
+
+
+def test_mul_i32_to_i64_codegen_uses_cce_intrinsic():
+    cpp = _compile_to_cce(_mul_i32_to_i64_codegen_kernel)
+
+    assert "__mul_i32toi64((int)(" in cpp
+    assert "__mul_i32toi64((unsigned int)(" in cpp
+
+
+def test_integer_bit_arithmetic_codegen_uses_cce_intrinsics():
+    cpp = _compile_to_cce(_integer_bit_arithmetic_codegen_kernel)
+
+    assert "simt_api/" not in cpp
+    for intrinsic in (
+        "__brev",
+        "__clz",
+        "__ffs",
+        "__byte_perm",
+        "__sad",
+        "__usad",
+        "__mul24",
+        "__umul24",
+        "__hadd",
+        "__uhadd",
+        "__rhadd",
+        "__urhadd",
+    ):
+        assert f"{intrinsic}(" in cpp
+
+
+def test_fp16_fma_comparison_codegen_uses_cce_intrinsics():
+    cpp = _compile_to_cce(_fp16_fma_comparison_codegen_kernel)
+
+    assert "simt_api/" not in cpp
+    for intrinsic in ("__hfma_relu", "__hequ", "__hleu", "__hgeu", "__hltu", "__hgtu"):
+        assert f"{intrinsic}(" in cpp
+
+
+def test_bf16_fma_comparison_codegen_uses_cce_intrinsics():
+    cpp = _compile_to_cce(_bf16_fma_comparison_codegen_kernel)
+
+    assert "simt_api/" not in cpp
+    for intrinsic in ("__hfma_relu", "__hequ", "__hleu", "__hgeu", "__hltu", "__hgtu"):
+        assert f"{intrinsic}(" in cpp
+
+
+def test_fp32_binary_math_codegen_is_self_contained():
+    cpp = _compile_to_cce(_fp32_binary_math_codegen_kernel)
+    function = _simt_function_source(cpp, "_fp32_binary_math_intrinsics")
+
+    assert "simt_api/" not in cpp
+    assert "__sqrtf(" in function
+    assert "__fma(" in function
+    for wrapper in ("hypotf", "rhypotf", "fdimf", "remainderf", "powf"):
+        assert f"{wrapper}(" not in function

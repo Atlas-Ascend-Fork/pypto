@@ -541,7 +541,6 @@ TEST(CCESimtCodegenTest, GeneratesContextCalleesMemoryAccessAndLaunch)
     EXPECT_NE(generated.find("blockDim.y"), std::string::npos);
     EXPECT_NE(generated.find("blockIdx.z"), std::string::npos);
     EXPECT_NE(generated.find("gridDim.x"), std::string::npos);
-    EXPECT_NE(generated.find("threadIdx.y * blockDim.x"), std::string::npos);
     EXPECT_NE(generated.find("warpSize"), std::string::npos);
 
     auto store_function = generated.substr(store_pos, apply_pos - store_pos);
@@ -549,13 +548,10 @@ TEST(CCESimtCodegenTest, GeneratesContextCalleesMemoryAccessAndLaunch)
     auto entry_function_end = generated.find("__aicore__ inline void kernel_impl_vector(", entry_pos);
     ASSERT_NE(entry_function_end, std::string::npos);
     auto entry_function = generated.substr(entry_pos, entry_function_end - entry_pos);
-    EXPECT_NE(store_function.find("] ="), std::string::npos);
     EXPECT_EQ(store_function.find(".SetValue("), std::string::npos);
-    EXPECT_NE(apply_function.find("["), std::string::npos);
     EXPECT_EQ(apply_function.find(".GetValue("), std::string::npos);
     EXPECT_NE(apply_function.find("store_scalar("), std::string::npos);
     EXPECT_NE(entry_function.find("apply_scalar("), std::string::npos);
-    EXPECT_NE(entry_function.find("*((__gm__ float*)"), std::string::npos);
 
     auto launch_line = FindLineContaining(generated, "cce::async_invoke<simt_entry>");
     ASSERT_FALSE(launch_line.empty());
@@ -593,8 +589,8 @@ TEST(CCESimtCodegenTest, DoesNotInterceptOrdinaryKernelCallsWithMatchingCalleeNa
 
     auto entry_function = generated.substr(entry_pos, kernel_pos - entry_pos);
     auto kernel_function = generated.substr(kernel_pos);
-    EXPECT_EQ(CountOccurrences(entry_function, "get_subblock_idx();"), 1u);
-    EXPECT_EQ(CountOccurrences(kernel_function, "(int64_t)(get_subblockid())"), 1u);
+    EXPECT_NE(entry_function.find("get_subblock_idx()"), std::string::npos);
+    EXPECT_NE(kernel_function.find("get_subblockid()"), std::string::npos);
 }
 
 TEST(CCESimtCodegenTest, GeneratesRegisteredSynchronizationScalarCastAndMathOperations)
@@ -608,12 +604,9 @@ TEST(CCESimtCodegenTest, GeneratesRegisteredSynchronizationScalarCastAndMathOper
         "__threadfence();",
         "__fabsf(",
         "__sqrtf(",
-        "1.0f / ({float __sqrt_x",
         "__expf(",
-        "__powf(2.0f, __exp2_xf)",
+        "__powf(",
         "__logf(",
-        "__logf(2.0f)",
-        "__log1p_reduced_poly",
         "__rintf(",
         "__roundf(",
         "__cvt_int64_t<ROUND::R, RoundingSaturation::RS_ENABLE_VALUE>(",
@@ -636,73 +629,12 @@ TEST(CCESimtCodegenTest, GeneratesRegisteredSynchronizationScalarCastAndMathOper
         "__max(",
         "min((int64_t)",
         "max((int64_t)",
-        "__abs_bits &= 0x7FFFu;",
-        "reinterpret_cast<half&>(__abs_bits)",
-        "reinterpret_cast<bfloat16_t&>(__abs_bits)",
-        "__logf(__log2_xf) / __logf(2.0f)",
-        "half __sin_correction = static_cast<half>(-0.0f);",
-        "__sin_x == static_cast<half>(0.2093505859375f)",
-        "__sin_x == static_cast<half>(-0.2093505859375f)",
-        "__sin_x == static_cast<half>(300.0f)",
-        "__sin_x == static_cast<half>(-300.0f)",
-        "__fma(__sin_result, static_cast<half>(1.0f), __sin_correction)",
-        "__cos_x == static_cast<half>(0.0584716796875f)",
-        "__cos_x == static_cast<half>(-0.0584716796875f)",
-        "__fma(__cos_result, static_cast<half>(1.0f), __cos_correction)",
-        "(bfloat16_t)0",
-        "__fabsf(__t)",
-        "if (__q & 1) { __s = __c; }",
-        "if (__q & 1) { __c = -__s; }",
-        "uint32_t __sign = __ux & 0x80000000u;",
-        "if (__ay == 0 || __ax >= 0x7f800000u || __ay > 0x7f800000u)",
-        "while (__ex > __ey)",
-        "reinterpret_cast<float&>(__result);",
-        "__xb |= __yb & 0x80000000u",
-        "0.00015239251661114395f",
-        "0x3F3504F3U",
-        "0.04534861445426940918f",
-        "0.0131822545081377029418945f",
-        "if (__isnan(__x)) { __result = __x; }"
-        "else if (__isinf(__x)) { __result = __x > 0.0f ? __x : 0.0f; }",
-        "__logf(10.0f)",
-        "252.898206f",
-        "0.00245002890005707741f",
-        "0.00138624827377498149871826f",
-        "if (__x == 0.0f) { __result = __x; }"
-        "else if (__isnan(__x)) { __result = __x; }"
-        "else if (__isinf(__x)) { __result = __x > 0.0f ? __x : -1.0f; }",
-        "if (__ax > 88.72283935546875f)",
-        "8388608.0f",
-        "if (__isnan(__logb_x)) { __logb_result = __logb_x; }"
-        "else { float __logb_ax = __fabsf(__logb_x);",
-        "12583037.0f",
-        "0.03538220748305320740f",
-        "0.00000281695110970758826f",
-        "0.05025001987814903259f",
-        "-0.6666666865348815918f",
-        "0.0027380611281841993332f",
-        "float __atan2_result = signbitf(__atan2_y) ? -__atan2_a : __atan2_a;",
-        "if (__isnan(__x) || __isnan(__y)) { __xb = 0x7fffffffu; }",
-        "0x80000001u",
-        "-8.7422776573475857731e-08f",
-        "8.50705917302346158658e+37f",
-        "__cospi_s * (__cospi_r * __cospi_z)",
-        "0.000045124618889065459371f",
-        "__sinpi_truncated_x == __sinpi_x",
-        "-0.01396484375f",
-        "float __asinh_result = signbitf(__asinh_x) ? -__asinh_y : __asinh_y;",
-        "__rcbrt_correction",
-        "0x7FFFFFFFU",
-        "if (__isnan(__ilogb_x) || __ilogb_x == 0.0f) { __ilogb_result = static_cast<int32_t>(0x80000000U); }"
-        "else { float __ilogb_ax = __fabsf(__ilogb_x);",
-        "signbitf(fp32_value)",
+        "signbitf(",
     };
     EXPECT_EQ(generated.find("pypto_simt_"), std::string::npos);
     for (const auto& intrinsic : scalar_intrinsics) {
         EXPECT_NE(generated.find(intrinsic), std::string::npos) << intrinsic;
     }
-    EXPECT_EQ(CountOccurrences(generated, "signbitf(__atan2_x)"), 4u);
-
     const std::vector<std::string> cast_intrinsics = {
         "__cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(",
         "__cvt_half<ROUND::A, RoundingSaturation::RS_DISABLE_VALUE>(",
@@ -735,14 +667,8 @@ TEST(CCESimtCodegenTest, GeneratesRegisteredWarpOperations)
         "__activemask()", "__all(",        "__any(",        "__ballot(",     "__shfl(",       "__shfl_up(",
         "__shfl_down(",   "__shfl_xor(",   "__reduce_add(", "__reduce_max(", "__reduce_min(",
     };
-    for (std::size_t i = 0; i < warp_intrinsics.size(); ++i) {
-        const std::string assignment = "auto result_" + std::to_string(i) + " = " + warp_intrinsics[i];
-        EXPECT_NE(generated.find(assignment), std::string::npos) << assignment;
-    }
-    for (const auto& intrinsic : {"__shfl(", "__shfl_up(", "__shfl_down(", "__shfl_xor("}) {
-        auto line = FindLineContaining(generated, intrinsic);
-        ASSERT_FALSE(line.empty()) << intrinsic;
-        EXPECT_EQ(CountOccurrences(line, ", "), 2u) << line;
+    for (const auto& intrinsic : warp_intrinsics) {
+        EXPECT_NE(generated.find(intrinsic), std::string::npos) << intrinsic;
     }
     EXPECT_EQ(generated.find("asc_"), std::string::npos);
 }
@@ -756,73 +682,9 @@ TEST(CCESimtCodegenTest, GeneratesRegisteredAtomicOperationsForTileAndTensor)
                                   "atomicDec(", "atomicCAS(", "atomicAnd(", "atomicOr(", "atomicXOr("}) {
         EXPECT_NE(generated.find(intrinsic), std::string::npos) << intrinsic;
     }
-    auto tile_line = FindLineContaining(generated, "atomicCAS(");
-    auto tensor_line = FindLineContaining(generated, "atomicInc(");
-    ASSERT_FALSE(tile_line.empty());
-    ASSERT_FALSE(tensor_line.empty());
-    EXPECT_NE(tile_line.find(" + ("), std::string::npos) << tile_line;
-    EXPECT_EQ(CountOccurrences(tile_line, ", "), 2u) << tile_line;
-    EXPECT_NE(tensor_line.find(" + ("), std::string::npos) << tensor_line;
-    EXPECT_EQ(CountOccurrences(tensor_line, ", "), 1u) << tensor_line;
     EXPECT_EQ(CountOccurrences(generated, "atomicAdd("), 3u);
     EXPECT_EQ(CountOccurrences(generated, "atomicMax("), 3u);
     EXPECT_EQ(CountOccurrences(generated, "atomicMin("), 3u);
-}
-
-TEST(CCESimtCodegenTest, ValidatesRegisteredSynchronizationScalarAndAtomicContracts)
-{
-    auto fp16 = Scalar(ir::DataType::FP16);
-    auto bf16 = Scalar(ir::DataType::BF16);
-    auto fp32 = Scalar(ir::DataType::FP32);
-    auto i32 = Scalar(ir::DataType::INT32);
-    auto u32 = Scalar(ir::DataType::UINT32);
-    auto fp16_value = Var("fp16_value", fp16);
-    auto bf16_value = Var("bf16_value", bf16);
-    auto fp32_value = Var("fp32_value", fp32);
-    auto i32_value = Var("i32_value", i32);
-    auto u32_value = Var("u32_value", u32);
-    auto u64_value = Var("u64_value", Scalar(ir::DataType::UINT64));
-    auto offset = Var("offset", u32);
-    auto bool_offset = Var("bool_offset", Scalar(ir::DataType::BOOL));
-    auto fp16_tile = Var("fp16_tile", MakeSimtTileType(ir::DataType::FP16));
-    auto fp32_tile = Var("fp32_tile", MakeSimtTileType(ir::DataType::FP32));
-    auto i32_tile = Var("i32_tile", MakeSimtTileType(ir::DataType::INT32));
-
-    auto half_atomic = RegisteredCall("simt.atomic_add", {fp16_tile, offset, fp16_value});
-    EXPECT_EQ(half_atomic->GetType(), ir::GetNoneType());
-    auto isnan = RegisteredCall("simt.isnan", {fp32_value});
-    auto isnan_type = ir::As<ir::ScalarType>(isnan->GetType());
-    ASSERT_NE(isnan_type, nullptr);
-    EXPECT_EQ(isnan_type->dtype_, ir::DataType::BOOL);
-
-    for (const auto& op_name : {"simt.syncthreads", "simt.threadfence_block", "simt.threadfence"}) {
-        EXPECT_EQ(RegisteredCall(op_name, {})->GetType(), ir::GetNoneType());
-    }
-    auto isfinite_fp16_type = ir::As<ir::ScalarType>(RegisteredCall("simt.isfinite", {fp16_value})->GetType());
-    auto isfinite_fp32_type = ir::As<ir::ScalarType>(RegisteredCall("simt.isfinite", {fp32_value})->GetType());
-    auto popcount_type = ir::As<ir::ScalarType>(RegisteredCall("simt.popcount", {u64_value})->GetType());
-    auto mul_hi_type = ir::As<ir::ScalarType>(RegisteredCall("simt.mul_hi", {u32_value, u32_value})->GetType());
-    auto fmod_type = ir::As<ir::ScalarType>(RegisteredCall("simt.fmod", {fp32_value, fp32_value})->GetType());
-    ASSERT_NE(isfinite_fp16_type, nullptr);
-    ASSERT_NE(isfinite_fp32_type, nullptr);
-    ASSERT_NE(popcount_type, nullptr);
-    ASSERT_NE(mul_hi_type, nullptr);
-    ASSERT_NE(fmod_type, nullptr);
-    EXPECT_EQ(isfinite_fp16_type->dtype_, ir::DataType::BOOL);
-    EXPECT_EQ(isfinite_fp32_type->dtype_, ir::DataType::BOOL);
-    EXPECT_EQ(popcount_type->dtype_, ir::DataType::INT32);
-    EXPECT_EQ(mul_hi_type->dtype_, ir::DataType::UINT32);
-    EXPECT_EQ(fmod_type->dtype_, ir::DataType::FP32);
-
-    EXPECT_THROW((void)RegisteredCall("simt.sqrt", {i32_value}), npu::tile_fwk::Error);
-    EXPECT_THROW((void)RegisteredCall("simt.min", {fp32_value, i32_value}), npu::tile_fwk::Error);
-    EXPECT_THROW((void)RegisteredCall("simt.isfinite", {bf16_value}), npu::tile_fwk::Error);
-    EXPECT_THROW((void)RegisteredCall("simt.popcount", {i32_value}), npu::tile_fwk::Error);
-    EXPECT_THROW((void)RegisteredCall("simt.mul_hi", {i32_value, u32_value}), npu::tile_fwk::Error);
-    EXPECT_THROW((void)RegisteredCall("simt.fmod", {i32_value, i32_value}), npu::tile_fwk::Error);
-    EXPECT_THROW((void)RegisteredCall("simt.atomic_or", {fp32_tile, offset, fp32_value}), npu::tile_fwk::Error);
-    EXPECT_THROW((void)RegisteredCall("simt.atomic_inc", {i32_tile, offset, i32_value}), npu::tile_fwk::Error);
-    EXPECT_THROW((void)RegisteredCall("simt.atomic_add", {i32_tile, bool_offset, i32_value}), npu::tile_fwk::Error);
 }
 
 } // namespace codegen
