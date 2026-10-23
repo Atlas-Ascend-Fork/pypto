@@ -1042,6 +1042,12 @@ class CallParserMixin:
         """
         op_name = self._extract_op_name(call.func)
 
+        if op_name in ("gemm", "gemm_mx"):
+            raise NotSupported(
+                f"pl.{op_name}() must be called as a standalone statement",
+                hint="The operation writes its accumulator and returns no value",
+            )
+
         # Ahead of _route_ir_node_method: that route parses the receiver and emits
         # the tile-group cursor bump, so a call from the wrong execution domain has
         # to be rejected before its side effects reach the section being built.
@@ -1086,7 +1092,7 @@ class CallParserMixin:
             return self._default_op_func(op_name, call)
 
     def _mx_slot_addrs(self, value: ir.Expr) -> tuple[int, ...] | None:
-        source = self._tile_slot_source.get(value) if value in self._dynamic_slot_tiles else None
+        source = self._tile_slot_source.get(value)
         types = source.type.types if source is not None else (value.type,)
         addresses = []
         for tile_type in types:
@@ -1104,7 +1110,7 @@ class CallParserMixin:
             plane_index = first + 2 + offset
             plane = args[plane_index] if len(args) > plane_index else kwargs[role]
             data = args[first + offset]
-            if data not in self._dynamic_slot_tiles and plane not in self._dynamic_slot_tiles:
+            if data not in self._tile_slot_source and plane not in self._tile_slot_source:
                 continue  # The builder already checks the selected static addresses.
             data_addrs = self._mx_slot_addrs(data)
             plane_addrs = self._mx_slot_addrs(plane)

@@ -4204,7 +4204,7 @@ def _parse_reinterpret(self, call: ast.Call) -> Expr:
     if self.is_tile_group(src):
         return self._build_reinterpreted_group(src, kwargs, span)
 
-    if src in self._dynamic_slot_tiles or (
+    if src in self._tile_slot_source or (
         isinstance(src, _ir_core.GetItemExpr) and not isinstance(src.slice, ConstInt)
     ):
         raise NotSupported(

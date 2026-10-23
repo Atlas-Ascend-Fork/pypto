@@ -145,6 +145,8 @@ __all__ = [
     "matmul_acc",
     "matmul_mx",
     "matmul_mx_acc",
+    "gemm",
+    "gemm_mx",
     "transpose",
     # Reductions
     "sum",
@@ -317,6 +319,8 @@ from ._api import (
     gatherb,
     gathermask,
     ge,
+    gemm,
+    gemm_mx,
     get_block_idx,
     get_block_num,
     get_ctrl_spr,

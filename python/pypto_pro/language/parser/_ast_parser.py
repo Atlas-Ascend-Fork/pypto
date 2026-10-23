@@ -38,6 +38,7 @@ from ._call_parser import CallParserMixin, _check_type_compatible
 from ._control_flow_parser import ControlFlowParserMixin, validate_single_tail_return
 from ._expr_evaluator import ExprEvaluator
 from ._expression_parser import ExpressionParserMixin
+from ._gemm_lowering import lower_gemm
 from ._scope_manager import JumpKind, ScopeManager
 from ._span_tracker import SpanTracker
 from ._struct_parser import StructParserMixin
@@ -172,7 +173,6 @@ class ASTParser(
         self._tile_mutex_meta: dict[ir.Expr, tuple[ir.MakeTuple, ir.MakeTuple]] = {}
         # Slot provenance survives SSA bindings; a dynamic Tile's type alone describes slot 0.
         self._tile_slot_source: dict[ir.Expr, ir.Expr] = {}
-        self._dynamic_slot_tiles: set[ir.Expr] = set()
         self.scope_manager = ScopeManager(strict_ssa=strict_ssa)
         self._tilingkey_consts = tilingkey_consts
         self._datatype_consts = datatype_consts
@@ -269,6 +269,8 @@ class ASTParser(
         self._auto_mutex = auto_mutex
         self._mutex_id_manager = mutex_id_manager
         self._parsed_expr_cache: dict[ast.expr, Any] = {}
+        self._gemm_counter = 0
+        self._gemm_used_names: set[str] = set()
         self._current_func_type = ir.FunctionType.Opaque
         self._void_return_only = void_return_only
         self._void_return_context = void_return_context
@@ -388,6 +390,7 @@ class ASTParser(
             raise NotSupported("callsite_param_types is only supported for SIMT functions")
 
         func_name = func_def.name
+        self._gemm_used_names.update(node.id for node in ast.walk(func_def) if isinstance(node, ast.Name))
         func_span = self.span_tracker.get_span(func_def)
 
         if (
@@ -587,6 +590,11 @@ class ASTParser(
 
     @_dispatch_statement.register
     def _parse_evaluation_statement(self, stmt: ast.Expr) -> None:
+        lowered = lower_gemm(self, stmt)
+        if lowered is not None:
+            for inner in lowered:
+                self.parse_statement(inner)
+            return
         self.parse_evaluation_statement(stmt)
 
     @_dispatch_statement.register
@@ -613,8 +621,6 @@ class ASTParser(
             self._tile_mutex_meta[target] = mutex_meta
         if value_expr in self._tile_slot_source:
             self._tile_slot_source[target] = self._tile_slot_source[value_expr]
-        if value_expr in self._dynamic_slot_tiles:
-            self._dynamic_slot_tiles.add(target)
 
     def _validate_tiling_params(
         self,

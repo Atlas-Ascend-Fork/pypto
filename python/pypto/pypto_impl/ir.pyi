@@ -2453,6 +2453,17 @@ class InsertPoint:
         """
 
 
+attributes_api_version: Final[int]
+
+@overload
+def get_attributes(node: Call) -> dict[str, Any]: ...
+
+@overload
+def get_attributes(node: Function) -> dict[str, Any]: ...
+
+@overload
+def get_attributes(node: ForStmt) -> dict[str, Any]: ...
+
 def type_equal(a: Expr, b: Expr) -> bool:
     """Check if the types of two expressions are equal.
 

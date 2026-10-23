@@ -413,17 +413,17 @@ def ssbuf_store(struct_var: Struct, offset: int, /) -> None:
 
 
 @_api_decl
-def adds(out: Tile, lhs: Tile, rhs: Scalar) -> None:
+def adds(out: Tile, lhs: Tile, rhs: Scalar, /) -> None:
     """Elementwise scalar addition: ``out = lhs + rhs``."""
 
 
 @_api_decl
-def subs(out: Tile, lhs: Tile, rhs: Scalar) -> None:
+def subs(out: Tile, lhs: Tile, rhs: Scalar, /) -> None:
     """Elementwise scalar subtraction: ``out = lhs - rhs``."""
 
 
 @_api_decl
-def muls(out: Tile, lhs: Tile, rhs: Scalar) -> None:
+def muls(out: Tile, lhs: Tile, rhs: Scalar, /) -> None:
     """Elementwise scalar multiplication: ``out = lhs * rhs``."""
 
 
@@ -852,6 +852,96 @@ def matmul_mx_acc(
         scale_a: Left scale Tile (ScaleLeft, E8M0)
         scale_b: Right scale Tile (ScaleRight, E8M0)
         phase: Optional — ``pl.AccPhase.Partial`` or ``pl.AccPhase.Final``
+    """
+
+
+
+@_api_decl
+def gemm(
+    acc: Tile, l1a: Tile, l1b: Tile, /, *,
+    l0a: Union[Tile, TileGroup], l0b: Union[Tile, TileGroup],
+    m: Optional[Scalar] = None, n: Optional[Scalar] = None, k: Optional[Scalar] = None,
+    init: bool = True, splitn: Optional[int] = None, splitk: Optional[int] = None,
+    trans_a: bool = False, trans_b: bool = False, bias: Optional[Tile] = None,
+) -> None:
+    """Stage L1 operands and compute acc = l1a @ l1b, or accumulate when init=False.
+
+    The caller supplies all Tiles, addresses and mutex IDs. A staging TileGroup
+    rotates once per step. Generated move/matmul statements use native auto_mutex.
+    Automatic cross-core pipelines track L1 reads on MTE1; the accumulator,
+    staging Tiles and bias must remain local to the stage.
+
+    Args:
+        acc: L0C accumulator, shape [M, N].
+        l1a: L1 left operand, shape [M, K], or [K, M] with trans_a.
+        l1b: L1 right operand, shape [K, N], or [N, K] with trans_b.
+        l0a: L0A staging Tile or TileGroup.
+        l0b: L0B staging Tile or TileGroup.
+        m: Effective M. Narrows l0a and acc; narrowed Tiles require compact=1.
+        n: Effective N. Narrows l0b and acc.
+        k: Effective K. Narrows l0a and l0b. L1 descriptors are left unchanged.
+        init: Compile-time bool; True initializes acc, False accumulates in place.
+        splitn: Compile-time N step, a multiple of 16, equal to l0b's column
+            extent. Requires a static accumulator slot. The final strip may be
+            shorter; l0b then requires compact=1. With splitn, n must be static;
+            m and bias are unsupported.
+        splitk: Compile-time K step, equal to l0a's column and l0b's row extents.
+            The first step initializes when init=True; subsequent steps accumulate.
+            A short final step requires compact staging. With splitk, k must be static.
+            Mutually exclusive with splitn.
+        trans_a: Transpose a named static L1 operand using an NZ-to-ZN alias.
+            For runtime-selected slots, reinterpret the whole group before selection.
+        trans_b: Transpose l1b by the same mechanism.
+        bias: Optional BiasTable Tile, shape [1, N]; requires init=True.
+
+    Each call sets the staging and accumulator descriptors to its effective
+    extents; omitted axes use the L1 operands' declared extents, even after a
+    partial call on the same Tiles. Explicit full physical extents need no compact
+    layout. Extents remain after the call so a subsequent store drains the same
+    valid extent. Runtime extents must stay positive and within declared shapes.
+    """
+
+
+@_api_decl
+def gemm_mx(
+    acc: Tile, l1a: Tile, l1b: Tile, l1a_scale: Tile, l1b_scale: Tile, /, *,
+    l0a: Union[Tile, TileGroup], l0b: Union[Tile, TileGroup],
+    scale_a: Union[Tile, TileGroup], scale_b: Union[Tile, TileGroup],
+    m: Optional[Scalar] = None, n: Optional[Scalar] = None, k: Optional[Scalar] = None,
+    init: bool = True, trans_a: bool = False, trans_b: bool = False,
+) -> None:
+    """Stage MX data and scale pairs from L1, then compute an MX matmul.
+
+    Each operand is staged as an adjacent data/scale move pair. Native matmul_mx
+    checks the ScaleLeft/ScaleRight plane at its data slot's address >> 4.
+
+    Args:
+        acc: FP32 L0C accumulator, shape [M, N].
+        l1a: FP8/FP4 L1 left operand, shape [M, K], or [K, M] with trans_a.
+        l1b: FP8/FP4 L1 right operand, shape [K, N], or [N, K] with trans_b.
+        l1a_scale: E8M0 L1 scale, ZZ layout, shape [M, K // 32].
+        l1b_scale: E8M0 L1 scale, NN layout, shape [K // 32, N].
+        l0a: L0A data staging Tile or TileGroup.
+        l0b: L0B data staging Tile or TileGroup.
+        scale_a: ScaleLeft plane or group, ZZ layout, shape [M, K // 32].
+        scale_b: ScaleRight plane or group, NN layout, shape [K // 32, N].
+        m: Effective M; narrows l0a, acc and scale_a's row axis.
+        n: Effective N; narrows l0b, acc and scale_b's column axis.
+        k: Effective K; narrows data staging and both planes' group axes.
+            Declared K and a static k must be multiples of 64. A runtime k has
+            the same caller contract. Narrowed data/acc Tiles require compact=1;
+            planes require compact=1 when k narrows their group axis. M/N-only
+            plane narrowing does not require it.
+        init: Compile-time bool; False emits matmul_mx_acc.
+        trans_a: Transpose the named static L1 data operand as in gemm.
+            Its scale operand keeps the canonical scale shape and layout.
+        trans_b: Transpose l1b by the same mechanism.
+
+    Each call sets data staging, accumulator and scale-plane extents, restoring
+    declared L1 extents on omitted axes even when reusing narrowed Tiles. Explicit
+    full physical extents need no compact layout. Effective extents remain after
+    the call for a subsequent store. Source L1 descriptors are unchanged.
+    bias, splitn and splitk are unsupported.
     """
 
 

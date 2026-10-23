@@ -896,7 +896,12 @@ def _scan_stmts(stmts: list, bindings: dict, slot_to_buffer: dict, tables: Acces
                 continue
             op_name = resolve_op_name(node.func, tables.closure_vars)
             if op_name is not None and _vf_op_of(op_name) is None:
-                _handle_block_op(node, op_name.rsplit(".", 1)[-1], slot_to_buffer, tables, out)
+                op_name = op_name.rsplit(".", 1)[-1]
+                op_buffers = slot_to_buffer
+                if op_name == "gemm":
+                    # Its keyword staging operands can be groups rather than selected slots.
+                    op_buffers = {**slot_to_buffer, **{name: buf for name, (buf, _) in bindings.items()}}
+                _handle_block_op(node, op_name, op_buffers, tables, out)
                 continue
             name = call_name(node)
             if not name:
@@ -1021,7 +1026,7 @@ def _reject_untabled_op(node: ast.Call, op_name: str, stage_slot_to_buffer: dict
     set, guessing "write" drops the consumer's wait.
     """
     touched = []
-    for arg in node.args:
+    for arg in (*node.args, *(kw.value for kw in node.keywords)):
         buf = _tile_arg_buffer(arg, stage_slot_to_buffer)
         if tables.tracks(buf):
             touched.append(buf)
@@ -1041,6 +1046,19 @@ def _reject_untabled_op(node: ast.Call, op_name: str, stage_slot_to_buffer: dict
     )
 
 
+def _gemm_arg_buffer(arg: ast.expr, named_buffers: dict, tables: AccessScanTables) -> str | None:
+    buf = _tile_arg_buffer(arg, named_buffers)
+    if buf is None:
+        root = _slot_accessor_group_name(arg) or _root_name(arg)
+        if tables.tracks(named_buffers.get(root)):
+            raise NotSupported(
+                "pipeline: a tracked `pl.gemm` operand must be assigned to a simple variable "
+                "before the call; this expression cannot be traced.",
+                span=span_of(arg),
+            )
+    return buf
+
+
 def _handle_block_op(
     node: ast.Call, op_name: str, stage_slot_to_buffer: dict, tables: AccessScanTables, out: list
 ) -> None:
@@ -1055,13 +1073,25 @@ def _handle_block_op(
     if roles is None:
         _reject_untabled_op(node, op_name, stage_slot_to_buffer, tables)
         return
-    # One record per buffer, not per argument: an op is a single point in time, so a buffer it
-    # both reads and writes is one RW access. The pipe is a property of the op, so merging
-    # cannot lose one.
+    if op_name == "gemm":
+        for kw in node.keywords:
+            if kw.arg not in ("l0a", "l0b", "bias"):
+                continue
+            buf = _gemm_arg_buffer(kw.value, stage_slot_to_buffer, tables)
+            if tables.tracks(buf):
+                raise InvalidOperation(
+                    f"pipeline: `pl.gemm` cannot hand over its {kw.arg} buffer '{buf}'; "
+                    "only its L1 operands are supported. Use explicit move/matmul operations "
+                    "for other tracked buffers.",
+                    span=span_of(node),
+                )
+    # One record per buffer, not per argument. GEMM spans MTE1 (L1 inputs) and M
+    # (accumulator); only its L1 staging reads participate in automatic handover.
     merged: dict[str, str] = {}
     pipe = None
     for argpos, arg in enumerate(node.args):
-        buf = _tile_arg_buffer(arg, stage_slot_to_buffer)
+        buf = (_gemm_arg_buffer(arg, stage_slot_to_buffer, tables) if op_name == "gemm"
+               else _tile_arg_buffer(arg, stage_slot_to_buffer))
         if buf is None or argpos >= len(roles):
             continue
         role = roles[argpos]
@@ -1069,7 +1099,16 @@ def _handle_block_op(
             continue
         if not tables.tracks(buf):
             continue
-        if pipe is None:
+        if op_name == "gemm":
+            if argpos == 0:
+                raise InvalidOperation(
+                    "pipeline: `pl.gemm` cannot hand over its accumulator; only its L1 "
+                    "operands are supported. Use explicit move/matmul operations for a "
+                    "tracked accumulator.",
+                    span=span_of(node),
+                )
+            pipe = "MTE1"
+        elif pipe is None:
             pipe = _block_op_pipe(op_name, node, stage_slot_to_buffer, tables.all_buffer_memory)
         _merge_role(merged, buf, role)
     for buf, role in merged.items():

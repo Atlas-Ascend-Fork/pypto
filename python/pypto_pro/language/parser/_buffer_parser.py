@@ -601,7 +601,6 @@ class BufferParserMixin:
         self._tuple_idx_counter += 1
         tile_ir = ir.GetItemExpr(tiles, idx, span)
         self._tile_slot_source[tile_ir] = tiles
-        self._dynamic_slot_tiles.add(tile_ir)
         if mutex_ids is not None:
             tile_id_irs = []
             for column in range(len(mutex_ids.elements[0].elements)):
