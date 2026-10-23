@@ -1293,7 +1293,9 @@ std::vector<std::reference_wrapper<SymbolicScalar>> Operation::GetDynamicAttribu
         } break;
         case Opcode::OP_COPY_IN:
             [[fallthrough]];
-        case Opcode::OP_UB_COPY_IN: {
+        case Opcode::OP_UB_COPY_IN:
+            [[fallthrough]];
+        case Opcode::OP_UB_COPY_L1: {
             auto copyAttr = std::static_pointer_cast<CopyOpAttribute>(GetOpAttribute());
             if (copyAttr != nullptr) {
                 for (auto& offset : copyAttr->GetFromOffset()) {

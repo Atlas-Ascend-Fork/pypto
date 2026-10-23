@@ -279,6 +279,26 @@ Status InferParamIndex::InferShape(Function& function)
     return SUCCESS;
 }
 
+static void TryBindSpecifiedDynValidShape(Operation& op, int coaIndex, bool dynamicOnly,
+                                          std::map<int, std::vector<SymbolicScalar>>& addr2ValidShapeSpecified)
+{
+    auto attr = std::static_pointer_cast<CopyOpAttribute>(op.GetOpAttribute());
+    if (attr == nullptr || attr->GetToDynValidShape().empty()) {
+        return;
+    }
+    if (!attr->GetToDynValidShape().front().IsSpecified()) {
+        return;
+    }
+    auto validShape = OpImmediate::ToSpecified(attr->GetToDynValidShape());
+    bool hasDynamicDim = false;
+    for (const auto& dim : validShape) {
+        hasDynamicDim |= !dim.ConcreteValid();
+    }
+    if (!dynamicOnly || hasDynamicDim) {
+        addr2ValidShapeSpecified[coaIndex] = std::move(validShape);
+    }
+}
+
 Status InferParamIndex::InsertAddr2ValidShapeSpecified(
     Operation& op, std::map<int, std::vector<SymbolicScalar>>& addr2ValidShape,
     std::map<int, std::vector<SymbolicScalar>>& addr2ValidShapeSpecified, std::map<int, int>& magic2Coa)
@@ -306,12 +326,9 @@ Status InferParamIndex::InsertAddr2ValidShapeSpecified(
         }
         if (addr2ValidShape.find(tensorBaseAddrCoaIndex) == addr2ValidShape.end()) {
             addr2ValidShape[tensorBaseAddrCoaIndex] = op.GetOOperands()[i]->GetDynValidShape();
-            if (IsCopyIn(op.GetOpcode())) {
-                auto attr = std::static_pointer_cast<CopyOpAttribute>(op.GetOpAttribute());
-                if (attr->GetToDynValidShape().size() != 0 && attr->GetToDynValidShape()[0].IsSpecified()) {
-                    addr2ValidShapeSpecified[tensorBaseAddrCoaIndex] = OpImmediate::ToSpecified(
-                        attr->GetToDynValidShape());
-                }
+            if (IsCopyIn(op.GetOpcode()) || op.GetOpcode() == Opcode::OP_UB_COPY_L1) {
+                TryBindSpecifiedDynValidShape(op, tensorBaseAddrCoaIndex, !IsCopyIn(op.GetOpcode()),
+                                              addr2ValidShapeSpecified);
             }
             if (distCopyType && *distCopyType) {
                 auto attr = std::static_pointer_cast<CopyOpAttribute>(op.GetOpAttribute());

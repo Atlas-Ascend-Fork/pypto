@@ -248,3 +248,69 @@ TEST_F(GetParamIdxTest, TestGmGatherElementResetsResultDynValidShape)
     EXPECT_EQ(result->GetDynValidShape()[0].Dump(), "sym_" + std::to_string(result->GetMagic()) + "_dim_0");
     EXPECT_EQ(result->GetDynValidShape()[1].Dump(), "sym_" + std::to_string(result->GetMagic()) + "_dim_1");
 }
+
+TEST_F(GetParamIdxTest, UB2L1BindsDynamicValidShapeToOutputAddress)
+{
+    auto root = std::make_shared<Function>(Program::GetInstance(), "UB2L1Root", "UB2L1Root", nullptr);
+    root->rootFunc_ = root.get();
+    auto leaf = std::make_shared<Function>(Program::GetInstance(), "UB2L1Leaf", "UB2L1Leaf", root.get());
+    root->programs_.emplace(leaf->GetFuncMagic(), leaf.get());
+    const Shape shape{32, 64};
+    auto input = IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+    auto output = IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+    input->SetMemoryTypeBoth(MEM_UB);
+    output->SetMemoryTypeBoth(MEM_L1);
+    // The dynamic dimension is deliberately second: a static first dimension must not hide it.
+    IRBuilder builder;
+    auto processValueInput = builder.CreateTensorVar(DT_INT32, {1}, CreateTestConstIntVector({1}));
+    processValueInput->SetMemoryTypeBoth(MEM_DEVICE_DDR);
+    leaf->inCasts_.push_back(processValueInput);
+    SymbolicScalar getTensorData(AddRuntimePrefix("GetTensorDataInt32Dim1"));
+    auto processValue = getTensorData(builder.CreateConstInt(0),
+                                      builder.CreateConstInt(GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST),
+                                      builder.CreateConstInt(0), builder.CreateConstInt(0), builder.CreateConstInt(0));
+    const std::vector<SymbolicScalar> validShape{builder.CreateConstInt(32), processValue};
+    auto& op = leaf->AddOperation(Opcode::OP_UB_COPY_L1, {input}, {output});
+    op.SetOpAttribute(std::make_shared<CopyOpAttribute>(OpImmediate::Specified({0, 0}), MEM_L1,
+                                                        OpImmediate::Specified(shape), OpImmediate::Specified(shape),
+                                                        OpImmediate::Specified(validShape)));
+    constexpr int outputAddress = 7;
+    op.SetIOpAtt(0, 3);
+    op.SetOOpAtt(0, outputAddress);
+
+    ASSERT_EQ(InferParamIndex().RunOnFunction(*root), SUCCESS);
+    const auto& params = leaf->GetDynParamTable();
+    for (size_t i = 0; i < shape.size(); ++i) {
+        auto name = "sym_" + std::to_string(output->GetMagic()) + "_dim_" + std::to_string(i);
+        auto it = params.find(name);
+        ASSERT_NE(it, params.end());
+        EXPECT_EQ(it->second.tensorBaseAddrCoaIndex, outputAddress);
+        EXPECT_EQ(it->second.dimIndex, i);
+        EXPECT_EQ(it->second.dim.Dump(), validShape[i].Dump());
+    }
+}
+
+TEST_F(GetParamIdxTest, UB2L1StaticOrUnspecifiedShapeDoesNotOverrideBinding)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "UB2L1Static", "UB2L1Static", nullptr);
+    const Shape shape{32, 64};
+    auto input = IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+    auto output = IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+    auto& op = func->AddOperation(Opcode::OP_UB_COPY_L1, {input}, {output});
+    op.SetOOpAtt(0, 7);
+    const std::vector<std::vector<OpImmediate>> shapes{
+        {}, OpImmediate::Specified(shape), {OpImmediate::Parameter(1), OpImmediate::Parameter(2)}};
+    for (const auto& validShape : shapes) {
+        SCOPED_TRACE(validShape.size());
+        op.SetOpAttribute(std::make_shared<CopyOpAttribute>(OpImmediate::Specified({0, 0}), MEM_L1,
+                                                            OpImmediate::Specified(shape),
+                                                            OpImmediate::Specified(shape), validShape));
+        std::map<int, std::vector<SymbolicScalar>> addr2Shape;
+        std::map<int, std::vector<SymbolicScalar>> specified;
+        std::map<int, int> magic2Coa;
+        ASSERT_EQ(InferParamIndex().InsertAddr2ValidShapeSpecified(op, addr2Shape, specified, magic2Coa), SUCCESS);
+        EXPECT_TRUE(specified.empty());
+        EXPECT_EQ(addr2Shape.count(7), 1);
+        EXPECT_EQ(magic2Coa.at(output->GetMagic()), 7);
+    }
+}

@@ -1159,5 +1159,37 @@ TEST_F(SubgraphToFunctionTest, LightweightStableSortIgnoresInplaceSelfDependency
     EXPECT_EQ(&function->Operations(false)[1], &consumer);
 }
 
+std::shared_ptr<LogicalTensor> GetTensorDataSubgraphTensor(Operation& refOp);
+
+TEST_F(SubgraphToFunctionTest, UB2L1DynamicAttributesUseL1Tensor)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "UB2L1Dependency", "UB2L1Dependency", nullptr);
+    const Shape shape{32, 64};
+    auto input = IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+    auto output = IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+    input->SetMemoryTypeBoth(MEM_UB);
+    output->SetMemoryTypeBoth(MEM_L1);
+    auto& op = func->AddOperation(Opcode::OP_UB_COPY_L1, {input}, {output});
+    auto offset = CreateTestScalarVar("ub2l1_offset");
+    IRBuilder builder;
+    SymbolicScalar getTensorData(AddRuntimePrefix("GetTensorDataInt32Dim1"));
+    auto validDim = getTensorData(builder.CreateConstInt(0), builder.CreateConstInt(0), builder.CreateConstInt(0),
+                                  builder.CreateConstInt(0), builder.CreateConstInt(0));
+    auto attr = std::make_shared<CopyOpAttribute>(
+        std::vector<OpImmediate>{OpImmediate::Specified(offset), OpImmediate::Parameter(1)}, MEM_L1,
+        OpImmediate::Specified(shape), OpImmediate::Specified(shape),
+        std::vector<OpImmediate>{OpImmediate::Specified(validDim), OpImmediate::Parameter(2)});
+    op.SetOpAttribute(attr);
+
+    auto dynamicAttrs = op.GetDynamicAttributeList();
+    ASSERT_EQ(dynamicAttrs.size(), 2);
+    EXPECT_EQ(GetTensorDataDict(dynamicAttrs).size(), 1);
+    EXPECT_EQ(&dynamicAttrs[0].get(), &attr->GetFromOffset()[0].GetSpecifiedValue());
+    EXPECT_EQ(&dynamicAttrs[1].get(), &attr->GetToDynValidShape()[0].GetSpecifiedValue());
+    // Rebinding must update the original attribute rather than a temporary copy.
+    dynamicAttrs[1].get() = IRBuilder().CreateConstInt(17);
+    EXPECT_EQ(attr->GetToDynValidShape()[0].GetSpecifiedValue().Concrete(), 17);
+    EXPECT_EQ(GetTensorDataSubgraphTensor(op), output);
+}
 } // namespace tile_fwk
 } // namespace npu

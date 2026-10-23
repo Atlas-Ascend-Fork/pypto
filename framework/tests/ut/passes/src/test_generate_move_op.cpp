@@ -1592,5 +1592,32 @@ TEST_F(GenerateMoveOpPassTest, ProcessUB2L1GemvSkipND2NZ)
     EXPECT_TRUE(hasIsGemv && isGemv != 0);
 }
 
+TEST_F(GenerateMoveOpPassTest, UB2L1ViewPreservesDynamicValidShape)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "UB2L1Dynamic", "UB2L1Dynamic", nullptr);
+    const Shape shape{32, 64};
+    auto input = IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+    auto output = IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+    input->SetMemoryTypeBoth(MEM_UB);
+    output->SetMemoryTypeBoth(MEM_L1);
+    const std::vector<SymbolicScalar> validShape{CreateTestScalarVar("ub2l1_rows"), IRBuilder().CreateConstInt(48)};
+    auto attr = std::make_shared<ViewOpAttribute>(Offset{0, 16});
+    attr->SetToDynValidShape(validShape);
+    auto& op = func->AddOperation(Opcode::OP_VIEW, {input}, {output});
+    op.SetOpAttribute(attr);
+
+    ASSERT_EQ(GenerateMoveOp().A23CreateMoveOpForView(*func, op), SUCCESS);
+    ASSERT_EQ(op.GetOpcode(), Opcode::OP_UB_COPY_L1);
+    auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(op.GetOpAttribute());
+    ASSERT_NE(copyAttr, nullptr);
+    ASSERT_EQ(copyAttr->GetToDynValidShape().size(), shape.size());
+    ASSERT_EQ(output->GetDynValidShape().size(), shape.size());
+    for (size_t i = 0; i < shape.size(); ++i) {
+        EXPECT_EQ(copyAttr->GetToDynValidShape()[i].GetSpecifiedValue().Dump(), validShape[i].Dump());
+        EXPECT_EQ(output->GetDynValidShape()[i].Dump(), validShape[i].Dump());
+    }
+    EXPECT_EQ(OpImmediate::ToSpecified(copyAttr->GetFromOffset())[1].Concrete(), 16);
+    EXPECT_EQ(op.GetIntAttribute(OpAttributeKey::localCopyLocalMode), static_cast<int64_t>(Matrix::CopyMode::EXTRACT));
+}
 } // namespace tile_fwk
 } // namespace npu

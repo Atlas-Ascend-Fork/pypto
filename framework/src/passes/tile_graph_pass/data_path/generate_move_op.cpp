@@ -253,9 +253,9 @@ Status GenerateMoveOp::ProcessDefault(Function& function, Operation& op, ViewOpA
     }
     if (op.GetOpcode() == Opcode::OP_UB_COPY_L1) {
         ProcessUB2L1(function, op);
-        SetUB2L1CopyAttr(op, op.GetOOperands()[0]->GetShape(),
-                         OpImmediate::Specified(viewOpAttribute->GetFromTensorOffset()),
-                         OpImmediate::Specified(ZERO_OFFSET), Matrix::CopyMode::EXTRACT);
+        SetUB2L1CopyAttr(
+            op, op.GetOOperands()[0]->GetShape(), OpImmediate::Specified(viewOpAttribute->GetFromTensorOffset()),
+            OpImmediate::Specified(ZERO_OFFSET), Matrix::CopyMode::EXTRACT, viewOpAttribute->GetToDynValidShape());
         return SUCCESS;
     }
     if (op.GetOpcode() == Opcode::OP_L0C_TO_L1) {
@@ -380,7 +380,8 @@ void GenerateMoveOp::SetL0C2UBCopyConvAttr(Operation& op, const Shape& realShape
 }
 
 void GenerateMoveOp::SetUB2L1CopyAttr(Operation& op, const Shape& copyShape, const std::vector<OpImmediate>& fromOffset,
-                                      const std::vector<OpImmediate>& toOffset, Matrix::CopyMode copyMode) const
+                                      const std::vector<OpImmediate>& toOffset, Matrix::CopyMode copyMode,
+                                      const std::vector<SymbolicScalar>& toDynValidShape) const
 {
     IRBuilder builder;
     // 实际搬运的 shape 转换为 validShape
@@ -388,6 +389,11 @@ void GenerateMoveOp::SetUB2L1CopyAttr(Operation& op, const Shape& copyShape, con
     for (auto dim : copyShape) {
         SymbolicScalar scal = builder.CreateConstInt(dim);
         validShape.push_back(scal);
+    }
+    // view 携带动态 valid_shape 时继承，避免 EXTRACT 场景搬运长度退化为静态 tile shape
+    const bool hasValidShape = !toDynValidShape.empty();
+    if (hasValidShape) {
+        validShape = toDynValidShape;
     }
     // 创建 CopyOpAttribute
     auto copyAttr = std::make_shared<CopyOpAttribute>(
@@ -399,6 +405,9 @@ void GenerateMoveOp::SetUB2L1CopyAttr(Operation& op, const Shape& copyShape, con
     );
     copyAttr->SetToOffset(toOffset);
     op.SetOpAttribute(copyAttr);
+    if (hasValidShape) {
+        op.GetOOperands()[0]->UpdateDynValidShape(validShape);
+    }
     op.SetAttribute(OpAttributeKey::localCopyLocalMode, static_cast<int64_t>(copyMode));
 }
 

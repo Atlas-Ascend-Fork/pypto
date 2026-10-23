@@ -66,8 +66,8 @@ private:
                            const std::vector<OpImmediate>& toOffset,
                            Matrix::CopyMode mode = Matrix::CopyMode::UNKNOWN) const;
     void SetUB2L1CopyAttr(Operation& op, const Shape& copyShape, const std::vector<OpImmediate>& fromOffset,
-                          const std::vector<OpImmediate>& toOffset,
-                          Matrix::CopyMode mode = Matrix::CopyMode::UNKNOWN) const;
+                          const std::vector<OpImmediate>& toOffset, Matrix::CopyMode mode = Matrix::CopyMode::UNKNOWN,
+                          const std::vector<SymbolicScalar>& toDynValidShape = {}) const;
     Status SetOpcodeByMemPath(Operation& op, MemoryType from, MemoryType to) const;
     bool HasSpecificConsumer(const Operation& op) const;
     void ConvertViewToCopyInWhenInputGm(Operation& op, ViewOpAttribute* viewOpAttribute) const;
