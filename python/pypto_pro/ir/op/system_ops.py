@@ -257,6 +257,15 @@ def set_cross_core(
     """
     actual_span = _get_span_or_capture(span)
     _validate_concrete_pipe(pipe, "pipe")
+    if pipe == PipeType.S and sync_mode not in (
+        CrossCoreSyncMode.INTRA_BLOCK,
+        CrossCoreSyncMode.UNICAST_BLOCK,
+    ):
+        raise NotSupported(
+            "set_cross_core supports PipeType.S only with sync_mode=CrossCoreSyncMode.INTRA_BLOCK "
+            "or CrossCoreSyncMode.UNICAST_BLOCK",
+            span=actual_span,
+        )
 
     if isinstance(event_id, Expr):
         return _ir_core.create_op_call(
@@ -279,7 +288,8 @@ def wait_cross_core(
     Args:
         pipe: Pipe that waits the flag
         event_id: Event identifier (int for static, Expr for dynamic)
-        sync_mode: Cross-core sync mode. Must match the paired set_cross_core.
+        sync_mode: Cross-core sync mode. Prefer the same mode as the paired set_cross_core;
+            ensure the participating cores and event IDs match.
             ``pl.CrossCoreSyncMode.INTRA_BLOCK`` (default, mode 2) waits both VEC subcores,
             ``UNICAST_BLOCK`` (mode 3) waits one VEC subcore. ``INTER_BLOCK`` (mode 0)
             for inter-core, ``INTER_SUBBLOCK`` (mode 1) for AIV-to-AIV.

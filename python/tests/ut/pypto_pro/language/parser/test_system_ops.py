@@ -95,6 +95,59 @@ def test_sync_with_different_pipe_types():
     assert "ir.PipeType.S" in printed
 
 
+@pytest.mark.parametrize(
+    "sync_mode",
+    [
+        pl.CrossCoreSyncMode.INTER_BLOCK,
+        pl.CrossCoreSyncMode.INTER_SUBBLOCK,
+    ],
+)
+def test_set_cross_core_s_rejects_ffts_modes(sync_mode):
+    @pl.jit(auto_mutex=False)
+    def func(_jit_entry: pl.DT_INT64):
+        pl.system.set_cross_core(pipe=pl.PipeType.S, event_id=0, sync_mode=sync_mode)
+
+    with pytest.raises(NotSupported, match="set_cross_core supports PipeType.S only"):
+        func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_set_cross_core_s_accepts_default_mode_in_parser():
+    @pl.jit(auto_mutex=False)
+    def func(_jit_entry: pl.DT_INT64):
+        pl.system.set_cross_core(pipe=pl.PipeType.S, event_id=0)
+
+    func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_set_cross_core_s_accepts_unicast_mode():
+    @pl.jit(auto_mutex=False)
+    def func(_jit_entry: pl.DT_INT64):
+        pl.system.set_cross_core(
+            pipe=pl.PipeType.S,
+            event_id=0,
+            sync_mode=pl.CrossCoreSyncMode.UNICAST_BLOCK,
+        )
+
+    func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize(
+    "sync_mode",
+    [
+        pl.CrossCoreSyncMode.INTER_BLOCK,
+        pl.CrossCoreSyncMode.INTER_SUBBLOCK,
+        pl.CrossCoreSyncMode.INTRA_BLOCK,
+        pl.CrossCoreSyncMode.UNICAST_BLOCK,
+    ],
+)
+def test_wait_cross_core_s_accepts_all_modes(sync_mode):
+    @pl.jit(auto_mutex=False)
+    def func(_jit_entry: pl.DT_INT64):
+        pl.system.wait_cross_core(pipe=pl.PipeType.S, event_id=0, sync_mode=sync_mode)
+
+    func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
 def test_sync_src_pipe_kwarg_rejects_plain_integer():
     with pytest.raises(InvalidVal, match="'set_pipe' expects an enum value"):
 

@@ -117,7 +117,8 @@ class System:
         """Set a synchronization signal (cross core).
 
         Args:
-            pipe: Pipe that sets the flag
+            pipe: Pipe that sets the flag. ``PipeType.S`` supports only
+                ``CrossCoreSyncMode.INTRA_BLOCK`` and ``CrossCoreSyncMode.UNICAST_BLOCK``.
             event_id: Event identifier (int for static, Scalar expression for dynamic)
             sync_mode: Cross-core sync mode. ``pl.CrossCoreSyncMode.INTRA_BLOCK`` (default,
                 mode 2) for AIC-AIV both subcores, ``UNICAST_BLOCK`` (mode 3) for AIC-AIV one
@@ -136,9 +137,10 @@ class System:
         """Wait for a synchronization signal (cross core).
 
         Args:
-            pipe: Pipe that waits on the flag
+            pipe: Pipe that waits on the flag. ``PipeType.S`` is supported for all sync modes.
             event_id: Event identifier (int for static, Scalar expression for dynamic)
-            sync_mode: Cross-core sync mode. Must match the paired ``set_cross_core``.
+            sync_mode: Cross-core sync mode. Prefer the same mode as the paired
+                ``set_cross_core``; ensure the participating cores and event IDs match.
         """
 
     @staticmethod
