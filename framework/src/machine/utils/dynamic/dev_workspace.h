@@ -163,6 +163,8 @@ private:
     // Helper: assign incast address descriptors for a duplicated root function
     void AssignIncastAddresses(DevAscendFunctionDupped devRootDup, DeviceExecuteSlot* slotList);
 
+    void AllocateAssembleSlot(DeviceExecuteSlot& slot, const char* rootName);
+
     // Helper: assign outcast address descriptors for a duplicated root function
     void ResolveOutcastAddress(DevAscendFunctionDupped devRootDup, DevAscendFunction* devRootSrc,
                                DeviceExecuteSlot* slotList, size_t outcastIdx, int outputSlotIndex,

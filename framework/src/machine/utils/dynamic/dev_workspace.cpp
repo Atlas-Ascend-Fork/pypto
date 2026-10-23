@@ -292,6 +292,18 @@ void DeviceWorkspaceAllocator::AllocateInnerWorkspaceForDup(DevAscendFunctionDup
     }
 }
 
+void DeviceWorkspaceAllocator::AllocateAssembleSlot(DeviceExecuteSlot& slot, const char* rootName)
+{
+    RuntimeOutcastTensorDerefSafe(slot.rtOutcastIter);
+    slot.rtOutcastIter = MakeRuntimeOutcastTensor(AllocateInnerTemporalOutcastSlot(rootName),
+                                                  RuntimeTensorMemProperty::BOUNDARY_OUTCAST);
+    slot.isAssembleSlotNeedAlloc = false;
+    if (slot.isPartialUpdateStitch && slot.partialUpdate->stitchCtrlBitMask != STITCH_CTRL_NONE) {
+        TryAllocateDynamicCellMatchForAssembleSlot(slot);
+        slot.ChangeSlotAllocIterId(); // tensor memory changed → invalidate cell-match tagId
+    }
+}
+
 // Helper: assign incast address descriptors for a duplicated root function
 void DeviceWorkspaceAllocator::AssignIncastAddresses(DevAscendFunctionDupped devRootDup, DeviceExecuteSlot* slotList)
 {
@@ -303,6 +315,11 @@ void DeviceWorkspaceAllocator::AssignIncastAddresses(DevAscendFunctionDupped dev
                        "Root [%s] Incast %zu has no fromSlotList.", devRootSrc->GetRawName(), i);
 
         int slotIndex = devRootSrc->At(incast.fromSlotList, 0);
+        // Loop storage dependencies may read a newly constructed assemble slot before its first outcast.
+        if (slotList[slotIndex].isAssembleSlotNeedAlloc &&
+            slotList[slotIndex].rtOutcastIter == ITEM_POOL_INVALID_INDEX) {
+            AllocateAssembleSlot(slotList[slotIndex], devRootSrc->GetRawName());
+        }
         DEV_ASSERT_MSG(WsErr::WORKSPACE_ITER_INVALID, slotList[slotIndex].rtOutcastIter != ITEM_POOL_INVALID_INDEX,
                        "Root[%s] incast %zu  slotIndex %d read from empty address.", devRootSrc->GetRawName(), i,
                        slotIndex);
@@ -339,16 +356,7 @@ void DeviceWorkspaceAllocator::ResolveOutcastAddress(DevAscendFunctionDupped dev
         /* assemble outcast tensor: isAssembleSlotNeedAlloc = local buffer alloc only;
          * cell-match uses stitchCtrlBitMask on partialUpdate (Partial slots only). */
         if (slotList[assembleSlotIndex].isAssembleSlotNeedAlloc) {
-            RuntimeOutcastTensorDerefSafe(slotList[assembleSlotIndex].rtOutcastIter);
-            slotList[assembleSlotIndex].rtOutcastIter = MakeRuntimeOutcastTensor(
-                AllocateInnerTemporalOutcastSlot(devRootSrc->GetRawName()), RuntimeTensorMemProperty::BOUNDARY_OUTCAST);
-            slotList[assembleSlotIndex].isAssembleSlotNeedAlloc = false;
-            if (slotList[assembleSlotIndex].isPartialUpdateStitch &&
-                slotList[assembleSlotIndex].partialUpdate->stitchCtrlBitMask != STITCH_CTRL_NONE) {
-                TryAllocateDynamicCellMatchForAssembleSlot(slotList[assembleSlotIndex]);
-                slotList[assembleSlotIndex]
-                    .ChangeSlotAllocIterId(); // tensor memory changed → invalidate cell-match tagId
-            }
+            AllocateAssembleSlot(slotList[assembleSlotIndex], devRootSrc->GetRawName());
         } else {
             DEV_ASSERT_MSG(WsErr::WORKSPACE_ITER_INVALID,
                            slotList[assembleSlotIndex].rtOutcastIter != ITEM_POOL_INVALID_INDEX,
