@@ -2297,13 +2297,15 @@ TEST_F(TestRemoveRedundantOpPass, SliceContractMultiL1SlicesShouldKeepFanout)
     bool operationUpdated = false;
     ASSERT_EQ(RemoveRedundantOpUtils::Process(*function, newOps, operationUpdated), SUCCESS);
 
-    EXPECT_TRUE(operationUpdated);
+    // 前序 slice 无法折叠（input 内存类型未知，与 contractInput 的 UB 不一致）时，
+    // 不做"仅消除 CONTRACT、L1 slice 输入转接 contractInput"的改写，整条链保持不变。
+    EXPECT_FALSE(operationUpdated);
     EXPECT_TRUE(newOps.empty());
-    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumZero);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumOne);
     EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumThree);
     EXPECT_EQ(CountOpcode(function, Opcode::OP_VIEW), kNumZero);
-    EXPECT_EQ(l1Slice0.GetIOperands().front(), precedingOutput);
-    EXPECT_EQ(l1Slice1.GetIOperands().front(), precedingOutput);
+    EXPECT_EQ(l1Slice0.GetIOperands().front(), contractOutput);
+    EXPECT_EQ(l1Slice1.GetIOperands().front(), contractOutput);
     EXPECT_EQ(exp0.GetIOperands().front(), sliceOutput0);
     EXPECT_EQ(exp1.GetIOperands().front(), sliceOutput1);
 
@@ -4088,6 +4090,7 @@ struct L1FanoutFoldGraph {
     std::shared_ptr<Function> function;
     LogicalTensorPtr input;
     LogicalTensorPtr precedingOutput;
+    LogicalTensorPtr contractOutput;
 };
 
 // input{8,32}->slice{precedingOffset}(same-mem view)->contractInput{8,32-preOffset[1]}->contract{0,0}
@@ -4102,6 +4105,7 @@ L1FanoutFoldGraph BuildL1FanoutFoldGraph(const std::string& name, const std::vec
     graph.input = IRBuilder().CreateTensorVar(DT_FP16, sourceShape, CreateTestConstIntVector(sourceShape));
     graph.precedingOutput = IRBuilder().CreateTensorVar(DT_FP16, innerShape, CreateTestConstIntVector(innerShape));
     auto contractOutput = IRBuilder().CreateTensorVar(DT_FP16, innerShape, CreateTestConstIntVector(innerShape));
+    graph.contractOutput = contractOutput;
     auto sliceOutput0 = IRBuilder().CreateTensorVar(DT_FP16, innerShape, CreateTestConstIntVector(innerShape));
     auto sliceOutput1 = IRBuilder().CreateTensorVar(DT_FP16, innerShape, CreateTestConstIntVector(innerShape));
     sliceOutput0->SetMemoryTypeBoth(MemoryType::MEM_L1);
@@ -4147,8 +4151,8 @@ SliceContractSliceL1FanoutMisalignedMergedOffset (fp16): graph built by BuildL1F
 precedingOffset {0,8}, i.e. input{8,32}->slice{0,8}(same-mem view)->contractInput{8,24}->contract
 ->{slice{0,0}(To=L1)->exp->out0, slice{0,0}(To=L1)->exp->out1}.  All consumers are L1 slices
 (keepL1Fanout).  The preceding offset {0,8} linearizes to 16B on the fp16 source, so the merged offset
-{0,8} is not 32B aligned: the L1 fold must keep the preceding slice materialization and let the
-consumers read the contract input at the (aligned) local offset {0,0} instead.
+{0,8} is not 32B aligned and the L1 fold cannot proceed: keep the whole SLICE->CONTRACT->SLICE chain
+unchanged instead of eliminating only the contract and rewiring consumers to the contract input.
 */
 TEST_F(TestRemoveRedundantOpPass, SliceContractSliceL1FanoutMisalignedMergedOffsetShouldKeepMaterialization)
 {
@@ -4156,11 +4160,11 @@ TEST_F(TestRemoveRedundantOpPass, SliceContractSliceL1FanoutMisalignedMergedOffs
     std::vector<Operation*> newOps;
     bool operationUpdated = false;
     ASSERT_EQ(RemoveRedundantOpUtils::Process(*graph.function, newOps, operationUpdated), SUCCESS);
-    EXPECT_TRUE(operationUpdated);
-    EXPECT_EQ(CountOpcode(graph.function, Opcode::OP_CONTRACT), kNumZero);
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(CountOpcode(graph.function, Opcode::OP_CONTRACT), kNumOne);
     EXPECT_EQ(CountOpcode(graph.function, Opcode::OP_SLICE), kNumThree);
     EXPECT_EQ(CountOpcode(graph.function, Opcode::OP_VIEW), kNumZero);
-    const auto consumers = FindSlicesWithInput(graph.function, graph.precedingOutput);
+    const auto consumers = FindSlicesWithInput(graph.function, graph.contractOutput);
     ASSERT_EQ(consumers.size(), 2UL);
     for (const auto* consumer : consumers) {
         auto attr = std::dynamic_pointer_cast<ViewOpAttribute>(consumer->GetOpAttribute());

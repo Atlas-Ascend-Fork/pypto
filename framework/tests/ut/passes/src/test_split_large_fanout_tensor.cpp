@@ -893,13 +893,10 @@ TEST_F(SplitLargeFanoutTensorTest, BeCovered_Full)
     dump graph after Pass
     function->DumpJsonFile(jsonFilePath);
     */
-    // TODO: CreateOpFor1toM 改为共享 assemble 后，1:N 场景下保留一个共享 ASSEMBLE 作为汇聚点，
-    // 当前的 EraseRedundantAssembleOp 不会删除该 ASSEMBLE（它只删 1:1 的 ASSEMBLE->VIEW）。
-    // 后续计划将 RemoveRedundantOp 中的删除冗余 assemble 逻辑提成公共方法，由本 pass 调用。
-    // 暂时注释断言，避免阻塞后续测试。
-    constexpr int opNumAfter = 9;
-    constexpr int viewNumAfter = 4;
-    constexpr int assembleNumAfter = 3;
+    // Independent aliases allow the redundant assemble/view pair to merge.
+    constexpr int opNumAfter = 7;
+    constexpr int viewNumAfter = 3;
+    constexpr int assembleNumAfter = 2;
     auto countResultAfter = CountViewAssemble(*function);
     viewNumCount = countResultAfter[0];
     assembleNumCount = countResultAfter[1];
@@ -2357,6 +2354,61 @@ TEST_F(SplitLargeFanoutTensorTest, OneToMSharedTensor)
         EXPECT_EQ(contractWithMultiSlice, 1U)
             << "期望存在一条 1:2 contract->slice 链（共享 tensor），实际 >=2 slice 消费者的 contract 数: "
             << contractWithMultiSlice;
+    }
+}
+
+TEST_F(SplitLargeFanoutTensorTest, AliasFanoutHasIndependentBuffersWhileCopiesAndTokensShare)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    for (const std::string mode :
+         {"alias", "slice", "contract", "view_token", "assemble_token", "view_need_copy", "assemble_need_copy",
+          "view_result_token", "assemble_result_token", "inplace", "rmw"}) {
+        SCOPED_TRACE(mode);
+        ComputationalGraphBuilder graph;
+        graph.AddTensor(DataType::DT_FP16, {16, 32}, "input");
+        graph.AddTensor(DataType::DT_FP16, {32, 32}, "large");
+        graph.AddTensor(DataType::DT_FP16, {16, 32}, "left");
+        graph.AddTensor(DataType::DT_FP16, {16, 32}, "right");
+        graph.AddOp(mode == "contract" ? Opcode::OP_CONTRACT : Opcode::OP_ASSEMBLE, {"input"}, {"large"}, "assemble");
+        auto assemble = graph.GetOp("assemble");
+        assemble->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_L1, Offset{0, 0}));
+        for (const std::string name : {"left", "right"}) {
+            graph.AddOp(mode == "slice" ? Opcode::OP_SLICE : Opcode::OP_VIEW, {"large"}, {name}, name);
+            graph.GetOp(name)->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}));
+        }
+        auto token = IRContext::Get().MakeSemanticToken("fanout_read", ir::TokenKind::READ, ir::Span::Unknown());
+        if (mode == "view_token") {
+            graph.GetOp("left")->tokens_ = {token};
+        } else if (mode == "assemble_token") {
+            assemble->tokens_ = {token};
+        } else if (mode == "view_result_token") {
+            graph.GetOp("left")->result_token_ = {token};
+        } else if (mode == "assemble_result_token") {
+            assemble->result_token_ = {token};
+        } else if (mode == "view_need_copy") {
+            graph.GetOp("left")->SetAttr("NeedCopy", true);
+        } else if (mode == "assemble_need_copy") {
+            assemble->SetAttr("NeedCopy", true);
+        } else if (mode == "inplace") {
+            graph.GetOp("left")->SetAttribute(OpAttributeKey::inplaceIdx, 0);
+        } else if (mode == "rmw") {
+            assemble->SetAttribute(OpAttributeKey::rmwMode, 1);
+        }
+        SplitLargeFanoutTensor pass;
+        pass.CreateOpFor1toM(*graph.GetFunction(), graph.GetTensor("large"), {16, 32}, {0, 0},
+                             {graph.GetTensor("input")}, {graph.GetTensor("left"), graph.GetTensor("right")});
+        auto left = graph.GetOp("left")->GetIOperands().front();
+        auto right = graph.GetOp("right")->GetIOperands().front();
+        EXPECT_EQ(left->GetShape(), (Shape{16, 32}));
+        EXPECT_EQ(right->GetShape(), (Shape{16, 32}));
+        if (mode == "alias") {
+            EXPECT_NE(left->GetRawMagic(), right->GetRawMagic());
+        } else {
+            EXPECT_EQ(left, right);
+        }
+        if (mode == "view_token") {
+            EXPECT_EQ(graph.GetOp("left")->tokens_, (std::vector<ir::VarPtr>{token}));
+        }
     }
 }
 

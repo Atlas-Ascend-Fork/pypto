@@ -575,6 +575,12 @@ Status AssignMemoryType::InferSliceMemoryType(Operation& operation)
                           operation.GetOpMagic());
         return FAILED;
     }
+    // Vector copy-in supports at most five dimensions; convolution uses a dedicated L1 transfer.
+    if (output->GetShape().size() >= SHAPE_DIM6 && !operation.GetBoolAttribute(OpAttributeKey::isConv)) {
+        MemoryPathUtils::ForceSetOriginal(output, MemoryType::MEM_DEVICE_DDR, "InferHighRankSliceOutputOriginal");
+        viewOpAttribute->SetToType(MemoryType::MEM_DEVICE_DDR);
+        return SUCCESS;
+    }
     if (output->GetMemoryTypeOriginal() != MemoryType::MEM_UNKNOWN) {
         viewOpAttribute->SetToType(output->GetMemoryTypeOriginal());
         return SUCCESS;
@@ -603,6 +609,13 @@ Status AssignMemoryType::InferContractMemoryType(Operation& operation)
                           "Infer OP_CONTRACT[%d] memory type failed because assemble attr is null.",
                           operation.GetOpMagic());
         return FAILED;
+    }
+    // Vector copy-out supports at most five dimensions; keep higher-rank inputs in DDR.
+    if (input->GetShape().size() >= SHAPE_DIM6) {
+        MemoryPathUtils::ForceSetRequirement(inserter, input, operation, MemoryType::MEM_DEVICE_DDR,
+                                             "InferHighRankContractInputRequirement");
+        assembleOpAttribute->SetFromType(MemoryType::MEM_DEVICE_DDR);
+        return SUCCESS;
     }
     MemoryType inputRequirement = inserter.GetRequirementOrUnknown(input, operation);
     if (inputRequirement != MemoryType::MEM_UNKNOWN) {
@@ -1214,6 +1227,18 @@ Status AssignMemoryType::KeepSplitReshapeUb(Operation& operation, const LogicalT
     if (input == nullptr || output == nullptr) {
         return SUCCESS;
     }
+    // A parallel copy-in branch still needs its original memory boundary. Keeping
+    // the assembled input in UB would fuse all producer tiles and materialize the
+    // whole tensor again for each incompatible slice.
+    for (auto* consumer : input->GetConsumers()) {
+        if (consumer == &operation || consumer->GetOpcode() != Opcode::OP_SLICE) {
+            continue;
+        }
+        auto attr = std::dynamic_pointer_cast<ViewOpAttribute>(consumer->GetOpAttribute());
+        if (attr != nullptr && attr->GetTo() != MemoryType::MEM_UNKNOWN && attr->GetTo() != MemoryType::MEM_UB) {
+            return SUCCESS;
+        }
+    }
     auto& producers = input->GetProducers();
     auto& consumers = output->GetConsumers();
     if (producers.empty() || consumers.empty()) {
@@ -1407,7 +1432,7 @@ Status AssignMemoryType::ApplyOversizedLocalBufferFallbackStandard(Operation& op
         return SUCCESS;
     }
 
-    if (MemoryPathUtils::IsOversizedLocalBuffer(output, output->GetMemoryTypeOriginal(), false, true)) {
+    if (MemoryPathUtils::IsOversizedLocalBuffer(output, output->GetMemoryTypeOriginal(), false, false)) {
         MemoryPathUtils::ForceSetOriginal(output, MemoryType::MEM_DEVICE_DDR, "ApplyOversizedSliceOutputFallback");
         auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(operation.GetOpAttribute());
         if (viewAttr == nullptr) {
@@ -1434,7 +1459,7 @@ Status AssignMemoryType::DowngradeOversizedMoveInInputRequirement(Operation& ope
     }
     auto input = operation.iOperand.front();
     MemoryType inputType = inserter.GetRequirementOrUnknown(input, operation);
-    if (!MemoryPathUtils::IsOversizedLocalBuffer(input, inputType, false, true)) {
+    if (!MemoryPathUtils::IsOversizedLocalBuffer(input, inputType, false, false)) {
         return SUCCESS;
     }
     const char* reason = IsSliceMode() ? "ApplyOversizedSliceInputFallback" : "ApplyOversizedViewInputFallback";

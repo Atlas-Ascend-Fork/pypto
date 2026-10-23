@@ -8,7 +8,7 @@
         "copyout_resolve_coalescing": 0,
         "auto_mix_partition": 0,
         "sg_set_tunevf_mode": 0,
-        "enable_slice": false,
+        "enable_slice": true,
         "sg_set_scope": [-1, 0, 0],
         "sg_set_ooo_scope": [-1],
         "sg_set_atomic_scope": [-1],

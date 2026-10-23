@@ -2321,6 +2321,28 @@ TEST_F(AssignMemoryTypeTest, ExpReshapeDuplicatedViewReshapeExp)
     }
 }
 
+TEST_F(AssignMemoryTypeTest, SingleReshapeSliceFanoutPreservesDdrBoundary)
+{
+    ComputationalGraphBuilder graph;
+    graph.AddTensor(DT_FP32, {NUM_64, NUM_512}, MemoryType::MEM_UB, "input");
+    graph.AddTensor(DT_FP32, {NUM_64, NUM_512}, MemoryType::MEM_DEVICE_DDR, "assembled");
+    graph.AddTensor(DT_FP32, {NUM_1, NUM_1, NUM_64, NUM_512}, MemoryType::MEM_DEVICE_DDR, "reshaped");
+    graph.AddOp(Opcode::OP_CONTRACT, {"input"}, {"assembled"}, "contract");
+    graph.GetOp("contract")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 0}));
+    graph.AddOp(Opcode::OP_RESHAPE, {"assembled"}, {"reshaped"}, "reshape");
+    for (int row = 0; row < NUM_2; ++row) {
+        auto name = "slice" + std::to_string(row);
+        graph.AddTensor(DT_FP32, {NUM_1, NUM_1, NUM_1, NUM_512}, MemoryType::MEM_UB, name);
+        graph.AddOp(Opcode::OP_SLICE, {"reshaped"}, {name}, name);
+        graph.GetOp(name)->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0, row, 0}, MemoryType::MEM_UB));
+    }
+
+    AssignMemoryType pass;
+    ASSERT_EQ(pass.ProcessDdrMultiReshape(*graph.GetFunction()), SUCCESS);
+    EXPECT_EQ(graph.GetTensor("assembled")->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(graph.GetTensor("reshaped")->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+}
+
 TEST_F(AssignMemoryTypeTest, DdrMultiReshapeWithDirectSlice)
 {
     auto function = std::make_shared<Function>(Program::GetInstance(), "DdrMultiReshapeWithDirectSlice",
@@ -3050,6 +3072,43 @@ TEST_F(AssignMemoryTypeTest, ReshapeL1SlicePathIsNotKeptInUb)
     EXPECT_NE(reshapeOutput->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
 }
 
+TEST_F(AssignMemoryTypeTest, SplitReshapeRespectsParallelInputConsumers)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    for (auto parallelMemory : {MemoryType::MEM_UB, MemoryType::MEM_L1, MemoryType::MEM_DEVICE_DDR}) {
+        SCOPED_TRACE(parallelMemory);
+        ComputationalGraphBuilder G;
+        G.AddTensor(DT_BF16, {NUM_16, NUM_128}, MemoryType::MEM_L0C, "tile0");
+        G.AddTensor(DT_BF16, {NUM_16, NUM_128}, MemoryType::MEM_L0C, "tile1");
+        G.AddTensor(DT_BF16, {NUM_16, NUM_256}, MemoryType::MEM_UNKNOWN, "assembled");
+        G.AddTensor(DT_BF16, {NUM_1, NUM_16, NUM_256}, MemoryType::MEM_UNKNOWN, "reshaped");
+        G.AddTensor(DT_BF16, {NUM_1, NUM_16, NUM_128}, MemoryType::MEM_UB, "vector_input");
+        G.AddTensor(DT_BF16, {NUM_16, NUM_128}, parallelMemory, "parallel_input");
+        G.AddOp(Opcode::OP_CONTRACT, {"tile0"}, {"assembled"}, "contract0");
+        G.GetOp("contract0")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_L0C, Offset{0, 0}));
+        G.AddOp(Opcode::OP_CONTRACT, {"tile1"}, {"assembled"}, "contract1");
+        G.GetOp("contract1")
+            ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_L0C, Offset{0, NUM_128}));
+        G.AddOp(Opcode::OP_RESHAPE, {"assembled"}, {"reshaped"}, "reshape");
+        G.AddOp(Opcode::OP_SLICE, {"reshaped"}, {"vector_input"}, "vector_slice");
+        G.GetOp("vector_slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0, 0}, MemoryType::MEM_UB));
+        G.AddOp(Opcode::OP_SLICE, {"assembled"}, {"parallel_input"}, "parallel_slice");
+        G.GetOp("parallel_slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, parallelMemory));
+
+        AssignMemoryType pass;
+        auto input = G.GetTensor("assembled");
+        auto output = G.GetTensor("reshaped");
+        // A reshape's provisional DDR requirement must not count as a parallel branch.
+        pass.inserter.UpdateTensorTobeMap(input, *G.GetOp("reshape"), MemoryType::MEM_DEVICE_DDR);
+        pass.inserter.UpdateTensorTobeMap(input, *G.GetOp("parallel_slice"), MemoryType::MEM_DEVICE_DDR);
+        bool kept = false;
+        ASSERT_EQ(pass.KeepSplitReshapeUb(*G.GetOp("reshape"), input, output, kept), SUCCESS);
+        EXPECT_EQ(kept, parallelMemory == MemoryType::MEM_UB);
+        EXPECT_EQ(input->GetMemoryTypeOriginal(), kept ? MemoryType::MEM_UB : MemoryType::MEM_UNKNOWN);
+        EXPECT_EQ(output->GetMemoryTypeOriginal(), kept ? MemoryType::MEM_UB : MemoryType::MEM_UNKNOWN);
+    }
+}
+
 TEST_F(AssignMemoryTypeTest, ExplicitUnknownGatherElementSliceFromIncastFallsBackToDdr)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
@@ -3351,6 +3410,82 @@ TEST_F(AssignMemoryTypeTest, SameMemorySliceContractDowngradeToLayoutOps)
 
     EXPECT_EQ(sliceOp.GetOpcode(), Opcode::OP_VIEW);
     EXPECT_EQ(contractOp.GetOpcode(), Opcode::OP_ASSEMBLE);
+}
+
+TEST_F(AssignMemoryTypeTest, HighRankSliceOutputOriginalFallsBackToDdr)
+{
+    for (size_t rank : {5U, 6U, 7U}) {
+        for (MemoryType original : {MemoryType::MEM_UNKNOWN, MemoryType::MEM_UB, MemoryType::MEM_L1}) {
+            SCOPED_TRACE(rank);
+            auto function = std::make_shared<Function>(Program::GetInstance(), "HighRankSlice", "HighRankSlice",
+                                                       nullptr);
+            Shape shape(rank, 1);
+            shape.back() = NUM_16;
+            auto input = IRBuilder().CreateTensorVar(DT_BF16, shape, CreateTestConstIntVector(shape));
+            auto output = IRBuilder().CreateTensorVar(DT_BF16, shape, CreateTestConstIntVector(shape));
+            input->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+            output->SetMemoryTypeBoth(original, true);
+            auto& slice = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_SLICE, {input}, {output});
+            auto attr = std::make_shared<ViewOpAttribute>(Offset(rank, 0), original);
+            slice.SetOpAttribute(attr);
+
+            AssignMemoryType pass;
+            ASSERT_EQ(pass.InferSliceMemoryType(slice), SUCCESS);
+            MemoryType expected = rank >= 6 ? MemoryType::MEM_DEVICE_DDR :
+                                              (original == MemoryType::MEM_UNKNOWN ? MemoryType::MEM_UB : original);
+            EXPECT_EQ(output->GetMemoryTypeOriginal(), expected);
+            EXPECT_EQ(attr->GetTo(), expected);
+        }
+    }
+}
+
+TEST_F(AssignMemoryTypeTest, HighRankConvSliceKeepsDedicatedL1Transfer)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "HighRankConvSlice", "HighRankConvSlice",
+                                               nullptr);
+    Shape shape = {1, 1, 1, NUM_16, NUM_16, NUM_16};
+    auto input = IRBuilder().CreateTensorVar(DT_BF16, shape, CreateTestConstIntVector(shape));
+    auto output = IRBuilder().CreateTensorVar(DT_BF16, shape, CreateTestConstIntVector(shape));
+    input->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+    output->SetMemoryTypeBoth(MemoryType::MEM_L1, true);
+    auto& slice = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_SLICE, {input}, {output});
+    auto attr = std::make_shared<ViewOpAttribute>(Offset(shape.size(), 0), MemoryType::MEM_L1);
+    slice.SetOpAttribute(attr);
+    slice.SetAttribute(OpAttributeKey::isConv, true);
+
+    AssignMemoryType pass;
+    ASSERT_EQ(pass.InferSliceMemoryType(slice), SUCCESS);
+    EXPECT_EQ(output->GetMemoryTypeOriginal(), MemoryType::MEM_L1);
+    EXPECT_EQ(attr->GetTo(), MemoryType::MEM_L1);
+}
+
+TEST_F(AssignMemoryTypeTest, HighRankContractInputRequirementFallsBackToDdr)
+{
+    for (size_t rank : {5U, 6U, 7U}) {
+        for (MemoryType requirement : {MemoryType::MEM_UNKNOWN, MemoryType::MEM_UB, MemoryType::MEM_L1}) {
+            SCOPED_TRACE(rank);
+            auto function = std::make_shared<Function>(Program::GetInstance(), "HighRankContract", "HighRankContract",
+                                                       nullptr);
+            Shape shape(rank, 1);
+            shape.back() = NUM_16;
+            auto input = IRBuilder().CreateTensorVar(DT_BF16, shape, CreateTestConstIntVector(shape));
+            auto output = IRBuilder().CreateTensorVar(DT_BF16, shape, CreateTestConstIntVector(shape));
+            input->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+            output->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+            auto& contract = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {input}, {output});
+            auto attr = std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset(rank, 0));
+            contract.SetOpAttribute(attr);
+
+            AssignMemoryType pass;
+            pass.inserter.UpdateTensorTobeMap(input, contract, requirement);
+            ASSERT_EQ(pass.InferContractMemoryType(contract), SUCCESS);
+            MemoryType expected = rank >= 6 ?
+                                      MemoryType::MEM_DEVICE_DDR :
+                                      (requirement == MemoryType::MEM_UNKNOWN ? MemoryType::MEM_UB : requirement);
+            EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, contract), expected);
+            EXPECT_EQ(attr->GetFrom(), expected);
+        }
+    }
 }
 
 class AssignMemoryTypeUbSliceTest : public AssignMemoryTypeTest,

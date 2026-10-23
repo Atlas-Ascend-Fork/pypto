@@ -38,13 +38,17 @@ public:
 private:
     Status RunOnFunction(Function& function) override;
     Status Expandfunction(Function& function) const;
+    Status ExpandTensorOperations(Function& function, const std::vector<OperationPtr>& tensorOperations,
+                                  const std::unordered_set<Operation*>& skipExpandOps,
+                                  const std::unordered_set<LogicalTensor*>& incastGatherOutputs) const;
     Status ExpandOperation(Function& function, Operation& op) const;
     Status VerifyScopeInfo(Function& function, std::ostringstream& oss) const;
     Status ClearIOOperand(const std::vector<OperationPtr>& tensorOperations) const;
     void RefreshViewAssembleTileShapes(const std::vector<OperationPtr>& tensorOperations,
                                        const std::unordered_set<Operation*>& skipExpandOps) const;
     std::unordered_set<Operation*> CollectSkipExpandOps(Function& function,
-                                                        const std::vector<OperationPtr>& tensorOperations) const;
+                                                        const std::vector<OperationPtr>& tensorOperations,
+                                                        std::unordered_set<LogicalTensor*>& incastGatherOutputs) const;
     static bool ShouldKeepOpUnexpanded(const OperationPtr& op, const std::unordered_set<Operation*>& skipExpandOps);
     void ProcessForNotExpandOp(Function& function, Operation& op) const;
     void DoHealthCheckBefore(Function& function, const std::string& folderPath) override;

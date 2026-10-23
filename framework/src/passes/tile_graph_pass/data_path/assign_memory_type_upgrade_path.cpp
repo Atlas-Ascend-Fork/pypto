@@ -178,7 +178,9 @@ Status AssignMemoryType::ProcessDdrMultiReshape(Function& function)
                 break;
             }
         }
-        if (!matches) {
+        // A single reshape followed only by slices keeps the boundary selected by
+        // normal inference. This upgrade is for paths with another reshape branch.
+        if (!matches || branchReshapes.empty()) {
             continue;
         }
 

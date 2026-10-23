@@ -447,7 +447,21 @@ void SplitLargeFanoutTensor::CreateOpFor1toM(Function& function, const LogicalTe
         return;
     }
     auto overlap = overlaps[0];
-    if (!config::EnableSlice()) {
+    auto oldAssemble = FindAssembleFamilyProducer(overlap, largeTensor);
+    auto isPureAlias = [](Operation* op, Opcode opcode) {
+        bool needCopy = false;
+        return op != nullptr && op->GetOpcode() == opcode && op->tokens_.empty() && op->result_token_.empty() &&
+               !(op->GetAttr<bool>("NeedCopy", needCopy) && needCopy) &&
+               !op->HasAttribute(OpAttributeKey::inplaceIdx) && !op->HasAttribute(OpAttributeKey::rmwMode);
+    };
+    const bool aliasFanout = isPureAlias(oldAssemble, Opcode::OP_ASSEMBLE) &&
+                             std::all_of(dualOverlaps.begin(), dualOverlaps.end(), [&](const LogicalTensorPtr& tensor) {
+                                 auto view = FindViewFamilyProducer(tensor, largeTensor);
+                                 return isPureAlias(view, Opcode::OP_VIEW);
+                             });
+    // Independent alias consumers need independent buffers so cube tiles can be
+    // partitioned separately. Copy operations and token contracts retain sharing.
+    if (!config::EnableSlice() || aliasFanout) {
         for (const auto& dualOverlap : dualOverlaps) {
             auto viewOp = *dualOverlap->GetProducers().begin();
             if (viewOp->GetIOperands().empty() ||

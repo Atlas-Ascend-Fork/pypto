@@ -1963,33 +1963,39 @@ bool RemoveRedundantOpUtils::CollectL1FoldMergedOffsets(const SliceContractSlice
     return true;
 }
 
-void RemoveRedundantOpUtils::FoldL1FanoutChain(const SliceContractSliceChain& chain,
+bool RemoveRedundantOpUtils::FoldL1FanoutChain(const SliceContractSliceChain& chain,
                                                const std::vector<SliceContractSliceRewrite>& rewrites)
 {
     // Multiple L1 consumers share the preceding L1/UB materialization.  Fold the preceding slice into
-    // every consumer when it is a plain same-memory view, so the slice and the contract both disappear;
-    // otherwise keep the slice and remove only the redundant contract.
+    // every consumer when it is a plain same-memory view, so the slice and the contract both disappear.
     std::vector<MergedOffset> mergedOffsets;
     const bool canFoldPrecedingSlice = CollectL1FoldMergedOffsets(chain, rewrites, mergedOffsets);
+    if (!canFoldPrecedingSlice) {
+        // 前序 slice 无法折叠（内存类型变换/维度不一致/合并偏移越界或非 32B 对齐等）时，不做
+        // "仅消除 CONTRACT、consumer SLICE 输入转接 contractInput" 的半优化改写：consumer 直读
+        // 前序 slice 的局部物化 buffer，会拉长该 buffer 生命周期并改变下游内存布局假设，收益
+        // 有限且易引入回归。保持整条 SLICE→CONTRACT→SLICE 链不变，交由后续数据通路 pass 按
+        // 原语义物化。
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Skip slice-contract-slice L1 fanout rewrite: preceding slice of CONTRACT[%d] "
+                          "cannot be folded, keep the whole chain.",
+                          chain.contract->GetOpMagic());
+        return false;
+    }
     for (size_t idx = 0; idx < rewrites.size(); ++idx) {
         const auto& rewrite = rewrites[idx];
         auto* consumer = rewrite.consumer;
         auto consumerAttr = GetViewAttr(*consumer);
         auto newAttr = std::dynamic_pointer_cast<ViewOpAttribute>(consumerAttr->Clone());
-        if (canFoldPrecedingSlice) {
-            newAttr->SetFromOffset(mergedOffsets[idx].first, mergedOffsets[idx].second);
-        } else {
-            newAttr->SetFromOffset(rewrite.localOffset, rewrite.localDynOffset);
-        }
+        newAttr->SetFromOffset(mergedOffsets[idx].first, mergedOffsets[idx].second);
         newAttr->SetToType(MemoryType::MEM_L1);
         consumer->SetOpAttribute(newAttr);
         consumer->GetOOperands().front()->SetMemoryTypeBoth(MemoryType::MEM_L1, true);
-        consumer->ReplaceInput(canFoldPrecedingSlice ? chain.sourceTensor : chain.contractInput, chain.contractOutput);
+        consumer->ReplaceInput(chain.sourceTensor, chain.contractOutput);
     }
-    if (canFoldPrecedingSlice) {
-        chain.precedingSlice->SetAsDeleted();
-    }
+    chain.precedingSlice->SetAsDeleted();
     chain.contract->SetAsDeleted();
+    return true;
 }
 
 void RemoveRedundantOpUtils::RewriteComposableFanoutChain(const SliceContractSliceChain& chain,
@@ -2090,7 +2096,7 @@ bool RemoveRedundantOpUtils::ProcessSliceContractSliceFanout(Function& function,
         return false;
     }
     if (keepL1Fanout) {
-        FoldL1FanoutChain(chain, rewrites);
+        return FoldL1FanoutChain(chain, rewrites);
     } else if (canComposeOffsets) {
         RewriteComposableFanoutChain(chain, rewrites);
     } else if (!RewriteDynamicFanoutFallback(function, chain, rewrites, hasL1Consumer, newOps, operationUpdated)) {
@@ -2261,6 +2267,7 @@ void RemoveRedundantOpUtils::GenerateContractSliceView(Function& function, Opera
     auto& newViewOp = PassOperationUtils::AddOperation(
         function, Opcode::OP_VIEW, {inputTensor}, {newViewTensor},
         [&viewAttribute](Operation& newOp) { newOp.SetOpAttribute(viewAttribute); });
+    newViewOp.SetScopeInfo(sliceOp.GetScopeInfo());
     newOps.push_back(&newViewOp);
     operationUpdated = true;
 }
