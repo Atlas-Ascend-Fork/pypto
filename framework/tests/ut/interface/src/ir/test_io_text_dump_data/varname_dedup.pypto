@@ -1,0 +1,7 @@
+program #entry(main) {
+    function main incast(int32_t %a) outcast(int32_t) #entry(true) #type(Opaque) {
+        int32_t %0 = %a;
+        int32_t %0_0 = %0;
+        return %0_0;
+    }
+}

@@ -7,6 +7,6 @@ function foo incast(v0_logical_tensor %src@0 #dtype(float) #dynvalidshape([v0cal
     v0_logical_tensor %kj_assemble_7@1 #dtype(float) #dynvalidshape([512, 128]) #offset([0, 0]) #shape([512, 128]) = !10019 ASSEMBLE(%View_src_1@5) token() #toOffset([256, 0]);
     v0_logical_tensor %View_src_2@6 #dtype(float) #dynvalidshape([v0min(v0call(RUNTIME_GetInputShapeDim, ARG_src, 0), 128), 128]) #offset([0, 0]) #shape([128, 128]) = !10020 VIEW(%src@0) token() #fromOffset([384, 0]) #toValidShape([v0min(v0call(RUNTIME_GetInputShapeDim, ARG_src, 0), 128), 128]);
     v0_logical_tensor %kj_assemble_7@1 #dtype(float) #dynvalidshape([512, 128]) #offset([0, 0]) #shape([512, 128]) = !10021 ASSEMBLE(%View_src_2@6) token() #toOffset([384, 0]);
-    v0_logical_tensor %$0@7 #dtype(float) #dynvalidshape([512, 128]) #offset([0, 0]) #shape([512, 128]) = !10022 ADDS(%kj_assemble_7@1) token();
-    return %src@0, %kj_assemble_7@1, %$0@7;
+    v0_logical_tensor %0@7 #dtype(float) #dynvalidshape([512, 128]) #offset([0, 0]) #shape([512, 128]) = !10022 ADDS(%kj_assemble_7@1) token();
+    return %src@0, %kj_assemble_7@1, %0@7;
 }

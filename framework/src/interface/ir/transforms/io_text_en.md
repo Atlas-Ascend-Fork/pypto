@@ -92,7 +92,7 @@ var_ref_list            ::= var_ref { ',' var_ref };
 ```ebnf
 ident                   ::= [A-Za-z_][A-Za-z0-9_]*;
 string                  ::= "([^"\\\r\n]|\\["\\nrt0])*";
-varname                 ::= '%' ( [A-Za-z_][A-Za-z0-9_.]* | [0-9]+ ) [ '@' ( [A-Za-z_][A-Za-z0-9_.]* | [0-9]+ ) ];
+varname                 ::= '%' ( [A-Za-z0-9_][A-Za-z0-9_.]* ) [ '@' ( [A-Za-z0-9_][A-Za-z0-9_.]* ) ];
 attrname                ::= '#' [A-Za-z_][A-Za-z0-9_.]*;
 v0_tensor_opmagic       ::= '!' [0-9]+;
 int                     ::= [-+]?[0-9]+;

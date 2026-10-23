@@ -28,9 +28,10 @@ def _marked_tensors(kernel):
     """{PATH name without kernel prefix: source variable names in its constructAssembleSlotList}."""
     prog = run_root_function(kernel, pypto.Tensor([BS, HIDDEN], pypto.DT_FP32, name="src"),
                              pypto.Tensor([BS, HIDDEN], pypto.DT_FP32, name="out"))
-    # Slot aliases: SSA versions "buf_3" -> "buf"; drop anonymous "$N" and pass-made "OUTCAST_*" names.
+    # Slot aliases: SSA versions "buf_3" -> "buf"; drop anonymous temp-var names (all digits, or pass-made
+    # "$N") and pass-made "OUTCAST_*" names.
     var_of = {slot: re.sub(r"_\d+$", "", name) for name, slot in pypto_impl.GetSlotInfo().items()
-              if not name.startswith(("$", "OUTCAST_"))}
+              if not re.match(r"\d|\$|OUTCAST_", name)}
     prefix = kernel.__name__ + "_"
     return {f.GetRawName()[len(prefix):]: {var_of[s] for s in f.GetConstructAssembleSlotList()}
             for f in prog.functions.values() if f.GetConstructAssembleSlotList()}

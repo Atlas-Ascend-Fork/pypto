@@ -1,7 +1,7 @@
 function foo incast(v0_logical_tensor %target@0 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), v0_logical_tensor %src_0@1 #dtype(float) #dynvalidshape([16, 32]) #offset([0, 0]) #shape([16, 32]), v0_logical_tensor %src_1@2 #dtype(float) #dynvalidshape([8, 64]) #offset([0, 0]) #shape([8, 64])) outcast() #entry(false) #type(Opaque) {
-    v0_logical_tensor %$0@3 #dtype(float) #dynvalidshape([16, 32]) #offset([0, 0]) #shape([16, 32]) = !10000 RESHAPE(%target@0) token();
-    v0_logical_tensor %$1@4 #dtype(float) #dynvalidshape([8, 64]) #offset([0, 0]) #shape([8, 64]) = !10001 RESHAPE(%target@0) token();
-    v0_logical_tensor %$0_0@3 #dtype(float) #dynvalidshape([16, 32]) #offset([0, 0]) #shape([16, 32]), token %$0_0_w, token %src_0_r = !10002 ASSEMBLE(%src_0@1) token() #toOffset([0, 0]);
-    v0_logical_tensor %$1_0@4 #dtype(float) #dynvalidshape([8, 64]) #offset([0, 0]) #shape([8, 64]), token %$1_0_w, token %src_1_r = !10003 ASSEMBLE(%src_1@2) token(%$0_0_w) #toOffset([0, 0]);
+    v0_logical_tensor %0@3 #dtype(float) #dynvalidshape([16, 32]) #offset([0, 0]) #shape([16, 32]) = !10000 RESHAPE(%target@0) token();
+    v0_logical_tensor %1@4 #dtype(float) #dynvalidshape([8, 64]) #offset([0, 0]) #shape([8, 64]) = !10001 RESHAPE(%target@0) token();
+    v0_logical_tensor %0_0@3 #dtype(float) #dynvalidshape([16, 32]) #offset([0, 0]) #shape([16, 32]), token %0_0_w, token %src_0_r = !10002 ASSEMBLE(%src_0@1) token() #toOffset([0, 0]);
+    v0_logical_tensor %1_0@4 #dtype(float) #dynvalidshape([8, 64]) #offset([0, 0]) #shape([8, 64]), token %1_0_w, token %src_1_r = !10003 ASSEMBLE(%src_1@2) token(%0_0_w) #toOffset([0, 0]);
     return %target@0, %src_0@1, %src_1@2;
 }

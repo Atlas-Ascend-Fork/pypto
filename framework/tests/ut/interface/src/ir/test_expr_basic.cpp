@@ -61,7 +61,7 @@ TEST(ExprBasicTest, TestNoneValue)
 
     ASSERT_NE(none, nullptr);
     EXPECT_EQ(none, NoneValue());
-    EXPECT_EQ(std::dynamic_pointer_cast<const Var>(none)->name_, "None");
+    EXPECT_EQ(std::dynamic_pointer_cast<const Var>(none)->name_, "none");
     EXPECT_NE(std::dynamic_pointer_cast<const NoneType>(none->GetType()), nullptr);
 }
 

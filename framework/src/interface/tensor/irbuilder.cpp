@@ -277,7 +277,7 @@ ir::VarPtr IRBuilder::CreateTokenVar(ir::Span span) { return irContext_.MakeTemp
 
 ir::ExprPtr IRBuilder::None()
 {
-    static auto none = irContext_.MakeVar("None", ir::GetNoneType(), ir::Span::Unknown());
+    static auto none = irContext_.MakeVar("none", ir::GetNoneType(), ir::Span::Unknown());
     return none;
 }
 

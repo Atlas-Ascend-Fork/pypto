@@ -69,7 +69,7 @@ public:
         rules_ = {
             R{IRTextLexerTokenKind::TokString, std::regex(R"str("([^"\\\r\n]|\\["\\nrt0])*")str")},
             R{IRTextLexerTokenKind::TokVarName,
-              std::regex(R"(%([A-Za-z_][A-Za-z0-9_.]*|[0-9]+)(@([A-Za-z_][A-Za-z0-9_.]*|[0-9]+))?)")},
+              std::regex(R"(%([A-Za-z0-9_][A-Za-z0-9_.]*)(@([A-Za-z0-9_][A-Za-z0-9_.]*))?)")},
             R{IRTextLexerTokenKind::TokAttrName, std::regex(R"(#[A-Za-z_][A-Za-z0-9_.]*)")},
             R{IRTextLexerTokenKind::TokV0OpMagic, std::regex(R"(!\d+)")},
             R{IRTextLexerTokenKind::TokFloat, std::regex(R"(-?\d+\.\d+(?:[eE][+-]?\d+)?|-?\d+[eE][-+]?\d+)")},
@@ -1148,6 +1148,8 @@ StmtPtr IRTextParser::ParseStmt()
 // ---- Function parsing ----
 FunctionPtr IRTextParser::ParseFunction()
 {
+    // Reset the process-global name uniquifier so loaded names match the text.
+    npu::tile_fwk::IRContext::Get().Reset();
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwFunction));
     MUST_VALID(name, ParseIdent());
 

@@ -1,6 +1,6 @@
 function foo incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]), v0_logical_tensor %y@1 #dtype(float) #dynvalidshape([v0call(RUNTIME_GetInputShapeDim, ARG_y, 0), 32]) #offset([0, 0]) #shape([-1, 32])) outcast() #entry(false) #type(Opaque) {
     OP_CONFIG() token() #vec_tile_shapes([16, 16]);
-    int64_t %n_0 = for %loop_idx_12 inrange 0, 10, 1 iter { int64_t %n = 0; } #parallel(false) #submit_before_loop(false) #_loop_conds([v0ge(loop_idx_12, 0), v0lt(loop_idx_12, 10)]) #_config_scope(Unsupported) #unroll_times(1) {
+    int64_t %n_0 = for %loop_idx_12 inrange 0, 10, 1 iter { int64_t %n = 0; } #_config_scope(Unsupported) #_loop_conds([v0ge(loop_idx_12, 0), v0lt(loop_idx_12, 10)]) #parallel(false) #submit_before_loop(false) #unroll_times(1) {
         continue v0add(n, 32);
     }
     v0_logical_tensor %y_3@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = if v0lt(128, n_0) then {

@@ -236,7 +236,7 @@ using VarPtr = std::shared_ptr<const Var>;
 
 inline ExprPtr NoneValue()
 {
-    static const auto none = std::make_shared<Var>("None", GetNoneType(), Span::Unknown());
+    static const auto none = std::make_shared<Var>("none", GetNoneType(), Span::Unknown());
     return none;
 }
 

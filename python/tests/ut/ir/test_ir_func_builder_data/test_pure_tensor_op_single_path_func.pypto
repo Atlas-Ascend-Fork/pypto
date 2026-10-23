@@ -1,8 +1,8 @@
 program #entry() {
     function foo incast(v0_logical_tensor %a@0 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %b@1 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), v0_logical_tensor %out@2 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16])) outcast() #entry(false) #type(Opaque) {
         OP_CONFIG() token() #vec_tile_shapes([16, 16]);
-        v0_logical_tensor %$0@3 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10000 ADD(%a@0, %b@1) token();
-        v0_logical_tensor %out@2 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10001 ASSEMBLE(%$0@3) token() #toOffset([0, 0]);
+        v0_logical_tensor %0@3 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10000 ADD(%a@0, %b@1) token();
+        v0_logical_tensor %out@2 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10001 ASSEMBLE(%0@3) token() #toOffset([0, 0]);
         return %a@0, %b@1, %out@2;
     }
 }

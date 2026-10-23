@@ -510,6 +510,9 @@ private:
     // Attr is the leaf layer of the traversal: nodes carrying attrs hand their
     // attr dict to PrintAttrDict, which dispatches value formatting.
     void PrintAttrDict(const std::map<std::string, std::any>& attrDict);
+    // Dump an ordered attr list in sorted (lexicographic) key order, so a re-loaded
+    // IR dumps identically to the original.
+    void PrintAttrsSorted(const std::vector<std::pair<std::string, std::any>>& attrs);
     static std::map<std::string, std::any> GetTensorAttrDict(const VarPtr& var);
     static std::map<std::string, std::any> GetFunctionAttrDict(const FunctionPtr& func);
     void PrintScalarExpr(const std::shared_ptr<const npu::tile_fwk::RawSymbolicScalar>& ptr);

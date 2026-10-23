@@ -1,5 +1,5 @@
 function foo incast(v0_logical_tensor %target@0 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16])) outcast() #entry(false) #type(Opaque) {
-    v0_logical_tensor %$0@1 #dtype(float) #dynvalidshape([16, 32]) #offset([0, 0]) #shape([16, 32]) = !10000 RESHAPE(%target@0) token();
-    v0_logical_tensor %$1@2 #dtype(float) #dynvalidshape([8, 64]) #offset([0, 0]) #shape([8, 64]) = !10001 RESHAPE(%target@0) token();
+    v0_logical_tensor %0@1 #dtype(float) #dynvalidshape([16, 32]) #offset([0, 0]) #shape([16, 32]) = !10000 RESHAPE(%target@0) token();
+    v0_logical_tensor %1@2 #dtype(float) #dynvalidshape([8, 64]) #offset([0, 0]) #shape([8, 64]) = !10001 RESHAPE(%target@0) token();
     return %target@0;
 }

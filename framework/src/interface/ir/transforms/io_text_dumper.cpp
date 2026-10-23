@@ -13,6 +13,7 @@
 
 #include "ir/transforms/io_text.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <cmath>
@@ -214,6 +215,15 @@ void IRTextDumper::PrintTokenList(const std::vector<VarPtr>& tokenList)
 void IRTextDumper::PrintAttrDict(const std::map<std::string, std::any>& attrDict)
 {
     for (const auto& [key, value] : attrDict) {
+        PrintAttr(key, value);
+    }
+}
+
+void IRTextDumper::PrintAttrsSorted(const std::vector<std::pair<std::string, std::any>>& attrs)
+{
+    std::vector<std::pair<std::string, std::any>> sorted(attrs.begin(), attrs.end());
+    std::sort(sorted.begin(), sorted.end(), [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+    for (const auto& [key, value] : sorted) {
         PrintAttr(key, value);
     }
 }
@@ -449,9 +459,7 @@ void IRTextDumper::VisitStmt_(const ForStmtPtr& op)
     VisitExpr(op->step_);
     PrintIterArgs(op->iterArgs_);
     if (!op->attrs_.empty()) {
-        for (const auto& [key, value] : op->attrs_) {
-            PrintAttr(key, value);
-        }
+        PrintAttrsSorted(op->attrs_);
     }
     PrintBody(op->body_);
 }
