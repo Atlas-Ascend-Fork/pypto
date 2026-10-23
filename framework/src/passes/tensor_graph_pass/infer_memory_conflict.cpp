@@ -656,6 +656,11 @@ Status InferMemoryConflict::UpdateBackwardTensor(Function& function, const Logic
             continue;
         }
         if (ShouldSkipOutcastInput(inputTensor, function)) {
+            // Preserve the outcast boundary, but separate every direct
+            // outcast-to-outcast conflict that reaches this existing path.
+            if (CheckConflict(memoryInfo[curTensor], inputTensor)) {
+                preregcopys.insert(producer);
+            }
             continue;
         }
         auto reshapeOutput = producer->GetOOperands().front();
@@ -827,7 +832,13 @@ Status InferMemoryConflict::ObtainReshapeTile(Operation& op, Shape& inTileShape,
 Status InferMemoryConflict::InsertPrecededCopys(Function& function)
 {
     for (const auto op : preregcopys) {
-        LogicalTensorPtr inputTensor = op->GetIOperands().front();
+        LogicalTensorPtr inputTensor;
+        for (const auto& input : op->GetIOperands()) {
+            if (CanTransmitInput(op, input)) {
+                inputTensor = input;
+                break;
+            }
+        }
         std::shared_ptr<RawTensor> newRawTensor = std::make_shared<RawTensor>(inputTensor->Datatype(),
                                                                               inputTensor->GetShape());
         Offset newOffset(inputTensor->GetShape().size(), 0);
