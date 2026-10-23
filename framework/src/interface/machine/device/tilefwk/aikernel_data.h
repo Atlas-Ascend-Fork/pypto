@@ -92,8 +92,9 @@ const uint32_t TASKID_DRCO_SUCC_SPECIAL_SHIFT = TASKID_TASK_BITS + TASKID_FUNC_B
 const uint32_t TASKID_DRCO_SUCC_SPECIAL_MASK = 0x3f;
 
 constexpr uint32_t DRCO_SUCC_SPECIAL_PERCORE_SKIP_RESOLVE = 0x3f;
-constexpr uint32_t DRCO_SUCC_SPECIAL_MQ_MEMBER = 0x3c;
-constexpr uint32_t DRCO_SUCC_SPECIAL_MQ_MEMBER_HUB = 0x3a;
+constexpr uint32_t DRCO_SUCC_SPECIAL_MIDDLE_QUEUE_MEMBER = 0x3c;
+constexpr uint32_t DRCO_SUCC_SPECIAL_MIDDLE_QUEUE_MEMBER_SKIP = 0x3b;
+constexpr uint32_t DRCO_SUCC_SPECIAL_MIDDLE_QUEUE_MEMBER_HUB = 0x3a;
 
 /* DRCO-only: successor-table pairing. Entry bits 16-28 are free in the drco-encoded succ table
  * (entries are per-func opIdx, not full taskIds). Bit16 on an entry marks "this entry and the next

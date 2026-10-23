@@ -66,6 +66,28 @@ uint32_t CollectDirectSuccessors(DevAscendFunction* devFunc, DevAscendFunctionDu
     return cnt;
 }
 
+// resolve 跳过判定（perCoreQueue 的 SKIP_RESOLVE 与 middleQueue 的 MIDDLE_QUEUE_MEMBER_SKIP 共用判据）：
+// 唯一后继为本函数 dummyEnding 且无 stitch、本 func 未内存复用缝合 —— 该任务 resolve 到的
+// 全是 dummy 边（设备侧本就跳过递减），无任何下游可解
+bool IsSkipResolveSucc(DynDeviceTask* dyntask, uint32_t taskId)
+{
+    const uint32_t funcIdx = npu::tile_fwk::FuncID(taskId);
+    const int opIdx = static_cast<int>(npu::tile_fwk::TaskID(taskId));
+    DevAscendFunction* devFunc = dyntask->dynFuncDataCacheList[funcIdx].devFunc;
+    size_t succSize = 0;
+    const uint32_t* succList = devFunc->GetOperationDepGraphSuccAddr(opIdx, succSize);
+    if (succSize != 1 || npu::tile_fwk::TaskID(succList[0]) != devFunc->dummyEndingOpIdx_) {
+        return false;
+    }
+    const uint64_t funcInfoAndStaticDataOffset = dyntask->dynFuncDataList->GetDrcoRootFuncData(funcIdx)
+                                                     .funcInfoAndStaticDataOffset;
+    if ((funcInfoAndStaticDataOffset & npu::tile_fwk::DRCO_ROOT_FUNC_MEMORY_REUSE_STITCHED_BIT) != 0) {
+        return false;
+    }
+    auto* duppedData = dyntask->dynFuncDataCacheList[funcIdx].duppedData;
+    return duppedData == nullptr || duppedData->GetOperationStitch(opIdx, true).IsNull();
+}
+
 // HUB 搬入防御判定：编码侧会把"HUB 后继的后继表"整体搬入其唯一前驱头的解依赖表
 // （dev_encode.cpp hubExpanded：HUB 本体表清空、边只在头表中解，HUB 链上按唯一前驱
 // 奇偶交替展开保证每边恰搬一次）。middleQueue 跳过头 resolve 会使这些搬入边永不被解
@@ -131,11 +153,12 @@ uint32_t CollectEligibleMembers(DynDeviceTask* dyntask, uint64_t funcCount, Pred
 // [nrValidAic, 3*nrValidAic)）——顺序轮转保证每核至多 ⌈n/核数⌉ 个，避免取模撞核把长
 // 成员波尾拉串行；② 容量校验（任一核超 queueCapacity 返回 false，由调用方回退注册走
 // 老路径——失败发生在入队之前，无半途状态）；③ 入队打标（单槽 0，懒分配精确尺寸，
-// leaf 打 MQ_MEMBER / hub 打 MQ_MEMBER_HUB；stitch 条目自带的 ct 位与 special 位段
+// leaf 打 MIDDLE_QUEUE_MEMBER / hub 打 MIDDLE_QUEUE_MEMBER_HUB；stitch 条目自带的 ct 位与 special 位段
 // 重叠，入队前先清位段再打标，否则设备侧 ct 解码错乱）
 bool SpreadMiddleQueueMembers(npu::tile_fwk::DrcoRootFuncList* rootFuncList, DeviceWorkspaceAllocator* workspace,
-                              const uint32_t* memberTask, const uint32_t* memberCt, uint32_t memberCnt,
-                              uint32_t headFlat, uint32_t slot, uint32_t nrValidAic, uint32_t queueCapacity)
+                              const uint32_t* memberTask, const uint32_t* memberCt, const bool* memberSkip,
+                              uint32_t memberCnt, uint32_t headFlat, uint32_t slot, uint32_t nrValidAic,
+                              uint32_t queueCapacity)
 {
     uint32_t memberCore[MIDDLE_QUEUE_MAX_SUCC];
     uint32_t perCore[3 * npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE];
@@ -171,9 +194,16 @@ bool SpreadMiddleQueueMembers(npu::tile_fwk::DrcoRootFuncList* rootFuncList, Dev
         }
         auto* middleQueue = perCoreMiddleQueueArray[coreIdx][slot];
         middleQueue->headTaskId = headFlat;
-        const uint32_t memberSpecial = (memberCt[mi] == static_cast<uint32_t>(CoreType::HUB)) ?
-                                           npu::tile_fwk::DRCO_SUCC_SPECIAL_MQ_MEMBER_HUB :
-                                           npu::tile_fwk::DRCO_SUCC_SPECIAL_MQ_MEMBER;
+        // leaf 成员命中 IsSkipResolveSucc 时打 MIDDLE_QUEUE_MEMBER_SKIP（消费侧跳过 resolve）；
+        // hub 成员保持 MIDDLE_QUEUE_MEMBER_HUB 原行为（仅 resolve 不执行）
+        uint32_t memberSpecial;
+        if (memberCt[mi] == static_cast<uint32_t>(CoreType::HUB)) {
+            memberSpecial = npu::tile_fwk::DRCO_SUCC_SPECIAL_MIDDLE_QUEUE_MEMBER_HUB;
+        } else if (memberSkip != nullptr && memberSkip[mi]) {
+            memberSpecial = npu::tile_fwk::DRCO_SUCC_SPECIAL_MIDDLE_QUEUE_MEMBER_SKIP;
+        } else {
+            memberSpecial = npu::tile_fwk::DRCO_SUCC_SPECIAL_MIDDLE_QUEUE_MEMBER;
+        }
         middleQueue->UnsafeEnqueue((memberTask[mi] & ~(0x3Fu << specialShift)) | (memberSpecial << specialShift));
     }
     return true;
@@ -366,16 +396,7 @@ void DeviceTaskContext::DispatchDieReadyQueueToCores(DynDeviceTask* dyntask, Dev
 void DeviceTaskContext::DrcoRefreshSpecialTaskId(DynDeviceTask* dyntask)
 {
     auto encodeTaskId = [&](uint32_t taskId) -> uint32_t {
-        uint32_t funcIdx = npu::tile_fwk::FuncID(taskId);
-        uint64_t funcInfoAndStaticDataOffset = dyntask->dynFuncDataList->GetDrcoRootFuncData(funcIdx)
-                                                   .funcInfoAndStaticDataOffset;
-        DevAscendFunction* devFunc = dyntask->dynFuncDataCacheList[funcIdx].devFunc;
-        int opIdx = static_cast<int>(npu::tile_fwk::TaskID(taskId));
-        size_t succSize = 0;
-        const uint32_t* succList = devFunc->GetOperationDepGraphSuccAddr(opIdx, succSize);
-        if (succSize == 1 && npu::tile_fwk::TaskID(succList[0]) == devFunc->dummyEndingOpIdx_ &&
-            (funcInfoAndStaticDataOffset & npu::tile_fwk::DRCO_ROOT_FUNC_MEMORY_REUSE_STITCHED_BIT) == 0 &&
-            dyntask->dynFuncDataCacheList[funcIdx].duppedData->GetOperationStitch(opIdx).IsNull()) {
+        if (IsSkipResolveSucc(dyntask, taskId)) {
             return taskId | ((npu::tile_fwk::DRCO_SUCC_SPECIAL_PERCORE_SKIP_RESOLVE &
                               npu::tile_fwk::TASKID_DRCO_SUCC_SPECIAL_MASK)
                              << npu::tile_fwk::TASKID_DRCO_SUCC_SPECIAL_SHIFT);
@@ -504,6 +525,7 @@ bool DeviceTaskContext::TryHeadReleaseFastPath(DynDeviceTask* dyntask, DevAscend
                            reinterpret_cast<uint64_t>(rootFuncList->controlFlowCacheBase)};
     uint32_t succBuf[MIDDLE_QUEUE_MAX_SUCC]; // 收集缓冲兼成员压实缓冲（写位恒 ≤ 读位）
     uint32_t memberCt[MIDDLE_QUEUE_MAX_SUCC];
+    bool memberSkip[MIDDLE_QUEUE_MAX_SUCC];
     uint32_t regionApplied = 0;
     for (uint64_t f = 0; f < funcCount; f++) {
         DevAscendFunction* devFunc = dyntask->dynFuncDataCacheList[f].devFunc;
@@ -534,6 +556,9 @@ bool DeviceTaskContext::TryHeadReleaseFastPath(DynDeviceTask* dyntask, DevAscend
             const uint32_t headFlat = npu::tile_fwk::MakeTaskID(static_cast<uint32_t>(f), static_cast<uint32_t>(o));
             const uint32_t regionIdx = rootFuncList->middleQueueRegionHeadCount;
             rootFuncList->middleQueueRegionHeadList[rootFuncList->middleQueueRegionHeadCount++] = headFlat;
+            for (uint32_t mi = 0; mi < memberCnt; mi++) {
+                memberSkip[mi] = IsSkipResolveSucc(dyntask, succBuf[mi]);
+            }
             uint32_t aicLeafCnt = 0;
             uint32_t aivLeafCnt = 0;
             for (uint32_t mi = 0; mi < memberCnt; mi++) {
@@ -548,7 +573,7 @@ bool DeviceTaskContext::TryHeadReleaseFastPath(DynDeviceTask* dyntask, DevAscend
 
             // 撒核 + 入队。slot = regionApplied（候选序）：同 devTask 多头各自独立槽位/
             // 独立门——共享单槽会 headTaskId 互相覆盖，后入队头开门时放行未完成头的成员
-            if (!SpreadMiddleQueueMembers(rootFuncList, workspace_, succBuf, memberCt, memberCnt, headFlat,
+            if (!SpreadMiddleQueueMembers(rootFuncList, workspace_, succBuf, memberCt, memberSkip, memberCnt, headFlat,
                                           regionApplied, nrValidAic, queueCapacity)) {
                 rootFuncList->middleQueueRegionHeadCount--; // 容量不足回退本次注册
                 continue;

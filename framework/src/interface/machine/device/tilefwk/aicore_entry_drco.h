@@ -252,28 +252,27 @@ struct DrcoEntryState {
     npu::tile_fwk::DrcoSsbufState* ssbuf;
     npu::tile_fwk::DrcoMixHubC2VReadyQueue* mixHubC2VReadyQueue;
     bool isExectedLeafTask{false};
-    // P1 middleQueue 指针（每 devTask 从 rootFuncList 载入；null = 无直通场景）
-    __gm__ npu::tile_fwk::PerCoreMiddleQueue* middleQueue[npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM];
-    // 门探测：headTaskId 为 encode 期不变量，载入核本地后热路径只读其 predCount（1 次/轮）
-    uint32_t middleQueueHeadId[npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM];
-    // 本轮消费标记（核本地，每 devTask 复位）：队列内容跨回放只读
-    bool middleQueueConsumed[npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM];
-    // 门已开标记：fetch 自旋内置位，重消费在外层执行
-    bool middleQueuePending;
-    // probe 已验开的槽位号（0xFF = 无）：consume 对该槽跳过门复读——16 核同时复读同一
-    // head predCount cacheline 是开门后最大争用点（case3 实测 ~2us）；probe 刚做过新鲜
-    // DCCI 读，结果直接复用（0xff 粘性 + consumed 防重入，跳过安全）
-    // middleQueue 消费/区域注册表核本地缓存（散落字段整合，评审意见）：
+    // middleQueue 全量核本地状态（每 devTask 复位/载入一次，热路径只读）：
+    //  · queue：槽队列指针（从 rootFuncList 载入；null = 无直通场景）
+    //  · headTaskId：门探测（encode 期不变量，热路径只读其 predCount，1 次/轮）
+    //  · queueSize：槽深度缓存（与 headTaskId 同 cacheline 一次 u64 读入，consume 免冷 dcci）
+    //  · consumed：本轮消费标记（队列内容跨回放只读）
+    //  · pending：门已开标记（fetch 自旋内置位，重消费在外层执行）
     //  · verifiedSlot：probe 已验开的槽位号（0xFF = 无），consume 对该槽跳过门复读——
     //    16 核同时复读同一 head predCount cacheline 是开门后最大争用点（case3 实测 ~2us）；
     //    probe 刚做过新鲜 DCCI 读，结果直接复用（0xff 粘性 + consumed 防重入，跳过安全）
     //  · regionHeadCount/regionHeadList：区域头注册表核本地副本（TryOpen 完成点高频比对，
     //    每 devTask 载入一次，避免读 GM）
     struct MiddleQueueState {
+        __gm__ npu::tile_fwk::PerCoreMiddleQueue* queue[npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM];
+        uint32_t headTaskId[npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM];
+        uint32_t queueSize[npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM];
+        bool consumed[npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM];
+        bool pending;
         uint8_t verifiedSlot{0xFF};
         uint32_t regionHeadCount;
         uint32_t regionHeadList[npu::tile_fwk::DrcoRootFuncList::DRCO_MIDDLE_QUEUE_REGION_MAX];
-    } middleQueueState;
+    } middleQueue;
     // 期望动态计数 = 本 devTask 本 coreType 的 leaf 总数(size) - host 静态预累加计数(staticExecCount)
     // （devTask 内不变）：入口缓存一次，热路径完成判定用 Σ分片 >= 该值；动态计数走分片，
     // 避免对热 staticExecCount/size 行反复 dcci
@@ -414,16 +413,16 @@ INLINE __gm__ int32_t* DrcoTaskPredCountAddr(DrcoEntryState* state, uint32_t tas
 // flag：退出路径据此做"flag 置位 ⇒ 门已全开"的双检（见 fetch 循环退出分支）
 INLINE void DrcoNotifyTaskExecutedAddType(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                           uint32_t queueType, uint32_t addCount);
-INLINE bool DrcoMqRegionHeadTryOpen(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
-                                    uint32_t taskId)
+INLINE bool DrcoMiddleQueueRegionHeadTryOpen(DrcoEntryState* state,
+                                             __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList, uint32_t taskId)
 {
-    const uint32_t count = state->middleQueueState.regionHeadCount;
+    const uint32_t count = state->middleQueue.regionHeadCount;
     if (count == 0) {
         return false;
     }
     const uint32_t flat = taskId & npu::tile_fwk::DrcoRootFuncList::DRCO_MIDDLE_QUEUE_REGION_FLAT_MASK;
     for (uint32_t i = 0; i < count; i++) {
-        if (state->middleQueueState.regionHeadList[i] == flat) {
+        if (state->middleQueue.regionHeadList[i] == flat) {
             // 开门必须字粒度原子交换：DrcoGmStore 的 dcci(CACHELINE_OUT) 会把本核 L1 中
             // 过期的整行 predCount（头与邻居 op 共享 cacheline）回写 GM，抹掉其他核对同行
             // 邻居的原子减计数（mla_prolog capture 实证：头 op394/395 与 op393 同行，开门
@@ -431,6 +430,15 @@ INLINE bool DrcoMqRegionHeadTryOpen(DrcoEntryState* state, __gm__ npu::tile_fwk:
             // 原子交换走 L2 字粒度，不回写 cacheline。
             DrcoAtomicExchToU32(reinterpret_cast<__gm__ uint32_t*>(DrcoTaskPredCountAddr(state, taskId)),
                                 npu::tile_fwk::DRCO_MIDDLE_QUEUE_GATE_OPEN);
+            // 开门核本地已知门开：按 flat 匹配直置 verifiedSlot，consume 跳过门复读
+            // （head predCount 行是 16 核轮询热线，开门核未走 probe 无缓存，复读最贵）
+            for (uint32_t s = 0; s < npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM; s++) {
+                if ((state->middleQueue.headTaskId[s] &
+                     npu::tile_fwk::DrcoRootFuncList::DRCO_MIDDLE_QUEUE_REGION_FLAT_MASK) == flat) {
+                    state->middleQueue.verifiedSlot = static_cast<uint8_t>(s);
+                    break;
+                }
+            }
             DrcoNotifyTaskExecutedAddType(state, rootFuncList, npu::tile_fwk::DRCO_QUEUE_AIC,
                                           DrcoGmLoad(&rootFuncList->middleQueueRegionLeafCountAic[i]));
             DrcoNotifyTaskExecutedAddType(state, rootFuncList, npu::tile_fwk::DRCO_QUEUE_AIV,
@@ -449,12 +457,12 @@ INLINE bool DrcoMiddleQueueGateOpen(DrcoEntryState* state, uint32_t s);
 INLINE bool DrcoMiddleQueueTryProbeGate(DrcoEntryState* state, uint32_t& resultTaskIdCount)
 {
     for (uint32_t s = 0; s < npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM; s++) {
-        if (state->middleQueueConsumed[s] || state->middleQueue[s] == nullptr) {
+        if (state->middleQueue.consumed[s] || state->middleQueue.queue[s] == nullptr) {
             continue;
         }
         if (DrcoMiddleQueueGateOpen(state, s)) {
-            state->middleQueuePending = true;
-            state->middleQueueState.verifiedSlot = static_cast<uint8_t>(s);
+            state->middleQueue.pending = true;
+            state->middleQueue.verifiedSlot = static_cast<uint8_t>(s);
             resultTaskIdCount = 0;
             return true;
         }
@@ -1390,8 +1398,8 @@ INLINE static void DrcoResolveStaticSuccNodes(
 // 生产核整链幂分解：先按 2 的幂序列（1,2,4,8,16,32 / 每 64 一轮）把子链头 push 入矩阵
 // （由消费核 pop 接力），push 完成后再解链头（chainHead）依赖（先 push 后解依赖）；
 // push 失败则就地解对应子链整段兜底（矩阵写不进则保证前向推进）。
-INLINE void DrcoResolveDepend(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
-                              uint32_t* taskIdList, uint32_t taskCount = 1)
+static __aicore__ void DrcoResolveDepend(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                         uint32_t* taskIdList, uint32_t taskCount = 1)
 {
     uint32_t succTaskIdListCoreList[npu::tile_fwk::DRCO_QUEUE_MAX][BATCH_PUSH_BUF_SIZE];
     uint32_t succTaskIdListSizeCoreList[npu::tile_fwk::DRCO_QUEUE_MAX] = {0};
@@ -1406,7 +1414,7 @@ INLINE void DrcoResolveDepend(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoR
     __gm__ void* programBase = state->programBase;
     while (hubStackTop >= 0) {
         uint32_t curTaskId = hubStack[hubStackTop--];
-        if (DrcoMqRegionHeadTryOpen(state, rootFuncList, curTaskId)) {
+        if (DrcoMiddleQueueRegionHeadTryOpen(state, rootFuncList, curTaskId)) {
             continue;
         }
         uint32_t funcIdx = npu::tile_fwk::FuncID(curTaskId);
@@ -1487,7 +1495,7 @@ __aicore__ INLINE static uint32_t ResolveHubMixTask(DrcoEntryState* state,
                                                     uint32_t hubMixTaskId, npu::tile_fwk::DrcoMixHubC2VReadyQueue* body)
 {
     // 区域头（HUB_MIX 型）：命中即开门，跳过 hub 解析
-    if (DrcoMqRegionHeadTryOpen(state, rootFuncList, hubMixTaskId)) {
+    if (DrcoMiddleQueueRegionHeadTryOpen(state, rootFuncList, hubMixTaskId)) {
         return static_cast<uint32_t>(AICORE_TASK_INIT);
     }
     uint32_t funcIdx = npu::tile_fwk::FuncID(hubMixTaskId);
@@ -2003,16 +2011,25 @@ INLINE void PerfDevTaskFirstLeafTask(DrcoEntryState* state)
 }
 
 // middleQueue 成员标记：leaf 成员（执行后 resolve 区域外后继）与 hub 成员（只 resolve 不执行）
-INLINE bool DrcoPerCoreTaskMqMemberHub(uint32_t taskId)
+INLINE bool DrcoPerCoreTaskMiddleQueueMemberHub(uint32_t taskId)
 {
     return ((taskId >> npu::tile_fwk::TASKID_DRCO_SUCC_SPECIAL_SHIFT) & npu::tile_fwk::TASKID_DRCO_SUCC_SPECIAL_MASK) ==
-           npu::tile_fwk::DRCO_SUCC_SPECIAL_MQ_MEMBER_HUB;
+           npu::tile_fwk::DRCO_SUCC_SPECIAL_MIDDLE_QUEUE_MEMBER_HUB;
 }
 
-INLINE bool DrcoPerCoreTaskMqMember(uint32_t taskId)
+// MQ 成员 resolve 跳过标记（host 撒核入队时按"唯一后继为 dummyEnding 且无 stitch、未内存
+// 复用缝合"同 DrcoRefreshSpecialTaskId 判据预编码）：命中者 resolve 到的全是 dummy 边
+// （设备侧本就跳过递减），无任何下游可解，消费侧直接跳过 resolve
+INLINE bool DrcoPerCoreTaskMiddleQueueMemberSkipResolve(uint32_t taskId)
 {
     return ((taskId >> npu::tile_fwk::TASKID_DRCO_SUCC_SPECIAL_SHIFT) & npu::tile_fwk::TASKID_DRCO_SUCC_SPECIAL_MASK) ==
-           npu::tile_fwk::DRCO_SUCC_SPECIAL_MQ_MEMBER;
+           npu::tile_fwk::DRCO_SUCC_SPECIAL_MIDDLE_QUEUE_MEMBER_SKIP;
+}
+
+INLINE bool DrcoPerCoreTaskMiddleQueueMember(uint32_t taskId)
+{
+    return ((taskId >> npu::tile_fwk::TASKID_DRCO_SUCC_SPECIAL_SHIFT) & npu::tile_fwk::TASKID_DRCO_SUCC_SPECIAL_MASK) ==
+           npu::tile_fwk::DRCO_SUCC_SPECIAL_MIDDLE_QUEUE_MEMBER;
 }
 
 // per-core queue 任务是否带「唯一后继为 dummyEnding 可跳过 resolve」标记（special 字段命中 SKIP_RESOLVE）
@@ -2025,7 +2042,7 @@ INLINE bool DrcoPerCoreTaskSkipResolve(uint32_t taskId)
 // 门判定：一解多直通成员恒为单前驱（分量拓扑序），门只由头 predCount==0xff 决定
 INLINE bool DrcoMiddleQueueGateOpen(DrcoEntryState* state, uint32_t s)
 {
-    return DrcoGmLoad(DrcoTaskPredCountAddr(state, state->middleQueueHeadId[s])) ==
+    return DrcoGmLoad(DrcoTaskPredCountAddr(state, state->middleQueue.headTaskId[s])) ==
            npu::tile_fwk::DRCO_MIDDLE_QUEUE_GATE_OPEN;
 }
 
@@ -2033,34 +2050,35 @@ INLINE bool DrcoMiddleQueueGateOpen(DrcoEntryState* state, uint32_t s)
 INLINE void DrcoTryMiddleQueueConsume(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList)
 {
     for (uint32_t s = 0; s < npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM; s++) {
-        if (state->middleQueueConsumed[s]) {
+        if (state->middleQueue.consumed[s]) {
             continue;
         }
-        __gm__ npu::tile_fwk::PerCoreMiddleQueue* middleQueue = state->middleQueue[s];
+        __gm__ npu::tile_fwk::PerCoreMiddleQueue* middleQueue = state->middleQueue.queue[s];
         if (middleQueue == nullptr) {
             continue;
         }
-        uint32_t queueSize = DrcoGmLoad(&middleQueue->size);
+        uint32_t queueSize = state->middleQueue.queueSize[s];
         if (queueSize == 0) {
             continue;
         }
         // probe 刚验过的槽不再复读门（0xff 粘性 + consumed 防重入）：16 核同时 DCCI 同一
         // head predCount cacheline 的争用风暴即由此复读引发；未验过的槽（多 region 场景
         // 下 consume 扫到 probe 未覆盖的槽）仍走完整门检查
-        if (s != state->middleQueueState.verifiedSlot && !DrcoMiddleQueueGateOpen(state, s)) {
+        if (s != state->middleQueue.verifiedSlot && !DrcoMiddleQueueGateOpen(state, s)) {
             continue;
         }
         // 消费权仅需核本地标记：rootFuncList/middleQueue 由 InitDrcoRootFuncList 按 devTask
         // 独立分配，核本地 middleQueueConsumed 在每 devTask 加载段复位、每 launch 全新
         // ——同 devTask 内不存在"同一队列被重复消费"的场景，无需 GM 仲裁
-        state->middleQueueConsumed[s] = true;
-        // leaf 计数已由开门核在写 0xff 时一次性代加（DrcoMqRegionHeadTryOpen），此处不再逐核记账
+        state->middleQueue.consumed[s] = true;
+        // leaf 计数已由开门核在写 0xff 时一次性代加（DrcoMiddleQueueRegionHeadTryOpen），此处不再逐核记账
         for (uint32_t i = 0; i < queueSize; i++) {
             // 队列条目 = 裸 flatId | MQ 标记（bits26-31）；标记仅用于条目分类，执行/resolve
             // 必须用剥标后的裸 id——tag 位与 ct/parallelIdx 位重叠，带标 id 会使
             // DrcoTaskCoreTypeOf 读出 ct=7（hub 路由）、ParallelIndex 读出 7（越界风险）
             uint32_t taskId = DrcoGmLoadArray(middleQueue->taskList, i);
-            bool isHubMember = DrcoPerCoreTaskMqMemberHub(taskId);
+            bool isHubMember = DrcoPerCoreTaskMiddleQueueMemberHub(taskId);
+            bool skipResolve = DrcoPerCoreTaskMiddleQueueMemberSkipResolve(taskId);
             taskId &= TASKID_FROM_CTRL_TOPO_MASK;
             if (isHubMember) {
                 DrcoResolveDepend(state, rootFuncList, &taskId);
@@ -2068,10 +2086,12 @@ INLINE void DrcoTryMiddleQueueConsume(DrcoEntryState* state, __gm__ npu::tile_fw
             }
             PerfDevTaskFirstLeafTask(state);
             ExecLeafFunction(state, taskId);
-            DrcoResolveDepend(state, rootFuncList, &taskId);
+            if (!skipResolve) {
+                DrcoResolveDepend(state, rootFuncList, &taskId);
+            }
         }
     }
-    state->middleQueueState.verifiedSlot = 0xFF;
+    state->middleQueue.verifiedSlot = 0xFF;
 }
 
 INLINE void ExecDrcoPerCoreTasks(DrcoEntryState* state, __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue,
@@ -2127,8 +2147,8 @@ INLINE void ExecDrcoReadyQueueTasks(DrcoEntryState* state, __gm__ npu::tile_fwk:
     uint32_t outCoreType = 0;
     uint32_t taskCount = DrcoDynFuncDataListFetchTask(state, rootFuncList, outCoreType, taskIdList);
     while (taskCount != static_cast<uint32_t>(AICORE_TASK_ALL_FINISH)) {
-        if (state->middleQueuePending) {
-            state->middleQueuePending = false;
+        if (state->middleQueue.pending) {
+            state->middleQueue.pending = false;
             DrcoTryMiddleQueueConsume(state, rootFuncList);
         }
         PerfDevTaskFirstLeafTask(state);
@@ -2144,23 +2164,31 @@ INLINE void ExecDrcoReadyQueueTasks(DrcoEntryState* state, __gm__ npu::tile_fwk:
 
 // middleQueue 相关状态初始化（每 devTask 载入一次）：
 //  · 各槽队列指针 + 门探测常量（headTaskId，encode 期不变量）缓存到核本地
-//  · 区域头注册表载入核本地副本（DrcoMqRegionHeadTryOpen 在任务完成点高频调用，避免读 GM）
+//  · 区域头注册表载入核本地副本（DrcoMiddleQueueRegionHeadTryOpen 在任务完成点高频调用，避免读 GM）
 INLINE void DrcoMiddleQueueInit(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList)
 {
     for (uint32_t s = 0; s < npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM; s++) {
         __gm__ npu::tile_fwk::PerCoreMiddleQueue* mq = DrcoGmLoad(
             &rootFuncList->perCoreMiddleQueueArray[BlockDescBlockIdx(state->blockDesc)][s]);
-        state->middleQueue[s] = mq;
-        state->middleQueueConsumed[s] = false;
-        state->middleQueueHeadId[s] = (mq != nullptr) ? DrcoGmLoad(&mq->headTaskId) : 0;
+        state->middleQueue.queue[s] = mq;
+        state->middleQueue.consumed[s] = false;
+        // headTaskId/size 同 cacheline 相邻：一次 u64 读回双字段，size 供 consume 免冷 dcci
+        if (mq != nullptr) {
+            uint64_t headAndSize = DrcoGmLoad(reinterpret_cast<__gm__ uint64_t*>(mq));
+            state->middleQueue.headTaskId[s] = static_cast<uint32_t>(headAndSize);
+            state->middleQueue.queueSize[s] = static_cast<uint32_t>(headAndSize >> 32);
+        } else {
+            state->middleQueue.headTaskId[s] = 0;
+            state->middleQueue.queueSize[s] = 0;
+        }
     }
-    state->middleQueuePending = false;
-    state->middleQueueState.verifiedSlot = 0xFF;
-    state->middleQueueState.regionHeadCount = DrcoGmLoad(&rootFuncList->middleQueueRegionHeadCount);
-    for (uint32_t i = 0; i < state->middleQueueState.regionHeadCount &&
-                         i < npu::tile_fwk::DrcoRootFuncList::DRCO_MIDDLE_QUEUE_REGION_MAX;
+    state->middleQueue.pending = false;
+    state->middleQueue.verifiedSlot = 0xFF;
+    state->middleQueue.regionHeadCount = DrcoGmLoad(&rootFuncList->middleQueueRegionHeadCount);
+    for (uint32_t i = 0;
+         i < state->middleQueue.regionHeadCount && i < npu::tile_fwk::DrcoRootFuncList::DRCO_MIDDLE_QUEUE_REGION_MAX;
          i++) {
-        state->middleQueueState.regionHeadList[i] = DrcoGmLoad(&rootFuncList->middleQueueRegionHeadList[i]);
+        state->middleQueue.regionHeadList[i] = DrcoGmLoad(&rootFuncList->middleQueueRegionHeadList[i]);
     }
 }
 
