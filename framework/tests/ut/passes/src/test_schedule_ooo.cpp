@@ -4976,4 +4976,40 @@ TEST_F(ScheduleOoOTest, PriorDFSSort_SortOutNodeQueue_SameSourceGrouped)
     EXPECT_EQ(outNodeQueue[2], b.GetOp("CopyOut3"));
 }
 
+/*
+仅开启 post_check（PreCheck 未运行）时，OoOSchedule PostCheck 不应段错误：
+PostCheckNewTensor 依赖 PreCheck 收集的 before 快照(tensorListBeforePass_)，
+快照缺失时应跳过 new-tensor 对比并放行其余检查，而非越界访问空 vector。
+*/
+TEST_F(ScheduleOoOTest, PostCheckWithoutPreCheckShouldSkipNewTensorCheck)
+{
+    auto rootFuncPtr = std::make_shared<Function>(Program::GetInstance(), "PostNoPre", "PostNoPre", nullptr);
+    rootFuncPtr->rootFunc_ = rootFuncPtr.get();
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "TestOOOPostOnly", "TestOOOPostOnly",
+                                                      rootFuncPtr.get());
+    currFunctionPtr->paramConfigs_.OoOPreScheduleMethod = "PriorDFS";
+    currFunctionPtr->SetGraphType(GraphType::BLOCK_GRAPH);
+    rootFuncPtr->rootFunc_->programs_.emplace(currFunctionPtr->GetFuncMagic(), currFunctionPtr.get());
+
+    std::vector<int64_t> shape = {128, 128};
+    auto tensor1 = CreateTensor(DataType::DT_FP32, shape, MEM_DEVICE_DDR, 0);
+    auto tensor2 = CreateTensor(DataType::DT_FP32, shape, MEM_DEVICE_DDR, 1);
+    auto tensor3 = CreateTensor(DataType::DT_FP32, shape, MEM_UB, 2);
+    auto tensor4 = CreateTensor(DataType::DT_FP32, shape, MEM_UB, 3);
+    auto tensor5 = CreateTensor(DataType::DT_FP32, shape, MEM_UB, 4);
+    CreateAllocOp(*currFunctionPtr, tensor3, 1);
+    CreateAllocOp(*currFunctionPtr, tensor4, 1);
+    CreateAllocOp(*currFunctionPtr, tensor5, 1);
+    CreateCopyOp(*currFunctionPtr, Opcode::OP_COPY_IN, tensor1, tensor3, shape);
+    CreateCopyOp(*currFunctionPtr, Opcode::OP_COPY_IN, tensor2, tensor4, shape);
+    CreateAddOp(*currFunctionPtr, tensor3, tensor4, tensor5);
+    ReorderOperations(*currFunctionPtr);
+    currFunctionPtr->EndFunction(nullptr);
+
+    OoOSchedule oooSchedule;
+    // 模拟仅开启 post_check：跳过 PreCheck，before 快照为空；RunOnFunction 填充 oriFunctions。
+    EXPECT_EQ(oooSchedule.RunOnFunction(*rootFuncPtr), SUCCESS);
+    EXPECT_EQ(oooSchedule.PostCheck(*rootFuncPtr), SUCCESS);
+}
+
 } // namespace npu::tile_fwk

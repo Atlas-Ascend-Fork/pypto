@@ -4101,4 +4101,42 @@ TEST_F(AssignMemoryTypeTest, ViewPartialReadToOutcastSplitsViewAndContract)
     EXPECT_EQ(outcast->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
 }
 
+/*
+A_MUL_B 输入生产者为 LOAD2D(L1->L0B) / IMG2COL(L1->L0A)（conv 场景等价数据通路）时，
+AssignMemoryType PreCheck 应放行；生产者为无关计算 op（如 EXP）时仍应拦截。
+*/
+TEST_F(AssignMemoryTypeTest, PrecheckAmulBWithLoad2dAndImg2colProducers)
+{
+    ComputationalGraphBuilder G;
+    G.AddTensor(DataType::DT_FP16, {128, 128}, MemoryType::MEM_L1, "inputA");
+    G.AddTensor(DataType::DT_FP16, {128, 128}, MemoryType::MEM_L0A, "l0a");
+    G.AddTensor(DataType::DT_FP16, {128, 128}, MemoryType::MEM_L1, "inputB");
+    G.AddTensor(DataType::DT_FP16, {128, 128}, MemoryType::MEM_L0B, "l0b");
+    G.AddTensor(DataType::DT_FP16, {128, 128}, MemoryType::MEM_DEVICE_DDR, "out");
+
+    G.AddOp(Opcode::OP_LOAD3D_CONV, {"inputA"}, {"l0a"}, "img2col");
+    G.AddOp(Opcode::OP_LOAD2D_CONV, {"inputB"}, {"l0b"}, "load2d");
+    G.AddOp(Opcode::OP_A_MUL_B, {"l0a", "l0b"}, {"out"}, "mm");
+
+    G.SetInCast({"inputA", "inputB"});
+    G.SetOutCast({"out"});
+
+    AssignMemoryType assignMemoryType;
+    EXPECT_EQ(assignMemoryType.PreCheck(*G.GetFunction()), SUCCESS);
+
+    ComputationalGraphBuilder G2;
+    G2.AddTensor(DataType::DT_FP16, {128, 128}, MemoryType::MEM_UB, "ubA");
+    G2.AddTensor(DataType::DT_FP16, {128, 128}, MemoryType::MEM_UB, "ubB");
+    G2.AddTensor(DataType::DT_FP16, {128, 128}, MemoryType::MEM_DEVICE_DDR, "badProd");
+    G2.AddTensor(DataType::DT_FP16, {128, 128}, MemoryType::MEM_DEVICE_DDR, "out2");
+
+    G2.AddOp(Opcode::OP_EXP, {"ubA"}, {"badProd"}, "exp");
+    G2.AddOp(Opcode::OP_A_MUL_B, {"badProd", "ubB"}, {"out2"}, "mm2");
+
+    G2.SetInCast({"ubA", "ubB"});
+    G2.SetOutCast({"out2"});
+
+    EXPECT_EQ(assignMemoryType.PreCheck(*G2.GetFunction()), FAILED);
+}
+
 } // namespace npu

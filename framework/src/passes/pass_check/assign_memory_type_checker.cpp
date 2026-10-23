@@ -25,8 +25,11 @@
 namespace npu {
 namespace tile_fwk {
 const std::unordered_set<Opcode> AssignMemoryTypeChecker::kValidProducerOpcodes = {
-    Opcode::OP_L1_TO_L0A, Opcode::OP_L1_TO_L0B, Opcode::OP_L1_TO_L0_AT, Opcode::OP_L1_TO_L0_BT,
-    Opcode::OP_VIEW,      Opcode::OP_SLICE,     Opcode::OP_VEC_DUP};
+    Opcode::OP_L1_TO_L0A, Opcode::OP_L1_TO_L0B, Opcode::OP_L1_TO_L0_AT, Opcode::OP_L1_TO_L0_BT, Opcode::OP_VIEW,
+    Opcode::OP_SLICE, Opcode::OP_VEC_DUP,
+    // conv 场景下 A_MUL_B 的输入可由 LOAD2D(L1->L0B) / IMG2COL(L1->L0A) 直接送入 L0，
+    // 与 L1_TO_L0A/L1_TO_L0B 等价的合法 cube 输入生产者。
+    Opcode::OP_LOAD2D_CONV, Opcode::OP_LOAD3D_CONV};
 const std::unordered_set<MemoryType> AssignMemoryTypeChecker::kValidViewToTypes = {
     MemoryType::MEM_BT,    MemoryType::MEM_FIX_QUANT_PRE, MemoryType::MEM_L0A,    MemoryType::MEM_L0B,
     MemoryType::MEM_L0AMX, MemoryType::MEM_L0BMX,         MemoryType::MEM_UNKNOWN};

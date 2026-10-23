@@ -112,6 +112,9 @@ Status OoOScheduleChecker::DoPreCheck(Function& function)
         if (opList.empty()) {
             APASS_LOG_INFO_F(Elements::Operation, "Operation List is empty!");
             APASS_LOG_INFO_F(Elements::Operation, "Subgraph[%zu] OoOSchedule Precheck end.", program.first);
+            // 与 DoPostCheck 的 programIdx 递增保持对齐（其按 program 无条件递增），
+            // 否则后续非空 program 的 before 快照索引错位。
+            programIdx++;
             continue;
         }
         for (auto& op : opList) {
@@ -318,6 +321,16 @@ bool OoOScheduleChecker::PostCheckNewTensor(std::pair<const int, Function*> prog
     std::vector<LogicalTensorPtr> newTensors;
     std::unordered_set<int> tensorMagicBeforePass;
     std::unordered_set<int> tensorMagicAfterPass;
+    if (tensorListBeforePass_.size() <= static_cast<size_t>(programIdx)) {
+        // pre_check 与 post_check 可独立开关：仅开启 post_check 时 PreCheck 未运行，
+        // before 快照(tensorListBeforePass_)未填充，继续访问会越界导致段错误。
+        // new-tensor 对比无从进行，跳过该项检查。
+        APASS_LOG_WARN_F(Elements::Operation,
+                         "Program %d: before-pass tensor snapshot is missing (pre_check disabled?); skip the "
+                         "new-tensor existence check in OoOSchedule Postcheck.",
+                         programIdx);
+        return true;
+    }
     for (auto& tensor : tensorListBeforePass_[programIdx]) {
         tensorMagicBeforePass.insert(tensor->GetMagic());
     }
