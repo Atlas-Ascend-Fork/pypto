@@ -61,7 +61,10 @@ void BuildMatmulAddBranch(ComputationalGraphBuilder& G, int brId, std::vector<st
     std::vector<std::vector<std::string>> ooperands{{"tL1A" + br}, {"tL1B" + br}, {"tA" + br},
                                                     {"tB" + br},   {"tC" + br},   {"tUB" + br}};
     std::vector<std::string> opNames{"view" + br, "view2" + br, "toA" + br, "toB" + br, "matmul" + br, "convert" + br};
-    EXPECT_EQ(G.AddTensors(DataType::DT_FP32, tileShape, tensorNames), true);
+    std::vector<MemoryType> memTypes{MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN,
+                                     MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN,
+                                     MemoryType::MEM_L0C,     MemoryType::MEM_UB};
+    EXPECT_EQ(G.AddTensors(DataType::DT_FP32, tileShape, memTypes, tensorNames), true);
     EXPECT_EQ(G.AddOps(opCodes, ioperands, ooperands, opNames, true), true);
     for (auto aicOp : opNames) {
         G.GetOp(aicOp)->SetAttr(OpAttributeKey::isCube, true);
@@ -142,7 +145,10 @@ void BuildConnectMatmul(ComputationalGraphBuilder& G, int brId, std::vector<std:
     std::vector<std::vector<std::string>> ooperands{{"tL1A" + br}, {"tL1B" + br}, {"tA" + br},
                                                     {"tB" + br},   {"tC" + br},   {"tGM" + br}};
     std::vector<std::string> opNames{"view" + br, "view2" + br, "toA" + br, "toB" + br, "matmul" + br, "convert" + br};
-    EXPECT_EQ(G.AddTensors(DataType::DT_FP32, tileShape, tensorNames), true);
+    std::vector<MemoryType> memTypes{MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN,
+                                     MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN,
+                                     MemoryType::MEM_L0C,     MemoryType::MEM_UB};
+    EXPECT_EQ(G.AddTensors(DataType::DT_FP32, tileShape, memTypes, tensorNames), true);
     EXPECT_EQ(G.AddOps(opCodes, ioperands, ooperands, opNames, true), true);
     incasts.push_back("tRA" + br);
     incasts.push_back("tRB" + br);
@@ -274,12 +280,18 @@ static std::string AddIncast(ComputationalGraphBuilder& G, const std::string& na
     return name;
 }
 
+// 以下图构造 helper 与部分用例为 tensor 显式设置 memtype, 模拟 AssignMemoryType 已执行的前置状态:
+// matmul 输出在 L0C、vec 算子输入输出在 UB、view 输出落 L1, 使跨核边界 tensor 的
+// directPathCandidate 判定(IsSpecialDirectMemoryPath)能从图上计算出 L0C2UB/UB2L1 直连资格
 static std::string AddCubeMatmulFrom(ComputationalGraphBuilder& G, int sg, const std::string& inA,
                                      const std::string& inB)
 {
     std::vector<int64_t> sh{16, 16};
     std::string b = std::to_string(sg);
-    EXPECT_EQ(G.AddTensors(DataType::DT_FP32, sh, {"tVA" + b, "tVB" + b, "tL0A" + b, "tL0B" + b, "tC" + b}), true);
+    std::vector<MemoryType> memTypes{MemoryType::MEM_L1, MemoryType::MEM_L1, MemoryType::MEM_UNKNOWN,
+                                     MemoryType::MEM_UNKNOWN, MemoryType::MEM_L0C};
+    EXPECT_EQ(G.AddTensors(DataType::DT_FP32, sh, memTypes, {"tVA" + b, "tVB" + b, "tL0A" + b, "tL0B" + b, "tC" + b}),
+              true);
     EXPECT_EQ(
         G.AddOps({Opcode::OP_VIEW, Opcode::OP_VIEW, Opcode::OP_L1_TO_L0A, Opcode::OP_L1_TO_L0B, Opcode::OP_A_MUL_B},
                  {{inA}, {inB}, {"tVA" + b}, {"tVB" + b}, {"tL0A" + b, "tL0B" + b}},
@@ -299,7 +311,8 @@ static std::string AddVecSG(ComputationalGraphBuilder& G, int sg, const std::str
 {
     std::vector<int64_t> sh{16, 16};
     std::string b = std::to_string(sg);
-    EXPECT_EQ(G.AddTensors(DataType::DT_FP32, sh, {"vAdd" + b, out}), true);
+    std::vector<MemoryType> memTypes{MemoryType::MEM_UB, MemoryType::MEM_UB};
+    EXPECT_EQ(G.AddTensors(DataType::DT_FP32, sh, memTypes, {"vAdd" + b, out}), true);
     std::string addsName = "vadds" + b;
     std::string asmName = "vasm" + b;
     EXPECT_EQ(G.AddOps({Opcode::OP_ADDS, Opcode::OP_ASSEMBLE}, {{in}, {"vAdd" + b}}, {{"vAdd" + b}, {out}},
@@ -325,7 +338,7 @@ static void AddVecSinkSG(ComputationalGraphBuilder& G, int sg, const std::vector
         std::string b = std::to_string(sg) + "_" + std::to_string(i);
         std::string tName = "sinkadd" + b;
         std::string opName = "vadds" + b;
-        EXPECT_EQ(G.AddTensor(DataType::DT_FP32, sh, tName), true);
+        EXPECT_EQ(G.AddTensor(DataType::DT_FP32, sh, MemoryType::MEM_UB, tName), true);
         EXPECT_EQ(G.AddOp(Opcode::OP_ADDS, {inputs[i]}, {tName}, opName, true), true);
         G.GetOp(opName)->UpdateSubgraphID(sg);
         G.GetOp(opName)->UpdateLatency(Num50);
@@ -556,7 +569,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_EnforcedMergeRejectsExternalDdrTensorUse)
 {
     std::vector<std::set<int>> outGraph{{1}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1}});
-    input.boundaryTensors = {{101, {0, 2}, {0, 2}, true, {}, {}}};
+    input.boundaryTensors = {{101, {0, 2}, {0, 2}, true, false, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0}, {}, {0}};
 
     MixGraphMerger merger;
@@ -574,7 +587,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_EnforcedMergeRejectsExternalConsumerOnly)
 {
     std::vector<std::set<int>> outGraph{{1}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1}});
-    input.boundaryTensors = {{103, {0}, {0, 2}, true, {}, {}}};
+    input.boundaryTensors = {{103, {0}, {0, 2}, true, false, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0}, {}, {0}};
 
     MixGraphMerger merger;
@@ -591,7 +604,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_EnforcedMergeAllowsInternalDdrTensorUse)
 {
     std::vector<std::set<int>> outGraph{{1}, {}};
     MergeInput input = BuildSimpleMergeInput(2, outGraph, {{0, 1}});
-    input.boundaryTensors = {{102, {0}, {1}, true, {}, {}}};
+    input.boundaryTensors = {{102, {0}, {1}, true, false, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0}};
 
     MixGraphMerger merger;
@@ -609,7 +622,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_EnforcedMergeAllowsSameScopeExternalProduc
 {
     std::vector<std::set<int>> outGraph{{1}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1}});
-    input.boundaryTensors = {{202, {0, 2}, {1}, true, {5, 5}, {5}}};
+    input.boundaryTensors = {{202, {0, 2}, {1}, true, false, {5, 5}, {5}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0}, {0}};
 
     MixGraphMerger merger;
@@ -626,7 +639,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_EnforcedMergeAllowsSameScopeExternalConsum
 {
     std::vector<std::set<int>> outGraph{{1}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1}});
-    input.boundaryTensors = {{205, {0}, {1, 2}, true, {5}, {5, 5}}};
+    input.boundaryTensors = {{205, {0}, {1, 2}, true, false, {5}, {5, 5}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0}, {0}};
 
     MixGraphMerger merger;
@@ -644,7 +657,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_EnforcedMergeRejectsMixedScopeExternalEndp
 {
     std::vector<std::set<int>> outGraph{{1}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1}});
-    input.boundaryTensors = {{206, {0, 2}, {1, 2}, true, {5, 5}, {5, 7}}};
+    input.boundaryTensors = {{206, {0, 2}, {1, 2}, true, false, {5, 5}, {5, 7}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0}, {0}};
 
     MixGraphMerger merger;
@@ -662,7 +675,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_EnforcedMergeRejectsForeignScopeExternalPr
 {
     std::vector<std::set<int>> outGraph{{1}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1}});
-    input.boundaryTensors = {{201, {0, 2}, {1}, true, {5, 7}, {5}}};
+    input.boundaryTensors = {{201, {0, 2}, {1}, true, false, {5, 7}, {5}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0}, {0}};
 
     MixGraphMerger merger;
@@ -679,7 +692,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_EnforcedMergeRejectsScopelessExternalProdu
 {
     std::vector<std::set<int>> outGraph{{1}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1}});
-    input.boundaryTensors = {{203, {0, 2}, {1}, true, {5, -1}, {5}}};
+    input.boundaryTensors = {{203, {0, 2}, {1}, true, false, {5, -1}, {5}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0}, {0}};
 
     MixGraphMerger merger;
@@ -697,7 +710,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_EnforcedMergeRejectsScopelessInnerEndpoint
 {
     std::vector<std::set<int>> outGraph{{1}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1}});
-    input.boundaryTensors = {{204, {0, 2}, {1}, true, {5, 5}, {-1}}};
+    input.boundaryTensors = {{204, {0, 2}, {1}, true, false, {5, 5}, {-1}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0}, {0}};
 
     MixGraphMerger merger;
@@ -914,7 +927,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_AutoMixSkippedWhenScopedOpExists)
     MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1}, {2, 3}});
     input.isEnforceMergeGroup = {true, false};
     input.hasScopedOp = true;
-    input.boundaryTensors = {{300, {0}, {1}, false, {}, {}}, {301, {2}, {3}, false, {}, {}}};
+    input.boundaryTensors = {{300, {0}, {1}, false, false, {}, {}}, {301, {2}, {3}, false, false, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0}, {1}, {1}};
 
     // 对照: 无 scope 标记时 auto-mix 同时合并 {0,1} 和 {2,3}
@@ -944,7 +957,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_AutoMixSkippedWithoutEnforceGroup)
     MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1}, {2, 3}});
     input.isEnforceMergeGroup = {false, false};
     input.hasScopedOp = true;
-    input.boundaryTensors = {{300, {0}, {1}, false, {}, {}}, {301, {2}, {3}, false, {}, {}}};
+    input.boundaryTensors = {{300, {0}, {1}, false, false, {}, {}}, {301, {2}, {3}, false, false, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0}, {1}, {1}};
 
     MixGraphMerger merger;
@@ -954,6 +967,92 @@ TEST_F(ReduceCopyTest, MixGraphMerger_AutoMixSkippedWithoutEnforceGroup)
     EXPECT_EQ(output.numSubgraphUpdated, Num4);
     EXPECT_NE(output.subgraphIdUpdated[0], output.subgraphIdUpdated[1]);
     EXPECT_NE(output.subgraphIdUpdated[2], output.subgraphIdUpdated[3]);
+}
+
+// ============================================================================
+// 直连收益门控 UT: 跨核边界(C-V 直接相邻)须至少一条具备直连资格(L0C2UB/UB2L1/L0C2L1)
+
+// 负向: 跨核边界(纯C->纯V 相邻)存在但无任何直连资格 -> 结构合并被拒
+TEST_F(ReduceCopyTest, DirectPathGate_RejectsCrossCoreWithoutDirectPath)
+{
+    std::vector<std::set<int>> outGraph{{1}, {}};
+    MergeInput input = BuildSimpleMergeInput(2, outGraph, {{0, 1}});
+    input.isEnforceMergeGroup = {false};
+    input.subgraphAICLatency = {50, 0};
+    input.subgraphAIVLatency = {0, 50};
+    input.boundaryTensors = {{100, {0}, {1}, true, false, {}, {}}};
+    input.subgraphToBoundaryTensorIds = {{0}, {0}};
+
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+
+    const int Num2 = 2;
+    EXPECT_EQ(output.numSubgraphUpdated, Num2);
+    EXPECT_NE(output.subgraphIdUpdated[0], output.subgraphIdUpdated[1]);
+}
+
+// 正向: 跨核边界且直连资格命中子图在候选组内 -> 放行合并
+TEST_F(ReduceCopyTest, DirectPathGate_AllowsCrossCoreWithDirectPath)
+{
+    std::vector<std::set<int>> outGraph{{1}, {}};
+    MergeInput input = BuildSimpleMergeInput(2, outGraph, {{0, 1}});
+    input.isEnforceMergeGroup = {false};
+    input.subgraphAICLatency = {50, 0};
+    input.subgraphAIVLatency = {0, 50};
+    input.boundaryTensors = {{100, {0}, {1}, true, true, {}, {}}};
+    input.boundaryTensors[0].directPathConsumerSubgraphs = {1}; // 命中邻居 sg1 在组内
+    input.subgraphToBoundaryTensorIds = {{0}, {0}};
+
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+
+    const int Num1 = 1;
+    EXPECT_EQ(output.numSubgraphUpdated, Num1);
+    EXPECT_EQ(output.subgraphIdUpdated[0], output.subgraphIdUpdated[1]);
+}
+
+// 组外命中: 跨核边界的直连资格命中子图全部在候选组外(通路不随合并内部化) -> 仍拒绝
+TEST_F(ReduceCopyTest, DirectPathGate_RejectsWhenEligibilityOutsideGroup)
+{
+    std::vector<std::set<int>> outGraph{{1, 2}, {}, {}};
+    MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1}});
+    input.isEnforceMergeGroup = {false};
+    input.subgraphAICLatency = {50, 0, 0};
+    input.subgraphAIVLatency = {0, 50, 50};
+    // sg0(纯C) -> sg1(纯V, 组内)/sg2(纯V, 组外); 直连命中仅来自组外消费者 sg2
+    input.boundaryTensors = {{100, {0}, {1, 2}, true, true, {}, {}}};
+    input.boundaryTensors[0].directPathConsumerSubgraphs = {2};
+    input.subgraphToBoundaryTensorIds = {{0}, {0}, {0}};
+
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+
+    const int Num3 = 3;
+    EXPECT_EQ(output.numSubgraphUpdated, Num3);
+    EXPECT_NE(output.subgraphIdUpdated[0], output.subgraphIdUpdated[1]);
+}
+
+// 同类边界豁免: 组内 C-C 边界(sg0->sg1)无直连资格不触发门控(非跨核),
+// 放行与否仅由跨核边界(sg1->sg2)的直连资格决定; 整组混合满足 auto-mix 的 mixed 约束
+TEST_F(ReduceCopyTest, DirectPathGate_IgnoresSameCoreEdge)
+{
+    std::vector<std::set<int>> outGraph{{1}, {2}, {}};
+    MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1, 2}});
+    input.isEnforceMergeGroup = {false};
+    input.subgraphAICLatency = {50, 50, 0};
+    input.subgraphAIVLatency = {0, 0, 50};
+    input.boundaryTensors = {{100, {0}, {1}, true, false, {}, {}}, // C-C 边界, 无直连资格
+                             {101, {1}, {2}, true, true, {}, {}}}; // C-V 跨核边界
+    input.boundaryTensors[1].directPathConsumerSubgraphs = {2};    // 命中邻居 sg2 在组内
+    input.subgraphToBoundaryTensorIds = {{0}, {0, 1}, {1}};
+
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+
+    const int Num1 = 1;
+    EXPECT_EQ(output.numSubgraphUpdated, Num1);
+    EXPECT_EQ(output.subgraphIdUpdated[0], output.subgraphIdUpdated[1]);
+    EXPECT_EQ(output.subgraphIdUpdated[1], output.subgraphIdUpdated[2]);
 }
 
 // enforce 合并超 op 数上限时不拦截, 只打 WARN; 子图照常合并为 1
@@ -1012,7 +1111,7 @@ TEST_F(ReduceCopyTest, Merge_LatencyCap250kBlocksOversizeChain)
     input.maxLatency = kExpLatencyCap;
     input.subgraphAICLatency = {120000, 120000, 120000};
     input.subgraphAIVLatency = {10, 10, 10};
-    input.boundaryTensors = {{100, {0}, {1}, true, {}, {}}, {101, {1}, {2}, true, {}, {}}};
+    input.boundaryTensors = {{100, {0}, {1}, true, false, {}, {}}, {101, {1}, {2}, true, false, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0, 1}, {1}};
     MixGraphMerger merger;
     MergeOutput output = merger.Merge(input);
@@ -1028,7 +1127,7 @@ TEST_F(ReduceCopyTest, Merge_LatencyCap250kAllowsChainUnderLimit)
     input.maxLatency = kExpLatencyCap;
     input.subgraphAICLatency = {60000, 60000, 60000};
     input.subgraphAIVLatency = {10, 10, 10};
-    input.boundaryTensors = {{100, {0}, {1}, true, {}, {}}, {101, {1}, {2}, true, {}, {}}};
+    input.boundaryTensors = {{100, {0}, {1}, true, true, {}, {}}, {101, {1}, {2}, true, true, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0, 1}, {1}};
     MixGraphMerger merger;
     MergeOutput output = merger.Merge(input);
@@ -1071,7 +1170,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_LoopPathConsistencyDataEdgeExempted)
     MergeInput input = BuildSimpleMergeInput(4, {{1}, {2}, {}, {}}, {});
     input.subgraphLoopPaths = {{7}, {7}, {}, {}}; // sg0/sg1 在 carry 环 7 上, sg2/sg3 环外
     // sg0 -> sg2 直接数据边 (boundary tensor 100: producer sg0, consumer sg2)
-    input.boundaryTensors = {{100, {0}, {2}, true, {}, {}}};
+    input.boundaryTensors = {{100, {0}, {2}, true, false, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0}, {}, {0}, {}};
     MixGraphMerger merger;
     merger.mInput = input;
@@ -1104,8 +1203,8 @@ TEST_F(ReduceCopyTest, MixGraphMerger_LoopPathConsistencySharedLoopExempted)
 TEST_F(ReduceCopyTest, MixGraphMerger_LoopPathConsistencyCrossRingDataEdgeRejected)
 {
     MergeInput input = BuildSimpleMergeInput(2, {{1}, {}}, {});
-    input.subgraphLoopPaths = {{7}, {8}};                    // sg0 环7, sg1 环8, 互不相交
-    input.boundaryTensors = {{100, {0}, {1}, true, {}, {}}}; // sg0 -> sg1 直接数据边
+    input.subgraphLoopPaths = {{7}, {8}};                           // sg0 环7, sg1 环8, 互不相交
+    input.boundaryTensors = {{100, {0}, {1}, true, false, {}, {}}}; // sg0 -> sg1 直接数据边
     input.subgraphToBoundaryTensorIds = {{0}, {0}};
     MixGraphMerger merger;
     merger.mInput = input;
@@ -1116,18 +1215,22 @@ TEST_F(ReduceCopyTest, MixGraphMerger_LoopPathConsistencyCrossRingDataEdgeReject
 }
 
 // hinge guard(扇出): 扇出源 sg0 喂 3 个互不可达的组内分支(>= kHingeBranchThreshold),
-// 串行化独立并行分支拒绝; 组内含简单 tensor edge(0->1/0->2/0->3), 无 hinge guard 时本组合并归 1
+// 串行化损失(3000-1000=2000)超过 8xhinge(100)=800, 独立并行分支拒绝保持 4;
+// 组内含简单 tensor edge(0->1/0->2/0->3), 无 hinge guard 时本组合并归 1
 TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardRejectsParallelFanout)
 {
     std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
     input.isEnforceMergeGroup = {false};
-    input.boundaryTensors = {
-        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
+    input.boundaryTensors = {{100, {0}, {1}, true, false, {}, {}},
+                             {101, {0}, {2}, true, false, {}, {}},
+                             {102, {0}, {3}, true, false, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
+    input.subgraphAICLatency = {50, 500, 500, 500}; // hinge 100, 分支各 1000, 损失 2000 > 800
+    input.subgraphAIVLatency = {50, 500, 500, 500};
     MixGraphMerger merger;
     MergeOutput output = merger.Merge(input);
-    EXPECT_EQ(output.numSubgraphUpdated, 4); // 分支互不可达, 保持独立
+    EXPECT_EQ(output.numSubgraphUpdated, 4); // 分支互不可达且损失超限, 保持独立
 }
 
 // hinge guard(链式): 扇出源 sg0 -> sg1 -> sg2 -> sg3 链式依赖(组内可达),
@@ -1138,7 +1241,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardAllowsChainedBranches)
     MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
     input.isEnforceMergeGroup = {false};
     input.boundaryTensors = {
-        {100, {0}, {1}, true, {}, {}}, {101, {1}, {2}, true, {}, {}}, {102, {2}, {3}, true, {}, {}}};
+        {100, {0}, {1}, true, true, {}, {}}, {101, {1}, {2}, true, true, {}, {}}, {102, {2}, {3}, true, true, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0, 1}, {1, 2}, {2}};
     MixGraphMerger merger;
     MergeOutput output = merger.Merge(input);
@@ -1154,7 +1257,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardExemptsSameRingBranches)
     input.isEnforceMergeGroup = {false};
     input.subgraphLoopPaths = {{7}, {7}, {7}, {7}};
     input.boundaryTensors = {
-        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
+        {100, {0}, {1}, true, true, {}, {}}, {101, {0}, {2}, true, true, {}, {}}, {102, {0}, {3}, true, true, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
     MixGraphMerger merger;
     MergeOutput output = merger.Merge(input);
@@ -1168,7 +1271,7 @@ TEST_F(ReduceCopyTest, Merge_LoopPathGateBlocksBranchAbsorption)
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1, 2}});
     input.isEnforceMergeGroup = {false};
     input.subgraphLoopPaths = {{7}, {7}, {}};
-    input.boundaryTensors = {{100, {0}, {1}, true, {}, {}}, {101, {1}, {2}, true, {}, {}}};
+    input.boundaryTensors = {{100, {0}, {1}, true, false, {}, {}}, {101, {1}, {2}, true, false, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0, 1}, {1}};
     MixGraphMerger merger;
     MergeOutput output = merger.Merge(input);
@@ -1182,7 +1285,7 @@ TEST_F(ReduceCopyTest, Merge_LoopPathGateAllowsSamePathChain)
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1, 2}});
     input.isEnforceMergeGroup = {false};
     input.subgraphLoopPaths = {{7}, {7}, {7}};
-    input.boundaryTensors = {{100, {0}, {1}, true, {}, {}}, {101, {1}, {2}, true, {}, {}}};
+    input.boundaryTensors = {{100, {0}, {1}, true, true, {}, {}}, {101, {1}, {2}, true, true, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0, 1}, {1}};
     MixGraphMerger merger;
     MergeOutput output = merger.Merge(input);
@@ -1195,7 +1298,7 @@ TEST_F(ReduceCopyTest, Merge_NoSlotInfoGateDisabledMergesAll)
     std::vector<std::set<int>> outGraph{{1}, {2}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1, 2}});
     input.isEnforceMergeGroup = {false};
-    input.boundaryTensors = {{100, {0}, {1}, true, {}, {}}, {101, {1}, {2}, true, {}, {}}};
+    input.boundaryTensors = {{100, {0}, {1}, true, true, {}, {}}, {101, {1}, {2}, true, true, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0}, {0, 1}, {1}};
     MixGraphMerger merger;
     MergeOutput output = merger.Merge(input);
@@ -1436,22 +1539,23 @@ TEST_F(ReduceCopyTest, SinkBoundaryLossEqualRatioAllows)
 }
 
 // ============================================================================
-// 本次修改 UT: hinge guard 纯 V 轻量分支规模豁免
+// 本次修改 UT: hinge guard 分支规模豁免(移除纯 V 一票否决)
 // 对应 reduce_copy.cpp CheckMergeBenefitByStructuralPattern 的豁免分支:
-// 独立分支全纯 V(无 AIC op) 且串行损失(Σbranch − max) <= kSerialLossRatio(8) × hinge
-// 端点 root 总 latency 时放行; 含 C 分支或损失超限仍拒绝
+// 独立分支的串行损失(Σbranch − max) <= kSerialLossRatio(8) × hinge 端点 root 总
+// latency 时放行, 不再要求分支纯 V; 含 C 但损失可消化的扇入/扇出同样放行,
+// 损失超限(纯 V 或含 C 均同标尺)仍拒绝
 // ============================================================================
 
 // 豁免放行(扇出): hinge 端点 sg0(含 C, 900) 扇出 3 个互不可达纯 V 轻量分支(各 50),
 // 串行损失 150-50=100 <= 8x900 -> 豁免放行归 1
-// (同构型无豁免时被拒保持 4, 见 MixGraphMerger_HingeGuardRejectsParallelFanout)
+// (损失超限被拒保持 4, 见 MixGraphMerger_HingeGuardRejectsHeavyPureVecFanout)
 TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardExemptsPureVecLightFanout)
 {
     std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
     input.isEnforceMergeGroup = {false};
     input.boundaryTensors = {
-        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
+        {100, {0}, {1}, true, true, {}, {}}, {101, {0}, {2}, true, true, {}, {}}, {102, {0}, {3}, true, true, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
     input.subgraphAICOpNum = {2, 0, 0, 0}; // 仅 hinge 端点含 AIC op, 分支全纯 V
     input.subgraphAICLatency = {800, 0, 0, 0};
@@ -1461,19 +1565,39 @@ TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardExemptsPureVecLightFanout)
     EXPECT_EQ(output.numSubgraphUpdated, 1);
 }
 
-// 含 C 分支不豁免(扇出): 分支 sg1 含 AIC op, 串行损失同上 100 <= 8x900 本可达标,
-// 但豁免限纯 V 分支 -> 拒绝保持 4 (钉住豁免判据的纯 V 子句)
-TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardKeepsCubeBranchFanoutRejected)
+// 含 C 轻量分支豁免放行(扇出): 分支 sg1 含 AIC op, 串行损失 100 <= 8x900 可消化,
+// 豁免不再按分支是否含 cube 一票否决 -> 归 1 (修复含 C 微损失扇入被误杀)
+TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardExemptsLightCubeBranchFanout)
 {
     std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
     input.isEnforceMergeGroup = {false};
     input.boundaryTensors = {
-        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
+        {100, {0}, {1}, true, true, {}, {}}, {101, {0}, {2}, true, true, {}, {}}, {102, {0}, {3}, true, true, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
-    input.subgraphAICOpNum = {2, 1, 0, 0}; // 分支 sg1 含 AIC op, 破坏全纯 V
+    input.subgraphAICOpNum = {2, 1, 0, 0}; // 分支 sg1 含 AIC op
     input.subgraphAICLatency = {800, 50, 0, 0};
     input.subgraphAIVLatency = {100, 50, 50, 50};
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+    EXPECT_EQ(output.numSubgraphUpdated, 1);
+}
+
+// 含 C 实质分支拒绝(扇出, mla 型 Unroll 体): 分支全含 AIC 且各 5100, 串行损失
+// 15300-5100=10200 > 8x900=7200, 损失不可被 hinge 规模消化 -> 拒绝保持 4
+// (钉住豁免判据的损失子句对含 C 分支同样生效)
+TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardRejectsHeavyCubeBranchFanout)
+{
+    std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
+    MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
+    input.isEnforceMergeGroup = {false};
+    input.boundaryTensors = {{100, {0}, {1}, true, false, {}, {}},
+                             {101, {0}, {2}, true, false, {}, {}},
+                             {102, {0}, {3}, true, false, {}, {}}};
+    input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
+    input.subgraphAICOpNum = {2, 1, 1, 1}; // 分支全部含 AIC op
+    input.subgraphAICLatency = {800, 5000, 5000, 5000};
+    input.subgraphAIVLatency = {100, 100, 100, 100};
     MixGraphMerger merger;
     MergeOutput output = merger.Merge(input);
     EXPECT_EQ(output.numSubgraphUpdated, 4);
@@ -1486,8 +1610,9 @@ TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardRejectsHeavyPureVecFanout)
     std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
     input.isEnforceMergeGroup = {false};
-    input.boundaryTensors = {
-        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
+    input.boundaryTensors = {{100, {0}, {1}, true, false, {}, {}},
+                             {101, {0}, {2}, true, false, {}, {}},
+                             {102, {0}, {3}, true, false, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
     input.subgraphAICOpNum = {2, 0, 0, 0};
     input.subgraphAICLatency = {20, 0, 0, 0};
@@ -1504,7 +1629,11 @@ TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardPureVecBoundaryEqualRatioAllows)
     MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
     input.isEnforceMergeGroup = {false};
     input.boundaryTensors = {
-        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
+        {100, {0}, {1}, true, true, {}, {}}, {101, {0}, {2}, true, true, {}, {}}, {102, {0}, {3}, true, true, {}, {}}};
+    // 纯 C hinge -> 纯 V 分支的边界仍属跨核, 注入组内直连命中使直连门放行, 聚焦 hinge 等比判定
+    input.boundaryTensors[0].directPathConsumerSubgraphs = {1};
+    input.boundaryTensors[1].directPathConsumerSubgraphs = {2};
+    input.boundaryTensors[2].directPathConsumerSubgraphs = {3};
     input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
     input.subgraphAICOpNum = {2, 0, 0, 0};
     input.subgraphAICLatency = {25, 0, 0, 0};
@@ -1514,19 +1643,39 @@ TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardPureVecBoundaryEqualRatioAllows)
     EXPECT_EQ(output.numSubgraphUpdated, 1);
 }
 
-// 扇入(sparse_attention_antiquant 型): 3 个分支产 tensor 汇入 hinge 端点 sg0(含 C, 900)。
-// 分支 sg1 含 AIC: sink 串行损失门放行(100 <= 8x900)后 hinge 豁免因非纯 V 拒绝 -> 保持 4
-TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardKeepsCubeBranchFaninRejected)
+// 扇入含 C 轻量分支豁免放行(sparse_attention_antiquant 型): 3 个分支产 tensor 汇入
+// hinge 端点 sg0(含 C, 900)。分支 sg1 含 AIC 但串行损失 100 <= 8x900 可消化,
+// sink 门与 hinge 豁免同标尺均放行 -> 归 1 (不再按非纯 V 一票否决)
+TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardExemptsLightCubeBranchFanin)
 {
     std::vector<std::set<int>> outGraph{{}, {0}, {0}, {0}};
     MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
     input.isEnforceMergeGroup = {false};
     input.boundaryTensors = {
-        {100, {1}, {0}, true, {}, {}}, {101, {2}, {0}, true, {}, {}}, {102, {3}, {0}, true, {}, {}}};
+        {100, {1}, {0}, true, true, {}, {}}, {101, {2}, {0}, true, true, {}, {}}, {102, {3}, {0}, true, true, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
-    input.subgraphAICOpNum = {2, 1, 0, 0};
+    input.subgraphAICOpNum = {2, 1, 0, 0}; // 分支 sg1 含 AIC op
     input.subgraphAICLatency = {800, 50, 0, 0};
     input.subgraphAIVLatency = {100, 50, 50, 50};
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+    EXPECT_EQ(output.numSubgraphUpdated, 1);
+}
+
+// 扇入含 C 实质分支拒绝(mla 型): 3 个含 AIC 大分支(各 5100)汇入 hinge 端点 sg0(900),
+// 串行损失 15300-5100=10200 > 8x900=7200, sink 门与 hinge 豁免同标尺均拒绝 -> 保持 4
+TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardRejectsHeavyCubeBranchFanin)
+{
+    std::vector<std::set<int>> outGraph{{}, {0}, {0}, {0}};
+    MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
+    input.isEnforceMergeGroup = {false};
+    input.boundaryTensors = {{100, {1}, {0}, true, false, {}, {}},
+                             {101, {2}, {0}, true, false, {}, {}},
+                             {102, {3}, {0}, true, false, {}, {}}};
+    input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
+    input.subgraphAICOpNum = {2, 1, 1, 1}; // 分支全部含 AIC op
+    input.subgraphAICLatency = {800, 5000, 5000, 5000};
+    input.subgraphAIVLatency = {100, 100, 100, 100};
     MixGraphMerger merger;
     MergeOutput output = merger.Merge(input);
     EXPECT_EQ(output.numSubgraphUpdated, 4);
@@ -1540,7 +1689,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardExemptsPureVecLightFanin)
     MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
     input.isEnforceMergeGroup = {false};
     input.boundaryTensors = {
-        {100, {1}, {0}, true, {}, {}}, {101, {2}, {0}, true, {}, {}}, {102, {3}, {0}, true, {}, {}}};
+        {100, {1}, {0}, true, true, {}, {}}, {101, {2}, {0}, true, true, {}, {}}, {102, {3}, {0}, true, true, {}, {}}};
     input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
     input.subgraphAICOpNum = {2, 0, 0, 0};
     input.subgraphAICLatency = {800, 0, 0, 0};

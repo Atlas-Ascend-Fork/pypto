@@ -18,6 +18,7 @@
 #include "interface/tensor/logical_tensor.h"
 #include "passes/pass_log/pass_log.h"
 #include "passes/pass_utils/graph_utils.h"
+#include "passes/tile_graph_pass/data_path/memory_path_utils.h"
 #include "interface/utils/common.h"
 #include <vector>
 #include <numeric>
@@ -30,6 +31,7 @@
 #include <queue>
 #include <tuple>
 
+#undef MODULE_NAME
 #define MODULE_NAME "ReduceCopy"
 
 namespace npu::tile_fwk {
@@ -572,6 +574,47 @@ static bool WillBeDdrWithoutNewCopyOp(LogicalTensorPtr tensor)
     return true;
 }
 
+// 直连通路判定: 边界 tensor 内部化后能否走上直连通路(免 DDR 往返), 并输出命中侧的邻居子图。
+// 资格(dtype 支持/对齐/跨核)已由 AssignMemoryType 落成 memtype, 这里只查边界两侧已分配的
+// memtype 通路, 与 GenerateMoveOp 的 memtype-pair -> opcode 映射同源(IsSpecialDirectMemoryPath
+// 覆盖 L0C2UB/UB2L1/L0C2L1); 跨核(C-V)边界实际只命中 L0C2UB/UB2L1, L0C2L1 为 C-C 通路。
+// 前提: AssignMemoryType 后跨 memtype 数据流必有搬运 op 隔离, 故按邻接 op 的 memtype 对判定
+// 即等价于搬运 op 两端判定; 后续若出现输出 L1/UB 的融合算子需复核此前提。
+// 命中子图可能含组外邻居(其通路不随本次合并内部化), 门控侧须按候选组过滤后计数。
+static bool IsDirectPathCandidate(const LogicalTensorPtr& tensor, std::vector<int>& prodHitSubgraphs,
+                                  std::vector<int>& consHitSubgraphs)
+{
+    prodHitSubgraphs.clear();
+    consHitSubgraphs.clear();
+    if (tensor == nullptr) {
+        return false;
+    }
+    MemoryType self = tensor->GetMemoryTypeOriginal();
+    std::set<int> prodHits;
+    std::set<int> consHits;
+    // 搬运 op 在消费侧: 输入为本 tensor, 输出为目标 memtype
+    for (auto& consumer : tensor->GetConsumers()) {
+        for (auto& out : consumer->GetOOperands()) {
+            if (out != nullptr && MemoryPathUtils::IsSpecialDirectMemoryPath(self, out->GetMemoryTypeOriginal())) {
+                consHits.insert(consumer->GetSubgraphID());
+                break;
+            }
+        }
+    }
+    // 搬运 op 在生产侧: 输入为源 memtype, 输出为本 tensor
+    for (auto& producer : tensor->GetProducers()) {
+        for (auto& in : producer->GetIOperands()) {
+            if (in != nullptr && MemoryPathUtils::IsSpecialDirectMemoryPath(in->GetMemoryTypeOriginal(), self)) {
+                prodHits.insert(producer->GetSubgraphID());
+                break;
+            }
+        }
+    }
+    prodHitSubgraphs.assign(prodHits.begin(), prodHits.end());
+    consHitSubgraphs.assign(consHits.begin(), consHits.end());
+    return !prodHitSubgraphs.empty() || !consHitSubgraphs.empty();
+}
+
 void ReduceCopyMerge::RecordBoundaryTensorInfo(LogicalTensorPtr& tensor, MergeInput& mergeInput,
                                                const std::set<int>& connectGraphs)
 {
@@ -581,6 +624,8 @@ void ReduceCopyMerge::RecordBoundaryTensorInfo(LogicalTensorPtr& tensor, MergeIn
     // boundary tensor 也须参与 inner-external-use 检查(其后必落地 DDR, 且无新 op 隔离)
     tensorInfo.isDDR = tensor->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR ||
                        tensor->GetMemoryTypeToBe() == MemoryType::MEM_DEVICE_DDR || WillBeDdrWithoutNewCopyOp(tensor);
+    tensorInfo.directPathCandidate = IsDirectPathCandidate(tensor, tensorInfo.directPathProducerSubgraphs,
+                                                           tensorInfo.directPathConsumerSubgraphs);
     std::set<std::pair<int, int>> producerEndpoints;
     std::set<std::pair<int, int>> consumerEndpoints;
     for (auto& op : tensor->GetProducers()) {
@@ -1175,6 +1220,8 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
     std::unordered_map<int, std::set<int>> rootPreds;
     std::unordered_map<int, std::set<int>> rootSuccs;
     bool hasSimpleTensorEdge = false;
+    bool hasDirectPathEdge = false;
+    bool hasCrossCoreEdge = false;
     for (int root : actualGroup) {
         for (int tensorId : mRootToBoundaryTensorIds[root]) {
             if (mTensorVisitStamp[tensorId] == mVisitStamp) {
@@ -1182,24 +1229,55 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
             }
             mTensorVisitStamp[tensorId] = mVisitStamp;
             const auto& info = mInput.boundaryTensors[tensorId];
-            // 分侧收集 in-group producer/consumer 当前 root
+            // 分侧收集 in-group producer/consumer 当前 root, 并统计该侧(组内子图)核构成
             std::set<int> prodRoots;
             std::set<int> consRoots;
+            bool prodSideHasAic = false;
+            bool prodSideHasAiv = false;
             for (int s : info.producerSubgraphs) {
                 int parent = FindParent(s);
                 if (mergedRoot.count(parent) > 0) {
                     prodRoots.insert(parent);
                     allProdRoots.insert(parent);
+                    prodSideHasAic = prodSideHasAic || (mInput.subgraphAICLatency[s] > 0);
+                    prodSideHasAiv = prodSideHasAiv || (mInput.subgraphAIVLatency[s] > 0);
                 }
             }
+            bool consSideHasAic = false;
+            bool consSideHasAiv = false;
             for (int s : info.consumerSubgraphs) {
                 int parent = FindParent(s);
                 if (mergedRoot.count(parent) > 0) {
                     consRoots.insert(parent);
+                    consSideHasAic = consSideHasAic || (mInput.subgraphAICLatency[s] > 0);
+                    consSideHasAiv = consSideHasAiv || (mInput.subgraphAIVLatency[s] > 0);
                 }
             }
             if (prodRoots.empty() || consRoots.empty()) {
                 continue;
+            }
+            // 跨核边界: 本 tensor 两侧子图分属纯 AIC/纯 AIV 才要求直连收益; 混合子图(切图抱团
+            // 产物, 如 convert 非跨核路径与上下游同 island)既非纯 C 也非纯 V, 其边界不套用直连
+            // 要求, 避免多轮 CV 混合合并被大面积误拒(kernel 数回退)。
+            const bool prodSidePureAic = prodSideHasAic && !prodSideHasAiv;
+            const bool prodSidePureAiv = prodSideHasAiv && !prodSideHasAic;
+            const bool consSidePureAic = consSideHasAic && !consSideHasAiv;
+            const bool consSidePureAiv = consSideHasAiv && !consSideHasAic;
+            const bool crossCoreTensor = (prodSidePureAic && consSidePureAiv) || (prodSidePureAiv && consSidePureAic);
+            if (crossCoreTensor) {
+                hasCrossCoreEdge = true;
+                // 仅统计命中子图在候选组内的直连资格: 组外邻居的通路不随本次合并内部化, 不算收益
+                auto hitInGroup = [&](const std::vector<int>& hitSubgraphs) {
+                    for (int sg : hitSubgraphs) {
+                        if (mergedRoot.count(FindParent(sg)) > 0) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+                if (hitInGroup(info.directPathProducerSubgraphs) || hitInGroup(info.directPathConsumerSubgraphs)) {
+                    hasDirectPathEdge = true;
+                }
             }
             // N:M tensor: 双侧均多 root
             if (prodRoots.size() >= multiBranchThreshold && consRoots.size() >= multiBranchThreshold) {
@@ -1371,21 +1449,17 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
             }
         }
         if (!hasDependentPair) {
-            // 规模豁免(限纯 V 分支): 独立分支全部为纯 vector(无 AIC op)且串行化损失(Σbranch − max)
-            // 不超过 hinge 端点 root 总 latency 的 kSerialLossRatio 倍时, 属轻量准备段扇入
-            // (gather/索引/反量化碎片, ~20op 级, sparse_attention_antiquant: 64 碎片致 65 kernel
-            // vs 基线 5), 边界与调度收益远大于微小串行损失, 放行; 含 cube 的实质并行分支
-            // (mla 型 8~16 路 Unroll 体)不豁免, 保持完整护栏。判据与 sink 串行损失门同标尺。
-            bool allBranchPureVec = true;
+            // 规模豁免: 独立分支的串行化损失(Σbranch − max)不超过 hinge 端点 root 总 latency 的
+            // kSerialLossRatio 倍时, 损失可被 hinge 规模消化, 放行(轻量准备段扇入: gather/索引/
+            // 反量化碎片, sparse_attention_antiquant: 64 碎片致 65 kernel vs 基线 5, 边界与调度
+            // 收益远大于微小串行损失)。判据与 sink 串行损失门同标尺, 不再按分支是否含 cube
+            // 一票否决: 含 cube 但损失可消化的扇入同样放行, 损失不可消化的实质并行分支
+            // (mla 型 Unroll 体, 串行损失远超 hinge 规模)仍被拒绝。
             int64_t hingeLatency = 0;
             int64_t sumBranchLatency = 0;
             int64_t maxBranchLatency = 0;
             for (size_t i = 0; i < static_cast<size_t>(mInput.numSubgraph); ++i) {
                 int root = FindParent(static_cast<int>(i));
-                if (mInput.subgraphAICOpNum[i] > 0 && kv.second.count(root) > 0 && root != kv.first) {
-                    allBranchPureVec = false;
-                    break;
-                }
                 int64_t lat = static_cast<int64_t>(mInput.subgraphAICLatency[i]) + mInput.subgraphAIVLatency[i];
                 if (root == kv.first) {
                     hingeLatency += lat;
@@ -1394,7 +1468,7 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                     maxBranchLatency = std::max(maxBranchLatency, lat);
                 }
             }
-            if (allBranchPureVec && sumBranchLatency - maxBranchLatency <= kSerialLossRatio * hingeLatency) {
+            if (sumBranchLatency - maxBranchLatency <= kSerialLossRatio * hingeLatency) {
                 continue;
             }
             APASS_LOG_DEBUG_F(Elements::Operation,
@@ -1407,6 +1481,14 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
     // 通过条件: 至少存在一个简单 tensor edge
     if (!hasSimpleTensorEdge) {
         APASS_LOG_DEBUG_F(Elements::Operation, "Structural merge skipped: no simple tensor edge benefit.");
+        return false;
+    }
+    // 直连收益门(跨核边界): 候选组内存在 C-V 直接相邻的边界边时, 至少一条跨核边界须具备
+    //            直连通路资格(L0C2UB/UB2L1), 否则合并只剩调度收益, 拒绝; 纯同类(C-C/V-V)
+    //            或 C-V 子图间无直接边界的合并不受约束。
+    if (hasCrossCoreEdge && !hasDirectPathEdge) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Structural merge skipped: cross-core edge without direct-path (L0C2UB/UB2L1) benefit.");
         return false;
     }
     APASS_LOG_DEBUG_F(Elements::Operation, "Structural merge allowed: has simple tensor edge benefit.");

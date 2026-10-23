@@ -33,9 +33,14 @@ struct BoundaryTensorInfo {
     int tensorMagic;
     std::vector<int> producerSubgraphs;
     std::vector<int> consumerSubgraphs;
-    bool isDDR{false};                  // 目的: 仅 DDR tensor 参与 inner-external-use 检查
+    bool isDDR{false}; // 目的: 仅 DDR tensor 参与 inner-external-use 检查
+    bool directPathCandidate{false}; // 目的: 内部化后可走直连通路(免 DDR 往返)的收益候选, 跨核(C-V)边界即 L0C2UB/UB2L1
     std::vector<int> producerCvFuseIds; // 与 producerSubgraphs 逐项平行, 端点级 CvFuseId, 未分配为 -1
     std::vector<int> consumerCvFuseIds; // 与 consumerSubgraphs 逐项平行
+    // 直连资格命中的邻居子图(消费侧/生产侧分别记录): 命中子图可能在候选组外(该通路不随
+    // 本次合并内部化), 门控须按候选组过滤后才计入直连收益
+    std::vector<int> directPathConsumerSubgraphs{};
+    std::vector<int> directPathProducerSubgraphs{};
 };
 
 struct MergeInput {
