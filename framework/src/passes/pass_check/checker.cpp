@@ -14,6 +14,7 @@
  */
 
 #include "remove_redundant_op_checker.h"
+#include "interface/utils/common.h"
 #include "passes/pass_log/pass_log.h"
 #include "passes/pass_utils/pass_utils.h"
 #include "tilefwk/error_code.h"
@@ -182,29 +183,31 @@ Status Checker::PublicCheck(Function& function)
     return SUCCESS;
 }
 
-inline std::unordered_set<Operation*> GetNeedCheckOps(Function& function, Opcode opcode)
+Status Checker::CheckDynAttrForView(Function& function)
 {
-    std::unordered_set<Operation*> needCheckOps;
+    std::unordered_set<Operation*> needCheckViewOps;
+    // 边界张量无动态轴（shape 不含 -1）时，View 无需携带动态属性即可表达完整语义，跳过校验；
+    // 含 -1 动态轴的边界张量（incast/outcast）侧的 View 仍要求携带动态属性
     for (const auto& incast : function.GetIncast()) {
+        if (!HasNegativeNum<int64_t>(incast->GetShape())) {
+            continue;
+        }
         for (auto& consumer : incast->GetConsumers()) {
-            if (consumer->GetOpcode() == opcode) {
-                needCheckOps.insert(consumer);
+            if (consumer->GetOpcode() == Opcode::OP_VIEW) {
+                needCheckViewOps.insert(consumer);
             }
         }
     }
     for (const auto& outcast : function.GetOutcast()) {
+        if (!HasNegativeNum<int64_t>(outcast->GetShape())) {
+            continue;
+        }
         for (auto& producer : outcast->GetProducers()) {
-            if (producer->GetOpcode() == opcode) {
-                needCheckOps.insert(producer);
+            if (producer->GetOpcode() == Opcode::OP_VIEW) {
+                needCheckViewOps.insert(producer);
             }
         }
     }
-    return needCheckOps;
-}
-
-Status Checker::CheckDynAttrForView(Function& function)
-{
-    std::unordered_set<Operation*> needCheckViewOps = GetNeedCheckOps(function, Opcode::OP_VIEW);
     for (const auto& op : needCheckViewOps) {
         const int opMagic = op->GetOpMagic();
         const int funcMagic = function.GetFuncMagic();
@@ -229,17 +232,27 @@ Status Checker::CheckDynAttrForView(Function& function)
 
 Status Checker::CheckToDynOffsetForAssemble(Function& function)
 {
-    std::unordered_set<Operation*> needCheckAssembleOps = GetNeedCheckOps(function, Opcode::OP_ASSEMBLE);
-    for (const auto& op : needCheckAssembleOps) {
-        const int opMagic = op->GetOpMagic();
-        const int funcMagic = function.GetFuncMagic();
-        auto assembleAttr = std::static_pointer_cast<AssembleOpAttribute>(op->GetOpAttribute());
-        std::vector<SymbolicScalar>& assembleToDynOffset = assembleAttr->GetToDynOffset();
-        if (assembleToDynOffset.empty()) {
-            APASS_LOG_ERROR_C(TensorErr::TENSOR_DYNAMIC_ATTR, Elements::Operation,
-                              "CheckToDynOffsetForAssemble failed, toDynOffset_ of op[%d] in function[%d] is empty.",
-                              opMagic, funcMagic);
-            return FAILED;
+    // 仅校验动态 outcast（shape 含 -1）的写入描述：outcast 无动态轴时写入位置可由静态 offset 完整描述，
+    // 不强制其 Assemble 携带 toDynOffset_；incast 侧展开后不存在 Assemble 直接连接 incast 的场景，故不收集
+    for (const auto& outcast : function.GetOutcast()) {
+        if (!HasNegativeNum<int64_t>(outcast->GetShape())) {
+            continue;
+        }
+        for (auto& producer : outcast->GetProducers()) {
+            if (producer->GetOpcode() != Opcode::OP_ASSEMBLE) {
+                continue;
+            }
+            const int opMagic = producer->GetOpMagic();
+            const int funcMagic = function.GetFuncMagic();
+            auto assembleAttr = std::static_pointer_cast<AssembleOpAttribute>(producer->GetOpAttribute());
+            std::vector<SymbolicScalar>& assembleToDynOffset = assembleAttr->GetToDynOffset();
+            if (assembleToDynOffset.empty()) {
+                APASS_LOG_ERROR_C(
+                    TensorErr::TENSOR_DYNAMIC_ATTR, Elements::Operation,
+                    "CheckToDynOffsetForAssemble failed, toDynOffset_ of op[%d] in function[%d] is empty.", opMagic,
+                    funcMagic);
+                return FAILED;
+            }
         }
     }
     return SUCCESS;

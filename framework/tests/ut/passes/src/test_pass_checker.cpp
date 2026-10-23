@@ -165,8 +165,9 @@ TEST_F(PassCheckTest, TestCheckDynAttrForView)
     EXPECT_TRUE(currFunctionPtr != nullptr);
 
     std::vector<int64_t> shape = {8, 16};
+    std::vector<int64_t> dynShape = {-1, 16};
 
-    auto incast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto incast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, dynShape, CreateTestConstIntVector(shape));
     auto outcast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
     auto& tensorOffset = incast1->GetTensorOffset();
     auto viewAttr = std::make_shared<ViewOpAttribute>(tensorOffset.GetOffset(), tensorOffset.GetDynOffset());
@@ -186,9 +187,10 @@ TEST_F(PassCheckTest, TestCheckDynAttrForViewWithoutToDynValidShape)
     EXPECT_TRUE(currFunctionPtr != nullptr);
 
     std::vector<int64_t> shape = {16, 16};
+    std::vector<int64_t> dynShape = {-1, 16};
 
     auto outcast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
-    auto incast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto incast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, dynShape, CreateTestConstIntVector(shape));
     Offset offset = {0, 128};
     std::vector<SymbolicScalar> dynOffset = {0, 128};
     auto viewAttr = std::make_shared<ViewOpAttribute>(offset, dynOffset, CreateTestConstIntVector(shape));
@@ -202,6 +204,29 @@ TEST_F(PassCheckTest, TestCheckDynAttrForViewWithoutToDynValidShape)
     EXPECT_EQ(checker.CheckDynAttrForView(*currFunctionPtr), FAILED);
 }
 
+TEST_F(PassCheckTest, TestCheckDynAttrForView_StaticBoundary)
+{
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "TestCheckDynAttrForView_StaticBoundary",
+                                                      "TestCheckDynAttrForView_StaticBoundary", nullptr);
+    EXPECT_TRUE(currFunctionPtr != nullptr);
+
+    // 边界张量为静态 shape（不含 -1）时，View 无需携带动态属性即可表达完整语义，跳过校验
+    std::vector<int64_t> shape = {8, 16};
+    auto incast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto outcast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto viewAttr = std::make_shared<ViewOpAttribute>(Offset(0, 0), CreateTestConstIntVector(shape),
+                                                      CreateTestConstIntVector(shape));
+    PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_VIEW, {incast1}, {outcast1},
+                                     [&viewAttr](Operation& op) { op.SetOpAttribute(viewAttr); });
+    viewAttr->GetFromDynOffset().clear();
+    viewAttr->GetToDynValidShape().clear();
+
+    currFunctionPtr->inCasts_.push_back(incast1);
+    currFunctionPtr->outCasts_.push_back(outcast1);
+    Checker checker;
+    EXPECT_EQ(checker.CheckDynAttrForView(*currFunctionPtr), SUCCESS);
+}
+
 TEST_F(PassCheckTest, TestCheckToDynOffsetForAssemble)
 {
     auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "IntraSubGraphAdapterTest",
@@ -209,7 +234,30 @@ TEST_F(PassCheckTest, TestCheckToDynOffsetForAssemble)
     EXPECT_TRUE(currFunctionPtr != nullptr);
 
     std::vector<int64_t> shape = {8, 16};
+    std::vector<int64_t> dynShape = {-1, 16};
 
+    auto incast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto outcast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, dynShape, CreateTestConstIntVector(shape));
+    auto& tensorOffset = incast1->GetTensorOffset();
+    auto assembleAttr = std::make_shared<AssembleOpAttribute>(tensorOffset.GetOffset());
+    PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_ASSEMBLE, {incast1}, {outcast1},
+                                     [&assembleAttr](Operation& op) { op.SetOpAttribute(assembleAttr); });
+
+    currFunctionPtr->inCasts_.push_back(incast1);
+    currFunctionPtr->outCasts_.push_back(outcast1);
+    Checker checker;
+    EXPECT_EQ(checker.CheckToDynOffsetForAssemble(*currFunctionPtr), FAILED);
+}
+
+TEST_F(PassCheckTest, TestCheckToDynOffsetForAssemble_StaticOutcast)
+{
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(),
+                                                      "TestCheckToDynOffsetForAssemble_StaticOutcast",
+                                                      "TestCheckToDynOffsetForAssemble_StaticOutcast", nullptr);
+    EXPECT_TRUE(currFunctionPtr != nullptr);
+
+    // outcast 为静态 shape（不含 -1）时，写入位置可由静态 offset 完整描述，不强制其 Assemble 携带 toDynOffset_
+    std::vector<int64_t> shape = {8, 16};
     auto incast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
     auto outcast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
     auto& tensorOffset = incast1->GetTensorOffset();
@@ -220,7 +268,7 @@ TEST_F(PassCheckTest, TestCheckToDynOffsetForAssemble)
     currFunctionPtr->inCasts_.push_back(incast1);
     currFunctionPtr->outCasts_.push_back(outcast1);
     Checker checker;
-    EXPECT_EQ(checker.CheckToDynOffsetForAssemble(*currFunctionPtr), FAILED);
+    EXPECT_EQ(checker.CheckToDynOffsetForAssemble(*currFunctionPtr), SUCCESS);
 }
 
 TEST_F(PassCheckTest, TestPreGraphCheckerAssembleViewReshapeInvalidIO)
@@ -406,12 +454,13 @@ TEST_F(PassCheckTest, TestCheckDynAttrForView_FromDynOffsetEmpty)
                                                       "TestCheckDynAttrForView_FromDynOffsetEmpty",
                                                       "TestCheckDynAttrForView_FromDynOffsetEmpty", nullptr);
     EXPECT_TRUE(currFunctionPtr != nullptr);
-
     std::vector<int64_t> shape = {32, 32};
-    auto incast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape),
+    std::vector<int64_t> dynShape = {-1, 32};
+    auto incast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, dynShape, CreateTestConstIntVector(shape),
                                                               TileOpFormat::TILEOP_ND, "");
     auto outcast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape),
                                                                TileOpFormat::TILEOP_ND, "");
+
     auto viewAttr = std::make_shared<ViewOpAttribute>(Offset(0, 0), CreateTestConstIntVector(shape),
                                                       CreateTestConstIntVector(shape));
     PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_VIEW, {incast1}, {outcast1},
@@ -432,7 +481,8 @@ TEST_F(PassCheckTest, TestCheckDynAttrForView_ToDynValidShapeEmpty)
     EXPECT_TRUE(currFunctionPtr != nullptr);
 
     std::vector<int64_t> shape = {32, 32};
-    auto incast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape),
+    std::vector<int64_t> dynShape = {-1, 32};
+    auto incast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, dynShape, CreateTestConstIntVector(shape),
                                                               TileOpFormat::TILEOP_ND, "");
     auto outcast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape),
                                                                TileOpFormat::TILEOP_ND, "");
@@ -457,9 +507,10 @@ TEST_F(PassCheckTest, TestCheckToDynOffsetForAssemble_ToDynOffsetEmpty)
     EXPECT_TRUE(currFunctionPtr != nullptr);
 
     std::vector<int64_t> shape = {32, 32};
+    std::vector<int64_t> dynShape = {-1, 32};
     auto incast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape),
                                                               TileOpFormat::TILEOP_ND, "");
-    auto outcast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape),
+    auto outcast1 = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, dynShape, CreateTestConstIntVector(shape),
                                                                TileOpFormat::TILEOP_ND, "");
 
     auto& op = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_ASSEMBLE, {incast1}, {outcast1});
