@@ -351,3 +351,40 @@ def test_init_output_matmul_integration():
     torch.testing.assert_close(c_out.cpu(), expected, rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(ws_acc.cpu(), expected, rtol=1e-3, atol=1e-3)
     logging.info("init_output + matmul + atomic (mixed kernel, both visibility directions) passed!")
+
+
+# ===========================================================================
+# 4. Float value on an integer tensor: the filler truncates toward zero
+# ===========================================================================
+
+
+@pl.jit(auto_mutex=True)
+def init_output_float_value_on_int(
+    out_i8: pl.Tensor[[32], pl.DT_INT8],
+    out_u8: pl.Tensor[[32], pl.DT_UINT8],
+    out_i32: pl.Tensor[[32], pl.DT_INT32],
+):
+    with pl.section_vector():
+        pl.init_output(out_i8, offset=0, size=32, value=-1.9)
+        pl.init_output(out_u8, offset=0, size=32, value=200.7)
+        pl.init_output(out_i32, offset=0, size=32, value=2.7)
+
+
+@pytest.mark.soc("950")
+@pypto.options(pass_options={"enable_slice": False})
+def test_init_output_float_value_on_int():
+    """A float value on an integer tensor is truncated toward zero, not rejected."""
+    _require_a5(ST_DEVICE)
+    # Non-zero sentinels so an unfilled element would be visible.
+    out_i8 = torch.full([32], 7, dtype=torch.int8).to(ST_DEVICE)
+    out_u8 = torch.full([32], 7, dtype=torch.uint8).to(ST_DEVICE)
+    out_i32 = torch.full([32], 7, dtype=torch.int32).to(ST_DEVICE)
+
+    init_output_float_value_on_int(out_i8, out_u8, out_i32)
+    torch.npu.synchronize()
+
+    # Truncation toward zero: -1.9 -> -1, 200.7 -> 200, 2.7 -> 2.
+    torch.testing.assert_close(out_i8.cpu(), torch.full([32], -1, dtype=torch.int8), rtol=0, atol=0)
+    torch.testing.assert_close(out_u8.cpu(), torch.full([32], 200, dtype=torch.uint8), rtol=0, atol=0)
+    torch.testing.assert_close(out_i32.cpu(), torch.full([32], 2, dtype=torch.int32), rtol=0, atol=0)
+    logging.info("init_output float value on integer tensors truncated correctly!")

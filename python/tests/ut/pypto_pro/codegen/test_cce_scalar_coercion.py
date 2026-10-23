@@ -114,3 +114,71 @@ def test_float_scalar_keeps_its_float_form_for_a_float_dtype():
     cpp = _compile_to_cce(kernel)
 
     assert _vadds_arg(cpp) == "1.5f"
+
+
+# ===========================================================================
+# TEXPANDS family (block.expands / block.init_output): the same float-constant
+# scalar coercion applies to the integer destination, so the emitted
+# TEXPANDS scalar is a truncated integer literal, not a float literal.
+# ===========================================================================
+
+
+def _expands_kernel(dtype, scalar):
+    @pl.jit()
+    def kernel(out: pl.Tensor[[_N, _M], dtype]):
+        tf = pl.TileType(shape=[_N, _M], dtype=dtype, target_memory=pl.MemorySpace.Vec)
+        t = pl.make_tile(tf, addr=0)
+        with pl.section_vector():
+            pl.expands(t, scalar)
+            pl.store(out, t, [0, 0])
+
+    return kernel
+
+
+def _init_output_kernel(dtype, scalar):
+    @pl.jit(auto_mutex=True)
+    def kernel(out: pl.Tensor[[_N * _M], dtype]):
+        with pl.section_vector():
+            pl.init_output(out, offset=0, size=_N * _M, value=scalar)
+
+    return kernel
+
+
+def _texpands_scalar(cpp: str) -> str:
+    """The scalar operand emitted for the first TEXPANDS, i.e. its second argument."""
+    line = next(ln for ln in cpp.splitlines() if "TEXPANDS(" in ln)
+    return line.split("TEXPANDS(", 1)[1].split(",", 1)[1].strip().rstrip(");")
+
+
+_TEXPANDS_CASES = [
+    (pl.DT_INT8, 1.9, "1"),
+    (pl.DT_INT8, -1.9, "-1"),
+    (pl.DT_UINT8, 200.7, "200u"),
+    (pl.DT_INT16, 3.5, "3"),
+    (pl.DT_INT32, -7.9, "-7"),
+    (pl.DT_UINT32, 9.9, "9u"),
+]
+
+
+@pytest.mark.soc("950")
+@pytest.mark.parametrize(("dtype", "scalar", "expected"), _TEXPANDS_CASES)
+def test_float_scalar_is_truncated_by_expands(dtype, scalar, expected):
+    cpp = _compile_to_cce(_expands_kernel(dtype, scalar))
+
+    assert _texpands_scalar(cpp) == expected
+
+
+@pytest.mark.soc("950")
+@pytest.mark.parametrize(("dtype", "scalar", "expected"), _TEXPANDS_CASES)
+def test_float_scalar_is_truncated_by_init_output(dtype, scalar, expected):
+    cpp = _compile_to_cce(_init_output_kernel(dtype, scalar))
+
+    assert _texpands_scalar(cpp) == expected
+
+
+@pytest.mark.soc("950")
+def test_float_scalar_keeps_its_float_form_for_a_float_texpands_dst():
+    """Coercion applies only to integer destinations; a float destination keeps the float."""
+    cpp = _compile_to_cce(_expands_kernel(pl.DT_FP32, 1.5))
+
+    assert _texpands_scalar(cpp) == "1.5f"

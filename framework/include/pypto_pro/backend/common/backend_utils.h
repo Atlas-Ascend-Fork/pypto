@@ -75,6 +75,14 @@ int64_t GetNZInnerCols(const ir::DataType& dtype);
 void ValidateNZTransfer(const std::string& op_name, const ir::CallPtr& op, const ir::ExprPtr& tile_expr,
                         const ir::MakeTuplePtr& offsets, const ir::TensorTypePtr& tensor_type);
 
+/// Emit *scalar_expr* as a truncated integer literal when *dtype* is an integer
+/// (fraction dropped, value masked/sign-extended to the dtype width); return *original*
+/// unchanged when *dtype* is not an integer or the scalar is not a float constant.
+/// Shared by every backend that takes a scalar operand on an integer destination so a
+/// float constant is truncated uniformly instead of emitted as a bare float literal
+/// that trips -Wliteral-conversion.
+std::string CoerceScalarToInt(const ir::ExprPtr& scalar_expr, const ir::DataType& dtype, const std::string& original);
+
 } // namespace cce
 
 namespace debug_printf {

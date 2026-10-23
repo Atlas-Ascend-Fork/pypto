@@ -716,6 +716,9 @@ static std::string MakeBlockOutInitOutputCodegenCCE(const ir::CallPtr& op, codeg
         tensor_type->dtype_.IsFloat()) {
         value = "(" + ctype + ")(" + value + ")";
     }
+    // Float constant on an integer tensor: emit a truncated integer literal, matching the
+    // scalar coercion every integer-destination backend applies (see CoerceScalarToInt).
+    value = cce::CoerceScalarToInt(op->args_[3], tensor_type->dtype_, value);
 
     // Chunk size: MAX_REPEAT_TIMES(256) * ONE_BLK_SIZE(32) / sizeof(T) elements.
     size_t dtype_bits = tensor_type->dtype_.GetBit();
@@ -994,6 +997,12 @@ static std::string MakeBlockOutExpandsCodegenCCE(const ir::CallPtr& op, codegen:
             // aicore forbids direct unsigned-to-float cast; go via int64_t first.
             scalar = "(float)((int64_t)(" + scalar + "))";
         }
+    }
+
+    // Float constant on an integer destination: truncate to an integer literal, uniformly with
+    // every other integer-destination backend (see CoerceScalarToInt).
+    if (tile_type) {
+        scalar = cce::CoerceScalarToInt(op->args_[1], tile_type->dtype_, scalar);
     }
 
     codegen.Emit("TEXPANDS(" + dst + ", " + scalar + ");");

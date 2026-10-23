@@ -190,6 +190,30 @@ void ValidateNZTransfer(const std::string& op_name, const ir::CallPtr& op, const
         << op_name << ": Acc NZ partial-M store spanning multiple N fractals is not supported by direct TSTORE";
 }
 
+std::string CoerceScalarToInt(const ir::ExprPtr& scalar_expr, const ir::DataType& src_dt,
+                              const std::string& original_str)
+{
+    if (!src_dt.IsInt()) {
+        return original_str;
+    }
+    auto cf = ir::As<ir::ConstFloat>(scalar_expr);
+    if (cf == nullptr) {
+        return original_str;
+    }
+    const size_t bits = src_dt.GetBit();
+    if (bits == 0 || bits > 64) {
+        return original_str;
+    }
+    const auto raw = static_cast<uint64_t>(static_cast<int64_t>(cf->value_));
+    const uint64_t truncated = (bits == 64) ? raw : (raw & ((static_cast<uint64_t>(1) << bits) - 1));
+    if (src_dt.IsUnsignedInt()) {
+        return std::to_string(truncated) + "u";
+    }
+    // Sign-extend back out of the truncated width.
+    const uint64_t sign_bit = static_cast<uint64_t>(1) << (bits - 1);
+    return std::to_string(static_cast<int64_t>((truncated ^ sign_bit) - sign_bit));
+}
+
 } // namespace cce
 
 namespace debug_printf {

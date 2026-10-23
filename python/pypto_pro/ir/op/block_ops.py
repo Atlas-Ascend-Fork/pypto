@@ -548,6 +548,23 @@ def _check_init_output_bounds(
         )
 
 
+def _require_vector_section_hook(self, call: ast.Call, kwargs: dict) -> None:
+    """init_output is a Vector-pipe (V/MTE3) op and needs an explicit Vector domain.
+
+    Without an enclosing ``pl.section_vector()`` the kernel has no target section,
+    so it is treated as shared by Cube and Vector: the Vector-only body
+    (TEXPANDS/TSTORE) is also emitted into the Cube (AIC) target and fails to
+    compile on dav-3510. Reject the bare call at parse time instead.
+    """
+    if self.target != _ir_core.SectionKind.Vector:
+        raise InvalidOperation(
+            "init_output must be called inside 'with pl.section_vector():'",
+            span=self.span_tracker.get_span(call),
+            hint="init_output is a Vector-pipe op; a sectionless kernel is shared by Cube and "
+                 "Vector, which emits it into the Cube (AIC) target and fails to compile.",
+        )
+
+
 def _ir_init_output(
     tensor: Expr,
     *,
@@ -4773,7 +4790,7 @@ register_table(
     "load_tile": OpSpec(builder=_ir_load_tile, pre_hooks=[_resolve_order_kwarg]),
     "store": OpSpec(builder=_ir_store, pre_hooks=[_validate_scaling_tile_hook, _resolve_order_kwarg]),
     "store_tile": OpSpec(builder=_ir_store_tile, pre_hooks=[_validate_scaling_tile_hook, _resolve_order_kwarg]),
-    "init_output": OpSpec(builder=_ir_init_output),
+    "init_output": OpSpec(builder=_ir_init_output, pre_hooks=[_require_vector_section_hook]),
         # kwargs only
         "set_mask_count": OpSpec(builder=_ir_set_mask_count, parse_args=False),
         "set_mask_norm": OpSpec(builder=_ir_set_mask_norm, parse_args=False),

@@ -21,6 +21,7 @@
 
 #include "backend/backend_cce.h"
 #include "backend/common/backend.h"
+#include "backend/common/backend_utils.h"
 #include "codegen/cce/cce_codegen.h"
 #include "codegen/codegen_base.h"
 #include "core/logging.h"
@@ -126,33 +127,8 @@ static DataType GetExprDtype(const ir::ExprPtr& expr, DataType fallback = DataTy
 // Coerce a float-constant scalar to an integer literal matching the src type,
 // so that the emitted intrinsic (vmuls/vadds/vmins/vmaxs/vcmps_*/vaxpy)
 // receives a correctly-typed integer literal instead of a float literal
-// that would trigger -Wliteral-conversion. The value is truncated to the width
-// of src_dt, matching AscendC's implicit float→int conversion. The front end now
-// rejects a scalar the src type cannot represent, so what reaches here is only
-// the fractional part being dropped — not a value silently wrapping.
-static std::string CoerceScalarToInt(const ir::ExprPtr& scalar_expr, const DataType& src_dt,
-                                     const std::string& original_str)
-{
-    if (!src_dt.IsInt()) {
-        return original_str;
-    }
-    auto cf = ir::As<ir::ConstFloat>(scalar_expr);
-    if (cf == nullptr) {
-        return original_str;
-    }
-    const size_t bits = src_dt.GetBit();
-    if (bits == 0 || bits > 64) {
-        return original_str;
-    }
-    const auto raw = static_cast<uint64_t>(static_cast<int64_t>(cf->value_));
-    const uint64_t truncated = (bits == 64) ? raw : (raw & ((static_cast<uint64_t>(1) << bits) - 1));
-    if (src_dt.IsUnsignedInt()) {
-        return std::to_string(truncated) + "u";
-    }
-    // Sign-extend back out of the truncated width.
-    const uint64_t sign_bit = static_cast<uint64_t>(1) << (bits - 1);
-    return std::to_string(static_cast<int64_t>((truncated ^ sign_bit) - sign_bit));
-}
+// that would trigger -Wliteral-conversion. Shared with the elementwise/TEXPANDS
+// backends via backend_utils so float->int truncation is uniform.
 
 // For ops that only support ZEROING: return "MODE_ZEROING", reject MERGING.
 static std::string VFZeroingOnly(const ir::CallPtr& op, const std::string& op_name)
@@ -2533,7 +2509,7 @@ static std::string EmitVFMuls(const ir::CallPtr& op, codegen::CodegenBase& codeg
     std::string scalar_str = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.muls");
-    scalar_str = CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
+    scalar_str = cce::CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
     if (src_dt.GetBit() == 64) {
         // B64 Muls: dst = src * scalar. Mirrors AscendC MulsImpl: Duplicate(scalar) + Mul(src, scalar_reg).
         std::string p = dst + "_muls_";
@@ -3146,7 +3122,7 @@ static std::string EmitVFAdds(const ir::CallPtr& op, codegen::CodegenBase& codeg
     std::string scalar_str = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.adds");
-    scalar_str = CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
+    scalar_str = cce::CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
     if (src_dt.GetBit() == 64) {
         // B64 Adds: dst = src + scalar.
         // Mirrors AscendC AddsImpl: Duplicate(scalar) + Add(src, scalar_reg).
@@ -3223,7 +3199,7 @@ static std::string EmitVFMins(const ir::CallPtr& op, codegen::CodegenBase& codeg
     std::string scalar_str = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.mins");
-    scalar_str = CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
+    scalar_str = cce::CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
     if (src_dt.GetBit() == 64) {
         // B64 mins: min(src, scalar) via deinterleave + scalar compare + vsel + interleave.
         std::string p = dst + "_mins_";
@@ -3306,7 +3282,7 @@ static std::string EmitVFMaxs(const ir::CallPtr& op, codegen::CodegenBase& codeg
     std::string scalar_str = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.maxs");
-    scalar_str = CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
+    scalar_str = cce::CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
     if (src_dt.GetBit() == 64) {
         // B64 maxs: max(src, scalar) via deinterleave + scalar compare + vsel + interleave.
         std::string p = dst + "_maxs_";
@@ -3590,7 +3566,7 @@ static std::string EmitVFAxpy(const ir::CallPtr& op, codegen::CodegenBase& codeg
     std::string scalar_str = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.axpy");
-    scalar_str = CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
+    scalar_str = cce::CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
     if (src_dt == DataType::INT64 || src_dt == DataType::UINT64) {
         // B64 Axpy: dst = src * scalar + dst → Muls (Duplicate + MulB64Impl) + Add (AddB64Impl).
         // Mirrors AscendC AxpyImpl for b64.
@@ -4944,7 +4920,7 @@ static std::string EmitVFCompareImpl(const ir::CallPtr& op, codegen::CodegenBase
     else if (cmp_mode == "LE")
         suffix = "le";
     if (is_scalar_src) {
-        src1 = CoerceScalarToInt(op->args_[2], s0_dt, src1);
+        src1 = cce::CoerceScalarToInt(op->args_[2], s0_dt, src1);
         if (s0_dt.GetBit() == 64) {
             // B64 scalar compare: deinterleave src0, broadcast scalar halves, compare b32.
             // Must pack b64 mask to b32 (MaskPack) and unpack result (MaskUnPack),
