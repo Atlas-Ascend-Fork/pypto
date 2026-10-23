@@ -26,6 +26,30 @@
 
 namespace npu {
 namespace tile_fwk {
+namespace {
+bool ProducesReadToken(const Operation& op, const LogicalTensorPtr& input)
+{
+    const auto& token = input->GetReadToken();
+    return token != nullptr &&
+           std::find(op.result_token_.begin(), op.result_token_.end(), token) != op.result_token_.end();
+}
+
+void MoveReadTokenToCast(Function& function, Operation& op, const LogicalTensorPtr& input, Operation& cast)
+{
+    if (!ProducesReadToken(op, input)) {
+        return;
+    }
+    const auto& token = input->GetReadToken();
+    // ExpandFunction matches READ tokens against the actual input tensor. After promotion,
+    // the CAST reads that tensor; leaving the token on the compute op loses the WAR edge.
+    op.result_token_.erase(std::remove(op.result_token_.begin(), op.result_token_.end(), token),
+                           op.result_token_.end());
+    cast.result_token_.push_back(token);
+    auto& dependency = function.GetVarDependency();
+    dependency.RemoveProducer(token, std::static_pointer_cast<const ir::Stmt>(op.shared_from_this()));
+    dependency.AddProducer(token, std::static_pointer_cast<const ir::Stmt>(cast.shared_from_this()));
+}
+} // namespace
 
 LogicalTensorPtr AutoCast::CreateFp32TensorLike(const LogicalTensorPtr& tensor)
 {
@@ -161,8 +185,8 @@ bool AutoCast::SupportFP16(Operation* op)
     return true;
 }
 
-void AutoCast::InsertCastOp(Function& function, LogicalTensorPtr src, LogicalTensorPtr tgt, const TileShape& tileShape,
-                            const Operation::ScopeInfo& scopeInfo)
+Operation& AutoCast::InsertCastOp(Function& function, LogicalTensorPtr src, LogicalTensorPtr tgt,
+                                  const TileShape& tileShape, const Operation::ScopeInfo& scopeInfo)
 {
     Operation& newCast = irBuilder_.CreateTensorOpStmt(function, Opcode::OP_CAST, {src}, {tgt});
     newCast.SetAttribute(OP_ATTR_PREFIX + "mode", CastMode::CAST_NONE);
@@ -174,6 +198,7 @@ void AutoCast::InsertCastOp(Function& function, LogicalTensorPtr src, LogicalTen
     newCast.UpdateTileShape(newTileShape);
     newCast.SetScopeInfo(scopeInfo);
     addedCast_.insert(&newCast);
+    return newCast;
 }
 
 Status AutoCast::InsertBF16Cast(Function& function)
@@ -192,13 +217,14 @@ Status AutoCast::InsertBF16Cast(Function& function)
                 continue;
             }
             visitedIOp.insert(iop->GetMagic());
-            if (oldMagic2Input.count(iop->GetMagic()) > 0) {
+            if (oldMagic2Input.count(iop->GetMagic()) > 0 && !ProducesReadToken(*op, iop)) {
                 auto newInput = oldMagic2Input[iop->GetMagic()];
                 op->ReplaceInput(newInput, iop);
                 continue;
             }
             auto newInput = CreateFp32TensorLike(iop);
-            InsertCastOp(function, iop, newInput, op->GetTileShape(), op->GetScopeInfo());
+            auto& cast = InsertCastOp(function, iop, newInput, op->GetTileShape(), op->GetScopeInfo());
+            MoveReadTokenToCast(function, *op, iop, cast);
             op->ReplaceInput(newInput, iop);
             oldMagic2Input[iop->GetMagic()] = newInput;
             if (inCastConnectedTensors_.count(iop->GetMagic()) > 0) {
@@ -242,13 +268,14 @@ Status AutoCast::InsertFP16Cast(Function& function)
                 continue;
             }
             visitedIOp.insert(iop->GetMagic());
-            if (oldMagic2Input.count(iop->GetMagic()) > 0) {
+            if (oldMagic2Input.count(iop->GetMagic()) > 0 && !ProducesReadToken(*op, iop)) {
                 auto newInput = oldMagic2Input[iop->GetMagic()];
                 op->ReplaceInput(newInput, iop);
                 continue;
             }
             auto newInput = CreateFp32TensorLike(iop);
-            InsertCastOp(function, iop, newInput, op->GetTileShape(), op->GetScopeInfo());
+            auto& cast = InsertCastOp(function, iop, newInput, op->GetTileShape(), op->GetScopeInfo());
+            MoveReadTokenToCast(function, *op, iop, cast);
             op->ReplaceInput(newInput, iop);
             oldMagic2Input[iop->GetMagic()] = newInput;
             if (inCastConnectedTensors_.count(iop->GetMagic()) > 0) {

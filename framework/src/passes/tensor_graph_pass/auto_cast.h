@@ -38,8 +38,8 @@ public:
     Status RemoveRedundantCastChain(Function& function);
     Status DefaultEnabledPreCheck(Function& function) override;
     Status PostCheck(Function& function) override;
-    void InsertCastOp(Function& function, LogicalTensorPtr src, LogicalTensorPtr tgt, const TileShape& tileShape,
-                      const Operation::ScopeInfo& scopeInfo);
+    Operation& InsertCastOp(Function& function, LogicalTensorPtr src, LogicalTensorPtr tgt, const TileShape& tileShape,
+                            const Operation::ScopeInfo& scopeInfo);
     Status GetInOutConnectedTensor(Function& function);
     std::set<std::pair<DataType, DataType>> legalCastPair{
         {DataType::DT_FP32, DataType::DT_FP16},  {DataType::DT_FP16, DataType::DT_FP32},

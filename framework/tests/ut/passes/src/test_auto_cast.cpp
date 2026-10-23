@@ -24,6 +24,7 @@
 #include "interface/configs/config_manager.h"
 #include "computational_graph_builder.h"
 #include "passes/tensor_graph_pass/auto_cast.h"
+#include "passes/tensor_graph_pass/expand_function.h"
 
 namespace npu {
 namespace tile_fwk {
@@ -62,6 +63,75 @@ TEST_F(AutoCastTest, AddBF16)
     autoCast.RunOnFunction(*function);
     const int opNum3 = 3;
     EXPECT_EQ(function->Operations().size(), opNum3);
+}
+
+void CheckReadTokensAfterAutoCast(ComputationalGraphBuilder& graph)
+{
+    auto& function = *graph.GetFunction();
+    auto source = graph.GetTensor("source");
+    auto token = source->GetReadToken();
+    AutoCast autoCast;
+    ASSERT_EQ(autoCast.RunOnFunction(function), SUCCESS);
+    size_t readCasts = 0;
+    for (auto* cast : source->GetConsumers()) {
+        ASSERT_EQ(cast->GetOpcode(), Opcode::OP_CAST);
+        EXPECT_NE(std::find(cast->result_token_.begin(), cast->result_token_.end(), token), cast->result_token_.end());
+        EXPECT_TRUE(function.GetVarDependency().HasProducer(
+            token, std::static_pointer_cast<const ir::Stmt>(cast->shared_from_this())));
+        ++readCasts;
+    }
+    EXPECT_EQ(readCasts, 2U);
+    EXPECT_TRUE(graph.GetOp("read1")->result_token_.empty());
+    EXPECT_TRUE(graph.GetOp("read2")->result_token_.empty());
+}
+
+void CheckReadTokensAfterExpansion(Function& function, const LogicalTensorPtr& source)
+{
+    function.SetGraphType(GraphType::TENSOR_GRAPH);
+    ExpandFunction expand;
+    ASSERT_EQ(static_cast<Pass&>(expand).RunOnFunction(function), SUCCESS);
+    size_t readSlices = 0;
+    for (auto& op : function.Operations()) {
+        if (op.GetOpcode() == Opcode::OP_SLICE && op.GetIOperands().front() == source) {
+            ASSERT_EQ(op.result_token_.size(), 1U);
+            auto type = std::dynamic_pointer_cast<const ir::TokenType>(op.result_token_.front()->GetType());
+            ASSERT_NE(type, nullptr);
+            EXPECT_EQ(type->kind_, ir::TokenKind::NORMAL);
+            ++readSlices;
+        }
+    }
+    EXPECT_EQ(readSlices, 2U);
+}
+
+TEST_F(AutoCastTest, PromotedReadsKeepCompletionTokensThroughExpansion)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);
+    for (auto dtype : {DT_FP16, DT_BF16}) {
+        ComputationalGraphBuilder graph;
+        ASSERT_TRUE(graph.AddTensor(dtype, {64, 64}, "source"));
+        ASSERT_TRUE(graph.AddTensor(DT_FP32, {64, 64}, "rhs"));
+        ASSERT_TRUE(graph.AddTensor(dtype, {64, 64}, "first"));
+        ASSERT_TRUE(graph.AddTensor(dtype, {64, 64}, "second"));
+        ASSERT_TRUE(graph.AddOps({Opcode::OP_MOD, Opcode::OP_MOD}, {{"source", "rhs"}, {"source", "rhs"}},
+                                 {{"first"}, {"second"}}, {"read1", "read2"}, true));
+        ASSERT_TRUE(graph.SetInCast({"source", "rhs"}));
+        ASSERT_TRUE(graph.SetOutCast({"first", "second"}));
+        auto& function = *graph.GetFunction();
+        auto source = graph.GetTensor("source");
+        auto token = IRContext::Get().MakeSemanticToken("source_read", ir::TokenKind::READ, ir::Span::Unknown());
+        source->SetReadToken(token);
+        for (const auto& name : {"read1", "read2"}) {
+            auto* read = graph.GetOp(name);
+            read->GetTileShapeForSetting().SetVecTile({64, 64});
+            read->result_token_ = {token};
+            function.GetVarDependency().AddProducer(token,
+                                                    std::static_pointer_cast<const ir::Stmt>(read->shared_from_this()));
+        }
+
+        ASSERT_NO_FATAL_FAILURE(CheckReadTokensAfterAutoCast(graph));
+        ASSERT_NO_FATAL_FAILURE(CheckReadTokensAfterExpansion(function, source));
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
 }
 
 TEST_F(AutoCastTest, AddCascadeBF16)
