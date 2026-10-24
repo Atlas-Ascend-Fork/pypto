@@ -16,6 +16,7 @@
 #ifndef PASS_REMOVE_REDUNDANT_OP_INTERNAL_H_
 #define PASS_REMOVE_REDUNDANT_OP_INTERNAL_H_
 
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include "interface/function/function.h"
@@ -38,6 +39,15 @@ void MigrateRemovedOpsTokenDependency(Function& function, const std::vector<Oper
 
 bool HasOtherAssembleOutputOnSameRaw(Function& function, const LogicalTensorPtr& output,
                                      const Operation* ignoredOp = nullptr);
+
+// 单次子 pass 内需对大量候选判定"是否存在同 raw 的其他 assemble 输出（拆分版本兄弟）"时，
+// 先构建本索引再做 O(1) 查询，避免逐候选 O(ops×operands) 全图扫描。索引取子 pass 起始时刻
+// 快照：子 pass 内部改写造成的删减不做增量维护（可达场景由其余结构条件排除）。
+using AssembleOutputRawIndex = std::unordered_map<int, std::unordered_set<int>>;
+
+AssembleOutputRawIndex CollectAssembleOutputRawIndex(Function& function);
+
+bool HasSiblingAssembleOutputOnRaw(const AssembleOutputRawIndex& rawTensorMagics, const LogicalTensorPtr& tensor);
 
 } // namespace npu::tile_fwk::remove_redundant_op_internal
 

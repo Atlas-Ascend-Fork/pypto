@@ -77,9 +77,9 @@ private:
     static bool CollectL1FoldMergedOffsets(const SliceContractSliceChain& chain,
                                            const std::vector<SliceContractSliceRewrite>& rewrites,
                                            std::vector<MergedOffset>& mergedOffsets);
-    static bool FoldL1FanoutChain(const SliceContractSliceChain& chain,
+    static bool FoldL1FanoutChain(Function& function, const SliceContractSliceChain& chain,
                                   const std::vector<SliceContractSliceRewrite>& rewrites);
-    static void RewriteComposableFanoutChain(const SliceContractSliceChain& chain,
+    static bool RewriteComposableFanoutChain(Function& function, const SliceContractSliceChain& chain,
                                              const std::vector<SliceContractSliceRewrite>& rewrites);
     bool RewriteDynamicFanoutFallback(Function& function, const SliceContractSliceChain& chain,
                                       std::vector<SliceContractSliceRewrite>& rewrites, bool hasL1Consumer,

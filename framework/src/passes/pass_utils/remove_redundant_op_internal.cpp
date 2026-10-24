@@ -410,4 +410,33 @@ bool HasOtherAssembleOutputOnSameRaw(Function& function, const LogicalTensorPtr&
     return false;
 }
 
+AssembleOutputRawIndex CollectAssembleOutputRawIndex(Function& function)
+{
+    AssembleOutputRawIndex rawTensorMagics;
+    for (auto& op : function.Operations(false)) {
+        if (op.IsDeleted() || !IsAssembleLikeOpcode(op.GetOpcode())) {
+            continue;
+        }
+        for (const auto& opOutput : op.GetOOperands()) {
+            if (opOutput != nullptr) {
+                rawTensorMagics[opOutput->GetRawMagic()].insert(opOutput->GetMagic());
+            }
+        }
+    }
+    return rawTensorMagics;
+}
+
+bool HasSiblingAssembleOutputOnRaw(const AssembleOutputRawIndex& rawTensorMagics, const LogicalTensorPtr& tensor)
+{
+    if (tensor == nullptr) {
+        return false;
+    }
+    auto iter = rawTensorMagics.find(tensor->GetRawMagic());
+    if (iter == rawTensorMagics.end()) {
+        return false;
+    }
+    // 与 HasOtherAssembleOutputOnSameRaw 等价：同 raw 上存在 magic 不同的 assemble 输出。
+    return iter->second.size() > 1 || iter->second.count(tensor->GetMagic()) == 0;
+}
+
 } // namespace npu::tile_fwk::remove_redundant_op_internal

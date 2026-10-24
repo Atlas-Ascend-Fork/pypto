@@ -4625,3 +4625,413 @@ TEST_F(TestRemoveRedundantOpPass, ContractSliceContractDynamicSiblingShapeKept)
     ASSERT_EQ(consumerContract.GetIOperands().size(), 1UL);
     EXPECT_EQ(consumerContract.GetIOperands().front(), tile);
 }
+
+namespace {
+
+// ===== token / 同 raw 拆分版本适配用例公共构图 =====
+// source ─SLICE₁(from {0,0}, 纯视图)→ in ─CONTRACT(to {0,0})→ out ─{SLICE₂ᵢ(from Fᵢ)→ tileᵢ→EXP}
+// 消费者偏移取 {0,0} / {4,0}（均为 partial，localOffset 即偏移本身），可选是否要求 L1。
+struct ScsTokenChain {
+    Operation* precedingSlice = nullptr;
+    Operation* contract = nullptr;
+    std::vector<Operation*> consumers;
+    LogicalTensorPtr source;
+    LogicalTensorPtr in;
+    LogicalTensorPtr out;
+};
+
+ScsTokenChain BuildScsTokenChain(Function& function, bool consumersRequireL1, size_t consumerCount)
+{
+    const std::vector<int64_t> fullShape{kNumEight, kNumExpFour};
+    const std::vector<int64_t> partShape{kNumFour, kNumExpFour};
+    const std::vector<int64_t> zeroOffset{kNumZero, kNumZero};
+    const std::vector<int64_t> partOffset{kNumFour, kNumZero};
+    const std::vector<const std::vector<int64_t>*> consumerOffsets{&zeroOffset, &partOffset};
+
+    ScsTokenChain g;
+    g.source = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    g.in = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    g.out = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    auto precedingAttr = std::make_shared<ViewOpAttribute>(zeroOffset);
+    g.precedingSlice = &PassOperationUtils::AddOperation(
+        function, Opcode::OP_SLICE, {g.source}, {g.in},
+        [&precedingAttr](Operation& op) { op.SetOpAttribute(precedingAttr); });
+    g.contract = &PassOperationUtils::AddOperation(
+        function, Opcode::OP_CONTRACT, {g.in}, {g.out},
+        [&zeroOffset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset)); });
+    for (size_t idx = 0; idx < consumerCount && idx < consumerOffsets.size(); ++idx) {
+        const auto& offset = *consumerOffsets[idx];
+        auto tile = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+        auto expOut = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+        auto consumerAttr = std::make_shared<ViewOpAttribute>(offset);
+        if (consumersRequireL1) {
+            tile->SetMemoryTypeBoth(MemoryType::MEM_L1);
+            consumerAttr->SetToType(MemoryType::MEM_L1);
+        }
+        auto& consumer = PassOperationUtils::AddOperation(
+            function, Opcode::OP_SLICE, {g.out}, {tile},
+            [&consumerAttr](Operation& op) { op.SetOpAttribute(consumerAttr); });
+        PassOperationUtils::AddOperation(function, Opcode::OP_EXP, {tile}, {expOut});
+        g.consumers.push_back(&consumer);
+    }
+    return g;
+}
+
+Operation& AddOutsideExpOp(Function& function)
+{
+    const std::vector<int64_t> shape{kNumEight, kNumExpFour};
+    auto in = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto out = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    return PassOperationUtils::AddOperation(function, Opcode::OP_EXP, {in}, {out});
+}
+
+} // namespace
+
+// SLICE₁ 携带 result_token 且全部消费者要求 L1、前缀可折叠时：SLICE₁/CONTRACT 删除，
+// 每个保留的消费者重新发出 token 指向 SLICE₁ 原指向的外部 op（token 迁移）。
+TEST_F(TestRemoveRedundantOpPass, SliceContractSliceFoldInheritsPrecedingSliceToken)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "ScsFoldToken", "ScsFoldToken", nullptr);
+    ASSERT_NE(function, nullptr);
+    auto g = BuildScsTokenChain(*function, true, kNumTwo);
+    auto& outsideOp = AddOutsideExpOp(*function);
+    auto token = AddTokenEdge(*function, *g.precedingSlice, outsideOp);
+    ASSERT_TRUE(HasToken(outsideOp, token));
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+    EXPECT_TRUE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumZero);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumTwo);
+    EXPECT_EQ(g.consumers[0]->GetIOperands().front(), g.source);
+    EXPECT_EQ(g.consumers[1]->GetIOperands().front(), g.source);
+    ASSERT_FALSE(g.consumers[0]->result_token_.empty());
+    ASSERT_FALSE(g.consumers[1]->result_token_.empty());
+    EXPECT_TRUE(HasToken(outsideOp, g.consumers[0]->result_token_.front()));
+    EXPECT_TRUE(HasToken(outsideOp, g.consumers[1]->result_token_.front()));
+}
+
+// 静态可合成的非 L1 扇出（compose 路径）同样删除公共前缀，token 迁移行为与 fold 一致。
+TEST_F(TestRemoveRedundantOpPass, SliceContractSliceComposeInheritsPrecedingSliceToken)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "ScsComposeToken", "ScsComposeToken", nullptr);
+    ASSERT_NE(function, nullptr);
+    auto g = BuildScsTokenChain(*function, false, kNumTwo);
+    auto& outsideOp = AddOutsideExpOp(*function);
+    auto token = AddTokenEdge(*function, *g.precedingSlice, outsideOp);
+    ASSERT_TRUE(HasToken(outsideOp, token));
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+    EXPECT_TRUE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumZero);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumTwo);
+    EXPECT_EQ(g.consumers[0]->GetIOperands().front(), g.source);
+    EXPECT_EQ(g.consumers[1]->GetIOperands().front(), g.source);
+    ASSERT_FALSE(g.consumers[0]->result_token_.empty());
+    ASSERT_FALSE(g.consumers[1]->result_token_.empty());
+    EXPECT_TRUE(HasToken(outsideOp, g.consumers[0]->result_token_.front()));
+    EXPECT_TRUE(HasToken(outsideOp, g.consumers[1]->result_token_.front()));
+}
+
+// SLICE₁ 携带外部输入 token 时无法迁移该依赖，保留整条扇出链。
+TEST_F(TestRemoveRedundantOpPass, SliceContractSliceInputTokenKeepsChain)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "ScsInputToken", "ScsInputToken", nullptr);
+    ASSERT_NE(function, nullptr);
+    auto g = BuildScsTokenChain(*function, true, kNumTwo);
+    auto& outsideOp = AddOutsideExpOp(*function);
+    auto token = AddTokenEdge(*function, outsideOp, *g.precedingSlice);
+    ASSERT_TRUE(HasToken(*g.precedingSlice, token));
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumOne);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumThree);
+    EXPECT_EQ(g.consumers[0]->GetIOperands().front(), g.out);
+    EXPECT_EQ(g.consumers[1]->GetIOperands().front(), g.out);
+    EXPECT_TRUE(HasToken(*g.precedingSlice, token));
+}
+
+// 单消费者 partial 路径保留 SLICE₁：其 token 原样不动，仅生成 VIEW 替代消费者 SLICE₂。
+TEST_F(TestRemoveRedundantOpPass, SliceContractSliceSingleKeepsPrecedingSliceToken)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "ScsSingleToken", "ScsSingleToken", nullptr);
+    ASSERT_NE(function, nullptr);
+    auto g = BuildScsTokenChain(*function, false, kSizeOne);
+    auto& outsideOp = AddOutsideExpOp(*function);
+    auto token = AddTokenEdge(*function, *g.precedingSlice, outsideOp);
+    ASSERT_TRUE(HasToken(outsideOp, token));
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+    EXPECT_TRUE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumZero);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumOne);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_VIEW), kNumOne);
+    auto* generatedView = FindSingleOp(function, Opcode::OP_VIEW);
+    ASSERT_NE(generatedView, nullptr);
+    EXPECT_EQ(generatedView->GetIOperands().front(), g.in);
+    ASSERT_FALSE(g.precedingSlice->result_token_.empty());
+    EXPECT_EQ(g.precedingSlice->result_token_.front(), token);
+    EXPECT_TRUE(HasToken(outsideOp, token));
+}
+
+// CONTRACT 携带 token 时整链放弃：偏移合成无法保持 token 的时序语义。
+TEST_F(TestRemoveRedundantOpPass, SliceContractSliceContractTokenKeepsChain)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "ScsContractToken", "ScsContractToken", nullptr);
+    ASSERT_NE(function, nullptr);
+    auto g = BuildScsTokenChain(*function, false, kSizeOne);
+    auto& outsideOp = AddOutsideExpOp(*function);
+    auto token = AddTokenEdge(*function, *g.contract, outsideOp);
+    ASSERT_TRUE(HasToken(outsideOp, token));
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumOne);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumTwo);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_VIEW), kNumZero);
+    EXPECT_EQ(g.consumers[0]->GetIOperands().front(), g.out);
+    EXPECT_TRUE(HasToken(outsideOp, token));
+}
+
+// 消费者 SLICE₂ 携带 token 时整链放弃。
+TEST_F(TestRemoveRedundantOpPass, SliceContractSliceConsumerTokenKeepsChain)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "ScsConsumerToken", "ScsConsumerToken", nullptr);
+    ASSERT_NE(function, nullptr);
+    auto g = BuildScsTokenChain(*function, false, kSizeOne);
+    auto& outsideOp = AddOutsideExpOp(*function);
+    auto token = AddTokenEdge(*function, *g.consumers[0], outsideOp);
+    ASSERT_TRUE(HasToken(outsideOp, token));
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumOne);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumTwo);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_VIEW), kNumZero);
+    EXPECT_EQ(g.consumers[0]->GetIOperands().front(), g.out);
+    EXPECT_TRUE(HasToken(outsideOp, token));
+}
+
+// contract 输出存在同 raw 的其他 assemble 输出（拆分版本）时整链放弃。
+TEST_F(TestRemoveRedundantOpPass, SliceContractSliceRawSiblingKeepsChain)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "ScsRawSibling", "ScsRawSibling", nullptr);
+    ASSERT_NE(function, nullptr);
+    auto g = BuildScsTokenChain(*function, false, kSizeOne);
+    const std::vector<int64_t> fullShape{kNumEight, kNumExpFour};
+    const std::vector<int64_t> zeroOffset{kNumZero, kNumZero};
+    auto siblingIn = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    auto sibling = IRBuilder().CreateTensorVar(g.out->GetRawTensor(), zeroOffset, fullShape,
+                                               std::vector<SymbolicScalar>{});
+    PassOperationUtils::AddOperation(
+        *function, Opcode::OP_CONTRACT, {siblingIn}, {sibling},
+        [&zeroOffset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset)); });
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumTwo);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumTwo);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_VIEW), kNumZero);
+    EXPECT_EQ(g.consumers[0]->GetIOperands().front(), g.out);
+}
+
+// 三明治组合内任一 op 携带 token 时不消除（此处挂在下游 CONTRACT₂ 上）。
+TEST_F(TestRemoveRedundantOpPass, ContractSliceContractTokenKeepsSandwich)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "TestCscToken", "TestCscToken", nullptr);
+    ASSERT_NE(function, nullptr);
+    function->SetGraphType(GraphType::TENSOR_GRAPH);
+    auto g = BuildCscSandwich(*function, Opcode::OP_A_MUL_B, {kNumZero, kNumZero}, {1, kNumExpSix}, true, false);
+    auto& outsideOp = AddOutsideExpOp(*function);
+    auto token = AddTokenEdge(*function, *g.consumerContract, outsideOp);
+    ASSERT_TRUE(HasToken(outsideOp, token));
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumThree);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumOne);
+    EXPECT_EQ(g.consumerContract->GetIOperands().front(), g.tile);
+    EXPECT_TRUE(HasToken(outsideOp, token));
+}
+
+// 多 contract 扇入：contract 之间的 token 由原位改写（SetOpCode/ReplaceOOperand）自动继承，
+// 转换后的两个 ASSEMBLE 仍保持原有等待关系。
+TEST_F(TestRemoveRedundantOpPass, MultiContractSingleSlicePreservesInterContractToken)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "McssToken", "McssToken", nullptr);
+    ASSERT_NE(function, nullptr);
+    const std::vector<int64_t> partShape{kNumFour, kNumExpFour};
+    const std::vector<int64_t> fullShape{kNumEight, kNumExpFour};
+    const std::vector<int64_t> zeroOffset{kNumZero, kNumZero};
+    const std::vector<int64_t> partOffset{kNumFour, kNumZero};
+    auto inA = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+    auto inB = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    auto sliceOut = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    auto expOut = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    auto& contractA = PassOperationUtils::AddOperation(
+        *function, Opcode::OP_CONTRACT, {inA}, {middle},
+        [&zeroOffset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset)); });
+    auto& contractB = PassOperationUtils::AddOperation(
+        *function, Opcode::OP_CONTRACT, {inB}, {middle},
+        [&partOffset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(partOffset)); });
+    auto identityAttr = std::make_shared<ViewOpAttribute>(zeroOffset);
+    PassOperationUtils::AddOperation(*function, Opcode::OP_SLICE, {middle}, {sliceOut},
+                                     [&identityAttr](Operation& op) { op.SetOpAttribute(identityAttr); });
+    PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {sliceOut}, {expOut});
+    auto token = AddTokenEdge(*function, contractA, contractB);
+    ASSERT_TRUE(HasToken(contractB, token));
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+    EXPECT_TRUE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumZero);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_ASSEMBLE), kNumTwo);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumZero);
+    ASSERT_FALSE(contractA.result_token_.empty());
+    EXPECT_EQ(contractA.result_token_.front(), token);
+    EXPECT_TRUE(HasToken(contractB, token));
+}
+
+// 多 contract 扇入：contract 输出存在同 raw 的其他 assemble 输出（拆分版本）时不处理。
+TEST_F(TestRemoveRedundantOpPass, MultiContractSingleSliceRawSiblingKept)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "McssRawSibling", "McssRawSibling", nullptr);
+    ASSERT_NE(function, nullptr);
+    const std::vector<int64_t> partShape{kNumFour, kNumExpFour};
+    const std::vector<int64_t> fullShape{kNumEight, kNumExpFour};
+    const std::vector<int64_t> zeroOffset{kNumZero, kNumZero};
+    const std::vector<int64_t> partOffset{kNumFour, kNumZero};
+    auto inA = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+    auto inB = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    auto sliceOut = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    auto expOut = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    PassOperationUtils::AddOperation(*function, Opcode::OP_CONTRACT, {inA}, {middle}, [&zeroOffset](Operation& op) {
+        op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset));
+    });
+    PassOperationUtils::AddOperation(*function, Opcode::OP_CONTRACT, {inB}, {middle}, [&partOffset](Operation& op) {
+        op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(partOffset));
+    });
+    auto identityAttr = std::make_shared<ViewOpAttribute>(zeroOffset);
+    PassOperationUtils::AddOperation(*function, Opcode::OP_SLICE, {middle}, {sliceOut},
+                                     [&identityAttr](Operation& op) { op.SetOpAttribute(identityAttr); });
+    PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {sliceOut}, {expOut});
+    auto siblingIn = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    auto sibling = IRBuilder().CreateTensorVar(middle->GetRawTensor(), zeroOffset, fullShape,
+                                               std::vector<SymbolicScalar>{});
+    PassOperationUtils::AddOperation(
+        *function, Opcode::OP_CONTRACT, {siblingIn}, {sibling},
+        [&zeroOffset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset)); });
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumThree);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_ASSEMBLE), kNumZero);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumOne);
+}
+
+// 单 contract 扇出：CONTRACT 携带 token 时不优化。
+TEST_F(TestRemoveRedundantOpPass, ContractMultiSliceTokenKept)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "CmsToken", "CmsToken", nullptr);
+    ASSERT_NE(function, nullptr);
+    const std::vector<int64_t> fullShape{kNumEight, kNumExpFour};
+    const std::vector<int64_t> partShape{kNumFour, kNumExpFour};
+    const std::vector<int64_t> zeroOffset{kNumZero, kNumZero};
+    const std::vector<int64_t> partOffset{kNumFour, kNumZero};
+    auto in = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    auto out = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    auto& contract = PassOperationUtils::AddOperation(
+        *function, Opcode::OP_CONTRACT, {in}, {out},
+        [&zeroOffset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset)); });
+    for (const auto& offset : {zeroOffset, partOffset}) {
+        auto tile = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+        auto expOut = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+        auto sliceAttr = std::make_shared<ViewOpAttribute>(offset);
+        PassOperationUtils::AddOperation(*function, Opcode::OP_SLICE, {out}, {tile},
+                                         [&sliceAttr](Operation& op) { op.SetOpAttribute(sliceAttr); });
+        PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {tile}, {expOut});
+    }
+    auto& outsideOp = AddOutsideExpOp(*function);
+    auto token = AddTokenEdge(*function, contract, outsideOp);
+    ASSERT_TRUE(HasToken(outsideOp, token));
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumOne);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumTwo);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_VIEW), kNumZero);
+    EXPECT_TRUE(HasToken(outsideOp, token));
+}
+
+// 单 contract 扇出：contract 输出存在同 raw 的其他 assemble 输出（拆分版本）时不优化。
+TEST_F(TestRemoveRedundantOpPass, ContractMultiSliceRawSiblingKept)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "CmsRawSibling", "CmsRawSibling", nullptr);
+    ASSERT_NE(function, nullptr);
+    const std::vector<int64_t> fullShape{kNumEight, kNumExpFour};
+    const std::vector<int64_t> partShape{kNumFour, kNumExpFour};
+    const std::vector<int64_t> zeroOffset{kNumZero, kNumZero};
+    const std::vector<int64_t> partOffset{kNumFour, kNumZero};
+    auto in = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    auto out = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    PassOperationUtils::AddOperation(*function, Opcode::OP_CONTRACT, {in}, {out}, [&zeroOffset](Operation& op) {
+        op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset));
+    });
+    for (const auto& offset : {zeroOffset, partOffset}) {
+        auto tile = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+        auto expOut = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+        auto sliceAttr = std::make_shared<ViewOpAttribute>(offset);
+        PassOperationUtils::AddOperation(*function, Opcode::OP_SLICE, {out}, {tile},
+                                         [&sliceAttr](Operation& op) { op.SetOpAttribute(sliceAttr); });
+        PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {tile}, {expOut});
+    }
+    auto siblingIn = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+    auto sibling = IRBuilder().CreateTensorVar(out->GetRawTensor(), zeroOffset, fullShape,
+                                               std::vector<SymbolicScalar>{});
+    PassOperationUtils::AddOperation(
+        *function, Opcode::OP_CONTRACT, {siblingIn}, {sibling},
+        [&zeroOffset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset)); });
+
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumTwo);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumTwo);
+    EXPECT_EQ(CountOpcode(function, Opcode::OP_VIEW), kNumZero);
+}

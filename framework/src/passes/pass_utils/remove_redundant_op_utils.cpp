@@ -1112,6 +1112,28 @@ void ReplaceConsumers(const LogicalTensorPtr& oldTensor, const LogicalTensorPtr&
     }
 }
 
+bool HasAnyToken(const Operation& op) { return !op.tokens_.empty() || !op.result_token_.empty(); }
+
+// 消除 slice1-contract1 公共前缀前，把前缀 op 的 token 依赖迁移到保留的消费者上：SLICE₁ 的
+// result_token（如对 source 共享 buffer 的读后写保护）由每个保留消费者重新发出并指向原外部
+// 消费者。前缀 op 无 token 时迁移为空操作，直接放行（无迁移边则环检查恒为无环）；有 token 时
+// 环检查仅建模 result_token 继承（targetConsumers 置空，只引入 consumer→外部消费者的边），
+// 同一集合同时作为 producer/consumer 会被环检查误判为环。SLICE₁/CONTRACT 携带输入 token 时
+// CanMigrate 返回 false，调用方应放弃整条链。
+bool MigratePrefixTokensToConsumers(Function& function, Operation* precedingSlice, Operation* contract,
+                                    const std::vector<Operation*>& consumers)
+{
+    if (!HasAnyToken(*precedingSlice) && !HasAnyToken(*contract)) {
+        return true;
+    }
+    std::vector<Operation*> removedOps{precedingSlice, contract};
+    if (!remove_redundant_op_internal::CanMigrateRemovedOpsTokenDependency(function, removedOps, {}, consumers)) {
+        return false;
+    }
+    remove_redundant_op_internal::MigrateRemovedOpsTokenDependency(function, removedOps, consumers, consumers);
+    return true;
+}
+
 } // namespace
 
 bool RemoveRedundantOpUtils::CollectSliceContractSliceChain(const Operation& contractOp, SliceContractSliceChain& chain)
@@ -1772,10 +1794,19 @@ bool RemoveRedundantOpUtils::MatchContractSliceContract(Operation& sliceOp, Oper
         !HasEligibleContractProducers(middle->GetProducers())) {
         return false;
     }
+    // 组合内任一 op 携带 token（同 raw 拆分版本的时序保护等）时不做消除，避免破坏版本语义。
+    if (HasAnyToken(sliceOp)) {
+        return false;
+    }
+    for (auto* producer : middle->GetProducers()) {
+        if (HasAnyToken(*producer)) {
+            return false;
+        }
+    }
     const auto& tileConsumers = tile->GetConsumers();
     if (tileConsumers.empty() || std::any_of(tileConsumers.begin(), tileConsumers.end(), [](Operation* consumer) {
             return consumer == nullptr || consumer->GetOpcode() != Opcode::OP_CONTRACT ||
-                   consumer->GetIOperands().size() != 1;
+                   consumer->GetIOperands().size() != 1 || HasAnyToken(*consumer);
         })) {
         return false;
     }
@@ -1963,7 +1994,7 @@ bool RemoveRedundantOpUtils::CollectL1FoldMergedOffsets(const SliceContractSlice
     return true;
 }
 
-bool RemoveRedundantOpUtils::FoldL1FanoutChain(const SliceContractSliceChain& chain,
+bool RemoveRedundantOpUtils::FoldL1FanoutChain(Function& function, const SliceContractSliceChain& chain,
                                                const std::vector<SliceContractSliceRewrite>& rewrites)
 {
     // Multiple L1 consumers share the preceding L1/UB materialization.  Fold the preceding slice into
@@ -1982,6 +2013,15 @@ bool RemoveRedundantOpUtils::FoldL1FanoutChain(const SliceContractSliceChain& ch
                           chain.contract->GetOpMagic());
         return false;
     }
+    std::vector<Operation*> consumers;
+    consumers.reserve(rewrites.size());
+    for (const auto& rewrite : rewrites) {
+        consumers.push_back(rewrite.consumer);
+    }
+    // 折叠会删除 SLICE₁：其 token 依赖必须迁移到保留的消费者上，不可迁移时放弃整条链。
+    if (!MigratePrefixTokensToConsumers(function, chain.precedingSlice, chain.contract, consumers)) {
+        return false;
+    }
     for (size_t idx = 0; idx < rewrites.size(); ++idx) {
         const auto& rewrite = rewrites[idx];
         auto* consumer = rewrite.consumer;
@@ -1998,12 +2038,21 @@ bool RemoveRedundantOpUtils::FoldL1FanoutChain(const SliceContractSliceChain& ch
     return true;
 }
 
-void RemoveRedundantOpUtils::RewriteComposableFanoutChain(const SliceContractSliceChain& chain,
+bool RemoveRedundantOpUtils::RewriteComposableFanoutChain(Function& function, const SliceContractSliceChain& chain,
                                                           const std::vector<SliceContractSliceRewrite>& rewrites)
 {
     // For UNKNOWN consumers and mixed L1/UNKNOWN fan-out, compose the preceding slice and contract
     // offsets into each remaining slice.  This is the only safe way to eliminate the common
     // slice1-contract1 prefix: every consumer then reads directly from the one original source tensor.
+    std::vector<Operation*> consumers;
+    consumers.reserve(rewrites.size());
+    for (const auto& rewrite : rewrites) {
+        consumers.push_back(rewrite.consumer);
+    }
+    // 公共前缀 SLICE₁/CONTRACT 均被删除：token 依赖必须迁移到保留的消费者，不可迁移时放弃整条链。
+    if (!MigratePrefixTokensToConsumers(function, chain.precedingSlice, chain.contract, consumers)) {
+        return false;
+    }
     for (const auto& rewrite : rewrites) {
         auto* consumer = rewrite.consumer;
         auto consumerAttr = GetViewAttr(*consumer);
@@ -2014,6 +2063,7 @@ void RemoveRedundantOpUtils::RewriteComposableFanoutChain(const SliceContractSli
     }
     chain.precedingSlice->SetAsDeleted();
     chain.contract->SetAsDeleted();
+    return true;
 }
 
 bool RemoveRedundantOpUtils::RewriteDynamicFanoutFallback(Function& function, const SliceContractSliceChain& chain,
@@ -2096,9 +2146,11 @@ bool RemoveRedundantOpUtils::ProcessSliceContractSliceFanout(Function& function,
         return false;
     }
     if (keepL1Fanout) {
-        return FoldL1FanoutChain(chain, rewrites);
+        return FoldL1FanoutChain(function, chain, rewrites);
     } else if (canComposeOffsets) {
-        RewriteComposableFanoutChain(chain, rewrites);
+        if (!RewriteComposableFanoutChain(function, chain, rewrites)) {
+            return false;
+        }
     } else if (!RewriteDynamicFanoutFallback(function, chain, rewrites, hasL1Consumer, newOps, operationUpdated)) {
         return false;
     }
@@ -2137,6 +2189,7 @@ Status RemoveRedundantOpUtils::ProcessSliceContractSlice(Function& function, std
                                                          bool& operationUpdated)
 {
     auto opList = function.Operations().DuplicatedOpList();
+    const auto assembleRawIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(function);
     for (auto* op : opList) {
         if (op == nullptr || op->GetOpcode() != Opcode::OP_CONTRACT) {
             continue;
@@ -2144,6 +2197,15 @@ Status RemoveRedundantOpUtils::ProcessSliceContractSlice(Function& function, std
 
         SliceContractSliceChain chain;
         if (!CollectSliceContractSliceChain(*op, chain)) {
+            continue;
+        }
+        // contract 输出存在同 raw 的其他 assemble 输出（拆分版本），或 CONTRACT/消费者携带 token
+        // 时，偏移合成无法保持版本/时序语义，保守放弃整条链。SLICE₁ 携带 token 是合法场景，
+        // 由 fold/compose 路径迁移处理。
+        if (remove_redundant_op_internal::HasSiblingAssembleOutputOnRaw(assembleRawIndex, chain.contractOutput) ||
+            HasAnyToken(*chain.contract) ||
+            std::any_of(chain.consumers.begin(), chain.consumers.end(),
+                        [](const Operation* consumer) { return HasAnyToken(*consumer); })) {
             continue;
         }
 
@@ -2178,6 +2240,7 @@ Status RemoveRedundantOpUtils::ProcessSliceContractSlice(Function& function, std
 Status RemoveRedundantOpUtils::ProcessMultiContractSingleSlice(Function& function, bool& operationUpdated)
 {
     auto opList = function.Operations().DuplicatedOpList();
+    const auto assembleRawIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(function);
     for (auto& op : opList) {
         if (op == nullptr || op->GetOpcode() != Opcode::OP_SLICE || op->GetIOperands().empty() ||
             op->GetOOperands().empty() || !IsSliceEqualSizeMove(*op)) {
@@ -2194,6 +2257,13 @@ Status RemoveRedundantOpUtils::ProcessMultiContractSingleSlice(Function& functio
             continue;
         }
         if (SliceRequiresL1(*op)) {
+            continue;
+        }
+        // contract 输出存在同 raw 的其他 assemble 输出（拆分版本），或恒等 SLICE 携带 token 时，
+        // 版本/时序语义无法在 CONTRACT→ASSEMBLE 改写中保持，保守不处理；contract 之间的 token
+        // 由原位改写自动继承（SetOpCode/ReplaceOOperand 不改变 op 身份）。
+        if (remove_redundant_op_internal::HasSiblingAssembleOutputOnRaw(assembleRawIndex, sliceInput) ||
+            HasAnyToken(*op)) {
             continue;
         }
         bool canProcess = true;
@@ -2407,6 +2477,7 @@ Status RemoveRedundantOpUtils::ProcessSingleContractMultiSlice(Function& functio
                                                                bool& operationUpdated)
 {
     auto opList = function.Operations().DuplicatedOpList();
+    const auto assembleRawIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(function);
     for (auto& op : opList) {
         if (op == nullptr || op->IsDeleted() || op->GetOpcode() != Opcode::OP_CONTRACT || op->GetIOperands().empty() ||
             op->GetOOperands().empty() || GetAssembleAttr(*op) == nullptr) {
@@ -2422,6 +2493,14 @@ Status RemoveRedundantOpUtils::ProcessSingleContractMultiSlice(Function& functio
         }
         auto consumers = contractOutput->GetConsumers();
         if (consumers.empty()) {
+            continue;
+        }
+        // contract 输出存在同 raw 的其他 assemble 输出（拆分版本），或组合内携带 token 时，
+        // 折叠会破坏版本/时序语义，保守不优化。
+        if (remove_redundant_op_internal::HasSiblingAssembleOutputOnRaw(assembleRawIndex, contractOutput) ||
+            HasAnyToken(*op) || std::any_of(consumers.begin(), consumers.end(), [](const Operation* consumer) {
+                return consumer != nullptr && HasAnyToken(*consumer);
+            })) {
             continue;
         }
         if (ShouldSkipContractMultiSlice(*op, contractInput, contractOutput, consumers)) {
