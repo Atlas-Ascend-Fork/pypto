@@ -30,6 +30,10 @@ void CheckTensorDynamicShape(const LogicalTensors iOperands, const Opcode opCode
     if (inputMemType.size() != iOperands.size()) {
         return;
     }
+    // On Kirin (LiteNPU) the litenpu_dynamic_to_static pass resolves -1 (dynamic) dims to
+    // concrete shapes, so -1 is temporarily allowed as an operation operand; other platforms
+    // must resolve dynamic shapes via view in pypto.loop before computation.
+    const bool allowDynamicShape = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
     for (size_t i = 0; i < iOperands.size(); i++) {
         CHECK(VectorErrorCode::ERR_RUNTIME_NULLPTR, iOperands[i] != nullptr)
             << opName << ": Input operand[" << i << "] is nullptr.";
@@ -40,12 +44,13 @@ void CheckTensorDynamicShape(const LogicalTensors iOperands, const Opcode opCode
             continue;
         }
         for (size_t dimIdx = 0; dimIdx < iOperands[i]->shape.size(); ++dimIdx) {
-            CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, iOperands[i]->shape[dimIdx] > 0)
+            CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED,
+                  iOperands[i]->shape[dimIdx] > 0 || (allowDynamicShape && iOperands[i]->shape[dimIdx] == -1))
                 << (!opName.empty() ? "Operation: " + opName : "")
                 << " Input operand (name: " << iOperands[i]->tensor->GetSymbol() << ") "
                 << " at dimension[" << dimIdx << "] has invalid shape value: " << iOperands[i]->shape[dimIdx]
-                << ". Dynamic shape tensors are not allowed as operation operands. "
-                << "Use view in pypto.loop to get static shape tensors before computation.";
+                << ". Shape dim must be a positive integer; on non-Kirin platforms, -1 (dynamic) must be resolved "
+                << "to a static shape via view in pypto.loop before this operation.";
         }
     }
 }

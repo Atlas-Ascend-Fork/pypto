@@ -23,7 +23,10 @@ from pypto.tensor import Tensor
 
 logging.basicConfig(level=logging.INFO, format="", force=True)
 SIM_RUNTIME_OPTIONS = {"run_mode": pypto.RunMode.SIM}
-DYNAMIC_SHAPE_ERROR = "Dynamic shape tensors are not allowed as operation operands"
+DYNAMIC_SHAPE_ERROR = (
+    r"Shape dim must be a positive integer; on non-Kirin platforms, -1 \(dynamic\) "
+    r"must be resolved to a static shape via view in pypto\.loop"
+)
 ASSEMBLE_DYNAMIC_SHAPE_ERROR = "Assemble: shape of src tensor requires integer"
 
 

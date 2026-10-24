@@ -1759,6 +1759,10 @@ def assemble_new_logical_tensor() -> bool:
     """Get whether Assemble creates a new LogicalTensor version."""
 
 
+def register_static_shape_tensor(tensor, shape) -> None:
+    """Write an input logical tensor's concrete static shape."""
+
+
 class IRBuilder:
     """IR Builder for incremental IR construction with context management.
 
@@ -2524,6 +2528,10 @@ class Pass:
     @staticmethod
     def finalize_dynamic_function() -> Pass:
         """Finalize dynamic functions."""
+
+    @staticmethod
+    def litenpu_dynamic_to_static() -> Pass:
+        """Convert device-side (Kirin) dynamic expressions to static (loop unroll)."""
 
     @staticmethod
     def run_verifier() -> Pass:

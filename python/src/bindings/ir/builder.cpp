@@ -21,6 +21,7 @@
 #include "ir/kind_traits.h"
 #include "ir/scalar_expr.h"
 #include "ir/transforms/structural_comparison.h"
+#include "tilefwk/platform.h"
 
 namespace npu::tile_fwk {
 
@@ -36,6 +37,25 @@ void BindIRBuilder(py::module_& m)
         "Get whether Assemble creates a new LogicalTensor version.\n\n"
         "Returns:\n"
         "    bool: True if Assemble creates a new LogicalTensor version");
+
+    ir.def(
+        "register_static_shape_tensor",
+        [](const ir::VarPtr& var, const std::vector<int64_t>& shape) {
+            if (!IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
+                return;
+            }
+            auto lt = std::dynamic_pointer_cast<const LogicalTensor>(var);
+            if (lt == nullptr) {
+                throw py::type_error("register_static_shape_tensor: tensor is not a LogicalTensor");
+            }
+            auto* tensor = const_cast<LogicalTensor*>(lt.get());
+            tensor->shape = std::vector<int64_t>(shape);
+            tensor->oriShape = std::vector<int64_t>(shape);
+            IRContext::Get().RegisterStaticShapeByRawMagic(tensor->tensor->rawmagic, shape);
+        },
+        py::arg("tensor"), py::arg("shape"),
+        "Register a logical tensor's concrete static shape keyed by its RawTensor rawmagic, "
+        "used by the litenpu_dynamic_to_static pass to resolve dynamic (-1) dims.");
 
     // IRBuilder class
     py::class_<IRBuilder>(ir, "IRBuilder",

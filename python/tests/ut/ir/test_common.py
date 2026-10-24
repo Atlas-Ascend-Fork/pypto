@@ -16,6 +16,7 @@ from typing import Any
 
 import pypto
 from pypto import ir, pil
+from pypto.pil.compile_pipeline import compile_new_ir
 
 
 @contextmanager
@@ -124,3 +125,26 @@ def run_root_function(func, *args, create_new_logical_tensor=True):
         create_new_logical_tensor=create_new_logical_tensor,
     )
     return prog
+
+
+def run_litenpu_pass(func, *args):
+    """Run the litenpu_dynamic_to_static pass (Kirin default pipeline) and return the
+    staticized Function IR.
+
+    Callers must wrap this in `with npuarch("DAV_3113"):` so the pass is active. `args`
+    are pypto.Tensor inputs; for dynamic-shape scenarios pass `ori_shape` on each input so
+    compile_new_ir can register the concrete shape for the pass to resolve -1 dims.
+    """
+    dce = ir.Pass.aggressive_dce()
+    canonicalize = ir.Pass.canonicalize()
+    merge_stmts = ir.Pass.merge_stmts_into_if()
+    pipeline = [
+        ("litenpu_dynamic_to_static", ir.Pass.litenpu_dynamic_to_static()),
+        ("infer_token_pass", ir.Pass.infer_token_pass()),
+        ("first_canonicalize_dce", lambda p:dce(canonicalize(p))),
+        ("second_canonicalize_dce", lambda p:dce(canonicalize(p))),
+        ("canonicalize(merge_stmts)", lambda p:canonicalize(merge_stmts(p))),
+        ("simplify_symbolic_scalar", ir.Pass.simplify_symbolic_scalar()),
+        ("remove_redundant_token_pass", ir.Pass.remove_redundant_token_pass()),
+    ]
+    return compile_new_ir(func, *args, pipeline=pipeline, create_new_logical_tensor=True)

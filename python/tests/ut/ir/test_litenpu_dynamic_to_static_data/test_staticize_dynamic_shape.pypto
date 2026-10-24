@@ -1,0 +1,4 @@
+function foo incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([v0call(RUNTIME_GetInputShapeDim, ARG_x, 0)]) #offset([0]) #shape([112]), v0_logical_tensor %y@1 #dtype(float) #dynvalidshape([v0call(RUNTIME_GetInputShapeDim, ARG_y, 0)]) #offset([0]) #shape([112]), v0_logical_tensor %out@2 #dtype(float) #dynvalidshape([v0call(RUNTIME_GetInputShapeDim, ARG_out, 0)]) #offset([0]) #shape([112])) outcast() #entry(false) #type(Opaque) {
+    v0_logical_tensor %out_0@3 #dtype(float) #dynvalidshape([v0call(RUNTIME_GetInputShapeDim, ARG_x, 0)]) #offset([0]) #shape([112]) = !10001 ADD(%x@0, %y@1) token();
+    return %x@0, %y@1, %out_0@3;
+}

@@ -259,6 +259,14 @@ Pass InferMultiIterOverlap();
 Pass FinalizeDynamicFunction();
 
 /**
+ * \brief Convert device-side (Kirin) dynamic expressions to static expressions.
+ *
+ * No-op on non-device-side SoCs: the pass checks the compilation target via
+ * npu::tile_fwk::IsLiteNPU(npu::tile_fwk::Platform::Instance().GetSoc().GetNPUArch()).
+ */
+Pass LitenpuDynamicToStatic();
+
+/**
  * \brief Create a sanitizer instrumentation pass
  *
  * Injects block.sanitizer_log records and the hidden log-buffer parameters

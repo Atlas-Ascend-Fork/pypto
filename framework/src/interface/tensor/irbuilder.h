@@ -95,10 +95,18 @@ public:
         all_vars_.clear();
         token_map_.clear();
         ClearTensorDataDescList();
+        staticShapeByRawMagic_.clear();
     }
 
     void SetAssembleNewLogicalTensor(bool enabled) { assembleNewLogicalTensor_ = enabled; }
     bool AssembleNewLogicalTensor() const { return assembleNewLogicalTensor_; }
+
+    void RegisterStaticShapeByRawMagic(int rawmagic, const Shape& shape) { staticShapeByRawMagic_[rawmagic] = shape; }
+    const Shape* GetStaticShapeByRawMagic(int rawmagic) const
+    {
+        auto it = staticShapeByRawMagic_.find(rawmagic);
+        return it == staticShapeByRawMagic_.end() ? nullptr : &it->second;
+    }
 
     void ClearTensorDataDescList() { getTensorDataDescList.clear(); }
 
@@ -138,6 +146,7 @@ private:
     std::unordered_map<ir::ExprPtr, std::vector<ir::VarPtr>> token_map_;
     std::vector<std::shared_ptr<Tensor>> getTensorDataDescList;
     bool assembleNewLogicalTensor_{false};
+    std::unordered_map<int, Shape> staticShapeByRawMagic_;
 };
 
 class IRBuilder : public ir::IRBuilder {

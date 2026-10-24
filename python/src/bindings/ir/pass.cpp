@@ -112,6 +112,8 @@ void BindPasses(py::module_& m)
                     "Mark Function RebuildableMultiIterNoOverlap for assemble-level loop-carried non-overlap")
         .def_static("finalize_dynamic_function", &pass::FinalizeDynamicFunction,
                     "Finalize dynamic functions built from new IR")
+        .def_static("litenpu_dynamic_to_static", &pass::LitenpuDynamicToStatic,
+                    "Convert device-side (Kirin) dynamic expressions to static (loop unroll)")
         .def_static("sanitizer", &pass::Sanitizer,
                     "Create a sanitizer instrumentation pass (stateless; every check value travels in the records)");
 

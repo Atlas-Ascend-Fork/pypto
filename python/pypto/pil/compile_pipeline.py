@@ -27,6 +27,7 @@ def _dump_program(name, program):
 
 
 def _build_default_pipeline():
+    litenpu_dynamic_to_static = ir.Pass.litenpu_dynamic_to_static()
     infer_token_pass = ir.Pass.infer_token_pass()
     dce = ir.Pass.aggressive_dce()
     canonicalize = ir.Pass.canonicalize()
@@ -38,6 +39,7 @@ def _build_default_pipeline():
     finalize = ir.Pass.finalize_dynamic_function()
 
     return [
+        ("litenpu_dynamic_to_static", litenpu_dynamic_to_static),
         ("infer_token_pass", infer_token_pass),
         ("first_canonicalize_dce", lambda p:dce(canonicalize(p))),
         ("second_canonicalize_dce", lambda p:dce(canonicalize(p))),
@@ -58,6 +60,22 @@ def _run_pipeline(program, pipeline):
     return program
 
 
+def _register_static_shape_tensors(func, args):
+    tensor_args = getattr(func, "__args__", None)
+    if not tensor_args:
+        return
+    params = getattr(func, "params", None)
+    for i, tensor_arg in enumerate(tensor_args):
+        logical_tensor = (
+            params[i] if params is not None and i < len(params) else tensor_arg.logical_tensor()
+        )
+        if logical_tensor is None or i >= len(args):
+            continue
+        ori_shape = getattr(args[i], "ori_shape", None)
+        if ori_shape is not None:
+            pypto_impl.ir.register_static_shape_tensor(logical_tensor, list(ori_shape))
+
+
 def compile_new_ir(pyfunc, *args, pipeline=None, **kwargs):
     """Compile a Python function and run the complete new-IR lowering pipeline."""
     create_new_logical_tensor = kwargs.pop("create_new_logical_tensor", False)
@@ -67,6 +85,7 @@ def compile_new_ir(pyfunc, *args, pipeline=None, **kwargs):
         func = pil.compile(
             pyfunc, *args, create_new_logical_tensor=create_new_logical_tensor, **kwargs
         )
+        _register_static_shape_tensors(func, args)
         program = builder.create_program([func], "main", ir.Span.unknown())
         setup_verify_data(args)
 

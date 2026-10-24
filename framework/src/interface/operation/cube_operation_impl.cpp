@@ -284,6 +284,10 @@ void SetTensorGraphNodes(const std::vector<LogicalTensorPtr>& operandVec, const 
 
 Status CheckOperandShape(const Tensor& operand1, const Tensor& operand2, const MatmulAttrParam& attrParam)
 {
+    // On Kirin (LiteNPU) the litenpu_dynamic_to_static pass resolves -1 (dynamic) dims to
+    // concrete shapes, so -1 is temporarily allowed as a matmul operand; other platforms
+    // must resolve dynamic shapes via view in pypto.loop before computation.
+    const bool allowDynamicShape = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
     // 检查 shape 维度一致性
     const Shape shape1 = operand1.GetShape();
     const Shape shape2 = operand2.GetShape();
@@ -312,27 +316,27 @@ Status CheckOperandShape(const Tensor& operand1, const Tensor& operand2, const M
     CHECK(ExternalError::INVALID_SHAPE, Op2DimValid) << "operand2 dimension(" << operand2Dim << ") must be >= 2";
 
     for (size_t i = 0; i < operand1Dim; ++i) {
-        CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, shape1[i] != -1)
+        CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, shape1[i] > 0 || (allowDynamicShape && shape1[i] == -1))
             << "operand1 dim[" << i << "] = " << shape1[i]
-            << ". Dynamic shape tensors are not allowed as operation operands. "
-            << "Use view in pypto.loop to get static shape tensors before computation.";
+            << ". Shape dim must be a positive integer; on non-Kirin platforms, -1 (dynamic) must be resolved "
+            << "to a static shape via view in pypto.loop before this operation.";
     }
 
     for (size_t i = 0; i < operand2Dim; ++i) {
-        CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, shape2[i] != -1)
+        CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, shape2[i] > 0 || (allowDynamicShape && shape2[i] == -1))
             << "operand2 dim[" << i << "] = " << shape2[i]
-            << ". Dynamic shape tensors are not allowed as operation operands. "
-            << "Use view in pypto.loop to get static shape tensors before computation.";
+            << ". Shape dim must be a positive integer; on non-Kirin platforms, -1 (dynamic) must be resolved "
+            << "to a static shape via view in pypto.loop before this operation.";
     }
 
     // 检查每个维度的值
     for (size_t i = 0; i < operand1Dim; ++i) {
-        CHECK(ExternalError::INVALID_SHAPE, shape1[i] > 0)
+        CHECK(ExternalError::INVALID_SHAPE, shape1[i] > 0 || (allowDynamicShape && shape1[i] == -1))
             << "operand1 dim[" << i << "] = " << shape1[i] << ", must be > 0";
     }
 
     for (size_t i = 0; i < operand2Dim; ++i) {
-        CHECK(ExternalError::INVALID_SHAPE, shape2[i] > 0)
+        CHECK(ExternalError::INVALID_SHAPE, shape2[i] > 0 || (allowDynamicShape && shape2[i] == -1))
             << "operand2 dim[" << i << "] = " << shape2[i] << ", must be > 0";
     }
 
