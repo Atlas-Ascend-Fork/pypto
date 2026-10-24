@@ -462,6 +462,9 @@ int DeviceLauncher::SetDevPerfAddr(const bool debugEnable, const bool isCaptureM
                                    const ToSubMachineConfig& profLevelConfig)
 {
     int ret = 0;
+    // PGO 选项是算子作用域化的（generic.experimental_pgo_path / generic.experimental_pgo_update），必须在算子作用域
+    // 生效期间（每次 launch）重新登记，不能只在进程初始化时读一次，否则多算子会互相覆盖。
+    FedProfManager::GetInstance().PgoUpdatePath();
     if (debugEnable || KernelBinary::GetEnableDumpDevPref() || HostProf::GetInstance().GetHostProfType() == 1) {
         if (isCaptureMode) {
             ExchangeCaptureModeRelax();
@@ -686,6 +689,13 @@ int DeviceLauncher::LaunchKernel(AclRtStream aicoreStream, uint8_t* ctrlFlowCach
     if (ringSync) {
         ret = RunRingEventRecordAfterAicore(ringSequence, aicoreStream, kernel, isCaptureMode);
         MACHINE_ASSERT(ret == RT_SUCCESS) << "launch ring event record failed: " << ret;
+    }
+
+    if (!isCaptureMode && FedProfManager::GetInstance().IsPgoDumpRequested()) {
+        // PGO：prof 数据在 launch 同步完成后才完整，导出时机放在同步之后
+        (void)DynamicLaunchSynchronize(GetStreamContext().GetScheStream(), GetStreamContext().GetCtrlStream(),
+                                       aicoreStream);
+        FedProfManager::GetInstance().PgoDump();
     }
     return ret;
 }

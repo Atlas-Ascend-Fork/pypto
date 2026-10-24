@@ -439,7 +439,11 @@ struct ConfigManagerImpl {
         }
         auto& scope = scopes.top();
         for (auto& it : values) {
-            CHECK(ExternalError::INVALID_VAL, scope->HasConfig(it.first))
+            // 除了已存在于 scope 链（其根来自 tile_fwk_config.json）的 key，还允许"仅在 schema 中声明、
+            // 不写进 tile_fwk_config.json"的 key：这类选项没有全局默认值，只应通过作用域设置
+            // （例如算子级选项 generic.experimental_pgo_path / generic.experimental_pgo_update）。
+            bool declaredInSchema = typeInfo.Type(it.first) != typeid(void);
+            CHECK(ExternalError::INVALID_VAL, scope->HasConfig(it.first) || declaredInSchema)
                 << "key: " << it.first.c_str() << " does not exist.";
             scope->UpdateValueWithAny(it.first, it.second);
         }
@@ -452,6 +456,11 @@ struct ConfigManagerImpl {
             return;
         }
         for (auto& it : values) {
+            // 与 SetScope 一致：schema 中声明但未写入 tile_fwk_config.json 的 key 也允许设置。
+            if (!root->HasConfig(it.first) && typeInfo.Type(it.first) == typeid(void)) {
+                FE_LOGE(FeError::INVALID_VAL, "Failed to set option. Key: %s does not exist.", it.first.c_str());
+                continue;
+            }
             try {
                 root->AddValue(it.first, it.second);
                 FE_LOGD("Set option successfully, Key: %s", it.first.c_str());

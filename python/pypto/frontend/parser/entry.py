@@ -181,6 +181,8 @@ class JitCallableWrapper:
         Options for verification.
     _debug_options : Optional[dict[str, Any]]
         Options for debugging (including runtime_debug_mode).
+    _generic_options : Optional[dict[str, Any]]
+        Options for generic behaviour that cross multiple components.
     _captured_locals : Optional[dict[str, Any]]
         Captured local variables from the original function's scope (copied to avoid reference issues).
     _kernel_module_cache : dict[tuple, Any]
@@ -242,6 +244,7 @@ class JitCallableWrapper:
         runtime_options: Optional[dict[str, Any]] = None,
         verify_options: Optional[dict[str, Any]] = None,
         debug_options: Optional[dict[str, Any]] = None,
+        generic_options: Optional[dict[str, Any]] = None,
         captured_locals: Optional[dict[str, Any]] = None,
     ):
         """Initialize the JIT callable wrapper with compilation and runtime configurations.
@@ -266,6 +269,8 @@ class JitCallableWrapper:
             Options for verification during compilation.
         debug_options : Optional[dict[str, Any]], optional
             Options for debugging (e.g., runtime_debug_mode).
+        generic_options : Optional[dict[str, Any]], optional
+            Options for generic behaviour that cross multiple components.
         captured_locals : Optional[dict[str, Any]], optional
             Local variables captured from the original function's scope (copied to a new dict
             to prevent external modification). Defaults to None.
@@ -284,6 +289,7 @@ class JitCallableWrapper:
         self._pass_options = None if pass_options is None else dict(pass_options)
         self._verify_options = None if verify_options is None else dict(verify_options)
         self._debug_options = None if debug_options is None else dict(debug_options)
+        self._generic_options = None if generic_options is None else dict(generic_options)
 
         self._set_run_mode()
         self.kwargs = None
@@ -1042,6 +1048,8 @@ class JitCallableWrapper:
             pypto.set_verify_options(**self._verify_options, _skip_calculator_load=True)
         if self._debug_options:
             pypto.set_debug_options(**self._debug_options)
+        if self._generic_options:
+            pypto.set_generic_options(**self._generic_options)
         # Follow torch_npu deterministic level 0/1/2 (same idea as TorchAir / aclnn).
         pypto.set_global_config(
             "compute_determinism_level", get_compute_determinism_level()
@@ -1219,6 +1227,7 @@ def jit(
     runtime_options: Optional[dict[str, Any]] = None,
     verify_options: Optional[dict[str, Any]] = None,
     debug_options: Optional[dict[str, Any]] = None,
+    generic_options: Optional[dict[str, Any]] = None,
     create_new_logical_tensor: bool = False,
 ) -> Union[Callable, Callable[[Callable], JitCallableWrapper]]:
     """JIT decorator for compiling Python functions to PTO IR.
@@ -1245,6 +1254,8 @@ def jit(
         Options to configure the verify.
     debug_options : Optional[dict[str, Any]], optional
         Options to configure the debug.
+    generic_options : Optional[dict[str, Any]], optional
+        Options for generic behaviour that cross multiple components.
 
     Returns
     -------
@@ -1301,6 +1312,7 @@ def jit(
             runtime_options=runtime_options,
             verify_options=verify_options,
             debug_options=debug_options,
+            generic_options=generic_options,
             captured_locals=captured_locals,
         )
         wrapper._create_new_logical_tensor = create_new_logical_tensor

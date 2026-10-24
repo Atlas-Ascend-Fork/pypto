@@ -33,6 +33,10 @@ class CompStage(enum.Enum):
 _FUNC_HASH_ORDER_PATTERN = re.compile(r'^func\d+_\d+$')
 _DEFAULT_KEY = 'DEFAULT'
 
+# Generic option group prefix (mirrors GENERIC_PREFIX in
+# framework/src/interface/configs/config_manager_ng.h).
+_GENERIC_PREFIX = "generic."
+
 # Maximum allowed scope_id (ooo_scope or atomic_scope). Combined with _ATOMIC_SCOPE_ENCODE_BASE below,
 # max user encoding = 10000 * 10000 + 9999 = 100,009,999. C++ side VF_CLUSTER_ID_START
 # = 200,000,000, ensuring no overlap between user and VF cluster encoding spaces.
@@ -622,6 +626,44 @@ def get_debug_options() -> Dict[str, Union[str, int, List[str], List[int], Dict[
     return scope.get_debug_options()
 
 
+def get_generic_options() -> Dict[str, Union[str, bool]]:
+    """
+    Get generic options.
+
+    Returns
+    -------
+    Dict[str, Union[str, bool]]
+        All generic options
+    """
+    scope = get_current_scope()
+    return scope.get_generic_options()
+
+
+def set_generic_options(
+    *,
+    experimental_pgo_path: Optional[str] = None,
+    experimental_pgo_update: Optional[bool] = None,
+) -> None:
+    """
+    Set generic options.
+
+    Parameters
+    ---------
+    experimental_pgo_path : str
+        Output directory of the PGO (Profiling Guided Optimization) data. The data is
+        dumped per prof kind as ``<experimental_pgo_path>/<kind name>.json``
+        (``per_core.json``, ``aicpu.json``); it has no default value and must be
+        specified explicitly.
+
+    experimental_pgo_update : bool
+        When True, the runtime PGO data collected during execution is dumped into
+        ``experimental_pgo_path``. One configuration can be reused across multiple
+        runs to refine the PGO data.
+    """
+    options_dict = {k: v for k, v in locals().items() if v is not None}
+    set_options(generic_options=options_dict)
+
+
 def set_semantic_label(label: str) -> None:
     """
     Set the semantic label object.
@@ -670,6 +712,7 @@ class _Options:
         "runtime_options",
         "verify_options",
         "debug_options",
+        "generic_options",
         "vec_tile_shapes",
         "cube_tile_shapes",
         "conv_tile_shapes",
@@ -685,6 +728,7 @@ class _Options:
         "runtime_options": "runtime.",
         "verify_options": "verify.",
         "debug_options": "debug.",
+        "generic_options": _GENERIC_PREFIX,
         "operation_options": "operation.",
     }
 
@@ -776,6 +820,7 @@ def options(
     verify_options=None,
     operation_options=None,
     debug_options=None,
+    generic_options=None,
     vec_tile_shapes=None,
     cube_tile_shapes=None,
     conv_tile_shapes=None,
@@ -795,6 +840,7 @@ def options(
     verify_options: Verify options (dict)
     debug_options: Debug options (dict)
     operation_options: Operation options (dict)
+    generic_options: Options for generic behaviour that cross multiple components.
     vec_tile_shapes: Vector tile shapes (list)
     cube_tile_shapes: Cube tile shapes (CubeTile instance or list)
     matrix_size: Matrix size (list)
@@ -844,6 +890,7 @@ def set_options(
     verify_options=None,
     debug_options=None,
     operation_options=None,
+    generic_options=None,
     vec_tile_shapes=None,
     cube_tile_shapes=None,
     conv_tile_shapes=None,
@@ -862,6 +909,7 @@ def set_options(
     verify_options: Verify options (dict)
     debug_options: Debug options (dict)
     operation_options: Operation options (dict)
+    generic_options: Options for generic behaviour that cross multiple components.
     vec_tile_shapes: Vector tile shapes (list)
     cube_tile_shapes: Cube tile shapes (CubeTile instance or list)
     matrix_size: Matrix size (list)
@@ -1066,6 +1114,9 @@ class ConfigScope:
 
     def get_operation_options(self):
         return self.get_options("operation")
+
+    def get_generic_options(self):
+        return self.get_options("generic")
 
     def get_runtime_options(self):
         return self.get_options("runtime")

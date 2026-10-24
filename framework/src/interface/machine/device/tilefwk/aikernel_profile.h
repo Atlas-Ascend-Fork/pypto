@@ -25,6 +25,8 @@ enum FedProfKind {
     FED_PROF_KIND_MAX,
 };
 
+constexpr const char* fed_prof_name_list[FED_PROF_KIND_MAX] = {"per_core", "aicpu"};
+
 struct FedProfDataBase {};
 
 template <typename DerivedType, typename UnderlyingType>

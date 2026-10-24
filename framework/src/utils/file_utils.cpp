@@ -69,14 +69,14 @@ bool CreateDir(const std::string& path, bool recursive)
             }
             *p = '\0';
             if (fullpath[0] != '\0' && mkdir(fullpath, DIR_MODE) != 0 && errno != EEXIST) {
-                std::cerr << "Create dir[" << fullpath << "] failed, reason is " << errno << std::endl;
+                std::cerr << "Create dir[" << fullpath << "] failed, reason is " << strerror(errno) << std::endl;
                 return false;
             }
             *p = '/';
         }
     }
     if (mkdir(fullpath, DIR_MODE) != 0 && errno != EEXIST) {
-        std::cerr << "Create dir[" << fullpath << "] failed, reason is " << errno << std::endl;
+        std::cerr << "Create dir[" << fullpath << "] failed, reason is " << strerror(errno) << std::endl;
         return false;
     }
     return true;

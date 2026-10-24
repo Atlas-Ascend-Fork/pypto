@@ -410,6 +410,29 @@
                 }
             }
         },
+        "generic": {
+            "type": "object",
+            "label": {
+                "zh": "通用配置",
+                "en": "generic configuration"
+            },
+            "properties": {
+                "experimental_pgo_path": {
+                    "type": "string",
+                    "label": {
+                        "zh": "PGO 数据输出目录：导出的数据按 prof 类型分别保存为 <该目录>/<类型名>.json（per_core.json、aicpu.json）；无默认值，必须显式指定",
+                        "en": "Output directory of the PGO data: the exported data is saved per prof kind as <dir>/<kind name>.json (per_core.json, aicpu.json). It has no default value and must be specified explicitly."
+                    }
+                },
+                "experimental_pgo_update": {
+                    "type": "boolean",
+                    "label": {
+                        "zh": "使能后，将本次运行采集到的 PGO 数据保存到 experimental_pgo_path；一次配置可多次运行以迭代生成",
+                        "en": "When enabled, the PGO data collected during this run is saved to experimental_pgo_path. One configuration can be reused across runs to refine the data."
+                    }
+                }
+            }
+        },
         "host": {
             "type": "object",
             "label": {

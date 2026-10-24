@@ -65,6 +65,11 @@ constexpr const char* READY_ON_HOST_TENSORS = "ready_on_host_tensors";
 constexpr const char* DEVICE_SCHED_PARALLELISM = "device_sched_parallelism";
 constexpr const char* LAUNCH_SCHED_AICPU_NUM = "launch_sched_aicpu_num";
 
+// generic
+constexpr const char* GENERIC_PREFIX = "generic.";
+constexpr const char* EXPERIMENTAL_PGO_PATH = "experimental_pgo_path";
+constexpr const char* EXPERIMENTAL_PGO_UPDATE = "experimental_pgo_update";
+
 // host
 constexpr const char* COMPILE_STAGE = "compile_stage";
 constexpr const char* COMPILE_MONITOR_ENABLE = "compile_monitor_enable";
@@ -154,6 +159,15 @@ public:
     T GetRuntimeConfig(const std::string& key) const
     {
         return GetConfigAllType<T>("runtime." + key);
+    }
+
+    /**
+     * \brief Get generic config (prefix: GENERIC_PREFIX)
+     */
+    template <typename T>
+    T GetGenericConfig(const std::string& key) const
+    {
+        return GetConfigAllType<T>(std::string(GENERIC_PREFIX) + key);
     }
 
     /**

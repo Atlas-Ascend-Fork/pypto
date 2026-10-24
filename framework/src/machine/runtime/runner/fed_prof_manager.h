@@ -17,6 +17,7 @@
 
 #include <atomic>
 #include <memory>
+#include <string>
 #include <thread>
 #include "machine/runtime/runner/fed_prof_holder.h"
 
@@ -36,6 +37,17 @@ public:
     void PerCoreProfResetData() const;
     void PerCoreProfSync(bool debugEnable);
     int SetDebugEnable(const ToSubMachineConfig& profLevelConfig);
+
+    // PGO (Profiling Guided Optimization) support.
+    // PGO 侧只负责"记录"：在算子作用域内同步一次选项（launch 期间调用，可重复调用）。
+    //   experimental_pgo_update=true 时，把 experimental_pgo_path 记为导出目标（只有一个字符串）。
+    // 不区分同一进程内不同算子，也不对数据做算子维度的切分——PGO 数据的读取与使用由使用方
+    // 自行按其作用域里的选项处理。
+    void PgoUpdatePath();
+    // PGO: 是否已有算子要求导出（experimental_pgo_update=true 且路径非空）。
+    bool IsPgoDumpRequested() const { return !pgoPath_.empty(); }
+    // PGO: 枚举所有 prof 数据，逐类 DumpJson 落盘到 <pgoPath_>/<kind 名称>.json。
+    void PgoDump();
 
 private:
     uint32_t GetCoreCount() const;
@@ -67,6 +79,7 @@ private:
 
     uint32_t lastDumpRound{0};
     bool perCoreProfDataInited_{false};
+    std::string pgoPath_;
     std::thread dumpThread_;
     std::atomic<bool> dumpThreadStopFlag_{false};
 };
