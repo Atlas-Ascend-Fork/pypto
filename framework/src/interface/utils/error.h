@@ -50,5 +50,7 @@ struct TerminateHandler {
 
     struct sigaction ori[2];
 };
+
+void InstallTerminateHandler();
 } // namespace npu::tile_fwk
 #endif

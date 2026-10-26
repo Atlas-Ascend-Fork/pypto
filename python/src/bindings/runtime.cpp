@@ -32,6 +32,7 @@
 #include "adapter/api/runtime_define.h"
 #include "interface/interpreter/raw_tensor_data.h"
 #include "interface/utils/op_info_manager.h"
+#include "interface/utils/error.h"
 #include "interface/compiler_monitor/monitor_manager.h"
 #include "interface/compiler_monitor/monitor_stage_scope.h"
 #include "interface/function/rebuildable_attribute.h"
@@ -429,7 +430,11 @@ int64_t BuildCache(uintptr_t opAddr, const std::vector<DeviceTensorData>& inputL
 
 class KernelModule {
 public:
-    KernelModule(py::object& module) { InitConfigOptions(module); }
+    KernelModule(py::object& module)
+    {
+        InstallTerminateHandler();
+        InitConfigOptions(module);
+    }
 
     ~KernelModule()
     {
@@ -722,7 +727,7 @@ void LaunchKernelTorch(py::object& module, int64_t stream, py::sequence& torchTe
 void LaunchKernelTorch(py::object&, int64_t, py::sequence&, py::sequence&) {}
 class KernelModule {
 public:
-    KernelModule(py::object&) {}
+    KernelModule(py::object&) { InstallTerminateHandler(); }
 };
 using KernelModulePtr = std::shared_ptr<KernelModule>;
 #endif

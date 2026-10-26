@@ -154,5 +154,5 @@ TerminateHandler::TerminateHandler()
     });
 }
 
-static struct TerminateHandler terminateHandler;
+void InstallTerminateHandler() { static struct TerminateHandler terminateHandler; }
 } // namespace npu::tile_fwk
