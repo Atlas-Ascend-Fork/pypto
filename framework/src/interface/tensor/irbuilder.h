@@ -9,6 +9,8 @@
  */
 #pragma once
 
+#include <set>
+
 #include "ir/builder.h"
 #include "ir/type.h"
 
@@ -59,6 +61,23 @@ public:
     {
         auto it = all_vars_.find(var->name_);
         return it != all_vars_.end() ? it->second : var->name_;
+    }
+
+    std::string GetOriginName(const std::string& name)
+    {
+        auto it = all_vars_.find(name);
+        return it != all_vars_.end() ? it->second : name;
+    }
+
+    std::set<std::string> GetVarNamesByOrigin(const std::string& originName) const
+    {
+        std::set<std::string> uniqueNames;
+        for (const auto& [uniqueName, origin] : all_vars_) {
+            if (origin == originName) {
+                uniqueNames.insert(uniqueName);
+            }
+        }
+        return uniqueNames;
     }
 
     std::string GetVarName(const std::string& name = "")

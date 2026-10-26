@@ -16,6 +16,7 @@
 #include "interface/tensor/symbolic_scalar_evaluate.h"
 #include "interface/interpreter/function.h"
 #include "interface/operation/attribute.h"
+#include "interface/tensor/irbuilder.h"
 #include "tensor/symbolic_scalar.h"
 
 #include <string>
@@ -215,6 +216,18 @@ ScalarImmediateType EvaluateSymbolicCallRuntimeCoaGetParam(EvaluateSymbol* evalu
     auto coaIndex = dataList[0];
     return evaluateSymbol->EvaluateSymbolicScalar(linearArgList[coaIndex]);
 }
+
+bool FindDedupNameInDict(const std::string& originName,
+                         const std::unordered_map<std::string, ScalarImmediateType>& dict, ScalarImmediateType& outVal)
+{
+    for (const auto& uniqueName : IRContext::Get().GetVarNamesByOrigin(originName)) {
+        if (dict.count(uniqueName)) {
+            outVal = dict.at(uniqueName);
+            return true;
+        }
+    }
+    return false;
+}
 } // namespace
 
 ScalarImmediateType EvaluateSymbol::EvaluateSymbolicCall(const std::string& name,
@@ -279,9 +292,15 @@ ScalarImmediateType EvaluateSymbol::EvaluateSymbolicScalar(const RawSymbolicScal
             std::shared_ptr<RawSymbolicSymbol> sym = std::static_pointer_cast<RawSymbolicSymbol>(ss);
             if (constSymbolDict_.count(sym->Name())) {
                 result = constSymbolDict_[sym->Name()];
-            } else {
-                FE_ASSERT(symbolDict_.count(sym->Name()));
+            } else if (symbolDict_.count(sym->Name())) {
                 result = symbolDict_.at(sym->Name());
+            } else {
+                ScalarImmediateType dedupVal;
+                if (FindDedupNameInDict(IRContext::Get().GetOriginName(sym->Name()), symbolDict_, dedupVal)) {
+                    result = dedupVal;
+                } else {
+                    FE_ASSERT(false) << "Symbol not found in symbolDict: " << sym->Name();
+                }
             }
         } break;
         case SymbolicScalarKind::T_SCALAR_SYMBOLIC_EXPRESSION: {

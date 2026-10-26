@@ -18,6 +18,7 @@
 #include <memory>
 #include "gtest/gtest.h"
 #include "interface/tensor/symbolic_scalar.h"
+#include "interface/tensor/irbuilder.h"
 #include "interface/interpreter/raw_tensor_data.h"
 #include "interface/interpreter/function.h"
 #include "tilefwk/data_type.h"
@@ -301,6 +302,67 @@ TEST_F(TestSymbolicScalarEvaluate, EvaluateSymbolicScalarSymbol)
     evaluator.UpdateSymbolDict("test_symbol", 99);
     auto ret = evaluator.EvaluateSymbolicScalar(ss);
     EXPECT_EQ(ret, 99);
+}
+
+TEST_F(TestSymbolicScalarEvaluate, EvaluateSymbolicScalarConstTypeSymbol)
+{
+    EvaluateSymbol evaluator;
+    SymbolicScalar ss("RUNTIME_int32_t");
+    auto ret = evaluator.EvaluateSymbolicScalar(ss);
+    EXPECT_EQ(ret, static_cast<ScalarImmediateType>(DataType::DT_INT32));
+}
+
+TEST_F(TestSymbolicScalarEvaluate, EvaluateSymbolicScalarSymbolDedupFallback)
+{
+    auto& irCtx = IRContext::Get();
+    // Loop unroll dedup: create_scalar_var with the same origin twice gives base/dedup names
+    // e.g. loop_idx_s_idx / loop_idx_s_idx_0
+    std::string baseName = irCtx.GetVarName("ut_dedup_loop_idx");
+    std::string dedupName = irCtx.GetVarName("ut_dedup_loop_idx");
+    EXPECT_NE(baseName, dedupName);
+
+    // Expression references the base name while symbolDict only registers the dedup name
+    EvaluateSymbol evaluator;
+    evaluator.UpdateSymbolDict(dedupName, 8);
+    SymbolicScalar ss(baseName);
+    auto ret = evaluator.EvaluateSymbolicScalar(ss);
+    EXPECT_EQ(ret, 8);
+}
+
+TEST_F(TestSymbolicScalarEvaluate, EvaluateSymbolicScalarSymbolDedupFallbackReverse)
+{
+    auto& irCtx = IRContext::Get();
+    std::string baseName = irCtx.GetVarName("ut_dedup_reverse_idx");
+    std::string dedupName = irCtx.GetVarName("ut_dedup_reverse_idx");
+
+    // Expression references the dedup name while symbolDict only registers the base name
+    EvaluateSymbol evaluator;
+    evaluator.UpdateSymbolDict(baseName, 5);
+    SymbolicScalar ss(dedupName);
+    auto ret = evaluator.EvaluateSymbolicScalar(ss);
+    EXPECT_EQ(ret, 5);
+}
+
+TEST_F(TestSymbolicScalarEvaluate, EvaluateSymbolicScalarSymbolDirectHitPriorToDedupFallback)
+{
+    auto& irCtx = IRContext::Get();
+    std::string baseName = irCtx.GetVarName("ut_dedup_priority_idx");
+    std::string dedupName = irCtx.GetVarName("ut_dedup_priority_idx");
+
+    // Both names exist in symbolDict: direct hit must win over the dedup fallback
+    EvaluateSymbol evaluator;
+    evaluator.UpdateSymbolDict(baseName, 100);
+    evaluator.UpdateSymbolDict(dedupName, 200);
+    SymbolicScalar ss(baseName);
+    auto ret = evaluator.EvaluateSymbolicScalar(ss);
+    EXPECT_EQ(ret, 100);
+}
+
+TEST_F(TestSymbolicScalarEvaluate, EvaluateSymbolicScalarSymbolNotFound)
+{
+    EvaluateSymbol evaluator;
+    SymbolicScalar ss("ut_symbol_not_registered");
+    EXPECT_THROW(evaluator.EvaluateSymbolicScalar(ss), std::exception);
 }
 
 TEST_F(TestSymbolicScalarEvaluate, EvaluateSymbolicScalarExpressionUnary)
