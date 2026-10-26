@@ -62,7 +62,7 @@ TEST_F(TestAicoreCompiler, CompileAICoreKernel_EmptyCcePath)
     dynamic::EncodeDevAscendFunctionParam param = {};
     std::string kernelPath;
 
-    EXPECT_THROW(CompileAICoreKernel(leafDict, param, "", "test_hash", "test_func", kernelPath, false),
+    EXPECT_THROW(CompileAICoreKernel(leafDict, param, "", "test_hash", "test_func", kernelPath, false, false),
                  npu::tile_fwk::Error);
 }
 
@@ -71,9 +71,9 @@ TEST_F(TestAicoreCompiler, CompileAICoreKernel_GenSrcFileFails)
     std::map<uint64_t, Function*> leafDict;
     dynamic::EncodeDevAscendFunctionParam param = {};
     std::string kernelPath;
-    EXPECT_THROW(
-        CompileAICoreKernel(leafDict, param, "/nonexistent_dir/cce_path/", "test_hash", "test_func", kernelPath, false),
-        npu::tile_fwk::Error);
+    EXPECT_THROW(CompileAICoreKernel(leafDict, param, "/nonexistent_dir/cce_path/", "test_hash", "test_func",
+                                     kernelPath, false, false),
+                 npu::tile_fwk::Error);
 }
 
 TEST_F(TestAicoreCompiler, GenSubFuncCall_EmptyLeafDict)
@@ -150,7 +150,7 @@ TEST_F(TestAicoreCompiler, CompileAICoreKernel_ReachRunBishengQuiet)
     dynamic::EncodeDevAscendFunctionParam param = {};
     std::string kernelPath;
     try {
-        (void)CompileAICoreKernel(leafDict, param, ccePath, "ut_hash", "ut_func", kernelPath, false);
+        (void)CompileAICoreKernel(leafDict, param, ccePath, "ut_hash", "ut_func", kernelPath, false, false);
     } catch (const npu::tile_fwk::Error&) {
         // compile/link failure is acceptable; path through RunBishengQuiet is already exercised
     }

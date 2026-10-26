@@ -279,6 +279,8 @@ struct DrcoRootFuncList {
     // 跨所有组/列铺开；colIdx 达到本类型核数（groupCount * N）后回绕。追加在结构体末尾，
     // 不改变既有字段偏移。
     alignas(64) uint32_t readyMatrixPushCol[DRCO_QUEUE_MAX];
+
+    alignas(64) uint32_t hasStitchNode;
 };
 
 #ifdef __TILE_FWK_HOST__

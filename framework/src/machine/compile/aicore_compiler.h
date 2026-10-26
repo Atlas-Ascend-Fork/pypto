@@ -21,8 +21,9 @@
 
 namespace npu::tile_fwk {
 bool DynamicKernelRequiresSimt(const std::map<uint64_t, Function*>& leafDict);
+
 int CompileAICoreKernel(std::map<uint64_t, Function*>& leafDict, dynamic::EncodeDevAscendFunctionParam& param,
                         const std::string& ccePath, const std::string& funcHash, const std::string& funcRawName,
-                        std::string& kernelPath, bool requiresSimt, bool enableSubFunc = true);
+                        std::string& kernelPath, bool requiresSimt, bool graphHasMixWork, bool enableSubFunc = true);
 } // namespace npu::tile_fwk
 #endif // TILEFRAMEWORK_AICORE_COMPILER_H

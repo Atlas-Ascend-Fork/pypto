@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
@@ -221,6 +221,9 @@ INLINE uint32_t BlockDescValidCoreNum(BlockDesc desc, bool isAiv)
 
 #define ENABLE_AICORE_TRACE 0
 
+#ifndef DRCO_FLAG_HAS_MIX
+#define DRCO_FLAG_HAS_MIX 0
+#endif
 // 直通 selfReadyQueue 容量：同类型就绪后继截留直通上限（resolve 收尾直写本核槽位，
 // fetch 循环每轮开头直取，省 push/pop 矩阵探测往返；波内实测容量 1 即饱和）
 constexpr uint32_t SELF_QUEUE_SIZE = 1;
@@ -277,6 +280,9 @@ struct DrcoEntryState {
     // （devTask 内不变）：入口缓存一次，热路径完成判定用 Σ分片 >= 该值；动态计数走分片，
     // 避免对热 staticExecCount/size 行反复 dcci
     uint32_t drcoCountDynExpect{0};
+    // 本 devTask 是否存在 stitch 节点（devTask 内不变）：入口缓存一次；为 false 时 stitch
+    // 矩阵恒无生产者，fetch 循环整段跳过其扫描，省每轮 dcci 空探
+    bool hasStitchNode{false};
     // C 端聚合状态核本地缓存（if (IS_AIC) 运行时门控，散落字段整合）：
     //  · vectorCountDynExpect：AIV 期望动态计数（devTask 内不变，入口缓存）
     //  · lastVCount：本组 V0/V1 计数快照
@@ -313,6 +319,7 @@ struct DrcoEntryState {
 #define EVENT_LEAF_START() EVENT(1, 0x1001)
 #define EVENT_LEAF_END() EVENT(2, 0x1002)
 #define EVENT_RESOLVE() EVENT(3, 0)
+#define EVENT_ROWCURSOR() EVENT(3, 0x103)
 #define EVENT_PUSH_LOCAL(group) EVENT(4, group)
 #define EVENT_PUSH_GLOBAL() EVENT(5, 0)
 #define EVENT_SUCC_STATIC(size) EVENT(6, size)
@@ -537,6 +544,7 @@ INLINE uint32_t DrcoLocalReadyMatrixPushBatch(DrcoEntryState* state,
     // 当前的matrix 有多少行
     uint32_t colNum = matrix->colNum;
     uint32_t rowCnt = matrix->validCoreNum;
+    TraceEvent(state, succTaskIdList[0], EVENT_ROWCURSOR());
     __gm__ uint32_t* rowCursor = &rootFuncList->readyMatrixPushCol[queueType];
     // succTaskIdListSize <=6 不会溢出；即便回绕，% coreCount 仍给合法核
     uint32_t base = DrcoAtomicAddToU32(rowCursor, succTaskIdListSize) % rowCnt;
@@ -556,6 +564,7 @@ INLINE uint32_t DrcoLocalReadyMatrixPushBatch(DrcoEntryState* state,
             if (DrcoAtomicCasToU32(&matrix->rowList[matrixRowIdx].taskList[matrixColIdx], 0,
                                    DRCO_ENCODE_TASK(succTaskIdList[i])) == 0) {
                 slotPushed = true;
+                TraceEvent(state, succTaskIdList[i], EVENT_PUSH_LOCAL(rowIdx));
                 break;
             }
             if (++matrixColIdx == colNum) {
@@ -566,7 +575,7 @@ INLINE uint32_t DrcoLocalReadyMatrixPushBatch(DrcoEntryState* state,
             // 本行 colNum 个深度全占（消费侧未及时排空）：从本任务起（list[pushed..]）整体溢出去队列
             break;
         }
-        TraceEvent(state, succTaskIdList[i], EVENT_PUSH_LOCAL(rowIdx));
+
         pushed++;
     }
     return pushed;
@@ -581,9 +590,13 @@ INLINE uint32_t DrcoLocalReadyMatrixPopRowTasks(__gm__ DrcoLocalReadyMatrix* mat
 {
     uint32_t wordCnt = matrix->colNum >> 1;
     uint32_t count = 0;
+    // 行恒为单个 64B cacheline（Row alignas(64)，taskList ≤ DRCO_MATRIX_COL_MAX=8 槽 = 32B）：
+    // 一次 dcci 失效整行即可，随后逐字普通读命中 L1；原逐字 DrcoGmLoad 对同一行重复 dcci，
+    // 多次失效无收益、纯开销（空查时尤其明显）
+    DRCO_DCCI_SINGLE_CACHE_LINE(&matrix->rowList[rowIdx]);
     for (uint32_t i = 0; i < wordCnt && count < maxCount; i++) {
         __gm__ uint64_t* word = DrcoLocalReadyMatrixWord(matrix, i, rowIdx);
-        if (DrcoGmLoad(word) == 0) {
+        if (*word == 0) {
             continue;
         }
         uint64_t old = DrcoAtomicExchToU64(word, 0);
@@ -652,8 +665,10 @@ INLINE void DrcoLocalReadyQueuePushBatch(__gm__ DrcoLocalReadyQueue* queue, uint
 
 INLINE uint32_t DrcoLocalReadyQueueGetFirstTask(__gm__ DrcoLocalReadyQueue* queue)
 {
-    uint32_t head = DrcoAtomicLoad(&queue->head);
-    uint32_t tail = DrcoAtomicLoad(&queue->tail);
+    // 空判用普通 dcci 读（非 RMW）：head/tail 仅取快照，真正认领走下方 head CAS；
+    // 快照陈旧最多本轮漏取（下一轮再扫），省每轮 2 次 atomicCAS(0,0) 的 L2 原子往返
+    uint32_t head = DrcoGmLoad(&queue->head);
+    uint32_t tail = DrcoGmLoad(&queue->tail);
     if (head >= tail) {
         return static_cast<uint32_t>(AICORE_TASK_NO_INCOME);
     }
@@ -1575,11 +1590,19 @@ INLINE __gm__ DrcoLocalReadyQueue* TryGetOtherLocalQue(__gm__ npu::tile_fwk::Drc
 INLINE void DrcoStitchNodeMatrixPopResolve(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                            __gm__ DrcoGlobalStitchNodeMatrix* matrix, uint32_t rowIdx)
 {
+    // 提前判断（按需走）：stitch 矩阵 COL_SIZE=1（单槽即整行），本核行槽空即无待解节点，直接
+    // 返回——省下方批数组清零与 DrcoFlushBatchTasks 空转（fetch 循环每轮无条件调用本函数）。
+    // 空槽探测用普通 dcci 读（非 RMW）：本行仅本行主一个 popper、push 侧只 CAS 空槽，读到 0
+    // 可安全跳过（探测后新 push 由下一轮捕获）
+    if (DrcoGmLoad(&matrix->stitchNodeList[rowIdx].slot[0]) == 0) {
+        return;
+    }
     uint32_t succTaskIdListCoreList[npu::tile_fwk::DRCO_QUEUE_MAX][BATCH_PUSH_BUF_SIZE];
     uint32_t succTaskIdListSizeCoreList[npu::tile_fwk::DRCO_QUEUE_MAX] = {0};
     int32_t dummyHubStackTop = -1; // pop 的节点不含 HUB（HUB 节点从不入 matrix），仅占位
     for (uint32_t col = 0; col < DrcoGlobalStitchNodeMatrix::COL_SIZE; col++) {
         __gm__ uint32_t* slot = &matrix->stitchNodeList[rowIdx].slot[col];
+        // 入口已判 slot[0] 非空（COL_SIZE=1 即整行），此处不再逐槽 dcci 探测
         uint32_t slotVal = DrcoAtomicExchToU32(slot, 0);
         if (slotVal == 0) {
             continue;
@@ -1630,8 +1653,14 @@ INLINE void DrcoHubTaskMatrixPopResolve(DrcoEntryState* state, __gm__ npu::tile_
     if (matrix == nullptr) {
         return;
     }
+    // 提前判断（按需走）：hub 矩阵 COL_SIZE=1（单槽即整行），本核行槽空即无需 pop resolve，
+    // 直接返回（fetch 循环每轮无条件调用本函数）；空槽探测为普通 dcci 读，非空才走 u32 exch
+    if (DrcoGmLoad(&matrix->hubTaskList[rowIdx].slot[0]) == 0) {
+        return;
+    }
     for (uint32_t col = 0; col < npu::tile_fwk::DrcoGlobalHubTaskMatrix::COL_SIZE; col++) {
         __gm__ uint32_t* slot = &matrix->hubTaskList[rowIdx].slot[col];
+        // 入口已判 slot[0] 非空（COL_SIZE=1 即整行），此处不再逐槽 dcci 探测
         uint32_t encoded = DrcoAtomicExchToU32(slot, 0);
         if (encoded == 0) {
             continue;
@@ -1683,7 +1712,7 @@ INLINE bool DrcoDynFuncDataListFetchTaskLocalReadyQueue([[maybe_unused]] DrcoEnt
 {
     __gm__ DrcoLocalReadyQueue* localReadyQueue = DrcoRootFuncListGetLocalReadyQueue(rootFuncList, queueCoreType,
                                                                                      groupIdx);
-    DRCO_DCCI_SINGLE_CACHE_LINE(localReadyQueue);
+    // 冗余 dcci 删除：GetFirstTask 现已逐次对 head/tail 做 dcci 读，无需再额外失效一次
     uint32_t taskId = static_cast<uint32_t>(AICORE_TASK_FETCH_CONFLICT);
     while (taskId == static_cast<uint32_t>(AICORE_TASK_FETCH_CONFLICT)) {
         taskId = DrcoLocalReadyQueueGetFirstTask(localReadyQueue);
@@ -1811,8 +1840,10 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
         uint32_t ssbufFinishState = IS_AIV ? npu::tile_fwk::DrcoWarpExecuteCount::FinishStateLoad(
                                                  &state->ssbuf->warpExecuteCount) :
                                              0;
+        // C 端本轮 own flag 缓存一次（下方 ownTypeFinished 复用），省一次 GM dcci 重复读
+        uint32_t ownFinishFlag = IS_AIV ? 0 : DrcoGmLoad(devTaskFinishFlag);
         bool allTaskFinished = IS_AIV ? ((ssbufFinishState & npu::tile_fwk::DrcoWarpExecuteCount::FINISH_ALL) != 0) :
-                                        (DrcoGmLoad(devTaskFinishFlag) != 0 && DrcoGmLoad(otherTaskFinishFlag) != 0);
+                                        (ownFinishFlag != 0 && DrcoGmLoad(otherTaskFinishFlag) != 0);
         if (allTaskFinished) {
             if (DrcoMiddleQueueTryProbeGate(state, resultTaskIdCount)) {
                 break;
@@ -1837,18 +1868,27 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
             break;
         }
 
-        DrcoDynFuncDataListFetchResolveStitchNodeMatrix(state, rootFuncList, blockIdx);
-        // 兜底 hub 矩阵扫描同样无条件（帮忙模式含）：pop 后就地解依赖，pop 出的任务
-        // 不进 taskIdList（不执行不计数），own-type 批因此恒为纯 leaf 批
+        // stitch 矩阵扫描：仅在图中存在 stitch 节点时开启（hasStitchWork，运行时判定；
+        // DRCO_OPT_STITCH_GATE 为构建开关，置 0 恢复无条件调用）
+        if (state->hasStitchNode) {
+            DrcoDynFuncDataListFetchResolveStitchNodeMatrix(state, rootFuncList, blockIdx);
+        }
+        // 兜底 hub 矩阵扫描：由 push 侧首次成功改投时置位的共享标记驱动（state 缓存；未见
+        // 置位时每轮补读一次共享标记，置位后仅剩本行空槽探测，帮忙模式含）。pop 后就地解
+        // 依赖，pop 出的任务不进 taskIdList（不执行不计数），own-type 批因此恒为纯 leaf 批
         DrcoHubTaskMatrixPopResolve(state, rootFuncList, blockIdx);
 
         // 本类型 leaf 全部认领/执行完（flag 置位）后跳过本类型 leaf 矩阵/队列/mixhub 消费
-        // （必然空，省 CAS 竞争——mixhub 任务的写入方即本类型核，全部完成后不再有新任务），
-        // 仅保留上方共享 stitch 矩阵扫描帮忙对侧展开。V 端门控复用本轮镜像值，无 GM dcci
+        // （必然空，省 CAS 竞争）。V 端门控复用本轮镜像值，无 GM dcci。
+        // 探测前置：本核行/本组队列命中概率最高，先于共享矩阵扫描可缩短 push→pop 相位；
+        // 全未命中时本轮继续落在下方共享 stitch/hub 扫描（含帮忙模式），不丢服务
         bool ownTypeFinished = IS_AIV ? ((ssbufFinishState & npu::tile_fwk::DrcoWarpExecuteCount::FINISH_VECTOR) != 0) :
-                                        DrcoGmLoad(devTaskFinishFlag) != 0;
+                                        ownFinishFlag != 0;
         if (!ownTypeFinished) {
-            // middleQueue 探测已前置到循环顶部（任何模式必探）；此处不再重复
+            // MIX 分支（C2V 环 + MIX 矩阵行扫 + MIX 队列）仅在本图存在 HUB_MIX 后继时才可能
+            // 非空。DRCO_FLAG_HAS_MIX 由 host 在 kernel 编译时按图注入：有=1（保留扫描，运行时
+            // 判定）、无=0（整段编译裁剪，矩阵/环恒无生产者），并保留一致性校验
+#if DRCO_FLAG_HAS_MIX
             if (DrcoDynFuncDataListFetchTaskMixHubC2VReadyQueue(state, rootFuncList, resultCoreType, resultTaskIdList,
                                                                 resultTaskIdCount, blockIdx)) {
                 break;
@@ -1857,6 +1897,7 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
                                                    resultTaskIdCount, groupIdx, rowIdx)) {
                 break;
             }
+#endif
             if (DrcoDynFuncDataListFetchTaskLocalReadyMatrix(state, rootFuncList, resultCoreType, resultTaskIdList,
                                                              resultTaskIdCount, localReadyMatrix, rowIdx)) {
                 break;
@@ -2236,7 +2277,7 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
             state.warpAggState.vectorFinishPublished = false;
             state.warpAggState.vectorFinishPollTick = 0;
         }
-
+        state.hasStitchNode = DrcoGmLoad(&rootFuncList->hasStitchNode) != 0;
         __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue = DrcoGmLoad(
             &rootFuncList->perCorePendingQueueArray[BlockDescBlockIdx(state.blockDesc)]);
         DRCO_DCCI_SINGLE_CACHE_LINE(perCoreQueue);

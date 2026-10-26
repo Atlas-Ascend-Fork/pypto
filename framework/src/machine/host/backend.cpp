@@ -934,9 +934,30 @@ static void RunCompileControlFlowStage(Function* function, const std::shared_ptr
 }
 
 #ifdef BUILD_WITH_CANN
+// MIX 段（C2V 环/MIX 矩阵/MIX 队列）是否可能非空：本图存在 wrap 组（mix 子图拆分 pass 为
+// callop 赋 wrapId，IR 内 HUB_MIX callee 只在 dev encode 阶段合成，不在 IR 里出现）；dev
+// encode 会为每个 wrapId 组插入 HUB_MIX 同步节点（见 dev_encode.cpp AddHubMixForWrapTask），
+// 这些节点只走 MIX 段消费。值注入 kernel 编译命令行（DRCO_FLAG_HAS_MIX），无则整段编译裁剪
+static bool ComputeDrcoGraphHasMixWork(const std::shared_ptr<DyndevFunctionAttribute>& attr)
+{
+    for (auto& devRoot : attr->funcGroup.devRootList) {
+        for (Operation& op : devRoot->Operations()) {
+            if (op.GetOpcode() != Opcode::OP_CALL) {
+                continue;
+            }
+            auto* callAttr = dynamic_cast<CallOpAttribute*>(op.GetOpAttribute().get());
+            if (callAttr != nullptr && callAttr->wrapId != -1) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 static bool RunCompileAicoreKernelStage(Function* function, std::map<uint64_t, Function*>& leafDict,
                                         EncodeDevAscendFunctionParam& encodeDevAscendFunctionParam,
-                                        const std::string& ccePath, std::string& kernelPath, bool requiresSimt)
+                                        const std::string& ccePath, std::string& kernelPath, bool requiresSimt,
+                                        bool graphHasMixWork)
 {
     const int hmStep = MonitorManager::Instance().AllocHostMachineStepIndex();
     MonitorStageScope aicoreKernelCompileScope(STAGE_HOST_MACHINE, hmStep, STAGE_DYNDEV_AICORE_KERNEL_COMPILE,
@@ -946,7 +967,7 @@ static bool RunCompileAicoreKernelStage(Function* function, std::map<uint64_t, F
         return true;
     }
     int ret = CompileAICoreKernel(leafDict, encodeDevAscendFunctionParam, ccePath, function->GetFunctionHash().Data(),
-                                  function->GetOriginalRawName(), kernelPath, requiresSimt);
+                                  function->GetOriginalRawName(), kernelPath, requiresSimt, graphHasMixWork);
     if (ret != 0) {
         MACHINE_LOGE(HostBackEndErr::COMPILE_AICORE_FAILED, "Compile dynamic aicore.o failed.");
         return false;
@@ -1115,9 +1136,12 @@ static void CompileDyndevFunction(Function* function, FunctionCache& cache, [[ma
 
     std::string kernelPath;
 #ifdef BUILD_WITH_CANN
+    // DRCO MIX 门控：backend 按图推导后注入 kernel 编译（有=1 保留扫描 / 无=0 整段裁剪）
+    bool graphHasMixWork = ComputeDrcoGraphHasMixWork(attr);
+    MACHINE_LOGI("DRCO graph mix work: %d.", static_cast<int>(graphHasMixWork));
     if (hasAicoreKernelLink) {
         if (!RunCompileAicoreKernelStage(function, leafDict, encodeDevAscendFunctionParam, ccePath, kernelPath,
-                                         requiresSimt)) {
+                                         requiresSimt, graphHasMixWork)) {
             return;
         }
     }

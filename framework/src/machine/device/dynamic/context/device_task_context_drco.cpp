@@ -231,15 +231,20 @@ void DeviceTaskContext::InitDrcoRootFuncList(DynDeviceTask* dyntask)
     uint32_t queueCapacity = dyntask->devTask.coreFunctionCnt;
     uint32_t aicTaskCnt = 0;
     uint32_t aivTaskCnt = 0;
+    // stitch 节点数：静态为零时 stitch 矩阵恒无生产者，设备侧 fetch 循环据此整段跳过扫描
+    uint32_t stitchOpCnt = 0;
     for (uint64_t funcId = 0; funcId < dyntask->dynFuncDataCacheListSize; ++funcId) {
         auto callList = dyntask->dynFuncDataCacheList[funcId].calleeList;
-        for (size_t opIndex = 0; opIndex < dyntask->dynFuncDataCacheList[funcId].devFunc->GetOperationSize();
-             ++opIndex) {
+        auto* devFunc = dyntask->dynFuncDataCacheList[funcId].devFunc;
+        for (size_t opIndex = 0; opIndex < devFunc->GetOperationSize(); ++opIndex) {
             auto coreType = dyntask->cceBinary[callList[opIndex]].coreType;
             if (coreType == static_cast<int>(CoreType::AIC)) {
                 aicTaskCnt++;
             } else if (coreType == static_cast<int>(CoreType::AIV)) {
                 aivTaskCnt++;
+            }
+            if (devFunc->GetOperationStitchIndex(static_cast<int>(opIndex)) != 0) {
+                stitchOpCnt++;
             }
         }
     }
@@ -247,6 +252,10 @@ void DeviceTaskContext::InitDrcoRootFuncList(DynDeviceTask* dyntask)
     new (&rootFuncList->devTaskCountList) npu::tile_fwk::DrcoDevTaskCountList();
     rootFuncList->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIC].size = aicTaskCnt;
     rootFuncList->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIV].size = aivTaskCnt;
+    // MIX 行完成计数恒不走（无 MIX 型 finish flag，见 fetch/notify 只用 AIC/AIV），该 size 槽
+    // 复用为"HUB_MIX 后继是否存在"的静态标记（MIX 段编译裁剪的一致性校验读它）
+    // stitch 工作标记：按图静态写入（devTask 内不变），入口读入 state 后裁剪扫描
+    rootFuncList->hasStitchNode = stitchOpCnt != 0 ? 1 : 0;
     uint32_t perCoreSize = sizeof(npu::tile_fwk::PerCorePendingQueue) +
                            queueCapacity * sizeof(npu::tile_fwk::LeafTaskId);
     for (uint32_t i = 0; i < npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE; i++) {

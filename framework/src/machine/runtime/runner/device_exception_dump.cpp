@@ -112,7 +112,8 @@ void DumpNoSubFuncBundledKernel(const DyndevFunctionAttribute* dynAttr, Function
     std::string kernelPath;
     auto devProg = reinterpret_cast<const DevAscendProgram*>(dynAttr->devProgBinary.data());
     bool requiresSimt = devProg != nullptr && devProg->requiresSimt;
-    int ret = CompileAICoreKernel(leafDict, param, ccePath, funcHash, funcRawName, kernelPath, requiresSimt, false);
+    int ret = CompileAICoreKernel(leafDict, param, ccePath, funcHash, funcRawName, kernelPath, requiresSimt,
+                                  true /* 保守：dump bundle 保留 MIX 扫描 */, false);
     if (ret != 0 || RealPath(kernelPath).empty()) {
         MACHINE_LOGW("Skip no-subfunc bundled kernel dump: recompile kernel failed for %s.", kernelName);
         return;

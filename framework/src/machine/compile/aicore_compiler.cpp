@@ -121,6 +121,11 @@ static std::string BuildPtoPrintfCompileFlags()
     return "-D__ENABLE_PTO_PRINTF__ -DPYPTO_PTO_DEBUG=1 -I" + QuoteShellArg(ptoDebugRoot) + " -I" +
            QuoteShellArg(ptoDebugRoot + "/include") + " ";
 }
+
+static std::string BuildDrcoOptCompileFlags(bool graphHasMixWork)
+{
+    return std::string("-DDRCO_FLAG_HAS_MIX=") + (graphHasMixWork ? "1" : "0");
+}
 } // namespace
 
 // Redirect cannot appear in Checkinject()'d system() args; use packaged/source-tree run_to_log.sh.
@@ -163,7 +168,8 @@ int RunBishengQuiet(const std::string& compileCmd, const std::string& workDir)
 }
 
 static int CompileCoreMachine(const std::string& objFile, bool isCube, uint64_t tilingKey, const std::string& headFile,
-                              const std::string& aicoreSrcFile, const std::string& funcRawName, bool requiresSimt)
+                              const std::string& aicoreSrcFile, const std::string& funcRawName, bool requiresSimt,
+                              bool graphHasMixWork)
 {
     MACHINE_LOGI("Compile src file is [%s], kernel type[%d].", aicoreSrcFile.c_str(), isCube);
     const std::string cc_opt = isCube ? Platform::Instance().GetSoc().GetCCECVersion("AIC") :
@@ -185,6 +191,7 @@ static int CompileCoreMachine(const std::string& objFile, bool isCube, uint64_t 
     ccecCmd.resize(CMD_SIZE_4K);
     std::string includePath = GetPyptoLibPath() + "/../include/tile_fwk";
     const std::string ptoPrintfFlags = BuildPtoPrintfCompileFlags();
+    const std::string drcoOptFlags = BuildDrcoOptCompileFlags(graphHasMixWork);
     constexpr const char* warningFlags = "-Wall -Werror";
     int ret = snprintf_s(ccecCmd.data(), CMD_SIZE_4K, CMD_SIZE_4K - 1,
                          "%s -c -O3 -g -x cce %s -std=c++17 "
@@ -206,6 +213,7 @@ static int CompileCoreMachine(const std::string& objFile, bool isCube, uint64_t 
                          "%s "
                          "%s "
                          "%s "
+                         "%s "
                          "-I%s/tileop/arch32 "
                          "-I%s/ "
                          "-I%s/include/tileop/arch32 "
@@ -214,9 +222,9 @@ static int CompileCoreMachine(const std::string& objFile, bool isCube, uint64_t 
                          BISHENG_PROGRAM_CMD, warningFlags, cc_opt.c_str(), simtCompileOption.c_str(),
                          std::to_string(tilingKey).c_str(), opType.c_str(), funcRawName.c_str(), headFile.c_str(),
                          requiresSimtMacro.c_str(), hasSubFunc.c_str(), coreType.c_str(), enableAicoreResolve.c_str(),
-                         ptoPrintfFlags.c_str(), includePath.c_str(), includePath.c_str(), GetPyptoLibPath().c_str(),
-                         GetPyptoLibPath().c_str(), objFile.c_str(), aicoreSrcFile.c_str(), davArch.c_str(),
-                         enableMainBlock.c_str());
+                         ptoPrintfFlags.c_str(), drcoOptFlags.c_str(), includePath.c_str(), includePath.c_str(),
+                         GetPyptoLibPath().c_str(), GetPyptoLibPath().c_str(), objFile.c_str(), aicoreSrcFile.c_str(),
+                         davArch.c_str(), enableMainBlock.c_str());
     if (ret < 0) {
         MACHINE_LOGE(HostBackEndErr::COMPILE_AICORE_FAILED, "Compile aicore construct cmd failed.");
         return ret;
@@ -374,7 +382,7 @@ bool DynamicKernelRequiresSimt(const std::map<uint64_t, Function*>& leafDict)
 
 int CompileAICoreKernel(std::map<uint64_t, Function*>& leafDict, dynamic::EncodeDevAscendFunctionParam& param,
                         const std::string& ccePath, const std::string& funcHash, const std::string& funcRawName,
-                        std::string& kernelPath, bool requiresSimt, bool enableSubFunc)
+                        std::string& kernelPath, bool requiresSimt, bool graphHasMixWork, bool enableSubFunc)
 {
     if (ccePath.empty()) {
         MACHINE_LOGE(DevCommonErr::FILE_ERROR, "No cce path.");
@@ -390,12 +398,13 @@ int CompileAICoreKernel(std::map<uint64_t, Function*>& leafDict, dynamic::Encode
     }
     std::deque<std::function<void(void)>> tasks;
     auto task = [&ccePath, &funcHash, &funcRawName, &leafDict, &param, &aic_obj, &aicoreSrcFile, &tilingKey,
-                 enableSubFunc, requiresSimt]() {
+                 enableSubFunc, requiresSimt, graphHasMixWork]() {
         // gen switch case func
         std::stringstream src_aic_obj;
         auto headFile = GenSubFuncCall(leafDict, CoreType::AIC, param, ccePath, tilingKey, src_aic_obj, enableSubFunc);
         std::string mid_aic_obj = ccePath + "mid_kernel_" + funcHash + "_aic_" + std::to_string(tilingKey) + ".o";
-        auto ret = CompileCoreMachine(mid_aic_obj, true, tilingKey, headFile, aicoreSrcFile, funcRawName, requiresSimt);
+        auto ret = CompileCoreMachine(mid_aic_obj, true, tilingKey, headFile, aicoreSrcFile, funcRawName, requiresSimt,
+                                      graphHasMixWork);
         ASSERT(HostBackEndErr::COMPILE_AICORE_FAILED, ret == 0)
             << "CompileCoreMachine failed with return code  " << ret;
         src_aic_obj << mid_aic_obj;
@@ -406,12 +415,12 @@ int CompileAICoreKernel(std::map<uint64_t, Function*>& leafDict, dynamic::Encode
     tasks.push_back(task);
 
     auto task1 = [&ccePath, &funcHash, &funcRawName, &leafDict, &param, &aiv_obj, &aicoreSrcFile, &tilingKey,
-                  enableSubFunc, requiresSimt]() {
+                  enableSubFunc, requiresSimt, graphHasMixWork]() {
         std::stringstream src_aiv_obj;
         auto headFile = GenSubFuncCall(leafDict, CoreType::AIV, param, ccePath, tilingKey, src_aiv_obj, enableSubFunc);
         std::string mid_aiv_obj = ccePath + "mid_kernel_" + funcHash + "_aiv_" + std::to_string(tilingKey) + ".o";
-        auto ret = CompileCoreMachine(mid_aiv_obj, false, tilingKey, headFile, aicoreSrcFile, funcRawName,
-                                      requiresSimt);
+        auto ret = CompileCoreMachine(mid_aiv_obj, false, tilingKey, headFile, aicoreSrcFile, funcRawName, requiresSimt,
+                                      graphHasMixWork);
         ASSERT(HostBackEndErr::COMPILE_AICORE_FAILED, ret == 0)
             << "CompileCoreMachine failed with return code  " << ret;
         src_aiv_obj << mid_aiv_obj;
