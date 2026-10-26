@@ -64,7 +64,15 @@ TileTensor CodeGenOpLiteNPU::BuildTileTensor(int paramIdx, const std::string& us
     tileTensor.magic = operandWithMagic[paramIdx];
     tileTensor.isInLoop = tileTensorShape.isInLoop;
 
-    tileTensor.dim = tileTensor.isConstant ? tileTensorShape.shape.size() : tileTensorShape.dynamicValidShape.size();
+    // Keep original dim source; empty dynamicValidShape means "unset", not rank-0.
+    // Fall back to rawShape so GM spill does not emit illegal Shape0Dim/Stride0Dim.
+    if (tileTensor.isConstant) {
+        tileTensor.dim = static_cast<int>(tileTensorShape.shape.size());
+    } else if (!tileTensorShape.dynamicValidShape.empty()) {
+        tileTensor.dim = static_cast<int>(tileTensorShape.dynamicValidShape.size());
+    } else {
+        tileTensor.dim = static_cast<int>(tileTensorShape.rawShape.size());
+    }
 
     tileTensor.dtype = operandDtype[paramIdx];
     tileTensor.bufType = operandType[paramIdx];
