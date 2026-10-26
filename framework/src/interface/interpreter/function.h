@@ -1673,9 +1673,23 @@ struct FunctionInterpreter {
                 ASSERT(ControlFlowScene::FUNC_SLOT_IO_COUNT_MISMATCH, func->GetIncast().size() == incastSlot.size());
                 for (size_t i = 0; i < func->GetIncast().size(); i++) {
                     int slot = incastSlot[i][0];
+                    auto tensor = func->GetIncast()[i];
+                    // A loop storage incast can alias an outcast before the first write to that storage.
+                    if (!slotDataViewDict_.count(slot)) {
+                        for (size_t j = 0; j < outcastSlot.size(); ++j) {
+                            if (tensor->GetRawTensor() == func->GetOutcast()[j]->GetRawTensor() &&
+                                std::find(outcastSlot[j].begin(), outcastSlot[j].end(), slot) != outcastSlot[j].end()) {
+                                auto data = LogicalTensorData::CreateEmpty(
+                                    tensor->Datatype(), tensor->GetShape(),
+                                    EvaluateValidShape(tensor->GetDynValidShape()),
+                                    EvaluateValidShape(tensor->GetRawTensor()->GetDynRawShape()));
+                                slotDataViewDict_[slot] = data->GetData()->GetRawData();
+                                break;
+                            }
+                        }
+                    }
                     ASSERT(ControlFlowScene::FUNC_SLOT_MISSING, slotDataViewDict_.count(slot))
                         << "missing slot=" << slot;
-                    auto tensor = func->GetIncast()[i];
                     auto offset = EvaluateOffset(tensor->GetOffset(), tensor->GetDynOffset());
                     auto validShape = EvaluateValidShape(tensor->GetDynValidShape());
                     auto rawShape = EvaluateValidShape(tensor->GetRawTensor()->GetDynRawShape());
