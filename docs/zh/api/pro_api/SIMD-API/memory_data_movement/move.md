@@ -50,22 +50,23 @@ pypto_pro.language.move(
 
   | 源 → 目的 | 分形要求 | 数据类型要求 |
   |---|---|---|
-  | L1 Buffer → L0A Buffer | 源支持ND、NZ、ZN、ZZ，目的固定为NZ。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2、DT_FP8E8M0。 |
-  | L1 Buffer → L0B Buffer | 源支持ND、NZ、ZN、ZZ，目的固定为ZN。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2、DT_FP8E8M0。 |
-  | UB → UB（目的Tile的shape不大于源Tile） | 不校验分形。 | 源与目的必须相同。<br>- 非ND → NZ：支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。<br>- ND → NZ：支持DT_INT8、DT_UINT8、DT_INT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
-  | UB → UB（目的Tile的shape大于源Tile） | ND → ND、NZ → NZ。 | 源与目的必须相同，支持DT_INT8、DT_INT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
-  | UB → L1 Buffer（目的Tile的shape不大于源Tile） | 源支持ND、NZ，目的不校验分形。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2、DT_FP8E8M0。 |
-  | UB → L1 Buffer（目的Tile的shape大于源Tile） | 源支持ND、NZ，目的不校验分形。 | 源与目的必须相同，支持DT_INT8、DT_INT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
+  | L1 Buffer → L0A/L0B Buffer（不配置offset） | 源支持ND、NZ、ZN、ZZ；L0A目的固定为NZ，L0B目的固定为ZN。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2、DT_FP8E8M0。 |
+  | L1 Buffer → L0A/L0B Buffer（配置offset） | L0A支持ND/NZ/ZN → NZ，L0B支持NZ/ZN → ZN。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2、DT_FP8E8M0。 |
+  | UB → UB（不配置offset） | 支持ND → ND、NZ → NZ、ND → NZ。 | 源与目的必须相同。<br>- ND → ND、NZ → NZ：支持DT_INT8、DT_INT16、DT_INT32、DT_UINT8、DT_UINT16、DT_UINT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。<br>- ND → NZ：支持DT_INT8、DT_UINT8、DT_INT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
+  | UB → UB（配置offset） | 支持ND → ND、NZ → NZ。 | 源与目的必须相同，支持DT_INT8、DT_INT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
+  | UB → L1 Buffer（不配置offset，或配置offset且目的Tile的shape不大于源Tile） | 源支持ND、NZ，目的不校验分形。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2、DT_FP8E8M0。 |
+  | UB → L1 Buffer（配置offset且目的Tile的shape大于源Tile） | 源支持ND、NZ，目的不校验分形。 | 源与目的必须相同，支持DT_INT8、DT_INT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
   | L1 Buffer → BiasTable Buffer | 目的layout固定为ND。 | 支持DT_INT32 → DT_INT32、DT_FP32 → DT_FP32、DT_FP16 → DT_FP32、DT_BF16 → DT_FP32。 |
   | L1 Buffer → Fixpipe Buffer | 不校验分形。 | 目的必须为DT_INT64或DT_UINT64，源数据类型不做限制。 |
   | L1 Buffer → L0A_MX Buffer | 源与目的分形均为ZZ。 | 源与目的必须相同，仅支持DT_FP8E8M0。 |
   | L1 Buffer → L0B_MX Buffer | 源与目的分形均为NN。 | 源与目的必须相同，仅支持DT_FP8E8M0。 |
-  | L0C Buffer → UB（不配置scale） | NZ → ND，NZ → DN，NZ → NZ。 | 支持DT_FP32 → DT_FP32/DT_FP16/DT_BF16，以及DT_INT32 → DT_INT32。 |
-  | L0C Buffer → UB（配置scale） | NZ → ND，NZ → DN，NZ → NZ。 | 支持DT_FP32 → DT_INT8/DT_UINT8/DT_HF8/DT_FP16/DT_BF16/DT_FP8E4M3FN/DT_FP32，以及DT_INT32 → DT_INT8/DT_UINT8/DT_FP16/DT_BF16。 |
-  | L0C Buffer → L1 Buffer（源与目的Tile的shape相同，不配置scale） | NZ → NZ、NZ → ND、NZ → DN。 | 支持DT_FP32 → DT_FP32/DT_FP16/DT_BF16，以及DT_INT32 → DT_INT32。 |
-  | L0C Buffer → L1 Buffer（源与目的Tile的shape相同，配置scale） | NZ → NZ、NZ → ND、NZ → DN。 | 支持DT_FP32 → DT_INT8/DT_UINT8/DT_FP16/DT_BF16/DT_HF8/DT_FP8E4M3FN，以及DT_INT32 → DT_INT8/DT_UINT8/DT_FP16/DT_BF16。 |
-  | L0C Buffer → L1 Buffer（源与目的Tile的shape不同，不配置scale） | NZ → NZ。 | 支持DT_FP32 → DT_FP32/DT_FP16/DT_BF16，以及DT_INT32 → DT_INT32。 |
-  | L0C Buffer → L1 Buffer（源与目的Tile的shape不同，配置scale） | NZ → NZ。 | 支持DT_FP32 → DT_INT8/DT_UINT8/DT_FP16/DT_BF16/DT_HF8/DT_FP8E4M3FN，以及DT_INT32 → DT_INT8/DT_UINT8/DT_FP16/DT_BF16。 |
+  | L0C Buffer → UB（不配置offset，不配置scale） | NZ → ND，NZ → DN，NZ → NZ。 | 支持DT_FP32 → DT_FP32/DT_FP16/DT_BF16，以及DT_INT32 → DT_INT32。 |
+  | L0C Buffer → UB（配置offset，不配置scale） | NZ → ND，NZ → NZ。 | 支持DT_FP32 → DT_FP32/DT_FP16/DT_BF16，以及DT_INT32 → DT_INT32。 |
+  | L0C Buffer → UB（不配置offset，配置scale） | NZ → ND，NZ → DN，NZ → NZ。 | 支持DT_FP32 → DT_INT8/DT_UINT8/DT_HF8/DT_FP16/DT_BF16/DT_FP8E4M3FN/DT_FP32，以及DT_INT32 → DT_INT8/DT_UINT8/DT_FP16/DT_BF16。 |
+  | L0C Buffer → L1 Buffer（不配置offset，不配置scale） | NZ → NZ、NZ → ND、NZ → DN。 | 支持DT_FP32 → DT_FP32/DT_FP16/DT_BF16，以及DT_INT32 → DT_INT32。 |
+  | L0C Buffer → L1 Buffer（不配置offset，配置scale） | NZ → NZ、NZ → ND、NZ → DN。 | 支持DT_FP32 → DT_INT8/DT_UINT8/DT_FP16/DT_BF16/DT_HF8/DT_FP8E4M3FN，以及DT_INT32 → DT_INT8/DT_UINT8/DT_FP16/DT_BF16。 |
+  | L0C Buffer → L1 Buffer（配置offset，不配置scale） | NZ → NZ。 | 支持DT_FP32 → DT_FP32/DT_FP16/DT_BF16，以及DT_INT32 → DT_INT32。 |
+  | L0C Buffer → L1 Buffer（配置offset，配置scale） | NZ → NZ。 | 支持DT_FP32 → DT_INT8/DT_UINT8/DT_FP16/DT_BF16/DT_HF8/DT_FP8E4M3FN，以及DT_INT32 → DT_INT8/DT_UINT8/DT_FP16/DT_BF16。 |
 
   UB → L1 Buffer 仅执行按字节物理拷贝，不做layout转换。源UB Tile为ND时，禁止直接用layout=NZ/ZN的L1 Tile承接，会产生错误分形数据。必须先通过pypto_pro.language.move在UB内将ND转换为NZ（UB → UB），再写入L1 Buffer的NZ/ZN Tile，正确用法参见[UB数据转置写入L1 Buffer](#ub数据转置写入l1-buffer)。<br><br>
 

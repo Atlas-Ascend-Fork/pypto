@@ -13,7 +13,16 @@
 
 from __future__ import annotations
 
-__all__ = ["_get_span_or_capture", "_is_int", "_normalize_expr", "_normalize_shape", "_to_make_tuple"]
+__all__ = [
+    "_const_int_value",
+    "_get_span_or_capture",
+    "_is_int",
+    "_normalize_expr",
+    "_normalize_shape",
+    "_to_make_tuple",
+    "require_const_int",
+    "require_int",
+]
 
 
 from collections.abc import Sequence
@@ -22,7 +31,62 @@ import inspect
 from pypto.pypto_impl import ir as _ir
 from pypto.pypto_impl.ir import DataType
 
-from .._errors import InvalidType
+from .._errors import InvalidType, InvalidVal
+
+
+def _const_int_value(value: object) -> int | None:
+    """Return a compile-time integer value, or ``None`` for a runtime expression."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, _ir.ConstInt):
+        return value.value
+    return None
+
+
+def require_const_int(
+    value: object,
+    *,
+    subject: str,
+    lower_bound: int | None = None,
+    upper_bound: int | None = None,
+) -> int:
+    """Require a compile-time integer and validate its inclusive bounds."""
+    const_value = _const_int_value(value)
+    if const_value is None:
+        raise InvalidType(f"{subject} must be a compile-time integer constant")
+    if lower_bound is not None and const_value < lower_bound:
+        raise InvalidVal(f"{subject} must be at least {lower_bound}, got {const_value}")
+    if upper_bound is not None and const_value > upper_bound:
+        raise InvalidVal(f"{subject} must be at most {upper_bound}, got {const_value}")
+    return const_value
+
+
+def require_int(
+    value: object,
+    *,
+    subject: str,
+    lower_bound: int | None = None,
+    upper_bound: int | None = None,
+) -> int | None:
+    """Require an integer scalar and validate constant values when available.
+
+    Runtime integer expressions are accepted and return ``None`` because their
+    bounds cannot be checked while constructing the IR.
+    """
+    if _const_int_value(value) is not None:
+        return require_const_int(
+            value,
+            subject=subject,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
+        )
+
+    value_type = getattr(value, "type", None)
+    if isinstance(value_type, _ir.ScalarType) and value_type.dtype.is_int():
+        return None
+    raise InvalidType(f"{subject} must be an integer scalar")
 
 
 def _get_span_or_capture(span: _ir.Span | None = None, frame_offset: int = 1) -> _ir.Span:

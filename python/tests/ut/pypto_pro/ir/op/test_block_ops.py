@@ -452,6 +452,157 @@ def test_move_rejects_non_2d_offset():
         main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
+@pytest.mark.parametrize(
+    "offset,error,match",
+    [
+        ([-1, 0], InvalidVal, r"move: offset\[0\] must be at least 0"),
+        ([0, -1], InvalidVal, r"move: offset\[1\] must be at least 0"),
+        ([8.1, 0], InvalidType, r"move: offset\[0\] must be an integer scalar"),
+    ],
+)
+def test_move_rejects_invalid_offset_element(offset, error, match):
+    with pytest.raises(error, match=match):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            tile_type = pl.TileType(
+                shape=[16, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            src = pl.make_tile(tile_type, addr=0x0000)
+            dst = pl.make_tile(tile_type, addr=0x1000)
+            pl.move(dst, src, offset)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("offset", [[48, 8], [8, 40]])
+def test_move_allows_static_window_to_exceed_shape(offset):
+    @pl.jit(auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        src_type = pl.TileType(
+            shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+        )
+        dst_type = pl.TileType(
+            shape=[32, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+        )
+        src = pl.make_tile(src_type, addr=0x0000)
+        dst = pl.make_tile(dst_type, addr=0x4000)
+        pl.move(dst, src, offset)
+
+    main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_move_allows_window_that_fits_runtime_valid_shape():
+    @pl.jit(arch="a5", auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        src_type = pl.TileType(
+            shape=[128, 192], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ
+        )
+        dst_type = pl.TileType(
+            shape=[128, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left, layout=pl.NZ
+        )
+        src = pl.make_tile(src_type, addr=0x0000)
+        dst = pl.make_tile(dst_type, addr=0x0000)
+        pl.set_validshape(dst, [128, 96])
+        pl.move(dst, src, [0, 96])
+
+    main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
+
+
+@pytest.mark.parametrize("offset", [[48, 8], [8, 40]])
+def test_insert_allows_static_window_to_exceed_shape(offset):
+    @pl.jit(auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        src_type = pl.TileType(
+            shape=[32, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+        )
+        dst_type = pl.TileType(
+            shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+        )
+        src = pl.make_tile(src_type, addr=0x0000)
+        dst = pl.make_tile(dst_type, addr=0x4000)
+        pl.insert(dst, src, offset)
+
+    main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_insert_transpose_checks_destination_axes_in_source_order():
+    @pl.jit(arch="a5", auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        src_type = pl.TileType(
+            shape=[64, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, layout=pl.NZ
+        )
+        dst_type = pl.TileType(
+            shape=[32, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.ZN
+        )
+        src = pl.make_tile(src_type, addr=0x0000)
+        dst = pl.make_tile(dst_type, addr=0x0000)
+        pl.insert(dst, src, [0, 16])
+
+    main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_insert_accepts_tile_slice_window():
+    @pl.jit(arch="a5", auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        src_type = pl.TileType(
+            shape=[16, 4096], dtype=pl.DT_INT8, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+        )
+        dst_type = pl.TileType(
+            shape=[64, 256], dtype=pl.DT_INT8, target_memory=pl.MemorySpace.Mat, layout=pl.NZ
+        )
+        src = pl.make_tile(src_type, addr=0x0000)
+        dst = pl.make_tile(dst_type, addr=0x0000)
+        pl.insert(dst, src[:, :256], [0, 0])
+
+    main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("dtype", [pl.DT_FP4E2M1, pl.DT_FP4E1M2])
+def test_vec_nd_fp4_extract_requires_aligned_column_offset(dtype):
+    with pytest.raises(InvalidVal, match=r"move: offset\[1\] must be a multiple of 64, got 32"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[64, 128], dtype=dtype, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            dst_type = pl.TileType(
+                shape=[32, 64], dtype=dtype, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            src = pl.make_tile(src_type, addr=0x0000)
+            dst = pl.make_tile(dst_type, addr=0x2000)
+            pl.move(dst, src, [0, 32])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize(
+    "offset,error,match",
+    [
+        ([-1, 0], InvalidVal, r"insert: offset\[0\] must be at least 0"),
+        ([0, -1], InvalidVal, r"insert: offset\[1\] must be at least 0"),
+        ([8.1, 0], InvalidType, r"insert: offset\[0\] must be an integer scalar"),
+    ],
+)
+def test_insert_rejects_invalid_offset_element(offset, error, match):
+    with pytest.raises(error, match=match):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[16, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            dst_type = pl.TileType(
+                shape=[32, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            src = pl.make_tile(src_type, addr=0x0000)
+            dst = pl.make_tile(dst_type, addr=0x1000)
+            pl.insert(dst, src, offset)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
 def test_acc_to_mat_insert_preserves_scale_relu_and_phase():
     @pl.jit(auto_mutex=False)
     def main(_jit_entry: pl.DT_INT64):
@@ -689,6 +840,133 @@ def test_vec_store_tile_rejects_relu_pre_mode():
         main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
+@pytest.mark.parametrize(
+    "src_layout,dst_layout",
+    [
+        (pl.NZ, pl.ND),
+        (pl.ND, pl.DN),
+        (pl.DN, pl.ND),
+        (pl.DN, pl.DN),
+        (pl.DN, pl.NZ),
+    ],
+)
+def test_vec_to_vec_move_rejects_unsupported_layout_conversion(src_layout, dst_layout):
+    with pytest.raises(InvalidType, match="move: unsupported layout/dtype combination"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[32, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=src_layout
+            )
+            dst_type = pl.TileType(
+                shape=[32, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=dst_layout
+            )
+            src = pl.make_tile(src_type, addr=0x0000)
+            dst = pl.make_tile(dst_type, addr=0x2000)
+            pl.move(dst, src)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_vec_to_vec_move_with_offset_rejects_tmov_only_layout_conversion():
+    """ND -> NZ is a TMOV conversion; an offset selects TEXTRACT instead."""
+    with pytest.raises(InvalidType, match="move: unsupported layout/dtype combination"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            dst_type = pl.TileType(
+                shape=[32, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.NZ
+            )
+            src = pl.make_tile(src_type, addr=0x0000)
+            dst = pl.make_tile(dst_type, addr=0x4000)
+            pl.move(dst, src, [0, 0])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize(
+    "src_layout,dst_memory,dst_layout",
+    [
+        (pl.ZZ, pl.MemorySpace.Left, pl.NZ),
+        (pl.ND, pl.MemorySpace.Right, pl.ZN),
+        (pl.ZZ, pl.MemorySpace.Right, pl.ZN),
+    ],
+)
+def test_mat_to_cube_move_with_offset_rejects_tmov_only_layout_conversion(src_layout, dst_memory, dst_layout):
+    """These Mat-to-Left/Right layouts are supported by TMOV but rejected by TEXTRACT."""
+    with pytest.raises(InvalidType, match="move: unsupported layout/dtype combination"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[64, 32],
+                dtype=pl.DT_FP8E8M0,
+                target_memory=pl.MemorySpace.Mat,
+                layout=src_layout,
+            )
+            dst_type = pl.TileType(
+                shape=[32, 32],
+                dtype=pl.DT_FP8E8M0,
+                target_memory=dst_memory,
+                layout=dst_layout,
+            )
+            src = pl.make_tile(src_type, addr=0x0000)
+            dst = pl.make_tile(dst_type, addr=0x0000)
+            pl.move(dst, src, [0, 0])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
+
+
+def test_vec_to_vec_move_rejects_unsupported_int64_dtype():
+    with pytest.raises(InvalidType, match="move: unsupported layout/dtype combination"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            tile_type = pl.TileType(
+                shape=[32, 32], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            src = pl.make_tile(tile_type, addr=0x0000)
+            dst = pl.make_tile(tile_type, addr=0x2000)
+            pl.move(dst, src)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_vec_to_mat_move_allows_physical_copy_to_different_layout():
+    @pl.jit(auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        src_type = pl.TileType(
+            shape=[32, 32], dtype=pl.DT_INT8, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+        )
+        dst_type = pl.TileType(
+            shape=[32, 32], dtype=pl.DT_INT8, target_memory=pl.MemorySpace.Mat, layout=pl.NZ
+        )
+        src = pl.make_tile(src_type, addr=0x0000)
+        dst = pl.make_tile(dst_type, addr=0x0000)
+        pl.move(dst, src)
+
+    main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_vec_to_mat_insert_allows_physical_copy_to_different_layout():
+    @pl.jit(auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        src_type = pl.TileType(
+            shape=[32, 32], dtype=pl.DT_INT8, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+        )
+        dst_type = pl.TileType(
+            shape=[64, 64], dtype=pl.DT_INT8, target_memory=pl.MemorySpace.Mat, layout=pl.NZ
+        )
+        src = pl.make_tile(src_type, addr=0x0000)
+        dst = pl.make_tile(dst_type, addr=0x0000)
+        pl.insert(dst, src, [0, 0])
+
+    main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
 def test_acc_to_mat_move_rejects_unsupported_layout():
     with pytest.raises(InvalidType, match="unsupported layout/dtype combination"):
 
@@ -719,12 +997,30 @@ def test_acc_to_mat_move_rejects_unsupported_dtype_conversion():
 
 @pytest.mark.parametrize("layout", [pl.ND, pl.DN])
 def test_acc_to_mat_extract_rejects_non_nz_destination_layout(layout):
-    with pytest.raises(InvalidType, match="extract: unsupported layout/dtype combination"):
+    with pytest.raises(InvalidType, match="move: unsupported layout/dtype combination"):
 
         @pl.jit(auto_mutex=False)
         def main(_jit_entry: pl.DT_INT64):
             src_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc, layout=pl.NZ)
             dst_type = pl.TileType(shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=layout)
+            src = pl.make_tile(src_type, addr=0x0000)
+            dst = pl.make_tile(dst_type, addr=0x4000)
+            pl.move(dst, src, [0, 0])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
+
+
+def test_acc_to_vec_extract_rejects_dn_destination_layout():
+    with pytest.raises(InvalidType, match="move: unsupported layout/dtype combination"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc, layout=pl.NZ
+            )
+            dst_type = pl.TileType(
+                shape=[32, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.DN
+            )
             src = pl.make_tile(src_type, addr=0x0000)
             dst = pl.make_tile(dst_type, addr=0x4000)
             pl.move(dst, src, [0, 0])

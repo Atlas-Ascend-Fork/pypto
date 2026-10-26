@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-__all__ = ["_const_int_value", "_is_const_expr", "_is_const_int"]
+__all__ = ["_is_const_expr"]
 
 from pypto.pypto_impl import ir
 
@@ -24,21 +24,3 @@ def _is_const_expr(expr: object) -> bool:
         isinstance(expr, ir.MakeTuple)
         and all(_is_const_expr(element) for element in expr.elements)
     )
-
-
-def _is_const_int(value: object) -> bool:
-    """Check if a value is a compile-time constant integer."""
-    if isinstance(value, (int, ir.ConstInt)):
-        return True
-    return isinstance(value, ir.Neg) and isinstance(value.operand, ir.ConstInt)
-
-
-def _const_int_value(value: object) -> int | None:
-    """Extract integer value from a compile-time constant, or None."""
-    if isinstance(value, int):
-        return value
-    if isinstance(value, ir.ConstInt):
-        return value.value
-    if isinstance(value, ir.Neg) and isinstance(value.operand, ir.ConstInt):
-        return -value.operand.value
-    return None

@@ -312,7 +312,6 @@ def move(
     Acc (L0C)    Mat (L1)     fix
     Mat (L1)     Left (L0A)   mte1
     Mat (L1)     Right (L0B)  mte1
-    Mat (L1)     Vec (UB)     v
     Vec (UB)     Mat (L1)     mte3
     others       —            v
     ============ ============ ========

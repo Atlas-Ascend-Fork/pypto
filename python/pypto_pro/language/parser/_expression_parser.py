@@ -18,7 +18,7 @@ from pypto.pypto_impl import ir
 from pypto.pypto_impl.ir import DataType
 from pypto_pro.ir import op as ir_op
 from pypto_pro.ir._operators import make_binary as _make_binary
-from pypto_pro.ir._utils import _normalize_expr, _to_make_tuple
+from pypto_pro.ir._utils import _const_int_value, _normalize_expr, _to_make_tuple
 
 from ..._errors import (
     InvalidFormat,
@@ -34,7 +34,7 @@ from ..._errors import (
 )
 from ._expr_evaluator import ExprEvaluator
 from ._tuple_type_registry import TupleTypeInfo
-from ._utils import _const_int_value, _is_const_expr
+from ._utils import _is_const_expr
 from .diagnostics import (
     check_fits_dtype,
     make_const_int,

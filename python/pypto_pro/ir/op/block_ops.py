@@ -43,7 +43,13 @@ from pypto.pypto_impl.ir import (
     TilePad,
 )
 from pypto.pypto_impl.ir import TileType as _IRTileType  # IR-level TileType (C++ binding);
-from pypto_pro.ir._utils import _is_int, _normalize_expr, _to_make_tuple
+from pypto_pro.ir._utils import (
+    _const_int_value,
+    _is_int,
+    _normalize_expr,
+    _to_make_tuple,
+    require_int,
+)
 
 from ..._errors import (
     CapacityUnknown,
@@ -60,7 +66,6 @@ from ..._errors import (
     PyptoProError,
     _warn_located,
     message_of,
-    warn_check_skipped,
 )
 
 # NOTE: a DSL-descriptor dataclass named ``TileType`` is defined later in this
@@ -116,30 +121,81 @@ def _compute_absolute_offsets(
 
 
 def _const_int_attr(value: int | Expr, name: str) -> int:
-    if isinstance(value, int):
-        return value
-    const_value = getattr(value, "value", None)
-    if isinstance(const_value, int):
-        return const_value
-    raise InvalidVal(f"block op requires constant integer {name}")
+    const_value = _const_int_value(value)
+    if const_value is None:
+        raise InvalidVal(f"block op requires constant integer {name}")
+    return const_value
 
 
-def _validate_offset_bounds(
+def _validate_offsets(
     op_name: str,
-    src_shape: Sequence[Expr],
+    offsets: Sequence[int | Expr],
+    shape: Sequence[int | Expr],
+    *,
+    check_bounds: bool = True,
+) -> None:
+    """Validate offset rank, values, and optionally static starting-coordinate bounds."""
+    if len(offsets) != len(shape):
+        raise InvalidShape(
+            f"{op_name}: Tensor rank {len(shape)} requires exactly {len(shape)} offsets, got {len(offsets)}"
+        )
+
+    for i, (off, limit) in enumerate(zip(offsets, shape, strict=True)):
+        limit_val = _const_int_value(limit) if check_bounds else None
+        upper_bound = limit_val - 1 if limit_val is not None else None
+        require_int(
+            off,
+            subject=f"{op_name}: offset[{i}]",
+            lower_bound=0,
+            upper_bound=upper_bound,
+        )
+
+
+def _validate_offset_alignment(
+    op_name: str,
+    offsets: Sequence[int | Expr],
+    alignments: Sequence[int],
+) -> None:
+    """Validate statically known offsets against per-axis element alignments."""
+    for i, (off, alignment) in enumerate(zip(offsets, alignments, strict=True)):
+        if alignment <= 1:
+            continue
+        off_val = _const_int_value(off)
+        if off_val is not None and off_val % alignment != 0:
+            raise InvalidVal(f"{op_name}: offset[{i}] must be a multiple of {alignment}, got {off_val}")
+
+
+def _validate_transfer_offset_alignment(
+    op_name: str,
+    transfer_kind: str,
+    src_tile: Expr,
+    dst_tile: Expr,
     offsets: Sequence[int | Expr],
 ) -> None:
-    """Validate that offset does not exceed src_shape bounds at compile time.
+    """Validate TINSERT/TEXTRACT offsets using the transfer path's element alignments."""
+    src_mem = src_tile.type.memref.memory_space_
+    dst_mem = dst_tile.type.memref.memory_space_
+    src_layout = _tile_layout(src_tile.type)
+    dst_layout = _tile_layout(dst_tile.type)
+    layouts = (src_layout, dst_layout)
+    c0 = 256 // int(src_tile.type.dtype.get_bit())
+    alignments = (1, 1)
 
-    Only checks dimensions where both offset and src_shape are compile-time constants.
-    Note: offset + access_shape exceeding src_shape is allowed (valid_shape handles tail blocks).
-    """
-    for i, (off, src) in enumerate(zip(offsets, src_shape)):
-        off_val = off if isinstance(off, int) else getattr(off, "value", None)
-        src_val = getattr(src, "value", None)
-        if isinstance(off_val, int) and isinstance(src_val, int):
-            if off_val >= src_val:
-                raise InvalidShape(f"{op_name}: offset[{i}] ({off_val}) exceeds source shape[{i}] ({src_val})")
+    if (src_mem, dst_mem) == (MemorySpace.Vec, MemorySpace.Mat):
+        alignments = (1, c0)
+    elif (src_mem, dst_mem) == (MemorySpace.Vec, MemorySpace.Vec):
+        is_fp4_extract = (
+            transfer_kind == "extract"
+            and layouts == (TensorLayout.ND, TensorLayout.ND)
+            and src_tile.type.dtype in (
+                DataType.FP4E2M1,
+                DataType.FP4E1M2,
+            )
+        )
+        if layouts == (TensorLayout.NZ, TensorLayout.NZ) or is_fp4_extract:
+            alignments = (1, c0)
+
+    _validate_offset_alignment(op_name, offsets, alignments)
 
 
 def _validate_nz_transfer_axes(
@@ -203,12 +259,11 @@ def _ir_load(
     tile_ndim = len(dst_tile.type.shape)
     tile_dims, is_transpose = _resolve_order(order, tensor_ndim, tile_ndim, op_name)
 
-    tensor_ndim, tile_shape, tile_dims, _ = _validate_load_operands(
-        dst_tile, src_tensor, offsets_tuple, tile_dims, op_name
-    )
+    _, tile_dims, _ = _validate_load_operands(dst_tile, src_tensor, tile_dims, op_name)
+    _validate_offsets(op_name, offsets_tuple.elements, src_tensor.type.shape)
     _validate_nz_transfer_axes(src_tensor.type, tile_dims, op_name)
     nd_inner = _validate_merged_row_load(dst_tile, src_tensor, tile_dims, op_name, order=order)
-    if nd_inner is not None and _try_get_const_offset(offsets_tuple.elements[tile_dims[1]]) != 0:
+    if nd_inner is not None and _const_int_value(offsets_tuple.elements[tile_dims[1]]) != 0:
         raise InvalidArgument(f"{op_name}: a merged-row load's middle axis offset must be a compile-time zero")
 
     kwargs: dict[str, Any] = {}
@@ -220,10 +275,6 @@ def _ir_load(
     # explicitly supplied order, including the ordinary last-two-axes order.
     if order is not None and tile_dims is not None:
         kwargs["tile_dims"] = tile_dims
-    if isinstance(offsets, _ir_core.MakeTuple):
-        _validate_offset_bounds("load", src_tensor.type.shape, offsets.elements)
-    else:
-        _validate_offset_bounds("load", src_tensor.type.shape, offsets)
     _check_layout_dtype(op_name, src_tensor, dst_tile, is_transpose=is_transpose)
     return _ir_core.create_op_call(block_ir_op(op_name), [dst_tile, src_tensor, offsets_tuple], kwargs, actual_span)
 
@@ -250,15 +301,14 @@ def _ir_load_tile(
             f"rows span two tensor axes. Use pl.load with element offsets."
         )
 
-    tensor_ndim, tile_shape, tile_dims, access_size = _validate_load_operands(
+    tile_shape, tile_dims, access_size = _validate_load_operands(
         dst_tile,
         src_tensor,
-        offsets_tuple,
         tile_dims,
         op_name,
-        use_tile_absolute=True,
     )
     _validate_nz_transfer_axes(src_tensor.type, tile_dims, op_name)
+    _validate_offsets(op_name, offsets_tuple.elements, src_tensor.type.shape, check_bounds=False)
 
     abs_offsets = _compute_absolute_offsets(
         offsets_tuple,
@@ -267,8 +317,7 @@ def _ir_load_tile(
         actual_span,
         access_size=access_size,
     )
-    # Validate offset bounds at Python frontend level
-    _validate_offset_bounds("load_tile", src_tensor.type.shape, abs_offsets.elements)
+    _validate_offsets(op_name, abs_offsets.elements, src_tensor.type.shape)
     _check_layout_dtype("load_tile", src_tensor, dst_tile, is_transpose=is_transpose)
     kwargs: dict[str, Any] = {}
     if is_transpose:
@@ -361,16 +410,7 @@ def _ir_store(
     if order is not None and order != sorted(order):
         raise InvalidVal(f"{op_name}: order must be ascending, got {order}")
     _validate_nz_transfer_axes(dst_tensor.type, tile_dims, op_name)
-    _validate_offsets(
-        offsets_tuple,
-        tile_dims,
-        tile_shape,
-        dst_tensor.type.shape,
-        op_name,
-        access_size=access_size,
-    )
-
-    _validate_offset_bounds("store", dst_tensor.type.shape, offsets_tuple.elements)
+    _validate_offsets(op_name, offsets_tuple.elements, dst_tensor.type.shape)
 
     pre_quant_scalar, fp_tile = _resolve_scale_param(scale, actual_span)
     is_quant = pre_quant_scalar is not None or fp_tile is not None
@@ -440,16 +480,7 @@ def _ir_store_tile(
     if order is not None and order != sorted(order):
         raise InvalidVal(f"{op_name}: order must be ascending, got {order}")
     _validate_nz_transfer_axes(dst_tensor.type, tile_dims, op_name)
-    _validate_offsets(
-        offsets_tuple,
-        tile_dims,
-        tile_shape,
-        dst_tensor.type.shape,
-        op_name,
-        use_tile_absolute=True,
-        access_size=access_size,
-    )
-
+    _validate_offsets(op_name, offsets_tuple.elements, dst_tensor.type.shape, check_bounds=False)
     abs_offsets = _compute_absolute_offsets(
         offsets_tuple,
         tile_shape,
@@ -457,7 +488,7 @@ def _ir_store_tile(
         actual_span,
         access_size=access_size,
     )
-    _validate_offset_bounds("store_tile", dst_tensor.type.shape, abs_offsets.elements)
+    _validate_offsets(op_name, abs_offsets.elements, dst_tensor.type.shape)
 
     pre_quant_scalar, fp_tile = _resolve_scale_param(scale, actual_span)
     is_quant = pre_quant_scalar is not None or fp_tile is not None
@@ -609,21 +640,12 @@ def _tile_shape_ints(tile_type: "_IRTileType") -> list[int] | None:
     """Return the compile-time integer shape of a TileType, or None if any
     dimension is not a static constant (skip check — never over-rejects).
 
-    bool is excluded (same convention as _static_dim): without this, a
+    bool is excluded (same convention as _const_int_value): without this, a
     True/False dim would slip through ``isinstance(dim, int)`` as 1/0 and be
     compared as a real static dim.
     """
-    shape: list[int] = []
-    for dim in tile_type.shape:
-        if isinstance(dim, bool):
-            return None
-        if isinstance(dim, ConstInt):
-            shape.append(int(dim.value))
-        elif isinstance(dim, int):
-            shape.append(int(dim))
-        else:
-            return None  # symbolic / dynamic dim — cannot check statically
-    return shape
+    shape = [_const_int_value(dim) for dim in tile_type.shape]
+    return None if any(dim is None for dim in shape) else shape
 
 
 def _check_move_shape_compat(
@@ -647,11 +669,8 @@ def _check_move_shape_compat(
       test_insert_zn_transpose_left/right.py and
       test_fa_perf_tkv_preload_nbuf.py:221 where Right[TKV,TD] ← Mat[TD,TKV]).
 
-    NOTE: ``offset[i] + dst[i] <= src[i]`` is deliberately NOT checked here.
-    ``set_validshape`` can narrow runtime shapes below declared shapes, so
-    offset-bounds on declared shapes would false-reject legal cases (e.g.
-    test_quant_lightning_indexer_vf.py:606). The ``_validate_offset_bounds``
-    helper above guards the no-acc_to_vec_mode path separately.
+    The complete ``offset + transfer extent`` window is not checked here because
+    the effective extent may be set dynamically. Runtime DFX handles that bound.
     """
     out_type = out.type
     src_type = src.type
@@ -760,6 +779,11 @@ def _ir_move(
     phase: STPhase | None = None,
 ) -> Expr:
     actual_span = span or _span()
+    if not isinstance(dst_tile.type, _ir_core.TileType):
+        raise InvalidType(f"move: dst must be a Tile, got {type(dst_tile.type).__name__}")
+    if not isinstance(src_tile.type, _ir_core.TileType):
+        raise InvalidType(f"move: src must be a Tile, got {type(src_tile.type).__name__}")
+
     offset_tuple = None
     if offset is not None:
         offset_tuple = _to_make_tuple(offset, actual_span)
@@ -781,10 +805,6 @@ def _ir_move(
             phase=phase,
         )
 
-    if not isinstance(dst_tile.type, _ir_core.TileType):
-        raise InvalidType(f"move: dst must be a Tile, got {type(dst_tile.type).__name__}")
-    if not isinstance(src_tile.type, _ir_core.TileType):
-        raise InvalidType(f"move: src must be a Tile, got {type(src_tile.type).__name__}")
     _dst_mem = getattr(getattr(dst_tile.type, "memref", None), "memory_space_", None)
     _src_mem = getattr(getattr(src_tile.type, "memref", None), "memory_space_", None)
     _supported_move_paths = {
@@ -824,7 +844,7 @@ def _ir_move(
 
     _check_move_shape_compat(dst_tile, src_tile, offset_tuple, acc_to_vec_mode, actual_span)
     if offset_tuple is not None:
-        _validate_offset_bounds("move", src_tile.type.shape, offset_tuple.elements)
+        _validate_offsets("move", offset_tuple.elements, src_tile.type.shape)
 
     pre_quant_scalar, fp_tile = _resolve_scale_param(scale, actual_span)
     if fp_tile is not None and (_src_mem, _dst_mem) not in {
@@ -835,15 +855,20 @@ def _ir_move(
 
     is_quant = pre_quant_scalar is not None or fp_tile is not None
     is_acc_to_mat = _src_mem == MemorySpace.Acc and _dst_mem == MemorySpace.Mat
-    transfer_kind = "extract" if is_acc_to_mat and offset_tuple is not None else "move"
-    _check_layout_dtype(transfer_kind, src_tile, dst_tile, quant=is_quant)
-
     if offset_tuple is not None and is_quant and not is_acc_to_mat:
         raise NotSupported(
             "move: offset cannot be combined with scale — the fixpipe quantization "
             "paths (per-channel Tile or per-tensor scalar) do not support sub-block "
             "extraction offsets"
         )
+
+    # The CCE backend lowers every non-insert move with an offset to TEXTRACT.
+    # Its layout/dtype matrix differs from plain TMOV (notably Vec -> Vec does
+    # not perform ND -> NZ conversion), so validate it with the extract table.
+    transfer_kind = "extract" if offset_tuple is not None else "move"
+    _check_layout_dtype(transfer_kind, src_tile, dst_tile, quant=is_quant)
+    if offset_tuple is not None:
+        _validate_transfer_offset_alignment("move", "extract", src_tile, dst_tile, offset_tuple.elements)
 
     _dual_modes = {AccToVecMode.DualModeSplitM, AccToVecMode.DualModeSplitN}
     if is_quant and acc_to_vec_mode in _dual_modes:
@@ -906,10 +931,13 @@ def _ir_insert(
     ):
         raise NotSupported("insert: scale, relu_pre_mode, and phase are only supported for Acc-to-Mat inserts")
     row, col = _normalize_2d_sequence(offset, "offset", actual_span)
-    # Validate offset bounds at Python frontend level
-    _validate_offset_bounds("insert", dst_tile.type.shape, [row, col])
+    dst_shape = dst_tile.type.shape
+    if _is_fractal_transpose(_tile_layout(dst_tile.type), _tile_layout(src_tile.type)):
+        dst_shape = dst_shape[::-1]
+    _validate_offsets("insert", [row, col], dst_shape)
     pre_quant_scalar, fp_tile = _resolve_scale_param(scale, actual_span)
     _check_layout_dtype("insert", src_tile, dst_tile, quant=pre_quant_scalar is not None or fp_tile is not None)
+    _validate_transfer_offset_alignment("insert", "insert", src_tile, dst_tile, (row, col))
 
     kwargs: dict[str, Any] = {}
     if relu_pre_mode is not None:
@@ -1215,24 +1243,12 @@ def _check_scalar_access_supported(op_name: str, container: Expr, span: Span) ->
         )
 
 
-def _try_get_const_offset(off: Expr) -> int | None:
-    """Extract compile-time constant offset value, or None if dynamic."""
-    if isinstance(off, ConstInt):
-        return off.value
-    if isinstance(off, _ir_core.Neg) and isinstance(getattr(off, "operand", None), ConstInt):
-        return -off.operand.value
-    return None
-
-
 def _validate_load_operands(
     out: Expr,
     tensor: Expr,
-    offsets_tuple: _ir_core.MakeTuple,
     tile_dims: list[int] | None,
     op_name: str,
-    *,
-    use_tile_absolute: bool = False,
-) -> tuple[int, list[Any], list[int] | None, Any | None]:
+) -> tuple[list[Any], list[int] | None, Any | None]:
     if not isinstance(out.type, _ir_core.TileType):
         raise InvalidType(f"{op_name}: dst must be a Tile, got {type(out.type).__name__}")
     dst_mem = getattr(getattr(out.type, "memref", None), "memory_space", None)
@@ -1245,16 +1261,7 @@ def _validate_load_operands(
     tensor_ndim = len(tensor.type.shape)
     tile_shape = list(out.type.shape)
     tile_dims, access_size = _validate_tile_dims(tile_dims, tensor_ndim, tile_shape, op_name)
-    _validate_offsets(
-        offsets_tuple,
-        tile_dims,
-        tile_shape,
-        tensor.type.shape,
-        op_name,
-        use_tile_absolute=use_tile_absolute,
-        access_size=access_size,
-    )
-    return tensor_ndim, tile_shape, tile_dims, access_size
+    return tile_shape, tile_dims, access_size
 
 
 def _validate_merged_row_load(
@@ -1296,7 +1303,7 @@ def _validate_merged_row_load(
     if int(tensor.type.dtype.get_bit()) not in (8, 16, 32):
         raise InvalidType(f"{op_name}: merged-row loads require 8, 16 or 32-bit elements")
     view = getattr(tensor.type, "tensor_view", None)
-    if view is not None and view.stride and _static_dim(view.stride[-1]) != 1:
+    if view is not None and view.stride and _const_int_value(view.stride[-1]) != 1:
         raise InvalidArgument(f"{op_name}: merged-row loads require a compile-time column stride of 1")
 
     tile_shape = list(out.type.shape)
@@ -1354,13 +1361,13 @@ def _validate_merged_row_load(
     # The merged axis is the Tile's rows as nd2nz writes them -- the ZN alias reverses the shape,
     # so it is that Tile's columns.
     merged_dim = tile_shape[1] if is_transposed else tile_shape[0]
-    rows = _static_dim(merged_dim)
+    rows = _const_int_value(merged_dim)
     if rows is None:
         raise InvalidShape(f"{op_name}: a 3-axis order needs a compile-time Tile row count, got {merged_dim}")
     if not 0 < rows <= 0xFFFF:
         raise InvalidShape(f"{op_name}: nd2nz destination row stride is 16-bit; got {rows} merged rows")
 
-    inner = _static_dim(tensor.type.shape[tile_dims[1]])
+    inner = _const_int_value(tensor.type.shape[tile_dims[1]])
     if inner is None:
         # Keep a dynamic middle extent for lowering. It splits the runtime valid
         # region into complete matrices and an optional partial final matrix.
@@ -1530,10 +1537,7 @@ def _resolve_order(
 
 
 def _validate_rank1_tensor_tile_shape(tile_shape: list[Any], op_name: str) -> Any:
-    shape_values = [
-        dim.value if isinstance(dim, ConstInt) else dim if isinstance(dim, int) else None
-        for dim in tile_shape
-    ]
+    shape_values = [_const_int_value(dim) for dim in tile_shape]
     if 1 not in shape_values:
         raise InvalidShape(
             f"{op_name}: rank-1 Tensor requires a rank-2 Tile with one dimension equal to 1, "
@@ -1577,51 +1581,6 @@ def _validate_tile_dims(
         if dim < 0 or dim >= tensor_ndim:
             raise InvalidShape(f"{op_name}: order axis {dim} is out of range for Tensor rank {tensor_ndim}")
     return tile_dims, None
-
-
-def _validate_offsets(
-    offsets_tuple: _ir_core.MakeTuple,
-    tile_dims: list[int] | None,
-    tile_shape: list[Any],
-    tensor_shape: Sequence[Any],
-    op_name: str,
-    *,
-    use_tile_absolute: bool = False,
-    access_size: Any | None = None,
-) -> None:
-    if len(tensor_shape) != len(offsets_tuple.elements):
-        raise InvalidShape(
-            f"{op_name}: Tensor rank {len(tensor_shape)} requires exactly {len(tensor_shape)} offsets, "
-            f"got {len(offsets_tuple.elements)}"
-        )
-    for i, off in enumerate(offsets_tuple.elements):
-        off_val = _try_get_const_offset(off)
-        if off_val is not None and off_val < 0:
-            raise NotSupported(f"{op_name}: offsets[{i}] is {off_val}, negative offset is not allowed")
-        if off_val is None:
-            warn_check_skipped(f"{op_name}: offsets[{i}] is dynamic; negative-offset and bounds checks were skipped")
-            continue
-        if access_size is not None:
-            t_size = access_size
-        elif tile_dims is not None and i in tile_dims:
-            pos = tile_dims.index(i)
-            if len(tile_dims) > len(tile_shape):
-                # Merged-row form: the Tile's rows span several tensor axes, so only the
-                # column axis maps to one Tile extent. The row axes still get their plain
-                # bounds check from _validate_offset_bounds.
-                if pos != len(tile_dims) - 1:
-                    continue
-                t_size = tile_shape[-1]
-            else:
-                t_size = tile_shape[pos]
-        else:
-            continue
-
-        t_dim = tensor_shape[i] if i < len(tensor_shape) else None
-        check_val = off_val * t_size.value if use_tile_absolute else off_val
-        label = f" (absolute offset {check_val})" if use_tile_absolute else ""
-        if isinstance(t_size, ConstInt) and isinstance(t_dim, ConstInt) and check_val >= t_dim.value:
-            raise InvalidShape(f"{op_name}: offsets[{i}]={off_val}{label} exceeds tensor dim {i} size {t_dim.value}")
 
 
 def _ir_getval(
@@ -2070,14 +2029,9 @@ def _apply_default_layout(tt: "TileType") -> None:
 # A5 MOVE / INSERT / MATMUL dtype and layout validation.
 _ANY_LAYOUT = object()
 
-_A5_MOVE_COMBOS = (
-    # Mat -> Bias; the BiasTable destination is row-major (ND).
-    ("Mat", "Bias", _ANY_LAYOUT, TensorLayout.ND, DataType.INT32, DataType.INT32),
-    ("Mat", "Bias", _ANY_LAYOUT, TensorLayout.ND, DataType.FP32, DataType.FP32),
-    ("Mat", "Bias", _ANY_LAYOUT, TensorLayout.ND, DataType.FP16, DataType.FP32),
-    ("Mat", "Bias", _ANY_LAYOUT, TensorLayout.ND, DataType.BF16, DataType.FP32),
-
-    # Mat -> Left: destination layout is fixed to NZ.
+# Layout/dtype combinations shared by TMOV and TEXTRACT on A5.
+_A5_MOVE_EXTRACT_COMMON_COMBOS = (
+    # Mat -> Left.
     ("Mat", "Left", TensorLayout.NZ, TensorLayout.NZ, DataType.INT8, DataType.INT8),
     ("Mat", "Left", TensorLayout.NZ, TensorLayout.NZ, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
     ("Mat", "Left", TensorLayout.NZ, TensorLayout.NZ, DataType.FP8E5M2, DataType.FP8E5M2),
@@ -2108,18 +2062,7 @@ _A5_MOVE_COMBOS = (
     ("Mat", "Left", TensorLayout.ZN, TensorLayout.NZ, DataType.FP4E1M2, DataType.FP4E1M2),
     ("Mat", "Left", TensorLayout.ZN, TensorLayout.NZ, DataType.FP4E2M1, DataType.FP4E2M1),
     ("Mat", "Left", TensorLayout.ZN, TensorLayout.NZ, DataType.FP8E8M0, DataType.FP8E8M0),
-    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.INT8, DataType.INT8),
-    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
-    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP8E5M2, DataType.FP8E5M2),
-    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.HF8, DataType.HF8),
-    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP16, DataType.FP16),
-    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.BF16, DataType.BF16),
-    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP32, DataType.FP32),
-    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP4E1M2, DataType.FP4E1M2),
-    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP8E8M0, DataType.FP8E8M0),
-
-    # Mat -> Right: destination layout is fixed to ZN.
+    # Mat -> Right.
     ("Mat", "Right", TensorLayout.NZ, TensorLayout.ZN, DataType.INT8, DataType.INT8),
     ("Mat", "Right", TensorLayout.NZ, TensorLayout.ZN, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
     ("Mat", "Right", TensorLayout.NZ, TensorLayout.ZN, DataType.FP8E5M2, DataType.FP8E5M2),
@@ -2130,16 +2073,6 @@ _A5_MOVE_COMBOS = (
     ("Mat", "Right", TensorLayout.NZ, TensorLayout.ZN, DataType.FP4E1M2, DataType.FP4E1M2),
     ("Mat", "Right", TensorLayout.NZ, TensorLayout.ZN, DataType.FP4E2M1, DataType.FP4E2M1),
     ("Mat", "Right", TensorLayout.NZ, TensorLayout.ZN, DataType.FP8E8M0, DataType.FP8E8M0),
-    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.INT8, DataType.INT8),
-    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
-    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP8E5M2, DataType.FP8E5M2),
-    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.HF8, DataType.HF8),
-    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP16, DataType.FP16),
-    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.BF16, DataType.BF16),
-    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP32, DataType.FP32),
-    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP4E1M2, DataType.FP4E1M2),
-    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP8E8M0, DataType.FP8E8M0),
     ("Mat", "Right", TensorLayout.ZN, TensorLayout.ZN, DataType.INT8, DataType.INT8),
     ("Mat", "Right", TensorLayout.ZN, TensorLayout.ZN, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
     ("Mat", "Right", TensorLayout.ZN, TensorLayout.ZN, DataType.FP8E5M2, DataType.FP8E5M2),
@@ -2150,6 +2083,118 @@ _A5_MOVE_COMBOS = (
     ("Mat", "Right", TensorLayout.ZN, TensorLayout.ZN, DataType.FP4E1M2, DataType.FP4E1M2),
     ("Mat", "Right", TensorLayout.ZN, TensorLayout.ZN, DataType.FP4E2M1, DataType.FP4E2M1),
     ("Mat", "Right", TensorLayout.ZN, TensorLayout.ZN, DataType.FP8E8M0, DataType.FP8E8M0),
+    # Mat -> ScaleLeft.
+    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.INT8, DataType.INT8),
+    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
+    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP8E5M2, DataType.FP8E5M2),
+    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.HF8, DataType.HF8),
+    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP16, DataType.FP16),
+    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.BF16, DataType.BF16),
+    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP32, DataType.FP32),
+    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP4E1M2, DataType.FP4E1M2),
+    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP4E2M1, DataType.FP4E2M1),
+    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP8E8M0, DataType.FP8E8M0),
+
+    # Mat -> ScaleRight.
+    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.INT8, DataType.INT8),
+    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
+    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP8E5M2, DataType.FP8E5M2),
+    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.HF8, DataType.HF8),
+    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP16, DataType.FP16),
+    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.BF16, DataType.BF16),
+    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP32, DataType.FP32),
+    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP4E1M2, DataType.FP4E1M2),
+    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP4E2M1, DataType.FP4E2M1),
+    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP8E8M0, DataType.FP8E8M0),
+
+    # Vec -> Vec.
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.FP8E5M2, DataType.FP8E5M2),
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.FP8E8M0, DataType.FP8E8M0),
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.FP4E2M1, DataType.FP4E2M1),
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.FP4E1M2, DataType.FP4E1M2),
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.HF8, DataType.HF8),
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.INT8, DataType.INT8),
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.FP16, DataType.FP16),
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.BF16, DataType.BF16),
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.FP32, DataType.FP32),
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.INT32, DataType.INT32),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP8E5M2, DataType.FP8E5M2),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP8E8M0, DataType.FP8E8M0),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP4E2M1, DataType.FP4E2M1),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP4E1M2, DataType.FP4E1M2),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.HF8, DataType.HF8),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.INT8, DataType.INT8),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP16, DataType.FP16),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.BF16, DataType.BF16),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP32),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.INT32, DataType.INT32),
+
+    # Vec -> Mat is a physical copy; the destination layout does not select a conversion path.
+    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.INT8, DataType.INT8),
+    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
+    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP8E5M2, DataType.FP8E5M2),
+    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.HF8, DataType.HF8),
+    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP16, DataType.FP16),
+    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.BF16, DataType.BF16),
+    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP32, DataType.FP32),
+    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP4E1M2, DataType.FP4E1M2),
+    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP4E2M1, DataType.FP4E2M1),
+    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP8E8M0, DataType.FP8E8M0),
+    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.INT8, DataType.INT8),
+    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
+    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP8E5M2, DataType.FP8E5M2),
+    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.HF8, DataType.HF8),
+    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP16, DataType.FP16),
+    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.BF16, DataType.BF16),
+    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP32, DataType.FP32),
+    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP4E1M2, DataType.FP4E1M2),
+    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP4E2M1, DataType.FP4E2M1),
+    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP8E8M0, DataType.FP8E8M0),
+
+    # Acc -> Vec.
+    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.ND, DataType.FP32, DataType.FP16),
+    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.ND, DataType.FP32, DataType.BF16),
+    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.ND, DataType.FP32, DataType.FP32),
+    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.ND, DataType.INT32, DataType.INT32),
+    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP16),
+    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.BF16),
+    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP32),
+    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.INT32, DataType.INT32),
+
+    # Acc -> Mat.
+    ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP32),
+    ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP16),
+    ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.BF16),
+    ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.INT32, DataType.INT32),
+)
+
+_A5_MOVE_COMBOS = (
+    *_A5_MOVE_EXTRACT_COMMON_COMBOS,
+
+    # Additional layout/dtype combinations supported only by TMOV on A5.
+    # Mat -> Left/Right layouts rejected by TEXTRACT.
+    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.INT8, DataType.INT8),
+    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
+    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP8E5M2, DataType.FP8E5M2),
+    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.HF8, DataType.HF8),
+    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP16, DataType.FP16),
+    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.BF16, DataType.BF16),
+    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP32, DataType.FP32),
+    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP4E1M2, DataType.FP4E1M2),
+    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP4E2M1, DataType.FP4E2M1),
+    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP8E8M0, DataType.FP8E8M0),
+    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.INT8, DataType.INT8),
+    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
+    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP8E5M2, DataType.FP8E5M2),
+    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.HF8, DataType.HF8),
+    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP16, DataType.FP16),
+    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.BF16, DataType.BF16),
+    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP32, DataType.FP32),
+    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP4E1M2, DataType.FP4E1M2),
+    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP4E2M1, DataType.FP4E2M1),
+    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP8E8M0, DataType.FP8E8M0),
     ("Mat", "Right", TensorLayout.ZZ, TensorLayout.ZN, DataType.INT8, DataType.INT8),
     ("Mat", "Right", TensorLayout.ZZ, TensorLayout.ZN, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
     ("Mat", "Right", TensorLayout.ZZ, TensorLayout.ZN, DataType.FP8E5M2, DataType.FP8E5M2),
@@ -2161,7 +2206,19 @@ _A5_MOVE_COMBOS = (
     ("Mat", "Right", TensorLayout.ZZ, TensorLayout.ZN, DataType.FP4E2M1, DataType.FP4E2M1),
     ("Mat", "Right", TensorLayout.ZZ, TensorLayout.ZN, DataType.FP8E8M0, DataType.FP8E8M0),
 
-    # Mat -> Scaling; layout is not intercepted, destination dtype is INT64/UINT64.
+    # Acc -> Vec DN layout rejected by TEXTRACT.
+    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.DN, DataType.FP32, DataType.FP16),
+    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.DN, DataType.FP32, DataType.BF16),
+    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.DN, DataType.FP32, DataType.FP32),
+    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.DN, DataType.INT32, DataType.INT32),
+
+    # Mat -> Bias.
+    ("Mat", "Bias", _ANY_LAYOUT, TensorLayout.ND, DataType.INT32, DataType.INT32),
+    ("Mat", "Bias", _ANY_LAYOUT, TensorLayout.ND, DataType.FP32, DataType.FP32),
+    ("Mat", "Bias", _ANY_LAYOUT, TensorLayout.ND, DataType.FP16, DataType.FP32),
+    ("Mat", "Bias", _ANY_LAYOUT, TensorLayout.ND, DataType.BF16, DataType.FP32),
+
+    # Mat -> Scaling.
     ("Mat", "Scaling", _ANY_LAYOUT, _ANY_LAYOUT, DataType.FP8E4M3FN, DataType.INT64),
     ("Mat", "Scaling", _ANY_LAYOUT, _ANY_LAYOUT, DataType.FP8E4M3FN, DataType.UINT64),
     ("Mat", "Scaling", _ANY_LAYOUT, _ANY_LAYOUT, DataType.FP8E5M2, DataType.INT64),
@@ -2197,48 +2254,15 @@ _A5_MOVE_COMBOS = (
     ("Mat", "Scaling", _ANY_LAYOUT, _ANY_LAYOUT, DataType.UINT64, DataType.INT64),
     ("Mat", "Scaling", _ANY_LAYOUT, _ANY_LAYOUT, DataType.UINT64, DataType.UINT64),
 
-    # Mat -> ScaleLeft/ScaleRight; src/dst layouts must be ZZ/ZZ and NN/NN respectively.
-    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.INT8, DataType.INT8),
-    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
-    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP8E5M2, DataType.FP8E5M2),
-    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.HF8, DataType.HF8),
-    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP16, DataType.FP16),
-    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.BF16, DataType.BF16),
-    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP32, DataType.FP32),
-    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP4E1M2, DataType.FP4E1M2),
-    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP8E8M0, DataType.FP8E8M0),
-    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.INT8, DataType.INT8),
-    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
-    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP8E5M2, DataType.FP8E5M2),
-    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.HF8, DataType.HF8),
-    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP16, DataType.FP16),
-    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.BF16, DataType.BF16),
-    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP32, DataType.FP32),
-    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP4E1M2, DataType.FP4E1M2),
-    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Mat", "ScaleRight", TensorLayout.NN, TensorLayout.NN, DataType.FP8E8M0, DataType.FP8E8M0),
-
-    # Ordinary Vec -> Vec; layout is not intercepted.
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.FP8E5M2, DataType.FP8E5M2),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.FP8E8M0, DataType.FP8E8M0),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.FP4E1M2, DataType.FP4E1M2),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.HF8, DataType.HF8),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.INT8, DataType.INT8),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.FP16, DataType.FP16),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.BF16, DataType.BF16),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.INT16, DataType.INT16),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.FP32, DataType.FP32),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.INT32, DataType.INT32),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.INT64, DataType.INT64),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.UINT8, DataType.UINT8),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.UINT16, DataType.UINT16),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.UINT32, DataType.UINT32),
-    ("Vec", "Vec", _ANY_LAYOUT, _ANY_LAYOUT, DataType.UINT64, DataType.UINT64),
-
-    # Dedicated Vec ND -> Vec NZ path.
+    # Vec -> Vec.
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.INT16, DataType.INT16),
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.UINT8, DataType.UINT8),
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.UINT16, DataType.UINT16),
+    ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.UINT32, DataType.UINT32),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.INT16, DataType.INT16),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.UINT8, DataType.UINT8),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.UINT16, DataType.UINT16),
+    ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.UINT32, DataType.UINT32),
     ("Vec", "Vec", TensorLayout.ND, TensorLayout.NZ, DataType.INT8, DataType.INT8),
     ("Vec", "Vec", TensorLayout.ND, TensorLayout.NZ, DataType.UINT8, DataType.UINT8),
     ("Vec", "Vec", TensorLayout.ND, TensorLayout.NZ, DataType.INT32, DataType.INT32),
@@ -2251,47 +2275,7 @@ _A5_MOVE_COMBOS = (
     ("Vec", "Vec", TensorLayout.ND, TensorLayout.NZ, DataType.FP4E1M2, DataType.FP4E1M2),
     ("Vec", "Vec", TensorLayout.ND, TensorLayout.NZ, DataType.FP4E2M1, DataType.FP4E2M1),
 
-    # Vec -> Mat; destination layout is not intercepted.
-    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.INT8, DataType.INT8),
-    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
-    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP8E5M2, DataType.FP8E5M2),
-    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.HF8, DataType.HF8),
-    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP16, DataType.FP16),
-    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.BF16, DataType.BF16),
-    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP32, DataType.FP32),
-    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP4E1M2, DataType.FP4E1M2),
-    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP8E8M0, DataType.FP8E8M0),
-    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.INT8, DataType.INT8),
-    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
-    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP8E5M2, DataType.FP8E5M2),
-    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.HF8, DataType.HF8),
-    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP16, DataType.FP16),
-    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.BF16, DataType.BF16),
-    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP32, DataType.FP32),
-    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP4E1M2, DataType.FP4E1M2),
-    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Vec", "Mat", TensorLayout.NZ, _ANY_LAYOUT, DataType.FP8E8M0, DataType.FP8E8M0),
-
-    # Acc -> Vec, non-quantized.
-    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.ND, DataType.FP32, DataType.FP16),
-    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.ND, DataType.FP32, DataType.BF16),
-    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.ND, DataType.FP32, DataType.FP32),
-    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.ND, DataType.INT32, DataType.INT32),
-    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.DN, DataType.FP32, DataType.FP16),
-    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.DN, DataType.FP32, DataType.BF16),
-    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.DN, DataType.FP32, DataType.FP32),
-    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.DN, DataType.INT32, DataType.INT32),
-    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP16),
-    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.BF16),
-    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP32),
-    ("Acc", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.INT32, DataType.INT32),
-
-    # Acc -> Mat, non-quantized.
-    ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP32),
-    ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP16),
-    ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.BF16),
-    ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.INT32, DataType.INT32),
+    # Acc -> Mat.
     ("Acc", "Mat", TensorLayout.NZ, TensorLayout.ND, DataType.FP32, DataType.FP32),
     ("Acc", "Mat", TensorLayout.NZ, TensorLayout.ND, DataType.FP32, DataType.FP16),
     ("Acc", "Mat", TensorLayout.NZ, TensorLayout.ND, DataType.FP32, DataType.BF16),
@@ -2407,7 +2391,7 @@ _A5_INSERT_COMBOS = (
     ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP4E1M2, DataType.FP4E1M2),
     ("Vec", "Vec", TensorLayout.NZ, TensorLayout.NZ, DataType.FP4E2M1, DataType.FP4E2M1),
 
-    # Vec -> Mat; destination layout is not intercepted.
+    # Vec -> Mat is a physical copy; the destination layout does not select a conversion path.
     ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.INT8, DataType.INT8),
     ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.INT32, DataType.INT32),
     ("Vec", "Mat", TensorLayout.ND, _ANY_LAYOUT, DataType.FP16, DataType.FP16),
@@ -2451,6 +2435,10 @@ _A5_INSERT_COMBOS = (
     ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP32),
     ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.INT32, DataType.INT32),
 )
+
+# A move carrying an offset is emitted as TEXTRACT, not TMOV. TEXTRACT is a
+# strict subset of TMOV on A5, so reuse only the explicitly shared combinations.
+_A5_EXTRACT_COMBOS = _A5_MOVE_EXTRACT_COMMON_COMBOS
 
 
 _A5_MATMUL_DTYPE_COMBOS = (
@@ -2500,19 +2488,6 @@ def _layout_dtype_combo_matches(
         rule_src_dtype,
         rule_dst_dtype,
     ) = rule
-
-    # Vec ND -> Vec NZ is a dedicated path.
-    # It must match an explicit ND -> NZ rule instead of the generic
-    # _ANY_LAYOUT -> _ANY_LAYOUT Vec -> Vec rule.
-    if (
-        src_loc == "Vec"
-        and dst_loc == "Vec"
-        and src_layout == TensorLayout.ND
-        and dst_layout == TensorLayout.NZ
-        and rule_src_layout is _ANY_LAYOUT
-        and rule_dst_layout is _ANY_LAYOUT
-    ):
-        return False
 
     return (
         src_loc == rule_src_loc
@@ -3377,13 +3352,6 @@ _A5_STORE_QUANT_COMBOS = (
 )
 
 
-_A5_ACC_NZ_TO_MAT_NZ_COMBOS = (
-    ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP32),
-    ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP16),
-    ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.BF16),
-    ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.INT32, DataType.INT32),
-)
-
 _A5_INSERT_QUANT_COMBOS = (
     ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.INT8),
     ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.UINT8),
@@ -3403,7 +3371,7 @@ _LAYOUT_DTYPE_COMBOS = {
     "store": {NpuArch.DAV_3510: (_A5_STORE_COMBOS, _A5_STORE_QUANT_COMBOS)},
     "store_tile": {NpuArch.DAV_3510: (_A5_STORE_COMBOS, _A5_STORE_QUANT_COMBOS)},
     "move": {NpuArch.DAV_3510: (_A5_MOVE_COMBOS, _A5_MOVE_QUANT_COMBOS)},
-    "extract": {NpuArch.DAV_3510: (_A5_ACC_NZ_TO_MAT_NZ_COMBOS, _A5_INSERT_QUANT_COMBOS)},
+    "extract": {NpuArch.DAV_3510: (_A5_EXTRACT_COMBOS, _A5_INSERT_QUANT_COMBOS)},
     "insert": {NpuArch.DAV_3510: (_A5_INSERT_COMBOS, _A5_INSERT_QUANT_COMBOS)},
 }
 
@@ -3496,6 +3464,7 @@ def _check_layout_dtype(
     if any(_layout_dtype_combo_matches(combo, rule) for rule in combos):
         return
     kind = "quantized " if quant else ""
+    display_op = "move" if op == "extract" else op
     src_layout_name = src_layout.name if src_layout is not None else "unknown"
     dst_layout_name = dst_layout.name if dst_layout is not None else "unknown"
     hint = (
@@ -3505,7 +3474,7 @@ def _check_layout_dtype(
         else ""
     )
     raise InvalidType(
-        f"{op}: unsupported {kind}layout/dtype combination "
+        f"{display_op}: unsupported {kind}layout/dtype combination "
         f"src={src_loc}({src_layout_name},{_frontend_dtype_name(src_dtype)}) "
         f"-> dst={dst_loc}({dst_layout_name},{_frontend_dtype_name(dst_dtype)}); "
         f"please check whether the data path supports the current memory space, layout, and dtype.{hint}"
@@ -3661,17 +3630,6 @@ _MAKE_TILE_TYPE_HINT = (
 )
 
 
-def _static_dim(dim) -> "int | None":
-    """A shape dimension as a plain int, or None when it is not known while parsing."""
-    if isinstance(dim, bool):
-        return None
-    if isinstance(dim, int):
-        return dim
-    if isinstance(dim, ConstInt):
-        return int(dim.value)
-    return None
-
-
 def tile_slot_size(shape: "Sequence[int] | _ir_core.MakeTuple", dtype: DataType) -> int:
     """Byte footprint of one tile, derived from its static shape and dtype.
 
@@ -3683,7 +3641,7 @@ def tile_slot_size(shape: "Sequence[int] | _ir_core.MakeTuple", dtype: DataType)
     integers.
     """
     dims = list(shape.elements) if isinstance(shape, _ir_core.MakeTuple) else list(shape)
-    static_dims = [_static_dim(dim) for dim in dims]
+    static_dims = [_const_int_value(dim) for dim in dims]
     if any(dim is None for dim in static_dims):
         raise DynamicShapeUnsupported(f"tile shape must contain compile-time integers, got {dims}")
     if any(dim <= 0 for dim in static_dims):
@@ -3699,19 +3657,11 @@ def _const_shape_ints(shape) -> "list[int] | None":
 
     Returns None when any element is not a compile-time integer constant.
     """
-    if isinstance(shape, _ir_core.MakeTuple):
-        ints = []
-        for elt in shape.elements:
-            if isinstance(elt, _ir_core.ConstInt):
-                ints.append(elt.value)
-            else:
-                return None
-        return ints
-    if isinstance(shape, (list, tuple)) and all(
-        isinstance(s, int) and not isinstance(s, bool) for s in shape
-    ):
-        return list(shape)
-    return None
+    values = shape.elements if isinstance(shape, _ir_core.MakeTuple) else shape
+    if not isinstance(values, (list, tuple)):
+        return None
+    ints = [_const_int_value(value) for value in values]
+    return None if any(value is None for value in ints) else ints
 
 
 # Tile config constants, mirrored from pto_tile.hpp TileConfig.
