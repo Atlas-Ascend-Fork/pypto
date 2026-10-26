@@ -379,21 +379,21 @@ private:
 
         bool changed = false;
         for (const auto& group : BuildProducerResultGroups(nodes)) {
-            for (size_t index = 0; index < group.size(); ++index) {
-                const auto& candidate = group[index];
+            auto sink = group.back().output;
+            // Each read ends a version chain. Merge unread predecessors directly
+            // into that consumed version, or into the final version for an unread tail.
+            for (size_t index = group.size() - 1; index > 0; --index) {
+                const auto& candidate = group[index - 1];
                 if (useCollector.Uses().count(candidate.output.get()) != 0) {
+                    sink = candidate.output;
                     continue;
                 }
-                for (size_t next = index + 1; next < group.size(); ++next) {
-                    const auto& sink = group[next];
-                    if (useCollector.Uses().count(sink.output.get()) == 0) {
-                        continue;
-                    }
-                    nodes[candidate.nodeIndex].results[0] = sink.output;
-                    nodes[candidate.nodeIndex].changed = true;
-                    changed = true;
-                    break;
+                if (candidate.output == sink) {
+                    continue;
                 }
+                nodes[candidate.nodeIndex].results[0] = sink;
+                nodes[candidate.nodeIndex].changed = true;
+                changed = true;
             }
         }
         return changed;

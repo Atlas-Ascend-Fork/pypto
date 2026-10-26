@@ -463,3 +463,44 @@ def test_atomic_add_prior_read_keeps_consumed_version():
     )
     check_snapshot(before_remove, BEFORE_IR_18)
     check_snapshot(after_remove, IR_18)
+
+
+BEFORE_IR_19 = _GOLDEN_DIR / "BEFORE_IR_19.pypto"
+
+
+IR_19 = _GOLDEN_DIR / "IR_19.pypto"
+
+
+def test_unused_inplace_versions_merge_to_last_assemble():
+    """Merge the reshape and earlier write into the last unread alias version."""
+    def foo(src, aux, out):
+        alias = pypto.reshape(aux, [32, 8], inplace=True)
+        pypto.assemble(src, [0, 0], alias)
+        pypto.assemble(src, [16, 0], alias)
+        pypto.assemble(aux + 1.0, [0, 0], out)
+
+    before_remove, after_remove = _run_passes(
+        foo, _tensor((8, 8), "src"), _tensor((16, 16), "aux"), _tensor((16, 16), "out"))
+    check_snapshot(before_remove, BEFORE_IR_19)
+    check_snapshot(after_remove, IR_19)
+
+
+BEFORE_IR_20 = _GOLDEN_DIR / "BEFORE_IR_20.pypto"
+
+
+IR_20 = _GOLDEN_DIR / "IR_20.pypto"
+
+
+def test_multiple_assembles_merge_to_last_consumed_version():
+    """Merge all unread predecessors into the final version read by ADDS."""
+    def foo(src, aux, out):
+        alias = pypto.reshape(aux, [32, 8], inplace=True)
+        pypto.assemble(src, [0, 0], alias)
+        pypto.assemble(src, [8, 0], alias)
+        pypto.assemble(src, [16, 0], alias)
+        pypto.assemble(alias + 1.0, [0, 0], out)
+
+    before_remove, after_remove = _run_passes(
+        foo, _tensor((8, 8), "src"), _tensor((16, 16), "aux"), _tensor((32, 8), "out"))
+    check_snapshot(before_remove, BEFORE_IR_20)
+    check_snapshot(after_remove, IR_20)
