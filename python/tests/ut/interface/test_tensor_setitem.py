@@ -13,6 +13,7 @@
 import pytest
 
 import pypto
+from pypto.error import FeError
 
 
 def init_tensors():
@@ -64,6 +65,16 @@ def test_tensor_assmble_slice():
             c[:] = pypto.sub(b, a)
 
     assert isinstance(c, pypto.tensor)
+
+
+def test_assemble_empty_source():
+    a, b, c = init_tensors()
+    with pytest.raises(FeError, match="source tensor is empty"):
+        with pypto.function("MAIN", a, b, c):
+            pypto.set_vec_tile_shapes(16, 16)
+            y = pypto.add(a, b)
+            a[:] = y
+            b[8:16, :] = y
 
 
 @pytest.mark.skip(reason="Case is no longer maintained")

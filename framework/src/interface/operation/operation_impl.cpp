@@ -1581,6 +1581,8 @@ void Assemble(const Tensor& tensor, const std::vector<SymbolicScalar>& dynOffset
 {
     DECLARE_TRACER();
 
+    CHECK_OP(!tensor.IsEmpty()) << "source tensor is empty; a full-slice write (e.g. x[:] = y) may have consumed it.";
+
     const auto& srcShape = tensor.GetShape();
     const auto& dstShape = dest.GetShape();
     CHECK_OP(dstShape.size() == srcShape.size()) << "Assemble: src and dest requires same shape";
