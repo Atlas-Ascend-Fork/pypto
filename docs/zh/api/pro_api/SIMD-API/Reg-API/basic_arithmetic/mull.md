@@ -24,7 +24,7 @@ $$dst\_hi_i = \lfloor (src0_i \times src1_i) / 2^{bit} \rfloor$$
 
 **图1** vf.mull功能说明
 
-![](../../../figures/mull_diagram.jpg)
+![](../../../figures/mull_diagram.svg)
 
 ## 函数原型
 

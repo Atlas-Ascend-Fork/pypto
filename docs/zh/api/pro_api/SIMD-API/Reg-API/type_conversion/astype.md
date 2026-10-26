@@ -29,21 +29,21 @@ vf.astype用于数据类型精度转换，将源操作数数据类型转换成�
 
 **图1** 16位宽类型到32位宽类型转换过程
 
-![](../../../figures/astype_b16_to_b32_conversion.jpg)
+![](../../../figures/astype_b16_to_b32_conversion.svg)
 
 **图2** 32位宽类型到16位宽类型转换过程
 
-![](../../../figures/astype_b32_to_b16_conversion.jpg)
+![](../../../figures/astype_b32_to_b16_conversion.svg)
 
 特别地，DT_FP4E2M1、DT_FP4E1M2与DT_BF16之间的转换，指令会以每2个元素为一对进行读写，大转小时preg有效位以偶数位为准。下图展示了mask_reg和layout同时作用时DT_FP4E2M1和DT_BF16之间的转换过程：
 
 **图3** DT_FP4E2M1到DT_BF16类型转换过程
 
-![](../../../figures/astype_fp4x2_e2m1_to_bf16_conversion.jpg)
+![](../../../figures/astype_fp4x2_e2m1_to_bf16_conversion.svg)
 
 **图4** DT_BF16到DT_FP4E2M1类型转换过程
 
-![](../../../figures/astype_bf16_to_fp4x2_e2m1_conversion.jpg)
+![](../../../figures/astype_bf16_to_fp4x2_e2m1_conversion.svg)
 
 ## 函数原型
 

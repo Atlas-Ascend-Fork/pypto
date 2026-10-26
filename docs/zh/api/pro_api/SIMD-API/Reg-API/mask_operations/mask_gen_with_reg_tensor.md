@@ -27,7 +27,7 @@
 
 **图1** b16数据类型下mask_gen_with_reg_tensor搬运原理
 
-![](../../../figures/mask_gen_with_reg_tensor_b16.jpg)
+![](../../../figures/mask_gen_with_reg_tensor_b16.svg)
 
 ### b32数据类型搬运原理
 
@@ -35,7 +35,7 @@
 
 **图2** b32数据类型下mask_gen_with_reg_tensor搬运原理
 
-![](../../../figures/mask_gen_with_reg_tensor_b32.jpg)
+![](../../../figures/mask_gen_with_reg_tensor_b32.svg)
 
 ## 函数原型
 

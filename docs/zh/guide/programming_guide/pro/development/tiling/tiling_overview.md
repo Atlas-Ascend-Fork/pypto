@@ -33,7 +33,7 @@ Kernel通过[执行域](../kernel_function.md#定义执行域)声明代码运行
 
 **图2 AI Core与执行域**
 
-![AI Core与执行域](../../../../figures/pro/pro_tiling_ai_core.png "AI Core与执行域")
+![AI Core与执行域](../../../../figures/pro/pro_tiling_ai_core.svg "AI Core与执行域")
 
 片上Buffer的层级、容量和数据通路参见[SIMD抽象硬件架构](../../programming_paradigm/SIMD/abstract_hardware_architecture.md)。
 

@@ -19,7 +19,7 @@
 - **reg_tensor模式**：对src中的有效元素逐个复制写入dst中对应位置，无效位置保留dst原值。
 - **mask_reg模式**：将src中的bit复制到dst中对应位置。如果有输入mask，则仅复制被mask选定的有效bit，无效位置填0。机制如下图所示：16位宽（DT_INT16、DT_UINT16、DT_FP16、DT_BF16）类型读取完整128bit的 {MASK1, MASK0}，将每个bit复制为2bit；32位宽（DT_INT32、DT_UINT32、DT_FP32）类型读取64bit的MASK0，并将每个bit复制为4bit。
 
-  ![](../../../figures/move_mask_mode.jpg)
+  ![](../../../figures/move_mask_mode.svg)
 
 ## 函数原型
 

@@ -46,7 +46,7 @@ mask_reg的总位宽为256 bit，其粒度由dtype参数决定；每个数据元
 
 **图1**b8数据类型下CreateMask接口不同MaskPattern模式下元素选取
 
-![b8数据类型下CreateMask接口不同MaskPattern模式下元素选取](../../../figures/create_mask_b8_pattern_selection.jpg)
+![b8数据类型下CreateMask接口不同MaskPattern模式下元素选取](../../../figures/create_mask_b8_pattern_selection.svg)
 
 ### astype精度转换中的mask_reg
 
@@ -56,11 +56,11 @@ mask_reg的总位宽为256 bit，其粒度由dtype参数决定；每个数据元
 
 **图2**astype 16位宽到32位宽类型转换过程
 
-![[mask_reg](../basic_data_structures/mask_reg.md) 16位宽到32位宽类型转换过程](../../../figures/mask_reg_b16_to_b32_conversion.jpg)
+![[mask_reg](../basic_data_structures/mask_reg.md) 16位宽到32位宽类型转换过程](../../../figures/mask_reg_b16_to_b32_conversion.svg)
 
 **图3**astype 32位宽到16位宽类型转换过程
 
-![mask_reg 32位宽到16位宽类型转换过程](../../../figures/mask_reg_b32_to_b16_conversion.jpg)
+![mask_reg 32位宽到16位宽类型转换过程](../../../figures/mask_reg_b32_to_b16_conversion.svg)
 
 ## 函数原型
 

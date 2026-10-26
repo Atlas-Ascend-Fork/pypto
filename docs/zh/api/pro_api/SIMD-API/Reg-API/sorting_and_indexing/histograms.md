@@ -22,7 +22,7 @@
 
 **图1** histograms频率统计
 
-![](../../../figures/histograms_frequency_stats.jpg)
+![](../../../figures/histograms_frequency_stats.svg)
 
 ### 累计统计
 
@@ -30,7 +30,7 @@
 
 **图2** histograms累计统计
 
-![](../../../figures/histograms_cumulative_stats.jpg)
+![](../../../figures/histograms_cumulative_stats.svg)
 
 ## 函数原型
 

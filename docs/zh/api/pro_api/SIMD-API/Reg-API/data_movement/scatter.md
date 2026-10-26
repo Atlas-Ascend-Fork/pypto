@@ -18,7 +18,7 @@
 
 **图1** vf.scatter功能说明
 
-![vf.scatter功能说明](../../../figures/scatter_function.jpg)
+![vf.scatter功能说明](../../../figures/scatter_function.svg)
 
 ## 函数原型
 

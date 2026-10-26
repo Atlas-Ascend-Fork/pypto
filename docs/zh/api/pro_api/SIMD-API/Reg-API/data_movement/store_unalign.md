@@ -30,7 +30,7 @@
 
 **图1**非对齐数据搬出（ureg为空）
 
-![](../../../figures/unaligned_store_ureg_empty.jpg)
+![](../../../figures/unaligned_store_ureg_empty.svg)
 
 **场景二：ureg不为空**（除第一次迭代）
 
@@ -42,13 +42,13 @@
 
 **图2**非对齐数据搬出（ureg不为空）
 
-![](../../../figures/unaligned_store_ureg_not_empty.jpg)
+![](../../../figures/unaligned_store_ureg_not_empty.svg)
 
 ### 连续非对齐搬入搬出示例
 
 **图3**连续非对齐搬入搬出示例（数据类型DT_UINT32）
 
-![](../../../figures/contiguous_unaligned_load_store_unalign.jpg)
+![](../../../figures/contiguous_unaligned_load_store_unalign.svg)
 
 连续非对齐搬入时，vf.load_unalign会将后续未对齐的数据缓存至ureg，所以下一次搬入不需要再次调用vf.load_unalign_pre，只需在迭代开始前调用一次vf.load_unalign_pre，从而实现非对齐搬入的性能优化。
 

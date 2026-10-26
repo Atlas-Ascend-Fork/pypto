@@ -28,7 +28,7 @@ Vector侧参与Reg计算的硬件单元包括：
 
 **图1 SIMD Reg矢量执行关系**
 
-![SIMD Reg矢量执行单元与Register File、UB的关系](../../../../figures/pro/register_execution_unit.jpg)
+![SIMD Reg矢量执行单元与Register File、UB的关系](../../../../figures/pro/register_execution_unit.svg)
 
 ## 内存层级
 
@@ -40,7 +40,7 @@ GM → UB → Register File → UB → GM
 
 **图2 Reg计算内存层级**
 
-![Register File、UB和GM的层级关系](../../../../figures/pro/register_memory_hierarchy.jpg)
+![Register File、UB和GM的层级关系](../../../../figures/pro/register_memory_hierarchy.svg)
 
 PyPTO Pro中各阶段的接口对应关系如下：
 
@@ -58,7 +58,7 @@ Regbase在Tile计算的“数据搬入 → 计算 → 数据搬出”基础上�
 
 **图3 Regbase编程模型总体结构**
 
-![GM、UB、Register File之间的Regbase编程流程](../../../../figures/pro/regbase_programming_model_overview.jpg)
+![GM、UB、Register File之间的Regbase编程流程](../../../../figures/pro/regbase_programming_model_overview.svg)
 
 ### VF函数与执行域
 

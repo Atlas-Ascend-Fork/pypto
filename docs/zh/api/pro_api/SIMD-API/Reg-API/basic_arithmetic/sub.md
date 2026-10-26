@@ -22,7 +22,7 @@ $$dst_i = src0_i - src1_i$$
 
 **图1** vf.sub功能说明
 
-![](../../../figures/sub_with_carry.jpg)
+![](../../../figures/sub_with_carry.svg)
 
 若需要获取减法借位输出，请参考[vf.subc](subc.md#功能说明)。
 

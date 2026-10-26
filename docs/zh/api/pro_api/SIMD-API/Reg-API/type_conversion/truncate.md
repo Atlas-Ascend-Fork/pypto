@@ -20,7 +20,7 @@
 
 $$dstReg_i = \text{trunc}(srcReg_i)$$
 
-![](../../../figures/truncate_function.jpg)
+![](../../../figures/truncate_function.svg)
 
 ## 函数原型
 

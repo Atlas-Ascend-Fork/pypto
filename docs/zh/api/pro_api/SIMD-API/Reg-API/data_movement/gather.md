@@ -22,13 +22,13 @@
 
   **图1** gather NORM模式功能说明
 
-  ![](../../../figures/gather_function.jpg)
+  ![](../../../figures/gather_function.svg)
 
 - pypto_pro.language.DataCopyMode.DATA_BLOCK_LOAD：DATA_BLOCK_LOAD模式，按DataBlock（32B）收集，index单位为字节且需32B对齐。收集过程如下图所示：
 
   **图2** gather DATA_BLOCK_LOAD模式功能说明
 
-  ![](../../../figures/block_mode_gather.jpg)
+  ![](../../../figures/block_mode_gather.svg)
 
 **reg→reg形式**（src为reg_tensor）：reg_tensor到reg_tensor按元素收集，无需mask。
 

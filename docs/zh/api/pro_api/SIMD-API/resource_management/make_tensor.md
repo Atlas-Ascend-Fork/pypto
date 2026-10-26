@@ -20,7 +20,7 @@
 
 下图展示make_tensor的核心语义：它使用shape和stride为已有地址创建Tensor视图，不申请新内存，也不搬运数据。
 
-![make_tensor从裸指针创建Tensor视图](../../figures/make_tensor_view.jpg "make_tensor从裸指针创建Tensor视图")
+![make_tensor从裸指针创建Tensor视图](../../figures/make_tensor_view.svg "make_tensor从裸指针创建Tensor视图")
 
 ## 函数原型
 
@@ -80,7 +80,7 @@ transposed = pl.make_tensor(ptr, [16, 8], [1, 16])
 
 两者共享同一个ptr，且normal[i, j]与transposed[j, i]指向相同地址；接口只改变逻辑索引到物理地址的映射，不转置原数据。
 
-![make_tensor的非连续与转置视图](../../figures/make_tensor_stride_cases.jpg "make_tensor的非连续与转置视图")
+![make_tensor的非连续与转置视图](../../figures/make_tensor_stride_cases.svg "make_tensor的非连续与转置视图")
 
 ### 在Kernel中访问行间不连续的Tensor
 

@@ -24,7 +24,7 @@ Carry flag（进位标志）用于表示加法进位，若src0、src1、carry_sr
 
 **图1** vf.addc适用场景
 
-![](../../../figures/addc_scenario.jpg)
+![](../../../figures/addc_scenario.svg)
 
 ## 函数原型
 

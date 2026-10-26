@@ -20,7 +20,7 @@
 
 下图以UB源Tile为例展示按块索引写回GM Tensor的过程。块索引先换算为元素偏移，再确定目标块的落点；L0C Buffer中的源Tile通过Fixpipe写回。
 
-![store_tile按块索引把Tile写回GM](../../figures/store_tile_block_offset.jpg "store_tile按块索引把Tile写回GM")
+![store_tile按块索引把Tile写回GM](../../figures/store_tile_block_offset.svg "store_tile按块索引把Tile写回GM")
 
 ## 函数原型
 

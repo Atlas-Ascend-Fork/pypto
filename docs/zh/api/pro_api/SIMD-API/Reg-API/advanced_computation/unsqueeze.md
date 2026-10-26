@@ -22,7 +22,7 @@ $$dstReg_i = \begin{cases} 1 & \text{if } mask_i = 1 \\ 0 & \text{if } mask_i = 
 
 **图1** unsqueeze示意图
 
-![Unsqueeze示意图](../../../figures/unsqueeze_diagram.jpg)
+![Unsqueeze示意图](../../../figures/unsqueeze_diagram.svg)
 
 mask_reg由vf.create_mask或vf.update_mask产生，作为mask_reg类型的参数直接传递给矢量计算API，控制哪些元素参与运算。
 

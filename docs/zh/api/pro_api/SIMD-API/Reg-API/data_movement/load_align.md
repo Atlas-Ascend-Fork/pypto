@@ -27,7 +27,7 @@ reg_tensor模式支持**连续搬运模式**和**非连续搬运模式**。**连
 
 **图1** vf.load_align连续对齐搬入分布模式图示
 
-![](../../../figures/contiguous_aligned_load.jpg)
+![](../../../figures/contiguous_aligned_load.svg)
 
 **非连续搬运模式**下，通过data_copy_mode=pypto_pro.language.DataCopyMode.DATA_BLOCK_COPY启用DataBlock搬运模式，实现数据从Tile非连续搬运至reg_tensor。单条指令一次搬运8个DataBlock，block_stride参数表示相邻DataBlock间的间隔。该模式下offset参数改为传入控制有效元素的mask_reg，控制规则如下：
 
@@ -48,15 +48,15 @@ mask_reg目标支持三种分布模式，通过dist关键字参数配置，能�
 
 **图2** pypto_pro.language.LoadDist.NORM模式
 
-![LoadDist-NORM模式](../../../figures/load_dist_norm_mode.jpg)
+![LoadDist-NORM模式](../../../figures/load_dist_norm_mode.svg)
 
 **图3** pypto_pro.language.LoadDist.US模式
 
-![LoadDist-US模式](../../../figures/load_dist_us_mode.jpg)
+![LoadDist-US模式](../../../figures/load_dist_us_mode.svg)
 
 **图4** pypto_pro.language.LoadDist.DS模式
 
-![LoadDist-DS模式](../../../figures/load_dist_ds_mode.jpg)
+![LoadDist-DS模式](../../../figures/load_dist_ds_mode.svg)
 
 ## 函数原型
 

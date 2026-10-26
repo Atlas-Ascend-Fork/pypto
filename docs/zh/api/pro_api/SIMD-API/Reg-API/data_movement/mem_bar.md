@@ -20,7 +20,7 @@
 
 **图1**流水线等待示意图
 
-![流水线等待示意图](../../../figures/pipeline_wait.jpg)
+![流水线等待示意图](../../../figures/pipeline_wait.svg)
 
 通过mode选择src→dst的类型组合，共支持12种合法组合（V*表示矢量，*_LD、*_ST、ST_*、LD_*表示标量，*_ALL表示该单元全量屏障）：
 

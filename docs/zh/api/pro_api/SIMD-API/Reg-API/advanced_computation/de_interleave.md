@@ -20,7 +20,7 @@ $$dstReg0_i = srcReg_{2i}, \quad dstReg1_i = srcReg_{2i+1}$$
 
 **图1** de_interleave解交织示意图
 
-![](../../../figures/de_interleave_data_layout.jpg)
+![](../../../figures/de_interleave_data_layout.svg)
 
 ## 函数原型
 

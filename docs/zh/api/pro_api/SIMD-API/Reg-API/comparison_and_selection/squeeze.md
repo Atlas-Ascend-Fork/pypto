@@ -20,7 +20,7 @@ $$dstReg_j = srcReg_{idx_j}, \quad j \in \{0, 1, \ldots, count\_active - 1\}$$
 
 **图1** vf.squeeze计算示意图
 
-![](../../../figures/squeeze_calculation.jpg)
+![](../../../figures/squeeze_calculation.svg)
 
 特别地，当gather_mode取值为"pypto_pro.language.SqueezeMode.STORE_REG"时，vf.squeeze会将有效元素的总字节数存入AR特殊寄存器。此时配合使用连续非对齐搬出接口（无需显式传入偏移量），vf.store_unalign会自动从AR寄存器读取有效字节数作为地址偏移。
 

@@ -18,7 +18,7 @@
 
 **图1**update_mask 16位宽数据类型下基于scalarValue的掩码生成
 
-![update_mask 16位宽数据类型下基于scalarValue的掩码生成](../../../figures/maskreg_b16_update_mask_gen.jpg)
+![update_mask 16位宽数据类型下基于scalarValue的掩码生成](../../../figures/maskreg_b16_update_mask_gen.svg)
 
 ## 函数原型
 

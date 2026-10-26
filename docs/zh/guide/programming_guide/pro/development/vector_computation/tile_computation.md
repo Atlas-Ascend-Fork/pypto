@@ -164,7 +164,7 @@ n_tiles = (N + TILE_N - 1) // TILE_N
 
 **图1 二维Tensor中的满块、尾行、尾列和尾角**
 
-![二维Tensor中的满块、尾行、尾列和尾角](../../../../figures/pro/pro_tail_tile_grid.png)
+![二维Tensor中的满块、尾行、尾列和尾角](../../../../figures/pro/pro_tail_tile_grid.svg)
 
 对于第i行、第j列Tile，当前有效行列数可按下式计算：
 
@@ -186,7 +186,7 @@ TileType.shape和TileType.valid_shape描述的对象不同：
 
 **图2 Tile物理shape与逻辑valid_shape的关系**
 
-![Tile物理shape与逻辑valid_shape的关系](../../../../figures/pro/pro_tail_shape_validshape.png)
+![Tile物理shape与逻辑valid_shape的关系](../../../../figures/pro/pro_tail_shape_validshape.svg)
 
 对于每次运行时有效尺寸可能不同的尾块，[TileType](../../../../../api/pro_api/SIMD-API/basic_data_structures/TileType.md)可省略valid_shape；默认值None等同于动态模式[-1, -1]：
 
@@ -208,7 +208,7 @@ tile_type = pl.TileType(
 
 **图3 尾块处理流程**
 
-![尾块的计算、有效形状设置、搬入、计算和搬出流程](../../../../figures/pro/pro_tail_processing_flow.png)
+![尾块的计算、有效形状设置、搬入、计算和搬出流程](../../../../figures/pro/pro_tail_processing_flow.svg)
 
 ```python
 import pypto_pro.language as pl
