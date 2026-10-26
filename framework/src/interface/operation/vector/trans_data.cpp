@@ -472,12 +472,6 @@ void HandleNCHW5DimFormat(Function& function, const LogicalTensorPtr& dstTensor,
     auto tmpDstValidTile = tmpDstTile->View(function, dstTensorTile->GetShape(), Offset{0, 0, 0, 0});
     [[maybe_unused]] auto& copyOp2 = function.AddOperation(Opcode::OP_REGISTER_COPY, {tmpDstValidTile},
                                                            {dstTensorTile});
-    if (!tmpDstValidTile->GetProducers().empty()) {
-        auto* producer = *tmpDstValidTile->GetProducers().begin();
-        if (producer->GetOpcode() == Opcode::OP_VIEW) {
-            producer->SetAttribute(OpAttributeKey::dontTouch, true);
-        }
-    }
 }
 
 std::shared_ptr<LogicalTensor> GetNCDHWDstTile(Function& function, const LogicalTensorPtr& dstTensor,
@@ -876,13 +870,6 @@ void HandleFractalZ2NCHW(Function& function, const LogicalTensorPtr& dstTensor, 
     auto tmpDstValidTile = tmpDstTile->View(function, dstTensorTile->GetShape(), Offset{0, 0, 0, 0});
     [[maybe_unused]] auto& copyOp2 = function.AddOperation(Opcode::OP_REGISTER_COPY, {tmpDstValidTile},
                                                            {dstTensorTile});
-
-    if (!tmpDstValidTile->GetProducers().empty()) {
-        auto* producer = *tmpDstValidTile->GetProducers().begin();
-        if (producer->GetOpcode() == Opcode::OP_VIEW) {
-            producer->SetAttribute(OpAttributeKey::dontTouch, true);
-        }
-    }
 }
 
 void HandleFractalZ3D2NCDHW(Function& function, const LogicalTensorPtr& dstTensor, const LogicalTensorPtr& inputTile,
@@ -930,12 +917,6 @@ void HandleFractalZ3D2NCDHW(Function& function, const LogicalTensorPtr& dstTenso
     std::shared_ptr<LogicalTensor> realDstTile = tmpDstTile->View(function, dstTensorTile->GetShape(),
                                                                   Offset{0, 0, 0, 0, 0});
     [[maybe_unused]] auto& copyOp1 = function.AddOperation(Opcode::OP_REGISTER_COPY, {realDstTile}, {dstTensorTile});
-    if (!realDstTile->GetProducers().empty()) {
-        auto* producer = *realDstTile->GetProducers().begin();
-        if (producer->GetOpcode() == Opcode::OP_VIEW) {
-            producer->SetAttribute(OpAttributeKey::dontTouch, true);
-        }
-    }
 }
 
 template <TileOpFormat T>

@@ -202,11 +202,6 @@ bool EqualInOut(const Operation& op, bool relaxMaxZeroClamp)
 
 bool RemoveRedundantOp::ProcessRedundantOpWithDynShape(Operation& op) const
 {
-    if (op.GetBoolAttribute(OpAttributeKey::dontTouch)) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "dontTouch_CHECK: op[%d] has dontTouch, skip removing.",
-                          op.GetOpMagic());
-        return false;
-    }
     bool relaxMaxZeroClamp = op.GetOpcode() == Opcode::OP_VIEW && op.GetOOperands().size() == 1 &&
                              IsReduceAccExclusiveConsumer(op.GetOOperands().front());
     if (!EqualInOut(op, relaxMaxZeroClamp)) {
