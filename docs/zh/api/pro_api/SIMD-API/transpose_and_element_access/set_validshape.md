@@ -19,23 +19,25 @@
 ## 函数原型
 
 ```python
-pypto_pro.language.set_validshape(tile: Union[Tile, TileGroup], /, shape: Sequence[int]) -> None
+pypto_pro.language.set_validshape(tile: Tile | TileGroup, /, shape: Shape) -> None
 ```
 
 ## 参数说明
 
 | 参数 | 输入/输出 | 说明 |
 |---|---|---|
-| tile | 输入/输出 | 目的操作数，Tile或TileGroup类型。 |
+| tile | 输出 | 目的操作数，Tile或TileGroup类型。 |
 | shape | 输入 | 长度为2的有效shape序列（列表或元组），两个元素均为整型常量或运行时整型标量表达式（支持循环变量），元素须为正整数，且分别不超过Tile shape对应维度。 |
-
-## 约束说明
-
-无。
 
 ## 返回值说明
 
 无。
+
+## 约束说明
+
+- TileType必须使用动态有效Shape：省略valid_shape或声明valid_shape=[-1, -1]。存在静态有效维度时，不能通过本接口修改。
+- shape包含两个正整数或运行时整型表达式，不得超过对应物理Shape。动态表达式的范围由调用者保证。
+- 传入TileGroup时，组内所有Tile均须满足以上条件。
 
 ## 调用示例
 
@@ -60,17 +62,6 @@ def validshape_kernel(
         pl.set_validshape(tile, [rows, cols])
         pl.load(tile, a, [0, 0])
         pl.store(out, tile, [0, 0])
-```
-
-### 其他典型用法
-
-```python
-# matmul 尾块处理
-pl.set_validshape(q_mat_buf[q_count % 2], [TD, actual_sq])
-
-# TileGroup访问器和下标都直接返回Tile
-pl.set_validshape(a_wide_group.current(), [256, 64])
-pl.set_validshape(a_wide_group[0], [256, 64])
 ```
 
 ### TileGroup批量设置

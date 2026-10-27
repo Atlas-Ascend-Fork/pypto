@@ -19,11 +19,7 @@
 ## 函数原型
 
 ```python
-pypto_pro.language.min(
-    lhs: Union[int, float],
-    rhs: Union[int, float],
-    /,
-) -> Scalar
+pypto_pro.language.min(lhs: Union[int, float], rhs: Union[int, float], /) -> Scalar
 ```
 
 ## 参数说明
@@ -33,33 +29,30 @@ pypto_pro.language.min(
 | lhs | 输入 | 左操作数，为整型或浮点型常量，或运行时整型或浮点型标量表达式。 |
 | rhs | 输入 | 右操作数，为整型或浮点型常量，或运行时整型或浮点型标量表达式。 |
 
+## 返回值说明
+
+返回两个标量中的较小值，Scalar类型。返回值数据类型由参数的数据类型提升结果决定。
+
 ## 约束说明
 
 - lhs和rhs必须是数值标量。两个操作数同为整型或同为浮点型时，结果提升为位宽较大的数据类型；一个为整型、另一个为浮点型时，两个操作数均转换为FP32后再比较。
 - 接口只接受两个位置参数，不支持关键字参数。
 - 适用范围：本接口仅用于标量取较小值。Tile逐元素取最小值请使用pypto_pro.language.minimum。
 
-## 返回值说明
-
-返回两个标量中的较小值，Scalar类型。返回值数据类型由参数的数据类型提升结果决定。
-
 ## 调用示例
-
-### 基本用法
 
 ```python
 import pypto_pro.language as pl
 
-# 循环边界计算（尾块处理）
-m_size = pl.min(m_dim - i, 64)
-n_size = pl.min(n_dim - j, 128)
 
-# 与整数常量比较
-causal_kv_tiles = pl.min(qi + 1, skv_tiles)
-
-# 标量变量之间
-c = pl.min(a, b)
-
-# 浮点标量
-scale = pl.min(pl.const(2.5, pl.DT_FP32), pl.const(-1.5, pl.DT_FP32))
+@pl.jit(auto_mutex=True)
+def scalar_min_kernel(
+    lhs: pl.DT_FP32,
+    rhs: pl.DT_FP32,
+    out: pl.Tensor[[1], pl.DT_FP32],
+):
+    value = pl.min(lhs, rhs)
+    pl.setval(out, 0, value)
 ```
+
+例如lhs=2.5、rhs=-1.5时，out[0]为-1.5。整型标量可按相同方式在Kernel中用于循环边界或尾块大小计算。

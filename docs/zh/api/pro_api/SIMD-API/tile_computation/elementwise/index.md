@@ -8,10 +8,15 @@ abs
 add
 and_
 div
+log
 maximum
+minimum
 mul
 neg
 relu
+shl
+shr
+sqrt
 sub
 xor
 ```

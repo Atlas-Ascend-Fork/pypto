@@ -5,4 +5,9 @@
 :titlesonly:
 
 eq
+ge
+gt
+le
+lt
+ne
 ```
