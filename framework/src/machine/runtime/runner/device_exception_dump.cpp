@@ -30,6 +30,7 @@
 #include "machine/utils/dynamic/dev_encode_function_param.h"
 #ifndef TILE_FWK_BUNDLE_STANDALONE
 #include "machine/compile/aicore_compiler.h"
+#include "tilefwk/config.h"
 #endif
 #include "interface/function/function.h"
 
@@ -112,8 +113,12 @@ void DumpNoSubFuncBundledKernel(const DyndevFunctionAttribute* dynAttr, Function
     std::string kernelPath;
     auto devProg = reinterpret_cast<const DevAscendProgram*>(dynAttr->devProgBinary.data());
     bool requiresSimt = devProg != nullptr && devProg->requiresSimt;
+    // 与主编译一致：device_sched_mode 的 L2CACHE_AFFINITY_SCH 位随 CCE 编译传入
+    // -DDRCO_FLAG_L2_CLOSE（paramConfigs_.machineConfig_ 在 pass 期已解析）
+    const bool l2Close = (func->paramConfigs_.machineConfig_ &
+                          static_cast<uint8_t>(MachineScheduleConfig::L2CACHE_AFFINITY_SCH)) != 0;
     int ret = CompileAICoreKernel(leafDict, param, ccePath, funcHash, funcRawName, kernelPath, requiresSimt,
-                                  true /* 保守：dump bundle 保留 MIX 扫描 */, false);
+                                  true /* 保守：dump bundle 保留 MIX 扫描 */, false, l2Close);
     if (ret != 0 || RealPath(kernelPath).empty()) {
         MACHINE_LOGW("Skip no-subfunc bundled kernel dump: recompile kernel failed for %s.", kernelName);
         return;

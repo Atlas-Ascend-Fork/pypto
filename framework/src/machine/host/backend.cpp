@@ -18,6 +18,7 @@
 #include "tilefwk/pypto_fwk_log.h"
 #include "tilefwk/error_code.h"
 #include "tilefwk/comm_group_recorder.h"
+#include "tilefwk/config.h"
 #include "interface/program/program.h"
 #include "interface/function/rebuildable_attribute.h"
 #include "interface/operation/operation.h"
@@ -966,8 +967,14 @@ static bool RunCompileAicoreKernelStage(Function* function, std::map<uint64_t, F
         FindLiteNPUKernel(leafDict, kernelPath);
         return true;
     }
+    // DRCO L2 亲和编译宏：device_sched_mode 的 L2CACHE_AFFINITY_SCH 位（pass 期已解析进
+    // paramConfigs_.machineConfig_）随 CCE 编译传入 -DDRCO_FLAG_L2_CLOSE，设备侧按宏隔离
+    // L2 亲和调度路径（宏为 0 时与非 L2 亲和代码完全一致）
+    const bool l2Close = (function->paramConfigs_.machineConfig_ &
+                          static_cast<uint8_t>(MachineScheduleConfig::L2CACHE_AFFINITY_SCH)) != 0;
     int ret = CompileAICoreKernel(leafDict, encodeDevAscendFunctionParam, ccePath, function->GetFunctionHash().Data(),
-                                  function->GetOriginalRawName(), kernelPath, requiresSimt, graphHasMixWork);
+                                  function->GetOriginalRawName(), kernelPath, requiresSimt, graphHasMixWork, true,
+                                  l2Close);
     if (ret != 0) {
         MACHINE_LOGE(HostBackEndErr::COMPILE_AICORE_FAILED, "Compile dynamic aicore.o failed.");
         return false;

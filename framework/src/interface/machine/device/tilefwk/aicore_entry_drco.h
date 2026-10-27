@@ -62,6 +62,14 @@ using npu::tile_fwk::TaskID;
 // 即全核数 = AIC 1 倍 + AIV 2 倍；矩阵行 = 全局 blockIdx，行数上限钳到 MAX_AICORE_NUM_FOR_QUEUE
 constexpr uint32_t DRCO_ALL_CORES_PER_AIC = 3;
 
+// L2 亲和调度（device_sched_mode 含 MachineScheduleConfig::L2CACHE_AFFINITY_SCH 位）编译期开关：
+// host 编译 CCE 时按该 function 的调度模式传入 -DDRCO_FLAG_L2_CLOSE=1/0（CompileCoreMachine），
+// 未传入时默认 0。L2 亲和专属实现集中在 DrcoPerCoreInterleaveConsume 所在代码块，调用点由
+// 宏隔离；默认调度模式（宏=0）的生成代码与非 L2 亲和版本一致
+#ifndef DRCO_FLAG_L2_CLOSE
+#define DRCO_FLAG_L2_CLOSE 0
+#endif
+
 #if ENABLE_AICORE_PRINT
 #define DRCO_LOG(ctx, fmt, ...) AICORE_LOGE((ctx)->logger.Context(), fmt, ##__VA_ARGS__)
 #else
@@ -283,6 +291,10 @@ struct DrcoEntryState {
     // 本 devTask 是否存在 stitch 节点（devTask 内不变）：入口缓存一次；为 false 时 stitch
     // 矩阵恒无生产者，fetch 循环整段跳过其扫描，省每轮 dcci 空探
     bool hasStitchNode{false};
+    // 本类型 finishFlag 置位暂存（fetch 自旋门控与 percore 交替守卫共用）：
+    // flag 每 devTask 单调（只置不清），首次观测置位后置本暂存，后续判定仅查本地值，
+    // 不再付 GM dcci / ssbuf 读；每 devTask 入口复位（KernelEntryDrco，flag 跨 devTask 会重置）
+    bool drcoFinishFlagCached{false};
     // C 端聚合状态核本地缓存（if (IS_AIC) 运行时门控，散落字段整合）：
     //  · vectorCountDynExpect：AIV 期望动态计数（devTask 内不变，入口缓存）
     //  · lastVCount：本组 V0/V1 计数快照
@@ -1795,20 +1807,42 @@ INLINE void DrcoTryFinishByShardCount(DrcoEntryState* state, __gm__ npu::tile_fw
     }
 }
 
+// 本类型本地 leaf 批消费（fetch 自旋与 percore 交替共用）：本核矩阵行 → 分组队列。
+// 均为纯计算 leaf，不会阻塞在跨核事件上
+INLINE bool DrcoDynFuncDataListFetchTaskLocalLeaf(DrcoEntryState* state,
+                                                  __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                                  uint32_t& resultCoreType,
+                                                  uint32_t resultTaskIdList[npu::tile_fwk::DRCO_MATRIX_COL_MAX],
+                                                  uint32_t& resultTaskIdCount, uint32_t groupIdx, uint32_t rowIdx)
+{
+    __gm__ DrcoLocalReadyMatrix* localReadyMatrix = DrcoRootFuncListGetLocalReadyMatrix(rootFuncList, DRCO_CORE_TYPE);
+    if (DrcoDynFuncDataListFetchTaskLocalReadyMatrix(state, rootFuncList, resultCoreType, resultTaskIdList,
+                                                     resultTaskIdCount, localReadyMatrix, rowIdx)) {
+        return true;
+    }
+    return DrcoDynFuncDataListFetchTaskLocalReadyQueue(state, rootFuncList, DRCO_CORE_TYPE, resultCoreType,
+                                                       resultTaskIdList, resultTaskIdCount, groupIdx);
+}
+
+// 本类型完成 flag 置位判定（percore 交替守卫用；fetch 自旋复用本轮快照同判据）：C 端 dcci 读 GM flag；
+// V 端读 ssbuf 完成镜像（无 GM dcci）。V 端除 FINISH_VECTOR（AIV 完成镜像，C 空转聚合代发布）
+// 外还须并认 FINISH_ALL：全 percore 场景 host 已预置双类型 GM flag，C 核首次 fetch 迭代即经
+// 全局退出判定发布 FINISH_ALL 并退出（DrcoAggregateVectorCount 永不执行，FINISH_VECTOR 永不
+// 置位），只认前者会使该场景守卫恒不命中
+INLINE bool DrcoFinishFlagSet(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList)
+{
+    return IS_AIV ? (npu::tile_fwk::DrcoWarpExecuteCount::FinishStateLoad(&state->ssbuf->warpExecuteCount) &
+                     (npu::tile_fwk::DrcoWarpExecuteCount::FINISH_VECTOR |
+                      npu::tile_fwk::DrcoWarpExecuteCount::FINISH_ALL)) != 0 :
+                    DrcoGmLoad(&rootFuncList->devTaskFinishFlagList.flag[DRCO_CORE_TYPE].devTaskFinishFlag) != 0;
+}
+
 INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
                                              __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                              uint32_t& resultCoreType,
                                              uint32_t resultTaskIdList[npu::tile_fwk::DRCO_MATRIX_COL_MAX])
 {
     TraceEvent(state, 0xffffffff, EVENT_FETCH_START());
-    BlockDesc blockDesc = state->blockDesc;
-    uint32_t blockIdx = BlockDescBlockIdx(blockDesc);
-    uint32_t typedBlockIdx = BlockDescTypedBlockIdx(blockDesc);
-    uint32_t groupIdx = typedBlockIdx / npu::tile_fwk::LOCAL_GROUP_SIZE; // local queue 仍按分组
-
-    __gm__ DrcoLocalReadyMatrix* localReadyMatrix = DrcoRootFuncListGetLocalReadyMatrix(rootFuncList, DRCO_CORE_TYPE);
-    // 合并矩阵：行 = 类型内本地编号本身
-    uint32_t rowIdx = typedBlockIdx;
     // finishFlag 每类型共享一个：本类型全部核经 DrcoGmLoad（含 dcci 失效读）轮询同一 flag
     // （ssbuf 协议下 V 端改读 ssbuf 完成镜像，不走这两个 GM flag 指针）
     __gm__ uint32_t* devTaskFinishFlag = &rootFuncList->devTaskFinishFlagList.flag[DRCO_CORE_TYPE].devTaskFinishFlag;
@@ -1821,6 +1855,11 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
     __gm__ uint32_t* otherTaskFinishFlag = &rootFuncList->devTaskFinishFlagList.flag[DRCO_OTHER_QUEUE_TYPE]
                                                 .devTaskFinishFlag;
     uint32_t resultTaskIdCount = 0;
+    uint32_t blockIdx = BlockDescBlockIdx(state->blockDesc);
+    uint32_t typedBlockIdx = BlockDescTypedBlockIdx(state->blockDesc);
+    uint32_t groupIdx = typedBlockIdx / npu::tile_fwk::LOCAL_GROUP_SIZE; // local queue 仍按分组
+    // 合并矩阵：行 = 类型内本地编号本身
+    uint32_t rowIdx = typedBlockIdx;
 
     uint64_t t0 = get_sys_cnt();
     while (true) {
@@ -1836,14 +1875,17 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
         // 双检：顶部探针与 flag 读之间门可能新开+账凑齐（写序 0xff → add → flag），退出前
         // 再探一次未消费槽必命中，防成员核带任务退出（静默丢任务）
         // V 端一轮一次读 ssbuf 完成镜像（FINISH_ALL / FINISH_VECTOR 位复用，无 GM dcci）；
-        // C 端 dcci 读 GM 双 flag
+        // C 端 dcci 读 GM 双 flag。ownTypeFinished 快照与 DrcoFinishFlagSet 同判据，兼作下方
+        // leaf 消费门控置位（省自旋内复读）
         uint32_t ssbufFinishState = IS_AIV ? npu::tile_fwk::DrcoWarpExecuteCount::FinishStateLoad(
                                                  &state->ssbuf->warpExecuteCount) :
                                              0;
-        // C 端本轮 own flag 缓存一次（下方 ownTypeFinished 复用），省一次 GM dcci 重复读
-        uint32_t ownFinishFlag = IS_AIV ? 0 : DrcoGmLoad(devTaskFinishFlag);
+        // C 端本轮 own flag 直接读入完成判据（下方复用），省一次 GM dcci 重复读
+        bool ownTypeFinished = IS_AIV ? ((ssbufFinishState & (npu::tile_fwk::DrcoWarpExecuteCount::FINISH_VECTOR |
+                                                              npu::tile_fwk::DrcoWarpExecuteCount::FINISH_ALL)) != 0) :
+                                        (DrcoGmLoad(devTaskFinishFlag) != 0);
         bool allTaskFinished = IS_AIV ? ((ssbufFinishState & npu::tile_fwk::DrcoWarpExecuteCount::FINISH_ALL) != 0) :
-                                        (ownFinishFlag != 0 && DrcoGmLoad(otherTaskFinishFlag) != 0);
+                                        (ownTypeFinished && DrcoGmLoad(otherTaskFinishFlag) != 0);
         if (allTaskFinished) {
             if (DrcoMiddleQueueTryProbeGate(state, resultTaskIdCount)) {
                 break;
@@ -1860,14 +1902,11 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
         if (get_sys_cnt() - t0 > AICORE_LEAF_TASK_RUN_TIMEOUT) {
             Trap();
         }
-
-        // 直通 selfReadyQueue 优先消费（每轮循环开头查）：stitch 扫描/展开可能在【本轮循环内】
-        // 经 FlushBatchTasks 写入 selfQueue（同类型后继直通路径），若只在函数入口查一次，写入后
-        // 本函数空转期间槽内任务永久饿死（实测卡死教训：检查必须在循环内每轮开头）
+        // 直通 selfReadyQueue 优先消费（每轮开头查）：stitch 扫描/展开可能在本轮内经 FlushBatchTasks
+        // 写入 selfQueue（同类型后继直通路径），不消费会饿死槽内任务，故检查必须在每轮开头
         if (DrcyDynFuncDataListFetchSelfQueue(state, resultCoreType, resultTaskIdList, resultTaskIdCount)) {
             break;
         }
-
         // stitch 矩阵扫描：仅在图中存在 stitch 节点时开启（hasStitchWork，运行时判定；
         // DRCO_OPT_STITCH_GATE 为构建开关，置 0 恢复无条件调用）
         if (state->hasStitchNode) {
@@ -1878,13 +1917,14 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
         // 依赖，pop 出的任务不进 taskIdList（不执行不计数），own-type 批因此恒为纯 leaf 批
         DrcoHubTaskMatrixPopResolve(state, rootFuncList, blockIdx);
 
-        // 本类型 leaf 全部认领/执行完（flag 置位）后跳过本类型 leaf 矩阵/队列/mixhub 消费
-        // （必然空，省 CAS 竞争）。V 端门控复用本轮镜像值，无 GM dcci。
-        // 探测前置：本核行/本组队列命中概率最高，先于共享矩阵扫描可缩短 push→pop 相位；
-        // 全未命中时本轮继续落在下方共享 stitch/hub 扫描（含帮忙模式），不丢服务
-        bool ownTypeFinished = IS_AIV ? ((ssbufFinishState & npu::tile_fwk::DrcoWarpExecuteCount::FINISH_VECTOR) != 0) :
-                                        ownFinishFlag != 0;
-        if (!ownTypeFinished) {
+        // 完成门控：own flag 每 devTask 单调，首次观测置位即暂存，自旋尾段（帮忙模式）不再复读
+        if (ownTypeFinished) {
+            state->drcoFinishFlagCached = true;
+        }
+        // 本类型 leaf 全部认领/执行完（flag 置位）后跳过本类型 leaf 矩阵/队列/mixhub 消费（必然空，
+        // 省 CAS 竞争——mixhub 任务的写入方即本类型核，全部完成后不再有新任务），仅保留上方共享
+        // stitch 矩阵扫描帮忙对侧展开
+        if (!state->drcoFinishFlagCached) {
             // MIX 分支（C2V 环 + MIX 矩阵行扫 + MIX 队列）仅在本图存在 HUB_MIX 后继时才可能
             // 非空。DRCO_FLAG_HAS_MIX 由 host 在 kernel 编译时按图注入：有=1（保留扫描，运行时
             // 判定）、无=0（整段编译裁剪，矩阵/环恒无生产者），并保留一致性校验
@@ -1898,20 +1938,18 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
                 break;
             }
 #endif
-            if (DrcoDynFuncDataListFetchTaskLocalReadyMatrix(state, rootFuncList, resultCoreType, resultTaskIdList,
-                                                             resultTaskIdCount, localReadyMatrix, rowIdx)) {
+            if (DrcoDynFuncDataListFetchTaskLocalLeaf(state, rootFuncList, resultCoreType, resultTaskIdList,
+                                                      resultTaskIdCount, groupIdx, rowIdx)) {
                 break;
             }
-            if (DrcoDynFuncDataListFetchTaskLocalReadyQueue(state, rootFuncList, DRCO_CORE_TYPE, resultCoreType,
-                                                            resultTaskIdList, resultTaskIdCount, groupIdx)) {
-                break;
-            }
-        } // 本类型未完成（帮忙模式跳过 leaf 消费）
-
+        }
         // 本轮未取到任务：分片完成判定兜底，避免分片计数读漏导致完成 flag 永不置位而挂死
         // （V 端无判定职责；C 端追加聚合，保证 help 模式下持续推进）
         if (IS_AIC) {
-            DrcoTryFinishByShardCount(state, rootFuncList);
+            // cached 置位（own 已完成）时 flag 必已置位，分片兜底必然空转，短路省一次 dcci
+            if (!state->drcoFinishFlagCached) {
+                DrcoTryFinishByShardCount(state, rootFuncList);
+            }
             DrcoAggregateVectorCount(state, rootFuncList);
         }
     }
@@ -2135,23 +2173,6 @@ INLINE void DrcoTryMiddleQueueConsume(DrcoEntryState* state, __gm__ npu::tile_fw
     state->middleQueue.verifiedSlot = 0xFF;
 }
 
-INLINE void ExecDrcoPerCoreTasks(DrcoEntryState* state, __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue,
-                                 __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList)
-{
-    uint32_t perCoreQueueSize = DrcoGmLoad(&perCoreQueue->size);
-    uint32_t perCoreQueueHead = DrcoGmLoad(&perCoreQueue->head);
-    while (perCoreQueueSize > perCoreQueueHead) {
-        uint32_t taskId = DrcoGmLoadArray(perCoreQueue->taskList, perCoreQueueHead);
-        PerfDevTaskFirstLeafTask(state);
-        ExecLeafFunction(state, taskId);
-        // 区域头开门/跳过 resolve 统一由 DrcoResolveDepend 的 hubStack 首查处理
-        if (!DrcoPerCoreTaskSkipResolve(taskId)) {
-            DrcoResolveDepend(state, rootFuncList, &taskId);
-        }
-        perCoreQueueHead += 1;
-    }
-}
-
 // 执行单个就绪任务，恒执行恰好一个 leaf：own-type 批任务即本类型可执行 leaf（hubStack 溢出/
 // stitch 类型越界兜底已改投全核共享 hub 矩阵，fetch 无条件 pop 就地解依赖）；MIX 行任务为
 // hub_mix 节点，经 ResolveHubMixTask 解析后就地执行其唯一 AIC 后继（编码侧
@@ -2180,6 +2201,85 @@ INLINE void ExecDrcoReadyQueueTaskOnce(DrcoEntryState* state, __gm__ npu::tile_f
     ExecLeafFunction(state, taskId);
 }
 
+// 执行一批 fetch 到的任务（notify before run + 逐个执行 + resolve），fetch 自旋消费与
+// percore 交替消费共用；区域头开门/跳过 resolve 统一由 DrcoResolveDepend 的 hubStack 首查处理
+INLINE void DrcoExecFetchedBatch(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                 __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue, uint32_t* taskIdList,
+                                 uint32_t taskCount, uint32_t outCoreType)
+{
+    PerfDevTaskFirstLeafTask(state);
+    DrcoNotifyTaskExecutedAdd(state, rootFuncList, taskCount);
+    for (uint32_t i = 0; i < taskCount; i++) {
+        ExecDrcoReadyQueueTaskOnce(state, rootFuncList, perCoreQueue, taskIdList[i], outCoreType);
+    }
+    DrcoResolveDepend(state, rootFuncList, taskIdList, taskCount);
+}
+
+#if DRCO_FLAG_L2_CLOSE
+// 交替消费间隔：每 N 个 percore 任务消费一次（N=2：深链收益与交替探测开销的折中）
+constexpr uint32_t DRCO_PERCORE_INTERLEAVE_INTERVAL = 2;
+
+// ==================== L2 亲和：percore 交替消费（DRCO_FLAG_L2_CLOSE）====================
+// percore 阶段每 DRCO_PERCORE_INTERLEAVE_INTERVAL 个任务消费一趟 fetch 侧就绪任务：原路径
+// 整批跑完 percore 才进入 fetch 消费，前序产出被后续 percore 任务冲出 L2；交替执行让本核解出的
+// 下游紧跟生产完成点被消费（下游经 readyMatrixPushCol 轮转均分在各核行上，负载均衡不受影响）。
+// 漏消费由循环后的 fetch 兜底，活性不劣于原整批路径
+
+// 单趟交替消费：完成守卫 → 本类型纯计算 leaf 单趟非阻塞消费（selfQueue 直通 + 本核矩阵行/
+// 分组队列），取到则按 fetch 循环同款语义消费（批任务 notify before run + 执行 + resolve），
+// 取不到立即返回继续 percore——percore 任务均为零前驱可无条件执行，活性不劣于原整批路径。
+// 跳过 stitch/hub 矩阵帮忙扫描（重活且行主人固定本核，留给 fetch 循环总量不变）；跳过
+// mixhub/C2V——两者执行 wrap(mix) 部分，会阻塞在块内跨核事件（SET/WAIT_FLAGI/BAR.ALL）上，
+// 穿插执行会搁置本核 percore 尾部的 wrap 部分、打乱实例执行序，与配对核互等死锁，
+// 故 wrap 部分恒留 fetch 循环按原语义执行
+INLINE void DrcoPerCoreInterleaveConsume(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                         __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue)
+{
+    // 入口守卫：本类型 finishFlag 已置位（全 percore 预置 / 动态全认领）时本趟必然空手，
+    // 直接返回省探测开销；flag 每 devTask 单调，置位即暂存，后续交替仅查核本地布尔
+    if (state->drcoFinishFlagCached || DrcoFinishFlagSet(state, rootFuncList)) {
+        state->drcoFinishFlagCached = true;
+        return;
+    }
+    uint32_t typedBlockIdx = BlockDescTypedBlockIdx(state->blockDesc);
+    uint32_t groupIdx = typedBlockIdx / npu::tile_fwk::LOCAL_GROUP_SIZE;
+    // 合并矩阵：行 = 类型内本地编号本身
+    uint32_t rowIdx = typedBlockIdx;
+    uint32_t taskIdList[npu::tile_fwk::DRCO_MATRIX_COL_MAX];
+    uint32_t outCoreType = 0;
+    uint32_t taskCount = 0;
+    if (!DrcyDynFuncDataListFetchSelfQueue(state, outCoreType, taskIdList, taskCount) &&
+        !DrcoDynFuncDataListFetchTaskLocalLeaf(state, rootFuncList, outCoreType, taskIdList, taskCount, groupIdx,
+                                               rowIdx)) {
+        return;
+    }
+    DrcoExecFetchedBatch(state, rootFuncList, perCoreQueue, taskIdList, taskCount, outCoreType);
+}
+#endif // DRCO_FLAG_L2_CLOSE
+
+INLINE void ExecDrcoPerCoreTasks(DrcoEntryState* state, __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue,
+                                 __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList)
+{
+    uint32_t perCoreQueueSize = DrcoGmLoad(&perCoreQueue->size);
+    uint32_t perCoreQueueHead = DrcoGmLoad(&perCoreQueue->head);
+    while (perCoreQueueSize > perCoreQueueHead) {
+        uint32_t taskId = DrcoGmLoadArray(perCoreQueue->taskList, perCoreQueueHead);
+        PerfDevTaskFirstLeafTask(state);
+        ExecLeafFunction(state, taskId);
+        // 区域头开门/跳过 resolve 统一由 DrcoResolveDepend 的 hubStack 首查处理
+        if (!DrcoPerCoreTaskSkipResolve(taskId)) {
+            DrcoResolveDepend(state, rootFuncList, &taskId);
+        }
+        perCoreQueueHead += 1;
+#if DRCO_FLAG_L2_CLOSE
+        // L2 亲和：交替消费已解出的下游
+        if ((perCoreQueueHead % DRCO_PERCORE_INTERLEAVE_INTERVAL) == 0) {
+            DrcoPerCoreInterleaveConsume(state, rootFuncList, perCoreQueue);
+        }
+#endif
+    }
+}
+
 INLINE void ExecDrcoReadyQueueTasks(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                     __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue)
 {
@@ -2192,13 +2292,7 @@ INLINE void ExecDrcoReadyQueueTasks(DrcoEntryState* state, __gm__ npu::tile_fwk:
             state->middleQueue.pending = false;
             DrcoTryMiddleQueueConsume(state, rootFuncList);
         }
-        PerfDevTaskFirstLeafTask(state);
-        DrcoNotifyTaskExecutedAdd(state, rootFuncList, taskCount);
-        // 区域头开门/跳过 resolve 统一由 DrcoResolveDepend 的 hubStack 首查处理
-        for (uint32_t i = 0; i < taskCount; i++) {
-            ExecDrcoReadyQueueTaskOnce(state, rootFuncList, perCoreQueue, taskIdList[i], outCoreType);
-        }
-        DrcoResolveDepend(state, rootFuncList, taskIdList, taskCount);
+        DrcoExecFetchedBatch(state, rootFuncList, perCoreQueue, taskIdList, taskCount, outCoreType);
         taskCount = DrcoDynFuncDataListFetchTask(state, rootFuncList, outCoreType, taskIdList);
     }
 }
@@ -2311,6 +2405,9 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
         state.metadataBase = rootFuncList->metadataBase;
         state.programBase = rootFuncList->programBase;
         DrcoMiddleQueueInit(&state, rootFuncList);
+        // finishFlag 暂存复位：flag 跨 devTask 重置（构建期 placement new + precount），
+        // 暂存须同步复位，详见 DrcoEntryState::drcoFinishFlagCached
+        state.drcoFinishFlagCached = false;
         ExecDrcoPerCoreTasks(&state, perCoreQueue, rootFuncList);
         // 头在 perCore 中执行完成（写 0xff 开门）后立即消费 middleQueue——省去进入
         // fetch 自旋到探测到门开的轮询延迟；未开门时 Consume 内部按槽过滤，无害
