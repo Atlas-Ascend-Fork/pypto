@@ -59,7 +59,7 @@ Status AssignMemoryType::RunOnFunction(Function& function)
     RETURN_IF_NOT_SUCCESS(ResolveInconsistentRawTensorMemoryTypes(function));
     RETURN_IF_NOT_SUCCESS(SyncViewAssembleMemoryAttrs(function));
     RETURN_IF_NOT_SUCCESS(FixViewAssembleSemanticMismatch(function));
-    RETURN_IF_NOT_SUCCESS(ResolveUnalignedUbSlices(function));
+    RETURN_IF_NOT_SUCCESS(ResolveUnalignedUbMoves(function));
     RETURN_IF_NOT_SUCCESS(InsertConvertOpsAndInferShape(function));
     RETURN_IF_NOT_SUCCESS(NormalizeViewAssembleOpcodes(function));
     RETURN_IF_NOT_SUCCESS(MemoryPathUtils::SyncTensorToBe(function));
@@ -1684,26 +1684,46 @@ Status AssignMemoryType::SyncAssembleMemoryAttr(Operation& operation)
     return SUCCESS;
 }
 
-Status AssignMemoryType::ResolveUnalignedUbSlices(Function& function)
+Status AssignMemoryType::ResolveUnalignedUbMoves(Function& function)
 {
     for (auto& op : function.Operations()) {
-        if (op.GetOpcode() != Opcode::OP_SLICE || op.iOperand.empty() || op.oOperand.empty()) {
+        const auto opcode = op.GetOpcode();
+        const bool isSlice = opcode == Opcode::OP_SLICE;
+        const bool isAssembleLike = opcode == Opcode::OP_CONTRACT || opcode == Opcode::OP_ASSEMBLE;
+        if (!isSlice && !isAssembleLike) {
+            continue;
+        }
+        if (op.iOperand.empty() || op.oOperand.empty()) {
             continue;
         }
         auto input = op.iOperand.front();
         auto output = op.oOperand.front();
-        if (input == nullptr || output == nullptr || input->GetMemoryTypeOriginal() != MemoryType::MEM_UB ||
+        if (input == nullptr || output == nullptr) {
+            continue;
+        }
+        if (input->GetMemoryTypeOriginal() != MemoryType::MEM_UB ||
             output->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
             continue;
         }
         bool aligned = false;
-        RETURN_IF_NOT_SUCCESS(IsSliceFromOffsetAligned(op, input, aligned));
-        if (!aligned) {
-            // A same-memory SLICE becomes a shared-buffer VIEW below. Keep unaligned UB slices
-            // materialized through DDR so vector consumers receive an independently aligned buffer.
+        if (isSlice) {
+            RETURN_IF_NOT_SUCCESS(IsSliceFromOffsetAligned(op, input, aligned));
+            if (aligned) {
+                continue;
+            }
+            // 同内存 SLICE 后续会转成共享缓冲区 VIEW，非对齐时转到 DDR，保证访问对齐。
             MemoryPathUtils::ForceSetRequirement(inserter, input, op, MemoryType::MEM_DEVICE_DDR,
                                                  "ResolveUnalignedUbSlice");
+            continue;
         }
+
+        // Contract/Assemble
+        RETURN_IF_NOT_SUCCESS(IsAssembleToOffsetAligned(op, output, aligned));
+        if (aligned) {
+            continue;
+        }
+        // 非对齐拼接输出回退 DDR，避免后续访问共享 UB 的非对齐区域。
+        MemoryPathUtils::ForceSetOriginal(output, MemoryType::MEM_DEVICE_DDR, "ResolveUnalignedUbMoveOutput");
     }
     return SUCCESS;
 }

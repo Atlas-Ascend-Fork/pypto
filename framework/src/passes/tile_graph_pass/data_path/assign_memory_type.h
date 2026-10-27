@@ -172,7 +172,7 @@ private:
 
     Status NormalizeViewAssembleOpcodes(Function& function);
 
-    Status ResolveUnalignedUbSlices(Function& function);
+    Status ResolveUnalignedUbMoves(Function& function);
 
     Status ProcessL0C2L1SmallToLarge(Function& function);
     Status ProcessL0C2L1LargeToSmall(Function& function);

@@ -25,6 +25,7 @@
 #include "interface/inner/tilefwk.h"
 #include "interface/configs/config_manager.h"
 #include "passes/tile_graph_pass/data_path/assign_memory_type.h"
+#include "passes/tile_graph_pass/data_path/generate_move_op.h"
 #include "passes/tile_graph_pass/data_path/memory_path_utils.h"
 #include "passes/pass_mgr/pass_manager.h"
 #include "computational_graph_builder.h"
@@ -965,6 +966,205 @@ TEST_F(AssignMemoryTypeTest, UnalignedAssembleBeforeReshapeFallbackDdr)
     auto assembleOpAttr = std::dynamic_pointer_cast<AssembleOpAttribute>(G.GetOp("assemble")->GetOpAttribute());
     ASSERT_NE(assembleOpAttr, nullptr);
     EXPECT_EQ(assembleOpAttr->GetFrom(), MemoryType::MEM_UB);
+}
+
+TEST_F(AssignMemoryTypeTest, UnalignedContractIntoUbMaterializesDdr)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    ComputationalGraphBuilder G;
+    Shape inputShape{NUM_8, NUM_32, 12};
+    Shape outputShape{NUM_8, NUM_32, 25};
+    ASSERT_TRUE(G.AddTensor(DataType::DT_FP32, inputShape, MemoryType::MEM_UB, "input"));
+    ASSERT_TRUE(G.AddTensor(DataType::DT_FP32, outputShape, MemoryType::MEM_UB, "output"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_CONTRACT, {"input"}, {"output"}, "contract"));
+    G.GetOp("contract")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 0, 13}));
+
+    AssignMemoryType assignMemoryType;
+    ASSERT_EQ(assignMemoryType.RunOnFunction(*G.GetFunction()), SUCCESS);
+    EXPECT_EQ(G.GetTensor("output")->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+}
+
+class AssignMemoryTypeUbAssembleTest : public AssignMemoryTypeTest,
+                                       public testing::WithParamInterface<std::tuple<bool, int64_t>> {};
+
+TEST_P(AssignMemoryTypeUbAssembleTest, MaterializeUnalignedAssembleBeforeVectorConsumer)
+{
+    const auto [enableSlice, offset] = GetParam();
+    config::SetPassOption(ENABLE_SLICE, enableSlice);
+    const bool aligned = offset == NUM_8;
+    const Opcode assembleOpcode = enableSlice ? Opcode::OP_CONTRACT : Opcode::OP_ASSEMBLE;
+    const Shape outputShape{NUM_8, NUM_32, 25};
+    const Offset zero{0, 0, 0};
+    const Offset toOffset{0, 0, offset};
+    ComputationalGraphBuilder G;
+    ASSERT_TRUE(G.AddTensor(DT_FP32, Shape{NUM_8, NUM_32, offset}, MemoryType::MEM_UB, "first"));
+    ASSERT_TRUE(G.AddTensor(DT_FP32, Shape{NUM_8, NUM_32, 25 - offset}, MemoryType::MEM_UB, "second"));
+    ASSERT_TRUE(G.AddTensor(DT_FP32, outputShape, MemoryType::MEM_UB, "joined"));
+    ASSERT_TRUE(G.AddTensor(DT_FP32, outputShape, MemoryType::MEM_UB, "added"));
+    ASSERT_TRUE(G.AddTensor(DT_FP32, outputShape, MemoryType::MEM_DEVICE_DDR, "output"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_VEC_DUP, {}, {"first"}, "first_dup"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_VEC_DUP, {}, {"second"}, "second_dup"));
+    ASSERT_TRUE(G.AddOp(assembleOpcode, {"first"}, {"joined"}, "first_assemble"));
+    ASSERT_TRUE(G.AddOp(assembleOpcode, {"second"}, {"joined"}, "second_assemble"));
+    G.GetOp("first_assemble")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, zero));
+    G.GetOp("second_assemble")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, toOffset));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_ADD, {"joined", "joined"}, {"added"}, "add"));
+    ASSERT_TRUE(G.AddOp(assembleOpcode, {"added"}, {"output"}, "store"));
+    G.GetOp("store")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, zero));
+    G.GetFunction()->outCasts_.push_back(G.GetTensor("output"));
+
+    AssignMemoryType pass;
+    ASSERT_EQ(pass.RunOnFunction(*G.GetFunction()), SUCCESS);
+    ASSERT_EQ(pass.PostCheck(*G.GetFunction()), SUCCESS);
+    auto joined = G.GetTensor("joined");
+    auto* add = G.GetOp("add");
+    EXPECT_EQ(joined->GetMemoryTypeOriginal(), aligned ? MemoryType::MEM_UB : MemoryType::MEM_DEVICE_DDR);
+    ASSERT_EQ(add->GetIOperands().size(), 2U);
+    Operation* moveIn = nullptr;
+    for (const auto& operand : add->GetIOperands()) {
+        EXPECT_EQ(operand->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+        if (aligned) {
+            EXPECT_EQ(operand, joined);
+            continue;
+        }
+        // 消费者读取独立 UB 缓冲区，不能继续引用非对齐拼接区域。
+        EXPECT_NE(operand->GetRawTensor(), joined->GetRawTensor());
+        EXPECT_EQ(operand->GetOffset(), zero);
+        ASSERT_EQ(operand->GetProducers().size(), 1U);
+        moveIn = *operand->GetProducers().begin();
+        EXPECT_EQ(moveIn->GetOpcode(), enableSlice ? Opcode::OP_SLICE : Opcode::OP_VIEW);
+        ASSERT_EQ(moveIn->GetIOperands().size(), 1U);
+        EXPECT_EQ(moveIn->GetIOperands().front(), joined);
+        EXPECT_TRUE(operand->GetConsumers().count(add));
+        EXPECT_TRUE(joined->GetConsumers().count(moveIn));
+    }
+
+    GenerateMoveOp generateMove;
+    ASSERT_EQ(generateMove.CreateMoveOp(*G.GetFunction()), SUCCESS);
+    if (!aligned) {
+        ASSERT_NE(moveIn, nullptr);
+        EXPECT_EQ(moveIn->GetOpcode(), Opcode::OP_COPY_IN);
+        EXPECT_EQ(G.GetOp("second_assemble")->GetOpcode(), Opcode::OP_COPY_OUT);
+        auto copyOutAttr = std::dynamic_pointer_cast<CopyOpAttribute>(G.GetOp("second_assemble")->GetOpAttribute());
+        ASSERT_NE(copyOutAttr, nullptr);
+        EXPECT_EQ(OpImmediate::ToSpecified(copyOutAttr->GetToOffset()), CreateTestConstIntVector(toOffset));
+    } else {
+        EXPECT_EQ(G.GetOp("second_assemble")->GetOpcode(), Opcode::OP_ASSEMBLE);
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(UbAssembleAlignment, AssignMemoryTypeUbAssembleTest,
+                         testing::Combine(testing::Bool(), testing::Values(int64_t{NUM_8}, int64_t{13})));
+
+TEST_F(AssignMemoryTypeTest, AssembleAlignmentRejectsInvalidOperands)
+{
+    ComputationalGraphBuilder G;
+    ASSERT_TRUE(G.AddTensor(DT_FP32, Shape{NUM_8, NUM_32, 12}, MemoryType::MEM_UB, "input"));
+    ASSERT_TRUE(G.AddTensor(DT_FP32, Shape{NUM_8, NUM_32, 25}, MemoryType::MEM_UB, "output"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_CONTRACT, {"input"}, {"output"}, "contract"));
+    auto* contract = G.GetOp("contract");
+    auto output = G.GetTensor("output");
+    AssignMemoryType pass;
+    bool aligned = true;
+    EXPECT_EQ(pass.IsAssembleToOffsetAligned(*contract, output, aligned), FAILED);
+    EXPECT_FALSE(aligned);
+    contract->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 0, 13}));
+    aligned = true;
+    EXPECT_EQ(pass.IsAssembleToOffsetAligned(*contract, nullptr, aligned), FAILED);
+    EXPECT_FALSE(aligned);
+    auto rawTensor = output->tensor;
+    output->tensor.reset();
+    aligned = true;
+    EXPECT_EQ(pass.IsAssembleToOffsetAligned(*contract, output, aligned), FAILED);
+    EXPECT_FALSE(aligned);
+    output->tensor = rawTensor;
+}
+
+TEST_F(AssignMemoryTypeTest, AssembleAlignmentPreservesRankAndDynamicShapeHandling)
+{
+    ComputationalGraphBuilder G;
+    ASSERT_TRUE(G.AddTensor(DT_FP32, Shape{NUM_8, NUM_32, 12}, MemoryType::MEM_UB, "input"));
+    ASSERT_TRUE(G.AddTensor(DT_FP32, Shape{NUM_8, NUM_32, 25}, MemoryType::MEM_UB, "output"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_CONTRACT, {"input"}, {"output"}, "contract"));
+    auto* contract = G.GetOp("contract");
+    contract->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 13}));
+    AssignMemoryType pass;
+    bool aligned = true;
+    EXPECT_EQ(pass.IsAssembleToOffsetAligned(*contract, G.GetTensor("output"), aligned), FAILED);
+    EXPECT_FALSE(aligned);
+    // 动态维度仍走保守回退，不把编译期无法判断的形状当作非法输入。
+    G.GetTensor("output")->GetRawTensor()->rawshape[0] = -1;
+    aligned = true;
+    EXPECT_EQ(pass.IsAssembleToOffsetAligned(*contract, G.GetTensor("output"), aligned), SUCCESS);
+    EXPECT_FALSE(aligned);
+}
+
+TEST_F(AssignMemoryTypeTest, UnalignedHighRankContractPreservesDdrRequirement)
+{
+    for (size_t rank : {6U, 7U}) {
+        SCOPED_TRACE(rank);
+        ComputationalGraphBuilder G;
+        Shape inputShape(rank, 1);
+        Shape outputShape(rank, 1);
+        Offset offset(rank, 0);
+        inputShape.back() = 12;
+        outputShape.back() = 25;
+        offset.back() = 13;
+        ASSERT_TRUE(G.AddTensor(DT_FP32, inputShape, MemoryType::MEM_UB, "input"));
+        ASSERT_TRUE(G.AddTensor(DT_FP32, outputShape, MemoryType::MEM_UB, "output"));
+        ASSERT_TRUE(G.AddOp(Opcode::OP_CONTRACT, {"input"}, {"output"}, "contract"));
+        auto* contract = G.GetOp("contract");
+        contract->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, offset));
+
+        AssignMemoryType pass;
+        ASSERT_EQ(pass.InferContractMemoryType(*contract), SUCCESS);
+        ASSERT_EQ(pass.inserter.GetRequirementOrUnknown(G.GetTensor("input"), *contract), MemoryType::MEM_DEVICE_DDR);
+        ASSERT_EQ(pass.ResolveUnalignedUbMoves(*G.GetFunction()), SUCCESS);
+        EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(G.GetTensor("input"), *contract), MemoryType::MEM_DEVICE_DDR);
+        EXPECT_EQ(G.GetTensor("output")->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    }
+}
+
+TEST_F(AssignMemoryTypeTest, UnalignedOversizedContractPreservesDdrRequirement)
+{
+    ComputationalGraphBuilder G;
+    int64_t rows = Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) / (12 * BytesOf(DT_FP32)) + 1;
+    ASSERT_TRUE(G.AddTensor(DT_FP32, Shape{rows, 12}, MemoryType::MEM_UB, "input"));
+    ASSERT_TRUE(G.AddTensor(DT_FP32, Shape{rows, 25}, MemoryType::MEM_UB, "output"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_CONTRACT, {"input"}, {"output"}, "contract"));
+    auto* contract = G.GetOp("contract");
+    contract->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 13}));
+
+    AssignMemoryType pass;
+    ASSERT_EQ(pass.InferContractMemoryType(*contract), SUCCESS);
+    ASSERT_EQ(pass.ApplyOversizedLocalBufferFallbackStandard(*contract), SUCCESS);
+    ASSERT_EQ(pass.inserter.GetRequirementOrUnknown(G.GetTensor("input"), *contract), MemoryType::MEM_DEVICE_DDR);
+    ASSERT_EQ(pass.ResolveUnalignedUbMoves(*G.GetFunction()), SUCCESS);
+    EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(G.GetTensor("input"), *contract), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(G.GetTensor("output")->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+}
+
+TEST_F(AssignMemoryTypeTest, LegacyUnalignedAssembleGeneratesCopyOut)
+{
+    config::SetPassOption(ENABLE_SLICE, false);
+    ComputationalGraphBuilder G;
+    ASSERT_TRUE(G.AddTensor(DT_FP32, Shape{NUM_8, 13}, MemoryType::MEM_UB, "first"));
+    ASSERT_TRUE(G.AddTensor(DT_FP32, Shape{NUM_8, 12}, MemoryType::MEM_UB, "second"));
+    ASSERT_TRUE(G.AddTensor(DT_FP32, Shape{NUM_8, 25}, MemoryType::MEM_UB, "output"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_ASSEMBLE, {"first"}, {"output"}, "first_assemble"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_ASSEMBLE, {"second"}, {"output"}, "second_assemble"));
+    G.GetOp("first_assemble")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 0}));
+    G.GetOp("second_assemble")
+        ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 13}));
+
+    AssignMemoryType pass;
+    ASSERT_EQ(pass.RunOnFunction(*G.GetFunction()), SUCCESS);
+    EXPECT_EQ(G.GetTensor("output")->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(G.GetOp("second_assemble")->GetOpcode(), Opcode::OP_ASSEMBLE);
+    GenerateMoveOp generateMove;
+    ASSERT_EQ(generateMove.CreateMoveOp(*G.GetFunction()), SUCCESS);
+    EXPECT_EQ(G.GetOp("first_assemble")->GetOpcode(), Opcode::OP_COPY_OUT);
+    EXPECT_EQ(G.GetOp("second_assemble")->GetOpcode(), Opcode::OP_COPY_OUT);
 }
 
 TEST_F(AssignMemoryTypeTest, AssembleAndReshapeAfterAssemble)
