@@ -88,7 +88,7 @@ def test_matmul_mx_builds_registered_call():
     call = _ir_matmul_mx(t["dst"], t["lhs"], t["rhs"], t["scale_a"], t["scale_b"])
 
     assert call.name == "block.matmul_mx"
-    assert call.type.dtype == DataType.FP32
+    assert isinstance(call.type, ir.NoneType)
     assert [arg.name for arg in call.args] == ["dst", "lhs", "rhs", "scale_a", "scale_b"]
 
 
@@ -99,7 +99,7 @@ def test_matmul_mx_acc_builds_registered_call():
     )
 
     assert call.name == "block.matmul_mx_acc"
-    assert call.type.dtype == DataType.FP32
+    assert isinstance(call.type, ir.NoneType)
     assert [arg.name for arg in call.args] == ["dst", "acc", "lhs", "rhs", "scale_a", "scale_b"]
 
 
@@ -333,3 +333,14 @@ def test_mx_scale_memory_requires_32_byte_alignment(memory_space):
     _validate_tile_addr_alignment(0x20, memory_space)
     with pytest.raises(ValueError, match="32-byte aligned"):
         _validate_tile_addr_alignment(0x01, memory_space)
+
+
+def test_matmul_mx_acc_compares_data_type_without_mutex_count():
+    tiles = _mx_tiles()
+    for name, mutex_count in (("dst", 1), ("acc", 2)):
+        value = tiles[name]
+        tiles[name] = ir.Var(name, ir.MutexTileType(value.type, mutex_count), value.span)
+    call = _ir_matmul_mx_acc(
+        tiles["dst"], tiles["acc"], tiles["lhs"], tiles["rhs"], tiles["scale_a"], tiles["scale_b"]
+    )
+    assert isinstance(call.type, ir.NoneType)

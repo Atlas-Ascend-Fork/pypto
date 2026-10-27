@@ -11,12 +11,12 @@
 """Unit tests for the make_tile_group DSL composite (IR named tuple) and auto_mutex.
 
 ``pl.make_tile_group(type=, addrs=, mutex_ids=, depth=)`` is a DSL composite: declared inside a
-kernel, lowered by the parser to an IR named tuple ``{tiles, mutex_ids, cursor}``.
+kernel, lowered by the parser to an IR named tuple ``{tiles, cursor}``.
 ``group.next()/current()/previous()`` each return a bare tile (not a slot); ``next()``
 advances the cursor, ``current()/previous()`` do not. ``group[i]`` addresses a slot
 directly and never touches the cursor. Explicit indices must be in ``[0, depth)``;
-callers spell any desired wraparound as ``group[index % depth]``. The tile <-> mutex_id mapping is parser metadata
-consumed by auto_mutex, so the frontend never handles mutex ids or manual lock/unlock.
+callers spell any desired wraparound as ``group[index % depth]``. The tile binding is an explicit make_tile operand
+consumed by InsertSync, so the frontend never handles mutex ids or manual lock/unlock.
 """
 
 
@@ -37,7 +37,10 @@ def _ir_to_str(prog: ir.Program) -> str:
 
 
 def _parse_kernel(kernel_def, target=ir.SectionKind.Vector) -> ir.Program:
-    return kernel_def.to_kernel_def().parse_target_program(target)[0]
+    """Build IR and run InsertSync for tests that request automatic synchronization."""
+    definition = kernel_def.to_kernel_def()
+    program = definition.parse_target_program(target)[0]
+    return ir.Pass.insert_sync()(program) if definition._auto_mutex else program
 
 
 def _walk_statements(stmt):
@@ -45,7 +48,7 @@ def _walk_statements(stmt):
     if isinstance(stmt, ir.SeqStmts):
         for child in stmt.stmts:
             yield from _walk_statements(child)
-    elif isinstance(stmt, (ir.ForStmt, ir.WhileStmt)):
+    elif isinstance(stmt, (ir.ForStmt, ir.WhileStmt, ir.SectionStmt)):
         yield from _walk_statements(stmt.body)
     elif isinstance(stmt, ir.IfStmt):
         yield from _walk_statements(stmt.then_body)
@@ -62,10 +65,6 @@ def _mutex_calls(program: ir.Program, function_name: str):
         and isinstance(stmt.expr, ir.Call)
         and stmt.expr.name in ("system.mutex_lock_dyn", "system.mutex_unlock_dyn")
     ]
-
-
-def _constant_groups(tuple_expr):
-    return [[int(value.value) for value in group.elements] for group in tuple_expr.elements]
 
 
 def test_constant_mutex_lock_unlock_uses_dynamic_ir():
@@ -263,7 +262,7 @@ def test_auto_mutex_single_tile():
     ir_str = _ir_to_str(_parse_kernel(k))
     assert ir_str.count("mutex_lock") >= 2, ir_str
     assert ir_str.count("mutex_unlock") >= 2, ir_str
-    assert "_tg_g_mutex_ids_0 = tuple(3)" in ir_str, ir_str
+    assert "system.mutex_lock_dyn(3" in ir_str, ir_str
 
 
 def test_auto_mutex_locks_scale_kwarg_tile(monkeypatch):
@@ -279,11 +278,13 @@ def test_auto_mutex_locks_scale_kwarg_tile(monkeypatch):
         fp_g = pl.make_tile_group(type=fp_tt, addrs=0, mutex_ids=[1])
         pl.store(out, acc_g[0], [0, 0], scale=fp_g[0])
 
-    ir_str = _ir_to_str(k.to_kernel_def().parse_target_program(ir.SectionKind.Cube)[0])
+    ir_str = _ir_to_str(_parse_kernel(k, ir.SectionKind.Cube))
     assert "block.store" in ir_str, ir_str
-    assert ir_str.count("system.mutex_lock_dyn") == 1, ir_str
-    assert ir_str.count("system.mutex_unlock_dyn") == 1, ir_str
-    assert "tuple(tuple(0), tuple(1))" in ir_str, ir_str
+
+    assert ir_str.count("system.mutex_lock_dyn") == 2, ir_str
+    assert ir_str.count("system.mutex_unlock_dyn") == 2, ir_str
+    assert "system.mutex_lock_dyn(0" in ir_str
+    assert "system.mutex_lock_dyn(1" in ir_str
 
 
 def test_auto_mutex_group_loop():
@@ -298,8 +299,8 @@ def test_auto_mutex_group_loop():
     ir_str = _ir_to_str(_parse_kernel(k, ir.SectionKind.Cube))
     assert "mutex_lock" in ir_str, ir_str
     assert "mutex_unlock" in ir_str, ir_str
-    assert ir_str.count("block.make_tile") == 2, ir_str
-    assert "_tg_q_l1_db_mutex_ids_0 = tuple(0, 1)" in ir_str, ir_str
+    assert ir_str.count("block.make_mutex_tile") == 2, ir_str
+    assert "block.tile_mutex_id" in ir_str, ir_str
 
 
 def test_next_advances():
@@ -313,7 +314,7 @@ def test_next_advances():
         pl.load(b, gm_q, [0, 0])
 
     ir_str = _ir_to_str(_parse_kernel(k))
-    assert ir_str.count("block.make_tile") == 2, ir_str
+    assert ir_str.count("block.make_mutex_tile") == 2, ir_str
     assert "struct.create" in ir_str
     # Each next() advances the cursor via a struct.set field write.
     assert ir_str.count("struct.set") >= 2
@@ -346,7 +347,7 @@ def test_previous_no_advance():
         pl.load(prev, gm_q, [0, 0])
 
     ir_str = _ir_to_str(_parse_kernel(k))
-    assert ir_str.count("block.make_tile") == 2, ir_str
+    assert ir_str.count("block.make_mutex_tile") == 2, ir_str
     # Only the next() advanced the cursor; previous() does not.
     assert ir_str.count("struct.set") == 1
 
@@ -359,12 +360,12 @@ def test_single_tile_group_fast_path():
         cur = g.next()
         pl.load(cur, gm_q, [0, 0])
 
-    ir_str = _ir_to_str(_parse_kernel(k))
-    assert "block.make_tile" in ir_str
+    ir_str = _ir_to_str(_parse_kernel(k, ir.SectionKind.Cube))
+    assert "block.make_mutex_tile" in ir_str
     # Single-tile group: no cursor struct or rotate; mutex metadata is retained.
     assert "struct.create" not in ir_str
     assert "struct.set" not in ir_str
-    assert "mutex_id" in ir_str
+    assert "mutex_lock_dyn" in ir_str
     assert "5" in ir_str
 
 
@@ -376,7 +377,7 @@ def test_depth_creates_group_without_mutex_ids():
         pl.load(g[0], gm_q, [0, 0])
 
     ir_str = _ir_to_str(_parse_kernel(k))
-    assert ir_str.count("block.make_tile") == 2, ir_str
+    assert ir_str.count("block.make_mutex_tile") == 2, ir_str
     assert "mutex_lock" not in ir_str, ir_str
 
 
@@ -388,7 +389,7 @@ def test_depth_keyword_with_explicit_none_mutex_ids():
         pl.load(g[0], gm_q, [0, 0])
 
     ir_str = _ir_to_str(_parse_kernel(k))
-    assert ir_str.count("block.make_tile") == 2, ir_str
+    assert ir_str.count("block.make_mutex_tile") == 2, ir_str
     assert "mutex_lock" not in ir_str, ir_str
 
 
@@ -408,8 +409,8 @@ def test_depth_must_equal_mutex_ids_length():
 # ---------------------------------------------------------------------------
 
 
-def test_subscript_const_index_keeps_group_mutex_candidates():
-    """A literal index keeps its static ID while preserving group candidates for codegen."""
+def test_subscript_const_index_uses_the_selected_binding():
+    """A literal index resolves to the selected tile's static ID."""
 
     @pl.jit(auto_mutex=True)
     def k(gm_q: pl.Tensor[[32, 32], pl.DT_FP16]):
@@ -420,15 +421,13 @@ def test_subscript_const_index_keeps_group_mutex_candidates():
 
     program = _parse_kernel(k, ir.SectionKind.Cube)
     ir_str = _ir_to_str(program)
-    assert ir_str.count("block.make_tile") == 2, ir_str
+    assert ir_str.count("block.make_mutex_tile") == 2, ir_str
     assert "_bufidx" not in ir_str, ir_str
     assert ir_str.count("system.mutex_lock_dyn") == 2, ir_str
-    lock_candidates = [
-        _constant_groups(call.args[1])
-        for call in _mutex_calls(program, k.__name__)
-        if call.name == "system.mutex_lock_dyn"
-    ]
-    assert lock_candidates == [[[6, 7]], [[6, 7]]]
+
+    locks = [call for call in _mutex_calls(program, k.__name__) if call.name == "system.mutex_lock_dyn"]
+    assert [call.args[0].value for call in locks] == [6, 7]
+    assert all(len(call.args) == 1 for call in locks)
 
 
 def test_subscript_negative_index_rejected():
@@ -516,11 +515,7 @@ def test_subscript_single_tile_group_requires_bounded_index():
 
 
 def test_subscript_two_slots_in_one_op_dedup():
-    """Two slots of one group in a single op must share one dedup'd lock.
-
-    Two get_buf on the same pipe and the same id hang the hardware, so the two
-    ids go into one mutex_lock_dyn whose codegen guards the second with `!=`.
-    """
+    """InsertSync guards the second scalar lock when two dynamic slots may coincide."""
 
     @pl.jit(auto_mutex=True)
     def k(gm_q: pl.Tensor[[128, 32], pl.DT_FP16]):
@@ -531,7 +526,7 @@ def test_subscript_two_slots_in_one_op_dedup():
 
     ir_str = _ir_to_str(_parse_kernel(k))
     assert "mutex_lock_dyn" in ir_str, ir_str
-    # Both candidate ids travel with the single dedup op.
+    # Both declarations remain available to the pass; generated sync has no candidates.
     assert "10" in ir_str and "11" in ir_str, ir_str
 
 
@@ -548,7 +543,7 @@ def test_subscript_mixes_with_next():
             pl.load(g[i % 2], gm_q, [i * 32, 0])
 
     ir_str = _ir_to_str(_parse_kernel(k))
-    assert ir_str.count("block.make_tile") == 2, ir_str
+    assert ir_str.count("block.make_mutex_tile") == 2, ir_str
     assert ir_str.count("struct.set") == 1, ir_str  # only next() advances
 
 
@@ -728,7 +723,7 @@ def test_set_validshape_covers_every_tile_of_the_group():
 # ---------------------------------------------------------------------------
 
 
-def test_const_multi_mutex_ids_use_one_dedup_op():
+def test_const_multi_mutex_ids_expand_to_scalar_sync():
     @pl.jit(auto_mutex=True)
     def k(gm_q: pl.Tensor[[32, 32], pl.DT_FP16]):
         tt = pl.TileType(shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat)
@@ -737,14 +732,15 @@ def test_const_multi_mutex_ids_use_one_dedup_op():
 
     program = _parse_kernel(k, ir.SectionKind.Cube)
     ir_str = _ir_to_str(program)
-    assert ir_str.count("system.mutex_lock_dyn") == 1, ir_str
-    assert ir_str.count("system.mutex_unlock_dyn") == 1, ir_str
+
+    assert ir_str.count("system.mutex_lock_dyn") == 2, ir_str
+    assert ir_str.count("system.mutex_unlock_dyn") == 2, ir_str
     calls = _mutex_calls(program, k.__name__)
-    assert all(_constant_groups(call.args[0]) == [[2, 3]] for call in calls)
-    assert all(_constant_groups(call.args[1]) == [[2, 3]] for call in calls)
+    assert [call.args[0].value for call in calls] == [2, 3, 2, 3]
+    assert all(len(call.args) == 1 for call in calls)
 
 
-def test_dynamic_multi_mutex_ids_use_one_dedup_op():
+def test_dynamic_multi_mutex_ids_use_fixed_slot_getters():
     @pl.jit(auto_mutex=True)
     def k(gm_q: pl.Tensor[[96, 32], pl.DT_FP16]):
         tt = pl.TileType(shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat)
@@ -754,12 +750,12 @@ def test_dynamic_multi_mutex_ids_use_one_dedup_op():
 
     program = _parse_kernel(k, ir.SectionKind.Cube)
     ir_str = _ir_to_str(program)
-    assert ir_str.count("system.mutex_lock_dyn") == 1, ir_str
-    assert ir_str.count("system.mutex_unlock_dyn") == 1, ir_str
-    assert "_tg_g_mutex_ids" in ir_str, ir_str
-    assert "_tg_g_mutex_ids_1" in ir_str, ir_str
-    calls = _mutex_calls(program, k.__name__)
-    assert all(_constant_groups(call.args[1]) == [[0, 1, 2, 3, 4, 5]] for call in calls)
+
+    assert ir_str.count("system.mutex_lock_dyn") == 2, ir_str
+    assert ir_str.count("system.mutex_unlock_dyn") == 2, ir_str
+    assert ir_str.count("block.tile_mutex_id") == 2, ir_str
+    assert "_tg_g_mutex_ids" not in ir_str
+    assert "__sync_needed" not in ir_str
 
 
 def test_single_and_multi_id_groups_can_share_one_op():
@@ -773,11 +769,11 @@ def test_single_and_multi_id_groups_can_share_one_op():
 
     program = _parse_kernel(k)
     ir_str = _ir_to_str(program)
-    assert ir_str.count("system.mutex_lock_dyn") == 1, ir_str
-    assert ir_str.count("system.mutex_unlock_dyn") == 1, ir_str
-    calls = _mutex_calls(program, k.__name__)
-    assert all([len(group.elements) for group in call.args[0].elements] == [2, 1] for call in calls)
-    assert all(_constant_groups(call.args[1]) == [[0, 1, 2, 3, 4, 5], [0, 1, 2]] for call in calls)
+
+    assert ir_str.count("system.mutex_lock_dyn") == 3, ir_str
+    assert ir_str.count("system.mutex_unlock_dyn") == 3, ir_str
+    assert "__sync_needed" in ir_str
+    assert all(len(call.args) == 1 for call in _mutex_calls(program, k.__name__))
 
 
 def test_mutex_candidate_groups_preserve_each_tile_candidates():
@@ -791,10 +787,14 @@ def test_mutex_candidate_groups_preserve_each_tile_candidates():
 
     program = _parse_kernel(k)
     ir_str = _ir_to_str(program)
-    assert ir_str.count("system.mutex_lock_dyn") == 1, ir_str
-    assert ir_str.count("system.mutex_unlock_dyn") == 1, ir_str
-    calls = _mutex_calls(program, k.__name__)
-    assert all(_constant_groups(call.args[1]) == [[1], [1, 2], [2]] for call in calls)
+
+    assert ir_str.count("system.mutex_lock_dyn") == 3, ir_str
+    assert ir_str.count("system.mutex_unlock_dyn") == 3, ir_str
+    # Dynamic lhs may equal either static ID; both overlaps need a guard.
+    guards = [stmt for stmt in _walk_statements(program.get_function(k.__name__).body)
+              if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("__sync_needed")]
+    assert len(guards) == 2
+    assert all(len(call.args) == 1 for call in _mutex_calls(program, k.__name__))
 
 
 def test_multi_mutex_ids_survive_ternary_merge():
@@ -809,8 +809,8 @@ def test_multi_mutex_ids_survive_ternary_merge():
     func = program.get_function(k.__name__)
     if_stmt = next(stmt for stmt in func.body.stmts if isinstance(stmt, ir.IfStmt))
     ir_str = _ir_to_str(program)
-    assert len(if_stmt.return_vars) == 3
-    assert all("__mutexid" in var.name for var in if_stmt.return_vars[1:])
+    assert len(if_stmt.return_vars) == 1
+    assert "__mutexid" not in ir_str
     assert "system.mutex_lock_dyn" in ir_str, ir_str
 
 
@@ -826,8 +826,8 @@ def test_same_name_control_flow_rejects_different_mutex_id_counts():
         pl.load(tile, gm_q, [0, 0])
 
     with pytest.raises(
-        PyptoProError,
-        match="cannot merge tile mutex metadata with different ID counts: 2 and 1",
+        NameNotFound,
+        match="potentially undefined variable",
     ):
         _parse_kernel(k, ir.SectionKind.Cube)
 
@@ -844,12 +844,12 @@ def test_same_name_control_flow_merges_equal_mutex_id_counts():
         pl.load(tile, gm_q, [0, 0])
 
     ir_str = _ir_to_str(_parse_kernel(k, ir.SectionKind.Cube))
-    assert "tile__mutexid" in ir_str, ir_str
-    assert "tile__mutexid_1" in ir_str, ir_str
+    assert "__mutexid" not in ir_str
+    assert ir_str.count("block.tile_mutex_id") == 2
     assert "system.mutex_lock_dyn" in ir_str, ir_str
 
 
-def test_loop_appends_mutex_ids_after_explicit_merge_slots():
+def test_loop_carries_only_original_merge_slots():
     @pl.jit(auto_mutex=True)
     def k(gm_q: pl.Tensor[[32, 32], pl.DT_FP16], choose: pl.DT_INT32):
         tt = pl.TileType(shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat)
@@ -866,21 +866,16 @@ def test_loop_appends_mutex_ids_after_explicit_merge_slots():
     func = program.get_function(k.__name__)
     for_stmt = next(stmt for stmt in func.body.stmts if isinstance(stmt, ir.ForStmt))
 
-    assert len(for_stmt.iter_args) == 4
-    assert len(for_stmt.return_vars) == 4
-    assert all("__mutexid" not in arg.iterVar.name for arg in for_stmt.iter_args[:2])
-    assert all("tile__mutexid" in arg.iterVar.name for arg in for_stmt.iter_args[2:])
-    assert all("__mutexid" not in var.name for var in for_stmt.return_vars[:2])
-    assert all("tile__mutexid" in var.name for var in for_stmt.return_vars[2:])
 
+    assert len(for_stmt.iter_args) == len(for_stmt.return_vars) == 2
+    assert "__mutexid" not in str(program)
     continue_stmt = for_stmt.body.stmts[-1]
     assert isinstance(continue_stmt, ir.ContinueStmt)
-    assert len(continue_stmt.value) == 4
-    assert all("__mutexid" not in value.name for value in continue_stmt.value[:2])
-    assert all("tile__mutexid" in value.name for value in continue_stmt.value[2:])
+    assert len(continue_stmt.value) == 2
+    assert str(program).count("block.tile_mutex_id") == 2
 
 
-def test_while_aligns_mutex_ids_for_every_break_and_continue():
+def test_while_carries_only_original_values_on_every_jump():
     @pl.jit(auto_mutex=True)
     def k(gm_q: pl.Tensor[[32, 32], pl.DT_FP16], limit: pl.DT_INT32):
         tt = pl.TileType(shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat)
@@ -912,26 +907,16 @@ def test_while_aligns_mutex_ids_for_every_break_and_continue():
                 jumps.append(stmt)
             elif isinstance(stmt, ir.IfStmt):
                 collect_jumps(stmt.then_body)
-                collect_jumps(stmt.else_body)
+                if stmt.else_body is not None:
+                    collect_jumps(stmt.else_body)
 
     collect_jumps(while_stmt.body)
+
     assert len(jumps) >= 3
-    assert len(while_stmt.iter_args) == 4
-    assert len(while_stmt.return_vars) == 4
-    assert all(isinstance(arg.iterVar.type, ir.ScalarType) for arg in while_stmt.iter_args[2:4])
-    assert all(isinstance(var.type, ir.ScalarType) for var in while_stmt.return_vars[2:4])
-    for jump in jumps:
-        assert len(jump.value) == 4
-        assert all("__mutexid" not in value.name for value in jump.value[:2])
-        assert all(isinstance(value.type, ir.ScalarType) for value in jump.value[2:4])
-    calls = _mutex_calls(program, k.__name__)
-    candidates = {
-        int(candidate.value)
-        for call in calls
-        for group in call.args[1].elements
-        for candidate in group.elements
-    }
-    assert candidates == set(range(8))
+    assert len(while_stmt.iter_args) == len(while_stmt.return_vars) == 2
+    assert "__mutexid" not in str(program)
+    assert all(len(jump.value) == 2 for jump in jumps)
+    assert str(program).count("block.tile_mutex_id") == 2
 
 
 def test_loop_rejects_different_mutex_id_counts_for_one_slot():
@@ -950,13 +935,13 @@ def test_loop_rejects_different_mutex_id_counts_for_one_slot():
         pl.load(tile, gm_q, [0, 0])
 
     with pytest.raises(
-        PyptoProError,
-        match="cannot merge tile mutex metadata with different ID counts: 2 and 1",
+        NameNotFound,
+        match="potentially undefined variable",
     ):
         _parse_kernel(k, ir.SectionKind.Cube)
 
 
-def test_loop_rejects_mutex_tile_result_with_non_tile_body():
+def test_loop_infers_binding_from_reachable_tile_exit():
     @pl.jit(auto_mutex=True)
     def k(gm_q: pl.Tensor[[32, 32], pl.DT_FP16], limit: pl.DT_INT32):
         tt = pl.TileType(shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat)
@@ -968,11 +953,11 @@ def test_loop_rejects_mutex_tile_result_with_non_tile_body():
                 break
         pl.load(tile, gm_q, [0, 0])
 
-    with pytest.raises(
-        PyptoProError,
-        match="Cannot merge Tile values when only one input carries mutex metadata",
-    ):
-        _parse_kernel(k, ir.SectionKind.Cube)
+
+    # None on the backedge is not a tile binding. The only exit carries a bound tile.
+    program = _parse_kernel(k, ir.SectionKind.Cube)
+    assert str(program).count("system.mutex_lock_dyn") == 2
+    assert "__mutexid" not in str(program)
 
 
 def test_loop_allows_non_mutex_tile_body_with_scalar_result():
@@ -1018,8 +1003,8 @@ def test_ternary_rejects_different_mutex_id_counts():
         pl.load(tile, gm_q, [0, 0])
 
     with pytest.raises(
-        PyptoProError,
-        match="cannot merge tile mutex metadata with different ID counts: 1 and 2",
+        NameNotFound,
+        match="potentially undefined variable",
     ):
         _parse_kernel(k, ir.SectionKind.Cube)
 

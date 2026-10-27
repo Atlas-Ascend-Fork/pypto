@@ -18,7 +18,6 @@ from typing import Any, Callable
 from pypto.pypto_impl import ir
 from pypto.pypto_impl.ir import DataType
 from pypto_pro.ir._limits import INT64_MAX, INT64_MIN, from_storage_int
-from pypto_pro.ir._utils import _to_make_tuple
 
 from ..._errors import InvalidArgument, InvalidOperation, InvalidType, InvalidVal, NotSupported, OutOfRange
 from ._expr_evaluator import ExprEvaluator
@@ -107,7 +106,6 @@ class _LoopMergeSlot:
     init_value: ir.Expr
     iter_var: ir.Var
     state: LoopVarState
-    tile_id_iter_vars: ir.MakeTuple | None = None
 
 
 def validate_single_tail_return(func_def: ast.FunctionDef, context: str) -> tuple[ast.Return, str, str] | None:
@@ -159,104 +157,6 @@ class ControlFlowParserMixin:
             return dst_count is not None and dst_count > 0
 
         return collect_written_vars(statements, ignore_assignment=is_vf_register_write)
-
-    def _merge_tile_mutex_meta_pair(
-        self, first_value: ir.Expr, second_value: ir.Expr, span: ir.Span
-    ) -> tuple[ir.MakeTuple, ir.MakeTuple, ir.MakeTuple] | None:
-        """Align two runtime mutex-id lists and union their static candidates."""
-        if not self._auto_mutex:
-            return None
-        first_meta = self._tile_mutex_meta.get(first_value)
-        second_meta = self._tile_mutex_meta.get(second_value)
-        if first_meta is None and second_meta is None:
-            return None
-        if first_meta is None or second_meta is None:
-            present_meta = first_meta if first_meta is not None else second_meta
-            if not present_meta[1].elements:
-                return None
-            raise InvalidOperation(
-                "Cannot merge Tile values when only one input carries mutex metadata",
-                span=span,
-                hint="Ensure all values come from the same auto-mutex tile-group flow",
-                parser_retry=True,
-            )
-        first_tile_ids, first_candidates = first_meta
-        second_tile_ids, second_candidates = second_meta
-        if len(first_tile_ids.elements) != len(second_tile_ids.elements):
-            if not first_candidates.elements and len(first_tile_ids.elements) == 1:
-                first_tile_ids = _to_make_tuple(
-                    first_tile_ids.elements * len(second_tile_ids.elements), span
-                )
-            elif not second_candidates.elements and len(second_tile_ids.elements) == 1:
-                second_tile_ids = _to_make_tuple(
-                    second_tile_ids.elements * len(first_tile_ids.elements), span
-                )
-            else:
-                raise InvalidOperation(
-                    "cannot merge tile mutex metadata with different ID counts: "
-                    f"{len(first_tile_ids.elements)} and {len(second_tile_ids.elements)}",
-                    span=span,
-                    parser_retry=True,
-                )
-        candidates = _to_make_tuple(
-            list(dict.fromkeys([*first_candidates.elements, *second_candidates.elements])),
-            span,
-        )
-        return first_tile_ids, second_tile_ids, candidates
-
-    def _merge_control_flow_mutex_ids(
-        self, values: list[ir.Expr], span: ir.Span
-    ) -> tuple[list[ir.MakeTuple], ir.MakeTuple] | None:
-        """Align one explicit Tile slot's mutex ids across its CFG inputs."""
-        if not self._auto_mutex or not values:
-            return None
-        if len(values) == 1:
-            mutex_meta = self._tile_mutex_meta.get(values[0])
-            if mutex_meta is None:
-                return None
-            tile_ids, candidates = mutex_meta
-            return [tile_ids], candidates
-        if len(values) == 2:
-            merged = self._merge_tile_mutex_meta_pair(values[0], values[1], span)
-            if merged is None:
-                return None
-            first_tile_ids, second_tile_ids, candidates = merged
-            return [first_tile_ids, second_tile_ids], candidates
-
-        exemplar = next(
-            (
-                value
-                for value in values
-                if (meta := self._tile_mutex_meta.get(value)) is not None and meta[1].elements
-            ),
-            None,
-        )
-        if exemplar is None:
-            return None
-
-        tile_id_outputs: list[ir.MakeTuple] = []
-        candidates: list[Any] = []
-        for value in values:
-            merged = self._merge_tile_mutex_meta_pair(value, exemplar, span)
-            if merged is None:
-                raise InvalidOperation("Cannot merge Tile values without mutex metadata", span=span, parser_retry=True)
-            value_tile_ids, _, value_candidates = merged
-            tile_id_outputs.append(value_tile_ids)
-            candidates.extend(value_candidates.elements)
-        return tile_id_outputs, _to_make_tuple(list(dict.fromkeys(candidates)), span)
-
-    def _create_tile_id_vars(self, name: str, count: int, span: ir.Span) -> ir.MakeTuple:
-        return _to_make_tuple(
-            [
-                self.builder.var(
-                    f"{name}__mutexid" if index == 0 else f"{name}__mutexid_{index}",
-                    ir.ScalarType(DataType.INT64),
-                    span,
-                )
-                for index in range(count)
-            ],
-            span,
-        )
 
     def _parse_statement_list(self, statements: list[ast.stmt]) -> JumpKind | None:
         """Parse statements until the current scope has terminated."""
@@ -341,7 +241,10 @@ class ControlFlowParserMixin:
         if not info.jumps:
             return []
         output_count = len(info.jumps[0].outputs)
-        states = [PhiState(type_equal=self.tuple_type_registry.types_equal) for _ in range(output_count)]
+        states = [
+            PhiState(type_equal=self.tuple_type_registry.types_equal)
+            for _ in range(output_count)
+        ]
         for jump in info.jumps:
             if len(jump.outputs) != output_count:
                 raise InvalidVal("control-flow jump output counts must match")
@@ -471,7 +374,7 @@ class ControlFlowParserMixin:
             if self._is_empty_control_flow_value(init_value):
                 iter_var = self.builder.var(name, init_value.type, span)
                 self._mark_empty_control_flow_value(iter_var)
-                self._transfer_tile_sync_metadata(iter_var, init_value)
+                self._transfer_tile_group_metadata(iter_var, init_value)
             else:
                 state.body_phi.propagate(init_value)
                 if state.body_phi.ty is None:
@@ -486,24 +389,6 @@ class ControlFlowParserMixin:
                 )
             )
         return slots
-
-    def _prepare_loop_tile_id_iter_vars(
-        self, slots: list[_LoopMergeSlot], span: ir.Span
-    ) -> None:
-        """Expose provisional Tile-ID iter vars while parsing the loop body."""
-        if not self._auto_mutex:
-            return
-        for slot in slots:
-            if not isinstance(slot.init_value.type, ir.TileType):
-                continue
-            mutex_meta = self._tile_mutex_meta.get(slot.init_value)
-            if mutex_meta is None:
-                continue
-            tile_ids, candidates = mutex_meta
-            slot.tile_id_iter_vars = self._create_tile_id_vars(
-                slot.name, len(tile_ids.elements), span
-            )
-            self._tile_mutex_meta[slot.iter_var] = (slot.tile_id_iter_vars, candidates)
 
     def _parse_loop_region(
         self,
@@ -583,48 +468,10 @@ class ControlFlowParserMixin:
             return_vars.append(return_var)
             merged_bindings.append((slot.name, return_var, slot.state.result_phi))
 
-        # Mutex ids are framework-generated companion values. Infer and append
-        # them only after all source-visible main slots have completed Phi inference.
-        mutex_outputs_by_jump: list[list[ir.Expr]] = [[] for _ in info.jumps]
-        for index, (slot, iter_var, return_var) in enumerate(finalized):
-            if not isinstance(iter_var.type, ir.TileType) and not isinstance(return_var.type, ir.TileType):
-                continue
-
-            values = [slot.init_value]
-            values.extend(jump.outputs[index] for jump in info.jumps)
-            mutex_merge = self._merge_control_flow_mutex_ids(values, span)
-            if mutex_merge is None:
-                continue
-            tile_ids_by_source, candidates = mutex_merge
-            init_tile_ids, *tile_ids_by_jump = tile_ids_by_source
-            if slot.tile_id_iter_vars is None:
-                slot.tile_id_iter_vars = self._create_tile_id_vars(
-                    slot.name, len(init_tile_ids.elements), span
-                )
-            tile_id_return_vars = self._create_tile_id_vars(
-                slot.name, len(init_tile_ids.elements), span
-            )
-            for mutex_iter_var, tile_init_value in zip(
-                slot.tile_id_iter_vars.elements, init_tile_ids.elements, strict=True
-            ):
-                iter_args.append(
-                    self.builder.builder.create_iter_arg(
-                        mutex_iter_var, tile_init_value
-                    )
-                )
-            return_vars.extend(tile_id_return_vars.elements)
-            for jump_mutex_ids, tile_ids in zip(
-                mutex_outputs_by_jump, tile_ids_by_jump, strict=True
-            ):
-                jump_mutex_ids.extend(tile_ids.elements)
-
-            if isinstance(return_var.type, ir.TileType):
-                self._tile_mutex_meta[return_var] = (tile_id_return_vars, candidates)
-
-        for jump, jump_mutex_ids in zip(info.jumps, mutex_outputs_by_jump, strict=True):
+        for jump in info.jumps:
             if jump.jump_op is None:
                 raise InvalidVal("loop jump is missing its terminator")
-            self.builder.builder.update_jump_values(jump.jump_op, [*jump.outputs, *jump_mutex_ids])
+            self.builder.builder.update_jump_values(jump.jump_op, list(jump.outputs))
 
         return iter_args, return_vars, merged_bindings
 
@@ -644,7 +491,6 @@ class ControlFlowParserMixin:
             if not self._is_empty_control_flow_value(slot.init_value):
                 slot.state.result_phi.propagate(slot.init_value)
         info = ControlFlowInfo(merge_names)
-        self._prepare_loop_tile_id_iter_vars(slots, span)
         loop_var = self.builder.var(loop_var_name, ir.ScalarType(DataType.INT64), span)
         with self.scope_manager.change_loop_info(info):
             body = self._parse_loop_region(
@@ -724,7 +570,6 @@ class ControlFlowParserMixin:
         merge_names = tuple(name for name, _ in merge_inputs)
         slots = self._create_loop_slots(merge_inputs, span)
         info = ControlFlowInfo(merge_names)
-        self._prepare_loop_tile_id_iter_vars(slots, span)
         with self.scope_manager.change_loop_info(info):
             body = self._parse_loop_region(loop_body, "while", span, slots)
         iter_args, return_vars, merged_bindings = self._finalize_loop_slots(
@@ -780,7 +625,6 @@ class ControlFlowParserMixin:
 
         merged_bindings: list[tuple[str, ir.Var, PhiState]] = []
         return_vars: list[ir.Var] = []
-        jump_mutex_id_outputs: list[list[ir.Expr]] = [[] for _ in info.jumps]
         for name, state in zip(writes, phi_states, strict=True):
             if state.ty is None:
                 merged_var = self.builder.var(name, ir.NoneType.get(), span)
@@ -790,30 +634,10 @@ class ControlFlowParserMixin:
             return_vars.append(merged_var)
             merged_bindings.append((name, merged_var, state))
 
-        # Mutex ids are framework-generated companion values. Add them only
-        # after all source-visible main slots have completed Phi inference.
-        for index, (name, merged_var, state) in enumerate(merged_bindings):
-            if not isinstance(state.ty, ir.TileType):
-                continue
-            values = [jump.outputs[index] for jump in info.jumps]
-            mutex_merge = self._merge_control_flow_mutex_ids(values, span)
-            if mutex_merge is None:
-                continue
-            tile_id_outputs, candidates = mutex_merge
-            tile_id_vars = self._create_tile_id_vars(
-                name, len(tile_id_outputs[0].elements), span
-            )
-            return_vars.extend(tile_id_vars.elements)
-            for jump_mutex_ids, tile_ids in zip(
-                jump_mutex_id_outputs, tile_id_outputs, strict=True
-            ):
-                jump_mutex_ids.extend(tile_ids.elements)
-            self._tile_mutex_meta[merged_var] = (tile_id_vars, candidates)
-
-        for jump, jump_mutex_ids in zip(info.jumps, jump_mutex_id_outputs, strict=True):
+        for jump in info.jumps:
             if jump.jump_op is None:
                 raise InvalidVal("materialized If yield is missing its terminator")
-            self.builder.builder.update_jump_values(jump.jump_op, [*jump.outputs, *jump_mutex_ids])
+            self.builder.builder.update_jump_values(jump.jump_op, list(jump.outputs))
 
         self.builder.emit(
             self.builder.builder.create_if_stmt(condition, then_body, else_body, return_vars, span)

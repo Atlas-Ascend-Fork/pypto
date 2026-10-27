@@ -22,6 +22,10 @@
 
 namespace pypto {
 
+namespace codegen {
+class CCECodegen;
+}
+
 namespace backend {
 
 namespace round_mode {
@@ -43,6 +47,10 @@ CompareAttrs GetCompareAttrs(const ir::CallPtr& op);
 } // namespace gather
 
 namespace cce {
+
+/// Adapt an IR value to a data-instruction operand, extracting a tile's PTO descriptor.
+/// Tile expressions must denote wrappers; SIMD/SIMT pointer operands use GetExprAsCode instead.
+std::string GetOperandAsCode(codegen::CCECodegen& codegen, const ir::ExprPtr& expr);
 
 /// Positions of the operands of a GM access op (tile <-> tensor transfer:
 /// block.load / block.store / debug.dump_tile). tensor/tile name the GM-side

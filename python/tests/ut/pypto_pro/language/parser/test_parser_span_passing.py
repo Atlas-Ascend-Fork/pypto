@@ -43,7 +43,7 @@ def test_parser_passes_valid_spans_to_operations():
 
     # Two separate op calls on two source lines: the assertions below are about the
     # spans the parser attached, not about which op each line happens to build.
-    assert [name for name, _ in spans] == ["block.make_tile", "block.make_tile"]
+    assert [name for name, _ in spans] == ["block.make_mutex_tile", "block.make_mutex_tile"]
     for _, span in spans:
         assert span.is_valid()
         assert span.begin_line > 0

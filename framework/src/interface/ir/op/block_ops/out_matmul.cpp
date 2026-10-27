@@ -50,7 +50,7 @@ namespace ir {
 // Op registration
 // ---------------------------------------------------------------------------
 
-// block.matmul: (out, lhs, rhs) -> out's type
+// block.matmul: (out, lhs, rhs) -> NoneType
 REGISTER_OP("block.matmul")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output matrix multiplication: out = lhs @ rhs")
@@ -65,10 +65,10 @@ REGISTER_OP("block.matmul")
         CheckTileArg(args, 0, "block.matmul", {MemorySpace::Acc});
         CheckTileArg(args, 1, "block.matmul", {MemorySpace::Left});
         CheckTileArg(args, 2, "block.matmul", {MemorySpace::Right});
-        return DeduceBlockOutTileType(args, kwargs, "block.matmul", 3);
+        return DeduceBlockOutType(args, kwargs, "block.matmul", 3);
     });
 
-// block.matmul_acc: (out, acc, lhs, rhs) -> out's type
+// block.matmul_acc: (out, acc, lhs, rhs) -> NoneType
 REGISTER_OP("block.matmul_acc")
     .set_op_category("BlockOp")
     .set_description("Block in-place matmul accumulation: out += lhs @ rhs; acc must be the same tile as out")
@@ -85,10 +85,10 @@ REGISTER_OP("block.matmul_acc")
         CheckTileArg(args, 1, "block.matmul_acc", {MemorySpace::Acc});
         CheckTileArg(args, 2, "block.matmul_acc", {MemorySpace::Left});
         CheckTileArg(args, 3, "block.matmul_acc", {MemorySpace::Right});
-        return DeduceBlockOutTileType(args, kwargs, "block.matmul_acc", 4);
+        return DeduceBlockOutType(args, kwargs, "block.matmul_acc", 4);
     });
 
-// block.matmul_bias: (out, lhs, rhs, bias) -> out's type
+// block.matmul_bias: (out, lhs, rhs, bias) -> NoneType
 REGISTER_OP("block.matmul_bias")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output matmul with bias: out = lhs @ rhs + bias")
@@ -105,10 +105,10 @@ REGISTER_OP("block.matmul_bias")
         CheckTileArg(args, 1, "block.matmul_bias", {MemorySpace::Left});
         CheckTileArg(args, 2, "block.matmul_bias", {MemorySpace::Right});
         CheckTileArg(args, 3, "block.matmul_bias", {MemorySpace::Bias});
-        return DeduceBlockOutTileType(args, kwargs, "block.matmul_bias", 4);
+        return DeduceBlockOutType(args, kwargs, "block.matmul_bias", 4);
     });
 
-// block.matmul_mx: (out, lhs, rhs, scale_a, scale_b) -> out's type
+// block.matmul_mx: (out, lhs, rhs, scale_a, scale_b) -> NoneType
 REGISTER_OP("block.matmul_mx")
     .set_op_category("BlockOp")
     .set_description("Block MX matmul: out = lhs @ rhs (with per-group E8M0 scale)")
@@ -127,10 +127,10 @@ REGISTER_OP("block.matmul_mx")
         CheckTileArg(args, 2, "block.matmul_mx", {MemorySpace::Right});
         CheckTileArg(args, 3, "block.matmul_mx", {MemorySpace::ScaleLeft});
         CheckTileArg(args, 4, "block.matmul_mx", {MemorySpace::ScaleRight});
-        return DeduceBlockOutTileType(args, kwargs, "block.matmul_mx", 5);
+        return DeduceBlockOutType(args, kwargs, "block.matmul_mx", 5);
     });
 
-// block.matmul_mx_acc: (out, acc, lhs, rhs, scale_a, scale_b) -> out's type
+// block.matmul_mx_acc: (out, acc, lhs, rhs, scale_a, scale_b) -> NoneType
 REGISTER_OP("block.matmul_mx_acc")
     .set_op_category("BlockOp")
     .set_description("Block in-place MX matmul accumulation; acc must be the same tile as out")
@@ -151,10 +151,10 @@ REGISTER_OP("block.matmul_mx_acc")
         CheckTileArg(args, 3, "block.matmul_mx_acc", {MemorySpace::Right});
         CheckTileArg(args, 4, "block.matmul_mx_acc", {MemorySpace::ScaleLeft});
         CheckTileArg(args, 5, "block.matmul_mx_acc", {MemorySpace::ScaleRight});
-        return DeduceBlockOutTileType(args, kwargs, "block.matmul_mx_acc", 6);
+        return DeduceBlockOutType(args, kwargs, "block.matmul_mx_acc", 6);
     });
 
-// block.gemv: (out, lhs, rhs) -> out's type
+// block.gemv: (out, lhs, rhs) -> NoneType
 REGISTER_OP("block.gemv")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output GEMV: out[1,N] = lhs[1,K] @ rhs[K,N]")
@@ -168,10 +168,10 @@ REGISTER_OP("block.gemv")
         CheckTileArg(args, 0, "block.gemv", {MemorySpace::Acc});
         CheckTileArg(args, 1, "block.gemv", {MemorySpace::Left});
         CheckTileArg(args, 2, "block.gemv", {MemorySpace::Right});
-        return DeduceBlockOutTileType(args, kwargs, "block.gemv", 3);
+        return DeduceBlockOutType(args, kwargs, "block.gemv", 3);
     });
 
-// block.gemv_acc: (out, acc, lhs, rhs) -> out's type
+// block.gemv_acc: (out, acc, lhs, rhs) -> NoneType
 REGISTER_OP("block.gemv_acc")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output GEMV with accumulation: out += lhs @ rhs")
@@ -187,10 +187,10 @@ REGISTER_OP("block.gemv_acc")
         CheckTileArg(args, 1, "block.gemv_acc", {MemorySpace::Acc});
         CheckTileArg(args, 2, "block.gemv_acc", {MemorySpace::Left});
         CheckTileArg(args, 3, "block.gemv_acc", {MemorySpace::Right});
-        return DeduceBlockOutTileType(args, kwargs, "block.gemv_acc", 4);
+        return DeduceBlockOutType(args, kwargs, "block.gemv_acc", 4);
     });
 
-// block.gemv_bias: (out, lhs, rhs, bias) -> out's type
+// block.gemv_bias: (out, lhs, rhs, bias) -> NoneType
 REGISTER_OP("block.gemv_bias")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output GEMV with bias: out = lhs @ rhs + bias")
@@ -206,7 +206,7 @@ REGISTER_OP("block.gemv_bias")
         CheckTileArg(args, 1, "block.gemv_bias", {MemorySpace::Left});
         CheckTileArg(args, 2, "block.gemv_bias", {MemorySpace::Right});
         CheckTileArg(args, 3, "block.gemv_bias", {MemorySpace::Bias});
-        return DeduceBlockOutTileType(args, kwargs, "block.gemv_bias", 4);
+        return DeduceBlockOutType(args, kwargs, "block.gemv_bias", 4);
     });
 
 } // namespace ir

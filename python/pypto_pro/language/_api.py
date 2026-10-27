@@ -1277,15 +1277,15 @@ def reinterpret(tile: "Tile | TileGroup", /, *, dtype: Optional[DType] = None, s
                 layout: Optional[TensorLayout] = None) -> "Tile | TileGroup":
     """Reinterpret a Tile or tile_group's dtype/shape/layout metadata without data movement.
 
-    Returns a new handle over the same on-chip buffer: the new tile is
-    re-allocated at the ORIGINAL address and size (same-buffer semantics hold),
+    Returns a new handle using the source tile's current runtime address,
     with memory space, fractal, pad, compact and mutex mapping inherited; only
     the given properties are overridden. valid_shape is NOT inherited (the new
     handle starts with a dynamic valid shape, equivalent to -1; set it with
     ``pl.set_validshape``). The original handle is unchanged.
 
-    ``reinterpret`` is a compile-time view declaration, not a conversion — no
-    load/move/store/cast instruction is generated. The caller must guarantee
+    The view's dtype, shape and layout are compile-time properties; its address
+    comes from the source handle. No load/move/store/cast instruction is generated.
+    The caller must guarantee
     that the physical data actually matches the new declaration (e.g. declaring
     ``layout=pl.ZN`` on data that really is ZN-arranged).
 
@@ -1295,20 +1295,19 @@ def reinterpret(tile: "Tile | TileGroup", /, *, dtype: Optional[DType] = None, s
           count is re-stated explicitly)
         - ``shape`` must be compile-time constants; use ``pl.set_validshape``
           for runtime windows
-        - the new footprint (shape x dtype bytes) must not exceed the original
-          buffer size, and the base address must be aligned to the new element
-          size (both checked at parse time)
+        - the caller must ensure enough storage from the current address for
+          the new shape and dtype, and alignment to the new element size;
+          reinterpret does not statically validate runtime addresses
 
     Example::
 
         t2 = pl.reinterpret(tile_a, shape=[64, 64], dtype=pl.DT_BF16)  # same buffer as BF16 (dtype change needs shape)
         g2 = pl.reinterpret(group_a, shape=[128, 32])        # whole group, mutex kept
 
-    Reinterpreting a rotating group: pass the GROUP, not a Tile that ``next()`` returned.
-    A view of ``group.next()`` is one fixed Tile at the group's base address and does not
-    rotate, so from the second buffer on it reads the wrong one -- silently, since the shapes
-    still agree. The group view rotates correctly, but the two handles share one cursor, so
-    advance it once per iteration and read the view with ``current()``::
+    Reinterpreting ``group.next()`` creates a view of the tile selected by that call.
+    Reinterpreting the whole group creates views of all its tiles and shares the
+    group's cursor. Advance the shared cursor once per iteration and read the
+    group view with ``current()``::
 
         g_zn = pl.reinterpret(g, shape=[K, M], layout=pl.ZN)  # transposed view of the group
         t = g.next()                                          # advances the shared cursor

@@ -40,7 +40,7 @@ namespace ir {
 // a Vec space list.
 
 // ---------------------------------------------------------------------------
-// Reduction operations: (out, tile, tmp) -> out's type
+// Reduction operations: (out, tile, tmp) -> NoneType
 // ---------------------------------------------------------------------------
 
 REGISTER_OP("block.row_sum")
@@ -56,7 +56,7 @@ REGISTER_OP("block.row_sum")
         CheckTileArg(args, 0, "block.row_sum", {MemorySpace::Vec});
         CheckTileArg(args, 1, "block.row_sum", {MemorySpace::Vec});
         CheckTileArg(args, 2, "block.row_sum", {MemorySpace::Vec});
-        return DeduceBlockOutTileType(args, kwargs, "block.row_sum", 3);
+        return DeduceBlockOutType(args, kwargs, "block.row_sum", 3);
     });
 
 REGISTER_OP("block.row_max")
@@ -72,7 +72,7 @@ REGISTER_OP("block.row_max")
         CheckTileArg(args, 0, "block.row_max", {MemorySpace::Vec});
         CheckTileArg(args, 1, "block.row_max", {MemorySpace::Vec});
         CheckTileArg(args, 2, "block.row_max", {MemorySpace::Vec});
-        return DeduceBlockOutTileType(args, kwargs, "block.row_max", 3);
+        return DeduceBlockOutType(args, kwargs, "block.row_max", 3);
     });
 
 REGISTER_OP("block.row_min")
@@ -88,7 +88,7 @@ REGISTER_OP("block.row_min")
         CheckTileArg(args, 0, "block.row_min", {MemorySpace::Vec});
         CheckTileArg(args, 1, "block.row_min", {MemorySpace::Vec});
         CheckTileArg(args, 2, "block.row_min", {MemorySpace::Vec});
-        return DeduceBlockOutTileType(args, kwargs, "block.row_min", 3);
+        return DeduceBlockOutType(args, kwargs, "block.row_min", 3);
     });
 
 REGISTER_OP("block.col_max")
@@ -104,7 +104,7 @@ REGISTER_OP("block.col_max")
         CheckTileArg(args, 0, "block.col_max", {MemorySpace::Vec});
         CheckTileArg(args, 1, "block.col_max", {MemorySpace::Vec});
         CheckTileArg(args, 2, "block.col_max", {MemorySpace::Vec});
-        return DeduceBlockOutTileType(args, kwargs, "block.col_max", 3);
+        return DeduceBlockOutType(args, kwargs, "block.col_max", 3);
     });
 
 REGISTER_OP("block.col_sum")
@@ -120,7 +120,7 @@ REGISTER_OP("block.col_sum")
         CheckTileArg(args, 0, "block.col_sum", {MemorySpace::Vec});
         CheckTileArg(args, 1, "block.col_sum", {MemorySpace::Vec});
         CheckTileArg(args, 2, "block.col_sum", {MemorySpace::Vec});
-        return DeduceBlockOutTileType(args, kwargs, "block.col_sum", 3);
+        return DeduceBlockOutType(args, kwargs, "block.col_sum", 3);
     });
 
 REGISTER_OP("block.col_min")
@@ -136,7 +136,7 @@ REGISTER_OP("block.col_min")
         CheckTileArg(args, 0, "block.col_min", {MemorySpace::Vec});
         CheckTileArg(args, 1, "block.col_min", {MemorySpace::Vec});
         CheckTileArg(args, 2, "block.col_min", {MemorySpace::Vec});
-        return DeduceBlockOutTileType(args, kwargs, "block.col_min", 3);
+        return DeduceBlockOutType(args, kwargs, "block.col_min", 3);
     });
 
 REGISTER_OP("block.row_prod")
@@ -152,7 +152,7 @@ REGISTER_OP("block.row_prod")
         CheckTileArg(args, 0, "block.row_prod", {MemorySpace::Vec});
         CheckTileArg(args, 1, "block.row_prod", {MemorySpace::Vec});
         CheckTileArg(args, 2, "block.row_prod", {MemorySpace::Vec});
-        return DeduceBlockOutTileType(args, kwargs, "block.row_prod", 3);
+        return DeduceBlockOutType(args, kwargs, "block.row_prod", 3);
     });
 
 REGISTER_OP("block.col_prod")
@@ -168,7 +168,7 @@ REGISTER_OP("block.col_prod")
         CheckTileArg(args, 0, "block.col_prod", {MemorySpace::Vec});
         CheckTileArg(args, 1, "block.col_prod", {MemorySpace::Vec});
         CheckTileArg(args, 2, "block.col_prod", {MemorySpace::Vec});
-        return DeduceBlockOutTileType(args, kwargs, "block.col_prod", 3);
+        return DeduceBlockOutType(args, kwargs, "block.col_prod", 3);
     });
 
 REGISTER_OP("block.row_reduce")
@@ -179,7 +179,7 @@ REGISTER_OP("block.row_reduce")
     .add_argument("tmp", "Scratch tile required by hardware (TileType)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.row_reduce", 3);
+        return DeduceBlockOutType(args, kwargs, "block.row_reduce", 3);
     });
 
 REGISTER_OP("block.col_reduce")
@@ -190,7 +190,7 @@ REGISTER_OP("block.col_reduce")
     .add_argument("tmp", "Scratch tile required by hardware (TileType)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.col_reduce", 3);
+        return DeduceBlockOutType(args, kwargs, "block.col_reduce", 3);
     });
 
 // ---------------------------------------------------------------------------
@@ -206,7 +206,7 @@ REGISTER_OP("block.col_reduce")
         .add_argument("tmp", "Scratch tile required by hardware (TileType)")                              \
         .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,                              \
                           [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) { \
-            return DeduceBlockOutTileType(args, kwargs, "block." #direction "_" #op_suffix, 3);           \
+            return DeduceBlockOutType(args, kwargs, "block." #direction "_" #op_suffix, 3);               \
         })
 
 REGISTER_BLOCK_REDUCE_IDX(row, argmax, "argmax: out[i,0] = argmax_j(tile[i,j])");
@@ -228,7 +228,7 @@ REGISTER_OP("block.row_expand")
     .add_argument("src", "Source tile [M,1] (TileType)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.row_expand", 2);
+        return DeduceBlockOutType(args, kwargs, "block.row_expand", 2);
     });
 
 // col_expand (out, col_vec): unary broadcast.
@@ -239,7 +239,7 @@ REGISTER_OP("block.col_expand")
     .add_argument("col_vec", "Source column vector [1,N] (TileType)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.col_expand", 2);
+        return DeduceBlockOutType(args, kwargs, "block.col_expand", 2);
     });
 
 // row_expand_* (out, tile, row_vec): binary broadcast-arithmetic.
@@ -252,7 +252,7 @@ REGISTER_OP("block.col_expand")
         .add_argument("row_vec", "Row vector [M,1] (TileType)")                                           \
         .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,                              \
                           [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) { \
-            return DeduceBlockOutTileType(args, kwargs, "block.row_expand_" #op_suffix, 3);               \
+            return DeduceBlockOutType(args, kwargs, "block.row_expand_" #op_suffix, 3);                   \
         })
 
 REGISTER_BLOCK_OUT_ROW_EXPAND(add, "add: out = tile + broadcast(row_vec)");
@@ -274,7 +274,7 @@ REGISTER_OP("block.row_expand_binop")
     .add_argument("row_vec", "Row vector [M,1] (TileType)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.row_expand_binop", 3);
+        return DeduceBlockOutType(args, kwargs, "block.row_expand_binop", 3);
     });
 
 // col_expand_* (out, tile, col_vec): binary broadcast-arithmetic.
@@ -287,7 +287,7 @@ REGISTER_OP("block.row_expand_binop")
         .add_argument("col_vec", "Column vector [1,N] (TileType)")                                        \
         .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,                              \
                           [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) { \
-            return DeduceBlockOutTileType(args, kwargs, "block.col_expand_" #op_suffix, 3);               \
+            return DeduceBlockOutType(args, kwargs, "block.col_expand_" #op_suffix, 3);                   \
         })
 
 REGISTER_BLOCK_OUT_COL_EXPAND(add, "add: out = tile + broadcast(col_vec)");
@@ -309,7 +309,7 @@ REGISTER_OP("block.col_expand_binop")
     .add_argument("col_vec", "Column vector [1,N] (TileType)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.col_expand_binop", 3);
+        return DeduceBlockOutType(args, kwargs, "block.col_expand_binop", 3);
     });
 
 #undef REGISTER_BLOCK_OUT_COL_EXPAND

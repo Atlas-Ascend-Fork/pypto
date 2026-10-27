@@ -47,7 +47,7 @@ REGISTER_OP("block.sort32")
         auto dst_type = As<TileType>(args[0]->GetType());
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, dst_type)
             << "block.sort32: dst must be TileType, but got " << args[0]->GetType()->TypeName();
-        return dst_type;
+        return GetNoneType();
     });
 
 // ---------------------------------------------------------------------------
@@ -68,7 +68,7 @@ REGISTER_OP("block.mrgsort")
         auto dst_type = As<TileType>(args[0]->GetType());
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, dst_type)
             << "block.mrgsort: dst must be TileType, but got " << args[0]->GetType()->TypeName();
-        return dst_type;
+        return GetNoneType();
     });
 
 // ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ REGISTER_OP("block.mrgsort2")
         auto dst_type = As<TileType>(args[0]->GetType());
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, dst_type)
             << "block.mrgsort2: dst must be TileType, but got " << args[0]->GetType()->TypeName();
-        return dst_type;
+        return GetNoneType();
     });
 
 REGISTER_OP("block.histogram")
@@ -109,7 +109,7 @@ REGISTER_OP("block.histogram")
         auto dst_type = As<TileType>(args[0]->GetType());
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, dst_type)
             << "block.histogram: dst must be TileType, but got " << args[0]->GetType()->TypeName();
-        return dst_type;
+        return GetNoneType();
     });
 
 } // namespace ir

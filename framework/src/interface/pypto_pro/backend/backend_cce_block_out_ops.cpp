@@ -72,7 +72,7 @@ static std::string TileTypeStringForTemplate(codegen::CCECodegen& codegen, const
                 if (auto ci = ir::As<ir::ConstInt>(tile_type->shape_[1]))
                     cols = ci->value_;
             }
-            return codegen.GetTypeConverter().ConvertTileType(tile_type, rows, cols);
+            return codegen.GetTypeConverter().ConvertPtoTileType(tile_type, rows, cols);
         }
     }
     // Fallback: still use decltype; may still fail but better than nothing.
@@ -100,7 +100,7 @@ static std::string GetAtomicTypeCCE(int atomic)
 static std::string MakePreQuantExprCCE(codegen::CCECodegen& codegen, const ir::ExprPtr& pre_quant,
                                        ir::DataType dst_dtype)
 {
-    std::string code = codegen.GetExprAsCode(pre_quant);
+    std::string code = cce::GetOperandAsCode(codegen, pre_quant);
     auto scalar_type = ir::As<ir::ScalarType>(pre_quant->GetType());
     if (scalar_type != nullptr && scalar_type->dtype_ == DataType::FP32) {
         // Runtime float scale value: reinterpret its bits as the deqScalar low word.
@@ -181,9 +181,9 @@ static std::string MakeBlockOutBinaryCodegenCCE(const std::string& cce_op_name, 
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << cce_op_name << ": expected 3 args (dst, lhs, rhs), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string lhs = codegen.GetExprAsCode(op->args_[1]);
-    std::string rhs = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string lhs = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string rhs = cce::GetOperandAsCode(codegen, op->args_[2]);
     codegen.Emit(cce_op_name + "(" + dst + ", " + lhs + ", " + rhs + ");");
     return "";
 }
@@ -198,8 +198,8 @@ static std::string MakeBlockOutUnaryCodegenCCE(const std::string& cce_op_name, c
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << cce_op_name << ": expected 2 args (dst, src), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
     codegen.Emit(cce_op_name + "(" + dst + ", " + src + ");");
     return "";
 }
@@ -214,9 +214,9 @@ static std::string MakeBlockOutScalarCodegenCCE(const std::string& cce_op_name, 
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << cce_op_name << ": expected 3 args (dst, tile, scalar), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string tile = codegen.GetExprAsCode(op->args_[1]);
-    std::string scalar = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string tile = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string scalar = cce::GetOperandAsCode(codegen, op->args_[2]);
     codegen.Emit(cce_op_name + "(" + dst + ", " + tile + ", " + scalar + ");");
     return "";
 }
@@ -235,9 +235,9 @@ static std::string MakeBlockOutBinaryWithTmpCodegenCCE(const std::string& cce_op
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << cce_op_name << ": expected 3 args (dst, lhs, rhs), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string lhs = codegen.GetExprAsCode(op->args_[1]);
-    std::string rhs = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string lhs = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string rhs = cce::GetOperandAsCode(codegen, op->args_[2]);
     codegen.Emit(cce_op_name + "(" + dst + ", " + lhs + ", " + rhs + ", " + rhs + ");");
     return "";
 }
@@ -254,9 +254,9 @@ static std::string MakeBlockOutScalarWithTmpCodegenCCE(const std::string& cce_op
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << cce_op_name << ": expected 3 args (dst, tile, scalar), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string tile = codegen.GetExprAsCode(op->args_[1]);
-    std::string scalar = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string tile = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string scalar = cce::GetOperandAsCode(codegen, op->args_[2]);
     codegen.Emit(cce_op_name + "(" + dst + ", " + tile + ", " + scalar + ", " + tile + ");");
     return "";
 }
@@ -271,9 +271,9 @@ static std::string MakeBlockOutRowReductionCodegenCCE(const std::string& cce_op_
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << cce_op_name << ": expected 3 args (dst, tile, tmp), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string tile = codegen.GetExprAsCode(op->args_[1]);
-    std::string tmp = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string tile = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string tmp = cce::GetOperandAsCode(codegen, op->args_[2]);
     codegen.Emit(cce_op_name + "(" + dst + ", " + tile + ", " + tmp + ");");
     return "";
 }
@@ -288,8 +288,8 @@ static std::string MakeBlockOutColMaxCodegenCCE(const ir::CallPtr& op, codegen::
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "TCOLMAX: expected 3 args (dst, tile, tmp), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string tile = codegen.GetExprAsCode(op->args_[1]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string tile = cce::GetOperandAsCode(codegen, op->args_[1]);
     // args_[2] is tmp  - not used by TCOLMAX
     codegen.Emit("TCOLMAX(" + dst + ", " + tile + ");");
     return "";
@@ -325,9 +325,9 @@ static std::string MakeBlockOutExpandBinOpCodegenCCE(const std::string& prefix, 
         << prefix << "BINOP: expected 3 args, got " << op->args_.size();
     int op_type = op->GetKwarg<int>("op_type");
     std::string cce_op_name = prefix + GetExpandBinOpSuffix(op_type);
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string tile = codegen.GetExprAsCode(op->args_[1]);
-    std::string red = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string tile = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string red = cce::GetOperandAsCode(codegen, op->args_[2]);
     codegen.Emit(cce_op_name + "(" + dst + ", " + tile + ", " + red + ");");
     return "";
 }
@@ -337,9 +337,9 @@ static std::string MakeBlockOutColSumCodegenCCE(const ir::CallPtr& op, codegen::
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "TCOLSUM: expected 3 args (dst, tile, tmp), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string tile = codegen.GetExprAsCode(op->args_[1]);
-    std::string tmp = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string tile = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string tmp = cce::GetOperandAsCode(codegen, op->args_[2]);
     codegen.Emit("TCOLSUM(" + dst + ", " + tile + ", " + tmp + ", false);");
     return "";
 }
@@ -354,9 +354,9 @@ static std::string MakeBlockOutRowExpandCodegenCCE(const std::string& cce_op_nam
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << cce_op_name << ": expected 3 args (dst, tile, red), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string tile = codegen.GetExprAsCode(op->args_[1]);
-    std::string red = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string tile = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string red = cce::GetOperandAsCode(codegen, op->args_[2]);
     codegen.Emit(cce_op_name + "(" + dst + ", " + tile + ", " + red + ");");
     return "";
 }
@@ -404,8 +404,8 @@ static void EmitMergedTLoad(codegen::CCECodegen& codegen, const std::string& out
     std::ostringstream pointer;
     pointer << src;
     for (size_t i = 0; i < strides.size(); ++i) {
-        pointer << " + static_cast<uint64_t>(" << codegen.GetExprAsCode(offsets->elements_[i]) << ") * (" << strides[i]
-                << ")";
+        pointer << " + static_cast<uint64_t>(" << cce::GetOperandAsCode(codegen, offsets->elements_[i]) << ") * ("
+                << strides[i] << ")";
     }
     const auto valid = transposed ? ValidCols(out) : ValidRows(out);
     const auto columns = transposed ? ValidRows(out) : ValidCols(out);
@@ -463,7 +463,7 @@ static std::string MakeBlockOutLoadCodegenCCE(const ir::CallPtr& op, codegen::Co
     cce::ValidateNZTransfer("block.load", op, op->args_[0], offsets_tuple, src_tensor_type);
     std::string offset = codegen.ComputeTensorOffset(src_tensor_type, offsets_tuple);
     std::string src_ptr = codegen.GetPointer(src_tensor_var);
-    std::string out_name = codegen.GetExprAsCode(op->args_[0]);
+    std::string out_name = cce::GetOperandAsCode(codegen, op->args_[0]);
 
     // Merged-row load: `tile_dims` names three tensor axes and the destination Tile's row index
     // is the flattening of the first two (row = i_outer * nd_inner + i_inner). TLOAD's
@@ -499,7 +499,7 @@ static std::string MakeBlockOutLoadCodegenCCE(const ir::CallPtr& op, codegen::Co
             n_value_expr = std::to_string(nd_inner);
         } else {
             CHECK(nd_inner == -1) << "block.load: invalid nd_inner " << nd_inner;
-            n_value_expr = codegen.GetExprAsCode(src_tensor_type->shape_[static_cast<size_t>(tile_dims[1])]);
+            n_value_expr = cce::GetOperandAsCode(codegen, src_tensor_type->shape_[static_cast<size_t>(tile_dims[1])]);
         }
 
         EmitMergedTLoad(codegen, out_name, src_ptr, n_value_expr, op, offsets_tuple.get(), is_transpose, rows);
@@ -527,7 +527,7 @@ static std::string MakeBlockOutStoreCodegenCCE(const ir::CallPtr& op, codegen::C
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_tensor_var_ptr != nullptr)
         << "block.store destination tensor must be a Var";
 
-    std::string src_tile = codegen.GetExprAsCode(op->args_[1]);
+    std::string src_tile = cce::GetOperandAsCode(codegen, op->args_[1]);
 
     auto offsets_tuple = std::dynamic_pointer_cast<const ir::MakeTuple>(op->args_[2]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, offsets_tuple != nullptr)
@@ -551,7 +551,7 @@ static std::string MakeBlockOutStoreCodegenCCE(const ir::CallPtr& op, codegen::C
                           fp_tile_type->memref_.has_value() &&
                               fp_tile_type->memref_.value()->memorySpace_ == ir::MemorySpace::Scaling)
             << "block.store scale Tile must be allocated in Scaling memory";
-        std::string fp_tile = codegen.GetExprAsCode(op->args_[3]);
+        std::string fp_tile = cce::GetOperandAsCode(codegen, op->args_[3]);
         // TSTORE<[STPhase,] TileData, GlobalData, FpTileData[, AtomicType, ReluPreMode]>(dst, src, fp).
         // ReluPreMode can only be pinned by also pinning the AtomicType before it.
         std::string phase_template = GetSTPhaseCCE(op);
@@ -648,7 +648,7 @@ static void EmitMoveInsertInstructionCCE(codegen::CCECodegen& codegen, const ir:
     std::string tile_scale_type;
     if (scale_operand != nullptr) {
         if (ir::As<ir::TileType>(scale_operand->GetType()) != nullptr) {
-            scale = codegen.GetExprAsCode(scale_operand);
+            scale = cce::GetOperandAsCode(codegen, scale_operand);
             tile_scale_type = TileTypeStringForTemplate(codegen, scale, scale_operand);
         } else {
             auto dst_tile_type = ir::As<ir::TileType>(op->args_[0]->GetType());
@@ -696,7 +696,7 @@ static std::string MakeBlockOutInitOutputCodegenCCE(const ir::CallPtr& op, codeg
     std::string numel_expr;
     for (const auto& dim : tensor_type->shape_) {
         numel_expr += numel_expr.empty() ? "" : " * ";
-        numel_expr += codegen.GetExprAsCode(dim);
+        numel_expr += cce::GetOperandAsCode(codegen, dim);
     }
     if (numel_expr.empty()) {
         numel_expr = "1";
@@ -705,9 +705,9 @@ static std::string MakeBlockOutInitOutputCodegenCCE(const ir::CallPtr& op, codeg
     std::string tensor_name = codegen.DeclareFlatGlobalTensor(tensor_var, numel_expr);
 
     std::string ctype = tensor_type->dtype_.ToCTypeString();
-    std::string offset = codegen.GetExprAsCode(op->args_[1]);
-    std::string size = codegen.GetExprAsCode(op->args_[2]);
-    std::string value = codegen.GetExprAsCode(op->args_[3]);
+    std::string offset = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string size = cce::GetOperandAsCode(codegen, op->args_[2]);
+    std::string value = cce::GetOperandAsCode(codegen, op->args_[3]);
 
     // aicore does not allow implicit conversion from integer (incl. INDEX) scalars to
     // float element types; cast the scalar directly to the tensor's element type.
@@ -778,10 +778,10 @@ static std::string MakeBlockOutInsertCodegenCCE(const ir::CallPtr& op, codegen::
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4 || op->args_.size() == 5)
         << "block.insert: expected 4 or 5 args, got " << op->args_.size();
 
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
-    std::string row = codegen.GetExprAsCode(op->args_[2]);
-    std::string col = codegen.GetExprAsCode(op->args_[3]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string row = cce::GetOperandAsCode(codegen, op->args_[2]);
+    std::string col = cce::GetOperandAsCode(codegen, op->args_[3]);
     ir::ExprPtr scale_operand = op->args_.size() == 5 ? op->args_[4] : nullptr;
     EmitMoveInsertInstructionCCE(codegen, op, "TINSERT", dst, src, scale_operand, "", row, col);
 
@@ -798,8 +798,8 @@ static std::string MakeBlockOutMoveCodegenCCE(const ir::CallPtr& op, codegen::Co
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 2 && op->args_.size() <= 4)
         << op_name << ": expected 2 to 4 args, got " << op->args_.size();
 
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
 
     ir::ExprPtr offset_operand = nullptr;
     ir::ExprPtr scale_operand = nullptr;
@@ -838,8 +838,8 @@ static std::string MakeBlockOutMoveCodegenCCE(const ir::CallPtr& op, codegen::Co
             << op_name << ": offset must be a tuple [offset_m, offset_k]";
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, make_tuple->elements_.size() == 2)
             << op_name << ": offset must have 2 elements";
-        row = codegen.GetExprAsCode(make_tuple->elements_[0]);
-        col = codegen.GetExprAsCode(make_tuple->elements_[1]);
+        row = cce::GetOperandAsCode(codegen, make_tuple->elements_[0]);
+        col = cce::GetOperandAsCode(codegen, make_tuple->elements_[1]);
         instruction = "TEXTRACT";
     }
 
@@ -857,9 +857,9 @@ static std::string MakeBlockOutSetValidShapeCodegenCCE(const ir::CallPtr& op, co
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "block.set_validshape: expected 3 args (tile, row, col), got " << op->args_.size();
-    std::string tile = codegen.GetExprAsCode(op->args_[0]);
-    std::string row = codegen.GetExprAsCode(op->args_[1]);
-    std::string col = codegen.GetExprAsCode(op->args_[2]);
+    std::string tile = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string row = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string col = cce::GetOperandAsCode(codegen, op->args_[2]);
     codegen.Emit(tile + ".SetValidShape(" + row + ", " + col + ");");
     return "";
 }
@@ -873,9 +873,9 @@ static std::string MakeBlockOutMatmulCodegenCCE(const ir::CallPtr& op, codegen::
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "block.matmul: expected 3 args (dst, left, right), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string left = codegen.GetExprAsCode(op->args_[1]);
-    std::string right = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string left = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string right = cce::GetOperandAsCode(codegen, op->args_[2]);
 
     // Get phase (unit-flag) — AccPhase template parameter for TMATMUL.
     EmitTemplated(codegen, "TMATMUL", {GetAccPhaseCCE(op)}, {dst, left, right});
@@ -889,10 +889,10 @@ static std::string MakeBlockOutMatmulAccCodegenCCE(const ir::CallPtr& op, codege
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "block.matmul_acc: expected 4 args, got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string acc = codegen.GetExprAsCode(op->args_[1]);
-    std::string left = codegen.GetExprAsCode(op->args_[2]);
-    std::string right = codegen.GetExprAsCode(op->args_[3]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string acc = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string left = cce::GetOperandAsCode(codegen, op->args_[2]);
+    std::string right = cce::GetOperandAsCode(codegen, op->args_[3]);
 
     // Get phase (unit-flag) — AccPhase template parameter for TMATMUL_ACC.
     EmitTemplated(codegen, "TMATMUL_ACC", {GetAccPhaseCCE(op)}, {dst, acc, left, right});
@@ -907,10 +907,10 @@ static std::string MakeBlockOutMatmulBiasCodegenCCE(const ir::CallPtr& op, codeg
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "block.matmul_bias: expected 4 args (dst, left, right, bias), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string left = codegen.GetExprAsCode(op->args_[1]);
-    std::string right = codegen.GetExprAsCode(op->args_[2]);
-    std::string bias = codegen.GetExprAsCode(op->args_[3]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string left = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string right = cce::GetOperandAsCode(codegen, op->args_[2]);
+    std::string bias = cce::GetOperandAsCode(codegen, op->args_[3]);
 
     // Get phase (unit-flag) — AccPhase template parameter for TMATMUL_BIAS.
     EmitTemplated(codegen, "TMATMUL_BIAS", {GetAccPhaseCCE(op)}, {dst, left, right, bias});
@@ -928,11 +928,11 @@ static std::string MakeBlockOutMatmulMxCodegenCCE(const ir::CallPtr& op, codegen
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 5)
         << "block.matmul_mx: expected 5 args (dst, left, right, scale_a, scale_b), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string left = codegen.GetExprAsCode(op->args_[1]);
-    std::string right = codegen.GetExprAsCode(op->args_[2]);
-    std::string scale_a = codegen.GetExprAsCode(op->args_[3]);
-    std::string scale_b = codegen.GetExprAsCode(op->args_[4]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string left = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string right = cce::GetOperandAsCode(codegen, op->args_[2]);
+    std::string scale_a = cce::GetOperandAsCode(codegen, op->args_[3]);
+    std::string scale_b = cce::GetOperandAsCode(codegen, op->args_[4]);
 
     EmitTemplated(codegen, "TMATMUL_MX_IMPL", {GetAccPhaseCCE(op)}, {dst, left, scale_a, right, scale_b});
     return "";
@@ -945,12 +945,12 @@ static std::string MakeBlockOutMatmulMxAccCodegenCCE(const ir::CallPtr& op, code
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 6)
         << "block.matmul_mx_acc: expected 6 args, got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string acc = codegen.GetExprAsCode(op->args_[1]);
-    std::string left = codegen.GetExprAsCode(op->args_[2]);
-    std::string right = codegen.GetExprAsCode(op->args_[3]);
-    std::string scale_a = codegen.GetExprAsCode(op->args_[4]);
-    std::string scale_b = codegen.GetExprAsCode(op->args_[5]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string acc = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string left = cce::GetOperandAsCode(codegen, op->args_[2]);
+    std::string right = cce::GetOperandAsCode(codegen, op->args_[3]);
+    std::string scale_a = cce::GetOperandAsCode(codegen, op->args_[4]);
+    std::string scale_b = cce::GetOperandAsCode(codegen, op->args_[5]);
 
     EmitTemplated(codegen, "TMATMUL_MX_IMPL", {GetAccPhaseCCE(op)}, {dst, acc, left, scale_a, right, scale_b});
     return "";
@@ -962,8 +962,8 @@ static std::string MakeBlockOutCastCodegenCCE(const ir::CallPtr& op, codegen::Co
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "block.cast: expected 2 args (dst, src), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
 
     // Get round mode from kwargs - block.cast uses an int mode (RoundMode enum)
     int mode_idx = op->GetKwarg<int>("mode");
@@ -978,8 +978,8 @@ static std::string MakeBlockOutExpandsCodegenCCE(const ir::CallPtr& op, codegen:
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "block.full/expands: expected 2 args (dst, scalar), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string scalar = codegen.GetExprAsCode(op->args_[1]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string scalar = cce::GetOperandAsCode(codegen, op->args_[1]);
 
     // aicore does not allow implicit cast from integer (including index) to float.
     // Insert explicit (float) cast when scalar is integer/index and dst element type is float.
@@ -1015,8 +1015,8 @@ static std::string MakeBlockOutFillIndexCodegenCCE(const ir::CallPtr& op, codege
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "block.fill_index: expected 2 args (dst, start), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string start = codegen.GetExprAsCode(op->args_[1]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string start = cce::GetOperandAsCode(codegen, op->args_[1]);
     std::string dst_type = TileTypeStringForTemplate(codegen, dst, op->args_[0]);
 
     // TCI requires the scalar type T to match the tile element type.
@@ -1070,7 +1070,7 @@ static std::string BuildNullPadSourceAliasCCE(codegen::CCECodegen& codegen, cons
     auto alias_tile_type = std::make_shared<ir::TileType>(
         src_tile_type->shape_, src_tile_type->dtype_, src_tile_type->memref_, src_tile_type->tileView_, alias_hw_info);
 
-    std::string alias_tile_type_str = codegen.GetTypeConverter().ConvertTileType(alias_tile_type, rows, cols);
+    std::string alias_tile_type_str = codegen.GetTypeConverter().ConvertPtoTileType(alias_tile_type, rows, cols);
     static size_t fillpad_alias_counter = 0;
     std::string alias_suffix = std::to_string(fillpad_alias_counter++);
     std::string alias_type_name = "__block_fillpad_src_alias_type_" + alias_suffix;
@@ -1079,7 +1079,7 @@ static std::string BuildNullPadSourceAliasCCE(codegen::CCECodegen& codegen, cons
     codegen.Emit("using " + alias_type_name + " = " + alias_tile_type_str + ";");
     codegen.Emit(alias_type_name + " " + alias_name + "(" + src_name + ".GetValidRow(), " + src_name +
                  ".GetValidCol());");
-    codegen.Emit("TASSIGN(" + alias_name + ", " + codegen.GetTileAddress(src_name) + ");");
+    codegen.Emit("TASSIGN(" + alias_name + ", " + "(uint64_t)" + src_name + ".data()" + ");");
     return alias_name;
 }
 
@@ -1093,8 +1093,8 @@ static std::string MakeBlockOutFillpadCodegenCCE(const ir::CallPtr& op, codegen:
     auto src_tile_type = ir::As<ir::TileType>(op->args_[1]->GetType());
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_tile_type != nullptr) << "block.fillpad: expected TileType src";
 
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
     if (NeedsNullPadSourceAliasCCE(src_tile_type)) {
         src = BuildNullPadSourceAliasCCE(codegen, src_tile_type, src);
     }
@@ -1114,8 +1114,8 @@ static std::string MakeBlockOutFillpadInplaceCodegenCCE(const ir::CallPtr& op, c
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_tile_type != nullptr)
         << "block.fillpad_inplace: expected TileType src";
 
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
 
     if (NeedsNullPadSourceAliasCCE(src_tile_type)) {
         src = BuildNullPadSourceAliasCCE(codegen, src_tile_type, src);
@@ -1136,8 +1136,8 @@ static std::string MakeBlockOutFillpadExpandCodegenCCE(const ir::CallPtr& op, co
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_tile_type != nullptr)
         << "block.fillpad_expand: expected TileType src";
 
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
     if (src == dst) {
         PRO_CODEGEN_THROW(::pypto::ir::ValueError, ExternalError::NOT_IMPLEMENTED_ERROR)
             << "block.fillpad_expand: inplace is not supported";
@@ -1157,8 +1157,8 @@ static std::string MakeBlockOutReshapeCodegenCCE(const ir::CallPtr& op, codegen:
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "block.reshape: expected 3 args (dst, src, shape), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
     codegen.Emit("TRESHAPE(" + dst + ", " + src + ");");
     return "";
 }
@@ -1169,8 +1169,8 @@ static std::string MakeBlockOutTransposeCodegenCCE(const ir::CallPtr& op, codege
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "block.transpose: expected 2 args (dst, src), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
     // A5 CCE builtin requires the explicit tmp operand for TTRANS.
     // Reuse the source tile as the temporary buffer, matching PTO ISA demos.
     codegen.Emit("TTRANS(" + dst + ", " + src + ", " + src + ");");
@@ -1183,9 +1183,9 @@ static std::string MakeBlockOutCmpCodegenCCE(const ir::CallPtr& op, codegen::Cod
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "block.cmp: expected 3 args (dst, lhs, rhs), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string lhs = codegen.GetExprAsCode(op->args_[1]);
-    std::string rhs = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string lhs = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string rhs = cce::GetOperandAsCode(codegen, op->args_[2]);
     int cmp_mode = op->GetKwarg<int>("cmp_mode");
     codegen.Emit("TCMP(" + dst + ", " + lhs + ", " + rhs + ", " + ir::EnumToString(static_cast<ir::CmpMode>(cmp_mode)) +
                  ");");
@@ -1198,9 +1198,9 @@ static std::string MakeBlockOutCmpsCodegenCCE(const ir::CallPtr& op, codegen::Co
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "block.cmps: expected 3 args (dst, tile, scalar), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string tile = codegen.GetExprAsCode(op->args_[1]);
-    std::string scalar = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string tile = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string scalar = cce::GetOperandAsCode(codegen, op->args_[2]);
     int cmp_mode = op->GetKwarg<int>("cmp_mode");
     codegen.Emit("TCMPS(" + dst + ", " + tile + ", " + scalar + ", " +
                  ir::EnumToString(static_cast<ir::CmpMode>(cmp_mode)) + ");");
@@ -1219,8 +1219,8 @@ static std::string MakeBlockOutSsbufStoreCodegenCCE(const ir::CallPtr& op, codeg
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "block.ssbuf_store: expected 2 args (struct_var, offset)";
     codegen.MarkStructVolatile(op->args_[0]->GetType());
-    std::string struct_name = codegen.GetExprAsCode(op->args_[0]);
-    std::string offset = codegen.GetExprAsCode(op->args_[1]);
+    std::string struct_name = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string offset = cce::GetOperandAsCode(codegen, op->args_[1]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, !struct_name.empty()) << "block.ssbuf_store: empty struct name";
     static size_t ssbuf_store_counter = 0;
     std::string suffix = "_" + std::to_string(ssbuf_store_counter++);
@@ -1242,8 +1242,8 @@ static std::string MakeBlockOutSsbufLoadCodegenCCE(const ir::CallPtr& op, codege
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "block.ssbuf_load: expected 2 args (struct_var, offset)";
     codegen.MarkStructVolatile(op->args_[0]->GetType());
-    std::string struct_name = codegen.GetExprAsCode(op->args_[0]);
-    std::string offset = codegen.GetExprAsCode(op->args_[1]);
+    std::string struct_name = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string offset = cce::GetOperandAsCode(codegen, op->args_[1]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, !struct_name.empty()) << "block.ssbuf_load: empty struct name";
     static size_t ssbuf_load_counter = 0;
     std::string suffix = "_" + std::to_string(ssbuf_load_counter++);
@@ -1266,8 +1266,8 @@ static std::string MakeBlockOutColExpandCodegenCCE(const ir::CallPtr& op, codege
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "block.col_expand: expected 2 args (dst, src), got " << op->args_.size();
     // TCOLEXPAND is inplace: dst and src share same buffer
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
     codegen.Emit("TCOLEXPAND(" + dst + ", " + src + ");");
     return "";
 }
@@ -1278,8 +1278,8 @@ static std::string MakeBlockOutRowExpandUnaryCodegenCCE(const ir::CallPtr& op, c
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "block.row_expand: expected 2 args (dst, src), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
     codegen.Emit("TROWEXPAND(" + dst + ", " + src + ");");
     return "";
 }
@@ -1294,10 +1294,10 @@ static std::string MakeBlockOutTernaryCodegenCCE(const std::string& cce_op_name,
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << cce_op_name << ": expected 4 args (dst, a, b, c), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string a = codegen.GetExprAsCode(op->args_[1]);
-    std::string b = codegen.GetExprAsCode(op->args_[2]);
-    std::string c = codegen.GetExprAsCode(op->args_[3]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string a = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string b = cce::GetOperandAsCode(codegen, op->args_[2]);
+    std::string c = cce::GetOperandAsCode(codegen, op->args_[3]);
     codegen.Emit(cce_op_name + "(" + dst + ", " + a + ", " + b + ", " + c + ");");
     return "";
 }
@@ -1312,11 +1312,11 @@ static std::string MakeBlockOutQuaternaryCodegenCCE(const std::string& cce_op_na
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 5)
         << cce_op_name << ": expected 5 args (dst, a, b, c, d), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string a = codegen.GetExprAsCode(op->args_[1]);
-    std::string b = codegen.GetExprAsCode(op->args_[2]);
-    std::string c = codegen.GetExprAsCode(op->args_[3]);
-    std::string d = codegen.GetExprAsCode(op->args_[4]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string a = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string b = cce::GetOperandAsCode(codegen, op->args_[2]);
+    std::string c = cce::GetOperandAsCode(codegen, op->args_[3]);
+    std::string d = cce::GetOperandAsCode(codegen, op->args_[4]);
     codegen.Emit(cce_op_name + "(" + dst + ", " + a + ", " + b + ", " + c + ", " + d + ");");
     return "";
 }
@@ -1332,9 +1332,9 @@ static std::string MakeBlockOutBinaryReluCodegenCCE(const std::string& cce_op_na
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << cce_op_name << "+relu: expected 3 args (dst, lhs, rhs), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string lhs = codegen.GetExprAsCode(op->args_[1]);
-    std::string rhs = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string lhs = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string rhs = cce::GetOperandAsCode(codegen, op->args_[2]);
     codegen.Emit(cce_op_name + "(" + lhs + ", " + lhs + ", " + rhs + ");");
     codegen.Emit("TRELU(" + dst + ", " + lhs + ");");
     return "";
@@ -1351,9 +1351,9 @@ static std::string MakeBlockOutBinaryReluCastCodegenCCE(const std::string& cce_o
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << cce_op_name << "+relu+cast: expected 3 args (dst, lhs, rhs), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string lhs = codegen.GetExprAsCode(op->args_[1]);
-    std::string rhs = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string lhs = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string rhs = cce::GetOperandAsCode(codegen, op->args_[2]);
     int mode_idx = op->GetKwarg<int>("mode");
     codegen.Emit(cce_op_name + "(" + lhs + ", " + lhs + ", " + rhs + ");");
     codegen.Emit("TRELU(" + lhs + ", " + lhs + ");");
@@ -1372,9 +1372,9 @@ static std::string MakeBlockOutBinaryCastCodegenCCE(const std::string& cce_op_na
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << cce_op_name << "+cast: expected 3 args (dst, lhs, rhs), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string lhs = codegen.GetExprAsCode(op->args_[1]);
-    std::string rhs = codegen.GetExprAsCode(op->args_[2]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string lhs = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string rhs = cce::GetOperandAsCode(codegen, op->args_[2]);
     int mode_idx = op->GetKwarg<int>("mode");
     codegen.Emit(cce_op_name + "(" + lhs + ", " + lhs + ", " + rhs + ");");
     codegen.Emit("TCVT(" + dst + ", " + lhs + ", " + codegen.GetTypeConverter().ConvertCastRoundMode(mode_idx) + ");");
@@ -1391,9 +1391,9 @@ static std::string MakeBlockOutMulAddDstCodegenCCE(const ir::CallPtr& op, codege
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "block.mul_add_dst: expected 3 args (out, lhs, rhs), got " << op->args_.size();
-    std::string out = codegen.GetExprAsCode(op->args_[0]);
-    std::string lhs = codegen.GetExprAsCode(op->args_[1]);
-    std::string rhs = codegen.GetExprAsCode(op->args_[2]);
+    std::string out = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string lhs = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string rhs = cce::GetOperandAsCode(codegen, op->args_[2]);
     codegen.Emit("TMULA(" + out + ", " + lhs + ", " + rhs + ");");
     return "";
 }
@@ -1408,9 +1408,9 @@ static std::string MakeBlockOutFusedMulAddCodegenCCE(const ir::CallPtr& op, code
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "block.fused_mul_add: expected 3 args (out, lhs, rhs), got " << op->args_.size();
-    std::string out = codegen.GetExprAsCode(op->args_[0]);
-    std::string lhs = codegen.GetExprAsCode(op->args_[1]);
-    std::string rhs = codegen.GetExprAsCode(op->args_[2]);
+    std::string out = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string lhs = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string rhs = cce::GetOperandAsCode(codegen, op->args_[2]);
     codegen.Emit("TMADD(" + out + ", " + lhs + ", " + rhs + ");");
     return "";
 }
@@ -1425,9 +1425,9 @@ static std::string MakeBlockOutFusedMulAddReluCodegenCCE(const ir::CallPtr& op, 
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "block.fused_mul_add_relu: expected 3 args (out, lhs, rhs), got " << op->args_.size();
-    std::string out = codegen.GetExprAsCode(op->args_[0]);
-    std::string lhs = codegen.GetExprAsCode(op->args_[1]);
-    std::string rhs = codegen.GetExprAsCode(op->args_[2]);
+    std::string out = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string lhs = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string rhs = cce::GetOperandAsCode(codegen, op->args_[2]);
     codegen.Emit("TMADD(" + out + ", " + lhs + ", " + rhs + ");");
     codegen.Emit("TRELU(" + out + ", " + out + ");");
     return "";
@@ -1449,25 +1449,25 @@ static std::string MakeBlockOutGatherCodegenCCE(const ir::CallPtr& op, codegen::
 
     if (!attrs.has_cmp_mode && (op->args_.size() == 3 || op->args_.size() == 4)) {
         if (op->args_.size() == 3) {
-            std::string out = codegen.GetExprAsCode(op->args_[0]);
-            std::string src = codegen.GetExprAsCode(op->args_[1]);
-            std::string indices = codegen.GetExprAsCode(op->args_[2]);
+            std::string out = cce::GetOperandAsCode(codegen, op->args_[0]);
+            std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
+            std::string indices = cce::GetOperandAsCode(codegen, op->args_[2]);
             codegen.Emit("TGATHER(" + out + ", " + src + ", " + indices + ");");
         } else {
             PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
                 << "block.gather: expected 3 or 4 args, got " << op->args_.size();
-            std::string out = codegen.GetExprAsCode(op->args_[0]);
-            std::string src = codegen.GetExprAsCode(op->args_[1]);
-            std::string indices = codegen.GetExprAsCode(op->args_[2]);
-            std::string tmp = codegen.GetExprAsCode(op->args_[3]);
+            std::string out = cce::GetOperandAsCode(codegen, op->args_[0]);
+            std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
+            std::string indices = cce::GetOperandAsCode(codegen, op->args_[2]);
+            std::string tmp = cce::GetOperandAsCode(codegen, op->args_[3]);
             codegen.Emit("TGATHER(" + out + ", " + src + ", " + indices + ", " + tmp + ");");
         }
     } else if (attrs.has_cmp_mode && op->args_.size() == 5) {
-        std::string out = codegen.GetExprAsCode(op->args_[0]);
-        std::string src = codegen.GetExprAsCode(op->args_[1]);
-        std::string k_value = codegen.GetExprAsCode(op->args_[2]);
-        std::string cdst = codegen.GetExprAsCode(op->args_[3]);
-        std::string tmp = codegen.GetExprAsCode(op->args_[4]);
+        std::string out = cce::GetOperandAsCode(codegen, op->args_[0]);
+        std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
+        std::string k_value = cce::GetOperandAsCode(codegen, op->args_[2]);
+        std::string cdst = cce::GetOperandAsCode(codegen, op->args_[3]);
+        std::string tmp = cce::GetOperandAsCode(codegen, op->args_[4]);
         std::string cmp_mode_str = (attrs.cmp_mode == 4) ? "CmpMode::GT" : "CmpMode::EQ";
         std::string offset = std::to_string(attrs.offset);
         EmitTemplated(codegen, "TGATHER",
@@ -1508,8 +1508,8 @@ static std::string MakeBlockOutGatherMaskCodegenCCE(const ir::CallPtr& op, codeg
                                           "MaskPattern::P1000",
                                           "MaskPattern::P1111"};
 
-    std::string out = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
+    std::string out = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
 
     EmitTemplated(codegen, "TGATHER", {TypeOf(out), TypeOf(src), pattern_names[pattern_mode]}, {out, src});
     return "";
@@ -1525,11 +1525,9 @@ REGISTER_BACKEND_OP(BackendCCE, "block.load")
         return MakeBlockOutLoadCodegenCCE(op, codegen);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "block.store")
-    .set_pipe(ir::PipeType::MTE3)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeBlockOutStoreCodegenCCE(op, codegen);
-    });
+REGISTER_BACKEND_OP(BackendCCE, "block.store").f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+    return MakeBlockOutStoreCodegenCCE(op, codegen);
+});
 
 REGISTER_BACKEND_OP(BackendCCE, "block.init_output")
     .set_pipe(ir::PipeType::V)
@@ -1543,17 +1541,13 @@ REGISTER_BACKEND_OP(BackendCCE, "block.set_validshape")
         return MakeBlockOutSetValidShapeCodegenCCE(op, codegen);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "block.move")
-    .set_pipe(ir::PipeType::MTE1)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeBlockOutMoveCodegenCCE(op, codegen, "block.move");
-    });
+REGISTER_BACKEND_OP(BackendCCE, "block.move").f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+    return MakeBlockOutMoveCodegenCCE(op, codegen, "block.move");
+});
 
-REGISTER_BACKEND_OP(BackendCCE, "block.insert")
-    .set_pipe(ir::PipeType::MTE3)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeBlockOutInsertCodegenCCE(op, codegen);
-    });
+REGISTER_BACKEND_OP(BackendCCE, "block.insert").f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+    return MakeBlockOutInsertCodegenCCE(op, codegen);
+});
 
 REGISTER_BACKEND_OP(BackendCCE, "block.ub_copy")
     .set_pipe(ir::PipeType::V)
@@ -1573,11 +1567,9 @@ REGISTER_BACKEND_OP(BackendCCE, "block.ssbuf_load")
         return MakeBlockOutSsbufLoadCodegenCCE(op, codegen);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "block.full")
-    .set_pipe(ir::PipeType::V)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeBlockOutExpandsCodegenCCE(op, codegen);
-    });
+REGISTER_BACKEND_OP(BackendCCE, "block.full").f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+    return MakeBlockOutExpandsCodegenCCE(op, codegen);
+});
 
 REGISTER_BACKEND_OP(BackendCCE, "block.fillpad")
     .set_pipe(ir::PipeType::V)
@@ -1899,11 +1891,9 @@ REGISTER_BACKEND_OP(BackendCCE, "block.cmps")
 // Op registrations  - Scalar broadcast
 // ============================================================================
 
-REGISTER_BACKEND_OP(BackendCCE, "block.expands")
-    .set_pipe(ir::PipeType::V)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeBlockOutExpandsCodegenCCE(op, codegen);
-    });
+REGISTER_BACKEND_OP(BackendCCE, "block.expands").f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+    return MakeBlockOutExpandsCodegenCCE(op, codegen);
+});
 
 REGISTER_BACKEND_OP(BackendCCE, "block.fill_index")
     .set_pipe(ir::PipeType::V)
@@ -1951,8 +1941,8 @@ REGISTER_BACKEND_OP(BackendCCE, "block.col_min")
         auto& cce = dynamic_cast<codegen::CCECodegen&>(codegen);
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
             << "TCOLMIN: expected 3 args (dst, tile, tmp), got " << op->args_.size();
-        std::string dst = cce.GetExprAsCode(op->args_[0]);
-        std::string tile = cce.GetExprAsCode(op->args_[1]);
+        std::string dst = cce::GetOperandAsCode(cce, op->args_[0]);
+        std::string tile = cce::GetOperandAsCode(cce, op->args_[1]);
         cce.Emit("TCOLMIN(" + dst + ", " + tile + ");");
         return std::string("");
     });
@@ -1969,8 +1959,8 @@ REGISTER_BACKEND_OP(BackendCCE, "block.col_prod")
         auto& cce = dynamic_cast<codegen::CCECodegen&>(codegen);
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
             << "TCOLPROD: expected 3 args (dst, tile, tmp), got " << op->args_.size();
-        std::string dst = cce.GetExprAsCode(op->args_[0]);
-        std::string tile = cce.GetExprAsCode(op->args_[1]);
+        std::string dst = cce::GetOperandAsCode(cce, op->args_[0]);
+        std::string tile = cce::GetOperandAsCode(cce, op->args_[1]);
         cce.Emit("TCOLPROD(" + dst + ", " + tile + ");");
         return std::string("");
     });
@@ -2008,9 +1998,9 @@ REGISTER_BACKEND_OP(BackendCCE, "block.col_reduce")
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
             << "block.col_reduce: expected 3 args, got " << op->args_.size();
         int op_type = op->GetKwarg<int>("op_type");
-        std::string dst = cce.GetExprAsCode(op->args_[0]);
-        std::string tile = cce.GetExprAsCode(op->args_[1]);
-        std::string tmp = cce.GetExprAsCode(op->args_[2]);
+        std::string dst = cce::GetOperandAsCode(cce, op->args_[0]);
+        std::string tile = cce::GetOperandAsCode(cce, op->args_[1]);
+        std::string tmp = cce::GetOperandAsCode(cce, op->args_[2]);
         switch (op_type) {
             case 0:
                 cce.Emit("TCOLSUM(" + dst + ", " + tile + ", " + tmp + ", false);");
@@ -2387,12 +2377,12 @@ REGISTER_BACKEND_OP(BackendCCE, "block.sort32")
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3 || op->args_.size() == 4)
             << "block.sort32: expected 3 or 4 args (dst, src, idx[, tmp]), got " << op->args_.size();
 
-        std::string dst = codegen.GetExprAsCode(op->args_[0]);
-        std::string src = codegen.GetExprAsCode(op->args_[1]);
-        std::string idx = codegen.GetExprAsCode(op->args_[2]);
+        std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+        std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
+        std::string idx = cce::GetOperandAsCode(codegen, op->args_[2]);
 
         if (op->args_.size() == 4) {
-            std::string tmp = codegen.GetExprAsCode(op->args_[3]);
+            std::string tmp = cce::GetOperandAsCode(codegen, op->args_[3]);
             codegen.Emit("TSORT32(" + dst + ", " + src + ", " + idx + ", " + tmp + ");");
         } else {
             codegen.Emit("TSORT32(" + dst + ", " + src + ", " + idx + ");");
@@ -2407,8 +2397,8 @@ REGISTER_BACKEND_OP(BackendCCE, "block.mrgsort")
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
             << "block.mrgsort: expected 2 args (dst, src), got " << op->args_.size();
 
-        std::string dst = codegen.GetExprAsCode(op->args_[0]);
-        std::string src = codegen.GetExprAsCode(op->args_[1]);
+        std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+        std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
         int block_len = op->GetKwarg<int>("block_len");
 
         codegen.Emit("TMRGSORT(" + dst + ", " + src + ", " + std::to_string(block_len) + ");");
@@ -2426,10 +2416,10 @@ static std::string MakeBlockOutMrgsort2CCE(const ir::CallPtr& op, codegen::Codeg
     bool exhausted = op->GetKwarg<bool>("exhausted");
     std::string exhausted_str = exhausted ? "true" : "false";
 
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src0 = codegen.GetExprAsCode(op->args_[1]);
-    std::string tmp = codegen.GetExprAsCode(op->args_[2]);
-    std::string src1 = codegen.GetExprAsCode(op->args_[3]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src0 = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string tmp = cce::GetOperandAsCode(codegen, op->args_[2]);
+    std::string src1 = cce::GetOperandAsCode(codegen, op->args_[3]);
 
     // TMRGSORT requires exhausted as a non-deducible bool template parameter.
     // Tile-group accessors lower to array subscripts, whose decltype is Tile&; strip
@@ -2439,13 +2429,13 @@ static std::string MakeBlockOutMrgsort2CCE(const ir::CallPtr& op, codegen::Codeg
         EmitTemplated(codegen, "TMRGSORT_IMPL", {TypeOf(dst), TypeOf(tmp), TypeOf(src0), TypeOf(src1), exhausted_str},
                       {dst, "executedNumList", tmp, src0, src1});
     } else if (num_args == 5) {
-        std::string src2 = codegen.GetExprAsCode(op->args_[4]);
+        std::string src2 = cce::GetOperandAsCode(codegen, op->args_[4]);
         EmitTemplated(codegen, "TMRGSORT_IMPL",
                       {TypeOf(dst), TypeOf(tmp), TypeOf(src0), TypeOf(src1), TypeOf(src2), exhausted_str},
                       {dst, "executedNumList", tmp, src0, src1, src2});
     } else {
-        std::string src2 = codegen.GetExprAsCode(op->args_[4]);
-        std::string src3 = codegen.GetExprAsCode(op->args_[5]);
+        std::string src2 = cce::GetOperandAsCode(codegen, op->args_[4]);
+        std::string src3 = cce::GetOperandAsCode(codegen, op->args_[5]);
         EmitTemplated(codegen, "TMRGSORT_IMPL",
                       {TypeOf(dst), TypeOf(tmp), TypeOf(src0), TypeOf(src1), TypeOf(src2), TypeOf(src3), exhausted_str},
                       {dst, "executedNumList", tmp, src0, src1, src2, src3});
@@ -2466,9 +2456,9 @@ REGISTER_BACKEND_OP(BackendCCE, "block.histogram")
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
             << "block.histogram: expected 3 args (dst, src, idx), got " << op->args_.size();
 
-        std::string dst = codegen.GetExprAsCode(op->args_[0]);
-        std::string src = codegen.GetExprAsCode(op->args_[1]);
-        std::string idx = codegen.GetExprAsCode(op->args_[2]);
+        std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+        std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
+        std::string idx = cce::GetOperandAsCode(codegen, op->args_[2]);
 
         bool is_msb = op->GetKwarg<bool>("is_msb");
 
@@ -2501,17 +2491,17 @@ static std::string MakeBlockOutQuantCodegenCCE(const ir::CallPtr& op, codegen::C
     if (mode == ir::QuantMode::SYM) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
             << "block.quant(sym): expected 3 args (dst, src, scale), got " << op->args_.size();
-        std::string dst = codegen.GetExprAsCode(op->args_[0]);
-        std::string src = codegen.GetExprAsCode(op->args_[1]);
-        std::string scale = codegen.GetExprAsCode(op->args_[2]);
+        std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+        std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
+        std::string scale = cce::GetOperandAsCode(codegen, op->args_[2]);
         codegen.Emit("TQUANT<QuantType::INT8_SYM>(" + dst + ", " + src + ", " + scale + ");");
     } else if (mode == ir::QuantMode::ASYM) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
             << "block.quant(asym): expected 4 args (dst, src, scale, offset), got " << op->args_.size();
-        std::string dst = codegen.GetExprAsCode(op->args_[0]);
-        std::string src = codegen.GetExprAsCode(op->args_[1]);
-        std::string scale = codegen.GetExprAsCode(op->args_[2]);
-        std::string offset = codegen.GetExprAsCode(op->args_[3]);
+        std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+        std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
+        std::string scale = cce::GetOperandAsCode(codegen, op->args_[2]);
+        std::string offset = cce::GetOperandAsCode(codegen, op->args_[3]);
         codegen.Emit("TQUANT<QuantType::INT8_ASYM>(" + dst + ", " + src + ", " + scale + ", &" + offset + ");");
     } else {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, false)
@@ -2531,10 +2521,10 @@ static std::string MakeBlockOutDequantCodegenCCE(const ir::CallPtr& op, codegen:
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "block.dequant: expected 4 args (dst, src, scale, offset), got " << op->args_.size();
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
-    std::string scale = codegen.GetExprAsCode(op->args_[2]);
-    std::string offset = codegen.GetExprAsCode(op->args_[3]);
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
+    std::string scale = cce::GetOperandAsCode(codegen, op->args_[2]);
+    std::string offset = cce::GetOperandAsCode(codegen, op->args_[3]);
     codegen.Emit("TDEQUANT(" + dst + ", " + src + ", " + scale + ", " + offset + ");");
     return "";
 }

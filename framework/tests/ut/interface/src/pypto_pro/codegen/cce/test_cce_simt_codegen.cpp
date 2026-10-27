@@ -41,6 +41,14 @@ namespace pypto {
 namespace codegen {
 namespace {
 
+std::vector<ir::ExprPtr> MakeTileOperands(const ir::TypePtr& type)
+{
+    auto tile = std::dynamic_pointer_cast<const ir::TileType>(type);
+    auto empty = std::make_shared<const ir::MakeTuple>(std::vector<ir::ExprPtr>{}, ir::Span::Unknown());
+    auto shape = std::make_shared<const ir::MakeTuple>(tile->shape_, ir::Span::Unknown());
+    return {shape, empty, empty};
+}
+
 using Kwargs = std::vector<std::pair<std::string, std::any>>;
 
 ir::Span Sp() { return ir::Span::Unknown(); }
@@ -62,9 +70,10 @@ ir::VarPtr Var(const std::string& name, const ir::TypePtr& type)
 ir::TileTypePtr MakeSimtTileType(ir::DataType dtype = ir::DataType::FP32, int64_t address = 0)
 {
     auto memref = std::make_shared<const ir::MemRef>(ir::MemorySpace::Vec, ConstInt(address), 1024);
-    return std::make_shared<const ir::TileType>(
-        std::vector<int64_t>{1, 256}, dtype, std::optional<ir::MemRefPtr>(memref),
-        std::optional<ir::TileView>(std::nullopt), std::optional<ir::HardwareInfo>(ir::HardwareInfo{}));
+    return std::make_shared<const ir::MutexTileType>(
+        ir::TileType(std::vector<int64_t>{1, 256}, dtype, std::optional<ir::MemRefPtr>(memref),
+                     std::optional<ir::TileView>(std::nullopt), std::optional<ir::HardwareInfo>(ir::HardwareInfo{})),
+        0);
 }
 
 ir::TensorTypePtr MakeSimtTensorType(const std::string& name, ir::DataType dtype = ir::DataType::FP32)
@@ -217,7 +226,7 @@ ir::ProgramPtr MakeSimtProgram()
     auto count = Var("count", u32);
     auto delta = Var("delta", fp32);
     auto tile = Var("tile", tile_type);
-    auto make_tile = Call("block.make_tile", {}, tile_type);
+    auto make_tile = Call("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type);
     auto launch = Call("simt.launch", {ConstInt(8), ConstInt(4), ConstInt(8), tile, tensor, count, delta},
                        Kwargs{{"callee", std::string("simt_entry")}, {"max_threads", 256}}, ir::GetUnknownType());
     auto kernel_body = Seq({Assign(tile, make_tile), Eval(launch)});
@@ -488,8 +497,8 @@ ir::ProgramPtr MakeSimtAtomicOpsProgram()
     auto kernel_bf16_value = Var("bf16_value", bf16);
     auto kernel_i32_tile = Var("i32_tile", i32_tile_type);
     auto kernel_fp16_tile = Var("fp16_tile", fp16_tile_type);
-    auto make_i32_tile = Call("block.make_tile", {}, i32_tile_type);
-    auto make_fp16_tile = Call("block.make_tile", {}, fp16_tile_type);
+    auto make_i32_tile = Call("block.make_mutex_tile", MakeTileOperands(i32_tile_type), i32_tile_type);
+    auto make_fp16_tile = Call("block.make_mutex_tile", MakeTileOperands(fp16_tile_type), fp16_tile_type);
     auto launch = RegisteredCall(
         "simt.launch",
         {ConstInt(32), ConstInt(1), ConstInt(1), kernel_i32_tile, kernel_fp16_tile, kernel_u64_tensor,

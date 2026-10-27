@@ -42,7 +42,7 @@ using namespace test_helpers;
 // system.mutex_lock_dyn / system.mutex_unlock_dyn
 // ============================================================================
 
-TEST(SyncOpsMutexTest, DynamicMutexAcceptsPerTileGroups)
+TEST(SyncOpsMutexTest, DynamicMutexRejectsPerTileGroups)
 {
     auto& reg = OpRegistry::GetInstance();
     auto id0 = MakeScalarVar("id0", DataType::INDEX);
@@ -57,11 +57,7 @@ TEST(SyncOpsMutexTest, DynamicMutexAcceptsPerTileGroups)
     std::vector<std::pair<std::string, std::any>> kwargs = {{"pipe", 5}};
 
     for (const char* op_name : {"system.mutex_lock_dyn", "system.mutex_unlock_dyn"}) {
-        auto call = reg.Create(op_name, {mutexId, candidateGroups}, kwargs, Sp());
-        ASSERT_NE(call, nullptr);
-        EXPECT_NE(As<UnknownType>(call->GetType()), nullptr);
-        EXPECT_EQ(call->args_[0], mutexId);
-        EXPECT_EQ(call->args_[1], candidateGroups);
+        EXPECT_THROW((void)reg.Create(op_name, {mutexId, candidateGroups}, kwargs, Sp()), npu::tile_fwk::Error);
     }
 }
 

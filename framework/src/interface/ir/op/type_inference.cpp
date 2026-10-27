@@ -217,9 +217,9 @@ TileScalarTypes RequireTileScalarArgs(const std::vector<ExprPtr>& args, const st
     return {tile_type, scalar_type};
 }
 
-TypePtr DeduceBlockOutTileType(const std::vector<ExprPtr>& args,
-                               [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
-                               const std::string& op_name, size_t expected_args)
+TypePtr DeduceBlockOutType(const std::vector<ExprPtr>& args,
+                           [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
+                           const std::string& op_name, size_t expected_args)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == expected_args)
         << "The operator " << op_name << " requires exactly " << expected_args << " arguments, but got " << args.size();
@@ -227,7 +227,7 @@ TypePtr DeduceBlockOutTileType(const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, out_type)
         << "The operator " << op_name << " requires first argument (out) to be TileType, but got "
         << args.front()->GetType()->TypeName();
-    return out_type;
+    return GetNoneType();
 }
 
 std::optional<int64_t> GetConstantDimension(const ExprPtr& dim)

@@ -28,6 +28,14 @@ namespace pypto {
 namespace codegen {
 namespace {
 
+std::vector<ir::ExprPtr> MakeTileOperands(const ir::TypePtr& type)
+{
+    auto tile = std::dynamic_pointer_cast<const ir::TileType>(type);
+    auto empty = std::make_shared<const ir::MakeTuple>(std::vector<ir::ExprPtr>{}, ir::Span::Unknown());
+    auto shape = std::make_shared<const ir::MakeTuple>(tile->shape_, ir::Span::Unknown());
+    return {shape, empty, empty};
+}
+
 ir::ExprPtr MakeConstInt(int64_t value)
 {
     return std::make_shared<const ir::ConstInt>(value, ir::DataType::INT64, ir::Span::Unknown());
@@ -80,7 +88,6 @@ TEST(CCECodegenHeaderTest, CoversHeaderOnlyStateAccessors)
     EXPECT_EQ(codegen.GetArch(), npu::tile_fwk::NPUArch::DAV_2201);
     EXPECT_EQ(codegen.GetTarget(), ir::SectionKind::Vector);
     EXPECT_FALSE(codegen.IsInVFSection());
-    EXPECT_EQ(codegen.GetTileAddress("unknown_tile"), "0x0");
     EXPECT_TRUE(codegen.GetTilingHeaders().empty());
     EXPECT_EQ(codegen.GetTypeConverter().ConvertEventId(3), "EVENT_ID3");
 
@@ -99,11 +106,6 @@ TEST(CCECodegenHeaderTest, CoversHeaderOnlyStateAccessors)
 
     EXPECT_EQ(codegen.GetTileOffsetCounter(), 0);
     EXPECT_EQ(codegen.GetTileOffsetCounter(), 1);
-
-    EXPECT_FALSE(codegen.HasTileAddress("tile_0"));
-    codegen.SetTileAddress("tile_0", "0x100");
-    EXPECT_TRUE(codegen.HasTileAddress("tile_0"));
-    EXPECT_EQ(codegen.GetTileAddress("tile_0"), "0x100");
 }
 
 TEST(CCECodegenHeaderTest, GeneratesStandaloneTilingHeader)
@@ -238,20 +240,8 @@ TEST(CCECodegenHeaderTest, CoversPointerAndBasicCodegenHelpers)
     EXPECT_EQ(codegen.GetPointer("tensor"), "tensor_ptr");
 }
 
-TEST(CCECodegenHeaderTest, CoversTileAndTensorDefDefaults)
+TEST(CCECodegenHeaderTest, CoversTensorDefDefaults)
 {
-    auto tile_type = std::make_shared<const ir::TileType>(std::vector<int64_t>{16, 16}, ir::DataType::FP16,
-                                                          std::optional<ir::MemRefPtr>(std::nullopt),
-                                                          std::optional<ir::TileView>(std::nullopt));
-    auto tile_var = MakeVar("tile", tile_type);
-
-    TileDef tile_def;
-    tile_def.var = tile_var;
-    tile_def.tile_type = tile_type;
-
-    EXPECT_EQ(tile_def.var, tile_var);
-    EXPECT_EQ(tile_def.tile_type, tile_type);
-
     auto tensor_type = std::make_shared<const ir::TensorType>(std::vector<int64_t>{32, 32}, ir::DataType::FP16,
                                                               std::optional<ir::MemRefPtr>(std::nullopt));
     auto tensor_var = MakeVar("tensor", tensor_type);
@@ -269,9 +259,10 @@ TEST(CCECodegenHeaderTest, CoversTileAndTensorDefDefaults)
 TEST(CCECodegenTest, KeepsSeparateVFTilePointersForPostUpdate)
 {
     CCECodegen codegen(ir::SectionKind::Vector);
-    auto tile_type = std::make_shared<const ir::TileType>(std::vector<int64_t>{16, 16}, ir::DataType::FP16,
-                                                          std::optional<ir::MemRefPtr>(std::nullopt),
-                                                          std::optional<ir::TileView>(std::nullopt));
+    auto tile_type = std::make_shared<const ir::MutexTileType>(
+        ir::TileType(std::vector<int64_t>{16, 16}, ir::DataType::FP16, std::optional<ir::MemRefPtr>(std::nullopt),
+                     std::optional<ir::TileView>(std::nullopt)),
+        0);
     auto tile = MakeVar("tile", tile_type);
 
     std::string base_ptr = codegen.GetOrCreateVFTilePtr(tile);
@@ -560,11 +551,12 @@ TEST(CCECodegenTest, ClearsTupleBackingArraysBetweenGenerations)
 
 TEST(CCECodegenTest, ClearsTileTypeStateBetweenGenerations)
 {
-    auto tile_type = std::make_shared<const ir::TileType>(std::vector<int64_t>{16, 16}, ir::DataType::FP16,
-                                                          std::optional<ir::MemRefPtr>(std::nullopt),
-                                                          std::optional<ir::TileView>(std::nullopt));
+    auto tile_type = std::make_shared<const ir::MutexTileType>(
+        ir::TileType(std::vector<int64_t>{16, 16}, ir::DataType::FP16, std::optional<ir::MemRefPtr>(std::nullopt),
+                     std::optional<ir::TileView>(std::nullopt)),
+        0);
     auto tile = MakeVar("tile", tile_type);
-    auto make_tile = std::make_shared<const ir::Call>("block.make_tile", std::vector<ir::ExprPtr>{}, tile_type,
+    auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
     auto body = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
     auto program = MakeProgram(body);
@@ -582,14 +574,15 @@ TEST(CCECodegenTest, MaterializesHomogeneousTileTuple)
 {
     auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
     auto index = MakeVar("index", index_type);
-    auto tile_type = std::make_shared<const ir::TileType>(std::vector<int64_t>{16, 16}, ir::DataType::FP16,
-                                                          std::optional<ir::MemRefPtr>(std::nullopt),
-                                                          std::optional<ir::TileView>(std::nullopt));
+    auto tile_type = std::make_shared<const ir::MutexTileType>(
+        ir::TileType(std::vector<int64_t>{16, 16}, ir::DataType::FP16, std::optional<ir::MemRefPtr>(std::nullopt),
+                     std::optional<ir::TileView>(std::nullopt)),
+        0);
     auto tile0 = MakeVar("tile0", tile_type);
     auto tile1 = MakeVar("tile1", tile_type);
-    auto make_tile0 = std::make_shared<const ir::Call>("block.make_tile", std::vector<ir::ExprPtr>{}, tile_type,
+    auto make_tile0 = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                        ir::Span::Unknown());
-    auto make_tile1 = std::make_shared<const ir::Call>("block.make_tile", std::vector<ir::ExprPtr>{}, tile_type,
+    auto make_tile1 = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                        ir::Span::Unknown());
     auto values = std::make_shared<const ir::MakeTuple>(std::vector<ir::ExprPtr>{tile0, tile1}, ir::Span::Unknown());
     auto tiles = MakeVar("tiles", values->GetType());
@@ -610,7 +603,7 @@ TEST(CCECodegenTest, MaterializesHomogeneousTileTuple)
     auto generated = codegen.GenerateSingle(MakeProgram(body, {index}), npu::tile_fwk::NPUArch::DAV_3510);
 
     EXPECT_NE(generated.find("tiles"), std::string::npos);
-    EXPECT_NE(generated.find("[] = {tile0"), std::string::npos);
+    EXPECT_NE(generated.find("tiles[] = {static_cast<"), std::string::npos);
 }
 
 TEST(CCECodegenTest, HandlesStaticTupleGetItemWithoutBackingArray)
@@ -884,11 +877,12 @@ TEST(CCECodegenTest, WritesBackWhileCarriedValueBeforeBreak)
 TEST(CCECodegenTest, GeneratesTensorDescriptorAndLoadFromAccessShape)
 {
     auto input = MakeTensorVar("input", {64, 128}, ir::DataType::FP16);
-    auto tile_type = std::make_shared<const ir::TileType>(std::vector<int64_t>{16, 32}, ir::DataType::FP16,
-                                                          std::optional<ir::MemRefPtr>(std::nullopt),
-                                                          std::optional<ir::TileView>(std::nullopt));
+    auto tile_type = std::make_shared<const ir::MutexTileType>(
+        ir::TileType(std::vector<int64_t>{16, 32}, ir::DataType::FP16, std::optional<ir::MemRefPtr>(std::nullopt),
+                     std::optional<ir::TileView>(std::nullopt)),
+        0);
     auto tile = MakeVar("tile", tile_type);
-    auto make_tile = std::make_shared<const ir::Call>("block.make_tile", std::vector<ir::ExprPtr>{}, tile_type,
+    auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
     auto tile_assign = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
     auto offsets = std::make_shared<const ir::MakeTuple>(std::vector<ir::ExprPtr>{MakeConstInt(0), MakeConstInt(0)},
@@ -920,11 +914,12 @@ TEST(CCECodegenTest, ResolvesTensorAliasAndTransposeLayout)
 {
     auto input = MakeTensorVar("input", {64, 128}, ir::DataType::FP16);
     auto alias = MakeVar("alias", input->GetType());
-    auto tile_type = std::make_shared<const ir::TileType>(std::vector<int64_t>{16, 32}, ir::DataType::FP16,
-                                                          std::optional<ir::MemRefPtr>(std::nullopt),
-                                                          std::optional<ir::TileView>(std::nullopt));
+    auto tile_type = std::make_shared<const ir::MutexTileType>(
+        ir::TileType(std::vector<int64_t>{16, 32}, ir::DataType::FP16, std::optional<ir::MemRefPtr>(std::nullopt),
+                     std::optional<ir::TileView>(std::nullopt)),
+        0);
     auto tile = MakeVar("tile", tile_type);
-    auto make_tile = std::make_shared<const ir::Call>("block.make_tile", std::vector<ir::ExprPtr>{}, tile_type,
+    auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
     auto alias_assign = std::make_shared<const ir::AssignStmt>(alias, input, ir::Span::Unknown());
     auto tile_assign = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
@@ -1001,12 +996,13 @@ TEST(CCECodegenTest, HoistsDynamicVFLoopBoundAsUint16)
 
 TEST(CCECodegenTest, EmitsKernelTileValidShapeGetters)
 {
-    auto tile_type = std::make_shared<const ir::TileType>(std::vector<int64_t>{16, 32}, ir::DataType::FP16,
-                                                          std::optional<ir::MemRefPtr>(std::nullopt),
-                                                          std::optional<ir::TileView>(std::nullopt));
+    auto tile_type = std::make_shared<const ir::MutexTileType>(
+        ir::TileType(std::vector<int64_t>{16, 32}, ir::DataType::FP16, std::optional<ir::MemRefPtr>(std::nullopt),
+                     std::optional<ir::TileView>(std::nullopt)),
+        0);
     auto int64_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
     auto tile = MakeVar("tile", tile_type);
-    auto make_tile = std::make_shared<const ir::Call>("block.make_tile", std::vector<ir::ExprPtr>{}, tile_type,
+    auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
     auto valid_shape = [&](int axis) {
         return std::make_shared<const ir::Call>("block.tile_valid_shape", std::vector<ir::ExprPtr>{tile},
@@ -1022,8 +1018,8 @@ TEST(CCECodegenTest, EmitsKernelTileValidShapeGetters)
         ir::Span::Unknown());
     CCECodegen codegen(ir::SectionKind::Vector);
     std::string generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_NE(generated.find("(int64_t)(tile.GetValidRow())"), std::string::npos);
-    EXPECT_NE(generated.find("(int64_t)(tile.GetValidCol())"), std::string::npos);
+    EXPECT_NE(generated.find("(int64_t)(tile.tile.GetValidRow())"), std::string::npos);
+    EXPECT_NE(generated.find("(int64_t)(tile.tile.GetValidCol())"), std::string::npos);
 }
 
 TEST(CCECodegenTest, ComputesTensorOffsetAndRejectsRankMismatch)

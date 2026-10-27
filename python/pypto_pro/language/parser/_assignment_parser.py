@@ -61,7 +61,7 @@ class AssignmentParserMixin:
         annotation_type = self.type_resolver.resolve_type_if_memref(stmt.annotation)
         var = self.builder.let(var_name, value_expr, var_type=annotation_type, span=span)
         self._mark_make_tuple_anchor(value_expr)
-        self._transfer_tile_sync_metadata(var, value_expr)
+        self._transfer_tile_group_metadata(var, value_expr)
 
         # Register in scope
         self.scope_manager.define_var(var_name, var, span=span)
@@ -328,7 +328,7 @@ class AssignmentParserMixin:
             var = self.builder.let(elt.id, item_expr, span=span)
             self.scope_manager.define_var(elt.id, var, span=span)
             const_item = value_expr.elements[i] if isinstance(value_expr, ir.MakeTuple) else item_expr
-            self._transfer_tile_sync_metadata(var, const_item)
+            self._transfer_tile_group_metadata(var, const_item)
             self._update_var_envs(var, const_item)
 
     def _parse_name_assignment(self, var_name: str, stmt: ast.Assign) -> None:
@@ -345,15 +345,13 @@ class AssignmentParserMixin:
         if isinstance(value_expr, ir.Expr):
             var = self.builder.let(var_name, value_expr, span=span)
             self._mark_make_tuple_anchor(value_expr)
-            self._transfer_tile_sync_metadata(var, value_expr)
+            self._transfer_tile_group_metadata(var, value_expr)
             self.scope_manager.define_var(var_name, var, span=span)
             # Track MaskReg-producing VF ops (create_mask, update_mask, etc.)
             # so unified ops can infer dst register kind from source operands.
             vf_op = self._is_vf_op_call(stmt.value)
             if vf_op is not None and vf_op in self._VF_MASK_PRODUCING_OPS:
                 self.scope_manager.register_mask_reg_var(var_name)
-            if self._auto_mutex:
-                self._emit_auto_mutex_unlocks()
             self._update_var_envs(var, value_expr)
         else:
             self.scope_manager.define_var(var_name, value_expr, span=span)
@@ -504,11 +502,4 @@ class AssignmentParserMixin:
         index_expr = self._parse_scalar_subscript_index(container_expr, target.slice, span)
         from pypto_pro.ir.op.block_ops import _ir_setval
         setval_call = _ir_setval(container_expr, index_expr, value_expr, span=span)
-        mutex_locked = False
-        if self._auto_mutex:
-            from ._op_pipeline import get_op_pipe
-            pipe = get_op_pipe("setval")
-            mutex_locked = self._emit_mutex_for_tile(container_expr, pipe, span, is_lock=True)
         self.builder.emit(ir.EvalStmt(setval_call, span))
-        if mutex_locked:
-            self._emit_mutex_for_tile(container_expr, pipe, span, is_lock=False)

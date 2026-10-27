@@ -190,6 +190,7 @@ public:
     TypePtr ParseTypeTuple();
     TypePtr ParseTypeTensor();
     TypePtr ParseTypeTile();
+    TypePtr ParseTypeMutexTile();
     TypePtr ParseTypeScalar();
     IRTextParserOptionalTensorViewPtr ParserTensorTypeTensorView();
     TypePtr ParseTensorType();

@@ -465,23 +465,12 @@ private:
 // Single-program CCE generation (skip ptoas)
 // ============================================================================
 
-void CCECodegen::PreScanKernel(const ir::FunctionPtr& kernel_func)
-{
-    mutex_pipes_.clear();
-    CollectMutexPipeInfo(kernel_func->body_);
-}
-
 void CCECodegen::ResetFunctionGenerationState()
 {
     context_.Clear();
     tensor_to_pointer_.clear();
     tensor_defs_.clear();
     flat_tensor_decl_count_ = 0;
-    tile_addresses_.clear();
-    emitted_tile_types_.clear();
-    emitted_tile_aliases_.clear();
-
-    mutex_pipes_.clear();
 
     current_target_var_.clear();
     current_expr_value_.clear();
@@ -495,6 +484,7 @@ void CCECodegen::ResetFunctionGenerationState()
     yield_buffer_.clear();
 
     vf_tile_ptrs_.clear();
+    vf_tile_subview_pointer_codes_.clear();
     section_hoisted_decls_.clear();
     vf_reg_hoisted_decls_.clear();
     reg_tensor_vars_.clear();
@@ -561,7 +551,6 @@ void CCECodegen::GenerateSimtFunction(const ir::FunctionPtr& func)
         << "GenerateSimtFunction expects a SIMT_VF or SIMT_CALLEE function";
 
     ResetFunctionGenerationState();
-    PreScanKernel(func);
     current_function_type_ = func->funcType_;
 
     emitter_.EmitLine(BuildSimtFunctionSignature(func));
@@ -688,7 +677,6 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& program, npu::tile_
     }
 
     ResetFunctionGenerationState();
-    PreScanKernel(kernel_func);
     RegisterTilingStructTypes(kernel_func);
     GenerateSinglePrologue(kernel_func, needs_ffts);
     GenerateBody(kernel_func);
@@ -700,6 +688,15 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& program, npu::tile_
     } else {
         emitter_.EmitLine("#if defined(__DAV_VEC__)");
     }
+    emitter_.EmitLine("#ifndef PYPTO_SYNCED_TILE_DEFINED");
+    emitter_.EmitLine("#define PYPTO_SYNCED_TILE_DEFINED");
+    emitter_.EmitLine("#include <stdint.h>");
+    emitter_.EmitLine("template<class Tile, uint32_t N> struct SyncedTile {");
+    emitter_.EmitLine("    using PtoTile = Tile;");
+    emitter_.EmitLine("    PtoTile tile;");
+    emitter_.EmitLine("    int64_t mutex_ids[N];");
+    emitter_.EmitLine("};");
+    emitter_.EmitLine("#endif");
     EmitStructTypes();
     emitter_.EmitLine("#include <pypto_tprint.h>");
     emitter_.EmitRaw(function_code);
@@ -709,109 +706,6 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& program, npu::tile_
 }
 
 namespace {
-/**
- * \brief Collect tile definitions sourced from block.make_tile calls.
- *
- * Scans AssignStmt nodes and records each block.make_tile allocation with:
- *   - The var that holds the result (or a synthetic var__item_N for tuple elements)
- *   - The TileType of the allocation
- *   - The SectionKind in which the make_tile appears (nullopt = shared/outside section)
- *
- * Inline tuple elements are named with a dedicated suffix (var__item_0, var__item_1, ...).
- */
-class MakeTileDefCollector : public ir::IRVisitor {
-    using ir::IRVisitor::VisitExpr_;
-    using ir::IRVisitor::VisitStmt_;
-
-public:
-    std::vector<TileDef> tile_defs_;
-
-    void VisitStmt_(const ir::AssignStmtPtr& op) override
-    {
-        auto target_var = op->var_;
-        if (!op->value_)
-            return;
-        if (auto call = ir::As<ir::Call>(op->value_)) {
-            // Direct block.make_tile assignment ->primary collection path.
-            if (call->name_ == "block.make_tile") {
-                if (auto tile_type = ir::As<ir::TileType>(call->GetType())) {
-                    tile_defs_.push_back({target_var, tile_type});
-                }
-            }
-            return;
-        }
-    }
-};
-
-// Extract valid_shape constructor arguments from a TileType for CCE code generation.
-//
-// needs_ctor == true - template has -1 params (dynamic), Tile constructor must receive runtime values.
-// needs_ctor == false - template has explicit static params, no constructor args needed.
-//
-// Mapping for each valid_shape element:
-//   absent / ConstInt(-1) - template param = -1, ctor_arg = rows/cols  (needs_ctor = true)
-//   ConstInt(N > 0)       - template param = N,  ctor_arg unused        (needs_ctor = false)
-//   Var(name)             - template param = -1 (skipped by ConvertTileType), ctor_arg = var_name
-struct ValidShapeInfo {
-    std::string row_ctor_arg;
-    std::string col_ctor_arg;
-    bool needs_ctor = false; // true when template uses -1 and constructor args are required
-};
-
-inline ValidShapeInfo ExtractValidShapeInfo(const ir::TileTypePtr& tile_type, int64_t rows, int64_t cols,
-                                            std::function<std::string(const ir::VarPtr&)> get_var_name)
-{
-    ValidShapeInfo info;
-    if (!tile_type->tileView_.has_value()) {
-        // No tile_view: absent valid_shape - template uses -1, ctor uses full shape.
-        info.row_ctor_arg = std::to_string(rows);
-        info.col_ctor_arg = std::to_string(cols);
-        info.needs_ctor = true;
-        return info;
-    }
-    const auto& tv = tile_type->tileView_.value();
-    if (tv.validShape.empty()) {
-        // valid_shape absent: template uses -1, ctor uses full shape.
-        info.row_ctor_arg = std::to_string(rows);
-        info.col_ctor_arg = std::to_string(cols);
-        info.needs_ctor = true;
-        return info;
-    }
-    // valid_shape provided: check whether any element is -1 or a runtime Var.
-    auto resolve_dim = [&](const ir::ExprPtr& expr, int64_t fallback, std::string& out_arg) -> bool {
-        if (auto var = ir::As<ir::Var>(expr)) {
-            out_arg = get_var_name(var);
-            return true; // runtime var - needs ctor
-        }
-        if (auto c = ir::As<ir::ConstInt>(expr)) {
-            if (c->value_ == -1) {
-                out_arg = std::to_string(fallback);
-                return true; // -1 sentinel - template gets -1, ctor gets actual dim
-            }
-            out_arg = std::to_string(c->value_);
-            return false; // explicit static value - no ctor needed
-        }
-        return false;
-    };
-    bool row_dynamic = false;
-    bool col_dynamic = false;
-    if (tv.validShape.size() >= 1)
-        row_dynamic = resolve_dim(tv.validShape[0], rows, info.row_ctor_arg);
-    if (tv.validShape.size() >= 2)
-        col_dynamic = resolve_dim(tv.validShape[1], cols, info.col_ctor_arg);
-    info.needs_ctor = row_dynamic || col_dynamic;
-    return info;
-}
-
-// Build Tile constructor argument string.
-// Only call when ValidShapeInfo::needs_ctor is true.
-inline std::string BuildTileCtorArgs(const ValidShapeInfo& vs, int64_t rows, int64_t cols)
-{
-    std::string r = vs.row_ctor_arg.empty() ? std::to_string(rows) : vs.row_ctor_arg;
-    std::string c = vs.col_ctor_arg.empty() ? std::to_string(cols) : vs.col_ctor_arg;
-    return r + ", " + c;
-}
-
 std::vector<ir::VarPtr> CollectDynamicDimVars(const ir::FunctionPtr& func)
 {
     std::vector<ir::VarPtr> dyn_dim_vars;
@@ -945,73 +839,6 @@ void CCECodegen::EmitSingleTensorDeclarations(const ir::FunctionPtr& func)
     }
 }
 
-void CCECodegen::EmitSingleTileDeclarations(const ir::FunctionPtr& func)
-{
-    if (!func->body_)
-        return;
-
-    // Collect tile definitions from block.make_tile sources only.
-    MakeTileDefCollector def_collector;
-    def_collector.VisitStmt(func->body_);
-
-    auto has_independent_runtime_metadata = [](const ir::TileTypePtr& tile_type) {
-        return tile_type != nullptr && tile_type->tileView_.has_value() && !tile_type->tileView_->validShape.empty();
-    };
-
-    std::vector<TileDef> kept_defs;
-    std::vector<std::pair<ir::VarPtr, ir::VarPtr>> deduped_aliases;
-    std::map<std::string, ir::VarPtr> kept_tile_addr_vars;
-
-    for (const auto& td : def_collector.tile_defs_) {
-        const auto& tile_type = td.tile_type;
-        if (tile_type->memref_.has_value()) {
-            // Same-address tiles with explicit valid_shape metadata must stay as
-            // distinct C++ objects; a later SetValidShape() on one tile would otherwise
-            // narrow every deduped alias sharing the same backing storage.
-            if (has_independent_runtime_metadata(tile_type)) {
-                kept_defs.push_back(td);
-                continue;
-            }
-            int64_t addr = ExtractConstInt((*tile_type->memref_)->addr_);
-            auto space = (*tile_type->memref_)->memorySpace_;
-            std::string type_key = GetGeneratedType(tile_type);
-            std::string dedup_key = std::to_string(static_cast<int>(space)) + ":" + std::to_string(addr) + ":" +
-                                    type_key;
-            auto it = kept_tile_addr_vars.find(dedup_key);
-            if (it != kept_tile_addr_vars.end()) {
-                deduped_aliases.emplace_back(td.var, it->second);
-                continue;
-            }
-            kept_tile_addr_vars[dedup_key] = td.var;
-        }
-        kept_defs.push_back(td);
-    }
-
-    if (!kept_defs.empty() || !deduped_aliases.empty()) {
-        EmitTileDeclarations(kept_defs, deduped_aliases);
-    }
-}
-
-void CCECodegen::EmitDedupedTileAliases(const std::vector<std::pair<ir::VarPtr, ir::VarPtr>>& deduped_aliases)
-{
-    for (const auto& [dup_var, kept_var] : deduped_aliases) {
-        std::string san_dup = context_.SanitizeName(dup_var);
-        std::string san_kept = context_.SanitizeName(kept_var);
-        emitter_.EmitLine("auto& " + san_dup + " = " + san_kept + ";");
-        emitted_tile_aliases_.insert(san_dup);
-    }
-}
-
-void CCECodegen::EmitTileDeclarations(const std::vector<TileDef>& tile_defs,
-                                      const std::vector<std::pair<ir::VarPtr, ir::VarPtr>>& deduped_aliases)
-{
-    for (const auto& td : tile_defs) {
-        GenerateTileTypeDeclaration(context_.SanitizeName(td.var), td.tile_type);
-    }
-    EmitDedupedTileAliases(deduped_aliases);
-    emitter_.EmitLine("");
-}
-
 void CCECodegen::GenerateSinglePrologue(const ir::FunctionPtr& func, bool has_cross_sync)
 {
     EmitSingleFunctionSignature(func, has_cross_sync);
@@ -1019,7 +846,6 @@ void CCECodegen::GenerateSinglePrologue(const ir::FunctionPtr& func, bool has_cr
     // (tensors/tiles with dynamic shapes) and the body read `tiling.field`.
     EmitTilingStructCopy(func);
     EmitSingleTensorDeclarations(func);
-    EmitSingleTileDeclarations(func);
 }
 
 void CCECodegen::VisitStmt_(const ir::SectionStmtPtr& op)
@@ -1089,6 +915,7 @@ void CCECodegen::VisitStmt_(const ir::SectionStmtPtr& op)
         emitter_.EmitRaw(scope_code);
 
         vf_tile_ptrs_.clear();
+        vf_tile_subview_pointer_codes_.clear();
         return;
     }
 
@@ -1183,7 +1010,7 @@ void CCECodegen::VisitStmt_(const ir::AssignStmtPtr& op)
         // Tile/tuple aliases and simple var-to-var copies: register as alias (no code emitted).
         // Scalar complex expressions: emit "auto x = expr;" so codegen hoists the expression
         // into a C++ local variable rather than inlining it at every use site.
-        if (is_tile || is_tuple || rhs_is_var || tile_addresses_.count(current_expr_value_)) {
+        if (is_tile || is_tuple || rhs_is_var) {
             context_.RegisterVar(target_var, current_expr_value_);
         } else {
             // Scalar non-trivial expression: emit a local variable declaration so the
@@ -1209,9 +1036,6 @@ void CCECodegen::VisitStmt_(const ir::AssignStmtPtr& op)
             emitter_.EmitLine(BuildDynamicTupleArrayDecl(tt->types_[0], elem_names, var_name));
             tuple_backing_arr_.emplace(make_tuple.get(), var_name);
         }
-    }
-    if (tile_addresses_.count(current_expr_value_)) {
-        tile_addresses_[var_name] = tile_addresses_[current_expr_value_];
     }
 
     current_tuple_ = nullptr;
@@ -1319,10 +1143,13 @@ std::string CCECodegen::GetGeneratedType(const ir::TypePtr& type) const
     if (auto tensor_type = ir::As<ir::TensorType>(type)) {
         return "__gm__ " + tensor_type->dtype_.ToCTypeString() + "*";
     }
-    if (auto tile_type = ir::As<ir::TileType>(type)) {
+    if (auto tile_type = ir::As<ir::MutexTileType>(type)) {
         auto shape_dims = ExtractShapeDimensions(tile_type->shape_);
         int64_t rows = shape_dims.size() >= 1 ? shape_dims[0] : 1;
         int64_t cols = shape_dims.size() >= 2 ? shape_dims[1] : 1;
+        if (IsInSimtContext()) {
+            return "__ubuf__ " + tile_type->dtype_.ToCTypeString() + "*";
+        }
         return type_converter_.ConvertTileType(tile_type, rows, cols);
     }
     if (auto tuple_type = ir::As<ir::TupleType>(type)) {
@@ -1343,17 +1170,12 @@ std::string CCECodegen::BuildDynamicTupleArrayDecl(const ir::TypePtr& elem_type,
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !elem_names.empty())
         << "Array tuple '" << arr_name << "' has no elements";
 
-    std::string elem_cpp_type = GetGeneratedType(elem_type);
-
+    const auto elem_cpp_type = GetGeneratedType(elem_type);
     std::ostringstream init;
     for (size_t i = 0; i < elem_names.size(); ++i) {
         if (i > 0)
             init << ", ";
-        if (ir::As<ir::ScalarType>(elem_type)) {
-            init << "static_cast<" << elem_cpp_type << ">(" << elem_names[i] << ")";
-        } else {
-            init << elem_names[i];
-        }
+        init << "static_cast<" << elem_cpp_type << ">(" << elem_names[i] << ")";
     }
 
     return elem_cpp_type + " " + arr_name + "[] = {" + init.str() + "};";
@@ -1469,13 +1291,6 @@ void CCECodegen::EmitVariable(const ir::VarPtr& target, ir::ExprPtr value, bool 
     }
 
     std::string source = value ? GetExprAsCode(value) : "";
-    if (ir::As<ir::TileType>(type) && value) {
-        auto address = tile_addresses_.find(source);
-        if (address != tile_addresses_.end()) {
-            tile_addresses_[name] = address->second;
-        }
-    }
-
     if (initialize) {
         emitter_.EmitLine(GetGeneratedType(type) + " " + name + (value ? " = " + source : "") + ";");
     } else {
@@ -1892,14 +1707,14 @@ std::string CCECodegen::GetOrCreateVFTilePtr(const ir::ExprPtr& expr, bool is_po
     std::string elem_ctype = tile_type->dtype_.ToCTypeString();
 
     // tile[offset] is the rvalue `(vf_tile_ptr_N + off)`; a load uses it as-is, no new variable.
-    bool is_offset = code.find("vf_tile_ptr_") != std::string::npos;
-    if (is_offset && !is_post_update)
+    bool is_subview_pointer = vf_tile_subview_pointer_codes_.count(code) != 0;
+    if (is_subview_pointer && !is_post_update)
         return code;
 
     // Declare a vf_tile_ptr_N once, cached and hoisted before __VEC_SCOPE__: plain tile -> base from
-    // .data(); post_update -> a cursor the intrinsic advances in place.
+    // .tile.data(); post_update -> a cursor the intrinsic advances in place.
     std::string var = "vf_tile_ptr_" + std::to_string(vf_tile_ptr_counter_++);
-    std::string init = is_offset ? code : ("(__ubuf__ " + elem_ctype + " *)" + code + ".data()");
+    std::string init = is_subview_pointer ? code : ("(__ubuf__ " + elem_ctype + " *)" + code + ".tile.data()");
     section_hoisted_decls_.push_back("__ubuf__ " + elem_ctype + " *" + var + " = " + init + ";");
     vf_tile_ptrs_[cache_key] = var;
     return var;
@@ -1978,6 +1793,12 @@ void CCECodegen::VisitExpr_(const ir::GetItemExprPtr& op)
 // otherwise inherit whichever tuple the previous visit left behind. Clearing on the way out
 // keeps that same leftover from reaching whatever is parsed next.
 
+std::string CCECodegen::RecordVFTileSubviewPointer(std::string code)
+{
+    vf_tile_subview_pointer_codes_.insert(code);
+    return code;
+}
+
 std::string CCECodegen::GetExprAsCode(const ir::ExprPtr& expr)
 {
     auto saved_span = current_expr_span_;
@@ -2038,11 +1859,6 @@ std::string CCECodegen::GetPointer(const std::string& var_name)
 bool CCECodegen::HasPointer(const std::string& var_name) const
 {
     return tensor_to_pointer_.find(var_name) != tensor_to_pointer_.end();
-}
-
-bool CCECodegen::HasTileAddress(const std::string& tile_name) const
-{
-    return tile_addresses_.find(tile_name) != tile_addresses_.end();
 }
 
 std::vector<const TensorDef*> CCECodegen::GetTensorDefs(const std::string& name) const
@@ -2784,92 +2600,6 @@ std::vector<std::pair<ir::VarPtr, ir::TileTypePtr>> CCECodegen::CollectTileVaria
     return collector.tile_vars_;
 }
 
-namespace {
-
-class MutexPipeCollector : public ir::IRVisitor {
-public:
-    using ir::IRVisitor::VisitExpr_;
-    using ir::IRVisitor::VisitStmt_;
-
-    std::map<int, std::set<ir::PipeType>> mutex_pipes;
-
-    void VisitExpr_(const ir::CallPtr& op) override
-    {
-        if (op) {
-            CollectMutexInfo(op);
-        }
-        ir::IRVisitor::VisitExpr_(op);
-    }
-
-    void CollectMutexInfo(const ir::CallPtr& op)
-    {
-        const std::string& name = op->name_;
-        bool is_mutex = (name == "system.mutex_lock_dyn" || name == "system.mutex_unlock_dyn");
-        // One-argument manual mutexes do not participate in automatic V-pipe elision.
-        if (!is_mutex || op->args_.size() != 2) {
-            return;
-        }
-        auto pipe = static_cast<ir::PipeType>(op->GetKwarg<int>("pipe"));
-        auto candidateGroups = ir::As<ir::MakeTuple>(op->args_[1]);
-        auto mutexIds = ir::As<ir::MakeTuple>(op->args_[0]);
-
-        std::set<int> effectiveIds;
-        for (size_t tile = 0; tile < mutexIds->elements_.size(); ++tile) {
-            auto tileMutexIds = ir::As<ir::MakeTuple>(mutexIds->elements_[tile]);
-            bool hasDynamicId = false;
-            for (const auto& mutexIdExpr : tileMutexIds->elements_) {
-                auto mutexId = ir::As<ir::ConstInt>(mutexIdExpr);
-                if (mutexId != nullptr) {
-                    effectiveIds.insert(static_cast<int>(mutexId->value_));
-                } else {
-                    hasDynamicId = true;
-                }
-            }
-            if (!hasDynamicId) {
-                continue;
-            }
-            auto candidate = ir::As<ir::MakeTuple>(candidateGroups->elements_[tile]);
-            for (const auto& candidateExpr : candidate->elements_) {
-                auto candidateId = ir::As<ir::ConstInt>(candidateExpr);
-                if (candidateId == nullptr) {
-                    return;
-                }
-                effectiveIds.insert(static_cast<int>(candidateId->value_));
-            }
-        }
-        for (int mutexId : effectiveIds) {
-            mutex_pipes[mutexId].insert(pipe);
-        }
-    }
-};
-
-} // namespace
-
-void CCECodegen::CollectMutexPipeInfo(const ir::StmtPtr& stmt)
-{
-    if (!stmt)
-        return;
-    MutexPipeCollector collector;
-    collector.VisitStmt(stmt);
-    mutex_pipes_ = std::move(collector.mutex_pipes);
-}
-
-bool CCECodegen::ShouldSkipVPipeMutex(ir::PipeType pipe, const std::vector<int>& buf_ids) const
-{
-    if (pipe != ir::PipeType::V || arch_ != npu::tile_fwk::NPUArch::DAV_3510)
-        return false;
-    for (int bid : buf_ids) {
-        auto it = mutex_pipes_.find(bid);
-        if (it == mutex_pipes_.end())
-            continue;
-        for (auto p : it->second) {
-            if (p != ir::PipeType::V)
-                return false;
-        }
-    }
-    return true;
-}
-
 void CCECodegen::CollectTensorDefs(const ir::FunctionPtr& func)
 {
     if (!func || !func->body_)
@@ -2888,13 +2618,6 @@ std::vector<int64_t> CCECodegen::ExtractShapeDimensions(const std::vector<ir::Ex
         dims.push_back(ExtractConstInt(expr));
     }
     return dims;
-}
-
-std::string CCECodegen::FormatAddressHex(int64_t addr)
-{
-    std::ostringstream oss;
-    oss << "0x" << std::hex << addr;
-    return oss.str();
 }
 
 namespace {
@@ -3081,66 +2804,6 @@ void CCECodegen::EmitTilingStructCopy(const ir::FunctionPtr& func)
             emit_vector_copy();
         }
         emitter_.EmitLine("");
-    }
-}
-
-void CCECodegen::GenerateTileTypeDeclaration(const std::string& var_name, const ir::TileTypePtr& tile_type)
-{
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, !var_name.empty())
-        << "Internal error: var_name cannot be empty";
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tile_type != nullptr)
-        << "Internal error: tile_type is null";
-
-    // Extract tile shape dimensions
-    std::vector<int64_t> shape_dims = ExtractShapeDimensions(tile_type->shape_);
-
-    // CCE codegen only supports 1D and 2D tiles
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, shape_dims.size() <= 2)
-        << "CCE codegen only supports 1D and 2D TileType, but got " << shape_dims.size()
-        << " dimensions. Multi-dimensional tiles (>2D) are supported at IR level " << "but not yet in code generation.";
-
-    // Determine tile dimensions (default to 1 if not specified)
-    int64_t rows = shape_dims.size() >= 1 ? shape_dims[0] : 1;
-    int64_t cols = shape_dims.size() >= 2 ? shape_dims[1] : 1;
-
-    // Extract valid_shape: compute runtime ctor args.
-    auto vs = ExtractValidShapeInfo(tile_type, rows, cols, [this](const ir::VarPtr& v) { return GetVarName(v); });
-    std::string ctor_args = BuildTileCtorArgs(vs, rows, cols);
-
-    // Generate Tile type alias (with dedup: reuse alias if same type string already emitted)
-    std::string tile_type_str = GetGeneratedType(tile_type);
-    std::string type_alias_name;
-    auto dedup_it = emitted_tile_types_.find(tile_type_str);
-    if (dedup_it != emitted_tile_types_.end()) {
-        type_alias_name = dedup_it->second;
-    } else {
-        // Derive alias name from var_name base (strip trailing _N suffix for dedup readability)
-        auto last_underscore = var_name.rfind('_');
-        bool has_index_suffix = (last_underscore != std::string::npos && last_underscore + 1 < var_name.size() &&
-                                 std::isdigit(var_name[last_underscore + 1]));
-        std::string base_name = has_index_suffix ? var_name.substr(0, last_underscore) : var_name;
-        type_alias_name = base_name + "_Type";
-        // Ensure uniqueness against existing aliases
-        if (emitted_tile_types_.count(type_alias_name + "_used") > 0 &&
-            emitted_tile_types_[type_alias_name + "_used"] != tile_type_str) {
-            type_alias_name = var_name + "Type";
-        }
-        emitted_tile_types_[tile_type_str] = type_alias_name;
-        emitted_tile_types_[type_alias_name + "_used"] = tile_type_str;
-        emitter_.EmitLine("using " + type_alias_name + " = " + tile_type_str + ";");
-    }
-
-    // Generate Tile instance + TASSIGN on one line (compact)
-    // Only pass ctor args when template has -1 params (dynamic valid_shape).
-    std::string ctor_suffix = vs.needs_ctor ? ("(" + ctor_args + ")") : "";
-    if (tile_type->memref_.has_value()) {
-        int64_t addr = ExtractConstInt((*tile_type->memref_)->addr_); // NOLINT(bugprone-unchecked-optional-access)
-        std::string addr_str = FormatAddressHex(addr);
-        emitter_.EmitLine(type_alias_name + " " + var_name + ctor_suffix + "; TASSIGN(" + var_name + ", " + addr_str +
-                          ");");
-        tile_addresses_[var_name] = addr_str;
-    } else {
-        emitter_.EmitLine(type_alias_name + " " + var_name + ctor_suffix + ";");
     }
 }
 

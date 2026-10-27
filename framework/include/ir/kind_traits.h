@@ -97,7 +97,7 @@ DEFINE_KIND_TRAIT(UnknownType, ObjectKind::UnknownType);
 DEFINE_KIND_TRAIT(ScalarType, ObjectKind::ScalarType);
 // ShapedType is both a concrete type and a base class - handled separately below
 DEFINE_KIND_TRAIT(TensorType, ObjectKind::TensorType);
-DEFINE_KIND_TRAIT(TileType, ObjectKind::TileType);
+DEFINE_KIND_TRAIT(MutexTileType, ObjectKind::MutexTileType);
 DEFINE_KIND_TRAIT(TupleType, ObjectKind::TupleType);
 DEFINE_KIND_TRAIT(MemRefType, ObjectKind::MemRefType);
 DEFINE_KIND_TRAIT(PtrType, ObjectKind::PtrType);
@@ -201,9 +201,9 @@ struct KindTrait<UnaryExpr> {
 template <>
 struct KindTrait<Type> {
     static constexpr ObjectKind kinds[] = {
-        ObjectKind::UnknownType, ObjectKind::ScalarType, ObjectKind::ShapedType, ObjectKind::TensorType,
-        ObjectKind::TileType,    ObjectKind::TupleType,  ObjectKind::TokenType,  ObjectKind::LogicalTensorType,
-        ObjectKind::PtrType,     ObjectKind::NoneType};
+        ObjectKind::UnknownType,       ObjectKind::ScalarType,    ObjectKind::ShapedType, ObjectKind::TensorType,
+        ObjectKind::TileType,          ObjectKind::MutexTileType, ObjectKind::TupleType,  ObjectKind::TokenType,
+        ObjectKind::LogicalTensorType, ObjectKind::PtrType,       ObjectKind::NoneType};
     static constexpr size_t count = sizeof(kinds) / sizeof(ObjectKind);
 };
 
@@ -211,8 +211,15 @@ struct KindTrait<Type> {
 // It matches itself, TensorType, and TileType
 template <>
 struct KindTrait<ShapedType> {
-    // For base class matching: includes ShapedType, TensorType, TileType
-    static constexpr ObjectKind kinds[] = {ObjectKind::ShapedType, ObjectKind::TensorType, ObjectKind::TileType};
+    // For base class matching: includes all shaped types.
+    static constexpr ObjectKind kinds[] = {ObjectKind::ShapedType, ObjectKind::TensorType, ObjectKind::TileType,
+                                           ObjectKind::MutexTileType};
+    static constexpr size_t count = sizeof(kinds) / sizeof(ObjectKind);
+};
+
+template <>
+struct KindTrait<TileType> {
+    static constexpr ObjectKind kinds[] = {ObjectKind::TileType, ObjectKind::MutexTileType};
     static constexpr size_t count = sizeof(kinds) / sizeof(ObjectKind);
 };
 

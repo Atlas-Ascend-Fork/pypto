@@ -77,9 +77,10 @@ ir::VarPtr MakeVar(const std::string& name, ir::DataType dtype = ir::DataType::F
 
 ir::VarPtr MakeTile(const std::string& name, ir::DataType dtype = ir::DataType::FP32)
 {
-    auto type = std::make_shared<const ir::TileType>(std::vector<int64_t>{16, 16}, dtype,
-                                                     std::optional<ir::MemRefPtr>(std::nullopt),
-                                                     std::optional<ir::TileView>(std::nullopt));
+    auto type = std::make_shared<const ir::MutexTileType>(
+        ir::TileType(std::vector<int64_t>{16, 16}, dtype, std::optional<ir::MemRefPtr>(std::nullopt),
+                     std::optional<ir::TileView>(std::nullopt)),
+        0);
     return std::make_shared<const ir::Var>(name, type, ir::Span::Unknown());
 }
 

@@ -49,6 +49,7 @@ from pypto_pro.ir._utils import (
     _normalize_expr,
     _to_make_tuple,
     require_int,
+    unwrap_type,
 )
 
 from ..._errors import (
@@ -3854,7 +3855,7 @@ def _validate_tile_type_params(tt: "TileType") -> None:
             )
 
 
-def make_tile_expr(
+def make_mutex_tile_expr(
     shape: "Sequence[int] | _ir_core.MakeTuple",
     dtype: DataType,
     target_memory: MemorySpace,
@@ -3866,26 +3867,28 @@ def make_tile_expr(
     fractal: "int | None" = None,
     pad: "int | None" = None,
     compact: "int | None" = None,
+    mutex_ids: "Sequence[int | Expr] | _ir_core.MakeTuple" = (),
     span: "Span | None" = None,
 ) -> Expr:
-    """Create the block.make_tile allocation expression used by block buffers.
+    """Create the block.make_mutex_tile allocation expression used by block buffers.
 
     This is the IR builder, which takes the tile's fields spread out. The DSL
     entry point is ``pl.make_tile(tile_type, *, addr)``, whose parse
-    handler unpacks the TileType and calls this.
+    handler unpacks the TileType and calls this without mutex IDs. Framework
+    callers can supply mutex_ids; omission binds no IDs. Both paths create
+    the same internal op, with an empty mutex tuple for the zero-ID case.
 
     ``addr`` is required: it is what attaches a MemRef to the tile type, and a
     tile without one is placed nowhere in particular. ``size`` defaults to the
     footprint derived from ``shape`` and ``dtype``. The internal ``size`` override
-    preserves the original buffer span when building a reinterpretation; it is
-    not exposed by the DSL.
+    describes an allocation larger than that footprint; it is not exposed by the DSL.
     """
     actual_span = span or _span()
     shape_tuple = _to_make_tuple(shape, actual_span)
     valid_shape_tuple = (
         _to_make_tuple(valid_shape, actual_span) if valid_shape is not None else _ir_core.MakeTuple([], actual_span)
     )
-    args = [shape_tuple, valid_shape_tuple]
+    args = [shape_tuple, valid_shape_tuple, _to_make_tuple(mutex_ids, actual_span)]
     blayout: "int | None" = None
     slayout: "int | None" = None
     if layout is not None:
@@ -3903,7 +3906,7 @@ def make_tile_expr(
     }
     kwargs = {k: v for k, v in kwargs.items() if v is not None}
     if addr is None:
-        raise InvalidVal(f"make_tile_expr() requires 'addr', but it is missing. {_MAKE_TILE_HINT}", span=span)
+        raise InvalidVal(f"make_mutex_tile_expr() requires 'addr', but it is missing. {_MAKE_TILE_HINT}", span=span)
     if size is None:
         try:
             size = tile_slot_size(shape_tuple, dtype)
@@ -3922,7 +3925,7 @@ def make_tile_expr(
     kwargs["memref_addr"] = addr
     kwargs["memref_size"] = size
     kwargs["memref_id"] = mem_id
-    return _ir_core.create_op_call(block_ir_op("make_tile"), args, kwargs, actual_span)
+    return _ir_core.create_op_call(block_ir_op("make_mutex_tile"), args, kwargs, actual_span)
 
 
 # ---------------------------------------------------------------------------
@@ -3998,7 +4001,7 @@ def _parse_make_tile(self, call: ast.Call) -> Expr:
         hint="addr is fixed while parsing; pass a literal, or a variable bound to "
         "literals/constants — not a runtime value such as a tensor shape or loop index",
     )
-    tile = make_tile_expr(**kwargs, span=span)
+    tile = make_mutex_tile_expr(**kwargs, span=span)
     self._record_tile_high_water(tile)
     return tile
 
@@ -4019,96 +4022,28 @@ def _hw_attr(hw, field: str) -> "int | None":
     return value if value >= 0 else None
 
 
-def _reinterpret_footprint_check(shape: list[int], dtype: DataType, size: int, span: "Span | None") -> None:
-    """The new footprint must not exceed the original buffer span (hard constraint)."""
-    try:
-        footprint = tile_slot_size(shape, dtype)
-    except PyptoProError:
-        return
-    if footprint > size:
-        raise OutOfRange(
-            f"reinterpret: new footprint {footprint} bytes exceeds the original buffer size {size} bytes; "
-            "a reinterpretation may only reuse the buffer at the same size or smaller",
-            span=span,
-        )
-
-
-def _reinterpret_align_check(addr: int, dtype: DataType, span: "Span | None") -> None:
-    """The new element width must divide the base address (element-boundary view)."""
-    elem_bytes = max(1, (int(dtype.get_bit()) + 7) // 8)
-    if addr % elem_bytes != 0:
-        raise InvalidTile(
-            f"reinterpret: address 0x{addr:X} is not aligned to the new element size {elem_bytes} bytes",
-            span=span,
-        )
-
-
-def _memref_const_addr(memref, span: "Span | None") -> "int | None":
-    """The compile-time address of a tile's MemRef, or None when it is not constant."""
-    addr_expr = getattr(memref, "addr", None)
-    if addr_expr is None:
-        return None
-    value = getattr(addr_expr, "value", None)
-    if not isinstance(value, int):
-        return None
-    return value
-
-
 def _ir_reinterpret(
-    src: Expr,
-    *,
-    shape: "Sequence[int] | None" = None,
-    dtype: "DataType | None" = None,
-    layout: "TensorLayout | None" = None,
+    src: Expr, *, shape: "Sequence[int] | None" = None,
+    dtype: "DataType | None" = None, layout: "TensorLayout | None" = None,
     span: "Span | None" = None,
 ) -> Expr:
-    """Build a make_tile call re-declaring the tile's dtype/shape/layout.
-
-    The new tile is re-allocated at the SAME address and size as the source
-    (SameAllocation semantics keep the "same buffer" identity), with valid_shape
-    NOT inherited (dynamic / -1) and fractal/pad/compact inherited verbatim.
-    No MemRef is shared: this path reuses make_tile_expr, so the id counter
-    simply advances and the new MemRef is a fresh object.
-    """
+    """Keep the runtime source explicit; the backend binds its current address."""
     actual_span = span or _span()
     if not isinstance(src.type, _IRTileType):
         raise InvalidType(f"reinterpret: expected a Tile, got {type(src.type).__name__}", span=span)
-    t = src.type
-    memref = getattr(t, "memref", None)
-    if memref is None:
+    source_type = src.type
+    if source_type.memref is None:
         raise InvalidArgument(
             "reinterpret: source tile has no MemRef (bind it with pl.make_tile first)",
             span=span,
         )
-
-    old_shape = _static_shape_ints(t.shape, "reinterpret: source")
-    hw = getattr(t, "hardware_info", None)
-    old_layout = _tile_layout(t)
-
-    new_shape = list(shape) if shape is not None else old_shape
-    new_dtype = dtype if dtype is not None else t.dtype
-    new_layout = layout if layout is not None else old_layout
-
-    addr = _memref_const_addr(memref, actual_span)
-    if addr is None:
-        raise InvalidType("reinterpret: source tile address must be a compile-time constant", span=span)
-    _reinterpret_align_check(addr, new_dtype, span)
-    _reinterpret_footprint_check(new_shape, new_dtype, int(memref.size), span)
-
-    # Fresh MemRef at the same address & size (new memref_id); valid_shape
-    # intentionally omitted so the new handle starts dynamic (-1).
-    return make_tile_expr(
-        new_shape,
-        new_dtype,
-        memref.memory_space,
-        addr=addr,
-        size=int(memref.size),
-        valid_shape=None,
-        layout=new_layout,
-        fractal=_hw_attr(hw, "fractal"),
-        pad=_hw_attr(hw, "pad"),
-        compact=_hw_attr(hw, "compact"),
-        span=span,
+    new_shape = list(shape) if shape is not None else _static_shape_ints(source_type.shape, "reinterpret: source")
+    new_dtype = dtype if dtype is not None else source_type.dtype
+    new_layout = layout if layout is not None else _tile_layout(source_type)
+    b, s = _LAYOUT_TO_BS[new_layout]
+    return _ir_core.create_op_call(
+        "block.reinterpret", [src, _to_make_tuple(new_shape, actual_span)],
+        {"dtype": new_dtype, "blayout": b, "slayout": s}, actual_span,
     )
 
 
@@ -4154,22 +4089,8 @@ def _parse_reinterpret(self, call: ast.Call) -> Expr:
     if self.is_tile_group(src):
         return self._build_reinterpreted_group(src, kwargs, span)
 
-    if src in self._tile_slot_source or (
-        isinstance(src, _ir_core.GetItemExpr) and not isinstance(src.slice, ConstInt)
-    ):
-        raise NotSupported(
-            "pl.reinterpret() cannot resolve the address of a Tile selected by a runtime slot index; "
-            "its static type would bind the view to slot 0",
-            hint="Reinterpret the whole TileGroup, then select the matching slot from that view",
-        )
-
     new_tile = _ir_reinterpret(src, shape=new_shape, dtype=kwargs.get("dtype"), layout=kwargs.get("layout"), span=span)
 
-    # The reinterpreted tile aliases the same buffer, so it inherits the source's
-    # mutex binding (same propagation pattern as GetItemExpr in _expression_parser).
-    mm = self._tile_mutex_meta.get(src)
-    if mm is not None:
-        self._tile_mutex_meta[new_tile] = mm
     return new_tile
 
 
@@ -4816,7 +4737,7 @@ def _ir_matmul_acc(
     _check_tile_memory_space("matmul_acc", "lhs_tile", lhs, MemorySpace.Left, "L0A (Left)")
     _check_tile_memory_space("matmul_acc", "rhs_tile", rhs, MemorySpace.Right, "L0B (Right)")
     _check_matmul_dtype("matmul_acc", dst, lhs, rhs, acc=acc)
-    if not _ir_core.structural_equal(dst.type, acc.type, enable_auto_mapping=False):
+    if not _ir_core.structural_equal(unwrap_type(dst.type), unwrap_type(acc.type), enable_auto_mapping=False):
         raise InvalidType("matmul_acc: acc_tile type must match dst_tile type")
     kwargs: dict[str, Any] = {}
     if phase is not None:
@@ -4964,7 +4885,9 @@ def _check_mx_operands(
     if acc is not None:
         if acc.type.dtype != DataType.FP32:
             raise InvalidType(f"{op_name}: acc_tile must use FP32 dtype, got {acc.type.dtype}.")
-        if not _ir_core.structural_equal(dst.type, acc.type, enable_auto_mapping=False):
+        if not _ir_core.structural_equal(
+            unwrap_type(dst.type), unwrap_type(acc.type), enable_auto_mapping=False
+        ):
             raise InvalidType(f"{op_name}: acc_tile type must match dst_tile type")
 
     _check_mx_scale_tile(op_name, scale_a, lhs, is_left=True)

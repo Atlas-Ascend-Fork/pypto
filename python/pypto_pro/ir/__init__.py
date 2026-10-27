@@ -23,6 +23,7 @@ __all__ = [
     "IRBuilder",
     "TensorType",
     "TileType",
+    "MutexTileType",
     "python_print",
     "get_attributes",
     "attributes_api_version",

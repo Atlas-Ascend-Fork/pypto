@@ -44,12 +44,12 @@ def _mat(shape, layout=pl.NZ, dtype=pl.DT_FP16):
 @pytest.mark.parametrize("transposed", [False, True])
 def test_load_records_order_orientation_in_ir(axes, transposed):
     from pypto_pro import ir
-    from pypto_pro.ir.op.block_ops import _ir_load, make_tile_expr
+    from pypto_pro.ir.op.block_ops import _ir_load, make_mutex_tile_expr
 
     order = axes[::-1] if transposed else axes
     shape = [D, M] if transposed else [M, D]
     layout = pl.ZN if transposed else pl.NZ
-    tile = make_tile_expr(shape, pl.DT_FP16, pl.MemorySpace.Mat, addr=0, layout=layout)
+    tile = make_mutex_tile_expr(shape, pl.DT_FP16, pl.MemorySpace.Mat, addr=0, layout=layout)
     tensor = ir.Var("x", ir.TensorType([B, S, N, G, D], pl.DT_FP16), ir.Span.unknown())
 
     call = _ir_load(tile, tensor, [0] * 5, order=order)
@@ -302,9 +302,9 @@ def test_merged_order_rejected_for_load_tile():
 @pytest.mark.parametrize("order", [[], [0], [1], [4], [1, 2, 3, 4]])
 def test_load_rejects_wrong_order_rank(order):
     from pypto_pro import ir
-    from pypto_pro.ir.op.block_ops import _ir_load, make_tile_expr
+    from pypto_pro.ir.op.block_ops import _ir_load, make_mutex_tile_expr
 
-    tile = make_tile_expr([M, D], pl.DT_FP16, pl.MemorySpace.Mat, addr=0, layout=pl.NZ)
+    tile = make_mutex_tile_expr([M, D], pl.DT_FP16, pl.MemorySpace.Mat, addr=0, layout=pl.NZ)
     tensor = ir.Var("x", ir.TensorType([B, S, N, G, D], pl.DT_FP16), ir.Span.unknown())
     with pytest.raises(InvalidShape, match="order.*axes"):
         _ir_load(tile, tensor, [0] * 5, order=order)
@@ -313,9 +313,9 @@ def test_load_rejects_wrong_order_rank(order):
 @pytest.mark.parametrize("order", [[-1, 4], [1, 5]])
 def test_load_rejects_out_of_range_order(order):
     from pypto_pro import ir
-    from pypto_pro.ir.op.block_ops import _ir_load, make_tile_expr
+    from pypto_pro.ir.op.block_ops import _ir_load, make_mutex_tile_expr
 
-    tile = make_tile_expr([1, D], pl.DT_FP16, pl.MemorySpace.Vec, addr=0)
+    tile = make_mutex_tile_expr([1, D], pl.DT_FP16, pl.MemorySpace.Vec, addr=0)
     tensor = ir.Var("x", ir.TensorType([B, S, N, G, D], pl.DT_FP16), ir.Span.unknown())
     with pytest.raises(InvalidShape, match="order axis.*out of range"):
         _ir_load(tile, tensor, [0] * 5, order=order)
@@ -328,9 +328,9 @@ def test_transfer_rejects_single_axis_order(op_name, shape, order):
     """Rank-1 handling must not bypass explicit-order validation for any transfer API."""
     from pypto_pro import ir
     from pypto_pro.ir.op import block_ops
-    from pypto_pro.ir.op.block_ops import make_tile_expr
+    from pypto_pro.ir.op.block_ops import make_mutex_tile_expr
 
-    tile = make_tile_expr([1, D], pl.DT_FP16, pl.MemorySpace.Vec, addr=0)
+    tile = make_mutex_tile_expr([1, D], pl.DT_FP16, pl.MemorySpace.Vec, addr=0)
     tensor = ir.Var("x", ir.TensorType(shape, pl.DT_FP16), ir.Span.unknown())
     operands = (tile, tensor) if op_name.startswith("load") else (tensor, tile)
     error = InvalidArgument if len(shape) == 1 else InvalidShape
@@ -343,9 +343,9 @@ def test_transfer_rejects_single_axis_order(op_name, shape, order):
 def test_store_rejects_merged_order(op_name):
     from pypto_pro import ir
     from pypto_pro.ir.op import block_ops
-    from pypto_pro.ir.op.block_ops import make_tile_expr
+    from pypto_pro.ir.op.block_ops import make_mutex_tile_expr
 
-    tile = make_tile_expr([M, D], pl.DT_FP16, pl.MemorySpace.Vec, addr=0)
+    tile = make_mutex_tile_expr([M, D], pl.DT_FP16, pl.MemorySpace.Vec, addr=0)
     tensor = ir.Var("x", ir.TensorType([B, S, N, G, D], pl.DT_FP16), ir.Span.unknown())
     with pytest.raises(InvalidShape, match="order.*axes"):
         getattr(block_ops, "_ir_" + op_name)(tensor, tile, [0] * 5, order=[1, 3, 4])
@@ -354,9 +354,9 @@ def test_store_rejects_merged_order(op_name):
 @pytest.mark.parametrize("offset", [1, "dynamic"])
 def test_merged_load_rejects_nonzero_inner_offset(offset):
     from pypto_pro import ir
-    from pypto_pro.ir.op.block_ops import _ir_load, make_tile_expr
+    from pypto_pro.ir.op.block_ops import _ir_load, make_mutex_tile_expr
 
-    tile = make_tile_expr([M, D], pl.DT_FP16, pl.MemorySpace.Mat, addr=0, layout=pl.NZ)
+    tile = make_mutex_tile_expr([M, D], pl.DT_FP16, pl.MemorySpace.Mat, addr=0, layout=pl.NZ)
     tensor = ir.Var("x", ir.TensorType([B, S, N, G, D], pl.DT_FP16), ir.Span.unknown())
     if offset == "dynamic":
         offset = ir.Var("offset", ir.ScalarType(pl.DT_INT32), ir.Span.unknown())
@@ -367,9 +367,9 @@ def test_merged_load_rejects_nonzero_inner_offset(offset):
 @pytest.mark.parametrize("dtype", [pl.DT_INT64, pl.DT_FP4E2M1, pl.DT_FP4E1M2])
 def test_merged_load_rejects_unsupported_element_width(dtype):
     from pypto_pro import ir
-    from pypto_pro.ir.op.block_ops import _ir_load, make_tile_expr
+    from pypto_pro.ir.op.block_ops import _ir_load, make_mutex_tile_expr
 
-    tile = make_tile_expr([M, D], dtype, pl.MemorySpace.Mat, addr=0, layout=pl.NZ)
+    tile = make_mutex_tile_expr([M, D], dtype, pl.MemorySpace.Mat, addr=0, layout=pl.NZ)
     tensor = ir.Var("x", ir.TensorType([B, S, N, G, D], dtype), ir.Span.unknown())
     with pytest.raises(InvalidType, match="8, 16 or 32-bit"):
         _ir_load(tile, tensor, [0] * 5, order=[1, 3, 4])
@@ -377,9 +377,9 @@ def test_merged_load_rejects_unsupported_element_width(dtype):
 
 def test_merged_load_rejects_dtype_mismatch():
     from pypto_pro import ir
-    from pypto_pro.ir.op.block_ops import _ir_load, make_tile_expr
+    from pypto_pro.ir.op.block_ops import _ir_load, make_mutex_tile_expr
 
-    tile = make_tile_expr([M, D], pl.DT_BF16, pl.MemorySpace.Mat, addr=0, layout=pl.NZ)
+    tile = make_mutex_tile_expr([M, D], pl.DT_BF16, pl.MemorySpace.Mat, addr=0, layout=pl.NZ)
     tensor = ir.Var("x", ir.TensorType([B, S, N, G, D], pl.DT_FP16), ir.Span.unknown())
     with pytest.raises(InvalidType, match="dtype mismatch"):
         _ir_load(tile, tensor, [0] * 5, order=[1, 3, 4])
@@ -387,9 +387,9 @@ def test_merged_load_rejects_dtype_mismatch():
 
 def test_merged_load_rejects_strided_columns():
     from pypto_pro import ir
-    from pypto_pro.ir.op.block_ops import _ir_load, make_tile_expr
+    from pypto_pro.ir.op.block_ops import _ir_load, make_mutex_tile_expr
 
-    tile = make_tile_expr([M, D], pl.DT_FP16, pl.MemorySpace.Mat, addr=0, layout=pl.NZ)
+    tile = make_mutex_tile_expr([M, D], pl.DT_FP16, pl.MemorySpace.Mat, addr=0, layout=pl.NZ)
     stride = [ir.ConstInt(v, pl.DT_INT64, ir.Span.unknown()) for v in [98304, 1536, 512, 256, 2]]
     view = ir.TensorView(stride, ir.TensorLayout.ND)
     tensor = ir.Var("x", ir.TensorType([B, S, N, G, D], pl.DT_FP16, None, view), ir.Span.unknown())

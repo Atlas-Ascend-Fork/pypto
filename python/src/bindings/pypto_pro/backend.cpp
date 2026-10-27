@@ -115,7 +115,7 @@ void BindBackend(py::module_& m)
                 }
                 return op_info->pipe;
             },
-            py::arg("op_name"), "Get the registered pipeline type for an operator, or None if unregistered")
+            py::arg("op_name"), "Get an operator's fixed pipeline, or None if argument-dependent or unregistered")
         .def("find_mem_path", &Backend::FindMemPath, py::arg("from_mem"), py::arg("to_mem"),
              "Find memory path from source to destination")
         .def("get_mem_size", &Backend::GetMemSize, py::arg("mem_type"), "Get total memory size for given memory type")

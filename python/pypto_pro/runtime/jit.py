@@ -1493,6 +1493,14 @@ def _parse_and_codegen_targets(
 
     required_dynamic_ub_size = _infer_dynamic_ub_size(requires_simt, max_vec_tile_end)
 
+    if kernel_def._auto_mutex:
+        from pypto.pypto_impl.ir import Pass as IRPass
+
+        insert_sync = IRPass.insert_sync()
+        for target in (ir.SectionKind.Cube, ir.SectionKind.Vector):
+            if matched.get(target) and programs.get(target) is not None:
+                programs[target] = insert_sync(programs[target])
+
     if sanitizer:
         from pypto.pypto_impl.ir import Pass as IRPass
 

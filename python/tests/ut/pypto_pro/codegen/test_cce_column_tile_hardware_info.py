@@ -43,15 +43,15 @@ def _compile_to_cce(kernel) -> str:
 
 
 def _tile_type_alias(source: str, tile_group: str) -> str:
-    """The ``using _tg_<name>_tiles_0_Type = Tile<...>;`` line for one tile group."""
-    match = re.search(rf"using _tg_{re.escape(tile_group)}_tiles_0_Type = (Tile<[^;]*);", source)
+    """The ``using _tg_<name>_tiles_0_0_Type = SyncedTile<Tile<...>, N>;`` line for one tile group."""
+    match = re.search(rf"using _tg_{re.escape(tile_group)}_tiles_0_0_Type = SyncedTile<(Tile<[^;]*>), [0-9]+>;", source)
     assert match is not None, f"no tile type alias found for '{tile_group}'"
     return match.group(1)
 
 
 def _bare_tile_decl(source: str, var: str) -> str:
     """The ``Tile<...> <var>;`` declaration of a tile that has no memref of its own."""
-    match = re.search(rf"^\s*(Tile<[^;>]*>) {re.escape(var)};", source, re.MULTILINE)
+    match = re.search(rf"^\s*(?:SyncedTile<)?(Tile<[^;>]*>)(?:, \d+>)? {re.escape(var)};", source, re.MULTILINE)
     assert match is not None, f"no bare tile declaration found for '{var}'"
     return match.group(1)
 

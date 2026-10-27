@@ -27,6 +27,7 @@ from pypto_pro.language._vf_api import Vf
 from pypto_pro.language.parser._op_pipeline import (
     _BLOCK_OP_TILE_ROLES,
     _VF_OP_TILE_ROLES,
+    get_expands_pipe,
     get_move_pipe,
     get_op_pipe,
     get_store_pipe,
@@ -1424,6 +1425,15 @@ def _block_op_pipe(
                 span=span_of(call),
             )
         return _pipe_name(get_store_pipe(src_mem))
+    if op_name in ("expands", "full"):
+        dst_mem = _arg_memory(call.args[0] if call.args else None, stage_slot_to_buffer, all_buffer_memory)
+        if dst_mem is None:
+            raise InvalidOperation(
+                f"pipeline: cannot determine the pipe of `{ast.unparse(call)}`, "
+                "because its destination tile does not resolve to a declared tile group.",
+                span=span_of(call),
+            )
+        return _pipe_name(get_expands_pipe(dst_mem))
     pipe = get_op_pipe(op_name)
     if pipe is None:
         raise InvalidOperation(

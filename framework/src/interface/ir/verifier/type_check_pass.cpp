@@ -163,7 +163,17 @@ void TypeChecker::CheckTypeEquality(const TypePtr& type1, const TypePtr& type2, 
     }
 
     // For TensorType and TileType, check dtype and shape
-    if (type1->GetKind() == ObjectKind::TensorType || type1->GetKind() == ObjectKind::TileType) {
+    if (auto mutex1 = As<MutexTileType>(type1)) {
+        auto mutex2 = As<MutexTileType>(type2);
+        if (mutex1->mutexCount_ != mutex2->mutexCount_) {
+            std::ostringstream msg;
+            msg << "Mutex ID count mismatch in " << context << ": " << desc1 << " has " << mutex1->mutexCount_
+                << " mutex IDs, but " << desc2 << " has " << mutex2->mutexCount_ << " mutex IDs";
+            RecordError(typecheck::ErrorType::TYPE_KIND_MISMATCH, msg.str(), span);
+            return;
+        }
+    }
+    if (type1->GetKind() == ObjectKind::TensorType || As<TileType>(type1)) {
         auto shaped1 = std::dynamic_pointer_cast<const ShapedType>(type1);
         auto shaped2 = std::dynamic_pointer_cast<const ShapedType>(type2);
         if (!shaped1 || !shaped2)

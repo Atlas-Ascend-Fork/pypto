@@ -20,6 +20,7 @@
 
 #include "backend/backend_cce.h"
 #include "backend/common/backend.h"
+#include "backend/common/backend_utils.h"
 #include "codegen/cce/cce_codegen.h"
 #include "codegen/codegen_base.h"
 #include "core/dtype.h"
@@ -1792,7 +1793,7 @@ std::string MakeSimtLaunchCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
         auto arg_type = op->args_[i]->GetType();
         auto tile_type = ir::As<ir::TileType>(arg_type);
         if (tile_type != nullptr) {
-            std::string tile = codegen.GetExprAsCode(op->args_[i]);
+            std::string tile = cce::GetOperandAsCode(codegen, op->args_[i]);
             call << ", (__ubuf__ " << tile_type->dtype_.ToCTypeString() << "*)" << tile << ".data()";
             call << ", (uint32_t)" << tile << ".GetValidRow(), (uint32_t)" << tile << ".GetValidCol()";
         } else if (auto tensor_type = ir::As<ir::TensorType>(arg_type)) {

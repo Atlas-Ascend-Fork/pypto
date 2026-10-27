@@ -321,9 +321,9 @@ def test_simt_tile_codegen_emits_direct_cce_function_launch_and_ub_accesses():
             assert re.search(rf"\buint32_t\s+{tile}(?:_\d+)*__valid_{axis}\b", signature)
     assert "cce::async_invoke<_tile_add>(cce::dim3{256, 1, 1}" in launch_line
     assert launch_line.count("(__ubuf__ float*)") == 2
-    assert launch_line.count(".data()") == 2
-    assert launch_line.count(".GetValidRow()") == 2
-    assert launch_line.count(".GetValidCol()") == 2
+    assert launch_line.count(".tile.data()") == 2
+    assert launch_line.count(".tile.GetValidRow()") == 2
+    assert launch_line.count(".tile.GetValidCol()") == 2
     assert "pipe_barrier(PIPE_ALL);" not in cpp
     assert re.search(r"\bdst(?:_\d+)?\[", function)
     assert re.search(r"\bsrc(?:_\d+)?\[", function)
@@ -365,8 +365,8 @@ def test_simt_launch_passes_runtime_tile_valid_shape_to_native_function():
 
     assert re.search(r"\bsrc(?:_\d+)*__valid_row\b", function)
     assert re.search(r"\bsrc(?:_\d+)*__valid_col\b", function)
-    assert launch_line.count(".GetValidRow()") == 2
-    assert launch_line.count(".GetValidCol()") == 2
+    assert launch_line.count(".tile.GetValidRow()") == 2
+    assert launch_line.count(".tile.GetValidCol()") == 2
 
 
 def test_simt_warp_codegen_connects_each_operation_family_to_cce():

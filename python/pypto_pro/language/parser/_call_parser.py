@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import ast
-from collections import namedtuple
 import copy
 from dataclasses import dataclass
 import inspect
@@ -22,7 +21,7 @@ import sys
 from typing import Any, Callable
 
 from pypto.pypto_impl import ir
-from pypto_pro.ir._utils import _is_int, _to_make_tuple
+from pypto_pro.ir._utils import _is_int
 from pypto_pro.ir.op._op_registry import _OP_REGISTRY
 from pypto_pro.ir.op.block_ops import block_ir_op
 
@@ -233,7 +232,6 @@ def _get_source_info(entity: Callable | type, entity_type: str) -> tuple[str, li
 
 
 # Mutex carrier for one selected Tile (runtime IDs, possible values, memory, dedup id).
-_MutexRef = namedtuple("_MutexRef", "tile_ids candidate_ids memory slot_id")
 
 
 @dataclass(frozen=True)
@@ -743,26 +741,6 @@ class CallParserMixin:
             return True
         return bool(args.kw_defaults)
 
-    def _record_mutex_op_constraints(self, refs: list) -> None:
-        """Record same-operation ID preferences before grouped Calls are built."""
-        tile_id_groups = []
-        candidate_groups = []
-        for tile_ref in refs:
-            target = (
-                ir.SectionKind.Vector
-                if tile_ref.memory == ir.MemorySpace.Vec
-                else ir.SectionKind.Cube
-            )
-            # MTE3 may expose both Cube and Vector TileGroups to both target parses. Only pass
-            # candidates owned by this target to its independent mutex-ID manager.
-            if target != self.target:
-                continue
-
-            tile_id_groups.append(tile_ref.tile_ids)
-            candidate_groups.append(tile_ref.candidate_ids)
-
-        self._mutex_id_manager.record_op_constraints(tile_id_groups, candidate_groups)
-
     @classmethod
     def _make_call_with_return_type(
         cls,
@@ -845,32 +823,6 @@ class CallParserMixin:
         if fn.__closure__ and fn.__code__.co_freevars:
             fn_closure.update(dict(zip(fn.__code__.co_freevars, (c.cell_contents for c in fn.__closure__))))
         return fn_closure
-
-    @classmethod
-    def _resolve_auto_mutex_pipe(cls, op_name: str, tilerefs: list):
-        """Determine the pipe for auto_mutex from op_name and tile memory spaces."""
-        from ._op_pipeline import get_move_pipe, get_op_pipe, get_store_pipe
-
-        if op_name == "simt.launch":
-            return ir.PipeType.V
-        if op_name in ("move", "insert"):
-            dst_mem = tilerefs[0].memory if tilerefs[0] else None
-            src_mem = tilerefs[1].memory if len(tilerefs) > 1 and tilerefs[1] else None
-            if src_mem is not None and dst_mem is not None:
-                return get_move_pipe(src_mem, dst_mem)
-            return None
-        if op_name == "expands":
-            dst_mem = tilerefs[0].memory if tilerefs[0] else None
-            if dst_mem == ir.MemorySpace.Mat:
-                return ir.PipeType.MTE2
-            elif dst_mem == ir.MemorySpace.Vec:
-                return ir.PipeType.V
-        if op_name in ("store", "store_tile"):
-            src_mem = tilerefs[1].memory if len(tilerefs) > 1 and tilerefs[1] else None
-            if src_mem is not None:
-                return get_store_pipe(src_mem)
-            return None
-        return get_op_pipe(op_name)
 
     @classmethod
     def _init_vf_kwarg_enums(cls):
@@ -1018,10 +970,7 @@ class CallParserMixin:
             local_name = indexed.value.id
             callee_template = self.expr_evaluator.closure_vars.get(local_name)
             if is_simt_function(callee_template):
-                span = self.span_tracker.get_span(call)
                 self._validate_op_scope("simt.launch", call)
-                if self._auto_mutex:
-                    self._emit_auto_mutex("simt.launch", call, span)
                 return _parse_simt_launch(self, call, local_name, callee_template)
 
         raise NotSupported(
@@ -1079,8 +1028,6 @@ class CallParserMixin:
                 ),
                 parser_retry=True,
             )
-        if self._auto_mutex and not op_name.startswith("vf."):
-            self._emit_auto_mutex(op_name, call, span)
 
         self._check_declared_params(op_name, call, span)
 
@@ -1551,20 +1498,6 @@ class CallParserMixin:
             else:
                 ast.fix_missing_locations(func_def)
 
-            locked_vf_refs: list = []
-            if template.is_vector_function and self._auto_mutex and self.inline_vf_depth == 0:
-                # Only the OUTERMOST VF call acquires the buffer tokens: its
-                # lock spans the whole inlined body (every nesting level), and
-                # VF bodies cannot create buf-ids (the pl.* whitelist rejects
-                # make_tile/make_tile_group), so nested calls never re-acquire.
-                arg_nodes = [bound[param.arg][1] for param in params]
-                locked_vf_refs = self._emit_vf_func_mutex_lock(
-                    [param.arg for param in params],
-                    [self._try_resolve_tileref(arg) for arg in arg_nodes],
-                    {param.arg for param in params},
-                    span,
-                )
-
             self.inline_call_stack.append(id(fn))
             is_outermost_vf = template.is_vector_function and self.inline_vf_depth == 0
             if template.is_vector_function:
@@ -1584,7 +1517,7 @@ class CallParserMixin:
                     # assignment is nested in an if/while.
                     if param.arg in reassigned_params:
                         value = self.builder.let(renamed_name, expr, span=span)
-                        self._transfer_tile_sync_metadata(value, expr)
+                        self._transfer_tile_group_metadata(value, expr)
                     else:
                         value = expr
                     self.scope_manager.define_var(renamed_name, value, allow_redef=True)
@@ -1596,14 +1529,15 @@ class CallParserMixin:
                     self.scope_manager.define_var(
                         return_val_name, undefined_return, allow_redef=True, span=span
                     )
-                    if self._auto_mutex:
-                        self._tile_mutex_meta[undefined_return] = (
-                            _to_make_tuple([ir.ConstInt(-1, ir.DataType.INT64, span)], span),
-                            _to_make_tuple([], span),
-                        )
 
                 if is_outermost_vf:
                     with self.builder.section(ir.SectionKind.VF, span):
+                        # Preserve caller values before the body can rebind its parameters.
+                        tile_args = [
+                            expr for expr, _ in bound.values()
+                            if isinstance(expr, ir.Expr) and isinstance(expr.type, ir.TileType)
+                        ]
+                        self.builder.eval_stmt(ir.create_op_call("system.vf_scope_args", tile_args, {}, span), span)
                         self.scope_manager.enter_scope("section")
                         try:
                             self._parse_statement_list(body)
@@ -1620,8 +1554,6 @@ class CallParserMixin:
                 self.inline_call_stack.pop()
                 if template.is_vector_function:
                     self.inline_vf_depth -= 1
-                if locked_vf_refs:
-                    self._emit_inline_vf_mutex_unlock(locked_vf_refs, span)
         finally:
             self.expr_evaluator.closure_vars = old_closure
 
@@ -1638,8 +1570,8 @@ class CallParserMixin:
         Note: auto_mutex is NOT applied per-vf-op here, because bisheng requires
         VEC_SCOPE to contain only VF instructions (get_buf/rls_buf are plain CCE
         intrinsics and cause "Do not know how to expand this operator's operand"
-        errors if emitted inside the scope). Instead, auto_mutex wraps the whole
-        VF inline-function call at its call site -see _parse_inline_call.
+        errors if emitted inside the scope). InsertSync uses system.vf_scope_args
+        to insert synchronization around the whole VF section.
 
         Args:
             op_name: Name of the VF operation (without ``vf.`` prefix).
@@ -1687,214 +1619,6 @@ class CallParserMixin:
         # so the guard above has already rejected its statement form. The assignment form is checked
         # in _parse_vf_assignment, which is the only path those ops can reach.
         return ir.create_op_call(f"vf.{op_name}", args, kwargs, span)
-
-    # --- auto_mutex helpers ---------------------------------------------------
-
-    def _try_resolve_tileref(self, node: ast.expr):
-        """Resolve a tile argument to its memory and optional mutex metadata.
-
-        Returns _MutexRef(tile_ids, candidate_ids, memory, tile_id) for tile
-        arguments. Ordinary tiles have empty ``tile_ids`` and ``candidate_ids``;
-        their memory is still needed to infer the move pipe when paired with a
-        tile-group tile.
-
-        Only positional arguments are scanned by auto-mutex. Subscript
-        arguments (``tile[off]``, ``buf[idx]``) alias the base's
-        buffer; their mutex metadata is propagated onto the GetItemExpr by
-        ``parse_subscript``, so the generic ``parse_expression`` path finds it.
-        """
-        expr = self.parse_expression(node)
-        if not isinstance(expr, ir.Expr):
-            return None
-        if not isinstance(expr.type, ir.TileType) or not expr.type.memref:
-            return None
-        mem = expr.type.memref.memory_space_
-        meta = self.tile_mutex_lock_meta(expr)
-        if meta is None:
-            return _MutexRef(_to_make_tuple([], expr.span), _to_make_tuple([], expr.span), mem, id(expr))
-        tile_ids, candidate_ids = meta
-        return _MutexRef(tile_ids, candidate_ids, mem, id(expr))
-
-    def _emit_auto_mutex(self, op_name: str, call: ast.Call, span: ir.Span):
-        """Emit mutex_lock before and mutex_unlock after a block DSL op.
-
-        Scans positional arguments for tile-group tiles, determines the op pipe,
-        and emits lock/unlock per unique slot.
-        Returns None -the caller still parses the op normally.
-
-        Phase-aware skip on Acc tiles: when a matmul or FixPipe drain op carries
-        phase="partial"/"final", the cube/fixp handshake on the Acc-memory
-        accumulator is taken over by the hardware unit_flag bit
-        (AccPhase/STPhase). The software mutex on the Acc buf is redundant
-        *and* occupies M-pipe / FIX-pipe instruction slots that otherwise
-        let cube/fixp run back-to-back. Skip it.
-
-        Non-Acc tiles (L0A / L0B / L1) MUST keep their mutex: unit_flag does
-        NOT cover the MTE1 -> cube path. Removing L0A/L0B mutex causes RAW
-        between MTE1 finishing the move and cube starting to read
-        (verified: device error 507015 on 2026-05-29).
-        """
-
-        from ._op_pipeline import op_accesses_buffer
-
-        # Descriptor-only ops (e.g. set_validshape) rewrite tile metadata but never
-        # touch buffer data, so their accesses cannot race -> no buffer mutex needed.
-        if not op_accesses_buffer(op_name):
-            return
-
-        # 1. Build unique_refs: scan args for slot.tile mutex refs, dedup by slot,
-        #    then drop Acc tiles when a phase-aware matmul/FixPipe op carries the
-        #    unit_flag (the hardware handshake replaces the software mutex there).
-        tilerefs = (
-            [self._try_resolve_tileref(arg) for arg in call.args]
-            + [self._try_resolve_tileref(kw.value) for kw in call.keywords]
-        )
-        unique_refs = []
-        seen = set()
-        for tref in tilerefs:
-            if tref is None or not tref.tile_ids.elements:
-                continue
-            if tref.slot_id in seen:
-                continue
-            seen.add(tref.slot_id)
-            unique_refs.append(tref)
-
-        if op_name in (
-            "matmul",
-            "matmul_acc",
-            "matmul_mx",
-            "matmul_mx_acc",
-            "store",
-            "store_tile",
-            "move",
-            "insert",
-        ):
-            phase = None
-            for kw in call.keywords:
-                if kw.arg == "phase":
-                    # phase is written as pl.STPhase.X / pl.AccPhase.X, which
-                    # resolve_single_kwarg returns as the enum object.
-                    phase = self.resolve_single_kwarg("phase", kw.value)
-                    break
-            # STPhase/AccPhase enum: Partial/Final indicates multi-step accumulation.
-            # phase is written as an enum in the DSL (pl.STPhase.X / pl.AccPhase.X),
-            # which the parser lowers to the enum object, so match the objects.
-            _phase_skip = {
-                ir.STPhase.Partial,
-                ir.STPhase.Final,
-                ir.AccPhase.Partial,
-                ir.AccPhase.Final,
-            }
-            if phase in _phase_skip:
-                unique_refs = [r for r in unique_refs if r.memory != ir.MemorySpace.Acc]
-
-        if not unique_refs:
-            return
-
-        # 2. Determine pipe
-        pipe = self._resolve_auto_mutex_pipe(op_name, tilerefs)
-        if pipe is None:
-            return
-
-        self._record_mutex_op_constraints(unique_refs)
-
-        # 3. Preserve Tile boundaries and ordering for codegen-side deduplication.
-        self._emit_mutex_for_refs(unique_refs, pipe, span, is_lock=True)
-        self._pending_mutex_unlocks = (unique_refs, pipe, span)
-
-    def _emit_auto_mutex_unlocks(self):
-        """Emit mutex_unlock calls queued by _emit_auto_mutex or _parse_func_call."""
-        if not hasattr(self, "_pending_mutex_unlocks") or self._pending_mutex_unlocks is None:
-            return
-        refs, pipe, span = self._pending_mutex_unlocks
-        self._emit_mutex_for_refs(refs, pipe, span, is_lock=False)
-        self._pending_mutex_unlocks = None
-
-    def _emit_mutex_for_tile(self, tile: ir.Expr, pipe, span: ir.Span, *, is_lock: bool) -> bool:
-        """Emit all mutex IDs for one tile in input order and report whether any were emitted."""
-        meta = self.tile_mutex_lock_meta(tile)
-        if meta is None:
-            return False
-        tile_id_irs, candidate_ids = meta
-        self._emit_mutex_op(
-            _to_make_tuple([tile_id_irs], span),
-            _to_make_tuple([candidate_ids], span),
-            pipe,
-            span,
-            is_lock=is_lock,
-        )
-        return True
-
-    def _emit_mutex_op(
-        self,
-        mutex_id,
-        candidate_groups,
-        pipe,
-        span: ir.Span,
-        *,
-        is_lock: bool,
-    ) -> None:
-        """Emit per-Tile mutex IDs and candidates for codegen-side deduplication."""
-        from pypto_pro.ir.op.system_ops import _create_mutex_dedup_op
-
-        op_name = "system.mutex_lock" if is_lock else "system.mutex_unlock"
-        expr = _create_mutex_dedup_op(
-            op_name,
-            pipe=pipe,
-            mutex_id=mutex_id,
-            candidate_groups=candidate_groups,
-            span=span,
-        )
-        self.builder.emit(ir.EvalStmt(expr, span))
-
-    def _emit_mutex_for_refs(self, refs: list, pipe, span: ir.Span, *, is_lock: bool) -> None:
-        """Emit one mutex call containing all Tile references of the operation."""
-        if not refs:
-            return
-        self._emit_mutex_op(
-            _to_make_tuple([tile_ref.tile_ids for tile_ref in refs], span),
-            _to_make_tuple(
-                [tile_ref.candidate_ids for tile_ref in refs],
-                span,
-            ),
-            pipe,
-            span,
-            is_lock=is_lock,
-        )
-
-    def _emit_vf_func_mutex_lock(
-        self,
-        param_names: list,
-        arg_tilerefs: list,
-        used_params: set,
-        span: ir.Span,
-    ) -> list:
-        """Emit mutex_lock(V, mutex_id) for tile-valued args whose matching
-        parameter is referenced inside a ``@pl.vector_function`` body.
-
-        Called before a VF func.call is emitted (i.e., before the VEC_SCOPE
-        is generated). Returns the reference grouping so the caller can emit
-        matching unlocks after the call without rebuilding it.
-        """
-        unique_refs = []
-        seen = set()
-        for param_name, tref in zip(param_names, arg_tilerefs):
-            if tref is None or not tref.tile_ids.elements:
-                continue
-            if param_name not in used_params:
-                continue
-            if tref.slot_id in seen:
-                continue
-            seen.add(tref.slot_id)
-            unique_refs.append(tref)
-
-        self._record_mutex_op_constraints(unique_refs)
-        self._emit_mutex_for_refs(unique_refs, ir.PipeType.V, span, is_lock=True)
-        return unique_refs
-
-    def _emit_inline_vf_mutex_unlock(self, refs: list, span: ir.Span) -> None:
-        """Emit mutex_unlock(V, mutex_id) for refs from _emit_vf_func_mutex_lock."""
-        self._emit_mutex_for_refs(refs, ir.PipeType.V, span, is_lock=False)
 
     # -------------------------------------------------------------------------
     # Block default handler and helpers

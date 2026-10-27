@@ -9,8 +9,8 @@
 
 """Expand L1 GEMM calls through the normal statement parser.
 
-Generated moves, matmuls and loops use the existing parser's mutex, slot and SSA
-handling. Emitting their IR directly would bypass that handling.
+Generated moves, matmuls and loops use the existing parser's slot and SSA handling.
+Tile views retain their mutex bindings in IR for InsertSync.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import copy
 from pypto.pypto_impl import ir
 
 from ..._errors import current_span
-from ...ir.op.block_ops import _check_tile_memory_space, _tile_layout, tile_slot_size
+from ...ir.op.block_ops import _check_tile_memory_space, _tile_layout
 from ._argument_checker import declared_api
 from .diagnostics import InvalidArgument, InvalidType, InvalidVal, NotSupported
 
@@ -500,22 +500,19 @@ class _GemmCall:
             body.append(self.matmul(False))
         return [*outer, self.loop("k", extent, split, body)]
 
-    def strip_group(self, suffix, rows, width, addresses, ids, dtype):
-        kwargs = {
-            "type": self.call_op(
-                "TileType", [], shape=_list([_const(rows), _const(width)]),
-                dtype=self.attr(dtype), target_memory=self.attr("MemorySpace.Acc"),
-            ),
-            "addrs": _list([_const(addr) for addr in addresses]),
-        }
-        if ids == "auto":
-            kwargs["mutex_ids"] = _const("auto")
-            kwargs["depth"] = _const(len(addresses))
-        elif ids:
-            kwargs["mutex_ids"] = _list([_list([_const(i) for i in ids]) for _ in addresses])
-        else:
-            kwargs["depth"] = _const(len(addresses))
-        return self.assign(suffix, self.call_op("make_tile_group", [], **kwargs))
+    def strip_views(self, suffix, rows, width, columns):
+        views = []
+        for col in columns:
+            window = ast.Subscript(
+                value=self.read("acc"),
+                slice=ast.Tuple(elts=[
+                    ast.Slice(lower=_const(0), upper=_const(rows)),
+                    ast.Slice(lower=_const(col), upper=_const(col + width)),
+                ], ctx=ast.Load()),
+                ctx=ast.Load(),
+            )
+            views.append(self.call_op("reinterpret", [window], shape=_list([_const(rows), _const(width)])))
+        return self.assign(suffix, ast.Tuple(elts=views, ctx=ast.Load()))
 
     def split_n(self, outer):
         split = self.static_int("splitn")
@@ -545,13 +542,7 @@ class _GemmCall:
                 "pl.gemm() cannot split along N through a runtime-selected accumulator",
                 span=self.span(acc_node), hint="Use a static accumulator slot; strips need fixed addresses",
             )
-        meta = self.parser.tile_mutex_lock_meta(value)
-        # Static selection uses only the chosen slot's IDs. For AUTO, the native
-        # manager unifies contained strip aliases with their parent allocation.
-        row = meta[0].elements if meta else []
-        ids = "auto" if any(isinstance(i, ir.Var) for i in row) else sorted({i.value for i in row})
-        declared = value.type
-        addr = declared.memref.addr
+        addr = value.type.memref.addr
         if not isinstance(addr, ir.ConstInt):
             raise NotSupported("pl.gemm() cannot split along N through a computed address", span=self.span(acc_node))
         limit = self.static_int("n") if "n" in self.keywords else cols
@@ -566,17 +557,11 @@ class _GemmCall:
         if count * split + tail16 > cols:
             raise InvalidVal("pl.gemm() cannot place the last strip inside the accumulator")
         # NZ column fractals are contiguous at full M, with 16-column alignment.
-        stride = tile_slot_size((rows, split), declared.dtype)
-        import pypto_pro.language as language
-
-        dtype = next(
-            name for name in dir(language) if name.startswith("DT_") and getattr(language, name) == declared.dtype
-        )
         declares = [
-            self.strip_group("strips", rows, split, [addr.value + j * stride for j in range(count)], ids, dtype)
+            self.strip_views("strips", rows, split, [j * split for j in range(count)])
         ]
         if tail:
-            declares.append(self.strip_group("tailstrip", rows, tail16, [addr.value + count * stride], ids, dtype))
+            declares.append(self.strip_views("tailstrip", rows, tail16, [count * split]))
         outer += self.set_shape("acc", [_const(rows), self.read("n")])
         prologue = self.bindings("l0a")
         k = self.read("k")

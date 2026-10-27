@@ -367,6 +367,9 @@ StructuralHasher::ResultType StructuralHasher::HashType(const TypePtr& type)
             h = HashCombine(h, HashNode(dim));
         }
     } else if (auto tile_type = As<TileType>(type)) {
+        if (auto mutex_tile = As<MutexTileType>(type)) {
+            h = HashCombine(h, static_cast<ResultType>(mutex_tile->mutexCount_));
+        }
         // Hash dtype
         h = HashCombine(h, static_cast<ResultType>(std::hash<uint8_t>{}(tile_type->dtype_.Code())));
         // Hash shape size and dimensions

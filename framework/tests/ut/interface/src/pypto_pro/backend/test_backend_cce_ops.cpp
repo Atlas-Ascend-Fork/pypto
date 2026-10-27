@@ -34,6 +34,14 @@ namespace pypto {
 namespace backend {
 namespace {
 
+std::vector<ir::ExprPtr> MakeTileOperands(const ir::TypePtr& type)
+{
+    auto tile = std::dynamic_pointer_cast<const ir::TileType>(type);
+    auto empty = std::make_shared<const ir::MakeTuple>(std::vector<ir::ExprPtr>{}, ir::Span::Unknown());
+    auto shape = std::make_shared<const ir::MakeTuple>(tile->shape_, ir::Span::Unknown());
+    return {shape, empty, empty};
+}
+
 using Kwargs = std::vector<std::pair<std::string, std::any>>;
 
 class TestableCCECodegen : public codegen::CCECodegen {
@@ -58,34 +66,6 @@ ir::VarPtr MakeVar(const std::string& name, const ir::TypePtr& type)
 ir::MakeTuplePtr MakeTuple(std::vector<ir::ExprPtr> elements)
 {
     return std::make_shared<const ir::MakeTuple>(std::move(elements), ir::Span::Unknown());
-}
-
-ir::MakeTuplePtr MakeNestedTuple(const std::vector<std::vector<ir::ExprPtr>>& groups)
-{
-    std::vector<ir::ExprPtr> elements;
-    elements.reserve(groups.size());
-    for (const auto& group : groups) {
-        elements.push_back(MakeTuple(group));
-    }
-    return MakeTuple(std::move(elements));
-}
-
-ir::CallPtr MakeMutexCall(const std::string& name, const std::vector<std::vector<ir::ExprPtr>>& mutexId,
-                          const std::vector<std::vector<int>>& candidateGroups, ir::PipeType pipe)
-{
-    std::vector<std::vector<ir::ExprPtr>> candidateExprGroups;
-    candidateExprGroups.reserve(candidateGroups.size());
-    for (const auto& group : candidateGroups) {
-        std::vector<ir::ExprPtr> candidates;
-        candidates.reserve(group.size());
-        for (int candidate : group) {
-            candidates.push_back(MakeConstInt(candidate));
-        }
-        candidateExprGroups.push_back(std::move(candidates));
-    }
-    return std::make_shared<const ir::Call>(
-        name, std::vector<ir::ExprPtr>{MakeNestedTuple(mutexId), MakeNestedTuple(candidateExprGroups)},
-        Kwargs{{"pipe", static_cast<int>(pipe)}}, ir::Span::Unknown());
 }
 
 ir::CallPtr MakeManualMutexCall(const std::string& name, const ir::ExprPtr& mutexId, ir::PipeType pipe)
@@ -129,8 +109,10 @@ ir::TileTypePtr MakeTileType(const std::vector<int64_t>& shape, ir::DataType dty
     if (space.has_value()) {
         memref = std::make_shared<const ir::MemRef>(space.value(), MakeConstInt(0), 1024, 0, ir::Span::Unknown());
     }
-    return std::make_shared<const ir::TileType>(shape, dtype, memref, std::optional<ir::TileView>(std::nullopt),
-                                                std::optional<ir::HardwareInfo>(ir::HardwareInfo{}));
+    return std::make_shared<const ir::MutexTileType>(
+        ir::TileType(shape, dtype, memref, std::optional<ir::TileView>(std::nullopt),
+                     std::optional<ir::HardwareInfo>(ir::HardwareInfo{})),
+        0);
 }
 
 std::string RunCodegen(const std::string& op_name, const ir::CallPtr& call, TestableCCECodegen& codegen)
@@ -671,260 +653,22 @@ TEST(BackendCceOpsTest, VMutexWithoutCandidateIdsIsNotSkipped)
     EXPECT_NE(generated.find("rls_buf(PIPE_V, 7, 0);"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, AutoVMutexIsSkippedWhenAllCandidatesAreVOnly)
+// Candidate analysis and de-duplication are tested at the InsertSync IR boundary
+// in python/tests/ut/pypto_pro/ir/test_insert_sync.py. The backend consumes scalar IDs.
+TEST(BackendCceOpsTest, DynamicVMutexIsAlwaysEmitted)
 {
-    auto call = MakeMutexCall("system.mutex_lock_dyn", {{MakeConstInt(6)}}, {{6, 7}}, ir::PipeType::V);
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_EQ(generated.find("get_buf(PIPE_V, 6, 0);"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, AutoVMutexUsesTheWholeCandidateSetBeforeSkipping)
-{
-    auto dynamic_id = MakeVar("dynamic_id", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    auto vector_call = MakeMutexCall("system.mutex_lock_dyn", {{dynamic_id}}, {{6, 7}}, ir::PipeType::V);
-    auto mte2_call = MakeMutexCall("system.mutex_lock_dyn", {{MakeConstInt(7)}}, {{7}}, ir::PipeType::MTE2);
-    auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(vector_call, ir::Span::Unknown()),
-                                 std::make_shared<const ir::EvalStmt>(mte2_call, ir::Span::Unknown())},
-        ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {dynamic_id}), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_NE(generated.find("get_buf(PIPE_V, dynamic_id, 0);"), std::string::npos);
-    EXPECT_NE(generated.find("get_buf(PIPE_MTE2, 7, 0);"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, StaticVMutexConservativelyKeepsBroadCandidates)
-{
-    auto vector_call = MakeMutexCall("system.mutex_lock_dyn", {{MakeConstInt(6)}}, {{6, 7}}, ir::PipeType::V);
-    auto mte2_call = MakeMutexCall("system.mutex_lock_dyn", {{MakeConstInt(7)}}, {{6, 7}}, ir::PipeType::MTE2);
-    auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(vector_call, ir::Span::Unknown()),
-                                 std::make_shared<const ir::EvalStmt>(mte2_call, ir::Span::Unknown())},
-        ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_NE(generated.find("get_buf(PIPE_V, 6, 0);"), std::string::npos);
-    EXPECT_NE(generated.find("get_buf(PIPE_MTE2, 7, 0);"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, ManualConstantMutexDoesNotAffectAutoVMutexSkipForSameId)
-{
-    auto auto_v = MakeMutexCall("system.mutex_lock_dyn", {{MakeConstInt(6)}}, {{6}}, ir::PipeType::V);
-    auto manual_mte2 = MakeManualMutexCall("system.mutex_lock_dyn", MakeConstInt(6), ir::PipeType::MTE2);
-    auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(auto_v, ir::Span::Unknown()),
-                                 std::make_shared<const ir::EvalStmt>(manual_mte2, ir::Span::Unknown())},
-        ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_EQ(generated.find("get_buf(PIPE_V, 6, 0);"), std::string::npos);
-    EXPECT_NE(generated.find("get_buf(PIPE_MTE2, 6, 0);"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, ManualConstantMutexOnAnotherPipeDoesNotBlockAutoVMutexSkipForDifferentId)
-{
-    auto auto_v = MakeMutexCall("system.mutex_lock_dyn", {{MakeConstInt(6)}}, {{6}}, ir::PipeType::V);
-    auto manual_mte2 = MakeManualMutexCall("system.mutex_lock_dyn", MakeConstInt(7), ir::PipeType::MTE2);
-    auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(auto_v, ir::Span::Unknown()),
-                                 std::make_shared<const ir::EvalStmt>(manual_mte2, ir::Span::Unknown())},
-        ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_EQ(generated.find("get_buf(PIPE_V, 6, 0);"), std::string::npos);
-    EXPECT_NE(generated.find("get_buf(PIPE_MTE2, 7, 0);"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, ManualDynamicMutexDoesNotGloballyDisableAutoVMutexSkip)
-{
-    auto dynamic_id = MakeVar("manual_id", std::make_shared<const ir::ScalarType>(ir::DataType::INDEX));
-    auto auto_v = MakeMutexCall("system.mutex_lock_dyn", {{MakeConstInt(6)}}, {{6}}, ir::PipeType::V);
-    auto manual_mte2 = MakeManualMutexCall("system.mutex_lock_dyn", dynamic_id, ir::PipeType::MTE2);
-    auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(auto_v, ir::Span::Unknown()),
-                                 std::make_shared<const ir::EvalStmt>(manual_mte2, ir::Span::Unknown())},
-        ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {dynamic_id}), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_EQ(generated.find("get_buf(PIPE_V, 6, 0);"), std::string::npos);
-    EXPECT_NE(generated.find("get_buf(PIPE_MTE2, manual_id, 0);"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, MutexDynDedupSkipsRepeatedDynamicExpression)
-{
-    auto id0 = MakeVar("id0", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    auto id1 = MakeVar("id1", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    std::vector<std::vector<ir::ExprPtr>> ids = {{id0}, {id1}, {id0}};
-    std::vector<std::vector<int>> candidates = {{0, 1}, {0, 1}, {0, 1}};
-    auto lock = MakeMutexCall("system.mutex_lock_dyn", ids, candidates, ir::PipeType::S);
-    auto unlock = MakeMutexCall("system.mutex_unlock_dyn", ids, candidates, ir::PipeType::S);
+    auto id = MakeVar("id", std::make_shared<const ir::ScalarType>(ir::DataType::UINT32));
+    auto lock = MakeManualMutexCall("system.mutex_lock_dyn", id, ir::PipeType::V);
+    auto unlock = MakeManualMutexCall("system.mutex_unlock_dyn", id, ir::PipeType::V);
     auto body = std::make_shared<const ir::SeqStmts>(
         std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(lock, ir::Span::Unknown()),
                                  std::make_shared<const ir::EvalStmt>(unlock, ir::Span::Unknown())},
         ir::Span::Unknown());
-
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {id0, id1}), npu::tile_fwk::NPUArch::DAV_3510);
-    const std::string acquire_id0 = "get_buf(PIPE_S, id0, 0);";
-    const std::string acquire_id1 = "get_buf(PIPE_S, id1, 0);";
-    const std::string release_id0 = "rls_buf(PIPE_S, id0, 0);";
-    const std::string release_id1 = "rls_buf(PIPE_S, id1, 0);";
-    auto first_acquire_id0 = generated.find(acquire_id0);
-    auto first_release_id0 = generated.find(release_id0);
-    ASSERT_NE(first_acquire_id0, std::string::npos);
-    ASSERT_NE(first_release_id0, std::string::npos);
-    EXPECT_NE(generated.find(acquire_id1), std::string::npos);
-    EXPECT_NE(generated.find(release_id1), std::string::npos);
-    EXPECT_EQ(generated.find(acquire_id0, first_acquire_id0 + acquire_id0.size()), std::string::npos);
-    EXPECT_EQ(generated.find(release_id0, first_release_id0 + release_id0.size()), std::string::npos);
-    EXPECT_EQ(generated.find("id0 != id0"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, MutexDynFoldsConstantDedup)
-{
-    std::vector<std::vector<ir::ExprPtr>> ids = {{MakeConstInt(3)}, {MakeConstInt(7)}, {MakeConstInt(7)}};
-    std::vector<std::vector<int>> candidates = {{3}, {7}, {7}};
-    auto lock = MakeMutexCall("system.mutex_lock_dyn", ids, candidates, ir::PipeType::S);
-    auto unlock = MakeMutexCall("system.mutex_unlock_dyn", ids, candidates, ir::PipeType::S);
-    auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(lock, ir::Span::Unknown()),
-                                 std::make_shared<const ir::EvalStmt>(unlock, ir::Span::Unknown())},
-        ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
-    const std::string acquire7 = "get_buf(PIPE_S, 7, 0);";
-    const std::string release7 = "rls_buf(PIPE_S, 7, 0);";
-    auto first_acquire7 = generated.find(acquire7);
-    auto first_release7 = generated.find(release7);
-    ASSERT_NE(first_acquire7, std::string::npos);
-    ASSERT_NE(first_release7, std::string::npos);
-    EXPECT_EQ(generated.find(acquire7, first_acquire7 + acquire7.size()), std::string::npos);
-    EXPECT_EQ(generated.find(release7, first_release7 + release7.size()), std::string::npos);
-    EXPECT_EQ(generated.find("7 != 3"), std::string::npos);
-    EXPECT_EQ(generated.find("7 != 7"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, MutexDynKeepsOnlyDynamicGuardTerms)
-{
-    auto dynamic_id = MakeVar("dynamic_id", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    std::vector<std::vector<ir::ExprPtr>> ids = {{MakeConstInt(5)}, {dynamic_id}, {MakeConstInt(7)}};
-    std::vector<std::vector<int>> candidates = {{5}, {5, 7}, {7}};
-    auto call = MakeMutexCall("system.mutex_lock_dyn", ids, candidates, ir::PipeType::S);
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {dynamic_id}), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_NE(generated.find("if ((dynamic_id != 5)) {"), std::string::npos);
-    EXPECT_NE(generated.find("if ((7 != dynamic_id)) {"), std::string::npos);
-    EXPECT_EQ(generated.find("7 != 5"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, MutexDynStaticIdsOverrideBroadCandidates)
-{
-    auto dynamic_id = MakeVar("dynamic_id", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    std::vector<std::vector<ir::ExprPtr>> ids = {{MakeConstInt(5)}, {dynamic_id}};
-    std::vector<std::vector<int>> candidates = {{5, 7}, {7}};
-    auto call = MakeMutexCall("system.mutex_lock_dyn", ids, candidates, ir::PipeType::S);
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {dynamic_id}), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_NE(generated.find("get_buf(PIPE_S, 5, 0);"), std::string::npos);
-    EXPECT_NE(generated.find("get_buf(PIPE_S, dynamic_id, 0);"), std::string::npos);
-    EXPECT_EQ(generated.find("dynamic_id != 5"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, MutexDynUsesPerIdCandidatesInMixedTile)
-{
-    auto prior_id = MakeVar("prior_id", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    auto current_id = MakeVar("current_id", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    std::vector<std::vector<ir::ExprPtr>> ids = {{prior_id}, {MakeConstInt(0), current_id}};
-    auto call = MakeMutexCall("system.mutex_lock_dyn", ids, {{1}, {0, 1}}, ir::PipeType::S);
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {prior_id, current_id}),
-                                            npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_NE(generated.find("get_buf(PIPE_S, 0, 0);"), std::string::npos);
-    EXPECT_NE(generated.find("if ((current_id != prior_id)) {"), std::string::npos);
-    EXPECT_EQ(generated.find("0 != prior_id"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, MutexDynGuardPairsSkipDedupWithinOneTile)
-{
-    auto output0 = MakeVar("output0", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    auto output1 = MakeVar("output1", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    auto source = MakeVar("source", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    std::vector<std::vector<ir::ExprPtr>> ids = {{output0, output1}, {source}};
-    std::vector<std::vector<int>> candidates = {{0, 1}, {0, 1}};
-    auto lock = MakeMutexCall("system.mutex_lock_dyn", ids, candidates, ir::PipeType::S);
-    auto unlock = MakeMutexCall("system.mutex_unlock_dyn", ids, candidates, ir::PipeType::S);
-    auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(lock, ir::Span::Unknown()),
-                                 std::make_shared<const ir::EvalStmt>(unlock, ir::Span::Unknown())},
-        ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {output0, output1, source}),
-                                            npu::tile_fwk::NPUArch::DAV_3510);
-    const std::string same_tile_guard = "if ((output1 != output0)) {";
-    const std::string cross_tile_guard = "if ((source != output0) && (source != output1)) {";
-    auto acquire_output0 = generated.find("get_buf(PIPE_S, output0, 0);");
-    auto acquire_output1 = generated.find("get_buf(PIPE_S, output1, 0);", acquire_output0);
-    auto acquire_source_guard = generated.find(cross_tile_guard, acquire_output1);
-    auto release_output0 = generated.find("rls_buf(PIPE_S, output0, 0);", acquire_source_guard);
-    auto release_output1 = generated.find("rls_buf(PIPE_S, output1, 0);", release_output0);
-    auto release_source_guard = generated.find(cross_tile_guard, release_output1);
-    EXPECT_EQ(generated.find(same_tile_guard), std::string::npos);
-    EXPECT_NE(acquire_output0, std::string::npos);
-    EXPECT_NE(acquire_output1, std::string::npos);
-    EXPECT_NE(acquire_source_guard, std::string::npos);
-    EXPECT_NE(release_output0, std::string::npos);
-    EXPECT_NE(release_output1, std::string::npos);
-    EXPECT_NE(release_source_guard, std::string::npos);
-    EXPECT_LT(acquire_output0, acquire_output1);
-    EXPECT_LT(acquire_output1, acquire_source_guard);
-    EXPECT_LT(release_output0, release_output1);
-    EXPECT_LT(release_output1, release_source_guard);
-}
-
-TEST(BackendCceOpsTest, MutexDynDisjointCandidateGroupsEmitWithoutIf)
-{
-    auto id0 = MakeVar("id0", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    auto id1 = MakeVar("id1", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    auto call = MakeMutexCall("system.mutex_lock_dyn", {{id0}, {id1}}, {{0}, {1}}, ir::PipeType::S);
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {id0, id1}), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_NE(generated.find("get_buf(PIPE_S, id0, 0);"), std::string::npos);
-    EXPECT_NE(generated.find("get_buf(PIPE_S, id1, 0);"), std::string::npos);
-    EXPECT_EQ(generated.find("if ((id1 != id0)) {"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, MutexDynChecksOnlyOverlappingCandidateGroups)
-{
-    auto output0 = MakeVar("output0", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    auto output1 = MakeVar("output1", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    auto source = MakeVar("source", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
-    std::vector<std::vector<ir::ExprPtr>> ids = {{output0}, {output1}, {source}};
-    auto call = MakeMutexCall("system.mutex_lock_dyn", ids, {{0}, {1}, {0}}, ir::PipeType::S);
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {output0, output1, source}),
-                                            npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_NE(generated.find("if ((source != output0)) {"), std::string::npos);
-    EXPECT_EQ(generated.find("source != output1"), std::string::npos);
+    auto generated = codegen.GenerateSingle(MakeProgram(body, {id}), npu::tile_fwk::NPUArch::DAV_3510);
+    EXPECT_NE(generated.find("get_buf(PIPE_V, id, 0);"), std::string::npos);
+    EXPECT_NE(generated.find("rls_buf(PIPE_V, id, 0);"), std::string::npos);
+    EXPECT_EQ(generated.find("if ("), std::string::npos);
 }
 
 // ============================================================================
@@ -1043,7 +787,7 @@ TEST(BackendCceOpsTest, BlockMakeTileAndSetValTile)
 {
     auto tile_type = MakeTileType({16, 16}, ir::DataType::FP16);
     auto tile = MakeVar("tile", tile_type);
-    auto make_tile = std::make_shared<const ir::Call>("block.make_tile", std::vector<ir::ExprPtr>{}, tile_type,
+    auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
     auto tile_assign = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
 
@@ -1063,7 +807,7 @@ TEST(BackendCceOpsTest, BlockGetValTile)
 {
     auto tile_type = MakeTileType({16, 16}, ir::DataType::INT32);
     auto tile = MakeVar("tile", tile_type);
-    auto make_tile = std::make_shared<const ir::Call>("block.make_tile", std::vector<ir::ExprPtr>{}, tile_type,
+    auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
     auto tile_assign = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
 
@@ -1078,7 +822,7 @@ TEST(BackendCceOpsTest, BlockGetValTile)
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
-    EXPECT_NE(generated.find("(int64_t)(tile.GetValue(3))"), std::string::npos);
+    EXPECT_NE(generated.find("(int64_t)(tile.tile.GetValue(3))"), std::string::npos);
 }
 
 // ============================================================================
@@ -1146,7 +890,7 @@ TEST(BackendCceOpsTest, BlockSetValTensor)
 // block.subview
 // ============================================================================
 
-TEST(BackendCceOpsTest, BlockSubviewUsesRegisteredAddressAndResultTarget)
+TEST(BackendCceOpsTest, BlockSubviewUsesRuntimeAddressAndResultTarget)
 {
     auto tile = MakeVar("tile", MakeTileType({16, 32}, ir::DataType::FP16, ir::MemorySpace::Vec));
     auto call = std::make_shared<const ir::Call>(
@@ -1159,16 +903,15 @@ TEST(BackendCceOpsTest, BlockSubviewUsesRegisteredAddressAndResultTarget)
     EXPECT_EQ(info->pipe, ir::PipeType::S);
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
-    codegen.SetTileAddress("tile", "0x200");
     codegen.SetCurrentResultTarget("view");
     EXPECT_EQ(info->codegen_func(call, codegen), "view");
 
     auto generated = codegen.GetEmittedCode();
-    EXPECT_NE(generated.find("pto::GetTileOffset<std::remove_reference_t<decltype(tile)>>(3, 0)"), std::string::npos);
-    EXPECT_NE(generated.find("view.SetValidShape(8, 12)"), std::string::npos);
-    EXPECT_TRUE(codegen.HasTileAddress("view"));
-    EXPECT_EQ(codegen.GetTileAddress("view"),
-              "0x200 + ((pto::GetTileOffset<std::remove_reference_t<decltype(tile)>>(3, 0))*16/8)");
+    EXPECT_NE(generated.find("pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(3, 0)"),
+              std::string::npos);
+    EXPECT_NE(generated.find("view.tile.SetValidShape(8, 12)"), std::string::npos);
+    EXPECT_NE(generated.find("TASSIGN(view.tile, (uint64_t)tile.tile.data() + "), std::string::npos);
+    EXPECT_EQ(generated.find("TASSIGN(view.tile, 0x200"), std::string::npos);
 }
 
 TEST(BackendCceOpsTest, BlockSubviewUsesDynamicTileGroupAddressAndGeneratedName)
@@ -1186,20 +929,21 @@ TEST(BackendCceOpsTest, BlockSubviewUsesDynamicTileGroupAddressAndGeneratedName)
     codegen.RegisterVarName(tile, "tiles[index]");
     auto result = info->codegen_func(call, codegen);
 
-    EXPECT_EQ(result, "tiles_index__view_0");
+    EXPECT_EQ(result, "tiles_index__tile_view_0");
     auto generated = codegen.GetEmittedCode();
-    EXPECT_NE(generated.find("pto::GetTileOffset<std::remove_reference_t<decltype(tiles[index])>>(5, 0)"),
+    EXPECT_NE(generated.find("pto::GetTileOffset<std::remove_reference_t<decltype(tiles[index].tile)>>(5, 0)"),
               std::string::npos);
-    EXPECT_NE(generated.find("tiles_index__view_0.SetValidShape(4, 7)"), std::string::npos);
+    EXPECT_NE(generated.find("tiles_index__tile_view_0.tile.SetValidShape(4, 7)"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, BlockSubviewFallsBackToMemRefAddress)
+TEST(BackendCceOpsTest, BlockSubviewUsesRuntimeAddressWithStaticMemRef)
 {
     auto addr = MakeConstInt(0x180, ir::DataType::INDEX);
     auto memref = std::make_shared<const ir::MemRef>(ir::MemorySpace::Vec, addr, 1024, 0, ir::Span::Unknown());
-    auto tile_type = std::make_shared<const ir::TileType>(
-        std::vector<int64_t>{8, 16}, ir::DataType::FP32, std::optional<ir::MemRefPtr>(memref),
-        std::optional<ir::TileView>(std::nullopt), std::optional<ir::HardwareInfo>(ir::HardwareInfo{}));
+    auto tile_type = std::make_shared<const ir::MutexTileType>(
+        ir::TileType(std::vector<int64_t>{8, 16}, ir::DataType::FP32, std::optional<ir::MemRefPtr>(memref),
+                     std::optional<ir::TileView>(std::nullopt), std::optional<ir::HardwareInfo>(ir::HardwareInfo{})),
+        0);
     auto tile = MakeVar("tile", tile_type);
     auto call = std::make_shared<const ir::Call>(
         "block.subview",
@@ -1212,7 +956,9 @@ TEST(BackendCceOpsTest, BlockSubviewFallsBackToMemRefAddress)
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.SetCurrentResultTarget("memref_view");
     EXPECT_EQ(info->codegen_func(call, codegen), "memref_view");
-    EXPECT_NE(codegen.GetEmittedCode().find("pto::GetTileOffset<std::remove_reference_t<decltype(tile)>>(2, 0)"),
+    EXPECT_NE(codegen.GetEmittedCode().find("pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(2, 0)"),
+              std::string::npos);
+    EXPECT_NE(codegen.GetEmittedCode().find("TASSIGN(memref_view.tile, (uint64_t)tile.tile.data() + "),
               std::string::npos);
 }
 
@@ -1230,16 +976,17 @@ TEST(BackendCceOpsTest, BlockSubviewInVFSectionReturnsPointerArithmetic)
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.SetInVFSection(true);
     EXPECT_EQ(info->codegen_func(call, codegen),
-              "(vf_tile_ptr_0 + pto::GetTileOffset<std::remove_reference_t<decltype(tile)>>(7, 0))");
+              "(vf_tile_ptr_0 + pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(7, 0))");
     EXPECT_TRUE(codegen.GetEmittedCode().empty());
 }
 
 TEST(BackendCceOpsTest, BlockSubviewInVFSectionUsesNzElementOffset)
 {
     auto nz_hw = ir::HardwareInfo(ir::TileLayout::col_major, ir::TileLayout::row_major, 512);
-    auto tile_type = std::make_shared<const ir::TileType>(
-        std::vector<int64_t>{32, 32}, ir::DataType::FP16, std::optional<ir::MemRefPtr>(std::nullopt),
-        std::optional<ir::TileView>(std::nullopt), std::optional<ir::HardwareInfo>(nz_hw));
+    auto tile_type = std::make_shared<const ir::MutexTileType>(
+        ir::TileType(std::vector<int64_t>{32, 32}, ir::DataType::FP16, std::optional<ir::MemRefPtr>(std::nullopt),
+                     std::optional<ir::TileView>(std::nullopt), std::optional<ir::HardwareInfo>(nz_hw)),
+        0);
     auto tile = MakeVar("tile", tile_type);
     auto call = std::make_shared<const ir::Call>(
         "block.subview",
@@ -1252,16 +999,17 @@ TEST(BackendCceOpsTest, BlockSubviewInVFSectionUsesNzElementOffset)
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.SetInVFSection(true);
     EXPECT_EQ(info->codegen_func(call, codegen),
-              "(vf_tile_ptr_0 + pto::GetTileOffset<std::remove_reference_t<decltype(tile)>>(16, 16))");
+              "(vf_tile_ptr_0 + pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(16, 16))");
     EXPECT_TRUE(codegen.GetEmittedCode().empty());
 }
 
 TEST(BackendCceOpsTest, BlockSubviewUsesDnElementOffset)
 {
     ir::HardwareInfo hardware_info(ir::TileLayout::col_major);
-    auto tile_type = std::make_shared<const ir::TileType>(
-        std::vector<int64_t>{16, 32}, ir::DataType::FP16, std::optional<ir::MemRefPtr>(std::nullopt),
-        std::optional<ir::TileView>(std::nullopt), std::optional<ir::HardwareInfo>(hardware_info));
+    auto tile_type = std::make_shared<const ir::MutexTileType>(
+        ir::TileType(std::vector<int64_t>{16, 32}, ir::DataType::FP16, std::optional<ir::MemRefPtr>(std::nullopt),
+                     std::optional<ir::TileView>(std::nullopt), std::optional<ir::HardwareInfo>(hardware_info)),
+        0);
     auto tile = MakeVar("tile", tile_type);
     auto call = std::make_shared<const ir::Call>(
         "block.subview",
@@ -1272,10 +1020,9 @@ TEST(BackendCceOpsTest, BlockSubviewUsesDnElementOffset)
     ASSERT_NE(info, nullptr);
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
-    codegen.SetTileAddress("tile", "0x200");
     codegen.SetCurrentResultTarget("view");
     EXPECT_EQ(info->codegen_func(call, codegen), "view");
-    EXPECT_NE(codegen.GetEmittedCode().find("pto::GetTileOffset<std::remove_reference_t<decltype(tile)>>(3, 5)"),
+    EXPECT_NE(codegen.GetEmittedCode().find("pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(3, 5)"),
               std::string::npos);
 }
 
@@ -1373,7 +1120,7 @@ TEST(BackendCceOpsTest, DcciTileDefaultKwargs)
 {
     auto tile_type = MakeTileType({16, 16}, ir::DataType::FP16, ir::MemorySpace::Vec);
     auto tile = MakeVar("tile", tile_type);
-    auto make_tile = std::make_shared<const ir::Call>("block.make_tile", std::vector<ir::ExprPtr>{}, tile_type,
+    auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
     auto tile_assign = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
 
@@ -1601,7 +1348,7 @@ TEST(BackendCceOpsTest, DebugDumpTileFullAndWindow)
     auto tile = MakeVar("tile", MakeTileType({16, 32}, ir::DataType::FP16));
     auto full_call = std::make_shared<const ir::Call>("debug.dump_tile", std::vector<ir::ExprPtr>{tile},
                                                       ir::Span::Unknown());
-    EXPECT_NE(RunCodegen("debug.dump_tile", full_call).find("TPRINT(tile);"), std::string::npos);
+    EXPECT_NE(RunCodegen("debug.dump_tile", full_call).find("TPRINT(tile.tile);"), std::string::npos);
 
     auto window_call = std::make_shared<const ir::Call>(
         "debug.dump_tile",
@@ -1610,8 +1357,8 @@ TEST(BackendCceOpsTest, DebugDumpTileFullAndWindow)
         ir::Span::Unknown());
     auto generated = RunCodegen("debug.dump_tile", window_call);
     EXPECT_NE(generated.find("[TPRINT Tile Window]"), std::string::npos);
-    EXPECT_NE(generated.find("tile.GetValidRow() - (2)"), std::string::npos);
-    EXPECT_NE(generated.find("pto::GetTileOffset<std::remove_reference_t<decltype(tile)>>"), std::string::npos);
+    EXPECT_NE(generated.find("tile.tile.GetValidRow() - (2)"), std::string::npos);
+    EXPECT_NE(generated.find("pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>"), std::string::npos);
     EXPECT_NE(generated.find("__pypto_dtype_name"), std::string::npos);
     EXPECT_NE(generated.find("__pypto_print_val"), std::string::npos);
 }

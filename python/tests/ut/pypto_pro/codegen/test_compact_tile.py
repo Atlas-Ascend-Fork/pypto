@@ -11,7 +11,7 @@
 """Unit tests for compact mode propagation through Block tile creation."""
 
 from pypto_pro import DataType, ir
-from pypto_pro.ir.op.block_ops import make_tile_expr
+from pypto_pro.ir.op.block_ops import make_mutex_tile_expr
 import pypto_pro.language as pl
 import pytest
 
@@ -55,7 +55,7 @@ def test_tile_type_descriptor_stores_compact(compact):
 )
 def test_compact_stored_in_make_tile_type(compact, expected):
     kwargs = {"compact": compact} if compact is not None else {}
-    call = make_tile_expr(
+    call = make_mutex_tile_expr(
         shape=[128, 128],
         dtype=DataType.FP16,
         target_memory=MemorySpace.Left,

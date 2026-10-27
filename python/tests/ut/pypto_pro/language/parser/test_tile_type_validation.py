@@ -92,7 +92,7 @@ def test_tile_type_bias_single_row_allowed():
         _ = g.next()
 
     ir_str = str(_parse(k))
-    assert "block.make_tile" in ir_str
+    assert "block.make_mutex_tile" in ir_str
 
 
 def test_tile_type_bias_non_nd_layout_rejected():
@@ -402,7 +402,7 @@ def test_make_tile_group_bwd_fwd_ids_ignored_for_compat():
         _ = g.next()
 
     ir_str = str(_parse(k))
-    assert "block.make_tile" in ir_str
+    assert "block.make_mutex_tile" in ir_str
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +420,7 @@ def test_valid_dynamic_valid_shape_allowed():
         pl.load(g.next(), x, [0, 0])
 
     ir_str = str(_parse(k))
-    assert "block.make_tile" in ir_str
+    assert "block.make_mutex_tile" in ir_str
 
 
 def test_valid_contiguous_addrs_expansion():
@@ -443,7 +443,7 @@ def test_valid_acc_default_fractal():
         _ = g.next()
 
     ir_str = str(_parse(k))
-    assert "block.make_tile" in ir_str
+    assert "block.make_mutex_tile" in ir_str
 
 
 def test_valid_fractal_512_on_left_allowed():
@@ -456,7 +456,7 @@ def test_valid_fractal_512_on_left_allowed():
         _ = g.next()
 
     ir_str = str(_parse(k))
-    assert "block.make_tile" in ir_str
+    assert "block.make_mutex_tile" in ir_str
 
 
 def test_valid_compact_row_plus_one_allowed():
@@ -470,4 +470,4 @@ def test_valid_compact_row_plus_one_allowed():
         _ = g.next()
 
     ir_str = str(_parse(k))
-    assert "block.make_tile" in ir_str
+    assert "block.make_mutex_tile" in ir_str

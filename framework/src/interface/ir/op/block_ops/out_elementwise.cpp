@@ -12,8 +12,8 @@
  * @file block_ops/out_elementwise.cpp
  * \brief Block element-wise operations with explicit output tiles.
  *
- * All ops accept a pre-allocated output tile as the last argument and return
- * that tile's type.  This file covers:
+ * All ops accept a pre-allocated output tile as the first argument and return
+ * NoneType. This file covers:
  *   - Tile x Tile binary: add, sub, mul, div, rem, maximum, minimum, and, or, shl, shr
  *   - Tile x Scalar binary: adds, subs, muls, divs, rems, ands, ors, shls, shrs, maxs, mins, lrelu
  *   - Unary: neg, exp, sqrt, rsqrt, recip, log, abs, relu, not, cast
@@ -70,10 +70,10 @@ static TypePtr DeduceBlockOutBinaryTile([[maybe_unused]] const std::vector<ExprP
     CheckTileArg(args, 0, op_name, {MemorySpace::Vec});
     CheckTileArg(args, 1, op_name, {MemorySpace::Vec}); // NOLINT: lhs index
     CheckTileArg(args, 2, op_name, {MemorySpace::Vec}); // NOLINT: rhs index
-    return DeduceBlockOutTileType(args, kwargs, op_name, 0x3);
+    return DeduceBlockOutType(args, kwargs, op_name, 0x3);
 }
 
-// Type deduction for (out:TileType, TileType, ScalarType) -> out.
+// Type deduction for (out:TileType, TileType, ScalarType) -> NoneType.
 static TypePtr DeduceBlockOutBinaryScalar([[maybe_unused]] const std::vector<ExprPtr>& args,
                                           [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
                                           const std::string& op_name)
@@ -83,10 +83,10 @@ static TypePtr DeduceBlockOutBinaryScalar([[maybe_unused]] const std::vector<Exp
     CheckTileArg(args, 0, op_name, {MemorySpace::Vec});
     CheckTileArg(args, 1, op_name, {MemorySpace::Vec}); // NOLINT: lhs index
     CheckScalarArg(args, 2, op_name);                   // NOLINT: rhs index
-    return DeduceBlockOutTileType(args, kwargs, op_name, 0x3);
+    return DeduceBlockOutType(args, kwargs, op_name, 0x3);
 }
 
-// Type deduction for (out:TileType, TileType) -> out  (unary).
+// Type deduction for (out:TileType, TileType) -> NoneType  (unary).
 static TypePtr DeduceBlockOutUnary([[maybe_unused]] const std::vector<ExprPtr>& args,
                                    [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
                                    const std::string& op_name)
@@ -94,7 +94,7 @@ static TypePtr DeduceBlockOutUnary([[maybe_unused]] const std::vector<ExprPtr>& 
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x2) << op_name << " requires 2 arguments (out, src)";
     CheckTileArg(args, 0, op_name, {MemorySpace::Vec});
     CheckTileArg(args, 1, op_name, {MemorySpace::Vec});
-    return DeduceBlockOutTileType(args, kwargs, op_name, 0x2);
+    return DeduceBlockOutType(args, kwargs, op_name, 0x2);
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +138,7 @@ REGISTER_BLOCK_OUT_BINARY_TILE(partmul);
 
 #undef REGISTER_BLOCK_OUT_BINARY_TILE
 
-// block.add_relu_cast: (out, lhs_tile, rhs_tile) -> out's type; carries target_type and mode attrs.
+// block.add_relu_cast: (out, lhs_tile, rhs_tile) -> NoneType; carries target_type and mode attrs.
 REGISTER_OP("block.add_relu_cast")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output add-relu-cast: out = cast(max(0, lhs + rhs), target_dtype, rounding_mode)")
@@ -152,7 +152,7 @@ REGISTER_OP("block.add_relu_cast")
         return DeduceBlockOutBinaryTile(args, kwargs, "block.add_relu_cast");
     });
 
-// block.sub_relu_cast: (out, lhs_tile, rhs_tile) -> out's type; carries target_type and mode attrs.
+// block.sub_relu_cast: (out, lhs_tile, rhs_tile) -> NoneType; carries target_type and mode attrs.
 REGISTER_OP("block.sub_relu_cast")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output sub-relu-cast: out = cast(max(0, lhs - rhs), target_dtype, rounding_mode)")
@@ -166,7 +166,7 @@ REGISTER_OP("block.sub_relu_cast")
         return DeduceBlockOutBinaryTile(args, kwargs, "block.sub_relu_cast");
     });
 
-// block.mul_cast: (out, lhs_tile, rhs_tile) -> out's type; carries target_type and mode attrs.
+// block.mul_cast: (out, lhs_tile, rhs_tile) -> NoneType; carries target_type and mode attrs.
 REGISTER_OP("block.mul_cast")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output mul-cast: out = cast(lhs * rhs, target_dtype_dtype, rounding_mode)")
@@ -212,8 +212,8 @@ REGISTER_BLOCK_OUT_BINARY_SCALAR(axpy);
 #undef REGISTER_BLOCK_OUT_BINARY_SCALAR
 
 // block.gather: Two forms:
-//   Index form: (out, src_tile, indices_tile) or (out, src_tile, indices_tile, tmp) -> out's type
-//   Compare form: (out, src_tile, k_value_tile, cdst_tile, tmp_tile) + kwargs(cmp_mode, offset) -> out's type
+//   Index form: (out, src_tile, indices_tile) or (out, src_tile, indices_tile, tmp) -> NoneType
+//   Compare form: (out, src_tile, k_value_tile, cdst_tile, tmp_tile) + kwargs(cmp_mode, offset) -> NoneType
 REGISTER_OP("block.gather")
     .set_op_category("BlockOp")
     .set_description(
@@ -237,18 +237,18 @@ REGISTER_OP("block.gather")
                     has_cmp_mode = true;
             }
             if (!has_cmp_mode) {
-                return DeduceBlockOutTileType(args, kwargs, "block.gather", args.size());
+                return DeduceBlockOutType(args, kwargs, "block.gather", args.size());
             }
         }
         // Compare form: 5 args (out, src, k_value, cdst, tmp) + cmp_mode + offset
         if (args.size() == 5) {
-            return DeduceBlockOutTileType(args, kwargs, "block.gather", 5);
+            return DeduceBlockOutType(args, kwargs, "block.gather", 5);
         }
         PRO_IR_THROW(std::runtime_error, ExternalError::INVALID_ARGUMENT)
             << "block.gather: expected index form (3-4 args) or compare form (5 args + cmp_mode)";
     });
 
-// block.gatherb: (out, src_tile, offsets_tile) -> out's type
+// block.gatherb: (out, src_tile, offsets_tile) -> NoneType
 REGISTER_OP("block.gatherb")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output gatherb: out[i] = src[byte_offsets[i]]")
@@ -257,10 +257,10 @@ REGISTER_OP("block.gatherb")
     .add_argument("offsets", "Byte offset tile (TileType)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.gatherb", 3);
+        return DeduceBlockOutType(args, kwargs, "block.gatherb", 3);
     });
 
-// block.gathermask: (out, src_tile) + kwargs(pattern_mode) -> out's type
+// block.gathermask: (out, src_tile) + kwargs(pattern_mode) -> NoneType
 // Gathers elements where the corresponding bit in the pattern is 1.
 REGISTER_OP("block.gathermask")
     .set_op_category("BlockOp")
@@ -270,10 +270,10 @@ REGISTER_OP("block.gathermask")
     .set_attr<int>("pattern_mode")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.gathermask", 2);
+        return DeduceBlockOutType(args, kwargs, "block.gathermask", 2);
     });
 
-// block.scatter: (dst, src_tile, indices_tile) -> dst's type
+// block.scatter: (dst, src_tile, indices_tile) -> NoneType
 // Semantics: dst[indices[i,j], j] = src[i, j]
 REGISTER_OP("block.scatter")
     .set_op_category("BlockOp")
@@ -283,7 +283,7 @@ REGISTER_OP("block.scatter")
     .add_argument("indices", "Index tile (TileType, INT32)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.scatter", 3);
+        return DeduceBlockOutType(args, kwargs, "block.scatter", 3);
     });
 
 // ---------------------------------------------------------------------------
@@ -313,7 +313,7 @@ REGISTER_BLOCK_OUT_UNARY(not );
 
 #undef REGISTER_BLOCK_OUT_UNARY
 
-// block.cast: (out, src_tile) -> out's type; carries target_type and mode attrs.
+// block.cast: (out, src_tile) -> NoneType; carries target_type and mode attrs.
 REGISTER_OP("block.cast")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output type-cast: out = cast(src, target_dtype, rounding_mode)")
@@ -346,7 +346,7 @@ REGISTER_OP("block.xor")
         CheckTileArg(args, 1, "block.xor", {MemorySpace::Vec});
         CheckTileArg(args, 2, "block.xor", {MemorySpace::Vec});
         CheckTileArg(args, 3, "block.xor", {MemorySpace::Vec});
-        return DeduceBlockOutTileType(args, kwargs, "block.xor", 4);
+        return DeduceBlockOutType(args, kwargs, "block.xor", 4);
     });
 
 // XOR-scalar with tmp buffer (out, tile, scalar, tmp): 4 args.
@@ -364,7 +364,7 @@ REGISTER_OP("block.xors")
         CheckTileArg(args, 0, "block.xors", {MemorySpace::Vec});
         CheckTileArg(args, 1, "block.xors", {MemorySpace::Vec});
         CheckTileArg(args, 3, "block.xors", {MemorySpace::Vec});
-        return DeduceBlockOutTileType(args, kwargs, "block.xors", 4);
+        return DeduceBlockOutType(args, kwargs, "block.xors", 4);
     });
 
 // Selection (out, mask, lhs, rhs, tmp): 5 args.
@@ -386,7 +386,7 @@ REGISTER_OP("block.sel")
         CheckTileArg(args, 2, "block.sel", {MemorySpace::Vec});
         CheckTileArg(args, 3, "block.sel", {MemorySpace::Vec});
         CheckTileArg(args, 4, "block.sel", {MemorySpace::Vec});
-        return DeduceBlockOutTileType(args, kwargs, "block.sel", 5);
+        return DeduceBlockOutType(args, kwargs, "block.sel", 5);
     });
 
 // sels (out, mask, src, tmp, scalar): 5 args.
@@ -408,7 +408,7 @@ REGISTER_OP("block.sels")
         CheckTileArg(args, 1, "block.sels", {MemorySpace::Vec});
         CheckTileArg(args, 2, "block.sels", {MemorySpace::Vec});
         CheckTileArg(args, 3, "block.sels", {MemorySpace::Vec});
-        return DeduceBlockOutTileType(args, kwargs, "block.sels", 5);
+        return DeduceBlockOutType(args, kwargs, "block.sels", 5);
     });
 
 // ---------------------------------------------------------------------------
@@ -454,7 +454,7 @@ static TypePtr DeduceBlockOutExpands([[maybe_unused]] const std::vector<ExprPtr>
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x2)
         << op_name << " requires 2 arguments (out, scalar)";
     CheckTileArg(args, 0, op_name, {MemorySpace::Vec, MemorySpace::Mat});
-    return DeduceBlockOutTileType(args, kwargs, op_name, 0x2);
+    return DeduceBlockOutType(args, kwargs, op_name, 0x2);
 }
 
 REGISTER_OP("block.expands")
@@ -474,14 +474,14 @@ REGISTER_OP("block.fill_index")
     .add_argument("start", "Starting index value (ScalarType or constant)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.fill_index", 2);
+        return DeduceBlockOutType(args, kwargs, "block.fill_index", 2);
     });
 
 // ---------------------------------------------------------------------------
 // Layout operations
 // ---------------------------------------------------------------------------
 
-// block.reshape: (out, src_tile, shape_tuple) -> out's type.
+// block.reshape: (out, src_tile, shape_tuple) -> NoneType.
 REGISTER_OP("block.reshape")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output reshape: reinterpret src tile layout into out's shape")
@@ -490,10 +490,10 @@ REGISTER_OP("block.reshape")
     .add_argument("shape", "New shape dimensions (MakeTuple)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.reshape", 3);
+        return DeduceBlockOutType(args, kwargs, "block.reshape", 3);
     });
 
-// block.transpose: (out, src_tile) -> out's type; swaps the last two dimensions.
+// block.transpose: (out, src_tile) -> NoneType; swaps the last two dimensions.
 REGISTER_OP("block.transpose")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output transpose: swap the last two dimensions of src tile into out")
@@ -508,7 +508,7 @@ REGISTER_OP("block.transpose")
 // Quantize / Dequantize operations
 // ---------------------------------------------------------------------------
 
-// block.quant: (out, src, scale [, offset]) -> out's type; mode kwarg ("sym" or "asym").
+// block.quant: (out, src, scale [, offset]) -> NoneType; mode kwarg ("sym" or "asym").
 REGISTER_OP("block.quant")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output quantize: TQuant (FP32 -> INT8/UINT8)")
@@ -522,10 +522,10 @@ REGISTER_OP("block.quant")
             << "block.quant requires 3 args (sym) or 4 args (asym), got " << args.size();
         auto out_type = As<TileType>(args.front()->GetType());
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, out_type) << "block.quant: first argument (out) must be TileType";
-        return out_type;
+        return GetNoneType();
     });
 
-// block.dequant: (out, src, scale, offset) -> out's type.
+// block.dequant: (out, src, scale, offset) -> NoneType.
 REGISTER_OP("block.dequant")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output dequantize: TDequant (INT8/INT16 -> FP32)")
@@ -535,7 +535,7 @@ REGISTER_OP("block.dequant")
     .add_argument("offset", "Zero-point offset tile (TileType, FP32)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.dequant", 4);
+        return DeduceBlockOutType(args, kwargs, "block.dequant", 4);
     });
 
 } // namespace ir

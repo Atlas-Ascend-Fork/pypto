@@ -10,6 +10,8 @@
 # -----------------------------------------------------------------------------------------------------------
 """CCE codegen tests for per-tile-aware dynamic mutex deduplication."""
 
+import re
+
 import pypto_pro.language as pl
 from pypto_pro.runtime.platform import NpuArch
 
@@ -39,31 +41,19 @@ def _mixed_multi_mutex_ids_kernel(x: pl.Tensor[[64, 32], pl.DT_FP16]):
 def test_cce_dynamic_mutex_dedup_skips_same_tile_comparisons():
     cpp = _compile_to_cce(_mixed_multi_mutex_ids_kernel)
 
-    source_mutex = "_tg_source_group_mutex_ids_0[index__iterator_0]"
-    output_mutex0 = "_tg_output_group_mutex_ids_0[index__iterator_0]"
-    output_mutex1 = "_tg_output_group_mutex_ids_1_0[index__iterator_0]"
-    same_tile_guard = f"({output_mutex1} != {output_mutex0})"
-    cross_tile_guard = (
-        f"({source_mutex} != {output_mutex0}) && "
-        f"({source_mutex} != {output_mutex1})"
-    )
     assert "source_tile__mutexid" not in cpp
     assert "output_tile__mutexid" not in cpp
-    assert same_tile_guard not in cpp
-    assert cpp.count(cross_tile_guard) == 2
-    assert cpp.count(f"get_buf(PIPE_S, {output_mutex0}, 0);") == 2
-    assert cpp.count(f"get_buf(PIPE_S, {output_mutex1}, 0);") == 2
-    assert cpp.count(f"rls_buf(PIPE_S, {output_mutex1}, 0);") == 2
-    assert cpp.count(f"rls_buf(PIPE_S, {output_mutex0}, 0);") == 2
-
-    acquire_output0 = cpp.index(f"get_buf(PIPE_V, {output_mutex0}, 0);")
-    acquire_output1 = cpp.index(f"get_buf(PIPE_V, {output_mutex1}, 0);", acquire_output0)
-    acquire_source = cpp.index(cross_tile_guard, acquire_output1)
-    release_output0 = cpp.index(f"rls_buf(PIPE_V, {output_mutex0}, 0);", acquire_source)
-    release_output1 = cpp.index(f"rls_buf(PIPE_V, {output_mutex1}, 0);", release_output0)
-    release_source = cpp.index(cross_tile_guard, release_output1)
-    assert acquire_output0 < acquire_output1 < acquire_source
-    assert release_output0 < release_output1 < release_source
+    assert ".mutex_ids[0]" in cpp and ".mutex_ids[1]" in cpp
+    # Only the first output slot can overlap the source candidates.
+    # Compute that comparison once and reuse it at acquisition/release.
+    assert cpp.count(" != ") == 1
+    guards = re.findall(r"if \((__sync_needed_\w+)\)", cpp)
+    assert len(guards) == 2 and guards[0] == guards[1]
+    assert cpp.count("get_buf(PIPE_S,") == cpp.count("rls_buf(PIPE_S,") == 4
+    acquire_ids = re.findall(r"get_buf\(PIPE_V, (\w+), 0\);", cpp)
+    release_ids = re.findall(r"rls_buf\(PIPE_V, (\w+), 0\);", cpp)
+    assert len(acquire_ids) == 3
+    assert acquire_ids == release_ids
 
 
 @pl.jit(auto_mutex=True)
@@ -78,11 +68,11 @@ def _auto_mutex_ids_kernel(x: pl.Tensor[[64, 32], pl.DT_FP16]):
             pl.store(x, auto_tile, [index * 32, 0])
 
 
-def test_cce_auto_mutex_ids_use_existing_dynamic_lock_path():
+def test_cce_resolved_auto_mutex_ids_use_scalar_sync():
     cpp = _compile_to_cce(_auto_mutex_ids_kernel)
 
-    auto_mutex = "_tg_auto_group_mutex_ids_0[index__iterator_0]"
-    assert f"get_buf(PIPE_MTE2, {auto_mutex}, 0);" in cpp
-    assert f"rls_buf(PIPE_MTE2, {auto_mutex}, 0);" in cpp
-    assert f"get_buf(PIPE_MTE3, {auto_mutex}, 0);" in cpp
-    assert f"rls_buf(PIPE_MTE3, {auto_mutex}, 0);" in cpp
+    assert ".mutex_ids[0]" in cpp
+    assert "__pypto_auto_mutex_id_" not in cpp
+    for pipe in ("MTE2", "MTE3"):
+        assert cpp.count(f"get_buf(PIPE_{pipe},") == 1
+        assert cpp.count(f"rls_buf(PIPE_{pipe},") == 1

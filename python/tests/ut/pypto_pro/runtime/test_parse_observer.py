@@ -32,7 +32,7 @@ def test_observer_sees_final_program_once():
         ir.SectionKind.Vector, observer=lambda p, parser: calls.append((p, parser)))
     assert matched and len(calls) == 1
     assert calls[0][0].same_as(program)
-    assert calls[0][1].tile_group_meta and calls[0][1]._tile_mutex_meta
+    assert calls[0][1].tile_group_meta
     assert "__pypto_auto_mutex_id_" not in ir.python_print(program)
     definition.parse_target_program(ir.SectionKind.Cube)
     assert len(calls) == 1

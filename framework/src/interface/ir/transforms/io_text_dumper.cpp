@@ -153,6 +153,13 @@ void IRTextDumper::VisitType_(const TileTypePtr& op)
     stream_ << IR_PUN_GT;
 }
 
+void IRTextDumper::VisitType_(const MutexTileTypePtr& op)
+{
+    stream_ << IR_KW_MUTEX_TILE << IR_PUN_LT;
+    VisitType_(std::static_pointer_cast<const TileType>(op));
+    stream_ << IR_PUN_COMMA << " " << op->mutexCount_ << IR_PUN_GT;
+}
+
 void IRTextDumper::VisitType_(const TupleTypePtr& op)
 {
     stream_ << IR_KW_TUPLE << IR_PUN_LT;

@@ -24,6 +24,7 @@ _BLOCK_OP_ALIASES: dict[str, str] = {
     "ge": "cmp",
     "select": "sel",
     "load_tile": "load",
+    "make_tile": "make_mutex_tile",
     "not_": "not",
     "or_": "or",
     "sum": "row_sum",
@@ -41,7 +42,7 @@ _BLOCK_OP_ALIASES: dict[str, str] = {
 
 
 def get_op_pipe(op_name: str) -> PipeType | None:
-    """Return the pipe registered by the CCE backend for a block op."""
+    """Return the fixed backend pipe, or None when arguments determine the pipe."""
     backend_op_name = _BLOCK_OP_ALIASES.get(op_name, op_name)
     return BackendCCE.instance().get_op_pipe(f"block.{backend_op_name}")
 
@@ -97,6 +98,11 @@ def get_store_pipe(src_memory: MemorySpace | None) -> PipeType:
     if src_memory == MemorySpace.Acc:
         return PipeType.FIX
     return PipeType.MTE3
+
+
+def get_expands_pipe(target_memory: MemorySpace) -> PipeType:
+    """Scalar broadcast uses MTE2 for Mat tiles and V for Vec tiles."""
+    return PipeType.MTE2 if target_memory == MemorySpace.Mat else PipeType.V
 
 
 # ----------------------------------------------------------------------------

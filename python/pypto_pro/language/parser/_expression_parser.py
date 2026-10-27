@@ -18,7 +18,7 @@ from pypto.pypto_impl import ir
 from pypto.pypto_impl.ir import DataType
 from pypto_pro.ir import op as ir_op
 from pypto_pro.ir._operators import make_binary as _make_binary
-from pypto_pro.ir._utils import _const_int_value, _normalize_expr, _to_make_tuple
+from pypto_pro.ir._utils import _const_int_value, _normalize_expr
 
 from ..._errors import (
     InvalidFormat,
@@ -180,10 +180,6 @@ class ExpressionParserMixin:
         # Emit EvalStmt using builder method
         self.builder.eval_stmt(expr, span)
 
-        # Auto-mutex: emit deferred mutex_unlock AFTER the op
-        if self._auto_mutex:
-            self._emit_auto_mutex_unlocks()
-
     def parse_expression(self, expr: ast.expr, *, nested: bool = True) -> Any:
         """Parse expression and return IR Expr.
 
@@ -311,33 +307,6 @@ class ExpressionParserMixin:
             parser_retry=True,
         )
 
-    def none_with_mutex_meta(self, span: ir.Span) -> ir.Expr:
-        """The ``None`` sentinel, carrying mutex metadata that stands for "no buffer".
-
-        A merge slot with no initial value is seeded with ``slot = None`` before its control
-        flow. Treating that seed as a tile whose buffer is unknown gives the mutex-id companion
-        a definition at the same place, so loop construction carries the companion in lockstep
-        with the slot itself and a use after the loop locks the buffer the run actually selected.
-        The empty candidate list marks the seed as holding no buffer of its own, and
-        auto_mutex skips locking on it (see tile_mutex_lock_meta).
-        """
-        none_expr = self.builder.builder.none()
-        if self._auto_mutex and none_expr not in self._tile_mutex_meta:
-            self._tile_mutex_meta[none_expr] = (
-                _to_make_tuple([ir.ConstInt(-1, DataType.INT64, span)], span),
-                _to_make_tuple([], span),
-            )
-        return none_expr
-
-    def tile_mutex_lock_meta(self, expr):
-        """Mutex metadata for *expr*, but only when it names a buffer worth locking.
-
-        Propagation sites want the metadata as recorded; lock sites want it only when there are
-        candidate ids, so the ``None`` seed (which carries none) never turns into a lock.
-        """
-        meta = self._tile_mutex_meta.get(expr)
-        return meta if meta is not None and meta[1].elements else None
-
     def parse_constant(self, const: ast.Constant) -> ir.Expr:
         """Parse constant value.
 
@@ -360,7 +329,7 @@ class ExpressionParserMixin:
         elif isinstance(value, str):
             return value
         elif value is None:
-            return self.none_with_mutex_meta(span)
+            return self.builder.builder.none()
         else:
             raise InvalidType(
                 f"Unsupported constant type: {type(value)}",
@@ -895,14 +864,7 @@ class ExpressionParserMixin:
             from pypto_pro.ir.op.block_ops import _ir_getval
             is_simt = self._current_func_type in (ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee)
             result = _ir_getval(value_expr, index_expr, preserve_dtype=is_simt, span=span)
-            mutex_locked = False
-            if self._auto_mutex:
-                from ._op_pipeline import get_op_pipe
-                pipe = get_op_pipe("getval")
-                mutex_locked = self._emit_mutex_for_tile(value_expr, pipe, span, is_lock=True)
-            if mutex_locked:
-                result = self._materialize_nested_expr(result, span)
-                self._emit_mutex_for_tile(value_expr, pipe, span, is_lock=False)
+            result = self._materialize_nested_expr(result, span)
             return result
 
         if not isinstance(value_type, ir.TupleType):
@@ -944,13 +906,6 @@ class ExpressionParserMixin:
         # backing array. struct_array stays as a Var here because it is not a
         # parser constant; ordinary tuples may remain folded MakeTuple values.
         item_expr = ir.GetItemExpr(value_expr, index_expr, span)
-        # A subscript aliases the base's buffer, so carry the base's mutex
-        # metadata onto the item.  auto_mutex then locks accesses to the item on
-        # the base's Tile-ID metadata; it is consumed when the item is bound to a var (see
-        # _transfer_tile_sync_metadata).
-        meta = self._tile_mutex_meta.get(value_expr)
-        if meta is not None:
-            self._tile_mutex_meta[item_expr] = meta
         return item_expr
 
     def _is_struct_array_tuple(self, tuple_value: ir.MakeTuple) -> bool:
@@ -1466,8 +1421,6 @@ class ExpressionParserMixin:
             span,
         )
 
-        # Propagate tile mutex metadata for auto_mutex
-        self._transfer_tile_sync_metadata(view_expr, container_expr)
         return view_expr
 
     def _mark_make_tuple_anchor(self, result) -> None:
@@ -1504,8 +1457,7 @@ class ExpressionParserMixin:
         name = f"_expr_tmp_{self._expr_tmp_counter}"
         self._expr_tmp_counter += 1
         value = self.builder.let(name, result, span=span)
-        self._transfer_tile_sync_metadata(value, result)
-        self._emit_auto_mutex_unlocks()
+        self._transfer_tile_group_metadata(value, result)
         return value
 
     def _route_ir_node_method(self, node: ast.Call):

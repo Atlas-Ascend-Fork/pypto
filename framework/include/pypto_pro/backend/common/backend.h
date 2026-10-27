@@ -88,8 +88,8 @@ public:
     /**
      * \brief Finalize registration in destructor
      *
-     * Automatically registers the operator with the backend if both
-     * pipe type and codegen function are set.
+     * Registers the operator when its codegen function is set. An omitted
+     * pipe means that the execution pipe depends on the operation's arguments.
      */
     ~BackendOpRegistryEntry();
 
@@ -126,7 +126,7 @@ public:
      * and code generation function.
      */
     struct BackendOpInfo {
-        ir::PipeType pipe;
+        std::optional<ir::PipeType> pipe;
         BackendCodegenFunc codegen_func;
     };
 
@@ -154,10 +154,10 @@ public:
      * Internal method called by BackendOpRegistryEntry destructor.
      *
      * \param op_name Operator name
-     * \param pipe Pipeline type
+     * \param pipe Fixed pipeline type, or nullopt for argument-dependent operations
      * \param func Code generation function
      */
-    void FinalizeOpRegistration(const std::string& op_name, ir::PipeType pipe, BackendCodegenFunc func);
+    void FinalizeOpRegistration(const std::string& op_name, std::optional<ir::PipeType> pipe, BackendCodegenFunc func);
 
     /**
      * \brief Get backend-specific operator information

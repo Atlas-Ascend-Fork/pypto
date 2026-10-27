@@ -34,7 +34,26 @@
 
 namespace pypto {
 namespace backend {
+
+TEST(BackendCceBlockOutOpsTest, ArgumentDependentPipesKeepTheirCodegenRegistration)
+{
+    for (const auto* name : {"block.move", "block.insert", "block.store", "block.expands", "block.full"}) {
+        const auto* info = BackendCCE::Instance().GetOpInfo(name);
+        ASSERT_NE(info, nullptr) << name;
+        EXPECT_FALSE(info->pipe.has_value()) << name;
+        EXPECT_TRUE(static_cast<bool>(info->codegen_func)) << name;
+    }
+}
+
 namespace {
+
+std::vector<ir::ExprPtr> MakeTileOperands(const ir::TypePtr& type)
+{
+    auto tile = std::dynamic_pointer_cast<const ir::TileType>(type);
+    auto empty = std::make_shared<const ir::MakeTuple>(std::vector<ir::ExprPtr>{}, ir::Span::Unknown());
+    auto shape = std::make_shared<const ir::MakeTuple>(tile->shape_, ir::Span::Unknown());
+    return {shape, empty, empty};
+}
 
 class TestableCCECodegen : public codegen::CCECodegen {
 public:
@@ -57,7 +76,7 @@ ir::TypePtr MakeTileType(std::vector<int64_t> shape = {16, 16}, ir::DataType dty
                          std::optional<ir::MemRefPtr> memref = std::nullopt,
                          std::optional<ir::HardwareInfo> hw = std::nullopt)
 {
-    return std::make_shared<const ir::TileType>(shape, dtype, memref, std::nullopt, hw);
+    return std::make_shared<const ir::MutexTileType>(ir::TileType(shape, dtype, memref, std::nullopt, hw), 0);
 }
 
 ir::TypePtr MakeTensorType(std::vector<int64_t> shape = {32, 32}, ir::DataType dtype = ir::DataType::FP16)
@@ -160,11 +179,11 @@ std::string RunSsbufCodegen(const std::string& op_name)
     return codegen.GenerateSingle(MakeProgram(body, {}, debug_info), npu::tile_fwk::NPUArch::DAV_3510);
 }
 
-// A `tile = block.make_tile()` statement, which is what declares *tile* in the generated code.
+// A `tile = block.make_mutex_tile()` statement, which is what declares *tile* in the generated code.
 ir::StmtPtr MakeTileAssign(const ir::VarPtr& tile)
 {
-    auto make_tile = std::make_shared<const ir::Call>("block.make_tile", std::vector<ir::ExprPtr>{}, tile->GetType(),
-                                                      ir::Span::Unknown());
+    auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile->GetType()),
+                                                      tile->GetType(), ir::Span::Unknown());
     return std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
 }
 
@@ -225,13 +244,13 @@ TEST_P(BinaryOpTest, EmitsCorrectCode)
     auto tile = MakeTileType();
     auto call = MakeCall(p.op_name, {MakeVar("dst", tile), MakeVar("lhs", tile), MakeVar("rhs", tile)});
     auto code = RunCodegen(p.op_name, call);
-    EXPECT_CONTAINS(code, p.cce_op + "(dst, lhs, rhs" + p.trailing_arg + ");");
+    EXPECT_CONTAINS(code, p.cce_op + "(dst.tile, lhs.tile, rhs.tile" + p.trailing_arg + ");");
 }
 INSTANTIATE_TEST_SUITE_P(
     BlockOutBinaryOps, BinaryOpTest,
     ::testing::Values(SimpleOpParam{"block.add", "TADD"}, SimpleOpParam{"block.sub", "TSUB"},
                       SimpleOpParam{"block.mul", "TMUL"}, SimpleOpParam{"block.div", "TDIV"},
-                      SimpleOpParam{"block.rem", "TREM", ", rhs"}, SimpleOpParam{"block.maximum", "TMAX"},
+                      SimpleOpParam{"block.rem", "TREM", ", rhs.tile"}, SimpleOpParam{"block.maximum", "TMAX"},
                       SimpleOpParam{"block.minimum", "TMIN"}, SimpleOpParam{"block.and", "TAND"},
                       SimpleOpParam{"block.or", "TOR"}, SimpleOpParam{"block.shl", "TSHL"},
                       SimpleOpParam{"block.shr", "TSHR"}, SimpleOpParam{"block.gatherb", "TGATHERB"},
@@ -246,7 +265,7 @@ TEST_P(UnaryOpTest, EmitsCorrectCode)
     auto tile = MakeTileType();
     auto call = MakeCall(p.op_name, {MakeVar("dst", tile), MakeVar("src", tile)});
     auto code = RunCodegen(p.op_name, call);
-    EXPECT_CONTAINS(code, p.cce_op + "(dst, src);");
+    EXPECT_CONTAINS(code, p.cce_op + "(dst.tile, src.tile);");
 }
 INSTANTIATE_TEST_SUITE_P(BlockOutUnaryOps, UnaryOpTest,
                          ::testing::Values(SimpleOpParam{"block.neg", "TNEG"}, SimpleOpParam{"block.exp", "TEXP"},
@@ -263,12 +282,12 @@ TEST_P(ScalarOpTest, EmitsCorrectCode)
     auto scal = MakeScalarType();
     auto call = MakeCall(p.op_name, {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("scalar", scal)});
     auto code = RunCodegen(p.op_name, call);
-    EXPECT_CONTAINS(code, p.cce_op + "(dst, tile, scalar" + p.trailing_arg + ");");
+    EXPECT_CONTAINS(code, p.cce_op + "(dst.tile, tile.tile, scalar" + p.trailing_arg + ");");
 }
 INSTANTIATE_TEST_SUITE_P(BlockOutScalarOps, ScalarOpTest,
                          ::testing::Values(SimpleOpParam{"block.adds", "TADDS"}, SimpleOpParam{"block.subs", "TSUBS"},
                                            SimpleOpParam{"block.muls", "TMULS"}, SimpleOpParam{"block.divs", "TDIVS"},
-                                           SimpleOpParam{"block.rems", "TREMS", ", tile"},
+                                           SimpleOpParam{"block.rems", "TREMS", ", tile.tile"},
                                            SimpleOpParam{"block.ands", "TANDS"}, SimpleOpParam{"block.ors", "TORS"},
                                            SimpleOpParam{"block.shls", "TSHLS"}, SimpleOpParam{"block.shrs", "TSHRS"},
                                            SimpleOpParam{"block.maxs", "TMAXS"}, SimpleOpParam{"block.mins", "TMINS"},
@@ -281,7 +300,7 @@ TEST_P(RowReductionOpTest, EmitsCorrectCode)
     auto tile = MakeTileType();
     auto call = MakeCall(p.op_name, {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("tmp", tile)});
     auto code = RunCodegen(p.op_name, call);
-    EXPECT_CONTAINS(code, p.cce_op + "(dst, tile, tmp);");
+    EXPECT_CONTAINS(code, p.cce_op + "(dst.tile, tile.tile, tmp.tile);");
 }
 INSTANTIATE_TEST_SUITE_P(
     BlockOutRowReductionOps, RowReductionOpTest,
@@ -298,7 +317,7 @@ TEST_P(RowColExpandOpTest, EmitsCorrectCode)
     auto tile = MakeTileType();
     auto call = MakeCall(p.op_name, {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("red", tile)});
     auto code = RunCodegen(p.op_name, call);
-    EXPECT_CONTAINS(code, p.cce_op + "(dst, tile, red);");
+    EXPECT_CONTAINS(code, p.cce_op + "(dst.tile, tile.tile, red.tile);");
 }
 INSTANTIATE_TEST_SUITE_P(
     BlockOutExpandOps, RowColExpandOpTest,
@@ -319,7 +338,7 @@ TEST_P(TernaryOpTest, EmitsCorrectCode)
     auto tile = MakeTileType();
     auto call = MakeCall(p.op_name, {MakeVar("dst", tile), MakeVar("a", tile), MakeVar("b", tile), MakeVar("c", tile)});
     auto code = RunCodegen(p.op_name, call);
-    EXPECT_CONTAINS(code, p.cce_op + "(dst, a, b, c);");
+    EXPECT_CONTAINS(code, p.cce_op + "(dst.tile, a.tile, b.tile, c.tile);");
 }
 INSTANTIATE_TEST_SUITE_P(BlockOutTernaryOps, TernaryOpTest,
                          ::testing::Values(SimpleOpParam{"block.xor", "TXOR"}, SimpleOpParam{"block.xors", "TXORS"},
@@ -334,7 +353,7 @@ TEST_P(QuaternaryOpTest, EmitsCorrectCode)
     auto call = MakeCall(p.op_name, {MakeVar("dst", tile), MakeVar("a", tile), MakeVar("b", tile), MakeVar("c", tile),
                                      MakeVar("d", tile)});
     auto code = RunCodegen(p.op_name, call);
-    EXPECT_CONTAINS(code, p.cce_op + "(dst, a, b, c, d);");
+    EXPECT_CONTAINS(code, p.cce_op + "(dst.tile, a.tile, b.tile, c.tile, d.tile);");
 }
 INSTANTIATE_TEST_SUITE_P(BlockOutQuaternaryOps, QuaternaryOpTest,
                          ::testing::Values(SimpleOpParam{"block.sel", "TSEL"}, SimpleOpParam{"block.sels", "TSELS"}));
@@ -346,49 +365,49 @@ TEST(BackendCCEBlockOutOps, Maximum_VecMemref_EmitsTmax)
 {
     auto tile = MakeTileType({16, 16}, ir::DataType::FP16, std::make_optional(MakeMemRef(ir::MemorySpace::Vec)));
     auto call = MakeCall("block.maximum", {MakeVar("dst", tile), MakeVar("lhs", tile), MakeVar("rhs", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.maximum", call), "TMAX(dst, lhs, rhs);");
+    EXPECT_CONTAINS(RunCodegen("block.maximum", call), "TMAX(dst.tile, lhs.tile, rhs.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, ColMax)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.col_max", {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("tmp", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.col_max", call), "TCOLMAX(dst, tile);");
+    EXPECT_CONTAINS(RunCodegen("block.col_max", call), "TCOLMAX(dst.tile, tile.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, ColMin)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.col_min", {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("tmp", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.col_min", call), "TCOLMIN(dst, tile);");
+    EXPECT_CONTAINS(RunCodegen("block.col_min", call), "TCOLMIN(dst.tile, tile.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, ColProd)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.col_prod", {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("tmp", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.col_prod", call), "TCOLPROD(dst, tile);");
+    EXPECT_CONTAINS(RunCodegen("block.col_prod", call), "TCOLPROD(dst.tile, tile.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, ColSum)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.col_sum", {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("tmp", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.col_sum", call), "TCOLSUM(dst, tile, tmp, false);");
+    EXPECT_CONTAINS(RunCodegen("block.col_sum", call), "TCOLSUM(dst.tile, tile.tile, tmp.tile, false);");
 }
 
 TEST(BackendCCEBlockOutOps, RowExpandUnary)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.row_expand", {MakeVar("dst", tile), MakeVar("src", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.row_expand", call), "TROWEXPAND(dst, src);");
+    EXPECT_CONTAINS(RunCodegen("block.row_expand", call), "TROWEXPAND(dst.tile, src.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, ColExpandUnary)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.col_expand", {MakeVar("dst", tile), MakeVar("src", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.col_expand", call), "TCOLEXPAND(dst, src);");
+    EXPECT_CONTAINS(RunCodegen("block.col_expand", call), "TCOLEXPAND(dst.tile, src.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, ExpandBinop)
@@ -406,7 +425,7 @@ TEST(BackendCCEBlockOutOps, ExpandBinop)
         auto call = MakeCallWithKwargs(cases[i].first,
                                        {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("red", tile)},
                                        {{"op_type", static_cast<int>(i % 6)}});
-        EXPECT_CONTAINS(RunCodegen(cases[i].first, call), cases[i].second + "(dst, tile, red);");
+        EXPECT_CONTAINS(RunCodegen(cases[i].first, call), cases[i].second + "(dst.tile, tile.tile, red.tile);");
     }
 }
 
@@ -415,13 +434,13 @@ TEST(BackendCCEBlockOutOps, BinaryRelu)
     auto tile = MakeTileType();
     auto call = MakeCall("block.add_relu", {MakeVar("dst", tile), MakeVar("lhs", tile), MakeVar("rhs", tile)});
     auto code = RunCodegen("block.add_relu", call);
-    EXPECT_CONTAINS(code, "TADD(lhs, lhs, rhs);");
-    EXPECT_CONTAINS(code, "TRELU(dst, lhs);");
+    EXPECT_CONTAINS(code, "TADD(lhs.tile, lhs.tile, rhs.tile);");
+    EXPECT_CONTAINS(code, "TRELU(dst.tile, lhs.tile);");
 
     auto call2 = MakeCall("block.sub_relu", {MakeVar("dst", tile), MakeVar("lhs", tile), MakeVar("rhs", tile)});
     auto code2 = RunCodegen("block.sub_relu", call2);
-    EXPECT_CONTAINS(code2, "TSUB(lhs, lhs, rhs);");
-    EXPECT_CONTAINS(code2, "TRELU(dst, lhs);");
+    EXPECT_CONTAINS(code2, "TSUB(lhs.tile, lhs.tile, rhs.tile);");
+    EXPECT_CONTAINS(code2, "TRELU(dst.tile, lhs.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, BinaryReluCast)
@@ -430,14 +449,14 @@ TEST(BackendCCEBlockOutOps, BinaryReluCast)
     auto call = MakeCallWithKwargs("block.add_relu_cast",
                                    {MakeVar("dst", tile), MakeVar("lhs", tile), MakeVar("rhs", tile)}, {{"mode", 1}});
     auto code = RunCodegen("block.add_relu_cast", call);
-    EXPECT_CONTAINS(code, "TADD(lhs, lhs, rhs);");
-    EXPECT_CONTAINS(code, "TRELU(lhs, lhs);");
-    EXPECT_CONTAINS(code, "TCVT(dst, lhs, RoundMode::CAST_RINT);");
+    EXPECT_CONTAINS(code, "TADD(lhs.tile, lhs.tile, rhs.tile);");
+    EXPECT_CONTAINS(code, "TRELU(lhs.tile, lhs.tile);");
+    EXPECT_CONTAINS(code, "TCVT(dst.tile, lhs.tile, RoundMode::CAST_RINT);");
 
     auto call2 = MakeCallWithKwargs("block.sub_relu_cast",
                                     {MakeVar("dst", tile), MakeVar("lhs", tile), MakeVar("rhs", tile)}, {{"mode", 2}});
     auto code2 = RunCodegen("block.sub_relu_cast", call2);
-    EXPECT_CONTAINS(code2, "TSUB(lhs, lhs, rhs);");
+    EXPECT_CONTAINS(code2, "TSUB(lhs.tile, lhs.tile, rhs.tile);");
     EXPECT_CONTAINS(code2, "RoundMode::CAST_ROUND");
 }
 
@@ -447,8 +466,8 @@ TEST(BackendCCEBlockOutOps, BinaryCast)
     auto call = MakeCallWithKwargs("block.mul_cast", {MakeVar("dst", tile), MakeVar("lhs", tile), MakeVar("rhs", tile)},
                                    {{"mode", 0}});
     auto code = RunCodegen("block.mul_cast", call);
-    EXPECT_CONTAINS(code, "TMUL(lhs, lhs, rhs);");
-    EXPECT_CONTAINS(code, "TCVT(dst, lhs, RoundMode::CAST_NONE);");
+    EXPECT_CONTAINS(code, "TMUL(lhs.tile, lhs.tile, rhs.tile);");
+    EXPECT_CONTAINS(code, "TCVT(dst.tile, lhs.tile, RoundMode::CAST_NONE);");
 }
 
 TEST(BackendCCEBlockOutOps, FusedOps)
@@ -456,28 +475,29 @@ TEST(BackendCCEBlockOutOps, FusedOps)
     auto tile = MakeTileType();
     auto call = MakeCall("block.mul_add_dst", {MakeVar("out", tile), MakeVar("lhs", tile), MakeVar("rhs", tile)});
     auto code = RunCodegen("block.mul_add_dst", call);
-    EXPECT_CONTAINS(code, "TMULA(out, lhs, rhs);");
+    EXPECT_CONTAINS(code, "TMULA(out.tile, lhs.tile, rhs.tile);");
 
     auto call2 = MakeCall("block.fused_mul_add", {MakeVar("out", tile), MakeVar("lhs", tile), MakeVar("rhs", tile)});
     auto code2 = RunCodegen("block.fused_mul_add", call2);
-    EXPECT_CONTAINS(code2, "TMADD(out, lhs, rhs);");
+    EXPECT_CONTAINS(code2, "TMADD(out.tile, lhs.tile, rhs.tile);");
 
     auto call3 = MakeCall("block.fused_mul_add_relu",
                           {MakeVar("out", tile), MakeVar("lhs", tile), MakeVar("rhs", tile)});
     auto code3 = RunCodegen("block.fused_mul_add_relu", call3);
-    EXPECT_CONTAINS(code3, "TMADD(out, lhs, rhs);");
-    EXPECT_CONTAINS(code3, "TRELU(out, out);");
+    EXPECT_CONTAINS(code3, "TMADD(out.tile, lhs.tile, rhs.tile);");
+    EXPECT_CONTAINS(code3, "TRELU(out.tile, out.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, Matmul)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.matmul", {MakeVar("dst", tile), MakeVar("left", tile), MakeVar("right", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.matmul", call), "TMATMUL(dst, left, right);");
+    EXPECT_CONTAINS(RunCodegen("block.matmul", call), "TMATMUL(dst.tile, left.tile, right.tile);");
 
     auto callPhase = MakeCallWithKwargs(
         "block.matmul", {MakeVar("dst", tile), MakeVar("left", tile), MakeVar("right", tile)}, {{"phase", 1}});
-    EXPECT_CONTAINS(RunCodegen("block.matmul", callPhase), "TMATMUL<AccPhase::Partial>(dst, left, right);");
+    EXPECT_CONTAINS(RunCodegen("block.matmul", callPhase),
+                    "TMATMUL<AccPhase::Partial>(dst.tile, left.tile, right.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, MatmulAcc)
@@ -485,12 +505,13 @@ TEST(BackendCCEBlockOutOps, MatmulAcc)
     auto tile = MakeTileType();
     auto call = MakeCall("block.matmul_acc",
                          {MakeVar("dst", tile), MakeVar("acc", tile), MakeVar("left", tile), MakeVar("right", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.matmul_acc", call), "TMATMUL_ACC(dst, acc, left, right);");
+    EXPECT_CONTAINS(RunCodegen("block.matmul_acc", call), "TMATMUL_ACC(dst.tile, acc.tile, left.tile, right.tile);");
 
     auto callPhase = MakeCallWithKwargs(
         "block.matmul_acc", {MakeVar("dst", tile), MakeVar("acc", tile), MakeVar("left", tile), MakeVar("right", tile)},
         {{"phase", 2}});
-    EXPECT_CONTAINS(RunCodegen("block.matmul_acc", callPhase), "TMATMUL_ACC<AccPhase::Final>(dst, acc, left, right);");
+    EXPECT_CONTAINS(RunCodegen("block.matmul_acc", callPhase),
+                    "TMATMUL_ACC<AccPhase::Final>(dst.tile, acc.tile, left.tile, right.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, MatmulBias)
@@ -498,19 +519,19 @@ TEST(BackendCCEBlockOutOps, MatmulBias)
     auto tile = MakeTileType();
     auto call = MakeCall("block.matmul_bias",
                          {MakeVar("dst", tile), MakeVar("left", tile), MakeVar("right", tile), MakeVar("bias", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.matmul_bias", call), "TMATMUL_BIAS(dst, left, right, bias);");
+    EXPECT_CONTAINS(RunCodegen("block.matmul_bias", call), "TMATMUL_BIAS(dst.tile, left.tile, right.tile, bias.tile);");
 
     auto callPartial = MakeCallWithKwargs(
         "block.matmul_bias",
         {MakeVar("dst", tile), MakeVar("left", tile), MakeVar("right", tile), MakeVar("bias", tile)}, {{"phase", 1}});
     EXPECT_CONTAINS(RunCodegen("block.matmul_bias", callPartial),
-                    "TMATMUL_BIAS<AccPhase::Partial>(dst, left, right, bias);");
+                    "TMATMUL_BIAS<AccPhase::Partial>(dst.tile, left.tile, right.tile, bias.tile);");
 
     auto callFinal = MakeCallWithKwargs(
         "block.matmul_bias",
         {MakeVar("dst", tile), MakeVar("left", tile), MakeVar("right", tile), MakeVar("bias", tile)}, {{"phase", 2}});
     EXPECT_CONTAINS(RunCodegen("block.matmul_bias", callFinal),
-                    "TMATMUL_BIAS<AccPhase::Final>(dst, left, right, bias);");
+                    "TMATMUL_BIAS<AccPhase::Final>(dst.tile, left.tile, right.tile, bias.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, MatmulMx)
@@ -519,11 +540,11 @@ TEST(BackendCCEBlockOutOps, MatmulMx)
     auto args = std::vector<ir::ExprPtr>{MakeVar("dst", tile), MakeVar("left", tile), MakeVar("right", tile),
                                          MakeVar("scale_a", tile), MakeVar("scale_b", tile)};
     EXPECT_CONTAINS(RunCodegen("block.matmul_mx", MakeCall("block.matmul_mx", args)),
-                    "TMATMUL_MX_IMPL(dst, left, scale_a, right, scale_b);");
+                    "TMATMUL_MX_IMPL(dst.tile, left.tile, scale_a.tile, right.tile, scale_b.tile);");
 
     auto call_phase = MakeCallWithKwargs("block.matmul_mx", args, {{"phase", 2}});
     EXPECT_CONTAINS(RunCodegen("block.matmul_mx", call_phase),
-                    "TMATMUL_MX_IMPL<AccPhase::Final>(dst, left, scale_a, right, scale_b);");
+                    "TMATMUL_MX_IMPL<AccPhase::Final>(dst.tile, left.tile, scale_a.tile, right.tile, scale_b.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, MatmulMxAcc)
@@ -532,11 +553,12 @@ TEST(BackendCCEBlockOutOps, MatmulMxAcc)
     auto args = std::vector<ir::ExprPtr>{MakeVar("dst", tile),   MakeVar("acc", tile),     MakeVar("left", tile),
                                          MakeVar("right", tile), MakeVar("scale_a", tile), MakeVar("scale_b", tile)};
     EXPECT_CONTAINS(RunCodegen("block.matmul_mx_acc", MakeCall("block.matmul_mx_acc", args)),
-                    "TMATMUL_MX_IMPL(dst, acc, left, scale_a, right, scale_b);");
+                    "TMATMUL_MX_IMPL(dst.tile, acc.tile, left.tile, scale_a.tile, right.tile, scale_b.tile);");
 
     auto call_phase = MakeCallWithKwargs("block.matmul_mx_acc", args, {{"phase", 1}});
-    EXPECT_CONTAINS(RunCodegen("block.matmul_mx_acc", call_phase),
-                    "TMATMUL_MX_IMPL<AccPhase::Partial>(dst, acc, left, scale_a, right, scale_b);");
+    EXPECT_CONTAINS(
+        RunCodegen("block.matmul_mx_acc", call_phase),
+        "TMATMUL_MX_IMPL<AccPhase::Partial>(dst.tile, acc.tile, left.tile, scale_a.tile, right.tile, scale_b.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, Cast)
@@ -544,7 +566,7 @@ TEST(BackendCCEBlockOutOps, Cast)
     auto tile = MakeTileType();
     auto call = MakeCallWithKwargs("block.cast", {MakeVar("dst", tile), MakeVar("src", tile)}, {{"mode", 3}});
     auto code = RunCodegen("block.cast", call);
-    EXPECT_CONTAINS(code, "TCVT(dst, src, RoundMode::CAST_FLOOR);");
+    EXPECT_CONTAINS(code, "TCVT(dst.tile, src.tile, RoundMode::CAST_FLOOR);");
 }
 
 TEST(BackendCCEBlockOutOps, Cmp)
@@ -554,11 +576,11 @@ TEST(BackendCCEBlockOutOps, Cmp)
         auto call = MakeCallWithKwargs("block.cmp", {MakeVar("dst", tile), MakeVar("lhs", tile), MakeVar("rhs", tile)},
                                        {{"cmp_mode", i}});
         auto code = RunCodegen("block.cmp", call);
-        EXPECT_CONTAINS(code, "TCMP(dst, lhs, rhs, ");
+        EXPECT_CONTAINS(code, "TCMP(dst.tile, lhs.tile, rhs.tile, ");
     }
     auto call0 = MakeCallWithKwargs("block.cmp", {MakeVar("dst", tile), MakeVar("lhs", tile), MakeVar("rhs", tile)},
                                     {{"cmp_mode", 0}});
-    EXPECT_CONTAINS(RunCodegen("block.cmp", call0), "TCMP(dst, lhs, rhs, CmpMode::EQ);");
+    EXPECT_CONTAINS(RunCodegen("block.cmp", call0), "TCMP(dst.tile, lhs.tile, rhs.tile, CmpMode::EQ);");
 }
 
 TEST(BackendCCEBlockOutOps, Cmps)
@@ -567,7 +589,7 @@ TEST(BackendCCEBlockOutOps, Cmps)
     auto scal = MakeScalarType();
     auto call = MakeCallWithKwargs("block.cmps", {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("scalar", scal)},
                                    {{"cmp_mode", 4}});
-    EXPECT_CONTAINS(RunCodegen("block.cmps", call), "TCMPS(dst, tile, scalar, CmpMode::GT);");
+    EXPECT_CONTAINS(RunCodegen("block.cmps", call), "TCMPS(dst.tile, tile.tile, scalar, CmpMode::GT);");
 }
 
 TEST(BackendCCEBlockOutOps, Expands)
@@ -576,12 +598,12 @@ TEST(BackendCCEBlockOutOps, Expands)
     auto int_scal = MakeScalarType(ir::DataType::INT32);
     auto call = MakeCall("block.expands", {MakeVar("dst", fp_tile), MakeVar("scalar", int_scal)});
     auto code = RunCodegen("block.expands", call);
-    EXPECT_CONTAINS(code, "TEXPANDS(dst, (float)((int64_t)(scalar)));");
+    EXPECT_CONTAINS(code, "TEXPANDS(dst.tile, (float)((int64_t)(scalar)));");
 
     auto fp_scal = MakeScalarType(ir::DataType::FP16);
     auto call2 = MakeCall("block.expands", {MakeVar("dst", fp_tile), MakeVar("scalar", fp_scal)});
     auto code2 = RunCodegen("block.expands", call2);
-    EXPECT_CONTAINS(code2, "TEXPANDS(dst, scalar);");
+    EXPECT_CONTAINS(code2, "TEXPANDS(dst.tile, scalar);");
     EXPECT_NOT_CONTAINS(code2, "(float)");
 }
 
@@ -590,7 +612,7 @@ TEST(BackendCCEBlockOutOps, Full)
     auto fp_tile = MakeTileType({16, 16}, ir::DataType::FP16);
     auto fp_scal = MakeScalarType(ir::DataType::FP32);
     auto call = MakeCall("block.full", {MakeVar("dst", fp_tile), MakeVar("scalar", fp_scal)});
-    EXPECT_CONTAINS(RunCodegen("block.full", call), "TEXPANDS(dst, scalar);");
+    EXPECT_CONTAINS(RunCodegen("block.full", call), "TEXPANDS(dst.tile, scalar);");
 }
 
 TEST(BackendCCEBlockOutOps, FillIndex)
@@ -616,14 +638,14 @@ TEST(BackendCCEBlockOutOps, Reshape)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.reshape", {MakeVar("dst", tile), MakeVar("src", tile), MakeConstInt(16)});
-    EXPECT_CONTAINS(RunCodegen("block.reshape", call), "TRESHAPE(dst, src);");
+    EXPECT_CONTAINS(RunCodegen("block.reshape", call), "TRESHAPE(dst.tile, src.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, Transpose)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.transpose", {MakeVar("dst", tile), MakeVar("src", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.transpose", call), "TTRANS(dst, src, src);");
+    EXPECT_CONTAINS(RunCodegen("block.transpose", call), "TTRANS(dst.tile, src.tile, src.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, Insert)
@@ -631,7 +653,8 @@ TEST(BackendCCEBlockOutOps, Insert)
     auto tile = MakeTileType();
     auto call = MakeCall("block.insert",
                          {MakeVar("dst", tile), MakeVar("src", tile), MakeConstInt(0), MakeConstInt(0)});
-    EXPECT_CONTAINS(RunCodegen("block.insert", call), "TINSERT<decltype(dst), decltype(src)>(dst, src, 0, 0);");
+    EXPECT_CONTAINS(RunCodegen("block.insert", call),
+                    "TINSERT<decltype(dst.tile), decltype(src.tile)>(dst.tile, src.tile, 0, 0);");
 }
 
 TEST(BackendCCEBlockOutOps, InsertWithScalarQuantAndRelu)
@@ -657,8 +680,8 @@ TEST(BackendCCEBlockOutOps, InsertWithScalingTile)
     auto scale = MakeTileType({1, 16}, ir::DataType::INT64, scaling_memref);
     auto call = MakeCall("block.insert", {MakeVar("dst", dst), MakeVar("src", src), MakeConstInt(0), MakeConstInt(16),
                                           MakeVar("scale", scale)});
-    EXPECT_CONTAINS(RunCodegen("block.insert", call),
-                    "TINSERT<decltype(dst), decltype(src), decltype(scale)>(dst, src, scale, 0, 16);");
+    EXPECT_CONTAINS(RunCodegen("block.insert", call), "TINSERT<decltype(dst.tile), decltype(src.tile), "
+                                                      "decltype(scale.tile)>(dst.tile, src.tile, scale.tile, 0, 16);");
 }
 
 TEST(BackendCCEBlockOutOps, SetValidShape)
@@ -666,7 +689,7 @@ TEST(BackendCCEBlockOutOps, SetValidShape)
     auto tile = MakeTileType();
     auto call = MakeCall("block.set_validshape", {MakeVar("tile", tile), MakeConstInt(16), MakeConstInt(8)});
     auto code = RunCodegen("block.set_validshape", call);
-    EXPECT_CONTAINS(code, "tile.SetValidShape(16, 8);");
+    EXPECT_CONTAINS(code, "tile.tile.SetValidShape(16, 8);");
 }
 
 TEST(BackendCCEBlockOutOps, Load)
@@ -683,7 +706,7 @@ TEST(BackendCCEBlockOutOps, Load)
     info->codegen_func(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "TASSIGN(tensor, raw_ptr + ");
-    EXPECT_CONTAINS(code, "TLOAD(out, tensor);");
+    EXPECT_CONTAINS(code, "TLOAD(out.tile, tensor);");
     EXPECT_CONTAINS(code, "SetShape");
 }
 
@@ -822,7 +845,7 @@ TEST(BackendCCEBlockOutOps, GeneratesDumpTileThroughFullCodegen)
         {MakeTileAssign(tile), std::make_shared<const ir::EvalStmt>(dump, ir::Span::Unknown())}, {},
         ir::SectionKind::Vector);
 
-    EXPECT_CONTAINS(generated, "TPRINT(tile);");
+    EXPECT_CONTAINS(generated, "TPRINT(tile.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, MergedLoadPreservesStaticInnerExtent)
@@ -843,7 +866,7 @@ TEST(BackendCCEBlockOutOps, MergedLoadPreservesStaticInnerExtent)
                 ir::SectionKind::Cube);
             EXPECT_CONTAINS(code, "auto* __merged_src = tensor_ptr + ");
             EXPECT_CONTAINS(code, "const uint64_t __merged_inner = " + std::to_string(inner) + ";");
-            EXPECT_CONTAINS(code, transposed ? "out.GetValidRow()" : "out.GetValidCol()");
+            EXPECT_CONTAINS(code, transposed ? "out.tile.GetValidRow()" : "out.tile.GetValidCol()");
             EXPECT_CONTAINS(code, "const int32_t __merged_rows = static_cast<int32_t>("
                                   "__merged_inner < 32 ? __merged_inner : 32);");
             EXPECT_CONTAINS(code, "pto::Shape<1, 1, -1, -1, -1>");
@@ -857,7 +880,7 @@ TEST(BackendCCEBlockOutOps, MergedLoadPreservesStaticInnerExtent)
                                   "pto::GlobalTensorDim::DIM_4>(__merged_count, ");
             EXPECT_NOT_CONTAINS(code, ".SetStride<");
             EXPECT_CONTAINS(code, "TASSIGN(tensor, __merged_src);");
-            EXPECT_CONTAINS(code, "TLOAD(out, tensor);");
+            EXPECT_CONTAINS(code, "TLOAD(out.tile, tensor);");
             EXPECT_NOT_CONTAINS(code, "__merged_tensor");
         }
     }
@@ -874,7 +897,7 @@ TEST(BackendCCEBlockOutOps, MergedLoadKeepsValidWindowBoundForLargeZnTiles)
     const auto code = GenerateKernel(
         {MakeTileAssign(out), std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown())}, {tensor},
         ir::SectionKind::Cube);
-    EXPECT_CONTAINS(code, "const int32_t __merged_valid = static_cast<int64_t>(out.GetValidCol());");
+    EXPECT_CONTAINS(code, "const int32_t __merged_valid = static_cast<int64_t>(out.tile.GetValidCol());");
     EXPECT_CONTAINS(code, "static_cast<int32_t>(__merged_inner < __merged_valid ? "
                           "__merged_inner : __merged_valid)");
     EXPECT_NOT_CONTAINS(code, "__merged_inner < 32768");
@@ -919,14 +942,14 @@ TEST(BackendCCEBlockOutOps, MergedLoadsSeparateAxesAndReuseAliases)
     }
     EXPECT_NOT_CONTAINS(code, "tensor__v5");
     EXPECT_NOT_CONTAINS(code, "__merged_tensor");
-    EXPECT_CONTAINS(code, "TLOAD(out, tensor);");
-    EXPECT_CONTAINS(code, "TLOAD(transposed, tensor__v1);");
-    EXPECT_CONTAINS(code, "TLOAD(out, tensor__v2);");
-    EXPECT_CONTAINS(code, "TSTORE(tensor__v2, result);");
+    EXPECT_CONTAINS(code, "TLOAD(out.tile, tensor);");
+    EXPECT_CONTAINS(code, "TLOAD(transposed.tile, tensor__v1);");
+    EXPECT_CONTAINS(code, "TLOAD(out.tile, tensor__v2);");
+    EXPECT_CONTAINS(code, "TSTORE(tensor__v2, result.tile);");
     EXPECT_CONTAINS(code, "tensor__v2.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>");
     EXPECT_NOT_CONTAINS(code, "tensor__v2.SetStride");
-    EXPECT_CONTAINS(code, "TLOAD(out, tensor__v3);");
-    EXPECT_CONTAINS(code, "TLOAD(transposed, tensor__v4);");
+    EXPECT_CONTAINS(code, "TLOAD(out.tile, tensor__v3);");
+    EXPECT_CONTAINS(code, "TLOAD(transposed.tile, tensor__v4);");
     EXPECT_CONTAINS(code, "tensorStrideDim5(1, 1, uint64_t{1} * 3 * 2 * 128, uint64_t{1} * 128, 1)");
     EXPECT_CONTAINS(code, "tensor__v3StrideDim5(1, 1, uint64_t{1} * 3 * 2 * 128, uint64_t{1} * 2 * 128, 1)");
     EXPECT_CONTAINS(code, "tensor__v4StrideDim5(1, 1, uint64_t{1} * 3 * 2 * 128, 1, uint64_t{1} * 2 * 128)");
@@ -952,7 +975,7 @@ TEST(BackendCCEBlockOutOps, MergedSingleColumnLoadKeepsDestinationLayout)
         EXPECT_CONTAINS(code, "using tensorType = GlobalTensor<half, tensorShapeDim5, tensorStrideDim5, Layout::" +
                                   std::string(transposed ? "DN>;" : "ND>;"));
         EXPECT_CONTAINS(code, "tensorType tensor(tensor_ptr, tensorShapeDim5(), tensorStrideDim5(");
-        EXPECT_CONTAINS(code, "TLOAD(out, tensor);");
+        EXPECT_CONTAINS(code, "TLOAD(out.tile, tensor);");
     }
 }
 
@@ -992,7 +1015,7 @@ TEST(BackendCCEBlockOutOps, MergedLoadPreservesWideSourceStrides)
         EXPECT_CONTAINS(code,
                         "tensorStrideDim5(1, 1, 2147483648, " + std::string(wide_row ? "2147483648" : "64") + ", 1)");
         EXPECT_CONTAINS(code, "static_cast<uint64_t>(1) * (2147483648)");
-        EXPECT_CONTAINS(code, "TLOAD(out, tensor);");
+        EXPECT_CONTAINS(code, "TLOAD(out.tile, tensor);");
         EXPECT_NOT_CONTAINS(code, "MultiNd2Nz");
         EXPECT_NOT_CONTAINS(code, ".SetStride<");
     }
@@ -1036,8 +1059,8 @@ TEST(BackendCCEBlockOutOps, GeneratesHighDimensionalNzLoadAndStore)
     EXPECT_CONTAINS(generated, "tensorStrideDim5(64, 64)");
     EXPECT_CONTAINS(generated, "tensor.SetShape<pto::GlobalTensorDim::DIM_1, pto::GlobalTensorDim::DIM_2>");
     EXPECT_CONTAINS(generated, "1 * 3 * 64 * 64 + 2 * 64 * 64 + 16 * 64 + 16 * 16");
-    EXPECT_CONTAINS(generated, "TLOAD(tile, tensor);");
-    EXPECT_CONTAINS(generated, "TSTORE(tensor, tile);");
+    EXPECT_CONTAINS(generated, "TLOAD(tile.tile, tensor);");
+    EXPECT_CONTAINS(generated, "TSTORE(tensor, tile.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, GeneratesFp8NzLoadAndStore)
@@ -1057,8 +1080,8 @@ TEST(BackendCCEBlockOutOps, GeneratesFp8NzLoadAndStore)
 
     EXPECT_CONTAINS(generated, "pto::TileShape2D<float8_e4m3_t, pto::DYNAMIC, pto::DYNAMIC, Layout::NZ>");
     EXPECT_CONTAINS(generated, "32 * 64 + 16 * 32");
-    EXPECT_CONTAINS(generated, "TLOAD(tile, tensor);");
-    EXPECT_CONTAINS(generated, "TSTORE(tensor, tile);");
+    EXPECT_CONTAINS(generated, "TLOAD(tile.tile, tensor);");
+    EXPECT_CONTAINS(generated, "TSTORE(tensor, tile.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, GeneratesPackedFp4NzLoadAndStore)
@@ -1081,8 +1104,8 @@ TEST(BackendCCEBlockOutOps, GeneratesPackedFp4NzLoadAndStore)
     EXPECT_CONTAINS(generated, "tensorShapeDim5 tensor_shape_");
     EXPECT_CONTAINS(generated, "tensor.SetShape<pto::GlobalTensorDim::DIM_1, pto::GlobalTensorDim::DIM_2>");
     EXPECT_CONTAINS(generated, "(64 * 80 + 48 * 64) / 2");
-    EXPECT_CONTAINS(generated, "TLOAD(tile, tensor);");
-    EXPECT_CONTAINS(generated, "TSTORE(tensor, tile);");
+    EXPECT_CONTAINS(generated, "TLOAD(tile.tile, tensor);");
+    EXPECT_CONTAINS(generated, "TSTORE(tensor, tile.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, RejectsUnsupportedNzTileLayoutAndTranspose)
@@ -1188,13 +1211,13 @@ TEST(BackendCCEBlockOutOps, InfersHighDimensionalMxScaleLoadFromDestinationAndOr
     EXPECT_CONTAINS(a_code, "scale_aStrideDim5(1, 1, 3 * 3 * 2, 2, 1)");
     EXPECT_CONTAINS(a_code, "TASSIGN(scale_a, scale_a_ptr + (1 * (64 * 3 * 3 * 2) + 4 * (3 * 3 * 2) + 2 * (3 * 2) "
                             "+ 1 * (2) + 0));");
-    EXPECT_CONTAINS(a_code, "TLOAD(out_a, scale_a);");
+    EXPECT_CONTAINS(a_code, "TLOAD(out_a.tile, scale_a);");
 
     const auto b_code = GenerateMxLoadKernel(MakeTensorVar("scale_b", {2, 64, 3, 3, 2}, ir::DataType::FP8E8M0),
                                              MakeVar("out_b", nn_tile), {1, 4, 2, 1, 0},
                                              {{"tile_dims", std::vector<int>{1, 3}}, {"is_transpose", true}});
     EXPECT_CONTAINS(b_code, "Layout::MX_B_DN");
-    EXPECT_CONTAINS(b_code, "TLOAD(out_b, scale_b);");
+    EXPECT_CONTAINS(b_code, "TLOAD(out_b.tile, scale_b);");
 }
 
 TEST(BackendCCEBlockOutOps, RejectsMxScaleLoadSelectingPhysicalPhaseAxis)
@@ -1292,8 +1315,8 @@ TEST(BackendCCEBlockOutOps, InfersMxLayoutPerLoadForSameTensor)
                                "Layout::MX_A_ND>;");
     EXPECT_CONTAINS(generated, "using scale__v1Type = GlobalTensor<float8_e8m0_t, scale__v1ShapeDim5, "
                                "scale__v1StrideDim5, Layout::MX_B_DN>;");
-    EXPECT_CONTAINS(generated, "TLOAD(out_a, scale);");
-    EXPECT_CONTAINS(generated, "TLOAD(out_b, scale__v1);");
+    EXPECT_CONTAINS(generated, "TLOAD(out_a.tile, scale);");
+    EXPECT_CONTAINS(generated, "TLOAD(out_b.tile, scale__v1);");
 }
 
 // The inferred MX view is a GlobalTensor declaration hoisted to the prologue; each load resizes
@@ -1308,7 +1331,7 @@ TEST(BackendCCEBlockOutOps, HoistsInferredMxViewToPrologue)
                                                 {{"tile_dims", std::vector<int>{0, 1}}});
     EXPECT_CONTAINS(generated, "using scaleShapeDim5 = pto::TileShape2D<float8_e8m0_t");
     EXPECT_CONTAINS(generated, "scale.SetShape<pto::GlobalTensorDim::DIM_2, pto::GlobalTensorDim::DIM_3>");
-    EXPECT_CONTAINS(generated, "TLOAD(tile, scale);");
+    EXPECT_CONTAINS(generated, "TLOAD(tile.tile, scale);");
 }
 
 TEST(BackendCCEBlockOutOps, Store)
@@ -1325,7 +1348,7 @@ TEST(BackendCCEBlockOutOps, Store)
     info->codegen_func(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "TASSIGN(tensor, raw_ptr + ");
-    EXPECT_CONTAINS(code, "TSTORE(tensor, tile);");
+    EXPECT_CONTAINS(code, "TSTORE(tensor, tile.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, GeneratesLoadAndStoreThroughFullCodegen)
@@ -1333,7 +1356,7 @@ TEST(BackendCCEBlockOutOps, GeneratesLoadAndStoreThroughFullCodegen)
     auto tensor = MakeTensorVar("tensor", {32, 32}, ir::DataType::FP16);
     auto tile_type = MakeTileType({16, 16}, ir::DataType::FP16);
     auto tile = MakeVar("tile", tile_type);
-    auto make_tile = std::make_shared<const ir::Call>("block.make_tile", std::vector<ir::ExprPtr>{}, tile_type,
+    auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
     auto tile_assign = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
     auto offsets = MakeOffsets(0, 0);
@@ -1456,7 +1479,7 @@ TEST(BackendCCEBlockOutOps, StoreWithScalingTile)
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "TASSIGN(tensor, raw_ptr + ");
     EXPECT_CONTAINS(code, "TSTORE<");
-    EXPECT_CONTAINS(code, ">(tensor, tile, fp);");
+    EXPECT_CONTAINS(code, ">(tensor, tile.tile, fp.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, StoreWithScalingTileAndPhase)
@@ -1477,7 +1500,7 @@ TEST(BackendCCEBlockOutOps, StoreWithScalingTileAndPhase)
     info->codegen_func(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "TSTORE<STPhase::Final,");
-    EXPECT_CONTAINS(code, ">(tensor, tile, fp);");
+    EXPECT_CONTAINS(code, ">(tensor, tile.tile, fp.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, StoreWithScalingTileAndReluPhase)
@@ -1500,7 +1523,7 @@ TEST(BackendCCEBlockOutOps, StoreWithScalingTileAndReluPhase)
     EXPECT_CONTAINS(code, "TSTORE<STPhase::Final,");
     EXPECT_CONTAINS(code, "AtomicType::AtomicNone");
     EXPECT_CONTAINS(code, "ReluPreMode::NormalRelu");
-    EXPECT_CONTAINS(code, ">(tensor, tile, fp);");
+    EXPECT_CONTAINS(code, ">(tensor, tile.tile, fp.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, Move)
@@ -1509,9 +1532,9 @@ TEST(BackendCCEBlockOutOps, Move)
     auto call = MakeCall("block.move", {MakeVar("dst", tile), MakeVar("src", tile)});
     auto code = RunCodegen("block.move", call);
     EXPECT_CONTAINS(code, "TMOV<");
-    EXPECT_CONTAINS(code, "decltype(dst)");
-    EXPECT_CONTAINS(code, "decltype(src)");
-    EXPECT_CONTAINS(code, "(dst, src);");
+    EXPECT_CONTAINS(code, "decltype(dst.tile)");
+    EXPECT_CONTAINS(code, "decltype(src.tile)");
+    EXPECT_CONTAINS(code, "(dst.tile, src.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, MoveWithPhase)
@@ -1528,7 +1551,7 @@ TEST(BackendCCEBlockOutOps, MoveWithOffset)
     auto tile = MakeTileType();
     auto call = MakeCall("block.move", {MakeVar("dst", tile), MakeVar("src", tile), MakeOffsets(2, 4)});
     auto code = RunCodegen("block.move", call);
-    EXPECT_CONTAINS(code, "TEXTRACT<decltype(dst), decltype(src)>(dst, src, 2, 4);");
+    EXPECT_CONTAINS(code, "TEXTRACT<decltype(dst.tile), decltype(src.tile)>(dst.tile, src.tile, 2, 4);");
 }
 
 TEST(BackendCCEBlockOutOps, MoveWithOffsetAndPreQuant)
@@ -1558,7 +1581,7 @@ TEST(BackendCCEBlockOutOps, MoveWithDualModeSplitMAlignsValidShape)
                                    {{"acc_to_vec_mode", static_cast<int>(ir::AccToVecMode::DualModeSplitM)}});
     auto code = RunCodegen("block.move", call);
     EXPECT_CONTAINS(code, "AccToVecMode::DualModeSplitM");
-    EXPECT_CONTAINS(code, "src.SetValidShape((src.GetValidRow() + 1) / 2 * 2, src.GetValidCol());");
+    EXPECT_CONTAINS(code, "src.tile.SetValidShape((src.tile.GetValidRow() + 1) / 2 * 2, src.tile.GetValidCol());");
 }
 
 TEST(BackendCCEBlockOutOps, MoveWithDualModeSplitNAlignsValidShape)
@@ -1568,7 +1591,7 @@ TEST(BackendCCEBlockOutOps, MoveWithDualModeSplitNAlignsValidShape)
                                    {{"acc_to_vec_mode", static_cast<int>(ir::AccToVecMode::DualModeSplitN)}});
     auto code = RunCodegen("block.move", call);
     EXPECT_CONTAINS(code, "AccToVecMode::DualModeSplitN");
-    EXPECT_CONTAINS(code, "src.SetValidShape(src.GetValidRow(), (src.GetValidCol() + 31) / 32 * 32);");
+    EXPECT_CONTAINS(code, "src.tile.SetValidShape(src.tile.GetValidRow(), (src.tile.GetValidCol() + 31) / 32 * 32);");
 }
 
 TEST(BackendCCEBlockOutOps, MoveWithSingleModeVec1NoAlignment)
@@ -1617,7 +1640,8 @@ TEST(BackendCCEBlockOutOps, MoveWithScalingTile)
     auto call = MakeCall("block.move",
                          {MakeVar("dst", vec_tile), MakeVar("src", acc_tile), MakeVar("fp", scaling_tile)});
     auto code = RunCodegen("block.move", call);
-    EXPECT_CONTAINS(code, "TMOV<decltype(dst), decltype(src), decltype(fp)>(dst, src, fp);");
+    EXPECT_CONTAINS(code,
+                    "TMOV<decltype(dst.tile), decltype(src.tile), decltype(fp.tile)>(dst.tile, src.tile, fp.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, MoveWithScalingTileAccToMatOffset)
@@ -1634,7 +1658,7 @@ TEST(BackendCCEBlockOutOps, MoveWithScalingTileAccToMatOffset)
         {{"phase", static_cast<int>(ir::STPhase::Final)}});
     auto code = RunCodegen("block.move", call);
     EXPECT_CONTAINS(code, "TEXTRACT<STPhase::Final,");
-    EXPECT_CONTAINS(code, "(dst, src, fp, 2, 4);");
+    EXPECT_CONTAINS(code, "(dst.tile, src.tile, fp.tile, 2, 4);");
 }
 
 TEST(BackendCCEBlockOutOps, MoveRejectsDuplicateScaleAndNon2dOffset)
@@ -1765,7 +1789,7 @@ TEST(BackendCCEBlockOutOps, Fillpad)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.fillpad", {MakeVar("dst", tile), MakeVar("src", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.fillpad", call), "TFILLPAD(dst, src);");
+    EXPECT_CONTAINS(RunCodegen("block.fillpad", call), "TFILLPAD(dst.tile, src.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, FillpadWithPadAlias)
@@ -1779,21 +1803,21 @@ TEST(BackendCCEBlockOutOps, FillpadWithPadAlias)
     EXPECT_CONTAINS(code, "using __block_fillpad_src_alias_type_");
     EXPECT_CONTAINS(code, "fillpad_src_alias");
     EXPECT_CONTAINS(code, "TASSIGN(__block_fillpad_src_alias_");
-    EXPECT_CONTAINS(code, "TFILLPAD(dst, __block_fillpad_src_alias_");
+    EXPECT_CONTAINS(code, "TFILLPAD(dst.tile, __block_fillpad_src_alias_");
 }
 
 TEST(BackendCCEBlockOutOps, FillpadInplace)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.fillpad_inplace", {MakeVar("dst", tile), MakeVar("src", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.fillpad_inplace", call), "TFILLPAD_INPLACE(dst, src);");
+    EXPECT_CONTAINS(RunCodegen("block.fillpad_inplace", call), "TFILLPAD_INPLACE(dst.tile, src.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, FillpadExpand)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.fillpad_expand", {MakeVar("dst", tile), MakeVar("src", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.fillpad_expand", call), "TFILLPAD_EXPAND(dst, src);");
+    EXPECT_CONTAINS(RunCodegen("block.fillpad_expand", call), "TFILLPAD_EXPAND(dst.tile, src.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, FillpadExpandSameVarThrows)
@@ -1808,7 +1832,7 @@ TEST(BackendCCEBlockOutOps, Gather3Args)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.gather", {MakeVar("out", tile), MakeVar("src", tile), MakeVar("idx", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.gather", call), "TGATHER(out, src, idx);");
+    EXPECT_CONTAINS(RunCodegen("block.gather", call), "TGATHER(out.tile, src.tile, idx.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, Gather4Args)
@@ -1816,7 +1840,7 @@ TEST(BackendCCEBlockOutOps, Gather4Args)
     auto tile = MakeTileType();
     auto call = MakeCall("block.gather",
                          {MakeVar("out", tile), MakeVar("src", tile), MakeVar("idx", tile), MakeVar("tmp", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.gather", call), "TGATHER(out, src, idx, tmp);");
+    EXPECT_CONTAINS(RunCodegen("block.gather", call), "TGATHER(out.tile, src.tile, idx.tile, tmp.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, Gather5ArgsCmp)
@@ -1861,18 +1885,18 @@ TEST(BackendCCEBlockOutOps, Sort32)
 {
     auto tile = MakeTileType();
     auto call3 = MakeCall("block.sort32", {MakeVar("dst", tile), MakeVar("src", tile), MakeVar("idx", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.sort32", call3), "TSORT32(dst, src, idx);");
+    EXPECT_CONTAINS(RunCodegen("block.sort32", call3), "TSORT32(dst.tile, src.tile, idx.tile);");
 
     auto call4 = MakeCall("block.sort32",
                           {MakeVar("dst", tile), MakeVar("src", tile), MakeVar("idx", tile), MakeVar("tmp", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.sort32", call4), "TSORT32(dst, src, idx, tmp);");
+    EXPECT_CONTAINS(RunCodegen("block.sort32", call4), "TSORT32(dst.tile, src.tile, idx.tile, tmp.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, Mrgsort)
 {
     auto tile = MakeTileType();
     auto call = MakeCallWithKwargs("block.mrgsort", {MakeVar("dst", tile), MakeVar("src", tile)}, {{"block_len", 16}});
-    EXPECT_CONTAINS(RunCodegen("block.mrgsort", call), "TMRGSORT(dst, src, 16);");
+    EXPECT_CONTAINS(RunCodegen("block.mrgsort", call), "TMRGSORT(dst.tile, src.tile, 16);");
 }
 
 TEST(BackendCCEBlockOutOps, Mrgsort2)
@@ -1892,14 +1916,14 @@ TEST(BackendCCEBlockOutOps, Mrgsort2)
                                     {{"exhausted", true}});
     auto code5 = RunCodegen("block.mrgsort2", call5);
     EXPECT_CONTAINS(code5, "true");
-    EXPECT_CONTAINS(code5, "decltype(src2)");
+    EXPECT_CONTAINS(code5, "decltype(src2.tile)");
 
     auto call6 = MakeCallWithKwargs("block.mrgsort2",
                                     {MakeVar("dst", tile), MakeVar("src0", tile), MakeVar("tmp", tile),
                                      MakeVar("src1", tile), MakeVar("src2", tile), MakeVar("src3", tile)},
                                     {{"exhausted", false}});
     auto code6 = RunCodegen("block.mrgsort2", call6);
-    EXPECT_CONTAINS(code6, "decltype(src3)");
+    EXPECT_CONTAINS(code6, "decltype(src3.tile)");
 }
 
 TEST(BackendCCEBlockOutOps, Histogram)
@@ -1941,7 +1965,7 @@ TEST(BackendCCEBlockOutOps, RowReduce)
         auto call = MakeCallWithKwargs("block.row_reduce",
                                        {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("tmp", tile)},
                                        {{"op_type", op_type}});
-        EXPECT_CONTAINS(RunCodegen("block.row_reduce", call), op_name + "(dst, tile, tmp);");
+        EXPECT_CONTAINS(RunCodegen("block.row_reduce", call), op_name + "(dst.tile, tile.tile, tmp.tile);");
     }
 }
 
@@ -1950,19 +1974,19 @@ TEST(BackendCCEBlockOutOps, ColReduce)
     auto tile = MakeTileType();
     auto call0 = MakeCallWithKwargs(
         "block.col_reduce", {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("tmp", tile)}, {{"op_type", 0}});
-    EXPECT_CONTAINS(RunCodegen("block.col_reduce", call0), "TCOLSUM(dst, tile, tmp, false);");
+    EXPECT_CONTAINS(RunCodegen("block.col_reduce", call0), "TCOLSUM(dst.tile, tile.tile, tmp.tile, false);");
 
     auto call1 = MakeCallWithKwargs(
         "block.col_reduce", {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("tmp", tile)}, {{"op_type", 1}});
-    EXPECT_CONTAINS(RunCodegen("block.col_reduce", call1), "TCOLMAX(dst, tile);");
+    EXPECT_CONTAINS(RunCodegen("block.col_reduce", call1), "TCOLMAX(dst.tile, tile.tile);");
 
     auto call2 = MakeCallWithKwargs(
         "block.col_reduce", {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("tmp", tile)}, {{"op_type", 2}});
-    EXPECT_CONTAINS(RunCodegen("block.col_reduce", call2), "TCOLMIN(dst, tile);");
+    EXPECT_CONTAINS(RunCodegen("block.col_reduce", call2), "TCOLMIN(dst.tile, tile.tile);");
 
     auto call3 = MakeCallWithKwargs(
         "block.col_reduce", {MakeVar("dst", tile), MakeVar("tile", tile), MakeVar("tmp", tile)}, {{"op_type", 3}});
-    EXPECT_CONTAINS(RunCodegen("block.col_reduce", call3), "TCOLPROD(dst, tile);");
+    EXPECT_CONTAINS(RunCodegen("block.col_reduce", call3), "TCOLPROD(dst.tile, tile.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, Quant)
@@ -1970,12 +1994,13 @@ TEST(BackendCCEBlockOutOps, Quant)
     auto tile = MakeTileType();
     auto callSym = MakeCallWithKwargs(
         "block.quant", {MakeVar("dst", tile), MakeVar("src", tile), MakeVar("scale", tile)}, {{"mode", 0}});
-    EXPECT_CONTAINS(RunCodegen("block.quant", callSym), "TQUANT<QuantType::INT8_SYM>(dst, src, scale);");
+    EXPECT_CONTAINS(RunCodegen("block.quant", callSym), "TQUANT<QuantType::INT8_SYM>(dst.tile, src.tile, scale.tile);");
 
     auto callAsym = MakeCallWithKwargs(
         "block.quant", {MakeVar("dst", tile), MakeVar("src", tile), MakeVar("scale", tile), MakeVar("offset", tile)},
         {{"mode", 1}});
-    EXPECT_CONTAINS(RunCodegen("block.quant", callAsym), "TQUANT<QuantType::INT8_ASYM>(dst, src, scale, &offset);");
+    EXPECT_CONTAINS(RunCodegen("block.quant", callAsym),
+                    "TQUANT<QuantType::INT8_ASYM>(dst.tile, src.tile, scale.tile, &offset.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, Dequant)
@@ -1983,7 +2008,7 @@ TEST(BackendCCEBlockOutOps, Dequant)
     auto tile = MakeTileType();
     auto call = MakeCall("block.dequant",
                          {MakeVar("dst", tile), MakeVar("src", tile), MakeVar("scale", tile), MakeVar("offset", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.dequant", call), "TDEQUANT(dst, src, scale, offset);");
+    EXPECT_CONTAINS(RunCodegen("block.dequant", call), "TDEQUANT(dst.tile, src.tile, scale.tile, offset.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, StructCreate)
@@ -2042,7 +2067,10 @@ TEST(BackendCCEBlockOutOps, GeneratesStructCreateThroughAssignStmt)
                                                        {"fields", std::vector<std::string>{"f0", "f1"}},
                                                    },
                                                    tuple_type, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::AssignStmt>(result, create, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::SeqStmts>(
+        std::vector<ir::StmtPtr>{MakeTileAssign(v0), MakeTileAssign(v1),
+                                 std::make_shared<const ir::AssignStmt>(result, create, ir::Span::Unknown())},
+        ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);

@@ -14,8 +14,8 @@
 its memory space. Three layers are covered here:
 
 * ``tile_slot_size()`` — the byte footprint derived from a static shape/dtype,
-  shared by ``make_tile_expr``'s default ``size`` and ``make_tile_group``'s slot stride;
-* ``make_tile_expr()`` — the IR builder behind it, which takes the tile's fields
+  shared by ``make_mutex_tile_expr``'s default ``size`` and ``make_tile_group``'s slot stride;
+* ``make_mutex_tile_expr()`` — the IR builder behind it, which takes the tile's fields
   spread out, requires ``addr`` and derives ``size``;
 * ``pl.make_tile(...)`` as parsed inside a kernel, where a ``pl.TileType`` is the
   only accepted positional argument and ``addr`` is a keyword-only
@@ -31,7 +31,7 @@ from pypto_pro._errors import (
     InvalidTile,
     InvalidType,
 )
-from pypto_pro.ir.op.block_ops import make_tile_expr, tile_slot_size
+from pypto_pro.ir.op.block_ops import make_mutex_tile_expr, tile_slot_size
 import pypto_pro.language as pl
 import pytest
 
@@ -43,7 +43,7 @@ def _span() -> ir.Span:
 
 
 def _const_tuple(*dims: int) -> ir.MakeTuple:
-    """A shape as the parser hands it to make_tile_expr: a MakeTuple of ConstInt."""
+    """A shape as the parser hands it to make_mutex_tile_expr: a MakeTuple of ConstInt."""
     span = _span()
     return ir.MakeTuple([ir.ConstInt(dim, ir.DataType.INDEX, span) for dim in dims], span)
 
@@ -123,43 +123,66 @@ def test_slot_size_rejects_a_bool_dimension():
 
 
 # ---------------------------------------------------------------------------
-# make_tile_expr() — the IR builder
+# make_mutex_tile_expr() — the IR builder
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("kwargs, ids", [({}, []), ({"mutex_ids": []}, []), ({"mutex_ids": [1, 3]}, [1, 3])])
+def test_internal_builder_accepts_omitted_or_explicit_mutex_ids(kwargs, ids):
+    tile = make_mutex_tile_expr([16, 16], pl.DT_FP16, pl.MemorySpace.Vec, addr=0, **kwargs)
+    assert tile.name == "block.make_mutex_tile"
+    assert isinstance(tile.type, ir.MutexTileType)
+    assert tile.type.mutex_count == len(ids)
+    assert [value.value for value in tile.args[2].elements] == ids
+
+
+def test_frontend_make_tile_does_not_expose_mutex_ids():
+    with pytest.raises(InvalidArgument, match="unexpected keyword argument"):
+
+        @pl.jit(auto_mutex=False)
+        def kernel(_unused: pl.DT_INT64):
+            tt = pl.TileType(shape=[16, 16], dtype=pl.DT_FP16)
+            pl.make_tile(tt, addr=0, mutex_ids=[1])
+
+        _parse_kernel(kernel)
+
+
 def test_builder_requires_addr():
-    with pytest.raises(TypeError, match=r"make_tile_expr\(\) missing 1 required keyword-only argument: 'addr'"):
-        make_tile_expr([16, 16], pl.DT_FP16, pl.MemorySpace.Vec)
+    with pytest.raises(TypeError, match=r"make_mutex_tile_expr\(\) missing 1 required keyword-only argument: 'addr'"):
+        make_mutex_tile_expr([16, 16], pl.DT_FP16, pl.MemorySpace.Vec)
 
 
 def test_builder_missing_addr_points_at_make_tile_group():
-    with pytest.raises(TypeError, match=r"make_tile_expr\(\) missing 1 required keyword-only argument: 'addr'"):
-        make_tile_expr([16, 16], pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+    with pytest.raises(TypeError, match=r"make_mutex_tile_expr\(\) missing 1 required keyword-only argument: 'addr'"):
+        make_mutex_tile_expr([16, 16], pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
 
 
 def test_builder_treats_address_zero_as_an_address():
-    with pytest.raises(TypeError, match=r"make_tile_expr\(\) missing 1 required positional argument: 'target_memory'"):
-        assert make_tile_expr([16, 16], pl.DT_FP16, addr=0).kwargs["memref_addr"] == 0
+    with pytest.raises(
+        TypeError, match=r"make_mutex_tile_expr\(\) missing 1 required positional argument: 'target_memory'"
+    ):
+        assert make_mutex_tile_expr([16, 16], pl.DT_FP16, addr=0).kwargs["memref_addr"] == 0
 
 
 def test_builder_derives_size_from_shape_and_dtype():
-    assert make_tile_expr([64, 128], pl.DT_FP16, target_memory=pl.MemorySpace.Vec, \
+    assert make_mutex_tile_expr([64, 128], pl.DT_FP16, target_memory=pl.MemorySpace.Vec, \
     addr=0).kwargs["memref_size"] == 64 * 128 * 2
 
 
 def test_builder_keeps_an_explicit_size():
     """Internal reinterpretation can preserve a span larger than the new shape."""
-    assert make_tile_expr([64, 128], pl.DT_FP16, pl.MemorySpace.Vec, addr=0, size=40960).kwargs["memref_size"] == 40960
+    tile = make_mutex_tile_expr([64, 128], pl.DT_FP16, pl.MemorySpace.Vec, addr=0, size=40960)
+    assert tile.kwargs["memref_size"] == 40960
 
 
 def test_builder_reports_when_size_cannot_be_derived():
     with pytest.raises(InvalidOperation, match="cannot derive its byte span"):
-        make_tile_expr(_dynamic_tuple(), pl.DT_FP16, pl.MemorySpace.Vec, addr=0)
+        make_mutex_tile_expr(_dynamic_tuple(), pl.DT_FP16, pl.MemorySpace.Vec, addr=0)
 
 
 def test_builder_gives_each_tile_its_own_memref_id():
-    first = make_tile_expr([16, 16], pl.DT_FP16, pl.MemorySpace.Vec, addr=0).kwargs["memref_id"]
-    second = make_tile_expr([16, 16], pl.DT_FP16, pl.MemorySpace.Vec, addr=0).kwargs["memref_id"]
+    first = make_mutex_tile_expr([16, 16], pl.DT_FP16, pl.MemorySpace.Vec, addr=0).kwargs["memref_id"]
+    second = make_mutex_tile_expr([16, 16], pl.DT_FP16, pl.MemorySpace.Vec, addr=0).kwargs["memref_id"]
     assert second == first + 1
 
 
@@ -174,14 +197,14 @@ def test_builder_gives_each_tile_its_own_memref_id():
     ],
 )
 def test_builder_enforces_the_alignment_of_each_memory_space(memory_space, alignment):
-    make_tile_expr([64, 64], pl.DT_FP16, memory_space, addr=alignment)
+    make_mutex_tile_expr([64, 64], pl.DT_FP16, memory_space, addr=alignment)
     with pytest.raises(ValueError, match=f"not {alignment}-byte aligned"):
-        make_tile_expr([64, 64], pl.DT_FP16, memory_space, addr=alignment // 2)
+        make_mutex_tile_expr([64, 64], pl.DT_FP16, memory_space, addr=alignment // 2)
 
 
 def test_builder_leaves_unaligned_spaces_alone():
     """DDR has no enforced tile alignment, so any address is accepted."""
-    assert make_tile_expr([64, 64], pl.DT_FP16, pl.MemorySpace.DDR, addr=1).kwargs["memref_addr"] == 1
+    assert make_mutex_tile_expr([64, 64], pl.DT_FP16, pl.MemorySpace.DDR, addr=1).kwargs["memref_addr"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +451,7 @@ def test_valid_shape_pad_and_compact_are_spread_from_the_tile_type():
         pl.load(t, x, [0, 0])
 
     ir_str = _kernel_ir(k)
-    assert "block.make_tile(tuple(128, 128), tuple(64, 128)" in ir_str
+    assert "block.make_mutex_tile(tuple(128, 128), tuple(64, 128)" in ir_str
     assert "pad=1" in ir_str
     assert "compact=1" in ir_str
 
@@ -592,7 +615,7 @@ def test_tile_type_shape_accepts_a_constant_expression():
         t = pl.make_tile(tt, addr=0)
         pl.load(t, x, [0, 0])
 
-    assert "block.make_tile(tuple(1, 64)" in _kernel_ir(k)
+    assert "block.make_mutex_tile(tuple(1, 64)" in _kernel_ir(k)
 
 
 def test_tile_type_shape_rejects_a_bool_element():

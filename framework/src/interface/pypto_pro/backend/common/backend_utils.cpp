@@ -15,6 +15,7 @@
 #include <sstream>
 
 #include "core/error.h"
+#include "codegen/cce/cce_codegen.h"
 #include "core/logging.h"
 #include "ir/kind_traits.h"
 #include "ir/memref.h"
@@ -62,6 +63,15 @@ CompareAttrs GetCompareAttrs(const ir::CallPtr& op)
 } // namespace gather
 
 namespace cce {
+
+std::string GetOperandAsCode(codegen::CCECodegen& codegen, const ir::ExprPtr& expr)
+{
+    auto value = codegen.GetExprAsCode(expr);
+    if (ir::As<ir::MutexTileType>(expr->GetType())) {
+        value += ".tile";
+    }
+    return value;
+}
 
 AccessArgIndices ResolveAccessArgIndices(const std::string& op_name)
 {

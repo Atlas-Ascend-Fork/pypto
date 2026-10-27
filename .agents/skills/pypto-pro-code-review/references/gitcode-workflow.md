@@ -23,6 +23,7 @@
    用比较基点的对应文件确认问题是否由本次引入。将比较基点与 head SHA 一并记录。
    与 PR 页面显示的改动范围核对；若平台基点不同，先确定与页面一致的基点再继续。
 4. 分页请求 `pulls/{编号}/comments?per_page=100&page={页码}`，从第 1 页读取到空页或不足 100 项。
+   评估独立检出能力时，将本步延后到保存独立发现之后，避免先读评论影响判断。
    保留评论 ID、作者、完整正文、文件/行位置和解决状态，用于去重及发布后的回读。
    列表缺少文件路径时请求 `pulls/comments/{评论ID}`，从详情的 `position` 读取
    `new_path`/`old_path`、`new_line`/`old_line` 及 base/head SHA，并核对 `is_outdated`。
@@ -42,6 +43,7 @@ API 参数参考：[PR 信息](https://docs.gitcode.com/docs/apis/get-api-v-5-re
 ## 只读获取 Commit 评论
 
 用户指定 commit 评论时，以链接中的 SHA 为目标，不因 URL 带 `prId` 就改查 PR 评论。
+评估独立检出能力时，同样先固定源码并保存独立发现，再读取评论。
 复用上述凭据和 GET 方法读取 `commits/{SHA}`，核对返回 SHA，并根据返回的 `comments_url`
 分页读取 `commits/{SHA}/comments?per_page=100&page={页码}`；完整性与失败处理沿用上述约定。
 需要评论详情时读取 `comments/{评论ID}`。源码按该 SHA 固定；查看该次提交的变化用其父提交

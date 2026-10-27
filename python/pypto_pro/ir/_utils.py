@@ -22,6 +22,7 @@ __all__ = [
     "_to_make_tuple",
     "require_const_int",
     "require_int",
+    "unwrap_type",
 ]
 
 
@@ -87,6 +88,13 @@ def require_int(
     if isinstance(value_type, _ir.ScalarType) and value_type.dtype.is_int():
         return None
     raise InvalidType(f"{subject} must be an integer scalar")
+
+
+def unwrap_type(ty: _ir.Type) -> _ir.Type:
+    """Project a tile value type to the data properties checked by an op."""
+    if isinstance(ty, _ir.MutexTileType):
+        return _ir.TileType(ty.shape, ty.dtype, ty.memref, ty.tile_view, ty.hardware_info)
+    return ty
 
 
 def _get_span_or_capture(span: _ir.Span | None = None, frame_offset: int = 1) -> _ir.Span:

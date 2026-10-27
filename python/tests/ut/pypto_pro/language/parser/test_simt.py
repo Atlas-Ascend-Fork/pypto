@@ -756,6 +756,8 @@ def test_simt_launch_auto_mutex_inserts_pipe_v_lock_unlock():
             pl.store(out, data.current(), [0, 0])
 
     program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert "system.mutex_lock_dyn" not in str(program)
+    program = ir.Pass.insert_sync()(program)
     ir_str = str(program)
 
     assert "system.mutex_lock_dyn" in ir_str

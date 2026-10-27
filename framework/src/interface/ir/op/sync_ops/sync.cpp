@@ -44,44 +44,9 @@ bool IsIntScalar(const ExprPtr& expr)
 TypePtr DeduceMutexDynType(const std::vector<ExprPtr>& args,
                            [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1 || args.size() == 2)
-        << "dynamic mutex requires either mutex_id, or mutex_id and candidate_group arguments";
-    if (args.size() == 1) {
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[0]))
-            << "manual mutex_id must be an integer scalar expression";
-        return GetUnknownType();
-    }
-
-    auto mutexId = As<MakeTuple>(args[0]);
-    auto candidateGroups = As<MakeTuple>(args[1]);
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, mutexId != nullptr && candidateGroups != nullptr)
-        << "dynamic mutex arguments must be tuples";
-    PRO_IR_CHECK(ExternalError::INVALID_SHAPE, !mutexId->elements_.empty())
-        << "mutex_id must contain at least one Tile group";
-
-    for (const auto& tileMutexIdExpr : mutexId->elements_) {
-        auto tileMutexId = As<MakeTuple>(tileMutexIdExpr);
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, tileMutexId != nullptr && !tileMutexId->elements_.empty())
-            << "each mutex_id Tile group must be a non-empty tuple";
-        for (const auto& mutexIdExpr : tileMutexId->elements_) {
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(mutexIdExpr))
-                << "mutex_id elements must be integer scalar expressions";
-        }
-    }
-
-    PRO_IR_CHECK(ExternalError::INVALID_SHAPE,
-                 !candidateGroups->elements_.empty() && candidateGroups->elements_.size() == mutexId->elements_.size())
-        << "candidate_group must contain one group per mutex_id Tile";
-    for (const auto& groupExpr : candidateGroups->elements_) {
-        auto group = As<MakeTuple>(groupExpr);
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, group != nullptr && !group->elements_.empty())
-            << "each candidate_group Tile group must be a non-empty tuple";
-        for (const auto& candidate : group->elements_) {
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(candidate))
-                << "candidate_group elements must be integer scalar expressions";
-        }
-    }
-    return GetUnknownType();
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1) << "dynamic mutex requires one scalar mutex ID";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[0])) << "mutex_id must be an integer scalar expression";
+    return GetNoneType();
 }
 
 bool IsDcciTensorOffset(const ExprPtr& offset)
@@ -106,6 +71,14 @@ bool IsDcciTensorOffset(const ExprPtr& offset)
 // ============================================================================
 // Registration Function for Sync Operations
 // ============================================================================
+
+REGISTER_OP("system.vf_scope_args")
+    .set_description("Declare VF scope Tile arguments for InsertSync; generates no runtime code")
+    .set_op_category("SyncOp")
+    .add_argument("...", "Tile call arguments in parameter order")
+    .f_deduce_type([](const std::vector<ExprPtr>&, const std::vector<std::pair<std::string, std::any>>&) {
+        return GetNoneType();
+    });
 
 // Register system.sync_src_dyn (Set Flag)
 REGISTER_OP("system.sync_src_dyn")
@@ -273,19 +246,17 @@ REGISTER_OP("system.dcci")
 
 // Register system.mutex_lock_dyn (Mutex::Lock, A5)
 REGISTER_OP("system.mutex_lock_dyn")
-    .set_description("Acquire per-Tile Mutex buffer-id tokens with codegen-side deduplication (A5)")
+    .set_description("Acquire a Mutex buffer-id token (A5)")
     .set_op_category("SyncOp")
-    .add_argument("mutex_id", "Integer scalar for manual mutex, or two-dimensional tuple grouped by Tile")
-    .add_argument("candidate_group", "Optional two-dimensional tuple of candidate IDs for automatic mutex")
+    .add_argument("mutex_id", "Integer scalar mutex ID")
     .set_attr<int>("pipe")
     .f_deduce_type(DeduceMutexDynType);
 
 // Register system.mutex_unlock_dyn (Mutex::Unlock, A5)
 REGISTER_OP("system.mutex_unlock_dyn")
-    .set_description("Release per-Tile Mutex buffer-id tokens with codegen-side deduplication (A5)")
+    .set_description("Release a Mutex buffer-id token (A5)")
     .set_op_category("SyncOp")
-    .add_argument("mutex_id", "Integer scalar for manual mutex, or two-dimensional tuple grouped by Tile")
-    .add_argument("candidate_group", "Optional two-dimensional tuple of candidate IDs for automatic mutex")
+    .add_argument("mutex_id", "Integer scalar mutex ID")
     .set_attr<int>("pipe")
     .f_deduce_type(DeduceMutexDynType);
 

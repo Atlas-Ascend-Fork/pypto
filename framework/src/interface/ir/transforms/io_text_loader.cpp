@@ -481,6 +481,20 @@ TypePtr IRTextParser::ParseTypeScalar()
     return std::make_shared<ScalarType>(dt->data);
 }
 
+TypePtr IRTextParser::ParseTypeMutexTile()
+{
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwMutexTile));
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunLt));
+    MUST_VALID(tile, ParseTypeTile());
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunComma));
+    MUST_VALID(count, ParseExprInt());
+    auto value = As<ConstInt>(count)->value_;
+    if (value < 0 || static_cast<uint64_t>(value) > UINT32_MAX)
+        return nullptr;
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunGt));
+    return std::make_shared<MutexTileType>(*As<TileType>(tile), static_cast<uint32_t>(value));
+}
+
 IRTextParserOptionalTensorViewPtr IRTextParser::ParserTensorTypeTensorView()
 {
     // tensor_view<...> or tensor_view<>
@@ -605,6 +619,7 @@ TypePtr IRTextParser::ParseType()
         {IRTextLexerTokenKind::KwTuple, &IRTextParser::ParseTypeTuple},
         {IRTextLexerTokenKind::KwTensor, &IRTextParser::ParseTypeTensor},
         {IRTextLexerTokenKind::KwTile, &IRTextParser::ParseTypeTile},
+        {IRTextLexerTokenKind::KwMutexTile, &IRTextParser::ParseTypeMutexTile},
         {IRTextLexerTokenKind::TokIdent, &IRTextParser::ParseTypeScalar},
     };
     auto it = dispatch.find(Peek().kind);

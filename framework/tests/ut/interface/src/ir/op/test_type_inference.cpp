@@ -328,34 +328,32 @@ TEST_F(TypeInferenceTest, RequireTileScalarArgs_NonScalarSecond_Throws)
 }
 
 // ============================================================================
-// DeduceBlockOutTileType
+// DeduceBlockOutType
 // ============================================================================
 
-TEST_F(TypeInferenceTest, DeduceBlockOutTileType_Valid_ReturnsFirstTile)
+TEST_F(TypeInferenceTest, DeduceBlockOutType_Valid_ReturnsNone)
 {
     auto tile1 = MakeTileVar("a", {16, 32}, DataType::FP16);
     auto tile2 = MakeTileVar("b", {16, 32}, DataType::FP16);
     auto out = MakeTileVar("out", {16, 32}, DataType::FP32);
     std::vector<std::pair<std::string, std::any>> kwargs;
-    auto result = DeduceBlockOutTileType({out, tile1, tile2}, kwargs, "test_op", 3);
-    auto rt = As<TileType>(result);
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP32);
+    auto result = DeduceBlockOutType({out, tile1, tile2}, kwargs, "test_op", 3);
+    EXPECT_NE(As<NoneType>(result), nullptr);
 }
 
-TEST_F(TypeInferenceTest, DeduceBlockOutTileType_WrongArgCount_Throws)
+TEST_F(TypeInferenceTest, DeduceBlockOutType_WrongArgCount_Throws)
 {
     auto tile = MakeTileVar("a", {16}, DataType::FP16);
     std::vector<std::pair<std::string, std::any>> kwargs;
-    EXPECT_THROW((void)DeduceBlockOutTileType({tile}, kwargs, "test_op", 2), npu::tile_fwk::Error);
+    EXPECT_THROW((void)DeduceBlockOutType({tile}, kwargs, "test_op", 2), npu::tile_fwk::Error);
 }
 
-TEST_F(TypeInferenceTest, DeduceBlockOutTileType_FirstNotTile_Throws)
+TEST_F(TypeInferenceTest, DeduceBlockOutType_FirstNotTile_Throws)
 {
     auto tile = MakeTileVar("a", {16}, DataType::FP16);
     auto scalar = MakeScalarVar("s", DataType::FP32);
     std::vector<std::pair<std::string, std::any>> kwargs;
-    EXPECT_THROW((void)DeduceBlockOutTileType({scalar, tile}, kwargs, "test_op", 2), npu::tile_fwk::Error);
+    EXPECT_THROW((void)DeduceBlockOutType({scalar, tile}, kwargs, "test_op", 2), npu::tile_fwk::Error);
 }
 
 } // namespace ir

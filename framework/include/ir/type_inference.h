@@ -153,11 +153,11 @@ TileScalarTypes RequireTileScalarArgs(const std::vector<ExprPtr>& args, const st
                                       size_t expected_args = 2);
 
 /**
- * \brief Return the TileType of the last argument for block explicit-output operators
+ * \brief Validate the output Tile argument and return NoneType for explicit-output operators
  */
-TypePtr DeduceBlockOutTileType(const std::vector<ExprPtr>& args,
-                               const std::vector<std::pair<std::string, std::any>>& kwargs, const std::string& op_name,
-                               size_t expected_args);
+TypePtr DeduceBlockOutType(const std::vector<ExprPtr>& args,
+                           const std::vector<std::pair<std::string, std::any>>& kwargs, const std::string& op_name,
+                           size_t expected_args);
 
 /**
  * \brief Read an operator keyword argument, optionally falling back to a default value

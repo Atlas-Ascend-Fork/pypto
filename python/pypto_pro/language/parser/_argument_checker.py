@@ -362,6 +362,8 @@ def value_kind(value: Any) -> type:
         value_type = getattr(value, "type", None)
         if isinstance(value_type, ir.ScalarType):
             return _scalar_family(value_type)
+        if isinstance(value_type, ir.TileType):
+            return ir.TileType
         return type(value_type)
     return type(value)
 
@@ -376,6 +378,8 @@ def describe_value(value: Any) -> str:
             # Naming the class would say ScalarType for every scalar alike; the
             # dtype is what tells the caller which one they actually wrote.
             return f"a {value_type.dtype} scalar"
+        if isinstance(value_type, ir.TileType):
+            return "TileType"
         return type(value_type).__name__ if value_type is not None else "an expression"
     return type(value).__name__
 

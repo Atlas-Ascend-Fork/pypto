@@ -108,7 +108,7 @@ public:
         auto view_source_decl = [this](const CallPtr& c) { return CollectMakeTensor(c); };
 
         op_records_ = {
-            {"block.make_tile", tile_overlap_decl},
+            {"block.make_mutex_tile", tile_overlap_decl},
             {"ptr.make_tensor", view_source_decl},
             {"block.load", tensor_bounds},
             {"block.store", tensor_bounds},
@@ -406,21 +406,7 @@ StmtPtr SanitizerInstrumenter::RecordMutex(const CallPtr& call)
             MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::MutexAccess), std::move(fields), call->span_));
     };
 
-    if (call->args_.size() == 1) {
-        recordMutexId(call->args_[0]);
-        return SeqStmts::Flatten(std::move(logs), call->span_);
-    }
-
-    auto mutexId = As<MakeTuple>(call->args_[0]);
-
-    // candidate_group is compile-time metadata. Emit one record for every
-    // actual mutex ID while preserving each Tile's required-ID ordering.
-    for (const auto& tileMutexIdExpr : mutexId->elements_) {
-        auto tileMutexId = As<MakeTuple>(tileMutexIdExpr);
-        for (const auto& mutexIdExpr : tileMutexId->elements_) {
-            recordMutexId(mutexIdExpr);
-        }
-    }
+    recordMutexId(call->args_[0]);
     return SeqStmts::Flatten(std::move(logs), call->span_);
 }
 

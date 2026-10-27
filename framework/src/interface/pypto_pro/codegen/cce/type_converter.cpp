@@ -103,7 +103,13 @@ void ApplyTileViewValidShape(const ir::TileTypePtr& tile_type, int64_t rows, int
 
 } // namespace
 
-std::string TypeConverter::ConvertTileType(const ir::TileTypePtr& tile_type, int64_t rows, int64_t cols) const
+std::string TypeConverter::ConvertTileType(const ir::MutexTileTypePtr& tile_type, int64_t rows, int64_t cols) const
+{
+    return "SyncedTile<" + ConvertPtoTileType(tile_type, rows, cols) + ", " + std::to_string(tile_type->mutexCount_) +
+           ">";
+}
+
+std::string TypeConverter::ConvertPtoTileType(const ir::TileTypePtr& tile_type, int64_t rows, int64_t cols) const
 {
     std::ostringstream type_alias;
     if (!tile_type->memref_.has_value()) {

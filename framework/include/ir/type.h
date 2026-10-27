@@ -464,6 +464,25 @@ public:
 
 using TileTypePtr = std::shared_ptr<const TileType>;
 
+/** Tile value whose runtime descriptor carries a fixed number of mutex IDs. */
+class MutexTileType : public TileType {
+public:
+    uint32_t mutexCount_;
+
+    MutexTileType(const TileType& tileType, uint32_t mutexCount) : TileType(tileType), mutexCount_(mutexCount) {}
+
+    [[nodiscard]] ObjectKind GetKind() const override { return ObjectKind::MutexTileType; }
+    [[nodiscard]] std::string TypeName() const override { return "MutexTileType"; }
+
+    static constexpr auto GetFieldDescriptors()
+    {
+        return std::tuple_cat(TileType::GetFieldDescriptors(),
+                              std::make_tuple(reflection::UsualField(&MutexTileType::mutexCount_, "mutex_count")));
+    }
+};
+
+using MutexTileTypePtr = std::shared_ptr<const MutexTileType>;
+
 /**
  * \brief Tuple type representation
  *

@@ -520,6 +520,9 @@ std::string IRPrinter::Print(const TypePtr& type)
 
     if (auto tile_type = As<TileType>(type)) {
         std::ostringstream oss;
+        auto mutex_type = As<MutexTileType>(type);
+        if (mutex_type)
+            oss << prefix_ << ".MutexTileType(";
         oss << prefix_ << ".TileType([";
         PrintShapeDims(oss, tile_type->shape_);
         oss << "], " << prefix_ << "." << DTypeToString(tile_type->dtype_);
@@ -537,6 +540,8 @@ std::string IRPrinter::Print(const TypePtr& type)
         }
 
         oss << ")";
+        if (mutex_type)
+            oss << ", " << mutex_type->mutexCount_ << ")";
         return oss.str();
     }
 

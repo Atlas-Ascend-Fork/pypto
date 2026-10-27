@@ -143,7 +143,9 @@ def test_compact_column_tile_is_emitted_and_round_trips():
     assert generated, "no generated kernel.cpp found for the compact column kernel"
     source = max(generated, key=os.path.getmtime)
     with open(source, encoding="utf-8") as handle:
-        column_type = re.search(r"using _tg_column_group_tiles_0_Type = (Tile<[^;]*);", handle.read())
+        column_type = re.search(
+            r"using _tg_column_group_tiles_0_0_Type = SyncedTile<(Tile<[^;]*>), [0-9]+>;", handle.read()
+        )
     assert column_type is not None, f"no tile type alias for the column tile in {source}"
     assert "BLayout::ColMajor" in column_type.group(1), column_type.group(1)
     assert "CompactMode::Normal" in column_type.group(1), column_type.group(1)

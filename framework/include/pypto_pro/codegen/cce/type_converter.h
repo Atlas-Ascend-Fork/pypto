@@ -33,15 +33,17 @@ public:
     TypeConverter() = default;
 
     /**
-     * \brief Convert TileType to pto-isa TileType string
+     * \brief Convert MutexTileType to its complete runtime descriptor type
      *
-     * \param tile_type The ir::TileTypePtr
+     * \param tile_type The ir::MutexTileTypePtr
      * \param rows The number of rows
      * \param cols The number of columns
-     * \return pto-isa Tile declaration string (e.g., "Tile<TileType::Left, float, 1, 1, BLayout::RowMajor, -1,
-     * -1>;")
+     * \return SyncedTile<PTO Tile type, mutex count>; plain tiles have count zero.
      */
-    [[nodiscard]] std::string ConvertTileType(const ir::TileTypePtr& tile_type, int64_t rows, int64_t cols) const;
+    [[nodiscard]] std::string ConvertTileType(const ir::MutexTileTypePtr& tile_type, int64_t rows, int64_t cols) const;
+
+    /// Underlying PTO descriptor type used by instruction templates and descriptor construction.
+    [[nodiscard]] std::string ConvertPtoTileType(const ir::TileTypePtr& tile_type, int64_t rows, int64_t cols) const;
 
     /**
      * \brief Convert MemorySpace to pto-isa TileType string

@@ -11,9 +11,12 @@
 """Slot provenance protects dynamic aliases and every MX plane address."""
 
 from pypto_pro import ir
-from pypto_pro._errors import InvalidVal, NotSupported
+from pypto_pro._errors import InvalidVal
 import pypto_pro.language as pl
+from pypto_pro.runtime.platform import NpuArch
 import pytest
+
+from pypto.pypto_impl.codegen import CCECodegen
 
 
 def _parse(kernel):
@@ -41,10 +44,11 @@ def _reinterpret_kernel(selection, depth=2):
 
 
 @pytest.mark.parametrize("selection", [0, 1])
-def test_dynamic_slot_reinterpret_is_rejected(selection):
-    with pytest.raises(NotSupported) as caught:
-        _parse(_reinterpret_kernel(selection))
-    assert "runtime slot index" in caught.value.message
+def test_dynamic_slot_reinterpret_uses_runtime_address(selection):
+    program, _ = _parse(_reinterpret_kernel(selection))
+    code = CCECodegen(ir.SectionKind.Cube).generate_single(program, NpuArch.DAV_3510)
+    assert "TASSIGN(view" in code
+    assert ".data()" in code
 
 
 @pytest.mark.parametrize("selection,depth", [(0, 1), (2, 2), (3, 2)])

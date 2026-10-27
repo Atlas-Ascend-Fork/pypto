@@ -14,8 +14,8 @@
  *
  * fillpad_inplace, fillpad_expand.
  *
- * Each block explicit-output op receives the pre-allocated output tile as its first argument
- * and returns that tile's type rather than creating a fresh SSA result type.
+ * Each block explicit-output op receives the pre-allocated output buffer as its first argument.
+ * Operations that write to existing tiles return NoneType.
  * This mirrors the hardware semantics where the programmer explicitly manages
  * tile buffers.
  */
@@ -51,7 +51,8 @@ static TypePtr DeduceBlockOutFillPadType([[maybe_unused]] const std::vector<Expr
                                          const std::string& op_name, bool allow_expand,
                                          bool require_shared_backing_storage = false)
 {
-    auto out_type = As<TileType>(DeduceBlockOutTileType(args, kwargs, op_name, 2));
+    auto result_type = DeduceBlockOutType(args, kwargs, op_name, 2);
+    auto out_type = As<TileType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, out_type) << op_name << ": out must be TileType";
     auto src_type = As<TileType>(args[1]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, src_type) << op_name << ": src must be TileType";
@@ -102,18 +103,18 @@ static TypePtr DeduceBlockOutFillPadType([[maybe_unused]] const std::vector<Expr
                      out_rows->value_ >= src_rows->value_ && out_cols->value_ >= src_cols->value_)
             << op_name << ": out tile rows/cols must be >= src tile rows/cols";
     }
-    return out_type;
+    return result_type;
 }
 
 // ---------------------------------------------------------------------------
 // Op registration
 // ---------------------------------------------------------------------------
 
-// block.load: (out, tensor, offsets) -> TileType (out's type)
+// block.load: (out, tensor, offsets) -> NoneType
 REGISTER_OP("block.load")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output load: copy data from a global tensor into a pre-allocated tile. "
-                     "The output tile (first arg) defines the destination buffer; its type is returned. "
+                     "The output tile (first arg) defines the destination buffer. "
                      "Partition view sizes are derived from the tile type's shape/valid_shape.")
     .add_argument("out", "Pre-allocated destination tile (TileType)")
     .add_argument("tensor", "Source tensor (TensorType)")
@@ -134,7 +135,7 @@ REGISTER_OP("block.load")
             << "block.load: arg 1 must be TensorType";
         auto offsets = As<MakeTuple>(args[2]);
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsets) << "block.load: arg 2 must be MakeTuple (offsets)";
-        return args[0]->GetType();
+        return GetNoneType();
     });
 
 // block.store: (output_tensor, tile, offsets, [scale]) -> TensorType
@@ -167,7 +168,7 @@ REGISTER_OP("block.store")
         return out_type;
     });
 
-// block.move: (out, src_tile, [offset], [scale]) -> TileType (out's type)
+// block.move: (out, src_tile, [offset], [scale]) -> NoneType
 REGISTER_OP("block.move")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output move: transfer a tile between memory levels into a pre-allocated buffer. "
@@ -193,10 +194,10 @@ REGISTER_OP("block.move")
                                                           As<TileType>(args[i]->GetType()))
                 << "block.move: optional arg " << i << " must be TupleType (offset), ScalarType, or TileType (scale)";
         }
-        return out_type;
+        return GetNoneType();
     });
 
-// block.insert: (out, src, row, col, [scale]) -> TileType
+// block.insert: (out, src, row, col, [scale]) -> NoneType
 REGISTER_OP("block.insert")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output insert: insert a Vec or Acc source sub-tile into a Mat tile at a 2-D "
@@ -214,10 +215,10 @@ REGISTER_OP("block.insert")
             << "The operator block.insert requires 4 or 5 arguments, but got " << args.size();
         auto out_type = As<TileType>(args[0]->GetType());
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, out_type) << "block.insert: first argument (out) must be TileType";
-        return out_type;
+        return GetNoneType();
     });
 
-// block.ub_copy: (out, src_tile) -> TileType (out's type)
+// block.ub_copy: (out, src_tile) -> NoneType
 REGISTER_OP("block.ub_copy")
     .set_op_category("BlockOp")
     .set_description(
@@ -226,7 +227,7 @@ REGISTER_OP("block.ub_copy")
     .add_argument("src", "Source UB tile (TileType)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.ub_copy", 2);
+        return DeduceBlockOutType(args, kwargs, "block.ub_copy", 2);
     });
 
 // block.ssbuf_store: (struct_var, offset) -> void
@@ -258,7 +259,7 @@ REGISTER_OP("block.ssbuf_load")
         return GetNoneType();
     });
 
-// block.full: (out, scalar) -> TileType (out's type)
+// block.full: (out, scalar) -> NoneType
 // Fills the pre-allocated tile with a scalar value. Shape comes from out's TileType.
 REGISTER_OP("block.full")
     .set_op_category("BlockOp")
@@ -267,10 +268,10 @@ REGISTER_OP("block.full")
     .add_argument("scalar", "Fill value (ScalarType or constant)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.full", 2);
+        return DeduceBlockOutType(args, kwargs, "block.full", 2);
     });
 
-// block.fillpad: (out, src_tile) -> TileType (out's type)
+// block.fillpad: (out, src_tile) -> NoneType
 REGISTER_OP("block.fillpad")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output fill-with-padding: copy src tile into out and pad remaining elements.")
@@ -281,7 +282,7 @@ REGISTER_OP("block.fillpad")
         return DeduceBlockOutFillPadType(args, kwargs, "block.fillpad", false);
     });
 
-// block.fillpad_inplace: (out, src_tile) -> TileType (out's type)
+// block.fillpad_inplace: (out, src_tile) -> NoneType
 REGISTER_OP("block.fillpad_inplace")
     .set_op_category("BlockOp")
     .set_description(
@@ -294,7 +295,7 @@ REGISTER_OP("block.fillpad_inplace")
         return DeduceBlockOutFillPadType(args, kwargs, "block.fillpad_inplace", false, true);
     });
 
-// block.fillpad_expand: (out, src_tile) -> TileType (out's type)
+// block.fillpad_expand: (out, src_tile) -> NoneType
 REGISTER_OP("block.fillpad_expand")
     .set_op_category("BlockOp")
     .set_description(
@@ -306,7 +307,7 @@ REGISTER_OP("block.fillpad_expand")
         return DeduceBlockOutFillPadType(args, kwargs, "block.fillpad_expand", true);
     });
 
-// block.set_validshape: (tile, row, col) -> TileType (tile's type)
+// block.set_validshape: (tile, row, col) -> NoneType
 REGISTER_OP("block.set_validshape")
     .set_op_category("BlockOp")
     .set_description("Update valid-shape metadata on a dynamic tile in place. "
@@ -316,7 +317,7 @@ REGISTER_OP("block.set_validshape")
     .add_argument("col", "Runtime valid column count (ScalarType or constant)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutTileType(args, kwargs, "block.set_validshape", 3);
+        return DeduceBlockOutType(args, kwargs, "block.set_validshape", 3);
     });
 
 // block.init_output: (tensor, offset, size, value) -> void

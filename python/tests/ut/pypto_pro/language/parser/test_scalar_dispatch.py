@@ -49,6 +49,13 @@ def test_simd_element_reads_keep_scalar_promotion(dtype, expected, use_tile):
     ]
     assert len(loads) == 2
     assert all(load.type.dtype == expected for load in loads)
+    stores = [
+        stmt.expr
+        for stmt in function.body.stmts
+        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == "block.setval"
+    ]
+    assert len(stores) == 1
+    assert isinstance(stores[0].type, ir.NoneType)
 
 
 def test_simd_integer_reads_merge_as_int64_across_branches():

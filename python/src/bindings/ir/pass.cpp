@@ -30,8 +30,6 @@ void BindPasses(py::module_& m)
         .def(py::init<>())
         .def("collect_group", &AutoMutexIdManager::CollectGroup, py::arg("tiles"), py::arg("mutex_ids"),
              py::arg("group_name"))
-        .def("record_op_constraints", &AutoMutexIdManager::RecordOpConstraints, py::arg("tile_id_groups"),
-             py::arg("candidate_groups"))
         .def("assign_mutex_ids", &AutoMutexIdManager::AssignMutexIds, py::arg("program"))
         .def_property_readonly("diagnostic_span", &AutoMutexIdManager::DiagnosticSpan);
 
@@ -114,6 +112,7 @@ void BindPasses(py::module_& m)
                     "Finalize dynamic functions built from new IR")
         .def_static("litenpu_dynamic_to_static", &pass::LitenpuDynamicToStatic,
                     "Convert device-side (Kirin) dynamic expressions to static (loop unroll)")
+        .def_static("insert_sync", &pass::InsertSync, "Insert mutex synchronization from tile bindings")
         .def_static("sanitizer", &pass::Sanitizer,
                     "Create a sanitizer instrumentation pass (stateless; every check value travels in the records)");
 

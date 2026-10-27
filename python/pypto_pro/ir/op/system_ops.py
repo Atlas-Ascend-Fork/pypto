@@ -25,13 +25,12 @@ from pypto.pypto_impl.ir import (
     CrossCoreSyncMode,
     DcciDst,
     Expr,
-    MakeTuple,
     PipeType,
     Span,
     SyncCoreType,
 )
 
-from ..._errors import InvalidArgument, InvalidOperation, InvalidShape, InvalidType, NotSupported
+from ..._errors import InvalidArgument, InvalidOperation, InvalidType, NotSupported
 from .._utils import _get_span_or_capture, _is_int, _normalize_expr, _to_make_tuple
 from ._op_registry import OpSpec, op_impl, register_table
 
@@ -399,80 +398,6 @@ def _create_mutex_op(
         actual_span,
     )
 
-
-def _create_mutex_dedup_op(
-    op_name: str,
-    *,
-    pipe: PipeType,
-    mutex_id: MakeTuple,
-    candidate_groups: MakeTuple,
-    span: Span | None = None,
-) -> Call:
-    """Create a mutex lock/unlock with per-Tile ID and candidate groups.
-
-    The first argument is a two-dimensional tuple containing the IDs required by
-    each Tile. The second argument is the matching two-dimensional candidate
-    tuple used by codegen for cross-Tile deduplication.
-
-    Args:
-        op_name: Base operation name ("system.mutex_lock" or "system.mutex_unlock").
-        pipe: Pipe to lock on.
-        mutex_id: One non-empty mutex ID sequence per Tile.
-        candidate_groups: One non-empty candidate sequence per Tile.
-        span: Source span.
-    """
-    actual_span = span if span is not None else _get_span_or_capture(span, frame_offset=3)
-    _validate_concrete_pipe(pipe, "pipe", actual_span)
-    if not mutex_id.elements or any(
-        not isinstance(tile_mutex_id, MakeTuple) or not tile_mutex_id.elements
-        for tile_mutex_id in mutex_id.elements
-    ):
-        raise InvalidArgument("mutex_id requires at least one expression per Tile", span=actual_span)
-
-    mutex_id_tuple = _to_make_tuple(
-        [
-            _to_make_tuple(
-                [
-                    _normalize_integer_id_expr(value, actual_span, name="mutex_id", max_id=MAX_MUTEX_ID)
-                    for value in tile_mutex_id.elements
-                ],
-                actual_span,
-            )
-            for tile_mutex_id in mutex_id.elements
-        ],
-        actual_span,
-    )
-
-    if len(candidate_groups.elements) != len(mutex_id.elements) or any(
-        not isinstance(group, MakeTuple) or not group.elements
-        for group in candidate_groups.elements
-    ):
-        raise InvalidShape(
-            "candidate_group must contain one non-empty group per mutex_id Tile",
-            span=actual_span,
-        )
-    candidate_group_tuple = _to_make_tuple(
-        [
-            _to_make_tuple(
-                [
-                    _normalize_integer_id_expr(
-                        candidate, actual_span, name="candidate_group", max_id=MAX_MUTEX_ID
-                    )
-                    for candidate in group.elements
-                ],
-                actual_span,
-            )
-            for group in candidate_groups.elements
-        ],
-        actual_span,
-    )
-
-    return _ir_core.create_op_call(
-        f"{op_name}_dyn",
-        [mutex_id_tuple, candidate_group_tuple],
-        {"pipe": pipe},
-        actual_span,
-    )
 
 
 def _mutex_op(

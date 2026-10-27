@@ -16,10 +16,10 @@
 #include <limits>
 #include <numeric>
 #include <optional>
-#include <set>
 #include <sstream>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include "ir/kind_traits.h"
@@ -93,11 +93,6 @@ public:
         bool IsAuto() const { return placeholder != nullptr; }
     };
 
-    struct CandidateGroup {
-        std::vector<VarPtr> autoPlaceholders;
-        std::vector<int> manualIds;
-    };
-
     struct AliasComponent {
         std::vector<size_t> tiles;
         MemorySpace memorySpace;
@@ -113,12 +108,8 @@ public:
 
     struct AllocationState {
         std::vector<AliasComponent> components;
-        std::vector<size_t> componentByTile;
-        std::vector<std::set<size_t>> conflictNeighbors;
-        std::vector<std::set<int>> avoidedIdsByComponent;
         std::array<int, kMutexIdCount> tileUsageById{};
         std::array<int, kMutexIdCount> componentUsageById{};
-        std::vector<std::optional<int>> assignedIdByComponent;
     };
 
     void CollectGroup(const std::vector<ExprPtr>& tiles, const MakeTuplePtr& mutexIds, const std::string& groupName)
@@ -136,41 +127,6 @@ public:
         }
     }
 
-    void RecordOpConstraints(const std::vector<MakeTuplePtr>& tileIdGroups,
-                             const std::vector<MakeTuplePtr>& candidateGroups)
-    {
-        if (!hasAuto_ || tileIdGroups.size() < 2) {
-            return;
-        }
-        PRO_PASS_INTERNAL_CHECK_WITH_SPAN(npu::tile_fwk::InternalError::PASS_INNER_ERROR,
-                                          tileIdGroups.size() == candidateGroups.size(), Span::Unknown())
-            << "mutex tile-ID and candidate group counts must match";
-
-        std::vector<CandidateGroup> groups;
-        groups.reserve(tileIdGroups.size());
-        for (size_t index = 0; index < tileIdGroups.size(); ++index) {
-            groups.push_back(GetEffectiveCandidateGroup(tileIdGroups[index], candidateGroups[index]));
-        }
-
-        // Different Tile operands prefer distinct AUTO IDs. Manual candidates are soft
-        // exclusions for AUTO placeholders in the other operand group.
-        for (size_t leftIndex = 0; leftIndex < groups.size(); ++leftIndex) {
-            const auto& left = groups[leftIndex];
-            for (size_t rightIndex = leftIndex + 1; rightIndex < groups.size(); ++rightIndex) {
-                const auto& right = groups[rightIndex];
-                for (const auto& leftPlaceholder : left.autoPlaceholders) {
-                    AddAvoidedIds(leftPlaceholder, right.manualIds);
-                    for (const auto& rightPlaceholder : right.autoPlaceholders) {
-                        AddAutoConflict(leftPlaceholder, rightPlaceholder);
-                    }
-                }
-                for (const auto& rightPlaceholder : right.autoPlaceholders) {
-                    AddAvoidedIds(rightPlaceholder, left.manualIds);
-                }
-            }
-        }
-    }
-
     ProgramPtr AssignMutexIds(const ProgramPtr& program)
     {
         if (!hasAuto_) {
@@ -180,7 +136,7 @@ public:
         // AUTO-placeholder-to-ConstInt substitutions.
         auto assignedIdByTile = AllocateMutexIds();
         std::vector<std::pair<VarPtr, int>> replacements;
-        replacements.reserve(placeholderToTile_.size());
+        replacements.reserve(placeholders_.size());
         for (size_t tileIndex = 0; tileIndex < tiles_.size(); ++tileIndex) {
             const auto& tile = tiles_[tileIndex];
             if (!tile.IsAuto()) {
@@ -199,66 +155,6 @@ public:
     Span DiagnosticSpan() const { return diagnosticSpan_; }
 
 private:
-    bool IsPlaceholder(const ExprPtr& value) const
-    {
-        auto var = As<Var>(value);
-        return var != nullptr && placeholderToTile_.find(var.get()) != placeholderToTile_.end();
-    }
-
-    CandidateGroup GetEffectiveCandidateGroup(const MakeTuplePtr& tileIds, const MakeTuplePtr& tileCandidates) const
-    {
-        bool hasExactIds = std::all_of(
-            tileIds->elements_.begin(), tileIds->elements_.end(),
-            [this](const ExprPtr& value) { return IsPlaceholder(value) || As<ConstInt>(value) != nullptr; });
-        return ParseCandidateGroup(hasExactIds ? tileIds : tileCandidates);
-    }
-
-    CandidateGroup ParseCandidateGroup(const MakeTuplePtr& candidates) const
-    {
-        CandidateGroup group;
-        for (const auto& candidate : candidates->elements_) {
-            if (IsPlaceholder(candidate)) {
-                group.autoPlaceholders.push_back(As<Var>(candidate));
-                continue;
-            }
-
-            auto manualId = As<ConstInt>(candidate);
-            Span candidateSpan = candidate == nullptr ? candidates->span_ : candidate->span_;
-            PRO_PASS_INTERNAL_CHECK_WITH_SPAN(npu::tile_fwk::InternalError::PASS_INNER_ERROR, manualId != nullptr,
-                                              candidateSpan)
-                << "mutex candidate must be a registered AUTO placeholder or ConstInt";
-            ValidateMutexId(manualId->value_, candidateSpan);
-            group.manualIds.push_back(static_cast<int>(manualId->value_));
-        }
-        return group;
-    }
-
-    void AddAutoConflict(const VarPtr& left, const VarPtr& right)
-    {
-        size_t leftIndex = GetAutoTile(left);
-        size_t rightIndex = GetAutoTile(right);
-        if (leftIndex == rightIndex) {
-            return;
-        }
-        if (leftIndex > rightIndex) {
-            std::swap(leftIndex, rightIndex);
-        }
-        // Store an unordered Tile pair in canonical order so repeated op uses collapse naturally.
-        autoConflicts_.emplace(leftIndex, rightIndex);
-    }
-
-    void AddAvoidedIds(const VarPtr& placeholder, const std::vector<int>& avoidedIds)
-    {
-        size_t tileIndex = GetAutoTile(placeholder);
-        // These IDs are allocation preferences, not hard exclusions: exhaustion falls back to
-        // the full candidate domain.
-        auto& avoided = avoidedIds_[tileIndex];
-        for (int mutexId : avoidedIds) {
-            ValidateMutexId(mutexId, tiles_[tileIndex].span);
-            avoided.insert(mutexId);
-        }
-    }
-
     TileMutexId ParseTileMutexId(const ExprPtr& value, const Span& fallbackSpan)
     {
         auto mutexIds = As<MakeTuple>(value);
@@ -322,10 +218,9 @@ private:
 
         if (tileMutexId.IsAuto()) {
             hasAuto_ = true;
-            PRO_PASS_INTERNAL_CHECK_WITH_SPAN(
-                npu::tile_fwk::InternalError::PASS_INNER_ERROR,
-                placeholderToTile_.find(tileMutexId.placeholder.get()) == placeholderToTile_.end(),
-                tileMutexId.placeholder->span_)
+            PRO_PASS_INTERNAL_CHECK_WITH_SPAN(npu::tile_fwk::InternalError::PASS_INNER_ERROR,
+                                              placeholders_.find(tileMutexId.placeholder.get()) == placeholders_.end(),
+                                              tileMutexId.placeholder->span_)
                 << "AUTO mutex placeholder was reused by multiple Tiles";
         }
 
@@ -335,21 +230,8 @@ private:
                                     tileMutexId.placeholder, groupName, tile->span_});
         tileToIndex_[tile.get()] = tileIndex;
         if (tileMutexId.IsAuto()) {
-            placeholderToTile_[tileMutexId.placeholder.get()] = tileIndex;
+            placeholders_.insert(tileMutexId.placeholder.get());
         }
-    }
-
-    size_t GetAutoTile(const VarPtr& placeholder) const
-    {
-        PRO_PASS_INTERNAL_CHECK_WITH_SPAN(npu::tile_fwk::InternalError::PASS_INNER_ERROR, placeholder != nullptr,
-                                          Span::Unknown())
-            << "AUTO mutex constraint target is null";
-        auto it = placeholderToTile_.find(placeholder.get());
-        PRO_PASS_INTERNAL_CHECK_WITH_SPAN(npu::tile_fwk::InternalError::PASS_INNER_ERROR,
-                                          it != placeholderToTile_.end(), placeholder->span_)
-            << "unknown AUTO mutex placeholder";
-        // Constraints are keyed by placeholders, while allocation data is indexed by Tile.
-        return it->second;
     }
 
     static void ValidateMutexId(int64_t mutexId, const Span& span)
@@ -495,45 +377,11 @@ private:
         return os.str();
     }
 
-    void BuildComponentConstraints(AllocationState& state) const
-    {
-        // Lift per-Tile preferences to overlap components, which are the actual allocation units.
-        state.conflictNeighbors.resize(state.components.size());
-        for (const auto& [left, right] : autoConflicts_) {
-            size_t leftComponent = state.componentByTile[left];
-            size_t rightComponent = state.componentByTile[right];
-            if (leftComponent == rightComponent) {
-                // Aliasing already requires these Tiles to share one ID, so no distinct-ID
-                // preference can be applied inside the component.
-                continue;
-            }
-            state.conflictNeighbors[leftComponent].insert(rightComponent);
-            state.conflictNeighbors[rightComponent].insert(leftComponent);
-        }
-
-        state.avoidedIdsByComponent.resize(state.components.size());
-        for (const auto& [tileIndex, ids] : avoidedIds_) {
-            auto& componentIds = state.avoidedIdsByComponent[state.componentByTile[tileIndex]];
-            componentIds.insert(ids.begin(), ids.end());
-        }
-    }
-
     AllocationState BuildAllocationState()
     {
         AllocationState state;
         state.components = BuildAliasComponents();
         ValidateCrossingRanges(state.components);
-
-        // Build the reverse Tile-to-component lookup used to lift per-Tile constraints to their
-        // address-overlap allocation unit.
-        state.componentByTile.resize(tiles_.size());
-        for (size_t componentIndex = 0; componentIndex < state.components.size(); ++componentIndex) {
-            for (size_t tileIndex : state.components[componentIndex].tiles) {
-                state.componentByTile[tileIndex] = componentIndex;
-            }
-        }
-
-        BuildComponentConstraints(state);
 
         // Account for fixed IDs before AUTO allocation so the load-balancing score includes
         // already occupied manual IDs.
@@ -545,7 +393,6 @@ private:
             }
         }
 
-        state.assignedIdByComponent.resize(state.components.size());
         return state;
     }
 
@@ -569,24 +416,11 @@ private:
         return jobs;
     }
 
-    static size_t EffectiveAvailableIdCount(const MutexJob& job, const AllocationState& state)
+    static void SortAllocationJobs(std::vector<MutexJob>& jobs)
     {
-        size_t count = std::count_if(job.candidates.begin(), job.candidates.end(), [&](int mutexId) {
-            const auto& avoidedIds = state.avoidedIdsByComponent[job.component];
-            return avoidedIds.find(mutexId) == avoidedIds.end();
-        });
-        // Avoided IDs are a preference. When every candidate is avoided, allocation falls back to the full domain.
-        return count == 0 ? job.candidates.size() : count;
-    }
-
-    static void SortAllocationJobs(std::vector<MutexJob>& jobs, const AllocationState& state)
-    {
-        // Allocate the most constrained jobs first, then prefer highly connected and larger
-        // components so later choices retain as much freedom as possible.
-        auto priority = [&state](const MutexJob& job) {
-            return std::make_tuple(job.candidates.size(), EffectiveAvailableIdCount(job, state),
-                                   -static_cast<int>(state.conflictNeighbors[job.component].size()),
-                                   -static_cast<int>(job.autoTiles.size()), job.component);
+        // Allocate manually pinned jobs first, then larger components.
+        auto priority = [](const MutexJob& job) {
+            return std::make_tuple(job.candidates.size(), -static_cast<int>(job.autoTiles.size()), job.component);
         };
         std::sort(jobs.begin(), jobs.end(), [&priority](const MutexJob& left, const MutexJob& right) {
             return priority(left) < priority(right);
@@ -595,15 +429,9 @@ private:
 
     static int ChooseMutexId(const MutexJob& job, const AllocationState& state)
     {
-        // The lexicographic score first honors avoidance preferences and already allocated
-        // neighbors, then balances Tile/component usage, with the numeric ID as a stable tie-break.
-        auto score = [&job, &state](int mutexId) {
-            int neighborConflicts = 0;
-            for (size_t neighbor : state.conflictNeighbors[job.component]) {
-                neighborConflicts += state.assignedIdByComponent[neighbor] == mutexId;
-            }
-            return std::make_tuple(state.avoidedIdsByComponent[job.component].count(mutexId) != 0, neighborConflicts,
-                                   state.tileUsageById[mutexId], state.componentUsageById[mutexId], mutexId);
+        // Balance Tile/component usage, with the numeric ID as a stable tie-break.
+        auto score = [&state](int mutexId) {
+            return std::make_tuple(state.tileUsageById[mutexId], state.componentUsageById[mutexId], mutexId);
         };
         return *std::min_element(job.candidates.begin(), job.candidates.end(),
                                  [&score](int left, int right) { return score(left) < score(right); });
@@ -614,7 +442,6 @@ private:
         std::vector<std::optional<int>> assignedIdByTile(tiles_.size());
         for (const auto& job : jobs) {
             int chosen = ChooseMutexId(job, state);
-            state.assignedIdByComponent[job.component] = chosen;
             // Component members alias one address region and therefore share the chosen ID.
             for (size_t tileIndex : job.autoTiles) {
                 assignedIdByTile[tileIndex] = chosen;
@@ -629,7 +456,7 @@ private:
     {
         auto state = BuildAllocationState();
         auto jobs = BuildAllocationJobs(state);
-        SortAllocationJobs(jobs, state);
+        SortAllocationJobs(jobs);
         return AllocateJobs(state, jobs);
     }
 
@@ -647,9 +474,7 @@ private:
 
     std::vector<TileRecord> tiles_;
     std::unordered_map<const Expr*, size_t> tileToIndex_;
-    std::unordered_map<const Var*, size_t> placeholderToTile_;
-    std::set<std::pair<size_t, size_t>> autoConflicts_;
-    std::unordered_map<size_t, std::set<int>> avoidedIds_;
+    std::unordered_set<const Var*> placeholders_;
     bool hasAuto_ = false;
     Span diagnosticSpan_ = Span::Unknown();
 };
@@ -662,12 +487,6 @@ void AutoMutexIdManager::CollectGroup(const std::vector<ExprPtr>& tiles, const M
                                       const std::string& groupName)
 {
     impl_->CollectGroup(tiles, mutexIds, groupName);
-}
-
-void AutoMutexIdManager::RecordOpConstraints(const std::vector<MakeTuplePtr>& tileIdGroups,
-                                             const std::vector<MakeTuplePtr>& candidateGroups)
-{
-    impl_->RecordOpConstraints(tileIdGroups, candidateGroups);
 }
 
 ProgramPtr AutoMutexIdManager::AssignMutexIds(const ProgramPtr& program) { return impl_->AssignMutexIds(program); }

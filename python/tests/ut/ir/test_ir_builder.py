@@ -221,8 +221,7 @@ def test_builder_emit_block_ops():
     assert [func.body[i].expr.name for i in range(2)] == ["block.store", "block.move"]
     assert isinstance(func.body[0].expr.type, ir.TensorType)
     assert func.body[0].expr.kwargs["phase"] == 0
-    assert isinstance(func.body[1].expr.type, pypto_impl.ir.TileType)
-    assert func.body[1].expr.type.dtype == ir.FP32
+    assert isinstance(func.body[1].expr.type, ir.NoneType)
 
 
 def test_builder_emit_vf_op():

@@ -64,14 +64,15 @@ TypePtr DeduceBlockGetBlockIdxType([[maybe_unused]] const std::vector<ExprPtr>& 
     return std::make_shared<ScalarType>(DataType::INT64);
 }
 
-TypePtr DeduceBlockCreateTileType([[maybe_unused]] const std::vector<ExprPtr>& args,
-                                  [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
-                                  const std::string& op_name)
+TypePtr DeduceBlockCreateMutexTileType([[maybe_unused]] const std::vector<ExprPtr>& args,
+                                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
+                                       const std::string& op_name)
 {
-    // make_tile signature: (shape)
-    // TileType requires static compile-time constant shapes
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x2)
-        << "The operator " << op_name << " requires exactly 2 arguments, but got " << args.size();
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+        << "The operator " << op_name << " requires shape, valid_shape and mutex_ids";
+    auto mutex_ids = As<MakeTuple>(args[2]);
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, mutex_ids != nullptr)
+        << "make_mutex_tile mutex_ids must be a fixed-size tuple";
 
     // Extract dtype attribute
     DataType dtype = GetOpKwarg<DataType>(kwargs, "dtype");
@@ -152,10 +153,13 @@ TypePtr DeduceBlockCreateTileType([[maybe_unused]] const std::vector<ExprPtr>& a
         uint64_t id_val = static_cast<uint64_t>(GetOpKwarg<int>(kwargs, "memref_id"));
         auto addr_expr = std::make_shared<ConstInt>(addr_val, DataType::INT64, Span::Unknown());
         MemRefPtr memref = std::make_shared<MemRef>(target_memory, addr_expr, static_cast<uint64_t>(size_val), id_val);
-        return std::make_shared<TileType>(tile_shape, dtype, std::optional<MemRefPtr>(memref), tile_view, hw_info);
+        return std::make_shared<MutexTileType>(
+            TileType(tile_shape, dtype, std::optional<MemRefPtr>(memref), tile_view, hw_info),
+            static_cast<uint32_t>(mutex_ids->elements_.size()));
     }
 
-    return std::make_shared<TileType>(tile_shape, dtype, std::nullopt, tile_view, hw_info);
+    return std::make_shared<MutexTileType>(TileType(tile_shape, dtype, std::nullopt, tile_view, hw_info),
+                                           static_cast<uint32_t>(mutex_ids->elements_.size()));
 }
 
 TypePtr DeduceGetValType([[maybe_unused]] const std::vector<ExprPtr>& args,
@@ -209,13 +213,9 @@ TypePtr DeduceSetValType([[maybe_unused]] const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, value_type)
         << "setval requires value to be ScalarType, but got " << args[2]->GetType()->TypeName();
 
-    if (auto tile_type = As<TileType>(first_type)) {
-        return std::make_shared<TileType>(tile_type->shape_, tile_type->dtype_, tile_type->memref_);
-    }
-    auto tensor_type = As<TensorType>(first_type);
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensor_type)
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TileType>(first_type) || As<TensorType>(first_type))
         << "setval requires first argument to be TileType or TensorType, but got " << first_type->TypeName();
-    return std::make_shared<TensorType>(tensor_type->shape_, tensor_type->dtype_);
+    return GetNoneType();
 }
 
 // ============================================================================
@@ -339,11 +339,12 @@ REGISTER_OP("reset_ctrl_spr")
         return GetUnknownType();
     });
 
-REGISTER_OP("block.make_tile")
+REGISTER_OP("block.make_mutex_tile")
     .set_op_category("BlockOp")
-    .set_description("Create a tile")
+    .set_description("Create a tile with a fixed-size mutex ID binding")
     .add_argument("shape", "Shape dimensions (TupleType of ScalarType(INT64))")
     .add_argument("valid_shape", "Valid shape dimensions (optional, TupleType)")
+    .add_argument("mutex_ids", "Fixed-size tuple of bound mutex IDs")
     .set_attr<DataType>("dtype")
     .set_attr<MemorySpace>("target_memory")
     .set_attr<int>("memref_addr")
@@ -356,7 +357,7 @@ REGISTER_OP("block.make_tile")
     .set_attr<int>("compact")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockCreateTileType(args, kwargs, "block.make_tile");
+        return DeduceBlockCreateMutexTileType(args, kwargs, "block.make_mutex_tile");
     });
 
 REGISTER_OP("block.getval")
@@ -404,8 +405,11 @@ TypePtr DeduceSubViewType([[maybe_unused]] const std::vector<ExprPtr>& args,
     if (auto tile_type = As<TileType>(container_type)) {
         // A subview keeps the source Tile's physical storage description, but its
         // runtime SetValidShape must not be overridden by a source tile_view.
-        return std::make_shared<const TileType>(tile_type->shape_, tile_type->dtype_, tile_type->memref_, std::nullopt,
-                                                tile_type->hardwareInfo_);
+        auto result = std::make_shared<TileType>(tile_type->shape_, tile_type->dtype_, tile_type->memref_, std::nullopt,
+                                                 tile_type->hardwareInfo_);
+        if (auto mutex_type = As<MutexTileType>(container_type))
+            return std::make_shared<MutexTileType>(*result, mutex_type->mutexCount_);
+        return result;
     }
 
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, false)
@@ -422,6 +426,54 @@ REGISTER_OP("block.subview")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceSubViewType(args, kwargs);
+    });
+
+REGISTER_OP("block.tile_mutex_id")
+    .set_op_category("BlockOp")
+    .set_description("Read one runtime mutex ID from a tile")
+    .add_argument("tile", "Bound tile")
+    .add_argument("index", "Compile-time mutex slot index")
+    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>&) {
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2) << "tile_mutex_id requires tile and index";
+        auto index = As<ConstInt>(args[1]);
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TileType>(args[0]->GetType()) && index && index->value_ >= 0)
+            << "tile_mutex_id requires a tile and a non-negative constant index";
+        auto type = As<MutexTileType>(args[0]->GetType());
+        PRO_IR_IRCHECK(ExternalError::INVALID_ARGUMENT, type && index->value_ < type->mutexCount_)
+            << "tile_mutex_id index is outside the tile's mutex binding";
+        return std::make_shared<ScalarType>(DataType::INT64);
+    });
+
+REGISTER_OP("block.reinterpret")
+    .set_op_category("BlockOp")
+    .set_description("Create an independent descriptor of a source tile's runtime storage")
+    .add_argument("source", "Source tile, including its mutex binding")
+    .add_argument("shape", "Target static shape")
+    .set_attr<DataType>("dtype")
+    .set_attr<int>("blayout")
+    .set_attr<int>("slayout")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      const std::vector<std::pair<std::string, std::any>>& kwargs) -> TypePtr {
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2) << "reinterpret requires source and shape";
+        auto source = As<TileType>(args[0]->GetType());
+        auto shape = As<MakeTuple>(args[1]);
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, source && source->memref_ && shape)
+            << "reinterpret requires a placed tile and static shape";
+        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, shape->elements_.size() == 2)
+            << "reinterpret requires a rank-2 shape";
+        for (const auto& dim : shape->elements_) {
+            auto constant = As<ConstInt>(dim);
+            PRO_IR_CHECK(ExternalError::INVALID_SHAPE, constant && constant->value_ > 0)
+                << "reinterpret shape must contain positive compile-time integers";
+        }
+        auto hw = source->hardwareInfo_.value_or(HardwareInfo{});
+        hw.blayout = static_cast<TileLayout>(GetOpKwarg<int>(kwargs, "blayout"));
+        hw.slayout = static_cast<TileLayout>(GetOpKwarg<int>(kwargs, "slayout"));
+        auto result = std::make_shared<TileType>(shape->elements_, GetOpKwarg<DataType>(kwargs, "dtype"),
+                                                 source->memref_, std::nullopt, hw);
+        if (auto mutex_type = As<MutexTileType>(source))
+            return std::make_shared<MutexTileType>(*result, mutex_type->mutexCount_);
+        return result;
     });
 
 } // namespace ir

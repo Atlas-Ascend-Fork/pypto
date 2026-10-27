@@ -1,29 +1,60 @@
 """Compile-time tests for pl.reinterpret (Tile/TileGroup metadata reinterpretation).
 
 Two layers:
-- IR-level: call ``_ir_reinterpret`` directly on ``make_tile_expr`` calls to
+- IR-level: call ``_ir_reinterpret`` directly on ``make_mutex_tile_expr`` calls to
   assert type/metadata behavior (no parser, no device).
 - Kernel-level: parse ``@pl.jit`` programs and assert on the produced IR
   text, incl. group rebuilding, size/address inheritance, error diagnostics
   and auto_mutex behavior of reinterpreted handles.
 """
 
-from pypto_pro._errors import InvalidArgument, InvalidShape, InvalidTile, InvalidType, OutOfRange
-from pypto_pro.ir.op.block_ops import _ir_reinterpret, make_tile_expr
+from pypto_pro._errors import InvalidArgument, InvalidShape, InvalidType
+from pypto_pro.ir.op.block_ops import _ir_reinterpret as _build_reinterpret
+from pypto_pro.ir.op.block_ops import make_mutex_tile_expr
 import pypto_pro.language as pl
+from pypto_pro.runtime.platform import NpuArch
 import pytest
 
 from pypto.pypto_impl import ir
+from pypto.pypto_impl.codegen import CCECodegen
 
 
 def _span() -> ir.Span:
     return ir.Span("test_reinterpret.py", 1, 1, 1, 1)
 
 
+def _ir_reinterpret(*args, **kwargs):
+    result = _build_reinterpret(*args, **kwargs)
+    _codegen_expression(result)
+    return result
+
+
+def _codegen_expression(expr, params=()):
+    statements = []
+
+    def materialize(value):
+        if isinstance(value, ir.MakeTuple):
+            return ir.MakeTuple([materialize(element) for element in value.elements], value.span)
+        if isinstance(value, ir.GetItemExpr):
+            return ir.GetItemExpr(materialize(value.value), value.slice, value.span)
+        if not isinstance(value, ir.Call) or not isinstance(value.type, ir.TileType):
+            return value
+        args = [materialize(arg) for arg in value.args]
+        call = ir.Call(value.name, args, value.kwargs, value.type, value.span)
+        var = ir.Var(f"tile_{len(statements)}", value.type, value.span)
+        statements.append(ir.AssignStmt(var, call, value.span))
+        return var
+
+    materialize(expr)
+    function = ir.Function("validate", list(params), [], ir.SeqStmts(statements, _span()), _span())
+    program = ir.Program([function], "validate", _span(), ir.IRDebugInfo())
+    return CCECodegen(ir.SectionKind.Vector).generate_single(program, NpuArch.DAV_3510)
+
+
 def _src_tile(shape, dtype, addr=0x1000, size=None, valid_shape=None, layout=None, space=None,
                fractal=None, pad=None, compact=None):
     """A plain make_tile call whose type the reinterpret builder reads."""
-    return make_tile_expr(
+    return make_mutex_tile_expr(
         shape,
         dtype,
         space or pl.MemorySpace.Vec,
@@ -51,7 +82,9 @@ def _memref_fields(t) -> dict:
 
 
 def _parse_kernel(kernel_def) -> ir.Program:
-    return kernel_def.to_kernel_def().parse_target_program(ir.SectionKind.Vector)[0]
+    program = ir.Pass.insert_sync()(kernel_def.to_kernel_def().parse_target_program(ir.SectionKind.Vector)[0])
+    CCECodegen(ir.SectionKind.Vector).generate_single(program, NpuArch.DAV_3510)
+    return program
 
 
 def _kernel_ir(kernel_def) -> str:
@@ -117,12 +150,12 @@ def test_combined_override():
 
 
 def test_reinterpret_rebuilds_same_address():
-    """The reinterpreted tile is a fresh MemRef at the ORIGINAL address/size
-    (SameAllocation semantics); it is not the same object as the source."""
+    """The IR retains its source; codegen creates a separate runtime descriptor."""
     src = _src_tile([64, 64], pl.DT_FP16, addr=0x2000, size=8192)
     new = _ir_reinterpret(src, shape=[64, 64], dtype=pl.DT_BF16, span=_span())
     _assert_same_buffer(_memref_fields(new), _memref_fields(src))
-    assert new.type.memref is not src.type.memref  # fresh object, same buffer
+    assert new.name == "block.reinterpret"
+    assert new.args[0] is src  # Runtime descriptor is rebuilt from this source.
 
 
 def test_reinterpret_chains():
@@ -147,12 +180,6 @@ def test_valid_shape_is_not_inherited():
     assert tv is None or len(list(tv.valid_shape)) == 0  # dynamic / -1 semantics
 
 
-def test_new_footprint_exceeding_buffer_raises():
-    src = _src_tile([64, 64], pl.DT_FP16, addr=0x2000, size=8192)
-    with pytest.raises(OutOfRange, match="exceeds the original buffer size"):
-        _ir_reinterpret(src, shape=[128, 64], dtype=pl.DT_FP32, span=_span())
-
-
 def test_footprint_exactly_equal_is_accepted():
     src = _src_tile([64, 64], pl.DT_FP16, addr=0x2000, size=8192)
     new = _ir_reinterpret(src, shape=[32, 64], dtype=pl.DT_FP32, span=_span())
@@ -164,42 +191,6 @@ def test_footprint_shrinking_is_accepted():
     src = _src_tile([64, 64], pl.DT_FP32, addr=0x2000, size=16384)
     new = _ir_reinterpret(src, shape=[64, 64], dtype=pl.DT_FP16, span=_span())
     assert new.type.dtype == pl.DT_FP16
-
-
-@pytest.mark.parametrize(
-    ("addr", "dtype", "ok"),
-    [
-        (1, pl.DT_INT8, True),    # 1B element: any address is element-aligned
-        (1, pl.DT_FP16, False),   # 2B element at addr 1 -> misaligned
-        (2, pl.DT_FP16, True),
-        (2, pl.DT_FP32, False),   # 4B element at addr 2 -> misaligned
-        (4, pl.DT_FP32, True),
-        (4, pl.DT_INT64, False),  # 8B element at addr 4 -> misaligned
-        (8, pl.DT_INT64, True),
-    ],
-)
-def test_element_boundary_align_matrix(addr, dtype, ok):
-    """Hardware addressing granularity: new element width must divide the base address."""
-    src = _src_tile([16, 16], pl.DT_FP16, addr=addr, size=8192, space=pl.MemorySpace.DDR)
-    if ok:
-        new = _ir_reinterpret(src, shape=[16, 16], dtype=dtype, span=_span())
-        assert new.type.dtype == dtype
-        assert [int(d.value) for d in new.type.shape] == [16, 16]
-    else:
-        with pytest.raises(ValueError, match="not aligned to the new element size"):
-            _ir_reinterpret(src, shape=[16, 16], dtype=dtype, span=_span())
-
-
-def test_hw_aligned_spaces_always_pass_align_check():
-    """Vec/Mat/Left/Right/Acc alignments (32/512/64B) divide every 1/2/4/8B element width:
-    a fully aligned address never trips the element-boundary check, for any element width."""
-    from pypto_pro.ir.op.block_ops import _reinterpret_align_check
-
-    for space in (pl.MemorySpace.Vec, pl.MemorySpace.Mat, pl.MemorySpace.Acc,
-                  pl.MemorySpace.Left, pl.MemorySpace.Right):
-        _src_tile([64, 64], pl.DT_FP16, addr=0x2000, size=8192, space=space)
-        for dtype in (pl.DT_INT8, pl.DT_FP16, pl.DT_FP32, pl.DT_INT64):
-            _reinterpret_align_check(0x2000, dtype, _span())  # must not raise
 
 
 def test_source_without_memref_raises():
@@ -393,10 +384,10 @@ def test_group_reinterpret_rebuilds_slots_and_inherits_size():
 
     ir_str = _kernel_ir(k)
     # 2 original slots + 2 rebuilt slots.
-    assert ir_str.count("block.make_tile") == 4
-    # The rebuilt slots are fresh MemRefs (same address): the two original
-    # slots plus the two rebuilt slots each carry a memref_id.
-    assert ir_str.count("memref_id=") == 4
+    assert ir_str.count("block.make_mutex_tile") == 2
+    assert ir_str.count("block.reinterpret") == 2
+    # Only the original allocations carry a make_tile memref_id.
+    assert ir_str.count("memref_id=") == 2
     assert "memref_addr=" in ir_str and "65536" in ir_str
     # mutex_ids inherited -> auto_mutex still locks around the rebuilt handle's usage.
     assert "system.mutex_lock" in ir_str
@@ -413,7 +404,8 @@ def test_group_reinterpret_keeps_dtype_and_layout_inheritance():
         pl.load(c0, a, [0, 0])
 
     ir_str = _kernel_ir(k)
-    assert ir_str.count("block.make_tile") == 4
+    assert ir_str.count("block.make_mutex_tile") == 2
+    assert ir_str.count("block.reinterpret") == 2
     assert "bfloat16" in ir_str.lower()
 
 
@@ -427,28 +419,12 @@ def test_group_multi_column_mutex_inherited():
         pl.load(c0, a, [0, 0])
 
     ir_str = _kernel_ir(k)
-    assert ir_str.count("block.make_tile") == 4
-    # both mutex columns are inherited and printed as fields
-    assert "mutex_ids_1" in ir_str
+    assert ir_str.count("block.make_mutex_tile") == 2
+    assert ir_str.count("block.reinterpret") == 2
+    # Both IDs are read from the selected runtime descriptor.
+    assert "mutex_ids_1" not in ir_str
+    assert ir_str.count("block.tile_mutex_id") == 2
     assert "system.mutex_lock" in ir_str
-
-
-def test_group_unaligned_slot_address_rejected():
-    """Review finding (P2): every explicit slot address must pass the element-boundary check."""
-    with pytest.raises(InvalidTile, match="not aligned to the new element size"):
-
-        @pl.jit(auto_mutex=True)
-        def k(a: pl.Tensor[[64, 64], pl.DT_FP16]):
-            # Scaling has no enforced address alignment, so addrs [2, 68] reach the
-            # reinterpret element-boundary check instead of the alignment check.
-            # Tiles stay within the 4K ScalingVbuffer capacity (addr + 2048 <= 4096).
-            tt = pl.TileType(shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Scaling)
-            db = pl.make_tile_group(type=tt, addrs=[2, 68], mutex_ids=[0, 1])  # 2 % 4 != 0 for FP32
-            g2 = pl.reinterpret(db, shape=[16, 16], dtype=pl.DT_FP32)  # footprint 1024 <= 2048, addr 2 misaligned
-            c0 = g2.next()
-            pl.load(c0, a, [0, 0])
-
-        _parse_kernel(k)
 
 
 def test_group_runtime_shape_rejected():
@@ -478,7 +454,8 @@ def test_group_layout_override_updates_slot_encoding():
         pl.load(c0, a, [0, 0])
 
     ir_str = _kernel_ir(k)
-    assert ir_str.count("block.make_tile") == 4
+    assert ir_str.count("block.make_mutex_tile") == 2
+    assert ir_str.count("block.reinterpret") == 2
     assert "blayout=2" in ir_str and "slayout=1" in ir_str  # NZ encoding on rebuilt slots
 
 
@@ -492,7 +469,8 @@ def test_slot_tile_reinterpret_keeps_mutex_binding():
 
     ir_str = _kernel_ir(k)
     # 2 group slots + 1 reinterpreted slot tile
-    assert ir_str.count("block.make_tile") == 3
+    assert ir_str.count("block.make_mutex_tile") == 2
+    assert ir_str.count("block.reinterpret") == 1
     assert "system.mutex_lock" in ir_str
 
 
@@ -509,5 +487,6 @@ def test_original_handle_unchanged_after_group_reinterpret():
 
     ir_str = _kernel_ir(k)
     # 2 original + 2 rebuilt slots; both handles keep their 32768-byte spans.
-    assert ir_str.count("block.make_tile") == 4
+    assert ir_str.count("block.make_mutex_tile") == 2
+    assert ir_str.count("block.reinterpret") == 2
     assert ir_str.count("system.mutex_lock") >= 2

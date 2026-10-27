@@ -327,7 +327,7 @@ def test_cce_for_break():
 def test_cce_loop_tuple_return_propagates_as_one_value():
     cpp = _compile_to_cce(_loop_tuple_kernel)
 
-    assert "TADD(bundle_1__item_2, bundle_1__item_2, bundle_1__item_2);" in cpp
+    assert "TADD(bundle_1__item_2.tile, bundle_1__item_2.tile, bundle_1__item_2.tile);" in cpp
     assert "bundle_1[" not in cpp
     assert "TADD(bundle_0," not in cpp
 
@@ -338,6 +338,15 @@ def test_cce_while_body_and_result_use_independent_slots():
     expected = dedent(
         """\
         #if defined(__DAV_CUBE__)
+        #ifndef PYPTO_SYNCED_TILE_DEFINED
+        #define PYPTO_SYNCED_TILE_DEFINED
+        #include <stdint.h>
+        template<class Tile, uint32_t N> struct SyncedTile {
+            using PtoTile = Tile;
+            PtoTile tile;
+            int64_t mutex_ids[N];
+        };
+        #endif
         #include <pypto_tprint.h>
         __aicore__ inline void _while_independent_body_result_kernel_impl_cube(bool flag_0, int64_t result_value_0)
         {

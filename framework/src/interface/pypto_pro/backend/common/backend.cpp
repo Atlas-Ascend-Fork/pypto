@@ -142,7 +142,8 @@ uint64_t Backend::GetMemSize(ir::MemorySpace mem_type) const
 
 BackendOpRegistryEntry Backend::RegisterOp(const std::string& op_name) { return BackendOpRegistryEntry(this, op_name); }
 
-void Backend::FinalizeOpRegistration(const std::string& op_name, ir::PipeType pipe, BackendCodegenFunc func)
+void Backend::FinalizeOpRegistration(const std::string& op_name, std::optional<ir::PipeType> pipe,
+                                     BackendCodegenFunc func)
 {
     if (backend_op_registry_.find(op_name) != backend_op_registry_.end()) {
         return;
@@ -179,8 +180,8 @@ BackendOpRegistryEntry& BackendOpRegistryEntry::f_codegen(BackendCodegenFunc fun
 
 BackendOpRegistryEntry::~BackendOpRegistryEntry()
 {
-    if (backend_ && pipe_.has_value() && codegen_func_.has_value()) {
-        backend_->FinalizeOpRegistration(op_name_, *pipe_, std::move(*codegen_func_));
+    if (backend_ && codegen_func_.has_value()) {
+        backend_->FinalizeOpRegistration(op_name_, pipe_, std::move(*codegen_func_));
     }
 }
 

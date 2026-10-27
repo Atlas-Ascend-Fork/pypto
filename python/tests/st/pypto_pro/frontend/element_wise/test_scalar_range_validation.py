@@ -361,7 +361,7 @@ def test_expands_uint64_boundary_scalar_is_emitted_as_an_unsigned_literal():
 
     cpp = _compile_to_cce(kernel_expands_uint64_boundary)
 
-    assert f"TEXPANDS(_tg_tc_tiles_0[0], {UINT64_MAX}uLL);" in cpp
+    assert f"TEXPANDS(_tg_tc_tiles_0[0].tile, {UINT64_MAX}uLL);" in cpp
 
 
 # =============================================================================

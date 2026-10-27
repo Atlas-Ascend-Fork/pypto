@@ -49,6 +49,26 @@ static VarPtr Var_(const std::string& name, DataType dt = DataType::INT32)
 
 class IoTextDumpRoundTripTest : public testing::Test {};
 
+TEST_F(IoTextDumpRoundTripTest, MutexTileTypePreservesCount)
+{
+    for (uint32_t count : {0U, 2U}) {
+        auto type = std::make_shared<MutexTileType>(
+            TileType(std::vector<ExprPtr>{std::make_shared<ConstInt>(4, DataType::INT64, Sp()),
+                                          std::make_shared<ConstInt>(8, DataType::INT64, Sp())},
+                     DataType::FP32),
+            count);
+        std::string error;
+        const auto text = TextDumpType(type);
+        auto loaded = TextLoadType(text, error);
+        ASSERT_TRUE(error.empty()) << error;
+        ASSERT_NE(loaded, nullptr);
+        auto mutex_type = std::dynamic_pointer_cast<const MutexTileType>(loaded);
+        ASSERT_NE(mutex_type, nullptr);
+        EXPECT_EQ(mutex_type->mutexCount_, count);
+        EXPECT_EQ(TextDumpType(loaded), text);
+    }
+}
+
 // ---- Expression round-trip ----
 TEST_F(IoTextDumpRoundTripTest, TestExprRoundTrip)
 {

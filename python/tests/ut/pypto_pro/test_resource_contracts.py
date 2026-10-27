@@ -64,42 +64,21 @@ def test_make_tile_error_uses_explicit_or_current_span(explicit, addr, error):
     span = ir.Span("explicit_kernel.py", 73, 9) if explicit else None
     with current_span(ir.Span("active_kernel.py", 42, 4)):
         with pytest.raises(error) as caught:
-            block_ops.make_tile_expr([16, 16], pl.DT_FP16, ir.MemorySpace.Vec, addr=addr, span=span)
+            block_ops.make_mutex_tile_expr([16, 16], pl.DT_FP16, ir.MemorySpace.Vec, addr=addr, span=span)
     location = caught.value.span
     expected = ("explicit_kernel.py", 73, 9) if explicit else ("active_kernel.py", 42, 4)
     assert (location["filename"], location["line"], location["column"]) == expected
 
 
 @pytest.mark.parametrize("explicit", [False, True])
-@pytest.mark.parametrize("addr,space,shape,dtype,error", [
-    (0, ir.MemorySpace.Vec, [32, 16], pl.DT_FP16, OutOfRange),
-    (2, ir.MemorySpace.DDR, [16, 16], pl.DT_FP32, InvalidTile),
-])
-def test_reinterpret_error_uses_explicit_or_current_span(explicit, addr, space, shape, dtype, error):
-    tile = block_ops.make_tile_expr([16, 16], pl.DT_FP16, space, addr=addr)
-    span = ir.Span("explicit_kernel.py", 73, 9) if explicit else None
-    with current_span(ir.Span("active_kernel.py", 42, 4)):
-        with pytest.raises(error) as caught:
-            block_ops._ir_reinterpret(tile, shape=shape, dtype=dtype, span=span)
-    location = caught.value.span
-    expected = ("explicit_kernel.py", 73, 9) if explicit else ("active_kernel.py", 42, 4)
-    assert (location["filename"], location["line"], location["column"]) == expected
-
-
-@pytest.mark.parametrize("explicit", [False, True])
-@pytest.mark.parametrize("reinterpret", [False, True])
-def test_builder_capacity_warning_uses_explicit_or_current_span(monkeypatch, explicit, reinterpret):
+def test_builder_capacity_warning_uses_explicit_or_current_span(monkeypatch, explicit):
     from pypto_pro.runtime import platform
-    tile = block_ops.make_tile_expr([16, 16], pl.DT_FP16, ir.MemorySpace.Vec, addr=0)
     monkeypatch.setattr(platform, "get_memory_limit", lambda arch, space: 0)
     span = ir.Span("explicit_kernel.py", 73, 9) if explicit else None
     with current_span(ir.Span("active_kernel.py", 42, 4)):
         with warnings.catch_warnings(record=True) as recorded:
             warnings.simplefilter("always", CapacityUnknown)
-            if reinterpret:
-                block_ops._ir_reinterpret(tile, shape=[8, 16], span=span)
-            else:
-                block_ops.make_tile_expr([16, 16], pl.DT_FP16, ir.MemorySpace.Vec, addr=0, span=span)
+            block_ops.make_mutex_tile_expr([16, 16], pl.DT_FP16, ir.MemorySpace.Vec, addr=0, span=span)
     assert len(recorded) == 1 and recorded[0].category is CapacityUnknown
     expected = ("explicit_kernel.py", 73) if explicit else ("active_kernel.py", 42)
     assert (recorded[0].filename, recorded[0].lineno) == expected

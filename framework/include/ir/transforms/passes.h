@@ -278,6 +278,9 @@ Pass LitenpuDynamicToStatic();
 /// Sanitizer instrumentation pass. Stateless: every check value travels
 /// in the records; the replay tool supplies the source file for locations.
 Pass Sanitizer();
+
+/// Insert scalar mutex operations from explicit tile bindings after structural optimization.
+Pass InsertSync();
 } // namespace pass
 
 /**

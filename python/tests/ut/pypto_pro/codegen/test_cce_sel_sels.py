@@ -99,7 +99,7 @@ def test_cce_sel_emits_tsel():
 
     cpp = _compile_to_cce(_sel_kernel)
     logging.info("\n=== test_cce_sel ===\n%s", cpp)
-    assert "TSEL(out_0, mask_0, lhs_0, rhs_0, tmp_0);" in cpp
+    assert "TSEL(out_0.tile, mask_0.tile, lhs_0.tile, rhs_0.tile, tmp_0.tile);" in cpp
 
 
 def test_cce_sels_emits_tsels():
@@ -113,7 +113,9 @@ def test_cce_sels_emits_tsels():
     cpp = _compile_to_cce(_sels_kernel)
     logging.info("\n=== test_cce_sels ===\n%s", cpp)
     # TSELS(dst, mask, src, tmp, scalar) — pto-isa form.
-    assert "TSELS(out_0, mask_0, src_0, tmp_0, " in cpp, "Expected TSELS(dst, mask, src, tmp, scalar)"
+    assert "TSELS(out_0.tile, mask_0.tile, src_0.tile, tmp_0.tile, " in cpp, (
+        "Expected TSELS(dst, mask, src, tmp, scalar)"
+    )
     # The scalar operand (0.0) is the last argument. CCE codegen emits float
     # literals with the C++ "f" suffix for correct float type, and keeps the ".0"
     # so an integral value still reads as a float rather than an int.

@@ -60,8 +60,13 @@ def _mutex_calls(program, function_name):
     ]
 
 
-def _constant_groups(tuple_expr):
-    return [[int(value.value) for value in group.elements] for group in tuple_expr.elements]
+def _bound_ids(program, function_name):
+    return [
+        int(stmt.value.args[2].elements[0].value)
+        for stmt in _walk_statements(program.get_function(function_name).body)
+        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "block.make_mutex_tile" and stmt.value.args[2].elements
+    ]
 
 
 def test_auto_mutex_parser_requires_mutex_id_manager():
@@ -80,7 +85,7 @@ def test_auto_ids_are_planned_and_resolved_into_first_parse_ir():
 
     programs = _parse_once_and_resolve(k)
 
-    vector_ir = str(programs[ir.SectionKind.Vector])
+    vector_ir = str(ir.Pass.insert_sync()(programs[ir.SectionKind.Vector]))
     assert "mutex_lock" in vector_ir
     assert "mutex_unlock" in vector_ir
     assert all("__pypto_auto_mutex_id_" not in str(program) for program in programs.values())
@@ -99,7 +104,7 @@ def test_jit_parses_each_target_once_when_auto_is_present(monkeypatch):
 
         def parse_target_program(self, target, bound_signature=None):
             self.parse_targets.append(target)
-            return object(), True
+            return ir.Program([], "mock", ir.Span.unknown()), True
 
     kernel_def = FakeKernelDef()
     monkeypatch.setattr(
@@ -189,42 +194,8 @@ def test_same_operation_auto_tiles_receive_different_ids_in_one_codegen_dedup_ca
 
     programs = _parse_once_and_resolve(k)
     vector_program = programs[ir.SectionKind.Vector]
-    ir_text = str(vector_program)
-    assert ir_text.count("system.mutex_lock_dyn") == 1, ir_text
-    assert ir_text.count("system.mutex_unlock_dyn") == 1, ir_text
-    calls = _mutex_calls(vector_program, k.__name__)
-    for call in calls:
-        mutex_id = _constant_groups(call.args[0])
-        candidate_groups = _constant_groups(call.args[1])
-        assert len(mutex_id) == 2
-        assert mutex_id == candidate_groups
-        assert mutex_id[0] != mutex_id[1]
-
-
-def test_auto_tile_avoids_same_operation_manual_id_in_candidate_groups():
-    other_manual_ids = list(range(1, 32))
-
-    @pl.jit(auto_mutex=True)
-    def k(_unused: pl.DT_INT32):
-        tt = pl.TileType(shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
-        pl.make_tile_group(type=tt, addrs=0x4000, mutex_ids=other_manual_ids)
-        manual_group = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[0])
-        auto_group = pl.make_tile_group(type=tt, addrs=0x2000, mutex_ids="auto", depth=1)
-        pl.move(auto_group.current(), manual_group.current())
-
-    programs = _parse_once_and_resolve(k)
-    vector_program = programs[ir.SectionKind.Vector]
-    ir_text = str(vector_program)
-    assert ir_text.count("system.mutex_lock_dyn") == 1, ir_text
-    assert ir_text.count("system.mutex_unlock_dyn") == 1, ir_text
-    calls = _mutex_calls(vector_program, k.__name__)
-    for call in calls:
-        mutex_id = _constant_groups(call.args[0])
-        candidate_groups = _constant_groups(call.args[1])
-        assert len(mutex_id) == 2
-        assert mutex_id == candidate_groups
-        assert [0] in mutex_id
-        assert mutex_id[0] != mutex_id[1]
+    ids = _bound_ids(vector_program, k.__name__)
+    assert len(ids) == 2 and ids[0] != ids[1]
 
 
 def test_exhausted_manual_candidates_preserve_overlap_for_codegen():
@@ -240,17 +211,12 @@ def test_exhausted_manual_candidates_preserve_overlap_for_codegen():
 
     programs = _parse_once_and_resolve(k)
     vector_program = programs[ir.SectionKind.Vector]
-    ir_text = str(vector_program)
-    assert ir_text.count("system.mutex_lock_dyn") == 1, ir_text
-    assert ir_text.count("system.mutex_unlock_dyn") == 1, ir_text
-    calls = _mutex_calls(vector_program, k.__name__)
-    for call in calls:
-        candidate_groups = _constant_groups(call.args[1])
-        assert len(candidate_groups) == 2
-        assert any(group == all_manual_ids for group in candidate_groups)
-        auto_candidates = next(group for group in candidate_groups if group != all_manual_ids)
-        assert len(auto_candidates) == 1
-        assert auto_candidates[0] in all_manual_ids
+    synced = ir.Pass.insert_sync()(vector_program)
+    calls = _mutex_calls(synced, k.__name__)
+    assert len(calls) == 4
+    assert all(len(call.args) == 1 for call in calls)
+    assert "__sync_needed" in str(synced)
+    assert str(synced).count("block.tile_mutex_id") == 1
 
 
 def test_auto_requires_depth():
@@ -326,7 +292,7 @@ def test_compile_time_if_only_collects_live_branch():
             pl.make_tile_group(type=tt, addrs=128, mutex_ids="auto", depth=4)
 
     programs = _parse_once_and_resolve(k)
-    assert all(str(program).count("block.make_tile") == 1 for program in programs.values())
+    assert all(str(program).count("block.make_mutex_tile") == 1 for program in programs.values())
 
 
 def test_compile_time_ternary_only_collects_live_branch():
@@ -340,7 +306,7 @@ def test_compile_time_ternary_only_collects_live_branch():
         )
 
     programs = _parse_once_and_resolve(k)
-    assert all(str(program).count("block.make_tile") == 1 for program in programs.values())
+    assert all(str(program).count("block.make_mutex_tile") == 1 for program in programs.values())
 
 
 def test_same_helper_at_two_callsites_produces_two_stable_groups():

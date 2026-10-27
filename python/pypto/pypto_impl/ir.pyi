@@ -24,12 +24,6 @@ class _AutoMutexIdManager:
         group_name: str,
     ) -> None: ...
 
-    def record_op_constraints(
-        self,
-        tile_id_groups: Sequence[MakeTuple],
-        candidate_groups: Sequence[MakeTuple],
-    ) -> None: ...
-
     def assign_mutex_ids(self, program: Program) -> Program: ...
 
     @property
@@ -800,6 +794,30 @@ class ShapedType(Type):
             True if both have MemRef and they point to the same object, False otherwise
         """
         ...
+
+
+class TileType(ShapedType):
+    """Tile data type, storage and layout information."""
+
+    tile_view: Final[Any]
+    hardware_info: Final[Any]
+
+    def __init__(
+        self,
+        shape: Sequence[int] | Sequence[Expr],
+        dtype: DataType,
+        memref: MemRef | None = None,
+        tile_view: Any = None,
+        hardware_info: Any = None,
+    ) -> None: ...
+
+
+class MutexTileType(TileType):
+    """Tile value type including the number of runtime mutex IDs."""
+
+    mutex_count: Final[int]
+
+    def __init__(self, tile_type: TileType, mutex_count: int) -> None: ...
 
 
 class MemorySpace(enum.IntEnum):
@@ -2481,6 +2499,10 @@ def type_equal(a: Expr, b: Expr) -> bool:
 
 
 class Pass:
+
+    @staticmethod
+    def insert_sync() -> Pass:
+        """Insert mutex synchronization from allocated tile bindings."""
 
     def __call__(self, program: Program):
         """Execute the pass on the program.

@@ -458,6 +458,11 @@ void BindTypeClass(py::module_& ir)
                         "Create a tile type (supports multi-dimensional tensors; code generation has constraints)");
     BindFields<TileType>(tile_type_class);
 
+    auto mutex_tile_type_class = py::class_<MutexTileType, TileType, std::shared_ptr<MutexTileType>>(
+        ir, "MutexTileType", "Tile type with a fixed runtime mutex ID count");
+    mutex_tile_type_class.def(py::init<const TileType&, uint32_t>(), py::arg("tile_type"), py::arg("mutex_count"));
+    BindFields<MutexTileType>(mutex_tile_type_class);
+
     // TupleType - const shared_ptr
     auto tuple_type_class = py::class_<TupleType, Type, std::shared_ptr<TupleType>>(
         ir, "TupleType", "Tuple type representation (contains multiple types)");

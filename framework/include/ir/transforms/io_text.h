@@ -64,6 +64,7 @@
 #define IR_KW_UNKNOWN "unknown"
 #define IR_KW_TENSOR "tensor"
 #define IR_KW_TILE "tile"
+#define IR_KW_MUTEX_TILE "mutex_tile"
 #define IR_KW_PTR "ptr"
 #define IR_KW_TOKEN "token"
 #define IR_KW_NONE "none"
@@ -183,6 +184,7 @@ enum class IRTextLexerTokenKind {
     KwUnknown,
     KwTensor,
     KwTile,
+    KwMutexTile,
     KwPtr,
     KwToken,
     KwNone,
@@ -328,6 +330,7 @@ static inline const npu::tile_fwk::BiMap<IRTextLexerTokenKind>& IRTextGetLexerTo
         {IRTextLexerTokenKind::KwUnknown, IR_KW_UNKNOWN},
         {IRTextLexerTokenKind::KwTensor, IR_KW_TENSOR},
         {IRTextLexerTokenKind::KwTile, IR_KW_TILE},
+        {IRTextLexerTokenKind::KwMutexTile, IR_KW_MUTEX_TILE},
         {IRTextLexerTokenKind::KwPtr, IR_KW_PTR},
         {IRTextLexerTokenKind::KwToken, IR_KW_TOKEN},
         {IRTextLexerTokenKind::KwNone, IR_KW_NONE},
@@ -472,6 +475,7 @@ protected:
     void VisitType_(const ScalarTypePtr& op) override;
     void VisitType_(const TensorTypePtr& op) override;
     void VisitType_(const TileTypePtr& op) override;
+    void VisitType_(const MutexTileTypePtr& op) override;
     void VisitType_(const TupleTypePtr& op) override;
     void VisitType_(const MemRefTypePtr& op) override;
     void VisitType_(const PtrTypePtr& op) override;

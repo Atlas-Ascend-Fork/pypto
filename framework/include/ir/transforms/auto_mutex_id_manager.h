@@ -40,10 +40,6 @@ public:
     /** Collect a TileGroup using the mutex-ID expressions created by the frontend. */
     void CollectGroup(const std::vector<ExprPtr>& tiles, const MakeTuplePtr& mutexIds, const std::string& groupName);
 
-    /** Record the effective mutex-ID candidates for each Tile operand of one operation. */
-    void RecordOpConstraints(const std::vector<MakeTuplePtr>& tileIdGroups,
-                             const std::vector<MakeTuplePtr>& candidateGroups);
-
     ProgramPtr AssignMutexIds(const ProgramPtr& program);
 
     /** Source span associated with the most recent user-facing planning failure. */

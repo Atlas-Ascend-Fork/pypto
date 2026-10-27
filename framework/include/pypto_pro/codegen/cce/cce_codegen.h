@@ -41,12 +41,6 @@ namespace pypto {
 
 namespace codegen {
 
-/// Tile definition collected from a block.make_tile source.
-struct TileDef {
-    ir::VarPtr var;
-    ir::TileTypePtr tile_type;
-};
-
 /// Tensor definition collected from block.load/store access windows.
 /// tensor_type and the base pointer are derived from `var` at emit time (not stored):
 /// tensor_type = ir::As<ir::TensorType>(var->GetType()); the base pointer is the view's
@@ -145,6 +139,8 @@ public:
     [[nodiscard]] std::string GetCurrentResultTarget() const override { return current_target_var_; }
     void Emit(const std::string& line) override;
     std::string GetExprAsCode(const ir::ExprPtr& expr) override;
+    std::string GetGeneratedType(const ir::TypePtr& type) const;
+
     /// Resolve a tuple-typed expression to the MakeTuple backing it (the tuple counterpart of
     /// GetExprAsCode, which yields a C++ string). Returns null when the expression is not a tuple.
     ir::MakeTuplePtr GetExprAsMakeTuple(const ir::ExprPtr& expr);
@@ -165,6 +161,8 @@ public:
     /// pointer to the same tile (e.g. a POST_UPDATE store cursor that must not alias a base load),
     /// and even a `tile[offset]` materialises a real lvalue var rather than the shared rvalue.
     std::string GetOrCreateVFTilePtr(const ir::ExprPtr& expr, bool is_post_update = false);
+    /// Mark a VF block.subview result as a pointer expression, including linear offsets.
+    std::string RecordVFTileSubviewPointer(std::string code);
     int64_t GetConstIntValue(const ir::ExprPtr& expr) override;
     std::string GetVarName(const ir::VarPtr& var) override;
 
@@ -175,18 +173,6 @@ public:
 
     /** \brief Get the fixed Cube/Vector target selected for this generation. */
     ir::SectionKind GetTarget() const { return target_; }
-
-    /** \brief Get the base address of a tile variable (from TASSIGN in prologue) */
-    std::string GetTileAddress(const std::string& tile_name) const
-    {
-        auto it = tile_addresses_.find(tile_name);
-        if (it != tile_addresses_.end())
-            return it->second;
-        return "0x0";
-    }
-
-    /** \brief Set the base address of a tile variable (for subview offset registration). */
-    void SetTileAddress(const std::string& tile_name, const std::string& addr) { tile_addresses_[tile_name] = addr; }
 
     /** \brief Register a VF RegTensor variable (called from EmitVFRegTensor). */
     void RegisterRegTensorVar(const std::string& cpp_name) { reg_tensor_vars_.insert(cpp_name); }
@@ -247,14 +233,6 @@ public:
     [[nodiscard]] bool HasPointer(const std::string& var_name) const;
 
     /**
-     * \brief Check whether a tile address (TASSIGN) has been registered.
-     *
-     * Distinguishes a tile with a known base address from one that needs to be
-     * resolved via .data() or memref.
-     */
-    [[nodiscard]] bool HasTileAddress(const std::string& tile_name) const;
-
-    /**
      * \brief Register a struct TupleType definition for deferred class emission.
      */
     void RegisterStructDefinition(const ir::TupleTypePtr& tuple_type, const std::string& type_name,
@@ -267,14 +245,6 @@ public:
      * \brief Mark a registered TupleType as requiring volatile member declarations.
      */
     void MarkStructVolatile(const ir::TypePtr& type);
-
-    /**
-     * \brief Check whether a PIPE_V mutex lock/unlock should be skipped.
-     *
-     * Returns true (skip) when arch is A5, pipe is PIPE_V, and all buf_ids
-     * in the vector are only used by PIPE_V (no cross-pipe synchronization needed).
-     */
-    bool ShouldSkipVPipeMutex(ir::PipeType pipe, const std::vector<int>& buf_ids) const;
 
     /**
      * \brief Generate GlobalTensor type declaration and instance for a TensorDef.
@@ -442,16 +412,6 @@ private:
     std::vector<int64_t> ExtractShapeDimensions(const std::vector<ir::ExprPtr>& shape_exprs) const;
 
     /**
-     * \brief Format address as hexadecimal string
-     *
-     * Converts an integer address to hex format for TASSIGN instructions.
-     *
-     * \param addr Address value
-     * \return Hex string (e.g., "0x0", "0x10000")
-     */
-    std::string FormatAddressHex(int64_t addr);
-
-    /**
      * \brief Register each tiling TupleType parameter for deferred header emission.
      */
     void RegisterTilingStructTypes(const ir::FunctionPtr& func);
@@ -469,17 +429,6 @@ private:
     void EmitTilingStructCopy(const ir::FunctionPtr& func);
 
     /**
-     * \brief Generate Tile type declaration and instance
-     *
-     * Emits type alias and instance declaration for a Tile variable.
-     * Automatically extracts memref address from tile_type if present and emits TASSIGN.
-     *
-     * \param var_name Variable name for the tile
-     * \param tile_type The TileType to generate declaration for (memref extracted automatically)
-     */
-    void GenerateTileTypeDeclaration(const std::string& var_name, const ir::TileTypePtr& tile_type);
-
-    /**
      * \brief Generate PTO-style function signature and prologue
      *
      * Emits __global__ AICORE void func_name(__gm__ type* p, ...) with constexpr
@@ -489,8 +438,8 @@ private:
     std::string BuildSimtFunctionSignature(const ir::FunctionPtr& func);
     void GenerateSimtFunction(const ir::FunctionPtr& func);
     std::string GenerateSimtCalleeCall(const ir::CallPtr& op, const ir::FunctionPtr& callee);
-    void PreScanKernel(const ir::FunctionPtr& kernel_func);
     void ResetFunctionGenerationState();
+    std::unordered_set<std::string> vf_tile_subview_pointer_codes_;
 
     bool DetectCrossCoreSyncOps(const ir::StmtPtr& stmt);
 
@@ -556,13 +505,6 @@ private:
      */
     void EmitSingleTensorDeclarations(const ir::FunctionPtr& func);
 
-    /** \brief Emit Tile declarations for one target Program. */
-    void EmitSingleTileDeclarations(const ir::FunctionPtr& func);
-
-    void EmitTileDeclarations(const std::vector<TileDef>& tile_defs,
-                              const std::vector<std::pair<ir::VarPtr, ir::VarPtr>>& deduped_aliases);
-    void EmitDedupedTileAliases(const std::vector<std::pair<ir::VarPtr, ir::VarPtr>>& deduped_aliases);
-
     // --- Offset computation helpers ---
     std::string ComputeStrideOffset(const ir::TensorTypePtr& tensor_type, const ir::MakeTuplePtr& offsets);
     std::string ComputeNZStrideOffset(const ir::TensorTypePtr& tensor_type, const ir::MakeTuplePtr& offsets);
@@ -610,14 +552,12 @@ private:
     /// so every variant of one tensor is a contiguous range (see GetTensorDefs).
     std::map<std::pair<std::string, std::string>, TensorDef> tensor_defs_;
     int flat_tensor_decl_count_ = 0; ///< Monotonic suffix for DeclareFlatGlobalTensor names, reset per function
-    std::map<std::string, std::string> tile_addresses_; ///< tile_name ->TASSIGN address expression
 
     std::map<std::pair<bool, std::string>, std::string>
         vf_tile_ptrs_; ///< (is_post_update, VF tile expr code) -> hoisted vf_tile_ptr_N var. A dedicated var (e.g. a
                        ///< POST_UPDATE store cursor) and a plain base pointer to the same tile are kept separate, so a
                        ///< cursor store does not corrupt a base load of the same tile.
-    std::vector<std::string> section_hoisted_decls_;    ///< VF section decls hoisted before __VEC_SCOPE__ (pre mem_bar)
-    std::map<int, std::set<ir::PipeType>> mutex_pipes_; ///< buf_id ->pipes in this target Program
+    std::vector<std::string> section_hoisted_decls_; ///< VF section decls hoisted before __VEC_SCOPE__ (pre mem_bar)
 
     struct LoopWritebackTargets {
         std::vector<ir::VarPtr> continueVars;
@@ -627,23 +567,8 @@ private:
     /// Per active loop, keep separate continue and break write-back slots.
     std::vector<LoopWritebackTargets> loop_target_stack_;
 
-    /**
-     * \brief Pre-scan the IR for mutex_id ->pipe mappings.
-     *
-     * Used on A5 to eliminate redundant PIPE_V get_buf/rls_buf: if a buf_id is
-     * only used by PIPE_V (never by MTE2/MTE3/M/etc.), the V-side mutex
-     * synchronization is unnecessary (V→V ops execute in order within the pipe).
-     */
-    void CollectMutexPipeInfo(const ir::StmtPtr& stmt);
-
     int tile_offset_counter_ = 0; ///< Counter for unique tile-offset GetItemExpr temp names
     int vf_tile_ptr_counter_ = 0; ///< Counter for unique VF base-ptr var names (vf_tile_ptr_N)
-
-    // Tile type dedup: maps tile_type_str ->alias name already emitted
-    std::map<std::string, std::string> emitted_tile_types_;
-
-    /// Track emitted tile reference aliases to avoid C++ redefinition errors
-    std::set<std::string> emitted_tile_aliases_;
 
     /// Track VF RegTensor variable names (C++ names set by EmitVFRegTensor)
     std::set<std::string> reg_tensor_vars_;
@@ -711,7 +636,7 @@ private:
      * Returns empty vector on failure.
      */
     std::vector<std::string> CollectTupleElemNames(const ir::ExprPtr& tuple_value);
-    std::string GetGeneratedType(const ir::TypePtr& type) const;
+
     std::string BuildDynamicTupleArrayDecl(const ir::TypePtr& elem_type, const std::vector<std::string>& elem_names,
                                            const std::string& arr_name) const;
 

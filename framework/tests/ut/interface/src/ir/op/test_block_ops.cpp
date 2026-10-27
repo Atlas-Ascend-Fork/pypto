@@ -117,7 +117,7 @@ TEST_F(BlockOpsMemoryTest, GetSubblockNum_WithArgs_Throws)
 }
 
 // ============================================================================
-// memory.cpp: block.make_tile
+// memory.cpp: block.make_mutex_tile
 // ============================================================================
 
 TEST_F(BlockOpsMemoryTest, MakeTile_BasicShape_ReturnsTileType)
@@ -129,7 +129,9 @@ TEST_F(BlockOpsMemoryTest, MakeTile_BasicShape_ReturnsTileType)
     auto valid_tuple = std::make_shared<MakeTuple>(std::vector<ExprPtr>{dim1, dim2}, Sp());
 
     std::vector<std::pair<std::string, std::any>> kwargs = {{"dtype", DataType::FP16}};
-    auto call = reg.Create("block.make_tile", {shape_tuple, valid_tuple}, kwargs, Sp());
+    auto call = reg.Create("block.make_mutex_tile",
+                           {shape_tuple, valid_tuple, std::make_shared<const MakeTuple>(std::vector<ExprPtr>{}, Sp())},
+                           kwargs, Sp());
     ASSERT_NE(call, nullptr);
     auto rt = As<TileType>(call->GetType());
     ASSERT_NE(rt, nullptr);
@@ -151,7 +153,9 @@ TEST_F(BlockOpsMemoryTest, MakeTile_WithMemRef_ReturnsTileWithMemRef)
         {"memref_size", int(256)},
         {"memref_id", int(1)},
     };
-    auto call = reg.Create("block.make_tile", {shape_tuple, valid_tuple}, kwargs, Sp());
+    auto call = reg.Create("block.make_mutex_tile",
+                           {shape_tuple, valid_tuple, std::make_shared<const MakeTuple>(std::vector<ExprPtr>{}, Sp())},
+                           kwargs, Sp());
     auto rt = As<TileType>(call->GetType());
     ASSERT_NE(rt, nullptr);
     EXPECT_TRUE(rt->memref_.has_value());
@@ -164,7 +168,11 @@ TEST_F(BlockOpsMemoryTest, MakeTile_EmptyShape_Throws)
     auto valid_tuple = std::make_shared<MakeTuple>(std::vector<ExprPtr>{}, Sp());
     std::vector<std::pair<std::string, std::any>> kwargs = {{"dtype", DataType::FP16}};
 
-    EXPECT_THROW((void)reg.Create("block.make_tile", {shape_tuple, valid_tuple}, kwargs, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW(
+        (void)reg.Create("block.make_mutex_tile",
+                         {shape_tuple, valid_tuple, std::make_shared<const MakeTuple>(std::vector<ExprPtr>{}, Sp())},
+                         kwargs, Sp()),
+        npu::tile_fwk::Error);
 }
 
 TEST_F(BlockOpsMemoryTest, MakeTile_RankOneShape_Throws)
@@ -175,7 +183,11 @@ TEST_F(BlockOpsMemoryTest, MakeTile_RankOneShape_Throws)
     auto valid_tuple = std::make_shared<MakeTuple>(std::vector<ExprPtr>{dim}, Sp());
     std::vector<std::pair<std::string, std::any>> kwargs = {{"dtype", DataType::FP16}};
 
-    EXPECT_THROW((void)reg.Create("block.make_tile", {shape_tuple, valid_tuple}, kwargs, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW(
+        (void)reg.Create("block.make_mutex_tile",
+                         {shape_tuple, valid_tuple, std::make_shared<const MakeTuple>(std::vector<ExprPtr>{}, Sp())},
+                         kwargs, Sp()),
+        npu::tile_fwk::Error);
 }
 
 TEST_F(BlockOpsMemoryTest, MakeTile_RankThreeShape_Throws)
@@ -188,14 +200,18 @@ TEST_F(BlockOpsMemoryTest, MakeTile_RankThreeShape_Throws)
     auto valid_tuple = std::make_shared<MakeTuple>(std::vector<ExprPtr>{dim1, dim2, dim3}, Sp());
     std::vector<std::pair<std::string, std::any>> kwargs = {{"dtype", DataType::FP16}};
 
-    EXPECT_THROW((void)reg.Create("block.make_tile", {shape_tuple, valid_tuple}, kwargs, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW(
+        (void)reg.Create("block.make_mutex_tile",
+                         {shape_tuple, valid_tuple, std::make_shared<const MakeTuple>(std::vector<ExprPtr>{}, Sp())},
+                         kwargs, Sp()),
+        npu::tile_fwk::Error);
 }
 
 TEST_F(BlockOpsMemoryTest, MakeTile_WrongArgCount_Throws)
 {
     auto& reg = OpRegistry::GetInstance();
     std::vector<std::pair<std::string, std::any>> kwargs = {{"dtype", DataType::FP32}};
-    EXPECT_THROW((void)reg.Create("block.make_tile", {}, kwargs, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)reg.Create("block.make_mutex_tile", {}, kwargs, Sp()), npu::tile_fwk::Error);
 }
 
 TEST_F(BlockOpsMemoryTest, MakeTile_WithLayoutKwargs_ReturnsTileType)
@@ -210,7 +226,9 @@ TEST_F(BlockOpsMemoryTest, MakeTile_WithLayoutKwargs_ReturnsTileType)
         {"dtype", DataType::FP16}, {"blayout", int(1)}, {"slayout", int(0)},
         {"fractal", int(256)},     {"pad", int(1)},     {"compact", int(0)},
     };
-    auto call = reg.Create("block.make_tile", {shape_tuple, valid_tuple}, kwargs, Sp());
+    auto call = reg.Create("block.make_mutex_tile",
+                           {shape_tuple, valid_tuple, std::make_shared<const MakeTuple>(std::vector<ExprPtr>{}, Sp())},
+                           kwargs, Sp());
     auto rt = As<TileType>(call->GetType());
     ASSERT_NE(rt, nullptr);
     EXPECT_EQ(rt->dtype_, DataType::FP16);
@@ -322,16 +340,14 @@ TEST_F(BlockOpsMemoryTest, GetVal_NonIntIndex_Throws)
                  npu::tile_fwk::Error);
 }
 
-TEST_F(BlockOpsMemoryTest, SetVal_TileIndexValue_ReturnsTileType)
+TEST_F(BlockOpsMemoryTest, SetVal_TileIndexValue_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.setval",
                            {MakeTileVar("t", {128}, DataType::FP32), MakeScalarVar("i", DataType::INT64),
                             MakeScalarVar("v", DataType::FP32)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsMemoryTest, SetVal_WrongArgCount_Throws)
@@ -547,16 +563,14 @@ TEST_F(BlockOpsStructTest, StructSet_WithIndex_NullIndex_Throws)
 
 class BlockOpsOutElemwiseTest : public testing::Test {};
 
-TEST_F(BlockOpsOutElemwiseTest, BlockAdd_ThreeTiles_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockAdd_ThreeTiles_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto lhs = MakeTileVar("lhs", {16, 32}, DataType::FP16);
     auto rhs = MakeTileVar("rhs", {16, 32}, DataType::FP16);
     auto out = MakeTileVar("out", {16, 32}, DataType::FP16);
     auto call = reg.Create("block.add", {out, lhs, rhs}, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutElemwiseTest, BlockAdd_WrongArgCount_Throws)
@@ -579,57 +593,49 @@ TEST_F(BlockOpsOutElemwiseTest, BlockAdd_NonTileArg_Throws)
 }
 
 // Representative coverage for REGISTER_BLOCK_OUT_BINARY_TILE macro-registered ops.
-// All share the same DeduceBlockOutBinaryTile logic: validate 3 tile args, return out's type.
+// All share the same DeduceBlockOutBinaryTile logic: validate 3 tile args, return NoneType.
 
-TEST_F(BlockOpsOutElemwiseTest, BlockSub_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockSub_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto out = MakeTileVar("out", {16, 32}, DataType::FP32);
     auto lhs = MakeTileVar("lhs", {16, 32}, DataType::FP16);
     auto rhs = MakeTileVar("rhs", {16, 32}, DataType::FP16);
     auto call = reg.Create("block.sub", {out, lhs, rhs}, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockBitwiseAnd_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockBitwiseAnd_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto lhs = MakeTileVar("lhs", {16, 32}, DataType::INT32);
     auto rhs = MakeTileVar("rhs", {16, 32}, DataType::INT32);
     auto out = MakeTileVar("out", {16, 32}, DataType::INT32);
     auto call = reg.Create("block.and", {out, lhs, rhs}, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::INT32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockAddRelu_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockAddRelu_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto lhs = MakeTileVar("lhs", {16, 32}, DataType::FP16);
     auto rhs = MakeTileVar("rhs", {16, 32}, DataType::FP16);
     auto out = MakeTileVar("out", {16, 32}, DataType::FP16);
     auto call = reg.Create("block.add_relu", {out, lhs, rhs}, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockFusedMulAdd_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockFusedMulAdd_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto lhs = MakeTileVar("lhs", {16, 32}, DataType::FP16);
     auto rhs = MakeTileVar("rhs", {16, 32}, DataType::FP16);
     auto out = MakeTileVar("out", {16, 32}, DataType::FP16);
     auto call = reg.Create("block.fused_mul_add", {out, lhs, rhs}, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockRemainingBinaryTileOps_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockRemainingBinaryTileOps_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto lhs = MakeTileVar("lhs", {16, 32}, DataType::FP16);
@@ -641,14 +647,12 @@ TEST_F(BlockOpsOutElemwiseTest, BlockRemainingBinaryTileOps_ReturnsOutType)
           "block.sub_relu", "block.mul_add_dst", "block.fused_mul_add_relu", "block.partadd", "block.partmax",
           "block.partmin", "block.partmul"}) {
         auto call = reg.Create(op_name, {out, lhs, rhs}, Sp());
-        auto rt = As<TileType>(call->GetType());
-        ASSERT_NE(rt, nullptr) << op_name;
-        EXPECT_EQ(rt->dtype_, DataType::FP16) << op_name;
+        EXPECT_NE(As<NoneType>(call->GetType()), nullptr) << op_name;
     }
 }
 
 // block.add_relu_cast / sub_relu_cast / mul_cast: same deduction as binary tile ops
-TEST_F(BlockOpsOutElemwiseTest, BlockAddReluCast_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockAddReluCast_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto out = MakeTileVar("out", {16, 32}, DataType::FP16);
@@ -657,12 +661,10 @@ TEST_F(BlockOpsOutElemwiseTest, BlockAddReluCast_ReturnsOutType)
     std::vector<std::pair<std::string, std::any>> kwargs = {{"target_type", DataType::FP16},
                                                             {"mode", static_cast<int>(RoundMode::CAST_ROUND)}};
     auto call = reg.Create("block.add_relu_cast", {out, lhs, rhs}, kwargs, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockSubReluCast_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockSubReluCast_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto out = MakeTileVar("out", {16, 32}, DataType::FP16);
@@ -671,12 +673,10 @@ TEST_F(BlockOpsOutElemwiseTest, BlockSubReluCast_ReturnsOutType)
     std::vector<std::pair<std::string, std::any>> kwargs = {{"target_type", DataType::FP16},
                                                             {"mode", static_cast<int>(RoundMode::CAST_ROUND)}};
     auto call = reg.Create("block.sub_relu_cast", {out, lhs, rhs}, kwargs, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockMulCast_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockMulCast_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto out = MakeTileVar("out", {16, 32}, DataType::FP16);
@@ -685,25 +685,21 @@ TEST_F(BlockOpsOutElemwiseTest, BlockMulCast_ReturnsOutType)
     std::vector<std::pair<std::string, std::any>> kwargs = {{"target_type", DataType::FP16},
                                                             {"mode", static_cast<int>(RoundMode::CAST_ROUND)}};
     auto call = reg.Create("block.mul_cast", {out, lhs, rhs}, kwargs, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 // ============================================================================
 // out_elementwise.cpp: Tile x Scalar binary ops
 // ============================================================================
 
-TEST_F(BlockOpsOutElemwiseTest, BlockAdds_TileScalarOut_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockAdds_TileScalarOut_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.adds",
                            {MakeTileVar("o", {16, 16}, DataType::FP16), MakeTileVar("t", {16, 16}, DataType::FP16),
                             MakeScalarVar("s", DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutElemwiseTest, BlockAdds_NonScalarThird_Throws)
@@ -717,7 +713,7 @@ TEST_F(BlockOpsOutElemwiseTest, BlockAdds_NonScalarThird_Throws)
         npu::tile_fwk::Error);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockRemainingBinaryScalarOps_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockRemainingBinaryScalarOps_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto out = MakeTileVar("o", {16, 16}, DataType::FP16);
@@ -727,13 +723,11 @@ TEST_F(BlockOpsOutElemwiseTest, BlockRemainingBinaryScalarOps_ReturnsOutType)
     for (const auto& op_name :
          {"block.subs", "block.muls", "block.divs", "block.rems", "block.maxs", "block.mins", "block.axpy"}) {
         auto call = reg.Create(op_name, {out, tile, scalar}, Sp());
-        auto rt = As<TileType>(call->GetType());
-        ASSERT_NE(rt, nullptr) << op_name;
-        EXPECT_EQ(rt->dtype_, DataType::FP16) << op_name;
+        EXPECT_NE(As<NoneType>(call->GetType()), nullptr) << op_name;
     }
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockRemainingBinaryScalarIntOps_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockRemainingBinaryScalarIntOps_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto out = MakeTileVar("o", {16, 16}, DataType::INT32);
@@ -742,9 +736,7 @@ TEST_F(BlockOpsOutElemwiseTest, BlockRemainingBinaryScalarIntOps_ReturnsOutType)
 
     for (const auto& op_name : {"block.ands", "block.ors", "block.shls", "block.shrs"}) {
         auto call = reg.Create(op_name, {out, tile, scalar}, Sp());
-        auto rt = As<TileType>(call->GetType());
-        ASSERT_NE(rt, nullptr) << op_name;
-        EXPECT_EQ(rt->dtype_, DataType::INT32) << op_name;
+        EXPECT_NE(As<NoneType>(call->GetType()), nullptr) << op_name;
     }
 }
 
@@ -752,14 +744,12 @@ TEST_F(BlockOpsOutElemwiseTest, BlockRemainingBinaryScalarIntOps_ReturnsOutType)
 // out_elementwise.cpp: Unary ops
 // ============================================================================
 
-TEST_F(BlockOpsOutElemwiseTest, BlockNeg_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockNeg_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create(
         "block.neg", {MakeTileVar("o", {16, 16}, DataType::FP16), MakeTileVar("s", {16, 16}, DataType::FP16)}, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutElemwiseTest, BlockNeg_NonTileSrc_Throws)
@@ -771,7 +761,7 @@ TEST_F(BlockOpsOutElemwiseTest, BlockNeg_NonTileSrc_Throws)
         npu::tile_fwk::Error);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockRemainingUnaryOps_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockRemainingUnaryOps_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto src = MakeTileVar("s", {16, 16}, DataType::FP16);
@@ -780,24 +770,20 @@ TEST_F(BlockOpsOutElemwiseTest, BlockRemainingUnaryOps_ReturnsOutType)
     for (const auto& op_name :
          {"block.exp", "block.sqrt", "block.rsqrt", "block.recip", "block.log", "block.abs", "block.relu"}) {
         auto call = reg.Create(op_name, {out, src}, Sp());
-        auto rt = As<TileType>(call->GetType());
-        ASSERT_NE(rt, nullptr) << op_name;
-        EXPECT_EQ(rt->dtype_, DataType::FP16) << op_name;
+        EXPECT_NE(As<NoneType>(call->GetType()), nullptr) << op_name;
     }
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockNot_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockNot_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto src = MakeTileVar("s", {16, 16}, DataType::BOOL);
     auto out = MakeTileVar("o", {16, 16}, DataType::BOOL);
     auto call = reg.Create("block.not", {out, src}, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::BOOL);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockCast_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockCast_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     std::vector<std::pair<std::string, std::any>> kwargs = {{"target_type", DataType::FP32},
@@ -805,9 +791,7 @@ TEST_F(BlockOpsOutElemwiseTest, BlockCast_ReturnsOutType)
     auto call = reg.Create("block.cast",
                            {MakeTileVar("o", {16, 16}, DataType::FP32), MakeTileVar("s", {16, 16}, DataType::FP16)},
                            kwargs, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutElemwiseTest, BlockUnary_WrongArgCount_Throws)
@@ -821,14 +805,14 @@ TEST_F(BlockOpsOutElemwiseTest, BlockUnary_WrongArgCount_Throws)
 // out_elementwise.cpp: Ternary / multi-input ops
 // ============================================================================
 
-TEST_F(BlockOpsOutElemwiseTest, BlockXor_FourTiles_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockXor_FourTiles_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.xor",
                            {MakeTileVar("o", {16, 16}, DataType::INT32), MakeTileVar("l", {16, 16}, DataType::INT32),
                             MakeTileVar("r", {16, 16}, DataType::INT32), MakeTileVar("tmp", {16, 16}, DataType::INT32)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutElemwiseTest, BlockXor_WrongArgCount_Throws)
@@ -842,19 +826,17 @@ TEST_F(BlockOpsOutElemwiseTest, BlockXor_WrongArgCount_Throws)
         npu::tile_fwk::Error);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockXors_FourArgs_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockXors_FourArgs_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.xors",
                            {MakeTileVar("o", {16, 16}, DataType::INT32), MakeTileVar("lhs", {16, 16}, DataType::INT32),
                             MakeScalarVar("s", DataType::INT32), MakeTileVar("tmp", {16, 16}, DataType::INT32)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::INT32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockSels_FiveArgs_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockSels_FiveArgs_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.sels",
@@ -862,12 +844,10 @@ TEST_F(BlockOpsOutElemwiseTest, BlockSels_FiveArgs_ReturnsOutType)
                             MakeTileVar("src", {16, 16}, DataType::FP16), MakeTileVar("tmp", {16, 16}, DataType::FP16),
                             MakeScalarVar("s", DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockSel_FiveTiles_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockSel_FiveTiles_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.sel",
@@ -875,7 +855,7 @@ TEST_F(BlockOpsOutElemwiseTest, BlockSel_FiveTiles_ReturnsOutType)
                             MakeTileVar("l", {16, 16}, DataType::FP16), MakeTileVar("r", {16, 16}, DataType::FP16),
                             MakeTileVar("tmp", {16, 16}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutElemwiseTest, BlockSel_WrongArgCount_Throws)
@@ -893,7 +873,7 @@ TEST_F(BlockOpsOutElemwiseTest, BlockSel_WrongArgCount_Throws)
 // out_elementwise.cpp: Comparison ops
 // ============================================================================
 
-TEST_F(BlockOpsOutElemwiseTest, BlockCmp_ThreeTiles_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockCmp_ThreeTiles_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     std::vector<std::pair<std::string, std::any>> kwargs = {{"cmp_mode", int(0)}};
@@ -901,10 +881,10 @@ TEST_F(BlockOpsOutElemwiseTest, BlockCmp_ThreeTiles_ReturnsOutType)
                            {MakeTileVar("o", {16, 16}, DataType::FP16), MakeTileVar("l", {16, 16}, DataType::FP16),
                             MakeTileVar("r", {16, 16}, DataType::FP16)},
                            kwargs, Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockCmps_TileScalarOut_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockCmps_TileScalarOut_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     std::vector<std::pair<std::string, std::any>> kwargs = {{"cmp_mode", int(1)}};
@@ -912,56 +892,54 @@ TEST_F(BlockOpsOutElemwiseTest, BlockCmps_TileScalarOut_ReturnsOutType)
                            {MakeTileVar("o", {16, 16}, DataType::FP16), MakeTileVar("t", {16, 16}, DataType::FP16),
                             MakeScalarVar("s", DataType::FP16)},
                            kwargs, Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 // ============================================================================
 // out_elementwise.cpp: Scalar broadcast, layout
 // ============================================================================
 
-TEST_F(BlockOpsOutElemwiseTest, BlockExpands_ScalarAndOut_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockExpands_ScalarAndOut_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.expands",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeScalarVar("s", DataType::FP16)}, Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockFillIndex_ScalarAndOut_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockFillIndex_ScalarAndOut_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.fill_index",
                            {MakeTileVar("o", {1, 128}, DataType::INT32), MakeScalarVar("start", DataType::INT32)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::INT32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockReshape_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockReshape_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto shape = MakeOffsetsTuple({32, 16});
     auto call = reg.Create(
         "block.reshape",
         {MakeTileVar("o", {32, 16}, DataType::FP16), MakeTileVar("s", {16, 32}, DataType::FP16), shape}, Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockTranspose_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockTranspose_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.transpose",
                            {MakeTileVar("o", {32, 16}, DataType::FP16), MakeTileVar("s", {16, 32}, DataType::FP16)}, {},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 // ============================================================================
 // out_elementwise.cpp: Quantize / dequantize
 // ============================================================================
 
-TEST_F(BlockOpsOutElemwiseTest, BlockQuant_3Args_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockQuant_3Args_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     std::vector<std::pair<std::string, std::any>> kwargs = {{"mode", static_cast<int>(QuantMode::SYM)}};
@@ -969,12 +947,10 @@ TEST_F(BlockOpsOutElemwiseTest, BlockQuant_3Args_ReturnsOutType)
                            {MakeTileVar("out", {16, 32}, DataType::INT8), MakeTileVar("src", {16, 32}, DataType::FP32),
                             MakeTileVar("scale", {16, 1}, DataType::FP32)},
                            kwargs, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::INT8);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutElemwiseTest, BlockDequant_4Args_ReturnsOutType)
+TEST_F(BlockOpsOutElemwiseTest, BlockDequant_4Args_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create(
@@ -982,9 +958,7 @@ TEST_F(BlockOpsOutElemwiseTest, BlockDequant_4Args_ReturnsOutType)
         {MakeTileVar("out", {16, 32}, DataType::FP32), MakeTileVar("src", {16, 32}, DataType::INT8),
          MakeTileVar("scale", {16, 1}, DataType::FP32), MakeTileVar("offset", {16, 1}, DataType::FP32)},
         Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 // ============================================================================
@@ -1014,9 +988,7 @@ TEST_F(BlockOpsOutElemwiseTest, BlockAdd_VecMemrefs_Deduces)
                             MakeTileVarWithMemRef("l", {16, 32}, DataType::FP16, MemorySpace::Vec, 256, 1024),
                             MakeTileVarWithMemRef("r", {16, 32}, DataType::FP16, MemorySpace::Vec, 512, 1024)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutElemwiseTest, BlockNeg_NonVecMemspace_Throws)
@@ -1038,7 +1010,7 @@ TEST_F(BlockOpsOutElemwiseTest, BlockCmp_PackedMaskOut_ShapeExempt)
                            {MakeTileVar("o", {16, 128}, DataType::UINT8), MakeTileVar("l", {16, 64}, DataType::FP16),
                             MakeTileVar("r", {16, 64}, DataType::FP16)},
                            kwargs, Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutElemwiseTest, BlockCmps_PackedMaskOut_ShapeExempt)
@@ -1049,7 +1021,7 @@ TEST_F(BlockOpsOutElemwiseTest, BlockCmps_PackedMaskOut_ShapeExempt)
                            {MakeTileVar("o", {16, 128}, DataType::UINT8), MakeTileVar("t", {16, 64}, DataType::FP16),
                             MakeScalarVar("s", DataType::FP16)},
                            kwargs, Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutElemwiseTest, BlockTranspose_TransposedOut_ShapeExempt)
@@ -1059,7 +1031,7 @@ TEST_F(BlockOpsOutElemwiseTest, BlockTranspose_TransposedOut_ShapeExempt)
     auto call = reg.Create("block.transpose",
                            {MakeTileVar("o", {32, 16}, DataType::FP16), MakeTileVar("s", {16, 32}, DataType::FP16)},
                            kwargs, Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutElemwiseTest, BlockMaximum_NonVecMemspace_Throws)
@@ -1075,29 +1047,27 @@ TEST_F(BlockOpsOutElemwiseTest, BlockMaximum_NonVecMemspace_Throws)
 
 class BlockOpsOutMatmulTest : public testing::Test {};
 
-TEST_F(BlockOpsOutMatmulTest, BlockMatmul_LhsRhsOut_ReturnsOutType)
+TEST_F(BlockOpsOutMatmulTest, BlockMatmul_LhsRhsOut_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.matmul",
                            {MakeTileVar("o", {16, 16}, DataType::FP32), MakeTileVar("l", {16, 32}, DataType::FP16),
                             MakeTileVar("r", {32, 16}, DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutMatmulTest, BlockMatmulAcc_ReturnsOutType)
+TEST_F(BlockOpsOutMatmulTest, BlockMatmulAcc_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.matmul_acc",
                            {MakeTileVar("o", {16, 16}, DataType::FP32), MakeTileVar("acc", {16, 16}, DataType::FP32),
                             MakeTileVar("l", {16, 32}, DataType::FP16), MakeTileVar("r", {32, 16}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutMatmulTest, BlockMatmulMx_ReturnsOutType)
+TEST_F(BlockOpsOutMatmulTest, BlockMatmulMx_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create(
@@ -1106,12 +1076,10 @@ TEST_F(BlockOpsOutMatmulTest, BlockMatmulMx_ReturnsOutType)
          MakeTileVar("r", {64, 64}, DataType::FP8E5M2), MakeTileVar("sa", {64, 2}, DataType::FP8E8M0),
          MakeTileVar("sb", {2, 64}, DataType::FP8E8M0)},
         Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutMatmulTest, BlockMatmulMxAcc_ReturnsOutType)
+TEST_F(BlockOpsOutMatmulTest, BlockMatmulMxAcc_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create(
@@ -1120,55 +1088,47 @@ TEST_F(BlockOpsOutMatmulTest, BlockMatmulMxAcc_ReturnsOutType)
          MakeTileVar("l", {64, 64}, DataType::FP4E2M1), MakeTileVar("r", {64, 64}, DataType::FP4E1M2),
          MakeTileVar("sa", {64, 2}, DataType::FP8E8M0), MakeTileVar("sb", {2, 64}, DataType::FP8E8M0)},
         Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutMatmulTest, BlockGemv_ReturnsOutType)
+TEST_F(BlockOpsOutMatmulTest, BlockGemv_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.gemv",
                            {MakeTileVar("o", {1, 16}, DataType::FP32), MakeTileVar("l", {1, 32}, DataType::FP16),
                             MakeTileVar("r", {32, 16}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutMatmulTest, BlockMatmulBias_ReturnsOutType)
+TEST_F(BlockOpsOutMatmulTest, BlockMatmulBias_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.matmul_bias",
                            {MakeTileVar("o", {16, 16}, DataType::FP32), MakeTileVar("l", {16, 32}, DataType::FP16),
                             MakeTileVar("r", {32, 16}, DataType::FP16), MakeTileVar("bias", {1, 16}, DataType::FP32)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutMatmulTest, BlockGemvAcc_ReturnsOutType)
+TEST_F(BlockOpsOutMatmulTest, BlockGemvAcc_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.gemv_acc",
                            {MakeTileVar("o", {1, 16}, DataType::FP32), MakeTileVar("acc", {1, 16}, DataType::FP32),
                             MakeTileVar("l", {1, 32}, DataType::FP16), MakeTileVar("r", {32, 16}, DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutMatmulTest, BlockGemvBias_ReturnsOutType)
+TEST_F(BlockOpsOutMatmulTest, BlockGemvBias_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.gemv_bias",
                            {MakeTileVar("o", {1, 16}, DataType::FP32), MakeTileVar("l", {1, 32}, DataType::FP16),
                             MakeTileVar("r", {32, 16}, DataType::FP16), MakeTileVar("bias", {1, 16}, DataType::FP32)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutMatmulTest, BlockMatmul_WrongArgCount_Throws)
@@ -1192,7 +1152,7 @@ TEST_F(BlockOpsOutMatmulTest, BlockMatmul_Memspaces_Match)
                             MakeTileVarWithMemRef("l", {16, 32}, DataType::FP16, MemorySpace::Left, 0, 1024),
                             MakeTileVarWithMemRef("r", {32, 16}, DataType::FP16, MemorySpace::Right, 0, 1024)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutMatmulTest, BlockMatmul_OutNotAcc_Throws)
@@ -1248,16 +1208,14 @@ TEST_F(BlockOpsOutMatmulTest, BlockMatmulMx_ScaleWrongMemspace_Throws)
 
 class BlockOpsOutMemoryTest : public testing::Test {};
 
-TEST_F(BlockOpsOutMemoryTest, BlockLoad_TensorOffsetsOut_ReturnsOutType)
+TEST_F(BlockOpsOutMemoryTest, BlockLoad_TensorOffsetsOut_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto tensor = MakeTensorVar("tensor", {64, 128}, DataType::FP16);
     auto offsets = MakeOffsetsTuple({0, 0});
     auto out = MakeTileVar("out", {64, 128}, DataType::FP16);
     auto call = reg.Create("block.load", {out, tensor, offsets}, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutMemoryTest, BlockLoad_WrongArgCount_Throws)
@@ -1335,14 +1293,12 @@ TEST_F(BlockOpsOutMemoryTest, BlockStore_InvalidScaleType_Throws)
 // out_memory.cpp: block.move, block.ub_copy
 // ============================================================================
 
-TEST_F(BlockOpsOutMemoryTest, BlockMove_OutSrc_ReturnsOutType)
+TEST_F(BlockOpsOutMemoryTest, BlockMove_OutSrc_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create(
         "block.move", {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("s", {16, 32}, DataType::FP16)}, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutMemoryTest, BlockMove_WrongArgCount_Throws)
@@ -1352,26 +1308,24 @@ TEST_F(BlockOpsOutMemoryTest, BlockMove_WrongArgCount_Throws)
                  npu::tile_fwk::Error);
 }
 
-TEST_F(BlockOpsOutMemoryTest, BlockMove_WithScalingTile_ReturnsOutType)
+TEST_F(BlockOpsOutMemoryTest, BlockMove_WithScalingTile_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.move",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("s", {16, 32}, DataType::FP32),
                             MakeTileVar("fp", {16, 32}, DataType::FP32)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutMemoryTest, BlockMove_WithOffsetAndScalingTile_ReturnsOutType)
+TEST_F(BlockOpsOutMemoryTest, BlockMove_WithOffsetAndScalingTile_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.move",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("s", {32, 64}, DataType::FP32),
                             MakeOffsetsTuple({0, 16}), MakeTileVar("fp", {1, 32}, DataType::INT64)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutMemoryTest, BlockMove_InvalidOptionalArgument_Throws)
@@ -1385,31 +1339,30 @@ TEST_F(BlockOpsOutMemoryTest, BlockMove_InvalidOptionalArgument_Throws)
         npu::tile_fwk::Error);
 }
 
-TEST_F(BlockOpsOutMemoryTest, BlockUbCopy_ReturnsOutType)
+TEST_F(BlockOpsOutMemoryTest, BlockUbCopy_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.ub_copy",
                            {MakeTileVar("o", {16, 16}, DataType::FP16), MakeTileVar("s", {16, 16}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 // ============================================================================
 // out_memory.cpp: block.insert
 // ============================================================================
 
-TEST_F(BlockOpsOutMemoryTest, BlockInsert_4Args_ReturnsOutType)
+TEST_F(BlockOpsOutMemoryTest, BlockInsert_4Args_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.insert",
                            {MakeTileVar("o", {64, 64}, DataType::FP16), MakeTileVar("src", {16, 16}, DataType::FP16),
                             MakeScalarVar("row", DataType::INT32), MakeScalarVar("col", DataType::INT32)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutMemoryTest, BlockInsert_WithScale_ReturnsOutType)
+TEST_F(BlockOpsOutMemoryTest, BlockInsert_WithScale_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.insert",
@@ -1417,7 +1370,7 @@ TEST_F(BlockOpsOutMemoryTest, BlockInsert_WithScale_ReturnsOutType)
                             MakeScalarVar("row", DataType::INT32), MakeScalarVar("col", DataType::INT32),
                             MakeScalarVar("scale", DataType::INT64)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutMemoryTest, BlockInsert_WrongArgCount_Throws)
@@ -1433,12 +1386,12 @@ TEST_F(BlockOpsOutMemoryTest, BlockInsert_WrongArgCount_Throws)
 // out_memory.cpp: block.full, block.ssbuf_store, block.ssbuf_load
 // ============================================================================
 
-TEST_F(BlockOpsOutMemoryTest, BlockFull_OutScalar_ReturnsOutType)
+TEST_F(BlockOpsOutMemoryTest, BlockFull_OutScalar_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.full",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeScalarVar("v", DataType::FP16)}, Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutMemoryTest, BlockSsbufStore_ReturnsNone)
@@ -1463,14 +1416,14 @@ TEST_F(BlockOpsOutMemoryTest, BlockSsbufLoad_ReturnsNone)
 // out_memory.cpp: block.set_validshape
 // ============================================================================
 
-TEST_F(BlockOpsOutMemoryTest, BlockSetValidshape_ReturnsOutType)
+TEST_F(BlockOpsOutMemoryTest, BlockSetValidshape_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.set_validshape",
                            {MakeTileVar("t", {16, 32}, DataType::FP16), MakeScalarVar("row", DataType::INT32),
                             MakeScalarVar("col", DataType::INT32)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 // ============================================================================
@@ -1512,14 +1465,13 @@ TEST_F(BlockOpsOutMemoryTest, BlockInitOutput_NonTensorFirst_Throws)
 // out_memory.cpp: block.fillpad, block.fillpad_expand
 // ============================================================================
 
-TEST_F(BlockOpsOutMemoryTest, BlockFillpad_ReturnsOutType)
+TEST_F(BlockOpsOutMemoryTest, BlockFillpad_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto src = MakeTileVarWithHwInfo("src", {16, 32}, DataType::FP16, TilePad::zero);
     auto out = MakeTileVarWithHwInfo("out", {16, 32}, DataType::FP16, TilePad::zero);
     auto call = reg.Create("block.fillpad", {out, src}, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutMemoryTest, BlockFillpad_NoHardwareInfo_Throws)
@@ -1538,14 +1490,13 @@ TEST_F(BlockOpsOutMemoryTest, BlockFillpad_PadNull_Throws)
     EXPECT_THROW((void)reg.Create("block.fillpad", {out, src}, Sp()), npu::tile_fwk::Error);
 }
 
-TEST_F(BlockOpsOutMemoryTest, BlockFillpadExpand_ReturnsOutType)
+TEST_F(BlockOpsOutMemoryTest, BlockFillpadExpand_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto src = MakeTileVarWithHwInfo("src", {16, 32}, DataType::FP16, TilePad::zero);
     auto out = MakeTileVarWithHwInfo("out", {32, 64}, DataType::FP16, TilePad::zero);
     auto call = reg.Create("block.fillpad_expand", {out, src}, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutMemoryTest, BlockFillpadExpand_SrcLargerThanOut_Throws)
@@ -1556,7 +1507,7 @@ TEST_F(BlockOpsOutMemoryTest, BlockFillpadExpand_SrcLargerThanOut_Throws)
     EXPECT_THROW((void)reg.Create("block.fillpad_expand", {out, src}, Sp()), npu::tile_fwk::Error);
 }
 
-TEST_F(BlockOpsOutMemoryTest, BlockFillpadInplace_ReturnsOutType)
+TEST_F(BlockOpsOutMemoryTest, BlockFillpadInplace_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto src = MakeTileVarWithMemRef("src", {16, 32}, DataType::FP16, MemorySpace::Vec, 0, 1024);
@@ -1568,8 +1519,7 @@ TEST_F(BlockOpsOutMemoryTest, BlockFillpadInplace_ReturnsOutType)
                                                std::optional<HardwareInfo>(hw));
     auto out = std::make_shared<Var>("out", out_type, Sp());
     auto call = reg.Create("block.fillpad_inplace", {out, src}, Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutMemoryTest, BlockFillpadInplace_NoMemRef_Throws)
@@ -1586,348 +1536,322 @@ TEST_F(BlockOpsOutMemoryTest, BlockFillpadInplace_NoMemRef_Throws)
 
 class BlockOpsOutReductionTest : public testing::Test {};
 
-TEST_F(BlockOpsOutReductionTest, BlockRowSum_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowSum_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_sum",
                            {MakeTileVar("o", {16, 1}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {16, 1}, DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowMax_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowMax_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_max",
                            {MakeTileVar("o", {16, 1}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {16, 1}, DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowMin_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowMin_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_min",
                            {MakeTileVar("o", {16, 1}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {16, 1}, DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColMax_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColMax_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_max",
                            {MakeTileVar("o", {1, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {1, 32}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowArgmax_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowArgmax_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_argmax",
                            {MakeTileVar("o", {16, 1}, DataType::INT32), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {16, 1}, DataType::INT32)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowExpand_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowExpand_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_expand",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("s", {16, 1}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowExpandAdd_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowExpandAdd_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_expand_add",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("rv", {16, 1}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColExpandAdd_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColExpandAdd_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_expand_add",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("cv", {1, 32}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColSum_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColSum_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_sum",
                            {MakeTileVar("o", {1, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {1, 32}, DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColMin_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColMin_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_min",
                            {MakeTileVar("o", {1, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {1, 32}, DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowProd_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowProd_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_prod",
                            {MakeTileVar("o", {16, 1}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {16, 1}, DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColProd_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColProd_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_prod",
                            {MakeTileVar("o", {1, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {1, 32}, DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowReduce_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowReduce_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_reduce",
                            {MakeTileVar("o", {16, 1}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {16, 1}, DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColReduce_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColReduce_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_reduce",
                            {MakeTileVar("o", {1, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {1, 32}, DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowArgmin_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowArgmin_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_argmin",
                            {MakeTileVar("o", {16, 1}, DataType::INT32), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {16, 1}, DataType::INT32)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::INT32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColArgmax_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColArgmax_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_argmax",
                            {MakeTileVar("o", {1, 32}, DataType::INT32), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {1, 32}, DataType::INT32)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::INT32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColArgmin_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColArgmin_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_argmin",
                            {MakeTileVar("o", {1, 32}, DataType::INT32), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("tmp", {1, 32}, DataType::INT32)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::INT32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColExpand_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColExpand_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_expand",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("cv", {1, 32}, DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowExpandSub_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowExpandSub_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_expand_sub",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("rv", {16, 1}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowExpandMul_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowExpandMul_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_expand_mul",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("rv", {16, 1}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowExpandExpdif_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowExpandExpdif_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_expand_expdif",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("rv", {16, 1}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowExpandBinop_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowExpandBinop_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_expand_binop",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("rv", {16, 1}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColExpandMul_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColExpandMul_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_expand_mul",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("cv", {1, 32}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColExpandExpdif_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColExpandExpdif_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_expand_expdif",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("cv", {1, 32}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColExpandBinop_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColExpandBinop_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_expand_binop",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("cv", {1, 32}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowExpandDiv_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowExpandDiv_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_expand_div",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("rv", {16, 1}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowExpandMax_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowExpandMax_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_expand_max",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("rv", {16, 1}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockRowExpandMin_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockRowExpandMin_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_expand_min",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("rv", {16, 1}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColExpandDiv_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColExpandDiv_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_expand_div",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("cv", {1, 32}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColExpandSub_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColExpandSub_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_expand_sub",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("cv", {1, 32}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColExpandMax_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColExpandMax_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_expand_max",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("cv", {1, 32}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutReductionTest, BlockColExpandMin_ReturnsOutType)
+TEST_F(BlockOpsOutReductionTest, BlockColExpandMin_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_expand_min",
                            {MakeTileVar("o", {16, 32}, DataType::FP16), MakeTileVar("t", {16, 32}, DataType::FP16),
                             MakeTileVar("cv", {1, 32}, DataType::FP16)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 // ============================================================================
@@ -1957,9 +1881,7 @@ TEST_F(BlockOpsOutReductionTest, BlockRowSum_VecMemrefs_Deduces)
                             MakeTileVarWithMemRef("t", {16, 32}, DataType::FP16, MemorySpace::Vec, 256, 1024),
                             MakeTileVarWithMemRef("tmp", {16, 1}, DataType::FP16, MemorySpace::Vec, 512, 1024)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutReductionTest, BlockColMax_NonVecMemspace_Throws)
@@ -1975,16 +1897,14 @@ TEST_F(BlockOpsOutReductionTest, BlockColMax_NonVecMemspace_Throws)
 
 class BlockOpsSortTest : public testing::Test {};
 
-TEST_F(BlockOpsSortTest, BlockSort32_3Args_ReturnsDstType)
+TEST_F(BlockOpsSortTest, BlockSort32_3Args_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.sort32",
                            {MakeTileVar("dst", {32}, DataType::FP16), MakeTileVar("src", {32}, DataType::FP16),
                             MakeTileVar("idx", {32}, DataType::UINT32)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsSortTest, BlockSort32_WrongArgCount_Throws)
@@ -1994,16 +1914,14 @@ TEST_F(BlockOpsSortTest, BlockSort32_WrongArgCount_Throws)
                  npu::tile_fwk::Error);
 }
 
-TEST_F(BlockOpsSortTest, BlockMrgsort_SrcDst_ReturnsDstType)
+TEST_F(BlockOpsSortTest, BlockMrgsort_SrcDst_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     std::vector<std::pair<std::string, std::any>> kwargs = {{"block_len", int(32)}};
     auto call = reg.Create("block.mrgsort",
                            {MakeTileVar("dst", {64}, DataType::FP16), MakeTileVar("src", {64}, DataType::FP16)}, kwargs,
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsSortTest, BlockMrgsort_WrongArgCount_Throws)
@@ -2013,16 +1931,14 @@ TEST_F(BlockOpsSortTest, BlockMrgsort_WrongArgCount_Throws)
                  npu::tile_fwk::Error);
 }
 
-TEST_F(BlockOpsSortTest, BlockMrgsort2_4Args_ReturnsDstType)
+TEST_F(BlockOpsSortTest, BlockMrgsort2_4Args_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.mrgsort2",
                            {MakeTileVar("dst", {64}, DataType::FP16), MakeTileVar("src0", {64}, DataType::FP16),
                             MakeTileVar("tmp", {64}, DataType::FP16), MakeTileVar("src1", {64}, DataType::FP16)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsSortTest, BlockMrgsort2_WrongArgCount_Throws)
@@ -2035,16 +1951,14 @@ TEST_F(BlockOpsSortTest, BlockMrgsort2_WrongArgCount_Throws)
                  npu::tile_fwk::Error);
 }
 
-TEST_F(BlockOpsSortTest, BlockHistogram_ReturnsOutType)
+TEST_F(BlockOpsSortTest, BlockHistogram_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.histogram",
                            {MakeTileVar("dst", {1, 256}, DataType::UINT32), MakeTileVar("src", {32}, DataType::UINT16),
                             MakeTileVar("idx", {32}, DataType::UINT8)},
                            Sp());
-    auto rt = As<TileType>(call->GetType());
-    ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::UINT32);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsSortTest, BlockHistogram_WrongArgCount_Throws)
@@ -2062,17 +1976,17 @@ TEST_F(BlockOpsSortTest, BlockHistogram_WrongArgCount_Throws)
 
 class BlockOpsGatherTest : public testing::Test {};
 
-TEST_F(BlockOpsGatherTest, BlockGather_IndexForm3Args_ReturnsOutType)
+TEST_F(BlockOpsGatherTest, BlockGather_IndexForm3Args_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.gather",
                            {MakeTileVar("out", {64}, DataType::FP16), MakeTileVar("src", {64}, DataType::FP16),
                             MakeTileVar("indices", {64}, DataType::INT32)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsGatherTest, BlockGather_CompareForm5Args_ReturnsOutType)
+TEST_F(BlockOpsGatherTest, BlockGather_CompareForm5Args_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     std::vector<std::pair<std::string, std::any>> kwargs = {{"cmp_mode", int(0)}, {"offset", int(0)}};
@@ -2081,27 +1995,27 @@ TEST_F(BlockOpsGatherTest, BlockGather_CompareForm5Args_ReturnsOutType)
                             MakeTileVar("kval", {64}, DataType::FP16), MakeTileVar("cdst", {64}, DataType::FP16),
                             MakeTileVar("tmp", {64}, DataType::FP16)},
                            kwargs, Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsGatherTest, BlockGatherb_ReturnsOutType)
+TEST_F(BlockOpsGatherTest, BlockGatherb_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.gatherb",
                            {MakeTileVar("out", {64}, DataType::FP16), MakeTileVar("src", {64}, DataType::FP16),
                             MakeTileVar("offsets", {64}, DataType::INT32)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsGatherTest, BlockGathermask_ReturnsOutType)
+TEST_F(BlockOpsGatherTest, BlockGathermask_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     std::vector<std::pair<std::string, std::any>> kwargs = {{"pattern_mode", int(1)}};
     auto call = reg.Create("block.gathermask",
                            {MakeTileVar("out", {64}, DataType::FP16), MakeTileVar("src", {64}, DataType::FP16)}, kwargs,
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 TEST_F(BlockOpsOutElemwiseTest, BlockGather_WrongArgCount_Throws)
@@ -2113,14 +2027,14 @@ TEST_F(BlockOpsOutElemwiseTest, BlockGather_WrongArgCount_Throws)
                  std::runtime_error);
 }
 
-TEST_F(BlockOpsGatherTest, BlockScatter_ReturnsOutType)
+TEST_F(BlockOpsGatherTest, BlockScatter_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.scatter",
                            {MakeTileVar("dst", {16, 32}, DataType::FP16), MakeTileVar("src", {16, 32}, DataType::FP16),
                             MakeTileVar("indices", {16, 32}, DataType::INT32)},
                            Sp());
-    EXPECT_NE(As<TileType>(call->GetType()), nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
 // ============================================================================

@@ -251,6 +251,10 @@ protected:
     virtual R VisitType_(const ScalarTypePtr& op, Args... args) = 0;
     virtual R VisitType_(const TensorTypePtr& op, Args... args) = 0;
     virtual R VisitType_(const TileTypePtr& op, Args... args) = 0;
+    virtual R VisitType_(const MutexTileTypePtr& op, Args... args)
+    {
+        return VisitType_(std::static_pointer_cast<const TileType>(op), std::forward<Args>(args)...);
+    }
     virtual R VisitType_(const TupleTypePtr& op, Args... args) = 0;
     virtual R VisitType_(const MemRefTypePtr& op, Args... args) = 0;
     virtual R VisitType_(const PtrTypePtr& op, Args... args) = 0;
@@ -268,6 +272,7 @@ template <typename R, typename... Args>
 R TypeFunctor<R, Args...>::VisitType(const TypePtr& type, Args... args)
 {
     TYPE_FUNCTOR_DISPATCH(TensorType);
+    TYPE_FUNCTOR_DISPATCH(MutexTileType);
     TYPE_FUNCTOR_DISPATCH(TileType);
     TYPE_FUNCTOR_DISPATCH(ScalarType);
     TYPE_FUNCTOR_DISPATCH(TupleType);

@@ -87,6 +87,7 @@ def test_parser_marks_only_the_kernel_that_launches_simt():
 
 def test_cube_and_vector_facts_are_aggregated_for_one_kernel(monkeypatch):
     class FakeKernelDef:
+        _auto_mutex = False
         def __init__(self):
             self.last_param_directions = {}
             self.max_vec_tile_end = 0

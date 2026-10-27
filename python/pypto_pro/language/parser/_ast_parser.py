@@ -165,13 +165,7 @@ class ASTParser(
         self.max_vec_tile_end: int = 0
         self.requires_simt: bool = False
         self.span_tracker = SpanTracker(source_file, source_lines, line_offset, col_offset)
-        # Maps tile Expr objects -> (tile_id MakeTuple, candidate MakeTuple) for tiles returned by
-        # group.next()/current()/previous()/group[i]; consumed by auto_mutex and
-        # shared with ScopeManager for control-flow candidate-id merging.
-        # Keep the Expr itself as the key. A bare id(expr) does not retain the
-        # Python IR wrapper and can be reused by an unrelated expression.
-        self._tile_mutex_meta: dict[ir.Expr, tuple[ir.MakeTuple, ir.MakeTuple]] = {}
-        # Slot provenance survives SSA bindings; a dynamic Tile's type alone describes slot 0.
+        # Slot provenance for validating every runtime-selected MX plane address.
         self._tile_slot_source: dict[ir.Expr, ir.Expr] = {}
         self.scope_manager = ScopeManager(strict_ssa=strict_ssa)
         self._tilingkey_consts = tilingkey_consts
@@ -232,7 +226,7 @@ class ASTParser(
         self._auto_mutex_placeholder_counter: int = 0
         self._expr_tmp_counter: int = 0
         self._ifexpr_tmp_counter: int = 0
-        # Maps group Expr objects -> (depth, group mutex IDs, memory).
+        # Maps group Expr objects -> (depth, mutex_ids, memory).
         self.tile_group_meta: dict[ir.Expr, tuple] = {}
         # Parser-only constant environment. Runtime bindings remain exclusively in
         # ScopeManager as Vars; this map records constants by physical SSA name.
@@ -601,24 +595,15 @@ class ASTParser(
     def _parse_pass_statement(self, stmt: ast.Pass) -> None:
         pass  # No-op: pass statements are valid in DSL functions
 
-    def _transfer_tile_sync_metadata(
+    def _transfer_tile_group_metadata(
         self, target: ir.Expr, value_expr: ir.Expr | None = None
     ) -> None:
-        """Transfer tile sync metadata from a value expression to its target expression.
-
-        When ``target = value_expr``, re-key any tile-group or tile-mutex metadata
-        stored under ``value_expr`` to ``target``, so that subsequent
-        auto_mutex lookups on the target find the correct sync info.
-        This updates parser metadata only and does not emit companion IR.
-        """
+        """Preserve tile-group accessor metadata across an ordinary assignment."""
         if value_expr is None:
             return
         gm = self.tile_group_meta.get(value_expr)
         if gm is not None:
             self.tile_group_meta[target] = gm
-        mutex_meta = self._tile_mutex_meta.get(value_expr)
-        if mutex_meta is not None:
-            self._tile_mutex_meta[target] = mutex_meta
         if value_expr in self._tile_slot_source:
             self._tile_slot_source[target] = self._tile_slot_source[value_expr]
 

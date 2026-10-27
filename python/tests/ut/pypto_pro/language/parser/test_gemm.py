@@ -81,20 +81,28 @@ def _parse(tmp_path, body, *, k=128, n=64, l0k=None, l0n=None, compact=1,
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     program, _ = module.kernel.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
+    program = ir.Pass.insert_sync()(program)
     return ir.python_print(program.get_function("kernel"))
 
 
 def _sequence(text):
     result = []
+    aliases = {}
+    mutex_ids = {}
     for line in text.splitlines():
+        alias = re.match(r"\s*(\w+)(?::.*?)? = (\w+)(?:\[[^\]]+\])?$", line)
+        if alias:
+            aliases[alias.group(1)] = aliases.get(alias.group(2), alias.group(2))
+        getter = re.match(r"\s*(\w+).* = ir.call @block.tile_mutex_id\((\w+), (\d+)\)", line)
+        if getter:
+            mutex_ids[getter.group(1)] = (aliases.get(getter.group(2), getter.group(2)), getter.group(3))
         block = re.search(r"@(block\.[a-z_0-9]+)\(", line)
-        if block and block.group(1) != "block.make_tile":
+        if block and block.group(1) not in ("block.make_mutex_tile", "block.tile_mutex_id"):
             result.append(block.group(1))
-        lock = re.search(r"@(system\.mutex_(?:un)?lock)_dyn\(", line)
+        lock = re.search(r"@(system\.mutex_(?:un)?lock)_dyn\((\w+),", line)
         if lock:
             pipe = re.search(r'pipe="pipe": (\d+)', line).group(1)
-            candidates = re.search(r"(\[\[[0-9, \[\]-]+\]\])\s*,\s*pipe=", line).group(1)
-            result.append((lock.group(1), pipe, candidates))
+            result.append((lock.group(1), pipe, mutex_ids.get(lock.group(2), lock.group(2))))
     return result
 
 
@@ -254,16 +262,20 @@ def test_split_n_places_contiguous_alias_strips(tmp_path, auto, n, split, view):
             f"c = pl.reinterpret(wide[0], shape=[64, {n}])\n" + body
         )
     actual = _parse(tmp_path, body, n=n, l0n=split, auto=auto)
-    addresses = [
-        int(v) for v in re.findall(
-            r"_tg__pl_gemm\d+_(?:strips|tailstrip)_tiles_\d+_\d+ = ir\.call "
-            r'@block\.make_tile\([^\n]*?memref_addr="memref_addr": (\d+)', actual
-        )
-    ]
-    expected = [base, base + 64 * split * 4]
-    assert addresses == expected
+    # Both strips are views of the selected accumulator, including an already reinterpreted source.
+    slices = re.findall(r"(\w+) = ir.call @block.subview\((c_\d+), \[0, (\d+)\],", actual)
+    assert [int(col) for _, _, col in slices] == [0, split]
+    assert len({source for _, source, _ in slices}) == 1
+    for (window, _, _), width in zip(slices, (split, ((n - split + 15) // 16) * 16)):
+        assert f"@block.reinterpret({window}, [64, {width}]," in actual
     assert f"ir.range(0, {n}, {split})" in actual
-    # The native manager must accept alias strips even when their IDs are AUTO.
+    # InsertSync uses the original accumulator ID for every strip after AUTO assignment.
+    accumulator = "wide" if view else "gc"
+    mutex_id = re.search(
+        rf"_tg_{accumulator}_tiles_0_0 = ir.call @block.make_mutex_tile\([^\n]*?, \[\], \[(\d+)\]", actual
+    ).group(1)
+    locks = [entry for entry in _sequence(actual) if isinstance(entry, tuple) and entry[0] == "system.mutex_lock"]
+    assert locks.count(("system.mutex_lock", "3", mutex_id)) == actual.count("@block.matmul(")
     assert "-214748" not in actual
 
 

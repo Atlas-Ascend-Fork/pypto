@@ -121,6 +121,15 @@ def test_cce_single_dynamic_tuple_return_reads_the_loop_result():
     expected = dedent(
         """\
         #if defined(__DAV_CUBE__)
+        #ifndef PYPTO_SYNCED_TILE_DEFINED
+        #define PYPTO_SYNCED_TILE_DEFINED
+        #include <stdint.h>
+        template<class Tile, uint32_t N> struct SyncedTile {
+            using PtoTile = Tile;
+            PtoTile tile;
+            int64_t mutex_ids[N];
+        };
+        #endif
         #include <pypto_tprint.h>
         __aicore__ inline void _single_dynamic_pair_in_loop_kernel_impl_cube(int64_t value_0)
         {
@@ -157,6 +166,15 @@ def test_cce_static_if_break_terminates_the_enclosing_loop_block():
     expected = dedent(
         """\
         #if defined(__DAV_CUBE__)
+        #ifndef PYPTO_SYNCED_TILE_DEFINED
+        #define PYPTO_SYNCED_TILE_DEFINED
+        #include <stdint.h>
+        template<class Tile, uint32_t N> struct SyncedTile {
+            using PtoTile = Tile;
+            PtoTile tile;
+            int64_t mutex_ids[N];
+        };
+        #endif
         #include <pypto_tprint.h>
         __aicore__ inline void _static_if_break_kernel_impl_cube(int64_t n_0)
         {
@@ -453,14 +471,14 @@ def test_cce_tile_return_merges_through_a_typed_slot():
     # The declaration needs the tile type and nothing else: no constructor arguments and no
     # TASSIGN, because the slot is immediately overwritten by a whole-object copy of one of
     # the branch tiles, which carries its own valid shape and address.
-    declaration = re.search(r"^\s*(Tile<[^;]*>) __inline_0_return_val_4;$", body, re.MULTILINE)
+    declaration = re.search(r"^\s*(SyncedTile<Tile<[^;]*>, 0>) __inline_0_return_val_4;$", body, re.MULTILINE)
     assert declaration, "expected the tile merge slot to be declared from its type alone"
     assert "TASSIGN(__inline_0_return_val_4" not in body
 
     writes = re.findall(r"__inline_0_return_val_4 = (\S+);", body)
     assert sorted(writes) == ["tile_a_0", "tile_b_0"]
     # The merged tile, not either branch tile, is what the load targets.
-    assert "TLOAD(__inline_0_return_val_4, " in body
+    assert "TLOAD(__inline_0_return_val_4.tile, " in body
 
 
 def test_cce_void_returns_materialize_no_slot():

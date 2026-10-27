@@ -707,6 +707,15 @@ bool StructuralEqualImpl<AssertMode>::EqualType(const TypePtr& lhs, const TypePt
         }
         return true;
     } else if (auto lhs_tile = As<TileType>(lhs)) {
+        if (auto lhs_mutex_tile = As<MutexTileType>(lhs)) {
+            auto rhs_mutex_tile = As<MutexTileType>(rhs);
+            if (!rhs_mutex_tile) {
+                return IRAssert({}, "Type cast failed for MutexTileType");
+            }
+            if (lhs_mutex_tile->mutexCount_ != rhs_mutex_tile->mutexCount_) {
+                return IRAssert({}, "MutexTileType mutex count mismatch");
+            }
+        }
         auto rhs_tile = As<TileType>(rhs);
         if (!rhs_tile) {
             return IRAssert({}, "Type cast failed for TileType");
