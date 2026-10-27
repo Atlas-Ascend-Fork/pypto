@@ -1415,6 +1415,53 @@ TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvViewPathRefreshSrcOffset)
     EXPECT_EQ((*validMN)[0].Concrete(), 256);
     EXPECT_TRUE((*validMN)[1].ConcreteValid());
     EXPECT_EQ((*validMN)[1].Concrete(), 16);
+    // 落点侧这一片 (VIEW 路是 ubDst) 记进属性供 spill 分片回载取用: 必须是分片而不是整块,
+    // 两者同为 4 维, spill 侧的维数闸门挡不住记反。
+    EXPECT_EQ(l0cCopyUbOp.GetVectorIntAttribute(OpAttributeKey::l0cTileShape), ubShape);
+    EXPECT_NE(l0cCopyUbOp.GetVectorIntAttribute(OpAttributeKey::l0cTileShape), tfShape);
+}
+
+// INSERT (小搬大) 路径: 落点侧这一片是 transFormatOutput, 与 VIEW 路相反; 取成 op 输出的整块,
+// spill 会按 toOffset 把整块拼回去而越界写。
+TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvInsertPathRecordsLandingTile)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "l0CCopyUBConvInsertTile", "l0CCopyUBConvInsertTile",
+                                           nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("l0CCopyUBConvInsertTile", func);
+
+    std::vector<int64_t> l0cShape{256, 16};
+    std::vector<int64_t> tileShape{1, 16, 16, 16};
+    std::vector<int64_t> wholeShape{2, 32, 16, 16};
+    auto convOutput = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_NZ, l0cShape);
+    auto transFormatOutput = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_ND, tileShape);
+    auto ubOutput = CreateTestLogicalTensor(MEM_UB, TileOpFormat::TILEOP_ND, wholeShape);
+
+    auto& transFormatOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_TRANS_FORMAT_L0C, {convOutput},
+                                                         {transFormatOutput});
+    transFormatOp.SetAttribute(OpAttributeKey::isConv, true);
+
+    auto& l0cCopyUbOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_L0C_COPY_UB, {transFormatOutput}, {ubOutput});
+    // 源偏移二维 -> INSERT 路; 落点偏移四维, 这一片写在整块的 d1=16 处
+    std::vector<OpImmediate> fromOffset = {OpImmediate::Specified(IRBuilder().CreateConstInt(0)),
+                                           OpImmediate::Specified(IRBuilder().CreateConstInt(0))};
+    std::vector<OpImmediate> wholeShapeImm;
+    for (int64_t dim : wholeShape) {
+        wholeShapeImm.push_back(OpImmediate::Specified(IRBuilder().CreateConstInt(dim)));
+    }
+    auto insertAttr = std::make_shared<CopyOpAttribute>(
+        fromOffset, MEM_UB, wholeShapeImm, OpImmediate::Specified(transFormatOutput->tensor->GetDynRawShape()),
+        wholeShapeImm);
+    insertAttr->SetToOffset(
+        {OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(16)),
+         OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(0))});
+    l0cCopyUbOp.SetOpAttribute(insertAttr);
+
+    GenerateMoveOp pass;
+    EXPECT_EQ(pass.ProcessL0CCopyUBConv(l0cCopyUbOp), SUCCESS);
+
+    EXPECT_EQ(l0cCopyUbOp.GetOpcode(), Opcode::OP_L0C_COPY_UB_CONV);
+    EXPECT_EQ(l0cCopyUbOp.GetVectorIntAttribute(OpAttributeKey::l0cTileShape), tileShape);
+    EXPECT_NE(l0cCopyUbOp.GetVectorIntAttribute(OpAttributeKey::l0cTileShape), wholeShape);
 }
 
 TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvSkipNonTransFormatProducer)

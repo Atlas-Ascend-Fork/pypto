@@ -52,7 +52,10 @@ struct SpillPartialWrite {
     bool producedInPast{false};    // 已执行 -> 分片读回; 否则改指向
     std::vector<int64_t> toOffset; // 这一片在整块里的落位
     std::vector<SymbolicScalar> toDynOffset;
-    std::vector<SymbolicScalar> fromDynValidShape;
+    std::vector<SymbolicScalar> fromDynValidShape; // 给新建 assemble 属性; ASSEMBLE 路取存量属性, 与下面那个不同源
+    // 回载那一片自己的视图, 恒在落点坐标系 (与 toOffset 同维); 随路改排布的搬运推不回落点维, 改由属性给。
+    Shape landingShape;
+    std::vector<SymbolicScalar> landingValidShape;
 };
 
 // 一份落盘镜像。dtype 决定要几份: 随路转换只能落在 copyout 上, 不同 dtype 不能共用一份镜像。
@@ -138,6 +141,7 @@ private:
     Status CollectSpillSources(LogicalTensorPtr spillTensor, SpillPlan& plan);
     Status CollectPartialWrites(LogicalTensorPtr spillTensor, std::vector<SpillPartialWrite>& partialWrites);
     static Status GetPartialWriteReplayAttr(Operation* writeOp, SpillPartialWrite& partial);
+    static Status TakeLandingTile(Operation* writeOp, SpillPartialWrite& partial);
 
     SpillKind DispatchSpill(LogicalTensorPtr spillTensor);
     static bool IsReadFromDDR(Operation* op);
@@ -175,8 +179,8 @@ private:
                               const std::vector<SpillPartialWrite>& partialWrites, OpMemIdMap& opMemIdMap);
     void CreateOnePartialReload(LogicalTensorPtr localTensor, LogicalTensorPtr gmTensor,
                                 const SpillPartialWrite& partial, OpMemIdMap& opMemIdMap);
-    LogicalTensorPtr CreatePartialTensor(LogicalTensorPtr shapeFrom, LogicalTensorPtr wholeTensor,
-                                         const std::vector<int64_t>& toOffset);
+    LogicalTensorPtr CreatePartialTensor(const Shape& shape, const std::vector<SymbolicScalar>& validShape,
+                                         LogicalTensorPtr wholeTensor, const std::vector<int64_t>& toOffset);
     Operation* CreateAssembleOp(LogicalTensorPtr iOperand, LogicalTensorPtr oOperand, const SpillPartialWrite& partial);
     Status DropWritesWithoutReaders(LogicalTensorPtr spillTensor, SpillPlan& plan, SpillContext& ctx);
     OrphanedOps CollectOrphanedChain(LogicalTensorPtr spillTensor);

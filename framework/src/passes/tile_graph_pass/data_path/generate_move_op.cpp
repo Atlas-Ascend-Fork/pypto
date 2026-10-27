@@ -680,6 +680,9 @@ Status GenerateMoveOp::ProcessL0CCopyUBConv(Operation& op) const
         op.SetAttribute(OpAttributeKey::l0cValidMN, l0cValidMN);
     }
 
+    // 落点侧这一片: INSERT 路 (小搬大) 是 transFormatOutput, VIEW 路 (大搬小) 反过来是 ubDst。
+    op.SetAttribute(OpAttributeKey::l0cTileShape, isViewPath ? ubDst->GetShape() : transFormatOutput->GetShape());
+
     transFormatOp->SetAsDeleted();
 
     return SUCCESS;

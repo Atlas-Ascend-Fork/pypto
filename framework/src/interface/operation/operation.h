@@ -157,6 +157,7 @@ public:
     static const std::string wStride;
     static const std::string srcGmConvValidShape;
     static const std::string l0cValidMN;
+    static const std::string l0cTileShape; // L0C 搬出后落点侧这一片的静态形状
     static const std::string rmwMode;
     static const std::string transDataOffset;
     static const std::string isConv;

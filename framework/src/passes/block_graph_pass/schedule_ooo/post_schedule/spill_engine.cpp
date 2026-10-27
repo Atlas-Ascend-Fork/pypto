@@ -333,16 +333,16 @@ Operation* SpillEngine::CreateCopyoutOp(Operation* spillOp, LogicalTensorPtr iOp
 }
 
 // 整块里的一片视图: 落盘时描述"整块里已产出的那一片", 回载时描述"整块里要装回的那一片"。
-LogicalTensorPtr SpillEngine::CreatePartialTensor(LogicalTensorPtr shapeFrom, LogicalTensorPtr wholeTensor,
-                                                  const std::vector<int64_t>& toOffset)
+LogicalTensorPtr SpillEngine::CreatePartialTensor(const Shape& shape, const std::vector<SymbolicScalar>& validShape,
+                                                  LogicalTensorPtr wholeTensor, const std::vector<int64_t>& toOffset)
 {
-    LogicalTensorPtr partialTensor = irBuilder_.CreateTensorVar(wholeTensor->Datatype(), shapeFrom->GetShape(),
+    LogicalTensorPtr partialTensor = irBuilder_.CreateTensorVar(wholeTensor->Datatype(), shape,
                                                                 std::vector<SymbolicScalar>{}, wholeTensor->Format());
     partialTensor->SetMemoryTypeToBe(wholeTensor->GetMemoryTypeToBe());
     partialTensor->SetMemoryTypeOriginal(wholeTensor->GetMemoryTypeOriginal());
     partialTensor->tensor = wholeTensor->tensor;
     partialTensor->memoryrange.memId = wholeTensor->memoryrange.memId;
-    partialTensor->UpdateDynValidShape(shapeFrom->GetDynValidShape());
+    partialTensor->UpdateDynValidShape(validShape);
     partialTensor->offset = toOffset;
     APASS_LOG_DEBUG_F(Elements::Operation, "Spill: Create partial tensor[%d].", partialTensor->memoryrange.memId);
     return partialTensor;
@@ -980,6 +980,14 @@ Status SpillEngine::PlanSpill(int memId, LogicalTensorPtr spillTensor, SpillPlan
 // 取这个写在整块里的落点, 只有两种表达: assemble 的记在 AssembleOpAttribute, 搬运的记在 toOffset。
 Status SpillEngine::GetPartialWriteReplayAttr(Operation* writeOp, SpillPartialWrite& partial)
 {
+    LogicalTensorPtr writeInput = writeOp->GetInputOperand(0);
+    if (writeInput == nullptr) {
+        APASS_LOG_WARN_F(Elements::Operation, "Spill: write op %s has no input operand, buffer stays unspilled.",
+                         writeOp->GetOpcodeStr().c_str());
+        return FAILED;
+    }
+    partial.landingShape = writeInput->GetShape();
+    partial.landingValidShape = writeInput->GetDynValidShape();
     if (writeOp->GetOpcode() == Opcode::OP_ASSEMBLE) {
         auto attr = std::dynamic_pointer_cast<AssembleOpAttribute>(writeOp->GetOpAttribute());
         if (attr == nullptr) {
@@ -1001,10 +1009,33 @@ Status SpillEngine::GetPartialWriteReplayAttr(Operation* writeOp, SpillPartialWr
         }
         partial.toOffset.push_back(imm.GetSpecifiedValue().Concrete());
     }
-    partial.fromDynValidShape = writeOp->GetInputOperand(0)->GetDynValidShape();
+    partial.fromDynValidShape = partial.landingValidShape;
     if (partial.fromDynValidShape.empty()) {
         partial.fromDynValidShape = OpImmediate::ToSpecified(attr->GetToDynValidShape());
     }
+    // 源端维数够表达落点就用源端; 随路改排布的搬运两端维数不同, 拿源端会拿成低维。
+    if (partial.toOffset.empty() || partial.landingShape.size() == partial.toOffset.size()) {
+        return SUCCESS;
+    }
+    return TakeLandingTile(writeOp, partial);
+}
+
+// 属性在 GenerateMoveOp::ProcessL0CCopyUBConv 合并 TRANS_FORMAT 时记下。
+Status SpillEngine::TakeLandingTile(Operation* writeOp, SpillPartialWrite& partial)
+{
+    Shape landing = writeOp->GetVectorIntAttribute(OpAttributeKey::l0cTileShape);
+    if (landing.size() != partial.toOffset.size()) {
+        APASS_LOG_WARN_F(Elements::Operation,
+                         "Spill: op %s has no landing tile shape of rank %zu (got %zu), buffer stays unspilled.",
+                         writeOp->GetOpcodeStr().c_str(), partial.toOffset.size(), landing.size());
+        return FAILED;
+    }
+    // 写 op 的 valid 带它自己的迭代坐标系, 问的不是「这一片在整块里占多大」, 某些迭代下与回载所需相反。
+    // 恒按整片声明有效, 表达不了「只产出一部分」: 尾轮回载会把镜像残留一并读回, 不越界且消费者
+    // 只读自己 COA 那个 valid 窗口, 故无害; 哪天有消费者读整块 dynValidShape, 这里要跟着收窄。
+    partial.landingValidShape = SymbolicScalar::FromConcrete(landing);
+    partial.fromDynValidShape = partial.landingValidShape;
+    partial.landingShape = std::move(landing);
     return SUCCESS;
 }
 
@@ -1281,8 +1312,8 @@ void SpillEngine::CreateOnePartialReload(LogicalTensorPtr localTensor, LogicalTe
                                          const SpillPartialWrite& partial, OpMemIdMap& opMemIdMap)
 {
     int memId = localTensor->memoryrange.memId;
-    LogicalTensorPtr writeInput = partial.writeOp->GetInputOperand(0);
-    LogicalTensorPtr partialTensor = CreatePartialTensor(writeInput, localTensor, partial.toOffset);
+    LogicalTensorPtr partialTensor = CreatePartialTensor(partial.landingShape, partial.landingValidShape, localTensor,
+                                                         partial.toOffset);
     Operation* copyinOp = CreateCopyinOp(gmTensor, partialTensor, OpImmediate::Specified(partial.toOffset));
     Operation* assembleOp = CreateAssembleOp(partialTensor, localTensor, partial);
     // 这一片在镜像里是 NZ 还是 ND, 由写它的那个 op 决定, 读回来的两条都得照着认。

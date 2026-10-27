@@ -34,6 +34,7 @@
 #include "passes/block_graph_pass/schedule_ooo/common/dep_manager.h"
 #include "passes/block_graph_pass/schedule_ooo/common/iso_matcher.h"
 #include "passes/block_graph_pass/schedule_ooo/post_schedule/buffer_rearrange.h"
+#include "passes/block_graph_pass/schedule_ooo/post_schedule/spill_engine.h"
 #include "passes/block_graph_pass/schedule_ooo/pre_schedule/cluster_list_sort.h"
 #include "passes/block_graph_pass/schedule_ooo/pre_schedule/core_assign.h"
 #include "passes/block_graph_pass/schedule_ooo/pre_schedule/prior_dfs_sort.h"
@@ -959,6 +960,48 @@ TEST_F(ScheduleOoOTest, TestSpillAssemble)
     EXPECT_EQ(res, SUCCESS);
     res = ooOScheduler.SeqSchedule();
     EXPECT_EQ(res, SUCCESS);
+}
+
+// 分片回载取谁的 shape 按维数分派: 源端维数够表达落位就用源端, 不够 (随路改排布的搬运) 取属性记下的落点分片。
+TEST_F(ScheduleOoOTest, SpillPartialWriteTakesLandingTileByRank)
+{
+    const Shape wholeShape{2, 16, 16, 16};
+    const Shape landingTile{1, 16, 16, 16};
+    const std::vector<int64_t> toOffset{1, 0, 0, 0};
+
+    ComputationalGraphBuilder subGraph;
+    EXPECT_EQ(subGraph.AddTensor(DataType::DT_FP16, {256, 16}, MemoryType::MEM_L0C, "l0cView", 0), true);
+    EXPECT_EQ(subGraph.AddTensor(DataType::DT_FP16, landingTile, MemoryType::MEM_UB, "ubTile", 0), true);
+    EXPECT_EQ(subGraph.AddTensor(DataType::DT_FP16, wholeShape, MemoryType::MEM_UB, "ubWhole", 0), true);
+    EXPECT_EQ(subGraph.AddOp(Opcode::OP_L0C_COPY_UB_CONV, {"l0cView"}, {"ubWhole"}, "Tagged"), true);
+    EXPECT_EQ(subGraph.AddOp(Opcode::OP_L0C_COPY_UB_CONV, {"l0cView"}, {"ubWhole"}, "Bare"), true);
+    EXPECT_EQ(subGraph.AddOp(Opcode::OP_COPY_IN, {"ubTile"}, {"ubWhole"}, "SameRank"), true);
+
+    auto makeCopyAttr = [&toOffset, &landingTile, &wholeShape]() {
+        return std::make_shared<CopyOpAttribute>(MemoryType::MEM_L0C, OpImmediate::Specified(toOffset),
+                                                 OpImmediate::Specified(landingTile),
+                                                 OpImmediate::Specified(wholeShape));
+    };
+    for (const auto& name : {"Tagged", "Bare", "SameRank"}) {
+        ASSERT_NE(subGraph.GetOp(name), nullptr);
+        subGraph.GetOp(name)->SetOpAttribute(makeCopyAttr());
+    }
+    subGraph.GetOp("Tagged")->SetAttribute(OpAttributeKey::l0cTileShape, landingTile);
+
+    // 源端是合并后的二维 L0C 视图, 落位四维 -> 推不回落点维, 取属性
+    SpillPartialWrite tagged;
+    EXPECT_EQ(SpillEngine::GetPartialWriteReplayAttr(subGraph.GetOp("Tagged"), tagged), SUCCESS);
+    EXPECT_EQ(tagged.landingShape, landingTile);
+    EXPECT_EQ(tagged.toOffset, toOffset);
+
+    // 属性缺失就放弃这块的 spill, 而不是拿二维源端当落点分片蒙过去
+    SpillPartialWrite bare;
+    EXPECT_EQ(SpillEngine::GetPartialWriteReplayAttr(subGraph.GetOp("Bare"), bare), FAILED);
+
+    // 两端同维的既有路径不看属性, 仍从源端拿
+    SpillPartialWrite sameRank;
+    EXPECT_EQ(SpillEngine::GetPartialWriteReplayAttr(subGraph.GetOp("SameRank"), sameRank), SUCCESS);
+    EXPECT_EQ(sameRank.landingShape, landingTile);
 }
 
 // 写后写不变量: 凡是排在回载之后又跟它写同一片字节的 op, 回载都得是它的前驱。
