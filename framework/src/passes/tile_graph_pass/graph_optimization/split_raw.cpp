@@ -37,14 +37,8 @@ std::vector<SymbolicScalar> SplitRawTensor::UpdateDynOffset(std::vector<Symbolic
 {
     std::vector<SymbolicScalar> result = offset;
     for (size_t i = 0; i < offset.size(); i++) {
-        const auto shouldUpdate = (offset[i] >= diff[i]).Simplify();
-        const auto updatedOffset = (offset[i] - diff[i]).Simplify();
-        if (shouldUpdate.IsImmediate()) {
-            if (shouldUpdate.Concrete() != 0) {
-                result[i] = updatedOffset;
-            }
-        } else {
-            result[i] = (offset[i] + (updatedOffset - offset[i]) * shouldUpdate).Simplify();
+        if (offset[i] >= diff[i]) {
+            result[i] = offset[i] - diff[i];
         }
     }
     return result;
@@ -207,9 +201,9 @@ bool SplitRawTensor::SplitLogicalTensor(Function& function, const LogicalTensorP
     UpdateConsumerView(function, logicalTensor);
     UpdateProducerAssemble(function, logicalTensor);
     UpdateProducerShmemGet(function, logicalTensor);
-    const Offset zeroOffset(logicalTensor->GetOffset().size(), 0);
-    const std::vector<SymbolicScalar> emptyDynOffset;
-    logicalTensor->UpdateOffset(TensorOffset(zeroOffset, emptyDynOffset));
+    for (auto& offset : logicalTensor->offset) {
+        offset = 0;
+    }
     return true;
 }
 

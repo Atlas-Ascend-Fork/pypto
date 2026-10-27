@@ -84,7 +84,6 @@ struct PerfectlyMatchWithAllPara {
     LogicalTensorPtr reshapeOutput;
     LogicalTensorPtr newReshapeSource;
     std::vector<SymbolicScalar> viewDynShape;
-    std::vector<SymbolicScalar> localInputDynShape;
 };
 
 struct AssemblePara {
@@ -192,19 +191,15 @@ private:
                                const std::vector<int64_t>& toOffset, std::vector<SymbolicScalar>& dynValidShape);
     Status GetReshapeDynShape(const std::shared_ptr<ReshapeOp>& op, std::vector<SymbolicScalar>& dynValidShape);
     Status GroupReshapeOffset(const std::shared_ptr<ReshapeOp>& isAddReshapeop, const std::vector<int64_t>& offset);
-    Status UpdateDynShape(const std::shared_ptr<ReshapeOp>& reshapeOp,
-                          const std::vector<SymbolicScalar>& localInputDynShape = {});
-    bool InferDynFirstAxisMergeShape(const std::shared_ptr<ReshapeOp>& reshapeOp,
-                                     const std::vector<SymbolicScalar>& localInputDynShape,
-                                     std::vector<SymbolicScalar>& localOutputDynShape) const;
-    Status UpdateReshapeOutputDynOffset(const LogicalTensorPtr& reshapeOutput,
-                                        const ViewOpAttribute& viewOpAttribute) const;
+    Status UpdateDynShape(const std::shared_ptr<ReshapeOp>& reshapeOp);
     Status ObtainChangingAxis(std::vector<int64_t> alignedShape, std::vector<int64_t> input,
                               std::vector<bool>& ChangingAxis);
     Status CheckDynStatus(std::vector<int64_t> alignedShape, std::vector<int64_t> input, std::vector<int64_t> output,
-                          std::vector<SymbolicScalar> dynOutput);
+                          std::vector<SymbolicScalar> dynOutput, const std::vector<SymbolicScalar>& dynInput);
+    bool IsValidDynInput(const std::vector<SymbolicScalar>& dynInput, const std::vector<int64_t>& input) const;
     Status CheckDynOutputAlignment(const std::vector<int64_t>& alignedShape, const std::vector<int64_t>& output,
-                                   const std::vector<SymbolicScalar>& dynOutput, const std::vector<bool>& changingAxis);
+                                   const std::vector<SymbolicScalar>& dynOutput, const std::vector<bool>& changingAxis,
+                                   bool validDynInput);
     Status UpdateShapeOffset(UpdatePara& para, bool& flag, int& currentShape, int& currentOffset);
     Status ShapeAlign(std::vector<int64_t> shape1, std::vector<int64_t> shape2, std::vector<int64_t>& alignedShape);
     Status RawToAlign(const ReshapeTilePara& shapePara, std::vector<int64_t>& newOffset,
