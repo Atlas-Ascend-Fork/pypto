@@ -26,7 +26,7 @@
 
 下图以UB中的双缓冲为例，展示单个基地址如何展开成两个连续Tile槽位，以及地址、mutex和轮转访问之间的对应关系。
 
-![make_tile_group双缓冲地址与轮转关系](../../figures/make_tile_group_rotation.jpg "make_tile_group双缓冲地址与轮转关系")
+![make_tile_group双缓冲地址与轮转关系](../../figures/make_tile_group_rotation.svg "make_tile_group双缓冲地址与轮转关系")
 
 ## 函数原型
 

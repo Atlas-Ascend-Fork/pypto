@@ -18,7 +18,7 @@
 
 例如，对于shape=[64, 128]的二维Tile，不设置order时，tile_offsets=[2, 2]对应的绝对元素坐标为[128, 256]，等价于调用pypto_pro.language.load时传入offsets=[128, 256]。
 
-![load_tile按块索引从GM搬入Tile](../../figures/load_tile_block_offset.jpg "load_tile按块索引从GM搬入Tile")
+![load_tile按块索引从GM搬入Tile](../../figures/load_tile_block_offset.svg "load_tile按块索引从GM搬入Tile")
 
 ## 函数原型
 

@@ -4,7 +4,7 @@ PyPTO Pro的SIMT函数运行在AIV（Vector Core）上。
 
 **图1 SIMT抽象硬件架构**
 
-![GM、L2 Cache与多个Vector Core的关系](../../../../figures/pro/simt_abstract_hardware_architecture.png)
+![GM、L2 Cache与多个Vector Core的关系](../../../../figures/pro/simt_abstract_hardware_architecture.svg)
 
 AI处理器内部有多个Vector Core，每个Vector Core包含计算单元、Shared Memory（位于UB）和寄存器。核外的GM是全局内存空间，被所有Vector Core共享。L2 Cache位于GM与各Vector Core之间，也由多个Vector Core共享。
 

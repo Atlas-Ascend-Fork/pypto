@@ -20,13 +20,13 @@
 
 **图1** reg_tensor输入unpack示意图
 
-![reg_tensor输入unpack示意图](../../../figures/unpack_diagram.jpg)
+![reg_tensor输入unpack示意图](../../../figures/unpack_diagram.svg)
 
 **mask_reg输入**：根据part选取的模式，将源操作数src的低半部分或者高半部分，展开到目的操作数dst。示意图如下图所示：
 
 **图2** mask_reg输入unpack示意图
 
-![mask_reg输入unpack示意图](../../../figures/mask_unpack_diagram.jpg)
+![mask_reg输入unpack示意图](../../../figures/mask_unpack_diagram.svg)
 
 ## 函数原型
 

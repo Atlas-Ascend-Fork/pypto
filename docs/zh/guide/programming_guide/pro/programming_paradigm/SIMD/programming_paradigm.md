@@ -41,7 +41,7 @@ SIMD Kernel可以只使用一种执行域，也可以组合Vector和Cube执行�
 
 **图1 混合Kernel的执行组映射**
 
-![AIC与AIV为1比2时的执行组和执行域映射](../../../../figures/pro/pro_multicore_spmd_mapping.png)
+![AIC与AIV为1比2时的执行组和执行域映射](../../../../figures/pro/pro_multicore_spmd_mapping.svg)
 
 Vector执行域中的`get_block_idx()`已经是展平后的全局AIV索引。需要区分同一个执行组内的两个AIV时，可以使用`pypto_pro.language.get_subblock_idx()`。
 

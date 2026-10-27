@@ -38,7 +38,7 @@ for task_idx in pl.range(start, end, 1):
 
 **图1 任务编号与连续分配**
 
-![任务编号与连续分配](../../../../figures/pro/pro_multicore_contiguous_grid.png "任务编号与连续分配")
+![任务编号与连续分配](../../../../figures/pro/pro_multicore_contiguous_grid.svg "任务编号与连续分配")
 
 这种分配不要求任务数被核数整除：`tiles_per_core`向上取整，末尾的核用[`pypto_pro.language.min()`](../../../../../api/pro_api/Utils-API/python_syntax_sugar/min.md)把上界限制在`total_tiles`，剩余任务自然落在最后一个进入循环的核上，不需要为“除不尽”单独编写分支。任务总数少于核数时，编号超出范围的核得到空区间，不会进入循环。
 

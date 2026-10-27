@@ -22,7 +22,7 @@ $$dst_i = src0_i + src1_i$$
 
 **图1** vf.add功能说明
 
-![](../../../figures/add_with_carry.jpg)
+![](../../../figures/add_with_carry.svg)
 
 若需要获取加法进位输出，请参考[vf.addc](addc.md#功能说明)。
 

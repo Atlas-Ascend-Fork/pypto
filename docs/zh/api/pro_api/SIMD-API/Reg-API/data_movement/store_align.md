@@ -27,7 +27,7 @@ reg_tensor模式支持**连续搬运模式**和**非连续搬运模式**。连�
 
 **图1** vf.store_align连续对齐搬出分布模式图示
 
-![](../../../figures/contiguous_aligned_store.jpg)
+![](../../../figures/contiguous_aligned_store.svg)
 
 **非连续搬运模式**下，通过data_copy_mode=pypto_pro.language.DataCopyMode.DATA_BLOCK_COPY启用DataBlock搬运模式，实现数据从reg_tensor非连续搬运至Tile。单条指令一次搬运8个DataBlock，block_stride参数表示相邻DataBlock间的间隔。该模式下preg参数位置改为传入控制有效元素的mask_reg，mask控制规则如下：
 

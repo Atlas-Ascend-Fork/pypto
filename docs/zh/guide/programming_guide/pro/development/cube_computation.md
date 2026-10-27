@@ -19,7 +19,7 @@
 
 **图1 Cube计算的数据流和硬件流水**
 
-![Cube计算的数据流和硬件流水](../../../figures/pro/cube_matrix_computation_data_flow.png "Cube计算的数据流和硬件流水")
+![Cube计算的数据流和硬件流水](../../../figures/pro/cube_matrix_computation_data_flow.svg "Cube计算的数据流和硬件流水")
 
 ## 矩阵计算内存管理
 
@@ -148,7 +148,7 @@ L0C Buffer中的结果分形固定为16×16。以FP32/INT32累加结果为例，
 
 **图2 pypto_pro.language.load完成ND到NZ的分形转换**
 
-![PyPTO Pro中pypto_pro.language.load完成ND到NZ的分形转换](../../../figures/pro/cube_matrix_nd_to_nz.png "PyPTO Pro中pypto_pro.language.load完成ND到NZ的分形转换")
+![PyPTO Pro中pypto_pro.language.load完成ND到NZ的分形转换](../../../figures/pro/cube_matrix_nd_to_nz.svg "PyPTO Pro中pypto_pro.language.load完成ND到NZ的分形转换")
 
 #### 分形格式的命名
 
@@ -180,7 +180,7 @@ layout描述Tile的物理排布，TileType.shape保持逻辑轴语义；例如B�
 
 **图3 矩阵乘法的NZ × ZN = NZ分形组合（FP16输入）**
 
-![PyPTO Pro矩阵乘法的NZ × ZN = NZ分形组合](../../../figures/pro/cube_matrix_fractal_formats_950.png "PyPTO Pro矩阵乘法的NZ × ZN = NZ分形组合")
+![PyPTO Pro矩阵乘法的NZ × ZN = NZ分形组合](../../../figures/pro/cube_matrix_fractal_formats_950.svg "PyPTO Pro矩阵乘法的NZ × ZN = NZ分形组合")
 
 ### Cube侧同步
 

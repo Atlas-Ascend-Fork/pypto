@@ -8,7 +8,7 @@ AI Core的相关硬件可从计算单元、存储单元和搬运单元三个方�
 
 **图1 AI Core硬件架构（Ascend 950PR&950DT系列产品）**
 
-![AIC、AIV、存储、计算和搬运单元的关系](../../../../figures/pro/hardware_architecture_950.png)
+![AIC、AIV、存储、计算和搬运单元的关系](../../../../figures/pro/hardware_architecture_950.svg)
 
 图中黑色实线表示主要数据流，橙色虚线表示指令流。图中的SIMT资源用于说明其在AIV中的位置，不属于本章讨论范围。
 

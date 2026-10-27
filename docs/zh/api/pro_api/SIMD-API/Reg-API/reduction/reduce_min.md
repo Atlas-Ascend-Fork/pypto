@@ -20,7 +20,7 @@ reg_tensor最小值归约：将源寄存器src中的所有有效元素（preg选
 
 **图1** reduce_min归约索引示意图
 
-![reg_reduce_index示意图](../../../figures/reg_reduce_index.jpg)
+![reg_reduce_index示意图](../../../figures/reg_reduce_index.svg)
 
 ## 函数原型
 

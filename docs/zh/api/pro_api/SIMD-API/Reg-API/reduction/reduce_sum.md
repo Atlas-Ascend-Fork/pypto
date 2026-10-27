@@ -20,7 +20,7 @@ reg_tensor求和归约：将源寄存器src中的所有有效元素（preg选中
 
 **图1** reduce_sum累加顺序
 
-![reduce_sum累加顺序](../../../figures/reduce_sum_accum_order.jpg)
+![reduce_sum累加顺序](../../../figures/reduce_sum_accum_order.svg)
 
 当源操作数数据类型为DT_FP16时，累加过程在DT_FP16精度下进行。当源操作数数据类型为DT_INT16或DT_UINT16时，累加过程在32位精度下进行，最终结果与目的操作数数据类型一致。
 

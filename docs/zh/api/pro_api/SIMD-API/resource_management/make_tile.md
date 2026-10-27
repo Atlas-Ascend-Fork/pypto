@@ -20,7 +20,7 @@
 
 下图以UB为例，展示了make_tile如何将Tile绑定到片上地址：addr指定起始地址，地址范围大小由TileType的shape和dtype推导。
 
-![make_tile创建Tile并绑定片上地址](../../figures/make_tile_allocation.jpg "make_tile创建Tile并绑定片上地址")
+![make_tile创建Tile并绑定片上地址](../../figures/make_tile_allocation.svg "make_tile创建Tile并绑定片上地址")
 
 ## 函数原型
 

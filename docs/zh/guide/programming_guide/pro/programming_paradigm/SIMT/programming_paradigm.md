@@ -12,7 +12,7 @@ SIMT采用Grid、Thread Block和Thread三级线程层次，从顶层到底层逐
 
 **图1 SIMT线程层次结构**
 
-![Grid、Thread Block、Warp与Thread的层次关系](../../../../figures/pro/simt_thread_hierarchy.png)
+![Grid、Thread Block、Warp与Thread的层次关系](../../../../figures/pro/simt_thread_hierarchy.svg)
 
 #### Grid（线程块网格）
 
@@ -126,7 +126,7 @@ Host先启动外层@pypto_pro.language.jit(arch="3510") Kernel，再由外层Ker
 
 **图2 SIMD/SIMT混合模式启动关系**
 
-![Host启动JIT Kernel并由Vector执行域启动SIMT入口函数](../../../../figures/pro/simt_mixed_frontend_launch.png)
+![Host启动JIT Kernel并由Vector执行域启动SIMT入口函数](../../../../figures/pro/simt_mixed_frontend_launch.svg)
 
 图中Thread 0至Thread N-1表示实际启动N个线程的情况。一般情况下，实际线程数由`simt_func[threads](...)`中方括号内的threads决定，可以小于装饰器声明的max_threads。当前不支持Host直接启动SIMT函数或在SIMT函数内嵌套调用SIMT入口函数。
 

@@ -59,7 +59,7 @@ exp_sub(src0, src1, preg, /, *, layout: Optional[CastLayout] = None, dtype: Opti
 
   **图1** exp_sub高精度示意图
 
-  ![](../../../figures/exp_sub_high_precision.jpg)
+  ![](../../../figures/exp_sub_high_precision.svg)
 
 ## 返回值说明
 
