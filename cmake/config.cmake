@@ -261,6 +261,25 @@ if ((ENABLE_ASAN OR ENABLE_UBSAN) AND (ENABLE_TESTS_EXECUTE OR ENABLE_FEATURE_PY
         # strict_string_checks, 检查字符串参数是否正确以 null 终止
         # detect_leaks=1, 内存泄漏检测
         set(ASAN_OPTIONS "ASAN_OPTIONS=halt_on_error=1,detect_stack_use_after_return=1,check_initialization_order=1,strict_init_order=1,strict_string_checks=1,symbolize=1,detect_leaks=1")
+        # intercept_tls_get_addr=0, 规避 LLVM<17 的 LSan 在 glibc>=2.25 下按 glibc 2.19 启发式误读 dlopen
+        # 动态 TLS 块前 16 字节的问题(进程退出扫描垃圾区间触发 SIGSEGV), 仅损失动态 TLS 检测能力;
+        # 按实际使用的运行时探测旧分支(GNU 探测 LD_PRELOAD 的 libasan, Clang 按其自带运行时版本判断),
+        # 运行时升级到 LLVM 17+(改用分配器元数据探测)后本处理自动失效
+        set(ASAN_TLS_GET_ADDR_WORKAROUND OFF)
+        if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 17)
+            set(ASAN_TLS_GET_ADDR_WORKAROUND ON)
+        elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND EXISTS "${ASAN_SHARED_PATH}")
+            execute_process(COMMAND strings "${ASAN_SHARED_PATH}"
+                    COMMAND grep -q "glibc >=2.19 suspected"
+                    RESULT_VARIABLE ASAN_TLS_GET_ADDR_PROBE)
+            if (ASAN_TLS_GET_ADDR_PROBE EQUAL 0)
+                set(ASAN_TLS_GET_ADDR_WORKAROUND ON)
+            endif ()
+        endif ()
+        if (ASAN_TLS_GET_ADDR_WORKAROUND)
+            message(STATUS "ASAN old DTLS heuristic detected, append intercept_tls_get_addr=0")
+            string(APPEND ASAN_OPTIONS ",intercept_tls_get_addr=0")
+        endif ()
         if (ENABLE_FEATURE_PYTHON_FRONT_END)
             set(LSAN_OPTIONS "LSAN_OPTIONS=suppressions=${PTO_FWK_SRC_ROOT}/cmake/asan_suppressions.txt")
             file(APPEND "${XSAN_CONFIG_FILE}" "${LSAN_OPTIONS}\n")
