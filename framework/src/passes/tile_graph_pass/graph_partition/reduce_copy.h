@@ -29,18 +29,24 @@
 #include <utility>
 
 namespace npu::tile_fwk {
+// 核型属于单个边界 op 自身, 不属于其所在子图/root(子图级聚合核型会掩盖真实触碰边界的 op)。
+enum class EndpointCoreKind { AIC, AIV, AICPU, UNKNOWN };
+
+struct BoundaryEndpoint {
+    int subgraphId;            // 端点 op 所在子图, 门控按其当前 root 过滤候选组
+    EndpointCoreKind coreKind; // 端点 op 自身核型
+    bool directPath{false};    // 本 op 与本 boundary tensor 间的直连通路资格(L0C2UB/UB2L1)
+};
+
 struct BoundaryTensorInfo {
     int tensorMagic;
     std::vector<int> producerSubgraphs;
     std::vector<int> consumerSubgraphs;
-    bool isDDR{false}; // 目的: 仅 DDR tensor 参与 inner-external-use 检查
-    bool directPathCandidate{false}; // 目的: 内部化后可走直连通路(免 DDR 往返)的收益候选, 跨核(C-V)边界即 L0C2UB/UB2L1
+    bool isDDR{false};                  // 目的: 仅 DDR tensor 参与 inner-external-use 检查
     std::vector<int> producerCvFuseIds; // 与 producerSubgraphs 逐项平行, 端点级 CvFuseId, 未分配为 -1
     std::vector<int> consumerCvFuseIds; // 与 consumerSubgraphs 逐项平行
-    // 直连资格命中的邻居子图(消费侧/生产侧分别记录): 命中子图可能在候选组外(该通路不随
-    // 本次合并内部化), 门控须按候选组过滤后才计入直连收益
-    std::vector<int> directPathConsumerSubgraphs{};
-    std::vector<int> directPathProducerSubgraphs{};
+    std::vector<BoundaryEndpoint> producers{};
+    std::vector<BoundaryEndpoint> consumers{};
 };
 
 struct MergeInput {
