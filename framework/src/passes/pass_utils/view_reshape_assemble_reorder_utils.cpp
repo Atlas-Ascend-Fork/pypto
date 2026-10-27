@@ -107,6 +107,11 @@ bool HasTargetMatmulOp(Function& function)
                        [](Operation* op) { return kTargetMatmulOps.count(op->GetOpcode()) > 0; });
 }
 
+bool IsTargetMatmulOp(const Operation& op)
+{
+    return op.GetOpcode() == Opcode::OP_A_MULACC_B || op.GetOpcode() == Opcode::OP_A_MUL_B;
+}
+
 bool CanReorderFunction(Function& function)
 {
     for (const auto& incast : function.GetIncast()) {
@@ -126,6 +131,14 @@ bool HasSingleInput(const Operation& op) { return op.GetIOperands().size() == 1;
 
 bool HasSingleOutput(const Operation& op) { return op.GetOOperands().size() == 1; }
 
+bool IsVectorComputeOp(const Operation& op)
+{
+    const auto calcType = OpcodeManager::Inst().GetOpCalcType(op.GetOpcode());
+    return OpcodeManager::Inst().GetCoreType(op.GetOpcode()) == OpCoreType::AIV &&
+           (calcType == OpCalcType::CAST || calcType == OpCalcType::ELMWISE || calcType == OpCalcType::BROADCAST ||
+            calcType == OpCalcType::REDUCE);
+}
+
 Operation* GetSingleProducer(const LogicalTensorPtr& tensor)
 {
     if (tensor == nullptr || tensor->GetProducers().size() != 1) {
@@ -142,6 +155,62 @@ Operation* GetSingleConsumer(const LogicalTensorPtr& tensor)
     return *tensor->GetConsumers().begin();
 }
 
+bool HasMatmulConsumerThroughView(const LogicalTensorPtr& tensor)
+{
+    if (tensor == nullptr) {
+        return false;
+    }
+    return std::any_of(tensor->GetConsumers().begin(), tensor->GetConsumers().end(), [](Operation* consumer) {
+        if (consumer == nullptr) {
+            return false;
+        }
+        if (IsTargetMatmulOp(*consumer)) {
+            return true;
+        }
+        if (consumer->GetOpcode() != Opcode::OP_VIEW || !HasSingleInput(*consumer) || !HasSingleOutput(*consumer)) {
+            return false;
+        }
+        const auto& output = consumer->GetOOperands().front();
+        return output != nullptr &&
+               std::any_of(output->GetConsumers().begin(), output->GetConsumers().end(),
+                           [](Operation* matmul) { return matmul != nullptr && IsTargetMatmulOp(*matmul); });
+    });
+}
+
+bool IsMatmulOrAssembledMatmulOutput(const LogicalTensorPtr& tensor)
+{
+    Operation* producer = GetSingleProducer(tensor);
+    if (producer != nullptr && IsTargetMatmulOp(*producer)) {
+        return true;
+    }
+    if (tensor == nullptr || tensor->GetProducers().empty()) {
+        return false;
+    }
+    return std::all_of(tensor->GetProducers().begin(), tensor->GetProducers().end(), [](Operation* assemble) {
+        if (assemble == nullptr || assemble->GetOpcode() != Opcode::OP_ASSEMBLE || !HasSingleInput(*assemble)) {
+            return false;
+        }
+        Operation* matmul = GetSingleProducer(assemble->GetIOperands().front());
+        return matmul != nullptr && IsTargetMatmulOp(*matmul);
+    });
+}
+
+// This deliberately recognizes only the adjacent View -> vector -> View -> Reshape chain.
+bool IsMixViewReshapePair(const Operation& viewOp)
+{
+    if (viewOp.GetOpcode() != Opcode::OP_VIEW || !HasSingleInput(viewOp)) {
+        return false;
+    }
+    Operation* vectorOp = GetSingleProducer(viewOp.GetIOperands().front());
+    if (vectorOp == nullptr || !IsVectorComputeOp(*vectorOp)) {
+        return false;
+    }
+    return std::any_of(vectorOp->GetIOperands().begin(), vectorOp->GetIOperands().end(), [](const auto& input) {
+        Operation* firstView = GetSingleProducer(input);
+        return firstView != nullptr && firstView->GetOpcode() == Opcode::OP_VIEW;
+    });
+}
+
 bool HasCascadedViewsBeforeReshape(Function& function)
 {
     for (const auto& op : function.Operations()) {
@@ -156,6 +225,26 @@ bool HasCascadedViewsBeforeReshape(Function& function)
         auto firstViewInput = firstView->GetIOperands().front();
         Operation* secondView = GetSingleProducer(firstViewInput);
         if (secondView != nullptr && secondView->GetOpcode() == Opcode::OP_VIEW) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool HasVectorOpBetweenViewsBeforeReshape(Function& function)
+{
+    // Detect only the adjacent View -> vector -> View -> Reshape chain. This does not cover
+    // other mixed layouts or non-adjacent vector operations.
+    for (const auto& op : function.Operations()) {
+        if (op.GetOpcode() != Opcode::OP_RESHAPE || !HasSingleInput(op)) {
+            continue;
+        }
+        auto input = op.GetIOperands().front();
+        Operation* firstView = GetSingleProducer(input);
+        if (firstView == nullptr || firstView->GetOpcode() != Opcode::OP_VIEW || !HasSingleInput(*firstView)) {
+            continue;
+        }
+        if (IsMixViewReshapePair(*firstView)) {
             return true;
         }
     }
@@ -328,7 +417,11 @@ Status ViewReshapeAssembleReorderUtils::Process(Function& function)
     if (!HasRecords()) {
         return SUCCESS;
     }
-    if (HasCascadedPattern(function)) {
+    bool hasCascadedPattern = HasCascadedPattern(function);
+    if (!hasCascadedPattern && !HasMixPattern(function)) {
+        return SUCCESS;
+    }
+    if (hasCascadedPattern) {
         status = MergeViewAssembleUtils::MergeViewAssemble(function);
         if (status != SUCCESS) {
             APASS_LOG_ERROR_F(Elements::Function, "Merge assemble and view failed.");
@@ -454,6 +547,9 @@ Status ViewReshapeAssembleReorderUtils::TryRecordViewReshape(Function& function,
         return SUCCESS;
     }
     auto& reshapeOp = *match.secondOp;
+    if (!HasMatmulConsumerThroughView(match.output)) {
+        return SUCCESS;
+    }
     auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(viewOp.GetOpAttribute());
     if (viewAttr == nullptr) {
         APASS_LOG_ERROR_F(Elements::Operation, "View op[%d] missing ViewOpAttribute.", viewOp.GetOpMagic());
@@ -601,6 +697,9 @@ Status ViewReshapeAssembleReorderUtils::TryRecordReshapeAssemble(Function& funct
         return SUCCESS;
     }
     auto& assembleOp = *match.secondOp;
+    if (!IsMatmulOrAssembledMatmulOutput(match.input)) {
+        return SUCCESS;
+    }
     auto assembleAttr = std::dynamic_pointer_cast<AssembleOpAttribute>(assembleOp.GetOpAttribute());
     if (assembleAttr == nullptr) {
         APASS_LOG_ERROR_F(Elements::Operation, "Assemble op[%d] missing AssembleOpAttribute.", assembleOp.GetOpMagic());
@@ -1378,5 +1477,10 @@ bool ViewReshapeAssembleReorderUtils::IsScopeCompatible(Operation& first, Operat
 bool ViewReshapeAssembleReorderUtils::HasCascadedPattern(Function& function)
 {
     return HasCascadedViewsBeforeReshape(function) || HasCascadedAssemblesAfterReshape(function);
+}
+
+bool ViewReshapeAssembleReorderUtils::HasMixPattern(Function& function)
+{
+    return HasVectorOpBetweenViewsBeforeReshape(function);
 }
 } // namespace npu::tile_fwk

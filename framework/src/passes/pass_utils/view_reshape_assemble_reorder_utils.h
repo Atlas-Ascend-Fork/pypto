@@ -146,6 +146,7 @@ private:
     void ClearRecords();
     bool HasRecords() const;
     static bool HasCascadedPattern(Function& function);
+    static bool HasMixPattern(Function& function);
     Status ProcessOperations(Function& function);
     Status TryRecordViewReshape(Function& function, Operation& viewOp);
     Status TryRecordReshapeAssemble(Function& function, Operation& reshapeOp);

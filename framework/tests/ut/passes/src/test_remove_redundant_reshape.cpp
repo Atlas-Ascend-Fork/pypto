@@ -230,17 +230,18 @@ TEST_F(RemoveRedundantReshapeTest, ViewReshapeReorderMigratesTokenDependencies)
                                                "ViewReshapeReorderMigratesTokens", nullptr);
     ASSERT_NE(function, nullptr);
 
-    auto input = IRBuilder().CreateTensorVar(DT_FP32, {8, 16}, CreateTestConstIntVector({8, 16}));
-    auto middle = IRBuilder().CreateTensorVar(DT_FP32, {4, 16}, CreateTestConstIntVector({4, 16}));
-    auto reshapeOutput = IRBuilder().CreateTensorVar(DT_FP32, {64}, CreateTestConstIntVector({64}));
-    auto output = IRBuilder().CreateTensorVar(DT_FP32, {64}, CreateTestConstIntVector({64}));
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, {8, 4, 4}, CreateTestConstIntVector({8, 4, 4}));
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, {4, 4, 4}, CreateTestConstIntVector({4, 4, 4}));
+    auto reshapeOutput = IRBuilder().CreateTensorVar(DT_FP32, {16, 4}, CreateTestConstIntVector({16, 4}));
+    auto output = IRBuilder().CreateTensorVar(DT_FP32, {16, 4}, CreateTestConstIntVector({16, 4}));
+    auto rhs = IRBuilder().CreateTensorVar(DT_FP32, {4, 4}, CreateTestConstIntVector({4, 4}));
     auto tokenInput = IRBuilder().CreateTensorVar(DT_FP32, {1}, CreateTestConstIntVector({1}));
     auto tokenOutput = IRBuilder().CreateTensorVar(DT_FP32, {1}, CreateTestConstIntVector({1}));
 
     auto& view = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_VIEW, {input}, {middle});
-    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
+    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0}));
     auto& reshape = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_RESHAPE, {middle}, {reshapeOutput});
-    auto& consumer = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_EXP, {reshapeOutput}, {output});
+    auto& consumer = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_A_MUL_B, {reshapeOutput, rhs}, {output});
     auto& tokenProducer = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_ABS, {tokenInput}, {tokenOutput});
     int viewMagic = view.GetOpMagic();
     int reshapeMagic = reshape.GetOpMagic();
@@ -289,10 +290,10 @@ TEST_F(RemoveRedundantReshapeTest, ViewReshapeReorderMigratesTokenDependencies)
 }
 
 /*
- * View->Reshape with MatMul present.
+ * View->Reshape with MatMul present but no cascaded view pattern.
  * Before: input{32,64} -> view -> middle{16,64} -> reshape -> output{1024}
- * After:  input{32,64} -> reshape(metadata) -> newMid{2048} -> view -> output{1024}
- *         The view is pushed below the reshape and its offset is remapped to {0}.
+ * After:  unchanged — reorder requires cascaded pattern (VIEW->VIEW->RESHAPE),
+ *         so the pass skips reorder and preserves original ops.
  */
 TEST_F(RemoveRedundantReshapeTest, TestViewReshapeReorderWithMatmul)
 {
@@ -331,39 +332,96 @@ TEST_F(RemoveRedundantReshapeTest, TestViewReshapeReorderWithMatmul)
     EXPECT_EQ(pass.RunOnFunction(*currFunctionPtr), SUCCESS);
 
     auto ops = currFunctionPtr->Operations();
-    EXPECT_TRUE(IsOpRemoved(ops, viewMagic)) << "Original View should be replaced in the reordered chain";
-    EXPECT_TRUE(IsOpRemoved(ops, reshapeMagic)) << "Original Reshape should be replaced in the reordered chain";
+    EXPECT_FALSE(IsOpRemoved(ops, viewMagic)) << "View should be kept (no cascaded pattern, reorder skipped)";
+    EXPECT_FALSE(IsOpRemoved(ops, reshapeMagic)) << "Reshape should be kept (no cascaded pattern, reorder skipped)";
 
     int viewCount = 0, reshapeCount = 0, matmulCount = 0;
-    Operation* newReshape = nullptr;
-    Operation* newView = nullptr;
     for (auto& op : ops) {
         if (op.GetOpcode() == Opcode::OP_VIEW) {
             viewCount++;
-            newView = const_cast<Operation*>(&op);
         } else if (op.GetOpcode() == Opcode::OP_RESHAPE) {
             reshapeCount++;
-            newReshape = const_cast<Operation*>(&op);
         } else if (op.GetOpcode() == Opcode::OP_A_MUL_B) {
             matmulCount++;
         }
     }
-    EXPECT_EQ(viewCount, 1) << "One new View should be created after reorder";
-    EXPECT_EQ(reshapeCount, 1) << "One metadata Reshape should be created after reorder";
+    EXPECT_EQ(viewCount, 1) << "Original View should be preserved";
+    EXPECT_EQ(reshapeCount, 1) << "Original Reshape should be preserved";
     EXPECT_EQ(matmulCount, 1) << "MatMul should be preserved";
+}
+
+TEST_F(RemoveRedundantReshapeTest, TestViewReshapeReorderMixPatternWithMatmul)
+{
+    Function function(Program::GetInstance(), "TestViewReshapeReorderMix", "TestViewReshapeReorderMix", nullptr);
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, {8, 4, 4}, CreateTestConstIntVector({8, 4, 4}));
+    auto vecIn = IRBuilder().CreateTensorVar(DT_FP32, {4, 4, 4}, CreateTestConstIntVector({4, 4, 4}));
+    auto vecOut = IRBuilder().CreateTensorVar(DT_FP32, {4, 4, 4}, CreateTestConstIntVector({4, 4, 4}));
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, {2, 4, 4}, CreateTestConstIntVector({2, 4, 4}));
+    auto output = IRBuilder().CreateTensorVar(DT_FP32, {8, 4}, CreateTestConstIntVector({8, 4}));
+    auto rhs = IRBuilder().CreateTensorVar(DT_FP32, {4, 4}, CreateTestConstIntVector({4, 4}));
+    auto result = IRBuilder().CreateTensorVar(DT_FP32, {8, 4}, CreateTestConstIntVector({8, 4}));
+
+    auto& leadingView = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_VIEW, {input}, {vecIn});
+    leadingView.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0}));
+    auto& vectorOp = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_EXP, {vecIn}, {vecOut});
+    auto& view = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_VIEW, {vecOut}, {middle});
+    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0}));
+    auto& reshape = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_RESHAPE, {middle}, {output});
+    auto& matmul = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_A_MUL_B, {output, rhs}, {result});
+    int viewMagic = view.GetOpMagic();
+    int reshapeMagic = reshape.GetOpMagic();
+    function.inCasts_ = {input, rhs};
+    function.outCasts_ = {result};
+
+    RemoveRedundantReshape pass;
+    ASSERT_EQ(pass.RunOnFunction(function), SUCCESS);
+
+    auto ops = function.Operations();
+    EXPECT_EQ(ops.DuplicatedOpList().size(), 5u);
+    EXPECT_FALSE(IsOpRemoved(ops, leadingView.GetOpMagic()));
+    EXPECT_FALSE(IsOpRemoved(ops, vectorOp.GetOpMagic()));
+    EXPECT_FALSE(IsOpRemoved(ops, matmul.GetOpMagic()));
+    EXPECT_TRUE(IsOpRemoved(ops, viewMagic));
+    EXPECT_TRUE(IsOpRemoved(ops, reshapeMagic));
+    auto* newReshape = FindOpByOpcode(ops, Opcode::OP_RESHAPE);
     ASSERT_NE(newReshape, nullptr);
-    ASSERT_NE(newView, nullptr);
-
-    // New metadata reshape consumes the original input and flattens {32,64} to {2048}.
-    EXPECT_EQ(newReshape->GetIOperands().front(), input);
-    EXPECT_EQ(newReshape->GetOOperands().front()->GetShape(), std::vector<int64_t>({2048}));
-
-    // New view consumes the new reshape output and reproduces the original output{1024} at offset {0}.
-    EXPECT_EQ(newView->GetIOperands().front(), newReshape->GetOOperands().front());
+    EXPECT_EQ(newReshape->GetIOperands().front(), vecOut);
+    auto newMiddle = newReshape->GetOOperands().front();
+    EXPECT_EQ(newMiddle->GetShape(), std::vector<int64_t>({16, 4}));
+    ASSERT_EQ(newMiddle->GetConsumers().size(), 1u);
+    auto* newView = *newMiddle->GetConsumers().begin();
+    ASSERT_EQ(newView->GetOpcode(), Opcode::OP_VIEW);
     EXPECT_EQ(newView->GetOOperands().front(), output);
-    auto newViewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(newView->GetOpAttribute());
-    ASSERT_NE(newViewAttr, nullptr);
-    EXPECT_EQ(newViewAttr->GetFromOffset(), std::vector<int64_t>({0}));
+    auto attr = std::dynamic_pointer_cast<ViewOpAttribute>(newView->GetOpAttribute());
+    ASSERT_NE(attr, nullptr);
+    EXPECT_EQ(attr->GetFromOffset(), std::vector<int64_t>({0, 0}));
+    EXPECT_EQ(matmul.GetIOperands().front(), output);
+}
+
+TEST_F(RemoveRedundantReshapeTest, TestViewReshapeReorderSkipsWithoutLeadingView)
+{
+    Function function(Program::GetInstance(), "TestViewReshapeNoLeadingView", "TestViewReshapeNoLeadingView", nullptr);
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, {4, 4, 4}, CreateTestConstIntVector({4, 4, 4}));
+    auto vecOut = IRBuilder().CreateTensorVar(DT_FP32, {4, 4, 4}, CreateTestConstIntVector({4, 4, 4}));
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, {2, 4, 4}, CreateTestConstIntVector({2, 4, 4}));
+    auto output = IRBuilder().CreateTensorVar(DT_FP32, {8, 4}, CreateTestConstIntVector({8, 4}));
+    auto rhs = IRBuilder().CreateTensorVar(DT_FP32, {4, 4}, CreateTestConstIntVector({4, 4}));
+    auto result = IRBuilder().CreateTensorVar(DT_FP32, {8, 4}, CreateTestConstIntVector({8, 4}));
+
+    IRBuilder().CreateTensorOpStmt(function, Opcode::OP_EXP, {input}, {vecOut});
+    auto& view = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_VIEW, {vecOut}, {middle});
+    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0}));
+    IRBuilder().CreateTensorOpStmt(function, Opcode::OP_RESHAPE, {middle}, {output});
+    IRBuilder().CreateTensorOpStmt(function, Opcode::OP_A_MUL_B, {output, rhs}, {result});
+    function.inCasts_ = {input, rhs};
+    function.outCasts_ = {result};
+    auto originalOps = function.Operations().DuplicatedOpList();
+
+    RemoveRedundantReshape pass;
+    ASSERT_EQ(pass.RunOnFunction(function), SUCCESS);
+    EXPECT_EQ(function.Operations().DuplicatedOpList(), originalOps);
+    EXPECT_EQ(view.GetIOperands().front(), vecOut);
+    EXPECT_EQ(view.GetOOperands().front(), middle);
 }
 
 /*
@@ -486,8 +544,6 @@ TEST_F(RemoveRedundantReshapeTest, TestSubReshapeAssembleSkipReorderWithMatmul)
 struct FanoutGraphInfo {
     std::shared_ptr<Function> func;
     LogicalTensorPtr input;
-    LogicalTensorPtr fanout1;
-    LogicalTensorPtr fanout2;
     int viewMagic;
     int reshapeMagic;
     int fanoutView1Magic;
@@ -515,8 +571,6 @@ static FanoutGraphInfo BuildViewReshapeFanoutGraph()
     auto matmulB = IRBuilder().CreateTensorVar(DT_FP32, matmulShape, CreateTestConstIntVector(matmulShape));
     auto matmulC = IRBuilder().CreateTensorVar(DT_FP32, matmulShape, CreateTestConstIntVector(matmulShape));
     info.input = input;
-    info.fanout1 = fanout1;
-    info.fanout2 = fanout2;
 
     auto& viewOp = IRBuilder().CreateTensorOpStmt(*info.func, Opcode::OP_VIEW, {input}, {middle});
     viewOp.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 8}));
@@ -545,14 +599,12 @@ static FanoutGraphInfo BuildViewReshapeFanoutGraph()
 }
 
 /*
- * View->Reshape fanout with MatMul present.
+ * View->Reshape fanout with MatMul present but no cascaded view pattern.
  * Before: input{4,32} -> view(offset={0,8}) -> middle{4,16} -> reshape -> reshapeOut{64}
  *         reshapeOut -> fanoutView1(offset={0})  -> fanout1{32}
  *         reshapeOut -> fanoutView2(offset={32}) -> fanout2{32}
- * After:  input{4,32} -> reshape(metadata) -> newMid{128}
- *         newMid -> view(offset={8})  -> fanout1{32}
- *         newMid -> view(offset={72}) -> fanout2{32}
- *         The view is pushed below the reshape and fanout offsets are remapped.
+ * After:  unchanged — reorder requires cascaded pattern (VIEW->VIEW->RESHAPE),
+ *         so the pass skips reorder and preserves original ops.
  */
 TEST_F(RemoveRedundantReshapeTest, TestViewReshapeFanoutWithMatmul)
 {
@@ -563,53 +615,27 @@ TEST_F(RemoveRedundantReshapeTest, TestViewReshapeFanoutWithMatmul)
     EXPECT_EQ(pass.RunOnFunction(*info.func), SUCCESS);
 
     auto ops = info.func->Operations();
-    EXPECT_TRUE(IsOpRemoved(ops, info.viewMagic)) << "Original View should be replaced in the fanout chain";
-    EXPECT_TRUE(IsOpRemoved(ops, info.reshapeMagic)) << "Original Reshape should be replaced in the fanout chain";
-    EXPECT_TRUE(IsOpRemoved(ops, info.fanoutView1Magic)) << "Original fanout view1 should be replaced";
-    EXPECT_TRUE(IsOpRemoved(ops, info.fanoutView2Magic)) << "Original fanout view2 should be replaced";
+    EXPECT_FALSE(IsOpRemoved(ops, info.viewMagic)) << "View should be kept (no cascaded pattern, reorder skipped)";
+    EXPECT_FALSE(IsOpRemoved(ops, info.reshapeMagic))
+        << "Reshape should be kept (no cascaded pattern, reorder skipped)";
+    EXPECT_FALSE(IsOpRemoved(ops, info.fanoutView1Magic))
+        << "Fanout view1 should be kept (no cascaded pattern, reorder skipped)";
+    EXPECT_FALSE(IsOpRemoved(ops, info.fanoutView2Magic))
+        << "Fanout view2 should be kept (no cascaded pattern, reorder skipped)";
 
     int viewCount = 0, reshapeCount = 0, matmulCount = 0;
-    Operation* newReshape = nullptr;
-    std::vector<Operation*> newFanoutViews;
     for (auto& op : ops) {
         if (op.GetOpcode() == Opcode::OP_VIEW) {
             viewCount++;
-            newFanoutViews.push_back(const_cast<Operation*>(&op));
         } else if (op.GetOpcode() == Opcode::OP_RESHAPE) {
             reshapeCount++;
-            newReshape = const_cast<Operation*>(&op);
         } else if (op.GetOpcode() == Opcode::OP_A_MUL_B) {
             matmulCount++;
         }
     }
-    EXPECT_EQ(viewCount, 2) << "Two new fanout views should be created after reorder";
-    EXPECT_EQ(reshapeCount, 1) << "One metadata reshape should be created after reorder";
+    EXPECT_EQ(viewCount, 3) << "Original 3 Views (1 main + 2 fanout) should be preserved";
+    EXPECT_EQ(reshapeCount, 1) << "Original Reshape should be preserved";
     EXPECT_EQ(matmulCount, 1) << "MatMul should be preserved";
-    ASSERT_NE(newReshape, nullptr);
-    ASSERT_EQ(newFanoutViews.size(), 2u);
-
-    // New metadata reshape consumes the original input and flattens {4,32} to {128}.
-    EXPECT_EQ(newReshape->GetIOperands().front(), info.input);
-    EXPECT_EQ(newReshape->GetOOperands().front()->GetShape(), std::vector<int64_t>({128}));
-
-    // Both new fanout views consume the new reshape output with remapped offsets:
-    // fanout1 (compact offset {0})  -> {8};  fanout2 (compact offset {32}) -> {72}.
-    bool hasFanout1View = false, hasFanout2View = false;
-    for (auto* viewOp : newFanoutViews) {
-        EXPECT_EQ(viewOp->GetIOperands().front(), newReshape->GetOOperands().front());
-        auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(viewOp->GetOpAttribute());
-        ASSERT_NE(viewAttr, nullptr);
-        auto offset = viewAttr->GetFromOffset();
-        if (offset == std::vector<int64_t>({8})) {
-            hasFanout1View = true;
-            EXPECT_EQ(viewOp->GetOOperands().front(), info.fanout1);
-        } else if (offset == std::vector<int64_t>({72})) {
-            hasFanout2View = true;
-            EXPECT_EQ(viewOp->GetOOperands().front(), info.fanout2);
-        }
-    }
-    EXPECT_TRUE(hasFanout1View) << "Fanout view with remapped offset {8} should exist";
-    EXPECT_TRUE(hasFanout2View) << "Fanout view with remapped offset {72} should exist";
 }
 
 struct ReshapeAssembleGraphInfo {
