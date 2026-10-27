@@ -1378,21 +1378,17 @@ REGISTER_INFER_SHAPE_FUNC(OP_L0C_COPY_UB_CONV, Opcode::OP_L0C_COPY_UB_CONV, L0CC
 
 void TransDataInferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& outValidShapes)
 {
-    switch (op->GetOpcode()) {
-        case Opcode::OP_NCHW2NC1HWC0:
-        case Opcode::OP_NCHW2Fractal_Z:
-        case Opcode::OP_NC1HWC02NCHW:
-        case Opcode::OP_NCDHW2FRACTAL_Z_3D:
-        case Opcode::OP_NCDHW2NDC1HWC0:
-        case Opcode::OP_NDC1HWC02NCDHW:
-        case Opcode::OP_FractalZ2NCHW:
-        case Opcode::OP_FractalZ3D2NCDHW:
-            outValidShapes.push_back(op->GetOOperands()[0]->GetDynValidShape());
-            outValidShapes.push_back(SymbolicScalar::FromConcrete(op->GetOOperands()[1]->GetShape()));
-            return;
-        default:
-            ASSERT(VectorErrorCode::ERR_PARAM_INVALID, false) << "The transDataType is not supported";
+    // Keep the valid shape carried by the output tensor itself; only fall back to the leading
+    // transDataOffset slots (filled in trans_data.cpp) when the tensor does not carry one.
+    const auto& outTensor = op->GetOOperands()[0];
+    std::vector<SymbolicScalar> outValidShape = outTensor->GetDynValidShape();
+    std::vector<SymbolicScalar> transDataAttr;
+    op->GetAttr(OpAttributeKey::transDataOffset, transDataAttr);
+    if (transDataAttr.size() >= outTensor->GetShape().size()) {
+        outValidShape.assign(transDataAttr.begin(), transDataAttr.begin() + outTensor->GetShape().size());
     }
+    outValidShapes.push_back(outValidShape);
+    outValidShapes.push_back(SymbolicScalar::FromConcrete(op->GetOOperands()[1]->GetShape()));
 }
 
 REGISTER_INFER_SHAPE_FUNC(OP_NCHW2NC1HWC0, Opcode::OP_NCHW2NC1HWC0, TransDataInferFunc);
