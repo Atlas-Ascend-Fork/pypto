@@ -103,6 +103,24 @@ public:
 
     std::shared_ptr<InterpreterSyncSimulationState> GetSyncSimulationState() const { return syncSim_; }
 
+    // For tensors whose first dim is the combined h*w axis (raw row stride = the aligned cutW),
+    // the valid extent cannot be expressed as contiguous rows: GetValidDataView would squash it
+    // to validM leading rows and both misplace data and overflow the h*cutW+w row mapping.
+    // Restore the raw first dim (other dims keep the view extent, the original view offset is
+    // preserved) so conv pipeline calc ops (LOAD3D_CONV / A_MUL_B / TRANS_FORMAT_L0C) share the
+    // raw layout semantics. A non-squashed or unexpected (first dim larger than raw) view is
+    // returned as-is.
+    static LogicalTensorDataPtr GetRawFirstDimView(const LogicalTensorDataPtr& dataView)
+    {
+        const auto& rawShape = dataView->GetData()->GetShape();
+        auto shape = dataView->GetShape();
+        if (rawShape.empty() || shape.empty() || rawShape[0] <= shape[0]) {
+            return dataView;
+        }
+        shape[0] = rawShape[0];
+        return std::make_shared<LogicalTensorData>(dataView->GetData(), shape, dataView->GetOffset());
+    }
+
     // 注册默认函数
     static void RegisterFunc(const Opcode opcode, Funcs func)
     {

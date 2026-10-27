@@ -251,7 +251,8 @@ void ExecuteOpLoad3DConv(ExecuteOperationContext* ctx)
 {
     ASSERT(ExecuteOperationScene::CTX_OUTPUT_COUNT_MISMATCH, ctx->ooperandInplaceDataViewList->size() == 1);
     ASSERT(ExecuteOperationScene::CTX_INPUT_COUNT_MISMATCH, ctx->ioperandDataViewList->size() == 1);
-    auto ret = ctx->ooperandInplaceDataViewList->at(0);
+    // The A0 M axis is the combined h*w axis: keep the raw first dim so rows map to (h * cutW + w)
+    auto ret = OperationInterpreter::GetRawFirstDimView(ctx->ooperandInplaceDataViewList->at(0));
     auto l1 = ctx->ioperandDataViewList->at(0);
     Operation* op = ctx->op;
     ConvTileParam param;
@@ -297,16 +298,27 @@ void ExecuteOpTransFormatL0C(ExecuteOperationContext* ctx)
     ASSERT(ExecuteOperationScene::CTX_OUTPUT_COUNT_MISMATCH, ctx->ooperandInplaceDataViewList->size() == 1);
     ASSERT(ExecuteOperationScene::CTX_INPUT_COUNT_MISMATCH, ctx->ioperandDataViewList->size() == 1);
     auto ret = ctx->ooperandInplaceDataViewList->at(0);
-    auto l0c = ctx->ioperandDataViewList->at(0);
+    auto l0cValid = ctx->ioperandDataViewList->at(0);
     Operation* op = ctx->op;
     ConvL0CParam param;
     param.isConv3D = GetBoolAttrOr(op, Conv::LoadStoreConvOpAttributeKey::isConv3D) ? 1 : 0;
     param.copyOutMode = GetIntAttrOr(op, Conv::LoadStoreConvOpAttributeKey::copyOutMode, 0);
     param.cutW = GetIntAttrOr(op, Conv::LoadStoreConvOpAttributeKey::cutW, 0);
     param.reluType = GetIntAttrOr(op, Conv::LoadStoreConvOpAttributeKey::reluType, 0);
+    // The L0C M axis is the combined h*w axis with a per-h row stride of the aligned cutW.
+    // GetValidDataView squashes the input to contiguous validM rows; with a W tail tile
+    // (validW < cutW) the valid rows are non-contiguous in the raw layout, so the squashed
+    // view both misplaces data and overflows the h*cutW+w row mapping in ConvTransL0C.
+    // Rebuild the FULL raw view (not GetRawFirstDimView: the aligned N must stay visible for
+    // ConvTransL0C's fullN pad / pad-column zeroing / dynN) and pass the L0C valid N so the
+    // aligned pad columns can be zeroed. The original view offset is preserved (same semantics
+    // as GetRawFirstDimView) so a non-zero storage placement keeps reading the right region.
+    int64_t l0cValidN = l0cValid->GetShape().size() >= 2 ? l0cValid->GetShape()[1] : 0;
+    const auto& l0cRawShape = l0cValid->GetData()->GetShape();
+    auto l0c = std::make_shared<LogicalTensorData>(l0cValid->GetData(), l0cRawShape, l0cValid->GetOffset());
+    param.validN = l0cValidN;
     const auto& validShape = ret->GetValidShape();
     if (param.copyOutMode == static_cast<int64_t>(Conv::CopyOutMode::COPY_MOD_NZ2DN)) {
-        param.validN = validShape.size() >= 2 ? validShape[1] : 1;
         param.validD = (param.isConv3D != 0 && validShape.size() >= 3) ? validShape[2] : 1;
         param.validH = validShape.size() >= 2 ? validShape[validShape.size() - 2] : 1;
         param.validW = validShape.size() >= 1 ? validShape[validShape.size() - 1] : 1;
@@ -322,10 +334,12 @@ void ExecuteOpTransFormatL0C(ExecuteOperationContext* ctx)
             int64_t n = l0cShape[1];
             std::vector<SymbolicScalar> l0cValidMN;
             if (op->GetAttr(OpAttributeKey::l0cValidMN, l0cValidMN) && l0cValidMN.size() == 0x2) {
-                // per-tile valid M/N kept as an op attribute: it survives InferParamIndex clearing tensor
+                // per-tile M/N kept as an op attribute: it survives InferParamIndex clearing tensor
                 // valid shapes, and bounds group-tail tiles to their own channels (an unclamped region
-                // would let group 0's copy-out clobber the next group's channels in the outcast)
-                m = ctx->opInter->EvaluateSymbolicScalar(l0cValidMN[0]);
+                // would let group 0's copy-out clobber the next group's channels in the outcast).
+                // Only the N part is consumed here: the M part is the VALID M (= h_valid * w_valid),
+                // which is not divisible by the aligned cutW on W tail tiles (validM/cutW collapses to
+                // 0 and degenerates the region) — derive h from the raw aligned M instead.
                 n = ctx->opInter->EvaluateSymbolicScalar(l0cValidMN[1]);
             }
             int64_t w = param.cutW > 0 ? param.cutW : l0cShape[l0cShape.size() - 1];
@@ -380,19 +394,33 @@ void ExecuteOpL1CopyInConv(ExecuteOperationContext* ctx)
     auto os = ret->GetShape();
     std::vector<int64_t> srcShape;
     if (isFmap) {
+        // 输入是完整 GM 张量（tile 选择由 copyAttr 的 fromOffset 承担），当前视图 shape 与 raw
+        // storage shape 恒等；两套访问器按维选取以保证动态场景正确性：
+        // - N/D/C 用 gs（运行期视图形状）：动态 batch 等运行期收窄维的剩余范围必须按 runtime 计，
+        //   若用 raw（分配上界）会越界读；
+        // - H/W 用 gsRaw（storage 形状）：W 尾块在 InferParamIndex 清空 valid 后 os 为对齐值，
+        //   须按 storage 剩余范围裁剪，防止构造越界 GM 视图（setStorage OOB），
+        //   裁剪缺口由 ConvFmapND2NZ 补零，与硬件 GM 越界读 pad 语义一致。
         auto gs = gm->GetShape();
+        const auto& gsRaw = gm->GetData()->GetShape();
         if (is3d != 0) {
             // dst L1 NDC1HWC0 [n, d, c1, h, w, c0] -> src GM NCDHW [n, cin, dk, h, w]
             int64_t alignedCin = os[0x2] * os[os.size() - 1];
-            // N/D 维按 GM 剩余范围裁剪, 尾块越界平面 (offset 超出 tensor) 不读 GM
+            // N/D/H/W 维按 GM 剩余范围裁剪, 尾块越界平面 (offset 超出 tensor) 不读 GM;
+            // InferParamIndex 清空 valid 后 os 为对齐值, 不裁剪会构造越界 GM 视图 (setStorage OOB);
+            // 裁剪后的缺口由 ConvFmapND2NZ 补零, 与硬件 GM 越界读 pad 语义一致
             int64_t validN = std::max(int64_t(0), std::min(gs[0] - fromOffset[0], os[0]));
             int64_t validD = std::max(int64_t(0), std::min(gs[2] - fromOffset[2], os[1]));
-            srcShape = {validN, std::min(gs[1] - fromOffset[1], alignedCin), validD, os[3], os[4]};
+            int64_t validH = std::max(int64_t(0), std::min(gsRaw[3] - fromOffset[3], os[3]));
+            int64_t validW = std::max(int64_t(0), std::min(gsRaw[4] - fromOffset[4], os[4]));
+            srcShape = {validN, std::min(gs[1] - fromOffset[1], alignedCin), validD, validH, validW};
         } else {
             // dst L1 NC1HWC0 [n, c1, h, w, c0] -> src GM NCHW [n, cin, h, w]
             int64_t alignedCin = os[1] * os[os.size() - 1];
             int64_t validN = std::max(int64_t(0), std::min(gs[0] - fromOffset[0], os[0]));
-            srcShape = {validN, std::min(gs[1] - fromOffset[1], alignedCin), os[0x2], os[3]};
+            int64_t validH = std::max(int64_t(0), std::min(gsRaw[2] - fromOffset[2], os[0x2]));
+            int64_t validW = std::max(int64_t(0), std::min(gsRaw[3] - fromOffset[3], os[3]));
+            srcShape = {validN, std::min(gs[1] - fromOffset[1], alignedCin), validH, validW};
         }
     } else {
         // Weight ND view: [n, cin, (dk,) kh, kw], derived from the L1 NZ tile [k/cin0, nBlocks, n0, cin0] and

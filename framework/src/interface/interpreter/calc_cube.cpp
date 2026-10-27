@@ -170,6 +170,13 @@ void ExecuteOpAMulB(ExecuteOperationContext* ctx)
     auto rhs = ctx->ioperandDataViewList->at(1);
     Opcode opcode = ctx->op->GetOpcode();
     bool isAccOp = IsAccOp(opcode);
+    bool isConv = GetBoolAttrOrDefault(ctx->op, OpAttributeKey::isConv);
+    if (isConv) {
+        // conv 的 A0/L0C M 轴为 h*w 合轴（raw 行距 = 对齐 cutW），valid 视图无法用连续行表达，
+        // 还原 raw 首维，与 LOAD3D_CONV / TRANS_FORMAT_L0C 的行映射保持一致
+        ret = OperationInterpreter::GetRawFirstDimView(ret);
+        lhs = OperationInterpreter::GetRawFirstDimView(lhs);
+    }
     bool hasMXScaleByInputs = HasMxScaleByInputs(ctx, isAccOp);
     bool hasMXScale = HasMXScaleValue(ctx);
     bool hasBias = GetBoolAttrOrDefault(ctx->op, Matrix::A_MUL_B_BIAS_ATTR) ||
@@ -202,6 +209,9 @@ void ExecuteOpAMulB(ExecuteOperationContext* ctx)
         } break;
         case Opcode::OP_A_MULACC_B: {
             auto acc = ctx->ioperandDataViewList->at(2);
+            if (isConv) {
+                acc = OperationInterpreter::GetRawFirstDimView(acc);
+            }
             calc::AccMatMul(ret, lhs, rhs, acc, param);
         } break;
         default:

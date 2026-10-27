@@ -2149,12 +2149,21 @@ static void ConvFmapND2NZ(const TensorData& out, const TensorData& self, int64_t
     torch::Tensor r;
     if (isConv3D != 0) {
         int64_t c1 = os[2];
-        auto padded = torch::constant_pad_nd(tself, {0, 0, 0, 0, 0, 0, 0, c1 * c0 - tself.size(1), 0, 0}, 0);
+        // src 的 n/d/h/w 可能被 L1_COPY_IN_CONV 按 GM 剩余范围裁剪 (batch/W 尾块), pad 0 到 dst
+        // 尺寸, 与硬件 GM 越界读 pad 语义一致; 非尾块时 pad 量为 0, 行为不变
+        auto padded = torch::constant_pad_nd(
+            tself,
+            {0, os[4] - tself.size(4), 0, os[3] - tself.size(3), 0, os[1] - tself.size(2), 0, c1 * c0 - tself.size(1),
+             0, os[0] - tself.size(0)},
+            0);
         padded = padded.view({os[0], os[1], c1, c0, os[3], os[4]});
         r = padded.permute({0, 1, 2, 4, 5, 3});
     } else {
         int64_t c1 = os[1];
-        auto padded = torch::constant_pad_nd(tself, {0, 0, 0, 0, 0, c1 * c0 - tself.size(1)}, 0);
+        auto padded = torch::constant_pad_nd(
+            tself,
+            {0, os[3] - tself.size(3), 0, os[2] - tself.size(2), 0, c1 * c0 - tself.size(1), 0, os[0] - tself.size(0)},
+            0);
         padded = padded.view({os[0], c1, c0, os[2], os[3]});
         r = padded.permute({0, 1, 3, 4, 2});
     }
@@ -2281,6 +2290,13 @@ static void ConvTransL0C(const TensorData& out, const TensorData& l0c, ConvL0CPa
         if (tout.second.dim() >= 0x2 && dynN > tout.second.size(1)) {
             dynN = tout.second.size(1);
         }
+        // W tail tile: the dst view W is the valid extent (REAL_CUT_W < the aligned cutW); shrink
+        // the copy width to the dst extent, matching the device GM-side TStoreConv2DNZ2DN that
+        // copies realCutW per row; otherwise copy_ fails with "The size of tensor a ... must
+        // match ..." (FB200F)
+        if (tout.second.dim() >= 0x2 && dynW > tout.second.size(tout.second.dim() - 1)) {
+            dynW = tout.second.size(tout.second.dim() - 1);
+        }
     }
     auto opts = torch::TensorOptions().dtype(torch::kLong);
     if (param.copyOutMode != 3) {
@@ -2292,6 +2308,12 @@ static void ConvTransL0C(const TensorData& out, const TensorData& l0c, ConvL0CPa
             paddedTc.slice(1, 0, tc.size(1)).copy_(tc);
             tc = paddedTc;
         }
+    }
+    // The L0C input carries the raw aligned layout; columns at or beyond validN are aligned
+    // padding holding stale storage data, zero them so they match the hardware
+    if (param.validN > 0 && param.validN < tc.size(1)) {
+        tc = tc.clone();
+        tc.slice(1, param.validN, tc.size(1)).zero_();
     }
     auto rows = (torch::arange(dynH, opts) * param.cutW).unsqueeze(1) + torch::arange(dynW, opts);
     rows = rows.reshape({-1});

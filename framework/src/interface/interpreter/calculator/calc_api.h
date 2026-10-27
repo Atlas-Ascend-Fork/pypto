@@ -84,7 +84,8 @@ struct ConvL0CParam {
     int64_t copyOutMode = 0; // 1: NZ2NZ (A2A3), 3: NZ2DN (A5)
     int64_t cutW = 0;
     int64_t reluType = 0;
-    int64_t validN = 0;
+    int64_t validN = 0; // L0C valid N (aligned pad columns at or beyond it are zeroed before
+                        // the row mapping); 0 skips the zeroing (legacy calc direct callers)
     int64_t validD = 1;
     int64_t validH = 0;
     int64_t validW = 0;

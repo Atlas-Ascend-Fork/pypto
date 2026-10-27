@@ -361,6 +361,164 @@ TEST_F(TorchAdaptorTest, ConvTransL0CNz2Nz)
     ASSERT_EQ(out->Get<float>(48), 30.0f);
 }
 
+TEST_F(TorchAdaptorTest, ConvTransL0CNz2NzWTailTile)
+{
+    // W tail tile (validW < cutW): l0c raw [6, 4] with M = h(2) * cutW(3), valid rows are
+    // h * cutW + w for w < 2 (non-contiguous: 0, 1, 3, 4). A squashed validM view ([4, 4])
+    // both misplaces rows and overflows the h * cutW + w mapping (row 4 >= 4).
+    std::vector<float> cData(6 * 4, 0.0f);
+    for (int m = 0; m < 6; m++) {
+        for (int n = 0; n < 4; n++) {
+            cData[m * 4 + n] = static_cast<float>(m * 10 + n);
+        }
+    }
+    auto l0c = makeTensorData(DT_FP32, {6, 4}, cData);
+    auto out = makeTensorData(DT_FP32, {1, 1, 2, 2, 4}, std::vector<float>(16, 0.0f));
+    ConvL0CParam param;
+    param.copyOutMode = 1;
+    param.cutW = 3;
+    param.validN = 4;
+    param.validH = 2;
+    param.validW = 2;
+    calc::ConvTransL0C(out, l0c, param);
+    // out[0, c1, h, w, c0] = l0c[h * cutW + w, c1 * 4 + c0] = (h * 3 + w) * 10 + c0
+    ASSERT_EQ(out->Get<float>(0), 0.0f);   // h=0 w=0 -> m=0
+    ASSERT_EQ(out->Get<float>(1), 1.0f);   // c0=1 -> n=1
+    ASSERT_EQ(out->Get<float>(4), 10.0f);  // h=0 w=1 -> m=1
+    ASSERT_EQ(out->Get<float>(8), 30.0f);  // h=1 w=0 -> m=3 (raw row 1 * 3 + 0, not 2)
+    ASSERT_EQ(out->Get<float>(9), 31.0f);  // c0=1 -> n=1
+    ASSERT_EQ(out->Get<float>(12), 40.0f); // h=1 w=1 -> m=4
+}
+
+TEST_F(TorchAdaptorTest, ConvTransL0CNz2NzValidNPad)
+{
+    // validN < aligned N: columns at or beyond validN are aligned padding holding stale
+    // storage data (filled with markers here) and must read as zeros
+    std::vector<float> cData(4 * 8, 0.0f);
+    for (int m = 0; m < 4; m++) {
+        for (int n = 0; n < 8; n++) {
+            cData[m * 8 + n] = static_cast<float>(m * 10 + n);
+        }
+    }
+    auto l0c = makeTensorData(DT_FP32, {4, 8}, cData);
+    auto out = makeTensorData(DT_FP32, {1, 2, 2, 2, 4}, std::vector<float>(32, 0.0f));
+    ConvL0CParam param;
+    param.copyOutMode = 1;
+    param.cutW = 2;
+    param.validN = 5;
+    param.validH = 2;
+    param.validW = 2;
+    calc::ConvTransL0C(out, l0c, param);
+    // out[0, c1, h, w, c0] = l0c[h * 2 + w, c1 * 4 + c0], zero for n >= validN(5)
+    ASSERT_EQ(out->Get<float>(0), 0.0f);   // h=0 w=0 c1=0 c0=0 -> m=0 n=0
+    ASSERT_EQ(out->Get<float>(4), 10.0f);  // h=0 w=1 -> m=1
+    ASSERT_EQ(out->Get<float>(8), 20.0f);  // h=1 w=0 -> m=2
+    ASSERT_EQ(out->Get<float>(16), 4.0f);  // c1=1 c0=0 -> n=4 < validN
+    ASSERT_EQ(out->Get<float>(20), 14.0f); // h=0 w=1 -> m=1 n=4
+    ASSERT_EQ(out->Get<float>(17), 0.0f);  // n=5 >= validN -> 0 (raw holds 5)
+    ASSERT_EQ(out->Get<float>(19), 0.0f);  // n=7 -> 0
+    ASSERT_EQ(out->Get<float>(31), 0.0f);  // n=7 -> 0
+}
+
+TEST_F(TorchAdaptorTest, ConvTransL0CNz2DNWTailTile)
+{
+    // NZ2DN W tail tile (REAL_CUT_W < cutW): l0c raw [8, 8] with M = h(2) * cutW(4), valid rows
+    // are h * cutW + w for w < validW(3) (non-contiguous: 0, 1, 2, 4, 5, 6). The dst view is the
+    // valid extent [1, 8, 2, 3] (W = 3 < cutW = 4): the copy width must shrink to the dst extent,
+    // otherwise copy_ fails with "The size of tensor a (3) must match the size of tensor b (4)".
+    std::vector<float> cData(8 * 8, 0.0f);
+    for (int m = 0; m < 8; m++) {
+        for (int n = 0; n < 8; n++) {
+            if (n >= 6) {
+                cData[m * 8 + n] = 99.0f; // aligned N pad columns (stale storage data)
+            } else if ((m % 4) >= 3) {
+                cData[m * 8 + n] = 77.0f; // invalid w rows (w >= validW), never read
+            } else {
+                cData[m * 8 + n] = static_cast<float>(m * 10 + n);
+            }
+        }
+    }
+    auto l0c = makeTensorData(DT_FP32, {8, 8}, cData);
+    auto out = makeTensorData(DT_FP32, {1, 8, 2, 3}, std::vector<float>(48, 0.0f));
+    ConvL0CParam param;
+    param.copyOutMode = 3;
+    param.cutW = 4;
+    param.validN = 6;
+    param.validH = 2;
+    // note: validW is not consumed by the NZ2DN path; the copy width is cutW shrunk to the
+    // dst view extent (W = 3 here), which is what this test locks in
+    calc::ConvTransL0C(out, l0c, param);
+    // out[0, n, h, w] = l0c[h * cutW + w, n] = (h * 4 + w) * 10 + n, zero for n >= validN(6);
+    // flat idx = n * 6 + h * 3 + w
+    ASSERT_EQ(out->Get<float>(0), 0.0f);   // n=0 h=0 w=0 -> m=0
+    ASSERT_EQ(out->Get<float>(1), 10.0f);  // n=0 h=0 w=1 -> m=1
+    ASSERT_EQ(out->Get<float>(2), 20.0f);  // n=0 h=0 w=2 -> m=2
+    ASSERT_EQ(out->Get<float>(3), 40.0f);  // n=0 h=1 w=0 -> m=4 (row stride cutW=4, not validW=3)
+    ASSERT_EQ(out->Get<float>(4), 50.0f);  // n=0 h=1 w=1 -> m=5
+    ASSERT_EQ(out->Get<float>(5), 60.0f);  // n=0 h=1 w=2 -> m=6
+    ASSERT_EQ(out->Get<float>(6), 1.0f);   // n=1 h=0 w=0 -> l0c[0, 1]
+    ASSERT_EQ(out->Get<float>(25), 14.0f); // n=4 h=0 w=1 -> l0c[1, 4]
+    ASSERT_EQ(out->Get<float>(36), 0.0f);  // n=6 >= validN -> 0 (raw holds 99)
+    ASSERT_EQ(out->Get<float>(47), 0.0f);  // n=7 h=1 w=2 -> 0 (raw holds 99)
+}
+
+TEST_F(TorchAdaptorTest, ConvFmapND2NzWTail)
+{
+    // W tail fmap tile (DN2NZ copy-in): src GM NCHW [1, 16, 1, 4] (valid W = 4, clamped by the
+    // remaining GM extent), dst L1 NZ tile [1, 1, 1, 16, 16]. The src W gap must be zero-padded
+    // to the dst extent (hardware pads out-of-range GM reads with 0); before the fix the
+    // internal view() failed on the shape mismatch.
+    std::vector<float> srcData(16 * 4, 0.0f);
+    for (int c = 0; c < 16; c++) {
+        for (int w = 0; w < 4; w++) {
+            srcData[c * 4 + w] = static_cast<float>(c * 10 + w);
+        }
+    }
+    auto src = makeTensorData(DT_FP32, {1, 16, 1, 4}, srcData);
+    auto out = makeTensorData(DT_FP32, {1, 1, 1, 16, 16}, std::vector<float>(256, 0.0f));
+    calc::ConvFmapND2NZ(out, src, 0);
+    // out[0, 0, 0, w, c0] = src[0, c0, 0, w] = c0 * 10 + w for w < 4, zero for w >= 4;
+    // flat idx = w * 16 + c0
+    ASSERT_EQ(out->Get<float>(0), 0.0f);    // w=0 c0=0
+    ASSERT_EQ(out->Get<float>(1), 10.0f);   // w=0 c0=1
+    ASSERT_EQ(out->Get<float>(15), 150.0f); // w=0 c0=15
+    ASSERT_EQ(out->Get<float>(16), 1.0f);   // w=1 c0=0
+    ASSERT_EQ(out->Get<float>(18), 21.0f);  // w=1 c0=2
+    ASSERT_EQ(out->Get<float>(63), 153.0f); // w=3 c0=15
+    ASSERT_EQ(out->Get<float>(64), 0.0f);   // w=4 >= valid W -> 0 (pad)
+    ASSERT_EQ(out->Get<float>(255), 0.0f);  // w=15 c0=15 -> 0 (pad)
+}
+
+TEST_F(TorchAdaptorTest, ConvFmapND2NzBatchTail)
+{
+    // Batch tail + W tail combined (DN2NZ copy-in): src GM NCHW [13, 16, 1, 4] where the
+    // runtime batch (13) is smaller than the aligned dst tile N (16) and W is a tail (4 < 16).
+    // Both gaps must be zero-padded to the dst extent before view(); before the N pad was added
+    // the internal view() failed with an element-count mismatch (same FB200F family as issue 3637).
+    std::vector<float> srcData(13 * 16 * 4, 0.0f);
+    for (int n = 0; n < 13; n++) {
+        for (int c = 0; c < 16; c++) {
+            for (int w = 0; w < 4; w++) {
+                srcData[(n * 16 + c) * 4 + w] = static_cast<float>(c * 10 + w);
+            }
+        }
+    }
+    auto src = makeTensorData(DT_FP32, {13, 16, 1, 4}, srcData);
+    auto out = makeTensorData(DT_FP32, {16, 1, 1, 16, 16}, std::vector<float>(4096, 0.0f));
+    calc::ConvFmapND2NZ(out, src, 0);
+    // out[n, 0, 0, w, c0] = src[n, c0, 0, w] = c0 * 10 + w for n < 13 and w < 4, zero otherwise;
+    // flat idx = n * 256 + w * 16 + c0
+    ASSERT_EQ(out->Get<float>(0), 0.0f);                      // n=0 w=0 c0=0
+    ASSERT_EQ(out->Get<float>(1), 10.0f);                     // n=0 w=0 c0=1
+    ASSERT_EQ(out->Get<float>(3), 30.0f);                     // n=0 w=0 c0=3
+    ASSERT_EQ(out->Get<float>(16), 1.0f);                     // n=0 w=1 c0=0
+    ASSERT_EQ(out->Get<float>(12 * 256 + 3 * 16 + 5), 53.0f); // n=12 w=3 c0=5
+    ASSERT_EQ(out->Get<float>(12 * 256 + 15), 150.0f);        // n=12 w=0 c0=15
+    ASSERT_EQ(out->Get<float>(13 * 256), 0.0f);               // n=13 >= runtime batch -> 0 (pad)
+    ASSERT_EQ(out->Get<float>(15 * 256 + 255), 0.0f);         // n=15 w=15 c0=15 -> 0 (pad)
+    ASSERT_EQ(out->Get<float>(5 * 256 + 5 * 16), 0.0f);       // n=5 w=5 >= valid W -> 0 (pad)
+}
+
 TEST_F(TorchAdaptorTest, ConvND3D)
 {
     // conv3d: fmap [1, 2, 2, 4, 4] all 1.0, weight [4, 2, 1, 1, 1] all 1.0 -> out = 2
