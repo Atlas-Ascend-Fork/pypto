@@ -375,16 +375,4 @@ void CheckBinaryInputTensors(const LogicalTensorPtr& tensor1, const LogicalTenso
     CheckTensorsShapeConsistencyOrBroadcast({tensor1, tensor2}, opName);
     CheckTensorsFormatConsistency(tensor1, tensor2, opName);
 }
-void CheckInt64Broadcast(const LogicalTensorPtr& tensor1, const LogicalTensorPtr& tensor2, const std::string& opName)
-{
-    auto dtype = tensor1->Datatype();
-    if (dtype != DT_INT64 && dtype != DT_UINT64) {
-        return;
-    }
-    auto broadcastAxes = GetBroadcastAxes(tensor1->shape, tensor2->shape);
-    if (!broadcastAxes.empty()) {
-        CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, false)
-            << opName << ": broadcast is not supported for int64/uint64 dtype on current device";
-    }
-}
 } // namespace npu::tile_fwk

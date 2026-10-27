@@ -72,7 +72,6 @@ def run_prod_onboard_test(case: dict):
 
 
 @pytest.mark.parametrize("case", PROD_ONBOARD_TESTS, ids=[case["case_name"] for case in PROD_ONBOARD_TESTS])
-@pytest.mark.skip(reason="ci skip")
 @pypto.options(pass_options={"enable_slice": True})
 def test_prod_onboard(case: dict):
     run_prod_onboard_test(case)

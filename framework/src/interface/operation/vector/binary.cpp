@@ -110,7 +110,6 @@ Tensor Add(const Tensor& self, const Tensor& other)
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ADD);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "ADD");
-    CheckInt64Broadcast(self.GetStorage(), other.GetStorage(), "ADD");
     RETURN_CALL(BinaryOperation<BinaryOpType::ADD>, *Program::GetInstance().GetCurrentFunction(), self, other);
 }
 
@@ -122,7 +121,6 @@ Tensor Sub(const Tensor& self, const Tensor& other)
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SUB);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "SUB");
-    CheckInt64Broadcast(self.GetStorage(), other.GetStorage(), "SUB");
     RETURN_CALL(BinaryOperation<BinaryOpType::SUB>, *Program::GetInstance().GetCurrentFunction(), self, other);
 }
 
@@ -134,7 +132,6 @@ Tensor Mul(const Tensor& self, const Tensor& other)
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MUL);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "MUL");
-    CheckInt64Broadcast(self.GetStorage(), other.GetStorage(), "MUL");
     RETURN_CALL(BinaryOperation<BinaryOpType::MUL>, *Program::GetInstance().GetCurrentFunction(), self, other);
 }
 
@@ -195,7 +192,6 @@ Tensor Remainder(const Tensor& self, const Tensor& other, PrecisionType precisio
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_REM);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "REM");
-    CheckInt64Broadcast(self.GetStorage(), other.GetStorage(), "REM");
     auto selfDtype = self.GetDataType();
     bool isA5Architecture = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510);
     if ((!isA5Architecture && selfDtype == DT_INT16) || selfDtype == DT_FP16) {
@@ -221,7 +217,6 @@ Tensor Maximum(const Tensor& operand1, const Tensor& operand2)
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MAXIMUM);
     CheckTensorDataTypeCombination({operand1.GetDataType(), operand2.GetDataType()}, combinations, "MAXIMUM");
-    CheckInt64Broadcast(operand1.GetStorage(), operand2.GetStorage(), "MAXIMUM");
     RETURN_CALL(BinaryOperation<BinaryOpType::MAXIMUM>, *Program::GetInstance().GetCurrentFunction(), operand1,
                 operand2);
 }
@@ -234,7 +229,6 @@ Tensor Minimum(const Tensor& operand1, const Tensor& operand2)
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MINIMUM);
     CheckTensorDataTypeCombination({operand1.GetDataType(), operand2.GetDataType()}, combinations, "MINIMUM");
-    CheckInt64Broadcast(operand1.GetStorage(), operand2.GetStorage(), "MINIMUM");
     RETURN_CALL(BinaryOperation<BinaryOpType::MINIMUM>, *Program::GetInstance().GetCurrentFunction(), operand1,
                 operand2);
 }
@@ -288,7 +282,6 @@ Tensor Clip(const Tensor& self, const Tensor& min, const Tensor& max)
         std::vector minBroadcastAxes = GetBroadcastAxes(min.GetShape(), self.GetShape());
         CHECK(VectorErrorCode::ERR_PARAM_INVALID, minBroadcastAxes.size() <= 1)
             << "minBroadcastAxes size should be <= 1";
-        CheckInt64Broadcast(self.GetStorage(), min.GetStorage(), "CLIP");
         result = Maximum(result, min);
     }
     if (max.GetStorage() != nullptr) {
@@ -298,7 +291,6 @@ Tensor Clip(const Tensor& self, const Tensor& min, const Tensor& max)
         std::vector maxBroadcastAxes = GetBroadcastAxes(max.GetShape(), self.GetShape());
         CHECK(VectorErrorCode::ERR_PARAM_INVALID, maxBroadcastAxes.size() <= 1)
             << "maxBroadcastAxes size should be <= 1";
-        CheckInt64Broadcast(self.GetStorage(), max.GetStorage(), "CLIP");
         result = Minimum(result, max);
     }
     result.GetStorage()->UpdateDynValidShape(self.GetStorage()->GetDynValidShape());

@@ -154,7 +154,10 @@ private:
         testCase.opFunc(testCase.inputTensors, nonConstOutputs, testCase.args);
 
         if (testCase.onBoard) {
-            DevFuncRunner::Run(Program::GetInstance().GetLastFunction());
+            DeviceLauncherConfig config;
+            config.runModel = false;
+            config.onBoard = true;
+            DevFuncRunner::Run(Program::GetInstance().GetLastFunction(), config);
         } else {
             config::SetRuntimeOption(CFG_RUN_MODE, CFG_RUN_MODE_SIM);
             CostModelLauncher::CostModelRunOnce(Program::GetInstance().GetLastFunction());

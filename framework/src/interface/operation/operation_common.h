@@ -113,7 +113,6 @@ void CheckTensorsFormatConsistency(const LogicalTensorPtr& tensor1, const Logica
 void CheckTensorsFormatConsistency(const std::vector<LogicalTensorPtr>& tensors, const std::string& opName);
 void CheckBinaryInputTensors(const LogicalTensorPtr& tensor1, const LogicalTensorPtr& tensor2,
                              const std::string& opName);
-void CheckInt64Broadcast(const LogicalTensorPtr& tensor1, const LogicalTensorPtr& tensor2, const std::string& opName);
 
 using TiledFuncType = std::function<void(Function& function, const TileShape& tileShape,
                                          const std::vector<LogicalTensorPtr>& iOperand,
