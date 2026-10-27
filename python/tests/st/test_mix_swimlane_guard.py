@@ -231,6 +231,7 @@ def _run_mix_swimlane_guard_kernel():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)
     pypto.set_debug_options(runtime_debug_mode=1)
+    pypto.set_options(pass_options={"auto_mix_partition": 1})
 
     tiling = 32
     n, k, m = tiling * 8, tiling * 8, tiling * 8
