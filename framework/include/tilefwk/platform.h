@@ -46,6 +46,8 @@ enum class DPlatform {
     KIRIN_9030,
     KIRIN_X90,
     KIRIN_9050,
+    ASCEND_350_355E,
+    ASCEND_350_354F,
 
     UNKNOWN_DEVICE,
 };
@@ -67,6 +69,8 @@ inline DPlatform StringToDPlatform(std::string platform)
         {"Kirin9030", DPlatform::KIRIN_9030},
         {"KirinX90", DPlatform::KIRIN_X90},
         {"Kirin9050", DPlatform::KIRIN_9050},
+        {"Ascend350_355e", DPlatform::ASCEND_350_355E},
+        {"Ascend350_354f", DPlatform::ASCEND_350_354F},
         // Deprecated device_platform formats, kept for compatibility. Legacy values whose names did not
         // match the actual chip bin are mapped to the real soc_version of the ini they used to load:
         // ASCEND_950DT_9579 -> Ascend950DT_9572, ASCEND_950PR_9582 -> Ascend950PR_9589.
@@ -86,6 +90,8 @@ inline DPlatform StringToDPlatform(std::string platform)
         {"KIRIN_9030", DPlatform::KIRIN_9030},
         {"KIRIN_X90", DPlatform::KIRIN_X90},
         {"KIRIN_9050", DPlatform::KIRIN_9050},
+        {"ASCEND_350_355E", DPlatform::ASCEND_350_355E},
+        {"ASCEND_350_354F", DPlatform::ASCEND_350_354F},
     };
 
     if (mappings.count(platform) != 0) {
@@ -443,6 +449,8 @@ inline NPUArch DPlatformToNPUArch(DPlatform platform)
         case DPlatform::ASCEND_950DT_9581X:
         case DPlatform::ASCEND_950DT_9582:
         case DPlatform::ASCEND_950PR_9589:
+        case DPlatform::ASCEND_350_355E:
+        case DPlatform::ASCEND_350_354F:
             return NPUArch::DAV_3510;
         case DPlatform::KIRIN_9030:
             return NPUArch::DAV_3113;

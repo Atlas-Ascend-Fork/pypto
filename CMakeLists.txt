@@ -162,6 +162,8 @@ if (ENABLE_FEATURE_PYTHON_FRONT_END)
                 framework/src/platform/parser/simulation_platform/platform_config/Kirin9030.ini
                 framework/src/platform/parser/simulation_platform/platform_config/KirinX90.ini
                 framework/src/platform/parser/simulation_platform/platform_config/Kirin9050.ini
+                framework/src/platform/parser/simulation_platform/platform_config/Ascend350_355e.ini
+                framework/src/platform/parser/simulation_platform/platform_config/Ascend350_354f.ini
             DESTINATION ${PyPTO_WhlName}/lib/configs
             COMPONENT pypto
     )

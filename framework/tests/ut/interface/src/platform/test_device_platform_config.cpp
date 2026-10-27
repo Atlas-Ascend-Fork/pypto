@@ -59,6 +59,8 @@ TEST_F(TestDevicePlatformConfig, StringToDPlatformAllMappings)
     EXPECT_EQ(StringToDPlatform("Kirin9030"), DPlatform::KIRIN_9030);
     EXPECT_EQ(StringToDPlatform("KirinX90"), DPlatform::KIRIN_X90);
     EXPECT_EQ(StringToDPlatform("Kirin9050"), DPlatform::KIRIN_9050);
+    EXPECT_EQ(StringToDPlatform("Ascend350_355e"), DPlatform::ASCEND_350_355E);
+    EXPECT_EQ(StringToDPlatform("Ascend350_354f"), DPlatform::ASCEND_350_354F);
 }
 
 TEST_F(TestDevicePlatformConfig, StringToDPlatformUnknown)
@@ -78,6 +80,8 @@ TEST_F(TestDevicePlatformConfig, StringToDPlatformLegacyFormatCompat)
     EXPECT_EQ(StringToDPlatform("KIRIN_9050"), DPlatform::KIRIN_9050);
     EXPECT_EQ(StringToDPlatform("ASCEND_910_9363"), DPlatform::ASCEND_910_9363);
     EXPECT_EQ(StringToDPlatform("ASCEND_950DT_9581X"), DPlatform::ASCEND_950DT_9581X);
+    EXPECT_EQ(StringToDPlatform("ASCEND_350_355E"), DPlatform::ASCEND_350_355E);
+    EXPECT_EQ(StringToDPlatform("ASCEND_350_354F"), DPlatform::ASCEND_350_354F);
     // Legacy enum values whose names did not match the actual chip bin.
     EXPECT_EQ(StringToDPlatform("ASCEND_950DT_9579"), DPlatform::ASCEND_950DT_9572);
     EXPECT_EQ(StringToDPlatform("ASCEND_950PR_9582"), DPlatform::ASCEND_950PR_9589);
@@ -96,6 +100,8 @@ TEST_F(TestDevicePlatformConfig, DPlatformToNPUArchMapping)
     EXPECT_EQ(DPlatformToNPUArch(DPlatform::ASCEND_950DT_9581X), NPUArch::DAV_3510);
     EXPECT_EQ(DPlatformToNPUArch(DPlatform::ASCEND_950DT_9582), NPUArch::DAV_3510);
     EXPECT_EQ(DPlatformToNPUArch(DPlatform::ASCEND_950PR_9589), NPUArch::DAV_3510);
+    EXPECT_EQ(DPlatformToNPUArch(DPlatform::ASCEND_350_355E), NPUArch::DAV_3510);
+    EXPECT_EQ(DPlatformToNPUArch(DPlatform::ASCEND_350_354F), NPUArch::DAV_3510);
     EXPECT_EQ(DPlatformToNPUArch(DPlatform::KIRIN_9030), NPUArch::DAV_3113);
     EXPECT_EQ(DPlatformToNPUArch(DPlatform::KIRIN_X90), NPUArch::DAV_3003);
     EXPECT_EQ(DPlatformToNPUArch(DPlatform::KIRIN_9050), NPUArch::DAV_5101);
@@ -140,6 +146,14 @@ TEST_F(TestDevicePlatformConfig, ConfigGetDevicePlatformChain)
     platform = config::GetDevicePlatform();
     EXPECT_EQ(platform, DPlatform::KIRIN_9030);
 
+    config::SetPlatformConfig("device_platform", std::string("Ascend350_355e"));
+    platform = config::GetDevicePlatform();
+    EXPECT_EQ(platform, DPlatform::ASCEND_350_355E);
+
+    config::SetPlatformConfig("device_platform", std::string("Ascend350_354f"));
+    platform = config::GetDevicePlatform();
+    EXPECT_EQ(platform, DPlatform::ASCEND_350_354F);
+
     // Deprecated device_platform formats resolve to the same DPlatform through the in-memory config chain.
     config::SetPlatformConfig("device_platform", std::string("ASCEND_910B2"));
     platform = config::GetDevicePlatform();
@@ -156,6 +170,14 @@ TEST_F(TestDevicePlatformConfig, ConfigGetDevicePlatformChain)
     config::SetPlatformConfig("device_platform", std::string("ASCEND_950DT_9581X"));
     platform = config::GetDevicePlatform();
     EXPECT_EQ(platform, DPlatform::ASCEND_950DT_9581X);
+
+    config::SetPlatformConfig("device_platform", std::string("ASCEND_350_355E"));
+    platform = config::GetDevicePlatform();
+    EXPECT_EQ(platform, DPlatform::ASCEND_350_355E);
+
+    config::SetPlatformConfig("device_platform", std::string("ASCEND_350_354F"));
+    platform = config::GetDevicePlatform();
+    EXPECT_EQ(platform, DPlatform::ASCEND_350_354F);
 }
 
 TEST_F(TestDevicePlatformConfig, ConfigGetDevicePlatformUnknown)
@@ -273,6 +295,46 @@ TEST_F(TestDevicePlatformConfig, INIParserLoadsNew950PR9589Config)
     std::string socVersion;
     EXPECT_TRUE(parser.GetStringVal(version, socVersionInfo, socVersion));
     EXPECT_EQ(socVersion, "Ascend950PR_9589");
+}
+
+TEST_F(TestDevicePlatformConfig, INIParserLoadsNewAscend350355eConfig)
+{
+    INIParser parser("Ascend350_355e");
+
+    size_t memoryLimit;
+    EXPECT_TRUE(parser.GetSizeVal(aiCoreSpec, ubSize, memoryLimit));
+    EXPECT_EQ(memoryLimit, 253952UL);
+
+    EXPECT_TRUE(parser.GetSizeVal(aiCoreSpec, l0cSize, memoryLimit));
+    EXPECT_EQ(memoryLimit, 262144UL);
+
+    std::string archType;
+    EXPECT_TRUE(parser.GetStringVal(version, npuArchInfo, archType));
+    EXPECT_EQ(archType, "3510");
+
+    std::string socVersion;
+    EXPECT_TRUE(parser.GetStringVal(version, socVersionInfo, socVersion));
+    EXPECT_EQ(socVersion, "Ascend350_355e");
+}
+
+TEST_F(TestDevicePlatformConfig, INIParserLoadsNewAscend350354fConfig)
+{
+    INIParser parser("Ascend350_354f");
+
+    size_t memoryLimit;
+    EXPECT_TRUE(parser.GetSizeVal(aiCoreSpec, ubSize, memoryLimit));
+    EXPECT_EQ(memoryLimit, 253952UL);
+
+    EXPECT_TRUE(parser.GetSizeVal(aiCoreSpec, l0cSize, memoryLimit));
+    EXPECT_EQ(memoryLimit, 262144UL);
+
+    std::string archType;
+    EXPECT_TRUE(parser.GetStringVal(version, npuArchInfo, archType));
+    EXPECT_EQ(archType, "3510");
+
+    std::string socVersion;
+    EXPECT_TRUE(parser.GetStringVal(version, socVersionInfo, socVersion));
+    EXPECT_EQ(socVersion, "Ascend350_354f");
 }
 
 TEST_F(TestDevicePlatformConfig, INIParserLoadsNew950DT9581XConfig)
