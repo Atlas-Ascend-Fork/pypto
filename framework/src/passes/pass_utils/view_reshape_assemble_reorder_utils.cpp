@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <unordered_set>
 
 #include "interface/operation/attribute.h"
 #include "interface/operation/attr_holder.h"
@@ -95,10 +96,15 @@ bool HasNegativeDynRawShape(const LogicalTensorPtr& tensor, const SymbolicShape&
 
 bool HasTargetMatmulOp(Function& function)
 {
+    static const std::unordered_set<Opcode> kTargetMatmulOps = {
+        Opcode::OP_A_MUL_B, Opcode::OP_A_MULACC_B,
+        // kirin9050 宏指令落图使用 *_EPILOGUE opcode，需一并匹配，否则该平台不做
+        // view/reshape/assemble 重排，batch（3D/4D）matmul 与其它平台行为不一致。
+        Opcode::OP_A_MUL_B_EPILOGUE, Opcode::OP_A_MULACC_B_EPILOGUE, Opcode::OP_A_MUL_BT_EPILOGUE,
+        Opcode::OP_A_MULACC_BT_EPILOGUE, Opcode::OP_AT_MUL_B_EPILOGUE, Opcode::OP_AT_MUL_BT_EPILOGUE};
     auto opList = function.Operations().DuplicatedOpList();
-    return std::any_of(opList.begin(), opList.end(), [](Operation* op) {
-        return op->GetOpcode() == Opcode::OP_A_MULACC_B || op->GetOpcode() == Opcode::OP_A_MUL_B;
-    });
+    return std::any_of(opList.begin(), opList.end(),
+                       [](Operation* op) { return kTargetMatmulOps.count(op->GetOpcode()) > 0; });
 }
 
 bool CanReorderFunction(Function& function)

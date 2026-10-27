@@ -12,7 +12,7 @@
 Test softmax codegen for Kirin9050
 """
 
-from kirin.common_softmax import (
+from kirin.common.common_softmax import (
     TEST_CASES,
     create_softmax_kernels,
     run_softmax_test,

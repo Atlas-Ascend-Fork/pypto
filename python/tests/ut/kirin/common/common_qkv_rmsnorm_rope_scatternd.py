@@ -10,7 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 
 """
-Test qkv_rmsnorm_rope_scatternd codegen - common functions for Kirin9030 and KirinX90
+Test qkv_rmsnorm_rope_scatternd codegen - common functions for Kirin9030 and Kirin9050
 """
 
 import numpy as np
@@ -308,8 +308,19 @@ def run_qkv_fused_test(
     v_out = torch.empty_like(v_golden).contiguous()
 
     kernels[kernel_name](
-        q_input, k_input, v_input, q_gamma, k_gamma, cos_cache, sin_cache, indices, past_key, past_value,
-        q_out, k_out, v_out,
+        q_input,
+        k_input,
+        v_input,
+        q_gamma,
+        k_gamma,
+        cos_cache,
+        sin_cache,
+        indices,
+        past_key,
+        past_value,
+        q_out,
+        k_out,
+        v_out,
     )
 
     _assert_cos_output(q_out, q_golden, "q_out")

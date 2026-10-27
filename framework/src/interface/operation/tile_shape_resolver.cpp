@@ -394,7 +394,11 @@ TileShape TileShapeResolver::GetInputTileShape(const Operation& op, int index) c
         case Opcode::OP_A_MUL_B:
         case Opcode::OP_A_MUL_BT:
         case Opcode::OP_A_MULACC_B:
-        case Opcode::OP_A_MULACC_BT: {
+        case Opcode::OP_A_MULACC_BT:
+        case Opcode::OP_A_MUL_B_EPILOGUE:
+        case Opcode::OP_A_MUL_BT_EPILOGUE:
+        case Opcode::OP_A_MULACC_B_EPILOGUE:
+        case Opcode::OP_A_MULACC_BT_EPILOGUE: {
             const auto& cubeTile = opTileShape.GetCubeTile();
             auto transA = op.HasAttr(Matrix::A_MUL_B_TRANS_A) && op.GetBoolAttribute(Matrix::A_MUL_B_TRANS_A);
             auto transB = op.HasAttr(Matrix::A_MUL_B_TRANS_B) && op.GetBoolAttribute(Matrix::A_MUL_B_TRANS_B);
@@ -488,7 +492,11 @@ TileShape TileShapeResolver::GetOutputTileShape(const Operation& op, int index) 
         case Opcode::OP_A_MUL_B:
         case Opcode::OP_A_MUL_BT:
         case Opcode::OP_A_MULACC_B:
-        case Opcode::OP_A_MULACC_BT: {
+        case Opcode::OP_A_MULACC_BT:
+        case Opcode::OP_A_MUL_B_EPILOGUE:
+        case Opcode::OP_A_MUL_BT_EPILOGUE:
+        case Opcode::OP_A_MULACC_B_EPILOGUE:
+        case Opcode::OP_A_MULACC_BT_EPILOGUE: {
             // Output C is tiled by the L0 cube tile {m[0], n[0]} (see SetVecTileBasedOnUbSize
             // in cube_operation_impl.cpp), clamped to the actual {M, N}.
             const auto& cubeTile = opTileShape.GetCubeTile();

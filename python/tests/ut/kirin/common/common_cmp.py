@@ -37,10 +37,7 @@ def make_cmp_kernel(soc_version, name, op_name, dtype, tile_shapes):
     """Build a jit kernel that computes ``out = pypto_op(a, b)`` for the given op."""
     pypto_op = CMP_OPS[op_name][0]
 
-    @pypto.frontend.jit(
-        codegen_options={"soc_version": soc_version},
-        runtime_options={"run_mode": pypto.RunMode.SIM}
-    )
+    @pypto.frontend.jit(codegen_options={"soc_version": soc_version}, runtime_options={"run_mode": pypto.RunMode.SIM})
     def kernel(
         a: pypto.Tensor([...], dtype),
         b: pypto.Tensor([...], dtype),
@@ -48,6 +45,7 @@ def make_cmp_kernel(soc_version, name, op_name, dtype, tile_shapes):
     ):
         pypto.set_vec_tile_shapes(*tile_shapes)
         out[:] = pypto_op(a, b)
+
     kernel.__name__ = name
     return kernel
 
@@ -72,7 +70,7 @@ TEST_CASES = [
         (112,),
         None,
         marks=[pytest.mark.skip()],
-        id="001"
+        id="001",
     ),
     pytest.param(
         "eq_kernel_fp16_002",

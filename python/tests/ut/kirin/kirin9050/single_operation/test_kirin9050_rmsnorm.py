@@ -13,7 +13,7 @@
 Test rmsnorm codegen for Kirin9050
 """
 
-from kirin.common_rmsnorm import (
+from kirin.common.common_rmsnorm import (
     TEST_CASES,
     create_rmsnorm_kernels,
     run_rmsnorm_test,

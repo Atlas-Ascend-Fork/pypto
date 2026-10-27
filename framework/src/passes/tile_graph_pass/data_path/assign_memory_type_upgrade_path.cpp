@@ -86,6 +86,10 @@ Status AssignMemoryType::ApplyPlatformPathUpgradeRules(Function& function)
         RETURN_IF_NOT_SUCCESS(ProcessUB2L1SmallToLarge(function));
         RETURN_IF_NOT_SUCCESS(ProcessUB2L1LargeToSmall(function));
     }
+    if (Platform::Instance().GetSoc().IsSupportCubeEpilogue()) {
+        RETURN_IF_NOT_SUCCESS(ProcessL12UBSmallToLarge(function));
+        RETURN_IF_NOT_SUCCESS(ProcessL12UBLargeToSmall(function));
+    }
     RETURN_IF_NOT_SUCCESS(ProcessUB2UBContractSlice(function));
     return SUCCESS;
 }
@@ -402,6 +406,30 @@ Status AssignMemoryType::ProcessL0C2UBLargeToSmall(Function& function)
     return SUCCESS;
 }
 
+Status AssignMemoryType::ProcessL12UBSmallToLarge(Function& function)
+{
+    for (auto& op : function.Operations()) {
+        if (op.GetOpcode() != Opcode::OP_SLICE) {
+            continue;
+        }
+        RETURN_IF_NOT_SUCCESS(TryUpgradeSliceContractPath(op, MemoryType::MEM_L1, MemoryType::MEM_UB,
+                                                          "ProcessL12UBSmallToLarge", false, true, false));
+    }
+    return SUCCESS;
+}
+
+Status AssignMemoryType::ProcessL12UBLargeToSmall(Function& function)
+{
+    for (auto& op : function.Operations()) {
+        if (op.GetOpcode() != Opcode::OP_CONTRACT) {
+            continue;
+        }
+        RETURN_IF_NOT_SUCCESS(TryUpgradeSingleContractSlicePath(op, MemoryType::MEM_L1, MemoryType::MEM_UB,
+                                                                "ProcessL12UBLargeToSmall", false, true, false));
+    }
+    return SUCCESS;
+}
+
 Status AssignMemoryType::ProcessUB2L1SmallToLarge(Function& function)
 {
     for (auto& op : function.Operations()) {
@@ -637,17 +665,22 @@ Status AssignMemoryType::TryUpgradeSliceContractPath(Operation& sliceOp, MemoryT
     if (checkUbTileShape && !MemoryPathUtils::FitsAssembleOutputMemoryLimit(middle, targetType)) {
         return SUCCESS;
     }
+    const bool isLiteNpu = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
     for (auto* producer : middle->GetProducers()) {
         auto input = producer->iOperand.front();
         if (input == nullptr || input->GetMemoryTypeOriginal() != sourceType) {
             return SUCCESS;
         }
         if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_UB &&
-            !inserter.IsL0C2UbSupportedDtype(input)) {
+            !(isLiteNpu ? inserter.IsL0C2UbLiteNPUSupportedDtype(input) : inserter.IsL0C2UbSupportedDtype(input))) {
+            return SUCCESS;
+        }
+        if (isLiteNpu && sourceType == MemoryType::MEM_L1 && targetType == MemoryType::MEM_UB &&
+            !inserter.IsL12UbLiteNPUSupportedDtype(input)) {
             return SUCCESS;
         }
         if (sourceType == MemoryType::MEM_UB && targetType == MemoryType::MEM_L1 &&
-            !inserter.IsUb2L1SupportedDtype(input)) {
+            !(isLiteNpu ? inserter.IsUb2L1LiteNPUSupportedDtype(input) : inserter.IsUb2L1SupportedDtype(input))) {
             return SUCCESS;
         }
         if (requireMatrixShape && input->GetShape().size() != kMatrixShapeDimCount) {
@@ -745,17 +778,24 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
     if (HasParallelDifferentConsumerRequirement(middle, targetType)) {
         return SUCCESS;
     }
+    const bool isLiteNpu = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
     for (auto* producer : middle->GetProducers()) {
         auto producerInput = producer->iOperand.front();
         if (producerInput == nullptr || producerInput->GetMemoryTypeOriginal() != sourceType) {
             return SUCCESS;
         }
         if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_UB &&
-            !inserter.IsL0C2UbSupportedDtype(producerInput)) {
+            !(isLiteNpu ? inserter.IsL0C2UbLiteNPUSupportedDtype(producerInput) :
+                          inserter.IsL0C2UbSupportedDtype(producerInput))) {
+            return SUCCESS;
+        }
+        if (isLiteNpu && sourceType == MemoryType::MEM_L1 && targetType == MemoryType::MEM_UB &&
+            !inserter.IsL12UbLiteNPUSupportedDtype(producerInput)) {
             return SUCCESS;
         }
         if (sourceType == MemoryType::MEM_UB && targetType == MemoryType::MEM_L1 &&
-            !inserter.IsUb2L1SupportedDtype(producerInput)) {
+            !(isLiteNpu ? inserter.IsUb2L1LiteNPUSupportedDtype(producerInput) :
+                          inserter.IsUb2L1SupportedDtype(producerInput))) {
             return SUCCESS;
         }
         if (requireMatrixShape && producerInput->GetShape().size() != kMatrixShapeDimCount) {

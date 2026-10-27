@@ -14,6 +14,7 @@ from typing import Any, Type
 
 from .. import pypto_impl
 from .._op_wrapper import op_wrapper
+from ..config import get_codegen_options
 from ..enum import DataType
 from ..error import PyptoError
 from ..tensor import Tensor
@@ -373,6 +374,14 @@ def __is_a2a3_arch() -> bool:
     return pypto_impl.GetNPUArch() in A2A3_ARCHS
 
 
+def __is_kirin9050_arch() -> bool:
+    codegen_options = get_codegen_options()
+    soc_version = ""
+    if "soc_version" in codegen_options:
+        soc_version = codegen_options["soc_version"]
+    return soc_version == "Kirin9050"
+
+
 def __validate_type(value: Any, expect_type: Type, arg_name: str = "input") -> None:
     if value is None:
         return
@@ -497,11 +506,21 @@ def __has_quant_scale(extend_params) -> bool:
     return extend_params.get('scale_tensor') is not None or extend_params.get('scale', 0.0) != 0.0
 
 
+def __is_out_dtype_allowed(input_dtype, out_dtype, allowed_out) -> bool:
+    # kirin9050 宏指令：f16 输入支持 s32(NoQuant)/fp16/s8 输出，其中 s32 输出无需 quant scale
+    kirin9050_fp16_to_s32 = (
+        input_dtype == pypto_impl.DataType.DT_FP16
+        and out_dtype == pypto_impl.DataType.DT_INT32
+        and __is_kirin9050_arch()
+    )
+    return out_dtype in allowed_out or kirin9050_fp16_to_s32
+
+
 def __validate_out_dtype(input_dtype, out_dtype, extend_params, basic_out_map) -> None:
     if input_dtype not in basic_out_map:
         return
     allowed_out = QUANT_OUT_DTYPES[input_dtype] if __has_quant_scale(extend_params) else basic_out_map[input_dtype]
-    if out_dtype not in allowed_out:
+    if not __is_out_dtype_allowed(input_dtype, out_dtype, allowed_out):
         raise PyptoError(
             0xF00002,
             ValueError(

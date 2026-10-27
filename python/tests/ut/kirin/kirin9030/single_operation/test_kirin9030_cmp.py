@@ -13,7 +13,7 @@
 Test comparison ops (eq/ne/lt/le/gt/ge) codegen for Kirin9030
 """
 
-from kirin.common_cmp import TEST_CASES, create_test_cmp_module, run_cmp_test
+from kirin.common.common_cmp import TEST_CASES, create_test_cmp_module, run_cmp_test
 import pytest
 
 KERNELS, _ = create_test_cmp_module("Kirin9030")

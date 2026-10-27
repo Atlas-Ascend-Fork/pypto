@@ -13,7 +13,7 @@
 Test add codegen for Kirin9050
 """
 
-from kirin.common_add import TEST_CASES, create_test_add_module, run_add_test
+from kirin.common.common_add import TEST_CASES, create_test_add_module, run_add_test
 import pytest
 
 KERNELS, _ = create_test_add_module("Kirin9050")

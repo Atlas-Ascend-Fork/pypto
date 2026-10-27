@@ -13,7 +13,7 @@
 Test assemble codegen for Kirin9030
 """
 
-from kirin.common_assemble import TEST_CASES, create_test_assemble_module, run_assemble_test
+from kirin.common.common_assemble import TEST_CASES, create_test_assemble_module, run_assemble_test
 import pytest
 
 KERNELS, _ = create_test_assemble_module("Kirin9030")

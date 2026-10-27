@@ -12,7 +12,7 @@
 Test pad codegen for Kirin9030
 """
 
-from kirin.common_pad import (
+from kirin.common.common_pad import (
     TEST_CASES,
     create_pad_kernels,
     run_pad_test,

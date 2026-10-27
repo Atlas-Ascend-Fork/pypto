@@ -12,7 +12,7 @@
 Test concat codegen for Kirin9050
 """
 
-from kirin.common_concat import TEST_CASES, create_test_concat_module, run_concat_test
+from kirin.common.common_concat import TEST_CASES, create_test_concat_module, run_concat_test
 import pytest
 
 KERNELS, _ = create_test_concat_module("Kirin9050")

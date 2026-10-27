@@ -140,7 +140,6 @@ void SetAMulBAttr(const MatmulGraphNodes& tensorGraphNodes, const MatmulAttrPara
     op.SetAttribute(A_MUL_B_ACT_N, attrParam.nValue);
     op.SetAttribute(A_MUL_B_GM_ACC, attrParam.gmAccumulationFlag);
     op.SetAttribute(A_MUL_B_TRANS_MODE_ATTR, static_cast<int64_t>(attrParam.transMode));
-
     if (attrParam.isGemv) {
         op.SetAttribute(OpAttributeKey::isGemv, true);
     }
@@ -149,6 +148,23 @@ void SetAMulBAttr(const MatmulGraphNodes& tensorGraphNodes, const MatmulAttrPara
         op.SetAttribute(A_MUL_B_BIAS_ATTR, tensorGraphNodes.biasTensorPtr != nullptr);
         op.SetAttribute(A_MUL_B_RELU_ATTR, static_cast<int64_t>(attrParam.reluType));
         op.SetAttribute(A_MUL_B_SCALE_ATTR, Element(DataType::DT_UINT64, attrParam.scaleValue));
+    } else if (op.GetOpcode() == Opcode::OP_A_MUL_B_EPILOGUE) {
+        // kirin9050 宏指令：bias 仍走 BT 下发，但无 relu/scale 属性（relu 不支持，
+        // quant_pre 复用 scale_tensor，scale 标量恒为 0）
+        op.SetAttribute(A_MUL_B_BIAS_ATTR, tensorGraphNodes.biasTensorPtr != nullptr);
+        // scale_tensor 复用为 quant_pre：只有单 K 片（同时也是末片）才置位。
+        // 多 K 末片的操作数是 {A,B,partial,scale}，置位会被 codegen 绑成
+        // TMatmulQuant(c,a,b,partial,scale)，把 partial 误当 bias；多 K 末片改由
+        // TMatmulMacroAccFromQuant 单独下发 scale（向量档反量化），不依赖本 flag。
+        if (attrParam.hasScale && iterInfo.isFirstK && iterInfo.isLastK) {
+            op.SetAttribute(A_MUL_B_VECTOR_QUANT_FLAG, true);
+        }
+    } else if (op.GetOpcode() == Opcode::OP_A_MULACC_B_EPILOGUE && iterInfo.isLastK &&
+               tensorGraphNodes.outTensorPtr->Datatype() != DataType::DT_INT32) {
+        // kirin9050 宏指令多 K 末片：partial sum(int32) 与输出 dtype 不一致，二者不能复用同一 buffer。
+        // 打上 9050 独有的属性标记，ReplaceTensor 据此跳过 inplace 复用
+        // （中间片 partial(int32)->partial(int32) 同 dtype 仍走 inplace 累加；out 为 int32 时 dtype 一致，正常复用）。
+        op.SetAttribute(OpAttributeKey::partialDtypeMismatch, true);
     } else if (op.GetOpcode() == Opcode::OP_A_MULACC_B && iterInfo.isLastK) {
         op.SetAttribute(A_MUL_B_RELU_ATTR, static_cast<int64_t>(attrParam.reluType));
         if (attrParam.scaleValue != 0) {
@@ -393,6 +409,7 @@ Status CheckCubeTiling(const Tensor& operand1, const Tensor& operand2, const Mat
     if (CheckL1L0Tile(mL0, mL1, "mL0", "mL1") != SUCCESS) {
         return FAILED;
     }
+    // 9050 宏路径按 m0/n0/k0 迭代，A 的 L1 视图按 m0×k0 创建，m1 不参与，故不要求 m1 == m0。
     size_t alignSizeA = GetAlignSize(operand1.GetDataType());
     size_t alignSizeB = GetAlignSize(operand2.GetDataType());
     CHECK(ExternalError::INVALID_TILE, alignSizeA != 0 && alignSizeB != 0)
@@ -617,9 +634,12 @@ void CheckLiteNPUBiasParam(const Tensor& operand2, bool transB, const MatmulExte
         const NPUArch npuArch = Platform::Instance().GetSoc().GetNPUArch();
         DataType expectedBiasType = (npuArch == NPUArch::DAV_3113 || npuArch == NPUArch::DAV_5101) ? DataType::DT_FP16 :
                                                                                                      DataType::DT_FP32;
-        CHECK(ExternalError::INVALID_TYPE, param.biasTensor.GetDataType() == expectedBiasType)
+        // kirin9050 宏指令：bias 一律 s32（累加域为 s32）
+        const bool kirin9050MacroS32Bias = Platform::Instance().GetSoc().IsSupportCubeEpilogue() &&
+                                           param.biasTensor.GetDataType() == DataType::DT_INT32;
+        CHECK(ExternalError::INVALID_TYPE, param.biasTensor.GetDataType() == expectedBiasType || kirin9050MacroS32Bias)
             << "When input tensor is DT_FP16, Kirin bias must be DT_FP16 on Kirin9030/Kirin9050 or DT_FP32 on "
-               "KirinX90, got "
+               "KirinX90 (kirin9050 macro instr accepts DT_INT32), got "
             << DataType2String(param.biasTensor.GetDataType());
     } else if (inDtype == DataType::DT_INT8) {
         CHECK(ExternalError::INVALID_TYPE, param.biasTensor.GetDataType() == DataType::DT_INT32)
@@ -763,11 +783,19 @@ void CheckOperandDtype(DataType outType, const Tensor& operand1, const Tensor& o
         CHECK(ExternalError::INVALID_TYPE, isFp16Input || isInt8Input)
             << "Kirin matmul only supports DT_FP16 or DT_INT8 input, got " << DataType2String(operand1Dtype);
         if (isFp16Input) {
-            CHECK(ExternalError::INVALID_TYPE, outType == DataType::DT_FP16)
-                << "Kirin matmul with DT_FP16 input only supports DT_FP16 output, got " << DataType2String(outType);
+            // kirin9050 宏指令：f16 输入支持 s32(NoQuant)/fp16/s8(ReqS8) 输出
+            CHECK(ExternalError::INVALID_TYPE,
+                  outType == DataType::DT_FP16 || (Platform::Instance().GetSoc().IsSupportCubeEpilogue() &&
+                                                   (outType == DataType::DT_INT32 || outType == DataType::DT_INT8)))
+                << "Kirin matmul with DT_FP16 input only supports DT_FP16 output"
+                << " (kirin9050 macro instr also supports DT_INT32/DT_INT8), got " << DataType2String(outType);
         } else {
-            CHECK(ExternalError::INVALID_TYPE, outType == DataType::DT_INT32)
-                << "Kirin matmul with DT_INT8 input only supports DT_INT32 output, got " << DataType2String(outType);
+            // kirin9050 宏指令 pre-stage quant/dequant：s8 输入支持 fp16(dequant)/int8(requant)/int32 输出
+            CHECK(ExternalError::INVALID_TYPE,
+                  outType == DataType::DT_INT32 || (Platform::Instance().GetSoc().IsSupportCubeEpilogue() &&
+                                                    (outType == DataType::DT_FP16 || outType == DataType::DT_INT8)))
+                << "Kirin matmul with DT_INT8 input only supports DT_INT32 output"
+                << " (kirin9050 macro instr also supports DT_FP16/DT_INT8), got " << DataType2String(outType);
         }
     }
 }
@@ -786,7 +814,9 @@ void CheckLiteNPUMatmulParam(const Tensor& operand1, const Tensor& operand2, con
     CHECK(ExternalError::INVALID_FORMAT, operand2.Format() == TileOpFormat::TILEOP_ND)
         << "Kirin matmul does not support TILEOP_NZ input format.";
     CHECK(ExternalError::INVALID_FORMAT, !attrParam.isCMatrixNZ) << "Kirin matmul does not support c_matrix_nz.";
-    CHECK(ExternalError::INVALID_OPERATION, param.scaleTensor.GetStorage() == nullptr)
+    // kirin9050 宏指令场景 scale_tensor 复用为 quant_pre，其余 LiteNPU 平台不支持 scale_tensor
+    CHECK(ExternalError::INVALID_OPERATION,
+          param.scaleTensor.GetStorage() == nullptr || Platform::Instance().GetSoc().IsSupportCubeEpilogue())
         << "Kirin matmul does not support scale_tensor.";
     CHECK(ExternalError::INVALID_OPERATION, fabs(param.scaleValue) < EPSILON) << "Kirin matmul does not support scale.";
     CHECK(ExternalError::INVALID_OPERATION, param.reluType == ReLuType::NoReLu)
@@ -794,7 +824,6 @@ void CheckLiteNPUMatmulParam(const Tensor& operand1, const Tensor& operand2, con
     CHECK(ExternalError::INVALID_OPERATION, param.transMode == TransMode::CAST_NONE)
         << "Kirin matmul does not support trans_mode.";
 }
-
 Status CheckMatmulOperands(DataType outType, const Tensor& operand1, const Tensor& operand2,
                            const MatmulAttrParam& attrParam, const MatmulExtendParam& param = {})
 {
@@ -1052,18 +1081,24 @@ LogicalTensorPtr LinkTensorA(Function& function, const MatmulGraphNodes& tensorG
                              const MatmulAttrParam& attrParam, const MatmulTileInfo& tileInfo,
                              const MatmulIterInfo& iterInfo, LogicalTensorPtr& aL1TensorPtr)
 {
-    if (iterInfo.kOffset % tileInfo.tileKAL1 == 0) {
-        std::vector<int64_t> aL1Shape = (attrParam.transA) ? std::vector<int64_t>{iterInfo.kAL1Size, iterInfo.mL0Size} :
-                                                             std::vector<int64_t>{iterInfo.mL0Size, iterInfo.kAL1Size};
-        std::vector<int64_t> aL1Offset = (attrParam.transA) ? std::vector<int64_t>{iterInfo.kOffset, iterInfo.mOffset} :
-                                                              std::vector<int64_t>{iterInfo.mOffset, iterInfo.kOffset};
+    // transA with M == 1 is a degenerate transpose: a is (...,K,1) and A is (...,1,K) with the
+    // same linear order. Use the non-transposed tile geometry so the GEMV row-vector path is valid.
+    const bool transAEff = attrParam.transA && (tileInfo.mView != 1);
+    // 宏指令无 L0A：A 的 L1 视图按 m0×k0 逐 k0 片创建，直接供 A_MUL_B_EPILOGUE 使用。
+    const bool isMacroInstrA = Platform::Instance().GetSoc().IsSupportCubeEpilogue();
+    if (iterInfo.kOffset % tileInfo.tileKAL1 == 0 || isMacroInstrA) {
+        int64_t aL1KSize = isMacroInstrA ? iterInfo.kL0Size : iterInfo.kAL1Size;
+        std::vector<int64_t> aL1Shape = (transAEff) ? std::vector<int64_t>{aL1KSize, iterInfo.mL0Size} :
+                                                      std::vector<int64_t>{iterInfo.mL0Size, aL1KSize};
+        std::vector<int64_t> aL1Offset = (transAEff) ? std::vector<int64_t>{iterInfo.kOffset, iterInfo.mOffset} :
+                                                       std::vector<int64_t>{iterInfo.mOffset, iterInfo.kOffset};
         MatmulTensorInfo aL1TensorInfo{
             "aL1Tensor",     tensorGraphNodes.aTensorPtr->Datatype(), aL1Shape,          aL1Offset,
             NodeType::LOCAL, tensorGraphNodes.aTensorPtr->Format(),   MemoryType::MEM_L1};
         // 根据是否使用了MXScale标志来决定Padding模式
         int64_t paddingMode = attrParam.hasMXScale ? static_cast<int64_t>(PaddingMode::MX_PADDING_MODE) : 0;
         // K维度在dynValidShape中的索引：transA时K在第0维，非transA时K在第1维
-        int64_t kIndex = attrParam.transA ? 0 : 1;
+        int64_t kIndex = transAEff ? 0 : 1;
         std::map<std::string, int64_t> l1OpAttr = {{COPY_IN_L1_PADDING_MODE, paddingMode},
                                                    {COPY_IN_L1_K_INDEX, kIndex}};
         if (attrParam.isGemv) {
@@ -1072,11 +1107,14 @@ LogicalTensorPtr LinkTensorA(Function& function, const MatmulGraphNodes& tensorG
         }
         aL1TensorPtr = AddOpView<int64_t, int64_t>(function, tensorGraphNodes.aTensorPtr, aL1TensorInfo, l1OpAttr);
     }
-    std::vector<int64_t> aL0Shape = (attrParam.transA) ? std::vector<int64_t>{iterInfo.kL0Size, iterInfo.mL0Size} :
-                                                         std::vector<int64_t>{iterInfo.mL0Size, iterInfo.kL0Size};
-    std::vector<int64_t> aL0Offset = (attrParam.transA) ?
-                                         std::vector<int64_t>{iterInfo.kOffset % tileInfo.tileKAL1, 0} :
-                                         std::vector<int64_t>{0, iterInfo.kOffset % tileInfo.tileKAL1};
+    std::vector<int64_t> aL0Shape = (transAEff) ? std::vector<int64_t>{iterInfo.kL0Size, iterInfo.mL0Size} :
+                                                  std::vector<int64_t>{iterInfo.mL0Size, iterInfo.kL0Size};
+    std::vector<int64_t> aL0Offset = (transAEff) ? std::vector<int64_t>{iterInfo.kOffset % tileInfo.tileKAL1, 0} :
+                                                   std::vector<int64_t>{0, iterInfo.kOffset % tileInfo.tileKAL1};
+    // 宏指令直接复用上面按 k0 创建的 aL1，不再生成 L1→L0A 搬运。
+    if (Platform::Instance().GetSoc().IsSupportCubeEpilogue()) {
+        return aL1TensorPtr;
+    }
     MatmulTensorInfo aL0TensorInfo{"aL0Tensor",
                                    tensorGraphNodes.aTensorPtr->Datatype(),
                                    aL0Shape,
@@ -1084,14 +1122,14 @@ LogicalTensorPtr LinkTensorA(Function& function, const MatmulGraphNodes& tensorG
                                    NodeType::LOCAL,
                                    tensorGraphNodes.aTensorPtr->Format(),
                                    MemoryType::MEM_L0A,
-                                   attrParam.transA};
+                                   transAEff};
     std::vector<SymbolicScalar> l1ToL0Offset = SymbolicScalar::FromConcrete(aL0Offset);
     std::vector<SymbolicScalar> l1ToL0Tile = SymbolicScalar::FromConcrete(aL0Shape);
     LogicalTensorPtr aL0TensorPtr = AddOpView<bool, std::vector<SymbolicScalar>>(
         function, aL1TensorPtr, aL0TensorInfo,
-        {{L1_TO_L0_TRANSPOSE, attrParam.transA}, {A_MUL_B_MX_ATTR, attrParam.hasMXScale}},
+        {{L1_TO_L0_TRANSPOSE, transAEff}, {A_MUL_B_MX_ATTR, attrParam.hasMXScale}},
         {{L1_TO_L0_OFFSET, l1ToL0Offset}, {L1_TO_L0_TILE, l1ToL0Tile}});
-    // GEMV A 设 isGemv：transA 不支持 GEMV，源头已保证 isGemv 仅非 transA
+    // GEMV A 设 isGemv（M==1；含 transA 的退化情形，见 AddAMulBNode 的 GEMV 判定）
     if (attrParam.isGemv) {
         auto& viewOp = *aL0TensorPtr->GetProducers().begin();
         viewOp->SetAttribute(OpAttributeKey::isGemv, static_cast<int64_t>(1));
@@ -1224,7 +1262,9 @@ void LinkAMulB(Function& function, const MatmulGraphNodes& tensorGraphNodes, con
         << "Inputs must be non-nullptr.";
     std::vector<LogicalTensorPtr> aMulBInputs;
     std::vector<LogicalTensorPtr> aMulBOutputs;
-    const std::string matmulOpStr = iterInfo.isFirstK ? "TILE_A_MUL_B" : "TILE_A_MULACC_B";
+    const bool isMacroInstr = Platform::Instance().GetSoc().IsSupportCubeEpilogue();
+    const std::string matmulOpStr = iterInfo.isFirstK ? (isMacroInstr ? "TILE_A_MUL_B_EPILOGUE" : "TILE_A_MUL_B") :
+                                                        (isMacroInstr ? "TILE_A_MULACC_B_EPILOGUE" : "TILE_A_MULACC_B");
     if (iterInfo.isFirstK) {
         aMulBInputs = {tileGraphNodes.aTensorPtr, tileGraphNodes.bTensorPtr};
     } else {
@@ -1256,9 +1296,14 @@ void LinkAMulB(Function& function, const MatmulGraphNodes& tensorGraphNodes, con
     }
     if (iterInfo.isLastK) {
         aMulBOutputs = {tileGraphNodes.outTensorPtr};
+
     } else {
-        tileGraphNodes.cL0PartialSumPtr = std::make_shared<LogicalTensor>(
-            function, tileGraphNodes.outTensorPtr->Datatype(), tileGraphNodes.outTensorPtr->GetShape());
+        // kirin9050 宏指令多 K 片：中间片的 partial sum 必须是 int32 累加器。
+        // 指令契约（pto-isa RunTMATMUL_SPLIT_K）：K 中间片累加在 int32 acc（biasAddr/acc 为 int32），
+        // 末片再从 int32 acc 转到 out dtype；此前用 out dtype(fp16) 当累加器导致多 K 片输出错误。
+        DataType partialDtype = isMacroInstr ? DataType::DT_INT32 : tileGraphNodes.outTensorPtr->Datatype();
+        tileGraphNodes.cL0PartialSumPtr = std::make_shared<LogicalTensor>(function, partialDtype,
+                                                                          tileGraphNodes.outTensorPtr->GetShape());
         if (CheckValidShape(tileGraphNodes.aTensorPtr) && CheckValidShape(tileGraphNodes.bTensorPtr)) {
             tileGraphNodes.cL0PartialSumPtr->UpdateDynValidShape(
                 {tileGraphNodes.aTensorPtr->GetDynValidShape()[0], tileGraphNodes.bTensorPtr->GetDynValidShape()[1]});
@@ -1282,10 +1327,28 @@ void UpdateIterInfo(const MatmulTileInfo& tileInfo, MatmulIterInfo& iterInfo)
         << ", tileKBL1: " << tileInfo.tileKBL1;
 }
 
+void ConstructTileGraphImpl(Function& function, const TileShape& tileShape,
+                            const std::vector<LogicalTensorPtr>& operandVec, const LogicalTensorPtr& cTensorPtr,
+                            const Operation& op, bool isMacroInstr);
+
 void ConstructTileGraph(Function& function, const TileShape& tileShape, const std::vector<LogicalTensorPtr>& operandVec,
                         const LogicalTensorPtr& cTensorPtr, const Operation& op)
 {
-    MATMUL_LOGD("ConstructTileGraph: Start.");
+    ConstructTileGraphImpl(function, tileShape, operandVec, cTensorPtr, op, false);
+}
+
+void ConstructTileGraphMacroInstr(Function& function, const TileShape& tileShape,
+                                  const std::vector<LogicalTensorPtr>& operandVec, const LogicalTensorPtr& cTensorPtr,
+                                  const Operation& op)
+{
+    ConstructTileGraphImpl(function, tileShape, operandVec, cTensorPtr, op, true);
+}
+
+void ConstructTileGraphImpl(Function& function, const TileShape& tileShape,
+                            const std::vector<LogicalTensorPtr>& operandVec, const LogicalTensorPtr& cTensorPtr,
+                            const Operation& op, bool isMacroInstr)
+{
+    MATMUL_LOGD("ConstructTileGraph: Start. isMacroInstr=%d", isMacroInstr);
     MatmulAttrParam attrParam;
     SetMatmulAttrParam(op, attrParam);
     // tensor graph中的数据节点
@@ -1370,12 +1433,18 @@ void AddAMulBNode(const MatmulGraphNodes& tensorGraphNodes, const MatmulAttrPara
     Function* functionPtr = Program::GetInstance().GetCurrentFunction();
 
     ASSERT(MatmulErrorCode::ERR_RUNTIME_NULLPTR, functionPtr != nullptr) << "functionPtr is nullptr.";
-    auto& op = functionPtr->AddOperation(Opcode::OP_A_MUL_B, operandVec, {tensorGraphNodes.outTensorPtr});
+    // kirin9050 宏指令：tensor graph 落图使用宏指令 opcode（输入 L1/输出 L1 内存模型）
+    Opcode matmulOpCode = Platform::Instance().GetSoc().IsSupportCubeEpilogue() ? Opcode::OP_A_MUL_B_EPILOGUE :
+                                                                                  Opcode::OP_A_MUL_B;
+    auto& op = functionPtr->AddOperation(matmulOpCode, operandVec, {tensorGraphNodes.outTensorPtr});
     SetTensorGraphAttr(op, extendParam, gmAccumulationFlag, attrParam);
-    // GEMV：非 transA 且 M==1；transA 退化普通 matmul
-    if (IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch()) && !attrParam.transA) {
+    // GEMV（M==1，含 transA 退化情形）：kirin9050 宏指令禁用，M==1 走通用 TMATMUL 路径。
+    if (IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch()) &&
+        !Platform::Instance().GetSoc().IsSupportCubeEpilogue() &&
+        tensorGraphNodes.aTensorPtr->GetShape().size() >= SHAPE_DIM2) {
         const auto& aShape = tensorGraphNodes.aTensorPtr->GetShape();
-        if (aShape.size() >= SHAPE_DIM2 && aShape[aShape.size() - SHAPE_DIM2] == 1) {
+        const int64_t mDim = attrParam.transA ? aShape.back() : aShape[aShape.size() - SHAPE_DIM2];
+        if (mDim == 1) {
             op.SetAttribute(OpAttributeKey::isGemv, true);
         }
     }

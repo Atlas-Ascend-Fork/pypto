@@ -13,7 +13,7 @@
 Test silu_mul codegen for Kirin9030
 """
 
-from kirin.common_silu_mul import (
+from kirin.common.common_silu_mul import (
     TEST_CASES,
     create_silu_mul_kernels,
     run_silu_mul_test,

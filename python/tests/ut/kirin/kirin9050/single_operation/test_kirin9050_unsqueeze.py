@@ -12,7 +12,7 @@
 Test unsqueeze codegen for Kirin9050
 """
 
-from kirin.common_unsqueeze import (
+from kirin.common.common_unsqueeze import (
     TEST_CASES,
     create_unsqueeze_kernels,
     run_unsqueeze_test,

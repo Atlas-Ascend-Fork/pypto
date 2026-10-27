@@ -2154,6 +2154,10 @@ void ExpandOperationInto(Function& function, const TileShape& tileShape, Opcode 
             Matrix::ConstructTileGraph(function, tileShape, iOperand, oOperand[0], op);
             break;
         }
+        case Opcode::OP_A_MUL_B_EPILOGUE: {
+            Matrix::ConstructTileGraphMacroInstr(function, tileShape, iOperand, oOperand[0], op);
+            break;
+        }
         case Opcode::OP_CONV2D:
         case Opcode::OP_CONV3D: {
             Conv::ConstructTileGraph(function, tileShape, iOperand, oOperand[0], op);

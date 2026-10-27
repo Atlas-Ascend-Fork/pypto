@@ -13,7 +13,7 @@
 Test abs codegen for KirinX90
 """
 
-from kirin.common_abs import TEST_CASES, create_test_abs_module
+from kirin.common.common_abs import TEST_CASES, create_test_abs_module
 import pytest
 
 KERNELS, _ = create_test_abs_module("KirinX90")
@@ -24,7 +24,7 @@ KERNELS, _ = create_test_abs_module("KirinX90")
     TEST_CASES,
 )
 def test_abs(kernel_name, torch_dtype, pypto_dtype, tile_shapes, shape):
-    from kirin.common_abs import run_abs_test
+    from kirin.common.common_abs import run_abs_test
 
     run_abs_test(KERNELS, kernel_name, torch_dtype, shape)
 

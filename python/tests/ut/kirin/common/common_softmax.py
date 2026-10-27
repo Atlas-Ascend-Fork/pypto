@@ -47,31 +47,13 @@ TEST_CASES = [
     # - tile_shapes: tile shape for pypto kernel
     # - shape: input tensor shape
     pytest.param(
-        "softmax_kernel_fp16_001",
-        torch.float16,
-        pypto.DT_FP16,
-        (64,),
-        (112,),
-        marks=[pytest.mark.skip()],
-        id="001"
+        "softmax_kernel_fp16_001", torch.float16, pypto.DT_FP16, (64,), (112,), marks=[pytest.mark.skip()], id="001"
     ),
     pytest.param(
-        "softmax_kernel_fp16_002",
-        torch.float16,
-        pypto.DT_FP16,
-        (128,),
-        (100,),
-        marks=[pytest.mark.skip()],
-        id="002"
+        "softmax_kernel_fp16_002", torch.float16, pypto.DT_FP16, (128,), (100,), marks=[pytest.mark.skip()], id="002"
     ),
     pytest.param(
-        "softmax_kernel_fp16_003",
-        torch.float16,
-        pypto.DT_FP16,
-        (2, 32),
-        (4, 128),
-        marks=[pytest.mark.skip()],
-        id="003"
+        "softmax_kernel_fp16_003", torch.float16, pypto.DT_FP16, (2, 32), (4, 128), marks=[pytest.mark.skip()], id="003"
     ),
     pytest.param(
         "softmax_kernel_fp16_004",
@@ -309,8 +291,9 @@ def run_softmax_test(kernels, kernel_name, dtype, shape):
     kernels[kernel_name](input_, output)
 
     if dtype == torch.float16:
-        assert not generated_cpp_contains("float", expect_absent=True), \
+        assert not generated_cpp_contains("float", expect_absent=True), (
             f"{kernel_name}: generated cpp unexpectedly contains 'float'"
+        )
 
     expect = torch.softmax(input_, dim=-1)
     check_nan(output, name=kernel_name)

@@ -2501,7 +2501,7 @@ TEST_F(AssignMemoryTypeTest, TestL12UBPatternKirin9050)
     G.AddTensor(DataType::DT_FP16, reshapeShape, MemoryType::MEM_UNKNOWN, "slice_out");
     G.AddTensor(DataType::DT_FP16, reshapeShape, MemoryType::MEM_UNKNOWN, "exp_out");
 
-    G.AddOp(Opcode::OP_A_MUL_B, {"input_a", "input_b"}, {"matmul_out"}, "matmul");
+    G.AddOp(Opcode::OP_A_MUL_B_EPILOGUE, {"input_a", "input_b"}, {"matmul_out"}, "matmul");
     G.AddOp(Opcode::OP_CONTRACT, {"matmul_out"}, {"contract_out"}, "contract");
     G.GetOp("contract")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{0, 0}));
     G.AddOp(Opcode::OP_RESHAPE, {"contract_out"}, {"reshape_out"}, "reshape");

@@ -13,7 +13,7 @@
 Test mul codegen for KirinX90
 """
 
-from kirin.common_mul import TEST_CASES, create_test_mul_module, run_mul_test
+from kirin.common.common_mul import TEST_CASES, create_test_mul_module, run_mul_test
 import pytest
 
 KERNELS, _ = create_test_mul_module("KirinX90")

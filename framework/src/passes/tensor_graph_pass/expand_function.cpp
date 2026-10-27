@@ -351,9 +351,12 @@ std::unordered_set<Operation*> CollectAssembleGatherInL1SrcSkipExpandOps(
 
 bool IsMatmulOpcode(Opcode opcode)
 {
-    static const std::unordered_set<Opcode> kMatmulOps = {Opcode::OP_A_MUL_B,  Opcode::OP_A_MULACC_B,
-                                                          Opcode::OP_A_MUL_BT, Opcode::OP_A_MULACC_BT,
-                                                          Opcode::OP_AT_MUL_B, Opcode::OP_AT_MUL_BT};
+    static const std::unordered_set<Opcode> kMatmulOps = {Opcode::OP_A_MUL_B,           Opcode::OP_A_MULACC_B,
+                                                          Opcode::OP_A_MUL_BT,          Opcode::OP_A_MULACC_BT,
+                                                          Opcode::OP_AT_MUL_B,          Opcode::OP_AT_MUL_BT,
+                                                          Opcode::OP_A_MUL_B_EPILOGUE,  Opcode::OP_A_MULACC_B_EPILOGUE,
+                                                          Opcode::OP_A_MUL_BT_EPILOGUE, Opcode::OP_A_MULACC_BT_EPILOGUE,
+                                                          Opcode::OP_AT_MUL_B_EPILOGUE, Opcode::OP_AT_MUL_BT_EPILOGUE};
     return kMatmulOps.count(opcode) > 0;
 }
 

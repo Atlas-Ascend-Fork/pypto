@@ -56,24 +56,10 @@ TEST_CASES = [
     # has_gamma: whether to use gamma parameter
     # marks: pytest marks
     pytest.param(
-        "rmsnorm_kernel_001",
-        torch.float16,
-        pypto.DT_FP16,
-        (32,),
-        (32,),
-        False,
-        marks=[pytest.mark.skip()],
-        id="001"
+        "rmsnorm_kernel_001", torch.float16, pypto.DT_FP16, (32,), (32,), False, marks=[pytest.mark.skip()], id="001"
     ),
     pytest.param(
-        "rmsnorm_kernel_002",
-        torch.float16,
-        pypto.DT_FP16,
-        (96,),
-        (96,),
-        False,
-        marks=[pytest.mark.skip()],
-        id="002"
+        "rmsnorm_kernel_002", torch.float16, pypto.DT_FP16, (96,), (96,), False, marks=[pytest.mark.skip()], id="002"
     ),
     pytest.param(
         "rmsnorm_kernel_003",
@@ -469,8 +455,9 @@ def run_rmsnorm_test(kernels, kernel_name, dtype, shape, has_gamma):
         golden = _compute_golden_rmsnorm(a)
 
     if dtype == torch.float16:
-        assert not generated_cpp_contains("float", expect_absent=True), \
+        assert not generated_cpp_contains("float", expect_absent=True), (
             f"{kernel_name}: generated cpp unexpectedly contains 'float'"
+        )
 
     check_nan(out, name=kernel_name)
     cos_val = abs(compare_cos(out.numpy(), golden.numpy()))

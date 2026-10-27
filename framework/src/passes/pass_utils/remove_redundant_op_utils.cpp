@@ -42,10 +42,14 @@ bool IsAssembleLikeOpcode(Opcode opcode) { return opcode == Opcode::OP_ASSEMBLE 
 
 bool IsMatmulOpcode(Opcode opcode)
 {
-    static const std::unordered_set<Opcode> kMatmulOps = {Opcode::OP_A_MUL_B,  Opcode::OP_A_MULACC_B,
-                                                          Opcode::OP_A_MUL_BT, Opcode::OP_A_MULACC_BT,
-                                                          Opcode::OP_AT_MUL_B, Opcode::OP_AT_MUL_BT};
-    return kMatmulOps.count(opcode) > 0;
+    static const std::unordered_set<Opcode> kBaseMatmulOps = {Opcode::OP_A_MUL_B,  Opcode::OP_A_MULACC_B,
+                                                              Opcode::OP_A_MUL_BT, Opcode::OP_A_MULACC_BT,
+                                                              Opcode::OP_AT_MUL_B, Opcode::OP_AT_MUL_BT};
+    // kirin9050 宏指令落图使用 *_EPILOGUE opcode，与通用 matmul opcode 一并纳入判定。
+    static const std::unordered_set<Opcode> kMatmulEpilogueOps = {
+        Opcode::OP_A_MUL_B_EPILOGUE,     Opcode::OP_A_MULACC_B_EPILOGUE, Opcode::OP_A_MUL_BT_EPILOGUE,
+        Opcode::OP_A_MULACC_BT_EPILOGUE, Opcode::OP_AT_MUL_B_EPILOGUE,   Opcode::OP_AT_MUL_BT_EPILOGUE};
+    return kBaseMatmulOps.count(opcode) > 0 || kMatmulEpilogueOps.count(opcode) > 0;
 }
 
 bool IsL0CLayoutProducer(Opcode opcode) { return IsMatmulOpcode(opcode) || opcode == Opcode::OP_TRANS_FORMAT_L0C; }

@@ -24,6 +24,14 @@ const int RUNTIME_COA_IDX = 3;
 // ensure funcType is static, and isUnderDynamicFunc is false
 CodeGenOpLiteNPU::CodeGenOpLiteNPU(const CodeGenOpNPUCtx& ctx) : CodeGenOpNPU(ctx), subFunc(ctx.subFunc)
 {
+    mteFixPipeOps_.insert({Opcode::OP_L1_COPY_UB, [this]() { return GenL1ToUBTileTensor(); }});
+    // kirin9050 matmul 宏指令 opcode 仅在 litenpu codegen 中注册，实现见 litenpu/codegen_cube_litenpu.cpp
+    cubeOps_.insert({Opcode::OP_A_MUL_B_EPILOGUE, [this]() { return GenCubeOpMatmul(); }});
+    cubeOps_.insert({Opcode::OP_A_MUL_BT_EPILOGUE, [this]() { return GenCubeOpMatmul(); }});
+    cubeOps_.insert({Opcode::OP_AT_MUL_B_EPILOGUE, [this]() { return GenCubeOpMatmul(); }});
+    cubeOps_.insert({Opcode::OP_AT_MUL_BT_EPILOGUE, [this]() { return GenCubeOpMatmul(); }});
+    cubeOps_.insert({Opcode::OP_A_MULACC_B_EPILOGUE, [this]() { return GenCubeOpMatmulAcc(); }});
+    cubeOps_.insert({Opcode::OP_A_MULACC_BT_EPILOGUE, [this]() { return GenCubeOpMatmulAcc(); }});
     InitOpsGenMap();
     forBlkMgr_ = ctx.forBlockManager;
     CodeGenOp::Init(ctx.operation);
@@ -228,15 +236,35 @@ std::vector<SymbolicScalar> CodeGenOpLiteNPU::GetOffsetFromAttr(int idx) const
 void CodeGenOpLiteNPU::UpdateGemvTileOpName()
 {
     auto it = opAttrs.find(OpAttributeKey::isGemv);
-    if (it == opAttrs.end()) {
-        return;
-    }
     bool isGemv = false;
-    if (it->second.type() == typeid(bool)) {
-        isGemv = AnyCast<bool>(it->second);
-    } else if (it->second.type() == typeid(int64_t)) {
-        isGemv = AnyCast<int64_t>(it->second) != 0;
-    } else {
+    if (it != opAttrs.end()) {
+        if (it->second.type() == typeid(bool)) {
+            isGemv = AnyCast<bool>(it->second);
+        } else if (it->second.type() == typeid(int64_t)) {
+            isGemv = AnyCast<int64_t>(it->second) != 0;
+        }
+    }
+    // kirin9050 宏指令 pre-stage quant：scale_tensor（vector_quant_flag）复用为 quant_pre，
+    // 量化场景使用独立的 TMatmulQuant/TGemvQuant tileop
+    // （对接 pto-isa MatmulMacroConfig 重载，删减 kirin 不需要的 transMode/kAlignFlag 模板参数）
+    bool hasQuantPre = false;
+    auto quantIt = opAttrs.find(OP_ATTR_PREFIX + "vector_quant_flag");
+    if (quantIt != opAttrs.end()) {
+        if (quantIt->second.type() == typeid(bool)) {
+            hasQuantPre = AnyCast<bool>(quantIt->second);
+        } else if (quantIt->second.type() == typeid(int64_t)) {
+            hasQuantPre = AnyCast<int64_t>(quantIt->second) != 0;
+        }
+    }
+    if (hasQuantPre) {
+        switch (opCode) {
+            case Opcode::OP_A_MUL_B_EPILOGUE:
+            case Opcode::OP_A_MULACC_B_EPILOGUE:
+                tileOpName = isGemv ? "TGemvQuant" : "TMatmulQuant";
+                break;
+            default:
+                break;
+        }
         return;
     }
     if (!isGemv) {
@@ -245,6 +273,8 @@ void CodeGenOpLiteNPU::UpdateGemvTileOpName()
     switch (opCode) {
         case Opcode::OP_A_MUL_B:
         case Opcode::OP_A_MULACC_B:
+        case Opcode::OP_A_MUL_B_EPILOGUE:
+        case Opcode::OP_A_MULACC_B_EPILOGUE:
             tileOpName = "TGEMV";
             break;
         case Opcode::OP_L1_TO_L0A:

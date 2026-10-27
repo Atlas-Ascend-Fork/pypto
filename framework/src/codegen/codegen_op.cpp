@@ -272,7 +272,8 @@ void CodeGenOp::UpdateScalarValue(const Operation& ops)
 bool ShouldSkipIOperand(const std::shared_ptr<LogicalTensor>& tensor, const Operation& ops)
 {
     Opcode opcode = ops.GetOpcode();
-    if (opcode == Opcode::OP_A_MUL_B || opcode == Opcode::OP_A_MULACC_B) {
+    if (opcode == Opcode::OP_A_MUL_B || opcode == Opcode::OP_A_MULACC_B || opcode == Opcode::OP_A_MUL_B_EPILOGUE ||
+        opcode == Opcode::OP_A_MULACC_B_EPILOGUE) {
         bool isAcc = false;
         ops.GetAttr(OP_ATTR_PREFIX + "gm_acc", isAcc);
         return isAcc && tensor->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR;

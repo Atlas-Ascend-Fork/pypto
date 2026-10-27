@@ -10,7 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 
 """
-Test silu_mul codegen - common functions for Kirin9030 and KirinX90
+Test silu_mul codegen - common functions for Kirin9030 and Kirin9050
 """
 
 import numpy as np
@@ -86,10 +86,7 @@ def run_silu_mul_test(kernels, kernel_name, dtype, shape):
 
 
 def create_silu_mul_kernels(soc_version):
-    return {
-        p.values[0]: make_silu_mul_kernel(soc_version, p.values[0], p.values[2], p.values[3])
-        for p in TEST_CASES
-    }
+    return {p.values[0]: make_silu_mul_kernel(soc_version, p.values[0], p.values[2], p.values[3]) for p in TEST_CASES}
 
 
 if __name__ == "__main__":

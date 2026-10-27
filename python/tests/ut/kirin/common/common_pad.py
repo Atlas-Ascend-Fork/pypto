@@ -651,9 +651,7 @@ def run_pad_test(kernels, kernel_name, dtype, in_shape, padding, pad_value):
 
 def create_pad_kernels(soc_version):
     return {
-        p.values[0]: _make_pad_kernel(
-            soc_version, p.values[0], p.values[2], p.values[3], p.values[5], p.values[6]
-        )
+        p.values[0]: _make_pad_kernel(soc_version, p.values[0], p.values[2], p.values[3], p.values[5], p.values[6])
         for p in TEST_CASES
     }
 

@@ -26,6 +26,11 @@
 #include "impl/gather_in_l1_impl.h"
 #include "impl/mmad_impl.h"
 
+#ifdef __LITE_NPU
+#include "impl/litenpu/copy_l1_to_gm_impl.h"
+#include "impl/litenpu/copy_l1_to_ub_impl.h"
+#endif
+
 // Operator Header File for Ascend 950PR/Ascend 950DT Architectures, Enabled Only When PTO_NPU_ARCH_A5 Macro is Defined.
 #if defined(PTO_NPU_ARCH_A5) || defined(__LITE_NPU)
 #include "impl/arch35/copy_gm_to_l1_mx_impl.h"
@@ -162,6 +167,21 @@ TILEOP void TCopyL0C2UB(DstTileTensor& dst, SrcTileTensor& src, FbTileTensor& fi
     TCopyL0C2UBImpl<config, mode, dualDstMode, Coord, DstTileTensor, SrcTileTensor, FbTileTensor>(
         dst, src, fixbuf, dstCoord, srcCoord, subblockId, scaleValue);
 }
+
+#ifdef __LITE_NPU
+// Copy data from L1 to UB (kirin matmul 宏指令输出驻留 L1，无 L0C/quant/dualdst)
+template <CopyMode mode, typename Coord, typename DstTileTensor, typename SrcTileTensor>
+TILEOP void TCopyL12UB(DstTileTensor& dst, SrcTileTensor& src, const Coord& dstCoord, const Coord& srcCoord)
+{
+    if (!CheckShapeValid(dst, src)) {
+        return;
+    }
+    constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileTensor::Shape>::value;
+    static_assert(shapeSize == SHAPE_DIM2 && Std::tuple_size<Coord>::value == SHAPE_DIM2, "Shape Size should be 2 Dim");
+    static_assert(DstTileTensor::FORMAT == Hardware::UB && SrcTileTensor::FORMAT == Hardware::L1);
+    TCopyL12UBImpl<mode, Coord, DstTileTensor, SrcTileTensor>(dst, src, dstCoord, srcCoord);
+}
+#endif
 
 template <bool initMatrixC, typename TileRes, typename TileLeft, typename TileLeftScale, typename TileRight,
           typename TileRightScale>
@@ -384,12 +404,23 @@ TILEOP void TStore(GlobalData& dst, TileData& src, FpTileData& fixbuf, const Coo
     }
 }
 
-// L1 spill(Only used in deepseek model)
-// When L1 space is insufficient, spill to GM. (Supported on A2/A3 only.)
+// L1 -> GM: LiteNPU 侧 L1 驻留 cube 输出（kirin9050 无 L0C）直接 TSTORE(Mat) NZ2ND 落盘；
+// A2/A3 等其余架构保持 L1 spill 兜底路径（deepseek model only）。
 template <typename config, typename Coord, typename GlobalData, typename TileData>
 TILEOP void TStore(GlobalData& dst, TileData& src, const Coord& coord)
 {
+#if defined(__LITE_NPU)
+    if constexpr (TileData::FORMAT == Hardware::L1 && GlobalData::FORMAT == Hardware::GM) {
+        static_assert(Std::tuple_size<Coord>::value == SHAPE_DIM2, "L1->GM store coord must be 2-dim.");
+        int64_t offset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM2, 0>(coord);
+        int64_t offset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(coord);
+        TStoreL1MatNz2Nd<config, GlobalData, TileData>(dst, src, offset0, offset1);
+    } else {
+        TStoreL1SpillImpl<config>(dst, src, coord);
+    }
+#else
     TStoreL1SpillImpl<config>(dst, src, coord);
+#endif
 }
 
 template <int64_t blockSize, typename TileData, typename GlobalData, typename BlockT, typename OffsetT,

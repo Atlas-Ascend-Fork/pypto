@@ -12,7 +12,7 @@
 Test exp codegen for KirinX90
 """
 
-from kirin.common_exp import TEST_CASES, create_test_exp_module, run_exp_test
+from kirin.common.common_exp import TEST_CASES, create_test_exp_module, run_exp_test
 import pytest
 
 KERNELS, _ = create_test_exp_module("KirinX90")

@@ -606,9 +606,7 @@ def run_assemble_test(kernels, kernel_name, dtype, input_shape, output_shape, of
 
 def _compute_input2_shape(kernel_name, input_shape, output_shape, offsets1, offsets2):
     if "multi_shape" in kernel_name:
-        return tuple(
-            max(offsets1[d] + input_shape[d], offsets2[d] + output_shape[d]) for d in range(len(input_shape))
-        )
+        return tuple(max(offsets1[d] + input_shape[d], offsets2[d] + output_shape[d]) for d in range(len(input_shape)))
     return input_shape
 
 

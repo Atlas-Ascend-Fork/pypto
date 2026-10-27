@@ -262,7 +262,7 @@ Status GenerateMoveOp::ProcessDefault(Function& function, Operation& op, ViewOpA
         SetL0C2L1CopyAttr(op, op.GetOOperands()[0]->GetShape(),
                           OpImmediate::Specified(viewOpAttribute->GetFromTensorOffset()),
                           OpImmediate::Specified(ZERO_OFFSET), Matrix::CopyMode::EXTRACT);
-    } else if (op.GetOpcode() == Opcode::OP_L0C_COPY_UB) {
+    } else if (op.GetOpcode() == Opcode::OP_L0C_COPY_UB || op.GetOpcode() == Opcode::OP_L1_COPY_UB) {
         SetL0C2UBCopyAttr(op, op.GetOOperands()[0]->GetShape(),
                           OpImmediate::Specified(viewOpAttribute->GetFromTensorOffset()),
                           OpImmediate::Specified(ZERO_OFFSET), Matrix::CopyMode::EXTRACT);
@@ -509,6 +509,12 @@ bool GenerateMoveOp::TryInsertModeDispatch(Function& function, Operation& op, As
                           OpImmediate::Specified(assembleOpAttribute->GetToTensorOffset()), Matrix::CopyMode::INSERT);
         return true;
     }
+    if (inputMemtype == MemoryType::MEM_L1 && outputMemtype == MemoryType::MEM_UB) {
+        SetOpcodeByMemPath(op, inputMemtype, outputMemtype);
+        SetL0C2UBCopyAttr(op, op.GetIOperands()[0]->GetShape(), OpImmediate::Specified(ZERO_OFFSET),
+                          OpImmediate::Specified(assembleOpAttribute->GetToTensorOffset()), Matrix::CopyMode::INSERT);
+        return true;
+    }
     if (inputMemtype == MemoryType::MEM_UB && outputMemtype == MemoryType::MEM_L1) {
         SetOpcodeByMemPath(op, inputMemtype, outputMemtype);
         ProcessUB2L1(function, op); // 先进行 ND2NZ 转换
@@ -736,7 +742,7 @@ Status GenerateMoveOp::CreateMoveOpForConvert(Function& function, Operation& op)
         SetL0C2L1CopyAttr(op, op.GetOOperands()[0]->GetShape(), OpImmediate::Specified(ZERO_OFFSET),
                           OpImmediate::Specified(ZERO_OFFSET), Matrix::CopyMode::MOVE);
     }
-    if (op.GetOpcode() == Opcode::OP_L0C_COPY_UB) {
+    if (op.GetOpcode() == Opcode::OP_L0C_COPY_UB || op.GetOpcode() == Opcode::OP_L1_COPY_UB) {
         SetL0C2UBCopyAttr(op, op.GetOOperands()[0]->GetShape(), OpImmediate::Specified(ZERO_OFFSET),
                           OpImmediate::Specified(ZERO_OFFSET), Matrix::CopyMode::MOVE);
         op.SetAttribute(OpAttributeKey::isCube, true);

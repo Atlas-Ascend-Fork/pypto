@@ -12,7 +12,7 @@
 Test sqrt codegen for KirinX90
 """
 
-from kirin.common_sqrt import (
+from kirin.common.common_sqrt import (
     TEST_CASES,
     create_sqrt_kernels,
     run_sqrt_test,

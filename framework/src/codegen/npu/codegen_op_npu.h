@@ -487,7 +487,7 @@ protected:
     std::string PrintVectorScalarTileTensor(const PrintUnaryParam& param) const;
     std::string PrintVectorScalarOpDynamicUnalign(const PrintUnaryParam& param) const;
     std::string PrintMemL1ToL0TileTensor() const;
-    std::string PrintMatmulTileTensor(bool isAcc) const;
+    virtual std::string PrintMatmulTileTensor(bool isAcc) const;
     std::string PrintMatmulTileTensor(bool isAcc,
                                       std::unordered_map<OperandType, std::string>& tensorWithMemType) const;
     std::string PrintTmove() const;
@@ -549,7 +549,7 @@ protected:
 
     std::string PrintSyncInSingleKernel(bool isWait = false) const;
 
-    const std::unordered_map<Opcode, std::function<std::string()>> mteFixPipeOps_;
+    std::unordered_map<Opcode, std::function<std::string()>> mteFixPipeOps_;
 
     const std::unordered_map<Opcode, std::function<std::string()>> unaryOps_;
 
@@ -559,7 +559,7 @@ protected:
 
     const std::unordered_map<Opcode, std::function<std::string()>> sortOps_;
 
-    const std::unordered_map<Opcode, std::function<std::string()>> cubeOps_;
+    std::unordered_map<Opcode, std::function<std::string()>> cubeOps_;
 
     const std::unordered_map<Opcode, std::function<std::string()>> syncOps_;
 

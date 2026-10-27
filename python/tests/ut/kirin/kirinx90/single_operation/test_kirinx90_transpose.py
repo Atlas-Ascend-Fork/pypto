@@ -12,7 +12,7 @@
 Test transpose codegen for KirinX90
 """
 
-from kirin.common_transpose import (
+from kirin.common.common_transpose import (
     TEST_CASES,
     create_transpose_kernels,
     run_transpose_test,

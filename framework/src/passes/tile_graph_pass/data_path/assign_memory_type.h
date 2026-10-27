@@ -108,13 +108,25 @@ private:
 
     Status InferReshapeL0C2UBAndUB2L1PatternLiteNPU(Operation& op);
 
-    bool IsReshapeCubeToVecL0C2UBPattern(Operation& op);
+    MemoryType InferCubeToVecSourceType(Operation& op);
+
+    void ApplyReshapeCubeToVecUpgrade(Operation& op, const LogicalTensorPtr& output,
+                                      const std::set<Operation*, LogicalTensor::CompareOp>& producers,
+                                      const std::set<Operation*, LogicalTensor::CompareOp>& consumers,
+                                      MemoryType cubeOutputType);
+
+    void ApplyReshapeVecToCubeUpgrade(Operation& op, const std::set<Operation*, LogicalTensor::CompareOp>& producers,
+                                      const std::set<Operation*, LogicalTensor::CompareOp>& consumers);
 
     bool IsReshapeVecToCubeUB2L1Pattern(Operation& op);
 
     bool IsReshapeVecToCubeUB2L1ProducerPattern(const std::set<Operation*, LogicalTensor::CompareOp>& producers);
 
     bool IsReshapeVecToCubeUB2L1ConsumerPattern(const std::set<Operation*, LogicalTensor::CompareOp>& consumers);
+
+    bool IsReshapeVecToCubeUB2L1MacroConsumerPattern(const std::set<Operation*, LogicalTensor::CompareOp>& consumers);
+
+    bool AreAllMoveOpsInputOutputShapeIdentical(const std::set<Operation*, LogicalTensor::CompareOp>& moveOps);
 
     Status InferViewTypeMemoryType(Operation& operation);
 
@@ -168,6 +180,8 @@ private:
     bool AreAllSliceConsumerShapesPreserved(const LogicalTensorPtr& tensor) const;
     Status ProcessL0C2UBSmallToLarge(Function& function);
     Status ProcessL0C2UBLargeToSmall(Function& function);
+    Status ProcessL12UBSmallToLarge(Function& function);
+    Status ProcessL12UBLargeToSmall(Function& function);
     Status ProcessUB2UBContractSlice(Function& function);
     Status ProcessUB2L1SmallToLarge(Function& function);
     Status ProcessUB2L1LargeToSmall(Function& function);

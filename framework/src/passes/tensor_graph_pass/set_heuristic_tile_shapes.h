@@ -113,8 +113,18 @@ inline const std::unordered_map<DataType, int64_t> Latency{
 inline const std::unordered_map<DataType, int64_t> Parallelism{
     {DataType::DT_FP16, 64}, {DataType::DT_FP32, 32}, {DataType::DT_INT32, 32}, {DataType::DT_INT16, 64}};
 
-inline const std::set<Opcode> cubeMMOps = {Opcode::OP_A_MUL_B,   Opcode::OP_A_MUL_BT,   Opcode::OP_AT_MUL_B,
-                                           Opcode::OP_AT_MUL_BT, Opcode::OP_A_MULACC_B, Opcode::OP_A_MULACC_BT};
+inline const std::set<Opcode> cubeMMOps = {Opcode::OP_A_MUL_B,
+                                           Opcode::OP_A_MUL_BT,
+                                           Opcode::OP_AT_MUL_B,
+                                           Opcode::OP_AT_MUL_BT,
+                                           Opcode::OP_A_MULACC_B,
+                                           Opcode::OP_A_MULACC_BT,
+                                           Opcode::OP_A_MUL_B_EPILOGUE,
+                                           Opcode::OP_A_MUL_BT_EPILOGUE,
+                                           Opcode::OP_AT_MUL_B_EPILOGUE,
+                                           Opcode::OP_AT_MUL_BT_EPILOGUE,
+                                           Opcode::OP_A_MULACC_B_EPILOGUE,
+                                           Opcode::OP_A_MULACC_BT_EPILOGUE};
 
 inline const std::set<Opcode> stopOps = {Opcode::OP_ROWMAX,          Opcode::OP_ROWSUM,
                                          Opcode::OP_ROWEXPMAX,       Opcode::OP_ROWEXPSUM,

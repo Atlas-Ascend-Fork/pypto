@@ -12,7 +12,7 @@
 Test reciprocal codegen for Kirin9030
 """
 
-from kirin.common_reciprocal import (
+from kirin.common.common_reciprocal import (
     TEST_CASES,
     create_reciprocal_kernels,
     run_reciprocal_test,

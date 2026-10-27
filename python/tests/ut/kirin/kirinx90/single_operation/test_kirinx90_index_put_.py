@@ -12,7 +12,7 @@
 Test index_put_ codegen for KirinX90
 """
 
-from kirin.common_index_put_ import TEST_CASES, create_index_put_kernels, run_index_put_test
+from kirin.common.common_index_put_ import TEST_CASES, create_index_put_kernels, run_index_put_test
 import pytest
 
 KERNELS = create_index_put_kernels("KirinX90")

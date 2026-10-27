@@ -242,6 +242,14 @@ void Platform::SetMemoryLimit(const PlatformParser& parser)
         GetAICCore().AddMemory(MemoryInfo(MemoryType::MEM_L0B, memoryLimit));
     }
     if (parser.GetSizeVal(aiCoreSpec, l0cSize, memoryLimit)) {
+        // kirin9050(DAV_5101) 无独立 L0C buffer：cube 累加器驻留 cbuf（L1 的 cube 区域），
+        // 将 L0C 容量虚拟化为 L1 大小供调度/分配使用（L1 simulating L0C）。
+        if (memoryLimit == 0 && GetSoc().GetNPUArch() == NPUArch::DAV_5101) {
+            size_t l1Limit = 0;
+            if (parser.GetSizeVal(aiCoreSpec, l1Size, l1Limit)) {
+                memoryLimit = l1Limit;
+            }
+        }
         GetAICCore().AddMemory(MemoryInfo(MemoryType::MEM_L0C, memoryLimit));
     }
     if (parser.GetSizeVal(aiCoreSpec, l1Size, memoryLimit)) {

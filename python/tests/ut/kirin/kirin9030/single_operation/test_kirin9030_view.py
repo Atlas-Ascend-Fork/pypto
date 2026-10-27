@@ -12,7 +12,7 @@
 Test view codegen for Kirin9030
 """
 
-from kirin.common_view import (
+from kirin.common.common_view import (
     TEST_CASES,
     create_view_kernels,
     run_view_test,

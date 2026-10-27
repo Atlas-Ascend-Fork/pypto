@@ -13,22 +13,47 @@
 Test attention codegen for KirinX90
 """
 
-from kirin.common_attention import (
+from kirin.common.common_attention import (
     TEST_CASES_ATTENTION,
-    TEST_CASES_MUL_MATMUL_FUSION,
     create_attention_kernels,
     run_attention_test,
-    run_mul_matmul_fusion_test,
+    run_mul_matmul_test,
 )
 import pytest
 
-KERNELS = create_attention_kernels("KirinX90")
+# mul+matmul 融合用例。
+TEST_CASES_MUL_MATMUL = [
+    pytest.param("mul_matmul", (16, 16), (16, 16), (16, 16), (16, 16), (16, 16),
+                 ([16, 16], [16, 16], [16, 16]), marks=[], id="mul_matmul"),
+    pytest.param("matmul_mul", (16, 16), (16, 16), (16, 16), (16, 16), (16, 16),
+                 ([16, 16], [16, 16], [16, 16]), marks=[], id="matmul_mul"),
+    pytest.param("matmul_mul_with_reshape_001", (1, 1, 1, 256), (1, 1, 256, 128), (1, 1, 1, 128),
+                 (1, 1, 1, 128), (1, 1, 1, 64), ([16, 16], [64, 128], [64, 128]),
+                 marks=[pytest.mark.skip()], id="matmul_mul_with_reshape_001"),
+    pytest.param("matmul_mul_with_reshape_002", (1, 1, 1, 256), (1, 1, 256, 128), (1, 1, 1, 128),
+                 (1, 1, 1, 128), (1, 1, 1, 64), ([16, 16], [64, 128], [64, 128]),
+                 marks=[pytest.mark.skip()], id="matmul_mul_with_reshape_002"),
+    pytest.param("matmul_mul_with_reshape_003", (1, 16, 1, 256), (1, 16, 256, 128), (1, 16, 1, 128),
+                 (1, 16, 1, 128), (1, 1, 1, 64), ([16, 16], [64, 128], [64, 128]),
+                 marks=[], id="matmul_mul_with_reshape_003"),
+    pytest.param("mul_matmul_with_reshape_001", (1, 1, 16, 16), (1, 1, 16, 16), (1, 1, 16, 16),
+                 (1, 1, 16, 16), (1, 1, 16, 16), ([16, 16], [16, 16], [16, 16]),
+                 marks=[pytest.mark.skip()], id="mul_matmul_with_reshape_001"),
+    pytest.param("mul_matmul_with_reshape_002", (1, 1, 1, 256), (1, 1, 1, 256), (1, 1, 256, 128),
+                 (1, 1, 1, 128), (1, 1, 1, 64), ([16, 16], [64, 64], [64, 128]),
+                 marks=[pytest.mark.skip()], id="mul_matmul_with_reshape_002"),
+    pytest.param("mul_matmul_with_reshape_003", (1, 16, 1, 256), (1, 16, 1, 256), (1, 16, 256, 128),
+                 (1, 16, 1, 128), (1, 1, 1, 64), ([16, 16], [64, 64], [64, 128]),
+                 marks=[], id="mul_matmul_with_reshape_003"),
+]
+
+KERNELS = create_attention_kernels("KirinX90", TEST_CASES_MUL_MATMUL)
 
 
-@pytest.mark.parametrize("op_type,a_shape,b_shape,c_shape,out_shape,vec_tile,cube_tile", TEST_CASES_MUL_MATMUL_FUSION)
-def test_mul_matmul_fusion(op_type, a_shape, b_shape, c_shape, out_shape, vec_tile, cube_tile):
+@pytest.mark.parametrize("op_type,a_shape,b_shape,c_shape,out_shape,vec_tile,cube_tile", TEST_CASES_MUL_MATMUL)
+def test_mul_matmul(op_type, a_shape, b_shape, c_shape, out_shape, vec_tile, cube_tile):
     shapes = (a_shape, b_shape, c_shape, out_shape)
-    run_mul_matmul_fusion_test(KERNELS, op_type, shapes)
+    run_mul_matmul_test(KERNELS, op_type, shapes)
 
 
 @pytest.mark.parametrize(

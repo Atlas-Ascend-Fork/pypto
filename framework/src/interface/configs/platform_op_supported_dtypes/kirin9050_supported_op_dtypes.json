@@ -91,14 +91,6 @@
         "DIV": {
             "input_tensors_dtype_combinations": [
                 [
-                    "int16",
-                    "int16"
-                ],
-                [
-                    "int32",
-                    "int32"
-                ],
-                [
                     "fp16",
                     "fp16"
                 ],
@@ -111,12 +103,6 @@
         "DIVS": {
             "input_tensors_dtype_combinations": [
                 [
-                    "int16"
-                ],
-                [
-                    "int32"
-                ],
-                [
                     "fp16"
                 ],
                 [
@@ -126,22 +112,6 @@
         },
         "EXP": {
             "input_tensors_dtype_combinations": [
-                [
-                    "fp16"
-                ],
-                [
-                    "float32"
-                ]
-            ]
-        },
-        "EXPAND": {
-            "input_tensors_dtype_combinations": [
-                [
-                    "int16"
-                ],
-                [
-                    "int32"
-                ],
                 [
                     "fp16"
                 ],

@@ -13,7 +13,7 @@
 Test neg codegen for Kirin9050
 """
 
-from kirin.common_neg import (
+from kirin.common.common_neg import (
     TEST_CASES,
     create_neg_kernels,
     run_neg_test,

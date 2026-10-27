@@ -13,7 +13,7 @@
 Test where codegen for Kirin9030
 """
 
-from kirin.common_where import TEST_CASES, create_test_where_module, run_where_test
+from kirin.common.common_where import TEST_CASES, create_test_where_module, run_where_test
 import pytest
 
 KERNELS, _ = create_test_where_module("Kirin9030")

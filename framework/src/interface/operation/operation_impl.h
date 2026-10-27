@@ -187,6 +187,10 @@ struct MatmulAttrParam {
 
 void ConstructTileGraph(Function& function, const TileShape& tileShape, const std::vector<LogicalTensorPtr>& operandVec,
                         const LogicalTensorPtr& cTensorPtr, const Operation& op);
+// kirin9050 matmul 宏指令走独立构图入口（A 驻留 L1，无 L0A 搬运；quant_pre 走 cbuf tile 链路）
+void ConstructTileGraphMacroInstr(Function& function, const TileShape& tileShape,
+                                  const std::vector<LogicalTensorPtr>& operandVec, const LogicalTensorPtr& cTensorPtr,
+                                  const Operation& op);
 } // namespace Matrix
 
 namespace Conv {

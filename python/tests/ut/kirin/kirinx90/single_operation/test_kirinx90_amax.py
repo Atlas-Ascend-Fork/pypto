@@ -13,7 +13,7 @@
 Test amax codegen for KirinX90
 """
 
-from kirin.common_amax import TEST_CASES, create_test_amax_module, run_amax_test
+from kirin.common.common_amax import TEST_CASES, create_test_amax_module, run_amax_test
 import pytest
 
 KERNELS, _ = create_test_amax_module("KirinX90")

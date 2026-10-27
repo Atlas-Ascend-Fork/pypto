@@ -322,6 +322,11 @@ Status ReplaceTensor::InplaceCheck(Function& function)
 bool ReplaceTensor::CheckInplace(const Operation& op)
 {
     if (inplaceOpSet.find(op.GetOpcode()) != inplaceOpSet.end()) {
+        // kirin9050 宏指令多 K 末片：partial sum(int32) 与输出 dtype 不一致（构图时已打
+        // partialDtypeMismatch 属性），二者不能复用同一 buffer，不参与 inplace 处理。
+        if (op.GetOpcode() == Opcode::OP_A_MULACC_B_EPILOGUE && op.HasAttribute(OpAttributeKey::partialDtypeMismatch)) {
+            return false;
+        }
         return true;
     }
     return false;
@@ -553,6 +558,11 @@ Status ReplaceTensor::ForwardReshape(Operation* op, LogicalTensorPtr& rootTensor
 
 Status ReplaceTensor::ForwardInplaceOp(Operation* op, LogicalTensorPtr& rootTensor, Function& function)
 {
+    // kirin9050 宏指令多 K 末片：partial 与输出 dtype 不一致，构图时已打 partialDtypeMismatch
+    // 属性，不共享 RawTensor（由 CheckInplace 之外的 inplaceOpMap 派发路径调用，同样需拦截）。
+    if (op->GetOpcode() == Opcode::OP_A_MULACC_B_EPILOGUE && op->HasAttribute(OpAttributeKey::partialDtypeMismatch)) {
+        return SUCCESS;
+    }
     auto reusePairs = inplaceOpMap.at(op->GetOpcode());
     for (const auto& reusePair : reusePairs) {
         auto inputIdx = reusePair.first;
@@ -732,6 +742,11 @@ Status ReplaceTensor::BackwardReshape(Operation* op, LogicalTensorPtr& rootTenso
 
 Status ReplaceTensor::BackwardInplaceOp(Operation* op, LogicalTensorPtr& rootTensor, Function& function)
 {
+    // kirin9050 宏指令多 K 末片：partial 与输出 dtype 不一致，构图时已打 partialDtypeMismatch
+    // 属性，不共享 RawTensor（由 CheckInplace 之外的 inplaceOpMap 派发路径调用，同样需拦截）。
+    if (op->GetOpcode() == Opcode::OP_A_MULACC_B_EPILOGUE && op->HasAttribute(OpAttributeKey::partialDtypeMismatch)) {
+        return SUCCESS;
+    }
     auto reusePairs = inplaceOpMap.at(op->GetOpcode());
     for (const auto& reusePair : reusePairs) {
         auto inputIdx = reusePair.first;

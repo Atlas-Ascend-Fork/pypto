@@ -36,6 +36,9 @@ const std::unordered_set<DataType> kL0C2L1SupportedDtypes = {DT_FP16, DT_BF16};
 const std::unordered_set<DataType> kUb2L1SupportedDtypes = {DT_FP32, DT_FP16,    DT_BF16,   DT_INT8,
                                                             DT_HF8,  DT_FP8E5M2, DT_FP8E4M3};
 const std::unordered_set<DataType> kL0C2UbSupportedDtypes = {DT_FP32, DT_FP16, DT_BF16, DT_INT8, DT_INT32};
+const std::unordered_set<DataType> kL0C2UbLiteNPUSupportedDtypes = {DT_FP16, DT_INT8, DT_INT32};
+const std::unordered_set<DataType> kL12UbLiteNPUSupportedDtypes = {DT_FP16, DT_INT8, DT_INT32};
+const std::unordered_set<DataType> kUb2L1LiteNPUSupportedDtypes = {DT_FP16, DT_INT8, DT_INT32};
 
 const static std::unordered_map<NPUArch, std::unordered_set<DataType>> kArch2SupportedDtypes = {
     {NPUArch::DAV_1001, kA2A3SupportedDtypes},
@@ -402,6 +405,24 @@ bool ConvertInserter::IsUb2L1SupportedDtype(const LogicalTensorPtr& tensor) cons
 bool ConvertInserter::IsL0C2UbSupportedDtype(const LogicalTensorPtr& tensor) const
 {
     return kL0C2UbSupportedDtypes.find(tensor->Datatype()) != kL0C2UbSupportedDtypes.end();
+}
+
+// LiteNPU l0c2ub 仅支持 fp16/int8/int32
+bool ConvertInserter::IsL0C2UbLiteNPUSupportedDtype(const LogicalTensorPtr& tensor) const
+{
+    return kL0C2UbLiteNPUSupportedDtypes.find(tensor->Datatype()) != kL0C2UbLiteNPUSupportedDtypes.end();
+}
+
+// LiteNPU l12ub 仅支持 fp16/int8/int32
+bool ConvertInserter::IsL12UbLiteNPUSupportedDtype(const LogicalTensorPtr& tensor) const
+{
+    return kL12UbLiteNPUSupportedDtypes.find(tensor->Datatype()) != kL12UbLiteNPUSupportedDtypes.end();
+}
+
+// LiteNPU ub2l1 仅支持 fp16/int8/int32
+bool ConvertInserter::IsUb2L1LiteNPUSupportedDtype(const LogicalTensorPtr& tensor) const
+{
+    return kUb2L1LiteNPUSupportedDtypes.find(tensor->Datatype()) != kUb2L1LiteNPUSupportedDtypes.end();
 }
 
 bool ConvertInserter::HasParallelDifferentConsumerRequirement(const LogicalTensorPtr& tensor,

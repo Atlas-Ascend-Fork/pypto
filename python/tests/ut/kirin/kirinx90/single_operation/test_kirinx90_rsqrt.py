@@ -12,7 +12,7 @@
 Test rsqrt codegen for KirinX90
 """
 
-from kirin.common_rsqrt import (
+from kirin.common.common_rsqrt import (
     TEST_CASES,
     create_rsqrt_kernels,
     run_rsqrt_test,

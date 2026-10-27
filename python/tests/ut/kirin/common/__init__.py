@@ -56,8 +56,9 @@ def generated_cpp_contains(keyword, expect_absent=False):
         with open(path, encoding="utf-8", errors="replace") as handle:
             if keyword in handle.read():
                 if expect_absent:
-                    logger.warning("generated_cpp_contains: unexpectedly found '%s' in %s", keyword,
-                                   os.path.basename(path))
+                    logger.warning(
+                        "generated_cpp_contains: unexpectedly found '%s' in %s", keyword, os.path.basename(path)
+                    )
                 else:
                     logger.info("generated_cpp_contains: found '%s' in %s", keyword, os.path.basename(path))
                 return True
@@ -66,6 +67,53 @@ def generated_cpp_contains(keyword, expect_absent=False):
     else:
         logger.warning("generated_cpp_contains: '%s' not found in any generated cpp", keyword)
     return False
+
+
+def check_atol_rtol(input_1, input_2, rtol, atol, name="", scale_tol=1e-2):
+    """Elementwise atol/rtol check plus a global magnitude-ratio check.
+
+    Pass criterion:
+      - |actual - golden| <= atol + rtol * |golden| for every element;
+      - ||actual|| / ||golden|| ~= 1 (catches a pure global scaling, which
+        compare_cos cannot detect because cosine is scale-invariant).
+    """
+    if isinstance(input_1, torch.Tensor):
+        input_1 = input_1.detach().cpu().numpy()
+    if isinstance(input_2, torch.Tensor):
+        input_2 = input_2.detach().cpu().numpy()
+    a = np.asarray(input_1, dtype=np.float64).reshape(-1)
+    g = np.asarray(input_2, dtype=np.float64).reshape(-1)
+
+    diff = np.abs(a - g)
+    tol = atol + rtol * np.abs(g)
+    bad = diff > tol
+    max_diff = float(diff.max()) if diff.size else 0.0
+    mean_diff = float(diff.mean()) if diff.size else 0.0
+    g_norm = float(np.linalg.norm(g))
+    a_norm = float(np.linalg.norm(a))
+    if g_norm == 0.0:
+        ratio = 1.0 if a_norm == 0.0 else 0.0
+    else:
+        ratio = a_norm / g_norm
+    scale_ok = abs(ratio - 1.0) <= scale_tol
+
+    prefix = f"{name}: " if name else ""
+    logger.info(
+        "%smax diff: %s, mean diff: %s, scale ratio: %s",
+        prefix,
+        max_diff,
+        mean_diff,
+        ratio,
+    )
+    if bad.any() or not scale_ok:
+        idx = int(np.argmax(diff)) if diff.size else 0
+        raise AssertionError(
+            f"{prefix}precision check failed (rtol={rtol}, atol={atol}): "
+            f"bad={int(bad.sum())}/{a.size}, max_diff={max_diff:.6g} @ idx={idx} "
+            f"(actual={a[idx]:.6g}, golden={g[idx]:.6g}), mean_diff={mean_diff:.6g}, "
+            f"scale_ratio={ratio:.6g}, scale_ok={scale_ok}"
+        )
+    return {"max_diff": max_diff, "mean_diff": mean_diff, "scale_ratio": ratio}
 
 
 def check_nan(tensor, name=""):

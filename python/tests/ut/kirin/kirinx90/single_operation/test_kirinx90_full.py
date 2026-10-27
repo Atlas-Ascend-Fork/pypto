@@ -12,7 +12,7 @@
 Test full codegen for KirinX90
 """
 
-from kirin.common_full import (
+from kirin.common.common_full import (
     TEST_CASES,
     create_full_kernels,
     run_full_test,

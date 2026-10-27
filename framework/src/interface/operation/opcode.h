@@ -213,6 +213,14 @@ enum class Opcode {
     OP_AT_MUL_B,
     OP_AT_MUL_BT,
 
+    // Cube (kirin9050 macro instruction)
+    OP_A_MUL_B_EPILOGUE,
+    OP_A_MULACC_B_EPILOGUE,
+    OP_A_MUL_BT_EPILOGUE,
+    OP_A_MULACC_BT_EPILOGUE,
+    OP_AT_MUL_B_EPILOGUE,
+    OP_AT_MUL_BT_EPILOGUE,
+
     OP_CONV2D,
     OP_CONV3D,
     OP_CONV_ADD,

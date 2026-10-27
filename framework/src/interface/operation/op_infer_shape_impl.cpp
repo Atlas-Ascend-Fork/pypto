@@ -868,6 +868,11 @@ REGISTER_INFER_SHAPE_FUNC(OP_A_MUL_B, Opcode::OP_A_MUL_B, MatmulInferFunc);
 REGISTER_INFER_SHAPE_FUNC(OP_A_MUL_BT, Opcode::OP_A_MUL_BT, MatmulInferFunc);
 REGISTER_INFER_SHAPE_FUNC(OP_AT_MUL_B, Opcode::OP_AT_MUL_B, MatmulInferFunc);
 REGISTER_INFER_SHAPE_FUNC(OP_AT_MUL_BT, Opcode::OP_AT_MUL_BT, MatmulInferFunc);
+// kirin9050 宏指令 matmul：输入/输出/partial sum 均驻留 L1
+REGISTER_INFER_SHAPE_FUNC(OP_A_MUL_B_EPILOGUE, Opcode::OP_A_MUL_B_EPILOGUE, MatmulInferFunc);
+REGISTER_INFER_SHAPE_FUNC(OP_A_MUL_BT_EPILOGUE, Opcode::OP_A_MUL_BT_EPILOGUE, MatmulInferFunc);
+REGISTER_INFER_SHAPE_FUNC(OP_AT_MUL_B_EPILOGUE, Opcode::OP_AT_MUL_B_EPILOGUE, MatmulInferFunc);
+REGISTER_INFER_SHAPE_FUNC(OP_AT_MUL_BT_EPILOGUE, Opcode::OP_AT_MUL_BT_EPILOGUE, MatmulInferFunc);
 
 void LoadBTFBInferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& outValidShapes)
 {
@@ -897,6 +902,32 @@ void MatmulACCInferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>&
 }
 REGISTER_INFER_SHAPE_FUNC(OP_A_MULACC_B, Opcode::OP_A_MULACC_B, MatmulACCInferFunc);
 REGISTER_INFER_SHAPE_FUNC(OP_A_MULACC_BT, Opcode::OP_A_MULACC_BT, MatmulACCInferFunc);
+
+void MatmulMacroACCInferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& outValidShapes)
+{
+    // kirin9050 宏指令 ACC：输入排布为 [a(L1), b(L0B), partialSum(L1)]（见 LinkAMulB）。
+    // partial sum 与输出同 shape(M,N)；而 a 的 shape 是 (M,K)——必须取 partial sum，
+    // 若按“第一个 L1 输入”会取到 a，导致输出 valid shape 的 N 维被写成 K。
+    std::vector<SymbolicScalar> outValidShape;
+    const auto& inputs = op->GetIOperands();
+    for (size_t i = 1; i < inputs.size(); ++i) { // i=0 是 a，跳过
+        auto& t = inputs[i];
+        if (t != nullptr && t->GetMemoryTypeOriginal() == MemoryType::MEM_L1 &&
+            t->GetDynValidShape().size() == SHAPE_DIM2) {
+            outValidShape = t->GetDynValidShape();
+            break;
+        }
+    }
+    if (outValidShape.empty() && !inputs.empty() && inputs[0] != nullptr) {
+        outValidShape = inputs[0]->GetDynValidShape(); // 兜底：至少保证非空
+    }
+
+    for (auto output : op->GetOOperands()) {
+        outValidShapes.push_back(outValidShape);
+    }
+}
+REGISTER_INFER_SHAPE_FUNC(OP_A_MULACC_B_EPILOGUE, Opcode::OP_A_MULACC_B_EPILOGUE, MatmulMacroACCInferFunc);
+REGISTER_INFER_SHAPE_FUNC(OP_A_MULACC_BT_EPILOGUE, Opcode::OP_A_MULACC_BT_EPILOGUE, MatmulMacroACCInferFunc);
 
 void LoadL0C2L1InferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& outValidShapes)
 {

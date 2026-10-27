@@ -18,6 +18,11 @@
 
 #include "cube_utils.h"
 
+// 9050 宏指令 matmul 实现（pto-isa kirin9050 专属，仅 dav-l510 工具链定义 __DAV_L510__）
+#ifdef __DAV_L510__
+#include "litenpu/mmad_macro_impl.h"
+#endif
+
 template <bool initMatrixC, TransMode transMode, bool kAlignFlag, bool isGemv = false, typename TileAcc,
           typename TileLeft, typename TileRight>
 INLINE void TMatmulImpl(TileAcc& c, TileLeft& a, TileRight& b)

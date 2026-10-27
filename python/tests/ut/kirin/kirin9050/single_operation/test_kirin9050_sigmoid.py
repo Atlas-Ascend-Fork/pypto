@@ -12,7 +12,7 @@
 Test sigmoid codegen for Kirin9050
 """
 
-from kirin.common_sigmoid import (
+from kirin.common.common_sigmoid import (
     TEST_CASES,
     create_sigmoid_kernels,
     run_sigmoid_test,

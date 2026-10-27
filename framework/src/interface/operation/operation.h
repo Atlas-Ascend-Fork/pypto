@@ -74,6 +74,7 @@ public:
     static const std::string outputCombineAxisDone;
     static const std::string inplaceIdx;
     static const std::string inplaceInfo;
+    static const std::string partialDtypeMismatch;
     static const std::string cacheMode;
     static const std::string panzBlockSize;
     static const std::string requiresBoundaryCopy;
@@ -530,6 +531,7 @@ public:
                                                             Opcode::OP_COPY_IN,
                                                             Opcode::OP_L0C_TO_L1,
                                                             Opcode::OP_L0C_COPY_UB,
+                                                            Opcode::OP_L1_COPY_UB,
                                                             Opcode::OP_L0C_COPY_UB_DUAL_DST,
                                                             Opcode::OP_L0C_COPY_UB_CONV,
                                                             Opcode::OP_L1_TO_BT,

@@ -65,8 +65,16 @@ Shape& PadLocalBuffer::GetOriRawshape(LogicalTensorPtr& in)
 bool PadLocalBuffer::IsInputDataType(const Operation& op, const LogicalTensorPtr& in,
                                      const std::unordered_set<DataType>& targetTypes) const
 {
-    static const std::unordered_set<Opcode> cubeOps = {Opcode::OP_A_MUL_B, Opcode::OP_AT_MUL_B, Opcode::OP_A_MUL_BT,
-                                                       Opcode::OP_AT_MUL_BT, Opcode::OP_A_MULACC_B};
+    static const std::unordered_set<Opcode> cubeOps = {Opcode::OP_A_MUL_B,
+                                                       Opcode::OP_AT_MUL_B,
+                                                       Opcode::OP_A_MUL_BT,
+                                                       Opcode::OP_AT_MUL_BT,
+                                                       Opcode::OP_A_MULACC_B,
+                                                       Opcode::OP_A_MUL_B_EPILOGUE,
+                                                       Opcode::OP_AT_MUL_B_EPILOGUE,
+                                                       Opcode::OP_A_MUL_BT_EPILOGUE,
+                                                       Opcode::OP_AT_MUL_BT_EPILOGUE,
+                                                       Opcode::OP_A_MULACC_B_EPILOGUE};
 
     if (in == nullptr || in->tensor == nullptr) {
         return false;
@@ -211,7 +219,8 @@ int64_t PadLocalBuffer::GetMatmulPaddingValue(Operation& op, LogicalTensorPtr& i
 void PadLocalBuffer::PadMatmulHighLow(LogicalTensorPtr& in, size_t highIndex, size_t lowIndex, int64_t padValue)
 {
     Shape& oriRawshape = GetOriRawshape(in); // 获取已保存的 oriRawshape
-    in->tensor->rawshape[highIndex] = AlignmentUtils::Pad(oriRawshape[highIndex], padValue);
+    int64_t highPadValue = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch()) ? CUBE_PAD_VALUE : padValue;
+    in->tensor->rawshape[highIndex] = AlignmentUtils::Pad(oriRawshape[highIndex], highPadValue);
     in->tensor->rawshape[lowIndex] = AlignmentUtils::Pad(oriRawshape[lowIndex], padValue);
 }
 

@@ -13,7 +13,7 @@
 Test reshape codegen for Kirin9030
 """
 
-from kirin.common_reshape import (
+from kirin.common.common_reshape import (
     TEST_CASES,
     create_reshape_kernels,
     run_reshape_test,

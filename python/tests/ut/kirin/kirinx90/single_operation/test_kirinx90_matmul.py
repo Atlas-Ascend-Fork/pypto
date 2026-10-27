@@ -13,7 +13,7 @@
 Test matmul codegen for KirinX90
 """
 
-from kirin.common_matmul import TEST_CASES, create_test_matmul_module, run_matmul_test
+from kirin.common.common_matmul import TEST_CASES, create_test_matmul_module, run_matmul_test
 import pytest
 
 KERNELS, _ = create_test_matmul_module("KirinX90")

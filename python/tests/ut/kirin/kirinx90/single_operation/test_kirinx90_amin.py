@@ -13,7 +13,7 @@
 Test amin codegen for KirinX90
 """
 
-from kirin.common_amin import TEST_CASES, create_test_amin_module, run_amin_test
+from kirin.common.common_amin import TEST_CASES, create_test_amin_module, run_amin_test
 import pytest
 
 KERNELS, _ = create_test_amin_module("KirinX90")

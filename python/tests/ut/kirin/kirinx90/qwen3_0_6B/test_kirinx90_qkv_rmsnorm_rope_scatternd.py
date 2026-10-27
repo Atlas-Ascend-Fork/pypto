@@ -13,7 +13,7 @@
 Test qkv_rmsnorm_rope_scatternd codegen for KirinX90
 """
 
-from kirin.common_qkv_rmsnorm_rope_scatternd import (
+from kirin.common.common_qkv_rmsnorm_rope_scatternd import (
     TEST_CASES,
     create_fused_qkv_kernels,
     run_qkv_fused_test,

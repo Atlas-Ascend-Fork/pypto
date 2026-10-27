@@ -110,7 +110,9 @@ Status AssignMemoryType::AssignMatmulInputRequirements(Operation& operation)
             auto producerOpcode = producerOp->GetOpcode();
             MemoryType requirement = MemoryType::MEM_DEVICE_DDR;
             if (OpChecker::check(producerOp, OpChecker::CalcTypeChecker(OpCalcType::MATMUL))) {
-                requirement = MemoryType::MEM_L0C;
+                // kirin9050 宏指令：无 L0C，partial sum 与输出均驻留 L1
+                requirement = IsMatmulMacroInstrOpcode(operation.GetOpcode()) ? MemoryType::MEM_L1 :
+                                                                                MemoryType::MEM_L0C;
             } else if (IsModeMoveIn(mode_, producerOpcode)) {
                 auto viewOpAttribute = std::dynamic_pointer_cast<ViewOpAttribute>(producerOp->GetOpAttribute());
                 if (viewOpAttribute == nullptr) {
@@ -253,11 +255,13 @@ Status AssignMemoryType::AssignAssembleAttrMemoryType(Operation& operation)
     return FAILED;
 }
 
-// l0c2ub pattern: batchmatmul case: cube op -> move-out(s) -> reshape op -> move op(s) -> vector
-bool AssignMemoryType::IsReshapeCubeToVecL0C2UBPattern(Operation& op)
+// cube-to-vec reshape pattern 源驻留类型判定（(s)=单跳 1..N 兄弟节点，空集不匹配）：
+// cube(AIC) -> contract(s)[move-out] -> reshape -> slice(s)/contract(s)[move] -> vector(AIV)
+// 宏指令 (kirin9050, 无 L0C) cube 输出驻留 L1，普通 cube 驻留 L0C；不匹配返回 UNKNOWN。
+MemoryType AssignMemoryType::InferCubeToVecSourceType(Operation& op)
 {
     if (op.GetOpcode() != npu::tile_fwk::Opcode::OP_RESHAPE) {
-        return false;
+        return MemoryType::MEM_UNKNOWN;
     }
 
     auto& input = op.iOperand.front();
@@ -265,52 +269,56 @@ bool AssignMemoryType::IsReshapeCubeToVecL0C2UBPattern(Operation& op)
     auto& producers = input->GetProducers();
     auto& consumers = output->GetConsumers();
 
-    bool isL0C2UBPattern = true;
     if (producers.empty() || consumers.empty()) {
-        return false;
+        return MemoryType::MEM_UNKNOWN;
     }
 
+    bool allMacroInstrCube = true;
     for (auto& producer : producers) {
-        bool isProducerMoveOut = IsModeMoveOut(mode_, producer->GetOpcode());
-        bool isProducerProducerAllCube = false;
-
-        std::vector<bool> isProducerProducerCube;
+        if (!IsModeMoveOut(mode_, producer->GetOpcode())) {
+            return MemoryType::MEM_UNKNOWN;
+        }
+        bool hasCubeProducer = false;
         for (auto& producerIOperand : producer->iOperand) {
             for (auto& producerProducer : producerIOperand->GetProducers()) {
-                isProducerProducerCube.push_back(producerProducer->GetCoreType() == CoreType::AIC);
+                hasCubeProducer = true;
+                if (producerProducer->GetCoreType() != CoreType::AIC) {
+                    return MemoryType::MEM_UNKNOWN;
+                }
+                if (!IsMatmulMacroInstrOpcode(producerProducer->GetOpcode())) {
+                    allMacroInstrCube = false;
+                }
             }
         }
-
-        isProducerProducerAllCube = !isProducerProducerCube.empty() &&
-                                    std::all_of(isProducerProducerCube.begin(), isProducerProducerCube.end(),
-                                                [](bool val) { return val == true; });
-        if (!isProducerMoveOut || !isProducerProducerAllCube) {
-            isL0C2UBPattern = false;
+        if (!hasCubeProducer) {
+            return MemoryType::MEM_UNKNOWN;
         }
     }
-    for (auto& consumer : consumers) {
-        bool isConsumerMoveOp = IsModeMoveOp(mode_, consumer->GetOpcode());
-        bool isConsumerConsumerAllVector = false;
 
-        std::vector<bool> isConsumerConsumerVector;
+    for (auto& consumer : consumers) {
+        if (!IsModeMoveOp(mode_, consumer->GetOpcode())) {
+            return MemoryType::MEM_UNKNOWN;
+        }
+        bool hasVectorConsumer = false;
         for (auto& consumerOOperand : consumer->oOperand) {
             for (auto& consumerConsumer : consumerOOperand->GetConsumers()) {
-                isConsumerConsumerVector.push_back(consumerConsumer->GetCoreType() == CoreType::AIV);
+                hasVectorConsumer = true;
+                if (consumerConsumer->GetCoreType() != CoreType::AIV) {
+                    return MemoryType::MEM_UNKNOWN;
+                }
             }
         }
-        isConsumerConsumerAllVector = !isConsumerConsumerVector.empty() &&
-                                      std::all_of(isConsumerConsumerVector.begin(), isConsumerConsumerVector.end(),
-                                                  [](bool val) { return val == true; });
-        if (!isConsumerMoveOp || !isConsumerConsumerAllVector) {
-            isL0C2UBPattern = false;
+        if (!hasVectorConsumer) {
+            return MemoryType::MEM_UNKNOWN;
         }
     }
-    return isL0C2UBPattern;
+
+    return allMacroInstrCube ? MemoryType::MEM_L1 : MemoryType::MEM_L0C;
 }
 
-// ub2l1 pattern: 2 patterns
-// 1. vector op -> slice/contract -> reshape op -> slice from l1 -> slice from l0a -> cube
-// 2. vector op -> slice/contract -> slice/contract -> reshape op -> slice from l1 -> slice from l0a -> cube
+// ub2l1 pattern（(s)=单跳 1..N 兄弟节点）：
+// producer: vector -> slice(s)/contract(s) [-> slice(s)/contract(s)] -> reshape   (1~2 跳 move)
+// consumer: reshape -> slice(s)[from L1] [-> slice(s)[from L0A]] -> cube(AIC)     (宏指令无 L0A，仅 1 跳)
 bool AssignMemoryType::IsReshapeVecToCubeUB2L1Pattern(Operation& op)
 {
     if (op.GetOpcode() != npu::tile_fwk::Opcode::OP_RESHAPE) {
@@ -333,13 +341,14 @@ bool AssignMemoryType::IsReshapeVecToCubeUB2L1Pattern(Operation& op)
         return false;
     }
 
-    if (!IsReshapeVecToCubeUB2L1ConsumerPattern(consumers)) {
+    if (!IsReshapeVecToCubeUB2L1ConsumerPattern(consumers) && !IsReshapeVecToCubeUB2L1MacroConsumerPattern(consumers)) {
         return false;
     }
 
     return true;
 }
 
+// ub2l1 producer 侧（reshape 上游，1~2 跳 move）：vector -> slice(s)/contract(s) [-> slice(s)/contract(s)] -> reshape
 bool AssignMemoryType::IsReshapeVecToCubeUB2L1ProducerPattern(
     const std::set<Operation*, LogicalTensor::CompareOp>& producers)
 {
@@ -379,6 +388,7 @@ bool AssignMemoryType::IsReshapeVecToCubeUB2L1ProducerPattern(
     return true;
 }
 
+// ub2l1 consumer 侧（reshape 下游，含 L0A 中转）：reshape -> slice(s)[from L1] -> slice(s)[from L0A] -> cube(AIC)
 bool AssignMemoryType::IsReshapeVecToCubeUB2L1ConsumerPattern(
     const std::set<Operation*, LogicalTensor::CompareOp>& consumers)
 {
@@ -408,10 +418,110 @@ bool AssignMemoryType::IsReshapeVecToCubeUB2L1ConsumerPattern(
     return true;
 }
 
+// ub2l1 宏指令 consumer 侧（无 L0A 中转）：reshape -> slice(s)[from L1] -> cube(AIC macro)
+bool AssignMemoryType::IsReshapeVecToCubeUB2L1MacroConsumerPattern(
+    const std::set<Operation*, LogicalTensor::CompareOp>& consumers)
+{
+    for (auto& consumer : consumers) {
+        bool isConsumerDepth1MoveIn = IsModeMoveIn(mode_, consumer->GetOpcode());
+        bool isConsumerDepth2AllMacroCube = false;
+
+        std::vector<bool> isConsumerDepth2MacroCube;
+        for (auto& consumerOOperand : consumer->oOperand) {
+            for (auto& consumerConsumer : consumerOOperand->GetConsumers()) {
+                isConsumerDepth2MacroCube.push_back(consumerConsumer->GetCoreType() == CoreType::AIC &&
+                                                    IsMatmulMacroInstrOpcode(consumerConsumer->GetOpcode()));
+            }
+        }
+        isConsumerDepth2AllMacroCube = !isConsumerDepth2MacroCube.empty() &&
+                                       std::all_of(isConsumerDepth2MacroCube.begin(), isConsumerDepth2MacroCube.end(),
+                                                   [](bool val) { return val; });
+        if (!isConsumerDepth1MoveIn || !isConsumerDepth2AllMacroCube) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// 直连搬运 (L0C2UB/L12UB 的 contract，UB2L1 的 slice) 要求源与目的 tensor shape 完全一致，
+// reshape 仅改变 view 语义，实际搬运两端 shape 不一致会导致精度异常，必须回退 DDR。
+bool AssignMemoryType::AreAllMoveOpsInputOutputShapeIdentical(
+    const std::set<Operation*, LogicalTensor::CompareOp>& moveOps)
+{
+    for (auto& moveOp : moveOps) {
+        if (moveOp == nullptr || moveOp->iOperand.empty() || moveOp->oOperand.empty() ||
+            moveOp->iOperand.front() == nullptr || moveOp->oOperand.front() == nullptr) {
+            return false;
+        }
+        if (moveOp->iOperand.front()->GetShape() != moveOp->oOperand.front()->GetShape()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void AssignMemoryType::ApplyReshapeCubeToVecUpgrade(Operation& op, const LogicalTensorPtr& output,
+                                                    const std::set<Operation*, LogicalTensor::CompareOp>& producers,
+                                                    const std::set<Operation*, LogicalTensor::CompareOp>& consumers,
+                                                    MemoryType cubeOutputType)
+{
+    for (auto& producer : producers) {
+        auto& producerInput = producer->iOperand.front();
+        auto& producerOutput = producer->oOperand.front();
+
+        // set producer contract input to cube output type (L0C/L1)
+        producerInput->SetMemoryTypeOriginal(cubeOutputType, true);
+        inserter.UpdateTensorTobeMap(producerInput, *producer, cubeOutputType);
+
+        // set producer output to be UB
+        producerOutput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
+        inserter.UpdateTensorTobeMap(producerOutput, op, MemoryType::MEM_UB);
+    }
+    // set reshape output to UB
+    output->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
+
+    // set all consumer slice/contracts input to UB
+    for (auto& consumer : consumers) {
+        inserter.UpdateTensorTobeMap(output, *consumer, MemoryType::MEM_UB);
+    }
+}
+
+void AssignMemoryType::ApplyReshapeVecToCubeUpgrade(Operation& op,
+                                                    const std::set<Operation*, LogicalTensor::CompareOp>& producers,
+                                                    const std::set<Operation*, LogicalTensor::CompareOp>& consumers)
+{
+    for (auto& producer : producers) {
+        auto& producerInput = producer->iOperand.front();
+        auto& producerOutput = producer->oOperand.front();
+
+        // set producer slice/contract input to UB
+        producerInput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
+        inserter.UpdateTensorTobeMap(producerInput, *producer, MemoryType::MEM_UB);
+
+        // set reshape input to UB
+        producerOutput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
+        inserter.UpdateTensorTobeMap(producerOutput, op, MemoryType::MEM_UB);
+    }
+
+    for (auto& consumer : consumers) {
+        auto& consumerInput = consumer->iOperand.front();
+        auto& consumerOutput = consumer->oOperand.front();
+
+        // set reshape output to UB, set its tobe mem type to L1
+        consumerInput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
+        inserter.UpdateTensorTobeMap(consumerInput, *consumer, MemoryType::MEM_L1);
+
+        // set consumer slice output to be L1
+        consumerOutput->SetMemoryTypeOriginal(MemoryType::MEM_L1, true);
+        for (auto& consumerConsumer : consumerOutput->GetConsumers()) {
+            inserter.UpdateTensorTobeMap(consumerOutput, *consumerConsumer, MemoryType::MEM_L1);
+        }
+    }
+}
+
 Status AssignMemoryType::InferReshapeL0C2UBAndUB2L1PatternLiteNPU(Operation& op)
 {
-    const NPUArch npuArch = Platform::Instance().GetSoc().GetNPUArch();
-    if (!IsLiteNPU(npuArch)) {
+    if (!IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
         return SUCCESS;
     }
 
@@ -420,73 +530,24 @@ Status AssignMemoryType::InferReshapeL0C2UBAndUB2L1PatternLiteNPU(Operation& op)
     auto& producers = input->GetProducers();
     auto& consumers = output->GetConsumers();
 
-    // kirin9050(DAV_5101) 无 L0C buffer：cube 输出驻留 L1，l0c2ub pattern 改写为 l12ub
-    const MemoryType cubeOutputMemType = npuArch == NPUArch::DAV_5101 ? MemoryType::MEM_L1 : MemoryType::MEM_L0C;
-
-    // l0c2ub(l12ub on kirin9050) pattern: batchmatmul case:
-    // cube op -> contract(s) -> reshape op -> slice(s)/contract(s) -> vector
-    if (IsReshapeCubeToVecL0C2UBPattern(op) && MemoryPathUtils::FitsTensorInUb(input) &&
-        inserter.IsL0C2UbSupportedDtype(input)) {
-        for (auto& producer : producers) {
-            auto& producerInput = producer->iOperand.front();
-            auto& producerOutput = producer->oOperand.front();
-
-            // set producer contract input to L0C (L1 on kirin9050, which has no L0C buffer)
-            producerInput->SetMemoryTypeOriginal(cubeOutputMemType, true);
-            inserter.UpdateTensorTobeMap(producerInput, *producer, cubeOutputMemType);
-
-            // set producer output to be UB
-            producerOutput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
-            inserter.UpdateTensorTobeMap(producerOutput, op, MemoryType::MEM_UB);
-        }
-        // set reshape output to UB
-        output->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
-
-        // set all consumer slice/contracts input to UB
-        for (auto& consumer : consumers) {
-            inserter.UpdateTensorTobeMap(output, *consumer, MemoryType::MEM_UB);
-        }
+    // l0c2ub / l12ub pattern (batchmatmul case)，结构见 InferCubeToVecSourceType 注释。
+    // 仅按 cube 输出驻留类型区分：宏指令 (kirin9050, 无 L0C) 为 L1 (l12ub)，
+    // 普通 lite NPU 为 L0C (l0c2ub)，producer contract 输入随之设为 L1/L0C。
+    const MemoryType cubeOutputType = InferCubeToVecSourceType(op);
+    if (cubeOutputType != MemoryType::MEM_UNKNOWN && MemoryPathUtils::FitsTensorInUb(input) &&
+        AreAllMoveOpsInputOutputShapeIdentical(producers) &&
+        (cubeOutputType == MemoryType::MEM_L1 ? inserter.IsL12UbLiteNPUSupportedDtype(input) :
+                                                inserter.IsL0C2UbLiteNPUSupportedDtype(input))) {
+        ApplyReshapeCubeToVecUpgrade(op, output, producers, consumers, cubeOutputType);
         return SUCCESS;
     }
 
-    // ub2l1 pattern 依赖 L0A 中转路径，kirin9050 无 L0A，不适用
-    if (npuArch == NPUArch::DAV_5101) {
-        return SUCCESS;
-    }
-
-    // ub2l1 pattern:
-    // 1. vector op -> slice(s)/contract(s) -> reshape op -> slice(s) from l1 -> slice(s) from l0a -> cube
-    // 2. vector op -> contract(s) -> slice(s) -> reshape op -> slice(s) from l1 -> slice(s) from l0a -> cube
-    // MXMatmul场景K轴非64对齐不支持UB2L1直连（MX补齐仅由DDR路径支持），回退DDR
+    // ub2l1 pattern，结构见 IsReshapeVecToCubeUB2L1Pattern 注释。
+    // MXMatmul 场景 K 轴非 64 对齐不支持 UB2L1 直连（MX 补齐仅由 DDR 路径支持），回退 DDR。
     if (IsReshapeVecToCubeUB2L1Pattern(op) && MemoryPathUtils::FitsTensorInUb(output) &&
-        inserter.IsUb2L1SupportedDtype(output) && !MemoryPathUtils::HasMxPaddingModeConsumer(output)) {
-        for (auto& producer : producers) {
-            auto& producerInput = producer->iOperand.front();
-            auto& producerOutput = producer->oOperand.front();
-
-            // set producer slice/contract input to UB
-            producerInput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
-            inserter.UpdateTensorTobeMap(producerInput, *producer, MemoryType::MEM_UB);
-
-            // set reshape input to UB
-            producerOutput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
-            inserter.UpdateTensorTobeMap(producerOutput, op, MemoryType::MEM_UB);
-        }
-
-        for (auto& consumer : consumers) {
-            auto& consumerInput = consumer->iOperand.front();
-            auto& consumerOutput = consumer->oOperand.front();
-
-            // set reshape output to UB, set its tobe mem type to L1
-            consumerInput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
-            inserter.UpdateTensorTobeMap(consumerInput, *consumer, MemoryType::MEM_L1);
-
-            // set consumer slice output to be L1
-            consumerOutput->SetMemoryTypeOriginal(MemoryType::MEM_L1, true);
-            for (auto& consumerConsumer : consumerOutput->GetConsumers()) {
-                inserter.UpdateTensorTobeMap(consumerOutput, *consumerConsumer, MemoryType::MEM_L1);
-            }
-        }
+        AreAllMoveOpsInputOutputShapeIdentical(consumers) && inserter.IsUb2L1LiteNPUSupportedDtype(output) &&
+        !MemoryPathUtils::HasMxPaddingModeConsumer(output)) {
+        ApplyReshapeVecToCubeUpgrade(op, producers, consumers);
         return SUCCESS;
     }
 

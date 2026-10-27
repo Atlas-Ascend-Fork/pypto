@@ -53,11 +53,20 @@ vaule: vector of pair, 每个pair记录了第几个输入和第几个输出存�
 */
 const std::unordered_map<Opcode, std::vector<std::pair<size_t, size_t>>> inplaceOpMap = {
     {Opcode::OP_A_MULACC_B, {std::pair<size_t, size_t>{2, 0}}},
+    // kirin9050 宏指令：partial sum 与输出均为 L1，且 pto-isa TMATMUL_ACC 忽略 cIn、
+    // 直接往 cOut 累加，因此必须把输出与输入 2（partial sum）做同 buffer inplace，
+    // 否则多 K 片累加会写入未初始化的输出 buffer。
+    {Opcode::OP_A_MULACC_B_EPILOGUE, {std::pair<size_t, size_t>{2, 0}}},
     {Opcode::OP_INDEX_OUTCAST, {std::pair<size_t, size_t>{2, 0}}},
 };
 
-const std::unordered_set<Opcode> inplaceOpSet = {Opcode::OP_VIEW,       Opcode::OP_ASSEMBLE,      Opcode::OP_RESHAPE,
-                                                 Opcode::OP_A_MULACC_B, Opcode::OP_INDEX_OUTCAST, Opcode::OP_VIEW_TYPE};
+const std::unordered_set<Opcode> inplaceOpSet = {Opcode::OP_VIEW,
+                                                 Opcode::OP_ASSEMBLE,
+                                                 Opcode::OP_RESHAPE,
+                                                 Opcode::OP_A_MULACC_B,
+                                                 Opcode::OP_A_MULACC_B_EPILOGUE,
+                                                 Opcode::OP_INDEX_OUTCAST,
+                                                 Opcode::OP_VIEW_TYPE};
 
 class UnionFind {
 public:

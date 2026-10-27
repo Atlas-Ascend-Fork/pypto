@@ -167,6 +167,11 @@ public:
     // l0c2ub场景，限制数据类型
     bool IsL0C2UbSupportedDtype(const LogicalTensorPtr& tensor) const;
 
+    // LiteNPU l0c2ub/l12ub/ub2l1 场景，限制数据类型
+    bool IsL0C2UbLiteNPUSupportedDtype(const LogicalTensorPtr& tensor) const;
+    bool IsL12UbLiteNPUSupportedDtype(const LogicalTensorPtr& tensor) const;
+    bool IsUb2L1LiteNPUSupportedDtype(const LogicalTensorPtr& tensor) const;
+
     // 判断同一源 tensor 是否有并行 consumer 需要不同的 memory 去向
     bool HasParallelDifferentConsumerRequirement(const LogicalTensorPtr& tensor, MemoryType targetType) const;
 

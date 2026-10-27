@@ -2047,7 +2047,7 @@ TEST_F(LegacyAssignMemoryTypeTest, TestL12UBPatternKirin9050)
     G.AddTensor(DataType::DT_FP16, reshapeShape, MemoryType::MEM_UNKNOWN, "view_out");
     G.AddTensor(DataType::DT_FP16, reshapeShape, MemoryType::MEM_UNKNOWN, "exp_out");
 
-    G.AddOp(Opcode::OP_A_MUL_B, {"input_a", "input_b"}, {"matmul_out"}, "matmul");
+    G.AddOp(Opcode::OP_A_MUL_B_EPILOGUE, {"input_a", "input_b"}, {"matmul_out"}, "matmul");
     G.AddOp(Opcode::OP_ASSEMBLE, {"matmul_out"}, {"assemble_out"}, "assemble");
     G.GetOp("assemble")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{0, 0}));
     G.AddOp(Opcode::OP_RESHAPE, {"assemble_out"}, {"reshape_out"}, "reshape");

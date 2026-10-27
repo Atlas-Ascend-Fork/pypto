@@ -937,6 +937,32 @@ void OpcodeManager::RegisterCube()
                  {MemoryType::MEM_L0A, MemoryType::MEM_L0B, MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_BT,
                   MemoryType::MEM_FIX_QUANT_PRE},
                  {MemoryType::MEM_L0C}, {"TileOp::Tmad", PIPE_M, PIPE_M, CoreType::AIC}, OpCalcType::MATMUL);
+    // kirin9050(DAV_5101) matmul 宏指令：A 驻留 L1（无 L0A），C 输出驻留 L1（无 L0C），
+    // 仅 kirin9050 平台的前端构图会发出这些 opcode，其他平台不使用。
+    RegisterInfo(Opcode::OP_A_MUL_B_EPILOGUE, OpCoreType::AIC, "A_MUL_B_EPILOGUE",
+                 {MemoryType::MEM_L1, MemoryType::MEM_L0B, MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_BT,
+                  MemoryType::MEM_FIX_QUANT_PRE},
+                 {MemoryType::MEM_L1}, {"TileOp::Tmad", PIPE_M, PIPE_M, CoreType::AIC}, OpCalcType::MATMUL);
+    RegisterInfo(Opcode::OP_A_MULACC_B_EPILOGUE, OpCoreType::AIC, "A_MULACC_B_EPILOGUE",
+                 {MemoryType::MEM_L1, MemoryType::MEM_L0B, MemoryType::MEM_L1, MemoryType::MEM_DEVICE_DDR,
+                  MemoryType::MEM_BT, MemoryType::MEM_FIX_QUANT_PRE},
+                 {MemoryType::MEM_L1}, {"TileOp::Tmad", PIPE_M, PIPE_M, CoreType::AIC}, OpCalcType::MATMUL);
+    RegisterInfo(Opcode::OP_A_MUL_BT_EPILOGUE, OpCoreType::AIC, "A_MUL_Bt_EPILOGUE",
+                 {MemoryType::MEM_L1, MemoryType::MEM_L0B, MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_BT,
+                  MemoryType::MEM_FIX_QUANT_PRE},
+                 {MemoryType::MEM_L1}, {"TileOp::Tmad", PIPE_M, PIPE_M, CoreType::AIC}, OpCalcType::MATMUL);
+    RegisterInfo(Opcode::OP_A_MULACC_BT_EPILOGUE, OpCoreType::AIC, "A_MULACC_Bt_EPILOGUE",
+                 {MemoryType::MEM_L1, MemoryType::MEM_L0B, MemoryType::MEM_L1, MemoryType::MEM_DEVICE_DDR,
+                  MemoryType::MEM_BT, MemoryType::MEM_FIX_QUANT_PRE},
+                 {MemoryType::MEM_L1}, {"TileOp::Tmad", PIPE_M, PIPE_M, CoreType::AIC}, OpCalcType::MATMUL);
+    RegisterInfo(Opcode::OP_AT_MUL_B_EPILOGUE, OpCoreType::AIC, "At_MUL_B_EPILOGUE",
+                 {MemoryType::MEM_L1, MemoryType::MEM_L0B, MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_BT,
+                  MemoryType::MEM_FIX_QUANT_PRE},
+                 {MemoryType::MEM_L1}, {"TileOp::Tmad", PIPE_M, PIPE_M, CoreType::AIC}, OpCalcType::MATMUL);
+    RegisterInfo(Opcode::OP_AT_MUL_BT_EPILOGUE, OpCoreType::AIC, "At_MUL_Bt_EPILOGUE",
+                 {MemoryType::MEM_L1, MemoryType::MEM_L0B, MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_BT,
+                  MemoryType::MEM_FIX_QUANT_PRE},
+                 {MemoryType::MEM_L1}, {"TileOp::Tmad", PIPE_M, PIPE_M, CoreType::AIC}, OpCalcType::MATMUL);
 
     RegisterInfo(Opcode::OP_CONV2D, OpCoreType::AIC, "CONV2D", {}, {}, {"CUBE_CONV2D", PIPE_M, PIPE_M, CoreType::AIC},
                  OpCalcType::CONV, convAttrStrList, nullptr,
@@ -1410,10 +1436,17 @@ std::unordered_map<Opcode, std::string> SUPPORT_TILETENSOR_OPS{
     {Opcode::OP_L1_TO_L0_BT, "TExtractL1ToL0"},
     {Opcode::OP_A_MUL_B, "TMatmul"},
     {Opcode::OP_A_MULACC_B, "TMatmul"},
+    {Opcode::OP_A_MUL_B_EPILOGUE, "TMatmul"},
+    {Opcode::OP_A_MULACC_B_EPILOGUE, "TMatmul"},
+    {Opcode::OP_A_MUL_BT_EPILOGUE, "TMatmul"},
+    {Opcode::OP_A_MULACC_BT_EPILOGUE, "TMatmul"},
+    {Opcode::OP_AT_MUL_B_EPILOGUE, "TMatmul"},
+    {Opcode::OP_AT_MUL_BT_EPILOGUE, "TMatmul"},
     {Opcode::OP_L1_TO_FIX_QUANT_PRE, "TExtractL1ToFB"},
     {Opcode::OP_L1_TO_BT, "TExtractL1ToBT"},
     {Opcode::OP_UB_COPY_L1, "TCopyUB2L1"},
     {Opcode::OP_L0C_COPY_UB, "TCopyL0C2UB"},
+    {Opcode::OP_L1_COPY_UB, "TCopyL12UB"},
     {Opcode::OP_L0C_COPY_UB_DUAL_DST, "TCopyL0C2UB"},
     {Opcode::OP_L0C_COPY_UB_CONV, "TCopyL0C2UBConv"},
     {Opcode::OP_L0C_TO_L1, "TExtract"},

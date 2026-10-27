@@ -56,6 +56,15 @@ namespace npu::tile_fwk {
 
 class ConvertInserter;
 
+// kirin9050 matmul 宏指令 opcode 判定（与通用 matmul opcode 判定解耦，供 pass 独立处理）
+static inline bool IsMatmulMacroInstrOpcode(Opcode opcode)
+{
+    static const std::set<Opcode> kMatmulMacroInstrOps = {Opcode::OP_A_MUL_B_EPILOGUE,  Opcode::OP_A_MULACC_B_EPILOGUE,
+                                                          Opcode::OP_A_MUL_BT_EPILOGUE, Opcode::OP_A_MULACC_BT_EPILOGUE,
+                                                          Opcode::OP_AT_MUL_B_EPILOGUE, Opcode::OP_AT_MUL_BT_EPILOGUE};
+    return kMatmulMacroInstrOps.count(opcode) > 0;
+}
+
 class MemoryPathUtils {
 public:
     using OutputRequirementResolver = std::function<MemoryType(const LogicalTensorPtr&)>;

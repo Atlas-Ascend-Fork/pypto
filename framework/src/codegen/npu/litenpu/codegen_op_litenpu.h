@@ -33,6 +33,8 @@ private:
 
     void UpdateGemvTileOpName() override;
 
+    std::string GenL1ToUBTileTensor() const;
+
     TileTensor BuildTileTensor(int paramIdx, const std::string& usingType,
                                const TileTensorShape& tileTensorShape = {}) override;
 
@@ -45,6 +47,9 @@ private:
     bool ContainsRuntimeCoaGetParmOffset(const std::vector<SymbolicScalar>& offsets) const;
     void ExtractCoaGetParamOffset(const SymbolicScalar& expr, int& base, int& idx) const;
     std::vector<SymbolicScalar> GetStaticOffsetFromLinearArgList(const std::vector<SymbolicScalar>& dynOffset) const;
+    std::string PrintMatmulTileTensor(bool zeroC) const override;
+    std::string PrintMacroGenericMatmul(bool zeroC, std::vector<std::string>& paramList,
+                                        const std::string& transModeStr, bool kAlignFlag) const;
     Function& subFunc;
 };
 

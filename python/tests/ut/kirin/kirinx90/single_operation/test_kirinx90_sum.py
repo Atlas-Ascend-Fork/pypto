@@ -12,7 +12,7 @@
 Test sum codegen for KirinX90
 """
 
-from kirin.common_sum import (
+from kirin.common.common_sum import (
     TEST_CASES,
     create_sum_kernels,
     run_sum_test,

@@ -481,6 +481,8 @@ private:
     size_t aicpu_cache_ = static_cast<size_t>(-1);
 
 public:
+    // kirin9050(DAV_5101) matmul 宏指令支持判断：宏指令仅 kirin9050 支持，按架构判定
+    bool IsSupportCubeEpilogue() const { return version_ == NPUArch::DAV_5101; }
     void SetDie(const Die& die) { die_ = die; }
     void SetNPUArch(NPUArch version) { version_ = version; }
     void SetNPUArch(const std::string& version);
