@@ -409,6 +409,8 @@ StructuralHasher::ResultType StructuralHasher::HashType(const TypePtr& type)
         } else {
             h = HashCombine(h, static_cast<ResultType>(0));
         }
+    } else if (auto ptr_type = As<PtrType>(type)) {
+        h = HashCombine(h, static_cast<ResultType>(std::hash<uint8_t>{}(ptr_type->dtype_.Code())));
     } else if (auto tuple_type = As<TupleType>(type)) {
         h = HashCombine(h, static_cast<ResultType>(tuple_type->types_.size()));
         for (const auto& t : tuple_type->types_) {

@@ -844,7 +844,6 @@ def test_store_dynamic_scale_int64():
     logging.info("test_store_dynamic_scale_int64 passed.")
 
 
-@pl.jit()
 # Note: test_store_dynamic_scale_from_gm removed
 # Current implementation does not support reading scalar values from tensors at runtime
 # The scale parameter must be a scalar value passed as a kernel parameter
@@ -929,7 +928,6 @@ def test_store_multiple_calls():
 # ============================================================================
 
 
-@pl.jit()
 # Note: test_per_channel_row_scale removed
 # Hardware limitation: When TileType is Scaling, row must be 1 and col * sizeof(Dtype) must be aligned to 128 bytes
 # For INT64 (8 bytes), col must be a multiple of 16 (128/8=16)
@@ -1017,7 +1015,6 @@ def test_per_channel_int32_to_fp16():
     logging.info("test_per_channel_int32_to_fp16 passed.")
 
 
-@pl.jit()
 # Note: test_per_channel_move_row_scale removed
 # Hardware limitation: When TileType is Scaling, row must be 1 and col * sizeof(Dtype) must be aligned to 128 bytes
 # For INT64 (8 bytes), col must be a multiple of 16 (128/8=16)

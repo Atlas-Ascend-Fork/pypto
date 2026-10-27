@@ -232,6 +232,17 @@ TEST_F(IRStructEqTypeTest, TestTensorAndTileTypeEqual)
     EXPECT_FALSE(structural_equal(compactNullTile, compactNormalTile));
 }
 
+TEST_F(IRStructEqTypeTest, TestPtrTypeEqual)
+{
+    // PtrType must participate in structural equality by dtype.
+    auto f16 = std::make_shared<PtrType>(DataType::FP16);
+    auto f16_dup = std::make_shared<PtrType>(DataType::FP16);
+    auto f32 = std::make_shared<PtrType>(DataType::FP32);
+
+    EXPECT_TRUE(structural_equal(f16, f16_dup));
+    EXPECT_FALSE(structural_equal(f16, f32));
+}
+
 TEST_F(IRStructEqTypeTest, TestTileTypeMemoryReferencePresence)
 {
     auto dim = std::make_shared<ConstInt>(16, DataType::INT64, Sp());

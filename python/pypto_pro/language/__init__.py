@@ -210,6 +210,8 @@ __all__ = [
     "get_subblock_idx",
     "get_block_num",
     "get_subblock_num",
+    "dynamic_input_ptr",
+    "dynamic_input_dim",
     "make_tile_group",
     # Frontend (runtime) aliases
     "jit",
@@ -301,6 +303,8 @@ from ._api import (
     dequant,
     div,
     dump_data,
+    dynamic_input_dim,
+    dynamic_input_ptr,
     eq,
     exp,
     expand_add,

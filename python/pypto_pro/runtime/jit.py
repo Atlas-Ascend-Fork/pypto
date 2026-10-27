@@ -17,7 +17,6 @@ from collections.abc import Callable, Mapping
 import ctypes
 import dataclasses
 from enum import Enum
-import functools
 import hashlib
 import inspect
 import json
@@ -2049,83 +2048,29 @@ def jit(
             raise InvalidArgument(
                 f"jit() got unexpected keyword argument(s): {', '.join(kwargs.keys())}."
             )
+        if isinstance(f, _TileJitKernel):
+            return f
         if tilingkey_schema is not None:
             _validate_tilingkey_no_var_conflict(f, tilingkey_schema, caller_closure_vars)
 
-        # Detect if this is a Tile-programming kernel (has pl.Tensor annotations)
-        # by checking if annotations contain type hints with shape/dtype info.
-        is_tile_kernel = _is_tile_kernel(f)
-
-        if is_tile_kernel:
-            _validate_datatype_schema_context(datatype_schema, f, tilingkey_schema)
-            return _TileJitKernel(
-                func=f,
-                arch=arch,
-                auto_mutex=auto_mutex,
-                name=name,
-                closure_vars=caller_closure_vars,
-                pipeline=pipeline,
-                tilingkey_schema=tilingkey_schema,
-                datatype_schema=datatype_schema,
-                compile_timeout=compile_timeout,
-                sanitizer=sanitizer,
-            )
-        else:
-            # Legacy path: non-Tile function, wrap as pass-through
-            @functools.wraps(f)
-            def wrapper(*args, **kwargs_):
-                return f(*args, **kwargs_)
-
-            return wrapper
+        _validate_datatype_schema_context(datatype_schema, f, tilingkey_schema)
+        return _TileJitKernel(
+            func=f,
+            arch=arch,
+            auto_mutex=auto_mutex,
+            name=name,
+            closure_vars=caller_closure_vars,
+            pipeline=pipeline,
+            tilingkey_schema=tilingkey_schema,
+            datatype_schema=datatype_schema,
+            compile_timeout=compile_timeout,
+            sanitizer=sanitizer,
+        )
 
     if callable(target):
         return decorator(target)
     else:
         return decorator
-
-
-def _is_tile_kernel(func) -> bool:
-    """Detect if a function is a Tile-programming kernel based on its annotations.
-
-    A Tile kernel has pl.Tensor, pl.Ptr, or DT_* scalar annotations
-    on its parameters. These are created by pl.Tensor[[shape], dtype],
-    pl.Ptr[dtype], or dtype (e.g. pl.DT_INT64) syntax.
-    """
-    hints = getattr(func, "__annotations__", {})
-    if not hints:
-        return False
-
-    # Import type classes for isinstance check
-    tensor_cls = None
-    ptr_cls = None
-    try:
-        from pypto_pro.language.typing.tensor import Tensor
-
-        tensor_cls = Tensor
-    except ImportError:
-        pass
-
-    try:
-        from pypto_pro.language.typing.ptr import Ptr
-
-        ptr_cls = Ptr
-    except ImportError:
-        pass
-
-    for key, val in hints.items():
-        if key == "return":
-            continue
-        # pl.Tensor[[64, 128], pl.DT_FP16] returns a Tensor instance at runtime
-        if tensor_cls is not None and (isinstance(val, tensor_cls) or val is tensor_cls):
-            return True
-        # pl.Ptr[pl.DT_FP16] returns a Ptr instance at runtime
-        if ptr_cls is not None and (isinstance(val, ptr_cls) or val is ptr_cls):
-            return True
-        # DT_* values are DataType enum members at runtime.  String annotations
-        # are retained when ``from __future__ import annotations`` is active.
-        if isinstance(val, DataType) or (isinstance(val, str) and val.split(".")[-1].startswith("DT_")):
-            return True
-    return False
 
 
 # Specialization identity for a kernel launched without tilingkey/datatype keys.

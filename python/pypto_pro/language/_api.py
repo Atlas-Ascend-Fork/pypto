@@ -1565,6 +1565,37 @@ def get_subblock_idx() -> int:
 
 
 @_api_decl
+def dynamic_input_ptr(x: Ptr, i: int, /) -> Ptr:
+    """Pointer to the i-th tensor carried by a runtime-variadic (DYNAMIC) input.
+
+    ``x`` is the descriptor pointer the framework passes for a ``ParamType(DYNAMIC)``
+    op (CANN ``folded_with_desc``); declare it as ``pl.Ptr[dtype]``.  ``i`` is the tensor
+    index in ``[0, N)`` where N is the host-provided tensor count. The returned pointer's
+    element type is the descriptor's element dtype; build a typed view with
+    ``pl.make_tensor(dynamic_input_ptr(x, i), shape, stride, dtype=...)``, which also
+    reinterprets the element type when a different ``dtype`` is given.
+
+    Element widths: 8/16/32/64-bit elements use the matching C type. 4-bit elements are
+    *packed two-per-byte*, so ``DT_FP4E2M1``/``DT_FP4E1M2`` map to ``float4_e2m1x2_t``/
+    ``float4_e1m2x2_t`` (one element spans two values); ``DT_INT4``/``DT_UINT4``/``DT_FP4``/
+    ``DT_HF4`` have no packed C type and are rejected when the op is lowered.
+    """
+
+
+@_api_decl
+def dynamic_input_dim(x: Ptr, i: int, axis: int, /) -> Scalar:
+    """Length of shape axis ``axis`` of the i-th tensor in a runtime-variadic (DYNAMIC) input.
+
+    ``x`` is the descriptor pointer the framework passes for a ``ParamType(DYNAMIC)`` op;
+    declare it as ``pl.Ptr[dtype]``.
+    ``i`` is the tensor index; ``axis`` is an integer scalar expression (a compile-time constant
+    or a runtime value) whose valid range ``[0, dim)`` is only known at run time, so an
+    out-of-range axis is guarded on device. Only the ``dim != 0`` descriptor form carries
+    shape; reads the layout directly (no AscendC dependency).
+    """
+
+
+@_api_decl
 def get_block_num() -> int:
     """Get the launched worker block count after applying the stream's core limits.
 

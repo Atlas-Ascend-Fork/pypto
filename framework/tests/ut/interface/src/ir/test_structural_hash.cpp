@@ -60,6 +60,21 @@ TEST_F(IRStructHashTest, TestHashVarNoAutoMappingByName)
 }
 
 // ============================================================================
+// Type hashing
+// ============================================================================
+
+TEST_F(IRStructHashTest, TestHashPtrType)
+{
+    // PtrType must be hashable; dtype contributes.
+    auto f16 = std::make_shared<PtrType>(DataType::FP16);
+    auto f16_dup = std::make_shared<PtrType>(DataType::FP16);
+    auto f32 = std::make_shared<PtrType>(DataType::FP32);
+
+    EXPECT_EQ(structural_hash(f16), structural_hash(f16_dup));
+    EXPECT_NE(structural_hash(f16), structural_hash(f32));
+}
+
+// ============================================================================
 // Expression node hashing
 // ============================================================================
 

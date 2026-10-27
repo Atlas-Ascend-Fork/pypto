@@ -258,6 +258,51 @@ REGISTER_OP("get_subblock_num")
         return DeduceBlockGetBlockIdxType(args, kwargs, "get_subblock_num");
     });
 
+// Pointer to the i-th tensor inside a runtime-variadic (DYNAMIC) input descriptor. Returns a
+// PtrType; build a typed view with pl.make_tensor(ptr, shape, stride, dtype=...).
+TypePtr DeduceBlockDynamicInputPtrType(const std::vector<ExprPtr>& args, const std::string& op_name)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+        << "The operator " << op_name << " requires 2 arguments (x, i), but got " << args.size();
+    // Whether i is an integer index is settled by the frontend; reading x's dtype only
+    // needs it to be a pointer.
+    auto desc_type = As<PtrType>(args[0] ? args[0]->GetType() : nullptr);
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, desc_type != nullptr)
+        << "The operator " << op_name << " requires a PtrType as its first argument, got "
+        << (args[0] ? args[0]->GetType()->TypeName() : std::string("null"));
+    return std::make_shared<PtrType>(desc_type->dtype_);
+}
+
+REGISTER_OP("dynamic_input_ptr")
+    .set_op_category("LanguageOp")
+    .set_description("Pointer to the i-th tensor in a runtime-variadic (DYNAMIC) input descriptor")
+    .add_argument("x", "Descriptor pointer of the dynamic input (PtrType)")
+    .add_argument("i", "Tensor index within the descriptor")
+    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceBlockDynamicInputPtrType(args, "dynamic_input_ptr");
+    });
+
+// Shape entry of the i-th tensor inside a runtime-variadic (DYNAMIC) input descriptor
+// (dim != 0 form). Returns an INT64 scalar (the length of that axis).
+TypePtr DeduceBlockDynamicInputDimType(const std::vector<ExprPtr>& args, const std::string& op_name)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+        << "The operator " << op_name << " requires 3 arguments (x, i, axis), but got " << args.size();
+    return std::make_shared<ScalarType>(DataType::INT64);
+}
+
+REGISTER_OP("dynamic_input_dim")
+    .set_op_category("LanguageOp")
+    .set_description("Shape(axis) of the i-th tensor in a runtime-variadic (DYNAMIC) input descriptor")
+    .add_argument("x", "Descriptor pointer of the dynamic input (PtrType)")
+    .add_argument("i", "Tensor index within the descriptor")
+    .add_argument("axis", "Shape axis to read")
+    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceBlockDynamicInputDimType(args, "dynamic_input_dim");
+    });
+
 REGISTER_OP("get_spr")
     .set_op_category("LanguageOp")
     .set_description("Read special purpose register value (get_ar instruction). "

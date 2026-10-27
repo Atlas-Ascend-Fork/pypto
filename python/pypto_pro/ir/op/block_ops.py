@@ -5021,6 +5021,22 @@ def _parse_get_ctrl_spr(self, call: ast.Call) -> Expr:
     return _ir_get_ctrl_spr(*args, span=span)
 
 
+@op_impl("dynamic_input_ptr")
+def _parse_dynamic_input_ptr(self, call: ast.Call) -> Expr:
+    span = self.span_tracker.get_span(call)
+    args = [self.parse_expression(arg) for arg in call.args]
+    self._check_declared_types("dynamic_input_ptr", call, args, {}, span)
+    return _ir_core.create_op_call("dynamic_input_ptr", args, {}, span)
+
+
+@op_impl("dynamic_input_dim")
+def _parse_dynamic_input_dim(self, call: ast.Call) -> Expr:
+    span = self.span_tracker.get_span(call)
+    args = [self.parse_expression(arg) for arg in call.args]
+    self._check_declared_types("dynamic_input_dim", call, args, {}, span)
+    return _ir_core.create_op_call("dynamic_input_dim", args, {}, span)
+
+
 @op_impl("reset_ctrl_spr")
 def _parse_reset_ctrl_spr(self, call: ast.Call) -> Expr:
     span = self.span_tracker.get_span(call)

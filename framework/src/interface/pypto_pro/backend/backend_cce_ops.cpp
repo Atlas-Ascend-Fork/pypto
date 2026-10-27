@@ -790,6 +790,58 @@ static std::string MakeBlockGetBlockIdxCodegenCCE(const ir::CallPtr& op, codegen
     return "(int64_t)(get_block_idx())";
 }
 
+// Helper for dynamic_input_ptr: address of the i-th tensor in a runtime-variadic (DYNAMIC) input
+// descriptor. The descriptor layout is read directly -- word[0] is the byte offset from the
+// descriptor head to the address array, and the array holds one uint64 address per listed tensor,
+// i.e. exactly what AscendC::ListTensorDesc::GetDataPtr does internally:
+//     addr(i) = *( (__gm__ uint64_t*)((__gm__ uint8_t*)x + word[0]) + i )
+// Reading it directly keeps the op independent of the AscendC list-tensor header (no include is
+// injected) and identical on the pto-isa (direct-launch) and OPC paths, matching dynamic_input_dim.
+// Returns a pointer expression (not a value); a following ptr.make_tensor turns it into a typed view.
+static std::string MakeBlockDynamicInputPtrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
+        << "dynamic_input_ptr requires 2 arguments";
+    auto& cg = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    std::string x = cg.GetExprAsCode(op->args_[0]);
+    std::string i = cg.GetExprAsCode(op->args_[1]);
+    auto ptr_type = ir::As<ir::PtrType>(op->GetType());
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, ptr_type != nullptr) << "dynamic_input_ptr result must be a PtrType";
+    std::string ctype = ptr_type->dtype_.ToCTypeString();
+    // Unmapped dtypes (DT_INT4/DT_UINT4/DT_FP4/DT_HF4) would fall back to "unknown"; fail loudly
+    // instead of emitting a broken `__gm__ unknown*`.
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, ctype != "unknown")
+        << "dynamic_input_ptr: descriptor dtype " << ptr_type->dtype_.ToString()
+        << " has no C type mapping (DT_INT4/DT_UINT4/DT_FP4/DT_HF4 are not usable here)";
+    std::string word0 = "*reinterpret_cast<__gm__ uint64_t*>(" + x + ")";
+    return "(reinterpret_cast<__gm__ " + ctype + "*>(*(reinterpret_cast<__gm__ uint64_t*>(" +
+           "reinterpret_cast<__gm__ uint8_t*>(" + x + ") + " + word0 + ") + (" + i + "))))";
+}
+
+// Helper for dynamic_input_dim: read shape(axis) of the i-th tensor in a runtime-variadic
+// (DYNAMIC) input descriptor (dim != 0 form). Reads the descriptor layout directly instead of
+// AscendC::ListTensorDesc::GetDesc / TensorDesc::GetShape, because those are __NPU_ARCH__-guarded
+// and unavailable in the pto-isa (direct-launch) path.
+//   word[0] = dataPtrOffset; word[1] = dim(low32) | count(high32);
+//   shape structs: <count> entries of (1+dim) words at word[1..];
+//   tensor i's shape[axis] is word[1 + i*(1 + dim) + 1 + axis].
+static std::string MakeBlockDynamicInputDimCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
+        << "dynamic_input_dim requires 3 arguments";
+    auto& cg = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    std::string x = cg.GetExprAsCode(op->args_[0]);
+    std::string i = cg.GetExprAsCode(op->args_[1]);
+    std::string axis = cg.GetExprAsCode(op->args_[2]);
+    std::string base = "reinterpret_cast<__gm__ int64_t*>(" + x + ")";
+    std::string dim = "(*( " + base + " + 1) & 0xffffffff)";
+    std::string a = "(int64_t)(" + axis + ")";
+    // Guard: 0 <= axis < dim (out-of-range traps instead of reading a wrong word -- past the
+    // shape block for axis >= dim, and before it for a negative axis).
+    return "((0 <= " + a + " && " + a + " < (int64_t)(" + dim + ")) ? *( " + base + " + (1 + (int64_t)(" + i +
+           ")*(1 + (int64_t)(" + dim + ")) + 1 + " + a + ")) : (trap(), (int64_t)(-1)))";
+}
+
 static std::string TileConstructorArgs(codegen::CCECodegen& codegen, const ir::TileTypePtr& type)
 {
     std::vector<std::string> dims;
@@ -995,6 +1047,18 @@ REGISTER_BACKEND_OP(BackendCCE, "get_block_idx")
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeBlockGetBlockIdxCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "dynamic_input_ptr")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeBlockDynamicInputPtrCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "dynamic_input_dim")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeBlockDynamicInputDimCodegenCCE(op, codegen);
     });
 
 // Helper function for get_spr (reads AR special purpose register via get_ar())
