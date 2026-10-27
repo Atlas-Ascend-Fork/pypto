@@ -12,6 +12,7 @@
  */
 
 #include "ir/transforms/io_text.h"
+#include "tilefwk/tile_shape.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -36,9 +37,11 @@
 
 #include "interface/tensor/ir.h"
 #include "interface/operation/operation.h"
+#include "interface/configs/config_manager_ng.h"
 
 #include "../../tensor/symbolic_scalar.h"
 #include "../../tensor/logical_tensor.h"
+#include "tilefwk/element.h"
 
 using npu::tile_fwk::LogicalTensor;
 using npu::tile_fwk::Operation;
@@ -212,10 +215,69 @@ void IRTextDumper::PrintTokenList(const std::vector<VarPtr>& tokenList)
 // ---------------------------------------------------------------------------
 // Attr dict printing (attr is the leaf layer of the traversal)
 // ---------------------------------------------------------------------------
+namespace {
+
+template <typename TileShapeT>
+std::vector<int64_t> TileVecVector(const TileShapeT& tileShape)
+{
+    return tileShape.GetVecTile().tile;
+}
+
+template <typename TileShapeT>
+std::vector<int64_t> TileCubeVector(const TileShapeT& tileShape)
+{
+    const auto& cubeTile = tileShape.GetCubeTile();
+    if (!cubeTile.valid()) {
+        return {};
+    }
+    return {cubeTile.m[0], cubeTile.m[1], cubeTile.k[0], cubeTile.k[1],
+            cubeTile.k[2], cubeTile.n[0], cubeTile.n[1], cubeTile.enableSplitK ? 1 : 0};
+}
+
+template <typename TileShapeT>
+std::vector<int64_t> TileDistVector(const TileShapeT& tileShape)
+{
+    const auto& distTile = tileShape.GetDistTile();
+    if (!distTile.valid()) {
+        return {};
+    }
+    std::vector<int64_t> dist;
+    dist.insert(dist.end(), distTile.row.begin(), distTile.row.end());
+    dist.insert(dist.end(), distTile.col.begin(), distTile.col.end());
+    dist.insert(dist.end(), distTile.rank.begin(), distTile.rank.end());
+    dist.push_back(distTile.rankId);
+    return dist;
+}
+
+} // namespace
+
+// Only values that PrintAttrValue can rebuild verbatim are dumped as generic op attributes.
+bool IsRoundTrippableGenericAttr(const std::any& value)
+{
+    const auto& type = value.type();
+    return type == typeid(int64_t) || type == typeid(bool) || type == typeid(std::string) || type == typeid(double) ||
+           type == typeid(std::vector<int64_t>) || type == typeid(npu::tile_fwk::Element) ||
+           type == typeid(npu::tile_fwk::SymbolicScalar);
+}
+
 void IRTextDumper::PrintAttrDict(const std::map<std::string, std::any>& attrDict)
 {
     for (const auto& [key, value] : attrDict) {
         PrintAttr(key, value);
+    }
+}
+
+void IRTextDumper::PrintTileAttrs(const std::vector<int64_t>& vec, const std::vector<int64_t>& cube,
+                                  const std::vector<int64_t>& dist)
+{
+    if (!vec.empty()) {
+        PrintAttr("vec_tile", std::any(vec));
+    }
+    if (!cube.empty()) {
+        PrintAttr("cube_tile", std::any(cube));
+    }
+    if (!dist.empty()) {
+        PrintAttr("dist_tile", std::any(dist));
     }
 }
 
@@ -529,6 +591,32 @@ void IRTextDumper::VisitStmt_(const TensorOpStmtPtr& op)
     stream_ << IR_PUN_RPAREN;
 
     PrintAttrDict(GetOperationAttrDict(op));
+    if (operation) {
+        // Per-op tile snapshot taken when the op was built; not recoverable from the scope on load.
+        // Dump only what differs from the ambient tile: a tile inherited from the current scope is
+        // reproducible from it, so writing it into the text would make dumps depend on process state.
+        const auto& opTileShape = operation->GetTileShape();
+        const auto& ambientTileShape = TileShape::Current();
+        auto vecTile = TileVecVector(opTileShape);
+        auto cubeTile = TileCubeVector(opTileShape);
+        auto distTile = TileDistVector(opTileShape);
+        if (vecTile == TileVecVector(ambientTileShape)) {
+            vecTile.clear();
+        }
+        if (cubeTile == TileCubeVector(ambientTileShape)) {
+            cubeTile.clear();
+        }
+        if (distTile == TileDistVector(ambientTileShape)) {
+            distTile.clear();
+        }
+        PrintTileAttrs(vecTile, cubeTile, distTile);
+        // Generic op attrs (SCALAR/AXIS/mode/...) that downstream passes read back via GetAttr.
+        for (const auto& [key, value] : operation->GetAllAttr()) {
+            if (IsRoundTrippableGenericAttr(value)) {
+                PrintAttr(key, value);
+            }
+        }
+    }
     stream_ << IR_PUN_SEMI;
 }
 

@@ -4,30 +4,30 @@ function kernel incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([16, 
         OP_CONFIG() token() #vec_tile_shapes([8, 8]);
         OP_CONFIG() token() #vec_tile_shapes([16, 16]);
         OP_CONFIG() token() #pass.cube_nbuffer_setting([[-1, 2]]);
-        v0_logical_tensor %0@3 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10000 ADD(%x@0, %y@1) token();
+        v0_logical_tensor %0@3 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10000 ADD(%x@0, %y@1) token() #vec_tile([8, 8]);
         v0_logical_tensor %value_0@4 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = for %loop_idx_49 inrange 0, 2, 1 iter { v0_logical_tensor %value@3 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = %0@3; } #_config_scope(Unsupported) #_loop_conds([v0ge(loop_idx_49, 0), v0lt(loop_idx_49, 2)]) #parallel(false) #submit_before_loop(false) #unroll_times(1) {
             OP_CONFIG() token() #vec_tile_shapes([4, 16]);
-            v0_logical_tensor %2@4 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10001 ADD(%value@3, %y@1) token();
+            v0_logical_tensor %2@4 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10001 ADD(%value@3, %y@1) token() #vec_tile([4, 16]);
             continue %2@4;
         }
         OP_CONFIG() token() #vec_tile_shapes([16, 8]);
         OP_CONFIG() token() #host.compile_timeout(2000);
-        v0_logical_tensor %out_1@2 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10002 ASSEMBLE(%value_0@4) token() #toOffset([0, 0]);
+        v0_logical_tensor %out_1@2 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10002 ASSEMBLE(%value_0@4) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
         yield %out_1@2;
     } else {
         OP_CONFIG() token() #host.compile_timeout(1000);
         OP_CONFIG() token() #vec_tile_shapes([8, 8]);
         OP_CONFIG() token() #vec_tile_shapes([8, 16]);
         OP_CONFIG() token() #pass.cube_nbuffer_setting([[-1, 4]]);
-        v0_logical_tensor %0_1@8 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10003 ADD(%x@0, %y@1) token();
+        v0_logical_tensor %0_1@8 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10003 ADD(%x@0, %y@1) token() #vec_tile([8, 8]);
         v0_logical_tensor %value_3@12 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = for %loop_idx_49_0 inrange 0, 2, 1 iter { v0_logical_tensor %value_2@11 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = %0_1@8; } #_config_scope(Unsupported) #_loop_conds([v0ge(loop_idx_49_0, 0), v0lt(loop_idx_49_0, 2)]) #parallel(false) #submit_before_loop(false) #unroll_times(1) {
             OP_CONFIG() token() #vec_tile_shapes([4, 16]);
-            v0_logical_tensor %2_0@9 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10004 ADD(%value_2@11, %y@1) token();
+            v0_logical_tensor %2_0@9 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10004 ADD(%value_2@11, %y@1) token() #vec_tile([4, 16]);
             continue %2_0@9;
         }
         OP_CONFIG() token() #vec_tile_shapes([16, 8]);
         OP_CONFIG() token() #host.compile_timeout(2000);
-        v0_logical_tensor %out_5@2 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10005 ASSEMBLE(%value_3@12) token() #toOffset([0, 0]);
+        v0_logical_tensor %out_5@2 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10005 ASSEMBLE(%value_3@12) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
         yield %out_5@2;
     }
     return %x@0, %y@1, %out_3@7;

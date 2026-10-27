@@ -154,6 +154,8 @@ public:
     void SetValue(npu::tile_fwk::DataType& dst, const std::any& src);
     void SetValue(std::vector<int64_t>& dst, const std::any& src);
     void SetValue(std::vector<npu::tile_fwk::SymbolicScalar>& dst, const std::any& src);
+    void SetOpTileShape(npu::tile_fwk::Operation& op, const std::string& key, const std::any& value);
+    void SetOpGenericAttr(npu::tile_fwk::Operation& op, const std::string& key, const std::any& value);
 
     IRTextParserStringPtr ParseIdent();
     IRTextParserStringPtr ParseVarName();
@@ -251,6 +253,8 @@ protected:
     IRTextParserAttrValuePtr ParseAttrValueList();
     IRTextParserAttrValuePtr ParseAttrValueExpr();
     IRTextParserAttrValuePtr ParseAttrValueRaw();
+    IRTextParserAttrValuePtr ParseAttrValueElem();
+    IRTextParserAttrValuePtr ParseAttrValueSym();
 
     bool SetOperationAttrDict(const TensorOpStmtPtr& op, const std::map<std::string, std::any>& attrDict);
     bool SetViewOpAttrDict(npu::tile_fwk::Operation& op, const std::map<std::string, std::any>& attrDict);

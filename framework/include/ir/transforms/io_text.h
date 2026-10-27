@@ -113,6 +113,9 @@
 #define IR_KW_SCALAR_UOP_CAST "cast"
 
 // ---- Symbolic scalar (scalarv0) opcode keywords ----
+#define IR_KWV0_SCALAR_ELEMENT "v0elem"
+#define IR_KWV0_SCALAR_SYMBOLIC "v0sym"
+
 #define IR_KWV0_SCALAR_UOP_POS "v0pos"
 #define IR_KWV0_SCALAR_UOP_NEG "v0neg"
 #define IR_KWV0_SCALAR_UOP_NOT "v0not"
@@ -247,6 +250,9 @@ enum class IRTextLexerTokenKind {
     KwV0ScalarMOpOr,
     KwV0ScalarBegin = KwV0ScalarUOpPos,
     KwV0ScalarEnd = KwV0ScalarMOpOr,
+    // Attribute value tags (Element / a lone SymbolicScalar)
+    KwV0ScalarElement,
+    KwV0ScalarSymbolic,
     // Punctuation
     PunVarName,
     PunAttrName,
@@ -387,6 +393,8 @@ static inline const npu::tile_fwk::BiMap<IRTextLexerTokenKind>& IRTextGetLexerTo
         {IRTextLexerTokenKind::KwV0ScalarMOpMax, IR_KWV0_SCALAR_MOP_MAX},
         {IRTextLexerTokenKind::KwV0ScalarMOpAnd, IR_KWV0_SCALAR_MOP_AND},
         {IRTextLexerTokenKind::KwV0ScalarMOpOr, IR_KWV0_SCALAR_MOP_OR},
+        {IRTextLexerTokenKind::KwV0ScalarElement, IR_KWV0_SCALAR_ELEMENT},
+        {IRTextLexerTokenKind::KwV0ScalarSymbolic, IR_KWV0_SCALAR_SYMBOLIC},
         // Punctuation (VarName/AttrName handled as whole tokens, not here)
         {IRTextLexerTokenKind::PunLBrace, IR_PUN_LBRACE},
         {IRTextLexerTokenKind::PunRBrace, IR_PUN_RBRACE},
@@ -507,6 +515,8 @@ private:
     void PrintAttrValue(const std::string& key, const std::any& value);
     void PrintAttr(const std::string& key, const std::any& value);
     void PrintDataArray(const std::vector<int64_t>& vals);
+    void PrintTileAttrs(const std::vector<int64_t>& vec, const std::vector<int64_t>& cube,
+                        const std::vector<int64_t>& dist);
     // Attr is the leaf layer of the traversal: nodes carrying attrs hand their
     // attr dict to PrintAttrDict, which dispatches value formatting.
     void PrintAttrDict(const std::map<std::string, std::any>& attrDict);

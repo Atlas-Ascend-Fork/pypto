@@ -1,7 +1,7 @@
 function inside_loop_idx_10_Unroll1_PATH0_hiddenfunc_4 incast(v0_logical_tensor %src_1@5 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), v0_logical_tensor %out_7@7 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16])) outcast() #entry(false) #type(InCore) {
-    v0_logical_tensor %INCAST_LOCAL_BUF0@6 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]) = !10004 VIEW(%src_1@5) token() #fromOffset([0, 0]) #toValidShape([32, 16]);
+    v0_logical_tensor %INCAST_LOCAL_BUF0@6 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]) = !10004 VIEW(%src_1@5) token() #fromOffset([0, 0]) #toValidShape([32, 16]) #IS_GLOBAL_INPUT(true);
     v0_logical_tensor %View_src@3 #dtype(float) #dynvalidshape([v0min(v0max(v0sub(32, v0mul(loop_idx_10, 16)), 0), 16), 16]) #offset([0, 0]) #shape([16, 16]) = !10000 VIEW(%INCAST_LOCAL_BUF0@6) token() #fromDynOffset([v0mul(loop_idx_10, 16), 0]) #fromOffset([0, 0]) #toValidShape([v0min(v0max(v0sub(32, v0mul(loop_idx_10, 16)), 0), 16), 16]);
-    v0_logical_tensor %buf_2@2 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10001 ASSEMBLE(%View_src@3) token() #toOffset([0, 0]);
+    v0_logical_tensor %buf_2@2 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10001 ASSEMBLE(%View_src@3) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
     v0_logical_tensor %View_buf@4 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10002 VIEW(%buf_2@2) token() #fromOffset([0, 0]) #toValidShape([16, 16]);
-    v0_logical_tensor %out_7@7 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]) = !10003 ASSEMBLE(%View_buf@4) token() #toDynOffset([v0mul(loop_idx_10, 16), 0]) #toOffset([0, 0]);
+    v0_logical_tensor %out_7@7 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]) = !10003 ASSEMBLE(%View_buf@4) token() #toDynOffset([v0mul(loop_idx_10, 16), 0]) #toOffset([0, 0]) #dassemble(true) #parallel(false);
 }

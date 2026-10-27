@@ -6,25 +6,25 @@ function foo incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([32, 32]
         v0_logical_tensor %z_17@12 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = if v0eq(loop_idx_32, 0) then {
             v0_logical_tensor %0@5 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10002 ADD(%View_x@3, %View_y@4) token();
             v0_logical_tensor %z_7@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = for %loop_idx_50 inrange 0, 2, 1 iter { v0_logical_tensor %z_3@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = %z_1@2; } #_config_scope(Unsupported) #_loop_conds([v0ge(loop_idx_50, 0), v0lt(loop_idx_50, 2)]) #parallel(false) #submit_before_loop(false) #unroll_times(1) {
-                v0_logical_tensor %z_5@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10010 ASSEMBLE(%0@5) token() #toDynOffset([v0mul(loop_idx_50, 16), 0]) #toOffset([0, 0]);
+                v0_logical_tensor %z_5@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10010 ASSEMBLE(%0@5) token() #toDynOffset([v0mul(loop_idx_50, 16), 0]) #toOffset([0, 0]) #dassemble(true) #parallel(false);
                 continue %z_5@2;
             }
             v0_logical_tensor %4@8 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10012 SUB(%0@5, %View_y@4) token();
-            v0_logical_tensor %z_9@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10009 ASSEMBLE(%4@8) token() #toOffset([0, 0]);
+            v0_logical_tensor %z_9@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10009 ASSEMBLE(%4@8) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
             yield %z_9@2;
         } else {
             v0_logical_tensor %1@6 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10003 SUB(%View_x@3, %View_y@4) token();
             for %loop_idx_50_0 inrange 0, 2, 1 iter { } #_config_scope(Unsupported) #_loop_conds([v0ge(loop_idx_50_0, 0), v0lt(loop_idx_50_0, 2)]) #parallel(false) #submit_before_loop(false) #unroll_times(1) {
-                v0_logical_tensor %z_23@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10018 ASSEMBLE(%1@6) token() #toDynOffset([v0mul(loop_idx_50_0, 16), 0]) #toOffset([0, 0]);
+                v0_logical_tensor %z_23@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10018 ASSEMBLE(%1@6) token() #toDynOffset([v0mul(loop_idx_50_0, 16), 0]) #toOffset([0, 0]) #dassemble(true) #parallel(false);
                 continue;
             }
             v0_logical_tensor %z_13@9 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = if v0eq(loop_idx_32, 1) then {
                 v0_logical_tensor %3@7 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10014 ADD(%1@6, %View_y@4) token();
-                v0_logical_tensor %z_27@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10019 ASSEMBLE(%3@7) token() #toOffset([0, 0]);
+                v0_logical_tensor %z_27@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10019 ASSEMBLE(%3@7) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
                 yield %z_27@2;
             } else {
                 v0_logical_tensor %4_0@14 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10020 SUB(%1@6, %View_y@4) token();
-                v0_logical_tensor %z_19@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10021 ASSEMBLE(%4_0@14) token() #toOffset([0, 0]);
+                v0_logical_tensor %z_19@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10021 ASSEMBLE(%4_0@14) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
                 yield %z_19@2;
             }
             yield %z_13@9;

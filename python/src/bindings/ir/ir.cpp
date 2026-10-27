@@ -15,6 +15,7 @@
 #include <any>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -1654,6 +1655,69 @@ void BindHelpers(py::module_& ir)
         "The function receives (args, kwargs, span) and should return either:\n"
         "- An Expr (simple conversion)\n"
         "- A tuple (list[Stmt], Expr) for complex conversions with prologue statements");
+
+    // ---- IR text serialization (io_text): dump + load round-trip ----
+    ir.def(
+        "text_dump", [](const IRNodePtr& node) { return TextDump(node); }, py::arg("node"),
+        "Dump an IR node (Program/Function/Stmt/Expr) to canonical IR text.");
+    ir.def(
+        "text_dump_type", [](const TypePtr& type) { return TextDumpType(type); }, py::arg("type"),
+        "Dump an IR type to canonical IR text.");
+    ir.def(
+        "text_load_program",
+        [](const std::string& text) {
+            std::string error;
+            ProgramPtr prog = TextLoadProgram(text, error);
+            if (!error.empty()) {
+                throw std::runtime_error("text_load_program failed: " + error);
+            }
+            return prog;
+        },
+        py::arg("text"), "Load an ir.Program from IR text.");
+    ir.def(
+        "text_load_function",
+        [](const std::string& text) {
+            std::string error;
+            FunctionPtr func = TextLoadFunction(text, error);
+            if (!error.empty()) {
+                throw std::runtime_error("text_load_function failed: " + error);
+            }
+            return func;
+        },
+        py::arg("text"), "Load an ir.Function from IR text.");
+    ir.def(
+        "text_load_stmt",
+        [](const std::string& text) {
+            std::string error;
+            StmtPtr stmt = TextLoadStmt(text, error);
+            if (!error.empty()) {
+                throw std::runtime_error("text_load_stmt failed: " + error);
+            }
+            return stmt;
+        },
+        py::arg("text"), "Load an ir.Stmt from IR text.");
+    ir.def(
+        "text_load_expr",
+        [](const std::string& text) {
+            std::string error;
+            ExprPtr expr = TextLoadExpr(text, error);
+            if (!error.empty()) {
+                throw std::runtime_error("text_load_expr failed: " + error);
+            }
+            return expr;
+        },
+        py::arg("text"), "Load an ir.Expr from IR text.");
+    ir.def(
+        "text_load_type",
+        [](const std::string& text) {
+            std::string error;
+            TypePtr type = TextLoadType(text, error);
+            if (!error.empty()) {
+                throw std::runtime_error("text_load_type failed: " + error);
+            }
+            return type;
+        },
+        py::arg("text"), "Load an ir.Type from IR text.");
 }
 
 } // namespace ir

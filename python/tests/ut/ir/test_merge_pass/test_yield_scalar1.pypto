@@ -4,10 +4,10 @@ function foo incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([32, 32]
         continue v0add(n, 32);
     }
     v0_logical_tensor %y_3@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = if v0lt(128, n_0) then {
-        v0_logical_tensor %y_0@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10000 ADDS(%x@0) token();
+        v0_logical_tensor %y_0@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10000 ADDS(%x@0) token() #SCALAR(v0elem(float, 1));
         yield %y_0@2;
     } else {
-        v0_logical_tensor %y_1@3 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10001 ADDS(%x@0) token();
+        v0_logical_tensor %y_1@3 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10001 ADDS(%x@0) token() #SCALAR(v0elem(float, 2));
         yield %y_1@3;
     }
     return %x@0, %y_3@2;

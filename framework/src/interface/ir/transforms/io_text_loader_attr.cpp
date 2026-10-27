@@ -21,9 +21,11 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/any_cast.h"
+#include "tilefwk/element.h"
 #include "interface/operation/attribute.h"
 #include "interface/operation/opcode.h"
 #include "interface/operation/operation.h"
@@ -438,6 +440,10 @@ bool IRTextParser::SetTensorAttrDict(const VarPtr& var, const std::map<std::stri
     t->offset = values.offset.empty() ? npu::tile_fwk::Offset(values.shape.size(), 0) : values.offset;
     t->dynValidShape_ = values.dynValidShape;
     t->dynOffset_ = values.dynOffset;
+    // Loaded tensors start with an empty shape: rebuild the dyn shape from #shape (read later via GetDynRawShape).
+    if (t->tensor != nullptr && t->tensor->GetDynRawShape().empty() && !values.shape.empty()) {
+        t->tensor->UpdateDynRawShape(npu::tile_fwk::SymbolicScalar::FromConcrete(values.shape));
+    }
     return true;
 }
 
@@ -452,6 +458,22 @@ bool IRTextParser::SetOperationAttrDict(const TensorOpStmtPtr& op, const std::ma
         }
         return true;
     }
+    // Per-op tile is captured from the config scope at construction, so restore it from the text.
+    static const std::unordered_set<std::string> kTileAttrs = {"vec_tile", "cube_tile", "dist_tile"};
+    for (const auto& [key, value] : attrDict) {
+        if (kTileAttrs.count(key) != 0) {
+            SetOpTileShape(*operation, key, value);
+        }
+    }
+    // Remaining generic op attrs (SCALAR/AXIS/mode) read back via GetAttr; keys with dedicated
+    // handling (tile attrs above, view/assemble offsets and valid shapes below) are skipped here.
+    static const std::unordered_set<std::string> kReservedAttrs = {"fromOffset",  "fromDynOffset", "toOffset",
+                                                                   "toDynOffset", "toValidShape",  "fromValidShape"};
+    for (const auto& [key, value] : attrDict) {
+        if (kTileAttrs.count(key) == 0 && kReservedAttrs.count(key) == 0) {
+            SetOpGenericAttr(*operation, key, value);
+        }
+    }
     if (npu::tile_fwk::IsViewLike(operation->GetOpcode())) {
         return SetViewOpAttrDict(*operation, attrDict);
     }
@@ -459,6 +481,57 @@ bool IRTextParser::SetOperationAttrDict(const TensorOpStmtPtr& op, const std::ma
         return SetAssembleOpAttrDict(*operation, attrDict);
     }
     return true;
+}
+
+void IRTextParser::SetOpTileShape(npu::tile_fwk::Operation& op, const std::string& key, const std::any& value)
+{
+    auto& tileShape = op.GetTileShapeForSetting();
+    if (key == "vec_tile") {
+        SetValue(tileShape.GetVecTile().tile, value);
+    } else if (key == "cube_tile") {
+        std::vector<int64_t> cube;
+        SetValue(cube, value);
+        if (cube.size() == 8) {
+            auto& cubeTile = tileShape.GetCubeTile();
+            cubeTile.m = {cube[0], cube[1]};
+            cubeTile.k = {cube[2], cube[3], cube[4]};
+            cubeTile.n = {cube[5], cube[6]};
+            cubeTile.enableSplitK = (cube[7] != 0);
+        }
+    } else if (key == "dist_tile") {
+        std::vector<int64_t> dist;
+        SetValue(dist, value);
+        if (dist.size() == 10) {
+            auto& distTile = tileShape.GetDistTile();
+            for (int i = 0; i < 3; i++) {
+                distTile.row[i] = static_cast<int>(dist[i]);
+                distTile.col[i] = static_cast<int>(dist[3 + i]);
+                distTile.rank[i] = static_cast<int>(dist[6 + i]);
+            }
+            distTile.rankId = static_cast<int>(dist[9]);
+        }
+    }
+}
+
+void IRTextParser::SetOpGenericAttr(npu::tile_fwk::Operation& op, const std::string& key, const std::any& value)
+{
+    if (value.type() == typeid(int64_t)) {
+        op.SetAttr(key, AnyCast<int64_t>(value));
+    } else if (value.type() == typeid(bool)) {
+        op.SetAttr(key, AnyCast<bool>(value));
+    } else if (value.type() == typeid(std::string)) {
+        op.SetAttr(key, AnyCast<std::string>(value));
+    } else if (value.type() == typeid(double)) {
+        op.SetAttr(key, AnyCast<double>(value));
+    } else if (value.type() == typeid(npu::tile_fwk::Element)) {
+        op.SetAttr(key, AnyCast<npu::tile_fwk::Element>(value));
+    } else if (value.type() == typeid(npu::tile_fwk::SymbolicScalar)) {
+        op.SetAttr(key, AnyCast<npu::tile_fwk::SymbolicScalar>(value));
+    } else if (value.type() == typeid(std::vector<std::any>)) {
+        std::vector<int64_t> vec;
+        SetValue(vec, value);
+        op.SetAttr(key, vec);
+    }
 }
 
 bool IRTextParser::SetFunctionAttrDict(const FunctionPtr& func, const std::map<std::string, std::any>& attrDict)
@@ -555,13 +628,59 @@ IRTextParserAttrValuePtr IRTextParser::ParseAttrValueExpr()
     return std::make_shared<IRTextParserAttrValuePtr::element_type>(data);
 }
 
+IRTextParserAttrValuePtr IRTextParser::ParseAttrValueElem()
+{
+    ++cur_; // consume the 'v0elem' keyword
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunLParen));
+    MUST_VALID(dtype, ParseAttrValueIdent());
+    auto code = GetTileFwkDataTypeDict().Find(AnyCast<std::string>(dtype->data), npu::tile_fwk::DT_BOTTOM);
+    if (code == npu::tile_fwk::DT_BOTTOM) {
+        return Error("unknown dtype in v0elem");
+    }
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunComma));
+    MUST_VALID(data, ParseAttrValueRaw());
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunRParen));
+    std::any elem = (data->data.type() == typeid(double)) ?
+                        std::any(npu::tile_fwk::Element(code, AnyCast<double>(data->data))) :
+                        std::any(npu::tile_fwk::Element(code, AnyCast<int64_t>(data->data)));
+    return std::make_shared<IRTextParserAttrValuePtr::element_type>(elem);
+}
+
+IRTextParserAttrValuePtr IRTextParser::ParseAttrValueSym()
+{
+    ++cur_; // consume the 'v0sym' keyword
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunLParen));
+    MUST_VALID(inner, ParseAttrValueRaw());
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunRParen));
+    const std::any& v = inner->data;
+    npu::tile_fwk::SymbolicScalar sym;
+    if (v.type() == typeid(int64_t)) {
+        sym = npu::tile_fwk::SymbolicScalar(AnyCast<int64_t>(v));
+    } else if (v.type() == typeid(std::string)) {
+        sym = npu::tile_fwk::SymbolicScalar(AnyCast<std::string>(v));
+    } else if (v.type() == typeid(ExprPtr)) {
+        sym = npu::tile_fwk::SymbolicScalar(std::dynamic_pointer_cast<npu::tile_fwk::RawSymbolicScalar>(
+            std::const_pointer_cast<ir::Expr>(AnyCast<ExprPtr>(v))));
+    } else {
+        return Error("unsupported value in v0sym");
+    }
+    return std::make_shared<IRTextParserAttrValuePtr::element_type>(std::any(sym));
+}
+
 IRTextParserAttrValuePtr IRTextParser::ParseAttrValueRaw()
 {
+    // Empty attribute value, e.g. `program #entry()` when there is no entry function.
+    if (Peek().kind == IRTextLexerTokenKind::PunRParen) {
+        std::any data = std::string("");
+        return std::make_shared<IRTextParserAttrValuePtr::element_type>(data);
+    }
     static const std::unordered_map<IRTextLexerTokenKind, ParseAttrValueFn> dispatch = {
         {IRTextLexerTokenKind::TokInt, &IRTextParser::ParseAttrValueInt},
         {IRTextLexerTokenKind::TokFloat, &IRTextParser::ParseAttrValueFloat},
         {IRTextLexerTokenKind::TokIdent, &IRTextParser::ParseAttrValueIdent},
         {IRTextLexerTokenKind::TokString, &IRTextParser::ParseAttrValueString},
+        {IRTextLexerTokenKind::KwV0ScalarElement, &IRTextParser::ParseAttrValueElem},
+        {IRTextLexerTokenKind::KwV0ScalarSymbolic, &IRTextParser::ParseAttrValueSym},
         // dtype keywords (int32_t / float / bfloat16_t ...) are treated as ident-shaped attr values
         {IRTextLexerTokenKind::KwTypeBool, &IRTextParser::ParseAttrValueIdent},
         {IRTextLexerTokenKind::KwTypeInt8, &IRTextParser::ParseAttrValueIdent},

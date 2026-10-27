@@ -6,14 +6,14 @@ function foo_then_else incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshap
             v0_logical_tensor %View_y@4 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10001 VIEW(%y@1) token() #fromOffset([0, 0]) #toValidShape([16, 16]);
             v0_logical_tensor %0@5 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10002 ADD(%View_x@3, %View_y@4) token();
             v0_logical_tensor %View__4@7 #dtype(float) #dynvalidshape([v0min(n, m), 16]) #offset([0, 0]) #shape([16, 16]) = !10007 VIEW(%0@5) token() #fromOffset([0, 0]) #toValidShape([v0min(n, m), 16]);
-            v0_logical_tensor %z_3@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10008 ASSEMBLE(%View__4@7) token() #toOffset([0, 0]);
+            v0_logical_tensor %z_3@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10008 ASSEMBLE(%View__4@7) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
             yield %z_3@2;
         } else {
             v0_logical_tensor %View_x_4@12 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10012 VIEW(%x@0) token() #fromOffset([0, 0]) #toValidShape([16, 16]);
             v0_logical_tensor %View_y_4@13 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10013 VIEW(%y@1) token() #fromOffset([0, 0]) #toValidShape([16, 16]);
             v0_logical_tensor %1@6 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10014 SUB(%View_x_4@12, %View_y_4@13) token();
             v0_logical_tensor %View__6@7 #dtype(float) #dynvalidshape([v0min(n, 16), 16]) #offset([0, 0]) #shape([16, 16]) = !10010 VIEW(%1@6) token() #fromOffset([0, 0]) #toValidShape([v0min(n, 16), 16]);
-            v0_logical_tensor %z_9@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10015 ASSEMBLE(%View__6@7) token() #toOffset([0, 0]);
+            v0_logical_tensor %z_9@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10015 ASSEMBLE(%View__6@7) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
             yield %z_9@2;
         }
         continue %z_7@9;

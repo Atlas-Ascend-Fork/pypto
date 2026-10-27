@@ -15,9 +15,12 @@
 
 #include <any>
 #include <cstdint>
+#include <iomanip>
+#include <limits>
 #include <map>
 #include <memory>
 #include <regex>
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -25,6 +28,8 @@
 #include "core/any_cast.h"
 #include "core/dtype.h"
 #include "ir/memory_space.h"
+#include "tilefwk/element.h"
+#include "tilefwk/symbolic_scalar.h"
 
 #include "interface/operation/attribute.h"
 #include "interface/operation/operation.h"
@@ -160,6 +165,24 @@ void PrintMap(std::ostream& stream, const std::map<Key, int64_t>& values)
     stream << IR_PUN_RBRACKET;
 }
 
+// Full precision for the value, written through a local stream so the setting cannot leak into later attributes.
+std::string FormatFloat(double value)
+{
+    std::ostringstream os;
+    os << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
+    return os.str();
+}
+
+// Keep a float marker, or the loader reads it back as int64_t (Element data is exempt: dtype disambiguates).
+std::string FormatFloatLiteral(double value)
+{
+    std::string text = FormatFloat(value);
+    if (text.find_first_of(".eE") == std::string::npos) {
+        text += ".0";
+    }
+    return text;
+}
+
 } // namespace
 
 void IRTextDumper::PrintAttrValue(const std::string& key, const std::any& value)
@@ -171,9 +194,9 @@ void IRTextDumper::PrintAttrValue(const std::string& key, const std::any& value)
     } else if (value.type() == typeid(int64_t)) {
         stream_ << (AnyCast<int64_t>(value));
     } else if (value.type() == typeid(double)) {
-        stream_ << AnyCast<double>(value, key);
+        stream_ << FormatFloatLiteral(AnyCast<double>(value, key));
     } else if (value.type() == typeid(float)) {
-        stream_ << static_cast<double>(AnyCast<float>(value, key));
+        stream_ << FormatFloatLiteral(static_cast<double>(AnyCast<float>(value, key)));
     } else if (value.type() == typeid(bool)) {
         stream_ << (AnyCast<bool>(value, key) ? IR_KW_TRUE : IR_KW_FALSE);
     } else if (value.type() == typeid(std::string)) {
@@ -233,6 +256,27 @@ void IRTextDumper::PrintAttrValue(const std::string& key, const std::any& value)
             PrintScalarExpr(vals[i].Raw());
         }
         stream_ << IR_PUN_RBRACKET;
+    } else if (value.type() == typeid(npu::tile_fwk::Element)) {
+        // Written as v0elem(<dtype>, <data>): the value syntax itself carries the attribute type.
+        const auto& elem = AnyCast<npu::tile_fwk::Element>(value, key);
+        stream_ << IR_KWV0_SCALAR_ELEMENT << IR_PUN_LPAREN << GetTileFwkDataTypeDict().Find(elem.GetDataType())
+                << IR_PUN_COMMA << " ";
+        if (elem.IsSigned()) {
+            stream_ << elem.GetSignedData();
+        } else if (elem.IsUnsigned()) {
+            stream_ << elem.GetUnsignedData();
+        } else if (elem.IsFloat()) {
+            stream_ << FormatFloat(static_cast<double>(elem.GetFloatData()));
+        } else {
+            stream_ << static_cast<int64_t>(0);
+        }
+        stream_ << IR_PUN_RPAREN;
+    } else if (value.type() == typeid(npu::tile_fwk::SymbolicScalar)) {
+        // Written as v0sym(<expr>): the keyword marks a lone SymbolicScalar attribute, which would
+        // otherwise be indistinguishable from a bare immediate or an ordinary expression attribute.
+        stream_ << IR_KWV0_SCALAR_SYMBOLIC << IR_PUN_LPAREN;
+        PrintScalarExpr(AnyCast<npu::tile_fwk::SymbolicScalar>(value, key).Raw());
+        stream_ << IR_PUN_RPAREN;
     } else {
         stream_ << "Unsupported";
     }

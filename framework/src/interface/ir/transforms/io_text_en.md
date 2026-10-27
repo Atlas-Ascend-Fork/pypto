@@ -17,8 +17,10 @@ function                ::= 'function' ident
 
 ```ebnf
 attr                    ::= attrname '(' attr_value ')';
-attr_value              ::= expr | ident | string | attr_value_list;
+attr_value              ::= expr | ident | string | attr_value_list | v0elem | v0sym;
 attr_value_list         ::= '[' [ attr_value { ',' attr_value } ] ']';
+v0elem                  ::= 'v0elem' '(' dtype ',' ( int | float ) ')';
+v0sym                   ::= 'v0sym' '(' v0_scalar_expr_arg ')';
 attr_list               ::= { attr }
 ```
 

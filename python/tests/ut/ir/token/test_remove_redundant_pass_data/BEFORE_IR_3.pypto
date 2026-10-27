@@ -1,5 +1,5 @@
 function foo incast(v0_logical_tensor %src@0 #dtype(float) #dynvalidshape([8, 16]) #offset([0, 0]) #shape([8, 16]), v0_logical_tensor %aux@1 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), v0_logical_tensor %shape@2 #dtype(float) #dynvalidshape([v0call(RUNTIME_GetInputShapeDim, ARG_shape, 0)]) #offset([0]) #shape([-1])) outcast() #entry(false) #type(Opaque) {
-    v0_logical_tensor %aux_1@1 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), token %aux_1_w, token %src_r = !10000 ASSEMBLE(%src@0) token() #toOffset([0, 0]);
-    v0_logical_tensor %aux_3@1 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), token %aux_3_w, token %src_r = !10001 ASSEMBLE(%src@0) token(%aux_1_w) #toDynOffset([v0call(RUNTIME_GetInputShapeDim, ARG_shape, 0), 0]) #toOffset([0, 0]);
+    v0_logical_tensor %aux_1@1 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), token %aux_1_w, token %src_r = !10000 ASSEMBLE(%src@0) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
+    v0_logical_tensor %aux_3@1 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), token %aux_3_w, token %src_r = !10001 ASSEMBLE(%src@0) token(%aux_1_w) #toDynOffset([v0call(RUNTIME_GetInputShapeDim, ARG_shape, 0), 0]) #toOffset([0, 0]) #dassemble(true) #parallel(false);
     return %src@0, %aux_3@1, %shape@2;
 }

@@ -12,7 +12,7 @@ function foo incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([16, 16]
             }
             continue %value_4@3;
         }
-        v0_logical_tensor %out_1@1 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10007 ASSEMBLE(%value_5@3) token() #toOffset([0, 0]);
+        v0_logical_tensor %out_1@1 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10007 ASSEMBLE(%value_5@3) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
         yield %out_1@1;
     } else {
         OP_CONFIG() token() #vec_tile_shapes([16, 16]);
@@ -27,7 +27,7 @@ function foo incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([16, 16]
             }
             continue %value_7@3;
         }
-        v0_logical_tensor %out_5@1 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10012 ASSEMBLE(%value_8@3) token() #toOffset([0, 0]);
+        v0_logical_tensor %out_5@1 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]) = !10012 ASSEMBLE(%value_8@3) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
         yield %out_5@1;
     }
     return %x@0, %out_3@7;
