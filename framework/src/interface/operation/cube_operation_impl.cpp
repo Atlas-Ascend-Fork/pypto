@@ -1081,24 +1081,26 @@ LogicalTensorPtr LinkTensorA(Function& function, const MatmulGraphNodes& tensorG
                              const MatmulAttrParam& attrParam, const MatmulTileInfo& tileInfo,
                              const MatmulIterInfo& iterInfo, LogicalTensorPtr& aL1TensorPtr)
 {
-    // transA with M == 1 is a degenerate transpose: a is (...,K,1) and A is (...,1,K) with the
-    // same linear order. Use the non-transposed tile geometry so the GEMV row-vector path is valid.
-    const bool transAEff = attrParam.transA && (tileInfo.mView != 1);
     // 宏指令无 L0A：A 的 L1 视图按 m0×k0 逐 k0 片创建，直接供 A_MUL_B_EPILOGUE 使用。
-    const bool isMacroInstrA = Platform::Instance().GetSoc().IsSupportCubeEpilogue();
-    if (iterInfo.kOffset % tileInfo.tileKAL1 == 0 || isMacroInstrA) {
-        int64_t aL1KSize = isMacroInstrA ? iterInfo.kL0Size : iterInfo.kAL1Size;
-        std::vector<int64_t> aL1Shape = (transAEff) ? std::vector<int64_t>{aL1KSize, iterInfo.mL0Size} :
-                                                      std::vector<int64_t>{iterInfo.mL0Size, aL1KSize};
-        std::vector<int64_t> aL1Offset = (transAEff) ? std::vector<int64_t>{iterInfo.kOffset, iterInfo.mOffset} :
-                                                       std::vector<int64_t>{iterInfo.mOffset, iterInfo.kOffset};
+    const bool supportCubeEpilogue = Platform::Instance().GetSoc().IsSupportCubeEpilogue();
+    // transA 且 M==1 为退化转置，仅宏指令路径（无 L0A，A 驻留 L1）可简化为非转置视图；
+    // L0A 平台（A3/A5/910 等）必须保持原始转置视图，否则 L1→L0A 搬运的 TRANSPOSE 语义
+    // 与指令的 transA 消费方式不一致，L0A fragment 布局错位导致结果错误。
+    const bool isAViewTransposed = supportCubeEpilogue ? (attrParam.transA && tileInfo.mView != 1) : attrParam.transA;
+    if (iterInfo.kOffset % tileInfo.tileKAL1 == 0 || supportCubeEpilogue) {
+        int64_t aL1KSize = supportCubeEpilogue ? iterInfo.kL0Size : iterInfo.kAL1Size;
+        std::vector<int64_t> aL1Shape = (isAViewTransposed) ? std::vector<int64_t>{aL1KSize, iterInfo.mL0Size} :
+                                                              std::vector<int64_t>{iterInfo.mL0Size, aL1KSize};
+        std::vector<int64_t> aL1Offset = (isAViewTransposed) ?
+                                             std::vector<int64_t>{iterInfo.kOffset, iterInfo.mOffset} :
+                                             std::vector<int64_t>{iterInfo.mOffset, iterInfo.kOffset};
         MatmulTensorInfo aL1TensorInfo{
             "aL1Tensor",     tensorGraphNodes.aTensorPtr->Datatype(), aL1Shape,          aL1Offset,
             NodeType::LOCAL, tensorGraphNodes.aTensorPtr->Format(),   MemoryType::MEM_L1};
         // 根据是否使用了MXScale标志来决定Padding模式
         int64_t paddingMode = attrParam.hasMXScale ? static_cast<int64_t>(PaddingMode::MX_PADDING_MODE) : 0;
         // K维度在dynValidShape中的索引：transA时K在第0维，非transA时K在第1维
-        int64_t kIndex = transAEff ? 0 : 1;
+        int64_t kIndex = isAViewTransposed ? 0 : 1;
         std::map<std::string, int64_t> l1OpAttr = {{COPY_IN_L1_PADDING_MODE, paddingMode},
                                                    {COPY_IN_L1_K_INDEX, kIndex}};
         if (attrParam.isGemv) {
@@ -1107,10 +1109,11 @@ LogicalTensorPtr LinkTensorA(Function& function, const MatmulGraphNodes& tensorG
         }
         aL1TensorPtr = AddOpView<int64_t, int64_t>(function, tensorGraphNodes.aTensorPtr, aL1TensorInfo, l1OpAttr);
     }
-    std::vector<int64_t> aL0Shape = (transAEff) ? std::vector<int64_t>{iterInfo.kL0Size, iterInfo.mL0Size} :
-                                                  std::vector<int64_t>{iterInfo.mL0Size, iterInfo.kL0Size};
-    std::vector<int64_t> aL0Offset = (transAEff) ? std::vector<int64_t>{iterInfo.kOffset % tileInfo.tileKAL1, 0} :
-                                                   std::vector<int64_t>{0, iterInfo.kOffset % tileInfo.tileKAL1};
+    std::vector<int64_t> aL0Shape = (isAViewTransposed) ? std::vector<int64_t>{iterInfo.kL0Size, iterInfo.mL0Size} :
+                                                          std::vector<int64_t>{iterInfo.mL0Size, iterInfo.kL0Size};
+    std::vector<int64_t> aL0Offset = (isAViewTransposed) ?
+                                         std::vector<int64_t>{iterInfo.kOffset % tileInfo.tileKAL1, 0} :
+                                         std::vector<int64_t>{0, iterInfo.kOffset % tileInfo.tileKAL1};
     // 宏指令直接复用上面按 k0 创建的 aL1，不再生成 L1→L0A 搬运。
     if (Platform::Instance().GetSoc().IsSupportCubeEpilogue()) {
         return aL1TensorPtr;
@@ -1122,12 +1125,12 @@ LogicalTensorPtr LinkTensorA(Function& function, const MatmulGraphNodes& tensorG
                                    NodeType::LOCAL,
                                    tensorGraphNodes.aTensorPtr->Format(),
                                    MemoryType::MEM_L0A,
-                                   transAEff};
+                                   isAViewTransposed};
     std::vector<SymbolicScalar> l1ToL0Offset = SymbolicScalar::FromConcrete(aL0Offset);
     std::vector<SymbolicScalar> l1ToL0Tile = SymbolicScalar::FromConcrete(aL0Shape);
     LogicalTensorPtr aL0TensorPtr = AddOpView<bool, std::vector<SymbolicScalar>>(
         function, aL1TensorPtr, aL0TensorInfo,
-        {{L1_TO_L0_TRANSPOSE, transAEff}, {A_MUL_B_MX_ATTR, attrParam.hasMXScale}},
+        {{L1_TO_L0_TRANSPOSE, isAViewTransposed}, {A_MUL_B_MX_ATTR, attrParam.hasMXScale}},
         {{L1_TO_L0_OFFSET, l1ToL0Offset}, {L1_TO_L0_TILE, l1ToL0Tile}});
     // GEMV A 设 isGemv（M==1；含 transA 的退化情形，见 AddAMulBNode 的 GEMV 判定）
     if (attrParam.isGemv) {
