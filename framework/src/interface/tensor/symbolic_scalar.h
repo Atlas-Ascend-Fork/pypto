@@ -381,7 +381,7 @@ public:
 
     static std::string GetSymbolicCalcOpcode(SymbolicOpcode opcode)
     {
-        static const std::string OPCODE_NAME_LIST[] = {
+        static constexpr const char* OPCODE_NAME_LIST[] = {
             "+",       "-",       "!",                        // T_UOP_POS / T_UOP_NEG / T_UOP_NOT
             "+",       "-",       "*",       "/",  "%",       // T_BOP_ADD .. T_BOP_MOD
             "==",      "!=",      "<",       "<=", ">", ">=", // T_BOP_EQ .. T_BOP_GE
