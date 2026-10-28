@@ -76,6 +76,7 @@ private:
     ir::StmtPtr FinalizePathFunc(const ir::StmtPtr& placeholder);
 
     std::shared_ptr<Function> CreateHiddenFunc(const ir::SeqStmtsPtr& seq, const std::string& loopVarName);
+    bool ProcessConfigOp(Function* hiddenFunc, const ir::StmtPtr& stmt);
     std::pair<LogicalTensors, LogicalTensors> FinalizeHiddenFunc(Function* hiddenFunc, const ir::StmtPtr& placeholder);
     void BindExtraIncastStorage(Function* hiddenFunc, const LogicalTensors& originalIncasts,
                                 const LogicalTensors& hiddenInArgs, const LogicalTensors& hiddenOutArgs);
@@ -100,7 +101,6 @@ private:
                                 const LogicalTensors& originalIncasts, const LogicalTensors& originalOutcasts);
     void FlushConstructAssembleSlots();
 
-    bool IsPureTensorOpSeq(const ir::SeqStmtsPtr& seq);
     std::vector<std::vector<ir::StmtPtr>> SplitIntoTensorOpSegments(const ir::SeqStmtsPtr& seq);
     bool IsPlaceholderCallStmt(const ir::StmtPtr& stmt);
     std::string GetPlaceholderFuncname(const ir::StmtPtr& stmt);

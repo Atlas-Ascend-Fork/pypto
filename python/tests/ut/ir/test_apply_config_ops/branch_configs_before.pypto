@@ -1,0 +1,23 @@
+function kernel incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]), v0_logical_tensor %y@1 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]), v0_logical_tensor %out@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32])) outcast() #entry(false) #type(Opaque) {
+    v0_logical_tensor %out@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = if v0lt(0, cond) then {
+        OP_CONFIG() token() #vec_tile_shapes([8, 8]);
+        OP_CONFIG() token() #vec_tile_shapes([16, 16]);
+        OP_CONFIG() token() #pass.cube_nbuffer_setting([[-1, 3]]);
+        OP_CONFIG() token() #pass.sg_set_atomic_scope([210000]);
+        OP_CONFIG() token() #pass.sg_set_scope([11, 0, 0]);
+        v0_logical_tensor %0@3 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10000 ADD(%x@0, %y@1) token() #vec_tile([16, 16]);
+        v0_logical_tensor %3@5 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10004 MUL(%0@3, %y@1) token();
+        v0_logical_tensor %out@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10003 ASSEMBLE(%3@5) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
+        yield %out@2;
+    } else {
+        OP_CONFIG() token() #vec_tile_shapes([8, 8]);
+        OP_CONFIG() token() #pass.cube_nbuffer_setting([[-1, 4]]);
+        OP_CONFIG() token() #pass.sg_set_atomic_scope([220000]);
+        OP_CONFIG() token() #pass.sg_set_scope([12, 0, 0]);
+        v0_logical_tensor %1@4 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10001 SUB(%x@0, %y@1) token();
+        v0_logical_tensor %3_1@7 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10006 MUL(%1@4, %y@1) token();
+        v0_logical_tensor %out@2 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) #shape([32, 32]) = !10007 ASSEMBLE(%3_1@7) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
+        yield %out@2;
+    }
+    return %x@0, %y@1, %out@2;
+}

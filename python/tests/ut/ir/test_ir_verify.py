@@ -32,6 +32,7 @@ def _run_dce(func, golden, *args):
     prog = dce(canonical(prog))
     prog = dce(canonical(prog))
     prog = canonical(merge(prog))
+    prog = ir.Pass.apply_config_ops()(prog)
     prog = create_pf(prog)
 
     pypto.set_verify_golden_data(in_out_tensors=in_out_tensors, goldens=[None, None, golden])

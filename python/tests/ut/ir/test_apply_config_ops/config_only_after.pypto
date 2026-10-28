@@ -1,0 +1,3 @@
+function kernel incast() outcast() #entry(false) #type(Opaque) {
+    return;
+}

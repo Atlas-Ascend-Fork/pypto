@@ -1635,6 +1635,11 @@ class TensorOpStmt(Stmt):
     attrs: Final[dict[str, Any]]
     """Attributes (key-value metadata)."""
 
+
+    def parse_attrs(self) -> dict[str, Any]:
+        """Return vec tile, scope and atomic scope; unavailable backend values are None."""
+        ...
+
     def __init__(self, result: list[Var], result_tokens: list[Var], opcode: str, args: list[Expr],
                  tokens: list[Var], attrs: dict[str, Any], span: Span) -> None:
         """Create a tensor operation statement.
@@ -1681,6 +1686,10 @@ class Function(IRNode):
     def get_attr(self, key: str, default_value: int = 0) -> int:
         """Get an integer function attribute."""
         ...
+
+    def parse_attrs(self) -> dict[str, Any]:
+    """Return applied backend config; config is None for a generic IR function."""
+    ...
 
     def __init__(
         self,
@@ -2538,6 +2547,10 @@ class Pass:
     @staticmethod
     def simplify_symbolic_scalar() -> Pass:
         """Simplify symbolic scalars under their enclosing branch condition."""
+
+    @staticmethod
+    def apply_config_ops() -> Pass:
+        """Apply op configurations; leave function configurations for root function construction."""
 
     @staticmethod
     def create_root_functions() -> Pass:

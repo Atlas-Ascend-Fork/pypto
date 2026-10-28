@@ -115,6 +115,7 @@ def run_root_function(func, *args, create_new_logical_tensor=True):
         ("simplify_symbolic_scalar", ir.Pass.simplify_symbolic_scalar()),
         ("remove_redundant_token_pass", remove_redundant_tokens),
         # create_root_functions does not support ssa_verify yet, skip it
+        ("apply_config_ops", ir.Pass.apply_config_ops()),
         ("create_root_functions", ir.Pass.create_root_functions()),
     ]
     _, prog = _run_pass_pipeline(

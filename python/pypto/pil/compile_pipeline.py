@@ -46,6 +46,7 @@ def _build_default_pipeline():
         ("canonicalize(merge_stmts)", lambda p:canonicalize(merge_stmts(p))),
         ("simplify_symbolic_scalar", simplify_symbolic_scalar),
         ("remove_redundant_token_pass", remove_redundant_tokens),
+        ("apply_config_ops", ir.Pass.apply_config_ops()),
         ("create_root_functions", create_root_functions),
         ("infer_multi_iter_overlap", infer_multi_iter_overlap),
         ("finalize", finalize),

@@ -33,6 +33,8 @@ def _compile_root(func, *args):
     _ssa_verify(verifier, program, "original")
     program = ir.Pass.aggressive_dce()(ir.Pass.canonicalize()(program))
     _ssa_verify(verifier, program, "dce")
+    program = ir.Pass.apply_config_ops()(program)
+    _ssa_verify(verifier, program, "apply_config_ops")
     program = ir.Pass.create_root_functions()(program)
     return program
 

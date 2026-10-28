@@ -69,21 +69,17 @@ private:
 
     ir::StmtPtr VisitStmt_(const ir::SeqStmtsPtr& seq) override
     {
-        if (builder_.IsPureTensorOpSeq(seq)) {
-            auto newStmts = builder_.CreatePathFuncAndPlaceholder(seq, loopVarName_);
-            return std::make_shared<ir::SeqStmts>(std::vector<ir::StmtPtr>{newStmts}, seq->span_);
-        }
         auto segments = builder_.SplitIntoTensorOpSegments(seq);
         std::vector<ir::StmtPtr> newStmts;
-        for (auto& segment : segments) {
-            if (!segment.empty() && segment[0]->GetKind() == ir::ObjectKind::TensorOpStmt) {
+        for (const auto& segment : segments) {
+            if (segment[0]->GetKind() == ir::ObjectKind::TensorOpStmt) {
                 auto segSeq = std::make_shared<ir::SeqStmts>(segment, seq->span_);
                 newStmts.push_back(builder_.CreatePathFuncAndPlaceholder(segSeq, loopVarName_));
-            } else if (!segment.empty()) {
+            } else {
                 newStmts.push_back(VisitStmt(segment[0]));
             }
         }
-        return std::make_shared<ir::SeqStmts>(newStmts, seq->span_);
+        return std::make_shared<ir::SeqStmts>(std::move(newStmts), seq->span_);
     }
 
     ir::StmtPtr VisitStmt_(const ir::ForStmtPtr& forStmt) override
@@ -205,6 +201,8 @@ void RootFunctionBuilder::RebuildProducerConsumerLinks(const ir::FunctionPtr& ir
 std::shared_ptr<Function> RootFunctionBuilder::Build(const ir::FunctionPtr& irFunc)
 {
     RebuildProducerConsumerLinks(irFunc);
+    auto entry = irFunc->GetAttr<ConfigScopePtr>("_config_scope");
+    ConfigManagerNg::ScopedRestore scoped(entry ? entry : ConfigManagerNg::CurrentScope());
     InitDynFunc(irFunc);
     auto stmtsWithCall = TransformBody(irFunc->body_);
     dynFunc_->body_ = ir::SeqStmts::Wrap(stmtsWithCall, irFunc->span_);
@@ -217,6 +215,7 @@ void RootFunctionBuilder::InitDynFunc(const ir::FunctionPtr& irFunc)
 {
     auto funcMagicName = irFunc->name_ + "_" + std::to_string(Function::NextMagicNameSuffix(FunctionType::DYNAMIC));
     dynFunc_ = std::make_shared<Function>(program_, funcMagicName, irFunc->name_, parentFunc_);
+    dynFunc_->attrs_ = irFunc->attrs_;
     dynFunc_->SetFunctionType(FunctionType::DYNAMIC);
     dynFunc_->SetGraphType(GraphType::TENSOR_GRAPH);
     dynFunc_->SetSpan(irFunc->span_);
@@ -290,28 +289,11 @@ void RootFunctionBuilder::FinalizeDynFunc(const ir::FunctionPtr& irFunc)
     BuildDynSlotScope();
 }
 
-bool RootFunctionBuilder::IsPureTensorOpSeq(const ir::SeqStmtsPtr& seq)
-{
-    if (!seq || seq->stmts_.empty()) {
-        return false;
-    }
-    for (auto& stmt : seq->stmts_) {
-        auto op = ir::As<ir::TensorOpStmt>(stmt);
-        if (!op || op->opcode_ == "OP_CONFIG") {
-            return false;
-        }
-    }
-    return true;
-}
-
 std::vector<std::vector<ir::StmtPtr>> RootFunctionBuilder::SplitIntoTensorOpSegments(const ir::SeqStmtsPtr& seq)
 {
     std::vector<std::vector<ir::StmtPtr>> segments;
     std::vector<ir::StmtPtr> currentRun;
     for (auto& child : seq->stmts_) {
-        if (auto op = ir::As<ir::TensorOpStmt>(child); op && op->opcode_ == "OP_CONFIG") {
-            continue;
-        }
         if (child->GetKind() == ir::ObjectKind::TensorOpStmt) {
             currentRun.push_back(child);
         } else {
@@ -477,6 +459,22 @@ void RootFunctionBuilder::ComputeOutcast(Function& pathFunc)
     }
 }
 
+bool RootFunctionBuilder::ProcessConfigOp(Function* hiddenFunc, const ir::StmtPtr& stmt)
+{
+    auto op = ir::As<ir::TensorOpStmt>(stmt);
+    if (!op || op->opcode_ != "OP_CONFIG") {
+        return false;
+    }
+    FE_ASSERT(dynFunc_->GetAttr<bool>("_config_applied", false)) << "Run ApplyConfigOps before CreateRootFunctions";
+    FE_ASSERT(op->attrs_.size() == 1 && op->attrs_[0].first == "_config_scope")
+        << "Expected a computation segment config marker";
+    const auto* config = std::any_cast<ConfigScopePtr>(&op->attrs_[0].second);
+    FE_ASSERT(config != nullptr) << "Computation segment config scope has the wrong type";
+    FE_ASSERT(*config) << "Computation segment config scope is null";
+    hiddenFunc->attrs_.emplace_back("_config_scope", *config);
+    return true;
+}
+
 std::shared_ptr<Function> RootFunctionBuilder::CreateHiddenFunc(const ir::SeqStmtsPtr& seq,
                                                                 const std::string& loopVarName)
 {
@@ -496,6 +494,9 @@ std::shared_ptr<Function> RootFunctionBuilder::CreateHiddenFunc(const ir::SeqStm
     std::unordered_set<std::shared_ptr<LogicalTensor>> allInputs;
     std::unordered_map<int, std::shared_ptr<RawTensor>> memIdMap;
     for (auto& stmt : seq->stmts_) {
+        if (ProcessConfigOp(hiddenFunc.get(), stmt)) {
+            continue;
+        }
         (void)ProcessTensorOp(hiddenFunc, stmt, allInputs, definedOutputs, memIdMap);
     }
     ComputeIncast(*hiddenFunc, allInputs, definedOutputs);
@@ -729,7 +730,8 @@ std::pair<LogicalTensors, LogicalTensors> RootFunctionBuilder::FinalizeHiddenFun
     for (auto& op : hiddenFunc->Operations(false))
         hiddenBodyStmts.push_back(std::static_pointer_cast<const ir::Stmt>(op.shared_from_this()));
     hiddenFunc->body_ = std::make_shared<ir::SeqStmts>(std::move(hiddenBodyStmts), placeholder->span_);
-    program_.SetParamConfig(hiddenFunc, ConfigManagerNg::CurrentScope());
+    auto config = hiddenFunc->GetAttr<ConfigScopePtr>("_config_scope");
+    program_.SetParamConfig(hiddenFunc, config ? config : ConfigManagerNg::CurrentScope());
     hiddenFunc->ComputeHash();
     program_.GetFunctionCache().Insert(hiddenFunc->GetFunctionHash(), *hiddenFunc);
     DumpFunctionGraph(hiddenFunc);

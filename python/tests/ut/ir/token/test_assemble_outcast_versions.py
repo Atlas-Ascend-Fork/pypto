@@ -31,6 +31,7 @@ def _run_root_builder(func, *args):
     _ssa_verify(verifier, program, "original")
     program = ir.Pass.aggressive_dce()(ir.Pass.canonicalize()(program))
     _ssa_verify(verifier, program, "dce")
+    program = ir.Pass.apply_config_ops()(program)
     program = ir.Pass.create_root_functions()(program)
     _ssa_verify(verifier, program, "root_functions")
     return program

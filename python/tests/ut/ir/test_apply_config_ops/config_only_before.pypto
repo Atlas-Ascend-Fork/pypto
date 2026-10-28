@@ -1,0 +1,4 @@
+function kernel incast() outcast() #entry(false) #type(Opaque) {
+    OP_CONFIG() token() #pass.cube_nbuffer_setting([[-1, 2]]);
+    return;
+}

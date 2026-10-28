@@ -105,6 +105,8 @@ void BindPasses(py::module_& m)
         .def_static("merge_stmts_into_if", &pass::MergeStmtsIntoIf, "Merge stmts into if branches")
         .def_static("simplify_symbolic_scalar", &pass::SimplifySymbolicScalar,
                     "Simplify symbolic scalars under their enclosing branch condition")
+        .def_static("apply_config_ops", &pass::ApplyConfigOps,
+                    "Replay configs and attach each computation segment scope through OP_CONFIG")
         .def_static("create_root_functions", &pass::CreateRootFunctions, "Create root functions from IR")
         .def_static("infer_multi_iter_overlap", &pass::InferMultiIterOverlap,
                     "Mark Function RebuildableMultiIterNoOverlap for assemble-level loop-carried non-overlap")

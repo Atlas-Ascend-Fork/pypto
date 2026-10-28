@@ -2706,6 +2706,8 @@ Json Function::DumpJson(bool useTable)
     funcJson["_total_subgraph_count"] = totalSubGraphCount_;
     funcJson["_auto_mix_partition"] = paramConfigs_.autoMixPartition;
     funcJson["_ooo_preschedule_method"] = paramConfigs_.OoOPreScheduleMethod;
+    funcJson["_cube_l1_reuse_setting"] = paramConfigs_.cubeL1ReuseSetting;
+    funcJson["_cube_nbuffer_setting"] = paramConfigs_.cubeNBufferSetting;
     if (!span_.IsUnknown()) {
         funcJson["file"] = span_.Filename();
         funcJson["line"] = span_.BeginLine();
@@ -3021,6 +3023,11 @@ std::shared_ptr<Function> Function::LoadJson(Program& belongTo, const Json& func
     func->paramConfigs_.sgMgCopyInUpperBound = funcJson["_sg_mg_copyin_upper_bound"].get<int>();
     func->paramConfigs_.mgVecParallelLb = funcJson["_mg_vec_parallel_lb"].get<int>();
     func->paramConfigs_.autoMixPartition = funcJson["_auto_mix_partition"].get<int>();
+    // Keep defaults when loading older dumps without these configuration fields.
+    func->paramConfigs_.cubeL1ReuseSetting = funcJson.value("_cube_l1_reuse_setting",
+                                                            func->paramConfigs_.cubeL1ReuseSetting);
+    func->paramConfigs_.cubeNBufferSetting = funcJson.value("_cube_nbuffer_setting",
+                                                            func->paramConfigs_.cubeNBufferSetting);
     auto subGraphCount = funcJson["_total_subgraph_count"].get<size_t>();
     func->SetTotalSubGraphCount(subGraphCount);
 

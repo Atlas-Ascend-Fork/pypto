@@ -373,6 +373,7 @@ def test_forstmt_attrs_and_step_name_preserved():
     prog = b.create_program([func], "main", ir.Span.unknown())
     prog = ir.Pass.canonicalize()(prog)
     prog = ir.Pass.aggressive_dce()(prog)
+    prog = ir.Pass.apply_config_ops()(prog)
     prog = ir.Pass.create_root_functions()(prog)
 
     # 1. ForStmt exists (attrs preserved, no crash)

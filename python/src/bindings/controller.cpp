@@ -555,6 +555,7 @@ py::object AnyToPyObject(const std::any& val)
          [](const std::any& a) { return py::cast(AnyCast<std::map<int64_t, int64_t>>(a)); }},
         {typeid(std::map<std::string, int64_t>),
          [](const std::any& a) { return py::cast(AnyCast<std::map<std::string, int64_t>>(a)); }},
+        {typeid(ConfigScopePtr), [](const std::any& a) { return py::cast(AnyCast<ConfigScopePtr>(a)); }},
         {typeid(CubeTile), [](const std::any& a) { return py::cast(AnyCast<CubeTile>(a)); }},
         {typeid(ConvTile), [](const std::any& a) { return py::cast(AnyCast<ConvTile>(a)); }},
         {typeid(ConvBpTile), [](const std::any& a) { return py::cast(AnyCast<ConvBpTile>(a)); }},

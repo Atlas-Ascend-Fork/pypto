@@ -36,6 +36,7 @@ def _init_arguments(args):
 
 
 def pil2ir(func: Function, args: dict, tensor_args: list[pypto.Tensor]):
+    entry_config = pypto.pypto_impl.CurrentScope()
     scope = _init_scope(func)
     params = [x.logical_tensor() for x in tensor_args]
     body = SeqStmts(func.span)
@@ -52,7 +53,7 @@ def pil2ir(func: Function, args: dict, tensor_args: list[pypto.Tensor]):
         stmt = ctx.create_return_stmt([ctx.unwrap(t) for t in outs], func.span)
         ctx.emit(stmt)
 
-    return ctx.create_function(func.name, params, [], body, func.span)
+    return pypto.ir.Function(func.name, params, [], body, func.span, attrs={"_config_scope": entry_config})
 
 
 def collect_store_names(func: Function, all_args: dict):

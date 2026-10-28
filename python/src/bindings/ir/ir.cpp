@@ -26,6 +26,8 @@
 #include "core/common.h"
 #include "core/dtype.h"
 #include "core/error.h"
+#include "interface/function/function.h"
+#include "interface/operation/operation.h"
 #include "ir/core.h"
 #include "ir/expr.h"
 #include "ir/op_attr_types.h"
@@ -1425,6 +1427,21 @@ void BindStmt(py::module_& ir)
         py::arg("results"), py::arg("result_tokens"), py::arg("opcode"), py::arg("args"), py::arg("tokens"),
         py::arg("attrs"), py::arg("span"), "Create a tensor operation statement");
     BindFields<TensorOpStmt>(tensorop_stmt_class);
+    tensorop_stmt_class.def(
+        "parse_attrs",
+        [](const TensorOpStmt& stmt) {
+            py::dict info;
+            info["vec_tile_shapes"] = py::none();
+            info["scope_id"] = py::none();
+            info["atomic_scope_id"] = py::none();
+            if (auto op = dynamic_cast<const npu::tile_fwk::Operation*>(&stmt)) {
+                info["vec_tile_shapes"] = py::cast(op->GetTileShape().GetVecTile().tile);
+                info["scope_id"] = op->GetScopeId();
+                info["atomic_scope_id"] = op->GetAtomicScopeId();
+            }
+            return info;
+        },
+        "Return vec tile, scope and atomic scope as detached Python values.");
     tensorop_stmt_class.def_property_readonly("attrs", [](const TensorOpStmt& stmt) {
         py::dict attrs;
         for (const auto& [key, value] : stmt.attrs_) {
@@ -1470,6 +1487,21 @@ void BindProgram(py::module_& ir)
         py::arg("type") = FunctionType::OPAQUE, py::arg("entry") = false, py::arg("attrs") = py::none(),
         "Create a function definition");
     BindFields<Function>(function_class);
+    function_class.def(
+        "parse_attrs",
+        [](const Function& func) {
+            py::dict info;
+            info["config"] = py::none();
+            // Read the parameters actually applied to the backend function.
+            if (auto tensorFunc = dynamic_cast<const npu::tile_fwk::Function*>(&func)) {
+                py::dict config;
+                config["pass.vec_nbuffer_setting"] = py::cast(tensorFunc->paramConfigs_.vecNBufferSetting);
+                config["pass.cube_nbuffer_setting"] = py::cast(tensorFunc->paramConfigs_.cubeNBufferSetting);
+                info["config"] = std::move(config);
+            }
+            return info;
+        },
+        "Return applied function configurations as detached Python values.");
     function_class.def(
         "__str__", [](const std::shared_ptr<Function>& self) { return TextDump(self); }, "IR text representation");
     function_class.def("has_attr", &Function::HasAttr, py::arg("key"), "Check whether a function attribute exists");

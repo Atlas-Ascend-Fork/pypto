@@ -245,6 +245,8 @@ Pass MergeStmtsIntoIf();
  */
 Pass SimplifySymbolicScalar();
 
+Pass ApplyConfigOps();
+
 Pass CreateRootFunctions();
 
 /**

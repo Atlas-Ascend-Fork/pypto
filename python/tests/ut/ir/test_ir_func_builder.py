@@ -56,6 +56,7 @@ def _run_root_only(golden_name, func, *args):
         check_snapshot(prog, golden_path)
     prog = ir.Pass.canonicalize()(prog)
     prog = ir.Pass.aggressive_dce()(prog)
+    prog = ir.Pass.apply_config_ops()(prog)
     prog = ir.Pass.create_root_functions()(prog)
     return prog, prog.functions[compiled.name]
 
@@ -374,6 +375,7 @@ def test_create_tensor():
     assert func.body[0].opcode == "OP_CONFIG"
     assert func.body[1].opcode == "TENSOR_ALLOC"
 
+    prog = ir.Pass.apply_config_ops()(prog)
     prog = ir.Pass.create_root_functions()(prog)
     _assert_func_counts(prog, 2)
 
