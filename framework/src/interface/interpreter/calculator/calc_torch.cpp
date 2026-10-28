@@ -132,11 +132,12 @@ static torch::ScalarType FromDataType(DataType t)
         case DT_FP8E4M3:
             return torch::kUInt8;
         case DT_FP8E8M0:
+        case DT_FP8E6M2:
             return torch::kUInt8;
         case DT_FP4_E2M1:
         case DT_FP4_E1M2:
-            return torch::kUInt8;
         case DT_HF4:
+            return torch::kUInt8;
         default:
             assert(0);
     }

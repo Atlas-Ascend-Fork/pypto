@@ -51,7 +51,8 @@ const std::unordered_map<size_t, size_t> BLOCK_PADDING_DIM = {{1, 32}, {2, 16}, 
     DTYPE_DESC(DT_FP4_E2M1X2, 1, 8, true, float4_e2m1x2_t, 40)   \
     DTYPE_DESC(DT_FP4_E1M2X2, 1, 8, true, float4_e1m2x2_t, 41)   \
     DTYPE_DESC(DT_FP4_E2M1, 1, 4, true, float4_e2m1x2_t, 40)     \
-    DTYPE_DESC(DT_FP4_E1M2, 1, 4, true, float4_e1m2x2_t, 41)
+    DTYPE_DESC(DT_FP4_E1M2, 1, 4, true, float4_e1m2x2_t, 41)     \
+    DTYPE_DESC(DT_FP8E6M2, 1, 8, true, float8_e6m2_t, 28)
 
 enum DataType {
 #define DTYPE_DESC(name, byte, bit, is_float, type, cann_type) name,

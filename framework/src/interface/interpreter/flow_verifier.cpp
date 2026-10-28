@@ -83,6 +83,21 @@ float DecodeFp8E8M0(uint8_t x)
     return sign * std::pow(2.0f, expVal);
 }
 
+// e6m2: unsigned 8-bit (6-bit exponent, 2-bit mantissa), value = (1 + m/4) * 2^(e-48).
+// Code 0 means zero, code 0xFF is NaN, max finite is 0xFE = 1.5 * 2^15.
+float DecodeFp8E6M2(uint8_t x)
+{
+    if (x == 0) {
+        return 0.0f;
+    }
+    if (x == 0xFF) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    const int expBits = (static_cast<int>(x) >> 2) & 0x3F;
+    const int mantBits = static_cast<int>(x) & 0x3;
+    return (1.0f + static_cast<float>(mantBits) * 0.25f) * std::pow(2.0f, static_cast<float>(expBits - 48));
+}
+
 float DecodeHf8(uint8_t x)
 {
     const int signBit = (x >> 7) & 0x1;
@@ -146,6 +161,9 @@ double Fp8StorageToDouble(uint8_t bits, DataType fmt)
             break;
         case DT_FP8E8M0:
             v = DecodeFp8E8M0(bits);
+            break;
+        case DT_FP8E6M2:
+            v = DecodeFp8E6M2(bits);
             break;
         default:
             ASSERT(ExecuteOperationScene::INVALID_TENSOR_DTYPE, false);
@@ -231,6 +249,7 @@ FlowVerifier::CompareResult FlowVerifier::VerifyResult(const std::shared_ptr<Log
         case DT_FP8E4M3:
         case DT_FP8E5M2:
         case DT_FP8E8M0:
+        case DT_FP8E6M2:
             return CompareFp8TensorData(goldenDataView, outputDataView, goldenDataView->GetDataType(), rtol, atol);
         default:
             ASSERT(ExecuteOperationScene::INVALID_TENSOR_DTYPE, false);

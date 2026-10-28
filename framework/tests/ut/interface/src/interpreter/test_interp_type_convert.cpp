@@ -10,7 +10,8 @@
 
 /*!
  * \file test_interp_type_convert.cpp
- * \brief Unit tests for interpreter internal type conversion: FP8 (E4M3, E5M2, E8M0), FP4 packed (E2M1X2, E1M2X2).
+ * \brief Unit tests for interpreter internal type conversion: FP8 (E4M3, E5M2, E8M0, E6M2), FP4 packed (E2M1X2,
+ * E1M2X2), HF4 packed.
  */
 
 #include <gtest/gtest.h>
@@ -463,6 +464,141 @@ TEST_F(InterpTypeConvertTest, Fp32CastToHf8QuantizationCases)
     calc::Cast(hf8, src); // FP32 -> HF8
     calc::Cast(out, hf8); // HF8 -> FP32 decode for validation
     ASSERT_ALLCLOSE_ATOL(out, golden, 1e-5f);
+}
+
+TEST_F(InterpTypeConvertTest, Fp8E6M2DecodeToFp32)
+{
+    // e6m2: [EEEEEE MM], value = (1 + m/4) * 2^(e-48). Code 0 is zero, 0xFF is NaN, max finite is 0xFE.
+    struct {
+        uint8_t bits;
+        float expected;
+        bool is_nan;
+    } cases[] = {
+        {0x00, 0.0f, false},                      // e=0,m=0 -> 0
+        {0x01, 1.25f * std::exp2(-48.0f), false}, // e=0,m=1
+        {0x04, std::exp2(-47.0f), false},         // e=1,m=0
+        {0xC0, 1.0f, false},                      // e=48,m=0
+        {0xC1, 1.25f, false},                     // e=48,m=1
+        {0xFE, 1.5f * std::exp2(15.0f), false},   // e=63,m=2 -> max finite 49152
+        {0xFF, 0.0f, true},                       // NaN
+    };
+
+    for (const auto& c : cases) {
+        auto src = makeTensorData(DT_FP8E6M2, {4}, static_cast<uint8_t>(c.bits));
+        auto out = makeTensorData(DT_FP32, {4}, 0.0f);
+        calc::Cast(out, src);
+        if (c.is_nan) {
+            for (int64_t i = 0; i < 4; ++i) {
+                ASSERT(std::isnan(out->Get<float>(i))) << "expected NaN at index " << i;
+            }
+        } else {
+            auto golden = makeTensorData(DT_FP32, {4}, c.expected);
+            ASSERT_ALLCLOSE_ATOL(out, golden, 1e-18f);
+        }
+    }
+}
+
+TEST_F(InterpTypeConvertTest, Fp8E6M2RoundTripViaCast)
+{
+    const std::vector<float> vals = {
+        0.0f,
+        1.25f * std::exp2(-48.0f), // smallest non-zero code (0x01)
+        1.75f * std::exp2(-48.0f), // largest e=0 code (0x03)
+        std::exp2(-47.0f),         // e=1,m=0
+        1.0f,                      // e=48,m=0
+        1.75f,                     // e=48,m=3
+        1.5f * std::exp2(15.0f),   // max finite (0xFE)
+        1e9f,                      // saturates to max finite
+        -1.0f,                     // unsigned format clamps to zero
+    };
+    const std::vector<float> expected = {
+        0.0f,
+        1.25f * std::exp2(-48.0f),
+        1.75f * std::exp2(-48.0f),
+        std::exp2(-47.0f),
+        1.0f,
+        1.75f,
+        1.5f * std::exp2(15.0f),
+        1.5f * std::exp2(15.0f),
+        0.0f,
+    };
+
+    auto n = static_cast<int64_t>(vals.size());
+    auto src = makeTensorData(DT_FP32, {n}, vals);
+    auto e6m2 = makeTensorData(DT_FP8E6M2, {n}, std::vector<uint8_t>(vals.size(), 0));
+    auto out = makeTensorData(DT_FP32, {n}, 0.0f);
+    auto golden = makeTensorData(DT_FP32, {n}, expected);
+
+    calc::Cast(e6m2, src); // FP32 -> e6m2 encode
+    calc::Cast(out, e6m2); // e6m2 -> FP32 decode
+    ASSERT_ALLCLOSE_ATOL(out, golden, 1e-18f);
+}
+
+TEST_F(InterpTypeConvertTest, Fp8E6M2EncodeNaN)
+{
+    // NaN must be encoded as 0xFF (the e6m2 NaN code) and decoded back to NaN instead of being folded to zero.
+    const std::vector<float> vals = {std::numeric_limits<float>::quiet_NaN(), 1.0f};
+    const auto n = static_cast<int64_t>(vals.size());
+    auto src = makeTensorData(DT_FP32, {n}, vals);
+    auto e6m2 = makeTensorData(DT_FP8E6M2, {n}, std::vector<uint8_t>(vals.size(), 0));
+    auto out = makeTensorData(DT_FP32, {n}, 0.0f);
+
+    calc::Cast(e6m2, src); // FP32 -> e6m2 encode
+    calc::Cast(out, e6m2); // e6m2 -> FP32 decode
+    ASSERT(std::isnan(out->Get<float>(0))) << "NaN must survive the e6m2 round trip";
+    ASSERT_FLOAT_EQ(out->Get<float>(1), 1.0f);
+}
+
+// HF4 packed (DT_HF4): 1 byte = 2 nibbles (high 4 bits first, low 4 bits second).
+// nibble = [S][I][F1][F2], value = (-1)^S * (I + F1/2 + F2/4).
+TEST_F(InterpTypeConvertTest, Hf4PackedDecodeToFp32)
+{
+    // 0x47: high=4 -> I=1 -> 1.0; low=7 -> I=1,F1=F2=1 -> 1.75
+    // 0x8C: high=8 -> S=1 -> -0.0; low=12 -> S=1,I=1 -> -1.0
+    const std::vector<uint8_t> packed = {0x47, 0x8C};
+    auto src = makeTensorData(DT_HF4, {4}, packed);
+    auto out = makeTensorData(DT_FP32, {4}, 0.0f);
+    calc::Cast(out, src);
+    const std::vector<float> goldenVals = {1.0f, 1.75f, -0.0f, -1.0f};
+    auto golden = makeTensorData(DT_FP32, {4}, goldenVals);
+    ASSERT_ALLCLOSE_ATOL(out, golden, 1e-6f);
+}
+
+TEST_F(InterpTypeConvertTest, Hf4RoundTripViaCast)
+{
+    const std::vector<float> vals = {0.0f, 0.25f, 0.75f, 1.0f, 1.5f, 1.75f, -1.25f, -1.75f, 2.0f, -2.0f};
+    const std::vector<float> expected = {0.0f, 0.25f, 0.75f, 1.0f, 1.5f, 1.75f, -1.25f, -1.75f, 1.75f, -1.75f};
+
+    auto n = static_cast<int64_t>(vals.size());
+    auto src = makeTensorData(DT_FP32, {n}, vals);
+    auto hf4 = makeTensorData(DT_HF4, {n}, std::vector<uint8_t>((vals.size() + 1) / 2, 0));
+    auto out = makeTensorData(DT_FP32, {n}, 0.0f);
+    auto golden = makeTensorData(DT_FP32, {n}, expected);
+
+    calc::Cast(hf4, src); // FP32 -> HF4 encode
+    calc::Cast(out, hf4); // HF4 -> FP32 decode
+    ASSERT_ALLCLOSE_ATOL(out, golden, 1e-6f);
+}
+
+TEST_F(InterpTypeConvertTest, Hf4AddRoundTripViaFp32)
+{
+    // a {0x25,0xAF} -> [0.5, 1.25, -0.5, -1.75]
+    // b {0x41,0xB7} -> [1.0, 0.25, -0.75, 1.75]
+    // sum           -> [1.5, 1.5, -1.25, 0.0] (all exactly representable in HF4)
+    const std::vector<uint8_t> aPacked = {0x25, 0xAF};
+    const std::vector<uint8_t> bPacked = {0x41, 0xB7};
+
+    auto a = makeTensorData(DT_HF4, {4}, aPacked);
+    auto b = makeTensorData(DT_HF4, {4}, bPacked);
+    auto out = makeTensorData(DT_HF4, {4}, std::vector<uint8_t>(2, 0));
+    calc::Add(out, a, b);
+
+    auto outF32 = makeTensorData(DT_FP32, {4}, 0.0f);
+    calc::Cast(outF32, out);
+
+    const std::vector<float> goldenVals = {1.5f, 1.5f, -1.25f, 0.0f};
+    auto golden = makeTensorData(DT_FP32, {4}, goldenVals);
+    ASSERT_ALLCLOSE_ATOL(outF32, golden, 1e-6f);
 }
 
 } // namespace npu::tile_fwk

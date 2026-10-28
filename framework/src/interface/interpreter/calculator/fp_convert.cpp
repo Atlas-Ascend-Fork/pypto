@@ -166,6 +166,20 @@ static torch::Tensor Fp8E8M0ToFloat32(const torch::Tensor& self)
     return torch::where(is_zero, torch::zeros_like(decoded), decoded);
 }
 
+// e6m2: unsigned 8-bit (6-bit exponent, 2-bit mantissa), value = (1 + m/4) * 2^(e-48).
+// Code 0 means zero, code 0xFF is NaN, max finite is 0xFE = 1.5 * 2^15.
+static torch::Tensor Fp8E6M2ToFloat32(const torch::Tensor& self)
+{
+    auto x = self.to(torch::kInt32);
+    auto exp_bits = torch::bitwise_and(torch::bitwise_right_shift(x, at::Scalar(2)), at::Scalar(0x3F));
+    auto mant_bits = torch::bitwise_and(x, at::Scalar(0x3));
+    auto exp_val = exp_bits.to(torch::kFloat32) - 48.0f;
+    auto mant_val = 1.0f + mant_bits.to(torch::kFloat32) * 0.25f;
+    auto decoded = torch::pow(2.0f, exp_val) * mant_val;
+    decoded = torch::where(x == 0xFF, std::numeric_limits<float>::quiet_NaN(), decoded);
+    return torch::where(x == 0, torch::zeros_like(decoded), decoded);
+}
+
 static torch::Tensor Hf8ToFloat32(const torch::Tensor& self)
 {
     auto x = self.to(torch::kInt32);
@@ -246,6 +260,8 @@ torch::Tensor Fp8ToFloat32(const torch::Tensor& self, DataType actualType)
             return Fp8E5M2ToFloat32(self);
         case DT_FP8E8M0:
             return Fp8E8M0ToFloat32(self);
+        case DT_FP8E6M2:
+            return Fp8E6M2ToFloat32(self);
         default:
             return self.to(torch::kFloat32);
     }
@@ -469,6 +485,58 @@ static torch::Tensor Float32ToFp8E8M0(const torch::Tensor& self)
     return result.reshape(x.sizes());
 }
 
+static const std::array<float, 0x100>& Fp8E6M2DecodeTable()
+{
+    static const std::array<float, 0x100> table = [] {
+        std::array<float, 0x100> t{};
+        for (int code = 1; code < 0xFF; ++code) {
+            const int e = code >> 2;
+            const int m = code & 0x3;
+            t[static_cast<size_t>(code)] = (1.0f + static_cast<float>(m) * 0.25f) *
+                                           std::exp2(static_cast<float>(e - 48));
+        }
+        return t;
+    }();
+    return table;
+}
+
+static inline uint8_t EncodeFloatToFp8E6M2(float v)
+{
+    if (std::isnan(v)) {
+        return 0xFF;
+    }
+    if (!(v > 0.0f)) {
+        return 0;
+    }
+    const auto& table = Fp8E6M2DecodeTable();
+    if (v >= table[0xFE]) {
+        return 0xFE;
+    }
+    uint8_t best = 0;
+    float bestErr = v;
+    for (int code = 1; code < 0xFF; ++code) {
+        const float err = std::fabs(table[static_cast<size_t>(code)] - v);
+        if (err < bestErr) {
+            bestErr = err;
+            best = static_cast<uint8_t>(code);
+        }
+    }
+    return best;
+}
+
+static torch::Tensor Float32ToFp8E6M2(const torch::Tensor& self)
+{
+    auto x = self.to(torch::kFloat32).contiguous();
+    auto flat = x.flatten();
+    auto result = torch::empty_like(flat, torch::TensorOptions().dtype(torch::kUInt8));
+    auto ptr = flat.data_ptr<float>();
+    auto out_ptr = result.data_ptr<uint8_t>();
+    for (int64_t i = 0; i < flat.numel(); ++i) {
+        out_ptr[i] = EncodeFloatToFp8E6M2(ptr[i]);
+    }
+    return result.reshape(x.sizes());
+}
+
 torch::Tensor Float32ToFp8(const torch::Tensor& self, DataType actualType)
 {
     switch (actualType) {
@@ -481,6 +549,8 @@ torch::Tensor Float32ToFp8(const torch::Tensor& self, DataType actualType)
             return Float32ToFp8E5M2(self);
         case DT_FP8E8M0:
             return Float32ToFp8E8M0(self);
+        case DT_FP8E6M2:
+            return Float32ToFp8E6M2(self);
         default:
             return self.to(torch::kUInt8);
     }
@@ -524,6 +594,15 @@ static float DecodeFp4E1M2Nibble(uint8_t nib) { return kFp4E1M2DecodeTable[stati
 
 static uint8_t EncodeFp4E1M2Nibble(float v) { return EncodeFp4NibbleNearest(v, DecodeFp4E1M2Nibble); }
 
+// HF4 nibble = [S][I][F1][F2], value = (-1)^S * (I + F1/2 + F2/4), range [-1.75, 1.75] in steps of 0.25.
+static constexpr std::array<float, 16> kHf4DecodeTable = {
+    0.0f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, -0.0f, -0.25f, -0.5f, -0.75f, -1.0f, -1.25f, -1.5f, -1.75f,
+};
+
+static float DecodeHf4Nibble(uint8_t nib) { return kHf4DecodeTable[static_cast<size_t>(nib & 0x0F)]; }
+
+static uint8_t EncodeHf4Nibble(float v) { return EncodeFp4NibbleNearest(v, DecodeHf4Nibble); }
+
 static float DecodeNibble(uint8_t nib, DataType actualType)
 {
     switch (actualType) {
@@ -531,6 +610,8 @@ static float DecodeNibble(uint8_t nib, DataType actualType)
             return DecodeFp4E2M1Nibble(nib);
         case DT_FP4_E1M2:
             return DecodeFp4E1M2Nibble(nib);
+        case DT_HF4:
+            return DecodeHf4Nibble(nib);
         default:
             return static_cast<float>(nib);
     }
@@ -543,6 +624,8 @@ static uint8_t EncodeNibble(float v, DataType actualType)
             return EncodeFp4E2M1Nibble(v);
         case DT_FP4_E1M2:
             return EncodeFp4E1M2Nibble(v);
+        case DT_HF4:
+            return EncodeHf4Nibble(v);
         default:
             return 0;
     }
