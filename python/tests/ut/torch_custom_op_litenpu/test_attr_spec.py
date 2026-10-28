@@ -19,6 +19,7 @@ torch_defn arity (n_inputs + n_attrs); and the typed ONNX ``AttributeProto`` emi
 """
 import json
 
+import postponed_annot_samples as postponed  # sibling fixture module (pytest puts this dir on sys.path)
 import pytest
 import torch
 import torch.nn as nn
@@ -381,6 +382,7 @@ def test_convert_shape_attr_typed_from_string():
     assert _convert_shape_attr("[2, 2]", list[int], "crop_size") == [2, 2]
     assert _convert_shape_attr("3", int, "k") == 3
     assert _convert_shape_attr([2, 2], list[int], "crop_size") == [2, 2]  # already typed -> passthrough
+    assert _convert_shape_attr("2", float, "scale") == 2.0  # a Float attr, not the int json.loads gives
 
 
 def test_run_path_infer_shape_threads_shape_affecting_attr():
@@ -402,6 +404,100 @@ def test_run_path_infer_shape_shape_invariant_unchanged():
     entry = CompileEntry(num_inputs=2, num_outputs=1, factory=lambda *a, **k: None, factory_signature="full")
     entry.infer_shape = _bias_infer_shape  # (a, b) -> a; no attr param
     assert entry._infer_shape_run_args([(1, 8), (1, 8)], {"bias": "3"}) == [(1, 8), (1, 8)]
+
+
+# ── infer_shape annotations that are not a plain evaluated ``str`` / ``int`` / ``list[int]`` ──────────
+
+
+class _LayoutCallableInferShape:
+    """A callable-object infer_shape hook whose CLASS annotates a name its ``__call__`` also declares."""
+    layout: int = 0
+
+    def __call__(self, x: torch.Size, layout: str) -> torch.Size:
+        return torch.Size((*x, len(layout)))
+
+
+def _layout_infer_shape_defaulting_to_none(x: torch.Size, layout: str = None) -> torch.Size:
+    return torch.Size((*x, len(layout)))
+
+
+@pytest.mark.parametrize("hook_name,attrs,expected", [
+    ("str_attr", {"layout": "NHWC"}, "NHWC"),
+    ("str_attr", {"layout": "123"}, "123"),
+    ("int_attr", {"n": "2"}, 2),
+    ("listint_attr", {"crop": "[4, 4]"}, [4, 4]),
+], ids=["str", "str-json-lookalike", "int", "list-int"])
+def test_run_path_infer_shape_resolves_a_postponed_annotation(hook_name, attrs, expected):
+    # An author module with ``from __future__ import annotations`` (PEP 563) leaves the annotation SOURCE in
+    # the signature, so the attr is converted against the resolved annotation: a String attr reaches
+    # infer_shape as the declared str, both for 'NHWC' and for a JSON-parseable value like '123'.
+    from pypto.extensions.torch_custom_op_litenpu.common.compile import CompileEntry
+    entry = CompileEntry(num_inputs=1, num_outputs=1, factory=lambda *a, **k: None, factory_signature="full")
+    entry.infer_shape = getattr(postponed, hook_name)
+    assert entry._infer_shape_run_args([(1, 8)], attrs) == [(1, 8), expected]
+
+
+@pytest.mark.parametrize("raw", ["NHWC", "123"])
+@pytest.mark.parametrize("hook", [_LayoutCallableInferShape(), _layout_infer_shape_defaulting_to_none],
+                         ids=["callable-object", "none-default"])
+def test_run_path_infer_shape_keeps_an_evaluated_annotation(hook, raw):
+    # An annotation the author's module already evaluated is used as it stands. Resolving it again would read
+    # a callable object's CLASS namespace instead of its ``__call__`` parameters, which for 'NHWC' raises and
+    # for '123' silently hands infer_shape an int.
+    from pypto.extensions.torch_custom_op_litenpu.common.compile import CompileEntry
+    entry = CompileEntry(num_inputs=1, num_outputs=1, factory=lambda *a, **k: None, factory_signature="full")
+    entry.infer_shape = hook
+    assert entry._infer_shape_run_args([(1, 8)], {"layout": raw}) == [(1, 8), raw]
+
+
+def _layout_infer_shape_with_an_unresolvable_input(x: "Unresolvable", layout: str) -> torch.Size:  # noqa: F821
+    return torch.Size((*x, len(layout)))
+
+
+def test_run_path_infer_shape_does_not_resolve_an_evaluated_annotation():
+    # An evaluated annotation is passed on as written, so one quoted name that resolves nowhere does not
+    # stop a String attr from converting. A deployed compile snippet is that case: it carries no
+    # TYPE_CHECKING import, and nothing re-derives the arity that would reject the hook first.
+    from pypto.extensions.torch_custom_op_litenpu.common.compile import CompileEntry
+    entry = CompileEntry(num_inputs=1, num_outputs=1, factory=lambda *a, **k: None, factory_signature="full")
+    entry.infer_shape = _layout_infer_shape_with_an_unresolvable_input
+    assert entry._infer_shape_run_args([(1, 8)], {"layout": "NHWC"}) == [(1, 8), "NHWC"]
+
+
+@pytest.mark.parametrize("hook_name,attrs,expected", [
+    ("CallableStrAttr", {"layout": "NHWC"}, "NHWC"),
+    ("CallableListIntAttr", {"crop": "[4, 4]"}, [4, 4]),
+], ids=["str", "list-int"])
+def test_run_path_infer_shape_resolves_a_postponed_callable_object_from_its_call(hook_name, attrs, expected):
+    # A callable object's parameters belong to its ``__call__``, so the annotations are read from there.
+    # Both hooks carry a class attribute of the same name annotated as the OTHER type: reading the class
+    # namespace instead converts 'NHWC' to an int, and hands ``crop`` the string '[4, 4]' silently.
+    from pypto.extensions.torch_custom_op_litenpu.common.compile import CompileEntry
+    entry = CompileEntry(num_inputs=1, num_outputs=1, factory=lambda *a, **k: None, factory_signature="full")
+    entry.infer_shape = getattr(postponed, hook_name)()
+    assert entry._infer_shape_run_args([(1, 8)], attrs) == [(1, 8), expected]
+
+
+def test_run_path_infer_shape_keeps_refusing_a_postponed_annotated_attr():
+    # ``Annotated[str, ...]`` stays refused, as it is at the root of an export: the deploy codegen reads
+    # the same hints with include_extras=True, so the extras survive the lookup, and it accepts only the
+    # plain int / float / str / list[int] annotations. Dropping the extras here would make the run path
+    # take an op that cannot be built.
+    from pypto.extensions.torch_custom_op_litenpu.common.compile import CompileEntry
+    entry = CompileEntry(num_inputs=1, num_outputs=1, factory=lambda *a, **k: None, factory_signature="full")
+    entry.infer_shape = postponed.annotated_str_attr
+    with pytest.raises(ValueError, match="cannot convert"):
+        entry._infer_shape_run_args([(1, 8)], {"layout": "NHWC"})
+
+
+def test_run_path_infer_shape_names_an_unresolvable_annotation():
+    # One unresolvable annotation fails the whole signature's resolution, and the name that did not
+    # resolve is the report worth having, not a complaint about the attr being converted.
+    from pypto.extensions.torch_custom_op_litenpu.common.compile import CompileEntry
+    entry = CompileEntry(num_inputs=1, num_outputs=1, factory=lambda *a, **k: None, factory_signature="full")
+    entry.infer_shape = postponed.str_attr_with_an_unresolvable_sibling
+    with pytest.raises(NameError, match="Unresolvable"):
+        entry._infer_shape_run_args([(1, 8)], {"layout": "NHWC", "mode": "x"})
 
 
 @pytest.mark.parametrize("value,expected_key", [(7, "k_i"), (1.5, "k_f"), ("s", "k_s")])

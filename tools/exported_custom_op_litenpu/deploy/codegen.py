@@ -535,6 +535,8 @@ def _to_cpp_type(py_ann: Any) -> str:
         return "float"
     if py_ann is bool:
         return "bool"
+    if py_ann is str:
+        return "std::string"  # a String attr: pybind casts it to a Python str for the infer func
     origin = get_origin(py_ann)
     if origin is tuple:
         targs = get_args(py_ann)
@@ -768,9 +770,15 @@ def _generate_pybind_wrapper(
 def _infer_shape_attr_ge_type(ann: Any) -> str | None:
     """The GE attr type of a NON-``torch.Size`` ``infer_shape`` param (a shape-affecting attr), or
     ``None`` if the annotation isn't an accepted attr shape (``int`` -> ``Int``, ``list[int]`` ->
-    ``ListInt``). Only Int/ListInt can size an output, so only these are accepted in ``infer_shape``."""
+    ``ListInt``, ``str`` -> ``String``, ``float`` -> ``Float``). ``InferShapeGeImpl`` reads the attr and
+    passes it to the author's own ``infer_shape``, so what a value means is the author's to decide; this
+    maps the annotation to the GE attr type that carries it."""
     if ann is int:
         return "Int"
+    if ann is str:
+        return "String"
+    if ann is float:
+        return "Float"
     if get_origin(ann) is list and get_args(ann) == (int,):
         return "ListInt"
     return None
@@ -781,10 +789,11 @@ def _parse_infer_shape_for_codegen(func: Callable, attr_specs=None) -> _HelperFu
 
     The LEADING parameters are the tensor input shapes, each annotated ``torch.Size``. An op whose
     output shape depends on an attr may declare TRAILING shape-affecting attr params AFTER all the
-    shape params: ``int`` (-> ``Int``) or ``list[int]`` (-> ``ListInt``). ``param_names`` holds only the
-    tensor-shape params (so ``n_in`` stays the TENSOR count); the trailing attr params land in
-    ``attr_read_infos`` mapped to their GLOBAL ``_attr_specs`` index via *attr_specs*. The return
-    annotation must be ``torch.Size`` (single output) or ``tuple[torch.Size, torch.Size]`` (multi-output).
+    shape params: ``int`` (-> ``Int``), ``float`` (-> ``Float``), ``str`` (-> ``String``) or ``list[int]``
+    (-> ``ListInt``). ``param_names`` holds only the tensor-shape params (so ``n_in`` stays the TENSOR
+    count); the trailing attr params land in ``attr_read_infos`` mapped to their GLOBAL ``_attr_specs``
+    index via *attr_specs*. The return annotation must be ``torch.Size`` (single output) or
+    ``tuple[torch.Size, torch.Size]`` (multi-output).
     """
     sig = inspect.signature(func)
     try:
@@ -827,7 +836,7 @@ def _parse_infer_shape_for_codegen(func: Callable, attr_specs=None) -> _HelperFu
         if ge_type is None:
             raise TypeError(
                 f"infer_shape parameter {p.name!r}: a non-torch.Size param must be a shape-affecting "
-                "attr annotated int (Int) or list[int] (ListInt)"
+                "attr annotated int (Int), float (Float), str (String) or list[int] (ListInt)"
             )
         spec = spec_by_name.get(p.name)
         if spec is None:
@@ -875,9 +884,35 @@ def _infer_shape_input_block(i: int) -> str:
 def _infer_shape_attr_read_block(name: str, global_index: int, ge_type: str, default) -> str:
     """One shape-affecting attr read for InferShapeGeImpl: read the attr at its GLOBAL declaration
     index off ``context->GetAttrs()`` into a local, marshalled to the pybind param type (Int ->
-    ``int64_t``, ListInt -> ``std::vector<int64_t>``). The local is initialized to the AttrSpec default
-    (or a type zero) so a, in practice unreachable, since a shape attr is REQUIRED and GE guarantees it -
-    null-attrs path is still well-defined."""
+    ``int64_t``, ListInt -> ``std::vector<int64_t>``, String -> ``std::string``, Float -> ``float``).
+
+    The local is initialized to the AttrSpec default, or to a type zero. That null-attrs path is
+    unreachable in practice, since a shape attr is REQUIRED and GE guarantees it, but it stays
+    well-defined. A Float initializer always carries a decimal point or an exponent before the ``f``
+    suffix, because ``1f`` is not a C++ floating literal."""
+    if ge_type == "String":
+        init = '""' if default is None else f'"{default}"'
+        return (
+            f"    std::string {name} = {init};\n"
+            f"    if (_attrs != nullptr) {{ const char *_p_{name} = _attrs->GetStr({global_index}); "
+            f"if (_p_{name}) {name} = _p_{name}; }}"
+        )
+    if ge_type == "Float":
+        if default is None:
+            init = "0.0f"
+        else:
+            # ``%.9g`` drops the point of an integral value, and ``1f`` is not a C++ literal: the
+            # package build fails with "unable to find numeric literal operator". A non-finite
+            # default is left exactly as it was formatted; this PR does not accept one.
+            text = f"{float(default):.9g}"
+            if re.fullmatch(r"[+-]?[0-9]+", text):
+                text += ".0"
+            init = text + "f"
+        return (
+            f"    float {name} = {init};\n"
+            f"    if (_attrs != nullptr) {{ const float *_p_{name} = _attrs->GetFloat({global_index}); "
+            f"if (_p_{name}) {name} = *_p_{name}; }}"
+        )
     if ge_type == "Int":
         init = "0" if default is None else str(int(default))
         return (

@@ -241,6 +241,7 @@ def test_embedded_pybind_imports_torch_and_wraps_shape_args():
 def test_to_cpp_type_torch_size_and_int():
     assert cpp_mod._to_cpp_type(torch.Size) == "std::vector<int64_t>"
     assert cpp_mod._to_cpp_type(int) == "int64_t"
+    assert cpp_mod._to_cpp_type(str) == "std::string"          # a String attr param
     assert (cpp_mod._to_cpp_type(tuple[torch.Size, torch.Size])
             == "std::tuple<std::vector<int64_t>, std::vector<int64_t>>")
     # Generic tuple/list mapping still works for non-shape annotations.
@@ -941,6 +942,58 @@ def test_infer_shape_body_reads_getattrs_listint_at_index():
     assert "crop_size.assign(" in body
     # the attr local is threaded into the pybind wrapper call after the shape vec
     assert "inferShape(in0_shape_vec, crop_size)" in body
+
+
+def test_infer_shape_attr_ge_type_accepts_int_listint_and_string_only():
+    # The gate behind the InferShape attr read: an annotation it answers None for is refused outright,
+    # so a type with no emitter branch can never reach the generated C++.
+    ge = cpp_mod._infer_shape_attr_ge_type
+    assert (ge(int), ge(list[int]), ge(str), ge(float)) == ("Int", "ListInt", "String", "Float")
+    assert (ge(list[float]), ge(typing.Optional[str]), ge(typing.Annotated[int, "doc"])) == (None, None, None)
+
+
+def test_parse_infer_shape_maps_a_string_attr_to_its_declaration_index():
+    # The emitted text is pinned whole by infer_shape_ge_body_string_attr.inc.golden; this pins the
+    # metadata the emitter reads, which the golden cannot show.
+    meta = cpp_mod._parse_infer_shape_for_codegen(
+        infer_shape_samples.infer_shape_width_pick, [{"name": "width", "type": "String", "default": "FULL"}])
+    assert meta.param_names == ["x_shape"]
+    assert meta.attr_read_infos == (("width", 0, "String", "FULL"),)
+
+
+def test_parse_infer_shape_maps_a_float_attr_to_its_declaration_index():
+    # The Float twin of the String case above; the emitted text is pinned by
+    # infer_shape_ge_body_float_attr.inc.golden.
+    meta = cpp_mod._parse_infer_shape_for_codegen(
+        infer_shape_samples.infer_shape_scaled_last, [{"name": "scale", "type": "Float", "default": 0.5}])
+    assert meta.attr_read_infos == (("scale", 0, "Float", 0.5),)
+
+
+@pytest.mark.parametrize("default,expected", [
+    (None, "0.0f"),
+    (0.0, "0.0f"),
+    (1.0, "1.0f"),
+    (-2.0, "-2.0f"),
+    (-0.0, "-0.0f"),
+    (0.5, "0.5f"),
+    (1e-9, "1e-09f"),
+], ids=["absent", "zero", "one", "negative", "negative-zero", "fraction", "exponent"])
+def test_infer_shape_float_attr_default_emits_a_compilable_literal(default, expected):
+    # ``%.9g`` writes an integral Float default without a decimal point, and ``float scale = 1f;`` is
+    # not C++: the real package build failed with "unable to find numeric literal operator". The
+    # emitted initializer therefore needs a point or an exponent before the ``f``. Nine significant
+    # digits are preserved; the generator itself is exercised, not a copy of its formatter.
+    meta = cpp_mod._parse_infer_shape_for_codegen(
+        infer_shape_samples.infer_shape_scaled_last, [{"name": "scale", "type": "Float", "default": default}])
+    body = cpp_mod._infer_shape_ge_impl_body(meta)
+    assert f"    float scale = {expected};" in body
+    assert "_attrs->GetFloat(0)" in body                       # the read at declaration index 0 stays
+
+
+def test_parse_infer_shape_rejects_a_string_param_declared_as_another_attr_type():
+    with pytest.raises(TypeError, match="is String but its AttrSpec declares Int"):
+        cpp_mod._parse_infer_shape_for_codegen(infer_shape_samples.infer_shape_width_pick,
+                                               [{"name": "width", "type": "Int", "default": 0}])
 
 
 def test_parse_infer_shape_rejects_shape_after_attr():

@@ -1,0 +1,34 @@
+    PTO_CUSTOM_LOGD("Entering InferShapeGeImpl\n");
+    const gert::Shape* in0_shape = context->GetInputShape(0);
+    if (in0_shape == nullptr) {
+        PTO_CUSTOM_LOGD("ERROR: InferShapeGeImpl: null input shape at index 0 -> GRAPH_FAILED\n");
+        return ge::GRAPH_FAILED;
+    }
+    std::vector<int64_t> in0_shape_vec;
+    in0_shape_vec.reserve(in0_shape->GetDimNum());
+    for (size_t j = 0; j < in0_shape->GetDimNum(); ++j) {
+        in0_shape_vec.push_back((*in0_shape)[j]);
+    }
+    PTO_CUSTOM_LOGD("InferShapeGeImpl: in0 ndim=%zu\n", in0_shape_vec.size());
+
+    const gert::RuntimeAttrs *_attrs = context->GetAttrs();
+    float scale = 0.5f;
+    if (_attrs != nullptr) { const float *_p_scale = _attrs->GetFloat(0); if (_p_scale) scale = *_p_scale; }
+    auto out_shape_vec = inferShape(in0_shape_vec, scale);
+    PTO_CUSTOM_LOGD("InferShapeGeImpl: out0 ndim=%zu\n", out_shape_vec.size());
+    gert::Shape* out_shape = context->GetOutputShape(0);
+    if (out_shape == nullptr) {
+        PTO_CUSTOM_LOGD("ERROR: InferShapeGeImpl: null output shape at index 0 -> GRAPH_FAILED\n");
+        return ge::GRAPH_FAILED;
+    }
+    if (out_shape_vec.size() > gert::Shape::kMaxDimNum) {
+        PTO_CUSTOM_LOGD("ERROR: InferShapeGeImpl: out0 rank %zu exceeds gert::Shape::kMaxDimNum"
+                        " -> GRAPH_FAILED\n", out_shape_vec.size());
+        return ge::GRAPH_FAILED;
+    }
+    out_shape->SetDimNum(out_shape_vec.size());
+    for (size_t j = 0; j < out_shape_vec.size(); ++j) {
+        (*out_shape)[j] = out_shape_vec[j];
+    }
+    PTO_CUSTOM_LOGD("Exiting InferShapeGeImpl (status=%u)\n", (unsigned)ge::GRAPH_SUCCESS);
+    return ge::GRAPH_SUCCESS;

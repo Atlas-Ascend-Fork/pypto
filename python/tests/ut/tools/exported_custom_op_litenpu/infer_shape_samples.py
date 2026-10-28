@@ -62,6 +62,20 @@ def infer_shape_two_outputs(
     return (a_shape, b_shape)
 
 
+def infer_shape_width_pick(x_shape: torch.Size, width: str) -> torch.Size:
+    """A String shape-affecting attr: the attr value selects the output width."""
+    out = list(x_shape)
+    out[-1] = out[-1] if width == "FULL" else out[-1] // 2
+    return torch.Size(out)
+
+
+def infer_shape_scaled_last(x_shape: torch.Size, scale: float) -> torch.Size:
+    """A Float shape-affecting attr: the attr value scales the last dim."""
+    out = list(x_shape)
+    out[-1] = int(out[-1] * scale)
+    return torch.Size(out)
+
+
 def infer_dtype_one(a_dtype: torch.dtype) -> torch.dtype:
     return a_dtype
 

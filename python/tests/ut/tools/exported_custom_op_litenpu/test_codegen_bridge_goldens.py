@@ -85,6 +85,10 @@ GOLDEN_CASES = {
         shape_samples.infer_shape_nd_identity, cpp_mod._CPP_BIND__INFER_SHAPE),
     "pybind_infer_shape_two_outputs.inc": lambda: _pybind(
         shape_samples.infer_shape_two_outputs, cpp_mod._CPP_BIND__INFER_SHAPE),
+    "pybind_infer_shape_string_attr.inc": lambda: _pybind(
+        shape_samples.infer_shape_width_pick, cpp_mod._CPP_BIND__INFER_SHAPE),
+    "pybind_infer_shape_float_attr.inc": lambda: _pybind(
+        shape_samples.infer_shape_scaled_last, cpp_mod._CPP_BIND__INFER_SHAPE),
     "pybind_shipped_infer_shape_one_2d.inc": lambda: _pybind_shipped(
         shape_samples.infer_shape_one_2d, cpp_mod._CPP_BIND__INFER_SHAPE),
     "pybind_shipped_infer_shape_two_outputs.inc": lambda: _pybind_shipped(
@@ -98,6 +102,10 @@ GOLDEN_CASES = {
     "infer_shape_ge_body_two_by_two.inc": lambda: _shape_body(shape_samples.infer_shape_two_by_two),
     "infer_shape_ge_body_nd_identity.inc": lambda: _shape_body(shape_samples.infer_shape_nd_identity),
     "infer_shape_ge_body_two_outputs.inc": lambda: _shape_body(shape_samples.infer_shape_two_outputs),
+    "infer_shape_ge_body_string_attr.inc": lambda: _shape_body(
+        shape_samples.infer_shape_width_pick, [{"name": "width", "type": "String", "default": "FULL"}]),
+    "infer_shape_ge_body_float_attr.inc": lambda: _shape_body(
+        shape_samples.infer_shape_scaled_last, [{"name": "scale", "type": "Float", "default": 0.5}]),
     "infer_dtype_ge_body_two.inc": lambda: _dtype_body(shape_samples.infer_dtype_two),
     "infer_dtype_ge_body_two_outputs.inc": lambda: _dtype_body(shape_samples.infer_dtype_two_outputs),
     "attr_parse_param_int.inc": lambda: _attr_block(_BIAS_ATTR),

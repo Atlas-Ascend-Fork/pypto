@@ -21,7 +21,7 @@ tests substitute lightweight fakes without an NPU toolchain (see
 """
 import inspect
 import json
-from typing import Any, Callable, Optional, get_origin
+from typing import Any, Callable, Optional, get_origin, get_type_hints
 import warnings
 
 import torch
@@ -90,20 +90,23 @@ def _convert_shape_attr(raw, annotation, name: str):
     values. A non-string value (already typed) passes through."""
     if not isinstance(raw, str):
         return raw
-    if annotation is list or get_origin(annotation) is list:
-        return json.loads(raw)
-    if annotation is int:
-        return int(raw)
-    if annotation is str:
-        return raw
-    # Unannotated shape-affecting param: accept a JSON-typed value, but never silently hand
-    # infer_shape an unconverted string.
     try:
+        if annotation is list or get_origin(annotation) is list:
+            return json.loads(raw)
+        if annotation is int:
+            return int(raw)
+        if annotation is str:
+            return raw
+        if annotation is float:
+            return float(raw)
+        # Any other annotation, or none at all: accept a JSON-typed value, but never silently hand
+        # infer_shape an unconverted string.
         return json.loads(raw)
     except ValueError as exc:
+        declared = "absent" if annotation is inspect.Parameter.empty else repr(annotation)
         raise ValueError(
-            f"attr '{name}': cannot convert {raw!r} for infer_shape; annotate the parameter "
-            f"(int / str / list[int]) or pass a JSON-parseable value"
+            f"attr '{name}': cannot convert {raw!r} for infer_shape; the parameter's annotation is "
+            f"{declared} (annotate it int / float / str / list[int], or pass a JSON-parseable value)"
         ) from exc
 
 
@@ -309,7 +312,15 @@ class CompileEntry:
             return args
         attrs = attrs or {}
         for p in trailing:
-            args.append(_convert_shape_attr(attrs[p.name], p.annotation, p.name))
+            annotation = p.annotation
+            # PEP 563 leaves the annotation source in the signature; an evaluated one is passed on as written.
+            if isinstance(annotation, str):
+                # A callable object's parameters belong to the ``__call__`` that ``inspect.signature``
+                # read, so its hints come from there and not from the class namespace.
+                fn = self._infer_shape_fn
+                hints = get_type_hints(fn if inspect.isroutine(fn) else type(fn).__call__, include_extras=True)
+                annotation = hints.get(p.name, annotation)
+            args.append(_convert_shape_attr(attrs[p.name], annotation, p.name))
         return args
 
     def _infer_out_shapes_dtypes(self, in_shapes, in_torch_dtypes, attrs=None) -> tuple:

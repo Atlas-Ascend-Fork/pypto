@@ -1,0 +1,41 @@
+namespace {
+
+std::vector<int64_t> inferShape(std::vector<int64_t> x_shape, std::string width) {
+    PTO_CUSTOM_LOGD("Entering inferShape\n");
+    // One-time CPython bootstrap for a non-Python host (GE/Ascend executor that dlopen'd this .so);
+    // guarded so a Python host is untouched, and never finalized (called repeatedly; re-init is fragile).
+    static const bool _pypto_py_bootstrapped = []() {
+        if (!Py_IsInitialized()) {
+            Py_InitializeEx(0);   // 0: don't install signal handlers (library-friendly)
+            PyEval_SaveThread();  // drop the GIL the init thread holds; reacquired below
+        }
+        return true;
+    }();
+    (void)_pypto_py_bootstrapped;
+
+    // Held across the try AND the catch: error_already_set handling needs the GIL.
+    py::gil_scoped_acquire gil;
+    const std::string _dtype_bridge_src = R"PYSRC(
+import torch
+
+)PYSRC";
+    const std::string _import_by_path_src = R"PYSRC(
+import importlib.util as _pypto_ilu
+_pypto_spec = _pypto_ilu.spec_from_file_location('_pypto_infer_inferShape', '/nonexistent/pypto_ut_infer_defs.py')
+_pypto_infer_mod = _pypto_ilu.module_from_spec(_pypto_spec)
+_pypto_spec.loader.exec_module(_pypto_infer_mod)
+)PYSRC";
+
+    py::dict globals;                       // FRESH dict per call; py::exec auto-seeds __builtins__
+    py::exec(_dtype_bridge_src, globals, globals);     // torch + dtype bridge
+    py::exec(_import_by_path_src, globals, globals);   // load the .py defining infer_shape_width_pick
+    py::object _mod = globals["_pypto_infer_mod"];
+    py::object infer_shape_width_pick_py = _mod.attr("infer_shape_width_pick");
+    py::object _torch_Size = py::module_::import("torch").attr("Size");
+
+    std::vector<int64_t> _ret = infer_shape_width_pick_py(_torch_Size(py::cast(x_shape)), py::cast(width)).cast<std::vector<int64_t>>();
+    PTO_CUSTOM_LOGD("Exiting inferShape (ok)\n");
+    return _ret;
+}
+
+}
