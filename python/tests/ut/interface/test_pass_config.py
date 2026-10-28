@@ -10,9 +10,12 @@
 # -----------------------------------------------------------------------------------------------------------
 """ """
 
+import inspect
+
 import pytest
 
 import pypto
+from pypto import pil
 
 
 def test_pass_config():
@@ -148,3 +151,28 @@ class TestHashOrderConfig:
         pypto.reset_options()
         with pytest.raises(pypto.error.FeError, match=r"conflicts with function-granularity hashOrder"):
             pypto.set_semantic_label("func123_0")
+
+    @staticmethod
+    def test_semantic_label_records_kernel_call_site(monkeypatch):
+        """PIL 路径下记录的是 kernel 内的调用点，而不是框架内部的派发代码"""
+        records = []
+        monkeypatch.setattr(pypto.pypto_impl, "SetSemanticLabel", lambda *args: records.append(args))
+
+        def kernel(src, out):
+            pypto.set_vec_tile_shapes(16, 16)
+            pypto.set_semantic_label("stage")
+            pypto.assemble(src, [0, 0], out)
+
+        src = pypto.tensor([16, 16], pypto.DT_FP32, "src")
+        out = pypto.tensor([16, 16], pypto.DT_FP32, "out")
+        pil.compile(kernel, src, out, create_new_logical_tensor=True)
+
+        lines, first_lineno = inspect.getsourcelines(kernel)
+        expected_lineno = first_lineno + next(
+            i for i, line in enumerate(lines) if 'pypto.set_semantic_label("stage")' in line
+        )
+        assert records, "set_semantic_label should have been dispatched"
+        for label, filename, lineno in records:
+            assert label == "stage"
+            assert filename == kernel.__code__.co_filename
+            assert lineno == expected_lineno

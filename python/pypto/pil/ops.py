@@ -175,6 +175,16 @@ def delattr_impl(ctx, obj, attr):
     return delattr(obj, attr)
 
 
+# ---- Host config ----
+
+
+@impl(pypto.set_semantic_label)
+def set_semantic_label_impl(ctx: BuildContext, label: str):
+    # Reached from the dispatcher frame, so pass the parsed call site directly
+    # instead of letting set_semantic_label fall back to sys._getframe().
+    pypto_impl.SetSemanticLabel(label, ctx.span.filename, ctx.span.begin_line)
+
+
 # ---- Tensor construction ----
 
 @impl(pypto.Tensor)
