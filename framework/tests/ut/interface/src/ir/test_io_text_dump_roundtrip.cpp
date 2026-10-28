@@ -33,6 +33,7 @@
 #include "ir/span.h"
 #include "ir/stmt.h"
 #include "ir/transforms/io_text.h"
+#include "interface/tensor/logical_tensor.h"
 #include "ir/type.h"
 #include "test_ir.h"
 
@@ -483,5 +484,96 @@ TEST_F(IoTextDumpRoundTripTest, TestFunctionRoundTrip)
     EXPECT_TRUE(error.empty());
     EXPECT_EQ(TextDump(loaded), dumped);
 }
+
+// ---- The same name in two functions must not be bound to the same tensor ----
+TEST_F(IoTextDumpRoundTripTest, TestSameNamedTensorInTwoFunctionsIsNotShared)
+{
+    std::string error;
+    // The symbol table is per function: %x@0 of g must not be the %x@0 of f (same name and same rawmagic).
+    const std::string
+        text = "program #entry(f) {\n"
+               "    function f incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([4, 8]) #offset([0, 0]) "
+               "#shape([4, 8])) outcast() #entry(true) #type(Opaque) {\n"
+               "        return %x@0;\n"
+               "    }\n"
+               "    function g incast(v0_logical_tensor %x@0 #dtype(int32_t) #dynvalidshape([2, 2]) #offset([0, 0]) "
+               "#shape([2, 2])) outcast() #entry(false) #type(Opaque) {\n"
+               "        return %x@0;\n"
+               "    }\n"
+               "}";
+    auto program = TextLoadProgram(text, error);
+    ASSERT_TRUE(error.empty()) << error;
+    ASSERT_NE(program, nullptr);
+    EXPECT_EQ(TextDump(program), text);
+
+    auto paramF = std::dynamic_pointer_cast<const npu::tile_fwk::LogicalTensor>(
+        program->functions_.at("f")->params_.front());
+    auto paramG = std::dynamic_pointer_cast<const npu::tile_fwk::LogicalTensor>(
+        program->functions_.at("g")->params_.front());
+    ASSERT_NE(paramF, nullptr);
+    ASSERT_NE(paramG, nullptr);
+    EXPECT_NE(paramF.get(), paramG.get());
+    EXPECT_EQ(paramF->tensor->rawmagic, 0);
+    EXPECT_EQ(paramG->tensor->rawmagic, 0);
+    EXPECT_NE(paramF->tensor.get(), paramG->tensor.get());
+}
+
+// ---- Loop iter-args: a tensor iter-arg keeps its tensor, and `%none` resolves on reference ----
+TEST_F(IoTextDumpRoundTripTest, TestLoopIterArgKeepsTensorIdentity)
+{
+    std::string error;
+    const std::string
+        text = "program #entry() {\n"
+               "    function foo incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) "
+               "#shape([32, 16]), v0_logical_tensor %out@1 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) "
+               "#shape([32, 16])) outcast() #entry(false) #type(Opaque) {\n"
+               "        int64_t %i_0, v0_logical_tensor %xv_0@2 #dtype(float) #dynvalidshape([v0min(v0max(v0sub(32, "
+               "v0mul(loop_idx_10, 16)), 0), 16), 16]) #offset([0, 0]) #shape([16, 16]) = for %loop_idx_10 inrange 0, "
+               "2, 1 iter { none %i = %none; v0_logical_tensor %xv@2 #dtype(float) #dynvalidshape([16, 16]) "
+               "#offset([0, 0]) #shape([16, 16]) = %x@0; } #_config_scope(Unsupported) #_loop_conds([v0ge(loop_idx_10, "
+               "0), v0lt(loop_idx_10, 2)]) #parallel(false) #submit_before_loop(false) #unroll_times(1) {\n"
+               "            v0_logical_tensor %View_x@2 #dtype(float) #dynvalidshape([v0min(v0max(v0sub(32, "
+               "v0mul(loop_idx_10, 16)), 0), 16), 16]) #offset([0, 0]) #shape([16, 16]) = !10000 VIEW(%x@0) token() "
+               "#fromDynOffset([v0mul(loop_idx_10, 16), 0]) #fromOffset([0, 0]) #toValidShape([v0min(v0max(v0sub(32, "
+               "v0mul(loop_idx_10, 16)), 0), 16), 16]);\n"
+               "            v0_logical_tensor %out@1 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) "
+               "#shape([32, 16]) = !10001 ASSEMBLE(%View_x@2) token() #toDynOffset([v0mul(loop_idx_10, 16), 0]) "
+               "#toOffset([0, 0]) #dassemble(true) #parallel(false);\n"
+               "            continue %loop_idx_10, %View_x@2;\n"
+               "        }\n"
+               "        return %x@0, %out@1;\n"
+               "    }\n"
+               "}";
+    auto program = TextLoadProgram(text, error);
+    ASSERT_TRUE(error.empty()) << error;
+    ASSERT_NE(program, nullptr);
+    EXPECT_EQ(TextDump(program), text);
+
+    auto func = program->functions_.at("foo");
+    auto forStmt = std::dynamic_pointer_cast<const ForStmt>(func->body_->stmts_.front());
+    ASSERT_NE(forStmt, nullptr);
+    ASSERT_EQ(forStmt->iterArgs_.size(), 2U);
+    EXPECT_EQ(forStmt->returnVars_.size(), 2U);
+
+    // `none %i = %none`: the None sentinel has no var_def and is materialized when referenced.
+    auto noneIterAsTensor = std::dynamic_pointer_cast<const npu::tile_fwk::LogicalTensor>(
+        forStmt->iterArgs_[0]->iterVar_);
+    EXPECT_EQ(noneIterAsTensor, nullptr);
+    EXPECT_EQ(forStmt->iterArgs_[0]->iterVar_->name_, "i");
+    auto noneInit = std::dynamic_pointer_cast<const Var>(forStmt->iterArgs_[0]->initValue_);
+    ASSERT_NE(noneInit, nullptr);
+    EXPECT_EQ(noneInit->name_, "none");
+
+    // `v0_logical_tensor %xv@2 = %x@0`: the iter-arg keeps the @2 tensor, its init is the @0 param.
+    auto tensorIterVar = std::dynamic_pointer_cast<const npu::tile_fwk::LogicalTensor>(forStmt->iterArgs_[1]->iterVar_);
+    ASSERT_NE(tensorIterVar, nullptr);
+    ASSERT_NE(tensorIterVar->tensor, nullptr);
+    EXPECT_EQ(tensorIterVar->tensor->rawmagic, 2);
+    auto tensorInit = std::dynamic_pointer_cast<const npu::tile_fwk::LogicalTensor>(forStmt->iterArgs_[1]->initValue_);
+    ASSERT_NE(tensorInit, nullptr);
+    ASSERT_NE(tensorInit->tensor, nullptr);
+    EXPECT_EQ(tensorInit->tensor->rawmagic, 0);
+}
+
 } // namespace ir
 } // namespace pypto

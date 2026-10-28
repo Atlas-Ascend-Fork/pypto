@@ -162,6 +162,7 @@ public:
     IRTextParserDataPtr<int64_t> ParseOpMagic();
     IRTextParserDataPtr<DataType> ParseDType();
     IRTextParserExprListPtr ParseExprList(IRTextLexerTokenKind split, IRTextLexerTokenKind stop);
+    VarPtr ParseIterArgVar(const TypePtr& type, const std::string& name);
     IRTextParserIterArgListPtr ParseIterArgs();
 
     // ---- Var definition:  type %name ----
@@ -287,8 +288,8 @@ private:
     IRTextParserSuccessPtr success_;
     std::string errorMsg_;
     size_t errorPos_ = 0;
-    std::unique_ptr<npu::tile_fwk::Program> tempProgram_;
-    std::shared_ptr<npu::tile_fwk::Function> tempFunc_;
+    // Host framework Function of the parsed function; owned by the Program singleton so op->BelongTo() stays valid.
+    std::shared_ptr<npu::tile_fwk::Function> hostFunc_;
 
     friend class IRTextLoader;
 };

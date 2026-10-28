@@ -310,6 +310,17 @@ IRTextParserExprListPtr IRTextParser::ParseExprList(IRTextLexerTokenKind split, 
     return result;
 }
 
+VarPtr IRTextParser::ParseIterArgVar(const TypePtr& type, const std::string& name)
+{
+    if (As<LogicalTensorType>(type)) {
+        // Tensor iter-arg: its var_def carries dtype/shape/offset, so the tensor is already in use.
+        return ParseLogicalTensorVar(name);
+    }
+    auto var = std::make_shared<Var>(name, type, Span::Unknown());
+    symtab_[name] = var;
+    return var;
+}
+
 IRTextParserIterArgListPtr IRTextParser::ParseIterArgs()
 {
     auto result = std::make_shared<IRTextParserData<std::vector<IterArgPtr>>>();
@@ -318,11 +329,11 @@ IRTextParserIterArgListPtr IRTextParser::ParseIterArgs()
     while (!CheckToken(IRTextLexerTokenKind::PunRBrace)) {
         MUST_VALID(type, ParseType());
         MUST_VALID(name, ParseVarName());
+        MUST_VALID(iterVar, ParseIterArgVar(type, name->data));
         MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunEq));
         MUST_VALID(initVal, ParseExpr());
         MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunSemi));
-        auto ia = std::make_shared<IterArg>(std::make_shared<Var>(name->data, type, Span::Unknown()), initVal);
-        symtab_[name->data] = ia->iterVar_;
+        auto ia = std::make_shared<IterArg>(iterVar, initVal);
         result->data.push_back(ia);
     }
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunRBrace));
@@ -356,6 +367,15 @@ VarPtr IRTextParser::ParseLogicalTensorVar(const std::string& varName)
     std::string name = varName.substr(0, atPos);
 
     MUST_VALID(attrDict, ParseAttrDict());
+
+    // Same name + rawmagic (e.g. ASSEMBLE into an input): reuse it instead of cloning a suffix.
+    auto existing = symtab_.find(name);
+    if (existing != symtab_.end()) {
+        auto oldTensor = std::dynamic_pointer_cast<const npu::tile_fwk::LogicalTensor>(existing->second);
+        if (rawmagic >= 0 && oldTensor && oldTensor->tensor && oldTensor->tensor->rawmagic == rawmagic) {
+            return oldTensor;
+        }
+    }
 
     npu::tile_fwk::IRBuilder builder;
     npu::tile_fwk::LogicalTensorPtr tensor = builder.CreateTensorVar(npu::tile_fwk::DT_INT64, {},
@@ -645,9 +665,12 @@ ExprPtr IRTextParser::ParseExprVarName()
     auto it = symtab_.find(name);
     if (it != symtab_.end()) {
         return it->second;
-    } else {
-        return Error("Unknown var name: " + name);
     }
+    // `%none` has no var_def; materialize the None sentinel on demand.
+    if (name == "none") {
+        return std::make_shared<Var>("none", GetNoneType(), Span::Unknown());
+    }
+    return Error("Unknown var name: " + name);
 }
 
 ExprPtr IRTextParser::ParseExprInt()
@@ -1043,7 +1066,7 @@ StmtPtr IRTextParser::ParseStmtV0TensorOp(const VarDefList& defVarList)
             std::dynamic_pointer_cast<npu::tile_fwk::LogicalTensor>(std::const_pointer_cast<ir::Var>(res)));
     }
 
-    auto op = std::make_shared<npu::tile_fwk::Operation>(*tempFunc_, npu::tile_fwk::FindOpcode(opcode->data), iOperands,
+    auto op = std::make_shared<npu::tile_fwk::Operation>(*hostFunc_, npu::tile_fwk::FindOpcode(opcode->data), iOperands,
                                                          oOperands, static_cast<int>(opmagic->data));
     op->result_token_ = defVarList.tokenList;
     op->tokens_ = tokenList;
@@ -1163,8 +1186,9 @@ StmtPtr IRTextParser::ParseStmt()
 // ---- Function parsing ----
 FunctionPtr IRTextParser::ParseFunction()
 {
-    // Reset the process-global name uniquifier so loaded names match the text.
     npu::tile_fwk::IRContext::Get().Reset();
+    // One name scope per function: a later function must not reuse an earlier name + rawmagic.
+    symtab_.clear();
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwFunction));
     MUST_VALID(name, ParseIdent());
 
@@ -1185,13 +1209,15 @@ FunctionPtr IRTextParser::ParseFunction()
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunRParen));
     MUST_VALID(attrDict, ParseAttrDict());
 
-    tempProgram_ = std::make_unique<npu::tile_fwk::Program>();
-    tempFunc_ = std::make_shared<npu::tile_fwk::Function>(*tempProgram_, name->data, name->data, nullptr);
+    // Ops hold a raw BelongTo(); register the host in the Program singleton so it outlives the IR, as in BeginFunction.
+    auto& programInst = npu::tile_fwk::Program::GetInstance();
+    auto hostMagicSuffix = npu::tile_fwk::Function::NextMagicNameSuffix(npu::tile_fwk::FunctionType::STATIC);
+    auto hostMagicName = name->data + "_" + std::to_string(hostMagicSuffix);
+    hostFunc_ = std::make_shared<npu::tile_fwk::Function>(programInst, hostMagicName, name->data, nullptr);
+    hostFunc_->SetGraphType(npu::tile_fwk::GraphType::TENSOR_GRAPH);
+    programInst.InsertFuncToFunctionMap(hostFunc_->GetMagicName(), hostFunc_);
 
     MUST_VALID(body, ParseStmtSeq());
-
-    tempFunc_.reset();
-    tempProgram_.reset();
 
     auto func = std::make_shared<Function>(name->data, params->data.GetVarDefList(), retTypes, body, Span::Unknown(),
                                            FunctionType::OPAQUE, false);
