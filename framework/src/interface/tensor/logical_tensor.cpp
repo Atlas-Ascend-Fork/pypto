@@ -384,8 +384,8 @@ std::string LogicalTensor::DumpSSA([[maybe_unused]] bool showFrom, bool showMem,
 
 std::string LogicalTensor::Dump(bool showFrom, bool showMem) const { return DumpSSA(showFrom, showMem); }
 
-std::shared_ptr<LogicalTensor> LogicalTensor::View(Function& function, const Shape& newShape,
-                                                   const Offset& newOffset) const
+std::shared_ptr<LogicalTensor> LogicalTensor::View(Function& function, const Shape& newShape, const Offset& newOffset,
+                                                   bool useViewAssemble) const
 {
     FE_ASSERT(FeError::INVALID_VAL, shape.size() == newShape.size()) << "Tensor.view, shape must be the same dimension";
     FE_ASSERT(FeError::INVALID_VAL, offset.size() == newOffset.size())
@@ -412,6 +412,7 @@ std::shared_ptr<LogicalTensor> LogicalTensor::View(Function& function, const Sha
         GetAttr("SLICE_PARENT", parent);
     }
     view->SetAttr("SLICE_PARENT", parent);
+    view->SetAttr("USE_VIEW_ASSEMBLE", useViewAssemble);
     return view;
 }
 

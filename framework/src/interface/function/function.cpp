@@ -1927,8 +1927,29 @@ void ResetSliceView(const LogicalTensorPtr& tensor)
     tensor->offset = std::vector<int64_t>(dim, 0);
     tensor->dynOffset_ = std::vector<SymbolicScalar>(dim, SymbolicScalar(0));
     tensor->RemoveAttr("SLICE_PARENT");
+    if (tensor->HasAttr("USE_VIEW_ASSEMBLE")) {
+        tensor->RemoveAttr("USE_VIEW_ASSEMBLE");
+    }
     tensor->tensor = std::make_shared<RawTensor>(tensor->tensor->datatype, tensor->shape, tensor->tensor->format,
                                                  tensor->tensor->symbol);
+}
+
+Opcode GetSliceOpcodeFor(const LogicalTensor& tensor)
+{
+    bool useViewAssemble = false;
+    if (tensor.GetAttr("USE_VIEW_ASSEMBLE", useViewAssemble) && useViewAssemble) {
+        return Opcode::OP_VIEW;
+    }
+    return config::GetSliceOpcode();
+}
+
+Opcode GetContractOpcodeFor(const LogicalTensor& tensor)
+{
+    bool useViewAssemble = false;
+    if (tensor.GetAttr("USE_VIEW_ASSEMBLE", useViewAssemble) && useViewAssemble) {
+        return Opcode::OP_ASSEMBLE;
+    }
+    return config::GetContractOpcode();
 }
 
 ir::VarPtr GetPairedNormalToken(const ir::VarPtr& token)
@@ -2086,14 +2107,12 @@ Operation& Function::AddOperation(const Opcode opCode, LogicalTensors iOperands,
     auto plan = CollectExpandTokenPlan(ExpandFunction::GetCurrentTileOp(), iOperands, oOperands);
     CheckTensorDynamicShape(iOperands, opCode);
 
-    const Opcode sliceOpcode = config::GetSliceOpcode();
-    const Opcode contractOpcode = config::GetContractOpcode();
     for (auto& iOp : iOperands) {
         auto parent = GetSliceParent(iOp);
         if (parent == nullptr) {
             continue;
         }
-        auto& sliceOp = AddRawOperation(sliceOpcode, {parent}, {iOp});
+        auto& sliceOp = AddRawOperation(GetSliceOpcodeFor(*iOp), {parent}, {iOp});
         sliceOp.SetOpAttribute(std::make_shared<ViewOpAttribute>(iOp->offset, iOp->dynOffset_, iOp->dynValidShape_));
         AssignMappedTokens(sliceOp.result_token_, plan.sliceResultTokens, iOp.get());
         ResetSliceView(iOp);
@@ -2112,7 +2131,7 @@ Operation& Function::AddOperation(const Opcode opCode, LogicalTensors iOperands,
         if (parent == nullptr) {
             continue;
         }
-        auto& contractOp = AddRawOperation(contractOpcode, {oOp}, {parent});
+        auto& contractOp = AddRawOperation(GetContractOpcodeFor(*oOp), {oOp}, {parent});
         contractOp.SetAssembleOpAttribute(oOp->offset, oOp->dynOffset_);
         AssignMappedTokens(contractOp.result_token_, plan.contractResultTokens, oOp.get());
         AssignMappedTokens(contractOp.tokens_, plan.contractInputTokens, oOp.get());

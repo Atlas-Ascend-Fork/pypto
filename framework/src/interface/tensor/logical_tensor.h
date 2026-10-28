@@ -102,7 +102,8 @@ public:
 
     std::string Dump(bool showFrom = true, bool showMem = false) const;
 
-    std::shared_ptr<LogicalTensor> View(Function& function, const Shape& newShape, const Offset& newOffset) const;
+    std::shared_ptr<LogicalTensor> View(Function& function, const Shape& newShape, const Offset& newOffset,
+                                        bool useViewAssemble = false) const;
 
     DataType Datatype() const;
     std::string Symbol() const;
