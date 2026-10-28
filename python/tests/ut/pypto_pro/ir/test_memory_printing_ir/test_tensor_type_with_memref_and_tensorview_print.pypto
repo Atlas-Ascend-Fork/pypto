@@ -1,0 +1,1 @@
+tensor<64 x 64, half, tensor_view<, 1 x 64, NZ>>

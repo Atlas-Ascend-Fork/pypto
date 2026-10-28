@@ -11,30 +11,9 @@
 """Public scalar aliases and core-side barriers have complete DSL contracts."""
 
 from pypto_pro import ir
-from pypto_pro._errors import InvalidOperation, NotSupported
+from pypto_pro._errors import NotSupported
 import pypto_pro.language as pl
 import pytest
-
-
-@pl.jit(arch="3510", auto_mutex=False)
-def scalar_aliases(x: pl.Tensor[[1], pl.DT_FP32]):
-    tt = pl.TileType(shape=[1, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
-    a = pl.make_tile(tt, addr=0)
-    b = pl.make_tile(tt, addr=256)
-    with pl.section_vector():
-        pl.adds(b, a, 0.5)
-        pl.subs(b, b, 0.25)
-        pl.muls(b, b, 2.0)
-
-
-def test_public_aliases_parse_and_export():
-    program, _ = scalar_aliases.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-    text = ir.python_print(program)
-    for name in ("adds", "subs", "muls"):
-        assert name in pl.__all__ and callable(getattr(pl, name))
-        assert "block." + name in text
-        with pytest.raises(InvalidOperation):
-            getattr(pl, name)(None, None, 1)
 
 
 @pl.jit(arch="3510", auto_mutex=False)

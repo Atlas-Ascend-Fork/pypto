@@ -1,0 +1,10 @@
+program #entry() {
+    function scalar_aliases incast(tensor<1, float, tensor_view<, , ND, %x_ptr>> %x_0) outcast() #entry(false) #type(Opaque) {
+        mutex_tile<tile<1 x 64, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 0> %a_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=float, target_memory=Vec, memref_addr=0, memref_size=256, memref_id=<id>);
+        mutex_tile<tile<1 x 64, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 0> %b_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=float, target_memory=Vec, memref_addr=256, memref_size=256, memref_id=<id>);
+        block.adds(%b_0, %a_0, 0.5);
+        block.subs(%b_0, %b_0, 0.25);
+        block.muls(%b_0, %b_0, 2.0);
+        return;
+    }
+}

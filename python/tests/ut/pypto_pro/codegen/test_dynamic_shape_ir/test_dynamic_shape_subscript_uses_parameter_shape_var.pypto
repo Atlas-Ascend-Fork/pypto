@@ -1,0 +1,21 @@
+function add_kernel_shape_subscript incast(tensor<%__pypto_dyn_a_0 x 128, float, tensor_view<, , ND, %a_ptr>> %a_0, tensor<%__pypto_dyn_b_0 x 128, float, tensor_view<, , ND, %b_ptr>> %b_0, tensor<%__pypto_dyn_output_0 x 128, float, tensor_view<, , ND, %output_ptr>> %output_0) outcast() #entry(false) #type(Opaque) {
+    int64_t %m_var_0 = %__pypto_dyn_a_0;
+    mutex_tile<tile<2 x 128, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 0> %a_tile_0 = block.make_mutex_tile(tuple(2, 128), tuple(), tuple(), dtype=float, target_memory=Vec, memref_addr=0, memref_size=1024, memref_id=<id>);
+    mutex_tile<tile<2 x 128, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 0> %b_tile_0 = block.make_mutex_tile(tuple(2, 128), tuple(), tuple(), dtype=float, target_memory=Vec, memref_addr=1024, memref_size=1024, memref_id=<id>);
+    mutex_tile<tile<2 x 128, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 0> %result_0 = block.make_mutex_tile(tuple(2, 128), tuple(), tuple(), dtype=float, target_memory=Vec, memref_addr=2048, memref_size=1024, memref_id=<id>);
+    tensor<%__pypto_dyn_output_0 x 128, float, tensor_view<, , ND, %output_ptr>> %out_0 = %output_0;
+    tensor<%__pypto_dyn_output_0 x 128, float, tensor_view<, , ND, %output_ptr>> %out_3 = for %i__iterator_0 inrange 0, %m_var_0, 2 iter { tensor<%__pypto_dyn_output_0 x 128, float, tensor_view<, , ND, %output_ptr>> %out_1 = %out_0; } {
+        int64_t %i_0 = %i__iterator_0;
+        int64_t %offset_1_0 = (%i_0 mul 2);
+        tuple<int64_t, int64_t> %_tuple_anchor_0_0 = tuple(%offset_1_0, 0);
+        block.load(%a_tile_0, %a_0, tuple(%offset_1_0, 0));
+        tuple<int64_t, int64_t> %_tuple_anchor_1_0 = tuple(%offset_1_0, 0);
+        block.load(%b_tile_0, %b_0, tuple(%offset_1_0, 0));
+        block.add(%result_0, %a_tile_0, %b_tile_0);
+        tuple<int64_t, int64_t> %_tuple_anchor_2_0 = tuple(%offset_1_0, 0);
+        tensor<%__pypto_dyn_output_0 x 128, float, tensor_view<, , ND, %output_ptr>> %out_2 = block.store(%output_0, %result_0, tuple(%offset_1_0, 0));
+        continue %out_2;
+    }
+    tensor<%__pypto_dyn_output_0 x 128, float, tensor_view<, , ND, %output_ptr>> %_test_result_0 = %out_3;
+    return;
+}

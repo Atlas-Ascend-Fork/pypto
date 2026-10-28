@@ -1,0 +1,2 @@
+tensor<64 x 128, half, tensor_view<>>
+tile<16 x 16, half, tile_view<>, hw_info<>>

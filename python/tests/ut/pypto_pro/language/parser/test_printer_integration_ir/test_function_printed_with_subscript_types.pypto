@@ -1,0 +1,7 @@
+function test_func incast(tensor<64 x 128, half, tensor_view<, , ND, %x_ptr>> %x_0) outcast() #entry(false) #type(Opaque) {
+    tuple<int64_t, int64_t> %_tuple_anchor_0_0 = tuple(64, 128);
+    tuple<int64_t, int64_t> %_tuple_anchor_1_0 = tuple(128, 1);
+    tensor<64 x 128, float, tensor_view<, 128 x 1, ND, %x_0>> %result_0 = ptr.make_tensor(%x_0, tuple(64, 128), tuple(128, 1), dtype=float);
+    tensor<64 x 128, float, tensor_view<, 128 x 1, ND, %x_0>> %_test_result_0 = %result_0;
+    return;
+}

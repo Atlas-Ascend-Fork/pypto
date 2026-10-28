@@ -1,0 +1,18 @@
+function while_tensors incast(int64_t %n_0, tensor<64, float, tensor_view<, , ND, %x_ptr>> %x_0) outcast() #entry(false) #type(Opaque) {
+    int64_t %i_0 = 0;
+    mutex_tile<tile<1 x 64, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 0> %acc_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=float, target_memory=Vec, memref_addr=0, memref_size=256, memref_id=<id>);
+    int64_t %i_3 = while true iter { int64_t %i_1 = 0; } {
+        bool %_expr_tmp_0_0 = (%i_1 lt %n_0);
+        bool %_expr_tmp_1_0 = (not %_expr_tmp_0_0);
+        if %_expr_tmp_1_0 then {
+            break %i_1;
+        } else {
+            yield;
+        }
+        int64_t %i_2 = (%i_1 add 1);
+        block.add(%acc_0, %acc_0, %acc_0);
+        continue %i_2;
+    }
+    mutex_tile<tile<1 x 64, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 0> %_test_result_0 = %acc_0;
+    return;
+}

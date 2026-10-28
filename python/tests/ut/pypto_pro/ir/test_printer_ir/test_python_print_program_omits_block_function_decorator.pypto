@@ -1,0 +1,5 @@
+program #entry() {
+    function f incast(int64_t %x) outcast(int64_t) #entry(false) #type(InCore) {
+        yield %x;
+    }
+}

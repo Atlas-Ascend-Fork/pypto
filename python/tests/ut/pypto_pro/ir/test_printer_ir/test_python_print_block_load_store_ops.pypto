@@ -1,0 +1,4 @@
+{
+    block.load(%tile, %x, tuple(0));
+    block.store(%x, %tile, tuple(0));
+}

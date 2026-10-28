@@ -1,0 +1,18 @@
+program #entry() {
+    function grouped_copy incast(tensor<1 x 64, float, tensor_view<, , ND, %a_ptr>> %a_0, tensor<1 x 64, float, tensor_view<, , ND, %out_ptr>> %out_0) outcast() #entry(false) #type(Opaque) {
+        tuple<int64_t, int64_t> %_tuple_anchor_0_0 = tuple(0, 256);
+        mutex_tile<tile<1 x 64, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 1> %_tg_group_tiles_0_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(0), dtype=float, target_memory=Vec, memref_addr=0, memref_size=256, memref_id=<id>);
+        mutex_tile<tile<1 x 64, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 1> %_tg_group_tiles_1_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(1), dtype=float, target_memory=Vec, memref_addr=256, memref_size=256, memref_id=<id>);
+        tuple<mutex_tile<tile<1 x 64, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 1>, mutex_tile<tile<1 x 64, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 1>> %_tg_group_tiles_0 = tuple(%_tg_group_tiles_0_0, %_tg_group_tiles_1_0);
+        tuple<int64_t> %_tg_group_cursor_0 = struct.create(1, name=_TileGroupCursor, fields=[cursor]);
+        tuple<tuple<mutex_tile<tile<1 x 64, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 1>, mutex_tile<tile<1 x 64, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 1>>, tuple<int64_t>> %group_0 = tuple(%_tg_group_tiles_0, %_tg_group_cursor_0);
+        struct.set(%_tg_group_cursor_0, (getitem(%_tg_group_cursor_0, 0) add 1), field=cursor);
+        int64_t %_bufidx_0_0 = (getitem(%_tg_group_cursor_0, 0) mod 2);
+        mutex_tile<tile<1 x 64, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, null>>, 1> %tile_0 = getitem(%_tg_group_tiles_0, %_bufidx_0_0);
+        tuple<int64_t, int64_t> %_tuple_anchor_1_0 = tuple(0, 0);
+        block.load(%tile_0, %a_0, tuple(0, 0));
+        tuple<int64_t, int64_t> %_tuple_anchor_2_0 = tuple(0, 0);
+        block.store(%out_0, %tile_0, tuple(0, 0));
+        return;
+    }
+}

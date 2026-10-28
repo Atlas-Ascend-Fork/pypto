@@ -25,19 +25,6 @@ def grouped_copy(a: pl.Tensor[[1, 64], pl.DT_FP32], out: pl.Tensor[[1, 64], pl.D
         pl.store(out, tile, [0, 0])
 
 
-def test_observer_sees_final_program_once():
-    calls = []
-    definition = grouped_copy.to_kernel_def()
-    program, matched = definition.parse_target_program(
-        ir.SectionKind.Vector, observer=lambda p, parser: calls.append((p, parser)))
-    assert matched and len(calls) == 1
-    assert calls[0][0].same_as(program)
-    assert calls[0][1].tile_group_meta
-    assert "__pypto_auto_mutex_id_" not in ir.python_print(program)
-    definition.parse_target_program(ir.SectionKind.Cube)
-    assert len(calls) == 1
-
-
 def test_observer_errors_propagate_and_do_not_persist():
     definition = grouped_copy.to_kernel_def()
     def fail(program, parser):

@@ -1,0 +1,8 @@
+function test_min incast(tensor<2, int64_t, tensor_view<, , ND, %config_ptr>> %config_0, tensor<2 x 16 x 128, float, tensor_view<, , ND, %out_ptr>> %out_0) outcast() #entry(false) #type(Opaque) {
+    int64_t %a_0 = block.getval(%config_0, 0);
+    int64_t %b_0 = block.getval(%config_0, 1);
+    int64_t %c_0 = (%a_0 min %b_0);
+    int64_t %__0 = (%c_0 add 1);
+    tensor<2 x 16 x 128, float, tensor_view<, , ND, %out_ptr>> %_test_result_0 = %out_0;
+    return;
+}

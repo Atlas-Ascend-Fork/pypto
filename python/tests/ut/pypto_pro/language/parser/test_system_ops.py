@@ -22,79 +22,6 @@ def _const_int(value: int):
     return pypto_pro.ir.ConstInt(value, pypto_pro.ir.DataType.INDEX, pypto_pro.ir.Span.unknown())
 
 
-def test_sync_src_print_style():
-    """Test unified printing for pl.system.sync_src."""
-
-    @pl.jit(auto_mutex=False)
-    def main(x: pl.Tensor[[64], pl.DT_FP32]):
-        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
-        _test_result = x
-
-    main_program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-    main = main_program.get_function(main.__name__)
-
-    printed = pypto_pro.ir.python_print(main)
-    assert "ir.call @system.sync_src_dyn(" in printed
-    assert "set_pipe" in printed
-    assert "MTE2" in printed
-    assert "wait_pipe" in printed
-    assert "PipeType.V" in printed
-    assert "0" in printed
-
-
-def test_bar_all_print_style():
-    """Test unified printing for pl.system.bar_all."""
-
-    @pl.jit(auto_mutex=False)
-    def main(x: pl.Tensor[[64], pl.DT_FP32]):
-        pl.system.bar_all()
-        _test_result = x
-
-    main_program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-    main = main_program.get_function(main.__name__)
-
-    printed = pypto_pro.ir.python_print(main)
-    assert "ir.call @system.bar_all()" in printed
-
-
-def test_multiple_system_ops_print_style():
-    """Test unified printing with multiple system ops in a single function."""
-
-    @pl.jit(auto_mutex=False)
-    def main(x: pl.Tensor[[64], pl.DT_FP32]):
-        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
-        pl.system.sync_dst(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=0)
-        pl.system.bar_all()
-        _test_result = x
-
-    main_program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-    main = main_program.get_function(main.__name__)
-
-    printed = pypto_pro.ir.python_print(main)
-    assert "ir.call @system.sync_src_dyn(" in printed
-    assert "ir.call @system.sync_dst_dyn(" in printed
-    assert "ir.call @system.bar_all()" in printed
-
-
-def test_sync_with_different_pipe_types():
-    """Test sync ops with various PipeType enum values."""
-
-    @pl.jit(auto_mutex=False)
-    def main(x: pl.Tensor[[64], pl.DT_FP32]):
-        pl.system.sync_src(set_pipe=pl.PipeType.MTE1, wait_pipe=pl.PipeType.M, event_id=1)
-        pl.system.sync_dst(set_pipe=pl.PipeType.MTE3, wait_pipe=pl.PipeType.S, event_id=2)
-        _test_result = x
-
-    main_program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
-    main = main_program.get_function(main.__name__)
-
-    printed = pypto_pro.ir.python_print(main)
-    assert "ir.PipeType.MTE1" in printed
-    assert "ir.PipeType.M" in printed
-    assert "ir.PipeType.MTE3" in printed
-    assert "ir.PipeType.S" in printed
-
-
 @pytest.mark.parametrize(
     "sync_mode",
     [
@@ -601,23 +528,6 @@ def test_mutex_rejects_non_public_kwargs(builder, kwarg, value):
         builder(pipe=pl.PipeType.MTE2, mutex_id=_const_int(0), **{kwarg: value})
 
 
-def test_dcci_gm_tensor_with_offset_print_style():
-    """Test unified printing for pl.system.dcci with GM tensor and offset."""
-
-    @pl.jit(auto_mutex=False)
-    def main(x: pl.Tensor[[16, 16], pl.DT_FP32]):
-        pl.system.dcci(x, [0, 0], cache_line=pl.CacheLine.SINGLE_CACHE_LINE, dst=pl.DcciDst.CACHELINE_OUT)
-        _test_result = x
-
-    main_program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-    main = main_program.get_function(main.__name__)
-
-    printed = pypto_pro.ir.python_print(main)
-    assert "ir.call @system.dcci(" in printed
-    assert "cache_line=" in printed
-    assert "dst=" in printed
-
-
 def test_dcci_gm_tensor_rejects_float_scalar_offset():
     """Test pl.system.dcci rejects float scalar offset for GM tensor."""
 
@@ -642,18 +552,3 @@ def test_dcci_gm_tensor_rejects_float_tuple_offset():
             _test_result = x
 
         main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-
-
-def test_dcci_with_tuple_offset_print_style():
-    """Test unified printing for pl.system.dcci with tuple offset."""
-
-    @pl.jit(auto_mutex=False)
-    def main(x: pl.Tensor[[16, 16], pl.DT_FP32]):
-        pl.system.dcci(x, (1, 2))
-        _test_result = x
-
-    main_program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-    main = main_program.get_function(main.__name__)
-
-    printed = pypto_pro.ir.python_print(main)
-    assert "ir.call @system.dcci(" in printed

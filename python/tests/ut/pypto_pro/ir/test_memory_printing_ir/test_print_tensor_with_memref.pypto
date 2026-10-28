@@ -1,0 +1,1 @@
+tensor<10, float, tensor_view<>> %tensor = 0;

@@ -1,0 +1,16 @@
+function while_natural incast(int64_t %n_0) outcast() #entry(false) #type(Opaque) {
+    int64_t %x_0 = 0;
+    int64_t %x_3 = while true iter { int64_t %x_1 = 0; } {
+        bool %_expr_tmp_0_0 = (%x_1 lt %n_0);
+        bool %_expr_tmp_1_0 = (not %_expr_tmp_0_0);
+        if %_expr_tmp_1_0 then {
+            break %x_1;
+        } else {
+            yield;
+        }
+        int64_t %x_2 = (%x_1 add 1);
+        continue %x_2;
+    }
+    int64_t %_test_result_0 = %x_3;
+    return;
+}

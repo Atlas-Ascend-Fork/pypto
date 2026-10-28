@@ -1,0 +1,6 @@
+function default_func incast(int64_t %x_0) outcast(int64_t) #entry(false) #type(Opaque) {
+    return %x_0;
+}
+function kernel incast(int64_t %x_0) outcast(int64_t) #entry(false) #type(InCore) {
+    return %x_0;
+}

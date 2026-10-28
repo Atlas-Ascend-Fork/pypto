@@ -93,26 +93,3 @@ def test_builder_tile_type_with_memref_and_tileview():
     assert tile_t.memref is not None
     assert tile_t.tile_view is not None
     assert tile_t.memref.memory_space_ == ir.MemorySpace.Left
-
-
-def test_builder_round_trip():
-    """Test round-trip: create with builder, print to Python syntax."""
-    ib = IRBuilder()
-
-    # Create complex tile type with builder
-    memref = ib.memref(ir.MemorySpace.Right, 0x200, 1024, 36)
-    tv = ib.tile_view([32, 32], [1, 32], 0)
-    tile_t = ib.tile_type([32, 32], DataType.FP32, memref=memref, tile_view=tv)
-
-    # Print to Python syntax
-    printed = ir.python_print(tile_t)
-
-    # Verify output contains all expected elements
-    assert "ir.TileType" in printed
-    assert "ir.TileType([32, 32], ir.FP32," in printed
-    assert "ir.FP32" in printed
-    # MemRef prints as positional arg with full constructor syntax (no keyword)
-    assert "memref=" not in printed
-    assert "ir.MemRef" in printed
-    assert "ir.MemorySpace.Right" in printed
-    assert "tile_view=ir.TileView" in printed

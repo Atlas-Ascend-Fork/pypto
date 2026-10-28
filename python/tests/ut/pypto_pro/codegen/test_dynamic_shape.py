@@ -10,7 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 """Unit tests for codegen with dynamic shape tensor parameters."""
 
-from pypto_pro import DataType, ir
+from pypto_pro import ir
 from pypto_pro._errors import InvalidShape, InvalidType
 import pypto_pro.language as pl
 import pytest
@@ -74,34 +74,6 @@ add_kernel_valid_shape = add_kernel_valid_shape_program.get_function(add_kernel_
 
 
 @pl.jit(auto_mutex=False)
-def add_kernel_shape_subscript(
-    a: pl.Tensor[[pl.DYNAMIC, 128], pl.DT_FP32],
-    b: pl.Tensor[[pl.DYNAMIC, 128], pl.DT_FP32],
-    output: pl.Tensor[[pl.DYNAMIC, 128], pl.DT_FP32],
-):
-    """Uses the canonical dynamic dimension stored in a TensorType."""
-    m_var = a.shape[0]
-    tile_type = pl.TileType(shape=[2, 128], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
-    a_tile = pl.make_tile(tile_type, addr=0x0000)
-    b_tile = pl.make_tile(tile_type, addr=0x0400)
-    result = pl.make_tile(tile_type, addr=0x0800)
-    out = output
-    for i in pl.range(0, m_var, 2):
-        offset_1 = i * 2
-        pl.load(a_tile, a, [offset_1, 0])
-        pl.load(b_tile, b, [offset_1, 0])
-        pl.add(result, a_tile, b_tile)
-        out = pl.store(output, result, [offset_1, 0])
-    _test_result = out
-
-
-add_kernel_shape_subscript_program, _ = add_kernel_shape_subscript.to_kernel_def().parse_target_program(
-    ir.SectionKind.Vector
-)
-add_kernel_shape_subscript = add_kernel_shape_subscript_program.get_function(add_kernel_shape_subscript.__name__)
-
-
-@pl.jit(auto_mutex=False)
 def static_shape_negative_subscript(
     a: pl.Tensor[[2, 128], pl.DT_FP32],
     output: pl.Tensor[[2, 128], pl.DT_FP32],
@@ -152,15 +124,6 @@ def compile_time_shape_axis(
 
 compile_time_shape_axis_program, _ = compile_time_shape_axis.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 compile_time_shape_axis = compile_time_shape_axis_program.get_function(compile_time_shape_axis.__name__)
-
-
-def test_dynamic_shape_subscript_uses_parameter_shape_var():
-    dynamic_dim = add_kernel_shape_subscript.params[0].type.shape[0]
-
-    assert isinstance(dynamic_dim, ir.Var)
-    assert dynamic_dim.name == "__pypto_dyn_a_0"
-    assert dynamic_dim.type.dtype == DataType.INT64
-    assert dynamic_dim.name in ir.python_print(add_kernel_shape_subscript)
 
 
 def test_negative_shape_subscript_uses_fixed_dimension():

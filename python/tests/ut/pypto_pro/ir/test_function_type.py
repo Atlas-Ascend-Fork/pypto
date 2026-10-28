@@ -34,37 +34,6 @@ def test_ir_builder_with_function_type():
     assert func2.func_type == ir.FunctionType.InCore
 
 
-def test_function_type_python_print():
-    """Test that function type is correctly printed in Python syntax."""
-    ib = IRBuilder()
-    span = ir.Span.unknown()
-    dtype = DataType.INT64
-
-    # Ordinary functions print without a frontend decorator.
-    with ib.function("default_func", span=span) as f:
-        x = f.param("x", ir.ScalarType(dtype), span=span)
-        f.return_type(ir.ScalarType(dtype))
-        ib.return_stmt(x, span=span)
-
-    func_opaque = f.get_result()
-    printed = ir.python_print(func_opaque, "pl")
-    assert printed.startswith("def default_func")
-    assert "@pl.function" not in printed
-    assert "type=" not in printed
-
-    # FunctionType remains IR metadata and is not serialized as a removed decorator.
-    with ib.function("kernel", span=span, func_type=ir.FunctionType.InCore) as f:
-        x = f.param("x", ir.ScalarType(dtype), span=span)
-        f.return_type(ir.ScalarType(dtype))
-        ib.return_stmt(x, span=span)
-
-    func_incore = f.get_result()
-    printed_incore = ir.python_print(func_incore, "pl")
-    assert printed_incore.startswith("def kernel")
-    assert "@pl.function" not in printed_incore
-    assert "type=" not in printed_incore
-
-
 def test_jit_kernel_uses_opaque_function_type():
     """pl.jit captures only Opaque kernel entries."""
     assert "func_type" not in inspect.signature(pl.jit).parameters
