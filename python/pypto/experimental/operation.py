@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Tuple, Union
 from .. import pypto_impl
 from .._op_wrapper import op_wrapper
 from ..config import get_current_scope, set_options
+from ..error import PyptoError
 from ..symbolic_scalar import SymbolicScalar
 from ..tensor import Tensor
 
@@ -102,6 +103,7 @@ def transposed_batchmatmul(tensor_a: Tensor, tensor_b: Tensor, out_dtype) -> Ten
     b = pypto.tensor((2, 32, 64), pypto.DT_FP16, "tensor_b")
     c = pypto.experimental.transposed_batchmatmul(a, b, pypto.DT_FP16)
     """
+    __validate_transposed_batchmatmul_inputs(tensor_a, tensor_b, out_dtype)
     return pypto_impl.TransposedBatchMatmul(out_dtype, tensor_a, tensor_b)
 
 
@@ -157,3 +159,46 @@ def online_softmax_update(
 @op_wrapper
 def nop(in_tensors: List[Tensor]) -> Tensor:
     return pypto_impl.Nop(in_tensors)
+
+
+TRANSPOSED_BMM_INPUT_COMBOS = {
+    (pypto_impl.DataType.DT_FP16, pypto_impl.DataType.DT_FP16),
+    (pypto_impl.DataType.DT_BF16, pypto_impl.DataType.DT_BF16),
+}
+TRANSPOSED_BMM_OUT_DTYPES = (
+    pypto_impl.DataType.DT_FP16,
+    pypto_impl.DataType.DT_BF16,
+)
+
+
+def __validate_transposed_batchmatmul_inputs(tensor_a: Tensor, tensor_b: Tensor, out_dtype) -> None:
+    for tensor, name in ((tensor_a, "tensor_a"), (tensor_b, "tensor_b")):
+        if tensor.IsEmpty():
+            raise PyptoError(
+                0xF00003,
+                RuntimeError(f"Empty tensor is not supported for transposed_batchmatmul, {name} is empty."),
+            )
+        shape = tensor.GetShape()
+        if any(dim <= 0 for dim in shape):
+            raise PyptoError(
+                0xF00003,
+                RuntimeError(f"Empty tensor is not supported for transposed_batchmatmul, {name} has shape {shape}."),
+            )
+    input_combination = (tensor_a.GetDataType(), tensor_b.GetDataType())
+    if input_combination not in TRANSPOSED_BMM_INPUT_COMBOS:
+        raise PyptoError(
+            0xF00002,
+            ValueError(
+                f"Unsupported input dtype combination: (a={tensor_a.GetDataType().name}, "
+                f"b={tensor_b.GetDataType().name}). Supported combinations: DT_FP16 x DT_FP16, "
+                "DT_BF16 x DT_BF16 (see the API docs)."
+            ),
+        )
+    if out_dtype not in TRANSPOSED_BMM_OUT_DTYPES:
+        raise PyptoError(
+            0xF00002,
+            ValueError(
+                f"Unsupported out_dtype {out_dtype.name} for transposed_batchmatmul. "
+                "Allowed out_dtype: DT_FP16, DT_BF16 (see the API docs)."
+            ),
+        )

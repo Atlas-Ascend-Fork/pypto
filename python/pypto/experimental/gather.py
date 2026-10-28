@@ -12,6 +12,7 @@
 
 from .. import pypto_impl
 from .._op_wrapper import op_wrapper
+from ..error import PyptoError
 from ..tensor import Tensor
 
 
@@ -21,6 +22,7 @@ def gather_in_l1(
 ) -> Tensor:
     """gather_in_l1."""
 
+    __validate_gather_in_l1_inputs(src, indices, block_table)
     return pypto_impl.gather_in_l1(src, indices, block_table, block_size, size, is_b_matrix, is_trans)
 
 
@@ -82,3 +84,53 @@ def gather_in_ub(param: Tensor, indices: Tensor, block_table: Tensor, block_size
     ]
     """
     return pypto_impl.gather_in_ub(param, indices, block_table, block_size, axis)
+
+
+GATHER_IN_L1_SRC_DTYPES = (
+    pypto_impl.DataType.DT_FP32,
+    pypto_impl.DataType.DT_FP16,
+    pypto_impl.DataType.DT_BF16,
+    pypto_impl.DataType.DT_INT8,
+)
+GATHER_IN_L1_INDICES_DTYPES = (
+    pypto_impl.DataType.DT_INT32,
+    pypto_impl.DataType.DT_INT64,
+)
+
+
+def __validate_gather_in_l1_inputs(src: Tensor, indices: Tensor, block_table: Tensor) -> None:
+    if block_table.Dim() != 2:
+        raise PyptoError(
+            0xF00003,
+            RuntimeError(
+                "block_table dimension mismatch. Expect 2-dim block_table for gather_in_l1, "
+                f"got {block_table.Dim()}-dim."
+            ),
+        )
+    src_dtype = src.GetDataType()
+    if src_dtype not in GATHER_IN_L1_SRC_DTYPES:
+        raise PyptoError(
+            0xF00002,
+            ValueError(
+                f"Unsupported src dtype {src_dtype.name} for gather_in_l1. "
+                "Supported dtypes: DT_FP32, DT_FP16, DT_BF16, DT_INT8 (see the API docs)."
+            ),
+        )
+    indices_dtype = indices.GetDataType()
+    if indices_dtype not in GATHER_IN_L1_INDICES_DTYPES:
+        raise PyptoError(
+            0xF00002,
+            ValueError(
+                f"Unsupported indices dtype {indices_dtype.name} for gather_in_l1. "
+                "Supported dtypes: DT_INT32, DT_INT64 (see the API docs)."
+            ),
+        )
+    block_table_dtype = block_table.GetDataType()
+    if block_table_dtype != pypto_impl.DataType.DT_INT32:
+        raise PyptoError(
+            0xF00002,
+            ValueError(
+                f"Unsupported block_table dtype {block_table_dtype.name} for gather_in_l1. "
+                "Supported dtypes: DT_INT32 (see the API docs)."
+            ),
+        )
