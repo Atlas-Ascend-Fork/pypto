@@ -49,7 +49,6 @@ pypto_pro.language.reinterpret(
 ## 约束说明
 
 - dtype、shape和layout三个可选参数中至少必须指定一项。
-- 地址范围和对齐仅在初次创建Tile时进行静态校验，reinterpret不对源Tile的运行时地址进行静态校验。
 - 原始Tile的pypto_pro.language.set_validshape不继承。
 - TileGroup重声明后，与原TileGroup使用同一buffer管理，任意一方的next()行为都会影响buffer的轮转。需要独立轮转buffer时建议使用group[i] [pypto_pro.language.make_tile_group](make_tile_group.md)。
 

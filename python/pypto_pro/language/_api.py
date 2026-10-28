@@ -1772,8 +1772,8 @@ def make_tile_group(*, type: TileType, addrs: int | list,
     """Create a rotating Tile group with optional mutex metadata.
 
     The handle supports ``group.next()``, ``group.current()``,
-    ``group.previous()``, and ``group[i]``. When ``mutex_ids`` is provided,
-    ``auto_mutex`` synchronizes accesses automatically.
+    ``group.previous()``, and ``group[i]``. Configuring non-empty ``mutex_ids``
+    requires ``@pl.jit(auto_mutex=True)`` to synchronize accesses automatically.
 
     Args:
         type: ``pl.TileType`` descriptor

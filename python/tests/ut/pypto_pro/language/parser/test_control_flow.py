@@ -260,7 +260,7 @@ def test_none_type_binding_is_rejected_when_used():
 
 
 def test_dynamic_if_nested_tile_group_merge_is_deferred_until_use():
-    @pl.jit(auto_mutex=False)
+    @pl.jit(auto_mutex=True)
     def unused_tile_group(flag: pl.DT_BOOL):
         tile_type = pl.TileType(
             shape=[1, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec
@@ -279,7 +279,7 @@ def test_dynamic_if_nested_tile_group_merge_is_deferred_until_use():
 
     with pytest.raises(NameNotFound, match="Use of potentially undefined variable"):
 
-        @pl.jit(auto_mutex=False)
+        @pl.jit(auto_mutex=True)
         def used_tile_group(flag: pl.DT_BOOL):
             tile_type = pl.TileType(
                 shape=[1, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec

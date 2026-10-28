@@ -96,6 +96,41 @@ def test_parser_records_ids_without_inserting_sync():
     assert "_mutex_ids" not in str(program)
 
 
+@pytest.mark.parametrize("field_write", ["scalar", "array_element", "whole_array"])
+def test_struct_field_tile_read_is_materialized_and_synchronized(field_write):
+    @pl.jit(auto_mutex=True)
+    def kernel(unused: pl.DT_INT64):
+        tt = pl.TileType(shape=[1, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        group = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[5])
+        with pl.section_vector():
+            message = pl.struct("Message", value=0.0, values=[0.0])
+            if field_write == "scalar":
+                message.value = pl.getval(group[0], 0)
+            elif field_write == "array_element":
+                message.values[0] = pl.getval(group[0], 0)
+            else:
+                message.values = [pl.getval(group[0], 0)]
+
+    program = parse(kernel)
+    assert len(list(calls(program, "block.getval"))) == 1
+    (write,) = calls(program, "struct.set")
+    assert isinstance(write.args[-1], ir.Var)
+
+    sequence = []
+    for function in synced(kernel).functions.values():
+        for stmt in statements(function.body):
+            value = (
+                stmt.value if isinstance(stmt, ir.AssignStmt) else stmt.expr if isinstance(stmt, ir.EvalStmt) else None
+            )
+            if isinstance(value, ir.Call) and value.name in (
+                "system.mutex_lock_dyn", "block.getval", "system.mutex_unlock_dyn", "struct.set"
+            ):
+                sequence.append(value.name)
+    assert sequence == ["system.mutex_lock_dyn", "block.getval", "system.mutex_unlock_dyn", "struct.set"]
+    code = cpp(kernel)
+    assert code.count("get_buf(PIPE_S, 5, 0)") == code.count("rls_buf(PIPE_S, 5, 0)") == 1
+
+
 def test_mixed_counts_generate_scalar_sync_and_one_shared_guard():
     program = synced(mixed_counts)
     locks = list(calls(program, "system.mutex_lock_dyn"))
@@ -456,6 +491,8 @@ def test_vf_synchronizes_declared_arguments_at_section_boundary(helper):
 
 @pytest.mark.parametrize("auto_mutex", [False, True])
 def test_vf_dynamic_mutex_setup_stays_outside_scope(auto_mutex):
+    mutex_ids = [0, 1] if auto_mutex else None
+
     @pl.vector_function
     def copy_tile(source, target, count):
         value = vf.load_align(source, 0)
@@ -464,7 +501,7 @@ def test_vf_dynamic_mutex_setup_stays_outside_scope(auto_mutex):
     @pl.jit(auto_mutex=auto_mutex)
     def kernel(i: pl.DT_INT64, j: pl.DT_INT64):
         tt = pl.TileType(shape=[1, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
-        group = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[0, 1])
+        group = pl.make_tile_group(type=tt, addrs=0, mutex_ids=mutex_ids, depth=2)
         with pl.section_vector():
             copy_tile(group[i], group[j], 32)
 

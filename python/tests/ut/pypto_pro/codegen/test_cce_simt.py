@@ -521,7 +521,9 @@ def test_scalar_cast_codegen_maps_round_modes_and_cce_builtins():
     assert "__cvt_bfloat16_t<ROUND::A, RoundingSaturation::RS_DISABLE_VALUE>(" in function
     assert "__cvt_int32_t<ROUND::F, RoundingSaturation::RS_ENABLE_VALUE>(" in function
     assert "__cvt_float<ROUND::C, RoundingSaturation::RS_DISABLE_VALUE>(" in function
-    assert re.search(r"plain_out(?:_\d+)?\[[^]]+\]\s*=\s*\(\(int32_t\)integer(?:_\d+)?\)", function)
+    plain_cast = re.search(r"auto (\w+) = \(\(int32_t\)integer(?:_\d+)?\);", function)
+    assert plain_cast is not None
+    assert re.search(rf"plain_out(?:_\d+)?\[[^]]+\]\s*=\s*{plain_cast[1]};", function)
     assert "simt_api/" not in cpp
     assert "__float2half" not in cpp
     assert "__float2bfloat16" not in cpp

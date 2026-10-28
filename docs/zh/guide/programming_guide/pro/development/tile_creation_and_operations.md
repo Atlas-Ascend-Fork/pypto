@@ -170,7 +170,7 @@ separate = pl.make_tile_group(
 
 ### 配置mutex和depth
 
-mutex ID是片上缓冲区互斥同步资源的编号，用于协调不同Pipe对Tile的访问。为TileGroup配置mutex_ids，是指定组内每块Tile使用的ID；启用@pypto_pro.language.jit(auto_mutex=True)后，框架根据这些ID自动插入同步操作。也可以只传depth而不传mutex_ids来创建轮转Tile，但此时框架不会分配mutex ID；即使启用auto_mutex=True，也不会为这些Tile自动插入mutex同步，需要开发者自行保证访问时序。
+mutex ID是片上缓冲区互斥同步资源的编号，用于协调不同Pipe对Tile的访问。为TileGroup配置非空mutex_ids，是指定组内每块Tile使用的ID，此时必须启用@pypto_pro.language.jit(auto_mutex=True)，框架根据这些ID自动插入同步操作。也可以只传depth而不传mutex_ids来创建轮转Tile，但此时框架不会分配mutex ID；即使启用auto_mutex=True，也不会为这些Tile自动插入mutex同步，需要开发者自行保证访问时序。
 
 - mutex_ids中的每一项对应一块Tile，ID取值范围为[0, 31]。
 - 每块Tile可以绑定一个ID，也可以绑定一个非空ID列表；同一块Tile绑定的多个ID不能重复。

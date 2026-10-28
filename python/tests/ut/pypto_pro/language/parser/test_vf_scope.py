@@ -240,7 +240,7 @@ def _advance_previous(group):
 
 
 def _tile_group_kernel(advance):
-    @pl.jit(auto_mutex=False)
+    @pl.jit(auto_mutex=True)
     def kernel(x: pl.Tensor[[1, 128], pl.DT_FP32]):
         tile_type = pl.TileType(shape=[1, 128], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
         group = pl.make_tile_group(type=tile_type, addrs=[0, 512], mutex_ids=[0, 1])
@@ -282,7 +282,7 @@ def test_tile_group_accessor_stays_valid_in_the_calling_kernel():
         reg = vf.load_align(tile, 0)
         vf.store_align(tile, reg, vf.create_mask(), 0)
 
-    @pl.jit(auto_mutex=False)
+    @pl.jit(auto_mutex=True)
     def kernel(x: pl.Tensor[[1, 128], pl.DT_FP32]):
         tile_type = pl.TileType(shape=[1, 128], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
         group = pl.make_tile_group(type=tile_type, addrs=[0, 512], mutex_ids=[0, 1])

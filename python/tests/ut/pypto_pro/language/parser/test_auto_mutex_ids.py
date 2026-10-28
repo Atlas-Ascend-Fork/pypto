@@ -229,13 +229,14 @@ def test_auto_requires_depth():
         _kernel_def(k).parse_target_program(ir.SectionKind.Vector)
 
 
-def test_auto_requires_auto_mutex_enabled():
+@pytest.mark.parametrize("mutex_ids", ["auto", [0], (0,), [[0, 1]]])
+def test_mutex_ids_require_auto_mutex_enabled(mutex_ids):
     @pl.jit(auto_mutex=False)
     def k(_unused: pl.DT_INT32):
         tt = pl.TileType(shape=[1, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
-        pl.make_tile_group(type=tt, addrs=0, mutex_ids="auto", depth=1)
+        pl.make_tile_group(type=tt, addrs=0, mutex_ids=mutex_ids, depth=1)
 
-    with pytest.raises(InvalidOperation, match="auto_mutex=True"):
+    with pytest.raises(InvalidOperation, match="Configuring mutex_ids requires .*auto_mutex=True"):
         _kernel_def(k).parse_target_program(ir.SectionKind.Vector)
 
 

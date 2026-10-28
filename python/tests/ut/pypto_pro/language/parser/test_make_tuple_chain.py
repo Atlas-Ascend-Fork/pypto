@@ -273,7 +273,7 @@ def test_chain_same_level_multi_field_folds():
 def test_chain_tile_group_next():
     """info.buf.next() lowers to a dynamic tile select without a companion assignment."""
 
-    @pl.jit(auto_mutex=False)
+    @pl.jit(auto_mutex=True)
     def kernel(_jit_entry: pl.DT_INT64):
         tt = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         db = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[20, 21])
@@ -299,7 +299,7 @@ def test_chain_tile_group_next():
 def test_chain_tile_group_current():
     """info.buf.current() lowers without advancing the cursor."""
 
-    @pl.jit(auto_mutex=False)
+    @pl.jit(auto_mutex=True)
     def kernel(_jit_entry: pl.DT_INT64):
         tt = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         db = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[20, 21])
@@ -316,7 +316,7 @@ def test_chain_tile_group_current():
 def test_chain_tile_group_previous():
     """info.buf.previous() lowers to a dynamic tile select."""
 
-    @pl.jit(auto_mutex=False)
+    @pl.jit(auto_mutex=True)
     def kernel(_jit_entry: pl.DT_INT64):
         tt = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         db = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[20, 21])
@@ -333,7 +333,7 @@ def test_chain_tile_group_previous():
 def test_chain_tile_group_method_sequence():
     """next/next/previous sequence keeps compiling and maintains the cursor."""
 
-    @pl.jit(auto_mutex=False)
+    @pl.jit(auto_mutex=True)
     def kernel(_jit_entry: pl.DT_INT64):
         tt = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         db = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[20, 21])
@@ -352,7 +352,7 @@ def test_chain_tile_group_method_sequence():
 def test_chain_tile_group_single_slot():
     """Single-slot tile group lowers directly without a cursor."""
 
-    @pl.jit(auto_mutex=False)
+    @pl.jit(auto_mutex=True)
     def kernel(_jit_entry: pl.DT_INT64):
         tt = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         db = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[20])
@@ -372,7 +372,7 @@ def test_chain_tile_group_single_slot():
 def test_chain_tile_group_acc_multi_slot():
     """Chained next() on an Acc-memory multi-slot tile_group with valid_shape/compact."""
 
-    @pl.jit(auto_mutex=False)
+    @pl.jit(auto_mutex=True)
     def kernel(_jit_entry: pl.DT_INT64):
         tt = pl.TileType(
             shape=[64, 64],
@@ -401,7 +401,7 @@ def test_chain_tile_group_unknown_method():
     """Unknown method on a chained tile_group raises a RuntimeFailure."""
     with pytest.raises(KeyNotFound):
 
-        @pl.jit(auto_mutex=False)
+        @pl.jit(auto_mutex=True)
         def kernel(_jit_entry: pl.DT_INT64):
             tt = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
             db = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[20])

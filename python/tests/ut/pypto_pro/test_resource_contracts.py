@@ -187,7 +187,7 @@ def _manual_alias_kernel(addrs, ids, auto_mutex=True, include_auto=False):
     ([0, 0], [[1, 2], [2, 3]], True, 0),
     ([0, 256], [1, 1], True, 0),
     ([0, 0], None, True, 0),
-    ([0, 0], [1, 2], False, 0),
+    ([0, 0], None, False, 0),
 ])
 def test_manual_mutex_warning_preserves_alias_and_reuse_contracts(addrs, ids, auto_mutex, count):
     with warnings.catch_warnings(record=True) as recorded:

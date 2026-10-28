@@ -1087,7 +1087,7 @@ def test_get_cycle_without_prefix():
 
 
 def test_set_validshape_tile_group_4buf():
-    @pl.jit(auto_mutex=False)
+    @pl.jit(auto_mutex=True)
     def main(
         a: pl.Tensor[[128, 128], pl.DT_FP16],
         rows: pl.DT_INT64,
@@ -1112,7 +1112,7 @@ def test_set_validshape_tile_group_4buf():
 
 
 def test_set_validshape_tile_group_single_tile():
-    @pl.jit(auto_mutex=False)
+    @pl.jit(auto_mutex=True)
     def main(
         a: pl.Tensor[[128, 128], pl.DT_FP16],
         cols: pl.DT_INT64,

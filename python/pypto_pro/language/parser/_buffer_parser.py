@@ -146,17 +146,20 @@ class BufferParserMixin:
         if depth is not None:
             self._validate_depth(depth, depth_span)
 
+        if not self._auto_mutex and (
+            raw_mutex_ids == "auto" or isinstance(raw_mutex_ids, (list, tuple)) and raw_mutex_ids
+        ):
+            raise InvalidOperation(
+                "Configuring mutex_ids requires @pl.jit(auto_mutex=True)",
+                span=mutex_ids_span,
+                parser_retry=True,
+            )
+
         if isinstance(raw_mutex_ids, str):
             if raw_mutex_ids != "auto":
                 raise InvalidArgument(
                     'make_tile_group() string mutex_ids only supports "auto", '
                     f"got {raw_mutex_ids!r}",
-                    span=mutex_ids_span,
-                    parser_retry=True,
-                )
-            if not self._auto_mutex:
-                raise InvalidOperation(
-                    'mutex_ids="auto" requires @pl.jit(auto_mutex=True)',
                     span=mutex_ids_span,
                     parser_retry=True,
                 )

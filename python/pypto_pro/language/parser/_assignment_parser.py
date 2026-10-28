@@ -394,7 +394,7 @@ class AssignmentParserMixin:
                 span=span,
                 parser_retry=True,
             )
-        value_expr = self.parse_expression(stmt.value, nested=False)
+        value_expr = self.parse_expression(stmt.value)
         if not isinstance(value_expr, ir.Expr):
             raise InvalidVal(
                 f"Right-hand side of '{ast.unparse(target)}' must be an IR expression",
@@ -423,7 +423,7 @@ class AssignmentParserMixin:
         self.builder.emit(ir.EvalStmt(call, span))
 
     def _parse_subscript_assignment(self, target: ast.Subscript, stmt: ast.Assign, span: ir.Span) -> None:
-        value_expr = self.parse_expression(stmt.value, nested=False)
+        value_expr = self.parse_expression(stmt.value)
         if not isinstance(value_expr, ir.Expr):
             raise InvalidType(
                 "Right-hand side of subscript assignment must be an IR expression",

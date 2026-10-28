@@ -61,6 +61,25 @@ def getval_setval_am_kernel(a: pl.Tensor[[64, 128], pl.DT_FP16]):
 
 
 @pl.jit(arch="3510", auto_mutex=True)
+def getval_struct_field_am_kernel(
+    a: pl.Tensor[[64, 128], pl.DT_FP32],
+    out: pl.Tensor[[2], pl.DT_FP32],
+):
+    tt = pl.TileType(shape=[64, 128], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    group = pl.make_tile_group(type=tt, addrs=[0], mutex_ids=[20])
+    with pl.section_vector():
+        tile = group.next()
+        message = pl.struct("Message", value=0.0, values=[0.0])
+        pl.load(tile, a, [0, 0])
+        pl.muls(tile, tile, 2.0)
+        message.value = pl.getval(tile, 8191)
+        pl.adds(tile, tile, 3.0)
+        message.values[0] = pl.getval(tile, 8190)
+        out[0] = message.value
+        out[1] = message.values[0]
+
+
+@pl.jit(arch="3510", auto_mutex=True)
 def getval_while_condition_am_kernel(
     a: pl.Tensor[[64, 128], pl.DT_FP16],
     out: pl.Tensor[[1], pl.DT_INT64],
@@ -117,6 +136,22 @@ def test_getval_setval_auto_mutex():
     assert abs(d["got_t10"] - d["exp_a00"]) < 3e-3, f"stale read: t[1,0]={d['got_t10']} expect exp(a00)={d['exp_a00']}"
     assert abs(d["got_t11"] - d["exp_a63"]) < 3e-3, f"stale read: t[1,1]={d['got_t11']} expect exp(a63)={d['exp_a63']}"
     assert max_diff < 3e-3, f"max|diff|={max_diff} too large"
+
+
+@pytest.mark.soc("950")
+@pypto.options(pass_options={"enable_slice": False})
+def test_getval_struct_field_auto_mutex():
+    """Both struct write forms must read the preceding vector operation's result."""
+    _require_a5(ST_DEVICE)
+    a_cpu = torch.arange(64 * 128, dtype=torch.float32).reshape(64, 128)
+    a = a_cpu.to(ST_DEVICE)
+    out = torch.zeros(2, device=ST_DEVICE, dtype=torch.float32)
+
+    getval_struct_field_am_kernel[None, 1](a, out)
+    torch.npu.synchronize()
+
+    expected = torch.stack((a_cpu[-1, -1] * 2, a_cpu[-1, -2] * 2 + 3))
+    torch.testing.assert_close(out.cpu(), expected, rtol=0, atol=0)
 
 
 @pytest.mark.soc("950")

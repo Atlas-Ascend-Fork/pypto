@@ -300,7 +300,7 @@ def test_constant_tuple_index_is_direct_element():
 def test_tile_factories_accept_propagated_constant_kwargs():
     """Tile factory kwargs accept parser-propagated dtype and shape constants."""
 
-    @pl.jit(auto_mutex=False)
+    @pl.jit(auto_mutex=True)
     def func(_jit_entry: pl.DT_INT64):
         dtype_selector = 0
         if dtype_selector == 0:

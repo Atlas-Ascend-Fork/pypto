@@ -72,7 +72,7 @@ def _parse(tmp_path, body, *, k=128, n=64, l0k=None, l0n=None, compact=1,
     declarations += ["a = ga[0]", "b = gb[0]", "c = gc[0]"]
     source = (
         "import pypto_pro.language as pl\nfrom pypto_pro.language import gemm as product\n"
-        f"@pl.jit(auto_mutex={auto or not mx})\n"
+        "@pl.jit(auto_mutex=True)\n"
         "def kernel(arg: pl.Tensor[[1], pl.DT_FP16], extent: pl.DT_INT32):\n"
         + textwrap.indent("\n".join(declarations) + "\n" + textwrap.dedent(body).strip(), "    ") + "\n"
     )

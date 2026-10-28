@@ -187,10 +187,11 @@ class ExpressionParserMixin:
             expr: AST expression node
             nested: True (default) when this expression should materialize a
                 ir.Call result through a let-binding so the outer expression
-                only references the temporary Var. Callers at assignment RHS
-                positions (``var = expr``, ``struct.field = expr``) and at
-                EvalStmt positions should pass ``nested=False`` to avoid
-                redundant ``_expr_tmp_N`` indirection.
+                only references the temporary Var. Direct AssignStmt RHS
+                (``var = expr``) and EvalStmt positions should pass
+                ``nested=False`` to avoid redundant ``_expr_tmp_N`` indirection.
+                Field and subscript assignments lower to calls whose RHS is
+                an argument, so they keep the default nested materialization.
 
         Returns:
             IR expression
