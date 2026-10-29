@@ -20,6 +20,7 @@
 #include "tilefwk/tilefwk.h"
 #include "interface/inner/tilefwk.h"
 #include "interface/configs/config_manager.h"
+#include "passes/pass_utils/pass_operation_utils.h"
 #define private public
 #define protected public
 #include "passes/tile_graph_pass/graph_optimization/split_reshape.h"
@@ -110,4 +111,62 @@ TEST_F(SplitReshapeTokenTest, EmptyFunctionNoCrash)
 
     SplitReshape pass;
     EXPECT_EQ(pass.RunOnFunction(*func), SUCCESS);
+}
+
+void CheckAliasWriteIsNotBypassed(Opcode writeOpcode, bool separateVersion)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "WritableReshape", "WritableReshape", nullptr);
+    IRBuilder builder;
+    auto base = builder.CreateTensorVar(DT_FP32, {32, 16});
+    for (int64_t row : {0, 16}) {
+        auto tile = builder.CreateTensorVar(DT_FP32, {16, 16});
+        auto& assemble = PassOperationUtils::AddOperation(*func, writeOpcode, {tile}, {base});
+        assemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, std::vector<int64_t>{row, 0}));
+    }
+    auto alias = builder.CreateTensorVar(DT_FP32, {32, 1, 16});
+    auto& reshape = PassOperationUtils::AddOperation(*func, Opcode::OP_RESHAPE, {base}, {alias});
+    reshape.SetAttribute("op_attr_isInplace", true);
+    auto writtenAlias = separateVersion ? builder.CreateTensorVar(alias->GetRawTensor(), {0, 0, 0}, {32, 1, 16}, {}) :
+                                          alias;
+    auto patch = builder.CreateTensorVar(DT_FP32, {8, 1, 16});
+    auto& write = PassOperationUtils::AddOperation(*func, writeOpcode, {patch}, {writtenAlias});
+    write.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, std::vector<int64_t>{8, 0, 0}));
+    auto read = builder.CreateTensorVar(DT_FP32, {16, 1, 16});
+    auto& view = PassOperationUtils::AddOperation(*func, Opcode::OP_SLICE, {writtenAlias}, {read});
+    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0}));
+
+    SplitReshape pass;
+    ASSERT_EQ(pass.Init(), SUCCESS);
+    ASSERT_EQ(pass.CollectCopyOut(*func), SUCCESS);
+    ASSERT_EQ(pass.CheckCopyIn(*func), SUCCESS);
+    EXPECT_FALSE(view.IsDeleted());
+    EXPECT_EQ(view.GetIOperands().front(), writtenAlias);
+    EXPECT_FALSE(write.IsDeleted());
+}
+
+TEST_F(SplitReshapeTokenTest, ReadingWritableAliasKeepsPartialWrite)
+{
+    CheckAliasWriteIsNotBypassed(Opcode::OP_CONTRACT, false);
+    CheckAliasWriteIsNotBypassed(Opcode::OP_ASSEMBLE, false);
+}
+
+TEST_F(SplitReshapeTokenTest, ReadingNewAliasVersionKeepsPartialWrite)
+{
+    CheckAliasWriteIsNotBypassed(Opcode::OP_CONTRACT, true);
+}
+
+TEST_F(SplitReshapeTokenTest, ReadTensorWithNullProducerSkipsSplit)
+{
+    IRBuilder builder;
+    auto base = builder.CreateTensorVar(DT_FP32, {32, 16});
+    auto alias = builder.CreateTensorVar(DT_FP32, {32, 1, 16});
+    auto read = builder.CreateTensorVar(DT_FP32, {16, 1, 16});
+    alias->GetProducers().insert(nullptr);
+    ASSERT_EQ(alias->GetProducers().size(), 1);
+
+    SplitReshape pass;
+    ASSERT_EQ(pass.Init(), SUCCESS);
+    pass.reshapeSources_[alias->GetRawMagic()] = base;
+    CheckOutputParam checkOutputParam;
+    EXPECT_EQ(pass.CheckReshapeSkip(alias, read, checkOutputParam), WARNING);
 }

@@ -156,3 +156,167 @@ TEST_F(AssignMemoryTypeTokenTest, ResolveInconsistentRawTensorMemoryTypesConsist
     EXPECT_EQ(lt1->GetMemoryTypeOriginal(), MemoryType::MEM_L1);
     EXPECT_EQ(lt2->GetMemoryTypeOriginal(), MemoryType::MEM_L1);
 }
+
+void CheckReshapeStorage(bool inplace)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "WritableReshape", "WritableReshape", nullptr);
+    IRBuilder builder;
+    auto base = builder.CreateTensorVar(DT_FP32, {32, 16});
+    base->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR);
+    auto alias = builder.CreateTensorVar(DT_FP32, {32, 1, 16});
+    alias->SetMemoryTypeBoth(MemoryType::MEM_UB);
+    auto& reshape = func->AddRawOperation(Opcode::OP_RESHAPE, {base}, {alias});
+    reshape.SetAttribute("op_attr_isInplace", inplace);
+    auto patch = builder.CreateTensorVar(DT_FP32, {8, 1, 16});
+    auto& write = func->AddRawOperation(Opcode::OP_CONTRACT, {patch}, {alias});
+    write.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{8, 0, 0}));
+
+    AssignMemoryType pass;
+    pass.inserter.UpdateTensorTobeMap(base, reshape, MemoryType::MEM_UB, "test reshape consumer requirement");
+    ASSERT_EQ(pass.InferReshapeMemoryType(reshape), SUCCESS);
+    EXPECT_EQ(base->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    auto expected = inplace ? MemoryType::MEM_DEVICE_DDR : MemoryType::MEM_UB;
+    EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(base, reshape), expected);
+    EXPECT_EQ(alias->GetMemoryTypeOriginal(), expected);
+}
+
+TEST_F(AssignMemoryTypeTokenTest, WritableInplaceReshapeKeepsSharedDdrStorage) { CheckReshapeStorage(true); }
+
+TEST_F(AssignMemoryTypeTokenTest, WritableCopyReshapeKeepsIndependentUbStorage) { CheckReshapeStorage(false); }
+
+void CheckWritableReshapeStorage(MemoryType original, MemoryType expected, const Shape& shape = {32, 16},
+                                 const Offset& offset = {8, 0, 0})
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "WritableStorage", "WritableStorage", nullptr);
+    IRBuilder builder;
+    auto base = builder.CreateTensorVar(DT_FP32, shape);
+    base->SetMemoryTypeBoth(original);
+    auto alias = builder.CreateTensorVar(DT_FP32, {shape[0], 1, shape[1]});
+    alias->SetMemoryTypeBoth(original == MemoryType::MEM_UB ? MemoryType::MEM_DEVICE_DDR : MemoryType::MEM_UB);
+    auto& reshape = func->AddRawOperation(Opcode::OP_RESHAPE, {base}, {alias});
+    reshape.SetAttribute("op_attr_isInplace", true);
+    auto patch = builder.CreateTensorVar(DT_FP32, {8, 1, 8});
+    auto patchType = original == MemoryType::MEM_L1 ? MemoryType::MEM_L1 : MemoryType::MEM_UB;
+    patch->SetMemoryTypeBoth(patchType);
+    auto& write = func->AddRawOperation(Opcode::OP_CONTRACT, {patch}, {alias});
+    write.SetOpAttribute(std::make_shared<AssembleOpAttribute>(patchType, offset));
+
+    AssignMemoryType pass;
+    pass.inserter.UpdateTensorTobeMap(base, reshape, MemoryType::MEM_DEVICE_DDR, "test previous requirement");
+    ASSERT_EQ(pass.InferReshapeMemoryType(reshape), SUCCESS);
+    auto inferred = original == MemoryType::MEM_UNKNOWN ? MemoryType::MEM_DEVICE_DDR : original;
+    EXPECT_EQ(base->GetMemoryTypeOriginal(), inferred);
+    EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(base, reshape), inferred);
+    EXPECT_EQ(alias->GetMemoryTypeOriginal(), inferred);
+    ASSERT_EQ(pass.ResolveWritableReshapeMemoryTypes(*func), SUCCESS);
+    EXPECT_EQ(base->GetMemoryTypeOriginal(), expected);
+    EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(base, reshape), expected);
+    EXPECT_EQ(alias->GetMemoryTypeOriginal(), expected);
+}
+
+TEST_F(AssignMemoryTypeTokenTest, WritableInplaceReshapePreservesUbStorage)
+{
+    CheckWritableReshapeStorage(MemoryType::MEM_UB, MemoryType::MEM_UB);
+}
+
+TEST_F(AssignMemoryTypeTokenTest, WritableInplaceReshapePreservesL1Storage)
+{
+    CheckWritableReshapeStorage(MemoryType::MEM_L1, MemoryType::MEM_L1);
+}
+
+TEST_F(AssignMemoryTypeTokenTest, WritableInplaceReshapeUnknownStorageFallsBackToDdr)
+{
+    CheckWritableReshapeStorage(MemoryType::MEM_UNKNOWN, MemoryType::MEM_DEVICE_DDR);
+}
+
+TEST_F(AssignMemoryTypeTokenTest, WritableInplaceReshapeOversizedUbFallsBackToDdr)
+{
+    CheckWritableReshapeStorage(MemoryType::MEM_UB, MemoryType::MEM_DEVICE_DDR, {1024, 1024});
+}
+
+TEST_F(AssignMemoryTypeTokenTest, WritableInplaceReshapeUnalignedWriteFallsBackToDdr)
+{
+    CheckWritableReshapeStorage(MemoryType::MEM_UB, MemoryType::MEM_DEVICE_DDR, {32, 16}, {8, 0, 1});
+}
+
+TEST_F(AssignMemoryTypeTokenTest, WritableInplaceReshapeUnalignedL1WriteFallsBackToDdr)
+{
+    CheckWritableReshapeStorage(MemoryType::MEM_L1, MemoryType::MEM_DEVICE_DDR, {32, 16}, {8, 0, 1});
+}
+
+TEST_F(AssignMemoryTypeTokenTest, WritableInplaceReshapeAdvancedL0cToUbKeepsStorage)
+{
+    struct ArchGuard {
+        NPUArch original = Platform::Instance().GetSoc().GetNPUArch();
+        ~ArchGuard() { Platform::Instance().GetSoc().SetNPUArch(original); }
+    } archGuard;
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    auto func = std::make_shared<Function>(Program::GetInstance(), "AdvancedWritableReshape", "AdvancedWritableReshape",
+                                           nullptr);
+    IRBuilder builder;
+    auto base = builder.CreateTensorVar(DT_FP32, {32, 16});
+    auto alias = builder.CreateTensorVar(DT_FP32, {32, 1, 16});
+    base->SetMemoryTypeBoth(MemoryType::MEM_UB);
+    alias->SetMemoryTypeBoth(MemoryType::MEM_UB);
+    auto& reshape = func->AddRawOperation(Opcode::OP_RESHAPE, {base}, {alias});
+    reshape.SetAttribute("op_attr_isInplace", true);
+    auto patch = builder.CreateTensorVar(DT_FP32, {8, 1, 8});
+    patch->SetMemoryTypeBoth(MemoryType::MEM_L0C);
+    auto& write = func->AddRawOperation(Opcode::OP_CONTRACT, {patch}, {alias});
+    write.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_L0C, std::vector<int64_t>{8, 0, 1}));
+
+    AssignMemoryType pass;
+    bool aligned = true;
+    ASSERT_EQ(pass.IsAssembleToOffsetAligned(write, alias, aligned), SUCCESS);
+    ASSERT_FALSE(aligned);
+    ASSERT_EQ(pass.InferReshapeMemoryType(reshape), SUCCESS);
+    ASSERT_EQ(pass.ResolveWritableReshapeMemoryTypes(*func), SUCCESS);
+    EXPECT_EQ(base->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(alias->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(base, reshape), MemoryType::MEM_UB);
+}
+
+TEST_F(AssignMemoryTypeTokenTest, WritableReshapeChainFollowsRawVersionDdrFallback)
+{
+    for (bool aliasVersion : {false, true}) {
+        auto func = std::make_shared<Function>(Program::GetInstance(), "WritableChain", "WritableChain", nullptr);
+        IRBuilder builder;
+        auto base = builder.CreateTensorVar(DT_FP32, {32, 16});
+        auto alias = builder.CreateTensorVar(DT_FP32, {32, 1, 16});
+        auto tail = builder.CreateTensorVar(DT_FP32, {32, 16});
+        for (const auto& tensor : {base, alias, tail}) {
+            tensor->SetMemoryTypeBoth(MemoryType::MEM_UB);
+        }
+        auto basePatch = builder.CreateTensorVar(DT_FP32, {32, 16});
+        basePatch->SetMemoryTypeBoth(MemoryType::MEM_UB);
+        auto& baseWrite = func->AddRawOperation(Opcode::OP_CONTRACT, {basePatch}, {base});
+        baseWrite.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UB, std::vector<int64_t>{0, 0}));
+        auto& reshape = func->AddRawOperation(Opcode::OP_RESHAPE, {base}, {alias});
+        reshape.SetAttribute("op_attr_isInplace", true);
+        auto& nextReshape = func->AddRawOperation(Opcode::OP_RESHAPE, {alias}, {tail});
+        nextReshape.SetAttribute("op_attr_isInplace", true);
+        auto patch = builder.CreateTensorVar(DT_FP32, {8, 1, 16});
+        patch->SetMemoryTypeBoth(MemoryType::MEM_UB);
+        auto& write = func->AddRawOperation(Opcode::OP_CONTRACT, {patch}, {alias});
+        write.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UB, std::vector<int64_t>{8, 0, 0}));
+        auto shared = aliasVersion ? alias : base;
+        auto version = builder.CreateTensorVar(shared->GetRawTensor(), shared->GetOffset(), shared->GetShape(), {});
+        version->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR);
+        auto& versionWrite = func->AddRawOperation(Opcode::OP_CONTRACT, {aliasVersion ? patch : basePatch}, {version});
+        versionWrite.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UB, shared->GetOffset()));
+
+        AssignMemoryType pass;
+        ASSERT_EQ(pass.InferReshapeMemoryType(reshape), SUCCESS);
+        ASSERT_EQ(pass.InferReshapeMemoryType(nextReshape), SUCCESS);
+        ASSERT_EQ(base->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+        ASSERT_EQ(alias->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+        ASSERT_EQ(pass.ResolveInconsistentRawTensorMemoryTypes(*func), SUCCESS);
+        EXPECT_EQ(shared->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+        ASSERT_EQ(pass.ResolveWritableReshapeMemoryTypes(*func), SUCCESS);
+        for (const auto& tensor : {base, alias, tail, version}) {
+            EXPECT_EQ(tensor->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+        }
+        EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(base, reshape), MemoryType::MEM_DEVICE_DDR);
+        EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(alias, nextReshape), MemoryType::MEM_DEVICE_DDR);
+    }
+}

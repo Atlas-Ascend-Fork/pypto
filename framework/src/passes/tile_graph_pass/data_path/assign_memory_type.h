@@ -93,6 +93,8 @@ private:
 
     Status ResolveInconsistentRawTensorMemoryTypes(Function& function);
 
+    Status ResolveWritableReshapeMemoryTypes(Function& function);
+
     Status InferAssembleMemoryType(Operation& operation);
 
     MemoryType InferParallelAssembleInputRequirement(const LogicalTensorPtr& output) const;

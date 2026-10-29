@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <set>
+#include <unordered_map>
 
 #include "interface/function/function.h"
 #include "interface/tensor/logical_tensor.h"
@@ -57,6 +58,9 @@ Status AssignMemoryType::RunOnFunction(Function& function)
     }
     RETURN_IF_NOT_SUCCESS(ResolveMemoryUnknowns(function));
     RETURN_IF_NOT_SUCCESS(ResolveInconsistentRawTensorMemoryTypes(function));
+    if (IsSliceMode()) {
+        RETURN_IF_NOT_SUCCESS(ResolveWritableReshapeMemoryTypes(function));
+    }
     RETURN_IF_NOT_SUCCESS(SyncViewAssembleMemoryAttrs(function));
     RETURN_IF_NOT_SUCCESS(FixViewAssembleSemanticMismatch(function));
     RETURN_IF_NOT_SUCCESS(ResolveUnalignedUbMoves(function));
@@ -1193,6 +1197,17 @@ Status AssignMemoryType::InferReshapeMemoryType(Operation& operation)
     if (!shouldHandle) {
         return SUCCESS;
     }
+    // Preserve the source storage; reconcile aliases again after memory fallbacks.
+    if (operation.GetInplaceIndex(0) >= 0 && output->GetProducers().size() > 1) {
+        MemoryType storageType = input->GetMemoryTypeOriginal();
+        if (storageType == MemoryType::MEM_UNKNOWN) {
+            storageType = MemoryType::MEM_DEVICE_DDR;
+        }
+        MemoryPathUtils::ForceSetOriginal(input, storageType, "MutableInplaceReshape");
+        MemoryPathUtils::ForceSetRequirement(inserter, input, operation, storageType, "MutableInplaceReshape");
+        MemoryPathUtils::ForceSetOriginal(output, storageType, "MutableInplaceReshape");
+        return SUCCESS;
+    }
     MemoryType inputOriginal = input->GetMemoryTypeOriginal();
     MemoryType inputRequirement = MemoryPathUtils::GetReshapeInputRequirement(inserter, operation, input,
                                                                               inputOriginal);
@@ -1206,6 +1221,104 @@ Status AssignMemoryType::InferReshapeMemoryType(Operation& operation)
     bool isDynamic = MemoryPathUtils::IsDynamicReshape(operation, output);
     bool canUseUb = MemoryPathUtils::CanUseUbForReshape(input, output, inputRequirement, outputOriginal);
     return MemoryPathUtils::ApplyReshapeMemoryType(inserter, operation, input, output, isDynamic, canUseUb);
+}
+
+Status AssignMemoryType::ResolveWritableReshapeMemoryTypes(Function& function)
+{
+    std::unordered_map<int64_t, std::vector<int64_t>> aliases;
+    std::vector<Operation*> reshapes;
+    std::vector<int64_t> writableRaws;
+    for (auto& op : function.Operations()) {
+        if (op.GetOpcode() != Opcode::OP_RESHAPE || op.GetInplaceIndex(0) < 0) {
+            continue;
+        }
+        auto inputRaw = op.iOperand.front()->GetRawMagic();
+        auto outputRaw = op.oOperand.front()->GetRawMagic();
+        aliases[inputRaw].push_back(outputRaw);
+        aliases[outputRaw].push_back(inputRaw);
+        reshapes.push_back(&op);
+        if (op.oOperand.front()->GetProducers().size() > 1) {
+            writableRaws.push_back(inputRaw);
+        }
+    }
+    if (writableRaws.empty()) {
+        return SUCCESS;
+    }
+    // Same-raw logical versions and inplace reshape edges share one storage decision.
+    std::unordered_map<int64_t, TensorSet> tensorsByRaw;
+    TensorSet interfaceTensors(function.inCasts_.begin(), function.inCasts_.end());
+    interfaceTensors.insert(function.outCasts_.begin(), function.outCasts_.end());
+    for (const auto& tensor : interfaceTensors) {
+        tensorsByRaw[tensor->GetRawMagic()].insert(tensor);
+    }
+    for (auto& op : function.Operations()) {
+        for (const auto& tensor : op.GetIOperands()) {
+            tensorsByRaw[tensor->GetRawMagic()].insert(tensor);
+        }
+        for (const auto& tensor : op.GetOOperands()) {
+            tensorsByRaw[tensor->GetRawMagic()].insert(tensor);
+        }
+    }
+    std::unordered_set<int64_t> visited;
+    for (auto raw : writableRaws) {
+        if (visited.count(raw) != 0) {
+            continue;
+        }
+        TensorSet tensors;
+        std::vector<int64_t> pending{raw};
+        while (!pending.empty()) {
+            auto current = pending.back();
+            pending.pop_back();
+            if (!visited.insert(current).second) {
+                continue;
+            }
+            tensors.insert(tensorsByRaw[current].begin(), tensorsByRaw[current].end());
+            pending.insert(pending.end(), aliases[current].begin(), aliases[current].end());
+        }
+        std::set<MemoryType> types;
+        for (const auto& tensor : tensors) {
+            types.insert(tensor->GetMemoryTypeOriginal());
+            if (interfaceTensors.count(tensor) != 0) {
+                types.insert(MemoryType::MEM_DEVICE_DDR);
+            }
+        }
+        MemoryType storageType = types.size() == 1 ? *types.begin() : MemoryType::MEM_DEVICE_DDR;
+        if (storageType == MemoryType::MEM_UNKNOWN) {
+            storageType = MemoryType::MEM_DEVICE_DDR;
+        }
+        for (const auto& tensor : tensors) {
+            if (storageType == MemoryType::MEM_DEVICE_DDR) {
+                break;
+            }
+            if (tensor->GetDataSize() < 0 || MemoryPathUtils::IsOversizedLocalBuffer(tensor, storageType, true, true)) {
+                storageType = MemoryType::MEM_DEVICE_DDR;
+                break;
+            }
+            for (auto* producer : tensor->GetProducers()) {
+                if (producer == nullptr || !IsAssembleLike(producer->GetOpcode())) {
+                    continue;
+                }
+                MemoryType fromType = MemoryPathUtils::GetAssembleInputType(inserter, *producer);
+                bool checkOffsetAlignment = !MemoryPathUtils::IsAdvancedMemoryPath(fromType, storageType);
+                bool aligned = false;
+                RETURN_IF_NOT_SUCCESS(IsAssembleToOffsetAligned(*producer, tensor, aligned));
+                if ((checkOffsetAlignment && !aligned) || !CanUseDirectAssemblePath(*producer, fromType, storageType)) {
+                    storageType = MemoryType::MEM_DEVICE_DDR;
+                    break;
+                }
+            }
+        }
+        for (const auto& tensor : tensors) {
+            MemoryPathUtils::ForceSetOriginal(tensor, storageType, "ResolveWritableReshape");
+        }
+        for (auto* reshape : reshapes) {
+            if (tensors.count(reshape->iOperand.front()) != 0) {
+                MemoryPathUtils::ForceSetRequirement(inserter, reshape->iOperand.front(), *reshape, storageType,
+                                                     "ResolveWritableReshape");
+            }
+        }
+    }
+    return SUCCESS;
 }
 
 Status AssignMemoryType::InferViewTypeMemoryType(Operation& operation)

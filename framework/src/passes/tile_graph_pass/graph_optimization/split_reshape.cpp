@@ -1310,6 +1310,23 @@ Status SplitReshape::CheckReshapeSkip(const LogicalTensorPtr& input, const Logic
         APASS_LOG_DEBUG_F(Elements::Tensor, "View op has no preceding reshape op.");
         return WARNING;
     }
+    if (input->GetProducers().size() != 1) {
+        APASS_LOG_DEBUG_F(Elements::Tensor,
+                          "Skip splitreshape because the read tensor has %zu producers; expected a single reshape.",
+                          input->GetProducers().size());
+        return WARNING;
+    }
+    auto* reshapeProducer = *input->GetProducers().begin();
+    if (reshapeProducer == nullptr) {
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Skip splitreshape because the read tensor producer is null.");
+        return WARNING;
+    }
+    if (reshapeProducer->GetOpcode() != Opcode::OP_RESHAPE) {
+        APASS_LOG_DEBUG_F(Elements::Tensor,
+                          "Skip splitreshape because the read tensor producer is %s[%d]; expected a reshape.",
+                          reshapeProducer->GetOpcodeStr().c_str(), reshapeProducer->GetOpMagic());
+        return WARNING;
+    }
     if (groupReshapeNoSplitRawMagics_.count(inputRawMagic) > 0) {
         APASS_LOG_DEBUG_F(Elements::Tensor, "Skip splitreshape because reshape op has %s flag.",
                           OpAttributeKey::groupReshapeNoSplit.c_str());
