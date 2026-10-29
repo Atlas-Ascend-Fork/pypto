@@ -135,6 +135,13 @@ bool ShouldSkipViewAssembleExpand(const Operation& op)
         return true;
     }
 
+    // Materializing an NZ alias through vector copy loses the blocked layout.
+    if (op.GetIOperands().front()->Format() == TileOpFormat::TILEOP_NZ) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "ExpandFunction skip VIEW/ASSEMBLE op=%d opcode=%s rule=nz_alias.",
+                          op.GetOpMagic(), op.GetOpcodeStr().c_str());
+        return true;
+    }
+
     const bool traverseConsumers = (op.GetOpcode() == Opcode::OP_VIEW);
     std::vector<Operation*> currentLevel;
     if (traverseConsumers) {

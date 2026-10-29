@@ -1213,13 +1213,19 @@ Status AssignMemoryType::InferReshapeMemoryType(Operation& operation)
                                                                               inputOriginal);
     MemoryType outputOriginal = output->GetMemoryTypeOriginal();
     RETURN_IF_NOT_SUCCESS(MemoryPathUtils::InferReshapeOutputFromRequirement(inserter, output, outputOriginal));
+    bool isConv1DGroupReshape = false;
+    operation.GetAttr(OpAttributeKey::groupReshapeNoSplit, isConv1DGroupReshape);
     bool kept = false;
-    RETURN_IF_NOT_SUCCESS(KeepSplitReshapeUb(operation, input, output, kept));
+    // Grouped Conv1D reshapes must stay on DDR, as in the legacy memory path.
+    if (!isConv1DGroupReshape) {
+        RETURN_IF_NOT_SUCCESS(KeepSplitReshapeUb(operation, input, output, kept));
+    }
     if (kept) {
         return SUCCESS;
     }
     bool isDynamic = MemoryPathUtils::IsDynamicReshape(operation, output);
-    bool canUseUb = MemoryPathUtils::CanUseUbForReshape(input, output, inputRequirement, outputOriginal);
+    bool canUseUb = MemoryPathUtils::CanUseUbForReshape(input, output, inputRequirement, outputOriginal) &&
+                    !isConv1DGroupReshape;
     return MemoryPathUtils::ApplyReshapeMemoryType(inserter, operation, input, output, isDynamic, canUseUb);
 }
 

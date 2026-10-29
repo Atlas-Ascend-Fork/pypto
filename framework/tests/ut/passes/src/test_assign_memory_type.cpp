@@ -3309,6 +3309,35 @@ TEST_F(AssignMemoryTypeTest, SplitReshapeRespectsParallelInputConsumers)
     }
 }
 
+TEST_F(AssignMemoryTypeTest, Conv1DGroupReshapeUsesDdr)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    for (bool groupReshape : {false, true}) {
+        SCOPED_TRACE(groupReshape);
+        ComputationalGraphBuilder G;
+        G.AddTensor(DT_BF16, {NUM_64, NUM_64, NUM_1}, MemoryType::MEM_UB, "tile");
+        G.AddTensor(DT_BF16, {NUM_128, NUM_64, NUM_1}, MemoryType::MEM_UB, "assembled");
+        G.AddTensor(DT_BF16, {NUM_128, NUM_64, NUM_1, NUM_1}, MemoryType::MEM_UB, "reshaped");
+        G.AddTensor(DT_BF16, {NUM_64, NUM_64, NUM_1, NUM_1}, MemoryType::MEM_UB, "slice_out");
+        G.AddOp(Opcode::OP_CONTRACT, {"tile"}, {"assembled"}, "contract");
+        G.GetOp("contract")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 0, 0}));
+        G.AddOp(Opcode::OP_RESHAPE, {"assembled"}, {"reshaped"}, "reshape");
+        G.GetOp("reshape")->SetAttribute(OpAttributeKey::groupReshapeNoSplit, groupReshape);
+        G.AddOp(Opcode::OP_SLICE, {"reshaped"}, {"slice_out"}, "slice");
+        G.GetOp("slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0, 0, 0}, MemoryType::MEM_UB));
+
+        AssignMemoryType pass;
+        auto input = G.GetTensor("assembled");
+        auto output = G.GetTensor("reshaped");
+        auto* reshape = G.GetOp("reshape");
+        pass.inserter.UpdateTensorTobeMap(input, *reshape, MemoryType::MEM_UB);
+        ASSERT_EQ(pass.InferReshapeMemoryType(*reshape), SUCCESS);
+        auto expected = groupReshape ? MemoryType::MEM_DEVICE_DDR : MemoryType::MEM_UB;
+        EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, *reshape), expected);
+        EXPECT_EQ(output->GetMemoryTypeOriginal(), expected);
+    }
+}
+
 TEST_F(AssignMemoryTypeTest, ExplicitUnknownGatherElementSliceFromIncastFallsBackToDdr)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
