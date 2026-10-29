@@ -168,6 +168,8 @@ def test_disjoint_candidates_do_not_emit_comparisons_and_v_sync_remains():
 @pytest.mark.parametrize("overlap", [False, True])
 def test_derived_tile_inherits_candidates_after_inplace_operations(descriptor, overlap):
     output_ids = [1, 2] if overlap else [2, 3]
+    use_subview = descriptor == "subview"
+    use_reinterpret = descriptor == "reinterpret"
 
     @pl.jit(auto_mutex=True)
     def kernel(src: pl.Tensor[[32, 32], pl.DT_FP32], index: pl.DT_INT64):
@@ -178,9 +180,9 @@ def test_derived_tile_inherits_candidates_after_inplace_operations(descriptor, o
             tile = source[index]
             pl.load(tile, src, [0, 0])
             pl.set_validshape(tile, [32, 32])
-            if descriptor == "subview":
+            if use_subview:
                 view = tile[0:, 0:]
-            elif descriptor == "reinterpret":
+            elif use_reinterpret:
                 view = pl.reinterpret(tile, shape=[32, 32])
             else:
                 view = pl.reinterpret(tile[0:, 0:], shape=[32, 32])

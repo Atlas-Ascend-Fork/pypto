@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from pypto.pypto_impl import ir
 from pypto.pypto_impl.ir import DataType
+from pypto_pro.ir._utils import _to_make_tuple
 
 from ..._errors import InvalidOperation, InvalidType, InvalidVal, PyptoProError, RuntimeFailure, message_of
 from .diagnostics import check_fits_dtype, make_const_int
@@ -181,6 +182,8 @@ class ExprEvaluator:
             Tuple of (converted, value). ``converted`` is False when the
             expression has no parse-time value; ``value`` is then None.
         """
+        if isinstance(expr, ir.Expr) and isinstance(expr.type, ir.NoneType):
+            return (True, None)
         if isinstance(expr, ir.ConstBool):
             return (True, bool(expr.value))
         if isinstance(expr, ir.ConstInt):
@@ -238,16 +241,20 @@ class ExprEvaluator:
                 )
         return "Make sure the variable is defined in the enclosing scope or is a compile-time constant"
 
-    def python_value_to_ir(self, value: Any, span: ir.Span) -> ir.Expr:
-        """Convert a Python value to an IR expression.
+    def python_value_to_ir(self, value: Any, span: ir.Span) -> ir.Expr | str:
+        """Convert a Python value to IR, keeping strings as compile-time values.
 
         Args:
-            value: Python value (bool, int, float, ir.Expr, list, or tuple)
+            value: Python value (None, str, bool, int, float, ir.Expr, list, or tuple)
             span: Source span for the expression
 
         Returns:
-            IR expression representing the value
+            IR expression representing the value, or the string itself
         """
+        if value is None:
+            return ir.IRBuilder().none()
+        if isinstance(value, str):
+            return value
         # bool before int because isinstance(True, int) is True
         if isinstance(value, bool):
             return ir.ConstBool(value, span)
@@ -264,11 +271,11 @@ class ExprEvaluator:
             if isinstance(inner, ir.Expr):
                 return inner
         if isinstance(value, (list, tuple)):
-            return ir.MakeTuple([self.python_value_to_ir(elt, span) for elt in value], span)
+            return _to_make_tuple([self.python_value_to_ir(elt, span) for elt in value], span)
         raise InvalidType(
             f"Unsupported closure variable type: {type(value).__name__}",
             span=span,
-            hint="Closure variables must be int, float, bool, list, tuple, or IR expressions",
+            hint="Closure variables must be None, str, int, float, bool, list, tuple, or IR expressions",
             parser_retry=True,
         )
 

@@ -43,6 +43,37 @@ def _parse_kernel(kernel_def, target=ir.SectionKind.Vector) -> ir.Program:
     return ir.Pass.insert_sync()(program) if definition._auto_mutex else program
 
 
+def test_make_tile_group_accepts_parsed_pipeline_ids():
+    @pl.jit(auto_mutex=False)
+    def kernel(entry: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        group = pl.make_tile_group(
+            type=tile_type, addrs=0, depth=1, fwd_ids=[entry], bwd_ids=(entry,),
+        )
+        with pl.section_vector():
+            pl.expands(group[0], 0)
+
+    assert "block.make_mutex_tile" in _ir_to_str(_parse_kernel(kernel))
+
+
+@pytest.mark.parametrize(
+    "fwd_ids,bwd_ids,invalid_parameter",
+    [(1, [0], "fwd_ids"), ([0], 1, "bwd_ids")],
+)
+def test_make_tile_group_checks_pipeline_ids_types(fwd_ids, bwd_ids, invalid_parameter):
+    @pl.jit(auto_mutex=False)
+    def kernel(_entry: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        group = pl.make_tile_group(
+            type=tile_type, addrs=0, depth=1, fwd_ids=fwd_ids, bwd_ids=bwd_ids,
+        )
+        with pl.section_vector():
+            pl.expands(group[0], 0)
+
+    with pytest.raises(InvalidType, match=f"{invalid_parameter} expects"):
+        _parse_kernel(kernel)
+
+
 def _walk_statements(stmt):
     yield stmt
     if isinstance(stmt, ir.SeqStmts):
@@ -263,6 +294,22 @@ def test_auto_mutex_single_tile():
     assert ir_str.count("mutex_lock") >= 2, ir_str
     assert ir_str.count("mutex_unlock") >= 2, ir_str
     assert "system.mutex_lock_dyn(3" in ir_str, ir_str
+
+
+def test_auto_mutex_ids_from_closure():
+    ids = "auto"
+
+    @pl.jit(auto_mutex=True)
+    def k(x: pl.Tensor[[1, 64], pl.DT_FP16]):
+        tt = pl.TileType(shape=[1, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        group = pl.make_tile_group(type=tt, addrs=0, mutex_ids=ids, depth=1)
+        tile = group.next()
+        pl.load(tile, x, [0, 0])
+        pl.store(x, tile, [0, 0])
+
+    ir_str = _ir_to_str(_parse_kernel(k))
+    assert ir_str.count("system.mutex_lock") >= 2
+    assert ir_str.count("system.mutex_unlock") >= 2
 
 
 def test_auto_mutex_locks_scale_kwarg_tile(monkeypatch):
@@ -1058,8 +1105,12 @@ def test_make_tile_group_rejects_out_of_range_mutex_id(mutex_ids):
         _parse_kernel(k)
 
 
-@pytest.mark.parametrize("mutex_ids", [1, {0, 1}], ids=["integer", "set"])
-def test_make_tile_group_rejects_wrong_mutex_ids_container_type(mutex_ids):
+@pytest.mark.parametrize(
+    "mutex_ids,message",
+    [(1, "pl.make_tile_group: mutex_ids expects"), ({0, 1}, "Unsupported closure variable type: set")],
+    ids=["integer", "set"],
+)
+def test_make_tile_group_rejects_wrong_mutex_ids_container_type(mutex_ids, message):
     @pl.jit(auto_mutex=True)
     def k(gm_q: pl.Tensor[[32], pl.DT_FP16]):
         tt = pl.TileType(shape=[32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
@@ -1067,4 +1118,4 @@ def test_make_tile_group_rejects_wrong_mutex_ids_container_type(mutex_ids):
 
     with pytest.raises(InvalidType) as caught:
         _parse_kernel(k)
-    assert 'mutex_ids must be "auto", a list, tuple, or None' in caught.value.message
+    assert message in caught.value.message

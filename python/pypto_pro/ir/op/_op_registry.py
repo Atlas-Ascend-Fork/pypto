@@ -19,26 +19,22 @@ circular-import cycle:
 
 from __future__ import annotations
 
-import ast
 from collections.abc import Callable
-from dataclasses import dataclass, field
 
-from pypto.pypto_impl import ir as _ir_core
-
-from ..._errors import InvalidOperation, current_span
+from ..._errors import InvalidOperation
 
 _OP_REGISTRY: dict[str, Callable] = {}
+_AST_OP_REGISTRY: dict[str, Callable] = {}
 
 
 def op_impl(name: str) -> Callable:
-    """Register a function as the parse handler for the given op_name.
+    """Register a builder with parsed operands and keyword-only ``span``.
 
-    Decorated functions receive ``(self, call: ast.Call) -> ir.Expr`` where
-    ``self`` is the ``CallParserMixin`` (i.e. ``ASTParser``) instance.
+    Ordinary operands use parse_expression. Convert static instruction attributes
+    in the implementation with require_const_value when Python values are needed.
     """
-
     def decorator(func: Callable) -> Callable:
-        if name in _OP_REGISTRY:
+        if name in _OP_REGISTRY or name in _AST_OP_REGISTRY:
             raise InvalidOperation(f"Duplicate op_impl registration: '{name}'")
         _OP_REGISTRY[name] = func
         return func
@@ -46,55 +42,16 @@ def op_impl(name: str) -> Callable:
     return decorator
 
 
-@dataclass
-class OpSpec:
-    """Declarative parse specification for a template op handler.
+def op_impl_ast(name: str) -> Callable:
+    """Register a legacy ``(self, call: ast.Call)`` syntax handler.
 
-    Attributes:
-        builder: Builder function to forward parsed args/kwargs to.
-            If None, ``_ir_core.create_op_call(ir_name, ...)`` is used directly.
-        ir_name: IR op name used when ``builder`` is None.
-        parse_args: Whether to parse positional args from the AST call.
-        parse_kwargs: Whether to parse keyword args from the AST call.
-        pre_hooks: Callables ``(self, call, kwargs) -> None`` invoked on the
-            kwargs dict before forwarding to the builder.
+    Use this for references, typed literals and descriptors whose source syntax
+    cannot be treated as ordinary operands. The handler owns argument parsing.
     """
+    def decorator(func: Callable) -> Callable:
+        if name in _OP_REGISTRY or name in _AST_OP_REGISTRY:
+            raise InvalidOperation(f"Duplicate op_impl registration: '{name}'")
+        _AST_OP_REGISTRY[name] = func
+        return func
 
-    builder: Callable | None = None
-    ir_name: str | None = None
-    parse_args: bool = True
-    parse_kwargs: bool = True
-    pre_hooks: list[Callable] = field(default_factory=list)
-
-
-def _make_handler(spec: OpSpec) -> Callable:
-    """Generate a unified parse handler from an OpSpec."""
-
-    def handler(self, call: ast.Call):
-        span = self.span_tracker.get_span(call)
-        args = [self.parse_expression(a) for a in call.args] if spec.parse_args else []
-        kwargs = self.parse_op_kwargs(call) if spec.parse_kwargs else {}
-        for hook in spec.pre_hooks:
-            hook(self, call, kwargs)
-        # The arguments are values now, which is what the type gate needs and the
-        # name-and-count gate at the dispatch point could not have.
-        op_name = self._extract_op_name(call.func)
-        if op_name is not None:
-            self._check_declared_types(op_name, call, args, kwargs, span)
-        # Publish where the caller wrote each argument, so a builder that rejects
-        # one can point at that argument rather than at the whole call. Every
-        # @op_impl operator is dispatched here, so this one site covers them all.
-        with current_span(span, self.span_tracker.argument_spans(call)):
-            if spec.builder is not None:
-                return spec.builder(*args, **kwargs, span=span)
-            return _ir_core.create_op_call(spec.ir_name, args, kwargs, span)
-
-    return handler
-
-
-def register_table(specs: dict[str, OpSpec]) -> None:
-    """Batch-register declarative op specs into _OP_REGISTRY."""
-    for op_name, spec in specs.items():
-        if op_name in _OP_REGISTRY:
-            raise InvalidOperation(f"Duplicate op_impl registration: '{op_name}'")
-        _OP_REGISTRY[op_name] = _make_handler(spec)
+    return decorator

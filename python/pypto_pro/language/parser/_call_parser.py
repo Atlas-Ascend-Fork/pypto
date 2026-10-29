@@ -22,8 +22,7 @@ from typing import Any, Callable
 
 from pypto.pypto_impl import ir
 from pypto_pro.ir._utils import _is_int
-from pypto_pro.ir.op._op_registry import _OP_REGISTRY
-from pypto_pro.ir.op.block_ops import block_ir_op
+from pypto_pro.ir.op._op_registry import _AST_OP_REGISTRY, _OP_REGISTRY
 
 from ..._errors import (
     BadFd,
@@ -33,6 +32,7 @@ from ..._errors import (
     InvalidType,
     InvalidVal,
     NotSupported,
+    argument_span,
     current_span,
 )
 from .. import _api as _language_api
@@ -419,49 +419,6 @@ def _validate_simt_parameters(func: ir.Function, role: str) -> None:
 
 class CallParserMixin:
     """Mixin containing call and operation parsing methods for ``ASTParser``."""
-
-    # Kwargs whose value must be an enum, not a plain int. Writing e.g. ``phase=2``
-    # or a closure ``a=2; phase=a`` is rejected — use the enum (``phase=pl.STPhase.X``)
-    # or an enum variable. Covers block/tensor/system op enum kwargs and VF-op enum
-    # kwargs. ``cmp_mode`` is intentionally excluded: it is a plain-int parameter of
-    # block gather/cmp (not an enum kwarg), despite _VF_KWARG_ENUMS mapping it.
-    _ENUM_KWARGS: frozenset = frozenset({
-        # block / tensor / system op enum kwargs
-        "phase",
-        "atomic",
-        "mode",
-        "relu_pre_mode",
-        "acc_to_vec_mode",
-        "sync_mode",
-        "core_type",
-        "set_pipe",
-        "wait_pipe",
-        "pipe",
-        "cache_line",
-        "dst",
-        "target_memory",
-        # dtype-family kwargs (all resolve to a DataType at the C++ boundary)
-        "dtype",
-        "target_type",
-        "out_dtype",
-        # VF-op enum kwargs (from _VF_KWARG_ENUMS, minus cmp_mode)
-        "pattern",
-        "merge_mode",
-        "reduce_mode",
-        "reduce_type",
-        "pos",
-        "layout",
-        "round_mode",
-        "saturate",
-        "bin_type",
-        "hist_type",
-        "gather_mode",
-        "part",
-        "width",
-        "dist",
-        "data_copy_mode",
-        "index_order",
-    })
 
     # Mapping of VF kwarg names to their expected enum classes (tuple of types).
     # When a kwarg value resolves to an instance of any mapped enum, its .value
@@ -944,9 +901,10 @@ class CallParserMixin:
 
             # Builtin min/max -> route to pl.min/pl.max (scalar_ops.py)
             if func_name in _BUILTIN_TO_OP:
-                op_func = _OP_REGISTRY.get(_BUILTIN_TO_OP[func_name])
+                op_name = _BUILTIN_TO_OP[func_name]
+                op_func = _OP_REGISTRY.get(op_name)
                 if op_func is not None:
-                    return op_func(self, call)
+                    return self._dispatch_op(op_name, call, op_func)
 
             resolved = self.expr_evaluator.closure_vars.get(func_name)
             if callable(resolved) and not isinstance(resolved, type):
@@ -1016,9 +974,8 @@ class CallParserMixin:
                 parser_retry=True,
             )
 
-        if self._current_func_type in (ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee) and not op_name.startswith(
-            "simt."
-        ):
+        is_simt_function = self._current_func_type in (ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee)
+        if is_simt_function and not op_name.startswith("simt."):
             raise NotSupported(
                 f"Operation '{op_name}' is not supported inside a SIMT function",
                 span=span,
@@ -1028,15 +985,40 @@ class CallParserMixin:
                 ),
                 parser_retry=True,
             )
+        elif not is_simt_function and op_name.startswith("simt."):
+            raise InvalidOperation(
+                f"pl.{op_name}() can only be used inside a SIMT function",
+                span=span,
+                hint='Move SIMT-context-dependent logic into @pl.vector_function(mode="simt").',
+            )
 
+        ast_handler = _AST_OP_REGISTRY.get(op_name)
+        if ast_handler is not None:
+            return self._dispatch_ast_op(op_name, call, ast_handler)
+        op_func = _OP_REGISTRY.get(op_name)
+        if op_func is not None:
+            return self._dispatch_op(op_name, call, op_func)
+        if op_name.startswith("vf."):
+            return self._parse_vf_op(op_name[3:], call)
+        raise NotSupported(f"Unsupported operation call: {ast.unparse(call)}", span=span, parser_retry=True)
+
+    def _dispatch_ast_op(self, op_name: str, call: ast.Call, ast_handler: Callable):
+        """Check declared parameters, then call the registered AST implementation."""
+        span = self.span_tracker.get_span(call)
         self._check_declared_params(op_name, call, span)
-
-        # Statements already publish a span; nested calls need their own argument locations.
         with current_span(span, self.span_tracker.argument_spans(call)):
-            op_func = _OP_REGISTRY.get(op_name)
-            if op_func is not None:
-                return op_func(self, call)
-            return self._default_op_func(op_name, call)
+            return ast_handler(self, call)
+
+    def _dispatch_op(self, op_name: str, call: ast.Call, op_func: Callable):
+        """Check and parse arguments, then call the registered implementation."""
+        span = self.span_tracker.get_span(call)
+        self._check_declared_params(op_name, call, span)
+        args = [self.parse_expression(node) for node in call.args]
+        kwargs = {keyword.arg: self.parse_expression(keyword.value) for keyword in call.keywords}
+        argument_spans = self.span_tracker.argument_spans(call)
+        self._check_declared_types(op_name, args, kwargs, span, argument_spans)
+        with current_span(span, argument_spans):
+            return op_func(self, *args, **kwargs, span=span)
 
     def _mx_slot_addrs(self, value: ir.Expr) -> tuple[int, ...] | None:
         source = self._tile_slot_source.get(value)
@@ -1050,7 +1032,7 @@ class CallParserMixin:
             addresses.append(int(address.value))
         return tuple(addresses)
 
-    def _check_mx_plane_slots(self, op_name: str, args: list, kwargs: dict, span: ir.Span) -> None:
+    def _check_mx_plane_slots(self, op_name: str, args: tuple, kwargs: dict, span: ir.Span) -> None:
         """Check runtime slot layouts after operands have been parsed exactly once."""
         first = 1 if op_name == "matmul_mx" else 2
         for offset, role in enumerate(("scale_a", "scale_b")):
@@ -1078,13 +1060,15 @@ class CallParserMixin:
         _argument_checker.check_declared_params(op_name, call, span, self.span_tracker)
 
     def _check_declared_types(
-        self, op_name: str, call: ast.Call, args: list, kwargs: dict, span: ir.Span
+        self, op_name: str, args: list, kwargs: dict, span: ir.Span, argument_spans: dict
     ) -> None:
         """Check the parsed arguments against the roles their declaration names."""
-        _argument_checker.check_declared_types(op_name, call, args, kwargs, span, self.span_tracker)
+        _argument_checker.check_declared_types(
+            op_name, args, kwargs, span, argument_spans,
+        )
 
     def _validate_op_scope(self, op_name: str, call: ast.Call) -> None:
-        """Check the execution domain before parsing operands or emitting IR.
+        """Check VF execution scope before parsing operands or emitting IR.
 
         Every dispatch in parse_op_call runs behind this check, the tile-group
         route included: those routes lower their own operands and emit IR, so a
@@ -1128,90 +1112,30 @@ class CallParserMixin:
                 "Move other pl.* operations outside the vector function and pass their results as arguments.",
             )
 
-    def parse_op_kwargs(self, call: ast.Call) -> dict[str, Any]:
-        """Parse keyword arguments for an operation call."""
-        return {kw.arg: self.resolve_single_kwarg(kw.arg, kw.value) for kw in call.keywords}
-
-    def resolve_single_kwarg(self, key: str, value: ast.expr) -> Any:
-        """Resolve a single keyword argument value to a Python or IR value.
-
-        Kwargs are resolved uniformly through ``parse_expression`` and then
-        unwrapped: a constant IR value (ConstInt/ConstBool/ConstFloat) becomes a
-        plain Python scalar. This is how an enum written as ``pl.RoundMode.X``
-        (lowered to a ConstInt by ``parse_attribute``) turns into the int that op
-        builders / the C++ boundary expect. A dtype written as ``pl.DT_FP16``
-        resolves to a DataType object (``parse_attribute`` returns it as-is) and
-        passes through unchanged, since dtype consumers and the C++ boundary
-        expect a DataType. Other non-constant results (Var, MakeTuple, ...) also
-        pass through unchanged.
-
-        A list of constants (``order=[0, 1]``, ``mutex_ids=[VA]``) is parsed to a
-        MakeTuple and then unwrapped to a Python list, since such consumers expect
-        a list; a list containing an IR Var stays a MakeTuple.
-
-        This is the lenient policy: an argument with no parse-time value keeps its
-        IR, because most kwargs accept a runtime value. A position that cannot
-        (an address, an axis list) uses :meth:`require_const_value` instead,
-        which rejects it.
-
-        ``key`` is retained for call-site compatibility (some callers pass it).
-        """
-        parsed = self.parse_expression(value)
-        # An enum kwarg written directly (pl.RoundMode.X) or via an enum variable
-        # parses to the enum object, not a Const*, so a Const* here means a plain
-        # int/bool/float was passed — reject it for enum kwargs.
-        if key in self._ENUM_KWARGS and isinstance(parsed, (ir.ConstBool, ir.ConstInt, ir.ConstFloat)):
-            # Final: the int is a perfectly good Python value, so a retry would
-            # accept it and lose the rejection.
-            raise InvalidVal(
-                f"'{key}' expects an enum value, not {parsed.value!r}",
-                span=self.span_tracker.get_span(value),
-                hint=f"Use the enum, e.g. {key}=pl.RoundMode.X / dtype=pl.DT_FP16, "
-                "or an enum-valued variable",
-            )
-        found, python_value = ExprEvaluator.ir_to_python_value(parsed)
-        if not found:
-            return parsed
-        return python_value
-
-    @staticmethod
-    def _kwarg_node(call: ast.Call, key: str) -> "ast.expr | None":
-        """Value node of keyword *key*, or None when the call does not pass it."""
-        return next((kw.value for kw in call.keywords if kw.arg == key), None)
-
-    def require_const_value(
-        self, parsed: Any, node: ast.expr, *, expects: str, hint: str, check=None, key: str | None = None
-    ) -> Any:
+    def require_const_value(self, value, key, *, expects, hint, check=None, error=InvalidType):
         """Python value of an expression that has to be known while parsing.
 
-        The single compile-time accessor: take the parse-time value of *parsed*,
+        The single compile-time accessor: take the parse-time value of *value*,
         and report one consistent diagnostic when it has none or fails the caller's
         *check*. Callers add only what is specific to them — what the position
         expects and how to fix it.
 
-        *parsed* is the caller's own ``parse_expression(node)``: a handler that
+        *value* is the caller's already parsed expression. A handler that
         parsed its arguments up front already holds it, and re-parsing to reach the
         check is not free — ``parse_expression`` can emit IR and falls back to
-        evaluating the expression in Python. *node* is kept only for the
-        diagnostic's text and span, so it must be the node *parsed* came from.
+        evaluating the expression in Python. Prefer the call-site span for *key*,
+        falling back to the value's IR span when that argument is not recorded.
         """
-        found, value = ExprEvaluator.ir_to_python_value(parsed)
-        if not found or (check is not None and not check(value)):
-            subject = f"'{key}'" if key else f"'{ast.unparse(node)}'"
-            detail = f", got '{ast.unparse(node)}'" if key else ""
-            # Final for the same reason: *check* rejects values Python evaluation
-            # would happily produce.
-            raise InvalidType(
-                f"{subject} must be a compile-time {expects}{detail}",
-                span=self.span_tracker.get_span(node),
-                hint=hint,
+        found, constant = ExprEvaluator.ir_to_python_value(value)
+        if not found or (check is not None and not check(constant)):
+            span = argument_span(key, getattr(value, "span", None))
+            text = self.span_tracker.get_source_text(span)
+            detail = f", got '{text}'" if text else ""
+            raise error(
+                f"'{key}' must be a compile-time {expects}{detail}",
+                span=span, hint=hint,
             )
-        return value
-
-    def _default_op_func(self, op_name: str, call: ast.Call) -> ir.Expr:
-        if op_name.startswith("vf."):
-            return self._parse_vf_op(op_name[3:], call)
-        return self._parse_block_default(op_name, call)
+        return constant
 
     def _parse_simt_template_call(self, local_name: str, fn: Callable, call: ast.Call) -> ir.Expr:
         """Instantiate and call one helper @pl.vector_function(mode="simt") template."""
@@ -1581,6 +1505,7 @@ class CallParserMixin:
             IR expression for the VF op call.
         """
         span = self.span_tracker.get_span(call)
+        self._check_declared_params(f"vf.{op_name}", call, span)
 
         # Reject the legacy statement form `vf.xxx(dst, ...)` for ops that produce
         # a result. Only store/side-effect ops (dst_count == 0) may be called as a
@@ -1613,24 +1538,20 @@ class CallParserMixin:
             )
 
         args = [self.parse_expression(arg) for arg in call.args]
-        kwargs = self.parse_op_kwargs(call)
+        kwargs = {keyword.arg: self.parse_expression(keyword.value) for keyword in call.keywords}
+        argument_spans = self.span_tracker.argument_spans(call)
+        self._check_declared_types(
+            f"vf.{op_name}", args, kwargs, span, argument_spans,
+        )
+        with current_span(span, argument_spans):
+            kwargs = {
+                key: self.require_const_value(
+                    value, key, expects="attribute", hint="VF attributes must be known at compile time.",
+                )
+                for key, value in kwargs.items()
+            }
 
         # No scalar-range check here: every op that takes a scalar value operand produces a result,
         # so the guard above has already rejected its statement form. The assignment form is checked
         # in _parse_vf_assignment, which is the only path those ops can reach.
         return ir.create_op_call(f"vf.{op_name}", args, kwargs, span)
-
-    # -------------------------------------------------------------------------
-    # Block default handler and helpers
-    # -------------------------------------------------------------------------
-
-    def _parse_block_default(self, op_name: str, call: ast.Call) -> ir.Expr:
-        """Handle block DSL ops not registered in _OP_REGISTRY."""
-        span = self.span_tracker.get_span(call)
-
-        args = [self.parse_expression(arg) for arg in call.args]
-        kwargs = self.parse_op_kwargs(call)
-        self._check_declared_types(op_name, call, args, kwargs, span)
-
-        # first arg is out; keep out as first arg to match pto-isa convention
-        return ir.create_op_call(block_ir_op(op_name), args, kwargs, span)

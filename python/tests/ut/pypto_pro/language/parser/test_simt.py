@@ -857,6 +857,40 @@ def test_shuffle_accepts_runtime_controls_with_asc_dtypes():
     assert function_ir.count("simt.warp_shfl") == 4
 
 
+def test_warp_controls_evaluate_the_whole_constant_expression_before_ir_range_checks():
+    @pl.vector_function(mode="simt", max_threads=32)
+    def wide_controls(value: pl.DT_FP32):
+        pl.simt.warp_all(18446744073709551616 - 18446744073709551615)
+        pl.simt.warp_any(predicate=18446744073709551616 - 18446744073709551615)
+        pl.simt.warp_ballot(18446744073709551616 - 18446744073709551615)
+        pl.simt.warp_shfl(value, 18446744073709551616 - 18446744073709551615)
+        pl.simt.warp_shfl_up(value, delta=18446744073709551616 - 18446744073709551615)
+        pl.simt.warp_shfl_down(value, 18446744073709551616 - 18446744073709551615)
+        pl.simt.warp_shfl_xor(value, 1, width=(1 << 70) - (1 << 70) + 32)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(value: pl.DT_FP32):
+        with pl.section_vector():
+            wide_controls[32](value)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    calls = [
+        stmt.expr for stmt in program.get_function("wide_controls").body.stmts
+        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call)
+    ]
+    assert len(calls) == 7
+    for call in calls:
+        if len(call.args) == 1:
+            assert call.args[0].value == 1
+            assert call.args[0].type.dtype == ir.DataType.INT32
+        else:
+            expected = (
+                ir.DataType.UINT32 if call.name in ("simt.warp_shfl_up", "simt.warp_shfl_down") else ir.DataType.INT32
+            )
+            assert call.args[1].value == 1 and call.args[1].type.dtype == expected
+            assert call.args[2].value == 32 and call.args[2].type.dtype == ir.DataType.INT32
+
+
 def test_warp_operation_rejected_outside_simt_function():
     with pytest.raises(InvalidOperation, match="only be used inside"):
 
@@ -1202,7 +1236,7 @@ def test_simt_cast_is_available_inside_simt_helper():
 
 
 def test_simt_cast_rejects_plain_integer_round_mode():
-    with pytest.raises(InvalidVal, match="expects an enum value"):
+    with pytest.raises(InvalidType, match="mode expects"):
 
         @pl.vector_function(mode="simt", max_threads=1)
         def integer_mode(value: pl.DT_FP32):
@@ -1232,7 +1266,7 @@ def test_simt_cast_rejects_wrong_positional_arity():
 
 
 def test_simt_cast_rejects_non_dtype_target():
-    with pytest.raises(InvalidType, match=r"dtype must be a pl\.DT_\* value"):
+    with pytest.raises(InvalidType, match="dtype expects"):
 
         @pl.vector_function(mode="simt", max_threads=1)
         def invalid_dtype(value: pl.DT_FP32):

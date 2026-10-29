@@ -7,7 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Scalar op parse handlers (min, max, const) and unified dispatchers."""
+"""Scalar and tile arithmetic implementations receiving parsed operands."""
 
 from __future__ import annotations
 
@@ -16,46 +16,22 @@ import ast
 from pypto.pypto_impl import ir as _ir_core
 from pypto.pypto_impl.ir import Expr, Span
 
-from ..._errors import InvalidArgument, InvalidType, InvalidVal
-from ._op_registry import OpSpec, op_impl, register_table
+from ..._errors import InvalidType
+from ._op_registry import op_impl, op_impl_ast
 
 
 @op_impl("min")
-def _parse_min(self, call: ast.Call):
-
-    call_span = self.span_tracker.get_span(call)
-    if call.keywords:
-        raise InvalidArgument("Scalar operation 'min' does not accept keyword arguments", span=call_span)
-    if len(call.args) != 2:
-        raise InvalidArgument(
-            f"Scalar binary operation 'min' requires exactly 2 arguments, got {len(call.args)}",
-            span=call_span,
-        )
-    lhs = self.parse_expression(call.args[0])
-    rhs = self.parse_expression(call.args[1])
-    self._check_declared_types("min", call, [lhs, rhs], {}, call_span)
-    operation = _ir_core.min_(lhs, rhs, call_span)
-    folded = self._fold_const_binop("min", operation, call_span)
-    return folded if folded is not None else operation
+def _build_min(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    result = _ir_core.min_(lhs, rhs, span)
+    folded = self._fold_const_binop("min", result, span) if isinstance(result, _ir_core.BinaryExpr) else None
+    return result if folded is None else folded
 
 
 @op_impl("max")
-def _parse_max(self, call: ast.Call):
-
-    call_span = self.span_tracker.get_span(call)
-    if call.keywords:
-        raise InvalidArgument("Scalar operation 'max' does not accept keyword arguments", span=call_span)
-    if len(call.args) != 2:
-        raise InvalidArgument(
-            f"Scalar binary operation 'max' requires exactly 2 arguments, got {len(call.args)}",
-            span=call_span,
-        )
-    lhs = self.parse_expression(call.args[0])
-    rhs = self.parse_expression(call.args[1])
-    self._check_declared_types("max", call, [lhs, rhs], {}, call_span)
-    operation = _ir_core.max_(lhs, rhs, call_span)
-    folded = self._fold_const_binop("max", operation, call_span)
-    return folded if folded is not None else operation
+def _build_max(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    result = _ir_core.max_(lhs, rhs, span)
+    folded = self._fold_const_binop("max", result, span) if isinstance(result, _ir_core.BinaryExpr) else None
+    return result if folded is None else folded
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +39,23 @@ def _parse_max(self, call: ast.Call):
 #   rhs is Tile   -> block.add / block.sub / ... / block.and
 #   rhs is Scalar -> block.adds / block.subs / ... / block.ands
 # ---------------------------------------------------------------------------
-def _ir_add(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
+@op_impl("adds")
+def _build_adds(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _ir_core.create_op_call("block.adds", [out, lhs, rhs], {}, span)
+
+
+@op_impl("subs")
+def _build_subs(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _ir_core.create_op_call("block.subs", [out, lhs, rhs], {}, span)
+
+
+@op_impl("muls")
+def _build_muls(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _ir_core.create_op_call("block.muls", [out, lhs, rhs], {}, span)
+
+
+@op_impl("add")
+def _ir_add(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
     from pypto_pro.ir.op.block_ops import _BINARY_DTYPES, _check_dtype, _check_dtype_match, _create_tile_scalar_op
 
     dt = getattr(out.type, "dtype", None)
@@ -77,7 +69,8 @@ def _ir_add(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwar
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="add", scalar_op="adds", span=span, **kwargs)
 
 
-def _ir_sub(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
+@op_impl("sub")
+def _ir_sub(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
     from pypto_pro.ir.op.block_ops import _BINARY_DTYPES, _check_dtype, _check_dtype_match, _create_tile_scalar_op
 
     dt = getattr(out.type, "dtype", None)
@@ -91,7 +84,8 @@ def _ir_sub(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwar
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="sub", scalar_op="subs", span=span, **kwargs)
 
 
-def _ir_mul(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
+@op_impl("mul")
+def _ir_mul(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
     from pypto_pro.ir.op.block_ops import _MUL_DTYPES, _check_dtype, _check_dtype_match, _create_tile_scalar_op
 
     dt = getattr(out.type, "dtype", None)
@@ -105,7 +99,8 @@ def _ir_mul(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwar
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="mul", scalar_op="muls", span=span, **kwargs)
 
 
-def _ir_div(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
+@op_impl("div")
+def _ir_div(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
     from pypto_pro.ir.op.block_ops import _DIV_DTYPES, _check_dtype, _check_dtype_match, _create_tile_scalar_op
 
     dt = getattr(out.type, "dtype", None)
@@ -119,7 +114,8 @@ def _ir_div(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwar
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="div", scalar_op="divs", span=span, **kwargs)
 
 
-def _ir_rem(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
+@op_impl("rem")
+def _ir_rem(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
     from pypto_pro.ir.op.block_ops import _REM_DTYPES, _check_dtype, _check_dtype_match, _create_tile_scalar_op
 
     dt = getattr(out.type, "dtype", None)
@@ -133,7 +129,8 @@ def _ir_rem(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwar
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="rem", scalar_op="rems", span=span, **kwargs)
 
 
-def _ir_and(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
+@op_impl("and_")
+def _ir_and(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
     from pypto_pro.ir.op.block_ops import _BITWISE_DTYPES, _check_dtype, _check_dtype_match, _create_tile_scalar_op
 
     dt = getattr(out.type, "dtype", None)
@@ -147,7 +144,8 @@ def _ir_and(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwar
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="and", scalar_op="ands", span=span, **kwargs)
 
 
-def _ir_or(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
+@op_impl("or_")
+def _ir_or(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
     from pypto_pro.ir.op.block_ops import _BITWISE_DTYPES, _check_dtype, _check_dtype_match, _create_tile_scalar_op
 
     dt = getattr(out.type, "dtype", None)
@@ -161,7 +159,8 @@ def _ir_or(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwarg
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="or", scalar_op="ors", span=span, **kwargs)
 
 
-def _ir_shl(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
+@op_impl("shl")
+def _ir_shl(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
     from pypto_pro.ir.op.block_ops import _BITWISE_DTYPES, _check_dtype, _check_dtype_match, _create_tile_scalar_op
 
     dt = getattr(out.type, "dtype", None)
@@ -175,7 +174,8 @@ def _ir_shl(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwar
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="shl", scalar_op="shls", span=span, **kwargs)
 
 
-def _ir_shr(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
+@op_impl("shr")
+def _ir_shr(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwargs) -> Expr:
     from pypto_pro.ir.op.block_ops import _BITWISE_DTYPES, _check_dtype, _check_dtype_match, _create_tile_scalar_op
 
     dt = getattr(out.type, "dtype", None)
@@ -192,7 +192,10 @@ def _ir_shr(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, **kwar
 # ---------------------------------------------------------------------------
 # Builders for min/max (element-wise + reduce overload via dim kwarg)
 # ---------------------------------------------------------------------------
-def _ir_minimum(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, dim: int | None = None, **kwargs) -> Expr:
+@op_impl("minimum")
+def _ir_minimum(self,
+    out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, dim: int | Expr | None = None, **kwargs,
+) -> Expr:
     from pypto_pro.ir.op.block_ops import (
         _BINARY_DTYPES,
         _check_dtype,
@@ -201,6 +204,8 @@ def _ir_minimum(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, di
         _create_tile_scalar_op,
     )
 
+    if isinstance(getattr(dim, "type", None), _ir_core.NoneType):
+        dim = None
     dt = getattr(out.type, "dtype", None)
     _check_dtype("minimum", dt, _BINARY_DTYPES)
     # rhs consistency is only enforced for the tile-tile path; the
@@ -214,7 +219,10 @@ def _ir_minimum(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, di
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="minimum", scalar_op="mins", span=span, **kwargs)
 
 
-def _ir_maximum(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, dim: int | None = None, **kwargs) -> Expr:
+@op_impl("maximum")
+def _ir_maximum(self,
+    out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, dim: int | Expr | None = None, **kwargs,
+) -> Expr:
     from pypto_pro.ir.op.block_ops import (
         _BINARY_DTYPES,
         _check_dtype,
@@ -223,6 +231,8 @@ def _ir_maximum(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, di
         _create_tile_scalar_op,
     )
 
+    if isinstance(getattr(dim, "type", None), _ir_core.NoneType):
+        dim = None
     dt = getattr(out.type, "dtype", None)
     _check_dtype("maximum", dt, _BINARY_DTYPES)
     # rhs consistency is only enforced for the tile-tile path; the
@@ -236,62 +246,24 @@ def _ir_maximum(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, di
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="maximum", scalar_op="maxs", span=span, **kwargs)
 
 
-register_table(
-    {
-        "add": OpSpec(builder=_ir_add),
-        "sub": OpSpec(builder=_ir_sub),
-        "mul": OpSpec(builder=_ir_mul),
-        "div": OpSpec(builder=_ir_div),
-        "rem": OpSpec(builder=_ir_rem),
-        "and_": OpSpec(builder=_ir_and),
-        "or_": OpSpec(builder=_ir_or),
-        "shl": OpSpec(builder=_ir_shl),
-        "shr": OpSpec(builder=_ir_shr),
-        "minimum": OpSpec(builder=_ir_minimum),
-        "maximum": OpSpec(builder=_ir_maximum),
-    }
-)
-
-
-@op_impl("const")
-def _parse_typed_constant(self, call: ast.Call):
+# Keep AST registration: construct literals directly in the requested dtype so
+# values such as FP64 1e200 are not rejected by default expression range checks.
+# This also preserves the existing numeric-literal syntax restriction.
+@op_impl_ast("const")
+def _parse_typed_constant(self, call: ast.Call) -> Expr:
     from pypto_pro.language.parser.diagnostics import check_fits_dtype, make_const_int
 
     span = self.span_tracker.get_span(call)
-
-    if len(call.args) != 2:
-        raise InvalidArgument(
-            "pl.const() requires exactly 2 arguments: value and dtype",
-            span=span,
-            hint="Use pl.const(42, pl.DT_INT32) or pl.const(1.0, pl.DT_FP16)",
-        )
-
-    value_node = call.args[0]
-    negate = False
-    if isinstance(value_node, ast.UnaryOp) and isinstance(value_node.op, ast.USub):
-        negate = True
-        value_node = value_node.operand
-
-    if not isinstance(value_node, ast.Constant) or not isinstance(value_node.value, (int, float)):
+    node = call.args[0]
+    literal = node.operand if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub) else node
+    if not isinstance(literal, ast.Constant) or not isinstance(literal.value, (int, float)):
         raise InvalidType(
-            "pl.const() first argument must be a numeric literal",
-            span=self.span_tracker.call_argument_span(call, 0, span),
+            "pl.const() first argument must be a numeric literal", span=self.span_tracker.get_span(node),
             hint="Use an int or float literal: pl.const(42, pl.DT_INT32)",
         )
-
-    value = value_node.value
-    if negate:
-        value = -value
-
+    value = -literal.value if literal is not node else literal.value
     dtype = self.parse_expression(call.args[1])
-    if not isinstance(dtype, _ir_core.DataType):
-        raise InvalidType(
-            f"pl.const() second argument must be a dtype (pl.DT_*), "
-            f"got {type(dtype).__name__}",
-            span=self.span_tracker.call_argument_span(call, 1, span),
-            hint="Use a dtype: pl.DT_FP32, pl.DT_INT32, etc.",
-        )
-
+    self._check_declared_types("const", [value, dtype], {}, span, self.span_tracker.argument_spans(call))
     if dtype == _ir_core.DataType.BOOL:
         check_fits_dtype(value, dtype, subject="value", span=span, api="pl.const")
         return _ir_core.ConstBool(bool(value), span)
@@ -302,30 +274,5 @@ def _parse_typed_constant(self, call: ast.Call):
 
 
 @op_impl("astype")
-def _parse_scalar_astype(self, call: ast.Call):
-
-    span = self.span_tracker.get_span(call)
-    if call.keywords or len(call.args) != 2:
-        raise InvalidType(
-            "pl.astype() requires exactly 2 positional arguments: value and dtype",
-            span=span,
-            hint="Use pl.astype(value, pl.DT_INT32)",
-        )
-
-    value = self.parse_expression(call.args[0])
-    if not isinstance(value, _ir_core.Expr) or not isinstance(value.type, _ir_core.ScalarType):
-        value_type = getattr(value, "type", type(value).__name__)
-        raise InvalidVal(
-            f"pl.astype() first argument must be a Scalar, got {value_type}",
-            span=self.span_tracker.call_argument_span(call, 0, span),
-            parser_retry=True,
-        )
-
-    dtype = self.parse_expression(call.args[1])
-    if not isinstance(dtype, _ir_core.DataType):
-        raise InvalidType(
-            f"pl.astype() second argument must be a dtype (pl.DT_*), got {type(dtype).__name__}",
-            span=self.span_tracker.call_argument_span(call, 1, span),
-            parser_retry=True,
-        )
+def _build_scalar_astype(self, value: Expr, dtype, /, *, span: Span) -> Expr:
     return _ir_core.cast(value, dtype, span)

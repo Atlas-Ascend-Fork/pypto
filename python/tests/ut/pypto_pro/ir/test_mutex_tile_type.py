@@ -63,5 +63,5 @@ def test_matmul_acc_compares_data_type_without_mutex_count():
     acc = make_mutex_tile_expr([64, 64], ir.DataType.FP32, ir.MemorySpace.Acc, addr=16384, mutex_ids=[2, 3])
     lhs = make_mutex_tile_expr([64, 64], ir.DataType.FP16, ir.MemorySpace.Left, addr=0, mutex_ids=[])
     rhs = make_mutex_tile_expr([64, 64], ir.DataType.FP16, ir.MemorySpace.Right, addr=0, mutex_ids=[])
-    call = _ir_matmul_acc(dst, acc, lhs, rhs)
+    call = _ir_matmul_acc(None, dst, acc, lhs, rhs)
     assert isinstance(call.type, ir.NoneType)

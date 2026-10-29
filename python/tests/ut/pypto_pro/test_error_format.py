@@ -897,7 +897,7 @@ def test_a_shape_given_as_one_number_is_refused_before_it_is_unpacked():
         pl.load(pl.make_tile(tile_type, addr=0), x, [0, 0])
 
     rendered = _render(kernel)
-    assert rendered.head["reason"] == "pl.TileType: shape expects Shape, got int"
+    assert rendered.head["reason"] == "pl.TileType: shape expects Shape, got a int64 scalar"
     assert rendered.caret_under() == "64"
 
 
@@ -932,11 +932,7 @@ def test_either_branch_of_a_declared_union_is_accepted():
 
 
 def test_an_offset_is_accepted_however_the_caller_spelled_it():
-    """A positional argument parses into an Expr; the same keyword stays a Python list.
-
-    The two routes reach the gate as different kinds of value, and the role has to
-    cover both or one spelling of a legal call would be refused.
-    """
+    """Positional and keyword offsets both reach the gate as parsed IR values."""
 
     @pl.jit
     def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
@@ -947,11 +943,8 @@ def test_an_offset_is_accepted_however_the_caller_spelled_it():
     kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
-@pytest.mark.parametrize(
-    ("as_keyword", "expected_value"),
-    [(False, "a bool scalar"), (True, "bool")],
-)
-def test_an_offset_rejects_bool_in_either_call_form(as_keyword, expected_value):
+@pytest.mark.parametrize("as_keyword", [False, True])
+def test_an_offset_rejects_bool_in_either_call_form(as_keyword):
     """Unlike ordinary ``int``, an Offset must not treat bool as an integer."""
 
     if as_keyword:
@@ -970,7 +963,7 @@ def test_an_offset_rejects_bool_in_either_call_form(as_keyword, expected_value):
 
     rendered = _render(kernel)
     assert isinstance(rendered.error, InvalidType)
-    assert rendered.head["reason"] == f"pl.load: offsets expects Offset, got {expected_value}"
+    assert rendered.head["reason"] == "pl.load: offsets expects Offset, got a bool scalar"
     assert rendered.caret_under() == "True"
 
 
@@ -992,16 +985,12 @@ def test_load_offset_rejects_scalar_int(as_keyword):
 
     rendered = _render(kernel)
     assert isinstance(rendered.error, InvalidType)
-    expected_value = "int" if as_keyword else "a int64 scalar"
-    assert rendered.head["reason"] == f"pl.load: offsets expects Offset, got {expected_value}"
+    assert rendered.head["reason"] == "pl.load: offsets expects Offset, got a int64 scalar"
     assert rendered.caret_under() == "1"
 
 
-@pytest.mark.parametrize(
-    ("as_keyword", "expected_value"),
-    [(False, "a bool scalar"), (True, "bool")],
-)
-def test_dcci_offset_rejects_bool_in_either_call_form(as_keyword, expected_value):
+@pytest.mark.parametrize("as_keyword", [False, True])
+def test_dcci_offset_rejects_bool_in_either_call_form(as_keyword):
     if as_keyword:
 
         @pl.jit
@@ -1017,7 +1006,7 @@ def test_dcci_offset_rejects_bool_in_either_call_form(as_keyword, expected_value
     rendered = _render(kernel)
     assert isinstance(rendered.error, InvalidType)
     assert rendered.head["reason"] == (
-        f"pl.system.dcci: offset expects Optional[Union[Sequence[int], int]], got {expected_value}"
+        "pl.system.dcci: offset expects Optional[Union[Sequence[int], int]], got a bool scalar"
     )
     assert rendered.caret_under() == "True"
 
@@ -1040,8 +1029,7 @@ def test_move_offset_requires_a_sequence(as_keyword):
 
     rendered = _render(kernel)
     assert isinstance(rendered.error, InvalidType)
-    expected_value = "int" if as_keyword else "a int64 scalar"
-    assert rendered.head["reason"] == f"pl.move: offset expects Optional[Offset], got {expected_value}"
+    assert rendered.head["reason"] == "pl.move: offset expects Optional[Offset], got a int64 scalar"
     assert rendered.caret_under() == "1"
 
 
@@ -1129,7 +1117,7 @@ def test_a_dump_flag_must_be_a_string():
         pl.dump_data(tile, flag=123)
 
     rendered = _render(kernel)
-    assert rendered.head["reason"] == "pl.dump_data: flag expects Optional[str], got int"
+    assert rendered.head["reason"] == "pl.dump_data: flag expects Optional[str], got a int64 scalar"
     assert rendered.caret_under() == "123"
 
 

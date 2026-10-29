@@ -12,7 +12,7 @@
 
 import pypto_pro
 from pypto_pro import ir
-from pypto_pro._errors import InvalidArgument, InvalidOperation, InvalidType, InvalidVal, NotSupported, OutOfRange
+from pypto_pro._errors import InvalidArgument, InvalidOperation, InvalidType, NotSupported, OutOfRange
 from pypto_pro.ir.op import system_ops
 import pypto_pro.language as pl
 import pytest
@@ -76,7 +76,7 @@ def test_wait_cross_core_s_accepts_all_modes(sync_mode):
 
 
 def test_sync_src_pipe_kwarg_rejects_plain_integer():
-    with pytest.raises(InvalidVal, match="'set_pipe' expects an enum value"):
+    with pytest.raises(InvalidType, match="set_pipe expects"):
 
         @pl.jit(auto_mutex=False)
         def func(_jit_entry: pl.DT_INT64):
@@ -87,7 +87,7 @@ def test_sync_src_pipe_kwarg_rejects_plain_integer():
 
 
 def test_sync_dst_pipe_kwarg_rejects_plain_integer():
-    with pytest.raises(InvalidVal, match="'wait_pipe' expects an enum value"):
+    with pytest.raises(InvalidType, match="wait_pipe expects"):
 
         @pl.jit(auto_mutex=False)
         def func(_jit_entry: pl.DT_INT64):
@@ -112,7 +112,7 @@ def test_sync_pipe_kwarg_rejects_other_enum_type():
 
 
 def test_mutex_lock_pipe_kwarg_rejects_plain_integer():
-    with pytest.raises(InvalidVal, match="'pipe' expects an enum value"):
+    with pytest.raises(InvalidType, match="pipe expects"):
 
         @pl.jit(auto_mutex=False)
         def func(_jit_entry: pl.DT_INT64):
@@ -130,7 +130,7 @@ def test_mutex_ir_builder_requires_pipe_type(builder, pipe):
 
 
 def test_sync_all_core_type_rejects_plain_integer():
-    with pytest.raises(InvalidVal, match="'core_type' expects an enum value"):
+    with pytest.raises(InvalidType, match="core_type expects"):
 
         @pl.jit(auto_mutex=False)
         def func(_jit_entry: pl.DT_INT64):
@@ -150,7 +150,7 @@ def test_sync_event_id_rejects_bool(event_id):
             event_id=event_id,
         )
 
-    with pytest.raises(InvalidType, match="event_id must be .*integer scalar expression"):
+    with pytest.raises(InvalidType, match="event_id must be an integer scalar"):
         func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
@@ -181,13 +181,13 @@ def test_sync_parser_normalizes_python_int_id():
 @pytest.mark.parametrize("builder", [system_ops.mutex_lock, system_ops.mutex_unlock])
 @pytest.mark.parametrize("mutex_id", [True, False])
 def test_mutex_id_rejects_bool(builder, mutex_id):
-    with pytest.raises(TypeError, match="mutex_id must be a Python int or an integer scalar expression"):
+    with pytest.raises(TypeError, match="mutex_id must be an integer scalar"):
         builder(pipe=pl.PipeType.MTE2, mutex_id=mutex_id)
 
 
 @pytest.mark.parametrize("builder", [system_ops.mutex_lock, system_ops.mutex_unlock])
-def test_mutex_ir_builder_normalizes_python_int_id(builder):
-    call = builder(pipe=pl.PipeType.MTE2, mutex_id=0)
+def test_mutex_ir_builder_preserves_ir_constant_id(builder):
+    call = builder(pipe=pl.PipeType.MTE2, mutex_id=_const_int(0))
 
     assert len(call.args) == 1
     assert isinstance(call.args[0], pypto_pro.ir.ConstInt)
@@ -416,7 +416,7 @@ def test_runtime_mutex_id_is_single_operand():
 
 
 def test_bool_event_id_expression_is_rejected_by_parser():
-    with pytest.raises(InvalidType, match="event_id must be an integer scalar expression"):
+    with pytest.raises(InvalidType, match="event_id must be an integer scalar"):
 
         @pl.jit(auto_mutex=False)
         def func(event_id: pl.DT_BOOL):
@@ -431,7 +431,7 @@ def test_bool_event_id_expression_is_rejected_by_parser():
 
 
 def test_bool_mutex_id_expression_is_rejected_by_parser():
-    with pytest.raises(InvalidType, match="mutex_id must be an integer scalar expression"):
+    with pytest.raises(InvalidType, match="mutex_id must be an integer scalar"):
 
         @pl.jit(auto_mutex=False)
         def func(mutex_id: pl.DT_BOOL):

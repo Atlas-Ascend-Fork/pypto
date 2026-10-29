@@ -19,7 +19,7 @@ None of these functions are meant to be called at runtime.  Inside a PyPTO
 kernel the AST parser intercepts every ``pl.xxx`` call before Python executes
 it.  Outside a kernel, calling a declaration raises ``RuntimeError``.
 
-When adding a new op to the parser registry / block-default handler, add a
+When adding a new op to the parser registry, add a
 matching declaration here and re-export it from the package ``__init__.py``.
 """
 
@@ -1504,7 +1504,7 @@ def const(value: Union[int, float], dtype: DType, /) -> Scalar:
     """Create a typed compile-time constant.
 
     Args:
-        value: Numeric literal (int or float)
+        value: Numeric literal (int or float, optionally preceded by a minus sign)
         dtype: Data type, e.g. ``pl.DT_INT32``, ``pl.DT_FP16``
     """
 

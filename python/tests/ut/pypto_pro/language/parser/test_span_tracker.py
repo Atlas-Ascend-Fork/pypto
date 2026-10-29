@@ -108,3 +108,21 @@ def test_span_preserves_filename():
     span = tracker.get_span(node)
 
     assert span.filename == source_file
+
+
+def test_ir_span_recovers_the_same_source_as_the_ast():
+    for source in (
+        "pl.pto_assert(n > 0)",
+        "pl.pto_assert(长度 > 0)",
+        "pl.pto_assert(n > 0 and\n    m < 1)",
+    ):
+        tracker = SpanTracker("test.py", source.splitlines(), line_offset=7, col_offset=4)
+        argument = ast.parse(source, mode="eval").body.args[0]
+        span = tracker.get_span(argument)
+        assert tracker.get_source_text(span) == ast.get_source_segment(source, argument)
+
+
+def test_source_text_ignores_unknown_or_foreign_ir_spans():
+    tracker = SpanTracker("test.py", ["value"])
+    assert tracker.get_source_text(ir.Span.unknown()) == ""
+    assert tracker.get_source_text(ir.Span("other.py", 1, 1, 1, 5)) == ""

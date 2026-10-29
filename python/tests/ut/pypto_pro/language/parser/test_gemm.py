@@ -23,6 +23,16 @@ from pypto_pro.language.parser.diagnostics import (
 import pytest
 
 
+def test_compile_time_flags_and_splits_accept_local_constant_expressions(tmp_path):
+    actual = parse_gemm(tmp_path, """
+        chunk = 32 * 2
+        initialize = not False
+        pl.gemm(c, a, b, l0a=la, l0b=lb, splitk=chunk, init=initialize)
+    """, l0k=64)
+    expected = parse_gemm(tmp_path, "pl.gemm(c, a, b, l0a=la, l0b=lb, splitk=64, init=True)", l0k=64)
+    assert re.findall(r"@([\w.]+)\(", actual) == re.findall(r"@([\w.]+)\(", expected)
+
+
 @pytest.mark.parametrize("operand", ["l0a=la.next(), l0b=lb", "l0a=la, l0b=lb.next()"])
 def test_compact_is_checked_through_cursor_expressions(tmp_path, operand):
     with pytest.raises(InvalidVal) as caught:
@@ -80,8 +90,12 @@ def test_split_n_rejects_dynamic_address_even_with_reused_mutex_id(tmp_path):
     ("pl.gemm(c, a, b, l0a=la, l0b=lb, typo=True)", {}, InvalidArgument, "unexpected keyword"),
     ("pl.gemm(c, a, b, la, lb)", {}, InvalidArgument, "positional"),
     ("pl.gemm(c, a, b, l0a=la, l0b=lb, init=extent)", {}, InvalidType, "compile-time bool"),
+    ("pl.gemm(c, a, b, l0a=la, l0b=lb, init=1)", {}, InvalidType, "compile-time bool"),
+    ("pl.gemm(c, a, b, l0a=la, l0b=lb, trans_a=extent)", {}, InvalidType, "compile-time bool"),
     ("pl.gemm(c, a, b, l0a=la, l0b=lb, splitk=extent)", {}, InvalidType, "compile-time int"),
-    ("pl.gemm(c, a, b, l0a=la, l0b=lb, splitk=0)", {}, InvalidVal, "positive"),
+    ("pl.gemm(c, a, b, l0a=la, l0b=lb, splitk=True)", {}, InvalidType, "compile-time int"),
+    ("pl.gemm(c, a, b, l0a=la, l0b=lb, splitn=1.5)", {}, InvalidType, "compile-time int"),
+    ("pl.gemm(c, a, b, l0a=la, l0b=lb, splitk=0)", {}, InvalidVal, "must be at least 1"),
     ("pl.gemm(c, a, b, l0a=la, l0b=lb, splitk=64)", {}, InvalidVal, "must equal the split size"),
     ("pl.gemm(c, a, b, l0a=la, l0b=lb, splitn=24)", {}, InvalidVal, "multiple of 16"),
     ("pl.gemm(c, a, b, l0a=la, l0b=lb, splitn=32, splitk=64)", {}, InvalidArgument, "mutually exclusive"),
@@ -107,6 +121,7 @@ def test_invalid_calls_report_the_gemm_location(tmp_path, call, kwargs, error, m
     ("typo=True", InvalidArgument, "typo"),
     ("init=extent", InvalidType, "extent"),
     ("splitk=extent", InvalidType, "extent"),
+    ("splitk=0", InvalidVal, "0"),
     ("splitn=24", InvalidVal, "24"),
     ("k=192", InvalidVal, "192"),
 ])

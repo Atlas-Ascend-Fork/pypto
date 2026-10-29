@@ -353,7 +353,7 @@ def test_reinterpret_shape_with_loop_var_rejected_in_loop():
             pl.load_tile(t2, a, [i, 0])
             pl.store_tile(out, t2, [i, 0])
 
-    with pytest.raises(InvalidShape, match="compile-time integers"):
+    with pytest.raises(InvalidShape, match="compile-time integer"):
         _parse_kernel(k)
 
 
@@ -364,7 +364,7 @@ def test_runtime_shape_is_rejected():
         t = pl.make_tile(tt, addr=0)
         pl.load(pl.reinterpret(t, shape=[x.shape[0], 16]), x, [0, 0])
 
-    with pytest.raises(InvalidShape, match="compile-time integers"):
+    with pytest.raises(InvalidShape, match="compile-time integer"):
         _parse_kernel(k)
 
 
@@ -438,7 +438,7 @@ def test_group_runtime_shape_rejected():
         c0 = g2.next()
         pl.load(c0, a, [0, 0])
 
-    with pytest.raises(InvalidShape, match="compile-time integers"):
+    with pytest.raises(InvalidShape, match="compile-time integer"):
         _parse_kernel(k)
 
 
@@ -490,3 +490,55 @@ def test_original_handle_unchanged_after_group_reinterpret():
     assert ir_str.count("block.make_mutex_tile") == 2
     assert ir_str.count("block.reinterpret") == 2
     assert ir_str.count("system.mutex_lock") >= 2
+
+
+@pytest.mark.parametrize("use_group", [False, True])
+def test_reinterpret_none_shape_does_not_count_as_an_override(use_group):
+    @pl.jit(auto_mutex=False)
+    def kernel(x: pl.Tensor[[16, 16], pl.DT_FP32]):
+        tt = pl.TileType(shape=[16, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        if use_group:
+            source = pl.make_tile_group(type=tt, addrs=0, depth=1)
+        else:
+            source = pl.make_tile(tt, addr=0)
+        pl.reinterpret(source, shape=None)
+
+    with pytest.raises(InvalidType, match="requires at least one of dtype/shape/layout"):
+        _parse_kernel(kernel)
+
+
+@pytest.mark.parametrize("use_group", [False, True])
+def test_reinterpret_dtype_change_requires_a_non_none_shape(use_group):
+    @pl.jit(auto_mutex=False)
+    def kernel(x: pl.Tensor[[16, 16], pl.DT_FP32]):
+        tt = pl.TileType(shape=[16, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        if use_group:
+            source = pl.make_tile_group(type=tt, addrs=0, depth=1)
+        else:
+            source = pl.make_tile(tt, addr=0)
+        pl.reinterpret(source, dtype=pl.DT_FP16, shape=None)
+
+    with pytest.raises(InvalidShape, match="'shape' is required when 'dtype' changes"):
+        _parse_kernel(kernel)
+
+
+def test_reinterpret_none_dtype_and_layout_keep_the_source_metadata():
+    @pl.jit(auto_mutex=False)
+    def kernel(x: pl.Tensor[[8, 32], pl.DT_FP32]):
+        tt = pl.TileType(shape=[16, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.ND)
+        source = pl.make_tile(tt, addr=0)
+        result = pl.reinterpret(source, shape=[8, 32], dtype=None, layout=None)
+        pl.load(result, x, [0, 0])
+
+    program = _parse_kernel(kernel)
+    function = program.get_function("kernel")
+    tiles = [
+        stmt.value for stmt in function.body.stmts
+        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call)
+        and stmt.value.name in ("block.make_mutex_tile", "block.reinterpret")
+    ]
+    assert [tile.name for tile in tiles] == ["block.make_mutex_tile", "block.reinterpret"]
+    assert tiles[1].type.dtype == pl.DT_FP32
+    assert list(tiles[1].type.shape) == [8, 32]
+    assert tiles[1].type.hardware_info.blayout == tiles[0].type.hardware_info.blayout
+    assert tiles[1].type.hardware_info.slayout == tiles[0].type.hardware_info.slayout

@@ -58,9 +58,7 @@ def spelled(op_name: str) -> str:
 def declared_api(op_name: str) -> Callable | None:
     """The ``@_api_decl`` declaration for *op_name*, or None when it has none.
 
-    Coverage follows the declaration files rather than ``_OP_REGISTRY``: ``exp``,
-    ``sqrt`` and ``gather`` are declared but dispatch through
-    ``_parse_block_default``.
+    Coverage follows the declaration files rather than ``_OP_REGISTRY``.
     """
     namespace, _, attribute = op_name.rpartition(".")
     declarations = _NAMESPACE_DECLARATIONS.get(namespace) if namespace else _TOP_LEVEL_DECLARATIONS
@@ -100,23 +98,24 @@ def _keyword_names(signature: inspect.Signature) -> list[str]:
 def check_declared_params(op_name: str, call: ast.Call, span: ir.Span, span_tracker: Any) -> None:
     """Bind the call's parameters to its declaration, before any argument is parsed.
 
-    The rule is the declaration's own binding; only the written form is supplied --
-    one placeholder per positional argument, the written name for each keyword --
-    so nothing is evaluated. Callers run this after the execution-domain check, which
+    The rule is the declaration's own binding; AST nodes supply the written
+    arguments without evaluating them. Callers run this after the execution-domain check, which
     reports a call from the wrong domain first, and after receiver-method routing,
-    whose names no declaration covers.
+    whose names no declaration covers. The binding is used only for validation.
     """
+    for argument in call.args:
+        if isinstance(argument, ast.Starred):
+            raise InvalidArgument(
+                f"{spelled(op_name)}() does not support argument unpacking", span=span_tracker.get_span(argument),
+            )
+    if any(keyword.arg is None for keyword in call.keywords):
+        raise InvalidArgument(f"{spelled(op_name)}() does not support argument unpacking", span=span)
     declared = declared_api(op_name)
     if declared is None:
         return
-    if any(isinstance(argument, ast.Starred) for argument in call.args):
-        return
-    if any(keyword.arg is None for keyword in call.keywords):
-        return
     try:
-        # None stands in for every argument: binding counts positions and matches
-        # names, and never looks at what it was handed.
-        declared.bind_declared(*[None] * len(call.args), **{kw.arg: None for kw in call.keywords})
+        # Binding AST nodes checks only names/counts; it never evaluates them.
+        declared.bind_declared(*call.args, **{kw.arg: kw.value for kw in call.keywords})
     except TypeError as error:
         _reject_declared_params(op_name, declared, call, span, span_tracker, error)
 
@@ -129,10 +128,10 @@ def _reject_declared_params(
     span_tracker: Any,
     error: TypeError,
 ) -> None:
-    """Re-raise what the binding rejected, marked at the argument that caused it.
+    """Report a declaration binding error at the argument that caused it.
 
-    The reason is quoted as the binding worded it; where to point is derived from
-    the declared parameters, read only on the failing call.
+    The declaration's binding checks the call; this function only locates the
+    error and supplies a hint. Python compilation rejects repeated keywords.
     """
     signature = inspect.signature(declared)
     parameters = signature.parameters
@@ -217,9 +216,9 @@ class _BoolScalar:
 
 
 # What each name written in a declaration accepts, as classes to match a value's
-# kind against. A sequence, a scalar and an offset each have two shapes: a positional
-# argument parses into an IR expression, while the same literal written as a keyword
-# stays a Python value, because keywords take another route through the parser.
+# kind against. Explicit scalar and sequence arguments arrive as IR expressions,
+# regardless of whether they were written positionally or by keyword. Python
+# representations are also accepted for defaults and direct builder calls.
 _LEAF_TYPES: dict[str, tuple[type, ...]] = {
     "Tile": (ir.TileType,),
     "Tensor": (ir.TensorType,),
@@ -384,9 +383,9 @@ def describe_value(value: Any) -> str:
     return type(value).__name__
 
 
-def _written_as(call: ast.Call, name: str, signature: inspect.Signature) -> str | int:
-    """Where *name* was written: its keyword, or the index of its positional slot."""
-    if any(keyword.arg == name for keyword in call.keywords):
+def _written_as(kwargs: dict, name: str, signature: inspect.Signature) -> str | int:
+    """Locate an argument using the parsed call's keyword names."""
+    if name in kwargs:
         return name
     positional = [
         parameter_name
@@ -398,13 +397,12 @@ def _written_as(call: ast.Call, name: str, signature: inspect.Signature) -> str 
 
 def check_declared_types(
     op_name: str,
-    call: ast.Call,
     args: list,
     kwargs: dict,
     span: ir.Span,
-    span_tracker: Any,
+    argument_spans: dict,
 ) -> None:
-    """Check every parsed argument of *call* against the role its declaration names."""
+    """Check parsed values without changing the arguments passed to the builder."""
     declared = declared_api(op_name)
     if declared is None:
         return
@@ -422,8 +420,8 @@ def check_declared_types(
         allowed = accepted_types(str(parameter.annotation), declared)
         if allowed is None or value_kind(value) in allowed:
             continue
-        marked = _written_as(call, name, signature)
+        marked = _written_as(kwargs, name, signature)
         raise InvalidType(
             f"{spelled(op_name)}: {name} expects {parameter.annotation}, got {describe_value(value)}",
-            span=span_tracker.call_argument_span(call, marked, span),
+            span=argument_spans.get(marked, span),
         )

@@ -17,9 +17,9 @@ from pypto_pro import ir
 from pypto_pro._errors import (
     CapacityUnknown,
     InvalidOperation,
-    InvalidShape,
     InvalidTile,
     InvalidType,
+    InvalidVal,
     MutexMismatch,
     NotSupported,
     OutOfRange,
@@ -151,7 +151,10 @@ def test_nested_builder_error_keeps_the_inner_call_location():
         assert "pl.getval(packed, 0)" in source.readlines()[location["line"] - 1]
 
 
-@pytest.mark.parametrize("shape,error", [([0, 16], InvalidShape), ([17, 16], OutOfRange)])
+@pytest.mark.parametrize("shape,error", [
+    ([-1, 16], InvalidVal), ([16, -1], InvalidVal),
+    ([17, 16], InvalidVal), ([16, 17], InvalidVal),
+])
 def test_validshape_error_keeps_the_dsl_call_location(shape, error):
     @pl.jit(arch="3510")
     def invalid_validshape(x: pl.Tensor[[1], pl.DT_FP16]):
@@ -165,6 +168,32 @@ def test_validshape_error_keeps_the_dsl_call_location(shape, error):
     assert location["filename"] == __file__
     with open(__file__, encoding="utf-8") as source:
         assert "pl.set_validshape(tile, shape=shape)" in source.readlines()[location["line"] - 1]
+
+
+@pytest.mark.parametrize("cols,error", [(-1, InvalidVal), (17, InvalidVal)])
+def test_validshape_checks_static_dimension_alongside_dynamic_dimension(cols, error):
+    @pl.jit(arch="3510")
+    def invalid_validshape(x: pl.Tensor[[1], pl.DT_FP16], rows: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[16, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            pl.set_validshape(tile, shape=[rows, cols])
+
+    with pytest.raises(error):
+        invalid_validshape.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("shape", [[0, 0], [0, 16], [16, 0], [16, 16]])
+def test_validshape_accepts_zero_and_full_tile_dimensions(shape):
+    @pl.jit(arch="3510", auto_mutex=False)
+    def valid_validshape(x: pl.Tensor[[1], pl.DT_FP16]):
+        tile_type = pl.TileType(shape=[16, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            pl.set_validshape(tile, shape=shape)
+
+    program, _ = valid_validshape.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert "block.set_validshape" in str(program)
 
 
 def _manual_alias_kernel(addrs, ids, auto_mutex=True, include_auto=False):

@@ -199,11 +199,13 @@ def test_undefined_variable_still_raises():
         func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
-def test_unsupported_closure_type_raises():
-    """Unsupported closure variable type raises PyptoProError."""
-    bad_value = "not_a_number"
-
-    with pytest.raises(InvalidType, match="Unsupported closure variable type: str"):
+@pytest.mark.parametrize("bad_value,message", [
+    ("not_a_number", r"pl\.axpy: alpha expects Union\[int, float\], got str"),
+    ({"value": 1}, "Unsupported closure variable type: dict"),
+])
+def test_invalid_closure_operand_raises(bad_value, message):
+    """Reject unsupported closure types and strings used as numeric operands."""
+    with pytest.raises(InvalidType, match=message):
 
         @pl.jit(auto_mutex=False)
         def func(x: pl.Tensor[[1, 64], pl.DT_FP32]):

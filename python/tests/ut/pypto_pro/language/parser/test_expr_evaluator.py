@@ -12,8 +12,8 @@
 
 import ast
 
-from pypto_pro import DataType
-from pypto_pro._errors import InvalidVal, RuntimeFailure
+from pypto_pro import DataType, ir
+from pypto_pro._errors import InvalidType, InvalidVal, RuntimeFailure
 from pypto_pro.language.parser._expr_evaluator import ExprEvaluator
 import pytest
 
@@ -101,3 +101,19 @@ def test_try_eval_expr(closure_vars, expr, success, expected):
     actual_success, value = ev.try_eval_expr(_parse_expr(expr))
     assert actual_success is success
     assert value == expected
+
+
+@pytest.mark.parametrize("value,expected", [(None, None), ([None, 1], (None, 1)), ((2, None), (2, None))])
+def test_python_value_to_ir_preserves_none(value, expected):
+    ev = ExprEvaluator(closure_vars={})
+    expr = ev.python_value_to_ir(value, ir.Span.unknown())
+    known, result = ev.ir_to_python_value(expr)
+    assert known
+    assert result == expected
+
+
+@pytest.mark.parametrize("value", [["auto", 3], ("auto", 3)])
+def test_python_value_to_ir_rejects_non_ir_sequence_elements(value):
+    ev = ExprEvaluator(closure_vars={})
+    with pytest.raises(InvalidType, match="Cannot convert .*str.* to IR expression"):
+        ev.python_value_to_ir(value, ir.Span.unknown())

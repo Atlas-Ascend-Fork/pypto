@@ -231,7 +231,7 @@ def test_addr_none_is_rejected():
         t = pl.make_tile(tt, addr=None)
         pl.load(t, x, [0, 0])
 
-    with pytest.raises(InvalidType, match="'addr' must be a compile-time integer"):
+    with pytest.raises(InvalidType, match="pl.make_tile: addr expects int, got NoneType"):
         _parse_kernel(k)
 
 
@@ -255,7 +255,7 @@ def test_float_addr_is_rejected():
         t = pl.make_tile(tt, addr=0.0)
         pl.load(t, x, [0, 0])
 
-    with pytest.raises(InvalidType, match="'addr' must be a compile-time integer"):
+    with pytest.raises(InvalidType, match="pl.make_tile: addr expects int, got a fp32 scalar"):
         _parse_kernel(k)
 
 
@@ -344,7 +344,7 @@ def test_a_shape_in_place_of_a_tile_type_is_rejected():
 
     with pytest.raises(InvalidType) as excinfo:
         _parse_kernel(k)
-    assert "takes a pl.TileType as its first argument" in str(excinfo.value)
+    assert "pl.make_tile: tile_type expects TileType, got TupleType" in str(excinfo.value)
     # the offending expression, quoted from the source
     assert "[64]" in str(excinfo.value)
 
@@ -427,7 +427,7 @@ def test_a_non_tile_type_first_argument_is_rejected():
         t = pl.make_tile(0x40, addr=0)
         pl.load(t, x, [0])
 
-    with pytest.raises(InvalidType, match="takes a pl.TileType as its first argument"):
+    with pytest.raises(InvalidType, match="pl.make_tile: tile_type expects TileType, got a int64 scalar"):
         _parse_kernel(k)
 
 

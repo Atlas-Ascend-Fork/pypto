@@ -18,7 +18,7 @@ from pypto.pypto_impl import ir
 from pypto.pypto_impl.ir import DataType
 from pypto_pro.ir import op as ir_op
 from pypto_pro.ir._operators import make_binary as _make_binary
-from pypto_pro.ir._utils import _const_int_value, _normalize_expr
+from pypto_pro.ir._utils import _const_int_value, _normalize_expr, _to_make_tuple
 
 from ..._errors import (
     InvalidFormat,
@@ -542,6 +542,13 @@ class ExpressionParserMixin:
                 parser_retry=True,
             )
 
+        # Non-IR values use parse_expression's compile-time Python fallback.
+        if not isinstance(left, ir.Expr) or not isinstance(right, ir.Expr):
+            raise NotSupported(
+                "Comparison of Python values requires compile-time evaluation",
+                span=span, parser_retry=True,
+            )
+
         # Comparisons also promote mixed int/float operands to float via make_binary.
         op_map = {
             ast.Eq: "eq",
@@ -813,7 +820,7 @@ class ExpressionParserMixin:
         """
         span = self.span_tracker.get_span(list_node)
         elements = [self.parse_expression(elt) for elt in list_node.elts]
-        return ir.MakeTuple(elements, span)
+        return _to_make_tuple(elements, span)
 
     def parse_tuple_literal(self, tuple_node: ast.Tuple) -> ir.MakeTuple:
         """Parse tuple literal like (x, y, z).
@@ -826,7 +833,7 @@ class ExpressionParserMixin:
         """
         span = self.span_tracker.get_span(tuple_node)
         elements = [self.parse_expression(elt) for elt in tuple_node.elts]
-        return ir.MakeTuple(elements, span)
+        return _to_make_tuple(elements, span)
 
     def parse_subscript(self, subscript: ast.Subscript) -> ir.Expr:
         span = self.span_tracker.get_span(subscript)

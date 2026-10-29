@@ -180,30 +180,26 @@ def test_tile_ok_no_false_positive():
 def tile_dim_oob_kernel(
     x: pl.Tensor[[TILE_M * 2, TILE_N], pl.DT_FP16],
     z: pl.Tensor[[TILE_M * 2, TILE_N], pl.DT_FP16],
+    valid_rows: pl.DT_INT32,
 ):
     tt = pl.TileType(shape=[TILE_M, TILE_N], dtype=pl.DT_FP16,
                      target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
     a = pl.make_tile(tt, addr=0x0000)
     with pl.section_vector():
-        # ===== 错误注入点：valid_shape 行数 80 > 声明行数 64 →
-        # 编译期静态检查（set_validshape 处）直接报错 =====
-        pl.set_validshape(a, [TILE_M + 16, TILE_N // 2])  # [80, 32]
+        # 运行时传入 valid_rows=80，超过声明行数 64，由 sanitizer 回放检出。
+        pl.set_validshape(a, [valid_rows, TILE_N // 2])
         pl.load(a, x, [0, 0])
         pl.store(z, a, [0, 0])
 
 
 @pytest.mark.soc("950")
 def test_tile_dim_oob_detected():
-    """负样本：set_validshape 常量窗口超出 TileType 声明维度应由回放检出。
-
-    （原为编译期 CHECK 报错；统一"全部走记录回放"后常量窗口也发
-    tile 记录，由回放判定——含本用例的静态超限。）
-    """
+    """负样本：运行时有效窗口超出 TileType 声明维度应由回放检出。"""
     _require_a5(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M * 2, TILE_N])
     z = torch.zeros([TILE_M * 2, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
-        tile_dim_oob_kernel(x, z)
+        tile_dim_oob_kernel(x, z, TILE_M + 16)
         torch.npu.synchronize()
     assert any("TILE_OUT_OF_BOUNDS" in str(f) for f in exc_info.value.findings)
     logging.info("test_tile_dim_oob_detected OK")

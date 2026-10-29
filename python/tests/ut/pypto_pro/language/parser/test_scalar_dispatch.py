@@ -15,6 +15,7 @@ when called with scalar arguments.
 """
 
 import pypto_pro.language as pl
+from pypto_pro.runtime.platform import NpuArch
 import pytest
 
 from pypto.pypto_impl import ir
@@ -56,6 +57,58 @@ def test_simd_element_reads_keep_scalar_promotion(dtype, expected, use_tile):
     ]
     assert len(stores) == 1
     assert isinstance(stores[0].type, ir.NoneType)
+
+
+@pytest.mark.soc("950")
+def test_setval_literal_forms_keep_the_same_ir_dtype_and_codegen():
+    @pl.jit(auto_mutex=False)
+    def kernel(out: pl.Tensor[[1, 32], pl.DT_INT8]):
+        with pl.section_vector():
+            tile_type = pl.TileType(shape=[1, 32], dtype=pl.DT_INT8, target_memory=pl.MemorySpace.Vec)
+            tile = pl.make_tile(tile_type, addr=0)
+            pl.setval(tile, 0, 1)
+            pl.setval(tile, offset=1, value=1)
+            pl.store(out, tile, [0, 0])
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function = program.get_function("kernel")
+    stores = [
+        stmt.expr for stmt in function.body.stmts
+        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == "block.setval"
+    ]
+    assert len(stores) == 2
+    assert all(isinstance(store.args[2], ir.ConstInt) for store in stores)
+    assert all(store.args[2].type.dtype == pl.DT_INT64 for store in stores)
+
+    from pypto_pro.runtime.jit import _assemble_cv_source, _parse_and_codegen_targets
+
+    cube, vector = _parse_and_codegen_targets(kernel.to_kernel_def(), NpuArch.DAV_3510, "")
+    source = _assemble_cv_source(cube, vector).content
+    setval_lines = [line.strip() for line in source.splitlines() if ".SetValue(" in line]
+    assert len(setval_lines) == 2
+    values = [line.rsplit(",", 1)[1].removesuffix(");").strip() for line in setval_lines]
+    assert values[0] == values[1]
+
+
+def test_expands_literal_forms_keep_the_same_ir_dtype():
+    @pl.jit(auto_mutex=False)
+    def kernel(out: pl.Tensor[[1, 32], pl.DT_INT32]):
+        with pl.section_vector():
+            tile_type = pl.TileType(shape=[1, 32], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
+            tile = pl.make_tile(tile_type, addr=0)
+            pl.expands(tile, 3)
+            pl.expands(tile, scalar=3)
+            pl.store(out, tile, [0, 0])
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function = program.get_function("kernel")
+    expands = [
+        stmt.expr for stmt in function.body.stmts
+        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == "block.expands"
+    ]
+    assert len(expands) == 2
+    assert all(isinstance(call.args[1], ir.ConstInt) for call in expands)
+    assert expands[0].args[1].type.dtype == expands[1].args[1].type.dtype == pl.DT_INT64
 
 
 def test_simd_integer_reads_merge_as_int64_across_branches():

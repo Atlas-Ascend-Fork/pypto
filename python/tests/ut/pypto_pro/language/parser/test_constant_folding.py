@@ -13,7 +13,7 @@
 
 import math
 
-from pypto_pro._errors import InvalidVal, RuntimeFailure
+from pypto_pro._errors import InvalidType, InvalidVal, RuntimeFailure
 import pypto_pro.language as pl
 import pytest
 
@@ -41,6 +41,67 @@ def _assert_constant(expr, expected, dtype):
         assert expr.value == pytest.approx(expected)
     else:
         assert expr.value == expected
+
+
+def test_pl_const_uses_explicit_dtype_before_literal_range_checks():
+    fp64 = ir.DataType.FP64
+
+    @pl.jit(auto_mutex=False)
+    def typed_literals(_jit_entry: pl.DT_INT64):
+        large_float = pl.const(1e200, fp64)
+        negative_float = pl.const(-1e200, fp64)
+        large_integer = pl.const(1000000000000000000000000000000, pl.DT_FP32)
+        negative_integer = pl.const(-1000000000000000000000000000000, pl.DT_FP32)
+        negative_bool = pl.const(-True, pl.DT_INT32)
+
+    program, _ = typed_literals.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    values = _assignments(program.get_function(typed_literals.__name__))
+    _assert_constant(values["large_float"], 1e200, fp64)
+    _assert_constant(values["negative_float"], -1e200, fp64)
+    _assert_constant(values["large_integer"], 1e30, ir.DataType.FP32)
+    _assert_constant(values["negative_integer"], -1e30, ir.DataType.FP32)
+    _assert_constant(values["negative_bool"], -1, ir.DataType.INT32)
+
+
+def test_pl_const_rejects_a_folded_constant_expression():
+    @pl.jit(auto_mutex=False)
+    def folded_const(_jit_entry: pl.DT_INT64):
+        base = 5
+        typed = pl.const(base + 2, pl.DT_INT32)
+
+    with pytest.raises(InvalidType, match="numeric literal"):
+        folded_const.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_pl_const_rejects_a_runtime_expression():
+    @pl.jit(auto_mutex=False)
+    def runtime_const(value: pl.DT_INT64):
+        typed = pl.const(value, pl.DT_INT32)
+
+    with pytest.raises(InvalidType, match="numeric literal"):
+        runtime_const.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_tile_type_shapes_do_not_emit_tuple_anchors():
+    @pl.jit(auto_mutex=False)
+    def tile_shapes(_jit_entry: pl.DT_INT64):
+        descriptor = pl.TileType(shape=[8, 16], valid_shape=(4, 16), dtype=pl.DT_FP32)
+        tile = pl.make_tile(descriptor, addr=0)
+
+    program, _ = tile_shapes.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    values = _assignments(program.get_function(tile_shapes.__name__))
+    assert list(values["tile"].type.shape) == [8, 16]
+    assert not any(name.startswith("_tuple_anchor_") for name in values)
+
+
+def test_runtime_tuple_still_emits_an_anchor():
+    @pl.jit(auto_mutex=False)
+    def tuple_index(index: pl.DT_INT64):
+        value = (11, 22)[index]
+
+    program, _ = tuple_index.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    values = _assignments(program.get_function(tuple_index.__name__))
+    assert any(name.startswith("_tuple_anchor_") for name in values)
 
 
 def test_all_binary_and_comparison_operators_fold():

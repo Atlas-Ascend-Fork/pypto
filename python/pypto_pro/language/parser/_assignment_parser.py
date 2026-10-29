@@ -24,6 +24,7 @@ from ..._errors import (
     InvalidVal,
     NotSupported,
     OutOfRange,
+    current_span,
 )
 from ._tuple_type_registry import TupleTypeKind
 
@@ -197,9 +198,21 @@ class AssignmentParserMixin:
             dst_names = [target.elts[0].id, target.elts[1].id]
             dst_targets = [target.elts[0], target.elts[1]]
 
-        # Parse kwargs once; dtype is taken from here (explicit) or inferred
-        # from source args below.
-        parsed_kwargs = self.parse_op_kwargs(call)
+        # Parse sources before declaring destinations, so self-references still
+        # read the previous register. VF keyword attributes are compile-time metadata.
+        parsed_src_args = [self.parse_expression(src_arg) for src_arg in call.args]
+        parsed_kwargs = {keyword.arg: self.parse_expression(keyword.value) for keyword in call.keywords}
+        argument_spans = self.span_tracker.argument_spans(call)
+        self._check_declared_types(
+            f"vf.{vf_op_name}", parsed_src_args, parsed_kwargs, span, argument_spans,
+        )
+        with current_span(self.span_tracker.get_span(call), argument_spans):
+            parsed_kwargs = {
+                key: self.require_const_value(
+                    value, key, expects="attribute", hint="VF attributes must be known at compile time.",
+                )
+                for key, value in parsed_kwargs.items()
+            }
         dtype_val = parsed_kwargs.pop("dtype", None)
 
         # Detect MaskReg data source — reused both for the type-changing-op
@@ -226,12 +239,7 @@ class AssignmentParserMixin:
                 parser_retry=True,
             )
 
-        # Step 1: Parse source args FIRST, before any dst manipulation.
-        # This is critical for self-referential ops (e.g. max0 = vf.max(max0, src, preg))
-        # where the src must resolve to the OLD value, not a newly created register.
-        # Also use this pass to infer dtype if not already determined.
-        parsed_src_args = [self.parse_expression(src_arg) for src_arg in call.args]
-
+        # Step 1: Infer dtype from the already parsed source registers.
         src_dtype = self._infer_src_dtype(parsed_src_args)
 
         if dtype_val is None:

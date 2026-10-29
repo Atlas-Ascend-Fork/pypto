@@ -14,7 +14,7 @@ from __future__ import annotations
 import ast
 
 from pypto.pypto_impl import ir
-from pypto_pro.ir.op._op_registry import op_impl
+from pypto_pro.ir.op._op_registry import op_impl_ast
 
 from ..._errors import InvalidArgument, InvalidOperation, InvalidType, InvalidVal, NotSupported
 
@@ -143,7 +143,9 @@ class StructParserMixin:
         )
         return self.register_struct_type(call, struct_name, field_names)
 
-    @op_impl("make_tuple")
+    # Keep AST registration: keyword names are user fields, including "span" and
+    # "self", so framework parameters must not be injected into those fields.
+    @op_impl_ast("make_tuple")
     def _parse_pl_make_tuple_expr(self, call: ast.Call) -> ir.Expr:
         span = self.span_tracker.get_span(call)
         if call.args:
@@ -165,7 +167,9 @@ class StructParserMixin:
             elements.append(self.parse_expression(kw.value, nested=True))
         return self.make_named_tuple(elements, field_names, span)
 
-    @op_impl("struct")
+    # Keep AST registration to preserve the string-literal name check and user
+    # fields such as "span", which must not collide with framework parameters.
+    @op_impl_ast("struct")
     def _parse_pl_struct_expr(self, call: ast.Call) -> ir.Expr:
         span = self.span_tracker.get_span(call)
         if len(call.args) != 1 or not isinstance(call.args[0], ast.Constant) or not isinstance(call.args[0].value, str):
@@ -184,7 +188,9 @@ class StructParserMixin:
         field_names, elements = self._parse_struct_fields(call.keywords, "pl.struct()", span)
         return self._make_struct_create(elements, struct_name, field_names, span)
 
-    @op_impl("struct_array")
+    # Keep AST registration to check size/name literals before parsing fields;
+    # user field names such as "span" must remain independent of framework parameters.
+    @op_impl_ast("struct_array")
     def _parse_struct_array_expr(self, call: ast.Call) -> ir.Expr:
         """Handle ``var = pl.struct_array(N, "StructName", field1=val1, ...)``.
 

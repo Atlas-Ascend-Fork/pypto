@@ -256,7 +256,7 @@ def test_auto_cannot_be_mixed_with_manual_ids():
         tt = pl.TileType(shape=[1, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         pl.make_tile_group(type=tt, addrs=0, mutex_ids=["auto", 3])
 
-    with pytest.raises(InvalidType, match="mutex_ids must be ints"):
+    with pytest.raises(InvalidType, match="Cannot convert .*str.* to IR expression"):
         _kernel_def(k).parse_target_program(ir.SectionKind.Vector)
 
 

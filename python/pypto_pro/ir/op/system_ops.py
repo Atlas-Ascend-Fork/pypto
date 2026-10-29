@@ -16,8 +16,6 @@ System operations handle hardware synchronization primitives:
 
 from __future__ import annotations
 
-import ast
-
 from pypto.pypto_impl import ir as _ir_core
 from pypto.pypto_impl.ir import (
     CacheLine,
@@ -30,9 +28,9 @@ from pypto.pypto_impl.ir import (
     SyncCoreType,
 )
 
-from ..._errors import InvalidArgument, InvalidOperation, InvalidType, NotSupported
-from .._utils import _get_span_or_capture, _is_int, _normalize_expr, _to_make_tuple
-from ._op_registry import OpSpec, op_impl, register_table
+from ..._errors import InvalidArgument, InvalidOperation, InvalidType, NotSupported, current_span
+from .._utils import _get_span_or_capture, require_int
+from ._op_registry import op_impl
 
 # Hardware resource ranges, inclusive on both ends. These are the single definition of each limit;
 # the pipeline scanner and the make_tile_group parser import them rather than restating them.
@@ -71,21 +69,13 @@ _A5_AIV_SYNC_WAIT_PIPES = {
 }
 
 
-def _is_integer_scalar_expr(value: Expr) -> bool:
-    value_type = getattr(value, "type", None)
-    return isinstance(value_type, _ir_core.ScalarType) and value_type.dtype.is_int()
-
-
-def _normalize_integer_id_expr(value: int | Expr, span: Span, *, name: str, max_id: int) -> Expr:
-    """Normalize an integer ID to an IR operand and validate statically known values."""
-    if not isinstance(value, Expr) and not _is_int(value):
-        raise InvalidType(f"{name} must be a Python int or an integer scalar expression", span=span)
-    expr = _normalize_expr(value, span)
-    if not _is_integer_scalar_expr(expr):
-        raise InvalidType(f"{name} must be an integer scalar expression", span=span)
-    if isinstance(expr, _ir_core.ConstInt):
-        _check_id_range(expr.value, max_id, name, span=span)
-    return expr
+def _validate_integer_id(value: Expr, span: Span, *, name: str, max_id: int) -> int | None:
+    """Validate an IR integer ID and its statically known bounds."""
+    with current_span(span):
+        constant = require_int(value, subject=name)
+        if constant is not None:
+            _check_id_range(constant, max_id, name, span=span)
+    return constant
 
 
 def _validate_concrete_pipe(pipe: PipeType, name: str, span: Span | None = None) -> None:
@@ -131,7 +121,7 @@ def _create_sync_op(
     *,
     set_pipe: PipeType,
     wait_pipe: PipeType,
-    event_id: int | Expr,
+    event_id: Expr,
     span: Span | None,
 ) -> Call:
     """Create a flag-based synchronization operation.
@@ -145,10 +135,10 @@ def _create_sync_op(
     """
     actual_span = _get_span_or_capture(span, frame_offset=2)
     kwargs = {"set_pipe": set_pipe, "wait_pipe": wait_pipe}
-    event_id_expr = _normalize_integer_id_expr(
+    _validate_integer_id(
         event_id, actual_span, name="event_id", max_id=MAX_FLAG_EVENT_ID
     )
-    return _ir_core.create_op_call(op_name + "_dyn", [event_id_expr], kwargs, actual_span)
+    return _ir_core.create_op_call(op_name + "_dyn", [event_id], kwargs, actual_span)
 
 
 def _create_barrier_op(op_name: str, *, span: Span | None) -> Call:
@@ -166,7 +156,7 @@ def sync_src(
     *,
     set_pipe: PipeType,
     wait_pipe: PipeType,
-    event_id: int | Expr,
+    event_id: Expr,
     span: Span | None = None,
 ) -> Call:
     """Send a synchronization signal (Set Flag).
@@ -187,7 +177,7 @@ def sync_dst(
     *,
     set_pipe: PipeType,
     wait_pipe: PipeType,
-    event_id: int | Expr,
+    event_id: Expr,
     span: Span | None = None,
 ) -> Call:
     """Wait for a synchronization signal (Wait Flag).
@@ -237,7 +227,7 @@ def bar_all(*, span: Span | None = None) -> Call:
 def set_cross_core(
     *,
     pipe: PipeType,
-    event_id: int | Expr,
+    event_id: Expr,
     sync_mode: CrossCoreSyncMode = CrossCoreSyncMode.INTRA_BLOCK,
     span: Span | None = None,
 ) -> Call:
@@ -245,7 +235,7 @@ def set_cross_core(
 
     Args:
         pipe: Pipe that sets the flag
-        event_id: Event identifier (int for static, Expr for dynamic)
+        event_id: Integer IR constant for static IDs, or an IR expression for dynamic IDs
         sync_mode: Cross-core sync mode. ``pl.CrossCoreSyncMode.INTRA_BLOCK`` (default, mode 2)
             for AIC↔AIV both subcores, ``UNICAST_BLOCK`` (mode 3) for AIC↔AIV one subcore,
             ``INTER_BLOCK`` (mode 0) for inter-core, ``INTER_SUBBLOCK`` (mode 1) for AIV-to-AIV.
@@ -266,19 +256,19 @@ def set_cross_core(
             span=actual_span,
         )
 
-    if isinstance(event_id, Expr):
-        return _ir_core.create_op_call(
-            "system.set_cross_core_dyn", [event_id], {"pipe": pipe, "sync_mode": sync_mode}, actual_span
-        )
-    _check_id_range(event_id, MAX_EVENT_ID, "event_id")
-    kwargs = {"pipe": pipe, "event_id": event_id, "sync_mode": sync_mode}
-    return _ir_core.create_op_call("system.set_cross_core", [], kwargs, actual_span)
+    constant = _validate_integer_id(event_id, actual_span, name="event_id", max_id=MAX_EVENT_ID)
+    if constant is not None:
+        kwargs = {"pipe": pipe, "event_id": constant, "sync_mode": sync_mode}
+        return _ir_core.create_op_call("system.set_cross_core", [], kwargs, actual_span)
+    return _ir_core.create_op_call(
+        "system.set_cross_core_dyn", [event_id], {"pipe": pipe, "sync_mode": sync_mode}, actual_span,
+    )
 
 
 def wait_cross_core(
     *,
     pipe: PipeType,
-    event_id: int | Expr,
+    event_id: Expr,
     sync_mode: CrossCoreSyncMode = CrossCoreSyncMode.INTRA_BLOCK,
     span: Span | None = None,
 ) -> Call:
@@ -286,7 +276,7 @@ def wait_cross_core(
 
     Args:
         pipe: Pipe that waits the flag
-        event_id: Event identifier (int for static, Expr for dynamic)
+        event_id: Integer IR constant for static IDs, or an IR expression for dynamic IDs
         sync_mode: Cross-core sync mode. Prefer the same mode as the paired set_cross_core;
             ensure the participating cores and event IDs match.
             ``pl.CrossCoreSyncMode.INTRA_BLOCK`` (default, mode 2) waits both VEC subcores,
@@ -300,16 +290,13 @@ def wait_cross_core(
     actual_span = _get_span_or_capture(span)
     _validate_concrete_pipe(pipe, "pipe")
 
-    if isinstance(event_id, Expr):
-        return _ir_core.create_op_call(
-            "system.wait_cross_core_dyn",
-            [event_id],
-            {"pipe": pipe, "sync_mode": sync_mode},
-            actual_span,
-        )
-    _check_id_range(event_id, MAX_EVENT_ID, "event_id")
-    kwargs = {"pipe": pipe, "event_id": event_id, "sync_mode": sync_mode}
-    return _ir_core.create_op_call("system.wait_cross_core", [], kwargs, actual_span)
+    constant = _validate_integer_id(event_id, actual_span, name="event_id", max_id=MAX_EVENT_ID)
+    if constant is not None:
+        kwargs = {"pipe": pipe, "event_id": constant, "sync_mode": sync_mode}
+        return _ir_core.create_op_call("system.wait_cross_core", [], kwargs, actual_span)
+    return _ir_core.create_op_call(
+        "system.wait_cross_core_dyn", [event_id], {"pipe": pipe, "sync_mode": sync_mode}, actual_span,
+    )
 
 
 def sync_all(
@@ -335,7 +322,7 @@ def sync_all(
 
 def dcci(
     target: Expr,
-    offset: int | Expr | tuple[int | Expr, ...] | list[int | Expr] | None = None,
+    offset: Expr | None = None,
     *,
     cache_line: CacheLine = CacheLine.ENTIRE_DATA_CACHE,
     dst: DcciDst = DcciDst.AUTO,
@@ -358,13 +345,8 @@ def dcci(
     """
     actual_span = _get_span_or_capture(span)
     args: list[Expr] = [target]
-    if offset is not None:
-        if isinstance(offset, (list, tuple)):
-            args.append(_to_make_tuple(offset, actual_span))
-        elif isinstance(offset, (int, Expr)):
-            args.append(_normalize_expr(offset, actual_span))
-        else:
-            raise InvalidType("dcci offset must be an int, Expr, list, tuple, or None")
+    if offset is not None and not isinstance(getattr(offset, "type", None), _ir_core.NoneType):
+        args.append(offset)
     kwargs = {"cache_line": cache_line, "dst": dst}
     return _ir_core.create_op_call("system.dcci", args, kwargs, actual_span)
 
@@ -380,20 +362,20 @@ def dcci(
 
 def _create_mutex_op(
     op_name: str,
-    mutex_id: int | Expr,
+    mutex_id: Expr,
     *,
     pipe: PipeType,
     actual_span: Span,
 ) -> Call:
     """Create one user-requested manual mutex operation."""
     _validate_concrete_pipe(pipe, "pipe", actual_span)
-    mutex_id_expr = _normalize_integer_id_expr(
+    _validate_integer_id(
         mutex_id, actual_span, name="mutex_id", max_id=MAX_MUTEX_ID
     )
 
     return _ir_core.create_op_call(
         f"{op_name}_dyn",
-        [mutex_id_expr],
+        [mutex_id],
         {"pipe": pipe},
         actual_span,
     )
@@ -404,7 +386,7 @@ def _mutex_op(
     op_name: str,
     *,
     pipe: PipeType,
-    mutex_id: int | Expr,
+    mutex_id: Expr,
     span: Span | None = None,
 ) -> Call:
     """Shared wrapper for mutex_lock / mutex_unlock (handles span capture)."""
@@ -420,7 +402,7 @@ def _mutex_op(
 def mutex_lock(
     *,
     pipe: PipeType,
-    mutex_id: int | Expr,
+    mutex_id: Expr,
     span: Span | None = None,
 ) -> Call:
     """Acquire a Mutex buffer-id token on ``pipe`` (A5).
@@ -447,7 +429,7 @@ def mutex_lock(
 def mutex_unlock(
     *,
     pipe: PipeType,
-    mutex_id: int | Expr,
+    mutex_id: Expr,
     span: Span | None = None,
 ) -> Call:
     """Release a previously acquired Mutex buffer-id token on ``pipe`` (A5).
@@ -492,73 +474,118 @@ def set_mm_layout_transform(*, enabled: bool, span: Span | None = None) -> Call:
 
 
 # ---------------------------------------------------------------------------
-# Declarative op registration + special handlers
+# Value-facing implementations
 # ---------------------------------------------------------------------------
 
-register_table(
-    {
-        # kwargs only
-        "system.set_cross_core": OpSpec(builder=set_cross_core, parse_args=False),
-        "system.wait_cross_core": OpSpec(builder=wait_cross_core, parse_args=False),
-        "system.mutex_lock": OpSpec(builder=mutex_lock, parse_args=False),
-        "system.mutex_unlock": OpSpec(builder=mutex_unlock, parse_args=False),
-        # no args, no kwargs
-        "system.bar_m": OpSpec(builder=bar_m, parse_args=False, parse_kwargs=False),
-        "system.bar_mte1": OpSpec(builder=bar_mte1, parse_args=False, parse_kwargs=False),
-        "system.bar_mte2": OpSpec(builder=bar_mte2, parse_args=False, parse_kwargs=False),
-        "system.bar_mte3": OpSpec(builder=bar_mte3, parse_args=False, parse_kwargs=False),
-        "system.bar_fix": OpSpec(builder=bar_fix, parse_args=False, parse_kwargs=False),
-        "system.bar_all": OpSpec(builder=bar_all, parse_args=False, parse_kwargs=False),
-        "get_block_idx": OpSpec(ir_name="get_block_idx", parse_args=False, parse_kwargs=False),
-        "get_subblock_idx": OpSpec(ir_name="get_subblock_idx", parse_args=False, parse_kwargs=False),
-        "get_block_num": OpSpec(ir_name="get_block_num", parse_args=False, parse_kwargs=False),
-        "get_subblock_num": OpSpec(ir_name="get_subblock_num", parse_args=False, parse_kwargs=False),
-        "get_spr": OpSpec(ir_name="get_spr", parse_args=False, parse_kwargs=False),
-        "get_cycle": OpSpec(ir_name="get_cycle", parse_args=False, parse_kwargs=False),
-        # args + kwargs
-        "system.dcci": OpSpec(builder=dcci),
-    }
-)
-
-
-def _parse_system_sync(self, call: ast.Call, op_name: str):
-    span = self.span_tracker.get_span(call)
-    kwargs = self.parse_op_kwargs(call)
-    self._check_declared_types(op_name, call, [], kwargs, span)
-    _validate_sync_pipes(kwargs["set_pipe"], kwargs["wait_pipe"], self.target, span)
+def _build_system_sync(op_name: str, *, context, span: Span, **kwargs):
+    _validate_sync_pipes(kwargs["set_pipe"], kwargs["wait_pipe"], context.target, span)
     return _create_sync_op(op_name, **kwargs, span=span)
 
 
 @op_impl("system.sync_src")
-def _parse_system_sync_src(self, call: ast.Call):
-    return _parse_system_sync(self, call, "system.sync_src")
+def _build_system_sync_src(self, *, span: Span, **kwargs):
+    return _build_system_sync("system.sync_src", context=self, span=span, **kwargs)
 
 
 @op_impl("system.sync_dst")
-def _parse_system_sync_dst(self, call: ast.Call):
-    return _parse_system_sync(self, call, "system.sync_dst")
-
-
-@op_impl("system.sync_all")
-def _parse_system_sync_all(self, call: ast.Call):
-    span = self.span_tracker.get_span(call)
-    if call.args:
-        raise InvalidArgument("sync_all does not accept positional arguments", span=span)
-    kwargs = self.parse_op_kwargs(call)
-    self._check_declared_types("system.sync_all", call, [], kwargs, span)
-    return sync_all(**kwargs, span=span)
+def _build_system_sync_dst(self, *, span: Span, **kwargs):
+    return _build_system_sync("system.sync_dst", context=self, span=span, **kwargs)
 
 
 @op_impl("system.set_mm_layout_transform")
-def _parse_system_set_mm_layout_transform(self, call: ast.Call):
-    call_span = self.span_tracker.get_span(call)
-    kwargs = self.parse_op_kwargs(call)
-    if "enabled" not in kwargs:
+def _build_system_set_mm_layout_transform(self, *, enabled, span: Span):
+    enabled = self.require_const_value(
+        enabled, "enabled", expects="bool",
+        hint="enabled must be known at compile time.",
+    )
+    return set_mm_layout_transform(enabled=enabled, span=span)
 
-        raise InvalidArgument(
-            "set_mm_layout_transform requires keyword argument 'enabled'",
-            span=call_span,
-        )
-    self._check_declared_types("system.set_mm_layout_transform", call, [], kwargs, call_span)
-    enabled = bool(kwargs["enabled"])
-    return set_mm_layout_transform(enabled=enabled, span=call_span)
+
+@op_impl("get_block_idx")
+def _build_get_block_idx(self, *, span: Span | None = None):
+    return _ir_core.create_op_call("get_block_idx", [], {}, span)
+
+
+@op_impl("get_subblock_idx")
+def _build_get_subblock_idx(self, *, span: Span | None = None):
+    return _ir_core.create_op_call("get_subblock_idx", [], {}, span)
+
+
+@op_impl("get_block_num")
+def _build_get_block_num(self, *, span: Span | None = None):
+    return _ir_core.create_op_call("get_block_num", [], {}, span)
+
+
+@op_impl("get_subblock_num")
+def _build_get_subblock_num(self, *, span: Span | None = None):
+    return _ir_core.create_op_call("get_subblock_num", [], {}, span)
+
+
+@op_impl("get_spr")
+def _build_get_spr(self, *, span: Span | None = None):
+    return _ir_core.create_op_call("get_spr", [], {}, span)
+
+
+@op_impl("get_cycle")
+def _build_get_cycle(self, *, span: Span | None = None):
+    return _ir_core.create_op_call("get_cycle", [], {}, span)
+
+
+@op_impl("system.bar_m")
+def _build_bar_m(self, *, span: Span):
+    return bar_m(span=span)
+
+
+@op_impl("system.bar_mte1")
+def _build_bar_mte1(self, *, span: Span):
+    return bar_mte1(span=span)
+
+
+@op_impl("system.bar_mte2")
+def _build_bar_mte2(self, *, span: Span):
+    return bar_mte2(span=span)
+
+
+@op_impl("system.bar_mte3")
+def _build_bar_mte3(self, *, span: Span):
+    return bar_mte3(span=span)
+
+
+@op_impl("system.bar_fix")
+def _build_bar_fix(self, *, span: Span):
+    return bar_fix(span=span)
+
+
+@op_impl("system.bar_all")
+def _build_bar_all(self, *, span: Span):
+    return bar_all(span=span)
+
+
+@op_impl("system.set_cross_core")
+def _build_set_cross_core(self, *args, span: Span, **kwargs):
+    return set_cross_core(*args, span=span, **kwargs)
+
+
+@op_impl("system.wait_cross_core")
+def _build_wait_cross_core(self, *args, span: Span, **kwargs):
+    return wait_cross_core(*args, span=span, **kwargs)
+
+
+@op_impl("system.sync_all")
+def _build_sync_all(self, *args, span: Span, **kwargs):
+    return sync_all(*args, span=span, **kwargs)
+
+
+@op_impl("system.dcci")
+def _build_dcci(self, *args, span: Span, **kwargs):
+    return dcci(*args, span=span, **kwargs)
+
+
+@op_impl("system.mutex_lock")
+def _build_mutex_lock(self, *args, span: Span, **kwargs):
+    return mutex_lock(*args, span=span, **kwargs)
+
+
+@op_impl("system.mutex_unlock")
+def _build_mutex_unlock(self, *args, span: Span, **kwargs):
+    return mutex_unlock(*args, span=span, **kwargs)

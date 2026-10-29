@@ -28,7 +28,6 @@ from pypto_pro._errors import (
     InvalidShape,
     InvalidTile,
     InvalidType,
-    InvalidVal,
     NotSupported,
 )
 import pypto_pro.language as pl
@@ -82,7 +81,7 @@ def test_err_scale_tensor_rejected():
     q, k = _make_qk()
     scale_tensor = torch.zeros(1, 64, dtype=torch.int64)
     out = torch.zeros(64, 64, dtype=torch.int8)
-    with pytest.raises(InvalidVal, match="scale Tensor is not supported for per-channel quantization"):
+    with pytest.raises(InvalidType, match=r"scale expects .*TensorType"):
         kernel(q, k, scale_tensor, out)
 
 
@@ -514,5 +513,5 @@ def test_err_scale_bool():
 
     q, k = _make_qk()
     out = torch.zeros(64, 64, dtype=torch.int8)
-    with pytest.raises(InvalidType, match="got bool"):
+    with pytest.raises(InvalidType, match="'scale' must be a compile-time number"):
         kernel(q, k, out)

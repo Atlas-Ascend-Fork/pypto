@@ -10,7 +10,7 @@
 """UT for make_tuple chain attribute access: t.a.b and t.field.method()."""
 
 from pypto_pro import ir
-from pypto_pro._errors import InvalidOperation, InvalidShape, InvalidType, KeyNotFound
+from pypto_pro._errors import InvalidOperation, InvalidShape, InvalidType, NotSupported
 import pypto_pro.language as pl
 import pytest
 
@@ -398,8 +398,8 @@ def test_chain_tile_group_acc_multi_slot():
 
 
 def test_chain_tile_group_unknown_method():
-    """Unknown method on a chained tile_group raises a RuntimeFailure."""
-    with pytest.raises(KeyNotFound):
+    """Unknown methods are rejected by the frontend instead of reaching IR op lookup."""
+    with pytest.raises(NotSupported, match=r"Unsupported operation call: info\.buf\.foo\(\)"):
 
         @pl.jit(auto_mutex=True)
         def kernel(_jit_entry: pl.DT_INT64):

@@ -210,6 +210,40 @@ def test_manual_cmp():
     assert "block.cmp" in _program_ir(main)
 
 
+def test_fixed_axis_legacy_spellings_remain_registered():
+    @pl.jit(auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        tt = pl.TileType(shape=[16, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        row_tt = pl.TileType(shape=[16, 1], dtype=pl.DT_FP32,
+                             target_memory=pl.MemorySpace.Vec, layout=pl.DN)
+        col_tt = pl.TileType(shape=[1, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        src = pl.make_tile(tt, addr=0)
+        out = pl.make_tile(tt, addr=0x400)
+        tmp = pl.make_tile(tt, addr=0x800)
+        row = pl.make_tile(row_tt, addr=0xC00)
+        col = pl.make_tile(col_tt, addr=0xD00)
+        with pl.section_vector():
+            pl.row_max(row, src, tmp)
+            pl.row_min(row, src, tmp)
+            pl.row_prod(row, src, tmp)
+            pl.col_max(col, src, tmp)
+            pl.col_min(col, src, tmp)
+            pl.col_prod(col, src, tmp)
+            pl.row_expand_sub(out, src, row)
+            pl.row_expand_mul(out, src, row)
+            pl.row_expand_div(out, src, row)
+            pl.col_expand_sub(out, src, col)
+            pl.col_expand_mul(out, src, col)
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function = program.get_function(main.__name__)
+    for name in (
+        "row_max", "row_min", "row_prod", "col_max", "col_min", "col_prod",
+        "row_expand_sub", "row_expand_mul", "row_expand_div", "col_expand_sub", "col_expand_mul",
+    ):
+        assert _find_call(function, "block." + name) is not None
+
+
 def test_manual_row_max():
     @pl.jit(auto_mutex=False)
     def main(
@@ -341,6 +375,28 @@ def test_load_with_dynamic_valid_shape():
     assert "block.set_validshape" in ir_str
 
 
+def test_fillpad_accepts_empty_valid_region_from_tile_group():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[1, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec,
+            valid_shape=[-1, -1], pad=pl.TilePad.zero,
+        )
+        src_group = pl.make_tile_group(type=tile_type, addrs=0, depth=1)
+        dst_group = pl.make_tile_group(type=tile_type, addrs=256, depth=1)
+        with pl.section_vector():
+            src = src_group.current()
+            dst = dst_group.current()
+            pl.set_validshape(src, [0, 0])
+            pl.fillpad(dst, src)
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function = program.get_function(main.__name__)
+    call = _find_call(function, "block.set_validshape")
+    assert [dim.value for dim in call.args[1:]] == [0, 0]
+    assert _find_call(function, "block.fillpad") is not None
+
+
 def test_set_validshape_rejects_static_declared_valid_shape():
     with pytest.raises(InvalidOperation, match="cannot modify a TileType with static valid_shape"):
 
@@ -351,6 +407,35 @@ def test_set_validshape_rejects_static_declared_valid_shape():
             pl.set_validshape(tile, [rows, cols])
 
         main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("row,error,match", [
+    (-1, InvalidVal, "set_validshape row must be at least 0"),
+    (65, InvalidVal, "set_validshape row must be at most 64"),
+    (1.5, InvalidType, "set_validshape row must be an integer scalar"),
+])
+def test_set_validshape_checks_integer_dimensions(row, error, match):
+    from pypto_pro.ir.op.block_ops import _ir_set_validshape
+
+    span = ir.Span.unknown()
+    tile = ir.Var("tile", ir.TileType([64, 32], ir.DataType.FP32), span)
+    with pytest.raises(error, match=match):
+        _ir_set_validshape(tile, [row, 0], span=span)
+
+
+@pytest.mark.parametrize("shape", ["constant", "mixed"])
+def test_set_validshape_preserves_normalized_integer_operands(shape):
+    from pypto_pro.ir.op.block_ops import _ir_set_validshape
+
+    span = ir.Span.unknown()
+    tile = ir.Var("tile", ir.TileType([64, 32], ir.DataType.FP32), span)
+    row = ir.ConstInt(64, ir.DataType.INT64, span) if shape == "constant" else ir.Var(
+        "row", ir.ScalarType(ir.DataType.INT64), span,
+    )
+    col = ir.ConstInt(0, ir.DataType.INT64, span)
+    call = _ir_set_validshape(tile, ir.MakeTuple([row, col], span), span=span)
+    assert ir.structural_equal(call.args[1], row)
+    assert ir.structural_equal(call.args[2], col)
 
 
 def test_insert_with_offset_sequence():
@@ -1096,7 +1181,7 @@ def test_set_validshape_tile_group_4buf():
     ):
         tile_type = pl.TileType(shape=[128, 128], dtype=pl.DT_FP16, valid_shape=[-1, -1])
         a_db = pl.make_tile_group(type=tile_type, addrs=0x0000, mutex_ids=[0, 1, 2, 3])
-        pl.set_validshape(a_db, [rows, cols])
+        pl.set_validshape(a_db, shape=[rows, cols])
         tile_a = a_db.next()
         pl.load(tile_a, a, [0, 0])
         _test_result = pl.store(output, tile_a, [0, 0])

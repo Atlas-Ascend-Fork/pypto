@@ -13,16 +13,15 @@ from __future__ import annotations
 
 __all__ = ["pto_assert", "dump_data", "printf", "trap"]
 
-import ast
 from collections.abc import Sequence
 from typing import Any
 
 from pypto.pypto_impl import ir as _ir_core
-from pypto.pypto_impl.ir import Call, ConstBool, ConstInt, DataType, Expr, ScalarType, Span, TensorType, TileType
+from pypto.pypto_impl.ir import Call, ConstInt, DataType, Expr, ScalarType, Span, TensorType, TileType
 
-from ..._errors import InvalidArgument, InvalidShape, InvalidType, InvalidVal, NotSupported
-from .._utils import _get_span_or_capture, _normalize_expr, _to_make_tuple
-from ._op_registry import OpSpec, op_impl, register_table
+from ..._errors import InvalidArgument, InvalidShape, InvalidType, InvalidVal, NotSupported, argument_span
+from .._utils import _get_span_or_capture, _to_make_tuple
+from ._op_registry import op_impl
 
 _INTEGER_CONVERSIONS = {"d", "i", "u", "x"}
 _FLOAT_CONVERSIONS = {"f"}
@@ -100,36 +99,15 @@ def _scan_printf_format(format_str: str) -> list[str]:
     return specs
 
 
-def _normalize_printf_args(
-    args: Sequence[int | float | Expr | bool], actual_span: Span
-) -> tuple[list[Expr], list[bool]]:
-    normalized_args: list[Expr] = []
-    raw_bool_args: list[bool] = []
-    for arg in args:
-        if isinstance(arg, Expr):
-            normalized_args.append(arg)
-            raw_bool_args.append(False)
-        elif isinstance(arg, bool):
-            normalized_args.append(ConstBool(arg, actual_span))
-            raw_bool_args.append(True)
-        else:
-            normalized_args.append(
-                _normalize_expr(arg, actual_span, int_dtype=DataType.INT64, float_dtype=DataType.FP32)
-            )
-            raw_bool_args.append(False)
-
-    return normalized_args, raw_bool_args
-
-
 def _validate_printf_arguments(
-    format_str: str, normalized_args: Sequence[Expr], raw_bool_args: Sequence[bool], *, op_name: str
+    format_str: str, normalized_args: Sequence[Expr], *, op_name: str
 ) -> None:
     specs = _scan_printf_format(format_str)
     if len(specs) != len(normalized_args):
         raise InvalidArgument(f"{op_name} format expects {len(specs)} scalar arguments, but got {len(normalized_args)}")
 
-    for idx, (spec, arg, is_raw_bool) in enumerate(zip(specs, normalized_args, raw_bool_args)):
-        arg_type = arg.type
+    for idx, (spec, arg) in enumerate(zip(specs, normalized_args)):
+        arg_type = getattr(arg, "type", None)
         conversion = spec[-1]
 
         # %p accepts pointer types (PtrType)
@@ -159,7 +137,6 @@ def _validate_printf_arguments(
             _is_unsigned_integer_dtype(scalar_type.dtype)
             or _is_bool_dtype(scalar_type.dtype)
             or _is_index_dtype(scalar_type.dtype)
-            or is_raw_bool
         ):
             raise InvalidVal(
                 f"debug.{op_name} conversion '{spec}' requires unsigned integer, bool, or index scalar, "
@@ -172,8 +149,6 @@ def _validate_printf_arguments(
                 f"debug.{op_name} conversion '{spec}' requires unsigned integer or index scalar, "
                 f"but got {scalar_type.dtype}"
             )
-        if conversion == "x" and is_raw_bool:
-            raise NotSupported(f"debug.{op_name} conversion '{spec}' does not support bool scalars")
         if conversion in _FLOAT_CONVERSIONS and scalar_type.dtype != DataType.FP32:
             raise InvalidVal(f"debug.{op_name} conversion '{spec}' requires FP32 scalar, but got {scalar_type.dtype}")
 
@@ -419,24 +394,23 @@ def dump_data(
         raise InvalidType(f"debug.dump_data requires Tensor or Tile input, but got {type(data_type).__name__}")
 
 
-def printf(format_str: str, *args: int | float | Expr, loc: bool = False, span: Span | None = None) -> Call:
+def printf(format_str: str, *args: Expr, loc: bool = False, span: Span | None = None) -> Call:
     """Print scalar values using a compile-time format string."""
     actual_span = _get_span_or_capture(span)
     show_location = _normalize_location_flag(loc, "printf")
     if not isinstance(format_str, str):
         raise InvalidType(f"debug.printf requires string format literal, but got {type(format_str).__name__}")
 
-    normalized_args, raw_bool_args = _normalize_printf_args(args, actual_span)
-    _validate_printf_arguments(format_str, normalized_args, raw_bool_args, op_name="printf")
+    _validate_printf_arguments(format_str, args, op_name="printf")
 
     kwargs: dict[str, Any] = {"format": format_str, "show_location": show_location}
-    return _ir_core.create_op_call("debug.printf", normalized_args, kwargs, actual_span)
+    return _ir_core.create_op_call("debug.printf", list(args), kwargs, actual_span)
 
 
 def pto_assert(
-    condition: bool | Expr,
+    condition: Expr,
     format_str: str | None = None,
-    *args: int | float | Expr | bool,
+    *args: Expr,
     condition_text: str | None = None,
     loc: bool = False,
     span: Span | None = None,
@@ -444,14 +418,7 @@ def pto_assert(
     """Abort execution when a scalar boolean condition is false."""
     actual_span = _get_span_or_capture(span)
     show_location = _normalize_location_flag(loc, "pto_assert")
-    if isinstance(condition, Expr):
-        condition_expr = condition
-    elif isinstance(condition, bool):
-        condition_expr = ConstBool(condition, actual_span)
-    else:
-        raise InvalidType(f"debug.pto_assert requires a scalar bool condition, but got {type(condition).__name__}")
-
-    condition_type = condition_expr.type
+    condition_type = getattr(condition, "type", None)
     if not isinstance(condition_type, ScalarType) or condition_type.dtype != DataType.BOOL:
         raise InvalidType(
             "debug.pto_assert requires a scalar bool condition, "
@@ -471,8 +438,8 @@ def pto_assert(
     else:
         if not isinstance(format_str, str):
             raise InvalidType(f"debug.pto_assert requires string literal format, but got {type(format_str).__name__}")
-        normalized_args, raw_bool_args = _normalize_printf_args(args, actual_span)
-        _validate_printf_arguments(format_str, normalized_args, raw_bool_args, op_name="pto_assert")
+        normalized_args = list(args)
+        _validate_printf_arguments(format_str, normalized_args, op_name="pto_assert")
         format_value = format_str
 
     kwargs: dict[str, Any] = {
@@ -480,7 +447,7 @@ def pto_assert(
         "format": format_value,
         "show_location": show_location,
     }
-    return _ir_core.create_op_call("debug.assert", [condition_expr, *normalized_args], kwargs, actual_span)
+    return _ir_core.create_op_call("debug.assert", [condition, *normalized_args], kwargs, actual_span)
 
 
 def trap(*, span: Span | None = None) -> Call:
@@ -490,31 +457,43 @@ def trap(*, span: Span | None = None) -> Call:
 
 
 # ---------------------------------------------------------------------------
-# Declarative op registration + special handlers
+# Value-facing implementations
 # ---------------------------------------------------------------------------
-
-register_table(
-    {
-        "printf": OpSpec(builder=printf),
-        "trap": OpSpec(builder=trap),
-    }
-)
 
 
 @op_impl("dump_data")
-def _parse_dump_data(self, call: ast.Call):
-    span = self.span_tracker.get_span(call)
-    args = [self.parse_expression(a) for a in call.args]
-    kwargs = self.parse_op_kwargs(call)
-    self._check_declared_types("dump_data", call, args, kwargs, span)
+def _build_dump_data(self, *args: Expr, span: Span, **kwargs):
+    if "loc" in kwargs:
+        kwargs["loc"] = self.require_const_value(
+            kwargs["loc"], "loc", expects="bool",
+            hint="loc must be known at compile time.",
+        )
     return dump_data(*args, section=self.target, **kwargs, span=span)
 
 
 @op_impl("pto_assert")
-def _parse_pto_assert(self, call: ast.Call):
-    span = self.span_tracker.get_span(call)
-    args = [self.parse_expression(a) for a in call.args]
-    kwargs = self.parse_op_kwargs(call)
-    self._check_declared_types("pto_assert", call, args, kwargs, span)
-    condition_text = self.span_tracker.get_source_text(call.args[0])
-    return pto_assert(*args, condition_text=condition_text, **kwargs, span=span)
+def _build_pto_assert(self, *args: Expr, span: Span, **kwargs):
+    if "loc" in kwargs:
+        kwargs["loc"] = self.require_const_value(
+            kwargs["loc"], "loc", expects="bool",
+            hint="loc must be known at compile time.",
+        )
+    condition = args[0] if args else kwargs.get("condition")
+    condition_span = argument_span(0 if args else "condition", getattr(condition, "span", span))
+    condition_text = self.span_tracker.get_source_text(condition_span)
+    return pto_assert(*args, condition_text=condition_text or None, **kwargs, span=span)
+
+
+@op_impl("printf")
+def _build_printf(self, *args, span: Span, **kwargs):
+    if "loc" in kwargs:
+        kwargs["loc"] = self.require_const_value(
+            kwargs["loc"], "loc", expects="bool",
+            hint="loc must be known at compile time.",
+        )
+    return printf(*args, span=span, **kwargs)
+
+
+@op_impl("trap")
+def _build_trap(self, *, span: Span):
+    return trap(span=span)

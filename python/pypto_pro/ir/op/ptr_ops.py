@@ -23,8 +23,8 @@ from pypto.pypto_impl import ir as _ir_core
 from pypto.pypto_impl.ir import Call, DataType, Expr, Span
 
 from ..._errors import InvalidType
-from .._utils import _get_span_or_capture, _normalize_expr, _to_make_tuple
-from ._op_registry import OpSpec, register_table
+from .._utils import _get_span_or_capture, _to_make_tuple
+from ._op_registry import op_impl
 
 
 def make_tensor(
@@ -129,14 +129,14 @@ def _check_addptr_dtype(ptr: Expr) -> None:
         )
 
 
-def addptr(ptr: Expr, offset: int | Expr, span: Span | None = None) -> Call:
+def addptr(ptr: Expr, offset: Expr, span: Span | None = None) -> Call:
     """Advance a raw pointer by an integer offset.
 
     Emits ``pto.addptr`` in the ptoas codegen.
 
     Args:
         ptr: Raw pointer expression (must have PtrType)
-        offset: Integer offset (int or Expr with integer/index ScalarType)
+        offset: IR expression with integer/index ScalarType
         span: Optional source span for debugging (auto-captured if not provided)
 
     Returns:
@@ -144,21 +144,19 @@ def addptr(ptr: Expr, offset: int | Expr, span: Span | None = None) -> Call:
     """
     _check_addptr_dtype(ptr)
     actual_span = _get_span_or_capture(span)
-    if isinstance(offset, int):
-        offset_expr = _normalize_expr(offset, actual_span, int_dtype=DataType.INT64)
-    else:
-        offset_expr = offset
-    return _ir_core.create_op_call("ptr.addptr", [ptr, offset_expr], {}, actual_span)
+    return _ir_core.create_op_call("ptr.addptr", [ptr, offset], {}, actual_span)
 
 
-# ---------------------------------------------------------------------------
-# Declarative op registration
-# ---------------------------------------------------------------------------
+@op_impl("make_tensor")
+def _build_make_tensor(self, *args, span: Span, **kwargs):
+    return make_tensor(*args, span=span, **kwargs)
 
-register_table(
-    {
-        "make_tensor": OpSpec(builder=make_tensor),
-        "make_ptr": OpSpec(builder=make_ptr),
-        "addptr": OpSpec(builder=addptr, parse_kwargs=False),
-    }
-)
+
+@op_impl("make_ptr")
+def _build_make_ptr(self, *args, span: Span, **kwargs):
+    return make_ptr(*args, span=span, **kwargs)
+
+
+@op_impl("addptr")
+def _build_addptr(self, *args, span: Span, **kwargs):
+    return addptr(*args, span=span, **kwargs)

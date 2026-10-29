@@ -21,6 +21,7 @@ import copy
 from pypto.pypto_impl import ir
 
 from ..._errors import current_span
+from ...ir._utils import require_const_int
 from ...ir.op.block_ops import _check_tile_memory_space, _tile_layout
 from ._argument_checker import declared_api
 from .diagnostics import InvalidArgument, InvalidType, InvalidVal, NotSupported
@@ -72,7 +73,8 @@ def lower_gemm(parser, stmt: ast.Expr) -> list[ast.stmt] | None:
         prefix = f"_pl_gemm{parser._gemm_counter}_"
         if not any(name.startswith(prefix) for name in parser._gemm_used_names):
             break
-    return _GemmCall(parser, stmt, op).lower()
+    with current_span(parser.span_tracker.get_span(call), parser.span_tracker.argument_spans(call)):
+        return _GemmCall(parser, stmt, op).lower()
 
 
 class _GemmCall:
@@ -213,14 +215,9 @@ class _GemmCall:
 
     def static_int(self, name):
         node = self.keywords[name]
-        value = self.parser.resolve_single_kwarg(name, node)
-        if not isinstance(value, int) or isinstance(value, bool):
-            raise InvalidType(
-                f"{self.api} '{name}' must be a compile-time int", span=self.span(node)
-            )
-        if value <= 0:
-            raise InvalidVal(f"{self.api} '{name}' must be positive, got {value}", span=self.span(node))
-        return value
+        value = self.parser.parse_expression(node)
+        with current_span(self.span(node)):
+            return require_const_int(value, subject=f"{self.api} '{name}'", lower_bound=1)
 
     def known_int(self, node):
         if node is None:
@@ -262,9 +259,13 @@ class _GemmCall:
         flags = {}
         for key, default in (("init", True), ("trans_a", False), ("trans_b", False)):
             node = self.keywords.get(key)
-            value = default if node is None else self.parser.resolve_single_kwarg(key, node)
-            if not isinstance(value, bool):
-                raise InvalidType(f"{self.api} '{key}' must be a compile-time bool", span=self.span(node))
+            value = default
+            if node is not None:
+                value = self.parser.parse_expression(node)
+                value = self.parser.require_const_value(
+                    value, key, expects="bool", check=lambda value: isinstance(value, bool),
+                    hint="Use True, False, or a boolean value known at compile time.",
+                )
             flags[key] = value
         self.init = flags["init"]
         self.trans_a, self.trans_b = flags["trans_a"], flags["trans_b"]

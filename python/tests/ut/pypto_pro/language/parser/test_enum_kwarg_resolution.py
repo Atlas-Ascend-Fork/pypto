@@ -10,7 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 """Unit tests for enum-valued kwarg resolution in DSL function bodies.
 
-Covers the "support const enum" / "expects an enum value" changes:
+Covers enum values and declaration-based type checking:
 
   * An enum kwarg (dtype / target_type / mode / ...) may be written as an enum
     literal (``pl.DT_FP32`` / ``pl.RoundMode.X``), or captured from a closure
@@ -18,10 +18,10 @@ Covers the "support const enum" / "expects an enum value" changes:
     and kernel-factory ``dtype`` parameters used for dtype generalization.
   * The same enum kwarg rejects a plain int, whether written directly
     (``target_type=1``) or captured from an int closure variable — raising
-    InvalidArgument ("expects an enum value").
+    InvalidType from the shared declaration check.
 """
 from pypto_pro import ir
-from pypto_pro._errors import InvalidOperation, InvalidType, InvalidVal, NotSupported
+from pypto_pro._errors import InvalidOperation, InvalidType, NotSupported
 import pypto_pro.language as pl
 from pypto_pro.language import Vf as vf  # noqa: N813
 import pytest
@@ -158,8 +158,8 @@ def test_kernel_factory_closure_dtype():
 # ---------------------------------------------------------------------------
 @pytest.mark.soc("950")
 def test_dtype_kwarg_int_literal_rejected():
-    """A dtype kwarg given a raw int literal raises InvalidArgument."""
-    with pytest.raises(InvalidVal, match="expects an enum value"):
+    """A dtype kwarg given a raw int literal raises InvalidType."""
+    with pytest.raises(InvalidType, match="dtype expects"):
 
         @pl.jit(auto_mutex=False)
         def func(x: pl.Tensor[[64, 128], pl.DT_FP16]):
@@ -172,8 +172,8 @@ def test_dtype_kwarg_int_literal_rejected():
 
 @pytest.mark.soc("950")
 def test_mode_kwarg_int_literal_rejected():
-    """A RoundMode kwarg given a raw int literal raises InvalidArgument."""
-    with pytest.raises(InvalidVal, match="expects an enum value"):
+    """A RoundMode kwarg given a raw int literal raises InvalidType."""
+    with pytest.raises(InvalidType, match="mode expects"):
 
         @pl.jit(auto_mutex=False)
         def func(x: pl.Tensor[[64, 128], pl.DT_FP16]):
@@ -192,13 +192,13 @@ def test_mode_kwarg_int_literal_rejected():
 # ---------------------------------------------------------------------------
 @pytest.mark.soc("950")
 def test_dtype_kwarg_int_closure_var_rejected():
-    """A dtype kwarg given an int closure variable raises InvalidArgument.
+    """A dtype kwarg given an int closure variable raises InvalidType.
 
     ``target_type=iv`` and ``target_type=1`` reach the resolver as the same int,
     so the int closure variable is rejected exactly like the literal.
     """
     iv = 1
-    with pytest.raises(InvalidVal, match="expects an enum value"):
+    with pytest.raises(InvalidType, match="dtype expects"):
 
         @pl.jit(auto_mutex=False)
         def func(x: pl.Tensor[[64, 128], pl.DT_FP16]):
@@ -232,8 +232,8 @@ def test_target_memory_enum_literal():
 
 @pytest.mark.soc("950")
 def test_target_memory_int_rejected():
-    """A MemorySpace kwarg given a raw int raises InvalidArgument."""
-    with pytest.raises(InvalidVal, match="expects an enum value"):
+    """A MemorySpace kwarg given a raw int raises InvalidType."""
+    with pytest.raises(InvalidType, match="target_memory expects"):
 
         @pl.jit(auto_mutex=False)
         def func(x: pl.Tensor[[64, 128], pl.DT_FP16]):
@@ -250,15 +250,15 @@ def test_target_memory_int_rejected():
 # ---------------------------------------------------------------------------
 @pytest.mark.soc("950")
 def test_cmp_mode_is_not_an_enum_kwarg():
-    """``cmp_mode`` is a plain-int parameter and must be excluded from the guard.
+    """Block gather's cmp_mode accepts an IR integer according to its declaration."""
+    import inspect
 
-    Guards against a regression where ``_VF_KWARG_ENUMS`` (which maps cmp_mode to
-    CompareMode) is used verbatim as the guard list — that would wrongly reject
-    the legitimate ``cmp_mode=<int>`` used by block cmp/gather.
-    """
-    from pypto_pro.language.parser._call_parser import CallParserMixin
+    from pypto_pro.language.parser import _argument_checker
 
-    assert "cmp_mode" not in CallParserMixin._ENUM_KWARGS
+    declared = _argument_checker.declared_api("gather")
+    annotation = inspect.signature(declared).parameters["cmp_mode"].annotation
+    value = ir.ConstInt(0, ir.DataType.INT64, ir.Span.unknown())
+    assert _argument_checker.value_kind(value) in _argument_checker.accepted_types(str(annotation), declared)
 
 
 @pytest.mark.soc("950")
@@ -341,8 +341,8 @@ def test_vf_register_writes_are_not_loop_carried_ssa_values():
 
 @pytest.mark.soc("950")
 def test_vf_enum_kwarg_int_rejected():
-    """A VF-op enum kwarg given a raw int raises InvalidArgument."""
-    with pytest.raises(InvalidVal, match="expects an enum value"):
+    """A VF-op enum kwarg given a raw int raises InvalidType."""
+    with pytest.raises(InvalidType, match="pattern expects"):
         _parse_vf_mask_kernel(1)
 
 
@@ -382,8 +382,8 @@ def test_const_valid_dtype_closure_var():
 
 @pytest.mark.soc("950")
 def test_const_dtype_int_literal_rejected():
-    """pl.const() with an int instead of a dtype raises InvalidType."""
-    with pytest.raises(InvalidType, match="must be a dtype"):
+    """pl.const() rejects an integer dtype through the shared type check."""
+    with pytest.raises(InvalidType, match="dtype expects"):
 
         @pl.jit(auto_mutex=False)
         def func(x: pl.Tensor[[64, 128], pl.DT_FP16]):
@@ -395,10 +395,10 @@ def test_const_dtype_int_literal_rejected():
 
 @pytest.mark.soc("950")
 def test_const_dtype_int_closure_var_rejected():
-    """pl.const() with an int closure variable as dtype raises InvalidType."""
+    """pl.const() applies the shared type check to a closure integer dtype."""
     bad_dtype = 1
 
-    with pytest.raises(InvalidType, match="must be a dtype"):
+    with pytest.raises(InvalidType, match="dtype expects"):
 
         @pl.jit(auto_mutex=False)
         def func(x: pl.Tensor[[64, 128], pl.DT_FP16]):
@@ -411,7 +411,7 @@ def test_const_dtype_int_closure_var_rejected():
 @pytest.mark.soc("950")
 def test_const_dtype_string_rejected():
     """pl.const() with a string instead of a dtype raises InvalidType."""
-    with pytest.raises(InvalidType, match="must be a dtype"):
+    with pytest.raises(InvalidType, match="dtype expects DType"):
 
         @pl.jit(auto_mutex=False)
         def func(x: pl.Tensor[[64, 128], pl.DT_FP16]):
@@ -731,7 +731,7 @@ def test_int_via_ternary_still_rejected_by_enum_kwarg_guard():
     for ``target_type=1`` written directly -- the pass-through widens what a ternary may
     *carry*, not what a kwarg may *accept*.
     """
-    with pytest.raises(InvalidVal, match="expects an enum value"):
+    with pytest.raises(InvalidType, match="dtype expects"):
 
         @pl.jit(auto_mutex=False)
         def func(x: pl.Tensor[[64, 128], pl.DT_FP16]):
@@ -762,7 +762,7 @@ def test_mixed_enum_int_branches_follow_the_selected_branch():
 
     assert isinstance(picks_enum, ir.Function)
 
-    with pytest.raises(InvalidVal, match="expects an enum value"):
+    with pytest.raises(InvalidType, match="dtype expects"):
 
         @pl.jit(auto_mutex=False)
         def picks_int(x: pl.Tensor[[64, 128], pl.DT_FP16]):
@@ -834,7 +834,7 @@ def test_helper_returning_int_still_rejected_for_enum_kwarg():
     def _pick_int(_wide):
         return 1
 
-    with pytest.raises(InvalidVal, match="expects an enum value"):
+    with pytest.raises(InvalidType, match="dtype expects"):
 
         @pl.jit(auto_mutex=False)
         def func(x: pl.Tensor[[64, 128], pl.DT_FP16]):

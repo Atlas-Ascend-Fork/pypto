@@ -151,10 +151,23 @@ class SpanTracker:
             getattr(end_node, "end_col_offset", 0) + self.col_offset,
         )
 
-    def get_source_text(self, ast_node: ast.AST | None) -> str:
-        """Recover the original source text for an AST node when available."""
+    def get_source_text(self, ast_node: ast.AST | ir.Span | None) -> str:
+        """Recover source text from an AST node or an existing IR span."""
         if ast_node is None:
             return ""
+        if isinstance(ast_node, ir.Span):
+            start = ast_node.begin_line - self.line_offset - 1
+            end = ast_node.end_line - self.line_offset - 1
+            column = ast_node.begin_column - self.col_offset - 1
+            end_column = ast_node.end_column - self.col_offset
+            if ast_node.filename != self.source_file or not (0 <= start <= end < len(self.source_lines)):
+                return ""
+            if column < 0 or end_column < 0:
+                return ""
+            lines = [line.encode("utf-8") for line in self.source_lines[start:end + 1]]
+            lines[-1] = lines[-1][:end_column]
+            lines[0] = lines[0][column:]
+            return b"\n".join(lines).decode("utf-8")
 
         source = "\n".join(self.source_lines)
         try:

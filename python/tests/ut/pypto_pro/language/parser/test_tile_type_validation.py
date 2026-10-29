@@ -21,7 +21,6 @@ from pypto_pro._errors import (
     InvalidType,
     InvalidVal,
     NotSupported,
-    RuntimeFailure,
 )
 import pypto_pro.language as pl
 import pytest
@@ -285,7 +284,7 @@ def test_make_tile_group_float_addrs_rejected():
         g = pl.make_tile_group(type=tt, addrs=0.5, mutex_ids=[0])
         pl.load(g.next(), x, [0])
 
-    with pytest.raises(InvalidType, match="addrs.*must be a compile-time integer, or list of integers"):
+    with pytest.raises(InvalidType, match=r"pl\.make_tile_group: addrs expects int \| list, got a fp32 scalar"):
         _parse(k)
 
 
@@ -318,7 +317,7 @@ def test_make_tile_group_none_addrs_rejected():
         g = pl.make_tile_group(type=tt, addrs=None, mutex_ids=[0])
         pl.load(g.next(), x, [0])
 
-    with pytest.raises(InvalidType, match="addrs.*must be a compile-time integer, or list of integers"):
+    with pytest.raises(InvalidType, match=r"pl\.make_tile_group: addrs expects int \| list, got NoneType"):
         _parse(k)
 
 
@@ -329,7 +328,7 @@ def test_make_tile_group_str_in_addrs_list_rejected():
         g = pl.make_tile_group(type=tt, addrs=["x"], mutex_ids=[0])
         pl.load(g.next(), x, [0])
 
-    with pytest.raises(RuntimeFailure, match="Failed to parse kernel function"):
+    with pytest.raises(InvalidType, match="Cannot convert .*str.* to IR expression"):
         _parse(k)
 
 
@@ -351,7 +350,7 @@ def test_make_tile_group_scalar_mutex_id_int_rejected():
         g = pl.make_tile_group(type=tt, addrs=0, mutex_ids=5)
         pl.load(g.next(), x, [0])
 
-    with pytest.raises(InvalidType, match='mutex_ids must be "auto", a list, tuple, or None'):
+    with pytest.raises(InvalidType, match=r"pl\.make_tile_group: mutex_ids expects .*got a int64 scalar"):
         _parse(k)
 
 
@@ -362,7 +361,7 @@ def test_make_tile_group_scalar_mutex_id_float_rejected():
         g = pl.make_tile_group(type=tt, addrs=0, mutex_ids=0.0)
         pl.load(g.next(), x, [0])
 
-    with pytest.raises(InvalidType, match='mutex_ids must be "auto", a list, tuple, or None'):
+    with pytest.raises(InvalidType, match=r"pl\.make_tile_group: mutex_ids expects .*got a fp32 scalar"):
         _parse(k)
 
 
