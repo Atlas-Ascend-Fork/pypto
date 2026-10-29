@@ -24,7 +24,7 @@
 
     - 安装PyTorch及TorchNPU。
 
-        请务必先完成CANN toolkit包安装后，再安装`TorchNPU`。请根据实际环境的Python版本单独安装，详细指导请参考《[TorchNPU软件安装](https://www.hiascend.com/document/detail/zh/Pytorch/latest/installguide/swinstall/docs/zh/installation_guide/installation_description.md)》。需确保`PyTorch`、`TorchNPU`与`PyPTO`三者的Python版本一致。
+        请务必先完成CANN toolkit包安装后，再安装`TorchNPU`。请根据实际环境的Python版本单独安装，详细指导请参考《[TorchNPU软件安装](https://www.hiascend.com/developer/software/ai-frameworks/pytorch/download)》。需确保`PyTorch`、`TorchNPU`与`PyPTO`三者的Python版本一致。
 
 - 安装CMake。PyPTO要求安装3.16.3及以上版本的CMake，如果版本不符合要求，可以参考如下示例安装满足要求的版本。
 
@@ -47,4 +47,4 @@
 具体使用文档参考[PyPTO Toolkit文档](https://pypto-tools.gitcode.com/index.html)。
 
 > [!NOTE] 说明
-> 对于PyPTO开发，并非必须安装驱动固件。在非昇腾设备上，可以利用CPU仿真环境先行进行PyPTO开发和测试，并在准备就绪后，利用昇腾设备进行验证和加速计算。仿真功能当前为试验特性，后续版本可能存在变更，暂不支持应用于生产环境。非昇腾设备的安装请参考《[CANN软件安装](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/softwareinst/instg/instg_0000.html?OS=openEuler&InstallType=netyum)》中“附录B：常用操作 > 在非昇腾设备上安装CANN”章节。
+> 对于PyPTO开发，并非必须安装驱动固件。在非昇腾设备上，可以利用CPU仿真环境先行进行PyPTO开发和测试，并在准备就绪后，利用昇腾设备进行验证和加速计算。仿真功能当前为试验特性，后续版本可能存在变更，暂不支持应用于生产环境。非昇腾设备的安装请参考《[CANN软件安装](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/930beta1/softwareinst/instg/instg_0000.html?OS=openEuler&InstallType=netyum)》中“附录B：常用操作 > 在非昇腾设备上安装CANN”章节。

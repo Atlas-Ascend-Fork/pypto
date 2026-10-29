@@ -507,7 +507,7 @@ print("Matmul-Softmax VF kernel passed!")
 
 #### 实现说明
 
-- FP32 VF寄存器包含64个lane。每个AIV最多处理32个M行，`vf.update_mask(valid_rows)`只使能对应lane；64列物理宽度使每个N位置的起始地址按一个完整寄存器对齐。
+- FP32 VF寄存器包含64个lane。每个AIV最多处理32个M行，`vf.update_mask(valid_rows)`只启用对应lane；64列物理宽度使每个N位置的起始地址按一个完整寄存器对齐。
 - 转置前后的UB Tile均声明为64×64。`TTRANS`的实际转置范围来自源Tile的`valid_shape`：源、目标的有效区域分别为`[valid_rows, valid_n]`和`[valid_n, valid_rows]`，VF循环上界和predicate再分别处理N/M尾块。
 - `vf.mem_bar(mode=pypto_pro.language.MemBarMode.VST_VLD)`处理VF/Vector store到后续Vector load之间的局部内存依赖，包括跨N块读取`global_max`/`global_sum`，以及`transpose`读取归一化结果。MTE2、MTE3与VF之间的Tile流水依赖仍由`auto_mutex=True`管理。
 

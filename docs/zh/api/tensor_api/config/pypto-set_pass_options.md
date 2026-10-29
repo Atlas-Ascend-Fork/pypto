@@ -11,12 +11,6 @@
 <!-- npu="910b" id3 -->
 - Atlas A2系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id24 -->
-- Kirin9030处理器系列产品：支持
-<!-- end id24 -->
-<!-- npu="x90" id25 -->
-- KirinX90处理器系列产品：支持
-<!-- end id25 -->
 
 ## 功能说明
 
@@ -61,33 +55,6 @@ set_pass_options(*,
 - sg_set_scope一致性约束：同一scope_id的所有Operation必须设置相同的`allow_parallel_merge`和`allow_cross_scope_merge`，否则编译报错。
 - scope_id为 -1时，`allow_parallel_merge`和`allow_cross_scope_merge`必须为False。
 - 不同scope_id的子图之间不可合并，`allow_cross_scope_merge`仅控制带scope的子图与无scope（scope_id=-1）的子图合并。
-<!-- npu="x90,9030" id38 -->
-- vec_nbuffer_setting使用说明：
-   <!-- npu="9030" id41 -->
-   - Kirin9030处理器系列产品：不支持，Kirin处理器系列产品不支持切图。
-   <!-- end id41 -->
-   <!-- npu="x90" id42 -->
-   - KirinX90处理器系列产品：不支持，Kirin处理器系列产品不支持切图。
-   <!-- end id42 -->
-<!-- end id38 -->
-<!-- npu="x90,9030" id39 -->
-- cube_l1_reuse_setting使用说明：
-   <!-- npu="9030" id43 -->
-   - Kirin9030处理器系列产品：不支持，Kirin处理器系列产品不支持切图。
-   <!-- end id43 -->
-   <!-- npu="x90" id44 -->
-   - KirinX90处理器系列产品：不支持，Kirin处理器系列产品不支持切图。
-   <!-- end id44 -->
-<!-- end id39 -->
-<!-- npu="x90,9030" id40 -->
-- cube_nbuffer_setting使用说明：
-   <!-- npu="9030" id45 -->
-   - Kirin9030处理器系列产品：不支持，Kirin处理器系列产品不支持切图。
-   <!-- end id45 -->
-   <!-- npu="x90" id46 -->
-   - KirinX90处理器系列产品：不支持，Kirin处理器系列产品不支持切图。
-   <!-- end id46 -->
-<!-- end id40 -->
 - sg_set_scope使用说明：
    <!-- npu="950" id7 -->
    - Ascend 950PR&950DT系列产品：支持纯Vector、纯Cube以及CV混合场景的scope配置。
@@ -98,12 +65,6 @@ set_pass_options(*,
    <!-- npu="910b" id9 -->
    - Atlas A2系列产品：支持纯Vector或纯Cube的scope配置，不支持CV混合场景的scope配置。
    <!-- end id9 -->
-   <!-- npu="9030" id28 -->
-   - Kirin9030处理器系列产品：不支持，Kirin处理器系列产品不支持切图。
-   <!-- end id28 -->
-   <!-- npu="x90" id29 -->
-   - KirinX90处理器系列产品：不支持，Kirin处理器系列产品不支持切图。
-   <!-- end id29 -->
 - sg_set_ooo_scope使用说明：
    <!-- npu="950" id10 -->
    - Ascend 950PR&950DT系列产品：支持。
@@ -114,12 +75,6 @@ set_pass_options(*,
    <!-- npu="910b" id12 -->
    - Atlas A2系列产品：不支持，因为不支持cv mix合图。
    <!-- end id12 -->
-   <!-- npu="9030" id30 -->
-   - Kirin9030处理器系列产品：支持。
-   <!-- end id30 -->
-   <!-- npu="x90" id31 -->
-   - KirinX90处理器系列产品：支持。
-   <!-- end id31 -->
 - ooo_sched_mode使用说明：
    <!-- npu="950" id16 -->
    - Ascend 950PR&950DT系列产品：支持。
@@ -130,12 +85,6 @@ set_pass_options(*,
    <!-- npu="910b" id18 -->
    - Atlas A2系列产品：不支持，因为不支持cv mix合图。
    <!-- end id18 -->
-   <!-- npu="9030" id34 -->
-   - Kirin9030处理器系列产品：支持。
-   <!-- end id34 -->
-   <!-- npu="x90" id35 -->
-   - KirinX90处理器系列产品：支持。
-   <!-- end id35 -->
 - sg_set_tunevf_mode使用说明：
    <!-- npu="950" id19 -->
    - Ascend 950PR&950DT系列产品：支持。
@@ -146,12 +95,6 @@ set_pass_options(*,
    <!-- npu="910b" id21 -->
    - Atlas A2系列产品：不支持，因为不支持cv mix合图。
    <!-- end id21 -->
-   <!-- npu="9030" id32 -->
-   - Kirin9030处理器系列产品：支持。
-   <!-- end id32 -->
-   <!-- npu="x90" id33 -->
-   - KirinX90处理器系列产品：支持。
-   <!-- end id33 -->
 
 ## 调用示例
 
@@ -347,7 +290,7 @@ pypto.set_pass_options(sg_set_ooo_scope=-1)
 如下面示例，通过将 mul 和 exp 包在相同的 ooo_scope，可以使得 OoO 的调度结果中 exp 在 add 之前执行
 
 ```python
-# 因为需要在 MIX 子图内使能 ooo_scope，所以使用 sg_set_scope 构造 MIX 子图
+# 因为需要在 MIX 子图内启用 ooo_scope，所以使用 sg_set_scope 构造 MIX 子图
 pypto.set_pass_options(sg_set_scope=1)
 # Cube 操作
 matmul_result = pypto.matmul(a, b)

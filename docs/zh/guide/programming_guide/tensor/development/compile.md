@@ -81,31 +81,6 @@ pypto.set_codegen_options(support_dynamic_aligned=True)
 
 建议优先使用JIT入参配置各类选项，因为JIT配置选项提供了配置的便利性，同时避免在计算函数内部出现与数据流和计算不相关的代码。
 
-<!-- npu="x90,9030" id1 -->
-## 指定soc_version
-
-本章节仅适用于Kirin场景。默认（不指定）时，框架通过运行时接口（rtGetSocVersion）获取当前云环境已挂载NPU硬件的soc_version；无硬件挂载的场景下（Kirin场景默认无硬件）需要使用set_codegen_options的soc_version参数指定目标芯片版本。
-
-具体api请参考：[set_codegen_options api](../../../../api/tensor_api/config/pypto-set_codegen_options.md)。
-
-前端jit配置如下：
-
-```python
-@pypto.frontend.jit(
-    codegen_options={"soc_version": "Kirin9030"}
-)
-def advanced_function(input0, input1):
-    # 实现自定义计算逻辑
-    pass
-```
-
-独立配置如下：
-
-```python
-pypto.set_codegen_options(soc_version="Kirin9030")
-```
-<!-- end id1 -->
-
 ## 定义多个JIT函数
 
 您可以定义多个JIT函数并将它们一起使用：

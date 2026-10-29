@@ -11,12 +11,6 @@
 <!-- npu="910b" id3 -->
 - Atlas A2系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id4 -->
-- Kirin9030处理器系列产品：支持
-<!-- end id4 -->
-<!-- npu="x90" id5 -->
-- KirinX90处理器系列产品：支持
-<!-- end id5 -->
 
 ## 功能说明
 
@@ -35,7 +29,7 @@ set_cube_tile_shapes(m: List[int], k: List[int], n: List[int], enable_split_k: b
 | m                      | 输入      | m维度在L0和L1上的TileShape（切片形状）的切分大小，为包含两个整数的列表，分别对应mL0和mL1的切分大小 |
 | k                      | 输入      | k维度在L0和L1上的TileShape（切片形状）的切分大小，为包含两个整数的列表，分别对应kL0和kL1的切分大小 |
 | n                      | 输入      | n维度在L0和L1上的TileShape（切片形状）的切分大小，为包含两个整数的列表，分别对应nL0和nL1的切分大小 |
-| enable_split_k         | 输入      | 设置True表示使能matmul的多核切K功能（便捷开关，**不保证性能最优**）；默认为False，表示未使能多核切K。<br>性能调优推荐通过前端手动切K实现，详见[Matmul高性能编程](../../../guide/programming_guide/tensor/debug/matmul_performance_guide.md) |
+| enable_split_k         | 输入      | 设置True表示启用matmul的多核切K功能（便捷开关，**不保证性能最优**）；默认为False，表示未启用多核切K。<br>性能调优推荐通过前端手动切K实现，详见[Matmul高性能编程](../../../guide/programming_guide/tensor/debug/matmul_performance_guide.md) |
 
 ## 返回值说明
 
@@ -112,9 +106,6 @@ void
 
 - 多核切K约束
 
-    <!-- npu="x90,9030" id6 -->
-    - Kirin9030/KirinX90处理器系列产品不支持多核切K（`enable_split_k`）。
-    <!-- end id6 -->
     - `pypto.matmul`支持2维/3维/4维矩阵多核切K。
     - `pypto.scaled_mm`仅支持2维矩阵多核切K，3维/4维矩阵不支持。
     - 多核切K场景只支持out\_dtype数据类型为DT\_FP32或DT\_INT32。

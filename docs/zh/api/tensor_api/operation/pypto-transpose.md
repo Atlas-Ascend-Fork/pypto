@@ -11,12 +11,6 @@
 <!-- npu="910b" id3 -->
 - Atlas A2系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id7 -->
-- Kirin9030处理器系列产品：支持
-<!-- end id7 -->
-<!-- npu="x90" id8 -->
-- KirinX90处理器系列产品：支持
-<!-- end id8 -->
 
 ## 功能说明
 
@@ -80,12 +74,6 @@ transpose(input: Tensor, dim0: int, dim1: int) -> Tensor
    <!-- npu="910b" id6 -->
    - Atlas A2系列产品：DT_FP16，DT_BF16，DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_FP32，DT_INT32，DT_UINT32
    <!-- end id6 -->
-   <!-- npu="9030" id9 -->
-   - Kirin9030处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16
-   <!-- end id9 -->
-   <!-- npu="x90" id10 -->
-   - KirinX90处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16
-   <!-- end id10 -->
 7. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例

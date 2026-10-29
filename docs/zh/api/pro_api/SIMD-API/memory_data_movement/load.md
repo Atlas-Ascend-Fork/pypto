@@ -314,7 +314,7 @@ def load_merged_rows(x: pl.Tensor[[1, 4, 2, 12, 128], pl.DT_FP16]):
         type=pl.TileType(shape=[48, 128], dtype=pl.DT_FP16,
                          target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
         addrs=0x0000, mutex_ids=[0])
-    # 也可以使能转置搬运，通过order的逆序实现
+    # 也可以启用转置搬运，通过order的逆序实现
     zn = pl.make_tile_group(
         type=pl.TileType(shape=[128, 48], dtype=pl.DT_FP16,
                          target_memory=pl.MemorySpace.Mat, layout=pl.ZN),

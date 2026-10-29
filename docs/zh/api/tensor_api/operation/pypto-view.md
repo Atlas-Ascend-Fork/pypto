@@ -11,12 +11,6 @@
 <!-- npu="910b" id3 -->
 - Atlas A2系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id4 -->
-- Kirin9030处理器系列产品：支持
-<!-- end id4 -->
-<!-- npu="x90" id5 -->
-- KirinX90处理器系列产品：支持
-<!-- end id5 -->
 
 ## 功能说明
 
@@ -33,13 +27,13 @@ view(input: Tensor, shape: List[int] = None, offsets: List[Union[int, SymbolicSc
 
 | 参数名      | 输入/输出 | 说明                                                                 |
 |-------------|-----------|----------------------------------------------------------------------|
-| input       | 输入      | 源操作数。<br>支持的数据类型为：PyPto支持的数据类型。<!-- npu="x90,9030" id9 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id9 --><br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
+| input       | 输入      | 源操作数。<br>支持的数据类型为：PyPto支持的数据类型。<br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
 | shape       | 输入      | 获取出视图的大小，需要和input的维度数量一致。<br>Shape Size不大于2147483647（即INT32_MAX），**shape仅支持List [int] 类型，不支持SymbolicScalar类型。** |
 | offsets     | 输入      | 获取视图时每个维度相对于input的偏移。<br>需要保证offsets小于input的Shape |
 | valid_shape | 输入      | 取出视图块的有效数据大小。<br>需要保证valid_shape小于input的Shape；在类似page_attention场景下，当输入的kv_cache等张量包含无效数据时，无法正确推导输出的validshape，需要手动传入； |
 | dtype       | 输入      | 返回值的数据类型，允许将输入数据解读为不同数据类型 |
 
-`valid_shape` 可以配合 `pypto.experimental.assume_divisible` 使用。当某个动态标量已知可被 tile shape 整除时，可通过 `assume_divisible` 声明该事实，帮助编译器消除该轴逐 tile 动态 valid shape，使能 dualdst 等依赖静态 valid shape 的优化。
+`valid_shape` 可以配合 `pypto.experimental.assume_divisible` 使用。当某个动态标量已知可被 tile shape 整除时，可通过 `assume_divisible` 声明该事实，帮助编译器消除该轴逐 tile 动态 valid shape，启用 dualdst 等依赖静态 valid shape 的优化。
 
 ## 返回值说明
 
@@ -50,15 +44,6 @@ view(input: Tensor, shape: List[int] = None, offsets: List[Union[int, SymbolicSc
 - **需要valid_shape时必须用pypto.view**：当需要指定`valid_shape`（动态有效数据大小）时，不能使用`[]`切片语法，必须使用显式的`pypto.view`接口
 - 输入张量input和输入shape的维度数量需要一致。
 - **view创建后与源input相互独立**：view创建后即成为独立的数据拷贝，对view的读写（含view[:] = ...）只作用于view自身，不会写回源input，也不会感知源input的后续修改。若需要将数据写回源Tensor（例如在循环中向persistent buffer分片累积写入的场景），请使用pypto.assemble(value, offsets, dest)。
-<!-- npu="x90,9030" id6 -->
-- Tensor数据类型说明：
-   <!-- npu="9030" id7 -->
-   - Kirin9030处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16，DT_INT8
-   <!-- end id7 -->
-   <!-- npu="x90" id8 -->
-   - KirinX90处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16，DT_INT8
-   <!-- end id8 -->
-<!-- end id6 -->
 
 ## 调用示例
 

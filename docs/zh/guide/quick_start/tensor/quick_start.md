@@ -133,14 +133,6 @@ Output shape: torch.Size([32, 32, 1, 256])
 
 同时，会在$\{work\_path\}/output/output\_\*/目录（\*代表时间戳）下生成编译和执行的结果文件。
 
-<!-- npu="x90,9030" id4 -->
-**限制说明**：
-
-Kirin处理器系列产品不支持pypto直接调用device上板推理，支持以下两个运行模式：
-- [CPU CAModel仿真](../../programming_guide/tensor/debug/debug.md#kirin9030kirinx90)
-- [NPU推理，自定义算子部署](../../programming_guide/tensor/pytorch_integration.md)
-<!-- end id4 -->
-
 ## 查看计算图
 
 PyPTO程序在编译过程中，会自动生成由Tensor和Operation组合而成的图结构，即计算图。该计算图经过PyPTO编译优化流程，完成从原始计算图到可执行图的编译过程，最终生成可在昇腾硬件环境中运行的可执行代码，以实现实际的计算任务。用户可借助PyPTO Toolkit可视化工具查看计算图中的关键信息。
@@ -193,14 +185,3 @@ PyPTO程序在编译过程中，会自动生成由Tensor和Operation组合而成
     ![](../../figures/tensor/swimlane_graph.png "泳道图界面")
 
     上图中带有色块的部分即为泳道，展示了每个AIC/AIV上的任务执行情况。泳道条目的长度对应任务的耗时，能够直观地反映计算的密集程度。用户可以通过观察相邻泳道之间的空闲间隔（如图中的黑色区域，或称气泡）以及耗时较长的泳道条目，来分析可能存在的性能瓶颈问题。
-
-<!-- npu="x90,9030" id1 -->
-**限制说明**：
-- 产品支持情况：
-  <!-- npu="9030" id2 -->
-  - Kirin9030处理器系列产品：不支持
-  <!-- end id2 -->
-  <!-- npu="x90" id3 -->
-  - KirinX90处理器系列产品：不支持
-  <!-- end id3 -->
-<!-- end id1 -->

@@ -11,12 +11,6 @@
 <!-- npu="910b" id3 -->
 - Atlas A2系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id4 -->
-- Kirin9030处理器系列产品：支持
-<!-- end id4 -->
-<!-- npu="x90" id5 -->
-- KirinX90处理器系列产品：支持
-<!-- end id5 -->
 
 ## 功能说明
 
@@ -39,7 +33,7 @@ reshape(input: Tensor,shape: List[int],*,valid_shape: Optional[List[Union[int, S
 
 | 参数名      | 输入/输出 | 说明                                                                 |
 |-------------|-----------|----------------------------------------------------------------------|
-| input       | 输入      | 源操作数。<br>支持的数据类型为：PyPTO支持的数据类型。<!-- npu="x90,9030" id9 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id9 --><br>不支持空Tensor。 |
+| input       | 输入      | 源操作数。<br>支持的数据类型为：PyPTO支持的数据类型。<br>不支持空Tensor。 |
 | shape       | 输入      | 目标Shape。<br>- **静态shape**：支持使用`-1`自动推导一个维度。<br>- **动态shape**：不支持`-1`，必须显式指定所有维度值。维度值可以是具体整数或SymbolicScalar（从动态轴获取）。 |
 | valid_shape | 输入      | 输出Tensor的有效数据的Shape。<br>输入带有validshape时，框架不会自动推导输出validshape；若需要输出保留validshape，须由用户计算后通过本参数传入。 |
 | inplace     | 输入      | 是否为inplace，默认为False；参数为True时，不会为输出申请新地址； |
@@ -54,15 +48,6 @@ reshape(input: Tensor,shape: List[int],*,valid_shape: Optional[List[Union[int, S
 2. inplace为True时，reshape通常需单独置于loop (1)中，无其他类型的operation并列时，可省略loop (1)，框架自动补齐，见示例2。
 3. inplace为True的输出，不可作为函数最终输出。
 4. inplace=False仅适配静态shape；inplace=True兼容静态shape和动态shape。
-<!-- npu="x90,9030" id6 -->
-5. Tensor数据类型说明：
-   <!-- npu="9030" id7 -->
-   - Kirin9030处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16，DT_INT8
-   <!-- end id7 -->
-   <!-- npu="x90" id8 -->
-   - KirinX90处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16，DT_INT8
-   <!-- end id8 -->
-<!-- end id6 -->
 
 ## 调用示例
 

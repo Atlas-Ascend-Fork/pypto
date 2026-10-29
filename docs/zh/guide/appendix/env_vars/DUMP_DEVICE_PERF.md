@@ -2,7 +2,7 @@
 
 ## 功能描述
 
-使能AICPU / AI Core联合性能数据采集。开启后，框架在执行过程中采集AICPU调度与AI Core执行过程中端到端的耗时数据，并能够在终端打屏，输出相关性能统计信息。采集结果落盘到`output/output_时间戳/`目录下。
+启用AICPU / AI Core联合性能数据采集。开启后，框架在执行过程中采集AICPU调度与AI Core执行过程中端到端的耗时数据，并能够在终端打屏，输出相关性能统计信息。采集结果落盘到`output/output_时间戳/`目录下。
 
 - 类型：字符串
 - 取值范围：`true`（开启）、`false`或未设置（关闭）
@@ -33,9 +33,3 @@ python tools/scripts/machine_perf_trace.py analyze output/output_<时间戳>/mac
 <!-- npu="910b" id3 -->
 - Atlas A3系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id4 -->
-- Kirin9030处理器系列产品：不支持
-<!-- end id4 -->
-<!-- npu="x90" id5 -->
-- KirinX90处理器系列产品：不支持
-<!-- end id5 -->

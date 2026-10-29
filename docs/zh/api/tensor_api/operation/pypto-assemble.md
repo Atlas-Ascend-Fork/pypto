@@ -11,12 +11,6 @@
 <!-- npu="910b" id3 -->
 - Atlas A2系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id4 -->
-- Kirin9030处理器系列产品：支持
-<!-- end id4 -->
-<!-- npu="x90" id5 -->
-- KirinX90处理器系列产品：支持
-<!-- end id5 -->
 
 ## 功能说明
 
@@ -34,10 +28,10 @@ assemble(inputs: List[Tuple[Tensor, List[Union[int, SymbolicScalar]]]], out: Ten
 
 | 参数名  | 输入/输出 | 说明                                                                 |
 |---------|-----------|----------------------------------------------------------------------|
-| input   | 输入      | 源操作数。<br>支持的数据类型为：PyPto支持的数据类型。<!-- npu="x90,9030" id9 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id9 --><br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
-| inputs   | 输入      | 源操作数和输出偏移组成的Tuple列表。<br>单个支持的数据类型为：PyPto支持的数据类型。<!-- npu="x90,9030" id10 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id10 --><br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
+| input   | 输入      | 源操作数。<br>支持的数据类型为：PyPto支持的数据类型。<br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
+| inputs   | 输入      | 源操作数和输出偏移组成的Tuple列表。<br>单个支持的数据类型为：PyPto支持的数据类型。<br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
 | offsets | 输入      | 相对于目标输出的偏移。<br>需要保证offsets小于out的Shape。          |
-| out     | 输出      | 目的操作数，需要和input的维度数量一致。<br>支持的数据类型为：PyPto支持的数据类型。<!-- npu="x90,9030" id11 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id11 --><br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
+| out     | 输出      | 目的操作数，需要和input的维度数量一致。<br>支持的数据类型为：PyPto支持的数据类型。<br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
 | parallel | 输入      | 是否允许并行写回。默认值为False；当写回区域互不重叠、可安全并行时，应显式传入`parallel=True`。 |
 
 ## 返回值说明
@@ -49,15 +43,6 @@ assemble(inputs: List[Tuple[Tensor, List[Union[int, SymbolicScalar]]]], out: Ten
 1. 输出Tensor out的valid shape需由用户在调用assemble前确保正确，该接口不会自动推导。
 2. 输入张量input和输出张量out的维度数量需要一致。
 3. 当多个assemble对同一out的重叠区域存在写后写依赖，且这些写回分布在不同loop迭代或不同function中时，默认`parallel=False`已保证写回按依赖顺序串行执行，框架会在对应outcast上标记`NORMAL`，供后续调度按串行写处理。若写回区域互不重叠、可安全并行，应显式传入`parallel=True`。
-<!-- npu="x90,9030" id6 -->
-4. Tensor数据类型说明：
-   <!-- npu="9030" id7 -->
-   - Kirin9030处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16，DT_INT8。
-   <!-- end id7 -->
-   <!-- npu="x90" id8 -->
-   - KirinX90处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16，DT_INT8。
-   <!-- end id8 -->
-<!-- end id6 -->
 
 ## 调用示例
 

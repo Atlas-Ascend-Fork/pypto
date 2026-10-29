@@ -14,7 +14,7 @@
 
 ## 功能说明
 
-使能随路ReLU操作的枚举，用于L0C Buffer搬往UB、GM或L1 Buffer的数据搬运场景。
+启用随路ReLU操作的枚举，用于L0C Buffer搬往UB、GM或L1 Buffer的数据搬运场景。
 
 随路ReLU逐元素将负值置零、正值保持不变，计算公式如下：
 
@@ -24,6 +24,6 @@ $$dst = \max(src, 0) = \begin{cases} src & src > 0 \\ 0 & src \leq 0 \end{cases}
 
 ```python
 PYPTO_DECLARE_ENUM(ReluPreMode,
-    NormalRelu      # 使能随路ReLU操作
+    NormalRelu      # 启用随路ReLU操作
 )
 ```

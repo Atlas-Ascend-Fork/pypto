@@ -2,7 +2,7 @@
 
 ## 功能描述
 
-使能上板执行时的tensor dump功能。开启后，框架在NPU上执行算子时会自动dump leaf function的输入输出数据，用于与模拟计算结果进行精度对比分析。
+启用上板执行时的tensor dump功能。开启后，框架在NPU上执行算子时会自动dump leaf function的输入输出数据，用于与模拟计算结果进行精度对比分析。
 
 - 类型：字符串
 - 取值范围：`true`（开启）、`false`或未设置（关闭）
@@ -35,9 +35,3 @@ os.environ["PYPTO_DATADUMP_ENABLE"] = "true"
 <!-- npu="910b" id3 -->
 - Atlas A3系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id4 -->
-- Kirin9030处理器系列产品：不支持
-<!-- end id4 -->
-<!-- npu="x90" id5 -->
-- KirinX90处理器系列产品：不支持
-<!-- end id5 -->

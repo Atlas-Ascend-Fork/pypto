@@ -11,12 +11,6 @@
 <!-- npu="910b" id3 -->
 - Atlas A2系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id12 -->
-- Kirin9030处理器系列产品：支持
-<!-- end id12 -->
-<!-- npu="x90" id13 -->
-- KirinX90处理器系列产品：支持
-<!-- end id13 -->
 
 ## 功能说明
 
@@ -58,12 +52,6 @@ div(input: Tensor, other: Union[Tensor, float, int], precision_type: PrecisionTy
    <!-- npu="910b" id9 -->
    - Atlas A2系列产品：DT_FP16，DT_FP32，DT_BF16，DT_INT16，DT_INT32。
    <!-- end id9 -->
-   <!-- npu="9030" id14 -->
-   - Kirin9030处理器系列产品：DT_FP16，DT_FP32
-   <!-- end id14 -->
-   <!-- npu="x90" id15 -->
-   - KirinX90处理器系列产品：DT_FP16，DT_FP32
-   <!-- end id15 -->
 3. **精度模式说明**：
     - **HIGH_PRECISION（高精度模式）**：默认模式，在底层实现中会使用更高精度的计算方式，在不同型号上的支持情况：
       <!-- npu="950" id4 -->
@@ -75,12 +63,6 @@ div(input: Tensor, other: Union[Tensor, float, int], precision_type: PrecisionTy
       <!-- npu="910b" id6 -->
       - Atlas A2系列产品：不支持
       <!-- end id6 -->
-      <!-- npu="9030" id16 -->
-      - Kirin9030处理器系列产品：不支持
-      <!-- end id16 -->
-      <!-- npu="x90" id17 -->
-      - KirinX90处理器系列产品：不支持
-      <!-- end id17 -->
     - **INTRINSIC（指令模式）**：直接使用芯片指令进行计算。
 4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 5. 整型输入约束：

@@ -190,8 +190,8 @@ Ctrl AICPU运行超时或整网环境中AICPU执行超时。
 2. **缩小到Root Function**：每个Root有独立日志`MaxRootInnerMem is xxx`，最大者即为问题来源。
 3. **定位问题Tensor**：搜索`staticMemReq=[xxx] is too large`警告，根据rawmagic在pass计算图中定位。
 4. **调整配置**：
-   - `max_workspace_kb` → **推荐优先配置**，使能内存驱动 stitch 模式；尤其在使用 `unroll_list` 时，按 encode 日志推荐值设置。
-   - `stitch_function_max_num` → 未使能内存驱动模式时控制 stitch 深度（按 root function 个数）。
+   - `max_workspace_kb` → **推荐优先配置**，启用内存驱动 stitch 模式；尤其在使用 `unroll_list` 时，按 encode 日志推荐值设置。
+   - `stitch_function_max_num` → 未启用内存驱动模式时控制 stitch 深度（按 root function 个数）。
    - `unroll_list` / `max_unroll` → 控制展开次数。
 5. **关联Skill**：[pypto-machine-workspace](../../../../../.agents/skills/pypto-machine-workspace/SKILL.md)。
 

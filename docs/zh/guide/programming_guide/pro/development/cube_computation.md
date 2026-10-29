@@ -163,7 +163,7 @@ L0C Buffer中的结果分形固定为16×16。以FP32/INT32累加结果为例，
 - **NZ**：分形之间按列主序排列，分形内部按行主序排列。对shape为[M, N]的矩阵，补齐并拆分为[M1, M0, N1, N0]后，物理排列顺序为[N1, M1, M0, N0]。
 - **ZN**：分形之间按行主序排列，分形内部按列主序排列。对shape为[K, N]的矩阵，补齐并拆分为[K1, K0, N1, N0]后，物理排列顺序为[K1, N1, N0, K0]。
 
-ND、NZ和ZN等数据排布格式的详细说明请参见[数据排布格式](https://gitcode.com/cann/asc-devkit/blob/master/docs/zh/guide/technical_appendix/concepts_and_terms/neural_networks_and_operators/data_layout.md)。
+ND、NZ和ZN等数据排布格式的详细说明请参见[数据排布格式](https://gitcode.com/cann/asc-devkit/blob/9.3.0-beta.1/docs/zh/guide/technical_appendix/concepts_and_terms/neural_networks_and_operators/data_layout.md)。
 
 对于矩阵乘法`C = A × B`，左矩阵A使用NZ，右矩阵B使用ZN，结果矩阵C使用NZ。左矩阵按行取数、右矩阵按列取数时，相应元素均能从连续地址读取。
 

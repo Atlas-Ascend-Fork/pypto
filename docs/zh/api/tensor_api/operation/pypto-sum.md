@@ -11,12 +11,6 @@
 <!-- npu="910b" id3 -->
 - Atlas A2系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id7 -->
-- Kirin9030处理器系列产品：支持
-<!-- end id7 -->
-<!-- npu="x90" id8 -->
-- KirinX90处理器系列产品：支持
-<!-- end id8 -->
 
 ## 功能说明
 
@@ -66,12 +60,6 @@ sum(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
    <!-- npu="910b" id6 -->
    - Atlas A2系列产品：DT_FP32，DT_BF16，DT_INT32，DT_INT16。
    <!-- end id6 -->
-   <!-- npu="9030" id9 -->
-   - Kirin9030处理器系列产品：DT_FP32，DT_FP16，DT_INT32。
-   <!-- end id9 -->
-   <!-- npu="x90" id10 -->
-   - KirinX90处理器系列产品：DT_FP32，DT_FP16，DT_INT32。
-   <!-- end id10 -->
 
 3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 

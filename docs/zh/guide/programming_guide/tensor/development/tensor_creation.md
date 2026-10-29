@@ -31,7 +31,7 @@ Tensor是PyPTO中的基本数据结构，用于表示将在计算图中使用并
     支持的格式：
 
     - TILEOP\_ND：ND格式，N维数组，在PyPTO中采用行优先模式。
-    - TILEOP\_NZ：NZ格式，矩阵乘相关的特殊格式。二维矩阵被分为若干个分形（分形大小更能适配一次Cube计算），分形按照列优先即N字形排布；每个分形按照行优先即Z字形排布。详细请参见[数据排布格式](https://gitcode.com/cann/asc-devkit/blob/master/docs/zh/guide/technical_appendix/concepts_and_terms/neural_networks_and_operators/data_layout.md)。
+    - TILEOP\_NZ：NZ格式，矩阵乘相关的特殊格式。二维矩阵被分为若干个分形（分形大小更能适配一次Cube计算），分形按照列优先即N字形排布；每个分形按照行优先即Z字形排布。详细请参见[数据排布格式](https://gitcode.com/cann/asc-devkit/blob/9.3.0-beta.1/docs/zh/guide/technical_appendix/concepts_and_terms/neural_networks_and_operators/data_layout.md)。
 
 - 在子函数内创建Tensor并返回至主函数
 

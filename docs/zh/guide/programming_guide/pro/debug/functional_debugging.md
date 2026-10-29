@@ -21,7 +21,7 @@ JIT编译产物默认位于当前工作目录下的`build`目录；设置`ASCEND
 
 ## 精度错误
 
-当Kernel能够正常执行，但输出与参考实现不一致时，先确认输入、Shape、数据类型、布局和比较阈值一致，并在设备同步后读取结果。固定失败用例，再按[pypto-pro-precision-debug Skill](https://gitcode.com/cann/pypto-gym/blob/master/cannbot-skills/ops/pypto-pro-precision-debug/SKILL.md)提供的流程，沿实际数据路径查找第一个出错环节。
+当Kernel能够正常执行，但输出与参考实现不一致时，先确认输入、Shape、数据类型、布局和比较阈值一致，并在设备同步后读取结果。固定失败用例，再按[pypto-pro-precision-debug Skill](https://gitcode.com/cann/pypto-gym/blob/9.2.0/cannbot-skills/ops/pypto-pro-precision-debug/SKILL.md)提供的流程，沿实际数据路径查找第一个出错环节。
 
 需要检查多核切分、循环边界、运行时参数或搬运偏移时，可使用[`pypto_pro.language.printf`](../../../../api/pro_api/Utils-API/debugging/printf.md)打印Core编号、偏移、Shape和分支标志等标量信息。多核场景建议通过`pypto_pro.language.get_block_idx()`限制打印的Core，避免日志大量交错。该接口会引入运行时开销，仅用于功能调试，不应用于性能测试。
 

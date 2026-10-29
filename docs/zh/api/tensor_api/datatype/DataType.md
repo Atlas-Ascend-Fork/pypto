@@ -11,12 +11,6 @@
 <!-- npu="910b" id3 -->
 - Atlas A2系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id7 -->
-- Kirin9030处理器系列产品：支持
-<!-- end id7 -->
-<!-- npu="x90" id8 -->
-- KirinX90处理器系列产品：支持
-<!-- end id8 -->
 
 ## 功能说明
 
@@ -66,9 +60,3 @@ class DataType(enum.Enum):
 <!-- npu="910b" id5 -->
 - Atlas A2系列产品：不支持DT_FP8E4M3，DT_FP8E5M2和DT_FP8E8M0类型。
 <!-- end id5 -->
-<!-- npu="9030" id9 -->
-- Kirin9030处理器系列产品：不支持DT_INT4，DT_INT64，DT_FP8，DT_BF16，DT_HF4，DT_HF8，DT_FP4E2M1，DT_FP8E4M3，DT_FP8E5M2，DT_FP8E8M0，DT_FP4_E2M1X2，DT_FP4_E1M2X2，DT_UINT16，DT_UINT32，DT_UINT64和DT_DOUBLE。
-<!-- end id9 -->
-<!-- npu="x90" id10 -->
-- KirinX90处理器系列产品：不支持DT_INT4，DT_INT64，DT_FP8，DT_BF16，DT_HF4，DT_HF8，DT_FP4E2M1，DT_FP8E4M3，DT_FP8E5M2，DT_FP8E8M0，DT_FP4_E2M1X2，DT_FP4_E1M2X2，DT_UINT16，DT_UINT32，DT_UINT64和DT_DOUBLE。
-<!-- end id10 -->

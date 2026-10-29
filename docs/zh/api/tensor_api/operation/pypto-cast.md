@@ -11,12 +11,6 @@
 <!-- npu="910b" id3 -->
 - Atlas A2系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id12 -->
-- Kirin9030处理器系列产品：支持
-<!-- end id12 -->
-<!-- npu="x90" id13 -->
-- KirinX90处理器系列产品：支持
-<!-- end id13 -->
 
 ## 功能说明
 
@@ -39,8 +33,8 @@ cast(input: Tensor, dtype: DataType, mode: CastMode = CastMode.CAST_NONE,
 
 | 参数名     | 输入/输出 | 说明                                                                 |
 |------------|-----------|----------------------------------------------------------------------|
-| input      | 输入      | 源操作数。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_FP32，DT_FP16，DT_BF16，DT_INT8，DT_UINT8，DT_INT16，DT_INT32，DT_INT64，DT_INT4，DT_FP8E4M3，DT_FP8E5M2，DT_HF8，DT_FP4_E2M1，DT_FP4_E1M2。<!-- npu="x90,9030" id19 -->Kirin支持的数据类型为：DT_FP32，DT_FP16，DT_INT32，DT_INT16，DT_UINT8，DT_INT8。<!-- end id19 --><br>不支持空Tensor；Shape仅支持1-4维；Shape Size不大于2147483647（即INT32_MAX）。 |
-| dtype      | 输入      | 精度转换后的数据类型。<br>支持的数据类型为：DT_FP32，DT_FP16，DT_BF16，DT_INT8，DT_UINT8，DT_INT16，DT_INT32，DT_INT64，DT_INT4，DT_FP8E4M3，DT_FP8E5M2，DT_HF8，DT_FP4_E2M1，DT_FP4_E1M2。<!-- npu="x90,9030" id20 -->Kirin支持的数据类型为：DT_FP16，DT_INT32，DT_INT16，DT_FP32，DT_INT8，DT_UINT8。<!-- end id20 --> |
+| input      | 输入      | 源操作数。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_FP32，DT_FP16，DT_BF16，DT_INT8，DT_UINT8，DT_INT16，DT_INT32，DT_INT64，DT_INT4，DT_FP8E4M3，DT_FP8E5M2，DT_HF8，DT_FP4_E2M1，DT_FP4_E1M2。<br>不支持空Tensor；Shape仅支持1-4维；Shape Size不大于2147483647（即INT32_MAX）。 |
+| dtype      | 输入      | 精度转换后的数据类型。<br>支持的数据类型为：DT_FP32，DT_FP16，DT_BF16，DT_INT8，DT_UINT8，DT_INT16，DT_INT32，DT_INT64，DT_INT4，DT_FP8E4M3，DT_FP8E5M2，DT_HF8，DT_FP4_E2M1，DT_FP4_E1M2。 |
 | CastMode   | 输入      | 源操作数枚举类型，用以控制精度转换处理模式，具体定义为：[CastMode](../datatype/CastMode.md)。<br>默认为CAST_NONE，常见类型之间的转换，框架会自动转换，与torch对齐，详见约束说明。 |
 | SaturationMode    | 输入      | 饱和模式枚举类型，用以控制浮点数转整数时的溢出处理方式，具体定义为：[SaturationMode](../datatype/SaturationMode.md)。<br>默认为OFF（截断模式），当设置为ON时，超出目标类型范围的数值会被截断到最大值或最小值（饱和截断），详见约束说明。 |
 
@@ -143,28 +137,6 @@ Ascend 950PR&950DT系列产品使用不同的CastMode体系，内部实现基于
 | DT_FP4_E1M2 | DT_BF16 | 不支持舍入模式 | - | - |
 <!-- end id5 -->
 
-<!-- npu="x90,9030" id14 -->
-### Kirin9030/KirinX90支持的转换
-
-Kirin9030/KirinX90使用不同的CastMode体系，内部实现基于 `RoundRType`/`RoundAType`/`RoundFType`/`RoundCType`/`RoundZType`/`RoundOType` 等模板参数，用户接口层面仍使用统一的CastMode enum。
-
-| 源类型 | 目标类型 | 支持的CastMode | 默认CastMode | 特殊说明 |
-|--------|----------|----------------|--------------|----------|
-| DT_FP32 | DT_FP16 | RINT, ROUND, FLOOR, CEIL, TRUNC, ODD | CAST_RINT | - |
-| DT_FP32 | DT_INT32 | RINT, ROUND, FLOOR, CEIL, TRUNC | CAST_TRUNC | - |
-| DT_FP32 | DT_INT16 | RINT, ROUND, FLOOR, CEIL, TRUNC | CAST_TRUNC | 支持inf/-inf等边缘情况 |
-| DT_FP16 | DT_FP32 | 不支持舍入模式 | - | 类型扩展（PART_EVEN） |
-| DT_FP16 | DT_INT32 | RINT, ROUND, FLOOR, CEIL, TRUNC | CAST_TRUNC | ROUND_PART模式 |
-| DT_FP16 | DT_INT16 | RINT, ROUND, FLOOR, CEIL, TRUNC | CAST_TRUNC | 支持inf/-inf等边缘情况，ROUND_SAT模式 |
-| DT_FP16 | DT_INT8 | RINT, ROUND, FLOOR, CEIL, TRUNC | CAST_TRUNC | 支持inf/-inf等边缘情况，ROUND_SAT_PART模式 |
-| DT_FP16 | DT_UINT8 | RINT, ROUND, FLOOR, CEIL, TRUNC | CAST_TRUNC | ROUND_SAT_PART模式 |
-| DT_INT32 | DT_FP32 | RINT, ROUND, FLOOR, CEIL, TRUNC | CAST_RINT | ROUND模式 |
-| DT_INT16 | DT_FP32 | 不支持舍入模式 | - | 类型扩展 |
-| DT_INT16 | DT_FP16 | RINT, ROUND, FLOOR, CEIL, TRUNC | CAST_RINT | ROUND模式 |
-| DT_UINT8 | DT_FP16 | 不支持舍入模式 | - | 类型扩展 |
-| DT_INT8 | DT_FP16 | 不支持舍入模式 | - | 类型扩展 |
-<!-- end id14 -->
-
 ### 饱和模式设置说明
 
 饱和模式（SaturationMode）用于控制浮点数转整数时的溢出处理方式：
@@ -192,12 +164,6 @@ Kirin9030/KirinX90使用不同的CastMode体系，内部实现基于 `RoundRType
     <!-- npu="910b" id8 -->
     - Atlas A2系列产品：不支持
     <!-- end id8 -->
-    <!-- npu="9030" id15 -->
-    - Kirin9030处理器系列产品：不支持
-    <!-- end id15 -->
-    <!-- npu="x90" id16 -->
-    - KirinX90处理器系列产品：不支持
-    <!-- end id16 -->
     - 使用逻辑4-bit类型，与scaled_mm一致；输入参数标注和cast目标类型均使用不带X2的枚举。
     - 转换前后逻辑Shape保持不变；每字节存储2个FP4元素，逻辑末轴长度必须为偶数。
     - 与Torch交互时，用torch.uint8承载打包数据，存储Shape为[m, n/2]；参数标注为`pypto.Tensor([], pypto.DT_FP4_E1M2)`或`pypto.Tensor([], pypto.DT_FP4_E2M1)`后，kernel内看到的逻辑Shape为[m, n]。
@@ -213,12 +179,6 @@ Kirin9030/KirinX90使用不同的CastMode体系，内部实现基于 `RoundRType
     <!-- npu="910b" id11 -->
     - Atlas A2系列产品：不支持
     <!-- end id11 -->
-    <!-- npu="9030" id17 -->
-    - Kirin9030处理器系列产品：不支持
-    <!-- end id17 -->
-    <!-- npu="x90" id18 -->
-    - KirinX90处理器系列产品：不支持
-    <!-- end id18 -->
     - 必须使用CAST_ROUND舍入模式（对应硬件的ROUND_A）
     - 如果指定其他CastMode，会自动回退到CAST_ROUND
 

@@ -118,10 +118,6 @@
         - \$\{soc\_name\}：表示NPU型号名称。
         - \$\{install\_path\}：表示指定安装路径，ops包需与toolkit包安装在相同路径，root用户默认安装在`/usr/local/Ascend`目录。
 
-        <!-- npu="x90,9030" id2 -->
-        Kirin处理器系列产品：仅依赖CANN toolkit包，不需要安装CANN ops包。
-        <!-- end id2 -->
-
 - **场景2：体验PyPTO已发布版本能力或基于已发布版本进行开发**
 
     请访问[CANN官网下载中心](https://www.hiascend.com/cann/download)，选择与PyPTO版本配套的CANN发布版本，并根据产品型号和环境架构下载对应包，最后参考网页提供的命令完成安装。
@@ -147,11 +143,8 @@
 
     - PyTorch及TorchNPU：
         - **顺序说明**：请务必先完成上文"安装CANN包"章节中的toolkit包安装后，再安装`TorchNPU`。
-        - 请根据实际环境的Python版本单独安装，请参考《[TorchNPU软件安装](https://www.hiascend.com/document/detail/zh/Pytorch/latest/installguide/swinstall/docs/zh/installation_guide/installation_description.md)》。
+        - 请根据实际环境的Python版本单独安装，请参考《[TorchNPU软件安装](https://www.hiascend.com/developer/software/ai-frameworks/pytorch/download)》。
         - **重要**：需确保`PyTorch`、`TorchNPU`与`PyPTO`三者的Python版本一致。
-        <!-- npu="x90,9030" id1 -->
-        Kirin处理器系列产品：仅依赖PyTorch，不需要安装TorchNPU。
-        <!-- end id1 -->
 
 2. **安装其它依赖**
 

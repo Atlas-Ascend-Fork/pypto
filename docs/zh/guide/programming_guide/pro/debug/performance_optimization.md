@@ -9,7 +9,7 @@ PyPTO Pro算子的性能受多核任务划分、数据搬运效率、片上数�
 | 工具 | 适用场景 | 主要产物或分析内容 |
 |---|---|---|
 | torch_npu.profiler | 在Python代码中控制采集范围，适合采集PyPTO Pro Kernel的性能数据。 | Kernel耗时、AI Core流水指标和任务时间线。 |
-| [msOpProf](https://gitcode.com/Ascend/msopprof/blob/master/docs/zh/user_guide/msopprof_user_guide.md) | 单算子上板性能分析和核内流水采集。 | 算子耗时、AI Core流水、内存、Cache、资源冲突和核内流水图。 |
+| [msOpProf](https://gitcode.com/Ascend/msopprof/blob/26.2.0/docs/zh/user_guide/msopprof_user_guide.md) | 单算子上板性能分析和核内流水采集。 | 算子耗时、AI Core流水、内存、Cache、资源冲突和核内流水图。 |
 
 `msOpProf`由CANN包中的`msopprof`可执行程序提供，其命令接口与`msprof op`一致。下文使用`msprof op`命令进行说明。
 
@@ -66,7 +66,7 @@ with torch_npu.profiler.profile(
 msprof op python3 test_example.py
 ```
 
-正式采集前，先在测试脚本中完成JIT预热。通过`--aic-metrics`选择所需的AI Core指标；采集多组指标时，应保持输入和运行条件不变。核内流水的采集命令和参数配置请参考[《msOpProf用户指南》](https://gitcode.com/Ascend/msopprof/blob/master/docs/zh/user_guide/msopprof_user_guide.md)。常用指标如下：
+正式采集前，先在测试脚本中完成JIT预热。通过`--aic-metrics`选择所需的AI Core指标；采集多组指标时，应保持输入和运行条件不变。核内流水的采集命令和参数配置请参考[《msOpProf用户指南》](https://gitcode.com/Ascend/msopprof/blob/26.2.0/docs/zh/user_guide/msopprof_user_guide.md)。常用指标如下：
 
 | 指标 | 主要检查内容 | 可定位的问题 |
 |---|---|---|

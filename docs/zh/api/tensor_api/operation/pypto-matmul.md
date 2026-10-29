@@ -11,12 +11,6 @@
 <!-- npu="910b" id3 -->
 - Atlas A2系列产品：支持
 <!-- end id3 -->
-<!-- npu="9030" id7 -->
-- Kirin9030处理器系列产品：支持
-<!-- end id7 -->
-<!-- npu="x90" id8 -->
-- KirinX90处理器系列产品：支持
-<!-- end id8 -->
 
 ## 功能说明
 
@@ -60,7 +54,7 @@ matmul(input, mat2, out_dtype, *, a_trans = False, b_trans = False, c_matrix_nz 
 | scale_tensor      | 表示per-channel量化场景（对每一个输出通道独立计算一套量化参数）输出矩阵反量化的矩阵。<br>scale_tensor输入固定为uint64_t或int64_t的Tensor。计算时会转换64位bit为float类型的低32位bit后，取1位符号位 + 8位指数位 + 10位尾数位参与运算。<br>输入输出数据类型支持情况详见表4、表5。<br>scale_tensor的倒数第二维度的形状必须置1，且N维度需要与mat2矩阵的N维度相等。<br>scale_tensor只支持ND格式。<br>不支持叠加多核切k功能。<br>量化输出类型为DT_INT8场景时，需要提前调用torch_npu.npu_trans_quant_param并传入float32类型的torch.tensor来获取int64数据类型的scale_tensor。|
 | bias_tensor       | 表示偏置矩阵。<br>输入为Tensor类型。<br>输入输出数据类型支持情况详见表3。<br>bias_tensor只支持ND格式。<br>bias_tensor的倒数第二维度的形状应置1，且N维度需要与mat2矩阵的N维度相等。<br>矩阵维度为4维场景下，bias仅允许2维输入。<br>不支持叠加多核切k功能。 |
 | relu_type         | 表示输出矩阵是否进行ReLu操作。<br>输入为[ReLuType](../datatype/ReLuType.md)类型。<br>支持RELU和NO_RELU两种模式。<br>不支持叠加多核切k功能。|
-| trans_mode        | 表示是否使能TF32计算及TF32舍入模式。<br>输入为[TransMode](../datatype/TransMode.md)类型，支持以下三种模式：<br>• CAST_NONE：不使能float数据类型转换为TF32数据类型。<br>• CAST_RINT：使能float数据类型转换为TF32数据类型，舍入规则：舍入到最近整数，中间值时舍入到偶数。<br>• CAST_ROUND：使能float数据类型转换为TF32数据类型，舍入规则：舍入到最近整数，中间值时远离零舍入。<br>仅支持输入左右矩阵和输出矩阵数据类型均为DT_FP32时设置。 |
+| trans_mode        | 表示是否启用TF32计算及TF32舍入模式。<br>输入为[TransMode](../datatype/TransMode.md)类型，支持以下三种模式：<br>• CAST_NONE：不启用float数据类型转换为TF32数据类型。<br>• CAST_RINT：启用float数据类型转换为TF32数据类型，舍入规则：舍入到最近整数，中间值时舍入到偶数。<br>• CAST_ROUND：启用float数据类型转换为TF32数据类型，舍入规则：舍入到最近整数，中间值时远离零舍入。<br>仅支持输入左右矩阵和输出矩阵数据类型均为DT_FP32时设置。 |
 
 表3：Matmul基础场景支持的数据类型
 
@@ -104,33 +98,10 @@ matmul(input, mat2, out_dtype, *, a_trans = False, b_trans = False, c_matrix_nz 
 <!-- npu="A3" id5 -->
 - Atlas A3系列产品：不支持DT_HF8，DT_FP8E5M2，DT_FP8E4M3，不支持extend_params中的trans_mode参数。当输入矩阵的数据类型为DT_BF16时，bias_tensor数据类型不支持DT_BF16。
 <!-- end id5 -->
-<!-- npu="9030" id11 -->
-- Kirin9030处理器系列产品：具体数据类型请见[Kirin9030支持的数据类型](#kirin9030支持的数据类型)，不支持输入TILEOP_NZ format输入（input与mat2），不支持c_matrix_nz，不支持extend_params中的：scale、scale_tensor、relu_type、trans_mode。
-<!-- end id11 -->
-<!-- npu="x90" id12 -->
-- KirinX90处理器系列产品：具体数据类型请见[KirinX90支持的数据类型](#kirinx90支持的数据类型)，不支持输入TILEOP_NZ format输入（input与mat2），不支持c_matrix_nz，不支持extend_params中的：scale、scale_tensor、relu_type、trans_mode。
-<!-- end id12 -->
 - 调用matmul接口前需要通过pypto.set\_cube\_tile\_shapes设置M、K、N轴上的切分大小
 - 当矩阵维度为3维或者4维时，需要调用pypto.set\_vec\_tile\_shapes接口设置vector的TileShape切分，如未设置，接口内部会设置2维的vec\_tile\_shape，其值为128，128。
 - 调用matmul接口的输入为调用pypto.reshape后的NZ格式时，需要调用pypto.set\_matrix\_size接口设置pypto.reshape前的输入到matmul的原始Shape的m，k，n值。
 - 调用matmul接口的输入矩阵维度为3维/4维并且数据格式为NZ格式时，需要调用pypto.set\_matrix\_size接口设置输入到matmul的原始Shape的m，k，n值。
-
-<!-- npu="9030" id9 -->
-### Kirin9030支持的数据类型
-| input | mat2 | out_dtype | bias_tensor |
-|:------|:-----|:----------|:------------|
-| DT_FP16 | DT_FP16 | DT_FP16 | DT_FP16 |
-| DT_INT8 | DT_INT8 | DT_INT32 | DT_INT32 |
-<!-- end id9 -->
-
-<!-- npu="x90" id10 -->
-### KirinX90支持的数据类型
-| input | mat2 | out_dtype | bias_tensor |
-|:------|:-----|:----------|:------------|
-| DT_FP16 | DT_FP16 | DT_FP16 | DT_FP32 |
-| DT_INT8 | DT_INT8 | DT_INT32 | DT_INT32 |
-- KirinX90要求fp16@fp16->fp16场景，bias按照fp32保存（有效数实际按照fp16保存），高16比特无效补零，低16比特有效
-<!-- end id10 -->
 
 ## 调用示例
 

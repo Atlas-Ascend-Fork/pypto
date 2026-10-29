@@ -315,12 +315,6 @@ AICORE_LOGD(param->ctx, "INT8 input loaded");
    <!-- npu="910b" id3 -->
    - Atlas A2系列产品：支持
    <!-- end id3 -->
-   <!-- npu="9030" id4 -->
-   - Kirin9030处理器系列产品：不支持
-   <!-- end id4 -->
-   <!-- npu="x90" id5 -->
-   - KirinX90处理器系列产品：不支持
-   <!-- end id5 -->
 
 4. **AIC (Cube核)中不能使用AiCorePrintUbTensor**：AIC (Cube核)的标量处理器(SP)没有到UB地址空间的物理通路，无法从UB标量读取数据。编译期已通过`static_assert`拦截，在AIC kernel中调用`AiCorePrintUbTensor`会触发编译报错:
 
