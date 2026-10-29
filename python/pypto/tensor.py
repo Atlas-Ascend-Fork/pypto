@@ -823,8 +823,8 @@ class Tensor:
         return pypto.where(self, condition, x, y)
 
     @source_location
-    def lrelu(self, other: 'Tensor', negative_slope: Union[float, Element] = 0.01) -> 'Tensor':
-        return pypto.lrelu(self, other, negative_slope)
+    def lrelu(self, negative_slope: Union[float, Element] = 0.01) -> 'Tensor':
+        return pypto.lrelu(self, negative_slope)
 
     @source_location
     def topk(self, k: int, dim: Optional[int] = None, largest: bool = True) -> List['Tensor']:

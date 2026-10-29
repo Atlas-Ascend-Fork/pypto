@@ -413,7 +413,7 @@ def fmod(
 
 
 @op_wrapper
-def lrelu(other: Tensor, negative_slope: Union[float, Element] = 0.01) -> Tensor:
+def lrelu(input: Tensor, negative_slope: Union[float, Element] = 0.01) -> Tensor:
     """
     Returns a new tensor with the Leaky Rectified Linear Unit (LReLU) function applied element-wise.
 
@@ -426,10 +426,10 @@ def lrelu(other: Tensor, negative_slope: Union[float, Element] = 0.01) -> Tensor
 
     Parameters
     ----------
-    a : Tensor
+    input : Tensor
         The input tensor.
-    negative_slope : float, optional
-        Controls the angle of the negative slope (default is 0.0 impending small positive value, typically 0.01).
+    negative_slope : Union[float, Element], optional
+        Controls the angle of the negative slope (default is 0.01).
         Internally always treated as fp32. Must be non-negative, and must not be NaN or inf.
 
     Returns
@@ -473,15 +473,15 @@ def lrelu(other: Tensor, negative_slope: Union[float, Element] = 0.01) -> Tensor
 
     negative_slope_base = pypto_impl.Element(pypto_impl.DT_FP32, slope_val)
 
-    orig_dtype = other.dtype
+    orig_dtype = input.dtype
     if orig_dtype in (DataType.DT_FP16, DataType.DT_BF16):
-        fp32_input = pypto_impl.Cast(other, DataType.DT_FP32, CastMode.CAST_NONE,
+        fp32_input = pypto_impl.Cast(input, DataType.DT_FP32, CastMode.CAST_NONE,
                                      pypto_impl.SaturationMode.OFF)
         fp32_result = pypto_impl.LReLU(fp32_input, negative_slope_base)
         return pypto_impl.Cast(fp32_result, orig_dtype, CastMode.CAST_NONE,
                                pypto_impl.SaturationMode.OFF)
 
-    return pypto_impl.LReLU(other, negative_slope_base)
+    return pypto_impl.LReLU(input, negative_slope_base)
 
 
 @op_wrapper

@@ -144,8 +144,10 @@ def source_location(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         set_source_location()
-        out = func(*args, **kwargs)
-        clear_source_location()
+        try:
+            out = func(*args, **kwargs)
+        finally:
+            clear_source_location()
         return out
 
     return wrapper

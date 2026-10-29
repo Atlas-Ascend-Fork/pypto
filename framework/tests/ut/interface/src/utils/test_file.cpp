@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 #include <string>
+#include <utime.h>
 
 #include "utils/file_utils.h"
 
@@ -79,6 +80,10 @@ TEST(FileTest, RemoveOldDirectoriesKeepsNewestAndOnlyMatchingPrefix)
         ASSERT_TRUE(CreateDir(d, true));
         // 写入一个文件，验证删除走的是递归路径。
         ASSERT_TRUE(SaveFile(d + "/f.bin", std::vector<uint8_t>{0x01}));
+        const struct utimbuf times {
+            100 + i * 100, 100 + i * 100
+        };
+        ASSERT_EQ(utime(d.c_str(), &times), 0);
     }
     // 不匹配前缀的目录（必须被忽略，不被删除）。
     const std::string other = base + "/unrelated";
@@ -88,13 +93,42 @@ TEST(FileTest, RemoveOldDirectoriesKeepsNewestAndOnlyMatchingPrefix)
     RemoveOldDirectories(base, prefix, 1);
 
     EXPECT_TRUE(IsPathExist(other)); // 非匹配前缀必须保留
-    int surviving = 0;
+    EXPECT_FALSE(IsPathExist(base + "/run_0"));
+    EXPECT_FALSE(IsPathExist(base + "/run_1"));
+    EXPECT_TRUE(IsPathExist(base + "/run_2/f.bin"));
+
+    DeleteDir(base, true);
+}
+
+TEST(FileTest, RemoveOldDirectoriesHandlesRetentionBounds)
+{
+    const std::string base = "/tmp/test_remove_old_dirs_bounds_" + std::to_string(::getpid());
+    const std::string prefix = "run_";
+    DeleteDir(base, true);
+    ASSERT_TRUE(CreateDir(base, true));
     for (int i = 0; i < 3; ++i) {
-        if (IsPathExist(base + "/" + prefix + std::to_string(i))) {
-            ++surviving;
-        }
+        ASSERT_TRUE(CreateDir(base + "/" + prefix + std::to_string(i), true));
     }
-    EXPECT_EQ(surviving, 1); // 只保留 1 个 prefix 目录
+    const std::string other = base + "/unrelated";
+    ASSERT_TRUE(CreateDir(other, true));
+    const std::string file = base + "/run_file";
+    ASSERT_TRUE(SaveFile(file, std::vector<uint8_t>{0x01}));
+
+    for (size_t kept : {4, 3}) {
+        RemoveOldDirectories(base, prefix, kept);
+        for (int i = 0; i < 3; ++i) {
+            EXPECT_TRUE(IsPathExist(base + "/" + prefix + std::to_string(i)));
+        }
+        EXPECT_TRUE(IsPathExist(other));
+        EXPECT_TRUE(IsPathExist(file));
+    }
+
+    RemoveOldDirectories(base, prefix, 0);
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_FALSE(IsPathExist(base + "/" + prefix + std::to_string(i)));
+    }
+    EXPECT_TRUE(IsPathExist(other));
+    EXPECT_TRUE(IsPathExist(file));
 
     DeleteDir(base, true);
 }

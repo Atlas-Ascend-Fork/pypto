@@ -217,7 +217,7 @@ void RemoveOldDirectories(const std::string& path, const std::string& prefix, si
 
     closedir(dir);
 
-    std::sort(dirList.begin(), dirList.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+    std::sort(dirList.begin(), dirList.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
     for (size_t i = kept; i < dirList.size(); ++i) {
         DeleteDir(dirList[i].first, true);
     }

@@ -51,8 +51,10 @@ def op_wrapper(func):
         if not isinstance(args, (list, tuple)):
             raise FeError(TypeError(f"args must be list or tuple, but got {type(args)}."))
         set_source_location()
-        out = func(*args, **kwargs)
-        clear_source_location()
+        try:
+            out = func(*args, **kwargs)
+        finally:
+            clear_source_location()
         if out is None:
             return None
         else:

@@ -358,7 +358,7 @@ def argsort(input: Tensor, dim: Optional[int] = None, descending: bool = False) 
     descending : bool
         Controls the order of sorting.
         If `True`, the tensor will be sorted in descending order;
-        if `False`, it will be sorted in ascending order.
+        if `False`, it will be sorted in ascending order. Defaults to `False`.
 
     Returns
     -------
