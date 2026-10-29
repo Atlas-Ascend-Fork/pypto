@@ -10,7 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 """PyPTO"""
 
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Union
 
 from .. import pypto_impl
 from .._element import Element
@@ -302,7 +302,7 @@ def le(input: Tensor, other: Union[Tensor, float, Element]) -> Tensor:
 @op_wrapper
 def topk(
     input: Tensor, k: int, dim: Optional[int] = None, largest: bool = True, algo: TopKAlgo = TopKAlgo.MERGE_SORT
-) -> Tuple[Tensor, Tensor]:
+) -> List[Tensor]:
     """Returns the k largest elements of the given input tensor along a given dimension.
 
     Parameters
@@ -319,9 +319,9 @@ def topk(
 
     Returns
     -------
-    tuple
-        A tuple of (values, indices) is returned with the values and indices of the largest k elements of
-        each row of the input tensor in the given dimension dim.
+    List[Tensor]
+        A list containing two tensors, values followed by indices, for the largest or smallest k elements
+        of each row of the input tensor in the given dimension dim. The two tensors can be unpacked.
 
     Raises
     ------
@@ -331,17 +331,17 @@ def topk(
     Examples
     --------
     x = pypto.tensor([2, 3], pypto.DT_FP32)
-    y = pypto.topk(x, 2, -1, True)
+    values, indices = pypto.topk(x, 2, -1, True)
 
     Input x:     [[1.0 2.0 3.0],
                   [1.0 2.0 3.0]]
-    Output y[0]: [[3.0 2.0],
+    Output values: [[3.0 2.0],
                   [3.0 2.0]]
-    Output y[1]: [[2 1],
+    Output indices: [[2 1],
                   [2 1]]
     """
 
-    return pypto_impl.TopK(input, k, (-1 if dim is None else dim), largest, algo)
+    return list(pypto_impl.TopK(input, k, (-1 if dim is None else dim), largest, algo))
 
 
 @op_wrapper

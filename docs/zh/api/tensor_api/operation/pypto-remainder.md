@@ -86,23 +86,23 @@ remainder(
 
 TileShape维度应和输出一致。
 
-如非广播场景，输入input shape为[m, n]，other为[m, n]，输出为[m, n]，TileShape设置为[m1, n1]，则m1，n1分别用于切分m，n轴。
-
-广播场景，输入input shape为[m, n]，other为[m, 1]，输出为[m, n]，TileShape设置为[m1, n1]，则m1，n1分别用于切分m，n轴。
+如以下非广播示例，输入input和other的Shape均为[n]，输出为[n]，TileShape设置为[n1]，则n1用于切分n轴。
 
 ```python
-pypto.set_vec_tile_shapes(4, 16)
+pypto.set_vec_tile_shapes(16)
 ```
 
 ### 接口调用示例
 
+以下为计算图构建上下文中的接口调用片段。pypto.tensor的首参为Shape，不会初始化示例数值；具体输入数据由调用方在执行时提供。高精度模式和指令模式示例使用相同的输入Shape。
+
 ```python
-a = pypto.tensor([7.0, 8.0, 9.0], pypto.DT_FP32)
-b = pypto.tensor([-3.0, -3.0, -3.0], pypto.DT_FP32)
+a = pypto.tensor([3], pypto.DT_FP32)
+b = pypto.tensor([3], pypto.DT_FP32)
 out = pypto.remainder(a, b)
 ```
 
-结果示例如下：
+当调用方提供下列输入数据时，结果示例如下：
 
 ```python
 输入数据a:    [7.0, 8.0, 9.0]
@@ -113,15 +113,15 @@ out = pypto.remainder(a, b)
 ### 高精度模式示例
 
 ```python
-a = pypto.tensor([7.0, 8.0, 9.0], pypto.DT_FP16)
-b = pypto.tensor([-3.0, -3.0, -3.0], pypto.DT_FP16)
+a = pypto.tensor([3], pypto.DT_FP16)
+b = pypto.tensor([3], pypto.DT_FP16)
 out = pypto.remainder(a, b, pypto.PrecisionType.HIGH_PRECISION)
 ```
 
 ### 指令模式示例
 
 ```python
-a = pypto.tensor([7.0, 8.0, 9.0], pypto.DT_FP32)
-b = pypto.tensor([-3.0, -3.0, -3.0], pypto.DT_FP32)
+a = pypto.tensor([3], pypto.DT_FP32)
+b = pypto.tensor([3], pypto.DT_FP32)
 out = pypto.remainder(a, b, pypto.PrecisionType.INTRINSIC)
 ```

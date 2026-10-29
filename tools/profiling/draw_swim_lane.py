@@ -244,6 +244,8 @@ class CoreInfo:
 
     def trans_cycles_to_time(self):
         for task in self.tasks:
+            if task.is_fake or task.leaf_total_cycles <= 0:
+                continue
             freq_convert = 1800
             task.leaf_total_time = task.leaf_total_cycles / freq_convert
             proportion = (task.exec_end - task.exec_start) / task.leaf_total_time
@@ -982,11 +984,10 @@ def analysis_wait_cycles(path):
 
 
 def get_total_time(tasks):
+    tasks = [task for task in tasks if not task.is_fake]
     if len(tasks) == 0:
-        return 1
-    if tasks[0].is_fake:
-        return 1
-    return tasks[-1].exec_end - tasks[0].exec_start
+        return 0
+    return max(task.exec_end for task in tasks) - min(task.exec_start for task in tasks)
 
 
 def print_aicore_summary():
@@ -1041,20 +1042,22 @@ def calculate_pipe_usage(path):
     leaf_data = load_json(args.pipe_exec_time)
     leaf_funcs, pipe_list = pipe_time.get_leaf_funcs(leaf_data)
 
-    total_execute_time = max_end_time - mininum_start_time
+    total_execute_time = max(max_end_time - mininum_start_time, 0)
     total_pipe_use_time = {}
     aic_num = 0
     aiv_num = 0
     for _, value in total_cores.items():
         value.total_time = get_total_time(value.tasks)
-        if value.total_time == 1:
+        if value.total_time <= 0:
             continue
         if 'AIC' in value.core_type:
             aic_num += 1
         elif 'AIV' in value.core_type:
             aiv_num += 1
         for entry in value.tasks:
-            func_name = entry.func_name()
+            if entry.is_fake:
+                continue
+            func_name = entry.func_name
             if func_name in leaf_funcs:
                 leaf_func = leaf_funcs[func_name]
                 entry.leaf_total_cycles = leaf_func.leaf_total_time
@@ -1074,16 +1077,12 @@ def calculate_pipe_usage(path):
         f.write(f"AIV: {aiv_num}\n")
         f.write("Total Pipe Usage\n")
         f.write("Pipe, AverageTime, TotalExecuteTime, AverageUsage\n")
-        avg_time = total_pipe_use_time.get('CUBE', 0) / aic_num
-        f.write(f"CUBE, {avg_time}, {total_execute_time}, {(avg_time / total_execute_time) * 100:.{4}}%\n")
-        avg_time = total_pipe_use_time.get('VECTOR_ALU', 0) / aiv_num
-        f.write(f"VECTOR_ALU, {avg_time}, {total_execute_time}, {(avg_time / total_execute_time) * 100:.{4}}%\n")
-        avg_time = total_pipe_use_time.get('MTE_IN', 0) / (aic_num + aiv_num)
-        f.write(f"MTE_IN, {avg_time}, {total_execute_time}, {(avg_time / total_execute_time) * 100:.{4}}%\n")
-        avg_time = total_pipe_use_time.get('MTE1', 0) / aic_num
-        f.write(f"MTE1, {avg_time}, {total_execute_time}, {(avg_time / total_execute_time) * 100:.{4}}%\n")
-        avg_time = total_pipe_use_time.get('MTE_OUT', 0) / (aic_num + aiv_num)
-        f.write(f"MTE_OUT, {avg_time}, {total_execute_time}, {(avg_time / total_execute_time) * 100:.{4}}%\n")
+        pipe_core_nums = [('CUBE', aic_num), ('VECTOR_ALU', aiv_num), ('MTE_IN', aic_num + aiv_num),
+                          ('MTE1', aic_num), ('MTE_OUT', aic_num + aiv_num)]
+        for pipe, core_num in pipe_core_nums:
+            avg_time = total_pipe_use_time.get(pipe, 0) / core_num if core_num else 0
+            usage = (avg_time / total_execute_time) * 100 if total_execute_time else 0.0
+            f.write(f"{pipe}, {avg_time}, {total_execute_time}, {usage:.{4}}%\n")
 
         pipe_list = ['MTE_IN', 'MTE1', 'MTE_OUT', 'CUBE', 'VECTOR_ALU']
         formatted_pipe = [f"{x}_Time, {x}_Usage" for x in pipe_list]
@@ -1092,12 +1091,13 @@ def calculate_pipe_usage(path):
         f.write("AICore Pipe Usage\n")
         f.write(f"Core, TotalTime, {head_str}\n")
         for _, value in sorted_cores:
-            if value.total_time == 1:
+            if value.total_time <= 0:
                 continue
             info = ''
             for pipe in pipe_list:
-                info += f", {value.pipe_exec_time[pipe]}, {(value.pipe_exec_time[pipe] / value.total_time) * 100:.{4}}%"
-            res = f"{value.get_core_name()}, {total_execute_time}{info}\n"
+                pipe_exec_time = value.pipe_exec_time.get(pipe, 0)
+                info += f", {pipe_exec_time}, {(pipe_exec_time / value.total_time) * 100:.{4}}%"
+            res = f"{value.get_core_name()}, {value.total_time}{info}\n"
             f.write(res)
     return
 

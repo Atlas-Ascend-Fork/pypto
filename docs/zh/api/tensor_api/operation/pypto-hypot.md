@@ -57,24 +57,26 @@ hypot(input: Tensor, other: Tensor) -> Tensor
 
 TileShape维度应和输出一致。
 
-示例1：输入input shape为[m, n]，输出为[m, n]，TileShape设置为[m1, n1]，则m1，n1分别用于切分m，n轴。
+示例：输入input和other的Shape均为[n]，输出为[n]，TileShape设置为[n1]，则n1用于切分n轴。
 
 ```python
-pypto.set_vec_tile_shapes(4, 16)
+pypto.set_vec_tile_shapes(16)
 ```
 
 ### 接口调用示例
+
+以下为计算图构建上下文中的接口调用片段。pypto.tensor的首参为Shape，不会初始化示例数值；具体输入数据由调用方在执行时提供。
 
 ```python
 # 示例：计算两组直角边的斜边
 # 第一组: (3, 4) -> 5
 # 第二组: (5, 12) -> 13
-a = pypto.tensor([3.0, 5.0], pypto.DT_FP32)
-b = pypto.tensor([4.0, 12.0], pypto.DT_FP32)
+a = pypto.tensor([2], pypto.DT_FP32)
+b = pypto.tensor([2], pypto.DT_FP32)
 out = pypto.hypot(a, b)
 ```
 
-结果示例如下：
+当调用方提供下列输入数据时，结果示例如下：
 
 ```python
 输入数据a:   [3.0, 5.0]

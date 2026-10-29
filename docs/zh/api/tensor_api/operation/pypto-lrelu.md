@@ -72,12 +72,14 @@ pypto.set_vec_tile_shapes(4, 16)
 
 ### 接口调用示例
 
+以下为计算图构建上下文中的接口调用片段。pypto.tensor的首参为Shape，不会初始化示例数值；具体输入数据由调用方在执行时提供。
+
 ```python
-a = pypto.tensor([[-1.0, 0.0, 1.0]], pypto.DT_FP32)
+a = pypto.tensor([1, 3], pypto.DT_FP32)
 out = pypto.lrelu(a)
 ```
 
-结果示例如下：
+当调用方提供下列输入数据时，结果示例如下：
 
 ```python
 输入数据a:   [[-1.0  0.0  1.0]]

@@ -67,17 +67,19 @@ TileShape维度应和输出一致。
 示例1：输入input shape为[m, n]，输出为[m, n]，TileShape设置为[m1, n1]，则m1，n1分别用于切分m，n轴。
 
 ```python
-pypto.set_vec_tile_shapes(m1, n1)
+pypto.set_vec_tile_shapes(4, 16)
 ```
 
 ### 接口调用示例
 
+以下为计算图构建上下文中的接口调用片段。pypto.tensor的首参为Shape，不会初始化示例数值；具体输入数据由调用方在执行时提供。
+
 ```python
-input_tensor = pypto.tensor([[-2.0, 0.0, 3.0]], pypto.DT_FP32)
+input_tensor = pypto.tensor([1, 3], pypto.DT_FP32)
 out = pypto.relu(input_tensor)
 ```
 
-结果示例如下：
+当调用方提供下列输入数据时，结果示例如下：
 
 ```python
 输入数据input：[[-2.0 0.0 3.0]]

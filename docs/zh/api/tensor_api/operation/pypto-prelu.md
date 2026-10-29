@@ -74,11 +74,11 @@ TileShape维度应和输出一致。
 
 示例2（2D输入）：输入input与weight，shape分别为[m, n] [n]。输出为[m, n]，TileShape设置为[m1, n1]，则m1，n1分别用于切分m，n轴。
 
-```python
-pypto.set_vec_tile_shapes(4, 16)
-```
+根据输入维度选择相应的TileShape，具体设置见[接口调用示例](#接口调用示例)。
 
 ### 接口调用示例
+
+以下为计算图构建上下文中的接口调用片段。pypto.tensor的首参为Shape，不会初始化示例数值；具体输入数据由调用方在执行时提供。
 
 示例1：1D输入
 
@@ -86,12 +86,13 @@ pypto.set_vec_tile_shapes(4, 16)
 # 示例1：1D PReLU运算
 # input shape为[4]，weight shape为[1]
 # 对于负数元素，所有元素共享同一个权重
-input_tensor = pypto.tensor([-2.0, 1.0, -3.0, 0.5], pypto.DT_FP32)
-weight_tensor = pypto.tensor([0.25], pypto.DT_FP32)
+pypto.set_vec_tile_shapes(16)
+input_tensor = pypto.tensor([4], pypto.DT_FP32)
+weight_tensor = pypto.tensor([1], pypto.DT_FP32)
 out = pypto.prelu(input_tensor, weight_tensor)
 ```
 
-结果示例如下：
+当调用方提供下列输入数据时，结果示例如下：
 
 ```python
 输入数据input:  [-2.0,  1.0, -3.0,  0.5]
@@ -111,12 +112,13 @@ out = pypto.prelu(input_tensor, weight_tensor)
 # 示例2：2D PReLU运算
 # input shape为[2, 3]，weight shape为[3]
 # 对于负数元素，按通道乘以对应权重
-input_tensor = pypto.tensor([[-2.0, 1.0, -3.0], [0.5, -1.0, 2.0]], pypto.DT_FP32)
-weight_tensor = pypto.tensor([0.25, 0.5, 0.1], pypto.DT_FP32)
+pypto.set_vec_tile_shapes(4, 16)
+input_tensor = pypto.tensor([2, 3], pypto.DT_FP32)
+weight_tensor = pypto.tensor([3], pypto.DT_FP32)
 out = pypto.prelu(input_tensor, weight_tensor)
 ```
 
-结果示例如下：
+当调用方提供下列输入数据时，结果示例如下：
 
 ```python
 输入数据input:  [[-2.0,  1.0, -3.0], [ 0.5, -1.0,  2.0]]

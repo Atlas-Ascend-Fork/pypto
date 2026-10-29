@@ -61,12 +61,14 @@ pypto.set_vec_tile_shapes(16)
 
 ### 接口调用示例
 
+以下为计算图构建上下文中的接口调用片段。pypto.tensor的首参为Shape，不会初始化示例数值；具体输入数据由调用方在执行时提供。
+
 ```python
-x = pypto.tensor([6, 5, 4, 3, 8, 6, 5, 1], pypto.DT_UINT8)
+x = pypto.tensor([8], pypto.DT_UINT8)
 y = pypto.unpack(x, pypto.DT_INT32)
 ```
 
-结果示例如下：
+当调用方提供下列输入数据时，结果示例如下：
 
 ```python
 输入数据x: [  6  5  4  3  8  6  5  1  ]    # DT_UINT8, shape=[8]

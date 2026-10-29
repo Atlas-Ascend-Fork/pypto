@@ -21,7 +21,7 @@
 ## 函数原型
 
 ```python
-topk(self, k: int, dim: Optional[int] = None, largest: bool = True) -> Tuple['Tensor', 'Tensor']
+topk(self, k: int, dim: Optional[int] = None, largest: bool = True) -> List['Tensor']
 ```
 
 ## 详细说明

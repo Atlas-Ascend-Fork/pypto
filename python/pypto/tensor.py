@@ -827,7 +827,7 @@ class Tensor:
         return pypto.lrelu(self, other, negative_slope)
 
     @source_location
-    def topk(self, k: int, dim: Optional[int] = None, largest: bool = True) -> Tuple['Tensor', 'Tensor']:
+    def topk(self, k: int, dim: Optional[int] = None, largest: bool = True) -> List['Tensor']:
         return pypto.topk(self, k, dim, largest)
 
     @source_location

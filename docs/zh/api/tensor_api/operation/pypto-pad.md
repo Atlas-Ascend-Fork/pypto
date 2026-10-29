@@ -60,26 +60,27 @@ pad(input: Tensor, pad: Sequence[int], mode: str = "constant", value: Union[floa
 
 TileShape维度应和**输出**一致。
 
-示例1：输入`input` shape为`[m, n]`，如果对其在n轴右侧填充了`p`，则输出shape为`[m, n+p]`，TileShape设置为`[m1, n1]`，则`m1`，`n1`分别用于切分输出的`m`，`n+p`轴。
+示例：输入Shape为[1, 1, 2, 2]，在尾轴右侧和次尾轴底部各填充1，输出Shape为[1, 1, 3, 3]，可设置TileShape为[1, 1, 4, 16]。
 
 ```python
-pypto.set_vec_tile_shapes(4, 16)
+pypto.set_vec_tile_shapes(1, 1, 4, 16)
 ```
 
 ### 接口调用示例
+
+以下为计算图构建上下文中的接口调用片段。pypto.tensor的首参为Shape，不会初始化示例数值；具体输入数据由调用方在执行时提供。
 
 ```python
 # 示例：对一个shape为 [1, 1, 2, 2] 的Tensor进行填充
 # 最后一个维度(右侧)填充1
 # 倒数第二个维度(底部)填充1
-t4d = pypto.tensor([0.0, 1.0, 2.0, 3.0], pypto.DT_FP32)
-# 假设内部已将一维数据reshape为 [1, 1, 2, 2]
+t4d = pypto.tensor([1, 1, 2, 2], pypto.DT_FP32)
 
 p1 = (0, 1, 0, 1)  # (pad_left=0, pad_right=1, pad_top=0, pad_bottom=1)
 out = pypto.pad(t4d, p1, mode="constant", value=0.0)
 ```
 
-结果示例如下：
+当调用方提供下列输入数据时，结果示例如下：
 
 ```python
 # 输入数据t4d (逻辑shape为 [1, 1, 2, 2]):

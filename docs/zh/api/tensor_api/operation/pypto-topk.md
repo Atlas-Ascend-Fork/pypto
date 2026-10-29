@@ -29,7 +29,7 @@
 ## 函数原型
 
 ```python
-topk(input: Tensor, k: int, dim: Optional[int] = None, largest: bool = True, algo: TopKAlgo = TopKAlgo.MERGE_SORT) -> Tuple[Tensor, Tensor]
+topk(input: Tensor, k: int, dim: Optional[int] = None, largest: bool = True, algo: TopKAlgo = TopKAlgo.MERGE_SORT) -> List[Tensor]
 ```
 
 ## 参数说明
@@ -44,7 +44,7 @@ topk(input: Tensor, k: int, dim: Optional[int] = None, largest: bool = True, alg
 
 ## 返回值说明
 
-返回一个命名元组(values, indices)，其中包含input在指定维度dim下每行中最大或最小的k个元素的值和索引。
+返回包含两个Tensor的列表，依次为values和indices，分别表示input在指定维度dim下每行中最大或最小的k个元素的值和索引。可通过序列解包获取两个Tensor。
 
 ## 约束说明
 
@@ -91,7 +91,7 @@ pypto.set_vec_tile_shapes(4, 16, 32)
 
 ```python
 x = pypto.tensor([2, 3], pypto.DT_FP32)
-y = pypto.topk(x, 2, -1, True, pypto.TopKAlgo.MERGE_SORT)
+values, indices = pypto.topk(x, 2, -1, True, pypto.TopKAlgo.MERGE_SORT)
 ```
 
 结果示例如下：
@@ -99,8 +99,8 @@ y = pypto.topk(x, 2, -1, True, pypto.TopKAlgo.MERGE_SORT)
 ```python
 输入数据x: [[1.0 2.0 3.0],
             [1.0 2.0 3.0]]
-输出数据y[0]: [[3.0 2.0],
+输出数据values: [[3.0 2.0],
                [3.0 2.0]]
-输出数据y[1]: [[2, 1],
+输出数据indices: [[2, 1],
                [2, 1]]
 ```
