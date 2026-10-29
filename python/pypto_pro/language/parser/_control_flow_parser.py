@@ -380,6 +380,7 @@ class ControlFlowParserMixin:
                 if state.body_phi.ty is None:
                     raise InvalidVal(f"Loop phi state for '{name}' has no IR type")
                 iter_var = self.builder.var(name, state.body_phi.ty, span)
+                self._transfer_tile_group_metadata(iter_var, init_value)
             slots.append(
                 _LoopMergeSlot(
                     name=name,
@@ -467,6 +468,11 @@ class ControlFlowParserMixin:
             iter_args.append(self.builder.builder.create_iter_arg(iter_var, slot.init_value))
             return_vars.append(return_var)
             merged_bindings.append((slot.name, return_var, slot.state.result_phi))
+
+        for index, (slot, iter_var, return_var) in enumerate(finalized):
+            carried = [slot.init_value, *(jump.outputs[index] for jump in info.jumps)]
+            self._transfer_tile_group_metadata(iter_var, *carried)
+            self._transfer_tile_group_metadata(return_var, *carried)
 
         for jump in info.jumps:
             if jump.jump_op is None:
@@ -633,6 +639,9 @@ class ControlFlowParserMixin:
                 merged_var = self.builder.var(name, state.ty, span)
             return_vars.append(merged_var)
             merged_bindings.append((name, merged_var, state))
+
+        for index, (_name, merged_var, _state) in enumerate(merged_bindings):
+            self._transfer_tile_group_metadata(merged_var, *[jump.outputs[index] for jump in info.jumps])
 
         for jump in info.jumps:
             if jump.jump_op is None:

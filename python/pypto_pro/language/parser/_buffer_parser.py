@@ -18,6 +18,7 @@ and its IDs together.
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 
 from pypto.pypto_impl import ir
 from pypto.pypto_impl.ir import DataType
@@ -51,6 +52,19 @@ _TILE_GROUP_TYPE_NAME = "tile_group"
 def _is_int_sequence(value) -> bool:
     """Whether *value* is a non-empty tuple of plain integers."""
     return isinstance(value, tuple) and bool(value) and all(_is_int(e) for e in value)
+
+
+@dataclass(frozen=True)
+class TileGroupFacts:
+    """One pl.make_tile_group() declaration's resolved facts."""
+
+    memory: ir.MemorySpace
+    depth: int  # slot count, inferred from len(mutex_ids) when the source omits depth
+    addrs: tuple[int, ...]  # one start address per slot
+    slot_size: int
+    fwd_ids: tuple[int, ...] | None  # None when the keyword is absent
+    bwd_ids: tuple[int, ...] | None
+    span: ir.Span
 
 
 class BufferParserMixin:
@@ -330,7 +344,22 @@ class BufferParserMixin:
         else:
             tile_addrs = [addrs + i * slot_size for i in range(depth)]
 
-        return self._build_tile_group_ir(
+        # fwd_ids/bwd_ids take no part in the IR; they are resolved into the
+        # TileGroupFacts below, which the automatic pipeline transform reads.
+        decl_ids: dict[str, tuple[int, ...]] = {}
+        for ids_key, ids_value in (("fwd_ids", fwd_ids), ("bwd_ids", bwd_ids)):
+            if ids_value is None:
+                continue
+            ids = self.require_const_value(
+                ids_value, ids_key, expects="non-empty list of integers",
+                check=lambda value: (
+                    _is_int_sequence(tuple(value)) if isinstance(value, (list, tuple)) else False
+                ),
+                hint="Cross-core event IDs are fixed while parsing; pass a literal list of "
+                "integers, or a variable bound to one.",
+            )
+            decl_ids[ids_key] = tuple(ids)
+        result = self._build_tile_group_ir(
             tile_type,
             tile_addrs,
             depth,
@@ -338,6 +367,16 @@ class BufferParserMixin:
             slot_size,
             span,
         )
+        self.parse_facts.buffer_decls[result] = TileGroupFacts(
+            memory=tile_type.target_memory,
+            depth=depth,
+            addrs=tuple(tile_addrs),
+            slot_size=slot_size,
+            fwd_ids=decl_ids.get("fwd_ids"),
+            bwd_ids=decl_ids.get("bwd_ids"),
+            span=span,
+        )
+        return result
 
 
     def _build_tile_group_ir(
@@ -393,6 +432,7 @@ class BufferParserMixin:
             fields.append("cursor")
         result = self.make_named_tuple(elements, fields, span, name=_TILE_GROUP_TYPE_NAME)
         self.tile_group_meta[result] = (depth, mutex_ids, memory)
+        self._bind_buffer_ref(result, group, None)
         return result
 
     def _emit_cursor_advance(self, cursor_struct, new_val, span: ir.Span) -> None:
@@ -416,9 +456,7 @@ class BufferParserMixin:
         """Capture the index before a later cursor update."""
         idx = self.builder.let(f"_bufidx_{self._tuple_idx_counter}", raw_index, span=span)
         self._tuple_idx_counter += 1
-        result = ir.GetItemExpr(tiles, idx, span)
-        self._tile_slot_source[result] = tiles
-        return result
+        return ir.GetItemExpr(tiles, idx, span)
 
     def _lower_group_accessor(self, group_var, method_name: str, span: ir.Span):
         """Select a complete bound tile using the rotating cursor."""
@@ -426,7 +464,9 @@ class BufferParserMixin:
         tiles = self.lower_attr_access(group_var, "tiles", span)
         if depth == 1:
             # Single tile: no cursor or modulo; optional mutex metadata stays static.
-            return self._select_static_slot(tiles, 0, span)
+            tile = self._select_static_slot(tiles, 0, span)
+            self._bind_buffer_ref(tile, group_var, 0)
+            return tile
         cursor_struct = self.lower_attr_access(group_var, "cursor", span)
         cur_read = self.lower_attr_access(cursor_struct, "cursor", span)
         if method_name == "next":
@@ -438,11 +478,13 @@ class BufferParserMixin:
         else:  # previous
             raw = cur_read + ir.ConstInt(depth - 1, DataType.INT64, span)
         wrapped = raw % ir.ConstInt(depth, DataType.INT64, span)
-        return self._select_dynamic_slot(
+        tile = self._select_dynamic_slot(
             tiles,
             wrapped,
             span,
         )
+        self._bind_buffer_ref(tile, group_var, None)
+        return tile
 
     def lower_group_subscript(self, group_var, slice_node: ast.expr, span: ir.Span) -> ir.Expr:
         """Select a complete tile without advancing or wrapping the index."""
@@ -460,13 +502,17 @@ class BufferParserMixin:
                     hint=f"Valid indices are in [0, {depth})",
                     parser_retry=True,
                 )
-            return self._select_static_slot(tiles, slot, span)
+            tile = self._select_static_slot(tiles, slot, span)
+            self._bind_buffer_ref(tile, group_var, slot)
+            return tile
 
-        return self._select_dynamic_slot(
+        tile = self._select_dynamic_slot(
             tiles,
             index_expr,
             span,
         )
+        self._bind_buffer_ref(tile, group_var, None)
+        return tile
 
     def _reject_non_index_subscript(self, slice_node: ast.expr, span: ir.Span) -> ir.Expr:
         """Parse and validate one integer tile-group index."""

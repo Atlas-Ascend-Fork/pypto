@@ -317,6 +317,7 @@ class AssignmentParserMixin:
                 parser_retry=True,
             )
         tuple_var = self.builder.let(f"_tuple_tmp_{self._tuple_idx_counter}", value_expr, span=span)
+        self._transfer_tile_group_metadata(tuple_var, value_expr)
         self._mark_make_tuple_anchor(value_expr)
         self._tuple_idx_counter += 1
         for i, elt in enumerate(target.elts):
@@ -333,6 +334,7 @@ class AssignmentParserMixin:
                 ir.ConstInt(i, DataType.INT64, ir.Span.unknown()),
                 span,
             )
+            self._transfer_tile_group_metadata(item_expr, tuple_var)
             var = self.builder.let(elt.id, item_expr, span=span)
             self.scope_manager.define_var(elt.id, var, span=span)
             const_item = value_expr.elements[i] if isinstance(value_expr, ir.MakeTuple) else item_expr

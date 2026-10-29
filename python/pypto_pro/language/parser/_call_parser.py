@@ -1021,16 +1021,15 @@ class CallParserMixin:
             return op_func(self, *args, **kwargs, span=span)
 
     def _mx_slot_addrs(self, value: ir.Expr) -> tuple[int, ...] | None:
-        source = self._tile_slot_source.get(value)
-        types = source.type.types if source is not None else (value.type,)
-        addresses = []
-        for tile_type in types:
-            memref = getattr(tile_type, "memref", None)
-            address = getattr(memref, "addr", None)
-            if not isinstance(address, ir.ConstInt):
-                return None
-            addresses.append(int(address.value))
-        return tuple(addresses)
+        if self.is_runtime_slot(value):
+            refs = self.buffer_refs_of(value)
+            facts = self.parse_facts.buffer_decls.get(refs[0].buffer) if len(refs) == 1 else None
+            return facts.addrs if facts is not None else None
+        memref = getattr(value.type, "memref", None)
+        address = getattr(memref, "addr", None)
+        if not isinstance(address, ir.ConstInt):
+            return None
+        return (int(address.value),)
 
     def _check_mx_plane_slots(self, op_name: str, args: tuple, kwargs: dict, span: ir.Span) -> None:
         """Check runtime slot layouts after operands have been parsed exactly once."""
@@ -1039,7 +1038,7 @@ class CallParserMixin:
             plane_index = first + 2 + offset
             plane = args[plane_index] if len(args) > plane_index else kwargs[role]
             data = args[first + offset]
-            if data not in self._tile_slot_source and plane not in self._tile_slot_source:
+            if not self.is_runtime_slot(data) and not self.is_runtime_slot(plane):
                 continue  # The builder already checks the selected static addresses.
             data_addrs = self._mx_slot_addrs(data)
             plane_addrs = self._mx_slot_addrs(plane)

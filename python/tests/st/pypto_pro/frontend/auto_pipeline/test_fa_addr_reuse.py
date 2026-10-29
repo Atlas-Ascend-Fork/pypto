@@ -484,18 +484,12 @@ def fa_addr_reuse_auto_pipeline_kernel(
                              valid_shape=[TKV // 2, TS_HALF], layout=pl.NZ),
             addrs=[VA2_DN, VA2B_DN], mutex_ids=[0, 1])
         red_rm_type = pl.TileType(shape=[1, TS_HALF], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
-        gmax_rm_0 = pl.make_tile(red_rm_type, addr=VA_GMAX0)
-        gmax_rm_1 = pl.make_tile(red_rm_type, addr=VA_GMAX1)
-        gmax_rm_2 = pl.make_tile(red_rm_type, addr=VA_GMAX2)
-        global_max_rm_buf = (gmax_rm_0, gmax_rm_1, gmax_rm_2)
-        gsum_rm_0 = pl.make_tile(red_rm_type, addr=VA_GSUM0)
-        gsum_rm_1 = pl.make_tile(red_rm_type, addr=VA_GSUM1)
-        gsum_rm_2 = pl.make_tile(red_rm_type, addr=VA_GSUM2)
-        global_sum_rm_buf = (gsum_rm_0, gsum_rm_1, gsum_rm_2)
-        ec_rm_0 = pl.make_tile(red_rm_type, addr=VA_EC0)
-        ec_rm_1 = pl.make_tile(red_rm_type, addr=VA_EC1)
-        ec_rm_2 = pl.make_tile(red_rm_type, addr=VA_EC2)
-        exp_corr_rm_fifo = (ec_rm_0, ec_rm_1, ec_rm_2)
+        global_max_rm_buf = pl.make_tile_group(
+            type=red_rm_type, addrs=[VA_GMAX0, VA_GMAX1, VA_GMAX2], depth=FIFO_DEPTH)
+        global_sum_rm_buf = pl.make_tile_group(
+            type=red_rm_type, addrs=[VA_GSUM0, VA_GSUM1, VA_GSUM2], depth=FIFO_DEPTH)
+        exp_corr_rm_fifo = pl.make_tile_group(
+            type=red_rm_type, addrs=[VA_EC0, VA_EC1, VA_EC2], depth=FIFO_DEPTH)
         o_f16_buf = pl.make_tile_group(
             type=pl.TileType(shape=[TS_HALF, TD], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
             addrs=VA9, mutex_ids=[11])

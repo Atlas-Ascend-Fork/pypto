@@ -1263,9 +1263,9 @@ def _prepare_codegen_inputs(
         from pypto_pro.runtime.pipeline._analyzer import probe_kernel_facts
         from pypto_pro.runtime.pipeline._dump import build_generated_file_source
 
-        # Probe parse to learn which if-conditions are compile-time constants
-        # (reuses the parser's own constant folding); drives dead-branch pruning.
-        if_const_map, var_types, arg_types, field_types = probe_kernel_facts(kernel_def, bound_signature)
+        # Probe parse for the facts only the parser can give: the compile-time-constant
+        # if-conditions (its own constant folding), the IR types, each buffer's memory space.
+        facts = probe_kernel_facts(kernel_def, bound_signature)
         # The analysis below walks the kernel's AST from here, where the parser's
         # SpanTracker is not in scope. Publish one so its errors can point at the
         # code they are about instead of naming a line number in their text.
@@ -1282,10 +1282,7 @@ def _prepare_codegen_inputs(
                 kernel_def._func_def,
                 kernel_def._closure_vars,
                 kernel_def._pipeline,
-                if_const_map=if_const_map,
-                var_types=var_types,
-                arg_types=arg_types,
-                field_types=field_types,
+                facts=facts,
                 tilingkey_consts=kernel_def._tilingkey_consts,
                 datatype_consts=kernel_def._datatype_consts,
             )

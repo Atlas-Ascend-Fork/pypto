@@ -20,19 +20,13 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
+import functools
+import inspect
 
-from pypto.pypto_impl.ir import MemorySpace
+from pypto.pypto_impl.backend import BackendCCE
+from pypto.pypto_impl.ir import MemorySpace, PipeType
 from pypto_pro.language import _api as _language_api
 from pypto_pro.language._vf_api import Vf
-from pypto_pro.language.parser._op_pipeline import (
-    _BLOCK_OP_TILE_ROLES,
-    _VF_OP_TILE_ROLES,
-    get_expands_pipe,
-    get_move_pipe,
-    get_op_pipe,
-    get_store_pipe,
-    op_accesses_buffer,
-)
 
 from ..._errors import (
     InvalidArgument,
@@ -50,16 +44,9 @@ from ._astutil import call_name, eval_const, gm_slot_size, slot_accessor, spans_
 # allocates from the same pool for address-reuse edges.
 MAX_EVENT_ID = 15
 
-# MemorySpace attribute name (as written in pl.MemorySpace.<X>) -> enum value
-_MEMORY_NAMES = {
-    "Vec": MemorySpace.Vec,
-    "Mat": MemorySpace.Mat,
-    "Left": MemorySpace.Left,
-    "Right": MemorySpace.Right,
-    "Acc": MemorySpace.Acc,
-    "ScaleLeft": MemorySpace.ScaleLeft,
-    "ScaleRight": MemorySpace.ScaleRight,
-}
+# The memory spaces a cross-core tile group may live in: UB and L1. GM is the third
+# cross-core space, declared with make_tensor instead of make_tile_group.
+_CROSS_CORE_TILE_MEMORY = frozenset({MemorySpace.Vec, MemorySpace.Mat})
 
 
 def _tile_type_memory(type_node: ast.expr | None) -> MemorySpace | None:
@@ -72,8 +59,19 @@ def _tile_type_memory(type_node: ast.expr | None) -> MemorySpace | None:
         return None
     for kw in type_node.keywords:
         if kw.arg == "target_memory" and isinstance(kw.value, ast.Attribute):
-            if kw.value.attr in _MEMORY_NAMES:
-                return _MEMORY_NAMES[kw.value.attr]
+            return MemorySpace.__members__.get(kw.value.attr)
+    return None
+
+
+def _declared_memory(type_node: ast.expr | None, stmt: ast.Assign, buffer_memory: dict) -> MemorySpace | None:
+    """The MemorySpace a tile-group declaration gives, read off its TileType or, when that is
+    not a literal pl.MemorySpace.<X>, taken from the probe parse."""
+    memory = _tile_type_memory(type_node)
+    if memory is not None:
+        return memory
+    for target in stmt.targets:
+        if isinstance(target, ast.Name) and target.id in buffer_memory:
+            return buffer_memory[target.id]
     return None
 
 
@@ -224,11 +222,14 @@ class BufferDecl:
     stride_node: ast.expr | None = None  # GM only
 
 
-def scan_buffer_decls(kernel_func_def: ast.FunctionDef) -> list[BufferDecl]:
+def scan_buffer_decls(kernel_func_def: ast.FunctionDef, buffer_memory: dict | None = None) -> list[BufferDecl]:
     """Every buffer declaration in the kernel body, in AST order.
 
     The one pass over the kernel body that all buffer-declaration scans share.
+    ``buffer_memory`` is the probe parse's {buffer: MemorySpace} (see KernelFacts), which
+    fills in a target_memory the declaration's AST does not spell out literally.
     """
+    buffer_memory = buffer_memory or {}
     tile_types = _scan_bindings(kernel_func_def, _is_tile_type_call)
     lists = _scan_bindings(kernel_func_def, _is_list_literal)
     decls: list[BufferDecl] = []
@@ -258,7 +259,7 @@ def scan_buffer_decls(kernel_func_def: ast.FunctionDef) -> list[BufferDecl]:
                 fwd_ids_node=written.get("fwd_ids"),
                 bwd_ids_node=written.get("bwd_ids"),
                 # target_memory is a keyword of the TILE TYPE, not of make_tile_group.
-                memory=_tile_type_memory(type_node),
+                memory=_declared_memory(type_node, node, buffer_memory),
                 stmt=node,
             )
         )
@@ -326,7 +327,7 @@ def scan_all_tile_group_names(decls: list[BufferDecl]) -> set[str]:
     Independent of mutex_ids and cross-core ids: a group whose ids do not resolve statically
     is still a group, and callers that recognise slot selection must not miss it.
     """
-    return {name for decl in decls if decl.memory != MemorySpace.DDR for name in decl.names}
+    return {name for decl in decls if decl.type_node is not None for name in decl.names}
 
 
 def scan_all_buffer_memory(decls: list[BufferDecl]) -> dict[str, MemorySpace]:
@@ -567,12 +568,22 @@ def scan_cross_core_buffers(
 
 
 def _validate_buffer_memory(decl: BufferDecl, bufname: str) -> None:
-    """L8: Validate that a make_tile_group call declares a resolvable memory space."""
+    """L8: Validate the memory space a cross-core buffer declares."""
     if decl.memory is None:
         raise InvalidVal(
-            f"pipeline: cross-core buffer '{bufname}' has no resolvable memory space. "
-            f"Its make_tile_group(type=pl.TileType(..., target_memory=pl.MemorySpace.X)) "
-            f"must set target_memory to a literal pl.MemorySpace.<X>.",
+            f"pipeline: cross-core buffer '{bufname}' has no resolvable memory space. Its "
+            f"make_tile_group(type=pl.TileType(..., target_memory=...)) must set target_memory, "
+            f"and the parse has to reach that declaration for the space to be known.",
+            span=span_of(decl.stmt),
+        )
+    # type_node is None for a GM declaration, which make_tensor fixes to DDR.
+    if decl.type_node is not None and decl.memory not in _CROSS_CORE_TILE_MEMORY:
+        raise NotSupported(
+            f"pipeline: cross-core buffer '{bufname}' lives in "
+            f"pl.MemorySpace.{decl.memory.name}, which cross-core sync does not support. "
+            f"A tile group handing data to the other core has to be in pl.MemorySpace.Vec (UB) "
+            f"or pl.MemorySpace.Mat (L1); to hand the data over through GM, declare the buffer "
+            f"with pl.make_tensor(ws, shape, depth=..., fwd_ids=..., bwd_ids=...) instead.",
             span=span_of(decl.stmt),
         )
 
@@ -898,11 +909,11 @@ def _scan_stmts(stmts: list, bindings: dict, slot_to_buffer: dict, tables: Acces
             op_name = resolve_op_name(node.func, tables.closure_vars)
             if op_name is not None and _vf_op_of(op_name) is None:
                 op_name = op_name.rsplit(".", 1)[-1]
-                op_buffers = slot_to_buffer
-                if op_name == "gemm":
-                    # Its keyword staging operands can be groups rather than selected slots.
-                    op_buffers = {**slot_to_buffer, **{name: buf for name, (buf, _) in bindings.items()}}
-                _handle_block_op(node, op_name, op_buffers, tables, out)
+                # An operand is usually a selected slot, but pl.gemm stages a whole buffer
+                # and pl.reinterpret views one.
+                named_buffers = {**slot_to_buffer, **{name: buf for name, (buf, _) in bindings.items()}}
+                op_buffers = named_buffers if op_name == "gemm" else slot_to_buffer
+                _handle_block_op(node, op_name, op_buffers, named_buffers, tables, out)
                 continue
             name = call_name(node)
             if not name:
@@ -1001,48 +1012,255 @@ def _reject_buffer_decl(func_def: ast.FunctionDef, name: str, is_stage: bool = F
             )
 
 
+# ----------------------------------------------------------------------------
+# Per-op tile-argument role table (for cross-core sync direction inference)
+# ----------------------------------------------------------------------------
+#
+# One role per declared parameter, in declaration order:
+#   "W"   - written  (producer of cross-core data)
+#   "R"   - read     (consumer of cross-core data)
+#   "RW"  - read and written (e.g. matmul_acc accumulator)
+#   None  - carries no read or write of buffer data
+#
+# Keyword-only parameters are covered too, so an argument written as a keyword
+# takes the role at its own parameter's position. An entry's length equals the
+# number of parameters the op declares.
+#
+# A parameter whose role depends on a keyword takes a pair instead:
+#   (role, {keyword: role when the call passes that keyword})
+#
+# Only ops with their own page in the API docs are listed; a cross-core buffer
+# handed to any other op is refused (see _reject_untabled_op).
+#
+# Note: cross-core sync MUST distinguish read vs write because the sync
+# direction depends on it.
+
+# ----------------------------------------------------------------------------
+# Per-op tile-argument role table for vector-function (vf.*) ops
+# ----------------------------------------------------------------------------
+#
+# Same roles as _BLOCK_OP_TILE_ROLES below, one per call argument, for the vf.*
+# ops that touch a UB tile.  Every other vf op works purely on registers and is
+# absent.
+#
+# A table rather than a rule, because no rule holds: the pointer is not always
+# the first argument (the unaligned loads take their alignment-state register
+# there), and the name does not say the direction either --- `gather` reads a
+# tile, `scatter` and `squeeze_store_unalign` write one, and neither starts
+# with "load" or "store".
+#
+# Adding a vf op that reads or writes a UB tile means adding it here too;
+# the pipeline scan reports an op it cannot find when one reaches a buffer
+# that cross-core sync tracks.
+
+_VF_OP_TILE_ROLES: dict[str, list] = {
+    # ===== Aligned =====
+    "load_align": ["R"],  # load_align(src, offset, ...) -> reg
+    "store_align": ["W", None],  # store_align(dst, src, ...)
+    # ===== Unified (AscendC-style Load/Store) =====
+    "load": ["R"],  # load(src_ptr, stride, ...) -> reg
+    "store": ["W", None, None],  # store(dst_ptr, src, count)
+    # ===== Unaligned: arg 0 is the alignment-state register, not the tile =====
+    "load_unalign_pre": [None, "R"],  # load_unalign_pre(ureg, src_ptr)
+    "load_unalign": [None, "R", None],  # load_unalign(ureg, src_ptr, stride)
+    "store_unalign": ["W", None, None, None],  # (dst_ptr, src, align_reg, stride)
+    "store_unalign_post": ["W", None, None],  # (dst_ptr, align_reg, stride)
+    "squeeze_store_unalign": ["W", None, None],  # (dst_ptr, src, align_reg)
+    "squeeze_store_unalign_post": ["W", None],  # (dst_ptr, align_reg)
+    # ===== Indexed =====
+    "gather": ["R", None, None],  # gather(src, indices, mask) -- src is a UB tile
+    "scatter": ["W", None, None, None],  # scatter(base_ptr, src, index, mask)
+}
+
+_BLOCK_OP_TILE_ROLES: dict[str, list] = {
+    # ===== Scalar element access (S pipe) =====
+    # Reached both as pl.getval(t, i) / pl.setval(t, i, v) and as the subscript spellings
+    # t[i] / t[i] = v that the parser lowers to them. A scalar read of a tile another core
+    # wrote still has to wait for that write: measured on device, without the handshake the
+    # read returns the buffer's previous contents, and wait_cross_core(pipe=PipeType.S)
+    # fixes it.
+    "getval": ["R", None],  # (container, offset)
+    "setval": ["W", None, None],  # (container, offset, value)
+    # ===== Data movement =====
+    "init_output": ["W", None, None, None],  # (tensor, *, offset, size, value)
+    "load": ["W", "R", None, None],  # (dst_tile, src_tensor, offsets, *, order)
+    "load_tile": ["W", "R", None, None],  # (dst_tile, src_tensor, tile_offsets, *, order)
+    # (dst_tensor, src_tile, offsets, *, relu_pre_mode, scale, order, atomic, phase)
+    "store": ["W", "R", None, None, "R", None, None, None],
+    "store_tile": ["W", "R", None, None, "R", None, None, None],
+    # (dst_tile, src_tile, offset, *, acc_to_vec_mode, relu_pre_mode, scale, phase)
+    "move": ["W", "R", None, None, None, "R", None],
+    # (dst_tile, src_tile, offset, *, relu_pre_mode, scale, phase)
+    "insert": ["W", "R", None, None, "R", None],
+    # ===== Matmul =====
+    "matmul": ["W", "R", "R", "R", None],  # (dst, lhs, rhs, bias, *, phase)
+    "matmul_acc": ["RW", "R", "R", "R", None],  # (dst, acc, lhs, rhs, *, phase); dst is acc
+    "matmul_mx": ["W", "R", "R", "R", "R", None],  # (dst, lhs, rhs, scale_a, scale_b, *, phase)
+    "matmul_mx_acc": ["RW", "R", "R", "R", "R", "R", None],
+    # (acc, l1a, l1b, *, l0a, l0b, m, n, k, init, splitn, splitk, trans_a, trans_b, bias)
+    "gemm": ["RW", "R", "R", "RW", "RW", None, None, None, None, None, None, None, None, "R"],
+    # ===== Binary element-wise =====
+    "add": ["W", "R", "R"],
+    "sub": ["W", "R", "R"],
+    "mul": ["W", "R", "R"],
+    "div": ["W", "R", "R"],
+    "and_": ["W", "R", "R"],
+    "xor": ["W", "R", "R", None],  # (out, lhs, rhs, tmp)
+    # (out, lhs, rhs, *, dim); dim= reduces, which makes rhs a workspace tile
+    "maximum": ["W", "R", ("R", {"dim": None}), None],
+    # ===== Fused / composite =====
+    "add_relu": ["W", "RW", "R"],  # lhs holds the intermediate sum
+    "axpy": ["RW", "R", None],  # out = alpha * src + out
+    # ===== Unary =====
+    "neg": ["W", "R"],
+    "abs": ["W", "R"],
+    "relu": ["W", "R"],
+    # ===== Type cast =====
+    "cast": ["W", "R", None],  # (out, src, *, mode)
+    # ===== Select / compare =====
+    "select": ["W", "R", "R", "R", None],  # (out, mask, lhs, rhs, tmp)
+    "eq": ["W", "R", "R"],
+    # ===== Quantisation =====
+    "quant": ["W", "R", "R", None, "R"],  # (out, src, scale, *, mode, offset)
+    "dequant": ["W", "R", "R", "R"],  # (out, src, scale, offset)
+    # ===== Reduce =====
+    "sum": ["W", "R", None, None],  # (out, src, tmp, *, dim)
+    "expands": ["W", None],  # (out, scalar)
+    # ===== Layout / element access =====
+    "fill_index": ["W", None],  # (out, start)
+    "transpose": ["W", "R"],
+}
+
+
+# ----------------------------------------------------------------------------
+# Descriptor-only (metadata) ops
+# ----------------------------------------------------------------------------
+# These block ops never read or write a tile's buffer *data*: they rewrite its
+# *descriptor* (e.g. its valid (row, col) window) or hand back another handle on
+# the same storage.  Accesses to their tiles therefore cannot race, so they need
+# no cross-core / cross-pipe synchronisation.  This mirrors the tile-graph
+# sync pass, which likewise excludes the metadata opcodes OP_VIEW /
+# OP_VIEW_TYPE / OP_RESHAPE / OP_ASSEMBLE.
+_DESCRIPTOR_ONLY_OPS: frozenset[str] = frozenset(
+    {
+        "make_tile_group",  # Declares storage metadata; does not access tile data.
+        "reinterpret",  # Returns another handle on the same storage.
+        "set_validshape",
+        "subview",
+    }
+)
+
+
+def op_accesses_buffer(op_name: str) -> bool:
+    """Whether a block op reads or writes its tiles' buffer data.
+
+    False for descriptor-only ops (they only touch tile metadata), which is the
+    signal that cross-core sync can skip them.
+    """
+    return _BLOCK_OP_ALIASES.get(op_name, op_name) not in _DESCRIPTOR_ONLY_OPS
+
+
+_UNCOVERED = object()
+
+
+@functools.lru_cache(maxsize=None)
+def _declared_signature(op_name: str) -> inspect.Signature | None:
+    """The signature the op's API declaration gives, or None when it has no declaration."""
+    declared = getattr(_language_api, op_name, None)
+    if declared is None:
+        return None
+    try:
+        return inspect.signature(declared)
+    except (TypeError, ValueError):
+        return None
+
+
+def _call_arg_roles(node: ast.Call, op_name: str, roles: list):
+    """Yield ``(parameter, argument, role)`` for every argument the call passes.
+
+    The role is the one the table gives the parameter the argument binds to, so a value
+    written as a keyword gets the same role as the same value written by position.
+    ``_UNCOVERED`` means the table says nothing about that parameter.
+    """
+    if any(isinstance(arg, ast.Starred) for arg in node.args):
+        for arg in node.args:
+            yield "", arg, _UNCOVERED
+        return
+    sig = _declared_signature(op_name)
+    params = tuple(sig.parameters) if sig is not None else ()
+    bound = None
+    if sig is not None:
+        try:
+            bound = sig.bind(*node.args, **{kw.arg: kw.value for kw in node.keywords if kw.arg})
+        except TypeError:
+            bound = None
+    pairs = (
+        list(bound.arguments.items()) if bound is not None
+        else [(params[i] if i < len(params) else "", arg) for i, arg in enumerate(node.args)]
+    )
+    for param, value in pairs:
+        idx = params.index(param) if param in params else -1
+        role = roles[idx] if 0 <= idx < len(roles) else _UNCOVERED
+        for arg in (value if isinstance(value, tuple) else (value,)):
+            yield param, arg, role
+
+
 def _block_op_roles(node: ast.Call, op_name: str) -> list | None:
     """The argument roles for this call, or None when the table does not cover the op.
 
-    An op whose ``mode=`` changes what it reads and writes has one entry per mode, named
-    ``<op>_<mode lowercased>`` (e.g. ``fillpad_inplace``, ``fillpad_expand``). A new
-    mode-dependent op then needs a table entry and nothing here.
+    A parameter whose role depends on a keyword is tabled as ``(role, {keyword: role})``
+    and takes the role of a keyword the call passes. Which keywords those are is what the
+    table holds, so a new one needs an entry there and nothing here.
     """
-    for kw in node.keywords:
-        if kw.arg == "mode" and isinstance(kw.value, ast.Attribute):
-            variant = _BLOCK_OP_TILE_ROLES.get(f"{op_name}_{kw.value.attr.lower()}")
-            if variant is not None:
-                return variant
-    return _BLOCK_OP_TILE_ROLES.get(op_name)
+    roles = _BLOCK_OP_TILE_ROLES.get(op_name)
+    if roles is None:
+        return None
+    passed = {kw.arg for kw in node.keywords}
+    return [
+        next((r for k, r in role[1].items() if k in passed), role[0])
+        if isinstance(role, tuple) else role
+        for role in roles
+    ]
 
 
-def _reject_untabled_op(node: ast.Call, op_name: str, stage_slot_to_buffer: dict, tables) -> None:
+def _reject_untabled_op(node: ast.Call, op_name: str, touched: list) -> None:
     """Refuse an op that touches a tracked buffer but has no roles in the table.
 
-    The hand-written table runs behind the framework's op set, and reaching an uncovered op
-    used to mean recording nothing — a missing wait/set with nothing to announce it.
-
-    Refusing only when a resolved argument is a buffer the graph tracks keeps this quiet for
-    ops on purely local tiles. There is no safe default: guessing "read" drops the producer's
-    set, guessing "write" drops the consumer's wait.
+    The table covers the ops published in the API docs; reaching one outside it would mean
+    recording nothing — a missing wait/set with nothing to announce it. There is no safe
+    default: guessing "read" drops the producer's set, guessing "write" drops the consumer's
+    wait.
     """
-    touched = []
-    for arg in (*node.args, *(kw.value for kw in node.keywords)):
-        buf = _tile_arg_buffer(arg, stage_slot_to_buffer)
-        if tables.tracks(buf):
-            touched.append(buf)
-    if not touched:
-        return
-    likely = ["W"] + ["R"] * (len(node.args) - 1)
     raise InvalidArgument(
-        f"pipeline: `{ast.unparse(node)}` touches buffer(s) "
-        f"{sorted(set(touched))} that cross-core sync tracks, but _BLOCK_OP_TILE_ROLES has "
-        f"no entry for it, so the scan cannot tell which arguments it reads and which it "
-        f"writes — and which way a wait/set goes depends on exactly that.\n"
-        f"Add an entry in pypto_pro/language/parser/_op_pipeline.py. With the "
-        f"{len(node.args)} positional argument(s) here the roles are probably {likely}, but "
-        f"check the two things a signature cannot show: an argument the op accumulates into "
-        f"is 'RW', and a position that is not a tile is None.",
+        f"pipeline: `{ast.unparse(node)}` touches buffer(s) {sorted(set(touched))} that "
+        f"cross-core sync tracks, but '{op_name}' has no entry in _BLOCK_OP_TILE_ROLES, so "
+        f"the scan cannot tell which arguments it reads and which it writes — and which way "
+        f"a wait/set goes depends on exactly that.\n"
+        f"That table covers the ops published in the API docs, so '{op_name}' cannot carry a "
+        f"cross-core handover yet. If you added the op yourself, give it one role per "
+        f"declared parameter in pypto_pro/runtime/pipeline/_cross_core_scanner.py.",
+        span=span_of(node),
+    )
+
+
+def _reject_roleless_arg(node: ast.Call, op_name: str, param: str, buf: str, role: object) -> None:
+    """Refuse a tracked buffer at an argument the table gives no read/write role."""
+    where = f"as '{param}'" if param else "here"
+    if role is None:
+        raise InvalidArgument(
+            f"pipeline: `{ast.unparse(node)}` passes buffer '{buf}' {where}, and cross-core "
+            f"sync tracks that buffer, but the parameter carries no read or write of the "
+            f"buffer's data — it is workspace the op hands to the hardware. No handover can "
+            f"be ordered through it, so the buffer would get no wait/set at all.\n"
+            f"Pass a buffer local to this core {where}.",
+            span=span_of(node),
+        )
+    raise InvalidArgument(
+        f"pipeline: `{ast.unparse(node)}` passes buffer '{buf}' {where}, and cross-core sync "
+        f"tracks that buffer, but _BLOCK_OP_TILE_ROLES gives '{op_name}' no role at that "
+        f"parameter, so the scan cannot tell whether it is read or written.\n"
+        f"The table holds one role per declared parameter in "
+        f"pypto_pro/runtime/pipeline/_cross_core_scanner.py; a parameter it misses is a gap there.",
         span=span_of(node),
     )
 
@@ -1060,19 +1278,41 @@ def _gemm_arg_buffer(arg: ast.expr, named_buffers: dict, tables: AccessScanTable
     return buf
 
 
+def _tracked_buffers_of_call(node: ast.Call, named_buffers: dict, tables: AccessScanTables) -> list:
+    """The tracked buffers a call's arguments name, as slot variables or whole buffers.
+
+    An argument that resolves to no buffer of its own but whose root name is a tracked one
+    counts too, so an expression this cannot trace reaches the diagnostics below.
+    """
+    touched = []
+    for arg in (*node.args, *(kw.value for kw in node.keywords)):
+        buf = _tile_arg_buffer(arg, named_buffers)
+        if buf is None:
+            root = _slot_accessor_group_name(arg) or _root_name(arg)
+            buf = named_buffers.get(root) if root else None
+        if tables.tracks(buf):
+            touched.append(buf)
+    return touched
+
+
 def _handle_block_op(
-    node: ast.Call, op_name: str, stage_slot_to_buffer: dict, tables: AccessScanTables, out: list
+    node: ast.Call, op_name: str, stage_slot_to_buffer: dict, named_buffers: dict,
+    tables: AccessScanTables, out: list
 ) -> None:
     """Record a single block-op call. ``op_name`` is resolved by the caller (resolve_op_name)."""
-    # Descriptor-only ops (set_validshape and the like) rewrite a tile's metadata and never
-    # touch its data, so they can neither race nor need a handover; the parser already keeps
-    # that set for auto_mutex. Asking before the role lookup also keeps _reject_untabled_op
-    # honest: an op absent from the role table is then genuinely unclassified.
+    # A descriptor-only op touches no buffer data, whatever pipe it is registered on.
     if not op_accesses_buffer(op_name):
+        return
+    # An op reaching no tracked buffer orders nothing, so its pipe and roles never come up.
+    touched = _tracked_buffers_of_call(node, named_buffers, tables)
+    if not touched:
+        return
+    pipe = _block_op_pipe(op_name, node, stage_slot_to_buffer, tables.all_buffer_memory)
+    if pipe is None:
         return
     roles = _block_op_roles(node, op_name)
     if roles is None:
-        _reject_untabled_op(node, op_name, stage_slot_to_buffer, tables)
+        _reject_untabled_op(node, op_name, touched)
         return
     if op_name == "gemm":
         for kw in node.keywords:
@@ -1086,31 +1326,22 @@ def _handle_block_op(
                     "for other tracked buffers.",
                     span=span_of(node),
                 )
-    # One record per buffer, not per argument. GEMM spans MTE1 (L1 inputs) and M
-    # (accumulator); only its L1 staging reads participate in automatic handover.
+    # One record per buffer, not per argument.
     merged: dict[str, str] = {}
-    pipe = None
-    for argpos, arg in enumerate(node.args):
+    for param, arg, role in _call_arg_roles(node, op_name, roles):
         buf = (_gemm_arg_buffer(arg, stage_slot_to_buffer, tables) if op_name == "gemm"
                else _tile_arg_buffer(arg, stage_slot_to_buffer))
-        if buf is None or argpos >= len(roles):
-            continue
-        role = roles[argpos]
-        if role is None:
-            continue
         if not tables.tracks(buf):
             continue
-        if op_name == "gemm":
-            if argpos == 0:
-                raise InvalidOperation(
-                    "pipeline: `pl.gemm` cannot hand over its accumulator; only its L1 "
-                    "operands are supported. Use explicit move/matmul operations for a "
-                    "tracked accumulator.",
-                    span=span_of(node),
-                )
-            pipe = "MTE1"
-        elif pipe is None:
-            pipe = _block_op_pipe(op_name, node, stage_slot_to_buffer, tables.all_buffer_memory)
+        if role is None or role is _UNCOVERED:
+            _reject_roleless_arg(node, op_name, param, buf, role)
+        if op_name == "gemm" and param == "acc":
+            raise InvalidOperation(
+                "pipeline: `pl.gemm` cannot hand over its accumulator; only its L1 "
+                "operands are supported. Use explicit move/matmul operations for a "
+                "tracked accumulator.",
+                span=span_of(node),
+            )
         _merge_role(merged, buf, role)
     for buf, role in merged.items():
         _record_access(out, buf, role, pipe)
@@ -1388,14 +1619,82 @@ def _tile_arg_buffer(arg: ast.expr, stage_slot_to_buffer: dict[str, str]) -> str
     return None
 
 
+_BLOCK_OP_ALIASES: dict[str, str] = {
+    "and_": "and",
+    "eq": "cmp",
+    "ne": "cmp",
+    "lt": "cmp",
+    "le": "cmp",
+    "gt": "cmp",
+    "ge": "cmp",
+    "select": "sel",
+    "load_tile": "load",
+    "make_tile": "make_mutex_tile",
+    "not_": "not",
+    "or_": "or",
+    "sum": "row_sum",
+    "argmax": "row_argmax",
+    "argmin": "row_argmin",
+    "expand_max": "row_expand_max",
+    "expand_min": "row_expand_min",
+    "expand_mul": "row_expand_mul",
+    "expand_sub": "row_expand_sub",
+    "expand_div": "row_expand_div",
+    "prod": "row_prod",
+    "expand_add": "row_expand_add",
+    "expand_expdif": "row_expand_expdif",
+}
+
+
+def get_op_pipe(op_name: str) -> PipeType | None:
+    """Return the fixed backend pipe, or None when arguments determine the pipe."""
+    backend_op_name = _BLOCK_OP_ALIASES.get(op_name, op_name)
+    return BackendCCE.instance().get_op_pipe(f"block.{backend_op_name}")
+
+
+def get_move_pipe(
+    src_memory: MemorySpace | None,
+    target_memory: MemorySpace | None,
+) -> PipeType:
+    """Determine the hardware pipe for a block ``move`` operation."""
+    if src_memory == MemorySpace.Acc and target_memory in (MemorySpace.Vec, MemorySpace.Mat):
+        return PipeType.FIX
+    if src_memory == MemorySpace.Mat:
+        if target_memory in (MemorySpace.Left, MemorySpace.Right, MemorySpace.Bias, MemorySpace.ScaleLeft,
+                             MemorySpace.ScaleRight):
+            return PipeType.MTE1
+        if target_memory == MemorySpace.Vec:
+            return PipeType.V
+        return PipeType.FIX
+    if src_memory == MemorySpace.Vec and target_memory == MemorySpace.Mat:
+        return PipeType.MTE3
+    return PipeType.V
+
+
+def get_store_pipe(src_memory: MemorySpace | None) -> PipeType:
+    """Determine the hardware pipe for a block ``store`` / ``store_tile`` operation."""
+    if src_memory == MemorySpace.Acc:
+        return PipeType.FIX
+    return PipeType.MTE3
+
+
+def get_expands_pipe(target_memory: MemorySpace) -> PipeType:
+    """Scalar broadcast uses MTE2 for Mat tiles and V for Vec tiles."""
+    return PipeType.MTE2 if target_memory == MemorySpace.Mat else PipeType.V
+
+
 def _block_op_pipe(
     op_name: str, call: ast.Call, stage_slot_to_buffer: dict[str, str], all_buffer_memory: dict[str, MemorySpace]
-) -> str:
-    """Determine the pipe name for a block op accessing a cross-core buffer.
+) -> str | None:
+    """The pipe a block op's wait/set goes on, or None when sync does not cover the op.
 
-    Raises when the pipe cannot be determined. There is no safe default: the pipe decides
-    which queue the wait/set lands on, and a section only has some of the pipes, so a guess
-    can even name one that does not exist on that core.
+    Sync covers what the backend registers under ``block.``, so the pipe registered there
+    answers both questions at once. The ops whose pipe is not one fixed value are branched on
+    by name above that, which is also what makes them covered.
+
+    Raises when a covered op's pipe cannot be determined. There is no safe default: the pipe
+    decides which queue the wait/set lands on, and a section only has some of the pipes, so a
+    guess can even name one that does not exist on that core.
     """
     if op_name in ("move", "insert"):
         # move(dst, src): pipe depends on src/dst memory
@@ -1434,15 +1733,12 @@ def _block_op_pipe(
                 span=span_of(call),
             )
         return _pipe_name(get_expands_pipe(dst_mem))
+    if op_name in ("gemm", "gemm_mx"):
+        # The GEMM family stages its L1 operands on MTE1; its accumulator (M) is refused by
+        # the caller, and gemm_mx is refused there too for having no roles.
+        return "MTE1"
     pipe = get_op_pipe(op_name)
-    if pipe is None:
-        raise InvalidOperation(
-            f"pipeline: `{ast.unparse(call)}` touches a cross-core buffer, but "
-            f"no pipe is registered for it, so the sync has nowhere to go. Register the op's "
-            f"pipe (see get_op_pipe) or keep the cross-core buffer out of this op.",
-            span=span_of(call),
-        )
-    return _pipe_name(pipe)
+    return _pipe_name(pipe) if pipe is not None else None
 
 
 def _arg_memory(arg, stage_slot_to_buffer, all_buffer_memory) -> MemorySpace | None:
@@ -1621,16 +1917,25 @@ def _record_vf_call_role(
             raise NotSupported(
                 f"pipeline: `{ast.unparse(call)}`, in vector function "
                 f"'{vf_name}', is handed buffer '{tile_params[param]}' (as '{param}'), but "
-                f"_VF_OP_TILE_ROLES has no entry for it, so the scan cannot tell whether it "
-                f"reads or writes the tile — and which way a cross-core wait/set goes "
+                f"'{op}' has no entry in _VF_OP_TILE_ROLES, so the scan cannot tell whether "
+                f"it reads or writes the tile — and which way a cross-core wait/set goes "
                 f"depends on that.\n"
-                f"If the op touches a UB tile, add it to _VF_OP_TILE_ROLES in "
-                f"pypto_pro/language/parser/_op_pipeline.py, giving each argument position "
-                f"'R', 'W', 'RW', or None for the positions that are not tiles.",
+                f"That table covers the vf ops published in the API docs, so '{op}' cannot "
+                f"carry a cross-core handover yet. If you added the op yourself, give it a "
+                f"role per argument in pypto_pro/runtime/pipeline/_cross_core_scanner.py.",
                 span=span_of(call),
             )
-        if argpos < len(roles) and roles[argpos] is not None:
-            _merge_role(result, param, roles[argpos])
+        role = roles[argpos] if argpos < len(roles) else None
+        if role is None:
+            raise InvalidArgument(
+                f"pipeline: `{ast.unparse(call)}`, in vector function '{vf_name}', is handed "
+                f"buffer '{tile_params[param]}' (as '{param}') at an argument that carries no "
+                f"read or write of the tile's data. No handover can be ordered through it, so "
+                f"the buffer would get no wait/set at all.\n"
+                f"Pass a tile local to this core there.",
+                span=span_of(call),
+            )
+        _merge_role(result, param, role)
 
 
 def _scan_vf_roles(

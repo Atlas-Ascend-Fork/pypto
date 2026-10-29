@@ -11,10 +11,11 @@
 
 from __future__ import annotations
 
-__all__ = ["ASTParser"]
+__all__ = ["ASTParser", "ParseFacts"]
 
 
 import ast
+from dataclasses import dataclass, field
 from functools import singledispatchmethod
 from typing import Any
 
@@ -33,7 +34,7 @@ from ..._errors import (
 from ..typing._tiling import get_tiling_fields, get_tiling_tuple_type, is_tiling_class
 from ..typing.shape import _ShapePolicy
 from ._assignment_parser import AssignmentParserMixin
-from ._buffer_parser import BufferParserMixin
+from ._buffer_parser import BufferParserMixin, TileGroupFacts
 from ._call_parser import CallParserMixin, _check_type_compatible
 from ._control_flow_parser import ControlFlowParserMixin, validate_single_tail_return
 from ._expr_evaluator import ExprEvaluator
@@ -102,6 +103,29 @@ def _infer_return_types_from_body(
     return inferred
 
 
+@dataclass(frozen=True, eq=False)
+class BufferRef:
+    """A declared buffer that an expression may refer to, and which slot of it."""
+
+    buffer: ir.Expr  # the declaration handle
+    slot: int | None  # None when any slot may be referred to
+
+
+@dataclass
+class ParseFacts:
+    """Facts recorded during the parse for readers of its result.
+
+    The automatic pipeline transform is today's only reader; a new fact is added
+    here rather than as another field on the parser.
+    """
+
+    # Maps any Expr -> the buffers it may refer to. Buffers are always
+    # declaration handles, never an alias, so one lookup is final.
+    buffer_refs: dict[ir.Expr, tuple[BufferRef, ...]] = field(default_factory=dict)
+    # Maps a buffer declaration handle -> that declaration's resolved facts.
+    buffer_decls: dict[ir.Expr, TileGroupFacts] = field(default_factory=dict)
+
+
 class ASTParser(
     AssignmentParserMixin,
     ControlFlowParserMixin,
@@ -165,8 +189,6 @@ class ASTParser(
         self.max_vec_tile_end: int = 0
         self.requires_simt: bool = False
         self.span_tracker = SpanTracker(source_file, source_lines, line_offset, col_offset)
-        # Slot provenance for validating every runtime-selected MX plane address.
-        self._tile_slot_source: dict[ir.Expr, ir.Expr] = {}
         self.scope_manager = ScopeManager(strict_ssa=strict_ssa)
         self._tilingkey_consts = tilingkey_consts
         self._datatype_consts = datatype_consts
@@ -228,6 +250,7 @@ class ASTParser(
         self._ifexpr_tmp_counter: int = 0
         # Maps group Expr objects -> (depth, mutex_ids, memory).
         self.tile_group_meta: dict[ir.Expr, tuple] = {}
+        self.parse_facts = ParseFacts()
         # Parser-only constant environment. Runtime bindings remain exclusively in
         # ScopeManager as Vars; this map records constants by physical SSA name.
         self.const_env: dict[str, ir.Expr] = {}
@@ -595,17 +618,55 @@ class ASTParser(
     def _parse_pass_statement(self, stmt: ast.Pass) -> None:
         pass  # No-op: pass statements are valid in DSL functions
 
-    def _transfer_tile_group_metadata(
-        self, target: ir.Expr, value_expr: ir.Expr | None = None
-    ) -> None:
-        """Preserve tile-group accessor metadata across an ordinary assignment."""
-        if value_expr is None:
-            return
-        gm = self.tile_group_meta.get(value_expr)
-        if gm is not None:
-            self.tile_group_meta[target] = gm
-        if value_expr in self._tile_slot_source:
-            self._tile_slot_source[target] = self._tile_slot_source[value_expr]
+    def _transfer_tile_group_metadata(self, target: ir.Expr, *sources: ir.Expr | None) -> None:
+        """Transfer tile-group metadata from ``sources`` to ``target``.
+
+        Tile-group accessor metadata is copied only from a single source; the
+        buffer slots referred to are merged from all sources.
+        """
+        if len(sources) == 1 and sources[0] is not None:
+            gm = self.tile_group_meta.get(sources[0])
+            if gm is not None:
+                self.tile_group_meta[target] = gm
+        refs = {(id(ref.buffer), ref.slot): ref for source in sources for ref in self.buffer_refs_of(source)}
+        if refs:
+            self.parse_facts.buffer_refs[target] = tuple(refs.values())
+
+    def _bind_buffer_ref(self, target: ir.Expr, buffer: ir.Expr, slot: int | None) -> None:
+        """Record that ``target`` refers to ``slot`` of the buffers ``buffer`` refers to."""
+        refs = tuple(BufferRef(decl, slot) for decl in self.buffers_of(buffer))
+        if refs:
+            self.parse_facts.buffer_refs[target] = refs
+
+    def buffer_refs_of(self, expr) -> tuple[BufferRef, ...]:
+        """Return the buffers ``expr`` may refer to, empty when it refers to none.
+
+        A recorded entry answers first, so an alias or a rebuilt handle reports
+        the declaration it came from rather than itself.
+        """
+        if not isinstance(expr, ir.Expr):
+            return ()
+        refs = self.parse_facts.buffer_refs.get(expr)
+        if refs is not None:
+            return refs
+        if expr in self.tile_group_meta:
+            return (BufferRef(expr, None),)
+        return ()
+
+    def buffers_of(self, expr) -> tuple[ir.Expr, ...]:
+        """Return the buffer declarations ``expr`` refers to, empty when it refers to none."""
+        return tuple({id(ref.buffer): ref.buffer for ref in self.buffer_refs_of(expr)}.values())
+
+    def static_slot(self, expr) -> BufferRef | None:
+        """Return the one slot ``expr`` refers to when it is known at compile time."""
+        refs = self.buffer_refs_of(expr)
+        if len(refs) == 1 and refs[0].slot is not None:
+            return refs[0]
+        return None
+
+    def is_runtime_slot(self, expr) -> bool:
+        """Whether ``expr`` refers to a buffer slot that is not known at compile time."""
+        return bool(self.buffer_refs_of(expr)) and self.static_slot(expr) is None
 
     def _validate_tiling_params(
         self,

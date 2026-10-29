@@ -56,6 +56,7 @@ def stage1(ki, a, b_l1, a_l1_db, left_db, right_db, acc_db, mm1_vec_db):
 > [!NOTE]说明
 >
 > - 跨核Buffer和核内Buffer的声明需要写在kernel函数体内，不能写在stage内，也不能写在stage调用的普通函数中。
+> - 自动流水不扫描[pypto_pro.language.make_tile](../../../../api/pro_api/SIMD-API/resource_management/make_tile.md)声明的Tile，不会为访问它的op插入任何同步。框架也不检查它的地址，其地址范围与跨核Buffer（或与跨核Buffer复用地址的Buffer）重叠时不会报错，但同样不会插入同步，需由开发者自行保证地址不冲突。参与流水的Buffer建议统一用make_tile_group声明，不需要轮转和自动同步时只配置`depth`、不配置`mutex_ids`即可。
 > - 一个跨核Buffer需要恰好被相邻的两个stage使用，两个stage分别位于Cube和Vector上，并构成一对一的生产者和消费者关系。需要把数据送到更后面的stage时，应逐级交接。
 > - `fwd_ids`和`bwd_ids`的取值范围为0～15，只能直接写编译期常量整数列表，或使用kernel外绑定到整数列表的变量，不支持切片、拼接、函数调用等表达式。ID数量需要等于slot数或等于1；等于1时所有slot共用同一个同步ID，可能降低性能。
 > - 跨核Buffer的slot需要随迭代顺序轮转。按stage在主循环中的书写顺序编号（与第一个stage位于Cube还是Vector无关），写该Buffer的stage编号为奇数时至少需要2个slot，为偶数时至少需要`preload`个slot；slot数不足时会在编译期报错，并提示所需的最小slot数。

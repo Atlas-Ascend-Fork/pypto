@@ -33,7 +33,9 @@ import logging
 import os
 import re
 
+from pypto_pro._errors import span_source
 import pypto_pro.language as pl
+from pypto_pro.language.parser._span_tracker import SpanTracker
 from pypto_pro.runtime.pipeline._analyzer import probe_kernel_facts
 from pypto_pro.runtime.pipeline._transformer import transform_pipeline
 import pytest
@@ -357,12 +359,15 @@ def test_gm_buffer(kind, preload, slack, pitched):
 def _generated(kernel) -> str:
     """The transformed kernel as source, the way the framework hands it to codegen."""
     kd = kernel.to_kernel_def()
-    if_const_map, var_types, arg_types, field_types = probe_kernel_facts(kd, None)
-    tree = transform_pipeline(
-        kd._func_def, kd._closure_vars, kd._pipeline,
-        if_const_map=if_const_map, var_types=var_types, arg_types=arg_types, field_types=field_types,
-        tilingkey_consts=kd._tilingkey_consts, datatype_consts=kd._datatype_consts,
-    )
+    facts = probe_kernel_facts(kd, None)
+    # The span resolver @pl.jit publishes around the transform, so a refusal raised here
+    # carries the source excerpt a user would be shown.
+    spans = SpanTracker(kd._source_file, kd._source_lines, kd._line_offset, kd._col_offset)
+    with span_source(spans.get_span):
+        tree = transform_pipeline(
+            kd._func_def, kd._closure_vars, kd._pipeline, facts=facts,
+            tilingkey_consts=kd._tilingkey_consts, datatype_consts=kd._datatype_consts,
+        )
     return ast.unparse(tree)
 
 
@@ -773,3 +778,44 @@ def unknown_shape_kernel(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl
 def test_refused(kernel, message):
     with pytest.raises(Exception, match=re.escape(message)):
         _generated(kernel())
+
+
+# ---------------------------------------------------------------------------
+# A pointer view derived from the buffer inside a stage
+# ---------------------------------------------------------------------------
+
+
+@pl.pipeline.stage
+def scale_with_view(k, src, gm_a, ub_a):
+    """The same store, with a pointer view derived from the cross-core buffer."""
+    t = ub_a.next()
+    pl.load(t, src, [k * TM, 0])
+    _ = pl.addptr(pl.make_ptr(gm_a), 0)
+    pl.store(gm_a, t, [0, 0])
+
+
+def _view_kernel(vector_stage, name):
+    @pl.jit(arch="3510", auto_mutex=True, name=name, pipeline=pl.pipeline.PipelineConfig(preload=1))
+    def k(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT_FP16]):
+        gm_a = pl.make_tensor(ws, [TM, K], depth=2, fwd_ids=[0, 1], bwd_ids=[2, 3])
+        with pl.section_cube():
+            mat_a = pl.make_tile_group(
+                type=pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+                addrs=0x00000, mutex_ids=[0, 1])
+        with pl.section_vector():
+            ub_a = pl.make_tile_group(
+                type=pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
+                addrs=0x00000, mutex_ids=[2, 3])
+        for i in pl.range(0, NT):
+            with pl.section_vector():
+                vector_stage(i, src, gm_a, ub_a)
+            with pl.section_cube():
+                consume(gm_a, mat_a)
+
+    return k
+
+
+def test_a_pointer_view_changes_nothing():
+    """make_ptr/addptr are not block ops, so deriving one records no access on the buffer."""
+    with_view = _generated(_view_kernel(scale_with_view, "gm_view"))
+    assert with_view.replace("scale_with_view", "scale") == _generated(_view_kernel(scale, "gm_plain"))

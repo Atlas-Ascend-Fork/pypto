@@ -28,8 +28,9 @@ costs nothing and catches what numbers cannot.
 import ast
 import os
 
-from pypto_pro._errors import PyptoProError
+from pypto_pro._errors import PyptoProError, span_source
 import pypto_pro.language as pl
+from pypto_pro.language.parser._span_tracker import SpanTracker
 from pypto_pro.runtime.pipeline import transform_pipeline
 from pypto_pro.runtime.pipeline._analyzer import probe_kernel_facts
 import pytest
@@ -47,12 +48,15 @@ ATOL = 1e-2
 def _generated(kernel) -> str:
     """The transformed kernel as source, the way the framework hands it to codegen."""
     kd = kernel.to_kernel_def()
-    if_const_map, var_types, arg_types, field_types = probe_kernel_facts(kd, None)
-    tree = transform_pipeline(
-        kd._func_def, kd._closure_vars, kd._pipeline,
-        if_const_map=if_const_map, var_types=var_types, arg_types=arg_types, field_types=field_types,
-        tilingkey_consts=kd._tilingkey_consts, datatype_consts=kd._datatype_consts,
-    )
+    facts = probe_kernel_facts(kd, None)
+    # The span resolver @pl.jit publishes around the transform, so a refusal raised here
+    # carries the source excerpt a user would be shown.
+    spans = SpanTracker(kd._source_file, kd._source_lines, kd._line_offset, kd._col_offset)
+    with span_source(spans.get_span):
+        tree = transform_pipeline(
+            kd._func_def, kd._closure_vars, kd._pipeline, facts=facts,
+            tilingkey_consts=kd._tilingkey_consts, datatype_consts=kd._datatype_consts,
+        )
     return ast.unparse(tree)
 
 
@@ -465,6 +469,55 @@ def one_stage_called_twice(
             produce(ki, 3.0, src, out, sh, ub)   # sync belongs to the NAME
 
 
+@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+def return_in_pipeline_loop(
+    src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
+):
+    sh = pl.make_tile_group(
+        type=pl.TileType(shape=[TM, TN], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.ZN),
+        addrs=[0x0000, 0x8000], mutex_ids=[0, 1], fwd_ids=[0, 1], bwd_ids=[2, 3])
+    with pl.section_cube():
+        leftg = pl.make_tile_group(
+            type=pl.TileType(shape=[TM, TN], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left, layout=pl.NZ),
+            addrs=[0x0000, 0x2000], mutex_ids=[4, 5])
+    with pl.section_vector():
+        ub = pl.make_tile_group(
+            type=pl.TileType(shape=[TM, TN], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
+            addrs=[0x0000, 0x2000], mutex_ids=[6, 7])
+    for ki in pl.range(0, NT):
+        with pl.section_vector():
+            produce(ki, 2.0, src, out, sh, ub)
+        with pl.section_cube():
+            consume(ki, sh, leftg)
+        if ki == 1:
+            return                            # skips the drain after the loop
+
+
+@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+def return_in_outer_loop(
+    src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
+):
+    sh = pl.make_tile_group(
+        type=pl.TileType(shape=[TM, TN], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.ZN),
+        addrs=[0x0000, 0x8000], mutex_ids=[0, 1], fwd_ids=[0, 1], bwd_ids=[2, 3])
+    with pl.section_cube():
+        leftg = pl.make_tile_group(
+            type=pl.TileType(shape=[TM, TN], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left, layout=pl.NZ),
+            addrs=[0x0000, 0x2000], mutex_ids=[4, 5])
+    with pl.section_vector():
+        ub = pl.make_tile_group(
+            type=pl.TileType(shape=[TM, TN], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
+            addrs=[0x0000, 0x2000], mutex_ids=[6, 7])
+    for qi in pl.range(0, 2):
+        for ki in pl.range(0, NT // 2):
+            with pl.section_vector():
+                produce(qi * (NT // 2) + ki, 2.0, src, out, sh, ub)
+            with pl.section_cube():
+                consume(qi * (NT // 2) + ki, sh, leftg)
+        if qi == 0:
+            return                            # the drain sits after the OUTER loop
+
+
 @pytest.mark.soc("950")
 @pytest.mark.parametrize(
     "kernel, message",
@@ -478,10 +531,12 @@ def one_stage_called_twice(
         (helper_returns_a_slot, "a tile or tile group"),
         (stage_call_without_a_section, "not inside a `with pl.section_cube"),
         (one_stage_called_twice, "called more than once"),
+        (return_in_pipeline_loop, "`return` inside the pipeline loop"),
+        (return_in_outer_loop, "outermost loop enclosing the pipeline loop"),
     ],
 )
 def test_refused_shapes(kernel, message):
-    # 8 of the parametrised shapes raise InvalidOperation and one raises
+    # 8 of the parametrised shapes raise InvalidOperation and three raise
     # NotSupported, whose builtin bases differ, so the shared base is what fits.
     with pytest.raises(PyptoProError, match=message):
         _generated(kernel)

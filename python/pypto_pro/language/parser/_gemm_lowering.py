@@ -282,7 +282,7 @@ class _GemmCall:
     def transpose(self, node, flag):
         rows, cols = self.dims(node, flag)
         value = self.value(node)
-        if value in self.parser._tile_slot_source:
+        if self.parser.is_runtime_slot(value):
             raise NotSupported(
                 f"{self.api} '{flag}': the operand is a tile selected by a runtime index; "
                 "the transpose alias would silently bind to slot 0",
@@ -538,7 +538,7 @@ class _GemmCall:
         value = self.value(acc_node)
         with current_span(self.span(acc_node)):
             _check_tile_memory_space(self.api, "acc", value, ir.MemorySpace.Acc, "L0C (Acc)")
-        if value in self.parser._tile_slot_source:
+        if self.parser.is_runtime_slot(value):
             raise NotSupported(
                 "pl.gemm() cannot split along N through a runtime-selected accumulator",
                 span=self.span(acc_node), hint="Use a static accumulator slot; strips need fixed addresses",

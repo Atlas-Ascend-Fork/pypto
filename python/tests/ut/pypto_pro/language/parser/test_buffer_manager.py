@@ -45,10 +45,12 @@ def _parse_kernel(kernel_def, target=ir.SectionKind.Vector) -> ir.Program:
 
 def test_make_tile_group_accepts_parsed_pipeline_ids():
     @pl.jit(auto_mutex=False)
-    def kernel(entry: pl.DT_INT64):
+    def kernel(_entry: pl.DT_INT64):
         tile_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        # Cross-core event IDs are read while parsing, so they are compile-time
+        # integers; a list and a tuple are both accepted spellings.
         group = pl.make_tile_group(
-            type=tile_type, addrs=0, depth=1, fwd_ids=[entry], bwd_ids=(entry,),
+            type=tile_type, addrs=0, depth=1, fwd_ids=[0], bwd_ids=(1,),
         )
         with pl.section_vector():
             pl.expands(group[0], 0)

@@ -396,6 +396,7 @@ class ExpressionParserMixin:
                 {},
                 span,
             )
+            self._transfer_tile_group_metadata(result, left)
             return result
 
         # Raw pointer arithmetic: only `ptr + offset` is meaningful (→ pl.addptr).
@@ -833,7 +834,9 @@ class ExpressionParserMixin:
         """
         span = self.span_tracker.get_span(tuple_node)
         elements = [self.parse_expression(elt) for elt in tuple_node.elts]
-        return _to_make_tuple(elements, span)
+        result = _to_make_tuple(elements, span)
+        self._transfer_tile_group_metadata(result, *elements)
+        return result
 
     def parse_subscript(self, subscript: ast.Subscript) -> ir.Expr:
         span = self.span_tracker.get_span(subscript)
@@ -914,6 +917,9 @@ class ExpressionParserMixin:
         # backing array. struct_array stays as a Var here because it is not a
         # parser constant; ordinary tuples may remain folded MakeTuple values.
         item_expr = ir.GetItemExpr(value_expr, index_expr, span)
+        # A subscript aliases the base's buffer, so the item inherits the base's
+        # buffer origin.
+        self._transfer_tile_group_metadata(item_expr, value_expr)
         return item_expr
 
     def _is_struct_array_tuple(self, tuple_value: ir.MakeTuple) -> bool:

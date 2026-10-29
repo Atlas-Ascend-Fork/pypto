@@ -5,8 +5,13 @@
 import ast
 
 from pypto_pro.ir.op.block_ops import make_mutex_tile_expr
-from pypto_pro.language.parser._op_pipeline import get_expands_pipe, get_move_pipe, get_op_pipe, get_store_pipe
-from pypto_pro.runtime.pipeline._cross_core_scanner import _block_op_pipe
+from pypto_pro.runtime.pipeline._cross_core_scanner import (
+    _block_op_pipe,
+    get_expands_pipe,
+    get_move_pipe,
+    get_op_pipe,
+    get_store_pipe,
+)
 import pytest
 
 from pypto.pypto_impl import ir

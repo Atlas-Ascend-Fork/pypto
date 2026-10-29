@@ -56,6 +56,28 @@ from .config import PipelineConfig
 
 
 @dataclass
+class KernelFacts:
+    """What one probe parse learns about the kernel (see probe_kernel_facts).
+
+    One object rather than a tuple of its own: a new fact is added here and read where it is
+    needed, without threading another argument through transform_pipeline and analyze_pipeline.
+    """
+
+    # {(lineno, col_offset) of an `if` test: (is_const, value)}, for dead-branch pruning.
+    if_const_map: dict = field(default_factory=dict)
+    # {name: (IR type class name, scalar dtype or None)}
+    var_types: dict = field(default_factory=dict)
+    # {(lineno, col_offset) of a call argument: its parsed type}
+    arg_types: dict = field(default_factory=dict)
+    # {(struct variable, field name): the field's IR type}
+    field_types: dict = field(default_factory=dict)
+    # {buffer variable: its MemorySpace}, as the parser resolved target_memory
+    buffer_memory: dict = field(default_factory=dict)
+    # {(inlined function chain, variable name): the buffers the name holds a tile of}
+    name_buffers: dict = field(default_factory=dict)
+
+
+@dataclass
 class StageCall:
     """Info about a single stage call in the serial loop body."""
 
@@ -154,9 +176,7 @@ def analyze_pipeline(
     func_def: ast.FunctionDef,
     closure_vars: dict,
     config: PipelineConfig,
-    var_types: dict | None = None,
-    arg_types: dict | None = None,
-    field_types: dict | None = None,
+    facts: KernelFacts | None = None,
 ) -> list:
     """Analyze a serial kernel AST: one PipelineInfo per pipeline loop, in source order.
 
@@ -181,6 +201,7 @@ def analyze_pipeline(
     Returns:
         [PipelineInfo, ...], one per pipeline loop, in source order.
     """
+    facts = facts or KernelFacts()
     # Find all stage functions.
     stage_func_names = set()
     for name, val in closure_vars.items():
@@ -213,9 +234,9 @@ def analyze_pipeline(
         # Shared by reference — see PipelineInfo. sync is filled in below, after the
         # structural checks, and every info sees the same object filling up.
         info.closure_vars = closure_vars
-        info.var_types = var_types or {}
-        info.arg_types = arg_types or {}
-        info.field_types = field_types or {}
+        info.var_types = facts.var_types
+        info.arg_types = facts.arg_types
+        info.field_types = facts.field_types
         info.var_sections = var_sections
         info.stages = stages
         _record_pipeline_loop_info(loop, info)
@@ -227,7 +248,7 @@ def analyze_pipeline(
         infos.append(info)
 
     # Every buffer declaration, scanned once and shared by everything that reads them.
-    decls = scan_buffer_decls(func_def)
+    decls = scan_buffer_decls(func_def, facts.buffer_memory)
     group_names = scan_all_tile_group_names(decls)
     sync = CrossCoreSyncContext()
     for info in infos:
@@ -972,18 +993,35 @@ def _struct_field_init(var_type, node=None) -> ast.expr:
     )
 
 
-def probe_kernel_facts(kernel_def, bound_signature=None) -> tuple[dict, dict, dict, dict]:
-    """Probe-parse the kernel once per target.
+def _inline_chain(parser) -> tuple:
+    """The names of the inlined functions the parser currently sits in, outermost first."""
+    cache = parser.inline_func_cache
+    return tuple(cache[fid].func_def.name for fid in parser.inline_call_stack if fid in cache)
 
-    Returns ``(if_const_map, var_types, arg_types, field_types)``, all taken from the parse.
+
+def _source_name(name: str) -> str:
+    """A name as it is written in the source: inlining prefixes locals with ``__inline_<n>_``."""
+    if not name.startswith("__inline_"):
+        return name
+    head, _, rest = name[len("__inline_"):].partition("_")
+    return rest if head.isdigit() and rest else name
+
+
+def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
+    """Probe-parse the kernel once per target, for the facts only the parser can give.
+
+    The parsed IR is discarded; what the parse learns is collected into a KernelFacts.
     """
     from pypto.pypto_impl import ir
     from pypto_pro.language.parser._ast_parser import ASTParser
 
-    if_const: dict = {}
-    var_types: dict = {}
-    arg_types: dict = {}
-    field_types: dict = {}
+    facts = KernelFacts()
+    if_const = facts.if_const_map
+    var_types = facts.var_types
+    arg_types = facts.arg_types
+    field_types = facts.field_types
+    buffer_memory = facts.buffer_memory
+    name_buffers = facts.name_buffers
     for target in (ir.SectionKind.Cube, ir.SectionKind.Vector):
         # The probe discards parsed IR, so AUTO placeholders do not need resolution.
         parser = ASTParser(
@@ -1009,6 +1047,12 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> tuple[dict, dict, di
         # harvests types without touching the parser itself.
         scope = parser.scope_manager
         original_define = scope.define_var
+        # {id(group handle IR): (declared name, bound at kernel scope)}, filled below. A
+        # kernel-scope name wins: a factory function binds the handle to a local of its own
+        # first, and that local is a synthetic return-value name.
+        decl_names: dict = {}
+        # {(chain, name): [id(group handle IR), ...]}, resolved to names once the parse ends.
+        pending: dict = {}
 
         def _record_type(value):
             var_type = getattr(value, "type", None)
@@ -1021,6 +1065,25 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> tuple[dict, dict, di
             recorded = _record_type(value)
             if recorded is not None:
                 var_types.setdefault(name, recorded)
+            # A buffer's memory space, as target_memory resolved during the parse: written as a
+            # variable it is unreadable from the declaration's AST. tile_group_meta is keyed by
+            # IR expression; a name bound to anything else (a TileType, say) is not hashable.
+            meta = parser.tile_group_meta.get(value) if isinstance(value, ir.Expr) else None
+            origins = parser.buffers_of(value)
+            if meta is not None:
+                buffer_memory.setdefault(name, meta[2])
+                # Keyed by the handle the origins report, which is the declaration's own IR
+                # object, so that a name bound to a copy of it resolves to the same buffer.
+                outer = not parser.inline_call_stack
+                for group in origins:
+                    known = decl_names.get(id(group))
+                    if known is None or (outer and not known[1]):
+                        decl_names[id(group)] = (_source_name(name), outer)
+            # The buffers this name holds a tile of. Several mean a value the run selects
+            # between.
+            if origins:
+                key = (_inline_chain(parser), _source_name(name))
+                pending.setdefault(key, []).extend(id(group) for group in origins)
             var_type = getattr(value, "type", None)
             if isinstance(var_type, ir.TupleType):
                 info = parser.debug_info.get_tuple_type_info(var_type)
@@ -1044,6 +1107,11 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> tuple[dict, dict, di
 
         parser._bind_inline_arguments = _bind
         parser.parse_function(kernel_def._func_def, func_type=kernel_def._func_type)
+        # Resolve the collected handles to names now that every declaration has been seen.
+        for key, group_ids in pending.items():
+            found = tuple(decl_names[gid][0] for gid in group_ids if gid in decl_names)
+            if found:
+                name_buffers[key] = tuple(dict.fromkeys(name_buffers.get(key, ()) + found))
         # Merge, preferring a CONSTANT verdict: a target that skips a section never sees the
         # condition, so a later (False, None) must not clobber the other target's fold.
         for k, v in parser.if_const_map.items():
@@ -1055,4 +1123,4 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> tuple[dict, dict, di
                 # to dynamic so a branch wrapping a stage reports CB3 rather than being pruned down a side
                 # that is right for one target only.
                 if_const[k] = (False, None)
-    return if_const, var_types, arg_types, field_types
+    return facts

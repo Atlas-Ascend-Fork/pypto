@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pypto.pypto_impl.ir import MemorySpace
 
 from ..._errors import CommonInner, KeyNotFound, NotSupported, span_of
-from ._analyzer import PipelineInfo, analyze_pipeline, buffers_touched
+from ._analyzer import KernelFacts, PipelineInfo, analyze_pipeline, buffers_touched
 from ._astutil import (
     PL_IS_VALID_FIELD,
     PL_STRUCT_ARG,
@@ -308,10 +308,7 @@ def transform_pipeline(
     func_def: ast.FunctionDef,
     closure_vars: dict,
     config: PipelineConfig,
-    if_const_map: dict | None = None,
-    var_types: dict | None = None,
-    arg_types: dict | None = None,
-    field_types: dict | None = None,
+    facts: KernelFacts | None = None,
     tilingkey_consts: dict | None = None,
     datatype_consts: dict | None = None,
 ) -> ast.FunctionDef:
@@ -321,19 +318,16 @@ def transform_pipeline(
         func_def: The kernel function's AST (will not be mutated; a copy is made)
         closure_vars: Closure variables (contains stage functions, module constants)
         config: Pipeline configuration (depth, dump_generated, etc.)
-        var_types: {name: (IR type class name, scalar dtype or None)} from the parser probe.
-        arg_types: {(lineno, col_offset): its parsed type} for call arguments.
-        field_types: {(struct variable, field name): the field's IR type}.
-        if_const_map: {(lineno, col_offset) of test: (is_const, value)} for every ``if``
-            in the kernel body, produced by a probe parse (reuses the parser's constant
-            folding).
-            Drives the compile-time constant branch collapse before analysis.
+        facts: what the probe parse learned about this kernel (see KernelFacts): the types
+            behind the ctx fill, the constant-folded ``if`` conditions behind the dead-branch
+            prune, and each buffer's memory space.
         tilingkey_consts: This launch key's concrete tilingkey field values.
         datatype_consts: This launch's concrete datatype symbol values.
 
     Returns:
         New ast.FunctionDef with pipeline transformation applied
     """
+    facts = facts or KernelFacts()
     # Work on a deep copy to avoid mutating the original
     new_func = copy.deepcopy(func_def)
 
@@ -348,12 +342,12 @@ def transform_pipeline(
 
     # Prune dead compile-time-constant if/elif/else branches that wrap stage calls,
     # so downstream analysis/transform only ever sees plain unconditional stages.
-    _prune_const_branches(new_func, closure_vars, if_const_map or {})
+    _prune_const_branches(new_func, closure_vars, facts.if_const_map)
 
     # Analyze the serial structure. Everything about whether this kernel is legal is settled
     # in there, so what comes back is a shape that can be emitted: one PipelineInfo per
     # pipeline loop, in source order.
-    infos = analyze_pipeline(new_func, closure_vars, config, var_types, arg_types, field_types)
+    infos = analyze_pipeline(new_func, closure_vars, config, facts)
     preloads = [config.preload_of(info.loop_index) for info in infos]
 
     # Arrangement first, for every loop, because the names below depend on the delays it

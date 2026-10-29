@@ -4022,6 +4022,9 @@ def _build_reinterpret(self, src: Expr, /, *, span: Span, **kwargs) -> Expr:
 
     new_tile = _ir_reinterpret(src, shape=new_shape, dtype=kwargs.get("dtype"), layout=kwargs.get("layout"), span=span)
 
+    # The reinterpreted tile aliases the same buffer, so it inherits the source's
+    # group origin (same propagation pattern as GetItemExpr in _expression_parser).
+    self._transfer_tile_group_metadata(new_tile, src)
     return new_tile
 
 

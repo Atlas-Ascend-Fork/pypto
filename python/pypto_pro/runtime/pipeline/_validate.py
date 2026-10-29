@@ -406,6 +406,7 @@ def validate_structure(info, func_def=None, stage_func_names: set | None = None)
     _check_unique_stage_names(info)
     _check_alternating_sections(info)
     _check_nothing_between_stages(info)
+    _check_no_return_in_loop(info)
     _check_loop_step(info)
     if func_def is not None and stage_func_names:
         _check_no_nested_stage(func_def, info, stage_func_names)
@@ -555,6 +556,49 @@ def _check_nothing_between_stages(info) -> None:
             f"Move it to the start or the end of the pipeline loop body, or into a stage.",
             span=span_of(stmt_header(stmt)),
         )
+
+
+def _check_no_return_in_loop(info) -> None:
+    """No `return` inside the outermost loop that encloses the pipeline loop.
+
+    The drain beats and the closing waits are emitted after that loop; a `return` inside it
+    leaves the kernel without running them.
+
+    Runs on the pruned tree, so a `return` under a compile-time-false condition is already gone.
+    """
+    outer = info.outer_loop
+    if outer is None:
+        return
+    for node in _walk_skipping_defs(outer):
+        if not isinstance(node, ast.Return):
+            continue
+        header = ast.unparse(outer).splitlines()[0].rstrip(":")
+        if outer is info.pipeline_loop:
+            where = f"the pipeline loop `{header}`"
+            fix = "Use `break` to leave the pipeline loop instead."
+        else:
+            where = f"`{header}`, the outermost loop enclosing the pipeline loop"
+            fix = (
+                "Leave every loop level with `break` instead (set a flag before the inner "
+                "`break` and break each enclosing loop on it), then return after "
+                f"`{header}` if needed."
+            )
+        raise NotSupported(
+            f"pipeline: `return` inside {where}. The pipeline emits its closing cross-core "
+            f"waits after that loop, and with preload > 0 also the drain beats that run the "
+            f"delayed stages of the last tasks; returning from inside the loop skips them, "
+            f"leaving those stages unrun and the cross-core sync unpaired.\n{fix}",
+            span=span_of(node),
+        )
+
+
+def _walk_skipping_defs(node):
+    """ast.walk without descending into nested function or lambda bodies."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        yield child
+        yield from _walk_skipping_defs(child)
 
 
 def _check_alternating_sections(info) -> None:
