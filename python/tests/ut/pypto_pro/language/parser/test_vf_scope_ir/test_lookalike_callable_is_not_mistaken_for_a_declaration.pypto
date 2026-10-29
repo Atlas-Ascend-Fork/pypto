@@ -1,0 +1,7 @@
+function kernel incast(int64_t %n_0) outcast() #entry(false) #type(Opaque) {
+    bool %__inline_0_returned_0 = false;
+    int64_t %__inline_0_return_val_1 = 7;
+    bool %__inline_0_returned_1 = true;
+    int64_t %value_0 = 7;
+    return;
+}

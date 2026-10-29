@@ -24,7 +24,6 @@ __all__ = [
     "TensorType",
     "TileType",
     "MutexTileType",
-    "python_print",
     "get_attributes",
     "attributes_api_version",
     "VerificationMode",
@@ -43,7 +42,6 @@ from . import _operators
 from . import builder as _builder
 from . import op as _op
 from . import op_conversion as _conversion
-from . import printer as _printer
 from . import type as _types
 
 # Re-export the public native IR API.
@@ -56,7 +54,6 @@ IRBuilder = _builder.IRBuilder
 ConversionContext = _conversion.ConversionContext
 op_conversion = _conversion.op_conversion
 register_op_conversion = _conversion.register_op_conversion
-python_print = _printer.python_print
 TensorType = _types.TensorType
 TileType = _types.TileType
 

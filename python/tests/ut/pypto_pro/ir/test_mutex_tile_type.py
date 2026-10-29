@@ -22,9 +22,6 @@ def test_subtype_preserves_tile_properties_and_exact_equality():
     assert not ir.structural_equal(first, other)
     assert not ir.structural_equal(base, ir.MutexTileType(base, 0))
     assert not ir.structural_equal(ir.TupleType([first]), ir.TupleType([other]))
-    printed = ir.python_print_type(first)
-    restored = eval(printed, {"ir": ir})
-    assert ir.structural_equal(first, restored)
 
 
 @pytest.mark.parametrize("ids", [[], [1], [1, 3]])

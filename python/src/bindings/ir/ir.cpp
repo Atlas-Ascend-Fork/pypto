@@ -1576,24 +1576,6 @@ void BindProgram(py::module_& ir)
     program_class.def_readonly("span", &Program::span_, "Source location");
     program_class.def(
         "__str__", [](const std::shared_ptr<const Program>& self) { return TextDump(self); }, "IR text representation");
-
-    // Python-style printer function - unified API for IRNode
-    ir.def(
-        "python_print", [](const IRNodePtr& node, const std::string& prefix) { return PythonPrint(node, prefix); },
-        py::arg("node"), py::arg("prefix") = "ir",
-        "Print IR node (Expr, Stmt, Function, or Program) in Python IR syntax.\n\n"
-        "Args:\n"
-        "    node: IR node to print\n"
-        "    prefix: Module prefix (default 'ir' for 'import pypto_pro.ir as ir')");
-
-    // Python-style printer function for Type objects
-    ir.def(
-        "python_print_type", [](const TypePtr& type, const std::string& prefix) { return PythonPrint(type, prefix); },
-        py::arg("type"), py::arg("prefix") = "ir",
-        "Print Type object in Python IR syntax.\n\n"
-        "Args:\n"
-        "    type: Type to print\n"
-        "    prefix: Module prefix (default 'ir' for 'import pypto_pro.ir as ir')");
 }
 
 void BindHelpers(py::module_& ir)
