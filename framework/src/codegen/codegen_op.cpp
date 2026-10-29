@@ -46,6 +46,7 @@ const std::unordered_set<Opcode> OP_SHAPE_FROM_ATTR{
     Opcode::OP_L0C_RESHAPE_COPY_OUT,
     // convBp Load
     Opcode::OP_L1_COPY_IN_CONV_BP_DX_DY,
+    Opcode::OP_L1_COPY_IN_CONV_BP_DW_DY,
     Opcode::OP_L1_COPY_IN_CONV_BP,
 };
 bool IsOpShapeFromAttr(Opcode opcode) { return OP_SHAPE_FROM_ATTR.find(opcode) != OP_SHAPE_FROM_ATTR.end(); }

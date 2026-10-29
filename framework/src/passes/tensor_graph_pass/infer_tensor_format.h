@@ -58,6 +58,9 @@ private:
     static int FindInputPosition(const Operation& op, const std::shared_ptr<LogicalTensor>& tensor);
     static Operation* FindRelatedConvOp(const std::shared_ptr<LogicalTensor>& srcTensor,
                                         const std::shared_ptr<LogicalTensor>& fakeDstTensor, TileOpFormat targetFormat);
+    static Operation* FindRelatedConvBpOp(const std::shared_ptr<LogicalTensor>& srcTensor,
+                                          const std::shared_ptr<LogicalTensor>& fakeDstTensor,
+                                          TileOpFormat targetFormat);
     static std::shared_ptr<LogicalTensor> InsertTransDataOp(Function& function,
                                                             const std::shared_ptr<LogicalTensor>& srcTensor,
                                                             const std::shared_ptr<LogicalTensor>& fakeDstTensor,

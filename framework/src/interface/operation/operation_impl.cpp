@@ -2168,6 +2168,10 @@ void ExpandOperationInto(Function& function, const TileShape& tileShape, Opcode 
             ConvBp::ConstructTileGraph(function, tileShape, iOperand, oOperand[0], op);
             break;
         }
+        case Opcode::OP_CONV_BP_FILTER_2D: {
+            ConvBp::ConstructDwTileGraph(function, tileShape, iOperand, oOperand[0], op);
+            break;
+        }
         case Opcode::OP_FAKE_TRANS: {
             function.AddOperation(Opcode::OP_FAKE_TRANS, iOperand, oOperand);
             break;

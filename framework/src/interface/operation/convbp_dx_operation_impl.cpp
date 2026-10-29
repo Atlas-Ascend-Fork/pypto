@@ -9,7 +9,7 @@
  */
 
 /*!
- * \file convbp_operation_impl.cpp
+ * \file convbp_dx_operation_impl.cpp
  * \brief ConvBackwardInput operation implementation
  */
 
@@ -177,7 +177,7 @@ void BpCheckAttrShape(const Tensor& gradOutputTensor, const Tensor& weightTensor
 void BpCheckL0TileTiling(DataType outType, const ConvBpAttrParam& attrParam, const Tensor& weightTensor,
                          const Tensor& gradOutputTensor, const std::vector<int64_t>& inputSize)
 {
-    auto& convTile = TileShape::Current().GetConvBpTile();
+    auto& convTile = TileShape::Current().GetConvBpInputTile();
     int64_t tileML0 = convTile.tileL0Info.tileML0;
     int64_t tileNL0 = convTile.tileL0Info.tileNL0;
     int64_t tileKL0 = convTile.tileL0Info.tileKL0;
@@ -234,7 +234,7 @@ void BpCheckL0TileTiling(DataType outType, const ConvBpAttrParam& attrParam, con
 void BpCheckTileTiling(DataType outType, const Tensor& gradOutputTensor, const Tensor& weightTensor,
                        const ConvBpAttrParam& attrParam, const std::vector<int64_t>& inputSize)
 {
-    auto convTile = TileShape::Current().GetConvBpTile();
+    auto convTile = TileShape::Current().GetConvBpInputTile();
     int64_t tileML1 = convTile.tileL1Info.tileML1;
     int64_t tileNL1 = convTile.tileL1Info.tileNL1;
     int64_t tileKL1 = convTile.tileL1Info.tileKL1;
@@ -259,7 +259,7 @@ void BpCheckL1SizeTiling(DataType outType, const Tensor& gradOutputTensor, const
                          const Tensor& biasTensor, const ConvBpAttrParam& attrParam,
                          const std::vector<int64_t>& inputSize)
 {
-    auto convTile = TileShape::Current().GetConvBpTile();
+    auto convTile = TileShape::Current().GetConvBpInputTile();
     Platform& platform = Platform::Instance();
     uint64_t l1Size = platform.GetAIVCore().GetMemorySize(MemoryType::MEM_L1); // todo check AIV MEM L1?
     uint32_t indexH = attrParam.isConv3D ? NCDHW_H_IDX : NCHW_H_IDX;
@@ -1119,7 +1119,7 @@ void SetConvBpShapeInfo(const TileShape& tileShape, const ConvBpAttrParam& convB
                                convBpTileInfo.orgKw;
 
     // set tileshape info
-    auto& convBpTile = tileShape.GetConvBpTile();
+    auto& convBpTile = tileShape.GetConvBpInputTile();
     convBpTileInfo.mL1 = convBpTile.tileL1Info.tileML1;
     convBpTileInfo.kL1 = convBpTile.tileL1Info.tileKL1;
     convBpTileInfo.nL1 = convBpTile.tileL1Info.tileNL1;

@@ -608,6 +608,11 @@ Tensor ConvBackwardInput(DataType outType, const Tensor& gradOutput, const std::
                          const std::vector<int64_t>& paddings, const std::vector<int64_t>& dilations,
                          const ConvBpExtendParam& extendParam, const int64_t groups = 1);
 
+Tensor ConvBackwardFilter(DataType outType, const Tensor& gradOutput, const Tensor& input,
+                          const std::vector<int64_t>& filterSize, const std::vector<int64_t>& strides,
+                          const std::vector<int64_t>& paddings, const std::vector<int64_t>& dilations,
+                          const int64_t groups = 1);
+
 } // namespace ConvBp
 
 namespace Distributed {

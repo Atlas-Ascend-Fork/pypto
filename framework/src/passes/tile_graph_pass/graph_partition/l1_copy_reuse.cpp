@@ -1255,6 +1255,7 @@ Status L1CopyInReuseMerge::CheckOpListValid(Function& func) const
                 opOriList[i].GetOpcode() == Opcode::OP_CONVERT ||
                 opOriList[i].GetOpcode() == Opcode::OP_L1_COPY_IN_CONV ||
                 opOriList[i].GetOpcode() == Opcode::OP_L1_COPY_IN_CONV_BP_DX_DY ||
+                opOriList[i].GetOpcode() == Opcode::OP_L1_COPY_IN_CONV_BP_DW_DY ||
                 opOriList[i].GetOpcode() == Opcode::OP_L1_COPY_IN_CONV_BP) {
                 // 符合预期且合法
                 continue;

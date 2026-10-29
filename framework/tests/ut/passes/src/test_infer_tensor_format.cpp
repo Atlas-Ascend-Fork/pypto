@@ -330,23 +330,6 @@ TEST_F(InferTensorFormatTest, FakeTransMissingFormatAttrFails)
     EXPECT_EQ(RunInferTensorFormat(G.GetFunction()), FAILED);
 }
 
-TEST_F(InferTensorFormatTest, FakeTransUnsupportedFormatConversionFails)
-{
-    ComputationalGraphBuilder G;
-    std::vector<int64_t> shape4d{2, 32, 14, 14};
-    ASSERT_TRUE(G.AddTensors(DataType::DT_FP16, shape4d, {"incast", "fake_out"}));
-    ASSERT_TRUE(G.AddOp(Opcode::OP_FAKE_TRANS, {"incast"}, {"fake_out"}, "fake_trans"));
-    ASSERT_TRUE(G.SetInCast({"incast"}));
-
-    auto* fakeTrans = G.GetOp("fake_trans");
-    ASSERT_NE(fakeTrans, nullptr);
-    fakeTrans->SetAttribute(FAKE_TRANS_IN_FORMAT_ATTR, static_cast<int64_t>(TileOpFormat::TILEOP_FRACTAL_Z));
-    fakeTrans->SetAttribute(FAKE_TRANS_OUT_FORMAT_ATTR, static_cast<int64_t>(TileOpFormat::TILEOP_ND));
-
-    fakeTrans->GetTileShapeForSetting().SetVecTile({16, 16, 2, 16});
-    EXPECT_EQ(RunInferTensorFormat(G.GetFunction()), FAILED);
-}
-
 // =============================================================================
 // 场景 j5: 零输入 op (VEC_DUP) 输出驱动 FAKE_TRANS 推导
 //   图: VEC_DUP(零输入) → dup_out(ND) → FAKE_TRANS(ND→NC1HWC0) → fake_out → ASSEMBLE → local_out

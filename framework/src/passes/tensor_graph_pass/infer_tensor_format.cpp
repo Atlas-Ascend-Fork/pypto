@@ -16,6 +16,7 @@
 #include "infer_tensor_format.h"
 
 #include "interface/operation/conv/conv_vec_tile_inference.h"
+#include "interface/operation/convbp/convbp_vec_tile_inference.h"
 #include "interface/operation/operation.h"
 #include "passes/pass_log/pass_log.h"
 #include "passes/pass_utils/pass_utils.h"
@@ -108,7 +109,8 @@ bool InferTensorFormat::IsSupportedTransData(TileOpFormat srcFormat, TileOpForma
         return targetFormat == TileOpFormat::TILEOP_NC1HWC0 || targetFormat == TileOpFormat::TILEOP_FRACTAL_Z ||
                targetFormat == TileOpFormat::TILEOP_NDC1HWC0 || targetFormat == TileOpFormat::TILEOP_FRACTAL_Z_3D;
     }
-    return (srcFormat == TileOpFormat::TILEOP_NC1HWC0 || srcFormat == TileOpFormat::TILEOP_NDC1HWC0) &&
+    return (srcFormat == TileOpFormat::TILEOP_NC1HWC0 || srcFormat == TileOpFormat::TILEOP_NDC1HWC0 ||
+            srcFormat == TileOpFormat::TILEOP_FRACTAL_Z) &&
            targetFormat == TileOpFormat::TILEOP_ND;
 }
 
@@ -176,6 +178,32 @@ Operation* InferTensorFormat::FindRelatedConvOp(const std::shared_ptr<LogicalTen
     return nullptr;
 }
 
+Operation* InferTensorFormat::FindRelatedConvBpOp(const std::shared_ptr<LogicalTensor>& srcTensor,
+                                                  const std::shared_ptr<LogicalTensor>& fakeDstTensor,
+                                                  TileOpFormat targetFormat)
+{
+    if (targetFormat == TileOpFormat::TILEOP_ND) {
+        if (srcTensor == nullptr) {
+            return nullptr;
+        }
+        for (auto* producer : srcTensor->GetProducers()) {
+            if (producer != nullptr && producer->GetOpcode() == Opcode::OP_CONV_BP_FILTER_2D) {
+                return producer;
+            }
+        }
+    } else {
+        if (fakeDstTensor == nullptr) {
+            return nullptr;
+        }
+        for (auto* consumer : fakeDstTensor->GetConsumers()) {
+            if (consumer != nullptr && consumer->GetOpcode() == Opcode::OP_CONV_BP_FILTER_2D) {
+                return consumer;
+            }
+        }
+    }
+    return nullptr;
+}
+
 void InferTensorFormat::ApplyTransDataVecTile(const std::shared_ptr<LogicalTensor>& srcTensor,
                                               TileOpFormat targetFormat, Operation* relatedOp)
 {
@@ -233,11 +261,19 @@ std::shared_ptr<LogicalTensor> InferTensorFormat::InsertTransDataOp(Function& fu
     int group_value = GetTransDataGroupValue(srcTensor, fakeDstTensor, relatedOp);
 
     Operation* convOp = FindRelatedConvOp(srcTensor, fakeDstTensor, targetFormat);
+    Operation* convBpOp = FindRelatedConvBpOp(srcTensor, fakeDstTensor, targetFormat);
     VecTile savedVecTile = TileShape::Current().GetVecTile();
     bool vecTileInferred = false;
     if (convOp != nullptr) {
         auto vecTiles = Conv::InferConvVecTileShapes(*convOp, srcTensor->Datatype());
         VecTile inferredVecTile = Conv::SelectConvVecTile(vecTiles, targetFormat);
+        if (!inferredVecTile.tile.empty()) {
+            TileShape::Current().SetVecTile(inferredVecTile);
+            vecTileInferred = true;
+        }
+    } else if (convBpOp != nullptr) {
+        auto vecTiles = ConvBp::InferConvBpVecTileShapes(*convBpOp, srcTensor->Datatype());
+        VecTile inferredVecTile = ConvBp::SelectConvBpVecTile(vecTiles, targetFormat);
         if (!inferredVecTile.tile.empty()) {
             TileShape::Current().SetVecTile(inferredVecTile);
             vecTileInferred = true;

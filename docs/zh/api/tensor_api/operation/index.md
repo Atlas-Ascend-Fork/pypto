@@ -34,6 +34,7 @@ pypto-ceil_div
 pypto-clip
 pypto-clone
 pypto-concat
+pypto-conv_backward_filter
 pypto-conv_backward_input
 pypto-conv
 pypto-cos

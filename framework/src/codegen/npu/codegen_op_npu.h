@@ -62,7 +62,9 @@ public:
     std::string GenMemL1CopyOut() const;
     std::string GenMemL1CopyInConv() const;
     std::string GenMemL1CopyInConvBp() const;
+    std::string GenMemL1CopyInConvBpDwDy() const;
     std::string GenMemL1CopyInConvBpNZ() const;
+    std::string GenMemL0CCopyOutConvBpDw() const;
     std::string GenMemL0CCopyOutConv() const;
     std::string GenMemL1ToFB() const;
     std::string GenMemL0CCopyOut() const;
@@ -72,6 +74,7 @@ public:
     std::string GenAxpyOp() const;
 
     std::string GenMemL1ToL0Load2DConvBpDx() const;
+    std::string GenMemL1ToL0AConvDw() const;
 
     std::string GenMemL1ToL0() const;
 
@@ -228,7 +231,10 @@ protected:
                                                    const std::string& realN, const std::string& realCutW,
                                                    const std::string& cutW,
                                                    const std::vector<std::string>& srcOffsetList = {}) const;
-
+    std::vector<std::string> BuildCopyOutConvBpDwParamList(const std::string& dstTensor, const std::string& srcTensor,
+                                                           const std::vector<std::string>& gmOffsetExpr,
+                                                           const std::vector<int64_t>& staticOffsets,
+                                                           const std::string& realM, const std::string& realN) const;
     std::string GenTemplateParamsForPutAndGet() const;
     std::string GenTemplateParamsForLoad() const;
     std::string GenTemplateParamsForStore() const;

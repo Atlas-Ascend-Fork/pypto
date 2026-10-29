@@ -13,7 +13,8 @@ Operation阶段校验TileShape配置超出硬件缓存空间限制，包括L0A�
 **处理方式**
 
 1. 卷积正向参考：[卷积正向tileshape切分约束说明](../../../api/tensor_api/config/pypto-set_conv_tile_shapes.md)，计算占用空间是否超限。
-2. 卷积反向参考：[卷积反向tileshape切分约束说明](../../../api/tensor_api/config/pypto-set_convbp_input_tile_shapes.md)，计算占用空间是否超限。
+2. 卷积反向输入参考：[卷积反向输入tileshape切分约束说明](../../../api/tensor_api/config/pypto-set_convbp_input_tile_shapes.md)，计算占用空间是否超限。
+3. 卷积反向权重参考：[卷积反向权重tileshape切分约束说明](../../../api/tensor_api/config/pypto-set_convbp_filter_tile_shapes.md)，计算占用空间是否超限。
 
 ## FC6201 EXPANDFUNC_TENSOR_OP_NULLPTR
 
@@ -23,7 +24,7 @@ Tile图切分阶段，在为MMAD（矩阵乘累加）操作设置属性时，输
 
 **可能原因**
 
-- Conv Operation或Conv_backward_input Operation的输入/输出Tensor未正确传入或被提前释放，导致Tile图展开时tensor节点缺失。
+- Conv Operation或Conv_backward_input/Conv_backward_filter Operation的输入/输出Tensor未正确传入或被提前释放，导致Tile图展开时tensor节点缺失。
 
    ```python
    # 错误示例-在动态场景中，view操作的offset或shape传入异常，导致Tile图展开时无法正确构造fmap子tensor节点
@@ -36,15 +37,15 @@ Tile图切分阶段，在为MMAD（矩阵乘累加）操作设置属性时，输
 
 **处理方式**
 
-1. 开启编译debug模式dump计算图，确认Conv Operation或Conv_backward_input Operation的输入/输出tensor节点是否完整：
+1. 开启编译debug模式dump计算图，确认Conv Operation或Conv_backward_input/Conv_backward_filter Operation的输入/输出tensor节点是否完整：
 
    ```python
    @pypto.frontend.jit(debug_options={"compile_debug_mode": 1})
    def conv_kernel():
    ```
 
-2. 在output目录下使用pto-toolkit打开dump的计算图，定位到报错的Conv Operation或Conv_backward_input Operation节点，检查其输入tensor和输出tensor是否均存在且非空。
-3. 若为动态shape场景，检查`pypto.view`的offset和shape参数是否合法，确认view后的子tensor能正确传递到`pypto.conv`或`pypto.conv_backward_input`。
+2. 在output目录下使用pto-toolkit打开dump的计算图，定位到报错的Conv Operation或Conv_backward_input/Conv_backward_filter Operation节点，检查其输入tensor和输出tensor是否均存在且非空。
+3. 若为动态shape场景，检查`pypto.view`的offset和shape参数是否合法，确认view后的子tensor能正确传递到`pypto.conv`。
 4. 若上述排查均未发现问题，请按CONV组件提issue或问题单，附带完整报错日志、dump计算图与复现用例。
 
 ## FC6202 EXPANDFUNC_TENSOR_ATTR_GET_FAILED
@@ -52,7 +53,8 @@ Tile图切分阶段，在为MMAD（矩阵乘累加）操作设置属性时，输
 **错误描述**
 
 卷积正向：Tile图切分阶段，Conv Operation的原始fmap/weight shape属性（`CONV_ORI_FMAP_SHAPE_ATTR`/`CONV_ORI_WEIGHT_SHAPE_ATTR`）未设置。该校验在NZ2NZ模式下触发。
-卷积反向：Tile图切分阶段，Convbp Operation的原始gradOutput/weight shape属性（`CONV_ORI_GRAD_OUTPUT_SHAPE_ATTR`/`CONV_ORI_WEIGHT_SHAPE_ATTR`）未设置。该校验在NZ2NZ模式下触发。
+卷积反向输入：Tile图切分阶段，Convbp Operation的原始gradOutput/weight shape属性（`CONV_ORI_GRAD_OUTPUT_SHAPE_ATTR`/`CONV_ORI_WEIGHT_SHAPE_ATTR`）未设置。该校验在NZ2NZ模式下触发。
+卷积反向权重：Tile图切分阶段，Convbp Filter Operation的原始gradOutput/input shape属性（`CONV_ORI_GRAD_OUTPUT_SHAPE_ATTR`/`CONV_ORI_INPUT_SHAPE_ATTR`）未设置。该校验在NZ2NZ模式下触发。
 
 **可能原因**
 
@@ -64,13 +66,13 @@ Tile图切分阶段，在为MMAD（矩阵乘累加）操作设置属性时，输
    # Conv ori fmapshape should be set when InOut Tensor NZ mode.
    ```
 
-- Conv Operation或Conv_backward_input Operation通过非标准方式构造（如自定义Pass修改了Conv节点属性），导致必要属性丢失。
+- Conv Operation或Conv_backward_input/Conv_backward_filter Operation通过非标准方式构造（如自定义Pass修改了Conv节点属性），导致必要属性丢失。
 
 **处理方式**
 
 1. 确认运行芯片型号，检查是否走了NZ2NZ路径（`ConstructTensorGraphNZ2NZ`）。
-2. 开启编译debug模式dump计算图，卷积正向：在dump图中搜索Conv Operation节点，检查其属性列表是否包含`ori_fmap_shape`和`ori_weight_shape`；卷积反向：在dump图中搜索Conv_backward_input Operation节点，检查其属性列表是否包含`ori_gradOutput_shape`和`ori_weight_shape`。
-3. 确认Operation是否通过标准`pypto.conv`或者`pypto.conv_backward_input`接口构造，若使用了自定义Pass修改Conv节点，检查是否误删了shape属性。
+2. 开启编译debug模式dump计算图，卷积正向：在dump图中搜索Conv Operation节点，检查其属性列表是否包含`ori_fmap_shape`和`ori_weight_shape`；卷积反向输入：在dump图中搜索Conv_backward_input Operation节点，检查其属性列表是否包含`ori_gradOutput_shape`和`ori_weight_shape`；卷积反向权重：在dump图中搜索Conv_backward_filter Operation节点，检查其属性列表是否包含`ori_gradOutput_shape`和`ori_input_shape`。
+3. 确认Operation是否通过标准`pypto.conv`、`pypto.conv_backward_input`或者`pypto.conv_backward_filter`接口构造，若使用了自定义Pass修改Conv节点，检查是否误删了shape属性。
 4. 若上述排查均未发现问题，请按CONV组件提issue或问题单，附带完整报错日志、芯片型号信息与复现用例。
 
 ## FC6203 EXPANDFUNC_TILE_OP_NULLPTR
@@ -81,7 +83,7 @@ Tile图切分阶段，Tile图新生成的节点出现空指针，包括：当前
 
 **可能原因**
 
-- Conv Operation或Conv_backward_input Operation未在`@pypto.frontend.jit`装饰的动态函数内调用，导致获取当前Function指针失败（`functionPtr`为空）。
+- Conv Operation或Conv_backward_input/Conv_backward_filter Operation未在`@pypto.frontend.jit`装饰的动态函数内调用，导致获取当前Function指针失败（`functionPtr`为空）。
 
    ```python
    # 错误示例-未在jit动态函数内调用conv，functionPtr为空
@@ -102,7 +104,7 @@ Tile图切分阶段，Tile图新生成的节点出现空指针，包括：当前
 
 **处理方式**
 
-1. 确认`pypto.conv`或者`pypto.conv_backward_input`调用位于`@pypto.frontend.jit`装饰的函数内部，不能在普通Python函数中直接调用。
+1. 确认`pypto.conv`、`pypto.conv_backward_input`或者`pypto.conv_backward_filter`调用位于`@pypto.frontend.jit`装饰的函数内部，不能在普通Python函数中直接调用。
 2. 若使用了bias，确认`extend_params['bias_tensor']`传入的是有效的Tensor对象，而非None。
 3. 开启编译debug模式dump计算图，检查Tile图展开后各节点的tensor连接关系是否完整。
 4. 若上述排查均未发现问题，请按CONV组件提issue或问题单，附带完整报错日志与复现用例。
@@ -150,7 +152,7 @@ NA
 
 **错误描述**
 
-Codegen代码生成阶段，获取Conv TileOp或Conv_backward_input TileOp的CopyInMode或CopyOutMode属性失败。这两个属性在Tile图展开阶段设置，Codegen阶段读取。
+Codegen代码生成阶段，获取Conv TileOp或Conv_backward_input/Conv_backward_filter TileOp的CopyInMode或CopyOutMode属性失败。这两个属性在Tile图展开阶段设置，Codegen阶段读取。
 
 **可能原因**
 
@@ -163,12 +165,12 @@ Codegen代码生成阶段，获取Conv TileOp或Conv_backward_input TileOp的Cop
    # GenMemL0CCopyOutConv get CopyOutMode failed.
    ```
 
-- Conv Operation或Conv_backward_input Operation的Load/Store操作节点在Pass阶段被异常修改，导致属性丢失。
+- Conv Operation或Conv_backward_input/Conv_backward_filter Operation的Load/Store操作节点在Pass阶段被异常修改，导致属性丢失。
 
 **处理方式**
 
-1. 开启编译debug模式dump计算图，在dump图中定位到Conv或Conv_backward_input的Load（CopyIn）/Store（CopyOut）操作节点，检查其属性是否包含`COPY_IN_MODE`/`COPY_OUT_MODE`。
-2. 检查是否使用了自定义Pass修改了Conv或Conv_backward_input的Load/Store节点，确认属性未被误删。
+1. 开启编译debug模式dump计算图，在dump图中定位到Conv或Conv_backward_input/Conv_backward_filter的Load（CopyIn）/Store（CopyOut）操作节点，检查其属性是否包含`COPY_IN_MODE`/`COPY_OUT_MODE`。
+2. 检查是否使用了自定义Pass修改了Conv或Conv_backward_input/Conv_backward_filter的Load/Store节点，确认属性未被误删。
 3. 在生成的kernel代码文件（`kernel_aicore`目录下的`TENSOR***.cpp`）中搜索对应的TileOp调用，确认参数是否完整。
 4. 若上述排查均未发现问题，请按Codegen组件提issue或问题单，附带完整报错日志、dump计算图与复现用例。
 
@@ -176,7 +178,7 @@ Codegen代码生成阶段，获取Conv TileOp或Conv_backward_input TileOp的Cop
 
 **错误描述**
 
-Codegen代码生成阶段，Conv TileOp或Conv_backward_input TileOp的CopyInMode/CopyOutMode属性值不在合法范围内，或cutW属性为0。
+Codegen代码生成阶段，Conv TileOp或Conv_backward_input/Conv_backward_filter TileOp的CopyInMode/CopyOutMode属性值不在合法范围内，或cutW属性为0。
 
 **可能原因**
 
@@ -195,7 +197,7 @@ Codegen代码生成阶段，Conv TileOp或Conv_backward_input TileOp的CopyInMod
 
 **处理方式**
 
-1. 开启编译debug模式dump计算图，在dump图中定位到Conv或Conv_backward_input的Load/Store操作节点，检查`COPY_IN_MODE`/`COPY_OUT_MODE`/`CUT_W`属性值是否合法。
+1. 开启编译debug模式dump计算图，在dump图中定位到Conv或Conv_backward_input/Conv_backward_filter的Load/Store操作节点，检查`COPY_IN_MODE`/`COPY_OUT_MODE`/`CUT_W`属性值是否合法。
 2. CopyInMode合法值：`ND2NZ`（1）、`NZ2NZ`（2）、`DN2NZ`（3）；CopyOutMode合法值：`NZ2ND`（0）、`NZ2NZ`（1）、`NZ2DN`（3）。
 3. 确认Tile图展开流程未被自定义Pass干扰，这些属性由框架根据输入tensor格式和芯片型号自动推导。
 4. 若上述排查均未发现问题，请按Codegen组件提issue或问题单，附带完整报错日志、dump计算图与复现用例。
@@ -204,7 +206,7 @@ Codegen代码生成阶段，Conv TileOp或Conv_backward_input TileOp的CopyInMod
 
 **错误描述**
 
-Codegen代码生成阶段，Conv或Conv_backward_input TileOp的src shape或offset维度与预期不匹配。2D的shape/offset应为4维，3D应为5维，L0C的valid shape应为2维。
+Codegen代码生成阶段，Conv或Conv_backward_input/Conv_backward_filter TileOp的src shape或offset维度与预期不匹配。2D的shape/offset应为4维，3D应为5维，L0C的valid shape应为2维。
 
 **可能原因**
 
@@ -216,6 +218,7 @@ Codegen代码生成阶段，Conv或Conv_backward_input TileOp的src shape或offs
    # GenMemL1CopyInConv shape should be 4-dim!（2D conv期望4维，实际非4维）
    # GenMemL1CopyInConv offset should be 4-dim!（2D conv期望4维，实际非4维）
    # GenMemL0CCopyOutConv valid shape should be 2-dim!（L0C期望2维，实际非2维）
+   # GenMemL0CCopyOutConvBpDw valid shape should be 2-dim!（卷积反向权重L0C期望2维，实际非2维）
    ```
 
 - 动态shape场景下，valid shape的维度推导异常。
@@ -223,7 +226,7 @@ Codegen代码生成阶段，Conv或Conv_backward_input TileOp的src shape或offs
 
 **处理方式**
 
-1. 开启编译debug模式dump计算图，在dump图中定位到报错的Conv或Conv_backward_input Load/Store节点，检查其src tensor的shape维度。
+1. 开启编译debug模式dump计算图，在dump图中定位到报错的Conv或Conv_backward_input/Conv_backward_filter Load/Store节点，检查其src tensor的shape维度。
 2. 确认shape维度与卷积类型匹配：1D conv对应3维（NCL），2D conv对应4维（NCHW），3D conv对应5维（NCDHW）。
 3. 若为动态shape场景，检查`pypto.view`构造的子tensor shape维度是否与原始输入一致。
 4. 检查生成的kernel代码文件（`kernel_aicore`目录下），确认TileOp调用的shape/offset参数维度正确。
@@ -233,7 +236,7 @@ Codegen代码生成阶段，Conv或Conv_backward_input TileOp的src shape或offs
 
 **错误描述**
 
-TileOp阶段，tensor硬件FORMAT校验失败。Conv或Conv_backward_input的Load操作要求src为GM格式、dst为L1格式；Store操作要求src为L0C格式、dst为GM格式。
+TileOp阶段，tensor硬件FORMAT校验失败。Conv或Conv_backward_input/Conv_backward_filter的Load操作要求src为GM格式、dst为L1格式；Store操作要求src为L0C格式、dst为GM格式。
 
 **可能原因**
 

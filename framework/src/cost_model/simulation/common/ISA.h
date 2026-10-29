@@ -201,6 +201,7 @@ const std::map<std::string, CorePipeType> SCHED_CORE_PIPE_TYPE{// Unary Vector
                                                                {"CUBE_CONV3D", CorePipeType::PIPE_CUBE},
                                                                {"CUBE_CONV_BP_INPUT_2D", CorePipeType::PIPE_CUBE},
                                                                {"CUBE_CONV_BP_INPUT_3D", CorePipeType::PIPE_CUBE},
+                                                               {"CUBE_CONV_BP_FILTER_2D", CorePipeType::PIPE_CUBE},
                                                                {"FAKE_TRANS", CorePipeType::PIPE_MTE_OUT},
                                                                {"CONV_D2S", CorePipeType::PIPE_FIX},
                                                                {"CONCAT_C", CorePipeType::PIPE_CUBE},

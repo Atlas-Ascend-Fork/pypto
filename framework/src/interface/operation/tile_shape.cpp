@@ -118,11 +118,20 @@ std::string DistTile::ToString() const
     return ss.str();
 }
 
-TileShape::TileShape() : vecTile{}, cubeTile{}, convTile{}, convBpTile{}, distTile{}, matrixSize{} {}
+TileShape::TileShape()
+    : vecTile{}, cubeTile{}, convTile{}, convBpInputTile{}, convBpFilterTile{}, distTile{}, matrixSize{}
+{}
 
 TileShape::TileShape(const std::vector<int64_t>& vTile, const CubeTile& cTile, const ConvTile& cvTile,
-                     const ConvBpTile& cvBpTile, const DistTile& dTile, const std::vector<int64_t>& mSize)
-    : vecTile{vTile}, cubeTile(cTile), convTile(cvTile), convBpTile(cvBpTile), distTile(dTile), matrixSize(mSize)
+                     const ConvBpTile& cvBpInputTile, const ConvBpTile& cvBpFilterTile, const DistTile& dTile,
+                     const std::vector<int64_t>& mSize)
+    : vecTile{vTile},
+      cubeTile(cTile),
+      convTile(cvTile),
+      convBpInputTile(cvBpInputTile),
+      convBpFilterTile(cvBpFilterTile),
+      distTile(dTile),
+      matrixSize(mSize)
 {}
 
 TileShape& TileShape::Current()
@@ -138,10 +147,18 @@ void TileShape::SetConvTile(const Conv::TileL1Info& tileL1Info, const Conv::Tile
     ConfigManagerNg::CurrentScope()->UpdateValue("conv_tile_shapes", convTile);
 }
 
-void TileShape::SetConvBpTile(const ConvBp::ConvBpTileL1Info& tileL1Info, const ConvBp::ConvBpTileL0Info& tileL0Info)
+void TileShape::SetConvBpInputTile(const ConvBp::ConvBpTileL1Info& tileL1Info,
+                                   const ConvBp::ConvBpTileL0Info& tileL0Info)
 {
-    convBpTile = {tileL1Info, tileL0Info};
-    ConfigManagerNg::CurrentScope()->UpdateValue("convbp_tile_shapes", convBpTile);
+    convBpInputTile = {tileL1Info, tileL0Info};
+    ConfigManagerNg::CurrentScope()->UpdateValue("convbp_input_tile_shapes", convBpInputTile);
+}
+
+void TileShape::SetConvBpFilterTile(const ConvBp::ConvBpTileL1Info& tileL1Info,
+                                    const ConvBp::ConvBpTileL0Info& tileL0Info)
+{
+    convBpFilterTile = {tileL1Info, tileL0Info};
+    ConfigManagerNg::CurrentScope()->UpdateValue("convbp_filter_tile_shapes", convBpFilterTile);
 }
 
 void TileShape::SetVecTile(const std::vector<int64_t>& tile)
@@ -228,7 +245,8 @@ std::string TileShape::ToString(TileType type) const
         ss << convTile.ToString();
     }
     if (type == TileType::CONV_BP || type == TileType::MAX) {
-        ss << convBpTile.ToString();
+        ss << "ConvBpInputTile: {" << convBpInputTile.ToString() << "}; ";
+        ss << "ConvBpFilterTile: {" << convBpFilterTile.ToString() << "}; ";
     }
     if (type == TileType::DIST || type == TileType::MAX) {
         ss << distTile.ToString();

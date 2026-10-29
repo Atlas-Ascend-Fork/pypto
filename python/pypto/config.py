@@ -716,7 +716,8 @@ class _Options:
         "vec_tile_shapes",
         "cube_tile_shapes",
         "conv_tile_shapes",
-        "convbp_tile_shapes",
+        "convbp_input_tile_shapes",
+        "convbp_filter_tile_shapes",
         "matrix_size",
         "operation_options",
     ]
@@ -760,11 +761,17 @@ class _Options:
             else:
                 opts["conv_tile_shapes"] = ConvTile(*self.conv_tile_shapes)._impl
 
-        if self.convbp_tile_shapes is not None:
-            if isinstance(self.convbp_tile_shapes, ConvBpTile):
-                opts["convbp_tile_shapes"] = self.convbp_tile_shapes._impl
+        if self.convbp_input_tile_shapes is not None:
+            if isinstance(self.convbp_input_tile_shapes, ConvBpTile):
+                opts["convbp_input_tile_shapes"] = self.convbp_input_tile_shapes._impl
             else:
-                opts["convbp_tile_shapes"] = ConvBpTile(*self.convbp_tile_shapes)._impl
+                opts["convbp_input_tile_shapes"] = ConvBpTile(*self.convbp_input_tile_shapes)._impl
+
+        if self.convbp_filter_tile_shapes is not None:
+            if isinstance(self.convbp_filter_tile_shapes, ConvBpTile):
+                opts["convbp_filter_tile_shapes"] = self.convbp_filter_tile_shapes._impl
+            else:
+                opts["convbp_filter_tile_shapes"] = ConvBpTile(*self.convbp_filter_tile_shapes)._impl
 
         if self.matrix_size is not None:
             opts["matrix_size"] = self.matrix_size
@@ -824,7 +831,8 @@ def options(
     vec_tile_shapes=None,
     cube_tile_shapes=None,
     conv_tile_shapes=None,
-    convbp_tile_shapes=None,
+    convbp_input_tile_shapes=None,
+    convbp_filter_tile_shapes=None,
     matrix_size=None,
 ):
     """
@@ -894,7 +902,8 @@ def set_options(
     vec_tile_shapes=None,
     cube_tile_shapes=None,
     conv_tile_shapes=None,
-    convbp_tile_shapes=None,
+    convbp_input_tile_shapes=None,
+    convbp_filter_tile_shapes=None,
     matrix_size=None,
 ):
     """
@@ -1038,7 +1047,7 @@ class ConvBpTile:
     """ConvBpTile"""
     def __init__(self, tile_l1_info: pypto_impl.ConvBpTileL1Info, tile_l0_info: pypto_impl.ConvBpTileL0Info):
         """
-        ConvBpTile tile for convolution backward input operation, tile_l1_info for L1 Cache, tile_l0_info for L0 Cache
+        ConvBpTile tile for convolution backward operations, tile_l1_info for L1 Cache, tile_l0_info for L0 Cache.
 
         Parameters
         ---------
@@ -1131,7 +1140,10 @@ class ConfigScope:
         return self._options.get("conv_tile_shapes")
 
     def get_convbp_input_tile_shapes(self):
-        return self._options.get("convbp_tile_shapes")
+        return self._options.get("convbp_input_tile_shapes")
+
+    def get_convbp_filter_tile_shapes(self):
+        return self._options.get("convbp_filter_tile_shapes")
 
     def get_matrix_size(self):
         return self._options.get("matrix_size")

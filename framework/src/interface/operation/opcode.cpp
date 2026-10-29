@@ -984,6 +984,10 @@ void OpcodeManager::RegisterCube()
                  {{"DAV_2201",
                    {{TileOpFormat::TILEOP_NDC1HWC0, TileOpFormat::TILEOP_FRACTAL_Z_3D, TileOpFormat::TILEOP_ND},
                     {TileOpFormat::TILEOP_NDC1HWC0}}}});
+    RegisterInfo(Opcode::OP_CONV_BP_FILTER_2D, OpCoreType::AIC, "CONV_BP_FILTER_2D", {}, {},
+                 {"CUBE_CONV_BP_FILTER_2D", PIPE_M, PIPE_M, CoreType::AIC}, OpCalcType::CONV, convAttrStrList, nullptr,
+                 {{"DAV_2201",
+                   {{TileOpFormat::TILEOP_NC1HWC0, TileOpFormat::TILEOP_NC1HWC0}, {TileOpFormat::TILEOP_FRACTAL_Z}}}});
     RegisterInfo(Opcode::OP_CONV_ADD, OpCoreType::AIC, "CONV_ADD", {}, {},
                  {"CUBE_CONV_ADD", PIPE_M, PIPE_M, CoreType::AIC}, OpCalcType::CONV, convAttrStrList);
     RegisterInfo(Opcode::OP_CUBE_CONV_D2S, OpCoreType::AIC, "CONV_D2S", {}, {},
@@ -998,6 +1002,11 @@ void OpcodeManager::RegisterCube()
                  {"TileOp::TLoadConvBpDxDedy", PIPE_MTE2, PIPE_MTE2, CoreType::AIC}, OpCalcType::MOVE_IN,
                  {OpAttributeKey::srcGmConvValidShape, OpAttributeKey::strideH, OpAttributeKey::strideW,
                   OpAttributeKey::skipH, OpAttributeKey::skipW});
+    RegisterInfo(Opcode::OP_L1_COPY_IN_CONV_BP_DW_DY, OpCoreType::AIC, "L1_COPY_IN_CONV_BP_DW_DY",
+                 {MemoryType::MEM_DEVICE_DDR}, {MemoryType::MEM_L1},
+                 {"TileOp::TLoadConvBPDwDedy", PIPE_MTE2, PIPE_MTE2, CoreType::AIC}, OpCalcType::MOVE_IN,
+                 {OpAttributeKey::srcGmConvValidShape});
+
     RegisterInfo(Opcode::OP_L1_COPY_IN_CONV_BP, OpCoreType::AIC, "L1_COPY_IN_CONV_BP", {MemoryType::MEM_DEVICE_DDR},
                  {MemoryType::MEM_L1}, {"TileOp::L1CopyInConvBpNZ", PIPE_MTE2, PIPE_MTE2, CoreType::AIC},
                  OpCalcType::MOVE_IN, {OpAttributeKey::srcGmConvValidShape});
@@ -1015,8 +1024,22 @@ void OpcodeManager::RegisterCube()
                  {"TileOp::TLoad2DDX", PIPE_MTE1, PIPE_MTE1, CoreType::AIC}, OpCalcType::MOVE_LOCAL,
                  {OpAttributeKey::postK, OpAttributeKey::postN, OpAttributeKey::hwk, OpAttributeKey::kL0Size,
                   OpAttributeKey::nL0Size, OpAttributeKey::k0Idx, OpAttributeKey::n0Idx});
+    RegisterInfo(Opcode::OP_L1_TO_L0A_CONV_DW, OpCoreType::AIC, "L1_TO_L0A_CONV_DW", {MemoryType::MEM_L1},
+                 {MemoryType::MEM_L0A}, {"TileOp::TLoadDwA", PIPE_MTE1, PIPE_MTE1, CoreType::AIC},
+                 OpCalcType::MOVE_LOCAL, {OpAttributeKey::postM, OpAttributeKey::postN});
+    RegisterInfo(Opcode::OP_LOAD3D_CONV_DW, OpCoreType::AIC, "LOAD3D_CONV_DW", {MemoryType::MEM_L1},
+                 {MemoryType::MEM_L0B}, {"TileOp::TLoad3DDW", PIPE_MTE1, PIPE_MTE1, CoreType::AIC},
+                 OpCalcType::MOVE_LOCAL,
+                 {OpAttributeKey::postK, OpAttributeKey::postM, OpAttributeKey::filterH, OpAttributeKey::filterW,
+                  OpAttributeKey::strideH, OpAttributeKey::strideW, OpAttributeKey::dilationH,
+                  OpAttributeKey::dilationW, OpAttributeKey::paddingLeft, OpAttributeKey::paddingRight,
+                  OpAttributeKey::paddingTop, OpAttributeKey::paddingBottom, OpAttributeKey::padValue,
+                  OpAttributeKey::repeatStride, OpAttributeKey::repeatTime, OpAttributeKey::wStride});
     RegisterInfo(Opcode::OP_L0C_COPY_OUT_CONV, OpCoreType::AIC, "L0C_COPY_OUT_CONV", {MemoryType::MEM_L0C},
                  {MemoryType::MEM_DEVICE_DDR}, {"TileOp::L0CCopyOutConv", PIPE_FIX, PIPE_FIX, CoreType::AIC},
+                 OpCalcType::MOVE_OUT, {OpAttributeKey::excludeBufferReuse, OpAttributeKey::l0cValidMN});
+    RegisterInfo(Opcode::OP_L0C_COPY_OUT_CONV_DW, OpCoreType::AIC, "L0C_COPY_OUT_CONV_DW", {MemoryType::MEM_L0C},
+                 {MemoryType::MEM_DEVICE_DDR}, {"TileOp::TStoreConvDW", PIPE_FIX, PIPE_FIX, CoreType::AIC},
                  OpCalcType::MOVE_OUT, {OpAttributeKey::excludeBufferReuse, OpAttributeKey::l0cValidMN});
     RegisterInfo(Opcode::OP_TRANS_FORMAT_L0C, OpCoreType::AIC, "TRANS_FORMAT_L0C", {MemoryType::MEM_L0C},
                  {MemoryType::MEM_L0C}, {"TileOp::TransFormatL0C", PIPE_FIX, PIPE_FIX, CoreType::AIC},
@@ -1465,9 +1488,13 @@ std::unordered_map<Opcode, std::string> SUPPORT_TILETENSOR_OPS{
     {Opcode::OP_LOAD3D_CONV, "TLoad3D"},
     {Opcode::OP_LOAD2D_CONV, "TLoad2D"},
     {Opcode::OP_L1_COPY_IN_CONV_BP_DX_DY, "TLoadConvBpDxDedy"},
+    {Opcode::OP_L1_COPY_IN_CONV_BP_DW_DY, "TLoadConvBPDwDedy"},
     {Opcode::OP_L1_COPY_IN_CONV_BP, "TLoadConvBPNZ"},
     {Opcode::OP_LOAD2DDX_CONV, "TLoad2DDX"},
+    {Opcode::OP_L1_TO_L0A_CONV_DW, "TLoadDwA"},
+    {Opcode::OP_LOAD3D_CONV_DW, "TLoad3DDW"},
     {Opcode::OP_L0C_COPY_OUT_CONV, "TStoreConv"},
+    {Opcode::OP_L0C_COPY_OUT_CONV_DW, "TStoreConvDW"},
     {Opcode::OP_SHMEM_PUT, "TileOp::Distributed::ShmemPut"},
     {Opcode::OP_SHMEM_GET, "TileOp::Distributed::ShmemGet"},
     {Opcode::OP_SHMEM_SIGNAL, "TileOp::Distributed::ShmemSignal"},

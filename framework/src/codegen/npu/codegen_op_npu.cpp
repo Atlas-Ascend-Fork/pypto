@@ -51,6 +51,7 @@ CodeGenOpNPU::CodeGenOpNPU(const CodeGenOpNPUCtx& ctx)
           {Opcode::OP_GATHER_IN_L1, [this]() { return GenGatherInL1(); }},
           {Opcode::OP_L1_COPY_IN_CONV, [this]() { return GenMemL1CopyInConv(); }},
           {Opcode::OP_L1_COPY_IN_CONV_BP_DX_DY, [this]() { return GenMemL1CopyInConvBp(); }},
+          {Opcode::OP_L1_COPY_IN_CONV_BP_DW_DY, [this]() { return GenMemL1CopyInConvBpDwDy(); }},
           {Opcode::OP_L1_COPY_IN_CONV_BP, [this]() { return GenMemL1CopyInConvBpNZ(); }},
           {Opcode::OP_L1_RESHAPE_COPY_IN, [this]() { return GenMemL1CopyIn(); }},
 
@@ -58,6 +59,7 @@ CodeGenOpNPU::CodeGenOpNPU(const CodeGenOpNPUCtx& ctx)
           {Opcode::OP_L0C_COPY_OUT, [this]() { return GenMemL0CCopyOut(); }},
           {Opcode::OP_L0C_COPY_OUT_CONV, [this]() { return GenMemL0CCopyOutConv(); }},
           {Opcode::OP_L0C_COPY_UB_CONV, [this]() { return GenMemL0CCopyOutConv(); }},
+          {Opcode::OP_L0C_COPY_OUT_CONV_DW, [this]() { return GenMemL0CCopyOutConvBpDw(); }},
           {Opcode::OP_L0C_TO_L1, [this]() { return GenMemL0CToL1(); }},
           {Opcode::OP_L0C_RESHAPE_COPY_OUT, [this]() { return GenMemL0CCopyOut(); }},
 
@@ -72,6 +74,8 @@ CodeGenOpNPU::CodeGenOpNPU(const CodeGenOpNPUCtx& ctx)
           {Opcode::OP_LOAD3D_CONV, [this]() { return GenMemL1ToL0Load3D(); }},
           {Opcode::OP_LOAD2D_CONV, [this]() { return GenMemL1ToL0Load2D(); }},
           {Opcode::OP_LOAD2DDX_CONV, [this]() { return GenMemL1ToL0Load2DConvBpDx(); }},
+          {Opcode::OP_L1_TO_L0A_CONV_DW, [this]() { return GenMemL1ToL0AConvDw(); }},
+          {Opcode::OP_LOAD3D_CONV_DW, [this]() { return GenMemL1ToL0Load3D(); }},
 
           // transpose with gm
           {Opcode::OP_TRANSPOSE_MOVEOUT, [this]() { return GenTransposeDataMove(); }},

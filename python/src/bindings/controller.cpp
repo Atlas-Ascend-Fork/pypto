@@ -141,14 +141,24 @@ void BindControllerSetTile(py::module_& m)
         .def_readwrite("tileKL0", &ConvBp::ConvBpTileL0Info::tileKL0)
         .def_readwrite("tileNL0", &ConvBp::ConvBpTileL0Info::tileNL0);
     m.def(
-        "SetConvBpTile",
+        "SetConvBpInputTile",
         [](const ConvBp::ConvBpTileL1Info& tileL1Info, const ConvBp::ConvBpTileL0Info& tileL0Info) {
-            TileShape::Current().SetConvBpTile(tileL1Info, tileL0Info);
+            TileShape::Current().SetConvBpInputTile(tileL1Info, tileL0Info);
         },
-        py::arg("tileL1Info"), py::arg("tileL0Info"), "Set convBp tile shapes");
-    m.def("GetConvBpTile", []() {
-        auto convBpTile = TileShape::Current().GetConvBpTile();
+        py::arg("tileL1Info"), py::arg("tileL0Info"), "Set convBp input tile shapes");
+    m.def("GetConvBpInputTile", []() {
+        auto convBpTile = TileShape::Current().GetConvBpInputTile();
         return std::tuple(convBpTile.tileL1Info, convBpTile.tileL0Info);
+    });
+    m.def(
+        "SetConvBpFilterTile",
+        [](const ConvBp::ConvBpTileL1Info& tileL1Info, const ConvBp::ConvBpTileL0Info& tileL0Info) {
+            TileShape::Current().SetConvBpFilterTile(tileL1Info, tileL0Info);
+        },
+        py::arg("tileL1Info"), py::arg("tileL0Info"), "Set convBp filter tile shapes");
+    m.def("GetConvBpFilterTile", []() {
+        auto convBpFilterTile = TileShape::Current().GetConvBpFilterTile();
+        return std::tuple(convBpFilterTile.tileL1Info, convBpFilterTile.tileL0Info);
     });
 }
 

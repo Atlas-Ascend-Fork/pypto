@@ -48,7 +48,7 @@ Function* GetFunctionConvBp(const std::string& funcName)
     const std::vector<int64_t> shape = {64, 64};
     ConvBp::ConvBpTileL1Info l1TileShape(16, 144, 16);
     ConvBp::ConvBpTileL0Info l0TileShape(16, 144, 16);
-    TileShape::Current().SetConvBpTile(l1TileShape, l0TileShape);
+    TileShape::Current().SetConvBpInputTile(l1TileShape, l0TileShape);
 
     auto function = GenMockFuncDyn(funcName, shape);
     return function;
@@ -179,6 +179,52 @@ TEST_F(TestCodegenDynConvBp, Load2DDxConv)
     std::string res = TestConvBpLoad2DDxBody("Load2DDxConv");
     std::string expect =
         R"!!!(TLoad2DDX(l0bTensor_0, l1Tensor_1, 144, 16, 9, 0, 0);
+)!!!";
+    EXPECT_EQ(res, expect);
+}
+
+std::string TestConvBpDwL0COutBody(const std::string& funcName, const std::vector<int64_t>& l0cShape,
+                                   const std::vector<SymbolicScalar>& l0cValidShape,
+                                   const std::vector<int64_t>& gmShape, const std::vector<int64_t>& offset)
+{
+    auto function = GetFunctionConvBp(funcName);
+    auto gmTensor = CreateConvTensor(*function, DataType::DT_FP16, gmShape, MemoryType::MEM_DEVICE_DDR, false);
+    auto l0cTensor = CreateConvTensor(*function, DataType::DT_FP32, l0cShape, MemoryType::MEM_L0C, false);
+
+    auto& op = function->AddOperation(Opcode::OP_L0C_COPY_OUT_CONV_DW, {l0cTensor}, {gmTensor});
+    op.SetAttribute("COPY_OUT_MODE", (int64_t)1); // CopyOutMode::NZ2NZ
+    op.SetAttribute("IS_CONV3D", false);
+    op.SetAttribute(OpAttributeKey::l0cValidMN, l0cValidShape);
+    op.SetAttribute(OpAttributeKey::gmTensorParamIdxInCall, 0);
+    op.SetOpAttribute(std::make_shared<CopyOpAttribute>(
+        MemoryType::MEM_L0C, OpImmediate::Specified(offset), OpImmediate::Specified(gmShape),
+        OpImmediate::Specified(gmShape), OpImmediate::Specified(l0cValidShape)));
+
+    return GenOpCodeFromOp(*function, op);
+}
+
+TEST_F(TestCodegenDynConvBp, L0COutConvBpDw)
+{
+    std::vector<int64_t> l0cShape = {16, 64};
+    std::vector<int64_t> gmShape = {4, 1, 16, 16};
+    std::vector<int64_t> offset = {2, 1, 0, 0};
+    std::string res = TestConvBpDwL0COutBody("L0COutConvBpDw", l0cShape, SymbolicScalar::FromConcrete(l0cShape),
+                                             gmShape, offset);
+    std::string expect =
+        R"!!!(TStoreConvDW<CopyOutMode::NZ2NZ, 0>(gmTensor_0, l0cTensor_1, 2, 1, 0, 0, 0, 16, 64);
+)!!!";
+    EXPECT_EQ(res, expect);
+}
+
+TEST_F(TestCodegenDynConvBp, L0COutConvBpDwTailTensor)
+{
+    std::vector<int64_t> l0cShape = {16, 64};
+    std::vector<SymbolicScalar> l0cValidShape = {16, 33};
+    std::vector<int64_t> gmShape = {4, 1, 16, 16};
+    std::vector<int64_t> offset = {0, 0, 0, 0};
+    std::string res = TestConvBpDwL0COutBody("L0COutConvBpDwTailTensor", l0cShape, l0cValidShape, gmShape, offset);
+    std::string expect =
+        R"!!!(TStoreConvDW<CopyOutMode::NZ2NZ, 0>(gmTensor_0, l0cTensor_1, 0, 0, 0, 0, 0, 16, 33);
 )!!!";
     EXPECT_EQ(res, expect);
 }

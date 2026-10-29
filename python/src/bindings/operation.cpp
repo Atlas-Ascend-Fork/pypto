@@ -645,6 +645,16 @@ void BindOperation(py::module_& m)
         py::arg("strides"), py::arg("paddings"), py::arg("dilations"), py::arg("extend_params"), py::arg("groups") = 1,
         "Convolution backward input with extend param.");
     m.def(
+        "ConvBackwardFilter",
+        [](DataType out_type, const Tensor& grad_output, const Tensor& input, const std::vector<int64_t>& filter_size,
+           const std::vector<int64_t>& strides, const std::vector<int64_t>& paddings,
+           const std::vector<int64_t>& dilations, const int64_t groups) {
+            return ConvBp::ConvBackwardFilter(out_type, grad_output, input, filter_size, strides, paddings, dilations,
+                                              groups);
+        },
+        py::arg("out_type"), py::arg("grad_output"), py::arg("input"), py::arg("filter_size"), py::arg("strides"),
+        py::arg("paddings"), py::arg("dilations"), py::arg("groups") = 1, "Convolution backward filter.");
+    m.def(
         "BatchMatmul",
         [](DataType out_type, const Tensor& tensor_a, const Tensor& tensor_b, bool a_trans, bool b_trans,
            bool c_matrix_nz) {

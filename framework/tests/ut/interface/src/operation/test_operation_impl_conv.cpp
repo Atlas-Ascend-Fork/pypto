@@ -338,7 +338,7 @@ TEST_F(OperationImplConvTest, Test_ConvBp2d_FP16)
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);
     ConvBp::ConvBpTileL1Info l1TileShape(16, 144, 16);
     ConvBp::ConvBpTileL0Info l0TileShape(16, 144, 16);
-    TileShape::Current().SetConvBpTile(l1TileShape, l0TileShape);
+    TileShape::Current().SetConvBpInputTile(l1TileShape, l0TileShape);
     TileShape::Current().SetVecTile({16, 16, 16, 16});
     Tensor gradOutput(DT_FP16, {1, 16, 14, 14}, "gradOutput");
     Tensor weight(DT_FP16, {16, 16, 3, 3}, "weight");
@@ -357,7 +357,7 @@ TEST_F(OperationImplConvTest, Test_ConvBp2d_BF16)
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);
     ConvBp::ConvBpTileL1Info l1TileShape(16, 144, 16);
     ConvBp::ConvBpTileL0Info l0TileShape(16, 144, 16);
-    TileShape::Current().SetConvBpTile(l1TileShape, l0TileShape);
+    TileShape::Current().SetConvBpInputTile(l1TileShape, l0TileShape);
     TileShape::Current().SetVecTile({16, 16, 16, 16});
     Tensor gradOutput(DT_BF16, {1, 16, 14, 14}, "gradOutput");
     Tensor weight(DT_BF16, {16, 16, 3, 3}, "weight");
@@ -376,7 +376,7 @@ TEST_F(OperationImplConvTest, Test_ConvBp2d_FP16_Stride1)
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);
     ConvBp::ConvBpTileL1Info l1TileShape(16, 144, 16);
     ConvBp::ConvBpTileL0Info l0TileShape(16, 144, 16);
-    TileShape::Current().SetConvBpTile(l1TileShape, l0TileShape);
+    TileShape::Current().SetConvBpInputTile(l1TileShape, l0TileShape);
     TileShape::Current().SetVecTile({16, 16, 16, 16});
     Tensor gradOutput(DT_FP16, {1, 16, 32, 32}, "gradOutput");
     Tensor weight(DT_FP16, {16, 16, 3, 3}, "weight");
@@ -386,6 +386,60 @@ TEST_F(OperationImplConvTest, Test_ConvBp2d_FP16_Stride1)
     {
         result = ConvBp::ConvBackwardInput(DT_FP16, gradOutput, {1, 16, 32, 32}, weight, {1, 1}, {1, 1, 1, 1}, {1, 1},
                                            convBpExtendParam, 1);
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(OperationImplConvTest, Test_ConvBpFilter2d_FP16)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);
+    ConvBp::ConvBpTileL1Info l1TileShape(16, 80, 64);
+    ConvBp::ConvBpTileL0Info l0TileShape(16, 80, 64);
+    TileShape::Current().SetConvBpFilterTile(l1TileShape, l0TileShape);
+    TileShape::Current().SetVecTile({16, 16, 16, 16});
+    Tensor gradOutput(DT_FP16, {1, 16, 5, 16}, "gradOutput");
+    Tensor input(DT_FP16, {1, 16, 4, 15}, "input");
+    Tensor result;
+    FUNCTION("TestConvBpFilter")
+    {
+        result = ConvBp::ConvBackwardFilter(DT_FP16, gradOutput, input, {16, 16, 2, 2}, {1, 1}, {1, 1, 1, 1}, {1, 1},
+                                            1);
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(OperationImplConvTest, Test_ConvBpFilter2d_BF16)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);
+    ConvBp::ConvBpTileL1Info l1TileShape(16, 80, 64);
+    ConvBp::ConvBpTileL0Info l0TileShape(16, 80, 64);
+    TileShape::Current().SetConvBpFilterTile(l1TileShape, l0TileShape);
+    TileShape::Current().SetVecTile({16, 16, 16, 16});
+    Tensor gradOutput(DT_BF16, {1, 16, 5, 16}, "gradOutput");
+    Tensor input(DT_BF16, {1, 16, 4, 15}, "input");
+    Tensor result;
+    FUNCTION("TestConvBpFilter")
+    {
+        result = ConvBp::ConvBackwardFilter(DT_BF16, gradOutput, input, {16, 16, 2, 2}, {1, 1}, {1, 1, 1, 1}, {1, 1},
+                                            1);
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(OperationImplConvTest, Test_ConvBpFilter2d_FP16_Stride2)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);
+    ConvBp::ConvBpTileL1Info l1TileShape(16, 16, 144);
+    ConvBp::ConvBpTileL0Info l0TileShape(16, 16, 16);
+    TileShape::Current().SetConvBpFilterTile(l1TileShape, l0TileShape);
+    TileShape::Current().SetVecTile({16, 16, 16, 16});
+    Tensor gradOutput(DT_FP16, {1, 16, 4, 4}, "gradOutput");
+    Tensor input(DT_FP16, {1, 16, 8, 8}, "input");
+    Tensor result;
+    FUNCTION("TestConvBpFilter")
+    {
+        result = ConvBp::ConvBackwardFilter(DT_FP16, gradOutput, input, {16, 16, 3, 3}, {2, 2}, {1, 1, 1, 1}, {1, 1},
+                                            1);
     }
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
 }

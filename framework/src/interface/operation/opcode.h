@@ -226,6 +226,7 @@ enum class Opcode {
     OP_CONV_ADD,
     OP_CONV_BP_INPUT_3D,
     OP_CONV_BP_INPUT_2D,
+    OP_CONV_BP_FILTER_2D,
     OP_FAKE_TRANS,
     OP_CUBE_CONV_D2S,
     OP_CUBE_CONCAT_C,
@@ -236,9 +237,14 @@ enum class Opcode {
     OP_LOAD3D_CONV,
     OP_LOAD2D_CONV,
     OP_L1_COPY_IN_CONV_BP_DX_DY,
+    OP_L1_COPY_IN_CONV_BP_DW_DY,
     OP_L1_COPY_IN_CONV_BP,
+    OP_L1_TO_L0A_CONV_DW,
+    OP_LOAD3D_CONV_DW,
     OP_LOAD2DDX_CONV,
     OP_L0C_COPY_OUT_CONV,
+    OP_L0C_COPY_OUT_CONV_DW,
+
     // ANY
     OP_DUPLICATE,
     // View
@@ -566,8 +572,8 @@ public:
                opCode == Opcode::OP_L1_TO_FIX_QUANT_PRE || opCode == Opcode::OP_L1_TO_BT ||
                opCode == Opcode::OP_SHMEM_LOAD || opCode == Opcode::OP_L1_COPY_IN_A_SCALE ||
                opCode == Opcode::OP_L1_COPY_IN_B_SCALE || opCode == Opcode::OP_L1_COPY_IN_CONV ||
-               opCode == Opcode::OP_L1_COPY_IN_CONV_BP_DX_DY || opCode == Opcode::OP_L1_COPY_IN_CONV_BP ||
-               opCode == Opcode::OP_L1_RESHAPE_COPY_IN;
+               opCode == Opcode::OP_L1_COPY_IN_CONV_BP_DX_DY || opCode == Opcode::OP_L1_COPY_IN_CONV_BP_DW_DY ||
+               opCode == Opcode::OP_L1_COPY_IN_CONV_BP || opCode == Opcode::OP_L1_RESHAPE_COPY_IN;
     }
 
     inline bool IsCopyOut(Opcode opCode) const
@@ -577,7 +583,8 @@ public:
                opCode == Opcode::OP_INDEX_OUTCAST || opCode == Opcode::OP_INDEX_PUT || opCode == Opcode::OP_INDEX_ADD ||
                opCode == Opcode::OP_SHMEM_PUT || opCode == Opcode::OP_SHMEM_SIGNAL || opCode == Opcode::OP_SHMEM_GET ||
                opCode == Opcode::OP_SHMEM_STORE || opCode == Opcode::OP_RESHAPE_COPY_OUT ||
-               opCode == Opcode::OP_L0C_COPY_OUT_CONV || opCode == Opcode::OP_L0C_RESHAPE_COPY_OUT;
+               opCode == Opcode::OP_L0C_COPY_OUT_CONV || opCode == Opcode::OP_L0C_COPY_OUT_CONV_DW ||
+               opCode == Opcode::OP_L0C_RESHAPE_COPY_OUT;
     }
 
     inline bool IsCopyFromL1(Opcode opcode) const
@@ -1119,8 +1126,8 @@ inline bool IsCopyIn(const Opcode opCode)
            opCode == Opcode::OP_TRANSPOSE_MOVEIN || opCode == Opcode::OP_RESHAPE_COPY_IN ||
            opCode == Opcode::OP_SHMEM_LOAD || opCode == Opcode::OP_L1_COPY_IN_A_SCALE ||
            opCode == Opcode::OP_L1_COPY_IN_B_SCALE || opCode == Opcode::OP_L1_COPY_IN_CONV ||
-           opCode == Opcode::OP_L1_COPY_IN_CONV_BP_DX_DY || opCode == Opcode::OP_L1_COPY_IN_CONV_BP ||
-           opCode == Opcode::OP_L1_RESHAPE_COPY_IN;
+           opCode == Opcode::OP_L1_COPY_IN_CONV_BP_DX_DY || opCode == Opcode::OP_L1_COPY_IN_CONV_BP_DW_DY ||
+           opCode == Opcode::OP_L1_COPY_IN_CONV_BP || opCode == Opcode::OP_L1_RESHAPE_COPY_IN;
 }
 
 inline bool IsCopyOut(const Opcode& op)
@@ -1129,7 +1136,8 @@ inline bool IsCopyOut(const Opcode& op)
             op == Opcode::OP_INDEX_OUTCAST || op == Opcode::OP_INDEX_PUT || op == Opcode::OP_SHMEM_PUT ||
             op == Opcode::OP_SHMEM_SIGNAL || op == Opcode::OP_SHMEM_GET || op == Opcode::OP_SHMEM_SET ||
             op == Opcode::OP_RESHAPE_COPY_OUT || op == Opcode::OP_SHMEM_STORE || op == Opcode::OP_INDEX_ADD ||
-            op == Opcode::OP_L0C_COPY_OUT_CONV || op == Opcode::OP_L0C_RESHAPE_COPY_OUT);
+            op == Opcode::OP_L0C_COPY_OUT_CONV || op == Opcode::OP_L0C_COPY_OUT_CONV_DW ||
+            op == Opcode::OP_L0C_RESHAPE_COPY_OUT);
 }
 
 inline bool IsViewLike(Opcode op) { return op == Opcode::OP_VIEW || op == Opcode::OP_SLICE; }

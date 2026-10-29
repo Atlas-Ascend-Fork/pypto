@@ -73,7 +73,7 @@ struct ConvTile {
 };
 
 /**
- * @brief ConvBpTile tile for conv backward input operation
+ * @brief ConvBpTile tile for conv backward operation
  *
  */
 struct ConvBpTile {
@@ -117,7 +117,8 @@ struct TileShape {
     TileShape();
 
     TileShape(const std::vector<int64_t>& vTile, const CubeTile& cTile, const ConvTile& cvTile,
-              const ConvBpTile& cvBpTile, const DistTile& dTile, const std::vector<int64_t>& mSize);
+              const ConvBpTile& cvBpInputTile, const ConvBpTile& cvBpFilterTile, const DistTile& dTile,
+              const std::vector<int64_t>& mSize);
 
     /**
      * \brief Set the Vec Tile
@@ -174,19 +175,34 @@ struct TileShape {
     ConvTile& GetConvTile() { return convTile; }
 
     /**
-     * \brief Set the ConvBp Tile
+     * \brief Set the ConvBp Tile (conv backward input)
      *
      * \param tileL1Info
      * \param tileL0Info
      */
-    void SetConvBpTile(const npu::tile_fwk::ConvBp::ConvBpTileL1Info& tileL1Info,
-                       const npu::tile_fwk::ConvBp::ConvBpTileL0Info& tileL0Info);
+    void SetConvBpInputTile(const npu::tile_fwk::ConvBp::ConvBpTileL1Info& tileL1Info,
+                            const npu::tile_fwk::ConvBp::ConvBpTileL0Info& tileL0Info);
 
     /**
-     * \brief Get the ConvBp Tile
+     * \brief Get the ConvBp Tile (conv backward input)
      */
-    const ConvBpTile& GetConvBpTile() const { return convBpTile; }
-    ConvBpTile& GetConvBpTile() { return convBpTile; }
+    const ConvBpTile& GetConvBpInputTile() const { return convBpInputTile; }
+    ConvBpTile& GetConvBpInputTile() { return convBpInputTile; }
+
+    /**
+     * \brief Set the ConvBp Tile (conv backward filter)
+     *
+     * \param tileL1Info
+     * \param tileL0Info
+     */
+    void SetConvBpFilterTile(const npu::tile_fwk::ConvBp::ConvBpTileL1Info& tileL1Info,
+                             const npu::tile_fwk::ConvBp::ConvBpTileL0Info& tileL0Info);
+
+    /**
+     * \brief Get the ConvBp Tile (conv backward filter)
+     */
+    const ConvBpTile& GetConvBpFilterTile() const { return convBpFilterTile; }
+    ConvBpTile& GetConvBpFilterTile() { return convBpFilterTile; }
 
     /**
      * \brief Set the Dist Tile
@@ -291,7 +307,8 @@ private:
     VecTile vecTile;
     CubeTile cubeTile;
     ConvTile convTile;
-    ConvBpTile convBpTile;
+    ConvBpTile convBpInputTile;
+    ConvBpTile convBpFilterTile;
     DistTile distTile;
     std::vector<int64_t> matrixSize;
 };

@@ -460,7 +460,10 @@ constexpr const int NC1HWC0_W_IDX = 3;
 constexpr const int NC1HWC0_C0_IDX = 4;
 constexpr const int INPUT_GRAD_OUTPUT_IDX = 0;
 constexpr const int INPUT_WEIGHT_IDX = 1;
+constexpr const int INPUT_INPUT_IDX = 1;
 constexpr const int INPUT_BIAS_IDX = 2;
+constexpr const int FILTER_GRAD_OUTPUT_IDX = 0;
+constexpr const int FILTER_INPUT_IDX = 1;
 
 const std::string OP_ATTR_PREFIX = "op_attr_";
 const std::string CONV_PADDINGS_ATTR = OP_ATTR_PREFIX + "paddings";
@@ -468,6 +471,7 @@ const std::string CONV_DILATIONS_ATTR = OP_ATTR_PREFIX + "dilations";
 const std::string CONV_STRIDES_ATTR = OP_ATTR_PREFIX + "strides";
 const std::string CONV_ORI_GRAD_OUTPUT_SHAPE_ATTR = OP_ATTR_PREFIX + "ori_gradOutput_shape";
 const std::string CONV_ORI_WEIGHT_SHAPE_ATTR = OP_ATTR_PREFIX + "ori_weight_shape";
+const std::string CONV_ORI_INPUT_SHAPE_ATTR = OP_ATTR_PREFIX + "ori_input_shape";
 const std::string CONV_ORI_RES_SHAPE_ATTR = OP_ATTR_PREFIX + "ori_res_shape";
 const std::string CONV_BIAS_ATTR = OP_ATTR_PREFIX + "bias_flag";
 const std::string CONV_3D_FLAG = OP_ATTR_PREFIX + "is_conv3d";
@@ -489,6 +493,7 @@ struct ConvBpAttrParam {
     std::vector<int64_t> dilations = {1, 1, 1};
     std::vector<int64_t> oriGradOutputShape = {0, 0, 0, 0};
     std::vector<int64_t> oriWeightShape = {0, 0, 0, 0};
+    std::vector<int64_t> oriInputShape = {0, 0, 0, 0};
     std::vector<int64_t> oriResShape = {0, 0, 0, 0};
     std::vector<SymbolicScalar> dynValidResShape;
     int64_t groups = 0;
@@ -513,8 +518,16 @@ struct ConvBpAttrParam {
 struct ConvBpGraphNodes {
     LogicalTensorPtr gradOutputTensorPtr = nullptr;
     LogicalTensorPtr weightTensorPtr = nullptr;
+    LogicalTensorPtr inputTensorPtr = nullptr;
     LogicalTensorPtr cL0PartialSumPtr = nullptr;
     LogicalTensorPtr biasTensorPtr = nullptr;
+    LogicalTensorPtr resTensorPtr = nullptr;
+};
+
+struct ConvBpFilterGraphNodes {
+    LogicalTensorPtr gradOutputTensorPtr = nullptr;
+    LogicalTensorPtr inputTensorPtr = nullptr;
+    LogicalTensorPtr cL0PartialSumPtr = nullptr;
     LogicalTensorPtr resTensorPtr = nullptr;
 };
 
@@ -524,6 +537,7 @@ struct ConvBpTileInfo {
     int64_t orgCout = 0;
     int64_t orgDin = 0;
     int64_t orgDout = 0;
+    int64_t orgBatchDout = 0;
     int64_t orgHin = 0;
     int64_t orgWin = 0;
     int64_t orgHinWin = 0;
@@ -546,6 +560,7 @@ struct ConvBpTileInfo {
     int64_t cout1PerGroup = 0;
     int64_t cin0 = 0;
     int64_t cout0 = 0;
+    int64_t cin1KdKhKwCin0 = 0;
 
     int64_t mL1 = 0;
     int64_t kL1 = 0;
@@ -559,9 +574,10 @@ struct ConvBpIterInfo {
     int64_t groupOffset = 0;
     int64_t batchOffset = 0;
     int64_t dinOffset = 0;
-
     int64_t doutOffset = 0;
+    int64_t batchDoutOffset = 0;
     int64_t dkOffset = 0;
+
     int64_t hinL1Offset = 0;
     int64_t winL1Offset = 0;
     int64_t houtL1Offset = 0;
@@ -599,6 +615,10 @@ struct ConvBpIterInfo {
 
 void ConstructTileGraph(Function& function, const TileShape& tileShape, const std::vector<LogicalTensorPtr>& operandVec,
                         const LogicalTensorPtr& cTensorPtr, const Operation& op);
+
+void ConstructDwTileGraph(Function& function, const TileShape& tileShape,
+                          const std::vector<LogicalTensorPtr>& operandVec, const LogicalTensorPtr& cTensorPtr,
+                          const Operation& op);
 
 } // namespace ConvBp
 } // namespace npu::tile_fwk
