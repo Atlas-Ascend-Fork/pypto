@@ -870,7 +870,7 @@ void SetCopyInBL1Op(Operation& copyInOpBl1, const ConvTileInfo& convTileInfo, Co
         if (IsArch32Platform()) {
             // arch32 NZ: D折叠进dim0平坦偏移; 钳制起始slice使整个载入窗口in-bounds
             // (空block载入的是冗余weight数据, mmad按validK=0跳过, 结果不受影响)
-            int64_t cin1 = CeilDiv(srcGmValidShape[1], convTileInfo.cin0);
+            int64_t cin1 = CeilDiv(convTileInfo.orgCin / convAttrParam.groups, convTileInfo.cin0);
             int64_t khxkw = convTileInfo.orgKh * convTileInfo.orgKw;
             SymbolicScalar dClamped = srcD.Min(SymbolicScalar(convTileInfo.orgKd - iterInfo.dkBL1Size))
                                           .Max(SymbolicScalar(0));
