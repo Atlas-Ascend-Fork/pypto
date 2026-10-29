@@ -22,9 +22,30 @@
 
 import logging
 import os
+import struct
 
 import pypto_pro.language as pl
-from pypto_pro.runtime.sanitizer_replay import SanitizerReplayError
+import pypto_pro.runtime.sanitizer_replay as replay_module
+from pypto_pro.runtime.sanitizer_replay import (
+    Detection,
+    Finding,
+    GmAccessRecord,
+    MutexAccessRecord,
+    PhaseAccessRecord,
+    ReplayContext,
+    SanitizerReplayError,
+    SanitizerReportError,
+    SyncAccessRecord,
+    TileAccessRecord,
+    check_gm_bounds,
+    check_mutex_pairing,
+    check_phase_state_machine,
+    check_sync_pairing,
+    check_tile_bounds,
+    decode_regions,
+    run_replay,
+    scan_report_file,
+)
 import pytest
 import torch
 
@@ -33,7 +54,10 @@ logging.basicConfig(level=logging.INFO)
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
-TILE_M, TILE_N = 64, 64
+# Shared tile shapes for the phase/sync cases below.
+M_DIM, N_DIM, K_DIM = 64, 64, 128
+TILE_M, TILE_N, TILE_K = 64, 64, 64
+
 
 
 def _require_a5(device):
@@ -246,35 +270,248 @@ def test_tile_move_offset_oob_detected():
 
 @pytest.mark.soc("950")
 def test_tile_bounds_combined_check():
-    """纯逻辑测试：验证 _check_tile_bounds 逐维越界检测（含 offset）。"""
-    from pypto_pro.runtime.sanitizer_replay import ReplayContext, _check_tile_bounds
-
+    """纯逻辑测试：验证 check_tile_bounds 逐维越界检测（含 offset）。"""
     ctx = ReplayContext(source_file="test.py")
 
     def rec(off_row, off_col, acc_row, acc_col, dim_row=64, dim_col=64):
-        return dict(det_id=2, dim_row=dim_row, dim_col=dim_col,
-                    off_row=off_row, off_col=off_col,
-                    acc_row=acc_row, acc_col=acc_col, line=0)
+        return TileAccessRecord(dim_row=dim_row, dim_col=dim_col,
+                                off_row=off_row, off_col=off_col,
+                                acc_row=acc_row, acc_col=acc_col, line=0)
 
     # 无 offset：窗口超出声明维度
-    hits = _check_tile_bounds([rec(0, 0, 80, 32)], ctx)
+    hits = check_tile_bounds([rec(0, 0, 80, 32)], ctx)
     assert len(hits) == 1, f"expected 1 finding, got {len(hits)}"
     assert "dim0: offset 0 + valid_shape 80 = 80 > 64 (over by 16)" in hits[0].message
     # 有 offset：offset+window 超出声明维度（核心回归场景）
-    hits = _check_tile_bounds([rec(32, 0, 64, 32)], ctx)
+    hits = check_tile_bounds([rec(32, 0, 64, 32)], ctx)
     assert len(hits) == 1, f"expected 1 finding, got {len(hits)}"
     assert "dim0: offset 32 + valid_shape 64 = 96 > 64 (over by 32)" in hits[0].message
     # 两维都越界
-    hits2 = _check_tile_bounds([rec(32, 16, 64, 64)], ctx)
+    hits2 = check_tile_bounds([rec(32, 16, 64, 64)], ctx)
     assert len(hits2) == 1, f"expected 1 finding, got {len(hits2)}"
     assert "dim0: offset 32 + valid_shape 64 = 96 > 64 (over by 32)" in hits2[0].message
     assert "dim1: offset 16 + valid_shape 64 = 80 > 64 (over by 16)" in hits2[0].message
     # 正样本：offset+window 在声明维度内
-    hits3 = _check_tile_bounds([rec(16, 0, 32, 32)], ctx)
+    hits3 = check_tile_bounds([rec(16, 0, 32, 32)], ctx)
     assert len(hits3) == 0, f"expected 0, got {len(hits3)}"
     # 按记录 dims 判定（无表）
-    hits4 = _check_tile_bounds([rec(32, 0, 64, 32)], ctx)
+    hits4 = check_tile_bounds([rec(32, 0, 64, 32)], ctx)
     assert len(hits4) == 1, f"expected 1 finding, got {len(hits4)}"
+    # 动态负 offset 必须和 GM bounds 一样被拒绝。
+    negative = check_tile_bounds([rec(-1, 0, 1, 32)], ctx)
+    assert len(negative) == 1
+    assert "negative offset -1" in negative[0].message
+
+
+# -----------------------------------------------------------------------------
+# 一-d、GM 窗口轴放置：win_ax 显式化（rank-1 乘积窗口 / 非尾部 order / 转置）
+# -----------------------------------------------------------------------------
+
+
+@pytest.mark.soc("950")
+def test_gm_window_axis_placement():
+    """纯逻辑测试：win_ax 驱动的窗口放置（rank-1 全 tile 投影、非尾部 order、转置交换）。"""
+    ctx = ReplayContext(source_file="test.py")
+
+    def rec(ndim, offs, dims, acc_row, acc_col, win_ax0, win_ax1):
+        off5 = list(offs) + [0] * (5 - len(offs))
+        dim5 = list(dims) + [0] * (5 - len(dims))
+        return GmAccessRecord(ndim=ndim,
+                              off0=off5[0], off1=off5[1], off2=off5[2], off3=off5[3], off4=off5[4],
+                              dim0=dim5[0], dim1=dim5[1], dim2=dim5[2], dim3=dim5[3], dim4=dim5[4],
+                              acc_row=acc_row, acc_col=acc_col, win_ax0=win_ax0, win_ax1=win_ax1, line=0)
+
+    # rank-1 [N,1] 列向量：整 tile 投影（acc_row 为乘积窗口），修复前曾漏检
+    hits = check_gm_bounds([rec(1, [64], [100], 64, 1, 0, -1)], ctx)
+    assert len(hits) == 1, f"expected 1 finding, got {len(hits)}"
+    assert "dim0: offset 64 + valid_shape 64 = 128 > 100 (over by 28)" in hits[0].message
+    # rank-1 [1,N] 行向量：同样的乘积窗口
+    hits = check_gm_bounds([rec(1, [64], [100], 64, 64, 0, -1)], ctx)
+    assert len(hits) == 1, f"expected 1 finding, got {len(hits)}"
+    # rank-1 边界贴合：36 + 64 = 100 ≤ 100，不报
+    hits = check_gm_bounds([rec(1, [36], [100], 64, 1, 0, -1)], ctx)
+    assert len(hits) == 0, f"expected 0, got {len(hits)}"
+    # 非尾部 order=[1,3]：窗口贴轴 1/轴 3，其余轴 offset-only
+    hits = check_gm_bounds([rec(4, [1, 48, 3, 0], [2, 64, 8, 128], 64, 128, 1, 3)], ctx)
+    assert len(hits) == 1, f"expected 1 finding, got {len(hits)}"
+    assert "dim1: offset 48 + valid_shape 64 = 112 > 64 (over by 48)" in hits[0].message
+    # 转置 order=[1,0]：win_ax 交换，tile 第 0 维窗口（acc_row）贴轴 1
+    hits = check_gm_bounds([rec(2, [0, 64], [128, 96], 64, 128, 1, 0)], ctx)
+    assert len(hits) == 1, f"expected 1 finding, got {len(hits)}"
+    assert "dim1: offset 64 + valid_shape 64 = 128 > 96 (over by 32)" in hits[0].message
+    # 非尾部 order 干净访问：不报
+    hits = check_gm_bounds([rec(4, [1, 0, 3, 0], [2, 64, 8, 128], 64, 128, 1, 3)], ctx)
+    assert len(hits) == 0, f"expected 0, got {len(hits)}"
+
+
+R1_LEN = 100
+R1_TILE = 64
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def rank1_col_oob_kernel(
+    x: pl.Tensor[[R1_LEN], pl.DT_FP16],
+    z: pl.Tensor[[R1_LEN], pl.DT_FP16],
+):
+    tt = pl.TileType(shape=[R1_TILE, 1], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+    a = pl.make_tile(tt, addr=0x0000)
+    with pl.section_vector():
+        # ===== 错误注入点：offset 64 + 64 = 128 > 100，[N,1] 列向量（修复前漏检）=====
+        pl.load(a, x, [64])
+        pl.store(z, a, [0])
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def rank1_row_oob_kernel(
+    x: pl.Tensor[[R1_LEN], pl.DT_FP16],
+    z: pl.Tensor[[R1_LEN], pl.DT_FP16],
+):
+    tt = pl.TileType(shape=[1, R1_TILE], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+    a = pl.make_tile(tt, addr=0x0000)
+    with pl.section_vector():
+        # ===== 错误注入点：同样访问 64..127，[1,N] 行向量 =====
+        pl.load(a, x, [64])
+        pl.store(z, a, [0])
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def rank1_clean_kernel(
+    x: pl.Tensor[[R1_LEN], pl.DT_FP16],
+    z: pl.Tensor[[R1_LEN], pl.DT_FP16],
+):
+    tt = pl.TileType(shape=[R1_TILE, 1], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+    a = pl.make_tile(tt, addr=0x0000)
+    with pl.section_vector():
+        # 边界贴合：36 + 64 = 100 = 100
+        pl.load(a, x, [36])
+        pl.store(z, a, [0])
+
+
+@pytest.mark.soc("950")
+def test_rank1_column_tile_oob_detected():
+    """负样本：rank-1 列向量 tile 越界应被检出（win_ax 乘积窗口修复）。"""
+    _require_a5(ST_DEVICE)
+    x = _inputs(ST_DEVICE, [R1_LEN])
+    z = torch.zeros([R1_LEN], device=ST_DEVICE, dtype=torch.float16)
+    with pytest.raises(SanitizerReplayError) as exc_info:
+        rank1_col_oob_kernel(x, z)
+        torch.npu.synchronize()
+    assert any("GM_OUT_OF_BOUNDS" in str(f) for f in exc_info.value.findings)
+    assert any("over by 28" in str(f) for f in exc_info.value.findings)
+    logging.info("test_rank1_column_tile_oob_detected OK")
+
+
+@pytest.mark.soc("950")
+def test_rank1_row_tile_oob_detected():
+    """负样本：rank-1 行向量 tile 越界应被检出（回归）。"""
+    _require_a5(ST_DEVICE)
+    x = _inputs(ST_DEVICE, [R1_LEN])
+    z = torch.zeros([R1_LEN], device=ST_DEVICE, dtype=torch.float16)
+    with pytest.raises(SanitizerReplayError) as exc_info:
+        rank1_row_oob_kernel(x, z)
+        torch.npu.synchronize()
+    assert any("GM_OUT_OF_BOUNDS" in str(f) for f in exc_info.value.findings)
+    assert any("over by 28" in str(f) for f in exc_info.value.findings)
+    logging.info("test_rank1_row_tile_oob_detected OK")
+
+
+@pytest.mark.soc("950")
+def test_rank1_tile_clean():
+    """正样本：rank-1 边界贴合访问不应误报。"""
+    _require_a5(ST_DEVICE)
+    x = _inputs(ST_DEVICE, [R1_LEN])
+    z = torch.zeros([R1_LEN], device=ST_DEVICE, dtype=torch.float16)
+    rank1_clean_kernel(x, z)
+    torch.npu.synchronize()
+    logging.info("test_rank1_tile_clean OK")
+
+
+# -----------------------------------------------------------------------------
+# 一-e、非尾部 order：GM 窗口贴到非最内两维
+# -----------------------------------------------------------------------------
+
+O4 = (2, 64, 8, 128)  # [B, S, N, D]，order=[1, 3] 映射 S、D
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def order_nontrailing_oob_kernel(
+    x: pl.Tensor[list(O4), pl.DT_FP16],
+    z: pl.Tensor[list(O4), pl.DT_FP16],
+):
+    tt = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+    a = pl.make_tile(tt, addr=0x0000)
+    with pl.section_vector():
+        # ===== 错误注入点：S 轴 48 + 64 = 112 > 64（修复前该形态不插桩）=====
+        pl.load(a, x, [1, 48, 3, 0], order=[1, 3])
+        pl.store(z, a, [1, 0, 3, 0], order=[1, 3])
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def order_nontrailing_clean_kernel(
+    x: pl.Tensor[list(O4), pl.DT_FP16],
+    z: pl.Tensor[list(O4), pl.DT_FP16],
+):
+    tt = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+    a = pl.make_tile(tt, addr=0x0000)
+    with pl.section_vector():
+        pl.load(a, x, [1, 0, 3, 0], order=[1, 3])
+        pl.store(z, a, [1, 0, 3, 0], order=[1, 3])
+
+
+@pytest.mark.soc("950")
+def test_order_nontrailing_oob_detected():
+    """负样本：非尾部 order 的窗口越界（S 轴）应被检出（win_ax 修复）。"""
+    _require_a5(ST_DEVICE)
+    x = _inputs(ST_DEVICE, list(O4))
+    z = torch.zeros(list(O4), device=ST_DEVICE, dtype=torch.float16)
+    with pytest.raises(SanitizerReplayError) as exc_info:
+        order_nontrailing_oob_kernel(x, z)
+        torch.npu.synchronize()
+    assert any("GM_OUT_OF_BOUNDS" in str(f) for f in exc_info.value.findings)
+    assert any("dim1" in str(f) for f in exc_info.value.findings)
+    logging.info("test_order_nontrailing_oob_detected OK")
+
+
+@pytest.mark.soc("950")
+def test_order_nontrailing_clean():
+    """正样本：非尾部 order 干净访问不应误报。"""
+    _require_a5(ST_DEVICE)
+    x = _inputs(ST_DEVICE, list(O4))
+    z = torch.zeros(list(O4), device=ST_DEVICE, dtype=torch.float16)
+    order_nontrailing_clean_kernel(x, z)
+    torch.npu.synchronize()
+    logging.info("test_order_nontrailing_clean OK")
+
+
+# -----------------------------------------------------------------------------
+# 一-f、转置 load：win_ax 交换语义（tile 第 0 维窗口贴 Tensor 第 1 维）
+# -----------------------------------------------------------------------------
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def transpose_oob_kernel(
+    x: pl.Tensor[[128, 96], pl.DT_FP16],
+):
+    # [K=128, M=96] 转置搬入 L1：tile [M, K] = [64, 128]，order=[1, 0]
+    tt = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.ZN)
+    a = pl.make_tile(tt, addr=0x0000)
+    with pl.section_cube():
+        # ===== 错误注入点：M 轴（dim1）偏移 64 + 64 = 128 > 96 =====
+        pl.load(a, x, [0, 64], order=[1, 0])
+
+
+@pytest.mark.soc("950")
+def test_transpose_window_axes_detected():
+    """负样本：转置 load 的窗口贴轴交换后，M 轴越界应按 acc_row 窗口检出。"""
+    _require_a5(ST_DEVICE)
+    x = _inputs(ST_DEVICE, [128, 96])
+    with pytest.raises(SanitizerReplayError) as exc_info:
+        transpose_oob_kernel(x)
+        torch.npu.synchronize()
+    assert any("GM_OUT_OF_BOUNDS" in str(f) for f in exc_info.value.findings)
+    assert any("dim1: offset 64 + valid_shape 64 = 128 > 96 (over by 32)" in str(f)
+               for f in exc_info.value.findings)
+    logging.info("test_transpose_window_axes_detected OK")
 
 
 # -----------------------------------------------------------------------------
@@ -752,6 +989,51 @@ def test_mutex_unpaired_lock_detected():
         torch.npu.synchronize()
     assert any("UNPAIRED_MUTEX_LOCK" in str(f) for f in exc_info.value.findings)
     logging.info("test_mutex_unpaired_lock_detected OK")
+
+
+def _mr(is_lock, mutex_id=0, pipe=1, line=10, region=0):
+    return MutexAccessRecord(mutex_id=mutex_id, pipe=pipe, is_lock=is_lock,
+                             line=line, region=region)
+
+
+@pytest.mark.soc("950")
+def test_mutex_double_lock_detected_without_launch():
+    """重复 lock 直接报根因，避免用真实挂死样本验证。"""
+    findings = check_mutex_pairing(
+        [_mr(1, line=10), _mr(1, line=11), _mr(0, line=12), _mr(0, line=13)],
+        ReplayContext("test.py"),
+    )
+    assert [f.kind for f in findings] == ["MUTEX_DOUBLE_LOCK"]
+    assert findings[0].location.endswith(":11")
+
+
+@pytest.mark.soc("950")
+def test_decoder_rejects_truncated_region():
+    with pytest.raises(SanitizerReportError, match="counter claims"):
+        decode_regions([struct.pack("<I", 1)])
+
+
+@pytest.mark.soc("950")
+def test_decoder_rejects_unknown_record():
+    unknown_head = (0x5A5A << 16) | 0xFFFF
+    with pytest.raises(SanitizerReportError, match="unknown sanitizer record"):
+        decode_regions([struct.pack("<II", 1, unknown_head)])
+
+
+@pytest.mark.soc("950")
+def test_scan_report_rejects_empty_file(tmp_path):
+    path = tmp_path / "empty.bin"
+    path.write_bytes(b"")
+    with pytest.raises(SanitizerReportError, match="region count"):
+        scan_report_file(str(path), "test.py")
+
+
+@pytest.mark.soc("950")
+def test_scan_report_rejects_trailing_bytes(tmp_path):
+    path = tmp_path / "trailing.bin"
+    path.write_bytes(struct.pack("<I", 0) + b"\x00")
+    with pytest.raises(SanitizerReportError, match="trailing bytes"):
+        scan_report_file(str(path), "test.py")
 
 
 # -----------------------------------------------------------------------------
@@ -1631,27 +1913,1019 @@ def test_named_kernel_sanitizer_instrumented():
     logging.info("test_named_kernel_sanitizer_instrumented OK")
 
 
-if __name__ == "__main__":
-    """python3 直接执行入口：跑本文件全部 sanitizer 自研日志回放用例。
+# ===========================================================================
+# unit_flag phase detection (det 7) -- unit_flag_matching_full_analysis.md
+# ===========================================================================
 
-    Usage:
-        python3 test_sanitizer.py                              # 跑全部用例
-        python3 test_sanitizer.py test_gm_out_of_bounds_detected   # 跑指定用例（可多个）
-        python3 test_sanitizer.py -k oob                       # pytest 选项原样透传
+def _cube_tiles():
+    """Mat(L1) 中转 + move 到 Left/Right（Left/Right 不能直接 load）。"""
+    mat_a = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE_M, TILE_K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        addrs=0x0000, mutex_ids=[0])
+    mat_b = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE_K, TILE_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        addrs=0x8000, mutex_ids=[1])
+    left_g = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE_M, TILE_K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left),
+        addrs=0x0000, mutex_ids=[2])
+    right_g = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE_K, TILE_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Right),
+        addrs=0x0000, mutex_ids=[3])
+    acc_g = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE_M, TILE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc),
+        addrs=0x0000, mutex_ids=[4])
+    return mat_a, mat_b, left_g, right_g, acc_g
+
+
+def _load_operands(cube_tiles, a, b, ka, kb):
+    """load GM 到 Mat 再 move 到 Left/Right，返回当前迭代可用的 al/br。"""
+    mat_a, mat_b, left_g, right_g, acc_g = cube_tiles
+    ma = mat_a.current()
+    mb = mat_b.current()
+    pl.load(ma, a, [0, ka])
+    pl.load(mb, b, [kb, 0])
+    al = left_g.current()
+    br = right_g.current()
+    pl.move(al, ma)
+    pl.move(br, mb)
+    return al, br
+
+
+def _phase_inputs(device, m=M_DIM):
+    return torch.randn(m, K_DIM, device=device, dtype=torch.float16)
+
+# =============================================================================
+# 正样本（合法形态，不报）
+# =============================================================================
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def phase_clean_software_sync_kernel(
+    a: pl.Tensor[[M_DIM, K_DIM], pl.DT_FP16],
+    b: pl.Tensor[[K_DIM, N_DIM], pl.DT_FP16],
+    out: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+):
+    """模式 2：双方不带 phase，软件同步路径（CV 混合 kernel 形态）。"""
+    cube_tiles = _cube_tiles()
+    with pl.section_cube():
+        ac = cube_tiles[4].current()
+        al, br = _load_operands(cube_tiles, a, b, 0, 0)
+        pl.matmul(ac, al, br)
+        pl.system.sync_src(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
+        pl.store(out, ac, [0, 0])
+
+
+@pytest.mark.soc("950")
+def test_phase_clean_software_sync():
+    _require_a5(ST_DEVICE)
+    logging.info("------------test_phase_clean_software_sync--------------")
+    a = _phase_inputs(ST_DEVICE)
+    b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
+    out = torch.zeros(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    phase_clean_software_sync_kernel(a, b, out)
+    torch.npu.synchronize()
+    # 单块 tile [TILE_M, TILE_K] x [TILE_K, TILE_N]：只算 K 的前 TILE_K 段
+    ref = torch.matmul(a[:, :TILE_K].float(), b[:TILE_K, :].float())
+    torch.testing.assert_close(out, ref, rtol=1e-2, atol=1e-2)
+    logging.info("test_phase_clean_software_sync OK")
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def phase_clean_kchain_kernel(
+    a: pl.Tensor[[M_DIM, K_DIM], pl.DT_FP16],
+    b: pl.Tensor[[K_DIM, N_DIM], pl.DT_FP16],
+    out: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+):
+    """模式 2（phase 版）：K 分块，首块 Partial、末块 Final、store Final 收尾。"""
+    cube_tiles = _cube_tiles()
+    with pl.section_cube():
+        ac = cube_tiles[4].current()
+        for k in pl.range(0, K_DIM, TILE_K):
+            al, br = _load_operands(cube_tiles, a, b, k, k)
+            if k == 0:
+                pl.matmul(ac, al, br, phase=pl.AccPhase.Partial)
+            else:
+                pl.matmul_acc(ac, ac, al, br, phase=pl.AccPhase.Final)
+        pl.store(out, ac, [0, 0], phase=pl.STPhase.Final)
+
+
+@pytest.mark.soc("950")
+def test_phase_clean_kchain():
+    _require_a5(ST_DEVICE)
+    logging.info("------------test_phase_clean_kchain--------------")
+    a = _phase_inputs(ST_DEVICE)
+    b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
+    out = torch.zeros(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    phase_clean_kchain_kernel(a, b, out)
+    torch.npu.synchronize()
+    torch.testing.assert_close(out, torch.matmul(a.float(), b.float()), rtol=1e-2, atol=1e-2)
+    logging.info("test_phase_clean_kchain OK")
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def phase_control_flow_group_kernel(
+    a: pl.Tensor[[M_DIM, K_DIM], pl.DT_FP16],
+    b: pl.Tensor[[K_DIM, N_DIM], pl.DT_FP16],
+    out: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+):
+    """Select an Acc tile through device control flow before the phase op.
+
+    The selected tile expression must keep its runtime TileGroup slot. The
+    sanitizer address record must follow that expression instead of resolving
+    the last textual assignment in the host pass.
     """
+    cube_tiles = _cube_tiles()
+    acc_true = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE_M, TILE_N], dtype=pl.DT_FP32,
+                         target_memory=pl.MemorySpace.Acc),
+        addrs=0x4000, mutex_ids=[5],
+    )
+    acc_false = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE_M, TILE_N], dtype=pl.DT_FP32,
+                         target_memory=pl.MemorySpace.Acc),
+        addrs=0x8000, mutex_ids=[6],
+    )
+    with pl.section_cube():
+        al, br = _load_operands(cube_tiles, a, b, 0, 0)
+        ac = acc_true.current()
+        if pl.get_block_idx() != 0:
+            ac = acc_false.current()
+        pl.matmul(ac, al, br, phase=pl.AccPhase.Final)
+        pl.store(out, ac, [0, 0], phase=pl.STPhase.Final)
+
+
+@pytest.mark.soc("950")
+def test_phase_control_flow_group_address_is_not_misresolved():
+    _require_a5(ST_DEVICE)
+    logging.info("------------test_phase_control_flow_group_address_is_not_misresolved--------------")
+    a = _phase_inputs(ST_DEVICE)
+    b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
+    out = torch.zeros(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    try:
+        phase_control_flow_group_kernel(a, b, out)
+        torch.npu.synchronize()
+    except SanitizerReplayError as exc:
+        phase_findings = [f for f in exc.findings if f.kind.startswith("PHASE_")]
+        assert not phase_findings, phase_findings
+        raise
+    logging.info("test_phase_control_flow_group_address_is_not_misresolved OK")
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def phase_clean_insert_final_kernel(
+    a: pl.Tensor[[M_DIM, K_DIM], pl.DT_FP16],
+    b: pl.Tensor[[K_DIM, N_DIM], pl.DT_FP16],
+):
+    """insert(STPhase.Final) 消费 K 链：Acc→Mat 读端闭环。
+
+    回归：insert 曾不在 phase 插桩注册表中，合法的 matmul(Final)→insert(Final)
+    链读侧无记录，被终态检查误报 PHASE_DEADLOCK(C-T1)。
+    """
+    cube_tiles = _cube_tiles()
+    mt = pl.make_tile(
+        pl.TileType(shape=[TILE_M, TILE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Mat),
+        addr=0x10000)
+    with pl.section_cube():
+        ac = cube_tiles[4].current()
+        al, br = _load_operands(cube_tiles, a, b, 0, 0)
+        pl.matmul(ac, al, br, phase=pl.AccPhase.Final)
+        pl.insert(mt, ac, [0, 0], phase=pl.STPhase.Final)
+
+
+@pytest.mark.soc("950")
+def test_phase_clean_insert_final():
+    _require_a5(ST_DEVICE)
+    logging.info("------------test_phase_clean_insert_final--------------")
+    a = _phase_inputs(ST_DEVICE)
+    b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
+    phase_clean_insert_final_kernel(a, b)  # 修复前: SanitizerReplayError(PHASE_DEADLOCK C-T1)
+    torch.npu.synchronize()
+    logging.info("test_phase_clean_insert_final OK")
+
+
+# =============================================================================
+# 负样本 A：配置匹配
+# =============================================================================
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def phase_a1_mixed_sync_kernel(
+    a: pl.Tensor[[M_DIM, K_DIM], pl.DT_FP16],
+    b: pl.Tensor[[K_DIM, N_DIM], pl.DT_FP16],
+    out: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+):
+    """A-1：matmul 带 phase、store 不带——两套同步机制混用，精度错误。"""
+    cube_tiles = _cube_tiles()
+    with pl.section_cube():
+        ac = cube_tiles[4].current()
+        al, br = _load_operands(cube_tiles, a, b, 0, 0)
+        pl.matmul(ac, al, br, phase=pl.AccPhase.Final)
+        pl.store(out, ac, [0, 0])  # 违规点：未配 STPhase
+
+
+@pytest.mark.soc("950")
+def test_phase_a1_mixed_sync_detected():
+    _require_a5(ST_DEVICE)
+    logging.info("------------test_phase_a1_mixed_sync_detected--------------")
+    a = _phase_inputs(ST_DEVICE)
+    b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
+    out = torch.zeros(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    with pytest.raises(SanitizerReplayError) as exc_info:
+        phase_a1_mixed_sync_kernel(a, b, out)
+        torch.npu.synchronize()
+    assert any("PHASE_MISMATCH" in str(f) for f in exc_info.value.findings)
+    logging.info("test_phase_a1_mixed_sync_detected OK")
+
+
+# =============================================================================
+# 负样本 B：flag 状态机
+# =============================================================================
+
+
+# =============================================================================
+# 负样本 C：终态
+# =============================================================================
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def phase_ct1_dangling_final_write_kernel(
+    a: pl.Tensor[[M_DIM, K_DIM], pl.DT_FP16],
+    b: pl.Tensor[[K_DIM, N_DIM], pl.DT_FP16],
+):
+    """C-T1：Final 写后无读消费——flag 悬挂，下次写该块死锁（kernel 本身能跑完）。"""
+    cube_tiles = _cube_tiles()
+    with pl.section_cube():
+        ac = cube_tiles[4].current()
+        al, br = _load_operands(cube_tiles, a, b, 0, 0)
+        # 违规点：Final 写之后漏 store，无人释放块
+        pl.matmul(ac, al, br, phase=pl.AccPhase.Final)
+
+
+@pytest.mark.soc("950")
+def test_phase_ct1_dangling_final_write_detected():
+    _require_a5(ST_DEVICE)
+    logging.info("------------test_phase_ct1_dangling_final_write_detected--------------")
+    a = _phase_inputs(ST_DEVICE)
+    b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
+    with pytest.raises(SanitizerReplayError) as exc_info:
+        phase_ct1_dangling_final_write_kernel(a, b)
+        torch.npu.synchronize()
+    assert len(exc_info.value.findings) == 1
+    assert any("PHASE_DEADLOCK" in str(f) for f in exc_info.value.findings)
+    logging.info("test_phase_ct1_dangling_final_write_detected OK")
+
+
+# =============================================================================
+# 负样本 D：轮结构（静默精度错误）
+# =============================================================================
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def phase_d1_acc_chain_head_kernel(
+    a: pl.Tensor[[2 * M_DIM, K_DIM], pl.DT_FP16],
+    b: pl.Tensor[[K_DIM, N_DIM], pl.DT_FP16],
+    out: pl.Tensor[[2 * M_DIM, N_DIM], pl.DT_FP32],
+):
+    """D-1：切 M 复用 tile，第二链首块误用 matmul_acc——累加到上一轮残留值，静默错误。"""
+    cube_tiles = _cube_tiles()
+    with pl.section_cube():
+        ac = cube_tiles[4].current()
+        for i in pl.range(0, 2 * M_DIM, TILE_M):
+            for k in pl.range(0, K_DIM, TILE_K):
+                al, br = _load_operands(cube_tiles, a, b, i, k)
+                if k == 0:
+                    if i == 0:
+                        pl.matmul(ac, al, br, phase=pl.AccPhase.Partial)
+                    else:
+                        # 违规点：第二链首块误用 matmul_acc（复制中段代码忘改）
+                        pl.matmul_acc(ac, ac, al, br, phase=pl.AccPhase.Partial)
+                else:
+                    pl.matmul_acc(ac, ac, al, br, phase=pl.AccPhase.Final)
+            pl.store(out, ac, [i, 0], phase=pl.STPhase.Final)
+
+
+@pytest.mark.soc("950")
+def test_phase_d1_acc_chain_head_detected():
+    _require_a5(ST_DEVICE)
+    logging.info("------------test_phase_d1_acc_chain_head_detected--------------")
+    a = _phase_inputs(ST_DEVICE, m=2 * M_DIM)
+    b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
+    out = torch.zeros(2 * M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    with pytest.raises(SanitizerReplayError) as exc_info:
+        phase_d1_acc_chain_head_kernel(a, b, out)
+        torch.npu.synchronize()
+    assert any("PHASE_MISMATCH" in str(f) for f in exc_info.value.findings)
+    logging.info("test_phase_d1_acc_chain_head_detected OK")
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def phase_mid_overwrite_kernel(
+    a: pl.Tensor[[M_DIM, K_DIM], pl.DT_FP16],
+    b: pl.Tensor[[K_DIM, N_DIM], pl.DT_FP16],
+    out: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+):
+    """链中段误用覆盖写（复制链首行忘改的变体）：部分和被静默丢弃。"""
+    cube_tiles = _cube_tiles()
+    with pl.section_cube():
+        ac = cube_tiles[4].current()
+        for k in pl.range(0, K_DIM, TILE_K):
+            al, br = _load_operands(cube_tiles, a, b, k, k)
+            if k == 0:
+                pl.matmul(ac, al, br, phase=pl.AccPhase.Partial)
+            else:
+                # 违规点：末块应为 matmul_acc，复制了链首行忘改——覆盖写丢掉首块部分和
+                pl.matmul(ac, al, br, phase=pl.AccPhase.Final)
+        pl.store(out, ac, [0, 0], phase=pl.STPhase.Final)
+
+
+@pytest.mark.soc("950")
+def test_phase_mid_overwrite_detected():
+    _require_a5(ST_DEVICE)
+    logging.info("------------test_phase_mid_overwrite_detected--------------")
+    a = _phase_inputs(ST_DEVICE)
+    b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
+    out = torch.zeros(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    with pytest.raises(SanitizerReplayError) as exc_info:
+        phase_mid_overwrite_kernel(a, b, out)
+        torch.npu.synchronize()
+    assert any("PHASE_MISMATCH" in str(f) for f in exc_info.value.findings)
+    logging.info("test_phase_mid_overwrite_detected OK")
+
+
+@pl.jit(sanitizer=True, auto_mutex=True)
+def phase_write_mixing_kernel(
+    a: pl.Tensor[[M_DIM, K_DIM], pl.DT_FP16],
+    b: pl.Tensor[[K_DIM, N_DIM], pl.DT_FP16],
+    out: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+):
+    """写侧混用（P11）：链首 matmul 忘带 phase、后续块带——两套同步机制缺排序边。
+
+    回归：该形态曾无任何报告（或被 D-1 以"未初始化内存"误报）——
+    实际基值由无 phase 的覆盖写建立，数据未必错，但两种机制互不排序。
+    """
+    cube_tiles = _cube_tiles()
+    with pl.section_cube():
+        ac = cube_tiles[4].current()
+        for k in pl.range(0, K_DIM, TILE_K):
+            al, br = _load_operands(cube_tiles, a, b, k, k)
+            if k == 0:
+                pl.matmul(ac, al, br)  # 违规点：链首忘带 phase（软件同步）
+            else:
+                pl.matmul_acc(ac, ac, al, br, phase=pl.AccPhase.Final)  # 硬件握手
+        pl.store(out, ac, [0, 0], phase=pl.STPhase.Final)
+
+
+@pytest.mark.soc("950")
+def test_phase_write_mixing_detected():
+    _require_a5(ST_DEVICE)
+    logging.info("------------test_phase_write_mixing_detected--------------")
+    a = _phase_inputs(ST_DEVICE)
+    b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
+    out = torch.zeros(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    with pytest.raises(SanitizerReplayError) as exc_info:
+        phase_write_mixing_kernel(a, b, out)
+        torch.npu.synchronize()
+    assert len(exc_info.value.findings) == 1
+    assert any("mix phase and phase-less writes" in str(f) for f in exc_info.value.findings)
+    assert not any("matmul_acc" in str(f) for f in exc_info.value.findings)
+    logging.info("test_phase_write_mixing_detected OK")
+
+
+# =============================================================================
+# 单元测试（构造记录直测 check_phase_state_machine）
+#
+# 卡死类（A-2 / B 族）端到端时 kernel 在设备上等 flag 永久挂起，走不到回放，
+# 因此用记录流直测判定逻辑（覆盖 14 场景中所有卡死形态 + D-2 + 链中段覆盖写）。
+# 记录字段：op_kind / phase / acc_addr / acc_src_addr / line（acc_src_addr 默认 -1，region 默认 0）。
+# =============================================================================
+
+_CTX = ReplayContext("ut.py")
+
+# op_kind: 1 matmul 2 matmul_acc 3 matmul_bias 4 matmul_mx 5 matmul_mx_acc
+#          6 store 7 store_tile(保留) 8 move 9 move_fp(保留) 10 insert；
+#          phase: 0 Unspec 1 Partial 2 Final
+def _pr(kind, phase, acc_addr=0, line=10, acc_src_addr=None):
+    fields = {"op_kind": kind, "phase": phase, "acc_addr": acc_addr, "line": line}
+    if acc_src_addr is not None:
+        fields["acc_src_addr"] = acc_src_addr
+    return PhaseAccessRecord(**fields)
+
+
+def _kinds(findings):
+    return sorted({f.kind for f in findings})
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_clean_kchain_records():
+    """正样本：P -> P(F) -> store(F) 单链合法。"""
+    recs = [_pr(1, 1), _pr(2, 2), _pr(6, 2)]
+    assert check_phase_state_machine(recs, _CTX) == []
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_clean_software_sync_records():
+    """正样本：全 Unspecified（软件同步路径）。"""
+    recs = [_pr(1, 0), _pr(8, 0)]
+    assert check_phase_state_machine(recs, _CTX) == []
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_clean_multiread_records():
+    """正样本：多读链 F写 -> P读 -> F读。"""
+    recs = [_pr(1, 2), _pr(6, 1), _pr(6, 2)]
+    assert check_phase_state_machine(recs, _CTX) == []
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_a1_mixed_sync_records():
+    """A-1：phased 写 + Unspecified 读 -> PHASE_MISMATCH。"""
+    recs = [_pr(1, 2), _pr(6, 0)]
+    kinds = _kinds(check_phase_state_machine(recs, _CTX))
+    assert "PHASE_MISMATCH" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_a2_unspec_write_phased_read_records():
+    """A-2：Unspecified 写 + phased 读 -> PHASE_DEADLOCK。"""
+    recs = [_pr(1, 0), _pr(6, 2)]
+    findings = check_phase_state_machine(recs, _CTX)
+    assert [f.kind for f in findings] == ["PHASE_DEADLOCK"]
+    assert "unit_flag" in findings[0].message
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_a2_reverse_stops_at_the_first_phased_read():
+    """phased 读先发生时立即阻塞，不能把不可达的软件写当成错误点。"""
+    recs = [_pr(6, 2, line=10), _pr(1, 0, line=11)]
+    findings = check_phase_state_machine(recs, _CTX)
+    assert [f.kind for f in findings] == ["PHASE_DEADLOCK"]
+    assert findings[0].location == "ut.py:10"
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_b1a_partial_read_then_next_write_records():
+    """B-1a：Partial 读不复位，下轮写撞 flag=1 -> PHASE_DEADLOCK。"""
+    recs = [_pr(1, 2), _pr(6, 1), _pr(1, 1)]  # F写 P读（不复位） 新写
+    kinds = _kinds(check_phase_state_machine(recs, _CTX))
+    assert "PHASE_DEADLOCK" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_b1b_double_final_write_records():
+    """B-1b：同链双 Final 写 -> PHASE_DEADLOCK。"""
+    recs = [_pr(1, 2), _pr(2, 2)]
+    findings = check_phase_state_machine(recs, _CTX)
+    assert [f.kind for f in findings] == ["PHASE_DEADLOCK"]
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_b1c_dangling_then_next_write_records():
+    """B-1c：悬挂 Final 后的写同时暴露 flag 和 K 链故障。"""
+    recs = [_pr(1, 2), _pr(1, 1)]  # F写（无读消费） 新写
+    findings = check_phase_state_machine(recs, _CTX)
+    assert [f.kind for f in findings] == ["PHASE_DEADLOCK", "PHASE_MISMATCH"]
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_b2a_read_without_write_records():
+    """B-2a：无写就读 -> PHASE_DEADLOCK。"""
+    recs = [_pr(6, 2)]
+    kinds = _kinds(check_phase_state_machine(recs, _CTX))
+    assert "PHASE_DEADLOCK" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_b2b_all_partial_write_records():
+    """B-2b：全 Partial 写 + Final 读（文档案例一）-> PHASE_DEADLOCK。"""
+    recs = [_pr(1, 1), _pr(2, 1), _pr(6, 2)]
+    kinds = _kinds(check_phase_state_machine(recs, _CTX))
+    assert "PHASE_DEADLOCK" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_b2c_double_final_read_records():
+    """B-2c：双 Final 读 -> PHASE_DEADLOCK。"""
+    recs = [_pr(1, 2), _pr(6, 2), _pr(6, 2)]
+    kinds = _kinds(check_phase_state_machine(recs, _CTX))
+    assert "PHASE_DEADLOCK" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_b3_final_then_partial_write_records():
+    """B-3：Final 写后同轮 Partial 写 -> PHASE_DEADLOCK。"""
+    recs = [_pr(1, 1), _pr(2, 2), _pr(2, 1), _pr(6, 2)]
+    kinds = _kinds(check_phase_state_machine(recs, _CTX))
+    assert "PHASE_DEADLOCK" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_ct1_dangling_final_write_records():
+    """C-T1：序列结束 flag 悬挂 -> PHASE_DEADLOCK。"""
+    recs = [_pr(1, 2)]  # F写无读
+    findings = check_phase_state_machine(recs, _CTX)
+    assert [f.kind for f in findings] == ["PHASE_DEADLOCK"]
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_d1_acc_chain_head_records():
+    """D-1：Final 读闭链后新链以 matmul_acc 开头 -> PHASE_MISMATCH。"""
+    recs = [_pr(1, 1), _pr(2, 2), _pr(6, 2), _pr(2, 1)]  # 链1F收尾 链2 acc开头
+    kinds = _kinds(check_phase_state_machine(recs, _CTX))
+    assert "PHASE_MISMATCH" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_d2_mid_chain_bias_records():
+    """D-2：链中段 matmul_bias -> PHASE_MISMATCH。"""
+    recs = [_pr(1, 1), _pr(3, 2)]  # 首块后接 bias（非轮首）
+    kinds = _kinds(check_phase_state_machine(recs, _CTX))
+    assert "PHASE_MISMATCH" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_mid_overwrite_records():
+    """链中段覆盖写（复制链首行忘改）：部分和被静默丢弃 -> PHASE_MISMATCH。"""
+    recs = [_pr(1, 1), _pr(1, 1), _pr(2, 2), _pr(6, 2)]  # 首块后再来一个覆盖写
+    kinds = _kinds(check_phase_state_machine(recs, _CTX))
+    assert "PHASE_MISMATCH" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_mid_overwrite_mx_records():
+    """链中段覆盖写变体：matmul_mx（kind 4）同样丢弃部分和。"""
+    recs = [_pr(1, 1), _pr(4, 2), _pr(6, 2)]
+    kinds = _kinds(check_phase_state_machine(recs, _CTX))
+    assert "PHASE_MISMATCH" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_d3_wrong_loop_var_records():
+    """D-3：分支条件误用变量 -> 部分轮落 B-2b（读前置失败）。"""
+    # i=0 轮：P P + F读（漏 Final -> B-2b）
+    recs = [_pr(1, 1), _pr(2, 1), _pr(6, 2)]
+    kinds = _kinds(check_phase_state_machine(recs, _CTX))
+    assert "PHASE_DEADLOCK" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_d4_mid_chain_final_read_records():
+    """D-4：多读链中间 Final 读 + 后续读 -> PHASE_DEADLOCK（B-2c 形态）。"""
+    recs = [_pr(1, 2), _pr(6, 1), _pr(6, 2), _pr(6, 1)]  # P F P：F后还有读
+    kinds = _kinds(check_phase_state_machine(recs, _CTX))
+    assert "PHASE_DEADLOCK" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_acc_addrs_independent_records():
+    """两个 Acc tile 各自合法，互不干扰。"""
+    recs = [_pr(1, 2, acc_addr=0), _pr(6, 2, acc_addr=0), _pr(1, 2, acc_addr=1), _pr(6, 2, acc_addr=1)]
+    assert check_phase_state_machine(recs, _CTX) == []
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_two_kchains_sequential_records():
+    """切 M 两轮复用（合法）：F收尾 -> 覆盖写开新链 -> F收尾。"""
+    recs = [_pr(1, 1), _pr(2, 2), _pr(6, 2), _pr(1, 1), _pr(2, 2), _pr(6, 2)]
+    assert check_phase_state_machine(recs, _CTX) == []
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_mode_switches_after_completed_rounds():
+    """Completed phased/software rounds may reuse one Acc with a new mode."""
+    phased_then_software = [
+        _pr(1, 2, line=10),
+        _pr(6, 2, line=11),
+        _pr(1, 0, line=12),
+        _pr(6, 0, line=13),
+    ]
+    software_then_phased = [
+        _pr(1, 0, line=20),
+        _pr(6, 0, line=21),
+        _pr(1, 2, line=22),
+        _pr(6, 2, line=23),
+    ]
+    assert check_phase_state_machine(phased_then_software, _CTX) == []
+    assert check_phase_state_machine(software_then_phased, _CTX) == []
+
+
+def test_ut_phase_insert_final_read_records():
+    """正样本：matmul(F) -> insert(F) 读端闭环——insert 缺记录时曾误报 C-T1。"""
+    recs = [_pr(1, 1), _pr(2, 2), _pr(10, 2)]
+    assert check_phase_state_machine(recs, _CTX) == []
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_insert_read_without_write_records():
+    """B-2a 形态：insert(F) 读一个无人写的块 -> PHASE_DEADLOCK。"""
+    recs = [_pr(10, 2)]
+    assert "PHASE_DEADLOCK" in _kinds(check_phase_state_machine(recs, _CTX))
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_insert_unspec_mixed_records():
+    """A-1 形态：phased 写 + Unspecified insert 读（漏 STPhase）-> PHASE_MISMATCH。"""
+    recs = [_pr(1, 2), _pr(10, 0)]
+    assert "PHASE_MISMATCH" in _kinds(check_phase_state_machine(recs, _CTX))
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_write_mixing_records():
+    """写侧混用（P11）：无 phase 覆盖写开链 + phased 累加 -> 混用报错，且 D-1 不再误报。"""
+    recs = [_pr(1, 0), _pr(2, 1), _pr(2, 2), _pr(6, 2)]
+    findings = check_phase_state_machine(recs, _CTX)
+    msgs = [f.message for f in findings]
+    assert len(findings) == 1
+    assert any("mix phase and phase-less writes" in m for m in msgs)
+    assert not any("matmul_acc" in m for m in msgs)  # 基值已由无 phase 写建立，D-1 不报
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_write_mixing_reverse_records():
+    """写侧混用与顺序无关：phased 写在前、无 phase 写在后同样报。"""
+    recs = [_pr(1, 1), _pr(1, 0), _pr(6, 2)]
+    msgs = [f.message for f in check_phase_state_machine(recs, _CTX)]
+    assert any("mix phase and phase-less writes" in m for m in msgs)
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_pure_software_no_mixing_records():
+    """纯软件同步流（全 Unspecified）不报混用。"""
+    recs = [_pr(1, 0), _pr(8, 0), _pr(6, 0)]
+    assert check_phase_state_machine(recs, _CTX) == []
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_acc_src_addr_has_backward_compatible_default():
+    """旧构造方式不传 acc_src_addr 时使用 -1 哨兵。"""
+    assert _pr(1, 0).acc_src_addr == -1
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_pure_software_accumulate_records():
+    """纯软件流 W(0) -> A(0) 合法，UNSPECIFIED 不触发 K 链误报。"""
+    recs = [_pr(1, 0), _pr(2, 0)]
+    assert check_phase_state_machine(recs, _CTX) == []
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_mode_and_kchain_findings_at_same_point_coexist():
+    """同点的写模式混用、契约和 K 链故障全部保留。"""
+    recs = [_pr(1, 0, acc_addr=0, line=10), _pr(2, 1, acc_addr=0, line=11, acc_src_addr=1)]
+    findings = check_phase_state_machine(recs, _CTX)
+    assert len(findings) == 2
+    assert any("mix phase and phase-less writes" in f.message for f in findings)
+    assert any("dst and acc must be the same Tile" in f.message for f in findings)
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_findings_at_different_record_indexes_coexist():
+    """MIXED 模式不能吞掉不同记录位置上的终态 flag 故障。"""
+    recs = [_pr(1, 2, acc_addr=0, line=10), _pr(6, 0, acc_addr=0, line=11)]
+    findings = check_phase_state_machine(recs, _CTX)
+    assert [f.location for f in findings] == ["ut.py:10", "ut.py:11"]
+    assert [f.kind for f in findings] == ["PHASE_DEADLOCK", "PHASE_MISMATCH"]
+    assert "unit_flag" in findings[0].message
+    assert "mix" in findings[1].message
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_mixed_stream_keeps_flag_findings():
+    """同轮 MIXED 保留模式与 flag 故障；新轮只保留当前轮本身的故障。"""
+    cases = [
+        [_pr(1, 2, line=10), _pr(6, 0, line=11)],
+        [_pr(1, 1, line=20), _pr(1, 0, line=21), _pr(6, 2, line=22)],
+        [_pr(1, 2, line=30), _pr(6, 2, line=31), _pr(1, 0, line=32), _pr(6, 2, line=33)],
+    ]
+    for recs, expected_count in zip(cases, (2, 2, 1)):
+        findings = check_phase_state_machine(recs, _CTX)
+        assert len(findings) == expected_count
+        if expected_count == 2:
+            assert {f.kind for f in findings} == {"PHASE_MISMATCH", "PHASE_DEADLOCK"}
+        else:
+            assert [f.kind for f in findings] == ["PHASE_DEADLOCK"]
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_out_of_place_acc_is_rejected_even_when_source_initialized():
+    """官方契约要求 matmul_acc 的 dst_tile 与 acc_tile 必须相同。"""
+    recs = [
+        _pr(1, 1, acc_addr=0, line=10),
+        _pr(2, 2, acc_addr=1, line=11, acc_src_addr=0),
+        _pr(6, 2, acc_addr=1, line=12),
+    ]
+    findings = check_phase_state_machine(recs, _CTX)
+    assert len(findings) == 2
+    assert any("dst and acc must be the same Tile" in f.message for f in findings)
+    assert any("first write of a chain" in f.message for f in findings)
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_out_of_place_acc_rejects_uninitialized_source_tile():
+    """异地累加即使源 Acc tile 未初始化，也按同 Tile 契约报错。"""
+    recs = [_pr(2, 1, acc_addr=1, line=11, acc_src_addr=0)]
+    findings = check_phase_state_machine(recs, _CTX)
+    assert len(findings) == 2
+    assert any("dst and acc must be the same Tile" in f.message for f in findings)
+    assert any("first write of a chain" in f.message for f in findings)
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_out_of_place_acc_contract_survives_flag_failure():
+    """契约错误即使同点还有 flag 错误，也必须被报告。"""
+    recs = [
+        _pr(1, 2, acc_addr=0, line=10),
+        _pr(2, 2, acc_addr=0, line=11, acc_src_addr=1),
+    ]
+    findings = check_phase_state_machine(recs, _CTX)
+    assert any("dst and acc must be the same Tile" in f.message for f in findings)
+    assert any(f.kind == "PHASE_DEADLOCK" for f in findings)
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_mx_acc_out_of_place_is_rejected():
+    """matmul_mx_acc 与 matmul_acc 共享同一个原地累加契约。"""
+    findings = check_phase_state_machine(
+        [_pr(5, 2, acc_addr=1, line=12, acc_src_addr=0)], _CTX
+    )
+    assert len(findings) == 3
+    assert any("dst and acc must be the same Tile" in f.message for f in findings)
+    assert any("first write of a chain" in f.message for f in findings)
+    assert any("unit_flag still set" in f.message for f in findings)
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_partial_write_at_eof_is_accepted_in_v1():
+    """W(P) 不置位 unit_flag；v1 缺少用途证据时不判错。"""
+    assert check_phase_state_machine([_pr(1, 1)], _CTX) == []
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_interleaved_acc_addresses_keep_independent_flags():
+    """一次全局扫描中，不同 acc_addr 的 unit_flag 不能互相干扰。"""
+    recs = [
+        _pr(1, 2, acc_addr=0, line=10),
+        _pr(1, 2, acc_addr=1, line=11),
+        _pr(6, 2, acc_addr=0, line=12),
+        _pr(1, 2, acc_addr=1, line=13),
+    ]
+    findings = check_phase_state_machine(recs, _CTX)
+    assert [f.location for f in findings] == ["ut.py:13", "ut.py:13"]
+    assert any(f.kind == "PHASE_DEADLOCK" for f in findings)
+    assert any(f.kind == "PHASE_MISMATCH" for f in findings)
+
+
+@pytest.mark.soc("950")
+def test_ut_phase_fatal_address_does_not_stop_other_addresses():
+    """一个 Acc 地址挂死后，其他地址仍须继续回放并报告问题。"""
+    recs = [
+        _pr(6, 2, acc_addr=0, line=10),
+        _pr(1, 2, acc_addr=1, line=11),
+        _pr(6, 2, acc_addr=1, line=12),
+        _pr(6, 2, acc_addr=1, line=13),
+    ]
+    findings = check_phase_state_machine(recs, _CTX)
+    assert [f.location for f in findings] == ["ut.py:10", "ut.py:13"]
+    assert all(f.kind == "PHASE_DEADLOCK" for f in findings)
+
+
+def test_ut_replay_keeps_distinct_findings_at_same_location(monkeypatch):
+    """同一行的不同诊断都保留，完全重复项只折叠 hits。"""
+    class _Record:
+        pass
+
+    first = Finding("PHASE_MISMATCH", "mode mismatch", "ut.py:10", "fix mode")
+    second = Finding("PHASE_MISMATCH", "contract mismatch", "ut.py:10", "fix tile")
+    duplicate = Finding("PHASE_MISMATCH", "mode mismatch", "ut.py:10", "fix mode")
+    monkeypatch.setattr(
+        replay_module,
+        "DETECTIONS",
+        [Detection(_Record, "ERROR", lambda records, ctx:[first, second, duplicate])],
+    )
+
+    findings = run_replay([_Record()], _CTX)
+    assert len(findings) == 2
+    assert any(
+        f.message == "mode mismatch  (same defect hit 2 times at this location)" and f.hits == 2
+        for f in findings
+    )
+    assert any(f.message == "contract mismatch" and f.hits == 1 for f in findings)
+
+
+
+
+# ===========================================================================
+# sync_src/sync_dst pairing detection (det 8) -- sync_pairing_detection_analysis.md
+# ===========================================================================
+
+def _vec_tiles():
+    tt = pl.TileType(shape=[M_DIM, N_DIM], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    ta = pl.make_tile(tt, addr=0x0000)
+    tb = pl.make_tile(tt, addr=0x4000)
+    tc = pl.make_tile(tt, addr=0x8000)
+    return ta, tb, tc
+
+
+# =============================================================================
+# 正样本（合法配对，不报）
+# =============================================================================
+
+
+@pl.jit(sanitizer=True)
+def sync_clean_basic_kernel(
+    a: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+    b: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+    out: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+):
+    """API 文档示例原样：load -> src/dst(MTE2,V,0) -> add -> src/dst(V,MTE3,1) -> store。"""
+    ta, tb, tc = _vec_tiles()
+    with pl.section_vector():
+        pl.load(ta, a, [0, 0])
+        pl.load(tb, b, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
+        pl.add(tc, ta, tb)
+        pl.system.sync_src(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=1)
+        pl.system.sync_dst(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=1)
+        pl.store(out, tc, [0, 0])
+
+
+@pytest.mark.soc("950")
+def test_sync_clean_basic():
+    _require_a5(ST_DEVICE)
+    logging.info("------------test_sync_clean_basic--------------")
+    a = torch.randn(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    b = torch.randn(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    out = torch.zeros(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    sync_clean_basic_kernel(a, b, out)
+    torch.npu.synchronize()
+    torch.testing.assert_close(out, a + b)
+    logging.info("test_sync_clean_basic OK")
+
+
+@pl.jit(sanitizer=True)
+def sync_clean_reuse_kernel(
+    a: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+    out: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+):
+    """消费完成后反向 fence，再复用 MTE2->V event。"""
+    ta, tb, tc = _vec_tiles()
+    with pl.section_vector():
+        pl.load(ta, a, [0, 0])
+        pl.load(tc, a, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
+        pl.add(tb, ta, tc)
+        # The first V consumer must complete before MTE2 overwrites tc.
+        pl.system.sync_src(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE2, event_id=1)
+        pl.system.sync_dst(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE2, event_id=1)
+        pl.load(tc, a, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
+        pl.add(ta, tb, tc)
+        pl.system.sync_src(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=2)
+        pl.system.sync_dst(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=2)
+        pl.store(out, ta, [0, 0])
+
+
+@pytest.mark.soc("950")
+def test_sync_clean_reuse():
+    _require_a5(ST_DEVICE)
+    logging.info("------------test_sync_clean_reuse--------------")
+    a = torch.randn(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    out = torch.zeros(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    sync_clean_reuse_kernel(a, out)
+    torch.npu.synchronize()
+    torch.testing.assert_close(out, a + a + a)
+    logging.info("test_sync_clean_reuse OK")
+
+
+# =============================================================================
+# 负样本（违规，回放报告）
+# =============================================================================
+
+
+@pl.jit(sanitizer=True)
+def sync_s1_missing_dst_kernel(
+    a: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+    b: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+    out: pl.Tensor[[M_DIM, N_DIM], pl.DT_FP32],
+):
+    """S-1：只有 src 没有 dst——等待方根本没等，数据竞争。"""
+    ta, tb, tc = _vec_tiles()
+    with pl.section_vector():
+        pl.load(ta, a, [0, 0])
+        pl.load(tb, b, [0, 0])
+        # 违规点：漏写 sync_dst
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
+        pl.add(tc, ta, tb)
+        pl.store(out, tc, [0, 0])
+
+
+@pytest.mark.soc("950")
+def test_sync_s1_missing_dst_detected():
+    _require_a5(ST_DEVICE)
+    logging.info("------------test_sync_s1_missing_dst_detected--------------")
+    a = torch.randn(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    b = torch.randn(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    out = torch.zeros(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
+    with pytest.raises(SanitizerReplayError) as exc_info:
+        sync_s1_missing_dst_kernel(a, b, out)
+        torch.npu.synchronize()
+    assert any("SYNC_UNPAIRED_SRC" in str(f) for f in exc_info.value.findings)
+    logging.info("test_sync_s1_missing_dst_detected OK")
+
+
+# =============================================================================
+# 单元测试（记录流直测 check_sync_pairing）
+# Unit tests share the _CTX / _kinds helpers of the phase block above.
+
+def _sr(is_src, set_pipe=1, wait_pipe=4, event_id=0, line=10, region=0):
+    return SyncAccessRecord(event_id=event_id, set_pipe=set_pipe, wait_pipe=wait_pipe,
+                            is_src=is_src, line=line, region=region)
+
+
+
+
+@pytest.mark.soc("950")
+def test_ut_sync_clean_basic_records():
+    recs = [_sr(1), _sr(0), _sr(1, set_pipe=4, wait_pipe=3, event_id=1), _sr(0, set_pipe=4, wait_pipe=3, event_id=1)]
+    assert check_sync_pairing(recs, _CTX) == []
+
+
+@pytest.mark.soc("950")
+def test_ut_sync_clean_reuse_records():
+    recs = [_sr(1), _sr(0), _sr(1), _sr(0)]
+    assert check_sync_pairing(recs, _CTX) == []
+
+
+@pytest.mark.soc("950")
+def test_ut_sync_clean_multi_key_records():
+    recs = [_sr(1, event_id=0), _sr(1, event_id=1), _sr(0, event_id=0), _sr(0, event_id=1)]
+    assert check_sync_pairing(recs, _CTX) == []
+
+
+@pytest.mark.soc("950")
+def test_ut_sync_s1_unpaired_src_records():
+    recs = [_sr(1)]
+    assert "SYNC_UNPAIRED_SRC" in _kinds(check_sync_pairing(recs, _CTX))
+
+
+@pytest.mark.soc("950")
+def test_ut_sync_s2_unpaired_dst_records():
+    recs = [_sr(0)]
+    assert "SYNC_UNPAIRED_DST" in _kinds(check_sync_pairing(recs, _CTX))
+
+
+@pytest.mark.soc("950")
+def test_ut_sync_s4_event_reuse_records():
+    recs = [_sr(1), _sr(1)]
+    assert "SYNC_EVENT_REUSE" in _kinds(check_sync_pairing(recs, _CTX))
+
+
+@pytest.mark.soc("950")
+def test_ut_sync_s3_param_mismatch_records():
+    """S-3：wait_pipe 不一致——落入不同分组，各自以漏配对暴露。"""
+    recs = [_sr(1, wait_pipe=4), _sr(0, wait_pipe=5)]  # src 等 V，dst 等 MTE3
+    kinds = _kinds(check_sync_pairing(recs, _CTX))
+    assert "SYNC_UNPAIRED_SRC" in kinds and "SYNC_UNPAIRED_DST" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_sync_s3_event_mismatch_records():
+    """S-3 变体：event_id 不一致。"""
+    recs = [_sr(1, event_id=0), _sr(0, event_id=1)]
+    kinds = _kinds(check_sync_pairing(recs, _CTX))
+    assert "SYNC_UNPAIRED_SRC" in kinds and "SYNC_UNPAIRED_DST" in kinds
+
+
+@pytest.mark.soc("950")
+def test_ut_sync_regions_independent_records():
+    recs = [_sr(1, line=10, region=0), _sr(0, line=11, region=1)]
+    assert check_sync_pairing(recs, _CTX) != []  # 不同 region 各自漏配对 -> 报
+
+
+@pytest.mark.soc("950")
+def test_ut_sync_s1_dangling_src_location_records():
+    """S-1 定位回归：终态报告指向悬空 src 的行（曾指向组内第一条记录）。"""
+    # [src@10, dst@11, src@20]：悬空的是行 20 的 src
+    recs = [_sr(1, line=10), _sr(0, line=11), _sr(1, line=20)]
+    s1 = [f for f in check_sync_pairing(recs, _CTX) if f.kind == "SYNC_UNPAIRED_SRC"]
+    assert len(s1) == 1 and s1[0].location.endswith(":20")
+    # 乱序变体 [dst@10, src@20]：S-1 不应指向 dst 的行
+    recs = [_sr(0, line=10), _sr(1, line=20)]
+    s1 = [f for f in check_sync_pairing(recs, _CTX) if f.kind == "SYNC_UNPAIRED_SRC"]
+    assert len(s1) == 1 and s1[0].location.endswith(":20")
+    # S-4 变体 [src@10, src@11]：悬空的是第二个 src（行 11）
+    recs = [_sr(1, line=10), _sr(1, line=11)]
+    s1 = [f for f in check_sync_pairing(recs, _CTX) if f.kind == "SYNC_UNPAIRED_SRC"]
+    assert len(s1) == 1 and s1[0].location.endswith(":11")
+
+
+
+if __name__ == "__main__":
+    """python3 直接执行入口：跑本文件全部用例（选跑单个用例请用 pytest）。"""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     import sys
 
-    raw = sys.argv[1:]
-    base = ["-v", "-s", "--tb=short", "--no-header"]
-    if any(a.startswith("-") for a in raw):
-        # Any pytest option (e.g. -k oob / -m mark): pass everything
-        # through verbatim -- splitting raw ourselves would break options
-        # whose value is a separate argument.
-        args = [__file__, *base, *raw]
-    elif raw:
-        # Bare test names only: address them as this file's nodes.
-        args = [*(f"{__file__}::{n}" for n in raw), *base]
-    else:
-        args = [__file__, *base]
-    sys.exit(pytest.main(args))
+    sys.exit(pytest.main([__file__, "-v", "-s", "--tb=short", "--no-header"]))

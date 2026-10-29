@@ -197,6 +197,17 @@ TypePtr DeduceTileValidShapeType(const std::vector<ExprPtr>& args,
     return std::make_shared<ScalarType>(DataType::INT64);
 }
 
+TypePtr DeduceTileAddrType(const std::vector<ExprPtr>& args,
+                           [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "block.tile_addr requires exactly one argument (tile), but got " << args.size();
+    auto tile_type = As<TileType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tile_type)
+        << "block.tile_addr requires a TileType argument, but got " << args[0]->GetType()->TypeName();
+    return std::make_shared<ScalarType>(DataType::INT64);
+}
+
 TypePtr DeduceSetValType([[maybe_unused]] const std::vector<ExprPtr>& args,
                          [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
@@ -422,6 +433,12 @@ REGISTER_OP("block.tile_valid_shape")
     .add_argument("tile", "Input tile")
     .set_attr<int>("axis")
     .f_deduce_type(DeduceTileValidShapeType);
+
+REGISTER_OP("block.tile_addr")
+    .set_op_category("BlockOp")
+    .set_description("Return the runtime base address of a Tile")
+    .add_argument("tile", "Input tile (TileType or MutexTileType)")
+    .f_deduce_type(DeduceTileAddrType);
 
 REGISTER_OP("block.setval")
     .set_op_category("BlockOp")

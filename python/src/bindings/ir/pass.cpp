@@ -8,6 +8,11 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include <pybind11/functional.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -18,6 +23,7 @@
 #include "ir/transforms/ir_property.h"
 #include "ir/transforms/pass_context.h"
 #include "ir/transforms/passes.h"
+#include "ir/transforms/sanitizer_layout.h"
 #include "ir/verifier/verification_error.h"
 #include "ir/verifier/verifier.h"
 
@@ -117,6 +123,36 @@ void BindPasses(py::module_& m)
         .def_static("insert_sync", &pass::InsertSync, "Insert mutex synchronization from tile bindings")
         .def_static("sanitizer", &pass::Sanitizer,
                     "Create a sanitizer instrumentation pass (stateless; every check value travels in the records)");
+
+    py::enum_<SanitizerDetection>(m, "SanitizerDetection", "Sanitizer record detection ids (wire values)")
+        .value("GmAccess", SanitizerDetection::GmAccess, "GM access window vs tensor shape")
+        .value("TileAccess", SanitizerDetection::TileAccess, "Tile transfer offsets vs tile dims")
+        .value("MutexAccess", SanitizerDetection::MutexAccess, "Mutex lock/unlock pairing")
+        .value("ViewShape", SanitizerDetection::ViewShape, "make_tensor view vs source capacity")
+        .value("TileScalar", SanitizerDetection::TileScalar, "getval/setval vs tile element count")
+        .value("TileDecl", SanitizerDetection::TileDecl, "Tile address-range overlap scan")
+        .value("PhaseAccess", SanitizerDetection::PhaseAccess, "unit_flag phase state machine")
+        .value("SyncAccess", SanitizerDetection::SyncAccess, "sync_src/sync_dst alternation");
+
+    m.attr("SANITIZER_RECORD_MAGIC") = kSanitizerRecordMagic;
+
+    m.def(
+        "sanitizer_record_layouts",
+        []() {
+            // det_id -> (record name, [(wire field, 'u'|'s')...])
+            std::map<uint32_t, std::pair<std::string, std::vector<std::pair<std::string, std::string>>>> layouts;
+            for (const auto& desc : kSanitizerRecordLayouts) {
+                std::vector<std::pair<std::string, std::string>> fields;
+                for (uint32_t i = 0; i < desc.wire_count; ++i) {
+                    fields.emplace_back(desc.wire[i].name, std::string(1, desc.wire[i].kind));
+                }
+                layouts[static_cast<uint32_t>(desc.det)] = std::make_pair(std::string(desc.name), std::move(fields));
+            }
+            return layouts;
+        },
+        "Wire contract per detection: det_id -> (record name, [(field, 'u'|'s')...]).\n"
+        "Single source shared with the encoder's MakeLogStmt field-count check;\n"
+        "the host-side replay builds its decoders from this table.");
 
     py::class_<PassInstrument, std::shared_ptr<PassInstrument>>(m, "PassInstrument",
                                                                 "Abstract base class for pass instrumentation")

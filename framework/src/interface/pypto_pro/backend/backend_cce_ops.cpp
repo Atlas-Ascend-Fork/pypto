@@ -1781,7 +1781,7 @@ REGISTER_BACKEND_OP(BackendCCE, "debug.trap")
 // sanitizer_replay decodes by det_id); the trailing three arguments are the
 // hidden log-buffer pointer / capacity and the span id.
 //   args = [det_id, field..., log_ptr, capacity, span_id]
-//   record = [det_id, field...] (rec_u32 = args.size() - 3)
+//   record = [det_id, field..., span_id] (rec_u32 = args.size() - 2)
 // The buffer region per sub-block is [ctr u32, records...], where ctr is the
 // region's u32-word offset past itself and the capacity
 // (`sanitizer_log_capacity` scalar) is the per-region u32 word budget for
@@ -1798,8 +1798,9 @@ void EmitSanitizerLogPrologue(codegen::CCECodegen& codegen, const std::string& l
     // append counter is a plain read-modify-write; two writers on one
     // region silently drop records). The Vector part is therefore offset by
     // the block count: Cube covers [0, block_num), Vector covers
-    // [block_num, block_num + block_num * subblockdim) = at most [N, 3N),
-    // which the host allocation of 4 * block_dim regions holds. A
+    // [block_num, block_num + block_num * subblockdim) = at most [N, 3N)
+    // with the A5 1:2 C/V pairing, which the host allocation's configured
+    // region envelope holds exactly. A
     // vector-only kernel wastes the first block_num regions, which is safe.
     // Sub-block addressing follows the established get_block_idx() backend-op
     // contract: the Vector target computes the global AIV index, so each
@@ -1858,12 +1859,38 @@ static std::string MakeSanitizerLogCodegenCCE(const ir::CallPtr& op, codegen::Co
     }
     codegen.Emit("    __log_rec[" + std::to_string(rec_u32 - 1u) + "] = static_cast<uint32_t>(" + span_id + ");");
     codegen.Emit("    __log_base[0] = __log_off + " + std::to_string(rec_u32) + "u;");
+    // Flush the record (and the counter update) to DDR before the next
+    // instruction executes.  The instrumentation record is written by the S
+    // pipe as a posted GM write; without a barrier the record can sit in the
+    // write buffer while the actual op runs on a different pipe (MTE2/V/M).
+    // When that op crashes the device (e.g. an extreme out-of-bounds load
+    // triggers a hardware trap like 507015), the unflushed writes are lost
+    // and the host-side rescue reads an empty log buffer.  dsb(DSB_DDR)
+    // guarantees each record reaches main memory before any subsequent op,
+    // at the cost of one barrier per instrumented record (debug-only cost).
+    codegen.Emit("    dsb(DSB_DDR);");
     codegen.Emit("  }");
     codegen.Emit("}");
     return "";
 }
 
 REGISTER_BACKEND_OP(BackendCCE, "block.sanitizer_log").set_pipe(ir::PipeType::S).f_codegen(MakeSanitizerLogCodegenCCE);
+
+// Shared block.tile_addr helper. Keep the original Tile expression in the IR so
+// CCE codegen can use the same MakeTuple/TileGroup materialization as the
+// instrumented operation, then read the selected runtime Tile's data address.
+static std::string MakeTileAddrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
+        << "block.tile_addr requires one Tile argument";
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, ir::As<ir::TileType>(op->args_[0]->GetType()) != nullptr)
+        << "block.tile_addr requires a Tile argument";
+    const std::string tile = cce::GetOperandAsCode(codegen, op->args_[0]);
+    return "(int64_t)((uint64_t)" + tile + ".data())";
+}
+
+REGISTER_BACKEND_OP(BackendCCE, "block.tile_addr").set_pipe(ir::PipeType::S).f_codegen(MakeTileAddrCodegenCCE);
 
 // ============================================================================
 // Language operations: get_block_num, get_subblock_idx

@@ -26,6 +26,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import threading
 import uuid
 
 import torch
@@ -78,18 +79,56 @@ using namespace pto;
 # pl DataType -> accepted torch storage dtypes for a tensor parameter.
 _PL_DTYPE_TO_TORCH: dict[str, tuple["torch.dtype", ...]] = {}
 
-# Sanitizer GM log budget for one launch (~1GB, split across all regions).
-# Each executing core owns one region laid out as [ctr u32, records...] and is
-# the region's single writer, so no atomics are needed. The per-region record
-# capacity is derived from the budget at launch time; with hundreds of
-# thousands of record slots per core the capacity is effectively unlimited
-# for debugging use. Allocation stays lazy-cost: only the per-region ctr word
-# is zeroed and only the written part of each region is copied back to the
-# host. KSANITIZER_SUB_BLOCKS mirrors the device-side region layout (an A5
-# vector section addresses each AIV sub-block by its own get_block_idx, so
-# each gets an independent region).
+# Sanitizer GM log budget for one launch (~1GB by default). The environment
+# override is intentionally in MiB so the value is easy to audit in launch logs.
 KSANITIZER_LOG_BUDGET_BYTES = 1 * 1024**3
-KSANITIZER_SUB_BLOCKS = 4
+_SANITIZER_LOG_BUDGET_ENV = "PYPTO_SANITIZER_LOG_BUDGET_MB"
+
+
+def _sanitizer_log_budget_bytes() -> int:
+    raw = os.getenv(_SANITIZER_LOG_BUDGET_ENV)
+    if raw is None:
+        return KSANITIZER_LOG_BUDGET_BYTES
+    try:
+        budget_mb = int(raw)
+    except ValueError as exc:
+        raise RuntimeFailure(
+            f"{_SANITIZER_LOG_BUDGET_ENV} must be a positive integer MiB value"
+        ) from exc
+    if budget_mb <= 0:
+        raise RuntimeFailure(
+            f"{_SANITIZER_LOG_BUDGET_ENV} must be a positive integer MiB value"
+        )
+    return budget_mb * 1024**2
+
+
+def _sanitizer_sub_blocks(compiled: "CompiledKernel") -> int:
+    """Return the configured per-block region envelope for this binary.
+
+    The device prologue keeps the historical mixed-kernel envelope for
+    single-engine launches (vector launches reserve the leading block range).
+    Use the matching ``cube_vec`` target as the floor instead of duplicating
+    the A5 ``1 + 2`` assumption in the host launcher.
+    """
+    target = compiled.target
+    if target is None:
+        raise RuntimeFailure(
+            "Sanitizer launch requires a resolved KernelTarget"
+        )
+    slots = target.aic_per_block + target.aiv_per_block
+    config = get_jit_compile_config()
+    for variants in config.kernel_targets.values():
+        mixed = variants.get("cube_vec")
+        if mixed is not None and mixed.npu_arch == target.npu_arch:
+            slots = max(slots, mixed.aic_per_block + mixed.aiv_per_block)
+    if slots <= 0:
+        raise RuntimeFailure(
+            "Sanitizer launch target has no AIC/AIV region participants"
+        )
+    return slots
+
+
+_SANITIZER_REPORT_LOCK = threading.Lock()
 
 
 def _register_pl_dtype(pl_dtype: DataType, torch_name: str) -> None:
@@ -1839,10 +1878,10 @@ def _format_findings(findings) -> str:
 def _replay_sanitizer(log_buffer, capacity_u32, block_dim, build_dir, kernel_name, source_file):
     """Wait for the launch, read the written part of the device log buffer
     back, merge it with the compile-time metadata into one
-    ``sanitizer_report.bin``, scan that file with the registered detections
+    ``sanitizer_report.<launch_id>.bin``, scan that file with the registered detections
     and raise an aggregated report when findings exist.
 
-    Results go to pypto_sanitizer_report.txt next to sanitizer_report.bin in
+    Results go to pypto_sanitizer_report.txt next to sanitizer_report.<launch_id>.bin in
     the kernel's build dir (one file per compile instance), appended per
     launch (kernel-tagged). No terminal output; an uncaught
     SanitizerReplayError is the only on-screen signal.
@@ -1863,19 +1902,26 @@ def _replay_sanitizer(log_buffer, capacity_u32, block_dim, build_dir, kernel_nam
     # actually written (a region that never executed copies one word).
     region_chunks = []
     for region_idx, ctr in enumerate(ctrs):
-        written = min(int(ctr), capacity_u32)
+        ctr = int(ctr)
+        if ctr < 0:
+            from pypto_pro.runtime.sanitizer_replay import SanitizerReportError
+            raise SanitizerReportError(
+                f"region {region_idx}: counter is not a valid unsigned value")
+        written = min(ctr, capacity_u32)
         start = region_idx * words_per_region
         region_chunks.append(flat[start:start + 1 + written].cpu().numpy().tobytes())
-    report_path = os.path.join(build_dir, "sanitizer_report.bin")
+    launch_id = uuid.uuid4().hex
+    report_path = os.path.join(build_dir, f"sanitizer_report.{launch_id}.bin")
     build_report_file(region_chunks, report_path)
     findings = scan_report_file(report_path, source_file)
-    # Detection result file, appended per launch (kernel-tagged), next to
-    # sanitizer_report.bin in the build dir.
+    # Each launch owns a unique binary report.  Serialize only the human-readable
+    # aggregate so concurrent launches cannot interleave their text blocks.
     report_file = os.path.join(build_dir, "pypto_sanitizer_report.txt")
-    with open(report_file, "a", encoding="utf-8") as f:
-        f.write(f"===== kernel '{kernel_name}' ({build_dir}) =====\n")
-        f.write(_format_findings(findings))
-        f.write("\n")
+    with _SANITIZER_REPORT_LOCK:
+        with open(report_file, "a", encoding="utf-8") as f:
+            f.write(f"===== kernel '{kernel_name}' launch {launch_id} ({build_dir}) =====\n")
+            f.write(_format_findings(findings))
+            f.write("\n")
     if findings:
         raise SanitizerReplayError(findings)
 
@@ -1933,7 +1979,7 @@ def _build_sanitizer_entry(compiled: "CompiledKernel", build_dir: str):
     wrapper only (a) allocates the GM log buffer and appends the two hidden
     ``sanitizer_log``/``sanitizer_log_capacity`` arguments, then (b) reads the
     buffer back, merges it with the compile-time metadata into a single
-    ``sanitizer_report.bin`` and scans that file with the registered
+    ``sanitizer_report.<launch_id>.bin`` and scans that file with the registered
     detections.
 
     Loaded lazily on the first launch via ``compiled.entry``, exactly like the
@@ -1946,13 +1992,23 @@ def _build_sanitizer_entry(compiled: "CompiledKernel", build_dir: str):
         # natively at launch); size by the device-level upper bound instead,
         # while the launch itself still carries the sentinel.
         sized_dim = _auto_block_upper_bound(compiled) if block_dim == _AUTO_BLOCK_DIM else block_dim
-        regions = KSANITIZER_SUB_BLOCKS * sized_dim
-        words_per_region = KSANITIZER_LOG_BUDGET_BYTES // (4 * regions)
+        sub_blocks = _sanitizer_sub_blocks(compiled)
+        regions = sub_blocks * sized_dim
+        budget_bytes = _sanitizer_log_budget_bytes()
+        words_per_region = budget_bytes // (4 * regions)
+        if words_per_region <= 1:
+            raise RuntimeFailure(
+                "Sanitizer log budget is too small for the launch region count"
+            )
         nbytes = words_per_region * 4 * regions
         log_buffer = torch.empty(nbytes, dtype=torch.uint8, device="npu")
         # Only the per-region ctr word must start at zero; the record area is
         # write-before-read on the device, so zeroing it would be wasted cost.
-        log_buffer.view(torch.int32)[::words_per_region] = 0
+        # Record the clear on the exact stream used by the kernel.
+        if stream is None:
+            stream = torch.npu.current_stream()
+        with torch.npu.stream(stream):
+            log_buffer.view(torch.int32)[::words_per_region] = 0
         capacity_u32 = words_per_region - 1
         full_args = (*args, log_buffer, capacity_u32)
         base_entry(full_args, block_dim, stream)

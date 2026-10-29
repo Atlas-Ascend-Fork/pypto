@@ -6,7 +6,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-from typing import Final, Union, Any, Optional, Sequence, overload
+from typing import Any, Dict, Final, List, Optional, Sequence, Tuple, Union, overload
 import enum
 from .. import pypto_impl
 from .. import SymbolicScalar
@@ -2571,3 +2571,23 @@ class Pass:
     @staticmethod
     def run_verifier() -> Pass:
         """Run the verifier on the program."""
+
+
+class SanitizerDetection(enum.IntEnum):
+    """Sanitizer record detection identifiers exported by the native binding."""
+
+    GmAccess: int
+    TileAccess: int
+    MutexAccess: int
+    ViewShape: int
+    TileScalar: int
+    TileDecl: int
+    PhaseAccess: int
+    SyncAccess: int
+
+
+SANITIZER_RECORD_MAGIC: Final[int]
+
+
+def sanitizer_record_layouts() -> Dict[int, Tuple[str, List[Tuple[str, str]]]]:
+    """Return the native sanitizer wire layout by detection id."""

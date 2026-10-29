@@ -9,16 +9,20 @@
  */
 
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "backend/common/backend_utils.h"
 #include "ir/kind_traits.h"
+#include "ir/memory_space.h"
+#include "ir/op_registry.h"
 #include "ir/scalar_expr.h"
 #include "ir/scalar_expr_ops.h"
 #include "ir/type.h"
 #include "ir/transforms/base/mutator.h"
 #include "ir/transforms/base/visitor.h"
 #include "ir/transforms/passes.h"
+#include "ir/transforms/sanitizer_layout.h"
 #include "pypto_pro/error.h"
 
 namespace pypto {
@@ -26,26 +30,38 @@ namespace ir {
 
 namespace {
 
-// det_id values on the wire; each owns a distinct record format. Must stay
-// in sync with the Python DET_* constants in sanitizer_replay.py.
-enum class SanitizerDetection : uint32_t {
-    GmAccess = 1,    // GM access: tensor_id, ndim, off[5], acc_row, acc_col
-    TileAccess = 2,  // tile access: tile_id, dim0, dim1, off_row, off_col, acc_row, acc_col
-    MutexAccess = 3, // mutex lock/unlock: mutex_id, pipe, is_lock, span_id
-    ViewShape = 4,   // runtime view shape: tensor_id, dim[5] (exprs), footprint (expr), span
-    TileScalar = 5,  // tile scalar access: dims, linear offset, span
-    TileDecl = 6,    // make_tile declaration: addr, size, space_id, span (overlap scan)
+// det_id values live in ir/transforms/sanitizer_layout.h together with the
+// record layouts -- the single wire-contract source shared with the pybind
+// export and the Python replay.
+
+// Phase record op kinds. Write side = matmul family (dst Acc tile), read side
+// = L0C consumers (src Acc tile): store/store_tile/move/move_fp/insert.
+// Values travel in the record; the replay classifies (write/read,
+// overwrite/accumulate, bias) from the kind alone. Kind numbering is frozen
+// (the wire discipline): 7/9 never travel today -- the DSL lowers store_tile
+// to block.store and the frontend no longer emits move_fp -- but stay
+// reserved instead of being renumbered.
+enum class PhaseOpKind : uint32_t {
+    Matmul = 1,
+    MatmulAcc = 2,
+    MatmulBias = 3,
+    MatmulMx = 4,
+    MatmulMxAcc = 5,
+    Store = 6,
+    StoreTile = 7, // reserved (never emitted; store_tile lowers to block.store)
+    Move = 8,
+    MoveFp = 9,  // reserved (never emitted; the frontend dropped move_fp)
+    Insert = 10, // Acc->Mat insert: reads the Acc tile (src) with STPhase
 };
 
 /// Max logical tensor rank supported by the GM bounds check.
 constexpr uint32_t kSanitizerMaxTensorDims = 5;
+constexpr char kTileAddrOp[] = "block.tile_addr";
 
 // Runtime-evaluated GetValidRow()/GetValidCol() of the tile.
 ExprPtr TileDim(const ExprPtr& tile, int axis)
 {
-    return std::make_shared<Call>("block.tile_valid_shape", std::vector<ExprPtr>{tile},
-                                  std::vector<std::pair<std::string, std::any>>{{"axis", axis}},
-                                  std::make_shared<ScalarType>(DataType(DataType::UINT32)), Span::Unknown());
+    return OpRegistry::GetInstance().Create("block.tile_valid_shape", {tile}, {{"axis", axis}}, tile->span_);
 }
 
 ExprPtr Int64Const(int64_t v) { return std::make_shared<ConstInt>(v, DataType::INT64, Span::Unknown()); }
@@ -106,19 +122,62 @@ public:
         auto mutex_pairing = [this](const CallPtr& c) { return RecordMutex(c); };
         auto tile_overlap_decl = [this](const CallPtr& c) { return CollectMakeTile(c); };
         auto view_source_decl = [this](const CallPtr& c) { return CollectMakeTensor(c); };
+        // unit_flag phase records. The matmul family carries no other record
+        // (bounds live on the load/move side); the read side composes with
+        // the existing GM/tile-transfer records so one op emits both.
+        auto phase_matmul = [this](const CallPtr& c) { return RecordPhase(c, PhaseOpKind::Matmul, 0); };
+        auto phase_matmul_acc = [this](const CallPtr& c) { return RecordPhase(c, PhaseOpKind::MatmulAcc, 0, 1); };
+        auto phase_matmul_bias = [this](const CallPtr& c) { return RecordPhase(c, PhaseOpKind::MatmulBias, 0); };
+        auto phase_matmul_mx = [this](const CallPtr& c) { return RecordPhase(c, PhaseOpKind::MatmulMx, 0); };
+        auto phase_matmul_mx_acc = [this](const CallPtr& c) { return RecordPhase(c, PhaseOpKind::MatmulMxAcc, 0, 1); };
+        // sync_src/sync_dst pairing: one record per call (the flag event is a
+        // one-way signal, not a resource), grouped by (region, pipes, event).
+        auto sync_record = [this](const CallPtr& c) { return RecordSync(c); };
+        auto gm_and_phase_store = [this, tensor_bounds](const CallPtr& c) {
+            auto gm = tensor_bounds(c);
+            auto phase = RecordPhase(c, PhaseOpKind::Store, 1);
+            if (gm == nullptr)
+                return phase;
+            if (phase == nullptr)
+                return gm;
+            return SeqStmts::Flatten({gm, phase}, c->span_);
+        };
+        auto tile_and_phase_move = [this, tile_transfer_bounds](const CallPtr& c) {
+            auto bounds = tile_transfer_bounds(c);
+            auto phase = RecordPhase(c, PhaseOpKind::Move, 1);
+            if (phase == nullptr)
+                return bounds;
+            return SeqStmts::Flatten({bounds, phase}, c->span_);
+        };
+        // insert reads the Acc tile (src, Acc->Mat) with STPhase: compose the
+        // tile-bounds record with the phase record, like store/move.
+        auto tile_and_phase_insert = [this, tile_insert_bounds](const CallPtr& c) {
+            auto bounds = tile_insert_bounds(c);
+            auto phase = RecordPhase(c, PhaseOpKind::Insert, 1);
+            if (phase == nullptr)
+                return bounds;
+            return SeqStmts::Flatten({bounds, phase}, c->span_);
+        };
 
         op_records_ = {
             {"block.make_mutex_tile", tile_overlap_decl},
             {"ptr.make_tensor", view_source_decl},
             {"block.load", tensor_bounds},
-            {"block.store", tensor_bounds},
-            {"block.move", tile_transfer_bounds},
-            {"block.insert", tile_insert_bounds},
+            {"block.store", gm_and_phase_store},
+            {"block.move", tile_and_phase_move},
+            {"block.insert", tile_and_phase_insert},
             {"block.getval", scalar_bounds},
             {"block.setval", scalar_bounds},
             {"block.set_validshape", validshape_bounds},
             {"system.mutex_lock_dyn", mutex_pairing},
             {"system.mutex_unlock_dyn", mutex_pairing},
+            {"system.sync_src_dyn", sync_record},
+            {"system.sync_dst_dyn", sync_record},
+            {"block.matmul", phase_matmul},
+            {"block.matmul_acc", phase_matmul_acc},
+            {"block.matmul_bias", phase_matmul_bias},
+            {"block.matmul_mx", phase_matmul_mx},
+            {"block.matmul_mx_acc", phase_matmul_mx_acc},
         };
     }
 
@@ -139,6 +198,18 @@ private:
     StmtPtr RecordTileAccess(const CallPtr& call, uint32_t tile_arg_idx, const ExprPtr& off_row, const ExprPtr& off_col,
                              const ExprPtr& win_row, const ExprPtr& win_col);
     StmtPtr RecordMutex(const CallPtr& call);
+    // sync_src/sync_dst record: event_id (runtime expr from args[0]) +
+    // set_pipe/wait_pipe kwargs + is_src flag. Frontend already validates
+    // pipe combos and the [0,7] event range at compile time; the runtime
+    // pairing/alternation is what this record feeds.
+    StmtPtr RecordSync(const CallPtr& call);
+    // unit_flag phase record: op_kind + phase kwarg (Unspecified when absent)
+    // + the Acc tile's memref addr expressions as the runtime acc_addr /
+    // acc_src_addr identity. acc_tile_idx picks the tile whose address lands
+    // in acc_addr (0 = matmul dst, 1 = store/move src); acc_src_idx names
+    // matmul_acc's accumulator source arg, or -1 when the op has no separate
+    // accumulator source.
+    StmtPtr RecordPhase(const CallPtr& call, PhaseOpKind kind, uint32_t acc_tile_idx, int32_t acc_src_idx = -1);
     StmtPtr RecordScalarAccess(const CallPtr& call);
     StmtPtr RecordValidShape(const CallPtr& call);
     // Op name -> record functions. Same-handler ops (load/store) share one
@@ -153,6 +224,9 @@ private:
     StmtPtr CollectMakeTensor(const CallPtr& call);
     // Table lookup for the op call hooks.
     StmtPtr RecordForCall(const CallPtr& call);
+    // Keep the original Tile expression so the backend can read the runtime
+    // Tile object data() address after normal TileGroup lowering.
+    ExprPtr RuntimeTileAddr(const ExprPtr& tile) const;
     // Collection helpers shared by the record builders.
     // Declared tile dims (static by frontend contract); nullptr when the
     // expression is not a Tile.
@@ -172,6 +246,8 @@ private:
     // Type of the current AssignStmt target (set by the hook, read by the
     // make_tile builder; empty while visiting EvalStmts).
     TypePtr target_type_;
+    // Frontend let/SSA bindings needed to resolve TileGroup tuple fields while
+    // building sanitizer-only address expressions.
 };
 
 StmtPtr SanitizerInstrumenter::RecordForCall(const CallPtr& call)
@@ -209,6 +285,20 @@ StmtPtr SanitizerInstrumenter::VisitStmt_(const AssignStmtPtr& op)
     return new_stmt;
 }
 
+ExprPtr SanitizerInstrumenter::RuntimeTileAddr(const ExprPtr& tile) const
+{
+    auto tile_type = As<TileType>(tile->GetType());
+    if (tile_type == nullptr || !tile_type->memref_.has_value() || *tile_type->memref_ == nullptr) {
+        return nullptr;
+    }
+    // Keep the tile expression intact. The CCE backend evaluates it after the
+    // existing TileGroup/MakeTuple lowering and calls data() on that runtime
+    // Tile object, so dynamic indices and control-flow-selected groups follow
+    // the same path as the original operation.
+    // Use the registry so block.tile_addr type deduction validates the Tile operand.
+    return OpRegistry::GetInstance().Create(kTileAddrOp, {tile}, tile->span_);
+}
+
 // ---------------------------------------------------------------------------
 // Record functions: collect the operands, hand fields to MakeLogStmt
 // ---------------------------------------------------------------------------
@@ -236,11 +326,20 @@ ExprPtr SanitizerInstrumenter::ShapeProduct(const ShapedTypePtr& type, const Spa
 }
 
 // Unified exit of every record function: assembles the block.sanitizer_log
-// call (det_id + fields + hidden log params + source line).
+// call (det_id + fields + hidden log params + source line). The field
+// count is checked against the shared wire layout (sanitizer_layout.h) so
+// an encoder/replay drift fails the build here, not as a decode error.
 StmtPtr SanitizerInstrumenter::MakeLogStmt(uint32_t det_id, std::vector<ExprPtr> fields, const Span& span)
 {
+    const SanitizerRecordLayout* desc = FindSanitizerRecordLayout(det_id);
+    PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR,
+                            desc != nullptr && fields.size() + 1 == desc->wire_count)
+        << "sanitizer: det " << det_id << " record fields (" << fields.size() << ") do not match the wire layout ("
+        << (desc != nullptr ? desc->wire_count - 1 : 0) << " expected)";
     std::vector<ExprPtr> args;
-    args.push_back(Int64Const(det_id)); // codegen / decoder dispatch on it
+    // Record head: magic in the high 16 bits, det_id in the low 16 -- the
+    // decoder dispatches on the det_id half and self-verifies the magic.
+    args.push_back(Int64Const(SanitizerRecordHead(det_id)));
     args.insert(args.end(), std::make_move_iterator(fields.begin()), std::make_move_iterator(fields.end()));
     args.push_back(log_param_);
     args.push_back(capacity_param_);
@@ -273,7 +372,8 @@ StmtPtr SanitizerInstrumenter::RecordScalarAccess(const CallPtr& call)
     // Linear bound: the whole-tensor element count as an expression product
     // (static and dynamic dims alike travel in the record). Same length as
     // the per-dim GM record (one det owns one format): shape slots zero,
-    // acc_row carries the count.
+    // acc_row carries the count, no window axes (the scalar branch of the
+    // replay never reads them).
     ExprPtr numel = ShapeProduct(tensor_type, call->span_);
     std::vector<ExprPtr> fields;
     fields.push_back(Int64Const(0)); // ndim = 0: linear-offset access
@@ -284,6 +384,8 @@ StmtPtr SanitizerInstrumenter::RecordScalarAccess(const CallPtr& call)
         fields.push_back(Int64Const(0)); // shape slots (length only)
     fields.push_back(numel);
     fields.push_back(Int64Const(1));
+    fields.push_back(Int64Const(-1)); // win_ax0: unused by the linear branch
+    fields.push_back(Int64Const(-1)); // win_ax1
     return MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::GmAccess), std::move(fields), call->span_);
 }
 
@@ -346,27 +448,62 @@ StmtPtr SanitizerInstrumenter::RecordGmAccess(const CallPtr& call)
         uint32_t dim = (rank <= ndim) ? i : (ndim - rank) + i; // leading dims dropped
         fields.push_back(dim < rank ? tensor_type->shape_[dim] : Int64Const(0));
     }
-    // The order kwarg decomposes into ascending tile_dims + is_transpose;
-    // a transposed trailing-axes load swaps the recorded windows. Orders
-    // selecting other axes are inexpressible in the record: emit nothing
-    // rather than misjudge (known limitation).
+    // The tile's two valid-shape windows land on the tensor axes named by
+    // win_ax0/win_ax1 (-1: that tile dim maps to no axis). Axis resolution
+    // delegates to the same single sources the backend consumes: the
+    // frontend's order decomposition (ascending tile_dims + is_transpose,
+    // reconstructed here), MXLoadTileDims for MX scale loads (phase-axis
+    // default included), and the generic trailing-axes default.
     ExprPtr acc_row = TileDim(tile, 0);
     ExprPtr acc_col = TileDim(tile, 1);
-    if (call->HasKwarg("tile_dims")) {
-        auto tile_dims = call->GetKwarg<std::vector<int>>("tile_dims");
-        if (tile_dims.size() == 0x2) {
-            auto off_rank = static_cast<int>(off_tuple->elements_.size());
-            if (tile_dims[0] == off_rank - 0x2 && tile_dims[1] == off_rank - 1) {
-                if (call->GetKwarg<bool>("is_transpose", false)) {
-                    std::swap(acc_row, acc_col);
-                }
-            } else {
-                return nullptr;
+    int32_t win_ax0 = -1;
+    int32_t win_ax1 = -1;
+    if (ndim == 1) {
+        // Rank-1: the whole tile projects onto the single axis -- one tile
+        // dim is statically 1, so the valid-shape product is the access
+        // length whichever side is degenerate. acc_col carries no window of
+        // its own (win_ax1 stays -1); write 1 so the report reads naturally.
+        win_ax0 = 0;
+        acc_row = MakeMul(acc_row, acc_col, call->span_);
+        acc_col = Int64Const(1);
+    } else {
+        std::vector<int> tile_dims;
+        if (backend::cce::IsMXLoadCall(call)) {
+            tile_dims = backend::cce::MXLoadTileDims(call, tensor_type);
+        } else if (call->HasKwarg("tile_dims")) {
+            tile_dims = call->GetKwarg<std::vector<int>>("tile_dims");
+        } else {
+            tile_dims = {static_cast<int>(ndim) - 2, static_cast<int>(ndim) - 1};
+        }
+        if (tile_dims.size() != 0x2) {
+            return nullptr;
+        }
+        // Rebuild the original order: tile_dims is ascending, is_transpose
+        // swapped it, so the first tile dim owned the second axis.
+        if (call->GetKwarg<bool>("is_transpose", false)) {
+            win_ax0 = tile_dims[1];
+            win_ax1 = tile_dims[0];
+        } else {
+            win_ax0 = tile_dims[0];
+            win_ax1 = tile_dims[1];
+        }
+        // MX scale tiles store one physical phase pair per logical matrix
+        // element. The backend lowering expands A's second dimension or B's
+        // first dimension by two; replay must compare logical group counts
+        // against the GM tensor and keep the phase pair out of that window.
+        if (backend::cce::IsMXLoadCall(call)) {
+            const auto layout = backend::cce::MXLoadLayoutName(call);
+            if (layout.find("MX_A_") != std::string::npos) {
+                acc_col = MakeFloorDiv(acc_col, Int64Const(2), call->span_);
+            } else if (layout.find("MX_B_") != std::string::npos) {
+                acc_row = MakeFloorDiv(acc_row, Int64Const(2), call->span_);
             }
         }
     }
     fields.push_back(std::move(acc_row));
     fields.push_back(std::move(acc_col));
+    fields.push_back(Int64Const(win_ax0));
+    fields.push_back(Int64Const(win_ax1));
     return MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::GmAccess), std::move(fields), call->span_);
 }
 
@@ -410,13 +547,92 @@ StmtPtr SanitizerInstrumenter::RecordMutex(const CallPtr& call)
     return SeqStmts::Flatten(std::move(logs), call->span_);
 }
 
+StmtPtr SanitizerInstrumenter::RecordPhase(const CallPtr& call, PhaseOpKind kind, uint32_t acc_tile_idx,
+                                           int32_t acc_src_idx)
+{
+    // Phase records serve the unit_flag (AccPhase/STPhase) pairing check.
+    // Read side (store/move/insert) records are emitted for EVERY call whose
+    // source tile lives in Acc -- including phase-less ones, whose
+    // Unspecified marker is what lets the replay separate "read without
+    // phase" (mixed-sync A-1) from "no read at all" (dangling C-T1). Ops
+    // whose operand is not an Acc tile are unrelated to unit_flag: no record.
+    // The acc_addr field is the runtime Tile object data() expression, so
+    // pairing groups use the true block identity for plain tiles and TileGroups.
+    PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, acc_tile_idx < call->args_.size())
+        << "sanitizer: " << call->name_ << " phase record tile index " << acc_tile_idx << " out of range [0, "
+        << call->args_.size() << ")";
+    auto tile_type = As<TileType>(call->args_[acc_tile_idx]->GetType());
+    if (tile_type == nullptr)
+        return nullptr;
+    auto memref = tile_type->memref_.has_value() ? *tile_type->memref_ : nullptr;
+    if (memref == nullptr)
+        return nullptr;
+    if (memref->memorySpace_ != MemorySpace::Acc)
+        return nullptr;
+    int phase = 0; // AccPhase/STPhase: Unspecified = 0, Partial = 1, Final = 2
+    if (call->HasKwarg("phase")) {
+        phase = call->GetKwarg<int>("phase");
+    }
+    auto acc_addr = RuntimeTileAddr(call->args_[acc_tile_idx]);
+    PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, acc_addr != nullptr)
+        << "sanitizer: Acc tile has no resolvable phase address";
+    ExprPtr acc_src_addr = Int64Const(-1);
+    if (acc_src_idx >= 0) {
+        const auto src_idx = static_cast<uint32_t>(acc_src_idx);
+        PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, src_idx < call->args_.size())
+            << "sanitizer: " << call->name_ << " accumulator source index " << src_idx << " out of range [0, "
+            << call->args_.size() << ")";
+        auto acc_type = As<TileType>(call->args_[src_idx]->GetType());
+        PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, acc_type != nullptr)
+            << "sanitizer: " << call->name_ << " accumulator source is not a Tile";
+        auto acc_memref = acc_type->memref_.has_value() ? *acc_type->memref_ : nullptr;
+        PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, acc_memref != nullptr)
+            << "sanitizer: " << call->name_ << " accumulator source has no memref";
+        PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR,
+                                acc_memref->memorySpace_ == MemorySpace::Acc)
+            << "sanitizer: " << call->name_ << " accumulator source is not in Acc memory";
+        acc_src_addr = RuntimeTileAddr(call->args_[src_idx]);
+        PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, acc_src_addr != nullptr)
+            << "sanitizer: accumulator source has no resolvable phase address";
+    }
+    std::vector<ExprPtr> fields;
+    fields.push_back(Int64Const(static_cast<int64_t>(kind)));
+    fields.push_back(Int64Const(phase));
+    fields.push_back(std::move(acc_addr));
+    fields.push_back(acc_src_addr);
+    auto log = MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::PhaseAccess), std::move(fields), call->span_);
+    return log;
+}
+
+StmtPtr SanitizerInstrumenter::RecordSync(const CallPtr& call)
+{
+    // sync is a one-way signal dependency (src sets the flag once, dst waits
+    // for it and clears it): the replay pairs records per
+    // (region, set_pipe, wait_pipe, event_id) key with strict alternation.
+    // All three key fields travel in the record -- the event id as the args[0]
+    // runtime expression (the frontend allows an integer Scalar), the pipes as
+    // compile-time enum values. Parameter-mismatched src/dst fall into
+    // different groups and surface as unpaired endpoints, so no separate
+    // cross-comparison is needed.
+    bool is_src = (call->name_ == "system.sync_src_dyn");
+    PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, !call->args_.empty())
+        << "sanitizer: " << call->name_ << " requires the event_id argument";
+    int set_pipe = call->GetKwarg<int>("set_pipe");
+    int wait_pipe = call->GetKwarg<int>("wait_pipe");
+    std::vector<ExprPtr> fields;
+    fields.push_back(call->args_[0]); // event_id (runtime expression)
+    fields.push_back(Int64Const(set_pipe));
+    fields.push_back(Int64Const(wait_pipe));
+    fields.push_back(Int64Const(is_src ? 1 : 0));
+    return MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::SyncAccess), std::move(fields), call->span_);
+}
+
 StmtPtr SanitizerInstrumenter::CollectMakeTile(const CallPtr& call)
 {
     // make_tile: the assigned variable's type (target_type_, set by the
     // AssignStmt hook) carries the TileType; addr
-    // comes from the memref_addr kwarg, size =
-    // shape product x dtype bytes from the TileType (the frontend enforces
-    // compile-time-constant shapes and a resolved MemRef). Emits a
+    // comes from the resolved MemRef, whose size preserves explicit physical
+    // spans and layout padding. Emits a
     // declaration record for the overlap scan; the replay dedups identical
     // re-registrations (the top-level statements are copied into both
     // programs of one kernel) by (addr, size, space, span) -- same-statement
@@ -429,7 +645,6 @@ StmtPtr SanitizerInstrumenter::CollectMakeTile(const CallPtr& call)
     PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR,
                             tile_type->memref_.has_value() && *tile_type->memref_ != nullptr)
         << "sanitizer: make_tile requires a resolved MemRef (frontend enforces addr)";
-    int64_t dtype_bytes = std::max<int64_t>(1, tile_type->dtype_.GetBit() / 8);
     int64_t sz = 1;
     for (const auto& d : tile_type->shape_) {
         auto c = As<ConstInt>(d);
@@ -437,23 +652,18 @@ StmtPtr SanitizerInstrumenter::CollectMakeTile(const CallPtr& call)
             << "sanitizer: tile shape dims must be static";
         sz *= c->value_;
     }
-    int64_t addr = -1;
-    for (const auto& [k, v] : call->kwargs_) {
-        if (k == "memref_addr") {
-            try {
-                addr = std::any_cast<int64_t>(v);
-            } catch (...) {
-            }
-            try {
-                addr = static_cast<int64_t>(std::any_cast<int32_t>(v));
-            } catch (...) {
-            }
-        }
-    }
+    auto memref = *tile_type->memref_;
+    auto addr_const = As<ConstInt>(memref->addr_);
+    PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, addr_const != nullptr)
+        << "sanitizer: make_tile memref address must be a constant integer";
+    PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, memref->size_ > 0)
+        << "sanitizer: make_tile memref size must be positive";
+    // Use the resolved MemRef footprint rather than shape*dtype.  The MemRef
+    // preserves explicit spans and physical NZ/fractal padding.
     std::vector<ExprPtr> fields;
-    fields.push_back(Int64Const(addr));
-    fields.push_back(Int64Const(sz * dtype_bytes));
-    fields.push_back(Int64Const(static_cast<int64_t>((*tile_type->memref_)->memorySpace_)));
+    fields.push_back(Int64Const(addr_const->value_));
+    fields.push_back(Int64Const(static_cast<int64_t>(memref->size_)));
+    fields.push_back(Int64Const(static_cast<int64_t>(memref->memorySpace_)));
     fields.push_back(Int64Const(sz)); // element count (report display)
     return MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::TileDecl), std::move(fields), call->span_);
 }
@@ -512,14 +722,28 @@ StmtPtr SanitizerInstrumenter::CollectMakeTensor(const CallPtr& call)
     }
     ExprPtr fp_bytes = MakeMul(fp_elems, Int64Const(elem_bytes), call->span_);
 
-    // Source capacity in bytes: the element-count product of the source
-    // tensor's shape scaled by its element width. A raw pointer has no
-    // known bound (-1); the record skips the check then.
+    // Prefer the resolved physical MemRef span or an existing view stride.
+    // Fall back to the logical tensor extent when no storage metadata exists.
     ExprPtr src_bytes = Int64Const(-1);
     auto src_tensor = As<TensorType>(call->args_[0]->GetType());
     if (src_tensor != nullptr) {
         int64_t src_elem = std::max<int64_t>(1, static_cast<int64_t>(src_tensor->dtype_.GetBit()) / 8);
-        src_bytes = MakeMul(ShapeProduct(src_tensor, call->span_), Int64Const(src_elem), call->span_);
+        if (src_tensor->memref_.has_value() && *src_tensor->memref_ != nullptr) {
+            src_bytes = Int64Const(static_cast<int64_t>((*src_tensor->memref_)->size_));
+        } else if (src_tensor->tensor_view_.has_value() &&
+                   src_tensor->tensor_view_->stride.size() == src_tensor->shape_.size() &&
+                   !src_tensor->tensor_view_->stride.empty()) {
+            ExprPtr src_fp_elems = Int64Const(1);
+            const auto& strides = src_tensor->tensor_view_->stride;
+            for (size_t i = 0; i < src_tensor->shape_.size() && i < strides.size(); ++i) {
+                ExprPtr term = MakeMul(MakeSub(src_tensor->shape_[i], Int64Const(1), call->span_), strides[i],
+                                       call->span_);
+                src_fp_elems = MakeAdd(src_fp_elems, term, call->span_);
+            }
+            src_bytes = MakeMul(src_fp_elems, Int64Const(src_elem), call->span_);
+        } else {
+            src_bytes = MakeMul(ShapeProduct(src_tensor, call->span_), Int64Const(src_elem), call->span_);
+        }
     }
 
     std::vector<ExprPtr> fields;
