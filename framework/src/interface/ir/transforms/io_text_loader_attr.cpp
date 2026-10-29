@@ -15,6 +15,7 @@
 
 #include <any>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -26,6 +27,7 @@
 
 #include "core/any_cast.h"
 #include "tilefwk/element.h"
+#include "interface/configs/config_manager_ng.h"
 #include "interface/operation/attribute.h"
 #include "interface/operation/opcode.h"
 #include "interface/operation/operation.h"
@@ -321,6 +323,55 @@ bool IsSymbolicScalarListAttr(const std::any& value)
 }
 
 } // namespace
+
+template <typename T>
+std::any IRTextParser::ParseAs(const std::string&, const std::any& value)
+{
+    return static_cast<T>(AnyCast<int64_t>(value));
+}
+
+template <>
+std::any IRTextParser::ParseAs<std::vector<npu::tile_fwk::SymbolicScalar>>(const std::string& key,
+                                                                           const std::any& value)
+{
+    std::vector<npu::tile_fwk::SymbolicScalar> conds;
+    if (!FillSymbolicScalarListAttr(key, value, conds)) {
+        return {};
+    }
+    return conds;
+}
+
+template <>
+std::any IRTextParser::ParseAs<std::shared_ptr<npu::tile_fwk::ConfigScope>>(const std::string&, const std::any&)
+{
+    return npu::tile_fwk::ConfigManagerNg::CurrentScope();
+}
+
+bool IRTextParser::FillForStmtAttrs(const std::map<std::string, std::any>& attrDict,
+                                    std::vector<std::pair<std::string, std::any>>& attrs)
+{
+    using AttrParser = std::any (IRTextParser::*)(const std::string&, const std::any&);
+    static const std::map<std::string, AttrParser> parsers = {
+        {"_loop_conds", &IRTextParser::ParseAs<std::vector<npu::tile_fwk::SymbolicScalar>>},
+        {"unroll_times", &IRTextParser::ParseAs<int>},
+        {"_config_scope", &IRTextParser::ParseAs<std::shared_ptr<npu::tile_fwk::ConfigScope>>},
+    };
+    attrs.reserve(attrDict.size());
+    for (const auto& [key, value] : attrDict) {
+        const auto it = parsers.find(key);
+        if (it == parsers.end()) {
+            attrs.emplace_back(key, value);
+            continue;
+        }
+        std::any rebuilt = (this->*(it->second))(key, value);
+        if (!rebuilt.has_value()) {
+            Error("invalid attr value for #" + key);
+            return false;
+        }
+        attrs.emplace_back(key, rebuilt);
+    }
+    return true;
+}
 
 bool IRTextParser::FillSymbolicScalarListAttr(const std::string& key, const std::any& value,
                                               std::vector<npu::tile_fwk::SymbolicScalar>& out)

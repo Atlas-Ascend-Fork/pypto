@@ -265,6 +265,10 @@ protected:
                         std::vector<npu::tile_fwk::SymbolicScalar>& dynOffset);
     bool FillSymbolicScalarListAttr(const std::string& key, const std::any& value,
                                     std::vector<npu::tile_fwk::SymbolicScalar>& out);
+    bool FillForStmtAttrs(const std::map<std::string, std::any>& attrDict,
+                          std::vector<std::pair<std::string, std::any>>& attrs);
+    template <typename T>
+    std::any ParseAs(const std::string& key, const std::any& value);
 
     // ---- v0_logical_tensor var-def attrs ----
     /// Parsed attr values of a v0_logical_tensor var-def.

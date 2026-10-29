@@ -33,8 +33,10 @@
 #include "ir/span.h"
 #include "ir/stmt.h"
 #include "ir/transforms/io_text.h"
+#include "interface/configs/config_manager_ng.h"
 #include "interface/tensor/logical_tensor.h"
 #include "ir/type.h"
+#include "tilefwk/symbolic_scalar.h"
 #include "test_ir.h"
 
 namespace pypto {
@@ -483,6 +485,32 @@ TEST_F(IoTextDumpRoundTripTest, TestFunctionRoundTrip)
     auto loaded = TextLoadFunction(dumped, error);
     EXPECT_TRUE(error.empty());
     EXPECT_EQ(TextDump(loaded), dumped);
+}
+
+// ---- Integer literal in a scalar position keeps its RawSymbolic* identity ----
+TEST_F(IoTextDumpRoundTripTest, TestIntLiteralInScalarPositionKeepsRawSymbolicIdentity)
+{
+    std::string error;
+    auto expr = TextLoadExpr("42", error);
+    EXPECT_TRUE(error.empty());
+    ASSERT_NE(expr, nullptr);
+    EXPECT_NE(std::dynamic_pointer_cast<const npu::tile_fwk::RawSymbolicImmediate>(expr), nullptr);
+}
+
+// ---- For-stmt attrs keep the element types that consumers read with GetAttr ----
+TEST_F(IoTextDumpRoundTripTest, TestForLoopAttrsKeepDeclaredTypes)
+{
+    std::string error;
+    auto stmt = TextLoadStmt("for %i inrange 0, 4, 1 iter { } #_config_scope(Unsupported) "
+                             "#_loop_conds([v0ge(i, 0), v0lt(i, 4)]) #unroll_times(2) { }",
+                             error);
+    EXPECT_TRUE(error.empty()) << error;
+    auto forStmt = std::dynamic_pointer_cast<const ForStmt>(stmt);
+    ASSERT_NE(forStmt, nullptr);
+    EXPECT_NE(std::dynamic_pointer_cast<const npu::tile_fwk::RawSymbolicSymbol>(forStmt->loopVar_), nullptr);
+    EXPECT_EQ(forStmt->GetAttr<std::vector<npu::tile_fwk::SymbolicScalar>>("_loop_conds").size(), 2u);
+    EXPECT_EQ(forStmt->GetAttr<int>("unroll_times"), 2);
+    EXPECT_NE(forStmt->GetAttr<std::shared_ptr<npu::tile_fwk::ConfigScope>>("_config_scope"), nullptr);
 }
 
 // ---- The same name in two functions must not be bound to the same tensor ----

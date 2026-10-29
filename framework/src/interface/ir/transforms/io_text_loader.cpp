@@ -677,7 +677,8 @@ ExprPtr IRTextParser::ParseExprInt()
 {
     auto val = Peek().intVal;
     ++cur_;
-    return std::make_shared<ConstInt>(val, DataType::INT64, Span::Unknown());
+    // Codegen re-reads this as SymbolicScalar; keep the RawSymbolic node type.
+    return npu::tile_fwk::SymbolicScalar(val).AsExpr();
 }
 
 ExprPtr IRTextParser::ParseExprFloat()
@@ -932,8 +933,8 @@ StmtPtr IRTextParser::ParseStmtFor(const VarDefList& defVarList)
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwFor));
     // for %loopVar inrange start, stop, step [iter (...)] {body}
     MUST_VALID(loopVarName, ParseVarName());
-    auto loopVar = std::make_shared<Var>(loopVarName->data, std::make_shared<ScalarType>(DataType::INT64),
-                                         Span::Unknown());
+    // A direct run uses RawSymbolicSymbol here; a plain Var would be reinterpreted as one.
+    auto loopVar = std::make_shared<npu::tile_fwk::RawSymbolicSymbol>(loopVarName->data);
     symtab_[loopVarName->data] = loopVar;
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwInrange));
     MUST_VALID(start, ParseExpr());
@@ -944,9 +945,21 @@ StmtPtr IRTextParser::ParseStmtFor(const VarDefList& defVarList)
     MUST_VALID(iterArgs, ParseIterArgs());
     MUST_VALID(attrDict, ParseAttrDict());
     MUST_VALID(body, ParseStmtSeq());
-    std::vector<std::pair<std::string, std::any>> attrs(attrDict->data.begin(), attrDict->data.end());
-    return std::make_shared<ForStmt>(loopVar, start, stop, step, iterArgs->data, body, defVarList.GetVarDefList(),
-                                     Span::Unknown(), std::move(attrs));
+    std::vector<std::pair<std::string, std::any>> attrs;
+    if (!FillForStmtAttrs(attrDict->data, attrs)) {
+        return nullptr;
+    }
+    auto asScalar = [](const ExprPtr& e) -> ExprPtr {
+        if (e == nullptr || std::dynamic_pointer_cast<const npu::tile_fwk::RawSymbolicScalar>(e) != nullptr) {
+            return e;
+        }
+        if (auto intLit = std::dynamic_pointer_cast<const ConstInt>(e)) {
+            return npu::tile_fwk::SymbolicScalar(intLit->value_).AsExpr();
+        }
+        return e;
+    };
+    return std::make_shared<ForStmt>(loopVar, asScalar(start), asScalar(stop), asScalar(step), iterArgs->data, body,
+                                     defVarList.GetVarDefList(), Span::Unknown(), std::move(attrs));
 }
 
 StmtPtr IRTextParser::ParseStmtWhile(const VarDefList& defVarList)
