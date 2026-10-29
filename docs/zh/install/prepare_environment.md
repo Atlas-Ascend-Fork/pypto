@@ -147,7 +147,7 @@
 
     - PyTorch及TorchNPU：
         - **顺序说明**：请务必先完成上文"安装CANN包"章节中的toolkit包安装后，再安装`TorchNPU`。
-        - 请根据实际环境的Python版本单独安装，请参考《[TorchNPU软件安装](https://www.hiascend.com/document/detail/zh/Pytorch/latest/installguide/swinstall/docs/zh/installation_guide/installation_description.md)》。
+        - 请根据实际环境的Python版本单独安装，请参考《[TorchNPU软件安装](    https://www.hiascend.com/developer/software/ai-frameworks/pytorch/download)》。
         - **重要**：需确保`PyTorch`、`TorchNPU`与`PyPTO`三者的Python版本一致。
         <!-- npu="x90,9030" id1 -->
         Kirin处理器系列产品：仅依赖PyTorch，不需要安装TorchNPU。

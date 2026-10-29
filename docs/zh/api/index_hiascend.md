@@ -1,6 +1,6 @@
 # PyPTO API参考
 
-- [PyPTO Tensor API](tensor_api/index.md)
+- [PyPTO Tensor API<a npu_parse_enabled="true"></a>](tensor_api/index.md)
   - [张量](tensor_api/tensor/index.md)
     - [pypto.Tensor简介](tensor_api/tensor/pypto-Tensor_introduction.md)
     - [pypto.Tensor构造函数](tensor_api/tensor/pypto-Tensor_constructor.md)
@@ -283,7 +283,7 @@
     - [pypto.DYNAMIC](tensor_api/others/pypto-DYNAMIC.md)
     - [pypto.frontend.function](tensor_api/others/pypto-frontend-function.md)
 
-- [PyPTO Pro API](pro_api/index.md)
+- [PyPTO Pro API<a npu_parse_enabled="true"></a>](pro_api/index.md)
   - [SIMD API](pro_api/SIMD-API/index.md)
     - [基础数据结构](pro_api/SIMD-API/basic_data_structures/index.md)
       - [pypto_pro.language.AccPhase](pro_api/SIMD-API/basic_data_structures/AccPhase.md)

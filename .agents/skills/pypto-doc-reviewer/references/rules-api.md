@@ -76,7 +76,7 @@
 
 | 编号 | 规则 | 严重级别 |
 |------|------|---------|
-| API-13 | 使用 ` ```python ` 代码块声明，含类型标注；原型统一**不加 `def` 关键字和末尾冒号**，直接写 `函数名(参数) -> 返回类型`（如 `bitwise_and(input: Tensor, other: Union[Tensor, int]) -> Tensor`） | HIGH |
+| API-13 | 使用 `python` 代码块声明，含类型标注；原型统一**不加 `def` 关键字和末尾冒号**，直接写 `函数名(参数) -> 返回类型`（如 `bitwise_and(input: Tensor, other: Union[Tensor, int]) -> Tensor`） | HIGH |
 | API-14 | 原型必须与代码实现一致：函数名、参数名、参数顺序、类型、返回值。若 PR 修改了 `.py` 签名，对应文档必须同步更新，不得遗留旧原型 | CRITICAL |
 | API-15 | 存在多个重载/变体接口时，须分别列出原型并明确标注适用场景 | MEDIUM |
 
@@ -113,7 +113,7 @@
 | API-27 | 示例代码不使用交互式会话格式（`>>>` REPL 风格），统一使用普通脚本形式 | MEDIUM |
 | API-28 | 涉及 TileShape 前置设置的接口（vec 类操作），示例须先调用 `set_vec_tile_shapes` 并说明设置依据 | MEDIUM |
 | API-29 | 结果示例按接口类型区分：**vector 计算 API** 为方便用户理解计算逻辑，建议给出结果示例（"结果示例如下"代码块）；**cube 计算 API** 由于计算逻辑复杂，可不提供结果示例 | LOW |
-| API-30 | 块级代码示例使用三反引号围栏代码块（如 ` ```python `），并声明语言类型（python、bash、json 等），上下空一行 | MEDIUM |
+| API-30 | 块级代码示例使用三反引号围栏代码块（如 `python`），并声明语言类型（python、bash、json 等），上下空一行 | MEDIUM |
 
 > 全文通用的表达约定（标识符引用风格、锚点与链接规范、pro 接口命名、数据类型写法、功能开关用词）见 [rules-terms.md](rules-terms.md)「表达约定」。
 

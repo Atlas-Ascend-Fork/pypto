@@ -22,7 +22,7 @@ description: PyPTO 文档（docs/目录）质量检查，支持两种模式：�
 
 | # | 维度 | 何时必查 | 规则来源 |
 |---|------|---------|----------|
-| 1 | 开源写作规范 | 所有 `.md` | 外部（webfetch 其一）：[CANN 文档写作要求](https://gitcode.com/cann/community/blob/master/contributor/docs/document_writing_specs.md) 或 [md-review-skill 检视规则](https://gitcode.com/cann/docs/blob/master/skills/md-review-skill/SKILL.md#%E5%BC%80%E6%BA%90%E5%86%99%E4%BD%9C%E8%A7%84%E8%8C%83%E6%A3%80%E8%A7%86%E8%A7%84%E5%88%99) |
+| 1 | 开源写作规范 | 所有 `.md` | 外部（webfetch 读取，配套使用）：[开源文档写作规范](https://gitcode.com/cann/docs/blob/master/specification/document_writing_specs.md)（事实来源）及配套检视规则 [md-review-skill](https://gitcode.com/cann/docs/blob/master/skills/md-review-skill/SKILL.md) |
 | 2 | API 文档写作规范 | `docs/zh/api/` 下文件 | [rules-api.md](references/rules-api.md) |
 | 3 | 产品型号和芯片标签 | 所有 `.md` | [rules-product.md](references/rules-product.md) |
 | 4 | 术语及表达约定 | 所有 `.md` | [rules-terms.md](references/rules-terms.md) |
@@ -33,7 +33,7 @@ description: PyPTO 文档（docs/目录）质量检查，支持两种模式：�
 对检查范围内每个 `.md` 文件：
 
 1. **选维度**：按上表「何时必查」确定该文件命中的维度
-2. **读规则**：读取命中维度的规则文件（维度 1 用 webfetch 读外部规范其一）
+2. **读规则**：读取命中维度的规则文件（维度 1 用 webfetch 读取开源文档写作规范及配套的 md-review-skill 检视规则）
 3. **读文件**：新文件读全文；修改文件按检查粒度——变更点检查读 diff 及所在章节上下文，全量检查读全文
 4. **逐条核对**：按「规则」逐项检查，并执行文件末尾「检查方法」中的排查命令。通用排版排查（维度 1，对所有 `.md` 执行）：`grep -nP '[\x{4e00}-\x{9fa5}] [A-Za-z0-9\x{4e00}-\x{9fa5}]|[A-Za-z0-9] [\x{4e00}-\x{9fa5}]' <目标文件>`——中文与英文之间、中文与中文之间均不加空格
 5. **记录**：命中问题按「问题输出格式」记为 findings，定级 CRITICAL/HIGH/MEDIUM/LOW。排查命令为文件级扫描，报告按检查粒度过滤——变更点检查（检视模式同）仅报变更行及其上下文内的问题，全量检查报全部命中
