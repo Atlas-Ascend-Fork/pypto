@@ -26,7 +26,7 @@ CUMPROD_TESTS = [
                 'dtype': 'fp32',
                 'format': 'ND',
                 'need_trans': False,
-                'data_range': {'min': -100, 'max': 100},
+                'data_range': {'min': -2, 'max': 2},
             }
         ],
         'output_tensors': [

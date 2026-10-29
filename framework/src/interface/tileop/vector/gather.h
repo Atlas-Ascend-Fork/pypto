@@ -568,6 +568,7 @@ TILEOP void TGatherMask(T0 dst, T1 src)
     auto dstStride1 = dstLayout.template GetStrideDim<DIM_2ND, MAX_DIMS>();
     auto dstStride2 = dstLayout.template GetStrideDim<DIM_3RD, MAX_DIMS>();
     auto dstStride3 = dstLayout.template GetStrideDim<DIM_4TH, MAX_DIMS>();
+    auto srcShape4 = srcLayout.template GetShapeDim<DIM_5TH, MAX_DIMS>();
     auto srcStride0 = srcLayout.template GetStrideDim<DIM_1ST, MAX_DIMS>();
     auto srcStride1 = srcLayout.template GetStrideDim<DIM_2ND, MAX_DIMS>();
     auto srcStride2 = srcLayout.template GetStrideDim<DIM_3RD, MAX_DIMS>();
@@ -588,7 +589,7 @@ TILEOP void TGatherMask(T0 dst, T1 src)
                     using SrcTileDefine = pto::Tile<pto::TileType::Vec, typename T1::Type, 1, srcTileW,
                                                     pto::BLayout::RowMajor, -1, -1>;
                     DstTileDefine dstTile(1, dstShape4);
-                    SrcTileDefine srcTile(1, srcTileW);
+                    SrcTileDefine srcTile(1, srcShape4);
                     auto dstOffset = n0Index * dstStride0 + n1Index * dstStride1 + n2Index * dstStride2 +
                                      n3Index * dstStride3;
                     auto srcOffset = n0Index * srcStride0 + n1Index * srcStride1 + n2Index * srcStride2 +

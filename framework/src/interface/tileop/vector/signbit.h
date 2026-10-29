@@ -101,12 +101,7 @@ TILEOP void TSignbit(T0 dst, T1 src, T2 tmp)
                 pto::TASSIGN(srcTile, (uint64_t)(src.GetAddr() + srcOffset * srcTypeSize));
 
                 if constexpr (std::is_same<typename T1::Type, uint8_t>::value) {
-                    constexpr auto UINT8_TO_UINT16_RATIO = sizeof(uint16_t) / sizeof(uint8_t);
-                    using DstUint16Tile = pto::Tile<pto::TileType::Vec, uint16_t, srcTileH,
-                                                    srcTileW / UINT8_TO_UINT16_RATIO, pto::BLayout::RowMajor, -1, -1>;
-                    DstUint16Tile dstUint16Tile(dstShape3, dstShape4);
-                    pto::TASSIGN(dstUint16Tile, (uint64_t)(dst.GetAddr() + dstOffset * dstTypeSize));
-                    pto::TEXPANDS(dstUint16Tile, static_cast<uint16_t>(zero));
+                    pto::TEXPANDS(dstTile, static_cast<uint8_t>(zero));
                     continue;
                 } else if constexpr (std::is_same<typename T1::Type, float>::value ||
                                      std::is_same<typename T1::Type, int32_t>::value) {

@@ -42,7 +42,10 @@ TILEOP void TLog1pTileImpl(TDst dstTile, TSrc srcTile, TTmp0 tmp0Tile, TTmp1 tmp
     // If x + 1 == 1, return x.
     pto::TCMPS(maskTile, tmp0Tile, scalarOne, pto::CmpMode::EQ);
     SyncV();
-    pto::TSEL(dstTile, maskTile, srcTile, dstTile, tmp1Tile);
+    // TSEL requires matching operand layouts; TMULS also supports different row strides.
+    pto::TMULS(tmp2Tile, srcTile, scalarOne);
+    SyncV();
+    pto::TSEL(dstTile, maskTile, tmp2Tile, dstTile, tmp1Tile);
     SyncV();
 
     // If x + 1 == inf, return inf.
@@ -75,7 +78,7 @@ TILEOP void TLog1p(T0 dst, T1 src, T2 tmp)
     using MaskTileDefine = pto::Tile<pto::TileType::Vec, uint8_t, tileH, tileW * 4, pto::BLayout::RowMajor, -1, -1>;
 
     DataTileDefine dstTile(shape3, shape4);
-    DataTileDefine srcTile(shape3, shape4);
+    auto srcTile = MakeElementwiseOperandExecTile(dst, src);
     DataTileDefine tmp0Tile(shape3, shape4);
     DataTileDefine tmp1Tile(shape3, shape4);
     DataTileDefine tmp2Tile(shape3, shape4);

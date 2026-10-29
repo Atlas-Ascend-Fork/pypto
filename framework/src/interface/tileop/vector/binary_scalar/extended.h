@@ -93,7 +93,7 @@ TILEOP void TGcdS(T0 dst, T1 src0, Scalar src1, T2 temp)
     MaskTile oppTile(shape3, shape4);
     MaskTile fixMaskTile(shape3, shape4);
     CalcTile selTmpTile(shape3, shape4);
-    TTile src0Tile(shape3, shape4);
+    auto src0Tile = MakeElementwiseOperandExecTile(dst, src0);
     TTile dstTile(shape3, shape4);
 
     pto::TASSIGN(aTile, temp.GetAddr());

@@ -207,7 +207,7 @@ TILEOP void ErfCompute(T0 dst, T1 tmp, T2 src)
     TmpFP32Tile tmp0Tile(shape3, shape4);
     TmpFP32Tile tmp2Tile(shape3, shape4);
     TmpFP32Tile tmp3Tile(shape3, shape4);
-    TmpFP32Tile src0Tile(shape3, shape4);
+    auto src0Tile = MakeElementwiseOperandExecTile(dst, src);
     constexpr size_t TMP2_SLOT = 2;
     for (LoopVar n0Index = 0; n0Index < shape0; ++n0Index) {
         for (LoopVar n1Index = 0; n1Index < shape1; ++n1Index) {

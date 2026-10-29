@@ -303,7 +303,7 @@ TILEOP void TFloorDivS(T0 dst, T1 src0, Scalar src1, T2 tmp)
                                   FLOOR_DIV_TMP_PLANE_COUNT;
     using DataTileDefine = pto::Tile<pto::TileType::Vec, typename T0::Type, tileH, tileW, pto::BLayout::RowMajor, -1,
                                      -1>;
-    DataTileDefine src0Tile(dstShape3, dstShape4);
+    auto src0Tile = MakeElementwiseOperandExecTile(dst, src0);
     DataTileDefine dstTile(dstShape3, dstShape4);
 
     for (LoopVar n0Index = 0; n0Index < dstShape0; ++n0Index) {

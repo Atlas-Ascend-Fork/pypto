@@ -197,7 +197,7 @@ TEST_F(TestCodegenDynUna, TestPadDynamic)
                                                                 HIDDEN_FUNC_SUFFIX);
 
     const std::string res = GenCodeByFunction(*function);
-    std::string expect = R"!!!(TPad<pto::PadValueCustom((float)2.f)>(ubTensor_2, ubTensor_0);)!!!";
+    std::string expect = R"!!!(TPad<pto::PadValueCustom((float)2.f), 18>(ubTensor_2, ubTensor_0);)!!!";
     CheckStringExist(expect, res);
 }
 
@@ -228,7 +228,7 @@ TEST_F(TestCodegenDynUna, TestPadDynamicFP16)
                                                                 HIDDEN_FUNC_SUFFIX);
 
     const std::string res = GenCodeByFunction(*function);
-    std::string expect = R"!!!(TPad<pto::PadValue::Max>(ubTensor_2, ubTensor_0);)!!!";
+    std::string expect = R"!!!(TPad<pto::PadValue::Max, 18>(ubTensor_2, ubTensor_0);)!!!";
     CheckStringExist(expect, res);
 }
 

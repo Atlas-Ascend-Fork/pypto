@@ -184,14 +184,29 @@ template <typename DST, typename SRC0, typename SRC1, typename TMP1, typename TM
 TILEOP void Atan2Div(DST dst, SRC0 src0, SRC1 src1, TMP1 tmp1, TMP2 tmp2, TMP3 tmp3, CMP cmp)
 {
     pto::TDIV<pto::DivAlgorithm::HIGH_PRECISION>(dst, src0, src1);
-    pto::TCMP(cmp, src0, src1, pto::CmpMode::NE);
+    if constexpr (SRC0::RowStride == SRC1::RowStride) {
+        pto::TCMP(cmp, src0, src1, pto::CmpMode::NE);
+    } else {
+        pto::TMULS(tmp1, src0, 1.0f);
+        pto::TMULS(tmp2, src1, 1.0f);
+        SyncV();
+        pto::TCMP(cmp, tmp1, tmp2, pto::CmpMode::NE);
+        SyncV();
+    }
     pto::TMULS(tmp1, src0, -1.0);
     pto::TEXPANDS(tmp2, 1.0);
     SyncV();
     pto::TSEL(dst, cmp, dst, tmp2, tmp3);
     SyncV();
     pto::TEXPANDS(tmp2, -1.0);
-    pto::TCMP(cmp, tmp1, src1, pto::CmpMode::NE);
+    if constexpr (TMP1::RowStride == SRC1::RowStride) {
+        pto::TCMP(cmp, tmp1, src1, pto::CmpMode::NE);
+    } else {
+        // TCMP uses its first FP32 operand's row stride for both operands.
+        pto::TMULS(tmp3, src1, 1.0f);
+        SyncV();
+        pto::TCMP(cmp, tmp1, tmp3, pto::CmpMode::NE);
+    }
     SyncV();
     pto::TSEL(dst, cmp, dst, tmp2, tmp3);
     SyncV();
@@ -233,8 +248,6 @@ TILEOP void TAtan2(DST dst, SRC0 src0, SRC1 src1, TMP tmp)
                 AssignElementwiseOperandExecTile(src0ExecTile, src0, dstOffset);
                 AssignElementwiseOperandExecTile(src1ExecTile, src1, dstOffset);
                 auto tileOffset = GenTileOffset(dst, dstOffset);
-                pto::TASSIGN(dstUIntTile, dst.GetAddr() + tileOffset * dstDtypeSize);
-                pto::TASSIGN(dstHalfTile, dst.GetAddr() + tileOffset * dstDtypeSize);
                 auto tmp1Offset = tileOffset * AtanConstants::NUM_VALUE_4;
                 auto tmp2Offset = tmp1Offset + dstShape[DIM_4TH] * tileW;
                 auto tmp3Offset = tmp2Offset + dstShape[DIM_4TH] * tileW;
@@ -242,6 +255,9 @@ TILEOP void TAtan2(DST dst, SRC0 src0, SRC1 src1, TMP tmp)
                 tmp1Tile.Assign(tmp.GetAddr(), tmp1Offset);
                 tmp2Tile.Assign(tmp.GetAddr(), tmp2Offset);
                 tmp3Tile.Assign(tmp.GetAddr(), tmp3Offset);
+                // The packed FP16 sign workspace must not overwrite gaps in the FP32 output.
+                pto::TASSIGN(dstUIntTile, tmp.GetAddr() + tmp3Offset * dstDtypeSize);
+                pto::TASSIGN(dstHalfTile, tmp.GetAddr() + tmp3Offset * dstDtypeSize);
                 pto::TASSIGN(tmp2UIntTile, tmp.GetAddr() + tmp2Offset * dstDtypeSize);
                 pto::TASSIGN(cmpTile, tmp.GetAddr() + cmpOffset * dstDtypeSize);
                 Atan2Div(dstTile.Data(), src0ExecTile, src1ExecTile, tmp1Tile.Data(), tmp2Tile.Data(), tmp3Tile.Data(),

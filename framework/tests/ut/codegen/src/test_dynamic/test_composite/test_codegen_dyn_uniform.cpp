@@ -58,7 +58,7 @@ TEST_F(TestCodegenDynUniform, UniformTileTensorFP32)
     op.SetAttribute(OP_ATTR_PREFIX + "SHAPE", shape);
 
     std::string res = GenOpCodeFromOp(*function, op);
-    EXPECT_TRUE(res.find("TUniform") != std::string::npos);
+    EXPECT_TRUE(res.find("TUniform<64>") != std::string::npos);
 }
 
 TEST_F(TestCodegenDynUniform, UniformTileTensorFP16)
@@ -86,7 +86,7 @@ TEST_F(TestCodegenDynUniform, UniformTileTensorFP16)
     op.SetAttribute(OP_ATTR_PREFIX + "SHAPE", shape);
 
     std::string res = GenOpCodeFromOp(*function, op);
-    EXPECT_TRUE(res.find("TUniform") != std::string::npos);
+    EXPECT_TRUE(res.find("TUniform<64>") != std::string::npos);
 }
 
 TEST_F(TestCodegenDynUniform, UniformTileTensorBF16)
@@ -114,7 +114,7 @@ TEST_F(TestCodegenDynUniform, UniformTileTensorBF16)
     op.SetAttribute(OP_ATTR_PREFIX + "SHAPE", shape);
 
     std::string res = GenOpCodeFromOp(*function, op);
-    EXPECT_TRUE(res.find("TUniform") != std::string::npos);
+    EXPECT_TRUE(res.find("TUniform<64>") != std::string::npos);
 }
 
 } // namespace npu::tile_fwk

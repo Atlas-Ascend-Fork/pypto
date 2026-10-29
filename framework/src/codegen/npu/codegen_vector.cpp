@@ -613,7 +613,7 @@ std::string CodeGenOpNPU::GenUniformOp() const
     std::vector<std::string> paramList = GetTileOpParamsByOrder();
     paramList.insert(paramList.end(), {keyStr, counter0Str, counter1Str, roundsStr});
     std::ostringstream oss;
-    oss << tileOpName << WrapParamByParentheses(paramList) << STMT_END;
+    oss << tileOpName << "<" << randomShape.back() << ">" << WrapParamByParentheses(paramList) << STMT_END;
     return oss.str();
 }
 
@@ -1278,9 +1278,7 @@ std::string CodeGenOpNPU::PrintPadTileTensor() const
     std::vector<std::string> tileOpParamList = GetTileOpParamsByOrder();
     std::ostringstream oss;
 
-    const std::string fillPadCols = originalOp.GetOpcode() == Opcode::OP_FILLPAD ?
-                                        ", " + std::to_string(shape[0].back()) :
-                                        "";
+    const std::string fillPadCols = ", " + std::to_string(shape[0].back());
     bool isFloatType = (dstDtype == DT_FP32 || dstDtype == DT_FP16 || dstDtype == DT_BF16);
 
     if (isFloatType) {

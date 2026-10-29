@@ -22,7 +22,7 @@
 
 #if defined(PTO_NPU_ARCH_A5) || defined(__CPU_SIM)
 #define OP_TILE_OP_UNIFORM TUniform
-template <typename TDst, typename TTmp>
+template <int Size, typename TDst, typename TTmp>
 TILEOP void TUniform(TDst dst, TTmp tmpbuf, uint64_t key, uint64_t counter0, uint64_t counter1, uint16_t rounds)
 {
     constexpr uint16_t REDUCED_ROUNDS = 7;
@@ -37,8 +37,7 @@ TILEOP void TUniform(TDst dst, TTmp tmpbuf, uint64_t key, uint64_t counter0, uin
     constexpr uint16_t FP16_ONE_BITS = 0x3C00;
     constexpr uint16_t BF16_MANTISSA_MASK = 0x007F;
     constexpr uint16_t BF16_ONE_BITS = 0x3F80;
-    constexpr auto shapeSize = Std::tuple_size<typename TDst::Shape>::value;
-    constexpr int Size = Std::tuple_element<shapeSize - 1, typename TDst::TileShape>::type::value;
+    const auto validSize = dst.GetLayout().template GetShapeDim<DIM_5TH, MAX_DIMS>();
     constexpr int alignElems = static_cast<int>(TileOp::BLOCK_SIZE / sizeof(uint32_t));
     constexpr int tileW = (Size + alignElems - 1) / alignElems * alignElems;
 
@@ -48,8 +47,8 @@ TILEOP void TUniform(TDst dst, TTmp tmpbuf, uint64_t key, uint64_t counter0, uin
     __ubuf__ uint32_t* uint32Buffer = reinterpret_cast<__ubuf__ uint32_t*>(tmpbufAddr);
 
     using TileUint32 = pto::Tile<pto::TileType::Vec, uint32_t, 1, tileW, pto::BLayout::RowMajor, -1, -1>;
-    TileUint32 uint32Tile(1, Size);
-    TileUint32 dstUint32Tile(1, Size);
+    TileUint32 uint32Tile(1, validSize);
+    TileUint32 dstUint32Tile(1, validSize);
     pto::TASSIGN(uint32Tile, (uint64_t)uint32Buffer);
 
     pto::TRandomKey uniformKey = {static_cast<uint32_t>(key & UINT32_LOW_MASK),
@@ -77,11 +76,11 @@ TILEOP void TUniform(TDst dst, TTmp tmpbuf, uint64_t key, uint64_t counter0, uin
         pto::TORS(uint32Tile, dstUint32Tile, FP32_ONE_BITS);
 
         using TileFloat = pto::Tile<pto::TileType::Vec, float, 1, tileW, pto::BLayout::RowMajor, -1, -1>;
-        TileFloat floatTile(1, Size);
+        TileFloat floatTile(1, validSize);
         pto::TASSIGN(floatTile, (uint64_t)uint32Buffer);
 
         using TileDst = pto::Tile<pto::TileType::Vec, DstType, 1, tileW, pto::BLayout::RowMajor, -1, -1>;
-        TileDst dstTile(1, Size);
+        TileDst dstTile(1, validSize);
         pto::TASSIGN(dstTile, (uint64_t)(dst.GetAddr()));
         pto::TSUBS(dstTile, floatTile, 1.0f);
     } else if constexpr (isHalf || isBfloat16) {
@@ -90,7 +89,7 @@ TILEOP void TUniform(TDst dst, TTmp tmpbuf, uint64_t key, uint64_t counter0, uin
                                               TileOp::BLOCK_SIZE;
         __ubuf__ uint32_t* uint32BufferLow = reinterpret_cast<__ubuf__ uint32_t*>(tmpbufAddr + uint32BufferBytes);
 
-        TileUint32 uint32TileLow(1, Size);
+        TileUint32 uint32TileLow(1, validSize);
         pto::TASSIGN(uint32TileLow, (uint64_t)uint32BufferLow);
 
         pto::TANDS(uint32TileLow, uint32Tile, UINT16_LOW_MASK);
@@ -98,8 +97,8 @@ TILEOP void TUniform(TDst dst, TTmp tmpbuf, uint64_t key, uint64_t counter0, uin
         __ubuf__ uint16_t* uint16Buffer = reinterpret_cast<__ubuf__ uint16_t*>(tmpbufAddr);
 
         using TileUint16 = pto::Tile<pto::TileType::Vec, uint16_t, 1, tileW, pto::BLayout::RowMajor, -1, -1>;
-        TileUint16 uint16Tile(1, Size);
-        TileUint16 dstUint16Tile(1, Size);
+        TileUint16 uint16Tile(1, validSize);
+        TileUint16 dstUint16Tile(1, validSize);
         pto::TASSIGN(uint16Tile, (uint64_t)uint16Buffer);
         pto::TASSIGN(dstUint16Tile, (uint64_t)dst.GetAddr());
 
@@ -116,11 +115,11 @@ TILEOP void TUniform(TDst dst, TTmp tmpbuf, uint64_t key, uint64_t counter0, uin
         __ubuf__ DstType* resultBuffer = reinterpret_cast<__ubuf__ DstType*>(uint16Buffer);
 
         using TileResult = pto::Tile<pto::TileType::Vec, DstType, 1, tileW, pto::BLayout::RowMajor, -1, -1>;
-        TileResult resultTile(1, Size);
+        TileResult resultTile(1, validSize);
         pto::TASSIGN(resultTile, (uint64_t)resultBuffer);
 
         using TileDst = pto::Tile<pto::TileType::Vec, DstType, 1, tileW, pto::BLayout::RowMajor, -1, -1>;
-        TileDst dstTile(1, Size);
+        TileDst dstTile(1, validSize);
         pto::TASSIGN(dstTile, (uint64_t)(dst.GetAddr()));
 
         if constexpr (isHalf) {
