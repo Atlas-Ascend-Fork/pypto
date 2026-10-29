@@ -77,14 +77,14 @@ Status AssignMemoryType::ApplyPlatformPathUpgradeRules(Function& function)
 {
     RETURN_IF_NOT_SUCCESS(ProcessDdrMultiReshape(function));
     RETURN_IF_NOT_SUCCESS(ProcessL1DdrL1(function));
-    RETURN_IF_NOT_SUCCESS(ProcessL0C2L1SmallToLarge(function));
     RETURN_IF_NOT_SUCCESS(ProcessL0C2L1LargeToSmall(function));
+    RETURN_IF_NOT_SUCCESS(ProcessL0C2L1SmallToLarge(function));
     if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510 ||
         IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
         RETURN_IF_NOT_SUCCESS(ProcessL0C2UBSmallToLarge(function));
         RETURN_IF_NOT_SUCCESS(ProcessL0C2UBLargeToSmall(function));
-        RETURN_IF_NOT_SUCCESS(ProcessUB2L1SmallToLarge(function));
         RETURN_IF_NOT_SUCCESS(ProcessUB2L1LargeToSmall(function));
+        RETURN_IF_NOT_SUCCESS(ProcessUB2L1SmallToLarge(function));
     }
     if (Platform::Instance().GetSoc().IsSupportCubeEpilogue()) {
         RETURN_IF_NOT_SUCCESS(ProcessL12UBSmallToLarge(function));
