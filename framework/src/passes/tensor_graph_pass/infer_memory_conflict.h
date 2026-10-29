@@ -41,7 +41,8 @@ private:
                                std::queue<LogicalTensorPtr>& curTensors);
     Status BackwardPropagation(Function& function);
     Status UpdateBackwardTensor(Function& function, const LogicalTensorPtr& curTensor, Operation* producer,
-                                std::queue<LogicalTensorPtr>& curTensors);
+                                std::queue<std::pair<LogicalTensorPtr, Operation*>>& curTensors,
+                                Operation* outcastAssembleLike = nullptr);
     Status InsertPrecededCopys(Function& function);
     Status InsertPostCopys(Function& function);
     Status InsertCopys(Function& function);

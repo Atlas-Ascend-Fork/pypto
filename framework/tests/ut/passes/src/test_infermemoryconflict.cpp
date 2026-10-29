@@ -233,196 +233,13 @@ TEST_F(InferMemoryConflictTest, TestSkipOutcastInputBackward)
 
     InferMemoryConflict updatePass;
     updatePass.memoryInfo[curTensor] = curTensor;
-    std::queue<LogicalTensorPtr> curTensors;
+    std::queue<std::pair<LogicalTensorPtr, Operation*>> curTensors;
     status = updatePass.UpdateBackwardTensor(*currFunctionPtr, curTensor, &producer, curTensors);
     EXPECT_EQ(status, SUCCESS);
     EXPECT_TRUE(curTensors.empty());
     EXPECT_EQ(updatePass.memoryInfo.find(outcastInput), updatePass.memoryInfo.end());
-    EXPECT_EQ(updatePass.preregcopys.size(), NUM_ONE);
+    EXPECT_EQ(updatePass.preregcopys.size(), NUM_ZERO);
     EXPECT_EQ(updatePass.postregcopys.size(), NUM_ZERO);
-}
-
-/*
-Case:
-incast -> view -> viewTensor -> atomic_rmw -> source(outcast) -> assemble -> destination(outcast)
-The first copy separates View from AtomicRMW because their memory IDs conflict;
-a second copy is needed before Assemble when its output memory also conflicts.
-*/
-TEST_F(InferMemoryConflictTest, OutcastAssembleOutcastInsertsRegisterCopy)
-{
-    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "TestOutcastAssembleOutcast",
-                                                      "TestOutcastAssembleOutcast", nullptr);
-    ASSERT_NE(currFunctionPtr, nullptr);
-
-    const Shape shape = {NUM_2, NUM_4};
-    const Offset offset = {NUM_ZERO, NUM_ZERO};
-    auto incastRaw = std::make_shared<RawTensor>(DT_FP32, shape);
-    auto sourceRaw = std::make_shared<RawTensor>(DT_FP32, shape);
-    auto destinationRaw = std::make_shared<RawTensor>(DT_FP32, shape);
-    incastRaw->SetSymbol("incast");
-    sourceRaw->SetSymbol("source");
-    destinationRaw->SetSymbol("destination");
-    incastRaw->memoryId = NUM_ZERO;
-    sourceRaw->memoryId = NUM_ONE;
-    destinationRaw->memoryId = NUM_2;
-    auto incast = IRBuilder().CreateTensorVar(incastRaw, offset, shape, CreateTestConstIntVector(shape));
-    auto viewTensor = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
-    auto source = IRBuilder().CreateTensorVar(sourceRaw, offset, shape, CreateTestConstIntVector(shape));
-    auto destination = IRBuilder().CreateTensorVar(destinationRaw, offset, shape, CreateTestConstIntVector(shape));
-    currFunctionPtr->inCasts_.push_back(incast);
-    currFunctionPtr->outCasts_.push_back(source);
-    currFunctionPtr->outCasts_.push_back(destination);
-
-    auto& view = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_VIEW, {incast}, {viewTensor});
-    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(offset));
-    auto& atomicRmw = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_ATOMIC_RMW, {viewTensor}, {source});
-    atomicRmw.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, offset));
-    atomicRmw.SetAttribute(OpAttributeKey::rmwMode, static_cast<int>(AtomicRMWMode::ADD));
-
-    auto& assemble = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_ASSEMBLE, {source}, {destination});
-    assemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, offset));
-
-    InferMemoryConflict pass;
-    ASSERT_EQ(pass.RunOnFunction(*currFunctionPtr), SUCCESS);
-    EXPECT_EQ(CountRegisterCopy(currFunctionPtr.get()), NUM_2);
-    Operation* copyAfterView = nullptr;
-    for (auto& op : currFunctionPtr->Operations().DuplicatedOpList()) {
-        if (op->GetOpcode() == Opcode::OP_REGISTER_COPY && op->GetIOperands().front() == viewTensor) {
-            copyAfterView = op;
-        }
-    }
-    ASSERT_NE(copyAfterView, nullptr);
-    EXPECT_EQ(atomicRmw.GetIOperands().front(), copyAfterView->GetOOperands().front());
-
-    Operation* copyBeforeAssemble = nullptr;
-    for (auto& op : currFunctionPtr->Operations().DuplicatedOpList()) {
-        if (op->GetOpcode() == Opcode::OP_REGISTER_COPY && op->GetIOperands().front() == source) {
-            copyBeforeAssemble = op;
-        }
-    }
-    ASSERT_NE(copyBeforeAssemble, nullptr);
-    EXPECT_EQ(assemble.GetIOperands().front(), copyBeforeAssemble->GetOOperands().front());
-}
-
-/*
-Case:
-incast -> view -> viewTensor -> atomic_rmw -> source(outcast) -> index_add -> destination(outcast)
-Copies are required after View and before IndexAdd. IndexAdd's copy must replace
-its transmitted target input, not src or indices.
-*/
-TEST_F(InferMemoryConflictTest, OutcastIndexAddOutcastInsertsRegisterCopy)
-{
-    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "TestOutcastIndexAddOutcast",
-                                                      "TestOutcastIndexAddOutcast", nullptr);
-    ASSERT_NE(currFunctionPtr, nullptr);
-
-    const Shape shape = {NUM_2, NUM_4};
-    const Shape srcShape = {NUM_ONE, NUM_4};
-    const Shape indicesShape = {NUM_ONE};
-    const Offset offset = {NUM_ZERO, NUM_ZERO};
-    auto incastRaw = std::make_shared<RawTensor>(DT_FP32, shape);
-    auto sourceRaw = std::make_shared<RawTensor>(DT_FP32, shape);
-    auto destinationRaw = std::make_shared<RawTensor>(DT_FP32, shape);
-    incastRaw->SetSymbol("incast");
-    sourceRaw->SetSymbol("source");
-    destinationRaw->SetSymbol("destination");
-    incastRaw->memoryId = NUM_ZERO;
-    sourceRaw->memoryId = NUM_ONE;
-    destinationRaw->memoryId = NUM_2;
-    auto incast = IRBuilder().CreateTensorVar(incastRaw, offset, shape, CreateTestConstIntVector(shape));
-    auto viewTensor = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
-    auto source = IRBuilder().CreateTensorVar(sourceRaw, offset, shape, CreateTestConstIntVector(shape));
-    auto src = IRBuilder().CreateTensorVar(DT_FP32, srcShape, CreateTestConstIntVector(srcShape));
-    auto indices = IRBuilder().CreateTensorVar(DT_INT32, indicesShape, CreateTestConstIntVector(indicesShape));
-    auto destination = IRBuilder().CreateTensorVar(destinationRaw, offset, shape, CreateTestConstIntVector(shape));
-    auto tmp = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
-    currFunctionPtr->inCasts_.push_back(incast);
-    currFunctionPtr->inCasts_.push_back(src);
-    currFunctionPtr->inCasts_.push_back(indices);
-    currFunctionPtr->outCasts_.push_back(source);
-    currFunctionPtr->outCasts_.push_back(destination);
-    currFunctionPtr->outCasts_.push_back(tmp);
-
-    auto& view = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_VIEW, {incast}, {viewTensor});
-    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(offset));
-    auto& atomicRmw = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_ATOMIC_RMW, {viewTensor}, {source});
-    atomicRmw.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, offset));
-    atomicRmw.SetAttribute(OpAttributeKey::rmwMode, static_cast<int>(AtomicRMWMode::ADD));
-
-    auto& indexAdd = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_INDEX_ADD, {source, src, indices},
-                                                      {destination, tmp});
-
-    InferMemoryConflict pass;
-    ASSERT_EQ(pass.RunOnFunction(*currFunctionPtr), SUCCESS);
-    EXPECT_EQ(CountRegisterCopy(currFunctionPtr.get()), NUM_2);
-
-    Operation* copyBeforeIndexAdd = nullptr;
-    for (auto& op : currFunctionPtr->Operations().DuplicatedOpList()) {
-        if (op->GetOpcode() == Opcode::OP_REGISTER_COPY && op->GetIOperands().front() == source) {
-            copyBeforeIndexAdd = op;
-        }
-    }
-    ASSERT_NE(copyBeforeIndexAdd, nullptr);
-    EXPECT_EQ(indexAdd.GetIOperands().front(), copyBeforeIndexAdd->GetOOperands().front());
-}
-
-/*
-incast -> view -> viewTensor -> atomic_rmw -> source(outcast) -> index_outcast -> destination(outcast)
-IndexOutcast aliases its third input with the output. Its two indices are also
-incasts; copies are required after View and before IndexOutcast, with the latter
-replacing the aliased source rather than either index.
-*/
-TEST_F(InferMemoryConflictTest, OutcastIndexOutcastInsertsRegisterCopyAtAliasedInput)
-{
-    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "TestOutcastIndexOutcast",
-                                                      "TestOutcastIndexOutcast", nullptr);
-    ASSERT_NE(currFunctionPtr, nullptr);
-
-    const Shape shape = {NUM_2, NUM_4};
-    const Shape indexShape = {NUM_ONE};
-    const Offset offset = {NUM_ZERO, NUM_ZERO};
-    auto incastRaw = std::make_shared<RawTensor>(DT_FP32, shape);
-    auto sourceRaw = std::make_shared<RawTensor>(DT_FP32, shape);
-    auto destinationRaw = std::make_shared<RawTensor>(DT_FP32, shape);
-    incastRaw->SetSymbol("incast");
-    sourceRaw->SetSymbol("source");
-    destinationRaw->SetSymbol("destination");
-    incastRaw->memoryId = NUM_ZERO;
-    sourceRaw->memoryId = NUM_ONE;
-    destinationRaw->memoryId = NUM_2;
-    auto incast = IRBuilder().CreateTensorVar(incastRaw, offset, shape, CreateTestConstIntVector(shape));
-    auto viewTensor = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
-    auto source = IRBuilder().CreateTensorVar(sourceRaw, offset, shape, CreateTestConstIntVector(shape));
-    auto destination = IRBuilder().CreateTensorVar(destinationRaw, offset, shape, CreateTestConstIntVector(shape));
-    auto index0 = IRBuilder().CreateTensorVar(DT_INT32, indexShape, CreateTestConstIntVector(indexShape));
-    auto index1 = IRBuilder().CreateTensorVar(DT_INT32, indexShape, CreateTestConstIntVector(indexShape));
-    currFunctionPtr->inCasts_.push_back(incast);
-    currFunctionPtr->inCasts_.push_back(index0);
-    currFunctionPtr->inCasts_.push_back(index1);
-    currFunctionPtr->outCasts_.push_back(source);
-    currFunctionPtr->outCasts_.push_back(destination);
-
-    auto& view = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_VIEW, {incast}, {viewTensor});
-    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(offset));
-    auto& atomicRmw = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_ATOMIC_RMW, {viewTensor}, {source});
-    atomicRmw.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, offset));
-    atomicRmw.SetAttribute(OpAttributeKey::rmwMode, static_cast<int>(AtomicRMWMode::ADD));
-
-    auto& indexOutcast = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_INDEX_OUTCAST,
-                                                          {index0, index1, source}, {destination});
-
-    InferMemoryConflict pass;
-    ASSERT_EQ(pass.RunOnFunction(*currFunctionPtr), SUCCESS);
-    EXPECT_EQ(CountRegisterCopy(currFunctionPtr.get()), NUM_2);
-
-    Operation* copyBeforeIndexOutcast = nullptr;
-    for (auto& op : currFunctionPtr->Operations().DuplicatedOpList()) {
-        if (op->GetOpcode() == Opcode::OP_REGISTER_COPY && op->GetIOperands().front() == source) {
-            copyBeforeIndexOutcast = op;
-        }
-    }
-    ASSERT_NE(copyBeforeIndexOutcast, nullptr);
-    EXPECT_EQ(indexOutcast.GetIOperands()[2], copyBeforeIndexOutcast->GetOOperands().front());
 }
 
 /*
@@ -1933,5 +1750,185 @@ TEST_F(InferMemoryConflictTest, BMM_IncastAndOutcastOnlyOneDyn)
 
     EXPECT_EQ(CountRegisterCopy(currFunctionPtr), NUM_ZERO);
 }
+
+/*
+ * Before:
+ * incast(mem=0) -> VIEW -> inputView -> ASSEMBLE -> source(outcast1, mem=1)
+ * source -> VIEW / RESHAPE / INDEX_OUTCAST -> intermediate -> ASSEMBLE -> destination(outcast2)
+ * INDEX_OUTCAST inputs: {updates, indices, source}; destination mem=1 or mem=2.
+ *
+ * After:
+ * incast -> VIEW -> inputView -> REGISTER_COPY -> ASSEMBLE -> source
+ * VIEW / RESHAPE, destination mem=2:
+ * source -> VIEW / RESHAPE -> intermediate -> REGISTER_COPY -> ASSEMBLE -> destination
+ * Otherwise, the source-to-destination chain is unchanged. Backward propagation
+ * stops at an ASSEMBLE whose input is produced by INDEX_OUTCAST.
+ */
+TEST_F(InferMemoryConflictTest, OutcastInplaceChainCopiesBeforeAssemble)
+{
+    for (auto opcode : {Opcode::OP_VIEW, Opcode::OP_RESHAPE, Opcode::OP_INDEX_OUTCAST}) {
+        for (bool conflict : {false, true}) {
+            SCOPED_TRACE(static_cast<int>(opcode));
+            SCOPED_TRACE(conflict);
+            auto function = std::make_shared<Function>(Program::GetInstance(), "OutcastChain", "OutcastChain", nullptr);
+            const Shape shape = {NUM_2, NUM_32};
+            auto source = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+            auto destination = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+            source->tensor->symbol = "source";
+            destination->tensor->symbol = "destination";
+            source->tensor->memoryId = NUM_ONE;
+            destination->tensor->memoryId = conflict ? NUM_2 : NUM_ONE;
+            function->outCasts_ = {source, destination};
+            auto incast = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+            incast->tensor->symbol = "incast";
+            incast->tensor->memoryId = NUM_ZERO;
+            function->inCasts_ = {incast};
+            auto inputView = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+            auto& incastView = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_VIEW, {incast}, {inputView});
+            incastView.GetTileShapeForSetting().SetVecTile(NUM_2, NUM_32);
+            IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {inputView}, {source});
+            auto intermediate = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+            LogicalTensors inputs = {source};
+            if (opcode == Opcode::OP_INDEX_OUTCAST) {
+                const Shape indexShape = {NUM_ONE, NUM_2};
+                auto updates = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+                auto indices = IRBuilder().CreateTensorVar(DT_INT32, indexShape, CreateTestConstIntVector(indexShape));
+                inputs = {updates, indices, source};
+            }
+            auto& inplace = IRBuilder().CreateTensorOpStmt(*function, opcode, inputs, {intermediate});
+            inplace.GetTileShapeForSetting().SetVecTile(NUM_2, NUM_32);
+            auto& assemble = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {intermediate},
+                                                            {destination});
+            InferMemoryConflict pass;
+            ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+            const bool copyDestination = conflict && opcode != Opcode::OP_INDEX_OUTCAST;
+            EXPECT_EQ(CountRegisterCopy(function.get()), copyDestination ? NUM_2 : NUM_ONE);
+            if (!copyDestination) {
+                EXPECT_EQ(assemble.GetInputOperand(0), intermediate);
+                continue;
+            }
+            auto copied = assemble.GetInputOperand(0);
+            EXPECT_NE(copied, intermediate);
+            ASSERT_EQ(copied->GetProducers().size(), 1UL);
+            auto* copy = *copied->GetProducers().begin();
+            EXPECT_EQ(copy->GetOpcode(), Opcode::OP_REGISTER_COPY);
+            EXPECT_EQ(copy->GetInputOperand(0), intermediate);
+        }
+    }
+}
+
+/*
+ * Before:
+ * incast(mem=0) -> VIEW -> inputView -> ASSEMBLE -> source(outcast1, mem=1)
+ * source -> VIEW -> first -> ASSEMBLE(earlier) -> merged -> VIEW -> last
+ *        -> ASSEMBLE / ATOMIC_RMW(final) -> destination(outcast2, mem=2)
+ *
+ * After:
+ * incast -> VIEW -> inputView -> REGISTER_COPY -> ASSEMBLE -> source
+ * source -> VIEW -> first -> ASSEMBLE(earlier) -> merged -> VIEW -> last
+ *        -> REGISTER_COPY -> ASSEMBLE / ATOMIC_RMW(final) -> destination
+ * The outcast conflict copy belongs before the final ASSEMBLE / ATOMIC_RMW, not the earlier ASSEMBLE.
+ */
+TEST_F(InferMemoryConflictTest, OutcastChainCopiesBeforeAssembleClosestToDestination)
+{
+    for (auto finalOpcode : {Opcode::OP_ASSEMBLE, Opcode::OP_ATOMIC_RMW}) {
+        SCOPED_TRACE(static_cast<int>(finalOpcode));
+        auto function = std::make_shared<Function>(Program::GetInstance(), "OutcastMergeChain", "OutcastMergeChain",
+                                                   nullptr);
+        const Shape shape = {NUM_2, NUM_32};
+        auto source = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        auto destination = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        source->tensor->symbol = "source";
+        destination->tensor->symbol = "destination";
+        source->tensor->memoryId = NUM_ONE;
+        destination->tensor->memoryId = NUM_2;
+        function->outCasts_ = {source, destination};
+        auto incast = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        incast->tensor->symbol = "incast";
+        incast->tensor->memoryId = NUM_ZERO;
+        function->inCasts_ = {incast};
+        auto inputView = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        auto& incastView = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_VIEW, {incast}, {inputView});
+        incastView.GetTileShapeForSetting().SetVecTile(NUM_2, NUM_32);
+        auto& sourceAssemble = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {inputView}, {source});
+        auto first = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        auto merged = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        auto last = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_VIEW, {source}, {first});
+        auto& earlier = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {first}, {merged});
+        auto& view = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_VIEW, {merged}, {last});
+        view.GetTileShapeForSetting().SetVecTile(NUM_2, NUM_32);
+        auto& final = IRBuilder().CreateTensorOpStmt(*function, finalOpcode, {last}, {destination});
+        SetAssembleLikeAttr(&final, MEM_DEVICE_DDR, {NUM_ZERO, NUM_ZERO});
+        InferMemoryConflict pass;
+        ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+        EXPECT_EQ(CountRegisterCopy(function.get()), NUM_2);
+        auto sourceCopy = sourceAssemble.GetInputOperand(0);
+        EXPECT_NE(sourceCopy, inputView);
+        ASSERT_EQ(sourceCopy->GetProducers().size(), 1UL);
+        auto* sourceCopyOp = *sourceCopy->GetProducers().begin();
+        EXPECT_EQ(sourceCopyOp->GetOpcode(), Opcode::OP_REGISTER_COPY);
+        EXPECT_EQ(sourceCopyOp->GetInputOperand(0), inputView);
+        EXPECT_EQ(incastView.GetInputOperand(0), incast);
+        auto copied = final.GetInputOperand(0);
+        ASSERT_EQ(copied->GetProducers().size(), 1UL);
+        auto* copy = *copied->GetProducers().begin();
+        EXPECT_EQ(copy->GetOpcode(), Opcode::OP_REGISTER_COPY);
+        EXPECT_EQ(copy->GetInputOperand(0), last);
+        EXPECT_EQ(earlier.GetInputOperand(0), first);
+    }
+}
+
+/*
+ * Minimal reproducer for an address conflict between two outcast buffers.
+ * Before:
+ * incast(mem=0) -> VIEW -> viewed -> ATOMIC_RMW -> outcast1(mem=1) -> ASSEMBLE -> outcast2(mem=2)
+ * After:
+ * incast -> VIEW -> viewed -> REGISTER_COPY -> ATOMIC_RMW -> outcast1
+ *        -> REGISTER_COPY -> ASSEMBLE -> outcast2
+ */
+TEST_F(InferMemoryConflictTest, AtomicRmwOutcastAssembleOutcastCopiesAtBothBoundaries)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "AtomicRmwOutcastChain", "AtomicRmwOutcastChain",
+                                               nullptr);
+    const Shape shape = {NUM_2, NUM_32};
+    auto incast = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto viewed = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto outcast1 = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto outcast2 = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    incast->tensor->symbol = "incast";
+    outcast1->tensor->symbol = "outcast1";
+    outcast2->tensor->symbol = "outcast2";
+    incast->tensor->memoryId = NUM_ZERO;
+    outcast1->tensor->memoryId = NUM_ONE;
+    outcast2->tensor->memoryId = NUM_2;
+    function->inCasts_ = {incast};
+    function->outCasts_ = {outcast1, outcast2};
+    auto& view = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_VIEW, {incast}, {viewed});
+    view.GetTileShapeForSetting().SetVecTile(NUM_2, NUM_32);
+    auto& atomic = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_ATOMIC_RMW, {viewed}, {outcast1});
+    SetAssembleLikeAttr(&atomic, MEM_DEVICE_DDR, {NUM_ZERO, NUM_ZERO});
+    atomic.GetTileShapeForSetting().SetVecTile(NUM_2, NUM_32);
+    auto& assemble = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {outcast1}, {outcast2});
+    SetAssembleLikeAttr(&assemble, MEM_DEVICE_DDR, {NUM_ZERO, NUM_ZERO});
+
+    InferMemoryConflict pass;
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(function.get()), NUM_2);
+    auto atomicInput = atomic.GetInputOperand(0);
+    ASSERT_EQ(atomicInput->GetProducers().size(), 1UL);
+    auto* atomicCopy = *atomicInput->GetProducers().begin();
+    EXPECT_EQ(atomicCopy->GetOpcode(), Opcode::OP_REGISTER_COPY);
+    EXPECT_EQ(atomicCopy->GetInputOperand(0), viewed);
+    auto assembleInput = assemble.GetInputOperand(0);
+    ASSERT_EQ(assembleInput->GetProducers().size(), 1UL);
+    auto* assembleCopy = *assembleInput->GetProducers().begin();
+    EXPECT_EQ(assembleCopy->GetOpcode(), Opcode::OP_REGISTER_COPY);
+    EXPECT_EQ(assembleCopy->GetInputOperand(0), outcast1);
+    EXPECT_EQ(view.GetInputOperand(0), incast);
+    EXPECT_EQ(atomic.GetOutputOperand(0), outcast1);
+    EXPECT_EQ(assemble.GetOutputOperand(0), outcast2);
+}
+
 } // namespace tile_fwk
 } // namespace npu

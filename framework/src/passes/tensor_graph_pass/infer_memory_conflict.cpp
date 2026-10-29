@@ -649,17 +649,21 @@ bool InferMemoryConflict::TryInsertPreMergeCopy(Function& function, const Logica
 }
 
 Status InferMemoryConflict::UpdateBackwardTensor(Function& function, const LogicalTensorPtr& curTensor,
-                                                 Operation* producer, std::queue<LogicalTensorPtr>& curTensors)
+                                                 Operation* producer,
+                                                 std::queue<std::pair<LogicalTensorPtr, Operation*>>& curTensors,
+                                                 Operation* outcastAssembleLike)
 {
     for (auto& inputTensor : producer->GetIOperands()) {
         if (!CanTransmitInput(producer, inputTensor)) {
             continue;
         }
         if (ShouldSkipOutcastInput(inputTensor, function)) {
-            // Preserve the outcast boundary, but separate every direct
-            // outcast-to-outcast conflict that reaches this existing path.
-            if (CheckConflict(memoryInfo[curTensor], inputTensor)) {
-                preregcopys.insert(producer);
+            if (outcastAssembleLike == nullptr) {
+                APASS_LOG_DEBUG_F(Elements::Operation,
+                                  "No assemble-like boundary recorded for producer op [%d]; skip outcast input.",
+                                  producer->GetOpMagic());
+            } else if (CheckConflict(memoryInfo[curTensor], inputTensor)) {
+                preregcopys.insert(outcastAssembleLike);
             }
             continue;
         }
@@ -677,7 +681,7 @@ Status InferMemoryConflict::UpdateBackwardTensor(Function& function, const Logic
             }
         } else {
             memoryInfo[inputTensor] = memoryInfo[curTensor];
-            curTensors.push(inputTensor);
+            curTensors.emplace(inputTensor, outcastAssembleLike);
         }
     }
     return SUCCESS;
@@ -710,12 +714,13 @@ Status InferMemoryConflict::ForwardPropagation(Function& function)
 
 Status InferMemoryConflict::BackwardPropagation(Function& function)
 {
-    std::queue<LogicalTensorPtr> curTensors;
+    // Remember the first ASSEMBLE or ATOMIC_RMW seen from each outcast; later ones must not replace it.
+    std::queue<std::pair<LogicalTensorPtr, Operation*>> curTensors;
     for (const auto& outcast : function.GetOutcast()) {
-        curTensors.push(outcast);
+        curTensors.emplace(outcast, nullptr);
     }
     while (!curTensors.empty()) {
-        auto curTensor = curTensors.front();
+        auto [curTensor, outcastAssembleLike] = curTensors.front();
         curTensors.pop();
         for (const auto& producer : curTensor->GetProducers()) {
             if (!CheckTransmit(*producer)) {
@@ -724,7 +729,11 @@ Status InferMemoryConflict::BackwardPropagation(Function& function)
             if (!CanTransmitOutput(producer, curTensor)) {
                 continue;
             }
-            if (UpdateBackwardTensor(function, curTensor, producer, curTensors) != SUCCESS) {
+            auto* assembleLike = outcastAssembleLike;
+            if (assembleLike == nullptr && IsAssembleLikeOpcode(producer->GetOpcode())) {
+                assembleLike = producer;
+            }
+            if (UpdateBackwardTensor(function, curTensor, producer, curTensors, assembleLike) != SUCCESS) {
                 APASS_LOG_ERROR_F(Elements::Operation, "UpdateBackwardTensor failed.");
                 return FAILED;
             }
@@ -838,6 +847,10 @@ Status InferMemoryConflict::InsertPrecededCopys(Function& function)
                 inputTensor = input;
                 break;
             }
+        }
+        if (inputTensor == nullptr) {
+            APASS_LOG_ERROR_F(Elements::Operation, "No transmittable input found for op [%d].", op->GetOpMagic());
+            return FAILED;
         }
         std::shared_ptr<RawTensor> newRawTensor = std::make_shared<RawTensor>(inputTensor->Datatype(),
                                                                               inputTensor->GetShape());
