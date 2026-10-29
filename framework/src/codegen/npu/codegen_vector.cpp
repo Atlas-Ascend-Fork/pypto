@@ -221,10 +221,7 @@ std::string CodeGenOpNPU::GenTransData() const
         tileParamsStr.emplace_back("(int)(" + SymbolicExpressionTable::BuildExpression(tileParam) + ")");
     }
 
-    if (opCode == Opcode::OP_NCHW2NC1HWC0 || opCode == Opcode::OP_NC1HWC02NCHW || opCode == Opcode::OP_NCHW2Fractal_Z ||
-        opCode == Opcode::OP_NCDHW2NDC1HWC0 || opCode == Opcode::OP_NCDHW2FRACTAL_Z_3D ||
-        opCode == Opcode::OP_NDC1HWC02NCDHW || opCode == Opcode::OP_FractalZ2NCHW ||
-        opCode == Opcode::OP_FractalZ3D2NCDHW) {
+    if (opCode == Opcode::OP_FractalZ2NCHW || opCode == Opcode::OP_FractalZ3D2NCDHW) {
         return PrintTransDataLayoutTmp();
     }
 
@@ -245,20 +242,17 @@ std::string CodeGenOpNPU::PrintTransDataLayoutTmp() const
 std::string CodeGenOpNPU::PrintTransDataLayout(const std::vector<std::string>& param) const
 {
     std::string dstTensor = QueryTileTensorNameByIdx(ID0);
-    std::vector<std::string> gmOffsetExpr = GetGmOffsetForTileTensor(ID0);
-    std::string coordCp = WrapParamByParentheses(gmOffsetExpr);
-    std::string coord = PrintCoord(rawShape[ID0].size(), coordCp);
     std::string tmpTensor = QueryTileTensorNameByIdx(ID1);
     std::string inputTensor = QueryTileTensorNameByIdx(ID2);
-    std::vector<std::string> paramList = {dstTensor, coord, tmpTensor, inputTensor};
+    std::vector<std::string> paramList = {dstTensor, tmpTensor, inputTensor};
     std::vector<std::string> templateParam = {};
     static const std::unordered_map<Opcode, unsigned> opParamPos{
-        {Opcode::OP_NCHW2NC1HWC0, 4}, {Opcode::OP_NCHW2Fractal_Z, 6}, {Opcode::OP_NCDHW2NDC1HWC0, 5},
-        {Opcode::OP_NC1HWC02NCHW, 8}, {Opcode::OP_NDC1HWC02NCDHW, 9}, {Opcode::OP_NCDHW2FRACTAL_Z_3D, 7}};
+        {Opcode::OP_NCHW2NC1HWC0, NUM_VALUE_5},        {Opcode::OP_NCHW2Fractal_Z, NUM_VALUE_6},
+        {Opcode::OP_NC1HWC02NCHW, NUM_VALUE_8},        {Opcode::OP_NCDHW2NDC1HWC0, NUM_VALUE_5},
+        {Opcode::OP_NCDHW2FRACTAL_Z_3D, NUM_VALUE_10}, {Opcode::OP_NDC1HWC02NCDHW, NUM_VALUE_9}};
     auto iter = opParamPos.find(opCode);
     ASSERT(OperErr::ATTRIBUTE_INVALID, iter != opParamPos.end()) << "This transData conversion is not supported.";
     unsigned pos = iter->second;
-    paramList.insert(paramList.end(), param.begin(), param.begin() + pos);
     templateParam = std::vector<std::string>(param.begin() + pos, param.end());
     std::ostringstream oss;
     oss << tileOpName << WrapParamByAngleBrackets(templateParam) << WrapParamByParentheses(paramList) << STMT_END;

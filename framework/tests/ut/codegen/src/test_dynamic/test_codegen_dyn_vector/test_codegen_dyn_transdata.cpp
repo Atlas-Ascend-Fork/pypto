@@ -99,67 +99,85 @@ TEST_F(TestCodegenDynTransData, TestTransData2)
                       .outputShape = {1, 1, 1, 8, 8},
                       .tileOpFormat = 2,
                       .validShape = {1, 1, 1, 8, 8},
-                      .expect = R"!!!(TTransDataNCHW2NC1HWC0(ubTensor_)!!!"});
+                      .expect = R"!!!(TTransDataNCHW2NC1HWC0<(int)(1), (int)(8), (int)(1), (int)(8)>(ubTensor_)!!!"});
 }
 
 TEST_F(TestCodegenDynTransData, TestTransData4)
 {
-    RunTransDataTest({.caseName = "TestTransData4",
-                      .inputShape = {15, 15, 2, 16},
-                      .vecTile = {16, 16, 1, 16},
-                      .dtype = DT_FP16,
-                      .outputShape = {32, 1, 16, 16},
-                      .tileOpFormat = 4,
-                      .validShape = {32, 1, 16, 16},
-                      .expect = R"!!!(TTransDataNCHW2Fractal_Z(ubTensor_)!!!"});
+    RunTransDataTest(
+        {.caseName = "TestTransData4",
+         .inputShape = {15, 15, 2, 16},
+         .vecTile = {16, 16, 1, 16},
+         .dtype = DT_FP16,
+         .outputShape = {32, 1, 16, 16},
+         .tileOpFormat = 4,
+         .validShape = {32, 1, 16, 16},
+         .expect = R"!!!(TTransDataNCHW2Fractal_Z<(int)(16), (int)(16), (int)(1), (int)(16)>(ubTensor_)!!!"});
 }
 
 TEST_F(TestCodegenDynTransData, TestTransData3)
 {
-    RunTransDataTest({.caseName = "TestTransData3",
-                      .inputShape = {1, 7, 1, 1, 8},
-                      .vecTile = {1, 8, 1, 1, 8},
-                      .dtype = DT_FP32,
-                      .outputShape = {1, 1, 1, 1, 8, 8},
-                      .tileOpFormat = 3,
-                      .validShape = {1, 1, 1, 1, 8, 8},
-                      .expect = R"!!!(TTransDataNCDHW2NDC1HWC0(ubTensor_9, ubTensor_10, ubTensor_7);)!!!"});
+    RunTransDataTest(
+        {.caseName = "TestTransData3",
+         .inputShape = {1, 7, 1, 1, 8},
+         .vecTile = {1, 8, 1, 1, 8},
+         .dtype = DT_FP32,
+         .outputShape = {1, 1, 1, 1, 8, 8},
+         .tileOpFormat = 3,
+         .validShape = {1, 1, 1, 1, 8, 8},
+         .expect = R"!!!(TTransDataNCDHW2NDC1HWC0<(int)(1), (int)(1), (int)(8), (int)(1), (int)(8)>(ubTensor_)!!!"});
 }
 
 TEST_F(TestCodegenDynTransData, TestTransData5)
 {
-    RunTransDataTest({.caseName = "TestTransData5",
-                      .inputShape = {15, 7, 1, 1, 8},
-                      .vecTile = {16, 8, 1, 1, 8},
-                      .dtype = DT_FP32,
-                      .outputShape = {8, 1, 16, 8},
-                      .tileOpFormat = 5,
-                      .validShape = {8, 1, 16, 8},
-                      .expect = R"!!!(TVecDup<float>(ubTensor_0, 0.f);)!!!"});
+    RunTransDataTest(
+        {.caseName = "TestTransData5",
+         .inputShape = {15, 7, 1, 1, 8},
+         .vecTile = {16, 8, 1, 1, 8},
+         .dtype = DT_FP32,
+         .outputShape = {8, 1, 16, 8},
+         .tileOpFormat = 5,
+         .validShape = {8, 1, 16, 8},
+         .expect = R"!!!(TTransDataNCDHW2FRACTAL_Z_3D<(int)(16), (int)(8), (int)(1), (int)(1), (int)(8)>(ubTensor_)!!!",
+         .checkAllSubKernels = true});
+}
+
+TEST_F(TestCodegenDynTransData, TestTransDataTmpFzPartialW)
+{
+    RunTransDataTest({.caseName = "TestTransDataTmpFzPartialW",
+                      .inputShape = {16, 16, 1, 40},
+                      .vecTile = {16, 16, 1, 32},
+                      .dtype = DT_FP16,
+                      .outputShape = {40, 1, 16, 16},
+                      .tileOpFormat = 4,
+                      .validShape = {40, 1, 16, 16},
+                      .expect = R"!!!(TTransDataNCHW2Fractal_Z)!!!"});
 }
 
 TEST_F(TestCodegenDynTransData, TestTransData0_3)
 {
-    RunTransDataTest({.caseName = "TestTransData0_3",
-                      .inputShape = {1, 1, 1, 8, 8},
-                      .vecTile = {1, 1, 1, 8, 8},
-                      .dtype = DT_FP32,
-                      .outputShape = {1, 7, 1, 8},
-                      .tileOpFormat = 0,
-                      .validShape = {1, 7, 1, 8},
-                      .expect = R"!!!(TTransDataNC1HWC02NCHW(ubTensor_)!!!"});
+    RunTransDataTest(
+        {.caseName = "TestTransData0_3",
+         .inputShape = {1, 1, 1, 8, 8},
+         .vecTile = {1, 1, 1, 8, 8},
+         .dtype = DT_FP32,
+         .outputShape = {1, 7, 1, 8},
+         .tileOpFormat = 0,
+         .validShape = {1, 7, 1, 8},
+         .expect = R"!!!(TTransDataNC1HWC02NCHW<(int)(1), (int)(1), (int)(1), (int)(8), (int)(8)>(ubTensor_)!!!"});
 }
 
 TEST_F(TestCodegenDynTransData, TestTransData0_6)
 {
-    RunTransDataTest({.caseName = "TestTransData0_6",
-                      .inputShape = {1, 1, 1, 1, 8, 8},
-                      .vecTile = {1, 1, 1, 1, 8, 8},
-                      .dtype = DT_FP32,
-                      .outputShape = {1, 7, 1, 1, 8},
-                      .tileOpFormat = 0,
-                      .validShape = {1, 7, 1, 1, 8},
-                      .expect = R"!!!(TTransDataNDC1HWC02NCDHW(ubTensor_)!!!"});
+    RunTransDataTest(
+        {.caseName = "TestTransData0_6",
+         .inputShape = {1, 1, 1, 1, 8, 8},
+         .vecTile = {1, 1, 1, 1, 8, 8},
+         .dtype = DT_FP32,
+         .outputShape = {1, 7, 1, 1, 8},
+         .tileOpFormat = 0,
+         .validShape = {1, 7, 1, 1, 8},
+         .expect = R"!!!(TTransDataNDC1HWC02NCDHW<(int)(1), (int)(1), (int)(1), (int)(8), (int)(8)>(ubTensor_)!!!"});
 }
 
 TEST_F(TestCodegenDynTransData, TestTransData0_4)
