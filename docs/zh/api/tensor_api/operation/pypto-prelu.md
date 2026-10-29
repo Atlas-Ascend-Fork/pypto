@@ -55,8 +55,12 @@ prelu(input: Tensor, weight: Tensor) -> Tensor
 
 1. input和weight类型应该相同。
 2. weight的Shape必须为一维，当input为1维时长度为1；当input为2-4维时长度等于input的第二维大小。
-3. 由于存在临时内存使用，输入维度为二维时，TileShape大小有额外约束，假设TileShape为\[a,b\]，那么a*b*sizeof(self) + b/8 + 8KB < UB。
-4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+4. 由于存在临时内存使用，输入维度为二维时，TileShape大小有额外约束。输入Tensor在拷贝至UB时会先对最后一维做32字节对齐填充，再对倒数第二维做行填充；输出Tensor仅对最后一维做32字节对齐填充，weight不会被填充。假设TileShape为\[a,b\]，记 $A=32/sizeof(input), b_{align}=CeilAlign(b, A), k=b_{align}/A, p=\lceil8/k\rceil, a_{pad}=a+p-1$，则总的UB空间占用为：
+
+   $$
+   (a_{pad}+a+1)*b_{align}*sizeof(input)+b/8+8\text{KB} <= UB
+   $$
 
 ## 调用示例
 

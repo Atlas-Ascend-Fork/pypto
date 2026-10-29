@@ -60,6 +60,17 @@ gt(input: Tensor, other: Union[Tensor, float, Element]) -> Tensor
    - KirinX90处理器系列产品：DT_FP16，DT_FP32
    <!-- end id10 -->
 4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+5. 输入Tensor的UB空间占用说明：当other为Tensor时，input和other两个输入Tensor在拷贝至UB时均会先对最后一维做32字节对齐填充，再对倒数第二维做行填充；当other为标量（float或Element）时，仅input会做上述填充，标量other不会被填充为Tensor。若TileShape为\[a,b,c,d\]，记 $A=32/sizeof(input), d_{align}=CeilAlign(d, A), k=d_{align}/A, p=\lceil8/k\rceil, c_{pad}=c+p-1$，则每个输入Tensor的实际UB空间占用为 $a*b*c_{pad}*d_{align}*sizeof(input)$。输出Tensor（数据类型为DT\_BOOL）仅对最后一维做32字节对齐填充，UB空间占用为 $a*b*c*CeilAlign(d, 32)*sizeof(DT\_BOOL)$。此外，设置TileShape后分块执行还需要一块与TileShape大小无关的固定临时空间，大小不超过12608字节。综上，当other为Tensor时，总的UB空间占用需满足：
+
+   $$
+   2*a*b*c_{pad}*d_{align}*sizeof(input)+a*b*c*CeilAlign(d, 32)*sizeof(DT\_BOOL)+12608 <= UB
+   $$
+
+   当other为标量时，总的UB空间占用需满足：
+
+   $$
+   a*b*c_{pad}*d_{align}*sizeof(input)+a*b*c*CeilAlign(d, 32)*sizeof(DT\_BOOL)+12608 <= UB
+   $$
 
 ## 调用示例
 

@@ -46,8 +46,12 @@ isnan(self: Tensor) -> Tensor
 
 1. 仅支持DT_FP16，DT_BF16，DT_FP32等数据类型。
 2. TileShape以及ViewShape的尾轴必须按照输出张量的类型32B对齐，由于输出张量为布尔类型，因此TileShape以及ViewShape的尾轴必须是32的倍数。
-3. 在综合考虑输入、输出及临时存储空间占用的前提下，TileShape大小需满足额外约束条件。假设TileShape为\[a,b,c,d\]，那么a\*b\*c\*d\*sizeof\(self\) + 3\*c\*d\*sizeof\(DT\_FP32\) + 32 <UB。
-4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+4. 在综合考虑输入、输出及临时存储空间占用的前提下，TileShape大小需满足额外约束条件。输入Tensor在拷贝至UB时会先对最后一维做32字节对齐填充，再对倒数第二维做行填充；输出Tensor（数据类型为DT\_BOOL）仅对最后一维做32字节对齐填充。假设TileShape为\[a,b,c,d\]（由约束2，d为32的倍数），记 $A=32/sizeof(self), k=d/A, p=\lceil8/k\rceil, c_{pad}=c+p-1$，则总的UB空间占用为：
+
+   $$
+   a*b*c_{pad}*d*sizeof(self)+a*b*c*d*sizeof(DT\_BOOL)+3*c*d*sizeof(DT\_FP32)+32 <= UB
+   $$
 
 ## 调用示例
 

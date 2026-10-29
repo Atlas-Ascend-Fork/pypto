@@ -44,8 +44,12 @@ erf(input: Tensor) -> Tensor
 ## 约束说明
 
 1. 输入Tensor和输出Tensor类型应该相同。
-2. 由于存在临时内存使用，TileShape大小有额外约束，假设TileShape为\[a,b,c,d\]，那么5\*a\*b\*c\*d\*sizeof\(DT_FP32\) < UB。
-3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+3. 由于存在临时内存使用，TileShape大小有额外约束。input会被转换为DT_FP32后拷贝至UB，UB中的输入Tensor会先对最后一维做32字节对齐填充，再对倒数第二维做行填充；输出Tensor仅对最后一维做32字节对齐填充。假设TileShape为\[a,b,c,d\]，记 $d_{align}=CeilAlign(d, 8), k=d_{align}/8, p=\lceil8/k\rceil, c_{pad}=c+p-1$，则总的UB空间占用为：
+
+   $$
+   a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)+4*a*b*c*d_{align}*sizeof(DT\_FP32) <= UB
+   $$
 
 ## 调用示例
 

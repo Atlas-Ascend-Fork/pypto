@@ -51,7 +51,7 @@ logical_not(input: Tensor) -> Tensor
    - Atlas A2系列产品：DT_FP32，DT_FP16，DT_BF16，DT_BOOL，DT_INT8，DT_UINT8。
    <!-- end id6 -->
 2. TileShape与input维度保持一致；
-3. 由于存在临时内存使用，假设TileShape为$[a,b,c,d]$，记$N=a \cdot b \cdot c \cdot d$。当输入数据类型为DT_FP32时，TileShape大小应满足$N \cdot \text{sizeof}(input) + N \cdot \text{sizeof}(BOOL) + 20.25\text{KB} < \text{UB}$；其他基础支持类型应满足$N \cdot \text{sizeof}(input) + N \cdot \text{sizeof}(BOOL) + 12.54\text{KB} < \text{UB}$。
+3. 由于存在临时内存使用，假设TileShape为$[a,b,c,d]$，记$N=a \cdot b \cdot c \cdot d$。当输入数据类型为DT_FP32、DT_FP16或DT_BF16时，输入Tensor在拷贝至UB时会先对最后一维做32字节对齐填充，再对倒数第二维做行填充，输出Tensor（数据类型为DT\_BOOL）仅对最后一维做32字节对齐填充；当输入数据类型为DT_BOOL、DT_INT8或DT_UINT8时，输入Tensor不做填充。记 $A=32/sizeof(input), d_{align}=CeilAlign(d, A), k=d_{align}/A, p=\lceil8/k\rceil, c_{pad}=c+p-1$，当输入数据类型为DT_FP32时，TileShape大小应满足$a \cdot b \cdot c_{pad} \cdot d_{align} \cdot \text{sizeof}(input) + a \cdot b \cdot c \cdot CeilAlign(d, 32) \cdot \text{sizeof}(BOOL) + 20.25\text{KB} < \text{UB}$；当输入数据类型为DT_FP16或DT_BF16时，应满足$a \cdot b \cdot c_{pad} \cdot d_{align} \cdot \text{sizeof}(input) + a \cdot b \cdot c \cdot CeilAlign(d, 32) \cdot \text{sizeof}(BOOL) + 12.54\text{KB} < \text{UB}$；当输入数据类型为DT_BOOL、DT_INT8或DT_UINT8时，应满足$N \cdot \text{sizeof}(input) + N \cdot \text{sizeof}(BOOL) + 12.54\text{KB} < \text{UB}$。
    <!-- npu="950" id7 -->
    - Ascend 950PR&950DT系列产品：输入数据类型为DT_INT16、DT_UINT16、DT_INT32、DT_UINT32或DT_INT64时，采用整数计算实现。其中，DT_INT16/DT_UINT16需要4KB临时内存，DT_INT32/DT_UINT32需要8KB临时内存，DT_INT64需要16KB临时内存。上述类型的TileShape大小应满足$N \cdot \text{sizeof}(input) + N \cdot \text{sizeof}(BOOL) + 2048 \cdot \text{sizeof}(input) < \text{UB}$。
    <!-- end id7 -->
