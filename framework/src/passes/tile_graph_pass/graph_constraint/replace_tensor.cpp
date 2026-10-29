@@ -783,6 +783,10 @@ Status ReplaceTensor::BackwardView(Operation* op, LogicalTensorPtr& rootTensor, 
     int origRawMagic = viewIn->tensor->rawmagic;
     SetRawTensor(viewIn, viewOut->tensor);
     backwardOps.insert(op->GetOpMagic());
+    if (viewIn->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR && viewIn->GetConsumers().size() > 1) {
+        // Propagate the updated DDR alias to the other branches of this view input.
+        forRoots.push(viewIn);
+    }
     // 新图表达下, view的输入可能是assemble输出(共享rawMagic), 需同步兄弟并继续遍历
     SyncSiblingAssembleOutput(function, viewIn, origRawMagic);
     return SUCCESS;

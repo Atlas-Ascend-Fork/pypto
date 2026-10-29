@@ -353,6 +353,56 @@ TEST_F(ReplaceTensorTest, TestReshape)
     EXPECT_EQ(pass.PostCheck(*currFunctionPtr), SUCCESS);
 }
 
+TEST_F(ReplaceTensorTest, DdrViewReshapeFanoutSharesProducerStorage)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "DdrReshapeFanout", "DdrReshapeFanout", nullptr);
+    std::vector<int64_t> shape = {1, 128};
+    std::vector<int64_t> reshapeShape = {1, 1, 128};
+    Offset offset(shape.size(), 0);
+    Offset reshapeOffset(reshapeShape.size(), 0);
+    auto makeTensor = [](const Shape& tensorShape, MemoryType memoryType) {
+        auto tensor = IRBuilder().CreateTensorVar(DT_FP32, tensorShape, CreateTestConstIntVector(tensorShape));
+        tensor->SetMemoryTypeBoth(memoryType, true);
+        return tensor;
+    };
+    auto source = makeTensor(shape, MEM_UB);
+    auto copyOut = makeTensor(shape, MEM_DEVICE_DDR);
+    auto& copyOutOp = PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_OUT, {source}, {copyOut});
+    copyOutOp.UpdateSubgraphID(0);
+    copyOutOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(
+        MEM_UB, OpImmediate::Specified(offset), OpImmediate::Specified(shape), OpImmediate::Specified(shape)));
+
+    LogicalTensors views;
+    LogicalTensors reshapes;
+    for (int branch = 0; branch < 5; ++branch) {
+        auto view = makeTensor(shape, MEM_DEVICE_DDR);
+        auto reshape = makeTensor(reshapeShape, MEM_DEVICE_DDR);
+        auto copyIn = makeTensor(reshapeShape, MEM_UB);
+        auto& viewOp = PassOperationUtils::AddOperation(*function, Opcode::OP_VIEW, {copyOut}, {view});
+        viewOp.SetOpAttribute(std::make_shared<ViewOpAttribute>(offset));
+        viewOp.UpdateSubgraphID(0);
+        auto& reshapeOp = PassOperationUtils::AddOperation(*function, Opcode::OP_RESHAPE, {view}, {reshape});
+        reshapeOp.UpdateSubgraphID(0);
+        auto& copyInOp = PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_IN, {reshape}, {copyIn});
+        copyInOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(OpImmediate::Specified(reshapeOffset), MEM_UB,
+                                                                  OpImmediate::Specified(reshapeShape),
+                                                                  OpImmediate::Specified(reshapeShape)));
+        copyInOp.UpdateSubgraphID(branch + 1);
+        views.push_back(view);
+        reshapes.push_back(reshape);
+    }
+
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    for (size_t branch = 0; branch < views.size(); ++branch) {
+        EXPECT_EQ(views[branch]->GetRawMagic(), copyOut->GetRawMagic());
+        EXPECT_EQ(reshapes[branch]->GetRawMagic(), copyOut->GetRawMagic());
+        EXPECT_EQ(reshapes[branch]->GetShape(), reshapeShape);
+    }
+    EXPECT_EQ(copyOut->GetRawTensor()->GetRawShape(), shape);
+    EXPECT_EQ(pass.PostCheck(*function), SUCCESS);
+}
+
 TEST_F(ReplaceTensorTest, TestIndexOutCast)
 {
     auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "TestIndexOutCast", "TestIndexOutCast",
