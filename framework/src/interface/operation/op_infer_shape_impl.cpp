@@ -1342,6 +1342,9 @@ void L0CCopyUBConvInferFunc(Operation* op, std::vector<std::vector<SymbolicScala
         }
         outShape.push_back(validH);
         outShape.push_back(validW);
+        // 大搬小场景需要更新op的RealM和RealCutW参数
+        op->SetAttribute(Conv::LoadStoreConvOpAttributeKey::realCutW, validW);
+        op->SetAttribute(OpAttributeKey::l0cValidMN, std::vector<SymbolicScalar>{validRows, validN});
     } else {
         // 本 copy 的窗口范围 (n=1, c, [d=1,] h, w), 以 toOffset 平移后与已有 valid 按维取 max
         std::vector<SymbolicScalar> extent;
@@ -1359,7 +1362,46 @@ void L0CCopyUBConvInferFunc(Operation* op, std::vector<std::vector<SymbolicScala
             SymbolicScalar offset = (i < toOffset.size() && toOffset[i].IsSpecified()) ?
                                         toOffset[i].GetSpecifiedValue() :
                                         SymbolicScalar(0);
-            outShape.push_back(exist.Max((extent[i] + offset) * (extent[i] != 0)));
+            SymbolicScalar merged = exist.Max((extent[i] + offset) * (extent[i] != 0));
+            // infer 相互独立, 仅依赖当前 exist 会因 infer 顺序/覆盖丢失先序 copy 的贡献
+            for (const auto& producer : output->GetProducers()) {
+                if (producer == op || producer->GetOpcode() != Opcode::OP_L0C_COPY_UB_CONV) {
+                    continue;
+                }
+                auto producerInput = producer->GetIOperands()[0];
+                if (producerInput == nullptr || producerInput->GetDynValidShape().size() != SHAPE_DIM2) {
+                    continue;
+                }
+                std::vector<SymbolicScalar>* producerValidMN = producer->GetAttr<std::vector<SymbolicScalar>>(
+                    OpAttributeKey::l0cValidMN);
+                if (producerValidMN == nullptr || producerValidMN->size() != SHAPE_DIM2) {
+                    continue;
+                }
+                SymbolicScalar producerRealCutW = SymbolicScalar(tileShape.back());
+                SymbolicScalar producerRealCutWAttr;
+                if (producer->GetAttr(Conv::LoadStoreConvOpAttributeKey::realCutW, producerRealCutWAttr) &&
+                    producerRealCutWAttr.IsValid()) {
+                    producerRealCutW = producerRealCutWAttr;
+                }
+                SymbolicScalar producerValidN = (*producerValidMN)[1].Min(tileShape[1]).Max(0);
+                SymbolicScalar producerValidW = producerRealCutW.Min(tileShape.back());
+                SymbolicScalar producerValidRows = (*producerValidMN)[0]
+                                                       .Min(tileShape[tileShape.size() - NUM2] * tileShape.back())
+                                                       .Max(0);
+                SymbolicScalar producerValidH = producerValidRows / producerValidW.Max(1);
+                SymbolicScalar producerExtent = (i == 1)                    ? producerValidN :
+                                                (i == extent.size() - NUM2) ? producerValidH :
+                                                (i == extent.size() - 1)    ? producerValidW :
+                                                                              SymbolicScalar(1);
+                auto producerCopyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(producer->GetOpAttribute());
+                SymbolicScalar producerOffset = SymbolicScalar(0);
+                if (producerCopyAttr != nullptr && i < producerCopyAttr->GetToOffset().size() &&
+                    producerCopyAttr->GetToOffset()[i].IsSpecified()) {
+                    producerOffset = producerCopyAttr->GetToOffset()[i].GetSpecifiedValue();
+                }
+                merged = merged.Max((producerExtent + producerOffset) * (producerExtent != 0));
+            }
+            outShape.push_back(merged);
         }
     }
     for (auto outputTensor : op->GetOOperands()) {
