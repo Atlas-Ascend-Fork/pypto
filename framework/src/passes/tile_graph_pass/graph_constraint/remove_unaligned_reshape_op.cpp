@@ -646,6 +646,10 @@ void RemoveUnalignedReshape::HandleNoCopyInConsumer(Function& function, Operatio
         checkOverUbSize = true;
         return;
     }
+    // Empty consumers only need the UB check above; keep the existing bounded-tensor path unchanged.
+    if (output->GetConsumers().empty()) {
+        return;
+    }
     auto& newCopyInOp = PassOperationUtils::AddOperation(
         function, Opcode::OP_COPY_IN, {output}, {newCopyinTensorPtr}, [&output](Operation& newOp) {
             newOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(
@@ -852,8 +856,8 @@ bool RemoveUnalignedReshape::HasMixedRawCopyOutAndAssembleProducers(Function& fu
  */
 bool RemoveUnalignedReshape::checkNonCopyInConsumerExists(LogicalTensorPtr tensor, std::vector<Operation*>& copyInOps)
 {
-    bool hasNoCopyInConsumer = false;
     auto consumers = tensor->GetConsumers();
+    bool hasNoCopyInConsumer = consumers.empty();
     for (auto* consumerOp : consumers) {
         auto opcode = consumerOp->GetOpcode();
         if (opcode == Opcode::OP_COPY_IN) {
