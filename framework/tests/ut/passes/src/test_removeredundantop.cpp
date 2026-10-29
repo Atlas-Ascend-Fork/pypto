@@ -3509,6 +3509,88 @@ TEST_F(TestRemoveRedundantOpPass, WarVersionAssembleIsPreserved)
     EXPECT_TRUE(HasToken(newWrite, warToken));
 }
 
+TEST_F(TestRemoveRedundantOpPass, MultiContractSingleSliceKeepsSharedVersions)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "SharedVersionContracts",
+                                               "SharedVersionContracts", nullptr);
+    IRBuilder builder;
+    std::vector<int64_t> shape = {kNumFour, kNumExpFour};
+    std::vector<int64_t> partShape = {kNumTwo, kNumExpFour};
+    auto raw = builder.CreateRawTensor(DT_FP32, Shape{kNumFour, kNumExpFour});
+    auto oldVersion = builder.CreateTensorVar(*function, raw, {0, 0}, shape);
+    auto nextVersion = builder.CreateTensorVar(*function, raw, {0, 0}, shape);
+    auto initial = builder.CreateTensorVar(*function, DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto patch = builder.CreateTensorVar(*function, DT_FP32, partShape, CreateTestConstIntVector(partShape));
+    auto snapshot = builder.CreateTensorVar(*function, DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto readOut = builder.CreateTensorVar(*function, DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto finalOut = builder.CreateTensorVar(*function, DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto& init = builder.CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {initial}, {oldVersion});
+    init.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+    auto& firstWrite = builder.CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {patch}, {oldVersion});
+    firstWrite.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+    auto& slice = builder.CreateTensorOpStmt(*function, Opcode::OP_SLICE, {oldVersion}, {snapshot});
+    slice.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
+    builder.CreateTensorOpStmt(*function, Opcode::OP_ABS, {snapshot}, {readOut});
+    auto& nextWrite = builder.CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {patch}, {nextVersion});
+    nextWrite.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{2, 0}));
+    builder.CreateTensorOpStmt(*function, Opcode::OP_ABS, {nextVersion}, {finalOut});
+    auto token = AddTokenEdge(*function, slice, nextWrite);
+    function->inCasts_ = {initial, patch};
+    function->outCasts_ = {readOut, finalOut};
+
+    std::vector<Operation*> newOps;
+    bool updated = false;
+    ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, updated), SUCCESS);
+    EXPECT_FALSE(updated);
+    EXPECT_EQ(init.GetOOperands().front(), oldVersion);
+    EXPECT_EQ(firstWrite.GetOOperands().front(), oldVersion);
+    EXPECT_TRUE(function->Operations().Contains(slice));
+    EXPECT_TRUE(function->GetVarDependency().HasProducer(token, ToStmtPtr(slice)));
+    EXPECT_TRUE(HasToken(nextWrite, token));
+}
+
+TEST_F(TestRemoveRedundantOpPass, ReadCompletionViewKeepsSnapshot)
+{
+    for (auto opcode : {Opcode::OP_VIEW, Opcode::OP_SLICE}) {
+        for (bool partialWrite : {true, false}) {
+            auto function = std::make_shared<Function>(Program::GetInstance(), "ReadCompletionSnapshot",
+                                                       "ReadCompletionSnapshot", nullptr);
+            IRBuilder builder;
+            std::vector<int64_t> shape = {kNumFour, kNumExpFour};
+            std::vector<int64_t> patchShape = {partialWrite ? kNumTwo : kNumFour, kNumExpFour};
+            auto initial = builder.CreateTensorVar(*function, DT_FP32, shape, CreateTestConstIntVector(shape));
+            auto input = builder.CreateTensorVar(*function, DT_FP32, shape, CreateTestConstIntVector(shape));
+            auto snapshot = builder.CreateTensorVar(*function, DT_FP32, shape, CreateTestConstIntVector(shape));
+            auto output = builder.CreateTensorVar(*function, DT_FP32, shape, CreateTestConstIntVector(shape));
+            auto patch = builder.CreateTensorVar(*function, DT_FP32, patchShape, CreateTestConstIntVector(patchShape));
+            auto nextOutput = builder.CreateTensorVar(*function, input->GetRawTensor(), {0, 0}, shape);
+            auto& init = builder.CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {initial}, {input});
+            init.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+            auto& view = builder.CreateTensorOpStmt(*function, opcode, {input}, {snapshot});
+            auto viewStmt = view.shared_from_this();
+            view.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
+            auto& read = builder.CreateTensorOpStmt(*function, Opcode::OP_ABS, {snapshot}, {output});
+            auto& nextWrite = builder.CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {patch}, {nextOutput});
+            nextWrite.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+            auto token = AddTokenEdge(*function, view, nextWrite);
+            function->inCasts_ = {initial, patch};
+            function->outCasts_ = {output, nextOutput};
+
+            RemoveRedundantOp pass;
+            ASSERT_EQ(pass.RemoveDummyOp(*function), SUCCESS);
+            EXPECT_EQ(function->Operations().Contains(view), partialWrite);
+            EXPECT_EQ(read.GetIOperands().front(), partialWrite ? snapshot : input);
+            if (partialWrite) {
+                EXPECT_TRUE(function->GetVarDependency().HasProducer(token, ToStmtPtr(view)));
+                EXPECT_TRUE(function->GetVarDependency().HasConsumer(token, ToStmtPtr(nextWrite)));
+                EXPECT_TRUE(HasToken(nextWrite, token));
+            } else {
+                EXPECT_FALSE(HasToken(nextWrite, token));
+            }
+        }
+    }
+}
+
 TEST_F(TestRemoveRedundantOpPass, ViewAssembleWarVersionBoundaryIsPreserved)
 {
     auto function = std::make_shared<Function>(Program::GetInstance(), "ViewAssembleWarVersionBoundaryIsPreserved",

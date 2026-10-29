@@ -36,6 +36,19 @@ namespace tile_fwk {
 namespace {
 bool IsAssembleLikeOpcode(Opcode opcode) { return opcode == Opcode::OP_ASSEMBLE || opcode == Opcode::OP_CONTRACT; }
 
+bool ProtectsPartialWriteSnapshot(const Operation& op)
+{
+    auto rawMagic = op.GetIOperands().front()->GetRawMagic();
+    for (auto* consumer : op.ConsumerOpsByToken()) {
+        if (IsAssembleLikeOpcode(consumer->GetOpcode()) &&
+            consumer->GetOOperands().front()->GetRawMagic() == rawMagic &&
+            consumer->GetIOperands().front()->GetShape() != consumer->GetOOperands().front()->GetShape()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::vector<Operation*> GetExternalConsumers(Operation& op, const std::unordered_set<Operation*>& removedOps)
 {
     std::vector<Operation*> consumers;
@@ -255,6 +268,11 @@ Status RemoveRedundantOp::RemoveDummyOp(Function& function)
 {
     bool anyRemoved = false;
     for (auto& op : function.Operations()) {
+        // Keep the snapshot read before a partial overwrite of the same raw tensor.
+        if ((op.GetOpcode() == Opcode::OP_VIEW || op.GetOpcode() == Opcode::OP_SLICE) &&
+            ProtectsPartialWriteSnapshot(op)) {
+            continue;
+        }
         bool canRemove = false;
         if (matchOpcodeWithDynshape.find(op.GetOpcode()) != matchOpcodeWithDynshape.end()) {
             canRemove = ProcessRedundantOpWithDynShape(op);
