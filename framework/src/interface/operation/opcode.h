@@ -200,6 +200,7 @@ enum class Opcode {
     OP_FLOORDIV,
     OP_FLOORDIVS,
     OP_QUANT_MX,
+    OP_MOVE_UB_TO_UB,
     OP_AXPY,
     OP_INTERLEAVE,
     OP_DEINTERLEAVE,
@@ -450,6 +451,7 @@ public:
     void RegisterVectorSort();
     void RegisterVectorReduction();
     void RegisterVectorQuant();
+    void RegisterVectorMove();
     void RegisterVector();
     void RegisterCube();
     void RegisterDistribute();

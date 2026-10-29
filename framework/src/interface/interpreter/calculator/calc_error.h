@@ -55,6 +55,10 @@ enum class CalculatorErrorScene : uint32_t {
     // QuantMX 相关
     QUANTMX_RANK_INVALID = 0xBF010U, // QuantMX 仅支持 1D~4D 输入
 
+    // MoveUbToUb 相关
+    MOVEUB2UB_SHAPE_MISMATCH = 0xBF01CU, // MoveUbToUb 输入/输出 shape 或 valid shape 不一致
+    MOVEUB2UB_DTYPE_MISMATCH = 0xBF01DU, // MoveUbToUb 输入/输出 dtype 不一致
+
     // Gather / GatherINUB 相关
     GATHER_AXIS_OUT_OF_RANGE = 0xBF00EU,             // Gather 中 axis 超出 params 维度范围
     GATHER_INUB_DEVICE_INVALID = 0xBF00FU,           // GatherINUB 要求 params/indices/pageTable/out 全部在 CPU 上

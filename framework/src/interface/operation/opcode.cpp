@@ -653,6 +653,13 @@ void OpcodeManager::RegisterVectorQuant()
                   OpAttributeKey::mxQuantPerformanceMode});
 }
 
+void OpcodeManager::RegisterVectorMove()
+{
+    RegisterInfo(Opcode::OP_MOVE_UB_TO_UB, OpCoreType::AIV, "MOVE_UB_TO_UB", {MemoryType::MEM_UB}, {MemoryType::MEM_UB},
+                 {"TileOp::TMoveUbToUb", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::MOVE_LOCAL,
+                 {OpAttributeKey::excludeBufferReuse});
+}
+
 void OpcodeManager::RegisterVector()
 {
     RegisterVectorBinary();
@@ -660,6 +667,7 @@ void OpcodeManager::RegisterVector()
     RegisterVectorSort();
     RegisterVectorReduction();
     RegisterVectorQuant();
+    RegisterVectorMove();
     RegisterInfo(Opcode::OP_CAST, OpCoreType::AIV, "CAST", {MemoryType::MEM_UB},
                  {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Tcast", PIPE_V, PIPE_V, CoreType::AIV},
                  OpCalcType::CAST, {OP_ATTR_PREFIX + "mode", OP_ATTR_PREFIX + "satmode"}, TileShapeVerifier::Verify);
@@ -1355,6 +1363,7 @@ std::unordered_map<Opcode, std::string> SUPPORT_TILETENSOR_OPS{
     {Opcode::OP_EXTRACT_SINGLE, "TExtractSingle"},
     {Opcode::OP_GATHER_MASK, "TGatherMask"},
     {Opcode::OP_QUANT_MX, "TQuantMX"},
+    {Opcode::OP_MOVE_UB_TO_UB, "TMoveUbToUb"},
     {Opcode::OP_CAST, "TCast"},
     {Opcode::OP_ROWSUM_SINGLE, "TRowSumSingle"},
     {Opcode::OP_ROWARGMAXWITHVALUE_SINGLE, "TRowArgMaxWithValueSingle"},

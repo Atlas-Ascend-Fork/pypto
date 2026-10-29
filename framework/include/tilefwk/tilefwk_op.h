@@ -387,6 +387,8 @@ std::tuple<Tensor, Tensor> QuantMX(const Tensor& input, DataType quantDtype = Da
                                    DequantScaleRoundingMode mode = DequantScaleRoundingMode::ROUND_DOWN,
                                    int64_t axis = -1, bool performanceMode = true);
 
+void MoveUbToUb(const Tensor& src, Tensor& dst);
+
 Tensor ScalarDivS(const Tensor& operand, const Element& value, bool reverseOperand = false);
 Tensor ScalarAddS(const Tensor& operand, const Element& value, bool reverseOperand = false);
 Tensor ScalarMaxS(const Tensor& operand, const Element& value, bool reverseOperand = false);

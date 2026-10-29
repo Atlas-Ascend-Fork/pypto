@@ -212,6 +212,11 @@ inline void QuantMX(LogicalTensorDataPtr out, LogicalTensorDataPtr exp, LogicalT
     GetCalcOps()->QuantMX(Trans(out), Trans(exp), Trans(max), Trans(scaling), Trans(self), performanceMode, mode, axis);
 }
 
+inline void MoveUbToUb(LogicalTensorDataPtr out, LogicalTensorDataPtr self)
+{
+    GetCalcOps()->MoveUbToUb(Trans(out), Trans(self));
+}
+
 inline void Interleave(LogicalTensorDataPtr out0, LogicalTensorDataPtr out1, LogicalTensorDataPtr self,
                        LogicalTensorDataPtr other)
 {

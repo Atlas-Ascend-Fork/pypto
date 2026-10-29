@@ -276,4 +276,31 @@ TEST_F(TestCodegenDynQuantize, QuantMXRoundUpFp8OutputNonPerformanceMode)
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
 }
 
+TEST_F(TestCodegenDynQuantize, MoveUbToUbCodegen)
+{
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    config::SetHostOption(COMPILE_STAGE, CS_CODEGEN_INSTRUCTION);
+    TileShape::Current().SetVecTile(8, 64);
+    Tensor input(DataType::DT_FP32, {8, 64}, "input");
+    Tensor output(DataType::DT_FP32, {8, 64}, "output");
+
+    constexpr const char* funcName = "MOVE_UB_TO_UB";
+    FUNCTION(funcName, {input}, {output})
+    {
+        LOOP(funcName, FunctionType::DYNAMIC_LOOP, i, LoopRange(1))
+        {
+            (void)i;
+            auto srcTile = View(input, {8, 64}, {0, 0});
+            Tensor dstTile(DT_FP32, {8, 64});
+            MoveUbToUb(srcTile, dstTile);
+            Assemble(dstTile, {0, 0}, output);
+        }
+    }
+
+    auto function = Program::GetInstance().GetFunctionByRawName(FUNCTION_PREFIX + funcName + SUB_FUNC_SUFFIX +
+                                                                HIDDEN_FUNC_SUFFIX);
+
+    CheckStringExist(R"!!!(TMoveUbToUb)!!!", GenCodeByFunction(*function));
+}
+
 } // namespace npu::tile_fwk

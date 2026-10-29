@@ -1200,4 +1200,14 @@ TEST_F(TorchAdaptorTest, BinaryPairOps)
     }
 }
 
+TEST_F(TorchAdaptorTest, MoveUbToUbCopiesData)
+{
+    auto input = makeTensorData(DT_FP32, {8, 64}, 3.0f);
+    auto out = makeTensorData(DT_FP32, {8, 64}, 0.0f);
+    auto golden = makeTensorData(DT_FP32, {8, 64}, 3.0f);
+
+    calc::MoveUbToUb(out, input);
+    ASSERT_ALLCLOSE(out, golden);
+}
+
 } // namespace npu::tile_fwk

@@ -98,6 +98,7 @@ public:
     std::string GenOnlineSoftmaxUpdateOp() const;
     std::string GenArgReduceWithValue() const;
     std::string GenQuantMXOp() const;
+    std::string GenMoveUbToUbOp() const;
 
     std::string GenLogicalNotOp() const;
     std::string GenLogicalAndOp() const;

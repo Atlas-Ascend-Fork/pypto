@@ -1482,4 +1482,15 @@ std::string CodeGenOpNPU::GenQuantMXOp() const
     oss << STMT_END;
     return oss.str();
 }
+
+std::string CodeGenOpNPU::GenMoveUbToUbOp() const
+{
+    ASSERT(GenCodeErr::PRINT_MODE_ERROR, isSupportTileTensor) << "MoveUbToUb only supports tile tensor codegen.";
+
+    std::ostringstream oss;
+    oss << tileOpName;
+    oss << WrapParamByParentheses(GetTileOpParamsByOrder());
+    oss << STMT_END;
+    return oss.str();
+}
 } // namespace npu::tile_fwk

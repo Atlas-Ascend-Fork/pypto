@@ -1989,6 +1989,14 @@ void QuantMXInferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& o
 
 REGISTER_INFER_SHAPE_FUNC(OP_QUANT_MX, Opcode::OP_QUANT_MX, QuantMXInferFunc);
 
+void MoveUbToUbInferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& outValidShapes)
+{
+    std::vector<SymbolicScalar> outValidShape(op->GetIOperands()[0]->GetDynValidShape());
+    outValidShapes.push_back(outValidShape);
+}
+
+REGISTER_INFER_SHAPE_FUNC(OP_MOVE_UB_TO_UB, Opcode::OP_MOVE_UB_TO_UB, MoveUbToUbInferFunc);
+
 void RadixSelectFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& outValidShapes)
 {
     auto input = op->GetIOperands()[0];

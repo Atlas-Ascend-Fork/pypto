@@ -67,6 +67,7 @@
 #include "vector/radix_select/radix_select.h"
 #include "vector/quantize.h"
 #include "vector/dequantize.h"
+#include "vector/move_ub_to_ub.h"
 #endif
 #include "vector/logicaland.h"
 #include "vector/log1p.h"

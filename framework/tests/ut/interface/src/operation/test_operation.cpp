@@ -174,6 +174,32 @@ TEST_F(OperationOpsTest, QuantMX_Fp32ToFp4Unsupported)
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
 }
 
+TEST_F(OperationOpsTest, MoveUbToUb_SameShapeOutput)
+{
+    TileShape::Current().SetVecTile(8, 64);
+    Tensor input(DT_FP32, {8, 64});
+    Tensor out(DT_FP32, {8, 64});
+
+    FUNCTION("MoveUbToUbSameShape", {input, out})
+    {
+        auto srcTile = View(input, {8, 64}, {0, 0});
+        Tensor dstTile(DT_FP32, {8, 64});
+        MoveUbToUb(srcTile, dstTile);
+        Assemble(dstTile, {0, 0}, out);
+    }
+    EXPECT_EQ(out.GetDataType(), DT_FP32);
+    EXPECT_EQ(out.GetShape(), std::vector<int64_t>({8, 64}));
+}
+
+TEST_F(OperationOpsTest, MoveUbToUb_UnsupportedRank)
+{
+    TileShape::Current().SetVecTile(1, 8, 8, 8, 8);
+    Tensor input(DT_FP32, {2, 2, 2, 2, 2, 2});
+    Tensor out(DT_FP32, {2, 2, 2, 2, 2, 2});
+
+    FUNCTION("MoveUbToUbUnsupportedRank", {input}) { EXPECT_THROW(MoveUbToUb(input, out), std::exception); }
+}
+
 TEST_F(OperationOpsTest, DumpAttr_PrintsInplaceInfoMap)
 {
     Program::GetInstance().Reset();

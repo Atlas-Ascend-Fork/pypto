@@ -910,6 +910,20 @@ void ExecuteOpQuantMX(ExecuteOperationContext* ctx)
 }
 REGISTER_CALC_OP(OP_QUANT_MX, Opcode::OP_QUANT_MX, ExecuteOpQuantMX);
 
+void ExecuteOpMoveUbToUb(ExecuteOperationContext* ctx)
+{
+    ASSERT(ExecuteOperationScene::CTX_INPUT_COUNT_MISMATCH, ctx->ioperandDataViewList->size() == 1);
+    ASSERT(ExecuteOperationScene::CTX_OUTPUT_COUNT_MISMATCH, ctx->ooperandInplaceDataViewList->size() == 1);
+    auto out = ctx->ooperandInplaceDataViewList->at(0);
+    auto src = ctx->ioperandDataViewList->at(0);
+    ASSERT(ExecuteOperationScene::RUNTIME_EXCEPTION, src->GetShape() == out->GetShape())
+        << "MoveUbToUb requires input and output to have the same shape.";
+    ASSERT(ExecuteOperationScene::INVALID_TENSOR_DTYPE, src->GetDataType() == out->GetDataType())
+        << "MoveUbToUb requires input and output to have the same dtype.";
+    calc::MoveUbToUb(out, src);
+}
+REGISTER_CALC_OP(OP_MOVE_UB_TO_UB, Opcode::OP_MOVE_UB_TO_UB, ExecuteOpMoveUbToUb);
+
 void ExecuteOpInterleave(ExecuteOperationContext* ctx)
 {
     ASSERT(ExecuteOperationScene::CTX_OUTPUT_COUNT_MISMATCH, ctx->ooperandInplaceDataViewList->size() == SIZE_TWO);

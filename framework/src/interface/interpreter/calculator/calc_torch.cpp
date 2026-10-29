@@ -3950,6 +3950,17 @@ static void QuantMX(const TensorData& out, const TensorData& exp, const TensorDa
     CopyQuantMXOutputs(tout, texp, tmax, tscaling, quantRaw, expRaw, maxTemp, scalingTemp, shapes, performanceMode);
 }
 
+static void MoveUbToUb(const TensorData& out, const TensorData& self)
+{
+    auto tout = From(out);
+    auto tself = From(self);
+    ASSERT(CalculatorErrorScene::MOVEUB2UB_SHAPE_MISMATCH, tout.first.sizes() == tself.first.sizes())
+        << "MoveUbToUb requires input and output to have the same shape.";
+    ASSERT(CalculatorErrorScene::MOVEUB2UB_DTYPE_MISMATCH, out.dtype == self.dtype)
+        << "MoveUbToUb requires input and output to have the same dtype.";
+    tout.first.copy_(tself.first);
+}
+
 static struct CalcOps calcOps = {
     .Random = Random,
     .AllClose = AllClose,
@@ -4099,6 +4110,7 @@ static struct CalcOps calcOps = {
     .MrgSort = MrgSort,
     .TopK = TopK,
     .QuantMX = QuantMX,
+    .MoveUbToUb = MoveUbToUb,
     .Interleave = Interleave,
     .DeInterleave = DeInterleave,
     .DeInterleaveSingle = DeInterleaveSingle,
