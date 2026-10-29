@@ -27,23 +27,23 @@ struct KernelBinaryTestHelper {
         new (&kb->pinnedGraph_) std::vector<std::shared_ptr<Function>>();
         new (&kb->inferShapeCaches) std::vector<ControlFlowCache>();
         new (&kb->originShapeCaches) std::vector<ControlFlowCache>();
-        new (&kb->hostCtrlFlowCaches_) std::vector<HostControlFlowCache>();
+        new (&kb->valueDependCache_) KernelBinary::ValueDependCtrlFlowCache();
         new (&kb->aicpuArgBuf) std::vector<int64_t>();
         new (&kb->argTypes) std::vector<DeviceTensorData>();
         new (&kb->dynamicCellMatchDescPatches_) std::vector<DevDynamicCellMatchStridePatch>();
         new (&kb->kernelName_) std::string();
-        new (&kb->kernelArgs_) std::vector<void*>();
+        new (&kb->aicoreArgBuf_) std::vector<uint8_t>();
     }
 
     ~KernelBinaryTestHelper()
     {
         if (kb) {
-            kb->kernelArgs_.~vector();
+            kb->aicoreArgBuf_.~vector();
             kb->kernelName_.~basic_string();
             kb->dynamicCellMatchDescPatches_.~vector();
             kb->argTypes.~vector();
             kb->aicpuArgBuf.~vector();
-            kb->hostCtrlFlowCaches_.~vector();
+            kb->valueDependCache_.~ValueDependCtrlFlowCache();
             kb->originShapeCaches.~vector();
             kb->inferShapeCaches.~vector();
             kb->pinnedGraph_.~vector();
@@ -77,7 +77,7 @@ TEST(KernelBinaryTest, RefReturningGetters)
     KernelBinaryTestHelper helper;
     auto& config = helper.kb->GetMachineConfig();
     (void)config;
-    EXPECT_TRUE(helper.kb->GetHostCtrlFlowCaches().empty());
+    EXPECT_EQ(helper.kb->GetActiveHostCtrlFlowCache(), nullptr);
     EXPECT_TRUE(helper.kb->GetArgTypes().empty());
     auto& aicpuLaunchDesc = helper.kb->GetAicpuLaunchDesc();
     (void)aicpuLaunchDesc;
@@ -85,7 +85,7 @@ TEST(KernelBinaryTest, RefReturningGetters)
     (void)aicoreArgs;
     auto& taskCfg = helper.kb->GetRtTaskCfg();
     (void)taskCfg;
-    EXPECT_TRUE(helper.kb->GetKernelArgs().empty());
+    EXPECT_TRUE(helper.kb->aicoreArgBuf_.empty());
 }
 
 TEST(KernelBinaryTest, SetSyncMode_And_GetSyncMode)

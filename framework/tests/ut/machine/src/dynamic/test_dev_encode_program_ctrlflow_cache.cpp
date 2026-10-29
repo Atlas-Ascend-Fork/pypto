@@ -811,52 +811,7 @@ TEST(CtrlFlowCacheDrcoUt, DrcoReadyQueueDataRestore_WithMixWraps)
     EXPECT_EQ(drco.root.devTaskFinishFlagList.flag[DRCO_QUEUE_AIV].devTaskFinishFlag, 1U);
 }
 
-TEST(CtrlFlowCacheRelocUt, BuildIncastOutcastRelocTable_EmitsKindOrderedBatches)
-{
-    RelocTableFixture f;
-    f.ctrl->BuildIncastOutcastRelocTable();
-
-    ASSERT_EQ(f.ctrl->taskRelocTableCount, 1U);
-    ASSERT_NE(f.ctrl->taskRelocTableOffset, 0U);
-
-    const uint8_t* base = f.blob.data();
-    auto* table = reinterpret_cast<const DevControlFlowCache::TaskRelocEntry*>(base + f.ctrl->taskRelocTableOffset);
-    EXPECT_EQ(table[0].batchCount, 4U);
-    EXPECT_EQ(table[0].dynFuncHeaderOffset, static_cast<uint64_t>(reinterpret_cast<const uint8_t*>(f.header) - base));
-
-    // Batches must be dup-major and kind-ascending, each carrying the base offsets of
-    // the dup's backup (src) and live (dst) arrays and a compact index segment.
-    auto* batches = reinterpret_cast<const DevControlFlowCache::IncastOutcastRelocBatch*>(base +
-                                                                                          table[0].batchListOffset);
-    const AddressCacheKind kExpectedKinds[4] = {AddressCacheKind::Workspace, AddressCacheKind::Input,
-                                                AddressCacheKind::Output, AddressCacheKind::Communication};
-    const uint16_t kExpectedIdx[4] = {1, 0, 2, 3};
-    for (uint32_t j = 0; j < table[0].batchCount; ++j) {
-        EXPECT_EQ(batches[j].kind, kExpectedKinds[j]);
-        EXPECT_EQ(batches[j].descCount, 1U);
-        EXPECT_EQ(batches[j].srcBaseOffset, static_cast<uint64_t>(reinterpret_cast<const uint8_t*>(f.backup) - base));
-        EXPECT_EQ(batches[j].dstBaseOffset, static_cast<uint64_t>(reinterpret_cast<const uint8_t*>(f.live) - base));
-        auto* idx = reinterpret_cast<const uint16_t*>(base + batches[j].idxListOffset);
-        EXPECT_EQ(idx[0], kExpectedIdx[j]);
-    }
-}
-
-TEST(CtrlFlowCacheRelocUt, RelocIncastOutcastTask_TablePath_ResolvesAllKinds)
-{
-    RelocTableFixture f;
-    f.ctrl->BuildIncastOutcastRelocTable();
-
-    f.ctrl->RelocIncastOutcastTask(0, 0, RelocTableFixture::kDstWorkspace, &f.args);
-
-    // live layout: [0]=Input#1, [1]=Workspace offset, [2]=Output#0, [3]=Comm.
-    EXPECT_EQ(f.live[0], RelocTableFixture::kInputAddr);
-    EXPECT_EQ(f.live[1], RelocTableFixture::kDstWorkspace + RelocTableFixture::kWsOffset);
-    EXPECT_EQ(f.live[2], RelocTableFixture::kOutputAddr);
-    EXPECT_EQ(f.live[3], RelocTableFixture::kCommAddr);
-    EXPECT_EQ(f.dyntask->dynFuncDataList->startArgs, &f.args);
-}
-
-TEST(CtrlFlowCacheRelocUt, RelocIncastOutcastTask_NoTable_FallsBackToStructural)
+TEST(CtrlFlowCacheRelocUt, RelocIncastOutcastTask_ResolvesAllKinds)
 {
     DeviceWorkspaceAllocator workspace;
     auto dyntask = std::make_unique<DynDeviceTask>(workspace);
@@ -875,9 +830,7 @@ TEST(CtrlFlowCacheRelocUt, RelocIncastOutcastTask_NoTable_FallsBackToStructural)
     backup[3] = CacheFormWord(AddressCacheKind::Communication, RelocTableFixture::kCommAddr);
     dyntask->dynFuncDataBackupList[0].rawTensorAddrBackup = backup.data();
 
-    // No BuildIncastOutcastRelocTable: taskRelocTableCount(0) != deviceTaskCount(1)
-    // must route the call into RelocIncastOutcastTaskStructural, which resolves the
-    // descriptors into the dupped data's own incast/outcast arrays.
+    // Resolves cache-form descriptors into the dupped data incast/outcast arrays.
     DevControlFlowCache ctrl;
     DeviceTaskCache entry;
     entry.dynTaskBase = dyntask.get();
@@ -901,4 +854,68 @@ TEST(CtrlFlowCacheRelocUt, RelocIncastOutcastTask_NoTable_FallsBackToStructural)
     EXPECT_EQ(duppedData->GetOutcastAddress(0).GetAddressValue(), RelocTableFixture::kOutputAddr);
     EXPECT_EQ(duppedData->GetOutcastAddress(1).GetAddressValue(), RelocTableFixture::kCommAddr);
     EXPECT_EQ(dyntask->dynFuncDataList->startArgs, &args);
+    EXPECT_EQ(dyntask->dynFuncDataList->At(0).ioAddressArenaOffset, npu::tile_fwk::kIoAddressArenaOffsetInvalid);
+}
+
+TEST(CtrlFlowCacheRelocUt, MaterializeIoAddressArena)
+{
+    RelocTableFixture f;
+    f.ctrl->AssignIoAddressArenaLayout();
+    ASSERT_EQ(f.ctrl->ioAddressArenaBytes, 4U * sizeof(uint64_t));
+    EXPECT_EQ(f.header->At(0).ioAddressArenaOffset, 0U);
+
+    std::array<uint64_t, 4> arena{};
+    f.ctrl->MaterializeIncastOutcastAddrs(0, RelocTableFixture::kDstWorkspace, &f.args, arena.data());
+    EXPECT_EQ(arena[0], RelocTableFixture::kInputAddr);
+    EXPECT_EQ(arena[1], RelocTableFixture::kDstWorkspace + RelocTableFixture::kWsOffset);
+    EXPECT_EQ(arena[2], RelocTableFixture::kOutputAddr);
+    EXPECT_EQ(arena[3], RelocTableFixture::kCommAddr);
+
+    // Simulate leaf entry: param.rawTensorAddr = arena + element index (no /8).
+    uint64_t* table = arena.data() + f.header->At(0).ioAddressArenaOffset;
+    EXPECT_EQ(table, arena.data());
+    EXPECT_EQ(table[0], RelocTableFixture::kInputAddr);
+    EXPECT_EQ(table[2], RelocTableFixture::kOutputAddr);
+}
+
+// Materialize (arena words) and Reloc (embedded AddressDescriptors) must resolve the same
+// absolute addresses from the same backup + startArgs. Guards the shared ResolveLeaf path.
+TEST(CtrlFlowCacheRelocUt, MaterializeAndReloc_ResolveSameAbsoluteAddrs)
+{
+    RelocTableFixture f;
+    f.ctrl->AssignIoAddressArenaLayout();
+    ASSERT_EQ(f.ctrl->ioAddressArenaBytes, 4U * sizeof(uint64_t));
+
+    std::array<uint64_t, 4> arena{};
+    f.ctrl->MaterializeIncastOutcastAddrs(0, RelocTableFixture::kDstWorkspace, &f.args, arena.data());
+    f.ctrl->RelocIncastOutcastTask(0, 0, RelocTableFixture::kDstWorkspace, &f.args);
+
+    EXPECT_EQ(f.duppedData->GetIncastAddress(0).GetAddressValue(), arena[0]);
+    EXPECT_EQ(f.duppedData->GetIncastAddress(1).GetAddressValue(), arena[1]);
+    EXPECT_EQ(f.duppedData->GetOutcastAddress(0).GetAddressValue(), arena[2]);
+    EXPECT_EQ(f.duppedData->GetOutcastAddress(1).GetAddressValue(), arena[3]);
+
+    EXPECT_EQ(arena[0], RelocTableFixture::kInputAddr);
+    EXPECT_EQ(arena[1], RelocTableFixture::kDstWorkspace + RelocTableFixture::kWsOffset);
+    EXPECT_EQ(arena[2], RelocTableFixture::kOutputAddr);
+    EXPECT_EQ(arena[3], RelocTableFixture::kCommAddr);
+    EXPECT_EQ(f.header->At(0).ioAddressArenaOffset, npu::tile_fwk::kIoAddressArenaOffsetInvalid);
+    EXPECT_EQ(f.dyntask->dynFuncDataList->startArgs, &f.args);
+}
+
+// Single ResolveLeaf call writing both sinks must keep arena words == embedded GetAddressValue.
+TEST(CtrlFlowCacheRelocUt, ResolveLeaf_ArenaAndEmbedded_Consistent)
+{
+    RelocTableFixture f;
+    RelocRange relocWorkspace(0, RelocTableFixture::kDstWorkspace);
+    const AddressDescriptor* backupAddr = reinterpret_cast<const AddressDescriptor*>(f.backup);
+    std::array<uint64_t, 4> arena{};
+
+    DevControlFlowCache::ResolveLeafIncastOutcastAddrs(backupAddr, f.duppedData, relocWorkspace, &f.args, arena.data(),
+                                                       true);
+
+    EXPECT_EQ(f.duppedData->GetIncastAddress(0).GetAddressValue(), arena[0]);
+    EXPECT_EQ(f.duppedData->GetIncastAddress(1).GetAddressValue(), arena[1]);
+    EXPECT_EQ(f.duppedData->GetOutcastAddress(0).GetAddressValue(), arena[2]);
+    EXPECT_EQ(f.duppedData->GetOutcastAddress(1).GetAddressValue(), arena[3]);
 }

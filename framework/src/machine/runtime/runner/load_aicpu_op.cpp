@@ -37,7 +37,7 @@ RtAicpuArgsEx BuildRtAicpuArgs(const AicpuLaunchDesc& desc)
     RtAicpuArgsEx rt{};
     rt.args = desc.args;
     rt.argsSize = desc.argsSize;
-    rt.hostInputInfoPtr = reinterpret_cast<RtHostInputInfo*>(desc.hostInputs);
+    rt.hostInputInfoPtr = desc.hostInputs;
     rt.hostInputInfoNum = desc.hostInputNum;
     rt.timeout = desc.timeout;
     rt.kernelNameAddrOffset = desc.kernelNameOffset;
@@ -97,8 +97,7 @@ int LoadAicpuOp::LaunchWithHostArgs(void* funcHandle, const AicpuLaunchDesc& des
         kernelLaunchCfg.numAttrs = 1U;
     }
     return RuntimeLaunchKernelWithHostArgs(aicpuFuncHandle, desc.blockDim, desc.stream, &kernelLaunchCfg, desc.args,
-                                           desc.argsSize, reinterpret_cast<RtHostInputInfo*>(desc.hostInputs),
-                                           desc.hostInputNum);
+                                           desc.argsSize, desc.hostInputs, desc.hostInputNum);
 }
 
 int LoadAicpuOp::LaunchCustomOp([[maybe_unused]] const AicpuLaunchDesc& desc,

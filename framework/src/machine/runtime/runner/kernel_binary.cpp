@@ -15,6 +15,7 @@
 
 #include "machine/runtime/runner/kernel_binary.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <mutex>
 #include <sstream>
@@ -29,6 +30,7 @@
 #include "interface/utils/common.h"
 #include "interface/configs/config_manager.h"
 #include "interface/machine/host/perf_analysis.h"
+#include "machine/runtime/runner/aicore_launch_args.h"
 #include "machine/runtime/runner/host_prof.h"
 #include "machine/runtime/runner/fed_prof_manager.h"
 #include "machine/runtime/runner/runtime_agent.h"
@@ -160,9 +162,13 @@ uint8_t* KernelBinary::FindCtrlFlowCache(std::vector<std::vector<int64_t>>& inpu
     auto& caches = isOriginShape ? originShapeCaches : inferShapeCaches;
     for (auto& cache : caches) {
         if (cache.hash == inHash) {
+            activeHostCtrlFlowCache_ = cache.hostCache.empty() ?
+                                           nullptr :
+                                           reinterpret_cast<DevControlFlowCache*>(cache.hostCache.data());
             return cache.devCache;
         }
     }
+    activeHostCtrlFlowCache_ = nullptr;
     return nullptr;
 }
 
@@ -172,14 +178,18 @@ uint8_t* KernelBinary::FindCtrlFlowCache(std::vector<DeviceTensorData>& inputs, 
     auto& caches = isOriginShape ? originShapeCaches : inferShapeCaches;
     for (auto& cache : caches) {
         if (cache.hash == inHash) {
+            activeHostCtrlFlowCache_ = cache.hostCache.empty() ?
+                                           nullptr :
+                                           reinterpret_cast<DevControlFlowCache*>(cache.hostCache.data());
             return cache.devCache;
         }
     }
+    activeHostCtrlFlowCache_ = nullptr;
     return nullptr;
 }
 
 uint8_t* KernelBinary::BuildControlFlowCache(std::vector<DeviceTensorData>& inputs, bool isOriginShape,
-                                             bool storeToCache)
+                                             bool storeToCache, uint64_t valueDependHash)
 {
     DeviceLauncherConfig config;
     DeviceLauncher::DeviceLauncherConfigFillDeviceInfo(config);
@@ -203,13 +213,20 @@ uint8_t* KernelBinary::BuildControlFlowCache(std::vector<DeviceTensorData>& inpu
 
     uint8_t* devCache = DeviceLauncher::CopyControlFlowCache(ctrlCache);
     COMPILER_LOGD("control flow cache: %p", devCache);
+    // Host mirror paired with device cache; Find binds it to activeHostCtrlFlowCache_.
+    CtrlFlowCacheBlob* hostSlot = nullptr;
     if (storeToCache) {
-        if (isOriginShape) {
-            originShapeCaches.emplace_back(inputs, devCache);
-        } else {
-            inferShapeCaches.emplace_back(inputs, devCache);
-        }
+        auto& caches = isOriginShape ? originShapeCaches : inferShapeCaches;
+        caches.emplace_back(inputs, devCache);
+        hostSlot = &caches.back().hostCache;
+    } else {
+        valueDependCache_.hash = valueDependHash;
+        valueDependCache_.devCache = devCache;
+        hostSlot = &valueDependCache_.hostCache;
     }
+    hostSlot->resize(ctrlCache->usedCacheSize);
+    (void)memcpy_s(hostSlot->data(), hostSlot->size(), ctrlCache, ctrlCache->usedCacheSize);
+    activeHostCtrlFlowCache_ = reinterpret_cast<DevControlFlowCache*>(hostSlot->data());
     return devCache;
 }
 
@@ -286,6 +303,77 @@ std::pair<AiCpuArgs*, int64_t> KernelBinary::BuildKernelArgs(const std::vector<D
     return {aicpuArgs, aicpuArgBuf.size() * sizeof(int64_t)};
 }
 
+void KernelBinary::MaterializeIoAddressArenaForAicore(AiCpuArgs* aicpuArgs)
+{
+    DevControlFlowCache* hostCache = nullptr;
+    size_t arenaBytes = 0;
+    if (ctrlFlowCacheReplay_ && aicpuArgs != nullptr && activeHostCtrlFlowCache_ != nullptr) {
+        hostCache = activeHostCtrlFlowCache_;
+        arenaBytes = static_cast<size_t>(hostCache->ioAddressArenaBytes);
+        if (arenaBytes != 0) {
+            EnsureHostCtrlFlowCacheRebased(hostCache, devProg);
+        }
+    }
+
+    PrepareAicoreLaunchArgsBuffer(aicoreArgBuf_, aicpuArgs, kernelName_.c_str(), arenaBytes, rtAicoreArgs_);
+    if (arenaBytes != 0) {
+        int64_t* inputp = reinterpret_cast<int64_t*>(aicpuArgs + 1);
+        FillAicoreIoAddressArenaBuffer(aicoreArgBuf_, aicpuArgs, hostCache, static_cast<uint64_t>(inputp[0]),
+                                       static_cast<uint64_t>(inputp[1]), rtAicoreArgs_, aicoreHostInfo_);
+    }
+}
+
+DevControlFlowCache* KernelBinary::FindHostCtrlFlowCache(const std::vector<DeviceTensorData>& tensors,
+                                                         CtrlFlowCacheBlob& hostCacheOut)
+{
+    const int64_t hash = ControlFlowCache::Hash(tensors);
+    auto tryCopy = [&](CtrlFlowCacheBlob& blob) -> DevControlFlowCache* {
+        if (blob.empty()) {
+            return nullptr;
+        }
+        hostCacheOut = blob;
+        return reinterpret_cast<DevControlFlowCache*>(hostCacheOut.data());
+    };
+    for (auto& cache : originShapeCaches) {
+        if (cache.hash == hash) {
+            return tryCopy(cache.hostCache);
+        }
+    }
+    for (auto& cache : inferShapeCaches) {
+        if (cache.hash == hash) {
+            return tryCopy(cache.hostCache);
+        }
+    }
+    if (!valueDependCache_.hostCache.empty() &&
+        activeHostCtrlFlowCache_ == reinterpret_cast<DevControlFlowCache*>(valueDependCache_.hostCache.data())) {
+        return tryCopy(valueDependCache_.hostCache);
+    }
+    return nullptr;
+}
+
+void KernelBinary::AttachHostCtrlFlowCache(const std::vector<DeviceTensorData>& tensors, CtrlFlowCacheBlob&& hostCache)
+{
+    const int64_t hash = ControlFlowCache::Hash(tensors);
+    for (auto& cache : originShapeCaches) {
+        if (cache.hash == hash) {
+            cache.hostCache = std::move(hostCache);
+            activeHostCtrlFlowCache_ = reinterpret_cast<DevControlFlowCache*>(cache.hostCache.data());
+            return;
+        }
+    }
+    for (auto& cache : inferShapeCaches) {
+        if (cache.hash == hash) {
+            cache.hostCache = std::move(hostCache);
+            activeHostCtrlFlowCache_ = reinterpret_cast<DevControlFlowCache*>(cache.hostCache.data());
+            return;
+        }
+    }
+    valueDependCache_.hostCache = std::move(hostCache);
+    activeHostCtrlFlowCache_ = valueDependCache_.hostCache.empty() ?
+                                   nullptr :
+                                   reinterpret_cast<DevControlFlowCache*>(valueDependCache_.hostCache.data());
+}
+
 bool KernelBinary::CheckArgs(const std::vector<DeviceTensorData>& tensors) const
 {
     if (tensors.size() != argTypes.size()) {
@@ -337,10 +425,23 @@ const std::vector<size_t>& KernelBinary::GetValueDependInputIndices() const
 
 void KernelBinary::FreeAndClearValueDependCache()
 {
-    if (valueDependDevCache_ != nullptr) {
-        DeviceLauncher::FreeControlFlowCache(valueDependDevCache_);
-        valueDependDevCache_ = nullptr;
+    if (valueDependCache_.devCache != nullptr) {
+        DeviceLauncher::FreeControlFlowCache(valueDependCache_.devCache);
+        valueDependCache_.devCache = nullptr;
     }
+    if (!valueDependCache_.hostCache.empty() &&
+        activeHostCtrlFlowCache_ == reinterpret_cast<DevControlFlowCache*>(valueDependCache_.hostCache.data())) {
+        activeHostCtrlFlowCache_ = nullptr;
+    }
+    valueDependCache_.hostCache.clear();
+    valueDependCache_.hash = 0;
+}
+
+void KernelBinary::BindValueDependActiveHost()
+{
+    activeHostCtrlFlowCache_ = valueDependCache_.hostCache.empty() ?
+                                   nullptr :
+                                   reinterpret_cast<DevControlFlowCache*>(valueDependCache_.hostCache.data());
 }
 
 uint64_t KernelBinary::GetMaxDynamicAssembleOutcastMem() const
@@ -433,9 +534,14 @@ void KernelBinary::InitLaunchArgs()
     aicpuLaunchDesc_.hostInputs = &hostInfo_;
     aicpuLaunchDesc_.timeout = AICPU_EXECUTE_TIMEOUT;
     memset_s(&rtAicoreArgs_, sizeof(RtArgsEx), 0, sizeof(RtArgsEx));
-    kernelArgs_.resize(0x7, nullptr);
-    rtAicoreArgs_.args = kernelArgs_.data();
-    rtAicoreArgs_.argsSize = kernelArgs_.size() * sizeof(void*);
+    // Pre-size to the no-arena footprint; Materialize grows capacity once and reuses it.
+    const size_t slotsBytes = AicoreLaunchSlotsBytes();
+    aicoreArgBuf_.reserve(slotsBytes);
+    aicoreArgBuf_.resize(slotsBytes);
+    (void)memset_s(aicoreArgBuf_.data(), slotsBytes, 0, slotsBytes);
+    rtAicoreArgs_.args = aicoreArgBuf_.data();
+    rtAicoreArgs_.argsSize = static_cast<uint32_t>(slotsBytes);
+    InitAicoreHostInputInfo(aicoreHostInfo_);
 
     memset_s(&rtTaskCfg_, sizeof(RtTaskCfgInfo), 0, sizeof(RtTaskCfgInfo));
     rtTaskCfg_.schemMode = static_cast<uint8_t>(RtSchemModeType::BATCH);

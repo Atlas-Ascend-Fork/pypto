@@ -67,11 +67,13 @@ TEST(CtrlFlowCacheManagerTest, ControlFlowCache_Constructor)
     EXPECT_NE(cache.hash, 0);
 }
 
-TEST(CtrlFlowCacheManagerTest, HostControlFlowCache_Constructor)
+TEST(CtrlFlowCacheManagerTest, ControlFlowCache_WithHostMirror)
 {
     std::vector<DeviceTensorData> datas = {{DT_FP32, nullptr, {2, 4}}};
     CtrlFlowCacheBlob hostCache = {1, 2, 3, 4, 5};
-    HostControlFlowCache cache(datas, std::move(hostCache));
+    auto* cachePtr = reinterpret_cast<uint8_t*>(0x2000);
+    ControlFlowCache cache(datas, cachePtr, std::move(hostCache));
+    EXPECT_EQ(cache.devCache, cachePtr);
     EXPECT_EQ(cache.hostCache.size(), 5u);
     EXPECT_EQ(cache.hostCache[0], 1);
     EXPECT_NE(cache.hash, 0);

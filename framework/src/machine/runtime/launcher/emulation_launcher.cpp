@@ -152,6 +152,8 @@ int EmulationLauncher::EmulationRunOnce(Function* function, DevControlFlowCache*
                     "OK" :
                     "MISALIGNED");
             MemcpyS(launchCtrlFlowCache, inputCtrlCache->usedCacheSize, inputCtrlCache, inputCtrlCache->usedCacheSize);
+            // No AICore host-args arena here. Clear the size so GELaunch refreshes the embedded table.
+            launchCtrlFlowCache->ioAddressArenaBytes = 0;
         }
     }
     int rc = EmulationLaunchOnceWithHostTensorData(function, inputDeviceDataList, outputDeviceDataList,
@@ -273,7 +275,7 @@ int EmulationLauncher::BuildControlFlowCacheWithEmulationTensorData(
     TryResetBlockDimForPreLaunch(hostCtrlFlowCache, devProg, config);
     uint64_t contextWorkspaceAddr = hostCtrlFlowCache->contextWorkspaceAddr;
     hostCtrlFlowCache->IncastOutcastAddrReloc(contextWorkspaceAddr, 0, nullptr);
-    hostCtrlFlowCache->BuildIncastOutcastRelocTable();
+    hostCtrlFlowCache->AssignIoAddressArenaLayout();
     hostCtrlFlowCache->CalcUsedCacheSize();
     hostCtrlFlowCache->RuntimeAddrRelocWorkspace(contextWorkspaceAddr, 0, nullptr, nullptr, nullptr,
                                                  devProg->GetParallelism());

@@ -34,13 +34,16 @@
 #include "machine/runtime/runner/runtime_utils.h"
 #include "machine/runtime/runner/load_aicpu_op.h"
 #include "machine/runtime/runner/host_prof.h"
+#include "machine/runtime/runner/aicore_launch_args.h"
 #include "machine/runtime/launcher/device_launcher.h"
 #include "machine/runtime/launcher/cell_match_dynamic.h"
+#include "machine/runtime/memory_utils/device_memory_utils.h"
+#include "machine/utils/dynamic/dev_encode_program_ctrlflow_cache.h"
+#include "machine/utils/dynamic/dev_encode_tensor.h"
 
 namespace npu::tile_fwk::dynamic {
 
 namespace {
-// aicpu launch primitive (topology from devProg), kept here so device_launcher stays free of bundle code.
 int BundleLaunchAicpu(AicpuLaunchDesc& launchDesc, DevAscendProgram* devProg)
 {
     auto ctrlStream = GetStreamContext().GetCtrlStream();
@@ -76,7 +79,6 @@ int BundleLaunchAicpu(AicpuLaunchDesc& launchDesc, DevAscendProgram* devProg)
     return ret;
 }
 
-// aicore launch primitive: bundle always runs debugEnable=false, so the debug-sync branch is omitted.
 int BundleLaunchAicore(AclRtStream aicoreStream, void* kernel, RtArgsEx& rtArgs, RtTaskCfgInfo& rtTaskCfg,
                        DevAscendProgram* devProg)
 {
@@ -104,62 +106,47 @@ std::string MakeAicpuOpName(const std::string& displayName, uint64_t bundleKey)
     const size_t prefixSize = maxNameSize - std::strlen(keySuffix);
     return displayName.substr(0, prefixSize) + keySuffix;
 }
-} // namespace
 
-int LaunchBundleKernelOnce(const std::vector<uint8_t>& devProgBinary, void* binHandle, uint64_t cacheKey,
-                           const std::vector<DeviceTensorData>& tensorList,
-                           const std::vector<uint8_t>& hostCtrlFlowCache, const std::string& displayName,
-                           const std::vector<DevDynamicCellMatchStridePatch>& cellMatchStridePatches,
-                           void* workspaceAddr, RtStream aicoreStream, bool streamSynchronize,
-                           const DeviceLauncherConfig& config)
+size_t BundleAicpuArgsBytes(size_t tensorCount, size_t cellMatchPatchCount)
 {
-    (void)config;
-    MACHINE_LOGI("Kernel Launch (bundle)");
-    if (binHandle == nullptr) {
-        MACHINE_LOGE(HostLauncherErr::REGISTER_KERNEL_FAILED, "[kernel-bundle] null kernel bin handle.");
-        return -1;
-    }
-    aicoreStream = aicoreStream == nullptr ? GetContextAiCoreStream() : aicoreStream;
+    return sizeof(AiCpuArgs) + 2 * sizeof(int64_t) + tensorCount * sizeof(DevTensorData) + sizeof(uint64_t) +
+           cellMatchPatchCount * sizeof(DevDynamicCellMatchStridePatch);
+}
 
+int BundleInitRuntime()
+{
     int rc = AclInit(nullptr);
     if (rc != 0 && rc != ACLRT_ERROR_REPEAT_INITIALIZE) {
         return rc;
     }
     DeviceLauncher::CheckAscendDriverVersionOnboard();
     CheckDeviceId();
+    return 0;
+}
 
-    auto* devProg = reinterpret_cast<DevAscendProgram*>(const_cast<uint8_t*>(devProgBinary.data()));
-
-    // Control-flow cache: copied host->device once per bundle, reused across launches (freed at process exit).
-    uint8_t* devCtrlCache = bundle::KernelBundleDevCache::Instance().GetOrCopy(cacheKey, hostCtrlFlowCache);
-
-    // Build AiCpuArgs buffer: one unified operand list ([nTensors, 0], outputs folded in), then the trailing
-    // cell-match stride patch count + patches (device applies via ApplyDynamicCellMatchDescPatchesFromLaunchArgs).
-    const uint64_t tensorCount = tensorList.size();
-    const size_t argSize = sizeof(AiCpuArgs) + 2 * sizeof(int64_t) + tensorCount * sizeof(DevTensorData) +
-                           sizeof(uint64_t) + cellMatchStridePatches.size() * sizeof(DevDynamicCellMatchStridePatch);
-    std::vector<int64_t> aicpuArgBuf((argSize + sizeof(int64_t) - 1) / sizeof(int64_t), 0);
+AiCpuArgs* BundleBuildAicpuArgs(std::vector<int64_t>& aicpuArgBuf, size_t tensorCount, size_t cellMatchPatchCount,
+                                const std::string& aicpuOpName)
+{
+    const size_t argSize = BundleAicpuArgsBytes(tensorCount, cellMatchPatchCount);
+    aicpuArgBuf.assign((argSize + sizeof(int64_t) - 1) / sizeof(int64_t), 0);
     auto* aicpuArgs = new (aicpuArgBuf.data()) AiCpuArgs();
     aicpuArgs->kArgs.inputs = nullptr;
     aicpuArgs->kArgs.outputs = nullptr;
-    const std::string aicpuOpName = MakeAicpuOpName(displayName, cacheKey);
     if (strcpy_s(aicpuArgs->opName, sizeof(aicpuArgs->opName), aicpuOpName.c_str()) != 0) {
         MACHINE_LOGE(DevCommonErr::PARAM_CHECK_FAILED, "[kernel-bundle] invalid AICPU op name: %s",
                      aicpuOpName.c_str());
-        return -1;
+        return nullptr;
     }
+    return aicpuArgs;
+}
 
-    // Fill device-side kArgs: cfgdata (base-0 devProg), metadata, distributed ctx. Topology is re-derived from
-    // the target platform in DeviceInitTilingData.
-    DeviceMemoryUtils devMem;
-    DeviceLauncher::FillDeviceKernelArgs(devMem, const_cast<std::vector<uint8_t>&>(devProgBinary), aicpuArgs->kArgs,
-                                         std::vector<std::string>{});
-
-    // Fill tensor descriptors: [nTensors, 0] then the flat tensor array (kernel addresses operands by position).
+void BundleFillTensorList(AiCpuArgs* aicpuArgs, const std::vector<DeviceTensorData>& tensorList,
+                          const std::vector<DevDynamicCellMatchStridePatch>& cellMatchStridePatches)
+{
     int64_t* inputp = reinterpret_cast<int64_t*>(aicpuArgs + 1);
-    inputp[0] = static_cast<int64_t>(tensorCount);
+    inputp[0] = static_cast<int64_t>(tensorList.size());
     inputp[1] = 0; // nOut: outputs are folded into tensorList
-    auto* tensorData = reinterpret_cast<DevTensorData*>(inputp + 2);
+    auto* tensorData = reinterpret_cast<DevTensorData*>(inputp + DEV_TENSOR_DATA_OFFSET);
     for (const auto& t : tensorList) {
         tensorData->address = reinterpret_cast<uint64_t>(t.GetAddr());
         tensorData->dataType = t.GetDataType();
@@ -170,10 +157,12 @@ int LaunchBundleKernelOnce(const std::vector<uint8_t>& devProgBinary, void* binH
         }
         tensorData++;
     }
-    // Trailing cell-match stride patch count (0 when empty) + patch array, after the flat tensor list.
     WriteDynamicCellMatchStridePatchesToLaunchArgs(inputp, cellMatchStridePatches);
+}
 
-    // Per-launch kArgs (ctrl cache device ptr / workspace / monotonic round / dynamic mem budgets).
+void BundleFillPerLaunchKArgs(AiCpuArgs* aicpuArgs, DevAscendProgram* devProg, uint8_t* devCtrlCache,
+                              void* workspaceAddr, uint64_t cacheKey)
+{
     static std::atomic<int64_t> bundleSequence{0};
     aicpuArgs->kArgs.ctrlFlowCache = reinterpret_cast<int64_t*>(devCtrlCache);
     aicpuArgs->kArgs.workspace = reinterpret_cast<int64_t*>(workspaceAddr);
@@ -181,41 +170,90 @@ int LaunchBundleKernelOnce(const std::vector<uint8_t>& devProgBinary, void* binH
     aicpuArgs->kArgs.maxDynamicAssembleOutcastMem = devProg->memBudget.tensor.maxDynamicAssembleOutcastMem;
     aicpuArgs->kArgs.maxDynamicCellMatchTableMem = devProg->memBudget.metadata.maxDynamicCellMatchTableMem;
 
-    // Dynamic cell-match metadata pool: a standalone device buffer (size = memBudget.metadata.dynamicCellMatch,
-    // computed in EvalWorkspaceForShapes), allocated once per bundle and reused. The device (device_ctrl InitDyn)
-    // overwrites devArgs.dynamicCellMatch{Addr,Capacity} from these kArgs and inits the pool in place.
     const uint64_t dynamicCellMatchBytes = devProg->memBudget.metadata.dynamicCellMatch;
     uint8_t* cellMatchAddr = bundle::KernelBundleDevCache::Instance().GetOrAllocCellMatch(cacheKey,
                                                                                           dynamicCellMatchBytes);
     aicpuArgs->kArgs.runtimeDynamicCellMatchAddr = reinterpret_cast<uint64_t>(cellMatchAddr);
     aicpuArgs->kArgs.runtimeDynamicCellMatchCapacity = cellMatchAddr != nullptr ? dynamicCellMatchBytes : 0;
+}
 
-    // Resolve the entry through PyptoRun; only the input tensor pointer needs host-args relocation.
-    AicpuLaunchDesc aicpuLaunchDesc{};
-    AicpuHostInput hostInfo{};
-    hostInfo.addrOffset = offsetof(AiCpuArgs, kArgs.inputs);
-    hostInfo.dataOffset = sizeof(AiCpuArgs);
-    aicpuLaunchDesc.hostInputs = &hostInfo;
-    aicpuLaunchDesc.hostInputNum = 1;
-    aicpuLaunchDesc.timeout = AICPU_EXECUTE_TIMEOUT;
-    aicpuLaunchDesc.args = aicpuArgs;
-    aicpuLaunchDesc.argsSize = static_cast<uint32_t>(aicpuArgBuf.size() * sizeof(int64_t));
+struct BundleAicpuLaunchState {
+    std::vector<int64_t> argBuf;
+    AiCpuArgs* args{nullptr};
+    AicpuLaunchDesc launchDesc{};
+    RtHostInputInfo hostInfo{};
+};
 
-    std::vector<void*> kernelArgs(0x7, nullptr);
-    RtArgsEx rtAicoreArgs;
-    (void)memset_s(&rtAicoreArgs, sizeof(RtArgsEx), 0, sizeof(RtArgsEx));
-    rtAicoreArgs.args = kernelArgs.data();
-    rtAicoreArgs.argsSize = static_cast<uint32_t>(kernelArgs.size() * sizeof(void*));
+bool BundlePrepareAicpuLaunch(BundleAicpuLaunchState& state, const std::vector<uint8_t>& devProgBinary,
+                              DevAscendProgram* devProg, const std::vector<DeviceTensorData>& tensorList,
+                              const std::vector<DevDynamicCellMatchStridePatch>& cellMatchStridePatches,
+                              uint8_t* devCtrlCache, void* workspaceAddr, uint64_t cacheKey,
+                              const std::string& aicpuOpName)
+{
+    state.args = BundleBuildAicpuArgs(state.argBuf, tensorList.size(), cellMatchStridePatches.size(), aicpuOpName);
+    if (state.args == nullptr) {
+        return false;
+    }
+    DeviceMemoryUtils devMem;
+    DeviceLauncher::FillDeviceKernelArgs(devMem, const_cast<std::vector<uint8_t>&>(devProgBinary), state.args->kArgs,
+                                         std::vector<std::string>{});
+    BundleFillTensorList(state.args, tensorList, cellMatchStridePatches);
+    BundleFillPerLaunchKArgs(state.args, devProg, devCtrlCache, workspaceAddr, cacheKey);
 
-    RtTaskCfgInfo rtTaskCfg;
-    (void)memset_s(&rtTaskCfg, sizeof(RtTaskCfgInfo), 0, sizeof(RtTaskCfgInfo));
-    rtTaskCfg.schemMode = static_cast<uint8_t>(RtSchemModeType::BATCH);
-    rtTaskCfg.localMemorySize = GetAicoreLocalMemorySize(static_cast<NPUArch>(devProg->devArgs.archInfo),
-                                                         devProg->requiresSimt);
+    state.hostInfo.addrOffset = offsetof(AiCpuArgs, kArgs.inputs);
+    state.hostInfo.dataOffset = sizeof(AiCpuArgs);
+    state.launchDesc = {};
+    state.launchDesc.hostInputs = &state.hostInfo;
+    state.launchDesc.hostInputNum = 1;
+    state.launchDesc.timeout = AICPU_EXECUTE_TIMEOUT;
+    state.launchDesc.args = state.args;
+    state.launchDesc.argsSize = static_cast<uint32_t>(state.argBuf.size() * sizeof(int64_t));
+    return true;
+}
 
-    // Launch (mirrors KernelModule::Launch), reusing the public DeviceLauncher helpers.
+struct BundleAicoreLaunchState {
+    std::vector<uint8_t> argBuf;
+    RtArgsEx rtArgs{};
+    RtHostInputInfo hostInfo{};
+    RtTaskCfgInfo taskCfg{};
+    DevControlFlowCache* hostCache{nullptr};
+    size_t arenaBytes{0};
+};
+
+void BundlePrepareAicoreArgs(BundleAicoreLaunchState& state, AiCpuArgs* aicpuArgs, DevAscendProgram* devProg,
+                             std::vector<uint8_t>& hostCtrlFlowCache, const std::string& displayName)
+{
+    if (!hostCtrlFlowCache.empty()) {
+        state.hostCache = reinterpret_cast<DevControlFlowCache*>(hostCtrlFlowCache.data());
+        state.arenaBytes = static_cast<size_t>(state.hostCache->ioAddressArenaBytes);
+    }
+    // Size/slots only here. Materialize stays after AICPU launch (same order as DeviceLauncher::LaunchKernel).
+    PrepareAicoreLaunchArgsBuffer(state.argBuf, aicpuArgs, displayName.c_str(), state.arenaBytes, state.rtArgs);
+
+    (void)memset_s(&state.taskCfg, sizeof(RtTaskCfgInfo), 0, sizeof(RtTaskCfgInfo));
+    state.taskCfg.schemMode = static_cast<uint8_t>(RtSchemModeType::BATCH);
+    state.taskCfg.localMemorySize = GetAicoreLocalMemorySize(static_cast<NPUArch>(devProg->devArgs.archInfo),
+                                                             devProg->requiresSimt);
+}
+
+void BundleMaterializeAicoreIoArena(BundleAicoreLaunchState& state, AiCpuArgs* aicpuArgs, DevAscendProgram* devProg)
+{
+    if (state.arenaBytes == 0 || state.hostCache == nullptr) {
+        return;
+    }
+    EnsureHostCtrlFlowCacheRebased(state.hostCache, devProg);
+    // Packed ABI: nIn/nOut come from the recording cache, not the folded [nTensors,0] launch list.
+    FillAicoreIoAddressArenaBuffer(state.argBuf, aicpuArgs, state.hostCache,
+                                   state.hostCache->inputTensorDataList.size(),
+                                   state.hostCache->outputTensorDataList.size(), state.rtArgs, state.hostInfo);
+}
+
+int BundleDispatchKernels(AclRtStream aicoreStream, void* binHandle, AicpuLaunchDesc& aicpuLaunchDesc,
+                          AiCpuArgs* aicpuArgs, DevAscendProgram* devProg, BundleAicoreLaunchState& aicoreState,
+                          bool streamSynchronize)
+{
     const bool isCaptureMode = DeviceLauncher::IsCaptureMode();
-    rc = DeviceLauncher::LaunchSyncTask(aicoreStream, isCaptureMode, /*launchEarlyMode=*/0);
+    int rc = DeviceLauncher::LaunchSyncTask(aicoreStream, isCaptureMode, /*launchEarlyMode=*/0);
     if (rc != RT_SUCCESS) {
         return rc;
     }
@@ -230,12 +268,10 @@ int LaunchBundleKernelOnce(const std::vector<uint8_t>& devProgBinary, void* binH
         return rc;
     }
 
-    kernelArgs[0] = const_cast<char*>(displayName.c_str());
-    kernelArgs[4] = reinterpret_cast<int64_t*>(aicpuArgs + 1); // inputp
-    kernelArgs[5] = aicpuArgs->kArgs.cfgdata;                  // 5 is cfgdata
-    kernelArgs[6] = reinterpret_cast<DevTensorData*>(reinterpret_cast<int64_t*>(aicpuArgs + 1) + 2);
+    BundleMaterializeAicoreIoArena(aicoreState, aicpuArgs, devProg);
 
-    rc = BundleLaunchAicore(aicoreStream, static_cast<RtBinHandle>(binHandle), rtAicoreArgs, rtTaskCfg, devProg);
+    rc = BundleLaunchAicore(aicoreStream, static_cast<RtBinHandle>(binHandle), aicoreState.rtArgs, aicoreState.taskCfg,
+                            devProg);
     if (rc != RT_SUCCESS) {
         MACHINE_LOGE(HostLauncherErr::REGISTER_KERNEL_FAILED, "[kernel-bundle] launch aicore failed: %d", rc);
         return rc;
@@ -244,6 +280,44 @@ int LaunchBundleKernelOnce(const std::vector<uint8_t>& devProgBinary, void* binH
     if (streamSynchronize) {
         rc = DeviceLauncher::DynamicLaunchSynchronize(GetContextScheStream(), GetContextCtrlStream(), aicoreStream);
     }
+    return rc;
+}
+} // namespace
+
+int LaunchBundleKernelOnce(const std::vector<uint8_t>& devProgBinary, void* binHandle, uint64_t cacheKey,
+                           const std::vector<DeviceTensorData>& tensorList, std::vector<uint8_t>& hostCtrlFlowCache,
+                           const std::string& displayName,
+                           const std::vector<DevDynamicCellMatchStridePatch>& cellMatchStridePatches,
+                           void* workspaceAddr, RtStream aicoreStream, bool streamSynchronize,
+                           const DeviceLauncherConfig& config)
+{
+    (void)config;
+    MACHINE_LOGI("Kernel Launch (bundle)");
+    if (binHandle == nullptr) {
+        MACHINE_LOGE(HostLauncherErr::REGISTER_KERNEL_FAILED, "[kernel-bundle] null kernel bin handle.");
+        return -1;
+    }
+    aicoreStream = aicoreStream == nullptr ? GetContextAiCoreStream() : aicoreStream;
+    int rc = BundleInitRuntime();
+    if (rc != 0) {
+        return rc;
+    }
+
+    auto* devProg = reinterpret_cast<DevAscendProgram*>(const_cast<uint8_t*>(devProgBinary.data()));
+    // H2D before host rebase so Materialize cannot leak absolute host pointers into device cache.
+    uint8_t* devCtrlCache = bundle::KernelBundleDevCache::Instance().GetOrCopy(cacheKey, hostCtrlFlowCache);
+
+    BundleAicpuLaunchState aicpuState;
+    if (!BundlePrepareAicpuLaunch(aicpuState, devProgBinary, devProg, tensorList, cellMatchStridePatches, devCtrlCache,
+                                  workspaceAddr, cacheKey, MakeAicpuOpName(displayName, cacheKey))) {
+        return -1;
+    }
+
+    BundleAicoreLaunchState aicoreState;
+    BundlePrepareAicoreArgs(aicoreState, aicpuState.args, devProg, hostCtrlFlowCache, displayName);
+
+    rc = BundleDispatchKernels(aicoreStream, binHandle, aicpuState.launchDesc, aicpuState.args, devProg, aicoreState,
+                               streamSynchronize);
     MACHINE_LOGI("finish Kernel Launch (bundle).");
     return rc;
 }

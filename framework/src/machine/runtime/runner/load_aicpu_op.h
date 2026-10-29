@@ -24,20 +24,13 @@
 #include "machine/utils/machine_ws_intf.h"
 
 namespace npu::tile_fwk {
-struct AicpuHostInput {
-    // device 上待刷新的位置， launch时。rt
-    // 会申请Device内存并将该device内存地址刷新到hostArgs中，该参数描述就是这个待刷新的位置的偏移
-    uint32_t addrOffset = 0;
-    // 数据偏移区，指向的数据去需要拷贝到device侧， 该参数用于指定数据区基于hostArgs的地址偏移(主要描述input 信息)
-    uint32_t dataOffset = 0;
-};
-
 struct AicpuLaunchDesc {
     void* stream = nullptr;
     // args 表示的host侧 DeviceKernelArgs + input info 等组装的info
     AiCpuArgs* args = nullptr;
     uint32_t argsSize = 0;
-    AicpuHostInput* hostInputs = nullptr;
+    /* AICPU / AICore launch 共用 RT host-input 描述（随路 H2D 槽位）。 */
+    RtHostInputInfo* hostInputs = nullptr;
     uint16_t hostInputNum = 0;
     uint16_t timeout = 0;
     uint32_t blockDim = 1;

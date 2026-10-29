@@ -48,11 +48,16 @@ public:
 
     uint8_t* FindCtrlFlowCache(std::vector<std::vector<int64_t>>& inputs, bool isOriginShape);
     uint8_t* FindCtrlFlowCache(std::vector<DeviceTensorData>& inputs, bool isOriginShape);
-    uint8_t* BuildControlFlowCache(std::vector<DeviceTensorData>& inputs, bool isOriginShape, bool storeToCache = true);
+    /* storeToCache=false commits the value-depend slot (hash + device ptr + host mirror) in one write. */
+    uint8_t* BuildControlFlowCache(std::vector<DeviceTensorData>& inputs, bool isOriginShape, bool storeToCache = true,
+                                   uint64_t valueDependHash = 0);
 
     int64_t GetWorkspaceSize(const std::vector<DeviceTensorData>& tensors);
 
     std::pair<AiCpuArgs*, int64_t> BuildKernelArgs(const std::vector<DeviceTensorData>& tensors);
+    /* After workspace is set: materialize IO addrs into AICore launch host-args arena.
+     * Uses activeHostCtrlFlowCache_ bound by FindOrBuildDevCache (no second hash lookup). */
+    void MaterializeIoAddressArenaForAicore(AiCpuArgs* aicpuArgs);
 
     bool CheckArgs(const std::vector<DeviceTensorData>& tensors) const;
 
@@ -63,19 +68,27 @@ public:
     bool DisableHostCtrlFlowCacheBuild() const;
     bool HasValueDepend() const { return devProg != nullptr && devProg->hasValueDepend != 0; }
     const std::vector<size_t>& GetValueDependInputIndices() const;
-    uint64_t GetCachedCtrlFlowHash() const { return cachedCtrlFlowHash_; }
-    void SetCachedCtrlFlowHash(uint64_t hash) { cachedCtrlFlowHash_ = hash; }
-    uint8_t* GetValueDependDevCache() const { return valueDependDevCache_; }
-    void SetValueDependDevCache(uint8_t* cache) { valueDependDevCache_ = cache; }
+    uint64_t GetCachedCtrlFlowHash() const { return valueDependCache_.hash; }
+    uint8_t* GetValueDependDevCache() const { return valueDependCache_.devCache; }
     void FreeAndClearValueDependCache();
+    void BindValueDependActiveHost();
     uint64_t GetMaxDynamicAssembleOutcastMem() const;
     uint64_t GetMaxDynamicCellMatchTableMem() const;
     uint64_t GetRuntimeDynamicCellMatchAddr() const;
     uint64_t GetRuntimeDynamicCellMatchCapacity() const;
-    auto& GetHostCtrlFlowCaches() { return hostCtrlFlowCaches_; }
-
-    void SetCtrlFlowCacheReplay(bool replay) { ctrlFlowCacheReplay_ = replay; }
+    void SetCtrlFlowCacheReplay(bool replay)
+    {
+        ctrlFlowCacheReplay_ = replay;
+        if (!replay) {
+            activeHostCtrlFlowCache_ = nullptr;
+        }
+    }
     bool IsCtrlFlowCacheReplay() const { return ctrlFlowCacheReplay_; }
+    DevControlFlowCache* GetActiveHostCtrlFlowCache() const { return activeHostCtrlFlowCache_; }
+    /* Emulation path: copy out host mirror by shape hash; D2H attach when missing. */
+    DevControlFlowCache* FindHostCtrlFlowCache(const std::vector<DeviceTensorData>& tensors,
+                                               CtrlFlowCacheBlob& hostCacheOut);
+    void AttachHostCtrlFlowCache(const std::vector<DeviceTensorData>& tensors, CtrlFlowCacheBlob&& hostCache);
 
     // Eager and aclgraph cannot share one record/wait pair. epoch=0 is eager;
     // a non-zero epoch is the capture model. Switching epoch restarts sequence
@@ -99,7 +112,6 @@ public:
     AicpuLaunchDesc& GetAicpuLaunchDesc() { return aicpuLaunchDesc_; }
     RtArgsEx& GetRtAicoreArgs() { return rtAicoreArgs_; }
     RtTaskCfgInfo& GetRtTaskCfg() { return rtTaskCfg_; }
-    std::vector<void*>& GetKernelArgs() { return kernelArgs_; }
 
 private:
     void InitCachedArgs();
@@ -123,7 +135,16 @@ private:
     int64_t workspaceSize{0}; // static workspace size
     std::vector<ControlFlowCache> inferShapeCaches;
     std::vector<ControlFlowCache> originShapeCaches;
-    std::vector<HostControlFlowCache> hostCtrlFlowCaches_;
+    /* Single value-depend slot: data+shape hash, device cache, and host mirror. */
+    struct ValueDependCtrlFlowCache {
+        uint64_t hash{0};
+        uint8_t* devCache{nullptr};
+        CtrlFlowCacheBlob hostCache;
+    };
+
+    /* Bound when Find/Build hits; Materialize reads this without re-hashing. */
+    DevControlFlowCache* activeHostCtrlFlowCache_{nullptr};
+    ValueDependCtrlFlowCache valueDependCache_;
     bool ctrlFlowCacheReplay_{false};
     int64_t ringSequence_{0};
     uintptr_t ringEpoch_{0};
@@ -150,10 +171,10 @@ private:
     AicpuLaunchDesc aicpuLaunchDesc_;
     RtArgsEx rtAicoreArgs_;
     RtTaskCfgInfo rtTaskCfg_;
-    std::vector<void*> kernelArgs_;
-    AicpuHostInput hostInfo_;
-    uint64_t cachedCtrlFlowHash_{0};
-    uint8_t* valueDependDevCache_{nullptr};
+    /* Contiguous AICore launch buffer: 7 void* slots + optional IO arena. */
+    std::vector<uint8_t> aicoreArgBuf_;
+    RtHostInputInfo hostInfo_{};
+    RtHostInputInfo aicoreHostInfo_{};
     static std::vector<size_t> emptyIndices_;
 };
 

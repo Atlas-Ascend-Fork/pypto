@@ -45,6 +45,8 @@ inline void FillOneDynFuncData(DynFuncData* dyndata, DevAscendFunctionDupped& du
     dyndata->rawTensorAddr = reinterpret_cast<uint64_t*>(&dupFunc.GetIncastAddress(0));
     dyndata->rawTensorDesc = source->GetRawTensorDesc(0);
     dyndata->workspaceAddr = dupFunc.RuntimeWorkspace();
+    // Stitch / non-layout funcs must not participate in the host arena leaf resolve.
+    dyndata->ioAddressArenaOffset = npu::tile_fwk::kIoAddressArenaOffsetInvalid;
     DEV_IF_NONDEVICE
     {
         dyndata->exprNum = source->expressionList.size();

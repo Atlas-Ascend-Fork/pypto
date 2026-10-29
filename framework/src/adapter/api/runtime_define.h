@@ -59,7 +59,10 @@ struct RtDevBinary {
 };
 
 struct RtHostInputInfo {
+    // device 上待刷新的位置， launch时。rt
+    // 会申请Device内存并将该device内存地址刷新到hostArgs中，该参数描述就是这个待刷新的位置的偏移
     uint32_t addrOffset;
+    // 数据偏移区，指向的数据去需要拷贝到device侧， 该参数用于指定数据区基于hostArgs的地址偏移(主要描述input 信息)
     uint32_t dataOffset;
 };
 

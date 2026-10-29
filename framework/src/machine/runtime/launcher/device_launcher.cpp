@@ -626,7 +626,6 @@ int DeviceLauncher::LaunchKernel(AclRtStream aicoreStream, uint8_t* ctrlFlowCach
     auto& aicpuLaunchDesc = kernel->GetAicpuLaunchDesc();
     auto& rtAicoreArgs = kernel->GetRtAicoreArgs();
     auto& rtTaskCfg = kernel->GetRtTaskCfg();
-    auto& kernelArgs = kernel->GetKernelArgs();
 
     auto [args, argsSize] = kernel->BuildKernelArgs(tensors);
     aicpuLaunchDesc.args = args;
@@ -678,10 +677,8 @@ int DeviceLauncher::LaunchKernel(AclRtStream aicoreStream, uint8_t* ctrlFlowCach
     ret = LaunchAicpuKernel(aicpuLaunchDesc, debugEnable, kernel->GetFunction(), tensors);
     MACHINE_ASSERT(ret == RT_SUCCESS) << "launch aicpu failed: " << ret;
 
-    kernelArgs[5] = args->kArgs.cfgdata;
-    kernelArgs[0] = const_cast<char*>(kernel->GetKernelname().c_str());
-    kernelArgs[4] = (int64_t*)(args + 1);
-    kernelArgs[6] = (DevTensorData*)((int64_t*)(args + 1) + 2);
+    // Materialize IO arena into AICore launch host-args (lifetime matches AICore, not ctrl AICPU).
+    kernel->MaterializeIoAddressArenaForAicore(args);
     ret = LaunchAicoreKernel(aicoreStream, kernel->GetKernelBin(), rtAicoreArgs, rtTaskCfg, debugEnable,
                              kernel->GetFunction());
     MACHINE_ASSERT(ret == RT_SUCCESS) << "launch aicore failed: " << ret;

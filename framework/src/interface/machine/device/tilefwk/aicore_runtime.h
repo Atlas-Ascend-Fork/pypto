@@ -234,11 +234,11 @@ INLINE uint64_t GetTensorAddr(CoreFuncParam* ctx, int idx)
     if constexpr (mode == 2) { // workspace
         return func->workspaceAddr + desc->offsetOrIndex;
     } else if constexpr (mode == 3) { // root function incast/outcast 内存
-        return func->rawTensorAddr[desc->offsetOrIndex] & RAW_TENSOR_ADDR_MASK;
+        return ctx->rawTensorAddr[desc->offsetOrIndex] & RAW_TENSOR_ADDR_MASK;
     } else {
         return (desc->location == npu::tile_fwk::RAW_TENSOR_LOCATION_LOCAL) ?
                    func->workspaceAddr + desc->offsetOrIndex :
-                   func->rawTensorAddr[desc->offsetOrIndex] & RAW_TENSOR_ADDR_MASK;
+                   ctx->rawTensorAddr[desc->offsetOrIndex] & RAW_TENSOR_ADDR_MASK;
     }
 }
 

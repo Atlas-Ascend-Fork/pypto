@@ -259,10 +259,16 @@ INLINE void ExecDynCoreFunctionKernel(ExecuteContext* ctx, uint32_t taskId, uint
     dcci((__gm__ uint8_t*)funcData + 128, SINGLE_CACHE_LINE, CACHELINE_OUT);
 #endif
     auto opAttrs = &funcData->opAttrs[funcData->opAtrrOffsets[npu::tile_fwk::TaskID(taskId)]];
+    // Valid offset selects the host-args arena. Stitch and no-arena launches keep Invalid.
+    __gm__ uint64_t* rawTensorAddr = funcData->rawTensorAddr;
+    if (funcData->ioAddressArenaOffset != npu::tile_fwk::kIoAddressArenaOffsetInvalid) {
+        rawTensorAddr = ctx->ioAddressArena + funcData->ioAddressArenaOffset;
+    }
 #if ENABLE_AICORE_PRINT
-    CoreFuncParam param = {funcData, cachedTask.header, opAttrs, funcData->exprTbl, taskId, ctx->logger.Context()};
+    CoreFuncParam param = {funcData, cachedTask.header,     opAttrs,      funcData->exprTbl,
+                           taskId,   ctx->logger.Context(), rawTensorAddr};
 #else
-    CoreFuncParam param = {funcData, cachedTask.header, opAttrs, funcData->exprTbl, taskId, nullptr};
+    CoreFuncParam param = {funcData, cachedTask.header, opAttrs, funcData->exprTbl, taskId, nullptr, rawTensorAddr};
 #endif
 
 #ifdef __ENABLE_MAIN_BLOCK
@@ -319,17 +325,6 @@ INLINE void InitCtx(ExecuteContext* ctx, __gm__ FedProfPerCoreProf* metric,
     return;
 }
 
-INLINE void ExecCoreFunctionKernel(ExecuteContext* ctx, uint32_t curTaskIdx, uint8_t& lastMixResourceType)
-{
-    UNUSED(ctx);
-    UNUSED(curTaskIdx);
-    UNUSED(lastMixResourceType);
-#ifdef __HAS_SUB_FUNC__
-    ExecDynCoreFunctionKernel(ctx, curTaskIdx, lastMixResourceType);
-    return;
-#endif
-}
-
 INLINE uint32_t WaitWaveSignal(__gm__ KernelArgs* args)
 {
     AICORE_TIMEOUT_CHECK_BEGIN(t0, loop_count);
@@ -363,7 +358,6 @@ INLINE void KernelEntry(int64_t ffts_addr, int64_t inputs, int64_t outputs, int6
 #endif
     uint64_t start = get_sys_cnt();
     UNUSED(ffts_addr);
-    UNUSED(inputs);
     UNUSED(outputs);
     UNUSED(workspace);
     UNUSED(tilingdata);
@@ -381,6 +375,8 @@ INLINE void KernelEntry(int64_t ffts_addr, int64_t inputs, int64_t outputs, int6
     ctx.args = args;
     ctx.blockIdx = blockIdx;
     ctx.perCoreProf = perCoreProf;
+    // Host Materialize piggybacks the absolute IO table on AICore launch args (`inputs`).
+    ctx.ioAddressArena = (inputs != 0) ? reinterpret_cast<__gm__ uint64_t*>(inputs) : nullptr;
     __gm__ DevDfxArgs* devDfxAddr = (__gm__ DevDfxArgs*)devArgs->devDfxArgAddr;
     ctx.devTaskProfStatus.profEnabled = devDfxAddr->isOpenPerfTrace != 0;
     uint8_t aicoreLogLevel = static_cast<uint8_t>(AicoreLogLevel::NONE);
@@ -403,7 +399,9 @@ INLINE void KernelEntry(int64_t ffts_addr, int64_t inputs, int64_t outputs, int6
     uint32_t curTaskIdx;
     uint32_t lastTaskIdx = AICORE_TASK_INIT;
     uint32_t lastRegHighVal = 0;
+#ifdef __HAS_SUB_FUNC__
     uint8_t lastMixResourceType = static_cast<uint8_t>(MixResourceType::MIX_UNKNOWN);
+#endif
 
     FedProfDevTaskProfRecord(INVALID_DEV_TASK_ID, ctx.devTaskProfStatus.devTaskProf, PERF_TRACE_CORE_INIT);
 
@@ -458,7 +456,9 @@ INLINE void KernelEntry(int64_t ffts_addr, int64_t inputs, int64_t outputs, int6
 
         SendRegAck(curTaskIdx);
         PmuTestBegin(ctx.profLevel);
-        ExecCoreFunctionKernel(&ctx, curTaskIdx, lastMixResourceType);
+#ifdef __HAS_SUB_FUNC__
+        ExecDynCoreFunctionKernel(&ctx, curTaskIdx, lastMixResourceType);
+#endif
         PmuTestEnd(ctx.profLevel);
         SendRegFinish(curTaskIdx);
         lastTaskIdx = curTaskIdx;

@@ -90,7 +90,10 @@ _SUBPROCESS_SCRIPT = textwrap.dedent(
     torch_npu.npu.synchronize()
 
     assert torch.allclose(output_data, golden), "onboard dump kernel result mismatch"
-    print("SUBPROCESS_OK")
+    print("SUBPROCESS_OK", flush=True)
+    # Skip Ascend/platform static destructors that can abort after a successful run
+    # (seen as free(): invalid size in PlatformManagerV2::~PlatformManagerV2).
+    os._exit(0)
     """
 )
 

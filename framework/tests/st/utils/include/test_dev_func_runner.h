@@ -174,6 +174,7 @@ private:
             functionDevProg->controlFlowCache.isRecording = false;
             uint64_t contextWorkspaceAddr = functionDevProg->controlFlowCache.contextWorkspaceAddr;
             functionDevProg->controlFlowCache.IncastOutcastAddrReloc(contextWorkspaceAddr, 0, nullptr);
+            functionDevProg->controlFlowCache.AssignIoAddressArenaLayout();
             functionDevProg->controlFlowCache.RuntimeAddrRelocWorkspace(contextWorkspaceAddr, 0, nullptr, nullptr,
                                                                         nullptr, functionDevProg->GetParallelism());
             functionDevProg->controlFlowCache.RuntimeAddrRelocProgram(reinterpret_cast<uint64_t>(functionDevProg), 0);

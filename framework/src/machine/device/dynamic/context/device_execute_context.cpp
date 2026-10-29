@@ -129,8 +129,19 @@ void DeviceExecuteContext::GELaunchRunCached(DevStartArgs* startArgs, PushTaskEn
     for (size_t index = 0; index < devProg->ctrlFlowCacheAnchor->deviceTaskCount; index++) {
         DynDeviceTask* dynTask = reinterpret_cast<DynDeviceTask*>(
             devProg->ctrlFlowCacheAnchor->deviceTaskCacheList[index].dynTaskBase);
-        devProg->ctrlFlowCacheAnchor->RelocIncastOutcastTask(static_cast<uint32_t>(index), 0,
-                                                             startArgs->contextWorkspaceAddr, startArgs);
+        // Arena path: host Materialize fills the AICore launch-args table; the leaf reads
+        // arena + ioAddressArenaOffset. Emulation and aicore-model copies clear
+        // ioAddressArenaBytes so this fallback refreshes the embedded table and marks offsets Invalid.
+        // AICPU still reads the embedded rawTensorAddr (dump / shmem / schema). Skip Reloc only when
+        // nothing on the device needs that table refreshed for this launch.
+        const bool arenaLive = (devProg->ctrlFlowCacheAnchor->ioAddressArenaBytes != 0);
+        const bool needEmbeddedIo = (devProg->devArgs.hostPid != 0) || (startArgs->commGroupNum != 0);
+        if (arenaLive && !needEmbeddedIo) {
+            dynTask->dynFuncDataList->startArgs = startArgs;
+        } else {
+            devProg->ctrlFlowCacheAnchor->RelocIncastOutcastTask(static_cast<uint32_t>(index), 0,
+                                                                 startArgs->contextWorkspaceAddr, startArgs);
+        }
         devProg->ctrlFlowCacheAnchor->PredCountPingPongSwap(dynTask);
         if (startArgs->devProg->devArgs.enableAicoreResolve) {
             devProg->ctrlFlowCacheAnchor->DrcoPredCountPingPongSwap(dynTask);

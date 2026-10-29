@@ -44,6 +44,8 @@ struct ExecuteContext {
     int32_t blockIdx;
     __gm__ FedProfPerCoreProf* perCoreProf{nullptr};
     volatile __gm__ ParallelDevTask* parallelDevTask{nullptr};
+    /* Absolute IO address table from AICore launch host-args (KernelEntry inputs). */
+    __gm__ uint64_t* ioAddressArena{nullptr};
     uint32_t curLeafTaskParallelIdx{0};
     uint32_t seqNo{0};
     uint32_t profLevel{0};

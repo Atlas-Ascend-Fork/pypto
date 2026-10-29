@@ -103,7 +103,7 @@ extern "C" [aicore] void TENSOR_PATH0_4_0(CoreFuncParam* param, int64_t GMStackB
 
 extern "C" __global__ [aicore] void PvModelKernelEntry(__gm__ npu::tile_fwk::DynFuncHeader *funcHeader, __gm__ uint64_t *opAttrs) {
     __gm__ npu::tile_fwk::DynFuncData *funcData = (__gm__ npu::tile_fwk::DynFuncData*)(funcHeader + 1);
-    CoreFuncParam param = {funcData, funcHeader, opAttrs, funcData->exprTbl};
+    CoreFuncParam param = {funcData, funcHeader, opAttrs, funcData->exprTbl, 0, nullptr, funcData->rawTensorAddr};
     TENSOR_PATH0_4_0(&param, funcHeader->stackWorkSpaceAddr, (__gm__ int64_t *)funcHeader->startArgs->commContexts, (__gm__ FedProfLeafTaskProf*)NULL);
 }
 

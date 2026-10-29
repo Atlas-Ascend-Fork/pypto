@@ -255,6 +255,8 @@ int AicoreModelLauncher::AicoreModelRunOnce(Function* function, DevControlFlowCa
                     "OK" :
                     "MISALIGNED");
             MemcpyS(launchCtrlFlowCache, inputCtrlCache->usedCacheSize, inputCtrlCache, inputCtrlCache->usedCacheSize);
+            // No AICore host-args arena here. Clear the size so GELaunch refreshes the embedded table.
+            launchCtrlFlowCache->ioAddressArenaBytes = 0;
         }
     }
     int rc = AicoreModelLaunchOnceWithHostTensorData(function, inputDeviceDataList, outputDeviceDataList,

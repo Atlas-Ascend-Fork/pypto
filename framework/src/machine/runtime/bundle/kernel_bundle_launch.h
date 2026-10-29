@@ -34,9 +34,11 @@ namespace npu::tile_fwk::dynamic {
 // operand list ([nTensors, 0], outputs folded in). `cellMatchStridePatches` are the per-shape patches from
 // EvalWorkspaceForShapes (empty when no cell-match table), which must already have patched `devProgBinary`'s
 // memBudget for the launch shape. Returns 0 on success.
+// `hostCtrlFlowCache` is non-const: the first arena materialize rebases the base-0 blob in place
+// (isRelocMetaDev / isRelocDataDev), matching KernelBinary::MaterializeIoAddressArenaForAicore.
 int LaunchBundleKernelOnce(const std::vector<uint8_t>& devProgBinary, void* binHandle, uint64_t cacheKey,
-                           const std::vector<DeviceTensorData>& tensorList,
-                           const std::vector<uint8_t>& hostCtrlFlowCache, const std::string& displayName,
+                           const std::vector<DeviceTensorData>& tensorList, std::vector<uint8_t>& hostCtrlFlowCache,
+                           const std::string& displayName,
                            const std::vector<DevDynamicCellMatchStridePatch>& cellMatchStridePatches,
                            void* workspaceAddr, RtStream aicoreStream, bool streamSynchronize,
                            const DeviceLauncherConfig& config = DeviceLauncherConfig());

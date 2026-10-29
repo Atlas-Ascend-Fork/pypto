@@ -255,7 +255,9 @@ struct DrcoEntryState {
     __gm__ npu::tile_fwk::RuntimeDataRingBufferHeadData* runtimeDataRingBufferHeadData;
     __gm__ npu::tile_fwk::DevStartArgsBase* base;
     __gm__ DrcoDeviceTaskReadyQueue* deviceTaskReadyQueue;
+#ifdef __HAS_SUB_FUNC__
     uint8_t lastMixResourceType;
+#endif
 
     uint32_t selfReadyQueueSize;
     uint32_t selfReadyQueue[SELF_QUEUE_SIZE];
@@ -2000,7 +2002,9 @@ INLINE void InitDrcoEntry(DrcoEntryState* state, int64_t cfgdata)
     }
 
     set_mask_norm();
+#ifdef __HAS_SUB_FUNC__
     state->lastMixResourceType = static_cast<uint8_t>(MixResourceType::MIX_UNKNOWN);
+#endif
 
     FedProfDevTaskProfRecord(INVALID_DEV_TASK_ID, state->ctx.devTaskProfStatus.devTaskProf, PERF_TRACE_CORE_INIT);
 
@@ -2075,7 +2079,9 @@ INLINE void ExecLeafFunction(DrcoEntryState* state, uint32_t taskId)
 {
     TraceEvent(state, taskId, EVENT_LEAF_START());
 
-    ExecCoreFunctionKernel(&state->ctx, taskId, state->lastMixResourceType);
+#ifdef __HAS_SUB_FUNC__
+    ExecDynCoreFunctionKernel(&state->ctx, taskId, state->lastMixResourceType);
+#endif
 
     TraceEvent(state, taskId, EVENT_LEAF_END());
 }
@@ -2331,13 +2337,13 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
                             int64_t cfgdata)
 {
     UNUSED(ffts_addr);
-    UNUSED(inputs);
     UNUSED(outputs);
     UNUSED(workspace);
     UNUSED(tilingdata);
 
     DrcoEntryState state = {};
     InitDrcoEntry(&state, cfgdata);
+    state.ctx.ioAddressArena = (inputs != 0) ? reinterpret_cast<__gm__ uint64_t*>(inputs) : nullptr;
     TraceInit(&state);
 
     bool isFirstTask = true;

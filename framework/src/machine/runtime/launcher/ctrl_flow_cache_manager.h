@@ -34,8 +34,12 @@ struct ControlFlowCache {
     int64_t hash;
     std::vector<DeviceTensorData> inputs;
     uint8_t* devCache{nullptr};
+    /* Host mirror of the same CF blob; used for per-launch IO arena Materialize. */
+    CtrlFlowCacheBlob hostCache;
 
-    ControlFlowCache(std::vector<DeviceTensorData>& datas, uint8_t* tcache) : inputs(datas), devCache(tcache)
+    ControlFlowCache(std::vector<DeviceTensorData>& datas, uint8_t* tcache,
+                     CtrlFlowCacheBlob&& hcache = CtrlFlowCacheBlob{})
+        : inputs(datas), devCache(tcache), hostCache(std::move(hcache))
     {
         hash = Hash(inputs);
     }
@@ -65,17 +69,6 @@ struct ControlFlowCache {
     }
 };
 
-struct HostControlFlowCache {
-    int64_t hash;
-    CtrlFlowCacheBlob hostCache;
-
-    HostControlFlowCache(std::vector<DeviceTensorData>& datas, CtrlFlowCacheBlob&& hcache)
-        : hostCache(std::move(hcache))
-    {
-        hash = ControlFlowCache::Hash(datas);
-    }
-};
-
 class CtrlFlowCacheManager {
 public:
     static CtrlFlowCacheManager& Instance();
@@ -91,11 +84,6 @@ public:
 private:
     CtrlFlowCacheManager() = default;
     ~CtrlFlowCacheManager() = default;
-
-    DevControlFlowCache* FindHostCtrlFlowCache(KernelBinary* kernel, std::vector<DeviceTensorData>& tensors,
-                                               CtrlFlowCacheBlob& hostCache);
-    void AddHostCtrlFlowCache(KernelBinary* kernel, std::vector<DeviceTensorData>& tensors,
-                              CtrlFlowCacheBlob&& hostCache);
 };
 
 } // namespace npu::tile_fwk::dynamic

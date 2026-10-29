@@ -26,6 +26,9 @@ namespace npu::tile_fwk {
 struct DevStartArgsBase;
 
 constexpr uint64_t DRCO_ROOT_FUNC_MEMORY_REUSE_STITCHED_BIT = ((uint64_t)1) << (uint64_t)60;
+/* DynFuncData.ioAddressArenaOffset sentinel: not laid out into the per-launch arena
+ * (device stitch, or a no-arena launch after the embedded table is refreshed). */
+constexpr uint32_t kIoAddressArenaOffsetInvalid = 0xFFFFFFFFu;
 
 struct DrcoRootFuncData {
     // funcDynamicDataOffset 打包一个 u64（偏移本身平移不变）：
@@ -58,6 +61,8 @@ struct DynFuncData {
     uint64_t rawTensorAddrSize;
     uint64_t workspaceAddr;
     __gm__ int* cceBinaryIndexList;
+    /* Element index into the per-launch AICore host-args IO arena (uint64_t units, not bytes). */
+    uint32_t ioAddressArenaOffset;
 };
 
 struct DynFuncBin {

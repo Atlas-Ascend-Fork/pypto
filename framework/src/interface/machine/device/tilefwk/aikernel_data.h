@@ -42,6 +42,8 @@ struct CoreFuncParam {
     __gm__ uint64_t* exprTbl;
     uint32_t taskId;
     LogContext* ctx;
+    /* Per-leaf table base: arena+elemIndex, or embedded rawTensorAddr when no arena. */
+    __gm__ uint64_t* rawTensorAddr;
 };
 
 /*
