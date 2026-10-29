@@ -16,6 +16,7 @@
 #pragma once
 
 #include "adapter/api/hcomm_define.h"
+#include "adapter/api/hcomm_res_define.h"
 
 namespace npu::tile_fwk {
 HcommResult HcommGetCommName(HcommHandle comm, char* commName);
@@ -31,4 +32,23 @@ HcommResult HcommCommDestroy(HcommHandle comm);
 HcommResult HcommCommInitRootInfo(uint32_t nRanks, const HcommRootInfo* rootInfo, uint32_t rank, HcommHandle* comm);
 
 HcommResult HcommAllocComResourceByTiling(HcommHandle comm, void* stream, void* Mc2Tiling, void** commContext);
+
+// One-sided communication windows (mem registration / rank graph / channels), see window_context.cpp.
+HcommResult HcommCommGetHandleWithName(const char* commName, HcommHandle* comm);
+
+HcommResult HcommCommMemReg(HcommHandle comm, const char* memTag, const CommMem* mem, HcclMemHandle* memHandle);
+
+HcommResult HcommRankGraphGetLayers(HcommHandle comm, uint32_t** netLayers, uint32_t* netLayerNum);
+
+HcommResult HcommRankGraphGetLinks(HcommHandle comm, uint32_t netLayer, uint32_t srcRank, uint32_t dstRank,
+                                   CommLink** links, uint32_t* linkNum);
+
+HcommResult HcommChannelAcquire(HcommHandle comm, CommEngine engine, const HcclChannelDesc* channelDescs,
+                                uint32_t channelNum, ChannelHandle* channels);
+
+HcommResult HcommChannelGetRemoteMems(HcommHandle comm, ChannelHandle channel, uint32_t* memNum, CommMem** remoteMems,
+                                      char*** memTags);
+
+HcommResult HcommAllGather(void* sendBuf, void* recvBuf, uint64_t sendCount, HcommDataType dataType, HcommHandle comm,
+                           void* stream);
 } // namespace npu::tile_fwk

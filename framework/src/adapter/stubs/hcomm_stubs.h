@@ -16,6 +16,7 @@
 #pragma once
 
 #include "adapter/api/hcomm_define.h"
+#include "adapter/api/hcomm_res_define.h"
 
 namespace npu::tile_fwk {
 HcommResult StubGetCommName(HcommHandle comm, char* commName);
@@ -31,4 +32,22 @@ HcommResult StubCommInitRootInfo(uint32_t nRanks, const HcommRootInfo* rootInfo,
 HcommResult StubCommDestroy(HcommHandle comm);
 
 HcommResult StubAllocComResourceByTiling(HcommHandle comm, void* stream, void* Mc2Tiling, void** commContext);
+
+HcommResult StubCommGetHandleWithName(const char* commName, HcommHandle* comm);
+
+HcommResult StubCommMemReg(HcommHandle comm, const char* memTag, const CommMem* mem, HcclMemHandle* memHandle);
+
+HcommResult StubRankGraphGetLayers(HcommHandle comm, uint32_t** netLayers, uint32_t* netLayerNum);
+
+HcommResult StubRankGraphGetLinks(HcommHandle comm, uint32_t netLayer, uint32_t srcRank, uint32_t dstRank,
+                                  CommLink** links, uint32_t* linkNum);
+
+HcommResult StubChannelAcquire(HcommHandle comm, CommEngine engine, const HcclChannelDesc* channelDescs,
+                               uint32_t channelNum, ChannelHandle* channels);
+
+HcommResult StubChannelGetRemoteMems(HcommHandle comm, ChannelHandle channel, uint32_t* memNum, CommMem** remoteMems,
+                                     char*** memTags);
+
+HcommResult StubAllGather(void* sendBuf, void* recvBuf, uint64_t sendCount, HcommDataType dataType, HcommHandle comm,
+                          void* stream);
 } // namespace npu::tile_fwk

@@ -59,6 +59,22 @@ enum HCommTopo {
     HCOMM_TOPO_CUSTOM = 5      ///< 自定义
 };
 
+enum HcommDataType {
+    HCOMM_DATA_TYPE_INT8 = 0,      /**< int8 */
+    HCOMM_DATA_TYPE_INT16 = 1,     /**< int16 */
+    HCOMM_DATA_TYPE_INT32 = 2,     /**< int32 */
+    HCOMM_DATA_TYPE_FP16 = 3,      /**< fp16 */
+    HCOMM_DATA_TYPE_FP32 = 4,      /**< fp32 */
+    HCOMM_DATA_TYPE_INT64 = 5,     /**< int64 */
+    HCOMM_DATA_TYPE_UINT64 = 6,    /**< uint64 */
+    HCOMM_DATA_TYPE_UINT8 = 7,     /**< uint8 */
+    HCOMM_DATA_TYPE_UINT16 = 8,    /**< uint16 */
+    HCOMM_DATA_TYPE_UINT32 = 9,    /**< uint32 */
+    HCOMM_DATA_TYPE_FP64 = 10,     /**< fp64 */
+    HCOMM_DATA_TYPE_BFP16 = 11,    /**< bfp16 */
+    HCOMM_DATA_TYPE_RESERVED = 255 /**< reserved */
+};
+
 const uint32_t HCOMM_ROOT_INFO_BYTES = 4108; // 4108: root info length
 
 struct HcommRootInfo {

@@ -75,4 +75,81 @@ HcommResult StubAllocComResourceByTiling(HcommHandle comm, void* stream, void* M
     (void)commContext;
     return HCOMM_SUCCESS;
 }
+
+HcommResult StubCommGetHandleWithName(const char* commName, HcommHandle* comm)
+{
+    ADAPTER_LOGD("Enter stub function of CommGetHandleWithName.");
+    (void)commName;
+    (void)comm;
+    return HCOMM_SUCCESS;
+}
+
+HcommResult StubCommMemReg(HcommHandle comm, const char* memTag, const CommMem* mem, HcclMemHandle* memHandle)
+{
+    ADAPTER_LOGD("Enter stub function of CommMemReg.");
+    (void)comm;
+    (void)memTag;
+    (void)mem;
+    (void)memHandle;
+    return HCOMM_SUCCESS;
+}
+
+HcommResult StubRankGraphGetLayers(HcommHandle comm, uint32_t** netLayers, uint32_t* netLayerNum)
+{
+    ADAPTER_LOGD("Enter stub function of RankGraphGetLayers.");
+    (void)comm;
+    (void)netLayers;
+    (void)netLayerNum;
+    return HCOMM_SUCCESS;
+}
+
+HcommResult StubRankGraphGetLinks(HcommHandle comm, uint32_t netLayer, uint32_t srcRank, uint32_t dstRank,
+                                  CommLink** links, uint32_t* linkNum)
+{
+    ADAPTER_LOGD("Enter stub function of RankGraphGetLinks.");
+    (void)comm;
+    (void)netLayer;
+    (void)srcRank;
+    (void)dstRank;
+    (void)links;
+    (void)linkNum;
+    return HCOMM_SUCCESS;
+}
+
+HcommResult StubChannelAcquire(HcommHandle comm, CommEngine engine, const HcclChannelDesc* channelDescs,
+                               uint32_t channelNum, ChannelHandle* channels)
+{
+    ADAPTER_LOGD("Enter stub function of ChannelAcquire.");
+    (void)comm;
+    (void)engine;
+    (void)channelDescs;
+    (void)channelNum;
+    (void)channels;
+    return HCOMM_SUCCESS;
+}
+
+HcommResult StubChannelGetRemoteMems(HcommHandle comm, ChannelHandle channel, uint32_t* memNum, CommMem** remoteMems,
+                                     char*** memTags)
+{
+    ADAPTER_LOGD("Enter stub function of ChannelGetRemoteMems.");
+    (void)comm;
+    (void)channel;
+    (void)memNum;
+    (void)remoteMems;
+    (void)memTags;
+    return HCOMM_SUCCESS;
+}
+
+HcommResult StubAllGather(void* sendBuf, void* recvBuf, uint64_t sendCount, HcommDataType dataType, HcommHandle comm,
+                          void* stream)
+{
+    ADAPTER_LOGD("Enter stub function of AllGather.");
+    (void)sendBuf;
+    (void)recvBuf;
+    (void)sendCount;
+    (void)dataType;
+    (void)comm;
+    (void)stream;
+    return HCOMM_SUCCESS;
+}
 } // namespace npu::tile_fwk

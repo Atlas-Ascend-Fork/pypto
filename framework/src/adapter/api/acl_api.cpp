@@ -62,6 +62,19 @@ AclError AclRtMemcpy(void* dst, size_t destMax, const void* src, size_t count, A
     return StubRtMemcpy(dst, destMax, src, count, kind);
 }
 
+AclError AclRtMemset(void* devPtr, size_t maxCount, int32_t value, size_t count)
+{
+#ifdef BUILD_WITH_CANN
+    void* func = AdapterManager::Instance().GetAclAdapter().GetFunction(AclFunc::RtMemset);
+    if (func != nullptr) {
+        aclError (*aclFunc)(void*, size_t, int32_t,
+                            size_t) = reinterpret_cast<aclError (*)(void*, size_t, int32_t, size_t)>(func);
+        return aclFunc(devPtr, maxCount, value, count);
+    }
+#endif
+    return StubRtMemset(devPtr, maxCount, value, count);
+}
+
 AclError AclRtMalloc(void** devPtr, size_t size, AclRtMemMallocPolicy policy)
 {
 #ifdef BUILD_WITH_CANN
@@ -262,6 +275,30 @@ AclError AclRtDestroyStream(AclRtStream stream)
     }
 #endif
     return StubRtDestroyStream(stream);
+}
+
+AclError AclRtGetDevice(int32_t* deviceId)
+{
+#ifdef BUILD_WITH_CANN
+    void* func = AdapterManager::Instance().GetAclAdapter().GetFunction(AclFunc::RtGetDevice);
+    if (func != nullptr) {
+        aclError (*aclFunc)(int32_t*) = reinterpret_cast<aclError (*)(int32_t*)>(func);
+        return aclFunc(deviceId);
+    }
+#endif
+    return StubRtGetDevice(deviceId);
+}
+
+AclError AclRtGetDeviceInfo(int32_t deviceId, int32_t attr, int64_t* value)
+{
+#ifdef BUILD_WITH_CANN
+    void* func = AdapterManager::Instance().GetAclAdapter().GetFunction(AclFunc::RtGetDeviceInfo);
+    if (func != nullptr) {
+        auto aclFunc = reinterpret_cast<aclError (*)(uint32_t, aclrtDevAttr, int64_t*)>(func);
+        return aclFunc(static_cast<uint32_t>(deviceId), static_cast<aclrtDevAttr>(attr), value);
+    }
+#endif
+    return StubRtGetDeviceInfo(deviceId, attr, value);
 }
 
 AclError AclRtBinaryLoadFromFile(const char* binPath, AclRtBinaryLoadOptions* options, AclRtBinHandle* binHandle)

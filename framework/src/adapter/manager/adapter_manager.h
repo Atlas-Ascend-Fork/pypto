@@ -19,6 +19,7 @@
 #include "adapter/manager/types/adump_adapter_types.h"
 #include "adapter/manager/types/hal_adapter_types.h"
 #include "adapter/manager/types/hccl_adapter_types.h"
+#include "adapter/manager/types/hcomm_res_adapter_types.h"
 #include "adapter/manager/types/msprof_adapter_types.h"
 #include "adapter/manager/types/runtime_adapter_types.h"
 #include "adapter/manager/cann_adapter.h"
@@ -31,6 +32,7 @@ public:
     const CannAdapter<AdumpFunc>& GetAdumpAdapter() const { return adumpAdapter_; }
     const CannAdapter<HalFunc>& GetHalAdapter() const { return halAdapter_; }
     const CannAdapter<HcclFunc>& GetHcclAdapter() const { return hcclAdapter_; }
+    const CannAdapter<HcommResFunc>& GetHcommResAdapter() const { return hcommResAdapter_; }
     const CannAdapter<MsprofFunc>& GetMsprofAdapter() const { return msprofAdapter_; }
     const CannAdapter<RuntimeFunc>& GetRuntimeAdapter() const { return runtimeAdapter_; }
     const CannAdapter<AclNewFunc>& GetAclNewAdapter() const { return aclNewAdapter_; }
@@ -43,6 +45,7 @@ private:
     CannAdapter<AdumpFunc> adumpAdapter_;
     CannAdapter<HalFunc> halAdapter_;
     CannAdapter<HcclFunc> hcclAdapter_;
+    CannAdapter<HcommResFunc> hcommResAdapter_;
     CannAdapter<MsprofFunc> msprofAdapter_;
     CannAdapter<RuntimeFunc> runtimeAdapter_;
 };

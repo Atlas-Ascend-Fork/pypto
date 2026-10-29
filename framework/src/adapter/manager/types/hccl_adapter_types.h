@@ -27,6 +27,13 @@ enum class HcclFunc {
     CommInitRootInfo,
     CommDestroy,
     AllocComResourceByTiling,
+    CommGetHandleWithName,
+    CommMemReg,
+    RankGraphGetLayers,
+    RankGraphGetLinks,
+    ChannelAcquire,
+    ChannelGetRemoteMems,
+    AllGather,
     Bottom
 };
 
@@ -38,5 +45,12 @@ const std::map<HcclFunc, std::string> kHcclFuncStrMap{
     {HcclFunc::GetRootInfo, "HcclGetRootInfo"},
     {HcclFunc::CommDestroy, "HcclCommDestroy"},
     {HcclFunc::CommInitRootInfo, "HcclCommInitRootInfo"},
-    {HcclFunc::AllocComResourceByTiling, "HcclAllocComResourceByTiling"}};
+    {HcclFunc::AllocComResourceByTiling, "HcclAllocComResourceByTiling"},
+    {HcclFunc::CommGetHandleWithName, "HcclCommGetHandleWithName"},
+    {HcclFunc::CommMemReg, "HcclCommMemReg"},
+    {HcclFunc::RankGraphGetLayers, "HcclRankGraphGetLayers"},
+    {HcclFunc::RankGraphGetLinks, "HcclRankGraphGetLinks"},
+    {HcclFunc::ChannelAcquire, "HcclChannelAcquire"},
+    {HcclFunc::ChannelGetRemoteMems, "HcclChannelGetRemoteMems"},
+    {HcclFunc::AllGather, "HcclAllGather"}};
 } // namespace npu::tile_fwk

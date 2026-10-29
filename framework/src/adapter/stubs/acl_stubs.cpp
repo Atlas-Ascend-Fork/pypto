@@ -41,6 +41,16 @@ AclError StubRtMemcpy(void* dst, size_t destMax, const void* src, size_t count, 
     return ACLRT_SUCCESS;
 }
 
+AclError StubRtMemset(void* devPtr, size_t maxCount, int32_t value, size_t count)
+{
+    ADAPTER_LOGD("Enter stub function of AclRtMemset.");
+    (void)devPtr;
+    (void)maxCount;
+    (void)value;
+    (void)count;
+    return ACLRT_SUCCESS;
+}
+
 AclError StubRtMalloc(void** devPtr, size_t size, AclRtMemMallocPolicy policy)
 {
     ADAPTER_LOGD("Enter stub function of AclRtMalloc.");
@@ -166,6 +176,22 @@ AclError StubRtDestroyStream(AclRtStream stream)
 {
     ADAPTER_LOGD("Enter stub function of AclRtDestroyStream.");
     (void)stream;
+    return ACLRT_SUCCESS;
+}
+
+AclError StubRtGetDevice(int32_t* deviceId)
+{
+    ADAPTER_LOGD("Enter stub function of AclRtGetDevice.");
+    (void)deviceId;
+    return ACLRT_SUCCESS;
+}
+
+AclError StubRtGetDeviceInfo(int32_t deviceId, int32_t attr, int64_t* value)
+{
+    ADAPTER_LOGD("Enter stub function of AclRtGetDeviceInfo.");
+    (void)deviceId;
+    (void)attr;
+    (void)value;
     return ACLRT_SUCCESS;
 }
 

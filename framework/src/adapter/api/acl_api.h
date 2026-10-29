@@ -21,6 +21,7 @@ namespace npu::tile_fwk {
 AclError AclInit(const char* configPath);
 AclError AclFinalize();
 AclError AclRtMemcpy(void* dst, size_t destMax, const void* src, size_t count, AclRtMemcpyKind kind);
+AclError AclRtMemset(void* devPtr, size_t maxCount, int32_t value, size_t count);
 AclError AclRtSetDevice(int32_t deviceId);
 AclError AclRtResetDevice(int32_t deviceId);
 AclError AclRtCreateEvent(AclRtEvent* event);
@@ -39,6 +40,8 @@ AclError AclRtFree(void* devPtr);
 AclError AclRtCreateStream(AclRtStream* stream);
 AclError AclRtSynchronizeStream(AclRtStream stream);
 AclError AclRtDestroyStream(AclRtStream stream);
+AclError AclRtGetDevice(int32_t* deviceId);
+AclError AclRtGetDeviceInfo(int32_t deviceId, int32_t attr, int64_t* value);
 AclError AclRtBinaryLoadFromFile(const char* binPath, AclRtBinaryLoadOptions* options, AclRtBinHandle* binHandle);
 AclError AclRtBinaryGetFunction(AclRtBinHandle binHandle, const char* kernelName, AclRtFuncHandle* funcHandle);
 AclError AclSysGetVersionStr(const char* pkgName, char* versionStr);

@@ -16,9 +16,9 @@
 #include "tilefwk/tilefwk.h"
 #include "interface/inner/tilefwk.h"
 #include "interface/configs/config_manager_ng.h"
+#include "adapter/api/hcomm_api.h"
 #include "distributed_test_framework.h"
 #include "test_distributed.h"
-#include "adapter/api/hcomm_api.h"
 
 namespace npu::tile_fwk::Distributed {
 class DistributedTest : public testing::TestWithParam<OpMetaData> {

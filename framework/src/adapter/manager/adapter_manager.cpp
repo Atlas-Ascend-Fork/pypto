@@ -54,6 +54,12 @@ AdapterManager::AdapterManager()
         ADAPTER_LOGI("Hccl adapter has been initialized from library[%s] successfully.", kHcclLibName.c_str());
     }
 
+    if (!hcommResAdapter_.Initialize(kHcommResLibName, kHcommResFuncStrMap)) {
+        ADAPTER_LOGI("Hcomm res adapter has not been initialized from library[%s].", kHcommResLibName.c_str());
+    } else {
+        ADAPTER_LOGI("Hcomm res adapter has been initialized from library[%s] successfully.", kHcommResLibName.c_str());
+    }
+
     if (!msprofAdapter_.Initialize(kMsprofLibName, kMsprofFuncStrMap)) {
         ADAPTER_LOGI("Msprof adapter has not been initialized from library[%s].", kMsprofLibName.c_str());
     } else {

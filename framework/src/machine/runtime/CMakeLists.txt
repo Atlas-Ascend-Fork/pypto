@@ -40,6 +40,8 @@ target_include_directories(tile_fwk_runtime
 target_compile_definitions(tile_fwk_runtime
         PUBLIC
             $<BUILD_INTERFACE:$<$<BOOL:${ENABLE_STEST_INTERPRETER_CONFIG}>:ENABLE_STEST_INTERPRETER_CONFIG>>
+        PRIVATE
+            $<BUILD_INTERFACE:$<$<AND:$<BOOL:${BUILD_WITH_CANN}>,$<NOT:$<BOOL:${ENABLE_UTEST}>>>:BUILD_WITH_CANN>>
 )
 target_link_libraries(tile_fwk_runtime
         PUBLIC
@@ -49,6 +51,8 @@ target_link_libraries(tile_fwk_runtime
             $<BUILD_INTERFACE:$<$<BOOL:${ENABLE_COMPILE_DEPENDENCY_CHECK}>:tile_fwk_compiler>>
             $<BUILD_INTERFACE:json>
         PRIVATE
+            $<BUILD_INTERFACE:$<$<BOOL:${BUILD_WITH_CANN}>:hcomm_headers>>
+            $<BUILD_INTERFACE:$<$<BOOL:${BUILD_WITH_CANN}>:acl_rt_headers>>
             tile_fwk_intf_pub
             dl
             c_sec
