@@ -414,7 +414,7 @@ pad只声明填充值，不会单独产生填充操作。需要对无效区域�
 | 矢量逐元素ND动态尾块 | [-1, -1]，逐块设置 | 不需要 | 通常不需要 |
 | 尾块后执行求和 | [-1, -1] | 不需要 | 填充0 |
 | 尾块后执行最大值归约 | [-1, -1] | 不需要 | 填充数据类型最小值 |
-| Cube动态尾块 | 为参与矩阵乘的L1 Buffer、L0A Buffer、L0B Buffer和L0C Buffer中的Tile设置匹配的有效尺寸 | L0A Buffer、L0B Buffer和L0C Buffer通常设为1；特殊路径按接口要求配置 | 由具体数据路径和算子语义决定 |
+| Cube动态尾块 | 为参与矩阵乘的L1 Buffer、L0A Buffer、L0B Buffer和L0C Buffer中的Tile设置匹配的有效尺寸 | L0A Buffer、L0B Buffer和L0C Buffer通常沿用默认值1；特殊路径按接口要求配置 | 由具体数据路径和算子语义决定 |
 
 ## 计算约束与建议
 

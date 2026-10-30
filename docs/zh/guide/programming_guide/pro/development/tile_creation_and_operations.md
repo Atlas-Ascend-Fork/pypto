@@ -26,7 +26,7 @@ tile_type = pypto_pro.language.TileType(
     layout=None,
     fractal=None,
     pad=None,
-    compact=None,
+    compact=1,
 )
 ```
 
@@ -39,7 +39,7 @@ tile_type = pypto_pro.language.TileType(
 | layout | Tile的物理排布，如ND、DN、NZ、ZN、NN或ZZ；省略时按内存空间推导默认值 |
 | fractal | 分形大小；部分内存空间和数据类型可以推导默认值 |
 | pad | 无效区域的填充模式 |
-| compact | Tile有效数据在缓冲区中的紧凑排布方式 |
+| compact | Tile有效数据在缓冲区中的紧凑排布方式，默认使用紧凑排布方式 |
 
 valid_shape、pad和compact主要用于尾块及特殊排布场景。它们不会改变make_tile或make_tile_group绑定的缓冲区大小。完整约束请参考[pypto_pro.language.TileType](../../../../api/pro_api/SIMD-API/basic_data_structures/TileType.md)。
 

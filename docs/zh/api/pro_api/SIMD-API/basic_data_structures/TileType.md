@@ -30,7 +30,7 @@ pypto_pro.language.TileType(
     layout: Optional[TensorLayout] = None,
     fractal: Optional[int] = None,
     pad: Optional[Union[TilePad, int]] = None,
-    compact: Optional[int] = None,
+    compact: Optional[int] = 1,
 ) -> TileType
 ```
 
@@ -45,7 +45,7 @@ pypto_pro.language.TileType(
 | layout | 输入 | 可选，排布方式，[pypto_pro.language.TensorLayout](TensorLayout.md)枚举值或None（默认）。不指定时按内存空间取默认值（详见[约束说明](#约束说明)）。L1 Buffer未指定layout时使用NZ，也可以显式指定ZN；数据类型为DT_UINT64或DT_INT64时，还可以显式指定ND。BiasTable Buffer默认且仅支持ND；L0A_MX Buffer仅支持ZZ，L0B_MX Buffer仅支持NN；UB的可用布局由具体Tile API约束。 |
 | fractal | 输入 | 可选，分形大小，整数或None（默认）。L0C Buffer中的FP32/INT32 Tile在未指定时自动设为1024；L1 Buffer中layout为ZZ或NN的DT_FP8E8M0 Tile及L0A_MX Buffer/L0B_MX Buffer中的Tile默认且仅支持fractal=32；其他取值要求由具体Tile API决定。 |
 | pad | 输入 | 可选，填充模式，支持[pypto_pro.language.TilePad](TilePad.md)类型或int类型。当为int类型时取值范围为[0, 3]：<br>- 0：不填充。<br>- 1：补零。<br>- 2：补最大值。<br>- 3：补最小值。<br>非法值报ValueError，非法类型报TypeError。 |
-| compact | 输入 | 可选，Tile缓冲区的紧凑布局模式，描述Tile在搬运、重排和矩阵计算路径中的布局解释方式，不改变数据类型，也不代替valid_shape对实际有效区域的描述。取值如下：<br>- **0或None**：不启用紧凑模式。此时L1 Buffer→L0A Buffer/L0B Buffer的[move](../memory_data_movement/move.md)完全按物理shape搬运，set_validshape在该搬运路径上不生效。<br>- **1**：使用普通紧凑模式。数据在valid_shape向上对齐到分形粒度的有效空间内连续排布，Tile声明的其余空间空闲在尾部，详见[普通紧凑模式的数据排布](#普通紧凑模式的数据排布)。通常用于尾块场景，与set_validshape搭配使用。在L1 Buffer上配置与否对结果无影响。与phase搭配使用时，如果存在尾块，L0C Buffer必须配置compact=1，否则可能会卡死。compact不会填充无效区域，需要填充时通过pad参数或fillpad补齐。compact不改变缓冲区的分配大小，只改变数据在缓冲区内的排布，因此把多个Tile拼成一个更宽的操作数时需特别注意地址偏移，详见[多Tile拼接的尾块处理](#多tile拼接的尾块处理)。<br>- **2**：使用RowPlusOne紧凑模式。仅在UB Tile中配置，用于避免以该Tile为源作搬运时的bank冲突，详见[RowPlusOne紧凑模式的数据排布](#rowplusone紧凑模式的数据排布)。NZ格式下每个分形列多预留一行物理空间，仅作占位不参与计算，因此申请Tile的物理shape时须包含多出来的这一行，数据使用时通过set_validshape配置实际的有效行数；ZN格式同理，多预留的是一列。 |
+| compact | 输入 | 可选，Tile缓冲区的紧凑布局模式，描述Tile在搬运、重排和矩阵计算路径中的布局解释方式，不改变数据类型，也不代替valid_shape对实际有效区域的描述。取值如下：<br>- **0**：不启用紧凑模式。此时L1 Buffer→L0A Buffer/L0B Buffer的[move](../memory_data_movement/move.md)完全按物理shape搬运，set_validshape在该搬运路径上不生效。<br>- **1（默认）**：使用普通紧凑模式。数据在valid_shape向上对齐到分形粒度的有效空间内连续排布，Tile声明的其余空间空闲在尾部，详见[普通紧凑模式的数据排布](#普通紧凑模式的数据排布)。通常用于尾块场景，与set_validshape搭配使用。在L1 Buffer上配置与否对结果无影响。与phase搭配使用时，如果存在尾块，L0C Buffer必须配置compact=1，否则可能会卡死。compact不会填充无效区域，需要填充时通过pad参数或fillpad补齐。compact不改变缓冲区的分配大小，只改变数据在缓冲区内的排布，因此把多个Tile拼成一个更宽的操作数时需特别注意地址偏移，详见[多Tile拼接的尾块处理](#多tile拼接的尾块处理)。<br>- **2**：使用RowPlusOne紧凑模式。仅在UB Tile中配置，用于避免以该Tile为源作搬运时的bank冲突，详见[RowPlusOne紧凑模式的数据排布](#rowplusone紧凑模式的数据排布)。NZ格式下每个分形列多预留一行物理空间，仅作占位不参与计算，因此申请Tile的物理shape时须包含多出来的这一行，数据使用时通过set_validshape配置实际的有效行数；ZN格式同理，多预留的是一列。 |
 
 ## 约束说明
 
@@ -73,7 +73,7 @@ layout不指定时，按内存空间自动取默认值：
         1、分形粒度D=16行×16列，共512字节（0x200）；
         2、实际搬运数据的有效空间为[ceil16(8), ceil16(24)] = [16, 32]，共2个分形；
 
-  不配置 compact：数据按 shape=[64,64] 排布
+  显式配置 compact=0：数据按 shape=[64,64] 排布
 
      0   16   32   48   64  ← 列
    0 ┌────┬────┬────┬────┐
@@ -293,7 +293,7 @@ def matmul_wide_alias(
     )
     x_l0a = pl.make_tile_group(
         type=pl.TileType(
-            shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left, layout=pl.NZ
+            shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left, layout=pl.NZ, compact=0
         ),
         addrs=0x0000,
         mutex_ids=[2, 3],
@@ -316,7 +316,7 @@ def matmul_wide_alias(
     c_l0c = pl.make_tile_group(
         type=pl.TileType(
             shape=[64, 128], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc,
-            layout=pl.NZ, fractal=1024, valid_shape=[-1, -1],
+            layout=pl.NZ, fractal=1024, valid_shape=[-1, -1], compact=0,
         ),
         addrs=0x0000,
         mutex_ids=[5],
@@ -332,7 +332,7 @@ def matmul_wide_alias(
         pl.load(cur_y, y, [0, 0])
         pl.move(br, cur_y)
 
-        # 两块L0A Buffer中的Tile不设置compact=1和set_validshape，数据全量搬运，确保拼接后的整块L0A Buffer中数据排布连续
+        # 两块L0A Buffer中的Tile显式设置compact=0，不调用set_validshape，数据全量搬运，确保拼接后的整块L0A Buffer中数据排布连续
         al_1 = x_l0a.next()
         pl.move(al_1, cur_x, [0, 0])
         al_2 = x_l0a.next()
@@ -341,7 +341,7 @@ def matmul_wide_alias(
         al = x_wide.next()
         pl.matmul(ac, al, br)
 
-        # L0C Buffer不设置compact=1，store按matmul的写入格式搬运；set_validshape控制搬运的数据量；
+        # L0C Buffer显式设置compact=0，store按matmul的写入格式搬运；set_validshape控制搬运的数据量；
         pl.set_validshape(ac, [40, 128])
         pl.store(out, ac, [0, 0])
 
