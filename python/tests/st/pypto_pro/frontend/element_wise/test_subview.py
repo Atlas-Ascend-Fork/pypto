@@ -374,6 +374,7 @@ def _make_nz_subview_kernel(name, dtype, c0):
                 dtype=dtype,
                 target_memory=pl.MemorySpace.Vec,
                 layout=pl.NZ,
+                compact=0,
             ),
             addrs=0x0000,
             mutex_ids=[0],
