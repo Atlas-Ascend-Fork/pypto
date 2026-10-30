@@ -454,9 +454,9 @@ INLINE __gm__ int32_t* DrcoTaskPredCountAddr(DrcoEntryState* state, uint32_t tas
 }
 
 // 区域头开门：按 flatId（func+op，bits0-25）比对核本地注册表副本（一解多直通头恒满覆盖，
-// 命中即头——写头 predCount=0xff 开门，调用方跳过 resolve；未命中返回 false 走常规路径）。
+// 命中即头——写头 predCount=门哨兵开门，调用方跳过 resolve；未命中返回 false 走常规路径）。
 // 开门同时由本核一次性代加该 region 的 leaf 总数（按核型拆账，host 撒核期写入）——替代
-// 原消费侧每核逐个原子加（16 路同计数器风暴）。写序恒为 0xff → add →
+// 原消费侧每核逐个原子加（16 路同计数器风暴）。写序恒为 哨兵 → add →
 // flag：退出路径据此做"flag 置位 ⇒ 门已全开"的双检（见 fetch 循环退出分支）
 INLINE void DrcoNotifyTaskExecutedAddType(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                           uint32_t queueType, uint32_t addCount);
@@ -499,7 +499,7 @@ INLINE bool DrcoMqRegionHeadTryOpen(DrcoEntryState* state, __gm__ npu::tile_fwk:
 // 门判定 forward：fetch 自旋内使用，完整定义见 ExecDrcoPerCoreTasks 之前
 INLINE bool DrcoMiddleQueueGateOpen(DrcoEntryState* state, uint32_t s);
 
-// middleQueue 门探测（fetch 自旋内逐轮调用）：任一未消费槽的门开（头 predCount==0xff）
+// middleQueue 门探测（fetch 自旋内逐轮调用）：任一未消费槽的门开（头 predCount==门哨兵）
 // → 置 pending、置空批并返回 true，调用方直接 break 退出自旋，重消费在外层执行
 INLINE bool DrcoMiddleQueueTryProbeGate(DrcoEntryState* state, uint32_t& resultTaskIdCount)
 {
@@ -1986,7 +1986,7 @@ INLINE uint32_t DrcoDynFuncDataListFetchTask(DrcoEntryState* state,
         }
         // 全局退出 = 本类型 + 对方类型 flag 均置位（leaf 计数含 mix 任务，两类型齐全即全部完成）；
         // 单侧完成不退出——继续循环扫共享 stitch 矩阵帮忙对侧，防对侧链节点落在己方行无人 pop。
-        // 双检：顶部探针与 flag 读之间门可能新开+账凑齐（写序 0xff → add → flag），退出前
+        // 双检：顶部探针与 flag 读之间门可能新开+账凑齐（写序 哨兵 → add → flag），退出前
         // 再探一次未消费槽必命中，防成员核带任务退出（静默丢任务）
         // V 端一轮一次读 ssbuf 完成镜像（FINISH_ALL / FINISH_VECTOR 位复用，无 GM dcci）；
         // C 端 dcci 读 GM 双 flag。ownTypeFinished 快照与 DrcoFinishFlagSet 同判据，兼作下方
@@ -2243,7 +2243,8 @@ INLINE bool DrcoPerCoreTaskSkipResolve(uint32_t taskId)
            npu::tile_fwk::DRCO_SUCC_SPECIAL_PERCORE_SKIP_RESOLVE;
 }
 
-// 门判定：一解多直通成员恒为单前驱（分量拓扑序），门只由头 predCount==0xff 决定
+// 门判定：一解多直通成员恒为单前驱（分量拓扑序），门只由头 predCount==DRCO_MIDDLE_QUEUE_GATE_OPEN
+// 哨兵（倒计时值域外，见 aikernel_data.h）决定
 INLINE bool DrcoMiddleQueueGateOpen(DrcoEntryState* state, uint32_t s)
 {
     return DrcoGmLoad(DrcoTaskPredCountAddr(state, state->mq->middleQueueHeadId[s])) ==
@@ -2265,7 +2266,7 @@ INLINE void DrcoTryMiddleQueueConsume(DrcoEntryState* state, __gm__ npu::tile_fw
         if (queueSize == 0) {
             continue;
         }
-        // probe 刚验过的槽不再复读门（0xff 粘性 + consumed 防重入）：16 核同时 DCCI 同一
+        // probe 刚验过的槽不再复读门（哨兵粘性 + consumed 防重入）：16 核同时 DCCI 同一
         // head predCount cacheline 的争用风暴即由此复读引发；未验过的槽（多 region 场景
         // 下 consume 扫到 probe 未覆盖的槽）仍走完整门检查
         if (s != state->mq->verifiedSlot && !DrcoMiddleQueueGateOpen(state, s)) {
@@ -2275,7 +2276,7 @@ INLINE void DrcoTryMiddleQueueConsume(DrcoEntryState* state, __gm__ npu::tile_fw
         // 独立分配，核本地 middleQueueConsumed 在每 devTask 加载段复位、每 launch 全新
         // ——同 devTask 内不存在"同一队列被重复消费"的场景，无需 GM 仲裁
         state->mq->middleQueueConsumed[s] = true;
-        // leaf 计数已由开门核在写 0xff 时一次性代加（DrcoMqRegionHeadTryOpen），此处不再逐核记账
+        // leaf 计数已由开门核在写哨兵时一次性代加（DrcoMqRegionHeadTryOpen），此处不再逐核记账
         for (uint32_t i = 0; i < queueSize; i++) {
             // 队列条目 = 裸 flatId | MQ 标记（bits26-31）；标记仅用于条目分类，执行/resolve
             // 必须用剥标后的裸 id——tag 位与 ct/parallelIdx 位重叠，带标 id 会使
@@ -3031,7 +3032,7 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
         // 暂存须同步复位，详见 DrcoEntryState::drcoFinishFlagCached
         state.drcoFinishFlagCached = false;
         ExecDrcoPerCoreTasks(&state, perCoreQueue, rootFuncList);
-        // 头在 perCore 中执行完成（写 0xff 开门）后立即消费 middleQueue——省去进入
+        // 头在 perCore 中执行完成（写门哨兵开门）后立即消费 middleQueue——省去进入
         // fetch 自旋到探测到门开的轮询延迟；未开门时 Consume 内部按槽过滤，无害
         DrcoTryMiddleQueueConsume(&state, rootFuncList);
         ExecDrcoReadyQueueTasks(&state, rootFuncList, perCoreQueue);

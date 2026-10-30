@@ -166,7 +166,10 @@ INLINE uint32_t ParallelDevTaskModifyFlag(uint64_t highRegValue)
     return (highRegValue >> REG_VAL_DEVTASK_ID_BITS) & REG_VAL_PARALLEL_DEVTASK_CTX_MODIFYFLAG_MASK;
 }
 
-constexpr int32_t DRCO_MIDDLE_QUEUE_GATE_OPEN = 0xff;
+// MQ 区域门哨兵：必须取 predCount 合法倒计时区间 [0, 初始前驱数] 之外的值。
+// 避免头的predCount在倒计时时与哨兵值重合导致fetch 自旋探针误判门开。
+// 取 0x7fffffff（INT32_MAX）：倒计时只会非负递减到 0，永不可达。
+constexpr int32_t DRCO_MIDDLE_QUEUE_GATE_OPEN = 0x7fffffff;
 } // namespace npu::tile_fwk
 
 #endif

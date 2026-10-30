@@ -279,7 +279,7 @@ void DeviceTaskContext::InitDrcoRootFuncList(DynDeviceTask* dyntask)
     // 分配，默认成员初始化不执行），未赋值槽位残留 workspace 旧数据指针（设备侧仅判非空即
     // 解引用 → taskId 越界）；mqRegionHeadCount 残留上一
     // devTask 的合法值（slab 复用）更凶——当前图注册追加在陈旧列表后，设备侧 TryOpen 撞
-    // 陈旧头即假命中，非头任务被写 0xff + 陈旧叶计数入账 → executedCount 污染。分配点建立
+    // 陈旧头即假命中，非头任务被写哨兵值 + 陈旧叶计数入账 → executedCount 污染。分配点建立
     // nullptr/0 契约（谁分配谁初始化）。
     (void)memset_s(rootFuncList->perCoreMiddleQueueArray, sizeof(rootFuncList->perCoreMiddleQueueArray), 0,
                    sizeof(rootFuncList->perCoreMiddleQueueArray));
@@ -590,7 +590,7 @@ bool DeviceTaskContext::TryHeadReleaseFastPath(DynDeviceTask* dyntask, DevAscend
 {
     // 一解多直通：头的执行逻辑不变（初始就绪走正常分发、运行期 fire 走矩阵），仅当头的
     // 全部直接后继唯一前驱=头（满覆盖零哨兵）且数量达门槛时，把后继预放入各核
-    // middleQueue 并注册头（完成点命中注册表 → 写 predCount=0xff 开门并跳过 resolve 展开，
+    // middleQueue 并注册头（完成点命中注册表 → 写 predCount=门哨兵开门并跳过 resolve 展开，
     // 省掉单核串行 push 大扇出后继到矩阵的分发）；成员执行后正常 resolve（第二层起走
     // 老路径），hub 成员不可执行只 resolve。随 DRCO 总开关生效（调用点 enableAicoreResolve_ 块内）
     const uint32_t nrValidAic = devProg->devArgs.nrValidAic;
@@ -624,7 +624,7 @@ bool DeviceTaskContext::TryHeadReleaseFastPath(DynDeviceTask* dyntask, DevAscend
             if (memberCnt == 0) {
                 continue;
             }
-            // 头注册（头调度不动；完成点命中 → 写 0xff 开门并跳过整个 resolve）
+            // 头注册（头调度不动；完成点命中 → 写门哨兵开门并跳过整个 resolve）
             if (rootFuncList->middleQueueRegionHeadCount >=
                 npu::tile_fwk::DrcoRootFuncList::DRCO_MIDDLE_QUEUE_REGION_MAX) {
                 continue;
