@@ -22,6 +22,11 @@
 
 namespace npu::tile_fwk {
 
+static bool IsFp4Type(DataType dtype)
+{
+    return dtype == DT_FP4_E2M1 || dtype == DT_FP4_E1M2 || dtype == DT_FP4_E2M1X2 || dtype == DT_FP4_E1M2X2;
+}
+
 template <CastOpType T>
 void TiledCastOperation(Function& function, const TileShape& tileShape, const int cur, Input& input,
                         const LogicalTensorPtr& result, const CastMode& mode, const SaturationMode& satmode)
@@ -160,6 +165,20 @@ Tensor Cast(const Tensor& self, DataType dstDataType, CastMode mode, SaturationM
     // Cast to same dType with no mode will do nothing
     if (self.GetStorage()->tensor->datatype == dstDataType && (mode == CAST_NONE || mode == CAST_RINT)) {
         return self;
+    }
+    if (IsFp4Type(self.GetDataType()) || IsFp4Type(dstDataType)) {
+        const auto innerSize = self.GetShape().back();
+        CHECK(ExternalError::INVALID_SHAPE, innerSize == -1 || (innerSize & 1) == 0)
+            << "CAST with FP4 dtype requires an even inner axis size, actual: " << innerSize;
+        const auto& vecTile = TileShape::Current().GetVecTile();
+        if (vecTile.valid()) {
+            CHECK(VectorErrorCode::ERR_CONFIG_TILE, vecTile.size() == self.GetShape().size())
+                << "CAST tile shape rank must equal input tensor rank";
+            const auto tileSize = vecTile[self.GetShape().size() - 1];
+            const auto effectiveTileSize = innerSize == -1 ? tileSize : std::min(innerSize, tileSize);
+            CHECK(ExternalError::INVALID_SHAPE, (effectiveTileSize & 1) == 0)
+                << "CAST with FP4 dtype requires an even effective tile inner axis size, actual: " << effectiveTileSize;
+        }
     }
     RETURN_CALL(CastOperation<CastOpType::CAST>, *Program::GetInstance().GetCurrentFunction(), self.GetStorage(),
                 dstDataType, mode, satmode);

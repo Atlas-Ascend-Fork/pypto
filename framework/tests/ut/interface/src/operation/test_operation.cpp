@@ -123,6 +123,35 @@ TEST_F(OperationOpsTest, LogicalNot_A5SupportedDataType)
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
 }
 
+TEST_F(OperationOpsTest, Cast_Fp4TileInnerAxis)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    FUNCTION("CastFp4TileInnerAxis")
+    {
+        auto& function = *Program::GetInstance().GetCurrentFunction();
+        for (auto dtype : {DT_FP32, DT_FP4_E2M1, DT_FP4_E1M2}) {
+            for (bool fp4Input : {false, true}) {
+                for (int64_t innerSize : {9, 10}) {
+                    const std::vector<int64_t> shape = {2, innerSize};
+                    Tensor input(std::make_shared<LogicalTensor>(function, fp4Input ? dtype : DT_BF16, shape));
+                    const auto dstType = fp4Input ? DT_BF16 : dtype;
+                    for (int64_t tileSize : {3, 4, 11}) {
+                        SCOPED_TRACE(testing::Message() << "dtype=" << dtype << ", fp4Input=" << fp4Input
+                                                        << ", innerSize=" << innerSize << ", tileSize=" << tileSize);
+                        TileShape::Current().SetVecTile(2, tileSize);
+                        if (dtype != DT_FP32 && (innerSize == 9 || tileSize == 3)) {
+                            EXPECT_THROW(Cast(input, dstType), std::exception);
+                        } else {
+                            EXPECT_NO_THROW((void)Cast(input, dstType));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
 TEST_F(OperationOpsTest, QuantMX_DefaultRoundDownFp8Output)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
