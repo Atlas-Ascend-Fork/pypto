@@ -16,8 +16,6 @@
 
 获取当前线程块网格在X、Y、Z三个维度上的线程块数量。
 
-线程块网格（Grid）的尺寸来自外层Kernel实际生效的Vector执行域，可能受运行时限核影响。网格中的线程块总数为X、Y、Z三个维度大小的乘积。
-
 ## 函数原型
 
 ```python
@@ -30,11 +28,14 @@ pypto_pro.language.simt.grid_dim() -> Any
 
 ## 约束说明
 
-只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT入口函数或辅助函数中调用。
+只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 
 ## 返回值说明
 
-返回三维线程块网格尺寸元组对象，通过grid.x、grid.y和grid.z读取各维大小，每个分量均为DT_UINT32类型的Scalar。当前线程块网格仅使用X维，grid.x为外层Kernel的Vector执行域逻辑Block数量，grid.y和grid.z均为1。
+返回三维线程块网格尺寸元组对象，通过grid.x、grid.y和grid.z读取各维大小，每个分量均为DT_UINT32类型的Scalar。
+
+- SIMT编程：返回Host传入的grid，例如grid=(2, 3, 4)时，返回(2, 3, 4)。
+- SIMD与SIMT混合编程：grid.x为外层Kernel实际生效的逻辑Vector（AIV）核数，grid.y和grid.z均为1。实际生效值与Host传入的block_dim的关系参见[blockDim的含义与设置](../../../../guide/programming_guide/pro/development/kernel_function.md#blockdim的含义与设置)。
 
 ## 调用示例
 

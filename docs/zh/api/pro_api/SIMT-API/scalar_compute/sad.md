@@ -38,7 +38,7 @@ pypto_pro.language.simt.sad(
 
 ## 约束说明
 
-- 只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT入口函数或辅助函数中调用。
+- 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 - lhs与rhs必须同为DT_INT32或同为DT_UINT32，不支持混合输入。
 
 ## 返回值说明

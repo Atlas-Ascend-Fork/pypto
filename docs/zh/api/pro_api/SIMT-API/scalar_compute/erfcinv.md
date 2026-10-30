@@ -32,7 +32,7 @@ pypto_pro.language.simt.erfcinv(
 
 ## 约束说明
 
-- 只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT入口函数或辅助函数中调用。
+- 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 - 定义域是数学语义说明，不进行输入数值范围的编译期校验。输入超出$[0,2]$（包括正负无穷）或为NaN时返回NaN。
 
 ## 返回值说明

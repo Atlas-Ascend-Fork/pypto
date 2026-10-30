@@ -36,7 +36,7 @@ pypto_pro.language.simt.jn(
 
 ## 约束说明
 
-- 只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT入口函数或辅助函数中调用。
+- 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 - order为负数时返回NaN，不进行阶数数值的编译期校验。
 
 ## 返回值说明
@@ -46,7 +46,6 @@ pypto_pro.language.simt.jn(
 | 输入情况 | 返回值 |
 |---|---|
 | order < 0，或value为NaN | NaN |
-| order = 0，value为±0 | 1 |
 | order = 1，value为±0或±Inf | 与value同符号的零 |
 | order ≥ 2，value为±0或±Inf | +0 |
 

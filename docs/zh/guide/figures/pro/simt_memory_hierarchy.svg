@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="630" viewBox="0 0 1120 630" role="img" aria-labelledby="title desc">
+  <title id="title">SIMT内存层级示意图</title>
+  <desc id="desc">Grid包含多个Thread Block。每个线程拥有私有的通用寄存器，同一线程块内的线程可以访问共享UB。各线程块均可访问GM中的Tensor数据，线程私有的通用栈也位于GM。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse">
+      <path d="M 0 0 L 8 4 L 0 8 Z" fill="#64748b"/>
+    </marker>
+    <style>
+      text { font-family: "Microsoft YaHei", "Noto Sans CJK SC", "PingFang SC", sans-serif; fill: #172d49; }
+      .heading { font-size: 26px; font-weight: 700; }
+      .label { font-size: 22px; font-weight: 600; }
+      .body { font-size: 20px; }
+      .small { font-size: 18px; }
+      .note { font-size: 18px; fill: #52647b; }
+      .access { fill: none; stroke: #64748b; stroke-width: 2; marker-start: url(#arrow); marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1120" height="630" fill="#fff"/>
+  <rect x="24" y="20" width="1072" height="390" rx="14" fill="#f0f7ff" stroke="#315a82" stroke-width="2"/>
+  <text x="48" y="60" class="heading">Grid</text>
+
+  <rect x="48" y="86" width="496" height="300" rx="12" fill="#fff8df" stroke="#a9955c" stroke-width="1.5"/>
+  <text x="68" y="121" class="label">Thread Block 0</text>
+  <rect x="68" y="144" width="224" height="116" rx="8" fill="#fff" stroke="#b6a674"/>
+  <rect x="300" y="144" width="224" height="116" rx="8" fill="#fff" stroke="#b6a674"/>
+  <text x="180" y="178" text-anchor="middle" class="body">Thread 0</text>
+  <text x="412" y="178" text-anchor="middle" class="body">Thread 1 …</text>
+  <rect x="84" y="196" width="192" height="44" rx="5" fill="#e2efff"/>
+  <rect x="316" y="196" width="192" height="44" rx="5" fill="#e2efff"/>
+  <text x="180" y="224" text-anchor="middle" class="small">通用寄存器（私有）</text>
+  <text x="412" y="224" text-anchor="middle" class="small">通用寄存器（私有）</text>
+  <path d="M 180 265 V 304" class="access"/>
+  <path d="M 412 265 V 304" class="access"/>
+  <rect x="68" y="310" width="456" height="48" rx="7" fill="#d5eee4" stroke="#6c9b86"/>
+  <text x="296" y="341" text-anchor="middle" class="body">共享内存（UB）· 块内共享</text>
+
+  <rect x="576" y="86" width="496" height="300" rx="12" fill="#fff8df" stroke="#a9955c" stroke-width="1.5"/>
+  <text x="596" y="121" class="label">Thread Block 1 …</text>
+  <rect x="596" y="144" width="224" height="116" rx="8" fill="#fff" stroke="#b6a674"/>
+  <rect x="828" y="144" width="224" height="116" rx="8" fill="#fff" stroke="#b6a674"/>
+  <text x="708" y="178" text-anchor="middle" class="body">Thread 0</text>
+  <text x="940" y="178" text-anchor="middle" class="body">Thread 1 …</text>
+  <rect x="612" y="196" width="192" height="44" rx="5" fill="#e2efff"/>
+  <rect x="844" y="196" width="192" height="44" rx="5" fill="#e2efff"/>
+  <text x="708" y="224" text-anchor="middle" class="small">通用寄存器（私有）</text>
+  <text x="940" y="224" text-anchor="middle" class="small">通用寄存器（私有）</text>
+  <path d="M 708 265 V 304" class="access"/>
+  <path d="M 940 265 V 304" class="access"/>
+  <rect x="596" y="310" width="456" height="48" rx="7" fill="#d5eee4" stroke="#6c9b86"/>
+  <text x="824" y="341" text-anchor="middle" class="body">共享内存（UB）· 块内共享</text>
+
+  <path d="M 296 415 V 473" class="access"/>
+  <path d="M 824 415 V 473" class="access"/>
+  <text x="560" y="451" text-anchor="middle" class="note">各Thread Block访问GM</text>
+  <rect x="48" y="478" width="1024" height="132" rx="12" fill="#e2efff" stroke="#315a82" stroke-width="2"/>
+  <text x="560" y="515" text-anchor="middle" class="label">全局内存（GM）</text>
+  <rect x="68" y="534" width="590" height="56" rx="7" fill="#fff" stroke="#a5bfda"/>
+  <text x="363" y="569" text-anchor="middle" class="body">Tensor数据：可供Grid中的所有线程访问</text>
+  <rect x="678" y="534" width="374" height="56" rx="7" fill="#fff" stroke="#a5bfda"/>
+  <text x="865" y="569" text-anchor="middle" class="small">通用栈：为每个线程独立保存数据</text>
+</svg>

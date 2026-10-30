@@ -30,11 +30,14 @@ pypto_pro.language.simt.block_idx() -> Any
 
 ## 约束说明
 
-只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT入口函数或辅助函数中调用。
+只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 
 ## 返回值说明
 
-返回三维线程块坐标元组对象，通过block.x、block.y和block.z读取各维坐标，每个分量均为DT_UINT32类型的Scalar。当前线程块网格仅使用X维，block.x的范围为[0, grid_dim().x)，block.y和block.z均为0。
+返回三维线程块坐标元组对象，可以通过block.x、block.y和block.z读取各维坐标，每个分量均为DT_UINT32类型的Scalar。
+
+- SIMT编程：各维坐标由Host传入的grid确定。例如grid=(2, 3, 4)时，block.x、block.y和block.z坐标范围分别为[0, 1]、[0, 2]、[0, 3]。
+- SIMD与SIMT混合编程：block.x的范围为[0, pypto_pro.language.simt.grid_dim().x)，block.y和block.z均为0。
 
 ## 调用示例
 

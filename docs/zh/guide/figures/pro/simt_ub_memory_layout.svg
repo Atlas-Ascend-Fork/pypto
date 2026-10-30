@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="600" viewBox="0 0 1120 600" role="img" aria-labelledby="title desc">
+  <title id="title">UB内存划分排布示意图</title>
+  <desc id="desc">Ascend 950PR&amp;950DT系列产品的UB总容量为256KB。从低地址到高地址依次为静态共享空间、动态共享空间、内部预留空间和Data Cache。默认内部预留8KB，包括6KB参数中转空间和2KB底层库预留空间。Data Cache为32KB至128KB，静态与动态共享空间合计不超过216KB。各区域高度仅作示意。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#8a97a8"/>
+    </marker>
+    <style>
+      text { font-family: "Microsoft YaHei", "Noto Sans CJK SC", "PingFang SC", sans-serif; fill: #172d49; }
+      .heading { font-size: 26px; font-weight: 700; }
+      .label { font-size: 24px; font-weight: 600; }
+      .body { font-size: 20px; }
+      .small { font-size: 18px; }
+      .note { font-size: 18px; fill: #52647b; }
+      .guide { fill: none; stroke: #8a97a8; stroke-width: 2; }
+    </style>
+  </defs>
+  <rect width="1120" height="600" fill="#fff"/>
+  <text x="450" y="51" text-anchor="middle" class="heading">UB（总容量256KB）</text>
+
+  <text x="96" y="77" text-anchor="middle" class="body">0</text>
+  <path d="M 112 94 V 546" stroke="#8a97a8" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="28" y="112" class="small">低地址</text>
+  <text x="28" y="532" class="small">高地址</text>
+  <text x="100" y="581" text-anchor="middle" class="body">256KB</text>
+
+  <rect x="160" y="90" width="580" height="90" fill="#dcf2fc"/>
+  <rect x="160" y="180" width="580" height="130" fill="#ffedd4"/>
+  <rect x="160" y="310" width="580" height="80" fill="#d5eee4"/>
+  <rect x="160" y="390" width="580" height="140" fill="#e2eafb"/>
+  <rect x="160" y="90" width="580" height="440" fill="none" stroke="#93a7bb" stroke-width="1.5"/>
+  <path d="M 160 180 H 740 M 160 310 H 740 M 160 390 H 740" stroke="#fff" stroke-width="2"/>
+
+  <text x="450" y="126" text-anchor="middle" class="label">静态共享空间</text>
+  <text x="450" y="155" text-anchor="middle" class="body">大小在编译期确定</text>
+  <text x="450" y="233" text-anchor="middle" class="label">动态共享空间</text>
+  <text x="450" y="266" text-anchor="middle" class="body">大小由启动配置确定</text>
+  <text x="450" y="343" text-anchor="middle" class="label">内部预留空间 · 8KB</text>
+  <text x="450" y="373" text-anchor="middle" class="small">参数中转6KB + 底层库预留2KB</text>
+  <text x="450" y="449" text-anchor="middle" class="label">Data Cache</text>
+  <text x="450" y="483" text-anchor="middle" class="body">32KB ≤ 容量 ≤ 128KB</text>
+
+  <path d="M 754 94 H 770 V 306 H 754" class="guide"/>
+  <text x="798" y="190" class="body">共享数据区</text>
+  <text x="798" y="224" class="small">静态 + 动态 ≤ 216KB</text>
+  <path d="M 740 350 H 778" class="guide"/>
+  <text x="798" y="343" class="body">内部使用</text>
+  <text x="798" y="374" class="note">不用于Tile数据</text>
+  <path d="M 740 460 H 778" class="guide"/>
+  <text x="798" y="450" class="body">GM访问缓存</text>
+  <text x="798" y="482" class="note">不用于Tile数据</text>
+</svg>

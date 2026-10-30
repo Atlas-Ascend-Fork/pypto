@@ -36,7 +36,7 @@ pypto_pro.language.simt.yn(
 
 ## 约束说明
 
-- 只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT入口函数或辅助函数中调用。
+- 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 - order为负数或value为负数时返回NaN，不进行输入数值范围的编译期校验。
 
 ## 返回值说明

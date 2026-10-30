@@ -34,7 +34,7 @@ pypto_pro.language.simt.lgamma(
 
 ## 约束说明
 
-- 只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT入口函数或辅助函数中调用。
+- 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 - Gamma函数在零和负整数处存在极点。
 
 ## 返回值说明

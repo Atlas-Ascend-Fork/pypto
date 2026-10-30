@@ -36,7 +36,7 @@ pypto_pro.language.simt.pow(
 
 ## 约束说明
 
-- 只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT入口函数或辅助函数中调用。
+- 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 - 两个输入均须为DT_FP32；不支持整数或低精度浮点类型混合输入。
 - 有限负数底数与有限非整数指数的组合返回NaN，不进行输入数值范围的编译期校验。
 

@@ -8,7 +8,7 @@ PyPTO Pro使用Python语法编写运行在NPU上的Kernel。开发者可通过Te
 
 PyPTO Pro的并行执行流程：
 
-1. 用户在Host侧启动JIT Kernel，并通过`block_dim`配置核数。
+1. 用户在Host侧启动JIT Kernel，配置启动规模。
 2. 多个核以SPMD（Single Program Multiple Data，单程序多数据）方式执行同一份Kernel程序，并根据各自的核索引处理不同的数据分片。
 3. 在每个逻辑执行域内，AIC主要执行Cube侧SIMD矩阵计算，AIV主要执行Vector侧SIMD或SIMT计算。
 4. SIMD与SIMT可以在同一个外层Kernel中组合，并与数据搬运流水共同完成一个算子的计算。
@@ -48,7 +48,7 @@ SIMT（Single Instruction Multiple Threads，单指令多线程）是一种线�
 - **线程独立**：每个Thread拥有独立的索引和执行状态，可以独立寻址，并支持分支与循环。
 - **并行调度**：多个Thread由硬件并行调度，不同Thread可以采用不同的控制路径。
 
-SIMT编程先定义SIMT入口函数，再由外层JIT Kernel在Vector执行域中启动Thread Block。
+PyPTO Pro支持SIMT编程和SIMD与SIMT混合编程两种方式。前者由Host直接启动SIMT kernel，后者在外层Kernel中组合SIMD与SIMT计算。具体定义与启动方式参见[SIMT计算](../development/vector_computation/simt_computation.md)。
 
 ### 适用场景
 
@@ -85,7 +85,7 @@ PyPTO Pro算子的典型开发与运行流程如下：
 2. 使用JIT装饰器定义Kernel，并声明Tensor、Scalar或TilingData等参数。
 3. 根据数据规模设计多核切分和Tiling，规划Tile及片上存储。
 4. 根据数据访问模式和控制流特点选择SIMD、SIMT，或在同一个Kernel中组合两种计算方式。
-5. 在Host侧启动Kernel，并按需配置Stream和`block_dim`；首次调用触发JIT编译。
+5. 在Host侧启动Kernel，并配置Stream及启动规模：SIMD模式使用block_dim，SIMT编程使用grid和block；首次调用触发JIT编译。
 6. Kernel异步下发后，在Host读取结果前等待Device任务完成。
 
 建议继续阅读以下内容：

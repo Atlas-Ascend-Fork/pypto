@@ -32,7 +32,7 @@ pypto_pro.language.simt.signbit(
 
 ## 约束说明
 
-只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT函数中调用。
+只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 
 ## 返回值说明
 

@@ -9,7 +9,7 @@ SIMT程序中，不同线程的执行进度和内存访问完成顺序可能不�
 
 ## 同步屏障
 
-pypto_pro.language.simt.syncthreads用于线程块内的阶段同步。典型场景是多个线程先向共享UB写入数据，待所有线程完成写入后，再进入下一阶段读取这些数据。
+pypto_pro.language.simt.syncthreads用于线程块内的阶段同步。以下以SIMD与SIMT混合编程的共享UB Tile为例，多个线程先写入数据，待所有线程完成写入后，再进入下一阶段读取这些数据。
 
 ```python
 shared[0, tid] = value

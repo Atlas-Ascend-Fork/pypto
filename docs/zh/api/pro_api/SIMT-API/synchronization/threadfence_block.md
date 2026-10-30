@@ -30,7 +30,7 @@ pypto_pro.language.simt.threadfence_block() -> None
 
 ## 约束说明
 
-- 只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT入口函数或辅助函数中调用。
+- 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 - 必须作为独立语句调用，不支持使用其结果参与表达式。
 - 该接口不保证其他线程已经执行到同一位置。如需等待当前线程块中的所有线程，应使用[pypto_pro.language.simt.syncthreads](syncthreads.md)。
 

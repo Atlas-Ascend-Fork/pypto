@@ -80,6 +80,7 @@ JIT复用范围限于当前Python进程。重新启动进程后会重新执行�
 
 | 参数 | 类型 | 说明 | 默认值 |
 | --- | --- | --- | --- |
+| mode | str或None | 指定Kernel的编程模式。支持SIMD和SIMT编程，传入"simd"、None或省略时使用SIMD编程，传入"simt"时为SIMT编程。 | None |
 | arch | str | 指定编译目标。通常省略，由运行环境自动确定。 | None |
 | auto_mutex | bool | 是否根据TileGroup声明的mutex元数据，为框架能够识别的数据依赖自动插入同步。 | True |
 | name | str | 自定义Kernel名称，用于区分编译产物；未设置时使用被装饰函数的名称。 | None |
@@ -88,6 +89,7 @@ JIT复用范围限于当前Python进程。重新启动进程后会重新执行�
 | tiling_key | TilingKey定义类 | 绑定当前Kernel支持的TilingKey字段及其候选值。 | None |
 | datatype | dict[str, str] | 声明需要进行数据类型特化的Kernel参数，以及Kernel函数体中引用的数据类型变量名。 | None |
 | compile_timeout | int | 设置当前Kernel的编译超时时间，单位为秒。 | None（基础默认值为600秒） |
+| max_threads | int或None | SIMT kernel每个Thread Block允许的最大线程数，取值为[1, 2048]，SIMT模式必填，SIMD模式不接受该参数。 | None |
 
 ```python
 import pypto_pro.language as pl
@@ -106,7 +108,7 @@ def add_kernel(x, y, out):
 
 ## Kernel下发与同步
 
-编译完成后，JIT通过Host侧Launcher将Kernel提交到指定Stream。`kernel[None, block_dim](...)`使用当前Stream，`kernel[stream, block_dim](...)`使用显式Stream。
+编译完成后，JIT通过Host侧Launcher将Kernel提交到指定Stream。SIMD模式中，`kernel[None, block_dim](...)`使用当前Stream，`kernel[stream, block_dim](...)`使用显式Stream。SIMT kernel的启动方式参见[从Host启动SIMT kernel](../vector_computation/simt_computation.md#从host启动simt-kernel)。
 
 Kernel下发是异步操作。在读取输出、检查精度或统计完整执行时间前，同步相应Stream：
 

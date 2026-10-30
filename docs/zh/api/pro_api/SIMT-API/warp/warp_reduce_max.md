@@ -32,7 +32,7 @@ pypto_pro.language.simt.warp_reduce_max(
 
 ## 约束说明
 
-- 只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT入口函数或辅助函数中调用。
+- 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 - 仅归约执行到当前指令的活跃Lane；发生分支发散时，不同分支的参与集合不同。
 
 ## 返回值说明

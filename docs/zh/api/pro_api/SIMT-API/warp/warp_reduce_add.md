@@ -32,7 +32,7 @@ pypto_pro.language.simt.warp_reduce_add(
 
 ## 约束说明
 
-- 只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT入口函数或辅助函数中调用。
+- 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 - 仅归约执行到当前指令的活跃Lane；发生分支发散时，不同分支的参与集合不同。
 - 当数据求和结果溢出时，本接口不保证计算精度。
 - 本接口底层使用二分（树形）归约算法，计算顺序可能与顺序累加不同。例如，(((a + b) + c) + d)与((a + b) + (c + d))的计算顺序不同。浮点加法使用有限精度表示且每步可能发生舍入，因此不同的归约顺序可能产生不同的中间结果和最终结果。

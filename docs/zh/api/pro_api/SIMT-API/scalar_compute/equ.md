@@ -34,7 +34,7 @@ pypto_pro.language.simt.equ(
 
 ## 约束说明
 
-- 只能在由@pypto_pro.language.vector_function(mode="simt")定义的SIMT入口函数或辅助函数中调用。
+- 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 - 两个输入必须同为DT_FP16或同为DT_BF16。
 
 ## 返回值说明
