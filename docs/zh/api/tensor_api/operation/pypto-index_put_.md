@@ -17,6 +17,9 @@
 <!-- npu="x90" id5 -->
 - KirinX90处理器系列产品：支持
 <!-- end id5 -->
+<!-- npu="9050" id11 -->
+- Kirin9050处理器系列产品：支持
+<!-- end id11 -->
 
 ## 功能说明
 
@@ -32,9 +35,9 @@ index_put_(input: Tensor, indices: tuple, values: Tensor, accumulate: bool = Fal
 
 |   参数名   | 输入/输出 | 说明                                                                  |
 |------------|-----------|----------------------------------------------------------------------|
-|   input    |    输入   | 源操作数。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_INT32，DT_UINT32，DT_INT64，DT_UINT64，DT_BF16，DT_FP16，DT_FP32。<!-- npu="x90,9030" id8 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id8 --><br>不支持空Tensor，Shape仅支持1-4维，Shape Size不大于2147483647（即INT32_MAX）。 |
-|  indices   |   输入    | Tensor类型的元组，每个Tensor表示一个维度的索引。<br>支持的类型为：tuple\[Tensor\]，每个Tensor均为一维，且维度相同。<br>Tensor支持的数据类型为：DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_INT32，DT_UINT32，DT_INT64，DT_UINT64。<!-- npu="x90,9030" id9 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id9 --><br>不支持空Tensor，tuple中Tensor的个数不大于input的维数。 |
-|   values   |   输入    | 待更新到input中的值。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_INT32，DT_UINT32，DT_INT64，DT_UINT64，DT_BF16，DT_FP16，DT_FP32。<!-- npu="x90,9030" id10 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id10 --><br>不支持空Tensor，维数不大于input的维数。 |
+|   input    |    输入   | 源操作数。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_INT32，DT_UINT32，DT_INT64，DT_UINT64，DT_BF16，DT_FP16，DT_FP32。<!-- npu="x90,9030,9050" id8 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id8 --><br>不支持空Tensor，Shape仅支持1-4维，Shape Size不大于2147483647（即INT32_MAX）。 |
+|  indices   |   输入    | Tensor类型的元组，每个Tensor表示一个维度的索引。<br>支持的类型为：tuple\[Tensor\]，每个Tensor均为一维，且维度相同。<br>Tensor支持的数据类型为：DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_INT32，DT_UINT32，DT_INT64，DT_UINT64。<!-- npu="x90,9030,9050" id9 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id9 --><br>不支持空Tensor，tuple中Tensor的个数不大于input的维数。 |
+|   values   |   输入    | 待更新到input中的值。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_INT32，DT_UINT32，DT_INT64，DT_UINT64，DT_BF16，DT_FP16，DT_FP32。<!-- npu="x90,9030,9050" id10 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id10 --><br>不支持空Tensor，维数不大于input的维数。 |
 | accumulate |   输入（可选）    | 累加参数，默认为False。<br>支持的类型为：bool。 |
 
 ## 返回值说明
@@ -59,7 +62,7 @@ index_put_(input: Tensor, indices: tuple, values: Tensor, accumulate: bool = Fal
 
 8. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
-<!-- npu="x90,9030" id6 -->
+<!-- npu="x90,9030,9050" id6 -->
 9. Tensor数据类型说明：
    <!-- npu="9030" id12 -->
    - Kirin9030处理器系列产品：
@@ -71,9 +74,14 @@ index_put_(input: Tensor, indices: tuple, values: Tensor, accumulate: bool = Fal
       - input/values：DT_FP16，DT_FP32，DT_INT8，DT_INT16，DT_INT32
       - indices：DT_INT8，DT_INT16，DT_INT32，DT_INT64，DT_UINT8，DT_UINT16，DT_UINT32，DT_UINT64
    <!-- end id13 -->
+   <!-- npu="9050" id16 -->
+   - Kirin9050处理器系列产品：
+      - input/values：DT_FP16，DT_FP32，DT_INT8，DT_INT16，DT_INT32
+      - indices：DT_INT8，DT_INT16，DT_INT32，DT_INT64，DT_UINT8，DT_UINT16，DT_UINT32，DT_UINT64
+   <!-- end id16 -->
 <!-- end id6 -->
 
-<!-- npu="x90,9030" id7 -->
+<!-- npu="x90,9030,9050" id7 -->
 10. accumulate支持说明：
     <!-- npu="9030" id14 -->
     - Kirin9030处理器系列产品：不支持，必须设置为False
@@ -81,6 +89,9 @@ index_put_(input: Tensor, indices: tuple, values: Tensor, accumulate: bool = Fal
     <!-- npu="x90" id15 -->
     - KirinX90处理器系列产品：不支持，必须设置为False
     <!-- end id15 -->
+    <!-- npu="9050" id17 -->
+    - Kirin9050处理器系列产品：不支持，必须设置为False
+    <!-- end id17 -->
 <!-- end id7 -->
 
 ## 调用示例

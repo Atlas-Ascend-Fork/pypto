@@ -17,6 +17,9 @@
 <!-- npu="x90" id5 -->
 - KirinX90处理器系列产品：支持
 <!-- end id5 -->
+<!-- npu="9050" id6 -->
+- Kirin9050处理器系列产品：支持
+<!-- end id6 -->
 
 ## 功能说明
 
@@ -61,6 +64,15 @@ from_torch(tensor: torch.Tensor, name: str="", *, dynamic_axis: Optional[List[in
     - torch.int64
     - torch.uint64
     - torch.bool
+    <!-- npu="9030" id7 -->
+    - Kirin9030处理器系列产品：torch.float16，torch.float32，torch.int8，torch.uint8，torch.int16，torch.int32，torch.int64，torch.bool
+    <!-- end id7 -->
+    <!-- npu="x90" id8 -->
+    - KirinX90处理器系列产品：torch.float16，torch.float32，torch.int8，torch.uint8，torch.int16，torch.int32，torch.int64，torch.bool
+    <!-- end id8 -->
+    <!-- npu="9050" id9 -->
+    - Kirin9050处理器系列产品：torch.float16，torch.float32，torch.int8，torch.uint8，torch.int16，torch.int32，torch.int64，torch.bool
+    <!-- end id9 -->
 
 ## 调用示例
 

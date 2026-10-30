@@ -36,3 +36,6 @@ export PYPTO_LAUNCH_SCHED_SAME_CLUSTER=false
 <!-- npu="x90" id5 -->
 - KirinX90处理器系列产品：不支持
 <!-- end id5 -->
+<!-- npu="9050" id6 -->
+- Kirin9050处理器系列产品：不支持
+<!-- end id6 -->

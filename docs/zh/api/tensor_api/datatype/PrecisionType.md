@@ -17,6 +17,9 @@
 <!-- npu="x90" id8 -->
 - KirinX90处理器系列产品：不支持
 <!-- end id8 -->
+<!-- npu="9050" id11 -->
+- Kirin9050处理器系列产品：不支持
+<!-- end id11 -->
 
 ## 功能说明
 
@@ -58,6 +61,9 @@ class PrecisionType(enum.Enum):
    <!-- npu="x90" id10 -->
    - KirinX90处理器系列产品：不支持
    <!-- end id10 -->
+   <!-- npu="9050" id12 -->
+   - Kirin9050处理器系列产品：不支持
+   <!-- end id12 -->
 
 ## 支持的算子
 

@@ -17,6 +17,9 @@
 <!-- npu="x90" id5 -->
 - KirinX90处理器系列产品：支持
 <!-- end id5 -->
+<!-- npu="9050" id10 -->
+- Kirin9050处理器系列产品：支持
+<!-- end id10 -->
 
 ## 功能说明
 
@@ -32,7 +35,7 @@ pypto.exp(input, precision_type=pypto.PrecisionType.INTRINSIC) -> Tensor
 
 | 参数名 | 类型 | 说明 |
 |:-----|:-----|:-----|
-| input | Tensor | 源操作数。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_FP16，DT_BF16，DT_FP32。<!-- npu="x90,9030" id9 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id9 --><br>不支持空Tensor；支持的维度：1-4维；Shape Size不大于2147483647（即INT32_MAX）。 |
+| input | Tensor | 源操作数。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_FP16，DT_BF16，DT_FP32。<!-- npu="x90,9030,9050" id9 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id9 --><br>不支持空Tensor；支持的维度：1-4维；Shape Size不大于2147483647（即INT32_MAX）。 |
 | precision_type | PrecisionType，可选 | 指数操作的精度模式。默认值为`PrecisionType.INTRINSIC`。<br>**INTRINSIC**：直接使用芯片指令进行计算，速度更快。<br>**HIGH_PRECISION**：使用更高精度的计算方式，减少精度损失。 |
 
 ## 返回值说明
@@ -42,7 +45,7 @@ pypto.exp(input, precision_type=pypto.PrecisionType.INTRINSIC) -> Tensor
 ## 约束说明
 
 1. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-<!-- npu="x90,9030" id6 -->
+<!-- npu="x90,9030,9050" id6 -->
 2. Tensor数据类型说明：
    <!-- npu="9030" id7 -->
    - Kirin9030处理器系列产品：DT_FP16，DT_FP32
@@ -50,6 +53,9 @@ pypto.exp(input, precision_type=pypto.PrecisionType.INTRINSIC) -> Tensor
    <!-- npu="x90" id8 -->
    - KirinX90处理器系列产品：DT_FP16，DT_FP32
    <!-- end id8 -->
+   <!-- npu="9050" id11 -->
+   - Kirin9050处理器系列产品：DT_FP16，DT_FP32
+   <!-- end id11 -->
 <!-- end id6 -->
 
 ## 调用示例

@@ -41,3 +41,6 @@ os.environ["PYPTO_DATADUMP_ENABLE"] = "true"
 <!-- npu="x90" id5 -->
 - KirinX90处理器系列产品：不支持
 <!-- end id5 -->
+<!-- npu="9050" id6 -->
+- Kirin9050处理器系列产品：不支持
+<!-- end id6 -->

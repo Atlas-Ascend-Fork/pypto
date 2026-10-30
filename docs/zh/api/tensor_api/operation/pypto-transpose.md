@@ -17,6 +17,9 @@
 <!-- npu="x90" id8 -->
 - KirinX90处理器系列产品：支持
 <!-- end id8 -->
+<!-- npu="9050" id11 -->
+- Kirin9050处理器系列产品：支持
+<!-- end id11 -->
 
 ## 功能说明
 
@@ -86,6 +89,9 @@ transpose(input: Tensor, dim0: int, dim1: int) -> Tensor
    <!-- npu="x90" id10 -->
    - KirinX90处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16
    <!-- end id10 -->
+   <!-- npu="9050" id12 -->
+   - Kirin9050处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16
+   <!-- end id12 -->
 7. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例

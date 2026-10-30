@@ -17,6 +17,9 @@
 <!-- npu="x90" id8 -->
 - KirinX90处理器系列产品：支持
 <!-- end id8 -->
+<!-- npu="9050" id11 -->
+- Kirin9050处理器系列产品：支持
+<!-- end id11 -->
 
 ## 功能说明
 
@@ -69,6 +72,9 @@ full(size: List[int], fill_value: Union[int, float, Element], dtype: DataType, *
    <!-- npu="x90" id10 -->
    - KirinX90处理器系列产品：DT_INT32，DT_INT16，DT_INT8，DT_FP16，DT_FP32。
    <!-- end id10 -->
+   <!-- npu="9050" id12 -->
+   - Kirin9050处理器系列产品：DT_INT32，DT_INT16，DT_INT8，DT_FP16，DT_FP32。
+   <!-- end id12 -->
 
 ## 调用示例
 

@@ -1,10 +1,10 @@
 # PyTorch集成和接入
 
-当前PyPTO支持单算子模式（eager）和图捕获模式（aclgraph）两种执行模式，<!-- npu="x90,9030" id1 -->Kirin仅支持自定义算子部署执行模式（见以下详细描述）<!-- end id1 -->：
+当前PyPTO支持单算子模式（eager）和图捕获模式（aclgraph）两种执行模式，<!-- npu="x90,9030,9050" id1 -->Kirin仅支持自定义算子部署执行模式（见以下详细描述）<!-- end id1 -->：
 
 - 单算子模式（eager）：代码执行方式与普通Python程序一致，即时执行，函数在调用时立即执行，无需构建计算图，开发调试友好，但是会带来Host的任务下发开销，随着性能优化的不断深入，这些Host开销逐渐成为瓶颈，变成不可忽视的问题。
 - 图捕获模式（aclgraph）：采用Capture&Replay方式实现任务一次捕获多次执行，Capture阶段捕获Stream任务到Device侧，暂不执行；Replay阶段从Host侧发出执行指令，Device侧再执行已捕获的任务，从而减少Host调度开销，提升性能。
-<!-- npu="x90,9030" id2 -->
+<!-- npu="x90,9030,9050" id2 -->
 - Kirin不支持以上的执行模式，device部署及推理需要执行以下步骤：
     1. [pypto自定义算子部署](https://gitcode.com/cann/cann-recipes-harmony-infer/tree/master/docs/pypto_develop_guide.md)
     2. [CANNKIT-NPUProfiling工具上板执行](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/cannkit-debugging-and-optimization)

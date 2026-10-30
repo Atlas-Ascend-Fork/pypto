@@ -17,6 +17,9 @@
 <!-- npu="x90" id5 -->
 - KirinX90处理器系列产品：支持
 <!-- end id5 -->
+<!-- npu="9050" id10 -->
+- Kirin9050处理器系列产品：支持
+<!-- end id10 -->
 
 ## 功能说明
 
@@ -32,7 +35,7 @@ concat(tensors: List[Tensor], dim: int = 0) -> Tensor
 
 | 参数名  | 输入/输出 | 说明                                                                                                                                                                                                     |
 | ------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| tensors | 输入      | 源操作数。支持的类型为：Tensor。Tensor支持的数据类型为：DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_INT32，DT_UINT32，DT_FP16，DT_FP32，DT_BF16，DT_INT64，DT_UINT64。<!-- npu="x90,9030" id9 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id9 -->不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
+| tensors | 输入      | 源操作数。支持的类型为：Tensor。Tensor支持的数据类型为：DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_INT32，DT_UINT32，DT_FP16，DT_FP32，DT_BF16，DT_INT64，DT_UINT64。<!-- npu="x90,9030,9050" id9 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id9 -->不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
 | dim     | 输入      | 指定进行拼接的维度。支持的数据类型为：int，默认为0。                                                                                                                                                      |
 
 ## 返回值说明
@@ -53,7 +56,7 @@ concat(tensors: List[Tensor], dim: int = 0) -> Tensor
 
 6.Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
-<!-- npu="x90,9030" id6 -->
+<!-- npu="x90,9030,9050" id6 -->
 7.Tensor数据类型说明：
    <!-- npu="9030" id7 -->
    - Kirin9030处理器系列产品：DT_INT32，DT_INT16，DT_INT8，DT_FP16，DT_FP32
@@ -61,6 +64,9 @@ concat(tensors: List[Tensor], dim: int = 0) -> Tensor
    <!-- npu="x90" id8 -->
    - KirinX90处理器系列产品：DT_INT32，DT_INT16，DT_INT8，DT_FP16，DT_FP32
    <!-- end id8 -->
+   <!-- npu="9050" id11 -->
+   - Kirin9050处理器系列产品：DT_INT32，DT_INT16，DT_INT8，DT_FP16，DT_FP32
+   <!-- end id11 -->
 <!-- end id6 -->
 
 ## 调用示例

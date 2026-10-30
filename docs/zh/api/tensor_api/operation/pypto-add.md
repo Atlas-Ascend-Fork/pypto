@@ -17,6 +17,9 @@
 <!-- npu="x90" id8 -->
 - KirinX90处理器系列产品：支持
 <!-- end id8 -->
+<!-- npu="9050" id11 -->
+- Kirin9050处理器系列产品：支持
+<!-- end id11 -->
 
 ## 功能说明
 
@@ -63,6 +66,9 @@ add(input: Tensor, other: Union[Tensor, float, int]) -> Tensor
    <!-- npu="x90" id10 -->
    - KirinX90处理器系列产品：DT_INT32，DT_INT16，DT_FP16，DT_FP32。
    <!-- end id10 -->
+   <!-- npu="9050" id12 -->
+   - Kirin9050处理器系列产品：DT_INT32，DT_INT16，DT_FP16，DT_FP32。
+   <!-- end id12 -->
 4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例

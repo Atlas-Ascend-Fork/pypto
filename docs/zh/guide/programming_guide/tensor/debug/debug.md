@@ -261,14 +261,14 @@ Ascend 950PR&950DT系列产品 支持以下两种仿真模式，均通过`cannsi
 6. 精度仿真与NPU执行一致，执行完成后，会返回运行结果，用户可获取结果并进行处理。
 <!-- end id2 -->
 
-<!-- npu="x90,9030" id3 -->
-### Kirin9030/KirinX90
+<!-- npu="x90,9030,9050" id3 -->
+### Kirin9030/KirinX90/Kirin9050
 
 Kirin不支持pypto直接调用device推理，需要通过Kirin算子部署过程，通过CANNKIT-NPUProfiling工具上板执行，请参考[Kirin NPU部署流程](../pytorch_integration.md) 。Kirin场景支持CPU仿真环境中进行测试体验：
 
 - 精度仿真：支持用户在CPU环境获取算子运算结果（精度仿真依赖CANN软件包）。
 
-Kirin9030/KirinX90支持以下CAModel仿真模式进行精度对比：
+Kirin9030/KirinX90/Kirin9050支持以下CAModel仿真模式进行精度对比：
 
 - **CAModel**：指令级仿真，粒度较细、性能仿真准确度高但速度慢
 
@@ -286,6 +286,12 @@ Kirin9030/KirinX90支持以下CAModel仿真模式进行精度对比：
 
         ```bash
         export LD_LIBRARY_PATH=${CANN_INSTALL_PATH}/ascend-toolkit/latest/x86_64-linux/simulator/KirinX90/lib:$LD_LIBRARY_PATH
+        ```
+
+    - Kirin9050处理器系列产品：
+
+        ```bash
+        export LD_LIBRARY_PATH=${CANN_INSTALL_PATH}/ascend-toolkit/latest/x86_64-linux/simulator/Kirin9050/lib:$LD_LIBRARY_PATH
         ```
 
 2. 指定tensor分配cpu并切换仿真模式，指定soc_version。
@@ -312,6 +318,12 @@ Kirin9030/KirinX90支持以下CAModel仿真模式进行精度对比：
 
         ```python
         pypto.set_codegen_options(soc_version="KirinX90")
+        ```
+
+    - Kirin9050处理器系列产品：
+
+        ```python
+        pypto.set_codegen_options(soc_version="Kirin9050")
         ```
 
 3. 执行算子，自动触发仿真运行。

@@ -17,6 +17,9 @@
 <!-- npu="x90" id8 -->
 - KirinX90处理器系列产品：支持
 <!-- end id8 -->
+<!-- npu="9050" id35 -->
+- Kirin9050处理器系列产品：支持
+<!-- end id35 -->
 
 ## 功能说明
 
@@ -83,94 +86,25 @@ def kernel_function(...):
    format显式标记时,性能更优,要求传入的torch tensor与pypto.Tensor声明的format一致，能获得更优的性能;
 4. 张量参数在前，非张量参数（如`scalar`、`tiling`）在后
 5. 非张量参数支持keyword传参、位置参数、使用默认值
-6. 最大可用aicpu数量说明：
+6. 配置项使用限制说明：
    <!-- npu="950" id4 -->
-   - Ascend 950PR&950DT系列产品，最大可用aicpu数量为7（具体最大数量取决于具体的型号）。
+   - Ascend 950PR&950DT系列产品：最大可用aicpu数量为7（具体最大数量取决于具体的型号）；支持全部运行时配置项；run_mode支持0（NPU执行）和1（模拟器执行）。
    <!-- end id4 -->
    <!-- npu="A3" id5 -->
-   - Atlas A3系列产品：最大可用aicpu数量为5。
+   - Atlas A3系列产品：最大可用aicpu数量为5；支持全部运行时配置项；run_mode支持0（NPU执行）和1（模拟器执行）。
    <!-- end id5 -->
    <!-- npu="910b" id6 -->
-   - Atlas A2系列产品：最大可用aicpu数量为5。
+   - Atlas A2系列产品：最大可用aicpu数量为5；支持全部运行时配置项；run_mode支持0（NPU执行）和1（模拟器执行）。
    <!-- end id6 -->
-   <!-- npu="9030" id24 -->
-   - Kirin9030处理器系列产品：最大可用aicpu数量为0，Kirin9030没有aicpu。
-   <!-- end id24 -->
-   <!-- npu="x90" id25 -->
-   - KirinX90处理器系列产品：最大可用aicpu数量为0，KirinX90没有aicpu。
-   <!-- end id25 -->
-<!-- npu="x90,9030" id9 -->
-7. device_sched_mode使用说明：
-   <!-- npu="9030" id10 -->
-   - Kirin9030处理器系列产品：不支持。
+   <!-- npu="9030" id9 -->
+   - Kirin9030处理器系列产品：最大可用aicpu数量为0（无aicpu）；不支持device_sched_mode、stitch_function_max_num、max_workspace_kb、ready_on_host_tensors、launch_sched_aicpu_num、device_sched_parallelism参数；run_mode仅支持1（模拟器执行）；支持valid_shape_optimize（Kirin场景动态shape会默认转换为静态）。
+   <!-- end id9 -->
+   <!-- npu="x90" id10 -->
+   - KirinX90处理器系列产品：最大可用aicpu数量为0（无aicpu）；不支持device_sched_mode、stitch_function_max_num、max_workspace_kb、ready_on_host_tensors、launch_sched_aicpu_num、device_sched_parallelism参数；run_mode仅支持1（模拟器执行）；支持valid_shape_optimize（Kirin场景动态shape会默认转换为静态）。
    <!-- end id10 -->
-   <!-- npu="x90" id11 -->
-   - KirinX90处理器系列产品：不支持。
+   <!-- npu="9050" id11 -->
+   - Kirin9050处理器系列产品：最大可用aicpu数量为0（无aicpu）；不支持device_sched_mode、stitch_function_max_num、max_workspace_kb、ready_on_host_tensors、launch_sched_aicpu_num、device_sched_parallelism参数；run_mode仅支持1（模拟器执行）；支持valid_shape_optimize（Kirin场景动态shape会默认转换为静态）。
    <!-- end id11 -->
-<!-- end id9 -->
-<!-- npu="x90,9030" id12 -->
-8. stitch_function_max_num使用说明：
-   <!-- npu="9030" id13 -->
-   - Kirin9030处理器系列产品：不支持。
-   <!-- end id13 -->
-   <!-- npu="x90" id14 -->
-   - KirinX90处理器系列产品：不支持。
-   <!-- end id14 -->
-<!-- end id12 -->
-<!-- npu="x90,9030" id15 -->
-9. max_workspace_kb使用说明：
-   <!-- npu="9030" id16 -->
-   - Kirin9030处理器系列产品：不支持。
-   <!-- end id16 -->
-   <!-- npu="x90" id17 -->
-   - KirinX90处理器系列产品：不支持。
-   <!-- end id17 -->
-<!-- end id15 -->
-<!-- npu="x90,9030" id18 -->
-10. run_mode使用说明：
-    <!-- npu="9030" id19 -->
-    - Kirin9030处理器系列产品：仅支持1：模拟器执行。
-    <!-- end id19 -->
-    <!-- npu="x90" id20 -->
-    - KirinX90处理器系列产品：仅支持1：模拟器执行。
-    <!-- end id20 -->
-<!-- end id18 -->
-<!-- npu="x90,9030" id21 -->
-11. valid_shape_optimize使用说明：
-    <!-- npu="9030" id22 -->
-    - Kirin9030处理器系列产品：支持，Kirin场景动态shape会默认转换为静态。
-    <!-- end id22 -->
-    <!-- npu="x90" id23 -->
-    - KirinX90处理器系列产品：支持，Kirin场景动态shape会默认转换为静态。
-    <!-- end id23 -->
-<!-- end id21 -->
-<!-- npu="x90,9030" id26 -->
-12. ready_on_host_tensors使用说明：
-    <!-- npu="9030" id27 -->
-    - Kirin9030处理器系列产品：不支持。
-    <!-- end id27 -->
-    <!-- npu="x90" id28 -->
-    - KirinX90处理器系列产品：不支持。
-    <!-- end id28 -->
-<!-- end id26 -->
-<!-- npu="x90,9030" id29 -->
-13. launch_sched_aicpu_num使用说明：
-    <!-- npu="9030" id30 -->
-    - Kirin9030处理器系列产品：不支持。
-    <!-- end id30 -->
-    <!-- npu="x90" id31 -->
-    - KirinX90处理器系列产品：不支持。
-    <!-- end id31 -->
-<!-- end id29 -->
-<!-- npu="x90,9030" id32 -->
-14. device_sched_parallelism使用说明：
-    <!-- npu="9030" id33 -->
-    - Kirin9030处理器系列产品：不支持。
-    <!-- end id33 -->
-    <!-- npu="x90" id34 -->
-    - KirinX90处理器系列产品：不支持。
-    <!-- end id34 -->
-<!-- end id32 -->
 
 **pypto.Tensor[...]说明**：
 

@@ -84,6 +84,9 @@ PyPTO Tensor以“算法表达与硬件执行解耦”为主要设计理念。�
 <!-- npu="x90" id8 -->
 - KirinX90处理器系列产品：支持
 <!-- end id8 -->
+<!-- npu="9050" id11 -->
+- Kirin9050处理器系列产品：支持
+<!-- end id11 -->
 
 ## PyPTO Pro
 
@@ -142,3 +145,6 @@ PyPTO Pro让开发者用Python编写Kernel，同时保留对硬件执行方式�
 <!-- npu="x90" id10 -->
 - KirinX90处理器系列产品：不支持
 <!-- end id10 -->
+<!-- npu="9050" id12 -->
+- Kirin9050处理器系列产品：不支持
+<!-- end id12 -->

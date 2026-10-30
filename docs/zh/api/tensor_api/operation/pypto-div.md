@@ -17,6 +17,9 @@
 <!-- npu="x90" id13 -->
 - KirinX90处理器系列产品：支持
 <!-- end id13 -->
+<!-- npu="9050" id18 -->
+- Kirin9050处理器系列产品：支持
+<!-- end id18 -->
 
 ## 功能说明
 
@@ -64,6 +67,9 @@ div(input: Tensor, other: Union[Tensor, float, int], precision_type: PrecisionTy
    <!-- npu="x90" id15 -->
    - KirinX90处理器系列产品：DT_FP16，DT_FP32
    <!-- end id15 -->
+   <!-- npu="9050" id20 -->
+   - Kirin9050处理器系列产品：DT_FP16，DT_FP32
+   <!-- end id20 -->
 3. **精度模式说明**：
     - **HIGH_PRECISION（高精度模式）**：默认模式，在底层实现中会使用更高精度的计算方式，在不同型号上的支持情况：
       <!-- npu="950" id4 -->
@@ -81,6 +87,9 @@ div(input: Tensor, other: Union[Tensor, float, int], precision_type: PrecisionTy
       <!-- npu="x90" id17 -->
       - KirinX90处理器系列产品：不支持
       <!-- end id17 -->
+      <!-- npu="9050" id19 -->
+      - Kirin9050处理器系列产品：不支持
+      <!-- end id19 -->
     - **INTRINSIC（指令模式）**：直接使用芯片指令进行计算。
 4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 5. 整型输入约束：

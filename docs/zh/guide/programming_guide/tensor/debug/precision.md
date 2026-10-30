@@ -394,7 +394,7 @@ output/output_*/dump_tensor_*/device_{deviceId}/
 - 自动合并分片tensor为完整的raw tensor（针对多个task处理同一raw tensor的场景）
 - 支持codegen pass tensor对比验证（需配合`enable_pass_verify`使用）
 
-<!-- npu="x90,9030" id1 -->
+<!-- npu="x90,9030,9050" id1 -->
 **限制说明：**
 
 - 产品支持情况：
@@ -404,6 +404,9 @@ output/output_*/dump_tensor_*/device_{deviceId}/
     <!-- npu="x90" id8 -->
     - KirinX90处理器系列产品：不支持
     <!-- end id8 -->
+    <!-- npu="9050" id11 -->
+    - Kirin9050处理器系列产品：不支持
+    <!-- end id11 -->
 <!-- end id1 -->
 
 **使用方法：**
@@ -714,7 +717,7 @@ output/output_*/verify/
 
 支持整网中算子级别的输入输出上板dump的能力。
 
-<!-- npu="x90,9030" id4 -->
+<!-- npu="x90,9030,9050" id4 -->
 ### 限制说明
 
 - 产品支持情况：
@@ -724,6 +727,9 @@ output/output_*/verify/
     <!-- npu="x90" id10 -->
     - KirinX90处理器系列产品：不支持
     <!-- end id10 -->
+    <!-- npu="9050" id12 -->
+    - Kirin9050处理器系列产品：不支持
+    <!-- end id12 -->
 <!-- end id4 -->
 
 ### 启用方式

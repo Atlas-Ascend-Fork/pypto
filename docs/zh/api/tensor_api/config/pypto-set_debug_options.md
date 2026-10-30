@@ -17,6 +17,9 @@
 <!-- npu="x90" id5 -->
 - KirinX90处理器系列产品：支持
 <!-- end id5 -->
+<!-- npu="9050" id9 -->
+- Kirin9050处理器系列产品：支持
+<!-- end id9 -->
 
 ## 功能说明
 
@@ -51,7 +54,7 @@ void：Set方法无返回值。设置操作成功即生效。
 - dump_pass_graph 配置项填写的是当前Pass策略中的Pass标识符（identifier），例如"RemoveRedundantReshape"，不是C++中的PassName枚举值。
 - dump_pass_graph 支持配置多个Pass标识符；列表中未匹配当前Pass策略的标识符会被忽略，并输出告警。若列表中所有标识符均未匹配，则不会输出任何Pass的计算图或IR。
 - 当 compile_debug_mode=1 与 dump_pass_graph 同时设置时，compile_debug_mode=1 优先，最终开启所有Pass的计算图dump和IR打印。
-<!-- npu="x90,9030" id6 -->
+<!-- npu="x90,9030,9050" id6 -->
 - runtime_debug_mode使用说明：
     <!-- npu="9030" id7 -->
     - Kirin9030处理器系列产品：不支持runtime_debug_mode=1、3、4。
@@ -59,6 +62,9 @@ void：Set方法无返回值。设置操作成功即生效。
     <!-- npu="x90" id8 -->
     - KirinX90处理器系列产品：不支持runtime_debug_mode=1、3、4。
     <!-- end id8 -->
+    <!-- npu="9050" id10 -->
+    - Kirin9050处理器系列产品：不支持runtime_debug_mode=1、3、4。
+    <!-- end id10 -->
 <!-- end id6 -->
 
 ## 调用示例
