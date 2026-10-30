@@ -155,37 +155,6 @@ class System:
                 vector cores only, ``MIX`` (default) syncs both AIC and AIV cores.
         """
 
-    @staticmethod
-    @_api_decl
-    def wait_pre_task_end(*, force: bool = True) -> None:
-        """Early-start inter-task synchronization (SuperKernel cap bit 1).
-
-        ``WaitPreTaskEnd`` lets the instructions before the call run in parallel with
-        the previous sub-kernel. Pair with ``pl.jit(sk_cap=pl.SkCap.CAP_1_EARLY_START_WAIT)`` (early
-        start wait flag). Call exactly once per core, in every TilingKey branch.
-
-        Args:
-            force: Force early-start behavior (``AscendC::WaitPreTaskEnd<true>()``).
-                Defaults to ``True``, since ``WaitPreTaskEnd()`` (false) is compiled out
-                in the SK sub-kernel context.
-        """
-
-    @staticmethod
-    @_api_decl
-    def set_next_task_start(*, force: bool = True) -> None:
-        """Early-start inter-task synchronization (SuperKernel cap bit 2).
-
-        ``SetNextTaskStart`` lets the instructions after the call run in parallel with
-        the next sub-kernel. Pair with ``pl.jit(sk_cap=pl.SkCap.CAP_2_EARLY_START_SET)`` (early start
-        set flag). Call exactly once per core, after the operator's last data-movement
-        instruction, in every TilingKey branch.
-
-        Args:
-            force: Force early-start behavior (``AscendC::SetNextTaskStart<..., true>()``).
-                Defaults to ``True``, since ``SetNextTaskStart()`` (false) is compiled out
-                in the SK sub-kernel context.
-        """
-
     # -----------------------------------------------------------------
     # Mutex buffer-id tokens
     # -----------------------------------------------------------------

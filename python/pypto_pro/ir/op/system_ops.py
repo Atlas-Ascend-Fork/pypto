@@ -85,13 +85,6 @@ def _validate_concrete_pipe(pipe: PipeType, name: str, span: Span | None = None)
         raise InvalidArgument(f"{name} must identify one concrete pipe, got PipeType.ALL", span=span)
 
 
-def _require_bool(value: object, name: str, *, span: Span | None = None) -> bool:
-    """Return *value* only when it is already a Python bool (no truthiness coercion)."""
-    if not isinstance(value, bool):
-        raise InvalidType(f"{name} must be a bool, got {type(value).__name__}", span=span)
-    return value
-
-
 def _check_id_range(value: int, max_id: int, name: str, *, min_id: int = 0, span: Span | None = None) -> None:
     """Reject a hardware resource id outside its inclusive range."""
     from pypto_pro.language.parser.diagnostics import check_in_range
@@ -229,62 +222,6 @@ def bar_fix(*, span: Span | None = None) -> Call:
 def bar_all(*, span: Span | None = None) -> Call:
     """Global barrier synchronization."""
     return _create_barrier_op("system.bar_all", span=span)
-
-
-def wait_pre_task_end(*, force: bool = True, span: Span | None = None) -> Call:
-    """Early-start inter-task synchronization (SuperKernel cap bit 1).
-
-    In a fused SuperKernel, ``WaitPreTaskEnd`` lets the instructions *before* the call
-    run in parallel with the *previous* sub-kernel (asc-devkit ``WaitPreTaskEnd``). Pair
-    with ``pl.jit(sk_cap=pl.SkCap.CAP_1_EARLY_START_WAIT)`` (early start wait flag): the framework fills
-    ``sysArgs->skTaskSyncCfg`` and the generated ``__sk__`` entry propagates it into the
-    block-local ``g_super_kernel_early_start_config`` (V3 macro behavior). Constraints:
-    call it exactly once per core, in every TilingKey branch, and avoid flagId conflicts
-    with ``sync_all`` / ``set_cross_core``.
-
-    ``force`` defaults to ``True``: empirically the default ``WaitPreTaskEnd()``
-    (FORCE=false) is compiled out in the SK sub-kernel context, while
-    ``WaitPreTaskEnd<true>()`` emits the real sync instructions (verified via binary
-    diff on Ascend 950 / CANN 9.3.0).
-
-    Args:
-        force: Force early-start behavior (``AscendC::WaitPreTaskEnd<true>()``).
-        span: Optional source span for debugging (auto-captured if not provided).
-
-    Returns:
-        Call expression for system.wait_pre_task_end.
-    """
-    actual_span = _get_span_or_capture(span)
-    kwargs: dict[str, object] = {"force": _require_bool(force, "force", span=actual_span)}
-    return _ir_core.create_op_call("system.wait_pre_task_end", [], kwargs, actual_span)
-
-
-def set_next_task_start(*, force: bool = True, span: Span | None = None) -> Call:
-    """Early-start inter-task synchronization (SuperKernel cap bit 2).
-
-    In a fused SuperKernel, ``SetNextTaskStart`` lets the instructions *after* the call
-    run in parallel with the *next* sub-kernel (asc-devkit ``SetNextTaskStart``). Pair
-    with ``pl.jit(sk_cap=pl.SkCap.CAP_2_EARLY_START_SET)`` (early start set flag): the framework fills
-    ``sysArgs->skTaskSyncCfg`` and the generated ``__sk__`` entry propagates it into the
-    block-local ``g_super_kernel_early_start_config`` (V3 macro behavior). Constraints:
-    call it exactly once per core, after the operator's last data-movement instruction,
-    in every TilingKey branch, and avoid flagId conflicts with ``sync_all`` /
-    ``set_cross_core``.
-
-    ``force`` defaults to ``True``: empirically the default ``SetNextTaskStart()``
-    (FORCE=false) is compiled out in the SK sub-kernel context, so the forced
-    ``SetNextTaskStart<..., true>()`` form (emitting the real sync instructions) is used.
-
-    Args:
-        force: Force early-start behavior (``AscendC::SetNextTaskStart<..., true>()``).
-        span: Optional source span for debugging (auto-captured if not provided).
-
-    Returns:
-        Call expression for system.set_next_task_start.
-    """
-    actual_span = _get_span_or_capture(span)
-    kwargs: dict[str, object] = {"force": _require_bool(force, "force", span=actual_span)}
-    return _ir_core.create_op_call("system.set_next_task_start", [], kwargs, actual_span)
 
 
 def set_cross_core(
@@ -553,26 +490,6 @@ def _build_system_sync_src(self, *, span: Span, **kwargs):
 @op_impl("system.sync_dst")
 def _build_system_sync_dst(self, *, span: Span, **kwargs):
     return _build_system_sync("system.sync_dst", context=self, span=span, **kwargs)
-
-
-@op_impl("system.wait_pre_task_end")
-def _build_system_wait_pre_task_end(self, *, force: bool = True, span: Span):
-    force = self.require_const_value(
-        force, "force", expects="bool",
-        hint="force selects the early-start template argument at compile time; "
-        "pass a bool literal, e.g. force=True.",
-    )
-    return wait_pre_task_end(force=force, span=span)
-
-
-@op_impl("system.set_next_task_start")
-def _build_system_set_next_task_start(self, *, force: bool = True, span: Span):
-    force = self.require_const_value(
-        force, "force", expects="bool",
-        hint="force selects the early-start template argument at compile time; "
-        "pass a bool literal, e.g. force=True.",
-    )
-    return set_next_task_start(force=force, span=span)
 
 
 @op_impl("system.set_mm_layout_transform")

@@ -35,15 +35,6 @@ TypePtr DeduceUnknownType([[maybe_unused]] const std::vector<ExprPtr>& args,
     return GetUnknownType();
 }
 
-// Helper to deduce NoneType (for statement ops that produce no value)
-TypePtr DeduceNoneType([[maybe_unused]] const std::vector<ExprPtr>& args,
-                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
-{
-    (void)args;
-    (void)kwargs;
-    return GetNoneType();
-}
-
 bool IsIntScalar(const ExprPtr& expr)
 {
     auto scalar_type = As<ScalarType>(expr->GetType());
@@ -202,29 +193,6 @@ REGISTER_OP("system.sync_all")
     .no_argument()
     .set_attr<int>("core_type")
     .f_deduce_type(DeduceUnknownType);
-
-// Register system.wait_pre_task_end (early-start inter-task sync; SK cap bit 1)
-// Delegates to AscendC::WaitPreTaskEnd(); under the V3 compile macro it reads the
-// block-local g_super_kernel_early_start_config (propagated by the __sk__ entry from
-// sysArgs->skTaskSyncCfg) so instructions before the call can overlap the previous
-// sub-kernel. Requires -D__ASCENDC_SUPERKERNEL_EARLY_START_V3 at compile time.
-REGISTER_OP("system.wait_pre_task_end")
-    .set_description("Early-start inter-task sync (overlap with previous sub-kernel)")
-    .set_op_category("SyncOp")
-    .no_argument()
-    .set_attr<bool>("force")
-    .f_deduce_type(DeduceNoneType);
-
-// Register system.set_next_task_start (early-start inter-task sync; SK cap bit 2)
-// Delegates to AscendC::SetNextTaskStart(); the dual of wait_pre_task_end: instructions
-// after the call overlap the *next* sub-kernel. Same V3 macro / sysArgs->skTaskSyncCfg
-// propagation as wait_pre_task_end.
-REGISTER_OP("system.set_next_task_start")
-    .set_description("Early-start inter-task sync (overlap with next sub-kernel)")
-    .set_op_category("SyncOp")
-    .no_argument()
-    .set_attr<bool>("force")
-    .f_deduce_type(DeduceNoneType);
 
 // Register system.dcci (Data Cache Clean and Invalid)
 // Arguments:

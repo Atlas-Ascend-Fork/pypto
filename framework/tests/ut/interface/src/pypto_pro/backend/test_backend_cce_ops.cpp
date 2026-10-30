@@ -154,14 +154,11 @@ TEST(BackendCceOpsTest, GetBlockIdx)
 
     codegen::CCECodegen codegen(ir::SectionKind::Cube);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
-    EXPECT_NE(generated.find("(int64_t)(__pypto_block_idx_value())"), std::string::npos);
+    EXPECT_NE(generated.find("(int64_t)(get_block_idx())"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, GetBlockIdxUsesBlockMetaAccessorOnBothTargets)
+TEST(BackendCceOpsTest, GetBlockIdxVectorUsesGlobalAivIndex)
 {
-    // The AIV global-AIV-index contract lives in pypto_block_meta.h; codegen emits the
-    // same accessor for both targets so the generated source is identical for the SK
-    // and non-SK builds.
     auto int_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
     auto call = std::make_shared<const ir::Call>("get_block_idx", std::vector<ir::ExprPtr>{}, int_type,
                                                  ir::Span::Unknown());
@@ -169,9 +166,7 @@ TEST(BackendCceOpsTest, GetBlockIdxUsesBlockMetaAccessorOnBothTargets)
     ASSERT_NE(info, nullptr);
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    EXPECT_EQ(info->codegen_func(call, codegen), "(int64_t)(__pypto_block_idx_value())");
-    codegen::CCECodegen cube_codegen(ir::SectionKind::Cube);
-    EXPECT_EQ(info->codegen_func(call, cube_codegen), "(int64_t)(__pypto_block_idx_value())");
+    EXPECT_EQ(info->codegen_func(call, codegen), "(int64_t)(get_block_idx() * get_subblockdim() + get_subblockid())");
 }
 
 TEST(BackendCceOpsTest, GetBlockNum)
@@ -184,7 +179,7 @@ TEST(BackendCceOpsTest, GetBlockNum)
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
-    EXPECT_NE(generated.find("(int64_t)(__pypto_block_num_value())"), std::string::npos);
+    EXPECT_NE(generated.find("(int64_t)(get_block_num())"), std::string::npos);
 }
 
 TEST(BackendCceOpsTest, GetSpr)

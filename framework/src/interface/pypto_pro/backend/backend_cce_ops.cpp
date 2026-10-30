@@ -778,15 +778,16 @@ static std::string MakeDebugDumpTileCodegenCCE(const ir::CallPtr& op, codegen::C
 }
 
 // Helper function for get_block_idx (returns value expression).
-// Emits the pypto_block_meta.h accessor, which keeps the AscendC GetBlockIdx() contract
-// (AIV: global AIV index; AIC: AIC index) and resolves to the SuperKernel per-core
-// record or the raw builtin at compile time (__PYPTO_SK_BLOCK__), so the generated
-// source is identical for both builds.
+// Matches AscendC GetBlockIdx(): AIV returns global AIV index, AIC returns AIC index.
 static std::string MakeBlockGetBlockIdxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 0) << "get_block_idx requires no arguments";
-    (void)codegen_base;
-    return "(int64_t)(__pypto_block_idx_value())";
+    auto& cg = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto target = cg.GetTarget();
+    if (target == ir::SectionKind::Vector) {
+        return "(int64_t)(get_block_idx() * get_subblockdim() + get_subblockid())";
+    }
+    return "(int64_t)(get_block_idx())";
 }
 
 // Helper for dynamic_input_ptr: address of the i-th tensor in a runtime-variadic (DYNAMIC) input
@@ -1807,9 +1808,9 @@ void EmitSanitizerLogPrologue(codegen::CCECodegen& codegen, const std::string& l
     // AIC block.
     std::string block_idx;
     if (codegen.GetTarget() == ir::SectionKind::Vector) {
-        block_idx = "(int32_t)(__pypto_block_num_value() + __pypto_block_idx_value())";
+        block_idx = "(int32_t)(get_block_num() + get_block_idx() * get_subblockdim() + get_subblockid())";
     } else {
-        block_idx = "(int32_t)(__pypto_block_idx_value())";
+        block_idx = "(int32_t)(get_block_idx())";
     }
 
     // Append-mode logging, no atomics: each executing sub-block targets its own
@@ -1900,10 +1901,7 @@ REGISTER_BACKEND_OP(BackendCCE, "get_block_num")
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& /*codegen_base*/) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 0)
             << "get_block_num requires no arguments";
-        // pypto_block_meta.h accessor: the raw count is the container's grid under
-        // SuperKernel; the accessor resolves SK vs raw builtin at compile time
-        // (__PYPTO_SK_BLOCK__), so the generated source is identical for both builds.
-        return std::string("(int64_t)(__pypto_block_num_value())");
+        return std::string("(int64_t)(get_block_num())");
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "get_subblock_idx")
@@ -2201,36 +2199,6 @@ REGISTER_BACKEND_OP(BackendCCE, "system.sync_all")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeSystemSyncAllCodegenCCE(op, codegen);
-    });
-
-// ============================================================================
-// Early-start inter-task sync (wait_pre_task_end)
-// ============================================================================
-// Delegates to AscendC::WaitPreTaskEnd(); effective only when the kernel is compiled
-// with -D__ASCENDC_SUPERKERNEL_EARLY_START_V3. The __sk__ entry must propagate
-// sysArgs->skTaskSyncCfg into g_super_kernel_early_start_config (see jit.py).
-
-REGISTER_BACKEND_OP(BackendCCE, "system.wait_pre_task_end")
-    .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        auto& cce_codegen = dynamic_cast<codegen::CCECodegen&>(codegen);
-        bool force = op->HasKwarg("force") ? op->GetKwarg<bool>("force") : false;
-        cce_codegen.Emit(force ? "AscendC::WaitPreTaskEnd<true>();" : "AscendC::WaitPreTaskEnd();");
-        return "";
-    });
-
-// Early-start inter-task sync (set_next_task_start, dual of wait_pre_task_end):
-// instructions after the call overlap the *next* sub-kernel. FORCE is SetNextTaskStart's
-// third template parameter (after the AIV/AIC pipe selectors); the A5 (__NPU_ARCH__ not
-// 1001/2002) defaults are PIPE_MTE3 / PIPE_FIX, so the forced form spells them out.
-REGISTER_BACKEND_OP(BackendCCE, "system.set_next_task_start")
-    .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        auto& cce_codegen = dynamic_cast<codegen::CCECodegen&>(codegen);
-        bool force = op->HasKwarg("force") ? op->GetKwarg<bool>("force") : false;
-        cce_codegen.Emit(force ? "AscendC::SetNextTaskStart<PIPE_MTE3, PIPE_FIX, true>();" :
-                                 "AscendC::SetNextTaskStart();");
-        return "";
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "system.set_mm_layout_transform")

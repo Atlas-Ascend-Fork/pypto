@@ -77,20 +77,15 @@ static void probe_impl({signature})
 }}
 """)
     target = jit.get_jit_compile_config().resolve_kernel_target(NpuArch.DAV_3510, has_cube=False, has_vector=True)
-    check_launch_slots = """template<class... Args> void CheckLaunchSlots(Args... args)
+    entry = jit._make_global_entry("probe", entry_params, target=target)
+    entry += """template<class... Args> void CheckLaunchSlots(Args... args)
 {
     static_assert(((sizeof(Args) == 8) && ...), "Every physical launch slot must occupy eight bytes");
     probe(args...);
 }
 """
     caller = jit._generate_caller_cpp(
-        params, "kernel.cpp", "probe", has_cross_core_sync=True, target=target,
-        global_entry=jit._make_global_entry("probe", entry_params, target=target),
-    )
-    # The launch-slot check is a test-only helper: splice it in right before the
-    # launcher so it is declared before its first use.
-    caller = caller.replace(
-        'extern "C" int64_t call_kernel(', check_launch_slots + 'extern "C" int64_t call_kernel(', 1
+        params, "kernel.cpp", "probe", has_cross_core_sync=True, target=target, global_entry=entry,
     )
     # Replace only the ASC dispatch; compile the real host encoder and device decoder.
     caller = caller.replace("probe<<<blockDim, nullptr, stream>>>(", "CheckLaunchSlots(")

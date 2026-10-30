@@ -202,8 +202,8 @@ def _build_debug_compile_cmd(compiled: "CompiledKernel") -> str:
         return ""
 
     # Mirror the JIT's own shared-library invocation (see jit._compile_shared_library):
-    # the same arch/fatobj/print-debug flags and include roots all come from one builder,
-    # and the same llvm args / link args are used; only -g and the output location differ.
+    # same arch/fatobj/print-debug flags (all resolved from the same KernelTarget the
+    # JIT used), same llvm args and link args, only -g and the output location differ.
     cmd_parts = [
         shlex.quote(bisheng),
         *[shlex.quote(f) for f in cfg.build_bisheng_flags(
@@ -211,9 +211,8 @@ def _build_debug_compile_cmd(compiled: "CompiledKernel") -> str:
             arch=arch,
             target=target,
             enable_print_debug=has_print_debug,
-            sk_cap=compiled.sk_cap,
-            ascend_home_path=ascend_home,
         )],
+        *[shlex.quote(f) for f in cfg.runtime_include_flags(ascend_home)],
         *[shlex.quote(f) for f in cfg.build_llvm_args(arch)],
     ]
     cmd_parts.append("-g")
