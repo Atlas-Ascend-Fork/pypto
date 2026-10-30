@@ -1,4 +1,4 @@
-program #entry() {
+program #entry() #vec_tile([16, 16]) {
     function foo incast(v0_logical_tensor %a@0 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), v0_logical_tensor %b@1 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), v0_logical_tensor %c@2 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16])) outcast() #entry(false) #type(Opaque) {
         OP_CONFIG() token() #vec_tile_shapes([16, 16]);
         v0_logical_tensor %0@3 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]) = !10000 ADD(%a@0, %b@1) token();

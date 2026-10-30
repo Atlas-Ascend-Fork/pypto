@@ -48,6 +48,7 @@
 #include "interface/operation/operation.h"
 #include "interface/program/program.h"
 #include "interface/function/function.h"
+#include "interface/configs/config_manager_ng.h"
 
 #include "io_text_loader.h"
 
@@ -1244,17 +1245,24 @@ FunctionPtr IRTextParser::ParseFunction()
 ProgramPtr IRTextParser::ParseProgram()
 {
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwProgram));
-    MUST_MATCH(ParseAttrDict());
-    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunLBrace));
-
-    std::vector<FunctionPtr> funcs;
-    while (!CheckToken(IRTextLexerTokenKind::PunRBrace)) {
-        MUST_VALID(func, ParseFunction());
-        funcs.push_back(func);
+    MUST_VALID(progAttrs, ParseAttrDict());
+    std::map<std::string, std::any> savedTiles;
+    const bool tileRestored = RestoreProgramTileShape(progAttrs->data, savedTiles);
+    auto parseBody = [this]() -> ProgramPtr {
+        MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunLBrace));
+        std::vector<FunctionPtr> funcs;
+        while (!CheckToken(IRTextLexerTokenKind::PunRBrace)) {
+            MUST_VALID(func, ParseFunction());
+            funcs.push_back(func);
+        }
+        MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunRBrace));
+        return std::make_shared<Program>(funcs, IR_KW_PROGRAM, Span::Unknown());
+    };
+    auto prog = parseBody();
+    if (prog == nullptr || !tileRestored) {
+        RollbackProgramTileShape(savedTiles);
+        return nullptr;
     }
-    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunRBrace));
-
-    auto prog = std::make_shared<Program>(funcs, IR_KW_PROGRAM, Span::Unknown());
     return prog;
 }
 

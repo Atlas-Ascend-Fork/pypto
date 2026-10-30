@@ -235,6 +235,9 @@ public:
     // ---- Function / Program parsing ----
     FunctionPtr ParseFunction();
     ProgramPtr ParseProgram();
+    // Restore the dumped ambient tile so ops rebuilt during load keep their tile shape.
+    bool RestoreProgramTileShape(const std::map<std::string, std::any>& attrs, std::map<std::string, std::any>& saved);
+    void RollbackProgramTileShape(const std::map<std::string, std::any>& saved);
 
     // ---- Attr dict:  #name(attr_value) { #name(attr_value) } ----
     IRTextParserAttrDictPtr ParseAttrDict();

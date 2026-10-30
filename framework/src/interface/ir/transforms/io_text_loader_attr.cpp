@@ -585,6 +585,63 @@ void IRTextParser::SetOpGenericAttr(npu::tile_fwk::Operation& op, const std::str
     }
 }
 
+void IRTextParser::RollbackProgramTileShape(const std::map<std::string, std::any>& saved)
+{
+    auto scope = npu::tile_fwk::ConfigManagerNg::CurrentScope();
+    for (const auto& [key, value] : saved) {
+        scope->AddValue(key, value);
+    }
+}
+
+// Program-header tile attrs share the body config keys' layout, so reuse the same decoders.
+bool IRTextParser::RestoreProgramTileShape(const std::map<std::string, std::any>& attrs,
+                                           std::map<std::string, std::any>& saved)
+{
+    static const std::map<std::string, std::string> kProgramTileKeys = {
+        {"vec_tile", "vec_tile_shapes"},
+        {"cube_tile", "cube_tile_shapes"},
+        {"dist_tile", "dist_tile_shapes"},
+    };
+    saved.clear();
+    const bool hasTile = std::any_of(kProgramTileKeys.begin(), kProgramTileKeys.end(),
+                                     [&attrs](const auto& entry) { return attrs.count(entry.first) != 0; });
+    if (!hasTile) {
+        return true;
+    }
+    auto scope = npu::tile_fwk::ConfigManagerNg::CurrentScope();
+    const auto tileShape = scope->GenerateTileShape();
+    saved = {
+        {"vec_tile_shapes", tileShape.GetVecTile().tile},
+        {"cube_tile_shapes", tileShape.GetCubeTile()},
+        {"dist_tile_shapes", tileShape.GetDistTile()},
+    };
+    for (const auto& [headerKey, value] : attrs) {
+        const auto it = kProgramTileKeys.find(headerKey);
+        if (it == kProgramTileKeys.end()) {
+            continue;
+        }
+        const std::string& configKey = it->second;
+        if (configKey == "vec_tile_shapes") {
+            if (!IsIntListAttr(value)) {
+                Error("#" + headerKey + ": expected a list of int64 values");
+                return false;
+            }
+            std::vector<int64_t> vec;
+            SetValue(vec, value);
+            scope->AddValue(configKey, vec);
+            continue;
+        }
+        std::any decoded = value;
+        std::string decodeError;
+        if (!DecodeTileAttr(configKey, decoded, decodeError)) {
+            Error("#" + headerKey + ": " + decodeError);
+            return false;
+        }
+        scope->AddValue(configKey, decoded);
+    }
+    return true;
+}
+
 bool IRTextParser::SetFunctionAttrDict(const FunctionPtr& func, const std::map<std::string, std::any>& attrDict)
 {
     auto f = std::const_pointer_cast<Function>(func);

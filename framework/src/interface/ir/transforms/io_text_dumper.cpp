@@ -256,6 +256,15 @@ std::vector<int64_t> TileDistVector(const TileShapeT& tileShape)
     return dist;
 }
 
+using TileExtractor = std::vector<int64_t> (*)(const TileShape&);
+
+// The body config key is the header key with a "_shapes" suffix.
+const std::pair<const char*, TileExtractor> kTileAttrs[] = {
+    {"vec_tile", &TileVecVector<TileShape>},
+    {"cube_tile", &TileCubeVector<TileShape>},
+    {"dist_tile", &TileDistVector<TileShape>},
+};
+
 } // namespace
 
 // Only values that PrintAttrValue can rebuild verbatim are dumped as generic op attributes.
@@ -271,20 +280,6 @@ void IRTextDumper::PrintAttrDict(const std::map<std::string, std::any>& attrDict
 {
     for (const auto& [key, value] : attrDict) {
         PrintAttr(key, value);
-    }
-}
-
-void IRTextDumper::PrintTileAttrs(const std::vector<int64_t>& vec, const std::vector<int64_t>& cube,
-                                  const std::vector<int64_t>& dist)
-{
-    if (!vec.empty()) {
-        PrintAttr("vec_tile", std::any(vec));
-    }
-    if (!cube.empty()) {
-        PrintAttr("cube_tile", std::any(cube));
-    }
-    if (!dist.empty()) {
-        PrintAttr("dist_tile", std::any(dist));
     }
 }
 
@@ -599,24 +594,15 @@ void IRTextDumper::VisitStmt_(const TensorOpStmtPtr& op)
 
     PrintAttrDict(GetOperationAttrDict(op));
     if (operation) {
-        // Per-op tile snapshot taken when the op was built; not recoverable from the scope on load.
-        // Dump only what differs from the ambient tile: a tile inherited from the current scope is
-        // reproducible from it, so writing it into the text would make dumps depend on process state.
         const auto& opTileShape = operation->GetTileShape();
         const auto& ambientTileShape = TileShape::Current();
-        auto vecTile = TileVecVector(opTileShape);
-        auto cubeTile = TileCubeVector(opTileShape);
-        auto distTile = TileDistVector(opTileShape);
-        if (vecTile == TileVecVector(ambientTileShape)) {
-            vecTile.clear();
+        for (const auto& [headerKey, extract] : kTileAttrs) {
+            auto tile = extract(opTileShape);
+            if (tile.empty() || tile == extract(ambientTileShape)) {
+                continue;
+            }
+            PrintAttr(headerKey, std::any(tile));
         }
-        if (cubeTile == TileCubeVector(ambientTileShape)) {
-            cubeTile.clear();
-        }
-        if (distTile == TileDistVector(ambientTileShape)) {
-            distTile.clear();
-        }
-        PrintTileAttrs(vecTile, cubeTile, distTile);
         // Generic op attrs (SCALAR/AXIS/mode/...) that downstream passes read back via GetAttr.
         for (const auto& [key, value] : operation->GetAllAttr()) {
             if (IsRoundTrippableGenericAttr(value)) {
@@ -669,6 +655,14 @@ void IRTextDumper::VisitProgram(const ProgramPtr& program)
     }
     stream_ << IR_KW_PROGRAM;
     PrintAttr(IR_KW_ENTRY, entryName);
+    if (!dumpTileAttrs_.empty()) {
+        auto ambientTileShape = npu::tile_fwk::ConfigManagerNg::CurrentScope()->GenerateTileShape();
+        for (const auto& [headerKey, extract] : kTileAttrs) {
+            if (dumpTileAttrs_.count(headerKey) != 0) {
+                PrintAttr(headerKey, std::any(extract(ambientTileShape)));
+            }
+        }
+    }
     stream_ << " " << IR_PUN_LBRACE << "\n";
     indent_++;
     bool first = true;
@@ -692,6 +686,19 @@ std::string IRTextDumper::Dump(const IRNodePtr& node)
     IRTextDumper dumper;
     if (auto program = As<Program>(node)) {
         dumper.VisitProgram(program);
+        const std::string& text = dumper.stream_.str();
+        std::set<std::string> tileAttrs;
+        for (const auto& entry : kTileAttrs) {
+            if (text.find(std::string(entry.first) + "_shapes") != std::string::npos) {
+                tileAttrs.insert(entry.first);
+            }
+        }
+        if (!tileAttrs.empty()) {
+            IRTextDumper withAmbientTile;
+            withAmbientTile.dumpTileAttrs_ = tileAttrs;
+            withAmbientTile.VisitProgram(program);
+            return withAmbientTile.stream_.str();
+        }
     } else if (auto func = As<Function>(node)) {
         dumper.VisitFunction(func);
     } else if (auto stmt = As<Stmt>(node)) {

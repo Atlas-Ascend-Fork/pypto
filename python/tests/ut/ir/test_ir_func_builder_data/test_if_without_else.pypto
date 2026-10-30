@@ -1,4 +1,4 @@
-program #entry() {
+program #entry() #vec_tile([16, 16]) {
     function foo incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([64, 16]) #offset([0, 0]) #shape([64, 16]), v0_logical_tensor %out@1 #dtype(float) #dynvalidshape([64, 16]) #offset([0, 0]) #shape([64, 16])) outcast() #entry(false) #type(Opaque) {
         OP_CONFIG() token() #vec_tile_shapes([16, 16]);
         int64_t %i_0, v0_logical_tensor %xv_1@3 #dtype(float) #dynvalidshape([v0min(v0max(v0sub(64, v0mul(loop_idx_10, 16)), 0), 16), 16]) #offset([0, 0]) #shape([16, 16]) = for %loop_idx_10 inrange 0, 4, 1 iter { none %i = %none; none %xv = %none; } #_config_scope(Unsupported) #_loop_conds([v0ge(loop_idx_10, 0), v0lt(loop_idx_10, 4)]) #parallel(false) #submit_before_loop(false) #unroll_times(1) {

@@ -7,10 +7,14 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 
+import re
+
 import pytest
 
 import pypto
-from pypto.pil.compile_pipeline import compile_new_ir
+from pypto import ir, pil
+from pypto.pil.compile_pipeline import _build_default_pipeline, _run_pipeline, compile_new_ir
+import pypto.pypto_impl
 
 
 @pytest.mark.skip(reason="write-after-write split-large-fanout-tensor not support yet")
@@ -46,3 +50,51 @@ def test_war_conflict():
 
 if __name__ == "__main__":
     test_assemble()
+
+
+def _norm(text):
+    """Fold the id and naming side effects so a direct run and a resumed run can be compared."""
+
+    def _name(match):
+        name = match.group(1)
+        if re.fullmatch(r"[0-9_]+", name):
+            name = "T"
+        else:
+            name = re.sub(r"(_\d+)+$", "", name)
+        return "%" + name
+
+    text = re.sub(r"@\d+", "@I", text)
+    text = re.sub(r"!\d+", "!I", text)
+    text = re.sub(r"%(?:INCAST|OUTCAST)_SYMBOL\d+", "%T", text)
+    text = re.sub(r"%([A-Za-z0-9_.]+)", _name, text)
+    text = re.sub(r"(_\d+)+", "_N", text)
+    return text.strip()
+
+
+def _loop_front():
+    def loop_kernel(a, b, out):
+        pypto.set_vec_tile_shapes(16, 16)
+        for _ in pypto.loop(2):
+            out[:] = a + b
+
+    a = pypto.Tensor([64, 64], dtype=pypto.DT_FP32, name="a")
+    b = pypto.Tensor([64, 64], dtype=pypto.DT_FP32, name="b")
+    out = pypto.Tensor([64, 64], dtype=pypto.DT_FP32, name="out")
+    return ir.IRBuilder().create_program([pil.compile(loop_kernel, a, b, out)], "main", ir.Span.unknown())
+
+
+def test_resume_from_dumped_for_loop_matches_direct_run(tmp_path):
+    """A for-loop checkpoint keeps typed attrs, so loading it and finishing the pipeline matches a direct run."""
+    checkpoint = tmp_path / "loop.pypto"
+    checkpoint.write_text(str(_loop_front()))
+
+    pypto.pypto_impl.Reset()
+    direct = _norm(str(_run_pipeline(_loop_front(), _build_default_pipeline())))
+
+    pypto.pypto_impl.Reset()
+    # A stale ambient must not leak in: only the header can restore [16, 16].
+    pypto.set_vec_tile_shapes(32, 32)
+    loaded = pypto.pypto_impl.ir.text_load_program(checkpoint.read_text())
+    resumed = _norm(str(_run_pipeline(loaded, _build_default_pipeline())))
+
+    assert resumed == direct

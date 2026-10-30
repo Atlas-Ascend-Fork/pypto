@@ -441,7 +441,7 @@ TEST_F(IoTextDumpRoundTripTest, TestTileConfigOpRoundTrip)
     EXPECT_EQ(distValue->type(), typeid(DistTile));
 }
 
-TEST_F(IoTextDumpRoundTripTest, TestTileConfigOpDecodeErrors)
+TEST_F(IoTextDumpRoundTripTest, TestTileDecodeErrors)
 {
     std::string error;
     auto missing = TextLoadStmt(ConfigText("cube_tile_shapes", "[1, 2, 3, 4, 5, 6, 7]"), error);
@@ -466,6 +466,14 @@ TEST_F(IoTextDumpRoundTripTest, TestTileConfigOpDecodeErrors)
     error.clear();
     EXPECT_EQ(TextLoadStmt(ConfigText("conv_tile_shapes", "true"), error), nullptr);
     EXPECT_NE(error.find("conv_tile_shapes: expected an integer list"), std::string::npos);
+
+    error.clear();
+    EXPECT_EQ(TextLoadProgram("program #entry() #vec_tile(16) {\n}\n", error), nullptr);
+    EXPECT_NE(error.find("vec_tile: expected a list of int64 values"), std::string::npos) << error;
+
+    error.clear();
+    EXPECT_EQ(TextLoadProgram("program #entry() #cube_tile([1, 2, 3]) {\n}\n", error), nullptr);
+    EXPECT_NE(error.find("CubeTile: expected 8 int64 values, got 3"), std::string::npos) << error;
 }
 
 // ---- Function round-trip ----
@@ -601,6 +609,52 @@ TEST_F(IoTextDumpRoundTripTest, TestLoopIterArgKeepsTensorIdentity)
     ASSERT_NE(tensorInit, nullptr);
     ASSERT_NE(tensorInit->tensor, nullptr);
     EXPECT_EQ(tensorInit->tensor->rawmagic, 0);
+}
+
+TEST_F(IoTextDumpRoundTripTest, FailedLoadRestoresAmbientTile)
+{
+    auto scope = npu::tile_fwk::ConfigManagerNg::CurrentScope();
+    auto currentVec = [&scope]() { return scope->GenerateTileShape().GetVecTile().tile; };
+    const auto saved = currentVec();
+    scope->AddValue("vec_tile_shapes", std::vector<int64_t>{32, 32});
+
+    std::string error;
+    EXPECT_EQ(TextLoadProgram("program #entry() #vec_tile([16, 16]) not_a_body {\n", error), nullptr);
+    EXPECT_EQ(currentVec(), (std::vector<int64_t>{32, 32}));
+
+    scope->AddValue("vec_tile_shapes", saved);
+}
+
+TEST_F(IoTextDumpRoundTripTest, ProgramHeaderRestoresCubeAndDistTile)
+{
+    auto scope = npu::tile_fwk::ConfigManagerNg::CurrentScope();
+    const auto saved = scope->GenerateTileShape();
+
+    std::string error;
+    auto program = TextLoadProgram(
+        "program #entry() #cube_tile([1, 2, 3, 4, 5, 6, 7, 1]) #dist_tile([1, 2, 3, 4, 5, 6, 7, 8, 9, 2]) {\n}\n",
+        error);
+    EXPECT_NE(program, nullptr) << error;
+
+    const auto tileShape = scope->GenerateTileShape();
+    const auto& cubeTile = tileShape.GetCubeTile();
+    EXPECT_EQ(cubeTile.m[0], 1);
+    EXPECT_EQ(cubeTile.m[1], 2);
+    EXPECT_EQ(cubeTile.k[0], 3);
+    EXPECT_EQ(cubeTile.k[2], 5);
+    EXPECT_EQ(cubeTile.n[0], 6);
+    EXPECT_EQ(cubeTile.n[1], 7);
+    EXPECT_TRUE(cubeTile.enableSplitK);
+
+    const auto& distTile = tileShape.GetDistTile();
+    EXPECT_EQ(distTile.row[0], 1);
+    EXPECT_EQ(distTile.col[0], 4);
+    EXPECT_EQ(distTile.rank[0], 7);
+    EXPECT_EQ(distTile.rankId, 2);
+
+    scope->AddValue("vec_tile_shapes", saved.GetVecTile().tile);
+    scope->AddValue("cube_tile_shapes", saved.GetCubeTile());
+    scope->AddValue("dist_tile_shapes", saved.GetDistTile());
 }
 
 } // namespace ir

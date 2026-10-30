@@ -18,6 +18,7 @@
 #define PYPTO_IR_TRANSFORMS_IO_TEXT_H_
 
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -503,6 +504,7 @@ protected:
 
 private:
     std::ostringstream stream_;
+    std::set<std::string> dumpTileAttrs_;
     int indent_ = 0;
 
     std::string GetIndent() const { return std::string(static_cast<size_t>(indent_ * 4), ' '); }
@@ -519,8 +521,6 @@ private:
     void PrintAttrValue(const std::string& key, const std::any& value);
     void PrintAttr(const std::string& key, const std::any& value);
     void PrintDataArray(const std::vector<int64_t>& vals);
-    void PrintTileAttrs(const std::vector<int64_t>& vec, const std::vector<int64_t>& cube,
-                        const std::vector<int64_t>& dist);
     // Attr is the leaf layer of the traversal: nodes carrying attrs hand their
     // attr dict to PrintAttrDict, which dispatches value formatting.
     void PrintAttrDict(const std::map<std::string, std::any>& attrDict);
