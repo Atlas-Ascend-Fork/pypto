@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 
 SKILL_FILE = ".agents/skills/pypto-log-check/SKILL.md"
@@ -39,15 +40,27 @@ SCAN_DIRS = (
 BEGIN_MARKER = "LOG_CHECK_JSON_BEGIN"
 END_MARKER = "LOG_CHECK_JSON_END"
 
-# Probed in this order; cannbot is the CANN-specific agent.  The
-# skip-permissions flags let the agent read the reviewed files without an
-# interactive prompt; the prompt itself forbids any write.
+# Probed in this order; cannbot is the CANN-specific agent.  The skip-permissions
+# flags let the agent read files without an interactive prompt, but every write
+# path is explicitly denied, and snapshot (undo) is disabled: both would run an
+# internal git add / staging that could mutate the repository and pull unrelated
+# changes into the in-progress commit.  run_agent() additionally runs the agent
+# under a throwaway GIT_INDEX_FILE as a hard guarantee.
+OPENCODE_AGENT_ENV = (
+    'OPENCODE_CONFIG_CONTENT={"snapshot":false}',
+    'OPENCODE_PERMISSION={"edit":"deny","bash":"deny","webfetch":"deny",'
+    '"websearch":"deny","task":"deny"}',
+)
 AGENT_COMMANDS = {
-    "cannbot": lambda prompt: ["cannbot", "run", "--dangerously-skip-permissions", prompt],
+    "cannbot": lambda prompt: [
+        "env", *OPENCODE_AGENT_ENV, "cannbot", "run", "--dangerously-skip-permissions", prompt,
+    ],
     "cursor-agent": lambda prompt: ["cursor-agent", "-p", prompt, "--output-format", "text"],
     "claude": lambda prompt: ["claude", "-p", prompt, "--permission-mode", "plan"],
     "codex": lambda prompt: ["codex", "exec", "--sandbox", "read-only", prompt],
-    "opencode": lambda prompt: ["opencode", "run", "--dangerously-skip-permissions", prompt],
+    "opencode": lambda prompt: [
+        "env", *OPENCODE_AGENT_ENV, "opencode", "run", "--dangerously-skip-permissions", prompt,
+    ],
 }
 AGENT_ORDER = ["cannbot", "cursor-agent", "claude", "codex", "opencode"]
 
@@ -223,48 +236,64 @@ def report_progress(line, state):
 
 
 def run_agent(agent, prompt, timeout, state):
-    """Stream the agent output, relaying progress; return it or None on failure."""
+    """Stream the agent output, relaying progress; return it or None on failure.
+
+    The agent runs with a throwaway GIT_INDEX_FILE.  cannbot/opencode stage the
+    whole working tree for their snapshot (undo) feature; without this, those
+    staged entries land in the repository's real index and leak unrelated
+    changes into the in-progress commit.
+    """
     argv = AGENT_COMMANDS[agent](prompt)
-    try:
-        process = subprocess.Popen(
-            argv,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-    except OSError as exc:
-        log(f"{agent} 调用失败（{exc}），跳过日志规范检查。")
-        return None
-
+    fd, agent_index = tempfile.mkstemp(prefix="log-spec-agent-index-")
+    os.close(fd)
+    os.remove(agent_index)
+    env = dict(os.environ, GIT_INDEX_FILE=agent_index)
     collected = []
-
-    def reader():
-        try:
-            for line in process.stdout:
-                collected.append(line)
-                report_progress(line, state)
-        except (OSError, ValueError):
-            pass
-
-    thread = threading.Thread(target=reader, daemon=True)
-    thread.start()
     try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
-        log(f"{agent} 超过 {timeout}s 未返回，跳过日志规范检查。")
-        return None
-    finally:
-        thread.join(timeout=5)
+        try:
+            process = subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=env,
+            )
+        except OSError as exc:
+            log(f"{agent} 调用失败（{exc}），跳过日志规范检查。")
+            return None
 
-    if process.returncode != 0:
-        detail = "".join(collected).strip().splitlines()
-        tail = detail[-1] if detail else "无输出"
-        log(f"{agent} 返回码 {process.returncode}（{tail}），跳过日志规范检查。")
-        return None
-    return "".join(collected)
+        def reader():
+            try:
+                for line in process.stdout:
+                    collected.append(line)
+                    report_progress(line, state)
+            except (OSError, ValueError):
+                pass
+
+        thread = threading.Thread(target=reader, daemon=True)
+        thread.start()
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            log(f"{agent} 超过 {timeout}s 未返回，跳过日志规范检查。")
+            return None
+        finally:
+            thread.join(timeout=5)
+
+        if process.returncode != 0:
+            detail = "".join(collected).strip().splitlines()
+            tail = detail[-1] if detail else "无输出"
+            log(f"{agent} 返回码 {process.returncode}（{tail}），跳过日志规范检查。")
+            return None
+        return "".join(collected)
+    finally:
+        try:
+            os.remove(agent_index)
+        except OSError:
+            pass
 
 
 def parse_findings(output):
