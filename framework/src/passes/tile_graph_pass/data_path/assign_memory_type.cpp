@@ -1400,6 +1400,39 @@ Status AssignMemoryType::TryInferViewTypeFromProducerMoveIn(Operation& operation
     return SUCCESS;
 }
 
+bool AssignMemoryType::CanUseReshapeUb2L1Path(const LogicalTensorPtr& output)
+{
+    if (output == nullptr || Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_3510 ||
+        !MemoryPathUtils::FitsTensorInUb(output)) {
+        return false;
+    }
+
+    const auto& consumers = output->GetConsumers();
+    if (consumers.empty()) {
+        return false;
+    }
+
+    // ND2NZ converts the reshape output, so budget both its ND and NZ storage.
+    const size_t ubLimit = static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) *
+                                               UB_THRESHOLD_NORMAL);
+    if (CalcNZTensorSize(output) > ubLimit) {
+        return false;
+    }
+
+    for (auto* consumer : consumers) {
+        if (consumer == nullptr || !IsSliceOutputTarget(*consumer, MemoryType::MEM_L1) ||
+            !CanUseDirectViewPath(*consumer, MemoryType::MEM_UB, MemoryType::MEM_L1)) {
+            return false;
+        }
+        int64_t copyInMode = 0;
+        if (consumer->GetAttr<int64_t>("op_attr_copy_in_mode", copyInMode) && copyInMode == 0) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 Status AssignMemoryType::KeepSplitReshapeUb(Operation& operation, const LogicalTensorPtr& input,
                                             const LogicalTensorPtr& output, bool& kept)
 {
@@ -1427,14 +1460,18 @@ Status AssignMemoryType::KeepSplitReshapeUb(Operation& operation, const LogicalT
     bool allProducersContract = std::all_of(producers.begin(), producers.end(), [](const auto& producer) {
         return producer != nullptr && producer->GetOpcode() == Opcode::OP_CONTRACT;
     });
-    bool allConsumersSlice = std::all_of(consumers.begin(), consumers.end(), [](const auto& consumer) {
-        if (consumer == nullptr || consumer->GetOpcode() != Opcode::OP_SLICE) {
-            return false;
-        }
-        // 后续放开在DAV_3510直接走UB2L1，暂走DDR2L1
-        auto viewOpAttribute = std::dynamic_pointer_cast<ViewOpAttribute>(consumer->GetOpAttribute());
-        return viewOpAttribute == nullptr || viewOpAttribute->GetTo() != MemoryType::MEM_L1;
-    });
+    const bool canUseReshapeUb2L1Path = CanUseReshapeUb2L1Path(output);
+    bool allConsumersSlice = std::all_of(
+        consumers.begin(), consumers.end(), [canUseReshapeUb2L1Path](const auto* consumer) {
+            if (consumer == nullptr || consumer->GetOpcode() != Opcode::OP_SLICE) {
+                return false;
+            }
+            auto viewOpAttribute = std::dynamic_pointer_cast<ViewOpAttribute>(consumer->GetOpAttribute());
+            if (viewOpAttribute == nullptr || viewOpAttribute->GetTo() != MemoryType::MEM_L1) {
+                return true;
+            }
+            return canUseReshapeUb2L1Path;
+        });
     const size_t ubThreshold = static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) *
                                                    UB_THRESHOLD_ASSEMBLE);
     int64_t inputDataSize = input->GetDataSize();

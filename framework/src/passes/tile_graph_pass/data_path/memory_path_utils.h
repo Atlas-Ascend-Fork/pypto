@@ -542,10 +542,7 @@ public:
                 continue;
             }
             auto viewOutput = consumerOp->oOperand.front();
-            auto viewOutputOriginal = viewOutput->GetMemoryTypeOriginal();
-            bool canUseAdvancedPath = IsAdvancedMemoryPath(targetRequirement, viewOutputOriginal) &&
-                                      IsDimMultiple(tensor->GetShape(), viewOutput->GetShape());
-            if (viewOutput->GetMemoryTypeOriginal() == targetRequirement || canUseAdvancedPath ||
+            if (viewOutput->GetMemoryTypeOriginal() == targetRequirement ||
                 HasRequirementThroughViewConsumers(inserter, viewOutput, targetRequirement, visitedTensors)) {
                 return true;
             }

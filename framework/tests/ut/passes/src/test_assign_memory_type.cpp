@@ -3209,17 +3209,18 @@ TEST_F(AssignMemoryTypeTest, ReshapeOutputUsesUbWithMixedViewConsumers)
     EXPECT_EQ(viewOpAttr->GetTo(), MemoryType::MEM_L1);
 }
 
-TEST_F(AssignMemoryTypeTest, ReshapeL1SlicePathIsNotKeptInUb)
+TEST_F(AssignMemoryTypeTest, ReshapeL1SlicePathKeepsUbOnDav3510)
 {
     // Main path: incast -> SLICE -> EXP -> CONTRACT -> RESHAPE ->
     // (UB->L1) SLICE -> (L1->L0A) SLICE -> A_MUL_B -> CONTRACT -> outcast.
     // The other A_MUL_B input is incast1 -> (DDR->L1) SLICE ->
     // (L1->L0B) SLICE.
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
-    auto function = std::make_shared<Function>(Program::GetInstance(), "ReshapeL1SlicePathIsNotKeptInUb",
-                                               "ReshapeL1SlicePathIsNotKeptInUb", nullptr);
+    Platform::Instance().ReloadMemoryPaths("3510");
+    auto function = std::make_shared<Function>(Program::GetInstance(), "ReshapeL1SlicePathKeepsUbOnDav3510",
+                                               "ReshapeL1SlicePathKeepsUbOnDav3510", nullptr);
     ASSERT_NE(function, nullptr);
-    Program::GetInstance().InsertFuncToFunctionMap("ReshapeL1SlicePathIsNotKeptInUb", function);
+    Program::GetInstance().InsertFuncToFunctionMap("ReshapeL1SlicePathKeepsUbOnDav3510", function);
 
     const Shape aShape{2, NUM_32};
     const Shape bShape{NUM_32, NUM_32};
@@ -3267,9 +3268,52 @@ TEST_F(AssignMemoryTypeTest, ReshapeL1SlicePathIsNotKeptInUb)
     ASSERT_EQ(assignMemoryType.RunOnFunction(*function), SUCCESS);
     ASSERT_EQ(assignMemoryType.PostCheck(*function), SUCCESS);
 
-    // The L1 slice is a real copy-in boundary
-    // And must prevent the reshape output from being forced to UB by KeepSplitReshapeUb.
-    EXPECT_NE(reshapeOutput->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(reshapeInput->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(reshapeOutput->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+TEST_F(AssignMemoryTypeTest, SplitReshapeSliceTargetRespectsArchitecture)
+{
+    for (auto arch : {NPUArch::DAV_3510, NPUArch::DAV_2201}) {
+        SCOPED_TRACE(static_cast<int>(arch));
+        Platform::Instance().GetSoc().SetNPUArch(arch);
+        Platform::Instance().ReloadMemoryPaths(arch == NPUArch::DAV_3510 ? "3510" : "2201");
+        for (auto target : {MemoryType::MEM_L1, MemoryType::MEM_UB}) {
+            SCOPED_TRACE(target);
+            ComputationalGraphBuilder G;
+            G.AddTensor(DT_FP16, {NUM_16, NUM_32}, MemoryType::MEM_UB, "tile");
+            G.AddTensor(DT_FP16, {NUM_16, NUM_32}, MemoryType::MEM_UNKNOWN, "assembled");
+            G.AddTensor(DT_FP16, {NUM_32, NUM_16}, MemoryType::MEM_UNKNOWN, "reshaped");
+            G.AddTensor(DT_FP16, {NUM_32, NUM_16}, target, "slice_out");
+            G.AddOp(Opcode::OP_CONTRACT, {"tile"}, {"assembled"}, "contract");
+            G.GetOp("contract")
+                ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 0}));
+            G.AddOp(Opcode::OP_RESHAPE, {"assembled"}, {"reshaped"}, "reshape");
+            G.AddOp(Opcode::OP_SLICE, {"reshaped"}, {"slice_out"}, "slice");
+            G.GetOp("slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, target));
+
+            AssignMemoryType pass;
+            auto input = G.GetTensor("assembled");
+            auto output = G.GetTensor("reshaped");
+            auto& reshape = *G.GetOp("reshape");
+            auto& slice = *G.GetOp("slice");
+            pass.inserter.UpdateTensorTobeMap(input, reshape, MemoryType::MEM_DEVICE_DDR);
+            pass.inserter.UpdateTensorTobeMap(output, slice, MemoryType::MEM_DEVICE_DDR);
+            bool kept = false;
+            ASSERT_EQ(pass.KeepSplitReshapeUb(reshape, input, output, kept), SUCCESS);
+            const bool expectedKept = arch == NPUArch::DAV_3510 || target == MemoryType::MEM_UB;
+            EXPECT_EQ(kept, expectedKept);
+            const auto expectedMemory = expectedKept ? MemoryType::MEM_UB : MemoryType::MEM_UNKNOWN;
+            EXPECT_EQ(input->GetMemoryTypeOriginal(), expectedMemory);
+            EXPECT_EQ(output->GetMemoryTypeOriginal(), expectedMemory);
+            const auto expectedRequirement = expectedKept ? MemoryType::MEM_UB : MemoryType::MEM_DEVICE_DDR;
+            EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, reshape), expectedRequirement);
+            EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(output, slice), expectedRequirement);
+            EXPECT_EQ(G.GetTensor("slice_out")->GetMemoryTypeOriginal(), target);
+        }
+    }
+    Platform::Instance().ReloadMemoryPaths("2201");
 }
 
 TEST_F(AssignMemoryTypeTest, SplitReshapeRespectsParallelInputConsumers)

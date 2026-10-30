@@ -145,6 +145,7 @@ private:
 
     Status KeepSplitReshapeUb(Operation& operation, const LogicalTensorPtr& input, const LogicalTensorPtr& output,
                               bool& kept);
+    bool CanUseReshapeUb2L1Path(const LogicalTensorPtr& output);
 
     Status ApplyOversizedLocalBufferFallback(Function& function);
 
