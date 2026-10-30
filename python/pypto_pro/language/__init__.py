@@ -52,6 +52,7 @@ __all__ = [
     "QuantMode",
     "CrossCoreSyncMode",
     "SyncCoreType",
+    "SkCap",
     "CacheLine",
     "DcciDst",
     "DT_FP4",
@@ -284,7 +285,7 @@ from pypto.pypto_impl.ir import (
 )
 from pypto_pro.ir.op.block_ops import FillPadMode, TileType
 from pypto_pro.ir.op.ptr_ops import addptr, make_ptr, make_tensor
-from pypto_pro.runtime import jit, pipeline
+from pypto_pro.runtime import SkCap, jit, pipeline
 
 from . import parser
 from ._api import (

@@ -16,9 +16,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import os
+from typing import TYPE_CHECKING
 
 from .._errors import InvalidArgument, InvalidVal, NotSupported, RuntimeFailure
 from .platform import NpuArch
+
+if TYPE_CHECKING:
+    # jit imports this module, so the enum is only referenced for type checking here.
+    from .jit import SkCap
 
 CCE_BACKEND = "cce"
 
@@ -84,7 +89,15 @@ class JitCompileConfig:
         target: KernelTarget,
         enable_print_debug: bool,
         enable_simt: bool = False,
+        sk_cap: SkCap | None = None,
+        ascend_home_path: str | None = None,
     ) -> list[str]:
+        """Build the complete bisheng flag list.
+
+        ``ascend_home_path`` is optional so callers that only need the compiler switches
+        can omit the include roots; when provided, the runtime/pypto/SK include flags are
+        appended so one call yields the full command line.
+        """
         variables = {
             "toolkit_home": toolkit_home,
             "mem_arch": self._memory_arch_flag(arch),
@@ -93,12 +106,24 @@ class JitCompileConfig:
         common = self._format_values(self.common_flags, variables)
         if enable_print_debug:
             common.extend(self._format_values(self.print_debug_flags, variables))
-        if enable_simt:
-            common.append("--enable-simt")
+        if sk_cap is not None:
+            # Local import: jit imports this module, so importing the enum at module
+            # scope would be circular. SkCap is defined before any flag build runs.
+            from .jit import EARLY_START_MASK
+
+            # SuperKernel compile switches: select the record-based pypto_block_meta.h
+            # accessor implementation, and (for early-start bits 1/2) the config-matched
+            # V3 inter-task sync implementations.
+            common.append("-D__PYPTO_SK_BLOCK__")
+            if sk_cap & EARLY_START_MASK:
+                common.append("-D__ASCENDC_SUPERKERNEL_EARLY_START_V3")
         flags = self._format_values(self.arch_flags, variables)
         if target.fat_object:
             flags.extend(self._format_values(self.fatobj_flags, variables))
-        return [*flags, *common]
+        result = [*flags, *common]
+        if ascend_home_path is not None:
+            result.extend(self._runtime_include_flags(ascend_home_path, sk_cap))
+        return result
 
     def build_llvm_args(self, arch: NpuArch) -> list[str]:
         arch_args = self.llvm_arch_args.get(arch)
@@ -106,13 +131,18 @@ class JitCompileConfig:
             raise InvalidVal(f"JIT compile config does not define llvm_arch_args for arch '{arch}'")
         return [*self.llvm_common_args, *arch_args]
 
-    def runtime_include_flags(self, ascend_home_path: str) -> list[str]:
+    def _runtime_include_flags(self, ascend_home_path: str, sk_cap: SkCap | None = None) -> list[str]:
         variables = {"ascend_home": ascend_home_path}
         flags = [f"-I{include_dir}" for include_dir in self._format_values(self.runtime_include_dirs, variables)]
         import pypto_pro
 
         pypto_include = os.path.join(os.path.dirname(pypto_pro.__file__), "include")
         flags.append(f"-I{pypto_include}")
+        if sk_cap is not None:
+            # The SK branch of pypto_block_meta.h includes asc-devkit headers
+            # (kernel_operator.h); the JIT adds these roots under the same condition.
+            flags.append(f"-I{os.path.join(ascend_home_path, 'compiler', 'asc')}")
+            flags.append(f"-I{os.path.join(ascend_home_path, 'compiler', 'asc', 'include')}")
         return flags
 
     def runtime_link_args(self, ascend_home_path: str) -> list[str]:
