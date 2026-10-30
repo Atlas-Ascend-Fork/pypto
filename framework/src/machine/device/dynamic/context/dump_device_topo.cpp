@@ -59,15 +59,21 @@ struct CellMatchHandleCollect {
     }
 };
 
+inline bool IsValidCellMatchDim(int dims) { return dims > 0 && dims <= DEV_SHAPE_DIM_NUM_5; }
+
 bool CollectCellIdxForUse(DevAscendFunction* devFunc, const DevAscendFunctionCallOperandUse& use,
                           const uint64_t* runtimeExpressionList, const DevCellMatchTableDesc& cellMatchTableDesc,
                           std::vector<int>* cellIdxListOut)
 {
+    const int dims = cellMatchTableDesc.GetDimensionSize();
+    if (!IsValidCellMatchDim(dims)) {
+        return false;
+    }
     uint64_t offset[DEV_SHAPE_DIM_MAX];
     uint64_t validShape[DEV_SHAPE_DIM_MAX];
     SymInt* dummy = nullptr;
-    GetTensorOffsetAndValidShape(devFunc, offset, validShape, runtimeExpressionList, cellMatchTableDesc,
-                                 cellMatchTableDesc.GetDimensionSize(), use.offsetAttrIdx, dummy, use.operationIdx);
+    GetTensorOffsetAndValidShape(devFunc, offset, validShape, runtimeExpressionList, cellMatchTableDesc, dims,
+                                 use.offsetAttrIdx, dummy, use.operationIdx);
     CellMatchHandle<CellMatchHandleCollect>(offset, validShape, cellMatchTableDesc, cellIdxListOut);
     return true;
 }
