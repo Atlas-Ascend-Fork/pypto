@@ -91,6 +91,44 @@ def test_simt_launcher_bakes_inferred_dynamic_ub_into_generated_caller():
     assert "-cce-dyn-kernel-stack-size=false" not in flags
 
 
+@pytest.mark.parametrize("max_threads", [32, 256])
+def test_simt_kernel_caller_emits_entry_and_launch(monkeypatch, tmp_path, max_threads):
+    @pl.jit(mode="simt", max_threads=max_threads)
+    def simt_kernel(out: pl.Tensor[[32], pl.DT_FP32], scale: pl.DT_FP32, count: pl.DT_UINT32):
+        index = pl.simt.thread_idx().x
+        if index < count:
+            out[index] = scale
+
+    target = get_jit_compile_config().resolve_kernel_target(NpuArch.DAV_3510, has_cube=False, has_vector=True)
+    cube, vector = jit._parse_and_codegen_targets(
+        simt_kernel.to_kernel_def(), NpuArch.DAV_3510, str(tmp_path),
+    )
+    cg = jit._assemble_cv_source(cube, vector)
+    monkeypatch.setattr(jit, "_compile_shared_library", lambda *_args: "unused.so")
+    jit._build_jit_so(cg, NpuArch.DAV_3510, clean_up=False, compile_timeout=30, target=target)
+    caller = (tmp_path / "call_kernel.cpp").read_text()
+
+    assert caller.count("__global__") == 1
+    signature = next(line for line in caller.splitlines() if line.startswith("__global__"))
+    assert f"__global__ __launch_bounds__({max_threads}) void simt_kernel(" in signature
+    assert "float* out" in signature
+    assert "float scale" in signature
+    assert "uint32_t count" in signature
+    assert "__gm__" not in signature
+    assert "simt_kernel_impl(" in caller
+    assert caller.index('#include "kernel.cpp"') < caller.index(signature) < caller.index('extern "C"')
+    assert "uint32_t gridX" in caller
+    assert "uint32_t threadBlockZ" in caller
+    assert "dynUbufSize" not in caller
+    assert "dim3(gridX, gridY, gridZ)" in caller
+    assert "dim3(threadBlockX, threadBlockY, threadBlockZ)" in caller
+    assert "0, stream" in caller
+    assert "simt_kernel<<<" in caller
+    launch = next(line for line in caller.splitlines() if "simt_kernel<<<" in line)
+    assert "static_cast" not in launch
+    assert "__builtin_bit_cast" not in launch
+
+
 def test_architecture_specific_mixed_geometry_is_independent(future_config):
     """A future 1:1 target must not overwrite the 1:2 rule of an existing architecture."""
     a5 = future_config.resolve_kernel_target(NpuArch.DAV_3510, has_cube=True, has_vector=True)

@@ -229,6 +229,30 @@ def test_simt_index_rejects_more_than_three_dimensions():
         parser.parse_function(ast.parse(source).body[0])
 
 
+@pytest.mark.parametrize(
+    "annotation, error_type, message",
+    [
+        ("pl.Ptr[pl.DT_FP32]", InvalidVal, "must resolve to a scalar or Tensor"),
+        ("pl.Tensor[[pl.DYNAMIC], pl.DT_FP32]", InvalidType, "requires a static shape"),
+        ("pl.Tensor[[32], pl.DT_INT4]", NotSupported, "unsupported sub-byte dtype"),
+        ("pl.Tensor[[16, 16], pl.DT_FP32, pl.NZ]", InvalidVal, "requires ND layout"),
+    ],
+)
+def test_simt_kernel_parser_rejects_unsupported_parameters(annotation, error_type, message):
+    from pypto_pro.language.parser._ast_parser import ASTParser
+
+    source = f"def kernel(value: {annotation}):\n    return\n"
+    parser = ASTParser(
+        source_file=__file__,
+        source_lines=source.splitlines(),
+        target=ir.SectionKind.Vector,
+        debug_info=ir.IRDebugInfo(),
+        closure_vars={"pl": pl},
+    )
+    with pytest.raises(error_type, match=message):
+        parser.parse_function(ast.parse(source).body[0], func_type=ir.FunctionType.SimtKernel)
+
+
 def test_simt_indexed_invocation_rejects_keyword_arguments():
     @pl.vector_function(mode="simt", max_threads=32)
     def entry(value: pl.DT_INT32):
@@ -733,6 +757,92 @@ def test_recursive_simt_callee_is_rejected_during_instantiation():
             entry[32](value)
 
     with pytest.raises(NotSupported, match="Recursive helper"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pl.vector_function(mode="simt")
+def _identity(value):
+    return value
+
+
+def test_simt_kernel_helper_rejects_recursive_call_chain():
+    @pl.vector_function(mode="simt")
+    def first(value):
+        return second(value)
+
+    @pl.vector_function(mode="simt")
+    def second(value):
+        return first(value)
+
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(value: pl.DT_INT32):
+        first(value)
+
+    with pytest.raises(NotSupported, match="Recursive"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_simt_kernel_rejects_call_to_launchable_vf(nested):
+    @pl.vector_function(mode="simt", max_threads=32)
+    def vf(value):
+        return
+
+    @pl.vector_function(mode="simt")
+    def helper(value):
+        vf(value)
+
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(value: pl.DT_INT32):
+        if nested:
+            helper(value)
+        else:
+            vf(value)
+
+    with pytest.raises(InvalidVal, match="must omit max_threads"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_simt_kernel_helper_rejects_tuple_parameter():
+    @pl.vector_function(mode="simt")
+    def helper(value):
+        return
+
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(value: pl.DT_INT32):
+        helper((value, value))
+
+    with pytest.raises((InvalidVal, NotSupported), match="scalar|Scalar|Tuple|tuple"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("through_helper", [False, True])
+def test_simt_kernel_checks_launch_at_call_site(through_helper):
+    @pl.vector_function(mode="simt", max_threads=32)
+    def vf(value):
+        return
+
+    @pl.vector_function(mode="simt")
+    def helper(value):
+        vf[32](value)
+
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(value: pl.DT_INT32):
+        if through_helper:
+            helper(value)
+        else:
+            vf[32](value)
+
+    with pytest.raises(NotSupported, match="Nested SIMT"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_simt_kernel_helper_rejects_tensor_return():
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(src: pl.Tensor[[32], pl.DT_INT32]):
+        _identity(src)
+
+    with pytest.raises(InvalidVal, match="must return None or one scalar"):
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 

@@ -503,19 +503,23 @@ std::string CCECodegen::BuildSimtFunctionSignature(const ir::FunctionPtr& func)
         PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, func->HasAttr(ir::kMaxThreadsAttr))
             << "SIMT function '" << func->name_ << "' has no max_threads";
         sig << "__simt_vf__ __launch_bounds__(" << func->GetAttr<int>(ir::kMaxThreadsAttr) << ") inline void ";
+    } else if (func->funcType_ == ir::FunctionType::SIMT_KERNEL) {
+        sig << "__aicore__ inline void ";
     } else {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, func->returnTypes_.size() <= 1)
             << "SIMT callee '" << func->name_ << "' has multiple return values";
+        const char* qualifier = GetCurrentKernelType() == ir::FunctionType::SIMT_KERNEL ? "__aicore__" :
+                                                                                          "__simt_callee__";
         if (func->returnTypes_.empty()) {
-            sig << "__simt_callee__ inline void ";
+            sig << qualifier << " inline void ";
         } else {
             auto return_type = ir::As<ir::ScalarType>(func->returnTypes_[0]);
             PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, return_type != nullptr)
                 << "SIMT callee '" << func->name_ << "' must return a scalar or void";
-            sig << "__simt_callee__ inline " << return_type->dtype_.ToCTypeString() << " ";
+            sig << qualifier << " inline " << return_type->dtype_.ToCTypeString() << " ";
         }
     }
-    sig << func->name_ << "(";
+    sig << func->name_ << (func->funcType_ == ir::FunctionType::SIMT_KERNEL ? "_impl" : "") << "(";
     bool first = true;
     for (const auto& param : func->params_) {
         if (!first) {
@@ -526,7 +530,11 @@ std::string CCECodegen::BuildSimtFunctionSignature(const ir::FunctionPtr& func)
         if (auto scalar_type = ir::As<ir::ScalarType>(param->GetType())) {
             sig << scalar_type->dtype_.ToCTypeString() << " " << param_name;
         } else if (auto tensor_type = ir::As<ir::TensorType>(param->GetType())) {
-            sig << "__gm__ " << tensor_type->dtype_.ToCTypeString() << "* " << param_name;
+            if (GetCurrentKernelType() == ir::FunctionType::SIMT_KERNEL) {
+                sig << tensor_type->dtype_.ToCTypeString() << "* " << param_name;
+            } else {
+                sig << "__gm__ " << tensor_type->dtype_.ToCTypeString() << "* " << param_name;
+            }
             RegisterPointer(param_name, param_name);
         } else if (auto tile_type = ir::As<ir::TileType>(param->GetType())) {
             sig << "__ubuf__ " << tile_type->dtype_.ToCTypeString() << "* " << param_name;
@@ -547,17 +555,17 @@ void CCECodegen::GenerateSimtFunction(const ir::FunctionPtr& func)
 {
     PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
                       func != nullptr && (func->funcType_ == ir::FunctionType::SIMT_VF ||
-                                          func->funcType_ == ir::FunctionType::SIMT_CALLEE))
-        << "GenerateSimtFunction expects a SIMT_VF or SIMT_CALLEE function";
+                                          func->funcType_ == ir::FunctionType::SIMT_CALLEE ||
+                                          func->funcType_ == ir::FunctionType::SIMT_KERNEL))
+        << "GenerateSimtFunction expects a SIMT_VF, SIMT_CALLEE, or SIMT_KERNEL function";
 
     ResetFunctionGenerationState();
     current_function_type_ = func->funcType_;
 
-    emitter_.EmitLine(BuildSimtFunctionSignature(func));
-    emitter_.EmitLine("{");
-    emitter_.IncreaseIndent();
-
     try {
+        emitter_.EmitLine(BuildSimtFunctionSignature(func));
+        emitter_.EmitLine("{");
+        emitter_.IncreaseIndent();
         GenerateBody(func);
     } catch (...) {
         current_function_type_ = ir::FunctionType::OPAQUE;
@@ -621,6 +629,8 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& program, npu::tile_
         << "Cannot generate code for null program";
 
     ResetFunctionGenerationState();
+    needs_simt_atomic_header_ = false;
+    current_kernel_type_ = ir::FunctionType::OPAQUE;
     arch_ = arch;
     PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, arch_ != npu::tile_fwk::NPUArch::DAV_UNKNOWN)
         << "unknown arch '" << npu::tile_fwk::NPUArchToString(arch_) << "'";
@@ -654,7 +664,8 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& program, npu::tile_
     }
     PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, kernel_func != nullptr)
         << "No kernel function found in program";
-    if (!simt_funcs.empty() || !simt_callees_.empty()) {
+    current_kernel_type_ = kernel_func->funcType_;
+    if (current_kernel_type_ == ir::FunctionType::SIMT_KERNEL || !simt_funcs.empty() || !simt_callees_.empty()) {
         PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, target_ == ir::SectionKind::Vector)
             << "SIMT functions can only be generated for the Vector target";
         PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, arch_ == npu::tile_fwk::NPUArch::DAV_3510)
@@ -665,16 +676,27 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& program, npu::tile_
     tiling_headers_.clear();
     struct_definitions_.clear();
 
-    // Detect cross-core sync (a5 uses hardware sync, not ffts)
-    bool has_cross_sync = DetectCrossCoreSyncOps(kernel_func->body_);
-    bool needs_ffts = has_cross_sync && (arch_ != npu::tile_fwk::NPUArch::DAV_3510);
-
     for (const auto& simt_callee : OrderSimtCallees(simt_callees_)) {
         GenerateSimtFunction(simt_callee);
     }
     for (const auto& simt_func : simt_funcs) {
         GenerateSimtFunction(simt_func);
     }
+
+    if (kernel_func->funcType_ == ir::FunctionType::SIMT_KERNEL) {
+        GenerateSimtFunction(kernel_func);
+        if (needs_simt_atomic_header_) {
+            return "#if defined(__DAV_VEC__)\n"
+                   "#include \"__clang_cce_simt_atomic.h\"\n"
+                   "#endif\n" +
+                   emitter_.GetCode();
+        }
+        return emitter_.GetCode();
+    }
+
+    // 3510 uses hardware synchronization; other architectures require FFTS setup.
+    bool has_cross_sync = DetectCrossCoreSyncOps(kernel_func->body_);
+    bool needs_ffts = has_cross_sync && (arch_ != npu::tile_fwk::NPUArch::DAV_3510);
 
     ResetFunctionGenerationState();
     RegisterTilingStructTypes(kernel_func);

@@ -408,6 +408,68 @@ def test_half_precision_atomic_codegen_emits_void_ub_and_gm_calls():
         assert f"{intrinsic}(" in function
 
 
+@pytest.mark.parametrize("mode", ["simt", "simd"])
+def test_atomic_codegen_uses_entry_mode_in_kernel_and_helper(mode):
+    @pl.vector_function(mode="simt")
+    def update(state, old):
+        old[0] = pl.simt.atomic_add(state[0], 3)
+        old[1] = pl.simt.atomic_cas(state[1], 7, 3)
+
+    @pl.vector_function(mode="simt", max_threads=32)
+    def vf(state, old):
+        old[2] = pl.simt.atomic_add(state[2], 1)
+        update(state, old)
+
+    @pl.jit(mode="simt", max_threads=32)
+    def pure(state: pl.Tensor[[3], pl.DT_UINT64], old: pl.Tensor[[3], pl.DT_UINT64]):
+        old[2] = pl.simt.atomic_add(state[2], 1)
+        update(state, old)
+
+    @pl.jit
+    def mixed(state: pl.Tensor[[3], pl.DT_UINT64], old: pl.Tensor[[3], pl.DT_UINT64]):
+        with pl.section_vector():
+            vf[32](state, old)
+
+    cpp = _compile_to_cce(pure if mode == "simt" else mixed)
+    if mode == "simt":
+        assert cpp.count("__atomic_add(") == 2
+        assert "__atomic_cas(" in cpp
+        assert "atomicAdd(" not in cpp
+        assert "atomicCAS(" not in cpp
+        assert cpp.count('#include "__clang_cce_simt_atomic.h"') == 1
+        assert cpp.index("__clang_cce_simt_atomic.h") < cpp.index("__aicore__")
+    else:
+        assert cpp.count("atomicAdd(") == 2
+        assert "atomicCAS(" in cpp
+        assert "__atomic_add(" not in cpp
+        assert "__atomic_cas(" not in cpp
+        assert "__clang_cce_simt_atomic.h" not in cpp
+        assert "static_cast<uint64_t>" not in cpp
+
+
+@pytest.mark.parametrize("dtype", [pl.DT_FP16, pl.DT_BF16])
+def test_half_atomic_in_helper_includes_compiler_overloads(dtype):
+    @pl.vector_function(mode="simt")
+    def update(state):
+        pl.simt.atomic_add(state[0], 1.0)
+        pl.simt.atomic_max(state[1], 2.0)
+        pl.simt.atomic_min(state[2], -2.0)
+
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(state: pl.Tensor[[3], dtype]):
+        update(state)
+
+    cpp = _compile_to_cce(kernel)
+    assert cpp.count('#include "__clang_cce_simt_atomic.h"') == 1
+    assert cpp.index("__clang_cce_simt_atomic.h") < cpp.index("__aicore__")
+    assert cpp.count('#include "__clang_cce_simt_fp16.h"') == 1
+    assert cpp.count('#include "__clang_cce_simt_bf16.h"') == 1
+    assert cpp.index("__clang_cce_simt_fp16.h") < cpp.index("__clang_cce_simt_bf16.h") < cpp.index("__aicore__")
+    for name in ("add", "max", "min"):
+        assert f"__atomic_{name}(" in cpp
+    assert "__simt_atomic_result_" not in cpp
+
+
 def test_simt_callee_codegen_emits_native_nested_calls_and_tile_abi():
     cpp = _compile_to_cce(_simt_callee_codegen_kernel)
 
@@ -439,6 +501,116 @@ def test_simt_callee_codegen_emits_native_nested_calls_and_tile_abi():
     for callee in ("_callee_load(", "_callee_add(", "_callee_store("):
         assert callee in apply_function
     assert "_callee_apply(" in cpp[entry_pos:]
+
+
+@pl.jit(mode="simt", max_threads=256)
+def _simt_kernel_copy(
+    out: pl.Tensor[[1024], pl.DT_FP32],
+    src: pl.Tensor[[1024], pl.DT_FP32],
+    count: pl.DT_UINT32,
+):
+    tid = pl.simt.block_idx().x * pl.simt.block_dim().x + pl.simt.thread_idx().x
+    if tid < count:
+        out[tid] = src[tid]
+
+
+def test_simt_kernel_codegen_emits_implementation_and_headers():
+    cpp = _compile_to_cce(_simt_kernel_copy)
+
+    assert "__aicore__ inline void _simt_kernel_copy_impl(" in cpp
+    assert "__global__" not in cpp
+    assert "__launch_bounds__" not in cpp
+    assert "threadIdx.x" in cpp
+    assert "blockIdx.x" in cpp
+    assert "blockDim.x" in cpp
+    assert "__gm__" not in cpp
+    assert re.search(r"\(src(?:_\d+)*\)\[", cpp)
+    assert re.search(r"\(out(?:_\d+)*\)\[", cpp)
+    assert (
+        '#if defined(__DAV_VEC__)\n'
+        '#include "__clang_cce_simt_fp16.h"\n'
+        '#include "__clang_cce_simt_bf16.h"\n'
+        '#endif\n'
+    ) in cpp
+    assert cpp.index("#endif") < cpp.index("__aicore__")
+    assert "#include <cstdint>" in cpp
+    assert "pto/pto-inst.hpp" not in cpp
+    assert "using namespace pto" not in cpp
+    assert "pypto_tprint.h" not in cpp
+    assert "__clang_cce_simt_atomic.h" not in cpp
+    assert cpp.count('#include "__clang_cce_simt_fp16.h"') == 1
+    assert cpp.count('#include "__clang_cce_simt_bf16.h"') == 1
+    assert cpp.index("__clang_cce_simt_bf16.h") < cpp.index("__aicore__")
+
+    mixed_cpp = _compile_to_cce(_simt_gm_codegen_kernel)
+    assert "#include <pto/pto-inst.hpp>" in mixed_cpp
+    assert "using namespace pto" in mixed_cpp
+    assert "#include <pypto_tprint.h>" in mixed_cpp
+
+
+@pytest.mark.parametrize("mode", ["simt", "simd"])
+def test_simt_kernel_and_vf_share_nested_helpers_with_mode_specific_gm_access(mode):
+    @pl.jit(mode="simt", max_threads=32)
+    def pure(
+        dst: pl.Tensor[[1, 32], pl.DT_INT32],
+        src: pl.Tensor[[1, 32], pl.DT_INT32],
+        delta: pl.DT_INT32,
+    ):
+        index = pl.simt.linear_thread_idx()
+        _callee_apply(dst, src, index, delta)
+
+    @pl.jit
+    def mixed(
+        dst: pl.Tensor[[1, 32], pl.DT_INT32],
+        src: pl.Tensor[[1, 32], pl.DT_INT32],
+        delta: pl.DT_INT32,
+    ):
+        with pl.section_vector():
+            _callee_entry[32](dst, src, delta)
+
+    cpp = _compile_to_cce(pure if mode == "simt" else mixed)
+    qualifier = "__aicore__" if mode == "simt" else "__simt_callee__"
+    for name, result_type in (
+        ("_callee_add", "int32_t"), ("_callee_load", "int32_t"),
+        ("_callee_store", "void"), ("_callee_apply", "void"),
+    ):
+        assert f"{qualifier} inline {result_type} {name}(" in cpp
+    assert cpp.index(f"{qualifier} inline int32_t _callee_load(") < cpp.index(
+        f"{qualifier} inline void _callee_apply("
+    )
+    assert "threadIdx.x" in cpp
+    if mode == "simt":
+        assert "__gm__" not in cpp
+        assert re.search(r"\(src(?:_\d+)*\)\[", cpp)
+        assert re.search(r"\(dst(?:_\d+)*\)\[[^\]]+\]\s*=", cpp)
+    else:
+        assert "__gm__ int32_t* src" in cpp
+        assert "*((__gm__ int32_t*)src" in cpp
+        assert "*((__gm__ int32_t*)dst" in cpp
+
+
+@pytest.mark.parametrize("through_helper", [False, True])
+def test_integer_load_can_feed_warp_reduce(through_helper):
+    @pl.vector_function(mode="simt")
+    def operations(dst, src):
+        index = pl.simt.linear_thread_idx()
+        reduced = pl.simt.warp_reduce_add(src[index])
+        dst[index] = reduced
+
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(dst: pl.Tensor[[32], pl.DT_INT32], src: pl.Tensor[[32], pl.DT_INT32]):
+        if through_helper:
+            operations(dst, src)
+        else:
+            index = pl.simt.linear_thread_idx()
+            reduced = pl.simt.warp_reduce_add(src[index])
+            dst[index] = reduced
+
+    cpp = _compile_to_cce(kernel)
+    assert "__reduce_add(" in cpp
+    assert "__gm__" not in cpp
+    assert re.search(r"\(src(?:_\d+)*\)\[", cpp)
+    assert re.search(r"\(dst(?:_\d+)*\)\[[^\]]+\]\s*=", cpp)
 
 
 @pl.vector_function(mode="simt", max_threads=256)
@@ -479,6 +651,29 @@ def test_simt_auto_mutex_emits_pipe_v_lock_unlock_around_launch():
 def test_simt_codegen_rejects_pre_a5_architecture():
     with pytest.raises(NotSupported, match="requires arch='3510'"):
         _compile_to_cce(_simt_tile_codegen_kernel, arch="a3")
+
+
+def test_simt_kernel_cast_in_helper_includes_compiler_overloads():
+    @pl.vector_function(mode="simt")
+    def convert(half_out, bfloat_out, src):
+        half_out[0] = pl.simt.cast(src[0], pl.DT_FP16, mode=pl.RoundMode.CAST_RINT)
+        bfloat_out[0] = pl.simt.cast(src[0], pl.DT_BF16, mode=pl.RoundMode.CAST_RINT)
+
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(
+        half_out: pl.Tensor[[1], pl.DT_FP16],
+        bfloat_out: pl.Tensor[[1], pl.DT_BF16],
+        src: pl.Tensor[[1], pl.DT_INT16],
+    ):
+        convert(half_out, bfloat_out, src)
+
+    cpp = _compile_to_cce(kernel)
+    assert cpp.count('#include "__clang_cce_simt_fp16.h"') == 1
+    assert cpp.count('#include "__clang_cce_simt_bf16.h"') == 1
+    assert cpp.index("__clang_cce_simt_fp16.h") < cpp.index("__clang_cce_simt_bf16.h") < cpp.index("__aicore__")
+    assert "__cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" in cpp
+    assert "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" in cpp
+    assert "__clang_cce_simt_atomic.h" not in cpp
 
 
 @pl.vector_function(mode="simt", max_threads=1)
@@ -528,6 +723,8 @@ def test_scalar_cast_codegen_maps_round_modes_and_cce_builtins():
     assert "__float2half" not in cpp
     assert "__float2bfloat16" not in cpp
     assert "__float2int" not in cpp
+    assert "__clang_cce_simt_fp16.h" not in cpp
+    assert "__clang_cce_simt_bf16.h" not in cpp
 
 
 @pl.vector_function(mode="simt", max_threads=1)

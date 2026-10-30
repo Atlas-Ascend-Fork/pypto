@@ -83,6 +83,7 @@ class JitCompileConfig:
         arch: NpuArch,
         target: KernelTarget,
         enable_print_debug: bool,
+        enable_simt: bool = False,
     ) -> list[str]:
         variables = {
             "toolkit_home": toolkit_home,
@@ -92,6 +93,8 @@ class JitCompileConfig:
         common = self._format_values(self.common_flags, variables)
         if enable_print_debug:
             common.extend(self._format_values(self.print_debug_flags, variables))
+        if enable_simt:
+            common.append("--enable-simt")
         flags = self._format_values(self.arch_flags, variables)
         if target.fat_object:
             flags.extend(self._format_values(self.fatobj_flags, variables))

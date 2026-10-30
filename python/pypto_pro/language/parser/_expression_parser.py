@@ -873,7 +873,9 @@ class ExpressionParserMixin:
             # All-integer index: A[i, j] → getval(A, i*cols+j)
             index_expr = self._parse_scalar_subscript_index(value_expr, subscript.slice, span)
             from pypto_pro.ir.op.block_ops import _ir_getval
-            is_simt = self._current_func_type in (ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee)
+            is_simt = self._current_func_type in (
+                ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee, ir.FunctionType.SimtKernel
+            )
             result = _ir_getval(value_expr, index_expr, preserve_dtype=is_simt, span=span)
             result = self._materialize_nested_expr(result, span)
             return result
@@ -1259,7 +1261,11 @@ class ExpressionParserMixin:
                 hint="Use pl.load/pl.store with offset lists for tensor access",
             )
 
-        if self._current_func_type in (ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee):
+        if self._current_func_type in (
+            ir.FunctionType.SimtVF,
+            ir.FunctionType.SimtCallee,
+            ir.FunctionType.SimtKernel,
+        ):
             raise InvalidOperation(
                 "Tile subview is not supported inside a SIMT function",
                 span=span,

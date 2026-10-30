@@ -95,6 +95,7 @@ def test_jit_parses_each_target_once_when_auto_is_present(monkeypatch):
     class FakeKernelDef:
         _auto_mutex = True
         func_def = None
+        func_type = ir.FunctionType.Opaque
 
         def __init__(self):
             self.parse_targets = []

@@ -1969,6 +1969,10 @@ static std::string MakeGetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
 
     std::string tensor_ptr = codegen.GetPointer(tensor_name);
 
+    if (codegen.GetCurrentKernelType() == ir::FunctionType::SIMT_KERNEL) {
+        return cast_result_if_dtype_changed("(" + tensor_ptr + ")[" + offset + "]", result_type->dtype_,
+                                            tensor_type->dtype_);
+    }
     return cast_result_if_dtype_changed("*((__gm__ " + dtype_str + "*)" + tensor_ptr + " + " + offset + ")",
                                         result_type->dtype_, tensor_type->dtype_);
 }
@@ -2006,6 +2010,10 @@ static std::string MakeSetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
 
     std::string tensor_ptr = codegen.GetPointer(tensor_name);
 
+    if (codegen.GetCurrentKernelType() == ir::FunctionType::SIMT_KERNEL) {
+        codegen.Emit("(" + tensor_ptr + ")[" + offset + "] = " + value + ";");
+        return "";
+    }
     codegen.Emit("*((__gm__ " + dtype_str + "*)" + tensor_ptr + " + " + offset + ") = " + value + ";");
     return "";
 }

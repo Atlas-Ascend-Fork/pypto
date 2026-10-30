@@ -115,11 +115,13 @@ public:
     /**
      * \brief Generate a single C++ file from a PyPTO IR Program
      *
-     * Generates a single __global__ AICORE kernel from SSA IR with:
+     * Generates an ordinary kernel device implementation from SSA IR with:
      * - PTO-style function signature
      * - Target-specific function naming and DAV macro guards
      * - constexpr for compile-time constants
      * - FFTS support for cross-core sync
+     *
+     * SIMT kernels emit a __global__ entry directly.
      *
      * \param program The IR Program to generate code for
      * \return Generated C++ code as a single string
@@ -138,6 +140,7 @@ public:
     // CodegenBase interface (unified API for operator codegen callbacks)
     [[nodiscard]] std::string GetCurrentResultTarget() const override { return current_target_var_; }
     void Emit(const std::string& line) override;
+    bool needs_simt_atomic_header_ = false;
     std::string GetExprAsCode(const ir::ExprPtr& expr) override;
     std::string GetGeneratedType(const ir::TypePtr& type) const;
 
@@ -147,12 +150,14 @@ public:
     [[nodiscard]] std::string GetTypeString(const ir::DataType& dtype) const override;
     /// True when currently generating code inside a VF section (CCE __VEC_SCOPE__).
     [[nodiscard]] bool IsInVFSection() const { return in_vf_section_; }
-    /// True when emitting an A5 `__simt_vf__` or `__simt_callee__` body.
+    /// True when emitting a 3510 SIMT VF, callee, or SIMT kernel body.
     [[nodiscard]] bool IsInSimtContext() const
     {
         return current_function_type_ == ir::FunctionType::SIMT_VF ||
-               current_function_type_ == ir::FunctionType::SIMT_CALLEE;
+               current_function_type_ == ir::FunctionType::SIMT_CALLEE ||
+               current_function_type_ == ir::FunctionType::SIMT_KERNEL;
     }
+    [[nodiscard]] ir::FunctionType GetCurrentKernelType() const { return current_kernel_type_; }
     int GetTileOffsetCounter() { return tile_offset_counter_++; }
     /// Resolve a VF tile expr (plain tile or `tile[offset]`) to its `__ubuf__` pointer, typed as the
     /// tile element and hoisted before `__VEC_SCOPE__`. A `tile[offset]` load reuses the rvalue
@@ -429,10 +434,10 @@ private:
     void EmitTilingStructCopy(const ir::FunctionPtr& func);
 
     /**
-     * \brief Generate PTO-style function signature and prologue
+     * \brief Generate the ordinary kernel device-function signature and prologue
      *
-     * Emits __global__ AICORE void func_name(__gm__ type* p, ...) with constexpr
-     * scalars and target-specific declarations.
+     * Emits __aicore__ inline void <name>_impl_cube/vector with target setup
+     * and tiling and Tensor declarations.
      */
     void GenerateSinglePrologue(const ir::FunctionPtr& func, bool has_cross_sync);
     std::string BuildSimtFunctionSignature(const ir::FunctionPtr& func);
@@ -545,7 +550,10 @@ private:
     npu::tile_fwk::NPUArch arch_ = npu::tile_fwk::NPUArch::DAV_2201; ///< Target architecture
     const ir::SectionKind target_;                                   ///< Fixed Cube/Vector target for this generator
     bool in_vf_section_ = false;                                     ///< True only while emitting a nested VF section
+    /// Actual IR type of the SIMT function being emitted.
     ir::FunctionType current_function_type_ = ir::FunctionType::OPAQUE;
+    /// Kernel entry type for GenerateSingle; preserved across per-function resets.
+    ir::FunctionType current_kernel_type_ = ir::FunctionType::OPAQUE;
     std::map<std::string, ir::FunctionPtr> simt_callees_;
     std::unordered_map<std::string, std::string> tensor_to_pointer_; ///< Tensor var name ->raw pointer expression
     /// Prescan: (tensor cce name, layout key) ->TensorDef. One entry per layout an access needs,

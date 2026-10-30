@@ -38,17 +38,19 @@ inline constexpr char kMaxThreadsAttr[] = "max_threads";
  * - Orchestration: Runs on host/AICPU for control flow and dependency analysis
  * - InCore: Sub-graph on specific AICore
  * - Helper: Scalar helper callable from a kernel
- * - SimtVF: A5 SIMT vector
+ * - SimtVF: 3510 SIMT vector
  * function launched from an AIV kernel
- * - SimtCallee: A5 SIMT helper callable from a SimtVF or another SimtCallee
+ * - SimtCallee: 3510 SIMT helper callable from a SimtVF or another SimtCallee
+ * - SimtKernel: 3510 SIMT kernel launched directly from host
  */
 enum class FunctionType : uint8_t {
     OPAQUE = 0,        ///< Default: unspecified function type
     ORCHESTRATION = 1, ///< Host/AICPU control and coordination
     IN_CORE = 2,       ///< AICore sub-graph execution
     HELPER = 3,        ///< Scalar helper function callable from kernels
-    SIMT_VF = 4,       ///< A5 SIMT vector function launched from an AIV kernel
-    SIMT_CALLEE = 5    ///< A5 SIMT helper callable from SIMT functions
+    SIMT_VF = 4,       ///< 3510 SIMT vector function launched from an AIV kernel
+    SIMT_CALLEE = 5,   ///< 3510 SIMT helper callable from SIMT functions
+    SIMT_KERNEL = 6    ///< 3510 SIMT kernel launched directly from host
 };
 
 /**
@@ -71,6 +73,8 @@ inline std::string FunctionTypeToString(FunctionType type)
             return "SimtVF";
         case FunctionType::SIMT_CALLEE:
             return "SimtCallee";
+        case FunctionType::SIMT_KERNEL:
+            return "SimtKernel";
         default:
             return "Unknown";
     }
@@ -96,6 +100,8 @@ inline FunctionType StringToFunctionType(const std::string& str)
         return FunctionType::SIMT_VF;
     } else if (str == "SimtCallee") {
         return FunctionType::SIMT_CALLEE;
+    } else if (str == "SimtKernel") {
+        return FunctionType::SIMT_KERNEL;
     } else {
         throw std::invalid_argument("Unknown FunctionType: " + str);
     }

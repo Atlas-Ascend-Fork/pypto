@@ -1,0 +1,9 @@
+program #entry() {
+    function helper incast(int32_t %value_0) outcast() #entry(false) #type(SimtCallee) {
+        return;
+    }
+    function kernel incast(int32_t %value_0) outcast() #entry(false) #type(SimtKernel) {
+        helper(%value_0);
+        return;
+    }
+}

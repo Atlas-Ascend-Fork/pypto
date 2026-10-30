@@ -1,0 +1,21 @@
+program #entry() {
+    function _simt_kernel_copy incast(tensor<1024, float, tensor_view<, , ND, %out_ptr>> %out_0, tensor<1024, float, tensor_view<, , ND, %src_ptr>> %src_0, uint32_t %count_0) outcast() #entry(false) #type(SimtKernel) {
+        tuple<uint32_t, uint32_t, uint32_t> %_tuple_anchor_0_0 = tuple(simt.block_idx(axis=0), simt.block_idx(axis=1), simt.block_idx(axis=2));
+        uint32_t %_expr_tmp_1_0 = simt.block_idx(axis=0);
+        tuple<uint32_t, uint32_t, uint32_t> %_tuple_anchor_2_0 = tuple(simt.block_dim(axis=0), simt.block_dim(axis=1), simt.block_dim(axis=2));
+        uint32_t %_expr_tmp_3_0 = simt.block_dim(axis=0);
+        uint32_t %_expr_tmp_4_0 = (%_expr_tmp_1_0 mul %_expr_tmp_3_0);
+        tuple<uint32_t, uint32_t, uint32_t> %_tuple_anchor_5_0 = tuple(simt.thread_idx(axis=0), simt.thread_idx(axis=1), simt.thread_idx(axis=2));
+        uint32_t %_expr_tmp_6_0 = simt.thread_idx(axis=0);
+        uint32_t %tid_0 = (%_expr_tmp_4_0 add %_expr_tmp_6_0);
+        bool %_expr_tmp_7_0 = (%tid_0 lt %count_0);
+        if %_expr_tmp_7_0 then {
+            float %_expr_tmp_8_0 = block.getval(%src_0, %tid_0, preserve_dtype=true);
+            block.setval(%out_0, %tid_0, %_expr_tmp_8_0);
+            yield;
+        } else {
+            yield;
+        }
+        return;
+    }
+}

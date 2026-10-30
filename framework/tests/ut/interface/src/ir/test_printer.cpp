@@ -468,10 +468,14 @@ TEST_F(IRPrinterTest, TestPrintSimtFunctionDecorators)
         "unbounded", std::vector<VarPtr>{}, std::vector<TypePtr>{}, body, Sp(), FunctionType::SIMT_VF);
     auto simt_callee = std::make_shared<Function>("helper", std::vector<VarPtr>{}, std::vector<TypePtr>{}, body, Sp(),
                                                   FunctionType::SIMT_CALLEE);
+    auto simt_kernel = std::make_shared<Function>(
+        "simt_kernel", std::vector<VarPtr>{}, std::vector<TypePtr>{}, body, Sp(), FunctionType::SIMT_KERNEL, true,
+        std::vector<std::pair<std::string, std::any>>{{kMaxThreadsAttr, 512}});
 
     auto function_str = Print(simt_function);
     auto unbounded_function_str = Print(unbounded_simt_function);
     auto callee_str = Print(simt_callee);
+    auto kernel_str = Print(simt_kernel);
 
     EXPECT_NE(function_str.find("@ir.vector_function(mode=\"simt\", max_threads=256)"), std::string::npos);
     EXPECT_EQ(function_str.find("ir.FunctionType.SimtVF"), std::string::npos);
@@ -481,6 +485,8 @@ TEST_F(IRPrinterTest, TestPrintSimtFunctionDecorators)
     EXPECT_NE(callee_str.find("@ir.vector_function(mode=\"simt\")"), std::string::npos);
     EXPECT_EQ(callee_str.find("ir.FunctionType.SimtCallee"), std::string::npos);
     EXPECT_NE(callee_str.find("def helper()"), std::string::npos);
+    EXPECT_NE(kernel_str.find("@ir.jit(mode=\"simt\", max_threads=512)"), std::string::npos);
+    EXPECT_NE(kernel_str.find("def simt_kernel()"), std::string::npos);
 }
 
 // ============================================================================

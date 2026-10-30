@@ -1459,8 +1459,9 @@ void BindProgram(py::module_& ir)
         .value("Orchestration", FunctionType::ORCHESTRATION, "Host/AICPU control and coordination")
         .value("InCore", FunctionType::IN_CORE, "AICore sub-graph execution")
         .value("Helper", FunctionType::HELPER, "Scalar helper callable from kernels (generates func.call)")
-        .value("SimtVF", FunctionType::SIMT_VF, "A5 SIMT vector function launched from an AIV kernel")
-        .value("SimtCallee", FunctionType::SIMT_CALLEE, "A5 helper callable from SIMT functions")
+        .value("SimtVF", FunctionType::SIMT_VF, "3510 SIMT vector function launched from an AIV kernel")
+        .value("SimtCallee", FunctionType::SIMT_CALLEE, "3510 helper callable from SIMT functions")
+        .value("SimtKernel", FunctionType::SIMT_KERNEL, "3510 SIMT kernel launched from host")
         .export_values();
 
     // Function - const shared_ptr

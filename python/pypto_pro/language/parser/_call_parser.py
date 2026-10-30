@@ -375,9 +375,32 @@ def _check_type_compatible(annotated: ir.Type, actual: ir.Type, *, what: str, na
         )
 
 
-def _validate_simt_parameters(func: ir.Function, role: str) -> None:
+def _validate_simt_tensor_type(tensor_type: ir.TensorType, subject: str, span: ir.Span) -> None:
+    if tensor_type.dtype.get_bit() < 8:
+        raise NotSupported(
+            f"{subject} uses an unsupported sub-byte dtype",
+            span=span,
+            hint="Use a byte-addressable Tensor element type such as pl.DT_UINT8 or wider.",
+            parser_retry=True,
+        )
+    tensor_view = tensor_type.tensor_view
+    if tensor_view is None or tensor_view.layout != ir.TensorLayout.ND:
+        raise InvalidVal(
+            f"{subject} requires ND layout",
+            span=span,
+            hint="Use pl.Tensor[[shape], dtype] or specify pl.ND explicitly.",
+            parser_retry=True,
+        )
+
+
+def _validate_simt_parameters(func: ir.Function, role: str, *, entry_type: ir.FunctionType) -> None:
     """Validate the common native CCE ABI accepted by SIMT functions."""
     for param in func.params:
+        if entry_type == ir.FunctionType.SimtKernel and isinstance(param.type, ir.TileType):
+            raise InvalidVal(
+                f"{role} parameter '{param.name}' must be a scalar or Tensor, not Tile",
+                span=param.span,
+            )
         if not isinstance(param.type, (ir.ScalarType, ir.TensorType, ir.TileType)):
             raise InvalidVal(
                 f"{role} parameter '{param.name}' must resolve to a scalar, Tensor, or Tile value, got {param.type}",
@@ -386,21 +409,7 @@ def _validate_simt_parameters(func: ir.Function, role: str) -> None:
                 parser_retry=True,
             )
         if isinstance(param.type, ir.TensorType):
-            if param.type.dtype.get_bit() < 8:
-                raise NotSupported(
-                    f"{role} Tensor parameter '{param.name}' uses an unsupported sub-byte dtype",
-                    span=param.span,
-                    hint="Use a byte-addressable Tensor element type such as pl.DT_UINT8 or wider.",
-                    parser_retry=True,
-                )
-            tensor_view = param.type.tensor_view
-            if tensor_view is None or tensor_view.layout != ir.TensorLayout.ND:
-                raise InvalidVal(
-                    f"{role} Tensor parameter '{param.name}' requires ND layout",
-                    span=param.span,
-                    hint="Use pl.Tensor[[shape], dtype] or specify pl.ND explicitly.",
-                    parser_retry=True,
-                )
+            _validate_simt_tensor_type(param.type, f"{role} Tensor parameter '{param.name}'", param.span)
         if isinstance(param.type, ir.TileType):
             if len(param.type.shape) != 2 or not all(isinstance(dim, ir.ConstInt) for dim in param.type.shape):
                 raise InvalidShape(
@@ -974,7 +983,11 @@ class CallParserMixin:
                 parser_retry=True,
             )
 
-        is_simt_function = self._current_func_type in (ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee)
+        is_simt_function = self._current_func_type in (
+            ir.FunctionType.SimtVF,
+            ir.FunctionType.SimtCallee,
+            ir.FunctionType.SimtKernel,
+        )
         if is_simt_function and not op_name.startswith("simt."):
             raise NotSupported(
                 f"Operation '{op_name}' is not supported inside a SIMT function",
@@ -1225,6 +1238,7 @@ class CallParserMixin:
         parser.external_funcs = self.external_funcs
         parser.simt_func_cache = self.simt_func_cache
         parser.simt_call_stack = self.simt_call_stack
+        parser._simt_entry_type = self._simt_entry_type
 
         self.simt_call_stack.append(id(fn))
         try:
@@ -1233,7 +1247,7 @@ class CallParserMixin:
                 func_type=func_type,
                 callsite_param_types={param.arg: actual.type for param, actual in zip(params, args)},
             )
-            _validate_simt_parameters(parsed, role)
+            _validate_simt_parameters(parsed, role, entry_type=self._simt_entry_type)
             if launchable:
                 result = ir.Function(
                     parsed.name,
@@ -1365,7 +1379,9 @@ class CallParserMixin:
         from .decorator import get_simt_max_threads, is_simt_function
 
         if is_simt_function(fn):
-            if self._current_func_type in (ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee):
+            if self._current_func_type in (
+                ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee, ir.FunctionType.SimtKernel
+            ):
                 if get_simt_max_threads(fn) is not None:
                     raise InvalidVal(
                         f"SIMT helper '{func_name}' must omit max_threads in "

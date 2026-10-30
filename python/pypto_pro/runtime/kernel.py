@@ -202,6 +202,7 @@ class KernelDef:
         pipeline=None,
         tilingkey_consts: dict[str, int] | None = None,
         datatype_consts: dict[str, Any] | None = None,
+        func_attrs: dict[str, Any] | None = None,
     ) -> None:
         self._func = func
         self._source_file = source_file
@@ -219,6 +220,7 @@ class KernelDef:
         self._meta_data = meta_data
         self._tilingkey_consts = tilingkey_consts
         self._datatype_consts = datatype_consts
+        self._func_attrs = dict(func_attrs or {})
         # Populated by parse_target_program: parameter index -> declared direction.
         self._last_param_directions: dict[int, TensorDirection] = {}
         self._max_vec_tile_end = 0
@@ -250,6 +252,11 @@ class KernelDef:
     def requires_simt(self) -> bool:
         """Whether parse_target_program emitted a SIMT launch."""
         return self._requires_simt
+
+    @property
+    def func_type(self) -> ir.FunctionType:
+        """IR function type selected for the root kernel."""
+        return self._func_type
 
     def parse_target_program(
         self,
@@ -294,7 +301,11 @@ class KernelDef:
             )
 
             try:
-                ir_func = parser.parse_function(self._func_def, func_type=self._func_type)
+                ir_func = parser.parse_function(
+                    self._func_def,
+                    func_type=self._func_type,
+                    func_attrs=self._func_attrs,
+                )
             except PyptoProError:
                 raise
             except Exception as e:

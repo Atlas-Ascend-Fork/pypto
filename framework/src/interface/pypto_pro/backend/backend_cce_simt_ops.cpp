@@ -1743,10 +1743,15 @@ std::string MakeSimtFmaCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
            codegen.GetExprAsCode(op->args_[2]) + ")";
 }
 
-std::string MakeSimtAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base, const char* intrinsic)
+std::string MakeSimtAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base, const char* intrinsic,
+                                     const char* kernel_intrinsic)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     auto tile_type = ir::As<ir::TileType>(op->args_[0]->GetType());
+    const bool simt_kernel = codegen.GetCurrentKernelType() == ir::FunctionType::SIMT_KERNEL;
+    if (simt_kernel) {
+        codegen.needs_simt_atomic_header_ = true;
+    }
 
     std::string base;
     if (tile_type) {
@@ -1759,7 +1764,7 @@ std::string MakeSimtAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
     }
     std::string offset = codegen.GetExprAsCode(op->args_[1]);
     std::stringstream call;
-    call << intrinsic << "(" << base << " + (" << offset << ")";
+    call << (simt_kernel ? kernel_intrinsic : intrinsic) << "(" << base << " + (" << offset << ")";
     for (size_t i = 2; i < op->args_.size(); ++i) {
         call << ", " << codegen.GetExprAsCode(op->args_[i]);
     }
@@ -3487,7 +3492,7 @@ REGISTER_BACKEND_OP(BackendCCE, "simt.fma").set_pipe(ir::PipeType::S).f_codegen(
     REGISTER_BACKEND_OP(BackendCCE, "simt." Name)                                                 \
         .set_pipe(ir::PipeType::S)                                                                \
         .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) -> std::string { \
-            return MakeSimtAtomicCodegenCCE(op, codegen_base, Intrinsic);                         \
+            return MakeSimtAtomicCodegenCCE(op, codegen_base, Intrinsic, "__" Name);              \
         })
 
 REGISTER_SIMT_ATOMIC_BACKEND_OP("atomic_add", "atomicAdd");

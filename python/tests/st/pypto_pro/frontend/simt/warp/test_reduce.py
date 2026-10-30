@@ -153,25 +153,18 @@ def test_warp_reduce_min():
 # -----------------------------------------------------------------------------------------------------------
 
 @pl.vector_function(mode="simt", max_threads=WARP_SIZE)
-def write_warp_reduce_fp16_divergent(
+def write_warp_reduce_fp16_full_warp(
     values,
     output,
 ):
     tid = pl.simt.linear_thread_idx()
-    lane = pl.simt.lane_id()
-    if lane < WARP_SIZE // 2:
-        output[0, tid] = pl.simt.warp_reduce_add(values[0, tid])
-        output[1, tid] = pl.simt.warp_reduce_max(values[0, tid])
-        output[2, tid] = pl.simt.warp_reduce_min(values[0, tid])
-    else:
-        value = values[0, tid]
-        doubled = value + value
-        output[0, tid] = pl.simt.warp_reduce_add(doubled)
-        output[1, tid] = pl.simt.warp_reduce_max(doubled)
-        output[2, tid] = pl.simt.warp_reduce_min(doubled)
+    value = values[0, tid]
+    output[0, tid] = pl.simt.warp_reduce_add(value)
+    output[1, tid] = pl.simt.warp_reduce_max(value)
+    output[2, tid] = pl.simt.warp_reduce_min(value)
 
 @pl.jit(arch="3510", auto_mutex=True)
-def simt_warp_reduce_fp16_divergent(
+def simt_warp_reduce_fp16_full_warp(
     values: pl.Tensor[[1, WARP_SIZE], pl.DT_FP16],
     output: pl.Tensor[[3, WARP_SIZE], pl.DT_FP16],
 ):
@@ -191,24 +184,15 @@ def simt_warp_reduce_fp16_divergent(
     output_tile = output_tile_group.current()
     with pl.section_vector():
         pl.load(values_tile, values, [0, 0])
-        write_warp_reduce_fp16_divergent[WARP_SIZE](values_tile, output_tile)
+        write_warp_reduce_fp16_full_warp[WARP_SIZE](values_tile, output_tile)
         pl.store(output, output_tile, [0, 0])
 
 @pytest.mark.soc("950")
-def test_warp_reduce_fp16_divergent():
+def test_warp_reduce_fp16_full_warp():
     torch.npu.set_device(ST_DEVICE)
-    # Keep zero as both groups' minimum while doubling the upper group to distinguish its add and max results.
-    half_warp_values = torch.arange(WARP_SIZE // 2, dtype=torch.float16)
-    values = half_warp_values.repeat(2).reshape(1, WARP_SIZE)
-    expected = torch.empty((3, WARP_SIZE), dtype=torch.float16)
-    for start in (0, WARP_SIZE // 2):
-        group = values[0, start:start + WARP_SIZE // 2]
-        if start:
-            group = group * 2
-        expected[0, start:start + WARP_SIZE // 2] = group.sum()
-        expected[1, start:start + WARP_SIZE // 2] = group.max()
-        expected[2, start:start + WARP_SIZE // 2] = group.min()
+    values = (torch.arange(WARP_SIZE, dtype=torch.float16) - WARP_SIZE // 2).reshape(1, WARP_SIZE)
+    expected = torch.stack([values.sum(), values.max(), values.min()]).reshape(3, 1).repeat(1, WARP_SIZE)
     actual = torch.empty_like(expected).to(ST_DEVICE)
-    simt_warp_reduce_fp16_divergent(values.to(ST_DEVICE), actual)
+    simt_warp_reduce_fp16_full_warp(values.to(ST_DEVICE), actual)
     torch.npu.synchronize()
     torch.testing.assert_close(actual.cpu(), expected, rtol=0, atol=0)

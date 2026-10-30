@@ -22,6 +22,7 @@ import sys
 from unittest.mock import MagicMock
 
 from pypto_pro._errors import InvalidShape
+import pypto_pro.language as pl
 from pypto_pro.language import STATIC, Tensor
 from pypto_pro.runtime.platform import NpuArch
 import pytest
@@ -172,6 +173,77 @@ def _scalar_spec(name, dtype) -> ParamSpec:
     return ParamSpec(name, ParamKind.SCALAR, dtype, None)
 
 
+@pytest.mark.parametrize("mode", ["simd", "simt"])
+@pytest.mark.parametrize("explicit_stream", [False, True])
+def test_jit_modes_share_launch_argument_binding(monkeypatch, mode, explicit_stream):
+    class Stream:
+        pass
+
+    monkeypatch.setattr(_jit.torch.npu, "Stream", Stream)
+
+    @pl.jit(mode=mode, max_threads=32 if mode == "simt" else None)
+    def kernel(out: pl.Tensor[[32], pl.DT_FP32], count: pl.DT_UINT32 = 7):
+        pass
+
+    compiled = object()
+    compile_kernel = MagicMock(return_value=compiled)
+    launch = MagicMock()
+    monkeypatch.setattr(kernel, "_validate_launch_arch", lambda: None)
+    monkeypatch.setattr(kernel, "_ensure_compiled", compile_kernel)
+    monkeypatch.setattr(_jit, "_launch", launch)
+    stream = Stream() if explicit_stream else None
+    if mode == "simt":
+        launcher = kernel[stream, (2, 3), (8, 4)] if explicit_stream else kernel[(2, 3), (8, 4)]
+        launch_config = ((2, 3, 1), (8, 4, 1))
+    else:
+        launcher = kernel[stream, 6] if explicit_stream else kernel[6]
+        launch_config = 6
+
+    out = object()
+    calls = [((out, 9), {}, 9), ((), {"count": 9, "out": out}, 9), ((out,), {}, 7)]
+    for args, kwargs, expected_count in calls:
+        compile_kernel.reset_mock()
+        launch.reset_mock()
+        launcher(*args, **kwargs)
+        compile_kernel.assert_called_once_with(
+            (out, expected_count), concrete_key=None, dtype_key=None, spec=_jit._NO_SPEC
+        )
+        launch.assert_called_once_with(compiled, (out, expected_count), launch_config, stream)
+
+
+def test_simt_kernel_uses_shared_launch_entry(monkeypatch):
+    """The SIMT kernel uses the shared validator/packer with its extended launch prefix."""
+    lib = _FakeLib()
+    monkeypatch.setattr(_jit, "ctypes", _CtypesProxy(lib))
+    compiled = CompiledKernel(
+        lib_path="<fake>",
+        param_specs=[
+            _tensor_spec("src", DataType.FP32, [1000]),
+            _scalar_spec("count", DataType.UINT32),
+        ],
+        simt_kernel=True,
+    )
+    grid = (4, 1, 1)
+    thread_block = (256, 1, 1)
+
+    _jit._launch(
+        compiled,
+        (
+            _MockTensor([1000], torch.float32),
+            1000,
+        ),
+        (grid, thread_block),
+        _FAKE_STREAM,
+    )
+
+    fn = lib.call_kernel
+    assert compiled.entry is not None
+    assert fn.restype is ctypes.c_int64
+    assert fn.argtypes[:7] == [ctypes.c_uint32] * 6 + [ctypes.c_void_p]
+    assert fn.argtypes[7:] == [ctypes.c_void_p, ctypes.c_uint32]
+    assert fn.calls[-1] == (*grid, *thread_block, 0, 0, 1000)
+
+
 # ---------------------------------------------------------------------------
 # Argument validation
 # ---------------------------------------------------------------------------
@@ -244,10 +316,13 @@ def test_validate_args_mixed_params(launch):
     launch(specs, args)  # must not raise
 
 
-def test_unmappable_scalar_dtype_rejected_at_bind_time():
-    """A scalar dtype with no ctypes mapping fails when the plan is built, not per launch."""
+@pytest.mark.parametrize("dtype, cpp_type", [(DataType.FP16, "half"), (DataType.BF16, "bfloat16_t")])
+def test_unmappable_scalar_dtype_rejected_at_bind_time(dtype, cpp_type):
+    """C++ signature generation accepts half scalars; ctypes rejects them at JIT binding."""
+    specs = [_scalar_spec("h", dtype)]
+    assert _jit._entry_params_from_param_specs(specs) == [(cpp_type, "h", False)]
     with pytest.raises(TypeError, match="No ctypes mapping for scalar dtype"):
-        _jit._LaunchPlan([_scalar_spec("h", DataType.FP16)])
+        _jit._LaunchPlan(specs)
 
 
 @pytest.mark.parametrize(
@@ -763,7 +838,8 @@ def test_capture_log_uses_native_block_count(monkeypatch, caplog):
     assert "block_dim=12" not in caplog.text
 
 
-def test_explicit_stream_validated_once_at_launcher_creation(monkeypatch):
+@pytest.mark.parametrize("simt", [False, True])
+def test_explicit_stream_validated_once_at_launcher_creation(monkeypatch, simt):
     """A foreign stream can expose a pointer too; reject it before ACL dereferences that handle."""
     class NPUStream:
         _as_parameter_ = 0x1234
@@ -772,12 +848,17 @@ def test_explicit_stream_validated_once_at_launcher_creation(monkeypatch):
         _as_parameter_ = 0xDEAD
 
     monkeypatch.setattr(_torch_mock.npu, "Stream", NPUStream)
-    kernel = _jit._TileJitKernel(lambda: None, arch=NpuArch.DAV_3510)
+    kernel = _jit._TileJitKernel(
+        lambda: None,
+        arch=NpuArch.DAV_3510,
+        func_type=_jit.ir.FunctionType.SimtKernel if simt else _jit.ir.FunctionType.Opaque,
+        max_threads=32 if simt else None,
+    )
     with pytest.raises(TypeError, match="stream must be torch.npu.Stream or None"):
-        kernel[ForeignStream(), 8]
+        kernel[ForeignStream(), 8, 32] if simt else kernel[ForeignStream(), 8]
 
     stream = NPUStream()
-    launcher = kernel[stream, 8]
+    launcher = kernel[stream, 8, 32] if simt else kernel[stream, 8]
     monkeypatch.setattr(kernel, "_validate_launch_arch", lambda: None)
     monkeypatch.setattr(kernel, "_ensure_compiled", lambda *_args, **_kwargs: None)
     launches = []
@@ -787,4 +868,5 @@ def test_explicit_stream_validated_once_at_launcher_creation(monkeypatch):
     monkeypatch.setattr(_torch_mock.npu, "Stream", None)
     launcher()
     launcher()
-    assert launches == [(8, stream), (8, stream)]
+    launch_config = ((8, 1, 1), (32, 1, 1)) if simt else 8
+    assert launches == [(launch_config, stream), (launch_config, stream)]

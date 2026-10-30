@@ -1096,7 +1096,10 @@ void IRPrinter::VisitFunctionBody(const StmtPtr& body)
 void IRPrinter::VisitFunction(const FunctionPtr& func)
 {
     // Print decorator: only SIMT functions carry a decorator
-    if (func->funcType_ == FunctionType::SIMT_VF || func->funcType_ == FunctionType::SIMT_CALLEE) {
+    if (func->funcType_ == FunctionType::SIMT_KERNEL) {
+        stream_ << GetIndent() << "@" << prefix_
+                << ".jit(mode=\"simt\", max_threads=" << func->GetAttr<int>(kMaxThreadsAttr) << ")\n";
+    } else if (func->funcType_ == FunctionType::SIMT_VF || func->funcType_ == FunctionType::SIMT_CALLEE) {
         stream_ << GetIndent() << "@" << prefix_ << ".vector_function(mode=\"simt\"";
         if (func->funcType_ == FunctionType::SIMT_VF && func->HasAttr(kMaxThreadsAttr)) {
             stream_ << ", max_threads=" << func->GetAttr<int>(kMaxThreadsAttr);

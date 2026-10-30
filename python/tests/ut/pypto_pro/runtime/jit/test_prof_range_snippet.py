@@ -23,6 +23,7 @@ from pypto_pro.runtime.jit import (
     _parse_and_codegen_targets,
 )
 from pypto_pro.runtime.platform import NpuArch
+import pytest
 
 
 def _snippet(kernel_name, specs, dims):
@@ -168,7 +169,8 @@ def test_no_tensor_params_disables_snippet():
     assert _snippet("k", [], set()) == ("", "", "")
 
 
-def test_caller_embeds_metadata_around_launch_static():
+@pytest.mark.parametrize("simt_kernel", [False, True])
+def test_caller_embeds_metadata_around_launch_static(simt_kernel):
     """End-to-end caller generation: pl.Output flows into the snippet."""
     @pl.jit()
     def static_kernel(
@@ -183,7 +185,16 @@ def test_caller_embeds_metadata_around_launch_static():
             pl.add(tc, ta, ta)
             pl.store(out, tc, [0, 0])
 
-    cube, vector = _parse_and_codegen_targets(static_kernel.to_kernel_def(), NpuArch.DAV_3510, "")
+    @pl.jit(mode="simt", max_threads=32)
+    def simt_static_kernel(
+        a: pl.Tensor[[64, 64], pl.DT_FP32],
+        out: pl.Tensor[[64, 64], pl.DT_FP32, pl.Output],
+    ):
+        index = pl.simt.linear_thread_idx()
+        out[0, index] = a[0, index] + a[0, index]
+
+    kernel = simt_static_kernel if simt_kernel else static_kernel
+    cube, vector = _parse_and_codegen_targets(kernel.to_kernel_def(), NpuArch.DAV_3510, "")
     from pypto_pro.runtime.compile_config import get_jit_compile_config
 
     target = get_jit_compile_config().resolve_kernel_target(NpuArch.DAV_3510, has_cube=cube is not None,
@@ -195,13 +206,25 @@ def test_caller_embeds_metadata_around_launch_static():
         kernel_name=cg.kernel_name,
         target=target,
         prof_param_specs=cg.param_specs,
+        simt_kernel=simt_kernel,
     )
     assert '#include "acl/acl_prof.h"' in content
-    assert 'aclprofStr2Id("PYPTO_static_kernel")' in content
+    assert f'aclprofStr2Id("PYPTO_{cg.kernel_name}")' in content
     push_idx = content.index("BeginCaptureTensorReport")
-    launch_idx = content.index("<<<blockDim")
+    launch = (
+        "<<<dim3(gridX, gridY, gridZ), dim3(threadBlockX, threadBlockY, threadBlockZ), 0, stream>>>"
+        if simt_kernel else "<<<blockDim"
+    )
+    launch_idx = content.index(launch)
     pop_idx = content.index("ReportCaptureTensorInfo")
     assert push_idx < launch_idx < pop_idx
+    assert "pyptoProfInfo.kernelType = 2;" in content
+    block_nums = "gridX * gridY * gridZ" if simt_kernel else "blockDim"
+    assert f"pyptoProfInfo.blockNums = {block_nums};" in content
+    else_idx = content.index("} else {")
+    assert pop_idx < else_idx
+    assert content.count(launch) == 2
+    assert "ReportCaptureTensorInfo" not in content[else_idx:]
     assert "{0, 2, 0, 2, {64, 64" in content   # a: input
     assert "{1, 2, 0, 2, {64, 64" in content   # out: output
 

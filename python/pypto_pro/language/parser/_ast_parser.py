@@ -27,6 +27,7 @@ from ..._errors import (
     InvalidArgument,
     InvalidOperation,
     InvalidType,
+    InvalidVal,
     NotSupported,
     PyptoProError,
     current_span,
@@ -35,7 +36,7 @@ from ..typing._tiling import get_tiling_fields, get_tiling_tuple_type, is_tiling
 from ..typing.shape import _ShapePolicy
 from ._assignment_parser import AssignmentParserMixin
 from ._buffer_parser import BufferParserMixin, TileGroupFacts
-from ._call_parser import CallParserMixin, _check_type_compatible
+from ._call_parser import CallParserMixin, _check_type_compatible, _validate_simt_tensor_type
 from ._control_flow_parser import ControlFlowParserMixin, validate_single_tail_return
 from ._expr_evaluator import ExprEvaluator
 from ._expression_parser import ExpressionParserMixin
@@ -238,6 +239,7 @@ class ASTParser(
         self.inline_counter: int = 0
         self.simt_func_cache: dict[int, ir.Function] = {}
         self.simt_call_stack: list[int] = []
+        self._simt_entry_type = ir.FunctionType.Opaque
         # Nested vector helpers share the outermost VF section.
         self.inline_vf_depth: int = 0
 
@@ -349,17 +351,6 @@ class ASTParser(
     def get_tile_valid_shape(self, tile_expr: ir.Expr):
         return self._tile_valid_shape.get(tile_expr)
 
-    def set_void_return_mode(self, context: str, allow_early_return: bool = False) -> None:
-        """Configure void-only return mode for this parser.
-
-        Args:
-            context: User-facing name used in diagnostics (e.g. "@pl.vector_function").
-            allow_early_return: If True, skip the single-tail-return restriction.
-        """
-        self._void_return_only = True
-        self._void_return_context = context
-        self._allow_early_return = allow_early_return
-
     def set_auto_mutex_enabled(self, enabled: bool) -> None:
         """Set automatic mutex emission for helper parsing."""
         self._auto_mutex = enabled
@@ -384,6 +375,7 @@ class ASTParser(
         func_type: ir.FunctionType = ir.FunctionType.Opaque,
         is_vector_function: bool = False,
         callsite_param_types: dict[str, ir.Type] | None = None,
+        func_attrs: dict[str, Any] | None = None,
     ) -> ir.Function:
         """Parse function definition and build IR.
 
@@ -396,6 +388,7 @@ class ASTParser(
 
             callsite_param_types: Concrete parameter types supplied while parsing
                 a SIMT function at its call site.
+            func_attrs: Attributes attached to the parsed IR function.
 
         Returns:
             IR Function object
@@ -438,6 +431,8 @@ class ASTParser(
                 )
 
         self._current_func_type = func_type
+        if func_type in (ir.FunctionType.SimtKernel, ir.FunctionType.SimtVF):
+            self._simt_entry_type = func_type
         self.scope_manager.enter_scope("function")
 
         # Collect args to process, filtering out bare 'self'
@@ -505,6 +500,8 @@ class ASTParser(
                     span=return_span,
                 )
 
+        attrs = dict(result.attrs)
+        attrs.update(func_attrs or {})
         result = ir.Function(
             result.name,
             list(result.params),
@@ -513,7 +510,7 @@ class ASTParser(
             result.span,
             result.func_type,
             result.entry,
-            dict(result.attrs),
+            attrs,
         )
         return result
 
@@ -695,6 +692,21 @@ class ASTParser(
                     hint="Move the tiling parameter to the last position",
                 )
 
+    @staticmethod
+    def _validate_simt_kernel_param(param_name: str, param_type: ir.Type, param_span: ir.Span) -> None:
+        if isinstance(param_type, ir.ScalarType):
+            return
+        if not isinstance(param_type, ir.TensorType):
+            raise InvalidVal(
+                f"SIMT kernel parameter '{param_name}' must resolve to a scalar or Tensor, got {param_type}",
+                span=param_span,
+                hint="Tile, Ptr, tuple, and tiling parameters are not supported.",
+            )
+        subject = f"SIMT kernel Tensor parameter '{param_name}'"
+        _validate_simt_tensor_type(param_type, subject, param_span)
+        if any(not isinstance(dim, ir.ConstInt) for dim in param_type.shape):
+            raise InvalidType(f"{subject} requires a static shape", span=param_span)
+
     def _parse_function_param(
         self,
         arg: ast.arg,
@@ -710,6 +722,11 @@ class ASTParser(
         # call-site type exists for this name).
         tiling_cls = self.resolve_tiling_class(arg.annotation) if arg.annotation else None
         if tiling_cls is not None:
+            if self._current_func_type == ir.FunctionType.SimtKernel:
+                raise InvalidType(
+                    f"SIMT kernel parameter '{param_name}' must be a scalar or pl.Tensor",
+                    span=param_span,
+                )
             fields = get_tiling_fields(tiling_cls)
             # Single struct parameter: the tiling class is lowered to a TupleType whose
             # STRUCT TupleTypeInfo is recorded in IRDebugInfo.
@@ -747,6 +764,8 @@ class ASTParser(
             arg.annotation, parameter_name=param_name, parameter_index=parameter_index
         )
         param_type = self._attach_ptr_to_tensor_type(param_name, param_type, param_span)
+        if self._current_func_type == ir.FunctionType.SimtKernel:
+            self._validate_simt_kernel_param(param_name, param_type, param_span)
         param_var = f.param(param_name, param_type, param_span)
         self.scope_manager.define_var(param_name, param_var, allow_redef=True)
 

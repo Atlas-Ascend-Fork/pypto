@@ -545,6 +545,9 @@ TEST_F(IRCheckTest, TestFunctionTypeToString)
     ASSERT_EQ(FunctionTypeToString(FunctionType::ORCHESTRATION), "Orchestration");
     ASSERT_EQ(FunctionTypeToString(FunctionType::IN_CORE), "InCore");
     ASSERT_EQ(FunctionTypeToString(FunctionType::HELPER), "Helper");
+    ASSERT_EQ(FunctionTypeToString(FunctionType::SIMT_VF), "SimtVF");
+    ASSERT_EQ(FunctionTypeToString(FunctionType::SIMT_CALLEE), "SimtCallee");
+    ASSERT_EQ(FunctionTypeToString(FunctionType::SIMT_KERNEL), "SimtKernel");
     ASSERT_EQ(FunctionTypeToString(static_cast<FunctionType>(999)), "Unknown");
 }
 
@@ -554,6 +557,9 @@ TEST_F(IRCheckTest, TestStringToFunctionType)
     ASSERT_EQ(StringToFunctionType("Orchestration"), FunctionType::ORCHESTRATION);
     ASSERT_EQ(StringToFunctionType("InCore"), FunctionType::IN_CORE);
     ASSERT_EQ(StringToFunctionType("Helper"), FunctionType::HELPER);
+    ASSERT_EQ(StringToFunctionType("SimtVF"), FunctionType::SIMT_VF);
+    ASSERT_EQ(StringToFunctionType("SimtCallee"), FunctionType::SIMT_CALLEE);
+    ASSERT_EQ(StringToFunctionType("SimtKernel"), FunctionType::SIMT_KERNEL);
     ASSERT_THROW(StringToFunctionType("Invalid"), std::invalid_argument);
 }
 

@@ -1,0 +1,27 @@
+program #entry() {
+    function _identity incast(uint32_t %value_0) outcast(uint32_t) #entry(false) #type(SimtCallee) {
+        return %value_0;
+    }
+    function _load incast(tensor<32, uint32_t, tensor_view<, , ND, %src_ptr>> %src_0, uint32_t %index_0) outcast(uint32_t) #entry(false) #type(SimtCallee) {
+        uint32_t %_expr_tmp_0_0 = block.getval(%src_0, %index_0, preserve_dtype=true);
+        uint32_t %_expr_tmp_1_0 = _identity(%_expr_tmp_0_0);
+        return %_expr_tmp_1_0;
+    }
+    function _store incast(tensor<32, uint32_t, tensor_view<, , ND, %dst_ptr>> %dst_0, tensor<32, uint32_t, tensor_view<, , ND, %src_ptr>> %src_0) outcast() #entry(false) #type(SimtCallee) {
+        uint32_t %index_0 = simt.linear_thread_idx();
+        uint32_t %_expr_tmp_0_0 = _load(%src_0, %index_0);
+        block.setval(%dst_0, %index_0, %_expr_tmp_0_0);
+        return;
+    }
+    function host incast(tensor<32, uint32_t, tensor_view<, , ND, %dst_ptr>> %dst_0, tensor<32, uint32_t, tensor_view<, , ND, %src_ptr>> %src_0) outcast() #entry(false) #type(Opaque) {
+        simt.launch(32, 1, 1, %dst_0, %src_0, callee=mixed, max_threads=32);
+        return;
+    }
+    function mixed incast(tensor<32, uint32_t, tensor_view<, , ND, %dst_ptr>> %dst_0, tensor<32, uint32_t, tensor_view<, , ND, %src_ptr>> %src_0) outcast() #entry(false) #type(SimtVF) {
+        uint32_t %_expr_tmp_0_0 = block.getval(%src_0, 0, preserve_dtype=true);
+        uint32_t %_expr_tmp_1_0 = _identity(%_expr_tmp_0_0);
+        block.setval(%dst_0, 0, %_expr_tmp_1_0);
+        _store(%dst_0, %src_0);
+        return;
+    }
+}

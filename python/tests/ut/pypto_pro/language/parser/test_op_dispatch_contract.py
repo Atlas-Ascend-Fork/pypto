@@ -154,7 +154,7 @@ def runtime(monkeypatch):
         TileType=_TileType, TensorType=type("TensorType", (_TileType,), {}),
         TupleType=_TupleType, PtrType=type("PtrType", (), {}), NoneType=_NoneType,
         Span=_Span, DataType=_DType, MemorySpace=types.SimpleNamespace(Vec="vec"),
-        FunctionType=types.SimpleNamespace(SimtVF="simt", SimtCallee="simt_callee"),
+        FunctionType=types.SimpleNamespace(SimtVF="simt", SimtCallee="simt_callee", SimtKernel="simt_kernel"),
         SectionKind=types.SimpleNamespace(Cube="cube", Vector="vector"),
     )
     for name in (
@@ -912,7 +912,7 @@ def test_simt_scope_rejects_before_evaluating_operands(runtime, op_name, functio
     assert parser.evaluated == []
 
 
-@pytest.mark.parametrize("function_type", ["simt", "simt_callee"])
+@pytest.mark.parametrize("function_type", ["simt", "simt_callee", "simt_kernel"])
 def test_simt_function_rejects_non_simt_ops_before_evaluating_operands(runtime, function_type):
     parser = runtime.Parser("pl.add(undefined)")
     parser._current_func_type = function_type
@@ -921,8 +921,8 @@ def test_simt_function_rejects_non_simt_ops_before_evaluating_operands(runtime, 
     assert parser.evaluated == []
 
 
-@pytest.mark.parametrize("function_type", ["simt", "simt_callee"])
-def test_simt_scope_accepts_both_simt_function_kinds(runtime, function_type):
+@pytest.mark.parametrize("function_type", ["simt", "simt_callee", "simt_kernel"])
+def test_simt_scope_accepts_simt_function_kinds(runtime, function_type):
     runtime.simt_module()
     runtime.ir.create_op_call = lambda name, args, attrs, span: name
     parser = runtime.Parser("pl.simt.syncthreads()")

@@ -1,0 +1,5 @@
+program #entry() {
+    function kernel incast(int32_t %value_0) outcast() #entry(false) #type(SimtKernel) {
+        return;
+    }
+}

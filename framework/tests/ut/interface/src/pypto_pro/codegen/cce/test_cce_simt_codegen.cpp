@@ -515,6 +515,27 @@ ir::ProgramPtr MakeSimtAtomicOpsProgram()
                                                Sp(), std::make_shared<ir::IRDebugInfo>());
 }
 
+ir::ProgramPtr MakeSimtKernelProgram()
+{
+    auto u32 = Scalar(ir::DataType::UINT32);
+    auto fp32 = Scalar(ir::DataType::FP32);
+    auto out_type = MakeSimtTensorType("out");
+    auto src_type = MakeSimtTensorType("src");
+    auto out = Var("out", out_type);
+    auto src = Var("src", src_type);
+    auto count = Var("count", u32);
+    auto tid = Var("tid", u32);
+    auto value = Var("value", fp32);
+    auto thread_x = Call("simt.thread_idx", {}, Kwargs{{"axis", 0}}, u32);
+    auto body = Seq({Assign(tid, thread_x), Assign(value, Call("block.getval", {src, tid}, fp32)),
+                     Eval(Call("block.setval", {out, tid, value}, ir::GetUnknownType()))});
+    auto kernel = std::make_shared<const ir::Function>(
+        "simt_kernel", std::vector<ir::VarPtr>{out, src, count}, std::vector<ir::TypePtr>{}, body, Sp(),
+        ir::FunctionType::SIMT_KERNEL, true, std::vector<std::pair<std::string, std::any>>{{ir::kMaxThreadsAttr, 256}});
+    return std::make_shared<const ir::Program>(std::vector<ir::FunctionPtr>{kernel}, "simt_kernel", Sp(),
+                                               std::make_shared<ir::IRDebugInfo>());
+}
+
 } // namespace
 
 TEST(CCESimtCodegenTest, GeneratesContextCalleesMemoryAccessAndLaunch)
@@ -694,6 +715,144 @@ TEST(CCESimtCodegenTest, GeneratesRegisteredAtomicOperationsForTileAndTensor)
     EXPECT_EQ(CountOccurrences(generated, "atomicAdd("), 3u);
     EXPECT_EQ(CountOccurrences(generated, "atomicMax("), 3u);
     EXPECT_EQ(CountOccurrences(generated, "atomicMin("), 3u);
+}
+
+TEST(CCESimtCodegenTest, GeneratesRegisteredAtomicOperationsForSimtKernel)
+{
+    auto state = Var("state", MakeSimtTensorType("state", ir::DataType::UINT64));
+    auto value = ConstInt(3, ir::DataType::UINT64);
+    auto compare = ConstInt(7, ir::DataType::UINT64);
+    const std::vector<std::pair<std::string, std::string>> intrinsics = {
+        {"add", "atomicAdd"}, {"sub", "atomicSub"}, {"exch", "atomicExch"}, {"max", "atomicMax"},
+        {"min", "atomicMin"}, {"cas", "atomicCAS"}, {"and", "atomicAnd"},   {"or", "atomicOr"},
+        {"xor", "atomicXOr"}, {"inc", "atomicInc"}, {"dec", "atomicDec"},
+    };
+    std::vector<ir::StmtPtr> stmts;
+    std::size_t result_index = 0;
+    for (const auto& intrinsic : intrinsics) {
+        const auto& name = intrinsic.first;
+        std::vector<ir::ExprPtr> args = {state, ConstInt(0), value};
+        if (name == "cas") {
+            args = {state, ConstInt(0), compare, value};
+        }
+        AppendRegisteredResult(stmts, result_index, "simt.atomic_" + name, args);
+    }
+    auto kernel = std::make_shared<const ir::Function>(
+        "simt_kernel", std::vector<ir::VarPtr>{state}, std::vector<ir::TypePtr>{}, Seq(std::move(stmts)), Sp(),
+        ir::FunctionType::SIMT_KERNEL, true, Kwargs{{ir::kMaxThreadsAttr, 32}});
+    auto program = std::make_shared<const ir::Program>(std::vector<ir::FunctionPtr>{kernel}, "simt_atomic_ops", Sp(),
+                                                       std::make_shared<ir::IRDebugInfo>());
+    CCECodegen codegen(ir::SectionKind::Vector);
+    std::string generated = codegen.GenerateSingle(program, npu::tile_fwk::NPUArch::DAV_3510);
+
+    for (const auto& [name, mixed_intrinsic] : intrinsics) {
+        EXPECT_EQ(CountOccurrences(generated, "__atomic_" + name + "("), 1u) << name;
+        EXPECT_EQ(generated.find(mixed_intrinsic + "("), std::string::npos) << mixed_intrinsic;
+    }
+    EXPECT_EQ(CountOccurrences(generated, "#include \"__clang_cce_simt_atomic.h\""), 1u);
+    EXPECT_NE(generated.find("#if defined(__DAV_VEC__)\n"
+                             "#include \"__clang_cce_simt_atomic.h\"\n"
+                             "#endif\n"),
+              std::string::npos);
+    EXPECT_LT(generated.find("__clang_cce_simt_atomic.h"), generated.find("__aicore__"));
+    EXPECT_EQ(codegen.GenerateSingle(MakeSimtKernelProgram(), npu::tile_fwk::NPUArch::DAV_3510)
+                  .find("__clang_cce_simt_atomic.h"),
+              std::string::npos);
+    EXPECT_EQ(codegen.GenerateSingle(MakeSimtAtomicOpsProgram(), npu::tile_fwk::NPUArch::DAV_3510)
+                  .find("__clang_cce_simt_atomic.h"),
+              std::string::npos);
+}
+
+TEST(CCESimtCodegenTest, GeneratesSimtKernelImplementation)
+{
+    CCECodegen codegen(ir::SectionKind::Vector);
+    std::string generated = codegen.GenerateSingle(MakeSimtKernelProgram(), npu::tile_fwk::NPUArch::DAV_3510);
+
+    auto signature = FindLineContaining(generated, "__aicore__ inline void simt_kernel_impl(");
+    ASSERT_FALSE(signature.empty());
+    EXPECT_NE(signature.find("float* out"), std::string::npos);
+    EXPECT_NE(signature.find("float* src"), std::string::npos);
+    EXPECT_NE(signature.find("uint32_t count"), std::string::npos);
+    EXPECT_NE(generated.find("threadIdx.x"), std::string::npos);
+    EXPECT_EQ(generated.find("__gm__"), std::string::npos);
+    EXPECT_NE(generated.find("(src)["), std::string::npos);
+    EXPECT_NE(generated.find("(out)["), std::string::npos);
+    EXPECT_EQ(generated.find("__simt_vf__"), std::string::npos);
+    EXPECT_EQ(generated.find("cce::async_invoke"), std::string::npos);
+    EXPECT_EQ(generated.find("__global__"), std::string::npos);
+    EXPECT_EQ(generated.find("__launch_bounds__"), std::string::npos);
+    EXPECT_EQ(generated.find(" AICORE "), std::string::npos);
+    EXPECT_EQ(generated.find("#if defined(__DAV_VEC__)"), std::string::npos);
+    EXPECT_EQ(generated.find("pypto_tprint.h"), std::string::npos);
+}
+
+TEST(CCESimtCodegenTest, RejectsSimtKernelUnsupportedTargetAndArchitecture)
+{
+    CCECodegen cube_codegen(ir::SectionKind::Cube);
+    EXPECT_THROW((void)cube_codegen.GenerateSingle(MakeSimtKernelProgram(), npu::tile_fwk::NPUArch::DAV_3510),
+                 npu::tile_fwk::Error);
+
+    CCECodegen vector_codegen(ir::SectionKind::Vector);
+    EXPECT_THROW((void)vector_codegen.GenerateSingle(MakeSimtKernelProgram(), npu::tile_fwk::NPUArch::DAV_2201),
+                 npu::tile_fwk::Error);
+}
+
+TEST(CCESimtCodegenTest, KernelModeControlsHelperSignaturesAndMemoryAccess)
+{
+    auto tensor = Var("data", MakeSimtTensorType("data", ir::DataType::INT32));
+    auto load = RegisteredCall("block.getval", {tensor, ConstInt(0)}, Kwargs{{"preserve_dtype", true}});
+    auto body = Eval(RegisteredCall("block.setval", {tensor, ConstInt(1), load}));
+    auto callee = std::make_shared<const ir::Function>("helper", std::vector<ir::VarPtr>{tensor},
+                                                       std::vector<ir::TypePtr>{}, body, Sp(),
+                                                       ir::FunctionType::SIMT_CALLEE);
+    auto kernel = std::make_shared<const ir::Function>(
+        "simt_kernel", std::vector<ir::VarPtr>{tensor}, std::vector<ir::TypePtr>{},
+        Eval(Call("helper", {tensor}, ir::GetNoneType())), Sp(), ir::FunctionType::SIMT_KERNEL, true,
+        Kwargs{{ir::kMaxThreadsAttr, 32}});
+    auto program = std::make_shared<const ir::Program>(std::vector<ir::FunctionPtr>{kernel, callee}, "pure_helpers",
+                                                       Sp(), std::make_shared<ir::IRDebugInfo>());
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    std::string generated = codegen.GenerateSingle(program, npu::tile_fwk::NPUArch::DAV_3510);
+    const std::string pure_code = generated;
+    EXPECT_NE(generated.find("__aicore__ inline void helper(int32_t* data"), std::string::npos);
+    EXPECT_EQ(CountOccurrences(generated, "__aicore__ inline void helper("), 1u);
+    EXPECT_EQ(CountOccurrences(generated, "__aicore__ inline void simt_kernel_impl("), 1u);
+    EXPECT_EQ(generated.find("__gm__"), std::string::npos);
+    EXPECT_EQ(CountOccurrences(generated, "(data)["), 2u);
+    EXPECT_EQ(generated.find("__simt_callee__"), std::string::npos);
+    EXPECT_LT(generated.find("__aicore__ inline void helper("), generated.find("simt_kernel_impl("));
+    EXPECT_EQ(generated.find("#if defined(__DAV_VEC__)"), std::string::npos);
+    EXPECT_EQ(generated.find("pypto_tprint.h"), std::string::npos);
+
+    auto simt_vf = std::make_shared<const ir::Function>(
+        "simt_vf", std::vector<ir::VarPtr>{tensor}, std::vector<ir::TypePtr>{},
+        Eval(Call("helper", {tensor}, ir::GetNoneType())), Sp(), ir::FunctionType::SIMT_VF, false,
+        Kwargs{{ir::kMaxThreadsAttr, 32}});
+    auto launch = RegisteredCall("simt.launch", {ConstInt(32), ConstInt(1), ConstInt(1), tensor},
+                                 Kwargs{{"callee", std::string("simt_vf")}, {"max_threads", 32}});
+    auto mixed_kernel = std::make_shared<const ir::Function>("kernel", std::vector<ir::VarPtr>{tensor},
+                                                             std::vector<ir::TypePtr>{}, Eval(launch), Sp(),
+                                                             ir::FunctionType::IN_CORE, true);
+    auto mixed_program = std::make_shared<const ir::Program>(
+        std::vector<ir::FunctionPtr>{mixed_kernel, simt_vf, callee}, "mixed_helpers", Sp(),
+        std::make_shared<ir::IRDebugInfo>());
+
+    generated = codegen.GenerateSingle(mixed_program, npu::tile_fwk::NPUArch::DAV_3510);
+    EXPECT_NE(generated.find("__simt_callee__ inline void helper(__gm__ int32_t* data"), std::string::npos);
+    EXPECT_EQ(CountOccurrences(generated, "__simt_callee__ inline void helper("), 1u);
+    auto vf_pos = generated.find("__simt_vf__ __launch_bounds__(32) inline void simt_vf(");
+    auto kernel_pos = generated.find("__aicore__ inline void kernel_impl_vector(");
+    ASSERT_NE(vf_pos, std::string::npos);
+    ASSERT_NE(kernel_pos, std::string::npos);
+    EXPECT_LT(generated.find("__simt_callee__"), vf_pos);
+    EXPECT_LT(vf_pos, kernel_pos);
+    EXPECT_EQ(CountOccurrences(generated, "*((__gm__ int32_t*)data + "), 2u);
+    EXPECT_EQ(generated.find("__aicore__ inline void helper("), std::string::npos);
+    EXPECT_NE(generated.find("#if defined(__DAV_VEC__)"), std::string::npos);
+    EXPECT_NE(generated.find("pypto_tprint.h"), std::string::npos);
+
+    EXPECT_EQ(codegen.GenerateSingle(program, npu::tile_fwk::NPUArch::DAV_3510), pure_code);
 }
 
 } // namespace codegen

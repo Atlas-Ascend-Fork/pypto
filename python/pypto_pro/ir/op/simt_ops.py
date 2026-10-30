@@ -540,7 +540,11 @@ def _parse_simt_launch(parser: Any, call: ast.Call, local_name: str, callee_temp
     from pypto_pro.language.parser.decorator import get_simt_max_threads
 
     span = parser.span_tracker.get_span(call)
-    if parser._current_func_type in (_ir_core.FunctionType.SimtVF, _ir_core.FunctionType.SimtCallee):
+    if parser._current_func_type in (
+        _ir_core.FunctionType.SimtVF,
+        _ir_core.FunctionType.SimtCallee,
+        _ir_core.FunctionType.SimtKernel,
+    ):
         raise NotSupported("Nested SIMT vector-function invocation is not supported", span=span)
     if parser.target != _ir_core.SectionKind.Vector:
         raise InvalidOperation(

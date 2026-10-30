@@ -895,8 +895,9 @@ class FunctionType(enum.IntEnum):
     - Orchestration: Host/AICPU control and coordination
     - InCore: AICore sub-graph execution
     - Helper: Scalar helper function callable from kernels
-    - SimtVF: A5 SIMT vector function launched from an AIV kernel
-    - SimtCallee: A5 helper callable from SIMT functions
+    - SimtVF: 3510 SIMT vector function launched from an AIV kernel
+    - SimtCallee: 3510 helper callable from SIMT functions
+    - SimtKernel: 3510 SIMT kernel launched directly from host
     """
 
     Opaque = ...
@@ -905,6 +906,7 @@ class FunctionType(enum.IntEnum):
     Helper = ...
     SimtVF = ...
     SimtCallee = ...
+    SimtKernel = ...
 
 
 class PtrType(Type):
@@ -1662,7 +1664,7 @@ class Function(IRNode):
     """Function name."""
 
     func_type: Final[FunctionType]
-    """Function type (Opaque, Orchestration, InCore, Helper, SimtVF, or SimtCallee)."""
+    """Function type (Opaque, Orchestration, InCore, Helper, SimtVF, SimtCallee, or SimtKernel)."""
 
     entry: Final[bool]
     """Whether this is the program entry function."""
