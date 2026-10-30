@@ -3961,6 +3961,253 @@ static void MoveUbToUb(const TensorData& out, const TensorData& self)
     tout.first.copy_(tself.first);
 }
 
+#define HIF4_QUANT_BLOCK 64
+#define HIF4_QUANT_SUB_BLOCK 8
+#define HIF4_QUANT_MICRO_BLOCK 4
+
+static constexpr int64_t kHiF4MicroPerBlock = 16;
+static constexpr int64_t kHiF4SubPerBlock = 8;
+static constexpr int kHiF4E6M2ExpBias = 48;
+static constexpr int kHiF4E6M2ExpMin = -48;
+static constexpr int kHiF4E6M2ExpMax = 15;
+// bf16(1/7) == 0x3E12 == 0.142578125, pre-multiplied into Ma before the e6m2 cast.
+static constexpr float kHiF4Recp7 = 0.142578125f;
+// e1m2 (S1P2) magnitudes: value = (-1)^S * (P + M * 0.25)
+static constexpr float kHiF4E1M2Values[8] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f};
+
+static uint8_t EncodeE1M2(float value)
+{
+    if (std::isnan(value)) {
+        return 0x7u; // e1m2 has no NaN code; saturate to max magnitude
+    }
+    const uint8_t sign = value < 0.0f ? 0x8u : 0x0u;
+    const float mag = std::fabs(value);
+    if (std::isinf(mag)) {
+        return static_cast<uint8_t>(sign | 0x7u);
+    }
+    int best = 0;
+    float minDiff = std::fabs(kHiF4E1M2Values[0] - mag);
+    for (int code = 1; code < 0x8; ++code) {
+        const float diff = std::fabs(kHiF4E1M2Values[code] - mag);
+        if (diff < minDiff) {
+            minDiff = diff;
+            best = code;
+        } else if (FloatToBits(diff) == FloatToBits(minDiff)) {
+            best = (best % 0x2 == 0) ? best : code; // tie: round to even code
+        }
+    }
+    return static_cast<uint8_t>(sign | static_cast<uint8_t>(best));
+}
+
+static uint8_t EncodeE6M2(float maxAbs)
+{
+    if (std::isnan(maxAbs)) {
+        return 0xFFu; // e6m2 NaN
+    }
+    const float value = RoundToBf16(std::fabs(maxAbs));
+    if (std::isinf(value)) {
+        return 0xFEu; // saturate to max finite e6m2 (0xFF is reserved for NaN)
+    }
+    if ((FloatToBits(value) & 0x7FFFFFFFu) == 0u) {
+        return 0u;
+    }
+    const float scaled = RoundToBf16(value * kHiF4Recp7);
+    if ((FloatToBits(scaled) & 0x7FFFFFFFu) == 0u) {
+        return 0u;
+    }
+    const int expRaw = std::clamp(static_cast<int>(std::floor(std::log2(scaled))), kHiF4E6M2ExpMin, kHiF4E6M2ExpMax);
+    int biasedExp = expRaw + kHiF4E6M2ExpBias;
+    const float mantissaFrac = scaled / std::ldexp(1.0f, expRaw);
+    int mantBits = static_cast<int>(std::nearbyint((mantissaFrac - 1.0f) * 4.0f));
+    if (mantBits >= 0x4) {
+        mantBits = 0;
+        biasedExp += 1;
+    }
+    if (biasedExp > 0x3F || (biasedExp == 0x3F && mantBits == 3)) {
+        biasedExp = 0x3F;
+        mantBits = 0x2; // 0xFF is NaN in e6m2; saturate to max finite
+    }
+    return static_cast<uint8_t>((biasedExp << 2) | mantBits);
+}
+
+static float DecodeE6M2(uint8_t code)
+{
+    const int exp = static_cast<int>((code >> 2) & 0x3Fu);
+    const int mant = static_cast<int>(code & 0x03u);
+    if (exp == 0 && mant == 0) {
+        return 0.0f;
+    }
+    return (1.0f + mant * 0.25f) * std::ldexp(1.0f, exp - kHiF4E6M2ExpBias);
+}
+
+static float ReciprocalE6M2(uint8_t code)
+{
+    const double value = static_cast<double>(DecodeE6M2(code));
+    if (!(value > 0.0)) {
+        return 0.0f;
+    }
+    return RoundToBf16(static_cast<float>(1.0 / value));
+}
+
+static int32_t PackHiF4ScaleWord(uint8_t ea, const uint8_t* eb, const uint8_t* ec)
+{
+    uint32_t ebByte = 0;
+    for (int64_t i = 0; i < kHiF4SubPerBlock; ++i) {
+        ebByte |= (eb[i] & 0x1u) != 0 ? (1u << i) : 0u;
+    }
+    uint32_t ecLow = 0;
+    uint32_t ecHigh = 0;
+    for (int64_t j = 0; j < kHiF4MicroPerBlock; ++j) {
+        const uint32_t bit = (ec[j] & 0x1u) != 0 ? 1u : 0u;
+        if (j < 0x8) {
+            ecLow |= bit << j;
+        } else {
+            ecHigh |= bit << (j - 0x8);
+        }
+    }
+    const uint32_t word = static_cast<uint32_t>(ea) | (ebByte << 8) | (ecLow << 16) | (ecHigh << 24);
+    return static_cast<int32_t>(word);
+}
+
+struct QuantHiF4Shapes {
+    std::vector<int64_t> quantShape; // rank n, last dim packed
+    std::vector<int64_t> scaleShape; // rank n, last dim / 64: one uint32 word per Block
+    int64_t rows;
+    int64_t cols;
+    int64_t totalElem;
+    int64_t totalGroups;
+    int64_t groupCols;
+    int64_t quantCols;
+};
+
+static QuantHiF4Shapes BuildQuantHiF4Shapes(const torch::Tensor& input, DataType quantDtype, int64_t axis)
+{
+    QuantHiF4Shapes shapes;
+    shapes.quantShape = input.sizes().vec();
+    const int64_t rank = static_cast<int64_t>(shapes.quantShape.size());
+    const int64_t normalizedAxis = axis < 0 ? axis + rank : axis;
+    ASSERT(CalculatorErrorScene::QUANTHIF4_RANK_INVALID, normalizedAxis >= 0 && normalizedAxis < rank)
+        << "QuantHiF4 axis is out of range. Current axis: " << axis << ", input rank: " << rank;
+    ASSERT(CalculatorErrorScene::QUANTHIF4_RANK_INVALID, normalizedAxis == rank - 1)
+        << "QuantHiF4 interpreter only supports the last axis. Current axis: " << axis << ", input rank: " << rank;
+    shapes.cols = shapes.quantShape.back();
+    ASSERT(CalculatorErrorScene::QUANTHIF4_RANK_INVALID, shapes.cols % 2 == 0)
+        << "QuantHiF4 requires an even valid last dimension. Current last dim: " << shapes.cols;
+    shapes.totalElem = input.numel();
+
+    shapes.rows = 1;
+    for (size_t i = 0; i + 1 < shapes.quantShape.size(); ++i) {
+        shapes.rows *= shapes.quantShape[i];
+    }
+    shapes.groupCols = (shapes.cols + HIF4_QUANT_BLOCK - 1) / HIF4_QUANT_BLOCK;
+    shapes.totalGroups = shapes.rows * shapes.groupCols;
+    shapes.scaleShape = shapes.quantShape;
+    shapes.scaleShape.back() = shapes.groupCols;
+    shapes.quantShape.back() = LastDimPackedCount(shapes.cols, quantDtype);
+    shapes.quantCols = shapes.quantShape.back();
+
+    return shapes;
+}
+
+static void FillQuantHiF4Block(const float* src, uint8_t* quantPtr, const QuantHiF4Shapes& shapes, int64_t group,
+                               int32_t* expPtr, int64_t scaleAlg)
+{
+    const int64_t row = group / shapes.groupCols;
+    const int64_t colInRow = group % shapes.groupCols * HIF4_QUANT_BLOCK;
+    // A partial final group is zero-padded independently for every row.
+    float blockSrc[HIF4_QUANT_BLOCK] = {};
+    const int64_t count = std::min<int64_t>(HIF4_QUANT_BLOCK, shapes.cols - colInRow);
+    std::copy_n(src + row * shapes.cols + colInRow, count, blockSrc);
+
+    // ---- Stage 1: per-4 / per-8 / per-64 abs-max, all in BF16 precision ----
+    // NaN propagates through every reduce level, matching the NumPy golden's
+    // ndarray.max() semantics.
+    float microMax[kHiF4MicroPerBlock];
+    float subMax[kHiF4SubPerBlock];
+    float blockMax = 0.0f;
+    for (int64_t j = 0; j < kHiF4MicroPerBlock; ++j) {
+        float mc = 0.0f;
+        bool hasNaN = false;
+        for (int64_t k = 0; k < HIF4_QUANT_MICRO_BLOCK; ++k) {
+            const float val = RoundToBf16(std::fabs(blockSrc[j * HIF4_QUANT_MICRO_BLOCK + k]));
+            hasNaN = hasNaN || std::isnan(val);
+            mc = std::isnan(val) ? mc : std::max(mc, val);
+        }
+        microMax[j] = hasNaN ? std::numeric_limits<float>::quiet_NaN() : mc;
+        blockMax = std::isnan(microMax[j]) ? microMax[j] : std::max(blockMax, microMax[j]);
+    }
+    for (int64_t i = 0; i < kHiF4SubPerBlock; ++i) {
+        float mb = 0.0f;
+        for (int64_t j = 0; j < HIF4_QUANT_SUB_BLOCK / HIF4_QUANT_MICRO_BLOCK; ++j) {
+            const float val = microMax[i * (HIF4_QUANT_SUB_BLOCK / HIF4_QUANT_MICRO_BLOCK) + j];
+            mb = std::isnan(val) ? val : std::max(mb, val);
+        }
+        subMax[i] = mb;
+    }
+
+    // ---- Stage 2: Ea / Eb / Ec and the per-4 scaling factor ----
+    const uint8_t ea = EncodeE6M2(blockMax);
+    const float eaRec = ReciprocalE6M2(ea);
+
+    uint8_t ebBits[kHiF4SubPerBlock];
+    float ebRec[kHiF4SubPerBlock];
+    for (int64_t i = 0; i < kHiF4SubPerBlock; ++i) {
+        ebBits[i] = RoundToBf16(subMax[i] * eaRec) >= (scaleAlg == 1 ? 3.75f : 4.0f) ? 1u : 0u;
+        ebRec[i] = ebBits[i] != 0 ? 0.5f : 1.0f;
+    }
+
+    uint8_t ecBits[kHiF4MicroPerBlock];
+    float scale[kHiF4MicroPerBlock];
+    for (int64_t j = 0; j < kHiF4MicroPerBlock; ++j) {
+        const float ebRecForMicro = ebRec[j * HIF4_QUANT_MICRO_BLOCK / HIF4_QUANT_SUB_BLOCK];
+        const float ecTmp = RoundToBf16(RoundToBf16(microMax[j] * eaRec) * ebRecForMicro);
+        ecBits[j] = ecTmp >= (scaleAlg == 1 ? 1.875f : 2.0f) ? 1u : 0u;
+        const float ecRec = ecBits[j] != 0 ? 0.5f : 1.0f;
+        scale[j] = RoundToBf16(eaRec * RoundToBf16(ebRecForMicro * ecRec));
+    }
+
+    expPtr[group] = PackHiF4ScaleWord(ea, ebBits, ecBits);
+
+    // ---- Stage 3: scale and cast each element to its e1m2 code ----
+    for (int64_t j = 0; j < kHiF4MicroPerBlock; ++j) {
+        for (int64_t k = 0; k < HIF4_QUANT_MICRO_BLOCK; ++k) {
+            const int64_t col = colInRow + j * HIF4_QUANT_MICRO_BLOCK + k;
+            if (col >= shapes.cols) {
+                continue;
+            }
+            const float scaled = RoundToBf16(blockSrc[j * HIF4_QUANT_MICRO_BLOCK + k] * scale[j]);
+            const uint8_t encoded = EncodeE1M2(scaled);
+            uint8_t& packed = quantPtr[row * shapes.quantCols + col / 0x2];
+            packed = (col & 1) == 0 ? static_cast<uint8_t>((packed & 0xF0u) | encoded) :
+                                      static_cast<uint8_t>((packed & 0x0Fu) | (encoded << 0x4));
+        }
+    }
+}
+
+static void QuantHiF4(const TensorData& out, const TensorData& exp, const TensorData& scratch, const TensorData& self,
+                      int64_t scaleAlg, int64_t axis)
+{
+    auto tout = From(out);
+    auto texp = From(exp);
+    auto input = From(self).second.to(torch::kFloat32).contiguous();
+    ASSERT(CalculatorErrorScene::QUANTHIF4_RANK_INVALID, input.dim() >= 1 && input.dim() <= 4)
+        << "QuantHiF4 supports 1D to 4D input.";
+    ASSERT(CalculatorErrorScene::QUANTHIF4_RANK_INVALID, self.dtype == DT_BF16) << "QuantHiF4 requires BF16 input.";
+    ASSERT(CalculatorErrorScene::QUANTHIF4_RANK_INVALID, scaleAlg == 0 || scaleAlg == 1)
+        << "QuantHiF4 scaleAlg must be 0 or 1.";
+    const auto shapes = BuildQuantHiF4Shapes(input, out.dtype, axis);
+    auto quant = torch::zeros(shapes.quantShape, torch::TensorOptions().dtype(torch::kUInt8));
+    auto exponent = torch::zeros(shapes.scaleShape, torch::TensorOptions().dtype(torch::kInt32));
+    for (int64_t group = 0; group < shapes.totalGroups; ++group) {
+        FillQuantHiF4Block(input.data_ptr<float>(), quant.data_ptr<uint8_t>(), shapes, group,
+                           exponent.data_ptr<int32_t>(), scaleAlg);
+    }
+    tout.first.copy_(quant);
+    texp.first.copy_(exponent);
+    // Scratch contents are internal and do not participate in numerical results.
+    From(scratch).first.zero_();
+}
+
 static struct CalcOps calcOps = {
     .Random = Random,
     .AllClose = AllClose,
@@ -4111,6 +4358,7 @@ static struct CalcOps calcOps = {
     .TopK = TopK,
     .QuantMX = QuantMX,
     .MoveUbToUb = MoveUbToUb,
+    .QuantHiF4 = QuantHiF4,
     .Interleave = Interleave,
     .DeInterleave = DeInterleave,
     .DeInterleaveSingle = DeInterleaveSingle,

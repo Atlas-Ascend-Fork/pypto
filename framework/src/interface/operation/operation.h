@@ -120,6 +120,8 @@ public:
     static const std::string mxQuantMode;
     static const std::string mxQuantAxis;
     static const std::string mxQuantPerformanceMode;
+    static const std::string hif4ScaleAlg;
+    static const std::string hif4QuantAxis;
     static const std::string gmTensorParamIdxInCall;
     static const std::string staticValidShape;
     // HashOrder attribute keys

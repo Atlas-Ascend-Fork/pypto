@@ -4078,6 +4078,189 @@ def gen_quantmx_op_golden(case_name: str, output: Path, case_index: int = None) 
     logging.debug("Case(%s), Golden creating...", case_name)
     return gen_op_golden("QuantMX", golden_func, output, case_index)
 
+def _hif4_to_bf16_float32(values: np.ndarray) -> np.ndarray:
+    """Round to BF16 and widen back to float32, mirroring a CCE bf16 register write."""
+    return np.asarray(values, dtype=np.float32).astype(bfloat16).astype(np.float32)
+
+
+def _hif4_encode_e6m2(max_abs: np.ndarray) -> np.ndarray:
+    """per-64 abs-max -> e6m2 byte code (6 exp bits [7:2] + 2 mantissa bits [1:0], no sign).
+
+    Mirrors CCE vmuls(Ma, bf16(1/7)) -> vcvt_bf162e6m2(ROUND_R, PART_EVEN).
+    """
+    exp_bias = 48
+    exp_min = -48
+    exp_max = 15
+    recp7 = np.float32(0.142578125)  # bf16(1/7) == 0x3E12
+    ma = _hif4_to_bf16_float32(np.abs(max_abs))
+    codes = np.zeros(ma.shape, dtype=np.uint8)
+    flat_ma = ma.reshape(-1)
+    flat_codes = codes.reshape(-1)
+    for i in range(flat_ma.size):
+        value = float(flat_ma[i])
+        if math.isnan(value):
+            flat_codes[i] = 0xFF  # e6m2 NaN
+            continue
+        if math.isinf(value):
+            flat_codes[i] = 0xFE  # saturate to max finite (0xFF is reserved for NaN)
+            continue
+        if value == 0.0:
+            continue
+        scaled = float(_hif4_to_bf16_float32(np.float32(value) * recp7))
+        if scaled == 0.0:
+            continue
+        exp_raw = max(exp_min, min(exp_max, int(math.floor(math.log2(scaled)))))
+        biased_exp = exp_raw + exp_bias
+        mantissa_frac = scaled / (2.0**exp_raw)
+        # Python's round() is half-to-even, matching CCE ROUND_R.
+        mant_bits = int(round((mantissa_frac - 1.0) * 4.0))
+        if mant_bits >= 4:
+            mant_bits = 0
+            biased_exp += 1
+        if biased_exp > 63 or (biased_exp == 63 and mant_bits == 3):
+            biased_exp = 63
+            mant_bits = 2
+        flat_codes[i] = np.uint8((biased_exp << 2) | mant_bits)
+    return codes
+
+
+def _hif4_decode_e6m2(codes: np.ndarray) -> np.ndarray:
+    codes = np.asarray(codes, dtype=np.uint8)
+    exp = ((codes >> np.uint8(2)) & np.uint8(0x3F)).astype(np.float64)
+    mant = (codes & np.uint8(0x03)).astype(np.float64)
+    values = (1.0 + mant * 0.25) * np.power(2.0, exp - 48.0)  # e6m2 exponent bias = 48
+    return np.where((exp == 0.0) & (mant == 0.0), 0.0, values)
+
+
+def _hif4_e6m2_reciprocal_bf16(codes: np.ndarray) -> np.ndarray:
+    """Ea_rec as BF16. Mirrors CCE vcvt_rcpe6m22bf16: a true FP reciprocal of the decoded
+    e6m2 value, not 2^(-floor(log2(Ma)))."""
+    values = _hif4_decode_e6m2(codes)
+    with np.errstate(divide="ignore"):
+        recips = np.where(values > 0, 1.0 / values, 0.0)
+    return _hif4_to_bf16_float32(recips.astype(np.float32))
+
+
+def _hif4_pack_scale_words(ea: np.ndarray, eb_bits: np.ndarray, ec_bits: np.ndarray) -> np.ndarray:
+    """Pack one Block's Ea/Eb/Ec into the 4-byte HIFLOAT4_SCALE word (little-endian).
+
+    Byte0 = Ea (e6m2), Byte1 = Eb (8 x 1-bit, LSB-first), Byte2-3 = Ec (16 x 1-bit, LSB-first).
+    Matches DynamicHiF4QuantTailAxis::ComputeScale and PackHiF4ScaleWord.
+    """
+    groups = ea.shape[0]
+    eb_byte = np.zeros(groups, dtype=np.uint32)
+    for i in range(8):  # 8 sub-blocks (Eb bits) per 64-element Block
+        eb_byte |= (eb_bits[:, i].astype(np.uint32) & np.uint32(1)) << np.uint32(i)
+    ec_low = np.zeros(groups, dtype=np.uint32)
+    ec_high = np.zeros(groups, dtype=np.uint32)
+    for j in range(16):  # 16 micro-blocks (Ec bits) per 64-element Block
+        bit = ec_bits[:, j].astype(np.uint32) & np.uint32(1)
+        if j < 8:
+            ec_low |= bit << np.uint32(j)
+        else:
+            ec_high |= bit << np.uint32(j - 8)
+    return (
+        ea.astype(np.uint32)
+        | (eb_byte << np.uint32(8))
+        | (ec_low << np.uint32(16))
+        | (ec_high << np.uint32(24))
+    ).astype(np.uint32)
+
+
+@TestCaseLoader.reg_params_handler(ops=["QuantHiF4"])
+def params_quanthif4_func(params: dict):
+    params["scale_alg"] = int(params.get("scale_alg", 0))
+    assert params["scale_alg"] in (0, 1), "QuantHiF4 scale_alg must be 0 or 1."
+    params["axis"] = int(params.get("axis", -1))
+    return params
+
+
+def _quanthif4_normalize_axis(axis: int, rank: int) -> int:
+    if axis < 0:
+        axis += rank
+    if axis < 0 or axis >= rank:
+        raise ValueError(f"QuantHiF4 axis is out of range. axis={axis}, rank={rank}")
+    if axis != rank - 1:
+        raise ValueError(f"QuantHiF4 golden only supports the last axis. axis={axis}")
+    return axis
+
+
+def _quanthif4_golden(x: np.ndarray, scale_alg: int = 0):
+    """Returns [quantized_packed(uint8), scale_words(uint32)]."""
+    block_size = 64
+    sub_block_size = 8
+    micro_block_size = 4
+    sub_per_block = block_size // sub_block_size        # 8 Eb bits per Block
+    micro_per_block = block_size // micro_block_size    # 16 Ec bits per Block
+    micro_per_sub = sub_block_size // micro_block_size  # 2 micro-blocks per sub-block
+    eb_thresh = np.float32(3.75 if scale_alg == 1 else 4.0)
+    ec_thresh = np.float32(1.875 if scale_alg == 1 else 2.0)
+
+    orig_shape = x.shape
+    cols = orig_shape[-1]
+    if cols % 2:
+        raise ValueError(f"QuantHiF4 requires an even last dim. Current last dim: {cols}")
+    padded_cols = (cols + block_size - 1) // block_size * block_size
+    padding = [(0, 0)] * x.ndim
+    padding[-1] = (0, padded_cols - cols)
+    padded = np.pad(np.asarray(x, dtype=np.float32), padding, constant_values=0)
+    groups = padded.size // block_size
+
+    flat = padded.reshape(-1)
+    abs_blk = _hif4_to_bf16_float32(np.abs(flat)).reshape(groups, block_size)
+
+    # ---- Stage 1: per-4 / per-8 / per-64 abs-max ----
+    mc = abs_blk.reshape(groups, micro_per_block, micro_block_size).max(axis=2)
+    mb = abs_blk.reshape(groups, sub_per_block, sub_block_size).max(axis=2)
+    ma = abs_blk.max(axis=1)
+
+    # ---- Stage 2: Ea / Eb / Ec and the per-4 scaling factor ----
+    ea = _hif4_encode_e6m2(ma)
+    ea_rec = _hif4_e6m2_reciprocal_bf16(ea)[:, None]
+
+    eb_bits = (_hif4_to_bf16_float32(mb * ea_rec) >= eb_thresh).astype(np.uint8)
+    eb_rec = np.where(eb_bits == 1, np.float32(0.5), np.float32(1.0))
+    eb_rec_per_micro = np.repeat(eb_rec, micro_per_sub, axis=1)
+
+    ec_tmp = _hif4_to_bf16_float32(_hif4_to_bf16_float32(mc * ea_rec) * eb_rec_per_micro)
+    ec_bits = (ec_tmp >= ec_thresh).astype(np.uint8)
+    ec_rec = np.where(ec_bits == 1, np.float32(0.5), np.float32(1.0))
+
+    ebc_rec = _hif4_to_bf16_float32(eb_rec_per_micro * ec_rec)
+    scale = _hif4_to_bf16_float32(ea_rec * ebc_rec)
+
+    # ---- Stage 3: scale and cast each element to its e1m2 code ----
+    scale_per_elem = np.repeat(scale, micro_block_size, axis=1)
+    scaled = _hif4_to_bf16_float32(flat.reshape(groups, block_size) * scale_per_elem)
+    codes = _encode_e1m2_cast(scaled.reshape(-1)).reshape(padded.shape)[..., :cols]
+    quant = _pack_fp4_e1m2x2_low_first(codes)
+
+    scale_words = _hif4_pack_scale_words(ea, eb_bits, ec_bits)
+    # The public scale keeps the input rank: one 4-byte word per Block on the quantization
+    # axis, no trailing dim (HiF4 packs Ea/Eb/Ec into a single word, so there is no
+    # intra-block axis to represent).
+    scale_shape = list(orig_shape[:-1]) + [padded_cols // block_size]
+    return [quant, scale_words.reshape(scale_shape)]
+
+
+@GoldenRegister.reg_golden_func(
+    case_names=[
+        "TestQuantHiF4/QuantHiF4OperationTest.TestQuantHiF4"
+    ]
+)
+def gen_quanthif4_op_golden(case_name: str, output: Path, case_index: int = None) -> bool:
+    def golden_func(inputs: list, _config: dict):
+        params = _config.get("params", {}) or {}
+        axis = int(params.get("axis", -1))
+        x = inputs[0]
+        if x.ndim < 1 or x.ndim > 4:
+            raise ValueError("QuantHiF4 golden only supports 1D to 4D input.")
+        _quanthif4_normalize_axis(axis, x.ndim)
+        return _quanthif4_golden(x, int(params.get("scale_alg", 0)))
+
+    logging.debug("Case(%s), Golden creating...", case_name)
+    return gen_op_golden("QuantHiF4", golden_func, output, case_index)
+
 
 @GoldenRegister.reg_golden_func(
     case_names=[

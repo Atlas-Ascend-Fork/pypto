@@ -18,6 +18,7 @@
 #include "interface/function/function.h"
 #include "interface/operation/operation.h"
 #include "interface/program/program.h"
+#include "tilefwk/hif4_scratch.h"
 #include "tilefwk/data_type.h"
 #include "tilefwk/platform.h"
 
@@ -170,6 +171,131 @@ TEST_F(OperationOpsTest, QuantMX_Fp32ToFp4Unsupported)
     {
         EXPECT_THROW(QuantMX(input, DT_FP4_E2M1, DequantScaleRoundingMode::ROUND_DOWN, -1, true), std::exception);
         EXPECT_THROW(QuantMX(input, DT_FP4_E2M1, DequantScaleRoundingMode::ROUND_UP, -1, true), std::exception);
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+TEST_F(OperationOpsTest, QuantHiF4Bf16)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    TileShape::Current().SetVecTile(8, 128);
+    Tensor input(DT_BF16, {8, 128});
+
+    FUNCTION("QuantHiF4Bf16", {input})
+    {
+        auto defaultRes = QuantHiF4(input);
+        EXPECT_EQ(std::get<0>(defaultRes).GetDataType(), DT_HF4);
+        EXPECT_EQ(std::get<1>(defaultRes).GetDataType(), DT_UINT32);
+        EXPECT_EQ(std::get<1>(defaultRes).GetShape(), std::vector<int64_t>({8, 2}));
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(OperationOpsTest, QuantHiF4MultiTile)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    // [8, 512] split into four tiles of [2, 512].
+    TileShape::Current().SetVecTile(2, 512);
+    Tensor input(DT_BF16, {8, 512});
+
+    FUNCTION("QuantHiF4MultiTile", {input})
+    {
+        auto res = QuantHiF4(input);
+        EXPECT_EQ(std::get<0>(res).GetDataType(), DT_HF4);
+        EXPECT_EQ(std::get<0>(res).GetShape(), std::vector<int64_t>({8, 512}));
+        EXPECT_EQ(std::get<1>(res).GetDataType(), DT_UINT32);
+        EXPECT_EQ(std::get<1>(res).GetShape(), std::vector<int64_t>({8, 8}));
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(OperationOpsTest, QuantHiF4TailTiles)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    TileShape::Current().SetVecTile(4, 128);
+    Tensor input(DT_BF16, {6, 192});
+    FUNCTION("QuantHiF4TailTiles", {input})
+    {
+        auto res = QuantHiF4(input, DT_HF4, 1);
+        EXPECT_EQ(std::get<1>(res).GetShape(), std::vector<int64_t>({6, 3}));
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(OperationOpsTest, QuantHiF4PartialGroups)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    TileShape::Current().SetVecTile(4, 512);
+    Tensor input(DT_BF16, {6, 704});
+    input.GetStorage()->UpdateDynValidShape({6, 650});
+    FUNCTION("QuantHiF4PartialGroups", {input})
+    {
+        auto result = QuantHiF4(input);
+        EXPECT_EQ(std::get<0>(result).GetShape(), std::vector<int64_t>({6, 704}));
+        EXPECT_EQ(std::get<1>(result).GetShape(), std::vector<int64_t>({6, 11}));
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(OperationOpsTest, QuantHiF4RejectsUnalignedTileCapacity)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    TileShape::Current().SetVecTile(3, 145);
+    Tensor input(DT_BF16, {5, 576});
+    FUNCTION("QuantHiF4UnalignedTileCapacity", {input}) { EXPECT_THROW(QuantHiF4(input), std::exception); }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(OperationOpsTest, QuantHiF4RejectsUnalignedView)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    TileShape::Current().SetVecTile(4, 704);
+    Tensor input(DT_BF16, {6, 650});
+    FUNCTION("QuantHiF4UnalignedView", {input}) { EXPECT_THROW(QuantHiF4(input), std::exception); }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(OperationOpsTest, QuantHiF4WholeTileScratchBounds)
+{
+    EXPECT_EQ(hif4::ScratchLayout(1, 512).bytes, 736u);
+    EXPECT_EQ(hif4::ScratchLayout(32, 1024).bytes, 47104u);
+    EXPECT_EQ(hif4::ScratchLayout(3, 192).bytes, 928u);
+    for (size_t capacityCols = 64; capacityCols <= 2048; capacityCols += 64) {
+        const hif4::ScratchLayout layout(7, capacityCols);
+        EXPECT_EQ(layout.max8Offset, layout.scaleBytes);
+        EXPECT_EQ(layout.eaOffset, layout.max8Offset + layout.max8Bytes);
+        EXPECT_GE(layout.bytes, layout.ecOffset + layout.metaBytes);
+        EXPECT_GE(layout.bytes, layout.elements);
+        for (size_t validCols = 2; validCols <= capacityCols; validCols += 2) {
+            EXPECT_LE((validCols + 63) / 64, layout.cols / 64);
+        }
+        {
+            const auto elements = layout.elements;
+            for (size_t base = 0; base < elements; base += 512) {
+                const auto count = std::min<size_t>(512, elements - base);
+                EXPECT_LE((base + count) / 4 * 2, layout.scaleBytes); // initial max4
+                EXPECT_LE(base + count, layout.scaleBytes);           // expanded inverse scales
+                EXPECT_LE((base + count) / 8 * 2, layout.max8Bytes);
+                EXPECT_LE(base / 512 * 32 + 32, layout.metaBytes);
+                // Reverse expansion never touches max4 of a still unread lower batch.
+                EXPECT_GE(base, base / 4 * 2);
+            }
+        }
+    }
+}
+
+TEST_F(OperationOpsTest, QuantHiF4ScratchPerMatrix)
+{
+    Program::GetInstance().Reset();
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    TileShape::Current().SetVecTile(2, 3, 5, 192);
+    Tensor input(DT_BF16, {2, 3, 5, 192}, "input");
+    FUNCTION("QuantHiF4ScratchPerMatrix", {input})
+    {
+        auto result = QuantHiF4(input);
+        (void)result;
+        const auto& op = Program::GetInstance().GetCurrentFunction()->Operations(false).back();
+        EXPECT_EQ(op.GetOOperands().at(2)->GetShape(),
+                  std::vector<int64_t>({static_cast<int64_t>(hif4::ScratchLayout(5, 192).bytes)}));
     }
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
 }

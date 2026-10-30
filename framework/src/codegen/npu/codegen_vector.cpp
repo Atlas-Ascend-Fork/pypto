@@ -1493,4 +1493,30 @@ std::string CodeGenOpNPU::GenMoveUbToUbOp() const
     oss << STMT_END;
     return oss.str();
 }
+
+std::string CodeGenOpNPU::GenQuantHiF4Op() const
+{
+    ASSERT(GenCodeErr::PRINT_MODE_ERROR, isSupportTileTensor) << "QuantHiF4 only supports tile tensor codegen.";
+
+    int64_t scaleAlg = 0;
+    ASSERT(OperErr::ATTRIBUTE_INVALID, GetOpAttr(OpAttributeKey::hif4ScaleAlg, scaleAlg))
+        << "QuantHiF4 missing required attribute: " << OpAttributeKey::hif4ScaleAlg;
+    int64_t axis = 0;
+    ASSERT(OperErr::ATTRIBUTE_INVALID, GetOpAttr(OpAttributeKey::hif4QuantAxis, axis))
+        << "QuantHiF4 missing required attribute: " << OpAttributeKey::hif4QuantAxis;
+
+    // Static views are 64-aligned; the TileOp pads columns of valid input rows.
+    // Capacity bounds scratch; compute skips invalid rows without an input copy.
+    const auto& inputShape = shape[ID3];
+    const int64_t computeCols = (inputShape.back() + 63) / 64 * 64;
+    const int64_t computeRows = inputShape.size() > 1 ? inputShape[inputShape.size() - 2] : 1;
+    std::vector<int64_t> templateParams = {scaleAlg, axis, computeCols, computeRows};
+
+    std::ostringstream oss;
+    oss << tileOpName;
+    oss << WrapParamByAngleBrackets(templateParams);
+    oss << WrapParamByParentheses(GetTileOpParamsByOrder());
+    oss << STMT_END;
+    return oss.str();
+}
 } // namespace npu::tile_fwk

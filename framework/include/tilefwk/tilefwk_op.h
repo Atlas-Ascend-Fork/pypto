@@ -386,6 +386,8 @@ std::tuple<Tensor, Tensor> Quant(const Tensor& input, bool isSymmetry = true, bo
 std::tuple<Tensor, Tensor> QuantMX(const Tensor& input, DataType quantDtype = DataType::DT_FP8E4M3,
                                    DequantScaleRoundingMode mode = DequantScaleRoundingMode::ROUND_DOWN,
                                    int64_t axis = -1, bool performanceMode = true);
+std::tuple<Tensor, Tensor> QuantHiF4(const Tensor& input, DataType quantDtype = DataType::DT_HF4, int64_t scaleAlg = 0,
+                                     int64_t axis = -1);
 
 void MoveUbToUb(const Tensor& src, Tensor& dst);
 

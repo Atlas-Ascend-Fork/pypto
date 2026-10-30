@@ -529,4 +529,8 @@ TILEOP void TQuantMX(T0 dst, T1 exp, T2 maxScratch, T3 scalingScratch, T4 src)
     }
 }
 #endif // defined PTO_NPU_ARCH_A5
+
+#if __NPU_ARCH__ == 9201
+#include "quant_hif4_tile.h"
+#endif
 #endif // TILEOP_TILE_OPERATOR_QUANTIZE__H

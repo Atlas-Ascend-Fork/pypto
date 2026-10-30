@@ -14,6 +14,7 @@
  */
 
 #include "test_interp_calc_utils.h"
+#include "tilefwk/hif4_scratch.h"
 
 namespace npu::tile_fwk {
 namespace {
@@ -1115,6 +1116,83 @@ TEST_F(TorchAdaptorTest, QuantMXFp32)
     ASSERT_ALLCLOSE(exp, expGolden);
     ASSERT_ALLCLOSE(max, maxGolden);
     ASSERT_ALLCLOSE(scaling, scalingGolden);
+}
+
+TEST_F(TorchAdaptorTest, QuantHiF4Bf16)
+{
+    for (int64_t cols : {64, 192, 512, 576, 1088}) {
+        const int64_t groups = cols / 64;
+        for (int64_t alg : {0, 1}) {
+            auto input = makeTensorData(DT_BF16, {2, cols}, static_cast<bfloat16>(1.0f));
+            auto out = makeTensorData(DT_HF4, {2, cols}, std::vector<uint8_t>(cols, 0));
+            auto exp = makeTensorData(DT_UINT32, {2, groups}, static_cast<uint32_t>(0));
+            auto scratch = makeTensorData(DT_UINT8, {static_cast<int64_t>(hif4::ScratchLayout(2, cols).bytes)},
+                                          static_cast<uint8_t>(0));
+            auto quantGolden = makeTensorData(DT_HF4, {2, cols}, std::vector<uint8_t>(cols, 0x66));
+            auto expGolden = makeTensorData(DT_UINT32, {2, groups}, std::vector<uint32_t>(2 * groups, 0xFFFFFFB5u));
+            calc::QuantHiF4(out, exp, scratch, input, alg);
+            ASSERT_ALLCLOSE(out, quantGolden);
+            ASSERT_ALLCLOSE(exp, expGolden);
+        }
+    }
+}
+
+TEST_F(TorchAdaptorTest, QuantHiF4ValidShapeAndPadding)
+{
+    for (const auto& valid : std::vector<std::vector<int64_t>>{{2, 128}, {2, 130}, {2, 30}, {0, 130}, {2, 0}}) {
+        std::vector<bfloat16> inputData(3 * 192, static_cast<bfloat16>(1000.0f));
+        for (int row = 0; row < 2; ++row) {
+            std::fill(inputData.begin() + row * 192, inputData.begin() + row * 192 + valid[1],
+                      static_cast<bfloat16>(1.0f));
+        }
+        auto inputRaw = makeTensorData(DT_BF16, {3, 192}, inputData);
+        auto outputRaw = makeTensorData(DT_HF4, {3, 192}, std::vector<uint8_t>(288, 0xa5));
+        auto expRaw = makeTensorData(DT_UINT32, {3, 8}, std::vector<uint32_t>(24, 0x12345678u));
+        auto input = std::make_shared<LogicalTensorData>(inputRaw->GetData(), valid, std::vector<int64_t>{0, 0});
+        auto output = std::make_shared<LogicalTensorData>(outputRaw->GetData(), valid, std::vector<int64_t>{0, 0});
+        const std::vector<int64_t> expValid{valid[0], (valid[1] + 63) / 64};
+        auto exp = std::make_shared<LogicalTensorData>(expRaw->GetData(), expValid, std::vector<int64_t>{0, 0});
+        auto scratch = makeTensorData(DT_UINT8, {static_cast<int64_t>(hif4::ScratchLayout(3, 192).bytes)}, uint8_t{0});
+        calc::QuantHiF4(output, exp, scratch, input);
+        std::vector<uint8_t> expectedOutput(288, 0xa5);
+        std::vector<uint32_t> expectedExp(24, 0x12345678u);
+        if (valid[0] != 0 && valid[1] != 0) {
+            for (int row = 0; row < 2; ++row) {
+                std::fill(expectedOutput.begin() + row * 96, expectedOutput.begin() + row * 96 + valid[1] / 2, 0x66);
+                for (int64_t group = 0; group < expValid[1]; ++group) {
+                    int64_t count = std::min<int64_t>(64, valid[1] - group * 64);
+                    uint32_t eb = (1u << ((count + 7) / 8)) - 1;
+                    uint32_t ec = (1u << ((count + 3) / 4)) - 1;
+                    expectedExp[row * 8 + group] = 0xb5u | (eb << 8) | (ec << 16);
+                }
+            }
+        }
+        ASSERT_ALLCLOSE(outputRaw, makeTensorData(DT_HF4, {3, 192}, expectedOutput));
+        ASSERT_ALLCLOSE(expRaw, makeTensorData(DT_UINT32, {3, 8}, expectedExp));
+    }
+}
+
+TEST_F(TorchAdaptorTest, QuantHiF4ScaleAlgorithms)
+{
+    std::vector<bfloat16> data(64, static_cast<bfloat16>(7.0f));
+    std::fill(data.begin(), data.begin() + 4, static_cast<bfloat16>(3.875f));
+    std::fill(data.begin() + 4, data.begin() + 8, static_cast<bfloat16>(1.9375f));
+    for (int64_t alg : {0, 1}) {
+        auto input = makeTensorData(DT_BF16, {64}, data);
+        auto out = makeTensorData(DT_HF4, {64}, std::vector<uint8_t>(32, 0));
+        auto exp = makeTensorData(DT_UINT32, {1}, static_cast<uint32_t>(0));
+        auto scratch = makeTensorData(DT_UINT8, {static_cast<int64_t>(hif4::ScratchLayout(1, 64).bytes)},
+                                      static_cast<uint8_t>(0));
+        std::vector<uint8_t> codes(32, 0x77);
+        if (alg == 1) {
+            std::fill(codes.begin(), codes.begin() + 4, 0x44);
+        }
+        auto quantGolden = makeTensorData(DT_HF4, {64}, codes);
+        auto expGolden = makeTensorData(DT_UINT32, {1}, std::vector<uint32_t>{alg == 0 ? 0xFFFDFEC0u : 0xFFFDFFC0u});
+        calc::QuantHiF4(out, exp, scratch, input, alg);
+        ASSERT_ALLCLOSE(out, quantGolden);
+        ASSERT_ALLCLOSE(exp, expGolden);
+    }
 }
 
 TEST_F(TorchAdaptorTest, Erfc)

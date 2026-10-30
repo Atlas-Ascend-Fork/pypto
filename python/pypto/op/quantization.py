@@ -161,3 +161,49 @@ def quant_mx(
     """
 
     return pypto_impl.QuantMX(input, quant_dtype, mode, axis, performance_mode)
+
+
+@op_wrapper
+def quant_hif4(
+    input: Tensor,
+    quant_dtype: DataType = DataType.DT_HF4,
+    scale_alg: int = 0,
+    axis: int = -1,
+) -> Tuple[Tensor, Tensor]:
+    """Quantizes a 1D to 4D BF16 ND tensor to HiFloat4 (HiF4) format.
+
+    `quant_dtype` only supports `DT_HF4`, and `input` only supports `DT_BF16`.
+
+    Returns
+    -------
+    tuple
+        A tuple of `(quantized, scale)` where:
+        - `quantized` has the same shape as `input` and dtype `quant_dtype`; two 4-bit
+          codes are packed per storage byte, the even column in the low nibble
+          (matching MXFP4's logical shape convention). External Torch output uses
+          a `torch.uint8` buffer with half the last dimension; kernel Tensor shapes,
+          slices and offsets remain in logical HiF4 elements and must not be halved.
+        - `scale` has shape `[*input.shape[:-1], ceil(input.shape[-1] / 64)]` and dtype
+          `DT_UINT32`, one little-endian word per Block laid out as
+          `Byte0 = Ea (e6m2)`, `Byte1 = Eb (8 x 1-bit, LSB-first)`,
+          `Byte2-3 = Ec (16 x 1-bit, LSB-first)`
+
+    Notes
+    -----
+    `axis` may use a positive or negative index but must resolve to the last dimension;
+    there is no `axis=-2` path, because the HiF4 kernel is ND-only.
+    `scale_alg` supports 0 (mte_first, Eb/Ec thresholds 4.0 / 2.0) and
+    1 (unbiased, thresholds 3.75 / 1.875).
+    VecTile and static ViewShape last dimensions must be positive multiples of 64.
+    The actual valid last dimension only needs to be even. Local input padding is
+    zero-filled in place for valid rows; invalid outer rows are skipped.
+    Valid input elements and validshape remain unchanged. Outer dimensions are
+    traversed by scalar loops; each final two-dimensional tile is computed
+    linearly using ISA-style Tile arguments and shared per-matrix scratch. TSTORE writes only valid quantized elements
+    and ceil(valid last dimension / 64) scale words, preserving each output's
+    rank and layout. Outer dimensions need no alignment.
+    Short final tiles are supported; there is no 512-element alignment requirement.
+    Only `TILEOP_ND` input is accepted, and the op runs on the A6 architecture only.
+    """
+
+    return pypto_impl.QuantHiF4(input, quant_dtype, scale_alg, axis)

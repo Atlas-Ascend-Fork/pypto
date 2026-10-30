@@ -841,6 +841,15 @@ class Tensor:
         return pypto.quant_mx(self, quant_dtype, mode, axis, performance_mode)
 
     @source_location
+    def quant_hif4(
+        self,
+        quant_dtype: DataType = DataType.DT_HF4,
+        scale_alg: int = 0,
+        axis: int = -1,
+    ) -> Tuple['Tensor', 'Tensor']:
+        return pypto.quant_hif4(self, quant_dtype, scale_alg, axis)
+
+    @source_location
     def sort32(self, index: Optional[int] = None) -> 'Tensor':
         return pypto.sort32(self, index)
 

@@ -909,6 +909,30 @@ void ExecuteOpQuantMX(ExecuteOperationContext* ctx)
     calc::QuantMX(out, exp, max, scaling, src, performanceMode != 0, mode, normalizedAxis);
 }
 REGISTER_CALC_OP(OP_QUANT_MX, Opcode::OP_QUANT_MX, ExecuteOpQuantMX);
+void ExecuteOpQuantHiF4(ExecuteOperationContext* ctx)
+{
+    ASSERT(ExecuteOperationScene::CTX_INPUT_COUNT_MISMATCH, ctx->ioperandDataViewList->size() == 1);
+    ASSERT(ExecuteOperationScene::CTX_OUTPUT_COUNT_MISMATCH, ctx->ooperandInplaceDataViewList->size() == 3);
+    int64_t scaleAlg = 0;
+    ASSERT(ExecuteOperationScene::RUNTIME_EXCEPTION, ctx->op->GetAttr(OpAttributeKey::hif4ScaleAlg, scaleAlg))
+        << "QuantHiF4 missing required attribute: " << OpAttributeKey::hif4ScaleAlg;
+    int64_t axis = 0;
+    ASSERT(ExecuteOperationScene::RUNTIME_EXCEPTION, ctx->op->GetAttr(OpAttributeKey::hif4QuantAxis, axis))
+        << "QuantHiF4 missing required attribute: " << OpAttributeKey::hif4QuantAxis;
+    auto out = ctx->ooperandInplaceDataViewList->at(0);
+    auto exp = ctx->ooperandInplaceDataViewList->at(1);
+    auto scratch = ctx->ooperandInplaceDataViewList->at(2);
+    auto src = ctx->ioperandDataViewList->at(0);
+    const auto srcRank = static_cast<int64_t>(src->GetShape().size());
+    const auto normalizedAxis = axis < 0 ? axis + srcRank : axis;
+    ASSERT(ExecuteOperationScene::RUNTIME_EXCEPTION, normalizedAxis >= 0 && normalizedAxis < srcRank)
+        << "QuantHiF4 axis is out of range. Current axis: " << axis << ", input rank: " << srcRank;
+    ASSERT(ExecuteOperationScene::RUNTIME_EXCEPTION, normalizedAxis == srcRank - 1)
+        << "QuantHiF4 interpreter currently only supports the last axis. Current axis: " << axis
+        << ", input rank: " << srcRank;
+    calc::QuantHiF4(out, exp, scratch, src, scaleAlg, normalizedAxis);
+}
+REGISTER_CALC_OP(OP_QUANT_HIF4, Opcode::OP_QUANT_HIF4, ExecuteOpQuantHiF4);
 
 void ExecuteOpMoveUbToUb(ExecuteOperationContext* ctx)
 {

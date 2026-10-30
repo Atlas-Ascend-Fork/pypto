@@ -211,6 +211,11 @@ inline void QuantMX(LogicalTensorDataPtr out, LogicalTensorDataPtr exp, LogicalT
 {
     GetCalcOps()->QuantMX(Trans(out), Trans(exp), Trans(max), Trans(scaling), Trans(self), performanceMode, mode, axis);
 }
+inline void QuantHiF4(LogicalTensorDataPtr out, LogicalTensorDataPtr exp, LogicalTensorDataPtr scratch,
+                      LogicalTensorDataPtr self, int64_t scaleAlg = 0, int64_t axis = -1)
+{
+    GetCalcOps()->QuantHiF4(Trans(out), Trans(exp), Trans(scratch), Trans(self), scaleAlg, axis);
+}
 
 inline void MoveUbToUb(LogicalTensorDataPtr out, LogicalTensorDataPtr self)
 {

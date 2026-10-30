@@ -76,7 +76,7 @@ void CheckShapeValid(DataType& dataType, const Shape& shape, TileOpFormat& forma
         return;
     }
     static const std::vector<DataType> FP4_TYPES = {DataType::DT_FP4_E2M1X2, DataType::DT_FP4_E1M2X2,
-                                                    DataType::DT_FP4_E2M1, DataType::DT_FP4_E1M2};
+                                                    DataType::DT_FP4_E2M1, DataType::DT_FP4_E1M2, DataType::DT_HF4};
     bool isB4 = std::find(FP4_TYPES.begin(), FP4_TYPES.end(), dataType) != FP4_TYPES.end();
     if (format == TileOpFormat::TILEOP_NZ) {
         size_t alignSize = isB4 ? ALIGN_SIZE_64 : ALIGN_SIZE_32;

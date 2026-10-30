@@ -53,7 +53,7 @@ struct TileTensor {
         size_t offset = Std::get<DIM_1ST>(offsets) * layout_.template GetStrideDim<DIM_1ST, MAX_DIMS>();
         offset += Std::get<DIM_2ND>(offsets) * layout_.template GetStrideDim<DIM_2ND, MAX_DIMS>();
         offset += Std::get<DIM_3RD>(offsets) * layout_.template GetStrideDim<DIM_3RD, MAX_DIMS>();
-#if defined PTO_NPU_ARCH_A5
+#if defined(PTO_NPU_ARCH_A5) || (__NPU_ARCH__ == 9201)
         if constexpr (std::is_same_v<Type, float4_e1m2x2_t> || std::is_same_v<Type, float4_e2m1x2_t>) {
             offset >>= 1;
         }

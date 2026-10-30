@@ -651,6 +651,10 @@ void OpcodeManager::RegisterVectorQuant()
                  {"TileOp::TQuantMX", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::OTHER,
                  {OpAttributeKey::excludeBufferReuse, OpAttributeKey::mxQuantMode, OpAttributeKey::mxQuantAxis,
                   OpAttributeKey::mxQuantPerformanceMode});
+    RegisterInfo(Opcode::OP_QUANT_HIF4, OpCoreType::AIV, "QUANT_HIF4", {MemoryType::MEM_UB},
+                 {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
+                 {"TileOp::TQuantHIF4", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::OTHER,
+                 {OpAttributeKey::excludeBufferReuse, OpAttributeKey::hif4ScaleAlg, OpAttributeKey::hif4QuantAxis});
 }
 
 void OpcodeManager::RegisterVectorMove()
@@ -1364,6 +1368,7 @@ std::unordered_map<Opcode, std::string> SUPPORT_TILETENSOR_OPS{
     {Opcode::OP_GATHER_MASK, "TGatherMask"},
     {Opcode::OP_QUANT_MX, "TQuantMX"},
     {Opcode::OP_MOVE_UB_TO_UB, "TMoveUbToUb"},
+    {Opcode::OP_QUANT_HIF4, "TQuantHIF4"},
     {Opcode::OP_CAST, "TCast"},
     {Opcode::OP_ROWSUM_SINGLE, "TRowSumSingle"},
     {Opcode::OP_ROWARGMAXWITHVALUE_SINGLE, "TRowArgMaxWithValueSingle"},

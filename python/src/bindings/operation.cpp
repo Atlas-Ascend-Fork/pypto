@@ -521,6 +521,13 @@ void BindOperation(py::module_& m)
         py::arg("mode") = DequantScaleRoundingMode::ROUND_DOWN, py::arg("axis") = -1, py::arg("performanceMode") = true,
         "Tensor MX quant.");
     m.def(
+        "QuantHiF4",
+        [](const Tensor& input, DataType quantDtype, int64_t scaleAlg, int64_t axis) {
+            return npu::tile_fwk::QuantHiF4(input, quantDtype, scaleAlg, axis);
+        },
+        py::arg("input"), py::arg("quantDtype") = DataType::DT_HF4, py::arg("scaleAlg") = 0, py::arg("axis") = -1,
+        "Tensor HiF4 quant.");
+    m.def(
         "Sort32", [](const Tensor& self, int index) { return npu::tile_fwk::Sort32(self, index); }, py::arg("operand"),
         py::arg("index"), "Tensor sort32.");
     m.def(

@@ -1997,6 +1997,21 @@ void MoveUbToUbInferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>
 
 REGISTER_INFER_SHAPE_FUNC(OP_MOVE_UB_TO_UB, Opcode::OP_MOVE_UB_TO_UB, MoveUbToUbInferFunc);
 
+void QuantHiF4InferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& outValidShapes)
+{
+    const auto& valid = op->GetIOperands()[0]->GetDynValidShape();
+    if (valid.empty()) {
+        return;
+    }
+    outValidShapes.push_back(valid);
+    auto expValid = valid;
+    expValid.back() = (expValid.back() + NUM_VALUE_64 - 1) / NUM_VALUE_64;
+    outValidShapes.push_back(expValid);
+    outValidShapes.push_back(SymbolicScalar::FromConcrete(op->GetOOperands()[2]->GetShape()));
+}
+
+REGISTER_INFER_SHAPE_FUNC(OP_QUANT_HIF4, Opcode::OP_QUANT_HIF4, QuantHiF4InferFunc);
+
 void RadixSelectFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& outValidShapes)
 {
     auto input = op->GetIOperands()[0];

@@ -42,7 +42,7 @@ __aicore__ inline constexpr size_t GetTupleElementWithDefaultOverride(const Tupl
 namespace TileOp {
 template <typename DType>
 inline constexpr bool IsPackedFp4Type =
-#if defined PTO_NPU_ARCH_A5
+#if defined(PTO_NPU_ARCH_A5) || (__NPU_ARCH__ == 9201)
     std::is_same_v<DType, float4_e1m2x2_t> || std::is_same_v<DType, float4_e2m1x2_t> ||
     std::is_same_v<DType, __gm__ float4_e1m2x2_t> || std::is_same_v<DType, __gm__ float4_e2m1x2_t>;
 #else

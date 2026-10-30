@@ -1,0 +1,1933 @@
+{
+    "test_cases": [
+        {
+            "case_index": 0,
+            "case_name": "QuantHiF4_bf16_1d_0",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        512
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -1,
+                        "max": 1
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        512
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        8
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                512
+            ],
+            "tile_shape": [
+                512
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 0
+        },
+        {
+            "case_index": 1,
+            "case_name": "QuantHiF4_bf16_2d_1",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        4,
+                        128
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -1,
+                        "max": 1
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        4,
+                        128
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        4,
+                        2
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                4,
+                128
+            ],
+            "tile_shape": [
+                4,
+                128
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 1
+        },
+        {
+            "case_index": 2,
+            "case_name": "QuantHiF4_bf16_2d_2",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        2,
+                        512
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -64,
+                        "max": 64
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        2,
+                        512
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        2,
+                        8
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                2,
+                512
+            ],
+            "tile_shape": [
+                2,
+                512
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 2
+        },
+        {
+            "case_index": 3,
+            "case_name": "QuantHiF4_bf16_2d_3",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        8,
+                        256
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -1,
+                        "max": 1
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        8,
+                        256
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        8,
+                        4
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                8,
+                256
+            ],
+            "tile_shape": [
+                8,
+                256
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 3
+        },
+        {
+            "case_index": 4,
+            "case_name": "QuantHiF4_bf16_2d_4",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        128,
+                        128
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -0.5,
+                        "max": 0.5
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        128,
+                        128
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        128,
+                        2
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                128,
+                128
+            ],
+            "tile_shape": [
+                128,
+                128
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 4
+        },
+        {
+            "case_index": 5,
+            "case_name": "QuantHiF4_bf16_2d_wide_5",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        2,
+                        1024
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -1,
+                        "max": 1
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        2,
+                        1024
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        2,
+                        16
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                2,
+                1024
+            ],
+            "tile_shape": [
+                2,
+                1024
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 5
+        },
+        {
+            "case_index": 6,
+            "case_name": "QuantHiF4_bf16_3d_6",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        2,
+                        3,
+                        256
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -1,
+                        "max": 1
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        2,
+                        3,
+                        256
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        2,
+                        3,
+                        4
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                2,
+                3,
+                256
+            ],
+            "tile_shape": [
+                2,
+                3,
+                256
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 6
+        },
+        {
+            "case_index": 7,
+            "case_name": "QuantHiF4_bf16_3d_7",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        4,
+                        8,
+                        128
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -128,
+                        "max": 128
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        4,
+                        8,
+                        128
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        4,
+                        8,
+                        2
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                4,
+                8,
+                128
+            ],
+            "tile_shape": [
+                4,
+                8,
+                128
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 7
+        },
+        {
+            "case_index": 8,
+            "case_name": "QuantHiF4_bf16_4d_8",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        2,
+                        2,
+                        3,
+                        128
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -1,
+                        "max": 1
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        2,
+                        2,
+                        3,
+                        128
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        2,
+                        2,
+                        3,
+                        2
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                2,
+                2,
+                3,
+                128
+            ],
+            "tile_shape": [
+                2,
+                2,
+                3,
+                128
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 8
+        },
+        {
+            "case_index": 9,
+            "case_name": "QuantHiF4_bf16_zero_9",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        4,
+                        128
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": 0,
+                        "max": 0
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        4,
+                        128
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        4,
+                        2
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                4,
+                128
+            ],
+            "tile_shape": [
+                4,
+                128
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 9
+        },
+        {
+            "case_index": 10,
+            "case_name": "QuantHiF4_bf16_multitile_10",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        8,
+                        512
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -1,
+                        "max": 1
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        8,
+                        512
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        8,
+                        8
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                8,
+                512
+            ],
+            "tile_shape": [
+                2,
+                512
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 10
+        },
+        {
+            "case_index": 11,
+            "case_name": "QuantHiF4_bf16_multitile_11",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        4,
+                        1024
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -64,
+                        "max": 64
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        4,
+                        1024
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        4,
+                        16
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                4,
+                1024
+            ],
+            "tile_shape": [
+                1,
+                1024
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 11
+        },
+        {
+            "case_index": 12,
+            "case_name": "QuantHiF4_bf16_multitile_12",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        16,
+                        256
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -1,
+                        "max": 1
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        16,
+                        256
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        16,
+                        4
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                8,
+                256
+            ],
+            "tile_shape": [
+                2,
+                256
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 12
+        },
+        {
+            "case_index": 13,
+            "case_name": "QuantHiF4_bf16_multitile_3d_13",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        2,
+                        4,
+                        512
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -0.5,
+                        "max": 0.5
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        2,
+                        4,
+                        512
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        2,
+                        4,
+                        8
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                2,
+                4,
+                512
+            ],
+            "tile_shape": [
+                1,
+                2,
+                512
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 13
+        },
+        {
+            "case_index": 14,
+            "case_name": "QuantHiF4_bf16_multitile_3d_14",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        4,
+                        8,
+                        128
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -128,
+                        "max": 128
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        4,
+                        8,
+                        128
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        4,
+                        8,
+                        2
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                4,
+                8,
+                128
+            ],
+            "tile_shape": [
+                1,
+                4,
+                128
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 14
+        },
+        {
+            "case_index": 15,
+            "case_name": "QuantHiF4_bf16_tail_15",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        64
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -1,
+                        "max": 1
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        64
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        1
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                64
+            ],
+            "tile_shape": [
+                64
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 15
+        },
+        {
+            "case_index": 16,
+            "case_name": "QuantHiF4_bf16_tail_16",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        192
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -1,
+                        "max": 1
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        192
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        3
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                192
+            ],
+            "tile_shape": [
+                128
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 16
+        },
+        {
+            "case_index": 17,
+            "case_name": "QuantHiF4_bf16_tail_17",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        576
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -1,
+                        "max": 1
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        576
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        9
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                576
+            ],
+            "tile_shape": [
+                576
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 17
+        },
+        {
+            "case_index": 18,
+            "case_name": "QuantHiF4_bf16_tail_18",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        6,
+                        192
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -1,
+                        "max": 1
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        6,
+                        192
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        6,
+                        3
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                6,
+                192
+            ],
+            "tile_shape": [
+                4,
+                128
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 18
+        },
+        {
+            "case_index": 19,
+            "case_name": "QuantHiF4_bf16_tail_19",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        3,
+                        576
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -1,
+                        "max": 1
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        3,
+                        576
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        3,
+                        9
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                3,
+                576
+            ],
+            "tile_shape": [
+                2,
+                320
+            ],
+            "params": {
+                "scale_alg": 1,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 19
+        },
+        {
+            "case_index": 20,
+            "case_name": "QuantHiF4_bf16_strided_704_20",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        6,
+                        704
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -7,
+                        "max": 7
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        6,
+                        704
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        6,
+                        11
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                4,
+                1152
+            ],
+            "tile_shape": [
+                4,
+                1152
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 20
+        },
+        {
+            "case_index": 21,
+            "case_name": "QuantHiF4_bf16_strided_64_21",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        5,
+                        64
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -7,
+                        "max": 7
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        5,
+                        64
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        5,
+                        1
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                4,
+                128
+            ],
+            "tile_shape": [
+                4,
+                128
+            ],
+            "params": {
+                "scale_alg": 1,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 21
+        },
+        {
+            "case_index": 22,
+            "case_name": "QuantHiF4_bf16_strided_448_22",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        2,
+                        448
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -7,
+                        "max": 7
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        2,
+                        448
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        2,
+                        7
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                2,
+                512
+            ],
+            "tile_shape": [
+                2,
+                512
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 22
+        },
+        {
+            "case_index": 23,
+            "case_name": "QuantHiF4_bf16_outer_tail_23",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        2,
+                        3,
+                        128
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -7,
+                        "max": 7
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        2,
+                        3,
+                        128
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        2,
+                        3,
+                        2
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                2,
+                4,
+                128
+            ],
+            "tile_shape": [
+                2,
+                4,
+                128
+            ],
+            "params": {
+                "scale_alg": 1,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 23
+        },
+        {
+            "case_index": 24,
+            "case_name": "QuantHiF4_bf16_contiguous_192_24",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        3,
+                        192
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -7,
+                        "max": 7
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        3,
+                        192
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        3,
+                        3
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                3,
+                192
+            ],
+            "tile_shape": [
+                3,
+                192
+            ],
+            "params": {
+                "scale_alg": 1,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 24
+        },
+        {
+            "case_index": 25,
+            "case_name": "QuantHiF4_bf16_partial_650_25",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        6,
+                        650
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -7,
+                        "max": 7
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        6,
+                        650
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        6,
+                        11
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                4,
+                1024
+            ],
+            "tile_shape": [
+                4,
+                1024
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 25
+        },
+        {
+            "case_index": 26,
+            "case_name": "QuantHiF4_bf16_partial_multitile_26",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        2,
+                        650
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -7,
+                        "max": 7
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        2,
+                        650
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        2,
+                        11
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                2,
+                704
+            ],
+            "tile_shape": [
+                2,
+                512
+            ],
+            "params": {
+                "scale_alg": 1,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 26
+        },
+        {
+            "case_index": 27,
+            "case_name": "QuantHiF4_bf16_partial_30_27",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        4,
+                        30
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -7,
+                        "max": 7
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        4,
+                        30
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        4,
+                        1
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                4,
+                128
+            ],
+            "tile_shape": [
+                4,
+                128
+            ],
+            "params": {
+                "scale_alg": 1,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 27
+        },
+        {
+            "case_index": 28,
+            "case_name": "QuantHiF4_bf16_partial_66_28",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        2,
+                        66
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -7,
+                        "max": 7
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        2,
+                        66
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        2,
+                        2
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                2,
+                128
+            ],
+            "tile_shape": [
+                2,
+                128
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 28
+        },
+        {
+            "case_index": 29,
+            "case_name": "QuantHiF4_bf16_partial_130_29",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        2,
+                        130
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -7,
+                        "max": 7
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        2,
+                        130
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        2,
+                        3
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                2,
+                192
+            ],
+            "tile_shape": [
+                2,
+                192
+            ],
+            "params": {
+                "scale_alg": 1,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 29
+        },
+        {
+            "case_index": 30,
+            "case_name": "QuantHiF4_bf16_partial_638_30",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        3,
+                        638
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -7,
+                        "max": 7
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        3,
+                        638
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        3,
+                        10
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                4,
+                1024
+            ],
+            "tile_shape": [
+                4,
+                1024
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 30
+        },
+        {
+            "case_index": 31,
+            "case_name": "QuantHiF4_bf16_partial_3d_31",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        2,
+                        3,
+                        130
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -7,
+                        "max": 7
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        2,
+                        3,
+                        130
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        2,
+                        3,
+                        3
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                2,
+                4,
+                192
+            ],
+            "tile_shape": [
+                2,
+                4,
+                192
+            ],
+            "params": {
+                "scale_alg": 1,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 31
+        },
+        {
+            "case_index": 32,
+            "case_name": "QuantHiF4_bf16_partial_2_32",
+            "operation": "QuantHiF4",
+            "input_tensors": [
+                {
+                    "name": "input0",
+                    "shape": [
+                        2
+                    ],
+                    "dtype": "bf16",
+                    "format": "ND",
+                    "need_trans": false,
+                    "data_range": {
+                        "min": -7,
+                        "max": 7
+                    }
+                }
+            ],
+            "output_tensors": [
+                {
+                    "name": "output0",
+                    "shape": [
+                        2
+                    ],
+                    "dtype": "hf4",
+                    "format": "ND",
+                    "need_trans": false
+                },
+                {
+                    "name": "output1",
+                    "shape": [
+                        1
+                    ],
+                    "dtype": "uint32",
+                    "format": "ND",
+                    "need_trans": false
+                }
+            ],
+            "view_shape": [
+                64
+            ],
+            "tile_shape": [
+                64
+            ],
+            "params": {
+                "scale_alg": 0,
+                "axis": -1,
+                "on_board": true,
+                "func_id": -1
+            },
+            "index": 32
+        }
+    ]
+}

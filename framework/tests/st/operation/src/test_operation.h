@@ -90,7 +90,7 @@ private:
     static bool IsFp4PackedDtype(DataType dtype)
     {
         return dtype == DataType::DT_FP4_E2M1 || dtype == DataType::DT_FP4_E1M2 || dtype == DataType::DT_FP4_E2M1X2 ||
-               dtype == DataType::DT_FP4_E1M2X2;
+               dtype == DataType::DT_FP4_E1M2X2 || dtype == DataType::DT_HF4;
     }
 
     static size_t GetTensorStorageElementCount(const Tensor& tensor)
@@ -243,6 +243,7 @@ private:
     {
         auto& tensor = testCase.outputTensors[i];
         switch (tensor.GetDataType()) {
+            case DataType::DT_HF4:
             case DataType::DT_HF8:
             case DataType::DT_FP8E4M3:
             case DataType::DT_FP8E5M2:

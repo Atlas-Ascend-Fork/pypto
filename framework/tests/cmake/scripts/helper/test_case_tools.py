@@ -100,6 +100,7 @@ def get_dtype_by_name(name: str, is_torch: bool = False, check: bool = True):
         ],
         "fp8e8m0": [np.uint8, fp8_e8m0_torch if fp8_e8m0_torch is not None else np.uint8],
         "hf8": [np.uint8, torch.uint8],
+        "hf4": [np.uint8, torch.uint8],
     }
     return str_to_dtype.get(name, [np.float32, torch.float32])[is_torch]
 

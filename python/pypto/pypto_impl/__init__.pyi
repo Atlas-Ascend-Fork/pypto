@@ -729,6 +729,9 @@ def QuantMX(input: Tensor, quantDtype: DataType = DataType.DT_FP8E4M3,
             mode: DequantScaleRoundingMode = DequantScaleRoundingMode.ROUND_DOWN,
             axis: int = -1, performanceMode: bool = True) -> Tuple[Tensor, Tensor]: ...
 
+def QuantHiF4(input: Tensor, quantDtype: DataType = DataType.DT_HF4,
+              scaleAlg: int = 0, axis: int = -1) -> Tuple[Tensor, Tensor]: ...
+
 
 class MatmulExtendParam:
     @overload

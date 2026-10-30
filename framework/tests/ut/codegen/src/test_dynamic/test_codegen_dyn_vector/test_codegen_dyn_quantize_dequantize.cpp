@@ -275,6 +275,248 @@ TEST_F(TestCodegenDynQuantize, QuantMXRoundUpFp8OutputNonPerformanceMode)
     CheckStringExist(R"!!!(LocalLayout1Dim<64>)!!!", cpp);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
 }
+TEST_F(TestCodegenDynQuantize, QuantHiF4Fp4Output)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    config::SetHostOption(COMPILE_STAGE, CS_CODEGEN_INSTRUCTION);
+    TileShape::Current().SetVecTile(8, 64);
+    Tensor input(DataType::DT_BF16, {8, 64}, "input");
+    Tensor quantOutput(DataType::DT_HF4, {8, 64}, "quantOutput");
+    Tensor scaleOutput(DataType::DT_UINT32, {8, 1}, "scaleOutput");
+
+    constexpr const char* funcName = "QUANT_HIF4_FP4_OUTPUT";
+    FUNCTION(funcName, {input, quantOutput, scaleOutput})
+    {
+        LOOP(funcName, FunctionType::DYNAMIC_LOOP, i, LoopRange(1))
+        {
+            (void)i;
+            auto res = QuantHiF4(input, DataType::DT_HF4, 0, -1);
+            quantOutput = std::get<0>(res);
+            scaleOutput = std::get<1>(res);
+        }
+    }
+
+    auto function = Program::GetInstance().GetFunctionByRawName(FUNCTION_PREFIX + funcName + SUB_FUNC_SUFFIX +
+                                                                HIDDEN_FUNC_SUFFIX);
+
+    CheckStringExist("TQuantHIF4<0, 1,", GenCodeByFunction(*function));
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(TestCodegenDynQuantize, QuantHiF4TailTiles)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    config::SetHostOption(COMPILE_STAGE, CS_CODEGEN_INSTRUCTION);
+    TileShape::Current().SetVecTile(4, 128);
+    Tensor input(DataType::DT_BF16, {6, 192}, "input");
+    Tensor quantOutput(DataType::DT_HF4, {6, 192}, "quantOutput");
+    Tensor scaleOutput(DataType::DT_UINT32, {6, 3}, "scaleOutput");
+
+    constexpr const char* funcName = "QUANT_HIF4_TAIL_TILES";
+    FUNCTION(funcName, {input, quantOutput, scaleOutput})
+    {
+        LOOP(funcName, FunctionType::DYNAMIC_LOOP, i, LoopRange(1))
+        {
+            (void)i;
+            auto res = QuantHiF4(input, DataType::DT_HF4, 1, -1);
+            quantOutput = std::get<0>(res);
+            scaleOutput = std::get<1>(res);
+        }
+    }
+
+    auto function = Program::GetInstance().GetFunctionByRawName(FUNCTION_PREFIX + funcName + SUB_FUNC_SUFFIX +
+                                                                HIDDEN_FUNC_SUFFIX);
+
+    const auto cpp = GenCodeByFunction(*function);
+    CheckStringExist("TQuantHIF4<1, 1,", cpp);
+    CheckStringExist(R"!!!(LocalLayout1Dim<736>)!!!", cpp);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(TestCodegenDynQuantize, QuantHiF4PartialGroups)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    config::SetHostOption(COMPILE_STAGE, CS_CODEGEN_INSTRUCTION);
+    TileShape::Current().SetVecTile(4, 512);
+    Tensor input(DataType::DT_BF16, {6, 704}, "input");
+    input.GetStorage()->UpdateDynValidShape({6, 650});
+    Tensor quantOutput(DataType::DT_HF4, {6, 704}, "quantOutput");
+    Tensor scaleOutput(DataType::DT_UINT32, {6, 11}, "scaleOutput");
+
+    constexpr const char* funcName = "QUANT_HIF4_PARTIAL_GROUPS";
+    FUNCTION(funcName, {input, quantOutput, scaleOutput})
+    {
+        LOOP(funcName, FunctionType::DYNAMIC_LOOP, i, LoopRange(1))
+        {
+            (void)i;
+            auto res = QuantHiF4(input, DataType::DT_HF4, 1, -1);
+            quantOutput = std::get<0>(res);
+            scaleOutput = std::get<1>(res);
+        }
+    }
+
+    auto function = Program::GetInstance().GetFunctionByRawName(FUNCTION_PREFIX + funcName + SUB_FUNC_SUFFIX +
+                                                                HIDDEN_FUNC_SUFFIX);
+
+    const auto cpp = GenCodeByFunction(*function);
+    CheckStringExist("TQuantHIF4<1, 1,", cpp);
+    CheckStringExist(R"!!!(LocalLayout1Dim<2944>)!!!", cpp);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(TestCodegenDynQuantize, QuantHiF4SmallPartialGroups)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    config::SetHostOption(COMPILE_STAGE, CS_CODEGEN_INSTRUCTION);
+    TileShape::Current().SetVecTile(2, 64);
+    Tensor input(DataType::DT_BF16, {2, 64}, "input");
+    input.GetStorage()->UpdateDynValidShape({2, 2});
+    Tensor quantOutput(DataType::DT_HF4, {2, 64}, "quantOutput");
+    Tensor scaleOutput(DataType::DT_UINT32, {2, 1}, "scaleOutput");
+
+    constexpr const char* funcName = "QUANT_HIF4_SMALL_PARTIAL_GROUPS";
+    FUNCTION(funcName, {input, quantOutput, scaleOutput})
+    {
+        LOOP(funcName, FunctionType::DYNAMIC_LOOP, i, LoopRange(1))
+        {
+            (void)i;
+            auto res = QuantHiF4(input, DataType::DT_HF4, 1, -1);
+            quantOutput = std::get<0>(res);
+            scaleOutput = std::get<1>(res);
+        }
+    }
+
+    auto function = Program::GetInstance().GetFunctionByRawName(FUNCTION_PREFIX + funcName + SUB_FUNC_SUFFIX +
+                                                                HIDDEN_FUNC_SUFFIX);
+
+    const auto cpp = GenCodeByFunction(*function);
+    CheckStringExist("TQuantHIF4<1, 1, 64, 2>", cpp);
+    CheckStringExist(R"!!!(LocalLayout1Dim<256>)!!!", cpp);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(TestCodegenDynQuantize, QuantHiF4OneDimPartialGroup)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    config::SetHostOption(COMPILE_STAGE, CS_CODEGEN_INSTRUCTION);
+    TileShape::Current().SetVecTile(64);
+    Tensor input(DataType::DT_BF16, {64}, "input");
+    input.GetStorage()->UpdateDynValidShape({2});
+    Tensor quantOutput(DataType::DT_HF4, {64}, "quantOutput");
+    Tensor scaleOutput(DataType::DT_UINT32, {1}, "scaleOutput");
+
+    constexpr const char* funcName = "QUANT_HIF4_ONE_DIM_PARTIAL_GROUP";
+    FUNCTION(funcName, {input, quantOutput, scaleOutput})
+    {
+        LOOP(funcName, FunctionType::DYNAMIC_LOOP, i, LoopRange(1))
+        {
+            (void)i;
+            auto res = QuantHiF4(input, DataType::DT_HF4, 1, -1);
+            quantOutput = std::get<0>(res);
+            scaleOutput = std::get<1>(res);
+        }
+    }
+
+    auto function = Program::GetInstance().GetFunctionByRawName(FUNCTION_PREFIX + funcName + SUB_FUNC_SUFFIX +
+                                                                HIDDEN_FUNC_SUFFIX);
+
+    const auto cpp = GenCodeByFunction(*function);
+    CheckStringExist("TQuantHIF4<1, 0, 64, 1>", cpp);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(TestCodegenDynQuantize, QuantHiF4LogicalSliceOffsets)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    config::SetHostOption(COMPILE_STAGE, CS_CODEGEN_INSTRUCTION);
+    TileShape::Current().SetVecTile(32, 128);
+    Tensor input(DataType::DT_BF16, {128, 256}, "input");
+    Tensor quantOutput(DataType::DT_HF4, {128, 256}, "quantOutput");
+    Tensor scaleOutput(DataType::DT_UINT32, {128, 4}, "scaleOutput");
+    constexpr const char* funcName = "QUANT_HIF4_LOGICAL_SLICE_OFFSETS";
+    FUNCTION(funcName, {input, quantOutput, scaleOutput})
+    {
+        LOOP(funcName, FunctionType::DYNAMIC_LOOP, i, LoopRange(1))
+        {
+            (void)i;
+            auto inputView = View(input, {64, 128}, {64, 128});
+            auto result = QuantHiF4(inputView);
+            EXPECT_EQ(std::get<0>(result).GetShape(), std::vector<int64_t>({64, 128}));
+            EXPECT_EQ(std::get<0>(result).GetDataType(), DT_HF4);
+            EXPECT_EQ(std::get<1>(result).GetShape(), std::vector<int64_t>({64, 2}));
+            // Like MXFP4, both slice shapes and offsets count logical FP4 elements.
+            // Packing happens once, at the byte-address/storage layer.
+            Assemble(std::get<0>(result), {64, 128}, quantOutput);
+            Assemble(std::get<1>(result), {64, 2}, scaleOutput);
+        }
+    }
+    auto function = Program::GetInstance().GetFunctionByRawName(FUNCTION_PREFIX + funcName + SUB_FUNC_SUFFIX +
+                                                                HIDDEN_FUNC_SUFFIX);
+    const auto cpp = GenCodeByFunction(*function);
+    CheckStringExist("TQuantHIF4<0, 1, 128, 32>", cpp);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(TestCodegenDynQuantize, QuantHiF4ExplicitAxisRank3)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    config::SetHostOption(COMPILE_STAGE, CS_CODEGEN_INSTRUCTION);
+    TileShape::Current().SetVecTile(2, 4, 64);
+    Tensor input(DataType::DT_BF16, {2, 4, 64}, "input");
+    Tensor quantOutput(DataType::DT_HF4, {2, 4, 64}, "quantOutput");
+    Tensor scaleOutput(DataType::DT_UINT32, {2, 4, 1}, "scaleOutput");
+
+    constexpr const char* funcName = "QUANT_HIF4_EXPLICIT_AXIS_RANK3";
+    FUNCTION(funcName, {input, quantOutput, scaleOutput})
+    {
+        LOOP(funcName, FunctionType::DYNAMIC_LOOP, i, LoopRange(1))
+        {
+            (void)i;
+            auto res = QuantHiF4(input, DataType::DT_HF4, 0, -1);
+            quantOutput = std::get<0>(res);
+            scaleOutput = std::get<1>(res);
+        }
+    }
+
+    auto function = Program::GetInstance().GetFunctionByRawName(FUNCTION_PREFIX + funcName + SUB_FUNC_SUFFIX +
+                                                                HIDDEN_FUNC_SUFFIX);
+
+    CheckStringExist("TQuantHIF4<0, 2, 64, 4>", GenCodeByFunction(*function));
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(TestCodegenDynQuantize, QuantHiF4TwoDimensionalScratchRank4)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    config::SetHostOption(COMPILE_STAGE, CS_CODEGEN_INSTRUCTION);
+    TileShape::Current().SetVecTile(2, 3, 5, 192);
+    Tensor input(DataType::DT_BF16, {2, 3, 5, 192}, "input");
+    Tensor quantOutput(DataType::DT_HF4, {2, 3, 5, 192}, "quantOutput");
+    Tensor scaleOutput(DataType::DT_UINT32, {2, 3, 5, 3}, "scaleOutput");
+    constexpr const char* funcName = "QUANT_HIF4_TWO_DIMENSIONAL_SCRATCH_RANK4";
+    FUNCTION(funcName, {input, quantOutput, scaleOutput})
+    {
+        LOOP(funcName, FunctionType::DYNAMIC_LOOP, i, LoopRange(1))
+        {
+            (void)i;
+            auto result = QuantHiF4(input, DataType::DT_HF4, 1, -1);
+            quantOutput = std::get<0>(result);
+            scaleOutput = std::get<1>(result);
+        }
+    }
+    auto function = Program::GetInstance().GetFunctionByRawName(FUNCTION_PREFIX + funcName + SUB_FUNC_SUFFIX +
+                                                                HIDDEN_FUNC_SUFFIX);
+    CheckStringExist("TQuantHIF4<1, 3, 192, 5>", GenCodeByFunction(*function));
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
 
 TEST_F(TestCodegenDynQuantize, MoveUbToUbCodegen)
 {

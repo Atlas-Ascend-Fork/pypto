@@ -99,6 +99,7 @@ public:
     std::string GenArgReduceWithValue() const;
     std::string GenQuantMXOp() const;
     std::string GenMoveUbToUbOp() const;
+    std::string GenQuantHiF4Op() const;
 
     std::string GenLogicalNotOp() const;
     std::string GenLogicalAndOp() const;

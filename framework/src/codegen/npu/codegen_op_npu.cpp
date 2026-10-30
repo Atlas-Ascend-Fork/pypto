@@ -132,6 +132,7 @@ CodeGenOpNPU::CodeGenOpNPU(const CodeGenOpNPUCtx& ctx)
           {Opcode::OP_UNPACK, [this]() { return GenUnaryOp(); }},
           {Opcode::OP_QUANT_MX, [this]() { return GenQuantMXOp(); }},
           {Opcode::OP_MOVE_UB_TO_UB, [this]() { return GenMoveUbToUbOp(); }},
+          {Opcode::OP_QUANT_HIF4, [this]() { return GenQuantHiF4Op(); }},
 
           // unary with temp buffer
           {Opcode::OP_COMPACT, [this]() { return GenUnaryOpWithTmpBuff(); }},
