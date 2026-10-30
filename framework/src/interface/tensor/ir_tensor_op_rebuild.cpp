@@ -47,6 +47,30 @@ LogicalTensors VarsToLogicalTensors(const std::vector<ir::VarPtr>& vars)
 
 } // namespace
 
+void RemapTensorAccessTokens(const ir::TensorOpStmtPtr& src, const std::vector<ir::VarPtr>& results,
+                             const std::vector<ir::VarPtr>& resultTokens, const std::vector<ir::ExprPtr>& args)
+{
+    FE_ASSERT(src->result_token_.size() == resultTokens.size());
+    FE_ASSERT(src->args_.size() == args.size() && src->result_.size() == results.size());
+    for (size_t t = 0; t < resultTokens.size(); ++t) {
+        const auto& oldToken = src->result_token_[t];
+        for (size_t i = 0; i < args.size(); ++i) {
+            auto original = std::dynamic_pointer_cast<const LogicalTensor>(src->args_[i]);
+            auto mapped = std::dynamic_pointer_cast<const LogicalTensor>(args[i]);
+            if (original && mapped && original->HasReadToken(oldToken)) {
+                std::const_pointer_cast<LogicalTensor>(mapped)->AddReadToken(resultTokens[t]);
+            }
+        }
+        for (size_t i = 0; i < results.size(); ++i) {
+            auto original = std::dynamic_pointer_cast<const LogicalTensor>(src->result_[i]);
+            auto mapped = std::dynamic_pointer_cast<const LogicalTensor>(results[i]);
+            if (original && mapped && original->HasWriteToken(oldToken)) {
+                std::const_pointer_cast<LogicalTensor>(mapped)->AddWriteToken(resultTokens[t]);
+            }
+        }
+    }
+}
+
 ir::StmtPtr RebuildTensorOpStmt(const ir::TensorOpStmtPtr& src, std::vector<ir::VarPtr> results,
                                 std::vector<ir::VarPtr> resultTokens, std::vector<ir::ExprPtr> args,
                                 std::vector<ir::VarPtr> tokens, ir::Span span, Function* targetFunc)

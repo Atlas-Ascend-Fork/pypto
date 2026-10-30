@@ -2002,7 +2002,7 @@ bool AttachReadToMatchingInputParents(const LogicalTensors& iOperands, const Log
             continue;
         }
         auto parent = GetSliceParent(iOp);
-        if (parent == nullptr || parent->GetReadToken() != token) {
+        if (parent == nullptr || !parent->HasReadToken(token)) {
             continue;
         }
         target[iOp.get()].push_back(normal);
@@ -2400,10 +2400,12 @@ void Function::CreateFromIncast(const std::shared_ptr<LogicalTensor>& symbol,
     newIncast->UpdateDynValidShape(validShape);
     newIncast->GetRawTensor()->UpdateDynRawShape(symbol->GetDynValidShape());
     newIncast->CopyMemoryType(origin);
-    auto readToken = origin->GetReadToken();
-    auto writeToken = origin->GetWriteToken();
-    newIncast->SetReadToken(readToken);
-    newIncast->SetWriteToken(writeToken);
+    for (const auto& token : origin->GetReadTokens()) {
+        newIncast->AddReadToken(token);
+    }
+    for (const auto& token : origin->GetWriteTokens()) {
+        newIncast->AddWriteToken(token);
+    }
 }
 
 void Function::MoveNewlyInsertedOpsToFront(size_t operationCountBefore)

@@ -558,6 +558,7 @@ StmtPtr IRMutator::VisitStmt_(const TensorOpStmtPtr& op)
     changed = changed || tokens_changed;
 
     if (changed) {
+        npu::tile_fwk::RemapTensorAccessTokens(op, new_results, new_tokens_result, new_args);
         return npu::tile_fwk::RebuildTensorOpStmt(op, std::move(new_results), std::move(new_tokens_result),
                                                   std::move(new_args), std::move(new_tokens), op->span_);
     }

@@ -20,6 +20,11 @@ namespace npu::tile_fwk {
 
 class Function;
 
+// The lists passed here are the position-preserving results of an IRMutator visit,
+// not filtered token lists. Register remapped accesses on the corresponding tensors.
+void RemapTensorAccessTokens(const ir::TensorOpStmtPtr& src, const std::vector<ir::VarPtr>& results,
+                             const std::vector<ir::VarPtr>& resultTokens, const std::vector<ir::ExprPtr>& args);
+
 /**
  * Rebuild a TensorOpStmt after IR substitution/mutation.
  * If \p src is an Operation with a valid owning function, clone via CloneTensorOpStmt

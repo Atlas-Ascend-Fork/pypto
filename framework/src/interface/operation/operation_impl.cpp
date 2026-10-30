@@ -158,7 +158,7 @@ void AttachExpandResultTokens(Operation& sliceOp, Operation& contractOp, Operati
             continue;
         }
         if (tokenType->kind_ == ir::TokenKind::READ) {
-            if (matchReadOn != nullptr && matchReadOn->GetReadToken() != token) {
+            if (matchReadOn != nullptr && !matchReadOn->HasReadToken(token)) {
                 continue;
             }
             sliceOp.result_token_.push_back(normal);

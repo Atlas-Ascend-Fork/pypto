@@ -541,6 +541,7 @@ private:
         auto newResultTokens = VisitVarList(op->result_token_).first;
         auto newTokens = VisitVarList(op->tokens_).first;
 
+        npu::tile_fwk::RemapTensorAccessTokens(op, newResults, newResultTokens, newArgs);
         auto rebuilt = npu::tile_fwk::RebuildTensorOpStmt(op, std::move(newResults), std::move(newResultTokens),
                                                           std::move(newArgs), std::move(newTokens), op->span_);
 

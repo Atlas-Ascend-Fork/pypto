@@ -705,8 +705,17 @@ void InheritTokenContract(const OperationsViewer& opListPost, const OperationPtr
         for (size_t i = opListPreSize; i < opListPost.size(); i++) {
             auto& newOp = opListPost[i];
             if (newOp.GetOpcode() == op->GetOpcode()) {
-                newOp.result_token_ = op->result_token_;
-                newOp.tokens_ = op->tokens_;
+                auto inheritNormal = [](std::vector<ir::VarPtr>& dst, const std::vector<ir::VarPtr>& src) {
+                    for (const auto& token : src) {
+                        auto type = token ? std::dynamic_pointer_cast<const ir::TokenType>(token->GetType()) : nullptr;
+                        if (type && type->kind_ == ir::TokenKind::NORMAL &&
+                            std::find(dst.begin(), dst.end(), token) == dst.end()) {
+                            dst.push_back(token);
+                        }
+                    }
+                };
+                inheritNormal(newOp.result_token_, op->result_token_);
+                inheritNormal(newOp.tokens_, op->tokens_);
             }
         }
     }

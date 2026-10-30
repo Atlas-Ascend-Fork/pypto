@@ -69,7 +69,8 @@ void CheckReadTokensAfterAutoCast(ComputationalGraphBuilder& graph)
 {
     auto& function = *graph.GetFunction();
     auto source = graph.GetTensor("source");
-    auto token = source->GetReadToken();
+    ASSERT_EQ(source->GetReadTokens().size(), 1UL);
+    auto token = source->GetReadTokens().front();
     AutoCast autoCast;
     ASSERT_EQ(autoCast.RunOnFunction(function), SUCCESS);
     size_t readCasts = 0;
@@ -119,7 +120,7 @@ TEST_F(AutoCastTest, PromotedReadsKeepCompletionTokensThroughExpansion)
         auto& function = *graph.GetFunction();
         auto source = graph.GetTensor("source");
         auto token = IRContext::Get().MakeSemanticToken("source_read", ir::TokenKind::READ, ir::Span::Unknown());
-        source->SetReadToken(token);
+        source->AddReadToken(token);
         for (const auto& name : {"read1", "read2"}) {
             auto* read = graph.GetOp(name);
             read->GetTileShapeForSetting().SetVecTile({64, 64});

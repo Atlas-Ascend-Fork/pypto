@@ -14,6 +14,11 @@
  */
 
 #include <gtest/gtest.h>
+#include <set>
+#include <tuple>
+#include "ir/transforms/infer_token_pass.h"
+#include "ir/transforms/base/mutator.h"
+#include "passes/tensor_graph_pass/auto_cast.h"
 #include <vector>
 #include <string>
 #include "ir/type.h"
@@ -1844,6 +1849,154 @@ TEST_F(TestExpandFunctionPass, AssembleDerivesVecTileFromCubeMatmulProducer)
     EXPECT_EQ(CountSliceOpsOnInputWithShape(*func, matmulOut, {kCubeM, kCubeM}), 0);
 }
 
+class TestTensorTokenLists : public TestExpandFunctionPass,
+                             public ::testing::WithParamInterface<std::tuple<DataType, bool>> {};
+
+TEST_P(TestTensorTokenLists, BranchReadsAttachOnlyToTheirOwnInputSlices)
+{
+    auto [dtype, autoCast] = GetParam();
+    std::vector<int64_t> shape{129, 128};
+    TileShape::Current().SetVecTile(64, 128);
+    auto a = IRBuilder().CreateTensorVar(dtype, shape, CreateTestConstIntVector(shape));
+    auto b = IRBuilder().CreateTensorVar(dtype, shape, CreateTestConstIntVector(shape));
+    auto value = IRBuilder().CreateTensorVar(dtype, shape, CreateTestConstIntVector(shape));
+    std::vector<std::shared_ptr<Function>> branches;
+    std::vector<ir::SeqStmtsPtr> bodies;
+    std::vector<Operation*> adds;
+    for (int branch = 0; branch < 2; ++branch) {
+        auto name = "ReadListBranch" + std::to_string(branch);
+        auto func = std::make_shared<Function>(Program::GetInstance(), name, name, nullptr);
+        auto out = IRBuilder().CreateTensorVar(dtype, shape, CreateTestConstIntVector(shape));
+        auto& add = PassOperationUtils::AddOperation(*func, Opcode::OP_ADD, {a, b}, {out});
+        add.tileShape_.SetVecTile(64, 128);
+        std::vector<ir::VarPtr> tokens;
+        auto updated = a->NextVersion(*func, tokens);
+        auto& write = PassOperationUtils::AddOperation(*func, Opcode::OP_ASSEMBLE, {value}, {updated});
+        write.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+        write.tileShape_.SetVecTile(64, 128);
+        func->inCasts_ = {a, b, value};
+        func->outCasts_ = {out, updated};
+        func->SetGraphType(GraphType::TENSOR_GRAPH);
+        bodies.push_back(std::make_shared<ir::SeqStmts>(
+            std::vector<ir::StmtPtr>{add.shared_from_this(), write.shared_from_this()}, ir::Span::Unknown()));
+        branches.push_back(func);
+        adds.push_back(&add);
+    }
+    auto conditional = std::make_shared<ir::IfStmt>(std::make_shared<ir::ConstBool>(true, ir::Span::Unknown()),
+                                                    bodies[0], bodies[1], std::vector<ir::VarPtr>{},
+                                                    ir::Span::Unknown());
+    ir::RunInferTokenPass(std::make_shared<ir::SeqStmts>(std::vector<ir::StmtPtr>{conditional}, ir::Span::Unknown()));
+    ASSERT_EQ(a->GetReadTokens().size(), 2UL);
+    ASSERT_EQ(b->GetReadTokens().size(), 2UL);
+    for (size_t branch = 0; branch < branches.size(); ++branch) {
+        auto read = a->GetReadTokens()[branch];
+        auto otherRead = a->GetReadTokens()[1 - branch];
+        EXPECT_NE(std::find(adds[branch]->result_token_.begin(), adds[branch]->result_token_.end(), read),
+                  adds[branch]->result_token_.end());
+        auto& func = *branches[branch];
+        if (autoCast) {
+            AutoCast cast;
+            ASSERT_EQ(cast.RunOnFunction(func), SUCCESS);
+        }
+        ExpandFunction expand;
+        ASSERT_EQ(expand.RunOnFunction(func), SUCCESS);
+        auto findNormal = [](const std::vector<ir::VarPtr>& tokens, const ir::VarPtr& semantic) {
+            return std::find_if(tokens.begin(), tokens.end(),
+                                [&](const auto& token) { return token->name_ == semantic->name_ + "_n"; });
+        };
+        std::set<ir::VarPtr> sliceTokens;
+        std::set<ir::VarPtr> waitedTokens;
+        bool aProduces = false;
+        bool writeWaits = false;
+        for (auto& op : func.Operations(false)) {
+            bool hasRead = findNormal(op.result_token_, read) != op.result_token_.end();
+            if (op.GetOpcode() == Opcode::OP_SLICE && op.GetIOperands()[0] == a) {
+                aProduces |= hasRead;
+                sliceTokens.insert(op.result_token_.begin(), op.result_token_.end());
+                EXPECT_EQ(findNormal(op.result_token_, otherRead), op.result_token_.end());
+            } else {
+                EXPECT_FALSE(hasRead);
+            }
+            if (op.GetOpcode() == Opcode::OP_CONTRACT && !op.GetOOperands().empty() &&
+                op.GetOOperands()[0]->GetRawTensor() == a->GetRawTensor()) {
+                waitedTokens.insert(op.tokens_.begin(), op.tokens_.end());
+                writeWaits |= findNormal(op.tokens_, read) != op.tokens_.end();
+            }
+        }
+        EXPECT_EQ(sliceTokens.size(), 3UL);
+        for (const auto& token : sliceTokens) {
+            EXPECT_EQ(waitedTokens.count(token), 1UL);
+        }
+        EXPECT_TRUE(aProduces);
+        EXPECT_TRUE(writeWaits);
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(DtypesAndCast, TestTensorTokenLists,
+                         ::testing::Combine(::testing::Values(DT_FP32, DT_FP16, DT_BF16), ::testing::Bool()));
+
+TEST_F(TestExpandFunctionPass, ConsecutiveReadsReuseOneTensorToken)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "ReadListSequence", "ReadListSequence", nullptr);
+    std::vector<int64_t> shape{64, 64};
+    auto a = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto b = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto x = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto y = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto& first = PassOperationUtils::AddOperation(*func, Opcode::OP_ADD, {a, b}, {x});
+    auto& second = PassOperationUtils::AddOperation(*func, Opcode::OP_ADD, {a, b}, {y});
+    ir::RunInferTokenPass(std::make_shared<ir::SeqStmts>(
+        std::vector<ir::StmtPtr>{first.shared_from_this(), second.shared_from_this()}, ir::Span::Unknown()));
+    ASSERT_EQ(a->GetReadTokens().size(), 1UL);
+    auto read = a->GetReadTokens().front();
+    for (auto* op : {&first, &second}) {
+        EXPECT_NE(std::find(op->result_token_.begin(), op->result_token_.end(), read), op->result_token_.end());
+    }
+    auto nextRead = IRContext::Get().MakeSemanticToken("next_read", ir::TokenKind::READ, ir::Span::Unknown());
+    a->AddReadToken(nextRead);
+    a->AddReadToken(nextRead);
+    EXPECT_EQ(a->GetReadTokens().size(), 2UL);
+    a->RemoveReadToken(read);
+    EXPECT_EQ(a->GetReadTokens(), (std::vector<ir::VarPtr>{nextRead}));
+}
+
+TEST_F(TestExpandFunctionPass, TensorTokenListsSurviveCloneAndRemapping)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "ReadListClone", "ReadListClone", nullptr);
+    std::vector<int64_t> shape{64, 64};
+    auto a = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto out = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto& op = PassOperationUtils::AddOperation(*func, Opcode::OP_EXP, {a}, {out});
+    ir::RunInferTokenPass(
+        std::make_shared<ir::SeqStmts>(std::vector<ir::StmtPtr>{op.shared_from_this()}, ir::Span::Unknown()));
+    ASSERT_EQ(a->GetReadTokens().size(), 1UL);
+    auto read = a->GetReadTokens().front();
+    auto write = out->GetWriteToken();
+    ASSERT_NE(read, nullptr);
+    ASSERT_NE(write, nullptr);
+    auto clonedA = a->Clone(*func, true);
+    auto clonedOut = out->Clone(*func, true);
+    EXPECT_TRUE(clonedA->HasReadToken(read));
+    EXPECT_TRUE(clonedOut->HasWriteToken(write));
+    auto clonedRead = read->Clone();
+    auto clonedWrite = write->Clone();
+    class Remapper : public ir::IRMutator {
+    public:
+        void Bind(const ir::ExprPtr& from, const ir::ExprPtr& to) { var_remap_[from.get()] = to; }
+    } remap;
+    remap.Bind(a, clonedA);
+    remap.Bind(out, clonedOut);
+    remap.Bind(read, clonedRead);
+    remap.Bind(write, clonedWrite);
+    auto rebuilt = remap.VisitStmt(op.shared_from_this());
+    ASSERT_NE(rebuilt, nullptr);
+    EXPECT_TRUE(clonedA->HasReadToken(clonedRead));
+    EXPECT_TRUE(clonedOut->HasWriteToken(clonedWrite));
+    EXPECT_FALSE(a->HasReadToken(clonedRead));
+    clonedOut->RemoveWriteToken(write);
+    EXPECT_EQ(clonedOut->GetWriteTokens(), (std::vector<ir::VarPtr>{clonedWrite}));
+}
+
 TEST_F(TestExpandFunctionPass, ComputeOpReadGoesToSliceAndWriteGoesToContract)
 {
     TileShape::Current().SetVecTile(kNumExpSix, kNumExpSix);
@@ -1862,7 +2015,9 @@ TEST_F(TestExpandFunctionPass, ComputeOpReadGoesToSliceAndWriteGoesToContract)
     auto readSemantic = IRContext::Get().MakeSemanticToken("lhs_r", ir::TokenKind::READ, ir::Span::Unknown());
     auto writeSemantic = IRContext::Get().MakeSemanticToken("out_w", ir::TokenKind::WRITE, ir::Span::Unknown());
     auto depSemantic = IRContext::Get().MakeSemanticToken("dep_w", ir::TokenKind::WRITE, ir::Span::Unknown());
-    lhs->SetReadToken(readSemantic);
+    lhs->AddReadToken(readSemantic);
+    // Another operation/branch reads the same tensor after this ADD was inferred.
+    lhs->AddReadToken(IRContext::Get().MakeSemanticToken("later_lhs_r", ir::TokenKind::READ, ir::Span::Unknown()));
     addOp.result_token_ = {readSemantic, writeSemantic};
     addOp.tokens_ = {depSemantic};
 
@@ -1915,7 +2070,7 @@ TEST_F(TestExpandFunctionPass, ComputeTokenDependenciesAreRebuiltBeforeSortingEx
     readOp.tileShape_.SetVecTile(kNumEight, kNumExpFour);
     dependentOp.tileShape_.SetVecTile(kNumEight, kNumExpFour);
     auto readToken = IRContext::Get().MakeSemanticToken("lhs_r", ir::TokenKind::READ, ir::Span::Unknown());
-    lhs->SetReadToken(readToken);
+    lhs->AddReadToken(readToken);
     readOp.result_token_ = {readToken};
     dependentOp.tokens_ = {readToken};
     func->inCasts_ = {lhs, rhs};
@@ -1928,19 +2083,23 @@ TEST_F(TestExpandFunctionPass, ComputeTokenDependenciesAreRebuiltBeforeSortingEx
     ASSERT_EQ(expandPass.RunOnFunction(*func), SUCCESS);
 
     size_t addCount = 0;
-    size_t dependentCount = 0;
+    std::set<ir::VarPtr> readCompletions;
+    std::set<ir::VarPtr> waitedTokens;
     for (auto& op : func->Operations()) {
-        if (op.GetOpcode() != Opcode::OP_ADD) {
-            continue;
+        if (op.GetOpcode() == Opcode::OP_ADD) {
+            ++addCount;
         }
-        ++addCount;
-        if (!op.tokens_.empty()) {
-            ++dependentCount;
+        if (op.GetOpcode() == Opcode::OP_SLICE && op.GetIOperands()[0] == lhs) {
+            readCompletions.insert(op.result_token_.begin(), op.result_token_.end());
+        }
+        if (op.GetOpcode() == Opcode::OP_CONTRACT && op.GetOOperands()[0] == secondOut) {
+            waitedTokens.insert(op.tokens_.begin(), op.tokens_.end());
             EXPECT_FALSE(op.ProducerOpsByToken().empty());
         }
     }
     EXPECT_EQ(addCount, 4UL);
-    EXPECT_EQ(dependentCount, 2UL);
+    EXPECT_EQ(readCompletions.size(), 2UL);
+    EXPECT_EQ(waitedTokens, readCompletions);
 }
 
 TEST_F(TestExpandFunctionPass, AssembleWriteGoesToContractAndConsumedOnNextAssemble)
@@ -1967,7 +2126,7 @@ TEST_F(TestExpandFunctionPass, AssembleWriteGoesToContractAndConsumedOnNextAssem
     auto readSemantic = IRContext::Get().MakeSemanticToken("src1_r", ir::TokenKind::READ, ir::Span::Unknown());
     auto firstWrite = IRContext::Get().MakeSemanticToken("out_w1", ir::TokenKind::WRITE, ir::Span::Unknown());
     auto secondWrite = IRContext::Get().MakeSemanticToken("out_w2", ir::TokenKind::WRITE, ir::Span::Unknown());
-    src1->SetReadToken(readSemantic);
+    src1->AddReadToken(readSemantic);
     firstAssemble.result_token_ = {readSemantic, firstWrite};
     secondAssemble.result_token_ = {secondWrite};
     secondAssemble.tokens_ = {firstWrite};
@@ -2031,7 +2190,7 @@ TEST_F(TestExpandFunctionPass, AtomicRmwConvertsSemanticTokensToNormal)
     auto atomicWrite = IRContext::Get().MakeSemanticToken("dst_w1", ir::TokenKind::WRITE, ir::Span::Unknown());
     auto depSemantic = IRContext::Get().MakeSemanticToken("dep_w", ir::TokenKind::WRITE, ir::Span::Unknown());
     auto assembleWrite = IRContext::Get().MakeSemanticToken("dst_w2", ir::TokenKind::WRITE, ir::Span::Unknown());
-    src1->SetReadToken(readSemantic);
+    src1->AddReadToken(readSemantic);
     atomicOp.result_token_ = {readSemantic, atomicWrite};
     atomicOp.tokens_ = {depSemantic};
     assembleOp.result_token_ = {assembleWrite};

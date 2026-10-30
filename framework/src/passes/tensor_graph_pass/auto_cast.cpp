@@ -29,25 +29,25 @@ namespace tile_fwk {
 namespace {
 bool ProducesReadToken(const Operation& op, const LogicalTensorPtr& input)
 {
-    const auto& token = input->GetReadToken();
-    return token != nullptr &&
-           std::find(op.result_token_.begin(), op.result_token_.end(), token) != op.result_token_.end();
+    return std::any_of(op.result_token_.begin(), op.result_token_.end(),
+                       [&](const auto& token) { return input->HasReadToken(token); });
 }
 
 void MoveReadTokenToCast(Function& function, Operation& op, const LogicalTensorPtr& input, Operation& cast)
 {
-    if (!ProducesReadToken(op, input)) {
-        return;
+    // Match this operation's accesses, not the last reader of the shared tensor.
+    const auto producedTokens = op.result_token_;
+    for (const auto& token : producedTokens) {
+        if (!input->HasReadToken(token)) {
+            continue;
+        }
+        op.result_token_.erase(std::remove(op.result_token_.begin(), op.result_token_.end(), token),
+                               op.result_token_.end());
+        cast.result_token_.push_back(token);
+        auto& dependency = function.GetVarDependency();
+        dependency.RemoveProducer(token, std::static_pointer_cast<const ir::Stmt>(op.shared_from_this()));
+        dependency.AddProducer(token, std::static_pointer_cast<const ir::Stmt>(cast.shared_from_this()));
     }
-    const auto& token = input->GetReadToken();
-    // ExpandFunction matches READ tokens against the actual input tensor. After promotion,
-    // the CAST reads that tensor; leaving the token on the compute op loses the WAR edge.
-    op.result_token_.erase(std::remove(op.result_token_.begin(), op.result_token_.end(), token),
-                           op.result_token_.end());
-    cast.result_token_.push_back(token);
-    auto& dependency = function.GetVarDependency();
-    dependency.RemoveProducer(token, std::static_pointer_cast<const ir::Stmt>(op.shared_from_this()));
-    dependency.AddProducer(token, std::static_pointer_cast<const ir::Stmt>(cast.shared_from_this()));
 }
 } // namespace
 

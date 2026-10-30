@@ -331,7 +331,7 @@ private:
         for (const auto& result : op->result_) {
             auto tensor = AsLogicalTensor(result);
             auto token = CreateTokenVar(tensor, op->span_, TokenKind::WRITE);
-            tensor->SetWriteToken(token);
+            tensor->AddWriteToken(token);
             auto* raw = storage_.Find(tensor->GetRawTensor().get());
             writes.push_back({raw, std::move(token)});
             writtenRaws.insert(raw);
@@ -349,7 +349,7 @@ private:
             }
             auto it = opReadTokens.find(raw);
             if (it != opReadTokens.end()) {
-                tensor->SetReadToken(it->second);
+                tensor->AddReadToken(it->second);
                 continue;
             }
 
@@ -357,7 +357,7 @@ private:
             if (!token) {
                 token = CreateTokenVar(tensor, op->span_, TokenKind::READ);
             }
-            tensor->SetReadToken(token);
+            tensor->AddReadToken(token);
             opReadTokens.emplace(raw, token);
             reads.push_back({raw, std::move(token)});
         }
@@ -432,7 +432,7 @@ private:
             auto token = MergeIfToken(thenToken, elseToken, returnTensor->name_, TokenKind::WRITE, op->span_,
                                       thenTokenValues, elseTokenValues, returnVars);
             if (token) {
-                returnTensor->SetWriteToken(token);
+                returnTensor->AddWriteToken(token);
                 if (returnTensor->GetRawTensor()) {
                     returnedTensorWrites[storage_.Find(returnTensor->GetRawTensor().get())] = token;
                 }
@@ -513,7 +513,7 @@ private:
             auto token = AddForToken(initToken, bodyToken, returnTensor->name_, TokenKind::WRITE, op->span_, iterArgs,
                                      bodyTokenValues, returnVars);
             if (token) {
-                returnTensor->SetWriteToken(token);
+                returnTensor->AddWriteToken(token);
                 if (returnTensor->GetRawTensor()) {
                     returnedTensorWrites[storage_.Find(returnTensor->GetRawTensor().get())] = token;
                 }

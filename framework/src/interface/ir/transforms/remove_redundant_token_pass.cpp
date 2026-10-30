@@ -621,14 +621,14 @@ private:
             }
             for (const auto& result : op->result_) {
                 auto tensor = AsLogicalTensor(result);
-                if (tensor && tensor->GetWriteToken() == token) {
-                    tensor->SetWriteToken(nullptr);
+                if (tensor && tensor->HasWriteToken(token)) {
+                    tensor->RemoveWriteToken(token);
                 }
             }
             for (const auto& arg : op->args_) {
                 auto tensor = AsLogicalTensor(arg);
-                if (tensor && tensor->GetReadToken() == token) {
-                    tensor->SetReadToken(nullptr);
+                if (tensor && tensor->HasReadToken(token)) {
+                    tensor->RemoveReadToken(token);
                 }
             }
         }
