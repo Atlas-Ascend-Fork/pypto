@@ -15,6 +15,7 @@
 
 #include "remove_redundant_assemble.h"
 #include "interface/tensor/irbuilder.h"
+#include "operation/opcode.h"
 #include "passes/pass_log/pass_log.h"
 #include "passes/pass_utils/pass_token_utils.h"
 #include "passes/pass_utils/pass_utils.h"
@@ -31,6 +32,9 @@
 namespace npu::tile_fwk {
 namespace {
 constexpr const char* KEY_ENABLE_TRUE = "enable_true";
+constexpr size_t DIMENSIONS_2D = 2;
+constexpr size_t DIMENSIONS_3D = 3;
+constexpr size_t DIMENSIONS_5D = 5;
 
 bool HasInputOperand(const Operation& op, const LogicalTensorPtr& tensor)
 {
@@ -592,6 +596,119 @@ bool MatchReshapePattern(const LogicalTensorPtr& reshapeInput, const LogicalTens
     return removeAllOnes(inputShape) == removeAllOnes(outputShape);
 }
 
+bool IsZeroDynamicTailOffset(const std::vector<SymbolicScalar>& values, size_t rank)
+{
+    if (values.empty()) {
+        return true;
+    }
+    if (values.size() != rank) {
+        return false;
+    }
+    return std::all_of(values.begin() + 1, values.end(), [](const SymbolicScalar& value) {
+        auto simplified = value.Simplify();
+        return simplified.ConcreteValid() && simplified.Concrete() == 0;
+    });
+}
+
+// BFS 节点分类：穿透层节点（copyin/copyout/view/assemble）下探并收集下层消费节点，
+// transdata 为合法终结，其余节点为非法终结（终止匹配）。
+enum class BfsNodeKind { TRANSPARENT, TRANS_DATA, TERMINAL };
+
+BfsNodeKind ClassifyBfsNode(Operation* curOp, std::vector<Operation*>& nextLevel)
+{
+    const auto opcode = curOp->GetOpcode();
+    if (IsCopyIn(opcode) || IsCopyOut(opcode) || opcode == Opcode::OP_VIEW || opcode == Opcode::OP_ASSEMBLE) {
+        for (const auto& outTensor : curOp->GetOOperands()) {
+            const auto& consumers = outTensor->GetConsumers();
+            nextLevel.insert(nextLevel.end(), consumers.begin(), consumers.end());
+        }
+        return BfsNodeKind::TRANSPARENT;
+    }
+    if (OpcodeManager::Inst().IsTransData(opcode)) {
+        return BfsNodeKind::TRANS_DATA;
+    }
+    return BfsNodeKind::TERMINAL;
+}
+
+// 判断 RESHAPE 输出沿消费方向逐层 BFS（跳过 copyin/copyout/view/assemble 穿透层，可跨越多层）后，
+// 全部分支是否均终结于 transdata 类算子：任一分支终结于非 transdata 节点即不命中，
+// 不能在某层出现 transdata 后提前返回，否则更深的非 transdata 消费分支会被遗漏。
+bool IsOnlyConsumedByTransDataThroughCopy(const LogicalTensorPtr& reshapeOut)
+{
+    const auto& consumers = reshapeOut->GetConsumers();
+    if (consumers.empty()) {
+        return false;
+    }
+    std::vector<Operation*> currentLevel(consumers.begin(), consumers.end());
+    std::unordered_set<Operation*> visited;
+    while (!currentLevel.empty()) {
+        std::vector<Operation*> nextLevel;
+        for (auto* curOp : currentLevel) {
+            if (curOp == nullptr || !visited.insert(curOp).second) {
+                continue;
+            }
+            if (ClassifyBfsNode(curOp, nextLevel) == BfsNodeKind::TERMINAL) {
+                return false;
+            }
+        }
+        currentLevel = std::move(nextLevel);
+    }
+    return true;
+}
+
+bool MatchConvReshapePattern(const LogicalTensorPtr& viewInput, const LogicalTensorPtr& reshapeIn,
+                             const LogicalTensorPtr& reshapeOut, const ViewOpAttribute& viewAttr)
+{
+    const auto& inputShape = reshapeIn->GetShape();
+    const auto& outputShape = reshapeOut->GetShape();
+    const auto& sourceShape = viewInput->GetShape();
+    const auto& sourceRaw = viewInput->GetRawTensor();
+    const auto& rawShape = sourceRaw->GetRawShape();
+    // 与 InferMemoryConflict 侧对齐的安全前提：仅 ND 行主序、dtype 一致才可按源 raw 重写布局。
+    if (reshapeIn->Format() != TileOpFormat::TILEOP_ND || reshapeOut->Format() != TileOpFormat::TILEOP_ND ||
+        reshapeIn->Datatype() != reshapeOut->Datatype()) {
+        return false;
+    }
+    // 仅处理 3D/4D/5D 合并尾轴为 2D，且保留窗口首轴的场景。
+    if (inputShape.size() < DIMENSIONS_3D || inputShape.size() > DIMENSIONS_5D || outputShape.size() != DIMENSIONS_2D) {
+        return false;
+    }
+    if (outputShape[0] != inputShape[0]) {
+        return false;
+    }
+    // VIEW 输出只能被当前 RESHAPE 使用，避免删除后影响其他消费者。
+    if (reshapeIn->GetConsumers().size() != 1) {
+        return false;
+    }
+    // 源逻辑布局和物理布局的尾轴必须与窗口完整对应。
+    if (sourceShape.size() != inputShape.size() || rawShape.size() != inputShape.size()) {
+        return false;
+    }
+    if (!std::equal(inputShape.begin() + 1, inputShape.end(), sourceShape.begin() + 1)) {
+        return false;
+    }
+    // 源 raw 第三轴起须与逻辑尾轴一致：tile 允许裁切第二轴（行前缀块仍稠密，行跨度由
+    // raw 尾轴积锚定承载）；更深轴不一致会使行内出现交错间隔，展平按连续行块寻址
+    // 会读入间隔数据，须拒绝。
+    if (!std::equal(sourceShape.begin() + 2, sourceShape.end(), rawShape.begin() + 2)) {
+        return false;
+    }
+    Shape tailShape(inputShape.begin() + 1, inputShape.end());
+    if (std::any_of(tailShape.begin(), tailShape.end(), [](int64_t dim) { return dim <= 0; })) {
+        return false;
+    }
+    // 仅首轴允许切片，静态、动态尾轴偏移都必须为零。
+    const auto& offset = viewAttr.GetFromOffset();
+    if (offset.size() != inputShape.size() || !TensorOffset::IsZero(Offset(offset.begin() + 1, offset.end()))) {
+        return false;
+    }
+    if (!IsZeroDynamicTailOffset(viewAttr.GetFromDynOffset(), inputShape.size())) {
+        return false;
+    }
+    auto [tailSize, overflow] = CommonUtils::SafeMultiplyShape(tailShape);
+    return !overflow && outputShape[1] == tailSize && IsOnlyConsumedByTransDataThroughCopy(reshapeOut);
+}
+
 // Build the axis mapping for a reshape that only inserts singleton axes.
 // Unlike a regular reshape, a VIEW may expose only a slice of its source
 // tensor, so the source raw shape and the reshape logical shape can have
@@ -640,6 +757,7 @@ Shape GetStaticShapeForDynAxes(const Shape& rawShape)
 }
 
 void UpdateCopyInAttrAfterRemoveView(Operation& reshapeOp, const Shape& newRawShape,
+                                     const std::vector<SymbolicScalar>& newDynRawShape,
                                      const std::vector<SymbolicScalar>& newDynOffset,
                                      const std::vector<SymbolicScalar>& oriReshapeDynValidShape,
                                      const SymbolicScalar& validShapeExpr)
@@ -663,7 +781,12 @@ void UpdateCopyInAttrAfterRemoveView(Operation& reshapeOp, const Shape& newRawSh
             newOffset[i] = newOffset[i] + oriCopyOffset[i];
         }
         copyAttr->SetFromOffset(newOffset);
-        copyAttr->SetRawShape(OpImmediate::Specified(newRawShape));
+        // 源rawshape含动态描述（符号表达式）时必须写动态形态，静态-1占位会推导出错误的stride；
+        // 纯常量dyn形态（如BMM路径负数除法得到的常量镜像）不携带动态信息，写归一化静态形态
+        bool hasSymbolicDynShape = std::any_of(newDynRawShape.begin(), newDynRawShape.end(),
+                                               [](const SymbolicScalar& value) { return !value.IsImmediate(); });
+        copyAttr->SetRawShape(hasSymbolicDynShape ? OpImmediate::Specified(newDynRawShape) :
+                                                    OpImmediate::Specified(newRawShape));
         auto copyOut = copyIn->GetOOperands().front();
         auto copyDynValidShape = copyOut->GetDynValidShape();
         if (copyDynValidShape.empty()) {
@@ -784,6 +907,66 @@ bool RemoveRedundantAssemble::CalculateViewReshapeInfo(const Operation& reshapeO
     return true;
 }
 
+bool RemoveRedundantAssemble::CalculateViewReshapeRawShapeForConv(const Shape& sourceRawShape, Shape& rawShape) const
+{
+    Shape sourceTailShape(sourceRawShape.begin() + 1, sourceRawShape.end());
+    auto [tailSize, overflow] = CommonUtils::SafeMultiplyShape(sourceTailShape);
+    if (overflow) {
+        APASS_LOG_INFO_F(Elements::Tensor, "Skip VIEW folding: source raw tail product overflows.");
+        return false;
+    }
+    rawShape = {sourceRawShape[0], tailSize};
+    return true;
+}
+
+void RemoveRedundantAssemble::CalculateViewReshapeDynRawShapeForConv(const std::vector<SymbolicScalar>& sourceDynRaw,
+                                                                     const Shape& rawShape,
+                                                                     std::vector<SymbolicScalar>& dynRawShape) const
+{
+    if (sourceDynRaw.empty()) {
+        dynRawShape = CommonUtils::CreateConstIntVector(rawShape);
+        return;
+    }
+    SymbolicScalar dynTailSize = IRBuilder().CreateConstInt(1);
+    for (size_t idx = 1; idx < sourceDynRaw.size(); ++idx) {
+        dynTailSize = dynTailSize * sourceDynRaw[idx];
+    }
+    dynRawShape = {sourceDynRaw.front(), dynTailSize.Simplify()};
+}
+
+bool RemoveRedundantAssemble::CalculateViewReshapeInfoForConv(const Operation& reshapeOp,
+                                                              const LogicalTensorPtr& viewInput,
+                                                              const ViewOpAttribute& viewAttr,
+                                                              ViewReshapeInfo& info) const
+{
+    const auto& reshapeOut = reshapeOp.GetOOperands().front();
+    const auto& sourceRaw = viewInput->GetRawTensor();
+    if (!CalculateViewReshapeRawShapeForConv(sourceRaw->GetRawShape(), info.rawShape)) {
+        return false;
+    }
+    // dyn raw 秩须与 raw 秩一致（或为空）：秩不一致时尾轴积无法锚定（如仅描述动态首轴
+    // 的单维 dyn raw 会使尾轴积恒为 1），会静默写出错误布局，保守拒绝不改写图。
+    const auto& sourceDynRaw = sourceRaw->GetDynRawShape();
+    if (!sourceDynRaw.empty() && sourceDynRaw.size() != sourceRaw->GetRawShape().size()) {
+        return false;
+    }
+    CalculateViewReshapeDynRawShapeForConv(sourceDynRaw, info.rawShape, info.dynRawShape);
+    CalculateViewReshapeValidInfo(viewInput, viewAttr, reshapeOut, info);
+    return info.dynOffset.size() == info.dynRawShape.size() &&
+           info.reshapeDynValidShape.size() == reshapeOut->GetShape().size();
+}
+
+bool RemoveRedundantAssemble::TryCalculateViewReshapeInfo(const Operation& reshapeOp, const LogicalTensorPtr& viewInput,
+                                                          const ViewOpAttribute& viewAttr, ViewReshapeInfo& info) const
+{
+    const auto& reshapeIn = reshapeOp.GetIOperands().front();
+    const auto& reshapeOut = reshapeOp.GetOOperands().front();
+    if (MatchConvReshapePattern(viewInput, reshapeIn, reshapeOut, viewAttr)) {
+        return CalculateViewReshapeInfoForConv(reshapeOp, viewInput, viewAttr, info);
+    }
+    return MatchReshapePattern(reshapeIn, reshapeOut) && CalculateViewReshapeInfo(reshapeOp, viewInput, viewAttr, info);
+}
+
 Status RemoveRedundantAssemble::ProcessView(Function& function) const
 {
     std::vector<std::pair<Operation*, Operation*>> multiReshapeVector;
@@ -817,8 +1000,6 @@ Status RemoveRedundantAssemble::RemoveViewSingleReshape(Function& function) cons
         if (op.GetOpcode() != Opcode::OP_RESHAPE)
             continue;
         auto& reshapeOp = op;
-        if (!MatchReshapePattern(reshapeOp.GetIOperands().front(), reshapeOp.GetOOperands().front()))
-            continue;
         auto producers = reshapeOp.GetIOperands().front()->GetProducers();
         if (producers.empty()) {
             APASS_LOG_INFO_F(Elements::Operation, "No producers found for RESHAPE op's input %d.",
@@ -847,8 +1028,9 @@ Status RemoveRedundantAssemble::RemoveViewSingleReshape(Function& function) cons
             continue;
         }
         ViewReshapeInfo reshapeInfo;
-        if (!CalculateViewReshapeInfo(reshapeOp, viewInput, *opAttr, reshapeInfo)) {
-            APASS_LOG_INFO_F(Elements::Operation, "Skip RESHAPE op %d as view reshape info calculation failed.",
+        if (!TryCalculateViewReshapeInfo(reshapeOp, viewInput, *opAttr, reshapeInfo)) {
+            APASS_LOG_INFO_F(Elements::Operation,
+                             "Skip RESHAPE op %d as pattern is unmatched or view reshape info calculation failed.",
                              reshapeOp.GetOpMagic());
             continue;
         }
@@ -857,7 +1039,7 @@ Status RemoveRedundantAssemble::RemoveViewSingleReshape(Function& function) cons
                           producerOp->GetOpMagic(), reshapeOp.GetOOperands().front()->GetMagic(),
                           IntVecToStr(reshapeInfo.rawShape).c_str(), IntVecToStr(reshapeInfo.dynOffset).c_str());
         Shape staticNewRawShape = GetStaticShapeForDynAxes(reshapeInfo.rawShape);
-        UpdateCopyInAttrAfterRemoveView(reshapeOp, staticNewRawShape, reshapeInfo.dynOffset,
+        UpdateCopyInAttrAfterRemoveView(reshapeOp, staticNewRawShape, reshapeInfo.dynRawShape, reshapeInfo.dynOffset,
                                         reshapeInfo.reshapeDynValidShape, reshapeInfo.validShapeExpr);
         UpdateReshapeShape(reshapeOp, reshapeOp.GetOOperands().front(), staticNewRawShape, reshapeInfo.dynRawShape);
         PassTokenUtils::MoveTokenDependencyBeforeRemoveOp(function, *producerOp);

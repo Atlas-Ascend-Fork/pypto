@@ -45,8 +45,15 @@ private:
         SymbolicScalar validShapeExpr;
     };
 
+    bool TryCalculateViewReshapeInfo(const Operation& reshapeOp, const LogicalTensorPtr& viewInput,
+                                     const ViewOpAttribute& viewAttr, ViewReshapeInfo& info) const;
     void UpdateReshapeShape(Operation& reshapeOp, LogicalTensorPtr tensorPtr, const Shape& newRawShape,
                             const std::vector<SymbolicScalar>& newDynRawShape) const;
+    bool CalculateViewReshapeInfoForConv(const Operation& reshapeOp, const LogicalTensorPtr& viewInput,
+                                         const ViewOpAttribute& viewAttr, ViewReshapeInfo& info) const;
+    bool CalculateViewReshapeRawShapeForConv(const Shape& sourceRawShape, Shape& rawShape) const;
+    void CalculateViewReshapeDynRawShapeForConv(const std::vector<SymbolicScalar>& sourceDynRaw, const Shape& rawShape,
+                                                std::vector<SymbolicScalar>& dynRawShape) const;
     bool CalculateViewReshapeInfo(const Operation& reshapeOp, const LogicalTensorPtr& viewInput,
                                   const ViewOpAttribute& viewAttr, ViewReshapeInfo& info) const;
     bool CalculateViewReshapeRawShape(const Shape& inputShape, const Shape& outputShape, const Shape& viewRawShape,

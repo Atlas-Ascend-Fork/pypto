@@ -14,6 +14,7 @@
  */
 
 #include "infer_memory_conflict.h"
+#include "interface/operation/attribute.h"
 #include "interface/tensor/irbuilder.h"
 #include "passes/pass_log/pass_log.h"
 #include "passes/pass_utils/pass_utils.h"
@@ -265,9 +266,9 @@ bool MatchReshapeDimensionPair(const Shape& inputShape, const Shape& outputShape
     }
 }
 
-bool AccumulateRawShapeSize(const Shape& shape, const char* shapeName, int64_t& rawSize)
+bool AccumulateRawShapeSize(const Shape& shape, const char* shapeName, int64_t& rawSize, size_t fromIndex = 0)
 {
-    for (size_t i = 0; i < shape.size(); ++i) {
+    for (size_t i = fromIndex; i < shape.size(); ++i) {
         if (shape[i] < 0) {
             APASS_LOG_DEBUG_F(Elements::Operation, "%s[%zu] = %ld, dynamic shape should trigger conflict", shapeName, i,
                               static_cast<long>(shape[i]));
@@ -276,6 +277,166 @@ bool AccumulateRawShapeSize(const Shape& shape, const char* shapeName, int64_t& 
         rawSize *= shape[i];
     }
     return true;
+}
+
+bool SimplifyToConst(const SymbolicScalar& expr, int64_t expected)
+{
+    SymbolicScalar simplified = expr.Simplify();
+    return simplified.IsValid() && simplified.IsImmediate() && simplified.Concrete() == expected;
+}
+
+// 检查 tensorOffset 的尾轴分量（第 1 维起）是否全为零，或不存在（dynOffset）
+bool IsTrailingOffsetZero(const TensorOffset& tensorOffset, size_t rank)
+{
+    const std::vector<int64_t>& staticOffset = tensorOffset.GetOffset();
+    const std::vector<SymbolicScalar>& dynOffset = tensorOffset.GetDynOffset();
+    for (size_t i = 1; i < rank; ++i) {
+        if (i < staticOffset.size() && staticOffset[i] != 0) {
+            return false;
+        }
+        // dyn 偏移无效视为零（保守放行），有效且非零则拒绝
+        if (i < dynOffset.size() && dynOffset[i].IsValid() && !SimplifyToConst(dynOffset[i], 0)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<SymbolicScalar> ResolveEffectiveValidShape(const std::vector<SymbolicScalar>& candidate,
+                                                       const LogicalTensorPtr& tensor)
+{
+    if (!candidate.empty()) {
+        return candidate;
+    }
+    if (!tensor->GetDynValidShape().empty()) {
+        return tensor->GetDynValidShape();
+    }
+    return SymbolicScalar::FromConcrete(tensor->GetShape());
+}
+
+bool IsTrailingValidFull(const std::vector<SymbolicScalar>& validShape, const Shape& shape)
+{
+    if (validShape.size() != shape.size()) {
+        return false;
+    }
+    for (size_t i = 1; i < shape.size(); ++i) {
+        if (!SimplifyToConst(validShape[i], shape[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+Operation* TryGetDirectViewProducer(const LogicalTensorPtr& tensor)
+{
+    if (tensor == nullptr || tensor->GetProducers().size() != 1) {
+        return nullptr;
+    }
+    Operation* producer = *tensor->GetProducers().begin();
+    if (producer == nullptr || producer->GetOpcode() != Opcode::OP_VIEW) {
+        return nullptr;
+    }
+    return producer;
+}
+
+bool HasAtMostFirstNegativeDim(const LogicalTensorPtr& tensor)
+{
+    if (tensor == nullptr) {
+        return false;
+    }
+    const Shape& shape = tensor->GetShape();
+    return shape.size() >= 2 && !HasNegativeDimAfterFirst(tensor);
+}
+
+bool IsSupportedReshapeFormat(const LogicalTensorPtr& reshapeIn, const LogicalTensorPtr& reshapeOut)
+{
+    return reshapeIn->Format() == TileOpFormat::TILEOP_ND && reshapeOut->Format() == TileOpFormat::TILEOP_ND &&
+           reshapeIn->Datatype() == reshapeOut->Datatype();
+}
+
+// 校验 view 是否只在首轴上取视图
+bool IsViewHopTrailingAligned(Operation& viewOp, const LogicalTensorPtr& reshapeIn)
+{
+    const Shape& inShape = reshapeIn->GetShape();
+    const auto& viewIn = viewOp.GetIOperands().front();
+    const Shape& viewInShape = viewIn->GetShape();
+    if (viewInShape.size() != inShape.size()) {
+        return false;
+    }
+    // 源 raw 尾轴须与逻辑尾轴一致：raw 尾轴大于逻辑尾轴时行间存在空洞，跳过物化会使
+    // 展平按连续行块寻址读入间隔数据、遗漏有效元素。
+    const Shape& viewInRawShape = viewIn->GetRawTensor()->GetRawShape();
+    if (viewInRawShape.size() != viewInShape.size() ||
+        !std::equal(viewInShape.begin() + 1, viewInShape.end(), viewInRawShape.begin() + 1)) {
+        return false;
+    }
+    for (size_t i = 1; i < inShape.size(); ++i) {
+        if (viewInShape[i] != inShape[i]) {
+            return false;
+        }
+    }
+    auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(viewOp.GetOpAttribute());
+    if (viewAttr == nullptr) {
+        return false;
+    }
+    return IsTrailingOffsetZero(viewAttr->GetFromTensorOffset(), inShape.size()) &&
+           IsTrailingOffsetZero(reshapeIn->GetTensorOffset(), inShape.size());
+}
+
+// 校验 RESHAPE 输出是否只被 TRANSDATA 类布局转换直接消费。
+bool IsOnlyConsumedByTransData(const LogicalTensorPtr& reshapeOut)
+{
+    const auto& consumers = reshapeOut->GetConsumers();
+    if (consumers.empty()) {
+        return false;
+    }
+    for (const auto& consumer : consumers) {
+        if (consumer == nullptr || !OpcodeManager::Inst().IsTransData(consumer->GetOpcode())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// 校验 RESHAPE 是否为 3D/4D/5D 尾轴展平为 2D（反向展开不豁免，退回原路径）
+bool IsTrailingFlattenReshape(const LogicalTensorPtr& reshapeIn, const LogicalTensorPtr& reshapeOut,
+                              int64_t& trailingProduct)
+{
+    const Shape& inShape = reshapeIn->GetShape();
+    const Shape& outShape = reshapeOut->GetShape();
+    if (!AreReshapeShapesValid(inShape, outShape)) {
+        return false;
+    }
+    if ((inShape.size() != DIMENSIONS_3D && inShape.size() != DIMENSIONS_4D && inShape.size() != DIMENSIONS_5D) ||
+        outShape.size() != DIMENSIONS_2D) {
+        return false;
+    }
+    if (inShape[0] != outShape[0]) {
+        return false;
+    }
+    trailingProduct = 1;
+    if (!AccumulateRawShapeSize(inShape, "inShape", trailingProduct, 1)) {
+        return false;
+    }
+    if (outShape[1] != trailingProduct) {
+        return false;
+    }
+    return true;
+}
+
+// 检查 reshapeIn 和 reshapeOut 的 valid shape 是否满（除首轴），不满则不能跳过插 register copy
+bool IsEffectiveValidShapeAligned(Operation& viewOp, Operation& reshapeOp, const LogicalTensorPtr& reshapeIn,
+                                  const LogicalTensorPtr& reshapeOut)
+{
+    auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(viewOp.GetOpAttribute());
+    if (viewAttr == nullptr) {
+        return false;
+    }
+    std::vector<SymbolicScalar> reshapeAttrValid;
+    reshapeOp.GetAttr(OP_ATTR_PREFIX + "validShape", reshapeAttrValid);
+    std::vector<SymbolicScalar> inValid = ResolveEffectiveValidShape(viewAttr->GetToDynValidShape(), reshapeIn);
+    std::vector<SymbolicScalar> outValid = ResolveEffectiveValidShape(reshapeAttrValid, reshapeOut);
+    return IsTrailingValidFull(inValid, reshapeIn->GetShape()) && IsTrailingValidFull(outValid, reshapeOut->GetShape());
 }
 
 } // namespace
@@ -479,11 +640,22 @@ bool InferMemoryConflict::CheckReshapeContext(const LogicalTensorPtr& reshapeIn,
     return false;
 }
 
-// batch MatMul优化pattern，不插入register copy
-Status InferMemoryConflict::MatchReshapePattern(Function& function, const LogicalTensorPtr& reshapeIn,
-                                                const LogicalTensorPtr& reshapeOut, bool& matched)
+Status InferMemoryConflict::MatchReshapePattern(Function& function, Operation* reshapeOp,
+                                                const LogicalTensorPtr& reshapeIn, const LogicalTensorPtr& reshapeOut,
+                                                bool& matched)
 {
     matched = false;
+    if (MatchConvReshapePattern(reshapeOp, reshapeIn, reshapeOut)) {
+        matched = true;
+        return SUCCESS;
+    }
+    return MatchBmmReshapePattern(function, reshapeIn, reshapeOut, matched);
+}
+
+// batch MatMul 优化 pattern，不插入 register copy
+Status InferMemoryConflict::MatchBmmReshapePattern(Function& function, const LogicalTensorPtr& reshapeIn,
+                                                   const LogicalTensorPtr& reshapeOut, bool& matched)
+{
     auto nzIncast = FindNegativeDimAfterFirstNzIncast(function);
     if (nzIncast) {
         auto formatStr = std::to_string(nzIncast->Format());
@@ -513,6 +685,77 @@ Status InferMemoryConflict::MatchReshapePattern(Function& function, const Logica
     return SUCCESS;
 }
 
+// 首轴动态连续 RESHAPE 豁免判定。
+// 场景：RESHAPE 输入经 VIEW 来自"仅首轴动态"的布局来源，且 RESHAPE 仅做首轴保持的尾轴展平（[N,C,H,W] -> [N,C*H*W]
+// 等）。 返回 true 时输入输出共享内存、无需插入 REGISTER_COPY；
+bool InferMemoryConflict::MatchConvReshapePattern(Operation* reshapeOp, const LogicalTensorPtr& reshapeIn,
+                                                  const LogicalTensorPtr& reshapeOut)
+{
+    if (reshapeOp == nullptr || !reshapeIn || !reshapeOut) {
+        // 纯防御检查：三处调用点均有 OP_RESHAPE 前置判断，实际不可达；可恢复的保守拒绝用 WARN。
+        APASS_LOG_WARN_F(Elements::Operation, "MatchConvReshapePattern got null args, op [%s][%d].",
+                         reshapeOp == nullptr ? "UNKNOWN" : reshapeOp->GetOpcodeStr().c_str(),
+                         reshapeOp == nullptr ? -1 : reshapeOp->GetOpMagic());
+        return false;
+    }
+    if (!IsSupportedReshapeFormat(reshapeIn, reshapeOut)) { // 后续判断内存连续性依赖 ND 格式
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Reshape op [%d] not exempted: reshape pair is not ND format or dtypes differ.",
+                          reshapeOp->GetOpMagic());
+        return false;
+    }
+
+    Operation* viewOp = TryGetDirectViewProducer(reshapeIn);
+    if (viewOp == nullptr) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Reshape op [%d] not exempted: input is not directly produced by a single view op.",
+                          reshapeOp->GetOpMagic());
+        return false;
+    }
+    // VIEW 输出仅被当前 RESHAPE 消费：豁免后输入输出共享内存，多消费者会使别名逸散到其他分支。
+    if (reshapeIn->GetConsumers().size() != 1) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Reshape op [%d] not exempted: view output is consumed by other ops besides this reshape.",
+                          reshapeOp->GetOpMagic());
+        return false;
+    }
+    // 首轴静态或 -1 均可（行块地址映射不依赖首轴取值，静态首轴可覆盖"静态窗口 + 动态 raw"场景），尾轴须静态。
+    if (!HasAtMostFirstNegativeDim(viewOp->GetIOperands().front())) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Reshape op [%d] not exempted: view input has dynamic dims beyond the leading axis.",
+                          reshapeOp->GetOpMagic());
+        return false;
+    }
+    if (!IsViewHopTrailingAligned(*viewOp, reshapeIn)) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "Reshape op [%d] not exempted: view hop cuts or offsets trailing axes.",
+                          reshapeOp->GetOpMagic());
+        return false;
+    }
+    if (!IsOnlyConsumedByTransData(reshapeOut)) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Reshape op [%d] not exempted: output is not directly consumed by transdata ops only.",
+                          reshapeOp->GetOpMagic());
+        return false;
+    }
+
+    int64_t trailingProduct = 0;
+    if (!IsTrailingFlattenReshape(reshapeIn, reshapeOut, trailingProduct)) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "Reshape op [%d] not exempted: not a leading-axis-preserving flatten.",
+                          reshapeOp->GetOpMagic());
+        return false;
+    }
+    if (!IsEffectiveValidShapeAligned(*viewOp, *reshapeOp, reshapeIn, reshapeOut)) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "Reshape op [%d] not exempted: effective valid shapes inconsistent.",
+                          reshapeOp->GetOpMagic());
+        return false;
+    }
+
+    APASS_LOG_DEBUG_F(Elements::Operation,
+                      "Reshape op [%d] exempted: shares memory with view op [%d], trailing block size %ld.",
+                      reshapeOp->GetOpMagic(), viewOp->GetOpMagic(), static_cast<long>(trailingProduct));
+    return true;
+}
+
 Status InferMemoryConflict::UpdateForwardTensor(Function& function, const LogicalTensorPtr& curTensor,
                                                 Operation* consumer, std::queue<LogicalTensorPtr>& curTensors)
 {
@@ -525,7 +768,7 @@ Status InferMemoryConflict::UpdateForwardTensor(Function& function, const Logica
             bool isInplace = consumer->GetBoolAttribute(OP_ATTR_PREFIX + "isInplace");
             if (!isInplace && CheckRawShapeConflict(memoryInfo[curTensor], outputTensor)) {
                 bool matched = false;
-                if (MatchReshapePattern(function, reshapeInput, outputTensor, matched) != SUCCESS) {
+                if (MatchReshapePattern(function, consumer, reshapeInput, outputTensor, matched) != SUCCESS) {
                     return FAILED;
                 }
                 if (!matched) {
@@ -576,7 +819,7 @@ Status InferMemoryConflict::HandleReshapeBackward(Function& function, const Logi
         return SUCCESS;
     }
     bool matched = false;
-    if (MatchReshapePattern(function, reshapeInput, reshapeOutput, matched) != SUCCESS) {
+    if (MatchReshapePattern(function, producer, reshapeInput, reshapeOutput, matched) != SUCCESS) {
         return FAILED;
     }
     if (!matched) {
@@ -601,7 +844,7 @@ Status InferMemoryConflict::HandleConflictBackward(Function& function, const Log
     }
     bool matched = false;
     if (producer->GetOpcode() == Opcode::OP_RESHAPE &&
-        MatchReshapePattern(function, inputTensor, reshapeOutput, matched) != SUCCESS) {
+        MatchReshapePattern(function, producer, inputTensor, reshapeOutput, matched) != SUCCESS) {
         return FAILED;
     }
     if (producer->GetOpcode() == Opcode::OP_RESHAPE && !matched) {

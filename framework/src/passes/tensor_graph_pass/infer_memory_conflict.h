@@ -66,8 +66,12 @@ private:
                                   const LogicalTensorPtr& reshapeOutput);
     bool TryInsertPreMergeCopy(Function& function, const LogicalTensorPtr& tensor,
                                const LogicalTensorPtr& conflictTensor, Operation* finalOp);
-    Status MatchReshapePattern(Function& function, const LogicalTensorPtr& reshapeInput,
+    Status MatchReshapePattern(Function& function, Operation* reshapeOp, const LogicalTensorPtr& reshapeInput,
                                const LogicalTensorPtr& reshapeOut, bool& matched);
+    Status MatchBmmReshapePattern(Function& function, const LogicalTensorPtr& reshapeInput,
+                                  const LogicalTensorPtr& reshapeOut, bool& matched);
+    bool MatchConvReshapePattern(Operation* reshapeOp, const LogicalTensorPtr& reshapeInput,
+                                 const LogicalTensorPtr& reshapeOut);
     bool CheckReshapeContext(const LogicalTensorPtr& reshapeInput, const LogicalTensorPtr& reshapeOut);
 
     std::set<Operation*> preregcopys;

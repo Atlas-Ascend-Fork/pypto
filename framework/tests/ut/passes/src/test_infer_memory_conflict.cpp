@@ -264,4 +264,229 @@ TEST_F(PassTest, InferMemoryConflictIndexAddInsertsRegisterCopy)
     EXPECT_EQ(indexAddOp.GetIOperands().front(), self);
     EXPECT_EQ(assembleTmpOp.GetIOperands().front(), tmp);
 }
+
+namespace {
+// 首轴动态连续 RESHAPE 豁免用例的构图工具。
+// 所有 rawtensor 共用 memoryId, 使 REGISTER_COPY 仅由 RESHAPE 的 rawshape 冲突路径驱动,
+// 排除 CheckConflict 真实内存冲突路径对 copy 计数的干扰
+LogicalTensorPtr CreateExemptionTestTensor(const std::string& symbol, const Shape& shape,
+                                           const std::vector<SymbolicScalar>& valid = {})
+{
+    auto rawTensor = std::make_shared<RawTensor>(DT_FP16, shape);
+    rawTensor->SetSymbol(symbol);
+    rawTensor->memoryId = 0;
+    auto validShape = valid.empty() ? CreateTestConstIntVector(shape) : valid;
+    return IRBuilder().CreateTensorVar(rawTensor, Offset(shape.size(), 0), shape, validShape);
+}
+
+struct ViewReshapeTestGraph {
+    std::shared_ptr<Function> function;
+    LogicalTensorPtr incast;
+    LogicalTensorPtr viewOut;
+    LogicalTensorPtr reshapeOut;
+    LogicalTensorPtr transOut;
+    Operation* viewOp = nullptr;
+    Operation* reshapeOp = nullptr;
+    Operation* transOp = nullptr;
+};
+
+// 构图: incast(incastShape) -> VIEW(viewOffset) -> viewOut(viewOutShape) -> RESHAPE -> reshapeOut
+//       -> [TRANSDATA -> transOut ->] ASSEMBLE -> out(outcast)。
+// withTransDataConsumer=false 时 RESHAPE 输出被 ASSEMBLE 直接消费(豁免须拒绝的场景)
+ViewReshapeTestGraph BuildViewReshapeGraph(const std::string& name, const Shape& incastShape, const Shape& viewOutShape,
+                                           const Shape& reshapeOutShape, const Offset& viewOffset,
+                                           const std::vector<int64_t>& reshapeTile,
+                                           const std::vector<SymbolicScalar>& viewOutValid = {},
+                                           const std::vector<SymbolicScalar>& viewDynOffset = {},
+                                           bool withTransDataConsumer = true)
+{
+    ViewReshapeTestGraph graph;
+    graph.function = std::make_shared<Function>(Program::GetInstance(), name, name, nullptr);
+    graph.incast = CreateExemptionTestTensor("incast", incastShape);
+    graph.viewOut = CreateExemptionTestTensor("view_out", viewOutShape, viewOutValid);
+    graph.reshapeOut = CreateExemptionTestTensor("reshape_out", reshapeOutShape);
+    auto out = CreateExemptionTestTensor("out", reshapeOutShape);
+    graph.function->inCasts_.push_back(graph.incast);
+    graph.function->outCasts_.push_back(out);
+
+    auto& viewOp = PassOperationUtils::AddOperation(*graph.function, Opcode::OP_VIEW, {graph.incast}, {graph.viewOut});
+    viewOp.SetOpAttribute(std::make_shared<ViewOpAttribute>(viewOffset, MemoryType::MEM_UNKNOWN, viewDynOffset));
+    graph.viewOp = &viewOp;
+
+    auto& reshapeOp = PassOperationUtils::AddOperation(*graph.function, Opcode::OP_RESHAPE, {graph.viewOut},
+                                                       {graph.reshapeOut});
+    TileShape tileShape;
+    tileShape.SetVecTile(reshapeTile);
+    reshapeOp.UpdateTileShape(tileShape);
+    graph.reshapeOp = &reshapeOp;
+
+    LogicalTensorPtr assembleSrc = graph.reshapeOut;
+    if (withTransDataConsumer) {
+        graph.transOut = CreateExemptionTestTensor("trans_out", reshapeOutShape);
+        auto transShapeOut = CreateExemptionTestTensor("trans_shape_out", reshapeOutShape);
+        auto& transOp = PassOperationUtils::AddOperation(*graph.function, Opcode::OP_NCHW2Fractal_Z, {graph.reshapeOut},
+                                                         {graph.transOut, transShapeOut});
+        graph.transOp = &transOp;
+        assembleSrc = graph.transOut;
+    }
+
+    auto& assembleOp = PassOperationUtils::AddOperation(*graph.function, Opcode::OP_ASSEMBLE, {assembleSrc}, {out});
+    assembleOp.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, Offset(reshapeOutShape.size(), 0)));
+    return graph;
+}
+
+Status RunInferMemoryConflictPass(Function& function, const std::string& strategyName)
+{
+    PassManager::Instance().RegisterStrategy(strategyName, {{"InferMemoryConflict", PassName::INFER_MEMORY_CONFLICT}});
+    return PassManager::Instance().RunPass(Program::GetInstance(), function, strategyName);
+}
+} // namespace
+
+// [-1,8,3,3] 布局来源经单 VIEW 物化为 [80,8,3,3], 尾轴展平为 [80,72]: 布局保持, 免插 REGISTER_COPY
+TEST_F(PassTest, InferMemoryConflictExemptLeadingDynamicFlattenReshape)
+{
+    auto graph = BuildViewReshapeGraph("ExemptFlatten", {-1, 8, 3, 3}, {80, 8, 3, 3}, {80, 72}, Offset{0, 0, 0, 0},
+                                       {16, 8, 3, 3});
+    EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "ExemptFlattenStrategy"), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 0);
+    EXPECT_EQ(graph.reshapeOp->GetIOperands().front(), graph.viewOut); // RESHAPE 输入未被 copy 替换
+}
+
+// conv1d 权重链(3D->2D): [-1,8,3] -> VIEW -> [80,8,3] -> RESHAPE -> [80,24]。
+// conv1d 构图的 3D->4D 升维 RESHAPE 已被先于本 pass 的 RemoveRedundantReshape 折叠
+TEST_F(PassTest, InferMemoryConflictExemptLeadingDynamicFlatten3DReshape)
+{
+    auto graph = BuildViewReshapeGraph("ExemptFlatten3D", {-1, 8, 3}, {80, 8, 3}, {80, 24}, Offset{0, 0, 0},
+                                       {16, 8, 3});
+    EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "ExemptFlatten3DStrategy"), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 0);
+    EXPECT_EQ(graph.reshapeOp->GetIOperands().front(), graph.viewOut);
+}
+
+// 同函数存在全动态 incast(BMM 的函数级卫兵场景)不影响豁免; VIEW 首轴动态滑窗偏移合法
+TEST_F(PassTest, InferMemoryConflictExemptWithDynamicSiblingAndLeadingOffset)
+{
+    std::vector<SymbolicScalar> viewDynOffset{CreateTestScalarVar("loop_n")};
+    auto trailingZero = CreateTestConstIntVector({0, 0, 0});
+    viewDynOffset.insert(viewDynOffset.end(), trailingZero.begin(), trailingZero.end());
+    auto graph = BuildViewReshapeGraph("ExemptWithSibling", {-1, 8, 3, 3}, {80, 8, 3, 3}, {80, 72}, Offset{0, 0, 0, 0},
+                                       {16, 8, 3, 3}, {}, viewDynOffset);
+    graph.function->inCasts_.push_back(CreateExemptionTestTensor("fmap", {-1, -1, -1, -1}));
+    EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "ExemptWithSiblingStrategy"), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 0);
+}
+
+// VIEW 窗口切了尾轴([-1,8,3,4] -> [80,8,3,3]): 行块不完整, 不豁免
+TEST_F(PassTest, InferMemoryConflictNotExemptWhenViewCutsTrailingAxis)
+{
+    auto graph = BuildViewReshapeGraph("ViewCutsTrailing", {-1, 8, 3, 4}, {80, 8, 3, 3}, {80, 72}, Offset{0, 0, 0, 0},
+                                       {16, 8, 3, 3});
+    EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "ViewCutsTrailingStrategy"), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+}
+
+// 源 raw 尾轴大于逻辑尾轴([-1,8,3,3] 逻辑 / [-1,8,3,4] raw): 行间存在空洞, 展平应读取
+// 0,1,2,4,5,6,... 而非连续 0..N, 跳过物化会读入间隔数据, 不豁免
+TEST_F(PassTest, InferMemoryConflictNotExemptWhenViewInputRawTailExceedsLogicalTail)
+{
+    auto graph = BuildViewReshapeGraph("RawTailMismatch", {-1, 8, 3, 3}, {80, 8, 3, 3}, {80, 72}, Offset{0, 0, 0, 0},
+                                       {16, 8, 3, 3});
+    graph.incast->GetRawTensor()->UpdateRawShape({-1, 8, 3, 4});
+    EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "RawTailMismatchStrategy"), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+}
+
+// VIEW 窗口偏移落在尾轴上: 起点不在行块边界, 不豁免
+TEST_F(PassTest, InferMemoryConflictNotExemptWhenViewOffsetsTrailingAxis)
+{
+    auto graph = BuildViewReshapeGraph("ViewOffsetsTrailing", {-1, 8, 3, 3}, {80, 8, 3, 3}, {80, 72},
+                                       Offset{0, 0, 1, 0}, {16, 8, 3, 3});
+    EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "ViewOffsetsTrailingStrategy"), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+}
+
+// 直接 VIEW 输入的尾轴含动态维度([-1,8,3,-1]): 行块大小不可静态证明, 不豁免
+TEST_F(PassTest, InferMemoryConflictNotExemptWhenViewInputHasDynamicTrailingAxis)
+{
+    auto graph = BuildViewReshapeGraph("DynTrailing", {-1, 8, 3, -1}, {80, 8, 3, 3}, {80, 72}, Offset{0, 0, 0, 0},
+                                       {16, 8, 3, 3});
+    EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "DynTrailingStrategy"), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+}
+
+// RESHAPE 输入尾轴有效范围不满(valid [80,8,3,2]): 展平块内存在空洞, 不豁免
+TEST_F(PassTest, InferMemoryConflictNotExemptWhenTrailingValidNotFull)
+{
+    auto graph = BuildViewReshapeGraph("TrailingValidNotFull", {-1, 8, 3, 3}, {80, 8, 3, 3}, {80, 72},
+                                       Offset{0, 0, 0, 0}, {16, 8, 3, 3}, CreateTestConstIntVector({80, 8, 3, 2}));
+    EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "TrailingValidNotFullStrategy"), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+}
+
+// RESHAPE 首轴不保持([80,8,3,3] -> [40,144]): 不属于尾轴展平模式, 不豁免
+TEST_F(PassTest, InferMemoryConflictNotExemptWhenLeadingAxisNotPreserved)
+{
+    auto graph = BuildViewReshapeGraph("LeadingNotPreserved", {-1, 8, 3, 3}, {80, 8, 3, 3}, {40, 144},
+                                       Offset{0, 0, 0, 0}, {16, 8, 3, 3});
+    EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "LeadingNotPreservedStrategy"), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+}
+
+// RESHAPE 输出为 NZ 格式: 连续性论证仅对 ND 布局成立, 不豁免
+TEST_F(PassTest, InferMemoryConflictNotExemptWhenOutputNotNdFormat)
+{
+    auto graph = BuildViewReshapeGraph("OutputNotNd", {-1, 8, 3, 3}, {80, 8, 3, 3}, {80, 72}, Offset{0, 0, 0, 0},
+                                       {16, 8, 3, 3});
+    graph.reshapeOut->GetRawTensor()->format = TileOpFormat::TILEOP_NZ;
+    EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "OutputNotNdStrategy"), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+}
+
+// RESHAPE 输出被非 TRANSDATA 算子(ASSEMBLE)直接消费: 别名逸散到通用图会破坏
+// 后续 view-assemble 融合的地址解析(assembled scratch 精度事故), 必须物化, 不豁免
+TEST_F(PassTest, InferMemoryConflictNotExemptWhenOutputNotConsumedByTransData)
+{
+    auto graph = BuildViewReshapeGraph("NoTransDataConsumer", {-1, 8, 3, 3}, {80, 8, 3, 3}, {80, 72},
+                                       Offset{0, 0, 0, 0}, {16, 8, 3, 3}, {}, {}, false);
+    EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "NoTransDataConsumerStrategy"), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+    EXPECT_NE(graph.reshapeOp->GetIOperands().front(), graph.viewOut);
+}
+
+// RESHAPE 输入无 VIEW 生产者(直接消费 incast): 不满足豁免构图前提, 不豁免。
+// 输入侧即动态 incast: 前向 rawshape 冲突插前置 copy, 反向传播的冲突路径再插后置 copy, 共 2 个
+TEST_F(PassTest, InferMemoryConflictNotExemptWithoutViewProducer)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "NoViewProducer", "NoViewProducer", nullptr);
+    auto incast = CreateExemptionTestTensor("incast", {-1, 8, 3, 3});
+    auto reshapeOut = CreateExemptionTestTensor("reshape_out", {80, 72});
+    auto out = CreateExemptionTestTensor("out", {80, 72});
+    function->inCasts_.push_back(incast);
+    function->outCasts_.push_back(out);
+
+    auto& reshapeOp = PassOperationUtils::AddOperation(*function, Opcode::OP_RESHAPE, {incast}, {reshapeOut});
+    TileShape tileShape;
+    tileShape.SetVecTile(std::vector<int64_t>{16, 8, 3, 3});
+    reshapeOp.UpdateTileShape(tileShape);
+    auto& assembleOp = PassOperationUtils::AddOperation(*function, Opcode::OP_ASSEMBLE, {reshapeOut}, {out});
+    assembleOp.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, Offset{0, 0}));
+
+    EXPECT_EQ(RunInferMemoryConflictPass(*function, "NoViewProducerStrategy"), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(function.get()), 2);
+    EXPECT_NE(reshapeOp.GetIOperands().front(), incast); // RESHAPE 输入已被前置 copy 输出替换
+}
+
+// 函数含 NZ 多动态轴 incast 且 RESHAPE 目标非 2D(不满足豁免的维度模式): 落回 BMM 判定, 既有 NZ 非法输入报错保留
+TEST_F(PassTest, InferMemoryConflictNzMultiDynamicIncastStillFails)
+{
+    auto graph = BuildViewReshapeGraph("NzMultiDynamic", {-1, 8, 3, 3}, {80, 8, 3, 3}, {80, 24, 3}, Offset{0, 0, 0, 0},
+                                       {16, 8, 3, 3});
+    auto nzRaw = std::make_shared<RawTensor>(DT_FP16, Shape{-1, -1, 3, 3});
+    nzRaw->SetSymbol("nz_incast");
+    nzRaw->format = TileOpFormat::TILEOP_NZ;
+    auto nzIncast = IRBuilder().CreateTensorVar(nzRaw, Offset(4, 0), Shape{-1, -1, 3, 3},
+                                                CreateTestConstIntVector({-1, -1, 3, 3}));
+    graph.function->inCasts_.push_back(nzIncast);
+    EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "NzMultiDynamicStrategy"), FAILED);
+}
 } // namespace npu::tile_fwk

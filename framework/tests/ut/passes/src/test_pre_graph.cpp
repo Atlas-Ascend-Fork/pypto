@@ -1494,6 +1494,296 @@ TEST_F(PreGraphTest, KeepParallelAssemblesWithSiblingCopyIn)
     CompareOpImmediateVector(copyAttr->GetRawShape(), {4, 4});
 }
 
+TEST_F(PreGraphTest, TestRemoveViewSingleReshapeConvMatchesDynamicLeadingWithTransDataConsumer)
+{
+    ComputationalGraphBuilder G;
+    // 卷积权重链: 源首轴动态([-1,4,1,1,1]), RESHAPE 输出跨 copyin 后由布局转换算子消费。
+    // conv 豁免须命中, 布局锚定源 raw: 首轴 -1 占位原样保留, 尾轴取源尾轴积 [-1,4]
+    // (BMM 的尾部对齐推导在此形状族会抄到单维 [1,1] 产出错误布局)。
+    G.AddTensor(DataType::DT_FP16, {-1, 4, 1, 1, 1}, MemoryType::MEM_DEVICE_DDR, "view_input");
+    G.AddTensor(DataType::DT_FP16, {16, 4, 1, 1, 1}, MemoryType::MEM_DEVICE_DDR, "reshape_input");
+    G.AddTensor(DataType::DT_FP16, {16, 4}, MemoryType::MEM_DEVICE_DDR, "reshape_output");
+    G.AddTensor(DataType::DT_FP16, {16, 4}, MemoryType::MEM_DEVICE_DDR, "copy_dst");
+    G.AddTensor(DataType::DT_FP16, {16, 4}, MemoryType::MEM_DEVICE_DDR, "transdata_dst");
+    G.AddOp(Opcode::OP_VIEW, {"view_input"}, {"reshape_input"}, "VIEW");
+    G.GetOp("VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0, 0, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"reshape_input"}, {"reshape_output"}, "RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"reshape_output"}, {"copy_dst"}, "COPYIN");
+    G.AddOp(Opcode::OP_NCHW2Fractal_Z, {"copy_dst"}, {"transdata_dst"}, "TRANSDATA");
+    auto copyAttr = std::static_pointer_cast<CopyOpAttribute>(G.GetOp("COPYIN")->GetOpAttribute());
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessView(*G.GetFunction()), SUCCESS);
+
+    EXPECT_TRUE(G.GetOp("VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("RESHAPE")->GetIOperands().front(), G.GetTensor("view_input"));
+    EXPECT_EQ(G.GetTensor("reshape_output")->tensor->GetRawShape(), (std::vector<int64_t>{-1, 4}));
+    CompareOpImmediateVector(copyAttr->GetFromOffset(), {0, 0});
+    CompareOpImmediateVector(copyAttr->GetRawShape(), {-1, 4});
+}
+
+TEST_F(PreGraphTest, TestRemoveViewSingleReshapeConvRejectsDynamicWithoutTransDataConsumer)
+{
+    ComputationalGraphBuilder G;
+    // 源首轴动态但消费侧无布局转换算子: 非卷积权重链语义, conv 豁免须拒绝,
+    // 由 BMM 路径处理(单维在尾轴积之前的形状族, 源锚推导保持动态首轴)。
+    G.AddTensor(DataType::DT_FP16, {-1, 1, 64}, MemoryType::MEM_DEVICE_DDR, "view_input");
+    G.AddTensor(DataType::DT_FP16, {1, 1, 64}, MemoryType::MEM_DEVICE_DDR, "reshape_input");
+    G.AddTensor(DataType::DT_FP16, {1, 64}, MemoryType::MEM_DEVICE_DDR, "reshape_output");
+    G.AddTensor(DataType::DT_FP16, {1, 64}, MemoryType::MEM_UB, "copy_dst");
+    G.AddOp(Opcode::OP_VIEW, {"view_input"}, {"reshape_input"}, "VIEW");
+    G.GetOp("VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"reshape_input"}, {"reshape_output"}, "RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"reshape_output"}, {"copy_dst"}, "COPYIN");
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessView(*G.GetFunction()), SUCCESS);
+
+    EXPECT_TRUE(G.GetOp("VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("RESHAPE")->GetIOperands().front(), G.GetTensor("view_input"));
+}
+
+TEST_F(PreGraphTest, TestRemoveViewSingleReshapeConvTransDataAcrossMultipleCopyHops)
+{
+    ComputationalGraphBuilder G;
+    // 布局转换算子在多层 copyin/copyout 之后: BFS 须穿透全部拷贝层找到 transdata,
+    // conv 豁免命中, 布局锚定源 raw 首轴 [-1,4]。
+    G.AddTensor(DataType::DT_FP16, {-1, 4, 1, 1, 1}, MemoryType::MEM_DEVICE_DDR, "view_input");
+    G.AddTensor(DataType::DT_FP16, {16, 4, 1, 1, 1}, MemoryType::MEM_DEVICE_DDR, "reshape_input");
+    G.AddTensor(DataType::DT_FP16, {16, 4}, MemoryType::MEM_DEVICE_DDR, "reshape_output");
+    G.AddTensor(DataType::DT_FP16, {16, 4}, MemoryType::MEM_DEVICE_DDR, "copy_dst1");
+    G.AddTensor(DataType::DT_FP16, {16, 4}, MemoryType::MEM_DEVICE_DDR, "copy_dst2");
+    G.AddTensor(DataType::DT_FP16, {16, 4}, MemoryType::MEM_DEVICE_DDR, "transdata_dst");
+    G.AddOp(Opcode::OP_VIEW, {"view_input"}, {"reshape_input"}, "VIEW");
+    G.GetOp("VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0, 0, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"reshape_input"}, {"reshape_output"}, "RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"reshape_output"}, {"copy_dst1"}, "COPYIN1");
+    G.AddOp(Opcode::OP_COPY_OUT, {"copy_dst1"}, {"copy_dst2"}, "COPYOUT");
+    G.AddOp(Opcode::OP_NCHW2Fractal_Z, {"copy_dst2"}, {"transdata_dst"}, "TRANSDATA");
+    auto copyAttr = std::static_pointer_cast<CopyOpAttribute>(G.GetOp("COPYIN1")->GetOpAttribute());
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessView(*G.GetFunction()), SUCCESS);
+
+    EXPECT_TRUE(G.GetOp("VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("RESHAPE")->GetIOperands().front(), G.GetTensor("view_input"));
+    EXPECT_EQ(G.GetTensor("reshape_output")->tensor->GetRawShape(), (std::vector<int64_t>{-1, 4}));
+    CompareOpImmediateVector(copyAttr->GetRawShape(), {-1, 4});
+}
+
+TEST_F(PreGraphTest, TestRemoveViewSingleReshapeConvRejectsDeeperNonTransDataBranch)
+{
+    ComputationalGraphBuilder G;
+    // 分支深度不一致: 一支 COPYIN->TRANSDATA, 另一支 COPYIN->COPYOUT->ABS。
+    // BFS 须全部分支终结于 transdata 才命中, 某层出现 transdata 不能提前返回,
+    // 否则更深的非 transdata 分支(ABS)会被遗漏。
+    G.AddTensor(DataType::DT_FP16, {-1, 4, 3}, MemoryType::MEM_DEVICE_DDR, "view_input");
+    G.AddTensor(DataType::DT_FP16, {16, 4, 3}, MemoryType::MEM_DEVICE_DDR, "reshape_input");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "reshape_output");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "copy_dst1");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "transdata_dst");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "copy_dst2");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "copy_dst3");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "abs_dst");
+    G.AddOp(Opcode::OP_VIEW, {"view_input"}, {"reshape_input"}, "VIEW");
+    G.GetOp("VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"reshape_input"}, {"reshape_output"}, "RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"reshape_output"}, {"copy_dst1"}, "COPYIN1");
+    G.AddOp(Opcode::OP_NCHW2Fractal_Z, {"copy_dst1"}, {"transdata_dst"}, "TRANSDATA");
+    G.AddOp(Opcode::OP_COPY_IN, {"reshape_output"}, {"copy_dst2"}, "COPYIN2");
+    G.AddOp(Opcode::OP_COPY_OUT, {"copy_dst2"}, {"copy_dst3"}, "COPYOUT");
+    G.AddOp(Opcode::OP_ABS, {"copy_dst3"}, {"abs_dst"}, "ABS");
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessView(*G.GetFunction()), SUCCESS);
+
+    EXPECT_FALSE(G.GetOp("VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("RESHAPE")->GetIOperands().front(), G.GetTensor("reshape_input"));
+}
+
+TEST_F(PreGraphTest, TestRemoveViewSingleReshapeConvRejectsRawTailMismatch)
+{
+    ComputationalGraphBuilder G;
+    // 源 raw 尾轴大于逻辑尾轴({-1,4,3} 逻辑 / {-1,4,4} raw): 行间存在空洞,
+    // 删除 VIEW 会使展平按连续行块寻址读入间隔数据, conv 豁免须拒绝。
+    G.AddTensor(DataType::DT_FP16, {-1, 4, 3}, MemoryType::MEM_DEVICE_DDR, "view_input");
+    G.GetTensor("view_input")->tensor->UpdateRawShape({-1, 4, 4});
+    G.AddTensor(DataType::DT_FP16, {16, 4, 3}, MemoryType::MEM_DEVICE_DDR, "reshape_input");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "reshape_output");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "copy_dst");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "transdata_dst");
+    G.AddOp(Opcode::OP_VIEW, {"view_input"}, {"reshape_input"}, "VIEW");
+    G.GetOp("VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"reshape_input"}, {"reshape_output"}, "RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"reshape_output"}, {"copy_dst"}, "COPYIN");
+    G.AddOp(Opcode::OP_NCHW2Fractal_Z, {"copy_dst"}, {"transdata_dst"}, "TRANSDATA");
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessView(*G.GetFunction()), SUCCESS);
+
+    EXPECT_FALSE(G.GetOp("VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("RESHAPE")->GetIOperands().front(), G.GetTensor("reshape_input"));
+}
+
+TEST_F(PreGraphTest, TestRemoveViewSingleReshapeConvMatchesSecondAxisCutRaw)
+{
+    ComputationalGraphBuilder G;
+    // tile 允许裁切第二轴: raw 第二轴(C'=8)大于逻辑第二轴(C=4)时, 行内取前 C 个通道
+    // 仍为稠密前缀块, 行跨度由 raw 尾轴积锚定承载, conv 豁免命中, 布局锚 [-1,8]。
+    G.AddTensor(DataType::DT_FP16, {-1, 4, 1, 1, 1}, MemoryType::MEM_DEVICE_DDR, "view_input");
+    G.GetTensor("view_input")->tensor->UpdateRawShape({-1, 8, 1, 1, 1});
+    G.AddTensor(DataType::DT_FP16, {16, 4, 1, 1, 1}, MemoryType::MEM_DEVICE_DDR, "reshape_input");
+    G.AddTensor(DataType::DT_FP16, {16, 4}, MemoryType::MEM_DEVICE_DDR, "reshape_output");
+    G.AddTensor(DataType::DT_FP16, {16, 4}, MemoryType::MEM_DEVICE_DDR, "copy_dst");
+    G.AddTensor(DataType::DT_FP16, {16, 4}, MemoryType::MEM_DEVICE_DDR, "transdata_dst");
+    G.AddOp(Opcode::OP_VIEW, {"view_input"}, {"reshape_input"}, "VIEW");
+    G.GetOp("VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0, 0, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"reshape_input"}, {"reshape_output"}, "RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"reshape_output"}, {"copy_dst"}, "COPYIN");
+    G.AddOp(Opcode::OP_NCHW2Fractal_Z, {"copy_dst"}, {"transdata_dst"}, "TRANSDATA");
+    auto copyAttr = std::static_pointer_cast<CopyOpAttribute>(G.GetOp("COPYIN")->GetOpAttribute());
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessView(*G.GetFunction()), SUCCESS);
+
+    EXPECT_TRUE(G.GetOp("VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("RESHAPE")->GetIOperands().front(), G.GetTensor("view_input"));
+    EXPECT_EQ(G.GetTensor("reshape_output")->tensor->GetRawShape(), (std::vector<int64_t>{-1, 8}));
+    CompareOpImmediateVector(copyAttr->GetRawShape(), {-1, 8});
+}
+
+TEST_F(PreGraphTest, TestRemoveViewSingleReshapeConvRejectsNonNdFormat)
+{
+    ComputationalGraphBuilder G;
+    // reshape 输入为 NZ 格式: 按 ND 行主序重写 rawshape 的前提不成立, conv 豁免须拒绝。
+    G.AddTensor(DataType::DT_FP16, {-1, 4, 3}, MemoryType::MEM_DEVICE_DDR, "view_input");
+    G.AddTensor(DataType::DT_FP16, {16, 4, 3}, MemoryType::MEM_DEVICE_DDR, "reshape_input");
+    G.GetTensor("reshape_input")->GetRawTensor()->format = TileOpFormat::TILEOP_NZ;
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "reshape_output");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "copy_dst");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "transdata_dst");
+    G.AddOp(Opcode::OP_VIEW, {"view_input"}, {"reshape_input"}, "VIEW");
+    G.GetOp("VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"reshape_input"}, {"reshape_output"}, "RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"reshape_output"}, {"copy_dst"}, "COPYIN");
+    G.AddOp(Opcode::OP_NCHW2Fractal_Z, {"copy_dst"}, {"transdata_dst"}, "TRANSDATA");
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessView(*G.GetFunction()), SUCCESS);
+
+    EXPECT_FALSE(G.GetOp("VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("RESHAPE")->GetIOperands().front(), G.GetTensor("reshape_input"));
+}
+
+TEST_F(PreGraphTest, TestRemoveViewSingleReshapeConvRejectsDynRawShapeRankMismatch)
+{
+    ComputationalGraphBuilder G;
+    // 源 dyn raw 仅描述动态首轴(秩 1 != raw 秩 3): 尾轴积无法锚定(恒为 1),
+    // 会静默写出错误布局, 保守拒绝不改写图。
+    G.AddTensor(DataType::DT_FP16, {-1, 4, 3}, MemoryType::MEM_DEVICE_DDR, "view_input");
+    G.GetTensor("view_input")->tensor->UpdateDynRawShape({SymbolicScalar("loop", 16)});
+    G.AddTensor(DataType::DT_FP16, {16, 4, 3}, MemoryType::MEM_DEVICE_DDR, "reshape_input");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "reshape_output");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "copy_dst");
+    G.AddTensor(DataType::DT_FP16, {16, 12}, MemoryType::MEM_DEVICE_DDR, "transdata_dst");
+    G.AddOp(Opcode::OP_VIEW, {"view_input"}, {"reshape_input"}, "VIEW");
+    G.GetOp("VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"reshape_input"}, {"reshape_output"}, "RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"reshape_output"}, {"copy_dst"}, "COPYIN");
+    G.AddOp(Opcode::OP_NCHW2Fractal_Z, {"copy_dst"}, {"transdata_dst"}, "TRANSDATA");
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessView(*G.GetFunction()), SUCCESS);
+
+    EXPECT_FALSE(G.GetOp("VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("RESHAPE")->GetIOperands().front(), G.GetTensor("reshape_input"));
+}
+
+TEST_F(PreGraphTest, TestRemoveViewSingleReshapeConvSymbolicDynRawShapeWritesDynamicForm)
+{
+    ComputationalGraphBuilder G;
+    // 源 rawshape 带符号动态描述(loop 为运行时首轴): CopyIn rawShape 须写动态形态 {loop,4},
+    // 静态 -1 占位会推导出错误的 stride; reshape 输出静态 raw 保持 {-1,4} 归一化形态。
+    G.AddTensor(DataType::DT_FP16, {-1, 4, 1, 1, 1}, MemoryType::MEM_DEVICE_DDR, "view_input");
+    G.AddTensor(DataType::DT_FP16, {16, 4, 1, 1, 1}, MemoryType::MEM_DEVICE_DDR, "reshape_input");
+    G.AddTensor(DataType::DT_FP16, {16, 4}, MemoryType::MEM_DEVICE_DDR, "reshape_output");
+    G.AddTensor(DataType::DT_FP16, {16, 4}, MemoryType::MEM_DEVICE_DDR, "copy_dst");
+    G.AddTensor(DataType::DT_FP16, {16, 4}, MemoryType::MEM_DEVICE_DDR, "transdata_dst");
+    G.GetTensor("view_input")
+        ->tensor->UpdateDynRawShape(
+            {SymbolicScalar("loop", 16), SymbolicScalar(4), SymbolicScalar(1), SymbolicScalar(1), SymbolicScalar(1)});
+    G.AddOp(Opcode::OP_VIEW, {"view_input"}, {"reshape_input"}, "VIEW");
+    G.GetOp("VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0, 0, 0, 0}));
+    G.AddOp(Opcode::OP_RESHAPE, {"reshape_input"}, {"reshape_output"}, "RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"reshape_output"}, {"copy_dst"}, "COPYIN");
+    G.AddOp(Opcode::OP_NCHW2Fractal_Z, {"copy_dst"}, {"transdata_dst"}, "TRANSDATA");
+    auto copyAttr = std::static_pointer_cast<CopyOpAttribute>(G.GetOp("COPYIN")->GetOpAttribute());
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessView(*G.GetFunction()), SUCCESS);
+
+    EXPECT_TRUE(G.GetOp("VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("RESHAPE")->GetIOperands().front(), G.GetTensor("view_input"));
+    EXPECT_EQ(G.GetTensor("reshape_output")->tensor->GetRawShape(), (std::vector<int64_t>{-1, 4}));
+    auto reshapeDynRaw = G.GetTensor("reshape_output")->tensor->GetDynRawShape();
+    ASSERT_EQ(reshapeDynRaw.size(), 2);
+    EXPECT_EQ(reshapeDynRaw[0].Dump(), "loop");
+    EXPECT_EQ(reshapeDynRaw[1].Dump(), "4");
+    const auto& copyRawShape = copyAttr->GetRawShape();
+    ASSERT_EQ(copyRawShape.size(), 2);
+    EXPECT_EQ(copyRawShape[0].Dump(), "loop");
+    EXPECT_EQ(copyRawShape[1].Dump(), "4");
+}
+
+TEST_F(PreGraphTest, TestRemoveViewSingleReshapeBmmSymbolicDynRawShapeWritesDynamicForm)
+{
+    ComputationalGraphBuilder G;
+    // BMM 符号回归: 源 dyn raw 含符号量时 CopyIn rawShape 须写动态形态 {2,1,L}
+    // (此前恒写静态形态), fromOffset 仍折算为具体值 {1,0,0}。
+    constexpr int64_t l = 26;
+    constexpr int64_t lMax = 32;
+    G.AddTensor(DataType::DT_FP32, {NUM2, 1, l}, MemoryType::MEM_DEVICE_DDR, "input");
+    G.AddTensor(DataType::DT_FP32, {1, lMax}, "view_out");
+    G.AddTensor(DataType::DT_FP32, {1, 1, lMax}, "reshape_out");
+    G.AddTensor(DataType::DT_FP32, {1, 1, lMax}, MemoryType::MEM_UB, "copy_in_out");
+
+    auto input = G.GetTensor("input");
+    input->tensor->UpdateRawShape({NUM2, 1, lMax});
+    input->tensor->UpdateDynRawShape({SymbolicScalar("M", NUM2), SymbolicScalar(1), SymbolicScalar("L", lMax)});
+    input->UpdateDynValidShape(CreateTestConstIntVector({NUM2, 1, l}));
+    G.GetTensor("view_out")->UpdateDynValidShape(CreateTestConstIntVector({1, l}));
+    G.GetTensor("reshape_out")->UpdateDynValidShape(CreateTestConstIntVector({1, 1, l}));
+    G.GetTensor("copy_in_out")->UpdateDynValidShape({});
+
+    G.AddOp(Opcode::OP_VIEW, {"input"}, {"view_out"}, "VIEW");
+    std::vector<int64_t> viewOffset{1, 0, 0};
+    auto viewAttr = std::make_shared<ViewOpAttribute>(viewOffset, MemoryType::MEM_UNKNOWN,
+                                                      OpImmediate::ToSpecified(OpImmediate::Specified(viewOffset)));
+    G.GetOp("VIEW")->SetOpAttribute(viewAttr);
+    G.AddOp(Opcode::OP_RESHAPE, {"view_out"}, {"reshape_out"}, "RESHAPE");
+    G.AddOp(Opcode::OP_COPY_IN, {"reshape_out"}, {"copy_in_out"}, "COPYIN");
+    auto copyAttr = std::static_pointer_cast<CopyOpAttribute>(G.GetOp("COPYIN")->GetOpAttribute());
+    copyAttr->SetFromOffset(OpImmediate::Specified(std::vector<int64_t>{0, 0, 0}));
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessView(*G.GetFunction()), SUCCESS);
+
+    EXPECT_TRUE(G.GetOp("VIEW")->IsDeleted());
+    EXPECT_EQ(G.GetOp("RESHAPE")->GetIOperands().front(), input);
+    EXPECT_EQ(G.GetTensor("reshape_out")->tensor->GetRawShape(), (std::vector<int64_t>{NUM2, 1, lMax}));
+    auto reshapeDynRaw = G.GetTensor("reshape_out")->tensor->GetDynRawShape();
+    ASSERT_EQ(reshapeDynRaw.size(), 3);
+    EXPECT_EQ(reshapeDynRaw[0].Dump(), "2");
+    EXPECT_EQ(reshapeDynRaw[1].Dump(), "1");
+    EXPECT_EQ(reshapeDynRaw[2].Dump(), "L");
+    const auto& copyRawShape = copyAttr->GetRawShape();
+    ASSERT_EQ(copyRawShape.size(), 3);
+    EXPECT_EQ(copyRawShape[0].Dump(), "2");
+    EXPECT_EQ(copyRawShape[1].Dump(), "1");
+    EXPECT_EQ(copyRawShape[2].Dump(), "L");
+    CompareOpImmediateVector(copyAttr->GetFromOffset(), {1, 0, 0});
+}
+
 TEST_F(PreGraphTest, TestRemoveRedundantAssemble)
 {
     ComputationalGraphBuilder G;
