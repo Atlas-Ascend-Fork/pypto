@@ -22,9 +22,9 @@
 
 ## 功能说明
 
-获取运行时变长（DYNAMIC）输入端口描述符中第i个张量的地址。DYNAMIC输入端口在Host侧挂接N个张量，N在运行时确定；框架将这N个张量的列表描述符（list-tensor descriptor）传给Kernel，本接口按张量下标从描述符中取出对应张量的GM地址。
+当输入有多个Tensor，个数、形状均不固定时，可使用[约束说明](#约束说明)中的打包方式将其按一定要求组合成动态输入，通过指针记录这多个输入Tensor的起始地址。本接口实现从该动态输入中，读取指定Tensor的起始地址，返回指针的元素类型由声明的dtype决定。
 
-返回值是一个裸指针pypto_pro.language.Ptr，其元素类型取描述符声明的dtype。通常先配合[pypto_pro.language.make_tensor](make_tensor.md)构造Tensor视图，再像普通GM Tensor一样被[load](../memory_data_movement/load.md)/[store](../memory_data_movement/store.md)使用。若需要按其它元素类型查看同一段地址（例如当作原始UINT8字节），在[pypto_pro.language.make_tensor](make_tensor.md)的dtype参数中指定即可，本接口返回的指针元素类型默认即为描述符的元素类型。
+常用于按顺序遍历全部张量，配合[pypto_pro.language.make_tensor](make_tensor.md)把每次取出的地址包装成Tensor视图，读取每个张量的形状使用[pypto_pro.language.dynamic_input_dim](dynamic_input_dim.md)。
 
 ## 函数原型
 
@@ -34,37 +34,63 @@ pypto_pro.language.dynamic_input_ptr(x: Ptr, i: int, /) -> Ptr
 
 ## 参数说明
 
-| 参数名 | 输入/输出 | 说明                                                                                                                                                                                                       |
-| ---- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| x    | 输入      | DYNAMIC输入端口的描述符指针，在Kernel签名中声明为[pypto_pro.language.Ptr](../basic_data_structures/Ptr.md)[dtype]，元素类型即描述符声明的dtype。 |
-| i    | 输入      | 张量下标，取值为[0, N)，N为Host侧挂接的张量个数；可以是编译期常量或运行时整型标量表达式。                                                                                                                  |
+| 参数名 | 输入/输出 | 说明                                                                                                              |
+| ------ | --------- | ----------------------------------------------------------------------------------------------------------------- |
+| x      | 输入      | 输入指针，类型为[pypto_pro.language.Ptr](../basic_data_structures/Ptr.md)[dtype]，对多Tensor的打包方式见约束说明。 |
+| i      | 输入      | 张量索引，整型常量或运行时整型标量，取值范围[0, N)，N为本次调用传入的Tensor个数。                                 |
 
 ## 约束说明
 
-- x是DYNAMIC输入端口的描述符（pl.Ptr[dtype]）；其指向的内存必须确实是框架传递的列表描述符，否则会按描述符布局解读，属未定义行为。
-- i必须落在[0, N)内，接口不对i做范围检查；越界会读取描述符地址表之外的内存，属未定义行为。
-- 各张量可以独立分配，地址不必连续；张量个数与形状由描述符及Host侧共同提供。
-- 元素类型的C类型映射：8/16/32/64位元素使用对应的C类型；4位元素按两个值一个字节打包（DT_FP4E2M1对应float4_e2m1x2_t、DT_FP4E1M2对应float4_e1m2x2_t），DT_INT4/DT_UINT4/DT_FP4/DT_HF4没有对应的打包C类型，不可在此使用。
+- 多个Tensor不包含形状信息的打包方式示意图如下，代码实现可见[调用示例](#调用示例)：
+
+  ```text
+           ┌──────────────┐
+      w[0] │      24      │  地址数组的字节偏移（固定24）
+           ├──────────────┤
+      w[1] │ dim | count  │  低32 bit为dim(=0)，高32 bit为Tensor个数N
+      w[2] │  0xFFFFFFFF  │  保留字
+           ├──────────────┤
+      w[3] │    addr_0    │  第0个Tensor的起始地址
+      w[4] │    addr_1    │  第1个Tensor的起始地址
+       ... │     ...      │  ...
+    w[2+N] │  addr_{N-1}  │  第N-1个Tensor的起始地址
+           └──────────────┘
+
+  以N=2、dim=0为例，该数组为[24, (2 << 32) | 0, 0xFFFFFFFF, addr_0, addr_1]。
+  ```
 
 ## 返回值说明
 
-返回描述符中第i个张量的地址，类型为pypto_pro.language.Ptr，元素类型为描述符声明的dtype。
+返回第i个张量的地址，类型为pypto_pro.language.Ptr，元素类型与各张量一致。
 
 ## 调用示例
 
-下面的Kernel消费一个DYNAMIC输入端口，按顺序读取其中的count个张量并逐元素求和。
-
 ```python
+import os
+
+import pypto
 import pypto_pro.language as pl
+import torch
 
 P = 256
+
+
+def _build_list_tensor_desc(addrs):
+    """dim为0的动态输入：[dataPtrOffset, (count<<32)|dim, 0xffffffff, addr_0..addr_{N-1}]。"""
+    n = len(addrs)
+    w = [0] * (3 + n)
+    w[0] = 24  # 从起始处到地址数组的字节偏移，即地址数组从 w[3] 开始
+    w[1] = (n << 32) & 0xFFFFFFFFFFFFFFFF  # 低32bit dim=0，高32bit count
+    w[2] = 0xFFFFFFFF  # 保留字
+    for i, a in enumerate(addrs):
+        w[3 + i] = a
+    return torch.tensor(w, dtype=torch.int64)
 
 
 @pl.jit(auto_mutex=True)
 def dynamic_input_ptr_sum(
     desc: pl.Ptr[pl.DT_FP32],
     out: pl.Ptr[pl.DT_FP32],
-    count: pl.DT_INT32,
 ):
     out_t = pl.make_tensor(out, [1, P], [P, 1], dtype=pl.DT_FP32)
     tt = pl.TileType(shape=[1, P], dtype=pl.DT_FP32,
@@ -77,19 +103,31 @@ def dynamic_input_ptr_sum(
         # 取第 0 个张量的地址，包装成 Tensor 视图后搬入 UB
         p0 = pl.dynamic_input_ptr(desc, 0)
         pl.load(acc, pl.make_tensor(p0, [1, P], [P, 1], dtype=pl.DT_FP32), [0, 0])
-        for i in pl.range(1, count):
-            t = src_db.next()
-            pl.set_validshape(t, [1, P])
-            pi = pl.dynamic_input_ptr(desc, i)
-            pl.load(t, pl.make_tensor(pi, [1, P], [P, 1], dtype=pl.DT_FP32), [0, 0])
-            pl.add(acc, acc, t)
+        # 取第 1 个张量的地址，搬入 UB 后累加到第 0 个张量上
+        t = src_db.next()
+        pl.set_validshape(t, [1, P])
+        p1 = pl.dynamic_input_ptr(desc, 1)
+        pl.load(t, pl.make_tensor(p1, [1, P], [P, 1], dtype=pl.DT_FP32), [0, 0])
+        pl.add(acc, acc, t)
         pl.store(out_t, acc, [0, 0])
-```
 
-如需把某个张量按原始字节查看，可在make_tensor中指定dtype：
 
-```python
-p0 = pl.dynamic_input_ptr(desc, 0)
-# 描述符声明为 pl.Ptr[pl.DT_FP32]，一个元素占4字节，这里按 UINT8 重新解释同一段地址
-raw = pl.make_tensor(p0, [1, P * 4], [P * 4, 1], dtype=pl.DT_UINT8)
+@pypto.options(pass_options={"enable_slice": False})
+def run():
+    device = f"npu:{int(os.environ.get('TILE_FWK_DEVICE_ID', 0))}"
+    torch.npu.set_device(device)
+    torch.manual_seed(0)
+    # 两个张量独立分配（地址不连续），全部由该参数索引
+    tensors = [torch.randn(P, device=device, dtype=torch.float32) for _ in range(2)]
+    desc = _build_list_tensor_desc([t.data_ptr() for t in tensors]).to(device)
+    out = torch.full((1, P), -1.0, device=device, dtype=torch.float32)
+    dynamic_input_ptr_sum[None, 1](desc, out)
+    torch.npu.synchronize()
+    ref = torch.stack(tensors).sum(0, keepdim=True)
+    torch.testing.assert_close(out.cpu(), ref.cpu(), rtol=1e-4, atol=1e-4)
+    print("PASSED")
+
+
+if __name__ == "__main__":
+    run()
 ```
