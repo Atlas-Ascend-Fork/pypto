@@ -30,15 +30,15 @@
 ## 函数原型
 
 ```python
-set_convbp_input_tile_shapes(l1_info: pypto_impl.ConvBpTileL1Info, l0_info: pypto_impl.ConvBpTileL0Info) -> None
+set_convbp_input_tile_shapes(tile_l1_info: pypto_impl.ConvBpTileL1Info, tile_l0_info: pypto_impl.ConvBpTileL0Info) -> None
 ```
 
 ## 参数说明
 
 | 参数名   | 输入/输出 | 说明                                         |
 |----------|-----------|----------------------------------------------|
-| l1_info  | 输入      | L1 Buffer层级下卷积反向计算的TileShape配置信息，有tileML1、tileNL1、tileKL1三个参数。请参考[约束说明](#约束说明)章节填写 |
-| l0_info  | 输入      | L0缓存层级下卷积反向计算的TileShape配置信息，有tileML0、tileNL0、tileKL0三个参数。请参考[约束说明](#约束说明)章节填写 |
+| tile_l1_info  | 输入      | L1缓存层级下卷积反向计算的TileShape配置信息，有tileML1、tileNL1、tileKL1三个参数。请参考[约束说明](#约束说明)章节填写 |
+| tile_l0_info  | 输入      | L0缓存层级下卷积反向计算的TileShape配置信息，有tileML0、tileNL0、tileKL0三个参数。请参考[约束说明](#约束说明)章节填写 |
 
 ## 返回值说明
 

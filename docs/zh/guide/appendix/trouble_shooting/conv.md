@@ -45,7 +45,7 @@ Tile图切分阶段，在为MMAD（矩阵乘累加）操作设置属性时，输
    ```
 
 2. 在output目录下使用pto-toolkit打开dump的计算图，定位到报错的Conv Operation或Conv_backward_input/Conv_backward_filter Operation节点，检查其输入tensor和输出tensor是否均存在且非空。
-3. 若为动态shape场景，检查`pypto.view`的offset和shape参数是否合法，确认view后的子tensor能正确传递到`pypto.conv`。
+3. 若为动态shape场景，检查`pypto.view`的offset和shape参数是否合法，确认view后的子tensor能正确传递到`pypto.conv`或`pypto.conv_backward_input`/`pypto.conv_backward_filter`。
 4. 若上述排查均未发现问题，请按CONV组件提issue或问题单，附带完整报错日志、dump计算图与复现用例。
 
 ## FC6202 EXPANDFUNC_TENSOR_ATTR_GET_FAILED
