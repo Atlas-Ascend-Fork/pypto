@@ -217,7 +217,6 @@
     - [CastMode](tensor_api/datatype/CastMode.md)
     - [DataType](tensor_api/datatype/DataType.md)
     - [PrecisionType](tensor_api/datatype/PrecisionType.md)
-    - [LogBaseType](tensor_api/datatype/LogBaseType.md)
     - [OpType](tensor_api/datatype/OpType.md)
     - [OutType](tensor_api/datatype/OutType.md)
     - [ReduceMode](tensor_api/datatype/ReduceMode.md)

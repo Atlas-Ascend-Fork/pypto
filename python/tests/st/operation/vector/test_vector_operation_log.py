@@ -13,7 +13,6 @@
 import os
 
 import numpy as np
-import pytest
 import torch
 
 import pypto
@@ -36,14 +35,14 @@ def test_vector_operation_log():
 
     with pypto.function("LOG", a, b):
         for b_idx in pypto.loop(int(np.ceil(n / view_shape[0])), name="LOOP_LOG_L0", idx_name="b_idx"):
-            for s_idx in pypto.loop(int(np.ceil(n / view_shape[0])), name="LOOP_LOG_L1", idx_name="s_idx"):
+            for s_idx in pypto.loop(int(np.ceil(m / view_shape[1])), name="LOOP_LOG_L1", idx_name="s_idx"):
                 tile_a = pypto.view(
                     a,
                     view_shape,
                     [b_idx * view_shape[0], s_idx * view_shape[1]],
                     valid_shape=[
                         pypto.min(pypto.symbolic_scalar(n) - b_idx * view_shape[0], pypto.symbolic_scalar(n)),
-                        pypto.min(pypto.symbolic_scalar(m) - b_idx * view_shape[1], pypto.symbolic_scalar(m)),
+                        pypto.min(pypto.symbolic_scalar(m) - s_idx * view_shape[1], pypto.symbolic_scalar(m)),
                     ],
                 )
                 pypto.set_vec_tile_shapes(tile_shape[0], tile_shape[1])
@@ -60,7 +59,6 @@ def test_vector_operation_log():
     pypto.runtime._device_fini()
 
 
-@pytest.mark.skip(reason="Dep operation interface")
 @pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_log2():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -85,11 +83,11 @@ def test_vector_operation_log2():
                     [b_idx * view_shape[0], s_idx * view_shape[1]],
                     valid_shape=[
                         pypto.min(pypto.symbolic_scalar(n) - b_idx * view_shape[0], pypto.symbolic_scalar(n)),
-                        pypto.min(pypto.symbolic_scalar(m) - b_idx * view_shape[1], pypto.symbolic_scalar(m)),
+                        pypto.min(pypto.symbolic_scalar(m) - s_idx * view_shape[1], pypto.symbolic_scalar(m)),
                     ],
                 )
                 pypto.set_vec_tile_shapes(tile_shape[0], tile_shape[1])
-                tile_a.move(pypto.log(tile_a, pypto.LogBaseType.LOG_2))
+                tile_a.move(pypto.log2(tile_a))
                 pypto.assemble(tile_a, [b_idx * view_shape[0], s_idx * view_shape[1]], b)
 
     a_tensor = torch.rand(n, m, dtype=torch.float32) * 99.999 + 0.001
@@ -102,7 +100,6 @@ def test_vector_operation_log2():
     pypto.runtime._device_fini()
 
 
-@pytest.mark.skip(reason="Dep operation interface")
 @pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_log10():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -119,19 +116,19 @@ def test_vector_operation_log10():
     b = pypto.tensor((n, m), pypto.DT_FP32, "LOG10_TENSOR_b")
 
     with pypto.function("LOG10", a, b):
-        for b_idx in pypto.loop(int(np.ceil(n / view_shape[0])), name="LOOP_LOG2_L0", idx_name="b_idx"):
-            for s_idx in pypto.loop(int(np.ceil(m / view_shape[1])), name="LOOP_LOG2_L1", idx_name="s_idx"):
+        for b_idx in pypto.loop(int(np.ceil(n / view_shape[0])), name="LOOP_LOG10_L0", idx_name="b_idx"):
+            for s_idx in pypto.loop(int(np.ceil(m / view_shape[1])), name="LOOP_LOG10_L1", idx_name="s_idx"):
                 tile_a = pypto.view(
                     a,
                     view_shape,
                     [b_idx * view_shape[0], s_idx * view_shape[1]],
                     valid_shape=[
                         pypto.min(pypto.symbolic_scalar(n) - b_idx * view_shape[0], pypto.symbolic_scalar(n)),
-                        pypto.min(pypto.symbolic_scalar(m) - b_idx * view_shape[1], pypto.symbolic_scalar(m)),
+                        pypto.min(pypto.symbolic_scalar(m) - s_idx * view_shape[1], pypto.symbolic_scalar(m)),
                     ],
                 )
                 pypto.set_vec_tile_shapes(tile_shape[0], tile_shape[1])
-                tile_a.move(pypto.log(tile_a, pypto.LogBaseType.LOG_10))
+                tile_a.move(pypto.log10(tile_a))
                 pypto.assemble(tile_a, [b_idx * view_shape[0], s_idx * view_shape[1]], b)
 
     a_tensor = torch.rand(n, m, dtype=torch.float32) * 99.999 + 0.001

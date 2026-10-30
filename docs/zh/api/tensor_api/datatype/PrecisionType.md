@@ -107,6 +107,6 @@ out = a / b
 # 其他算子示例
 out = pypto.exp(a, pypto.PrecisionType.HIGH_PRECISION)
 out = pypto.sqrt(a, pypto.PrecisionType.INTRINSIC)
-out = pypto.log(a, pypto.LogBaseType.LOG_E, pypto.PrecisionType.HIGH_PRECISION)
+out = pypto.log(a, pypto.PrecisionType.HIGH_PRECISION)
 out = pypto.pow(a, b, pypto.PrecisionType.HIGH_PRECISION)
 ```

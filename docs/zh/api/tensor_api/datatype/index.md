@@ -7,7 +7,6 @@ CachePolicy
 CastMode
 DataType
 PrecisionType
-LogBaseType
 OpType
 OutType
 ReduceMode
