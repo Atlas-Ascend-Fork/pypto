@@ -179,8 +179,8 @@ void CheckGatherParamsInvalid(const Tensor& params, const Tensor& indices, int a
 Tensor Gather(const Tensor& params, const Tensor& indices, int axis)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(params.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Gather");
-    CheckTensorFormat(indices.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Gather");
+    CheckVectorOperand(params.GetStorage(), "Gather");
+    CheckVectorOperand(indices.GetStorage(), "Gather");
 
     CheckGatherParamsInvalid(params, indices, axis, "GATHER");
     RETURN_CALL(GatherOperation, *Program::GetInstance().GetCurrentFunction(), params.GetStorage(),
@@ -279,8 +279,8 @@ LogicalTensorPtr TensorGatherElementOperation(Function& function, const LogicalT
 Tensor GatherElements(const Tensor& params, const Tensor& indices, int axis)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(params.GetStorage(), {TileOpFormat::TILEOP_NZ}, "GatherElements");
-    CheckTensorFormat(indices.GetStorage(), {TileOpFormat::TILEOP_NZ}, "GatherElements");
+    CheckVectorOperand(params.GetStorage(), "GatherElements");
+    CheckVectorOperand(indices.GetStorage(), "GatherElements");
 
     std::vector<LogicalTensorPtr> tensors = {params.GetStorage(), indices.GetStorage()};
     CheckTensorsDimConsistency(tensors, "GATHERELEMENTS");
@@ -295,8 +295,6 @@ Tensor GatherElements(const Tensor& params, const Tensor& indices, int axis)
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_GATHER_ELEMENT);
     CheckTensorDataTypeCombination({params.GetDataType(), indices.GetDataType()}, combinations, "GATHERELEMENTS");
     CheckTensorDimRange(params.GetStorage(), 1, NUM_VALUE_5, "GATHERELEMENTS");
-    CheckTensorShapeSize(params.GetStorage(), "GATHERELEMENTS");
-    CheckTensorShapeSize(indices.GetStorage(), "GATHERELEMENTS");
     CheckTensorsFormatConsistency(params.GetStorage(), indices.GetStorage(), "GATHERELEMENTS");
 
     RETURN_CALL(GatherElementOperation, *Program::GetInstance().GetCurrentFunction(), params.GetStorage(),

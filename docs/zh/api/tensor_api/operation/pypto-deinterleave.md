@@ -69,8 +69,8 @@ deinterleave(input: Tensor, other: Optional[Tensor] = None) -> Tuple[Tensor, Ten
 
 | 参数名 | 输入/输出 | 说明 |
 | ------ | --------- | ---- |
-| input  | 输入      | 源操作数。双输入形式下，表示交织流的前半部分；单输入形式下，表示完整交织流。支持的类型为 Tensor。 |
-| other  | 输入      | 可选参数。双输入形式下，表示交织流的后半部分，Shape 和数据类型需要与 `input` 一致。若不传入，则使用单输入形式。 |
+| input  | 输入      | 源操作数。双输入形式下，表示交织流的前半部分；单输入形式下，表示完整交织流。支持的类型为 Tensor。不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
+| other  | 输入      | 可选参数。双输入形式下，表示交织流的后半部分，Shape 和数据类型需要与 `input` 一致。若不传入，则使用单输入形式。不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
 
 ## 返回值说明
 

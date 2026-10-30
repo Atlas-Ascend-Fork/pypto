@@ -282,10 +282,11 @@ Tensor QuantizeAlongSecondLastAxis(const Tensor& input, const Tensor& scale, Dat
 Tensor Quantize(const Tensor& input, const Tensor& scale, DataType dtype, int axis, const Tensor& zeroPoints)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(input.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Quantize");
-    CheckTensorFormat(scale.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Quantize");
+    CheckVectorOperand(input.GetStorage(), "Quantize");
+    CheckVectorOperand(scale.GetStorage(), "Quantize");
+
     if (zeroPoints.GetStorage() != nullptr) {
-        CheckTensorFormat(zeroPoints.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Quantize");
+        CheckVectorOperand(zeroPoints.GetStorage(), "Quantize");
     }
 
     CHECK(VectorErrorCode::ERR_PARAM_SHAPE_DIM_UNSUPPORTED,

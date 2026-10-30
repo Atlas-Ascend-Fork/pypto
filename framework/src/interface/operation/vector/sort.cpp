@@ -363,12 +363,11 @@ void TensorSort(Function& function, const LogicalTensorPtr& self, LogicalTensorP
 std::tuple<Tensor, Tensor> sort(const Tensor& self, int axis = -1, bool descending = false)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "sort");
+    CheckVectorOperand(self.GetStorage(), "sort");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP32, DT_FP16};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "SORT");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "SORT");
-    CheckTensorShapeSize(self.GetStorage(), "SORT");
     auto len = static_cast<int>(self.GetShape().size());
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, len >= NUM_VALUE_1 && len <= NUM_VALUE_4)
         << "Only 1D to 4D input is supported.\n";

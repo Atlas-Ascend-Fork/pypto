@@ -242,12 +242,10 @@ void CheckCumOperation(const Tensor& input, const int& axis, const bool& is_sum)
         std::unordered_set<DataType> supportedTypes = {DT_FP32, DT_FP16, DT_INT32, DT_INT16, DT_BF16};
         CheckTensorDataType(input.GetStorage(), supportedTypes, "CUMSUM");
         CheckTensorDimRange(input.GetStorage(), 1, NUM_VALUE_4, "CUMSUM");
-        CheckTensorShapeSize(input.GetStorage(), "CUMSUM");
     } else {
         std::unordered_set<DataType> supportedTypes = {DT_FP32, DT_FP16, DT_BF16};
         CheckTensorDataType(input.GetStorage(), supportedTypes, "CUMPROD");
         CheckTensorDimRange(input.GetStorage(), 1, NUM_VALUE_4, "CUMPROD");
-        CheckTensorShapeSize(input.GetStorage(), "CUMPROD");
     }
     int tmpAxis0 = axis;
     CheckAxisRange(input, tmpAxis0);
@@ -306,7 +304,7 @@ Tensor CumOperation(const Tensor& input, const int& axis, const bool& is_sum)
 Tensor CumSum(const Tensor& input, const int& axis)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(input.GetStorage(), {TileOpFormat::TILEOP_NZ}, "CumSum");
+    CheckVectorOperand(input.GetStorage(), "CumSum");
 
     bool is_sum = true;
     Tensor result = CumOperation(input, axis, is_sum);
@@ -316,7 +314,7 @@ Tensor CumSum(const Tensor& input, const int& axis)
 Tensor CumProd(const Tensor& input, const int& axis)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(input.GetStorage(), {TileOpFormat::TILEOP_NZ}, "CumProd");
+    CheckVectorOperand(input.GetStorage(), "CumProd");
 
     bool is_sum = false;
     Tensor result = CumOperation(input, axis, is_sum);

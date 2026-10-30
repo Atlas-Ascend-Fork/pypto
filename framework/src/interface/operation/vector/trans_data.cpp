@@ -1521,7 +1521,7 @@ Tensor TransData(const Tensor& self, TileOpFormat transDataType, const std::vect
                  const std::vector<SymbolicScalar>& validShape, int group)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "TransData");
+    CheckVectorOperand(self.GetStorage(), "TransData");
 
     auto& function = *Program::GetInstance().GetCurrentFunction();
     auto output = std::make_shared<LogicalTensor>(function, self.GetDataType(), outputShape, validShape, self.Format());

@@ -78,7 +78,6 @@ void CheckTriULOperationParams(const Tensor& input, const std::string& opName)
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_TRIUL);
     CheckTensorDataTypeCombination({input.GetDataType()}, combinations, opName);
     CheckTensorDimRange(input.GetStorage(), NUM_VALUE_2, NUM_VALUE_5, opName);
-    CheckTensorShapeSize(input.GetStorage(), opName);
 }
 
 void TensorTriUL(Function& function, const TriULPara& triULPara)
@@ -109,7 +108,7 @@ void TensorTriUL(Function& function, const TriULPara& triULPara)
 Tensor TriU(const Tensor& input, const SymbolicScalar& diagonal)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(input.GetStorage(), {TileOpFormat::TILEOP_NZ}, "TriU");
+    CheckVectorOperand(input.GetStorage(), "TriU");
 
     CheckTriULOperationParams(input, "TRIU");
     Tensor result(input.GetDataType(), input.GetShape());
@@ -121,7 +120,7 @@ Tensor TriU(const Tensor& input, const SymbolicScalar& diagonal)
 Tensor TriL(const Tensor& input, const SymbolicScalar& diagonal)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(input.GetStorage(), {TileOpFormat::TILEOP_NZ}, "TriL");
+    CheckVectorOperand(input.GetStorage(), "TriL");
 
     CheckTriULOperationParams(input, "TRIL");
     Tensor result(input.GetDataType(), input.GetShape());

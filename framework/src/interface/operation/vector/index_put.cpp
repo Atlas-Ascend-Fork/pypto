@@ -138,7 +138,6 @@ static void CheckIndexPutParamsInvalid(const Tensor& self, const std::vector<Ten
             CHECK(VectorErrorCode::ERR_PARAM_INVALID, indices[i].GetShape()[0] == indicesShape)
                 << "Tensors in indices should have the same shape";
         }
-        CheckTensorShapeSize(indices[i].GetStorage(), "INDEXPUT");
     }
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, indices.size() >= NUM_VALUE_1 && indices.size() <= NUM_VALUE_4)
         << "indicesSize is out of range [1, 4]";
@@ -153,8 +152,6 @@ static void CheckIndexPutParamsInvalid(const Tensor& self, const std::vector<Ten
               self.GetShape()[self.GetShape().size() - i] == values.GetShape()[values.GetShape().size() - i])
             << "valuesShape should match selfShape";
     }
-    CheckTensorShapeSize(self.GetStorage(), "INDEXPUT");
-    CheckTensorShapeSize(values.GetStorage(), "INDEXPUT");
     CheckTensorsFormatConsistency(self.GetStorage(), values.GetStorage(), "INDEXPUT");
     for (size_t i = 0; i < indices.size(); i++) {
         CheckTensorsFormatConsistency(self.GetStorage(), indices[i].GetStorage(), "INDEXPUT");
@@ -165,10 +162,11 @@ static void CheckIndexPutParamsInvalid(const Tensor& self, const std::vector<Ten
 void IndexPut_(Tensor& self, const std::vector<Tensor>& indices, const Tensor& values, bool accumulate)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "IndexPut_");
-    CheckTensorFormat(values.GetStorage(), {TileOpFormat::TILEOP_NZ}, "IndexPut_");
+    CheckVectorOperand(self.GetStorage(), "IndexPut_");
+    CheckVectorOperand(values.GetStorage(), "IndexPut_");
+
     for (const auto& tensor : indices) {
-        CheckTensorFormat(tensor.GetStorage(), {TileOpFormat::TILEOP_NZ}, "IndexPut_");
+        CheckVectorOperand(tensor.GetStorage(), "IndexPut_");
     }
 
     CheckIndexPutParamsInvalid(self, indices, values);

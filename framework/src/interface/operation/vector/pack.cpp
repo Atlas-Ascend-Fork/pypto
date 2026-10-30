@@ -22,13 +22,12 @@ namespace npu::tile_fwk {
 Tensor Pack(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Pack");
+    CheckVectorOperand(self.GetStorage(), "Pack");
 
     std::unordered_set<DataType> supportedTypes = {DT_BF16,  DT_FP16,   DT_FP32,  DT_UINT8,  DT_INT8, DT_UINT16,
                                                    DT_INT16, DT_UINT32, DT_INT32, DT_UINT64, DT_INT64};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "Pack");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "Pack");
-    CheckTensorShapeSize(self.GetStorage(), "Pack");
     std::vector<int64_t> tmpShape;
     auto selfShape = self.GetShape();
     int64_t dim = 1;
@@ -53,10 +52,10 @@ Tensor UnPack(const Tensor& self, DataType dstDataType)
     std::unordered_set<DataType> supportedSrcTypes = {DT_UINT8};
     std::unordered_set<DataType> supportedDstTypes = {DT_FP32,  DT_FP16,  DT_BF16,   DT_INT8,   DT_INT16, DT_INT32,
                                                       DT_INT64, DT_UINT8, DT_UINT64, DT_UINT16, DT_UINT32};
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "UnPack");
+    CheckVectorOperand(self.GetStorage(), "UnPack");
+
     CheckTensorDataType(self.GetStorage(), supportedSrcTypes, "UnPack");
     CheckTensorDimRange(self.GetStorage(), 1, 1, "UnPack");
-    CheckTensorShapeSize(self.GetStorage(), "UnPack");
     CheckTensorDataType(dstDataType, supportedDstTypes, "UnPack");
     int64_t dstByte = BytesOf(dstDataType);
     auto srcShape = self.GetShape();

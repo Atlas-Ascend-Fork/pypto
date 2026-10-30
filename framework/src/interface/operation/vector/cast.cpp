@@ -155,11 +155,10 @@ void CheckCastTypeSupport(DataType srcType, DataType dstType, const std::string&
 Tensor Cast(const Tensor& self, DataType dstDataType, CastMode mode, SaturationMode satmode)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Cast");
+    CheckVectorOperand(self.GetStorage(), "Cast");
 
     CheckCastTypeSupport(self.GetDataType(), dstDataType, "CAST");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "CAST");
-    CheckTensorShapeSize(self.GetStorage(), "CAST");
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, self.GetShape().size() == self.GetStorage()->offset.size())
         << "The shape size of self and offset should be equal";
     // Cast to same dType with no mode will do nothing

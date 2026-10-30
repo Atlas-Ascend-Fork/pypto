@@ -26,7 +26,7 @@ namespace npu::tile_fwk {
 Tensor Atan(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Atan");
+    CheckVectorOperand(self.GetStorage(), "Atan");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_FP32, DT_BF16};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "Atan");
@@ -46,8 +46,8 @@ Tensor Atan(const Tensor& self)
 Tensor Atan2(const Tensor& y, const Tensor& x)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(y.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Atan2");
-    CheckTensorFormat(x.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Atan2");
+    CheckVectorOperand(y.GetStorage(), "Atan2");
+    CheckVectorOperand(x.GetStorage(), "Atan2");
 
     CheckTensorsDataTypeConsistency(y.GetStorage(), x.GetStorage(), "ATAN2");
     std::unordered_set<DataType> supportedTypes = {DT_FP32, DT_FP16, DT_BF16};
@@ -72,12 +72,11 @@ Tensor Atan2(const Tensor& y, const Tensor& x)
 Tensor Sin(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Sin");
+    CheckVectorOperand(self.GetStorage(), "Sin");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_FP32};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "Sin");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "Sin");
-    CheckTensorShapeSize(self.GetStorage(), "Sin");
 
     auto castSelf = Cast(self, DataType::DT_FP32);
     auto result = CALL(UnaryOperation<UnaryOpType::SIN>, *Program::GetInstance().GetCurrentFunction(),
@@ -89,12 +88,11 @@ Tensor Sin(const Tensor& self)
 Tensor Cos(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Cos");
+    CheckVectorOperand(self.GetStorage(), "Cos");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_FP32};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "Cos");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "Cos");
-    CheckTensorShapeSize(self.GetStorage(), "Cos");
 
     auto castSelf = Cast(self, DataType::DT_FP32);
     auto result = CALL(UnaryOperation<UnaryOpType::COS>, *Program::GetInstance().GetCurrentFunction(),
@@ -106,12 +104,11 @@ Tensor Cos(const Tensor& self)
 Tensor Asin(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Asin");
+    CheckVectorOperand(self.GetStorage(), "Asin");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_FP32, DT_BF16};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "ASIN");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "ASIN");
-    CheckTensorShapeSize(self.GetStorage(), "ASIN");
 
     auto castSelf = Cast(self, DataType::DT_FP32);
     auto result = CALL(UnaryOperation<UnaryOpType::ASIN>, *Program::GetInstance().GetCurrentFunction(),
@@ -123,12 +120,11 @@ Tensor Asin(const Tensor& self)
 Tensor Acos(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Acos");
+    CheckVectorOperand(self.GetStorage(), "Acos");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_FP32, DT_BF16};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "ACOS");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "ACOS");
-    CheckTensorShapeSize(self.GetStorage(), "ACOS");
 
     auto castSelf = Cast(self, DataType::DT_FP32);
     auto result = CALL(UnaryOperation<UnaryOpType::ACOS>, *Program::GetInstance().GetCurrentFunction(),
@@ -189,7 +185,8 @@ LogicalTensorPtr TensorTanOperation(Function& function, LogicalTensorPtr self)
 Tensor Tan(const Tensor& operand)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Tan");
+    CheckVectorOperand(operand.GetStorage(), "Tan");
+
     CheckTensorDimRange(operand.GetStorage(), 1, NUM_VALUE_4, "Tan");
 
     auto dType = operand.GetStorage()->Datatype();

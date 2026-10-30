@@ -181,10 +181,11 @@ Tensor DequantizeAlongSecondLastAxis(const Tensor& input, const Tensor& scale, c
 Tensor Dequantize(const Tensor& input, const Tensor& scale, DataType otype, int axis, const Tensor& zeroPoints)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(input.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Dequantize");
-    CheckTensorFormat(scale.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Dequantize");
+    CheckVectorOperand(input.GetStorage(), "Dequantize");
+    CheckVectorOperand(scale.GetStorage(), "Dequantize");
+
     if (zeroPoints.GetStorage() != nullptr) {
-        CheckTensorFormat(zeroPoints.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Dequantize");
+        CheckVectorOperand(zeroPoints.GetStorage(), "Dequantize");
     }
 
     CHECK(VectorErrorCode::ERR_PARAM_SHAPE_DIM_UNSUPPORTED,
@@ -217,17 +218,17 @@ Tensor Dequantize(const Tensor& input, const Tensor& scale, DataType otype, int 
 
 Tensor DequantizeSymmetric(const Tensor& src, const Tensor& scale, int64_t axis)
 {
-    CheckTensorFormat(src.GetStorage(), {TileOpFormat::TILEOP_NZ}, "DequantizeSymmetric");
-    CheckTensorFormat(scale.GetStorage(), {TileOpFormat::TILEOP_NZ}, "DequantizeSymmetric");
+    CheckVectorOperand(src.GetStorage(), "DequantizeSymmetric");
+    CheckVectorOperand(scale.GetStorage(), "DequantizeSymmetric");
 
     return Dequantize(src, scale, DataType::DT_FP32, axis, Tensor());
 }
 
 Tensor DequantizeAsymmetric(const Tensor& src, const Tensor& scale, const Tensor& zeroPoints, int64_t axis)
 {
-    CheckTensorFormat(src.GetStorage(), {TileOpFormat::TILEOP_NZ}, "DequantizeAsymmetric");
-    CheckTensorFormat(scale.GetStorage(), {TileOpFormat::TILEOP_NZ}, "DequantizeAsymmetric");
-    CheckTensorFormat(zeroPoints.GetStorage(), {TileOpFormat::TILEOP_NZ}, "DequantizeAsymmetric");
+    CheckVectorOperand(src.GetStorage(), "DequantizeAsymmetric");
+    CheckVectorOperand(scale.GetStorage(), "DequantizeAsymmetric");
+    CheckVectorOperand(zeroPoints.GetStorage(), "DequantizeAsymmetric");
 
     return Dequantize(src, scale, DataType::DT_FP32, axis, zeroPoints);
 }

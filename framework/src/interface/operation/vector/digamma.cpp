@@ -25,12 +25,11 @@ namespace npu::tile_fwk {
 Tensor Digamma(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Digamma");
+    CheckVectorOperand(self.GetStorage(), "Digamma");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "Digamma");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "Digamma");
-    CheckTensorShapeSize(self.GetStorage(), "Digamma");
 
     auto castSelf = Cast(self, DataType::DT_FP32);
     auto result = CALL(UnaryOperation<UnaryOpType::DIGAMMA>, *Program::GetInstance().GetCurrentFunction(),

@@ -101,12 +101,11 @@ LogicalTensorPtr TensorLogicalNotOperation(Function& function, LogicalTensorPtr 
 Tensor LogicalNot(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "LogicalNot");
+    CheckVectorOperand(self.GetStorage(), "LogicalNot");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_LOGICALNOT);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "LOGICALNOT");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "LOGICALNOT");
-    CheckTensorShapeSize(self.GetStorage(), "LOGICALNOT");
     RETURN_CALL(LogicalNotOperation, *Program::GetInstance().GetCurrentFunction(), self.GetStorage());
 }
 
@@ -205,8 +204,8 @@ LogicalTensorPtr TensorLogicalAndOperation(Function& function, const Tensor& sel
 Tensor LogicalAnd(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "LogicalAnd");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "LogicalAnd");
+    CheckVectorOperand(self.GetStorage(), "LogicalAnd");
+    CheckVectorOperand(other.GetStorage(), "LogicalAnd");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP32,  DT_FP16, DT_BF16,  DT_INT8,
                                                    DT_UINT8, DT_BOOL, DT_INT16, DT_INT32};

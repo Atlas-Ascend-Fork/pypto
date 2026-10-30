@@ -305,6 +305,9 @@ Tensor ScatterUpdate(Tensor& dst, const Tensor& index, const Tensor& src, int ax
     CheckTensorFormat(dst.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScatterUpdate");
     CheckTensorFormat(index.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScatterUpdate");
     CheckTensorFormat(src.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScatterUpdate");
+    CheckTensorNonEmpty(dst.GetStorage(), "ScatterUpdate");
+    CheckTensorNonEmpty(index.GetStorage(), "ScatterUpdate");
+    CheckTensorNonEmpty(src.GetStorage(), "ScatterUpdate");
 
     CheckScatterUpdateInvalid(dst, index, src);
     CheckAxisRange(dst, axis);

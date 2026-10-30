@@ -61,7 +61,7 @@ void TiledBinaryOperationAllScalar(Function& function, const TileShape& tileShap
 Tensor ScalarAddS(const Tensor& operand, const Element& value, bool reverseOperand)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarAddS");
+    CheckVectorOperand(operand.GetStorage(), "ScalarAddS");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_INT16, DT_INT32, DT_FP32};
     CheckTensorDataType(operand.GetStorage(), supportedTypes, "S_ADD");
@@ -73,7 +73,7 @@ Tensor ScalarAddS(const Tensor& operand, const Element& value, bool reverseOpera
 Tensor ScalarSubS(const Tensor& operand, const Element& value, bool reverseOperand)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarSubS");
+    CheckVectorOperand(operand.GetStorage(), "ScalarSubS");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_INT16, DT_INT32, DT_FP32};
     CheckTensorDataType(operand.GetStorage(), supportedTypes, "S_SUB");
@@ -85,7 +85,7 @@ Tensor ScalarSubS(const Tensor& operand, const Element& value, bool reverseOpera
 Tensor ScalarMulS(const Tensor& operand, const Element& value, bool reverseOperand)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarMulS");
+    CheckVectorOperand(operand.GetStorage(), "ScalarMulS");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_INT16, DT_INT32, DT_FP32};
     CheckTensorDataType(operand.GetStorage(), supportedTypes, "S_MUL");
@@ -97,7 +97,7 @@ Tensor ScalarMulS(const Tensor& operand, const Element& value, bool reverseOpera
 Tensor ScalarDivS(const Tensor& operand, const Element& value, bool reverseOperand)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarDivS");
+    CheckVectorOperand(operand.GetStorage(), "ScalarDivS");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
     CheckTensorDataType(operand.GetStorage(), supportedTypes, "S_DIV");
@@ -109,7 +109,7 @@ Tensor ScalarDivS(const Tensor& operand, const Element& value, bool reverseOpera
 Tensor ScalarMaxS(const Tensor& operand, const Element& value, bool reverseOperand)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarMaxS");
+    CheckVectorOperand(operand.GetStorage(), "ScalarMaxS");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_INT16, DT_INT32, DT_FP32};
     CheckTensorDataType(operand.GetStorage(), supportedTypes, "S_MAX");
@@ -174,8 +174,8 @@ void TiledBinaryOperationAllScalar(Function& function, const TileShape& tileShap
 Tensor ScalarAdd(const Tensor& operand1, const Tensor& operand2)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand1.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarAdd");
-    CheckTensorFormat(operand2.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarAdd");
+    CheckVectorOperand(operand1.GetStorage(), "ScalarAdd");
+    CheckVectorOperand(operand2.GetStorage(), "ScalarAdd");
 
     CheckTensorsDataTypeConsistency(operand1.GetStorage(), operand2.GetStorage(), "S_ADD");
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_INT16, DT_INT32, DT_FP32};
@@ -187,8 +187,8 @@ Tensor ScalarAdd(const Tensor& operand1, const Tensor& operand2)
 Tensor ScalarSub(const Tensor& operand1, const Tensor& operand2)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand1.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarSub");
-    CheckTensorFormat(operand2.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarSub");
+    CheckVectorOperand(operand1.GetStorage(), "ScalarSub");
+    CheckVectorOperand(operand2.GetStorage(), "ScalarSub");
 
     CheckTensorsDataTypeConsistency(operand1.GetStorage(), operand2.GetStorage(), "S_SUB");
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_INT16, DT_INT32, DT_FP32};
@@ -201,8 +201,8 @@ Tensor ScalarSub(const Tensor& operand1, const Tensor& operand2)
 Tensor ScalarMul(const Tensor& operand1, const Tensor& operand2)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand1.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarMul");
-    CheckTensorFormat(operand2.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarMul");
+    CheckVectorOperand(operand1.GetStorage(), "ScalarMul");
+    CheckVectorOperand(operand2.GetStorage(), "ScalarMul");
 
     CheckTensorsDataTypeConsistency(operand1.GetStorage(), operand2.GetStorage(), "S_MUL");
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_INT16, DT_INT32, DT_FP32};
@@ -215,8 +215,8 @@ Tensor ScalarMul(const Tensor& operand1, const Tensor& operand2)
 Tensor ScalarDiv(const Tensor& operand1, const Tensor& operand2)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand1.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarDiv");
-    CheckTensorFormat(operand2.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarDiv");
+    CheckVectorOperand(operand1.GetStorage(), "ScalarDiv");
+    CheckVectorOperand(operand2.GetStorage(), "ScalarDiv");
 
     CheckTensorsDataTypeConsistency(operand1.GetStorage(), operand2.GetStorage(), "S_DIV");
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
@@ -229,8 +229,8 @@ Tensor ScalarDiv(const Tensor& operand1, const Tensor& operand2)
 Tensor ScalarMax(const Tensor& operand1, const Tensor& operand2)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand1.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarMax");
-    CheckTensorFormat(operand2.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ScalarMax");
+    CheckVectorOperand(operand1.GetStorage(), "ScalarMax");
+    CheckVectorOperand(operand2.GetStorage(), "ScalarMax");
 
     CheckTensorsDataTypeConsistency(operand1.GetStorage(), operand2.GetStorage(), "S_MAX");
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_INT16, DT_INT32, DT_FP32};

@@ -466,17 +466,14 @@ LogicalTensorPtr TensorWhereOperation(Function& function, const Tensor& conditio
 Tensor Where(const Tensor& condition, const Tensor& input, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(condition.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
-    CheckTensorFormat(input.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
+    CheckVectorOperand(condition.GetStorage(), "Where");
+    CheckVectorOperand(input.GetStorage(), "Where");
+    CheckVectorOperand(other.GetStorage(), "Where");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_WHERE_TT);
     CheckTensorDataTypeCombination({condition.GetDataType(), input.GetDataType(), other.GetDataType()}, combinations,
                                    "WHERE");
     CheckTensorDimRange(condition.GetStorage(), 1, NUM_VALUE_4, "WHERE");
-    CheckTensorShapeSize(condition.GetStorage(), "WHERE");
-    CheckTensorShapeSize(input.GetStorage(), "WHERE");
-    CheckTensorShapeSize(other.GetStorage(), "WHERE");
     CheckTensorsDimConsistency({condition.GetStorage(), input.GetStorage(), other.GetStorage()}, "WHERE");
     CheckTensorsDataTypeConsistency(input.GetStorage(), other.GetStorage(), "WHERE");
     CheckTensorsFormatConsistency(condition.GetStorage(), input.GetStorage(), "WHERE");
@@ -487,14 +484,12 @@ Tensor Where(const Tensor& condition, const Tensor& input, const Tensor& other)
 Tensor Where(const Tensor& condition, const Tensor& input, const Element& otherValue)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(condition.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
-    CheckTensorFormat(input.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
+    CheckVectorOperand(condition.GetStorage(), "Where");
+    CheckVectorOperand(input.GetStorage(), "Where");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_WHERE_TS);
     CheckTensorDataTypeCombination({condition.GetDataType(), input.GetDataType()}, combinations, "WHERE");
     CheckTensorDimRange(condition.GetStorage(), 1, NUM_VALUE_4, "WHERE");
-    CheckTensorShapeSize(condition.GetStorage(), "WHERE");
-    CheckTensorShapeSize(input.GetStorage(), "WHERE");
     CheckTensorsDimConsistency({condition.GetStorage(), input.GetStorage()}, "WHERE");
     CheckTensorsFormatConsistency(condition.GetStorage(), input.GetStorage(), "WHERE");
     RETURN_CALL(WhereOperation, *Program::GetInstance().GetCurrentFunction(), condition, input, otherValue);
@@ -503,14 +498,12 @@ Tensor Where(const Tensor& condition, const Tensor& input, const Element& otherV
 Tensor Where(const Tensor& condition, const Element& inputValue, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(condition.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
+    CheckVectorOperand(condition.GetStorage(), "Where");
+    CheckVectorOperand(other.GetStorage(), "Where");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_WHERE_ST);
     CheckTensorDataTypeCombination({condition.GetDataType(), other.GetDataType()}, combinations, "WHERE");
     CheckTensorDimRange(condition.GetStorage(), 1, NUM_VALUE_4, "WHERE");
-    CheckTensorShapeSize(condition.GetStorage(), "WHERE");
-    CheckTensorShapeSize(other.GetStorage(), "WHERE");
     CheckTensorsDimConsistency({condition.GetStorage(), other.GetStorage()}, "WHERE");
     CheckTensorsFormatConsistency(condition.GetStorage(), other.GetStorage(), "WHERE");
     RETURN_CALL(WhereOperation, *Program::GetInstance().GetCurrentFunction(), condition, inputValue, other);
@@ -519,12 +512,11 @@ Tensor Where(const Tensor& condition, const Element& inputValue, const Tensor& o
 Tensor Where(const Tensor& condition, const Element& inputValue, const Element& otherValue)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(condition.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Where");
+    CheckVectorOperand(condition.GetStorage(), "Where");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_WHERE_SS);
     CheckTensorDataTypeCombination({condition.GetDataType()}, combinations, "WHERE");
     CheckTensorDimRange(condition.GetStorage(), 1, NUM_VALUE_4, "WHERE");
-    CheckTensorShapeSize(condition.GetStorage(), "WHERE");
     RETURN_CALL(WhereOperation, *Program::GetInstance().GetCurrentFunction(), condition, inputValue, otherValue);
 }
 

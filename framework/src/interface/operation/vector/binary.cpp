@@ -105,8 +105,8 @@ int BrcAxisBinaryOp(LogicalTensorPtr operand1, LogicalTensorPtr operand2, int64_
 Tensor Add(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Add");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Add");
+    CheckVectorOperand(self.GetStorage(), "Add");
+    CheckVectorOperand(other.GetStorage(), "Add");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ADD);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "ADD");
@@ -116,8 +116,8 @@ Tensor Add(const Tensor& self, const Tensor& other)
 Tensor Sub(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Sub");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Sub");
+    CheckVectorOperand(self.GetStorage(), "Sub");
+    CheckVectorOperand(other.GetStorage(), "Sub");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SUB);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "SUB");
@@ -127,8 +127,8 @@ Tensor Sub(const Tensor& self, const Tensor& other)
 Tensor Mul(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Mul");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Mul");
+    CheckVectorOperand(self.GetStorage(), "Mul");
+    CheckVectorOperand(other.GetStorage(), "Mul");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MUL);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "MUL");
@@ -138,8 +138,8 @@ Tensor Mul(const Tensor& self, const Tensor& other)
 Tensor Div(const Tensor& self, const Tensor& other, PrecisionType precisionType)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Div");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Div");
+    CheckVectorOperand(self.GetStorage(), "Div");
+    CheckVectorOperand(other.GetStorage(), "Div");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_DIV);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "DIV");
@@ -163,8 +163,8 @@ Tensor Div(const Tensor& self, const Tensor& other, PrecisionType precisionType)
 Tensor Fmod(const Tensor& self, const Tensor& other, PrecisionType precisionType)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Fmod");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Fmod");
+    CheckVectorOperand(self.GetStorage(), "Fmod");
+    CheckVectorOperand(other.GetStorage(), "Fmod");
 
     CheckTensorsDataTypeConsistency(self.GetStorage(), other.GetStorage(), "MOD");
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
@@ -187,8 +187,8 @@ Tensor Fmod(const Tensor& self, const Tensor& other, PrecisionType precisionType
 Tensor Remainder(const Tensor& self, const Tensor& other, PrecisionType precisionType)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Remainder");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Remainder");
+    CheckVectorOperand(self.GetStorage(), "Remainder");
+    CheckVectorOperand(other.GetStorage(), "Remainder");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_REM);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "REM");
@@ -212,8 +212,8 @@ Tensor Remainder(const Tensor& self, const Tensor& other, PrecisionType precisio
 Tensor Maximum(const Tensor& operand1, const Tensor& operand2)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand1.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Maximum");
-    CheckTensorFormat(operand2.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Maximum");
+    CheckVectorOperand(operand1.GetStorage(), "Maximum");
+    CheckVectorOperand(operand2.GetStorage(), "Maximum");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MAXIMUM);
     CheckTensorDataTypeCombination({operand1.GetDataType(), operand2.GetDataType()}, combinations, "MAXIMUM");
@@ -224,8 +224,8 @@ Tensor Maximum(const Tensor& operand1, const Tensor& operand2)
 Tensor Minimum(const Tensor& operand1, const Tensor& operand2)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand1.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Minimum");
-    CheckTensorFormat(operand2.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Minimum");
+    CheckVectorOperand(operand1.GetStorage(), "Minimum");
+    CheckVectorOperand(operand2.GetStorage(), "Minimum");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MINIMUM);
     CheckTensorDataTypeCombination({operand1.GetDataType(), operand2.GetDataType()}, combinations, "MINIMUM");
@@ -236,14 +236,13 @@ Tensor Minimum(const Tensor& operand1, const Tensor& operand2)
 Tensor Clip(const Tensor& self, const Element& min, const Element& max)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Clip");
+    CheckVectorOperand(self.GetStorage(), "Clip");
 
     static const std::unordered_set<DataType> CLIP_A2A3_TYPES = {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16};
     static const std::unordered_set<DataType> CLIP_A5_TYPES = {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16, DT_INT64};
     const auto& supportedTypes = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) ? CLIP_A5_TYPES :
                                                                                                      CLIP_A2A3_TYPES;
     CheckTensorDataType(self.GetStorage(), supportedTypes, "CLIP");
-    CheckTensorShapeSize(self.GetStorage(), "CLIP");
 
     Element min_ = min, max_ = max;
 
@@ -265,19 +264,18 @@ Tensor Clip(const Tensor& self, const Element& min, const Element& max)
 Tensor Clip(const Tensor& self, const Tensor& min, const Tensor& max)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Clip");
+    CheckVectorOperand(self.GetStorage(), "Clip");
 
     static const std::unordered_set<DataType> CLIP_A2A3_TYPES = {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16};
     static const std::unordered_set<DataType> CLIP_A5_TYPES = {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16, DT_INT64};
     const auto& supportedTypes = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) ? CLIP_A5_TYPES :
                                                                                                      CLIP_A2A3_TYPES;
     CheckTensorDataType(self.GetStorage(), supportedTypes, "CLIP");
-    CheckTensorShapeSize(self.GetStorage(), "CLIP");
 
     Tensor result = self;
     if (min.GetStorage() != nullptr) {
-        CheckTensorFormat(min.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Clip");
-        CheckTensorShapeSize(min.GetStorage(), "CLIP");
+        CheckVectorOperand(min.GetStorage(), "Clip");
+
         CheckTensorsFormatConsistency(self.GetStorage(), min.GetStorage(), "CLIP");
         std::vector minBroadcastAxes = GetBroadcastAxes(min.GetShape(), self.GetShape());
         CHECK(VectorErrorCode::ERR_PARAM_INVALID, minBroadcastAxes.size() <= 1)
@@ -285,8 +283,7 @@ Tensor Clip(const Tensor& self, const Tensor& min, const Tensor& max)
         result = Maximum(result, min);
     }
     if (max.GetStorage() != nullptr) {
-        CheckTensorFormat(max.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Clip");
-        CheckTensorShapeSize(max.GetStorage(), "CLIP");
+        CheckVectorOperand(max.GetStorage(), "Clip");
         CheckTensorsFormatConsistency(self.GetStorage(), max.GetStorage(), "CLIP");
         std::vector maxBroadcastAxes = GetBroadcastAxes(max.GetShape(), self.GetShape());
         CHECK(VectorErrorCode::ERR_PARAM_INVALID, maxBroadcastAxes.size() <= 1)
@@ -300,8 +297,8 @@ Tensor Clip(const Tensor& self, const Tensor& min, const Tensor& max)
 Tensor Gcd(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Gcd");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Gcd");
+    CheckVectorOperand(self.GetStorage(), "Gcd");
+    CheckVectorOperand(other.GetStorage(), "Gcd");
 
     CheckTensorsDataTypeConsistency(self.GetStorage(), other.GetStorage(), "GCD");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "GCD");
@@ -313,8 +310,8 @@ Tensor Gcd(const Tensor& self, const Tensor& other)
 Tensor FloorDiv(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "FLOORDIV");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "FLOORDIV");
+    CheckVectorOperand(self.GetStorage(), "FLOORDIV");
+    CheckVectorOperand(other.GetStorage(), "FLOORDIV");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_FLOORDIV);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "FLOORDIV");
@@ -324,8 +321,8 @@ Tensor FloorDiv(const Tensor& self, const Tensor& other)
 Tensor CeilDiv(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "CeilDiv");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "CeilDiv");
+    CheckVectorOperand(self.GetStorage(), "CeilDiv");
+    CheckVectorOperand(other.GetStorage(), "CeilDiv");
 
     CheckTensorsDataTypeConsistency(self.GetStorage(), other.GetStorage(), "CEILDIV");
     std::unordered_set<DataType> supportedTypes = {DT_INT32};

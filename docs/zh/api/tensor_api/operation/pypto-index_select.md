@@ -75,6 +75,8 @@ index_select(input: Tensor, dim: int, index: Tensor) -> Tensor
    <!-- end id6 -->
 5. TileShape的维度与result相同，用于切分result。TileShape设置需保证result不超过UB大小，具体用法详见[TileShape设置示例](#tileshape设置示例)。
 
+6. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+
 ## 调用示例
 
 ### TileShape设置示例

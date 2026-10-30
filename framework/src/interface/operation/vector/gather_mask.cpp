@@ -92,12 +92,11 @@ void TensorGatherMask(Function& function, const LogicalTensorPtr& self, const Lo
 Tensor GatherMask(const Tensor& self, const uint8_t patternMode)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "GatherMask");
+    CheckVectorOperand(self.GetStorage(), "GatherMask");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16, DT_UINT16, DT_UINT32};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "GATHERMASK");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "GATHERMASK");
-    CheckTensorShapeSize(self.GetStorage(), "GATHERMASK");
     auto shape = self.GetShape();
     CheckGatherMaskViewShape(self, shape, patternMode);
     const auto pattern = static_cast<GatherMaskPattern>(patternMode);

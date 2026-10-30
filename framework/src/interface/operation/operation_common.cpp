@@ -162,20 +162,33 @@ void CheckTensorNonEmpty(const LogicalTensorPtr& tensor, const std::string& opNa
     CHECK(VectorErrorCode::ERR_RUNTIME_NULLPTR, tensor != nullptr) << opName << ": tensor is nullptr.";
     auto shape = tensor->shape;
     for (size_t i = 0; i < shape.size(); ++i) {
-        CHECK(VectorErrorCode::ERR_PARAM_INVALID, shape[i] > 0)
-            << "Empty tensor is not supported for op: " << opName << ", dimension[" << i << "] has shape value 0.";
+        CHECK(VectorErrorCode::ERR_PARAM_INVALID, shape[i] != 0)
+            << "Empty tensor is not supported for op: " << opName << ", dimension[" << i << "] has shape value "
+            << shape[i] << ".";
     }
+}
+
+void CheckVectorOperand(const LogicalTensorPtr& tensor, const std::string& opName,
+                        const std::unordered_set<TileOpFormat>& unsupportedFormats)
+{
+    CheckTensorFormat(tensor, unsupportedFormats, opName);
+    CheckTensorNonEmpty(tensor, opName);
+    CheckTensorShapeSize(tensor, opName);
 }
 
 void CheckDstShapeSize(const std::vector<int64_t>& shape, const std::string& opName)
 {
     int64_t shapeSize = 1;
-    for (const auto& value : shape) {
+    for (size_t i = 0; i < shape.size(); ++i) {
+        const auto& value = shape[i];
         if (value > INT32_MAX) {
             CHECK(VectorErrorCode::ERR_PARAM_INVALID, false)
                 << "The dim value of dst shape must be less than or equal to INT32_MAX(2,147,483,647), "
                 << "actual dim value: " << value << " for op: " << opName;
         }
+        CHECK(VectorErrorCode::ERR_PARAM_INVALID, value != 0)
+            << "Empty tensor is not supported for op: " << opName << ", dimension[" << i << "] has shape value "
+            << value << ".";
         if (value > 0) {
             shapeSize *= value;
         }

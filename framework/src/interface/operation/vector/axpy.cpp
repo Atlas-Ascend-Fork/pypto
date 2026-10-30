@@ -141,8 +141,9 @@ LogicalTensorPtr TensorAxpyOperation(Function& function, const Tensor& self, con
 Tensor Axpy(const Tensor& self, const Tensor& other, float alpha)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Axpy");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Axpy");
+    CheckVectorOperand(self.GetStorage(), "Axpy");
+    CheckVectorOperand(other.GetStorage(), "Axpy");
+
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "AXPY");
     CheckTensorDimRange(other.GetStorage(), 1, NUM_VALUE_4, "AXPY");
 

@@ -40,7 +40,6 @@ void CheckCat(const std::vector<Tensor>& tensors, int axis)
     CheckAxisRange(tensors[0], axis);
     std::vector<LogicalTensorPtr> tensorPtrs;
     for (auto tensor : tensors) {
-        CheckTensorShapeSize(tensor.GetStorage(), "CAT");
         tensorPtrs.push_back(tensor.GetStorage());
     }
     CheckTensorsDimConsistency(tensorPtrs, "CAT");
@@ -62,7 +61,7 @@ Tensor Cat(const std::vector<Tensor>& tensors, int axis)
 {
     DECLARE_TRACER();
     for (const auto& tensor : tensors) {
-        CheckTensorFormat(tensor.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Cat");
+        CheckVectorOperand(tensor.GetStorage(), "Cat");
     }
 
     CheckCat(tensors, axis);

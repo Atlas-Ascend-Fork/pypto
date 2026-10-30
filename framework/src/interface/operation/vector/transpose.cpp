@@ -555,12 +555,11 @@ static bool TryReshapeDegenerateTranspose(const Tensor& self, const std::vector<
 Tensor Transpose(const Tensor& self, std::vector<int> perm)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Transpose");
+    CheckVectorOperand(self.GetStorage(), "Transpose");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_TRANSPOSE_VNCHWCONV);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "TRANSPOSE");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_5, "TRANSPOSE");
-    CheckTensorShapeSize(self.GetStorage(), "TRANSPOSE");
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, perm.size() == NUM_VALUE_2)
         << "Transpose dim num should be 2."; // perm should be 2 dims
     int shapeSize = self.GetShape().size();

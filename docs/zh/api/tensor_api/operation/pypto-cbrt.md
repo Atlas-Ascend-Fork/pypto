@@ -55,6 +55,7 @@ cbrt(input: Tensor) -> Tensor
    $$
 
    其中$dt$为输入Tensor的数据类型。
+3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

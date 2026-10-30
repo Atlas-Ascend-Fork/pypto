@@ -41,7 +41,7 @@ index_add_(input: Tensor, dim: int, index: Tensor, source: Tensor, *, alpha: Uni
 | input   | 输入      | 源操作数。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_FP32，DT_FP16，DT_BF16，DT_INT8，DT_INT16，DT_INT32。<br>不支持空Tensor；Shape仅支持1-5维；Shape Size不大于2147483647（即INT32_MAX）。 |
 | dim     | 输入      | int类型，加法作用到input的维度；<br>支持任意不超过input维数的值，详见约束说明。 |
 | index   | 输入      | 源操作数，值代表input所在dim轴的索引；<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_INT32，DT_INT64；<br>不支持空Tensor，Shape只支持1维，索引与source的dim轴索引一一对应，Shape大小与source所在dim轴的Shape大小相同。 |
-| source  | 输入      | 需要加到input的源操作数；<br>支持的类型为：Tensor。<br>Tensor的数据类型与input相同。<br>Shape支持1-5维，所在dim轴的Shape大小与index相同，其他维度的Shape大小与input相同。 |
+| source  | 输入      | 需要加到input的源操作数；<br>支持的类型为：Tensor。<br>Tensor的数据类型与input相同。<br>不支持空Tensor；Shape支持1-5维，所在dim轴的Shape大小与index相同，其他维度的Shape大小与input相同；Shape Size不大于2147483647（即INT32_MAX）。 |
 | alpha   | 输入      | 标量，关键字参数；<br>表示累加时的缩放因子，默认为1。 |
 
 ## 返回值说明

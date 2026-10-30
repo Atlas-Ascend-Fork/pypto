@@ -51,7 +51,7 @@ static std::pair<int64_t, int64_t> GetIntegerScalarRange(DataType dtype)
 Tensor Gcd(const Tensor& self, const Element& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Gcd");
+    CheckVectorOperand(self.GetStorage(), "Gcd");
 
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "GCD");
     std::unordered_set<DataType> supportedTypes = {DT_INT8, DT_INT16, DT_INT32, DT_UINT8};
@@ -132,13 +132,12 @@ void PowSCheck(const Tensor& self)
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_INT32, DT_FP32, DT_INT8, DT_UINT8, DT_INT16};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "POW");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "POW");
-    CheckTensorShapeSize(self.GetStorage(), "POW");
 }
 
 Tensor Pow(const Tensor& self, const Element& other, PrecisionType precisionType)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Pow");
+    CheckVectorOperand(self.GetStorage(), "Pow");
 
     PowSCheck(self);
     LogicalTensorPtr castSelf = self.GetStorage();
@@ -308,7 +307,7 @@ void TiledRemainderSOperation(Function& function, const TileShape& tileShape, Lo
 Tensor Add(const Tensor& self, const Element& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Add");
+    CheckVectorOperand(self.GetStorage(), "Add");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_ADDS);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "ADD");
@@ -319,7 +318,7 @@ Tensor Add(const Tensor& self, const Element& other)
 Tensor Sub(const Tensor& self, const Element& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Sub");
+    CheckVectorOperand(self.GetStorage(), "Sub");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SUBS);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "SUB");
@@ -330,7 +329,7 @@ Tensor Sub(const Tensor& self, const Element& other)
 Tensor Mul(const Tensor& self, const Element& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Mul");
+    CheckVectorOperand(self.GetStorage(), "Mul");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MULS);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "MUL");
@@ -341,7 +340,7 @@ Tensor Mul(const Tensor& self, const Element& other)
 Tensor Div(const Tensor& self, const Element& other, PrecisionType precisionType)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Div");
+    CheckVectorOperand(self.GetStorage(), "Div");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_DIVS);
     auto isDivSupportedInt = [](DataType dt) { return dt == DT_INT16 || dt == DT_INT32 || dt == DT_INT64; };
@@ -384,7 +383,7 @@ Tensor Div(const Tensor& self, const Element& other, PrecisionType precisionType
 Tensor Fmod(const Tensor& self, const Element& other, PrecisionType precisionType)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Fmod");
+    CheckVectorOperand(self.GetStorage(), "Fmod");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "MOD");
@@ -397,7 +396,7 @@ Tensor Fmod(const Tensor& self, const Element& other, PrecisionType precisionTyp
 Tensor Remainder(const Tensor& self, const Element& other, PrecisionType precisionType)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Remainder");
+    CheckVectorOperand(self.GetStorage(), "Remainder");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_REMS);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "REM");
@@ -421,7 +420,7 @@ Tensor Remainder(const Tensor& self, const Element& other, PrecisionType precisi
 Tensor Remainder(const Element& self, const Tensor& other, PrecisionType precisionType)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Remainder");
+    CheckVectorOperand(other.GetStorage(), "Remainder");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_REMRS);
     CheckTensorDataTypeCombination({other.GetDataType()}, combinations, "REM");
@@ -447,7 +446,7 @@ Tensor Remainder(const Element& self, const Tensor& other, PrecisionType precisi
 Tensor BitwiseAnd(const Tensor& self, const Element& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseAnd");
+    CheckVectorOperand(self.GetStorage(), "BitwiseAnd");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISEANDS);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "BITWISEAND");
@@ -458,7 +457,7 @@ Tensor BitwiseAnd(const Tensor& self, const Element& other)
 Tensor BitwiseOr(const Tensor& self, const Element& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseOr");
+    CheckVectorOperand(self.GetStorage(), "BitwiseOr");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISEORS);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "BITWISEOR");
@@ -469,7 +468,7 @@ Tensor BitwiseOr(const Tensor& self, const Element& other)
 Tensor BitwiseXor(const Tensor& self, const Element& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseXor");
+    CheckVectorOperand(self.GetStorage(), "BitwiseXor");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISEXORS);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "BITWISEXOR");
@@ -480,7 +479,7 @@ Tensor BitwiseXor(const Tensor& self, const Element& other)
 Tensor Maximum(const Tensor& operand1, const Element& operand2)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand1.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Maximum");
+    CheckVectorOperand(operand1.GetStorage(), "Maximum");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MAXS);
     CheckTensorDataTypeCombination({operand1.GetDataType()}, combinations, "MAX");
@@ -491,7 +490,7 @@ Tensor Maximum(const Tensor& operand1, const Element& operand2)
 Tensor Minimum(const Tensor& operand1, const Element& operand2)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand1.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Minimum");
+    CheckVectorOperand(operand1.GetStorage(), "Minimum");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MINS);
     CheckTensorDataTypeCombination({operand1.GetDataType()}, combinations, "MIN");
@@ -502,7 +501,7 @@ Tensor Minimum(const Tensor& operand1, const Element& operand2)
 Tensor LReLU(const Tensor& self, const Element& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "LReLU");
+    CheckVectorOperand(self.GetStorage(), "LReLU");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "LRELU");
@@ -513,7 +512,7 @@ Tensor LReLU(const Tensor& self, const Element& other)
 Tensor CeilDiv(const Tensor& self, const Element& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "CeilDiv");
+    CheckVectorOperand(self.GetStorage(), "CeilDiv");
 
     std::unordered_set<DataType> supportedTypes = {DT_INT32};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "CEILDIV");
@@ -541,7 +540,7 @@ Tensor CeilDiv(const Tensor& self, const Element& other)
 Tensor FloorDiv(const Tensor& self, const Element& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "FLOORDIV");
+    CheckVectorOperand(self.GetStorage(), "FLOORDIV");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_FLOORDIVS);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "FLOORDIV");

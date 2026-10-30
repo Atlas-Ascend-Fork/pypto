@@ -196,12 +196,11 @@ Tensor TensorJustNeedCopyOperation(Function& function, const LogicalTensorPtr& o
 Tensor Expand(const Tensor& self, const std::vector<int64_t>& dstShape, std::vector<SymbolicScalar> validShape)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Expand");
+    CheckVectorOperand(self.GetStorage(), "Expand");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_EXPAND);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "EXPAND");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "EXPAND");
-    CheckTensorShapeSize(self.GetStorage(), "EXPAND");
     CheckDstShapeSize(dstShape, "EXPAND");
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, self.GetShape().size() == dstShape.size())
         << "The shape size of self and dst should be equal";

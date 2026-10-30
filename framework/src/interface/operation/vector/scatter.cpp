@@ -172,15 +172,13 @@ static void CheckScatterElementSParamsInvalid(const Tensor& self, const Tensor& 
             << "The shape of indices and self should be equal";
     }
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "SCATTER");
-    CheckTensorShapeSize(self.GetStorage(), "SCATTER");
-    CheckTensorShapeSize(indices.GetStorage(), "SCATTER");
 }
 
 Tensor Scatter(const Tensor& self, const Tensor& indices, const Element& src, int axis, ScatterMode reduce)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Scatter");
-    CheckTensorFormat(indices.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Scatter");
+    CheckVectorOperand(self.GetStorage(), "Scatter");
+    CheckVectorOperand(indices.GetStorage(), "Scatter");
 
     CheckScatterElementSParamsInvalid(self, indices, src, axis < 0 ? self.GetShape().size() + axis : axis, reduce);
     DataType orgDtype = self.GetDataType();
@@ -395,17 +393,14 @@ static void CheckScatterParamsInvalid(const Tensor& self, const Tensor& indices,
             << "The shape size of src and indices should be equal";
     }
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "SCATTER");
-    CheckTensorShapeSize(self.GetStorage(), "SCATTER");
-    CheckTensorShapeSize(indices.GetStorage(), "SCATTER");
-    CheckTensorShapeSize(src.GetStorage(), "SCATTER");
 }
 
 Tensor Scatter(const Tensor& self, const Tensor& indices, const Tensor& src, int axis, ScatterMode reduce)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Scatter");
-    CheckTensorFormat(indices.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Scatter");
-    CheckTensorFormat(src.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Scatter");
+    CheckVectorOperand(self.GetStorage(), "Scatter");
+    CheckVectorOperand(indices.GetStorage(), "Scatter");
+    CheckVectorOperand(src.GetStorage(), "Scatter");
 
     CheckScatterParamsInvalid(self, indices, src, axis < 0 ? self.GetShape().size() + axis : axis, reduce);
     DataType orgDtype = self.GetDataType();
@@ -444,8 +439,8 @@ void Scatter_(Tensor& self, const Tensor& indices, const Element& src, int axis,
         return;
     }
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Scatter_");
-    CheckTensorFormat(indices.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Scatter_");
+    CheckVectorOperand(self.GetStorage(), "Scatter_");
+    CheckVectorOperand(indices.GetStorage(), "Scatter_");
     CheckScatterElementSParamsInvalid(self, indices, src, axis < 0 ? self.GetShape().size() + axis : axis, reduce);
     axis = axis < 0 ? self.GetShape().size() + axis : axis;
     Tensor dst(self.GetDataType(), self.GetShape());
@@ -481,9 +476,9 @@ void Scatter_(Tensor& self, const Tensor& indices, const Tensor& src, int axis, 
     }
 
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Scatter_");
-    CheckTensorFormat(indices.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Scatter_");
-    CheckTensorFormat(src.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Scatter_");
+    CheckVectorOperand(self.GetStorage(), "Scatter_");
+    CheckVectorOperand(indices.GetStorage(), "Scatter_");
+    CheckVectorOperand(src.GetStorage(), "Scatter_");
     CheckScatterParamsInvalid(self, indices, src, axis < 0 ? self.GetShape().size() + axis : axis, reduce);
 
     axis = axis < 0 ? self.GetShape().size() + axis : axis;

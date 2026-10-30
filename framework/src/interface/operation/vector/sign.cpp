@@ -122,32 +122,30 @@ LogicalTensorPtr TensorSignbitOperation(Function& function, LogicalTensorPtr sel
 Tensor Sign(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Sign");
+    CheckVectorOperand(self.GetStorage(), "Sign");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SIGN);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "SIGN");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "SIGN");
-    CheckTensorShapeSize(self.GetStorage(), "SIGN");
     RETURN_CALL(SignOperation, *Program::GetInstance().GetCurrentFunction(), self.GetStorage());
 }
 
 Tensor Signbit(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Signbit");
+    CheckVectorOperand(self.GetStorage(), "Signbit");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_INT16, DT_INT32, DT_FP32, DT_INT8};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "SIGNBIT");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "SIGNBIT");
-    CheckTensorShapeSize(self.GetStorage(), "SIGNBIT");
     RETURN_CALL(SignbitOperation, *Program::GetInstance().GetCurrentFunction(), self.GetStorage());
 }
 
 Tensor CopySign(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "CopySign");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "CopySign");
+    CheckVectorOperand(self.GetStorage(), "CopySign");
+    CheckVectorOperand(other.GetStorage(), "CopySign");
 
     CheckTensorsDataTypeConsistency(self.GetStorage(), other.GetStorage(), "COPYSIGN");
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_INT16, DT_INT32, DT_FP32};

@@ -46,6 +46,7 @@ pypto.log10(input, precision_type=pypto.PrecisionType.INTRINSIC) -> Tensor
 
 1. 输入Tensor和输出Tensor类型应该相同。
 2. 输入元素需大于0，否则输出为NaN。
+3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## TileShape设置示例
 

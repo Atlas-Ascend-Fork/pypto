@@ -25,7 +25,7 @@ namespace npu::tile_fwk {
 Tensor Ln(const Tensor& operand, PrecisionType precisionType)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(operand.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Ln");
+    CheckVectorOperand(operand.GetStorage(), "Ln");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
     CheckTensorDataType(operand.GetStorage(), supportedTypes, "Ln");
@@ -50,7 +50,7 @@ void LnOperationTileFunc(Function& function, const TileShape& tileShape, const s
 Tensor Log(const Tensor& self, LogBaseType base, PrecisionType precisionType)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Log");
+    CheckVectorOperand(self.GetStorage(), "Log");
 
     CHECK(VectorErrorCode::ERR_PARAM_INVALID,
           base == LogBaseType::LOG_E || base == LogBaseType::LOG_2 || base == LogBaseType::LOG_10)
@@ -58,7 +58,6 @@ Tensor Log(const Tensor& self, LogBaseType base, PrecisionType precisionType)
     std::unordered_set<DataType> supportedTypes = {DT_BF16, DT_FP16, DT_FP32};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "LOG");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "LOG");
-    CheckTensorShapeSize(self.GetStorage(), "LOG");
 
     auto operandCast = Tensor(DataType::DT_FP32, self.GetShape());
     if (self.GetStorage()->Datatype() == DataType::DT_FP16 || self.GetStorage()->Datatype() == DataType::DT_BF16) {
@@ -98,12 +97,11 @@ Tensor Log1p(const Tensor& self)
 {
     DECLARE_TRACER();
     auto& function = *Program::GetInstance().GetCurrentFunction();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Log1p");
+    CheckVectorOperand(self.GetStorage(), "Log1p");
 
     std::unordered_set<DataType> supportedTypes = {DT_BF16, DT_FP16, DT_FP32};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "LOG1P");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "LOG1P");
-    CheckTensorShapeSize(self.GetStorage(), "LOG1P");
 
     auto operandCast = self.GetStorage();
     if (self.GetStorage()->Datatype() == DataType::DT_FP16 || self.GetStorage()->Datatype() == DataType::DT_BF16) {

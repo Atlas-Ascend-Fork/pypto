@@ -89,8 +89,6 @@ void PReLUOperationOperandCheck(const LogicalTensorPtr& selfTensor, const Logica
 {
     CheckTensorDimRange(selfTensor, 1, NUM_VALUE_4, "PReLU");
     CheckTensorDimRange(weightTensor, 1, 1, "PReLU");
-    CheckTensorShapeSize(selfTensor, "PReLU");
-    CheckTensorShapeSize(weightTensor, "PReLU");
 
     if (selfTensor->shape.size() == 1) {
         // For a 1D input, weight must have shape [1].
@@ -126,8 +124,8 @@ LogicalTensorPtr TensorPReLUOperation(Function& function, const Tensor& self, co
 Tensor PReLU(const Tensor& self, const Tensor& weight)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "PReLU");
-    CheckTensorFormat(weight.GetStorage(), {TileOpFormat::TILEOP_NZ}, "PReLU");
+    CheckVectorOperand(self.GetStorage(), "PReLU");
+    CheckVectorOperand(weight.GetStorage(), "PReLU");
 
     CheckTensorsDataTypeConsistency(self.GetStorage(), weight.GetStorage(), "PReLU");
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};

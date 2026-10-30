@@ -37,12 +37,11 @@ int64_t CmpResAlign(const std::vector<int64_t>& vec)
 Tensor Sinh(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Sinh");
+    CheckVectorOperand(self.GetStorage(), "Sinh");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_FP32, DT_BF16};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "SINH");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "SINH");
-    CheckTensorShapeSize(self.GetStorage(), "SINH");
 
     auto castSelf = Cast(self, DataType::DT_FP32);
     auto result = CALL(UnaryOperation<UnaryOpType::SINH>, *Program::GetInstance().GetCurrentFunction(),
@@ -54,12 +53,11 @@ Tensor Sinh(const Tensor& self)
 Tensor Cosh(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Cosh");
+    CheckVectorOperand(self.GetStorage(), "Cosh");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_FP32, DT_BF16};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "COSH");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "COSH");
-    CheckTensorShapeSize(self.GetStorage(), "COSH");
 
     auto castSelf = Cast(self, DataType::DT_FP32);
     auto result = CALL(UnaryOperation<UnaryOpType::COSH>, *Program::GetInstance().GetCurrentFunction(),
@@ -71,12 +69,11 @@ Tensor Cosh(const Tensor& self)
 Tensor Atanh(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Atanh");
+    CheckVectorOperand(self.GetStorage(), "Atanh");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "ATANH");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "ATANH");
-    CheckTensorShapeSize(self.GetStorage(), "ATANH");
 
     auto castSelf = Cast(self, DataType::DT_FP32);
     auto result = CALL(UnaryOperation<UnaryOpType::ATANH>, *Program::GetInstance().GetCurrentFunction(),
@@ -88,12 +85,11 @@ Tensor Atanh(const Tensor& self)
 Tensor ASinh(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ASinh");
+    CheckVectorOperand(self.GetStorage(), "ASinh");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_FP32, DT_BF16};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "ASinh");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "ASinh");
-    CheckTensorShapeSize(self.GetStorage(), "ASinh");
 
     auto castSelf = Cast(self, DataType::DT_FP32);
     auto result = CALL(UnaryOperation<UnaryOpType::ASINH>, *Program::GetInstance().GetCurrentFunction(),
@@ -105,12 +101,11 @@ Tensor ASinh(const Tensor& self)
 Tensor ACosh(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ACosh");
+    CheckVectorOperand(self.GetStorage(), "ACosh");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_FP32, DT_BF16};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "ACosh");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "ACosh");
-    CheckTensorShapeSize(self.GetStorage(), "ACosh");
 
     auto castSelf = Cast(self, DataType::DT_FP32);
     auto result = CALL(UnaryOperation<UnaryOpType::ACOSH>, *Program::GetInstance().GetCurrentFunction(),
@@ -172,12 +167,11 @@ LogicalTensorPtr TensorTanhOperation(Function& function, LogicalTensorPtr self)
 Tensor Tanh(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Tanh");
+    CheckVectorOperand(self.GetStorage(), "Tanh");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "TANH");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "TANH");
-    CheckTensorShapeSize(self.GetStorage(), "TANH");
 
     RETURN_CALL(TanhOperation, *Program::GetInstance().GetCurrentFunction(), self.GetStorage());
 }

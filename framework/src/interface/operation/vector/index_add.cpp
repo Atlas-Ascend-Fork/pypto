@@ -207,9 +207,6 @@ void CheckIndexAddParamsInvalid(const Tensor& self, const Tensor& src, const Ten
 
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_5, "INDEXADD");
     CheckTensorDimRange(indices.GetStorage(), 1, 1, "INDEXADD");
-    CheckTensorShapeSize(self.GetStorage(), "INDEXADD");
-    CheckTensorShapeSize(src.GetStorage(), "INDEXADD");
-    CheckTensorShapeSize(indices.GetStorage(), "INDEXADD");
     std::vector<LogicalTensorPtr> tensors = {self.GetStorage(), src.GetStorage()};
     CheckTensorsDimConsistency(tensors, "INDEXADD");
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, src.GetShape()[axis] == indices.GetShape()[0])
@@ -243,9 +240,9 @@ void CheckIndexAddParamsInvalid(const Tensor& self, const Tensor& src, const Ten
 Tensor IndexAddUB(const Tensor& self, const Tensor& src, const Tensor& indices, int axis, const Element& alpha)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "IndexAddUB");
-    CheckTensorFormat(src.GetStorage(), {TileOpFormat::TILEOP_NZ}, "IndexAddUB");
-    CheckTensorFormat(indices.GetStorage(), {TileOpFormat::TILEOP_NZ}, "IndexAddUB");
+    CheckVectorOperand(self.GetStorage(), "IndexAddUB");
+    CheckVectorOperand(src.GetStorage(), "IndexAddUB");
+    CheckVectorOperand(indices.GetStorage(), "IndexAddUB");
 
     CheckAxisRange(self, axis);
     CheckIndexAddParamsInvalid(self, src, indices, axis, alpha, Opcode::OP_INDEX_ADD_UB);
@@ -392,9 +389,9 @@ void TensorIndexAdd(Function& function, const IndexAddPara& indexaddPara)
 void IndexAdd_(Tensor& self, const Tensor& src, const Tensor& indices, int axis, const Element& alpha)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "IndexAdd_");
-    CheckTensorFormat(src.GetStorage(), {TileOpFormat::TILEOP_NZ}, "IndexAdd_");
-    CheckTensorFormat(indices.GetStorage(), {TileOpFormat::TILEOP_NZ}, "IndexAdd_");
+    CheckVectorOperand(self.GetStorage(), "IndexAdd_");
+    CheckVectorOperand(src.GetStorage(), "IndexAdd_");
+    CheckVectorOperand(indices.GetStorage(), "IndexAdd_");
 
     CheckAxisRange(self, axis);
     CheckIndexAddParamsInvalid(self, src, indices, axis, alpha, Opcode::OP_INDEX_ADD);

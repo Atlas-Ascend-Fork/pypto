@@ -27,7 +27,7 @@ namespace npu::tile_fwk {
 Tensor Exp(const Tensor& self, PrecisionType precisionType)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Exp");
+    CheckVectorOperand(self.GetStorage(), "Exp");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_EXP);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "Exp");
@@ -63,12 +63,11 @@ Tensor TensorExp2(Function& function, const LogicalTensorPtr& self)
 Tensor Exp2(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Exp2");
+    CheckVectorOperand(self.GetStorage(), "Exp2");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "EXP2");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "EXP2");
-    CheckTensorShapeSize(self.GetStorage(), "EXP2");
 
     RETURN_CALL(Exp2, *Program::GetInstance().GetCurrentFunction(), self.GetStorage());
 }
@@ -149,12 +148,11 @@ Tensor TensorExpm1(Function& function, const LogicalTensorPtr& self)
 Tensor Expm1(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Expm1");
+    CheckVectorOperand(self.GetStorage(), "Expm1");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "EXPM1");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "EXPM1");
-    CheckTensorShapeSize(self.GetStorage(), "EXPM1");
 
     RETURN_CALL(Expm1, *Program::GetInstance().GetCurrentFunction(), self.GetStorage());
 }
@@ -265,8 +263,8 @@ void TiledExpandExpDifOperation(Function& function, const TileShape& tileShape, 
 Tensor ExpandExpDif(const Tensor& input, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(input.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ExpandExpDif");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "ExpandExpDif");
+    CheckVectorOperand(input.GetStorage(), "ExpandExpDif");
+    CheckVectorOperand(other.GetStorage(), "ExpandExpDif");
 
     CheckTensorsDataTypeConsistency(input.GetStorage(), other.GetStorage(), "EXPANDEXPDIF");
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
@@ -334,8 +332,8 @@ void PowCheck(const Tensor& self, const Tensor& other)
 Tensor Pow(const Tensor& self, const Tensor& other, PrecisionType precisionType)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Pow");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Pow");
+    CheckVectorOperand(self.GetStorage(), "Pow");
+    CheckVectorOperand(other.GetStorage(), "Pow");
 
     PowCheck(self, other);
     DataType selfType = self.GetDataType();
@@ -411,7 +409,7 @@ LogicalTensorPtr GeneralPow(const Tensor& self, double exponent)
 Tensor Pow(const Tensor& self, const Element& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Pow");
+    CheckVectorOperand(self.GetStorage(), "Pow");
 
     LogicalTensorPtr castSelf = self.GetStorage();
     if ((self.GetDataType() == DT_INT32 || self.GetDataType() == DT_INT16) && other.GetDataType() != DT_INT32) {

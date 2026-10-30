@@ -74,12 +74,11 @@ Tensor TensorOneHot(Function& function, const LogicalTensorPtr& self, int numCla
 Tensor OneHot(const Tensor& self, int numClasses)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "OneHot");
+    CheckVectorOperand(self.GetStorage(), "OneHot");
 
     std::unordered_set<DataType> supportedTypes = {DT_INT8, DT_INT16, DT_INT32, DT_INT64};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "ONEHOT");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_3, "ONEHOT");
-    CheckTensorShapeSize(self.GetStorage(), "ONEHOT");
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, numClasses > 0) << "numClasses must be greater than 0";
     auto res = CALL(OneHot, *Program::GetInstance().GetCurrentFunction(), self.GetStorage(), numClasses);
     CheckTensorShapeSize(res.GetStorage(), "ONEHOT");

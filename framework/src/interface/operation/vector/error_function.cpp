@@ -25,12 +25,11 @@ namespace npu::tile_fwk {
 Tensor Erf(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Erf");
+    CheckVectorOperand(self.GetStorage(), "Erf");
 
     std::unordered_set<DataType> supportedTypes = {DT_FP16, DT_BF16, DT_FP32};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "Erf");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "Erf");
-    CheckTensorShapeSize(self.GetStorage(), "Erf");
 
     auto castSelf = Cast(self, DataType::DT_FP32);
     auto result = CALL(UnaryOperation<UnaryOpType::ERF>, *Program::GetInstance().GetCurrentFunction(),
@@ -42,12 +41,11 @@ Tensor Erf(const Tensor& self)
 Tensor Erfc(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "Erfc");
+    CheckVectorOperand(self.GetStorage(), "Erfc");
 
     std::unordered_set<DataType> supportedTypes = {DT_BF16, DT_FP16, DT_FP32};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "Erfc");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "Erfc");
-    CheckTensorShapeSize(self.GetStorage(), "Erfc");
     if (self.GetDataType() != DataType::DT_FP32) {
         auto castSelf = Cast(self, DataType::DT_FP32);
         auto result = CALL(UnaryOperation<UnaryOpType::ERFC>, *Program::GetInstance().GetCurrentFunction(),

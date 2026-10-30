@@ -547,7 +547,7 @@ std::tuple<Tensor, Tensor> QuantMX(const Tensor& input, DataType quantDtype, Deq
                                    int64_t axis, bool performanceMode)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(input.GetStorage(), {TileOpFormat::TILEOP_NZ}, "QuantMX");
+    CheckVectorOperand(input.GetStorage(), "QuantMX");
 
     CheckSupportedNPUArch(QUANT_MX_SUPPORTED_ARCHITECTURES, "QuantMX");
     CheckQuantMXPerformanceMode(static_cast<int64_t>(performanceMode));

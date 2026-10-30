@@ -28,8 +28,8 @@ namespace npu::tile_fwk {
 Tensor BitwiseAnd(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseAnd");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseAnd");
+    CheckVectorOperand(self.GetStorage(), "BitwiseAnd");
+    CheckVectorOperand(other.GetStorage(), "BitwiseAnd");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISEAND);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "BITWISEAND");
@@ -39,8 +39,8 @@ Tensor BitwiseAnd(const Tensor& self, const Tensor& other)
 Tensor BitwiseOr(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseOr");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseOr");
+    CheckVectorOperand(self.GetStorage(), "BitwiseOr");
+    CheckVectorOperand(other.GetStorage(), "BitwiseOr");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISEOR);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "BITWISEOR");
@@ -50,8 +50,8 @@ Tensor BitwiseOr(const Tensor& self, const Tensor& other)
 Tensor BitwiseXor(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseXor");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseXor");
+    CheckVectorOperand(self.GetStorage(), "BitwiseXor");
+    CheckVectorOperand(other.GetStorage(), "BitwiseXor");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISEXOR);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "BITWISEXOR");
@@ -61,7 +61,7 @@ Tensor BitwiseXor(const Tensor& self, const Tensor& other)
 Tensor BitwiseNot(const Tensor& self)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseNot");
+    CheckVectorOperand(self.GetStorage(), "BitwiseNot");
 
     if (self.GetDataType() == DT_BOOL) {
         return LogicalNot(self);
@@ -245,7 +245,6 @@ LogicalTensorPtr TensorBitwiseShiftOperationScalar(Function& function, const Log
 {
     auto opName = GetBitwiseShiftOpName<T>();
     CheckTensorDimRange(self, MIN_TENSOR_DIM, MAX_TENSOR_DIM, opName);
-    CheckTensorShapeSize(self, opName);
     auto result = std::make_shared<LogicalTensor>(function, self->Datatype(), self->shape, self->GetDynValidShape());
     auto& op = function.AddOperation(GetBitwiseShiftOpNameCode<T, true>(), {self}, {result});
     op.SetAttribute(OpAttributeKey::scalar, other);
@@ -299,7 +298,6 @@ LogicalTensorPtr TensorBitwiseShiftOperationSelfScalar(Function& function, const
 {
     auto opName = GetBitwiseShiftOpName<T>();
     CheckTensorDimRange(other, MIN_TENSOR_DIM, MAX_TENSOR_DIM, opName);
-    CheckTensorShapeSize(other, opName);
     auto result = std::make_shared<LogicalTensor>(function, other->Datatype(), other->shape, other->GetDynValidShape());
     auto& op = function.AddOperation(GetBitwiseShiftOpNameCode<T>(), {other}, {result});
     op.SetAttribute(OpAttributeKey::scalar, self);
@@ -320,8 +318,8 @@ Element CastShiftScalarToDtype(const Element& scalar, DataType dtype)
 Tensor BitwiseRightShift(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseRightShift");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseRightShift");
+    CheckVectorOperand(self.GetStorage(), "BitwiseRightShift");
+    CheckVectorOperand(other.GetStorage(), "BitwiseRightShift");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISERIGHTSHIFT);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "BitwiseRightShift");
@@ -332,7 +330,7 @@ Tensor BitwiseRightShift(const Tensor& self, const Tensor& other)
 Tensor BitwiseRightShift(const Tensor& self, const Element& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseRightShift");
+    CheckVectorOperand(self.GetStorage(), "BitwiseRightShift");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISERIGHTSHIFTS);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "BitwiseRightShift");
@@ -350,7 +348,7 @@ Tensor BitwiseRightShift(const Tensor& self, const Element& other)
 Tensor BitwiseRightShift(const Element& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseRightShift");
+    CheckVectorOperand(other.GetStorage(), "BitwiseRightShift");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SBITWISERIGHTSHIFT);
     CheckTensorDataTypeCombination({other.GetDataType()}, combinations, "BitwiseRightShift");
@@ -368,8 +366,8 @@ Tensor BitwiseRightShift(const Element& self, const Tensor& other)
 Tensor BitwiseLeftShift(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseLeftShift");
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseLeftShift");
+    CheckVectorOperand(self.GetStorage(), "BitwiseLeftShift");
+    CheckVectorOperand(other.GetStorage(), "BitwiseLeftShift");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISELEFTSHIFT);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "BitwiseLeftShift");
@@ -380,7 +378,7 @@ Tensor BitwiseLeftShift(const Tensor& self, const Tensor& other)
 Tensor BitwiseLeftShift(const Tensor& self, const Element& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(self.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseLeftShift");
+    CheckVectorOperand(self.GetStorage(), "BitwiseLeftShift");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISELEFTSHIFTS);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "BitwiseLeftShift");
@@ -398,7 +396,7 @@ Tensor BitwiseLeftShift(const Tensor& self, const Element& other)
 Tensor BitwiseLeftShift(const Element& self, const Tensor& other)
 {
     DECLARE_TRACER();
-    CheckTensorFormat(other.GetStorage(), {TileOpFormat::TILEOP_NZ}, "BitwiseLeftShift");
+    CheckVectorOperand(other.GetStorage(), "BitwiseLeftShift");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SBITWISELEFTSHIFT);
     CheckTensorDataTypeCombination({other.GetDataType()}, combinations, "BitwiseLeftShift");
