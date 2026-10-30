@@ -47,6 +47,15 @@ struct DrcoRootFuncData {
         programBase 的偏移；空表 func 写 0（设备侧仅在 succNodeSize > 0 时解引用）
     */
     uint64_t funcInfoAndStaticDataOffset;
+    // skippable HUB 集合引用（host 在 device task 构建期按 func 计算，设备只做一次 bit test）：
+    /*
+        |--1bit--|--1bit--|-------------------------62bit-------------------------|
+        | base  | valid  |                         hubOffset                        |
+        base：0 = 相对 controlFlowCacheBase；1 = 相对 metadataBase
+        valid=0 表示本 func 没有 skippable HUB（或 memReuseStitched，禁止跳过）
+        集合 bit i = op i 的 raw 后继全为 dummyEnding、stitch 链为空（设备只在 HUB 后继上查询）
+    */
+    uint64_t skippableHubRef;
 };
 
 struct DynFuncData {

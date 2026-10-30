@@ -66,26 +66,82 @@ uint32_t CollectDirectSuccessors(DevAscendFunction* devFunc, DevAscendFunctionDu
     return cnt;
 }
 
-// resolve 跳过判定（perCoreQueue 的 SKIP_RESOLVE 与 middleQueue 的 MIDDLE_QUEUE_MEMBER_SKIP 共用判据）：
-// 唯一后继为本函数 dummyEnding 且无 stitch、本 func 未内存复用缝合 —— 该任务 resolve 到的
-// 全是 dummy 边（设备侧本就跳过递减），无任何下游可解
+// resolve 无下游工作判定（perCoreQueue 的 SKIP_RESOLVE、middleQueue 的 MIDDLE_QUEUE_MEMBER_SKIP
+// 与 skippable HUB 集合共用判据）：raw depGraph 后继全部为本函数 dummyEnding（或为空）且无 stitch、
+// 本 func 未内存复用缝合 —— 该 op resolve 到的全是 dummy 边（设备侧本就跳过递减），无任何下游可解。
+// 必须校验「全部」后继而非首个：区域头的 raw 后继是真实成员，靠此排除；误标会让
+// DrcoMiddleQueueRegionHeadTryOpen 不开门，middleQueue 挂死。stitch 为空指针表示无 stitch 数据。
+bool ResolveHasNoDownstreamWork(DevAscendFunction* devFunc, const DevAscendFunctionDuppedStitchList* stitch, int opIdx,
+                                uint64_t funcInfoAndStaticDataOffset)
+{
+    if ((funcInfoAndStaticDataOffset & npu::tile_fwk::DRCO_ROOT_FUNC_MEMORY_REUSE_STITCHED_BIT) != 0) {
+        return false;
+    }
+    size_t succSize = 0;
+    const uint32_t* succList = devFunc->GetOperationDepGraphSuccAddr(opIdx, succSize);
+    for (size_t i = 0; i < succSize; i++) {
+        if (npu::tile_fwk::TaskID(succList[i]) != devFunc->dummyEndingOpIdx_) {
+            return false;
+        }
+    }
+    return stitch == nullptr || stitch->IsNull();
+}
+
+// resolve 跳过判定（perCoreQueue 的 SKIP_RESOLVE 与 middleQueue 的 MIDDLE_QUEUE_MEMBER_SKIP 共用判据）
 bool IsSkipResolveSucc(DynDeviceTask* dyntask, uint32_t taskId)
 {
     const uint32_t funcIdx = npu::tile_fwk::FuncID(taskId);
     const int opIdx = static_cast<int>(npu::tile_fwk::TaskID(taskId));
-    DevAscendFunction* devFunc = dyntask->dynFuncDataCacheList[funcIdx].devFunc;
-    size_t succSize = 0;
-    const uint32_t* succList = devFunc->GetOperationDepGraphSuccAddr(opIdx, succSize);
-    if (succSize != 1 || npu::tile_fwk::TaskID(succList[0]) != devFunc->dummyEndingOpIdx_) {
-        return false;
-    }
-    const uint64_t funcInfoAndStaticDataOffset = dyntask->dynFuncDataList->GetDrcoRootFuncData(funcIdx)
-                                                     .funcInfoAndStaticDataOffset;
-    if ((funcInfoAndStaticDataOffset & npu::tile_fwk::DRCO_ROOT_FUNC_MEMORY_REUSE_STITCHED_BIT) != 0) {
-        return false;
-    }
     auto* duppedData = dyntask->dynFuncDataCacheList[funcIdx].duppedData;
-    return duppedData == nullptr || duppedData->GetOperationStitch(opIdx, true).IsNull();
+    const DevAscendFunctionDuppedStitchList* stitch = duppedData == nullptr ?
+                                                          nullptr :
+                                                          &duppedData->GetOperationStitch(opIdx, true);
+    return ResolveHasNoDownstreamWork(
+        dyntask->dynFuncDataCacheList[funcIdx].devFunc, stitch, opIdx,
+        dyntask->dynFuncDataList->GetDrcoRootFuncData(funcIdx).funcInfoAndStaticDataOffset);
+}
+
+// skippable HUB 集合：host 在 device task 构建期（stitch 链已建好）按 func 算好，设备只做一次 bit test。
+// bit i = op i 的 raw 后继全部为 dummyEnding、stitch 链为空（判据共用 ResolveHasNoDownstreamWork）；
+// memReuseStitched func 整体不置位。
+// 返回值即 DrcoRootFuncData::skippableHubRef 的打包值：bit62=valid、bit63=base（0=cache，1=metadata），
+// 低 62bit 为相对基址的字节偏移；无 skippable HUB 时返回 0（invalid）。
+uint64_t BuildSkippableHub(DevAscendFunction* source, DevAscendFunctionDupped& stitchedFunc, uint32_t opSize,
+                           uint64_t funcInfoAndStaticDataOffset, DevAscendProgram* devProg,
+                           DeviceWorkspaceAllocator* workspace, uint64_t metadataBase, uint64_t cacheBase,
+                           uint64_t cacheSize)
+{
+    const uint32_t hubWords = (opSize + 63) / 64;
+    if (hubWords == 0 || stitchedFunc.GetDummyEndingUsed()) {
+        return 0;
+    }
+    const uint32_t hubBytes = hubWords * sizeof(uint64_t);
+    WsAllocation hubAlloc = ControlFlowAllocateSlab(devProg, hubBytes,
+                                                    workspace->SlabAlloc(hubBytes, WsAicpuSlabMemType::SKIPPABLE_HUB));
+    uint64_t* skippableHub = hubAlloc.As<uint64_t>();
+    for (uint32_t i = 0; i < hubWords; i++) {
+        skippableHub[i] = 0;
+    }
+    bool hasSkippableHub = false;
+    for (uint32_t op = 0; op < opSize; ++op) {
+        if (!ResolveHasNoDownstreamWork(source, &stitchedFunc.GetOperationStitch(static_cast<int>(op), true),
+                                        static_cast<int>(op), funcInfoAndStaticDataOffset)) {
+            continue;
+        }
+        skippableHub[op >> 6] |= (1ULL << (op & 63));
+        hasSkippableHub = true;
+    }
+    if (!hasSkippableHub) {
+        return 0;
+    }
+    // ctrlFlowCache 为空时 cacheBase/cacheSize 均为 0，区间判定自然落到 metadataBase 分支
+    const uint64_t hubAddr = reinterpret_cast<uint64_t>(skippableHub);
+    const bool hubInCache = hubAddr >= cacheBase && hubAddr < cacheBase + cacheSize;
+    const uint64_t hubRawOffset = hubAddr - (hubInCache ? cacheBase : metadataBase);
+    DEV_ASSERT_MSG(ProgEncodeErr::METADATA_SIZE_OVERFLOW_4G, hubRawOffset < (1ULL << 62),
+                   "#drco.skippablehub.offset: offset=%llu is over 62bit",
+                   static_cast<unsigned long long>(hubRawOffset));
+    return hubRawOffset | (hubInCache ? 0ULL : (1ULL << 63)) | (1ULL << 62); // valid
 }
 
 // HUB 搬入防御判定：编码侧会把"HUB 后继的后继表"整体搬入其唯一前驱头的解依赖表
@@ -516,6 +572,10 @@ void DeviceTaskContext::BuildDrcoRootFuncData(DynFuncData* dyndata, DrcoRootFunc
     uint32_t succStitchListOffset = static_cast<uint32_t>(succStitchListRawOffset) |
                                     (succStitchListInCache ? 0u : 0x80000000u);
     rootFuncData->funcDynamicDataOffset = (static_cast<uint64_t>(succStitchListOffset) << 32) | predCountOffset;
+
+    rootFuncData->skippableHubRef = BuildSkippableHub(source, stitchedFunc, opSize,
+                                                      rootFuncData->funcInfoAndStaticDataOffset, devProg_, workspace_,
+                                                      metadataBase, controlFlowCacheBase, controlFlowCacheSize);
 
     dyndata->cceBinaryIndexList = source->GetCalleeIndexAddr();
     // 子链长度编码（nodeNext 低 6 位）：录制/非录制路径统一编码；录制路径下

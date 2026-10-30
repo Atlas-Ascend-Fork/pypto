@@ -37,6 +37,7 @@ enum class WsAicpuSlabMemType : uint8_t {
     LOCAL_READY_QUE,
     LOCAL_READY_MATRIX,
     PRED_COUNT,
+    SKIPPABLE_HUB,
     DUPPED_STITCH, //  stitch pool for stitch edge
     SLAB_MEM_TYPE_BUTT
 };

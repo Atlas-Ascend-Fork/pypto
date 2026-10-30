@@ -1175,6 +1175,91 @@ INLINE bool DrcoResolveDependMemoryReuseStitched(uint64_t funcInfoAndStaticDataO
     return funcInfoAndStaticDataOffset & npu::tile_fwk::DRCO_ROOT_FUNC_MEMORY_REUSE_STITCHED_BIT;
 }
 
+// skippable HUB 集合（host 在 BuildDrcoRootFuncData 中按 func 构建）：设备只做一次 bit test。
+// bit i = op i 的 raw 后继全为 dummyEnding、stitch 链为空；memReuseStitched func 的集合为空。
+// 基址按 func 解一次、循环内复用：rootFuncData 在 __gm__，而循环体含原子操作，编译器无法把
+// skippableHubRef 的加载提出循环，逐条目重算等于每条目两次 GM load。
+INLINE __gm__ uint64_t* DrcoGetSkippableHub(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncData* rootFuncData)
+{
+    if (DrcoResolveDependMemoryReuseStitched(rootFuncData->funcInfoAndStaticDataOffset)) {
+        return nullptr;
+    }
+    const uint64_t packed = rootFuncData->skippableHubRef;
+    if ((packed & (1ULL << 62)) == 0) {
+        return nullptr;
+    }
+    const uint64_t base = (packed & (1ULL << 63)) ? reinterpret_cast<uint64_t>(state->metadataBase) :
+                                                    reinterpret_cast<uint64_t>(state->controlFlowCacheBase);
+    return reinterpret_cast<__gm__ uint64_t*>(base + (packed & ((1ULL << 62) - 1)));
+}
+
+// skippableHub 为本 func 的集合基址（DrcoGetSkippableHub 的返回值），nullptr 表示本 func 无有效集合。
+// 只有 HUB 类型才查集合：非 HUB 后继的 bit 无意义（host 可能为其它类型置位）。
+INLINE bool DrcoEncodedSuccIsSkippableHub(__gm__ uint64_t* skippableHub, uint32_t succEncoded)
+{
+    if (skippableHub == nullptr) {
+        return false;
+    }
+    const uint32_t succCoreType = (succEncoded >> npu::tile_fwk::TASKID_DRCO_CT_SHIFT) &
+                                  npu::tile_fwk::TASKID_DRCO_CT_MASK;
+    if (succCoreType != static_cast<uint32_t>(npu::tile_fwk::CoreType::HUB)) {
+        return false;
+    }
+    const uint32_t opIdx = succEncoded & TASKID_TASK_MASK;
+    return (skippableHub[opIdx >> 6] & (1ULL << (opIdx & 63))) != 0;
+}
+
+// 单条边解依赖：只递减它自己的 predCount，减到 0 即最后一条边，fire。pair 拆半路径与
+// 非 pair 路径共用。
+INLINE void DrcoResolveOneEncodedSucc(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                      uint32_t funcIdx, __gm__ int32_t* predCount, uint32_t succEncoded,
+                                      uint32_t hubStack[], int32_t& hubStackTop,
+                                      uint32_t succTaskIdListCoreList[][BATCH_PUSH_BUF_SIZE],
+                                      uint32_t succTaskIdListSizeCoreList[])
+{
+    const uint32_t opIdx = succEncoded & TASKID_TASK_MASK;
+    const int32_t old = DrcoAtomicResolveDependOnce<int32_t, 1, -1>(&predCount[opIdx]);
+    if (old == 1) {
+        DrcoFireEncodedSucc(state, rootFuncList, funcIdx, succEncoded, hubStack, hubStackTop, succTaskIdListCoreList,
+                            succTaskIdListSizeCoreList);
+    }
+}
+
+// 解一对 pair 编码后继：正常走一次 u64 pair 原子；任一半是 skippable HUB 时退化为逐条 i32，
+// 避免把 skippable HUB 的 predCount 也减掉。
+INLINE void DrcoResolveEncodedSuccPair(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                       uint32_t funcIdx, __gm__ int32_t* predCount, __gm__ uint64_t* skippableHub,
+                                       uint32_t succEncoded, uint32_t nextEncoded, uint32_t hubStack[],
+                                       int32_t& hubStackTop, uint32_t succTaskIdListCoreList[][BATCH_PUSH_BUF_SIZE],
+                                       uint32_t succTaskIdListSizeCoreList[])
+{
+    const bool firstSkippable = DrcoEncodedSuccIsSkippableHub(skippableHub, succEncoded);
+    const bool nextSkippable = DrcoEncodedSuccIsSkippableHub(skippableHub, nextEncoded);
+    if (firstSkippable || nextSkippable) {
+        if (!firstSkippable) {
+            DrcoResolveOneEncodedSucc(state, rootFuncList, funcIdx, predCount, succEncoded, hubStack, hubStackTop,
+                                      succTaskIdListCoreList, succTaskIdListSizeCoreList);
+        }
+        if (!nextSkippable) {
+            DrcoResolveOneEncodedSucc(state, rootFuncList, funcIdx, predCount, nextEncoded, hubStack, hubStackTop,
+                                      succTaskIdListCoreList, succTaskIdListSizeCoreList);
+        }
+        return;
+    }
+    const uint32_t succOpIdx = succEncoded & TASKID_TASK_MASK;
+    __gm__ uint64_t* slot = reinterpret_cast<__gm__ uint64_t*>(&predCount[succOpIdx]);
+    const uint64_t old = DrcoAtomicResolveDependOnce<uint64_t, npu::tile_fwk::DRCO_SUCC_PAIR_BOTH_ONE,
+                                                     npu::tile_fwk::DRCO_SUCC_PAIR_DEC>(slot);
+    if (static_cast<uint32_t>(old) == 1u) {
+        DrcoFireEncodedSucc(state, rootFuncList, funcIdx, succEncoded, hubStack, hubStackTop, succTaskIdListCoreList,
+                            succTaskIdListSizeCoreList);
+    }
+    if (static_cast<uint32_t>(old >> 32) == 1u) {
+        DrcoFireEncodedSucc(state, rootFuncList, funcIdx, nextEncoded, hubStack, hubStackTop, succTaskIdListCoreList,
+                            succTaskIdListSizeCoreList);
+    }
+}
+
 // 解一段 per-func 相对编码后继条目（平铺区 / 节点 succList 同构）：配对 (2k, 2k+1) 共享
 // 一次 u64 原子减（恰好一次解依赖保证不借位，old==1 的半边唯一过零触发 fire）；单条走
 // i32，dummy ending 且本 func 未内存复用缝合时跳过递减（同上游平铺语义）。predCount 由
@@ -1190,33 +1275,23 @@ INLINE static void DrcoResolveEncodedSuccList(DrcoEntryState* state,
     __gm__ int32_t* predCount = DrcoGetCurrentRootFuncPredCount(
         state->controlFlowCacheBase, state->metadataBase, static_cast<uint32_t>(rootFuncData->funcDynamicDataOffset));
     bool memReuseStitched = DrcoResolveDependMemoryReuseStitched(rootFuncData->funcInfoAndStaticDataOffset);
+    __gm__ uint64_t* skippableHub = DrcoGetSkippableHub(state, rootFuncData);
     for (uint32_t i = begin; i < end;) {
         uint32_t succEncoded = succEncodedList[i];
-        uint32_t succOpIdx = succEncoded & TASKID_TASK_MASK;
         if ((succEncoded & npu::tile_fwk::DRCO_SUCC_PAIR_BIT) != 0) {
             uint32_t nextEncoded = succEncodedList[i + 1];
-            __gm__ uint64_t* slot = reinterpret_cast<__gm__ uint64_t*>(&predCount[succOpIdx]);
-            uint64_t old = DrcoAtomicResolveDependOnce<uint64_t, npu::tile_fwk::DRCO_SUCC_PAIR_BOTH_ONE,
-                                                       npu::tile_fwk::DRCO_SUCC_PAIR_DEC>(slot);
-            if (static_cast<uint32_t>(old) == 1u) {
-                DrcoFireEncodedSucc(state, rootFuncList, funcIdx, succEncoded, hubStack, hubStackTop,
-                                    succTaskIdListCoreList, succTaskIdListSizeCoreList);
-            }
-            if (static_cast<uint32_t>(old >> 32) == 1u) {
-                DrcoFireEncodedSucc(state, rootFuncList, funcIdx, nextEncoded, hubStack, hubStackTop,
-                                    succTaskIdListCoreList, succTaskIdListSizeCoreList);
-            }
+            DrcoResolveEncodedSuccPair(state, rootFuncList, funcIdx, predCount, skippableHub, succEncoded, nextEncoded,
+                                       hubStack, hubStackTop, succTaskIdListCoreList, succTaskIdListSizeCoreList);
             i += 2;
         } else {
             if (DrcoResolveDependDummyEnding(succEncoded) && !memReuseStitched) {
                 // Successor is dummy ending, and current is never memory reuse stitched to following root
                 // functions.
+            } else if (DrcoEncodedSuccIsSkippableHub(skippableHub, succEncoded)) {
+                // skippable HUB：后继全 dummy 且 stitch 链为空，跳过 predCount 原子减/fire
             } else {
-                int32_t old = DrcoAtomicResolveDependOnce<int32_t, 1, -1>(&predCount[succOpIdx]);
-                if (old == 1) {
-                    DrcoFireEncodedSucc(state, rootFuncList, funcIdx, succEncoded, hubStack, hubStackTop,
-                                        succTaskIdListCoreList, succTaskIdListSizeCoreList);
-                }
+                DrcoResolveOneEncodedSucc(state, rootFuncList, funcIdx, predCount, succEncoded, hubStack, hubStackTop,
+                                          succTaskIdListCoreList, succTaskIdListSizeCoreList);
             }
             i += 1;
         }
