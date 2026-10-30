@@ -185,9 +185,15 @@ static int CompileCoreMachine(const std::string& objFile, bool isCube, uint64_t 
                                             "";
     const std::string enableAicoreResolve = IsAicoreResolveEnabled() ? "-DENABLE_AICORE_RESOLVE=1" :
                                                                        "-DENABLE_AICORE_RESOLVE=0";
+    const std::string enableAicoreBnParallel = (IsAicoreResolveEnabled() && config::GetDeviceSchedParallelism() > 1) ?
+                                                   "-DENABLE_AICORE_BN_PARALLEL=1" :
+                                                   "-DENABLE_AICORE_BN_PARALLEL=0";
     // DRCO L2 亲和调度编译期开关：device_sched_mode 的 L2CACHE_AFFINITY_SCH 位随调度模式传入，
-    // 宏为 0 时设备侧 DRCO 调度代码与非 L2 亲和版本完全一致
-    const std::string drcoL2Close = l2Close ? "-DDRCO_FLAG_L2_CLOSE=1" : "-DDRCO_FLAG_L2_CLOSE=0";
+    // 宏为 0 时设备侧 DRCO 调度代码与非 L2 亲和版本完全一致。
+    // 与 并行互斥（临时，待专项融合）：两者同时启用时 AICPU 派发时序与 并行窗口
+    // admit/handover 协议存在数据陈旧窗口——并行优先，并行开启时强制关闭 L2 亲和
+    const bool bnParallelOn = enableAicoreBnParallel.find("=1") != std::string::npos;
+    const std::string drcoL2Close = (l2Close && !bnParallelOn) ? "-DDRCO_FLAG_L2_CLOSE=1" : "-DDRCO_FLAG_L2_CLOSE=0";
     const std::string requiresSimtMacro = requiresSimt ? "-DREQUIRES_SIMT=1" : "-DREQUIRES_SIMT=0";
     const std::string simtCompileOption = requiresSimt ? "-mllvm -cce-dyn-kernel-stack-size=false" : "";
     std::string ccecCmd;
@@ -196,39 +202,40 @@ static int CompileCoreMachine(const std::string& objFile, bool isCube, uint64_t 
     const std::string ptoPrintfFlags = BuildPtoPrintfCompileFlags();
     const std::string drcoOptFlags = BuildDrcoOptCompileFlags(graphHasMixWork);
     constexpr const char* warningFlags = "-Wall -Werror";
-    int ret = snprintf_s(ccecCmd.data(), CMD_SIZE_4K, CMD_SIZE_4K - 1,
-                         "%s -c -O3 -g -x cce %s -std=c++17 "
-                         "--cce-aicore-only "
-                         "--cce-aicore-arch=%s "
-                         "-mllvm -cce-aicore-stack-size=0x8000 "
-                         "-mllvm -cce-aicore-function-stack-size=0x8000 "
-                         "%s "
-                         "-mllvm -cce-aicore-record-overflow=false "
-                         "-mllvm -cce-aicore-addr-transform "
-                         "-mllvm -cce-aicore-dcci-insert-for-scalar=false "
-                         "-D__MIX__ "
-                         "-D__TILINGKEY__=%s "
-                         "-D__OPTYPE__=%s "
-                         "-D__OPNAME__=%s "
-                         "-D__HEAD_FILE__=%s "
-                         "%s "
-                         "%s "
-                         "%s "
-                         "%s "
-                         "%s "
-                         "%s "
-                         "%s "
-                         "-I%s/tileop/arch32 "
-                         "-I%s/ "
-                         "-I%s/include/tileop/arch32 "
-                         "-I%s/include/ "
-                         "-o %s %s %s %s",
-                         BISHENG_PROGRAM_CMD, warningFlags, cc_opt.c_str(), simtCompileOption.c_str(),
-                         std::to_string(tilingKey).c_str(), opType.c_str(), funcRawName.c_str(), headFile.c_str(),
-                         requiresSimtMacro.c_str(), hasSubFunc.c_str(), coreType.c_str(), enableAicoreResolve.c_str(),
-                         ptoPrintfFlags.c_str(), drcoOptFlags.c_str(), drcoL2Close.c_str(), includePath.c_str(),
-                         includePath.c_str(), GetPyptoLibPath().c_str(), GetPyptoLibPath().c_str(), objFile.c_str(),
-                         aicoreSrcFile.c_str(), davArch.c_str(), enableMainBlock.c_str());
+    int ret = snprintf_s(
+        ccecCmd.data(), CMD_SIZE_4K, CMD_SIZE_4K - 1,
+        "%s -c -O3 -g -x cce %s -std=c++17 "
+        "--cce-aicore-only "
+        "--cce-aicore-arch=%s "
+        "-mllvm -cce-aicore-stack-size=0x8000 "
+        "-mllvm -cce-aicore-function-stack-size=0x8000 "
+        "%s "
+        "-mllvm -cce-aicore-record-overflow=false "
+        "-mllvm -cce-aicore-addr-transform "
+        "-mllvm -cce-aicore-dcci-insert-for-scalar=false "
+        "-D__MIX__ "
+        "-D__TILINGKEY__=%s "
+        "-D__OPTYPE__=%s "
+        "-D__OPNAME__=%s "
+        "-D__HEAD_FILE__=%s "
+        "%s "
+        "%s "
+        "%s "
+        "%s "
+        "%s "
+        "%s "
+        "%s "
+        "%s "
+        "-I%s/tileop/arch32 "
+        "-I%s/ "
+        "-I%s/include/tileop/arch32 "
+        "-I%s/include/ "
+        "-o %s %s %s %s",
+        BISHENG_PROGRAM_CMD, warningFlags, cc_opt.c_str(), simtCompileOption.c_str(), std::to_string(tilingKey).c_str(),
+        opType.c_str(), funcRawName.c_str(), headFile.c_str(), requiresSimtMacro.c_str(), hasSubFunc.c_str(),
+        coreType.c_str(), enableAicoreResolve.c_str(), enableAicoreBnParallel.c_str(), ptoPrintfFlags.c_str(),
+        drcoOptFlags.c_str(), drcoL2Close.c_str(), includePath.c_str(), includePath.c_str(), GetPyptoLibPath().c_str(),
+        GetPyptoLibPath().c_str(), objFile.c_str(), aicoreSrcFile.c_str(), davArch.c_str(), enableMainBlock.c_str());
     if (ret < 0) {
         MACHINE_LOGE(HostBackEndErr::COMPILE_AICORE_FAILED, "Compile aicore construct cmd failed.");
         return ret;

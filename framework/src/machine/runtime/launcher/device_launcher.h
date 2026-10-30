@@ -127,6 +127,10 @@ public:
             devProg->devArgs.runtimeDataRingBufferAddr = (uint64_t)devMem.AllocZero(runtimeDataRingBufferSize, nullptr);
         }
 
+        // DRCO 队列布局偏移随 DeviceArgs 下发：AICore 入口以"当前槽 + 偏移"自行推导队列指针（per-program 常量，无槽字段
+        // GM 读、无发布时序；
+        devProg->devArgs.deviceTaskReadyQueueOffset = devProg->GetDeviceRuntimeOffset().deviceTaskReadyQueueOffset;
+
         uint64_t generalSize = devProg->memBudget.metadata.general;
         uint64_t stitchPoolSize = devProg->memBudget.metadata.stitchPool;
         uint64_t duppedStitchPoolSize = devProg->memBudget.metadata.duppedStitchPool;
@@ -225,6 +229,8 @@ public:
         }
         devProg->devArgs.enableAicoreResolve = IsAicoreResolveEnabled() &&
                                                config::GetRuntimeOption<int64_t>(CFG_RUN_MODE) != CFG_RUN_MODE_SIM;
+        // 并行模式判定：DRCO 开启且用户配置 parallelism>1。
+        devProg->devArgs.parallelMode = devProg->devArgs.enableAicoreResolve && config::GetDeviceSchedParallelism() > 1;
         if (isDevice) {
             devProg->devArgs.validGetPgMask = RuntimeAgent::GetAgent().GetValidGetPgMask();
         }

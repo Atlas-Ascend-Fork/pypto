@@ -102,4 +102,8 @@
 #define ENABLE_AICORE_RESOLVE 0
 #endif
 
+#ifndef ENABLE_AICORE_BN_PARALLEL
+#define ENABLE_AICORE_BN_PARALLEL 0
+#endif
+
 #endif

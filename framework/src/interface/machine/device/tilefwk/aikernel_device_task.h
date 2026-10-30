@@ -274,7 +274,7 @@ struct DrcoRootFuncList {
     uint32_t middleQueueRegionHeadCount{0};
     uint32_t middleQueueRegionHeadList[DRCO_MIDDLE_QUEUE_REGION_MAX];
     // 每 region 的 leaf 成员数（按核型拆分，撒核期由 host 写入）：开门核一次性代加，
-    // 替代每成员核逐个原子加（16 路同计数器风暴，case3 实测 4~8us）
+    // 替代每成员核逐个原子加（16 路同计数器风暴）
     uint32_t middleQueueRegionLeafCountAic[DRCO_MIDDLE_QUEUE_REGION_MAX];
     uint32_t middleQueueRegionLeafCountAiv[DRCO_MIDDLE_QUEUE_REGION_MAX];
     alignas(64) uint8_t pad[64];
@@ -286,6 +286,15 @@ struct DrcoRootFuncList {
     alignas(64) uint32_t readyMatrixPushCol[DRCO_QUEUE_MAX];
 
     alignas(64) uint32_t hasStitchNode;
+
+    // ===== 并行链字段：追加于结构体末尾，不改既有字段偏移（后继挂链，仅链头入 ready queue） =====
+    __gm__ DynFuncHeader* nextSameIterDynFuncDataList{nullptr}; // 后继 devTask 的 func 数据
+    __gm__ DrcoRootFuncList* nextSameIterRootFuncList{nullptr}; // 后继 devTask 的 rootFuncList
+    uint8_t existNextSameIterTask{0}; // 链尾标记：1 = 有后继（push 乐观置位），0 = 链尾
+    uint32_t parallelLeaderDone{0}; // 并行回收握手：leader 完成旧节点终态处理后置位，ctrl 改等本标志
+    // 窗口槽退出计数：每核退出本 devTask 槽时原子 +1，末核（== 全核数）置devTaskFinished——并行路径内替代收尾 SyncAllMix
+    // 的完成信号；
+    alignas(64) uint32_t slotExitCount{0};
 };
 
 #ifdef __TILE_FWK_HOST__
@@ -329,25 +338,85 @@ constexpr int32_t DEVICE_TASK_QUEUE_SIZE = 64;
 struct DrcoDeviceTask {
     __gm__ DynFuncHeader* dynFuncDataList;
     __gm__ DrcoRootFuncList* drcoRootFuncList;
+    // 并行窗口扩展：parallelInfo 为值语义（不入录制指针表，重放随 push 序列重写）；
+    uint32_t forId{0}; // 并行域 forId（0 = 非并行任务，走窗口排空规则）
+    uint32_t wsId{0};  // workspace 分区 id（同 lane 链内恒定：forId+iterId 唯一确定 wsId）
 };
+
+// 并行窗口槽位数 DRCO_PARALLEL_WINDOW_SLOT_NUM 定义于 aikernel_drco_leaf_task_ready_queue.h（ssbuf 分区维度同源依赖。
+
+// 并行窗口槽内容：恰好 64B（cacheline 独占，单写者整线重写、读者整线读）。槽定位 = 环位置 %
+// SLOT_NUM（链生命周期内不变）；
+struct alignas(64) DrcoParallelDevTaskWindowSlot {
+    __gm__ DynFuncHeader* dynFuncDataList; // 当前链节点 devTask 的 func 数据
+    __gm__ DrcoRootFuncList* rootFuncList; // 当前链节点 devTask 的 rootFuncList
+    __gm__ DrcoRootFuncList* curChainNode; // 链游标：devTaskFinished 后前移到 nextSameIterRootFuncList
+    uint32_t forId;
+    uint32_t wsId;
+    uint32_t posId; // 环位置自描述（幻影激活检测：读者校验 posId == 扫描位置）
+    uint8_t pad[64 - 3 * sizeof(uint64_t) - 3 * sizeof(uint32_t)];
+};
+static_assert(sizeof(DrcoParallelDevTaskWindowSlot) == 64, "BN window slot must stay cacheline sized");
+
+// 并行窗口槽环：单写者（block0）多读者 GM 发布结构；游标单调累计、% SLOT_NUM 定位物理槽。正确性契约：①
+// 游标单次执行内不回退（跨执行由 ctrl Reset 闭合）；
+struct alignas(64) DrcoParallelWindow {
+    uint32_t front{0};   // 最老 in-flight 槽的环位置（front-only 屏障锚点）
+    uint32_t rear{0};    // 下一 admit 落位（窗口满 = rear - front == SLOT_NUM）
+    uint32_t stop{0};    // 终止标志：drained && 窗口空 && block0 全槽退出后置 1
+    uint32_t drained{0}; // 哨兵已见（此后再无 push，存量未挂链槽判链尽）
+    uint8_t pad[64 - 4 * sizeof(uint32_t)];
+    DrcoParallelDevTaskWindowSlot slot[DRCO_PARALLEL_WINDOW_SLOT_NUM];
+};
+static_assert(sizeof(DrcoParallelWindow) == 64 * (1 + DRCO_PARALLEL_WINDOW_SLOT_NUM),
+              "BN window must be whole cachelines");
+
+// 并行窗口 64B 对齐取址（host/device 共用）：storage 为队列内填充字节，运行时向上对齐到cacheline——slot
+// 整线读写（dcci）与游标共线发布的前提。
+INLINE uint64_t DrcoParallelWindowAlignedAddr(uint64_t storageAddr) { return (storageAddr + 63) & ~uint64_t(63); }
+
 struct DrcoDeviceTaskReadyQueue {
     uint32_t head;
     uint32_t tail;
     DrcoDeviceTask dynFuncDataListList[DEVICE_TASK_QUEUE_SIZE];
+    // 并行窗口槽环存储（ v14 定案：base 区一次性分配——随本结构落在 runtime data 区，每个环 slot
+    // 一份，生命周期与队列一致；ctrl Reset 复位。
+    uint8_t parallelWindowStorage[sizeof(DrcoParallelWindow) + 64];
 #ifdef __TILE_FWK_HOST__
+    DrcoParallelWindow* ParallelWindow()
+    {
+        return reinterpret_cast<DrcoParallelWindow*>(
+            DrcoParallelWindowAlignedAddr(reinterpret_cast<uint64_t>(&parallelWindowStorage[0])));
+    }
     void Reset()
     {
         head = 0;
         tail = 0;
+        DrcoParallelWindow* win = ParallelWindow();
+        win->front = 0;
+        win->rear = 0;
+        win->stop = 0;
+        win->drained = 0;
+        for (uint32_t i = 0; i < DRCO_PARALLEL_WINDOW_SLOT_NUM; i++) {
+            win->slot[i].dynFuncDataList = nullptr;
+            win->slot[i].rootFuncList = nullptr;
+            win->slot[i].curChainNode = nullptr;
+            win->slot[i].forId = 0;
+            win->slot[i].wsId = 0;
+        }
     }
-    bool TryAppend(DynFuncHeader* dynFuncDataList, DrcoRootFuncList* rootFuncList)
+    bool TryAppend(DynFuncHeader* dynFuncDataList, DrcoRootFuncList* rootFuncList, uint32_t forId = 0,
+                   uint32_t wsId = 0)
     {
         if (tail - __atomic_load_n(&head, __ATOMIC_ACQUIRE) == DEVICE_TASK_QUEUE_SIZE) {
             return false;
         }
         uint32_t idx = tail % DEVICE_TASK_QUEUE_SIZE;
-        dynFuncDataListList[idx].dynFuncDataList = dynFuncDataList;
-        dynFuncDataListList[idx].drcoRootFuncList = rootFuncList;
+        // 入队字段原子发布（2201 多 die）：直达 L2 一致性域，替代 dc civac 行级 clean——tail 由末尾原子写网关最后发布。
+        __atomic_store_n(&dynFuncDataListList[idx].dynFuncDataList, dynFuncDataList, __ATOMIC_RELEASE);
+        __atomic_store_n(&dynFuncDataListList[idx].drcoRootFuncList, rootFuncList, __ATOMIC_RELEASE);
+        __atomic_store_n(&dynFuncDataListList[idx].forId, forId, __ATOMIC_RELEASE);
+        __atomic_store_n(&dynFuncDataListList[idx].wsId, wsId, __ATOMIC_RELEASE);
         __sync_synchronize();
         __atomic_store_n(&tail, tail + 1, __ATOMIC_RELEASE);
         return true;

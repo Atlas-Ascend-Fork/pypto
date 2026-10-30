@@ -199,10 +199,13 @@ struct DrcoWarpExecuteCount {
 #endif
 };
 
-// ssbuf 段（__ssbuf__ 专用地址空间，段基址 0 合法）上的 C2V 通信状态：
-// 每个 AIC 块两个 SPSC 队列（配对 V0/V1 各消费一个）+ warp 执行计数/完成镜像区
+// 并行窗口槽位数：与 SCH_DEVTASK_MAX_PARALLELISM 数值对齐（aikernel_data.h 有 static_assert 强校验。
+constexpr uint32_t DRCO_PARALLEL_WINDOW_SLOT_NUM = 8;
+
+// ssbuf 段（段基址 0 合法）上的 C2V 通信状态：每窗口槽一对 SPSC 队列（配对 V0/V1 各消费一个），8 槽 × 2 环 × 32B =
+// 512B/核；
 struct DrcoSsbufState {
-    DrcoMixHubC2VReadyQueue mixHubC2VReadyQueue[2];
+    DrcoMixHubC2VReadyQueue mixHubC2VReadyQueue[DRCO_PARALLEL_WINDOW_SLOT_NUM][2];
     DrcoWarpExecuteCount warpExecuteCount;
 };
 

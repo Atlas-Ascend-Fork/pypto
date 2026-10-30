@@ -104,7 +104,12 @@ public:
 
         if (AicoreResolveEnabled()) {
             if (!ctx->devProg->ctrlFlowCacheAnchor->IsRecording()) {
-                int ret = DrcoDeviceTaskReadyQueueAppend(dynTask->dynFuncDataList, dynTask->drcoRootFuncList);
+                int ret;
+                if (ParallelModeEnabled()) {
+                    ret = DrcoParallelAppend(dynTask);
+                } else {
+                    ret = DrcoDeviceTaskReadyQueueAppend(dynTask->dynFuncDataList, dynTask->drcoRootFuncList, 0, 0);
+                }
                 if (ret != DEVICE_MACHINE_OK) {
                     ctx->SetErrorState(ret);
                     DEV_ERROR(CtrlErr::CTRL_ALLOC_TIMEOUT, "#ctrl.push: DrcoDeviceTaskReadyQueueAppend failed, ret=%d.",
@@ -152,7 +157,7 @@ public:
     void StopAicoreManager(DeviceExecuteContext* ctx)
     {
         if (AicoreResolveEnabled()) {
-            int ret = DrcoDeviceTaskReadyQueueAppend(nullptr, nullptr);
+            int ret = DrcoDeviceTaskReadyQueueAppend(nullptr, nullptr, 0, 0);
             if (ret != DEVICE_MACHINE_OK) {
                 ctx->SetErrorState(ret);
             }
@@ -371,6 +376,10 @@ public:
 
         ringBufferHead->AllocateSubmit();
         lastTaskCtrl_ = nullptr;
+        lastChainNode_ = nullptr; // 并行挂链状态机跨 launch 复位（重放从录制序头重演）
+        lastChainForId_ = 0;
+        lastChainIterId_ = 0;
+        lastChainParallel_ = false;
         DEV_INFO("AscendCppDyInitTask done.");
         return 0;
     }
@@ -516,10 +525,10 @@ private:
         return *devStartArgs_->drcoDeviceTaskReadyQueue;
     }
     int32_t DrcoDeviceTaskReadyQueueAppend(npu::tile_fwk::DynFuncHeader* dynFuncDataList,
-                                           npu::tile_fwk::DrcoRootFuncList* rootFuncList)
+                                           npu::tile_fwk::DrcoRootFuncList* rootFuncList, uint32_t forId, uint32_t wsId)
     {
         TIMEOUT_CHECK_INIT(devStartArgs_->devProg->devArgs.archInfo, TIMEOUT_1MIN);
-        while (!GetDeviceTaskReadyQueue().TryAppend(dynFuncDataList, rootFuncList)) {
+        while (!GetDeviceTaskReadyQueue().TryAppend(dynFuncDataList, rootFuncList, forId, wsId)) {
             __PYPTO_TIMEOUT_CHECK_EXIT_ONLY(CtrlErr::CTRL_ALLOC_TIMEOUT, return DEVICE_MACHINE_ERROR,
                                             "#drco.queue.full: DrcoDeviceTaskReadyQueue full, tail=%u head=%u.",
                                             GetDeviceTaskReadyQueue().tail,
@@ -527,10 +536,58 @@ private:
         }
         return DEVICE_MACHINE_OK;
     }
+
+    // 并行挂链状态机：记忆 lastChainNode（同 forId+iterId 的上一个 rootFuncList）——同 iter 后继写前驱
+    // nextSameIter（O(1) 交接）；
+    int32_t DrcoParallelAppend(DynDeviceTask* dynTask)
+    {
+        auto* rootFuncList = dynTask->drcoRootFuncList;
+        const uint32_t forId = dynTask->ParallelForId();
+        const uint32_t iterId = dynTask->ParallelIterId();
+        const uint32_t wsId = dynTask->ParallelWsId();
+        const bool parallel = forId != 0;
+        bool chained = false;
+        if (parallel) {
+            rootFuncList->existNextSameIterTask = 1; // 并行域内乐观默认：链尾由标记/纠正回写 0 揭示
+        } // 非并行 = 长度 1 链：Init 已清 0（尾语义），无需写
+        if (lastChainNode_ != nullptr && lastChainParallel_) {
+            if (parallel && lastChainForId_ == forId && lastChainIterId_ == iterId) {
+                lastChainNode_->nextSameIterDynFuncDataList = dynTask->dynFuncDataList;
+                lastChainNode_->nextSameIterRootFuncList = rootFuncList;
+                chained = true; // 后继经链表交接，不入队
+            } else {
+                lastChainNode_->existNextSameIterTask = 0; // 纠正：前驱实为链尾（标记路径全覆盖后为无害冗余保险丝）
+            }
+        }
+        // release 写 + 消费者（AICore block0）dcci 轮询协议：屏障确保链字段先于后续push 到达 L2
+        // 一致性域——挂链先于后继/哨兵 push（ctrl 单线程顺序）。
+        __sync_synchronize();
+        if (dynTask->IsParallelSameIterLastDevTask()) {
+            rootFuncList->existNextSameIterTask = 0; // 标记：自身即链尾（无等待直接回收）
+        }
+        if (!chained) {
+            int ret = DrcoDeviceTaskReadyQueueAppend(dynTask->dynFuncDataList, rootFuncList, forId, wsId);
+            if (ret != DEVICE_MACHINE_OK) {
+                return ret;
+            }
+        }
+        lastChainNode_ = rootFuncList;
+        lastChainForId_ = forId;
+        lastChainIterId_ = iterId;
+        lastChainParallel_ = parallel;
+        return DEVICE_MACHINE_OK;
+    }
+
     bool AicoreResolveEnabled() const
     {
         return devStartArgs_ != nullptr && devStartArgs_->devProg != nullptr &&
                devStartArgs_->devProg->devArgs.enableAicoreResolve;
+    }
+    // 并行模式标志（launch 级单一事实源）：与 AICore 入口选路同源读同一 DeviceArgs 字段。
+    bool ParallelModeEnabled() const
+    {
+        return devStartArgs_ != nullptr && devStartArgs_->devProg != nullptr &&
+               devStartArgs_->devProg->devArgs.parallelMode;
     }
     uint32_t GetScheAicpuNum()
     {
@@ -544,6 +601,11 @@ private:
 private:
     DevStartArgs* devStartArgs_{nullptr};
     DeviceTaskCtrl* lastTaskCtrl_{nullptr};
+    // 并行挂链状态机记忆：同 forId+iterId 的上一个 rootFuncList 及其并行身份
+    npu::tile_fwk::DrcoRootFuncList* lastChainNode_{nullptr};
+    uint32_t lastChainForId_{0};
+    uint32_t lastChainIterId_{0};
+    bool lastChainParallel_{false};
 
     /* inspector entry */
     DeviceTaskInspectorEntry inspectorEntry_;

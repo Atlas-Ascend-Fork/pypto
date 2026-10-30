@@ -117,10 +117,13 @@ struct DeviceArgs {
     uint64_t taskId : 52;       // initial task id
     uint64_t taskData;          // initial task data
     uint64_t taskWastTime{0};
-    uint64_t aicpuSoBin{0};                        // server so Bin
-    uint64_t aicpuSoLen{0};                        // server so len
-    uint64_t deviceId{0};                          // for device copy fileName
-    uint64_t runtimeDataRingBufferAddr{0};         // DevStartArgs addr
+    uint64_t aicpuSoBin{0};                // server so Bin
+    uint64_t aicpuSoLen{0};                // server so len
+    uint64_t deviceId{0};                  // for device copy fileName
+    uint64_t runtimeDataRingBufferAddr{0}; // DevStartArgs addr
+    // DRCO devTask 就绪队列在 runtime data 槽内的布局偏移（per-program 常量，随 DeviceArgs下发）：AICore 入口以"当前槽
+    // + 偏移"自行推导队列指针。
+    uint64_t deviceTaskReadyQueueOffset{0};
     uint64_t dynamicCellMatchAddr{0};              // standalone metadata pool for dynamic cell match
     uint64_t dynamicCellMatchCapacity{0};          // allocated bytes for dynamicCellMatchAddr
     uint32_t hostPid{0};                           // for dump tensor
@@ -137,6 +140,9 @@ struct DeviceArgs {
     bool enableEslModel = false;
     bool hasAicpuTask = false;
     bool enableAicoreResolve = false; // runtime switch, driven by env ENABLE_AICORE_RESOLVE=true
+    // 并行（DRCO devTask 并行窗口）：launch 级单一事实源——ctrl 挂链状态机与 AICore 入口选路同源读本标志。on：ctrl
+    // 链头入队+挂链、设备走窗口；
+    bool parallelMode = false;
     ArchInfo archInfo{ArchInfo::DAV_2201};
     ToSubMachineConfig toSubMachineConfig;
 };

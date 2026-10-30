@@ -221,13 +221,20 @@ void DeviceTaskContext::InitDrcoRootFuncList(DynDeviceTask* dyntask)
     dyntask->drcoRootFuncList = rootFuncList;
     // middleQueue 懒分配数组 + 区域注册表计数：rootFuncList 整体不清零（reinterpret_cast
     // 分配，默认成员初始化不执行），未赋值槽位残留 workspace 旧数据指针（设备侧仅判非空即
-    // 解引用 → taskId 越界，AIV aicore 271，MxQuantize 实证）；mqRegionHeadCount 残留上一
+    // 解引用 → taskId 越界）；mqRegionHeadCount 残留上一
     // devTask 的合法值（slab 复用）更凶——当前图注册追加在陈旧列表后，设备侧 TryOpen 撞
     // 陈旧头即假命中，非头任务被写 0xff + 陈旧叶计数入账 → executedCount 污染。分配点建立
     // nullptr/0 契约（谁分配谁初始化）。
     (void)memset_s(rootFuncList->perCoreMiddleQueueArray, sizeof(rootFuncList->perCoreMiddleQueueArray), 0,
                    sizeof(rootFuncList->perCoreMiddleQueueArray));
     rootFuncList->middleQueueRegionHeadCount = 0;
+    // 并行链字段 nullptr/0 契约（slab 复用残留 = 悬空指针/假链尾，同 mqRegionHeadCount
+    // 残留教训）：existNextSameIterTask（0 = 尾语义。
+    rootFuncList->nextSameIterDynFuncDataList = nullptr;
+    rootFuncList->nextSameIterRootFuncList = nullptr;
+    rootFuncList->existNextSameIterTask = 0;
+    rootFuncList->parallelLeaderDone = 0; // 并行回收握手复位（slab 复用残留 = 假已完成，ctrl 误回收）
+    rootFuncList->slotExitCount = 0;
     uint32_t queueCapacity = dyntask->devTask.coreFunctionCnt;
     uint32_t aicTaskCnt = 0;
     uint32_t aivTaskCnt = 0;

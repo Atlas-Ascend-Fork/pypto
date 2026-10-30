@@ -240,6 +240,13 @@ void DevControlFlowCache::DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uin
                        sizeof(hubTaskMatrix->hubTaskList));
     }
     base->drcoRootFuncList->devTaskFinished = 0;
+    // BN 链字段复位：重放 push 序列 = 录制序，挂链与纠正动作在重放期确定性重演——残留的
+    // nextSameIter/existNextSameIterTask（上次运行的链结构。
+    base->drcoRootFuncList->nextSameIterDynFuncDataList = nullptr;
+    base->drcoRootFuncList->nextSameIterRootFuncList = nullptr;
+    base->drcoRootFuncList->existNextSameIterTask = 0;
+    base->drcoRootFuncList->slotExitCount = 0;
+    base->drcoRootFuncList->parallelLeaderDone = 0; // BN 回收握手复位（重放按新次执行重新置位）
     auto* finishFlagList = &base->drcoRootFuncList->devTaskFinishFlagList;
     (void)memset_s(reinterpret_cast<uint8_t*>(finishFlagList), sizeof(*finishFlagList), 0, sizeof(*finishFlagList));
     for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
@@ -322,6 +329,11 @@ void DevControlFlowCache::DrcoShadowPingPongSwap(DynDeviceTaskBase* base)
     PublishOther(root->hubTaskMatrix, backup->hubPing, backup->hubPong);
     root->devTaskFinished = 0;
     /* Match mainline rebuild path: recording/prior launch dirties these; replay must clear them. */
+    root->nextSameIterDynFuncDataList = nullptr;
+    root->nextSameIterRootFuncList = nullptr;
+    root->existNextSameIterTask = 0;
+    root->slotExitCount = 0;
+    root->parallelLeaderDone = 0;
     for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
         root->readyMatrixPushCol[ct] = 0;
         for (uint32_t s = 0; s < npu::tile_fwk::DRCO_COUNT_SHARD_NUM; s++) {
@@ -479,6 +491,10 @@ void DevControlFlowCache::RelocDrcoRootFuncList(RelocRange& relocCtrlCache, Relo
         relocCtrlCache.Reloc(drcoRootFuncList->metadataBase);
         relocCtrlCache.Reloc(drcoRootFuncList->controlFlowCacheBase);
         relocProgram.Reloc(drcoRootFuncList->programBase);
+        // BN 链指针（可空）：录制期不写入（状态机随 !IsRecording 门控）、重放期由 push 序列重写为重放地址——reloc
+        // 保持结构指针完整性（DFX/UT 直读 cache 时不悬空。
+        relocCtrlCache.RelocNullable(drcoRootFuncList->nextSameIterDynFuncDataList);
+        relocCtrlCache.RelocNullable(drcoRootFuncList->nextSameIterRootFuncList);
     }
 }
 

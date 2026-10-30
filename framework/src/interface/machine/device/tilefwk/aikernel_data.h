@@ -126,6 +126,9 @@ constexpr uint64_t DRCO_STITCH_INDEX_MASK = 0x7FFFFFFFull;
 #define TASKID_FROM_CTRL_TOPO_MASK ((1 << (TASKID_TASK_BITS + TASKID_FUNC_BITS)) - 1)
 
 const uint32_t SCH_DEVTASK_MAX_PARALLELISM = (1 << TASKID_PARALLEL_INDEX_BITS);
+// BN 窗口槽环与 cachedDevTasks 数组同维（v4 槽归属改结构上下文后无位宽耦合，数值须联动）
+static_assert(SCH_DEVTASK_MAX_PARALLELISM == DRCO_PARALLEL_WINDOW_SLOT_NUM,
+              "BN window slot count must match cachedDevTasks dimension");
 
 INLINE uint32_t FuncID(uint32_t taskId) { return (taskId >> TASKID_TASK_BITS) & TASKID_FUNC_MASK; }
 

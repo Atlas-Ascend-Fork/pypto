@@ -476,13 +476,7 @@ PrintOptions& GetPrintOptions();
 
 void SetRunDataOption(const std::string& key, const std::string& value);
 
-inline uint32_t GetDeviceSchedParallelism()
-{
-    if (IsAicoreResolveEnabled()) {
-        return 1;
-    }
-    return GetRuntimeOption<uint32_t>(DEVICE_SCHED_PARALLELISM);
-}
+inline uint32_t GetDeviceSchedParallelism() { return GetRuntimeOption<uint32_t>(DEVICE_SCHED_PARALLELISM); }
 
 } // namespace config
 

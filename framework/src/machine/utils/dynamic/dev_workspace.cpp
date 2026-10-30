@@ -1251,9 +1251,17 @@ bool DeviceWorkspaceAllocator::DeviceTaskMemTryRecycle()
             if (dynFuncHeader != nullptr) {
                 auto* rootFuncList = deviceTask->drcoRootFuncList;
                 if (rootFuncList != nullptr) {
-                    uint32_t finished = __atomic_load_n(&rootFuncList->devTaskFinished, __ATOMIC_ACQUIRE);
-                    if (finished == 1 || rootFuncList->totalTaskCount == 0) {
-                        deviceTask->taskStageAllocMem.canFree.store(true, std::memory_order_release);
+                    if (devProg_ != nullptr && devProg_->devArgs.parallelMode) {
+                        // 并行回收握手：finished 置位早于 leader 读链字段，按 finished 回收会踩设备尚在读取的内存——改等
+                        // leader 终态处理后的。
+                        if (__atomic_load_n(&rootFuncList->parallelLeaderDone, __ATOMIC_ACQUIRE) != 0) {
+                            deviceTask->taskStageAllocMem.canFree.store(true, std::memory_order_release);
+                        }
+                    } else {
+                        uint32_t finished = __atomic_load_n(&rootFuncList->devTaskFinished, __ATOMIC_ACQUIRE);
+                        if (finished == 1 || rootFuncList->totalTaskCount == 0) {
+                            deviceTask->taskStageAllocMem.canFree.store(true, std::memory_order_release);
+                        }
                     }
                 }
             }
