@@ -9,6 +9,10 @@
  */
 #include "gtest/gtest.h"
 
+#include "interface/function/function.h"
+#include "interface/operation/operation.h"
+#include "ir/kind_traits.h"
+
 #include "tilefwk/tilefwk_op.h"
 #include "ir/transforms/passes.h"
 
@@ -129,4 +133,38 @@ TEST(MergeStmtPass, TestDynValidShapeCloneThenElse)
 
     auto out = pypto::ir::pass::MergeStmtsIntoIf()(prog);
     ASSERT_NE(out, nullptr);
+}
+
+TEST(MergeStmtPass, TestInplaceReshapeStorage)
+{
+    ProgramBuilder p;
+    p.BeginFunction("InplaceReshapeStorage", {});
+    auto input = p.Alloc(DT_INT64, {8}, "index");
+    auto output = p.Alloc(DT_INT64, {8, 1}, "output");
+    p.If(SymbolicScalar("cond") > 0, [&] { p.Yield(8); }, [&] { p.Yield(4); });
+    auto reshaped = Reshape(input, std::vector<SymbolicScalar>{8, 1}, true);
+    Assemble(reshaped, {0, 0}, output);
+
+    auto merged = pypto::ir::pass::MergeStmtsIntoIf()(p.EndFunction());
+    auto ifStmt = ir::As<ir::IfStmt>(merged->functions_.at("InplaceReshapeStorage")->body_->stmts_.front());
+    ASSERT_NE(ifStmt, nullptr);
+    ASSERT_TRUE(ifStmt->elseBody_.has_value());
+    std::vector<std::shared_ptr<RawTensor>> results;
+    for (const auto& branch : {ifStmt->thenBody_, *ifStmt->elseBody_}) {
+        for (const auto& stmt : branch->stmts_) {
+            auto op = std::dynamic_pointer_cast<const Operation>(stmt);
+            if (!op || op->GetOpcode() != Opcode::OP_RESHAPE) {
+                continue;
+            }
+            auto src = op->GetInputOperand(0)->GetRawTensor();
+            auto dst = op->GetOutputOperand(0)->GetRawTensor();
+            EXPECT_EQ(dst->memoryId, src->memoryId);
+            auto link = op->BelongTo()->outIncastLinkMap.find(dst);
+            ASSERT_NE(link, op->BelongTo()->outIncastLinkMap.end());
+            EXPECT_EQ(link->second, src);
+            results.push_back(dst);
+        }
+    }
+    ASSERT_EQ(results.size(), 2u);
+    EXPECT_NE(results[0], results[1]);
 }

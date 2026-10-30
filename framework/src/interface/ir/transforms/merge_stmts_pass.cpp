@@ -16,6 +16,7 @@
 #include "ir/transforms/utils/stmt_utils.h"
 
 #include "tilefwk/symbolic_scalar.h"
+#include "interface/function/function.h"
 #include "interface/tensor/logical_tensor.h"
 #include "interface/operation/operation.h"
 #include "interface/tensor/ir_tensor_op_rebuild.h"
@@ -95,6 +96,11 @@ StmtPtr SubstituteTensorStmt(StmtPtr stmt, VarExprMap& varMap, std::unordered_se
     auto op = std::dynamic_pointer_cast<Operation>(std::const_pointer_cast<TensorOpStmt>(top));
     if (!op) {
         return stmt;
+    }
+
+    // Restore the cloned raw's alias; metadata-only clones below retain this raw.
+    if (op->GetOpcode() == npu::tile_fwk::Opcode::OP_RESHAPE && op->GetInplaceIndex(0) == 0) {
+        op->BelongTo()->SetSameMemId(op->GetInputOperand(0), op->GetOutputOperand(0));
     }
 
     bool attrChanged = false;
