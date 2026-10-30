@@ -103,6 +103,46 @@ TEST_F(OperationOpsTest, Range_UnsupportedOutputDataType)
     EXPECT_THROW(Range(start, end, step), std::exception);
 }
 
+TEST_F(OperationOpsTest, Gcd_UnsupportedScalarDataType)
+{
+    Tensor self(DT_INT32, {4, 8});
+    Element scalar(DT_FP32, 1.5f);
+
+    EXPECT_THROW(Gcd(self, scalar), std::exception);
+}
+
+TEST_F(OperationOpsTest, BitwiseRightShift_UnsupportedScalarDataType)
+{
+    Tensor self(DT_INT16, {4, 8});
+    Element scalar(DT_FP32, 1.0f);
+
+    EXPECT_THROW(BitwiseRightShift(self, scalar), std::exception);
+}
+
+TEST_F(OperationOpsTest, SBitwiseRightShift_UnsupportedScalarDataType)
+{
+    Element scalar(DT_FP32, 1.0f);
+    Tensor other(DT_INT16, {4, 8});
+
+    EXPECT_THROW(BitwiseRightShift(scalar, other), std::exception);
+}
+
+TEST_F(OperationOpsTest, BitwiseLeftShift_UnsupportedScalarDataType)
+{
+    Tensor self(DT_INT16, {4, 8});
+    Element scalar(DT_FP32, 1.0f);
+
+    EXPECT_THROW(BitwiseLeftShift(self, scalar), std::exception);
+}
+
+TEST_F(OperationOpsTest, SBitwiseLeftShift_UnsupportedScalarDataType)
+{
+    Element scalar(DT_FP32, 1.0f);
+    Tensor other(DT_INT16, {4, 8});
+
+    EXPECT_THROW(BitwiseLeftShift(scalar, other), std::exception);
+}
+
 TEST_F(OperationOpsTest, LogicalNot_UnsupportedDataType)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);

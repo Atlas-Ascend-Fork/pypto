@@ -56,6 +56,9 @@ Tensor Gcd(const Tensor& self, const Element& other)
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "GCD");
     std::unordered_set<DataType> supportedTypes = {DT_INT8, DT_INT16, DT_INT32, DT_UINT8};
     CheckTensorDataType(self.GetStorage(), supportedTypes, "GCD");
+    CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, IsInteger(other.GetDataType()))
+        << "Data type " << DataType2String(other.GetDataType())
+        << " of scalar is not supported for op: Gcd, scalar must be integer";
     auto [elemMin, elemMax] = GetIntegerScalarRange(self.GetDataType());
     if (other.GetSignedData() < elemMin || other.GetSignedData() > elemMax) {
         CHECK(VectorErrorCode::ERR_PARAM_INVALID, false)

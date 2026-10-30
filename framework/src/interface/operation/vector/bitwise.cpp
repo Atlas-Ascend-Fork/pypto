@@ -336,6 +336,9 @@ Tensor BitwiseRightShift(const Tensor& self, const Element& other)
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISERIGHTSHIFTS);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "BitwiseRightShift");
+    CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, IsInteger(other.GetDataType()))
+        << "Data type " << DataType2String(other.GetDataType())
+        << " of scalar is not supported for op: BitwiseRightShift, scalar must be integer";
     Element newOther = other;
     if (self.GetDataType() != other.GetDataType()) {
         newOther = CastShiftScalarToDtype(other, self.GetDataType());
@@ -351,6 +354,9 @@ Tensor BitwiseRightShift(const Element& self, const Tensor& other)
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SBITWISERIGHTSHIFT);
     CheckTensorDataTypeCombination({other.GetDataType()}, combinations, "BitwiseRightShift");
+    CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, IsInteger(self.GetDataType()))
+        << "Data type " << DataType2String(self.GetDataType())
+        << " of scalar is not supported for op: BitwiseRightShift, scalar must be integer";
     Element newSelf = self;
     if (self.GetDataType() != other.GetDataType()) {
         newSelf = CastShiftScalarToDtype(self, other.GetDataType());
@@ -378,6 +384,9 @@ Tensor BitwiseLeftShift(const Tensor& self, const Element& other)
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISELEFTSHIFTS);
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "BitwiseLeftShift");
+    CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, IsInteger(other.GetDataType()))
+        << "Data type " << DataType2String(other.GetDataType())
+        << " of scalar is not supported for op: BitwiseLeftShift, scalar must be integer";
     Element newOther = other;
     if (self.GetDataType() != other.GetDataType()) {
         newOther = CastShiftScalarToDtype(other, self.GetDataType());
@@ -393,6 +402,9 @@ Tensor BitwiseLeftShift(const Element& self, const Tensor& other)
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_SBITWISELEFTSHIFT);
     CheckTensorDataTypeCombination({other.GetDataType()}, combinations, "BitwiseLeftShift");
+    CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, IsInteger(self.GetDataType()))
+        << "Data type " << DataType2String(self.GetDataType())
+        << " of scalar is not supported for op: BitwiseLeftShift, scalar must be integer";
     Element newSelf = self;
     if (self.GetDataType() != other.GetDataType()) {
         newSelf = CastShiftScalarToDtype(self, other.GetDataType());
