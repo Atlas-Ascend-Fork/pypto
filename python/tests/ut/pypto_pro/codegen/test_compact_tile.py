@@ -26,7 +26,7 @@ def test_compact_mode_values_are_exposed(name):
 
 def test_hardware_info_compact_is_readable_and_writable():
     hw = _ir.HardwareInfo()
-    assert hw.compact == CompactMode.null
+    assert hw.compact == CompactMode.normal
 
     hw.compact = CompactMode.normal
     assert hw.compact == CompactMode.normal
@@ -36,19 +36,20 @@ def test_hardware_info_compact_is_readable_and_writable():
 
 
 @pytest.mark.parametrize(
-    "compact",
-    [None, 1, 2],
+    "compact,expected",
+    [(None, 1), (0, 0), (1, 1), (2, 2)],
 )
-def test_tile_type_descriptor_stores_compact(compact):
+def test_tile_type_descriptor_stores_compact(compact, expected):
     kwargs = {"compact": compact} if compact is not None else {}
     tt = pl.TileType(shape=[128, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, **kwargs)
-    assert tt.compact == compact
+    assert tt.compact == expected
 
 
 @pytest.mark.parametrize(
     "compact,expected",
     [
-        (None, CompactMode.null),
+        (None, CompactMode.normal),
+        (0, CompactMode.null),
         (1, CompactMode.normal),
         (2, CompactMode.row_plus_one),
     ],
@@ -72,7 +73,8 @@ def test_compact_stored_in_make_tile_type(compact, expected):
 @pytest.mark.parametrize(
     "compact,expected",
     [
-        (None, CompactMode.null),
+        (None, CompactMode.normal),
+        (0, CompactMode.null),
         (1, CompactMode.normal),
     ],
 )

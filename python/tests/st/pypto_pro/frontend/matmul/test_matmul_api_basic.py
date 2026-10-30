@@ -1029,6 +1029,7 @@ def t18_sq_nd_nz_m_tail(
         br = b_l0b.current()
         ac = c_l0c.current()
         pl.set_validshape(cur_a, [72, tile])
+        pl.set_validshape(al, [72, tile])
         pl.set_validshape(ac, [72, tile])
         pl.load(cur_a, a, [128, 0])
         pl.load(cur_b, b, [0, 0])

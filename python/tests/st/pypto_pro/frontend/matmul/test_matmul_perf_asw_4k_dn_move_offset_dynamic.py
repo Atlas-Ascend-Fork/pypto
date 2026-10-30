@@ -197,14 +197,14 @@ def matmul_perf_asw_4k_dn_move_offset_dynamic_kernel(
                         gsub = ko * STEP_KA + ki  # global KL0 sub-tile index
 
                         # FULL-M / FULL-N move + matmul (fixpipe must see a whole 256x256 tile).
-                        pl.set_validshape(a_wide_slot, [TILE_M, sub_k])
+                        pl.set_validshape(a_wide_slot, [valid_m, sub_k])
                         cur_a_left = a_left_db.next()
+                        pl.set_validshape(cur_a_left, [valid_m, sub_k])
                         pl.move(cur_a_left, a_wide_slot, offset=[0, sub_off])
-                        pl.set_validshape(cur_a_left, [TILE_M, sub_k])
                         pl.set_validshape(b_wide_slot, [sub_k, TILE_N])
                         cur_b_right = b_right_db.next()
-                        pl.move(cur_b_right, b_wide_slot, offset=[sub_off, 0])
                         pl.set_validshape(cur_b_right, [sub_k, TILE_N])
+                        pl.move(cur_b_right, b_wide_slot, offset=[sub_off, 0])
 
                         # gsub==0 -> first contribution (matmul, init acc); else matmul_acc.
                         # gsub==last_sub -> final K step (AccPhase.Final), else Partial.

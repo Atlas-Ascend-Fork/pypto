@@ -1817,7 +1817,7 @@ def TileType(  # noqa: N802 -- the user writes pl.TileType(...), a class constru
     layout: Optional[TensorLayout] = None,
     fractal: Optional[int] = None,
     pad: Optional[Union[TilePad, int]] = None,
-    compact: Optional[int] = None,
+    compact: Optional[int] = 1,
 ) -> TileType:
     """Describe a tile: its shape, dtype, memory space and layout.
 

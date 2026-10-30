@@ -3449,7 +3449,7 @@ class TileType:
     layout: Optional[TensorLayout] = None
     fractal: Optional[int] = None
     pad: Optional[int] = None
-    compact: Optional[int] = None
+    compact: Optional[int] = 1
 
     def __post_init__(self):
         _validate_tile_type_params(self)
@@ -3815,7 +3815,7 @@ def make_mutex_tile_expr(
     layout: "TensorLayout | None" = None,
     fractal: "int | None" = None,
     pad: "int | None" = None,
-    compact: "int | None" = None,
+    compact: "int | None" = 1,
     mutex_ids: "Sequence[int | Expr] | _ir_core.MakeTuple" = (),
     span: "Span | None" = None,
 ) -> Expr:

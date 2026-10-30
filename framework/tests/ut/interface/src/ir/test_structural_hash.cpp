@@ -425,7 +425,7 @@ TEST_F(IRStructHashTest, TestHashTileTypeWithHardwareInfo)
     HardwareInfo hw1(TileLayout::row_major, TileLayout::none_box, 512, TilePad::null);
     HardwareInfo hw2(TileLayout::row_major, TileLayout::none_box, 512, TilePad::null);
     HardwareInfo hw3(TileLayout::col_major, TileLayout::none_box, 512, TilePad::null);
-    HardwareInfo hw4(TileLayout::row_major, TileLayout::none_box, 512, TilePad::null, CompactMode::normal);
+    HardwareInfo hw4(TileLayout::row_major, TileLayout::none_box, 512, TilePad::null, CompactMode::null);
 
     auto t1 = std::make_shared<TileType>(std::vector<ExprPtr>{d16}, DataType::FP32, std::nullopt, std::nullopt, hw1);
     auto t2 = std::make_shared<TileType>(std::vector<ExprPtr>{d16}, DataType::FP32, std::nullopt, std::nullopt, hw2);

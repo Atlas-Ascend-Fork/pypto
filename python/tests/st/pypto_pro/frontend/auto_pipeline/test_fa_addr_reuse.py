@@ -471,17 +471,17 @@ def fa_addr_reuse_auto_pipeline_kernel(
     with pl.section_vector():
         p_f16_db = pl.make_tile_group(
             type=pl.TileType(shape=[TKV // 2 + 1, TS_HALF * 2], dtype=pl.DT_FP16,
-                             target_memory=pl.MemorySpace.Vec),
+                             target_memory=pl.MemorySpace.Vec, compact=0),
             addrs=[VA2, VA2B], mutex_ids=[0, 1])
         p_f16_main_db = pl.make_tile_group(
             type=pl.TileType(shape=[TKV // 2 + 1, TS_HALF], dtype=pl.DT_FP16,
                              target_memory=pl.MemorySpace.Vec,
-                             valid_shape=[TKV // 2, TS_HALF], layout=pl.NZ),
+                             valid_shape=[TKV // 2, TS_HALF], layout=pl.NZ, compact=0),
             addrs=[VA2, VA2B], mutex_ids=[0, 1])
         p_f16_back_db = pl.make_tile_group(
             type=pl.TileType(shape=[TKV // 2 + 1, TS_HALF], dtype=pl.DT_FP16,
                              target_memory=pl.MemorySpace.Vec,
-                             valid_shape=[TKV // 2, TS_HALF], layout=pl.NZ),
+                             valid_shape=[TKV // 2, TS_HALF], layout=pl.NZ, compact=0),
             addrs=[VA2_DN, VA2B_DN], mutex_ids=[0, 1])
         red_rm_type = pl.TileType(shape=[1, TS_HALF], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
         global_max_rm_buf = pl.make_tile_group(

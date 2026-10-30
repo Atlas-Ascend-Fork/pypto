@@ -218,13 +218,13 @@ enum class TilePad {
  * Defines the compact mode for tile buffers, used to handle
  * tail-block scenarios
  * where L0A/L0B split layouts are non-contiguous:
- * - null: No compact mode (default)
- * - normal: Normal compact mode
+ * - null: No compact mode
+ * - normal: Normal compact mode (default)
  * - row_plus_one: Row plus one compact mode
  */
 enum class CompactMode {
-    null,        ///< No compact mode (default)
-    normal,      ///< Normal compact mode
+    null,        ///< No compact mode
+    normal,      ///< Normal compact mode (default)
     row_plus_one ///< Row plus one compact mode
 };
 
@@ -240,13 +240,13 @@ struct HardwareInfo {
     TileLayout slayout = TileLayout::none_box;  ///< Scatter layout
     uint64_t fractal = kDefaultFractal;         ///< Fractal size
     TilePad pad = TilePad::null;                ///< Pad mode
-    CompactMode compact = CompactMode::null;    ///< Compact mode
+    CompactMode compact = CompactMode::normal;  ///< Compact mode
 
     HardwareInfo() = default;
 
     HardwareInfo(TileLayout blayoutIn, TileLayout slayoutIn = TileLayout::none_box,
                  uint64_t fractalIn = kDefaultFractal, TilePad padIn = TilePad::null,
-                 CompactMode compactIn = CompactMode::null)
+                 CompactMode compactIn = CompactMode::normal)
         : blayout(blayoutIn), slayout(slayoutIn), fractal(fractalIn), pad(padIn), compact(compactIn)
     {}
 

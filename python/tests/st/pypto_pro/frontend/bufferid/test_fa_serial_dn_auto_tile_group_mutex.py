@@ -546,7 +546,8 @@ def fa_perf_tkv_preload_dn_kernel(
     # ===== Vector-local buffer declarations (in section) =====
     with pl.section_vector():
         p_f16_db = pl.make_tile_group(
-            type=pl.TileType(shape=[TKV // 2 + 1, TS_HALF * 2], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
+            type=pl.TileType(shape=[TKV // 2 + 1, TS_HALF * 2], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec,
+                             compact=0),
             addrs=[VA2, VA2B],
             mutex_ids="auto",
             depth=2,
@@ -558,6 +559,7 @@ def fa_perf_tkv_preload_dn_kernel(
                 target_memory=pl.MemorySpace.Vec,
                 valid_shape=[TKV // 2, TS_HALF],
                 layout=pl.NZ,
+                compact=0
             ),
             addrs=[VA2, VA2B],
             mutex_ids="auto",
@@ -570,6 +572,7 @@ def fa_perf_tkv_preload_dn_kernel(
                 target_memory=pl.MemorySpace.Vec,
                 valid_shape=[TKV // 2, TS_HALF],
                 layout=pl.NZ,
+                compact=0
             ),
             addrs=[VA2_DN, VA2B_DN],
             mutex_ids="auto",

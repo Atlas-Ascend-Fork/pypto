@@ -752,14 +752,14 @@ def mm_complex_clean_kernel(
                         sub_off = ki * MM_KL0
                         sub_k = pl.min(MM_KL0, valid_k1 - sub_off)
                         gsub = ko * (MM_KL1 // MM_KL0) + ki
-                        pl.set_validshape(a_wide_slot, [MM_TILE_M, sub_k])
+                        pl.set_validshape(a_wide_slot, [valid_m, sub_k])
                         cur_a_left = a_left_db.next()
+                        pl.set_validshape(cur_a_left, [valid_m, sub_k])
                         pl.move(cur_a_left, a_wide_slot, offset=[0, sub_off])
-                        pl.set_validshape(cur_a_left, [MM_TILE_M, sub_k])
                         pl.set_validshape(b_wide_slot, [sub_k, MM_TILE_N])
                         cur_b_right = b_right_db.next()
-                        pl.move(cur_b_right, b_wide_slot, offset=[sub_off, 0])
                         pl.set_validshape(cur_b_right, [sub_k, MM_TILE_N])
+                        pl.move(cur_b_right, b_wide_slot, offset=[sub_off, 0])
                         if gsub == 0:
                             if gsub == last_sub:
                                 pl.matmul(acc.current(), cur_a_left, cur_b_right, phase=pl.AccPhase.Final)

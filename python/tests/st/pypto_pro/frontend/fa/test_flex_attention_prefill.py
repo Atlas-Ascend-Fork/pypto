@@ -1027,7 +1027,7 @@ def flex_attention_bf16(
     with pl.section_vector():
         tile_nz_g = pl.make_tile_group(
             type=pl.TileType(shape=[65, 128], dtype=pl.DT_BF16, target_memory=pl.MemorySpace.Vec,
-                             valid_shape=[-1, -1], layout=pl.NZ),
+                             valid_shape=[-1, -1], layout=pl.NZ, compact=0),
             addrs=VA1, mutex_ids=[0, 1])
 
         running_o = pl.make_tile(

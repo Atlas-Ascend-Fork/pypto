@@ -560,6 +560,7 @@ def fa_gm_auto_pipeline_kernel(
                 target_memory=pl.MemorySpace.Vec,
                 valid_shape=[TKV // 2, TS_HALF],
                 layout=pl.NZ,
+                compact=0
             ),
             addrs=[VA2, VA2B],
             mutex_ids=[0, 1],
@@ -571,6 +572,7 @@ def fa_gm_auto_pipeline_kernel(
                 target_memory=pl.MemorySpace.Vec,
                 valid_shape=[TKV // 2, TS_HALF],
                 layout=pl.NZ,
+                compact=0
             ),
             addrs=[VA2_DN, VA2B_DN],
             mutex_ids=[0, 1],
