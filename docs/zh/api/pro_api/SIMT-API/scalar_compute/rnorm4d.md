@@ -31,7 +31,7 @@ pypto_pro.language.simt.rnorm4d(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | x | 输入 | 分量，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
 | y | 输入 | 分量，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |

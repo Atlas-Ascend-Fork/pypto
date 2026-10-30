@@ -25,7 +25,7 @@ pypto_pro.language.make_tuple(**kwargs: Any) -> Any
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | \*\*kwargs | 输入 | 命名字段，以field=value形式传入，至少指定一个字段。字段名必须为合法标识符。字段值支持Kernel内可解析的值表达式，包括Python标量值、Kernel标量表达式、Tensor、Tile、Ptr以及由这些值组成的Python元组，例如(tile0, tile1)。不支持位置参数，也不支持通过字典展开参数，例如make_tuple(\*\*fields)。 |
 

@@ -59,8 +59,8 @@ AI = \frac{M \cdot N \cdot K \cdot 2}{M \cdot K \cdot \frac{N}{nL1} \cdot aByte 
 $$
 根据上式，显然$mL1 = nL1$时AI取到极大值，又由于$mL1 * nL1 * sizeof(float) <= L0C\_SIZE = 131072$，则当$mL1 = nL1 = sqrt(L0C\_SIZE / sizeof(float)) = 181$ 时，AI极大值成立。但是由于Tile大小需要满足分型格式的对齐要求，同时要考虑切分大小对于写入、写出带宽的影响，一般取128-256的组合。
 
-- MTE2、MTE1搬运均可以开启double buffer，可以使能流水并行；
- 上述配置下，L0A、L0B的空间占用为32KB，刚好可以使能MTE1 double buffer，同理，上述tile配置下MTE2也可以使能double buffer；同时由于kL1 > kL0并使能了大包搬运，单次MTE2的搬运量可以进一步增加，这有利于提高MTE2的带宽利用率。
+- MTE2、MTE1搬运均可以开启double buffer，可以启用流水并行；
+ 上述配置下，L0A、L0B的空间占用为32KB，刚好可以启用MTE1 double buffer，同理，上述tile配置下MTE2也可以启用double buffer；同时由于kL1 > kL0并启用了大包搬运，单次MTE2的搬运量可以进一步增加，这有利于提高MTE2的带宽利用率。
  不过需要注意，当mL1与nL1取128-256组合时，L0C上无法开启nbuffer，因此这种tile配置适用于K轴较大（即搬出次数相对较少）的场景。当需要频繁搬出时，可以考虑选择128-128组合。
 
 需要特别说明的是，上述Tile配置并非一成不变，需要用户根据计算场景（考虑输入shape、dtype、format等）以及硬件平台进行综合考虑。实际上，如果把Matmul看作一个算法，那么Tile的配置（Tiling）则是这个算法中最核心的部分。
@@ -111,10 +111,10 @@ pypto.set_cube_tile_shapes([mL0, mL1], [kL0, kAL1, kBL1], [nL0, nL1], enable_spl
 
 对于M、N较小而K轴较大的场景，仅在M、N轴做分核可能无法用满核导致整体性能较差，此时可以采用K轴分核策略进行优化。
 
-多核切K有两种使能方式：
+多核切K有两种启用方式：
 
 - **手动构图方式**：手动对K轴进行切分，并调用`pypto.matmul`以及`pypto.add`完成多核切K构图。该方式可独立配置单核切分长度以及Vector的切分大小，适合深度性能调优场景。
-- **自动构图方式**：采用`enable_split_k`开关使能多核切K，适合快速验证场景，但是**不保证性能最优**。
+- **自动构图方式**：采用`enable_split_k`开关启用多核切K，适合快速验证场景，但是**不保证性能最优**。
 
 ##### 手动构图方式
 
@@ -149,7 +149,7 @@ def matmul_demo_kernel(
 
 ##### 自动构图方式
 
-对于快速验证场景，可以通过`enable_split_k=True`快速使能K轴分核：
+对于快速验证场景，可以通过`enable_split_k=True`快速启用K轴分核：
 
 ```python
 pypto.set_cube_tile_shapes([128, 128], [64, 256], [256, 256], enable_split_k=True)

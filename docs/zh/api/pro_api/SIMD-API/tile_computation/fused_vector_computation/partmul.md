@@ -24,7 +24,7 @@ pypto_pro.language.partmul(out: Tile, src0: Tile, src1: Tile) -> None
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的二维UB Tile，保存部分区域乘法结果。支持DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_FP32、DT_BF16。 |
 | src0 | 输入 | 第一个源二维UB Tile。支持的数据类型与out相同。 |

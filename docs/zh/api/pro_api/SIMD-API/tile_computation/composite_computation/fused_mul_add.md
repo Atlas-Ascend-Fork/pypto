@@ -24,7 +24,7 @@ pypto_pro.language.fused_mul_add(out: Tile, lhs: Tile, rhs: Tile) -> None
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，UB Tile，数据类型为DT_FP16或DT_FP32，与lhs、rhs一致。调用前的值参与乘法，调用后保存lhs * out原始值 + rhs的结果；有效Shape与两个源一致。 |
 | lhs | 输入 | 源操作数（左操作数），Tile类型，存储空间为UB，数据类型、形状和有效形状必须与out一致。 |

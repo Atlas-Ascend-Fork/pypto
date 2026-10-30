@@ -29,7 +29,7 @@ pypto_pro.language.xor(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存放逐元素按位异或的结果。数据类型与lhs一致，rhs为Tile时也须与rhs一致；支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32或DT_UINT32。shape与lhs一致，rhs为Tile时也须与rhs一致。 |
 | lhs | 输入 | 左操作数，Tile类型。数据类型与out一致。 |

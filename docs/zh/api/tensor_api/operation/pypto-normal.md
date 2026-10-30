@@ -44,8 +44,8 @@ normal(shape: List[int], key: List[int], counter: List[int], alg: List[int], dty
 ## 约束说明
 
 - 不支持shape切分多个view shape，view shape必须和输入的shape一致。
-- 不支持shape切分多个tile shape，tile shape必须和输入的shape一致。
-- tile shape尾轴必须是4的倍数。
+- 不支持shape切分多个TileShape，TileShape必须和输入的shape一致。
+- TileShape尾轴必须是4的倍数。
 - `counter[0]`在内部被硬编码为0。虽然接口接受长度为2的counter列表，但`counter[0]`的值会被忽略，实际使用的Philox计数器为`[0, counter[1]]`。
 
 ## 返回值说明

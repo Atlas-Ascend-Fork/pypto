@@ -347,7 +347,7 @@ pypto.set_pass_options(sg_set_ooo_scope=-1)
 如下面示例，通过将 mul 和 exp 包在相同的 ooo_scope，可以使得 OoO 的调度结果中 exp 在 add 之前执行
 
 ```python
-# 因为需要在 MIX 子图内使能 ooo_scope，所以使用 sg_set_scope 构造 MIX 子图
+# 因为需要在 MIX 子图内启用 ooo_scope，所以使用 sg_set_scope 构造 MIX 子图
 pypto.set_pass_options(sg_set_scope=1)
 # Cube 操作
 matmul_result = pypto.matmul(a, b)

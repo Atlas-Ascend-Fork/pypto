@@ -26,7 +26,7 @@ create_addr_reg(stride0, stride1=None, stride2=None, stride3=None, /, *, dtype: 
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | stride0 | 输入 | 最外层循环轴对应的地址偏移量，单位为元素个数。 |
 | stride1 | 输入 | 可选，第二层循环轴对应的地址偏移量，单位为元素个数。 |

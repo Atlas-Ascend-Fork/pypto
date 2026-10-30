@@ -34,7 +34,7 @@ mull(src0, src1, preg, /) -> (dst_lo, dst_hi)
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | src0 | 输入 | 源操作数0，[reg_tensor](../basic_data_structures/reg_tensor.md)，源操作数src与目的操作数dst的数据类型保持一致。支持的数据类型为：DT_INT32、DT_UINT32。 |
 | src1 | 输入 | 源操作数1，[reg_tensor](../basic_data_structures/reg_tensor.md)，支持的数据类型和src0中的说明一致。 |

@@ -40,7 +40,7 @@ histograms(src, preg, /, *, bin_type: Optional[BinType] = None, hist_type: Optio
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | src | 输入 | 源操作数，[reg_tensor](../basic_data_structures/reg_tensor.md)，数据类型为DT_UINT8，待统计的数据。取值范围为0~255。<br>- mask位为0时，源操作数src对应位置的数值不参与统计，dst对应位置的值为原有值（对该位置src不存在的值进行统计）。 |
 | preg | 输入 | [mask_reg](../basic_data_structures/mask_reg.md)，指定参与统计的元素范围。mask位为1时该元素参与统计，为0时不参与统计。dtype需为DT_UINT8（b8粒度）。 |

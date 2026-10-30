@@ -31,7 +31,7 @@ pypto_pro.language.simt.scalbn(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | value | 输入 | 待缩放值，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
 | exponent | 输入 | 二进制指数，Scalar类型，支持DT_INT32和DT_INT64。Tensor或Tile元素需通过下标访问后传入。 |

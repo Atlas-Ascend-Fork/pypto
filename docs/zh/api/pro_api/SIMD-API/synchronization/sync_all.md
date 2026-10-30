@@ -29,7 +29,7 @@ pypto_pro.language.system.sync_all(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | core_type | 输入 | 可选，[pypto_pro.language.SyncCoreType](../basic_data_structures/SyncCoreType.md)枚举值，指定参与屏障的核类型，默认为pypto_pro.language.SyncCoreType.MIX。该参数不指定参与核数量。 |
 

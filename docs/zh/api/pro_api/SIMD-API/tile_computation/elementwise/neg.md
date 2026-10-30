@@ -27,7 +27,7 @@ pypto_pro.language.neg(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存放逐元素取负的结果。数据类型与src一致，支持DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_FP16、DT_BF16或DT_FP32。shape与src一致。可与src为同一Tile，实现原地计算。 |
 | src | 输入 | 源操作数，Tile类型。数据类型与out一致。 |

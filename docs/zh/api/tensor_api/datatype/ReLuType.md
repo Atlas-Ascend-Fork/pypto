@@ -26,6 +26,6 @@ ReLuType定义了RELU激活函数的模式，用于启用RELU功能。
 
 ```python
 class ReLuType(enum.Enum):
-     NO_RELU= ...  # 不使能ReLu功能
-     RELU= ...     # 使能ReLu功能
+     NO_RELU= ...  # 不启用ReLu功能
+     RELU= ...     # 启用ReLu功能
 ```

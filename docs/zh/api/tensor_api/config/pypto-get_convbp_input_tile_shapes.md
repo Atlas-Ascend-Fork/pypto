@@ -34,7 +34,7 @@ get_convbp_input_tile_shapes() -> Tuple[pypto_impl.ConvBpTileL1Info, pypto_impl.
 
 ## 返回值说明
 
-返回L0和L1上的TileShape大小。
+返回L0和L1 Buffer上的TileShape大小。
 
 ## 约束说明
 

@@ -40,7 +40,7 @@ pypto_pro.language.quant(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存储空间为UB，layout必须为ND。mode=SYM时数据类型为DT_INT8，mode=ASYM时为DT_UINT8；shape和valid_shape须与src一致。 |
 | src | 输入 | 源操作数，Tile类型，存储空间为UB，数据类型为DT_FP32，layout必须为ND；shape和valid_shape须与out一致。 |

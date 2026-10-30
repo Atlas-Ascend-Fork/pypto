@@ -24,7 +24,7 @@ pypto_pro.language.sub_relu(out: Tile, lhs: Tile, rhs: Tile) -> None
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的UB Tile，保存减法和ReLU结果。支持DT_FP16、DT_FP32、DT_INT32。 |
 | lhs | 输出 | 第一个源UB Tile，作为被减数和中间结果缓冲，数据类型与out一致。调用后原始内容被覆盖。 |

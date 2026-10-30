@@ -33,12 +33,12 @@ pypto_pro.language.load(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | dst_tile | 输出 | 目的操作数，Tile类型，存储空间为L1 Buffer或UB，首地址必须按32字节对齐。接口按照该Tile的valid_shape搬运数据。支持的数据类型和分形组合详见[约束说明](#约束说明)。 |
 | src_tensor | 输入 | 源操作数，Tensor类型，存储空间为GM。支持的数据类型和分形组合详见[约束说明](#约束说明)。 |
 | offsets | 输入 | 表示源Tensor各维度的绝对元素坐标，整数序列（列表或元组），每项可为整型常量或运行时整型标量表达式，长度须与源Tensor的维数相同。<br>- 不支持负数。<br>- 未被order选中的维度使用对应值固定下标。<br>- 搬运起始位置必须位于源Tensor的shape范围内；边界Tile可通过pypto_pro.language.set_validshape设置有效形状，保证有效搬运范围不越过源Tensor边界。<br>- 例如，offsets=[64, 0]表示从二维Tensor的第64行、第0列开始搬运。 |
-| order | 输入 | 可选，维度映射，长度为2或3的编译期整数列表。所有维度索引必须互不重复且位于src_tensor的维度范围内。<br>- 普通两轴搬运中，列表中的第i项表示dst_tile第i维对应src_tensor的维度。升序表示不转置，例如order=[0, 1]；降序表示转置，例如order=[1, 0]。<br>- 普通Tensor不设置order时，dst_tile默认对应src_tensor的最后两个维度，即[ndim - 2, ndim - 1]，且不转置。<br>- 搬运MX矩阵乘量化系数时，src_tensor的最后一维是物理phase轴，不能在order中选择；不设置order时，默认对应phase轴之前的两个维度，即[ndim - 3, ndim - 2]。<br>- GM ND Tensor搬入L1时，也可显式指定三个轴索引，将两个源轴合并为一个Tile轴，详见[约束说明](#约束说明)中的三轴合并搬入L1约束。<br>- 当Tensor为1维时，不支持传入order参数。 |
+| order | 输入 | 可选，维度映射，长度为2或3的编译期整数列表。所有维度索引必须互不重复且位于src_tensor的维度范围内。<br>- 普通两轴搬运中，列表中的第i项表示dst_tile第i维对应src_tensor的维度。升序表示不转置，例如order=[0, 1]；降序表示转置，例如order=[1, 0]。<br>- 普通Tensor不设置order时，dst_tile默认对应src_tensor的最后两个维度，即[ndim - 2, ndim - 1]，且不转置。<br>- 搬运MX矩阵乘量化系数时，src_tensor的最后一维是物理phase轴，不能在order中选择；不设置order时，默认对应phase轴之前的两个维度，即[ndim - 3, ndim - 2]。<br>- GM ND Tensor搬入L1 Buffer时，也可显式指定三个轴索引，将两个源轴合并为一个Tile轴，详见[约束说明](#约束说明)中的三轴合并搬入L1 Buffer约束。<br>- 当Tensor为1维时，不支持传入order参数。 |
 
 ## 约束说明
 
@@ -67,10 +67,10 @@ pypto_pro.language.load(
 
   开启auto_mutex时，如果连续两次pypto_pro.language.load写入同一个UB或L1 Buffer地址，且两次搬运之间没有操作读取前一次搬入的数据，需要在两次搬运之间调用[pypto_pro.language.system.bar_mte2](../synchronization/bar_mte2.md)。pypto_pro.language.system.bar_mte2仅保证两次写操作的先后顺序；如果后续仍需使用前一次搬入的数据，应在复用地址前先读取或复制该数据。
 
-- 三轴合并搬入L1约束：
+- 三轴合并搬入L1 Buffer约束：
 
     - 对于GM中的ND Tensor `x[B, S, N, G, D]`，如果内轴是[S,D]， 由于G轴的间隔，导致常规搬运需要搬运N*G次[S,D]。如果S比较小，那么搬运的效率是不高的。对于G轴不是batch轴的场景：
-    三轴`order`可以在搬入L1的同时，将选中的S、G轴按`r = s * G + g`合并。
+    三轴`order`可以在搬入L1 Buffer的同时，将选中的S、G轴按`r = s * G + g`合并。
     源Tensor视图保持五维，搬运使用两个源轴各自的stride。
 
     - 通过[pypto_pro.language.make_tensor](../resource_management/make_tensor.md)进行视图合轴时，
@@ -314,7 +314,7 @@ def load_merged_rows(x: pl.Tensor[[1, 4, 2, 12, 128], pl.DT_FP16]):
         type=pl.TileType(shape=[48, 128], dtype=pl.DT_FP16,
                          target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
         addrs=0x0000, mutex_ids=[0])
-    # 也可以使能转置搬运，通过order的逆序实现
+    # 也可以启用转置搬运，通过order的逆序实现
     zn = pl.make_tile_group(
         type=pl.TileType(shape=[128, 48], dtype=pl.DT_FP16,
                          target_memory=pl.MemorySpace.Mat, layout=pl.ZN),

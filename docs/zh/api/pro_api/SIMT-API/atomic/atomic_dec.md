@@ -27,7 +27,7 @@ pypto_pro.language.simt.atomic_dec(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | target | 输入 | 目的操作数，必须直接传入Tile或Tensor的单元素下标访问表达式，例如ub_tile[0, 0]或gm_tensor[0, 0]。<br>- UB Tile：必须位于UB，使用ND，支持DT_UINT32。<br>- GM Tensor：必须为ND，支持DT_UINT32、DT_UINT64。 |
 | limit | 输入 | 源操作数，整型常量或运行时整型标量表达式，表示计数上界。数据类型必须与target一致；整数字面量按target的数据类型处理。 |

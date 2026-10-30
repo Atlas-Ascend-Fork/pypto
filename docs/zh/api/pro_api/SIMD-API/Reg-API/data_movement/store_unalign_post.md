@@ -24,7 +24,7 @@ store_unalign_post(tile, align_reg, stride, /, *, post_update: bool = False)
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | tile | 输出 | 目的操作数，Tile地址。目的操作数与源操作数的数据类型需要保持一致。支持的数据类型为：DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_FP16、DT_BF16、DT_INT32、DT_UINT32、DT_FP32、DT_INT64、DT_UINT64、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
 | align_reg | 输入 | alignment tracker寄存器（由vf.unalign_reg_for_store()创建）。 |

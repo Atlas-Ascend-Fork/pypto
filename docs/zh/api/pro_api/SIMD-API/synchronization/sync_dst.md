@@ -29,7 +29,7 @@ pypto_pro.language.system.sync_dst(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | set_pipe | 输入 | pypto_pro.language.PipeType枚举值，表示源流水，即发送同步事件的流水。必须指定一条具体流水，不支持pypto_pro.language.PipeType.ALL。支持的流水组合见约束说明。 |
 | wait_pipe | 输入 | pypto_pro.language.PipeType枚举值，表示目的流水，即等待同步事件的流水。必须指定一条与set_pipe不同的具体流水，不支持pypto_pro.language.PipeType.ALL。支持的流水组合见约束说明。 |

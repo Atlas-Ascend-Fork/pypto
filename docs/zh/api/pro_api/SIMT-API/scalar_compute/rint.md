@@ -28,7 +28,7 @@ pypto_pro.language.simt.rint(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | value | 输入 | 源操作数，Scalar类型，支持DT_FP16、DT_BF16和DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
 | dtype | 输入 | 可选的返回数据类型。默认值为None。可设置为与value相同的数据类型；value为DT_FP32时，还可设置为DT_INT64。 |

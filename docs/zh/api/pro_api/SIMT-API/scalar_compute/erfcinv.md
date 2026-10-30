@@ -26,7 +26,7 @@ pypto_pro.language.simt.erfcinv(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | value | 输入 | 互补误差函数值，Scalar类型，仅支持DT_FP32，实数定义域为$[0,2]$。Tensor或Tile元素需通过下标访问后传入。 |
 

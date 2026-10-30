@@ -32,7 +32,7 @@ reduce_sum(src, preg, /, *, datablock: bool = False, merge_mode: Optional[MergeM
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | src | 输入 | 源操作数，[reg_tensor](../basic_data_structures/reg_tensor.md)，支持的数据类型请参见[约束说明](#约束说明)。 |
 | preg | 输入 | [mask_reg](../basic_data_structures/mask_reg.md)。当所有元素均不参与计算时（mask为空），将目的操作数数据类型的0写入dst[0]。 |

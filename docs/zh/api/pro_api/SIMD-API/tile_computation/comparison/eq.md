@@ -24,7 +24,7 @@ pypto_pro.language.eq(out: Tile, lhs: Tile, rhs: Union[Tile, int, float]) -> Non
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，数据类型不做限制，通常使用DT_UINT8类型，配合按位压缩的掩码布局使用。 |
 | lhs | 输入 | 源操作数（左操作数），Tile类型，存储空间为UB，采用行主序排布。支持8、16、32、64位整型、DT_FP16、DT_BF16和DT_FP32。 |

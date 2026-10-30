@@ -34,7 +34,7 @@ set_convbp_input_tile_shapes(l1_info: pypto_impl.ConvBpTileL1Info, l0_info: pypt
 
 | 参数名   | 输入/输出 | 说明                                         |
 |----------|-----------|----------------------------------------------|
-| l1_info  | 输入      | L1缓存层级下卷积反向计算的TileShape配置信息，有tileML1、tileNL1、tileKL1三个参数。请参考[约束说明](#约束说明)章节填写 |
+| l1_info  | 输入      | L1 Buffer层级下卷积反向计算的TileShape配置信息，有tileML1、tileNL1、tileKL1三个参数。请参考[约束说明](#约束说明)章节填写 |
 | l0_info  | 输入      | L0缓存层级下卷积反向计算的TileShape配置信息，有tileML0、tileNL0、tileKL0三个参数。请参考[约束说明](#约束说明)章节填写 |
 
 ## 返回值说明
@@ -70,7 +70,7 @@ TileShape需要满足以下约束条件：
 
 - buffer空间约束：
 
-    - L0A、L0B、L0C空间约束：
+    - L0A Buffer、L0B Buffer、L0C Buffer空间约束：
 
         ```txt
         tileML0 * tileKL0 * sizeof(dtype) <= L0A_size
@@ -86,7 +86,7 @@ TileShape需要满足以下约束条件：
         - `L0B_size = 65536 bytes`
         - `L0C_size = 131072 bytes`
 
-    - L1空间约束：
+    - L1 Buffer空间约束：
 
         ```txt
         (L1Weight + houtL1 * woutL1 * coutL1) * sizeof(dtype) <= L1_size

@@ -29,7 +29,7 @@ mask_reg(dtype: DType) -> mask_reg
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | dtype | 输入 | 掩码粒度对应的数据类型，决定每多少bit对应一个数据元素。mask_reg总位宽固定为256 bit。<br>- vf.mask_reg不能直接调用，由编译器在赋值形式中自动声明。<br>- mask_reg在@pypto_pro.language.vector_function函数内创建和使用，函数结束后自动释放。<br>- mask_reg的dtype一般与配套的vf.reg_tensor的dtype一致，不一致的情况下需要自行判断结果行为。<br>- MaskReg寄存器数量上限为16。编译器会自动复用生命周期结束的寄存器和预留内存，若寄存器与预留内存均存在可用空间，将优先复用寄存器。 |
 

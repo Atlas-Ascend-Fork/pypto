@@ -26,7 +26,7 @@ pypto_pro.language.histogram(dst: Tile, src: Tile, idx: Tile, *, is_msb: bool) -
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | dst | 输出 | 目的UB Tile，数据类型为DT_UINT32，采用pypto_pro.language.ND布局。有效行数与src一致，每行提供256个累计计数桶，Shape为[行数, 256]。 |
 | src | 输入 | 源操作数，Tile类型，待统计的元素。dtype为DT_UINT16或DT_UINT32；shape任意；布局为pypto_pro.language.ND（行主序）。 |

@@ -28,7 +28,7 @@ pypto_pro.language.system.mutex_lock(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | pipe | 输入 | pypto_pro.language.PipeType枚举值，必须是MTE1/MTE2/MTE3/V/M/S/FIX中的一条具体pipe；不允许PipeType.ALL。 |
 | mutex_id | 输入 | 整数、结果为整数的常量表达式，或运行时整型标量表达式。静态ID的取值范围为[0, 31]，不接受bool；动态ID的运行时取值需在[0, 31]范围内。 |

@@ -34,7 +34,7 @@ pypto_pro.language.maximum(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存放逐元素计算结果或归约结果。逐元素模式下数据类型与lhs一致，支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_BF16和DT_FP32；归约模式下数据类型与lhs一致，dim=0时shape为[行数, 1]，dim=1时shape为[1, 列数]。 |
 | lhs | 输入 | Tile类型。逐元素模式下为左操作数；归约模式下为源操作数，必须为二维Tile，dim=0时支持DT_INT8、DT_UINT8、DT_INT16、DT_INT32、DT_FP16、DT_FP32、DT_INT64和DT_UINT64，dim=1时还支持DT_UINT16、DT_UINT32和DT_BF16。 |

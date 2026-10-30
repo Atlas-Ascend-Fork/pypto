@@ -36,7 +36,7 @@ pypto_pro.language.TileType(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | shape | 输入 | Tile各维大小，如[64, 128]。长度为2的编译期常量整数序列（列表或元组），各维大小须为正整数；仅支持二维Tile。对齐及分形布局约束由使用该TileType的具体API检查。 |
 | dtype | 输入 | 元素的数据类型，[pypto_pro.language.DataType](DataType.md)类型。 |

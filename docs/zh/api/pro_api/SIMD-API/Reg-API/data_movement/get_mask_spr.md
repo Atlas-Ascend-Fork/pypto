@@ -29,7 +29,7 @@ get_mask_spr(*, width: MaskWidth = MaskWidth.B32) -> preg
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | width | 输入 | 可选，掩码宽度，决定读取的SPR位宽及扩展方式，对应[MaskWidth](../basic_data_structures/MaskWidth.md)类型。<br>- pypto_pro.language.MaskWidth.B32（默认）：读取64bit MASK0，每bit扩展为4bit。<br>- pypto_pro.language.MaskWidth.B16：读取128bit {MASK1, MASK0}，每bit扩展为2bit。 |
 

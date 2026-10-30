@@ -27,7 +27,7 @@ pypto_pro.language.expands(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，全部元素被填充为scalar值。<br>数据类型支持：DT_UINT8、DT_INT8、DT_UINT16、DT_INT16、DT_UINT32、DT_INT32、DT_INT64、DT_UINT64、DT_FP16、DT_BF16、DT_FP32。<br>位于UB或L1 Buffer。 |
 | scalar | 输入 | 填充值。为整型或浮点型常量，或运行时整型或浮点型标量表达式，类型须与out元素类型兼容。当out为整型而scalar为浮点常量时，按向零截断转换为整型（小数部分被丢弃），与框架内其他整型目的操作数的标量转换保持一致。 |

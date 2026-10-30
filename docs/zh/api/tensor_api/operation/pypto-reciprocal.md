@@ -30,7 +30,7 @@ pypto.reciprocal(input, precision_type=pypto.PrecisionType.HIGH_PRECISION) -> Te
 
 ## 参数说明
 
-| 参数 | 类型 | 说明 |
+| 参数名 | 类型 | 说明 |
 |:-----|:-----|:-----|
 | input | Tensor | 输入张量。<br>支持的数据类型为：DT_FP16、DT_BF16、DT_FP32。<!-- npu="x90,9030" id9 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id9 --><br>不支持空Tensor；支持的维度：1-4维；Shape Size不大于2147483647（即INT32_MAX）。 |
 | precision_type | PrecisionType，可选 | 倒数操作的精度模式。默认值为`PrecisionType.HIGH_PRECISION`。<br>**HIGH_PRECISION**：使用更高精度的计算方式，减少精度损失。<br>**INTRINSIC**：直接使用芯片指令进行计算，速度更快。 |

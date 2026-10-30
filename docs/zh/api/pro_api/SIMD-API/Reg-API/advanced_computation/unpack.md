@@ -36,7 +36,7 @@ unpack(src, /, *, part: Optional[PackPart] = None, dtype: Optional[DType] = None
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | src | 输入 | 源操作数，[reg_tensor](../basic_data_structures/reg_tensor.md)或者[mask_reg](../basic_data_structures/mask_reg.md)类型，支持的数据类型请参见[约束说明](#约束说明)。reg_tensor时数据类型为展开前的窄类型，mask_reg时数据类型不变。 |
 | part | 输入 | 可选，用于控制读取src的低半部分还是高半部分，对应[PackPart](../basic_data_structures/PackPart.md)类型。<br>- pypto_pro.language.PackPart.LOWER：低位模式，读取src的低半部分。<br>- pypto_pro.language.PackPart.UPPER：高位模式，读取src的高半部分。<br>默认pypto_pro.language.PackPart.LOWER。双寄存器模式只支持pypto_pro.language.PackPart.LOWER模式。 |

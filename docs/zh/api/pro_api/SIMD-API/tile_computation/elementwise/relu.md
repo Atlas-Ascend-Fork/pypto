@@ -27,7 +27,7 @@ pypto_pro.language.relu(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存放逐元素ReLU激活的结果。数据类型与src一致，支持DT_FP16、DT_FP32或DT_INT32。shape和valid_shape与src一致。可与src为同一Tile，实现原地计算。 |
 | src | 输入 | 源操作数，Tile类型。数据类型与out一致。 |

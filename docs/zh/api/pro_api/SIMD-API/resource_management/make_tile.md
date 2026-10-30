@@ -35,10 +35,10 @@ pypto_pro.language.make_tile(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | tile_type | 输入 | Tile类型描述，[TileType](../basic_data_structures/TileType.md)类型，是唯一允许的位置参数。其shape、dtype、target_memory和layout共同决定Tile的存储大小和可用接口。 |
-| addr | 输入 | Tile地址，int类型，表示Tile在tile_type所指定Buffer内的字节偏移，必须以关键字形式传入并在编译期确定。UB和L1 Buffer要求32字节对齐，L0A和L0B Buffer要求512字节对齐，L0C Buffer要求64字节对齐。 |
+| addr | 输入 | Tile地址，int类型，表示Tile在tile_type所指定Buffer内的字节偏移，必须以关键字形式传入并在编译期确定。UB和L1 Buffer要求32字节对齐，L0A Buffer和L0B Buffer要求512字节对齐，L0C Buffer要求64字节对齐。 |
 
 ## 约束说明
 

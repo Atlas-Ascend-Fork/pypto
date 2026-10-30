@@ -39,7 +39,7 @@ pypto_pro.language.matmul_mx(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | dst_tile | 输出 | 目的操作数，Tile类型，存储空间为L0C Buffer，形状为[M, N]，数据类型为DT_FP32，layout必须为NZ。 |
 | lhs_tile | 输入 | 源操作数（A，左矩阵），Tile类型，存储空间为L0A Buffer，形状为[M, K]，数据类型支持DT_FP8E4M3FN、DT_FP8E5M2、DT_FP4E2M1和DT_FP4E1M2，layout必须为NZ，K必须与rhs_tile的K维一致且为64的倍数。 |

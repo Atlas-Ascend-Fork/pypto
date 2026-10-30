@@ -20,7 +20,7 @@
 
 ## 功能说明
 
-获取卷积（conv）计算中设置的TileShape大小以及L0TileInfo的开关使能。
+获取卷积（conv）计算中设置的TileShape大小以及L0TileInfo的开关启用。
 
 ## 函数原型
 
@@ -34,7 +34,7 @@ get_conv_tile_shapes() -> Tuple[pypto_impl.TileL1Info, pypto_impl.TileL0Info, bo
 
 ## 返回值说明
 
-返回L0和L1上的TileShape大小、是否开启L0TileInfo的开关。
+返回L0和L1 Buffer上的TileShape大小、是否开启L0TileInfo的开关。
 
 ## 约束说明
 

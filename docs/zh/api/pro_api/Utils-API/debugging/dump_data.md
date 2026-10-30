@@ -43,7 +43,7 @@ pypto_pro.language.dump_data(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | data | 输入 | 要打印的数据，必须是Tensor（TensorType）或Tile（TileType），其他类型报TypeError。Tensor暂不支持pypto_pro.language.DT_FP4、pypto_pro.language.DT_FP4E2M1和pypto_pro.language.DT_FP4E1M2类型。 |
 | offsets | 输入 | 可选，窗口起始偏移（各维）。取值为由整型常量或运行时整型标量表达式组成的序列（列表或元组），长度须等于数据的维数；须与shapes同时提供或同时为None。Tile窗口当前仅支持二维Tile。offsets和shapes均为None时打印全部数据。 |

@@ -24,7 +24,7 @@ pypto_pro.language.exp(out: Tile, src: Tile) -> None
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存放逐元素自然指数结果。<br>数据类型支持DT_FP16、DT_FP32，与src保持一致。shape与src保持一致，src设置valid_shape时，out同步设置valid_shape且与src保持一致。<br>支持与src为同一Tile，实现in-place计算。 |
 | src | 输入 | 源操作数，Tile类型，数据类型支持DT_FP16、DT_FP32。 |

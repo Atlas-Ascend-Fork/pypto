@@ -24,7 +24,7 @@ pypto_pro.language.fillpad(out: Tile, src: Tile, *, mode: FillPadMode=FillPadMod
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的Tile，位于UB或L1 Buffer，保存填充结果。支持4、8、16、32位存储类型，具体布局、pad和模式要求参见[约束说明](#约束说明)。 |
 | src | 输入 | 源Tile，须与out位于同一种Buffer，元素位宽与out一致。UB路径中，源有效Shape指定需要保留的数据范围；L1 Buffer路径不从src复制有效数据，初始化要求及补零边界参见[约束说明](#约束说明)。 |

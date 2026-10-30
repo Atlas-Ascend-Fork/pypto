@@ -64,9 +64,9 @@ scatter_(input: Tensor, dim: int, index: Tensor, src: Union[float, Element, Tens
 
 2. input.shape的dim轴不可切，viewshape的维度与input维度相同，要求viewshape\[dim\] \>= max\( input.shape\[dim\], index.shape\[dim\] \)，其余维度的Shape大小不做限制；
 
-3. input.shape的dim轴不可切，tileshape的维度与input维度相同，tileshape\[dim\] \>= viewshape\[dim\]，其余维度的Shape大小不做限制，input index和result都会在UB中，需满足所有输入和输出的tileshape大小总和不能超过UB内存的大小。
+3. input.shape的dim轴不可切，TileShape的维度与input维度相同，TileShape\[dim\] \>= viewshape\[dim\]，其余维度的Shape大小不做限制，input index和result都会在UB中，需满足所有输入和输出的TileShape大小总和不能超过UB内存的大小。
 
-4. input.shape和index.shape的非dim轴切分，需满足viewshape[non dim]切分后，input和index的非dim轴切分块数相同。tileshape切分时，也需要保证input和index的非dim轴切分块数相同。
+4. input.shape和index.shape的非dim轴切分，需满足viewshape[non dim]切分后，input和index的非dim轴切分块数相同。TileShape切分时，也需要保证input和index的非dim轴切分块数相同。
 
 5. src为Tensor，reduce为None，且当index中存在指向相同位置的不唯一索引时，行为是不确定的，将从src中任意选择一个值写入。
 

@@ -24,7 +24,7 @@ pypto_pro.language.partmax(out: Tile, src0: Tile, src1: Tile) -> None
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目标二维UB Tile，用于保存计算结果。支持的数据类型为DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_BF16和DT_FP32。 |
 | src0 | 输入 | 第一个源二维UB Tile。支持的数据类型与out相同。 |

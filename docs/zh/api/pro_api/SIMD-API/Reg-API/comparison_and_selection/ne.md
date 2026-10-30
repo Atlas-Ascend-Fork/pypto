@@ -28,7 +28,7 @@ ne(src0, src1, preg, /) -> dst_mask
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | src0 | 输入 | 源操作数，[reg_tensor](../basic_data_structures/reg_tensor.md)。支持的数据类型为：DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_FP16、DT_BF16、DT_INT32、DT_UINT32、DT_FP32、DT_INT64、DT_UINT64。src0和src1可以是同一个reg_tensor。 |
 | src1 | 输入 | 比较操作数，可以是标量或[reg_tensor](../basic_data_structures/reg_tensor.md)，数据类型与src0一致。 |

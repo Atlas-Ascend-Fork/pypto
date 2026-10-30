@@ -24,7 +24,7 @@ pypto_pro.language.shl(out: Tile, lhs: Tile, rhs: Union[Tile, int]) -> None
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，UB Tile，采用行主序布局。数据类型与lhs一致，支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64。Shape和有效Shape与lhs一致。 |
 | lhs | 输入 | 被移位操作数，Tile类型。必须位于UB，采用row-major布局。数据类型与out一致。 |

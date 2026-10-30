@@ -20,7 +20,7 @@
 
 ## 功能说明
 
-声明符号标量表达式在运行时一定可以被指定整数整除。该接口返回表示expr的SymbolicScalar：SymbolicScalar输入原样返回，int输入会转换为SymbolicScalar。同时，接口在Program上注册规范化后的编译优化假设。例如，已知动态长度vm是tile大小的整数倍时，编译器可据此化简逐tile的动态valid_shape，从而使能dualdst等依赖静态valid shape的优化。
+声明符号标量表达式在运行时一定可以被指定整数整除。该接口返回表示expr的SymbolicScalar：SymbolicScalar输入原样返回，int输入会转换为SymbolicScalar。同时，接口在Program上注册规范化后的编译优化假设。例如，已知动态长度vm是tile大小的整数倍时，编译器可据此化简逐tile的动态valid_shape，从而启用dualdst等依赖静态valid shape的优化。
 
 ## 函数原型
 

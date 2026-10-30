@@ -38,7 +38,7 @@ pypto_pro.language.simt.warp_shfl_xor(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | value | 输入 | 当前Lane用于交换的标量值，支持DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_BF16和DT_FP32。每个Lane可以传入不同的值。 |
 | lane_mask | 输入 | 与当前逻辑Lane ID执行按位异或的掩码。整型常量或DT_INT32类型的运行时整型标量表达式，取值范围为[0, 31]，并且必须小于width。异或后选中的目标Lane必须处于当前活跃线程集合中，否则读取结果未定义。 |

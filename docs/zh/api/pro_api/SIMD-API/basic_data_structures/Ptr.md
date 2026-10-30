@@ -31,7 +31,7 @@ pypto_pro.language.Ptr[dtype]
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | dtype | 输入 | 指针指向的元素数据类型，[pypto_pro.language.DataType](DataType.md)枚举值。常用取值：pypto_pro.language.DT_FP16、pypto_pro.language.DT_FP32、pypto_pro.language.DT_INT8。 |
 

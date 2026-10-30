@@ -62,8 +62,8 @@ expand_clone(
 
     其中b\_idx表示循环索引。
 
-4. tileshape的维度与result维度相同，用于切分result。
-5. tileshape的大小形状无额外约束，只需保证不超过ub size。
+4. TileShape的维度与result维度相同，用于切分result。
+5. TileShape的大小形状无额外约束，只需保证不超过ub size。
 
 ## 调用示例
 

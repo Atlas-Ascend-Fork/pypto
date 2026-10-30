@@ -24,7 +24,7 @@ load(tile, stride=None, /) -> dst
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | tile | 输入 | 源操作数，Tile，起始地址需要32字节对齐。目的操作数与源操作数的数据类型需要保持一致。支持的数据类型为：DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_FP16、DT_BF16、DT_INT32、DT_UINT32、DT_FP32、DT_INT64、DT_UINT64。 |
 | stride | 输入 | 可选，传入时自动启用post-update模式，搬运后源地址自动累进stride指定的步长。不传时为普通加载模式。 |

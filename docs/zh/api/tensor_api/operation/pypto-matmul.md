@@ -63,7 +63,7 @@ matmul(input, mat2, out_dtype, *, a_trans = False, b_trans = False, c_matrix_nz 
 | scale_tensor      | 表示per-channel量化场景（对每一个输出通道独立计算一套量化参数）输出矩阵反量化的矩阵。<br>scale_tensor输入固定为uint64_t或int64_t的Tensor。计算时会转换64位bit为float类型的低32位bit后，取1位符号位 + 8位指数位 + 10位尾数位参与运算。<br>输入输出数据类型支持情况详见表4、表5。<br>scale_tensor的倒数第二维度的形状必须置1，且N维度需要与mat2矩阵的N维度相等。<br>scale_tensor只支持ND格式。<br>不支持叠加多核切k功能。<br>量化输出类型为DT_INT8场景时，需要提前调用torch_npu.npu_trans_quant_param并传入float32类型的torch.tensor来获取int64数据类型的scale_tensor。|
 | bias_tensor       | 表示偏置矩阵。<br>输入为Tensor类型。<br>输入输出数据类型支持情况详见表3。<br>bias_tensor只支持ND格式。<br>bias_tensor的倒数第二维度的形状应置1，且N维度需要与mat2矩阵的N维度相等。<br>矩阵维度为4维场景下，bias仅允许2维输入。<br>不支持叠加多核切k功能。 |
 | relu_type         | 表示输出矩阵是否进行ReLu操作。<br>输入为[ReLuType](../datatype/ReLuType.md)类型。<br>支持RELU和NO_RELU两种模式。<br>不支持叠加多核切k功能。|
-| trans_mode        | 表示是否使能TF32计算及TF32舍入模式。<br>输入为[TransMode](../datatype/TransMode.md)类型，支持以下三种模式：<br>• CAST_NONE：不使能float数据类型转换为TF32数据类型。<br>• CAST_RINT：使能float数据类型转换为TF32数据类型，舍入规则：舍入到最近整数，中间值时舍入到偶数。<br>• CAST_ROUND：使能float数据类型转换为TF32数据类型，舍入规则：舍入到最近整数，中间值时远离零舍入。<br>仅支持输入左右矩阵和输出矩阵数据类型均为DT_FP32时设置。 |
+| trans_mode        | 表示是否启用TF32计算及TF32舍入模式。<br>输入为[TransMode](../datatype/TransMode.md)类型，支持以下三种模式：<br>• CAST_NONE：不启用float数据类型转换为TF32数据类型。<br>• CAST_RINT：启用float数据类型转换为TF32数据类型，舍入规则：舍入到最近整数，中间值时舍入到偶数。<br>• CAST_ROUND：启用float数据类型转换为TF32数据类型，舍入规则：舍入到最近整数，中间值时远离零舍入。<br>仅支持输入左右矩阵和输出矩阵数据类型均为DT_FP32时设置。 |
 
 表3：Matmul基础场景支持的数据类型
 
@@ -115,7 +115,7 @@ matmul(input, mat2, out_dtype, *, a_trans = False, b_trans = False, c_matrix_nz 
 <!-- end id12 -->
 <!-- npu="9050" id13 -->
 - Kirin9050处理器系列产品：具体数据类型请见[Kirin9050支持的数据类型](#kirin9050支持的数据类型)，不支持输入TILEOP_NZ format输入（input与mat2），不支持c_matrix_nz。支持matmul宏指令的pre-stage quant/dequant（dequant与requant），不支持relu操作，不支持extend_params中的：scale、relu_type、trans_mode；extend_params中的scale_tensor复用为宏指令quant_pre per-channel量化scale：shape固定为(1, n)（n与mat2的N维度一致），dtype固定为DT_UINT64/DT_INT64，输入前需先调用trans_quant_param（本仓库tools/scripts/lite_npu_quant.py，或等价接口torch_npu.npu_trans_quant_param）将fp32的scale按硬件格式转换（fp32的23位尾数截断低13位为fp19的10位尾数，mantissa高位到低位），使用方法见下方[调用示例](#调用示例)。不支持多核切K场景（split-K/GM累加）。cache下发的scale_tensor仅支持单波次场景（cgh），不超过 (1, 4096)。
-- Kirin9050处理器系列产品cube tile切分有额外约束（m1==m0、k0与L0B匹配、对齐要求），详见[Kirin9050 matmul切分约束](#kirin9050-matmul切分约束)。
+- Kirin9050处理器系列产品cube tile切分有额外约束（m1==m0、k0与L0B Buffer匹配、对齐要求），详见[Kirin9050 matmul切分约束](#kirin9050-matmul切分约束)。
 <!-- end id13 -->
 - 调用matmul接口前需要通过pypto.set\_cube\_tile\_shapes设置M、K、N轴上的切分大小
 - 当矩阵维度为3维或者4维时，需要调用pypto.set\_vec\_tile\_shapes接口设置vector的TileShape切分，如未设置，接口内部会设置2维的vec\_tile\_shape，其值为128，128。
@@ -166,13 +166,13 @@ Matmul基础场景（extend_params中不携带量化scale）：
 <!-- npu="9050" id15 -->
 ### Kirin9050 matmul切分约束
 
-kirin9050无L0A/L0C buffer，A与C（含切K多片的partial sum）驻留L1，B经L1搬运到L0B后参与cube计算。因此调用matmul前通过pypto.set\_cube\_tile\_shapes设置的cube tile需满足以下约束（不满足会直接报错）：
+kirin9050无L0A/L0C Buffer，A与C（含切K多片的partial sum）驻留L1 Buffer，B经L1 Buffer搬运到L0B Buffer后参与cube计算。因此调用matmul前通过pypto.set\_cube\_tile\_shapes设置的cube tile需满足以下约束（不满足会直接报错）：
 
-- `pypto.set_cube_tile_shapes`各轴参数为[L0分片, L1分片]，即m轴[m0, m1]、k轴[k0, k1]、n轴[n0, n1]。
-- **m1 == m0**：宏指令没有独立的L0A M维分片，A在L1上的视图按m1×k0切分后直接供宏指令取数，因此m1必须与m0相等，否则报错`For macro instruction, m1 must equal m0`。
-- **k0与bL0匹配**：B的L0B分片为k0×n0；A以k0为步长在L1上切K片。同一K片内A（L1）与B（L0B）的K边界一致，逐片相乘后在int32累加域累加。
+- `pypto.set_cube_tile_shapes`各轴参数为[L0分片, L1 Buffer分片]，即m轴[m0, m1]、k轴[k0, k1]、n轴[n0, n1]。
+- **m1 == m0**：宏指令没有独立的L0A Buffer M维分片，A在L1 Buffer上的视图按m1×k0切分后直接供宏指令取数，因此m1必须与m0相等，否则报错`For macro instruction, m1 must equal m0`。
+- **k0与bL0匹配**：B的L0B Buffer分片为k0×n0；A以k0为步长在L1 Buffer上切K片。同一K片内A（L1 Buffer）与B（L0B Buffer）的K边界一致，逐片相乘后在int32累加域累加。
 - 对齐要求：k0、n0为16元素的倍数；k0×输入元素宽度、n0×输入元素宽度需32字节对齐（int8输入时k0、n0为32的倍数）。
-- 切K多片场景（K>k0）：中间片结果为int32的partial sum（驻留L1），末片将int32累加结果转换为out_dtype。
+- 切K多片场景（K>k0）：中间片结果为int32的partial sum（驻留L1 Buffer），末片将int32累加结果转换为out_dtype。
 <!-- end id15 -->
 
 ## 调用示例

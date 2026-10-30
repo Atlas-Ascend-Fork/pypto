@@ -24,7 +24,7 @@ pypto_pro.language.scatter(out: Tile, src: Tile, idx: Tile) -> None
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，按索引分散写入。位于UB，dtype与src一致，支持的数据类型详见[约束说明](#约束说明)。 |
 | src | 输入 | 源操作数，Tile类型，dtype与out一致，shape与out一致。 |

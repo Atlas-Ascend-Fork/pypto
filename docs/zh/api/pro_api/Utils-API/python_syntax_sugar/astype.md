@@ -24,7 +24,7 @@ result = pypto_pro.language.astype(x, dtype, /)
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | x | 输入 | 源标量表达式，Scalar类型，按位置传递。 |
 | dtype | 输入 | 目标数据类型，DataType类型，按位置传递。 |

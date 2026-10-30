@@ -24,7 +24,7 @@ pypto_pro.language.le(out: Tile, lhs: Tile, rhs: Union[Tile, int, float]) -> Non
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，UB Tile，采用行主序布局，保存按位压缩的比较结果。数据类型不限定为DT_UINT8，通常使用DT_UINT8；存储空间须覆盖所有有效元素对应的掩码位。 |
 | lhs | 输入 | 左操作数，UB Tile，采用行主序布局。支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_FP32、DT_BF16。 |

@@ -43,7 +43,7 @@ Matmul系列接口的`phase`参数使用`pypto_pro.language.AccPhase`，Fixpipe�
 
 ### AccPhase
 
-当Matmul系列接口配置pypto_pro.language.AccPhase.Partial或pypto_pro.language.AccPhase.Final时，会使能硬件unit_flag功能。
+当Matmul系列接口配置pypto_pro.language.AccPhase.Partial或pypto_pro.language.AccPhase.Final时，会启用硬件unit_flag功能。
 
 对于Cube向L0C Buffer写入数据：
 
@@ -61,7 +61,7 @@ Partial和Final的行为如下。
 
 ### STPhase
 
-当Fixpipe搬出接口配置pypto_pro.language.STPhase.Partial或pypto_pro.language.STPhase.Final时，同样会使能硬件unit_flag功能。
+当Fixpipe搬出接口配置pypto_pro.language.STPhase.Partial或pypto_pro.language.STPhase.Final时，同样会启用硬件unit_flag功能。
 
 对于Fixpipe从L0C Buffer读取数据：
 

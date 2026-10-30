@@ -36,7 +36,7 @@ pypto_pro.language.matmul(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | dst_tile | 输出 | 目的操作数，Tile类型，存储空间为L0C Buffer，形状为[M, N]，layout必须为NZ。数据类型为DT_FP32或DT_INT32时，fractal未指定则自动设为1024。支持通过valid_shape或pypto_pro.language.set_validshape设置尾块的有效形状，有效M、N必须与实际矩阵乘结果范围一致。支持的数据类型组合详见[约束说明](#约束说明)。 |
 | lhs_tile | 输入 | 源操作数（左矩阵），Tile类型，存储空间为L0A Buffer，形状为[M, K]，layout必须为NZ，K必须与rhs_tile的K维一致。支持的数据类型组合详见[约束说明](#约束说明)。 |

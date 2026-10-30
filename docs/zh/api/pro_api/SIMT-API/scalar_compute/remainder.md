@@ -29,7 +29,7 @@ pypto_pro.language.simt.remainder(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | lhs | 输入 | 被除数，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
 | rhs | 输入 | 除数，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |

@@ -34,7 +34,7 @@ unsqueeze(preg, /) -> dst
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | preg | 输入 | [mask_reg](../basic_data_structures/mask_reg.md)（由vf.create_mask或vf.update_mask产生）。 |
 

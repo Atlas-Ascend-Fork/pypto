@@ -24,7 +24,7 @@ pypto_pro.language.system.set_mm_layout_transform(*, enabled: bool) -> None
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | enabled | 输入 | Fixpipe结果读出方向切换开关，bool类型，必须在编译期确定。True表示沿N方向读取，False表示沿M方向读取。仅在matmul计算与Fixpipe需要并行访问同一块L0C Buffer时使用。 |
 

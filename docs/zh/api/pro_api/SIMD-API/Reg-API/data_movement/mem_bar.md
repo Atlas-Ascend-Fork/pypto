@@ -47,7 +47,7 @@ mem_bar(*, mode: Optional[MemBarMode] = None)
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | mode | 输入 | 可选，屏障模式，对应[MemBarMode](../basic_data_structures/MemBarMode.md)类型，pypto_pro.language.MemBarMode枚举（见上表12种组合）。默认pypto_pro.language.MemBarMode.VST_VLD。mode只能取上表12种合法组合之一。 |
 

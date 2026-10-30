@@ -33,7 +33,7 @@ pypto_pro.language.pto_assert(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | condition | 输入 | 断言条件，必须为标量布尔值（dtype为BOOL），也接受Python True/False。非布尔标量（如INT32）会报TypeError。条件表达式的源码文本由编译器自动提取，用于默认输出。 |
 | format_str | 输入 | 可选，错误消息格式串，必须是编译时常量，不能是运行时变量。不提供时使用空消息，此时额外的*args不会写入IR，也不会参与输出；输出固定为Assertion failed: <条件表达式源码>。提供时，先输出断言失败信息，再追加一行格式化消息。格式说明符规则同[pypto_pro.language.printf](printf.md)。 |

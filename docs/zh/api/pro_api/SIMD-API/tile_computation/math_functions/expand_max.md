@@ -24,7 +24,7 @@ pypto_pro.language.expand_max(out: Tile, src: Tile, scalar: Tile, *, dim: int=0)
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存放逐元素取较大值结果。<br>数据类型支持：DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_FP32、DT_BF16。<br>shape与src保持一致。 |
 | src | 输入 | 源操作数，Tile类型。<br>数据类型支持：DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_FP32、DT_BF16。 |

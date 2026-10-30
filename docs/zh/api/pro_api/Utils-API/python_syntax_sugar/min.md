@@ -28,7 +28,7 @@ pypto_pro.language.min(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | lhs | 输入 | 左操作数（Python int、Python float或Kernel内整型或浮点型标量表达式） |
 | rhs | 输入 | 右操作数（Python int、Python float或Kernel内整型或浮点型标量表达式） |

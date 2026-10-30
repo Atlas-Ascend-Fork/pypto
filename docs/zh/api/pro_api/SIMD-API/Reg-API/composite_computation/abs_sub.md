@@ -30,7 +30,7 @@ abs_sub(src0, src1, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | src0 | 输入 | 源操作数0，[reg_tensor](../basic_data_structures/reg_tensor.md)，支持的数据类型为：DT_FP16、DT_FP32、DT_INT64。 |
 | src1 | 输入 | 源操作数1，[reg_tensor](../basic_data_structures/reg_tensor.md)，支持的数据类型和src0中的说明一致。 |

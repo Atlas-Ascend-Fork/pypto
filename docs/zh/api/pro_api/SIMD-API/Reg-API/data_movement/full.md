@@ -27,7 +27,7 @@ full(src, preg=None, /, *, dtype: Optional[DType] = None, mode: Optional[MergeMo
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | src | 输入 | 源操作数，为标量值或者[reg_tensor](../basic_data_structures/reg_tensor.md)。源操作数src与目的操作数dst的数据类型保持一致。<br>- **Scalar模式**：标量值，广播到寄存器各元素。支持的数据类型为：DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_FP16、DT_BF16、DT_INT32、DT_UINT32、DT_FP32、DT_INT64、DT_UINT64。<br>- **Tensor模式**：[reg_tensor](../basic_data_structures/reg_tensor.md)，广播其最低位或最高位元素。支持的数据类型为：DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_FP16、DT_BF16、DT_INT32、DT_UINT32、DT_FP32、DT_INT64、DT_UINT64、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
 | preg | 输入 | [mask_reg](../basic_data_structures/mask_reg.md)。Tensor模式必选；Scalar模式可选。 |

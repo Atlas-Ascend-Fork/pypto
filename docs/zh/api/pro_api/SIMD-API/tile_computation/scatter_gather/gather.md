@@ -38,7 +38,7 @@ pypto_pro.language.gather(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的UB Tile。索引模式下，数据类型与src相同，Shape和有效Shape须与索引结果相匹配；比较模式下使用DT_INT32或DT_UINT32，保存选中的索引，容量须覆盖可能选中的全部元素。 |
 | src | 输入 | 源UB Tile。索引模式读取其扁平元素；比较模式支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_FP16、DT_FP32，比较规则及模式限制参见[约束说明](#约束说明)。 |

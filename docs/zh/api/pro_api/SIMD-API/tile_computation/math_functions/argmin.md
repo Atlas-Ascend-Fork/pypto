@@ -24,7 +24,7 @@ pypto_pro.language.argmin(out: Tile, src: Tile, tmp: Tile, *, dim: int=0) -> Non
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存放每行或者每列最小元素的索引值，支持的数据类型详见[约束说明](#约束说明)。<br>如果src的shape为[M, N]，dim=0时shape为[M, 1]；dim=1时shape为[1, N]。 |
 | src | 输入 | 源操作数，Tile类型，支持的数据类型详见[约束说明](#约束说明)。 |

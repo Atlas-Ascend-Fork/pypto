@@ -24,7 +24,7 @@ pypto_pro.language.rsqrt(out: Tile, src: Tile) -> None
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存放逐元素倒数平方根结果。<br>数据类型支持：DT_FP16、DT_FP32。<br>shape与src保持一致，如果src设置valid_shape，out必须同步设置valid_shape且与src保持一致。<br>支持与src为同一Tile，实现in-place计算。 |
 | src | 输入 | 源操作数，Tile类型。<br>数据类型支持：DT_FP16、DT_FP32，与out保持一致。<br>元素值应大于0，若为0或负数，硬件结果未定义。 |

@@ -63,12 +63,12 @@ conv(input_conv, weight, out_dtype, strides, paddings, dilations, *, groups=1, t
 
 2. 动态轴切分约束：
 
-    <!-- npu="950" id4 -->
+    <!-- npu="950" id10 -->
     - Ascend 950PR&950DT系列产品：前端循环切分时，Batch、Cout、Dout、Hout、Wout维度需要小于或等于out shape对应维度大小；不支持前端循环切分Cin。
-    <!-- end id4 -->
-    <!-- npu="A3" id5 -->
+    <!-- end id10 -->
+    <!-- npu="A3" id11 -->
     - Atlas A3系列产品：不支持前端循环切分Cin。
-    <!-- end id5 -->
+    <!-- end id11 -->
     <!-- npu="910b" id6 -->
     - Atlas A2系列产品：不支持前端循环切分Cin。
     <!-- end id6 -->

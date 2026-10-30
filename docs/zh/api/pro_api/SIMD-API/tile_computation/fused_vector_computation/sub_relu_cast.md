@@ -37,7 +37,7 @@ pypto_pro.language.sub_relu_cast(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | UB、RowMajor Tile；物理shape、valid_shape和layout须与lhs、rhs一致。dtype须与target_type一致，支持的目标类型见下表。 |
 | lhs | 输出 | UB、RowMajor Tile（被减数）；dtype须为DT_FP16、DT_FP32或DT_INT32，并与rhs一致。物理shape、valid_shape和layout须与rhs、out一致；调用后内容变为ReLU后的减法中间结果。 |

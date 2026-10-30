@@ -28,7 +28,7 @@ pypto_pro.language.mrgsort(dst: Tile, src: Tile, *, block_len: int) -> None
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | dst | 输出 | UB、RowMajor、单行Tile；dtype、物理shape和valid_shape须与src一致。 |
 | src | 输入 | UB、RowMajor、单行Tile，dtype为DT_FP16或DT_FP32；内容须为8字节value-index记录，每个待归并块内部已按value降序排列。 |

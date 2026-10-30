@@ -30,7 +30,7 @@ pypto.log10(input, precision_type=pypto.PrecisionType.INTRINSIC) -> Tensor
 
 ## 参数说明
 
-| 参数 | 类型 | 说明 |
+| 参数名 | 类型 | 说明 |
 |:-----|:-----|:-----|
 | input | Tensor | 源操作数。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_FP32，DT_FP16，DT_BF16。<br>支持的维度：1-4维<br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
 | precision_type | PrecisionType，可选 | 对数操作的精度模式。默认值为`PrecisionType.INTRINSIC`。<br>**INTRINSIC**：直接使用芯片指令进行计算，速度更快。<br>**HIGH_PRECISION**：使用更高精度的计算方式，减少精度损失。 |

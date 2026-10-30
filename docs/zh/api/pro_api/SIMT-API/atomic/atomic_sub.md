@@ -27,7 +27,7 @@ pypto_pro.language.simt.atomic_sub(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | target | 输入 | 目的操作数，必须直接传入Tile或Tensor的单元素下标访问表达式，例如ub_tile[0, 0]或gm_tensor[0, 0]。<br>- UB Tile：必须位于UB，使用ND，支持DT_INT32、DT_UINT32、DT_FP32。<br>- GM Tensor：必须为ND，支持DT_INT32、DT_UINT32、DT_FP32、DT_INT64、DT_UINT64。 |
 | value | 输入 | 源操作数，整型或浮点型常量，或相应类型的运行时标量表达式，表示减数。数据类型必须与target一致；数值字面量按target的数据类型处理，整数目的操作数不接受浮点字面量。 |

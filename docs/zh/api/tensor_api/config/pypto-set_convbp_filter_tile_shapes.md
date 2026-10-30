@@ -3,13 +3,13 @@
 ## 产品支持情况
 
 <!-- npu="950" id1 -->
-- Ascend 950PR/Ascend 950DT：不支持
+- Ascend 950PR&950DT系列产品：不支持
 <!-- end id1 -->
 <!-- npu="A3" id2 -->
-- Atlas A3 训练系列产品/Atlas A3 推理系列产品：支持
+- Atlas A3系列产品：支持
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A2 训练系列产品/Atlas A2 推理系列产品：支持
+- Atlas A2系列产品：支持
 <!-- end id3 -->
 
 ## 功能说明
@@ -28,7 +28,7 @@ set_convbp_filter_tile_shapes(l1_info: pypto_impl.ConvBpTileL1Info, l0_info: pyp
 
 | 参数名   | 输入/输出 | 说明                                         |
 |----------|-----------|----------------------------------------------|
-| l1_info  | 输入      | L1缓存层级下卷积反向权重梯度计算的TileShape配置信息，有tileML1、tileNL1、tileKL1三个参数。请参考[约束说明](#约束说明)章节填写 |
+| l1_info  | 输入      | L1 Buffer层级下卷积反向权重梯度计算的TileShape配置信息，有tileML1、tileNL1、tileKL1三个参数。请参考[约束说明](#约束说明)章节填写 |
 | l0_info  | 输入      | L0缓存层级下卷积反向权重梯度计算的TileShape配置信息，有tileML0、tileNL0、tileKL0三个参数。请参考[约束说明](#约束说明)章节填写 |
 
 ## 返回值说明
@@ -65,7 +65,7 @@ TileShape需要满足以下约束条件：
 
 - buffer空间约束：
 
-    - L0A、L0B、L0C空间约束：
+    - L0A Buffer、L0B Buffer、L0C Buffer空间约束：
 
         ```txt
         tileML0 * tileKL0 * sizeof(dtype) <= L0A_size
@@ -81,7 +81,7 @@ TileShape需要满足以下约束条件：
         - `L0B_size = 65536 bytes`
         - `L0C_size = 131072 bytes`
 
-    - L1空间约束：
+    - L1 Buffer空间约束：
 
         ```txt
         (gradOutputL1Size + inputL1Size) <= L1_size

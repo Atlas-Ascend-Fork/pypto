@@ -34,10 +34,10 @@ assemble(inputs: List[Tuple[Tensor, List[Union[int, SymbolicScalar]]]], out: Ten
 
 | 参数名  | 输入/输出 | 说明                                                                 |
 |---------|-----------|----------------------------------------------------------------------|
-| input   | 输入      | 源操作数。<br>支持的数据类型为：PyPto支持的数据类型。<!-- npu="x90,9030" id9 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id9 --><br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
-| inputs   | 输入      | 源操作数和输出偏移组成的Tuple列表。<br>单个支持的数据类型为：PyPto支持的数据类型。<!-- npu="x90,9030" id10 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id10 --><br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
+| input   | 输入      | 源操作数。<br>支持的数据类型为：PyPTO支持的数据类型。<!-- npu="x90,9030" id9 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id9 --><br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
+| inputs   | 输入      | 源操作数和输出偏移组成的Tuple列表。<br>单个支持的数据类型为：PyPTO支持的数据类型。<!-- npu="x90,9030" id10 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id10 --><br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
 | offsets | 输入      | 相对于目标输出的偏移。<br>需要保证offsets小于out的Shape。          |
-| out     | 输出      | 目的操作数，需要和input的维度数量一致。<br>支持的数据类型为：PyPto支持的数据类型。<!-- npu="x90,9030" id11 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id11 --><br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
+| out     | 输出      | 目的操作数，需要和input的维度数量一致。<br>支持的数据类型为：PyPTO支持的数据类型。<!-- npu="x90,9030" id11 -->Kirin数据类型支持范围请参考：[Tensor数据类型说明](#约束说明)。<!-- end id11 --><br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
 | parallel | 输入      | 是否允许并行写回。默认值为False；当写回区域互不重叠、可安全并行时，应显式传入`parallel=True`。 |
 
 ## 返回值说明

@@ -24,7 +24,7 @@ pypto_pro.language.gathermask(out: Tile, src: Tile, *, pattern_mode: int) -> Non
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的UB Tile，数据类型与src一致，保存按模式抽取的元素。容量须覆盖全部被选中元素；有效Shape的设置参见[约束说明](#约束说明)。 |
 | src | 输入 | 源操作数，Tile类型，位于UB，行主序，dtype支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_FP16、DT_BF16、DT_INT32、DT_UINT32、DT_FP32、DT_INT64、DT_UINT64、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8，out的数据类型须与src一致。 |

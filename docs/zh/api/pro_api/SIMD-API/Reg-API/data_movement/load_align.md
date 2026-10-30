@@ -66,7 +66,7 @@ load_align(tile, offset=None, /, *, dist: Optional[LoadDist] = None, dtype: Opti
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | tile | 输入 | 源操作数，Tile地址。地址需要32字节对齐。支持的数据类型为：DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_FP16、DT_BF16、DT_INT32、DT_UINT32、DT_FP32、DT_INT64、DT_UINT64、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
 | offset | 输入 | 可选，地址偏移参数，根据传入类型自动分派搬运接口。在**连续搬运模式**和**mask_reg模式**下单位为元素个数，在**非连续搬运模式**时为mask。<br>- **连续搬运模式**：<br>&nbsp;&nbsp;- **整数或[row, col]列表/元组**：整数偏移在代码生成时转换为指针算术Tile + offset。<br>&nbsp;&nbsp;&nbsp;&nbsp;[row, col]列表/元组的线性偏移为row * shape[1] + col，row单位为Tile的列数（即set_validshape[m, n]的n），col单位为元素个数，两者均支持表达式。<br>&nbsp;&nbsp;- **AddrReg**（由vf.create_addr_reg创建）：实际搬运Tile地址为Tile + AddrReg中存储的偏移量。<br>&nbsp;&nbsp;&nbsp;&nbsp;每次迭代需先调用vf.create_addr_reg设定偏移量再调用搬运指令。<br>- **非连续搬运模式**（DataBlock加载模式，data_copy_mode=pypto_pro.language.DataCopyMode.DATA_BLOCK_COPY时）：该模式下offset位置改为传入控制有效元素的mask_reg，<br>&nbsp;&nbsp;某个DataBlock在mask中对应的32bit有任意一位为1时搬入，全为0时不读取且dst对应位置置0。<br>&nbsp;&nbsp;- 当post_update=True时，搬运后源地址自动累进repeat_stride步长，每次迭代无需手动更新地址。<br>&nbsp;&nbsp;- 当post_update=False时，搬运后地址不更新。<br>- **mask_reg模式**（需先用vf.create_mask预声明）：<br>&nbsp;&nbsp;- **整数**：仅在post_update=True时生效；post_update=False时不支持整数offset。<br>&nbsp;&nbsp;- **AddrReg**（由vf.create_addr_reg创建）：实际搬运Tile地址为srcAddr + AddrReg中存储的偏移量。 |

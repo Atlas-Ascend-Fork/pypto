@@ -20,7 +20,7 @@
 
 ## 功能说明
 
-设置卷积（conv）计算中L1/L0缓存层级下各维度的TileShape（切片形状）大小，同时控制L0TileInfo配置开关的使能状态。
+设置卷积（conv）计算中L1/L0缓存层级下各维度的TileShape（切片形状）大小，同时控制L0TileInfo配置开关的启用状态。
 
 ## 函数原型
 
@@ -32,7 +32,7 @@ set_conv_tile_shapes(tile_l1_info: pypto_impl.TileL1Info, tile_l0_info: pypto_im
 
 | 参数名       | 输入/输出 | 说明                                   |
 |--------------|-----------|--------------------------------------|
-| tile_l1_info | 输入      | L1缓存层级下卷积计算的TileShape配置信息 |
+| tile_l1_info | 输入      | L1 Buffer层级下卷积计算的TileShape配置信息 |
 | tile_l0_info | 输入      | L0缓存层级下卷积计算的TileShape配置信息 |
 
 ## 返回值说明
@@ -43,7 +43,7 @@ void
 
 TileShape需要满足以下约束条件：
 
-**注意：L1和L0上都有tileN，但是其代表的含义不同，tileL1Info.tileN代表输出通道数，tileL0Info.tileN代表L0层级的n的大小**
+**注意：L1 Buffer和L0上都有tileN，但是其代表的含义不同，tileL1Info.tileN代表输出通道数，tileL0Info.tileN代表L0层级的n的大小**
 
 - 对齐约束：
 
@@ -107,7 +107,7 @@ TileShape需要满足以下约束条件：
 
         - `ALIGN_SIZE_32 = 32`
 
-    - L0与L1维度层级约束：
+    - L0与L1 Buffer维度层级约束：
 
         - 1 <= tileL0Info.tileH <= tileL1Info.tileHout且tileL1Info.tileHout % tileL0Info.tileH == 0
 
@@ -117,7 +117,7 @@ TileShape需要满足以下约束条件：
 
 - buffer空间约束：
 
-    - L0A、L0B、L0C空间约束：
+    - L0A Buffer、L0B Buffer、L0C Buffer空间约束：
 
         ```txt
         CeilAlign(tileH * tileW, 16)* CeilAlign(tileK, C0) * sizeof(dtype) <= L0A_size
@@ -139,7 +139,7 @@ TileShape需要满足以下约束条件：
 
         - `ALIGN_SIZE_32 = 32`
 
-    - L1空间约束：
+    - L1 Buffer空间约束：
 
         ```txt
         CeilAlign(hinL1 * winL1 * tileCinFmap * sizeof(dtype), ALIGN_SIZE_32) + CeilAlign(nL1 * kBL1 * sizeof(dtype), ALIGN_SIZE_32) + CeilAlign(tileN * sizeof(dtype), ALIGN_SIZE_32) <= L1_size

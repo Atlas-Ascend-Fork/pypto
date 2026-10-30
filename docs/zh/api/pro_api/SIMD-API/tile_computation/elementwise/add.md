@@ -31,7 +31,7 @@ pypto_pro.language.add(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存放逐元素加法的结果。数据类型与lhs一致，支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_BF16和DT_FP32。可与lhs或Tile类型的rhs为同一Tile，实现原地计算。 |
 | lhs | 输入 | 左操作数，Tile类型。数据类型与out一致。 |

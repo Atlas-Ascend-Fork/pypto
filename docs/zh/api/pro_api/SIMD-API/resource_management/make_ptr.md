@@ -26,7 +26,7 @@ pypto_pro.language.make_ptr(ptr: Union[Tensor, Ptr], dtype: Optional[DataType] =
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | ptr | 输入 | 待转换的对象，Tensor或Ptr类型。传入Tensor时获取其地址；传入Ptr时复用原地址。本接口不分配内存，也不复制数据。 |
 | dtype | 输入 | 目标元素类型，[DataType](../basic_data_structures/DataType.md)类型，可选。传入时，返回的Ptr按该数据类型解释原数据；省略时保留源对象的元素类型。指定dtype不会改变原数据，调用方必须保证新类型满足地址对齐和内存范围要求。 |

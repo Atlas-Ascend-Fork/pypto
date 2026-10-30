@@ -31,7 +31,7 @@ pypto_pro.language.and_(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存储空间为UB，采用row-major布局，存放逐元素按位与的结果。支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32和DT_UINT32。Tile-Tile模式下可与lhs为同一Tile，实现原地计算。 |
 | lhs | 输入 | 源操作数（左操作数），Tile类型，存储空间为UB，采用row-major布局。数据类型和valid_shape须与out一致。 |

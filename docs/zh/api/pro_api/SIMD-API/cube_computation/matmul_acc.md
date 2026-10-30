@@ -36,7 +36,7 @@ pypto_pro.language.matmul_acc(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | dst_tile | 输入/输出 | 累加器操作数（原地累加结果），Tile类型，存储空间为L0C Buffer，形状为[M, N]。数据类型为DT_FP32或DT_INT32，具体类型由乘法输入的数据类型组合决定。layout必须为NZ；未显式指定fractal时，DT_FP32和DT_INT32使用1024。M、N的有效取值范围均为[1, 4095]。 |
 | acc_tile | 输入 | 累加器参数，Tile类型，存储空间为L0C Buffer，形状为[M, N]，数据类型为DT_FP32或DT_INT32，layout必须为NZ。 |

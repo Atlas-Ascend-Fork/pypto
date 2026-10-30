@@ -29,7 +29,7 @@ pypto_pro.language.simt.yn(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | order | 输入 | 阶数，Scalar类型，仅支持DT_INT32。有效阶数为非负整数。Tensor或Tile元素需通过下标访问后传入。 |
 | value | 输入 | 源操作数，正实数为实数定义域，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |

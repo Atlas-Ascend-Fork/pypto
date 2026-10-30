@@ -24,7 +24,7 @@ get_saturation_flag(*, mode: SaturationFlagMode) -> bool
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | mode | 输入 | 饱和模式类别，对应[SaturationFlagMode](../basic_data_structures/SaturationFlagMode.md)枚举。取值与pypto_pro.language.set_saturation_flag的mode参数一致。 |
 

@@ -28,7 +28,7 @@ pypto_pro.language.add_relu(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目标 UB Tile，用于保存逐元素加法和 ReLU 激活的结果。支持的数据类型为 DT_FP16、DT_FP32 和 DT_INT32。 |
 | lhs | 输入/输出 | 左操作数 UB Tile，在计算过程中用于保存加法的中间结果。支持的数据类型为 DT_FP16、DT_FP32 和 DT_INT32。 |

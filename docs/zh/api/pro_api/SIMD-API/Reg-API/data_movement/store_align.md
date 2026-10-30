@@ -58,7 +58,7 @@ store_align(tile, src, preg=None, offset=None, /, *, dist: Optional[StoreDist] =
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | tile | 输出 | 目的操作数，Tile地址。地址需要32字节对齐。 |
 | src | 输入 | 源操作数，[reg_tensor](../basic_data_structures/reg_tensor.md)或者[mask_reg](../basic_data_structures/mask_reg.md)类型。支持的数据类型为：DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_FP16、DT_BF16、DT_INT32、DT_UINT32、DT_FP32、DT_INT64、DT_UINT64、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。<br>- 当源为reg_tensor时，单一src时，为**reg_tensor单搬出模式**；输入src_even和src_odd两个src时，为**reg_tensor双搬出模式**。<br>- 当源已通过vf.create_mask预声明为mask_reg时，自动分派mask_reg存储路径，将mask_reg中的数据搬出到Tile。 |

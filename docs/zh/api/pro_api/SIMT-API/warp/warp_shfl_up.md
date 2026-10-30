@@ -37,7 +37,7 @@ pypto_pro.language.simt.warp_shfl_up(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | value | 输入 | 当前Lane用于交换的标量值，支持DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_BF16和DT_FP32。每个Lane可以传入不同的值。 |
 | delta | 输入 | 相对于当前逻辑Lane向Lane ID减小方向的偏移量。整型常量或DT_UINT32类型的运行时整型标量表达式，取值范围为[0, 31]。当delta确定的目标Lane位于当前逻辑子组内时，目标Lane必须处于当前活跃线程集合中，否则读取结果未定义。 |

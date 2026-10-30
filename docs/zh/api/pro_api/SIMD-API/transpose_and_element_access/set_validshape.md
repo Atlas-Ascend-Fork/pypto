@@ -24,10 +24,10 @@ pypto_pro.language.set_validshape(tile: Tile | TileGroup, /, shape: Shape) -> No
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | tile | 输出 | 目的操作数，Tile或TileGroup类型。 |
-| shape | 输入 | 长度为2的有效shape序列（列表或元组），两个元素均为整型常量或运行时整型标量表达式（支持循环变量），元素须为正整数，且分别不超过Tile shape对应维度。 |
+| shape | 输入 | 长度为2的有效shape序列（列表或元组），两个元素均为整型常量或运行时整型标量表达式（支持循环变量），元素须为正整数，且分别不超过TileShape对应维度。 |
 
 ## 返回值说明
 

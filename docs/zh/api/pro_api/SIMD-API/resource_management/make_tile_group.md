@@ -44,7 +44,7 @@ pypto_pro.language.make_tile_group(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | type | 输入 | Tile类型描述，[pypto_pro.language.TileType](../basic_data_structures/TileType.md)类型。 |
 | addrs | 输入 | Tile地址，int或List[int]类型，必须非负并在编译期确定，且满足对应Buffer的地址对齐要求。传入单个基地址时，第i块Tile的地址为base + i × slot_size，其中slot_size为单块Tile占用的字节数；传入地址列表时，列表长度必须等于mutex_ids的长度或depth的值，并按顺序为每块Tile指定地址。地址列表可用于非连续地址排布。 |

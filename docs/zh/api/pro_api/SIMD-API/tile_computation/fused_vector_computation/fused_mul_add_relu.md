@@ -24,7 +24,7 @@ pypto_pro.language.fused_mul_add_relu(out: Tile, a: Tile, b: Tile) -> None
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，UB Tile，支持DT_FP16、DT_FP32。调用前的值参与乘法，调用后保存计算结果。 |
 | a | 输入 | 参与乘法的源UB Tile，数据类型、Shape和有效Shape与out一致。与out使用互不重叠的区域时，调用后保留原始数据。 |

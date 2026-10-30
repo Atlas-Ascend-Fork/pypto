@@ -30,7 +30,7 @@ pypto_pro.language.select(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存储空间为UB，形状必须与输入数据Tile一致。Tile-Tile和Tile-Scalar模式均支持8、16、32、64位整型、DT_FP16、DT_BF16和DT_FP32。 |
 | mask | 输入 | 源操作数（掩码），Tile类型，存储空间为UB，采用按位压缩格式，掩码Tile的数据类型不做限制，通常使用DT_UINT8类型，须由比较接口生成。 |

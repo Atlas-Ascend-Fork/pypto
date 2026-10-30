@@ -24,7 +24,7 @@ result = pypto_pro.language.const(value, dtype, /)
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | value | 输入 | 数值常量，支持Python int或float常量值。 |
 | dtype | 输入 | 目标数据类型，支持pypto_pro.language.DT_INT8、pypto_pro.language.DT_INT16、pypto_pro.language.DT_INT32、pypto_pro.language.DT_INT64、pypto_pro.language.DT_UINT8、pypto_pro.language.DT_UINT16、pypto_pro.language.DT_UINT32、pypto_pro.language.DT_UINT64、pypto_pro.language.DT_FP16、pypto_pro.language.DT_FP32、pypto_pro.language.DT_BF16、pypto_pro.language.DT_BOOL等。 |

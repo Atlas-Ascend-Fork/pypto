@@ -26,7 +26,7 @@ pypto_pro.language.simt.warp_reduce_max(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | value | 输入 | 当前Lane参与归约的标量值，支持DT_INT32、DT_UINT32、DT_FP16和DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
 

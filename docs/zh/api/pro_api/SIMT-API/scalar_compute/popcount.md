@@ -26,7 +26,7 @@ pypto_pro.language.simt.popcount(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | value | 输入 | 源操作数，整型常量或运行时整型标量表达式，支持DT_UINT32和DT_UINT64。Tensor或Tile元素需通过下标访问后传入。 |
 

@@ -27,7 +27,7 @@ arange(start, dtype: DType, *, index_order: Optional[IndexOrder] = None) -> dst
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | start | 输入 | 序列起始值（整型标量或表达式）。 |
 | dtype | 输入 | 指定目标[reg_tensor](../basic_data_structures/reg_tensor.md)的数据类型（如pypto_pro.language.DT_UINT32、pypto_pro.language.DT_INT32等）。由于标量源无法推断寄存器数据类型，必须显式指定。 |

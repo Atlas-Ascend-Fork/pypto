@@ -38,6 +38,8 @@ get_verify_options() -> Dict[str, Union[str, int, List[int], Dict[int, int]]]
 
 ## 约束说明
 
+无。
+
 ## 调用示例
 
 ```python

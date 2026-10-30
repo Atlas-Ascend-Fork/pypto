@@ -35,7 +35,7 @@ pypto_pro.language.mrgsort2(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | src0 | 输入 | UB、RowMajor、单行Tile；dtype为DT_FP16或DT_FP32。内容须为按value降序排列的8字节value-index记录。 |
 | src1 | 输入 | UB、RowMajor、单行Tile；dtype为DT_FP16或DT_FP32。内容须为按value降序排列的8字节value-index记录。 |

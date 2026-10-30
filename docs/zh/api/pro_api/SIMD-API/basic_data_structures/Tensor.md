@@ -37,7 +37,7 @@ pypto_pro.language.Tensor.__init__(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | shape | 输入 | 各维大小序列（列表或元组）。<br>- 表现形式如下：<br>&nbsp;&nbsp;- 固定维度：正整数表示，如[64, 128]，调用时对应维度须等于该整数。<br>&nbsp;&nbsp;- 动态维度：pypto_pro.language.DYNAMIC表示，调用时读取实际维度，维度值不参与编译缓存键，不同取值复用同一编译变体。<br>&nbsp;&nbsp;- 编译期特化维度：pypto_pro.language.STATIC表示，调用时读取实际维度，维度值固化到当前编译变体，取值变化时生成新的编译变体。<br>&nbsp;&nbsp;- 末尾...：展开剩余维度，各维均按pypto_pro.language.STATIC处理。<br>&nbsp;&nbsp;- 不同策略可混用，如[64, pl.DYNAMIC, pl.STATIC]。<br>- Kernel内可通过tensor.shape[i]读取对应维度，返回值类型为DT_INT64。 |
 | dtype | 输入 | 元素数据类型，[pypto_pro.language.DataType](DataType.md)枚举值。 |

@@ -40,7 +40,7 @@ pypto_pro.language.matmul_mx_acc(
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | dst_tile | 输入/输出 | 累加器操作数（原地累加结果），Tile类型，存储空间为L0C Buffer，形状为[M, N]，数据类型为DT_FP32，layout必须为NZ。 |
 | acc_tile | 输入 | 累加器参数，Tile类型，存储空间为L0C Buffer，形状为[M, N]，数据类型为DT_FP32，layout必须为NZ。 |
@@ -61,7 +61,7 @@ pypto_pro.language.matmul_mx_acc(
   addr(scale_b) = addr(rhs_tile) >> 4
   ```
 
-  硬件根据A/B矩阵首地址定位scale_a/scale_b。使用多组L0A/L0B Tile时，每组地址均须满足上述关系。
+  硬件根据A/B矩阵首地址定位scale_a/scale_b。使用多组L0A/L0B Buffer Tile时，每组地址均须满足上述关系。
 
 - 矩阵乘累加操作前，应调用[pypto_pro.language.matmul_mx](matmul_mx.md)初始化dst_tile，后续再调用本接口进行原地累加。
 

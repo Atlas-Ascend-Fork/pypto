@@ -24,7 +24,7 @@ pypto_pro.language.axpy(out: Tile, src: Tile, alpha: Union[int, float], /) -> No
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输入/输出 | 目的操作数，Tile类型，存储空间为UB，数据类型为DT_FP16或DT_FP32，形状和有效形状须与src一致。支持与src同类型计算，也支持src为DT_FP16、out为DT_FP32的拓宽计算，具体类型组合参见[约束说明](#约束说明)。运算前保存累加初值，运算后保存计算结果。 |
 | src | 输入 | 源操作数，Tile类型，存储空间为UB，数据类型为DT_FP16或DT_FP32，形状和有效形状须与out一致。 |

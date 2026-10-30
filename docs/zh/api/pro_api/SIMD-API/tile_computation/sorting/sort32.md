@@ -33,7 +33,7 @@ pypto_pro.language.sort32(dst: Tile, src: Tile, idx: Tile, tmp: Optional[Tile]=N
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | dst | 输出 | UB、RowMajor Tile，dtype与src相同且只能为DT_FP16或DT_FP32。若src.valid_shape=[R,C]，则dst.valid_shape须为FP16时的[R,4C]或FP32时的[R,2C]；硬件按完整32元素组写出记录，因此dst物理列数须分别不少于4 * ceil32(C)或2 * ceil32(C)。 |
 | src | 输入 | UB、RowMajor Tile，dtype为DT_FP16或DT_FP32；每行按连续32个有效值分组，组与组之间独立排序。 |

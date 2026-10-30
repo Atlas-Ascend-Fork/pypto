@@ -28,7 +28,7 @@ muls_cast(src, scalar, preg, /, *, dtype: DType, layout: Optional[CastLayout] = 
 
 ## 参数说明
 
-| 参数 | 输入/输出 | 说明 |
+| 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | src | 输入 | 源操作数，[reg_tensor](../basic_data_structures/reg_tensor.md)，支持的数据类型请参见[约束说明](#约束说明)。 |
 | scalar | 输入 | 标量源操作数。 |

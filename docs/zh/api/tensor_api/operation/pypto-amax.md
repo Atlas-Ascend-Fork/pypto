@@ -51,7 +51,7 @@ amax(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
 
 若keepdim参数为True，则在执行归约操作后保留被归约的维度。输出Tensor在除dim指定的维度外，其他维度的Shape与输入Tensor的Shape一致，而在dim指定的维度上的大小为1。
 
-若keepdim参数为False（默认），则被归约的维度会从输出Tensor中移除，而tileshape中对应的维度不变，所以建议在调其他operation前重设tileshape。
+若keepdim参数为False（默认），则被归约的维度会从输出Tensor中移除，而TileShape中对应的维度不变，所以建议在调其他operation前重设TileShape。
 
 ## 约束说明
 
@@ -89,7 +89,7 @@ TileShape维度应和输入input一致。
 pypto.set_vec_tile_shapes(4, 16)
 ```
 
-注意：如果keepdim设置为false，则被归约的维度会从输出Tensor中移除，而tileshape中对应的维度不变，所以建议在调其他operation前重设tileshape。
+注意：如果keepdim设置为false，则被归约的维度会从输出Tensor中移除，而TileShape中对应的维度不变，所以建议在调其他operation前重设TileShape。
 
 ### 接口调用示例
 
