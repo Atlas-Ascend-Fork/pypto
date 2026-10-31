@@ -294,6 +294,21 @@ public:
                                                const std::string& pointer_expr, const std::string& valid_rows,
                                                const std::string& valid_cols, const std::string& matrix_count = "");
 
+    /**
+     * \brief Emit a per-call-site GlobalTensor over a peer window payload (dist.get/dist.put).
+     *
+     * Window views have no prescan declaration (those are keyed to kernel tensor params), so
+     * unlike BindGlobalTensor this declares a private alias set + instance at the call site.
+     * *view_type* is the DTensor view as a synthetic contiguous tensor (offset flattening and
+     * strides reuse the block.load/block.store helpers); *remote_base* is the peer payload
+     * expression (element-typed pointer), *tile* the tile's C++ name for the valid window.
+     * Returns the instance name to pass to TLOAD/TSTORE.
+     */
+    [[nodiscard]] std::string BindDistGlobalTensor(const ir::TensorTypePtr& view_type, const ir::MakeTuplePtr& offsets,
+                                                   const std::optional<std::vector<int>>& tile_dims, bool is_transpose,
+                                                   const std::vector<ir::ExprPtr>& tile_shape,
+                                                   const std::string& remote_base, const std::string& tile);
+
 protected:
     // Override visitor methods for code generation - Statements
     void VisitStmt_(const ir::AssignStmtPtr& op) override;

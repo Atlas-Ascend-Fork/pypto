@@ -116,6 +116,25 @@ HcommResult StubRankGraphGetLinks(HcommHandle comm, uint32_t netLayer, uint32_t 
     return HCOMM_SUCCESS;
 }
 
+HcommResult StubRankGraphGetRanksByLayer(HcommHandle comm, uint32_t netLayer, uint32_t** ranks, uint32_t* rankNum)
+{
+    ADAPTER_LOGD("Enter stub function of RankGraphGetRanksByLayer.");
+    (void)comm;
+    (void)netLayer;
+    (void)ranks;
+    (void)rankNum;
+    return HCOMM_SUCCESS;
+}
+
+HcommResult StubRankGraphGetTopoTypeByLayer(HcommHandle comm, uint32_t netLayer, HCommTopo* topoType)
+{
+    ADAPTER_LOGD("Enter stub function of RankGraphGetTopoTypeByLayer.");
+    (void)comm;
+    (void)netLayer;
+    (void)topoType;
+    return HCOMM_SUCCESS;
+}
+
 HcommResult StubChannelAcquire(HcommHandle comm, CommEngine engine, const HcclChannelDesc* channelDescs,
                                uint32_t channelNum, ChannelHandle* channels)
 {

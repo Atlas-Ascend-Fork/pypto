@@ -150,6 +150,11 @@ class JitCompileConfig:
             # (kernel_operator.h); the JIT adds these roots under the same condition.
             flags.append(f"-I{os.path.join(ascend_home_path, 'compiler', 'asc')}")
             flags.append(f"-I{os.path.join(ascend_home_path, 'compiler', 'asc', 'include')}")
+
+        fwk_include = device_framework_include_dir()
+        if fwk_include is not None:
+            flags.append(f"-I{fwk_include}")
+
         return flags
 
     def runtime_link_args(self, ascend_home_path: str) -> list[str]:
@@ -179,6 +184,15 @@ class JitCompileConfig:
         if mem_arch is None:
             raise InvalidVal(f"JIT compile config does not define memory_arch_flags for arch '{arch}'")
         return mem_arch
+
+
+def device_framework_include_dir() -> str | None:
+    """Staged framework include root that device kernel compiles can reach.
+    """
+    import pypto
+
+    fwk_include = os.path.join(os.path.dirname(pypto.__file__), "lib", "framework", "include")
+    return fwk_include if os.path.isdir(fwk_include) else None
 
 
 _DEFAULT_CCE_JIT_COMPILE_CONFIG = JitCompileConfig(
@@ -218,6 +232,8 @@ _DEFAULT_CCE_JIT_COMPILE_CONFIG = JitCompileConfig(
         "-O3",
         "-std=c++17",
         "-I{toolkit_home}/include",
+        # asc-comm jetty API (hcomm_jetty.h)
+        "-I{toolkit_home}/asc/include/comm_api/aicore",
     ),
     print_debug_flags=(
         f"-I{PTO_DEBUG_ROOT}",

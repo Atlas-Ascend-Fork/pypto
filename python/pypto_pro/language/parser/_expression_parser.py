@@ -57,6 +57,12 @@ def _is_enum_value(value: Any) -> bool:
 class ExpressionParserMixin:
     """Mixin containing expression, attribute, and subscript parsing."""
 
+    # Window metadata accessors -> field index in the device dist::Window
+    # descriptor (framework/include/tilefwk/distribute_context.h; indices also encode the
+    # C++ side's dist.window_get field table, interface/inner/dist_utils.h).
+    # data_ptr maps to buffer_ptr, the payload base.
+    _WINDOW_ACCESSOR_FIELDS = {"rank": 0, "nrank": 1, "num_signals": 2, "size": 3, "data_ptr": 5}
+
     def lookup_expr_by_name(self, name: str) -> Any | None:
         """Resolve a parser name to its current expression."""
         value = self.scope_manager.lookup_var_bounded(name)
@@ -172,6 +178,14 @@ class ExpressionParserMixin:
         expr = self.parse_expression(stmt.value, nested=False)
         span = self.span_tracker.get_span(stmt)
 
+        from ...ir.op.dist_ops import _ChannelCreate
+
+        if isinstance(expr, _ChannelCreate):
+            raise InvalidOperation(
+                "pld.channel must be assigned to a variable",
+                span=span,
+                hint="Write `ch = pld.channel(...)` at the section scope.",
+            )
         # Void inline functions or python_var method calls (e.g. nbuf.advance())
         # return None or a non-IR sentinel — nothing to emit.
         if expr is None or not isinstance(expr, ir.Expr):
@@ -1461,6 +1475,14 @@ class ExpressionParserMixin:
         Expressions with UnknownType are skipped to avoid materializing
         void/sentinel results (e.g. nbuf.advance() void calls).
         """
+        from ...ir.op.dist_ops import _ChannelCreate
+
+        if isinstance(result, _ChannelCreate):
+            raise InvalidOperation(
+                "pld.channel must be assigned to a variable",
+                span=span,
+                hint="Write `ch = pld.channel(...)` at the section scope.",
+            )
         if isinstance(result, ir.MakeTuple):
             if result not in self._anchored_make_tuples:
                 name = f"_tuple_anchor_{self._expr_tmp_counter}"
@@ -1481,17 +1503,62 @@ class ExpressionParserMixin:
         return value
 
     def _route_ir_node_method(self, node: ast.Call):
-        """Route ``xxx.f(...)`` to an op func when ``xxx`` is a tile-group handle.
+        """Route ``xxx.f(...)`` to an op func when ``xxx`` is a tile-group handle or a window.
 
         Tile-group handle: next/current/previous (each returns a bare tile).
+        Window handle: rank/nrank/num_signals/size/data_ptr, each a scalar
+        GM read of the device dist::Window descriptor (dist.window_get).
         Returns the IR result, or None when not routed.
         """
         if not isinstance(node.func, ast.Attribute):
             return None
         method = node.func.attr
-        if method not in ("next", "current", "previous"):
+        if method in ("next", "current", "previous"):
+            obj = self.parse_expression(node.func.value)
+            if isinstance(obj, ir.Expr) and self.is_tile_group(obj):
+                return self._lower_group_accessor(obj, method, self.span_tracker.get_span(node))
             return None
-        obj = self.parse_expression(node.func.value)
-        if isinstance(obj, ir.Expr) and self.is_tile_group(obj):
-            return self._lower_group_accessor(obj, method, self.span_tracker.get_span(node))
+        if method in self._WINDOW_ACCESSOR_FIELDS:
+            obj = self.parse_expression(node.func.value)
+            if isinstance(obj, ir.Expr) and isinstance(obj.type, ir.WindowType):
+                span = self.span_tracker.get_span(node)
+                if node.args or node.keywords:
+                    raise InvalidOperation(
+                        f"Window accessor '.{method}()' takes no arguments",
+                        span=span,
+                        hint="Use win.rank() / win.nrank() / win.size() / win.num_signals() / win.data_ptr()",
+                    )
+                field = ir.ConstInt(self._WINDOW_ACCESSOR_FIELDS[method], DataType.INT64, span)
+                return ir.create_op_call("dist.window_get", [obj, field], {}, span)
         return None
+
+    _CHANNEL_METHODS = frozenset({"write", "write_notify", "submit", "drain", "is_exclusive"})
+
+    def _route_channel_method(self, node: ast.Call):
+        """Route ``ch.<method>(...)`` when ``ch`` resolves to a pld.Channel handle.
+
+        Returns the IR result, or None when the receiver is not a channel. Runs before
+        the declaration gate and auto-mutex dispatch, so it enforces its own execution
+        domain: channel operations drive the AIV write engine.
+        """
+        if not isinstance(node.func, ast.Attribute) or node.func.attr not in self._CHANNEL_METHODS:
+            return None
+        from ..distribute import Channel
+
+        receiver = self.parse_expression(node.func.value)
+        if not isinstance(receiver, Channel):
+            return None
+        span = self.span_tracker.get_span(node)
+        if (
+            self.target != ir.SectionKind.Vector
+            or self.inline_vf_depth != 0
+            or self._current_func_type in (ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee)
+        ):
+            raise InvalidOperation(
+                f"pld.Channel.{node.func.attr}() requires the Vector section",
+                span=span,
+                hint="Channel operations run on the AIV; move them into pl.section_vector().",
+            )
+        from ...ir.op import dist_ops
+
+        return dist_ops.parse_channel_method(self, receiver, node.func.attr, node)

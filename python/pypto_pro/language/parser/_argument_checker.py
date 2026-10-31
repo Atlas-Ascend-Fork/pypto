@@ -37,6 +37,7 @@ from pypto.pypto_impl import ir
 from ..._errors import InvalidArgument, InvalidType
 from .. import _api as _language_api
 from .. import _simt_api, _system_api
+from .. import distribute as _distribute_api
 from .._vf_api import Vf
 
 # Where each gated namespace keeps its declarations. A call written without one --
@@ -47,6 +48,7 @@ _NAMESPACE_DECLARATIONS = {
     "simt": _simt_api.Simt,
     "system": _system_api.System,
     "vf": Vf,
+    "dist": _distribute_api,
 }
 
 
@@ -227,6 +229,7 @@ _LEAF_TYPES: dict[str, tuple[type, ...]] = {
     "TileGroup": (ir.TileType, ir.TensorType, ir.TupleType),
     "Struct": (ir.TupleType,),
     "Ptr": (ir.PtrType,),
+    "Window": (ir.WindowType,),
     # Every scalar, written as a literal or lowered to an IR value. A bool is one
     # of them: whether it is a legal value in a given position -- an event id, a
     # loop bound -- is the builder's judgement, not this gate's.

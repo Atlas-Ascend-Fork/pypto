@@ -300,7 +300,7 @@ class ASTParser(
 
         self._current_node: ast.AST | None = None
 
-        # Pipeline constant-branch probe (design §3.0): when enabled, parse_if_statement
+        # Pipeline constant-branch probe: when enabled, parse_if_statement
         # records {(lineno, col_offset) of test: (is_const, value)} for every if in the
         # kernel body. Off by default so a normal parse is unaffected; the pipeline
         # transform turns it on for a probe run.
@@ -368,6 +368,30 @@ class ASTParser(
             return None
         cls = self.expr_evaluator.closure_vars.get(annotation.id)
         return cls if is_tiling_class(cls) else None
+
+    @staticmethod
+    def _window_param_class() -> type | None:
+        """The pybind Window class from pypto_impl.dist, or None when unavailable.
+
+        Absent on non-CANN builds (the dist submodule is compiled under BUILD_WITH_CANN),
+        where window annotations are simply not a thing.
+        """
+        from pypto import pypto_impl
+
+        return getattr(getattr(pypto_impl, "dist", None), "Window", None)
+
+    def is_window_annotation(self, annotation: ast.expr) -> bool:
+        """True when the annotation evaluates to the pld.Window class (``win: pld.Window``)."""
+        if not isinstance(annotation, (ast.Name, ast.Attribute)):
+            return False
+        window_cls = self._window_param_class()
+        if window_cls is None:
+            return False
+        try:
+            success, value = self.expr_evaluator.try_eval_expr(annotation)
+        except Exception:  # probing an arbitrary annotation; evaluation failure means "not ours"
+            return False
+        return success and value is window_cls
 
     def parse_function(
         self,
@@ -736,6 +760,14 @@ class ASTParser(
             # codegen emits `struct <ClassName>` (matching the host-side struct).
             self.register_struct_type(tiling_var, tiling_cls.__name__, list(fields.keys()))
             self.scope_manager.define_var(param_name, tiling_var, allow_redef=True)
+            return
+
+        # 1b) pld.Window annotation: an opaque WindowType handle. The launch ABI passes
+        # the device dist::Window descriptor pointer; field reads lower to scalar GM
+        # loads via dist.window_get.
+        if arg.annotation is not None and self.is_window_annotation(arg.annotation):
+            window_var = f.param(param_name, ir.WindowType(), param_span)
+            self.scope_manager.define_var(param_name, window_var, allow_redef=True)
             return
 
         # 2) A call-site type is available for delayed SIMT function parsing.

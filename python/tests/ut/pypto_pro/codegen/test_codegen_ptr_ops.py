@@ -76,3 +76,23 @@ def test_make_tensor_from_tensor_cce_dtype_cast():
     cpp = _compile_to_cce(_retensor_cce_dtype_kernel)
     # Reinterpreting fp16 -> uint8 emits a cast of the source pointer.
     assert "(__gm__ uint8_t*)(src_0_ptr)" in cpp
+
+
+@pl.jit
+def _tensor_view_cce_kernel(src: pl.Tensor[[64, 128], pl.DT_FP16], out: pl.Tensor[[32, 64], pl.DT_FP16]):
+    view = pl.tensor_view(src, [16, 32], [32, 64])
+    tile = pl.make_tile(
+        pl.TileType(shape=[32, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
+        addr=0x0,
+    )
+    with pl.section_vector():
+        pl.load(tile, view, [0, 0])
+        pl.store(out, tile, [0, 0])
+
+
+def test_tensor_view_cce_rebases_pointer_and_keeps_stride():
+    cpp = _compile_to_cce(_tensor_view_cce_kernel)
+    # 16 * 128 + 32 elements past the source pointer, with the source's 128-element
+    # row pitch rather than a contiguous 64.
+    assert "((__gm__ half*)(src_0_ptr)) + 2080" in cpp
+    assert "(1, 1, 1, 128, 1)" in cpp

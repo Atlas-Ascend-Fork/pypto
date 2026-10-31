@@ -22,8 +22,9 @@ from typing import Any
 from pypto.pypto_impl import ir as _ir_core
 from pypto.pypto_impl.ir import Call, DataType, Expr, Span
 
-from ..._errors import InvalidType
-from .._utils import _get_span_or_capture, _to_make_tuple
+from ..._errors import InvalidShape, InvalidType
+from .._operators import make_binary
+from .._utils import _const_int_value, _get_span_or_capture, _normalize_expr, _to_make_tuple
 from ._op_registry import op_impl
 
 
@@ -110,6 +111,99 @@ def make_ptr(ptr: Expr, dtype: DataType | None = None, span: Span | None = None)
     return _ir_core.create_op_call("ptr.make_ptr", [ptr], kwargs, actual_span)
 
 
+def _tensor_strides(tensor_type: _ir_core.TensorType, span: Span) -> list:
+    """Element strides of the source tensor: its declared stride, else row-major."""
+    shape = list(tensor_type.shape)
+    view = tensor_type.tensor_view
+    if view is not None and len(view.stride) == len(shape):
+        return list(view.stride)
+    strides: list = [0] * len(shape)
+    running: int | Expr = 1
+    for axis in range(len(shape) - 1, -1, -1):
+        strides[axis] = running
+        dim = _const_int_value(shape[axis])
+        if dim is not None:
+            running *= dim
+        else:
+            running = make_binary("mul", _normalize_expr(running, span), shape[axis], span)
+    return strides
+
+
+def _linear_coordinate(coords: Sequence[int | Expr], strides: Sequence[int | Expr], span: Span) -> Expr:
+    """Row-major linear element offset of per-axis coordinates."""
+    total: int | Expr = 0
+    for coord, stride in zip(coords, strides):
+        coord_value, stride_value = _const_int_value(coord), _const_int_value(stride)
+        term: int | Expr = (
+            coord_value * stride_value
+            if coord_value is not None and stride_value is not None
+            else make_binary("mul", _normalize_expr(coord, span), _normalize_expr(stride, span), span)
+        )
+        if isinstance(total, int) and isinstance(term, int):
+            total += term
+        else:
+            total = make_binary("add", _normalize_expr(total, span), _normalize_expr(term, span), span)
+    return _normalize_expr(total, span)
+
+
+def tensor_view(
+    tensor: Expr,
+    offset: Sequence[int | Expr] | int | Expr,
+    shape: Sequence[int | Expr] | _ir_core.MakeTuple,
+    span: Span | None = None,
+) -> Call:
+    """Create a no-copy sub-view of an existing GM tensor.
+
+    Emits ``ptr.make_tensor`` over the tensor's data pointer advanced by ``offset``,
+    so the ptoas codegen lowers it to ``pto.make_tensor_view`` and the CCE codegen
+    materializes the view as a ``GlobalTensor`` exactly like ``pl.make_tensor``.
+    The view keeps the source tensor's element dtype and per-axis strides, so it
+    addresses a window of the source's layout without a copy.
+
+    Args:
+        tensor: Source tensor (TensorType) to view into
+        offset: Per-axis element coordinates (one per source axis), or a scalar
+            linear element offset
+        shape: Extent of the sub-view per axis, same rank as the source
+        span: Optional source span for debugging (auto-captured if not provided)
+
+    Returns:
+        Call expression creating the sub-view
+    """
+    actual_span = _get_span_or_capture(span)
+    tensor_type = tensor.type if isinstance(tensor, Expr) else None
+    if not isinstance(tensor_type, _ir_core.TensorType):
+        source_kind = type(tensor_type).__name__ if tensor_type is not None else type(tensor).__name__
+        raise InvalidType(
+            f"pl.tensor_view source must be a GM tensor (pl.Tensor), but got {source_kind}",
+            span=actual_span,
+        )
+    source_rank = len(tensor_type.shape)
+    shape_tuple = _to_make_tuple(shape, actual_span)
+    if len(shape_tuple.elements) != source_rank:
+        raise InvalidShape(
+            f"pl.tensor_view shape rank ({len(shape_tuple.elements)}) must match the source "
+            f"tensor rank ({source_rank}); use pl.make_tensor to reshape",
+            span=actual_span,
+        )
+    strides = _tensor_strides(tensor_type, actual_span)
+
+    if isinstance(getattr(offset, "type", None), _ir_core.TupleType):
+        coords = list(_to_make_tuple(offset, actual_span).elements)
+        if len(coords) != source_rank:
+            raise InvalidShape(
+                f"pl.tensor_view offset has {len(coords)} coordinates, but the source tensor "
+                f"has {source_rank} axes",
+                span=actual_span,
+            )
+        linear_offset = _linear_coordinate(coords, strides, actual_span)
+    else:
+        linear_offset = _normalize_expr(offset, actual_span)
+
+    ptr = addptr(make_ptr(tensor, span=actual_span), linear_offset, span=actual_span)
+    return make_tensor(ptr, shape_tuple, strides, span=actual_span)
+
+
 def _check_addptr_dtype(ptr: Expr) -> None:
     """Reject pointer arithmetic on sub-byte element types.
 
@@ -155,6 +249,11 @@ def _build_make_tensor(self, *args, span: Span, **kwargs):
 @op_impl("make_ptr")
 def _build_make_ptr(self, *args, span: Span, **kwargs):
     return make_ptr(*args, span=span, **kwargs)
+
+
+@op_impl("tensor_view")
+def _build_tensor_view(self, *args, span: Span, **kwargs):
+    return tensor_view(*args, span=span, **kwargs)
 
 
 @op_impl("addptr")

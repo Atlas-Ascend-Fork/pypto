@@ -157,6 +157,108 @@ def test_make_ptr_accepts_tensor_argument():
     assert found.var.type.dtype == pl.DT_FP32
 
 
+@pl.jit
+def _tensor_view_coord_kernel(src: pl.Tensor[[64, 128], pl.DT_FP16]):
+    # Sub-view at element coordinates [16, 32], keeping the source row pitch.
+    view = pl.tensor_view(src, [16, 32], [32, 64])  # noqa: F841
+
+
+@pl.jit
+def _tensor_view_linear_kernel(src: pl.Tensor[[1024], pl.DT_FP16], off: pl.DT_INT64):
+    # A scalar offset is a linear (row-major) element index.
+    view = pl.tensor_view(src, off, [256])  # noqa: F841
+
+
+@pl.jit
+def _tensor_view_of_strided_kernel(src: pl.Tensor[[128, 256], pl.DT_FP16]):
+    # The sub-view inherits the source view's padded stride, not a contiguous one.
+    pitched = pl.make_tensor(src, [64, 128], [256, 1])
+    view = pl.tensor_view(pitched, [1, 2], [32, 64])  # noqa: F841
+
+
+def _call_args(call, op_name):
+    assert isinstance(call, ir.Call), f"expected an {op_name} call, got {call}"
+    assert call.name == op_name, f"expected an {op_name} call, got {call.name}"
+    return call.args
+
+
+def test_tensor_view_coordinate_offset_ir():
+    prog = _parse_kernel(_tensor_view_coord_kernel)
+    found = _find_assign_by_call(prog.get_function(prog_first_name(prog)).body, "ptr.make_tensor")
+    assert found is not None, "expected pl.tensor_view to emit ptr.make_tensor"
+
+    view_type = found.var.type
+    assert isinstance(view_type, ir.TensorType)
+    assert [int(dim.value) for dim in view_type.shape] == [32, 64]
+    assert view_type.dtype == pl.DT_FP16
+    assert [int(stride.value) for stride in view_type.tensor_view.stride] == [128, 1]
+
+    # 16 * 128 + 32 elements into the source.
+    addptr_args = _call_args(found.value.args[0], "ptr.addptr")
+    assert int(addptr_args[1].value) == 2080
+    _call_args(addptr_args[0], "ptr.make_ptr")
+
+
+def test_tensor_view_scalar_offset_ir():
+    prog = _parse_kernel(_tensor_view_linear_kernel)
+    found = _find_assign_by_call(prog.get_function(prog_first_name(prog)).body, "ptr.make_tensor")
+    assert found is not None
+
+    addptr_args = _call_args(found.value.args[0], "ptr.addptr")
+    # The runtime offset expression is added without scaling.
+    assert isinstance(addptr_args[1], ir.Var)
+    assert isinstance(addptr_args[1].type, ir.ScalarType)
+    assert isinstance(found.var.type, ir.TensorType)
+    assert [int(dim.value) for dim in found.var.type.shape] == [256]
+
+
+def test_tensor_view_inherits_source_stride():
+    prog = _parse_kernel(_tensor_view_of_strided_kernel)
+    body = prog.get_function(prog_first_name(prog)).body
+    views = []
+
+    def collect(stmt):
+        if isinstance(stmt, ir.AssignStmt):
+            value = stmt.value
+            if isinstance(value, ir.Call) and value.name == "ptr.make_tensor":
+                views.append(stmt)
+            return
+        if isinstance(stmt, ir.SeqStmts):
+            for sub in stmt.stmts:
+                collect(sub)
+        for attr in ("body", "then_body", "else_body"):
+            sub = getattr(stmt, attr, None)
+            if isinstance(sub, ir.Stmt):
+                collect(sub)
+
+    collect(body)
+    assert len(views) == 2, "expected the pitched view and the sub-view"
+    sub_view = views[1]
+    assert [int(stride.value) for stride in sub_view.var.type.tensor_view.stride] == [256, 1]
+    addptr_args = _call_args(sub_view.value.args[0], "ptr.addptr")
+    assert int(addptr_args[1].value) == 1 * 256 + 2
+
+
+@pl.jit
+def _tensor_view_offset_rank_mismatch_kernel(src: pl.Tensor[[64, 128], pl.DT_FP16]):
+    view = pl.tensor_view(src, [16], [32, 64])  # noqa: F841
+
+
+@pl.jit
+def _tensor_view_shape_rank_mismatch_kernel(src: pl.Tensor[[64, 128], pl.DT_FP16]):
+    view = pl.tensor_view(src, [0, 0], [32])  # noqa: F841
+
+
+def test_tensor_view_rejects_offset_rank_mismatch():
+    with pytest.raises(Exception, match="offset has 1 coordinates"):
+        _parse_kernel(_tensor_view_offset_rank_mismatch_kernel)
+
+
+def test_tensor_view_rejects_shape_rank_mismatch():
+    with pytest.raises(Exception, match="shape rank"):
+        _parse_kernel(_tensor_view_shape_rank_mismatch_kernel)
+
+
 def prog_first_name(prog):
     """Return the (single) function name in a parsed Program."""
     return next(iter(prog.functions))

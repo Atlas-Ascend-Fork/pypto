@@ -279,6 +279,7 @@ if (ENABLE_FEATURE_PYTHON_FRONT_END)
                     framework/include/tilefwk/error_code.h
                     framework/include/tilefwk/lazy.h
                     framework/include/tilefwk/element.h
+                    framework/include/tilefwk/distribute_context.h
                 DESTINATION ${PyPTO_WhlName}/lib/framework/include/tilefwk
                 COMPONENT pypto
         )
@@ -451,6 +452,7 @@ if (ENABLE_FEATURE_PYTHON_FRONT_END)
         install(FILES
                     framework/src/machine/runtime/distributed/distributed_context.h
                     framework/src/machine/runtime/distributed/hccl_context.h
+                    framework/src/machine/runtime/distributed/window_context.h
                 DESTINATION ${PyPTO_WhlName}/lib/framework/src/machine/runtime/distributed
                 COMPONENT pypto
         )

@@ -131,6 +131,7 @@ def test_cce_single_dynamic_tuple_return_reads_the_loop_result():
         };
         #endif
         #include <pypto_dump.h>
+        #include <pypto_distribute.h>
         __aicore__ inline void _single_dynamic_pair_in_loop_kernel_impl_cube(int64_t value_0)
         {
 
@@ -176,6 +177,7 @@ def test_cce_static_if_break_terminates_the_enclosing_loop_block():
         };
         #endif
         #include <pypto_dump.h>
+        #include <pypto_distribute.h>
         __aicore__ inline void _static_if_break_kernel_impl_cube(int64_t n_0)
         {
 

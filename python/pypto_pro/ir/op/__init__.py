@@ -18,6 +18,7 @@ This module organizes IR operations by category.
 __all__ = [
     "block",
     "debug",
+    "dist",
     "system",
     "ptr",
     "scalar",
@@ -27,6 +28,7 @@ __all__ = [
 
 from . import block_ops as block
 from . import debug_ops as debug
+from . import dist_ops as dist
 from . import ptr_ops as ptr
 from . import scalar_ops as scalar
 from . import simt_ops as simt

@@ -42,6 +42,10 @@ HcommResult StubRankGraphGetLayers(HcommHandle comm, uint32_t** netLayers, uint3
 HcommResult StubRankGraphGetLinks(HcommHandle comm, uint32_t netLayer, uint32_t srcRank, uint32_t dstRank,
                                   CommLink** links, uint32_t* linkNum);
 
+HcommResult StubRankGraphGetRanksByLayer(HcommHandle comm, uint32_t netLayer, uint32_t** ranks, uint32_t* rankNum);
+
+HcommResult StubRankGraphGetTopoTypeByLayer(HcommHandle comm, uint32_t netLayer, HCommTopo* topoType);
+
 HcommResult StubChannelAcquire(HcommHandle comm, CommEngine engine, const HcclChannelDesc* channelDescs,
                                uint32_t channelNum, ChannelHandle* channels);
 

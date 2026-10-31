@@ -43,10 +43,11 @@ def op_impl(name: str) -> Callable:
 
 
 def op_impl_ast(name: str) -> Callable:
-    """Register a legacy ``(self, call: ast.Call)`` syntax handler.
+    """Register a special-parse ``(self, call: ast.Call)`` syntax handler.
 
     Use this for references, typed literals and descriptors whose source syntax
-    cannot be treated as ordinary operands. The handler owns argument parsing.
+    cannot be treated as ordinary operands (e.g. a call whose let-binding target
+    is part of its lowering). The handler owns argument parsing.
     """
     def decorator(func: Callable) -> Callable:
         if name in _OP_REGISTRY or name in _AST_OP_REGISTRY:

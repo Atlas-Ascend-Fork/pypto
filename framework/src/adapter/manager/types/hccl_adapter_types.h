@@ -31,6 +31,8 @@ enum class HcclFunc {
     CommMemReg,
     RankGraphGetLayers,
     RankGraphGetLinks,
+    RankGraphGetRanksByLayer,
+    RankGraphGetTopoTypeByLayer,
     ChannelAcquire,
     ChannelGetRemoteMems,
     AllGather,
@@ -50,6 +52,8 @@ const std::map<HcclFunc, std::string> kHcclFuncStrMap{
     {HcclFunc::CommMemReg, "HcclCommMemReg"},
     {HcclFunc::RankGraphGetLayers, "HcclRankGraphGetLayers"},
     {HcclFunc::RankGraphGetLinks, "HcclRankGraphGetLinks"},
+    {HcclFunc::RankGraphGetRanksByLayer, "HcclRankGraphGetRanksByLayer"},
+    {HcclFunc::RankGraphGetTopoTypeByLayer, "HcclRankGraphGetTopoTypeByLayer"},
     {HcclFunc::ChannelAcquire, "HcclChannelAcquire"},
     {HcclFunc::ChannelGetRemoteMems, "HcclChannelGetRemoteMems"},
     {HcclFunc::AllGather, "HcclAllGather"}};

@@ -1856,6 +1856,29 @@ def make_ptr(ptr: Union[Ptr, Tensor], dtype: Optional[DType] = None) -> Ptr:
 
 
 @_api_decl
+def tensor_view(
+    tensor: Tensor,
+    offset: Offset | int,
+    shape: Shape,
+) -> Tensor:
+    """Create a no-copy sub-view of an existing GM tensor.
+
+    The view shares the source tensor's storage: it starts at element
+    coordinates ``offset`` and covers ``shape`` elements, keeping the source's
+    dtype and strides. Nothing is copied — codegen rebases the tensor's data
+    pointer and re-declares the access shape, exactly as
+    ``pl.make_tensor(pl.addptr(pl.make_ptr(tensor), offset), shape, stride)``
+    would.
+
+    Args:
+        tensor: Existing GM tensor — a kernel parameter or another view
+        offset: Per-axis element coordinates (one per source axis), or a scalar
+            linear element offset (row-major)
+        shape: Extent of the sub-view per axis, same rank as the source
+    """
+
+
+@_api_decl
 def make_tensor(
     ptr: Union[Ptr, Tensor],
     shape: Shape,

@@ -355,6 +355,7 @@ def control_flow_binary(request, tmp_path_factory):
     kernel, expected = request.param
     build = tmp_path_factory.mktemp(kernel.__name__)
     (build / "pypto_dump.h").write_text("")
+    (build / "pypto_distribute.h").write_text("")
     cube, vector = _parse_and_codegen_targets(kernel.to_kernel_def(), NpuArch.DAV_3510, "")
     source = build / "kernel.cpp"
     source.write_text(

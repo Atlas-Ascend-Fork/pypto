@@ -565,6 +565,10 @@ std::string IRPrinter::Print(const TypePtr& type)
         return prefix_ + ".MemRefType";
     }
 
+    if (auto window_type = As<WindowType>(type)) {
+        return prefix_ + ".WindowType";
+    }
+
     if (auto ptr_type = As<PtrType>(type)) {
         return prefix_ + ".Ptr";
     }

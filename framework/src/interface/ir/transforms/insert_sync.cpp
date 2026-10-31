@@ -37,7 +37,7 @@ bool DescriptorOnly(const std::string& name)
 std::optional<PipeType> Pipe(const CallPtr& call)
 {
     const auto& name = call->name_;
-    if ((name.rfind("block.", 0) != 0 && name != "simt.launch") || DescriptorOnly(name))
+    if ((name.rfind("block.", 0) != 0 && name.rfind("dist.", 0) != 0 && name != "simt.launch") || DescriptorOnly(name))
         return std::nullopt;
     auto info = backend::BackendCCE::Instance().GetOpInfo(name);
     if (info && info->pipe)

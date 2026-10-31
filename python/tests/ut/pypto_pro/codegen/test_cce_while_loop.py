@@ -348,6 +348,7 @@ def test_cce_while_body_and_result_use_independent_slots():
         };
         #endif
         #include <pypto_dump.h>
+        #include <pypto_distribute.h>
         __aicore__ inline void _while_independent_body_result_kernel_impl_cube(bool flag_0, int64_t result_value_0)
         {
 
@@ -432,6 +433,7 @@ def scalar_loop_binary(tmp_path_factory):
     """Execute the scalar CCE as C++ to check values independently of an NPU."""
     build = tmp_path_factory.mktemp("scalar_loop_cce")
     (build / "pypto_dump.h").write_text("")
+    (build / "pypto_distribute.h").write_text("")
     kernels = (_while_isqrt_carry_kernel, _while_swap_carry_kernel, _for_swap_carry_kernel)
     source = build / "loops.cpp"
     source.write_text(

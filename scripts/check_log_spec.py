@@ -362,7 +362,6 @@ def main():
     args = parser.parse_args()
 
     if os.environ.get("PYPTO_SKIP_LOG_CHECK"):
-        log("PYPTO_SKIP_LOG_CHECK 已设置，跳过日志规范检查。")
         return 0
     if not args.files:
         return 0

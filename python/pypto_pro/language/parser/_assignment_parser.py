@@ -352,6 +352,19 @@ class AssignmentParserMixin:
                 hint="Functions used as expressions must return a value",
                 parser_retry=True,
             )
+        from ...ir.op.dist_ops import _ChannelCreate
+        from ..distribute import Channel
+
+        if isinstance(value_expr, _ChannelCreate):
+            # pld.channel defers the binding until the target name is known: emit the
+            # token assignment here, then bind the Python name to the parse-time handle.
+            token = self.builder.let(var_name, value_expr.call, span=span)
+            self.scope_manager.define_var(
+                var_name,
+                Channel(value_expr.window, value_expr.peer, value_expr.ub_addr, token),
+                span=span,
+            )
+            return
         if isinstance(value_expr, ir.Expr):
             var = self.builder.let(var_name, value_expr, span=span)
             self._mark_make_tuple_anchor(value_expr)

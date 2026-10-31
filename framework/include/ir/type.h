@@ -549,6 +549,35 @@ inline MemRefTypePtr GetMemRefType()
 }
 
 /**
+ * \brief Distributed window type representation
+ */
+class WindowType : public Type {
+public:
+    /**
+     * \brief Create a window type
+     */
+    WindowType() = default;
+
+    [[nodiscard]] ObjectKind GetKind() const override { return ObjectKind::WindowType; }
+    [[nodiscard]] std::string TypeName() const override { return "WindowType"; }
+
+    static constexpr auto GetFieldDescriptors() { return Type::GetFieldDescriptors(); }
+};
+
+using WindowTypePtr = std::shared_ptr<const WindowType>;
+
+/**
+ * \brief Get a shared pointer to the singleton WindowType instance
+ *
+ * \return Shared pointer to WindowType
+ */
+inline WindowTypePtr GetWindowType()
+{
+    static const auto windowType = std::make_shared<WindowType>();
+    return windowType;
+}
+
+/**
  * \brief Pointer type representation
  *
  * Represents a raw pointer to global memory of a specific element type.

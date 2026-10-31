@@ -153,6 +153,7 @@ def runtime(monkeypatch):
         ConstInt=_ConstInt, ConstFloat=_ConstFloat, ConstBool=_ConstBool, MakeTuple=_MakeTuple,
         TileType=_TileType, TensorType=type("TensorType", (_TileType,), {}),
         TupleType=_TupleType, PtrType=type("PtrType", (), {}), NoneType=_NoneType,
+        WindowType=type("WindowType", (), {}),
         Span=_Span, DataType=_DType, MemorySpace=types.SimpleNamespace(Vec="vec"),
         FunctionType=types.SimpleNamespace(SimtVF="simt", SimtCallee="simt_callee", SimtKernel="simt_kernel"),
         SectionKind=types.SimpleNamespace(Cube="cube", Vector="vector"),
@@ -193,6 +194,7 @@ def runtime(monkeypatch):
     simt = types.SimpleNamespace()
     module("pypto_pro.language._simt_api", Simt=simt)
     module("pypto_pro.language._system_api", System=types.SimpleNamespace())
+    module("pypto_pro.language.distribute")
     vf = types.SimpleNamespace()
     module("pypto_pro.language._vf_api", Vf=vf)
     module(
@@ -300,6 +302,9 @@ def runtime(monkeypatch):
             return self._dispatch_op(name, self.call, registry._OP_REGISTRY[name])
 
         def _route_ir_node_method(self, call):
+            return None
+
+        def _route_channel_method(self, call):
             return None
 
         def _extract_op_name(self, node):

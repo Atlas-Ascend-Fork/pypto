@@ -36,6 +36,7 @@ from ..._errors import (
     current_span,
 )
 from .. import _api as _language_api
+from .. import distribute as _distribute_api
 from .._vf_api import Vf
 from . import _argument_checker
 from ._control_flow_parser import _is_bare_return
@@ -598,6 +599,7 @@ class CallParserMixin:
 
         pl.system.bar_all -> "system.bar_all"
         pl.add_scalar     -> "add_scalar"
+        pld.barrier       -> "dist.barrier"  (distribute module prefix)
         vf.add            -> "vf.add"  (vf prefix retained)
         bare_name         -> the op an imported alias stands for, otherwise None
 
@@ -606,7 +608,9 @@ class CallParserMixin:
         otherwise reach parse_call as a plain callable and smuggle a VF
         instruction past the execution-domain check in _validate_op_scope, and a
         renamed declaration module would silently reopen that bypass instead of
-        failing loudly.
+        failing loudly. The distribute module is matched by identity for the same
+        reason: without the explicit "dist." prefix, ``pld.barrier`` would collapse
+        to the bare name "barrier" and collide with the top-level op namespace.
         """
         if isinstance(func, ast.Name):
             resolved = self.expr_evaluator.closure_vars.get(func.id)
@@ -615,6 +619,8 @@ class CallParserMixin:
                 return None
             if getattr(Vf, name, None) is resolved:
                 return f"vf.{name}"
+            if getattr(_distribute_api, name, None) is resolved:
+                return f"dist.{name}"
             if getattr(_language_api, name, None) is resolved:
                 return name
             return None
@@ -632,6 +638,8 @@ class CallParserMixin:
             return ".".join(["vf", *attrs[1:]])
         if attrs[1] == "Vf":
             return ".".join(["vf", *attrs[2:]])
+        if self.expr_evaluator.closure_vars.get(attrs[0]) is _distribute_api:
+            return ".".join(["dist", *attrs[1:]])
         return ".".join(attrs[1:])
 
     @staticmethod
@@ -971,6 +979,10 @@ class CallParserMixin:
             self._validate_op_scope(op_name, call)
 
         result = self._route_ir_node_method(call)
+        if result is not None:
+            return result
+
+        result = self._route_channel_method(call)
         if result is not None:
             return result
 

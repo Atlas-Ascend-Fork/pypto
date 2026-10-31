@@ -371,6 +371,13 @@ void BindTypeClass(py::module_& ir)
     ptr_type_class.def_static("get", &GetOuterCompatPtrType, "Get the outer-IR compatibility pointer type singleton");
     BindFields<PtrType>(ptr_type_class);
 
+    // WindowType - const shared_ptr; opaque handle to a distributed window
+    auto window_type_class = py::class_<WindowType, Type, std::shared_ptr<WindowType>>(
+        ir, "WindowType", "Opaque distributed-window handle type (device dist::Window descriptor)");
+    window_type_class.def(py::init<>(), "Create a window type");
+    window_type_class.def_static("get", &GetWindowType, "Get the singleton WindowType instance");
+    BindFields<WindowType>(window_type_class);
+
     // IRNode - abstract base, const shared_ptr
     auto irnode_class = py::class_<IRNode, std::shared_ptr<IRNode>>(ir, "IRNode", "Base class for all IR nodes");
     BindFields<IRNode>(irnode_class);

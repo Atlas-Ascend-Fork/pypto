@@ -71,10 +71,10 @@ KERNEL_HEADER_SINGLE = """\
 */
 
 #include <cstdint>
-// Block num/idx accessors: the SK record vs raw-builtin implementation is selected by
-// -D__PYPTO_SK_BLOCK__ at compile time (see pypto_block_meta.h). Top-level so the
-// target-guarded impl and the caller-side entries all see the definitions.
 #include <pypto_block_meta.h>
+#if defined(__DAV_VEC__) && defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#include "jetty/hcomm_jetty.h"
+#endif
 #include <pto/pto-inst.hpp>
 
 using namespace pto;
@@ -216,6 +216,7 @@ class ParamKind(Enum):
     PTR = "ptr"
     SCALAR = "scalar"
     TILING = "tiling"
+    WINDOW = "window"  # pld.Window: opaque dist::Window descriptor pointer
 
 
 @dataclasses.dataclass
@@ -279,7 +280,8 @@ class GeneratedKernel:
     # Superkernel capability mask (None = no ``__sk__`` entry). The shared compiler-flag
     # builders derive the SK defines and asc-devkit include roots from it.
     sk_cap: SkCap | None = None
-
+    # Compile with -D__PYPTO_SANITIZER__=1 so device helpers keep their validation traps.
+    sanitizer: bool = False
     simt_kernel: bool = False
 
 
@@ -641,6 +643,10 @@ def _extract_param_specs(
         elif isinstance(t, TupleType):
             # Tiling struct param: passed as a single uint8 device buffer pointer.
             specs.append(ParamSpec(var.name, ParamKind.TILING, None, None))
+        elif isinstance(t, ir.WindowType):
+            # Window param: passed as the device dist::Window descriptor pointer
+            # (win.data_ptr()); no host-side serialization.
+            specs.append(ParamSpec(var.name, ParamKind.WINDOW, None, None))
         elif isinstance(t, ScalarType):
             specs.append(ParamSpec(var.name, ParamKind.SCALAR, t.dtype, None))
     return specs
@@ -662,7 +668,8 @@ def _entry_params_from_param_specs(param_specs: list[ParamSpec]) -> list[tuple[s
     for spec in param_specs:
         if spec.kind in (ParamKind.TENSOR, ParamKind.PTR):
             params.append((_cce_cpp_type_from_dtype(spec.dtype, param_name=spec.name), spec.name, True))
-        elif spec.kind == ParamKind.TILING:
+        elif spec.kind in (ParamKind.TILING, ParamKind.WINDOW):
+            # Both cross the ABI as one raw GM byte pointer.
             params.append(("uint8_t", spec.name, True))
         elif spec.kind == ParamKind.SCALAR:
             params.append((_cce_cpp_type_from_dtype(spec.dtype, param_name=spec.name), spec.name, False))
@@ -757,6 +764,9 @@ class _LaunchPlan:
     Attributes:
         n_params: Expected argument count.
         has_tiling: Whether any parameter is a tiling struct (skips _pack_tiling_arg).
+        window_indices: Parameter indices of pld.Window params; their argument is the
+            host Window object and the ABI value is ``win.data_ptr()`` (the device
+            descriptor address) — resolved per launch, no packing.
         slots: Per-parameter descriptors in ABI order. Tensor slots are
             ``(True, index, name, torch_dtypes | None, rank, const_dims, dyn_dims, pack)``
             where ``rank`` is -1 for parameters whose shape is not checked (PTR, or no
@@ -775,16 +785,19 @@ class _LaunchPlan:
     tensor's ``.shape`` once instead of rebuilding the torch.Size per dynamic dimension.
     """
 
-    __slots__ = ("n_params", "has_tiling", "slots", "dyn_checks", "dyn_count")
+    __slots__ = ("n_params", "has_tiling", "window_indices", "slots", "dyn_checks", "dyn_count")
 
     def __init__(self, param_specs: list[ParamSpec]) -> None:
         self.n_params = len(param_specs)
         self.has_tiling = any(spec.kind == ParamKind.TILING for spec in param_specs)
+        self.window_indices = frozenset(
+            index for index, spec in enumerate(param_specs) if spec.kind == ParamKind.WINDOW
+        )
         slots: list[tuple] = []
         occurrences: dict[str, list[tuple[int, int, int]]] = {}
         sources: dict[str, tuple[int, int]] = {}
         for index, spec in enumerate(param_specs):
-            if spec.kind not in (ParamKind.TENSOR, ParamKind.PTR, ParamKind.TILING):
+            if spec.kind not in (ParamKind.TENSOR, ParamKind.PTR, ParamKind.TILING, ParamKind.WINDOW):
                 ctype = _PL_DTYPE_TO_CTYPE.get(str(spec.dtype))
                 if ctype is None:
                     # A property of the dtype, not of any argument: reject it once here
@@ -862,6 +875,14 @@ def _build_launch_entry(compiled: "CompiledKernel"):
     call_kernel = lib.call_kernel
     n_params = plan.n_params
     has_tiling = plan.has_tiling
+    window_indices = plan.window_indices
+    window_cls = None
+    if window_indices:
+        # Resolve the pybind Window class once (absent on non-CANN builds, where no
+        # kernel could have compiled a window param in the first place).
+        from pypto import pypto_impl
+
+        window_cls = getattr(getattr(pypto_impl, "dist", None), "Window", None)
     slots = plan.slots
     dyn_checks = plan.dyn_checks
     simt_kernel = compiled.simt_kernel
@@ -900,6 +921,14 @@ def _build_launch_entry(compiled: "CompiledKernel"):
             if not slot[0]:
                 _validate_scalar_arg(index, arg, slot[2])
                 append(arg)
+                continue
+            if index in window_indices:
+                # pld.Window: the ABI value is the device descriptor address itself.
+                if window_cls is None or not isinstance(arg, window_cls):
+                    raise InvalidType(
+                        f"arg[{index}] '{slot[2]}': expected a pld.Window, got {type(arg).__name__}"
+                    )
+                append(arg.data_ptr())
                 continue
             _, _, name, expected_dtypes, rank, consts, dyn_dims, pack = slot
             if arg is None:
@@ -1309,7 +1338,7 @@ def _build_bisheng_flags(
             raise InvalidOperation("Contains ffts cross sync but vector code is missing.")
         if target.aiv_per_block:
             raise InvalidOperation("Contains ffts cross sync but cube code is missing.")
-    return get_jit_compile_config().build_bisheng_flags(
+    flags = get_jit_compile_config().build_bisheng_flags(
         toolkit_home=toolkit_home,
         arch=arch,
         target=target,
@@ -1318,6 +1347,7 @@ def _build_bisheng_flags(
         sk_cap=sk_cap,
         ascend_home_path=ascend_home_path,
     )
+    return flags
 
 
 def _build_llvm_args(arch: NpuArch) -> list[str]:
@@ -2029,6 +2059,8 @@ def _compile_shared_library(
         sk_cap=generated.sk_cap,
         ascend_home_path=ascend_home_path,
     )
+    if generated.sanitizer:
+        flags.extend(["-D__PYPTO_SANITIZER__=1"])
     bisheng_path = shutil.which("bisheng")
     if bisheng_path is None:
         logging.error("bisheng executable was not found")
@@ -2216,6 +2248,7 @@ def _build_jit_so(
         target=target,
         simt_kernel=cg.simt_kernel,
         sk_cap=sk_cap,
+        sanitizer=cg.sanitizer,
     )
     return _compile_shared_library(paths, arch, generated, clean_up, compile_timeout)
 

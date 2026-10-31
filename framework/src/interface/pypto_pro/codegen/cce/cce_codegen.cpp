@@ -721,6 +721,7 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& program, npu::tile_
     emitter_.EmitLine("#endif");
     EmitStructTypes();
     emitter_.EmitLine("#include <pypto_dump.h>");
+    emitter_.EmitLine("#include <pypto_distribute.h>");
     emitter_.EmitRaw(function_code);
     emitter_.EmitLine("#endif");
 
@@ -807,6 +808,16 @@ void CCECodegen::EmitSingleFunctionSignature(const ir::FunctionPtr& func, bool h
             std::string param_name = context_.SanitizeName(param);
             sig << "__gm__ uint8_t* " << param_name << "_ptr";
             context_.RegisterVar(param, param_name);
+        } else if (std::dynamic_pointer_cast<const ir::WindowType>(param->GetType())) {
+            // Window param: raw GM byte pointer to the device dist::Window
+            // descriptor the host wrote at create_window. Field reads (dist.window_get)
+            // cast it to the embedded PyptoDistWindow copy, so only the pointer name is
+            // addressable in C++.
+            std::string param_name = context_.SanitizeName(param);
+            std::string ptr_name = param_name + "_ptr";
+            sig << "__gm__ uint8_t* " << ptr_name;
+            context_.RegisterVar(param, param_name);
+            RegisterPointer(param_name, ptr_name);
         }
     }
     // Append dynamic dim variables as int64_t parameters
@@ -2952,6 +2963,36 @@ std::string CCECodegen::BindGlobalTensor(const ir::VarPtr& tensor_var, const ir:
     }
     emitter_.EmitLine("TASSIGN(" + decl_name + ", " + pointer_expr + ");");
     return decl_name;
+}
+
+std::string CCECodegen::BindDistGlobalTensor(const ir::TensorTypePtr& view_type, const ir::MakeTuplePtr& offsets,
+                                             const std::optional<std::vector<int>>& tile_dims, bool is_transpose,
+                                             const std::vector<ir::ExprPtr>& tile_shape, const std::string& remote_base,
+                                             const std::string& tile)
+{
+    // Offset flattening and stride construction are the block.load/block.store helpers over
+    // the synthetic view type, so addressing follows the local ops exactly.
+    const std::string elem_off = ComputeTensorOffset(view_type, offsets);
+    const std::string stride_args = BuildAccessStrideArgs(view_type, tile_dims, is_transpose, false);
+    const std::string dtype_str = view_type->dtype_.ToCTypeString();
+    const bool is_dn = IsDNAccessLayout(ExtractShapeDimensions(tile_shape), is_transpose);
+    const std::string layout = is_dn ? "pto::Layout::DN" : "pto::Layout::ND";
+
+    // Per-call-site declaration (window views have no prescan entry) + instance over the
+    // peer payload, resized to the tile's runtime valid window.
+    const int counter = GetTileOffsetCounter();
+    const std::string decl = "pypto_dist_gt" + std::to_string(counter);
+    const std::string inst = "pypto_dist_g" + std::to_string(counter);
+    emitter_.EmitLine("using " + decl + "ShapeDim5 = pto::TileShape2D<" + dtype_str + ", pto::DYNAMIC, pto::DYNAMIC, " +
+                      layout + ">;");
+    emitter_.EmitLine("using " + decl + "StrideDim5 = pto::Stride<-1, -1, -1, -1, -1>;");
+    emitter_.EmitLine("using " + decl + "Type = pto::GlobalTensor<" + dtype_str + ", " + decl + "ShapeDim5, " + decl +
+                      "StrideDim5, " + layout + ">;");
+    EmitGlobalTensorInstance(inst, decl, remote_base + " + " + elem_off, "", stride_args);
+    emitter_.EmitLine(inst + ".SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(" +
+                      "static_cast<int64_t>(" + tile + ".GetValidRow()), static_cast<int64_t>(" + tile +
+                      ".GetValidCol()));");
+    return inst;
 }
 
 void CCECodegen::EmitGlobalTensorInstance(const std::string& instance_name, const std::string& decl_name,

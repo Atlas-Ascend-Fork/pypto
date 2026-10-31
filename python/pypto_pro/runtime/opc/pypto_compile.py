@@ -305,6 +305,13 @@ def _compile_target_options(kernel_type: KernelMetaType, enable_c310_rules: bool
     return options
 
 
+_JETTY_PREINCLUDE = (
+    "#if defined(__DAV_VEC__) && defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)\n"
+    '#include "jetty/hcomm_jetty.h"\n'
+    "#endif\n"
+)
+
+
 def _gen_infer_cpp(cg, tilingkey_header: str, kernel_cpp: str, kernel_type: KernelMetaType) -> str:
     sig, names = _signature_parts(cg.entry_params)
     ws_idx = len(names) - 2 if len(names) >= 2 else None
@@ -317,7 +324,8 @@ def _gen_infer_cpp(cg, tilingkey_header: str, kernel_cpp: str, kernel_type: Kern
         )
         inner[ws_idx] = "usrWorkspace"
     return (
-        '#include "kernel_operator.h"\n'
+        _JETTY_PREINCLUDE
+        + '#include "kernel_operator.h"\n'
         f'#include "{tilingkey_header}"\n'
         f"{kernel_cpp}\n"
         f'extern "C" __global__ AICORE void {cg.kernel_name}({sig})\n'
@@ -465,9 +473,20 @@ def _setup_options(op_info, compile_options, op_compile_option, extend_options):
     opt.compile_options = compile_pre_process(op_info, opt.compile_options)
     _update_compile_option(_op_info_get(op_info, "kernel_name"), opt.compile_options, extend_options)
     opt.compile_options.append("-DASCENDC_TPL_KERNEL")
+    from ..compile_config import device_framework_include_dir
+
     pypto_include = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "include")
     opt.compile_options.append(f"-I{pypto_include}")
     opt.compile_options.extend((f"-I{PTO_DEBUG_ROOT}", f"-I{PTO_DEBUG_ROOT}/include"))
+    # Generated kernels include tilefwk/distribute_context.h through pypto_distribute.h; the
+    # staged framework root (the same flag the JIT adds via runtime_include_flags) resolves it.
+    fwk_include = device_framework_include_dir()
+    if fwk_include is not None:
+        opt.compile_options.append(f"-I{fwk_include}")
+    # asc-comm jetty API (hcomm_jetty.h), used by pypto_distribute.h's write-engine helpers.
+    toolkit_home = os.environ.get("ASCEND_TOOLKIT_HOME") or os.environ.get("ASCEND_HOME_PATH")
+    if toolkit_home:
+        opt.compile_options.append(f"-I{toolkit_home}/asc/include/comm_api/aicore")
     return opt
 
 
@@ -622,7 +641,8 @@ def _gen_key_src(kernel_cpp_path, origin_func, impl_name, entry_params, kernel_n
     inner = list(names)
     kernel_type = compile_info.tiling_key_kernel_type[str(packed)]
     return (
-        '#include "kernel_operator.h"\n'
+        _JETTY_PREINCLUDE
+        + '#include "kernel_operator.h"\n'
         f'#include "{kernel_cpp_path}"\n'
         f"__aicore__ inline __attribute__((always_inline)) void ascendc_auto_gen_{origin_func}_kernel({sig})\n"
         "{\n"

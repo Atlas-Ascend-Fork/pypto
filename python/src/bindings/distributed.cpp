@@ -15,6 +15,8 @@
 
 #include "pybind_common.h"
 
+#include "machine/runtime/distributed/window_context.h"
+
 using namespace npu::tile_fwk;
 using namespace npu::tile_fwk::Distributed;
 
@@ -160,6 +162,57 @@ void BindDistributed(py::module_& m)
     m.def(
         "GetSymbolicScalarPeId", [](std::string group) { return GetHcclRankId(group); }, py::arg("group"),
         "Get local rank id by groupname.");
+
+    py::module_ dist = m.def_submodule("dist");
+#ifdef BUILD_WITH_CANN // mirrors the window_context.cpp guard; keeps no-CANN builds linking
+    py::class_<WindowContext, std::shared_ptr<WindowContext>>(dist, "Window", py::dynamic_attr())
+        .def("rank", &WindowContext::Rank, "This rank's index in the group.")
+        .def("nrank", &WindowContext::NRank, "Group size.")
+        .def("size", &WindowContext::Size, "Payload size in bytes (data region only).")
+        .def("num_signals", &WindowContext::NumSignals, "Reserved signal-slot count.")
+        .def("data_ptr", &WindowContext::DataPtr,
+             "Device address of the device-side Window descriptor (host handle; in-kernel "
+             "win.data_ptr() reads the payload base instead).")
+        .def("support_multi_issuer", &WindowContext::SupportsMultiIssuer,
+             "True when every peer shares one local UBC_CTP endpoint, so any AIV may issue engine "
+             "writes to any peer; False when each peer needs a single issuer AIV.")
+        .def("__str__", &WindowContext::ToString)
+        .def(
+            "close",
+            [](WindowContext& win) {
+                // Collective teardown blocks on peers; don't stall other Python threads.
+                py::gil_scoped_release gil;
+                win.Close();
+            },
+            "Release resources; all-rank collective.");
+
+    dist.def(
+        "create_window",
+        [](int32_t rank, int32_t nrank, int64_t size, int64_t bufferSize, int64_t numSignals, int64_t deviceAddr,
+           int64_t streamAddr, const std::string& hcclGroupName, const std::string& name) {
+            std::shared_ptr<WindowContext> win;
+            {
+                // Collective setup blocks for seconds (AllGather barriers, channel connect);
+                // don't stall other Python threads while polling.
+                py::gil_scoped_release gil;
+                win = CreateWindow(rank, nrank, size, bufferSize, numSignals, deviceAddr, streamAddr, hcclGroupName,
+                                   name);
+            }
+            return win;
+        },
+        py::arg("rank"), py::arg("nrank"), py::arg("size"), py::arg("buffer_size"), py::arg("num_signals"),
+        py::arg("device_addr"), py::arg("stream"), py::arg("hccl_name"), py::arg("name") = std::string(),
+        "Register a symmetric window on the HCCL comm and build its connections.");
+
+    dist.def(
+        "dump_topology",
+        [](const std::string& hcclGroupName, int32_t rank, int32_t nrank, int32_t layer) {
+            return GetGroupTopology(hcclGroupName, rank, nrank, layer);
+        },
+        py::arg("hccl_name"), py::arg("rank"), py::arg("nrank"), py::arg("layer") = -1,
+        "Dump the rank-graph topology of an HCCL comm: per net layer its interconnect topology, the ranks "
+        "reachable from this rank, and the links to each peer. layer < 0 dumps every layer.");
+#endif
 }
 
 } // namespace pypto

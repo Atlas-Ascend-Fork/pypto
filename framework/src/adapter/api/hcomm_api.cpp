@@ -168,6 +168,33 @@ HcommResult HcommRankGraphGetLinks(HcommHandle comm, uint32_t netLayer, uint32_t
     return StubRankGraphGetLinks(comm, netLayer, srcRank, dstRank, links, linkNum);
 }
 
+HcommResult HcommRankGraphGetRanksByLayer(HcommHandle comm, uint32_t netLayer, uint32_t** ranks, uint32_t* rankNum)
+{
+#if defined(BUILD_WITH_CANN)
+    void* func = AdapterManager::Instance().GetHcclAdapter().GetFunction(HcclFunc::RankGraphGetRanksByLayer);
+    if (func != nullptr) {
+        HcclResult (*hcommFunc)(
+            HcclComm, uint32_t, uint32_t**,
+            uint32_t*) = reinterpret_cast<HcclResult (*)(HcclComm, uint32_t, uint32_t**, uint32_t*)>(func);
+        return static_cast<HcommResult>(hcommFunc(comm, netLayer, ranks, rankNum));
+    }
+#endif
+    return StubRankGraphGetRanksByLayer(comm, netLayer, ranks, rankNum);
+}
+
+HcommResult HcommRankGraphGetTopoTypeByLayer(HcommHandle comm, uint32_t netLayer, HCommTopo* topoType)
+{
+#if defined(BUILD_WITH_CANN)
+    void* func = AdapterManager::Instance().GetHcclAdapter().GetFunction(HcclFunc::RankGraphGetTopoTypeByLayer);
+    if (func != nullptr) {
+        HcclResult (*hcommFunc)(HcclComm, uint32_t,
+                                CommTopo*) = reinterpret_cast<HcclResult (*)(HcclComm, uint32_t, CommTopo*)>(func);
+        return static_cast<HcommResult>(hcommFunc(comm, netLayer, reinterpret_cast<CommTopo*>(topoType)));
+    }
+#endif
+    return StubRankGraphGetTopoTypeByLayer(comm, netLayer, topoType);
+}
+
 HcommResult HcommChannelAcquire(HcommHandle comm, CommEngine engine, const HcclChannelDesc* channelDescs,
                                 uint32_t channelNum, ChannelHandle* channels)
 {
