@@ -119,7 +119,11 @@ INLINE uint32_t RefreshParallelDevTaskByModifyFlag(ExecuteContext* ctx, uint32_t
             if (newElemPtr) {
                 dcci((__gm__ void*)newElemPtr, SINGLE_CACHE_LINE, CACHELINE_OUT);
             }
-        } while (newElemPtr == 0 || (((__gm__ DynFuncHeader*)newElemPtr)->seqNo != newDevTaskId));
+        } while (newElemPtr == 0 || (((__gm__ DynFuncHeader*)newElemPtr)->seqNo < newDevTaskId));
+        if (newElemPtr == 0 || ((__gm__ DynFuncHeader*)newElemPtr)->seqNo > newDevTaskId) {
+            mask &= (mask - 1);
+            continue;
+        }
         UpdateCacheDevTask(ctx, idx, newElemPtr);
         mask &= (mask - 1);
     }

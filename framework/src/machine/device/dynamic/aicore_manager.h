@@ -1103,6 +1103,7 @@ private:
             }
 
             aicoreHal_.SetParallelDevTaskCtxVersion(coreIdx, context_->PrallelVersion());
+            __sync_synchronize();
         }
         return encodeTaskId;
     }
