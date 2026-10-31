@@ -1,0 +1,5 @@
+function main incast(tensor<64, float, tensor_view<, , ND, %x_ptr>> %x_0) outcast() #entry(false) #type(Opaque) {
+    system.wait_pre_task_end(force=true);
+    tensor<64, float, tensor_view<, , ND, %x_ptr>> %_test_result_0 = %x_0;
+    return;
+}

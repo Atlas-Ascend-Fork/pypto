@@ -34,4 +34,4 @@ from pypto.pypto_impl.ir import MemorySpace  # noqa: F401
 # Preload pipeline transform — single-point feature, accessed via pl.pipeline.*
 # (e.g. pl.pipeline.PipelineConfig), not exposed as top-level framework API.
 from . import pipeline  # noqa: F401
-from .jit import jit
+from .jit import SkCap, jit  # noqa: F401

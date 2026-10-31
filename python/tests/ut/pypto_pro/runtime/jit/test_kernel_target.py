@@ -52,9 +52,9 @@ def test_asc_targets_keep_entry_profiling_and_launch_geometry_consistent(
     config = get_jit_compile_config()
     target = config.resolve_kernel_target(arch, has_cube=cube, has_vector=vector)
     flags = config.build_bisheng_flags(toolkit_home="/toolkit", arch=arch, target=target, enable_print_debug=False)
-    entry = jit._make_global_entry("probe", [], target=target)
     caller = jit._generate_caller_cpp(
-        [], "kernel.cpp", "probe", target=target, global_entry=entry,
+        [], "kernel.cpp", "probe", target=target,
+        global_entry=jit._make_global_entry("probe", [], target=target),
         prof_param_specs=[jit.ParamSpec("out", jit.ParamKind.TENSOR, "int32", [32], pl.Output)],
     )
     assert target.npu_arch == npu_arch
@@ -205,6 +205,71 @@ def test_shared_library_and_caller_use_the_same_resolved_target(monkeypatch, tmp
     assert "probe<<<blockDim, 16384, stream>>>" in caller
 
 
+def test_sk_switches_live_in_the_shared_flag_builders():
+    """SK defines and asc-devkit include roots come from the centralized helpers."""
+    target = get_jit_compile_config().resolve_kernel_target(NpuArch.DAV_3510, has_cube=False, has_vector=True)
+
+    def flags(sk_cap=None, ascend_home_path=None):
+        return jit._build_bisheng_flags(
+            "/toolkit", NpuArch.DAV_3510, target,
+            has_cross_sync=False, enable_print_debug=False,
+            sk_cap=sk_cap, ascend_home_path=ascend_home_path,
+        )
+
+    assert "-D__PYPTO_SK_BLOCK__" not in flags()
+    assert "-D__PYPTO_SK_BLOCK__" in flags(4)
+    assert "-D__ASCENDC_SUPERKERNEL_EARLY_START_V3" not in flags(4)
+    assert "-D__ASCENDC_SUPERKERNEL_EARLY_START_V3" in flags(3)
+
+    # Include roots come from the same builder and only when ascend_home_path is given.
+    assert "-I/toolkit/compiler/asc" not in flags()
+    combined = flags(4, ascend_home_path="/toolkit")
+    assert "-I/toolkit/compiler/asc" in combined
+    assert "-I/toolkit/compiler/asc/include" in combined
+
+
+def test_simt_frontend_flag_is_only_added_for_simt_kernels():
+    """SIMT code (threadIdx/blockDim/__launch_bounds__) needs bisheng's SIMT frontend."""
+    target = get_jit_compile_config().resolve_kernel_target(NpuArch.DAV_3510, has_cube=False, has_vector=True)
+
+    def flags(enable_simt):
+        return jit._build_bisheng_flags(
+            "/toolkit", NpuArch.DAV_3510, target,
+            has_cross_sync=False, enable_print_debug=False, enable_simt=enable_simt,
+        )
+
+    assert "--enable-simt" in flags(True)
+    assert "--enable-simt" not in flags(False)
+
+
+def test_shared_library_forwards_sk_cap_into_compiler_flags(monkeypatch, tmp_path):
+    """The real build command must carry the SK switches via the shared builders."""
+    target = get_jit_compile_config().resolve_kernel_target(NpuArch.DAV_3510, has_cube=True, has_vector=True)
+    monkeypatch.setenv("ASCEND_TOOLKIT_HOME", "/toolkit")
+    monkeypatch.setenv("ASCEND_HOME_PATH", "/toolkit")
+    monkeypatch.setattr(jit.shutil, "which", lambda _: "/toolkit/bin/bisheng")
+    captured = []
+
+    def compile_stub(_bisheng, flags, _arch, paths, _links, _timeout, output_path):
+        captured.append(flags)
+        Path(output_path).write_bytes(b"compiled test library")
+        return True
+
+    monkeypatch.setattr(jit, "_run_bisheng", compile_stub)
+    cg = jit.CodegenResult(
+        build_dir=str(tmp_path), content="", kernel_name="probe", kernel_params=[],
+        caller_cross_core_sync=False, bisheng_cross_sync=False, needs_print_debug=False,
+        has_cube=True, has_vector=True,
+    )
+    jit._build_jit_so(cg, NpuArch.DAV_3510, clean_up=False, compile_timeout=30,
+                      target=target, sk_cap=3)
+    flags = captured[0]
+    assert "-D__PYPTO_SK_BLOCK__" in flags
+    assert "-D__ASCENDC_SUPERKERNEL_EARLY_START_V3" in flags
+    assert "-I/toolkit/compiler/asc" in flags
+    assert "-I/toolkit/compiler/asc/include" in flags
+
+
 def test_compilation_preserves_target_for_cached_launch_and_debug(monkeypatch, tmp_path):
     """The compiled object must retain the exact descriptor selected when its binary was built."""
     config = get_jit_compile_config()
@@ -244,8 +309,12 @@ def test_debug_command_reuses_compiled_target_without_resolving(monkeypatch, tmp
     target = KernelTarget("test-compiled-target", 1, 1, True)
     compiled = jit.CompiledKernel(
         lib_path="/tmp/test-kernel.so", param_specs=[],
-        kernel_name="probe", build_dir=str(tmp_path), target=target,
+        kernel_name="probe", build_dir=str(tmp_path), target=target, sk_cap=3,
     )
     command = dump._build_debug_compile_cmd(compiled)
     assert "--npu-arch=test-compiled-target" in command
     assert "--npu-arch=dav-3510" not in command
+    # The dump rebuild must replay the SK switches from the same centralized builders.
+    assert "-D__PYPTO_SK_BLOCK__" in command
+    assert "-D__ASCENDC_SUPERKERNEL_EARLY_START_V3" in command
+    assert "-I/toolkit/compiler/asc" in command
