@@ -2175,6 +2175,11 @@ INLINE void InitDrcoEntry(DrcoEntryState* state, int64_t cfgdata)
     // 读、无发布时序（进本入口必为 DRCO 解依赖。
     state->deviceTaskReadyQueue = reinterpret_cast<__gm__ npu::tile_fwk::DrcoDeviceTaskReadyQueue*>(
         (__gm__ uint8_t*)state->base + devArgs->deviceTaskReadyQueueOffset);
+#if !ENABLE_AICORE_BN_PARALLEL
+    // 老路径：slot 内指针字段兼作“槽已发布”标志，空指针重取见 GetDrcoDeviceTask
+    DRCO_DCCI_SINGLE_CACHE_LINE(state->base);
+    state->deviceTaskReadyQueue = DrcoGmLoad(&state->base->drcoDeviceTaskReadyQueue);
+#endif
     // middleQueue 状态容器默认指向老路径单份存储（并行窗口模式 visit 入口重定向到 per-槽）
     state->mq = &state->mqStorage;
     // 并行模式：入口选路由编译期宏承担（与 device_launcher parallelMode 同源）。
@@ -2200,6 +2205,17 @@ INLINE __gm__ DrcoDeviceTask* GetDrcoDeviceTask(DrcoEntryState* state, bool& isF
         __gm__ DrcoDeviceTask* deviceTask = nullptr;
         while (true) {
             DRCO_LEADER_TIMEOUT_CHECK(t0, loopCount, AICORE_LEAF_TASK_RUN_TIMEOUT, STAGE_RUN_LEAFTASK_TIMEOUT);
+            if (state->deviceTaskReadyQueue == nullptr) {
+                DRCO_DCCI_SINGLE_CACHE_LINE(state->runtimeDataRingBufferHeadData);
+                state->base = npu::tile_fwk::RuntimeDataRingBufferHeadData::GetRuntimeDataCurrent(
+                    state->runtimeDataRingBufferHeadData);
+                DRCO_DCCI_SINGLE_CACHE_LINE(state->base);
+                state->deviceTaskReadyQueue = DrcoGmLoad(&state->base->drcoDeviceTaskReadyQueue);
+                if (state->deviceTaskReadyQueue == nullptr) {
+                    DrcoBusyBackOff();
+                    continue;
+                }
+            }
             deviceTask = GetCurrentDeviceTask(state->deviceTaskReadyQueue);
             if (deviceTask == nullptr) {
                 uint32_t qHead = DrcoAtomicLoad(&state->deviceTaskReadyQueue->head);
@@ -2222,6 +2238,13 @@ INLINE __gm__ DrcoDeviceTask* GetDrcoDeviceTask(DrcoEntryState* state, bool& isF
     }
 
     SyncAllMix();
+    if (state->deviceTaskReadyQueue == nullptr) {
+        DRCO_DCCI_SINGLE_CACHE_LINE(state->runtimeDataRingBufferHeadData);
+        state->base = npu::tile_fwk::RuntimeDataRingBufferHeadData::GetRuntimeDataCurrent(
+            state->runtimeDataRingBufferHeadData);
+        DRCO_DCCI_SINGLE_CACHE_LINE(state->base);
+        state->deviceTaskReadyQueue = DrcoGmLoad(&state->base->drcoDeviceTaskReadyQueue);
+    }
     __gm__ DrcoDeviceTask* deviceTask = GetCurrentDeviceTask(state->deviceTaskReadyQueue);
     return deviceTask;
 }
