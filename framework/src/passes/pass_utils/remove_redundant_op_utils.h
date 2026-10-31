@@ -16,6 +16,12 @@
 #ifndef PASS_REMOVE_REDUNDANT_OP_UTILS_H_
 #define PASS_REMOVE_REDUNDANT_OP_UTILS_H_
 
+#include <cstdint>
+#include <functional>
+#include <optional>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include "interface/function/function.h"
 #include "interface/tensor/irbuilder.h"
 #include "interface/tensor/logical_tensor.h"
@@ -60,6 +66,17 @@ private:
     Status ProcessImpl(Function& function, std::vector<Operation*>& newOps, bool& operationUpdated);
     Status ProcessViewAssembleLikeImpl(Function& function, std::vector<Operation*>& newOps, bool& operationUpdated);
     Status ProcessContractSliceImpl(Function& function, std::vector<Operation*>& newOps, bool& operationUpdated);
+    bool ShouldSkipViewAssembleCandidate(
+        Function& function, const Operation& viewOp, const Operation& assembleOp, const LogicalTensorPtr& startTensor,
+        const LogicalTensorPtr& endTensor,
+        const std::unordered_map<int, std::unordered_set<int>>& rawAssembleIndex) const;
+    void ProcessViewAssembleCandidate(Function& function, Operation& viewOp, Operation& assembleOp,
+                                      LogicalTensorPtr& startTensor, LogicalTensorPtr& endTensor,
+                                      std::unordered_map<int, std::unordered_set<int>>& rawAssembleIndex,
+                                      std::vector<Operation*>& newOps, bool& operationUpdated,
+                                      bool& hasDeletedOperations);
+    void RefreshRedundancyQueries(Function& function,
+                                  std::unordered_map<int, std::unordered_set<int>>& rawAssembleIndex);
     Status ProcessSliceContractSlice(Function& function, std::vector<Operation*>& newOps, bool& operationUpdated);
     Status ProcessContractSliceContract(Function& function, bool& operationUpdated);
     static bool MatchContractSliceContract(Operation& sliceOp, Operation*& matchedProducer);
@@ -110,13 +127,13 @@ private:
                                             std::set<Operation*>& precedingSlices, std::vector<Operation*>& newOps,
                                             bool& operationUpdated);
 
-    void ProcessPerfectMatch(Function& function, LogicalTensorPtr& startTensor, LogicalTensorPtr& endTensor,
-                             bool endTensorIsOutcast, bool& operationUpdated);
-    void RemoveViewAssembleForOutcast(LogicalTensorPtr& startTensor, LogicalTensorPtr& endTensor,
+    bool ProcessPerfectMatch(Function& function, LogicalTensorPtr& startTensor, LogicalTensorPtr& endTensor,
+                             bool endTensorIsOutcast, bool& operationUpdated, bool& graphUpdated);
+    bool RemoveViewAssembleForOutcast(LogicalTensorPtr& startTensor, LogicalTensorPtr& endTensor,
                                       bool& operationUpdated);
     void CalculateViewOffset(Operation& op, LogicalTensorPtr& startTensor, LogicalTensorPtr& endTensor,
                              std::vector<int64_t>& newOffset, std::vector<SymbolicScalar>& newDynOffset);
-    void GenerateNewViewLike(Function& function, Operation& op, LogicalTensorPtr& startTensor,
+    bool GenerateNewViewLike(Function& function, Operation& op, LogicalTensorPtr& startTensor,
                              LogicalTensorPtr& endTensor, Opcode newOpcode, std::vector<Operation*>& newOps,
                              bool& operationUpdated);
     void GenerateContractSliceView(Function& function, Operation& sliceOp, const LogicalTensorPtr& inputTensor,
@@ -127,6 +144,24 @@ private:
     bool IsNotSameViewInput(LogicalTensorPtr& startTensor, LogicalTensorPtr& endTensor) const;
     bool IsDataReplace(LogicalTensorPtr& endTensor) const;
     bool IsValidViewAssemble(LogicalTensorPtr& startTensor, LogicalTensorPtr& endTensor) const;
+
+    struct ViewInputSummary {
+        bool valid{false};
+        std::optional<int> startMagic;
+    };
+    struct TensorPairHash {
+        size_t operator()(const std::pair<int, int>& pair) const
+        {
+            return std::hash<int>{}(pair.first) ^ (std::hash<int>{}(pair.second) << 1);
+        }
+    };
+    const ViewInputSummary& GetViewInputSummary(const LogicalTensorPtr& endTensor) const;
+    bool GetDataReplace(const LogicalTensorPtr& endTensor) const;
+    void ClearRedundancyQueryCache() const;
+
+    mutable std::unordered_map<int, ViewInputSummary> viewInputSummaryCache_;
+    mutable std::unordered_map<int, bool> dataReplaceCache_;
+    mutable std::unordered_set<std::pair<int, int>, TensorPairHash> handledPerfectMatchPairs_;
 
     IRBuilder irBuilder_;
 };

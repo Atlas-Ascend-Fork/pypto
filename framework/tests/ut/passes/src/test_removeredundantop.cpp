@@ -33,6 +33,7 @@
 #include "interface/tensor/irbuilder.h"
 #define private public
 #include "passes/tile_graph_pass/graph_optimization/remove_redundant_op.h"
+#include "passes/pass_utils/remove_redundant_op_internal.h"
 #include "passes/pass_utils/remove_redundant_op_utils.h"
 
 namespace npu {
@@ -80,6 +81,43 @@ bool HasToken(const Operation& op, const ir::VarPtr& token)
 {
     return std::find(op.tokens_.begin(), op.tokens_.end(), token) != op.tokens_.end();
 }
+
+struct ViewAssembleQueryGraph {
+    std::shared_ptr<Function> function = std::make_shared<Function>(Program::GetInstance(), "ViewAssembleQuery",
+                                                                    "ViewAssembleQuery", nullptr);
+    const std::vector<int64_t> shape{kNumEight, kNumExpFour};
+    const std::vector<int64_t> offset{kNumZero, kNumZero};
+    LogicalTensorPtr input = CreateTensor();
+    LogicalTensorPtr start = CreateTensor();
+    LogicalTensorPtr part = CreateTensor();
+    LogicalTensorPtr end = CreateTensor();
+    Operation* producer = nullptr;
+    Operation* view = nullptr;
+    Operation* assemble = nullptr;
+
+    LogicalTensorPtr CreateTensor() const
+    {
+        auto tensor = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        tensor->SetMemoryTypeBoth(MemoryType::MEM_UB);
+        return tensor;
+    }
+
+    ViewAssembleQueryGraph()
+    {
+        producer = &PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {input}, {start});
+        view = &PassOperationUtils::AddOperation(*function, Opcode::OP_VIEW, {start}, {part}, [this](Operation& op) {
+            op.SetOpAttribute(std::make_shared<ViewOpAttribute>(offset));
+        });
+        assemble = &PassOperationUtils::AddOperation(
+            *function, Opcode::OP_ASSEMBLE, {part}, {end},
+            [this](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(offset)); });
+    }
+
+    Operation& AddConsumer()
+    {
+        return PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {end}, {CreateTensor()});
+    }
+};
 
 } // namespace
 
@@ -3281,6 +3319,359 @@ TEST_F(TestRemoveRedundantOpPass, ParallelViewAssembleToIntermediateShouldKeepSt
     EXPECT_EQ(consumer.GetIOperands().front(), start);
     EXPECT_EQ(startProducer.GetOOperands().front(), start);
     EXPECT_TRUE(start->HasProducer(&startProducer));
+}
+
+// Multiple removed view/assemble operations without token dependencies only contract the data path.
+TEST_F(TestRemoveRedundantOpPass, CanMigrateRemovedOpsWithoutTokens)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "CanMigrateRemovedOpsWithoutTokens",
+                                               "CanMigrateRemovedOpsWithoutTokens", nullptr);
+    ASSERT_NE(function, nullptr);
+
+    const std::vector<int64_t> shape{kNumEight, kNumExpFour};
+    const std::vector<int64_t> offset{kNumZero, kNumZero};
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto start = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto viewOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto assembleOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto output = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+
+    auto& producer = PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {input}, {start});
+    auto& view = PassOperationUtils::AddOperation(
+        *function, Opcode::OP_VIEW, {start}, {viewOutput},
+        [&offset](Operation& op) { op.SetOpAttribute(std::make_shared<ViewOpAttribute>(offset)); });
+    auto& assemble = PassOperationUtils::AddOperation(
+        *function, Opcode::OP_ASSEMBLE, {viewOutput}, {assembleOutput},
+        [&offset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(offset)); });
+    auto& consumer = PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {assembleOutput}, {output});
+
+    std::vector<Operation*> removedOps{&view, &assemble};
+    auto targetConsumers = remove_redundant_op_internal::GetTensorConsumers(assembleOutput);
+    auto targetProducers = remove_redundant_op_internal::GetTensorProducers(start);
+    ASSERT_EQ(targetConsumers.size(), kSizeOne);
+    ASSERT_EQ(targetProducers.size(), kSizeOne);
+    EXPECT_EQ(targetConsumers.front(), &consumer);
+    EXPECT_EQ(targetProducers.front(), &producer);
+
+    EXPECT_TRUE(remove_redundant_op_internal::CanMigrateRemovedOpsTokenDependency(*function, removedOps,
+                                                                                  targetConsumers, targetProducers));
+    EXPECT_TRUE(view.tokens_.empty());
+    EXPECT_TRUE(view.result_token_.empty());
+    EXPECT_TRUE(assemble.tokens_.empty());
+    EXPECT_TRUE(assemble.result_token_.empty());
+    EXPECT_TRUE(function->GetVarDependency().Empty());
+}
+
+// A refresh removes deleted outputs while preserving the live output on the same raw tensor.
+TEST_F(TestRemoveRedundantOpPass, RefreshRedundancyQueriesRebuildsIndexAndClearsCaches)
+{
+    ViewAssembleQueryGraph g;
+    auto sibling = IRBuilder().CreateTensorVar(g.end->GetRawTensor(), g.offset, g.shape, std::vector<SymbolicScalar>{});
+    auto& siblingAssemble = PassOperationUtils::AddOperation(
+        *g.function, Opcode::OP_ASSEMBLE, {g.part}, {sibling},
+        [&g](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(g.offset)); });
+    auto rawIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(*g.function);
+    RemoveRedundantOpUtils utils;
+    ASSERT_TRUE(utils.IsValidViewAssemble(g.start, g.end));
+    utils.handledPerfectMatchPairs_.insert({g.start->magic, g.end->magic});
+    ASSERT_TRUE(utils.ShouldSkipViewAssembleCandidate(*g.function, *g.view, *g.assemble, g.start, g.end, rawIndex));
+    ASSERT_EQ(rawIndex.at(g.end->GetRawMagic()).size(), kNumTwo);
+
+    siblingAssemble.SetAsDeleted();
+    utils.RefreshRedundancyQueries(*g.function, rawIndex);
+
+    EXPECT_TRUE(utils.viewInputSummaryCache_.empty());
+    EXPECT_TRUE(utils.dataReplaceCache_.empty());
+    EXPECT_TRUE(utils.handledPerfectMatchPairs_.empty());
+    ASSERT_EQ(rawIndex.at(g.end->GetRawMagic()).size(), kNumOne);
+    EXPECT_EQ(rawIndex.at(g.end->GetRawMagic()).count(g.end->magic), kNumOne);
+    EXPECT_EQ(rawIndex.at(g.end->GetRawMagic()).count(sibling->magic), kNumZero);
+    EXPECT_FALSE(utils.ShouldSkipViewAssembleCandidate(*g.function, *g.view, *g.assemble, g.start, g.end, rawIndex));
+    bool operationUpdated = false;
+    bool graphUpdated = true;
+    EXPECT_TRUE(utils.ProcessPerfectMatch(*g.function, g.start, g.end, false, operationUpdated, graphUpdated));
+    EXPECT_FALSE(graphUpdated);
+    EXPECT_FALSE(operationUpdated);
+
+    g.assemble->SetAsDeleted();
+    utils.RefreshRedundancyQueries(*g.function, rawIndex);
+    EXPECT_EQ(rawIndex.count(g.end->GetRawMagic()), kNumZero);
+}
+
+// Deleted assemble producers must not keep an invalid cached verdict after refresh.
+TEST_F(TestRemoveRedundantOpPass, RefreshRedundancyQueriesIgnoresDeletedAssemble)
+{
+    ViewAssembleQueryGraph g;
+    auto invalidPart = g.CreateTensor();
+    PassOperationUtils::AddOperation(*g.function, Opcode::OP_EXP, {g.input}, {invalidPart});
+    auto& invalidAssemble = PassOperationUtils::AddOperation(
+        *g.function, Opcode::OP_ASSEMBLE, {invalidPart}, {g.end},
+        [&g](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(g.offset)); });
+    RemoveRedundantOpUtils utils;
+    EXPECT_TRUE(utils.IsNotSameViewInput(g.start, g.end));
+    EXPECT_TRUE(utils.IsDataReplace(g.end));
+    auto rawIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(*g.function);
+
+    invalidAssemble.SetAsDeleted();
+    ASSERT_TRUE(g.end->HasProducer(&invalidAssemble));
+    utils.RefreshRedundancyQueries(*g.function, rawIndex);
+
+    EXPECT_FALSE(utils.IsNotSameViewInput(g.start, g.end));
+    EXPECT_FALSE(utils.IsDataReplace(g.end));
+    EXPECT_TRUE(utils.IsValidViewAssemble(g.start, g.end));
+}
+
+// A deleted view with a different source/offset must not invalidate the remaining live view.
+TEST_F(TestRemoveRedundantOpPass, RefreshRedundancyQueriesIgnoresDeletedView)
+{
+    ViewAssembleQueryGraph g;
+    const std::vector<int64_t> differentOffset{kNumOne, kNumZero};
+    auto& invalidView = PassOperationUtils::AddOperation(
+        *g.function, Opcode::OP_VIEW, {g.input}, {g.part},
+        [&differentOffset](Operation& op) { op.SetOpAttribute(std::make_shared<ViewOpAttribute>(differentOffset)); });
+    RemoveRedundantOpUtils utils;
+    EXPECT_TRUE(utils.IsNotSameViewInput(g.start, g.end));
+    EXPECT_TRUE(utils.IsDataReplace(g.end));
+    auto rawIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(*g.function);
+
+    invalidView.SetAsDeleted();
+    ASSERT_TRUE(g.part->HasProducer(&invalidView));
+    utils.RefreshRedundancyQueries(*g.function, rawIndex);
+
+    EXPECT_FALSE(utils.IsNotSameViewInput(g.start, g.end));
+    EXPECT_FALSE(utils.IsDataReplace(g.end));
+    EXPECT_TRUE(utils.IsValidViewAssemble(g.start, g.end));
+}
+
+// Skipping deleted producers must not turn a producerless intermediate tensor into a valid cascade.
+TEST_F(TestRemoveRedundantOpPass, RedundancyQueriesRejectOnlyDeletedViewProducers)
+{
+    ViewAssembleQueryGraph g;
+    g.view->SetAsDeleted();
+    RemoveRedundantOpUtils utils;
+
+    EXPECT_TRUE(utils.IsNotSameViewInput(g.start, g.end));
+    EXPECT_TRUE(utils.IsDataReplace(g.end));
+    EXPECT_FALSE(utils.IsValidViewAssemble(g.start, g.end));
+}
+
+// Absence of an end producer and a negative source magic are distinct states.
+TEST_F(TestRemoveRedundantOpPass, ViewInputSummaryDoesNotUseMagicSentinels)
+{
+    ViewAssembleQueryGraph g;
+    g.start->SetMagic(-2);
+    RemoveRedundantOpUtils utils;
+
+    EXPECT_FALSE(utils.IsNotSameViewInput(g.start, g.end));
+    EXPECT_TRUE(utils.IsNotSameViewInput(g.input, g.end));
+    auto producerless = g.CreateTensor();
+    EXPECT_FALSE(utils.IsNotSameViewInput(g.start, producerless));
+    EXPECT_FALSE(utils.IsNotSameViewInput(g.input, producerless));
+}
+
+// Clear only query caches between identical calls: an empty cache proves the second match was skipped.
+TEST_F(TestRemoveRedundantOpPass, ViewAssembleCandidateDeduplicatesSinkOnlyMatch)
+{
+    ViewAssembleQueryGraph g;
+    RemoveRedundantOpUtils utils;
+    auto rawIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(*g.function);
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    bool hasDeletedOperations = false;
+
+    utils.ProcessViewAssembleCandidate(*g.function, *g.view, *g.assemble, g.start, g.end, rawIndex, newOps,
+                                       operationUpdated, hasDeletedOperations);
+    ASSERT_EQ(utils.handledPerfectMatchPairs_.size(), kNumOne);
+    ASSERT_FALSE(utils.viewInputSummaryCache_.empty());
+    ASSERT_FALSE(utils.dataReplaceCache_.empty());
+    utils.ClearRedundancyQueryCache();
+    utils.ProcessViewAssembleCandidate(*g.function, *g.view, *g.assemble, g.start, g.end, rawIndex, newOps,
+                                       operationUpdated, hasDeletedOperations);
+
+    EXPECT_TRUE(utils.viewInputSummaryCache_.empty());
+    EXPECT_TRUE(utils.dataReplaceCache_.empty());
+    EXPECT_EQ(utils.handledPerfectMatchPairs_.size(), kNumOne);
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_FALSE(hasDeletedOperations);
+    EXPECT_TRUE(newOps.empty());
+}
+
+// Two sink-only matches with the same source and different outputs must be memoized independently.
+TEST_F(TestRemoveRedundantOpPass, ViewAssembleCandidateDistinguishesPairOutputs)
+{
+    ViewAssembleQueryGraph g;
+    auto otherEnd = g.CreateTensor();
+    auto& otherAssemble = PassOperationUtils::AddOperation(
+        *g.function, Opcode::OP_ASSEMBLE, {g.part}, {otherEnd},
+        [&g](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(g.offset)); });
+    RemoveRedundantOpUtils utils;
+    auto rawIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(*g.function);
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    bool hasDeletedOperations = false;
+    utils.ProcessViewAssembleCandidate(*g.function, *g.view, *g.assemble, g.start, g.end, rawIndex, newOps,
+                                       operationUpdated, hasDeletedOperations);
+    utils.ClearRedundancyQueryCache();
+    utils.ProcessViewAssembleCandidate(*g.function, *g.view, otherAssemble, g.start, otherEnd, rawIndex, newOps,
+                                       operationUpdated, hasDeletedOperations);
+
+    EXPECT_EQ(utils.handledPerfectMatchPairs_.size(), kNumTwo);
+    EXPECT_EQ(utils.handledPerfectMatchPairs_.count({g.start->magic, g.end->magic}), kNumOne);
+    EXPECT_EQ(utils.handledPerfectMatchPairs_.count({g.start->magic, otherEnd->magic}), kNumOne);
+    EXPECT_FALSE(utils.viewInputSummaryCache_.empty());
+    EXPECT_FALSE(utils.dataReplaceCache_.empty());
+}
+
+// Memoizing a sink-only match must not hide a later consumer; a real rewrite refreshes all query state.
+TEST_F(TestRemoveRedundantOpPass, ViewAssembleCandidateReprocessesPairWithConsumers)
+{
+    ViewAssembleQueryGraph g;
+    RemoveRedundantOpUtils utils;
+    auto rawIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(*g.function);
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    bool hasDeletedOperations = false;
+    utils.ProcessViewAssembleCandidate(*g.function, *g.view, *g.assemble, g.start, g.end, rawIndex, newOps,
+                                       operationUpdated, hasDeletedOperations);
+    ASSERT_EQ(utils.handledPerfectMatchPairs_.size(), kNumOne);
+    utils.handledPerfectMatchPairs_.insert({g.input->magic, g.end->magic});
+    auto& consumer = g.AddConsumer();
+
+    utils.ProcessViewAssembleCandidate(*g.function, *g.view, *g.assemble, g.start, g.end, rawIndex, newOps,
+                                       operationUpdated, hasDeletedOperations);
+
+    EXPECT_TRUE(operationUpdated);
+    EXPECT_EQ(consumer.GetIOperands().front(), g.start);
+    EXPECT_TRUE(g.end->GetConsumers().empty());
+    EXPECT_TRUE(utils.viewInputSummaryCache_.empty());
+    EXPECT_TRUE(utils.dataReplaceCache_.empty());
+    EXPECT_EQ(utils.handledPerfectMatchPairs_.size(), kNumOne);
+    EXPECT_EQ(utils.handledPerfectMatchPairs_.count({g.input->magic, g.end->magic}), kNumZero);
+}
+
+// A rejected token migration is not memoized, so adding a consumer permits a later successful rewrite.
+TEST_F(TestRemoveRedundantOpPass, ViewAssembleCandidateDoesNotMemoizeRejectedMatch)
+{
+    ViewAssembleQueryGraph g;
+    auto token = AddTokenEdge(*g.function, *g.producer, *g.view);
+    RemoveRedundantOpUtils utils;
+    auto rawIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(*g.function);
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    bool hasDeletedOperations = false;
+    utils.ProcessViewAssembleCandidate(*g.function, *g.view, *g.assemble, g.start, g.end, rawIndex, newOps,
+                                       operationUpdated, hasDeletedOperations);
+    EXPECT_TRUE(utils.handledPerfectMatchPairs_.empty());
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_TRUE(HasToken(*g.view, token));
+
+    auto& consumer = g.AddConsumer();
+    utils.ProcessViewAssembleCandidate(*g.function, *g.view, *g.assemble, g.start, g.end, rawIndex, newOps,
+                                       operationUpdated, hasDeletedOperations);
+
+    EXPECT_TRUE(operationUpdated);
+    EXPECT_EQ(consumer.GetIOperands().front(), g.start);
+    EXPECT_TRUE(HasToken(consumer, token));
+    EXPECT_FALSE(HasToken(*g.view, token));
+    EXPECT_EQ(utils.handledPerfectMatchPairs_.size(), kNumOne);
+}
+
+// A partial match without consumers keeps query state; creating a replacement view invalidates it.
+TEST_F(TestRemoveRedundantOpPass, PartialViewAssembleCandidateRefreshesOnlyAfterRewrite)
+{
+    ViewAssembleQueryGraph g;
+    const std::vector<int64_t> partShape{kNumFour, kNumExpFour};
+    for (auto& tensor : {g.part, g.end}) {
+        tensor->shape = partShape;
+        tensor->UpdateDynValidShape(CreateTestConstIntVector(partShape));
+    }
+    RemoveRedundantOpUtils utils;
+    auto rawIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(*g.function);
+    utils.handledPerfectMatchPairs_.insert({g.input->magic, g.end->magic});
+    std::vector<Operation*> newOps;
+    bool operationUpdated = false;
+    bool hasDeletedOperations = false;
+
+    utils.ProcessViewAssembleCandidate(*g.function, *g.view, *g.assemble, g.start, g.end, rawIndex, newOps,
+                                       operationUpdated, hasDeletedOperations);
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_TRUE(newOps.empty());
+    EXPECT_FALSE(utils.viewInputSummaryCache_.empty());
+    EXPECT_FALSE(utils.dataReplaceCache_.empty());
+    EXPECT_EQ(utils.handledPerfectMatchPairs_.size(), kNumOne);
+    auto& consumer = g.AddConsumer();
+
+    utils.ProcessViewAssembleCandidate(*g.function, *g.view, *g.assemble, g.start, g.end, rawIndex, newOps,
+                                       operationUpdated, hasDeletedOperations);
+
+    EXPECT_TRUE(operationUpdated);
+    ASSERT_EQ(newOps.size(), kNumOne);
+    EXPECT_EQ(consumer.GetIOperands().front(), newOps.front()->GetOOperands().front());
+    EXPECT_TRUE(utils.viewInputSummaryCache_.empty());
+    EXPECT_TRUE(utils.dataReplaceCache_.empty());
+    EXPECT_TRUE(utils.handledPerfectMatchPairs_.empty());
+}
+
+// graphUpdated is reset per call, independently of the cumulative operationUpdated flag.
+TEST_F(TestRemoveRedundantOpPass, PerfectMatchReportsOnlyActualDataRewrite)
+{
+    ViewAssembleQueryGraph g;
+    RemoveRedundantOpUtils utils;
+    bool operationUpdated = false;
+    bool graphUpdated = true;
+    ASSERT_TRUE(utils.ProcessPerfectMatch(*g.function, g.start, g.end, false, operationUpdated, graphUpdated));
+    EXPECT_FALSE(graphUpdated);
+    EXPECT_FALSE(operationUpdated);
+
+    auto& consumer = g.AddConsumer();
+    ASSERT_TRUE(utils.ProcessPerfectMatch(*g.function, g.start, g.end, false, operationUpdated, graphUpdated));
+    EXPECT_TRUE(graphUpdated);
+    EXPECT_TRUE(operationUpdated);
+    EXPECT_EQ(consumer.GetIOperands().front(), g.start);
+
+    ASSERT_TRUE(utils.ProcessPerfectMatch(*g.function, g.start, g.end, false, operationUpdated, graphUpdated));
+    EXPECT_FALSE(graphUpdated);
+    EXPECT_TRUE(operationUpdated);
+}
+
+// Rejected input-token migration leaves both the data path and token dependency unchanged.
+TEST_F(TestRemoveRedundantOpPass, PerfectMatchRejectsTokenMigrationWithoutGraphUpdate)
+{
+    ViewAssembleQueryGraph g;
+    auto token = AddTokenEdge(*g.function, *g.producer, *g.view);
+    RemoveRedundantOpUtils utils;
+    bool operationUpdated = false;
+    bool graphUpdated = true;
+
+    EXPECT_FALSE(utils.ProcessPerfectMatch(*g.function, g.start, g.end, false, operationUpdated, graphUpdated));
+
+    EXPECT_FALSE(graphUpdated);
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_TRUE(HasToken(*g.view, token));
+    EXPECT_TRUE(g.function->GetVarDependency().HasConsumer(token, ToStmtPtr(*g.view)));
+}
+
+// Result-token migration alone changes the graph even when the data path has no consumer to replace.
+TEST_F(TestRemoveRedundantOpPass, PerfectMatchReportsTokenOnlyRewrite)
+{
+    ViewAssembleQueryGraph g;
+    auto& sink = PassOperationUtils::AddOperation(*g.function, Opcode::OP_EXP, {g.input}, {g.CreateTensor()});
+    auto oldToken = AddTokenEdge(*g.function, *g.assemble, sink);
+    RemoveRedundantOpUtils utils;
+    bool operationUpdated = false;
+    bool graphUpdated = false;
+
+    ASSERT_TRUE(utils.ProcessPerfectMatch(*g.function, g.start, g.end, false, operationUpdated, graphUpdated));
+
+    EXPECT_TRUE(graphUpdated);
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_TRUE(g.end->HasProducer(g.assemble));
+    EXPECT_TRUE(g.assemble->result_token_.empty());
+    EXPECT_FALSE(g.function->GetVarDependency().HasDependency(oldToken));
+    ASSERT_FALSE(g.producer->result_token_.empty());
+    EXPECT_TRUE(HasToken(sink, g.producer->result_token_.front()));
+    ASSERT_TRUE(utils.ProcessPerfectMatch(*g.function, g.start, g.end, false, operationUpdated, graphUpdated));
+    EXPECT_FALSE(graphUpdated);
 }
 
 TEST_F(TestRemoveRedundantOpPass, SingleAssembleMovesTokenDependency)

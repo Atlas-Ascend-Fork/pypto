@@ -885,13 +885,13 @@ bool IsSingleZeroOffsetSliceContract(const Operation& sliceOp, const Operation& 
     return contractAttr != nullptr && IsZeroTensorOffset(contractAttr->GetToOffset(), contractAttr->GetToDynOffset());
 }
 
-void GenerateSingleSliceContractView(Function& function, Operation& sliceOp, Operation& contractOp,
+bool GenerateSingleSliceContractView(Function& function, Operation& sliceOp, Operation& contractOp,
                                      const LogicalTensorPtr& startTensor, const LogicalTensorPtr& endTensor,
                                      std::vector<Operation*>& newOps, bool& operationUpdated)
 {
     auto sliceAttr = GetViewAttr(sliceOp);
     if (sliceAttr == nullptr) {
-        return;
+        return false;
     }
 
     auto viewAttribute = std::make_shared<ViewOpAttribute>(sliceAttr->GetFromOffset(), sliceAttr->GetFromDynOffset(),
@@ -905,6 +905,7 @@ void GenerateSingleSliceContractView(Function& function, Operation& sliceOp, Ope
     contractOp.SetAsDeleted();
     newOps.push_back(&newViewOp);
     operationUpdated = true;
+    return true;
 }
 
 bool HasMemoryTypeTransform(const LogicalTensorPtr& inputTensor, const LogicalTensorPtr& outputTensor)
@@ -1371,95 +1372,124 @@ Status RemoveRedundantOpUtils::ProcessImpl(Function& function, std::vector<Opera
     return SUCCESS;
 }
 
+void RemoveRedundantOpUtils::RefreshRedundancyQueries(
+    Function& function, std::unordered_map<int, std::unordered_set<int>>& rawAssembleIndex)
+{
+    rawAssembleIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(function);
+    ClearRedundancyQueryCache();
+    handledPerfectMatchPairs_.clear();
+}
+
+bool RemoveRedundantOpUtils::ShouldSkipViewAssembleCandidate(
+    Function& function, const Operation& viewOp, const Operation& assembleOp, const LogicalTensorPtr& startTensor,
+    const LogicalTensorPtr& endTensor, const std::unordered_map<int, std::unordered_set<int>>& rawAssembleIndex) const
+{
+    if ((function.IsFromInCast(startTensor) && function.IsFromOutCast(endTensor)) ||
+        (function.IsFromOutCast(startTensor) && function.IsFromOutCast(endTensor))) {
+        return true;
+    }
+    if (IsLegacyViewAssembleCascade(viewOp.GetOpcode(), assembleOp.GetOpcode()) &&
+        startTensor->GetMemoryTypeOriginal() != endTensor->GetMemoryTypeOriginal()) {
+        return true;
+    }
+    if (remove_redundant_op_internal::HasSiblingAssembleOutputOnRaw(rawAssembleIndex, endTensor)) {
+        APASS_LOG_DEBUG_F(Elements::Tensor, "endTensor[%d] has another assemble output on the same raw tensor, skip.",
+                          endTensor->GetMagic());
+        return true;
+    }
+    if (viewOp.GetOpcode() != Opcode::OP_SLICE || assembleOp.GetOpcode() != Opcode::OP_CONTRACT ||
+        assembleOp.GetIOperands().size() != 1 || !IsInputProducedBySingleSlice(assembleOp.GetIOperands().front())) {
+        return false;
+    }
+
+    // Leave a strict slice-contract-slice chain to ProcessSliceContractSlice.  The dedicated pass
+    // must see all L1/UNKNOWN fan-out variants before this generic cascade pass can rewrite the prefix.
+    SliceContractSliceChain chain;
+    const auto& contractOutput = assembleOp.GetOOperands().front();
+    const bool hasOnlySliceConsumers = contractOutput != nullptr && !contractOutput->GetConsumers().empty() &&
+                                       std::all_of(contractOutput->GetConsumers().begin(),
+                                                   contractOutput->GetConsumers().end(), [](const Operation* consumer) {
+                                                       return consumer != nullptr && !consumer->IsDeleted() &&
+                                                              consumer->GetOpcode() == Opcode::OP_SLICE;
+                                                   });
+    return CollectSliceContractSliceChain(assembleOp, chain) ||
+           IsSingleContractWithMultipleL1SliceConsumers(assembleOp) || hasOnlySliceConsumers;
+}
+
+void RemoveRedundantOpUtils::ProcessViewAssembleCandidate(
+    Function& function, Operation& viewOp, Operation& assembleOp, LogicalTensorPtr& startTensor,
+    LogicalTensorPtr& endTensor, std::unordered_map<int, std::unordered_set<int>>& rawAssembleIndex,
+    std::vector<Operation*>& newOps, bool& operationUpdated, bool& hasDeletedOperations)
+{
+    if (startTensor->shape == endTensor->shape && startTensor->offset == endTensor->offset) {
+        if (!CanBypassPerfectMatch(startTensor, endTensor) ||
+            (function.IsFromOutCast(endTensor) && HasConsumerOutsideViewAssembleCascade(startTensor, endTensor))) {
+            return;
+        }
+        APASS_LOG_DEBUG_F(Elements::Operation, "CASE1: Process %s[%d]'s input and %s[%d]'s output perfectMatch.",
+                          OpcodeManager::Inst().GetOpcodeStr(viewOp.GetOpcode()).c_str(), viewOp.opmagic,
+                          OpcodeManager::Inst().GetOpcodeStr(assembleOp.GetOpcode()).c_str(), assembleOp.GetOpMagic());
+        const auto pairKey = std::make_pair(startTensor->magic, endTensor->magic);
+        if (endTensor->GetConsumers().empty() && handledPerfectMatchPairs_.count(pairKey) != 0) {
+            return;
+        }
+        bool graphUpdated = false;
+        const bool processed = ProcessPerfectMatch(function, startTensor, endTensor, function.IsFromOutCast(endTensor),
+                                                   operationUpdated, graphUpdated);
+        if (graphUpdated) {
+            RefreshRedundancyQueries(function, rawAssembleIndex);
+        }
+        if (processed && endTensor->GetConsumers().empty()) {
+            handledPerfectMatchPairs_.insert(pairKey);
+        }
+        return;
+    }
+    if ((function.IsFromInCast(startTensor) && CommonUtils::ContainsNegativeOne(startTensor->GetShape())) ||
+        (function.IsFromOutCast(endTensor) && CommonUtils::ContainsNegativeOne(endTensor->GetShape()))) {
+        return;
+    }
+    APASS_LOG_DEBUG_F(Elements::Operation, "CASE2: Process %s[%d]'s input is a part of %s[%d]'s output.",
+                      OpcodeManager::Inst().GetOpcodeStr(viewOp.GetOpcode()).c_str(), viewOp.opmagic,
+                      OpcodeManager::Inst().GetOpcodeStr(assembleOp.GetOpcode()).c_str(), assembleOp.GetOpMagic());
+    if (IsSingleZeroOffsetSliceContract(viewOp, assembleOp) && !HasMemoryTypeTransform(startTensor, endTensor)) {
+        if (GenerateSingleSliceContractView(function, viewOp, assembleOp, startTensor, endTensor, newOps,
+                                            operationUpdated)) {
+            hasDeletedOperations = true;
+            RefreshRedundancyQueries(function, rawAssembleIndex);
+        }
+        return;
+    }
+    const auto replacementOpcode = GetViewLikeReplacementOpcode(startTensor, endTensor);
+    if (GenerateNewViewLike(function, viewOp, startTensor, endTensor, replacementOpcode, newOps, operationUpdated)) {
+        RefreshRedundancyQueries(function, rawAssembleIndex);
+    }
+}
+
 Status RemoveRedundantOpUtils::ProcessViewAssembleLikeImpl(Function& function, std::vector<Operation*>& newOps,
                                                            bool& operationUpdated)
 {
     auto opList = function.Operations().DuplicatedOpList();
     bool hasDeletedOperations = false;
+    auto rawAssembleIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(function);
+    handledPerfectMatchPairs_.clear();
     for (auto& op : opList) {
-        if (op == nullptr || !IsViewLikeOpcode(op->GetOpcode()) || op->iOperand.empty() || op->oOperand.empty()) {
+        if (op == nullptr || op->IsDeleted() || !IsViewLikeOpcode(op->GetOpcode()) || op->iOperand.empty() ||
+            op->oOperand.empty()) {
             continue;
         }
         auto& startTensor = op->iOperand.front();
         auto consumers = op->oOperand.front()->GetConsumers();
         for (const auto& consumer : consumers) {
-            if (consumer == nullptr || !IsSupportedViewAssembleCascade(op->GetOpcode(), consumer->GetOpcode()) ||
-                consumer->oOperand.empty()) {
+            if (consumer == nullptr || consumer->IsDeleted() ||
+                !IsSupportedViewAssembleCascade(op->GetOpcode(), consumer->GetOpcode()) || consumer->oOperand.empty()) {
                 continue;
             }
             auto& endTensor = consumer->oOperand.front();
-            if (function.IsFromInCast(startTensor) && function.IsFromOutCast(endTensor)) {
+            if (ShouldSkipViewAssembleCandidate(function, *op, *consumer, startTensor, endTensor, rawAssembleIndex)) {
                 continue;
             }
-            if (function.IsFromOutCast(startTensor) && function.IsFromOutCast(endTensor)) {
-                continue;
-            }
-            if (IsLegacyViewAssembleCascade(op->GetOpcode(), consumer->GetOpcode()) &&
-                startTensor->GetMemoryTypeOriginal() != endTensor->GetMemoryTypeOriginal()) {
-                continue;
-            }
-            if (remove_redundant_op_internal::HasOtherAssembleOutputOnSameRaw(function, endTensor)) {
-                APASS_LOG_DEBUG_F(Elements::Tensor,
-                                  "endTensor[%d] has another assemble output on the same raw tensor, skip.",
-                                  endTensor->GetMagic());
-                continue;
-            }
-            if (op->GetOpcode() == Opcode::OP_SLICE && consumer->GetOpcode() == Opcode::OP_CONTRACT &&
-                consumer->GetIOperands().size() == 1 &&
-                IsInputProducedBySingleSlice(consumer->GetIOperands().front())) {
-                // Leave a strict slice-contract-slice chain to ProcessSliceContractSlice.  The
-                // dedicated pass must see all L1/UNKNOWN fan-out variants before this generic
-                // view/assemble cascade pass can rewrite the prefix.
-                SliceContractSliceChain chain;
-                const auto& contractOutput = consumer->GetOOperands().front();
-                const bool hasOnlySliceConsumers = contractOutput != nullptr &&
-                                                   !contractOutput->GetConsumers().empty() &&
-                                                   std::all_of(contractOutput->GetConsumers().begin(),
-                                                               contractOutput->GetConsumers().end(),
-                                                               [](const Operation* outputConsumer) {
-                                                                   return outputConsumer != nullptr &&
-                                                                          !outputConsumer->IsDeleted() &&
-                                                                          outputConsumer->GetOpcode() ==
-                                                                              Opcode::OP_SLICE;
-                                                               });
-                if (CollectSliceContractSliceChain(*consumer, chain) ||
-                    IsSingleContractWithMultipleL1SliceConsumers(*consumer) || hasOnlySliceConsumers) {
-                    continue;
-                }
-            }
-            if (startTensor->shape == endTensor->shape && startTensor->offset == endTensor->offset) {
-                if (!CanBypassPerfectMatch(startTensor, endTensor)) {
-                    continue;
-                }
-                if (function.IsFromOutCast(endTensor) &&
-                    HasConsumerOutsideViewAssembleCascade(startTensor, endTensor)) {
-                    continue;
-                }
-                APASS_LOG_DEBUG_F(
-                    Elements::Operation, "CASE1: Process %s[%d]'s input and %s[%d]'s output perfectMatch.",
-                    OpcodeManager::Inst().GetOpcodeStr(op->GetOpcode()).c_str(), op->opmagic,
-                    OpcodeManager::Inst().GetOpcodeStr(consumer->GetOpcode()).c_str(), consumer->GetOpMagic());
-                ProcessPerfectMatch(function, startTensor, endTensor, function.IsFromOutCast(endTensor),
-                                    operationUpdated);
-            } else {
-                if ((function.IsFromInCast(startTensor) && CommonUtils::ContainsNegativeOne(startTensor->GetShape())) ||
-                    (function.IsFromOutCast(endTensor) && CommonUtils::ContainsNegativeOne(endTensor->GetShape()))) {
-                    continue;
-                }
-                APASS_LOG_DEBUG_F(Elements::Operation, "CASE2: Process %s[%d]'s input is a part of %s[%d]'s output.",
-                                  OpcodeManager::Inst().GetOpcodeStr(op->GetOpcode()).c_str(), op->opmagic,
-                                  OpcodeManager::Inst().GetOpcodeStr(consumer->GetOpcode()).c_str(),
-                                  consumer->GetOpMagic());
-                if (IsSingleZeroOffsetSliceContract(*op, *consumer) &&
-                    !HasMemoryTypeTransform(startTensor, endTensor)) {
-                    GenerateSingleSliceContractView(function, *op, *consumer, startTensor, endTensor, newOps,
-                                                    operationUpdated);
-                    hasDeletedOperations = true;
-                    continue;
-                }
-                GenerateNewViewLike(function, *op, startTensor, endTensor,
-                                    GetViewLikeReplacementOpcode(startTensor, endTensor), newOps, operationUpdated);
-            }
+            ProcessViewAssembleCandidate(function, *op, *consumer, startTensor, endTensor, rawAssembleIndex, newOps,
+                                         operationUpdated, hasDeletedOperations);
         }
     }
     if (hasDeletedOperations) {
@@ -1468,7 +1498,7 @@ Status RemoveRedundantOpUtils::ProcessViewAssembleLikeImpl(Function& function, s
     return SUCCESS;
 }
 
-void RemoveRedundantOpUtils::RemoveViewAssembleForOutcast(LogicalTensorPtr& startTensor, LogicalTensorPtr& endTensor,
+bool RemoveRedundantOpUtils::RemoveViewAssembleForOutcast(LogicalTensorPtr& startTensor, LogicalTensorPtr& endTensor,
                                                           bool& operationUpdated)
 {
     bool canRemove = false;
@@ -1492,7 +1522,7 @@ void RemoveRedundantOpUtils::RemoveViewAssembleForOutcast(LogicalTensorPtr& star
     }
 
     if (removeOps.empty()) {
-        return;
+        return false;
     }
 
     auto startProducers = startTensor->GetProducers();
@@ -1516,29 +1546,40 @@ void RemoveRedundantOpUtils::RemoveViewAssembleForOutcast(LogicalTensorPtr& star
         }
     }
     operationUpdated = true;
+    return true;
 }
 
-void RemoveRedundantOpUtils::ProcessPerfectMatch(Function& function, LogicalTensorPtr& startTensor,
+bool RemoveRedundantOpUtils::ProcessPerfectMatch(Function& function, LogicalTensorPtr& startTensor,
                                                  LogicalTensorPtr& endTensor, bool endTensorIsOutcast,
-                                                 bool& operationUpdated)
+                                                 bool& operationUpdated, bool& graphUpdated)
 {
+    graphUpdated = false;
     if (!IsValidViewAssemble(startTensor, endTensor)) {
         APASS_LOG_DEBUG_F(Elements::Tensor, "Not valid view-assemble-like case.");
-        return;
+        return false;
     }
     auto removedOps = remove_redundant_op_internal::CollectViewAssembleCascadeOps(startTensor, endTensor);
-    auto targetConsumers = remove_redundant_op_internal::GetTensorConsumers(endTensor);
-    auto targetProducers = remove_redundant_op_internal::GetTensorProducers(startTensor);
-    if (!remove_redundant_op_internal::CanMigrateRemovedOpsTokenDependency(function, removedOps, targetConsumers,
-                                                                           targetProducers)) {
-        APASS_LOG_DEBUG_F(Elements::Tensor, "Cannot migrate token dependency for view-assemble perfect match.");
-        return;
+    bool dependencyUpdated = false;
+    const bool cascadeHasToken = std::any_of(removedOps.begin(), removedOps.end(), [](const Operation* removedOp) {
+        return removedOp != nullptr && (!removedOp->tokens_.empty() || !removedOp->result_token_.empty());
+    });
+    if (cascadeHasToken) {
+        auto targetConsumers = remove_redundant_op_internal::GetTensorConsumers(endTensor);
+        auto targetProducers = remove_redundant_op_internal::GetTensorProducers(startTensor);
+        if (!remove_redundant_op_internal::CanMigrateRemovedOpsTokenDependency(function, removedOps, targetConsumers,
+                                                                               targetProducers)) {
+            APASS_LOG_DEBUG_F(Elements::Tensor, "Cannot migrate token dependency for view-assemble perfect match.");
+            return false;
+        }
+        remove_redundant_op_internal::MigrateRemovedOpsTokenDependency(function, removedOps, targetConsumers,
+                                                                       targetProducers);
+        dependencyUpdated = true;
     }
-    remove_redundant_op_internal::MigrateRemovedOpsTokenDependency(function, removedOps, targetConsumers,
-                                                                   targetProducers);
-    if (endTensor->GetConsumers().size() == 0) {
+
+    bool dataPathUpdated = false;
+    if (endTensor->GetConsumers().empty()) {
         if (endTensorIsOutcast) {
-            RemoveViewAssembleForOutcast(startTensor, endTensor, operationUpdated);
+            dataPathUpdated = RemoveViewAssembleForOutcast(startTensor, endTensor, operationUpdated);
         }
     } else {
         auto consumers = endTensor->GetConsumers();
@@ -1546,67 +1587,134 @@ void RemoveRedundantOpUtils::ProcessPerfectMatch(Function& function, LogicalTens
             assembleConsumer->ReplaceInput(startTensor, endTensor);
         }
         operationUpdated = true;
+        dataPathUpdated = true;
     }
+    graphUpdated = dependencyUpdated || dataPathUpdated;
+    return true;
+}
+
+void RemoveRedundantOpUtils::ClearRedundancyQueryCache() const
+{
+    viewInputSummaryCache_.clear();
+    dataReplaceCache_.clear();
+}
+
+const RemoveRedundantOpUtils::ViewInputSummary& RemoveRedundantOpUtils::GetViewInputSummary(
+    const LogicalTensorPtr& endTensor) const
+{
+    const int magic = endTensor->magic;
+    auto iter = viewInputSummaryCache_.find(magic);
+    if (iter != viewInputSummaryCache_.end()) {
+        return iter->second;
+    }
+
+    ViewInputSummary summary;
+    summary.valid = true;
+    for (auto& assembleOp : endTensor->GetProducers()) {
+        if (assembleOp != nullptr && assembleOp->IsDeleted()) {
+            continue;
+        }
+        if (assembleOp == nullptr || !IsAssembleLikeOpcode(assembleOp->GetOpcode()) ||
+            assembleOp->GetIOperands().empty()) {
+            summary.valid = false;
+            break;
+        }
+        const auto& tempTensor = assembleOp->GetIOperands().front();
+        if (tempTensor == nullptr || tempTensor->GetProducers().empty()) {
+            summary.valid = false;
+            break;
+        }
+        bool hasLiveProducer = false;
+        for (auto& producerOp : tempTensor->GetProducers()) {
+            if (producerOp != nullptr && producerOp->IsDeleted()) {
+                continue;
+            }
+            hasLiveProducer = true;
+            if (producerOp == nullptr || producerOp->GetIOperands().empty() ||
+                !IsViewLikeOpcode(producerOp->GetOpcode())) {
+                summary.valid = false;
+                break;
+            }
+            const auto& inTensor = producerOp->GetIOperands().front();
+            if (inTensor == nullptr) {
+                summary.valid = false;
+                break;
+            }
+            if (!summary.startMagic.has_value()) {
+                summary.startMagic = inTensor->magic;
+            } else if (summary.startMagic.value() != inTensor->magic) {
+                summary.valid = false;
+                break;
+            }
+        }
+        if (!hasLiveProducer || !summary.valid) {
+            summary.valid = false;
+            break;
+        }
+    }
+    return viewInputSummaryCache_.emplace(magic, summary).first->second;
 }
 
 bool RemoveRedundantOpUtils::IsNotSameViewInput(LogicalTensorPtr& startTensor, LogicalTensorPtr& endTensor) const
 {
-    for (auto& assembleOp : endTensor->GetProducers()) {
-        if (assembleOp == nullptr || !IsAssembleLikeOpcode(assembleOp->GetOpcode()) ||
-            assembleOp->GetIOperands().empty()) {
-            return true;
-        }
-        auto& tempTensor = assembleOp->GetIOperands().front();
-        auto producers = tempTensor->GetProducers();
-        if (producers.empty()) {
-            return true;
-        }
-        auto& producerOps = tempTensor->GetProducers();
-        for (auto& producerOp : producerOps) {
-            if (producerOp == nullptr || producerOp->GetIOperands().empty() ||
-                !IsViewLikeOpcode(producerOp->GetOpcode())) {
-                return true;
-            }
-            auto& inTensor = producerOp->GetIOperands().front();
-            if (inTensor != startTensor) {
-                return true;
-            }
-        }
-    }
-    return false;
+    const auto& summary = GetViewInputSummary(endTensor);
+    return !summary.valid || (summary.startMagic.has_value() && summary.startMagic.value() != startTensor->magic);
 }
 
-bool RemoveRedundantOpUtils::IsDataReplace(LogicalTensorPtr& endTensor) const
+bool RemoveRedundantOpUtils::GetDataReplace(const LogicalTensorPtr& endTensor) const
 {
+    const int magic = endTensor->magic;
+    auto iter = dataReplaceCache_.find(magic);
+    if (iter != dataReplaceCache_.end()) {
+        return iter->second;
+    }
+
+    bool isDataReplace = false;
     for (auto& assembleOp : endTensor->GetProducers()) {
+        if (assembleOp != nullptr && assembleOp->IsDeleted()) {
+            continue;
+        }
         if (assembleOp == nullptr || !IsAssembleLikeOpcode(assembleOp->GetOpcode()) ||
             assembleOp->GetIOperands().empty()) {
-            return true;
+            isDataReplace = true;
+            break;
         }
-        auto& tempTensor = assembleOp->GetIOperands().front();
-        auto producers = tempTensor->GetProducers();
-        if (producers.empty()) {
-            return true;
+        const auto& tempTensor = assembleOp->GetIOperands().front();
+        if (tempTensor == nullptr || tempTensor->GetProducers().empty()) {
+            isDataReplace = true;
+            break;
         }
-        auto& viewOps = tempTensor->GetProducers();
-        for (auto& viewOp : viewOps) {
+        bool hasLiveProducer = false;
+        for (auto& viewOp : tempTensor->GetProducers()) {
+            if (viewOp != nullptr && viewOp->IsDeleted()) {
+                continue;
+            }
+            hasLiveProducer = true;
             if (viewOp == nullptr || viewOp->GetIOperands().empty() || !IsViewLikeOpcode(viewOp->GetOpcode())) {
-                return true;
+                isDataReplace = true;
+                break;
             }
             auto viewOpAttribute = GetViewAttr(*viewOp);
             auto assembleOpAttribute = GetAssembleAttr(*assembleOp);
             if (viewOpAttribute == nullptr || assembleOpAttribute == nullptr) {
-                return true;
+                isDataReplace = true;
+                break;
             }
-            auto viewOffset = viewOpAttribute->GetFrom();
-            auto assembleOffset = assembleOpAttribute->GetToOffset();
-            if (viewOffset != assembleOffset) {
-                return true;
+            if (viewOpAttribute->GetFrom() != assembleOpAttribute->GetToOffset()) {
+                isDataReplace = true;
+                break;
             }
         }
+        if (!hasLiveProducer || isDataReplace) {
+            isDataReplace = true;
+            break;
+        }
     }
-    return false;
+    dataReplaceCache_.emplace(magic, isDataReplace);
+    return isDataReplace;
 }
+
+bool RemoveRedundantOpUtils::IsDataReplace(LogicalTensorPtr& endTensor) const { return GetDataReplace(endTensor); }
 
 bool RemoveRedundantOpUtils::IsValidViewAssemble(LogicalTensorPtr& startTensor, LogicalTensorPtr& endTensor) const
 {
@@ -1673,7 +1781,7 @@ void RemoveRedundantOpUtils::CalculateViewOffset(Operation& op, LogicalTensorPtr
     }
 }
 
-void RemoveRedundantOpUtils::GenerateNewViewLike(Function& function, Operation& op, LogicalTensorPtr& startTensor,
+bool RemoveRedundantOpUtils::GenerateNewViewLike(Function& function, Operation& op, LogicalTensorPtr& startTensor,
                                                  LogicalTensorPtr& endTensor, Opcode newOpcode,
                                                  std::vector<Operation*>& newOps, bool& operationUpdated)
 {
@@ -1682,11 +1790,11 @@ void RemoveRedundantOpUtils::GenerateNewViewLike(Function& function, Operation& 
     bool isExistingValidCase = IsValidViewAssemble(startTensor, endTensor);
     if (!isExistingValidCase && !TryCalculateTranslatedViewOffset(startTensor, endTensor, newOffset, newDynOffset)) {
         APASS_LOG_DEBUG_F(Elements::Tensor, "Not valid view-assemble-like case.");
-        return;
+        return false;
     }
     // endTensor 是 outcast（无消费者）时不处理，避免图断裂
     if (endTensor->GetConsumers().empty()) {
-        return;
+        return false;
     }
     if (isExistingValidCase) {
         newOffset.assign(op.iOperand[0]->offset.size(), INT_MAX);
@@ -1714,6 +1822,7 @@ void RemoveRedundantOpUtils::GenerateNewViewLike(Function& function, Operation& 
     remove_redundant_op_internal::MigrateRemovedOpsTokenDependency(function, removedOps, {&newViewOp}, {&newViewOp});
     newOps.push_back(&newViewOp);
     operationUpdated = true;
+    return true;
 }
 
 Status RemoveRedundantOpUtils::ProcessContractSliceImpl(Function& function, std::vector<Operation*>& newOps,

@@ -242,8 +242,12 @@ std::vector<Operation*> GetTensorConsumers(const LogicalTensorPtr& tensor)
     if (tensor == nullptr) {
         return consumers;
     }
+    std::unordered_set<Operation*> seen;
+    consumers.reserve(tensor->GetConsumers().size());
     for (auto* consumer : tensor->GetConsumers()) {
-        AddUnique(consumers, consumer);
+        if (consumer != nullptr && seen.insert(consumer).second) {
+            consumers.emplace_back(consumer);
+        }
     }
     return consumers;
 }
@@ -254,8 +258,12 @@ std::vector<Operation*> GetTensorProducers(const LogicalTensorPtr& tensor)
     if (tensor == nullptr) {
         return producers;
     }
+    std::unordered_set<Operation*> seen;
+    producers.reserve(tensor->GetProducers().size());
     for (auto* producer : tensor->GetProducers()) {
-        AddUnique(producers, producer);
+        if (producer != nullptr && seen.insert(producer).second) {
+            producers.emplace_back(producer);
+        }
     }
     return producers;
 }
@@ -297,6 +305,12 @@ bool CanMigrateRemovedOpsTokenDependency(Function& function, const std::vector<O
                                          const std::vector<Operation*>& targetConsumers,
                                          const std::vector<Operation*>& targetProducers)
 {
+    // Without token inputs or results on the removed operations, there are no dependencies to migrate.
+    if (!removedOps.empty() && std::all_of(removedOps.begin(), removedOps.end(), [](const Operation* op) {
+            return op == nullptr || (op->tokens_.empty() && op->result_token_.empty());
+        })) {
+        return true;
+    }
     std::unordered_set<Operation*> removedSet(removedOps.begin(), removedOps.end());
     for (auto* removedOp : removedOps) {
         if (removedOp == nullptr) {
