@@ -1,9 +1,9 @@
 function foo incast(v0_logical_tensor %a@0 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]), v0_logical_tensor %aux@1 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]), v0_logical_tensor %out@2 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128])) outcast() #entry(false) #type(Opaque) {
-    v0_logical_tensor %0@3 #dtype(float) #dynvalidshape([32, 128]) #offset([0, 0]) #shape([32, 128]) = !10013 VEC_DUP() token() #SCALAR(v0elem(float, 1)) #op_attr_shape([32, 128]);
+    v0_logical_tensor %0@3 #dtype(float) #dynvalidshape([32, 128]) #offset([0, 0]) #shape([32, 128]) = !10013 VEC_DUP() token() #SCALAR(v0elem(float, 1)) #op_attr_shape([32, 128]) #op_attr_validShape([32, 128]);
     v0_logical_tensor %aux_5@1 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]), token %aux_1_w = !10014 ASSEMBLE(%0@3) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
-    v0_logical_tensor %1@4 #dtype(float) #dynvalidshape([32, 128]) #offset([0, 0]) #shape([32, 128]) = !10015 VEC_DUP() token() #SCALAR(v0elem(float, 2)) #op_attr_shape([32, 128]);
+    v0_logical_tensor %1@4 #dtype(float) #dynvalidshape([32, 128]) #offset([0, 0]) #shape([32, 128]) = !10015 VEC_DUP() token() #SCALAR(v0elem(float, 2)) #op_attr_shape([32, 128]) #op_attr_validShape([32, 128]);
     v0_logical_tensor %aux_5@1 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]) = !10016 ASSEMBLE(%1@4) token() #toOffset([96, 0]) #dassemble(true) #parallel(false);
-    v0_logical_tensor %2@5 #dtype(float) #dynvalidshape([64, 128]) #offset([0, 0]) #shape([64, 128]) = !10017 VEC_DUP() token() #SCALAR(v0elem(float, 3)) #op_attr_shape([64, 128]);
+    v0_logical_tensor %2@5 #dtype(float) #dynvalidshape([64, 128]) #offset([0, 0]) #shape([64, 128]) = !10017 VEC_DUP() token() #SCALAR(v0elem(float, 3)) #op_attr_shape([64, 128]) #op_attr_validShape([64, 128]);
     v0_logical_tensor %aux_5@1 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]) = !10018 ASSEMBLE(%2@5) token(%aux_1_w) #toOffset([16, 0]) #dassemble(true) #parallel(false);
     v0_logical_tensor %3@6 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]) = !10019 ADD(%a@0, %aux_5@1) token();
     v0_logical_tensor %out_1@2 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]) = !10020 ASSEMBLE(%3@6) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);

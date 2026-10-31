@@ -4,7 +4,7 @@ function foo incast(v0_logical_tensor %x@0 #dtype(float) #dynvalidshape([32, 16]
         v0_logical_tensor %0@3 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), token %0_w, token %aux_r, token %x_r = !10000 ADD(%aux@1, %x@0) token();
         continue %loop_idx_10, %0@3, %0_w, %aux_r;
     }
-    v0_logical_tensor %2@4 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), token %2_w = !10001 VEC_DUP() token() #SCALAR(v0elem(float, 1)) #op_attr_shape([16, 16]);
+    v0_logical_tensor %2@4 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), token %2_w = !10001 VEC_DUP() token() #SCALAR(v0elem(float, 1)) #op_attr_shape([16, 16]) #op_attr_validShape([16, 16]);
     v0_logical_tensor %aux_1@1 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), token %aux_1_w, token %2_r = !10002 ASSEMBLE(%2@4) token(%2_w, %aux_r_for) #toOffset([0, 0]) #dassemble(true) #parallel(false);
     v0_logical_tensor %out_1@2 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), token %out_1_w, token %read_0_r = !10003 ASSEMBLE(%read_0@3) token(%read_0_w_for) #toOffset([0, 0]) #dassemble(true) #parallel(false);
     return %x@0, %aux_1@1, %out_1@2;

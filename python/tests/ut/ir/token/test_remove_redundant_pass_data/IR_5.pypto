@@ -1,8 +1,8 @@
 function foo incast(v0_logical_tensor %a@0 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]), v0_logical_tensor %aux@1 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]), v0_logical_tensor %out@2 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128])) outcast() #entry(false) #type(Opaque) {
-    v0_logical_tensor %0@3 #dtype(float) #dynvalidshape([64, 128]) #offset([0, 0]) #shape([64, 128]) = !10012 VEC_DUP() token() #SCALAR(v0elem(float, 1)) #op_attr_shape([64, 128]);
+    v0_logical_tensor %0@3 #dtype(float) #dynvalidshape([64, 128]) #offset([0, 0]) #shape([64, 128]) = !10012 VEC_DUP() token() #SCALAR(v0elem(float, 1)) #op_attr_shape([64, 128]) #op_attr_validShape([64, 128]);
     v0_logical_tensor %aux_1@1 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]) = !10013 ASSEMBLE(%0@3) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);
     v0_logical_tensor %1@4 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]), token %aux_1_r = !10014 ADDS(%aux_1@1) token() #SCALAR(v0elem(float, 1));
-    v0_logical_tensor %2@5 #dtype(float) #dynvalidshape([64, 128]) #offset([0, 0]) #shape([64, 128]) = !10015 VEC_DUP() token() #SCALAR(v0elem(float, 2)) #op_attr_shape([64, 128]);
+    v0_logical_tensor %2@5 #dtype(float) #dynvalidshape([64, 128]) #offset([0, 0]) #shape([64, 128]) = !10015 VEC_DUP() token() #SCALAR(v0elem(float, 2)) #op_attr_shape([64, 128]) #op_attr_validShape([64, 128]);
     v0_logical_tensor %aux_3@1 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]) = !10016 ASSEMBLE(%2@5) token(%aux_1_r) #toOffset([64, 0]) #dassemble(true) #parallel(false);
     v0_logical_tensor %3@6 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]) = !10017 ADD(%1@4, %aux_3@1) token();
     v0_logical_tensor %out_1@2 #dtype(float) #dynvalidshape([129, 128]) #offset([0, 0]) #shape([129, 128]) = !10018 ASSEMBLE(%3@6) token() #toOffset([0, 0]) #dassemble(true) #parallel(false);

@@ -657,5 +657,22 @@ TEST_F(IoTextDumpRoundTripTest, ProgramHeaderRestoresCubeAndDistTile)
     scope->AddValue("dist_tile_shapes", saved.GetDistTile());
 }
 
+TEST_F(IoTextDumpRoundTripTest, ValidShapeAttrKeepsSymbolicList)
+{
+    const std::string text = "program #entry(f) {\n"
+                             "    function f incast() outcast() #entry(true) #type(Opaque) {\n"
+                             "        v0_logical_tensor %c@0 #dtype(float) #dynvalidshape([32, 32]) #offset([0, 0]) "
+                             "#shape([32, 32]) = "
+                             "!10000 VEC_DUP() token() #SCALAR(v0elem(float, 0)) #op_attr_shape([32, 32]) "
+                             "#op_attr_validShape([32, 32]);\n"
+                             "        return %c@0;\n"
+                             "    }\n"
+                             "}";
+    std::string error;
+    auto program = TextLoadProgram(text, error);
+    ASSERT_NE(program, nullptr) << error;
+    EXPECT_EQ(TextDump(program), text);
+}
+
 } // namespace ir
 } // namespace pypto

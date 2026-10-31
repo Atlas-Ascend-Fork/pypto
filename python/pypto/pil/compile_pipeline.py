@@ -97,3 +97,36 @@ def compile_new_ir(pyfunc, *args, pipeline=None, **kwargs):
         return program.functions[func.name]
     finally:
         pypto_impl.ir.set_assemble_new_logical_tensor(False)
+
+# Last stage that still works on the plain ir program; later passes build the framework graph.
+_RESUME_BOUNDARY_PASS = "apply_config_ops"
+
+
+def resume_stage(stage=None, pipeline=None):
+    """Return the last resumable stage, or validate and return `stage` when given."""
+    names = [name for name, _ in (pipeline if pipeline is not None else _build_default_pipeline())]
+    limit = names.index(_RESUME_BOUNDARY_PASS) if _RESUME_BOUNDARY_PASS in names else len(names)
+    if stage is None:
+        return limit
+    if not 0 <= stage <= limit:
+        raise ValueError(f"stage {stage} must be in 0..{limit}")
+    return stage
+
+
+def checkpoint(program, stage, pipeline=None):
+    """Run the first `stage` passes and return the dumped text; `program` is modified in place."""
+    stage = resume_stage(stage, pipeline)
+    stages = pipeline if pipeline is not None else _build_default_pipeline()
+    for _, transform in stages[:stage]:
+        program = transform(program)
+    return str(program)
+
+
+def resume(text, stage, pipeline=None):
+    """Load a checkpoint text and run the remaining passes."""
+    stage = resume_stage(stage, pipeline)
+    program = pypto_impl.ir.text_load_program(text)
+    stages = pipeline if pipeline is not None else _build_default_pipeline()
+    for _, transform in stages[stage:]:
+        program = transform(program)
+    return program

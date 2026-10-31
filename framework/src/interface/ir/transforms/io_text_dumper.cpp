@@ -219,6 +219,9 @@ void IRTextDumper::PrintTokenList(const std::vector<VarPtr>& tokenList)
     }
 }
 
+// The loader rebuilds this key as a symbol vector, so it is dumped by key rather than by type.
+bool IsSymbolicScalarListOpAttr(const std::string& key) { return key == npu::tile_fwk::OP_ATTR_PREFIX + "validShape"; }
+
 // ---------------------------------------------------------------------------
 // Attr dict printing (attr is the leaf layer of the traversal)
 // ---------------------------------------------------------------------------
@@ -605,7 +608,7 @@ void IRTextDumper::VisitStmt_(const TensorOpStmtPtr& op)
         }
         // Generic op attrs (SCALAR/AXIS/mode/...) that downstream passes read back via GetAttr.
         for (const auto& [key, value] : operation->GetAllAttr()) {
-            if (IsRoundTrippableGenericAttr(value)) {
+            if (IsRoundTrippableGenericAttr(value) || IsSymbolicScalarListOpAttr(key)) {
                 PrintAttr(key, value);
             }
         }

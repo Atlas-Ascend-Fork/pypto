@@ -579,6 +579,13 @@ void IRTextParser::SetOpGenericAttr(npu::tile_fwk::Operation& op, const std::str
     } else if (value.type() == typeid(npu::tile_fwk::SymbolicScalar)) {
         op.SetAttr(key, AnyCast<npu::tile_fwk::SymbolicScalar>(value));
     } else if (value.type() == typeid(std::vector<std::any>)) {
+        if (key == npu::tile_fwk::OP_ATTR_PREFIX + "validShape") {
+            std::vector<npu::tile_fwk::SymbolicScalar> validShape;
+            if (FillSymbolicScalarListAttr(key, value, validShape)) {
+                op.SetAttr(key, validShape);
+                return;
+            }
+        }
         std::vector<int64_t> vec;
         SetValue(vec, value);
         op.SetAttr(key, vec);

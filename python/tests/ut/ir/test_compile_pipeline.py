@@ -7,14 +7,24 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 
+from pathlib import Path
 import re
 
 import pytest
 
 import pypto
 from pypto import ir, pil
-from pypto.pil.compile_pipeline import _build_default_pipeline, _run_pipeline, compile_new_ir
+from pypto.pil.compile_pipeline import (
+    _build_default_pipeline,
+    _run_pipeline,
+    checkpoint,
+    compile_new_ir,
+    resume,
+    resume_stage,
+)
 import pypto.pypto_impl
+
+_DATA_DIR = Path(__file__).parent / "test_compile_pipeline_data"
 
 
 @pytest.mark.skip(reason="write-after-write split-large-fanout-tensor not support yet")
@@ -98,3 +108,28 @@ def test_resume_from_dumped_for_loop_matches_direct_run(tmp_path):
     resumed = _norm(str(_run_pipeline(loaded, _build_default_pipeline())))
 
     assert resumed == direct
+
+
+def test_resume_from_checkpoint_matches_direct_run():
+    # A pre-dumped front program: compiling it here would leave a host-function name that collides
+    # with the one create_root_functions registers.
+    front_text = (_DATA_DIR / "add_front.pypto").read_text()
+    stage = resume_stage()
+
+    # A pipeline run leaves process state behind, so each run starts from a fresh program.
+    pypto.pypto_impl.Reset()
+    direct = _run_pipeline(pypto.pypto_impl.ir.text_load_program(front_text), _build_default_pipeline())
+    pypto.pypto_impl.Reset()
+    text = checkpoint(pypto.pypto_impl.ir.text_load_program(front_text), stage)
+    pypto.pypto_impl.Reset()
+    resumed = resume(text, stage)
+
+    assert _norm(str(resumed)) == _norm(str(direct))
+
+
+def test_checkpoint_stage_is_limited_to_the_ir_pipeline():
+    stage = resume_stage()
+    with pytest.raises(ValueError):
+        checkpoint(None, stage + 1)
+    with pytest.raises(ValueError):
+        resume("", stage + 1)
