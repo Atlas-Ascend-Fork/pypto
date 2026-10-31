@@ -579,6 +579,7 @@ int DeviceTaskContext::BuildDeviceTaskDataAndReadyQueue(DynDeviceTask* dyntask, 
         (void)TryHeadReleaseFastPath(dyntask, devProg);
         DispatchReadyQueueToCores(dyntask, devProg);
         DispatchDieReadyQueueToCores(dyntask, devProg);
+        ComputeDrcoGraphFeatures(dyntask, devProg);
         npu::tile_fwk::DrcoRootFuncListPrecountPerCoreTasks(dyntask->drcoRootFuncList, devProg->devArgs.nrValidAic,
                                                             dyntask->drcoPrecountExecuted,
                                                             dyntask->drcoPrecountFinishFlag);

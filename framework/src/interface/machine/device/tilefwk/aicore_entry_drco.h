@@ -70,6 +70,36 @@ constexpr uint32_t DRCO_ALL_CORES_PER_AIC = 3;
 #define DRCO_FLAG_L2_CLOSE 0
 #endif
 
+// percore 急切消费（新调度模式）：percore 强制点上消费 fetch 侧就绪任务，缩短 C2 依赖数据
+// 自 L2 产生到被消费的间隔。无手动开关——是否启用由 host(AICPU encode)侧按网络结构自动
+// 判定（rootFuncList->percoreEagerConsumeEnable，见 device_task_context_drco.cpp）：
+// wrap(mix) 组存在 / percore 静态撒核过浅（< 256）/ 动态 fetch 池不足（< 静态池）的
+// devTask 整段关闭，行为与基线一致；「等待完成但无收益」的图在设备侧无负反馈信号，
+// 只能在 host 侧按图特征判别。设备侧行为：强制点先非阻塞试，未命中进入固定上限
+// TIMEOUT_CYC 的有界等待（就绪即消费，全图完成即退）。
+// 节奏：首轮第 FORCE_FETCH_AFTER 个 percore 任务触发，之后每 FORCE_FETCH_EVERY 个一次；
+// EVERY 置 0 = 仅首轮强制点（无周期节奏，规避取模除零）。
+// 编译期总门 DRCO_PERCORE_EAGER_CONSUME：急切消费与 L2 亲和同属 C2 数据 L2 热窗口优化，
+// 仅编入 L2 亲和调度（DRCO_FLAG_L2_CLOSE=1）编译单元，非亲和（含并行强制关亲和）场景
+// 整段裁剪；亲和场景内置 FORCE_FETCH_AFTER=0 仍可做实验对照裁剪
+#ifndef DRCO_PERCORE_FORCE_FETCH_AFTER
+#define DRCO_PERCORE_FORCE_FETCH_AFTER 4
+#endif
+#ifndef DRCO_PERCORE_FORCE_FETCH_EVERY
+#define DRCO_PERCORE_FORCE_FETCH_EVERY 2
+#endif
+#ifndef DRCO_PERCORE_FORCE_FETCH_TIMEOUT_CYC
+#define DRCO_PERCORE_FORCE_FETCH_TIMEOUT_CYC 200000 // 等待上限 200us @1GHz
+#endif
+#ifndef DRCO_PERCORE_FORCE_FINISH_POLL_MASK
+#define DRCO_PERCORE_FORCE_FINISH_POLL_MASK 0x3 // 等待环 finish 降频轮询掩码：dcci 探测每 ~(掩码+1) 轮一次
+#endif
+#if DRCO_FLAG_L2_CLOSE && DRCO_PERCORE_FORCE_FETCH_AFTER > 0
+#define DRCO_PERCORE_EAGER_CONSUME 1
+#else
+#define DRCO_PERCORE_EAGER_CONSUME 0
+#endif // DRCO_PERCORE_EAGER_CONSUME
+
 #if ENABLE_AICORE_PRINT
 #define DRCO_LOG(ctx, fmt, ...) AICORE_LOGE((ctx)->logger.Context(), fmt, ##__VA_ARGS__)
 #else
@@ -305,6 +335,9 @@ struct DrcoEntryState {
     // SSBuf 段（__ssbuf__ 专用地址空间，段基址 0 合法）上的 MIX C2V 通信状态：按窗口槽分区 ring[槽][V0/V1]。
     npu::tile_fwk::DrcoSsbufState* ssbuf;
     bool isExectedLeafTask{false};
+#if DRCO_PERCORE_EAGER_CONSUME
+    uint32_t percoreEagerConsume{0};
+#endif // DRCO_PERCORE_EAGER_CONSUME
     // middleQueue 状态（机制体参数化，见 DrcoMqState）：老路径恒 &mqStorage（InitDrcoEntry 设定）。
     DrcoMqState* mq{nullptr};
     DrcoMqState mqStorage{};
@@ -2352,13 +2385,33 @@ constexpr uint32_t DRCO_PERCORE_INTERLEAVE_INTERVAL = 2;
 // 下游紧跟生产完成点被消费（下游经 readyMatrixPushCol 轮转均分在各核行上，负载均衡不受影响）。
 // 漏消费由循环后的 fetch 兜底，活性不劣于原整批路径
 
-// 单趟交替消费：完成守卫 → 本类型纯计算 leaf 单趟非阻塞消费（selfQueue 直通 + 本核矩阵行/
-// 分组队列），取到则按 fetch 循环同款语义消费（批任务 notify before run + 执行 + resolve），
-// 取不到立即返回继续 percore——percore 任务均为零前驱可无条件执行，活性不劣于原整批路径。
-// 跳过 stitch/hub 矩阵帮忙扫描（重活且行主人固定本核，留给 fetch 循环总量不变）；跳过
-// mixhub/C2V——两者执行 wrap(mix) 部分，会阻塞在块内跨核事件（SET/WAIT_FLAGI/BAR.ALL）上，
-// 穿插执行会搁置本核 percore 尾部的 wrap 部分、打乱实例执行序，与配对核互等死锁，
-// 故 wrap 部分恒留 fetch 循环按原语义执行
+// 单次非阻塞尝试：fetch 侧就绪任务存在即执行一个，无任务立即返回。L2 亲和单元共享原语：
+// 交替消费（InterleaveConsume）与急切消费（EAGER 等待环）复用同一探测/消费路径。
+// 单趟只碰本类型纯计算 leaf（selfQueue 直通 + 本核矩阵行/分组队列），取到则按 fetch 循环
+// 同款语义消费（批任务 notify before run + 执行 + resolve）；跳过 stitch/hub 矩阵帮忙扫描
+// （重活且行主人固定本核，留给 fetch 循环总量不变）；跳过 mixhub/C2V——两者执行 wrap(mix)
+// 部分，会阻塞在块内跨核事件（SET/WAIT_FLAGI/BAR.ALL）上，穿插执行会搁置本核 percore 尾部的
+// wrap 部分、打乱实例执行序，与配对核互等死锁，故 wrap 部分恒留 fetch 循环按原语义执行
+INLINE bool DrcoPerCoreTryFetchConsume(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                       __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue)
+{
+    uint32_t typedBlockIdx = BlockDescTypedBlockIdx(state->blockDesc);
+    uint32_t groupIdx = typedBlockIdx / npu::tile_fwk::LOCAL_GROUP_SIZE;
+    uint32_t rowIdx = typedBlockIdx; // 合并矩阵：行 = 类型内本地编号本身
+    uint32_t taskIdList[npu::tile_fwk::DRCO_MATRIX_COL_MAX];
+    uint32_t outCoreType = 0;
+    uint32_t taskCount = 0;
+    if (DrcyDynFuncDataListFetchSelfQueue(state, outCoreType, taskIdList, taskCount) ||
+        DrcoDynFuncDataListFetchTaskLocalLeaf(state, rootFuncList, outCoreType, taskIdList, taskCount, groupIdx,
+                                              rowIdx)) {
+        DrcoExecFetchedBatch(state, rootFuncList, perCoreQueue, taskIdList, taskCount, outCoreType);
+        return true;
+    }
+    return false;
+}
+
+// 单趟交替消费：完成守卫 → 复用单次尝试原语；percore 任务均为零前驱可无条件执行，
+// 活性不劣于原整批路径
 INLINE void DrcoPerCoreInterleaveConsume(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                          __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue)
 {
@@ -2368,21 +2421,52 @@ INLINE void DrcoPerCoreInterleaveConsume(DrcoEntryState* state, __gm__ npu::tile
         state->drcoFinishFlagCached = true;
         return;
     }
-    uint32_t typedBlockIdx = BlockDescTypedBlockIdx(state->blockDesc);
-    uint32_t groupIdx = typedBlockIdx / npu::tile_fwk::LOCAL_GROUP_SIZE;
-    // 合并矩阵：行 = 类型内本地编号本身
-    uint32_t rowIdx = typedBlockIdx;
-    uint32_t taskIdList[npu::tile_fwk::DRCO_MATRIX_COL_MAX];
-    uint32_t outCoreType = 0;
-    uint32_t taskCount = 0;
-    if (!DrcyDynFuncDataListFetchSelfQueue(state, outCoreType, taskIdList, taskCount) &&
-        !DrcoDynFuncDataListFetchTaskLocalLeaf(state, rootFuncList, outCoreType, taskIdList, taskCount, groupIdx,
-                                               rowIdx)) {
-        return;
-    }
-    DrcoExecFetchedBatch(state, rootFuncList, perCoreQueue, taskIdList, taskCount, outCoreType);
+    (void)DrcoPerCoreTryFetchConsume(state, rootFuncList, perCoreQueue);
 }
 #endif // DRCO_FLAG_L2_CLOSE
+
+#if DRCO_PERCORE_EAGER_CONSUME
+// 有界等待：就绪即消费（L2 最热窗口），等待上限 timeoutCyc；全图完成即刻退出不空转。
+// 等待即收益机制本身——进入本函数的 devTask 均已通过 host 图特征门控。
+// finish 降频轮询：flag 每 devTask 单调（只置不清），本地暂存每轮必查、dcci 探测每
+// ~(POLL_MASK+1) 轮一次，命中即暂存 drcoFinishFlagCached——后续强制点/交替守卫仅查本地布尔
+INLINE bool DrcoPerCoreWaitFetchConsume(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                        __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue, uint32_t timeoutCyc)
+{
+    uint64_t t0 = get_sys_cnt();
+    uint32_t pollTick = 0;
+    while (true) {
+        if (DrcoPerCoreTryFetchConsume(state, rootFuncList, perCoreQueue)) {
+            return true;
+        }
+        // 本类型 leaf 已全部认领或全图完成：等待已无意义，回退
+        if (state->drcoFinishFlagCached ||
+            ((pollTick++ & DRCO_PERCORE_FORCE_FINISH_POLL_MASK) == 0 && DrcoFinishFlagSet(state, rootFuncList))) {
+            state->drcoFinishFlagCached = true;
+            return false;
+        }
+        if (get_sys_cnt() - t0 > timeoutCyc) {
+            return false;
+        }
+        DrcoBusyBackOff();
+    }
+}
+
+// percore 强制点主入口：非阻塞试 → 未命中进入固定上限有界等待（就绪即消费）。
+// 返回 true = 本次消费了一个 fetch 侧任务
+INLINE bool DrcoPerCoreForceFetchConsume(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
+                                         __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue)
+{
+    // finish 已暂存（本类型 leaf 全认领/全图完成）：必然空手，直接短路省探测开销
+    if (state->drcoFinishFlagCached) {
+        return false;
+    }
+    if (DrcoPerCoreTryFetchConsume(state, rootFuncList, perCoreQueue)) {
+        return true;
+    }
+    return DrcoPerCoreWaitFetchConsume(state, rootFuncList, perCoreQueue, DRCO_PERCORE_FORCE_FETCH_TIMEOUT_CYC);
+}
+#endif // DRCO_PERCORE_EAGER_CONSUME
 
 INLINE void ExecDrcoPerCoreTasks(DrcoEntryState* state, __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue,
                                  __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList)
@@ -2399,11 +2483,25 @@ INLINE void ExecDrcoPerCoreTasks(DrcoEntryState* state, __gm__ npu::tile_fwk::Pe
         }
         perCoreQueueHead += 1;
 #if DRCO_FLAG_L2_CLOSE
-        // L2 亲和：交替消费已解出的下游
-        if ((perCoreQueueHead % DRCO_PERCORE_INTERLEAVE_INTERVAL) == 0) {
+        bool forceFetched = false;
+#if DRCO_PERCORE_EAGER_CONSUME
+        // 急切消费（host 图特征门控）：首轮第 AFTER 个 percore 任务触发，之后每 EVERY 个一次
+        bool forcePoint = state->percoreEagerConsume != 0 && perCoreQueueHead == DRCO_PERCORE_FORCE_FETCH_AFTER;
+#if DRCO_PERCORE_FORCE_FETCH_EVERY > 0
+        forcePoint = forcePoint ||
+                     (state->percoreEagerConsume != 0 && perCoreQueueHead > DRCO_PERCORE_FORCE_FETCH_AFTER &&
+                      (perCoreQueueHead % DRCO_PERCORE_FORCE_FETCH_EVERY) == 0);
+#endif // DRCO_PERCORE_FORCE_FETCH_EVERY > 0
+        if (forcePoint) {
+            forceFetched = DrcoPerCoreForceFetchConsume(state, rootFuncList, perCoreQueue);
+        }
+#endif // DRCO_PERCORE_EAGER_CONSUME
+
+        // L2 亲和：交替消费已解出的下游（本趟已被急切消费过则跳过）
+        if (!forceFetched && (perCoreQueueHead % DRCO_PERCORE_INTERLEAVE_INTERVAL) == 0) {
             DrcoPerCoreInterleaveConsume(state, rootFuncList, perCoreQueue);
         }
-#endif
+#endif // DRCO_FLAG_L2_CLOSE
     }
 }
 
@@ -2997,6 +3095,10 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
             state.warpAggState.vectorFinishPollTick = 0;
         }
         state.hasStitchNode = DrcoGmLoad(&rootFuncList->hasStitchNode) != 0;
+#if DRCO_PERCORE_EAGER_CONSUME
+        // host 侧图特征门控结果（每 devTask 入口载入一次，强制点只读本地缓存）
+        state.percoreEagerConsume = DrcoGmLoad(&rootFuncList->percoreEagerConsumeEnable);
+#endif // DRCO_PERCORE_EAGER_CONSUME
         __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue = DrcoGmLoad(
             &rootFuncList->perCorePendingQueueArray[BlockDescBlockIdx(state.blockDesc)]);
         DRCO_DCCI_SINGLE_CACHE_LINE(perCoreQueue);

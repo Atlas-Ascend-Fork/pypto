@@ -63,6 +63,9 @@ private:
     void InitDieReadyQueues(DynDeviceTask* dyntask, DevAscendProgram* devProg);
     void DispatchReadyQueueToCores(DynDeviceTask* dyntask, DevAscendProgram* devProg);
     void DispatchDieReadyQueueToCores(DynDeviceTask* dyntask, DevAscendProgram* devProg);
+    // DRCO 图特征计算 + percore 急切消费门控判定（撒核分发完成后调用）；仅 L2 亲和调度
+    // （且并行未开）编译的 devTask 计算，其余整段跳过——设备侧不读门控字段
+    void ComputeDrcoGraphFeatures(DynDeviceTask* dyntask, DevAscendProgram* devProg);
     void UpdateDeviceTaskQueueInfo(DynDeviceTask* dyntask, ReadyCoreFunctionQueue* aicpuQueue,
                                    ReadyCoreFunctionQueue* aivQueue, ReadyCoreFunctionQueue* aicQueue,
                                    WrapInfoQueue* wrapQueue);

@@ -14,6 +14,8 @@
  */
 
 #include "machine/device/dynamic/context/device_task_context.h"
+#include "machine/utils/device_log.h"
+#include "tilefwk/config.h"
 
 namespace npu::tile_fwk::dynamic {
 
@@ -319,6 +321,14 @@ void DeviceTaskContext::InitDrcoRootFuncList(DynDeviceTask* dyntask)
     // 复用为"HUB_MIX 后继是否存在"的静态标记（MIX 段编译裁剪的一致性校验读它）
     // stitch 工作标记：按图静态写入（devTask 内不变），入口读入 state 后裁剪扫描
     rootFuncList->hasStitchNode = stitchOpCnt != 0 ? 1 : 0;
+    // 图特征快照与急切消费门控先置零（谁分配谁初始化契约），Dispatch 撒核完成后由
+    // ComputeDrcoGraphFeatures 覆写
+    rootFuncList->drcoGraphRootCnt = 0;
+    rootFuncList->drcoGraphTotalOps = 0;
+    rootFuncList->drcoGraphRootSuccEdges = 0;
+    rootFuncList->drcoGraphStaticQ = 0;
+    rootFuncList->drcoGraphWrapCnt = 0;
+    rootFuncList->percoreEagerConsumeEnable = 0;
     uint32_t perCoreSize = sizeof(npu::tile_fwk::PerCorePendingQueue) +
                            queueCapacity * sizeof(npu::tile_fwk::LeafTaskId);
     for (uint32_t i = 0; i < npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE; i++) {
@@ -463,6 +473,91 @@ void DeviceTaskContext::DispatchDieReadyQueueToCores(DynDeviceTask* dyntask, Dev
             dieAivIdx++;
         }
     }
+}
+
+// percore 急切消费图特征门控判据（按网络结构自动判定，无手动开关）：
+//   · wrap(mix) 组存在（wrapCnt>0）→ 关闭：急切消费与配对 AIC 的 wrap 体供给存在资源竞争；
+//   · percore 静态撒核过浅（staticQ < 256）→ 关闭：小 percore 区无 L2 驱逐窗口，
+//     交错消费只有开销没有收益载体；
+//   · 动态 fetch 池不足（totalOps - staticQ < staticQ）→ 关闭：直通/skip-resolve 区域
+//     预分发覆盖整图时等待必空转或迟到、消费无 L2 复用价值——该模式在设备侧无负反馈
+//     信号（等待总能完成），只能 host 侧按本特征判别。
+static uint32_t DrcoGraphEagerConsumePredicate(const npu::tile_fwk::DrcoRootFuncList* rootFuncList)
+{
+    if (rootFuncList->drcoGraphWrapCnt != 0) {
+        return 0;
+    }
+    if (rootFuncList->drcoGraphStaticQ < 256) { // 256：StaticQ thread
+        return 0;
+    }
+    uint32_t dynamicCnt = rootFuncList->drcoGraphTotalOps > rootFuncList->drcoGraphStaticQ ?
+                              rootFuncList->drcoGraphTotalOps - rootFuncList->drcoGraphStaticQ :
+                              0;
+    if (dynamicCnt < rootFuncList->drcoGraphStaticQ) {
+        return 0;
+    }
+    return 1;
+}
+
+void DeviceTaskContext::ComputeDrcoGraphFeatures(DynDeviceTask* dyntask, DevAscendProgram* devProg)
+{
+    npu::tile_fwk::DrcoRootFuncList* rootFuncList = dyntask->drcoRootFuncList;
+    // 设备侧急切消费仅编入 L2 亲和调度编译单元（编译期总门 DRCO_PERCORE_EAGER_CONSUME，判据与
+    // CCE 侧 CompileCoreMachine 一致：machineConfig 含 L2CACHE_AFFINITY_SCH 且并行未开启——并行
+    // 强制关 L2 亲和）。非亲和 devTask 设备侧不读门控字段，整段跳过省 encode 期 O(totalOps) 遍历；
+    // 字段保持 InitDrcoRootFuncList 的零初始化（谁分配谁初始化契约）
+    const bool l2Close = (static_cast<uint8_t>(devProg->devArgs.machineConfig) &
+                          static_cast<uint8_t>(MachineScheduleConfig::L2CACHE_AFFINITY_SCH)) != 0;
+    // 并行判定读 launch 级单一事实源 devArgs.parallelMode（host 侧 device_launcher 同源计算：
+    // enableAicoreResolve && parallelism > 1），设备侧不得直接调 host 侧配置接口
+    const bool bnParallelOn = devProg->devArgs.parallelMode;
+    if (!l2Close || bnParallelOn) {
+        return;
+    }
+    // staticQ：撒核分发完成后全部 perCorePendingQueue 尺寸合计（wrap+AIC+AIV+die）
+    uint32_t staticQ = 0;
+    for (uint32_t i = 0; i < npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE; i++) {
+        staticQ += rootFuncList->perCorePendingQueueArray[i]->size;
+    }
+    // wrapCnt：wrap(mix) 静态任务组数（与急切消费的资源竞争方）
+    uint32_t wrapCnt = 0;
+    WrapInfoQueue* wrapQueue = reinterpret_cast<WrapInfoQueue*>(dyntask->devTask.mixTaskData.readyWrapCoreFunctionQue);
+    if (wrapQueue != nullptr) {
+        for (uint32_t idx = wrapQueue->head; idx < wrapQueue->tail; ++idx) {
+            if (wrapQueue->elem[idx].tasklist[WRAP_IDX_AIC] != AICORE_TASK_INIT) {
+                wrapCnt++;
+            }
+        }
+    }
+    // 图拓扑特征（per func 函数内视图合计）：零前驱根 op = 静态撒核任务的图论来源；
+    // 根直接后继边 = fetch 侧对根产出的 L2 复用机会一阶代理（急切消费收益机制的载体）
+    uint32_t rootCnt = 0;
+    uint32_t totalOps = 0;
+    uint32_t rootSuccEdges = 0;
+    for (uint64_t funcId = 0; funcId < dyntask->dynFuncDataCacheListSize; ++funcId) {
+        auto* devFunc = dyntask->dynFuncDataCacheList[funcId].devFunc;
+        for (size_t opIndex = 0; opIndex < devFunc->GetOperationSize(); ++opIndex) {
+            totalOps++;
+            if (devFunc->GetOperationDepGraphPredCount(static_cast<int>(opIndex)) == 0) {
+                rootCnt++;
+                rootSuccEdges += static_cast<uint32_t>(
+                    devFunc->GetOperationDepGraphSuccList(static_cast<int>(opIndex)).size());
+            }
+        }
+    }
+    rootFuncList->drcoGraphRootCnt = rootCnt;
+    rootFuncList->drcoGraphTotalOps = totalOps;
+    rootFuncList->drcoGraphRootSuccEdges = rootSuccEdges;
+    rootFuncList->drcoGraphStaticQ = staticQ;
+    rootFuncList->drcoGraphWrapCnt = wrapCnt;
+    // 图特征门控（无配置开关，按网络结构自动判定）：判据命中才走急切消费调度，
+    // 其余 devTask 强制点整段短路、行为与基线一致
+    rootFuncList->percoreEagerConsumeEnable = DrcoGraphEagerConsumePredicate(rootFuncList);
+    DEV_INFO("DRCO_GFEAT rootCnt=%u totalOps=%u rootSuccEdges=%u staticQ=%u wrapCnt=%u aicCnt=%u aivCnt=%u eager=%u",
+             rootCnt, totalOps, rootSuccEdges, staticQ, wrapCnt,
+             rootFuncList->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIC].size,
+             rootFuncList->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIV].size,
+             rootFuncList->percoreEagerConsumeEnable);
 }
 
 void DeviceTaskContext::DrcoRefreshSpecialTaskId(DynDeviceTask* dyntask)

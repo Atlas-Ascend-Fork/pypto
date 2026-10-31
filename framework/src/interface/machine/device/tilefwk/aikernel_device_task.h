@@ -304,6 +304,23 @@ struct DrcoRootFuncList {
     // 窗口槽退出计数：每核退出本 devTask 槽时原子 +1，末核（== 全核数）置devTaskFinished——并行路径内替代收尾 SyncAllMix
     // 的完成信号；
     alignas(64) uint32_t slotExitCount{0};
+
+    // DRCO 图特征快照（encode 期 Dispatch 阶段计算一次，急切消费图特征门控的输入与诊断
+    // 数据，追加在结构体末尾不改变既有字段偏移）：
+    //  · rootCnt/totalOps/rootSuccEdges：零前驱根 op 数 / 全量 op 数 / 根直接后继边数
+    //    （函数内视图合计，fetch 侧 L2 复用机会的一阶代理）；
+    //  · staticQ：perCorePendingQueue 撒核任务总数（wrap+AIC+AIV+die 分发合计）；
+    //  · wrapCnt：wrap(mix) 静态任务组数
+    alignas(64) uint32_t drcoGraphRootCnt;
+    uint32_t drcoGraphTotalOps;
+    uint32_t drcoGraphRootSuccEdges;
+    uint32_t drcoGraphStaticQ;
+    uint32_t drcoGraphWrapCnt;
+    // percore 急切消费图特征门控（encode 期判定）：0 = 本 devTask 关闭，设备侧强制点整段
+    // 跳过、行为与基线一致。判定准则见 device_task_context_drco.cpp ComputeDrcoGraphFeatures。
+    // 设备侧仅 L2 亲和编译单元编入读取（总门 DRCO_PERCORE_EAGER_CONSUME，见
+    // aicore_entry_drco.h），非亲和编译单元不读本字段，host 恒写
+    alignas(64) uint32_t percoreEagerConsumeEnable;
 };
 
 #ifdef __TILE_FWK_HOST__

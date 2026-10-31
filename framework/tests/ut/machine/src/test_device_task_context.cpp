@@ -38,6 +38,7 @@
 #include "machine/utils/dynamic/dev_workspace.h"
 #include "interface/machine/device/tilefwk/aikernel_data.h"
 #include "interface/tileop/distributed/comm_context.h"
+#include "tilefwk/config.h"
 #include "tilefwk/data_type.h"
 #include "tilefwk/platform.h"
 #include "tilefwk/tilefwk.h"
@@ -1247,4 +1248,118 @@ TEST_F(TestDeviceTaskContext, DispatchReadyQueueToCores_PrecountPerCoreExecutedC
     EXPECT_EQ(root->devTaskFinishFlagList.flag[npu::tile_fwk::DRCO_QUEUE_AIV].devTaskFinishFlag, 0U);
     // MIX 恒为空类型（size == 0）：预累加即置完成 flag（对应原空队列通知置 flag 行为）
     EXPECT_EQ(root->devTaskFinishFlagList.flag[npu::tile_fwk::DRCO_QUEUE_MIX].devTaskFinishFlag, 1U);
+}
+
+TEST_F(TestDeviceTaskContext, ComputeDrcoGraphFeatures_SkipsWithoutL2AffinityOrUnderParallel)
+{
+    DeviceTaskContext taskContext;
+    DevStartArgsBase startArgs;
+    constexpr size_t kControlFlowCacheSize = 16 * 1024 * 1024;
+    auto controlFlowCacheBuf = std::make_unique<uint8_t[]>(kControlFlowCacheSize);
+
+    DevAscendProgram devProg;
+    CreateMockDevAscendProgram(&devProg, ArchInfo::DAV_3510);
+    devProg.devArgs.enableAicoreResolve = true;
+    devProg.devArgs.nrValidAic = 4;
+    devProg.devArgs.machineConfig = 0;
+    devProg.controlFlowCache.cacheData = DevRelocVector<uint8_t>(kControlFlowCacheSize, controlFlowCacheBuf.get());
+    devProg.controlFlowCache.isRecording = true;
+
+    DeviceWorkspaceAllocator workspace(&devProg);
+    taskContext.InitAllocator(&devProg, workspace, &startArgs);
+
+    auto dyntask = std::make_unique<DynDeviceTask>(workspace);
+    CreateMockDynDeviceTask(dyntask.get(), 16);
+
+    ReadyCoreFunctionQueue* queues[READY_QUEUE_SIZE] = {};
+    ASSERT_EQ(taskContext.InitReadyQueues(dyntask.get(), &devProg, queues), DEVICE_MACHINE_OK);
+
+    auto* root = dyntask->drcoRootFuncList;
+    ASSERT_NE(root, nullptr);
+    constexpr uint32_t kSentinel = 0x5A5A5A5AU;
+    root->drcoGraphTotalOps = kSentinel;
+    taskContext.ComputeDrcoGraphFeatures(dyntask.get(), &devProg);
+    EXPECT_EQ(root->drcoGraphTotalOps, kSentinel);
+
+    devProg.devArgs.machineConfig = static_cast<uint64_t>(MachineScheduleConfig::L2CACHE_AFFINITY_SCH);
+    devProg.devArgs.parallelMode = true;
+    root->drcoGraphTotalOps = kSentinel;
+    taskContext.ComputeDrcoGraphFeatures(dyntask.get(), &devProg);
+    EXPECT_EQ(root->drcoGraphTotalOps, kSentinel);
+}
+
+TEST_F(TestDeviceTaskContext, ComputeDrcoGraphFeatures_CollectsFeaturesAndGatesEagerConsume)
+{
+    DeviceTaskContext taskContext;
+    DevStartArgsBase startArgs;
+    constexpr size_t kControlFlowCacheSize = 16 * 1024 * 1024;
+    auto controlFlowCacheBuf = std::make_unique<uint8_t[]>(kControlFlowCacheSize);
+
+    DevAscendProgram devProg;
+    CreateMockDevAscendProgram(&devProg, ArchInfo::DAV_3510);
+    devProg.devArgs.enableAicoreResolve = true;
+    devProg.devArgs.nrValidAic = 4;
+    devProg.devArgs.machineConfig = static_cast<uint64_t>(MachineScheduleConfig::L2CACHE_AFFINITY_SCH);
+    devProg.devArgs.parallelMode = false;
+    devProg.controlFlowCache.cacheData = DevRelocVector<uint8_t>(kControlFlowCacheSize, controlFlowCacheBuf.get());
+    devProg.controlFlowCache.isRecording = true;
+
+    DeviceWorkspaceAllocator workspace(&devProg);
+    taskContext.InitAllocator(&devProg, workspace, &startArgs);
+
+    auto dyntask = std::make_unique<DynDeviceTask>(workspace);
+    CreateMockDynDeviceTask(dyntask.get(), 16);
+
+    ReadyCoreFunctionQueue* queues[READY_QUEUE_SIZE] = {};
+    ASSERT_EQ(taskContext.InitReadyQueues(dyntask.get(), &devProg, queues), DEVICE_MACHINE_OK);
+
+    constexpr size_t kOpCount = 512;
+    constexpr size_t kFuncBufferSize = kOpCount * 1024;
+    std::unique_ptr<uint8_t[]> funcBuffer;
+    uint8_t* funcDataPtr = nullptr;
+    DevAscendFunction* devFunc = CreateDevAscendFunctionBuffer(funcBuffer, funcDataPtr, kOpCount, kFuncBufferSize);
+    SetupDevAscendFunctionData(devFunc, funcDataPtr, funcBuffer.get(), kOpCount);
+    devFunc->GetOperationDepGraphPredCount(1) = 1;
+    dyntask->dynFuncDataCacheList[0].devFunc = devFunc;
+    dyntask->dynFuncDataCacheListSize = 1;
+
+    auto* root = dyntask->drcoRootFuncList;
+    ASSERT_NE(root, nullptr);
+    root->perCorePendingQueueArray[0]->size = 256;
+
+    // 存在 wrap(mix) 组：急切消费关闭
+    WrapInfo wraps[2]{};
+    wraps[0].tasklist[WRAP_IDX_AIC] = MakeTaskID(0, 0);
+    wraps[1].tasklist[WRAP_IDX_AIC] = static_cast<uint32_t>(AICORE_TASK_INIT);
+    WrapInfoQueue wrapQueue{0, 2, 2, wraps, 0};
+    dyntask->devTask.mixTaskData.readyWrapCoreFunctionQue = reinterpret_cast<uint64_t>(&wrapQueue);
+    taskContext.ComputeDrcoGraphFeatures(dyntask.get(), &devProg);
+    EXPECT_EQ(root->drcoGraphRootCnt, static_cast<uint32_t>(kOpCount - 1));
+    EXPECT_EQ(root->drcoGraphTotalOps, static_cast<uint32_t>(kOpCount));
+    EXPECT_EQ(root->drcoGraphRootSuccEdges, 0U);
+    EXPECT_EQ(root->drcoGraphStaticQ, 256U);
+    EXPECT_EQ(root->drcoGraphWrapCnt, 1U);
+    EXPECT_EQ(root->percoreEagerConsumeEnable, 0U);
+
+    // percore 静态撒核过浅：急切消费关闭
+    dyntask->devTask.mixTaskData.readyWrapCoreFunctionQue = 0;
+    root->perCorePendingQueueArray[0]->size = 255;
+    taskContext.ComputeDrcoGraphFeatures(dyntask.get(), &devProg);
+    EXPECT_EQ(root->drcoGraphWrapCnt, 0U);
+    EXPECT_EQ(root->drcoGraphStaticQ, 255U);
+    EXPECT_EQ(root->percoreEagerConsumeEnable, 0U);
+
+    // 动态 fetch 池不足：急切消费关闭
+    root->perCorePendingQueueArray[0]->size = 256;
+    dyntask->dynFuncDataCacheListSize = 0;
+    taskContext.ComputeDrcoGraphFeatures(dyntask.get(), &devProg);
+    EXPECT_EQ(root->drcoGraphTotalOps, 0U);
+    EXPECT_EQ(root->drcoGraphStaticQ, 256U);
+    EXPECT_EQ(root->percoreEagerConsumeEnable, 0U);
+
+    // 三项判据全部满足：急切消费开启
+    dyntask->dynFuncDataCacheListSize = 1;
+    taskContext.ComputeDrcoGraphFeatures(dyntask.get(), &devProg);
+    EXPECT_EQ(root->drcoGraphTotalOps, static_cast<uint32_t>(kOpCount));
+    EXPECT_EQ(root->percoreEagerConsumeEnable, 1U);
 }
