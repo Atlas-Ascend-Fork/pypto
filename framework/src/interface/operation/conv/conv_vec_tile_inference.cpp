@@ -30,6 +30,8 @@ constexpr int64_t NCHW_C_IDX = 1;
 constexpr int64_t NCHW_H_IDX = 2;
 constexpr int64_t NCHW_W_IDX = 3;
 constexpr int64_t NCDHW_D_IDX = 2;
+constexpr int64_t NCDHW_H_IDX = 3;
+constexpr int64_t NCDHW_W_IDX = 4;
 constexpr uint32_t PAD_STRIDE_H = 0;
 constexpr uint32_t PAD_STRIDE_W = 1;
 constexpr uint32_t PAD_STRIDE_D = 2;
@@ -137,7 +139,9 @@ VecTile InferFmapVecTile(const ConvInferContext& ctx, int64_t dtypeSize, size_t 
     return vecTile;
 }
 
-VecTile InferWeightVecTile(const ConvInferContext& ctx, int64_t dtypeSize, size_t ubLimit)
+// A5 keeps the pre-Fz weight tile: the last dim stays on the C0 block, which is what the A5 transdata
+// vec-tile split expects.
+VecTile InferWeightVecTileForA5(const ConvInferContext& ctx, int64_t dtypeSize, size_t ubLimit)
 {
     int64_t c0 = ALIGN_SIZE_32 / dtypeSize;
     int64_t n0 = MKN_N_VAL;
@@ -156,6 +160,39 @@ VecTile InferWeightVecTile(const ConvInferContext& ctx, int64_t dtypeSize, size_
     } else {
         vecTile.tile = {n0, c0, 1, c0};
         GrowDim(vecTile.tile, 3, c0, kw, dtypeSize, ubLimit);
+        GrowDim(vecTile.tile, 0, n0, nMax, dtypeSize, ubLimit);
+    }
+    return vecTile;
+}
+
+// A2/A3 follow the kernel extent (kd/kh/kw) of the weight and grow the C dim instead.
+VecTile InferWeightVecTile(const ConvInferContext& ctx, int64_t dtypeSize, size_t ubLimit)
+{
+    if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) {
+        return InferWeightVecTileForA5(ctx, dtypeSize, ubLimit);
+    }
+
+    int64_t c0 = ALIGN_SIZE_32 / dtypeSize;
+    int64_t n0 = MKN_N_VAL;
+    bool isConv3D = ctx.isConv3D;
+    bool isConv1D = ctx.isConv1D;
+
+    int64_t kh = isConv1D ? 1 : ctx.oriWeightShape[isConv3D ? NCDHW_H_IDX : NCHW_H_IDX];
+    int64_t kw = isConv1D ? ctx.oriWeightShape[NCHW_H_IDX] : ctx.oriWeightShape[isConv3D ? NCDHW_W_IDX : NCHW_W_IDX];
+    int64_t kd = isConv3D ? ctx.oriWeightShape[NCDHW_D_IDX] : 1;
+    int64_t coutPerGroup = ctx.oriWeightShape[0] / ctx.groups;
+    int64_t nMax = std::min(coutPerGroup, ctx.tileL1Info.tileN);
+
+    int64_t coutMax = ctx.oriWeightShape[1];
+
+    VecTile vecTile;
+    if (isConv3D) {
+        vecTile.tile = {n0, c0, kd, kh, kw};
+        GrowDim(vecTile.tile, 1, c0, coutMax, dtypeSize, ubLimit);
+        GrowDim(vecTile.tile, 0, n0, nMax, dtypeSize, ubLimit);
+    } else {
+        vecTile.tile = {n0, c0, kh, kw};
+        GrowDim(vecTile.tile, 1, c0, coutMax, dtypeSize, ubLimit);
         GrowDim(vecTile.tile, 0, n0, nMax, dtypeSize, ubLimit);
     }
     return vecTile;

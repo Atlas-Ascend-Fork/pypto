@@ -1947,14 +1947,20 @@ static torch::Tensor ConvNdc1hwc0ToNcdhw(const torch::Tensor& in, int64_t groups
 static torch::Tensor ConvNchwToFz(const torch::Tensor& in, int64_t groups, int64_t n1pg, int64_t c1pg, int64_t c0)
 {
     auto s = in.sizes().vec();
+    // The spatial dims may arrive as separate H/W dims (NCHW) or already flattened into a single
+    // H*W dim; only their product takes part in the FZ layout.
+    int64_t hw = 1;
+    for (size_t i = 2; i < s.size(); ++i) {
+        hw *= s[i];
+    }
     // pad cout per group (n1pg * N0 each), not at the end of the whole N dim: the FZ n dim is
     // [group, n1, n0] and group g's weights must land in group g's own n-block slice
     int64_t coutPG = s[0] / groups;
-    auto t = in.view({groups, coutPG, s[1], s[2], s[3]});
-    t = torch::constant_pad_nd(t, {0, 0, 0, 0, 0, c1pg * c0 - s[1], 0, n1pg * CONV_N0 - coutPG}, 0);
-    t = t.view({groups, n1pg, CONV_N0, c1pg, c0, s[2], s[3]});
-    t = t.permute({0, 3, 5, 6, 1, 2, 4});
-    return t.reshape({groups * c1pg * s[2] * s[3], n1pg, CONV_N0, c0});
+    auto t = in.reshape({groups, coutPG, s[1], hw});
+    t = torch::constant_pad_nd(t, {0, 0, 0, c1pg * c0 - s[1], 0, n1pg * CONV_N0 - coutPG}, 0);
+    t = t.view({groups, n1pg, CONV_N0, c1pg, c0, hw});
+    t = t.permute({0, 3, 5, 1, 2, 4});
+    return t.reshape({groups * c1pg * hw, n1pg, CONV_N0, c0});
 }
 
 static torch::Tensor ConvFzToNchw(const torch::Tensor& fz, int64_t groups, int64_t h, int64_t w)

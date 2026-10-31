@@ -112,7 +112,7 @@ TEST_F(TestCodegenDynTransData, TestTransData4)
          .outputShape = {32, 1, 16, 16},
          .tileOpFormat = 4,
          .validShape = {32, 1, 16, 16},
-         .expect = R"!!!(TTransDataNCHW2Fractal_Z<(int)(16), (int)(16), (int)(1), (int)(16)>(ubTensor_)!!!"});
+         .expect = R"!!!(TTransDataNCHW2Fractal_Z<(int)(16), (int)(16), (int)(2), (int)(16)>(ubTensor_)!!!"});
 }
 
 TEST_F(TestCodegenDynTransData, TestTransData3)
@@ -152,6 +152,19 @@ TEST_F(TestCodegenDynTransData, TestTransDataTmpFzPartialW)
                       .tileOpFormat = 4,
                       .validShape = {40, 1, 16, 16},
                       .expect = R"!!!(TTransDataNCHW2Fractal_Z)!!!"});
+}
+
+TEST_F(TestCodegenDynTransData, TestTransData5D2)
+{
+    RunTransDataTest(
+        {.caseName = "TestTransData5D2",
+         .inputShape = {16, 7, 2, 1, 8},
+         .vecTile = {16, 8, 2, 1, 8},
+         .dtype = DT_FP32,
+         .outputShape = {16, 1, 16, 8},
+         .tileOpFormat = 5,
+         .validShape = {16, 1, 16, 8},
+         .expect = R"!!!(TTransDataNCDHW2FRACTAL_Z_3D<(int)(16), (int)(8), (int)(2), (int)(1), (int)(8)>)!!!"});
 }
 
 TEST_F(TestCodegenDynTransData, TestTransData0_3)

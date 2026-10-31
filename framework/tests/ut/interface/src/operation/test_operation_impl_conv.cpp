@@ -21,6 +21,7 @@
 #include "tilefwk/tilefwk.h"
 #include "tilefwk/platform.h"
 #include "interface/inner/tilefwk.h"
+#include "passes/tensor_graph_pass/expand_function.h"
 using namespace npu::tile_fwk;
 
 class OperationImplConvTest : public testing::Test {
@@ -38,6 +39,21 @@ public:
 
     void TearDown() override {}
 };
+
+TEST_F(OperationImplConvTest, Test_FractalZTransData_ChannelTiles)
+{
+    TileShape::Current().SetVecTile({256, 96, 3, 3});
+    Tensor weight(DT_BF16, {256, 256, 3, 3}, "weight");
+    FUNCTION("TestFractalZChannelTiles")
+    {
+        auto* function = Program::GetInstance().GetCurrentFunction();
+        auto output = std::make_shared<LogicalTensor>(*function, DT_BF16, Shape{144, 16, 16, 16});
+        TransData(*function, weight.GetStorage(), output, TileOpFormat::TILEOP_FRACTAL_Z, 1);
+    }
+
+    ExpandFunction expandFunction;
+    EXPECT_NE(expandFunction.RunOnFunction(*Program::GetInstance().GetCurrentFunction()), Status::FAILED);
+}
 
 TEST_F(OperationImplConvTest, Test_Conv2d_FP16_A2A3)
 {

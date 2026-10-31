@@ -95,43 +95,26 @@ __aicore__ inline void TTransDataNCHW2Fractal_Z(DST dst, TMP tmpTensor, INPUT in
     constexpr auto inputTypeSize = sizeof(typename INPUT::Type);
     constexpr auto C0 = TileOp::BLOCK_SIZE / inputTypeSize;
     constexpr auto N0 = 16;
-    constexpr auto tileW = (tmpTileW + C0 - 1) / C0 * C0;
     constexpr auto tileC1 = tileC / C0;
     constexpr auto tileN1 = tileN / N0;
-
-    constexpr auto inputTileN = Std::tuple_element<DIM_1ST, typename INPUT::TileShape>::type::value;
-    constexpr auto inputTileC = Std::tuple_element<DIM_2ND, typename INPUT::TileShape>::type::value;
-    constexpr auto inputTileH = Std::tuple_element<DIM_3RD, typename INPUT::TileShape>::type::value;
-    constexpr auto inputTileW = Std::tuple_element<DIM_4TH, typename INPUT::TileShape>::type::value;
-
-    constexpr auto dstTileC1HW = Std::tuple_element<DIM_1ST, typename DST::TileShape>::type::value;
-    constexpr auto dstTileN1 = Std::tuple_element<DIM_2ND, typename DST::TileShape>::type::value;
-    constexpr auto dstTileN0 = Std::tuple_element<DIM_3RD, typename DST::TileShape>::type::value;
-    constexpr auto dstTileC0 = Std::tuple_element<DIM_4TH, typename DST::TileShape>::type::value;
+    constexpr int elementSize = tileN * tileC * tileH * tmpTileW;
+    constexpr int bufferSize = elementSize * inputTypeSize;
 
     const auto inputLayout = input.GetLayout();
-    auto inputN = inputLayout.template GetShapeDim<DIM_2ND, MAX_DIMS>();
-    auto inputC = inputLayout.template GetShapeDim<DIM_3RD, MAX_DIMS>();
-    auto inputH = inputLayout.template GetShapeDim<DIM_4TH, MAX_DIMS>();
-    auto inputW = inputLayout.template GetShapeDim<DIM_5TH, MAX_DIMS>();
+    auto inputN = inputLayout.template GetShapeDim<DIM_4TH, MAX_DIMS>();
+    auto inputCHW = inputLayout.template GetShapeDim<DIM_5TH, MAX_DIMS>();
+    auto inputC = inputCHW / (tileH * tmpTileW);
 
-    if (inputN == 0 || inputC == 0 || inputH == 0 || inputW == 0) {
+    if (inputN == 0 || inputCHW == 0) {
         return;
     }
 
-    constexpr int inputElementSize = inputTileN * inputTileC * inputTileH * inputTileW;
-    constexpr int inputBufferSize = inputElementSize * inputTypeSize;
-    constexpr int elementSize = tileN * tileC * tileH * tileW;
-    constexpr int dstElementSize = dstTileC1HW * dstTileN1 * dstTileN0 * dstTileC0;
-    constexpr int dstBufferSize = dstElementSize * inputTypeSize;
-
-    using inputTileData = pto::ConvTile<pto::TileType::Vec, typename INPUT::Type, inputBufferSize, pto::Layout::NCHW,
-                                        pto::ConvTileShape<inputTileN, inputTileC, inputTileH, inputTileW>,
-                                        pto::ConvTileShape<tileN, tileC, tileH, tileW>>;
-    using tmpDst1TileData = pto::ConvTile<pto::TileType::Vec, typename INPUT::Type, elementSize * inputTypeSize,
-                                          pto::Layout::NC1HWC0, pto::ConvTileShape<tileN, tileC1, tileH, tileW, C0>,
-                                          pto::ConvTileShape<tileN, tileC1, tileH, tileW, C0>>;
-    using tmp1TileData = pto::Tile<pto::TileType::Vec, typename INPUT::Type, 1, C0, pto::BLayout::RowMajor, 1, C0>;
+    using inputTileData = pto::ConvTile<pto::TileType::Vec, typename INPUT::Type, bufferSize, pto::Layout::NCHW,
+                                        pto::ConvTileShape<tileN, tileC, tileH, tmpTileW>>;
+    using tmpDst1TileData = pto::ConvTile<pto::TileType::Vec, typename INPUT::Type, bufferSize, pto::Layout::NC1HWC0,
+                                          pto::ConvTileShape<tileN, tileC1, tileH, tmpTileW, C0>>;
+    using tmp1TileData = pto::Tile<pto::TileType::Vec, typename INPUT::Type, tileH * tmpTileW, C0,
+                                   pto::BLayout::RowMajor, tileH * tmpTileW, C0>;
     inputTileData convInput;
     tmpDst1TileData convTmpDstNC1HWC0;
     tmp1TileData tmpTile;
@@ -142,40 +125,74 @@ __aicore__ inline void TTransDataNCHW2Fractal_Z(DST dst, TMP tmpTensor, INPUT in
     pto::TASSIGN(convTmpDstNC1HWC0, (uint64_t)tmpDstNC1HWC0Addr);
     pto::TASSIGN(tmpTile, (uint64_t)tmpAreaTileAddr);
 
-    auto inputPadN = (inputN + N0 - 1) / N0 * N0;
-    auto padNSize = inputPadN - inputN;
-    auto inputPadC = (inputC + C0 - 1) / C0 * C0;
-    auto padCSize = inputPadC - inputC;
-
     Sync2_VS();
-    if (padNSize != 0) {
-        using TileDefine = pto::Tile<pto::TileType::Vec, typename INPUT::Type, inputTileN,
-                                     inputTileC * inputTileH * inputTileW, pto::BLayout::RowMajor, -1, -1>;
-        TileDefine tmpInputTile(padNSize, inputTileC * inputTileH * inputTileW);
-        pto::TASSIGN(tmpInputTile,
-                     (uint64_t)(input.GetAddr() + inputN * inputTileC * inputTileH * inputTileW * inputTypeSize));
-        pto::TEXPANDS(tmpInputTile, static_cast<typename INPUT::Type>(0));
-        pipe_barrier(PIPE_V);
-    }
-
-    if (padCSize != 0) {
-        using TileDefine = pto::Tile<pto::TileType::Vec, typename INPUT::Type, inputTileC, inputTileH * inputTileW,
-                                     pto::BLayout::RowMajor, -1, -1>;
-        TileDefine tmpInputTile(padCSize, inputTileH * inputTileW);
-        for (LoopVar i = 0; i < inputN; i++) {
-            pto::TASSIGN(tmpInputTile, (uint64_t)(input.GetAddr() +
-                                                  (i * inputTileC + inputC) * inputTileH * inputTileW * inputTypeSize));
-            pto::TEXPANDS(tmpInputTile, static_cast<typename INPUT::Type>(0));
+    if constexpr (inputTypeSize == 2 && tileN % N0 == 0 && tileC % C0 == 0 && C0 == N0) {
+        if (inputN <= tileN && inputC <= tileC) {
+            constexpr int HW = tileH * tmpTileW;
+            constexpr int CHW = tileC * HW;
+            auto src = (__ubuf__ typename INPUT::Type*)((uint64_t)input.GetAddr());
+            auto tmp = tmpDstNC1HWC0Addr;
+            auto out = (__ubuf__ typename INPUT::Type*)((uint64_t)dst.GetAddr());
+            if (inputC < tileC) {
+                using PadCTile = pto::Tile<pto::TileType::Vec, typename INPUT::Type, 1, CHW, pto::BLayout::RowMajor, -1,
+                                           -1>;
+                PadCTile padCTile(1, (tileC - inputC) * HW);
+                for (LoopVar n = 0; n < inputN; ++n) {
+                    pto::TASSIGN(padCTile, (uint64_t)(src + n * CHW + inputC * HW));
+                    pto::TEXPANDS(padCTile, static_cast<typename INPUT::Type>(0));
+                }
+            }
+            if (inputN < tileN) {
+                using PadNTile = pto::Tile<pto::TileType::Vec, typename INPUT::Type, tileN, CHW, pto::BLayout::RowMajor,
+                                           -1, -1>;
+                PadNTile padNTile(tileN - inputN, CHW);
+                pto::TASSIGN(padNTile, (uint64_t)(src + inputN * CHW));
+                pto::TEXPANDS(padNTile, static_cast<typename INPUT::Type>(0));
+            }
+            if (inputN < tileN || inputC < tileC) {
+                pipe_barrier(PIPE_V);
+            }
+            uint64_t dstAddr[16];
+            uint64_t srcAddr[16];
+            // [N, C*HW] -> [C*HW, N]
+            for (int n = 0; n < tileN; n += N0) {
+                for (int chw = 0; chw < CHW; chw += N0) {
+                    for (int i = 0; i < N0; ++i) {
+                        srcAddr[i] = (uint64_t)(src + (n + i) * CHW + chw);
+                        dstAddr[i] = (uint64_t)(tmp + (chw + i) * tileN + n);
+                    }
+                    set_va_reg_sb(VA0, dstAddr);
+                    set_va_reg_sb(VA1, dstAddr + 8);
+                    set_va_reg_sb(VA2, srcAddr);
+                    set_va_reg_sb(VA3, srcAddr + 8);
+                    // A single 16x16 block uses zero repeat strides.
+                    scatter_vnchwconv_b16(VA0, VA2, 1, 0, 0);
+                }
+            }
+            pipe_barrier(PIPE_V);
+            // [C, HW, N] -> [C1*HW, N, C0]
+            for (int c1 = 0; c1 < tileC1; ++c1) {
+                for (int hw = 0; hw < HW; ++hw) {
+                    for (int n = 0; n < tileN; n += N0) {
+                        for (int i = 0; i < C0; ++i) {
+                            srcAddr[i] = (uint64_t)(tmp + ((c1 * C0 + i) * HW + hw) * tileN + n);
+                            dstAddr[i] = (uint64_t)(out + ((c1 * HW + hw) * tileN + n + i) * C0);
+                        }
+                        set_va_reg_sb(VA0, dstAddr);
+                        set_va_reg_sb(VA1, dstAddr + 8);
+                        set_va_reg_sb(VA2, srcAddr);
+                        set_va_reg_sb(VA3, srcAddr + 8);
+                        scatter_vnchwconv_b16(VA0, VA2, 1, 0, 0);
+                    }
+                }
+            }
+            return;
         }
-        pipe_barrier(PIPE_V);
     }
-
     pto::TTRANS(convTmpDstNC1HWC0, convInput, tmpTile);
     pipe_barrier(PIPE_V);
-    using tmpDst2TileData = pto::ConvTile<pto::TileType::Vec, typename INPUT::Type, dstBufferSize,
-                                          pto::Layout::FRACTAL_Z,
-                                          pto::ConvTileShape<dstTileC1HW, dstTileN1, dstTileN0, dstTileC0>,
-                                          pto::ConvTileShape<tileC1 * tileH * tileW, tileN1, N0, C0>>;
+    using tmpDst2TileData = pto::ConvTile<pto::TileType::Vec, typename INPUT::Type, bufferSize, pto::Layout::FRACTAL_Z,
+                                          pto::ConvTileShape<tileC1 * tileH * tmpTileW, tileN1, N0, C0>>;
     tmpDst2TileData dstFractalZ;
     pto::TASSIGN(dstFractalZ, (uint64_t)dst.GetAddr());
     pto::TTRANS(dstFractalZ, convTmpDstNC1HWC0, tmpTile);

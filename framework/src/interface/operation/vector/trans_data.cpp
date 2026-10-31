@@ -15,6 +15,7 @@
 
 #include "unary.h"
 #include "tensor_transformation.h"
+#include "interface/tensor/irbuilder.h"
 #include "interface/utils/operator_tracer.h"
 #include "tilefwk/error_code.h"
 #include "tilefwk/platform.h"
@@ -84,16 +85,16 @@ std::shared_ptr<LogicalTensor> transDataPadNC1HWC0(Function& function, const std
 }
 
 std::shared_ptr<LogicalTensor> transDataPadFractalZ(Function& function, const std::shared_ptr<LogicalTensor>& inputTile,
-                                                    int64_t C0)
+                                                    std::vector<SymbolicScalar>& tileParams, int64_t C0)
 {
     auto inputShape = inputTile->GetShape();
+    int64_t H = static_cast<int64_t>(tileParams[8]);
+    int64_t W = static_cast<int64_t>(tileParams[9]);
     int64_t N = inputShape[0];
-    int64_t C = inputShape[1];
+    int64_t C = inputShape[1] / H / W;
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, C0 > 0) << "The C0 is not valid !";
     int64_t C1 = (C + C0 - 1) / C0;
     int64_t padC = C1 * C0 - C;
-    int64_t H = inputShape[2];
-    int64_t W = inputShape[3];
     int64_t N0 = 16;
     int64_t N1 = (N + N0 - 1) / N0;
     int64_t padN = N1 * N0 - N;
@@ -102,49 +103,47 @@ std::shared_ptr<LogicalTensor> transDataPadFractalZ(Function& function, const st
         return inputTile;
     }
 
-    Shape resShape = Shape{N1 * N0, C1 * C0, H, W};
-    auto resValidShape = inputTile->dynValidShape_;
+    Shape resShape = Shape{N1 * N0, C1 * C0 * H * W};
+    auto inputTileValidShape = inputTile->dynValidShape_;
+    auto validShapePadN = (inputTileValidShape[0] + N0 - 1) / N0 * N0;
+    auto validShapePadC = ((inputTileValidShape[1] / H / W) + C0 - 1) / C0 * C0;
+    std::vector<SymbolicScalar> resValidShape = {validShapePadN, validShapePadC * H * W};
     auto resTile = std::make_shared<LogicalTensor>(function, inputTile->Datatype(), resShape, resValidShape);
-    std::shared_ptr<LogicalTensor> tmpResTile = resTile->View(function, inputTile->GetShape(), {0, 0, 0, 0});
-    [[maybe_unused]] auto& copyOp1 = function.AddOperation(Opcode::OP_REGISTER_COPY, {inputTile}, {tmpResTile});
 
-    if (padC) {
-        Shape resultCRemainShape = {N, C1 * C0 - C, H, W};
-        std::shared_ptr<LogicalTensor> resCRemainTile = resTile->View(function, resultCRemainShape, {0, C, 0, 0});
-        auto padCTile = std::make_shared<LogicalTensor>(function, inputTile->Datatype(), resultCRemainShape,
-                                                        SymbolicScalar::FromConcrete(resultCRemainShape));
-        auto& vecDupOp = function.AddOperation(Opcode::OP_VEC_DUP, {}, {padCTile});
-        vecDupOp.SetAttribute(OpAttributeKey::scalar, Element(inputTile->Datatype(), 0));
-        vecDupOp.SetAttribute(OP_ATTR_PREFIX + "shape", resultCRemainShape);
-        vecDupOp.SetAttribute(OP_ATTR_PREFIX + "validShape", SymbolicScalar::FromConcrete(resultCRemainShape));
-        [[maybe_unused]] auto& copyOp2 = function.AddOperation(Opcode::OP_REGISTER_COPY, {padCTile}, {resCRemainTile});
-    }
-    if (padN) {
-        Shape resultNRemainShape = {N1 * N0 - N, C1 * C0, H, W};
-        std::shared_ptr<LogicalTensor> resNRemainTile = resTile->View(function, resultNRemainShape, {N, 0, 0, 0});
-        auto padNTile = std::make_shared<LogicalTensor>(function, inputTile->Datatype(), resultNRemainShape,
-                                                        SymbolicScalar::FromConcrete(resultNRemainShape));
-        auto& vecDupOp = function.AddOperation(Opcode::OP_VEC_DUP, {}, {padNTile});
-        vecDupOp.SetAttribute(OpAttributeKey::scalar, Element(inputTile->Datatype(), 0));
-        vecDupOp.SetAttribute(OP_ATTR_PREFIX + "shape", resultNRemainShape);
-        vecDupOp.SetAttribute(OP_ATTR_PREFIX + "validShape", SymbolicScalar::FromConcrete(resultNRemainShape));
-        [[maybe_unused]] auto& copyOp2 = function.AddOperation(Opcode::OP_REGISTER_COPY, {padNTile}, {resNRemainTile});
-    }
+    std::shared_ptr<LogicalTensor> padResTile = resTile->View(function, resShape, {0, 0}, true);
+    auto& vecDupOp = function.AddOperation(Opcode::OP_VEC_DUP, {}, {padResTile});
+    vecDupOp.SetAttribute(OpAttributeKey::scalar, Element(inputTile->Datatype(), 0));
+    vecDupOp.SetAttribute(OP_ATTR_PREFIX + "shape", resShape);
+    vecDupOp.SetAttribute(OP_ATTR_PREFIX + "validShape", SymbolicScalar::FromConcrete(resShape));
+    auto dupStmt = std::static_pointer_cast<const ir::Stmt>(vecDupOp.shared_from_this());
+    auto dupToken = IRBuilder().CreateTokenVar(vecDupOp.GetSpan());
+    vecDupOp.result_token_.push_back(dupToken);
+    function.GetVarDependency().AddProducer(dupToken, dupStmt);
+
+    std::shared_ptr<LogicalTensor> tmpResTile = resTile->View(function, inputTile->GetShape(), {0, 0}, true);
+    auto& copyOp1 = function.AddOperation(Opcode::OP_REGISTER_COPY, {inputTile}, {tmpResTile});
+    auto copyStmt = std::static_pointer_cast<const ir::Stmt>(copyOp1.shared_from_this());
+    function.GetVarDependency().AddConsumer(dupToken, copyStmt);
+    copyOp1.tokens_.push_back(dupToken);
+
+    resTile->UpdateDynValidShape(resValidShape);
     return resTile;
 }
 
 std::shared_ptr<LogicalTensor> transDataPadFractalZ3D(Function& function,
-                                                      const std::shared_ptr<LogicalTensor>& inputTile, int64_t C0)
+                                                      const std::shared_ptr<LogicalTensor>& inputTile,
+                                                      std::vector<SymbolicScalar>& tileParams, int64_t C0)
 {
     auto inputShape = inputTile->GetShape();
     int64_t N = inputShape[0];
-    int64_t C = inputShape[1];
-    int64_t D = inputShape[2];
+    int64_t CDHW = inputShape[1];
+    int64_t D = static_cast<int64_t>(tileParams[12]);
+    int64_t H = static_cast<int64_t>(tileParams[13]);
+    int64_t W = static_cast<int64_t>(tileParams[14]);
+    int64_t C = CDHW / D / H / W;
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, C0 > 0) << "The C0 is not valid !";
     int64_t C1 = (C + C0 - 1) / C0;
     int64_t padC = C1 * C0 - C;
-    int64_t H = inputShape[3];
-    int64_t W = inputShape[4];
     int64_t N0 = 16;
     int64_t N1 = (N + N0 - 1) / N0;
     int64_t padN = N1 * N0 - N;
@@ -153,34 +152,30 @@ std::shared_ptr<LogicalTensor> transDataPadFractalZ3D(Function& function,
         return inputTile;
     }
 
-    Shape resShape = Shape{N1 * N0, C1 * C0, D, H, W};
-    auto resValidShape = inputTile->dynValidShape_;
+    Shape resShape = Shape{N1 * N0, C1 * C0 * D * H * W};
+    auto inputTileValidShape = inputTile->dynValidShape_;
+    auto validShapePadN = (inputTileValidShape[0] + N0 - 1) / N0 * N0;
+    auto validShapePadC = ((inputTileValidShape[1] / D / H / W) + C0 - 1) / C0 * C0;
+    std::vector<SymbolicScalar> resValidShape = {validShapePadN, validShapePadC * D * H * W};
     auto resTile = std::make_shared<LogicalTensor>(function, inputTile->Datatype(), resShape, resValidShape);
-    std::shared_ptr<LogicalTensor> tmpResTile = resTile->View(function, inputTile->GetShape(), {0, 0, 0, 0, 0});
-    [[maybe_unused]] auto& copyOp1 = function.AddOperation(Opcode::OP_REGISTER_COPY, {inputTile}, {tmpResTile});
 
-    if (padC) {
-        Shape resultCRemainShape = {N, C1 * C0 - C, D, H, W};
-        std::shared_ptr<LogicalTensor> resCRemainTile = resTile->View(function, resultCRemainShape, {0, C, 0, 0, 0});
-        auto padCTile = std::make_shared<LogicalTensor>(function, inputTile->Datatype(), resultCRemainShape,
-                                                        SymbolicScalar::FromConcrete(resultCRemainShape));
-        auto& vecDupOp = function.AddOperation(Opcode::OP_VEC_DUP, {}, {padCTile});
-        vecDupOp.SetAttribute(OpAttributeKey::scalar, Element(inputTile->Datatype(), 0));
-        vecDupOp.SetAttribute(OP_ATTR_PREFIX + "shape", resultCRemainShape);
-        vecDupOp.SetAttribute(OP_ATTR_PREFIX + "validShape", SymbolicScalar::FromConcrete(resultCRemainShape));
-        [[maybe_unused]] auto& copyOp2 = function.AddOperation(Opcode::OP_REGISTER_COPY, {padCTile}, {resCRemainTile});
-    }
-    if (padN) {
-        Shape resultNRemainShape = {N1 * N0 - N, C1 * C0, D, H, W};
-        std::shared_ptr<LogicalTensor> resNRemainTile = resTile->View(function, resultNRemainShape, {N, 0, 0, 0, 0});
-        auto padNTile = std::make_shared<LogicalTensor>(function, inputTile->Datatype(), resultNRemainShape,
-                                                        SymbolicScalar::FromConcrete(resultNRemainShape));
-        auto& vecDupOp = function.AddOperation(Opcode::OP_VEC_DUP, {}, {padNTile});
-        vecDupOp.SetAttribute(OpAttributeKey::scalar, Element(inputTile->Datatype(), 0));
-        vecDupOp.SetAttribute(OP_ATTR_PREFIX + "shape", resultNRemainShape);
-        vecDupOp.SetAttribute(OP_ATTR_PREFIX + "validShape", SymbolicScalar::FromConcrete(resultNRemainShape));
-        [[maybe_unused]] auto& copyOp2 = function.AddOperation(Opcode::OP_REGISTER_COPY, {padNTile}, {resNRemainTile});
-    }
+    std::shared_ptr<LogicalTensor> padResTile = resTile->View(function, resShape, {0, 0}, true);
+    auto& vecDupOp = function.AddOperation(Opcode::OP_VEC_DUP, {}, {padResTile});
+    vecDupOp.SetAttribute(OpAttributeKey::scalar, Element(inputTile->Datatype(), 0));
+    vecDupOp.SetAttribute(OP_ATTR_PREFIX + "shape", resShape);
+    vecDupOp.SetAttribute(OP_ATTR_PREFIX + "validShape", SymbolicScalar::FromConcrete(resShape));
+    auto dupStmt = std::static_pointer_cast<const ir::Stmt>(vecDupOp.shared_from_this());
+    auto dupToken = IRBuilder().CreateTokenVar(vecDupOp.GetSpan());
+    vecDupOp.result_token_.push_back(dupToken);
+    function.GetVarDependency().AddProducer(dupToken, dupStmt);
+
+    std::shared_ptr<LogicalTensor> tmpResTile = resTile->View(function, inputTile->GetShape(), {0, 0}, true);
+    auto& copyOp1 = function.AddOperation(Opcode::OP_REGISTER_COPY, {inputTile}, {tmpResTile});
+    auto copyStmt = std::static_pointer_cast<const ir::Stmt>(copyOp1.shared_from_this());
+    function.GetVarDependency().AddConsumer(dupToken, copyStmt);
+    copyOp1.tokens_.push_back(dupToken);
+
+    resTile->UpdateDynValidShape(resValidShape);
     return resTile;
 }
 
@@ -221,17 +216,17 @@ std::shared_ptr<LogicalTensor> transDataPadNDC1HWC0(Function& function, const st
 
 template <TileOpFormat T>
 std::shared_ptr<LogicalTensor> transDataPad(Function& function, const std::shared_ptr<LogicalTensor>& inputTile,
-                                            int64_t C0)
+                                            std::vector<SymbolicScalar>& tileParams, int64_t C0)
 {
     switch (T) {
         case TileOpFormat::TILEOP_NC1HWC0:
             return transDataPadNC1HWC0(function, inputTile, C0);
         case TileOpFormat::TILEOP_FRACTAL_Z:
-            return transDataPadFractalZ(function, inputTile, C0);
+            return transDataPadFractalZ(function, inputTile, tileParams, C0);
         case TileOpFormat::TILEOP_NDC1HWC0:
             return transDataPadNDC1HWC0(function, inputTile, C0);
         case TileOpFormat::TILEOP_FRACTAL_Z_3D:
-            return transDataPadFractalZ3D(function, inputTile, C0);
+            return transDataPadFractalZ3D(function, inputTile, tileParams, C0);
         default:
             CHECK(VectorErrorCode::ERR_PARAM_INVALID, false) << "The transDataType is not supported";
     }
@@ -255,7 +250,7 @@ void HandleNC1HWC0Format(Function& function, const LogicalTensorPtr& dstTensor, 
                          std::vector<SymbolicScalar>& tileParams, TransDataTileInfoPara& transDataTileInfoPara)
 {
     int64_t C0 = BLOCK_SIZE / BytesOf(inputTile->Datatype());
-    auto realInputTile = transDataPad<TileOpFormat::TILEOP_NC1HWC0>(function, inputTile, C0);
+    auto realInputTile = transDataPad<TileOpFormat::TILEOP_NC1HWC0>(function, inputTile, tileParams, C0);
     auto realInputShape = realInputTile->GetShape();
     auto dstTensorTile = GetNC1HWC0DstTile(function, dstTensor, realInputTile, transDataTileInfoPara, C0);
 
@@ -289,31 +284,28 @@ void HandleNC1HWC0Format(Function& function, const LogicalTensorPtr& dstTensor, 
 
 std::shared_ptr<LogicalTensor> GetFractalZDstTile(Function& function, const LogicalTensorPtr& dstTensor,
                                                   const std::shared_ptr<LogicalTensor>& inputTile,
+                                                  std::vector<SymbolicScalar>& tileParams,
                                                   const TransDataTileInfoPara& transDataTileInfoPara,
                                                   const TransDataPara& transDataPara, int64_t C0)
 {
     const auto& inputShape = inputTile->GetShape();
-    int64_t N0 = 16;
+    constexpr int64_t N0 = 16;
     int64_t N1 = inputShape[0] / N0;
-    int64_t shape0 = inputShape[1] / C0 * inputShape[2] * inputShape[3];
+    int64_t originH = static_cast<int64_t>(tileParams[8]);
+    int64_t originW = static_cast<int64_t>(tileParams[9]);
+    int64_t shape0 = (inputShape[1] / originH / originW) / C0 * originH * originW;
     Shape dstShape = {shape0, N1, N0, C0};
 
-    auto originInput = transDataPara.input;
-    auto originN = originInput->GetShape()[0];
-    auto originC = originInput->GetShape()[1];
-    auto originH = originInput->GetShape()[2];
-    auto originW = originInput->GetShape()[3];
+    int64_t dstPerGroupC1HW = dstTensor->GetShape()[0] / transDataPara.group;
+    int64_t dstPerGroupN = dstTensor->GetShape()[1] * N0;
 
-    int64_t originPerGroupN = originN / transDataPara.group;
-    int64_t originPerGroupPadN = (originPerGroupN + N0 - 1) / N0 * N0;
-    int64_t originC1 = (originC + C0 - 1) / C0;
     int64_t inputOffsetN = transDataTileInfoPara.inputTileInfo.offset[0];
-    int64_t inputOffsetC1 = transDataTileInfoPara.inputTileInfo.offset[1] / C0;
-    int64_t inputOffsetH = transDataTileInfoPara.inputTileInfo.offset[2];
-    int64_t inputOffsetW = transDataTileInfoPara.inputTileInfo.offset[3];
-    int64_t offset0 = transDataPara.groupIdx * originC1 * originH * originW + inputOffsetC1 * originH * originW +
+    int64_t inputOffsetC1 = transDataTileInfoPara.inputTileInfo.offset[1] / (C0 * originH * originW);
+    int64_t inputOffsetH = 0;
+    int64_t inputOffsetW = 0;
+    int64_t offset0 = transDataPara.groupIdx * dstPerGroupC1HW + inputOffsetC1 * originH * originW +
                       inputOffsetH * originW + inputOffsetW;
-    int64_t offset1 = (inputOffsetN % originPerGroupPadN) / N0;
+    int64_t offset1 = (inputOffsetN % dstPerGroupN) / N0;
     Offset dstOffset = {offset0, offset1, 0, 0};
 
     return dstTensor->View(function, dstShape, dstOffset);
@@ -324,47 +316,41 @@ void HandleFractalZFormat(Function& function, const LogicalTensorPtr& dstTensor,
                           const TransDataPara& transDataPara)
 {
     int64_t C0 = BLOCK_SIZE / BytesOf(inputTile->Datatype());
-    auto realInputTile = transDataPad<TileOpFormat::TILEOP_FRACTAL_Z>(function, inputTile, C0);
+    auto realInputTile = transDataPad<TileOpFormat::TILEOP_FRACTAL_Z>(function, inputTile, tileParams, C0);
     auto realInputShape = realInputTile->GetShape();
-    auto dstTensorTile = GetFractalZDstTile(function, dstTensor, realInputTile, transDataTileInfoPara, transDataPara,
-                                            C0);
+    auto dstTensorTile = GetFractalZDstTile(function, dstTensor, realInputTile, tileParams, transDataTileInfoPara,
+                                            transDataPara, C0);
 
+    int64_t H = static_cast<int64_t>(tileParams[8]);
+    int64_t W = static_cast<int64_t>(tileParams[9]);
     int64_t N = realInputShape[0];
-    int64_t C = realInputShape[1];
-    int64_t H = realInputShape[2];
-    int64_t W = realInputShape[3];
-    int64_t WPad = CeilDiv(W, C0) * C0;
+    int64_t C = realInputShape[1] / H / W;
+
     int64_t N0 = 16;
-    int64_t N1 = N / N0;
     int64_t C1 = C / C0;
-    int64_t shape1 = N * C1 * H * WPad * C0;
+    int64_t shape1 = N * C1 * H * W * C0;
     int64_t yTileSizeElem = BytesOf(inputTile->Datatype()) == 1 ? 32 : 16;
-    int64_t shape3 = H * WPad * ((C0 + yTileSizeElem - 1) / yTileSizeElem * yTileSizeElem);
+    int64_t shape3 = H * W * ((C0 + yTileSizeElem - 1) / yTileSizeElem * yTileSizeElem);
     std::vector<int64_t> tmpShape = {shape1 + shape3};
     auto tmpTile = std::make_shared<LogicalTensor>(function, inputTile->Datatype(), tmpShape);
 
-    auto tmpDstTile = std::make_shared<LogicalTensor>(function, inputTile->Datatype(),
-                                                      Shape{C1 * H * WPad, N1, N0, C0});
     auto inputValidShape = realInputTile->GetDynValidShape();
     auto inputValidShapeN1 = (inputValidShape[0] + N0 - 1) / N0;
-    auto inputValidShapeC1 = (inputValidShape[1] + C0 - 1) / C0;
-    auto inputValidShapeH = inputValidShape[2];
-    auto inputValidShapeW = inputValidShape[3];
-
+    auto inputValidShapeC1 = ((inputValidShape[1] / H / W) + C0 - 1) / C0;
+    auto inputValidShapeH = H;
+    auto inputValidShapeW = W;
     std::vector<SymbolicScalar> dstValidShape{inputValidShapeC1 * inputValidShapeH * inputValidShapeW,
                                               inputValidShapeN1, SymbolicScalar(N0), SymbolicScalar(C0)};
-    tmpDstTile->UpdateDynValidShape(dstValidShape);
-    dstTensorTile->UpdateDynValidShape(dstValidShape);
+    dstTensorTile->UpdateDynValidShape(dstValidShape); // validshape
 
-    auto& op = function.AddOperation(Opcode::OP_NCHW2Fractal_Z, {realInputTile}, {tmpDstTile, tmpTile});
-    constexpr int shapeOffset = NUM_VALUE_6;
-    for (int i = 0; i < SHAPE_DIM4; i++) {
-        tileParams[shapeOffset + i] = SymbolicScalar(realInputTile->GetShape()[i]);
-    }
+    auto& op = function.AddOperation(Opcode::OP_NCHW2Fractal_Z, {realInputTile}, {dstTensorTile, tmpTile});
+    tileParams[NUM_VALUE_4] = transDataPara.groupIdx;
+    tileParams[NUM_VALUE_5] = transDataPara.group;
+    tileParams[NUM_VALUE_6] = N;
+    tileParams[NUM_VALUE_7] = C;
+    tileParams[NUM_VALUE_8] = H;
+    tileParams[NUM_VALUE_9] = W;
     SetTransDataOffsetWithValid(op, tileParams);
-    std::shared_ptr<LogicalTensor> realDstTile = tmpDstTile->View(function, Shape{C1 * H * W, N1, N0, C0},
-                                                                  Offset{0, 0, 0, 0});
-    [[maybe_unused]] auto& copyOp = function.AddOperation(Opcode::OP_REGISTER_COPY, {realDstTile}, {dstTensorTile});
 }
 
 std::shared_ptr<LogicalTensor> GetNDC1HWC0DstTile(Function& function, const LogicalTensorPtr& dstTensor,
@@ -385,7 +371,7 @@ void HandleNDC1HWC0Format(Function& function, const LogicalTensorPtr& dstTensor,
                           std::vector<SymbolicScalar>& tileParams, TransDataTileInfoPara& transDataTileInfoPara)
 {
     int64_t C0 = BLOCK_SIZE / BytesOf(inputTile->Datatype());
-    auto realInputTile = transDataPad<TileOpFormat::TILEOP_NDC1HWC0>(function, inputTile, C0);
+    auto realInputTile = transDataPad<TileOpFormat::TILEOP_NDC1HWC0>(function, inputTile, tileParams, C0);
     auto realInputShape = realInputTile->GetShape();
     auto dstTensorTile = GetNDC1HWC0DstTile(function, dstTensor, realInputTile, transDataTileInfoPara, C0);
 
@@ -598,33 +584,34 @@ void InnerTransDataND(size_t cur, Function& function, const TileShape& tileShape
 
 std::shared_ptr<LogicalTensor> GetFractalZ3DDstTile(Function& function, const LogicalTensorPtr& dstTensor,
                                                     const std::shared_ptr<LogicalTensor>& inputTile,
+                                                    std::vector<SymbolicScalar>& tileParams,
                                                     const TransDataTileInfoPara& transDataTileInfoPara,
                                                     const TransDataPara& transDataPara, int64_t C0)
 {
     const auto& inputShape = inputTile->GetShape();
     int64_t N0 = 16;
     int64_t N1 = inputShape[0] / N0;
-    int64_t shape0 = inputShape[1] / C0 * inputShape[2] * inputShape[3] * inputShape[4];
+    int64_t D = static_cast<int64_t>(tileParams[12]);
+    int64_t H = static_cast<int64_t>(tileParams[13]);
+    int64_t W = static_cast<int64_t>(tileParams[14]);
+    int64_t C = inputShape[1] / D / H / W;
+    int64_t shape0 = C / C0 * D * H * W;
     Shape dstShape = {shape0, N1, N0, C0};
 
     auto originInput = transDataPara.input;
     auto originN = originInput->GetShape()[0];
-    auto originC = originInput->GetShape()[1];
-    auto originD = originInput->GetShape()[2];
-    auto originH = originInput->GetShape()[3];
-    auto originW = originInput->GetShape()[4];
+    auto originC = originInput->GetShape()[1] / D / H / W;
 
     int64_t originPerGroupN = originN / transDataPara.group;
     int64_t originPerGroupPadN = (originPerGroupN + N0 - 1) / N0 * N0;
     int64_t originC1 = (originC + C0 - 1) / C0;
     int64_t inputOffsetN = transDataTileInfoPara.inputTileInfo.offset[0];
-    int64_t inputOffsetC1 = transDataTileInfoPara.inputTileInfo.offset[1] / C0;
-    int64_t inputOffsetD = transDataTileInfoPara.inputTileInfo.offset[2];
-    int64_t inputOffsetH = transDataTileInfoPara.inputTileInfo.offset[3];
-    int64_t inputOffsetW = transDataTileInfoPara.inputTileInfo.offset[4];
-    int64_t offset0 = transDataPara.groupIdx * originD * originC1 * originH * originW +
-                      inputOffsetD * originC1 * originH * originW + inputOffsetC1 * originH * originW +
-                      inputOffsetH * originW + inputOffsetW;
+    int64_t inputOffsetC1 = transDataTileInfoPara.inputTileInfo.offset[1] / (C0 * D * H * W);
+    int64_t inputOffsetD = 0;
+    int64_t inputOffsetH = 0;
+    int64_t inputOffsetW = 0;
+    int64_t offset0 = transDataPara.groupIdx * D * originC1 * H * W + inputOffsetD * originC1 * H * W +
+                      inputOffsetC1 * H * W + inputOffsetH * W + inputOffsetW;
     int64_t offset1 = (inputOffsetN % originPerGroupPadN) / N0;
     Offset dstOffset = {offset0, offset1, 0, 0};
 
@@ -636,19 +623,18 @@ void HandleFractalZ3DFormat(Function& function, const LogicalTensorPtr& dstTenso
                             const TransDataPara& transDataPara)
 {
     int64_t C0 = BLOCK_SIZE / BytesOf(inputTile->Datatype());
-    auto realInputTile = transDataPad<TileOpFormat::TILEOP_FRACTAL_Z_3D>(function, inputTile, C0);
+    auto realInputTile = transDataPad<TileOpFormat::TILEOP_FRACTAL_Z_3D>(function, inputTile, tileParams, C0);
     auto realInputShape = realInputTile->GetShape();
-    auto dstTensorTile = GetFractalZ3DDstTile(function, dstTensor, realInputTile, transDataTileInfoPara, transDataPara,
-                                              C0);
 
     int64_t N = realInputShape[0];
-    int64_t C = realInputShape[1];
-    int64_t D = realInputShape[2];
-    int64_t H = realInputShape[3];
-    int64_t W = realInputShape[4];
+    int64_t CDHW = realInputShape[1];
+    int64_t D = static_cast<int64_t>(tileParams[12]);
+    int64_t H = static_cast<int64_t>(tileParams[13]);
+    int64_t W = static_cast<int64_t>(tileParams[14]);
     int64_t WPad = CeilDiv(W, C0) * C0;
     int64_t N0 = 16;
     int64_t N1 = N / N0;
+    int64_t C = CDHW / D / H / W;
     int64_t C1 = C / C0;
 
     int64_t tmp1 = N * C1 * C0 * H * WPad;
@@ -658,30 +644,58 @@ void HandleFractalZ3DFormat(Function& function, const LogicalTensorPtr& dstTenso
     std::vector<int64_t> tmpShape = {shape2};
     auto tmpTile = std::make_shared<LogicalTensor>(function, inputTile->Datatype(), tmpShape);
 
-    auto tmpDstTile = std::make_shared<LogicalTensor>(function, inputTile->Datatype(),
-                                                      Shape{D * C1 * H * WPad, N1, N0, C0});
     auto inputValidShape = realInputTile->GetDynValidShape();
     auto inputValidShapeN1 = (inputValidShape[0] + N0 - 1) / N0;
-    auto inputValidShapeC1 = (inputValidShape[1] + C0 - 1) / C0;
-    auto inputValidShapeD = inputValidShape[2];
-    auto inputValidShapeH = inputValidShape[3];
-    auto inputValidShapeW = inputValidShape[4];
+    auto inputValidShapeC1 = ((inputValidShape[1] / D / H / W) + C0 - 1) / C0;
+    std::vector<SymbolicScalar> dstValidShape{inputValidShapeC1 * D * H * W, inputValidShapeN1, SymbolicScalar(N0),
+                                              SymbolicScalar(C0)};
 
-    std::vector<SymbolicScalar> dstValidShape{
-        inputValidShapeD * inputValidShapeC1 * inputValidShapeH * inputValidShapeW, inputValidShapeN1,
-        SymbolicScalar(N0), SymbolicScalar(C0)};
-    tmpDstTile->UpdateDynValidShape(dstValidShape);
-    dstTensorTile->UpdateDynValidShape(dstValidShape);
+    tileParams[NUM_VALUE_5] = transDataPara.groupIdx;
+    tileParams[NUM_VALUE_6] = transDataPara.group;
+    tileParams[NUM_VALUE_10] = N;
+    tileParams[NUM_VALUE_10 + SHAPE_DIM1] = C;
+    tileParams[NUM_VALUE_10 + SHAPE_DIM2] = D;
+    tileParams[NUM_VALUE_10 + SHAPE_DIM3] = H;
+    tileParams[NUM_VALUE_10 + SHAPE_DIM4] = W;
 
-    auto& op = function.AddOperation(Opcode::OP_NCDHW2FRACTAL_Z_3D, {realInputTile}, {tmpDstTile, tmpTile});
-    constexpr int shapeOffset = NUM_VALUE_10;
-    for (int i = 0; i < SHAPE_DIM5; i++) {
-        tileParams[shapeOffset + i] = SymbolicScalar(realInputTile->GetShape()[i]);
+    auto originInput = transDataPara.input;
+    int64_t originC = originInput->GetShape()[1] / D / H / W;
+    if (C >= originC) {
+        // Tile covers the whole C: rows of each (d, c1) entry are contiguous in dst.
+        auto dstTensorTile = GetFractalZ3DDstTile(function, dstTensor, realInputTile, tileParams, transDataTileInfoPara,
+                                                  transDataPara, C0);
+        dstTensorTile->UpdateDynValidShape(dstValidShape);
+        auto& op = function.AddOperation(Opcode::OP_NCDHW2FRACTAL_Z_3D, {realInputTile}, {dstTensorTile, tmpTile});
+        SetTransDataOffsetWithValid(op, tileParams);
+        return;
     }
+
+    // C is split across tiles: each (d, c1) entry is a row strip in dst. The transdata writes a
+    // contiguous tmp tile first, then every d slice is copied to its (d, c1) rows in dst.
+    int64_t originN = originInput->GetShape()[0];
+    int64_t originPerGroupN = originN / transDataPara.group;
+    int64_t originPerGroupPadN = (originPerGroupN + N0 - 1) / N0 * N0;
+    int64_t originC1 = (originC + C0 - 1) / C0;
+    int64_t inputOffsetN = transDataTileInfoPara.inputTileInfo.offset[0];
+    int64_t inputOffsetC1 = transDataTileInfoPara.inputTileInfo.offset[1] / (C0 * D * H * W);
+    int64_t dstRowBase = transDataPara.groupIdx * D * originC1 * H * W + inputOffsetC1 * H * W;
+    int64_t dstN1 = (inputOffsetN % originPerGroupPadN) / N0;
+    int64_t sliceRows = C1 * H * W;
+
+    Shape tmpDstShape = {D * sliceRows, N1, N0, C0};
+    auto tmpDstTile = std::make_shared<LogicalTensor>(function, inputTile->Datatype(), tmpDstShape);
+    tmpDstTile->UpdateDynValidShape(dstValidShape);
+    auto& op = function.AddOperation(Opcode::OP_NCDHW2FRACTAL_Z_3D, {realInputTile}, {tmpDstTile, tmpTile});
     SetTransDataOffsetWithValid(op, tileParams);
-    std::shared_ptr<LogicalTensor> realDstTile = tmpDstTile->View(function, Shape{D * C1 * H * W, N1, N0, C0},
-                                                                  Offset{0, 0, 0, 0});
-    [[maybe_unused]] auto& copyOp = function.AddOperation(Opcode::OP_REGISTER_COPY, {realDstTile}, {dstTensorTile});
+
+    for (int64_t d = 0; d < D; ++d) {
+        Shape sliceShape = {sliceRows, N1, N0, C0};
+        Offset tmpOffset = {d * sliceRows, 0, 0, 0};
+        Offset dstOffset = {dstRowBase + d * originC1 * H * W, dstN1, 0, 0};
+        auto tmpSlice = tmpDstTile->View(function, sliceShape, tmpOffset);
+        auto dstSlice = dstTensor->View(function, sliceShape, dstOffset);
+        [[maybe_unused]] auto& copyOp = function.AddOperation(Opcode::OP_REGISTER_COPY, {tmpSlice}, {dstSlice});
+    }
 }
 
 template <TileOpFormat T>
@@ -1128,15 +1142,21 @@ LogicalTensorPtr TransDataNCHW2Fractal_Z(Function& function, const LogicalTensor
 
     VecTile oriVectile = TileShape::Current().GetVecTile();
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, oriVectile.tile[0] % N0 == 0)
-        << "The tileShape N should be an integer multiple of N0(16)!";
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, oriVectile.tile[1] == C0)
-        << "The tileShape C should be equal to C0, actual is " << oriVectile.tile[1];
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, oriVectile.tile[2] == 1)
-        << "The tileShape H should be equal to 1, actual is " << oriVectile.tile[2];
+        << "The tileShape N should be an integer multiple of N0(16), actual is " << oriVectile.tile[0];
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, oriVectile.tile[1] % C0 == 0)
+        << "The tileShape C should be an integer multiple of C0, actual is " << oriVectile.tile[1];
 
     auto result = std::make_shared<LogicalTensor>(function, self->Datatype(), resultShape, resultValidShape,
                                                   TileOpFormat::TILEOP_FRACTAL_Z);
-    auto& op = function.AddOperation(Opcode::OP_NCHW2Fractal_Z, {self}, {result});
+    std::vector<SymbolicScalar> selfValidShape2Dim{validShapeN, validShapeC * H * W};
+    Shape selfShape2Dim{N, C * H * W};
+    auto self2Dim = std::make_shared<LogicalTensor>(function, self->Datatype(), selfShape2Dim);
+    self2Dim->UpdateDynValidShape(selfValidShape2Dim);
+    [[maybe_unused]] auto& reshapeOp = function.AddOperation("TILE_RESHAPE", {self}, {self2Dim});
+
+    TileShape::Current().SetVecTile({oriVectile.tile[0], oriVectile.tile[1] * H * W});
+
+    auto& op = function.AddOperation(Opcode::OP_NCHW2Fractal_Z, {self2Dim}, {result});
     std::vector<SymbolicScalar> tileParams = {};
     // n c h w idx group N C H W
     for (auto i : self->GetShape()) {
@@ -1152,6 +1172,7 @@ LogicalTensorPtr TransDataNCHW2Fractal_Z(Function& function, const LogicalTensor
     tileParams[NUM_VALUE_7] = C1 * C0;
     SetTransDataOffsetWithValid(op, tileParams);
     op.SetAttribute(OP_ATTR_PREFIX + "group", group);
+    TileShape::Current().SetVecTile(oriVectile);
     return result;
 }
 
@@ -1240,30 +1261,32 @@ LogicalTensorPtr TransDataFRACTAL_Z_3D(Function& function, const LogicalTensorPt
 
     VecTile oriVectile = TileShape::Current().GetVecTile();
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, oriVectile.tile[0] % N0 == 0)
-        << "The tileShape N should be an integer multiple of N0(16)!";
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, oriVectile.tile[1] == C0)
-        << "The tileShape C should be equal to C0, actual is " << oriVectile.tile[1];
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, oriVectile.tile[3] == 1)
-        << "The tileShape H should be equal to 1, actual is " << oriVectile.tile[3];
+        << "The tileShape N should be an integer multiple of N0(16), actual is " << oriVectile.tile[0];
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, oriVectile.tile[1] % C0 == 0)
+        << "The tileShape C should be an integer multiple of C0, actual is " << oriVectile.tile[1];
 
     auto result = std::make_shared<LogicalTensor>(function, self->Datatype(), resultShape, resultValidShape,
                                                   TileOpFormat::TILEOP_FRACTAL_Z_3D);
+    std::vector<SymbolicScalar> selfValidShape2Dim{validShapeN, validShapeC * D * H * W};
+    Shape selfShape2Dim{N, C * D * H * W};
+    auto self2Dim = std::make_shared<LogicalTensor>(function, self->Datatype(), selfShape2Dim);
+    self2Dim->UpdateDynValidShape(selfValidShape2Dim);
+    [[maybe_unused]] auto& reshapeOp = function.AddOperation("TILE_RESHAPE", {self}, {self2Dim});
 
-    auto& op = function.AddOperation(Opcode::OP_NCDHW2FRACTAL_Z_3D, {self}, {result});
+    TileShape::Current().SetVecTile({oriVectile.tile[0], oriVectile.tile[1] * D * H * W});
+
+    auto& op = function.AddOperation(Opcode::OP_NCDHW2FRACTAL_Z_3D, {self2Dim}, {result});
     std::vector<SymbolicScalar> tileParams = {};
-    // n c d h w groupIdx group padNSize padCSize padWSize N C D H W
-    SymbolicScalar padNSize = (validShapePerGroupN + N0 - 1) / N0 * N0 - validShapePerGroupN;
-    SymbolicScalar padCSize = (validShapeC + C0 - 1) / C0 * C0 - validShapeC;
-    SymbolicScalar padWSize = (validShapeW + C0 - 1) / C0 * C0 - validShapeW;
+    // n c d h w idx group 0 0 0 N C D H W
     for (auto i : self->GetShape()) {
         (void)i;
         tileParams.push_back(SymbolicScalar(0));
     }
     tileParams.push_back(0);
     tileParams.push_back(0);
-    tileParams.push_back(padNSize);
-    tileParams.push_back(padCSize);
-    tileParams.push_back(padWSize);
+    tileParams.push_back(0);
+    tileParams.push_back(0);
+    tileParams.push_back(0);
     for (auto i : self->GetShape()) {
         tileParams.push_back(SymbolicScalar(i));
     }
@@ -1271,6 +1294,7 @@ LogicalTensorPtr TransDataFRACTAL_Z_3D(Function& function, const LogicalTensorPt
     tileParams[NUM_VALUE_10 + SHAPE_DIM1] = C1 * C0;
     SetTransDataOffsetWithValid(op, tileParams);
     op.SetAttribute(OP_ATTR_PREFIX + "group", group);
+    TileShape::Current().SetVecTile(oriVectile);
     return result;
 }
 

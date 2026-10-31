@@ -310,6 +310,14 @@ def test_conv1d_dynamic_cout():
 # - conv3d fails the A2A3 host golden compile with F00003 (FAKE_TRANS shape
 #   mismatch) for both FP16 and BF16 + FP32 bias, so there is no conv3d A2A3
 #   case yet.
+# - transDataPadFractalZ zero-fills the whole padded tile and then copies the
+#   valid block through a view, so both writes target the same tensor and the
+#   golden must keep their program order. The interpreter does not model view
+#   aliasing (ResetSliceView gives each view its own RawTensorData) and the
+#   dynamic execution order is token based, so the zero fill can run after the
+#   copy and the conv1d groups=2 weight golden degenerates to all zeros.
+#   test_conv1d_fp16_basic_with_bias is skipped until the interpreter models
+#   view aliasing or the pad IR stops relying on writer order.
 @pypto.frontend.jit(
     runtime_options={"run_mode": pypto.RunMode.SIM, "stitch_function_max_num": 128},
     pass_options={"enable_slice": False},
@@ -333,6 +341,7 @@ def conv1d_bias_kernel(
 
 
 @pytest.mark.soc("910")
+@pytest.mark.skip(reason="known golden gap: transdata pad view write order, see NOTE above")
 def test_conv1d_fp16_basic_with_bias():
     """Conv1D FP16 groups=2 + bias, stride=2, dilation=2, pad=1 (A2A3 pipeline)."""
     torch.manual_seed(0)

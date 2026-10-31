@@ -56,7 +56,7 @@ TEST_F(TestConvVecTileInference, InferConv1d_FP16)
     EXPECT_EQ(result.fmapVecTile.tile[0], 1);
     EXPECT_EQ(result.fmapVecTile.tile[1], c0);
     EXPECT_EQ(result.weightVecTile.tile[0], 16);
-    EXPECT_EQ(result.weightVecTile.tile[1], c0);
+    EXPECT_EQ(result.weightVecTile.tile[1], oriWeightShape[1]);
     EXPECT_EQ(result.outVecTile.tile.back(), c0);
 }
 
@@ -136,7 +136,7 @@ TEST_F(TestConvVecTileInference, InferConv3d_FP16)
     convTile.setL0Tile = true;
 
     std::vector<int64_t> oriFmapShape = {1, 32, 2, 2, 64};
-    std::vector<int64_t> oriWeightShape = {32, 32, 2, 3, 3};
+    std::vector<int64_t> oriWeightShape = {32, 32, 2, 3, 5};
     auto result = Conv::InferConvVecTileShapes(convTile, DT_FP16, oriFmapShape, oriWeightShape, true, false, 1);
 
     EXPECT_FALSE(result.fmapVecTile.tile.empty());
@@ -148,6 +148,9 @@ TEST_F(TestConvVecTileInference, InferConv3d_FP16)
     EXPECT_EQ(result.fmapVecTile.tile[0], 1);
     EXPECT_EQ(result.fmapVecTile.tile[1], c0);
     EXPECT_EQ(result.weightVecTile.tile.size(), 5u);
+    EXPECT_EQ(result.weightVecTile.tile[2], oriWeightShape[2]);
+    EXPECT_EQ(result.weightVecTile.tile[3], oriWeightShape[3]);
+    EXPECT_EQ(result.weightVecTile.tile[4], oriWeightShape[4]);
     EXPECT_EQ(result.outVecTile.tile.size(), 6u);
     EXPECT_EQ(result.outVecTile.tile.back(), c0);
 }

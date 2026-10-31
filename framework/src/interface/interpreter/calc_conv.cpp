@@ -151,6 +151,52 @@ void ExecuteOpFakeTrans(ExecuteOperationContext* ctx)
 
 REGISTER_CALC_OP(OP_FAKE_TRANS, Opcode::OP_FAKE_TRANS, ExecuteOpFakeTrans);
 
+// NCHW2Fractal_Z sees a flattened [N, C*H*W] input on the front-end side; rebuild the [N, C, H*W] view
+// so that the golden keeps working on the NCHW layout. Only the H*W product matters for the Fz layout.
+int64_t GetFractalZInputHW(const Operation* op, const LogicalTensorDataPtr& self, int64_t c0)
+{
+    std::vector<SymbolicScalar> offsets;
+    if (op->HasAttr(OpAttributeKey::transDataOffset)) {
+        op->GetAttr(OpAttributeKey::transDataOffset, offsets);
+        if (offsets.size() > NUM_VALUE_9) {
+            auto concrete = SymbolicScalar::Concrete(offsets, 0);
+            int64_t h = concrete[NUM_VALUE_8];
+            int64_t w = concrete[NUM_VALUE_9];
+            if (h > 0 && w > 0) {
+                return h * w;
+            }
+        }
+    }
+    // InferParamIndex rewrites transDataOffset into runtime params, so the H/W pair stops being concrete.
+    // The tmp tile size still carries it: tmp = N * C * H * W + alignUp(H * W * C0).
+    if (op->GetOOperands().size() < 2 || op->GetOOperands()[1]->GetShape().empty()) {
+        return 0;
+    }
+    int64_t tmpSize = op->GetOOperands()[1]->GetShape()[0];
+    int64_t align = std::max<int64_t>(c0, 16);
+    int64_t remain = tmpSize - self->GetShape()[0] * self->GetShape()[1];
+    if (remain <= 0 || remain % align != 0) {
+        return 0;
+    }
+    return remain / align;
+}
+
+LogicalTensorDataPtr RestoreFractalZInputShape(const Operation* op, const LogicalTensorDataPtr& self, int64_t c0)
+{
+    const auto& shape = self->GetShape();
+    if (op->GetOpcode() != Opcode::OP_NCHW2Fractal_Z || shape.size() != SHAPE_DIM2) {
+        return nullptr;
+    }
+    int64_t hw = GetFractalZInputHW(op, self, c0);
+    if (hw <= 0 || shape[1] % hw != 0) {
+        return nullptr;
+    }
+    std::vector<int64_t> nchwShape = {shape[0], shape[1] / hw, hw};
+    auto nchw = LogicalTensorData::CreateEmpty(self->GetDataType(), nchwShape, nchwShape, nchwShape);
+    calc::Reshape(nchw, self);
+    return nchw;
+}
+
 void ExecuteOpTransData(ExecuteOperationContext* ctx)
 {
     ASSERT(ExecuteOperationScene::CTX_OUTPUT_COUNT_MISMATCH,
@@ -196,7 +242,11 @@ void ExecuteOpTransData(ExecuteOperationContext* ctx)
             break;
     }
     int64_t group = GetIntAttrOr(op, OP_ATTR_PREFIX + "group", 1);
-    if (inputIsNdchw) {
+    auto selfFractalZ = RestoreFractalZInputShape(op, self,
+                                                  ret->GetShape().size() == SHAPE_DIM4 ? ret->GetShape()[3] : 0);
+    if (selfFractalZ != nullptr) {
+        calc::FormatTransConv(ret, selfFractalZ, srcFmt, dstFmt, group);
+    } else if (inputIsNdchw) {
         auto ndchwShape = self->GetShape();
         std::swap(ndchwShape[1], ndchwShape[2]);
         auto ncdhw = LogicalTensorData::CreateEmpty(self->GetDataType(), ndchwShape, std::vector<int64_t>{},
