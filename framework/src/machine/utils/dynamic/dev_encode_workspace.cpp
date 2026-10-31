@@ -290,9 +290,11 @@ uint64_t CalcStitchCacheSize(DevAscendProgram* devProg)
             devProg->rootFuncMaxCallOpsize = callOpsize;
         }
     }
-    uint64_t cacheSize = static_cast<uint64_t>(devProg->rootFuncMaxCallOpsize) * devProg->rootFuncMaxCallOpsize *
-                         sizeof(uint64_t);
-    MACHINE_LOGI("stitchCacheSize: %lu bytes, maxCallOpsize: %u", cacheSize, devProg->rootFuncMaxCallOpsize);
+    uint32_t stride = std::min(devProg->rootFuncMaxCallOpsize, STITCH_CACHE_MAX_OP_SIZE);
+    devProg->memBudget.metadata.stitchCacheStride = stride;
+    uint64_t cacheSize = static_cast<uint64_t>(stride) * stride * sizeof(uint64_t);
+    MACHINE_LOGI("stitchCacheSize: %lu bytes, stride: %u (cap=%u, maxCallOpsize: %u)", cacheSize, stride,
+                 STITCH_CACHE_MAX_OP_SIZE, devProg->rootFuncMaxCallOpsize);
     return cacheSize;
 }
 

@@ -107,6 +107,7 @@ struct DevAscendProgram {
             uint32_t generalSlabSize;
             uint32_t stitchSlabSize;
             uint32_t duppedStitchSlabSize{0};
+            uint32_t stitchCacheStride{0};
 
             uint64_t Total() const { return general + dynamicCellMatch + stitchPool + duppedStitchPool; }
         } metadata;

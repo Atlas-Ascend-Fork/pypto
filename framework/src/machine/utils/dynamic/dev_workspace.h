@@ -90,12 +90,14 @@ public:
     }
     void AllocateStitchCache()
     {
+        // stride is encoded on host (dev_encode_workspace.cpp CalcStitchCacheSize); device must not re-derive
+        // it, otherwise allocation size and dedup indexing can diverge.
+        stitchCacheStride_ = devProg_->memBudget.metadata.stitchCacheStride;
         stitchCacheAddr_ = metadataAllocators_.general.Malloc(devProg_->memBudget.metadata.stitchCacheSize).ptr;
-        rootFuncMaxCallOpsize_ = devProg_->rootFuncMaxCallOpsize;
         AdvanceStitchCacheEpoch();
     }
     uint64_t* StitchCacheAddr() const { return reinterpret_cast<uint64_t*>(stitchCacheAddr_); }
-    uint32_t RootFuncMaxCallOpsize() const { return rootFuncMaxCallOpsize_; }
+    uint32_t StitchCacheStride() const { return stitchCacheStride_; }
     uint16_t StitchCacheEpoch() const { return static_cast<uint16_t>(devProg_->stitchCacheEpoch_ & 0xFFFFU); }
 
     DevAscendProgram* GetDevProg() const { return devProg_; }
@@ -576,7 +578,7 @@ private:
     WorkspaceTuningState tuningState_{};
 
     uint64_t stitchCacheAddr_{0};
-    uint32_t rootFuncMaxCallOpsize_{0};
+    uint32_t stitchCacheStride_{0};
 };
 } // namespace npu::tile_fwk::dynamic
 #endif

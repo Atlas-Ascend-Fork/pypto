@@ -60,11 +60,11 @@ TEST_F(DevWorkspaceTest, StitchCacheAddr_ReturnsPointer)
     EXPECT_EQ(allocator.StitchCacheAddr(), reinterpret_cast<uint64_t*>(0xABCD0000));
 }
 
-TEST_F(DevWorkspaceTest, RootFuncMaxCallOpsize_ReturnsValue)
+TEST_F(DevWorkspaceTest, StitchCacheStride_ReturnsValue)
 {
     DeviceWorkspaceAllocator allocator;
-    allocator.rootFuncMaxCallOpsize_ = 100;
-    EXPECT_EQ(allocator.RootFuncMaxCallOpsize(), 100u);
+    allocator.stitchCacheStride_ = 100;
+    EXPECT_EQ(allocator.StitchCacheStride(), 100u);
 }
 
 TEST_F(DevWorkspaceTest, StitchCacheEpoch_ReturnsLow16Bits)

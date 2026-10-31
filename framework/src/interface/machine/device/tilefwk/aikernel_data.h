@@ -27,6 +27,10 @@ namespace npu::tile_fwk {
 
 constexpr uint32_t HCCL_GROUP_NUM = 2;
 
+// Cap on the op count covered by stitchCache: stride = min(rootFuncMaxCallOpsize, this value), so the
+// dense u64 table stays at 3000 x 3000 x 8 = 72,000,000 B (68.66 MiB) and the 31-bit DRCO offsets can't exceed 2 GiB.
+constexpr uint32_t STITCH_CACHE_MAX_OP_SIZE = 3000;
+
 // AIV/AIC/HUB_MIX 取值与 DRCO_QUEUE_AIV/AIC/MIX 一一对应：DRCO 设备侧把 taskId 中解码出的 coreType
 // 直接用作就绪队列下标；调整取值须与 DRCO_QUEUE_* 联动（下方 static_assert 强校验）
 enum class CoreType { AIV = 0, AIC = 1, HUB_MIX = 2, AICPU = 3, HUB = 4, GMATOMIC = 5, MIX = 6, INVALID = 20 };
