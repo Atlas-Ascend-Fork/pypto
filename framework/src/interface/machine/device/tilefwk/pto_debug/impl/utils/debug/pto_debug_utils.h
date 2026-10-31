@@ -15,9 +15,9 @@
 #ifndef IMPL_UTILS_DEBUG_PTO_DEBUG_UTILS_H
 #define IMPL_UTILS_DEBUG_PTO_DEBUG_UTILS_H
 
-#include "impl/utils/debug/pto_simd_debug_traits.h"
-
+#if !defined(IMPL_UTILS_DEBUG_ASC_DEBUG_UTILS_H)
 inline __gm__ uint8_t* __gm__ g_sysPrintFifoSpace = nullptr;
+#endif
 
 #ifndef ASCENDC_CPU_DEBUG
 #include <type_traits>
@@ -42,7 +42,7 @@ inline __gm__ uint8_t* __gm__ g_sysPrintFifoSpace = nullptr;
 #include "impl/utils/debug/pto_debug_utils_impl_stub.h"
 #endif
 
-namespace __pto_aicore {
+namespace pypto::aicore {
 __aicore__ inline void enable_pto_diagnostics()
 {
 #if (!defined(ASCENDC_DUMP) || (ASCENDC_DUMP != 0)) || defined(ASCENDC_TIME_STAMP_ON)
@@ -138,11 +138,11 @@ __aicore__ __gm__ inline DebugBlockHeadInfo* get_block_info()
     if (blockInfo->magic != 0xAE86) {
         return nullptr;
     }
-    if PTO_IS_AIV {
-        blockInfo->flag = 1;
-    } else {
-        blockInfo->flag = 0;
-    }
+#if defined(__DAV_VEC__)
+    blockInfo->flag = 1;
+#else
+    blockInfo->flag = 0;
+#endif
     pto_entire_dcci(reinterpret_cast<__gm__ uint64_t*>(blockInfo));
     return blockInfo;
 }
@@ -312,7 +312,7 @@ __aicore__ inline void pto_debug_get_cann_vserion(__gm__ char*& versionStr, uint
 #endif
 }
 
-} // namespace __pto_aicore
+} // namespace pypto::aicore
 #endif
 
 // PyPTO: PtoVFDebug* helpers omitted (SIMD VF printf/dump not in scope; avoids -Wunused-function).

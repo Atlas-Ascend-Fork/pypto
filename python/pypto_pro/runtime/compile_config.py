@@ -18,6 +18,8 @@ from dataclasses import dataclass
 import os
 from typing import TYPE_CHECKING
 
+import pypto
+
 from .._errors import InvalidArgument, InvalidVal, NotSupported, RuntimeFailure
 from .platform import NpuArch
 
@@ -26,6 +28,7 @@ if TYPE_CHECKING:
     from .jit import SkCap
 
 CCE_BACKEND = "cce"
+PTO_DEBUG_ROOT = os.path.join(os.path.dirname(pypto.__file__), "lib", "include", "tilefwk", "pto_debug")
 
 
 @dataclass(frozen=True)
@@ -217,10 +220,8 @@ _DEFAULT_CCE_JIT_COMPILE_CONFIG = JitCompileConfig(
         "-I{toolkit_home}/include",
     ),
     print_debug_flags=(
-        "-isystem",
-        "{toolkit_home}/asc/include",
-        "-isystem",
-        "{toolkit_home}/asc",
+        f"-I{PTO_DEBUG_ROOT}",
+        f"-I{PTO_DEBUG_ROOT}/include",
     ),
     llvm_common_args=(
         "-mllvm",

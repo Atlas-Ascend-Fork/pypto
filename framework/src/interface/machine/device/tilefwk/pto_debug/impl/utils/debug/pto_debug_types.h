@@ -22,6 +22,7 @@
 
 #define PTO_SIMD_VF_MAGIC_NUMBER 0xF0A00B0F
 
+#if !defined(IMPL_UTILS_DEBUG_ASC_DEBUG_TYPES_H)
 struct BlockVFBufInfo {
     enum class AssertState : uint8_t {
         IDLE = 0U,
@@ -68,8 +69,9 @@ enum class TraceId : uint32_t {
     BroadCast = 0x8601,
 };
 #endif
+#endif
 
-namespace __pto_aicore {
+namespace pypto::aicore {
 
 enum class DumpTensorDataType : uint32_t {
     ACL_FLOAT = 0,
@@ -237,7 +239,7 @@ struct RingBufReadInfo {
     uint64_t bufOffset = 0U;                                    // the offset of read addr relative to ringBufAddr
     uint64_t resv = 0U;
 };
-} // namespace __pto_aicore
+} // namespace pypto::aicore
 
 namespace __pto_simd_vf {
 enum class DumpTensorDataType : uint32_t {

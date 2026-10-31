@@ -34,7 +34,7 @@
 #include "impl/utils/debug/npu_arch_5162/pto_aicore_printf_utils.h"
 #endif
 
-namespace __pto_aicore {
+namespace pypto::aicore {
 #if (__NPU_ARCH__ == 2002) || (__NPU_ARCH__ == 2201) || (__NPU_ARCH__ == 3002) || (__NPU_ARCH__ == 3510) || \
     (__NPU_ARCH__ == 5102) || (__NPU_ARCH__ == 9201)
 template <typename T>
@@ -287,10 +287,10 @@ inline __aicore__ void printf_impl_assert_msg(const __gm__ char* __assertion, co
                                               const __gm__ char* fmt, Args&&... args)
 {}
 #endif
-} // namespace __pto_aicore
+} // namespace pypto::aicore
 #else
 #include <cstdio>
-namespace __pto_aicore {
+namespace pypto::aicore {
 enum class DumpType : uint8_t {
     DUMP_DEFAULT = 0,
     DUMP_SCALAR,
@@ -324,13 +324,13 @@ static __attribute__((noinline)) __aicore__ void printf_impl_assert_msg(const __
 #endif
 }
 
-} // namespace __pto_aicore
+} // namespace pypto::aicore
 
-using namespace __pto_aicore;
+using namespace pypto::aicore;
 #endif
 
 #if !defined(__NPU_COMPILER_INTERNAL_PURE_SIMT__) && !defined(__CHECK_FEATURE_AT_PRECOMPILE)
-namespace __pto_aicore {
+namespace pypto::aicore {
 template <class... Args>
 __aicore__ static __attribute__((noinline)) void printf(__gm__ const char* fmt, Args&&... args)
 {
@@ -342,7 +342,7 @@ __aicore__ static __attribute__((noinline)) void PRINTF(__gm__ const char* fmt, 
 {
     printf_impl(fmt, args...);
 }
-} // namespace __pto_aicore
+} // namespace pypto::aicore
 #endif
 
 #if defined(__UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_AICORE_PRINTF_IMPL__)

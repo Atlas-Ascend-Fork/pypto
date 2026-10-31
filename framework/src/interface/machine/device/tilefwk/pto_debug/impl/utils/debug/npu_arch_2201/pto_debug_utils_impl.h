@@ -18,7 +18,7 @@
 #include "impl/utils/sys_macros_impl.h"
 #include "impl/utils/debug/pto_debug_utils.h"
 
-namespace __pto_aicore {
+namespace pypto::aicore {
 __aicore__ inline void pto_entire_dcci_impl(__gm__ uint64_t* ptr)
 {
     dcci(ptr, cache_line_t::ENTIRE_DATA_CACHE, dcci_dst_t::CACHELINE_OUT);
@@ -98,7 +98,7 @@ __aicore__ constexpr inline DumpTensorDataType get_dump_datatype_impl()
 
 __aicore__ inline void sync_all_impl() { pipe_barrier(pipe_t::PIPE_ALL); }
 
-} // namespace __pto_aicore
+} // namespace pypto::aicore
 #if defined(__UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_DEBUG_UTILS_IMPL__)
 #undef __PTO_INCLUDE_INTERNAL_HEADERS__
 #undef __UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_DEBUG_UTILS_IMPL__

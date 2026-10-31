@@ -10,10 +10,12 @@
 
 /*!
  * \file pto_aicore_dump_impl.h
- * \brief
+ * \brief AICore tensor dump and window dump implementation.
  */
 #ifndef IMPL_UTILS_DEBUG_PTO_AICORE_DUMP_IMPL_H
 #define IMPL_UTILS_DEBUG_PTO_AICORE_DUMP_IMPL_H
+
+#include <type_traits>
 
 #ifndef ASCENDC_CPU_DEBUG
 #include "impl/utils/sys_macros_impl.h"
@@ -33,11 +35,11 @@
 #include "impl/utils/debug/npu_arch_5162/pto_aicore_dump_utils.h"
 #endif
 
-namespace __pto_aicore {
+namespace pypto::aicore {
 
 template <AscendC::Hardware hardware, typename T, typename U>
-__aicore__ inline void set_dump_tlv_info(U src, __gm__ DumpTensorTlv* dumpTlv, uint32_t alignDumpLen, uint32_t desc,
-                                         uint32_t dump_size)
+__aicore__ inline void _set_dump_tlv_info(U src, __gm__ DumpTensorTlv* dumpTlv, uint32_t alignDumpLen, uint32_t desc,
+                                          uint32_t dump_size)
 {
     dumpTlv->type = static_cast<uint32_t>(DumpType::DUMP_TENSOR);
     dumpTlv->length = sizeof(DumpTensorTlv) - sizeof(uint32_t[2]) + alignDumpLen;
@@ -57,7 +59,7 @@ __aicore__ inline void set_dump_tlv_info(U src, __gm__ DumpTensorTlv* dumpTlv, u
 }
 
 template <typename Tlv>
-__aicore__ inline void set_dump_shape_info(__gm__ Tlv* dumpTlv, const uint32_t shapeDim, const uint32_t* shape)
+__aicore__ inline void _set_dump_shape_info(__gm__ Tlv* dumpTlv, const uint32_t shapeDim, const uint32_t* shape)
 {
     if (shapeDim <= 0 || shapeDim > K_MAX_SHAPE_DIM || shape == nullptr) {
         return;
@@ -70,7 +72,7 @@ __aicore__ inline void set_dump_shape_info(__gm__ Tlv* dumpTlv, const uint32_t s
 }
 
 template <AscendC::Hardware hardware, typename T, typename U, typename Tlv>
-__aicore__ inline uint32_t set_dump_tlv_data(U src, __gm__ Tlv* dumpTlv, uint32_t alignDumpLen, uint32_t dump_size)
+__aicore__ inline uint32_t _set_dump_tlv_data(U src, __gm__ Tlv* dumpTlv, uint32_t alignDumpLen, uint32_t dump_size)
 {
     __gm__ T* dumpDstAddr = reinterpret_cast<__gm__ T*>(dumpTlv + 1);
 
@@ -109,7 +111,7 @@ __aicore__ inline uint32_t set_dump_tlv_data(U src, __gm__ Tlv* dumpTlv, uint32_
 }
 
 template <AscendC::Hardware hardware>
-__aicore__ constexpr inline bool is_super_tensor_hardware_supported()
+__aicore__ constexpr inline bool _is_super_tensor_hardware_supported()
 {
     return hardware == AscendC::Hardware::GM || hardware == AscendC::Hardware::UB ||
            hardware == AscendC::Hardware::L1 || hardware == AscendC::Hardware::L0C ||
@@ -117,7 +119,7 @@ __aicore__ constexpr inline bool is_super_tensor_hardware_supported()
 }
 
 template <AscendC::Hardware hardware>
-__aicore__ constexpr inline uint32_t get_super_tensor_payload_alignment()
+__aicore__ constexpr inline uint32_t _get_super_tensor_payload_alignment()
 {
     if constexpr (hardware == AscendC::Hardware::L0C) {
         return 16U * 16U * sizeof(uint32_t);
@@ -126,9 +128,9 @@ __aicore__ constexpr inline uint32_t get_super_tensor_payload_alignment()
 }
 
 template <AscendC::Hardware hardware>
-__aicore__ inline uint32_t get_super_tensor_payload_capacity(uint32_t ringBufLen, uint32_t headerLen)
+__aicore__ inline uint32_t _get_super_tensor_payload_capacity(uint32_t ringBufLen, uint32_t headerLen)
 {
-    constexpr uint32_t payloadAlignment = get_super_tensor_payload_alignment<hardware>();
+    constexpr uint32_t payloadAlignment = _get_super_tensor_payload_alignment<hardware>();
     if (ringBufLen <= headerLen) {
         return 0U;
     }
@@ -136,9 +138,9 @@ __aicore__ inline uint32_t get_super_tensor_payload_capacity(uint32_t ringBufLen
 }
 
 template <AscendC::Hardware hardware, typename T, typename U>
-__aicore__ inline void set_super_tensor_tlv_info(U src, __gm__ DumpSuperTensorTlv* dumpTlv, uint32_t alignDumpLen,
-                                                 uint32_t desc, uint64_t tensorLength, uint32_t dumpSize,
-                                                 const uint32_t* shape, uint32_t shapeDim)
+__aicore__ inline void _set_super_tensor_tlv_info(U src, __gm__ DumpSuperTensorTlv* dumpTlv, uint32_t alignDumpLen,
+                                                  uint32_t desc, uint64_t tensorLength, uint32_t dumpSize,
+                                                  const uint32_t* shape, uint32_t shapeDim)
 {
     dumpTlv->type = static_cast<uint32_t>(DumpType::DUMP_SUPER_TENSOR);
     dumpTlv->length = sizeof(DumpSuperTensorTlv) - sizeof(uint32_t[2]) + alignDumpLen;
@@ -156,12 +158,12 @@ __aicore__ inline void set_super_tensor_tlv_info(U src, __gm__ DumpSuperTensorTl
     dumpTlv->tensorLength = tensorLength;
     dumpTlv->tensorOffset = 0U;
     dumpTlv->dumpSize = dumpSize;
-    set_dump_shape_info(dumpTlv, shapeDim, shape);
+    _set_dump_shape_info(dumpTlv, shapeDim, shape);
     pto_entire_dcci(reinterpret_cast<__gm__ uint64_t*>(dumpTlv));
 }
 
-__aicore__ inline void set_super_tensor_body_tlv_info(__gm__ DumpSuperTensorBodyTlv* dumpTlv, uint32_t alignDumpLen,
-                                                      uint64_t tensorLength, uint64_t tensorOffset, uint32_t dumpSize)
+__aicore__ inline void _set_super_tensor_body_tlv_info(__gm__ DumpSuperTensorBodyTlv* dumpTlv, uint32_t alignDumpLen,
+                                                       uint64_t tensorLength, uint64_t tensorOffset, uint32_t dumpSize)
 {
     dumpTlv->type = static_cast<uint32_t>(DumpType::DUMP_SUPER_TENSOR_BODY);
     dumpTlv->length = sizeof(DumpSuperTensorBodyTlv) - sizeof(uint32_t[2]) + alignDumpLen;
@@ -174,15 +176,15 @@ __aicore__ inline void set_super_tensor_body_tlv_info(__gm__ DumpSuperTensorBody
 }
 
 template <AscendC::Hardware hardware, typename T, typename U>
-__aicore__ inline void pto_dump_super_tensor_impl(U src, uint32_t desc, uint64_t tensorLength, const uint32_t* shape,
-                                                  uint32_t shapeDim, __gm__ DebugBlockHeadInfo* blockInfo)
+__aicore__ inline void _pto_dump_super_tensor_impl(U src, uint32_t desc, uint64_t tensorLength, const uint32_t* shape,
+                                                   uint32_t shapeDim, __gm__ DebugBlockHeadInfo* blockInfo)
 {
-    constexpr uint32_t payloadAlignment = get_super_tensor_payload_alignment<hardware>();
+    constexpr uint32_t payloadAlignment = _get_super_tensor_payload_alignment<hardware>();
     uint64_t tensorOffset = 0U;
     bool isFirst = true;
     while (tensorOffset < tensorLength) {
         const uint32_t headerLen = isFirst ? sizeof(DumpSuperTensorTlv) : sizeof(DumpSuperTensorBodyTlv);
-        const uint32_t payloadCapacity = get_super_tensor_payload_capacity<hardware>(blockInfo->ringBufLen, headerLen);
+        const uint32_t payloadCapacity = _get_super_tensor_payload_capacity<hardware>(blockInfo->ringBufLen, headerLen);
         if (payloadCapacity == 0U) {
             return;
         }
@@ -198,15 +200,15 @@ __aicore__ inline void pto_dump_super_tensor_impl(U src, uint32_t desc, uint64_t
         U chunkSrc = src + tensorOffset / sizeof(T);
         if (isFirst) {
             auto* dumpTlv = reinterpret_cast<__gm__ DumpSuperTensorTlv*>(tlvAddr);
-            set_super_tensor_tlv_info<hardware, T>(src, dumpTlv, alignDumpLen, desc, tensorLength, dumpSize, shape,
-                                                   shapeDim);
-            if (set_dump_tlv_data<hardware, T>(chunkSrc, dumpTlv, alignDumpLen, dumpSize / sizeof(T)) != 0U) {
+            _set_super_tensor_tlv_info<hardware, T>(src, dumpTlv, alignDumpLen, desc, tensorLength, dumpSize, shape,
+                                                    shapeDim);
+            if (_set_dump_tlv_data<hardware, T>(chunkSrc, dumpTlv, alignDumpLen, dumpSize / sizeof(T)) != 0U) {
                 return;
             }
         } else {
             auto* dumpTlv = reinterpret_cast<__gm__ DumpSuperTensorBodyTlv*>(tlvAddr);
-            set_super_tensor_body_tlv_info(dumpTlv, alignDumpLen, tensorLength, tensorOffset, dumpSize);
-            if (set_dump_tlv_data<hardware, T>(chunkSrc, dumpTlv, alignDumpLen, dumpSize / sizeof(T)) != 0U) {
+            _set_super_tensor_body_tlv_info(dumpTlv, alignDumpLen, tensorLength, tensorOffset, dumpSize);
+            if (_set_dump_tlv_data<hardware, T>(chunkSrc, dumpTlv, alignDumpLen, dumpSize / sizeof(T)) != 0U) {
                 return;
             }
         }
@@ -219,8 +221,8 @@ __aicore__ inline void pto_dump_super_tensor_impl(U src, uint32_t desc, uint64_t
 }
 
 template <AscendC::Hardware hardware, typename T, typename U>
-__aicore__ inline void pto_dump_impl(U src, uint32_t desc, uint32_t dump_size, const uint32_t* shape,
-                                     const uint32_t shapeDim)
+__aicore__ inline void _pto_dump_impl(U src, uint32_t desc, uint32_t dump_size, const uint32_t* shape,
+                                      const uint32_t shapeDim)
 {
 #if !(defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0)
     __gm__ DebugBlockHeadInfo* blockInfo = get_block_info();
@@ -233,8 +235,8 @@ __aicore__ inline void pto_dump_impl(U src, uint32_t desc, uint32_t dump_size, c
     const uint64_t tlvLen64 = sizeof(DumpTensorTlv) + alignDumpLen64;
     if (tlvLen64 > blockInfo->ringBufLen) {
 #if __NPU_ARCH__ == 3510 || __NPU_ARCH__ == 2201 || __NPU_ARCH__ == 2002 || __NPU_ARCH__ == 5102 || __NPU_ARCH__ == 9201
-        if constexpr (is_super_tensor_hardware_supported<hardware>()) {
-            pto_dump_super_tensor_impl<hardware, T>(src, desc, tensorLength, shape, shapeDim, blockInfo);
+        if constexpr (_is_super_tensor_hardware_supported<hardware>()) {
+            _pto_dump_super_tensor_impl<hardware, T>(src, desc, tensorLength, shape, shapeDim, blockInfo);
         }
 #endif
         return;
@@ -246,9 +248,9 @@ __aicore__ inline void pto_dump_impl(U src, uint32_t desc, uint32_t dump_size, c
     }
     __gm__ DumpTensorTlv* dumpTlv = reinterpret_cast<__gm__ DumpTensorTlv*>(get_ringbuf_tlv_addr(blockInfo));
 
-    set_dump_tlv_info<hardware, T>(src, dumpTlv, alignDumpLen, desc, dump_size);
-    set_dump_shape_info(dumpTlv, shapeDim, shape);
-    if (set_dump_tlv_data<hardware, T>(src, dumpTlv, alignDumpLen, dump_size) != 0) {
+    _set_dump_tlv_info<hardware, T>(src, dumpTlv, alignDumpLen, desc, dump_size);
+    _set_dump_shape_info(dumpTlv, shapeDim, shape);
+    if (_set_dump_tlv_data<hardware, T>(src, dumpTlv, alignDumpLen, dump_size) != 0) {
         return;
     }
 
@@ -257,7 +259,7 @@ __aicore__ inline void pto_dump_impl(U src, uint32_t desc, uint32_t dump_size, c
 #endif
 }
 
-__aicore__ inline void pto_dump_shape_impl(const uint32_t shapeDim, const uint32_t* shape)
+__aicore__ inline void _pto_dump_shape_impl(const uint32_t shapeDim, const uint32_t* shape)
 {
 #if !(defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0)
     __gm__ DebugBlockHeadInfo* blockInfo = get_block_info();
@@ -284,14 +286,494 @@ __aicore__ inline void pto_dump_shape_impl(const uint32_t shapeDim, const uint32
 }
 
 template <AscendC::Hardware hardware, typename T, typename U>
-__aicore__ inline void pto_dump_local_impl(U input, uint32_t desc, uint32_t dump_size, const uint32_t* shape,
-                                           const uint32_t shapeDim)
+__aicore__ inline void _pto_dump_local_impl(U input, uint32_t desc, uint32_t dump_size, const uint32_t* shape,
+                                            const uint32_t shapeDim)
 {
     uint64_t ctrlValue = get_ctrl();
     set_atomic_none();
     enable_pto_diagnostics();
     if (g_sysPrintFifoSpace != nullptr) {
-        pto_dump_impl<hardware, T>(input, desc, dump_size, shape, shapeDim);
+        _pto_dump_impl<hardware, T>(input, desc, dump_size, shape, shapeDim);
+    }
+    set_ctrl(ctrlValue);
+}
+
+template <typename T>
+struct DumpWindowRecord {
+    __gm__ DebugBlockHeadInfo* blockInfo;
+    __gm__ T* payload;
+    uint32_t tlvLen;
+};
+
+template <AscendC::Hardware hardware, typename T, typename U>
+__aicore__ inline bool _prepare_dump_window_record(DumpWindowRecord<T>& record, U src, uint32_t desc, uint32_t dumpSize,
+                                                   const uint32_t* shape, uint32_t shapeDim)
+{
+#if defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0
+    return false;
+#else
+    record.blockInfo = get_block_info();
+    if (dumpSize == 0U || record.blockInfo == nullptr) {
+        return false;
+    }
+
+    constexpr uint64_t dataBlockSize = PTO_ONE_DATABLOCK_SIZE;
+    const uint64_t dataBytes = static_cast<uint64_t>(dumpSize) * sizeof(T);
+    const uint64_t alignedDataBytes = (dataBytes + dataBlockSize - 1U) / dataBlockSize * dataBlockSize;
+    const uint64_t tlvBytes = sizeof(DumpTensorTlv) + alignedDataBytes;
+    if (tlvBytes > record.blockInfo->ringBufLen || tlvBytes > 0xffffffffULL) {
+        printf("[WARNING] dump_data desc=%u requires %llu bytes, but the per-core dump FIFO capacity is %u bytes; "
+               "data was not dumped.\n",
+               desc, static_cast<unsigned long long>(tlvBytes), record.blockInfo->ringBufLen);
+        return false;
+    }
+    if (!check_ringbuf_space(record.blockInfo, static_cast<uint32_t>(tlvBytes))) {
+        return false;
+    }
+
+    auto* dumpTlv = reinterpret_cast<__gm__ DumpTensorTlv*>(get_ringbuf_tlv_addr(record.blockInfo));
+    record.payload = reinterpret_cast<__gm__ T*>(dumpTlv + 1);
+    record.tlvLen = static_cast<uint32_t>(tlvBytes);
+    _set_dump_tlv_info<hardware, T>(src, dumpTlv, static_cast<uint32_t>(alignedDataBytes), desc, dumpSize);
+    _set_dump_shape_info(dumpTlv, shapeDim, shape);
+    return true;
+#endif
+}
+
+template <typename T>
+__aicore__ inline void _publish_dump_window_record(const DumpWindowRecord<T>& record)
+{
+    sync_all();
+    pto_entire_dcci(reinterpret_cast<__gm__ uint64_t*>(record.payload));
+    update_write_info(get_block_write_info(record.blockInfo), record.tlvLen);
+}
+
+template <typename T>
+constexpr __aicore__ inline bool _is_packed_fp4_dump_type()
+{
+    return std::is_same_v<T, float4_e2m1x2_t> || std::is_same_v<T, float4_e1m2x2_t>;
+}
+
+template <typename T>
+using WindowDumpType = std::conditional_t<_is_packed_fp4_dump_type<T>(), float, T>;
+
+template <typename T>
+__aicore__ inline float _decode_fp4_dump_value(uint8_t value)
+{
+    constexpr float e2m1Values[8] = {0.0F, 0.5F, 1.0F, 1.5F, 2.0F, 3.0F, 4.0F, 6.0F};
+    constexpr float e1m2Values[8] = {0.0F, 0.25F, 0.5F, 0.75F, 1.0F, 1.25F, 1.5F, 1.75F};
+    const float magnitude = std::is_same_v<T, float4_e2m1x2_t> ? e2m1Values[value & 0x07U] : e1m2Values[value & 0x07U];
+    return (value & 0x08U) == 0U ? magnitude : -magnitude;
+}
+
+template <DumpLayout layout>
+__aicore__ inline int64_t _get_gm_matrix_offset(const DumpTensorView& view, int64_t batch, int64_t row, int64_t col)
+{
+    const uint32_t rowAxis = view.rank - 2U;
+    const uint32_t colAxis = view.rank - 1U;
+    if constexpr (layout == DumpLayout::NZ) {
+        const int64_t paddedRows = view.stride[rowAxis];
+        const int64_t c0 = view.stride[colAxis];
+        return batch + (col / c0) * paddedRows * c0 + (row / 16) * 16 * c0 + (row % 16) * c0 + col % c0;
+    }
+    return batch + row * view.stride[rowAxis] + col * view.stride[colAxis];
+}
+
+__aicore__ inline int64_t _get_gm_batch_offset(const DumpTensorView& view, uint64_t batchIndex)
+{
+    int64_t batchOffset = 0;
+    for (int32_t axis = static_cast<int32_t>(view.rank) - 3; axis >= 0; --axis) {
+        const uint64_t extent = static_cast<uint64_t>(view.shape[axis]);
+        const uint64_t coordinate = batchIndex % extent;
+        batchIndex /= extent;
+        batchOffset += (view.offsets[axis] + static_cast<int64_t>(coordinate)) * view.stride[axis];
+    }
+    return batchOffset;
+}
+
+template <typename T, typename SourcePtr>
+__aicore__ inline void _copy_window_element(SourcePtr input, int64_t inputOffset, __gm__ WindowDumpType<T>* output,
+                                            uint64_t outputOffset)
+{
+    if constexpr (_is_packed_fp4_dump_type<T>()) {
+        const uint8_t inputByte = get_scalar_bitcode_value<T, uint8_t>(input[inputOffset / 2]);
+        const uint8_t value = (inputByte >> ((inputOffset & 1) * 4)) & 0x0fU;
+        output[outputOffset] = _decode_fp4_dump_value<T>(value);
+    } else {
+        output[outputOffset] = input[inputOffset];
+    }
+}
+
+template <DumpLayout layout, typename T>
+__aicore__ inline void _pack_gm_window(__gm__ T* input, const DumpTensorView& view, __gm__ WindowDumpType<T>* output)
+{
+    if (view.rank == 1U) {
+        for (int64_t index = 0; index < view.shape[0]; ++index) {
+            const int64_t inputOffset = (view.offsets[0] + index) * view.stride[0];
+            _copy_window_element<T>(input, inputOffset, output, static_cast<uint64_t>(index));
+        }
+        return;
+    }
+
+    const uint32_t rowAxis = view.rank - 2U;
+    const uint32_t colAxis = view.rank - 1U;
+    uint64_t batchCount = 1U;
+    for (uint32_t axis = 0U; axis < rowAxis; ++axis) {
+        batchCount *= static_cast<uint64_t>(view.shape[axis]);
+    }
+
+    uint64_t outputOffset = 0U;
+    for (uint64_t batchIndex = 0U; batchIndex < batchCount; ++batchIndex) {
+        const int64_t batchOffset = _get_gm_batch_offset(view, batchIndex);
+        if constexpr (layout == DumpLayout::ND) {
+            for (int64_t row = 0; row < view.shape[rowAxis]; ++row) {
+                int64_t inputOffset = batchOffset + (view.offsets[rowAxis] + row) * view.stride[rowAxis] +
+                                      view.offsets[colAxis] * view.stride[colAxis];
+                for (int64_t col = 0; col < view.shape[colAxis]; ++col) {
+                    _copy_window_element<T>(input, inputOffset, output, outputOffset++);
+                    inputOffset += view.stride[colAxis];
+                }
+            }
+        } else {
+            const int64_t c0 = view.stride[colAxis];
+            const int64_t rowBegin = view.offsets[rowAxis];
+            const int64_t rowEnd = rowBegin + view.shape[rowAxis];
+            const int64_t colBegin = view.offsets[colAxis];
+            const int64_t colEnd = colBegin + view.shape[colAxis];
+            for (int64_t blockCol = colBegin / c0; blockCol < (colEnd + c0 - 1) / c0; ++blockCol) {
+                const int64_t blockColBegin = blockCol * c0;
+                const int64_t validColBegin = colBegin > blockColBegin ? colBegin : blockColBegin;
+                const int64_t blockColEnd = blockColBegin + c0;
+                const int64_t validColEnd = colEnd < blockColEnd ? colEnd : blockColEnd;
+                for (int64_t blockRow = rowBegin / 16; blockRow < (rowEnd + 15) / 16; ++blockRow) {
+                    const int64_t blockRowBegin = blockRow * 16;
+                    const int64_t validRowBegin = rowBegin > blockRowBegin ? rowBegin : blockRowBegin;
+                    const int64_t blockRowEnd = blockRowBegin + 16;
+                    const int64_t validRowEnd = rowEnd < blockRowEnd ? rowEnd : blockRowEnd;
+                    for (int64_t row = validRowBegin; row < validRowEnd; ++row) {
+                        int64_t inputOffset = _get_gm_matrix_offset<layout>(view, batchOffset, row, validColBegin);
+                        for (int64_t col = validColBegin; col < validColEnd; ++col) {
+                            _copy_window_element<T>(input, inputOffset, output, outputOffset++);
+                            ++inputOffset;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+template <DumpLayout layout, typename T>
+__aicore__ inline void _dump_tensor_window_impl(__gm__ T* input, uint32_t desc, const DumpTensorView& view)
+{
+    static_assert(layout == DumpLayout::ND || layout == DumpLayout::NZ, "unsupported GM dump layout");
+    if (view.rank < 1U || view.rank > K_MAX_SHAPE_DIM || view.sourceShape == nullptr || view.offsets == nullptr ||
+        view.shape == nullptr || view.stride == nullptr) {
+        return;
+    }
+
+    uint32_t dumpShape[K_MAX_SHAPE_DIM];
+    uint64_t outputElements = 1U;
+    for (uint32_t i = 0U; i < view.rank; ++i) {
+        if (view.sourceShape[i] <= 0 || view.offsets[i] < 0 || view.shape[i] <= 0 ||
+            view.offsets[i] > view.sourceShape[i] - view.shape[i] ||
+            outputElements > 0xffffffffULL / static_cast<uint64_t>(view.shape[i])) {
+            return;
+        }
+        dumpShape[i] = static_cast<uint32_t>(view.shape[i]);
+        outputElements *= static_cast<uint64_t>(dumpShape[i]);
+    }
+
+    const int64_t logicalOrigin = view.rank == 1U ? view.offsets[0] * view.stride[0] :
+                                                    _get_gm_matrix_offset<layout>(view, _get_gm_batch_offset(view, 0U),
+                                                                                  view.offsets[view.rank - 2U],
+                                                                                  view.offsets[view.rank - 1U]);
+    __gm__ T* windowInput = input + (_is_packed_fp4_dump_type<T>() ? logicalOrigin / 2 : logicalOrigin);
+    using OutputType = WindowDumpType<T>;
+    DumpWindowRecord<OutputType> record{};
+    if (!_prepare_dump_window_record<AscendC::Hardware::GM>(
+            record, windowInput, desc, static_cast<uint32_t>(outputElements), dumpShape, view.rank)) {
+        return;
+    }
+    _pack_gm_window<layout>(input, view, record.payload);
+    _publish_dump_window_record(record);
+}
+
+template <DumpLayout layout>
+__aicore__ inline void _get_local_window_coordinate(const DumpTensorView& view, int64_t physicalOffset, int64_t& row,
+                                                    int64_t& col)
+{
+    const int64_t rows = view.sourceShape[view.rank - 2U];
+    const int64_t cols = view.sourceShape[view.rank - 1U];
+    if constexpr (layout == DumpLayout::ND) {
+        row = physicalOffset / cols;
+        col = physicalOffset % cols;
+    } else if constexpr (layout == DumpLayout::DN) {
+        row = physicalOffset % rows;
+        col = physicalOffset / rows;
+    } else {
+        const int64_t blockRows = rows / view.innerRows;
+        const int64_t blockCols = cols / view.innerCols;
+        const int64_t innerNumel = view.innerRows * view.innerCols;
+        const int64_t block = physicalOffset / innerNumel;
+        const int64_t inner = physicalOffset % innerNumel;
+        if constexpr (layout == DumpLayout::NZ) {
+            row = (block % blockRows) * view.innerRows + inner / view.innerCols;
+            col = (block / blockRows) * view.innerCols + inner % view.innerCols;
+        } else if constexpr (layout == DumpLayout::ZN) {
+            row = (block / blockCols) * view.innerRows + inner % view.innerRows;
+            col = (block % blockCols) * view.innerCols + inner / view.innerRows;
+        } else if constexpr (layout == DumpLayout::ZZ) {
+            row = (block / blockCols) * view.innerRows + inner / view.innerCols;
+            col = (block % blockCols) * view.innerCols + inner % view.innerCols;
+        } else {
+            static_assert(layout == DumpLayout::NN, "unsupported local dump layout");
+            row = (block % blockRows) * view.innerRows + inner % view.innerRows;
+            col = (block / blockRows) * view.innerCols + inner / view.innerRows;
+        }
+    }
+}
+
+template <DumpLayout layout, typename T, typename SourcePtr>
+__aicore__ inline void _pack_direct_window(SourcePtr input, const DumpTensorView& view,
+                                           __gm__ WindowDumpType<T>* output)
+{
+    const int64_t rows = view.sourceShape[view.rank - 2U];
+    const int64_t cols = view.sourceShape[view.rank - 1U];
+    const int64_t rowBegin = view.offsets[view.rank - 2U];
+    const int64_t rowEnd = rowBegin + view.shape[view.rank - 2U];
+    const int64_t colBegin = view.offsets[view.rank - 1U];
+    const int64_t colEnd = colBegin + view.shape[view.rank - 1U];
+    uint64_t outputOffset = 0U;
+    for (int64_t physicalOffset = 0; physicalOffset < rows * cols; ++physicalOffset) {
+        int64_t row;
+        int64_t col;
+        _get_local_window_coordinate<layout>(view, physicalOffset, row, col);
+        if (row >= rowBegin && row < rowEnd && col >= colBegin && col < colEnd) {
+            _copy_window_element<T>(input, physicalOffset, output, outputOffset++);
+        }
+    }
+}
+
+struct DebugBusWindowChunk {
+    uint32_t word0 = 0U;
+    uint32_t word1 = 0U;
+    uint32_t word2 = 0U;
+    uint32_t word3 = 0U;
+    uint32_t word4 = 0U;
+    uint32_t word5 = 0U;
+    uint32_t word6 = 0U;
+    uint32_t word7 = 0U;
+
+    __aicore__ inline uint32_t word(uint32_t index) const
+    {
+        switch (index) {
+            case 0U:
+                return word0;
+            case 1U:
+                return word1;
+            case 2U:
+                return word2;
+            case 3U:
+                return word3;
+            case 4U:
+                return word4;
+            case 5U:
+                return word5;
+            case 6U:
+                return word6;
+            default:
+                return word7;
+        }
+    }
+
+    __aicore__ inline uint64_t bits(uint32_t bitOffset, uint32_t bitCount) const
+    {
+        uint64_t value = 0U;
+        const uint32_t byteOffset = bitOffset >> 3;
+        const uint32_t byteCount = (bitCount + 7U) >> 3;
+        for (uint32_t i = 0U; i < byteCount; ++i) {
+            const uint32_t byteIndex = byteOffset + i;
+            const uint32_t byteValue = (word(byteIndex >> 2) >> ((byteIndex & 3U) << 3)) & 0xffU;
+            value |= static_cast<uint64_t>(byteValue) << (i << 3);
+        }
+        value >>= bitOffset & 7U;
+        return bitCount == 64U ? value : value & ((1ULL << bitCount) - 1U);
+    }
+};
+
+template <AscendC::Hardware hardware, typename LocalPtr>
+__aicore__ inline bool _read_local_window_chunk(LocalPtr src, DebugBusWindowChunk& chunk)
+{
+#if __NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201
+    const uint64_t debugBusAddr = get_debug_bus_addr_impl();
+    if (debugBusAddr == 0U) {
+        return false;
+    }
+
+    constexpr uint32_t readyMask = 0x80000000U;
+    constexpr uint64_t timeoutCycles = 15U * 1000U * 1000U;
+    constexpr uint64_t readBytes = get_debug_bus_loop_steplen<hardware>();
+    constexpr uint32_t modelBase = get_debug_bus_model_base<hardware>();
+    const uint64_t localAddr = reinterpret_cast<uint64_t>(src);
+    uint32_t srcAddr;
+    if constexpr (hardware == AscendC::Hardware::FIXBUF) {
+        const uint64_t fbufType = localAddr >> PTO_DEBUG_BUS_FBUF_TYPE_SHIFT;
+        srcAddr = (localAddr & PTO_DEBUG_BUS_FBUF_ADDR_MASK) >> get_debug_bus_local_addr_shift<hardware>();
+        if (fbufType == 0U) {
+            srcAddr += 0x2000U;
+        } else if (fbufType == 1U) {
+            srcAddr += 0x1000U;
+        }
+    } else {
+        srcAddr = localAddr >> get_debug_bus_local_addr_shift<hardware>();
+    }
+
+    sync_all();
+    debug_bus_write_reg(debugBusAddr, PTO_DEBUG_BUS_UNLOCK_OFFSET, PTO_DEBUG_BUS_UNLOCK_VALUE);
+    debug_bus_write_reg(debugBusAddr, PTO_DEBUG_BUS_ADDR_LOW_OFFSET, srcAddr);
+    debug_bus_write_reg(debugBusAddr, PTO_DEBUG_BUS_MODEL_BASE_OFFSET, modelBase);
+    debug_bus_write_reg(debugBusAddr, PTO_DEBUG_BUS_CTRL_OFFSET, PTO_DEBUG_BUS_READ_MASK);
+
+    const uint64_t start = pto_debug_get_system_cycle();
+    while ((debug_bus_read_reg(debugBusAddr, PTO_DEBUG_BUS_BUSY_OFFSET) & readyMask) == 0U) {
+        if (pto_debug_get_system_cycle() - start >= timeoutCycles) {
+            return false;
+        }
+        ringbuf_wait_rts_sync<100U>();
+    }
+
+    ringbuf_wait_rts_sync<100U>();
+    chunk.word0 = debug_bus_read_reg(debugBusAddr, PTO_DEBUG_BUS_DATA_OFFSET);
+    chunk.word1 = debug_bus_read_reg(debugBusAddr, PTO_DEBUG_BUS_DATA_OFFSET + 4U);
+    if constexpr (readBytes == 32U) {
+        chunk.word2 = debug_bus_read_reg(debugBusAddr, PTO_DEBUG_BUS_DATA_OFFSET + 8U);
+        chunk.word3 = debug_bus_read_reg(debugBusAddr, PTO_DEBUG_BUS_DATA_OFFSET + 12U);
+        chunk.word4 = debug_bus_read_reg(debugBusAddr, PTO_DEBUG_BUS_DATA_OFFSET + 16U);
+        chunk.word5 = debug_bus_read_reg(debugBusAddr, PTO_DEBUG_BUS_DATA_OFFSET + 20U);
+        chunk.word6 = debug_bus_read_reg(debugBusAddr, PTO_DEBUG_BUS_DATA_OFFSET + 24U);
+        chunk.word7 = debug_bus_read_reg(debugBusAddr, PTO_DEBUG_BUS_DATA_OFFSET + 28U);
+    }
+    sync_all();
+    return true;
+#else
+    (void)src;
+    (void)chunk;
+    return false;
+#endif
+}
+
+template <AscendC::Hardware hardware, DumpLayout layout, typename T, typename LocalPtr>
+__aicore__ inline bool _pack_debug_bus_window(LocalPtr input, const DumpTensorView& view,
+                                              __gm__ WindowDumpType<T>* output)
+{
+#if __NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201
+    constexpr uint32_t transferBytes = get_debug_bus_loop_steplen<hardware>();
+    constexpr uint32_t packedElements = _is_packed_fp4_dump_type<T>() ? 2U : 1U;
+    constexpr uint32_t logicalElementsPerChunk = transferBytes * packedElements / sizeof(T);
+    static_assert(logicalElementsPerChunk <= 64U, "local dump window mask only supports up to 64 elements per chunk");
+
+    const int64_t rows = view.sourceShape[view.rank - 2U];
+    const int64_t cols = view.sourceShape[view.rank - 1U];
+    const int64_t physicalNumel = rows * cols;
+    const int64_t storageBytes = (physicalNumel + packedElements - 1U) / packedElements * sizeof(T);
+    if (storageBytes % transferBytes != 0) {
+        return false;
+    }
+
+    const int64_t rowBegin = view.offsets[view.rank - 2U];
+    const int64_t rowEnd = rowBegin + view.shape[view.rank - 2U];
+    const int64_t colBegin = view.offsets[view.rank - 1U];
+    const int64_t colEnd = colBegin + view.shape[view.rank - 1U];
+    uint64_t outputOffset = 0U;
+    DebugBusWindowChunk chunk{};
+    for (int64_t physicalBase = 0; physicalBase < physicalNumel; physicalBase += logicalElementsPerChunk) {
+        uint64_t windowMask = 0U;
+        for (uint32_t inner = 0U; inner < logicalElementsPerChunk && physicalBase + inner < physicalNumel; ++inner) {
+            int64_t row;
+            int64_t col;
+            _get_local_window_coordinate<layout>(view, physicalBase + inner, row, col);
+            if (row >= rowBegin && row < rowEnd && col >= colBegin && col < colEnd) {
+                windowMask |= 1ULL << inner;
+            }
+        }
+        if (windowMask == 0U) {
+            continue;
+        }
+
+        auto localChunk = input + physicalBase / packedElements;
+        if (!_read_local_window_chunk<hardware>(localChunk, chunk)) {
+            return false;
+        }
+        constexpr uint32_t elementBits = _is_packed_fp4_dump_type<T>() ? 4U : sizeof(T) * 8U;
+        for (uint32_t inner = 0U; inner < logicalElementsPerChunk && physicalBase + inner < physicalNumel; ++inner) {
+            if ((windowMask & (1ULL << inner)) != 0U) {
+                const uint64_t value = chunk.bits(inner * elementBits, elementBits);
+                if constexpr (_is_packed_fp4_dump_type<T>()) {
+                    output[outputOffset++] = _decode_fp4_dump_value<T>(static_cast<uint8_t>(value));
+                } else {
+                    output[outputOffset++] = get_scalar_bitcode_value<uint64_t, T>(value);
+                }
+            }
+        }
+    }
+    return true;
+#else
+    (void)input;
+    (void)view;
+    (void)output;
+    return false;
+#endif
+}
+
+template <AscendC::Hardware hardware, DumpLayout layout, typename T, typename SourcePtr>
+__aicore__ inline void _dump_tile_window_impl(SourcePtr input, uint32_t desc, const DumpTensorView& view)
+{
+    static_assert(layout == DumpLayout::ND || layout == DumpLayout::DN || layout == DumpLayout::NZ ||
+                      layout == DumpLayout::ZN || layout == DumpLayout::ZZ || layout == DumpLayout::NN,
+                  "unsupported local dump layout");
+    if (view.rank != 2U || view.sourceShape == nullptr || view.offsets == nullptr || view.shape == nullptr ||
+        view.innerRows <= 0 || view.innerCols <= 0 || view.sourceShape[0] <= 0 || view.sourceShape[1] <= 0 ||
+        view.sourceShape[0] % view.innerRows != 0 || view.sourceShape[1] % view.innerCols != 0 || view.offsets[0] < 0 ||
+        view.offsets[1] < 0 || view.shape[0] <= 0 || view.shape[1] <= 0 ||
+        view.offsets[0] > view.sourceShape[0] - view.shape[0] ||
+        view.offsets[1] > view.sourceShape[1] - view.shape[1]) {
+        return;
+    }
+    const uint64_t outputElements64 = static_cast<uint64_t>(view.shape[0]) * static_cast<uint64_t>(view.shape[1]);
+    if (outputElements64 > 0xffffffffULL) {
+        return;
+    }
+
+    using OutputType = WindowDumpType<T>;
+    const uint32_t outputElements = static_cast<uint32_t>(outputElements64);
+    uint32_t dumpShape[2] = {static_cast<uint32_t>(view.shape[0]), static_cast<uint32_t>(view.shape[1])};
+    DumpWindowRecord<OutputType> record{};
+    if (!_prepare_dump_window_record<hardware>(record, input, desc, outputElements, dumpShape, 2U)) {
+        return;
+    }
+
+    if constexpr (hardware == AscendC::Hardware::UB) {
+        _pack_direct_window<layout, T>(input, view, record.payload);
+    } else {
+        if (!_pack_debug_bus_window<hardware, layout, T>(input, view, record.payload)) {
+            return;
+        }
+    }
+    _publish_dump_window_record(record);
+}
+template <AscendC::Hardware hardware, DumpLayout layout, typename T, typename U>
+__aicore__ inline void _pto_dump_window_impl(U input, uint32_t desc, const DumpTensorView& view)
+{
+    uint64_t ctrlValue = get_ctrl();
+    set_atomic_none();
+    enable_pto_diagnostics();
+    if (g_sysPrintFifoSpace != nullptr) {
+        if constexpr (hardware == AscendC::Hardware::GM) {
+            _dump_tensor_window_impl<layout>(input, desc, view);
+        } else {
+            _dump_tile_window_impl<hardware, layout, T>(input, desc, view);
+        }
     }
     set_ctrl(ctrlValue);
 }
@@ -300,92 +782,92 @@ template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_gm(__gm__ T* input, uint32_t desc, uint32_t dump_size,
                                                              const uint32_t* shape, const uint32_t shapeDim)
 {
-    pto_dump_local_impl<AscendC::Hardware::GM, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<AscendC::Hardware::GM, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_ubuf(__ubuf__ T* input, uint32_t desc, uint32_t dump_size,
                                                                const uint32_t* shape, const uint32_t shapeDim)
 {
-    pto_dump_local_impl<AscendC::Hardware::UB, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<AscendC::Hardware::UB, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_abuf(__ca__ T* input, uint32_t desc, uint32_t dump_size,
                                                                const uint32_t* shape, const uint32_t shapeDim)
 {
-    pto_dump_local_impl<AscendC::Hardware::L0A, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<AscendC::Hardware::L0A, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_bbuf(__cb__ T* input, uint32_t desc, uint32_t dump_size,
                                                                const uint32_t* shape, const uint32_t shapeDim)
 {
-    pto_dump_local_impl<AscendC::Hardware::L0B, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<AscendC::Hardware::L0B, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_cbuf(__cc__ T* input, uint32_t desc, uint32_t dump_size,
                                                                const uint32_t* shape, const uint32_t shapeDim)
 {
-    pto_dump_local_impl<AscendC::Hardware::L0C, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<AscendC::Hardware::L0C, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_l1buf(__cbuf__ T* input, uint32_t desc, uint32_t dump_size,
                                                                 const uint32_t* shape, const uint32_t shapeDim)
 {
-    pto_dump_local_impl<AscendC::Hardware::L1, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<AscendC::Hardware::L1, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump(__biasbuf__ T* input, uint32_t desc, uint32_t dump_size,
                                                           const uint32_t* shape, const uint32_t shapeDim)
 {
-    pto_dump_local_impl<AscendC::Hardware::BIAS, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<AscendC::Hardware::BIAS, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump(__fbuf__ T* input, uint32_t desc, uint32_t dump_size,
                                                           const uint32_t* shape, const uint32_t shapeDim)
 {
-    pto_dump_local_impl<AscendC::Hardware::FIXBUF, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<AscendC::Hardware::FIXBUF, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_gm(__gm__ T* input, uint32_t desc, uint32_t dump_size)
 {
-    pto_dump_local_impl<AscendC::Hardware::GM, T>(input, desc, dump_size, nullptr, 0);
+    _pto_dump_local_impl<AscendC::Hardware::GM, T>(input, desc, dump_size, nullptr, 0);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_ubuf(__ubuf__ T* input, uint32_t desc, uint32_t dump_size)
 {
-    pto_dump_local_impl<AscendC::Hardware::UB, T>(input, desc, dump_size, nullptr, 0);
+    _pto_dump_local_impl<AscendC::Hardware::UB, T>(input, desc, dump_size, nullptr, 0);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_abuf(__ca__ T* input, uint32_t desc, uint32_t dump_size)
 {
-    pto_dump_local_impl<AscendC::Hardware::L0A, T>(input, desc, dump_size, nullptr, 0);
+    _pto_dump_local_impl<AscendC::Hardware::L0A, T>(input, desc, dump_size, nullptr, 0);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_bbuf(__cb__ T* input, uint32_t desc, uint32_t dump_size)
 {
-    pto_dump_local_impl<AscendC::Hardware::L0B, T>(input, desc, dump_size, nullptr, 0);
+    _pto_dump_local_impl<AscendC::Hardware::L0B, T>(input, desc, dump_size, nullptr, 0);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_cbuf(__cc__ T* input, uint32_t desc, uint32_t dump_size)
 {
-    pto_dump_local_impl<AscendC::Hardware::L0C, T>(input, desc, dump_size, nullptr, 0);
+    _pto_dump_local_impl<AscendC::Hardware::L0C, T>(input, desc, dump_size, nullptr, 0);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_l1buf(__cbuf__ T* input, uint32_t desc, uint32_t dump_size)
 {
-    pto_dump_local_impl<AscendC::Hardware::L1, T>(input, desc, dump_size, nullptr, 0);
+    _pto_dump_local_impl<AscendC::Hardware::L1, T>(input, desc, dump_size, nullptr, 0);
 }
 
 template <typename T>
@@ -423,11 +905,54 @@ __aicore__ static __attribute__((noinline)) void pto_dump(__fbuf__ T* input, uin
 {
     pto_dump(input, desc, dump_size, nullptr, 0);
 }
-} // namespace __pto_aicore
+
+template <DumpLayout layout, typename T>
+__aicore__ static __attribute__((noinline)) void pto_dump_window(__gm__ T* input, uint32_t desc,
+                                                                 const DumpTensorView& view)
+{
+    _pto_dump_window_impl<AscendC::Hardware::GM, layout, T>(input, desc, view);
+}
+
+template <DumpLayout layout, typename T>
+__aicore__ static __attribute__((noinline)) void pto_dump_window(__ubuf__ T* input, uint32_t desc,
+                                                                 const DumpTensorView& view)
+{
+    _pto_dump_window_impl<AscendC::Hardware::UB, layout, T>(input, desc, view);
+}
+
+template <DumpLayout layout, typename T>
+__aicore__ static __attribute__((noinline)) void pto_dump_window(__cc__ T* input, uint32_t desc,
+                                                                 const DumpTensorView& view)
+{
+    _pto_dump_window_impl<AscendC::Hardware::L0C, layout, T>(input, desc, view);
+}
+
+template <DumpLayout layout, typename T>
+__aicore__ static __attribute__((noinline)) void pto_dump_window(__cbuf__ T* input, uint32_t desc,
+                                                                 const DumpTensorView& view)
+{
+    _pto_dump_window_impl<AscendC::Hardware::L1, layout, T>(input, desc, view);
+}
+
+template <DumpLayout layout, typename T>
+__aicore__ static __attribute__((noinline)) void pto_dump_window(__biasbuf__ T* input, uint32_t desc,
+                                                                 const DumpTensorView& view)
+{
+    _pto_dump_window_impl<AscendC::Hardware::BIAS, layout, T>(input, desc, view);
+}
+
+template <DumpLayout layout, typename T>
+__aicore__ static __attribute__((noinline)) void pto_dump_window(__fbuf__ T* input, uint32_t desc,
+                                                                 const DumpTensorView& view)
+{
+    _pto_dump_window_impl<AscendC::Hardware::FIXBUF, layout, T>(input, desc, view);
+}
+
+} // namespace pypto::aicore
 #else
 #include <cstdio>
 
-namespace __pto_aicore {
+namespace pypto::aicore {
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_gm(__gm__ T* input, uint32_t desc, uint32_t dump_size)
 {
@@ -493,13 +1018,19 @@ __aicore__ static __attribute__((noinline)) void pto_dump(T* input, uint32_t des
     assert(false && "pto_dump is not supported in cpu mode.");
 }
 
-__aicore__ inline void pto_dump_shape_impl(const uint32_t shapeDim, const uint32_t* shape)
+__aicore__ inline void _pto_dump_shape_impl(const uint32_t shapeDim, const uint32_t* shape)
 {
-    assert(false && "pto_dump_shape_impl is not supported in cpu mode.");
+    assert(false && "_pto_dump_shape_impl is not supported in cpu mode.");
 }
-} // namespace __pto_aicore
 
-using namespace __pto_aicore;
+template <DumpLayout layout, typename T>
+__aicore__ static __attribute__((noinline)) void pto_dump_window(T* input, uint32_t desc, const DumpTensorView& view)
+{
+    assert(false && "pto_dump_window is not supported in cpu mode.");
+}
+} // namespace pypto::aicore
+
+using namespace pypto::aicore;
 #endif
 
 #if defined(__UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_AICORE_DUMP_IMPL__)

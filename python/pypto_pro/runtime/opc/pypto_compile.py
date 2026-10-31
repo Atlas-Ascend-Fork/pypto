@@ -86,12 +86,11 @@ from asc_op_compile_base.asc_op_compiler.get_op_tiling import TilingInfo, get_ti
 from asc_op_compile_base.asc_op_compiler.global_storage import global_var_storage
 from asc_op_compile_base.asc_op_compiler.kernel_info_infer import KernelInfoInfer
 from asc_op_compile_base.common.context import op_context
-
-# --- reused asc_op_compile_base backend leaves -------------------------------------------------------
 from asc_op_compile_base.common.utils import log as logger
 
+# --- reused asc_op_compile_base backend leaves -------------------------------------------------------
 from pypto_pro import DataType
-from pypto_pro.runtime.compile_config import get_jit_compile_config
+from pypto_pro.runtime.compile_config import PTO_DEBUG_ROOT, get_jit_compile_config
 from pypto_pro.runtime.platform import NpuArch
 
 from ..._errors import (
@@ -468,6 +467,7 @@ def _setup_options(op_info, compile_options, op_compile_option, extend_options):
     opt.compile_options.append("-DASCENDC_TPL_KERNEL")
     pypto_include = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "include")
     opt.compile_options.append(f"-I{pypto_include}")
+    opt.compile_options.extend((f"-I{PTO_DEBUG_ROOT}", f"-I{PTO_DEBUG_ROOT}/include"))
     return opt
 
 

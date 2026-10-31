@@ -17,7 +17,7 @@
 
 #include "impl/utils/sys_macros_impl.h"
 
-namespace __pto_aicore {
+namespace pypto::aicore {
 __aicore__ inline void pto_entire_dcci_impl(__gm__ uint64_t* ptr) {}
 
 __aicore__ inline uint64_t pto_debug_get_system_cycle_impl() { return 0; }
@@ -38,6 +38,6 @@ __aicore__ constexpr inline DumpTensorDataType get_dump_datatype_impl()
     return DumpTensorDataType::ACL_MAX;
 }
 
-} // namespace __pto_aicore
+} // namespace pypto::aicore
 
 #endif // IMPL_UTILS_DEBUG_PTO_DEBUG_UTILS_IMPL_STUB_H

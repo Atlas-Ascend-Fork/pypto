@@ -720,7 +720,7 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& program, npu::tile_
     emitter_.EmitLine("};");
     emitter_.EmitLine("#endif");
     EmitStructTypes();
-    emitter_.EmitLine("#include <pypto_tprint.h>");
+    emitter_.EmitLine("#include <pypto_dump.h>");
     emitter_.EmitRaw(function_code);
     emitter_.EmitLine("#endif");
 

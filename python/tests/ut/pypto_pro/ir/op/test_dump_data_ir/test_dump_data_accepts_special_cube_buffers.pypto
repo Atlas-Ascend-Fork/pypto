@@ -1,0 +1,7 @@
+function main incast() outcast() #entry(false) #type(Opaque) {
+    mutex_tile<tile<1 x 32, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, normal>>, 0> %bias_0 = block.make_mutex_tile(tuple(1, 32), tuple(), tuple(), dtype=float, target_memory=Bias, blayout=1, slayout=0, compact=1, memref_addr=0, memref_size=128, memref_id=<id>);
+    mutex_tile<tile<1 x 32, float, tile_view<, , null>, hw_info<row_major, none_box, 512, null, normal>>, 0> %scaling_0 = block.make_mutex_tile(tuple(1, 32), tuple(), tuple(), dtype=float, target_memory=Scaling, blayout=1, slayout=0, compact=1, memref_addr=0, memref_size=128, memref_id=<id>);
+    debug.dump_tile(%bias_0, show_location=false);
+    debug.dump_tile(%scaling_0, show_location=false);
+    return;
+}

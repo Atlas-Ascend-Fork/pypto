@@ -108,152 +108,32 @@ bool IsPrintfIndexType(const DataType& dtype) { return dtype == DataType::INDEX;
 
 bool IsPrintfBoolType(const DataType& dtype) { return dtype == DataType::BOOL; }
 
-TypePtr DeduceDebugDumpTensorType([[maybe_unused]] const std::vector<ExprPtr>& args,
-                                  [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+template <typename InputType>
+TypePtr DeduceDebugDumpType(const std::vector<ExprPtr>& args, const std::string& op_name,
+                            const std::string& input_type_name)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x3)
-        << "debug.dump_tensor requires exactly 3 arguments (tensor, offsets, shapes), but got " << args.size();
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1 || args.size() == 3)
+        << op_name << " requires 1 argument (input) or 3 arguments (input, offsets, shapes), but got " << args.size();
 
-    auto tensor_type = As<TensorType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensor_type)
-        << "debug.dump_tensor requires first argument to be a TensorType, but got " << args[0]->GetType()->TypeName();
-    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, tensor_type->dtype_ != DataType::FP4 &&
-                                                           tensor_type->dtype_ != DataType::FP4E2M1 &&
-                                                           tensor_type->dtype_ != DataType::FP4E1M2)
-        << "debug.dump_tensor does not support FP4 dtype " << tensor_type->dtype_.ToString();
+    auto input_type = As<InputType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, input_type)
+        << op_name << " requires first argument to be a " << input_type_name << ", but got "
+        << args[0]->GetType()->TypeName();
+
+    if (args.size() == 1) {
+        return GetUnknownType();
+    }
 
     auto offsets = As<MakeTuple>(args[1]);
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsets) << "debug.dump_tensor requires offsets to be a MakeTuple";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsets) << op_name << " requires offsets to be a MakeTuple";
 
     auto shapes = As<MakeTuple>(args[2]);
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, shapes) << "debug.dump_tensor requires shapes to be a MakeTuple";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, shapes) << op_name << " requires shapes to be a MakeTuple";
 
-    const size_t rank = tensor_type->shape_.size();
-    PRO_IR_CHECK(ExternalError::INVALID_SHAPE, offsets->elements_.size() == rank)
-        << "debug.dump_tensor offsets count (" << offsets->elements_.size() << ") must match tensor rank (" << rank
-        << ")";
-    PRO_IR_CHECK(ExternalError::INVALID_SHAPE, shapes->elements_.size() == rank)
-        << "debug.dump_tensor shapes count (" << shapes->elements_.size() << ") must match tensor rank (" << rank
-        << ")";
-
-    bool is_full_tensor_window = true;
-    for (size_t i = 0; i < rank; ++i) {
-        auto offset_const = As<ConstInt>(offsets->elements_[i]);
-        if (!offset_const || offset_const->value_ != 0) {
-            is_full_tensor_window = false;
-            break;
-        }
-        auto shape_const = As<ConstInt>(shapes->elements_[i]);
-        auto tensor_dim_const = As<ConstInt>(tensor_type->shape_[i]);
-        if (!shape_const || !tensor_dim_const || shape_const->value_ != tensor_dim_const->value_) {
-            is_full_tensor_window = false;
-            break;
-        }
-    }
-
-    if (!is_full_tensor_window && tensor_type->tensor_view_.has_value() && !tensor_type->tensor_view_->stride.empty()) {
-        const auto& last_stride = tensor_type->tensor_view_->stride.back();
-        auto last_stride_const = As<ConstInt>(last_stride);
-        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, last_stride_const)
-            << "debug.dump_tensor windowed mode requires the innermost stride to be statically 1";
-        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, last_stride_const->value_ == 1)
-            << "debug.dump_tensor windowed mode requires innermost stride == 1, got " << last_stride_const->value_;
-    }
-
-    for (size_t i = 0; i < rank; ++i) {
-        auto offset_scalar = As<ScalarType>(offsets->elements_[i]->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, offset_scalar)
-            << "debug.dump_tensor offset element " << i << " must be ScalarType, but got "
-            << offsets->elements_[i]->GetType()->TypeName();
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, offset_scalar->dtype_.IsInt())
-            << "debug.dump_tensor offset element " << i << " must have integer dtype, but got "
-            << offset_scalar->dtype_.ToString();
-
-        auto shape_scalar = As<ScalarType>(shapes->elements_[i]->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, shape_scalar)
-            << "debug.dump_tensor shape element " << i << " must be ScalarType, but got "
-            << shapes->elements_[i]->GetType()->TypeName();
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, shape_scalar->dtype_.IsInt())
-            << "debug.dump_tensor shape element " << i << " must have integer dtype, but got "
-            << shape_scalar->dtype_.ToString();
-        auto shape_const = As<ConstInt>(shapes->elements_[i]);
-        if (shape_const) {
-            PRO_IR_CHECK(ExternalError::INVALID_SHAPE, shape_const->value_ > 0)
-                << "debug.dump_tensor shape element " << i << " must be positive, got " << shape_const->value_;
-        }
-    }
-
-    return GetUnknownType();
-}
-
-TypePtr DeduceDebugDumpTileType([[maybe_unused]] const std::vector<ExprPtr>& args,
-                                [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
-{
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1 || args.size() == 0x3 || args.size() == 0x4)
-        << "debug.dump_tile requires 1 argument (tile), 3 arguments (tile, offsets, shapes), "
-        << "or 4 arguments (tile, offsets, shapes, workspace), but got " << args.size();
-
-    auto tile_type = As<TileType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tile_type)
-        << "debug.dump_tile requires first argument to be a TileType, but got " << args[0]->GetType()->TypeName();
-
-    if (args.size() == 0x3 || args.size() == 0x4) {
-        auto offsets = As<MakeTuple>(args[1]);
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsets)
-            << "debug.dump_tile requires second argument to be a MakeTuple (offsets)";
-
-        auto shapes = As<MakeTuple>(args[2]);
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, shapes)
-            << "debug.dump_tile requires third argument to be a MakeTuple (shapes)";
-
-        const size_t rank = tile_type->shape_.size();
-        PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, rank == 0x2)
-            << "debug.dump_tile currently only supports 2D tile windows, but got rank " << rank;
-        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, offsets->elements_.size() == rank)
-            << "debug.dump_tile offsets count (" << offsets->elements_.size() << ") must match tile rank (" << rank
-            << ")";
-        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, shapes->elements_.size() == rank)
-            << "debug.dump_tile shapes count (" << shapes->elements_.size() << ") must match tile rank (" << rank
-            << ")";
-
-        for (size_t i = 0; i < rank; ++i) {
-            auto offset_scalar = As<ScalarType>(offsets->elements_[i]->GetType());
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, offset_scalar)
-                << "debug.dump_tile offset element " << i << " must be ScalarType, but got "
-                << offsets->elements_[i]->GetType()->TypeName();
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, offset_scalar->dtype_.IsInt())
-                << "debug.dump_tile offset element " << i << " must have integer dtype, but got "
-                << offset_scalar->dtype_.ToString();
-
-            auto shape_scalar = As<ScalarType>(shapes->elements_[i]->GetType());
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, shape_scalar)
-                << "debug.dump_tile shape element " << i << " must be ScalarType, but got "
-                << shapes->elements_[i]->GetType()->TypeName();
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, shape_scalar->dtype_.IsInt())
-                << "debug.dump_tile shape element " << i << " must have integer dtype, but got "
-                << shape_scalar->dtype_.ToString();
-            if (auto shape_const = As<ConstInt>(shapes->elements_[i])) {
-                PRO_IR_CHECK(ExternalError::INVALID_SHAPE, shape_const->value_ > 0)
-                    << "debug.dump_tile shape element " << i << " must be positive, got " << shape_const->value_;
-            }
-        }
-    }
-
-    if (args.size() == 0x4) {
-        auto workspace_type = As<TensorType>(args[3]->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, workspace_type)
-            << "debug.dump_tile workspace (4th argument) must be a TensorType, but got "
-            << args[3]->GetType()->TypeName();
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, workspace_type->dtype_ == tile_type->dtype_)
-            << "debug.dump_tile workspace dtype must match tile dtype (tile: " << tile_type->dtype_.ToString()
-            << ", workspace: " << workspace_type->dtype_.ToString() << ")";
-        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, tile_type->memref_.has_value())
-            << "debug.dump_tile workspace requires tile to have a memref";
-        auto tile_space = (*tile_type->memref_)->memorySpace_;
-        PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, tile_space == MemorySpace::Acc)
-            << "debug.dump_tile workspace is only supported for Acc tiles, but got tile in "
-            << MemorySpaceToString(tile_space);
-    }
+    const size_t rank = input_type->shape_.size();
+    PRO_IR_CHECK(ExternalError::INVALID_SHAPE, offsets->elements_.size() == rank && shapes->elements_.size() == rank)
+        << op_name << " offsets/shapes must match input rank " << rank << ", got " << offsets->elements_.size()
+        << " offsets and " << shapes->elements_.size() << " shapes";
 
     return GetUnknownType();
 }
@@ -382,33 +262,30 @@ TypePtr DeduceDebugAssertType([[maybe_unused]] const std::vector<ExprPtr>& args,
 
 REGISTER_OP("debug.dump_tensor")
     .set_op_category("DebugOp")
-    .set_description("Print a tensor or tensor window for debugging. Supports full dumps and window dumps "
-                     "with dynamic offsets/shapes when the innermost stride is statically 1.")
+    .set_description("Print a full tensor or a tensor window for debugging. Window dumps support dynamic "
+                     "offsets/shapes and explicit Tensor strides.")
     .add_argument("tensor", "Input tensor (TensorType)")
-    .add_argument("offsets", "Offsets per dimension (MakeTuple of integer scalars)")
-    .add_argument("shapes", "Shape per dimension (MakeTuple of integer scalars)")
+    .add_argument("offsets", "Optional offsets per dimension (MakeTuple of integer scalars)")
+    .add_argument("shapes", "Optional shape per dimension (MakeTuple of integer scalars)")
     .set_attr<bool>("show_location")
     .set_attr<std::string>("dump_flag")
-    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceDebugDumpTensorType(args, kwargs);
+        return DeduceDebugDumpType<TensorType>(args, "debug.dump_tensor", "TensorType");
     });
 
 REGISTER_OP("debug.dump_tile")
     .set_op_category("DebugOp")
     .set_description("Print a tile or tile window for debugging. Full dumps support tiles with dynamic valid-shape; "
-                     "window dumps support dynamic offsets on PTO and CCE, and dynamic shapes on CCE only; "
-                     "PTO window shapes remain static-only. Tile windows are currently 2D-only. "
-                     "Acc tiles require a workspace Tensor (GM temporary space).")
+                     "window dumps support dynamic offsets/shapes. Tile windows are currently 2D-only.")
     .add_argument("tile", "Input tile (TileType)")
     .add_argument("offsets", "Optional offsets per dimension (MakeTuple of integer scalars)")
-    .add_argument("shapes", "Optional shape per dimension (MakeTuple of integer scalars; dynamic only on CCE)")
-    .add_argument("workspace", "Optional GM Tensor for Acc tile temporary space (required for Acc tiles)")
+    .add_argument("shapes", "Optional shape per dimension (MakeTuple of integer scalars)")
     .set_attr<bool>("show_location")
     .set_attr<std::string>("dump_flag")
-    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceDebugDumpTileType(args, kwargs);
+        return DeduceDebugDumpType<TileType>(args, "debug.dump_tile", "TileType");
     });
 
 REGISTER_OP("debug.printf")

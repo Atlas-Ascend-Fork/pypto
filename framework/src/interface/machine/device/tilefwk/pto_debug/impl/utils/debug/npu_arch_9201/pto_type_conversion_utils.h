@@ -18,7 +18,7 @@
 #include <type_traits>
 
 #include "impl/utils/sys_macros_impl.h"
-namespace __pto_aicore {
+namespace pypto::aicore {
 template <typename T>
 constexpr __aicore__ inline uint64_t get_scalar_bitcode_value(T scalarValue)
 {
@@ -387,7 +387,7 @@ __aicore__ constexpr inline float to_float(const T& bVal)
 {
     return cast_type<T>(bVal);
 }
-} // namespace __pto_aicore
+} // namespace pypto::aicore
 #if defined(__UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_TYPE_CONVERSION_UTILS__)
 #undef __PTO_INCLUDE_INTERNAL_HEADERS__
 #undef __UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_TYPE_CONVERSION_UTILS__

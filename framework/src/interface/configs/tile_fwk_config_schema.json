@@ -603,6 +603,15 @@
                     "minimum": 0,
                     "maximum": 4
                 },
+                "simd_printf_fifo_size_per_core": {
+                    "type": "integer",
+                    "label": {
+                        "zh": "设置每个AIC/AIV核的printf和dump FIFO大小，单位为字节。0表示使用Runtime默认值。非0值范围为1 KB到64 MB，且须为8字节的整数倍。须在首次使用NPU前设置。",
+                        "en": "Set the per-AIC/AIV-core printf and dump FIFO size in bytes. Zero keeps the Runtime default. A non-zero value must be an 8-byte multiple from 1 KB to 64 MB and must be set before the first NPU operation."
+                    },
+                    "minimum": 0,
+                    "maximum": 67108864
+                },
                 "dump_pass_graph": {
                     "type": "array",
                     "items": {

@@ -10,6 +10,8 @@
 # -----------------------------------------------------------------------------------------------------------
 """Test pypto.frontend.jit config scope behavior."""
 
+from unittest.mock import Mock
+
 import torch
 
 import pypto
@@ -46,6 +48,18 @@ def test_config_scope():
     out = torch.zeros(1, 8, dtype=torch.float32)
 
     kernel_with_dynamic(a, out)
+
+
+def test_dump_fifo_debug_option_is_applied_immediately(monkeypatch):
+    applied_sizes = []
+    runtime = Mock()
+    runtime.aclrtDeviceSetLimit.side_effect = lambda limit, size: applied_sizes.append((limit, size)) or 0
+    monkeypatch.setattr(pypto.config, "_acl_runtime", runtime)
+
+    pypto.set_debug_options(simd_printf_fifo_size_per_core=256 * 1024)
+
+    assert applied_sizes == [(3, 256 * 1024)]
+    assert pypto.get_debug_options()["simd_printf_fifo_size_per_core"] == 256 * 1024
 
 
 def test_reshape_assemble():

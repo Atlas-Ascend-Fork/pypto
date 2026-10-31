@@ -480,11 +480,10 @@ static std::string MakeBlockOutLoadCodegenCCE(const ir::CallPtr& op, codegen::Co
         CHECK(out_tile_type->hardwareInfo_.has_value())
             << "block.load: merged-row destination needs an NZ or ZN layout";
         const auto& out_hw = out_tile_type->hardwareInfo_.value();
+        const auto out_layout = cce::GetTileTensorLayout(out_hw);
         const bool is_transpose = op->GetKwarg<bool>("is_transpose", false);
-        const bool is_zn_dst = out_hw.blayout == ir::TileLayout::row_major &&
-                               out_hw.slayout == ir::TileLayout::col_major;
-        const bool is_nz_dst = out_hw.blayout == ir::TileLayout::col_major &&
-                               out_hw.slayout == ir::TileLayout::row_major;
+        const bool is_zn_dst = out_layout == ir::TensorLayout::ZN;
+        const bool is_nz_dst = out_layout == ir::TensorLayout::NZ;
         CHECK(is_transpose ? is_zn_dst : is_nz_dst)
             << "block.load: merged-row is_transpose requires a ZN destination when true "
                "and an NZ destination when false";

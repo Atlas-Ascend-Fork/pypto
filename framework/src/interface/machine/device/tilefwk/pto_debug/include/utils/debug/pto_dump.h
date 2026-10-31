@@ -15,19 +15,41 @@
 #ifndef INCLUDE_UTILS_DEBUG_PTO_DUMP_H
 #define INCLUDE_UTILS_DEBUG_PTO_DUMP_H
 
+#include <cstdint>
+
 #if !defined(__PTO_INCLUDE_INTERNAL_HEADERS__)
 #define __PTO_INCLUDE_INTERNAL_HEADERS__
 #define __UNDEF_PTO_INCLUDE_COMPILER_INTERNAL_HEADERS_PTO_DUMP_H__
 #endif
 
-#include "impl/utils/debug/pto_simd_debug_enable.h"
 #include "impl/utils/sys_macros_impl.h"
+
+namespace pypto::aicore {
+enum class DumpLayout : uint8_t {
+    ND,
+    DN,
+    NZ,
+    ZN,
+    ZZ,
+    NN,
+};
+
+struct DumpTensorView {
+    const int64_t* sourceShape;
+    const int64_t* offsets;
+    const int64_t* shape;
+    const int64_t* stride;
+    uint32_t rank;
+    int64_t innerRows;
+    int64_t innerCols;
+};
+} // namespace pypto::aicore
 
 #if (__NPU_ARCH__ == 2201) || (__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 9201)
 #include "impl/utils/debug/pto_aicore_dump_impl.h"
 #endif
 
-namespace __pto_aicore {
+namespace pypto::aicore {
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_gm(__gm__ T* input, uint32_t desc, uint32_t dump_size);
 
@@ -51,7 +73,31 @@ __aicore__ static __attribute__((noinline)) void pto_dump(__cc__ T* input, uint3
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump(__cbuf__ T* input, uint32_t desc, uint32_t dump_size);
-} // namespace __pto_aicore
+
+template <DumpLayout layout, typename T>
+__aicore__ static __attribute__((noinline)) void pto_dump_window(__gm__ T* input, uint32_t desc,
+                                                                 const DumpTensorView& view);
+
+template <DumpLayout layout, typename T>
+__aicore__ static __attribute__((noinline)) void pto_dump_window(__ubuf__ T* input, uint32_t desc,
+                                                                 const DumpTensorView& view);
+
+template <DumpLayout layout, typename T>
+__aicore__ static __attribute__((noinline)) void pto_dump_window(__cc__ T* input, uint32_t desc,
+                                                                 const DumpTensorView& view);
+
+template <DumpLayout layout, typename T>
+__aicore__ static __attribute__((noinline)) void pto_dump_window(__cbuf__ T* input, uint32_t desc,
+                                                                 const DumpTensorView& view);
+
+template <DumpLayout layout, typename T>
+__aicore__ static __attribute__((noinline)) void pto_dump_window(__biasbuf__ T* input, uint32_t desc,
+                                                                 const DumpTensorView& view);
+
+template <DumpLayout layout, typename T>
+__aicore__ static __attribute__((noinline)) void pto_dump_window(__fbuf__ T* input, uint32_t desc,
+                                                                 const DumpTensorView& view);
+} // namespace pypto::aicore
 
 #if defined(__UNDEF_PTO_INCLUDE_COMPILER_INTERNAL_HEADERS_PTO_DUMP_H__)
 #undef __PTO_INCLUDE_INTERNAL_HEADERS__

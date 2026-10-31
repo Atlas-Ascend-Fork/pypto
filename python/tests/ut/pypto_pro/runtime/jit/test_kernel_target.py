@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 from pypto_pro._errors import InvalidVal, RuntimeFailure
 import pypto_pro.language as pl
-from pypto_pro.runtime.compile_config import JitCompileConfig, KernelTarget, get_jit_compile_config
+from pypto_pro.runtime.compile_config import PTO_DEBUG_ROOT, JitCompileConfig, KernelTarget, get_jit_compile_config
 from pypto_pro.runtime.platform import NpuArch, normalize_arch
 import pytest
 
@@ -198,8 +198,9 @@ def test_shared_library_and_caller_use_the_same_resolved_target(monkeypatch, tmp
     assert f"--npu-arch={target.npu_arch}" in flags
     assert "-xasc" in flags
     assert "--cce-enable-print" not in flags
-    assert "/toolkit/asc/include" in flags
-    assert "/toolkit/asc" in flags
+    assert f"-I{PTO_DEBUG_ROOT}" in flags
+    assert f"-I{PTO_DEBUG_ROOT}/include" in flags
+    assert "/toolkit/asc" not in flags
     assert f"ResolveLaunchBlockDim<{cores[0]}, {cores[1]}>" in caller
     assert "-cce-dyn-kernel-stack-size=false" not in flags
     assert "probe<<<blockDim, 16384, stream>>>" in caller
@@ -268,6 +269,31 @@ def test_shared_library_forwards_sk_cap_into_compiler_flags(monkeypatch, tmp_pat
     assert "-D__ASCENDC_SUPERKERNEL_EARLY_START_V3" in flags
     assert "-I/toolkit/compiler/asc" in flags
     assert "-I/toolkit/compiler/asc/include" in flags
+
+
+def test_debug_codegen_uses_vendored_pto_debug_entrypoints(tmp_path):
+    content = 'pypto::aicore::printf("value=%d\\n", value);'
+    assert jit._detect_print_debug_from_cpp(content)
+    assert jit._detect_print_debug_from_cpp("PYPTO_DUMP_TENSOR(pypto::aicore::DumpLayout::NZ, data, 1, view);")
+    assert jit._detect_print_debug_from_cpp(
+        "PYPTO_DUMP_TILE_WINDOW(pypto::aicore::DumpLayout::NZ, tile, 1, 0, 0, 16, 16);"
+    )
+
+    result = jit.CodegenResult(
+        build_dir=str(tmp_path),
+        content=content,
+        kernel_name="probe",
+        kernel_params=[],
+        caller_cross_core_sync=False,
+        bisheng_cross_sync=False,
+        needs_print_debug=True,
+        has_cube=False,
+        has_vector=True,
+    )
+    result = jit._add_kernel_header(result)
+    assert "#define __ENABLE_PTO_PRINTF__ 1" in result.content
+    assert "#include <pypto_dump.h>" not in result.content
+    assert "__ENABLE_ASC_PRINTF__" not in result.content
 
 
 def test_compilation_preserves_target_for_cached_launch_and_debug(monkeypatch, tmp_path):

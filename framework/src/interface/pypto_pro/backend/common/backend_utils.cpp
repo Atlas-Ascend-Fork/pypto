@@ -73,6 +73,39 @@ std::string GetOperandAsCode(codegen::CCECodegen& codegen, const ir::ExprPtr& ex
     return value;
 }
 
+std::optional<ir::TensorLayout> GetTileTensorLayout(const ir::HardwareInfo& hardware_info)
+{
+    switch (hardware_info.slayout) {
+        case ir::TileLayout::none_box:
+            if (hardware_info.blayout == ir::TileLayout::row_major) {
+                return ir::TensorLayout::ND;
+            }
+            if (hardware_info.blayout == ir::TileLayout::col_major) {
+                return ir::TensorLayout::DN;
+            }
+            break;
+        case ir::TileLayout::row_major:
+            if (hardware_info.blayout == ir::TileLayout::row_major) {
+                return ir::TensorLayout::ZZ;
+            }
+            if (hardware_info.blayout == ir::TileLayout::col_major) {
+                return ir::TensorLayout::NZ;
+            }
+            break;
+        case ir::TileLayout::col_major:
+            if (hardware_info.blayout == ir::TileLayout::row_major) {
+                return ir::TensorLayout::ZN;
+            }
+            if (hardware_info.blayout == ir::TileLayout::col_major) {
+                return ir::TensorLayout::NN;
+            }
+            break;
+        default:
+            return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 AccessArgIndices ResolveAccessArgIndices(const std::string& op_name)
 {
     AccessArgIndices indices;
@@ -84,9 +117,6 @@ AccessArgIndices ResolveAccessArgIndices(const std::string& op_name)
         indices.tensor_arg_idx = 0;
         indices.tile_arg_idx = 1;
         indices.offsets_arg_idx = 2;
-    } else if (op_name == "debug.dump_tile") {
-        indices.tensor_arg_idx = 3;
-        indices.tile_arg_idx = 0;
     }
     return indices;
 }
@@ -106,9 +136,8 @@ bool IsMXLoad(const ir::TensorTypePtr& tensor_type, const ir::TileTypePtr& tile_
     }
 
     const auto& hw = tile_type->hardwareInfo_.value();
-    const bool is_zz = hw.blayout == ir::TileLayout::row_major && hw.slayout == ir::TileLayout::row_major;
-    const bool is_nn = hw.blayout == ir::TileLayout::col_major && hw.slayout == ir::TileLayout::col_major;
-    return hw.fractal == 32 && (is_zz || is_nn);
+    const auto layout = GetTileTensorLayout(hw);
+    return hw.fractal == 32 && (layout == ir::TensorLayout::ZZ || layout == ir::TensorLayout::NN);
 }
 
 bool IsMXLoadCall(const ir::CallPtr& op)
@@ -141,7 +170,7 @@ std::string MXLoadLayoutName(const ir::CallPtr& op)
         return "";
     }
     const auto& hw = ir::As<ir::TileType>(op->args_[0]->GetType())->hardwareInfo_.value();
-    const bool is_scale_a = hw.blayout == ir::TileLayout::row_major;
+    const bool is_scale_a = GetTileTensorLayout(hw) == ir::TensorLayout::ZZ;
     const bool is_dn = op->GetKwarg<bool>("is_transpose", false);
     return is_scale_a ? (is_dn ? "Layout::MX_A_DN" : "Layout::MX_A_ND") :
                         (is_dn ? "Layout::MX_B_DN" : "Layout::MX_B_ND");
@@ -162,8 +191,7 @@ void ValidateNZTransfer(const std::string& op_name, const ir::CallPtr& op, const
 
     auto tile_type = ir::As<ir::TileType>(tile_expr->GetType());
     const auto& hw = tile_type->hardwareInfo_.value();
-    const bool is_nz_tile = hw.blayout == ir::TileLayout::col_major && hw.slayout == ir::TileLayout::row_major;
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_FORMAT, is_nz_tile)
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_FORMAT, GetTileTensorLayout(hw) == ir::TensorLayout::NZ)
         << op_name << ": GM NZ transfer requires an NZ Tile layout";
 
     const size_t ndim = tensor_type->shape_.size();

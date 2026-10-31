@@ -40,7 +40,7 @@
 #endif
 
 #define PYPTO_AICORE_PRINTF_WITH_CORE(core_id, fmt, ...) \
-    __pto_aicore::printf("[core=%u][t=%lu] " fmt "\n", static_cast<uint32_t>(core_id), get_sys_cnt(), ##__VA_ARGS__)
+    pypto::aicore::printf("[core=%u][t=%lu] " fmt "\n", static_cast<uint32_t>(core_id), get_sys_cnt(), ##__VA_ARGS__)
 #define PYPTO_AICORE_PRINTF(fmt, ...) PYPTO_AICORE_PRINTF_WITH_CORE(PYPTO_AICORE_PRINTF_CORE_ID(), fmt, ##__VA_ARGS__)
 
 // Pointer-based dump (PyPTO machine / codegen has no AscendC LocalTensor / GlobalTensor).
@@ -49,25 +49,25 @@
 template <typename T>
 INLINE void AicorePtoDumpGm(__gm__ T* input, uint32_t desc, uint32_t dumpSize)
 {
-    __pto_aicore::pto_dump_gm(input, desc, dumpSize);
+    pypto::aicore::pto_dump_gm(input, desc, dumpSize);
 }
 
 template <typename T>
 INLINE void AicorePtoDumpUbuf(__ubuf__ T* input, uint32_t desc, uint32_t dumpSize)
 {
-    __pto_aicore::pto_dump_ubuf(input, desc, dumpSize);
+    pypto::aicore::pto_dump_ubuf(input, desc, dumpSize);
 }
 
 template <typename T>
 INLINE void AicorePtoDumpL1(__cbuf__ T* input, uint32_t desc, uint32_t dumpSize)
 {
-    __pto_aicore::pto_dump_l1buf(input, desc, dumpSize);
+    pypto::aicore::pto_dump_l1buf(input, desc, dumpSize);
 }
 
 template <typename T>
 INLINE void AicorePtoDumpL0c(__cc__ T* input, uint32_t desc, uint32_t dumpSize)
 {
-    __pto_aicore::pto_dump_cbuf(input, desc, dumpSize);
+    pypto::aicore::pto_dump_cbuf(input, desc, dumpSize);
 }
 
 template <typename T>

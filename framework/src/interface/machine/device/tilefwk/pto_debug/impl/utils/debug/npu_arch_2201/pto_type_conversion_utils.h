@@ -16,7 +16,7 @@
 #define IMPL_UTILS_DEBUG_NPU_ARCH_2201_PTO_TYPE_CONVERSION_UTILS_H
 
 #include "impl/utils/sys_macros_impl.h"
-namespace __pto_aicore {
+namespace pypto::aicore {
 
 __aicore__ inline float cast_type(const bfloat16_t& bVal)
 {
@@ -38,7 +38,7 @@ __aicore__ inline float cast_type(const bfloat16_t& bVal)
 }
 
 __aicore__ inline float to_float(const bfloat16_t& bVal) { return cast_type(bVal); }
-} // namespace __pto_aicore
+} // namespace pypto::aicore
 #if defined(__UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_TYPE_CONVERSION_UTILS__)
 #undef __PTO_INCLUDE_INTERNAL_HEADERS__
 #undef __UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_TYPE_CONVERSION_UTILS__

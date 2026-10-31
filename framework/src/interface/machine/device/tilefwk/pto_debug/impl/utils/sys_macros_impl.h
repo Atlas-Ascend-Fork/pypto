@@ -12,8 +12,8 @@
  * \file sys_macros_impl.h
  * \brief PyPTO-vendored slim macros for AICore printf/dump (no g_tilingKey strong symbol).
  */
-#ifndef IMPL_UTILS_SYS_MACROS_IMPL_H
-#define IMPL_UTILS_SYS_MACROS_IMPL_H
+#ifndef TILEFWK_PTO_DEBUG_IMPL_UTILS_SYS_MACROS_IMPL_H
+#define TILEFWK_PTO_DEBUG_IMPL_UTILS_SYS_MACROS_IMPL_H
 
 #include <cstdint>
 #include "utils/base/sys_constants.h"
@@ -64,16 +64,21 @@ extern int32_t g_coreType;
 #define PTO_IS_NOT_AIC (g_coreType != AscendC::AIC)
 #else
 #if defined(SPLIT_CORE_CUBE)
-constexpr int32_t g_coreType = AscendC::AIC;
+#define PTO_IS_AIV constexpr(false)
+#define PTO_IS_AIC constexpr(true)
+#define PTO_IS_NOT_AIV constexpr(true)
+#define PTO_IS_NOT_AIC constexpr(false)
 #elif defined(SPLIT_CORE_VEC)
-constexpr int32_t g_coreType = AscendC::AIV;
+#define PTO_IS_AIV constexpr(true)
+#define PTO_IS_AIC constexpr(false)
+#define PTO_IS_NOT_AIV constexpr(false)
+#define PTO_IS_NOT_AIC constexpr(true)
 #else
-constexpr int32_t g_coreType = AscendC::MIX;
+#define PTO_IS_AIV constexpr(false)
+#define PTO_IS_AIC constexpr(false)
+#define PTO_IS_NOT_AIV constexpr(true)
+#define PTO_IS_NOT_AIC constexpr(true)
 #endif
-#define PTO_IS_AIV constexpr(g_coreType == AscendC::AIV)
-#define PTO_IS_AIC constexpr(g_coreType == AscendC::AIC)
-#define PTO_IS_NOT_AIV constexpr(g_coreType != AscendC::AIV)
-#define PTO_IS_NOT_AIC constexpr(g_coreType != AscendC::AIC)
 #endif
 
 #if defined(__PTO_DISABLE_RESERVED_UBUF__)
@@ -149,4 +154,4 @@ constexpr int32_t g_coreType = AscendC::MIX;
 #endif
 #endif
 
-#endif // IMPL_UTILS_SYS_MACROS_IMPL_H
+#endif // TILEFWK_PTO_DEBUG_IMPL_UTILS_SYS_MACROS_IMPL_H

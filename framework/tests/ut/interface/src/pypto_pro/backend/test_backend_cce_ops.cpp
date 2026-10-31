@@ -1160,13 +1160,48 @@ TEST(BackendCceOpsTest, DebugDumpTensorStaticNdWindow)
     auto generated = RunCodegen("debug.dump_tensor", call);
     EXPECT_NE(generated.find("kernel.py"), std::string::npos);
     EXPECT_NE(generated.find("dump_tensor"), std::string::npos);
-    EXPECT_NE(generated.find("pto::Shape<1, 1, 1, 4, 5>"), std::string::npos);
-    EXPECT_NE(generated.find("pto::Stride<1, 1, 1, 16, 1>"), std::string::npos);
-    EXPECT_NE(generated.find("Layout::ND"), std::string::npos);
-    EXPECT_NE(generated.find("TPRINT(__debug_dump_tensor_view_"), std::string::npos);
+    EXPECT_NE(generated.find("int64_t __debug_dump_tensor_"), std::string::npos);
+    EXPECT_NE(generated.find("_source_shape[2] = {8, 16}"), std::string::npos);
+    EXPECT_NE(generated.find("_offsets[2] = {1, 2}"), std::string::npos);
+    EXPECT_NE(generated.find("{4, 5}"), std::string::npos);
+    EXPECT_NE(generated.find("{16, 1}"), std::string::npos);
+    EXPECT_NE(generated.find("pypto::aicore::DumpLayout::ND"), std::string::npos);
+    EXPECT_NE(generated.find("PYPTO_DUMP_TENSOR("), std::string::npos);
+    EXPECT_NE(generated.find(", data.data(),"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, DebugDumpTensorDynamicFullWindowUsesRuntimeView)
+TEST(BackendCceOpsTest, DebugDumpTensorOneDimensionalWindowKeepsRank)
+{
+    auto tensor = MakeTensorVar("data", {16}, ir::DataType::INT32);
+    auto call = std::make_shared<const ir::Call>(
+        "debug.dump_tensor",
+        std::vector<ir::ExprPtr>{tensor, MakeTuple({MakeConstInt(4)}), MakeTuple({MakeConstInt(8)})},
+        ir::Span::Unknown());
+
+    auto generated = RunCodegen("debug.dump_tensor", call);
+    EXPECT_NE(generated.find("_source_shape[1] = {16}"), std::string::npos);
+    EXPECT_NE(generated.find("_offsets[1] = {4}"), std::string::npos);
+    EXPECT_NE(generated.find("PYPTO_DUMP_TENSOR(pypto::aicore::DumpLayout::ND, 1,"), std::string::npos);
+}
+
+TEST(BackendCceOpsTest, DebugDumpTensorEncodedFp4UsesLogicalOffsetMetadata)
+{
+    for (const auto& dtype : {ir::DataType::FP4E2M1, ir::DataType::FP4E1M2}) {
+        auto tensor = MakeTensorVar("data", {8, 16}, dtype);
+        auto call = std::make_shared<const ir::Call>(
+            "debug.dump_tensor",
+            std::vector<ir::ExprPtr>{tensor, MakeTuple({MakeConstInt(1), MakeConstInt(3)}),
+                                     MakeTuple({MakeConstInt(4), MakeConstInt(5)})},
+            ir::Span::Unknown());
+
+        auto generated = RunCodegen("debug.dump_tensor", call);
+        EXPECT_NE(generated.find("PYPTO_DUMP_TENSOR("), std::string::npos);
+        EXPECT_NE(generated.find(", data.data(),"), std::string::npos);
+        EXPECT_NE(generated.find("_offsets[2] = {1, 3}"), std::string::npos);
+    }
+}
+
+TEST(BackendCceOpsTest, DebugDumpTensorDynamicFullWindowUsesDeclaredShapeAndStride)
 {
     auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INDEX);
     auto rows = MakeVar("rows", index_type);
@@ -1179,12 +1214,27 @@ TEST(BackendCceOpsTest, DebugDumpTensorDynamicFullWindowUsesRuntimeView)
         ir::Span::Unknown());
 
     auto generated = RunCodegen("debug.dump_tensor", call);
-    EXPECT_NE(generated.find("pto::Shape<1, 1, 1, -1, -1>"), std::string::npos);
-    EXPECT_NE(generated.find("data.GetShape(GlobalTensorDim::DIM_3)"), std::string::npos);
-    EXPECT_NE(generated.find("data.GetShape(GlobalTensorDim::DIM_4)"), std::string::npos);
-    EXPECT_NE(generated.find("pto::Stride<1, 1, 1, -1, -1>"), std::string::npos);
-    EXPECT_NE(generated.find("data.GetStride(GlobalTensorDim::DIM_3)"), std::string::npos);
-    EXPECT_NE(generated.find("data.GetStride(GlobalTensorDim::DIM_4)"), std::string::npos);
+    EXPECT_NE(generated.find("int64_t __debug_dump_tensor_"), std::string::npos);
+    EXPECT_NE(generated.find("{rows, cols}"), std::string::npos);
+    EXPECT_NE(generated.find("{cols, 1}"), std::string::npos);
+    EXPECT_EQ(generated.find("GetShape(GlobalTensorDim"), std::string::npos);
+    EXPECT_EQ(generated.find("GetStride(GlobalTensorDim"), std::string::npos);
+}
+
+TEST(BackendCceOpsTest, DebugDumpTensorFullUsesUnifiedDumpPrinter)
+{
+    auto tensor = MakeTensorVar("data", {8, 16}, ir::DataType::FP32);
+    auto call = std::make_shared<const ir::Call>("debug.dump_tensor", std::vector<ir::ExprPtr>{tensor},
+                                                 ir::Span::Unknown());
+
+    auto generated = RunCodegen("debug.dump_tensor", call);
+    EXPECT_NE(generated.find("PYPTO_DUMP_TENSOR("), std::string::npos);
+    EXPECT_NE(generated.find(", data.data(),"), std::string::npos);
+    EXPECT_NE(generated.find("pypto::aicore::DumpLayout::ND"), std::string::npos);
+    EXPECT_EQ(generated.find(", true);"), std::string::npos);
+    EXPECT_NE(generated.find("_source_shape[2] = {8, 16}"), std::string::npos);
+    EXPECT_NE(generated.find("_offsets[2] = {0, 0}"), std::string::npos);
+    EXPECT_NE(generated.find("{8, 16}"), std::string::npos);
 }
 
 TEST(BackendCceOpsTest, DebugDumpTensorUsesExplicitDynamicStride)
@@ -1200,12 +1250,11 @@ TEST(BackendCceOpsTest, DebugDumpTensorUsesExplicitDynamicStride)
         ir::Span::Unknown());
 
     auto generated = RunCodegen("debug.dump_tensor", call);
-    EXPECT_NE(generated.find("pto::Stride<1, 1, 1, -1, 1>"), std::string::npos);
-    EXPECT_NE(generated.find("__debug_dump_tensor_stride_"), std::string::npos);
-    EXPECT_NE(generated.find("(row_stride)"), std::string::npos);
+    EXPECT_NE(generated.find("int64_t __debug_dump_tensor_"), std::string::npos);
+    EXPECT_NE(generated.find("{row_stride, 1}"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, DebugDumpTensorSelectsDnLayout)
+TEST(BackendCceOpsTest, DebugDumpTensorKeepsDeclaredNdLayoutForSingleColumn)
 {
     auto tensor = MakeTensorVar("column", {32, 1}, ir::DataType::FP16);
     auto call = std::make_shared<const ir::Call>(
@@ -1215,7 +1264,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorSelectsDnLayout)
         ir::Span::Unknown());
 
     auto generated = RunCodegen("debug.dump_tensor", call);
-    EXPECT_NE(generated.find("Layout::DN"), std::string::npos);
+    EXPECT_NE(generated.find("pypto::aicore::DumpLayout::ND"), std::string::npos);
 }
 
 TEST(BackendCceOpsTest, DebugDumpTensorNzStaticWindowUsesCommonView)
@@ -1228,13 +1277,25 @@ TEST(BackendCceOpsTest, DebugDumpTensorNzStaticWindowUsesCommonView)
         ir::Span::Unknown());
 
     auto generated = RunCodegen("debug.dump_tensor", call);
-    EXPECT_NE(generated.find("pto::TileShape2D<"), std::string::npos);
-    EXPECT_NE(generated.find("pto::BaseShape2D<"), std::string::npos);
-    EXPECT_NE(generated.find("pto::DYNAMIC, pto::DYNAMIC, Layout::NZ"), std::string::npos);
-    EXPECT_NE(generated.find("Layout::NZ"), std::string::npos);
-    EXPECT_NE(generated.find("nz_data.data() + (16 * 32 + 16 * 16)"), std::string::npos);
-    EXPECT_NE(generated.find("(16, 32)"), std::string::npos);
-    EXPECT_NE(generated.find("(32, 64)"), std::string::npos);
+    EXPECT_NE(generated.find("int64_t __debug_dump_tensor_"), std::string::npos);
+    EXPECT_NE(generated.find("pypto::aicore::DumpLayout::NZ"), std::string::npos);
+    EXPECT_NE(generated.find("PYPTO_DUMP_TENSOR("), std::string::npos);
+    EXPECT_NE(generated.find(", nz_data.data(),"), std::string::npos);
+    EXPECT_NE(generated.find("_offsets[2] = {16, 16}"), std::string::npos);
+    EXPECT_NE(generated.find("{16, 32}"), std::string::npos);
+}
+
+TEST(BackendCceOpsTest, DebugDumpTensorFullNzUsesLogicalShapeAndPhysicalStride)
+{
+    auto tensor = MakeTensorVar("nz_data", {100, 100}, ir::DataType::FP16, ir::TensorLayout::NZ);
+    auto call = std::make_shared<const ir::Call>("debug.dump_tensor", std::vector<ir::ExprPtr>{tensor},
+                                                 ir::Span::Unknown());
+
+    auto generated = RunCodegen("debug.dump_tensor", call);
+    EXPECT_NE(generated.find("pypto::aicore::DumpLayout::NZ"), std::string::npos);
+    EXPECT_EQ(generated.find(", true);"), std::string::npos);
+    EXPECT_NE(generated.find("{100, 100}"), std::string::npos);
+    EXPECT_NE(generated.find("{112, 16}"), std::string::npos);
 }
 
 TEST(BackendCceOpsTest, DebugDumpTensorNzUnalignedRowOffsetUsesCommonView)
@@ -1247,13 +1308,12 @@ TEST(BackendCceOpsTest, DebugDumpTensorNzUnalignedRowOffsetUsesCommonView)
         ir::Span::Unknown());
 
     auto generated = RunCodegen("debug.dump_tensor", call);
-    EXPECT_NE(generated.find("pto::TileShape2D<"), std::string::npos);
-    EXPECT_NE(generated.find("pto::DYNAMIC, pto::DYNAMIC, Layout::NZ"), std::string::npos);
-    EXPECT_NE(generated.find("(0 * 32 + 1 * 16)"), std::string::npos);
-    EXPECT_NE(generated.find("TPRINT(__debug_dump_tensor_view_"), std::string::npos);
+    EXPECT_NE(generated.find("pypto::aicore::DumpLayout::NZ"), std::string::npos);
+    EXPECT_NE(generated.find("_offsets[2] = {1, 0}"), std::string::npos);
+    EXPECT_NE(generated.find(", nz_data.data(),"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, DebugDumpTensorNzPadsTensorAndRejectsMisalignedWindow)
+TEST(BackendCceOpsTest, DebugDumpTensorNzAllowsArbitraryWindowShapeAndRejectsMisalignedColumnOffset)
 {
     auto make_call = [](const std::vector<int64_t>& tensor_shape, int64_t col_offset,
                         const std::vector<int64_t>& window_shape) {
@@ -1266,9 +1326,11 @@ TEST(BackendCceOpsTest, DebugDumpTensorNzPadsTensorAndRejectsMisalignedWindow)
     };
 
     const auto non_aligned_tensor = RunCodegen("debug.dump_tensor", make_call({31, 63}, 0, {16, 16}));
-    EXPECT_NE(non_aligned_tensor.find("(32, 64)"), std::string::npos);
-    EXPECT_THROW(RunCodegen("debug.dump_tensor", make_call({32, 64}, 0, {15, 16})), npu::tile_fwk::Error);
-    EXPECT_THROW(RunCodegen("debug.dump_tensor", make_call({32, 64}, 0, {16, 8})), npu::tile_fwk::Error);
+    EXPECT_NE(non_aligned_tensor.find("{32, 16}"), std::string::npos);
+    const auto unaligned_rows = RunCodegen("debug.dump_tensor", make_call({32, 64}, 0, {15, 16}));
+    EXPECT_NE(unaligned_rows.find("{15, 16}"), std::string::npos);
+    const auto unaligned_cols = RunCodegen("debug.dump_tensor", make_call({32, 64}, 0, {16, 8}));
+    EXPECT_NE(unaligned_cols.find("{16, 8}"), std::string::npos);
     EXPECT_THROW(RunCodegen("debug.dump_tensor", make_call({32, 64}, 8, {16, 16})), npu::tile_fwk::Error);
 }
 
@@ -1285,15 +1347,12 @@ TEST(BackendCceOpsTest, DebugDumpTensorNzDynamicShapeUsesCommonView)
         ir::Span::Unknown());
 
     auto generated = RunCodegen("debug.dump_tensor", call);
-    EXPECT_NE(generated.find("pto::TileShape2D<"), std::string::npos);
-    EXPECT_NE(generated.find("pto::BaseShape2D<"), std::string::npos);
-    EXPECT_NE(generated.find("(rows, cols)"), std::string::npos);
+    EXPECT_NE(generated.find("{rows, cols}"), std::string::npos);
     EXPECT_NE(generated.find("((rows + 15) / 16 * 16)"), std::string::npos);
-    EXPECT_NE(generated.find("((cols + 15) / 16 * 16)"), std::string::npos);
-    EXPECT_NE(generated.find("TPRINT(__debug_dump_tensor_view_"), std::string::npos);
+    EXPECT_NE(generated.find(", nz_data.data(),"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, DebugDumpTensorHighDimensionalNzUsesBatchViews)
+TEST(BackendCceOpsTest, DebugDumpTensorHighDimensionalNzUsesUnifiedWindowMetadata)
 {
     auto tensor = MakeTensorVar("nz_data", {2, 3, 32, 64}, ir::DataType::FP16, ir::TensorLayout::NZ);
     auto call = std::make_shared<const ir::Call>(
@@ -1304,25 +1363,14 @@ TEST(BackendCceOpsTest, DebugDumpTensorHighDimensionalNzUsesBatchViews)
         ir::Span::Unknown());
 
     auto generated = RunCodegen("debug.dump_tensor", call);
-    EXPECT_NE(generated.find("for (int __debug_dump_tensor_batch_"), std::string::npos);
-    EXPECT_NE(generated.find("=== [dump_tensor] Batch [%d, %d]"), std::string::npos);
-    EXPECT_NE(generated.find("1 * 3 * 32 * 64 + 0 * 32 * 64 + 16 * 32 + 1 * 16"), std::string::npos);
-    EXPECT_NE(generated.find(" * 3 * 32 * 64"), std::string::npos);
-    EXPECT_NE(generated.find(" * 32 * 64"), std::string::npos);
-    EXPECT_NE(generated.find("(16, 32)"), std::string::npos);
-    EXPECT_NE(generated.find("(32, 64)"), std::string::npos);
-    EXPECT_NE(generated.find("TPRINT(__debug_dump_tensor_view_"), std::string::npos);
-
-    auto invalid_call = std::make_shared<const ir::Call>(
-        "debug.dump_tensor",
-        std::vector<ir::ExprPtr>{tensor,
-                                 MakeTuple({MakeConstInt(0), MakeConstInt(0), MakeConstInt(0), MakeConstInt(0)}),
-                                 MakeTuple({MakeConstInt(1), MakeConstInt(1), MakeConstInt(16), MakeConstInt(8)})},
-        ir::Span::Unknown());
-    EXPECT_THROW(RunCodegen("debug.dump_tensor", invalid_call), npu::tile_fwk::Error);
+    EXPECT_NE(generated.find("_source_shape[4] = {2, 3, 32, 64}"), std::string::npos);
+    EXPECT_NE(generated.find("_offsets[4] = {1, 0, 1, 16}"), std::string::npos);
+    EXPECT_NE(generated.find("{1, 2, 16, 32}"), std::string::npos);
+    EXPECT_NE(generated.find("{(3 * 32 * 64), (32 * 64), 32, 16}"), std::string::npos);
+    EXPECT_NE(generated.find(", nz_data.data(),"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, DebugDumpTensorHighDimensionalDynamicNzUsesBatchViews)
+TEST(BackendCceOpsTest, DebugDumpTensorHighDimensionalDynamicNzUsesUnifiedWindowMetadata)
 {
     auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INDEX);
     auto batch = MakeVar("batch", index_type);
@@ -1339,21 +1387,21 @@ TEST(BackendCceOpsTest, DebugDumpTensorHighDimensionalDynamicNzUsesBatchViews)
         ir::Span::Unknown());
 
     auto generated = RunCodegen("debug.dump_tensor", call);
-    EXPECT_NE(generated.find("< batch;"), std::string::npos);
-    EXPECT_NE(generated.find("< heads;"), std::string::npos);
-    EXPECT_NE(generated.find(" * heads * ((rows + 15) / 16 * 16) * ((cols + 15) / 16 * 16)"), std::string::npos);
-    EXPECT_NE(generated.find(" * ((rows + 15) / 16 * 16) * ((cols + 15) / 16 * 16)"), std::string::npos);
-    EXPECT_NE(generated.find("(rows, cols)"), std::string::npos);
-    EXPECT_NE(generated.find("=== [dump_tensor] Batch [%d, %d]"), std::string::npos);
-    EXPECT_NE(generated.find("TPRINT(__debug_dump_tensor_view_"), std::string::npos);
+    EXPECT_NE(generated.find("{batch, heads, rows, cols}"), std::string::npos);
+    EXPECT_NE(generated.find("(heads * ((rows + 15) / 16 * 16) * ((cols + 15) / 16 * 16))"), std::string::npos);
+    EXPECT_NE(generated.find("(((rows + 15) / 16 * 16) * ((cols + 15) / 16 * 16))"), std::string::npos);
+    EXPECT_NE(generated.find(", nz_data.data(),"), std::string::npos);
 }
 
 TEST(BackendCceOpsTest, DebugDumpTileFullAndWindow)
 {
-    auto tile = MakeVar("tile", MakeTileType({16, 32}, ir::DataType::FP16));
+    auto tile = MakeVar("tile", MakeTileType({16, 32}, ir::DataType::FP16, ir::MemorySpace::Vec));
     auto full_call = std::make_shared<const ir::Call>("debug.dump_tile", std::vector<ir::ExprPtr>{tile},
                                                       ir::Span::Unknown());
-    EXPECT_NE(RunCodegen("debug.dump_tile", full_call).find("TPRINT(tile.tile);"), std::string::npos);
+    const auto full_generated = RunCodegen("debug.dump_tile", full_call);
+    EXPECT_NE(full_generated.find("PYPTO_DUMP_TILE_WINDOW(pypto::aicore::DumpLayout::ND, tile.tile,"),
+              std::string::npos);
+    EXPECT_NE(full_generated.find(", 0, 0, 16, 32);"), std::string::npos);
 
     auto window_call = std::make_shared<const ir::Call>(
         "debug.dump_tile",
@@ -1361,32 +1409,30 @@ TEST(BackendCceOpsTest, DebugDumpTileFullAndWindow)
                                  MakeTuple({MakeConstInt(8), MakeConstInt(12)})},
         ir::Span::Unknown());
     auto generated = RunCodegen("debug.dump_tile", window_call);
-    EXPECT_NE(generated.find("[TPRINT Tile Window]"), std::string::npos);
-    EXPECT_NE(generated.find("tile.tile.GetValidRow() - (2)"), std::string::npos);
-    EXPECT_NE(generated.find("pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>"), std::string::npos);
-    EXPECT_NE(generated.find("__pypto_dtype_name"), std::string::npos);
-    EXPECT_NE(generated.find("__pypto_print_val"), std::string::npos);
+    EXPECT_NE(generated.find("PYPTO_DUMP_TILE_WINDOW(pypto::aicore::DumpLayout::ND, tile.tile,"), std::string::npos);
+    EXPECT_NE(generated.find(", 2, 3, 8, 12);"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, DebugDumpAccTileUsesWorkspace)
+TEST(BackendCceOpsTest, DebugDumpCubeTileWindowsWithoutWorkspace)
 {
-    auto tile = MakeVar("acc", MakeTileType({16, 32}, ir::DataType::FP16, ir::MemorySpace::Mat));
-    auto workspace = MakeTensorVar("workspace", {512}, ir::DataType::FP16);
-    auto call = std::make_shared<const ir::Call>(
-        "debug.dump_tile",
-        std::vector<ir::ExprPtr>{tile, MakeTuple({MakeConstInt(1), MakeConstInt(2)}),
-                                 MakeTuple({MakeConstInt(8), MakeConstInt(16)}), workspace},
-        ir::Span::Unknown());
+    const std::vector<std::pair<ir::MemorySpace, std::string>> cases = {
+        {ir::MemorySpace::Mat, "l1"},
+        {ir::MemorySpace::Acc, "acc"},
+    };
+    for (const auto& [memory_space, name] : cases) {
+        auto tile = MakeVar(name, MakeTileType({16, 32}, ir::DataType::FP16, memory_space));
+        auto call = std::make_shared<const ir::Call>(
+            "debug.dump_tile",
+            std::vector<ir::ExprPtr>{tile, MakeTuple({MakeConstInt(1), MakeConstInt(2)}),
+                                     MakeTuple({MakeConstInt(8), MakeConstInt(16)})},
+            ir::Span::Unknown());
 
-    TestableCCECodegen codegen(ir::SectionKind::Vector);
-    codegen.RegisterPointer("workspace", "workspace_ptr");
-    auto generated = RunCodegen("debug.dump_tile", call, codegen);
-    EXPECT_NE(generated.find("copy_matrix_cc_to_gm"), std::string::npos);
-    EXPECT_NE(generated.find("reinterpret_cast<__gm__"), std::string::npos);
-    EXPECT_NE(generated.find("workspace_ptr"), std::string::npos);
-    EXPECT_NE(generated.find("[TPRINT Acc Tile Window]"), std::string::npos);
-    EXPECT_NE(generated.find("__pypto_dtype_name"), std::string::npos);
-    EXPECT_NE(generated.find("__pypto_print_val"), std::string::npos);
+        TestableCCECodegen codegen(ir::SectionKind::Cube);
+        auto generated = RunCodegen("debug.dump_tile", call, codegen);
+        EXPECT_NE(generated.find("PYPTO_DUMP_TILE_WINDOW(pypto::aicore::DumpLayout::ND, " + name + ".tile,"),
+                  std::string::npos);
+        EXPECT_NE(generated.find(", 1, 2, 8, 16);"), std::string::npos);
+    }
 }
 
 TEST(BackendCceOpsTest, DebugPrintfRewritesUnsigned64BitValues)
@@ -1402,7 +1448,6 @@ TEST(BackendCceOpsTest, DebugPrintfRewritesUnsigned64BitValues)
     EXPECT_NE(generated.find("decimal=%llu hex=%llx"), std::string::npos);
     EXPECT_NE(generated.find("static_cast<unsigned long long>(decimal)"), std::string::npos);
     EXPECT_NE(generated.find("static_cast<unsigned long long>(hexadecimal)"), std::string::npos);
-    EXPECT_EQ(generated.find("pypto_printf_u64_"), std::string::npos);
 }
 
 TEST(BackendCceOpsTest, DebugPrintfRewritesPromotedScalarTypes)
@@ -1436,7 +1481,7 @@ TEST(BackendCceOpsTest, DebugPrintf)
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
-    EXPECT_NE(generated.find("pypto_printf"), std::string::npos);
+    EXPECT_NE(generated.find("pypto::aicore::printf"), std::string::npos);
 }
 
 TEST(BackendCceOpsTest, DebugAssert)
@@ -1463,7 +1508,7 @@ TEST(BackendCceOpsTest, DebugAssertWithFormatAndArgs)
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
     EXPECT_NE(generated.find("if (!("), std::string::npos);
-    EXPECT_NE(generated.find("pypto_printf"), std::string::npos);
+    EXPECT_NE(generated.find("pypto::aicore::printf"), std::string::npos);
 }
 
 TEST(BackendCceOpsTest, DebugAssertWithTextOnlyFormat)
@@ -1475,7 +1520,7 @@ TEST(BackendCceOpsTest, DebugAssertWithTextOnlyFormat)
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
-    EXPECT_NE(generated.find("pypto_printf(\"flag is false\\n\")"), std::string::npos);
+    EXPECT_NE(generated.find("pypto::aicore::printf(\"flag is false\\n\")"), std::string::npos);
 }
 
 // ============================================================================

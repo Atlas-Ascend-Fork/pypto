@@ -783,7 +783,7 @@ TEST(CCESimtCodegenTest, GeneratesSimtKernelImplementation)
     EXPECT_EQ(generated.find("__launch_bounds__"), std::string::npos);
     EXPECT_EQ(generated.find(" AICORE "), std::string::npos);
     EXPECT_EQ(generated.find("#if defined(__DAV_VEC__)"), std::string::npos);
-    EXPECT_EQ(generated.find("pypto_tprint.h"), std::string::npos);
+    EXPECT_EQ(generated.find("pypto_dump.h"), std::string::npos);
 }
 
 TEST(CCESimtCodegenTest, RejectsSimtKernelUnsupportedTargetAndArchitecture)
@@ -823,7 +823,7 @@ TEST(CCESimtCodegenTest, KernelModeControlsHelperSignaturesAndMemoryAccess)
     EXPECT_EQ(generated.find("__simt_callee__"), std::string::npos);
     EXPECT_LT(generated.find("__aicore__ inline void helper("), generated.find("simt_kernel_impl("));
     EXPECT_EQ(generated.find("#if defined(__DAV_VEC__)"), std::string::npos);
-    EXPECT_EQ(generated.find("pypto_tprint.h"), std::string::npos);
+    EXPECT_EQ(generated.find("pypto_dump.h"), std::string::npos);
 
     auto simt_vf = std::make_shared<const ir::Function>(
         "simt_vf", std::vector<ir::VarPtr>{tensor}, std::vector<ir::TypePtr>{},
@@ -850,7 +850,7 @@ TEST(CCESimtCodegenTest, KernelModeControlsHelperSignaturesAndMemoryAccess)
     EXPECT_EQ(CountOccurrences(generated, "*((__gm__ int32_t*)data + "), 2u);
     EXPECT_EQ(generated.find("__aicore__ inline void helper("), std::string::npos);
     EXPECT_NE(generated.find("#if defined(__DAV_VEC__)"), std::string::npos);
-    EXPECT_NE(generated.find("pypto_tprint.h"), std::string::npos);
+    EXPECT_NE(generated.find("pypto_dump.h"), std::string::npos);
 
     EXPECT_EQ(codegen.GenerateSingle(program, npu::tile_fwk::NPUArch::DAV_3510), pure_code);
 }

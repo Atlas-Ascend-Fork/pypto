@@ -18,7 +18,7 @@
 #include "impl/utils/debug/pto_debug_utils.h"
 #include "impl/utils/sys_macros_impl.h"
 
-namespace __pto_aicore {
+namespace pypto::aicore {
 constexpr uint32_t PTO_DEBUG_BUS_UNLOCK_OFFSET = 0x078;
 constexpr uint32_t PTO_DEBUG_BUS_CTRL_OFFSET = 0x100;
 constexpr uint32_t PTO_DEBUG_BUS_ADDR_LOW_OFFSET = 0x108;
@@ -211,9 +211,7 @@ __aicore__ inline uint32_t mem_copy_bbuf_to_gm_impl(__gm__ T* dst, __cb__ T* src
 template <typename T>
 __aicore__ inline uint32_t mem_copy_cbuf_to_gm_impl(__gm__ T* dst, __cc__ T* src, const uint32_t& dumpSize)
 {
-    if PTO_IS_NOT_AIC {
-        return 1;
-    }
+#if defined(__DAV_CUBE__)
     constexpr int32_t blockCube = 16;
     constexpr int32_t defaultOneBlockSize = 1024;
     constexpr int32_t srcBurstLenSizeEle = 16;
@@ -234,6 +232,9 @@ __aicore__ inline uint32_t mem_copy_cbuf_to_gm_impl(__gm__ T* dst, __cc__ T* src
                          static_cast<uint8_t>(0), false, false, static_cast<uint8_t>(0), false, false, nz2ndEn, false,
                          false, false);
     return 0;
+#else
+    return 1;
+#endif
 }
 
 template <typename T>
@@ -281,7 +282,7 @@ __aicore__ inline uint32_t mem_copy_ub_to_gm_impl(__gm__ T* dst, __ubuf__ T* src
 #endif
 }
 
-} // namespace __pto_aicore
+} // namespace pypto::aicore
 
 #if defined(__UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_AICORE_DUMP_UTILS__)
 #undef __PTO_INCLUDE_INTERNAL_HEADERS__

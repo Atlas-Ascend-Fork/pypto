@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -53,8 +54,8 @@ namespace cce {
 std::string GetOperandAsCode(codegen::CCECodegen& codegen, const ir::ExprPtr& expr);
 
 /// Positions of the operands of a GM access op (tile <-> tensor transfer:
-/// block.load / block.store / debug.dump_tile). tensor/tile name the GM-side
-/// tensor and the tile operand; offsets names the offset-tuple position.
+/// block.load / block.store). tensor/tile name the GM-side tensor and the tile
+/// operand; offsets names the offset-tuple position.
 /// Scalar-container ops (getval/setval) deliberately stay out: consumers
 /// like the CCE tensor-declaration collector treat every contract op as a
 /// tile-tensor transfer.
@@ -66,6 +67,8 @@ struct AccessArgIndices {
 
 AccessArgIndices ResolveAccessArgIndices(const std::string& op_name);
 
+/// Derive the Tile's ND/DN/NZ/ZN/NN/ZZ layout from its block/scatter layout pair.
+std::optional<ir::TensorLayout> GetTileTensorLayout(const ir::HardwareInfo& hardware_info);
 bool IsNZTensorType(const ir::TensorTypePtr& tensor_type);
 /// Whether a block.load is an MX scale load. Such a load declares its own GlobalTensor at the
 /// op -- TileShape2D maps rows/cols into layout-specific dims that the shared per-layout

@@ -1388,14 +1388,13 @@ def dump_data(
 
     Automatically dispatches based on input type:
     - TensorType (GM Tensor): prints GM tensor data
-    - TileType (on-chip Tile): prints tile data (Acc tiles require workspace)
+    - TileType (on-chip Tile): prints tile data
 
     Args:
         data: Tensor or Tile to dump
         offsets: Optional window start offsets (per dimension); must pair with *shapes*
         shapes: Optional window shape (per dimension); must pair with *offsets*
-        workspace: GM Tensor used as temporary space (only valid for Acc Tile inputs,
-                   size >= tile_numel * sizeof(element_type))
+        workspace: Reserved for future extensions; the current implementation does not require this argument
         loc: Show source location
         flag: Optional compile-time string label printed as a standalone marker line
               before the dump output, to distinguish multiple dump sites

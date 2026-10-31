@@ -53,11 +53,19 @@ TEST_F(DebugOpsTest, DumpTensor_FullWindow_ReturnsUnknown)
     EXPECT_NE(As<UnknownType>(call->GetType()), nullptr);
 }
 
+TEST_F(DebugOpsTest, DumpTensor_Full_ReturnsUnknown)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto call = reg.Create("debug.dump_tensor", {MakeTensorVar("t", {16}, DataType::FP16)}, Sp());
+    EXPECT_NE(As<UnknownType>(call->GetType()), nullptr);
+}
+
 TEST_F(DebugOpsTest, DumpTensor_WrongArgCount_Throws)
 {
     auto& reg = OpRegistry::GetInstance();
-    EXPECT_THROW((void)reg.Create("debug.dump_tensor", {MakeTensorVar("t", {16}, DataType::FP16)}, Sp()),
-                 npu::tile_fwk::Error);
+    EXPECT_THROW(
+        (void)reg.Create("debug.dump_tensor", {MakeTensorVar("t", {16}, DataType::FP16), MakeIntTuple({0})}, Sp()),
+        npu::tile_fwk::Error);
 }
 
 TEST_F(DebugOpsTest, DumpTensor_NonTensorFirst_Throws)
@@ -90,10 +98,31 @@ TEST_F(DebugOpsTest, DumpTile_3Args_ReturnsUnknown)
     EXPECT_NE(As<UnknownType>(call->GetType()), nullptr);
 }
 
+TEST_F(DebugOpsTest, DumpTile_4Args_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto tile = MakeTileVar("t", {16, 32}, DataType::FP16);
+    auto offsets = MakeIntTuple({0, 0});
+    auto shapes = MakeIntTuple({8, 16});
+    auto extra = MakeTensorVar("extra", {512}, DataType::FP16);
+    EXPECT_THROW((void)reg.Create("debug.dump_tile", {tile, offsets, shapes, extra}, Sp()), npu::tile_fwk::Error);
+}
+
 TEST_F(DebugOpsTest, DumpTile_NonTileFirst_Throws)
 {
     auto& reg = OpRegistry::GetInstance();
     EXPECT_THROW((void)reg.Create("debug.dump_tile", {MakeScalarVar("s", DataType::FP32)}, Sp()), npu::tile_fwk::Error);
+}
+
+TEST_F(DebugOpsTest, DumpTensorAndTile_EncodedFp4_ReturnUnknown)
+{
+    auto& reg = OpRegistry::GetInstance();
+    for (const auto& dtype : {DataType::FP4E2M1, DataType::FP4E1M2}) {
+        auto tensor = reg.Create("debug.dump_tensor", {MakeTensorVar("x", {16, 32}, dtype)}, Sp());
+        EXPECT_NE(As<UnknownType>(tensor->GetType()), nullptr);
+        auto tile = reg.Create("debug.dump_tile", {MakeTileVar("t", {16, 32}, dtype)}, Sp());
+        EXPECT_NE(As<UnknownType>(tile->GetType()), nullptr);
+    }
 }
 
 // ============================================================================

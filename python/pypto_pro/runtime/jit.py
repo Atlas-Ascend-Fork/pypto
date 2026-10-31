@@ -331,8 +331,11 @@ class CodegenResult:
 CPP_LITERAL_PATTERN = re.compile(
     r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
 )
-TPRINT_CALL_PATTERN = re.compile(r"\bTPRINT\s*\(")
-PYPTO_PRINTF_CALL_PATTERN = re.compile(r"\bpypto_printf\s*\(")
+PTO_DUMP_CALL_PATTERN = re.compile(
+    r"\b(?:(?:pypto::aicore::pto_dump_window|PyptoDumpTensor|PyptoDumpTileWindow)\s*<|"
+    r"PYPTO_DUMP_(?:TENSOR|TILE_WINDOW)\s*\()"
+)
+PTO_PRINTF_CALL_PATTERN = re.compile(r"\bpypto::aicore::printf\s*\(")
 
 
 def _sanitize_artifact_component(value: str) -> str:
@@ -1284,7 +1287,10 @@ def _generate_caller_cpp(
 def _detect_print_debug_from_cpp(content: str) -> bool:
     """Best-effort detection for device-side debug print usage in generated C++."""
     scrubbed = CPP_LITERAL_PATTERN.sub(" ", content)
-    return bool(TPRINT_CALL_PATTERN.search(scrubbed) or PYPTO_PRINTF_CALL_PATTERN.search(scrubbed))
+    return bool(
+        PTO_DUMP_CALL_PATTERN.search(scrubbed)
+        or PTO_PRINTF_CALL_PATTERN.search(scrubbed)
+    )
 
 
 def _build_bisheng_flags(
@@ -1899,7 +1905,7 @@ def _add_kernel_header(result: CodegenResult) -> CodegenResult:
     header = KERNEL_HEADER_SINGLE
     header = KERNEL_HEADER_SIMT if result.simt_kernel else KERNEL_HEADER_SINGLE
     if result.needs_print_debug:
-        header += "\n#define __ENABLE_ASC_PRINTF__ 1\n"
+        header += "\n#define __ENABLE_PTO_PRINTF__ 1\n"
     if any(tok in result.content for tok in ("AscendC::WaitPreTaskEnd", "AscendC::SetNextTaskStart")):
         # Early-start inter-task sync (SK cap bits 1/2) lives in the AscendC common
         # interface header, which pto-inst.hpp does not pull in.

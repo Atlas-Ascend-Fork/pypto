@@ -1513,6 +1513,40 @@ def test_a5_allows_regular_cube_buffer_layouts(monkeypatch):
     assert isinstance(stmt.var.type.hardware_info, _ir.HardwareInfo)
 
 
+@pytest.mark.parametrize(
+    "memory",
+    [
+        pl.MemorySpace.Left,
+        pl.MemorySpace.Right,
+        pl.MemorySpace.ScaleLeft,
+        pl.MemorySpace.ScaleRight,
+    ],
+)
+def test_dump_data_rejects_l0a_l0b_buffers(monkeypatch, memory):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "3510")
+
+    with pytest.raises(NotSupported, match=rf"does not support {memory.name} tiles"):
+
+        @pl.jit(auto_mutex=False)
+        def main():
+            tt = pl.TileType(shape=[32, 32], dtype=pl.DT_FP32, target_memory=memory)
+            tile = pl.make_tile(tt, addr=0x0000)
+            pl.dump_data(tile)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
+
+
+@pytest.mark.parametrize("dtype", [pl.DT_INT4, pl.DT_UINT4, pl.DT_FP4, pl.DT_HF4])
+def test_dump_data_rejects_unsupported_dtypes(dtype):
+    with pytest.raises(NotSupported, match=rf"does not support DT_{dtype.to_string().upper()}"):
+
+        @pl.jit(auto_mutex=False)
+        def main(inp: pl.Tensor[[32], dtype]):
+            pl.dump_data(inp)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
 def test_high_dimensional_nz_load_store_use_last_two_axes_by_default():
     @pl.jit(auto_mutex=False)
     def main(

@@ -152,7 +152,7 @@ __simd_callee__ inline void pto_copy_ub2ub(__ubuf__ void* dst, __ubuf__ void* sr
 }
 } // namespace __pto_simd_vf
 
-namespace __pto_aicore {
+namespace pypto::aicore {
 __aicore__ __gm__ inline DebugBlockHeadInfo* get_block_info();
 __aicore__ inline bool check_ringbuf_space(__gm__ DebugBlockHeadInfo* blockInfo, const uint32_t& tlvLen);
 
@@ -388,7 +388,7 @@ __aicore__ inline bool pto_vf_debug_ub2gm()
     }
     return vInfo->flag != 0;
 }
-} // namespace __pto_aicore
+} // namespace pypto::aicore
 
 namespace __pto_simd_vf {
 template <typename T>

@@ -536,7 +536,7 @@ def test_simt_kernel_codegen_emits_implementation_and_headers():
     assert "#include <cstdint>" in cpp
     assert "pto/pto-inst.hpp" not in cpp
     assert "using namespace pto" not in cpp
-    assert "pypto_tprint.h" not in cpp
+    assert "pypto_dump.h" not in cpp
     assert "__clang_cce_simt_atomic.h" not in cpp
     assert cpp.count('#include "__clang_cce_simt_fp16.h"') == 1
     assert cpp.count('#include "__clang_cce_simt_bf16.h"') == 1
@@ -545,7 +545,7 @@ def test_simt_kernel_codegen_emits_implementation_and_headers():
     mixed_cpp = _compile_to_cce(_simt_gm_codegen_kernel)
     assert "#include <pto/pto-inst.hpp>" in mixed_cpp
     assert "using namespace pto" in mixed_cpp
-    assert "#include <pypto_tprint.h>" in mixed_cpp
+    assert "#include <pypto_dump.h>" in mixed_cpp
 
 
 @pytest.mark.parametrize("mode", ["simt", "simd"])

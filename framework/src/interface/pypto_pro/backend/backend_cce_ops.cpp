@@ -75,25 +75,25 @@ static void EmitDebugLocationHeaderCCE(codegen::CCECodegen& codegen, const ir::S
 {
     std::string header = debug_printf::FormatDebugLocationHeader(span, op_name);
     if (!header.empty()) {
-        codegen.Emit("pypto_printf(\"" + debug_printf::EscapeStringLiteral(header + "\n") + "\");");
+        codegen.Emit("pypto::aicore::printf(\"" + debug_printf::EscapeStringLiteral(header + "\n") + "\");");
     }
 }
 
-static bool NeedsAscPrintfSignedLongLong(const DataType& dtype, char conversion)
+static bool NeedsPtoPrintfSignedLongLong(const DataType& dtype, char conversion)
 {
     return (conversion == 'd' || conversion == 'i') && (dtype == DataType::INT64 || dtype == DataType::INDEX);
 }
 
-static bool NeedsAscPrintfUnsignedLongLong(const DataType& dtype, char conversion)
+static bool NeedsPtoPrintfUnsignedLongLong(const DataType& dtype, char conversion)
 {
     return (conversion == 'u' || conversion == 'x') && (dtype == DataType::UINT64 || dtype == DataType::INDEX);
 }
 
-static std::string RewriteAscPrintfFormatForScalarType(const std::string& format_segment, char conversion,
+static std::string RewritePtoPrintfFormatForScalarType(const std::string& format_segment, char conversion,
                                                        const DataType& dtype)
 {
-    const bool signed_long_long = NeedsAscPrintfSignedLongLong(dtype, conversion);
-    const bool unsigned_long_long = NeedsAscPrintfUnsignedLongLong(dtype, conversion);
+    const bool signed_long_long = NeedsPtoPrintfSignedLongLong(dtype, conversion);
+    const bool unsigned_long_long = NeedsPtoPrintfUnsignedLongLong(dtype, conversion);
     if (!signed_long_long && !unsigned_long_long) {
         return format_segment;
     }
@@ -112,15 +112,15 @@ static std::string RewriteAscPrintfFormatForScalarType(const std::string& format
     return rewritten;
 }
 
-static std::string CastAscPrintfArgIfNeeded(const std::string& arg, const DataType& dtype, char conversion)
+static std::string CastPtoPrintfArgIfNeeded(const std::string& arg, const DataType& dtype, char conversion)
 {
     if (conversion == 'f') {
         return arg;
     }
-    if (NeedsAscPrintfSignedLongLong(dtype, conversion)) {
+    if (NeedsPtoPrintfSignedLongLong(dtype, conversion)) {
         return "static_cast<long long>(" + arg + ")";
     }
-    if (NeedsAscPrintfUnsignedLongLong(dtype, conversion)) {
+    if (NeedsPtoPrintfUnsignedLongLong(dtype, conversion)) {
         return "static_cast<unsigned long long>(" + arg + ")";
     }
     if (dtype == DataType::BOOL) {
@@ -135,11 +135,11 @@ static std::string CastAscPrintfArgIfNeeded(const std::string& arg, const DataTy
     return arg;
 }
 
-static std::string BuildAscPrintfCall(const std::string& format, const std::vector<std::string>& args,
+static std::string BuildPtoPrintfCall(const std::string& format, const std::vector<std::string>& args,
                                       const std::vector<DataType>& arg_dtypes)
 {
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == arg_dtypes.size())
-        << "debug.printf ASC argument/type count mismatch";
+        << "debug.printf argument/type count mismatch";
 
     auto segments = debug_printf::ParsePrintfSegments(format);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, segments.size() == args.size())
@@ -152,399 +152,134 @@ static std::string BuildAscPrintfCall(const std::string& format, const std::vect
     std::string rewritten_format = segments.empty() ? format : "";
     std::vector<std::string> rewritten_args;
     for (size_t i = 0; i < segments.size(); ++i) {
-        rewritten_format += RewriteAscPrintfFormatForScalarType(segments[i].format_segment, segments[i].conversion,
+        rewritten_format += RewritePtoPrintfFormatForScalarType(segments[i].format_segment, segments[i].conversion,
                                                                 arg_dtypes[i]);
-        rewritten_args.push_back(CastAscPrintfArgIfNeeded(args[i], arg_dtypes[i], segments[i].conversion));
+        rewritten_args.push_back(CastPtoPrintfArgIfNeeded(args[i], arg_dtypes[i], segments[i].conversion));
     }
 
-    std::string call = "pypto_printf(\"" + debug_printf::EscapeStringLiteral(rewritten_format) + "\"";
+    std::string call = "pypto::aicore::printf(\"" + debug_printf::EscapeStringLiteral(rewritten_format) + "\"";
     for (const auto& arg : rewritten_args) {
         call += ", " + arg;
     }
     return call + ");";
 }
 
-static bool HasDynamicTensorShape(const ir::TensorTypePtr& tensor_type)
+static std::vector<std::string> BuildTensorDumpStride(codegen::CCECodegen& codegen,
+                                                      const ir::TensorTypePtr& tensor_type)
 {
-    for (const auto& dim : tensor_type->shape_) {
-        if (!ir::As<ir::ConstInt>(dim)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool IsFullTensorWindow(const ir::TensorTypePtr& tensor_type, const ir::MakeTuplePtr& offsets,
-                               const ir::MakeTuplePtr& shapes)
-{
-    if (!tensor_type || !offsets || !shapes) {
-        return false;
-    }
     const size_t rank = tensor_type->shape_.size();
-    if (offsets->elements_.size() != rank || shapes->elements_.size() != rank) {
-        return false;
-    }
-
-    for (size_t i = 0; i < rank; ++i) {
-        auto offset_const = ir::As<ir::ConstInt>(offsets->elements_[i]);
-        if (!offset_const || offset_const->value_ != 0) {
-            return false;
-        }
-
-        auto shape_const = ir::As<ir::ConstInt>(shapes->elements_[i]);
-        auto tensor_dim_const = ir::As<ir::ConstInt>(tensor_type->shape_[i]);
-        if (shape_const && tensor_dim_const) {
-            if (shape_const->value_ != tensor_dim_const->value_) {
-                return false;
-            }
-            continue;
-        }
-        if (shapes->elements_[i].get() != tensor_type->shape_[i].get()) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static std::string GetRuntimeTensorShapeExpr(const std::string& tensor_name, size_t rank, size_t axis)
-{
-    const size_t gt_dim = 5 - rank + axis;
-    return tensor_name + ".GetShape(GlobalTensorDim::DIM_" + std::to_string(gt_dim) + ")";
-}
-
-static std::string GetRuntimeTensorStrideExpr(const std::string& tensor_name, size_t rank, size_t axis)
-{
-    const size_t gt_dim = 5 - rank + axis;
-    return tensor_name + ".GetStride(GlobalTensorDim::DIM_" + std::to_string(gt_dim) + ")";
-}
-
-static std::string BuildShapeTypeForDump(codegen::CCECodegen& codegen, const std::string& tensor_name,
-                                         const ir::TensorTypePtr& tensor_type,
-                                         const std::vector<ir::ExprPtr>& shape_exprs, bool use_runtime_full_shape,
-                                         std::vector<std::string>* ctor_args)
-{
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, shape_exprs.size() >= 1 && shape_exprs.size() <= 5)
-        << "debug.dump_tensor currently supports tensor rank 1..5, but got " << shape_exprs.size();
-
-    const size_t pad_dims = 5 - shape_exprs.size();
-    std::vector<std::string> template_dims(5, "1");
-    ctor_args->clear();
-    for (size_t i = 0; i < shape_exprs.size(); ++i) {
-        if (auto dim = ir::As<ir::ConstInt>(shape_exprs[i])) {
-            template_dims[pad_dims + i] = std::to_string(dim->value_);
-        } else {
-            template_dims[pad_dims + i] = "-1";
-            if (use_runtime_full_shape) {
-                ctor_args->push_back(GetRuntimeTensorShapeExpr(tensor_name, tensor_type->shape_.size(), i));
-            } else {
-                ctor_args->push_back(cce::GetOperandAsCode(codegen, shape_exprs[i]));
-            }
-        }
-    }
-    return "pto::Shape<" + JoinExpressions(template_dims, ", ") + ">";
-}
-
-static void ComputeStridesFromShape(codegen::CCECodegen& codegen, const ir::TensorTypePtr& tensor_type, size_t rank,
-                                    size_t pad_dims, std::vector<std::string>& stride_template_dims,
-                                    std::vector<std::string>* ctor_args)
-{
-    for (size_t i = 0; i < rank; ++i) {
-        bool all_const = true;
-        int64_t const_stride = 1;
-        std::vector<std::string> factors;
-        for (size_t j = i + 1; j < rank; ++j) {
-            if (auto dim = ir::As<ir::ConstInt>(tensor_type->shape_[j])) {
-                const_stride *= dim->value_;
-            } else {
-                all_const = false;
-                factors.push_back(cce::GetOperandAsCode(codegen, tensor_type->shape_[j]));
-            }
-        }
-        if (all_const) {
-            stride_template_dims[pad_dims + i] = std::to_string(const_stride);
-        } else {
-            std::string expr = std::to_string(const_stride);
-            if (!factors.empty()) {
-                expr += " * " + JoinExpressions(factors, " * ");
-            }
-            stride_template_dims[pad_dims + i] = "-1";
-            ctor_args->push_back("(" + expr + ")");
-        }
-    }
-}
-
-static std::string BuildStrideTypeForDump(codegen::CCECodegen& codegen, const std::string& tensor_name,
-                                          const ir::TensorTypePtr& tensor_type, bool use_runtime_tensor_view,
-                                          std::vector<std::string>* ctor_args)
-{
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tensor_type)
-        << "debug.dump_tensor requires TensorType for stride generation";
-    const size_t rank = tensor_type->shape_.size();
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, rank >= 1 && rank <= 5)
-        << "debug.dump_tensor currently supports tensor rank 1..5, but got " << rank;
-
-    std::vector<std::string> stride_template_dims(5, "1");
-    ctor_args->clear();
-    const size_t pad_dims = 5 - rank;
-
-    auto append_dynamic_stride = [&](size_t axis, const std::string& expr) {
-        stride_template_dims[pad_dims + axis] = "-1";
-        ctor_args->push_back(expr);
-    };
-
-    if (use_runtime_tensor_view) {
-        for (size_t i = 0; i < rank; ++i) {
-            append_dynamic_stride(i, GetRuntimeTensorStrideExpr(tensor_name, rank, i));
-        }
-        return "pto::Stride<" + JoinExpressions(stride_template_dims, ", ") + ">";
-    }
-
-    if (tensor_type->tensor_view_.has_value() && !tensor_type->tensor_view_->stride.empty()) {
-        const auto& strides = tensor_type->tensor_view_->stride;
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, strides.size() == rank)
-            << "debug.dump_tensor tensor_view stride rank (" << strides.size() << ") must match tensor rank (" << rank
-            << ")";
-        for (size_t i = 0; i < rank; ++i) {
-            if (auto stride = ir::As<ir::ConstInt>(strides[i])) {
-                stride_template_dims[pad_dims + i] = std::to_string(stride->value_);
-            } else {
-                append_dynamic_stride(i, cce::GetOperandAsCode(codegen, strides[i]));
-            }
-        }
-        return "pto::Stride<" + JoinExpressions(stride_template_dims, ", ") + ">";
-    }
-
-    ComputeStridesFromShape(codegen, tensor_type, rank, pad_dims, stride_template_dims, ctor_args);
-    return "pto::Stride<" + JoinExpressions(stride_template_dims, ", ") + ">";
-}
-
-static std::string ComputeRuntimeStrideBasedOffset(codegen::CCECodegen& codegen, const std::string& tensor_name,
-                                                   const ir::TensorTypePtr& tensor_type,
-                                                   const ir::MakeTuplePtr& offsets, const std::string& start_offset)
-{
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tensor_type)
-        << "debug.dump_tensor requires TensorType for runtime offset generation";
-    const size_t rank = tensor_type->shape_.size();
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, offsets)
-        << "debug.dump_tensor requires offsets tuple for runtime offset generation";
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, offsets->elements_.size() == rank)
-        << "debug.dump_tensor offset rank (" << offsets->elements_.size() << ") must match tensor rank (" << rank
-        << ")";
-
-    std::ostringstream offset_computation;
-    offset_computation << "(";
-    bool has_term = false;
-    if (!start_offset.empty()) {
-        offset_computation << start_offset;
-        has_term = true;
-    }
-
-    for (size_t i = 0; i < rank; ++i) {
-        if (has_term) {
-            offset_computation << " + ";
-        }
-        offset_computation << cce::GetOperandAsCode(codegen, offsets->elements_[i]) << " * ";
-        offset_computation << GetRuntimeTensorStrideExpr(tensor_name, rank, i);
-        has_term = true;
-    }
-
-    if (!has_term) {
-        offset_computation << "0";
-    }
-    offset_computation << ")";
-    return offset_computation.str();
-}
-
-static std::string MakeDebugDumpTensorNZCodegenCCE(codegen::CCECodegen& codegen, const ir::VarPtr& tensor_var,
-                                                   const ir::TensorTypePtr& tensor_type,
-                                                   const ir::MakeTuplePtr& offsets_tuple,
-                                                   const ir::MakeTuplePtr& shapes_tuple)
-{
-    const size_t ndim = tensor_type->shape_.size();
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, ndim >= 2)
-        << "debug.dump_tensor NZ lowering requires a tensor rank of at least 2";
-    const size_t row_axis = ndim - 2;
-    const size_t col_axis = ndim - 1;
-
-    const int64_t c0 = cce::GetNZInnerCols(tensor_type->dtype_);
-    const auto known_col_offset = ir::GetConstantDimension(offsets_tuple->elements_[col_axis]);
-    const auto known_window_rows = ir::GetConstantDimension(shapes_tuple->elements_[row_axis]);
-    const auto known_window_cols = ir::GetConstantDimension(shapes_tuple->elements_[col_axis]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_FORMAT,
-                      !known_window_rows.has_value() || known_window_rows.value() % 16 == 0)
-        << "debug.dump_tensor: NZ window rows must be divisible by 16";
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_FORMAT,
-                      !known_window_cols.has_value() || known_window_cols.value() % c0 == 0)
-        << "debug.dump_tensor: NZ window columns must be divisible by C0";
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_FORMAT,
-                      !known_col_offset.has_value() || known_col_offset.value() % c0 == 0)
-        << "debug.dump_tensor: NZ column offset must be divisible by C0";
-
-    const int debug_id = NextDebugDumpId();
-    const std::string tensor_name = codegen.GetVarName(tensor_var);
-    std::string base_ptr = codegen.GetPointer(tensor_name);
-    if (base_ptr.empty()) {
-        base_ptr = tensor_name + ".data()";
-    }
-
-    const std::string padded_rows = codegen.ComputeAlignedShapeDimension(tensor_type->shape_[row_axis], 16);
-    const std::string padded_cols = codegen.ComputeAlignedShapeDimension(tensor_type->shape_[col_axis], c0);
-    const std::string rows = cce::GetOperandAsCode(codegen, shapes_tuple->elements_[row_axis]);
-    const std::string cols = cce::GetOperandAsCode(codegen, shapes_tuple->elements_[col_axis]);
-    const std::string offset = codegen.ComputeTensorOffset(tensor_type, offsets_tuple);
-
-    const std::string dtype = codegen.GetTypeString(tensor_type->dtype_);
-    const std::string shape_alias = "__debug_dump_tensor_shape_" + std::to_string(debug_id);
-    const std::string stride_alias = "__debug_dump_tensor_stride_" + std::to_string(debug_id);
-    const std::string global_alias = "__debug_dump_tensor_type_" + std::to_string(debug_id);
-    const std::string view_name = "__debug_dump_tensor_view_" + std::to_string(debug_id);
-
-    codegen.Emit("using " + shape_alias + " = pto::TileShape2D<" + dtype +
-                 ", pto::DYNAMIC, pto::DYNAMIC, Layout::NZ>;");
-    codegen.Emit("using " + stride_alias + " = pto::BaseShape2D<" + dtype +
-                 ", pto::DYNAMIC, pto::DYNAMIC, Layout::NZ>;");
-    codegen.Emit("using " + global_alias + " = GlobalTensor<" + dtype + ", " + shape_alias + ", " + stride_alias +
-                 ", Layout::NZ>;");
-    std::vector<std::string> batch_indices;
-    for (size_t axis = 0; axis < row_axis; ++axis) {
-        const std::string index = "__debug_dump_tensor_batch_" + std::to_string(debug_id) + "_" + std::to_string(axis);
-        batch_indices.push_back(index);
-        codegen.Emit("for (int " + index + " = 0; " + index + " < " +
-                     cce::GetOperandAsCode(codegen, shapes_tuple->elements_[axis]) + "; ++" + index + ") {");
-    }
-
-    std::string view_offset = offset;
-    if (!batch_indices.empty()) {
-        std::ostringstream batch_delta;
+    std::vector<std::string> stride(rank, "1");
+    if (cce::IsNZTensorType(tensor_type)) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, rank >= 2)
+            << "debug.dump_tensor NZ lowering requires a tensor rank of at least 2";
+        const size_t row_axis = rank - 2;
+        const int64_t c0 = cce::GetNZInnerCols(tensor_type->dtype_);
+        const std::string padded_rows = codegen.ComputeAlignedShapeDimension(tensor_type->shape_[row_axis], 16);
+        const std::string padded_cols = codegen.ComputeAlignedShapeDimension(tensor_type->shape_[rank - 1], c0);
         for (size_t axis = 0; axis < row_axis; ++axis) {
-            if (axis != 0) {
-                batch_delta << " + ";
-            }
-            batch_delta << batch_indices[axis];
+            std::vector<std::string> factors;
             for (size_t inner = axis + 1; inner < row_axis; ++inner) {
-                batch_delta << " * " << cce::GetOperandAsCode(codegen, tensor_type->shape_[inner]);
+                factors.push_back(codegen.GetExprAsCode(tensor_type->shape_[inner]));
             }
-            batch_delta << " * " << padded_rows << " * " << padded_cols;
+            factors.push_back(padded_rows);
+            factors.push_back(padded_cols);
+            stride[axis] = "(" + JoinExpressions(factors, " * ") + ")";
         }
-        const std::string delta = "(" + batch_delta.str() + ")";
-        view_offset = "(" + offset + " + " + delta + ")";
-
-        std::ostringstream batch_header;
-        batch_header << "pypto_printf(\"=== [dump_tensor] Batch [";
-        for (size_t axis = 0; axis < row_axis; ++axis) {
-            if (axis != 0) {
-                batch_header << ", ";
-            }
-            batch_header << "%d";
-        }
-        batch_header << "] ===\\n\"";
-        for (size_t axis = 0; axis < row_axis; ++axis) {
-            batch_header << ", static_cast<int>(" << cce::GetOperandAsCode(codegen, offsets_tuple->elements_[axis])
-                         << " + " << batch_indices[axis] << ")";
-        }
-        batch_header << ");";
-        codegen.Emit(batch_header.str());
+        stride[row_axis] = padded_rows;
+        stride[rank - 1] = std::to_string(c0);
+        return stride;
     }
 
-    codegen.Emit(global_alias + " " + view_name + "(" + base_ptr + " + " + view_offset + ", " + shape_alias + "(" +
-                 rows + ", " + cols + "), " + stride_alias + "(" + padded_rows + ", " + padded_cols + "));");
-    codegen.Emit("TPRINT(" + view_name + ");");
-    for (size_t axis = 0; axis < row_axis; ++axis) {
-        codegen.Emit("}");
-    }
-    return "";
+    return codegen.BuildTensorStrideExpressions(tensor_type);
 }
 
-static void EmitDumpFlagHeaderCCE(codegen::CCECodegen& codegen, const ir::CallPtr& op)
+static void EmitDumpMetadataCCE(codegen::CCECodegen& codegen, const ir::CallPtr& op, const std::string& op_name)
 {
+    if (op->GetKwarg<bool>("show_location", false)) {
+        EmitDebugLocationHeaderCCE(codegen, op->span_, op_name);
+    }
     std::string dump_flag = op->HasKwarg("dump_flag") ? op->GetKwarg<std::string>("dump_flag") : "";
     if (dump_flag.empty()) {
         return;
     }
-    codegen.Emit("pypto_printf(\"=== [flag] %s ===\\n\", \"" + debug_printf::EscapeStringLiteral(dump_flag) + "\");");
+    codegen.Emit("pypto::aicore::printf(\"[flag] %s\\n\", \"" + debug_printf::EscapeStringLiteral(dump_flag) + "\");");
 }
 
 static std::string MakeDebugDumpTensorCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
-        << "debug.dump_tensor requires 3 arguments, but got " << op->args_.size();
-    if (op->GetKwarg<bool>("show_location", false)) {
-        EmitDebugLocationHeaderCCE(codegen, op->span_, "dump_tensor");
-    }
-    EmitDumpFlagHeaderCCE(codegen, op);
-
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1 || op->args_.size() == 3)
+        << "debug.dump_tensor requires 1 or 3 arguments, but got " << op->args_.size();
     auto tensor_var = ir::As<ir::Var>(op->args_[0]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tensor_var) << "debug.dump_tensor first argument must be a Var";
     auto tensor_type = ir::As<ir::TensorType>(tensor_var->GetType());
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tensor_type)
         << "debug.dump_tensor first argument must be TensorType";
-    auto offsets_tuple = ir::As<ir::MakeTuple>(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, offsets_tuple)
-        << "debug.dump_tensor second argument must be a tuple (offsets)";
-    auto shapes_tuple = ir::As<ir::MakeTuple>(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, shapes_tuple)
-        << "debug.dump_tensor third argument must be a tuple (shapes)";
-
-    if (cce::IsNZTensorType(tensor_type)) {
-        return MakeDebugDumpTensorNZCodegenCCE(codegen, tensor_var, tensor_type, offsets_tuple, shapes_tuple);
-    }
-
     const int debug_id = NextDebugDumpId();
     const std::string tensor_name = codegen.GetVarName(tensor_var);
     std::string base_ptr = codegen.GetPointer(tensor_name);
     if (base_ptr.empty()) {
         base_ptr = tensor_name + ".data()";
     }
-    const std::string shape_alias = "__debug_dump_tensor_shape_" + std::to_string(debug_id);
-    const std::string stride_alias = "__debug_dump_tensor_stride_" + std::to_string(debug_id);
-    const std::string global_alias = "__debug_dump_tensor_type_" + std::to_string(debug_id);
-    const std::string view_name = "__debug_dump_tensor_view_" + std::to_string(debug_id);
-    const bool has_dynamic_tensor_shape = HasDynamicTensorShape(tensor_type);
-    const bool is_full_tensor_window = IsFullTensorWindow(tensor_type, offsets_tuple, shapes_tuple);
-    const bool use_runtime_tensor_view = has_dynamic_tensor_shape;
-
-    std::string start_offset;
-    const std::string offset_expr = use_runtime_tensor_view ?
-                                        ComputeRuntimeStrideBasedOffset(codegen, tensor_name, tensor_type,
-                                                                        offsets_tuple, start_offset) :
-                                        codegen.ComputeTensorOffset(tensor_type, offsets_tuple);
-
-    std::vector<std::string> shape_ctor_args;
-    std::vector<std::string> stride_ctor_args;
-    const std::string shape_type = BuildShapeTypeForDump(codegen, tensor_name, tensor_type, shapes_tuple->elements_,
-                                                         use_runtime_tensor_view && is_full_tensor_window,
-                                                         &shape_ctor_args);
-    const std::string stride_type = BuildStrideTypeForDump(codegen, tensor_name, tensor_type, use_runtime_tensor_view,
-                                                           &stride_ctor_args);
-
-    std::string layout_suffix = ", Layout::ND";
-    if (tensor_type->shape_.size() == 2) {
-        if (auto last_dim = ir::As<ir::ConstInt>(tensor_type->shape_.back())) {
-            if (last_dim->value_ == 1) {
-                layout_suffix = ", Layout::DN";
-            }
+    const std::string metadata_prefix = "__debug_dump_tensor_" + std::to_string(debug_id);
+    const std::string source_shape_name = metadata_prefix + "_source_shape";
+    const std::string offsets_name = metadata_prefix + "_offsets";
+    const std::string shape_name = metadata_prefix + "_shape";
+    const std::string stride_name = metadata_prefix + "_stride";
+    const size_t rank = tensor_type->shape_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, rank >= 1 && rank <= 5)
+        << "debug.dump_tensor currently supports tensor rank 1..5, but got " << rank;
+    const auto get_expr_codes = [&codegen](const std::vector<ir::ExprPtr>& expressions) {
+        std::vector<std::string> result;
+        result.reserve(expressions.size());
+        for (const auto& expression : expressions) {
+            result.push_back(codegen.GetExprAsCode(expression));
+        }
+        return result;
+    };
+    std::vector<std::string> offsets(rank, "0");
+    std::vector<ir::ExprPtr> shape_exprs = tensor_type->shape_;
+    const bool is_nz = cce::IsNZTensorType(tensor_type);
+    if (op->args_.size() == 3) {
+        auto offsets_tuple = ir::As<ir::MakeTuple>(op->args_[1]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, offsets_tuple)
+            << "debug.dump_tensor second argument must be a tuple (offsets)";
+        auto shapes_tuple = ir::As<ir::MakeTuple>(op->args_[2]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, shapes_tuple)
+            << "debug.dump_tensor third argument must be a tuple (shapes)";
+        offsets = get_expr_codes(offsets_tuple->elements_);
+        shape_exprs = shapes_tuple->elements_;
+        if (is_nz) {
+            const size_t col_axis = tensor_type->shape_.size() - 1;
+            const int64_t c0 = cce::GetNZInnerCols(tensor_type->dtype_);
+            const auto known_col_offset = ir::GetConstantDimension(offsets_tuple->elements_[col_axis]);
+            PRO_CODEGEN_CHECK(ExternalError::INVALID_FORMAT,
+                              !known_col_offset.has_value() || known_col_offset.value() % c0 == 0)
+                << "debug.dump_tensor: NZ column offset must be divisible by C0";
         }
     }
+    const auto source_shape = get_expr_codes(tensor_type->shape_);
+    const auto shape = get_expr_codes(shape_exprs);
+    const auto stride = BuildTensorDumpStride(codegen, tensor_type);
 
-    codegen.Emit("using " + shape_alias + " = " + shape_type + ";");
-    codegen.Emit("using " + stride_alias + " = " + stride_type + ";");
-    codegen.Emit("using " + global_alias + " = GlobalTensor<" + codegen.GetTypeString(tensor_type->dtype_) + ", " +
-                 shape_alias + ", " + stride_alias + layout_suffix + ">;");
+    const std::string layout_name = is_nz ? "NZ" : "ND";
+    const std::string layout = "pypto::aicore::DumpLayout::" + layout_name;
 
-    std::string shape_ctor = shape_alias + "(" + JoinExpressions(shape_ctor_args, ", ") + ")";
-    if (shape_ctor_args.empty()) {
-        shape_ctor = shape_alias + "()";
-    }
-    std::string stride_ctor = stride_alias + "(" + JoinExpressions(stride_ctor_args, ", ") + ")";
-    if (stride_ctor_args.empty()) {
-        stride_ctor = stride_alias + "()";
-    }
-
-    codegen.Emit(global_alias + " " + view_name + "(" + base_ptr + " + " + offset_expr + ", " + shape_ctor + ", " +
-                 stride_ctor + ");");
-    codegen.Emit("TPRINT(" + view_name + ");");
+    EmitDumpMetadataCCE(codegen, op, "dump_tensor");
+    const std::string rank_str = std::to_string(rank);
+    codegen.Emit("int64_t " + source_shape_name + "[" + rank_str + "] = {" + JoinExpressions(source_shape, ", ") +
+                 "};");
+    codegen.Emit("int64_t " + offsets_name + "[" + rank_str + "] = {" + JoinExpressions(offsets, ", ") + "};");
+    codegen.Emit("int64_t " + shape_name + "[" + rank_str + "] = {" + JoinExpressions(shape, ", ") + "};");
+    codegen.Emit("int64_t " + stride_name + "[" + rank_str + "] = {" + JoinExpressions(stride, ", ") + "};");
+    const std::string view_name = metadata_prefix + "_view";
+    const std::string inner_rows = is_nz ? "16" : "1";
+    const std::string inner_cols = is_nz ? stride_name + "[" + std::to_string(rank - 1) + "]" : "1";
+    codegen.Emit("const pypto::aicore::DumpTensorView " + view_name + " = {" + source_shape_name + ", " + offsets_name +
+                 ", " + shape_name + ", " + stride_name + ", " + rank_str + "U, " + inner_rows + ", " + inner_cols +
+                 "};");
+    codegen.Emit("PYPTO_DUMP_TENSOR(" + layout + ", " + rank_str + ", " + base_ptr + ", " + std::to_string(debug_id) +
+                 ", " + view_name + ");");
     return "";
 }
 
@@ -566,9 +301,9 @@ static std::string MakeDebugPrintfCodegenCCE(const ir::CallPtr& op, codegen::Cod
     arg_dtypes.reserve(op->args_.size());
 
     for (size_t i = 0; i < op->args_.size(); ++i) {
-        args.emplace_back(cce::GetOperandAsCode(codegen, op->args_[i]));
+        args.emplace_back(codegen.GetExprAsCode(op->args_[i]));
         if (ir::As<ir::PtrType>(op->args_[i]->GetType())) {
-            // Pointer arguments are passed directly to ASC printf.
+            // Pointer arguments are passed directly to PTO printf.
             arg_dtypes.emplace_back(DataType::INT64);
         } else {
             auto scalar_type = ir::As<ir::ScalarType>(op->args_[i]->GetType());
@@ -578,7 +313,7 @@ static std::string MakeDebugPrintfCodegenCCE(const ir::CallPtr& op, codegen::Cod
         }
     }
 
-    std::string call = BuildAscPrintfCall(format, args, arg_dtypes);
+    std::string call = BuildPtoPrintfCall(format, args, arg_dtypes);
     if (!call.empty()) {
         codegen.Emit(call);
     }
@@ -588,192 +323,45 @@ static std::string MakeDebugPrintfCodegenCCE(const ir::CallPtr& op, codegen::Cod
 static std::string MakeDebugDumpTileCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT,
-                      op->args_.size() == 1 || op->args_.size() == 3 || op->args_.size() == 4)
-        << "debug.dump_tile requires 1 argument (tile), 3 arguments (tile, offsets, shapes), "
-        << "or 4 arguments (tile, offsets, shapes, workspace), but got " << op->args_.size();
-    if (op->GetKwarg<bool>("show_location", false)) {
-        EmitDebugLocationHeaderCCE(codegen, op->span_, "dump_tile");
-    }
-    EmitDumpFlagHeaderCCE(codegen, op);
-
-    std::string src = cce::GetOperandAsCode(codegen, op->args_[0]);
-
-    if (op->args_.size() == 4) {
-        auto tile_type = ir::As<ir::TileType>(op->args_[0]->GetType());
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tile_type) << "debug.dump_tile first argument must be TileType";
-        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, tile_type->shape_.size() == 2)
-            << "debug.dump_tile Acc window dump only supports 2D tiles";
-        auto workspace_var = ir::As<ir::Var>(op->args_[3]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, workspace_var)
-            << "debug.dump_tile workspace (4th argument) must be a Var";
-        std::string workspace_name = codegen.GetVarName(workspace_var);
-        std::string workspace_ptr = codegen.GetPointer(workspace_name);
-
-        auto tile_rows = ir::As<ir::ConstInt>(tile_type->shape_[0]);
-        auto tile_cols = ir::As<ir::ConstInt>(tile_type->shape_[1]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, tile_rows && tile_cols)
-            << "debug.dump_tile Acc dump requires static physical tile shape";
-
-        auto offsets_tuple = ir::As<ir::MakeTuple>(op->args_[1]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, offsets_tuple)
-            << "debug.dump_tile second argument must be a tuple (offsets)";
-        auto shapes_tuple = ir::As<ir::MakeTuple>(op->args_[2]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, shapes_tuple)
-            << "debug.dump_tile third argument must be a tuple (shapes)";
-
-        const int debug_id = NextDebugDumpId();
-        const std::string row_off = cce::GetOperandAsCode(codegen, offsets_tuple->elements_[0]);
-        const std::string col_off = cce::GetOperandAsCode(codegen, offsets_tuple->elements_[1]);
-        const std::string row_shape = cce::GetOperandAsCode(codegen, shapes_tuple->elements_[0]);
-        const std::string col_shape = cce::GetOperandAsCode(codegen, shapes_tuple->elements_[1]);
-        const std::string dtype_str = codegen.GetTypeString(tile_type->dtype_);
-        const std::string requested_row = "__debug_dump_acc_rrow_" + std::to_string(debug_id);
-        const std::string requested_col = "__debug_dump_acc_rcol_" + std::to_string(debug_id);
-        const std::string valid_row = "__debug_dump_acc_vrow_" + std::to_string(debug_id);
-        const std::string valid_col = "__debug_dump_acc_vcol_" + std::to_string(debug_id);
-        const std::string row_idx = "__debug_dump_acc_r_" + std::to_string(debug_id);
-        const std::string col_idx = "__debug_dump_acc_c_" + std::to_string(debug_id);
-        const std::string debug_val = "__debug_dump_acc_val_" + std::to_string(debug_id);
-        const std::string gm_buf = "__debug_dump_acc_gm_" + std::to_string(debug_id);
-        const std::string cc_src = "__debug_dump_acc_cc_" + std::to_string(debug_id);
-
-        codegen.Emit("pipe_barrier(PIPE_ALL);");
-        codegen.Emit("{");
-        codegen.Emit("  __gm__ " + dtype_str + "* " + gm_buf + " = reinterpret_cast<__gm__ " + dtype_str + "*>(" +
-                     workspace_ptr + ");");
-        codegen.Emit("  auto " + cc_src + " = " + src + ".data();");
-        codegen.Emit("  constexpr uint16_t __m = " + std::to_string(tile_rows->value_) + ";");
-        codegen.Emit("  constexpr uint16_t __n = " + std::to_string(tile_cols->value_) + ";");
-        codegen.Emit("  constexpr uint16_t __src_stride = (__m + 15u) / 16u * 16u;");
-        codegen.Emit("  constexpr uint16_t __c0 = 16;");
-        codegen.Emit("  constexpr uint16_t __nd_num = 1;");
-        codegen.Emit("  constexpr uint16_t __src_nd_stride = static_cast<uint16_t>(__src_stride * __n * __c0);");
-        codegen.Emit("  constexpr uint16_t __dst_nd_stride = static_cast<uint16_t>(__m * __n);");
-        codegen.Emit("  uint64_t __xm = ((uint64_t)(__n & 0xfff) << 4) | ((uint64_t)(__m & 0xffff) << 16) | "
-                     "((uint64_t)(__n) << 32);");
-        codegen.Emit("  uint64_t __xt = (uint64_t)__src_stride | ((uint64_t)1 << 43);");
-        codegen.Emit("  uint64_t __cfg = (uint64_t)__nd_num | ((uint64_t)(__src_nd_stride & 0xffff) << 16) | "
-                     "((uint64_t)(__dst_nd_stride & 0xffff) << 32);");
-        codegen.Emit("  set_nd_para(__cfg);");
-        codegen.Emit("  copy_matrix_cc_to_gm(" + gm_buf + ", " + cc_src + ", __xm, __xt);");
-        codegen.Emit("}");
-        codegen.Emit("pipe_barrier(PIPE_ALL);");
-
-        codegen.Emit("int " + requested_row + " = " + row_shape + ";");
-        codegen.Emit("if (" + requested_row + " < 0) " + requested_row + " = 0;");
-        codegen.Emit("int " + requested_col + " = " + col_shape + ";");
-        codegen.Emit("if (" + requested_col + " < 0) " + requested_col + " = 0;");
-        codegen.Emit("int " + valid_row + " = " + requested_row + ";");
-        codegen.Emit("if (" + valid_row + " > " + std::to_string(tile_rows->value_) + " - (" + row_off + ")) " +
-                     valid_row + " = " + std::to_string(tile_rows->value_) + " - (" + row_off + ");");
-        codegen.Emit("if (" + valid_row + " < 0) " + valid_row + " = 0;");
-        codegen.Emit("int " + valid_col + " = " + requested_col + ";");
-        codegen.Emit("if (" + valid_col + " > " + std::to_string(tile_cols->value_) + " - (" + col_off + ")) " +
-                     valid_col + " = " + std::to_string(tile_cols->value_) + " - (" + col_off + ");");
-        codegen.Emit("if (" + valid_col + " < 0) " + valid_col + " = 0;");
-
-        codegen.Emit("pypto_printf(\"=== [TPRINT Acc Tile Window] Data Type: %s, Layout: NZ, TileType: Acc "
-                     "===\\n\", "
-                     "__pypto_dtype_name<" +
-                     dtype_str + ">());");
-        codegen.Emit("pypto_printf(\"  Source Shape: [%d, %d], Window Offsets: [%d, %d], Requested Shape: "
-                     "[%d, %d], "
-                     "Valid Shape: [%d, %d]\\n\", " +
-                     std::to_string(tile_rows->value_) + ", " + std::to_string(tile_cols->value_) +
-                     ", static_cast<int>(" + row_off + "), static_cast<int>(" + col_off + "), " + requested_row + ", " +
-                     requested_col + ", " + valid_row + ", " + valid_col + ");");
-
-        codegen.Emit("{");
-        codegen.Emit("  __gm__ " + dtype_str + "* __ws = reinterpret_cast<__gm__ " + dtype_str + "*>(" + workspace_ptr +
-                     ");");
-        codegen.Emit("  for (int " + row_idx + " = 0; " + row_idx + " < " + valid_row + "; ++" + row_idx + ") {");
-        codegen.Emit("    for (int " + col_idx + " = 0; " + col_idx + " < " + valid_col + "; ++" + col_idx + ") {");
-        codegen.Emit("      " + dtype_str + " " + debug_val + " = *(__ws + (" + row_idx + " + (" + row_off + ")) * " +
-                     std::to_string(tile_cols->value_) + " + (" + col_idx + " + (" + col_off + ")));");
-        codegen.Emit("      __pypto_print_val(" + debug_val + ");");
-        codegen.Emit("    }");
-        codegen.Emit("    pypto_printf(\"\\n\");");
-        codegen.Emit("  }");
-        codegen.Emit("}");
-        return "";
-    }
-
-    if (op->args_.size() == 1) {
-        codegen.Emit("TPRINT(" + src + ");");
-        return "";
-    }
-
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1 || op->args_.size() == 3)
+        << "debug.dump_tile requires 1 argument (tile) or 3 arguments (tile, offsets, shapes), but got "
+        << op->args_.size();
+    const std::string src = cce::GetOperandAsCode(codegen, op->args_[0]);
     auto tile_type = ir::As<ir::TileType>(op->args_[0]->GetType());
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tile_type) << "debug.dump_tile first argument must be TileType";
     PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, tile_type->shape_.size() == 2)
         << "debug.dump_tile CCE lowering currently only supports 2D tiles";
-    auto offsets_tuple = ir::As<ir::MakeTuple>(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, offsets_tuple)
-        << "debug.dump_tile second argument must be a tuple (offsets)";
-    auto shapes_tuple = ir::As<ir::MakeTuple>(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, shapes_tuple)
-        << "debug.dump_tile third argument must be a tuple (shapes)";
-
-    auto tile_rows = ir::As<ir::ConstInt>(tile_type->shape_[0]);
-    auto tile_cols = ir::As<ir::ConstInt>(tile_type->shape_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, tile_rows && tile_cols)
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE,
+                      ir::As<ir::ConstInt>(tile_type->shape_[0]) && ir::As<ir::ConstInt>(tile_type->shape_[1]))
         << "debug.dump_tile CCE lowering requires static physical tile shape";
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, tile_type->memref_.has_value())
+        << "debug.dump_tile requires tile to have a memref";
+
+    std::string row_offset = "0";
+    std::string col_offset = "0";
+    std::string rows = codegen.GetExprAsCode(tile_type->shape_[0]);
+    std::string cols = codegen.GetExprAsCode(tile_type->shape_[1]);
+    if (op->args_.size() == 3) {
+        auto offsets = ir::As<ir::MakeTuple>(op->args_[1]);
+        auto shapes = ir::As<ir::MakeTuple>(op->args_[2]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, offsets && shapes)
+            << "debug.dump_tile offsets and shapes must be tuples";
+        row_offset = codegen.GetExprAsCode(offsets->elements_[0]);
+        col_offset = codegen.GetExprAsCode(offsets->elements_[1]);
+        rows = codegen.GetExprAsCode(shapes->elements_[0]);
+        cols = codegen.GetExprAsCode(shapes->elements_[1]);
+    }
 
     const int debug_id = NextDebugDumpId();
-    const std::string requested_row = "__debug_dump_tile_requested_row_" + std::to_string(debug_id);
-    const std::string requested_col = "__debug_dump_tile_requested_col_" + std::to_string(debug_id);
-    const std::string src_valid_row = "__debug_dump_tile_src_valid_row_" + std::to_string(debug_id);
-    const std::string src_valid_col = "__debug_dump_tile_src_valid_col_" + std::to_string(debug_id);
-    const std::string valid_row = "__debug_dump_tile_valid_row_" + std::to_string(debug_id);
-    const std::string valid_col = "__debug_dump_tile_valid_col_" + std::to_string(debug_id);
-    const std::string row_idx = "__debug_dump_tile_r_" + std::to_string(debug_id);
-    const std::string col_idx = "__debug_dump_tile_c_" + std::to_string(debug_id);
-    const std::string row_off = cce::GetOperandAsCode(codegen, offsets_tuple->elements_[0]);
-    const std::string col_off = cce::GetOperandAsCode(codegen, offsets_tuple->elements_[1]);
-    const std::string row_shape = cce::GetOperandAsCode(codegen, shapes_tuple->elements_[0]);
-    const std::string col_shape = cce::GetOperandAsCode(codegen, shapes_tuple->elements_[1]);
-    const std::string debug_val = "__debug_dump_tile_val_" + std::to_string(debug_id);
+    const auto tile_layout = cce::GetTileTensorLayout(tile_type->hardwareInfo_.value_or(ir::HardwareInfo{}));
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_FORMAT, tile_layout.has_value())
+        << "debug.dump_tile has an unsupported Tile layout";
+    const std::string layout_name = ir::EnumToString(tile_layout.value());
+    const std::string layout = "pypto::aicore::DumpLayout::" + layout_name.substr(layout_name.find("::") + 2);
 
-    codegen.Emit("pipe_barrier(PIPE_ALL);");
-    codegen.Emit("int " + requested_row + " = " + row_shape + ";");
-    codegen.Emit("if (" + requested_row + " < 0) " + requested_row + " = 0;");
-    codegen.Emit("int " + requested_col + " = " + col_shape + ";");
-    codegen.Emit("if (" + requested_col + " < 0) " + requested_col + " = 0;");
-    codegen.Emit("int " + src_valid_row + " = " + src + ".GetValidRow() - (" + row_off + ");");
-    codegen.Emit("if (" + src_valid_row + " < 0) " + src_valid_row + " = 0;");
-    codegen.Emit("int " + src_valid_col + " = " + src + ".GetValidCol() - (" + col_off + ");");
-    codegen.Emit("if (" + src_valid_col + " < 0) " + src_valid_col + " = 0;");
-    codegen.Emit("int " + valid_row + " = " + requested_row + ";");
-    codegen.Emit("if (" + valid_row + " > " + src_valid_row + ") " + valid_row + " = " + src_valid_row + ";");
-    codegen.Emit("if (" + valid_row + " < 0) " + valid_row + " = 0;");
-    codegen.Emit("if (" + valid_row + " > " + std::to_string(tile_rows->value_) + ") " + valid_row + " = " +
-                 std::to_string(tile_rows->value_) + ";");
-    codegen.Emit("int " + valid_col + " = " + requested_col + ";");
-    codegen.Emit("if (" + valid_col + " > " + src_valid_col + ") " + valid_col + " = " + src_valid_col + ";");
-    codegen.Emit("if (" + valid_col + " < 0) " + valid_col + " = 0;");
-    codegen.Emit("if (" + valid_col + " > " + std::to_string(tile_cols->value_) + ") " + valid_col + " = " +
-                 std::to_string(tile_cols->value_) + ";");
-    codegen.Emit("pypto_printf(\"=== [TPRINT Tile Window] Data Type: %s, Layout: %s, TileType: %s ===\\n\", "
-                 "__pypto_dtype_name<" +
-                 codegen.GetTypeString(tile_type->dtype_) +
-                 ">(), pto::GetLayoutName(std::remove_reference_t<decltype(" + src +
-                 ")>::BFractal, std::remove_reference_t<decltype(" + src + ")>::SFractal), \"Vec\");");
-    codegen.Emit("pypto_printf(\"  Source Shape: [%d, %d], Window Offsets: [%d, %d], Requested Shape: "
-                 "[%d, %d], "
-                 "Valid Shape: [%d, %d]\\n\", " +
-                 std::to_string(tile_rows->value_) + ", " + std::to_string(tile_cols->value_) + ", static_cast<int>(" +
-                 row_off + "), static_cast<int>(" + col_off + "), " + requested_row + ", " + requested_col + ", " +
-                 valid_row + ", " + valid_col + ");");
-    codegen.Emit("for (int " + row_idx + " = 0; " + row_idx + " < " + valid_row + "; ++" + row_idx + ") {");
-    codegen.Emit("  for (int " + col_idx + " = 0; " + col_idx + " < " + valid_col + "; ++" + col_idx + ") {");
-    codegen.Emit("    auto __debug_src_offset = pto::GetTileOffset<std::remove_reference_t<decltype(" + src + ")>>(" +
-                 row_idx + " + (" + row_off + "), " + col_idx + " + (" + col_off + "));");
-    codegen.Emit("    auto " + debug_val + " = " + src + ".data()[__debug_src_offset];");
-    codegen.Emit("    __pypto_print_val(" + debug_val + ");");
-    codegen.Emit("  }");
-    codegen.Emit("  pypto_printf(\"\\n\");");
-    codegen.Emit("}");
+    EmitDumpMetadataCCE(codegen, op, "dump_tile");
+    codegen.Emit("PYPTO_DUMP_TILE_WINDOW(" + layout + ", " +
+                 JoinExpressions({src, std::to_string(debug_id), row_offset, col_offset, rows, cols}, ", ") + ");");
     return "";
 }
 
@@ -1725,15 +1313,15 @@ static std::string MakeDebugAssertCodegenCCE(const ir::CallPtr& op, codegen::Cod
     if (op->GetKwarg<bool>("show_location", false)) {
         std::string location = debug_printf::FormatDebugLocation(op->span_);
         if (!location.empty()) {
-            codegen.Emit("  pypto_printf(\"" +
+            codegen.Emit("  pypto::aicore::printf(\"" +
                          debug_printf::EscapeStringLiteral(location + " Assertion failed: " + condition_text + "\n") +
                          "\");");
         } else {
-            codegen.Emit("  pypto_printf(\"" +
+            codegen.Emit("  pypto::aicore::printf(\"" +
                          debug_printf::EscapeStringLiteral("Assertion failed: " + condition_text + "\n") + "\");");
         }
     } else {
-        codegen.Emit("  pypto_printf(\"" +
+        codegen.Emit("  pypto::aicore::printf(\"" +
                      debug_printf::EscapeStringLiteral("Assertion failed: " + condition_text + "\n") + "\");");
     }
 
@@ -1746,7 +1334,7 @@ static std::string MakeDebugAssertCodegenCCE(const ir::CallPtr& op, codegen::Cod
             PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalar_type) << "debug.assert argument must be ScalarType";
             arg_dtypes.emplace_back(scalar_type->dtype_);
         }
-        codegen.Emit("  " + BuildAscPrintfCall(format, args, arg_dtypes));
+        codegen.Emit("  " + BuildPtoPrintfCall(format, args, arg_dtypes));
     }
 
     codegen.Emit("}");

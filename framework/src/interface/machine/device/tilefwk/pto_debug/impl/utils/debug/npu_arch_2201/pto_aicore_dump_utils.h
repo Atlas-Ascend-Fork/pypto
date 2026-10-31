@@ -16,7 +16,7 @@
 #define IMPL_UTILS_DEBUG_NPU_ARCH_2201_PTO_AICORE_DUMP_UTILS_H
 
 #include "impl/utils/debug/pto_debug_utils.h"
-namespace __pto_aicore {
+namespace pypto::aicore {
 
 __aicore__ inline void get_matrix_copy_param(uint32_t dumpSize, uint16_t& n, uint16_t& m, uint16_t& dstStrideDstD,
                                              uint16_t& srcStride)
@@ -96,7 +96,7 @@ __aicore__ inline uint32_t mem_copy_fbuf_to_gm_impl(__gm__ T* dst, __fbuf__ T* s
     return 1;
 }
 
-} // namespace __pto_aicore
+} // namespace pypto::aicore
 
 #if defined(__UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_AICORE_DUMP_UTILS__)
 #undef __PTO_INCLUDE_INTERNAL_HEADERS__

@@ -10,6 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 """ """
 
+import ctypes
 import enum
 from functools import wraps
 import logging
@@ -36,6 +37,43 @@ _DEFAULT_KEY = 'DEFAULT'
 # Generic option group prefix (mirrors GENERIC_PREFIX in
 # framework/src/interface/configs/config_manager_ng.h).
 _GENERIC_PREFIX = "generic."
+
+_DUMP_FIFO_OPTION = "debug.simd_printf_fifo_size_per_core"
+_ACL_ERROR_NONE = 0
+_ACL_ERROR_REPEAT_INITIALIZE = 100002
+_ACL_RT_DEV_LIMIT_SIMD_PRINTF_FIFO_SIZE_PER_CORE = 3
+_DUMP_FIFO_MIN_SIZE = 1024
+_DUMP_FIFO_MAX_SIZE = 64 * 1024 * 1024
+_acl_runtime = None
+
+
+def _apply_dump_fifo_option(opts) -> None:
+    size = opts.get(_DUMP_FIFO_OPTION)
+    if size is None or size == 0:
+        return
+    if isinstance(size, bool) or not isinstance(size, int):
+        raise TypeError(f"simd_printf_fifo_size_per_core must be an integer, but got {type(size).__name__}")
+    if not _DUMP_FIFO_MIN_SIZE <= size <= _DUMP_FIFO_MAX_SIZE or size % 8 != 0:
+        raise ValueError(
+            "simd_printf_fifo_size_per_core must be divisible by 8 and in the range [1 KB, 64 MB]"
+        )
+
+    global _acl_runtime
+    if _acl_runtime is None:
+        runtime = ctypes.CDLL("libascendcl.so")
+        runtime.aclInit.argtypes = [ctypes.c_char_p]
+        ret = runtime.aclInit(None)
+        if ret not in (_ACL_ERROR_NONE, _ACL_ERROR_REPEAT_INITIALIZE):
+            raise RuntimeError(f"aclInit failed with error code {ret}")
+        runtime.aclrtDeviceSetLimit.argtypes = [ctypes.c_int, ctypes.c_size_t]
+        _acl_runtime = runtime
+
+    ret = _acl_runtime.aclrtDeviceSetLimit(_ACL_RT_DEV_LIMIT_SIMD_PRINTF_FIFO_SIZE_PER_CORE, size)
+    if ret != _ACL_ERROR_NONE:
+        raise RuntimeError(
+            f"aclrtDeviceSetLimit failed with error code {ret}; "
+            "simd_printf_fifo_size_per_core must be set before the first NPU operation"
+        )
 
 # Maximum allowed scope_id (ooo_scope or atomic_scope). Combined with _ATOMIC_SCOPE_ENCODE_BASE below,
 # max user encoding = 10000 * 10000 + 9999 = 100,009,999. C++ side VF_CLUSTER_ID_START
@@ -577,6 +615,7 @@ def set_debug_options(
     *,
     compile_debug_mode: Optional[int] = None,
     runtime_debug_mode: Optional[int] = None,
+    simd_printf_fifo_size_per_core: Optional[int] = None,
     dump_pass_graph: Optional[List[str]] = None,
 ) -> None:
     """
@@ -603,6 +642,11 @@ def set_debug_options(
            at the control-flow entry for every explicitly registered, normalized
            `assume_divisible` expression; compiler-derived expressions that were
            not explicitly registered are not checked.
+
+    simd_printf_fifo_size_per_core : int
+        Per-AIC/AIV-core printf and dump FIFO size in bytes. A non-zero value must
+        be an 8-byte multiple from 1 KB to 64 MB and must be set before the first
+        NPU operation. Zero keeps the Runtime default.
 
     dump_pass_graph : List[str]
         Pass identifiers to dump computation graph and print IR. Empty list disables it.
@@ -932,6 +976,7 @@ def set_options(
     opts = temp_opts.prepare_options()
     frame = sys._getframe(1)
     pypto_impl.SetScope(opts, frame.f_code.co_filename, frame.f_lineno)
+    _apply_dump_fifo_option(opts)
 
 
 def get_options_tree():

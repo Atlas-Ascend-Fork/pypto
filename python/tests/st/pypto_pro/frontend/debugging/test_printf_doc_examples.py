@@ -24,6 +24,7 @@ import pypto
 
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
+DEBUG_BLOCK_DIM = 1
 
 
 def _check_npu():
@@ -111,7 +112,7 @@ def test_printf_doc_examples():
     logging.info("------------test_printf_doc_examples--------------")
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     tiling = OpTiling(valid_size=128)
-    printf_doc_examples_kernel[None, 2](out, True, 32, 3.14, 0x1234, 5, tiling)
+    printf_doc_examples_kernel[None, DEBUG_BLOCK_DIM](out, True, 32, 3.14, 0x1234, 5, tiling)
     torch.npu.synchronize()
     assert out.tolist()[0] == 1, f"got {out.tolist()}"
     logging.info("printf_doc_examples passed!")

@@ -17,7 +17,7 @@
 
 #include "impl/utils/debug/pto_debug_utils.h"
 #include "impl/utils/debug/npu_arch_9201/pto_type_conversion_utils.h"
-namespace __pto_aicore {
+namespace pypto::aicore {
 
 template <typename T>
 __aicore__ inline void set_scalar_param_impl(__gm__ uint8_t* paramAddr, uint32_t paramIdx, T scalar)
@@ -43,7 +43,7 @@ __aicore__ inline void set_scalar_param_impl(__gm__ uint8_t* paramAddr, uint32_t
     pto_entire_dcci((__gm__ uint64_t*)scalarAddr);
 }
 
-} // namespace __pto_aicore
+} // namespace pypto::aicore
 
 #if defined(__UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_AICORE_PRINTF_UTILS__)
 #undef __PTO_INCLUDE_INTERNAL_HEADERS__

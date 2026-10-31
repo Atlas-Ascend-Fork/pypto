@@ -839,13 +839,16 @@ TEST(BackendCCEBlockOutOps, GeneratesInitOutputDynamicShapeFallback)
 
 TEST(BackendCCEBlockOutOps, GeneratesDumpTileThroughFullCodegen)
 {
-    auto tile = MakeVar("tile", MakeTileType());
+    auto tile = MakeVar(
+        "tile", MakeTileType({16, 16}, ir::DataType::FP16, std::make_optional(MakeMemRef(ir::MemorySpace::Vec))));
     auto dump = MakeCall("debug.dump_tile", {tile});
     const auto generated = GenerateKernel(
         {MakeTileAssign(tile), std::make_shared<const ir::EvalStmt>(dump, ir::Span::Unknown())}, {},
         ir::SectionKind::Vector);
 
-    EXPECT_CONTAINS(generated, "TPRINT(tile.tile);");
+    EXPECT_CONTAINS(generated, "PYPTO_DUMP_TILE_WINDOW(");
+    EXPECT_EQ(generated.find("#include <utils/debug/pto_dump.h>"), std::string::npos);
+    EXPECT_CONTAINS(generated, "#include <pypto_dump.h>");
 }
 
 TEST(BackendCCEBlockOutOps, MergedLoadPreservesStaticInnerExtent)

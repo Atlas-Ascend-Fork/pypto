@@ -17,19 +17,16 @@ from collections.abc import Sequence
 from typing import Any
 
 from pypto.pypto_impl import ir as _ir_core
-from pypto.pypto_impl.ir import Call, ConstInt, DataType, Expr, ScalarType, Span, TensorType, TileType
+from pypto.pypto_impl.ir import Call, DataType, Expr, ScalarType, Span, TensorType, TileType
 
 from ..._errors import InvalidArgument, InvalidShape, InvalidType, InvalidVal, NotSupported, argument_span
-from .._utils import _get_span_or_capture, _to_make_tuple
+from .._utils import _const_int_value, _get_span_or_capture, _to_make_tuple, require_int
 from ._op_registry import op_impl
 
 _INTEGER_CONVERSIONS = {"d", "i", "u", "x"}
 _FLOAT_CONVERSIONS = {"f"}
 _POINTER_CONVERSIONS = {"p"}
 _SUPPORTED_CONVERSIONS = _INTEGER_CONVERSIONS | _FLOAT_CONVERSIONS | _POINTER_CONVERSIONS
-_INTEGER_DTYPE_NAMES = ("INT8", "INT16", "INT32", "INT64", "UINT8", "UINT16", "UINT32", "UINT64")
-_INTEGER_DTYPES = tuple(getattr(DataType, name) for name in _INTEGER_DTYPE_NAMES if hasattr(DataType, name))
-
 _SIGNED_INTEGER_DTYPES = tuple(
     getattr(DataType, dtype_name) for dtype_name in ("INT8", "INT16", "INT32", "INT64") if hasattr(DataType, dtype_name)
 )
@@ -40,11 +37,7 @@ _UNSIGNED_INTEGER_DTYPES = tuple(
     if hasattr(DataType, dtype_name)
 )
 
-
-def _is_integer_dtype(dtype: DataType) -> bool:
-    if hasattr(dtype, "IsInt"):
-        return dtype.IsInt()
-    return dtype in _INTEGER_DTYPES
+_UNSUPPORTED_DUMP_DTYPES = (DataType.INT4, DataType.UINT4, DataType.FP4, DataType.HF4)
 
 
 def _is_signed_integer_dtype(dtype: DataType) -> bool:
@@ -153,214 +146,33 @@ def _validate_printf_arguments(
             raise InvalidVal(f"debug.{op_name} conversion '{spec}' requires FP32 scalar, but got {scalar_type.dtype}")
 
 
-def dump_tensor(
-    tensor: Expr,
-    offsets: Sequence[int | Expr] | _ir_core.MakeTuple | None = None,
-    shapes: Sequence[int | Expr] | _ir_core.MakeTuple | None = None,
-    loc: bool = False,
-    span: Span | None = None,
-    flag: str | None = None,
-) -> Call:
-    """Print a tensor or tensor window for debugging.
-
-    Supported forms:
-    - Full tensor dump: ``dump_tensor(tensor)``
-    - Full dumps with dynamic tensor shapes
-    - Window dump with dynamic ``offsets``
-    - Window dump with dynamic ``shapes``
-
-    Backend support:
-    - full dump and window dump support dynamic ``offsets``/``shapes``
-
-    Current limitation:
-    - FP4 tensor dtypes are not supported
-    - Windowed dumps still require the innermost tensor stride to be statically 1
-    - An NZ window applies the fractal layout to its last two dimensions: rows
-      must be divisible by 16 and columns/column offset by C0; leading dimensions
-      are printed batch by batch and dynamic values must satisfy the same constraints at runtime
-    """
-    actual_span = _get_span_or_capture(span)
-    show_location = _normalize_location_flag(loc, "dump_tensor")
-    if flag is not None and not isinstance(flag, str):
-        raise InvalidType(f"debug.dump_tensor requires str flag, but got {type(flag).__name__}")
-    tensor_type = tensor.type
-    if not isinstance(tensor_type, TensorType):
-        raise InvalidType(f"debug.dump_tensor requires TensorType input, but got {type(tensor_type).__name__}")
-    if tensor_type.dtype in (DataType.FP4, DataType.FP4E2M1, DataType.FP4E1M2):
-        raise NotSupported(f"debug.dump_tensor does not support FP4 dtype {tensor_type.dtype}")
-
-    if (offsets is None) != (shapes is None):
-        raise InvalidArgument("debug.dump_tensor offsets and shapes must be provided together")
-
-    rank = len(tensor_type.shape)
-    if offsets is None and shapes is None:
-        offsets_tuple = _to_make_tuple([0] * rank, actual_span)
-        shapes_tuple = _to_make_tuple(tensor_type.shape, actual_span)
-    else:
-        if tensor_type.tensor_view is not None and tensor_type.tensor_view.stride:
-            last_stride = tensor_type.tensor_view.stride[-1]
-            if not isinstance(last_stride, ConstInt):
-                raise InvalidShape(
-                    "debug.dump_tensor windowed mode requires the innermost stride to be statically 1"
-                )
-            if last_stride.value != 1:
-                raise InvalidShape(
-                    f"debug.dump_tensor windowed mode requires innermost stride == 1, got {last_stride.value}"
-                )
-        offsets_tuple = _to_make_tuple(offsets, actual_span)
-        shapes_tuple = _to_make_tuple(shapes, actual_span)
-
-    if len(offsets_tuple.elements) != rank or len(shapes_tuple.elements) != rank:
-        raise InvalidShape(
-            f"debug.dump_tensor offsets/shapes must match tensor rank {rank}, got "
-            f"{len(offsets_tuple.elements)} offsets and {len(shapes_tuple.elements)} shapes"
-        )
-
-    for idx, shape_expr in enumerate(shapes_tuple.elements):
-        if isinstance(shape_expr, ConstInt) and shape_expr.value <= 0:
-            raise InvalidShape(f"debug.dump_tensor shape at axis {idx} must be positive, got {shape_expr.value}")
-
-    dump_kwargs: dict[str, Any] = {"show_location": show_location}
-    if flag:
-        dump_kwargs["dump_flag"] = flag
-    return _ir_core.create_op_call(
-        "debug.dump_tensor",
-        [tensor, offsets_tuple, shapes_tuple],
-        dump_kwargs,
-        actual_span,
-    )
-
-
 def _validate_dump_offsets_shapes(
     offsets_tuple: _ir_core.MakeTuple,
     shapes_tuple: _ir_core.MakeTuple,
-    rank: int,
+    input_shape: Sequence[Expr],
     op_name: str,
 ) -> None:
+    rank = len(input_shape)
     if len(offsets_tuple.elements) != rank or len(shapes_tuple.elements) != rank:
         raise InvalidShape(
-            f"debug.{op_name} offsets/shapes must match tile rank {rank}, got "
+            f"debug.{op_name} offsets/shapes must match input rank {rank}, got "
             f"{len(offsets_tuple.elements)} offsets and {len(shapes_tuple.elements)} shapes"
         )
-    for idx, shape_expr in enumerate(shapes_tuple.elements):
-        if isinstance(shape_expr, ConstInt) and shape_expr.value <= 0:
-            raise InvalidShape(f"debug.{op_name} shape at axis {idx} must be positive, got {shape_expr.value}")
-
-
-def dump_tile(
-    tile: Expr,
-    offsets: Sequence[int | Expr] | _ir_core.MakeTuple | None = None,
-    shapes: Sequence[int | Expr] | _ir_core.MakeTuple | None = None,
-    workspace: Expr | None = None,
-    loc: bool = False,
-    span: Span | None = None,
-    section: _ir_core.SectionKind | None = None,
-    flag: str | None = None,
-) -> Call:
-    """Print a tile or tile window for debugging.
-
-    Supported forms:
-    - Full tile dump: ``dump_tile(tile)``
-    - Full dump of tiles with dynamic valid-shape
-    - Window dump with dynamic ``offsets``
-    - Window dump with dynamic ``shapes``
-    - Acc tile dump with ``workspace`` (GM temporary space)
-
-    Backend support:
-    - window ``shapes`` may be dynamic
-
-    Current limitations:
-    - Tile windows are currently 2D-only
-    - Tile printing requires a printable ``vec`` tile; CCE window dumps handle
-      this by copying the requested window into a temporary vec tile before
-      printing
-    - Acc tile window dump is not yet supported (full dump only)
-    """
-    actual_span = _get_span_or_capture(span)
-    show_location = _normalize_location_flag(loc, "dump_tile")
-    if flag is not None and not isinstance(flag, str):
-        raise InvalidType(f"debug.dump_tile requires str flag, but got {type(flag).__name__}")
-    tile_type = tile.type
-    if not isinstance(tile_type, TileType):
-        raise InvalidType(f"debug.dump_tile requires TileType input, but got {type(tile_type).__name__}")
-    if section is not None:
-        _validate_dump_memory_section(tile_type, section, actual_span)
-    if (offsets is None) != (shapes is None):
-        raise InvalidArgument("debug.dump_tile offsets and shapes must be provided together")
-
-    if workspace is not None:
-        ws_type = workspace.type
-        if not isinstance(ws_type, TensorType):
-            raise InvalidType(f"debug.dump_tile workspace must be TensorType, but got {type(ws_type).__name__}")
-
-    rank = len(tile_type.shape)
-    dump_kwargs: dict[str, Any] = {"show_location": show_location}
-    if flag:
-        dump_kwargs["dump_flag"] = flag
-    if workspace is not None:
-        if offsets is None and shapes is None:
-            offsets_tuple = _to_make_tuple([0] * rank, actual_span)
-            shapes_tuple = _to_make_tuple(tile_type.shape, actual_span)
-        else:
-            offsets_tuple = _to_make_tuple(offsets, actual_span)
-            shapes_tuple = _to_make_tuple(shapes, actual_span)
-        _validate_dump_offsets_shapes(offsets_tuple, shapes_tuple, rank, "dump_tile")
-        return _ir_core.create_op_call(
-            "debug.dump_tile",
-            [tile, offsets_tuple, shapes_tuple, workspace],
-            dump_kwargs,
-            actual_span,
+    for idx, (offset_expr, shape_expr, input_dim) in enumerate(
+        zip(offsets_tuple.elements, shapes_tuple.elements, input_shape, strict=True)
+    ):
+        input_extent = _const_int_value(input_dim)
+        offset_value = require_int(
+            offset_expr,
+            subject=f"debug.{op_name} offset at axis {idx}",
+            lower_bound=0,
+            upper_bound=input_extent - 1 if input_extent is not None else None,
         )
-
-    if offsets is None and shapes is None:
-        return _ir_core.create_op_call("debug.dump_tile", [tile], dict(dump_kwargs), actual_span)
-
-    offsets_tuple = _to_make_tuple(offsets, actual_span)
-    shapes_tuple = _to_make_tuple(shapes, actual_span)
-    _validate_dump_offsets_shapes(offsets_tuple, shapes_tuple, rank, "dump_tile")
-
-    return _ir_core.create_op_call(
-        "debug.dump_tile",
-        [tile, offsets_tuple, shapes_tuple],
-        dict(dump_kwargs),
-        actual_span,
-    )
-
-
-def _validate_dump_memory_section(data_type, section, span: Span | None = None) -> None:
-    """Validate that dumping ``data_type`` is legal in ``section``.
-
-    GM tensors may be dumped from either section; on-chip tiles must live in
-    Vec (UB) inside a Vector section and Acc (L0C) inside a Cube section.
-    """
-    if isinstance(data_type, TensorType):
-        return
-    if not isinstance(data_type, TileType):
-        return
-    mem = getattr(data_type, "target_memory", None)
-    if mem is None and data_type.memref is not None:
-        mem = data_type.memref.memory_space_
-    if mem is None:
-        return
-    if section == _ir_core.SectionKind.Vector:
-        if mem == _ir_core.MemorySpace.Vec:
-            return
-
-        raise NotSupported(
-            f"pl.dump_data of a {mem.name} tile is not allowed in a Vector section; "
-            "only Vec (UB) tiles (and GM tensors) can be dumped there",
-            span=span,
-            hint="Move pl.dump_data into a 'with pl.section_cube():' block, or dump a Vec/UB tile.",
-        )
-    if section == _ir_core.SectionKind.Cube:
-        if mem == _ir_core.MemorySpace.Acc:
-            return
-
-        raise NotSupported(
-            f"pl.dump_data of a {mem.name} tile is not allowed in a Cube section; "
-            "only Acc (L0C) tiles (and GM tensors) can be dumped there",
-            span=span,
-            hint="Move pl.dump_data into a 'with pl.section_vector():' block, or dump an Acc/L0C tile.",
+        require_int(
+            shape_expr,
+            subject=f"debug.{op_name} shape at axis {idx}",
+            lower_bound=1,
+            upper_bound=input_extent - offset_value if input_extent is not None and offset_value is not None else None,
         )
 
 
@@ -374,24 +186,64 @@ def dump_data(
     section: _ir_core.SectionKind | None = None,
     flag: str | None = None,
 ) -> Call:
-    """Unified debug dump entry — dispatches to dump_tensor or dump_tile based on input type.
-
-    If *data* is a TensorType (GM tensor), delegates to :func:`dump_tensor`.
-    If *data* is a TileType (on-chip tile), delegates to :func:`dump_tile`.
-
-    All parameters are forwarded to the underlying function unchanged.
-    """
+    """Print a Tensor or Tile, or a logical window of it, for debugging."""
+    actual_span = _get_span_or_capture(span)
+    show_location = _normalize_location_flag(loc, "dump_data")
     data_type = data.type
     if flag is not None and not isinstance(flag, str):
         raise InvalidType(f"debug.dump_data requires str flag, but got {type(flag).__name__}")
-    if isinstance(data_type, TensorType):
-        if workspace is not None:
-            raise NotSupported("debug.dump_data: workspace is only valid for Tile inputs, not Tensor")
-        return dump_tensor(data, offsets, shapes, loc=loc, span=span, flag=flag)
-    elif isinstance(data_type, TileType):
-        return dump_tile(data, offsets, shapes, workspace=workspace, loc=loc, span=span, section=section, flag=flag)
-    else:
+    if not isinstance(data_type, (TensorType, TileType)):
         raise InvalidType(f"debug.dump_data requires Tensor or Tile input, but got {type(data_type).__name__}")
+    if data_type.dtype in _UNSUPPORTED_DUMP_DTYPES:
+        dtype_name = f"DT_{data_type.dtype.to_string().upper()}"
+        raise NotSupported(
+            f"debug.dump_data does not support {dtype_name}; use DT_FP4E2M1 or DT_FP4E1M2 for packed FP4 data"
+        )
+    if (offsets is None) != (shapes is None):
+        raise InvalidArgument("debug.dump_data offsets and shapes must be provided together")
+
+    dump_kwargs: dict[str, Any] = {"show_location": show_location}
+    if flag:
+        dump_kwargs["dump_flag"] = flag
+
+    if isinstance(data_type, TensorType):
+        op_name = "debug.dump_tensor"
+    else:
+        op_name = "debug.dump_tile"
+        if data_type.memref is None:
+            raise InvalidArgument("debug.dump_data requires Tile input to have an allocated memory space")
+        memory_space = data_type.memref.memory_space_
+        if memory_space in (
+            _ir_core.MemorySpace.Left,
+            _ir_core.MemorySpace.Right,
+            _ir_core.MemorySpace.ScaleLeft,
+            _ir_core.MemorySpace.ScaleRight,
+        ):
+            raise NotSupported(f"debug.dump_data does not support {memory_space.name} tiles")
+        if section == _ir_core.SectionKind.Vector and memory_space != _ir_core.MemorySpace.Vec:
+            raise NotSupported(
+                f"pl.dump_data of a {memory_space.name} tile is not allowed in a Vector section; "
+                "only Vec (UB) tiles can be dumped there",
+                span=actual_span,
+            )
+        if section == _ir_core.SectionKind.Cube and memory_space not in (
+            _ir_core.MemorySpace.Mat,
+            _ir_core.MemorySpace.Acc,
+            _ir_core.MemorySpace.Bias,
+            _ir_core.MemorySpace.Scaling,
+        ):
+            raise NotSupported(
+                f"pl.dump_data of a {memory_space.name} tile is not allowed in a Cube section",
+                span=actual_span,
+            )
+
+    operands = [data]
+    if offsets is not None:
+        offsets_tuple = _to_make_tuple(offsets, actual_span)
+        shapes_tuple = _to_make_tuple(shapes, actual_span)
+        _validate_dump_offsets_shapes(offsets_tuple, shapes_tuple, data_type.shape, "dump_data")
+        operands.extend([offsets_tuple, shapes_tuple])
+    return _ir_core.create_op_call(op_name, operands, dump_kwargs, actual_span)
 
 
 def printf(format_str: str, *args: Expr, loc: bool = False, span: Span | None = None) -> Call:

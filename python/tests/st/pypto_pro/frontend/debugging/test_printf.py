@@ -28,6 +28,7 @@ import pypto
 
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
+DEBUG_BLOCK_DIM = 1
 
 
 def _check_npu():
@@ -66,7 +67,7 @@ def test_printf_di():
     _check_npu()
     logging.info("------------test_printf_di--------------")
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
-    printf_di_kernel(out, True, -42, -1234, -56789, -1099511627776)
+    printf_di_kernel[None, DEBUG_BLOCK_DIM](out, True, -42, -1234, -56789, -1099511627776)
     torch.npu.synchronize()
     assert out.tolist()[0] == 1, f"got {out.tolist()}"
     logging.info("printf_di passed!")
@@ -94,7 +95,7 @@ def printf_u_kernel(
 def test_printf_u():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
-    printf_u_kernel(out, True, 250, 60000, 4000000000, 1099511627899)
+    printf_u_kernel[None, DEBUG_BLOCK_DIM](out, True, 250, 60000, 4000000000, 1099511627899)
     torch.npu.synchronize()
     assert out.tolist()[0] == 2, f"got {out.tolist()}"
 
@@ -117,7 +118,7 @@ def printf_f_kernel(
 def test_printf_f():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
-    printf_f_kernel(out, 3.25)
+    printf_f_kernel[None, DEBUG_BLOCK_DIM](out, 3.25)
     torch.npu.synchronize()
     assert out.tolist()[0] == 3, f"got {out.tolist()}"
 
@@ -143,7 +144,7 @@ def printf_x_kernel(
 def test_printf_x():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
-    printf_x_kernel(out, 0xAB, 0xCDEF, 0x89ABCDEF, 0x123456789ABCDEF0)
+    printf_x_kernel[None, DEBUG_BLOCK_DIM](out, 0xAB, 0xCDEF, 0x89ABCDEF, 0x123456789ABCDEF0)
     torch.npu.synchronize()
     assert out.tolist()[0] == 4, f"got {out.tolist()}"
 
@@ -168,7 +169,7 @@ def test_printf_ptr():
     logging.info("------------test_printf_ptr--------------")
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     data = torch.randn(16, device=ST_DEVICE, dtype=torch.float16)
-    printf_ptr_kernel(out, data)
+    printf_ptr_kernel[None, DEBUG_BLOCK_DIM](out, data)
     torch.npu.synchronize()
     assert out.tolist()[0] == 6, f"got {out.tolist()}"
     logging.info("printf_ptr passed!")
@@ -191,7 +192,7 @@ def printf_text_loc_kernel(
 def test_printf_text_loc():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
-    printf_text_loc_kernel(out)
+    printf_text_loc_kernel[None, DEBUG_BLOCK_DIM](out)
     torch.npu.synchronize()
     assert out.tolist()[0] == 5, f"got {out.tolist()}"
 
@@ -217,7 +218,7 @@ def test_printf_for_loop():
     _check_npu()
     logging.info("------------test_printf_for_loop--------------")
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
-    printf_for_loop_kernel(out)
+    printf_for_loop_kernel[None, DEBUG_BLOCK_DIM](out)
     torch.npu.synchronize()
     expected = torch.tensor([10], device=ST_DEVICE, dtype=torch.int32)
     assert torch.equal(out, expected), f"got {out.tolist()}, expected {expected.tolist()}"
@@ -250,7 +251,7 @@ def printf_if_else_kernel(
 def test_printf_if_else(flag, expected_value):
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
-    printf_if_else_kernel(out, flag)
+    printf_if_else_kernel[None, DEBUG_BLOCK_DIM](out, flag)
     torch.npu.synchronize()
     assert out.tolist()[0] == expected_value, f"got {out.tolist()}"
 
@@ -275,7 +276,7 @@ def printf_while_kernel(
 def test_printf_while():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
-    printf_while_kernel(out)
+    printf_while_kernel[None, DEBUG_BLOCK_DIM](out)
     torch.npu.synchronize()
     assert out.tolist()[0] == 4, f"got {out.tolist()}"
 
@@ -300,7 +301,7 @@ def printf_loc_combo_kernel(
 def test_printf_loc_combo():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
-    printf_loc_combo_kernel(out, 7, 1.5)
+    printf_loc_combo_kernel[None, DEBUG_BLOCK_DIM](out, 7, 1.5)
     torch.npu.synchronize()
     assert out.tolist()[0] == 7, f"got {out.tolist()}"
 
