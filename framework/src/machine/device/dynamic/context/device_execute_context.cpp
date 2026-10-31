@@ -323,21 +323,27 @@ void DeviceExecuteContext::DumpDeviceTask(uint64_t taskId, DynDeviceTask* device
 
 void DeviceExecuteContext::ProcessControlFlowCacheRecord(DynDeviceTask* dynTask)
 {
-    if (devProg->ctrlFlowCacheAnchor->IsRecording()) {
-        if (!devProg->ctrlFlowCacheAnchor->IsRecordingStopped()) {
-            devProg->ctrlFlowCacheAnchor->PredCountDataBackup(dynTask);
-            devProg->ctrlFlowCacheAnchor->ReadyQueueDataBackup(dynTask);
-            devProg->ctrlFlowCacheAnchor->DieReadyQueueDataBackup(dynTask);
-            devProg->ctrlFlowCacheAnchor->MixTaskDataBackup(dynTask);
-            devProg->ctrlFlowCacheAnchor->IncastOutcastAddrBackup(dynTask);
-            devProg->ctrlFlowCacheAnchor->TaskAddrBackupWorkspace(dynTask);
-            devProg->ctrlFlowCacheAnchor->RuntimeAddrBackup(slotContext.GetSlotList(),
-                                                            workspace.GetRuntimeOutcastTensorPool(), devProg->slotSize,
-                                                            devProg->memBudget.tensor.runtimeOutcastPoolSize,
-                                                            workspace.GetTensorAllocator(), devProg->GetParallelism());
-        }
-        devProg->ctrlFlowCacheAnchor->AppendDeviceTask(dynTask);
+    if (!devProg->ctrlFlowCacheAnchor->IsRecording()) {
+        return;
     }
+    auto* cache = devProg->ctrlFlowCacheAnchor;
+    if (!cache->IsRecordingStopped()) {
+        cache->PredCountDataBackup(dynTask);
+        cache->ReadyQueueDataBackup(dynTask);
+        cache->DieReadyQueueDataBackup(dynTask);
+        cache->MixTaskDataBackup(dynTask);
+        cache->IncastOutcastAddrBackup(dynTask);
+        cache->TaskAddrBackupWorkspace(dynTask);
+        /* Shadow (or any later backup) can exhaust the cache while this task is still being
+         * backed up. Append then drops it. The continuation snapshot must stay at the last
+         * task that actually lands in the cache, so live control flow resumes there. */
+        if (!cache->IsRecordingStopped()) {
+            cache->RuntimeAddrBackup(slotContext.GetSlotList(), workspace.GetRuntimeOutcastTensorPool(),
+                                     devProg->slotSize, devProg->memBudget.tensor.runtimeOutcastPoolSize,
+                                     workspace.GetTensorAllocator(), devProg->GetParallelism());
+        }
+    }
+    cache->AppendDeviceTask(dynTask);
 }
 
 void DeviceExecuteContext::CalcControlMaxAicore()
