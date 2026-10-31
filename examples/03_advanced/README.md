@@ -1,6 +1,6 @@
 # 高级样例 (Advanced Examples)
 
-本目录包含 PyPTO 的高级开发样例，展示了复杂的架构实现、高级设计模式以及系统级的性能调优。
+本目录包含 PyPTO 与 PyPTO Pro 的高级开发样例，展示了复杂的架构实现、高级设计模式以及系统级的性能调优。
 
 ## 样例说明
 
@@ -32,6 +32,12 @@
    - 将 pypto kernel 声明为 `torch.ops` 自定义算子，导出为 ONNX 制品。
    - 从导出的 ONNX 构建可部署的 `libcust_opapi.so`。
 
+### 6. SuperKernel 用法 ([superkernel](./superkernel))
+
+- **PyPTO Pro SK 用例 ([superkernel.py](./superkernel/superkernel.py))**:
+    - 基于 **PyPTO Pro**（`pypto_pro.language`）的 `sk_cap=pl.SkCap.CAP_4_DISABLE_DCCI_ALL` SIMD（Tile）kernel，生成 `__sk__` 入口与 `SK_BIND` 记录。
+    - 与 torch 原生算子一起通过 `npugraph_ex` + `super_kernel_optimize` 融合为一个超级核。
+
 ## 核心特性
 
 在高级样例中，您将接触到：
@@ -61,4 +67,4 @@ export TILE_FWK_DEVICE_ID=0
 
 1. 首先深入学习 `advanced_nn/attention`，这是所有现代 LLM 的核心。
 2. 通过 `patterns/function` 学习如何组织大型算子项目。
-3. 参考 `models` 目录下的真实模型实现，将这些高级特性应用到实际生产中。
+3. 参考 `superkernel` 了解 PyPTO Pro 的 SuperKernel 融合流程。

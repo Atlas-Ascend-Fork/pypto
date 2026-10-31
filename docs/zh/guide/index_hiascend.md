@@ -56,6 +56,7 @@
     - [高级编程](programming_guide/pro/advanced_programming/index.md)
       - [自动CV并行流水](programming_guide/pro/advanced_programming/auto_parallel_pipeline.md)
       - [Cube计算进阶](programming_guide/pro/advanced_programming/cube_computation_advanced_usage.md)
+      - [SuperKernel](programming_guide/pro/advanced_programming/superkernel.md)
     - [调试调优](programming_guide/pro/debug/index.md)
       - [功能调试](programming_guide/pro/debug/functional_debugging.md)
       - [内存检测](programming_guide/pro/debug/sanitizer.md)

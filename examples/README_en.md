@@ -77,6 +77,7 @@ python3 examples/01_beginner/basic/basic_ops.py --run_mode sim
 3. **Phase 3: In-Depth Practice**
    - [03_advanced/advanced_nn](03_advanced/advanced_nn/README_en.md)
    - [03_advanced/patterns](03_advanced/patterns/README_en.md)
+   - [03_advanced/superkernel](03_advanced/superkernel/README_en.md)
 
 ---
 

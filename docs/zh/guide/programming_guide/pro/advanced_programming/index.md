@@ -6,4 +6,5 @@
 
 auto_parallel_pipeline
 cube_computation_advanced_usage
+superkernel
 ```

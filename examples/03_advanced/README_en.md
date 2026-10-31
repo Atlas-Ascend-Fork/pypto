@@ -1,6 +1,6 @@
 # Advanced Examples
 
-This directory contains PyPTO advanced development samples, showcasing complex architecture implementations, advanced design patterns, and system-level performance tuning.
+This directory contains PyPTO and PyPTO Pro advanced development samples, showcasing complex architecture implementations, advanced design patterns, and system-level performance tuning.
 
 ## Sample Description
 
@@ -32,6 +32,12 @@ The advanced samples cover the following core areas:
    - Declares a pypto kernel as a `torch.ops` custom op and exports it as an ONNX artifact.
    - Builds a deployable `libcust_opapi.so` from the exported ONNX.
 
+### 6. SuperKernel ([superkernel](./superkernel))
+
+- **PyPTO Pro SK Sample ([superkernel.py](./superkernel/superkernel.py))**:
+    - A **PyPTO Pro** (`pypto_pro.language`) SIMD (Tile) kernel with `sk_cap=pl.SkCap.CAP_4_DISABLE_DCCI_ALL`, emitting the `__sk__` entry and the `SK_BIND` record.
+    - Fused with a native torch op into one superkernel through `npugraph_ex` with `super_kernel_optimize`.
+
 ## Core Features
 
 In the advanced samples, you will encounter:
@@ -61,4 +67,4 @@ Navigate to the corresponding subdirectory and run the script.
 
 1. First, study `advanced_nn/attention` in depth, as it is the core of all modern LLMs.
 2. Learn how to organize large operator projects through `patterns/function`.
-3. Refer to the real model implementations in the `models` directory to apply these advanced features to production.
+3. Refer to `superkernel` to learn the PyPTO Pro SuperKernel fusion flow.

@@ -90,6 +90,8 @@ JIT复用范围限于当前Python进程。重新启动进程后会重新执行�
 | datatype | dict[str, str] | 声明需要进行数据类型特化的Kernel参数，以及Kernel函数体中引用的数据类型变量名。 | None |
 | compile_timeout | int | 设置当前Kernel的编译超时时间，单位为秒。 | None（基础默认值为600秒） |
 | max_threads | int或None | SIMT kernel每个Thread Block允许的最大线程数，取值为[1, 2048]，SIMT模式必填，SIMD模式不接受该参数。 | None |
+| sk_cap | pypto_pro.language.SkCap | SuperKernel能力位。设置后除`__global__`入口外，额外生成`__sk__`入口和`SK_BIND`记录，Kernel可被图编译侧融合；按位或组合`CAP_1_EARLY_START_WAIT`、`CAP_2_EARLY_START_SET`、`CAP_4_DISABLE_DCCI_ALL`、`CAP_8_DISABLE_BATCHMODE_CHECK`、`CAP_16_BLOCKDIM_SCALE_UP`。只接受pypto_pro.language.SkCap成员及其按位或组合，不接受裸整数；SIMT Kernel不支持。 | None |
+| schedmode | int | Kernel调度模式，写入`__global__`入口的`__schedmode__(mode)`限定符：0为普通模式，1为batch模式。`schedmode=1`且需要参与融合时，应同时设置`CAP_8_DISABLE_BATCHMODE_CHECK`。 | 0 |
 
 ```python
 import pypto_pro.language as pl
@@ -105,6 +107,20 @@ def add_kernel(x, y, out):
 `tiling_key`和`datatype`用于生成编译期特化实例，不会作为Kernel函数的形参传入。启动Kernel时，需要在方括号中提供对应的TilingKey和datatype字典。两者的定义和启动参数位置参考[Kernel核函数](../kernel_function.md#使用tilingkey和datatype)，TilingKey字段规则参考[Tiling参数定义与传递](../tiling/tiling_parameter_definition.md#tilingkey)。
 
 `pipeline`接收`pypto_pro.language.pipeline.PipelineConfig`对象，用于配置自动CV并行流水变换；未设置时不执行该变换。配置方法和使用约束参考[自动CV并行流水](../../advanced_programming/auto_parallel_pipeline.md)。
+
+`sk_cap`用于SuperKernel（SK）融合适配，取值为pypto_pro.language.SkCap的成员或其按位或组合，`None`表示不生成SK入口。设置后JIT在Host侧Launcher中额外生成`__sk__`入口与`SK_BIND`记录，并在编译阶段追加SK相关的头文件路径和编译宏；`kernel.cpp`内容与普通构建一致。能力位含义如下：
+
+| 成员 | 位值 | 含义 |
+| --- | --- | --- |
+| `CAP_1_EARLY_START_WAIT` | 1 | 核内调用pypto_pro.language.system.wait_pre_task_end，允许调用点之前的指令与前序子核重叠 |
+| `CAP_2_EARLY_START_SET` | 2 | 核内调用pypto_pro.language.system.set_next_task_start，允许调用点之后的指令与后序子核重叠 |
+| `CAP_4_DISABLE_DCCI_ALL` | 4 | 框架跳过子核调用前后的DCCI，常作为只需完成绑定的默认取值 |
+| `CAP_8_DISABLE_BATCHMODE_CHECK` | 8 | 跳过`__schedmode__`检查，使`schedmode=1`的Kernel仍可参与融合 |
+| `CAP_16_BLOCKDIM_SCALE_UP` | 16 | 允许按容器核数启动，Kernel需按pypto_pro.language.get_block_num()动态确定核数 |
+
+`sk_cap`只声明Kernel可被融合，是否融合由图层决定；未融合时按普通Kernel执行，早启接口不产生效果。早启位需与配对子核中的接口配合使用（前序子核set、后序子核wait），且每个核、每个TilingKey分支只调用一次。SIMT Kernel暂不支持SK适配，设置`sk_cap`会在编译阶段报错。
+
+`schedmode`只影响Kernel的下发方式：`0`为普通模式，`1`为batch模式，JIT据此在入口上生成`__schedmode__`限定符。Kernel内使用pypto_pro.language.system.sync_all()且存在多流并发时建议设置为`1`，以降低死锁风险；参与融合时需要配合`CAP_8_DISABLE_BATCHMODE_CHECK`，否则融合会被`__schedmode__`检查拒绝。
 
 ## Kernel下发与同步
 
