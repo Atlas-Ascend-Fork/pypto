@@ -25,12 +25,8 @@
 #include "interface/configs/config_manager.h"
 
 namespace npu::tile_fwk {
-// Unified implementation of view and assemble operation merging. The frontend flag
-// create_new_logical_tensor (IRContext::AssembleNewLogicalTensor), read once per
-// invocation, selects the semantics: enabled runs the token implementation, disabled
-// keeps the original legal implementation. The two modes share the chain-walking and
-// offset-merging logic and differ only at the gated divergence points (stopper gates,
-// chain deletion strategy, cleanup, token dependency maintenance).
+// Merge semantics are selected from each chain's IR, independently of the frontend
+// logical-tensor construction option. Coverage and shared-tail checks protect both modes.
 class MergeViewAssembleUtils {
 public:
     MergeViewAssembleUtils() = default;
@@ -87,6 +83,10 @@ public:
         bool hasAssembleChainStopper = false;
         size_t producerCount = 0;
         bool allProducersAreAssembleLike = false;
+    };
+    struct DependencyCacheEntry {
+        std::vector<Operation*> producers;
+        std::vector<Operation*> consumers;
     };
 
     static Status MergeViewAssemble(Function& function);
@@ -178,17 +178,20 @@ public:
     Status ProcessAssembleConsumers(Function& function, const ConsumerCacheEntry& consumers,
                                     std::vector<Operation*>& chain, bool& chainEnd, int effectiveScopeId);
 
-    // Token-mode middle extension gate: split-version contribution plus fan-in
+    // Middle extension gate: split-version contribution plus fan-in
     // producer coverage. Returns false when the chain must stop at this middle.
     bool CanExtendThroughMiddle(Function& function, Operation& currentOp);
-    // Mode-dependent middle gate for chain extension (see the cpp for semantics).
+    // Stops extension when version contribution or coverage cannot be preserved.
     bool StopsAtMiddle(Function& function, const ConsumerCacheEntry& consumers, Operation* currentOp);
+    bool ShouldStopAssembleChain(const std::vector<Operation*>& chain, const ConsumerCacheEntry& consumers) const;
 
     Status ProcessAssembleChainEnd(Function& function, std::vector<Operation*>& chain, Operation& operation);
 
-    // Token-mode safety gates applied before merging an assemble chain.
+    // Safety gates applied before merging an assemble chain.
     bool HasBlockingChainCycle(Function& function, const std::vector<Operation*>& chain);
-    bool HasIncompatibleSiblingProducer(Function& function, const std::vector<Operation*>& chain);
+    bool HasCompleteAssembleGroup(const std::vector<size_t>& group) const;
+    Status CommitAssembleChains(Function& function);
+    Status CommitAssembleChain(Function& function, const std::vector<Operation*>& chain);
     // Rewrites inputTokens in-place: keeps tokens owned by this chain, drops the ones
     // owned by sibling-producer chains (data-coverage precision).
     void FilterOwnedInputTokens(Function& function, TokenDependency& tokenDependency,
@@ -215,6 +218,16 @@ public:
     // Common methods
     Status Initialize();
     Status BuildConsumerCache(Function& function);
+    void RecordTensorVersion(const LogicalTensorPtr& tensor);
+    void CacheOperationConsumers(Function& function, Operation& operation);
+    bool HasVersionedAssembleOutput(const Operation& operation) const;
+    void RecordTokenDependency(Operation& operation);
+    void BuildTokenSemanticCache(Function& function);
+    void BuildDependencyCache(Function& function);
+    bool HasSafeChainBoundary(const std::vector<Operation*>& chain) const;
+    void PropagateTokenSemantics(std::vector<Operation*>& tokenWorklist);
+    bool IsTokenSemanticOperation(const Operation& operation) const;
+    bool HasChainTokenDependency(const std::vector<Operation*>& chain, const ConsumerCacheEntry& consumers) const;
     bool HasSplitVersionContribution(const LogicalTensorPtr& middle,
                                      const std::vector<Operation*>& currentProducers) const;
     // Static coverage check with per-middle memoization: producers and their attributes
@@ -240,17 +253,18 @@ public:
     void CleanupLegacyResultTokens(Function& function);
 
     // Cleanup methods
+    void EraseLegacyRedundantAssembles(Function& function) const;
     Status CleanUp(Function& function);
-    // Legal-mode cleanup: drop assemble ops whose input has no producer.
-    Status EraseRedundantAssemble(Function& function) const;
-    // Frontend flag create_new_logical_tensor, fixed per invocation: true keeps the
-    // token semantics, false keeps the original legal semantics.
-    bool tokenMode_ = false;
-    bool hasTokenDependencies_ = false;
-    // Set once per run by BuildConsumerCache after a one-shot DAG verification of the
-    // untouched graph; lets the per-chain cycle checks short-circuit (merges only
-    // remove edges from an acyclic graph, so no merge can introduce a cycle).
-    bool dagVerified_ = false;
+    // Current chain semantics. It is reset at each candidate chain start.
+    bool useTokenSemantics_ = false;
+    // Whole-graph preparation state; it does not select the semantics of a chain.
+    bool hasAnyTokenSemantics_ = false;
+    std::unordered_set<Operation*> tokenSemanticOps_;
+    std::unordered_set<int> tokenDependencyTensorMagics_;
+    std::unordered_set<Operation*> tokenDependencyOps_;
+    // Original data/token edges remain conservative while chain planning only removes
+    // edges. Replacement operations are appended after all chain safety checks.
+    std::unordered_map<Operation*, DependencyCacheEntry> dependencyCache_;
     std::unordered_set<int> visitedOp_;
     std::unordered_map<int, const ConsumerCacheEntry*> consumerCache_;
     std::unordered_map<int, ConsumerCacheEntry> tensorConsumerCache_;
@@ -258,6 +272,8 @@ public:
     std::vector<Operation*> candidateOps_;
     std::vector<ViewOp> viewOpToAppend_;
     std::vector<AssembleOp> assembleOpToAppend_;
+    // Candidate paths are validated together before deleting their shared tail.
+    std::vector<std::vector<Operation*>> pendingAssembleChains_;
     // Input tensor magics of all merges recorded so far (view + assemble); lets the
     // chain-out survivor check see readers that only materialize in the append phase.
     std::unordered_set<int> recordedMergeInputMagics_;

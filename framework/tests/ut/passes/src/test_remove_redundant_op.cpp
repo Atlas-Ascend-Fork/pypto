@@ -112,7 +112,7 @@ TEST_F(RemoveRedundantOpTest, TestIntermediateOutcast)
     Function* func = Program::GetInstance().GetFunctionByRawName("TENSOR_RemoveRedundantOpFunction");
     npu::tile_fwk::RemoveRedundantOp removeRedundantOp;
     auto oriOpList = func->Operations(true);
-    // Assemble chain fusion preserves the four tiled VIEW consumers of the transpose result.
+    // The legacy stopper retains the intermediate Assemble; its tiled readers become SLICE ops.
     EXPECT_EQ(oriOpList.size(), 16) << "Before the Pass, there should be 16 operations";
     int ori_view_count = 0;
     int ori_assemble_count = 0;
@@ -124,7 +124,7 @@ TEST_F(RemoveRedundantOpTest, TestIntermediateOutcast)
         }
     }
     EXPECT_EQ(ori_view_count, 0) << "There should be 0 VIEW ops before RemoveRedundantOp";
-    EXPECT_EQ(ori_assemble_count, 2) << "There should be 2 ASSEMBLE op before RemoveRedundantOp";
+    EXPECT_EQ(ori_assemble_count, 2) << "There should be 2 ASSEMBLE ops before RemoveRedundantOp";
     EXPECT_EQ(removeRedundantOp.PreCheck(*func), SUCCESS);
     EXPECT_EQ(removeRedundantOp.RunOnFunction(*func), SUCCESS);
     EXPECT_EQ(removeRedundantOp.PostCheck(*func), SUCCESS);

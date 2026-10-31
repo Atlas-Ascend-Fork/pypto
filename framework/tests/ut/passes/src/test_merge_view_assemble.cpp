@@ -24,6 +24,7 @@
 #include "interface/tensor/irbuilder.h"
 #include "passes/pass_utils/pass_operation_utils.h"
 #include "symbolic_scalar_test_utils.h"
+#include "pass_test_utils.h"
 #include "tilefwk/tilefwk.h"
 #include "interface/inner/tilefwk.h"
 #include "passes/pass_mgr/pass_manager.h"
@@ -57,9 +58,7 @@ public:
         config::SetHostOption(COMPILE_STAGE, CS_EXECUTE_GRAPH);
         config::SetHostConfig(KEY_STRATEGY, "ViewAssembleTestStrategy");
         config::SetPlatformConfig(KEY_ENABLE_COST_MODEL, false);
-        // UTs exercise the token-era merging (chain share + safety gates); legacy-mode
-        // tests opt out explicitly.
-        IRContext::Get().SetAssembleNewLogicalTensor(true);
+        IRContext::Get().SetAssembleNewLogicalTensor(false);
     }
     void TearDown() override { IRContext::Get().SetAssembleNewLogicalTensor(false); }
 };
@@ -79,6 +78,69 @@ ir::VarPtr AddTokenEdge(Function& function, Operation& producer, Operation& cons
         consumer.tokens_.emplace_back(token);
     }
     return token;
+}
+
+void BuildTokenBoundaryGraph(ComputationalGraphBuilder& graph, Opcode opcode)
+{
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {4, 4},
+                                 {"input", "middle", "output", "sync_input", "sync_output", "side_output"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ABS, {"sync_input"}, {"sync_output"}, "sync", true));
+    ASSERT_TRUE(graph.AddOp(opcode, {"input"}, {"middle"}, "first", true));
+    ASSERT_TRUE(graph.AddOp(opcode, {"middle"}, {"output"}, "second", true));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ABS, {"sync_input"}, {"side_output"}, "side", true));
+    for (const auto& name : {"first", "second"}) {
+        if (opcode == Opcode::OP_VIEW) {
+            graph.GetOp(name)->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
+        } else {
+            graph.GetOp(name)->SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+        }
+    }
+    ASSERT_TRUE(graph.SetInCast({"input", "sync_input"}));
+    ASSERT_TRUE(graph.SetOutCast({"output", "sync_output", "side_output"}));
+}
+
+void BuildLiveTokenChains(ComputationalGraphBuilder& graph, int count)
+{
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {4, 4}, {"input", "sync_output"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ABS, {"input"}, {"sync_output"}, "sync", true));
+    std::vector<std::string> outputs{"sync_output"};
+    for (int index = 0; index < count; ++index) {
+        std::string id = std::to_string(index);
+        std::string middle = "middle_" + id;
+        std::string output = "output_" + id;
+        std::string first = "first_" + id;
+        std::string second = "second_" + id;
+        Opcode opcode = index % 2 == 0 ? Opcode::OP_VIEW : Opcode::OP_ASSEMBLE;
+        ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {4, 4}, {middle, output}));
+        ASSERT_TRUE(graph.AddOp(opcode, {"input"}, {middle}, first, true));
+        ASSERT_TRUE(graph.AddOp(opcode, {middle}, {output}, second, true));
+        for (const auto& name : {first, second}) {
+            if (opcode == Opcode::OP_VIEW) {
+                graph.GetOp(name)->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
+            } else {
+                graph.GetOp(name)->SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+            }
+        }
+        AddTokenEdge(*graph.GetFunction(), *graph.GetOp("sync"), *graph.GetOp(first));
+        outputs.emplace_back(output);
+    }
+    ASSERT_TRUE(graph.SetInCast({"input"}));
+    ASSERT_TRUE(graph.SetOutCast(outputs));
+}
+
+void AddUnrelatedTokenAndMiddleReader(ComputationalGraphBuilder& graph, bool unusedMarker)
+{
+    graph.GetOp("side")->UpdateInputOperand(0, graph.GetTensor("middle"));
+    graph.GetOp("sync")->UpdateInputOperand(0, graph.GetTensor("input"));
+    ASSERT_TRUE(graph.AddTensor(DataType::DT_FP32, {4, 4}, "token_output"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ABS, {"input"}, {"token_output"}, "token_consumer", true));
+    AddTokenEdge(*graph.GetFunction(), *graph.GetOp("sync"), *graph.GetOp("token_consumer"));
+    if (unusedMarker) {
+        auto* first = graph.GetOp("first");
+        first->result_token_ = {IRBuilder().CreateTokenVar(first->GetSpan())};
+        graph.GetFunction()->GetVarDependency().AddProducer(first->result_token_.front(), ToStmtPtr(*first));
+    }
+    ASSERT_TRUE(graph.SetOutCast({"output", "sync_output", "side_output", "token_output"}));
 }
 
 void BuildLargeSharedTensorMergeableChains(ComputationalGraphBuilder& graph, int assembleChainCount, int viewChainCount)
@@ -124,6 +186,65 @@ void BuildLargeSharedTensorMergeableChains(ComputationalGraphBuilder& graph, int
     ASSERT_TRUE(graph.SetOutCast(outputs));
 }
 } // namespace
+
+TEST_F(MergeViewAssembleTest, LegacyStopperUsesArchitectureDespiteUnrelatedTokenAndMarker)
+{
+    for (auto npuArch : {NPUArch::DAV_2201, NPUArch::DAV_3510}) {
+        NpuArchScope arch(npuArch);
+        for (bool constructionMode : {false, true}) {
+            IRContext::Get().SetAssembleNewLogicalTensor(constructionMode);
+            for (bool unusedMarker : {false, true}) {
+                ComputationalGraphBuilder graph;
+                BuildTokenBoundaryGraph(graph, Opcode::OP_ASSEMBLE);
+                AddUnrelatedTokenAndMiddleReader(graph, unusedMarker);
+                MergeViewAssemble pass;
+                ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+                auto output = graph.GetTensor("output");
+                ASSERT_EQ(output->GetProducers().size(), 1);
+                auto expected = graph.GetTensor(npuArch == NPUArch::DAV_3510 ? "input" : "middle");
+                EXPECT_EQ((*output->GetProducers().begin())->GetIOperands().front(), expected);
+                EXPECT_FALSE(graph.GetTensor("middle")->GetProducers().empty());
+                EXPECT_EQ(graph.GetOp("side")->GetIOperands().front(), graph.GetTensor("middle"));
+                auto* consumer = graph.GetOp("token_consumer");
+                ASSERT_EQ(consumer->tokens_.size(), 1);
+                EXPECT_TRUE(graph.GetFunction()->GetVarDependency().HasProducer(consumer->tokens_.front(),
+                                                                                ToStmtPtr(*graph.GetOp("sync"))));
+            }
+        }
+    }
+}
+
+TEST_F(MergeViewAssembleTest, AssembleWithoutInputFailsInBothConstructionModes)
+{
+    for (bool constructionMode : {false, true}) {
+        IRContext::Get().SetAssembleNewLogicalTensor(constructionMode);
+        ComputationalGraphBuilder graph;
+        BuildTokenBoundaryGraph(graph, Opcode::OP_ASSEMBLE);
+        auto* first = graph.GetOp("first");
+        graph.GetTensor("input")->RemoveConsumer(first);
+        first->GetIOperands().clear();
+        MergeViewAssemble pass;
+        EXPECT_EQ(pass.RunOnFunction(*graph.GetFunction()), FAILED);
+    }
+}
+
+TEST_F(MergeViewAssembleTest, LegacyAssembleKeepsProducerFreeIncast)
+{
+    for (bool constructionMode : {false, true}) {
+        IRContext::Get().SetAssembleNewLogicalTensor(constructionMode);
+        ComputationalGraphBuilder graph;
+        ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {4, 4}, {"input", "output"}));
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {"input"}, {"output"}, "assemble", true));
+        graph.GetOp("assemble")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+        ASSERT_TRUE(graph.SetInCast({"input"}));
+        ASSERT_TRUE(graph.SetOutCast({"output"}));
+        MergeViewAssemble pass;
+        ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+        ASSERT_EQ(graph.GetTensor("output")->GetProducers().size(), 1);
+        EXPECT_EQ((*graph.GetTensor("output")->GetProducers().begin())->GetIOperands().front(),
+                  graph.GetTensor("input"));
+    }
+}
 
 static void ExpectTopologicalOrder(Function* function)
 {
@@ -1628,7 +1749,8 @@ TEST_F(MergeViewAssembleTest, CompleteProducerGroupWithConcreteDynOffsetsFuses)
         EXPECT_EQ(op.GetOOperands().front(), output);
     }
     EXPECT_EQ(assembleCount, 2);
-    EXPECT_EQ(function->GetTensorMap().GetTensorByMagic(middle->GetMagic()), nullptr);
+    EXPECT_TRUE(middle->GetProducers().empty());
+    EXPECT_TRUE(middle->GetConsumers().empty());
 }
 
 TEST_F(MergeViewAssembleTest, NestedCompleteProducerGroupFusionsCollapseThroughAbsorption)
@@ -1681,16 +1803,20 @@ TEST_F(MergeViewAssembleTest, NestedCompleteProducerGroupFusionsCollapseThroughA
         EXPECT_EQ(op.GetOOperands().front(), output);
     }
     // The outer group absorbs both inner fusions: every leaf writes the final output
-    // directly at the composed offset and all intermediate middles are eliminated.
+    // directly at the composed offset; the legacy DCE removes all live middle edges.
     EXPECT_EQ(assembleCount, 4);
     EXPECT_EQ(output->GetProducers().size(), 4);
-    EXPECT_EQ(function->GetTensorMap().GetTensorByMagic(firstMiddle->GetMagic()), nullptr);
-    EXPECT_EQ(function->GetTensorMap().GetTensorByMagic(secondMiddle->GetMagic()), nullptr);
-    EXPECT_EQ(function->GetTensorMap().GetTensorByMagic(concatMiddle->GetMagic()), nullptr);
+    EXPECT_TRUE(firstMiddle->GetProducers().empty());
+    EXPECT_TRUE(firstMiddle->GetConsumers().empty());
+    EXPECT_TRUE(secondMiddle->GetProducers().empty());
+    EXPECT_TRUE(secondMiddle->GetConsumers().empty());
+    EXPECT_TRUE(concatMiddle->GetProducers().empty());
+    EXPECT_TRUE(concatMiddle->GetConsumers().empty());
 }
 
 TEST_F(MergeViewAssembleTest, ProducerGroupWithIntermediateViewConsumerKeepsDataEdge)
 {
+    NpuArchScope arch(NPUArch::DAV_3510);
     for (bool withToken : {false, true}) {
         Program program;
         auto function = std::make_unique<Function>(program, "producer_group_fanout", "producer_group_fanout", nullptr);
@@ -1737,6 +1863,125 @@ TEST_F(MergeViewAssembleTest, ProducerGroupWithIntermediateViewConsumerKeepsData
                 EXPECT_EQ(attr->GetToOffset(), (std::vector<int64_t>{input == firstInput ? 0 : 2, 0}));
             }
         }
+    }
+}
+
+// A rejected sibling must keep the shared tail, including when the conflict is
+// inside the suffix rather than at its last op. Exercise both producer orders.
+TEST_F(MergeViewAssembleTest, NestedSiblingRejectionPreservesEveryInputContribution)
+{
+    NpuArchScope arch(NPUArch::DAV_3510);
+    for (bool tokenMode : {false, true}) {
+        for (bool reverse : {false, true}) {
+            for (int conflict = 0; conflict < 3; ++conflict) {
+                IRContext::Get().SetAssembleNewLogicalTensor(tokenMode);
+                Program program;
+                auto function = std::make_unique<Function>(program, "rejected_sibling", "rejected_sibling", nullptr);
+                IRBuilder builder;
+                auto firstInput = builder.CreateTensorVar(*function, DataType::DT_FP32, {2, 4});
+                auto secondInput = builder.CreateTensorVar(*function, DataType::DT_FP32, {2, 4});
+                auto middle = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+                auto next = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+                auto output = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+                auto sideOutput = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+                function->inCasts_ = {firstInput, secondInput};
+                function->outCasts_ = {output, sideOutput};
+                auto add = [&](Opcode opcode, const LogicalTensorPtr& input, const LogicalTensorPtr& target,
+                               int64_t row) -> Operation& {
+                    auto& op = builder.CreateTensorOpStmt(*function, opcode, {input}, {target});
+                    op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{row, 0}));
+                    return op;
+                };
+                Operation* first = nullptr;
+                Operation* second = nullptr;
+                for (bool secondProducer : {reverse, !reverse}) {
+                    if (secondProducer) {
+                        second = &add(conflict == 0 ? Opcode::OP_CONTRACT : Opcode::OP_ASSEMBLE, secondInput, middle,
+                                      2);
+                    } else {
+                        first = &add(Opcode::OP_ASSEMBLE, firstInput, middle, 0);
+                    }
+                }
+                auto& downstream = add(conflict == 0 ? Opcode::OP_CONTRACT : Opcode::OP_ASSEMBLE, middle, next, 0);
+                auto& tail = add(Opcode::OP_ASSEMBLE, next, output, 0);
+                builder.CreateTensorOpStmt(*function, Opcode::OP_ABS, {middle}, {sideOutput});
+                if (conflict == 1) {
+                    second->SetScopeId(2);
+                    downstream.SetScopeId(1);
+                } else if (conflict == 2) {
+                    second->SetAttribute(RMW_MODE_ATTR_MIN, 1L);
+                    downstream.SetAttribute(RMW_MODE_ATTR_ADD, 1L);
+                }
+                if (tokenMode) {
+                    auto marker = builder.CreateTokenVar(first->GetSpan());
+                    first->result_token_ = {marker};
+                    function->GetVarDependency().AddProducer(marker, ToStmtPtr(*first));
+                }
+                std::vector<std::shared_ptr<Operation>> originalOps;
+                for (auto& op : function->Operations(false)) {
+                    originalOps.emplace_back(op.shared_from_this());
+                }
+                function->BuildTensorMap();
+                MergeViewAssemble pass;
+                ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+                EXPECT_FALSE(first->IsDeleted());
+                EXPECT_FALSE(second->IsDeleted());
+                EXPECT_FALSE(downstream.IsDeleted());
+                EXPECT_FALSE(tail.IsDeleted());
+                ASSERT_EQ(output->GetProducers().size(), 1);
+                EXPECT_EQ(*output->GetProducers().begin(), &tail);
+                ASSERT_EQ(tail.GetIOperands().size(), 1);
+                EXPECT_EQ(tail.GetIOperands().front(), next);
+                EXPECT_EQ(middle->GetProducers().size(), 2);
+            }
+        }
+    }
+}
+
+TEST_F(MergeViewAssembleTest, RejectedSiblingCycleKeepsSharedTailAndTokens)
+{
+    for (bool reverse : {false, true}) {
+        Program program;
+        auto function = std::make_unique<Function>(program, "sibling_cycle", "sibling_cycle", nullptr);
+        IRBuilder builder;
+        auto firstInput = builder.CreateTensorVar(*function, DataType::DT_FP32, {2, 4});
+        auto secondInput = builder.CreateTensorVar(*function, DataType::DT_FP32, {2, 4});
+        auto sideInput = builder.CreateTensorVar(*function, DataType::DT_FP32, {2, 4});
+        auto middle = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+        auto output = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+        auto sideOutput = builder.CreateTensorVar(*function, DataType::DT_FP32, {2, 4});
+        function->inCasts_ = {firstInput, secondInput, sideInput};
+        function->outCasts_ = {output, sideOutput};
+        Operation* first = nullptr;
+        Operation* second = nullptr;
+        for (bool secondProducer : {reverse, !reverse}) {
+            auto& op = builder.CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE,
+                                                  {secondProducer ? secondInput : firstInput}, {middle});
+            op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{secondProducer ? 2 : 0, 0}));
+            (secondProducer ? second : first) = &op;
+        }
+        auto& side = builder.CreateTensorOpStmt(*function, Opcode::OP_ABS, {sideInput}, {sideOutput});
+        auto& tail = builder.CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {middle}, {output});
+        tail.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+        auto firstToken = AddTokenEdge(*function, *second, side);
+        auto secondToken = AddTokenEdge(*function, side, tail);
+        std::vector<std::shared_ptr<Operation>> originalOps;
+        for (auto& op : function->Operations(false)) {
+            originalOps.emplace_back(op.shared_from_this());
+        }
+        function->BuildTensorMap();
+        MergeViewAssemble pass;
+        ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+        EXPECT_FALSE(first->IsDeleted());
+        EXPECT_FALSE(second->IsDeleted());
+        EXPECT_FALSE(tail.IsDeleted());
+        EXPECT_EQ(middle->GetProducers().size(), 2);
+        ASSERT_EQ(output->GetProducers().size(), 1);
+        EXPECT_EQ(*output->GetProducers().begin(), &tail);
+        EXPECT_TRUE(function->GetVarDependency().HasProducer(firstToken, ToStmtPtr(*second)));
+        EXPECT_TRUE(function->GetVarDependency().HasConsumer(firstToken, ToStmtPtr(side)));
+        EXPECT_TRUE(function->GetVarDependency().HasProducer(secondToken, ToStmtPtr(side)));
+        EXPECT_TRUE(function->GetVarDependency().HasConsumer(secondToken, ToStmtPtr(tail)));
     }
 }
 
@@ -1813,7 +2058,8 @@ TEST_F(MergeViewAssembleTest, ProducerGroupWithContractDownstreamMergesToContrac
         EXPECT_EQ(attr->GetToOffset(),
                   input == firstInput ? std::vector<int64_t>({1, 0}) : std::vector<int64_t>({3, 0}));
     }
-    EXPECT_EQ(function->GetTensorMap().GetTensorByMagic(middle->GetMagic()), nullptr);
+    EXPECT_TRUE(middle->GetProducers().empty());
+    EXPECT_TRUE(middle->GetConsumers().empty());
 }
 
 TEST_F(MergeViewAssembleTest, ProducerGroupWithAssembleDownstreamKeepsAssembleOpcode)
@@ -1858,7 +2104,8 @@ TEST_F(MergeViewAssembleTest, ProducerGroupWithAssembleDownstreamKeepsAssembleOp
         EXPECT_EQ(attr->GetToOffset(),
                   input == firstInput ? std::vector<int64_t>({1, 0}) : std::vector<int64_t>({3, 0}));
     }
-    EXPECT_EQ(function->GetTensorMap().GetTensorByMagic(middle->GetMagic()), nullptr);
+    EXPECT_TRUE(middle->GetProducers().empty());
+    EXPECT_TRUE(middle->GetConsumers().empty());
 }
 
 TEST_F(MergeViewAssembleTest, ProducerGroupWithContractProducersMergesToContract)
@@ -1903,7 +2150,8 @@ TEST_F(MergeViewAssembleTest, ProducerGroupWithContractProducersMergesToContract
         EXPECT_EQ(attr->GetToOffset(),
                   input == firstInput ? std::vector<int64_t>({1, 0}) : std::vector<int64_t>({3, 0}));
     }
-    EXPECT_EQ(function->GetTensorMap().GetTensorByMagic(middle->GetMagic()), nullptr);
+    EXPECT_TRUE(middle->GetProducers().empty());
+    EXPECT_TRUE(middle->GetConsumers().empty());
 }
 
 TEST_F(MergeViewAssembleTest, ProducerGroupWithMixedProducersMergesPerPairOpcode)
@@ -1956,7 +2204,8 @@ TEST_F(MergeViewAssembleTest, ProducerGroupWithMixedProducersMergesPerPairOpcode
     ASSERT_NE(assembleAttr, nullptr);
     EXPECT_EQ(assembleAttr->GetToOffset(), std::vector<int64_t>({3, 0}));
     EXPECT_EQ(output->GetProducers().size(), 2);
-    EXPECT_EQ(function->GetTensorMap().GetTensorByMagic(middle->GetMagic()), nullptr);
+    EXPECT_TRUE(middle->GetProducers().empty());
+    EXPECT_TRUE(middle->GetConsumers().empty());
 }
 
 TEST_F(MergeViewAssembleTest, ProducerGroupWithContractProducerAndContractDownstreamDoesNotFuse)
@@ -2084,6 +2333,7 @@ TEST_F(MergeViewAssembleTest, SplitLogicalTensorVersionWithContractProducerStops
 
 TEST_F(MergeViewAssembleTest, AssembleChainWithIntermediateViewConsumerKeepsDataEdge)
 {
+    NpuArchScope arch(NPUArch::DAV_3510);
     Program program;
     auto function = std::make_unique<Function>(program, "assemble_view_fanout", "assemble_view_fanout", nullptr);
     IRBuilder builder;
@@ -2211,34 +2461,180 @@ TEST_F(MergeViewAssembleTest, ShmemSetPredicateConsumerStopsViewChainFusion)
     EXPECT_FALSE(middle->GetProducers().empty());
 }
 
-TEST_F(MergeViewAssembleTest, OrdinaryIntermediateConsumerStopsViewChainFusion)
+TEST_F(MergeViewAssembleTest, ViewChainFusionDoesNotDependOnConstructionMode)
 {
-    Program program;
-    auto function = std::make_unique<Function>(program, "view_data_fanout", "view_data_fanout", nullptr);
-    IRBuilder builder;
-    auto input = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
-    auto middle = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
-    auto output = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
-    auto sideOutput = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
-    function->inCasts_ = {input};
-    function->outCasts_ = {output, sideOutput};
+    for (bool tokenMode : {false, true}) {
+        for (bool unusedMarker : {false, true}) {
+            IRContext::Get().SetAssembleNewLogicalTensor(tokenMode);
+            Program program;
+            auto function = std::make_unique<Function>(program, "view_data_fanout", "view_data_fanout", nullptr);
+            IRBuilder builder;
+            auto input = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+            auto middle = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+            auto output = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+            auto sideOutput = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+            function->inCasts_ = {input};
+            function->outCasts_ = {output, sideOutput};
 
-    auto& first = builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {input}, {middle});
-    first.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
-    auto& second = builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {middle}, {output});
-    second.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
-    builder.CreateTensorOpStmt(*function, Opcode::OP_ABS, {middle}, {sideOutput});
-    function->BuildTensorMap();
+            auto& first = builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {input}, {middle});
+            first.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
+            if (unusedMarker) {
+                auto marker = builder.CreateTokenVar(first.GetSpan());
+                first.result_token_ = {marker};
+                function->GetVarDependency().AddProducer(marker, ToStmtPtr(first));
+            }
+            auto& second = builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {middle}, {output});
+            second.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
+            builder.CreateTensorOpStmt(*function, Opcode::OP_ABS, {middle}, {sideOutput});
+            function->BuildTensorMap();
 
-    MergeViewAssemble pass;
-    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+            MergeViewAssemble pass;
+            ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
 
-    size_t viewCount = 0;
-    for (auto& op : function->Operations(false)) {
-        viewCount += op.GetOpcode() == Opcode::OP_VIEW;
+            size_t viewCount = 0;
+            for (auto& op : function->Operations(false)) {
+                viewCount += op.GetOpcode() == Opcode::OP_VIEW;
+            }
+            EXPECT_EQ(viewCount, 2);
+            EXPECT_FALSE(middle->GetProducers().empty());
+            ASSERT_EQ(output->GetProducers().size(), 1);
+            EXPECT_EQ((*output->GetProducers().begin())->GetIOperands().front(), input);
+        }
     }
-    EXPECT_EQ(viewCount, 2);
-    EXPECT_FALSE(middle->GetProducers().empty());
+}
+
+TEST_F(MergeViewAssembleTest, ViewChainContractionPreservesExternalTokenPath)
+{
+    for (bool tokenMode : {false, true}) {
+        IRContext::Get().SetAssembleNewLogicalTensor(tokenMode);
+        Program program;
+        auto function = std::make_unique<Function>(program, "view_token_path", "view_token_path", nullptr);
+        IRBuilder builder;
+        auto input = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+        auto middle = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+        auto output = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+        auto sideInput = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+        auto sideOutput = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+        function->inCasts_ = {input, sideInput};
+        function->outCasts_ = {output, sideOutput};
+        auto& first = builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {input}, {middle});
+        first.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
+        auto& second = builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {middle}, {output});
+        second.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
+        auto& side = builder.CreateTensorOpStmt(*function, Opcode::OP_ABS, {sideInput}, {sideOutput});
+        auto firstToken = AddTokenEdge(*function, first, side);
+        auto secondToken = AddTokenEdge(*function, side, second);
+        function->BuildTensorMap();
+
+        MergeViewAssemble pass;
+        ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+        ASSERT_EQ(output->GetProducers().size(), 1);
+        EXPECT_EQ((*output->GetProducers().begin())->GetIOperands().front(), middle);
+        EXPECT_TRUE(function->GetVarDependency().HasProducer(firstToken, ToStmtPtr(first)));
+        EXPECT_TRUE(function->GetVarDependency().HasConsumer(firstToken, ToStmtPtr(side)));
+        EXPECT_TRUE(function->GetVarDependency().HasConsumer(secondToken, ToStmtPtr(second)));
+    }
+}
+
+TEST_F(MergeViewAssembleTest, TokenBoundaryRulesPreserveDependencies)
+{
+    for (Opcode opcode : {Opcode::OP_VIEW, Opcode::OP_ASSEMBLE}) {
+        for (int direction : {0, 1, 2}) {
+            SCOPED_TRACE(static_cast<int>(opcode));
+            SCOPED_TRACE(direction);
+            ComputationalGraphBuilder graph;
+            BuildTokenBoundaryGraph(graph, opcode);
+            auto* function = graph.GetFunction();
+            ASSERT_NE(function, nullptr);
+            ir::VarPtr inputToken;
+            if (direction != 1) {
+                // A token entering the tail requires the single-exit fast path.
+                inputToken = AddTokenEdge(*function, *graph.GetOp("sync"),
+                                          *graph.GetOp(direction == 0 ? "second" : "first"));
+            }
+            if (direction != 0) {
+                // A token leaving the head requires the single-entry fast path.
+                AddTokenEdge(*function, *graph.GetOp("first"), *graph.GetOp("side"));
+            }
+            MergeViewAssemble pass;
+            ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+            const auto& producers = graph.GetTensor("output")->GetProducers();
+            ASSERT_EQ(producers.size(), 1);
+            auto* merged = *producers.begin();
+            EXPECT_EQ(merged->GetIOperands().front(), graph.GetTensor("input"));
+            auto& dependency = function->GetVarDependency();
+            if (inputToken != nullptr) {
+                EXPECT_TRUE(dependency.HasConsumer(inputToken, ToStmtPtr(*merged)));
+                EXPECT_NE(std::find(merged->tokens_.begin(), merged->tokens_.end(), inputToken), merged->tokens_.end());
+            }
+            if (direction != 0) {
+                ASSERT_EQ(merged->result_token_.size(), 1);
+                EXPECT_TRUE(dependency.HasProducer(merged->result_token_.front(), ToStmtPtr(*merged)));
+                EXPECT_TRUE(dependency.HasConsumer(merged->result_token_.front(), ToStmtPtr(*graph.GetOp("side"))));
+            }
+        }
+    }
+}
+
+TEST_F(MergeViewAssembleTest, InputTokenWithExternalDataPathStillChecksCycle)
+{
+    for (Opcode opcode : {Opcode::OP_VIEW, Opcode::OP_ASSEMBLE}) {
+        ComputationalGraphBuilder graph;
+        ASSERT_TRUE(
+            graph.AddTensors(DataType::DT_FP32, {4, 4}, {"input", "middle", "output", "side_middle", "side_output"}));
+        ASSERT_TRUE(graph.AddOp(opcode, {"input"}, {"middle"}, "first", true));
+        ASSERT_TRUE(graph.AddOp(opcode, {"middle"}, {"output"}, "second", true));
+        ASSERT_TRUE(graph.AddOp(opcode, {"middle"}, {"side_middle"}, "side", true));
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_ABS, {"side_middle"}, {"side_output"}, "reader", true));
+        for (const auto& name : {"first", "second", "side"}) {
+            if (opcode == Opcode::OP_VIEW) {
+                graph.GetOp(name)->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
+            } else {
+                graph.GetOp(name)->SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+            }
+        }
+        ASSERT_TRUE(graph.SetInCast({"input"}));
+        ASSERT_TRUE(graph.SetOutCast({"output", "side_output"}));
+        auto* function = graph.GetFunction();
+        auto token = AddTokenEdge(*function, *graph.GetOp("reader"), *graph.GetOp("second"));
+        MergeViewAssemble pass;
+        ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+        ASSERT_EQ(graph.GetTensor("output")->GetProducers().size(), 1);
+        auto* tail = *graph.GetTensor("output")->GetProducers().begin();
+        EXPECT_EQ(tail->GetIOperands().front(), graph.GetTensor("middle"));
+        EXPECT_FALSE(graph.GetTensor("middle")->GetProducers().empty());
+        EXPECT_TRUE(function->GetVarDependency().HasConsumer(token, ToStmtPtr(*tail)));
+    }
+}
+
+TEST_F(MergeViewAssembleTest, IndependentLiveTokenChainsPerfGuard)
+{
+    constexpr int count = 1024;
+    ComputationalGraphBuilder graph;
+    BuildLiveTokenChains(graph, count);
+    auto* function = graph.GetFunction();
+    ASSERT_NE(function, nullptr);
+    auto token = graph.GetOp("sync")->result_token_.front();
+    MergeViewAssemble pass;
+    const auto start = std::chrono::steady_clock::now();
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                                 start)
+                               .count();
+    size_t mergedCount = 0;
+    for (auto& op : function->Operations(false)) {
+        if (op.GetOpcode() != Opcode::OP_VIEW && op.GetOpcode() != Opcode::OP_ASSEMBLE) {
+            continue;
+        }
+        ++mergedCount;
+        EXPECT_EQ(op.GetIOperands().front(), graph.GetTensor("input"));
+        EXPECT_NE(std::find(op.tokens_.begin(), op.tokens_.end(), token), op.tokens_.end());
+        EXPECT_TRUE(function->GetVarDependency().HasConsumer(token, ToStmtPtr(op)));
+    }
+    EXPECT_EQ(mergedCount, static_cast<size_t>(count));
+    std::cout << "IndependentLiveTokenChainsPerfGuard elapsed: " << elapsedMs << " ms" << std::endl;
+    constexpr int64_t thresholdMs = 3000;
+    EXPECT_LT(elapsedMs, thresholdMs);
 }
 
 TEST_F(MergeViewAssembleTest, BuilderLargeSharedTensorMergeableChainsPerfGuard)
@@ -2461,6 +2857,53 @@ TEST_F(MergeViewAssembleTest, FanoutViewChainResultTokenPropagatesToEveryMergedS
     EXPECT_FALSE(dependency.HasDependency(warToken));
 }
 
+TEST_F(MergeViewAssembleTest, MixedChainsKeepLegacyFusionAndMergedTokenAssemble)
+{
+    Program program;
+    auto function = std::make_unique<Function>(program, "mixed_chains", "mixed_chains", nullptr);
+    IRBuilder builder;
+    auto assembleInput = builder.CreateTensorVar(*function, DataType::DT_FP32, {2, 4});
+    auto assembleMiddle = builder.CreateTensorVar(*function, DataType::DT_FP32, {2, 8});
+    auto assembleOutput = builder.CreateTensorVar(*function, DataType::DT_FP32, {2, 16});
+    auto source = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+    auto tokenOutput = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+    auto viewInput = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+    auto viewMiddle = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+    auto viewOutput = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+    auto sideOutput = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+    function->inCasts_ = {assembleInput, source};
+    function->outCasts_ = {assembleOutput, viewOutput, sideOutput};
+
+    auto& first = builder.CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {assembleInput}, {assembleMiddle});
+    SetSimpleAssembleAttr(&first, {0, 0});
+    auto& second = builder.CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {assembleMiddle}, {assembleOutput});
+    SetSimpleAssembleAttr(&second, {0, 4});
+    auto& tokenConsumer = builder.CreateTensorOpStmt(*function, Opcode::OP_ABS, {source}, {tokenOutput});
+    AddTokenEdge(*function, first, tokenConsumer);
+    // The ordinary ABS separates the token region from the legacy view chain.
+    builder.CreateTensorOpStmt(*function, Opcode::OP_ABS, {tokenOutput}, {viewInput});
+    auto& viewFirst = builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {viewInput}, {viewMiddle});
+    SetSimpleViewAttr(&viewFirst, {0, 0});
+    auto& viewSecond = builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {viewMiddle}, {viewOutput});
+    SetSimpleViewAttr(&viewSecond, {0, 0});
+    builder.CreateTensorOpStmt(*function, Opcode::OP_ABS, {viewMiddle}, {sideOutput});
+    function->BuildTensorMap();
+
+    MergeViewAssemble pass;
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+
+    ASSERT_EQ(viewOutput->GetProducers().size(), 1);
+    EXPECT_EQ((*viewOutput->GetProducers().begin())->GetIOperands().front(), viewInput);
+    EXPECT_FALSE(viewMiddle->GetProducers().empty());
+    ASSERT_EQ(assembleOutput->GetProducers().size(), 1);
+    auto* merged = *assembleOutput->GetProducers().begin();
+    EXPECT_EQ(merged->GetIOperands().front(), assembleInput);
+    ASSERT_EQ(tokenConsumer.tokens_.size(), 1);
+    const auto& token = tokenConsumer.tokens_.front();
+    EXPECT_TRUE(function->GetVarDependency().HasProducer(token, ToStmtPtr(*merged)));
+    EXPECT_TRUE(function->GetVarDependency().HasConsumer(token, ToStmtPtr(tokenConsumer)));
+}
+
 // Legacy mode (create_new_logical_tensor off): basic assemble chain merge still works.
 TEST_F(MergeViewAssembleTest, LegacyModeMergesLinearAssembleChain)
 {
@@ -2474,8 +2917,7 @@ TEST_F(MergeViewAssembleTest, LegacyModeMergesLinearAssembleChain)
     auto output = builder.CreateTensorVar(*function, DataType::DT_FP32, {2, 16});
     function->inCasts_ = {input};
     function->outCasts_ = {output};
-    // The producer view keeps the assemble input alive so EraseRedundantAssemble
-    // (legal-mode cleanup for producer-less inputs) does not remove the chain head.
+    // The producer view supplies the assemble input.
     auto& view = builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {input}, {viewOut});
     view.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
     auto& first = builder.CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {viewOut}, {midTensor});
@@ -2521,7 +2963,7 @@ TEST_F(MergeViewAssembleTest, LegacyModeKeepsIntermediateForSiblingConsumer)
     auto otherOut = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
     function->inCasts_ = {firstInput, secondInput};
     function->outCasts_ = {output, otherOut};
-    // Producer views keep the assemble inputs alive for EraseRedundantAssemble.
+    // Producer views supply the assemble inputs.
     auto& view1 = builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {firstInput}, {firstView});
     view1.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
     auto& view2 = builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {secondInput}, {secondView});

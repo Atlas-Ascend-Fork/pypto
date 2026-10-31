@@ -1847,9 +1847,9 @@ TEST_F(SplitLargeFanoutTensorTest, OneDimShouldSplit)
     // Assemble 创建新 LogicalTensor 后，拆分结果保留 2 个分片 Assemble 和 1 个未拆分分支的 Assemble。
     auto countResultAfter = CountViewAssemble(*function);
     const int viewNum = 2;
-    const int assembleNum = 0;
+    const int assembleNum = 3;
     EXPECT_EQ(viewNum, countResultAfter[0]) << countResultAfter[0] << " OP_VIEW after pass, should be 2";
-    EXPECT_EQ(assembleNum, countResultAfter[1]) << countResultAfter[1] << " OP_ASSEMBLE after pass, should be 0";
+    EXPECT_EQ(assembleNum, countResultAfter[1]) << countResultAfter[1] << " OP_ASSEMBLE after pass, should be 3";
 }
 
 // {1} + {16} + {15} --assemble--> {32} --view--> {16} + {16}
@@ -1951,7 +1951,7 @@ TEST_F(SplitLargeFanoutTensorTest, SixDimLargeTensorSkipSplit)
         }
     }
     EXPECT_EQ(recordView[largeTensor->GetMagic()], 2) << "views should still read the 6-dim large tensor";
-    EXPECT_EQ(recordAssemble[largeTensor->GetMagic()], 0) << "assembles should still write the 6-dim large tensor";
+    EXPECT_EQ(recordAssemble[largeTensor->GetMagic()], 2) << "assembles should still write the 6-dim large tensor";
 }
 
 // {1} + {2} + {1} + {1} --assemble--> {5} --view--> {3} + {1}
@@ -2093,12 +2093,12 @@ TEST_F(SplitLargeFanoutTensorTest, NoSplitLcmLargerThanLargeTensor)
     }
     EXPECT_EQ(countResultBefore[0], countResultAfter[0]) << countResultBefore[0] << "OP_VIEW before pass; "
                                                          << countResultAfter[0] << " OP_VIEW after pass, should equal.";
-    EXPECT_NE(countResultBefore[1], countResultAfter[1])
+    EXPECT_EQ(countResultBefore[1], countResultAfter[1])
         << countResultBefore[1] << "OP_ASSEMBLE before pass; " << countResultAfter[1]
-        << " OP_ASSEMBLE after pass, should not equal.";
-    EXPECT_NE(CommonUtils::ContainerToStr(opMagicBefore), CommonUtils::ContainerToStr(opMagicAfter))
+        << " OP_ASSEMBLE after pass, should equal.";
+    EXPECT_EQ(CommonUtils::ContainerToStr(opMagicBefore), CommonUtils::ContainerToStr(opMagicAfter))
         << "All op magic before pass: " << CommonUtils::ContainerToStr(opMagicBefore)
-        << "; All op magic after pass: " << CommonUtils::ContainerToStr(opMagicAfter) << "; Op should change.";
+        << "; All op magic after pass: " << CommonUtils::ContainerToStr(opMagicAfter) << "; Op should not change.";
 }
 
 TEST_F(SplitLargeFanoutTensorTest, TestSplitTailTile)
