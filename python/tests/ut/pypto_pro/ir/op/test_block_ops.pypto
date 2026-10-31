@@ -1,0 +1,1 @@
+block.load(%tile_0, %x_0, tuple(0, 0), is_transpose=true, tile_dims=[0, 1])

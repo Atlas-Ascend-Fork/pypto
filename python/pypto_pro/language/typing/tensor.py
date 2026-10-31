@@ -67,7 +67,8 @@ class Tensor:
             shape: Shape (for annotation mode)
             dtype: Data type (for annotation mode)
             expr: IR expression to wrap, or Input/Output in a call-style annotation
-            layout: Optional tensor layout (ND, DN, NZ)
+            layout: Optional tensor layout (ND or NZ). ``pl.DN`` cannot be declared explicitly; DN access is
+                inferred from a descending ``load``/``load_tile`` order or a single-column Tile transfer.
             memref: Optional memory reference
             _annotation_only: Whether this is annotation-only mode
         """

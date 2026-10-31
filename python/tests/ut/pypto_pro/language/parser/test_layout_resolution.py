@@ -29,7 +29,9 @@ def _make_resolver(
     closure_vars: dict | None = None, scope_lookup: "Callable[[str], Any | None] | None" = None
 ) -> TypeResolver:
     """Create a TypeResolver with ExprEvaluator from closure_vars."""
-    ev = ExprEvaluator(closure_vars=closure_vars or {})
+    namespace = {"pl": pl, "ND": pl.ND, "NZ": pl.NZ}
+    namespace.update(closure_vars or {})
+    ev = ExprEvaluator(closure_vars=namespace)
     return TypeResolver(expr_evaluator=ev, scope_lookup=scope_lookup)
 
 
@@ -37,7 +39,7 @@ def _make_resolver(
     "layout_str, expected_layout",
     [
         ("pl.NZ", ir.TensorLayout.NZ),
-        ("pl.DN", ir.TensorLayout.DN),
+        ("pl.ND", ir.TensorLayout.ND),
     ],
 )
 def test_resolve_tensor_with_layout(layout_str, expected_layout):
@@ -64,11 +66,14 @@ def test_resolve_tensor_without_layout_has_no_view():
 
 
 def test_resolve_tensor_layout_invalid():
-    """Invalid layout raises InvalidArgument."""
+    """Unsupported Tensor layout reports the supported layout set."""
     resolver = _make_resolver()
     node = ast.parse("pl.Tensor[[64, 128], pl.DT_FP16, pl.INVALID]", mode="eval").body
 
-    with pytest.raises(InvalidArgument, match="Unknown layout"):
+    with pytest.raises(
+        InvalidArgument,
+        match="Unknown layout: INVALID",
+    ):
         resolver.resolve_type(node)
 
 
@@ -124,16 +129,82 @@ def test_resolve_tensor_layout_with_dynamic_shape():
     assert result.tensor_view.layout == ir.TensorLayout.NZ
 
 
-def test_resolve_tensor_layout_with_shape_variable():
-    """Layout works with shape variable from closure."""
+def test_resolve_tensor_rejects_dn_with_shape_variable():
+    """A shape variable must not bypass explicit DN annotation validation."""
     resolver = _make_resolver(closure_vars={"shape": [64, 128]})
     node = ast.parse("pl.Tensor[shape, pl.DT_FP16, pl.DN]", mode="eval").body
-    result = resolver.resolve_type(node)
+    with pytest.raises(InvalidArgument, match="Unknown layout: DN"):
+        resolver.resolve_type(node)
 
-    assert isinstance(result, ir.TensorType)
-    assert len(result.shape) == 2
-    assert result.tensor_view is not None
-    assert result.tensor_view.layout == ir.TensorLayout.DN
+
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        "pl.Tensor[[64, 128], pl.DT_FP16, pl.DN]",
+        "pl.Tensor[[64, 128], pl.DT_FP16, DN]",
+        "pl.Tensor[[64, 128], pl.DT_FP16, layout_alias]",
+        "pl.Tensor[[64, 128], pl.DT_FP16, pl.DN, pl.MemRef(pl.MemorySpace.DDR, 0, 16384, 0)]",
+        "pl.Tensor[[64, 128], pl.DT_FP16, pl.DN, pl.Input]",
+        "pl.Tensor[[64], pl.DT_FP16, pl.DN]",
+        "pl.Tensor[[pl.DYNAMIC, 128], pl.DT_FP16, pl.DN]",
+    ],
+)
+def test_resolve_tensor_rejects_explicit_dn_annotation(annotation):
+    resolver = _make_resolver(closure_vars={"pl": pl, "layout_alias": pl.DN})
+    node = ast.parse(annotation, mode="eval").body
+    with pytest.raises(InvalidArgument, match="Unknown layout: DN"):
+        resolver.resolve_param_type(node, parameter_name="x")
+
+
+@pytest.mark.parametrize("layout_name", ["ZN", "NN", "ZZ"])
+def test_resolve_tensor_rejects_other_explicit_layouts(layout_name):
+    resolver = _make_resolver()
+    node = ast.parse(f"pl.Tensor[[64, 128], pl.DT_FP16, pl.{layout_name}]", mode="eval").body
+
+    with pytest.raises(
+        InvalidArgument,
+        match=rf"Unknown layout: {layout_name}",
+    ):
+        resolver.resolve_type(node)
+
+
+@pytest.mark.parametrize("layout", [pl.ZN, pl.NN, pl.ZZ])
+def test_resolve_tensor_rejects_other_layouts_from_closure(layout):
+    resolver = _make_resolver(closure_vars={"layout_alias": layout})
+    node = ast.parse("pl.Tensor[[64, 128], pl.DT_FP16, layout_alias]", mode="eval").body
+
+    with pytest.raises(InvalidArgument, match=rf"Unknown layout: {layout.name}"):
+        resolver.resolve_type(node)
+
+
+@pytest.mark.parametrize("shape", ["[pl.DYNAMIC, 128]", "[pl.STATIC, 128]", "[64, ...]"])
+def test_policy_helper_parameter_rejects_explicit_dn(shape):
+    resolver = _make_resolver(closure_vars={"pl": pl})
+    node = ast.parse(f"pl.Tensor[{shape}, pl.DT_FP16, pl.DN]", mode="eval").body
+    actual = ir.TensorType([64, 128], DataType.FP16)
+    with pytest.raises(InvalidArgument, match="Unknown layout: DN"):
+        resolver.validate_policy_parameter_type(node, "x", actual)
+
+
+@pytest.mark.parametrize("layout_name", ["ZN", "NN", "ZZ"])
+def test_policy_helper_parameter_rejects_other_explicit_layouts(layout_name):
+    resolver = _make_resolver(closure_vars={"pl": pl})
+    node = ast.parse(f"pl.Tensor[[pl.DYNAMIC, 128], pl.DT_FP16, pl.{layout_name}]", mode="eval").body
+    actual = ir.TensorType([64, 128], DataType.FP16)
+
+    with pytest.raises(InvalidArgument, match=rf"Unknown layout: {layout_name}"):
+        resolver.validate_policy_parameter_type(node, "x", actual)
+
+
+def test_policy_helper_parameter_rejects_non_layout_value():
+    resolver = _make_resolver(closure_vars={"pl": pl, "layout_alias": "DN"})
+    node = ast.parse(
+        "pl.Tensor[[pl.DYNAMIC, 128], pl.DT_FP16, layout_alias]", mode="eval"
+    ).body
+    actual = ir.TensorType([64, 128], DataType.FP16)
+
+    with pytest.raises(InvalidType, match="Tensor layout must be a TensorLayout, got str"):
+        resolver.validate_policy_parameter_type(node, "x", actual)
 
 
 def test_function_with_tensor_layout():
@@ -219,7 +290,7 @@ def test_function_layout_from_closure_variable():
     "layout, expected",
     [
         (pl.NZ, ir.TensorLayout.NZ),
-        (pl.DN, ir.TensorLayout.DN),
+        (pl.ND, ir.TensorLayout.ND),
     ],
 )
 def test_parametrized_layout(layout, expected):
@@ -240,8 +311,8 @@ def test_parametrized_layout(layout, expected):
     assert param_type.tensor_view.layout == expected
 
 
-def test_function_with_dn_layout():
-    """Kernel with DN layout for column-major tensors."""
+def test_function_rejects_dn_annotation_without_memory_operations():
+    """The declaration must fail even when the kernel never calls load/store."""
 
     @pl.jit(auto_mutex=False)
     def func(
@@ -249,13 +320,8 @@ def test_function_with_dn_layout():
     ):
         _test_result = x
 
-    func_program, _ = func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-    func = func_program.get_function(func.__name__)
-
-    param_type = func.params[0].type
-    assert isinstance(param_type, ir.TensorType)
-    assert param_type.tensor_view is not None
-    assert param_type.tensor_view.layout == ir.TensorLayout.DN
+    with pytest.raises(InvalidArgument, match="Unknown layout: DN"):
+        func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
 def test_backward_compat_bare_layout():

@@ -11,6 +11,7 @@
 """Unit tests for explicit-output block operations."""
 
 import inspect
+from pathlib import Path
 
 from pypto_pro import ir
 from pypto_pro._errors import (
@@ -31,6 +32,12 @@ from pypto.pypto_impl import ir as _ir
 
 def _program_ir(func: ir.Function) -> str:
     return str(func)
+
+
+def _assert_ir_dump(node) -> None:
+    printed = str(node)
+    golden = Path(__file__).with_suffix(".pypto").read_text(encoding="utf-8")
+    assert printed.rstrip("\n") == golden.rstrip("\n")
 
 
 def _find_call(func: ir.Function, name: str):
@@ -1615,6 +1622,132 @@ def test_high_dimensional_nz_store_rejects_non_final_transfer_axes():
             )
             tile = pl.make_tile(tile_type, addr=0x1000)
             pl.store(out, tile, [0, 0, 0, 0], order=[1, 3])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_single_column_vec_tile_rejects_explicit_nd_with_dn_hint():
+    with pytest.raises(
+        InvalidFormat,
+        match=r"requires layout DN, got ND.*Use layout=pl\.DN",
+    ):
+
+        @pl.jit(auto_mutex=False)
+        def main(x: pl.Tensor[[64, 64], pl.DT_FP32]):
+            tile_type = pl.TileType(
+                shape=[32, 1], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            tile = pl.make_tile(tile_type, addr=0x0000)
+            pl.load(tile, x, [0, 0])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_single_column_mat_tile_rejects_explicit_nd_with_dn_hint(monkeypatch):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "3510")
+
+    with pytest.raises(
+        InvalidFormat,
+        match=r"requires layout DN, got ND.*Use layout=pl\.DN, or widen the tile",
+    ):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            tile_type = pl.TileType(
+                shape=[32, 1], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Mat, layout=pl.ND
+            )
+            pl.make_tile(tile_type, addr=0x0000)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
+
+
+def test_non_column_dn_load_requires_descending_order():
+    with pytest.raises(InvalidFormat, match="load: DN Tile requires a descending order mapping"):
+
+        @pl.jit(auto_mutex=False)
+        def main(x: pl.Tensor[[64, 64], pl.DT_FP32]):
+            tile_type = pl.TileType(
+                shape=[32, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.DN
+            )
+            tile = pl.make_tile(tile_type, addr=0x0000)
+            pl.load(tile, x, [0, 0])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_nz_tensor_to_non_column_dn_tile_reports_layout_incompatibility(monkeypatch):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "3510")
+
+    with pytest.raises(InvalidType, match="load: unsupported layout/dtype combination"):
+
+        @pl.jit(auto_mutex=False)
+        def main(x: pl.Tensor[[64, 64], pl.DT_FP32, pl.NZ]):
+            tile_type = pl.TileType(
+                shape=[32, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.DN
+            )
+            tile = pl.make_tile(tile_type, addr=0x0000)
+            pl.load(tile, x, [0, 0])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_non_column_dn_load_tile_rejects_ascending_order():
+    with pytest.raises(InvalidFormat, match="load_tile: DN Tile requires a descending order mapping"):
+
+        @pl.jit(auto_mutex=False)
+        def main(x: pl.Tensor[[64, 64], pl.DT_FP32]):
+            tile_type = pl.TileType(
+                shape=[32, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.DN
+            )
+            tile = pl.make_tile(tile_type, addr=0x0000)
+            pl.load_tile(tile, x, [0, 0], order=[0, 1])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_non_column_dn_load_accepts_descending_order():
+    @pl.jit(auto_mutex=False)
+    def main(x: pl.Tensor[[64, 64], pl.DT_FP32]):
+        tile_type = pl.TileType(
+            shape=[32, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.DN
+        )
+        tile = pl.make_tile(tile_type, addr=0x0000)
+        pl.load(tile, x, [0, 0], order=[1, 0])
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function = program.get_function(main.__name__)
+    _assert_ir_dump(_find_call(function, "block.load"))
+
+
+def test_non_column_dn_load_tile_accepts_descending_order():
+    @pl.jit(auto_mutex=False)
+    def main(x: pl.Tensor[[64, 64], pl.DT_FP32]):
+        tile_type = pl.TileType(
+            shape=[32, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.DN
+        )
+        tile = pl.make_tile(tile_type, addr=0x0000)
+        pl.load_tile(tile, x, [0, 0], order=[1, 0])
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function = program.get_function(main.__name__)
+    _assert_ir_dump(_find_call(function, "block.load"))
+
+
+def test_if_merged_non_column_dn_load_requires_descending_order():
+    with pytest.raises(InvalidFormat, match="load: DN Tile requires a descending order mapping"):
+
+        @pl.jit(auto_mutex=False)
+        def main(x: pl.Tensor[[64, 64], pl.DT_FP32], flag: pl.Tensor[[1, 1], pl.DT_INT32]):
+            tile_type = pl.TileType(
+                shape=[32, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.DN
+            )
+            a = pl.make_tile(tile_type, addr=0x0000)
+            b = pl.make_tile(tile_type, addr=0x1000)
+            if flag[0, 0] > 0:
+                tile = a
+            else:
+                tile = b
+            pl.load(tile, x, [0, 0])
 
         main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 

@@ -19,8 +19,8 @@ opposite ways on its two paths:
 * the memref-less path (if-merged and intermediate tiles) applied ``hw_info`` *afterwards*,
   overriding the forced ColMajor back to RowMajor -- which the ISA then rejects.
 
-Both paths are covered here. A fractal layout on a 1-wide tile is now rejected outright rather
-than silently rewritten, which is checked too.
+Both paths are covered here. A fractal layout on a 1-wide tile is rejected rather than
+silently rewritten, which is checked too.
 
 These read the generated C++ directly, so they need no device and no bisheng.
 """
@@ -73,17 +73,6 @@ def _compact_tiles_kernel(x: pl.Tensor[[ROWS, COLS], pl.DT_FP32]):
 
 
 @pl.jit
-def _column_tile_declared_nd_kernel(x: pl.Tensor[[ROWS, COLS], pl.DT_FP32]):
-    """A column tile asking for pl.ND, which the ISA cannot honour for a 1-wide tile."""
-    column_type = pl.TileType(
-        shape=[ROWS, 1], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
-    )
-    column = pl.make_tile_group(type=column_type, addrs=0x0000, mutex_ids=[0])
-    with pl.section_vector():
-        pl.load(column.current(), x, [0, 0])
-
-
-@pl.jit
 def _if_merged_column_tile_kernel(x: pl.Tensor[[ROWS, COLS], pl.DT_FP32], flag: pl.Tensor[[1, 1], pl.DT_INT32]):
     """A column tile merged out of an if, which has no memref of its own."""
     column_type = pl.TileType(shape=[ROWS, 1], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
@@ -116,13 +105,6 @@ def test_column_tile_keeps_its_compact_mode():
     assert "CompactMode::Normal" in full, full
 
 
-def test_column_tile_is_col_major_whatever_the_layout_kwarg_says():
-    """A 1-wide tile cannot be RowMajor, so the shape still decides the block layout."""
-    source = _compile_to_cce(_column_tile_declared_nd_kernel)
-
-    assert "BLayout::ColMajor" in _tile_type_alias(source, "column")
-
-
 def test_memref_less_column_tile_is_col_major():
     """The memref-less path must apply the shape rule *after* hw_info, not before.
 
@@ -139,12 +121,12 @@ def test_memref_less_column_tile_is_col_major():
 
 
 def test_fractal_layout_on_a_column_tile_is_rejected():
-    """A 1-wide tile can only be ND or DN; a fractal layout would be silently rewritten.
+    """A 1-wide tile can only be DN; a fractal layout would be silently rewritten.
 
     ZN on a [ROWS, 1] Mat tile used to emit BLayout::ColMajor + SLayout::ColMajor, i.e. NN --
     a layout the user never asked for.
     """
-    with pytest.raises(Exception, match="requires layout ND or DN"):
+    with pytest.raises(Exception, match="requires layout DN"):
 
         @pl.jit
         def _fractal_column_kernel(x: pl.Tensor[[ROWS, COLS], pl.DT_FP16]):

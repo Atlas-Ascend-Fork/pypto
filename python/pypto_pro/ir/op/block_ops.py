@@ -3408,8 +3408,11 @@ def _check_layout_dtype(
         # declares the GM tensor as Layout::DN, so the emitted load is DN -> DN even when
         # the tensor itself is ND. Without this, a valid column load into a DN tile would
         # be misreported as an unsupported ND -> DN combination.
-        if dst_layout == TensorLayout.DN and _has_unit_last_axis(dst.type.shape):
-            src_layout = TensorLayout.DN
+        if dst_layout == TensorLayout.DN:
+            if _has_unit_last_axis(dst.type.shape):
+                src_layout = TensorLayout.DN
+            elif src_layout == TensorLayout.ND:
+                raise InvalidFormat(f"{op}: DN Tile requires a descending order mapping")
     elif src_loc != "GM" and dst_loc == "GM":
         # Mirror codegen's IsDNAccessLayout on the store side: a single-column tile
         # (last dim == 1) makes codegen declare the GM tensor as Layout::DN, so the
@@ -3642,13 +3645,12 @@ def _validate_tile_layout_alignments(tt: "TileType") -> None:
     # a 1-wide tile cannot satisfy, and codegen therefore emits ColMajor (DN). A
     # fractal layout would be silently rewritten (e.g. ZN on a [N, 1] tile -> NN).
     if tt.layout is not None and cols == 1 and tt.layout not in (
-        TensorLayout.ND,
         TensorLayout.DN,
     ):
         raise InvalidFormat(
-            f"a tile whose last axis is 1 requires layout ND or DN, got {tt.layout.name}: a "
+            f"a tile whose last axis is 1 requires layout DN, got {tt.layout.name}: a "
             f"1-wide tile cannot meet the 32-byte column alignment a fractal layout needs, so "
-            f"it is always emitted column-major. Drop the layout argument (DN is inferred), or "
+            f"it is always emitted column-major. Use layout=pl.DN, or "
             f"widen the tile if you need {tt.layout.name}."
         )
 

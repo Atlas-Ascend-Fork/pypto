@@ -91,7 +91,6 @@ class TypeResolver:
 
     _LAYOUT_MAP: dict[str, "ir.TensorLayout"] = {
         "ND": ir.TensorLayout.ND,
-        "DN": ir.TensorLayout.DN,
         "NZ": ir.TensorLayout.NZ,
     }
 
@@ -352,6 +351,8 @@ class TypeResolver:
                 span=self._get_span(type_node),
                 parser_retry=True,
             )
+        if annotation.layout is not None:
+            self._validate_tensor_layout(actual.shape, annotation.layout, type_node)
         if annotation.dtype != actual.dtype:
             raise InvalidType(
                 f"Helper parameter '{parameter_name}' dtype mismatch: expected {annotation.dtype}, got {actual.dtype}",
@@ -573,63 +574,6 @@ class TypeResolver:
             parser_retry=True,
         )
 
-    def resolve_layout(self, layout_node: ast.expr) -> "ir.TensorLayout":
-        """Resolve layout annotation to ir.TensorLayout.
-
-        Args:
-            layout_node: AST node representing layout (e.g., pl.NZ, NZ, or a variable)
-
-        Returns:
-            TensorLayout enum value
-
-        Raises:
-            InvalidArgument: If the layout name is not a known layout
-            InvalidType: If a layout variable holds something other than a TensorLayout
-            InvalidFormat: If the layout node cannot be resolved at all
-        """
-        span = self._get_span(layout_node)
-
-        if isinstance(layout_node, ast.Attribute):
-            layout_name = layout_node.attr
-            if layout_name in self._LAYOUT_MAP:
-                return self._LAYOUT_MAP[layout_name]
-            raise InvalidArgument(
-                f"Unknown layout: {layout_name}",
-                span=span,
-                hint=f"Use a valid layout: {', '.join(self._LAYOUT_MAP.keys())}",
-                parser_retry=True,
-            )
-
-        if isinstance(layout_node, ast.Name):
-            layout_name = layout_node.id
-            if layout_name in self._LAYOUT_MAP:
-                return self._LAYOUT_MAP[layout_name]
-
-            success, value = self.expr_evaluator.try_eval_expr(layout_node)
-            if success:
-                if isinstance(value, ir.TensorLayout):
-                    return value
-                raise InvalidType(
-                    f"Layout variable '{layout_name}' must be a TensorLayout, got {type(value).__name__}",
-                    span=span,
-                    hint=f"Use a valid layout: {', '.join(self._LAYOUT_MAP.keys())}",
-                    parser_retry=True,
-                )
-
-            raise InvalidArgument(
-                f"Unknown layout: {layout_name}",
-                span=span,
-                hint=f"Use a valid layout: {', '.join(self._LAYOUT_MAP.keys())}",
-                parser_retry=True,
-            )
-
-        raise InvalidFormat(
-            f"Cannot resolve layout: {ast.unparse(layout_node)}",
-            span=span,
-            hint="Use pl.ND, pl.DN, or pl.NZ",
-            parser_retry=True,
-        )
-
     def resolve_type_if_memref(self, annotation: ast.expr | None) -> "ir.Type | None":
         """Resolve annotation type only when it contains MemRef information.
 
@@ -764,20 +708,61 @@ class TypeResolver:
     def _validate_tensor_layout(
         self,
         shape: list[int] | list[ir.Expr],
-        layout: "ir.TensorLayout",
-        node: ast.expr,
-    ) -> None:
-        """Validate layout constraints known when a Tensor annotation is parsed."""
-        if layout != ir.TensorLayout.NZ:
-            return
+        layout: ast.expr | "ir.TensorLayout",
+        source_node: ast.expr | None = None,
+    ) -> "ir.TensorLayout":
+        """Resolve and validate a Tensor layout and its shape constraints."""
+        layout_node = layout if isinstance(layout, ast.expr) else None
+        node = layout_node if layout_node is not None else source_node
+        span = self._get_span(node) if node is not None else ir.Span.unknown()
 
-        span = self._get_span(node)
-        if len(shape) < 2:
+        if layout_node is not None:
+            success, layout = self.expr_evaluator.try_eval_expr(layout_node)
+            if not success:
+                layout_name = layout_node.attr if isinstance(layout_node, ast.Attribute) else ast.unparse(layout_node)
+                raise InvalidArgument(
+                    f"Unknown layout: {layout_name}",
+                    span=span,
+                    hint="Tensor only supports pl.ND and pl.NZ",
+                    parser_retry=True,
+                )
+
+        if not isinstance(layout, ir.TensorLayout):
+            if isinstance(layout_node, ast.Attribute):
+                raise InvalidArgument(
+                    f"Unknown layout: {layout_node.attr}",
+                    span=span,
+                    hint="Tensor only supports pl.ND and pl.NZ",
+                    parser_retry=True,
+                )
+            if layout_node is not None and not isinstance(layout_node, ast.Name):
+                raise InvalidFormat(
+                    f"Cannot resolve layout: {ast.unparse(layout_node)}",
+                    span=span,
+                    hint="Tensor only supports pl.ND and pl.NZ",
+                    parser_retry=True,
+                )
+            raise InvalidType(
+                f"Tensor layout must be a TensorLayout, got {type(layout).__name__}",
+                span=span,
+                hint="Tensor only supports pl.ND and pl.NZ",
+                parser_retry=True,
+            )
+        if layout not in self._LAYOUT_MAP.values():
+            raise InvalidArgument(
+                f"Unknown layout: {layout.name}",
+                span=span,
+                hint="Tensor only supports pl.ND and pl.NZ",
+                parser_retry=True,
+            )
+
+        if layout == ir.TensorLayout.NZ and len(shape) < 2:
             raise InvalidShape(
                 "NZ Tensor requires rank >= 2",
                 span=span,
                 parser_retry=True,
             )
+        return layout
 
     def _resolve_tensor_direction(self, node: ast.expr) -> TensorDirection | None:
         """Resolve a public direction enum used in a Tensor annotation."""
@@ -903,14 +888,12 @@ class TypeResolver:
             if self._is_memref_node(third):
                 memref = self.resolve_memref(third)
                 return with_direction(ir.TensorType(shape, dtype, memref))
-            layout = self.resolve_layout(third)
-            self._validate_tensor_layout(shape, layout, third)
+            layout = self._validate_tensor_layout(shape, third)
             tensor_view = ir.TensorView([], layout)
             return with_direction(ir.TensorType(shape, dtype, None, tensor_view))
 
         # 4 args: [shape, dtype, layout, memref] -> Tensor only
-        layout = self.resolve_layout(slice_value.elts[2])
-        self._validate_tensor_layout(shape, layout, slice_value.elts[2])
+        layout = self._validate_tensor_layout(shape, slice_value.elts[2])
         tensor_view = ir.TensorView([], layout)
         memref_node = slice_value.elts[3]
         if not self._is_memref_node(memref_node):
