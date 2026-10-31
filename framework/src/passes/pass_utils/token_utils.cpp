@@ -12,6 +12,10 @@
 #include "interface/tensor/irbuilder.h"
 #include "passes/pass_log/pass_log.h"
 
+#include <algorithm>
+#include <unordered_map>
+#include <vector>
+
 #define MODULE_NAME "TokenUtils"
 
 namespace npu::tile_fwk {
@@ -89,6 +93,54 @@ Status TokenUtils::SplitMultiProducerTokens(Function& function)
         APASS_LOG_INFO_F(Elements::Operation, "SplitMultiProducerTokens completed for function %s.",
                          function.GetRawName().c_str());
     }
+
+    return SUCCESS;
+}
+
+Status TokenUtils::RemoveDanglingTokens(Function& function)
+{
+    struct TokenDependency {
+        std::vector<Operation*> producers;
+        std::vector<Operation*> consumers;
+    };
+    std::unordered_map<ir::VarPtr, TokenDependency> tokenDependencies;
+    for (const auto& op : function.operations_) {
+        if (op->IsDeleted()) {
+            continue;
+        }
+        for (const auto& token : op->result_token_) {
+            if (token != nullptr) {
+                tokenDependencies[token].producers.push_back(op.get());
+            }
+        }
+        for (const auto& token : op->tokens_) {
+            if (token != nullptr) {
+                tokenDependencies[token].consumers.push_back(op.get());
+            }
+        }
+    }
+
+    size_t danglingNum = 0;
+    for (const auto& [token, dependency] : tokenDependencies) {
+        // A token is dangling when either side of its dependency is missing.
+        if (!dependency.producers.empty() && !dependency.consumers.empty()) {
+            continue;
+        }
+        ++danglingNum;
+        for (auto* producer : dependency.producers) {
+            producer->result_token_.erase(
+                std::remove(producer->result_token_.begin(), producer->result_token_.end(), token),
+                producer->result_token_.end());
+        }
+        for (auto* consumer : dependency.consumers) {
+            consumer->tokens_.erase(std::remove(consumer->tokens_.begin(), consumer->tokens_.end(), token),
+                                    consumer->tokens_.end());
+        }
+    }
+    function.RefreshVarDependency();
+
+    APASS_LOG_INFO_F(Elements::Operation, "RemoveDanglingTokens: dropped %zu dangling token(s) on function [%s].",
+                     danglingNum, function.GetRawName().c_str());
 
     return SUCCESS;
 }

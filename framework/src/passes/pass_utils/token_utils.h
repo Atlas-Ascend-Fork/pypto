@@ -55,6 +55,27 @@ public:
      * \return SUCCESS on completion, FAILED on internal error.
      */
     static Status SplitMultiProducerTokens(Function& function);
+
+    /*!
+     * \brief Remove dangling tokens: tokens whose dependency is incomplete.
+     *
+     * A token is dangling when either side of its dependency is missing within
+     * \p function: it is consumed (in some op's \c tokens_ list) but has no
+     * producer, or it is produced (in some op's \c result_token_ list) but has
+     * no consumer.  Such tokens carry no usable dependency and would otherwise
+     * be duplicated by later expansion passes.
+     *
+     * The live producer/consumer sets are derived directly from the operations'
+     * token lists, so a stale \c VarDependency index cannot hide or invent a
+     * dependency.  For each dangling token this removes it from the consuming
+     * ops' \c tokens_ list and/or the producing ops' \c result_token_ list, and
+     * rebuilds the Function-level \c VarDependency map from the remaining
+     * operations.
+     *
+     * \param function  The function whose dangling tokens should be removed.
+     * \return SUCCESS on completion.
+     */
+    static Status RemoveDanglingTokens(Function& function);
 };
 
 } // namespace npu::tile_fwk

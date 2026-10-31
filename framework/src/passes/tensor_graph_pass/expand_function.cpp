@@ -832,6 +832,7 @@ Status ExpandFunction::RunOnFunction(Function& function)
                           oss.str().c_str());
         return FAILED;
     }
+    TokenUtils::RemoveDanglingTokens(function);
     if (Expandfunction(function) != SUCCESS) {
         APASS_LOG_ERROR_F(Elements::Function, "Function[%s] ExpandFunction failed.", function.GetRawName().c_str());
         return FAILED;

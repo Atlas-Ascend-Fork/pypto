@@ -501,11 +501,12 @@ TEST_F(TestExpandFunctionPass, AssembleReshapeToOutcastWithTokenShouldExpand)
     auto outCast = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, outShape, CreateTestConstIntVector(outShape));
 
     auto& assembleOp = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_ASSEMBLE, {inCast}, {midTensor});
-    PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_RESHAPE, {midTensor}, {outCast});
+    auto& reshapeOp = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_RESHAPE, {midTensor}, {outCast});
     assembleOp.SetOpAttribute(CreateAssembleOpAttr());
     assembleOp.tileShape_.SetVecTile(shape);
     auto writeSemantic = IRContext::Get().MakeSemanticToken("mid_w", ir::TokenKind::WRITE, ir::Span::Unknown());
     assembleOp.result_token_ = {writeSemantic};
+    reshapeOp.tokens_.push_back(writeSemantic);
 
     currFunctionPtr->inCasts_.push_back(inCast);
     currFunctionPtr->outCasts_.push_back(outCast);
@@ -2018,8 +2019,8 @@ TEST_F(TestExpandFunctionPass, ComputeOpReadGoesToSliceAndWriteGoesToContract)
     lhs->AddReadToken(readSemantic);
     // Another operation/branch reads the same tensor after this ADD was inferred.
     lhs->AddReadToken(IRContext::Get().MakeSemanticToken("later_lhs_r", ir::TokenKind::READ, ir::Span::Unknown()));
-    addOp.result_token_ = {readSemantic, writeSemantic};
-    addOp.tokens_ = {depSemantic};
+    addOp.result_token_ = {readSemantic, writeSemantic, depSemantic};
+    addOp.tokens_ = {depSemantic, readSemantic, writeSemantic};
 
     func->inCasts_.push_back(lhs);
     func->inCasts_.push_back(rhs);
@@ -2129,7 +2130,7 @@ TEST_F(TestExpandFunctionPass, AssembleWriteGoesToContractAndConsumedOnNextAssem
     src1->AddReadToken(readSemantic);
     firstAssemble.result_token_ = {readSemantic, firstWrite};
     secondAssemble.result_token_ = {secondWrite};
-    secondAssemble.tokens_ = {firstWrite};
+    secondAssemble.tokens_ = {firstWrite, readSemantic, secondWrite};
 
     func->inCasts_.push_back(src1);
     func->inCasts_.push_back(src2);
@@ -2178,6 +2179,10 @@ TEST_F(TestExpandFunctionPass, AtomicRmwConvertsSemanticTokensToNormal)
     auto src2 = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
     auto dst = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
 
+    auto depTensor = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto& depOp = PassOperationUtils::AddOperation(*func, Opcode::OP_EXP, {src2}, {depTensor});
+    depOp.tileShape_.SetVecTile(kNumExpSix, kNumExpSix);
+
     auto& atomicOp = PassOperationUtils::AddOperation(*func, Opcode::OP_ATOMIC_RMW, {src1}, {dst});
     atomicOp.SetOpAttribute(CreateAssembleOpAttr());
     atomicOp.tileShape_.SetVecTile(kNumExpSix, kNumExpSix);
@@ -2186,15 +2191,21 @@ TEST_F(TestExpandFunctionPass, AtomicRmwConvertsSemanticTokensToNormal)
     assembleOp.SetOpAttribute(CreateAssembleOpAttr());
     assembleOp.tileShape_.SetVecTile(kNumExpSix, kNumExpSix);
 
+    auto sinkTensor = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto& sinkOp = PassOperationUtils::AddOperation(*func, Opcode::OP_EXP, {dst}, {sinkTensor});
+    sinkOp.tileShape_.SetVecTile(kNumExpSix, kNumExpSix);
+
     auto readSemantic = IRContext::Get().MakeSemanticToken("src1_r", ir::TokenKind::READ, ir::Span::Unknown());
     auto atomicWrite = IRContext::Get().MakeSemanticToken("dst_w1", ir::TokenKind::WRITE, ir::Span::Unknown());
     auto depSemantic = IRContext::Get().MakeSemanticToken("dep_w", ir::TokenKind::WRITE, ir::Span::Unknown());
     auto assembleWrite = IRContext::Get().MakeSemanticToken("dst_w2", ir::TokenKind::WRITE, ir::Span::Unknown());
     src1->AddReadToken(readSemantic);
+    depOp.result_token_ = {depSemantic};
     atomicOp.result_token_ = {readSemantic, atomicWrite};
     atomicOp.tokens_ = {depSemantic};
     assembleOp.result_token_ = {assembleWrite};
-    assembleOp.tokens_ = {atomicWrite};
+    assembleOp.tokens_ = {atomicWrite, readSemantic};
+    sinkOp.tokens_ = {assembleWrite};
 
     func->inCasts_.push_back(src1);
     func->inCasts_.push_back(src2);

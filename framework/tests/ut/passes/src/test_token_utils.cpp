@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 #include <unordered_map>
 #include <vector>
+#include <algorithm>
 #include "ir/span.h"
 #include "ir/type.h"
 #include "interface/configs/config_manager.h"
@@ -320,4 +321,72 @@ TEST_F(TokenUtilsTest, RebuildTokenDependenciesAllowsExternalProducer)
     auto consumer = std::static_pointer_cast<const ir::Stmt>(function->operations_.front());
     EXPECT_TRUE(function->GetVarDependency().GetProducers(externalToken).empty());
     EXPECT_EQ(function->GetVarDependency().GetConsumers(externalToken).count(consumer), 1);
+}
+
+TEST_F(TokenUtilsTest, RemoveDanglingTokensDropsIncomplete)
+{
+    TileShape::Current().SetVecTile({32, 32});
+    std::vector<int64_t> shape{32, 32};
+    Tensor input(DT_FP32, shape, "input");
+    Tensor output(DT_FP32, shape, "output");
+    FUNCTION("TokenDanglingRemove")
+    {
+        Tensor a = Exp(input);
+        Tensor b = Mul(a, Element(DT_FP32, 2.0));
+        output = Add(b, Element(DT_FP32, 1.0));
+    }
+    Function* func = Program::GetInstance().GetFunctionByRawName("TENSOR_TokenDanglingRemove");
+    ASSERT_NE(func, nullptr);
+
+    auto opList = func->Operations(false).DuplicatedOpList();
+    ASSERT_GE(opList.size(), 3);
+
+    auto& dep = func->GetVarDependency();
+    auto op0Stmt = std::static_pointer_cast<const ir::Stmt>(func->operations_[0]);
+    auto op1Stmt = std::static_pointer_cast<const ir::Stmt>(func->operations_[1]);
+    auto op2Stmt = std::static_pointer_cast<const ir::Stmt>(func->operations_[2]);
+
+    // Read-only token: consumed but never produced -> dangling.
+    auto readOnlyToken = MakeToken("token_read_only");
+    opList[2]->tokens_.push_back(readOnlyToken);
+    dep.AddConsumer(readOnlyToken, op2Stmt);
+
+    // Write-only token: produced but never consumed -> dangling.
+    auto writeOnlyToken = MakeToken("token_write_only");
+    opList[0]->result_token_.push_back(writeOnlyToken);
+    dep.AddProducer(writeOnlyToken, op0Stmt);
+
+    // Complete token: produced and consumed -> must be preserved.
+    auto completeToken = MakeToken("token_complete");
+    opList[1]->result_token_.push_back(completeToken);
+    opList[2]->tokens_.push_back(completeToken);
+    dep.AddProducer(completeToken, op1Stmt);
+    dep.AddConsumer(completeToken, op2Stmt);
+
+    EXPECT_EQ(TokenUtils::RemoveDanglingTokens(*func), SUCCESS);
+
+    EXPECT_EQ(dep.HasDependency(readOnlyToken), false);
+    EXPECT_EQ(std::count(opList[2]->tokens_.begin(), opList[2]->tokens_.end(), readOnlyToken), 0);
+
+    EXPECT_EQ(dep.HasDependency(writeOnlyToken), false);
+    EXPECT_EQ(std::count(opList[0]->result_token_.begin(), opList[0]->result_token_.end(), writeOnlyToken), 0);
+
+    EXPECT_EQ(dep.HasDependency(completeToken), true);
+    EXPECT_EQ(dep.GetProducers(completeToken).size(), 1);
+    EXPECT_EQ(dep.GetConsumers(completeToken).size(), 1);
+    EXPECT_EQ(std::count(opList[1]->result_token_.begin(), opList[1]->result_token_.end(), completeToken), 1);
+    EXPECT_EQ(std::count(opList[2]->tokens_.begin(), opList[2]->tokens_.end(), completeToken), 1);
+}
+
+TEST_F(TokenUtilsTest, RemoveDanglingTokensNoTokensNoop)
+{
+    TileShape::Current().SetVecTile({32, 32});
+    Tensor input(DT_FP32, {32, 32}, "input");
+    Tensor output(DT_FP32, {32, 32}, "output");
+    FUNCTION("TokenDanglingEmpty") { output = Exp(input); }
+    Function* func = Program::GetInstance().GetFunctionByRawName("TENSOR_TokenDanglingEmpty");
+    ASSERT_NE(func, nullptr);
+
+    EXPECT_EQ(TokenUtils::RemoveDanglingTokens(*func), SUCCESS);
+    EXPECT_TRUE(func->GetVarDependency().GetAllDependencies().empty());
 }

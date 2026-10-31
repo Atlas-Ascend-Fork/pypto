@@ -91,9 +91,12 @@ void CheckReadTokensAfterExpansion(Function& function, const LogicalTensorPtr& s
     function.SetGraphType(GraphType::TENSOR_GRAPH);
     ExpandFunction expand;
     ASSERT_EQ(static_cast<Pass&>(expand).RunOnFunction(function), SUCCESS);
+    // The complete token (producer on the CAST, consumer on the promoted read)
+    // is kept through expansion: the two slices that read `source` each carry
+    // exactly one NORMAL completion token. Assert where it lands and how many.
     size_t readSlices = 0;
     for (auto& op : function.Operations()) {
-        if (op.GetOpcode() == Opcode::OP_SLICE && op.GetIOperands().front() == source) {
+        if (op.GetOpcode() == Opcode::OP_SLICE && !op.GetIOperands().empty() && op.GetIOperands().front() == source) {
             ASSERT_EQ(op.result_token_.size(), 1U);
             auto type = std::dynamic_pointer_cast<const ir::TokenType>(op.result_token_.front()->GetType());
             ASSERT_NE(type, nullptr);
@@ -130,6 +133,15 @@ TEST_F(AutoCastTest, PromotedReadsKeepCompletionTokensThroughExpansion)
         }
 
         ASSERT_NO_FATAL_FAILURE(CheckReadTokensAfterAutoCast(graph));
+        // After AutoCast the token producer moved to the inserted CAST ops; the
+        // read ops are now consumers. Add the consumer side so the token is
+        // complete (producer + consumer) and must survive expansion.
+        for (const auto& name : {"read1", "read2"}) {
+            auto* read = graph.GetOp(name);
+            read->tokens_ = {token};
+            function.GetVarDependency().AddConsumer(token,
+                                                    std::static_pointer_cast<const ir::Stmt>(read->shared_from_this()));
+        }
         ASSERT_NO_FATAL_FAILURE(CheckReadTokensAfterExpansion(function, source));
     }
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);

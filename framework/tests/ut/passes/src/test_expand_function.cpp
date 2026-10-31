@@ -297,10 +297,19 @@ TEST_F(TestExpandFunction, ExpandedOperationsPreserveTokenContract)
     ASSERT_NE(source, operations.end());
     auto sourceOpcode = (*source)->GetOpcode();
 
+    auto tokenProducer = std::find_if(operations.begin(), operations.end(),
+                                      [](const auto* op) { return op->GetOpcode() == Opcode::OP_VIEW; });
+    ASSERT_NE(tokenProducer, operations.end());
+    auto tokenConsumer = std::find_if(operations.begin(), operations.end(),
+                                      [](const auto* op) { return op->GetOpcode() == Opcode::OP_ASSEMBLE; });
+    ASSERT_NE(tokenConsumer, operations.end());
+
     auto resultToken = IRBuilder().CreateTokenVar(ir::Span::Unknown());
     auto inputToken = IRBuilder().CreateTokenVar(ir::Span::Unknown());
     (*source)->result_token_ = {resultToken};
-    (*source)->tokens_.push_back(inputToken);
+    (*source)->tokens_ = {inputToken};
+    (*tokenProducer)->result_token_.push_back(inputToken);
+    (*tokenConsumer)->tokens_.push_back(resultToken);
 
     ExpandFunction expandFunction;
     ASSERT_EQ(expandFunction.RunOnFunction(*function), SUCCESS);
