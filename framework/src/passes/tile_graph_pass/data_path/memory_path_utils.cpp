@@ -357,6 +357,13 @@ Status MemoryPathUtils::SyncTensorToBe(Function& function)
         tensor->SetMemoryTypeToBe(tensor->GetMemoryTypeOriginal());
         ++syncCount;
     };
+    // Function boundary tensors can remain after all of their operand references are removed.
+    for (const auto& tensor : function.inCasts_) {
+        syncTensor(tensor);
+    }
+    for (const auto& tensor : function.outCasts_) {
+        syncTensor(tensor);
+    }
     for (auto& op : function.Operations()) {
         for (auto& input : op.iOperand) {
             syncTensor(input);
@@ -388,6 +395,15 @@ Status MemoryPathUtils::SetOriginalChecked(const LogicalTensorPtr& tensor, Memor
             tensor->GetMagic(), BriefMemoryTypeToString(currentType).c_str(),
             BriefMemoryTypeToString(memoryType).c_str(), context.c_str());
         return SUCCESS;
+    }
+    if (currentType != MemoryType::MEM_UNKNOWN && currentType != memoryType) {
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Override tensor[%d] original %s -> %s, reason: %s.", tensor->GetMagic(),
+                          BriefMemoryTypeToString(currentType).c_str(), BriefMemoryTypeToString(memoryType).c_str(),
+                          context.c_str());
+    } else if (currentType == MemoryType::MEM_UNKNOWN && memoryType != currentType &&
+               context.compare(0, 5, "Infer") == 0) {
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Infer tensor[%d] original as %s, reason: %s.", tensor->GetMagic(),
+                          BriefMemoryTypeToString(memoryType).c_str(), context.c_str());
     }
     tensor->SetMemoryTypeOriginal(memoryType, allowOverride);
     return SUCCESS;

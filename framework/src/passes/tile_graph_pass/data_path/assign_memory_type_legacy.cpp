@@ -615,8 +615,13 @@ Status AssignMemoryType::TryInferAssembleOutputByProducerCandidate(const Logical
     handled = !hasConflict && producerCandidate != MemoryType::MEM_UNKNOWN &&
               MemoryPathUtils::FitsAssembleOutputMemoryLimit(output, producerCandidate) &&
               AreAssembleDirectPathsSupported(output, producerCandidate);
-    if (!handled)
+    if (!handled) {
+        APASS_LOG_DEBUG_F(Elements::Tensor,
+                          "Reject assemble output tensor[%d] candidate %s: producer conflict=%d; "
+                          "otherwise memory limit or direct path constraints failed.",
+                          output->GetMagic(), BriefMemoryTypeToString(producerCandidate).c_str(), hasConflict);
         return SUCCESS;
+    }
     return ApplyAssembleProducerCandidate(output, producerCandidate);
 }
 
@@ -891,6 +896,13 @@ void AssignMemoryType::ProcessL0C2L1SmallToLargeLegacy(Function& function)
         if (HasParallelDifferentConsumerRequirementLegacy(iOperand, MemoryType::MEM_L1) ||
             !AreAllConsumerRequirements(oOperand, MemoryType::MEM_L1) ||
             !MemoryPathUtils::IsDimMultiple(oOperand->GetShape(), iOperand->GetShape()) || !isConsumerOutputMultiple) {
+            if (oOperand->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) {
+                APASS_LOG_DEBUG_F(Elements::Tensor,
+                                  "AssignMemoryType::ProcessL0C2L1SmallToLargeLegacy: tensor[%d] original %s -> %s.",
+                                  oOperand->GetMagic(),
+                                  BriefMemoryTypeToString(oOperand->GetMemoryTypeOriginal()).c_str(),
+                                  BriefMemoryTypeToString(MemoryType::MEM_DEVICE_DDR).c_str());
+            }
             oOperand->SetMemoryTypeOriginal(MemoryType::MEM_DEVICE_DDR, true);
             DowngradeConsumerRequirements(oOperand, MemoryType::MEM_L0C);
             APASS_LOG_DEBUG_F(Elements::Tensor,
@@ -998,6 +1010,13 @@ void AssignMemoryType::ProcessL0C2UBSmallToLargeLegacy(Function& function)
                         isConsumerOutputMultiple && isVecTileShapeValid &&
                         MemoryPathUtils::FitsAssembleOutputMemoryLimit(oOperand, MemoryType::MEM_UB);
         if (!canUseUb) {
+            if (oOperand->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) {
+                APASS_LOG_DEBUG_F(Elements::Tensor,
+                                  "AssignMemoryType::ProcessL0C2UBSmallToLargeLegacy: tensor[%d] original %s -> %s.",
+                                  oOperand->GetMagic(),
+                                  BriefMemoryTypeToString(oOperand->GetMemoryTypeOriginal()).c_str(),
+                                  BriefMemoryTypeToString(MemoryType::MEM_DEVICE_DDR).c_str());
+            }
             oOperand->SetMemoryTypeOriginal(MemoryType::MEM_DEVICE_DDR, true);
             DowngradeConsumerRequirements(oOperand, MemoryType::MEM_L0C);
             APASS_LOG_DEBUG_F(Elements::Tensor,
@@ -1076,10 +1095,22 @@ void AssignMemoryType::ProcessUB2L1SmallToLargeLegacy(Function& function)
                               "UB2L1 small to large: dtype %s of tensor %d is not supported by UB2L1, "
                               "downgrade to DDR",
                               DataType2String(iOperand->Datatype()), iOperand->magic);
+            if (oOperand->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) {
+                APASS_LOG_DEBUG_F(
+                    Elements::Tensor, "AssignMemoryType::ProcessUB2L1SmallToLargeLegacy: tensor[%d] original %s -> %s.",
+                    oOperand->GetMagic(), BriefMemoryTypeToString(oOperand->GetMemoryTypeOriginal()).c_str(),
+                    BriefMemoryTypeToString(MemoryType::MEM_DEVICE_DDR).c_str());
+            }
             oOperand->SetMemoryTypeOriginal(MemoryType::MEM_DEVICE_DDR, true);
             continue;
         }
         if (ShouldSkipUB2L1SmallToLarge(iOperand, oOperand)) {
+            if (oOperand->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) {
+                APASS_LOG_DEBUG_F(
+                    Elements::Tensor, "AssignMemoryType::ProcessUB2L1SmallToLargeLegacy: tensor[%d] original %s -> %s.",
+                    oOperand->GetMagic(), BriefMemoryTypeToString(oOperand->GetMemoryTypeOriginal()).c_str(),
+                    BriefMemoryTypeToString(MemoryType::MEM_DEVICE_DDR).c_str());
+            }
             oOperand->SetMemoryTypeOriginal(MemoryType::MEM_DEVICE_DDR, true);
             continue;
         }
@@ -1087,6 +1118,12 @@ void AssignMemoryType::ProcessUB2L1SmallToLargeLegacy(Function& function)
             !AreAllConsumerRequirements(oOperand, MemoryType::MEM_L1) ||
             !MemoryPathUtils::IsDimMultiple(oOperand->GetShape(), iOperand->GetShape()) ||
             !CheckConsumerMoveInShapeMultiple(oOperand, iOperand)) {
+            if (oOperand->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) {
+                APASS_LOG_DEBUG_F(
+                    Elements::Tensor, "AssignMemoryType::ProcessUB2L1SmallToLargeLegacy: tensor[%d] original %s -> %s.",
+                    oOperand->GetMagic(), BriefMemoryTypeToString(oOperand->GetMemoryTypeOriginal()).c_str(),
+                    BriefMemoryTypeToString(MemoryType::MEM_DEVICE_DDR).c_str());
+            }
             oOperand->SetMemoryTypeOriginal(MemoryType::MEM_DEVICE_DDR, true);
             DowngradeConsumerRequirements(oOperand, MemoryType::MEM_UB);
         }
@@ -1347,6 +1384,12 @@ void AssignMemoryType::ProcessShapeTransportFallback(Function& function)
         if (opcode == Opcode::OP_VIEW) {
             inserter.UpdateTensorTobeMap(iOperand, op, MEM_DEVICE_DDR);
         } else {
+            if (oOperand->GetMemoryTypeOriginal() != MEM_DEVICE_DDR) {
+                APASS_LOG_DEBUG_F(
+                    Elements::Tensor, "AssignMemoryType::ProcessShapeTransportFallback: tensor[%d] original %s -> %s.",
+                    oOperand->GetMagic(), BriefMemoryTypeToString(oOperand->GetMemoryTypeOriginal()).c_str(),
+                    BriefMemoryTypeToString(MEM_DEVICE_DDR).c_str());
+            }
             oOperand->SetMemoryTypeOriginal(MEM_DEVICE_DDR, true);
             DowngradeConsumerRequirements(oOperand, fromType);
         }

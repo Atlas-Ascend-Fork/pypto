@@ -474,14 +474,32 @@ void AssignMemoryType::ApplyReshapeCubeToVecUpgrade(Operation& op, const Logical
         auto& producerOutput = producer->oOperand.front();
 
         // set producer contract input to cube output type (L0C/L1)
+        if (producerInput->GetMemoryTypeOriginal() != cubeOutputType) {
+            APASS_LOG_DEBUG_F(
+                Elements::Tensor, "AssignMemoryType::ApplyReshapeCubeToVecUpgrade: tensor[%d] original %s -> %s.",
+                producerInput->GetMagic(), BriefMemoryTypeToString(producerInput->GetMemoryTypeOriginal()).c_str(),
+                BriefMemoryTypeToString(cubeOutputType).c_str());
+        }
         producerInput->SetMemoryTypeOriginal(cubeOutputType, true);
         inserter.UpdateTensorTobeMap(producerInput, *producer, cubeOutputType);
 
         // set producer output to be UB
+        if (producerOutput->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
+            APASS_LOG_DEBUG_F(
+                Elements::Tensor, "AssignMemoryType::ApplyReshapeCubeToVecUpgrade: tensor[%d] original %s -> %s.",
+                producerOutput->GetMagic(), BriefMemoryTypeToString(producerOutput->GetMemoryTypeOriginal()).c_str(),
+                BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
+        }
         producerOutput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
         inserter.UpdateTensorTobeMap(producerOutput, op, MemoryType::MEM_UB);
     }
     // set reshape output to UB
+    if (output->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
+        APASS_LOG_DEBUG_F(Elements::Tensor,
+                          "AssignMemoryType::ApplyReshapeCubeToVecUpgrade: tensor[%d] original %s -> %s.",
+                          output->GetMagic(), BriefMemoryTypeToString(output->GetMemoryTypeOriginal()).c_str(),
+                          BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
+    }
     output->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
 
     // set all consumer slice/contracts input to UB
@@ -499,10 +517,22 @@ void AssignMemoryType::ApplyReshapeVecToCubeUpgrade(Operation& op,
         auto& producerOutput = producer->oOperand.front();
 
         // set producer slice/contract input to UB
+        if (producerInput->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
+            APASS_LOG_DEBUG_F(
+                Elements::Tensor, "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: tensor[%d] original %s -> %s.",
+                producerInput->GetMagic(), BriefMemoryTypeToString(producerInput->GetMemoryTypeOriginal()).c_str(),
+                BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
+        }
         producerInput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
         inserter.UpdateTensorTobeMap(producerInput, *producer, MemoryType::MEM_UB);
 
         // set reshape input to UB
+        if (producerOutput->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
+            APASS_LOG_DEBUG_F(
+                Elements::Tensor, "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: tensor[%d] original %s -> %s.",
+                producerOutput->GetMagic(), BriefMemoryTypeToString(producerOutput->GetMemoryTypeOriginal()).c_str(),
+                BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
+        }
         producerOutput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
         inserter.UpdateTensorTobeMap(producerOutput, op, MemoryType::MEM_UB);
     }
@@ -512,10 +542,22 @@ void AssignMemoryType::ApplyReshapeVecToCubeUpgrade(Operation& op,
         auto& consumerOutput = consumer->oOperand.front();
 
         // set reshape output to UB, set its tobe mem type to L1
+        if (consumerInput->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
+            APASS_LOG_DEBUG_F(
+                Elements::Tensor, "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: tensor[%d] original %s -> %s.",
+                consumerInput->GetMagic(), BriefMemoryTypeToString(consumerInput->GetMemoryTypeOriginal()).c_str(),
+                BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
+        }
         consumerInput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
         inserter.UpdateTensorTobeMap(consumerInput, *consumer, MemoryType::MEM_L1);
 
         // set consumer slice output to be L1
+        if (consumerOutput->GetMemoryTypeOriginal() != MemoryType::MEM_L1) {
+            APASS_LOG_DEBUG_F(
+                Elements::Tensor, "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: tensor[%d] original %s -> %s.",
+                consumerOutput->GetMagic(), BriefMemoryTypeToString(consumerOutput->GetMemoryTypeOriginal()).c_str(),
+                BriefMemoryTypeToString(MemoryType::MEM_L1).c_str());
+        }
         consumerOutput->SetMemoryTypeOriginal(MemoryType::MEM_L1, true);
         for (auto& consumerConsumer : consumerOutput->GetConsumers()) {
             inserter.UpdateTensorTobeMap(consumerOutput, *consumerConsumer, MemoryType::MEM_L1);
@@ -544,6 +586,15 @@ Status AssignMemoryType::InferReshapeL0C2UBAndUB2L1PatternLiteNPU(Operation& op)
                                                 inserter.IsL0C2UbLiteNPUSupportedDtype(input))) {
         ApplyReshapeCubeToVecUpgrade(op, output, producers, consumers, cubeOutputType);
         return SUCCESS;
+    }
+
+    if (cubeOutputType != MemoryType::MEM_UNKNOWN) {
+        APASS_LOG_DEBUG_F(
+            Elements::Operation,
+            "Reject cube-to-vector reshape[%d] upgrade: UB capacity, transfer shape or dtype constraints; "
+            "input tensor[%d] shape=%s, dtype=%s.",
+            op.GetOpMagic(), input->GetMagic(), IntVecToStr(input->GetShape()).c_str(),
+            DataType2String(input->Datatype()));
     }
 
     // ub2l1 pattern，结构见 IsReshapeVecToCubeUB2L1Pattern 注释。
@@ -652,6 +703,9 @@ Status AssignMemoryType::InferSliceMemoryType(Operation& operation)
     }
     MemoryType inferredType = InferOriginalFromOutputRequirements(output);
     if (inferredType == MemoryType::MEM_UNKNOWN) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "InferSliceOutputOriginal: %s[%d] tensor[%d] defaults to UB after ambiguous inference.",
+                          operation.GetOpcodeStr().c_str(), operation.GetOpMagic(), output->GetMagic());
         inferredType = MemoryType::MEM_UB;
     }
     RETURN_IF_NOT_SUCCESS(MemoryPathUtils::SetOriginalChecked(output, inferredType, "InferSliceOutputOriginal"));
@@ -689,6 +743,9 @@ Status AssignMemoryType::InferContractMemoryType(Operation& operation)
     }
     MemoryType inferredType = InferRequirementFromInputOriginals(input);
     if (inferredType == MemoryType::MEM_UNKNOWN) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "InferContractInputRequirement: %s[%d] tensor[%d] defaults to UB after ambiguous inference.",
+                          operation.GetOpcodeStr().c_str(), operation.GetOpMagic(), input->GetMagic());
         inferredType = MemoryType::MEM_UB;
     }
     MemoryPathUtils::ForceSetRequirement(inserter, input, operation, inferredType, "InferContractInputRequirement");
@@ -699,7 +756,12 @@ Status AssignMemoryType::InferContractMemoryType(Operation& operation)
 MemoryType AssignMemoryType::InferOriginalFromOutputRequirements(const LogicalTensorPtr& tensor) const
 {
     std::unordered_set<const LogicalTensor*> visitedTensors;
-    return InferOriginalFromOutputRequirements(tensor, visitedTensors);
+    MemoryType inferred = InferOriginalFromOutputRequirements(tensor, visitedTensors);
+    if (tensor != nullptr && inferred == MemoryType::MEM_UNKNOWN) {
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Cannot infer tensor[%d] from consumer requirements: no unique known type.",
+                          tensor->GetMagic());
+    }
+    return inferred;
 }
 
 MemoryType AssignMemoryType::InferOriginalFromOutputRequirements(
@@ -738,7 +800,12 @@ MemoryType AssignMemoryType::InferOriginalFromOutputRequirements(
 MemoryType AssignMemoryType::InferRequirementFromInputOriginals(const LogicalTensorPtr& tensor) const
 {
     std::unordered_set<const LogicalTensor*> visitedTensors;
-    return InferRequirementFromInputOriginals(tensor, visitedTensors);
+    MemoryType inferred = InferRequirementFromInputOriginals(tensor, visitedTensors);
+    if (tensor != nullptr && inferred == MemoryType::MEM_UNKNOWN) {
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Cannot infer tensor[%d] from producer originals: no unique known type.",
+                          tensor->GetMagic());
+    }
+    return inferred;
 }
 
 MemoryType AssignMemoryType::InferRequirementFromInputOriginals(
@@ -783,11 +850,22 @@ bool AssignMemoryType::TryHandleSpecialDirectMemoryPath(Operation& operation, Me
     }
     if (from == MemoryType::MEM_L0C && to == MemoryType::MEM_L1) {
         directPath = inserter.FitL0C2L1(operation);
+        if (!directPath && input != nullptr) {
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "Reject L0C-to-L1 transfer constraints for %s[%d]: tensor[%d] shape=%s, dtype=%s.",
+                              operation.GetOpcodeStr().c_str(), operation.GetOpMagic(), input->GetMagic(),
+                              IntVecToStr(input->GetShape()).c_str(), DataType2String(input->Datatype()));
+        }
         return true;
     }
     bool isA5 = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510);
     if (isA5 && from == MemoryType::MEM_L0C && to == MemoryType::MEM_UB) {
         directPath = (input != nullptr) && inserter.IsL0C2UbSupportedDtype(input);
+        if (!directPath && input != nullptr) {
+            APASS_LOG_DEBUG_F(Elements::Operation, "Reject L0C-to-UB dtype for %s[%d]: tensor[%d] shape=%s, dtype=%s.",
+                              operation.GetOpcodeStr().c_str(), operation.GetOpMagic(), input->GetMagic(),
+                              IntVecToStr(input->GetShape()).c_str(), DataType2String(input->Datatype()));
+        }
         return true;
     }
     if (isA5 && from == MemoryType::MEM_UB && to == MemoryType::MEM_L1) {
@@ -801,6 +879,12 @@ bool AssignMemoryType::TryHandleSpecialDirectMemoryPath(Operation& operation, Me
             return true;
         }
         directPath = inserter.FitUB2L1(operation.iOperand.front());
+        if (!directPath && input != nullptr) {
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "Reject UB-to-L1 rank or dtype for %s[%d]: tensor[%d] shape=%s, dtype=%s.",
+                              operation.GetOpcodeStr().c_str(), operation.GetOpMagic(), input->GetMagic(),
+                              IntVecToStr(input->GetShape()).c_str(), DataType2String(input->Datatype()));
+        }
         return true;
     }
     return false;
@@ -1081,6 +1165,8 @@ MemoryType AssignMemoryType::InferParallelAssembleInputRequirement(const Logical
     if (candidates.size() == 1) {
         return *candidates.begin();
     }
+    APASS_LOG_DEBUG_F(Elements::Tensor, "Infer assemble output tensor[%d] as DDR: %zu conflicting input types.",
+                      output->GetMagic(), candidates.size());
     return MemoryType::MEM_DEVICE_DDR;
 }
 

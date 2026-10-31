@@ -72,6 +72,11 @@ void ConvertInserter::UpdateTensorTobeMap(const LogicalTensorPtr& tensor, Operat
     }
     MemoryType& currentType = opIt->second.second;
     if (currentType == MemoryType::MEM_UNKNOWN && t != MemoryType::MEM_UNKNOWN) {
+        if (hasReason && std::string(reason).compare(0, 5, "Infer") == 0) {
+            APASS_LOG_DEBUG_F(Elements::Tensor, "Infer tensor[%d] requirement for %s[%d] as %s, reason: %s.",
+                              tensor->GetMagic(), operation.GetOpcodeStr().c_str(), operation.GetOpMagic(),
+                              BriefMemoryTypeToString(t).c_str(), reason);
+        }
         currentType = t;
         return;
     }
@@ -315,6 +320,12 @@ void ConvertInserter::ProcessSpecialProducersOrConsumers(Function& function, con
     });
     bool producedByMoveOut = IsAllProducerMoveOut(oOperand);
     if (producedByMoveOut && crossCore) {
+        if (oOperand->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) {
+            APASS_LOG_DEBUG_F(Elements::Tensor,
+                              "ConvertInserter::ProcessSpecialProducersOrConsumers: tensor[%d] original %s -> %s.",
+                              oOperand->GetMagic(), BriefMemoryTypeToString(oOperand->GetMemoryTypeOriginal()).c_str(),
+                              BriefMemoryTypeToString(MemoryType::MEM_DEVICE_DDR).c_str());
+        }
         oOperand->SetMemoryTypeOriginal(MemoryType::MEM_DEVICE_DDR, true);
     }
     // case2:当tensor的消费者都是有效搬运操作，并且tensor的mem路径需要经过DDR时，将需求降级为DDR
@@ -372,12 +383,18 @@ bool ConvertInserter::FitL0C2L1(const Operation& op)
     };
     // pto-isa 不支持 TLOAD NZ 格式的 stride 跳变，在小搬大场景下做规避
     if (isSmallToLarge() && op.iOperand.front()->GetShape()[0] != op.oOperand.front()->GetShape()[0]) {
+        APASS_LOG_DEBUG_F(
+            Elements::Operation, "Reject L0C-to-L1 %s[%d]: small-to-large outer dimensions differ, %s -> %s.",
+            op.GetOpcodeStr().c_str(), op.GetOpMagic(), IntVecToStr(op.iOperand.front()->GetShape()).c_str(),
+            IntVecToStr(op.oOperand.front()->GetShape()).c_str());
         return false;
     }
     for (const auto& input : op.GetIOperands()) {
         const auto& dynValidShape = input->GetDynValidShape();
         for (const auto& dim : dynValidShape) {
             if (!dim.IsImmediate()) {
+                APASS_LOG_DEBUG_F(Elements::Operation, "Reject L0C-to-L1 %s[%d]: tensor[%d] has symbolic valid shape.",
+                                  op.GetOpcodeStr().c_str(), op.GetOpMagic(), input->GetMagic());
                 return false;
             }
         }

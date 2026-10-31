@@ -560,6 +560,13 @@ public:
             ForceSetOriginal(output, MemoryType::MEM_UB, reason);
             return SUCCESS;
         }
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Reshape[%d] falls back to DDR: dynamic=%d, input tensor[%d] original=%s, "
+                          "requirement=%s, output tensor[%d] original=%s.",
+                          operation.GetOpMagic(), isDynamic, input->GetMagic(),
+                          BriefMemoryTypeToString(input->GetMemoryTypeOriginal()).c_str(),
+                          BriefMemoryTypeToString(inserter.GetRequirementOrUnknown(input, operation)).c_str(),
+                          output->GetMagic(), BriefMemoryTypeToString(output->GetMemoryTypeOriginal()).c_str());
         const char* reason = isDynamic ? "InferDynamicReshapeFallbackDdr" : "InferStaticReshapeFallbackDdr";
         ForceSetRequirement(inserter, input, operation, MemoryType::MEM_DEVICE_DDR, reason);
         ForceSetOriginal(output, MemoryType::MEM_DEVICE_DDR, reason);
@@ -628,6 +635,8 @@ public:
         MemoryType original = tensor->GetMemoryTypeOriginal();
         if (original == MemoryType::MEM_UNKNOWN) {
             MemoryType inferredOriginal = InferOriginalFromRequirements(inserter, tensor);
+            APASS_LOG_DEBUG_F(Elements::Tensor, "Resolve unknown tensor[%d] original as %s from consumer requirements.",
+                              tensor->GetMagic(), BriefMemoryTypeToString(inferredOriginal).c_str());
             RETURN_IF_NOT_SUCCESS(SetOriginalChecked(tensor, inferredOriginal, "ResolveMemoryUnknowns"));
             original = tensor->GetMemoryTypeOriginal();
         }
@@ -645,6 +654,8 @@ public:
         if (knownRequirements.size() == 1) {
             return *knownRequirements.begin();
         }
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Default tensor[%d] to DDR: %zu distinct known consumer requirements.",
+                          tensor->GetMagic(), knownRequirements.size());
         return MemoryType::MEM_DEVICE_DDR;
     }
 

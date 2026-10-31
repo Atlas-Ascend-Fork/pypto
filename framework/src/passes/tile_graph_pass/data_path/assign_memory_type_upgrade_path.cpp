@@ -83,8 +83,8 @@ Status AssignMemoryType::ApplyPlatformPathUpgradeRules(Function& function)
         IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
         RETURN_IF_NOT_SUCCESS(ProcessL0C2UBSmallToLarge(function));
         RETURN_IF_NOT_SUCCESS(ProcessL0C2UBLargeToSmall(function));
-        RETURN_IF_NOT_SUCCESS(ProcessUB2L1LargeToSmall(function));
         RETURN_IF_NOT_SUCCESS(ProcessUB2L1SmallToLarge(function));
+        RETURN_IF_NOT_SUCCESS(ProcessUB2L1LargeToSmall(function));
     }
     if (Platform::Instance().GetSoc().IsSupportCubeEpilogue()) {
         RETURN_IF_NOT_SUCCESS(ProcessL12UBSmallToLarge(function));
@@ -449,6 +449,8 @@ bool AssignMemoryType::ShouldSkipUB2L1SmallToLarge(const LogicalTensorPtr& iOper
                                                 UB_THRESHOLD_NORMAL);
     size_t tensorSize = IsSliceMode() ? CalcNZTensorSize(iOperand) : CalcNZTensorSizeLegacy(iOperand);
     if (tensorSize > UB_LIMIT) {
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Reject UB-to-L1 tensor[%d]: storage %zu bytes exceeds UB limit %zu bytes.",
+                          iOperand->GetMagic(), tensorSize, UB_LIMIT);
         return true;
     }
     // 检查 consumer slice 是否有 copy_in_mode=0 属性
@@ -456,10 +458,14 @@ bool AssignMemoryType::ShouldSkipUB2L1SmallToLarge(const LogicalTensorPtr& iOper
         if (IsModeMoveIn(mode_, consumerOp->GetOpcode())) {
             int64_t copyInModeValue = 0;
             if (consumerOp->GetAttr<int64_t>("op_attr_copy_in_mode", copyInModeValue) && copyInModeValue == 0) {
+                APASS_LOG_DEBUG_F(Elements::Operation, "Reject UB-to-L1 tensor[%d]: consumer[%d] copy_in_mode is 0.",
+                                  oOperand->GetMagic(), consumerOp->GetOpMagic());
                 return true;
             }
             // MXMatmul场景K轴非64对齐不支持UB2L1直连（MX补齐仅由DDR路径支持），回退DDR
             if (MemoryPathUtils::IsMxPaddingMode(*consumerOp)) {
+                APASS_LOG_DEBUG_F(Elements::Operation, "Reject UB-to-L1 tensor[%d]: consumer[%d] requires MX padding.",
+                                  oOperand->GetMagic(), consumerOp->GetOpMagic());
                 return true;
             }
         }
@@ -647,6 +653,8 @@ Status AssignMemoryType::TryUpgradeSliceContractPath(Operation& sliceOp, MemoryT
     // 动态 shape 的 tensor 无法作为本地 scratch 静态分配。
     const auto& middleShape = middle->GetShape();
     if (std::any_of(middleShape.begin(), middleShape.end(), [](int64_t dim) { return dim < 0; })) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "Skip %s: op[%d] middle tensor[%d], dynamic middle shape.",
+                          reason.c_str(), sliceOp.GetOpMagic(), middle->GetMagic());
         return SUCCESS;
     }
     for (auto* consumer : middle->GetConsumers()) {
@@ -656,6 +664,9 @@ Status AssignMemoryType::TryUpgradeSliceContractPath(Operation& sliceOp, MemoryT
     }
     if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_L1 &&
         !AreAllSliceConsumerShapesPreserved(middle)) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Skip %s: op[%d] middle tensor[%d], slice changes shape on L0C-to-L1 path.", reason.c_str(),
+                          sliceOp.GetOpMagic(), middle->GetMagic());
         return SUCCESS;
     }
     if (requireMatrixShape &&
@@ -663,6 +674,12 @@ Status AssignMemoryType::TryUpgradeSliceContractPath(Operation& sliceOp, MemoryT
         return SUCCESS;
     }
     if (checkUbTileShape && !MemoryPathUtils::FitsAssembleOutputMemoryLimit(middle, targetType)) {
+        APASS_LOG_DEBUG_F(
+            Elements::Operation, "Skip %s: op[%d] middle tensor[%d], %zu bytes exceeds %s limit %zu bytes.",
+            reason.c_str(), sliceOp.GetOpMagic(), middle->GetMagic(), static_cast<size_t>(middle->GetDataSize()),
+            BriefMemoryTypeToString(targetType).c_str(),
+            static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(targetType) *
+                                (targetType == MemoryType::MEM_UB ? UB_THRESHOLD_ASSEMBLE : L1_THRESHOLD)));
         return SUCCESS;
     }
     const bool isLiteNpu = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
@@ -703,6 +720,9 @@ Status AssignMemoryType::TryUpgradeSliceContractPath(Operation& sliceOp, MemoryT
             }
             auto output = consumer->oOperand.front();
             if (HasDifferentConsumerRequirement(output, targetType)) {
+                APASS_LOG_DEBUG_F(Elements::Operation,
+                                  "Skip %s: op[%d] middle tensor[%d], parallel output requirement conflict.",
+                                  reason.c_str(), sliceOp.GetOpMagic(), middle->GetMagic());
                 return SUCCESS;
             }
         }
@@ -710,6 +730,10 @@ Status AssignMemoryType::TryUpgradeSliceContractPath(Operation& sliceOp, MemoryT
             !MemoryPathUtils::IsDimMultiple(middle->GetShape(), input->GetShape()) ||
             !CheckConsumerMoveInShapeMultiple(middle, input) ||
             !MemoryPathUtils::IsDimMultiple(target->GetShape(), input->GetShape())) {
+            APASS_LOG_DEBUG_F(
+                Elements::Operation,
+                "Skip %s: op[%d] middle tensor[%d], parallel input requirement conflict or incompatible tile shapes.",
+                reason.c_str(), sliceOp.GetOpMagic(), middle->GetMagic());
             return SUCCESS;
         }
         if (checkUb2L1Constraints && ShouldSkipUB2L1SmallToLarge(input, middle)) {
@@ -739,6 +763,8 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
     // 动态 shape 的 tensor 无法作为本地 scratch 静态分配（OoOSchedule requires static rawShape）。
     const auto& middleShape = middle->GetShape();
     if (std::any_of(middleShape.begin(), middleShape.end(), [](int64_t dim) { return dim < 0; })) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "Skip %s: op[%d] middle tensor[%d], dynamic middle shape.",
+                          reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
         return SUCCESS;
     }
     // Large-to-small must be a single-contract path: the slice/view side already reads with a
@@ -748,6 +774,9 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
     // fan-in is its designed pattern (CanKeepContractProducersInUb checks producers one by one).
     if (sourceType != targetType &&
         (middle->GetProducers().size() != 1 || *middle->GetProducers().begin() != &contractOp)) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Skip %s: op[%d] middle tensor[%d], multiple contract producers on a cross-memory path.",
+                          reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
         return SUCCESS;
     }
     // For large-to-small the middle stays in sourceType after the upgrade; reject when it cannot
@@ -759,12 +788,20 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
             const size_t ubLimit = static_cast<size_t>(
                 Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) * UB_THRESHOLD_NORMAL);
             if (CalcNZTensorSize(middle) > ubLimit) {
+                APASS_LOG_DEBUG_F(Elements::Operation,
+                                  "Skip %s: op[%d] middle tensor[%d], storage %zu bytes exceeds UB limit %zu bytes.",
+                                  reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic(), CalcNZTensorSize(middle),
+                                  ubLimit);
                 return SUCCESS;
             }
         } else if (sourceType == MemoryType::MEM_L0C) {
             const size_t l0cLimit = static_cast<size_t>(
                 Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_L0C) * L0C_THRESHOLD);
             if (CalcNzStorageSize(middle) > l0cLimit) {
+                APASS_LOG_DEBUG_F(Elements::Operation,
+                                  "Skip %s: op[%d] middle tensor[%d], storage %zu bytes exceeds L0C limit %zu bytes.",
+                                  reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic(),
+                                  CalcNzStorageSize(middle), l0cLimit);
                 return SUCCESS;
             }
         }
@@ -773,9 +810,15 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
         return SUCCESS;
     }
     if (HasParallelDifferentConsumerRequirement(input, targetType)) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Skip %s: op[%d] middle tensor[%d], parallel input requirement conflict.", reason.c_str(),
+                          contractOp.GetOpMagic(), middle->GetMagic());
         return SUCCESS;
     }
     if (HasParallelDifferentConsumerRequirement(middle, targetType)) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Skip %s: op[%d] middle tensor[%d], parallel middle requirement conflict.", reason.c_str(),
+                          contractOp.GetOpMagic(), middle->GetMagic());
         return SUCCESS;
     }
     const bool isLiteNpu = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
@@ -806,6 +849,9 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
             return SUCCESS;
         }
         if (HasParallelDifferentConsumerRequirement(producerInput, targetType)) {
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "Skip %s: op[%d] middle tensor[%d], parallel producer requirement conflict.",
+                              reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
             return SUCCESS;
         }
     }
@@ -826,6 +872,9 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
             shapeCompatible = shapeCompatible || MemoryPathUtils::IsDimMultiple(output->GetShape(), input->GetShape());
         }
         if (!shapeCompatible) {
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "Skip %s: op[%d] middle tensor[%d], incompatible input and output tile shapes.",
+                              reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
             return SUCCESS;
         }
         if (checkUbTileShape && !CheckUBTileShapeByRank(output)) {
@@ -839,6 +888,10 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
             if (CalcNZTensorSize(input) > ubLimit ||
                 (consumer->GetAttr<int64_t>("op_attr_copy_in_mode", copyInModeValue) && copyInModeValue == 0) ||
                 MemoryPathUtils::IsMxPaddingMode(*consumer)) {
+                APASS_LOG_DEBUG_F(
+                    Elements::Operation,
+                    "Skip %s: op[%d] middle tensor[%d], UB-to-L1 size, copy mode or MX padding constraints.",
+                    reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
                 return SUCCESS;
             }
         }

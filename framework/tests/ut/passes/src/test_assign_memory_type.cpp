@@ -3382,6 +3382,31 @@ TEST_F(AssignMemoryTypeTest, Conv1DGroupReshapeUsesDdr)
     }
 }
 
+TEST_F(AssignMemoryTypeTest, SyncUnusedFunctionBoundaryMemoryTypes)
+{
+    for (bool enableSlice : {false, true}) {
+        SCOPED_TRACE(enableSlice);
+        config::SetPassOption(ENABLE_SLICE, enableSlice);
+        ComputationalGraphBuilder G;
+        const Shape shape{NUM_16, NUM_128};
+        for (const auto& name : {"input", "output", "unusedInput", "unusedOutput"}) {
+            ASSERT_TRUE(G.AddTensor(DataType::DT_FP32, shape, MemoryType::MEM_UNKNOWN, name));
+        }
+        ASSERT_TRUE(G.AddOp(Opcode::OP_EXP, {"input"}, {"output"}, "exp"));
+        // Earlier passes can remove all operand references while retaining the function boundary tensors.
+        ASSERT_TRUE(G.SetInCast({"input", "unusedInput"}));
+        ASSERT_TRUE(G.SetOutCast({"output", "unusedOutput"}));
+
+        AssignMemoryType assignMemoryType;
+        ASSERT_EQ(assignMemoryType.RunOnFunction(*G.GetFunction()), SUCCESS);
+        for (const auto& name : {"input", "output", "unusedInput", "unusedOutput"}) {
+            auto tensor = G.GetTensor(name);
+            EXPECT_EQ(tensor->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR) << name;
+            EXPECT_EQ(tensor->GetMemoryTypeToBe(), MemoryType::MEM_DEVICE_DDR) << name;
+        }
+    }
+}
+
 TEST_F(AssignMemoryTypeTest, ExplicitUnknownGatherElementSliceFromIncastFallsBackToDdr)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
