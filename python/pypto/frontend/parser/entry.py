@@ -1228,7 +1228,7 @@ def jit(
     verify_options: Optional[dict[str, Any]] = None,
     debug_options: Optional[dict[str, Any]] = None,
     generic_options: Optional[dict[str, Any]] = None,
-    create_new_logical_tensor: bool = False,
+    create_new_logical_tensor: bool = True,
 ) -> Union[Callable, Callable[[Callable], JitCallableWrapper]]:
     """JIT decorator for compiling Python functions to PTO IR.
 
