@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import Optional, Sequence, Union
 
-from pypto.ir import CacheLine, CrossCoreSyncMode, DcciDst, PipeType, SyncCoreType
+from pypto.ir import CacheLine, CrossCoreSyncMode, DcciDst, MemDsb, PipeType, SyncCoreType
 
 from ._api import Tensor, Tile, _api_decl
 
@@ -184,6 +184,18 @@ class System:
             force: Force early-start behavior (``AscendC::SetNextTaskStart<..., true>()``).
                 Defaults to ``True``, since ``SetNextTaskStart()`` (false) is compiled out
                 in the SK sub-kernel context.
+        """
+
+    @staticmethod
+    @_api_decl
+    def dsb(*, scope: MemDsb = MemDsb.ALL) -> None:
+        """Data Synchronization Barrier.
+
+        Args:
+            scope: ``pl.MemDsb`` value selecting which accesses the barrier orders:
+                ``ALL`` (default) all memory accesses, ``DDR`` DDR accesses, ``UB`` UB
+                accesses. The scope restricts ordering; the barrier still only orders this core's
+                own accesses and never synchronizes other cores.
         """
 
     # -----------------------------------------------------------------

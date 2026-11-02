@@ -76,6 +76,9 @@ __aicore__ inline void pypto_dist_notify(__gm__ dist::Window* win, int64_t slot,
     set_flag(PIPE_MTE3, PIPE_S, 0);
     wait_flag(PIPE_MTE3, PIPE_S, 0);
 
+    // flush of MTE3 must happen before the real notify.
+    dsb(DSB_DDR);
+
     __gm__ int64_t* addr = pypto_dist_signal_addr(win, peer, slot);
     if constexpr (kNotifyOp != 0) {
         (void)atomicAdd(addr, val);
@@ -125,6 +128,9 @@ __aicore__ inline void pypto_dist_wait(__gm__ dist::Window* win, int64_t slot, i
         }
         pypto_dist_cpu_relax();
     }
+
+    // Enforce ordering between the wait and subsequent instructions.
+    dsb(DSB_DDR);
 }
 
 template <int32_t kNotifyOp>
@@ -135,6 +141,9 @@ __aicore__ inline void pypto_dist_notify_all(__gm__ dist::Window* win, int64_t s
                  static_cast<long long>(slot), win->num_signals);
     set_flag(PIPE_MTE3, PIPE_V, 0);
     wait_flag(PIPE_MTE3, PIPE_V, 0);
+
+    // flush of MTE3 must happen before the real notify.
+    dsb(DSB_DDR);
 
     const int64_t slot_off = win->signal_offset + slot * dist::kL2CacheLineSize;
     cce::async_invoke<pypto_dist_notify_all_signal<kNotifyOp == 1>>(cce::dim3{dist::kNumMaxRanks, 1, 1}, win, slot_off,

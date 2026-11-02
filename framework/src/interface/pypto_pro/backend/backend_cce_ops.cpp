@@ -2227,6 +2227,21 @@ REGISTER_BACKEND_OP(BackendCCE, "system.sync_all")
         return MakeSystemSyncAllCodegenCCE(op, codegen);
     });
 
+static std::string MakeSystemDsbCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+
+    int scope_int = op->HasKwarg("scope") ? op->GetKwarg<int>("scope") : 0; // MemDsb::ALL
+    const auto scope = static_cast<ir::MemDsb>(scope_int);
+
+    // MemDsb members drop the toolchain's DSB_ prefix; prepend it to recover the
+    // intrinsic token: MemDsb::DDR -> dsb(DSB_DDR).
+    codegen.Emit("dsb(DSB_" + EnumValueName(ir::EnumToString(scope)) + ");");
+    return "";
+}
+
+REGISTER_BACKEND_OP(BackendCCE, "system.dsb").set_pipe(ir::PipeType::S).f_codegen(MakeSystemDsbCodegenCCE);
+
 // ============================================================================
 // Early-start inter-task sync (wait_pre_task_end)
 // ============================================================================

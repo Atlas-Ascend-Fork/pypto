@@ -12,6 +12,7 @@
 System operations handle hardware synchronization primitives:
 - sync_src / sync_dst: Set/Wait flag-based synchronization between pipes
 - bar_*: Barrier synchronization for hardware pipelines
+- dsb: Data Synchronization Barrier
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from pypto.pypto_impl.ir import (
     CrossCoreSyncMode,
     DcciDst,
     Expr,
+    MemDsb,
     PipeType,
     Span,
     SyncCoreType,
@@ -414,6 +416,23 @@ def dcci(
     return _ir_core.create_op_call("system.dcci", args, kwargs, actual_span)
 
 
+def dsb(*, scope: MemDsb = MemDsb.ALL, span: Span | None = None) -> Call:
+    """Data Synchronization Barrier (pto-isa dsb).
+
+    Args:
+        scope: ``pl.MemDsb`` value selecting which accesses the barrier orders:
+            ``ALL`` (default) all memory accesses, ``DDR`` DDR accesses, ``UB`` UB
+            accesses. The scope restricts ordering; the barrier still only orders this core's
+            own accesses and never synchronizes other cores.
+        span: Optional source span for debugging (auto-captured if not provided).
+
+    Returns:
+        Call expression for system.dsb.
+    """
+    actual_span = _get_span_or_capture(span)
+    return _ir_core.create_op_call("system.dsb", [], {"scope": scope}, actual_span)
+
+
 # ============================================================================
 # Mutex (Buffer-ID Token) — A5 only
 # ----------------------------------------------------------------------------
@@ -662,6 +681,11 @@ def _build_sync_all(self, *args, span: Span, **kwargs):
 @op_impl("system.dcci")
 def _build_dcci(self, *args, span: Span, **kwargs):
     return dcci(*args, span=span, **kwargs)
+
+
+@op_impl("system.dsb")
+def _build_dsb(self, *args, span: Span, **kwargs):
+    return dsb(*args, span=span, **kwargs)
 
 
 @op_impl("system.mutex_lock")

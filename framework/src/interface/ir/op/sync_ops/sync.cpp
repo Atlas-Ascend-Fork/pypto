@@ -226,6 +226,16 @@ REGISTER_OP("system.set_next_task_start")
     .set_attr<bool>("force")
     .f_deduce_type(DeduceNoneType);
 
+// Register system.dsb (Data Synchronization Barrier)
+// Attributes:
+//   - scope: MemDsb enumerator (ALL / DDR / UB), ALL default.
+REGISTER_OP("system.dsb")
+    .set_description("Data Synchronization Barrier (memory-ordering barrier)")
+    .set_op_category("SyncOp")
+    .no_argument()
+    .set_attr<int>("scope")
+    .f_deduce_type(DeduceUnknownType);
+
 // Register system.dcci (Data Cache Clean and Invalid)
 // Arguments:
 //   - target: TensorType for GM or TileType for UB

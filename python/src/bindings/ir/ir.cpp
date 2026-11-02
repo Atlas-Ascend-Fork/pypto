@@ -619,6 +619,11 @@ void BindTypeClass(py::module_& ir)
         .value("CACHELINE_ALL", ir::DcciDst::CACHELINE_ALL, "Cache line all")
         .value("CACHELINE_ATOMIC", ir::DcciDst::CACHELINE_ATOMIC, "Cache line atomic");
 
+    py::enum_<ir::MemDsb>(ir, "MemDsb", "Data Synchronization Barrier (dsb) scope")
+        .value("ALL", ir::MemDsb::ALL, "All memory access instructions")
+        .value("DDR", ir::MemDsb::DDR, "DDR-access instructions")
+        .value("UB", ir::MemDsb::UB, "UB-access instructions");
+
     // --- VF (Vector Function) API enumerations ---
 
     py::enum_<ir::MaskPattern>(ir, "MaskPattern", R"pbdoc(
