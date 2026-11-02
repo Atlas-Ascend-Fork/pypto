@@ -389,18 +389,22 @@ def _get_hccl_name(group: "dist.ProcessGroup") -> str:
     return group._get_backend(torch.device("npu")).get_hccl_comm_name(dist.get_rank())
 
 
-def create_window(group: "dist.ProcessGroup", size: int, num_signals=15, name=None):
+def create_window(group: "dist.ProcessGroup", size: int, num_signals=15, name=None, layer: int = -1):
     """Create a symmetric window for communication between ranks in ``group``.
 
-    All-rank collective: every rank must call it (same order across several windows).
-    ``size`` is rounded up to a multiple of 512; the signal area is framework-managed
-    and zeroed here.
+    All-rank collective: every rank must call it (same order across several windows),
+    and pass the same ``layer`` value on every rank. ``size`` is rounded up to a multiple
+    of 512; the signal area is framework-managed and zeroed here.
 
     Args:
         group: ``torch.distributed`` process group with the ``hccl`` backend.
         size: payload size in bytes.
         num_signals: number of signal slots to reserve (default 15).
         name: optional window name, part of the registration uid.
+        layer: HCCL net layer to build the window's channels on; ``-1`` (default)
+            auto-selects the top layer (the inter-server network when present). Pass
+            e.g. ``0`` to force the intra-server mesh for single-server groups.
+            Valid ids are listed by :func:`dump_topology`.
 
     Returns:
         the :class:`Window`
@@ -423,6 +427,7 @@ def create_window(group: "dist.ProcessGroup", size: int, num_signals=15, name=No
         torch.npu.current_stream().npu_stream,
         _get_hccl_name(group),
         name or "",
+        layer,
     )
     win.device_buffer = device_buffer
     return win

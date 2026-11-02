@@ -189,20 +189,22 @@ void BindDistributed(py::module_& m)
     dist.def(
         "create_window",
         [](int32_t rank, int32_t nrank, int64_t size, int64_t bufferSize, int64_t numSignals, int64_t deviceAddr,
-           int64_t streamAddr, const std::string& hcclGroupName, const std::string& name) {
+           int64_t streamAddr, const std::string& hcclGroupName, const std::string& name, int32_t layer) {
             std::shared_ptr<WindowContext> win;
             {
                 // Collective setup blocks for seconds (AllGather barriers, channel connect);
                 // don't stall other Python threads while polling.
                 py::gil_scoped_release gil;
                 win = CreateWindow(rank, nrank, size, bufferSize, numSignals, deviceAddr, streamAddr, hcclGroupName,
-                                   name);
+                                   name, layer);
             }
             return win;
         },
         py::arg("rank"), py::arg("nrank"), py::arg("size"), py::arg("buffer_size"), py::arg("num_signals"),
         py::arg("device_addr"), py::arg("stream"), py::arg("hccl_name"), py::arg("name") = std::string(),
-        "Register a symmetric window on the HCCL comm and build its connections.");
+        py::arg("layer") = -1,
+        "Register a symmetric window on the HCCL comm and build its connections. layer < 0 "
+        "auto-selects the top net layer; an explicit layer must exist in the rank graph.");
 
     dist.def(
         "dump_topology",

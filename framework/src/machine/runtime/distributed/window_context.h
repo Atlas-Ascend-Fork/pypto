@@ -37,7 +37,7 @@ public:
     std::string ToString() const;
     void Close(); // all-rank collective teardown; best-effort, never throws
 
-    void Setup(const std::string& hcclGroupName, const std::string& name);
+    void Setup(const std::string& hcclGroupName, const std::string& name, int32_t layer);
 
 private:
     struct Impl;
@@ -46,7 +46,7 @@ private:
 
 std::shared_ptr<WindowContext> CreateWindow(int32_t rank, int32_t nrank, int64_t size, int64_t bufferSize,
                                             int64_t numSignals, int64_t deviceAddr, int64_t streamAddr,
-                                            const std::string& hcclGroupName, const std::string& name);
+                                            const std::string& hcclGroupName, const std::string& name, int32_t layer);
 
 std::string GetGroupTopology(const std::string& hcclGroupName, int32_t rank, int32_t nrank, int32_t layer);
 } // namespace npu::tile_fwk::Distributed

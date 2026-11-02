@@ -233,10 +233,16 @@ std::vector<uint32_t> GetNetLayers(void* comm)
     return std::vector<uint32_t>(layers, layers + numLayers);
 }
 
-uint32_t SelectNetLayer(void* comm)
+// layer < 0 auto-selects (the top net layer); an explicit layer must exist in the rank graph.
+uint32_t SelectNetLayer(void* comm, int32_t layer)
 {
     const auto layers = GetNetLayers(comm);
-    return layers.back();
+    if (layer < 0) {
+        return layers.back();
+    }
+    DIST_CHECK(std::find(layers.begin(), layers.end(), static_cast<uint32_t>(layer)) != layers.end())
+        << "net layer " << layer << " not in rank graph";
+    return static_cast<uint32_t>(layer);
 }
 
 // Tolerant variant of GetPeerLinks for topology dumps: a peer with no link on this layer
@@ -362,7 +368,7 @@ struct WindowContext::Impl {
     Impl(int32_t rank, int32_t nrank, int64_t size, int64_t numSignals, int64_t bufferSize, void* buffer, void* stream);
     ~Impl(); // closes channels/endpoints not yet released
 
-    void Setup(const std::string& hcclGroupName, const std::string& name);
+    void Setup(const std::string& hcclGroupName, const std::string& name, int32_t layer);
     void AcquireUlbmemChannels(); // resolve every peer's window base (peerPtrs_)
     void AcquireJettyChannels();  // multi-issuer: per-AIV jetties; else one jetty per peer
     void WriteDeviceWindow();     // fill dist::Window and copy it to device memory
@@ -429,12 +435,12 @@ WindowContext::Impl::Impl(int32_t rank, int32_t nrank, int64_t size, int64_t num
 
 std::shared_ptr<WindowContext> CreateWindow(int32_t rank, int32_t nrank, int64_t size, int64_t bufferSize,
                                             int64_t numSignals, int64_t deviceAddr, int64_t streamAddr,
-                                            const std::string& hcclGroupName, const std::string& name)
+                                            const std::string& hcclGroupName, const std::string& name, int32_t layer)
 {
     auto win = std::make_shared<WindowContext>(rank, nrank, size, numSignals, bufferSize,
                                                reinterpret_cast<void*>(deviceAddr),
                                                reinterpret_cast<void*>(streamAddr));
-    win->Setup(hcclGroupName, name);
+    win->Setup(hcclGroupName, name, layer);
     return win;
 }
 
@@ -515,7 +521,7 @@ std::string GetGroupTopology(const std::string& hcclGroupName, int32_t rank, int
     return out.str();
 }
 
-void WindowContext::Impl::Setup(const std::string& hcclGroupName, const std::string& name)
+void WindowContext::Impl::Setup(const std::string& hcclGroupName, const std::string& name, int32_t layer)
 {
     uid_ = NextWindowUid(hcclGroupName, name);
 
@@ -536,7 +542,7 @@ void WindowContext::Impl::Setup(const std::string& hcclGroupName, const std::str
         << "zero signal area failed";
 
     SynchronizeRanks(nrank_, comm_, stream_);
-    netLayer_ = SelectNetLayer(comm_);
+    netLayer_ = SelectNetLayer(comm_, layer);
     AcquireUlbmemChannels();
     AcquireJettyChannels();
     WaitChannelsReady(channelHandles_);
@@ -784,9 +790,9 @@ bool WindowContext::SupportsMultiIssuer() const { return impl_->multiIssuer_; }
 std::string WindowContext::ToString() const { return impl_->ToString(); }
 void WindowContext::Close() { impl_->Close(); }
 
-void WindowContext::Setup(const std::string& hcclGroupName, const std::string& name)
+void WindowContext::Setup(const std::string& hcclGroupName, const std::string& name, int32_t layer)
 {
-    impl_->Setup(hcclGroupName, name);
+    impl_->Setup(hcclGroupName, name, layer);
 }
 } // namespace npu::tile_fwk::Distributed
 

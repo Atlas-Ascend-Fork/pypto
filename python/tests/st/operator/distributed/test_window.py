@@ -78,6 +78,42 @@ def test_window_probe(world_size: int = 4):
     torch.multiprocessing.spawn(probe_worker, args=(nprocs,), nprocs=nprocs)
 
 
+def layer_worker(rank, nrank):
+    torch.npu.set_device(rank)
+    group = init_dist(rank, nrank)
+
+    # Explicit layer: take the first id dump_topology reports (0 = intra-server mesh).
+    topo = pld.dump_topology(group)
+    layer = int(topo.split("Network Layer: ")[1].split()[0])
+    win = pld.create_window(group, size=1 << 20, name="layer_probe", layer=layer)
+    assert f"layer {layer}" in str(win), f"[rank {rank}] window not built on layer {layer}:\n{win}"
+
+    out = torch.full((4,), -1, dtype=torch.int64).npu()
+    probe(win, out)
+    torch.npu.synchronize()
+    expect = [win.rank(), win.nrank(), win.size(), win.num_signals()]
+    assert out.cpu().tolist() == expect, f"[rank {rank}] probe got {out.cpu().tolist()}, expected {expect}"
+    print(f"[rank {rank}] explicit layer ok: layer {layer}", flush=True)
+    win.close()
+
+    # A layer outside the rank graph must be rejected on every rank.
+    try:
+        pld.create_window(group, size=1 << 20, layer=9999)
+        raise AssertionError(f"[rank {rank}] invalid layer 9999 accepted")
+    except RuntimeError as e:
+        assert "not in rank graph" in str(e), f"[rank {rank}] unexpected error: {e}"
+    print(f"[rank {rank}] invalid layer rejected", flush=True)
+
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_create_window_layer(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(layer_worker, args=(nprocs,), nprocs=nprocs)
+
+
 @pl.jit
 def barrier_kernel(win: pld.Window, out: pl.Tensor[[3], pl.DT_INT64]):
     with pl.section_vector():
@@ -865,6 +901,7 @@ def test_atomics(world_size: int = 4):
 if __name__ == '__main__':
     test_create_window()
     test_window_probe()
+    test_create_window_layer()
     test_window_barrier()
     test_local_roundtrip()
     test_shift_load_right()

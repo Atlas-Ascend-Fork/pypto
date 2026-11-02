@@ -35,6 +35,7 @@ def create_window(
     stream: int,
     hccl_name: str,
     name: str = ...,
+    layer: int = ...,
 ) -> Window: ...
 
 
