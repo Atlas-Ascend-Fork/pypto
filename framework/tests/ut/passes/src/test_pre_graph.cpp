@@ -1494,6 +1494,51 @@ TEST_F(PreGraphTest, KeepParallelAssemblesWithSiblingCopyIn)
     CompareOpImmediateVector(copyAttr->GetRawShape(), {4, 4});
 }
 
+// Fold ASSEMBLE with a sibling COPY_IN and a COPY_IN consumer instead of RESHAPE -> OUTCAST.
+TEST_F(PreGraphTest, RemoveSingleAssembleWithSiblingCopyIn)
+{
+    ComputationalGraphBuilder graph;
+    graph.AddTensor(DT_FP32, {4, 4}, MEM_UB, "ub");
+    graph.AddTensor(DT_FP32, {4, 4}, MEM_DEVICE_DDR, "gm");
+    graph.AddTensor(DT_FP32, {8, 8}, MEM_DEVICE_DDR, "out");
+    graph.AddTensor(DT_FP32, {2, 2}, MEM_UB, "read");
+    graph.AddTensor(DT_FP32, {2, 2}, MEM_UB, "out_read");
+    auto input = graph.GetTensor("gm");
+    auto output = graph.GetTensor("out");
+    input->tensor = output->tensor;
+    input->UpdateOffset(Offset{2, 4});
+    graph.AddOp(Opcode::OP_COPY_OUT, {"ub"}, {"gm"}, "writer");
+    auto copyOutAttr = std::make_shared<CopyOpAttribute>(
+        MEM_UB, OpImmediate::Specified({0, 0}), OpImmediate::Specified({4, 4}), OpImmediate::Specified({4, 4}));
+    graph.GetOp("writer")->SetOpAttribute(copyOutAttr);
+    graph.AddOp(Opcode::OP_ASSEMBLE, {"gm"}, {"out"}, "assemble");
+    graph.GetOp("assemble")
+        ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{2, 4}, CreateTestConstIntVector({2, 4})));
+    graph.AddOp(Opcode::OP_COPY_IN, {"gm"}, {"read"}, "reader");
+    // Absolute attributes already refreshed by ReplaceTensor must stay unchanged.
+    auto copyInAttr = std::make_shared<CopyOpAttribute>(OpImmediate::Specified({3, 5}), MEM_UB,
+                                                        OpImmediate::Specified({2, 2}), OpImmediate::Specified({8, 8}));
+    graph.GetOp("reader")->SetOpAttribute(copyInAttr);
+    graph.AddOp(Opcode::OP_COPY_IN, {"out"}, {"out_read"}, "out_reader");
+    graph.GetOp("out_reader")->SetOpAttribute(copyInAttr->Clone());
+    graph.SetOutCast({"out"});
+
+    RemoveRedundantAssemble pass;
+    ASSERT_EQ(pass.DeleteRedundantAssemble(*graph.GetFunction()), SUCCESS);
+    EXPECT_EQ(CountAssemble(*graph.GetFunction()), 0);
+    EXPECT_EQ(graph.GetOp("writer")->GetOOperands().front(), output);
+    EXPECT_EQ(graph.GetOp("reader")->GetIOperands().front(), output);
+    EXPECT_EQ(graph.GetOp("out_reader")->GetIOperands().front(), output);
+    EXPECT_EQ(output->GetProducers().count(graph.GetOp("writer")), 1);
+    EXPECT_EQ(output->GetConsumers().count(graph.GetOp("reader")), 1);
+    EXPECT_TRUE(input->GetProducers().empty());
+    EXPECT_TRUE(input->GetConsumers().empty());
+    CompareOpImmediateVector(copyOutAttr->GetToOffset(), {2, 4});
+    CompareOpImmediateVector(copyOutAttr->GetRawShape(), {8, 8});
+    CompareOpImmediateVector(copyInAttr->GetFromOffset(), {3, 5});
+    CompareOpImmediateVector(copyInAttr->GetRawShape(), {8, 8});
+}
+
 TEST_F(PreGraphTest, TestRemoveViewSingleReshapeConvMatchesDynamicLeadingWithTransDataConsumer)
 {
     ComputationalGraphBuilder G;

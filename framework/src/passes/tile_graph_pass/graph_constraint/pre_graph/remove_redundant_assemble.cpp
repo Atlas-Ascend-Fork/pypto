@@ -1505,16 +1505,10 @@ Status RemoveRedundantAssemble::HanldeForSingleAssemble(Function& function, Logi
 {
     auto producersBackup = input->GetProducers();
     auto& consumers = input->GetConsumers();
-    // Only fold the additional COPY_OUT -> ASSEMBLE -> RESHAPE -> OUTCAST pattern.
-    // The caller guarantees a single sibling ASSEMBLE. ReplaceTensor has already refreshed COPY_IN attributes.
-    const auto& outputConsumers = output->GetConsumers();
-    bool reshapeToOutcast = outputConsumers.size() == 1 &&
-                            (*outputConsumers.begin())->GetOpcode() == Opcode::OP_RESHAPE &&
-                            FunctionUtils::GetNodeType(*(*outputConsumers.begin())->GetOOperands().front(), function) ==
-                                NodeType::OUTCAST;
+    // Fold COPY_OUT -> ASSEMBLE with sibling COPY_IN consumers of the input.
     const auto& outputProducers = output->GetProducers();
-    bool rewireCopyIns = reshapeToOutcast && outputProducers.size() == 1 && *outputProducers.begin() == &op &&
-                         consumers.size() > 1 && input->GetRawMagic() == output->GetRawMagic() &&
+    bool rewireCopyIns = outputProducers.size() == 1 && *outputProducers.begin() == &op && consumers.size() > 1 &&
+                         input->GetRawMagic() == output->GetRawMagic() &&
                          std::all_of(producersBackup.begin(), producersBackup.end(),
                                      [](Operation* producer) { return IsCopyOut(producer->GetOpcode()); }) &&
                          std::all_of(consumers.begin(), consumers.end(), [&op](Operation* consumer) {
