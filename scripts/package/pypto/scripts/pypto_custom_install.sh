@@ -8,6 +8,9 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+
+set -e
+
 # PyPTO 自定义安装脚本 (install_common_parser.sh 回调)
 #
 # 本脚本由 install_common_parser.sh 的 package_custom_install() 机制自动调用:

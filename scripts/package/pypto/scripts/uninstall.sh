@@ -62,14 +62,14 @@ pypto_comm_log_init
 
 # 多版本包标记
 tmp_pkg_mulit_version=""
-is_multi_version_pkg "tmp_pkg_mulit_version" "$INSTALLED_VERSION_FILE"
+is_multi_version_pkg "tmp_pkg_mulit_version" "$INSTALLED_VERSION_FILE" || true
 PKG_IS_MULTI_VERSION="${tmp_pkg_mulit_version}"
 unset tmp_pkg_mulit_version
 export PKG_IS_MULTI_VERSION
 
 # 包版本
 tmp_pkg_verison=""
-get_version "tmp_pkg_verison" "$INSTALLED_VERSION_FILE"
+get_version "tmp_pkg_verison" "$INSTALLED_VERSION_FILE" || true
 PKG_VERSION="${tmp_pkg_verison}"
 unset tmp_pkg_verison
 export PKG_VERSION
@@ -133,7 +133,7 @@ if [ -f "${ASCEND_INSTALL_INFO_FILE}" ]; then
     ARG_INSTALL_PATH=$(_get_install_param "PyPTO_Install_Path_Param" "${ASCEND_INSTALL_INFO_FILE}")
     ARG_MODE=$(_get_install_param "PyPTO_Install_Type" "${ASCEND_INSTALL_INFO_FILE}")
 elif [ -f "${ASCEND_INSTALL_INFO_OLD_FILE}" ]; then
-    num=$(grep -c -i pypto_install_path_param "${ASCEND_INSTALL_INFO_OLD_FILE}")
+    num="$(grep -c -i pypto_install_path_param "${ASCEND_INSTALL_INFO_OLD_FILE}" || true)"
     if [ "${num}" != "0" ]; then
         ARG_INSTALL_PATH="$(grep -iw pypto_install_path_param "${ASCEND_INSTALL_INFO_OLD_FILE}" | cut -d"=" -f2-)"
         ARG_MODE="$(grep -iw pypto_install_type "${ASCEND_INSTALL_INFO_OLD_FILE}" | cut -d"=" -f2-)"

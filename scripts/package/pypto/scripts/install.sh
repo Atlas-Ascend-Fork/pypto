@@ -82,14 +82,14 @@ pypto_comm_log_init
 #   来区分不同的版本. 如 /usr/local/Ascend/cann-9.0.0 /usr/local/Ascend/cann-9.1.0 代表了不同的版本, 但是其统一的安装路径
 #   均为 /usr/local/Ascend 路径
 tmp_pkg_mulit_version=""
-is_multi_version_pkg "tmp_pkg_mulit_version" "$TMP_PKG_VERSION_FILE"
+is_multi_version_pkg "tmp_pkg_mulit_version" "$TMP_PKG_VERSION_FILE" || true
 PKG_IS_MULTI_VERSION="${tmp_pkg_mulit_version}"
 unset tmp_pkg_mulit_version
 export PKG_IS_MULTI_VERSION  # 导出给子进程使用, 避免重复获取
 
 # 包版本
 tmp_pkg_verison=""
-get_version "tmp_pkg_verison" "$TMP_PKG_VERSION_FILE"
+get_version "tmp_pkg_verison" "$TMP_PKG_VERSION_FILE" || true
 PKG_VERSION="${tmp_pkg_verison}"
 unset tmp_pkg_verison
 export PKG_VERSION
@@ -106,7 +106,7 @@ _set_mode() {
     eval "_val=\"\${${_check_var}}\""
     if [ ! -z "$_val" ]; then
         local msg="ERR_NO:0x0004;ERR_DES:" \
-            "Only support one type: '--full', '--run', '--devel', '--upgrade', '--uninstall', operation failed!"
+            "Only support one type: '--full', '--run', '--devel', '--upgrade', '--uninstall', operation failed!" || true
         comm_log "ERROR" "${msg}"
         exit 1
     fi
@@ -285,7 +285,7 @@ _parse_args() {
 
 _process() {
     local installed_version
-    get_package_version "installed_version" "${PKG_SHARE_INFO_INSTALL_PATH}/version.info"
+    get_package_version "installed_version" "${PKG_SHARE_INFO_INSTALL_PATH}/version.info" || true
 
     if [ -n "${installed_version}" ] && [ "${installed_version}" != "none" ] || [ -f "${PKG_INSTALL_INFO_FILE}" ]; then
         # === 已安装场景 ===

@@ -8,6 +8,9 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+
+set -e
+
 # PyPTO 安装子脚本
 #
 # 本脚本是 _do_install() 委托的同步子进程, 负责实际文件拷贝与包特有后处理. 出于以下原因以子进程方式执行实际操作:

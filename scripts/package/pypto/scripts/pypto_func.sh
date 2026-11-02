@@ -8,13 +8,19 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+
+set -e
+
 # 常用函数
 
 ########################################################################################################################
 # 日志管理
 ########################################################################################################################
 pypto_comm_log_init() {
-    comm_init_log
+    if ! comm_init_log; then
+        set_comm_log "PyPTO" "/dev/null"
+        return 0
+    fi
     set_comm_log "PyPTO" "${COMM_LOGFILE}"  # COMM_LOGFILE 在 common_func.inc 内定义
 }
 
@@ -77,9 +83,9 @@ chmod_recur() {
     local type="${3}"
     permission=$(set_file_chmod "$permission")
     if [ "$type" = "dir" ]; then
-        find "$file_path" -type d -exec chmod "$permission" {} \; 2> /dev/null
+        find "$file_path" -type d -exec chmod "$permission" {} \; 2> /dev/null || true
     elif [ "$type" = "file" ]; then
-        find "$file_path" -type f -exec chmod "$permission" {} \; 2> /dev/null
+        find "$file_path" -type f -exec chmod "$permission" {} \; 2> /dev/null || true
     fi
 }
 
@@ -158,9 +164,9 @@ chmod_start() {
 # 功能: 安装后精细化锁定权限
 chmod_end() {
     if [ "$(id -u)" = "0" ]; then
-        chown "root:root" "${PKG_SHARE_INFO_INSTALL_PATH}" 2> /dev/null
-        chmod 755 "${PKG_SHARE_INFO_INSTALL_PATH}" 2> /dev/null
-        chown -R "root:root" "${PKG_SHARE_INFO_INSTALL_PATH}/script" 2> /dev/null
+        chown "root:root" "${PKG_SHARE_INFO_INSTALL_PATH}" 2> /dev/null || true
+        chmod 755 "${PKG_SHARE_INFO_INSTALL_PATH}" 2> /dev/null || true
+        chown -R "root:root" "${PKG_SHARE_INFO_INSTALL_PATH}/script" 2> /dev/null || true
     fi
 }
 
@@ -178,7 +184,7 @@ _update_install_param() {
         return 1
     fi
     local _param
-    _param=$(grep -i "${_key}=" "${_file}")
+    _param="$(grep -i "${_key}=" "${_file}" || true)"
     if [ "${_param}" = "" ]; then
         echo "${_key}=${_val}" >> "${_file}"
     else
@@ -424,7 +430,7 @@ _unchattr_files() {
     if [ -f "${PKG_INSTALL_INFO_FILE}" ]; then
         if [ -d "${PKG_SHARE_INFO_INSTALL_PATH}" ]; then
             if ! chattr -R -i "${PKG_SHARE_INFO_INSTALL_PATH}" >/dev/null 2>&1; then
-                find "${PKG_SHARE_INFO_INSTALL_PATH}" -exec chattr -i {} + >/dev/null 2>&1
+                find "${PKG_SHARE_INFO_INSTALL_PATH}" -exec chattr -i {} + >/dev/null 2>&1 || true
             fi
         fi
     fi
@@ -564,11 +570,11 @@ _save_user_files_to_log() {
             local base="${file##*/}"
             if [[ -d "$file" && ! -L "$file" ]]; then
                 if [[ "$base" != "." && "$base" != ".." ]]; then
-                    echo "$file" >> "${COMM_LOGFILE}"
+                    echo "$file" >> "${COMM_LOGFILE}" || true
                     _save_user_files_to_log "$file"
                 fi
             else
-                echo "$file" >> "${COMM_LOGFILE}"
+                echo "$file" >> "${COMM_LOGFILE}" || true
             fi
         done
         shopt -u dotglob nullglob

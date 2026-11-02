@@ -8,6 +8,9 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+
+set -e
+
 # PyPTO 卸载子脚本
 #
 # 本脚本是 _do_uninstall() 委托的同步子进程, 负责实际文件删除与包特有后处理. 出于以下原因以子进程方式执行实际操作:
@@ -50,9 +53,10 @@ readonly INSTALLED_SCENE_FILE="${INSTALLED_ROOT_PATH}/scene.info"
 . "${INSTALLED_SCRIPTS_PATH}/common_func_v2.inc"
 # shellcheck disable=SC1091
 . "${INSTALLED_SCRIPTS_PATH}/common_func.inc"
+# shellcheck disable=SC1091
+. "${INSTALLED_SCRIPTS_PATH}/pypto_func.sh"
 
-comm_init_log
-set_comm_log "PyPTO" "${COMM_LOGFILE}"
+pypto_comm_log_init
 
 ########################################################################################################################
 # 变量获取: 已安装包文件 (权威来源)
@@ -78,7 +82,7 @@ _read_installed_info() {
         get_version "_val" "${INSTALLED_VERSION_FILE}"
         [ -n "${_val}" ] && INSTALLED_PKG_VERSION="${_val}"
         local _multi=""
-        is_multi_version_pkg "_multi" "${INSTALLED_VERSION_FILE}"
+        is_multi_version_pkg "_multi" "${INSTALLED_VERSION_FILE}" || true
         [ -n "${_multi}" ] && INSTALLED_PKG_IS_MULTI_VERSION="${_multi}"
     fi
     if [ -f "${INSTALLED_SCENE_FILE}" ]; then
@@ -115,12 +119,16 @@ ARG_INSTALL_FOR_ALL="${INSTALLED_ARG_INSTALL_FOR_ALL:-${ARG_INSTALL_FOR_ALL:-n}}
 ARG_PY_LOCAL="${INSTALLED_ARG_PY_LOCAL:-${ARG_PY_LOCAL:-n}}"
 ARG_DOCKER_ROOT="${ARG_DOCKER_ROOT:-}"
 PKG_VERSION_DIR_NAME="${INSTALLED_PKG_VERSION_DIR_NAME:-${PKG_VERSION_DIR_NAME:-cann}}"
-PKG_INSTALL_PATH="${PKG_INSTALL_PATH:-${ARG_INSTALL_PATH}/${PKG_VERSION_DIR_NAME}}"
+if [ -z "${PKG_INSTALL_PATH}" ]; then
+    PKG_INSTALL_PATH="${ARG_INSTALL_PATH}/${PKG_VERSION_DIR_NAME}"
+fi
 PKG_SHARE_INFO_INSTALL_PATH="${INSTALLED_SCRIPTS_PATH}/.."
 PKG_IS_MULTI_VERSION="${INSTALLED_PKG_IS_MULTI_VERSION:-${PKG_IS_MULTI_VERSION:-false}}"
 PKG_VERSION="${INSTALLED_PKG_VERSION:-${PKG_VERSION:-}}"
 PKG_ARCH_NAME="${INSTALLED_PKG_ARCH_NAME:-${PKG_ARCH_NAME:-}}"
-PKG_WHL_INSTALL_PATH="${PKG_WHL_INSTALL_PATH:-${PKG_INSTALL_PATH}/python/site-packages}"
+if [ -z "${PKG_WHL_INSTALL_PATH}" ]; then
+    PKG_WHL_INSTALL_PATH="${PKG_INSTALL_PATH}/python/site-packages"
+fi
 
 export ARG_QUIET ARG_MODE ARG_INSTALL_PATH ARG_INSTALL_FOR_ALL ARG_PY_LOCAL ARG_DOCKER_ROOT
 export PKG_VERSION_DIR_NAME PKG_INSTALL_PATH PKG_SHARE_INFO_INSTALL_PATH

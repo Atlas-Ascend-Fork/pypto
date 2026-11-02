@@ -8,6 +8,9 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+
+set -e
+
 # PyPTO 自定义卸载脚本 (install_common_parser.sh 回调)
 #
 # 本脚本由 install_common_parser.sh 的 package_custom_uninstall() 机制自动调用:
@@ -43,16 +46,17 @@ unset tmp_cfd
 ########################################################################################################################
 
 # 日志初始化
-comm_init_log
-set_comm_log "PyPTO" "${COMM_LOGFILE}"
+pypto_comm_log_init
 
-PKG_WHL_INSTALL_PATH="${PKG_WHL_INSTALL_PATH:-${PKG_INSTALL_PATH}/python/site-packages}"
+if [ -z "${PKG_WHL_INSTALL_PATH}" ]; then
+    PKG_WHL_INSTALL_PATH="${PKG_INSTALL_PATH}/python/site-packages"
+fi
 PYPTO_MODULE_NAME="pypto"
 
 if [ -n "${PKG_ARCH_NAME}" ]; then
     ARCH_NAME="${PKG_ARCH_NAME}"
 else
-    ARCH_NAME=$(pypto_get_pkg_arch_name)
+    ARCH_NAME="$(pypto_get_pkg_arch_name)" || ARCH_NAME=""
 fi
 
 ########################################################################################################################
