@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <utility>
 #include <vector>
 #include <string>
 #include "interface/function/function.h"
@@ -80,6 +81,26 @@ ir::VarPtr AddTokenEdge(Function& function, Operation& producer, Operation& cons
 bool HasToken(const Operation& op, const ir::VarPtr& token)
 {
     return std::find(op.tokens_.begin(), op.tokens_.end(), token) != op.tokens_.end();
+}
+
+Operation* FindOutcastWriter(const LogicalTensorPtr& outcast, const std::vector<int64_t>& inputShape,
+                             const std::vector<int64_t>& targetOffset)
+{
+    if (outcast == nullptr) {
+        return nullptr;
+    }
+    for (auto* producer : outcast->GetProducers()) {
+        if (producer == nullptr || producer->IsDeleted() || producer->GetIOperands().size() != 1 ||
+            producer->GetIOperands().front() == nullptr) {
+            continue;
+        }
+        auto assembleAttr = std::dynamic_pointer_cast<AssembleOpAttribute>(producer->GetOpAttribute());
+        if (producer->GetIOperands().front()->GetShape() == inputShape && assembleAttr != nullptr &&
+            assembleAttr->GetToOffset() == targetOffset) {
+            return producer;
+        }
+    }
+    return nullptr;
 }
 
 struct ViewAssembleQueryGraph {
@@ -3263,6 +3284,103 @@ TEST_F(TestRemoveRedundantOpPass, ParallelViewAssembleToOutcastShouldRelinkAllPr
     for (auto& op : function->Operations()) {
         if (!op.GetIOperands().empty() && !op.GetOOperands().empty()) {
             EXPECT_NE(op.GetIOperands().front(), op.GetOOperands().front());
+        }
+    }
+}
+
+TEST_F(TestRemoveRedundantOpPass, PartialRegionToOutcastMustKeepProducerDestination)
+{
+    std::vector<int64_t> fullShape = {129, kNumExpSeven};
+    std::vector<int64_t> partShape = {kNumExpFour, kNumExpSeven};
+    std::vector<int64_t> regionOffset = {kNumExpFive, kNumZero};
+    const std::vector<std::pair<Opcode, Opcode>> cascades = {{Opcode::OP_VIEW, Opcode::OP_ASSEMBLE},
+                                                             {Opcode::OP_SLICE, Opcode::OP_CONTRACT}};
+    for (const auto& [viewOpcode, assembleOpcode] : cascades) {
+        MemoryType partMemory = viewOpcode == Opcode::OP_SLICE ? MemoryType::MEM_UB : MemoryType::MEM_DEVICE_DDR;
+        auto function = std::make_shared<Function>(Program::GetInstance(), "PartialRegionToOutcast",
+                                                   "PartialRegionToOutcast", nullptr);
+        ASSERT_NE(function, nullptr);
+
+        auto input = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+        auto internal = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+        auto part = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+        auto outcast = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape),
+                                                   TileOpFormat::TILEOP_ND, "outcast");
+        input->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR);
+        internal->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR);
+        part->SetMemoryTypeBoth(partMemory);
+        outcast->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR);
+
+        auto& fullProducer = PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {input}, {internal});
+        PassOperationUtils::AddOperation(*function, viewOpcode, {internal}, {part}, [&regionOffset](Operation& op) {
+            op.SetOpAttribute(std::make_shared<ViewOpAttribute>(regionOffset));
+        });
+        PassOperationUtils::AddOperation(*function, assembleOpcode, {part}, {outcast}, [&regionOffset](Operation& op) {
+            op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(regionOffset));
+        });
+        function->inCasts_ = {input};
+        function->outCasts_ = {outcast};
+
+        RemoveRedundantOp pass;
+        ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+
+        EXPECT_EQ(fullProducer.GetOOperands().front(), internal);
+        EXPECT_NE(fullProducer.GetOOperands().front(), outcast);
+        EXPECT_TRUE(internal->HasProducer(&fullProducer));
+        EXPECT_EQ(outcast->GetConsumers().size(), kSizeZero);
+        Operation* outcastWriter = FindOutcastWriter(outcast, partShape, regionOffset);
+        ASSERT_NE(outcastWriter, nullptr);
+        EXPECT_NE(outcastWriter, &fullProducer);
+    }
+}
+
+TEST_F(TestRemoveRedundantOpPass, IncompleteMultipleRegionsToOutcastMustKeepProducerDestination)
+{
+    std::vector<int64_t> fullShape = {kNumFour, kNumExpFour};
+    std::vector<int64_t> partShape = {kNumOne, kNumExpFour};
+    const std::vector<std::vector<int64_t>> regionOffsets = {{kNumZero, kNumZero}, {kNumTwo, kNumZero}};
+    const std::vector<std::pair<Opcode, Opcode>> cascades = {{Opcode::OP_VIEW, Opcode::OP_ASSEMBLE},
+                                                             {Opcode::OP_SLICE, Opcode::OP_CONTRACT}};
+    for (const auto& [viewOpcode, assembleOpcode] : cascades) {
+        MemoryType partMemory = viewOpcode == Opcode::OP_SLICE ? MemoryType::MEM_UB : MemoryType::MEM_DEVICE_DDR;
+        auto function = std::make_shared<Function>(Program::GetInstance(), "IncompleteRegionsToOutcast",
+                                                   "IncompleteRegionsToOutcast", nullptr);
+        ASSERT_NE(function, nullptr);
+
+        auto input = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+        auto internal = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+        auto outcast = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape),
+                                                   TileOpFormat::TILEOP_ND, "outcast");
+        input->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR);
+        internal->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR);
+        outcast->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR);
+
+        auto& fullProducer = PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {input}, {internal});
+        for (const auto& regionOffset : regionOffsets) {
+            auto part = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+            part->SetMemoryTypeBoth(partMemory);
+            PassOperationUtils::AddOperation(*function, viewOpcode, {internal}, {part}, [&regionOffset](Operation& op) {
+                op.SetOpAttribute(std::make_shared<ViewOpAttribute>(regionOffset));
+            });
+            PassOperationUtils::AddOperation(*function, assembleOpcode, {part}, {outcast},
+                                             [&regionOffset](Operation& op) {
+                                                 op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(regionOffset));
+                                             });
+        }
+        function->inCasts_ = {input};
+        function->outCasts_ = {outcast};
+
+        RemoveRedundantOp pass;
+        ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+
+        EXPECT_EQ(fullProducer.GetOOperands().front(), internal);
+        EXPECT_NE(fullProducer.GetOOperands().front(), outcast);
+        EXPECT_TRUE(internal->HasProducer(&fullProducer));
+        EXPECT_EQ(outcast->GetConsumers().size(), kSizeZero);
+        for (const auto& regionOffset : regionOffsets) {
+            Operation* outcastWriter = FindOutcastWriter(outcast, partShape, regionOffset);
+            ASSERT_NE(outcastWriter, nullptr);
+            EXPECT_NE(outcastWriter, &fullProducer);
         }
     }
 }

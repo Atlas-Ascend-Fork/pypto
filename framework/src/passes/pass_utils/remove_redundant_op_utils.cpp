@@ -1558,6 +1558,25 @@ bool RemoveRedundantOpUtils::ProcessPerfectMatch(Function& function, LogicalTens
         APASS_LOG_DEBUG_F(Elements::Tensor, "Not valid view-assemble-like case.");
         return false;
     }
+    if (endTensorIsOutcast) {
+        // Redirecting every producer to the outcast also redirects writes outside the copied regions.
+        // Equal endpoint shapes and offsets alone do not prove that the whole output is overwritten.
+        std::vector<RegionMapping> mappings;
+        std::vector<int64_t> translation;
+        bool hasDynOffset = false;
+        if (!CollectRegionMappings(startTensor, endTensor, mappings, translation, hasDynOffset)) {
+            APASS_LOG_DEBUG_F(Elements::Tensor,
+                              "Cannot collect region mappings from startTensor[%d] to outcast endTensor[%d].",
+                              startTensor->magic, endTensor->magic);
+            return false;
+        }
+        if (!HasCompleteRegionCoverage(mappings, endTensor->GetShape())) {
+            APASS_LOG_DEBUG_F(Elements::Tensor,
+                              "Region mappings from startTensor[%d] do not fully cover outcast endTensor[%d].",
+                              startTensor->magic, endTensor->magic);
+            return false;
+        }
+    }
     auto removedOps = remove_redundant_op_internal::CollectViewAssembleCascadeOps(startTensor, endTensor);
     bool dependencyUpdated = false;
     const bool cascadeHasToken = std::any_of(removedOps.begin(), removedOps.end(), [](const Operation* removedOp) {
