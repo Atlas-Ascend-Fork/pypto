@@ -1158,7 +1158,9 @@ def run_matmul_test(
 
     is_gemv = not a_trans and len(shape_a) >= 2 and shape_a[-2] == 1
     if is_gemv:
-        assert generated_cpp_contains("TGEMV"), f"{kernel_name}: generated cpp missing 'TGEMV'"
+        # kirin9050 暂不使用 GEMV，M==1 走 TMatmul/TMatmulMacroAcc。
+        expected_op = "TMatmul" if soc_version == "Kirin9050" else "TGEMV"
+        assert generated_cpp_contains(expected_op), f"{kernel_name}: generated cpp missing '{expected_op}'"
 
     check_nan(c, name=kernel_name)
     cos_value = compare_cos(np.array(c.cpu()), np.array(golden_c.cpu()))

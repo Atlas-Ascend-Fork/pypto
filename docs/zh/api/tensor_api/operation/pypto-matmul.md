@@ -114,7 +114,7 @@ matmul(input, mat2, out_dtype, *, a_trans = False, b_trans = False, c_matrix_nz 
 - KirinX90处理器系列产品：具体数据类型请见[KirinX90处理器系列产品支持的数据类型](#kirinx90处理器系列产品支持的数据类型)，不支持输入TILEOP_NZ format输入（input与mat2），不支持c_matrix_nz，不支持extend_params中的：scale、scale_tensor、relu_type、trans_mode。
 <!-- end id12 -->
 <!-- npu="9050" id13 -->
-- Kirin9050处理器系列产品：具体数据类型请见[Kirin9050处理器系列产品支持的数据类型](#kirin9050处理器系列产品支持的数据类型)，不支持输入TILEOP_NZ format输入（input与mat2），不支持c_matrix_nz，不支持extend_params中的：scale、scale_tensor、relu_type、trans_mode。
+- Kirin9050处理器系列产品：具体数据类型请见[Kirin9050处理器系列产品支持的数据类型](#kirin9050处理器系列产品支持的数据类型)，不支持输入TILEOP_NZ format输入（input与mat2），不支持c_matrix_nz，不支持`a_trans`（Kirin9030处理器系列产品/KirinX90处理器系列产品的A矩阵随路转置），不支持extend_params中的：scale、scale_tensor、relu_type、trans_mode。如需对A矩阵转置，请先调用`pypto.transpose`手动转置`input`，再以`a_trans=False`调用`matmul`，例如：`a_t = pypto.transpose(a, -1, -2)`，`pypto.matmul(a_t, b, out_dtype, a_trans=False)`。
 <!-- end id13 -->
 - 调用matmul接口前需要通过pypto.set\_cube\_tile\_shapes设置M、K、N轴上的切分大小
 - 当矩阵维度为3维或者4维时，需要调用pypto.set\_vec\_tile\_shapes接口设置vector的TileShape切分，如未设置，接口内部会设置2维的vec\_tile\_shape，其值为128，128。

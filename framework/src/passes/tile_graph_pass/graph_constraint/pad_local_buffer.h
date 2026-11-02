@@ -68,6 +68,8 @@ private:
     int64_t AlignedRawTensorIfNeed(LogicalTensorPtr& in, int64_t pos, const int64_t base);
     bool IsInputDataType(const Operation& op, const LogicalTensorPtr& in,
                          const std::unordered_set<DataType>& targetTypes) const;
+    bool ShouldDefaultPadKirin9050Cube(const Operation& op, const LogicalTensorPtr& in, bool matmulOp,
+                                       const std::unordered_set<DataType>& targetTypes) const;
     // 设置原始 rawshape（替代 RawTensor::oriRawshape = rawshape）
     Shape& SetOriRawshape(LogicalTensorPtr& in);
     // 获取已保存的原始 rawshape

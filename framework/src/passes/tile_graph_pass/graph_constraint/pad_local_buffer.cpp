@@ -62,6 +62,23 @@ Shape& PadLocalBuffer::GetOriRawshape(LogicalTensorPtr& in)
     return oriRawshapeMap_[rawmagic];
 }
 
+// kirin9050(DAV_5101) 无 L0C：matmul 的 C/累加器直接驻留 L1（int32/fp16），其 fractal 行数由
+// 自身 dtype 决定（16 行），不能沿用 int8 输入的 32 元素 pad——32 行 C tile 会让宏指令多 K 片
+// 累加时第 2 个 16 列块读错 acc 地址（只保留末片）。仅 9050 存在 C 驻留 L1 的场景，
+// 其他平台 C 在 L0C，走 IsInputDataType 的提前返回，不受影响。
+bool PadLocalBuffer::ShouldDefaultPadKirin9050Cube(const Operation& op, const LogicalTensorPtr& in, bool matmulOp,
+                                                   const std::unordered_set<DataType>& targetTypes) const
+{
+    if (!Platform::Instance().GetSoc().IsSupportCubeEpilogue()) {
+        return false;
+    }
+    const bool isCubeRelatedOp = matmulOp || op.GetOpcode() == Opcode::OP_COPY_OUT ||
+                                 op.GetOpcode() == Opcode::OP_L0C_TO_L1 || op.GetOpcode() == Opcode::OP_L0C_COPY_UB ||
+                                 op.GetOpcode() == Opcode::OP_UB_COPY_L1;
+    return isCubeRelatedOp && in->GetMemoryTypeOriginal() == MemoryType::MEM_L1 &&
+           targetTypes.find(in->tensor->GetDataType()) == targetTypes.end();
+}
+
 bool PadLocalBuffer::IsInputDataType(const Operation& op, const LogicalTensorPtr& in,
                                      const std::unordered_set<DataType>& targetTypes) const
 {
@@ -93,6 +110,10 @@ bool PadLocalBuffer::IsInputDataType(const Operation& op, const LogicalTensorPtr
     bool opsInputDtype = false;
     if (op.GetIOperands().size() > 0 && op.GetIOperands()[0] != nullptr && op.GetIOperands()[0]->tensor != nullptr) {
         opsInputDtype = targetTypes.find(op.GetIOperands()[0]->tensor->GetDataType()) != targetTypes.end();
+    }
+
+    if (ShouldDefaultPadKirin9050Cube(op, in, matmulOp, targetTypes)) {
+        return false;
     }
 
     if (targetTypes.find(in->tensor->GetDataType()) != targetTypes.end() || (matmulOp && opsInputDtype)) {
@@ -219,8 +240,7 @@ int64_t PadLocalBuffer::GetMatmulPaddingValue(Operation& op, LogicalTensorPtr& i
 void PadLocalBuffer::PadMatmulHighLow(LogicalTensorPtr& in, size_t highIndex, size_t lowIndex, int64_t padValue)
 {
     Shape& oriRawshape = GetOriRawshape(in); // 获取已保存的 oriRawshape
-    int64_t highPadValue = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch()) ? CUBE_PAD_VALUE : padValue;
-    in->tensor->rawshape[highIndex] = AlignmentUtils::Pad(oriRawshape[highIndex], highPadValue);
+    in->tensor->rawshape[highIndex] = AlignmentUtils::Pad(oriRawshape[highIndex], padValue);
     in->tensor->rawshape[lowIndex] = AlignmentUtils::Pad(oriRawshape[lowIndex], padValue);
 }
 
