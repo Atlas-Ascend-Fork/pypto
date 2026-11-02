@@ -2,7 +2,7 @@
 
 PyPTO Pro算子的性能受多核任务划分、数据搬运效率、片上数据复用，以及计算与搬运流水并行度等因素影响。性能调优应以采集数据为依据：先分析Kernel耗时、AI Core流水、访存和任务时间线，确定瓶颈所在，再选择相应的优化手段。
 
-性能优化应以功能和精度正确为前提。每次调整Tile Shape、同步关系或多核切分后，均需先通过精度回归，再验证性能收益。
+性能优化应以功能和精度正确为前提。每次调整TileShape、同步关系或多核切分后，均需先通过精度回归，再验证性能收益。
 
 ## 性能工具与适用场景
 
@@ -98,7 +98,7 @@ msprof op python3 test_example.py
 2. 比较Cube、Vector和数据搬运流水的耗时及占比，识别主导流水。流水占比只能反映时间覆盖情况；判断计算效率和带宽利用率时，还需结合指令吞吐、带宽和阻塞指标。
 3. 根据计算量、数据搬运量和目标硬件规格估算理论耗时，再与实测结果对比，判断瓶颈来自工作量本身，还是硬件利用率不足。
 4. 使用`trace.json`检查关键流水是否连续，以及搬运、Vector和Cube能否有效重叠。
-5. 根据分析结果选择优化方向，例如多核切分、Tile Shape、片上复用或多缓冲。每轮只调整一类关键因素，完成精度回归后，再按相同口径复测。
+5. 根据分析结果选择优化方向，例如多核切分、TileShape、片上复用或多缓冲。每轮只调整一类关键因素，完成精度回归后，再按相同口径复测。
 
 流水优化的目标，是让决定Kernel性能的主流水在稳态阶段连续执行，并尽可能将其他流水的开销隐藏在主流水中。当总耗时主要受某条计算或搬运流水限制时，Kernel即达到该流水的bound状态。矩阵计算类Kernel通常以Cube bound为目标；矢量计算或搬运密集型Kernel则可能分别达到Vector bound或MTE bound。判断bound不能只看累计占比，还要确认主流水在主要执行区间内是否连续，以及其他流水是否与其充分重叠。
 
@@ -128,10 +128,10 @@ PyPTO Pro使用[`pypto_pro.language.get_block_idx()`](../../../../api/pro_api/SI
 
 ## Tile与片上内存优化
 
-Tile Shape同时影响单次计算量、片上内存占用、循环次数、尾块比例和搬运效率。选择Tile时需综合考虑以下因素：
+TileShape同时影响单次计算量、片上内存占用、循环次数、尾块比例和搬运效率。选择Tile时需综合考虑以下因素：
 
 - 各类片上Buffer的容量限制。
-- 数据类型和Tile Shape共同决定的实际字节数。
+- 数据类型和TileShape共同决定的实际字节数。
 - 数据搬运和计算指令的对齐要求。
 - 尾块比例以及有效数据之外的补齐开销。
 - 同一份输入数据在片上的复用次数。
@@ -160,7 +160,7 @@ GM访问应保持连续和对齐，并尽量合并为大粒度搬运。需要重
 
 矩阵计算通过[`pypto_pro.language.section_cube()`](../../../../api/pro_api/SIMD-API/controlflow/section_cube.md)描述Cube任务，矢量计算通过[`pypto_pro.language.section_vector()`](../../../../api/pro_api/SIMD-API/controlflow/section_vector.md)描述Vector任务。对于混合Kernel，应尽量重叠Cube计算、Vector前后处理和DMA搬运，并减少不必要的数据格式转换和跨存储层搬运。
 
-- Cube计算应检查M、N、K方向的Tile Shape、左右矩阵布局、转置方式以及L0A Buffer/L0B Buffer装载格式。
+- Cube计算应检查M、N、K方向的TileShape、左右矩阵布局、转置方式以及L0A Buffer/L0B Buffer装载格式。
 - 归约长度较大时，应在L0C Buffer中完成分块累加，再按需要转换并写回。
 - Vector前后处理应尽量与Cube流水重叠，避免形成全局串行阶段。
 - 连续执行多个细粒度Vector操作且额外开销明显时，可在确认瓶颈后使用Vector Function表达寄存器级计算，减少中间Tile读写。

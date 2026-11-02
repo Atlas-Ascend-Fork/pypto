@@ -236,7 +236,7 @@ L0A Buffer、L0B Buffer、L0A_MX Buffer和L0B_MX Buffer均暂不支持Tile子视
 
 ## 设置Tile的有效形状
 
-当Tensor shape不能被Tile shape整除时，边界Tile只有部分元素有效。TileType省略valid_shape时默认采用动态模式，等同于valid_shape=[-1, -1]，无需为尾块显式填写：
+当Tensor shape不能被TileShape整除时，边界Tile只有部分元素有效。TileType省略valid_shape时默认采用动态模式，等同于valid_shape=[-1, -1]，无需为尾块显式填写：
 
 ```python
 import pypto_pro.language as pl

@@ -24,7 +24,7 @@ AIC和AIV可以通过片上Buffer或GM中的workspace传递中间数据。两种
 - Cube → Vector：通过[`pypto_pro.language.move`](../../../../api/pro_api/SIMD-API/memory_data_movement/move.md)将L0C Buffer中的结果搬到UB。一个AIC向两个AIV分发数据时，可以使用[`pypto_pro.language.AccToVecMode`](../../../../api/pro_api/SIMD-API/basic_data_structures/AccToVecMode.md)按M轴或N轴拆分。
 - Vector → Cube：先在UB中得到Cube需要的ND/NZ布局，再通过[`pypto_pro.language.move`](../../../../api/pro_api/SIMD-API/memory_data_movement/move.md)或[`pypto_pro.language.insert`](../../../../api/pro_api/SIMD-API/memory_data_movement/insert.md)写入L1 Buffer。
 
-生产端和消费端需要使用一致的中间Tile shape、dtype和layout。一个AIC向两个AIV分发数据时，还需要确定沿M轴或N轴拆分，并按相同顺序使用轮转Buffer。
+生产端和消费端需要使用一致的中间TileShape、dtype和layout。一个AIC向两个AIV分发数据时，还需要确定沿M轴或N轴拆分，并按相同顺序使用轮转Buffer。
 
 ### 通过GM传递
 

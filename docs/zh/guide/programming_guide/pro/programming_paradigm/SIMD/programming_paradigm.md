@@ -76,14 +76,14 @@ VF函数不能独立启动，需要由外层JIT Kernel在Vector执行域中调�
 
 Cube计算使用L1 Buffer、L0A Buffer、L0B Buffer和L0C Buffer中的矩阵Tile，通过一条矩阵指令并行完成一个矩阵分块的乘加运算。Kernel使用`pypto_pro.language.section_cube()`标识Cube执行域。
 
-开发者根据矩阵分块选择Tile shape并组织矩阵计算。矩阵分形、片上地址、数据搬运、计算接口和完整示例请参考[Cube计算](../../development/cube_computation.md)。
+开发者根据矩阵分块选择TileShape并组织矩阵计算。矩阵分形、片上地址、数据搬运、计算接口和完整示例请参考[Cube计算](../../development/cube_computation.md)。
 
 ## SIMD Kernel开发流程
 
 使用PyPTO Pro开发SIMD算子通常包含以下步骤：
 
 1. **确定计算方式**：根据数据访问和计算特点选择Tile计算、Reg计算或Cube计算。
-2. **设计多核与Tile切分**：确定`block_dim`、各核的数据范围、Tile shape和尾块处理方式。
+2. **设计多核与Tile切分**：确定`block_dim`、各核的数据范围、TileShape和尾块处理方式。
 3. **声明Tensor参数**：在Kernel签名中描述GM输入、输出和Workspace的数据类型、shape及layout。
 4. **规划片上数据**：根据计算方式选择Tile所在的MemorySpace和数据排布。
 5. **编写执行域**：在`section_vector()`或`section_cube()`中表达相应的SIMD计算。

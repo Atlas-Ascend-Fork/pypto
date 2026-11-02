@@ -515,12 +515,12 @@ Operation的subgraph ID为负数或超出子图数量范围。
 **可能原因**
 
 - 子图中同时存在AIV和AIC操作。
-- 子图中同时存在UB和L0/L1内存类型Tensor。
+- 子图中同时存在UB和L0/L1 Buffer内存类型Tensor。
 
 **处理方式**
 
 1. 检查同一子图内是否混合AIV和AIC操作。
-2. 检查同一子图内是否混合UB与L0/L1 memory type Tensor。
+2. 检查同一子图内是否混合UB与L0/L1 Buffer memory type Tensor。
 3. 根据计算单元和memory type约束重新划分子图。
 
 ## F44000 CONFIG_MEMORY_TYPE_REACHABLE

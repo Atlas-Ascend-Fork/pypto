@@ -153,7 +153,7 @@ with pl.section_vector():
 
 ### 识别尾块
 
-以二维Tensor为例，设Tensor shape为[M, N]，Tile shape为[TILE_M, TILE_N]，两个方向的Tile数量为：
+以二维Tensor为例，设Tensor shape为[M, N]，TileShape为[TILE_M, TILE_N]，两个方向的Tile数量为：
 
 ```python
 m_tiles = (M + TILE_M - 1) // TILE_M

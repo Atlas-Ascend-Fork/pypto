@@ -167,7 +167,7 @@ PyPTO Sanitizer: 1 issue(s) detected
 
 字段解读：
 
-- exceed tile shape后的方括号：TileType声明的tile shape（GM访问越界中对应位置为tensor shape）。
+- exceed tile shape后的方括号：TileType声明的TileShape（GM访问越界中对应位置为tensor shape）。
 
 结论：demo.py第227行的move以偏移[32, 0]访问声明为[64, 64]的tile，行方向32 + 64 = 96超出64共32个元素，可定位为tile内偏移超出声明维度，需要检查搬运偏移或改用更大的tile。
 

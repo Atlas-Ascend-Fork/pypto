@@ -66,7 +66,7 @@ ErrCode: F1FFFF! Enum: InternalError::COMMON_INNER_ERROR. aicore exception, devi
 
 ### 功能说明
 
-AiCore Print用于在AICore kernel中打印tensor数据和调试信息，支持GM、UB、L1内存层次和多种数据类型。
+AiCore Print用于在AICore kernel中打印tensor数据和调试信息，支持GM、UB、L1 Buffer内存层次和多种数据类型。
 
 ### 对外接口
 
@@ -79,8 +79,8 @@ AiCore Print用于在AICore kernel中打印tensor数据和调试信息，支持G
 | **AiCorePrintShape** | 打印Shape信息 | 查看tensor shape维度 |
 | **AiCorePrintGmTensor** | 打印GM Tensor | 查看Global Memory数据 |
 | **AiCorePrintUbTensor** | 打印UB Tensor | 查看Unified Buffer数据（仅AIV kernel） |
-| **AiCorePrintL1Tensor** | 打印L1 Tensor | 查看Circular Buffer数据（仅AIC kernel） |
-| **AiCorePrintL0CTensor** | 打印L0C Tensor | 查看Accumulator Buffer数据（仅AIC kernel） |
+| **AiCorePrintL1Tensor** | 打印L1 Buffer Tensor | 查看Circular Buffer数据（仅AIC kernel） |
+| **AiCorePrintL0CTensor** | 打印L0C Buffer Tensor | 查看Accumulator Buffer数据（仅AIC kernel） |
 
 ### 支持的数据类型
 
@@ -188,7 +188,7 @@ AiCorePrintL1Tensor(param->ctx, (__cbuf__ T*)addr, end, begin, l1_staging, "name
 AiCorePrintL0CTensor(param->ctx, (__cc__ T*)addr, end, begin, l0cShape0, l0cShape1, l0c_staging, "name");
 ```
 
-**步骤3.3：配置L1/L0C staging buffer（仅AiCorePrintL1Tensor / AiCorePrintL0CTensor需要）**
+**步骤3.3：配置L1 Buffer/L0C Buffer数据的staging buffer（仅AiCorePrintL1Tensor / AiCorePrintL0CTensor需要）**
 
 ```cpp
 // L1 staging buffer（从workspace分配）
@@ -276,14 +276,14 @@ AiCorePrintShape(param->ctx, Shape3Dim(dim0, dim1, dim2));
 AiCorePrintShape(param->ctx, Shape4Dim(dim0, dim1, dim2, dim3), "conv_out");
 ```
 
-L1 Tensor打印示例：
+L1 Buffer Tensor打印示例：
 
 ```cpp
 __gm__ half* l1_staging = (__gm__ half*)(param->funcData->workspaceAddr);
 AiCorePrintL1Tensor(param->ctx, (__cbuf__ half*)l1Tensor.GetAddr(), 16, 0, l1_staging, "fp16_l1");
 ```
 
-L0C Tensor打印示例（L0C数据通过DMA搬运到GM staging buffer后打印）：
+L0C Buffer Tensor打印示例（L0C Buffer数据通过DMA搬运到GM staging buffer后打印）：
 
 ```cpp
 __gm__ int32_t* l0c_staging = (__gm__ int32_t*)(param->funcData->workspaceAddr);
@@ -301,7 +301,7 @@ AICORE_LOGD(param->ctx, "INT8 input loaded");
 
 ### 注意事项
 
-1. **L1/L0C staging buffer对齐**：l1_staging和l0c_staging地址必须32字节对齐，workspaceAddr默认满足要求。
+1. **L1 Buffer/L0C Buffer数据的staging buffer对齐**：l1_staging和l0c_staging地址必须32字节对齐，workspaceAddr默认满足要求。
 
 2. **打印数量控制**：PRINT_BUFFER_SIZE当前为128KB（定义于`framework/src/interface/machine/device/tilefwk/aicpu_common.h`），若触发overflow warning，需增大该值后重新编译。
 
@@ -354,7 +354,7 @@ AICORE_LOGD(param->ctx, "INT8 input loaded");
 
 检查：ENABLE_AICORE_PRINT=1、已重新编译安装，已指定日志落盘路径，已设置日志级别为info级别（1），grep搜索文件正确。
 
-### L1/L0C Print对齐WARNING
+### L1 Buffer/L0C Buffer Print对齐WARNING
 
 确保l1_staging / l0c_staging地址32B对齐，workspaceAddr本身已对齐。
 

@@ -4,7 +4,7 @@
 
 **错误描述**
 
-AICore kernel编译阶段失败。
+AI Core kernel编译阶段失败。
 
 **可能原因**
 

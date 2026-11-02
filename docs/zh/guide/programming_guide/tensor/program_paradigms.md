@@ -32,7 +32,7 @@ PyPTO提供了三种层次的编程接口：
 
 - Tile：是Tensor的子区间（sub-Tensor），通过Tiling（切分）将大的Tensor切分为多个子块。Tile的设计目的是：
 
-    - 使其能够存放在处理器核内私有缓存（如UB，L1）中，以提升数据局部性
+    - 使其能够存放在处理器核内私有缓存（如UB，L1 Buffer）中，以提升数据局部性
     - 充分利用硬件并行计算能力
     - 优化内存访问模式
 
@@ -129,7 +129,7 @@ Tensor层次编程是PyPTO当前主要支持的编程方式，开发者直接使
     - Tensor：数据节点。
     - Operation（Op）：对数据的操作，分为Tensor Op与Tile Op。
         - Tensor Op：作用于Tensor，逻辑上不受存储位置和规模约束。
-        - Tile Op：Tensor Op的子集，限定输入输出位于同一核的L1内存，确保数据局部性。
+        - Tile Op：Tensor Op的子集，限定输入输出位于同一核的L1 Buffer，确保数据局部性。
 
 - 计算图的转换流程
 

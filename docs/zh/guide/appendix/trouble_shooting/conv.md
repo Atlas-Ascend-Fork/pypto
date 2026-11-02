@@ -4,17 +4,17 @@
 
 **错误描述**
 
-Operation阶段校验TileShape配置超出硬件缓存空间限制，包括L0A、L0B、L0C和L1缓存。
+Operation阶段校验TileShape配置超出硬件缓存空间限制，包括L0A Buffer、L0B Buffer、L0C Buffer和L1 Buffer。
 
 **可能原因**
 
-- L1、L0A、L0B、L0C缓存空间超限。
+- L1 Buffer、L0A Buffer、L0B Buffer、L0C Buffer空间超限。
 
 **处理方式**
 
-1. 卷积正向参考：[卷积正向tileshape切分约束说明](../../../api/tensor_api/config/pypto-set_conv_tile_shapes.md)，计算占用空间是否超限。
-2. 卷积反向输入参考：[卷积反向输入tileshape切分约束说明](../../../api/tensor_api/config/pypto-set_convbp_input_tile_shapes.md)，计算占用空间是否超限。
-3. 卷积反向权重参考：[卷积反向权重tileshape切分约束说明](../../../api/tensor_api/config/pypto-set_convbp_filter_tile_shapes.md)，计算占用空间是否超限。
+1. 卷积正向参考：[卷积正向TileShape切分约束说明](../../../api/tensor_api/config/pypto-set_conv_tile_shapes.md)，计算占用空间是否超限。
+2. 卷积反向输入参考：[卷积反向输入TileShape切分约束说明](../../../api/tensor_api/config/pypto-set_convbp_input_tile_shapes.md)，计算占用空间是否超限。
+3. 卷积反向权重参考：[卷积反向权重TileShape切分约束说明](../../../api/tensor_api/config/pypto-set_convbp_filter_tile_shapes.md)，计算占用空间是否超限。
 
 ## FC6201 EXPANDFUNC_TENSOR_OP_NULLPTR
 
@@ -193,7 +193,7 @@ Codegen代码生成阶段，Conv TileOp或Conv_backward_input/Conv_backward_filt
    ```
 
 - CopyOutMode值不在`{NZ2ND, NZ2NZ, NZ2DN}`范围内。
-- cutW属性为0，导致L0C到GM的搬出操作无法正确分块。
+- cutW属性为0，导致L0C Buffer到GM的搬出操作无法正确分块。
 
 **处理方式**
 
@@ -206,7 +206,7 @@ Codegen代码生成阶段，Conv TileOp或Conv_backward_input/Conv_backward_filt
 
 **错误描述**
 
-Codegen代码生成阶段，Conv或Conv_backward_input/Conv_backward_filter TileOp的src shape或offset维度与预期不匹配。2D的shape/offset应为4维，3D应为5维，L0C的valid shape应为2维。
+Codegen代码生成阶段，Conv或Conv_backward_input/Conv_backward_filter TileOp的src shape或offset维度与预期不匹配。2D的shape/offset应为4维，3D应为5维，L0C Buffer的valid shape应为2维。
 
 **可能原因**
 
@@ -222,7 +222,7 @@ Codegen代码生成阶段，Conv或Conv_backward_input/Conv_backward_filter Tile
    ```
 
 - 动态shape场景下，valid shape的维度推导异常。
-- L0C tensor的shape不是2维（M，N），可能由Tile图展开时L0C节点构造错误导致。
+- L0C Buffer tensor的shape不是2维（M，N），可能由Tile图展开时L0C Buffer节点构造错误导致。
 
 **处理方式**
 
@@ -236,11 +236,11 @@ Codegen代码生成阶段，Conv或Conv_backward_input/Conv_backward_filter Tile
 
 **错误描述**
 
-TileOp阶段，tensor硬件FORMAT校验失败。Conv或Conv_backward_input/Conv_backward_filter的Load操作要求src为GM格式、dst为L1格式；Store操作要求src为L0C格式、dst为GM格式。
+TileOp阶段，tensor硬件FORMAT校验失败。Conv或Conv_backward_input/Conv_backward_filter的Load操作要求src为GM格式、dst为L1 Buffer格式；Store操作要求src为L0C Buffer格式、dst为GM格式。
 
 **可能原因**
 
-- Tile图展开阶段为tensor分配了错误的内存层级，如Load操作的dst被分配到L0C而非L1。
+- Tile图展开阶段为tensor分配了错误的内存层级，如Load操作的dst被分配到L0C Buffer而非L1 Buffer。
 
    ```txt
    # 错误示例-Load/Store操作的src/dst硬件格式不匹配
@@ -254,19 +254,19 @@ TileOp阶段，tensor硬件FORMAT校验失败。Conv或Conv_backward_input/Conv_
 **处理方式**
 
 1. 此错误码对应的校验为编译期`static_assert`，会在kernel代码编译阶段报错。在生成的kernel代码文件（`kernel_aicore`目录下）中搜索`TLoadConv`/`TStoreConv`调用，检查传入的tensor类型声明。
-2. 确认Load操作的dst tensor声明为L1类型（如`ConvTile<TileType::Mat, ..., Hardware::L1>`），src为GM类型。
-3. 确认Store操作的src tensor声明为L0C类型，dst为GM类型。
+2. 确认Load操作的dst tensor声明为L1 Buffer类型（如`ConvTile<TileType::Mat, ..., Hardware::L1>`），src为GM类型。
+3. 确认Store操作的src tensor声明为L0C Buffer类型，dst为GM类型。
 4. 若未修改Tile图展开逻辑但仍出现此报错，请按CONV组件提issue或问题单，附带kernel代码文件与复现用例。
 
 ## FC6402 TILEOP_SHAPE_SIZE_FAILED
 
 **错误描述**
 
-TileOp阶段，L0C tensor的shape size校验失败。Store操作要求L0C的shape为2维（M, N）。
+TileOp阶段，L0C Buffer tensor的shape size校验失败。Store操作要求L0C Buffer的shape为2维（M, N）。
 
 **可能原因**
 
-- Tile图展开阶段为L0C tensor构造了非2维的shape，可能由Conv的MMAD节点输出shape推导异常导致。
+- Tile图展开阶段为L0C Buffer tensor构造了非2维的shape，可能由Conv的MMAD节点输出shape推导异常导致。
 
    ```txt
    # 错误示例-L0C tensor shape不是2维
@@ -274,13 +274,13 @@ TileOp阶段，L0C tensor的shape size校验失败。Store操作要求L0C的shap
    # L0C shape size should be 2 Dim
    ```
 
-- 自定义Pass修改了L0C tensor的shape定义。
+- 自定义Pass修改了L0C Buffer tensor的shape定义。
 
 **处理方式**
 
-1. 此错误码对应的校验为编译期`static_assert`。在生成的kernel代码文件中搜索`TStoreConv`调用，检查L0C tensor的shape声明。
-2. 确认L0C tensor的shape为2维，即`（M, N）`。
-3. 开启编译debug模式dump计算图，在dump图中检查MMAD输出到Store操作的L0C tensor节点shape。
+1. 此错误码对应的校验为编译期`static_assert`。在生成的kernel代码文件中搜索`TStoreConv`调用，检查L0C Buffer tensor的shape声明。
+2. 确认L0C Buffer tensor的shape为2维，即`（M, N）`。
+3. 开启编译debug模式dump计算图，在dump图中检查MMAD输出到Store操作的L0C Buffer tensor节点shape。
 4. 若上述排查均未发现问题，请按CONV组件提issue或问题单，附带kernel代码文件与复现用例。
 
 ## FC6403 TILEOP_STC_SHAPE_INVALID

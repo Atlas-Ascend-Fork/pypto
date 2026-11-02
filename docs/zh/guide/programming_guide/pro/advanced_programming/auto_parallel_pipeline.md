@@ -45,9 +45,9 @@ def stage1(ki, a, b_l1, a_l1_db, left_db, right_db, acc_db, mm1_vec_db):
 
 ### 声明跨核共享Buffer
 
-跨核共享Buffer分为两类：一类使用每个核私有的UB或L1，通过make_tile_group接口声明；另一类使用所有核共享的GM（workspace），通过[pypto_pro.language.make_tensor](../../../../api/pro_api/SIMD-API/resource_management/make_tensor.md)接口声明。两类Buffer的核间同步规则完全相同，差别只在于Buffer本身如何分配，分别见下面两节。本节将轮转使用的每个位置统称为slot：UB和L1中一个slot就是一块Tile，GM中一个slot是按`depth`等分出的一段连续空间。
+跨核共享Buffer分为两类：一类使用每个核私有的UB或L1 Buffer，通过make_tile_group接口声明；另一类使用所有核共享的GM（workspace），通过[pypto_pro.language.make_tensor](../../../../api/pro_api/SIMD-API/resource_management/make_tensor.md)接口声明。两类Buffer的核间同步规则完全相同，差别只在于Buffer本身如何分配，分别见下面两节。本节将轮转使用的每个位置统称为slot：UB和L1 Buffer中一个slot就是一块Tile，GM中一个slot是按`depth`等分出的一段连续空间。
 
-`mutex_ids`与`fwd_ids`、`bwd_ids`作用于不同范围：`mutex_ids`用于管理核内Tile的流水同步和地址复用，仅UB和L1需要配置；`fwd_ids`、`bwd_ids`用于Cube与Vector之间的数据交接。声明了`fwd_ids`或`bwd_ids`，且该Buffer分别被Cube stage和Vector stage使用时，框架才将其识别为跨核共享Buffer，并插入相应的核间同步。
+`mutex_ids`与`fwd_ids`、`bwd_ids`作用于不同范围：`mutex_ids`用于管理核内Tile的流水同步和地址复用，仅UB和L1 Buffer需要配置；`fwd_ids`、`bwd_ids`用于Cube与Vector之间的数据交接。声明了`fwd_ids`或`bwd_ids`，且该Buffer分别被Cube stage和Vector stage使用时，框架才将其识别为跨核共享Buffer，并插入相应的核间同步。
 
 `fwd_ids`和`bwd_ids`的数量不要求始终与slot数一致：可以为每个slot分别配置一个id，也可以只配置一个由所有slot共用的id。共用一个核间同步id会使不同slot之间的交接串行化，能够减少同步id占用，但可能降低流水并行度。
 
@@ -62,9 +62,9 @@ def stage1(ki, a, b_l1, a_l1_db, left_db, right_db, acc_db, mm1_vec_db):
 > - 跨核Buffer的slot需要随迭代顺序轮转。按stage在主循环中的书写顺序编号（与第一个stage位于Cube还是Vector无关），写该Buffer的stage编号为奇数时至少需要2个slot，为偶数时至少需要`preload`个slot；slot数不足时会在编译期报错，并提示所需的最小slot数。
 > - 在空间充足时，可以分配多于下限的slot，并根据实测结果判断是否有性能收益。调整slot数时，需要同步调整`fwd_ids`和`bwd_ids`的数量以及Buffer占用的空间；核间同步ID配置为所有slot共用的单个ID时除外。
 
-#### 使用UB或L1
+#### 使用UB或L1 Buffer
 
-`mutex_ids`需要为Buffer中的每个Tile配置一个id，因此其数量与Tile数一致。`target_memory`仅声明Buffer所在的物理存储空间，不表示是否跨核；make_tile_group声明的跨核共享Buffer支持UB和L1。下面的`mm1_vec_db`是Cube stage将计算结果交给Vector stage的示例；在后文完整示例中，`p_mat_db`由Vector stage写入后交给Cube stage读取。两者的跨核关系都由stage的生产者/消费者关系以及`fwd_ids`、`bwd_ids`确定。
+`mutex_ids`需要为Buffer中的每个Tile配置一个id，因此其数量与Tile数一致。`target_memory`仅声明Buffer所在的物理存储空间，不表示是否跨核；make_tile_group声明的跨核共享Buffer支持UB和L1 Buffer。下面的`mm1_vec_db`是Cube stage将计算结果交给Vector stage的示例；在后文完整示例中，`p_mat_db`由Vector stage写入后交给Cube stage读取。两者的跨核关系都由stage的生产者/消费者关系以及`fwd_ids`、`bwd_ids`确定。
 
 ```python
 import pypto_pro.language as pl
@@ -85,11 +85,11 @@ mm1_vec_db = pl.make_tile_group(
 
 #### 使用GM
 
-核私有的UB和L1空间不足时，可以用GM交接数据。在make_tensor上增加`depth`、`fwd_ids`、`bwd_ids`，框架即将该Tensor视图识别为跨核共享Buffer。
+核私有的UB和L1 Buffer空间不足时，可以用GM交接数据。在make_tensor上增加`depth`、`fwd_ids`、`bwd_ids`，框架即将该Tensor视图识别为跨核共享Buffer。
 
-`shape`与`stride`描述**单个slot**，`depth`为slot数量。第k个slot相对声明位置的元素偏移为k × 单个slot的元素数，其中单个slot的元素数为`max(shape[i] × stride[i])`，省略`stride`时为`shape`各维的乘积。框架在每个stage调用点按本拍的任务号选出对应slot再传入stage，因此stage函数体按单个slot编写，与UB、L1中取出单个Tile后的写法一致。
+`shape`与`stride`描述**单个slot**，`depth`为slot数量。第k个slot相对声明位置的元素偏移为k × 单个slot的元素数，其中单个slot的元素数为`max(shape[i] × stride[i])`，省略`stride`时为`shape`各维的乘积。框架在每个stage调用点按本拍的任务号选出对应slot再传入stage，因此stage函数体按单个slot编写，与UB、L1 Buffer中取出单个Tile后的写法一致。
 
-GM由所有核共享，而UB和L1是每个核私有的，因此GM需要为每个核划分独立的区域，并把该区域的偏移写在声明的首地址上，框架计算的slot偏移会叠加在该首地址之上。Cube与Vector需要使用同一个核号，因此核号需要除以Vector的子核数。
+GM由所有核共享，而UB和L1 Buffer是每个核私有的，因此GM需要为每个核划分独立的区域，并把该区域的偏移写在声明的首地址上，框架计算的slot偏移会叠加在该首地址之上。Cube与Vector需要使用同一个核号，因此核号需要除以Vector的子核数。
 
 ```python
 import pypto_pro.language as pl

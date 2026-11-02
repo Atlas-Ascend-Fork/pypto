@@ -2,7 +2,7 @@
 
 ## 功能描述
 
-控制是否强制在同一Cluster内分配调度线程（AICPU）。在同一Cluster分配调度线程能够获得更好的核间流水性能，但在整网场景中，除PyPTO外还有其他组件使用AICPU，强制同Cluster可能因AICPU资源不足导致执行超时。
+控制是否强制在同一Cluster内分配调度线程（AI CPU）。在同一Cluster分配调度线程能够获得更好的核间流水性能，但在整网场景中，除PyPTO外还有其他组件使用AICPU，强制同Cluster可能因AICPU资源不足导致执行超时。
 
 - 类型：字符串
 - 取值范围：`true`（默认，同Cluster分配）、`false`（不强制同Cluster）
@@ -28,7 +28,7 @@ export PYPTO_LAUNCH_SCHED_SAME_CLUSTER=false
 - Atlas A3系列产品：支持
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- Atlas A3系列产品：支持
+- Atlas A2系列产品：支持
 <!-- end id3 -->
 <!-- npu="9030" id4 -->
 - Kirin9030处理器系列产品：不支持

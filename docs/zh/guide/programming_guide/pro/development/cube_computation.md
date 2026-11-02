@@ -412,7 +412,7 @@ def matmul_acc_kernel(
 
 ## 尾块处理
 
-当GM Tensor的shape不能被Tile shape整除时，边界上会出现比Tile小的尾块。Cube场景需要为参与当前矩阵乘的输入Tile和输出Tile设置相互匹配的有效形状：
+当GM Tensor的shape不能被TileShape整除时，边界上会出现比Tile小的尾块。Cube场景需要为参与当前矩阵乘的输入Tile和输出Tile设置相互匹配的有效形状：
 
 - `valid_shape`：省略时默认采用动态模式，等同于`[-1, -1]`；后续通过pypto_pro.language.set_validshape设置实际有效区域。
 - `compact=1`：使L0A Buffer、L0B Buffer和L0C Buffer中的数据按有效形状采用紧凑排布，但不改变Tile绑定的Buffer大小。

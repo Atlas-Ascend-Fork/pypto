@@ -107,7 +107,7 @@
 | 文件 | 用途 |
 |---|---|
 | `machine_trace_perf_data*.json` | Machine组件原始Profiling数据 |
-| `tilefwk_L1_prof_data_*.json` | Machine组件L1层级Profiling数据 |
+| `tilefwk_L1_prof_data_*.json` | Machine组件L1 Buffer层级Profiling数据 |
 | `merged_swimlane.json` | IDE可视化综合泳道图 |
 | `machine_runtime_operator_trace*.json` | AI CPU / AI Core泳道图（联合时序） |
 
@@ -387,7 +387,7 @@ for b, k in pypto.loop_unroll(A.shape[0] // 64, unroll_list=[64, 16, 4], name="A
 
 TileShape配置的基本原理与使用约束等参考[Tiling配置](../development/tiling.md)章节。其切分大小一方面直接决定了算子切分后的任务数量，从而决定了实际执行时的分核数、计算轮次。另一方面，切分大小从理论层面决定了算子的算数强度。因此，优化性能的关键是优化Tiling配置。
 
-通常切分越大，算数强度越大，计算越容易达到Compute Bound，进而充分启用NPU的算力。这是由于，切分必然会引入重复搬运，切分越多重复搬运量越大，从而算数强度越低。而另一方面，切分大小又受片上多级缓存空间（L1、L0或UB）的限制而不能无限增加。
+通常切分越大，算数强度越大，计算越容易达到Compute Bound，进而充分启用NPU的算力。这是由于，切分必然会引入重复搬运，切分越多重复搬运量越大，从而算数强度越低。而另一方面，切分大小又受片上多级缓存空间（L1 Buffer、L0或UB）的限制而不能无限增加。
 
 #### Matmul初始Tiling配置
 
@@ -430,7 +430,7 @@ pypto.set_vec_tile_shapes(64, 512)
 
 ### 其他注意事项
 
-- 检查输入矩阵、尤其是Shape较大的权重矩阵是否可以提前以NZ格式存储。NZ格式的数据搬运到L1的带宽更高。
+- 检查输入矩阵、尤其是Shape较大的权重矩阵是否可以提前以NZ格式存储。NZ格式的数据搬运到L1 Buffer的带宽更高。
 
 - 矩阵乘前后有transpose时，可以尝试更换左右矩阵并使用左右矩阵转置的配置。由于N轴在尾轴上，因此当M轴较大、N轴较小时，也可以尝试该方法，使得左右矩阵有更大的尾轴，提升搬运带宽。
 
@@ -524,14 +524,14 @@ PyPTO框架在深度方向上已经实现了自动合图的功能，在极致性
 
 #### 广度方向合图
 
-广度方向合图针对计算图中处于同一层级、可并行执行的Operation，通过将多个并行Operation合并到同一Kernel中执行以增强单次Kernel的计算规模。在核内指令编排阶段，多分支融合能更充分地填充硬件流水，实现更优的多pipe并发。在访存层面，通过归并同源访存，将多次重复的GM到L1搬运整合为单次加载，在节省内存带宽的同时，有效摊薄了Kernel启动开销，最终提升了硬件计算单元的整体吞吐率。
+广度方向合图针对计算图中处于同一层级、可并行执行的Operation，通过将多个并行Operation合并到同一Kernel中执行以增强单次Kernel的计算规模。在核内指令编排阶段，多分支融合能更充分地填充硬件流水，实现更优的多pipe并发。在访存层面，通过归并同源访存，将多次重复的GM到L1 Buffer搬运整合为单次加载，在节省内存带宽的同时，有效摊薄了Kernel启动开销，最终提升了硬件计算单元的整体吞吐率。
 ![](../../../figures/tensor/pypto.set_pass_options_2.png)
 
 针对Matmul与Vector计算，PyPTO提供了不同的广度方向合图调优接口，将在接下来的章节分别详细介绍。
 
 **Matmul广度方向合图**
 
-Matmul运算场景下通过[set_pass_options](../../../../api/tensor_api/config/pypto-set_pass_options.md)接口配置子图合并，主要可以选择`L1Reuse`和`CubeNBuffer`两种策略。两者都是用于在广度方向上合并Cube子图，前者用于合并具有冗余L1搬运的子图、后者用于合并同构的子图。L1Reuse可以减少L1搬运量，CubeNBuffer可以在不同分支的矩阵乘间隐藏搬运和计算耗时。它们都能减少子图调度开销，但考虑到大多数的矩阵乘场景的性能瓶颈都是数据搬运，因此优先使用L1Reuse策略减少数据搬运量。
+Matmul运算场景下通过[set_pass_options](../../../../api/tensor_api/config/pypto-set_pass_options.md)接口配置子图合并，主要可以选择`L1Reuse`和`CubeNBuffer`两种策略。两者都是用于在广度方向上合并Cube子图，前者用于合并具有冗余L1 Buffer搬运的子图、后者用于合并同构的子图。L1Reuse可以减少L1 Buffer搬运量，CubeNBuffer可以在不同分支的矩阵乘间隐藏搬运和计算耗时。它们都能减少子图调度开销，但考虑到大多数的矩阵乘场景的性能瓶颈都是数据搬运，因此优先使用L1Reuse策略减少数据搬运量。
 
 实际上L1Reuse策略是默认开启的，且自动计算并配置子图合并数量。极致性能优化场景下可以通过`cube_l1_reuse_setting`参数进行手动配置，通常考虑2、4、8等值，可以结合泳道图实测数据择优配置。
 
@@ -551,8 +551,8 @@ Matmul运算场景下通过[set_pass_options](../../../../api/tensor_api/config/
 
 CubeNBuffer针对的是不能启用L1Reuse的场景，此类场景较少，主要有以下两种：
 
-1. Cube子图间没有重复L1搬运。如BatchMatmul的左右矩阵Shape分别为(128,64,64)和(128,64,64)时，pass切出128个左右矩阵Shape分别为(64,64)和(64,64)的同构Cube子图后，它们之间没有重复L1搬运。还有FA算子的MM2，不同S2 block的MM2子图之间没有重复L1搬运。
-2. K轴很长。当没有进行切K时，L1Reuse要求左矩阵的一整行或右矩阵的一整列数据块驻留在L1中。而L1缓存容量有限。因此当K轴较长、且没有切K时，无法使用L1Reuse。
+1. Cube子图间没有重复L1 Buffer搬运。如BatchMatmul的左右矩阵Shape分别为(128,64,64)和(128,64,64)时，pass切出128个左右矩阵Shape分别为(64,64)和(64,64)的同构Cube子图后，它们之间没有重复L1 Buffer搬运。还有FA算子的MM2，不同S2 block的MM2子图之间没有重复L1 Buffer搬运。
+2. K轴很长。当没有进行切K时，L1Reuse要求左矩阵的一整行或右矩阵的一整列数据块驻留在L1 Buffer中。而L1 Buffer容量有限。因此当K轴较长、且没有切K时，无法使用L1Reuse。
 
 此时可以配置`cube_nbuffer_setting`参数，并结合泳道图实测数据进一步调优。
 

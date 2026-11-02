@@ -185,7 +185,7 @@ pl.store(out, ac, [0, 0])
 - **软件同步角度**：store未配置phase，框架会自动插入Fixpipe同步；但matmul配置了phase，不会自动插入matmul计算流水同步。两种同步机制不匹配。
 - **硬件unit_flag角度**：store未配置phase，不受硬件unit_flag值影响，Fixpipe不会等待unit_flag。
 
-上述两种情况，Fixpipe搬运L0C数据都不会严格等待Matmul计算完成，导致读到未完成的数据。
+上述两种情况，Fixpipe搬运L0C Buffer数据都不会严格等待Matmul计算完成，导致读到未完成的数据。
 
 ### 错误案例三：循环内store(Final)后matmul卡死
 
@@ -200,5 +200,5 @@ for ki in pl.range(0, K_SQ, TILE_SQ):
 
 **原因**：
 
-- 第一轮循环：matmul(Final)将unit_flag设置成1，store(Partial)能将L0C数据搬运出去，但未改变unit_flag的值（仍为1）。
-- 第二轮循环：由于共用同一块L0C内存，matmul等待unit_flag变更为0，但unit_flag始终为1 → 卡死。
+- 第一轮循环：matmul(Final)将unit_flag设置成1，store(Partial)能将L0C Buffer数据搬运出去，但未改变unit_flag的值（仍为1）。
+- 第二轮循环：由于共用同一块L0C Buffer，matmul等待unit_flag变更为0，但unit_flag始终为1 → 卡死。
