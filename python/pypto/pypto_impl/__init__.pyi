@@ -171,6 +171,11 @@ class ReLuType(enum.Enum):
     RELU = ...
 
 
+class ConvReLuType(enum.Enum):
+    NO_RELU = ...
+    RELU = ...
+
+
 class TransMode(enum.Enum):
     CAST_NONE = ...
     CAST_RINT = ...
@@ -455,6 +460,39 @@ def EndFunction(name: str, generate_call: bool = True): ...
 
 
 def GetWorkSpaceSize(handle: int, inputs: List[DeviceTensorData], outputs: List[DeviceTensorData]) -> int: ...
+
+
+class TileL1Info:
+
+    @overload
+    def __init__(self): ...
+
+    @overload
+    def __init__(self, tileHin: int, tileHout: int, tileWin: int, tileWout: int, tileCinFmap: int,
+                 tileCinWeight: int, tileN: int, tileBatch: int): ...
+
+    tileHin: int
+    tileHout: int
+    tileWin: int
+    tileWout: int
+    tileCinFmap: int
+    tileCinWeight: int
+    tileN: int
+    tileBatch: int
+
+
+class TileL0Info:
+
+    @overload
+    def __init__(self): ...
+
+    @overload
+    def __init__(self, tileH: int, tileW: int, tileK: int, tileN: int): ...
+
+    tileH: int
+    tileW: int
+    tileK: int
+    tileN: int
 
 
 def SetVecTile(*shapes: int): ...

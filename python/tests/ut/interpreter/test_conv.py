@@ -47,9 +47,9 @@ def conv3d_bias_kernel(
     out: pypto.Tensor([1, 16, 2, 2, 15], pypto.DT_BF16),
 ):
     pypto.set_conv_tile_shapes(
-        pypto_impl.TileL1Info(tileHin=1, tileHout=1, tileWin=32, tileWout=16, tileCinFmap=16,
+        pypto.TileL1Info(tileHin=1, tileHout=1, tileWin=32, tileWout=16, tileCinFmap=16,
                               tileCinWeight=16, tileN=16, tileBatch=1),
-        pypto_impl.TileL0Info(tileH=1, tileW=16, tileK=16, tileN=16),
+        pypto.TileL0Info(tileH=1, tileW=16, tileK=16, tileN=16),
     )
     extend_params = {"bias_tensor": bias}
     output = pypto.conv(fmap, weight, pypto.DT_BF16, [2, 2, 2], [1, 1, 1, 1, 1, 1], [2, 2, 2],
@@ -99,10 +99,10 @@ def conv2d_kernel(
     cin_per_group = weight.shape[1]
     groups = cin // cin_per_group
     pypto.set_conv_tile_shapes(
-        pypto_impl.TileL1Info(tileHin=tile_l1[0], tileHout=tile_l1[1], tileWin=tile_l1[2],
+        pypto.TileL1Info(tileHin=tile_l1[0], tileHout=tile_l1[1], tileWin=tile_l1[2],
                               tileWout=tile_l1[3], tileCinFmap=tile_l1[4], tileCinWeight=tile_l1[5],
                               tileN=tile_l1[6], tileBatch=tile_l1[7]),
-        pypto_impl.TileL0Info(tileH=tile_l0[0], tileW=tile_l0[1], tileK=tile_l0[2], tileN=tile_l0[3]),
+        pypto.TileL0Info(tileH=tile_l0[0], tileW=tile_l0[1], tileK=tile_l0[2], tileN=tile_l0[3]),
     )
     extend_params["bias_tensor"] = bias
     conv_out = pypto.conv(fmap, weight, pypto.DT_FP16, strides, paddings, dilations,
@@ -156,9 +156,9 @@ def conv2d_dynamic_batch_kernel(
     batch_loop = (batch + tile_batch - 1) // tile_batch
 
     pypto.set_conv_tile_shapes(
-        pypto_impl.TileL1Info(tileHin=1, tileHout=1, tileWin=16, tileWout=16, tileCinFmap=16,
+        pypto.TileL1Info(tileHin=1, tileHout=1, tileWin=16, tileWout=16, tileCinFmap=16,
                               tileCinWeight=16, tileN=64, tileBatch=1),
-        pypto_impl.TileL0Info(tileH=1, tileW=16, tileK=144, tileN=64),
+        pypto.TileL0Info(tileH=1, tileW=16, tileK=144, tileN=64),
     )
 
     for batch_idx in pypto.loop(0, batch_loop, 1, name="LOOP_batch"):
@@ -200,9 +200,9 @@ def conv2d_dynamic_hout_relu_kernel(
     tile_hin = tile_hout + 2  # stride=1, kernel=3
 
     pypto.set_conv_tile_shapes(
-        pypto_impl.TileL1Info(tileHin=8, tileHout=8, tileWin=32, tileWout=32, tileCinFmap=16,
+        pypto.TileL1Info(tileHin=8, tileHout=8, tileWin=32, tileWout=32, tileCinFmap=16,
                               tileCinWeight=16, tileN=64, tileBatch=1),
-        pypto_impl.TileL0Info(tileH=8, tileW=32, tileK=48, tileN=64),
+        pypto.TileL0Info(tileH=8, tileW=32, tileK=48, tileN=64),
     )
 
     for hout_idx in pypto.loop(0, hout_loop, 1, name="LOOP_hout"):
@@ -254,9 +254,9 @@ def conv1d_dynamic_cout_kernel(
     cout_loop = (cout + tile_cout - 1) // tile_cout
 
     pypto.set_conv_tile_shapes(
-        pypto_impl.TileL1Info(tileHin=1, tileHout=1, tileWin=64, tileWout=64, tileCinFmap=16,
+        pypto.TileL1Info(tileHin=1, tileHout=1, tileWin=64, tileWout=64, tileCinFmap=16,
                               tileCinWeight=16, tileN=tile_cout, tileBatch=1),
-        pypto_impl.TileL0Info(tileH=1, tileW=64, tileK=48, tileN=tile_cout),
+        pypto.TileL0Info(tileH=1, tileW=64, tileK=48, tileN=tile_cout),
     )
 
     for cout_idx in pypto.loop(0, cout_loop, 1, name="LOOP_cout"):
@@ -330,9 +330,9 @@ def conv1d_bias_kernel(
     out: pypto.Tensor([1, 16, 15], pypto.DT_FP16),
 ):
     pypto.set_conv_tile_shapes(
-        pypto_impl.TileL1Info(tileHin=1, tileHout=1, tileWin=32, tileWout=16, tileCinFmap=16,
+        pypto.TileL1Info(tileHin=1, tileHout=1, tileWin=32, tileWout=16, tileCinFmap=16,
                               tileCinWeight=16, tileN=16, tileBatch=1),
-        pypto_impl.TileL0Info(tileH=1, tileW=16, tileK=16, tileN=16),
+        pypto.TileL0Info(tileH=1, tileW=16, tileK=16, tileN=16),
     )
     extend_params = {"bias_tensor": bias}
     output = pypto.conv(fmap, weight, pypto.DT_FP16, [2], [1, 1], [2],
@@ -390,9 +390,9 @@ def conv2d_dynamic_batch_a2a3_kernel(
     batch_loop = (batch + tile_batch - 1) // tile_batch
 
     pypto.set_conv_tile_shapes(
-        pypto_impl.TileL1Info(tileHin=1, tileHout=1, tileWin=16, tileWout=16, tileCinFmap=16,
+        pypto.TileL1Info(tileHin=1, tileHout=1, tileWin=16, tileWout=16, tileCinFmap=16,
                               tileCinWeight=16, tileN=64, tileBatch=1),
-        pypto_impl.TileL0Info(tileH=1, tileW=16, tileK=144, tileN=64),
+        pypto.TileL0Info(tileH=1, tileW=16, tileK=144, tileN=64),
     )
 
     for batch_idx in pypto.loop(0, batch_loop, 1, name="LOOP_batch"):
@@ -434,9 +434,9 @@ def conv2d_dynamic_batch_bf16_a2a3_kernel(
     batch_loop = (batch + tile_batch - 1) // tile_batch
 
     pypto.set_conv_tile_shapes(
-        pypto_impl.TileL1Info(tileHin=1, tileHout=1, tileWin=16, tileWout=16, tileCinFmap=16,
+        pypto.TileL1Info(tileHin=1, tileHout=1, tileWin=16, tileWout=16, tileCinFmap=16,
                               tileCinWeight=16, tileN=64, tileBatch=1),
-        pypto_impl.TileL0Info(tileH=1, tileW=16, tileK=144, tileN=64),
+        pypto.TileL0Info(tileH=1, tileW=16, tileK=144, tileN=64),
     )
 
     for batch_idx in pypto.loop(0, batch_loop, 1, name="LOOP_batch"):
@@ -479,9 +479,9 @@ def conv2d_dynamic_hout_a2a3_kernel(
     tile_hin = tile_hout + 2  # stride=1, kernel=3
 
     pypto.set_conv_tile_shapes(
-        pypto_impl.TileL1Info(tileHin=8, tileHout=8, tileWin=32, tileWout=32, tileCinFmap=16,
+        pypto.TileL1Info(tileHin=8, tileHout=8, tileWin=32, tileWout=32, tileCinFmap=16,
                               tileCinWeight=16, tileN=64, tileBatch=1),
-        pypto_impl.TileL0Info(tileH=8, tileW=32, tileK=48, tileN=64),
+        pypto.TileL0Info(tileH=8, tileW=32, tileK=48, tileN=64),
     )
 
     for hout_idx in pypto.loop(0, hout_loop, 1, name="LOOP_hout"):
@@ -525,9 +525,9 @@ def conv1d_dynamic_cout_a2a3_kernel(
     cout_loop = (cout + tile_cout - 1) // tile_cout
 
     pypto.set_conv_tile_shapes(
-        pypto_impl.TileL1Info(tileHin=1, tileHout=1, tileWin=64, tileWout=64, tileCinFmap=16,
+        pypto.TileL1Info(tileHin=1, tileHout=1, tileWin=64, tileWout=64, tileCinFmap=16,
                               tileCinWeight=16, tileN=tile_cout, tileBatch=1),
-        pypto_impl.TileL0Info(tileH=1, tileW=64, tileK=48, tileN=tile_cout),
+        pypto.TileL0Info(tileH=1, tileW=64, tileK=48, tileN=tile_cout),
     )
 
     for cout_idx in pypto.loop(0, cout_loop, 1, name="LOOP_cout"):
@@ -570,9 +570,9 @@ def conv1d_dynamic_batch_bias_a2a3_kernel(
     batch_loop = (batch + tile_batch - 1) // tile_batch
 
     pypto.set_conv_tile_shapes(
-        pypto_impl.TileL1Info(tileHin=1, tileHout=1, tileWin=64, tileWout=32, tileCinFmap=16,
+        pypto.TileL1Info(tileHin=1, tileHout=1, tileWin=64, tileWout=32, tileCinFmap=16,
                               tileCinWeight=16, tileN=32, tileBatch=1),
-        pypto_impl.TileL0Info(tileH=1, tileW=32, tileK=48, tileN=32),
+        pypto.TileL0Info(tileH=1, tileW=32, tileK=48, tileN=32),
     )
 
     for batch_idx in pypto.loop(0, batch_loop, 1, name="LOOP_batch"):

@@ -35,6 +35,9 @@ AtomicRMWMode = pypto_impl.AtomicRMWMode
 AtomicType = pypto_impl.AtomicType
 DequantScaleRoundingMode = pypto_impl.DequantScaleRoundingMode
 PrecisionType = pypto_impl.PrecisionType
+ConvReLuType = pypto_impl.ConvReLuType
+TileL1Info = pypto_impl.TileL1Info
+TileL0Info = pypto_impl.TileL0Info
 
 _ENUM_CLASSES = [
     DataType,
