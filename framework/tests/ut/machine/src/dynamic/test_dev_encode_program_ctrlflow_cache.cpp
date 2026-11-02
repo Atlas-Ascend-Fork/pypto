@@ -919,3 +919,23 @@ TEST(CtrlFlowCacheRelocUt, ResolveLeaf_ArenaAndEmbedded_Consistent)
     EXPECT_EQ(f.duppedData->GetOutcastAddress(0).GetAddressValue(), arena[2]);
     EXPECT_EQ(f.duppedData->GetOutcastAddress(1).GetAddressValue(), arena[3]);
 }
+
+// Payload is no longer pre-zeroed by CreateHostCtrlFlowCache; AllocateCache must clear each slab
+// (including 64B alignment padding) so holes stay null for ready-queue / mix-task backup.
+TEST(CtrlFlowCacheAllocateUt, AllocateCache_ZerosPoisonedSlabAndPadding)
+{
+    DevControlFlowCache ctrl;
+    std::vector<uint8_t> cacheBuf(4096, 0xAB);
+    ctrl.cacheData = DevRelocVector<uint8_t>(static_cast<int>(cacheBuf.size()), cacheBuf.data());
+    ctrl.cacheDataOffset = 0;
+
+    constexpr uint64_t kReq = 40; // not 64-aligned → reserved padding must also be cleared
+    void* p = ctrl.AllocateCache(kReq);
+    ASSERT_NE(p, nullptr);
+    const uint64_t reserved = (kReq + CFGCACHE_ALIGN - 1) / CFGCACHE_ALIGN * CFGCACHE_ALIGN;
+    auto* bytes = static_cast<uint8_t*>(p);
+    for (uint64_t i = 0; i < reserved; ++i) {
+        EXPECT_EQ(bytes[i], 0) << "offset " << i;
+    }
+    EXPECT_EQ(ctrl.cacheDataOffset, reserved);
+}

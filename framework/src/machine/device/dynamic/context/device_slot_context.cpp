@@ -197,8 +197,10 @@ static uint32_t UpdateSlotsImpl(DeviceWorkspaceAllocator* workspace, DeviceExecu
         slot.stitchOutcastIdx = static_cast<uint32_t>(entry.outcastIdx);
         DEV_IF_NONDEVICE
         {
-            topo_dump::DumpProducerCellAccess(devTaskId, entry.slotIdx, devNextIdx, *devRootSrc, outcast, slot,
-                                              expressionList);
+            if (unlikely(topo_dump::DumpEnabled())) {
+                topo_dump::DumpProducerCellAccess(devTaskId, entry.slotIdx, devNextIdx, *devRootSrc, outcast, slot,
+                                                  expressionList);
+            }
         }
         uint32_t cellMatchTagId = CellMatchBuildTagId(slot.slotAllocIterId, cellMatchTagSeq);
         uint32_t errCode = 0;

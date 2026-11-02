@@ -177,11 +177,17 @@ DevControlFlowCache* EmulationLauncher::CreateHostCtrlFlowCache(DevAscendProgram
     InitHostCtrlFlowCacheLayout(encodeCtrlCache, devProg, dyndevAttr, initOffset);
     uint32_t ctrlCacheAllocSize = encodeCtrlCache.GetSize();
     // stichNode在保持controlFlow 64B 对齐。
-    DevControlFlowCache* hostCtrlFlowCache = reinterpret_cast<DevControlFlowCache*>(
-        memUtils.AllocZero(ctrlCacheAllocSize, nullptr, static_cast<size_t>(npu::tile_fwk::DUPPED_STITCH_NODE_ALIGN)));
-    if (hostCtrlFlowCache == nullptr) {
+    // cacheData 是容量上限（默认 100MB），录制只写 used 部分。只清 cacheData 之前的元数据前缀；
+    // payload 在 AllocateCache 按块清零，避免整块 memset。
+    uint8_t* rawCache = memUtils.AllocDev(ctrlCacheAllocSize, nullptr,
+                                          static_cast<size_t>(npu::tile_fwk::DUPPED_STITCH_NODE_ALIGN));
+    if (rawCache == nullptr) {
         return nullptr;
     }
+    const uint64_t headerBytes = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(encodeCtrlCache.cacheData.Data()) -
+                                                       reinterpret_cast<uintptr_t>(&encodeCtrlCache));
+    (void)memset_s(rawCache, headerBytes, 0, headerBytes);
+    DevControlFlowCache* hostCtrlFlowCache = reinterpret_cast<DevControlFlowCache*>(rawCache);
     MACHINE_LOGI("#ctrl.cache.align: site=CreateHostCtrlFlowCache base=%p size=%u align64=%lu %s",
                  static_cast<void*>(hostCtrlFlowCache), ctrlCacheAllocSize,
                  static_cast<unsigned long>(reinterpret_cast<uintptr_t>(hostCtrlFlowCache) %

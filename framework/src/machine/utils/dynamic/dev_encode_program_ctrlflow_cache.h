@@ -17,6 +17,7 @@
 
 #include <cinttypes>
 #include <type_traits>
+#include "securec.h"
 #include "machine/utils/dynamic/dev_encode_types.h"
 #include "machine/utils/dynamic/dev_encode_function.h"
 #include "machine/utils/dynamic/dev_encode_function_dupped_data.h"
@@ -325,7 +326,11 @@ struct DevControlFlowCache {
         if (cacheDataOffset + size < cacheData.size()) {
             result = &cacheData[cacheDataOffset];
             /* make cache 64 byte aligned */
-            cacheDataOffset += (size + CFGCACHE_ALIGN - 1) / CFGCACHE_ALIGN * CFGCACHE_ALIGN;
+            const uint64_t reserved = (size + CFGCACHE_ALIGN - 1) / CFGCACHE_ALIGN * CFGCACHE_ALIGN;
+            // Payload is not pre-zeroed. Callers leave holes null and expect a zero slab.
+            const uint64_t zeroBytes = (cacheDataOffset + reserved <= cacheData.size()) ? reserved : size;
+            (void)memset_s(result, zeroBytes, 0, zeroBytes);
+            cacheDataOffset += reserved;
             DEV_VERBOSE_DEBUG("cacheDataOffset is: %lu", cacheDataOffset);
         } else {
             DEV_DEBUG("[ctrl.cache.record] Recording is stopped, requestSize=%lu, "
