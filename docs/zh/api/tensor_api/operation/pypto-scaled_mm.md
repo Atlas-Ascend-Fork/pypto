@@ -124,7 +124,10 @@ extend_params = {'bias_tensor': bias}
 out = pypto.scaled_mm(mat_a, mat_b, pypto.DT_BF16, scale_a, scale_b, scale_a_trans=True, scale_b_trans=True, extend_params=extend_params)
 
 # 量化叠加RELU
-scale_cpu = pypto.tensor((1, 32), pypto.DT_UINT64, "tensor_scale")
+import torch
+import torch_npu
+
+scale_cpu = torch.full((1, 32), 0.2, dtype=torch.float32)
 scale_tensor = torch_npu.npu_trans_quant_param(scale_cpu.npu()) # 生成scale_tensor
 mat_a = pypto.tensor([128, 64], pypto.DT_FP8E5M2, "mat_a")
 mat_b = pypto.tensor([32, 128], pypto.DT_FP8E5M2, "mat_b")

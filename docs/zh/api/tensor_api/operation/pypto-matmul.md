@@ -207,8 +207,11 @@ extend_params = {'scale': 0.2}
 pypto.matmul(a, b, pypto.DT_INT8, extend_params=extend_params)
 
 # 量化叠加RELU
+import torch
+import torch_npu
+
 pypto.set_cube_tile_shapes([128, 128], [128, 128], [128, 128])
-scale_cpu = pypto.tensor((1, 64), pypto.DT_UINT64, "tensor_scale")
+scale_cpu = torch.full((1, 64), 0.2, dtype=torch.float32)
 scale_tensor = torch_npu.npu_trans_quant_param(scale_cpu.npu()) # 生成scale_tensor
 a = pypto.tensor((16, 32), pypto.DT_FP32, "tensor_a")
 b = pypto.tensor((32, 64), pypto.DT_FP32, "tensor_b")
