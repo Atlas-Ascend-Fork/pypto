@@ -714,6 +714,18 @@ bool DeviceTaskContext::TryHeadReleaseFastPath(DynDeviceTask* dyntask, DevAscend
             if (succCnt < MIDDLE_QUEUE_MIN_SUCC) {
                 continue;
             }
+            // Expanded HUB successors already live in the predecessor's DRCO table.
+            // The original graph still lists them, so admitting this HUB as an MQ head
+            // would dispatch its members twice: once through each topology view.
+            const int headCoreType = dyntask->cceBinary[dyntask->dynFuncDataCacheList[f].calleeList[o]].coreType;
+            if (headCoreType == static_cast<int>(CoreType::HUB)) {
+                size_t headDepSuccSize = 0;
+                (void)devFunc->GetOperationDepGraphSuccAddr(o, headDepSuccSize);
+                const uint64_t headSuccInfo = devFunc->GetOperationSuccInfo(o).staticIndexSizeAndStitchIndex;
+                if (headDepSuccSize != 0 && static_cast<uint16_t>(headSuccInfo >> 16) == 0) {
+                    continue;
+                }
+            }
             const uint32_t memberCnt = CollectEligibleMembers(dyntask, funcCount, predCache, succBuf, succCnt, succBuf,
                                                               memberCt);
             if (memberCnt == 0) {
