@@ -157,6 +157,32 @@ TEST_F(AssignMemoryTypeTokenTest, ResolveInconsistentRawTensorMemoryTypesConsist
     EXPECT_EQ(lt2->GetMemoryTypeOriginal(), MemoryType::MEM_L1);
 }
 
+TEST_F(AssignMemoryTypeTokenTest, ResolveInconsistentRawTensorMemoryTypesPreservesPhysicalRawIdentity)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "PhysicalRawIdentity", "PhysicalRawIdentity",
+                                               nullptr);
+    IRBuilder builder;
+    auto input = builder.CreateTensorVar(DT_FP32, std::vector<int64_t>{16, 32});
+    auto raw = std::make_shared<RawTensor>(DT_FP32, std::vector<int64_t>{32, 32}, TileOpFormat::TILEOP_ND);
+    auto aliasRaw = std::make_shared<RawTensor>(DT_FP32, std::vector<int64_t>{32, 32}, TileOpFormat::TILEOP_ND);
+    raw->actualRawmagic = aliasRaw->rawmagic;
+    auto first = builder.CreateTensorVar(raw, std::vector<int64_t>{0, 0}, std::vector<int64_t>{16, 32}, {});
+    auto second = builder.CreateTensorVar(raw, std::vector<int64_t>{16, 0}, std::vector<int64_t>{16, 32}, {});
+    auto alias = builder.CreateTensorVar(aliasRaw, std::vector<int64_t>{0, 0}, std::vector<int64_t>{16, 32}, {});
+    (void)function->AddRawOperation(Opcode::OP_ASSEMBLE, {input}, {first});
+    (void)function->AddRawOperation(Opcode::OP_ASSEMBLE, {input}, {second});
+    (void)function->AddRawOperation(Opcode::OP_ASSEMBLE, {input}, {alias});
+    first->SetMemoryTypeOriginal(MemoryType::MEM_L1, true);
+    second->SetMemoryTypeOriginal(MemoryType::MEM_L0A, true);
+    alias->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
+
+    AssignMemoryType pass;
+    ASSERT_EQ(pass.ResolveInconsistentRawTensorMemoryTypes(*function), SUCCESS);
+    EXPECT_EQ(first->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(second->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(alias->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+}
+
 void CheckReshapeStorage(bool inplace)
 {
     auto func = std::make_shared<Function>(Program::GetInstance(), "WritableReshape", "WritableReshape", nullptr);

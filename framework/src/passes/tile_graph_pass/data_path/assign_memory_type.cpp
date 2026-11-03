@@ -1085,6 +1085,13 @@ Status AssignMemoryType::ResolveInconsistentRawTensorMemoryTypes(Function& funct
             return producer != nullptr && IsAssembleLike(producer->GetOpcode());
         });
     };
+    RawMagicTensorMap tensorsByRaw;
+    for (const auto& tensor : GraphUtils::GetAllTensors(function)) {
+        if (tensor->tensor != nullptr) {
+            // Match physical rawmagic, without following actualRawmagic aliases.
+            tensorsByRaw[tensor->tensor->rawmagic].insert(tensor);
+        }
+    }
     std::unordered_set<int64_t> visitedRawMagic;
     for (auto& op : function.Operations()) {
         if (!IsAssembleLike(op.GetOpcode())) {
@@ -1101,7 +1108,7 @@ Status AssignMemoryType::ResolveInconsistentRawTensorMemoryTypes(Function& funct
         if (!visitedRawMagic.insert(rawMagic).second) {
             continue;
         }
-        auto siblings = GetLogicalTensorsByRawTensor(function, output);
+        const auto& siblings = tensorsByRaw.at(rawMagic);
         if (siblings.size() <= 1) {
             continue;
         }
