@@ -12,6 +12,7 @@
 #include <atomic>
 #include <ctime>
 #include <regex>
+#include <sys/time.h>
 #include <thread>
 #include <vector>
 #include "utils/host_log/log_time.h"
@@ -53,22 +54,28 @@ void CheckConcurrentTimestamps(std::atomic<bool>* valid)
 
 TEST(LogTimeTest, PreservesLocalTimestampFormat)
 {
-    const time_t before = std::time(nullptr);
+    timeval before{};
+    ASSERT_EQ(gettimeofday(&before, nullptr), 0);
     const std::string actual = GetCurrentTime();
-    const time_t after = std::time(nullptr);
+    timeval after{};
+    ASSERT_EQ(gettimeofday(&after, nullptr), 0);
     ASSERT_TRUE(std::regex_match(actual, std::regex(R"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})")));
     const std::string date = actual.substr(0, 19);
-    EXPECT_TRUE(date == FormatReferenceTime(before) || date == FormatReferenceTime(after));
+    EXPECT_GE(date, FormatReferenceTime(before.tv_sec));
+    EXPECT_LE(date, FormatReferenceTime(after.tv_sec));
 }
 
 TEST(LogTimeTest, PreservesFilenameTimestampFormat)
 {
-    const time_t before = std::time(nullptr);
+    timeval before{};
+    ASSERT_EQ(gettimeofday(&before, nullptr), 0);
     const std::string actual = GetCurrentTimeStr();
-    const time_t after = std::time(nullptr);
+    timeval after{};
+    ASSERT_EQ(gettimeofday(&after, nullptr), 0);
     ASSERT_TRUE(std::regex_match(actual, std::regex(R"(\d{17})")));
     const std::string date = actual.substr(0, 14);
-    EXPECT_TRUE(date == FormatReferenceFilenameTime(before) || date == FormatReferenceFilenameTime(after));
+    EXPECT_GE(date, FormatReferenceFilenameTime(before.tv_sec));
+    EXPECT_LE(date, FormatReferenceFilenameTime(after.tv_sec));
 }
 
 TEST(LogTimeTest, ConcurrentTimestampGeneration)
