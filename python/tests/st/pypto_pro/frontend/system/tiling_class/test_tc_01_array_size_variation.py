@@ -22,8 +22,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -208,25 +206,21 @@ class TestArraySizeCompute:
     """Complex cases: verify numerical correctness for large N values."""
 
     @pytest.mark.soc("950")
-    @pypto.options(pass_options={"enable_slice": False})
     def test_array_size_32_compute(self):
         full_values = list(range(32))
         _run_kernel(kernel_size32, TilingSize32, 32, full_values, 0)
 
     @pytest.mark.soc("950")
-    @pypto.options(pass_options={"enable_slice": False})
     def test_array_size_64_compute(self):
         full_values = list(range(64))
         _run_kernel(kernel_size64, TilingSize64, 64, full_values, 0)
 
     @pytest.mark.soc("950")
-    @pypto.options(pass_options={"enable_slice": False})
     def test_array_size_128_compute(self):
         full_values = list(range(128))
         _run_kernel(kernel_size128, TilingSize128, 128, full_values, 0)
 
     @pytest.mark.soc("950")
-    @pypto.options(pass_options={"enable_slice": False})
     def test_array_size_256_compute(self):
         full_values = list(range(256))
         _run_kernel(kernel_size256, TilingSize256, 256, full_values, 0)

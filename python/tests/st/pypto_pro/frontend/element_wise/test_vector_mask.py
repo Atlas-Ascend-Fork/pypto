@@ -24,8 +24,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -65,7 +63,6 @@ def reset_mask_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_reset_mask():
     device = ST_DEVICE
     _require_a5(device)
@@ -104,7 +101,6 @@ def set_vec_mask_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_set_vec_mask():
     device = ST_DEVICE
     _require_a5(device)
@@ -146,7 +142,6 @@ def mask_count_norm_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_mask_count_norm():
     device = ST_DEVICE
     _require_a5(device)

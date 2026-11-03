@@ -50,8 +50,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 # ================================================================
@@ -259,7 +257,6 @@ def _run_case(m, n, k):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_matmul_perf_asw_4k_dn_move_offset_dynamic():
     # (M, N, K): one compiled kernel serves all. N is fully arbitrary; M is arbitrary with
     # #M-tiles a multiple of 4 (ASW); K is fully arbitrary. Tails on every axis are exercised.

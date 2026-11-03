@@ -22,8 +22,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -134,7 +132,6 @@ def sort32_tail_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_mrgsort():
     """Smoke test: verify mrgsort kernel compiles and runs without crash.
 
@@ -156,7 +153,6 @@ def test_mrgsort():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_mrgsort2():
     """Smoke test: verify mrgsort2 kernel compiles and runs without crash.
 
@@ -178,7 +174,6 @@ def test_mrgsort2():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_sort32():
     torch.npu.set_device(ST_DEVICE)
     a = torch.randn(1, 32, device=ST_DEVICE, dtype=torch.float16)
@@ -190,7 +185,6 @@ def test_sort32():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_sort32_tail():
     torch.npu.set_device(ST_DEVICE)
     a = torch.randn(1, 16, device=ST_DEVICE, dtype=torch.float16)

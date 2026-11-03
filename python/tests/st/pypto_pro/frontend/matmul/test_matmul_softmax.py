@@ -19,8 +19,6 @@ import pytest
 import torch
 import torch_npu  # noqa: F401 — registers npu backend
 
-import pypto
-
 vf = Vf
 
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
@@ -208,7 +206,6 @@ def matmul_softmax_kernel(
     ],
 )
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_matmul_softmax_kernel(m, n):
     _require_a5()
     device = ST_DEVICE
@@ -420,7 +417,6 @@ def matmul_softmax_vf_kernel(
     ],
 )
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_matmul_softmax_vf_kernel(m, n):
     _require_a5()
     device = ST_DEVICE

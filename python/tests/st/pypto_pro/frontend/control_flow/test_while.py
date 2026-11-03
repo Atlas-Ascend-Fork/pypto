@@ -24,8 +24,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -554,7 +552,6 @@ WHILE_HIGH_DIM_ADD_KERNELS = [
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_add():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -577,7 +574,6 @@ def test_while_add():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_shape_generalization():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -595,7 +591,6 @@ def test_while_shape_generalization():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_sub():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -613,7 +608,6 @@ def test_while_sub():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_mul():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -631,7 +625,6 @@ def test_while_mul():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_mul_add():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -649,7 +642,6 @@ def test_while_mul_add():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_tail():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -667,7 +659,6 @@ def test_while_tail():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_4d_add():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -696,7 +687,6 @@ def test_while_4d_add():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_high_dim_add():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -711,7 +701,6 @@ def test_while_high_dim_add():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_large_shape():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -841,7 +830,6 @@ def while_truthiness_int_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_and():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -859,7 +847,6 @@ def test_while_and():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_ternary_expr():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -878,7 +865,6 @@ def test_while_ternary_expr():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_truthiness_int():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -930,7 +916,6 @@ def while_not_ge_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_not_ge():
     device = ST_DEVICE
     torch.npu.set_device(device)

@@ -20,8 +20,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -50,7 +48,6 @@ def struct_basic_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_struct_basic():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -75,7 +72,6 @@ def struct_for_accum_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_struct_for_accum():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -103,7 +99,6 @@ def struct_conditional_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_struct_conditional():
     _check_npu()
     out = torch.zeros(2, device=ST_DEVICE, dtype=torch.int32)
@@ -131,7 +126,6 @@ def struct_alias_for_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_struct_alias_for():
     _check_npu()
     out = torch.zeros(2, device=ST_DEVICE, dtype=torch.int32)
@@ -176,7 +170,6 @@ def struct_multi_cross_nested_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_struct_multi_cross_nested():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -227,7 +220,6 @@ def struct_multi_alias_const_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_struct_multi_alias_const():
     _check_npu()
     out = torch.zeros(6, device=ST_DEVICE, dtype=torch.int32)
@@ -261,7 +253,6 @@ def struct_chain_alias_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_struct_chain_alias():
     _check_npu()
     out = torch.zeros(2, device=ST_DEVICE, dtype=torch.int32)
@@ -308,7 +299,6 @@ def struct_pass_by_ref_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_struct_pass_by_ref():
     _check_npu()
     out = torch.zeros(2, device=ST_DEVICE, dtype=torch.int32)

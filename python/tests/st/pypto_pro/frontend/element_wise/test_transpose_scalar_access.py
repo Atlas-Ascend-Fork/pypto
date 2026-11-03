@@ -22,8 +22,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -60,7 +58,6 @@ def getval_setval_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_getval_setval():
     device = ST_DEVICE
     _require_a5(device)
@@ -94,7 +91,6 @@ def transpose_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_transpose():
     device = ST_DEVICE
     _require_a5(device)
@@ -134,7 +130,6 @@ def tensor_getval_setval_5d_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tensor_getval_setval():
     device = ST_DEVICE
     _require_a5(device)
@@ -179,7 +174,6 @@ def ptr_make_tensor_getval_setval_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_ptr_make_tensor_getval_setval():
     device = ST_DEVICE
     _require_a5(device)

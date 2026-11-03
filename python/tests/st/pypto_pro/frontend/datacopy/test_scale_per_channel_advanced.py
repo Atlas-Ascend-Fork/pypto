@@ -23,8 +23,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -107,7 +105,6 @@ def dynamic_scale_store_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dynamic_scale_per_channel_store():
     """Validate per-channel store with dynamic (runtime) scale tensor parameter."""
     device = ST_DEVICE
@@ -204,7 +201,6 @@ def multi_store_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_multiple_per_channel_stores():
     """Validate multiple per-channel stores with different scales in the same kernel."""
     device = ST_DEVICE
@@ -309,7 +305,6 @@ def dynamic_scale_move_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dynamic_scale_per_channel_move():
     """Validate per-channel move (Acc->Vec) with dynamic scale tensor."""
     device = ST_DEVICE
@@ -401,7 +396,6 @@ def per_channel_store_tile_group_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_per_channel_store_tile_group():
     """Validate per-channel store when user Mat tiles use make_tile_group.
 
@@ -493,7 +487,6 @@ def per_channel_store_user_tile_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_per_channel_store_user_tile():
     """Validate per-channel store with a user-prepared Scaling tile (scale=Tile)."""
     device = ST_DEVICE

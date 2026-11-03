@@ -29,8 +29,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -167,7 +165,6 @@ def _quant_golden(x: torch.Tensor, scale: float, dst_dtype) -> torch.Tensor:
 
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("m,n", [(64, 64), (50, 64)], ids=["full", "row_tail"])
-@pypto.options(pass_options={"enable_slice": False})
 def test_fp32_acc_to_uint8_scalar(m, n):
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -186,7 +183,6 @@ def test_fp32_acc_to_uint8_scalar(m, n):
 
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("m,n", [(64, 64), (50, 64)], ids=["full", "row_tail"])
-@pypto.options(pass_options={"enable_slice": False})
 def test_fp32_acc_to_bf16_scalar(m, n):
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -205,7 +201,6 @@ def test_fp32_acc_to_bf16_scalar(m, n):
 
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("m,n", [(64, 64), (50, 64)], ids=["full", "row_tail"])
-@pypto.options(pass_options={"enable_slice": False})
 def test_int32_acc_to_uint8_scalar(m, n):
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -224,7 +219,6 @@ def test_int32_acc_to_uint8_scalar(m, n):
 
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("m,n", [(64, 64), (50, 64)], ids=["full", "row_tail"])
-@pypto.options(pass_options={"enable_slice": False})
 def test_int32_acc_to_bf16_scalar(m, n):
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -247,7 +241,6 @@ def test_int32_acc_to_bf16_scalar(m, n):
     "bit46=1 semantics verified via in-process warm-up, tracked as framework issue",
     strict=False,
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_int32_acc_to_uint8_per_channel():
     m, n = 64, 64
     device = ST_DEVICE
@@ -267,7 +260,6 @@ def test_int32_acc_to_uint8_per_channel():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_int32_acc_to_bf16_per_channel():
     m, n = 64, 64
     device = ST_DEVICE

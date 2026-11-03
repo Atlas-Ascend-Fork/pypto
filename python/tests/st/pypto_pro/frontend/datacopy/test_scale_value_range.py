@@ -31,8 +31,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -154,7 +152,6 @@ SHAPE_IDS = ["full", "row_tail", "dual_tail"]
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("m,n", SHAPES, ids=SHAPE_IDS)
 @pytest.mark.parametrize("scale_value,pattern", list(zip(SCALE_VALUES, SCALE_PATTERNS)), ids=SCALE_IDS)
-@pypto.options(pass_options={"enable_slice": False})
 def test_scale_value_range(scale_value, pattern, m, n):
     """Per-tensor dynamic scale value range across full/tail/dual-tail blocks."""
     device = ST_DEVICE
@@ -182,7 +179,6 @@ def test_scale_value_range(scale_value, pattern, m, n):
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("m,n", SHAPES, ids=SHAPE_IDS)
 @pytest.mark.parametrize("pattern,scale_value", list(zip(INPUT_PATTERNS, INPUT_SCALES)), ids=INPUT_PATTERNS)
-@pypto.options(pass_options={"enable_slice": False})
 def test_input_pattern(pattern, scale_value, m, n):
     """Input boundary patterns across full/tail/dual-tail blocks."""
     device = ST_DEVICE

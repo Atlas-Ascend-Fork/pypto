@@ -20,8 +20,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -1778,7 +1776,6 @@ _TT_SHAPES = [
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
-@pypto.options(pass_options={"enable_slice": False})
 def test_t01(in_dtype, out_dtype, mkn, _device):
     """M/N/K multi-round loops with if/elif/else control flow, tail shape."""
     _run(make_matmul_mnk_if, in_dtype, out_dtype, _device, mkn=mkn)
@@ -1787,7 +1784,6 @@ def test_t01(in_dtype, out_dtype, mkn, _device):
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
-@pypto.options(pass_options={"enable_slice": False})
 def test_t02_no_phase(in_dtype, out_dtype, mkn, _device):
     """matmul/matmul_acc without a phase argument (L0C accumulation)."""
     _run(make_matmul_no_phase, in_dtype, out_dtype, _device, mkn=mkn)
@@ -1796,7 +1792,6 @@ def test_t02_no_phase(in_dtype, out_dtype, mkn, _device):
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype", ["hf8", "fp32"])
-@pypto.options(pass_options={"enable_slice": False})
 def test_t03_atomic(in_dtype, mkn, _device):
     """K accumulated through an atomic-add store into GM.
 
@@ -1809,7 +1804,6 @@ def test_t03_atomic(in_dtype, mkn, _device):
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("shape_id,m,k,n", _TT_SHAPES, ids=[s[0] for s in _TT_SHAPES])
 @pytest.mark.parametrize("in_dtype", ["hf8", "fp32"])
-@pypto.options(pass_options={"enable_slice": False})
 def test_t04_transpose(in_dtype, shape_id, m, k, n, _device):
     """M/N/K multi-round loops with both operands transposed, square and non-square."""
     _run(
@@ -1831,7 +1825,6 @@ def test_t04_transpose(in_dtype, shape_id, m, k, n, _device):
 @pytest.mark.parametrize("out_dtype", _QUANT_OUTS)
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype", ["hf8", "fp32"])
-@pypto.options(pass_options={"enable_slice": False})
 def test_t06_quant_scalar(in_dtype, out_dtype, mkn, _device):
     """store with a scalar scale, out HF8/FP32."""
     _run(make_matmul_quant_scalar, in_dtype, out_dtype, _device, mkn=mkn)
@@ -1841,7 +1834,6 @@ def test_t06_quant_scalar(in_dtype, out_dtype, mkn, _device):
 @pytest.mark.parametrize("out_dtype", _QUANT_OUTS)
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype", ["hf8", "fp32"])
-@pypto.options(pass_options={"enable_slice": False})
 def test_t07_fp_tile(in_dtype, out_dtype, mkn, _device):
     """store with a per-column scale (Tile form), out HF8/FP32."""
     # One scale per output column, so the vector length follows N (not a fixed constant).
@@ -1853,7 +1845,6 @@ def test_t07_fp_tile(in_dtype, out_dtype, mkn, _device):
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
-@pypto.options(pass_options={"enable_slice": False})
 def test_t08_tile_offsets(in_dtype, out_dtype, mkn, _device):
     """load_tile / store_tile block indices (ceil bounds cover the tail)."""
     _run(make_matmul_tile_offsets, in_dtype, out_dtype, _device, mkn=mkn)
@@ -1862,7 +1853,6 @@ def test_t08_tile_offsets(in_dtype, out_dtype, mkn, _device):
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
-@pypto.options(pass_options={"enable_slice": False})
 def test_t09_tile_transpose(in_dtype, out_dtype, mkn, _device):
     """Transposing load_tile (descending order), store_tile ascending."""
     _m, _k, _n = mkn
@@ -1881,7 +1871,6 @@ def test_t09_tile_transpose(in_dtype, out_dtype, mkn, _device):
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
-@pypto.options(pass_options={"enable_slice": False})
 def test_t10_tile_mixed(in_dtype, out_dtype, mkn, _device):
     """Tile-indexed and element-indexed addressing mixed in one kernel."""
     _run(make_matmul_tile_mixed, in_dtype, out_dtype, _device, mkn=mkn)
@@ -1890,7 +1879,6 @@ def test_t10_tile_mixed(in_dtype, out_dtype, mkn, _device):
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
-@pypto.options(pass_options={"enable_slice": False})
 def test_t11_batched_tile_order(in_dtype, out_dtype, mkn, _device):
     """Batched 4-D operands via load_tile / store_tile with order=[2, 3]."""
     _m, _k, _n = mkn
@@ -1910,7 +1898,6 @@ def test_t11_batched_tile_order(in_dtype, out_dtype, mkn, _device):
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype", ["hf8", "fp32"])
-@pypto.options(pass_options={"enable_slice": False})
 def test_t12_katomic_multicore(in_dtype, mkn, _device):
     """K axis split across K_CORES cores, partial sums joined by atomic-add.
 
@@ -1931,7 +1918,6 @@ def test_t12_katomic_multicore(in_dtype, mkn, _device):
 
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
-@pypto.options(pass_options={"enable_slice": False})
 def test_t13_insert(in_dtype, out_dtype, _device):
     """A staged GM -> UB -> L1 by pl.insert, i.e. whether UB -> L1 carries the input dtype.
 

@@ -36,8 +36,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -145,7 +143,6 @@ def histogram_uint16_msb_kernel_cce(
 
 @pl.jit()
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_histogram_uint16_msb():
     """Test histogram with uint16 input, MSB mode (bits 15-8)."""
     device = ST_DEVICE
@@ -253,7 +250,6 @@ def histogram_uint16_lsb_kernel_cce(
 
 @pl.jit()
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_histogram_uint16_lsb():
     """Test histogram with uint16 input, LSB mode (bits 7-0, filtered by MSB)."""
     device = ST_DEVICE
@@ -402,7 +398,6 @@ def histogram_uint32_byte3_kernel_cce(
 
 @pl.jit()
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_histogram_uint32_byte3():
     """Test histogram with uint16 input, MSB mode (bits 15-8), ROWS_U32 rows.
 

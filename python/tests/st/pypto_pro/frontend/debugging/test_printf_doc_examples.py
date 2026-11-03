@@ -20,8 +20,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 DEBUG_BLOCK_DIM = 1
@@ -96,7 +94,6 @@ def printf_doc_examples_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_printf_doc_examples():
     """Verify all printf.md documentation examples produce correct device log output.
 

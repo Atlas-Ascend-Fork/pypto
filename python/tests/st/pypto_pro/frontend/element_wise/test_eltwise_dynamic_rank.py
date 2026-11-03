@@ -67,8 +67,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -223,7 +221,6 @@ def _run_case(shape, opkind, ref_fn, op_name):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_add_dynamic_rank():
     shapes = [
         [512, 512],  # rank 2 -> M=512,  N=512   -> 4x4 full tiles (no tail)

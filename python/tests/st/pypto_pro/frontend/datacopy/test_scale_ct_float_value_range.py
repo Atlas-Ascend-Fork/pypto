@@ -22,8 +22,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -148,7 +146,6 @@ def _make_ct_kernel(scale_value: float):
     ],
     ids=["positive", "negative", "zero", "unit", "fraction", "very_small", "very_large"],
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_ct_float_scale_value_range(scale_value, pattern, m, n):
     """编译期 float scale 值域：与 clamp(round(x * scale)) golden 对比"""
     device = ST_DEVICE

@@ -43,8 +43,6 @@ import pytest
 import torch
 import torch_npu
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -101,7 +99,6 @@ def init_output_scalar_cases(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_init_output_scalar_cases():
     _require_a5(ST_DEVICE)
     # name, shape, dtype, initial value, (offset, size, fill value) regions.
@@ -190,7 +187,6 @@ def init_output_dynamic(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_init_output_dynamic():
     """Dynamic forms: 3D FP32 + 4D FP16 per-core sharding, loop-var INT64, shape-expr values."""
     device = ST_DEVICE
@@ -328,7 +324,6 @@ def init_output_matmul_integration(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_init_output_matmul_integration():
     device = ST_DEVICE
     _require_a5(device)
@@ -371,7 +366,6 @@ def init_output_float_value_on_int(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_init_output_float_value_on_int():
     """A float value on an integer tensor is truncated toward zero, not rejected."""
     _require_a5(ST_DEVICE)

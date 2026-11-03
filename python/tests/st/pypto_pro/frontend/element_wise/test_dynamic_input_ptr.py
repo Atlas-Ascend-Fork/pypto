@@ -24,8 +24,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -105,7 +103,6 @@ def dynamic_input_ptr_sum(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dynamic_input_ptr():
     _require_a5()
 
@@ -127,7 +124,6 @@ def test_dynamic_input_ptr():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dynamic_input_ptr_shaped():
     """dim != 0 descriptor form (each entry carries a shape value)."""
     _require_a5()
@@ -192,7 +188,6 @@ def _build_ptr_sum_kernel(dt):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dynamic_input_ptr_dtype_matrix():
     """Every element width (64/32/16/8-bit) reads through the descriptor correctly."""
     _require_a5()
@@ -231,7 +226,6 @@ def dynamic_input_ptr_uint8_view(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dynamic_input_ptr_uint8_view():
     """pl.make_tensor(dtype=) re-views the descriptor's tensor (here: raw uint8 bytes)."""
     _require_a5()

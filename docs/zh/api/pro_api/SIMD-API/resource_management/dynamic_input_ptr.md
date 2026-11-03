@@ -68,7 +68,6 @@ pypto_pro.language.dynamic_input_ptr(x: Ptr, i: int, /) -> Ptr
 ```python
 import os
 
-import pypto
 import pypto_pro.language as pl
 import torch
 
@@ -112,7 +111,6 @@ def dynamic_input_ptr_sum(
         pl.store(out_t, acc, [0, 0])
 
 
-@pypto.options(pass_options={"enable_slice": False})
 def run():
     device = f"npu:{int(os.environ.get('TILE_FWK_DEVICE_ID', 0))}"
     torch.npu.set_device(device)

@@ -17,8 +17,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -743,7 +741,6 @@ def make_causal_mask_dn_fixed_2048_u8(device):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_fa_causal_bn_a5():
     device = ST_DEVICE
     torch.npu.set_device(device)

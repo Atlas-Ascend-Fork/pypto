@@ -34,8 +34,6 @@ from pypto_pro.language import Vf as vf  # noqa: N813
 import pytest
 import torch
 
-import pypto
-
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
@@ -1100,7 +1098,6 @@ def _evaluate_topk_quality(
 @pytest.mark.soc("950")
 @pytest.mark.skip_jit_discovery(reason="Single kernel with an expensive CPU reference; run both only once")
 @pl.jit()
-@pypto.options(pass_options={"enable_slice": False})
 def test_quant_lightning_indexer_vf():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)

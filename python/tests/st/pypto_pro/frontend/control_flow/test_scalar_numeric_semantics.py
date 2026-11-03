@@ -17,8 +17,6 @@ import pytest
 import torch
 import torch_npu  # noqa: F401 — registers npu backend
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 FLOAT_FLOORDIV_OVERFLOW_CASES = [
@@ -101,14 +99,12 @@ def _run_float_divmod_case(lhs, rhs, expected_quotient):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_runtime_int_truediv_and_bool_numeric_semantics():
     _run_scalar_case(7, 2, 3.5, [8, 1, 3, 2, 1, 1])
     _run_scalar_case(1, 2, 0.5, [7, 0, 2, 3, 0, 1])
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_runtime_float_floordiv_and_mod_semantics():
     for lhs, rhs, expected_quotient in [
         (7.0, 2.0, 3.0),
@@ -130,13 +126,11 @@ def test_runtime_float_floordiv_and_mod_semantics():
     "lhs,rhs,expected_quotient",
     FLOAT_FLOORDIV_OVERFLOW_CASES,
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_runtime_float_floordiv_preserves_overflow(lhs, rhs, expected_quotient):
     _run_float_divmod_case(lhs, rhs, expected_quotient)
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_float_divmod_defines_static_tile_shape():
     torch.npu.set_device(ST_DEVICE)
     src = torch.arange(8, dtype=torch.float32, device=ST_DEVICE).reshape(1, 8)

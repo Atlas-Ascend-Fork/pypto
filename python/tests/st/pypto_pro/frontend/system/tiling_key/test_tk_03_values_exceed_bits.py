@@ -21,8 +21,6 @@ from pypto_pro.runtime.tilingkey import TilingKeyField
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -95,18 +93,15 @@ def _run_npu_test(kernel, key, ref_fn, shape=(128, 256)):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_bits_1_add():
     _run_npu_test(kernel_bits1, {"OpType": 0}, lambda a, b: a + b)
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_bits_2_add():
     _run_npu_test(kernel_bits2, {"OpType": 0}, lambda a, b: a + b)
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_bits_2_sub():
     _run_npu_test(kernel_bits2, {"OpType": 3}, lambda a, b: a - b)

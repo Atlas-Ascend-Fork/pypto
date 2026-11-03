@@ -40,8 +40,6 @@ from pypto_pro.language import Vf as vf  # noqa: N813
 import pytest
 import torch
 
-import pypto
-
 # ================================================================
 #  Configuration -- change QK_PRELOAD to tune pre-compute depth
 # ================================================================
@@ -866,7 +864,6 @@ def flash_attention_ref(q, k, v, d):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_fa_perf():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)

@@ -24,8 +24,6 @@ import pytest
 import torch
 import torch_npu
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 SENTINEL = -9.0
@@ -388,7 +386,6 @@ _NZ_E2E_CASES = [
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 @pytest.mark.parametrize(
     "kernel,valid_m,valid_n,row_offset,col_offset",
     [case[1:] for case in _NZ_E2E_CASES],
@@ -460,7 +457,6 @@ def nz_vec_non_aligned_logical_shape_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_t01_2d_dynamic_nz_non_aligned_logical_shape(device: str) -> None:
     logical = _matrix(70, 50, torch.float16, device, bias=2.0)
     inp = _to_nz(logical)
@@ -579,7 +575,6 @@ def nz_cube_mnk_tiled_tail_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_t01_2d_nz_mnk_tiled_tail(device: str) -> None:
     a_logical = _matrix(96, 96, torch.float16, device)
     b_logical = _matrix(96, 32, torch.float16, device, bias=0.5)
@@ -639,7 +634,6 @@ vec_fp16_tile_kernel = _make_vec_roundtrip_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_t02_vec_nz_element_and_tile_offsets(device: str) -> None:
     logical = _matrix(96, 96, torch.float16, device)
     inp = _to_nz(logical)
@@ -674,7 +668,6 @@ _VEC_DTYPE_KERNELS = {
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 @pytest.mark.parametrize(
     "label,pl_dtype,torch_dtype,c0",
     _VEC_DTYPE_CASES,
@@ -761,7 +754,6 @@ def vec_nz_runtime_windows_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_t02_vec_nz_runtime_windows(device: str) -> None:
     logical = _matrix(96, 96, torch.float16, device)
     out = _nz_filled((96, 96), torch.float16, SENTINEL, device)
@@ -886,7 +878,6 @@ def l0c_nz_direct_store_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_t03_l0c_nz_direct_store_variants(device: str) -> None:
     a_logical = _matrix(64, 64, torch.float16, device)
     b_logical = torch.eye(64, dtype=torch.float16, device=device)
@@ -983,7 +974,6 @@ def l0c_nz_phase_store_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_t03_l0c_nz_partial_final_phase(device: str) -> None:
     a_logical = _matrix(64, 64, torch.float16, device)
     b_logical = torch.eye(64, dtype=torch.float16, device=device)
@@ -1066,7 +1056,6 @@ def l0c_nz_via_vec_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_t03_l0c_nz_partial_m_multi_fractal_via_vec(device: str) -> None:
     a_logical = _matrix(64, 64, torch.float16, device)
     b_logical = torch.eye(64, dtype=torch.float16, device=device)
@@ -1137,7 +1126,6 @@ def l0c_nz_multicore_atomic_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_t03_l0c_nz_multicore_atomic_tail(device: str) -> None:
     a_logical = _matrix(32, 128, torch.float16, device)
     b_logical = _matrix(128, 32, torch.float16, device, bias=0.25)
@@ -1264,7 +1252,6 @@ def nz_high_dimensional_mnk_quant_kernel(
                         )
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_t04_high_dimensional_dynamic_nz_mnk_quantized(device: str) -> None:
     a_shape = (2, 3, 96, 96)
     b_shape = (2, 3, 96, 64)
@@ -1329,7 +1316,6 @@ def nz_high_dimensional_vec_windows_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_t05_high_dimensional_dynamic_nz_vec_windows(device: str) -> None:
     shape = (2, 3, 96, 96)
     logical = torch.empty(shape, dtype=torch.float16, device=device)
@@ -1415,7 +1401,6 @@ def nz_high_dimensional_l0c_via_vec_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_t06_high_dimensional_dynamic_nz_l0c_via_vec(device: str) -> None:
     shape = (2, 3, 64, 64)
     a_logical = torch.empty(shape, dtype=torch.float16)

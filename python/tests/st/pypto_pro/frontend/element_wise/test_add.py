@@ -29,8 +29,6 @@ from pypto_pro.language import store_tile as store_tile_op
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -69,7 +67,6 @@ def add_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_add():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -126,7 +123,6 @@ def add_kernel_bare_name_aliases(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_add_bare_name_aliases():
     """A block op imported under a bare name must lower to that op on device.
 

@@ -24,8 +24,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -56,7 +54,6 @@ def assert_cond_only_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_assert_cond_only():
     """测试 pl.pto_assert 的最简用法——仅传入条件参数（无消息），验证条件为真时断言通过、不阻断执行。
 
@@ -129,7 +126,6 @@ def assert_for_loop_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_assert_for_loop():
     """测试 pl.pto_assert 在 for 循环内的使用，验证断言在循环控制流中每轮迭代能正确检查条件。
 
@@ -211,7 +207,6 @@ def assert_fail_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_assert_fail_expected():
     """测试 pl.pto_assert(False) 的断言失败行为：条件为 False 时仅记录设备日志，不抛 host 侧 Python 异常。
 

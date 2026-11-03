@@ -32,8 +32,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -61,7 +59,6 @@ def max_const_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_max_const():
     """测试 pl.max 使用 Python int 常量作为参数的场景。
 
@@ -136,7 +133,6 @@ def max_for_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_max_for():
     """测试 pl.max 在 for 循环中作为 running max 累加器的场景。
 
@@ -189,7 +185,6 @@ def max_while_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_max_while():
     """测试 pl.max 在 while 循环控制流中作为 running max 累加器的场景。
 
@@ -236,7 +231,6 @@ def max_builtin_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_max_builtin():
     """测试 Python 内置 max() 在前端解析时自动转换为 pl.max 的场景。
 

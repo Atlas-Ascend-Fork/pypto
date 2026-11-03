@@ -19,8 +19,6 @@ from pypto_pro.runtime.tilingkey import TilingKeyField
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -150,38 +148,32 @@ def _run_test(kernel, key, ref_fn, shape=(128, 256)):
 
 # ---- 简单用例 -----------------------------------------------------------
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_2field_a_add():
     _run_test(kernel_2x2, {"OperandA": 0, "OperandB": 0}, lambda a, b: a + b)
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_2field_sub():
     _run_test(kernel_2x2, {"OperandA": 1, "OperandB": 0}, lambda a, b: a - b)
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_3x2_mode0_sub():
     _run_test(kernel_3x2, {"OpType": 1, "Mode": 0}, lambda a, b: a - b)
 
 
 # ---- 复杂用例 -----------------------------------------------------------
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_3x2_mode1_min():
     _run_test(kernel_3x2, {"OpType": 1, "Mode": 1}, lambda a, b: a + b)
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_2field_mul():
     _run_test(kernel_2x2, {"OperandA": 1, "OperandB": 1}, lambda a, b: a * b)
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_3x2_all_combos():
     """遍历 3x2 全部 6 种组合"""
     device = ST_DEVICE

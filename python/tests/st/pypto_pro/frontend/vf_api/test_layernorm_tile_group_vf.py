@@ -43,8 +43,6 @@ from pypto_pro.language import Vf as vf  # noqa: N813
 import pytest
 import torch
 
-import pypto
-
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
@@ -208,7 +206,6 @@ def _run_case(rows, cols):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_layernorm_tile_group_vf():
     # (rows, cols): both dynamic. Cover single-register N, multi-register N,
     # register-unaligned N (partial tail lane), partial row-tiles, and multicore.

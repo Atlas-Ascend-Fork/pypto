@@ -32,8 +32,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -253,7 +251,6 @@ def _device():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_split_m_odd_tail(_device):
     m_total = 289
     a = _inputs(_device, [m_total, K])
@@ -267,7 +264,6 @@ def test_split_m_odd_tail(_device):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_split_m_even_tail(_device):
     m_total = 288
     a = _inputs(_device, [m_total, K])
@@ -281,7 +277,6 @@ def test_split_m_even_tail(_device):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_split_n_odd_tail(_device):
     n_total = 289
     a = _inputs(_device, [TILE, K])
@@ -295,7 +290,6 @@ def test_split_n_odd_tail(_device):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_split_n_even_tail(_device):
     n_total = 288
     a = _inputs(_device, [TILE, K])
@@ -309,7 +303,6 @@ def test_split_n_even_tail(_device):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_split_n_tail_st_16(_device):
     n_total = 266
     a = _inputs(_device, [TILE, K])

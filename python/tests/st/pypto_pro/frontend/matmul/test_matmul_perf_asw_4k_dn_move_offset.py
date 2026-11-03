@@ -53,8 +53,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 # ================================================================
@@ -287,7 +285,6 @@ def run_perf_test(num_iters: int = 20, warmup: int = 3):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_matmul_perf_asw_4k_dn_move_offset():
     run_perf_test()
 

@@ -72,7 +72,6 @@ pypto_pro.language.dynamic_input_dim(x: Ptr, i: int, axis: int, /) -> Scalar
 ```python
 import os
 
-import pypto
 import pypto_pro.language as pl
 import torch
 
@@ -113,7 +112,6 @@ def dynamic_input_dim_read(
             pl.setval(out_t, axis, pl.dynamic_input_dim(desc, 1, axis))
 
 
-@pypto.options(pass_options={"enable_slice": False})
 def run():
     device = f"npu:{int(os.environ.get('TILE_FWK_DEVICE_ID', 0))}"
     torch.npu.set_device(device)

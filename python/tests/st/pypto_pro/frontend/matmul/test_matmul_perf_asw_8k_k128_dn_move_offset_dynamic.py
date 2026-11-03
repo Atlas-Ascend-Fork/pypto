@@ -47,8 +47,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 # ================================================================
@@ -236,7 +234,6 @@ def _run_case(m, n, k):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_matmul_perf_asw_8k_k128_dn_move_offset_dynamic():
     # (M, N, K): one compiled kernel serves all. N fully arbitrary; M arbitrary with #M-tiles
     # a multiple of 4 (ASW); K arbitrary. The 8K-K128 regime is large M/N with small K.

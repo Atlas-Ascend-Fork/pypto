@@ -38,8 +38,6 @@ from pypto_pro.language import Vf as vf  # noqa: N813
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -1471,7 +1469,6 @@ def flash_attention_ref_tnd(q_tnd, k_tnd, v_tnd, seq_q_list, seq_kv_list, d, seg
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_fa_perf_nbuf():
     device = ST_DEVICE
     torch.npu.set_device(device)

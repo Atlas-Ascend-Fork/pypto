@@ -22,8 +22,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -103,21 +101,18 @@ def _run_col_reduce(kernel, ref_fn):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_col_min():
     _run_col_reduce(col_min_kernel, lambda a: a.min(dim=0, keepdim=True).values)
     logging.info("col_min result equal!")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_col_max():
     _run_col_reduce(col_max_kernel, lambda a: a.max(dim=0, keepdim=True).values)
     logging.info("col_max result equal!")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_col_sum():
     _run_col_reduce(col_sum_kernel, lambda a: a.sum(dim=0, keepdim=True))
     logging.info("col_sum result equal!")
@@ -170,14 +165,12 @@ def _run_row_reduce(kernel, ref_fn):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_row_max():
     _run_row_reduce(row_max_kernel, lambda a: a.max(dim=1, keepdim=True).values)
     logging.info("row_max result equal!")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_row_sum():
     _run_row_reduce(row_sum_kernel, lambda a: a.sum(dim=1, keepdim=True))
     logging.info("row_sum result equal!")
@@ -206,7 +199,6 @@ def col_expand_sub_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_col_expand_sub():
     device = ST_DEVICE
     _require_a5(device)
@@ -293,21 +285,18 @@ def _run_row_expand(kernel, ref_fn):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_row_expand_sub():
     _run_row_expand(row_expand_sub_kernel, lambda a, v: a - v)
     logging.info("row_expand_sub result equal!")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_row_expand_mul():
     _run_row_expand(row_expand_mul_kernel, lambda a, v: a * v)
     logging.info("row_expand_mul result equal!")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_row_expand_div():
     _run_row_expand(row_expand_div_kernel, lambda a, v: a / v)
     logging.info("row_expand_div result equal!")
@@ -327,7 +316,6 @@ def expands_kernel(dummy: pl.Tensor[[64, 64], pl.DT_FP32], out: pl.Tensor[[64, 6
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_expands():
     device = ST_DEVICE
     _require_a5(device)
@@ -361,7 +349,6 @@ def row_min_kernel(a: pl.Tensor[[64, 128], pl.DT_FP32], out: pl.Tensor[[64, 1], 
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_row_min():
     _run_row_reduce(row_min_kernel, lambda a: a.min(dim=1, keepdim=True).values)
     logging.info("row_min result equal!")
@@ -421,14 +408,12 @@ def _run_col_expand(kernel, ref_fn):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_col_expand_mul():
     _run_col_expand(col_expand_mul_kernel, lambda a, v: a * v)
     logging.info("col_expand_mul result equal!")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_col_expand_div():
     _run_col_expand(col_expand_div_kernel, lambda a, v: a / v)
     logging.info("col_expand_div result equal!")

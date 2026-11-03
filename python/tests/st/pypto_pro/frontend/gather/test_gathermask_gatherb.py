@@ -22,8 +22,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -118,7 +116,6 @@ def gathermask_p7_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_gathermask_p1():
     device = ST_DEVICE
     _require_a5(device)
@@ -132,7 +129,6 @@ def test_gathermask_p1():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_gathermask_p2():
     device = ST_DEVICE
     _require_a5(device)
@@ -146,7 +142,6 @@ def test_gathermask_p2():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_gathermask_p7():
     device = ST_DEVICE
     _require_a5(device)
@@ -195,7 +190,6 @@ def gatherb_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_gatherb_identity():
     device = ST_DEVICE
     _require_a5(device)

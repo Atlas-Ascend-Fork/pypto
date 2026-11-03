@@ -20,8 +20,6 @@ import pypto_pro.language as pl
 from pypto_pro.runtime.tilingkey import TilingKeyField
 import pytest
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -84,7 +82,6 @@ kernel_single = _make_kernel(TkSingle)
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_direct_call_no_brackets():
     with pytest.raises(NotSupported):
         import torch

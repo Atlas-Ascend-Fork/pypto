@@ -23,8 +23,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -147,7 +145,6 @@ class TestComplexLayoutNPUKernel:
     """Complex cases: verify all 7 tiling fields are accessible on NPU with 3 combinations."""
 
     @pytest.mark.soc("950")
-    @pypto.options(pass_options={"enable_slice": False})
     def test_combo1_scalar_a_0_add(self):
         _run_complex_test(
             scalar_a=0,
@@ -161,7 +158,6 @@ class TestComplexLayoutNPUKernel:
         )
 
     @pytest.mark.soc("950")
-    @pypto.options(pass_options={"enable_slice": False})
     def test_combo2_scalar_a_1_sub(self):
         _run_complex_test(
             scalar_a=1,
@@ -175,7 +171,6 @@ class TestComplexLayoutNPUKernel:
         )
 
     @pytest.mark.soc("950")
-    @pypto.options(pass_options={"enable_slice": False})
     def test_combo3_scalar_a_2_sub_rev(self):
         _run_complex_test(
             scalar_a=2,

@@ -23,8 +23,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -59,7 +57,6 @@ def struct_many_fields_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_struct_many_fields():
     """验证 struct 支持 8 个字段，且字段可多次修改"""
     _check_npu()
@@ -89,7 +86,6 @@ def struct_in_loop_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_struct_in_loop():
     """验证可以在 for 循环内创建 struct"""
     _check_npu()
@@ -117,7 +113,6 @@ def struct_in_branch_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_struct_in_branch():
     """验证可以在 if/else 分支内修改 struct 字段（struct 须在分支外创建）"""
     _check_npu()

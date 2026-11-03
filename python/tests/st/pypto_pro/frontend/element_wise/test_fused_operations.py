@@ -24,8 +24,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -119,7 +117,6 @@ def partadd_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_mul_add_dst():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -134,7 +131,6 @@ def test_mul_add_dst():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_fused_mul_add_relu():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -149,7 +145,6 @@ def test_fused_mul_add_relu():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_partadd():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)

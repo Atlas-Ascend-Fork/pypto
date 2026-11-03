@@ -20,8 +20,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -1448,7 +1446,6 @@ def call_kernel_move_acc_to_vec_tail(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_basic_fp16():
     device = ST_DEVICE
     _require_a5(device)
@@ -1461,7 +1458,6 @@ def test_basic_fp16():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_basic_bf16():
     device = ST_DEVICE
     _require_a5(device)
@@ -1474,7 +1470,6 @@ def test_basic_bf16():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_basic_fp32():
     device = ST_DEVICE
     _require_a5(device)
@@ -1487,7 +1482,6 @@ def test_basic_fp32():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_offset_row():
     device = ST_DEVICE
     _require_a5(device)
@@ -1500,7 +1494,6 @@ def test_offset_row():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_offset_col():
     device = ST_DEVICE
     _require_a5(device)
@@ -1513,7 +1506,6 @@ def test_offset_col():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_offset_both():
     device = ST_DEVICE
     _require_a5(device)
@@ -1526,7 +1518,6 @@ def test_offset_both():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tile_offset():
     device = ST_DEVICE
     _require_a5(device)
@@ -1539,7 +1530,6 @@ def test_tile_offset():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dn_transpose():
     device = ST_DEVICE
     _require_a5(device)
@@ -1553,7 +1543,6 @@ def test_dn_transpose():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_4d_tile_dims():
     device = ST_DEVICE
     _require_a5(device)
@@ -1566,7 +1555,6 @@ def test_4d_tile_dims():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_loop():
     device = ST_DEVICE
     _require_a5(device)
@@ -1579,7 +1567,6 @@ def test_for_loop():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_if_else():
     device = ST_DEVICE
     _require_a5(device)
@@ -1595,7 +1582,6 @@ def test_if_else():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_for_ifelse():
     device = ST_DEVICE
     _require_a5(device)
@@ -1608,7 +1594,6 @@ def test_while_for_ifelse():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tail_row():
     device = ST_DEVICE
     _require_a5(device)
@@ -1621,7 +1606,6 @@ def test_tail_row():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tail_loop():
     device = ST_DEVICE
     _require_a5(device)
@@ -1634,7 +1618,6 @@ def test_tail_loop():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tail_pad_zero():
     device = ST_DEVICE
     _require_a5(device)
@@ -1648,7 +1631,6 @@ def test_tail_pad_zero():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_store_relu():
     device = ST_DEVICE
     _require_a5(device)
@@ -1661,7 +1643,6 @@ def test_store_relu():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_store_atomic_add():
     device = ST_DEVICE
     _require_a5(device)
@@ -1674,7 +1655,6 @@ def test_store_atomic_add():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_store_phase_final():
     device = ST_DEVICE
     _require_a5(device)
@@ -1687,7 +1667,6 @@ def test_store_phase_final():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_move_offset_k():
     device = ST_DEVICE
     _require_a5(device)
@@ -1700,7 +1679,6 @@ def test_move_offset_k():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_move_offset_m():
     device = ST_DEVICE
     _require_a5(device)
@@ -1713,7 +1691,6 @@ def test_move_offset_m():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_move_acc_to_vec_single():
     device = ST_DEVICE
     _require_a5(device)
@@ -1726,7 +1703,6 @@ def test_move_acc_to_vec_single():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_move_acc_to_vec_dual_m():
     device = ST_DEVICE
     _require_a5(device)
@@ -1739,7 +1715,6 @@ def test_move_acc_to_vec_dual_m():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_move_acc_to_vec_dual_n():
     device = ST_DEVICE
     _require_a5(device)
@@ -1752,7 +1727,6 @@ def test_move_acc_to_vec_dual_n():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_move_acc_to_vec_relu():
     device = ST_DEVICE
     _require_a5(device)
@@ -1765,7 +1739,6 @@ def test_move_acc_to_vec_relu():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_move_acc_to_vec_tail():
     device = ST_DEVICE
     _require_a5(device)
@@ -1778,7 +1751,6 @@ def test_move_acc_to_vec_tail():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_store_order_descending():
     device = ST_DEVICE
     _require_a5(device)
@@ -1789,7 +1761,6 @@ def test_store_order_descending():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_store_tile_order_descending():
     device = ST_DEVICE
     _require_a5(device)

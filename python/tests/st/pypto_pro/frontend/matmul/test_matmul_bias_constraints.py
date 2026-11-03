@@ -22,8 +22,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 TILE = 128
 K_SPLIT = 384
 DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
@@ -162,7 +160,6 @@ def kernel_bias_dtype_bf16(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_err_bias_dtype_fp16():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -173,7 +170,6 @@ def test_err_bias_dtype_fp16():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_err_bias_dtype_bf16():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.bfloat16)
@@ -369,7 +365,6 @@ def kernel_bias_mem_mat(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_err_bias_mem_right():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -380,7 +375,6 @@ def test_err_bias_mem_right():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_err_bias_mem_vec():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -391,7 +385,6 @@ def test_err_bias_mem_vec():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_err_bias_mem_mat():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -459,7 +452,6 @@ def kernel_bias_load_direct(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_err_bias_load_direct():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -535,7 +527,6 @@ def kernel_bias_shape_full_2d(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_err_bias_shape_full_2d():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -687,7 +678,6 @@ def kernel_bias_last_block(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_err_matmul_bias_middle_block():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -703,7 +693,6 @@ def test_err_matmul_bias_middle_block():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_err_matmul_bias_last_block():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -909,7 +898,6 @@ def kernel_move_vec_to_bias(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_err_move_left_to_bias():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -920,7 +908,6 @@ def test_err_move_left_to_bias():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_err_move_acc_to_bias():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -931,7 +918,6 @@ def test_err_move_acc_to_bias():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_err_move_vec_to_bias():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)

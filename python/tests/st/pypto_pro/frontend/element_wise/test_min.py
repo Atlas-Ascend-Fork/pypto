@@ -32,8 +32,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -61,7 +59,6 @@ def min_const_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_min_const():
     """测试 pl.min 使用 Python int 常量作为参数的场景。
 
@@ -136,7 +133,6 @@ def min_for_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_min_for():
     """测试 pl.min 在 for 循环中作为 running min 累加器的场景。
 
@@ -189,7 +185,6 @@ def min_while_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_min_while():
     """测试 pl.min 在 while 循环控制流中作为 running min 累加器的场景。
 
@@ -236,7 +231,6 @@ def min_builtin_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_min_builtin():
     """测试 Python 内置 min() 在前端解析时自动转换为 pl.min 的场景。
 

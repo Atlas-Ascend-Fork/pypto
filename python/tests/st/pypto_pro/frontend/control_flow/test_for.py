@@ -24,8 +24,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -498,7 +496,6 @@ MUL_ADD_KERNELS = {
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_add():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -521,7 +518,6 @@ def test_for_add():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_range_step_ge_span():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -546,7 +542,6 @@ def test_for_range_step_ge_span():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_4d_add():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -575,7 +570,6 @@ def test_for_4d_add():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_high_dim_add():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -590,7 +584,6 @@ def test_for_high_dim_add():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_sub():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -608,7 +601,6 @@ def test_sub():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_mul_add():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -626,7 +618,6 @@ def test_mul_add():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_single_tile():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -644,7 +635,6 @@ def test_single_tile():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_large_shape():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -829,7 +819,6 @@ THREE_WAY_KERNELS = {
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_residual_relu():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -847,7 +836,6 @@ def test_residual_relu():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_leaky_relu():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -864,7 +852,6 @@ def test_leaky_relu():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_fused_mul_add_relu():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -881,7 +868,6 @@ def test_fused_mul_add_relu():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_three_way():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -1035,7 +1021,6 @@ def for_unaligned_int32_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_unaligned_shape():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -1158,7 +1143,6 @@ def for_range_two_arg_fp16_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_range_one_arg():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -1173,7 +1157,6 @@ def test_for_range_one_arg():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_range_two_arg():
     device = ST_DEVICE
     torch.npu.set_device(device)

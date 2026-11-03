@@ -214,8 +214,6 @@ import pytest
 import torch
 import torch_npu
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -359,7 +357,6 @@ def pipeline_demo_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_pipeline_demo_kernel():
     device = ST_DEVICE
     torch.npu.set_device(device)

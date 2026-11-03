@@ -26,8 +26,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -141,7 +139,6 @@ def scale_phase_final_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_phase_partial():
     """Test scale + Partial phase fusion."""
     device = ST_DEVICE
@@ -171,7 +168,6 @@ def test_phase_partial():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_phase_final():
     """Test scale + Final phase fusion."""
     device = ST_DEVICE
@@ -248,7 +244,6 @@ def scale_atomic_add_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_atomic_add():
     """Test scale + AtomicAdd fusion."""
     device = ST_DEVICE
@@ -293,7 +288,6 @@ def test_atomic_add():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_order_descending_rejected():
     """store 的 order 仅支持升序；降序 order=[1, 0] 应在解析期被拒绝。
 

@@ -23,8 +23,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -221,7 +219,6 @@ def ternary_promote_used_size_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_ternary_promote_nested_int():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -240,7 +237,6 @@ def test_ternary_promote_nested_int():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_ternary_promote_nested_float():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -258,7 +254,6 @@ def test_ternary_promote_nested_float():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_ternary_promote_used_size():
     device = ST_DEVICE
     torch.npu.set_device(device)

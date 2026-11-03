@@ -41,8 +41,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -237,7 +235,6 @@ def _ab():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_load_nn(_ab):
     """left as-is (NZ [M,K]), right as-is (NZ [K,N])."""
     a, b = _ab
@@ -245,7 +242,6 @@ def test_load_nn(_ab):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_load_nt(_ab):
     """left as-is; right transpose-loaded from GM B^T [N,K] -> ZN [K,N]."""
     a, b = _ab
@@ -253,7 +249,6 @@ def test_load_nt(_ab):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_load_tn(_ab):
     """left transpose-loaded from GM A^T [K,M] -> ZN [M,K]; right as-is."""
     a, b = _ab
@@ -261,7 +256,6 @@ def test_load_tn(_ab):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_load_tt(_ab):
     """both operands transpose-loaded."""
     a, b = _ab

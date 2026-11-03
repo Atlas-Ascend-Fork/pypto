@@ -24,8 +24,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -325,7 +323,6 @@ def for_3layer_continue_fp16_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_continue():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -359,7 +356,6 @@ def test_for_continue():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_continue():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -378,7 +374,6 @@ def test_while_continue():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_while_continue():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -397,7 +392,6 @@ def test_for_while_continue():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_3layer_continue():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -453,7 +447,6 @@ def continue_unaligned_fp16_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_continue_unaligned_shape():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -588,7 +581,6 @@ def while_continue_mid_fp16_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_continue_mid():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -607,7 +599,6 @@ def test_for_continue_mid():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_continue_end():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -625,7 +616,6 @@ def test_for_continue_end():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_continue_mid():
     device = ST_DEVICE
     torch.npu.set_device(device)

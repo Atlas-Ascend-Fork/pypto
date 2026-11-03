@@ -22,8 +22,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 SCALE = 0.125
@@ -110,7 +108,6 @@ def vector_fp32_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_vector_fp32_operations():
     _require_a5(ST_DEVICE)
     torch.manual_seed(0)
@@ -171,7 +168,6 @@ def xor_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_xor():
     device = ST_DEVICE
     _require_a5(device)
@@ -207,7 +203,6 @@ def fused_mul_add_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_fused_mul_add():
     device = ST_DEVICE
     _require_a5(device)
@@ -249,7 +244,6 @@ def fused_cast_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_fused_cast_operations():
     _require_a5(ST_DEVICE)
     torch.manual_seed(0)

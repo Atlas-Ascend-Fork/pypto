@@ -26,8 +26,6 @@ from pypto_pro.language import Vf
 import pytest
 import torch
 
-import pypto
-
 vf = Vf
 
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
@@ -447,91 +445,76 @@ def _run(kernel, name):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_two_ifelse():
     _run(k_two_ifelse, "two_ifelse")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_two_vars():
     _run(k_two_vars, "two_vars")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_elif():
     _run(k_elif, "elif")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_if_only():
     _run(k_if_only, "if_only")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_nested():
     _run(k_nested, "nested")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_ifelse_then_ternary():
     _run(k_ifelse_then_ternary, "ifelse_then_ternary")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_ternary():
     _run(k_ternary, "ternary")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_ternary_db():
     _run(k_ternary_db, "ternary_db")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_ternary_nested():
     _run(k_ternary_nested, "ternary_nested")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_ternary_nested3():
     _run(k_ternary_nested3, "ternary_nested3")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_ifelse():
     _run(k_ifelse, "ifelse")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_ifelse_db():
     _run(k_ifelse_db, "ifelse_db")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_ifelse_multi():
     _run(k_ifelse_multi, "ifelse_multi")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_next_current():
     _run(k_next_current, "next_current")
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_ternary_next_current():
     _run(k_ternary_next_current, "ternary_next_current")
 

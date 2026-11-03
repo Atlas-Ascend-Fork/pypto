@@ -25,8 +25,6 @@ from pypto_pro.language import Vf
 import pytest
 import torch
 
-import pypto
-
 vf = Vf
 
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
@@ -221,7 +219,6 @@ WITH_SECTION_CUBE_KERNELS = {
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_with_section_cube():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -324,7 +321,6 @@ def with_section_cube_shape_generalization_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_with_section_cube_shape_generalization():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -408,7 +404,6 @@ def with_section_vf_min_exp_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_with_section_vf_min_exp():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -457,7 +452,6 @@ def with_section_if_fp16_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_with_section_if():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -559,7 +553,6 @@ def with_cube_then_vector_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_with_cube_then_vector():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -677,7 +670,6 @@ def with_cube_then_vf_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_with_cube_then_vf():
     device = ST_DEVICE
     torch.npu.set_device(device)

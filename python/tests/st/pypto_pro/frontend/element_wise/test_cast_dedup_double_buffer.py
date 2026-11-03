@@ -27,8 +27,6 @@ from pypto_pro.language import Vf as vf  # noqa: N813
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -65,7 +63,6 @@ def cast_dedup_db_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_cast_dedup_double_buffer():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -128,7 +125,6 @@ def vf_dedup_db_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_vf_dedup_double_buffer():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -178,7 +174,6 @@ def vf_partial_overlap_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_vf_dedup_partial_overlap():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -234,7 +229,6 @@ def vf_three_transitive_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_vf_dedup_three_transitive():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -284,7 +278,6 @@ def vf_no_overlap_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_vf_no_dedup_no_overlap():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -338,7 +331,6 @@ def vf_partial_group_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_vf_dedup_partial_group():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -392,7 +384,6 @@ def vf_three_same_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_vf_dedup_three_same():
     device = ST_DEVICE
     torch.npu.set_device(device)

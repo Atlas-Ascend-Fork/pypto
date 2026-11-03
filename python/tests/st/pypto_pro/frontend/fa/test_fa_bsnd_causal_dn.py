@@ -17,8 +17,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 # ================================================================
 #  Tile dimensions and constants
 # ================================================================
@@ -691,7 +689,6 @@ def make_causal_mask_dn_fixed_2048_u8(device):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_fa_causal_bs_a5():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)

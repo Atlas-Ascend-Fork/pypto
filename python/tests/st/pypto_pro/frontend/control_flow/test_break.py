@@ -24,8 +24,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -305,7 +303,6 @@ def while_if_break_inner_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_break():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -329,7 +326,6 @@ def test_for_break():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_break():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -348,7 +344,6 @@ def test_while_break():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_if_break_inner():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -367,7 +362,6 @@ def test_for_if_break_inner():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_if_break_inner():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -457,7 +451,6 @@ def for_while_8layer_break_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_while_8layer_break():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -519,7 +512,6 @@ def for_break_first_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_break_first():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -579,7 +571,6 @@ def for_while_if_not_break_continue_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_while_if_not_break_continue():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -636,7 +627,6 @@ def break_unaligned_fp16_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_break_unaligned_shape():
     device = ST_DEVICE
     torch.npu.set_device(device)

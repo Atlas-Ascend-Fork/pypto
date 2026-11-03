@@ -26,8 +26,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -78,7 +76,6 @@ def auto_over_32_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_more_than_32_tiles_runs_with_balanced_id_reuse():
     """A single AUTO group with 33 slots forces balanced reuse across the 32-ID pool."""
     _require_a5(ST_DEVICE)
@@ -148,7 +145,6 @@ def auto_and_manual_guard_paths_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_and_manual_runtime_guard_paths():
     """AUTO must land on a manual ID when all 32 are taken and avoid the IDs each mixed op locks."""
     _require_a5(ST_DEVICE)
@@ -216,7 +212,6 @@ def auto_if_merge_manual_candidates_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_if_merge_manual_candidates_with_auto_tile():
     """An if-merged manual/AUTO Tile must retain every possible mutex ID for the following add."""
     _require_a5(ST_DEVICE)
@@ -289,7 +284,6 @@ def auto_partial_alias_matching_manual_id_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_partial_alias_reuses_per_slot_manual_id():
     """AUTO half-tiles inherit the per-slot manual ID of the full tile they overlap."""
     _require_a5(ST_DEVICE)
@@ -361,7 +355,6 @@ def auto_three_groups_partial_vec_overlap_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_three_groups_share_ids_for_overlapping_vec_addresses():
     """Three AUTO groups overlapping in every Vec address pattern receive consistent IDs."""
     _require_a5(ST_DEVICE)
@@ -412,7 +405,6 @@ def auto_noncontiguous_over_32_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_noncontiguous_more_than_32_slots():
     """Gapped addresses visited in a permuted order still yield correct alias components."""
     _require_a5(ST_DEVICE)
@@ -478,7 +470,6 @@ def auto_nested_helper_permuted_slots_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_nested_helper_calls_with_permuted_slots():
     """Groups created inside a nested Python helper join one whole-kernel plan with permuted slots."""
     _require_a5(ST_DEVICE)
@@ -543,7 +534,6 @@ def auto_helper_compile_time_branches_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_helper_compile_time_branch_calls():
     """A helper's compile-time if/else builds groups at different addresses; both branches plan correctly."""
     _require_a5(ST_DEVICE)
@@ -633,7 +623,6 @@ def auto_cube_vector_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_cube_vector_targets_use_independent_pools():
     """Cube and Vector targets draw from independent 32-ID pools within one kernel."""
     _require_a5(ST_DEVICE)

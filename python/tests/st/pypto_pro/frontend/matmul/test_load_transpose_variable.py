@@ -32,8 +32,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -148,14 +146,12 @@ def _run(kernel, a_arg, b_arg, a, b):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_transpose_literal(_ab):
     a, b = _ab
     _run(k_transpose_lit, a.t().contiguous(), b, a, b)
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_transpose_local_var(_ab):
     """order from a local list assignment (assignment-fold path)."""
     a, b = _ab
@@ -163,7 +159,6 @@ def test_transpose_local_var(_ab):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_transpose_helper_var(_ab):
     """order threaded through an inlined helper parameter (inline-fold path)."""
     a, b = _ab

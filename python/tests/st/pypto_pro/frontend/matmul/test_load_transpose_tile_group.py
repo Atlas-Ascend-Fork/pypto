@@ -26,8 +26,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -248,28 +246,24 @@ def _ab():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_group_nn(_ab):
     a, b = _ab
     _run(k_nn_group, a, b, a, b)
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_group_nt(_ab):
     a, b = _ab
     _run(k_nt_group, a, b.t().contiguous(), a, b)
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_group_tn(_ab):
     a, b = _ab
     _run(k_tn_group, a.t().contiguous(), b, a, b)
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_group_tt(_ab):
     a, b = _ab
     _run(k_tt_group, a.t().contiguous(), b.t().contiguous(), a, b)

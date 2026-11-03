@@ -17,8 +17,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -120,7 +118,6 @@ def per_tensor_scale_relu_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("m,n", [(64, 64), (48, 96), (96, 96)], ids=["full", "row_tail", "dual_tail"])
-@pypto.options(pass_options={"enable_slice": False})
 def test_per_tensor_scale_relu_fusion(m, n):
     """Test per-tensor scale + relu fusion, covering tail blocks."""
     device = ST_DEVICE
@@ -219,7 +216,6 @@ def per_channel_scale_relu_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_per_channel_scale_relu_fusion():
     """Test per-channel scale (Tile) + relu fusion via the store_fp fixpipe path."""
     device = ST_DEVICE
@@ -337,7 +333,6 @@ def dynamic_scale_relu_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dynamic_scale_relu_fusion():
     """Test dynamic scale + relu fusion."""
     device = ST_DEVICE
@@ -381,7 +376,6 @@ def test_dynamic_scale_relu_fusion():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_multiple_scale_values_with_relu():
     """Test different scale values with relu fusion."""
     device = ST_DEVICE

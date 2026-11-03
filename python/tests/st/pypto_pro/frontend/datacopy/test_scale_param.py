@@ -30,8 +30,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -288,7 +286,6 @@ def scale_dynamic_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("m,n", [(64, 64), (48, 96), (96, 96)], ids=["full", "row_tail", "dual_tail"])
-@pypto.options(pass_options={"enable_slice": False})
 def test_scale_store_per_tensor(m, n):
     """编译期 float scale per-tensor store，覆盖完整/行尾/双尾块有效区。"""
     device = ST_DEVICE
@@ -319,7 +316,6 @@ def test_scale_store_per_tensor(m, n):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_scale_store_random_input():
     """随机输入 per-tensor 量化：golden = clamp(round(raw_ref * scale))。
 
@@ -355,7 +351,6 @@ def test_scale_store_random_input():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_scale_move_per_tensor():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -380,7 +375,6 @@ def test_scale_move_per_tensor():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_scale_dynamic():
     device = ST_DEVICE
     torch.npu.set_device(device)

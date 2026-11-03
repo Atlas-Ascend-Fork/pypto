@@ -25,8 +25,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -88,7 +86,6 @@ def move_fp32_to_fp16_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_move_fp32_to_fp16():
     """FP32 Acc -> FP16 Vec with scale."""
     device = ST_DEVICE
@@ -163,7 +160,6 @@ def move_int32_to_int8_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_move_int32_to_int8():
     """INT32 Acc -> INT8 Vec with scale."""
     device = ST_DEVICE
@@ -250,7 +246,6 @@ MOVE_SCALE_IDS = ["negative", "zero", "fraction", "very_small", "very_large"]
 
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("scale_value", MOVE_SCALE_VALUES, ids=MOVE_SCALE_IDS)
-@pypto.options(pass_options={"enable_slice": False})
 def test_move_scale_value(scale_value):
     """Acc->Vec move deqScalar value range (negative/zero/fraction/small/large)."""
     device = ST_DEVICE
@@ -331,7 +326,6 @@ def move_relu_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_move_relu():
     """Move with ReLU fusion."""
     device = ST_DEVICE
@@ -407,7 +401,6 @@ def move_dynamic_scale_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_move_dynamic_scale():
     """Move with dynamic scale."""
     device = ST_DEVICE
@@ -478,7 +471,6 @@ def store_bf16_to_fp16_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_store_bf16_to_fp16():
     """BF16 matmul -> FP16 output (no scale)."""
     device = ST_DEVICE
@@ -541,7 +533,6 @@ def store_fp16_to_bf16_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_store_fp16_to_bf16():
     """FP16 matmul -> BF16 output (no scale)."""
     device = ST_DEVICE
@@ -605,7 +596,6 @@ def store_scale_boundary_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_store_scale_boundary():
     """Store with scale=10.0 (moderate scale value)."""
     device = ST_DEVICE
@@ -671,7 +661,6 @@ def store_data_sparse_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_store_data_sparse():
     """Store with sparse input data (90% zeros)."""
     device = ST_DEVICE
@@ -751,7 +740,6 @@ def store_data_periodic_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_store_data_periodic():
     """Store with periodic input data (sine wave)."""
     device = ST_DEVICE
@@ -819,7 +807,6 @@ def store_dynamic_scale_int64_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_store_dynamic_scale_int64():
     """Store with INT64 dynamic scale."""
     device = ST_DEVICE
@@ -894,7 +881,6 @@ def store_multiple_calls_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_store_multiple_calls():
     """Multiple store calls with different scales."""
     device = ST_DEVICE
@@ -988,7 +974,6 @@ def per_channel_int32_to_fp16_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_per_channel_int32_to_fp16():
     """Per-channel INT32 -> FP16 dequantization."""
     device = ST_DEVICE
@@ -1085,7 +1070,6 @@ def per_channel_move_int32_to_fp16_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_per_channel_move_int32_to_fp16():
     """Per-channel move INT32 -> FP16 dequantization."""
     device = ST_DEVICE
@@ -1168,7 +1152,6 @@ def per_channel_store_tile_single_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_per_channel_store_tile_offset():
     """Per-channel store_tile with multiple tile offsets, region-level golden check.
 
@@ -1269,7 +1252,6 @@ def per_channel_store_tile_dynamic_scale_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_per_channel_store_tile_dynamic_scale():
     """Per-channel store_tile with dynamic scale tensor."""
     device = ST_DEVICE
@@ -1342,7 +1324,6 @@ def no_quant_store_fp32_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_no_quant_store_fp32():
     """Baseline: FP32 store without quantization."""
     device = ST_DEVICE
@@ -1405,7 +1386,6 @@ def no_quant_store_int32_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_no_quant_store_int32():
     """Baseline: INT32 store without quantization."""
     device = ST_DEVICE
@@ -1478,7 +1458,6 @@ def no_quant_move_fp32_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_no_quant_move_fp32():
     """Baseline: FP32 move without quantization."""
     device = ST_DEVICE
@@ -1541,7 +1520,6 @@ def no_quant_store_tile_fp32_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_no_quant_store_tile_fp32():
     """Baseline: FP32 store_tile without quantization."""
     device = ST_DEVICE

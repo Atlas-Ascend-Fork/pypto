@@ -25,8 +25,6 @@ from pypto_pro.runtime.tilingkey import TilingKeyField
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -117,56 +115,47 @@ def _run_test(key, shape=(128, 256)):
 
 # ---- 8 种指定组合的独立测试 -------------------------------------------------
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_combo_0_0_0():
     _run_test({"ModeA": 0, "ModeB": 0, "Flag": 0})
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_combo_1_1_0():
     _run_test({"ModeA": 1, "ModeB": 1, "Flag": 0})
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_combo_2_3_0():
     _run_test({"ModeA": 2, "ModeB": 3, "Flag": 0})
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_combo_3_7_0():
     _run_test({"ModeA": 3, "ModeB": 7, "Flag": 0})
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_combo_0_0_1():
     _run_test({"ModeA": 0, "ModeB": 0, "Flag": 1})
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_combo_1_1_1():
     _run_test({"ModeA": 1, "ModeB": 1, "Flag": 1})
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_combo_2_3_1():
     _run_test({"ModeA": 2, "ModeB": 3, "Flag": 1})
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_combo_3_7_1():
     _run_test({"ModeA": 3, "ModeB": 7, "Flag": 1})
 
 
 # ---- 8 种组合遍历测试 -------------------------------------------------------
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_all_8_combos():
     """遍历全部 8 种 (ModeA, ModeB, Flag) 排列组合并验证数值正确性。"""
     combos = [

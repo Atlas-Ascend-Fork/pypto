@@ -25,8 +25,6 @@ from pypto_pro.language import Vf as vf  # noqa: N813
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -459,7 +457,6 @@ def tile_group_alias_patterns_vf_kernel(
         vf_add_64_columns(tile_pong, 3.0)
         pl.store(shifted_out, tile_pong, [0, VF_VALID_COLS])
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_subscript_dynamic_index():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -479,7 +476,6 @@ def test_subscript_dynamic_index():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_subscript_depth_without_mutex_ids():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -496,7 +492,6 @@ def test_subscript_depth_without_mutex_ids():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_pipeline_stage_mixed_subscripts():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -513,7 +508,6 @@ def test_pipeline_stage_mixed_subscripts():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_subscript_repeated_mutex_ids_round_robin():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -530,7 +524,6 @@ def test_subscript_repeated_mutex_ids_round_robin():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_subscript_prefetch_two_slots_live():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -547,7 +540,6 @@ def test_subscript_prefetch_two_slots_live():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_subscript_two_slots_in_one_op():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -564,7 +556,6 @@ def test_subscript_two_slots_in_one_op():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_subscript_four_slots_loop_carried_add():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -582,7 +573,6 @@ def test_subscript_four_slots_loop_carried_add():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_subscript_ifelse_overlapping_mutex_ids():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -599,7 +589,6 @@ def test_subscript_ifelse_overlapping_mutex_ids():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_subscript_bounded_constant_indices():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -619,7 +608,6 @@ def test_subscript_bounded_constant_indices():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_subscript_getval_setval():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -642,7 +630,6 @@ def test_subscript_getval_setval():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_subscript_matmul_double_buffer():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -660,7 +647,6 @@ def test_subscript_matmul_double_buffer():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tile_group_alias_patterns_vf():
     device = ST_DEVICE
     torch.npu.set_device(device)

@@ -23,8 +23,6 @@ from pypto_pro.runtime.tilingkey import TilingKeyField
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -74,7 +72,6 @@ def kernel_valid(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_valid_on_npu_add():
     """合法 TilingKey 上板 — add 运算（OpType=0）。"""
     device = ST_DEVICE
@@ -93,7 +90,6 @@ def test_valid_on_npu_add():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_valid_on_npu_sub():
     """合法 TilingKey 上板 — sub 运算（OpType=1）。"""
     device = ST_DEVICE
@@ -112,7 +108,6 @@ def test_valid_on_npu_sub():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_valid_on_npu_mul():
     """合法 TilingKey 上板 — mul 运算（OpType=2）。"""
     device = ST_DEVICE

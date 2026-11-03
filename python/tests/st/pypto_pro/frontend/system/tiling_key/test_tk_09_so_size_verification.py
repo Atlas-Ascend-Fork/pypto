@@ -27,8 +27,6 @@ from pypto_pro.runtime.tilingkey import TilingKeyField
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -82,7 +80,6 @@ class TestSoSizeVerification:
     """Validates that tilingkey dead-code elimination reduces .so size."""
 
     @pytest.mark.soc("950")
-    @pypto.options(pass_options={"enable_slice": False})
     def test_light_branch_correctness(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -99,7 +96,6 @@ class TestSoSizeVerification:
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
     @pytest.mark.soc("950")
-    @pypto.options(pass_options={"enable_slice": False})
     def test_heavy_branch_correctness(self):
         device = ST_DEVICE
         torch.npu.set_device(device)

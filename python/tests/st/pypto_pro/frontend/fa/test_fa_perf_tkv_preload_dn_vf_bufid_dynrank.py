@@ -49,8 +49,6 @@ from pypto_pro.runtime.tilingkey import TilingKeyField
 import pytest
 import torch
 
-import pypto
-
 logging.basicConfig(level=logging.INFO)
 # ================================================================
 #  Configuration — change QK_PRELOAD to tune pre-compute depth
@@ -915,7 +913,6 @@ def make_causal_mask_dn_fixed_u8(device):
         (torch.bfloat16, pl.DT_BF16, 1e-2, 1e-2),
     ],
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_fa_perf(torch_dtype, pl_dtype, rtol, atol):
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)

@@ -24,8 +24,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -362,7 +360,6 @@ PLAIN_DEF_RETURN_HELPERS_KERNELS = {
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_return_early():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -386,7 +383,6 @@ def test_return_early():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_return_in_if():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -407,7 +403,6 @@ def test_return_in_if():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_plain_def_return_helpers():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -623,7 +618,6 @@ def for_while_if_return_else_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -643,7 +637,6 @@ def test_while_return():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_while_if_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -663,7 +656,6 @@ def test_while_if_return():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_while_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -683,7 +675,6 @@ def test_for_while_return():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_4layer_if_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -703,7 +694,6 @@ def test_for_4layer_if_return():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_while_if_return_else():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -797,7 +787,6 @@ def for_3layer_direct_return_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_direct_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -817,7 +806,6 @@ def test_for_direct_return():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_3layer_direct_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -877,7 +865,6 @@ def for_while_8layer_return_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_for_while_8layer_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -934,7 +921,6 @@ def return_unaligned_fp16_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_return_unaligned_shape():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -1011,7 +997,6 @@ def return_tile_group_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_return_tile_group_kernel():
     """LOAD-N01: Basic load to L1 (FP16), verify via matmul-with-identity."""
     device = ST_DEVICE

@@ -27,8 +27,6 @@ import pytest
 import torch
 import torch_npu
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -149,7 +147,6 @@ def _case(kind):
 @pytest.mark.skip(reason="parallel read/write")
 @pytest.mark.parametrize("kind", ["cube", "vector", "mixed"])
 @pytest.mark.parametrize("mode", ["graph_before_collection", "eager", "graph"])
-@pypto.options(pass_options={"enable_slice": False})
 def test_profiler_api_outputs(tmp_path, kind, mode):
     """Check exported tensors and core types, including graphs captured before collection."""
     _check_npu()

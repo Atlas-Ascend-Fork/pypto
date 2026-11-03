@@ -17,8 +17,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 DEBUG_BLOCK_DIM = 1
@@ -52,7 +50,6 @@ def dump_data_tensor_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dump_data_tensor_full_window_and_loc():
     _check_npu()
     expected = torch.arange(32, device=ST_DEVICE, dtype=torch.int32) * 2
@@ -88,7 +85,6 @@ def dump_data_vec_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dump_data_vec_full_window_and_loc():
     _check_npu()
     a = torch.arange(32 * 64, device=ST_DEVICE, dtype=torch.int32).reshape(32, 64)
@@ -168,7 +164,6 @@ _FP4_DUMP_KERNELS = {label: _make_fp4_dump_kernel(f"dump_data_{label}", dtype) f
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 @pytest.mark.parametrize("label,dtype", _FP4_DUMP_CASES, ids=[case[0] for case in _FP4_DUMP_CASES])
 def test_dump_data_fp4_supported_memory_levels(label: str, dtype):
     del dtype
@@ -210,7 +205,6 @@ def dump_data_dynamic_offset_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dump_data_dynamic_offset():
     _check_npu()
     a = torch.arange(32 * 32, device=ST_DEVICE, dtype=torch.int32).reshape(32, 32)
@@ -255,7 +249,6 @@ def dump_data_control_flow_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dump_data_control_flow():
     _check_npu()
     a = torch.arange(64 * 32, device=ST_DEVICE, dtype=torch.int32).reshape(64, 32)
@@ -317,7 +310,6 @@ def dump_data_cube_levels_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dump_data_cube_levels():
     _check_npu()
     a = torch.randn(16, 16, device=ST_DEVICE, dtype=torch.float16)
@@ -389,7 +381,6 @@ def dump_data_special_cube_buffers_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dump_data_special_cube_buffers():
     _check_npu()
     observable_values = torch.arange(1, SPECIAL_BUFFER_N + 1)

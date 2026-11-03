@@ -28,8 +28,6 @@ from pypto_pro.language import Vf as vf  # noqa: N813
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -100,7 +98,6 @@ def mixed_width_groups_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_mixed_single_and_multi_id_tile_groups():
     _require_a5(ST_DEVICE)
     torch.manual_seed(0)
@@ -274,7 +271,6 @@ def subfunction_tile_if_else_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_cube_vector_multi_mutex_id():
     _require_a5(ST_DEVICE)
     torch.manual_seed(0)
@@ -289,7 +285,6 @@ def test_cube_vector_multi_mutex_id():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dynamic_multi_id_patterns():
     _require_a5(ST_DEVICE)
     torch.manual_seed(0)
@@ -305,7 +300,6 @@ def test_dynamic_multi_id_patterns():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_same_group_overlapping_slots_in_one_op():
     _require_a5(ST_DEVICE)
     torch.manual_seed(0)
@@ -319,7 +313,6 @@ def test_same_group_overlapping_slots_in_one_op():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_subfunction_tile_if_else():
     _require_a5(ST_DEVICE)
     torch.manual_seed(0)
@@ -395,7 +388,6 @@ def l0a_l0b_overlap_same_id_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_l0a_l0b_overlap_same_id():
     _require_a5(ST_DEVICE)
     torch.manual_seed(0)

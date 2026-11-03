@@ -33,8 +33,6 @@ import pytest
 import torch
 import torch_npu
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -167,7 +165,6 @@ def tile_subview_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tile_subview():
     if not _is_a5():
         return
@@ -209,7 +206,6 @@ def tile_subview_vshape_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tile_subview_valid_shape():
     if not _is_a5():
         return
@@ -267,7 +263,6 @@ def tile_subview_vf_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tile_subview_vf():
     if not _is_a5():
         return
@@ -335,7 +330,6 @@ def tile_subview_dn_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tile_subview_dn():
     if not _is_a5():
         return
@@ -426,7 +420,6 @@ def _make_nz_subview_expected(logical: torch.Tensor, c0: int) -> torch.Tensor:
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 @pytest.mark.parametrize(
     "label,pl_dtype,torch_dtype,c0",
     _NZ_SUBVIEW_CASES,
@@ -541,7 +534,6 @@ def tile_subview_l1_nz_zn_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tile_subview_l1_nz_zn():
     if not _is_a5():
         return
@@ -650,7 +642,6 @@ def tile_subview_l0c_store_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tile_subview_l0c_store():
     if not _is_a5():
         return
@@ -781,7 +772,6 @@ def tile_subview_cube_composite_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tile_subview_cube_composite():
     if not _is_a5():
         return

@@ -22,8 +22,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 SIGNED_INT8_FLAG = 1 << 46
@@ -1309,7 +1307,6 @@ _T03_CASES = [pytest.param(None, id="n_tail_relu"), *_dtype_params("scaling")]
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 @pytest.mark.parametrize("case", _T01_CASES)
 def test_t01_l0c_to_l1_tmov(case):
     device = ST_DEVICE
@@ -1332,7 +1329,6 @@ def test_t01_l0c_to_l1_tmov(case):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 @pytest.mark.parametrize("case", _T02_CASES)
 def test_t02_l0c_to_l1_scalar_tmov(case):
     device = ST_DEVICE
@@ -1357,7 +1353,6 @@ def test_t02_l0c_to_l1_scalar_tmov(case):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 @pytest.mark.parametrize("case", _T03_CASES)
 def test_t03_l0c_to_l1_scaling_tmov(case):
     device = ST_DEVICE
@@ -1383,7 +1378,6 @@ def test_t03_l0c_to_l1_scaling_tmov(case):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_t04_l0c_to_l1_extract():
     device = ST_DEVICE
     _require_a5(device)
@@ -1419,7 +1413,6 @@ def test_t04_l0c_to_l1_extract():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_t05_l0c_to_l1_insert():
     device = ST_DEVICE
     _require_a5(device)
