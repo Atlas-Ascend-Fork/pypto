@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "machine/runtime/launcher/ctrl_flow_cache_manager.h"
 #include "machine/utils/dynamic/dev_encode_program.h"
 #include "machine/utils/dynamic/dev_encode_tensor.h"
 
@@ -34,11 +35,11 @@ struct LoadedBundle {
     // and run the wrong program. Two bundles share a bundleKey only when they are byte-identical.
     uint64_t bundleKey{0};
 
-    std::vector<uint8_t> aicoreKernel;  // .o raw
-    std::vector<uint8_t> aicpuSo;       // .so raw
-    std::vector<uint8_t> devProgram;    // kept base-0 (device-side reloc)
-    std::vector<uint8_t> ctrlFlowCache; // DevControlFlowCache blob (may be empty for old bundles)
-    std::vector<uint8_t> symbolMeta;    // JSON dynamic-workspace symbols (empty -> static workspace fallback)
+    std::vector<uint8_t> aicoreKernel;        // .o raw
+    std::vector<uint8_t> aicpuSo;             // .so raw
+    std::vector<uint8_t> devProgram;          // kept base-0 (device-side reloc)
+    dynamic::CtrlFlowCacheBlob ctrlFlowCache; // DevControlFlowCache blob (may be empty for old bundles)
+    std::vector<uint8_t> symbolMeta;          // JSON dynamic-workspace symbols (empty -> static workspace fallback)
 
     // Stable logical name used by asynchronous AICORE/AICPU exception callbacks.
     std::string displayName;

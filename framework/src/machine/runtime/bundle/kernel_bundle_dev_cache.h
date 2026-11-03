@@ -22,7 +22,8 @@
 #include <cstdint>
 #include <mutex>
 #include <unordered_map>
-#include <vector>
+
+#include "machine/runtime/launcher/ctrl_flow_cache_manager.h"
 
 namespace npu::tile_fwk::bundle {
 
@@ -32,7 +33,7 @@ public:
 
     // Return the device pointer holding `hostCtrlCache` for `key`, copying host->device once and caching it for
     // reuse. Returns nullptr when `hostCtrlCache` is empty. Held until process exit.
-    uint8_t* GetOrCopy(uint64_t key, const std::vector<uint8_t>& hostCtrlCache);
+    uint8_t* GetOrCopy(uint64_t key, const dynamic::CtrlFlowCacheBlob& hostCtrlCache);
 
     // Return a device buffer of at least `bytes` for bundle `key`'s cell-match metadata pool, allocated once and
     // reused (grown if a later launch needs more). Returns nullptr when bytes==0. The device inits the pool in

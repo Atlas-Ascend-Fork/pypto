@@ -22,7 +22,8 @@
 #include <string>
 #include <vector>
 
-#include "adapter/api/runtime_define.h"                     // RtStream
+#include "adapter/api/runtime_define.h" // RtStream
+#include "machine/runtime/launcher/ctrl_flow_cache_manager.h"
 #include "machine/runtime/launcher/device_launcher_types.h" // DeviceTensorData, DeviceLauncherConfig
 #include "machine/utils/dynamic/dev_encode_tensor.h"        // DevDynamicCellMatchStridePatch
 
@@ -37,7 +38,7 @@ namespace npu::tile_fwk::dynamic {
 // `hostCtrlFlowCache` is non-const: the first arena materialize rebases the base-0 blob in place
 // (isRelocMetaDev / isRelocDataDev), matching KernelBinary::MaterializeIoAddressArenaForAicore.
 int LaunchBundleKernelOnce(const std::vector<uint8_t>& devProgBinary, void* binHandle, uint64_t cacheKey,
-                           const std::vector<DeviceTensorData>& tensorList, std::vector<uint8_t>& hostCtrlFlowCache,
+                           const std::vector<DeviceTensorData>& tensorList, CtrlFlowCacheBlob& hostCtrlFlowCache,
                            const std::string& displayName,
                            const std::vector<DevDynamicCellMatchStridePatch>& cellMatchStridePatches,
                            void* workspaceAddr, RtStream aicoreStream, bool streamSynchronize,

@@ -30,11 +30,9 @@ namespace npu::tile_fwk::bundle {
 namespace {
 // Copy one TLV value out of the (possibly transient) source image into a buffer the LoadedBundle owns.
 //
-// No host-side alignment is required or attempted here: every segment reaches the device through
-// DeviceMemoryUtils::CopyToDev, which memcpy's from the host pointer, and the online path feeds the very same
-// call with a plain std::vector (DyndevFunctionAttribute::devProgBinary). The 4KB alignment in the on-disk
-// layout (kValueAlign) exists for the file/mmap side only. Do not "restore" a std::vector-based alignment
-// claim here -- the default allocator only guarantees alignof(max_align_t).
+// Opaque device segments need no additional host alignment. CtrlFlowCache is also rebased
+// and traversed on the host; copy it separately into CtrlFlowCacheBlob so stitch nodes
+// retain the 64-byte alignment required by their tagged next pointers.
 std::vector<uint8_t> CopySegment(const uint8_t* src, size_t len)
 {
     std::vector<uint8_t> v(len);
@@ -174,7 +172,7 @@ std::shared_ptr<LoadedBundle> KernelBundleLoader::LoadFromMemory(const uint8_t* 
                 b->devProgram = CopySegment(vp, t.valueLength);
                 break;
             case TlvType::CtrlFlowCache:
-                b->ctrlFlowCache = CopySegment(vp, t.valueLength);
+                b->ctrlFlowCache.assign(vp, vp + t.valueLength);
                 break;
             case TlvType::SymbolMeta:
                 b->symbolMeta = CopySegment(vp, t.valueLength);

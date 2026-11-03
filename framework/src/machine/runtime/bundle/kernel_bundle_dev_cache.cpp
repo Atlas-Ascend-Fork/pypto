@@ -26,7 +26,7 @@ KernelBundleDevCache& KernelBundleDevCache::Instance()
     return instance;
 }
 
-uint8_t* KernelBundleDevCache::GetOrCopy(uint64_t key, const std::vector<uint8_t>& hostCtrlCache)
+uint8_t* KernelBundleDevCache::GetOrCopy(uint64_t key, const dynamic::CtrlFlowCacheBlob& hostCtrlCache)
 {
     if (hostCtrlCache.empty()) {
         return nullptr; // launch path rebuilds the cache at runtime when absent

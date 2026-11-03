@@ -221,7 +221,7 @@ struct BundleAicoreLaunchState {
 };
 
 void BundlePrepareAicoreArgs(BundleAicoreLaunchState& state, AiCpuArgs* aicpuArgs, DevAscendProgram* devProg,
-                             std::vector<uint8_t>& hostCtrlFlowCache, const std::string& displayName)
+                             CtrlFlowCacheBlob& hostCtrlFlowCache, const std::string& displayName)
 {
     if (!hostCtrlFlowCache.empty()) {
         state.hostCache = reinterpret_cast<DevControlFlowCache*>(hostCtrlFlowCache.data());
@@ -285,7 +285,7 @@ int BundleDispatchKernels(AclRtStream aicoreStream, void* binHandle, AicpuLaunch
 } // namespace
 
 int LaunchBundleKernelOnce(const std::vector<uint8_t>& devProgBinary, void* binHandle, uint64_t cacheKey,
-                           const std::vector<DeviceTensorData>& tensorList, std::vector<uint8_t>& hostCtrlFlowCache,
+                           const std::vector<DeviceTensorData>& tensorList, CtrlFlowCacheBlob& hostCtrlFlowCache,
                            const std::string& displayName,
                            const std::vector<DevDynamicCellMatchStridePatch>& cellMatchStridePatches,
                            void* workspaceAddr, RtStream aicoreStream, bool streamSynchronize,
