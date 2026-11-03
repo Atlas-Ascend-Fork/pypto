@@ -12,7 +12,6 @@
 
 import os
 
-import pytest
 import torch
 
 import pypto
@@ -21,16 +20,14 @@ import pypto
 # =============================================================================
 # @jit @function 场景验证
 # =============================================================================
-@pytest.mark.skip("Failed for sync")
 @pypto.options(pass_options={"enable_slice": True})
 def test_add_with_kwargs_run():
-    @pypto.frontend.function
     def sub_add_kernel(
-        a: pypto.Tensor([], pypto.DT_INT32),
-        b: pypto.Tensor(dtype=pypto.DT_INT32),
-        c: pypto.Tensor([...], pypto.DT_INT32),
-        d: pypto.Tensor([pypto.STATIC, 32], pypto.DT_INT32),
-        res: pypto.Tensor([32, 32], pypto.DT_INT32),
+        a: pypto.Tensor,
+        b: pypto.Tensor,
+        c: pypto.Tensor,
+        d: pypto.Tensor,
+        res: pypto.Tensor,
         scalar=0,
     ):
         res.move(a + b + c + d + scalar)
