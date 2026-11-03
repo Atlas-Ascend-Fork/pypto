@@ -8,7 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-set_cann_package(pypto VERSION "9.2.0")
+set_cann_package(pypto VERSION "9.3.0")
 set_cann_build_dependencies(runtime "CUR_MAJOR_MINOR_VER")
 set_cann_build_dependencies(hcomm "CUR_MAJOR_MINOR_VER")
 set_cann_run_dependencies(driver ">=25.5.0")
