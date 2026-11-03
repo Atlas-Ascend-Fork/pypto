@@ -333,4 +333,52 @@ TEST_F(TestExpandFunction, ExpandedOperationsPreserveTokenContract)
         EXPECT_EQ(function->GetVarDependency().GetProducers(token).size(), 1);
     }
 }
+
+TEST_F(TestExpandFunction, WriteTokenWaitsBeforeExpandedInputSlice)
+{
+    std::vector<int64_t> shape{64, 64};
+    Tensor input(DT_FP32, shape, "input");
+    Tensor output(DT_FP32, shape, "output");
+    TileShape::Current().SetVecTile(32, 32);
+
+    FUNCTION("WriteTokenBeforeRead")
+    {
+        auto written = Add(input, input);
+        output = Sub(written, written);
+    }
+    auto* function = Program::GetInstance().GetFunctionByRawName("TENSOR_WriteTokenBeforeRead");
+    ASSERT_NE(function, nullptr);
+
+    auto operations = function->Operations(false).DuplicatedOpList();
+    auto source = std::find_if(operations.begin(), operations.end(),
+                               [](const auto* op) { return op->GetOpcode() == Opcode::OP_SUB; });
+    ASSERT_NE(source, operations.end());
+    auto writeToken = std::make_shared<ir::Var>("prior_write", ir::GetWriteTokenType(), ir::Span::Unknown());
+    (*source)->tokens_.push_back(writeToken);
+    auto inputStorage = (*source)->GetIOperands().front();
+    auto tokenProducer = std::find_if(operations.begin(), operations.end(),
+                                      [](const auto* op) { return op->GetOpcode() == Opcode::OP_ADD; });
+    ASSERT_NE(tokenProducer, operations.end());
+    (*tokenProducer)->result_token_.push_back(writeToken);
+
+    ExpandFunction expandFunction;
+    ASSERT_EQ(expandFunction.RunOnFunction(*function), SUCCESS);
+
+    int inputSlices = 0;
+    for (auto& op : function->Operations(false)) {
+        if (op.GetOpcode() != Opcode::OP_SLICE || op.GetIOperands().empty() ||
+            op.GetIOperands().front() != inputStorage) {
+            continue;
+        }
+        ++inputSlices;
+        ASSERT_FALSE(op.tokens_.empty());
+        for (const auto& token : op.tokens_) {
+            auto tokenType = std::dynamic_pointer_cast<const ir::TokenType>(token->GetType());
+            ASSERT_NE(tokenType, nullptr);
+            EXPECT_EQ(tokenType->kind_, ir::TokenKind::NORMAL);
+            EXPECT_FALSE(function->GetVarDependency().GetProducers(token).empty());
+        }
+    }
+    EXPECT_GT(inputSlices, 0);
+}
 } // namespace npu::tile_fwk

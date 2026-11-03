@@ -2006,12 +2006,18 @@ TEST_F(TestExpandFunctionPass, ComputeOpReadGoesToSliceAndWriteGoesToContract)
     ASSERT_NE(func, nullptr);
 
     std::vector<int64_t> shape = {kNumExpSix, kNumExpSix};
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
     auto lhs = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
     auto rhs = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
     auto out = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto result = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
 
+    auto& producerOp = PassOperationUtils::AddOperation(*func, Opcode::OP_EXP, {input}, {lhs});
+    producerOp.tileShape_.SetVecTile(kNumExpSix, kNumExpSix);
     auto& addOp = PassOperationUtils::AddOperation(*func, Opcode::OP_ADD, {lhs, rhs}, {out});
     addOp.tileShape_.SetVecTile(kNumExpSix, kNumExpSix);
+    auto& consumerOp = PassOperationUtils::AddOperation(*func, Opcode::OP_SUB, {out, rhs}, {result});
+    consumerOp.tileShape_.SetVecTile(kNumExpSix, kNumExpSix);
 
     auto readSemantic = IRContext::Get().MakeSemanticToken("lhs_r", ir::TokenKind::READ, ir::Span::Unknown());
     auto writeSemantic = IRContext::Get().MakeSemanticToken("out_w", ir::TokenKind::WRITE, ir::Span::Unknown());
@@ -2019,12 +2025,14 @@ TEST_F(TestExpandFunctionPass, ComputeOpReadGoesToSliceAndWriteGoesToContract)
     lhs->AddReadToken(readSemantic);
     // Another operation/branch reads the same tensor after this ADD was inferred.
     lhs->AddReadToken(IRContext::Get().MakeSemanticToken("later_lhs_r", ir::TokenKind::READ, ir::Span::Unknown()));
-    addOp.result_token_ = {readSemantic, writeSemantic, depSemantic};
-    addOp.tokens_ = {depSemantic, readSemantic, writeSemantic};
+    producerOp.result_token_ = {depSemantic};
+    addOp.result_token_ = {readSemantic, writeSemantic};
+    addOp.tokens_ = {depSemantic};
+    consumerOp.tokens_ = {readSemantic, writeSemantic};
 
-    func->inCasts_.push_back(lhs);
+    func->inCasts_.push_back(input);
     func->inCasts_.push_back(rhs);
-    func->outCasts_.push_back(out);
+    func->outCasts_.push_back(result);
     func->SetGraphType(GraphType::TENSOR_GRAPH);
 
     ExpandFunction expandPass;

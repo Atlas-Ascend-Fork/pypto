@@ -2031,6 +2031,7 @@ bool AttachToOutputParents(const LogicalTensors& oOperands, const LogicalTensors
 
 struct ExpandTokenPlan {
     std::unordered_map<LogicalTensor*, std::vector<ir::VarPtr>> sliceResultTokens;
+    std::unordered_map<LogicalTensor*, std::vector<ir::VarPtr>> sliceInputTokens;
     std::unordered_map<LogicalTensor*, std::vector<ir::VarPtr>> contractResultTokens;
     std::unordered_map<LogicalTensor*, std::vector<ir::VarPtr>> contractInputTokens;
     std::vector<ir::VarPtr> opResultTokens;
@@ -2071,6 +2072,15 @@ void CollectInputTokens(const Operation& tileOp, const LogicalTensors& iOperands
         auto normal = GetPairedNormalToken(token);
         if (normal == nullptr) {
             continue;
+        }
+        auto tokenType = std::dynamic_pointer_cast<const ir::TokenType>(token->GetType());
+        if (tokenType != nullptr && tokenType->kind_ == ir::TokenKind::WRITE) {
+            // A read must wait before its input slice loads data, not only before its output is contracted.
+            for (const auto& iOp : iOperands) {
+                if (GetSliceParent(iOp) != nullptr && IsCurrentTileOpOperand(iOp, currentInputs)) {
+                    plan.sliceInputTokens[iOp.get()].push_back(normal);
+                }
+            }
         }
         if (!AttachToOutputParents(oOperands, currentOutputs, normal, plan.contractInputTokens) &&
             HasCurrentTileOpOperand(iOperands, currentInputs)) {
@@ -2115,6 +2125,7 @@ Operation& Function::AddOperation(const Opcode opCode, LogicalTensors iOperands,
         auto& sliceOp = AddRawOperation(GetSliceOpcodeFor(*iOp), {parent}, {iOp});
         sliceOp.SetOpAttribute(std::make_shared<ViewOpAttribute>(iOp->offset, iOp->dynOffset_, iOp->dynValidShape_));
         AssignMappedTokens(sliceOp.result_token_, plan.sliceResultTokens, iOp.get());
+        AssignMappedTokens(sliceOp.tokens_, plan.sliceInputTokens, iOp.get());
         ResetSliceView(iOp);
     }
 
@@ -2221,6 +2232,7 @@ void Function::SetSameMemId(const LogicalTensorPtr& operand, const LogicalTensor
     auto dstRaw = dst->GetRawTensor();
     auto operandRaw = operand->GetRawTensor();
     dstRaw->memoryId = operandRaw->memoryId;
+
     outIncastLinkMap[dstRaw] = operandRaw;
 }
 
