@@ -20,6 +20,7 @@ __all__ = [
     "_normalize_expr",
     "_normalize_shape",
     "_to_make_tuple",
+    "require_const_bool",
     "require_const_int",
     "require_int",
     "unwrap_type",
@@ -44,6 +45,17 @@ def _const_int_value(value: object) -> int | None:
     if isinstance(value, _ir.ConstInt):
         return value.value
     return None
+
+
+def require_const_bool(value: object, *, subject: str) -> bool:
+    """Require a compile-time boolean value."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, _ir.ConstBool):
+        return bool(value.value)
+    if isinstance(value, _ir.ConstInt) and value.type.dtype == DataType.BOOL:
+        return bool(value.value)
+    raise InvalidType(f"{subject} must be a compile-time boolean constant")
 
 
 def require_const_int(

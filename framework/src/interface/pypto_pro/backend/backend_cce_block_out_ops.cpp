@@ -1562,7 +1562,7 @@ static std::string MakeDistTransferCodegenCCE(const ir::CallPtr& op, codegen::Co
     // DTensor base: the peer's payload base + the view's scalar byte offset; the
     // element-coordinate offsets below are then applied as typed pointer arithmetic.
     const std::string remote_base = "reinterpret_cast<__gm__ " + dtype_str +
-                                    "*>(reinterpret_cast<__gm__ uint8_t*>(pypto_dist_remote_ptr<" + dtype_str +
+                                    "*>(reinterpret_cast<__gm__ uint8_t*>(pypto::dist::remote_ptr<" + dtype_str +
                                     ">(reinterpret_cast<__gm__ dist::Window*>(" + win_ptr + "), " + peer + ")) + " +
                                     base_bytes + ")";
 

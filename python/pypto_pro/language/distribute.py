@@ -8,7 +8,7 @@
 # See the License in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 import enum
-from typing import TYPE_CHECKING, NamedTuple, overload
+from typing import TYPE_CHECKING, NamedTuple
 
 from pypto import pypto_impl
 from pypto.ir import AtomicType, CmpMode
@@ -99,42 +99,31 @@ CHANNEL_UB_BYTES = 256  # one channel's UB scratch (peer descriptor + jetty book
 class Channel(NamedTuple):
     """Parse-time handle of one write-engine channel (device-only).
 
-    Built only by :func:`channel` inside a kernel. ``peer`` is ``None`` for the
-    multi-issuer form. The parser intercepts the methods below; like every
-    ``@_api_decl`` API they raise outside a kernel.
+    Built only by :func:`channel` inside a kernel. The parser intercepts the
+    methods below; like every ``@_api_decl`` API they raise outside a kernel.
     """
 
     window: object  # kernel pld.Window parameter (ir.Var of WindowType)
-    peer: object  # None (multi-issuer) or the bound peer rank (int / integer scalar expr)
     ub_addr: int  # UB scratch address of this channel (>= CHANNEL_UB_BYTES bytes, 64-B aligned)
     token: object  # IR Var (int64) produced by dist.channel
 
     # -- declarations only: the parser routes every call via dist_ops.parse_channel_method
 
-    @overload
-    def write(self, peer: int, dtensor: DTensor, src, /, *, submit: bool = True,
-              timeout: int | None = None) -> None: ...
-    @overload
-    def write(self, dtensor: DTensor, src, /, *, submit: bool = True,
-              timeout: int | None = None) -> None: ...
     @_api_decl
-    def write(self, *args, submit: bool = True, timeout: int | None = None) -> None:
-        """Async write into the peer's window (device-only).
+    def write(self, dtensor: DTensor, src, /, *, submit: bool = True,
+              timeout: int | None = None) -> None:
+        """Async write into the channel's peer window (device-only).
 
-        ``src`` is a local GM tensor (<= 256 MiB, byte length a multiple of 32) or one
-        scalar word of the view dtype. ``submit=False`` stages the WQE for a later
-        :meth:`submit`; ``True`` (default) publishes it. On a peer-less channel the
-        destination leads: ``ch.write(peer, dtensor, src)``.
+        The destination peer is fixed when the channel is opened
+        (``pld.channel(..., peer=...)``); a peer-less channel rides the calling AIV's
+        own jetty. ``src`` is a local GM tensor (<= 256 MiB, byte length a multiple of
+        32) or one scalar word of the view dtype. ``submit=False`` stages the WQE for a
+        later :meth:`submit`; ``True`` (default) publishes it.
         """
 
-    @overload
-    def write_notify(self, peer: int, dtensor: DTensor, src, signal: Signal, val, /, *,
-                     timeout: int | None = None) -> None: ...
-    @overload
-    def write_notify(self, dtensor: DTensor, src, signal: Signal, val, /, *,
-                     timeout: int | None = None) -> None: ...
     @_api_decl
-    def write_notify(self, *args, timeout: int | None = None) -> None:
+    def write_notify(self, dtensor: DTensor, src, signal: Signal, val, /, *,
+                     timeout: int | None = None) -> None:
         """Fused write whose completion writes the signal in hardware (device-only).
 
         Hardware writes ``val`` into ``signal``'s slot when the payload lands, so data
@@ -276,13 +265,25 @@ def signal(win: Window, idx) -> Signal:
 
 
 @_api_decl
-def notify(signal: Signal, peer, val=None, *, op: NotifyOp = NotifyOp.SET) -> None:
+def notify(
+    signal: Signal, peer, val=None, *, op: NotifyOp = NotifyOp.SET, flush_store: bool = True
+) -> None:
     """Write a value into a signal slot (device-only).
 
     ``notify(signal, peer, val)`` writes the slot on ``peer``'s window;
     ``notify(signal, val)`` targets the local window's slot. ``op``: ``SET`` overwrites,
-    ``ATOMIC_ADD`` fetch-adds. The internal MTE3 flush orders the signal after this
-    AIV's prior ``put``\\ s.
+    ``ATOMIC_ADD`` fetch-adds.
+
+    Args:
+        signal: slot handle built by :func:`signal`.
+        peer: destination rank, or the value in the local form.
+        val: value to write.
+        op: ``NotifyOp.SET`` overwrites, ``NotifyOp.ATOMIC_ADD`` fetch-adds.
+        flush_store: flush this AIV's outstanding MTE3 stores before writing the
+            signal (default ``True``), so the signal is ordered after its prior
+            ``put``\\ s. The flush uses hardcoded event id 0 — do not keep an MTE3
+            event 0 in flight across the call. ``False`` skips it when the caller
+            already ordered the data.
     """
 
 
@@ -300,21 +301,24 @@ def wait(signal: Signal, val, *, cmp: Cmp = Cmp.EQ, timeout: int | None = None) 
 
 
 @_api_decl
-def notify_all(signal: Signal, val, *, op: NotifyOp = NotifyOp.SET) -> None:
+def notify_all(signal: Signal, val, *, op: NotifyOp = NotifyOp.SET, flush_store: bool = True) -> None:
     """Signal ``signal``'s slot on **every** rank of the window group, the local one
     included (device-only).
 
     Parallel spelling of ``for r in range(win.nrank()): notify(signal, r, val)``: one
     SIMT fan-out writes all ranks' slots at once, one thread per rank, instead of a
-    serial per-peer loop. Like :func:`notify`, the writes are async and ordered after
-    this AIV's prior ``put``\\ s (an internal MTE3 flush, event id 0 — do not keep an
-    MTE3->V event 0 in flight across the call); order explicitly (``barrier`` /
-    ``wait``) before relying on a peer's arrival.
+    serial per-peer loop. Like :func:`notify`, the writes are async; order explicitly
+    (``barrier`` / ``wait``) before relying on a peer's arrival.
 
     Args:
         signal: slot handle built by :func:`signal` from the **local** window.
         val: int64 value to write.
         op: ``NotifyOp.SET`` overwrites, ``NotifyOp.ATOMIC_ADD`` fetch-adds.
+        flush_store: flush this AIV's outstanding MTE3 stores before the fan-out
+            (default ``True``), ordering the signals after its prior ``put``\\ s. The
+            flush uses hardcoded event id 0 — do not keep an MTE3->V event 0 in flight
+            across the call. ``False`` skips it when the caller already ordered the
+            data.
     """
 
 
@@ -323,11 +327,11 @@ def channel(win: Window, buffer: int, peer: int | None = None) -> Channel:
     """Open one write-engine channel of ``win``, backed by a UB scratch buffer (device-only).
 
     Must be the RHS of a simple assignment, outside control flow — the C++ object lives
-    in the enclosing scope. Topology picks the jetty: without ``peer`` the channel rides
-    this AIV's own jetty (multi-issuer; transfers lead with the destination,
-    ``ch.write(peer, dtensor, src)``); with ``peer=k`` it rides peer ``k``'s jetty
-    (per-peer; transfers omit the peer). A write is not ordered against ``notify`` —
-    use ``drain`` first, or ``write_notify``.
+    in the enclosing scope. The channel binds its destination when it is opened: with
+    ``peer=k`` it rides peer ``k``'s jetty (per-peer); without ``peer`` it rides this
+    AIV's own jetty (multi-issuer). :meth:`write` and :meth:`write_notify` take no
+    peer. A write is not ordered against ``notify`` — use ``drain`` first, or
+    ``write_notify``.
 
     Args:
         win: the owning window.

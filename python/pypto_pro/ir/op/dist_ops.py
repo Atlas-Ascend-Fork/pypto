@@ -23,6 +23,7 @@ from .._utils import (
     _is_int,
     _normalize_expr,
     _to_make_tuple,
+    require_const_bool,
 )
 from ._op_registry import op_impl, op_impl_ast
 
@@ -383,8 +384,8 @@ def _build_signal(self, window, idx, *, span: Span | None = None):
 
 
 @op_impl("dist.notify")
-def _build_notify(self, signal, peer, val=None, *, op=None, span: Span | None = None):
-    """``pld.notify(signal, peer, val)`` / local ``pld.notify(signal, val)`` -> dist.notify."""
+def _build_notify(self, signal, peer, val=None, *, op=None, flush_store=True, span: Span | None = None):
+    """``pld.notify(signal, peer, val[, op=, flush_store=])`` / local form -> dist.notify."""
     from ...language.distribute import NotifyOp, Signal
 
     val = _none_value(val)
@@ -406,17 +407,21 @@ def _build_notify(self, signal, peer, val=None, *, op=None, span: Span | None = 
             f"pld.notify op must be NotifyOp.SET or NotifyOp.ATOMIC_ADD, got {notify_op}", span=span
         )
 
+    kwargs = {
+        "notify_op": notify_op,
+        "flush_store": require_const_bool(flush_store, subject="pld.notify 'flush_store'"),
+    }
     return _ir_core.create_op_call(
         "dist.notify",
         [signal.window, _normalize_expr(signal.slot, span), val_operand, peer_operand],
-        {"notify_op": notify_op},
+        kwargs,
         span,
     )
 
 
 @op_impl("dist.notify_all")
-def _build_notify_all(self, signal, val, *, op=None, span: Span | None = None):
-    """``pld.notify_all(signal, val[, op=])`` -> dist.notify_all."""
+def _build_notify_all(self, signal, val, *, op=None, flush_store=True, span: Span | None = None):
+    """``pld.notify_all(signal, val[, op=, flush_store=])`` -> dist.notify_all."""
     from ...language.distribute import NotifyOp, Signal
 
     if not isinstance(signal, Signal):
@@ -427,10 +432,14 @@ def _build_notify_all(self, signal, val, *, op=None, span: Span | None = None):
         raise InvalidVal(
             f"pld.notify_all op must be NotifyOp.SET or NotifyOp.ATOMIC_ADD, got {notify_op}", span=span
         )
+    kwargs = {
+        "notify_op": notify_op,
+        "flush_store": require_const_bool(flush_store, subject="pld.notify_all 'flush_store'"),
+    }
     return _ir_core.create_op_call(
         "dist.notify_all",
         [signal.window, _normalize_expr(signal.slot, span), val_operand],
-        {"notify_op": notify_op},
+        kwargs,
         span,
     )
 
@@ -518,11 +527,10 @@ class _ChannelCreate:
     """Internal: ``pld.channel`` deferred to the assignment parser, which knows the
     let-binding target (a nested call must not steal the outer name)."""
 
-    __slots__ = ("window", "peer", "ub_addr", "call")
+    __slots__ = ("window", "ub_addr", "call")
 
-    def __init__(self, window, peer, ub_addr, call):
+    def __init__(self, window, ub_addr, call):
         self.window = window
-        self.peer = peer
         self.ub_addr = ub_addr
         self.call = call
 
@@ -574,7 +582,7 @@ def _parse_channel(parser, call):
 
     peer_ir = peer if peer is not None else _normalize_expr(-1, span)
     create = _ir_core.create_op_call("dist.channel", [window, peer_ir], {"ub_addr": ub_addr}, span)
-    return _ChannelCreate(window, peer, ub_addr, create)
+    return _ChannelCreate(window, ub_addr, create)
 
 
 def _channel_dtensor(parser, api, node, channel, span):
@@ -592,30 +600,8 @@ def _channel_dtensor(parser, api, node, channel, span):
     return dtensor
 
 
-def _channel_peer_operand(parser, call, channel, span):
-    """Resolve the transfer's destination peer (per-call arg on multi-issuer channels)."""
-    if channel.peer is None:
-        from ...language.distribute import DTensor
-
-        if not call.args:
-            raise InvalidArgument(
-                "ch.write on a peer-less channel requires the destination peer first: "
-                "ch.write(peer, dtensor, ...)",
-                span=span,
-            )
-        first = parser.parse_expression(call.args[0])
-        if isinstance(first, DTensor):
-            raise InvalidArgument(
-                "ch.write on a peer-less channel requires the destination peer first: "
-                "ch.write(peer, dtensor, ...)",
-                span=span,
-            )
-        return _parse_int_operand(parser, call.args[0], "ch.write", "peer"), 1
-    return channel.peer, 0
-
-
 def _build_channel_write(parser, call, channel):
-    """``ch.write([peer,] dtensor, tensor|scalar, submit=, timeout=)`` -> channel_write[_value]."""
+    """``ch.write(dtensor, tensor|scalar, submit=, timeout=)`` -> channel_write[_value]."""
     span = parser.span_tracker.get_span(call)
     kwargs_parsed = _parse_op_kwargs(parser, call)
     for name in kwargs_parsed:
@@ -623,22 +609,20 @@ def _build_channel_write(parser, call, channel):
             raise InvalidArgument(f"ch.write does not accept keyword argument '{name}'", span=span)
     if any(isinstance(a, ast.Starred) for a in call.args):
         raise InvalidArgument("ch.write does not accept star-args", span=span)
-
-    peer, base_arg = _channel_peer_operand(parser, call, channel, span)
-    nargs = len(call.args) - base_arg
-    if nargs != 2:
-        expected = "peer, dtensor, tensor or scalar" if channel.peer is None else "dtensor, tensor or scalar"
+    if len(call.args) != 2:
         raise InvalidArgument(
-            f"ch.write requires ({expected}), got {nargs} arguments after the channel", span=span
+            f"ch.write requires (dtensor, tensor or scalar), got {len(call.args)} arguments after the channel",
+            span=span,
+            hint="The destination peer is bound when the channel is opened: pld.channel(win, buffer, peer=...)",
         )
 
-    dtensor = _channel_dtensor(parser, "ch.write", call.args[base_arg], channel, span)
+    dtensor = _channel_dtensor(parser, "ch.write", call.args[0], channel, span)
     submit = kwargs_parsed.get("submit", True)
     if not isinstance(submit, bool):
         raise InvalidType(f"ch.write submit must be a compile-time bool, got {submit!r}", span=span)
     timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write", span, minimum=1)
 
-    source = parser.parse_expression(call.args[base_arg + 1])
+    source = parser.parse_expression(call.args[1])
     if isinstance(source, _ir_core.Var) and isinstance(source.type, _ir_core.TensorType):
         if source.type.dtype != dtensor.dtype:
             raise InvalidType(
@@ -649,23 +633,23 @@ def _build_channel_write(parser, call, channel):
         num_bytes_arg = _shape_byte_count(source.type.shape, dtensor.dtype, span)
         return _ir_core.create_op_call(
             "dist.channel_write",
-            [channel.token, peer, dtensor.byte_offset, num_bytes_arg, source],
+            [channel.token, dtensor.byte_offset, num_bytes_arg, source],
             {"dtype": dtensor.dtype, "submit": submit, "timeout_cycles": timeout},
             span,
         )
 
-    value = _parse_write_scalar(source, call.args[base_arg + 1], dtensor.dtype, span, api="ch.write")
+    value = _parse_write_scalar(source, call.args[1], dtensor.dtype, span, api="ch.write")
     # The scalar rides inline in the WQE; no MTE3 flush is needed.
     return _ir_core.create_op_call(
         "dist.channel_write_value",
-        [channel.token, peer, dtensor.byte_offset, value],
+        [channel.token, dtensor.byte_offset, value],
         {"dtype": dtensor.dtype, "submit": submit, "timeout_cycles": timeout},
         span,
     )
 
 
 def _build_channel_write_notify(parser, call, channel):
-    """``ch.write_notify([peer,] dtensor, tensor, signal, val, timeout=)`` -> channel_write_notify."""
+    """``ch.write_notify(dtensor, tensor, signal, val, timeout=)`` -> channel_write_notify."""
     from ...language.distribute import Signal
 
     span = parser.span_tracker.get_span(call)
@@ -675,22 +659,20 @@ def _build_channel_write_notify(parser, call, channel):
             raise InvalidArgument(f"ch.write_notify does not accept keyword argument '{name}'", span=span)
     if any(isinstance(a, ast.Starred) for a in call.args):
         raise InvalidArgument("ch.write_notify does not accept star-args", span=span)
-
-    peer, base_arg = _channel_peer_operand(parser, call, channel, span)
-    nargs = len(call.args) - base_arg
-    if nargs != 4:
-        expected = "peer, dtensor, tensor, signal, val" if channel.peer is None else "dtensor, tensor, signal, val"
+    if len(call.args) != 4:
         raise InvalidArgument(
-            f"ch.write_notify requires ({expected}), got {nargs} arguments after the channel",
+            f"ch.write_notify requires (dtensor, tensor, signal, val), got {len(call.args)} arguments "
+            "after the channel",
             span=span,
+            hint="The destination peer is bound when the channel is opened: pld.channel(win, buffer, peer=...)",
         )
 
-    dtensor = _channel_dtensor(parser, "ch.write_notify", call.args[base_arg], channel, span)
-    source = parser.parse_expression(call.args[base_arg + 1])
+    dtensor = _channel_dtensor(parser, "ch.write_notify", call.args[0], channel, span)
+    source = parser.parse_expression(call.args[1])
     if not isinstance(source, _ir_core.Var) or not isinstance(source.type, _ir_core.TensorType):
         raise InvalidType(
             "ch.write_notify tensor must be a kernel GM tensor (the fused WQE reads its source "
-            f"from GM; use ch.write for the scalar-word form), got {ast.unparse(call.args[base_arg + 1])}",
+            f"from GM; use ch.write for the scalar-word form), got {ast.unparse(call.args[1])}",
             span=span,
         )
     if source.type.dtype != dtensor.dtype:
@@ -699,12 +681,12 @@ def _build_channel_write_notify(parser, call, channel):
             f"{dtensor.dtype}",
             span=span,
         )
-    signal = parser.parse_expression(call.args[base_arg + 2])
+    signal = parser.parse_expression(call.args[2])
     if not isinstance(signal, Signal):
         raise InvalidType("ch.write_notify signal must be a pld.Signal built by pld.signal", span=span)
     if signal.window.name != channel.window.name:
         raise InvalidType("ch.write_notify signal must belong to the channel's window", span=span)
-    val = _parse_int_operand(parser, call.args[base_arg + 3], "ch.write_notify", "val")
+    val = _parse_int_operand(parser, call.args[3], "ch.write_notify", "val")
     timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write_notify", span, minimum=1)
 
     num_bytes_arg = _shape_byte_count(source.type.shape, dtensor.dtype, span)
@@ -712,7 +694,6 @@ def _build_channel_write_notify(parser, call, channel):
         "dist.channel_write_notify",
         [
             channel.token,
-            peer,
             dtensor.byte_offset,
             num_bytes_arg,
             source,

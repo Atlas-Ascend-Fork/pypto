@@ -1,7 +1,7 @@
 /**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * CANN Open Software License Agreement Version 2.0 (the "License).
+ * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details.
  * You should not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
@@ -17,8 +17,6 @@
 // can name it; the device helpers below stay vector-only.
 #include <tilefwk/distribute_context.h>
 
-using PyptoDistWindow = dist::Window;
-
 #if defined(__DAV_VEC__)
 
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
@@ -27,8 +25,13 @@ using PyptoDistWindow = dist::Window;
 #define PYPTO_DIST_HAVE_JETTY 1
 #endif
 
-__simt_vf__ __launch_bounds__(dist::kNumMaxRanks) inline void pypto_dist_signal(__gm__ dist::Window* win,
-                                                                                int64_t slot_off, int32_t delta)
+namespace pypto::dist {
+using ::dist::Barrier;
+using ::dist::kL2CacheLineSize;
+using ::dist::kNumMaxRanks;
+using ::dist::Window;
+
+__simt_vf__ __launch_bounds__(kNumMaxRanks) inline void signal(__gm__ Window* win, int64_t slot_off, int32_t delta)
 {
     int32_t t = static_cast<int32_t>(threadIdx.x); // one thread per rank
     if (t < win->nrank) {
@@ -37,9 +40,8 @@ __simt_vf__ __launch_bounds__(dist::kNumMaxRanks) inline void pypto_dist_signal(
 }
 
 template <bool kAtomicAdd>
-__simt_vf__ __launch_bounds__(dist::kNumMaxRanks) inline void pypto_dist_notify_all_signal(__gm__ dist::Window* win,
-                                                                                           int64_t slot_off,
-                                                                                           int64_t val)
+__simt_vf__ __launch_bounds__(kNumMaxRanks) inline void notify_all_signal(__gm__ Window* win, int64_t slot_off,
+                                                                          int64_t val)
 {
     int32_t t = static_cast<int32_t>(threadIdx.x); // one thread per rank
     if (t < win->nrank) {
@@ -52,7 +54,7 @@ __simt_vf__ __launch_bounds__(dist::kNumMaxRanks) inline void pypto_dist_notify_
     }
 }
 
-__aicore__ inline void pypto_dist_cpu_relax()
+__aicore__ inline void cpu_relax()
 {
 #pragma unroll 1
     for (int32_t i = 0; i < 300; ++i) {
@@ -60,35 +62,38 @@ __aicore__ inline void pypto_dist_cpu_relax()
     }
 }
 
-__aicore__ inline __gm__ int64_t* pypto_dist_signal_addr(__gm__ dist::Window* win, int32_t peer, int64_t slot)
+__aicore__ inline __gm__ uint64_t* signal_addr(__gm__ Window* win, int32_t peer, int64_t slot)
 {
     pypto_assert(peer >= 0 && peer < win->nrank, "dist: peer %d out of range [0, %d)\n", peer, win->nrank);
-    return reinterpret_cast<__gm__ int64_t*>(win->remote_ptrs[peer] + win->signal_offset +
-                                             slot * dist::kL2CacheLineSize);
+    return reinterpret_cast<__gm__ uint64_t*>(win->remote_ptrs[peer] + win->signal_offset + slot * kL2CacheLineSize);
 }
 
-template <int32_t kNotifyOp>
-__aicore__ inline void pypto_dist_notify(__gm__ dist::Window* win, int64_t slot, int64_t val, int32_t peer)
+template <int32_t kNotifyOp, bool kFlushStore = true>
+__aicore__ inline void notify(__gm__ Window* win, int64_t slot, int64_t val, int32_t peer)
 {
     static_assert(kNotifyOp == 0 || kNotifyOp == 1, "notify_op must be 0 (SET) or 1 (ATOMIC_ADD)");
     pypto_assert(slot >= 0 && slot < win->num_signals, "dist.notify: slot %lld out of range [0, %d)\n",
                  static_cast<long long>(slot), win->num_signals);
-    set_flag(PIPE_MTE3, PIPE_S, 0);
-    wait_flag(PIPE_MTE3, PIPE_S, 0);
+    if constexpr (kFlushStore) {
+        // Drain this AIV's outstanding MTE3 stores into the scalar pipe before the
+        // signal write. Event id 0 is hardcoded — do not keep an MTE3 event 0 in flight.
+        set_flag(PIPE_MTE3, PIPE_S, 0);
+        wait_flag(PIPE_MTE3, PIPE_S, 0);
+    }
 
-    // flush of MTE3 must happen before the real notify.
+    // Flush the store buffer so prior stores are visible before the signal write.
     dsb(DSB_DDR);
 
-    __gm__ int64_t* addr = pypto_dist_signal_addr(win, peer, slot);
+    __gm__ uint64_t* addr = signal_addr(win, peer, slot);
     if constexpr (kNotifyOp != 0) {
-        (void)atomicAdd(addr, val);
+        (void)atomicAdd(reinterpret_cast<__gm__ int64_t*>(addr), val);
     } else {
-        (void)atomicExch(reinterpret_cast<__gm__ uint64_t*>(addr), static_cast<uint64_t>(val));
+        (void)atomicExch(addr, static_cast<uint64_t>(val));
     }
 }
 
 template <int32_t kCmp>
-__aicore__ inline constexpr bool pypto_dist_cmp(int64_t sig, int64_t val)
+__aicore__ inline constexpr bool cmp(int64_t sig, int64_t val)
 {
     static_assert(kCmp >= 0 && kCmp <= 5, "cmp must be a CmpMode value (0..5)");
     if constexpr (kCmp == 0) {
@@ -108,16 +113,16 @@ __aicore__ inline constexpr bool pypto_dist_cmp(int64_t sig, int64_t val)
 
 // The wait always polls the LOCAL window's slot (LD_DEV bypasses the DCache).
 template <int32_t kCmp>
-__aicore__ inline void pypto_dist_wait(__gm__ dist::Window* win, int64_t slot, int64_t val, int64_t timeout_cycles)
+__aicore__ inline void wait(__gm__ Window* win, int64_t slot, int64_t val, int64_t timeout_cycles)
 {
     static_assert(kCmp >= 0 && kCmp <= 5, "cmp must be a CmpMode value (0..5)");
     pypto_assert(slot >= 0 && slot < win->num_signals, "dist.wait: slot %lld out of range [0, %d)\n",
                  static_cast<long long>(slot), win->num_signals);
-    __gm__ int64_t* addr = pypto_dist_signal_addr(win, win->rank, slot);
+    __gm__ uint64_t* addr = signal_addr(win, win->rank, slot);
     const int64_t t0 = get_sys_cnt();
     while (true) {
         const int64_t sig = static_cast<int64_t>(ld_dev(addr, 0));
-        if (pypto_dist_cmp<kCmp>(sig, val)) {
+        if (cmp<kCmp>(sig, val)) {
             break;
         }
         if (timeout_cycles > 0 && get_sys_cnt() - t0 >= timeout_cycles) {
@@ -126,32 +131,35 @@ __aicore__ inline void pypto_dist_wait(__gm__ dist::Window* win, int64_t slot, i
                         static_cast<long long>(slot), static_cast<long long>(sig), static_cast<long long>(val), kCmp,
                         static_cast<long long>(get_sys_cnt() - t0), static_cast<long long>(timeout_cycles));
         }
-        pypto_dist_cpu_relax();
+        cpu_relax();
     }
 
     // Enforce ordering between the wait and subsequent instructions.
     dsb(DSB_DDR);
 }
 
-template <int32_t kNotifyOp>
-__aicore__ inline void pypto_dist_notify_all(__gm__ dist::Window* win, int64_t slot, int64_t val)
+template <int32_t kNotifyOp, bool kFlushStore = true>
+__aicore__ inline void notify_all(__gm__ Window* win, int64_t slot, int64_t val)
 {
     static_assert(kNotifyOp == 0 || kNotifyOp == 1, "notify_op must be 0 (SET) or 1 (ATOMIC_ADD)");
     pypto_assert(slot >= 0 && slot < win->num_signals, "dist.notify_all: slot %lld out of range [0, %d)\n",
                  static_cast<long long>(slot), win->num_signals);
-    set_flag(PIPE_MTE3, PIPE_V, 0);
-    wait_flag(PIPE_MTE3, PIPE_V, 0);
+    if constexpr (kFlushStore) {
+        // Drain this AIV's outstanding MTE3 stores into the vector pipe before the
+        // fan-out. Event id 0 is hardcoded — do not keep an MTE3->V event 0 in flight.
+        set_flag(PIPE_MTE3, PIPE_V, 0);
+        wait_flag(PIPE_MTE3, PIPE_V, 0);
+    }
 
-    // flush of MTE3 must happen before the real notify.
+    // Flush the store buffer so prior stores are visible before the signals.
     dsb(DSB_DDR);
 
-    const int64_t slot_off = win->signal_offset + slot * dist::kL2CacheLineSize;
-    cce::async_invoke<pypto_dist_notify_all_signal<kNotifyOp == 1>>(cce::dim3{dist::kNumMaxRanks, 1, 1}, win, slot_off,
-                                                                    val);
+    const int64_t slot_off = win->signal_offset + slot * kL2CacheLineSize;
+    cce::async_invoke<notify_all_signal<kNotifyOp == 1>>(cce::dim3{kNumMaxRanks, 1, 1}, win, slot_off, val);
 }
 
 template <int64_t kTimeoutCycles, bool kSyncLocal = true, bool kFlushStore = true>
-__aicore__ inline void pypto_dist_barrier(__gm__ dist::Window* win)
+__aicore__ inline void barrier(__gm__ Window* win)
 {
     if constexpr (kFlushStore) {
         // Store flush: drain this AIV's outstanding MTE3 stores (e.g. a preceding dist.put
@@ -169,8 +177,7 @@ __aicore__ inline void pypto_dist_barrier(__gm__ dist::Window* win)
     }
 
     if (get_block_idx() * get_subblockdim() + get_subblockid() == 0) {
-        __gm__ dist::Barrier* bar = reinterpret_cast<__gm__ dist::Barrier*>(win->remote_ptrs[win->rank] +
-                                                                            win->barrier_offset);
+        __gm__ Barrier* bar = reinterpret_cast<__gm__ Barrier*>(win->remote_ptrs[win->rank] + win->barrier_offset);
         __gm__ uint64_t* counter = reinterpret_cast<__gm__ uint64_t*>(&bar->barrier_counter);
         const int64_t cnt = static_cast<int64_t>(ld_dev(counter, 0));
         int32_t phase = static_cast<int32_t>(cnt & 1);
@@ -182,7 +189,7 @@ __aicore__ inline void pypto_dist_barrier(__gm__ dist::Window* win)
         __gm__ uint32_t* sig_addr = reinterpret_cast<__gm__ uint32_t*>(&bar->barrier_signals[phase]);
         const int64_t slot_off = win->barrier_offset + reinterpret_cast<int64_t>(sig_addr) -
                                  reinterpret_cast<int64_t>(bar);
-        cce::async_invoke<pypto_dist_signal>(cce::dim3{dist::kNumMaxRanks, 1, 1}, win, slot_off, delta);
+        cce::async_invoke<signal>(cce::dim3{kNumMaxRanks, 1, 1}, win, slot_off, delta);
 
         const int64_t t0 = get_sys_cnt();
         while (true) {
@@ -194,7 +201,7 @@ __aicore__ inline void pypto_dist_barrier(__gm__ dist::Window* win)
                 pypto_panic("dist.barrier timeout: nrank %d, signal %d, target %d, phase %d, counter %lld\n",
                             win->nrank, sig, target, phase, static_cast<long long>(cnt));
             }
-            pypto_dist_cpu_relax();
+            cpu_relax();
         }
     }
 
@@ -204,60 +211,55 @@ __aicore__ inline void pypto_dist_barrier(__gm__ dist::Window* win)
 }
 
 template <typename T>
-__aicore__ inline __gm__ T* pypto_dist_remote_ptr(__gm__ dist::Window* win, int32_t peer)
+__aicore__ inline __gm__ T* remote_ptr(__gm__ Window* win, int32_t peer)
 {
     pypto_assert(peer >= 0 && peer < win->nrank, "dist: peer %d out of range [0, %d)\n", peer, win->nrank);
     return reinterpret_cast<__gm__ T*>(win->remote_ptrs[peer]);
 }
 
 template <typename T>
-__aicore__ inline constexpr bool pypto_dist_atomic_supported()
+__aicore__ inline constexpr bool atomic_supported()
 {
     return std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t> || std::is_same_v<T, float> ||
            std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>;
 }
 
 template <typename T>
-__aicore__ inline __gm__ T* pypto_dist_atomic_addr(__gm__ dist::Window* win, int32_t peer, int64_t base_bytes,
-                                                   int64_t elem_offset)
+__aicore__ inline __gm__ T* atomic_addr(__gm__ Window* win, int32_t peer, int64_t base_bytes, int64_t elem_offset)
 {
-    static_assert(pypto_dist_atomic_supported<T>(),
-                  "dist atomics support int32_t/uint32_t/float/int64_t/uint64_t only");
-    return reinterpret_cast<__gm__ T*>(reinterpret_cast<__gm__ uint8_t*>(pypto_dist_remote_ptr<T>(win, peer)) +
-                                       base_bytes) +
+    static_assert(atomic_supported<T>(), "dist atomics support int32_t/uint32_t/float/int64_t/uint64_t only");
+    return reinterpret_cast<__gm__ T*>(reinterpret_cast<__gm__ uint8_t*>(remote_ptr<T>(win, peer)) + base_bytes) +
            elem_offset;
 }
 
 template <typename T>
-__aicore__ inline T pypto_dist_atomic_add(__gm__ dist::Window* win, int32_t peer, int64_t base_bytes,
-                                          int64_t elem_offset, T val)
+__aicore__ inline T atomic_add(__gm__ Window* win, int32_t peer, int64_t base_bytes, int64_t elem_offset, T val)
 {
-    return atomicAdd(pypto_dist_atomic_addr<T>(win, peer, base_bytes, elem_offset), val);
+    return atomicAdd(atomic_addr<T>(win, peer, base_bytes, elem_offset), val);
 }
 
 template <typename T>
-__aicore__ inline T pypto_dist_atomic_exchange(__gm__ dist::Window* win, int32_t peer, int64_t base_bytes,
-                                               int64_t elem_offset, T val)
+__aicore__ inline T atomic_exchange(__gm__ Window* win, int32_t peer, int64_t base_bytes, int64_t elem_offset, T val)
 {
-    return atomicExch(pypto_dist_atomic_addr<T>(win, peer, base_bytes, elem_offset), val);
+    return atomicExch(atomic_addr<T>(win, peer, base_bytes, elem_offset), val);
 }
 
 template <typename T>
-__aicore__ inline T pypto_dist_atomic_cas(__gm__ dist::Window* win, int32_t peer, int64_t base_bytes,
-                                          int64_t elem_offset, T expect, T desired)
+__aicore__ inline T atomic_cas(__gm__ Window* win, int32_t peer, int64_t base_bytes, int64_t elem_offset, T expect,
+                               T desired)
 {
-    return atomicCAS(pypto_dist_atomic_addr<T>(win, peer, base_bytes, elem_offset), expect, desired);
+    return atomicCAS(atomic_addr<T>(win, peer, base_bytes, elem_offset), expect, desired);
 }
 
 #if defined(PYPTO_DIST_HAVE_JETTY)
-struct PyptoDistChannel {
-    __gm__ dist::Window* win_;
+struct Channel {
+    __gm__ Window* win_;
     uint32_t jetty_idx_;
     GM_ADDR remote_base_;
     AscendC::HcommJetty jetty_;
     AscendC::HcommPeer peer_;
 
-    __aicore__ inline PyptoDistChannel(__gm__ dist::Window* w, __ubuf__ uint8_t* ubuf, int32_t peer)
+    __aicore__ inline Channel(__gm__ Window* w, __ubuf__ uint8_t* ubuf, int32_t peer)
         : win_(w),
           jetty_idx_(JettyOf(w, peer)),
           remote_base_(RemoteBase(win_, jetty_idx_)),
@@ -301,7 +303,7 @@ struct PyptoDistChannel {
 
         GM_ADDR dst = remote_base_ + base_bytes;
         GM_ADDR notify_addr = reinterpret_cast<GM_ADDR>(remote_base_ + win_->signal_offset +
-                                                        signal_slot * dist::kL2CacheLineSize);
+                                                        signal_slot * kL2CacheLineSize);
         int32_t ret = jetty_.WriteWithNotify<kTimeoutCycles>(peer_, dst, src, static_cast<uint64_t>(num_bytes),
                                                              notify_addr, static_cast<uint64_t>(val));
         pypto_assert(ret == AscendC::HCOMM_SUCCESS, "dist.channel.write_notify failed, ret %d\n", ret);
@@ -325,7 +327,7 @@ struct PyptoDistChannel {
     __aicore__ inline bool IsExclusive() const { return win_->multi_issuer != 0; }
 
 private:
-    __aicore__ inline static int32_t JettyOf(__gm__ dist::Window* win, int32_t peer)
+    __aicore__ inline static int32_t JettyOf(__gm__ Window* win, int32_t peer)
     {
         if (peer >= 0) {
             return peer < win->rank ? peer : peer - 1;
@@ -334,7 +336,7 @@ private:
         }
     }
 
-    __aicore__ inline static __gm__ uint8_t* RemoteBase(__gm__ dist::Window* win, int32_t peer_idx)
+    __aicore__ inline static __gm__ uint8_t* RemoteBase(__gm__ Window* win, int32_t peer_idx)
     {
         const uint64_t entry = reinterpret_cast<__gm__ uint64_t*>(win->jetty_ptrs)[peer_idx];
         pypto_assert(entry != 0, "dist.channel: jetty table entry %d is null\n", peer_idx);
@@ -359,5 +361,7 @@ private:
     }
 };
 #endif // defined(PYPTO_DIST_HAVE_JETTY)
+
+} // namespace pypto::dist
 
 #endif // defined(__DAV_VEC__)

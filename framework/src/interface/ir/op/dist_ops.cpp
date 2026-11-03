@@ -215,6 +215,12 @@ TypePtr DeduceNotifyType(const std::vector<ExprPtr>& args, const std::vector<std
             notifyOp = std::any_cast<int>(value);
             continue;
         }
+        if (name == "flush_store") {
+            // Static instruction attribute lowered to a codegen template parameter.
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(bool))
+                << "dist.notify 'flush_store' must be a compile-time constant bool";
+            continue;
+        }
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, false)
             << "dist.notify does not accept keyword argument '" << name << "'";
     }
@@ -281,6 +287,12 @@ TypePtr DeduceNotifyAllType(const std::vector<ExprPtr>& args,
             notifyOp = std::any_cast<int>(value);
             continue;
         }
+        if (name == "flush_store") {
+            // Static instruction attribute lowered to a codegen template parameter.
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(bool))
+                << "dist.notify_all 'flush_store' must be a compile-time constant bool";
+            continue;
+        }
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, false)
             << "dist.notify_all does not accept keyword argument '" << name << "'";
     }
@@ -294,8 +306,8 @@ TypePtr DeduceNotifyAllType(const std::vector<ExprPtr>& args,
 
 REGISTER_OP("dist.notify")
     .set_op_category("DistOp")
-    .set_description("Write a value into a signal slot of a peer's (or the local) window; ordered after the "
-                     "issuing AIV's prior puts via an MTE3 flush")
+    .set_description("Write a value into a signal slot of a peer's (or the local) window; flush_store= "
+                     "optionally orders it after the issuing AIV's prior puts via an MTE3 flush")
     .add_argument("window", "Window handle (WindowType)")
     .add_argument("slot", "Signal slot index (integer scalar)")
     .add_argument("val", "Value to write (integer scalar)")
@@ -320,7 +332,8 @@ REGISTER_OP("dist.wait")
 REGISTER_OP("dist.notify_all")
     .set_op_category("DistOp")
     .set_description("All-rank notify: every calling AIV signals every rank's window slot (local rank included) "
-                     "with one SIMT fan-out, ordered after its own prior puts; async like dist.notify")
+                     "with one SIMT fan-out; flush_store= optionally orders it after its own prior puts; async "
+                     "like dist.notify")
     .add_argument("window", "Window handle (WindowType)")
     .add_argument("slot", "Signal slot index (integer scalar)")
     .add_argument("val", "Value to write (integer scalar)")
@@ -446,18 +459,17 @@ ChannelWriteKwargs ParseChannelWriteKwargs(const std::vector<std::pair<std::stri
 TypePtr DeduceDistChannelWriteType(const std::vector<ExprPtr>& args,
                                    const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x5)
-        << "dist.channel_write requires 5 arguments [channel, peer, base_bytes, num_bytes, tensor], but got "
-        << args.size();
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x4)
+        << "dist.channel_write requires 4 arguments [channel, base_bytes, num_bytes, tensor], but got " << args.size();
     CheckChannelOperand(args, "dist.channel_write");
-    for (size_t i = 1; i <= 3; ++i) {
+    for (size_t i = 1; i <= 2; ++i) {
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[i]))
             << "dist.channel_write argument " << i << " must be an integer scalar, but got "
             << args[i]->GetType()->TypeName();
     }
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[4]->GetType()))
-        << "dist.channel_write tensor must be a TensorType, but got " << args[4]->GetType()->TypeName();
-    (void)ParseChannelWriteKwargs(kwargs, args[4], "dist.channel_write", true);
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[3]->GetType()))
+        << "dist.channel_write tensor must be a TensorType, but got " << args[3]->GetType()->TypeName();
+    (void)ParseChannelWriteKwargs(kwargs, args[3], "dist.channel_write", true);
     return GetNoneType();
 }
 
@@ -519,10 +531,10 @@ REGISTER_OP("dist.channel")
 
 REGISTER_OP("dist.channel_write")
     .set_op_category("DistOp")
-    .set_description("Async GM tensor -> remote window write through the channel's URMA jetty; "
-                     "submit=true publishes immediately, submit=false stages the WQE")
+    .set_description("Async GM tensor -> remote window write through the channel's URMA jetty "
+                     "(destination bound at channel creation); submit=true publishes immediately, "
+                     "submit=false stages the WQE")
     .add_argument("channel", "Channel handle (opaque integer token)")
-    .add_argument("peer", "Destination peer rank (integer scalar)")
     .add_argument("base_bytes", "DTensor view start, scalar byte offset into the payload (integer scalar)")
     .add_argument("num_bytes", "Transfer length in bytes (integer scalar)")
     .add_argument("tensor", "Local GM source tensor (TensorType)")
@@ -563,22 +575,19 @@ namespace {
 TypePtr DeduceDistChannelWriteValueType(const std::vector<ExprPtr>& args,
                                         const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x4)
-        << "dist.channel_write_value requires 4 arguments [channel, peer, base_bytes, value], but got " << args.size();
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x3)
+        << "dist.channel_write_value requires 3 arguments [channel, base_bytes, value], but got " << args.size();
     CheckChannelOperand(args, "dist.channel_write_value");
-    for (size_t i = 1; i <= 2; ++i) {
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[i]))
-            << "dist.channel_write_value argument " << i << " must be an integer scalar, but got "
-            << args[i]->GetType()->TypeName();
-    }
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsNumericScalar(args[3]))
-        << "dist.channel_write_value value must be a numeric scalar, but got " << args[3]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[1]))
+        << "dist.channel_write_value base_bytes must be an integer scalar, but got " << args[1]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsNumericScalar(args[2]))
+        << "dist.channel_write_value value must be a numeric scalar, but got " << args[2]->GetType()->TypeName();
 
     const auto parsed = ParseChannelWriteKwargs(kwargs, nullptr, "dist.channel_write_value", true);
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsSupportedScalarDType(parsed.dtype))
         << "dist.channel_write_value does not support dtype " << parsed.dtype.ToString()
         << "; supported: INT32/UINT32/INT64/UINT64/FP32";
-    const auto valueType = As<ScalarType>(args[3]->GetType());
+    const auto valueType = As<ScalarType>(args[2]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, !(parsed.dtype.IsInt() && valueType->dtype_.IsFloat()))
         << "dist.channel_write_value integer destination requires an integer value, but got "
         << valueType->dtype_.ToString();
@@ -588,23 +597,22 @@ TypePtr DeduceDistChannelWriteValueType(const std::vector<ExprPtr>& args,
 TypePtr DeduceDistChannelWriteNotifyType(const std::vector<ExprPtr>& args,
                                          const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x7)
-        << "dist.channel_write_notify requires 7 arguments [channel, peer, base_bytes, num_bytes, tensor, slot, "
-           "val], "
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x6)
+        << "dist.channel_write_notify requires 6 arguments [channel, base_bytes, num_bytes, tensor, slot, val], "
         << "but got " << args.size();
     CheckChannelOperand(args, "dist.channel_write_notify");
-    for (size_t i = 1; i <= 3; ++i) {
+    for (size_t i = 1; i <= 2; ++i) {
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[i]))
             << "dist.channel_write_notify argument " << i << " must be an integer scalar, but got "
             << args[i]->GetType()->TypeName();
     }
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[4]->GetType()))
-        << "dist.channel_write_notify tensor must be a TensorType, but got " << args[4]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[3]->GetType()))
+        << "dist.channel_write_notify tensor must be a TensorType, but got " << args[3]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[4]))
+        << "dist.channel_write_notify slot must be an integer scalar, but got " << args[4]->GetType()->TypeName();
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[5]))
-        << "dist.channel_write_notify slot must be an integer scalar, but got " << args[5]->GetType()->TypeName();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[6]))
-        << "dist.channel_write_notify val must be an integer scalar, but got " << args[6]->GetType()->TypeName();
-    (void)ParseChannelWriteKwargs(kwargs, args[4], "dist.channel_write_notify", false);
+        << "dist.channel_write_notify val must be an integer scalar, but got " << args[5]->GetType()->TypeName();
+    (void)ParseChannelWriteKwargs(kwargs, args[3], "dist.channel_write_notify", false);
     return GetNoneType();
 }
 
@@ -678,9 +686,9 @@ TypePtr DeduceAtomicType(const std::vector<ExprPtr>& args, const std::vector<std
 REGISTER_OP("dist.channel_write_value")
     .set_op_category("DistOp")
     .set_description("Async scalar-word write into the peer's window through the channel's jetty "
-                     "(inline WQE); the value is cast to the DTensor dtype")
+                     "(inline WQE; destination bound at channel creation); the value is cast to the "
+                     "DTensor dtype")
     .add_argument("channel", "Channel handle (opaque integer token)")
-    .add_argument("peer", "Destination peer rank (integer scalar)")
     .add_argument("base_bytes", "DTensor view start, scalar byte offset into the payload (integer scalar)")
     .add_argument("value", "Scalar word to write (numeric scalar)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
@@ -691,9 +699,9 @@ REGISTER_OP("dist.channel_write_value")
 REGISTER_OP("dist.channel_write_notify")
     .set_op_category("DistOp")
     .set_description("Async GM tensor -> remote window write fused with a hardware notify on payload "
-                     "completion (one WriteWithNotify WQE, born published)")
+                     "completion (one WriteWithNotify WQE, born published; destination bound at channel "
+                     "creation)")
     .add_argument("channel", "Channel handle (opaque integer token)")
-    .add_argument("peer", "Destination peer rank (integer scalar)")
     .add_argument("base_bytes", "DTensor view start, scalar byte offset into the payload (integer scalar)")
     .add_argument("num_bytes", "Transfer length in bytes (integer scalar)")
     .add_argument("tensor", "Local GM source tensor (TensorType)")

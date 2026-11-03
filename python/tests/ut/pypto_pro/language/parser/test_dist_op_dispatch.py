@@ -356,7 +356,7 @@ def test_notify_remote_local_and_enum_forms():
     # Local form reads this rank from the window descriptor at runtime.
     assert calls[1].args[3].name == "dist.window_get"
     assert calls[2].kwargs["notify_op"] == int(pld.NotifyOp.ATOMIC_ADD)
-    assert set(calls[0].kwargs) == {"notify_op"}
+    assert calls[0].kwargs == {"notify_op": int(pld.NotifyOp.SET), "flush_store": True}
 
 
 def test_notify_explicit_val_none_is_the_local_form():
@@ -393,7 +393,7 @@ def test_notify_all_lowers_with_the_set_default():
     call = _op_calls(_parse(kernel), "dist.notify_all")[0]
     assert isinstance(call.args[1], ir.ConstInt) and call.args[1].value == 3
     assert isinstance(call.args[2], ir.ConstInt) and call.args[2].value == 7
-    assert call.kwargs == {"notify_op": int(pld.NotifyOp.SET)}
+    assert call.kwargs == {"notify_op": int(pld.NotifyOp.SET), "flush_store": True}
 
 
 def test_notify_all_atomic_add_op_mode():
@@ -404,7 +404,33 @@ def test_notify_all_atomic_add_op_mode():
             pld.notify_all(sig, 1, op=pld.NotifyOp.ATOMIC_ADD)
 
     call = _op_calls(_parse(kernel), "dist.notify_all")[0]
-    assert call.kwargs == {"notify_op": int(pld.NotifyOp.ATOMIC_ADD)}
+    assert call.kwargs == {"notify_op": int(pld.NotifyOp.ATOMIC_ADD), "flush_store": True}
+
+
+def test_notify_flush_store_flag_lands_on_both_ops():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window):
+        with pl.section_vector():
+            sig = pld.signal(win, 0)
+            pld.notify(sig, 1, 7, flush_store=False)
+            pld.notify_all(sig, 7, flush_store=False)
+
+    notify_call = _op_calls(_parse(kernel), "dist.notify")[0]
+    notify_all_call = _op_calls(_parse(kernel), "dist.notify_all")[0]
+    assert notify_call.kwargs == {"notify_op": int(pld.NotifyOp.SET), "flush_store": False}
+    assert notify_all_call.kwargs == {"notify_op": int(pld.NotifyOp.SET), "flush_store": False}
+
+
+def test_notify_flush_store_must_be_compile_time():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, flag: pl.DT_BOOL):
+        with pl.section_vector():
+            sig = pld.signal(win, 0)
+            pld.notify(sig, 1, 7, flush_store=flag)
+
+    with pytest.raises(InvalidType) as caught:
+        _parse(kernel)
+    assert "'flush_store' must be a compile-time boolean constant" in str(caught.value)
 
 
 def test_notify_all_requires_a_signal_handle():
@@ -582,9 +608,39 @@ def test_channel_lifecycle_parses():
 
     func = _parse(kernel)
     assert _op_calls(func, "dist.channel")
-    assert _op_calls(func, "dist.channel_write")
+    writes = _op_calls(func, "dist.channel_write")
+    assert writes
+    # No per-call peer: [channel, base_bytes, num_bytes, tensor] — the channel binds it.
+    assert len(writes[0].args) == 4
     assert _op_calls(func, "dist.channel_submit")
     assert _op_calls(func, "dist.channel_drain")
+
+
+def test_channel_transfers_reject_per_call_peer():
+    """The channel binds its destination at creation; transfers take no peer argument."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def write_kernel(win: pld.Window, src: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            ch = pld.channel(win, 64, peer=1)
+            ch.write(1, dt, src)
+
+    with pytest.raises(InvalidArgument) as caught:
+        _parse(write_kernel)
+    assert "ch.write requires (dtensor, tensor or scalar)" in str(caught.value)
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def write_notify_kernel(win: pld.Window, src: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            sig = pld.signal(win, 0)
+            ch = pld.channel(win, 64, peer=1)
+            ch.write_notify(1, dt, src, sig, 1)
+
+    with pytest.raises(InvalidArgument) as caught:
+        _parse(write_notify_kernel)
+    assert "ch.write_notify requires (dtensor, tensor, signal, val)" in str(caught.value)
 
 
 def test_channel_requires_assignment():

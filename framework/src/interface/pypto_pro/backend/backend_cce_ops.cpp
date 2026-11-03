@@ -1592,7 +1592,7 @@ static std::string MakeWindowGetCodegenCCE(const ir::CallPtr& op, codegen::Codeg
         << "dist.window_get field index " << field->value_
         << " is not a scalar field (remote_ptrs array reads are not supported yet)";
     const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
-    return "((__gm__ PyptoDistWindow*)" + window_ptr + ")->" + member;
+    return "((__gm__ dist::Window*)" + window_ptr + ")->" + member;
 }
 
 static std::string MakeSetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
@@ -1697,8 +1697,8 @@ static std::string MakeDistBarrierCodegenCCE(const ir::CallPtr& op, codegen::Cod
     const bool flushStore = !op->HasKwarg("flush_store") || op->GetKwarg<bool>("flush_store");
 
     const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
-    codegen.Emit("pypto_dist_barrier<" + DistTimeoutLiteral(timeoutCycles) + ", " + (syncLocal ? "true" : "false") +
-                 ", " + (flushStore ? "true" : "false") + ">(reinterpret_cast<__gm__ PyptoDistWindow*>(" + window_ptr +
+    codegen.Emit("pypto::dist::barrier<" + DistTimeoutLiteral(timeoutCycles) + ", " + (syncLocal ? "true" : "false") +
+                 ", " + (flushStore ? "true" : "false") + ">(reinterpret_cast<__gm__ dist::Window*>(" + window_ptr +
                  "));");
     return "";
 }
@@ -1727,14 +1727,15 @@ static std::string MakeDistNotifyCodegenCCE(const ir::CallPtr& op, codegen::Code
     const int notifyOp = op->HasKwarg("notify_op") ? op->GetKwarg<int>("notify_op") : 0;
     PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, notifyOp == 0 || notifyOp == 1)
         << "dist.notify notify_op must be 0 (SET) or 1 (ATOMIC_ADD), but got " << notifyOp;
+    const bool flushStore = !op->HasKwarg("flush_store") || op->GetKwarg<bool>("flush_store");
 
     const std::string slot = codegen.GetExprAsCode(op->args_[1]);
     const std::string val = codegen.GetExprAsCode(op->args_[2]);
     const std::string peer = codegen.GetExprAsCode(op->args_[3]);
     const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
-    codegen.Emit("pypto_dist_notify<" + std::to_string(notifyOp) + ">(reinterpret_cast<__gm__ PyptoDistWindow*>(" +
-                 window_ptr + "), " + "static_cast<int64_t>(" + slot + "), static_cast<int64_t>(" + val + "), " +
-                 "static_cast<int32_t>(" + peer + "));");
+    codegen.Emit("pypto::dist::notify<" + std::to_string(notifyOp) + ", " + (flushStore ? "true" : "false") +
+                 ">(reinterpret_cast<__gm__ dist::Window*>(" + window_ptr + "), " + "static_cast<int64_t>(" + slot +
+                 "), static_cast<int64_t>(" + val + "), " + "static_cast<int32_t>(" + peer + "));");
     return "";
 }
 
@@ -1756,12 +1757,14 @@ static std::string MakeDistNotifyAllCodegenCCE(const ir::CallPtr& op, codegen::C
     const int notifyOp = op->HasKwarg("notify_op") ? op->GetKwarg<int>("notify_op") : 0;
     PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, notifyOp == 0 || notifyOp == 1)
         << "dist.notify_all notify_op must be 0 (SET) or 1 (ATOMIC_ADD), but got " << notifyOp;
+    const bool flushStore = !op->HasKwarg("flush_store") || op->GetKwarg<bool>("flush_store");
 
     const std::string slot = codegen.GetExprAsCode(op->args_[1]);
     const std::string val = codegen.GetExprAsCode(op->args_[2]);
     const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
-    codegen.Emit("pypto_dist_notify_all<" + std::to_string(notifyOp) + ">(reinterpret_cast<__gm__ PyptoDistWindow*>(" +
-                 window_ptr + "), static_cast<int64_t>(" + slot + "), static_cast<int64_t>(" + val + "));");
+    codegen.Emit("pypto::dist::notify_all<" + std::to_string(notifyOp) + ", " + (flushStore ? "true" : "false") +
+                 ">(reinterpret_cast<__gm__ dist::Window*>(" + window_ptr + "), static_cast<int64_t>(" + slot +
+                 "), static_cast<int64_t>(" + val + "));");
     return "";
 }
 
@@ -1790,8 +1793,8 @@ static std::string MakeDistWaitCodegenCCE(const ir::CallPtr& op, codegen::Codege
     const std::string slot = codegen.GetExprAsCode(op->args_[1]);
     const std::string val = codegen.GetExprAsCode(op->args_[2]);
     const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
-    codegen.Emit("pypto_dist_wait<" + std::to_string(cmp) + ">(reinterpret_cast<__gm__ PyptoDistWindow*>(" +
-                 window_ptr + "), " + "static_cast<int64_t>(" + slot + "), static_cast<int64_t>(" + val + "), " +
+    codegen.Emit("pypto::dist::wait<" + std::to_string(cmp) + ">(reinterpret_cast<__gm__ dist::Window*>(" + window_ptr +
+                 "), " + "static_cast<int64_t>(" + slot + "), static_cast<int64_t>(" + val + "), " +
                  std::to_string(timeoutCycles) + "LL);");
     return "";
 }
@@ -1840,7 +1843,7 @@ static std::string MakeDistCreateChannelCodegenCCE(const ir::CallPtr& op, codege
         << "dist.channel must be the RHS of an assignment";
 
     const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
-    codegen.Emit("auto " + target + " = PyptoDistChannel(reinterpret_cast<__gm__ PyptoDistWindow*>(" + window_ptr +
+    codegen.Emit("auto " + target + " = pypto::dist::Channel(reinterpret_cast<__gm__ dist::Window*>(" + window_ptr +
                  "), reinterpret_cast<__ubuf__ uint8_t*>(" + DistUbAddrLiteral(ubAddr) + "), static_cast<int32_t>(" +
                  codegen.GetExprAsCode(op->args_[1]) + "));");
     return "";
@@ -1849,12 +1852,12 @@ static std::string MakeDistCreateChannelCodegenCCE(const ir::CallPtr& op, codege
 static std::string MakeDistChannelWriteCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 5)
-        << "dist.channel_write requires 5 arguments, but got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
+        << "dist.channel_write requires 4 arguments, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.channel_write requires the Vector target (the write engine runs on the AIV)";
 
-    auto tensor_var = ir::As<ir::Var>(op->args_[4]);
+    auto tensor_var = ir::As<ir::Var>(op->args_[3]);
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensor_var)
         << "dist.channel_write source must be a tensor Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
@@ -1869,17 +1872,17 @@ static std::string MakeDistChannelWriteCodegenCCE(const ir::CallPtr& op, codegen
     // The channel binds the peer (jetty, peer metadata, remote base) at construction, so the
     // transfer carries only the destination offset, source and length.
     codegen.Emit(channel + ".Write<" + DistTimeoutLiteral(timeoutCycles) + ", " + (submit ? "true" : "false") + ">(" +
-                 "static_cast<int64_t>(" + codegen.GetExprAsCode(op->args_[2]) +
+                 "static_cast<int64_t>(" + codegen.GetExprAsCode(op->args_[1]) +
                  "), reinterpret_cast<__gm__ uint8_t*>(" + tensor_ptr + "), static_cast<int64_t>(" +
-                 codegen.GetExprAsCode(op->args_[3]) + "));");
+                 codegen.GetExprAsCode(op->args_[2]) + "));");
     return "";
 }
 
 static std::string MakeDistChannelWriteValueCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
-        << "dist.channel_write_value requires 4 arguments, but got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
+        << "dist.channel_write_value requires 3 arguments, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.channel_write_value requires the Vector target (the write engine runs on the AIV)";
 
@@ -1890,20 +1893,20 @@ static std::string MakeDistChannelWriteValueCodegenCCE(const ir::CallPtr& op, co
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
     codegen.Emit(channel + ".WriteValue<" + DistTimeoutLiteral(timeoutCycles) + ", " + dtype_str + ", " +
-                 (submit ? "true" : "false") + ">(static_cast<int64_t>(" + codegen.GetExprAsCode(op->args_[2]) +
-                 "), static_cast<" + dtype_str + ">(" + codegen.GetExprAsCode(op->args_[3]) + "));");
+                 (submit ? "true" : "false") + ">(static_cast<int64_t>(" + codegen.GetExprAsCode(op->args_[1]) +
+                 "), static_cast<" + dtype_str + ">(" + codegen.GetExprAsCode(op->args_[2]) + "));");
     return "";
 }
 
 static std::string MakeDistChannelWriteNotifyCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 7)
-        << "dist.channel_write_notify requires 7 arguments, but got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 6)
+        << "dist.channel_write_notify requires 6 arguments, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.channel_write_notify requires the Vector target (the write engine runs on the AIV)";
 
-    auto tensor_var = ir::As<ir::Var>(op->args_[4]);
+    auto tensor_var = ir::As<ir::Var>(op->args_[3]);
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensor_var)
         << "dist.channel_write_notify source must be a tensor Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
@@ -1915,10 +1918,10 @@ static std::string MakeDistChannelWriteNotifyCodegenCCE(const ir::CallPtr& op, c
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
     const std::string tensor_ptr = codegen.GetPointer(codegen.GetVarName(tensor_var));
     codegen.Emit(channel + ".WriteNotify<" + DistTimeoutLiteral(timeoutCycles) + ">(static_cast<int64_t>(" +
-                 codegen.GetExprAsCode(op->args_[2]) + "), reinterpret_cast<__gm__ uint8_t*>(" + tensor_ptr +
-                 "), static_cast<int64_t>(" + codegen.GetExprAsCode(op->args_[3]) + "), static_cast<int64_t>(" +
-                 codegen.GetExprAsCode(op->args_[5]) + "), static_cast<int64_t>(" +
-                 codegen.GetExprAsCode(op->args_[6]) + "));");
+                 codegen.GetExprAsCode(op->args_[1]) + "), reinterpret_cast<__gm__ uint8_t*>(" + tensor_ptr +
+                 "), static_cast<int64_t>(" + codegen.GetExprAsCode(op->args_[2]) + "), static_cast<int64_t>(" +
+                 codegen.GetExprAsCode(op->args_[4]) + "), static_cast<int64_t>(" +
+                 codegen.GetExprAsCode(op->args_[5]) + "));");
     return "";
 }
 
@@ -2036,7 +2039,7 @@ static std::string MakeDistAtomicCodegenCCE(const ir::CallPtr& op, codegen::Code
     const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
 
     std::ostringstream call;
-    call << helper << "<" << dtype_str << ">(reinterpret_cast<__gm__ PyptoDistWindow*>(" << window_ptr
+    call << helper << "<" << dtype_str << ">(reinterpret_cast<__gm__ dist::Window*>(" << window_ptr
          << "), static_cast<int32_t>(" << peer << "), static_cast<int64_t>(" << base_bytes << "), static_cast<int64_t>("
          << elem_off << ")";
     for (size_t i = 5; i < op->args_.size(); ++i) {
@@ -2058,19 +2061,19 @@ static std::string MakeDistAtomicCodegenCCE(const ir::CallPtr& op, codegen::Code
 REGISTER_BACKEND_OP(BackendCCE, "dist.atomic_add")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistAtomicCodegenCCE(op, codegen, "pypto_dist_atomic_add");
+        return MakeDistAtomicCodegenCCE(op, codegen, "pypto::dist::atomic_add");
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "dist.atomic_exchange")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistAtomicCodegenCCE(op, codegen, "pypto_dist_atomic_exchange");
+        return MakeDistAtomicCodegenCCE(op, codegen, "pypto::dist::atomic_exchange");
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "dist.atomic_cas")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistAtomicCodegenCCE(op, codegen, "pypto_dist_atomic_cas");
+        return MakeDistAtomicCodegenCCE(op, codegen, "pypto::dist::atomic_cas");
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "block.tile_valid_shape")

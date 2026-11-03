@@ -590,6 +590,12 @@ public:
     }
 };
 
+bool HasWindowParam(const ir::FunctionPtr& func)
+{
+    return std::any_of(func->params_.begin(), func->params_.end(),
+                       [](const ir::VarPtr& param) { return ir::As<ir::WindowType>(param->GetType()) != nullptr; });
+}
+
 std::vector<ir::FunctionPtr> OrderSimtCallees(const std::map<std::string, ir::FunctionPtr>& callees)
 {
     std::unordered_set<std::string> active;
@@ -721,7 +727,9 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& program, npu::tile_
     emitter_.EmitLine("#endif");
     EmitStructTypes();
     emitter_.EmitLine("#include <pypto_dump.h>");
-    emitter_.EmitLine("#include <pypto_distribute.h>");
+    if (HasWindowParam(kernel_func)) {
+        emitter_.EmitLine("#include <pypto_distribute.h>");
+    }
     emitter_.EmitRaw(function_code);
     emitter_.EmitLine("#endif");
 
@@ -811,7 +819,7 @@ void CCECodegen::EmitSingleFunctionSignature(const ir::FunctionPtr& func, bool h
         } else if (std::dynamic_pointer_cast<const ir::WindowType>(param->GetType())) {
             // Window param: raw GM byte pointer to the device dist::Window
             // descriptor the host wrote at create_window. Field reads (dist.window_get)
-            // cast it to the embedded PyptoDistWindow copy, so only the pointer name is
+            // cast it to the embedded dist::Window copy, so only the pointer name is
             // addressable in C++.
             std::string param_name = context_.SanitizeName(param);
             std::string ptr_name = param_name + "_ptr";

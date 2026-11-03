@@ -361,7 +361,7 @@ class AssignmentParserMixin:
             token = self.builder.let(var_name, value_expr.call, span=span)
             self.scope_manager.define_var(
                 var_name,
-                Channel(value_expr.window, value_expr.peer, value_expr.ub_addr, token),
+                Channel(value_expr.window, value_expr.ub_addr, token),
                 span=span,
             )
             return

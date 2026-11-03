@@ -103,7 +103,6 @@ def test_sibling_if_does_not_reference_a_previous_branch_local():
         };
         #endif
         #include <pypto_dump.h>
-        #include <pypto_distribute.h>
         __aicore__ inline void _sibling_if_kernel_impl_cube(int64_t rows_0, int64_t cols_0)
         {
 
@@ -153,7 +152,6 @@ def test_then_termination_uses_the_only_reachable_continuation_value():
         };
         #endif
         #include <pypto_dump.h>
-        #include <pypto_distribute.h>
         __aicore__ inline void _then_terminates_kernel_impl_cube(int64_t flag_0)
         {
 
@@ -199,7 +197,6 @@ def test_else_termination_uses_the_only_reachable_continuation_value():
         };
         #endif
         #include <pypto_dump.h>
-        #include <pypto_distribute.h>
         __aicore__ inline void _else_terminates_kernel_impl_cube(int64_t flag_0)
         {
 
@@ -249,7 +246,6 @@ def test_nested_if_yield_is_not_consumed_by_the_outer_loop():
         };
         #endif
         #include <pypto_dump.h>
-        #include <pypto_distribute.h>
         __aicore__ inline void _nested_yield_kernel_impl_cube(int64_t value_0, int64_t carried_0)
         {
 
@@ -306,7 +302,6 @@ def test_loop_induction_variable_does_not_reuse_shadowed_constant():
         };
         #endif
         #include <pypto_dump.h>
-        #include <pypto_distribute.h>
         __aicore__ inline void _loop_induction_shadows_constant_kernel_impl_cube(int64_t limit_0)
         {
 

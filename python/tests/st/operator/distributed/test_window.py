@@ -594,6 +594,16 @@ def notify_wait_kernel(win: pld.Window, out: pl.Tensor[[2], pl.DT_INT64]):
         pld.notify(sig_ring, (me + 1) % nr, 1, op=pld.NotifyOp.ATOMIC_ADD)
         pld.wait(sig_ring, 1, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
 
+        # Same ring without the store flush: there is no prior put to order here.
+        sig_ring_nf = pld.signal(win, 8)
+        pld.notify(sig_ring_nf, (me + 1) % nr, 1, op=pld.NotifyOp.ATOMIC_ADD, flush_store=False)
+        pld.wait(sig_ring_nf, 1, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
+
+        # notify_all without the flush: every rank adds 1 to every rank's slot 9.
+        sig_all_nf = pld.signal(win, 9)
+        pld.notify_all(sig_all_nf, 1, op=pld.NotifyOp.ATOMIC_ADD, flush_store=False)
+        pld.wait(sig_all_nf, nr, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
+
         sig_counter = pld.signal(win, 7)
         pld.notify(sig_counter, 0, 1, op=pld.NotifyOp.ATOMIC_ADD)
 
