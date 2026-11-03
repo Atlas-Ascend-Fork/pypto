@@ -1694,6 +1694,27 @@ Status ReplaceTensor::RunOnFunction(Function& function)
     if (MarkTensorAsPartialMem(function) == FAILED) {
         return FAILED;
     }
+    // A removed inplace reshape can leave its assemble output with only memoryId linking it to the original raw.
+    std::unordered_map<int, std::shared_ptr<RawTensor>> originalRaws;
+    const auto tensors = GraphUtils::GetAllTensors(function);
+    for (const auto& tensor : tensors) {
+        auto raw = tensor->GetRawTensor();
+        if (raw != nullptr && raw->memoryId == raw->rawmagic) {
+            originalRaws.emplace(raw->memoryId, raw);
+        }
+    }
+    for (const auto& tensor : tensors) {
+        auto raw = tensor->GetRawTensor();
+        if (raw == nullptr || raw->actualRawmagic != -1 || raw->rawmagic == raw->memoryId) {
+            continue;
+        }
+        auto it = originalRaws.find(raw->memoryId);
+        if (it != originalRaws.end() && raw->datatype == it->second->datatype &&
+            raw->GetRawShapeSize() == it->second->GetRawShapeSize()) {
+            it->second->actualRawmagic = it->second->rawmagic;
+            raw->actualRawmagic = it->second->rawmagic;
+        }
+    }
     APASS_LOG_INFO_F(Elements::Operation, "===> End ReplaceTensor.");
     return SUCCESS;
 }

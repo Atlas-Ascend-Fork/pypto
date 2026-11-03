@@ -18,6 +18,7 @@
 #include "split_large_fanout_tensor.h"
 #include "interface/tensor/irbuilder.h"
 #include "passes/pass_utils/graph_utils.h"
+#include "passes/pass_utils/pass_token_utils.h"
 #include "passes/pass_utils/merge_view_assemble_utils.h"
 #include "passes/pass_utils/pass_operation_utils.h"
 #include "passes/pass_log/pass_log.h"
@@ -98,6 +99,7 @@ Status SplitLargeFanoutTensor::RunOnFunction(Function& function)
 {
     APASS_LOG_INFO_F(Elements::Function, "===> Start SplitLargeFanoutTensor.");
     Init();
+    function.RefreshVarDependency();
     CollectLargeTensor(function);
     SplitLargeTensor(function);
     EraseRedundantAssembleOp(function);
@@ -332,6 +334,9 @@ void SplitLargeFanoutTensor::CollectCoveredTensors(const Shape& lcmTileShape, co
 
 void InheritTokenFromOldAssemble(Function& function, const Operation& oldAssemble, Operation& newAssemble)
 {
+    for (const auto& token : oldAssemble.tokens_) {
+        PassTokenUtils::AddTokenConsumer(function, token, newAssemble);
+    }
     if (oldAssemble.result_token_.empty()) {
         return;
     }
@@ -344,8 +349,7 @@ void InheritTokenFromOldAssemble(Function& function, const Operation& oldAssembl
 
     auto oldConsumers = oldAssemble.ConsumerOpsByToken();
     for (auto* consumer : oldConsumers) {
-        consumer->tokens_.push_back(newToken);
-        varDependency.AddConsumer(newToken, std::static_pointer_cast<const ir::Stmt>(consumer->shared_from_this()));
+        PassTokenUtils::AddTokenConsumer(function, newToken, *consumer);
     }
 }
 
@@ -379,7 +383,8 @@ void RemoveObsoleteTokensAfterSplit(Function& function)
             auto producerOutput = producerAssemble->oOperand.empty() ? nullptr : producerAssemble->oOperand.front();
             auto consumerOutput = consumerAssemble->oOperand.empty() ? nullptr : consumerAssemble->oOperand.front();
             if (producerOutput != nullptr && consumerOutput != nullptr &&
-                producerOutput->tensor != consumerOutput->tensor) {
+                producerOutput->tensor != consumerOutput->tensor &&
+                producerOutput->tensor->memoryId != consumerOutput->tensor->memoryId) {
                 tokensToRemove.push_back(token);
             }
         }
@@ -431,11 +436,15 @@ Operation* AddNewAssembleOp(Function& function, LogicalTensorPtr overlap, Logica
         auto newAssembleOp = AssembleOp{
             oldAssembleOpAttr->GetFrom(), newAssembleOffset, overlap, newTensor, oldAssembleOp,
             oldAssembleOp->GetOpcode()};
-        return &GraphUtils::AddAssembleOperation(function, newAssembleOp);
+        auto& newOp = GraphUtils::AddAssembleOperation(function, newAssembleOp);
+        InheritTokenFromOldAssemble(function, *oldAssembleOp, newOp);
+        return &newOp;
     }
     auto newAssembleOp = AssembleOp{
         overlap->GetMemoryTypeOriginal(), newAssembleOffset, overlap, newTensor, nullptr, Opcode::OP_ASSEMBLE};
-    return &GraphUtils::AddAssembleOperation(function, newAssembleOp);
+    auto& newOp = GraphUtils::AddAssembleOperation(function, newAssembleOp);
+    InheritTokenFromOldAssemble(function, *oldAssembleOp, newOp);
+    return &newOp;
 }
 
 // 对于一对一、一对多场景创建新的AssembleOp和Tensor
@@ -926,6 +935,25 @@ void SplitLargeFanoutTensor::CollectLargeTensor(Function& function)
     std::unordered_set<int> visited;
     const auto multiLogicalTensorRawMagics = GraphUtils::GetRawMagicsWithMultipleLogicalTensors(function);
     auto operations = function.Operations(false);
+    std::unordered_map<int, int> rawByMemory;
+    std::unordered_set<int> aliasedMemory;
+    auto recordStorage = [&](const LogicalTensorPtr& tensor) {
+        if (tensor == nullptr || tensor->tensor->memoryId < 0) {
+            return;
+        }
+        auto [it, inserted] = rawByMemory.emplace(tensor->tensor->memoryId, tensor->GetRawMagic());
+        if (!inserted && it->second != tensor->GetRawMagic()) {
+            aliasedMemory.insert(it->first);
+        }
+    };
+    for (const auto& op : operations) {
+        for (const auto& tensor : op.GetIOperands()) {
+            recordStorage(tensor);
+        }
+        for (const auto& tensor : op.GetOOperands()) {
+            recordStorage(tensor);
+        }
+    }
     visited.reserve(operations.size());
     for (auto& op : operations) {
         if (!IsAssembleLike(op.GetOpcode())) {
@@ -934,6 +962,10 @@ void SplitLargeFanoutTensor::CollectLargeTensor(Function& function)
         for (const auto& logicalTensor : op.GetOOperands()) {
             if (logicalTensor == nullptr || !visited.emplace(logicalTensor->GetMagic()).second ||
                 logicalTensor->GetProducers().empty() || logicalTensor->GetConsumers().empty()) {
+                continue;
+            }
+            // Splitting one raw tensor independently would disconnect accesses through its storage aliases.
+            if (aliasedMemory.count(logicalTensor->tensor->memoryId) != 0) {
                 continue;
             }
             bool allProducersAssemble = std::all_of(
@@ -1258,6 +1290,8 @@ void SplitLargeFanoutTensor::UpdateForRedundantAssemble(Operation& op)
 void SplitLargeFanoutTensor::EraseRedundantAssembleOp(Function& function)
 {
     APASS_LOG_INFO_F(Elements::Operation, "---> Remove redundant Assemble op.");
+    // Splitting rewrites token-bearing operations; rebuild the cache before testing token liveness.
+    function.RefreshVarDependency();
     std::vector<Operation*> redundantCopyOuts;
     std::unordered_set<int> outCastMagics;
     for (const auto& outCast : function.GetOutcast()) {
@@ -1276,7 +1310,9 @@ void SplitLargeFanoutTensor::EraseRedundantAssembleOp(Function& function)
                               op.GetOpcodeStr().c_str(), op.GetOpMagic(), GetFormatBacktrace(op).c_str());
             continue;
         }
-        if (outCastMagics.count(output->GetRawMagic()) == 0 && output->GetConsumers().empty()) {
+        // Alias writes can have token-only consumers reading the same storage through another raw tensor.
+        if (outCastMagics.count(output->GetRawMagic()) == 0 && output->GetConsumers().empty() &&
+            op.ConsumerOpsByToken().empty()) {
             /* input --> Assemble/Contract --> output(非OCAST, 且没有consumer) */
             redundantCopyOuts.push_back(&op);
         }

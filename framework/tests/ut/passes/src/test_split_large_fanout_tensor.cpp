@@ -31,11 +31,17 @@
 #include "passes/tile_graph_pass/graph_optimization/split_large_fanout_tensor.h"
 #undef private
 #include "computational_graph_builder.h"
+#include "passes/pass_utils/remove_redundant_op_utils.h"
+#include "passes/tensor_graph_pass/remove_redundant_reshape.h"
 
 using namespace npu::tile_fwk;
 
 namespace npu {
 namespace tile_fwk {
+
+void RemoveObsoleteTokensAfterSplit(Function& function);
+Operation* AddNewAssembleOp(Function& function, LogicalTensorPtr overlap, LogicalTensorPtr largeTensor,
+                            Offset lcmTileOffset, LogicalTensorPtr& newTensor);
 
 class SplitLargeFanoutTensorTest : public testing::Test {
 public:
@@ -2856,5 +2862,160 @@ TEST_F(SplitLargeFanoutTensorTest, OverlapSearchIndexBestDimNotZero)
     EXPECT_EQ(result[0], tensorInfos[0].first);
     EXPECT_EQ(result[1], tensorInfos[3].first);
 }
+
+// The alias has a different raw tensor and no data consumer; its write is visible through the base.
+TEST_F(SplitLargeFanoutTensorTest, PreserveAliasWriteWithTokenOnlyConsumer)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {8, 16}, {"source", "alias", "base", "out", "dead"}));
+    ASSERT_TRUE(graph.AddOps({Opcode::OP_ASSEMBLE, Opcode::OP_EXP, Opcode::OP_ASSEMBLE},
+                             {{"source"}, {"base"}, {"source"}}, {{"alias"}, {"out"}, {"dead"}},
+                             {"write", "read", "dead_write"}, true));
+    ASSERT_TRUE(graph.SetInCast({"source", "base"}));
+    ASSERT_TRUE(graph.SetOutCast({"out"}));
+    auto* function = graph.GetFunction();
+    function->SetSameMemId(graph.GetTensor("base"), graph.GetTensor("alias"));
+    auto token = IRContext::Get().MakeSemanticToken("alias_write", ir::TokenKind::WRITE, ir::Span::Unknown());
+    graph.GetOp("write")->result_token_ = {token};
+    graph.GetOp("read")->tokens_ = {token};
+    // Model an earlier rewrite that changed token fields without refreshing the dependency cache.
+    ASSERT_TRUE(graph.GetTensor("alias")->GetConsumers().empty());
+    auto writeMagic = graph.GetOp("write")->GetOpMagic();
+    auto deadMagic = graph.GetOp("dead_write")->GetOpMagic();
+
+    SplitLargeFanoutTensor pass;
+    pass.EraseRedundantAssembleOp(*function);
+
+    bool hasWrite = false;
+    bool hasDeadWrite = false;
+    for (auto& op : function->Operations(false)) {
+        hasWrite = hasWrite || op.GetOpMagic() == writeMagic;
+        hasDeadWrite = hasDeadWrite || op.GetOpMagic() == deadMagic;
+    }
+    EXPECT_TRUE(hasWrite);
+    EXPECT_FALSE(hasDeadWrite);
+    EXPECT_EQ(graph.GetOp("read")->ProducerOpsByToken().size(), 1UL);
+}
+
+TEST_F(SplitLargeFanoutTensorTest, PreserveWawBetweenStorageAliases)
+{
+    for (const bool sameStorage : {false, true}) {
+        ComputationalGraphBuilder graph;
+        ASSERT_TRUE(graph.AddTensors(DT_FP32, {8, 16}, {"source", "alias", "base"}));
+        ASSERT_TRUE(graph.AddOps({Opcode::OP_ASSEMBLE, Opcode::OP_ASSEMBLE}, {{"source"}, {"source"}},
+                                 {{"alias"}, {"base"}}, {"first", "second"}, true));
+        auto* function = graph.GetFunction();
+        if (sameStorage) {
+            function->SetSameMemId(graph.GetTensor("base"), graph.GetTensor("alias"));
+        }
+        auto token = IRContext::Get().MakeSemanticToken("alias_waw", ir::TokenKind::WRITE, ir::Span::Unknown());
+        graph.GetOp("first")->result_token_ = {token};
+        graph.GetOp("second")->tokens_ = {token};
+        function->RefreshVarDependency();
+
+        RemoveObsoleteTokensAfterSplit(*function);
+
+        EXPECT_EQ(graph.GetOp("second")->tokens_.size(), sameStorage ? 1UL : 0UL);
+        EXPECT_EQ(graph.GetOp("second")->ProducerOpsByToken().size(), sameStorage ? 1UL : 0UL);
+    }
+}
+
+TEST_F(SplitLargeFanoutTensorTest, SplitAssemblePreservesIncomingAndOutgoingTokens)
+{
+    for (const bool hasResultToken : {false, true}) {
+        ComputationalGraphBuilder graph;
+        ASSERT_TRUE(graph.AddTensors(DT_FP32, {8, 16}, {"source", "new", "read"}));
+        ASSERT_TRUE(graph.AddTensors(DT_FP32, {16, 16}, {"large"}));
+        ASSERT_TRUE(graph.AddOps({Opcode::OP_ASSEMBLE, Opcode::OP_EXP}, {{"source"}, {"source"}}, {{"large"}, {"read"}},
+                                 {"old", "reader"}, true));
+        graph.GetOp("old")->SetAssembleOpAttribute({0, 0});
+        auto* function = graph.GetFunction();
+        auto incoming = IRContext::Get().MakeSemanticToken("incoming", ir::TokenKind::WRITE, ir::Span::Unknown());
+        auto outgoing = IRContext::Get().MakeSemanticToken("outgoing", ir::TokenKind::WRITE, ir::Span::Unknown());
+        graph.GetOp("old")->tokens_ = {incoming};
+        if (hasResultToken) {
+            graph.GetOp("old")->result_token_ = {outgoing};
+            graph.GetOp("reader")->tokens_ = {outgoing};
+        }
+        function->RefreshVarDependency();
+        auto replacement = graph.GetTensor("new");
+
+        auto* split = AddNewAssembleOp(*function, graph.GetTensor("source"), graph.GetTensor("large"), {0, 0},
+                                       replacement);
+
+        ASSERT_NE(split, nullptr);
+        EXPECT_NE(std::find(split->tokens_.begin(), split->tokens_.end(), incoming), split->tokens_.end());
+        if (hasResultToken) {
+            auto consumers = split->ConsumerOpsByToken();
+            EXPECT_NE(consumers.find(graph.GetOp("reader")), consumers.end());
+        }
+    }
+}
+
+TEST_F(SplitLargeFanoutTensorTest, SharedStorageIsNotSplitIndependently)
+{
+    for (const bool sameStorage : {false, true}) {
+        ComputationalGraphBuilder graph;
+        ASSERT_TRUE(graph.AddTensors(DT_FP32, {8, 16}, {"source", "slice"}));
+        ASSERT_TRUE(graph.AddTensors(DT_FP32, {16, 16}, {"base"}));
+        ASSERT_TRUE(graph.AddTensors(DT_FP32, {32, 8}, {"alias"}));
+        ASSERT_TRUE(graph.AddOps({Opcode::OP_ASSEMBLE, Opcode::OP_VIEW, Opcode::OP_ASSEMBLE},
+                                 {{"source"}, {"base"}, {"source"}}, {{"base"}, {"slice"}, {"alias"}},
+                                 {"base_write", "read", "alias_write"}, true));
+        graph.GetOp("base_write")->SetAssembleOpAttribute({0, 0});
+        auto* function = graph.GetFunction();
+        if (sameStorage) {
+            function->SetSameMemId(graph.GetTensor("base"), graph.GetTensor("alias"));
+        }
+        SplitLargeFanoutTensor pass;
+        pass.Init();
+        pass.CollectLargeTensor(*function);
+        EXPECT_EQ(pass.largeTensors_.size(), sameStorage ? 0UL : 1UL);
+    }
+}
+
+TEST_F(SplitLargeFanoutTensorTest, ContractSliceFoldingPreservesTokenBearingAccesses)
+{
+    for (const auto& taggedOp : {"contract", "slice", "none"}) {
+        for (const bool resultToken : {false, true}) {
+            ComputationalGraphBuilder graph;
+            ASSERT_TRUE(graph.AddTensors(DT_FP32, {8, 16}, {"source", "tile", "out"}));
+            ASSERT_TRUE(graph.AddTensors(DT_FP32, {16, 16}, {"middle"}));
+            ASSERT_TRUE(graph.AddOps({Opcode::OP_CONTRACT, Opcode::OP_SLICE, Opcode::OP_CONTRACT},
+                                     {{"source"}, {"middle"}, {"tile"}}, {{"middle"}, {"tile"}, {"out"}},
+                                     {"contract", "slice", "consumer"}, true));
+            graph.GetOp("contract")->SetAssembleOpAttribute({0, 0});
+            graph.GetOp("slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(
+                Offset{0, 0}, SymbolicScalar::FromConcrete({0, 0}), SymbolicScalar::FromConcrete({8, 16})));
+            graph.GetOp("consumer")->SetAssembleOpAttribute({0, 0});
+            ASSERT_TRUE(graph.SetInCast({"source"}));
+            ASSERT_TRUE(graph.SetOutCast({"out"}));
+            auto* function = graph.GetFunction();
+            const bool hasToken = std::string(taggedOp) != "none";
+            auto* access = graph.GetOp(hasToken ? taggedOp : "contract");
+            auto accessMagic = access->GetOpMagic();
+            auto token = IRContext::Get().MakeSemanticToken("memory_order", ir::TokenKind::WRITE, ir::Span::Unknown());
+            if (hasToken) {
+                if (resultToken) {
+                    access->result_token_ = {token};
+                } else {
+                    access->tokens_ = {token};
+                }
+            }
+            function->RefreshVarDependency();
+            std::vector<Operation*> newOps;
+            bool updated = false;
+
+            ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, updated), SUCCESS);
+
+            bool retained = false;
+            for (auto& op : function->Operations(false)) {
+                retained = retained || op.GetOpMagic() == accessMagic;
+            }
+            EXPECT_EQ(retained, hasToken) << taggedOp << " resultToken=" << resultToken;
+        }
+    }
+}
+
 } // namespace tile_fwk
 } // namespace npu

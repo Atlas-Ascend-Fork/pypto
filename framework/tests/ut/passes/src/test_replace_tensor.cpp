@@ -2104,5 +2104,94 @@ TEST_F(ReplaceTensorTest, TestOversizedSharedDdrAssembleInputSkipsCopyInOut)
     }
 }
 
+namespace {
+struct MemoryIdAliasGraph {
+    std::shared_ptr<Function> function;
+    std::shared_ptr<RawTensor> originalRaw;
+    std::shared_ptr<RawTensor> aliasRaw;
+};
+
+// 构造仅靠memoryId与原始raw关联的raw(assemble输出被消除后的残留形态): rawmagic与memoryId不同, 且actualRawmagic未确定。
+MemoryIdAliasGraph BuildMemoryIdAliasGraph(const std::string& name, DataType aliasDataType, const Shape& aliasShape,
+                                           int aliasMemoryId = -1)
+{
+    MemoryIdAliasGraph graph;
+    graph.function = std::make_shared<Function>(Program::GetInstance(), name, name, nullptr);
+    Shape shape = {kNumEight, kNumEight};
+    Offset offset = {kNumZero, kNumZero};
+    graph.originalRaw = std::make_shared<RawTensor>(DT_FP32, shape);
+    graph.aliasRaw = std::make_shared<RawTensor>(aliasDataType, aliasShape);
+    graph.aliasRaw->memoryId = (aliasMemoryId == -1) ? graph.originalRaw->memoryId : aliasMemoryId;
+    auto input = IRBuilder().CreateTensorVar(graph.originalRaw, offset, shape, CreateTestConstIntVector(shape));
+    auto output = IRBuilder().CreateTensorVar(graph.aliasRaw, offset, aliasShape, CreateTestConstIntVector(aliasShape));
+    graph.function->inCasts_.push_back(input);
+    graph.function->outCasts_.push_back(output);
+    PassOperationUtils::AddOperation(*graph.function, Opcode::OP_EXP, {input}, {output});
+    return graph;
+}
+} // namespace
+
+TEST_F(ReplaceTensorTest, MemoryIdLinkedAliasInheritsOriginalActualRawMagic)
+{
+    auto graph = BuildMemoryIdAliasGraph("MemoryIdAlias", DT_FP32, {kNumEight, kNumEight});
+    ASSERT_NE(graph.aliasRaw->rawmagic, graph.originalRaw->rawmagic);
+    ASSERT_EQ(graph.aliasRaw->memoryId, graph.originalRaw->rawmagic);
+    ASSERT_EQ(graph.aliasRaw->actualRawmagic, -1);
+
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.function), SUCCESS);
+    EXPECT_EQ(graph.aliasRaw->actualRawmagic, graph.originalRaw->rawmagic);
+    EXPECT_EQ(graph.aliasRaw->GetRawMagic(), graph.originalRaw->GetRawMagic());
+    EXPECT_EQ(graph.originalRaw->actualRawmagic, graph.originalRaw->rawmagic);
+}
+
+TEST_F(ReplaceTensorTest, MemoryIdLinkedAliasWithDifferentDataTypeIsNotRelinked)
+{
+    auto graph = BuildMemoryIdAliasGraph("MemoryIdAliasDataType", DT_FP16, {kNumEight, kNumEight});
+    ASSERT_EQ(graph.aliasRaw->memoryId, graph.originalRaw->rawmagic);
+    ASSERT_NE(graph.aliasRaw->datatype, graph.originalRaw->datatype);
+    ASSERT_EQ(graph.aliasRaw->GetRawShapeSize(), graph.originalRaw->GetRawShapeSize());
+
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.function), SUCCESS);
+    EXPECT_EQ(graph.aliasRaw->actualRawmagic, -1);
+    EXPECT_EQ(graph.originalRaw->actualRawmagic, -1);
+}
+
+TEST_F(ReplaceTensorTest, MemoryIdLinkedAliasWithDifferentShapeSizeIsNotRelinked)
+{
+    auto graph = BuildMemoryIdAliasGraph("MemoryIdAliasShape", DT_FP32, {kNumEight, kNumFour});
+    ASSERT_EQ(graph.aliasRaw->memoryId, graph.originalRaw->rawmagic);
+    ASSERT_NE(graph.aliasRaw->GetRawShapeSize(), graph.originalRaw->GetRawShapeSize());
+
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.function), SUCCESS);
+    EXPECT_EQ(graph.aliasRaw->actualRawmagic, -1);
+    EXPECT_EQ(graph.originalRaw->actualRawmagic, -1);
+}
+
+TEST_F(ReplaceTensorTest, MemoryIdLinkedAliasWithoutOriginalRawIsNotRelinked)
+{
+    auto graph = BuildMemoryIdAliasGraph("MemoryIdAliasDangling", DT_FP32, {kNumEight, kNumEight}, 4096);
+    ASSERT_NE(graph.aliasRaw->memoryId, graph.originalRaw->rawmagic);
+    ASSERT_NE(graph.aliasRaw->rawmagic, graph.aliasRaw->memoryId);
+
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.function), SUCCESS);
+    EXPECT_EQ(graph.aliasRaw->actualRawmagic, -1);
+    EXPECT_EQ(graph.originalRaw->actualRawmagic, -1);
+}
+
+TEST_F(ReplaceTensorTest, MemoryIdLinkedAliasWithExistingActualRawMagicIsNotOverwritten)
+{
+    auto graph = BuildMemoryIdAliasGraph("MemoryIdAliasPreset", DT_FP32, {kNumEight, kNumEight});
+    graph.aliasRaw->actualRawmagic = graph.aliasRaw->rawmagic;
+
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.function), SUCCESS);
+    EXPECT_EQ(graph.aliasRaw->actualRawmagic, graph.aliasRaw->rawmagic);
+    EXPECT_EQ(graph.originalRaw->actualRawmagic, -1);
+}
+
 } // namespace tile_fwk
 } // namespace npu
