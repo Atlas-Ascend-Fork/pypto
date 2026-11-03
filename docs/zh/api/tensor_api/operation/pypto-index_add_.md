@@ -60,6 +60,13 @@ index_add_(input: Tensor, dim: int, index: Tensor, source: Tensor, *, alpha: Uni
 
 5. TileShape的维度与source相同，只用来切分source和index，所有输入和输出的TileShape大小总和不能超过UB内存的大小。
 6. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+7. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记source的Tile在最后一维上的大小为W（当dim为最后一维时，dim轴不切分，W为source最后一维的完整大小），记srcType为source的数据类型，CeilAlign\(x, n\)表示将x向上对齐到n的倍数，则使用临时空间大小为：
+   <!-- npu="950" id7 -->
+   - Ascend 950PR&950DT系列产品：当dim为最后一维、index数据类型为DT_INT32，且srcType为DT_FP32、DT_FP16或DT_BF16时，使用临时空间大小为`2 * CeilAlign(W, 32 / sizeof(srcType)) * 4`字节；其余情况使用临时空间大小为`CeilAlign(W * sizeof(srcType), 32)`字节。
+   <!-- end id7 -->
+   <!-- npu="A3,910b" id8 -->
+   - Atlas A3系列产品和Atlas A2系列产品：使用临时空间大小为`CeilAlign(W * sizeof(srcType), 32)`字节。
+   <!-- end id8 -->
 
 ## 调用示例
 

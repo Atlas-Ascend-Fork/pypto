@@ -65,6 +65,8 @@ index_add__ub(input: Tensor, dim: int, index: Tensor, source: Tensor, *, alpha: 
 
 6. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
+7. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。当input数据类型为DT_BF16（或input数据类型为DT_FP16且index数据类型为DT_INT64且alpha为1）时，计算过程会将input、source的Tile及输出Tile转换为DT_FP32的中间结果，此时使用临时空间大小为`(2 * S1 + S2) * 4 + T * 2`字节，其中S1为input的Tile元素个数，S2为source的Tile元素个数（dim轴上为index的大小，其余维度与input的Tile相同），T为input的Tile在dim轴之后各维大小的乘积（其中最后一维向上对齐到16）；其余情况使用临时空间大小固定为32字节。
+
 ## 调用示例
 
 ### TileShape设置示例

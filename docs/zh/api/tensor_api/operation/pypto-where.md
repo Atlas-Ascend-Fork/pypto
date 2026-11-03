@@ -95,6 +95,7 @@ result ：Tensor，Shape由输入的广播得到，详细广播场景可看上�
    - Kirin9050处理器系列产品：DT_INT16，DT_INT32，DT_FP16，DT_FP32
    <!-- end id12 -->
 4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+5. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。使用临时空间大小为固定值：当input数据类型为DT_FP32或DT_BF16时，为12448字节；其余情况为8352字节。
 
 ## 调用示例
 

@@ -60,6 +60,7 @@ bitwise_left_shift(input: Union[Tensor, int], other: Union[Tensor, int]) -> Tens
    - Atlas A2系列产品：DT_INT16，DT_UINT16
    <!-- end id6 -->
 3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+4. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape最后一维为W，其余维度大小的乘积为H（一维TileShape取H为1），记输出的数据类型为dstType，align为32/sizeof\(dstType\)，W对齐到align记为WAlign，则使用临时空间大小为`H * WAlign * sizeof(dstType)`字节。
 
 ## 调用示例
 

@@ -74,6 +74,8 @@ gather(input: Tensor, dim: int, index: Tensor) -> Tensor
 
 6. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
+7. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape最后一维为W，记align为32/sizeof\(index\)，W对齐到align记为WAlign，则使用临时空间（数据类型与index相同）大小为`2 * WAlign * sizeof(index)`字节。
+
 ## 调用示例
 
 ### TileShape设置示例

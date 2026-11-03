@@ -75,6 +75,8 @@ scatter_(input: Tensor, dim: int, index: Tensor, src: Union[float, Element, Tens
 
 6. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
+7. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记index的Tile在最后一维上的大小为I（当dim为最后一维时，dim轴不切分，I为index最后一维的完整大小；否则I不超过TileShape最后一维），记indexType为index的数据类型，则使用临时空间大小为：`I * sizeof(indexType)`字节。
+
 ## 调用示例
 
 ### TileShape设置示例

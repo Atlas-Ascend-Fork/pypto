@@ -61,6 +61,9 @@ floor_div(input: Tensor, other: Union[Tensor, int, float]) -> Tensor
    - Atlas A2系列产品：DT_FP16、DT_BF16、DT_FP32、DT_INT32、DT_INT8、DT_UINT8。
    <!-- end id6 -->
 4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+5. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape最后一维为W，其余维度大小的乘积为H（一维TileShape取H为1），记输出的数据类型为dstType，align为32/sizeof\(dstType\)，W对齐到align记为WAlign，则使用临时空间大小为：
+   - dstType为DT_INT64时：`6 * H * WAlign * sizeof(DT_INT64)`字节；
+   - 其余情况：`6 * H * WAlign * sizeof(DT_FP32)`字节。
 
 ## 调用示例
 

@@ -50,6 +50,7 @@ isfinite(self: Tensor) -> Tensor
 1. 仅支持DT_FP16，DT_BF16，DT_FP32，DT_UINT8，DT_INT8，DT_UINT16，DT_INT16，DT_UINT32，DT_INT32，DT_UINT64，DT_INT64等数据类型。
 2. TileShape以及ViewShape的尾轴必须按照输出张量的类型32Byte对齐，由于输出张量为布尔类型，因此TileShape以及ViewShape的尾轴必须是32的倍数。
 3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+4. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。若TileShape为\[a,b,c,d\]，则使用临时空间大小为`2 * a * b * c * d`字节。
 
 ## 调用示例
 

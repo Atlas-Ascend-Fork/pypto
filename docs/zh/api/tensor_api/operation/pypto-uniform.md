@@ -49,6 +49,7 @@ uniform(shape: List[int], key: List[int], counter: List[int], alg: List[int], dt
 - 不支持shape切分多个view shape，view shape必须和输入的shape一致。
 - TileShape尾轴必须是4的倍数。
 - `counter[0]`在内部被硬编码为0。虽然接口接受长度为2的counter列表，但`counter[0]`的值会被忽略，实际使用的Philox计数器为`[0, counter[1]]`。
+- 由于存在临时内存使用，设置TileShape时需保证输出Tile及临时空间的总占用小于可用UB。记TileShape各维大小的乘积为N，CeilAlign\(x, n\)表示将x向上对齐到n的倍数，则使用临时空间大小为`CeilAlign(N * 4, 32)`字节；当dtype为DT_FP16或DT_BF16时，使用临时空间大小为`2 * CeilAlign(N * 4, 32)`字节。
 
 ## 返回值说明
 

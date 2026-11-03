@@ -57,6 +57,7 @@ quantize(input: Tensor, scale: Tensor, otype: DataType, axis: int, zero_points: 
 ## 约束说明
 
 1. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+2. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape的次尾轴为H（若不存在则取1），尾轴为W，H和W分别向上对齐到8记为HAlign和WAlign，则使用临时空间（DT_INT32类型）大小为`HAlign * WAlign * sizeof(DT_INT32)`字节。当axis为-2或input.shape.size\(\)-2时，接口内部会拆解为转置、沿末轴量化和转置还原，除上述临时空间外还会使用转置临时空间，参见[pypto.transpose](pypto-transpose.md)的约束说明。
 
 ## 调用示例
 

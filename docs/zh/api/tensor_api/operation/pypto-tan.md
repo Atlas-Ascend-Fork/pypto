@@ -49,6 +49,7 @@ tan(input: Tensor) -> Tensor
 
 1. 输入Tensor和输出Tensor类型应该相同。
 2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+3. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape最后一维为W，倒数第二维为H（一维TileShape取H为1），W对齐到8记为WAlign，则使用临时空间大小为`9 * H * WAlign * sizeof(DT_FP32)`字节。
 
 ## 调用示例
 

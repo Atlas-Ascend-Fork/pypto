@@ -55,6 +55,16 @@ exp2(input: Tensor) -> Tensor
    <!-- npu="910b" id6 -->
    - Atlas A2系列产品：a\*b\*c\*\(2\*d+3\*d/8\)\*sizeof\(DT_FP32\)
    <!-- end id6 -->
+4. 输入Tensor的UB空间占用说明：exp2输出数据类型为DT_FP16、DT_BF16或DT_FP32，两个输入（输入input与内部生成的底数常数2对应的Tensor）均会被转换为DT_FP32后拷贝至UB，并且UB中的输入Tensor会先对最后一维做32字节对齐填充，再对倒数第二维做行填充。若TileShape为\[a,b,c,d\]，记`D=CeilAlign(d, 8), k=D/8, p=CeilDiv(8, k), C=c+p-1`，其中CeilAlign\(x, n\)表示将x向上对齐到n的倍数，CeilDiv\(x, m\)表示将x除以m的结果向上取整，则输入Tensor的实际UB空间占用为：
+   <!-- npu="950" id10 -->
+   - Ascend 950PR&950DT系列产品：无行填充，每个输入Tensor的实际UB空间占用为a\*b\*c\*D\*sizeof\(DT_FP32\)，两个输入合计为2\*a\*b\*c\*D\*sizeof\(DT_FP32\)。
+   <!-- end id10 -->
+   <!-- npu="A3" id11 -->
+   - Atlas A3系列产品：每个输入Tensor的实际UB空间占用为a\*b\*C\*D\*sizeof\(DT_FP32\)，两个输入合计为2\*a\*b\*C\*D\*sizeof\(DT_FP32\)。
+   <!-- end id11 -->
+   <!-- npu="910b" id12 -->
+   - Atlas A2系列产品：每个输入Tensor的实际UB空间占用为a\*b\*C\*D\*sizeof\(DT_FP32\)，两个输入合计为2\*a\*b\*C\*D\*sizeof\(DT_FP32\)。
+   <!-- end id12 -->
 
 ## 调用示例
 

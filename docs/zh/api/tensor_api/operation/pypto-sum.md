@@ -80,6 +80,12 @@ sum(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
    <!-- end id12 -->
 
 3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+4. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape最后一维为W，倒数第二维为H（一维TileShape取H为1），记K为TileShape归约轴上的大小，记srcType为输入数据类型，则使用临时空间大小为：
+   - axis为-1或输入最后一维时：
+     - K <= 128 / sizeof\(srcType\)：固定为32字节；
+     - K <= 2 \* \(128 / sizeof\(srcType\)\)：`H * 128`字节；
+     - 其余情况：记F为`K * sizeof(srcType) / 128`，使用临时空间大小为`H * (F / 2) * 128`字节。
+   - axis为其余取值时：`(K + 1) / 2 * CeilAlign(W, 8) * sizeof(srcType)`字节，其中CeilAlign\(x, n\)表示将x向上对齐到n的倍数。
 
 ## 调用示例
 

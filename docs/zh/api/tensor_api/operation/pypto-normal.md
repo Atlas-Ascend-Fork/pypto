@@ -50,6 +50,7 @@ normal(shape: List[int], key: List[int], counter: List[int], alg: List[int], dty
 - 不支持shape切分多个TileShape，TileShape必须和输入的shape一致。
 - TileShape尾轴必须是4的倍数。
 - `counter[0]`在内部被硬编码为0。虽然接口接受长度为2的counter列表，但`counter[0]`的值会被忽略，实际使用的Philox计数器为`[0, counter[1]]`。
+- 由于存在临时内存使用，设置TileShape时需保证输出Tile及临时空间的总占用小于可用UB。normal由[pypto.uniform](pypto-uniform.md)、[pypto.index\_put\_](pypto-index_put_.md)等组合实现，计算过程按DT_FP32进行：记TileShape各维大小的乘积为N、输出元素个数的一半（向上取整）为M，CeilAlign\(x, n\)表示将x向上对齐到n的倍数，则随机数生成部分使用临时空间大小为`CeilAlign(N * 4, 32)`字节，index\_put\_部分使用临时空间大小为`M * 4`字节。
 
 ## 返回值说明
 

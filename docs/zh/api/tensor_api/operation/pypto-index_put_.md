@@ -94,6 +94,26 @@ index_put_(input: Tensor, indices: tuple, values: Tensor, accumulate: bool = Fal
     <!-- end id17 -->
 <!-- end id7 -->
 
+11. 设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记V为values的Tile在第0维上的大小（不超过TileShape第0维），indicesType为indices的数据类型，则使用临时空间大小为：
+    <!-- npu="950" id18 -->
+    - Ascend 950PR&950DT系列产品：当input的维度与indices中Tensor的个数相同、input数据类型为DT_FP32、DT_FP16或DT_BF16，且indices的数据类型为DT_INT32或DT_UINT32时，使用临时空间大小为`V * sizeof(indicesType)`字节；其余情况无临时空间使用。
+    <!-- end id18 -->
+    <!-- npu="A3" id19 -->
+    - Atlas A3系列产品：无临时空间使用。
+    <!-- end id19 -->
+    <!-- npu="910b" id20 -->
+    - Atlas A2系列产品：无临时空间使用。
+    <!-- end id20 -->
+    <!-- npu="9030" id21 -->
+    - Kirin9030处理器系列产品：无临时空间使用。
+    <!-- end id21 -->
+    <!-- npu="x90" id22 -->
+    - KirinX90处理器系列产品：无临时空间使用。
+    <!-- end id22 -->
+    <!-- npu="9050" id23 -->
+    - Kirin9050处理器系列产品：无临时空间使用。
+    <!-- end id23 -->
+
 ## 调用示例
 
 ### TileShape设置示例

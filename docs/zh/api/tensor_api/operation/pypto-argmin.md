@@ -56,6 +56,10 @@ argmin(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
 2. 尾轴要32字节对齐；
 
 3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+4. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记calcType为运算时数据类型（输入为DT_FP16时为DT_FP32，否则与输入一致），记K为TileShape归约轴上的大小，记输入Tensor的Shape倒数第二维大小为H，则使用临时空间大小为：
+   - 输入为一维时：`K * sizeof(calcType)`字节；
+   - axis为-1或输入最后一维时：`H * K * sizeof(calcType)`字节；
+   - axis为其余取值时：固定为384字节。
 
 ## 调用示例
 

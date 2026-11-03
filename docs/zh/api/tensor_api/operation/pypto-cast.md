@@ -239,6 +239,7 @@ Kirin9030/KirinX90/Kirin9050使用不同的CastMode体系，内部实现基于 `
 
 6. **deq模式说明**：INT32→FP16转换使用deq模式，需要通过`set_deqscale`设置缩放因子，默认值为1.0。
 7. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+8. 设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。当input数据类型与dtype的转换组合为（DT_FP32→DT_INT16）、（DT_FP16→DT_INT16）或（DT_FP16→DT_INT8）三者之一，且satmode为SaturationMode.OFF时，使用临时空间大小为`min(H, 255) * CeilAlign(W + 64, 8) * 4`字节，其中W为输入Tile在最后一维上的大小，H为输入Tile在倒数第二维上的大小（输入为1维时H取1），CeilAlign\(x, n\)表示将x向上对齐到n的倍数；其余情况无临时空间使用。
 
 ## 调用示例
 
