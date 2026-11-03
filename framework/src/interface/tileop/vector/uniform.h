@@ -84,6 +84,9 @@ TILEOP void TUniform(TDst dst, TTmp tmpbuf, uint64_t key, uint64_t counter0, uin
         pto::TASSIGN(dstTile, (uint64_t)(dst.GetAddr()));
         pto::TSUBS(dstTile, floatTile, 1.0f);
     } else if constexpr (isHalf || isBfloat16) {
+        // pto::Tile 要求 width * sizeof(elem) 按 32B 对齐，2 字节元素的宽度需为 16 的倍数
+        constexpr int alignElems2B = static_cast<int>(TileOp::BLOCK_SIZE / sizeof(uint16_t));
+        constexpr int tileW2B = (Size + alignElems2B - 1) / alignElems2B * alignElems2B;
         constexpr int64_t uint32BufferBytes = ((Size * sizeof(uint32_t) + TileOp::BLOCK_SIZE - 1) /
                                                TileOp::BLOCK_SIZE) *
                                               TileOp::BLOCK_SIZE;
@@ -96,7 +99,7 @@ TILEOP void TUniform(TDst dst, TTmp tmpbuf, uint64_t key, uint64_t counter0, uin
 
         __ubuf__ uint16_t* uint16Buffer = reinterpret_cast<__ubuf__ uint16_t*>(tmpbufAddr);
 
-        using TileUint16 = pto::Tile<pto::TileType::Vec, uint16_t, 1, tileW, pto::BLayout::RowMajor, -1, -1>;
+        using TileUint16 = pto::Tile<pto::TileType::Vec, uint16_t, 1, tileW2B, pto::BLayout::RowMajor, -1, -1>;
         TileUint16 uint16Tile(1, validSize);
         TileUint16 dstUint16Tile(1, validSize);
         pto::TASSIGN(uint16Tile, (uint64_t)uint16Buffer);
@@ -114,11 +117,11 @@ TILEOP void TUniform(TDst dst, TTmp tmpbuf, uint64_t key, uint64_t counter0, uin
 
         __ubuf__ DstType* resultBuffer = reinterpret_cast<__ubuf__ DstType*>(uint16Buffer);
 
-        using TileResult = pto::Tile<pto::TileType::Vec, DstType, 1, tileW, pto::BLayout::RowMajor, -1, -1>;
+        using TileResult = pto::Tile<pto::TileType::Vec, DstType, 1, tileW2B, pto::BLayout::RowMajor, -1, -1>;
         TileResult resultTile(1, validSize);
         pto::TASSIGN(resultTile, (uint64_t)resultBuffer);
 
-        using TileDst = pto::Tile<pto::TileType::Vec, DstType, 1, tileW, pto::BLayout::RowMajor, -1, -1>;
+        using TileDst = pto::Tile<pto::TileType::Vec, DstType, 1, tileW2B, pto::BLayout::RowMajor, -1, -1>;
         TileDst dstTile(1, validSize);
         pto::TASSIGN(dstTile, (uint64_t)(dst.GetAddr()));
 
