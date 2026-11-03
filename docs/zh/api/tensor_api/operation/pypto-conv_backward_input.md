@@ -80,10 +80,10 @@ weight = pypto.tensor((16, 16, 3, 3), pypto.DT_FP16, "weight")
 hin = 5
 win = 32
 input_size = (1, 16, hin, win)
-tile_l1_info = pypto_impl.ConvBpTileL1Info(
+tile_l1_info = pypto.pypto_impl.ConvBpTileL1Info(
         tileML1=16, tileKL1=144, tileNL1=16
     )
-tile_l0_info = pypto_impl.ConvBpTileL0Info(
+tile_l0_info = pypto.pypto_impl.ConvBpTileL0Info(
     tileML0=16, tileKL0=16, tileNL0=16
 )
 pypto.set_convbp_input_tile_shapes(tile_l1_info, tile_l0_info)

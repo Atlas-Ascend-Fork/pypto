@@ -50,6 +50,7 @@
 ### 示例1: 基础用法 - 动态Batch Size
 
 ```python
+import torch
 import pypto
 
 # 固定轴
@@ -66,6 +67,7 @@ def add_bias(
     ...
 
 # 可以用不同的batch size调用
+bias = torch.randn(HIDDEN_SIZE, dtype=torch.float32, device='npu:0')
 x1 = torch.randn(2, 128, dtype=torch.float32, device='npu:0')
 out1 = torch.randn(2, 128, dtype=torch.float32, device='npu:0')
 result1 = add_bias(x1, bias, out1)  # batch=2
@@ -78,6 +80,9 @@ result2 = add_bias(x2, bias, out2)  # batch=8
 ### 示例2: 多个动态维度
 
 ```python
+import torch
+import pypto
+
 HIDDEN = 768
 
 @pypto.frontend.jit
@@ -93,8 +98,17 @@ def attention_kernel(
     return out
 
 # 可以处理不同的batch和序列长度
-attention_kernel(q_4_128, k_4_128, v_4_128, out)  # B=4, SEQ=128
-attention_kernel(q_2_256, k_2_256, v_2_256, out)  # B=2, SEQ=256，无需重编译
+q_4_128 = torch.randn(4, 128, HIDDEN, dtype=torch.float32, device='npu:0')
+k_4_128 = torch.randn(4, 128, HIDDEN, dtype=torch.float32, device='npu:0')
+v_4_128 = torch.randn(4, 128, HIDDEN, dtype=torch.float32, device='npu:0')
+out_4_128 = torch.randn(4, 128, HIDDEN, dtype=torch.float32, device='npu:0')
+attention_kernel(q_4_128, k_4_128, v_4_128, out_4_128)  # B=4, SEQ=128
+
+q_2_256 = torch.randn(2, 256, HIDDEN, dtype=torch.float32, device='npu:0')
+k_2_256 = torch.randn(2, 256, HIDDEN, dtype=torch.float32, device='npu:0')
+v_2_256 = torch.randn(2, 256, HIDDEN, dtype=torch.float32, device='npu:0')
+out_2_256 = torch.randn(2, 256, HIDDEN, dtype=torch.float32, device='npu:0')
+attention_kernel(q_2_256, k_2_256, v_2_256, out_2_256)  # B=2, SEQ=256，无需重编译
 ```
 
 ## 最佳实践

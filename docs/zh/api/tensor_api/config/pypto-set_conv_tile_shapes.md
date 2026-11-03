@@ -178,7 +178,7 @@ TileShape需要满足以下约束条件：
 
 ```python
 # 构造L1 Tile配置（确保各值在合法范围）
-l1_tile = pypto.TileL1Info(
+l1_tile = pypto.pypto_impl.TileL1Info(
     tileHin=4,        # 需满足1 <= tileHin <= Hin
     tileHout=4,       # 需满足1 <= tileHout <= Hout
     tileWin=8,        # 需满足1 <= tileWin <= Win
@@ -190,7 +190,7 @@ l1_tile = pypto.TileL1Info(
 )
 
 # 构造L0 Tile配置（满足对齐约束）
-l0_tile = pypto.TileL0Info(
+l0_tile = pypto.pypto_impl.TileL0Info(
     tileH=2,   # 需满足tileH <= tileL1Info.tileHout且tileL1Info.tileHout % tileH == 0
     tileW=8,   # 需满足tileW <= tileL1Info.tileWout且tileL1Info.tileWout % tileW == 0
     tileK=32,  # 需满足tileK % C0 == 0（C0为对齐基数，由数据类型决定）

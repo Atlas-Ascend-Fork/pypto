@@ -55,6 +55,9 @@ assume_divisible(expr: SymbolicScalar | int, divisor: int) -> SymbolicScalar
 
 ```python
 tile_m = 128
+# 动态场景下a的第一维为运行时确定的动态长度，已知其总能被tile_m整除
+a = pypto.tensor((128, 128), pypto.DT_FP32, "a")
+mm = pypto.tensor((256, 128), pypto.DT_FP32, "mm")
 valid_m = pypto.experimental.assume_divisible(a.shape[0], tile_m)
 tile = pypto.view(mm, [tile_m, 128], [0, 0], valid_shape=[valid_m, 128])
 ```

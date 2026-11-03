@@ -60,10 +60,10 @@ conv_backward_filter(grad_output, input, filter_size, out_dtype, strides, paddin
 grad_output = pypto.tensor((1, 16, 8, 8), pypto.DT_FP16, "grad_output")
 input = pypto.tensor((1, 16, 8, 8), pypto.DT_FP16, "input")
 
-tile_l1_info = pypto_impl.ConvBpTileL1Info(
+tile_l1_info = pypto.pypto_impl.ConvBpTileL1Info(
         tileML1=16, tileKL1=32, tileNL1=144
     )
-tile_l0_info = pypto_impl.ConvBpTileL0Info(
+tile_l0_info = pypto.pypto_impl.ConvBpTileL0Info(
     tileML0=16, tileKL0=16, tileNL0=16
 )
 pypto.set_convbp_filter_tile_shapes(tile_l1_info, tile_l0_info)
