@@ -14,12 +14,37 @@
  */
 
 #include "iso_partitioner_checker.h"
+#include "interface/configs/config_manager_ng.h"
 #include "passes/pass_log/pass_log.h"
+#include "passes/tile_graph_pass/data_path/generate_move_op.h"
 
 #define MODULE_NAME "GraphPartition"
 
 namespace npu {
 namespace tile_fwk {
+namespace {
+
+bool IsProducerSideViewMove(const Operation& op)
+{
+    if (op.GetOpcode() != config::GetSliceOpcode() || op.GetIOperands().size() != 1 || op.GetOOperands().size() != 1) {
+        return false;
+    }
+
+    const auto from = op.GetIOperands().front()->GetMemoryTypeOriginal();
+    const auto to = op.GetOOperands().front()->GetMemoryTypeOriginal();
+    const auto path = platformPathMap.find({from, to});
+    if (from == to || path == platformPathMap.end()) {
+        return false;
+    }
+
+    const auto loweredOpcode = path->second;
+    // UB_COPY_L1 is classified as MOVE_IN, but executes on the producer-side AIV.
+    return OpcodeManager::Inst().GetOpCalcType(loweredOpcode) == OpCalcType::MOVE_OUT ||
+           loweredOpcode == Opcode::OP_UB_COPY_L1;
+}
+
+} // namespace
+
 Status GraphPartitionChecker::DoPreCheck(Function& function)
 {
     APASS_LOG_INFO_F(Elements::Function, "PreCheck for GraphPartition.");
@@ -112,7 +137,7 @@ Status GraphPartitionChecker::PostOperationCheck(Function& function)
         }
         if (isEndNodeInSubgraph) {
             APASS_LOG_DEBUG_F(Elements::Operation, "Operation (opmagic: %d) is end node in subgraph.", op.GetOpMagic());
-            if (IsViewLike(op.GetOpcode()) || op.GetOpcode() == Opcode::OP_COPY_IN) {
+            if ((IsViewLike(op.GetOpcode()) && !IsProducerSideViewMove(op)) || op.GetOpcode() == Opcode::OP_COPY_IN) {
                 APASS_LOG_ERROR_F(Elements::Operation,
                                   "Operation (opmagic: %d) is the end node of the subgraph, opcode should not be %s.%s",
                                   op.GetOpMagic(), op.GetOpcodeStr().c_str(), GetFormatBacktrace(op).c_str());

@@ -14,6 +14,7 @@
  */
 
 #include <fstream>
+#include <memory>
 #include <vector>
 #include <string>
 #include "gtest/gtest.h"
@@ -25,6 +26,7 @@
 #define private public
 #include "passes/tile_graph_pass/graph_partition/iso_partitioner.h"
 #include "passes/tile_graph_pass/graph_partition/graph_partition.h"
+#include "passes/tile_graph_pass/data_path/generate_move_op.h"
 #undef private
 #include "passes/tile_graph_pass/graph_partition/graph_partition_token_dependency.h"
 #include "tilefwk/tilefwk.h"
@@ -32,6 +34,7 @@
 #include "passes/pass_mgr/pass_manager.h"
 #include "interface/configs/config_manager.h"
 #include "computational_graph_builder.h"
+#include "passes/pass_check/iso_partitioner_checker.h"
 
 namespace npu {
 namespace tile_fwk {
@@ -50,6 +53,301 @@ public:
     }
     void TearDown() override { Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN); }
 };
+
+void AddReverseTokenDependency(Function& function, Operation& producer, Operation& consumer);
+
+// Exercise the boundary rule directly so partition heuristics cannot hide an invalid end node.
+class GraphPartitionViewMovePostCheckTest : public GraphPartitionTest, public testing::WithParamInterface<bool> {
+protected:
+    void SetUp() override
+    {
+        GraphPartitionTest::SetUp();
+        config::SetPassOption(ENABLE_SLICE, GetParam());
+    }
+
+    void BuildBoundaryGraph(MemoryType from, MemoryType to, Opcode opcode,
+                            const std::vector<std::string>& inputs = {"source"},
+                            const std::vector<std::string>& outputs = {"destination"})
+    {
+        graph_ = std::make_unique<ComputationalGraphBuilder>();
+        ASSERT_TRUE(graph_->AddTensors(DT_FP32, {16, 16}, {from, from, from, to, to, to},
+                                       {"input", "source", "extraInput", "destination", "extraOutput", "result"}));
+        // The surrounding operations serve only as topology anchors for this checker.
+        ASSERT_TRUE(graph_->AddOp(Opcode::OP_ABS, {"input"}, {"source"}, "producer"));
+        ASSERT_TRUE(graph_->AddOp(opcode, inputs, outputs, "move"));
+        ASSERT_TRUE(graph_->AddOp(Opcode::OP_ABS, {"destination"}, {"result"}, "consumer"));
+        if (IsViewLike(opcode)) {
+            graph_->GetOp("move")->SetOpAttribute(std::make_shared<ViewOpAttribute>(
+                Offset{0, 0}, to, std::vector<SymbolicScalar>{}, graph_->GetTensor("destination")->GetDynValidShape()));
+        }
+        graph_->GetOp("producer")->UpdateSubgraphID(0);
+        graph_->GetOp("move")->UpdateSubgraphID(0);
+        graph_->GetOp("consumer")->UpdateSubgraphID(1);
+        graph_->GetFunction()->SetTotalSubGraphCount(2);
+    }
+
+    void CheckBoundary(Status expected)
+    {
+        auto* function = graph_->GetFunction();
+        auto* move = graph_->GetOp("move");
+        const auto opcode = move->GetOpcode();
+        const auto inputs = move->GetIOperands();
+        const auto outputs = move->GetOOperands();
+        const auto attr = move->GetOpAttribute();
+        const auto inputTokens = move->tokens_;
+        const auto outputTokens = move->result_token_;
+        const auto count = function->Operations().size();
+        const auto subgraphCount = function->GetTotalSubGraphCount();
+        const auto consumerSubgraph = graph_->GetOp("consumer")->GetSubgraphID();
+        GraphPartitionChecker checker;
+        EXPECT_EQ(checker.DoPostCheck(*function), expected);
+        // Postcheck must inspect the graph without lowering or repartitioning it.
+        EXPECT_EQ(move->GetOpcode(), opcode);
+        EXPECT_EQ(move->GetSubgraphID(), 0);
+        EXPECT_EQ(move->GetIOperands(), inputs);
+        EXPECT_EQ(move->GetOOperands(), outputs);
+        EXPECT_EQ(move->GetOpAttribute(), attr);
+        EXPECT_EQ(move->tokens_, inputTokens);
+        EXPECT_EQ(move->result_token_, outputTokens);
+        EXPECT_EQ(graph_->GetOp("producer")->GetSubgraphID(), 0);
+        EXPECT_EQ(graph_->GetOp("consumer")->GetSubgraphID(), consumerSubgraph);
+        EXPECT_EQ(function->Operations().size(), count);
+        EXPECT_EQ(function->GetTotalSubGraphCount(), subgraphCount);
+    }
+    std::unique_ptr<ComputationalGraphBuilder> graph_;
+};
+
+TEST_P(GraphPartitionViewMovePostCheckTest, AllowsL0CToUbEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L0C, MEM_UB, config::GetSliceOpcode()));
+    CheckBoundary(SUCCESS);
+    // An outgoing token must not change whether this data boundary is legal.
+    AddReverseTokenDependency(*graph_->GetFunction(), *graph_->GetOp("move"), *graph_->GetOp("consumer"));
+    CheckBoundary(SUCCESS);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, AllowsL1ToUbEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L1, MEM_UB, config::GetSliceOpcode()));
+    CheckBoundary(SUCCESS);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, AllowsL0CToL1End)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L0C, MEM_L1, config::GetSliceOpcode()));
+    CheckBoundary(SUCCESS);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, AllowsL0CToDdrEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L0C, MEM_DEVICE_DDR, config::GetSliceOpcode()));
+    CheckBoundary(SUCCESS);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, AllowsUbToDdrEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_UB, MEM_DEVICE_DDR, config::GetSliceOpcode()));
+    CheckBoundary(SUCCESS);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, AllowsProducerSideUbToL1End)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_UB, MEM_L1, config::GetSliceOpcode()));
+    CheckBoundary(SUCCESS);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsDdrToUbEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_DEVICE_DDR, MEM_UB, config::GetSliceOpcode()));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsDdrToL1End)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_DEVICE_DDR, MEM_L1, config::GetSliceOpcode()));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsL1ToL0AEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L1, MEM_L0A, config::GetSliceOpcode()));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsL1ToL0BEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L1, MEM_L0B, config::GetSliceOpcode()));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsL1ToL0AMXEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L1, MEM_L0AMX, config::GetSliceOpcode()));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsL1ToL0BMXEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L1, MEM_L0BMX, config::GetSliceOpcode()));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsL1ToBtEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L1, MEM_BT, config::GetSliceOpcode()));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsL1ToFixQuantPreEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L1, MEM_FIX_QUANT_PRE, config::GetSliceOpcode()));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsSameUbMemoryEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_UB, MEM_UB, config::GetSliceOpcode()));
+    CheckBoundary(FAILED);
+    // An outgoing token must not change whether this data boundary is legal.
+    AddReverseTokenDependency(*graph_->GetFunction(), *graph_->GetOp("move"), *graph_->GetOp("consumer"));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsSameDdrMemoryEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_DEVICE_DDR, MEM_DEVICE_DDR, config::GetSliceOpcode()));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsUnknownSourceEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_UNKNOWN, MEM_UB, config::GetSliceOpcode()));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsUnmappedPathEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L0A, MEM_UB, config::GetSliceOpcode()));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsUnconfiguredViewEnd)
+{
+    const auto opcode = GetParam() ? Opcode::OP_VIEW : Opcode::OP_SLICE;
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L0C, MEM_UB, opcode));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsMultipleInputs)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L0C, MEM_UB, config::GetSliceOpcode(), {"source", "extraInput"}));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsMultipleOutputs)
+{
+    ASSERT_NO_FATAL_FAILURE(
+        BuildBoundaryGraph(MEM_L0C, MEM_UB, config::GetSliceOpcode(), {"source"}, {"destination", "extraOutput"}));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsEmptyInputs)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L0C, MEM_UB, config::GetSliceOpcode(), {}));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, RejectsExplicitCopyInEnd)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_DEVICE_DDR, MEM_UB, Opcode::OP_COPY_IN));
+    CheckBoundary(FAILED);
+    // An outgoing token must not change whether this data boundary is legal.
+    AddReverseTokenDependency(*graph_->GetFunction(), *graph_->GetOp("move"), *graph_->GetOp("consumer"));
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, AllowsInternalSameMemoryView)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_UB, MEM_UB, config::GetSliceOpcode()));
+    graph_->GetOp("consumer")->UpdateSubgraphID(0);
+    graph_->GetFunction()->SetTotalSubGraphCount(1);
+    CheckBoundary(SUCCESS);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, UsesOriginalMemoryForOutputMove)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_L0C, MEM_UB, config::GetSliceOpcode()));
+    graph_->GetTensor("source")->SetMemoryTypeToBe(MEM_UB);
+    CheckBoundary(SUCCESS);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, ToBeMemoryCannotTurnPureViewIntoOutputMove)
+{
+    ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(MEM_UB, MEM_UB, config::GetSliceOpcode()));
+    graph_->GetTensor("source")->SetMemoryTypeToBe(MEM_L0C);
+    CheckBoundary(FAILED);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, AllowsProducerSideMoveEndAfterCoreSplit)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {16, 32}, {MEM_L0A, MEM_L0B, MEM_L0C, MEM_UB, MEM_DEVICE_DDR},
+                                 {"a", "b", "l0c", "ub", "output"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_A_MUL_B, {"a", "b"}, {"l0c"}, "cube"));
+    ASSERT_TRUE(graph.AddOp(config::GetSliceOpcode(), {"l0c"}, {"ub"}, "move"));
+    ASSERT_TRUE(graph.AddOp(config::GetContractOpcode(), {"ub"}, {"output"}, "write"));
+    auto* function = graph.GetFunction();
+    auto* cube = graph.GetOp("cube");
+    auto* move = graph.GetOp("move");
+    auto* write = graph.GetOp("write");
+    move->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, MEM_UB, std::vector<SymbolicScalar>{},
+                                                           graph.GetTensor("ub")->GetDynValidShape()));
+    for (auto* op : {cube, move, write}) {
+        op->UpdateSubgraphID(0);
+    }
+    function->SetTotalSubGraphCount(1);
+    AddReverseTokenDependency(*function, *cube, *write);
+
+    ASSERT_EQ(FinalizePartitionWithTokenDependency(*function, true), SUCCESS);
+    EXPECT_EQ(function->GetTotalSubGraphCount(), 2U);
+    EXPECT_EQ(cube->GetSubgraphID(), move->GetSubgraphID());
+    EXPECT_NE(move->GetSubgraphID(), write->GetSubgraphID());
+    EXPECT_EQ(move->GetOpcode(), config::GetSliceOpcode());
+    EXPECT_TRUE(move->tokens_.empty());
+    EXPECT_TRUE(move->result_token_.empty());
+    EXPECT_EQ(write->tokens_.size(), 1U);
+    GraphPartition pass;
+    EXPECT_EQ(pass.PostCheck(*function), SUCCESS);
+}
+
+TEST_P(GraphPartitionViewMovePostCheckTest, PostCheckMatchesActualLoweringAcrossArchitectures)
+{
+    for (const auto arch : {NPUArch::DAV_2201, NPUArch::DAV_3510}) {
+        Platform::Instance().GetSoc().SetNPUArch(arch);
+        for (const auto& [path, loweredOpcode] : platformPathMap) {
+            const auto [from, to] = path;
+            SCOPED_TRACE(testing::Message() << "arch=" << static_cast<int>(arch) << ", from=" << static_cast<int>(from)
+                                            << ", to=" << static_cast<int>(to));
+            ASSERT_NO_FATAL_FAILURE(BuildBoundaryGraph(from, to, config::GetSliceOpcode()));
+            // Keep the expected boundary classification independent of the checker's calc-type query.
+            const bool producerSide = loweredOpcode == Opcode::OP_COPY_OUT || loweredOpcode == Opcode::OP_L0C_COPY_UB ||
+                                      loweredOpcode == Opcode::OP_L1_COPY_UB || loweredOpcode == Opcode::OP_L0C_TO_L1 ||
+                                      loweredOpcode == Opcode::OP_UB_COPY_L1;
+            CheckBoundary(producerSide ? SUCCESS : FAILED);
+
+            auto* move = graph_->GetOp("move");
+            GenerateMoveOp pass;
+            ASSERT_EQ(pass.ProcessViewOp(*graph_->GetFunction(), *move), SUCCESS);
+            EXPECT_EQ(move->GetOpcode(), loweredOpcode);
+            EXPECT_EQ(move->GetSubgraphID(), 0);
+        }
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(ViewAndSlice, GraphPartitionViewMovePostCheckTest, testing::Bool(),
+                         [](const testing::TestParamInfo<bool>& paramInfo) {
+                             return paramInfo.param ? "Slice" : "View";
+                         });
 
 void SetScopeInfoForOps(ComputationalGraphBuilder& G, const std::vector<std::string>& opNames,
                         const Operation::ScopeInfo& info)
