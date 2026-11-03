@@ -17,10 +17,10 @@
 完成带量化系数的矩阵乘法：
 
 $$
-C_{M \times N} = \left(\mathrm{scale\_a}_{M \times (K/32)} \otimes A_{M \times K}\right) \times \left(\mathrm{scale\_b}_{(K/32) \times N} \otimes B_{K \times N}\right)
+C_{M \times N} = \left(\mathrm{scale\_a}_{M \times (K/32)} \otimes A_{M \times K}\right) \times \left(\mathrm{scale\_b}_{(K/32) \times N} \otimes B_{K \times N}\right) + \mathrm{bias}_{1 \times N}
 $$
 
-其中，⊗表示广播乘法，A、B沿K维度每连续32个元素分别共享scale_a、scale_b中的一个量化系数。
+其中，⊗表示广播乘法，A、B沿K维度每连续32个元素分别共享scale_a、scale_b中的一个量化系数。bias沿M维广播；未传入bias_tile时，bias项为0。
 
 ## 函数原型
 
@@ -32,6 +32,7 @@ pypto_pro.language.matmul_mx(
     /,
     scale_a: Tile,
     scale_b: Tile,
+    bias_tile: Optional[Tile] = None,
     *,
     phase: Optional[AccPhase] = None,
 ) -> None
@@ -46,6 +47,7 @@ pypto_pro.language.matmul_mx(
 | rhs_tile | 输入 | 源操作数（B，右矩阵），Tile类型，存储空间为L0B Buffer，形状为[K, N]，数据类型支持DT_FP8E4M3FN、DT_FP8E5M2、DT_FP4E2M1和DT_FP4E1M2。与lhs_tile的数据类型可以不同，但必须同时选自DT_FP8E4M3FN、DT_FP8E5M2，或同时选自DT_FP4E2M1、DT_FP4E1M2。layout必须为ZN，K必须与lhs_tile的K维一致且为64的倍数。 |
 | scale_a | 输入 | 源操作数（左量化系数矩阵），Tile类型，存储空间为L0A_MX Buffer，数据类型为DT_FP8E8M0，形状为[M, K/32]，layout默认且仅支持ZZ，fractal默认且仅支持32。每个量化系数对应A矩阵K方向连续32个元素。 |
 | scale_b | 输入 | 源操作数（右量化系数矩阵），Tile类型，存储空间为L0B_MX Buffer，数据类型为DT_FP8E8M0，形状为[K/32, N]，layout默认且仅支持NN，fractal默认且仅支持32。每个量化系数对应B矩阵K方向连续32个元素。 |
+| bias_tile | 输入 | 源操作数（可选偏置），Tile类型，存储空间为BiasTable Buffer，数据类型仅支持DT_FP32，形状为[1, N]且N必须与rhs_tile的N维一致，layout默认且仅支持ND。偏置沿M维广播。 |
 | phase | 输入 | K维分块累加阶段，[pypto_pro.language.AccPhase](../basic_data_structures/AccPhase.md)类型，可选，用于控制矩阵计算与L0C Buffer数据搬出之间的UnitFlag同步。与[pypto_pro.language.STPhase](../basic_data_structures/STPhase.md)的配合方式见[Cube计算进阶](../../../../guide/programming_guide/pro/advanced_programming/cube_computation_advanced_usage.md)。 |
 
 ## 约束说明
@@ -160,9 +162,119 @@ if __name__ == "__main__":
     print(f"max diff = {(out - ref).abs().max().item()}")
 ```
 
-### MXFP4矩阵乘
+### 带Bias的MXFP8矩阵乘
 
-下面计算C[128, 128] = A[128, 128] @ B[128, 128]。A和B的K方向均包含4个量化系数分组，因此scale_a/scale_b Tile的逻辑形状分别为[128, 4]和[4, 128]，GM中的Tensor物理形状分别为[128, 2, 2]和[2, 128, 2]。FP4矩阵在运行时以uint8存储，每字节打包两个FP4元素。
+下面计算C[64, 64] = A[64, 64] @ B[64, 64] + bias[1, 64]。bias从GM搬入L1 Buffer后，再搬入BiasTable Buffer并参与矩阵乘。
+
+```python
+import os
+import pypto_pro.language as pl
+import torch
+
+TILE = 64
+SCALE_K = TILE // 32
+
+
+@pl.jit(auto_mutex=True)
+def mxfp8_bias_kernel(
+    a: pl.Tensor[[TILE, TILE], pl.DT_FP8E4M3FN],
+    b: pl.Tensor[[TILE, TILE], pl.DT_FP8E5M2],
+    scale_a: pl.Tensor[[TILE, SCALE_K // 2, 2], pl.DT_FP8E8M0],
+    scale_b: pl.Tensor[[SCALE_K // 2, TILE, 2], pl.DT_FP8E8M0],
+    bias: pl.Tensor[[1, TILE], pl.DT_FP32],
+    out: pl.Tensor[[TILE, TILE], pl.DT_FP32],
+):
+    a_l1 = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE, TILE], dtype=pl.DT_FP8E4M3FN,
+                         target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
+        addrs=0x00000, mutex_ids=[0])
+    b_l1 = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE, TILE], dtype=pl.DT_FP8E5M2,
+                         target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
+        addrs=0x10000, mutex_ids=[1])
+    scale_a_l1 = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE, SCALE_K], dtype=pl.DT_FP8E8M0,
+                         target_memory=pl.MemorySpace.Mat, layout=pl.ZZ),
+        addrs=0x20000, mutex_ids=[2])
+    scale_b_l1 = pl.make_tile_group(
+        type=pl.TileType(shape=[SCALE_K, TILE], dtype=pl.DT_FP8E8M0,
+                         target_memory=pl.MemorySpace.Mat, layout=pl.NN),
+        addrs=0x21000, mutex_ids=[3])
+    bias_l1 = pl.make_tile_group(
+        type=pl.TileType(shape=[1, TILE], dtype=pl.DT_FP32,
+                         target_memory=pl.MemorySpace.Mat, layout=pl.NZ, compact=1),
+        addrs=0x22000, mutex_ids=[4])
+    a_l0 = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE, TILE], dtype=pl.DT_FP8E4M3FN,
+                         target_memory=pl.MemorySpace.Left, layout=pl.NZ),
+        addrs=0x0000, mutex_ids=[5])
+    b_l0 = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE, TILE], dtype=pl.DT_FP8E5M2,
+                         target_memory=pl.MemorySpace.Right, layout=pl.ZN),
+        addrs=0x0000, mutex_ids=[6])
+    scale_a_l0 = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE, SCALE_K], dtype=pl.DT_FP8E8M0,
+                         target_memory=pl.MemorySpace.ScaleLeft, layout=pl.ZZ),
+        addrs=0x0000, mutex_ids=[7])
+    scale_b_l0 = pl.make_tile_group(
+        type=pl.TileType(shape=[SCALE_K, TILE], dtype=pl.DT_FP8E8M0,
+                         target_memory=pl.MemorySpace.ScaleRight, layout=pl.NN),
+        addrs=0x0000, mutex_ids=[8])
+    bias_l0 = pl.make_tile_group(
+        type=pl.TileType(shape=[1, TILE], dtype=pl.DT_FP32,
+                         target_memory=pl.MemorySpace.Bias, layout=pl.ND, compact=1),
+        addrs=0x0000, mutex_ids=[9])
+    acc = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE, TILE], dtype=pl.DT_FP32,
+                         target_memory=pl.MemorySpace.Acc, layout=pl.NZ, fractal=1024),
+        addrs=0x0000, mutex_ids=[10])
+
+    with pl.section_cube():
+        al1, bl1 = a_l1.current(), b_l1.current()
+        sal1, sbl1 = scale_a_l1.current(), scale_b_l1.current()
+        bias_mat = bias_l1.current()
+        al0, bl0 = a_l0.current(), b_l0.current()
+        sal0, sbl0 = scale_a_l0.current(), scale_b_l0.current()
+        bias_tile = bias_l0.current()
+        ac = acc.current()
+
+        pl.load(al1, a, [0, 0])
+        pl.load(bl1, b, [0, 0])
+        pl.load(sal1, scale_a, [0, 0, 0], order=[0, 1])
+        pl.load(sbl1, scale_b, [0, 0, 0], order=[0, 1])
+        pl.load(bias_mat, bias, [0, 0])
+        pl.move(al0, al1)
+        pl.move(bl0, bl1)
+        pl.move(sal0, sal1)
+        pl.move(sbl0, sbl1)
+        pl.move(bias_tile, bias_mat)
+        pl.matmul_mx(ac, al0, bl0, sal0, sbl0, bias_tile)
+        pl.store(out, ac, [0, 0])
+
+
+if __name__ == "__main__":
+    device = f"npu:{int(os.environ.get('TILE_FWK_DEVICE_ID', 0))}"
+    torch.npu.set_device(device)
+
+    # E4M3编码0x38、E5M2编码0x3C均表示1.0；E8M0编码127表示缩放值1.0。
+    a = torch.full([TILE, TILE], 0x38, dtype=torch.uint8).view(torch.float8_e4m3fn).to(device)
+    b = torch.full([TILE, TILE], 0x3C, dtype=torch.uint8).view(torch.float8_e5m2).to(device)
+    scale_a = torch.full([TILE, SCALE_K // 2, 2], 127, device=device, dtype=torch.uint8)
+    scale_b = torch.full([SCALE_K // 2, TILE, 2], 127, device=device, dtype=torch.uint8)
+    bias = ((torch.arange(TILE, device=device, dtype=torch.float32) - 32) / 8).reshape(1, TILE)
+    out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
+
+    mxfp8_bias_kernel(a, b, scale_a, scale_b, bias, out)
+    torch.npu.synchronize()
+
+    ref = torch.full([TILE, TILE], float(TILE), device=device, dtype=torch.float32) + bias
+    torch.testing.assert_close(out, ref, rtol=1e-3, atol=1e-3)
+    print(f"max diff = {(out - ref).abs().max().item()}")
+```
+
+### 带Bias的MXFP4矩阵乘
+
+下面计算C[128, 128] = A[128, 128] @ B[128, 128] + bias[1, 128]。A和B的K方向均包含4个量化系数分组，因此scale_a/scale_b Tile的逻辑形状分别为[128, 4]和[4, 128]，GM中的Tensor物理形状分别为[128, 2, 2]和[2, 128, 2]。FP4矩阵在运行时以uint8存储，每字节打包两个FP4元素；bias使用DT_FP32并搬入BiasTable Buffer。
 
 ```python
 import os
@@ -174,11 +286,12 @@ SCALE_K = TILE // 32
 
 
 @pl.jit(auto_mutex=True)
-def mxfp4_matmul_kernel(
+def mxfp4_bias_kernel(
     a: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP4E2M1],
     b: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP4E1M2],
     scale_a: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 2], pl.DT_FP8E8M0],
     scale_b: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 2], pl.DT_FP8E8M0],
+    bias: pl.Tensor[[1, pl.DYNAMIC], pl.DT_FP32],
     out: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
 ):
     a_l1 = pl.make_tile_group(
@@ -197,42 +310,54 @@ def mxfp4_matmul_kernel(
         type=pl.TileType(shape=[SCALE_K, TILE], dtype=pl.DT_FP8E8M0,
                          target_memory=pl.MemorySpace.Mat, layout=pl.NN),
         addrs=0x21000, mutex_ids=[3])
+    bias_l1 = pl.make_tile_group(
+        type=pl.TileType(shape=[1, TILE], dtype=pl.DT_FP32,
+                         target_memory=pl.MemorySpace.Mat, layout=pl.NZ, compact=1),
+        addrs=0x22000, mutex_ids=[4])
     a_l0 = pl.make_tile_group(
         type=pl.TileType(shape=[TILE, TILE], dtype=pl.DT_FP4E2M1,
                          target_memory=pl.MemorySpace.Left, layout=pl.NZ),
-        addrs=0x0000, mutex_ids=[4])
+        addrs=0x0000, mutex_ids=[5])
     b_l0 = pl.make_tile_group(
         type=pl.TileType(shape=[TILE, TILE], dtype=pl.DT_FP4E1M2,
                          target_memory=pl.MemorySpace.Right, layout=pl.ZN),
-        addrs=0x0000, mutex_ids=[5])
+        addrs=0x0000, mutex_ids=[6])
     scale_a_l0 = pl.make_tile_group(
         type=pl.TileType(shape=[TILE, SCALE_K], dtype=pl.DT_FP8E8M0,
                          target_memory=pl.MemorySpace.ScaleLeft, layout=pl.ZZ),
-        addrs=0x0000, mutex_ids=[6])
+        addrs=0x0000, mutex_ids=[7])
     scale_b_l0 = pl.make_tile_group(
         type=pl.TileType(shape=[SCALE_K, TILE], dtype=pl.DT_FP8E8M0,
                          target_memory=pl.MemorySpace.ScaleRight, layout=pl.NN),
-        addrs=0x0000, mutex_ids=[7])
+        addrs=0x0000, mutex_ids=[8])
+    bias_l0 = pl.make_tile_group(
+        type=pl.TileType(shape=[1, TILE], dtype=pl.DT_FP32,
+                         target_memory=pl.MemorySpace.Bias, layout=pl.ND, compact=1),
+        addrs=0x0000, mutex_ids=[9])
     acc = pl.make_tile_group(
         type=pl.TileType(shape=[TILE, TILE], dtype=pl.DT_FP32,
                          target_memory=pl.MemorySpace.Acc, layout=pl.NZ, fractal=1024),
-        addrs=0x0000, mutex_ids=[8])
+        addrs=0x0000, mutex_ids=[10])
 
     with pl.section_cube():
         al1, bl1 = a_l1.current(), b_l1.current()
         sal1, sbl1 = scale_a_l1.current(), scale_b_l1.current()
+        bias_mat = bias_l1.current()
         al0, bl0 = a_l0.current(), b_l0.current()
         sal0, sbl0 = scale_a_l0.current(), scale_b_l0.current()
+        bias_tile = bias_l0.current()
         ac = acc.current()
         pl.load(al1, a, [0, 0])
         pl.load(bl1, b, [0, 0])
         pl.load(sal1, scale_a, [0, 0, 0], order=[0, 1])
         pl.load(sbl1, scale_b, [0, 0, 0], order=[0, 1])
+        pl.load(bias_mat, bias, [0, 0])
         pl.move(al0, al1)
         pl.move(bl0, bl1)
         pl.move(sal0, sal1)
         pl.move(sbl0, sbl1)
-        pl.matmul_mx(ac, al0, bl0, sal0, sbl0)
+        pl.move(bias_tile, bias_mat)
+        pl.matmul_mx(ac, al0, bl0, sal0, sbl0, bias_tile)
         pl.store(out, ac, [0, 0])
 
 
@@ -255,12 +380,13 @@ if __name__ == "__main__":
     b = pack_fp4(b_codes).to(device)
     scale_a = torch.full([TILE, SCALE_K // 2, 2], 127, device=device, dtype=torch.uint8)
     scale_b = torch.full([SCALE_K // 2, TILE, 2], 127, device=device, dtype=torch.uint8)
+    bias = ((torch.arange(TILE, device=device, dtype=torch.float32) - 64) / 8).reshape(1, TILE)
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
 
-    mxfp4_matmul_kernel(a, b, scale_a, scale_b, out)
+    mxfp4_bias_kernel(a, b, scale_a, scale_b, bias, out)
     torch.npu.synchronize()
 
-    ref = torch.full([TILE, TILE], float(TILE), device=device, dtype=torch.float32)
+    ref = torch.full([TILE, TILE], float(TILE), device=device, dtype=torch.float32) + bias
     torch.testing.assert_close(out, ref, rtol=1e-3, atol=1e-3)
     print(f"max diff = {(out - ref).abs().max().item()}")
 ```

@@ -389,6 +389,125 @@ def _build_mx_kernel(a_dtype_label, b_dtype_label, use_phase, addressing, transp
 
 
 @functools.lru_cache(maxsize=None)
+def _make_mx_bias_kernel(a_dtype_label, b_dtype_label, bias_dtype_label):
+    """Build a two-round K chain whose first MX matmul carries bias."""
+    a_dtype, _, a_is_fp4 = _MX_DTYPES[a_dtype_label]
+    b_dtype, _, b_is_fp4 = _MX_DTYPES[b_dtype_label]
+    assert a_is_fp4 == b_is_fp4
+    bias_dtype = {"fp16": pl.DT_FP16, "fp32": pl.DT_FP32}[bias_dtype_label]
+    scale_slot_addr = 0x80 if a_is_fp4 else 0x100
+    name = _kernel_name(f"mx_bias_{bias_dtype_label}_phase", a_dtype_label, b_dtype_label)
+
+    @pl.jit(auto_mutex=True, name=name)
+    def matmul_mx_bias(
+        a: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], a_dtype],
+        b: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], b_dtype],
+        scale_a: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 2], pl.DT_FP8E8M0],
+        scale_b: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 2], pl.DT_FP8E8M0],
+        bias: pl.Tensor[[1, pl.DYNAMIC], bias_dtype],
+        out: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
+    ):
+        a_l1 = pl.make_tile_group(
+            type=pl.TileType(shape=[TILE, TILE], dtype=a_dtype, target_memory=pl.MemorySpace.Mat,
+                             layout=pl.NZ, valid_shape=[-1, -1]),
+            addrs=0x00000, mutex_ids=[0, 1])
+        b_l1 = pl.make_tile_group(
+            type=pl.TileType(shape=[TILE, TILE], dtype=b_dtype, target_memory=pl.MemorySpace.Mat,
+                             layout=pl.ZN, valid_shape=[-1, -1]),
+            addrs=0x10000, mutex_ids=[2, 3])
+        sa_l1 = pl.make_tile_group(
+            type=pl.TileType(shape=[TILE, SCALE_K], dtype=pl.DT_FP8E8M0,
+                             target_memory=pl.MemorySpace.Mat, layout=pl.ZZ,
+                             valid_shape=[-1, -1]),
+            addrs=0x20000, mutex_ids=[4, 5])
+        sb_l1 = pl.make_tile_group(
+            type=pl.TileType(shape=[SCALE_K, TILE], dtype=pl.DT_FP8E8M0,
+                             target_memory=pl.MemorySpace.Mat, layout=pl.NN,
+                             valid_shape=[-1, -1]),
+            addrs=0x21000, mutex_ids=[6, 7])
+        bias_l1 = pl.make_tile_group(
+            type=pl.TileType(shape=[1, TILE], dtype=bias_dtype,
+                             target_memory=pl.MemorySpace.Mat, layout=pl.NZ,
+                             valid_shape=[-1, -1], compact=1),
+            addrs=0x22000, mutex_ids=[8])
+        a_l0a = pl.make_tile_group(
+            type=pl.TileType(shape=[TILE, TILE], dtype=a_dtype, target_memory=pl.MemorySpace.Left,
+                             layout=pl.NZ, valid_shape=[-1, -1], compact=1),
+            addrs=0x0, mutex_ids=[9, 10])
+        b_l0b = pl.make_tile_group(
+            type=pl.TileType(shape=[TILE, TILE], dtype=b_dtype, target_memory=pl.MemorySpace.Right,
+                             layout=pl.ZN, valid_shape=[-1, -1], compact=1),
+            addrs=0x0, mutex_ids=[11, 12])
+        sa_l0a = pl.make_tile_group(
+            type=pl.TileType(shape=[TILE, SCALE_K], dtype=pl.DT_FP8E8M0,
+                             target_memory=pl.MemorySpace.ScaleLeft, layout=pl.ZZ,
+                             valid_shape=[-1, -1], compact=1),
+            addrs=[0x0, scale_slot_addr], mutex_ids=[13, 14])
+        sb_l0b = pl.make_tile_group(
+            type=pl.TileType(shape=[SCALE_K, TILE], dtype=pl.DT_FP8E8M0,
+                             target_memory=pl.MemorySpace.ScaleRight, layout=pl.NN,
+                             valid_shape=[-1, -1], compact=1),
+            addrs=[0x0, scale_slot_addr], mutex_ids=[15, 16])
+        bias_l0 = pl.make_tile_group(
+            type=pl.TileType(shape=[1, TILE], dtype=pl.DT_FP32,
+                             target_memory=pl.MemorySpace.Bias, layout=pl.ND,
+                             valid_shape=[-1, -1], compact=1),
+            addrs=0x0, mutex_ids=[17])
+        c_l0c = pl.make_tile_group(
+            type=pl.TileType(shape=[TILE, TILE], dtype=pl.DT_FP32,
+                             target_memory=pl.MemorySpace.Acc, layout=pl.NZ, fractal=1024,
+                             valid_shape=[-1, -1], compact=1),
+            addrs=0x0, mutex_ids=[18])
+
+        with pl.section_cube():
+            kt = scale_a.shape[1] * 2 * GROUP_SIZE
+            ac = c_l0c.current()
+            bias_mat = bias_l1.current()
+            bias_tile = bias_l0.current()
+            pl.set_validshape(ac, [TILE, TILE])
+            pl.set_validshape(bias_mat, [1, TILE])
+            pl.set_validshape(bias_tile, [1, TILE])
+            pl.load(bias_mat, bias, [0, 0])
+            pl.move(bias_tile, bias_mat)
+            for ki in pl.range(0, kt, TILE):
+                cur_a = a_l1.next()
+                cur_b = b_l1.next()
+                cur_sa = sa_l1.next()
+                cur_sb = sb_l1.next()
+                al = a_l0a.next()
+                br = b_l0b.next()
+                sal = sa_l0a.next()
+                sbl = sb_l0b.next()
+                pl.set_validshape(cur_a, [TILE, TILE])
+                pl.set_validshape(cur_b, [TILE, TILE])
+                pl.set_validshape(cur_sa, [TILE, SCALE_K])
+                pl.set_validshape(cur_sb, [SCALE_K, TILE])
+                pl.set_validshape(al, [TILE, TILE])
+                pl.set_validshape(br, [TILE, TILE])
+                pl.set_validshape(sal, [TILE, SCALE_K])
+                pl.set_validshape(sbl, [SCALE_K, TILE])
+                pl.load(cur_a, a, [0, ki])
+                pl.load(cur_b, b, [0, ki], order=[1, 0])
+                pl.load(cur_sa, scale_a, [0, ki // (GROUP_SIZE * 2), 0])
+                pl.load(cur_sb, scale_b, [0, ki // (GROUP_SIZE * 2), 0], order=[1, 0])
+                pl.move(al, cur_a)
+                pl.move(br, cur_b)
+                pl.move(sal, cur_sa)
+                pl.move(sbl, cur_sb)
+                if ki == 0 and ki + TILE >= kt:
+                    pl.matmul_mx(ac, al, br, sal, sbl, bias_tile, phase=pl.AccPhase.Final)
+                elif ki == 0:
+                    pl.matmul_mx(ac, al, br, sal, sbl, bias_tile, phase=pl.AccPhase.Partial)
+                elif ki + TILE < kt:
+                    pl.matmul_mx_acc(ac, ac, al, br, sal, sbl, phase=pl.AccPhase.Partial)
+                else:
+                    pl.matmul_mx_acc(ac, ac, al, br, sal, sbl, phase=pl.AccPhase.Final)
+            pl.store(out, ac, [0, 0], phase=pl.STPhase.Final)
+
+    return matmul_mx_bias
+
+
+@functools.lru_cache(maxsize=None)
 def _make_mx_scale_tile_kernel(a_dtype_label, b_dtype_label, out_dtype_label):
     """Build t07: MX matmul followed by per-column Tile scaling."""
     a_dtype, _, a_is_fp4 = _MX_DTYPES[a_dtype_label]
@@ -1119,6 +1238,26 @@ def _run_mx(a_dtype_label, b_dtype_label, device, mkn, *, use_phase, addressing=
     _check_output(got, golden, out_dtype_label, label)
 
 
+def _run_mx_bias(a_dtype_label, b_dtype_label, device, bias_dtype_label):
+    m, k, n = TILE, 2 * TILE, TILE
+    kernel = _make_mx_bias_kernel(a_dtype_label, b_dtype_label, bias_dtype_label)
+    a, b, scale_a, scale_b, a_golden, b_golden, _ = _make_mx_operand_pair(
+        a_dtype_label, b_dtype_label, m, k, n, device
+    )
+    bias_torch_dtype = {"fp16": torch.float16, "fp32": torch.float32}[bias_dtype_label]
+    bias_cpu = (((torch.arange(n, dtype=torch.float32) % 17) - 8) * 32).reshape(1, n)
+    bias_host = bias_cpu.to(bias_torch_dtype)
+    bias = bias_host.to(device)
+    out = torch.zeros((m, n), dtype=torch.float32, device=device)
+    kernel(a, b, scale_a, scale_b, bias, out)
+    torch.npu.synchronize()
+    _assert_single_dynamic_variant(kernel)
+
+    golden = torch.matmul(a_golden, b_golden) + bias_host.to(torch.float32)
+    label = f"A={a_dtype_label},B={b_dtype_label}[{m}x{k}x{n},bias_{bias_dtype_label},phase]"
+    _check_output(out.cpu(), golden, "fp32", label)
+
+
 def _make_scale_params(scales, device, out_dtype_label):
     scale_bits = np.asarray(scales, dtype=np.float32).view(np.uint32)
     payload = scale_bits.astype(np.int64)
@@ -1521,6 +1660,22 @@ def test_t13_mx_scale_mg_to_ub(_device):
     _run_mx_scale_mg_to_ub(_device)
 
 
+@pytest.mark.soc("950")
+@pytest.mark.parametrize("a_dtype_label,b_dtype_label", _MX_REP_COMBOS,
+                         ids=[_combo_id(c) for c in _MX_REP_COMBOS])
+def test_t14_mx_bias_fp16_phase(a_dtype_label, b_dtype_label, _device):
+    """FP16 GM bias converts to FP32 and initializes a two-round K chain."""
+    _run_mx_bias(a_dtype_label, b_dtype_label, _device, "fp16")
+
+
+@pytest.mark.soc("950")
+@pytest.mark.parametrize("a_dtype_label,b_dtype_label", _MX_REP_COMBOS,
+                         ids=[_combo_id(c) for c in _MX_REP_COMBOS])
+def test_t15_mx_bias_fp32_phase(a_dtype_label, b_dtype_label, _device):
+    """FP32 GM bias passes through L1 to BiasTable and initializes a two-round K chain."""
+    _run_mx_bias(a_dtype_label, b_dtype_label, _device, "fp32")
+
+
 if __name__ == "__main__":
     _require_a5(ST_DEVICE)
     _cases = []
@@ -1592,6 +1747,12 @@ if __name__ == "__main__":
         ("t12_fp8_boundaries", _run_fp8_boundaries, (ST_DEVICE,), {}),
         ("t13_scale_mg_to_ub", _run_mx_scale_mg_to_ub, (ST_DEVICE,), {}),
     ))
+    for _a_dtype, _b_dtype in _MX_REP_COMBOS:
+        for _case_id, _bias_dtype in (("t14_bias_fp16_phase", "fp16"), ("t15_bias_fp32_phase", "fp32")):
+            _cases.append((
+                f"{_case_id}[A={_a_dtype},B={_b_dtype}]",
+                _run_mx_bias, (_a_dtype, _b_dtype, ST_DEVICE, _bias_dtype), {}
+            ))
 
     logging.info("MX datatype-generic matmul: %d cases", len(_cases))
     _passed = 0

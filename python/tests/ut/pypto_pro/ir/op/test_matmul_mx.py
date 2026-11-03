@@ -11,9 +11,10 @@
 """Host-side validation tests for MX block matmul construction."""
 
 from itertools import count
+from pathlib import Path
 
 from pypto_pro import DataType, ir
-from pypto_pro._errors import InvalidType
+from pypto_pro._errors import InvalidShape, InvalidType
 from pypto_pro.ir.op.block_ops import (
     TileType,
     _ir_load,
@@ -71,6 +72,7 @@ def _mx_tiles(*, k=64, lhs_dtype=DataType.FP8E4M3FN,
         "rhs": _tile("rhs", [k, 64], rhs_dtype, ir.MemorySpace.Right),
         "scale_a": _tile("scale_a", [64, k // 32], scale_a_dtype, scale_a_space),
         "scale_b": _tile("scale_b", [k // 32, 64], DataType.FP8E8M0, ir.MemorySpace.ScaleRight),
+        "bias": _tile("bias", [1, 64], DataType.FP32, ir.MemorySpace.Bias),
     }
 
 
@@ -90,6 +92,48 @@ def test_matmul_mx_builds_registered_call():
     assert call.name == "block.matmul_mx"
     assert isinstance(call.type, ir.NoneType)
     assert [arg.name for arg in call.args] == ["dst", "lhs", "rhs", "scale_a", "scale_b"]
+
+
+def test_matmul_mx_builds_registered_call_with_bias():
+    t = _mx_tiles()
+    call = _ir_matmul_mx(t["dst"], t["lhs"], t["rhs"], t["scale_a"], t["scale_b"], t["bias"])
+
+    params = [t[name] for name in ("dst", "lhs", "rhs", "scale_a", "scale_b", "bias")]
+    span = ir.Span.unknown()
+    body = ir.SeqStmts([ir.EvalStmt(call, span), ir.ReturnStmt(span)], span)
+    function = ir.Function("matmul_mx_bias", params, [], body, span)
+    printed = str(function)
+    golden = Path(__file__).with_suffix(".pypto").read_text(encoding="utf-8")
+
+    assert printed.rstrip("\n") == golden.rstrip("\n")
+    assert isinstance(call.type, ir.NoneType)
+
+
+def test_matmul_mx_rejects_bias_in_wrong_memory_space():
+    t = _mx_tiles()
+    t["bias"] = _tile("bias", [1, 64], DataType.FP32, ir.MemorySpace.Mat)
+
+    with pytest.raises(ValueError, match="bias_tile must be in BiasTable"):
+        _ir_matmul_mx(t["dst"], t["lhs"], t["rhs"], t["scale_a"], t["scale_b"], t["bias"])
+
+
+def test_matmul_mx_rejects_non_fp32_bias():
+    t = _mx_tiles()
+    t["bias"] = _tile("bias", [1, 64], DataType.FP16, ir.MemorySpace.Bias)
+
+    with pytest.raises(InvalidType, match="bias_tile must use FP32 dtype"):
+        _ir_matmul_mx(t["dst"], t["lhs"], t["rhs"], t["scale_a"], t["scale_b"], t["bias"])
+
+
+def test_matmul_mx_rejects_bias_columns_mismatched_with_rhs():
+    t = _mx_tiles()
+    t["bias"] = _tile("bias", [1, 32], DataType.FP32, ir.MemorySpace.Bias)
+
+    with pytest.raises(
+        InvalidShape,
+        match=r"bias_tile columns must match rhs_tile N dimension, expected 64, got 32",
+    ):
+        _ir_matmul_mx(t["dst"], t["lhs"], t["rhs"], t["scale_a"], t["scale_b"], t["bias"])
 
 
 def test_matmul_mx_acc_builds_registered_call():

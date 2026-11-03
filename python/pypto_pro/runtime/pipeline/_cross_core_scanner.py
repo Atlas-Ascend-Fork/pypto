@@ -1095,7 +1095,8 @@ _BLOCK_OP_TILE_ROLES: dict[str, list] = {
     # ===== Matmul =====
     "matmul": ["W", "R", "R", "R", None],  # (dst, lhs, rhs, bias, *, phase)
     "matmul_acc": ["RW", "R", "R", "R", None],  # (dst, acc, lhs, rhs, *, phase); dst is acc
-    "matmul_mx": ["W", "R", "R", "R", "R", None],  # (dst, lhs, rhs, scale_a, scale_b, *, phase)
+    # (dst, lhs, rhs, scale_a, scale_b, bias, *, phase)
+    "matmul_mx": ["W", "R", "R", "R", "R", "R", None],
     "matmul_mx_acc": ["RW", "R", "R", "R", "R", "R", None],
     # (acc, l1a, l1b, *, l0a, l0b, m, n, k, init, splitn, splitk, trans_a, trans_b, bias)
     "gemm": ["RW", "R", "R", "RW", "RW", None, None, None, None, None, None, None, None, "R"],

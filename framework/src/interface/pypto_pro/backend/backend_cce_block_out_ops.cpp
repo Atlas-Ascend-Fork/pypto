@@ -917,23 +917,29 @@ static std::string MakeBlockOutMatmulBiasCodegenCCE(const ir::CallPtr& op, codeg
 }
 
 // ============================================================================
-// block.matmul_mx  - args = [dst, left, right, scale_a, scale_b]
-// Emits: TMATMUL_MX_IMPL[<Phase>](dst, left, scale_a, right, scale_b);
+// block.matmul_mx  - args = [dst, left, right, scale_a, scale_b, optional bias]
+// Emits: TMATMUL_MX_IMPL[<Phase>](dst, left, scale_a, right, scale_b[, bias]);
 //        Scale tiles are passed for compile-time type validation; mad_mx reads
 //        them implicitly via SFractal layout.
 // ============================================================================
 static std::string MakeBlockOutMatmulMxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 5)
-        << "block.matmul_mx: expected 5 args (dst, left, right, scale_a, scale_b), got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 5 || op->args_.size() == 6)
+        << "block.matmul_mx: expected 5 or 6 args (dst, left, right, scale_a, scale_b[, bias]), got "
+        << op->args_.size();
     std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
     std::string left = cce::GetOperandAsCode(codegen, op->args_[1]);
     std::string right = cce::GetOperandAsCode(codegen, op->args_[2]);
     std::string scale_a = cce::GetOperandAsCode(codegen, op->args_[3]);
     std::string scale_b = cce::GetOperandAsCode(codegen, op->args_[4]);
 
-    EmitTemplated(codegen, "TMATMUL_MX_IMPL", {GetAccPhaseCCE(op)}, {dst, left, scale_a, right, scale_b});
+    if (op->args_.size() == 6) {
+        std::string bias = cce::GetOperandAsCode(codegen, op->args_[5]);
+        EmitTemplated(codegen, "TMATMUL_MX_IMPL", {GetAccPhaseCCE(op)}, {dst, left, scale_a, right, scale_b, bias});
+    } else {
+        EmitTemplated(codegen, "TMATMUL_MX_IMPL", {GetAccPhaseCCE(op)}, {dst, left, scale_a, right, scale_b});
+    }
     return "";
 }
 

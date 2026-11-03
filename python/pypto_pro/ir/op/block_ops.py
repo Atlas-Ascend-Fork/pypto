@@ -4754,6 +4754,7 @@ def _check_mx_operands(
     scale_a: Expr,
     scale_b: Expr,
     acc: Expr | None = None,
+    bias: Expr | None = None,
 ) -> None:
     """Run the common declared-type and shape checks for MX matmul variants."""
     _check_tile_memory_space(op_name, "dst_tile", dst, MemorySpace.Acc, "L0C (Acc)")
@@ -4761,6 +4762,8 @@ def _check_mx_operands(
     _check_tile_memory_space(op_name, "rhs_tile", rhs, MemorySpace.Right, "L0B (Right)")
     if acc is not None:
         _check_tile_memory_space(op_name, "acc_tile", acc, MemorySpace.Acc, "L0C (Acc)")
+    if bias is not None:
+        _check_tile_memory_space(op_name, "bias_tile", bias, MemorySpace.Bias, "BiasTable (Bias)")
 
     a_dtype, b_dtype, dst_dtype = lhs.type.dtype, rhs.type.dtype, dst.type.dtype
     valid_input_dtypes = (a_dtype in _MX_FP8_DTYPES and b_dtype in _MX_FP8_DTYPES) or (
@@ -4777,6 +4780,14 @@ def _check_mx_operands(
     lhs_k = lhs_shape[1] if lhs_shape is not None else None
     rhs_k = rhs_shape[0] if rhs_shape is not None else None
 
+    if bias is not None:
+        bias_shape = _tile_shape_ints(bias.type)
+        if rhs_shape is not None and bias_shape is not None and bias_shape[1] != rhs_shape[1]:
+            raise InvalidShape(
+                f"{op_name}: bias_tile columns must match rhs_tile N dimension, "
+                f"expected {rhs_shape[1]}, got {bias_shape[1]}."
+            )
+
     for name, k_value in (("lhs", lhs_k), ("rhs", rhs_k)):
         if k_value is not None and k_value % 64 != 0:
             raise InvalidShape(
@@ -4791,23 +4802,27 @@ def _check_mx_operands(
         ):
             raise InvalidType(f"{op_name}: acc_tile type must match dst_tile type")
 
+    if bias is not None and bias.type.dtype != DataType.FP32:
+        raise InvalidType(f"{op_name}: bias_tile must use FP32 dtype, got {bias.type.dtype}.")
+
     _check_mx_scale_tile(op_name, scale_a, lhs, is_left=True)
     _check_mx_scale_tile(op_name, scale_b, rhs, is_left=False)
 
 
 def _ir_matmul_mx(
     dst: Expr, lhs: Expr, rhs: Expr, scale_a: Expr, scale_b: Expr,
-    *, span: Span | None = None, phase: AccPhase | None = None
+    bias_tile: Expr | None = None, *, span: Span | None = None, phase: AccPhase | None = None
 ) -> Expr:
     actual_span = span or _span()
     _validate_acc_phase("matmul_mx", phase)
-    _check_mx_operands("matmul_mx", dst, lhs, rhs, scale_a, scale_b)
+    _check_mx_operands("matmul_mx", dst, lhs, rhs, scale_a, scale_b, bias=bias_tile)
     kwargs: dict[str, Any] = {}
     if phase is not None:
         kwargs["phase"] = phase
-    return _ir_core.create_op_call(
-        block_ir_op("matmul_mx"), [dst, lhs, rhs, scale_a, scale_b], kwargs, actual_span
-    )
+    operands = [dst, lhs, rhs, scale_a, scale_b]
+    if bias_tile is not None:
+        operands.append(bias_tile)
+    return _ir_core.create_op_call(block_ir_op("matmul_mx"), operands, kwargs, actual_span)
 
 
 def _ir_matmul_mx_acc(

@@ -545,6 +545,10 @@ TEST(BackendCCEBlockOutOps, MatmulMx)
     auto call_phase = MakeCallWithKwargs("block.matmul_mx", args, {{"phase", 2}});
     EXPECT_CONTAINS(RunCodegen("block.matmul_mx", call_phase),
                     "TMATMUL_MX_IMPL<AccPhase::Final>(dst.tile, left.tile, scale_a.tile, right.tile, scale_b.tile);");
+
+    args.emplace_back(MakeVar("bias", tile));
+    EXPECT_CONTAINS(RunCodegen("block.matmul_mx", MakeCall("block.matmul_mx", args)),
+                    "TMATMUL_MX_IMPL(dst.tile, left.tile, scale_a.tile, right.tile, scale_b.tile, bias.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, MatmulMxAcc)

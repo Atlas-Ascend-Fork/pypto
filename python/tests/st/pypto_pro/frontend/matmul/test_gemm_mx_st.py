@@ -24,7 +24,7 @@ DEVICE = f"npu:{int(os.environ.get('TILE_FWK_DEVICE_ID', 0))}"
 
 def _mx_kernel(a_label, b_label, *, trans_a=False, trans_b=False,
                m=64, n=64, k=128, accumulate=False, sugar=True, stage_k=None, plane_compact=0,
-               compact=1, restore=False):
+               compact=1, restore=False, use_bias=False):
     a_dtype, _, fp4 = _MX_DTYPES[a_label]
     b_dtype = _MX_DTYPES[b_label][0]
     shape_a = [128, 64] if trans_a else [64, 128]
@@ -32,7 +32,7 @@ def _mx_kernel(a_label, b_label, *, trans_a=False, trans_b=False,
     physical_k = stage_k or 128
     scale_slot = (64 * physical_k // (2 if fp4 else 1)) >> 4
     name = (f"gemm_mx_{a_label}_{b_label}_t{int(trans_a)}{int(trans_b)}_v{m}_{n}_{k}_"
-            f"a{int(accumulate)}_s{int(sugar)}_c{compact}_r{int(restore)}")
+            f"a{int(accumulate)}_s{int(sugar)}_c{compact}_r{int(restore)}_b{int(use_bias)}")
     if stage_k is not None:
         name += f"_p{stage_k}"
     if plane_compact:
@@ -43,6 +43,7 @@ def _mx_kernel(a_label, b_label, *, trans_a=False, trans_b=False,
                b: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], b_dtype],
                scale_a: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 2], pl.DT_FP8E8M0],
                scale_b: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, 2], pl.DT_FP8E8M0],
+               bias: pl.Tensor[[1, 64], pl.DT_FP32],
                out: pl.Tensor[[64, 64], pl.DT_FP32]):
         ga = pl.make_tile_group(
             type=pl.TileType(shape=shape_a, dtype=a_dtype, target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
@@ -85,12 +86,24 @@ def _mx_kernel(a_label, b_label, *, trans_a=False, trans_b=False,
                              compact=compact),
             addrs=0, mutex_ids=[12],
         )
+        gbias = pl.make_tile_group(
+            type=pl.TileType(shape=[1, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Mat,
+                             layout=pl.NZ, compact=1),
+            addrs=0x22000, mutex_ids=[13],
+        )
+        bias_table = pl.make_tile_group(
+            type=pl.TileType(shape=[1, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Bias,
+                             layout=pl.ND, compact=1),
+            addrs=0, mutex_ids=[14],
+        )
         with pl.section_cube():
             x = ga.current()
             y = gb.current()
             sx = gsa.current()
             sy = gsb.current()
             z = gc.current()
+            bias_l1 = gbias.current()
+            bias_l0 = bias_table.current()
             pl.load(x, a, [0, 0])
             pl.load(y, b, [0, 0])
             pl.load(sx, scale_a, [0, 0, 0])
@@ -98,6 +111,9 @@ def _mx_kernel(a_label, b_label, *, trans_a=False, trans_b=False,
                 pl.load(sy, scale_b, [0, 0, 0], order=[1, 0])
             else:
                 pl.load(sy, scale_b, [0, 0, 0])
+            if use_bias:
+                pl.load(bias_l1, bias, [0, 0])
+                pl.move(bias_l0, bias_l1)
             if sugar and restore:
                 al = la.current()
                 br = lb.current()
@@ -107,8 +123,12 @@ def _mx_kernel(a_label, b_label, *, trans_a=False, trans_b=False,
                            m=48, n=40, k=64)
                 pl.gemm_mx(z, x, y, sx, sy, l0a=al, l0b=br, scale_a=sal, scale_b=sbr)
             elif sugar:
-                pl.gemm_mx(z, x, y, sx, sy, l0a=la, l0b=lb, scale_a=sa, scale_b=sb,
-                           m=m, n=n, k=k, trans_a=trans_a, trans_b=trans_b)
+                if use_bias:
+                    pl.gemm_mx(z, x, y, sx, sy, l0a=la, l0b=lb, scale_a=sa, scale_b=sb,
+                               m=m, n=n, k=k, trans_a=trans_a, trans_b=trans_b, bias=bias_l0)
+                else:
+                    pl.gemm_mx(z, x, y, sx, sy, l0a=la, l0b=lb, scale_a=sa, scale_b=sb,
+                               m=m, n=n, k=k, trans_a=trans_a, trans_b=trans_b)
                 if accumulate:
                     pl.gemm_mx(z, x, y, sx, sy, l0a=la, l0b=lb, scale_a=sa, scale_b=sb,
                                m=m, n=n, k=k, init=False, trans_a=trans_a, trans_b=trans_b)
@@ -136,7 +156,10 @@ def _mx_kernel(a_label, b_label, *, trans_a=False, trans_b=False,
                     pl.move(sal, sx)
                     pl.move(br, y)
                     pl.move(sbr, sy)
-                pl.matmul_mx(z, al, br, sal, sbr)
+                if use_bias:
+                    pl.matmul_mx(z, al, br, sal, sbr, bias_l0)
+                else:
+                    pl.matmul_mx(z, al, br, sal, sbr)
                 if accumulate:
                     pl.matmul_mx_acc(z, z, al, br, sal, sbr)
             pl.store(out, z, [0, 0])
@@ -155,10 +178,11 @@ _MX_CASES = [
     {"stage_k": 64, "k": 64},
     {"compact": 0},
     {"restore": True, "plane_compact": 1},
+    {"use_bias": True},
 ]
 _MX_IDS = [
     "plain", "mn_tail", "k_tail", "mnk_tail", "trans_a", "trans_b", "trans_both", "accumulate", "smaller_staging",
-    "full_noncompact", "restore_default_mnk",
+    "full_noncompact", "restore_default_mnk", "bias",
 ]
 
 
@@ -178,12 +202,16 @@ def test_gemm_mx_matches_primitives_and_dequantized_reference(labels, options):
     a, b, sa, sb, a_ref, b_ref, _ = args
     m, n, k = options.get("m", 64), options.get("n", 64), options.get("k", 128)
     golden = a_ref[:m, :k] @ b_ref[:k, :n]
+    bias_ref = torch.randn((1, 64), dtype=torch.float32)
+    bias = bias_ref.to(DEVICE)
+    if options.get("use_bias"):
+        golden += bias_ref[:, :n]
     if options.get("accumulate"):
         golden *= 2
     outputs = []
     for sugar in (False, True):
         out = torch.full((64, 64), 7.0, device=DEVICE)
-        _mx_kernel(*labels, sugar=sugar, **options)(a, b, sa, sb, out)
+        _mx_kernel(*labels, sugar=sugar, **options)(a, b, sa, sb, bias, out)
         torch.npu.synchronize()
         actual = out.cpu()
         torch.testing.assert_close(actual[:m, :n], golden, rtol=1e-3, atol=1e-3)

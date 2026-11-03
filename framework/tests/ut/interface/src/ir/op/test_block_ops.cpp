@@ -1079,6 +1079,18 @@ TEST_F(BlockOpsOutMatmulTest, BlockMatmulMx_ReturnsNone)
     EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
+TEST_F(BlockOpsOutMatmulTest, BlockMatmulMxWithBias_ReturnsNone)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto call = reg.Create(
+        "block.matmul_mx",
+        {MakeTileVar("o", {64, 64}, DataType::FP32), MakeTileVar("l", {64, 64}, DataType::FP8E4M3FN),
+         MakeTileVar("r", {64, 64}, DataType::FP8E5M2), MakeTileVar("sa", {64, 2}, DataType::FP8E8M0),
+         MakeTileVar("sb", {2, 64}, DataType::FP8E8M0), MakeTileVar("bias", {1, 64}, DataType::FP32)},
+        Sp());
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
+}
+
 TEST_F(BlockOpsOutMatmulTest, BlockMatmulMxAcc_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
@@ -1198,6 +1210,19 @@ TEST_F(BlockOpsOutMatmulTest, BlockMatmulMx_ScaleWrongMemspace_Throws)
                           MakeTileVar("r", {64, 64}, DataType::FP8E5M2),
                           MakeTileVarWithMemRef("sa", {64, 2}, DataType::FP8E8M0, MemorySpace::Vec, 0, 1024),
                           MakeTileVar("sb", {2, 64}, DataType::FP8E8M0)},
+                         Sp()),
+        npu::tile_fwk::Error);
+}
+
+TEST_F(BlockOpsOutMatmulTest, BlockMatmulMx_BiasWrongMemspace_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    EXPECT_THROW(
+        (void)reg.Create("block.matmul_mx",
+                         {MakeTileVar("o", {64, 64}, DataType::FP32), MakeTileVar("l", {64, 64}, DataType::FP8E4M3FN),
+                          MakeTileVar("r", {64, 64}, DataType::FP8E5M2), MakeTileVar("sa", {64, 2}, DataType::FP8E8M0),
+                          MakeTileVar("sb", {2, 64}, DataType::FP8E8M0),
+                          MakeTileVarWithMemRef("bias", {1, 64}, DataType::FP32, MemorySpace::Vec, 0, 1024)},
                          Sp()),
         npu::tile_fwk::Error);
 }

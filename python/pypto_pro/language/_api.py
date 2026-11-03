@@ -816,9 +816,9 @@ def matmul_acc(
 @_api_decl
 def matmul_mx(
     dst_tile: Tile, lhs_tile: Tile, rhs_tile: Tile, /, scale_a: Tile, scale_b: Tile,
-    *, phase: Optional[AccPhase] = None
+    bias_tile: Optional[Tile] = None, *, phase: Optional[AccPhase] = None
 ) -> None:
-    """MX matmul with per-group E8M0 scale: ``dst = lhs @ rhs``
+    """MX matmul with per-group E8M0 scale and optional bias.
 
     Left/Right tiles use FP8/FP4 dtype; scale tiles use E8M0 in ScaleLeft/ScaleRight.
     Hardware mad_mx reads scale implicitly via SFractal layout.
@@ -829,6 +829,7 @@ def matmul_mx(
         rhs_tile: Right matrix Tile (L0B, FP8/FP4)
         scale_a: Left scale Tile (ScaleLeft, E8M0)
         scale_b: Right scale Tile (ScaleRight, E8M0)
+        bias_tile: Optional Bias Tile (BiasTable buffer, FP32, shape [1, N], row-broadcast)
         phase: Optional — ``pl.AccPhase.Partial`` or ``pl.AccPhase.Final``
     """
 
@@ -907,7 +908,7 @@ def gemm_mx(
     l0a: Union[Tile, TileGroup], l0b: Union[Tile, TileGroup],
     scale_a: Union[Tile, TileGroup], scale_b: Union[Tile, TileGroup],
     m: Optional[Scalar] = None, n: Optional[Scalar] = None, k: Optional[Scalar] = None,
-    init: bool = True, trans_a: bool = False, trans_b: bool = False,
+    init: bool = True, trans_a: bool = False, trans_b: bool = False, bias: Optional[Tile] = None,
 ) -> None:
     """Stage MX data and scale pairs from L1, then compute an MX matmul.
 
@@ -935,12 +936,13 @@ def gemm_mx(
         trans_a: Transpose the named static L1 data operand as in gemm.
             Its scale operand keeps the canonical scale shape and layout.
         trans_b: Transpose l1b by the same mechanism.
+        bias: Optional FP32 BiasTable Tile, shape [1, N]; requires init=True.
 
     Each call sets data staging, accumulator and scale-plane extents, restoring
     declared L1 extents on omitted axes even when reusing narrowed Tiles. Explicit
     full physical extents need no compact layout. Effective extents remain after
     the call for a subsequent store. Source L1 descriptors are unchanged.
-    bias, splitn and splitk are unsupported.
+    splitn and splitk are unsupported.
     """
 
 

@@ -154,13 +154,23 @@ def test_mx_static_k_alignment(tmp_path, k):
     assert re.search("multiple of 64", caught.value.message)
 
 
-@pytest.mark.parametrize("option", ["bias=c", "splitk=64", "splitn=32"])
+@pytest.mark.parametrize("option", ["splitk=64", "splitn=32"])
 def test_mx_unsupported_options_are_explicit(tmp_path, option):
     with pytest.raises(NotSupported) as caught:
         parse_gemm(tmp_path,
                f"pl.gemm_mx(c, a, b, s1, s2, l0a=la, l0b=lb, scale_a=sa, scale_b=sb, {option})",
                mx=True)
-    assert re.search("no bias operand|does not split", caught.value.message)
+    assert re.search("does not split", caught.value.message)
+
+
+def test_mx_bias_requires_initialization(tmp_path):
+    with pytest.raises(InvalidVal) as caught:
+        parse_gemm(
+            tmp_path,
+            "pl.gemm_mx(c, a, b, s1, s2, l0a=la, l0b=lb, scale_a=sa, scale_b=sb, bias=c, init=False)",
+            mx=True,
+        )
+    assert re.search("bias only with init=True", caught.value.message)
 
 
 def test_mx_runtime_slot_pairing_still_checks_every_possible_address(tmp_path):

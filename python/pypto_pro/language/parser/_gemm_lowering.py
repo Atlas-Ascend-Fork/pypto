@@ -240,9 +240,9 @@ class _GemmCall:
             key, node = keyword.arg, keyword.value
             if key is None:
                 raise NotSupported(f"{self.api} does not take **kwargs", span=self.span(node))
-            if self.mx and key in ("bias", "splitn", "splitk"):
-                reason = "pl.matmul_mx() has no bias operand" if key == "bias" else "pl.gemm_mx() does not split"
-                raise NotSupported(reason, span=self.span(node), hint="Use explicit native operations")
+            if self.mx and key in ("splitn", "splitk"):
+                raise NotSupported("pl.gemm_mx() does not split", span=self.span(node),
+                                   hint="Use explicit native operations")
         self.parser._check_declared_params(self.op, self.call, self.span(self.call))
         bound = declared_api(self.op).bind_declared(
             *self.call.args, **{kw.arg: kw.value for kw in self.call.keywords}
@@ -270,7 +270,7 @@ class _GemmCall:
         self.init = flags["init"]
         self.trans_a, self.trans_b = flags["trans_a"], flags["trans_b"]
         if "bias" in self.keywords and not self.init:
-            raise InvalidVal("pl.gemm() takes a bias only with init=True", span=self.span(self.keywords["bias"]))
+            raise InvalidVal(f"{self.api} takes a bias only with init=True", span=self.span(self.keywords["bias"]))
         if "splitn" in self.keywords and "splitk" in self.keywords:
             raise InvalidArgument("pl.gemm() 'splitn' and 'splitk' are mutually exclusive")
         if "splitn" in self.keywords and "m" in self.keywords:
@@ -333,6 +333,8 @@ class _GemmCall:
         acc = self.read("acc")
         if self.mx:
             args = [acc, self.read("l0a"), self.read("l0b"), self.read("scale_a"), self.read("scale_b")]
+            if "bias" in self.refs:
+                args.append(self.read("bias"))
             return self.emit("matmul_mx" if init else "matmul_mx_acc", args if init else [self.read("acc"), *args])
         args = [acc, self.read("l0a"), self.read("l0b")]
         if not init:

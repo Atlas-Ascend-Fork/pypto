@@ -16,7 +16,7 @@
  *   block.matmul       (out, lhs, rhs)
  *   block.matmul_acc   (out, acc, lhs, rhs)
  *   block.matmul_bias  (out, lhs, rhs, bias)
- *   block.matmul_mx       (out, lhs, rhs, scale_a, scale_b)
+ *   block.matmul_mx       (out, lhs, rhs, scale_a, scale_b[, bias])
  *   block.matmul_mx_acc   (out, acc, lhs, rhs, scale_a, scale_b)
  *   block.gemv         (out, lhs, rhs)
  *   block.gemv_acc     (out, acc, lhs, rhs)
@@ -108,26 +108,31 @@ REGISTER_OP("block.matmul_bias")
         return DeduceBlockOutType(args, kwargs, "block.matmul_bias", 4);
     });
 
-// block.matmul_mx: (out, lhs, rhs, scale_a, scale_b) -> NoneType
+// block.matmul_mx: (out, lhs, rhs, scale_a, scale_b[, bias]) -> NoneType
 REGISTER_OP("block.matmul_mx")
     .set_op_category("BlockOp")
-    .set_description("Block MX matmul: out = lhs @ rhs (with per-group E8M0 scale)")
+    .set_description("Block MX matmul with per-group E8M0 scale and optional bias")
     .add_argument("out", "Pre-allocated output tile [M,N] in Acc (TileType)")
     .add_argument("lhs", "Left matrix tile [M,K] (TileType, FP8/FP4)")
     .add_argument("rhs", "Right matrix tile [K,N] (TileType, FP8/FP4)")
     .add_argument("scale_a", "Left scale tile in ScaleLeft (TileType, E8M0)")
     .add_argument("scale_b", "Right scale tile in ScaleRight (TileType, E8M0)")
+    .add_argument("bias", "Optional bias tile [1,N] in Bias (TileType, FP32)")
     .set_attr<int>("phase")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x5)
-            << "The operator block.matmul_mx requires 5 arguments (out, lhs, rhs, scale_a, scale_b)";
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x5 || args.size() == 0x6)
+            << "The operator block.matmul_mx requires 5 or 6 arguments "
+               "(out, lhs, rhs, scale_a, scale_b[, bias])";
         CheckTileArg(args, 0, "block.matmul_mx", {MemorySpace::Acc});
         CheckTileArg(args, 1, "block.matmul_mx", {MemorySpace::Left});
         CheckTileArg(args, 2, "block.matmul_mx", {MemorySpace::Right});
         CheckTileArg(args, 3, "block.matmul_mx", {MemorySpace::ScaleLeft});
         CheckTileArg(args, 4, "block.matmul_mx", {MemorySpace::ScaleRight});
-        return DeduceBlockOutType(args, kwargs, "block.matmul_mx", 5);
+        if (args.size() == 0x6) {
+            CheckTileArg(args, 5, "block.matmul_mx", {MemorySpace::Bias});
+        }
+        return DeduceBlockOutType(args, kwargs, "block.matmul_mx", args.size());
     });
 
 // block.matmul_mx_acc: (out, acc, lhs, rhs, scale_a, scale_b) -> NoneType
