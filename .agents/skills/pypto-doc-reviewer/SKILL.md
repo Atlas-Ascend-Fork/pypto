@@ -1,6 +1,6 @@
 ---
 name: pypto-doc-reviewer
-description: PyPTO 文档（docs/目录）质量检查，支持两种模式：开发者提交 PR 前自检、Committer 检视文档 PR。覆盖开源写作规范（复用 CANN 社区规范）、API 文档写作规范、产品型号与芯片标签、术语及表达约定、目录文件维护要求五个维度。触发词：自检文档、文档自检、检查文档、检视文档、文档检视、review文档、检视PR、文档PR、docs检视。
+description: PyPTO 文档（docs/目录）质量检查，支持两种模式：开发者提交 PR 前自检、Committer 检视文档 PR。覆盖开源写作规范（复用 CANN 社区规范，含产品型号与芯片标签）、API 文档写作规范、术语及表达约定、目录文件维护要求四个维度。触发词：自检文档、文档自检、检查文档、检视文档、文档检视、review文档、检视PR、文档PR、docs检视。
 ---
 
 # PyPTO Doc Reviewer
@@ -18,15 +18,14 @@ description: PyPTO 文档（docs/目录）质量检查，支持两种模式：�
 
 ## 检查维度
 
-共 5 个维度。维度 1 复用 CANN 社区外部规范，其余规则在 `references/` 下；每个规则文件均分「规则」与「检查方法」（bash 命令与核对要点）两部分：
+共 4 个维度。维度 1 复用 CANN 社区外部规范（含产品型号命名规范、产品标签使用规范，配套 md-review-skill 的 PR/TG 检视规则），其余规则在 `references/` 下；每个规则文件均分「规则」与「检查方法」（bash 命令与核对要点）两部分：
 
 | # | 维度 | 何时必查 | 规则来源 |
 |---|------|---------|----------|
-| 1 | 开源写作规范 | 所有 `.md` | 外部（webfetch 读取，配套使用）：[开源文档写作规范](https://gitcode.com/cann/docs/blob/master/specification/document_writing_specs.md)（事实来源）及配套检视规则 [md-review-skill](https://gitcode.com/cann/docs/blob/master/skills/md-review-skill/SKILL.md) |
+| 1 | 开源写作规范 | 所有 `.md` | 外部（webfetch 读取，配套使用）：[开源文档写作规范](https://gitcode.com/cann/docs/blob/master/specification/document_writing_specs.md)（事实来源，含产品型号命名规范、产品标签使用规范）及配套检视规则 [md-review-skill](https://gitcode.com/cann/docs/blob/master/skills/md-review-skill/SKILL.md) |
 | 2 | API 文档写作规范 | `docs/zh/api/` 下文件 | [rules-api.md](references/rules-api.md) |
-| 3 | 产品型号和芯片标签 | 所有 `.md` | [rules-product.md](references/rules-product.md) |
-| 4 | 术语及表达约定 | 所有 `.md` | [rules-terms.md](references/rules-terms.md) |
-| 5 | 目录文件维护要求 | 文件新增/删除/移动/重命名，或修改 `index.md`/toctree 时 | [rules-structure.md](references/rules-structure.md) |
+| 3 | 术语及表达约定 | 所有 `.md` | [rules-terms.md](references/rules-terms.md) |
+| 4 | 目录文件维护要求 | 文件新增/删除/移动/重命名，或修改 `index.md`/toctree 时 | [rules-structure.md](references/rules-structure.md) |
 
 ## 检查执行步骤（两模式通用）
 

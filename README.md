@@ -61,7 +61,7 @@ PyPTO提供了丰富的示例代码，涵盖从基础操作到复杂模型实现
 
 - [环境部署](docs/zh/install/prepare_environment.md)：介绍项目基础环境的搭建，包括软件包和第三方依赖的获取和安装。
 - [编译安装](docs/zh/install/build_and_install.md)：环境部署后，介绍如何快速获取或编译PyPTO软件包并安装。
-- [样例运行](docs/zh/invocation/examples_invocation.md)：安装PyPTO软件包后，介绍如何快速实现样例运行。
+- [样例运行](docs/zh/install/examples_invocation.md)：安装PyPTO软件包后，介绍如何快速实现样例运行。
 
 ## 📖文档资源
 

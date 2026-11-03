@@ -1,7 +1,7 @@
 # PyPTO算子开发
 
 - [简介](introduction.md)
-- [环境准备](../install/prepare_environment_hiascend.md)
+- [环境准备](./prepare_environment.md)
 - [快速入门](quick_start/index.md)
   - [PyPTO Tensor编程](quick_start/tensor/index.md)
     - [Softmax算子快速入门](quick_start/tensor/quick_start.md)

@@ -20,10 +20,10 @@ The sample codes are divided into the following levels:
 3. **Exploring advanced patterns?** Refer to [Advanced Samples (03_advanced)](03_advanced/README_en.md).
 
 ### Environment Preparation
-For environment preparation, refer to [Environment Setup](../docs/zh/install/prepare_environment.md) to complete the basic environment setup.
+For environment preparation, refer to [Environment Setup](../docs/en/install/prepare_environment.md) to complete the basic environment setup.
 
 ### Software Installation
-For software installation, refer to [Software Installation](../docs/zh/install/build_and_install.md) to complete the PyPTO software installation.
+For software installation, refer to [Software Installation](../docs/en/install/build_and_install.md) to complete the PyPTO software installation.
 
 ### Pre-Run Configuration (Optional)
 If you need to run in a real NPU environment, refer to the following configuration:

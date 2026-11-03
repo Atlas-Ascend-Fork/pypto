@@ -60,9 +60,9 @@ Please note that to ensure smooth customization and development of the source co
 
 If you want to quickly experience the usage and development process of PyPTO, refer to the following documents for simple tutorials.
 
-- [Environment Setup](docs/zh/install/prepare_environment.md): Introduces setting up the project's basic environment, including obtaining and installing software packages and third-party dependencies.
-- [Build and Install](docs/zh/install/build_and_install.md): After environment setup, describes how to quickly obtain or compile the PyPTO software package and install it.
-- [Running Samples](docs/zh/invocation/examples_invocation.md): After installing the PyPTO software package, describes how to quickly run samples.
+- [Environment Setup](docs/en/install/prepare_environment.md): Introduces setting up the project's basic environment, including obtaining and installing software packages and third-party dependencies.
+- [Build and Install](docs/en/install/build_and_install.md): After environment setup, describes how to quickly obtain or compile the PyPTO software package and install it.
+- [Running Samples](docs/en/install/examples_invocation.md): After installing the PyPTO software package, describes how to quickly run samples.
 
 ## Documentation Resources
 

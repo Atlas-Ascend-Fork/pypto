@@ -76,4 +76,4 @@ bash ./cann-pypto_${pypto_version}_${os_arch}.run --full -q --pylocal --install-
 
 ## 安装验证
 
-完成以上步骤后，参考[样例运行](../invocation/examples_invocation.md)执行相关用例，验证PyPTO是否成功安装。
+完成以上步骤后，参考[样例运行](./examples_invocation.md)执行相关用例，验证PyPTO是否成功安装。
