@@ -176,7 +176,9 @@ void DevControlFlowCache::DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uin
                 if (info.mixResourceType != targetType) {
                     continue;
                 }
-                uint32_t aicCore = wrapCoreIdx++ % nrValidAic;
+                // 与 DispatchReadyQueueToCores 保持一致：wrap 静态余数反向分配（高 index 核），
+                // 非 wrap 任务按当前静态计数反向填充，避免与 wrap 占用的高 index 核叠加。
+                uint32_t aicCore = (nrValidAic - 1) - (wrapCoreIdx++ % nrValidAic);
                 uint32_t aiv0Core = nrValidAic + aicCore * 2;
                 perCorePendingQueueArray[aicCore]->UnsafeEnqueue(info.tasklist[WRAP_IDX_AIC]);
                 perCorePendingQueueArray[aiv0Core]->UnsafeEnqueue(info.tasklist[WRAP_IDX_AIV0]);
@@ -187,13 +189,32 @@ void DevControlFlowCache::DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uin
         }
     }
 
-    uint32_t aicIdx = wrapCoreIdx;
-    for (const auto* it = aicQueue->begin(); it != aicQueue->end(); ++it) {
-        perCorePendingQueueArray[aicIdx++ % nrValidAic]->UnsafeEnqueue(*it);
+    // 与 DispatchReadyQueueToCores 保持一致：AIC 队列续接 wrap 的反向 RR 序列。
+    if (nrValidAic > 0) {
+        uint32_t aicIdx = wrapCoreIdx;
+        for (const auto* it = aicQueue->begin(); it != aicQueue->end(); ++it) {
+            uint32_t coreIdx = (nrValidAic - 1) - (aicIdx++ % nrValidAic);
+            perCorePendingQueueArray[coreIdx]->UnsafeEnqueue(*it);
+        }
     }
-    uint32_t aivIdx = wrapCoreIdx * 2;
-    for (const auto* it = aivQueue->begin(); it != aivQueue->end(); ++it) {
-        perCorePendingQueueArray[nrValidAic + (aivIdx++ % nrAivCores)]->UnsafeEnqueue(*it);
+
+    // AIV wrap 因 1C2V/1C1V 混合不是简单反向序列，按当前静态计数最小优先、同 count 高 index 优先填充。
+    auto enqueueAivReverseFill = [perCorePendingQueueArray](uint32_t begin, uint32_t end, uint32_t task) {
+        uint32_t best = begin;
+        uint32_t bestSize = perCorePendingQueueArray[begin]->size;
+        for (uint32_t i = begin + 1; i < end; ++i) {
+            uint32_t size = perCorePendingQueueArray[i]->size;
+            if (size <= bestSize) { // 同 count 选高 index
+                best = i;
+                bestSize = size;
+            }
+        }
+        perCorePendingQueueArray[best]->UnsafeEnqueue(task);
+    };
+    if (nrAivCores > 0) {
+        for (const auto* it = aivQueue->begin(); it != aivQueue->end(); ++it) {
+            enqueueAivReverseFill(nrValidAic, nrValidAic + nrAivCores, *it);
+        }
     }
 
     __sync_synchronize();

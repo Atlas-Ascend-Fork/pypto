@@ -412,7 +412,9 @@ void DeviceTaskContext::DispatchReadyQueueToCores(DynDeviceTask* dyntask, DevAsc
                 if (info.mixResourceType != targetType) {
                     continue;
                 }
-                uint32_t aicCore = wrapCoreIdx++ % nrValidAic;
+                // wrap 静态余数反向分配：+1 落在高 index 核，与动态 fetch 从 0 起的 +1 互补，
+                // 避免同一批核同时拿到 wrap 静态 +1 和动态 +1（per-core 总数由 ±1 扩大到 ±2）。
+                uint32_t aicCore = (nrValidAic - 1) - (wrapCoreIdx++ % nrValidAic);
                 uint32_t aiv0Core = nrValidAic + aicCore * 2;
                 perCorePendingQueueArray[aicCore]->UnsafeEnqueue(info.tasklist[WRAP_IDX_AIC]);
                 perCorePendingQueueArray[aiv0Core]->UnsafeEnqueue(info.tasklist[WRAP_IDX_AIV0]);
@@ -423,20 +425,34 @@ void DeviceTaskContext::DispatchReadyQueueToCores(DynDeviceTask* dyntask, DevAsc
         }
     }
 
-    // perCorePendingQueue: distribute aic tasks to aicore cores (0..nrValidAic-1), continue from wrap dispatch
-    uint32_t aicIdx = wrapCoreIdx;
-    for (const auto* it = aicQueue->begin(); it != aicQueue->end(); ++it) {
-        uint32_t coreIdx = aicIdx % nrValidAic;
-        perCorePendingQueueArray[coreIdx]->UnsafeEnqueue(*it);
-        aicIdx++;
+    // AIC 队列续接 wrap 的反向 RR 序列：wrap 已占用反向序列的前 wrapCoreIdx 个位置，
+    // AIC 队列从 wrapCoreIdx 继续，整体仍是反向 RR，每核静态总数保持 ±1，+1 落在高 index 核。
+    if (nrValidAic > 0) {
+        uint32_t aicIdx = wrapCoreIdx;
+        for (const auto* it = aicQueue->begin(); it != aicQueue->end(); ++it) {
+            uint32_t coreIdx = (nrValidAic - 1) - (aicIdx++ % nrValidAic);
+            perCorePendingQueueArray[coreIdx]->UnsafeEnqueue(*it);
+        }
     }
 
-    // perCorePendingQueue: distribute aiv tasks to aiv cores (nrValidAic..3*nrValidAic-1)
-    uint32_t aivIdx = wrapCoreIdx * 2;
-    for (const auto* it = aivQueue->begin(); it != aivQueue->end(); ++it) {
-        uint32_t coreIdx = nrValidAic + (aivIdx % nrAivCores);
-        perCorePendingQueueArray[coreIdx]->UnsafeEnqueue(*it);
-        aivIdx++;
+    // AIV wrap 因 1C2V/1C1V 混合不是简单反向序列，按“当前静态计数最小优先、同 count 高 index 优先”
+    // 反向填充，保证 wrap + 非 wrap 的 AIV 静态总数仍为 ±1，且多余任务落在高 index 核。
+    auto enqueueAivReverseFill = [perCorePendingQueueArray](uint32_t begin, uint32_t end, uint32_t task) {
+        uint32_t best = begin;
+        uint32_t bestSize = perCorePendingQueueArray[begin]->size;
+        for (uint32_t i = begin + 1; i < end; ++i) {
+            uint32_t size = perCorePendingQueueArray[i]->size;
+            if (size <= bestSize) { // 同 count 选高 index
+                best = i;
+                bestSize = size;
+            }
+        }
+        perCorePendingQueueArray[best]->UnsafeEnqueue(task);
+    };
+    if (nrAivCores > 0) {
+        for (const auto* it = aivQueue->begin(); it != aivQueue->end(); ++it) {
+            enqueueAivReverseFill(nrValidAic, nrValidAic + nrAivCores, *it);
+        }
     }
 }
 

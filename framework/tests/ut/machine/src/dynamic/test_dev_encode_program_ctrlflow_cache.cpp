@@ -759,26 +759,29 @@ TEST(CtrlFlowCacheDrcoUt, DrcoReadyQueueDataRestore_WithMixWraps)
 
     auto* root = &drco.root;
 
-    // wrap0 (1C2V): aicCore=0, AIV cores = 4 + 0*2 = {4, 5}
-    EXPECT_EQ(root->perCorePendingQueueArray[0]->size, 1U);
-    EXPECT_EQ(root->perCorePendingQueueArray[0]->taskList[0], MakeTaskID(0, 100));
-    EXPECT_EQ(root->perCorePendingQueueArray[4]->size, 1U);
-    EXPECT_EQ(root->perCorePendingQueueArray[4]->taskList[0], MakeTaskID(0, 200));
-    EXPECT_EQ(root->perCorePendingQueueArray[5]->size, 1U);
-    EXPECT_EQ(root->perCorePendingQueueArray[5]->taskList[0], MakeTaskID(0, 201));
+    // wrap0 (1C2V): aicCore = (4-1)-0 = 3, AIV cores = 4 + 3*2 = {10, 11}
+    EXPECT_EQ(root->perCorePendingQueueArray[3]->size, 1U);
+    EXPECT_EQ(root->perCorePendingQueueArray[3]->taskList[0], MakeTaskID(0, 100));
+    EXPECT_EQ(root->perCorePendingQueueArray[10]->size, 1U);
+    EXPECT_EQ(root->perCorePendingQueueArray[10]->taskList[0], MakeTaskID(0, 200));
+    EXPECT_EQ(root->perCorePendingQueueArray[11]->size, 1U);
+    EXPECT_EQ(root->perCorePendingQueueArray[11]->taskList[0], MakeTaskID(0, 201));
 
-    // wrap1 (1C1V): aicCore=1, AIV core = 4 + 1*2 = {6}，不占 7
-    EXPECT_EQ(root->perCorePendingQueueArray[1]->size, 1U);
-    EXPECT_EQ(root->perCorePendingQueueArray[1]->taskList[0], MakeTaskID(1, 101));
-    EXPECT_EQ(root->perCorePendingQueueArray[6]->size, 1U);
-    EXPECT_EQ(root->perCorePendingQueueArray[6]->taskList[0], MakeTaskID(1, 202));
+    // wrap1 (1C1V): aicCore = (4-1)-1 = 2, AIV core = 4 + 2*2 = {8}
+    EXPECT_EQ(root->perCorePendingQueueArray[2]->size, 1U);
+    EXPECT_EQ(root->perCorePendingQueueArray[2]->taskList[0], MakeTaskID(1, 101));
+    EXPECT_EQ(root->perCorePendingQueueArray[8]->size, 1U);
+    EXPECT_EQ(root->perCorePendingQueueArray[8]->taskList[0], MakeTaskID(1, 202));
     EXPECT_EQ(root->perCorePendingQueueArray[7]->size, 0U);
 
-    // 普通任务从 wrap 游标续接：AIC 起始 core=2，AIV 起始 core=4+(4 % 8)=8
-    EXPECT_EQ(root->perCorePendingQueueArray[2]->size, 1U);
-    EXPECT_EQ(root->perCorePendingQueueArray[2]->taskList[0], MakeTaskID(2, 301));
-    EXPECT_EQ(root->perCorePendingQueueArray[8]->size, 1U);
-    EXPECT_EQ(root->perCorePendingQueueArray[8]->taskList[0], MakeTaskID(2, 302));
+    // 普通任务反向填充：选当前静态计数最小的核，同 count 选高 index。
+    // AIC 0/1 都是 0，选 1；AIV 4/5/6/7/9 都是 0，选 9。
+    EXPECT_EQ(root->perCorePendingQueueArray[1]->size, 1U);
+    EXPECT_EQ(root->perCorePendingQueueArray[1]->taskList[0], MakeTaskID(2, 301));
+    EXPECT_EQ(root->perCorePendingQueueArray[0]->size, 0U);
+    EXPECT_EQ(root->perCorePendingQueueArray[9]->size, 1U);
+    EXPECT_EQ(root->perCorePendingQueueArray[9]->taskList[0], MakeTaskID(2, 302));
+    EXPECT_EQ(root->perCorePendingQueueArray[4]->size, 0U);
 
     // Local ready queues (incl. the MIX shared queue at [DRCO_QUEUE_MIX][0]) reset to empty;
     // executed counters cleared (size untouched).
