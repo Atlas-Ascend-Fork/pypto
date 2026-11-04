@@ -1991,3 +1991,58 @@ TEST_F(FoldConsumerViewOffsetTest, FoldSkippedWithAllConstantOffsets)
 
     EXPECT_EQ(copyInOp.GetOOperands().front(), output) << "All-constant offsets should not trigger fold";
 }
+
+/*
+ * copyin -> adds(0) -> reshape([15, 1] -> [3, 5, 1]) -> adds(0) -> copyout
+ * Axis combining pads the UB raw shapes to [16, 1] and [3, 8, 1].
+ * The pass must insert copyout -> DDR reshape -> copyin.
+ */
+TEST_F(TestRemoveUnalignedReshapeOp, reshaped_axis_combine_padded_ub)
+{
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "AxisCombinePaddedReshape",
+                                                      "AxisCombinePaddedReshape", nullptr);
+    currFunctionPtr->paramConfigs_.combineAxis = true;
+    auto incast = CreateTestTensor(MemoryType::MEM_DEVICE_DDR, {15, 1});
+    auto copyInTensor = CreateTestTensor(MemoryType::MEM_UB, {15, 1});
+    auto input = CreateTestTensor(MemoryType::MEM_UB, {15, 1});
+    auto output = CreateTestTensor(MemoryType::MEM_UB, {3, 5, 1});
+    auto copyOutTensor = CreateTestTensor(MemoryType::MEM_UB, {3, 5, 1});
+    auto outcast = CreateTestTensor(MemoryType::MEM_DEVICE_DDR, {3, 5, 1});
+    input->tensor->rawshape = {16, 1};
+    output->tensor->rawshape = {3, 8, 1};
+    copyInTensor->tensor->rawshape = {16, 1};
+    copyOutTensor->tensor->rawshape = {3, 8, 1};
+    auto& copyIn = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_COPY_IN, {incast}, {copyInTensor});
+    copyIn.SetOpAttribute(
+        std::make_shared<CopyOpAttribute>(OpImmediate::Specified({0, 0}), MEM_UB, OpImmediate::Specified({15, 1}),
+                                          OpImmediate::Specified({15, 1}), std::vector<OpImmediate>()));
+    auto& addsBefore = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_ADDS, {copyInTensor}, {input});
+    addsBefore.SetAttribute(OpAttributeKey::scalar, Element(DT_FP32, 0.0f));
+    auto& reshape = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_RESHAPE, {input}, {output});
+    auto& addsAfter = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_ADDS, {output}, {copyOutTensor});
+    addsAfter.SetAttribute(OpAttributeKey::scalar, Element(DT_FP32, 0.0f));
+    auto& copyOut = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_COPY_OUT, {copyOutTensor}, {outcast});
+    copyOut.SetOpAttribute(std::make_shared<CopyOpAttribute>(MEM_UB, OpImmediate::Specified({0, 0, 0}),
+                                                             OpImmediate::Specified({3, 5, 1}),
+                                                             OpImmediate::Specified({3, 5, 1})));
+    currFunctionPtr->inCasts_.push_back(incast);
+    currFunctionPtr->outCasts_.push_back(outcast);
+
+    RemoveUnalignedReshape removeUnalignedReshapeOpTest;
+    ASSERT_EQ(removeUnalignedReshapeOpTest.RunOnFunction(*currFunctionPtr), SUCCESS);
+    EXPECT_EQ(currFunctionPtr->Operations().size(), 7);
+    auto reshapeInput = reshape.GetIOperands().front();
+    auto reshapeOutput = reshape.GetOOperands().front();
+    EXPECT_EQ(reshapeInput->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(reshapeOutput->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(reshapeInput->tensor->rawshape, input->shape);
+    EXPECT_EQ(reshapeOutput->tensor->rawshape, output->shape);
+    ASSERT_EQ(reshapeInput->GetProducers().size(), 1);
+    auto producer = *reshapeInput->GetProducers().begin();
+    EXPECT_EQ(producer->GetOpcode(), Opcode::OP_COPY_OUT);
+    EXPECT_EQ(producer->GetIOperands().front(), input);
+    ASSERT_EQ(reshapeOutput->GetConsumers().size(), 1);
+    auto consumer = *reshapeOutput->GetConsumers().begin();
+    EXPECT_EQ(consumer->GetOpcode(), Opcode::OP_COPY_IN);
+    EXPECT_EQ(consumer->GetOOperands().front(), output);
+}

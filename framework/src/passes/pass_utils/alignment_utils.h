@@ -23,6 +23,16 @@ namespace npu::tile_fwk {
 class AlignmentUtils {
 public:
     /**
+     * @brief Check the second-last-axis padding condition for axis combining.
+     *
+     * @param tensor input logical tensor.
+     * @param enableAxisCombine axis-combine eligibility or conservative function-level switch.
+     * @return true if axis combining is enabled, rank is at least two and the raw last dimension is one.
+     * This is a candidate condition, not a record of actual padding. BRCB producer padding is independent.
+     */
+    static bool CheckPadSecondLast(const LogicalTensorPtr& tensor, bool enableAxisCombine);
+
+    /**
      * @brief Get last-dimension alignment base in elements.
      *
      * @param tensor input logical tensor.

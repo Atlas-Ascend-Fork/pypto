@@ -79,7 +79,7 @@ private:
     bool checkNonCopyInConsumerExists(LogicalTensorPtr tensor, std::vector<Operation*>& copyInOps);
     void HandleNoCopyInConsumer(Function& function, Operation& op, LogicalTensorPtr output,
                                 std::vector<Operation*>& copyInOps, bool& checkOverUbSize);
-    bool CheckUnaligned(Operation& op);
+    bool CheckUnaligned(Operation& op, bool combineAxis);
     void CollectSiblingCopyInConsumersOfDDRReshapeInput(LogicalTensorPtr reshapeInput, Operation& reshapeOp,
                                                         std::vector<Operation*>& copyInOps);
     LogicalTensorPtr InsertIOTensor(Function& function, Operation& op,

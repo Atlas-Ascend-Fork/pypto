@@ -661,7 +661,7 @@ void PadLocalBuffer::PadVectorForAxisCombine(Operation& op, LogicalTensorPtr& in
     SetOriRawshape(in);
     auto producerOp = *(in->GetProducers().begin());
     bool enableAxisCombine = axisCombineMarker_.IsTensorEnableAxisCombine(in);
-    bool padSecondLast = enableAxisCombine && lastIdx > 0 && in->tensor->rawshape[lastIdx] == 1;
+    bool padSecondLast = AlignmentUtils::CheckPadSecondLast(in, enableAxisCombine);
     bool producerIsBrcb = producerOp != nullptr && producerOp->GetOpcode() == Opcode::OP_BRCB;
     if (producerIsBrcb) {
         AlignedRawTensorIfNeed(in, lastIdx - 1, BRCB_SECOND_LAST_BASE);

@@ -131,23 +131,32 @@ LogicalTensorPtr RemoveUnalignedReshape::InsertIOTensor(
     return newReshapeIO;
 }
 
-bool RemoveUnalignedReshape::CheckUnaligned(Operation& op)
+bool RemoveUnalignedReshape::CheckUnaligned(Operation& op, bool combineAxis)
 {
-    int lastIdx;
+    auto isUnaligned = [combineAxis](const LogicalTensorPtr& tensor) {
+        if (tensor == nullptr || tensor->tensor == nullptr || tensor->shape.empty()) {
+            return false;
+        }
+        const auto& shape = tensor->shape;
+        const auto& rawShape = tensor->tensor->rawshape;
+        if (rawShape.size() != shape.size()) {
+            return true;
+        }
+        const size_t lastIdx = shape.size() - 1;
+        if (shape[lastIdx] != rawShape[lastIdx]) {
+            return true;
+        }
+        // Axis-combine padding can extend the second-last axis when the raw last axis is 1.
+        return AlignmentUtils::CheckPadSecondLast(tensor, combineAxis) && shape[lastIdx - 1] != rawShape[lastIdx - 1];
+    };
     for (const auto& input : op.GetIOperands()) {
-        if (input != nullptr && input->tensor != nullptr) {
-            lastIdx = input->shape.size() - 1;
-            if (input->shape[lastIdx] != input->tensor->rawshape[lastIdx]) {
-                return true;
-            }
+        if (isUnaligned(input)) {
+            return true;
         }
     }
     for (const auto& output : op.GetOOperands()) {
-        if (output != nullptr && output->tensor != nullptr) {
-            lastIdx = output->shape.size() - 1;
-            if (output->shape[lastIdx] != output->tensor->rawshape[lastIdx]) {
-                return true;
-            }
+        if (isUnaligned(output)) {
+            return true;
         }
     }
     return false;
@@ -875,7 +884,7 @@ void RemoveUnalignedReshape::CollectReshapeOps(Function& function)
             continue;
         }
 
-        if (!CheckUnaligned(op)) {
+        if (!CheckUnaligned(op, function.paramConfigs_.combineAxis)) {
             continue;
         }
 

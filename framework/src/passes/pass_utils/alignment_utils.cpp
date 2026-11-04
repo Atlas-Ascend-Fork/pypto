@@ -18,6 +18,16 @@
 
 namespace npu::tile_fwk {
 
+bool AlignmentUtils::CheckPadSecondLast(const LogicalTensorPtr& tensor, bool enableAxisCombine)
+{
+    if (!enableAxisCombine || !IsValidForLastDimCheck(tensor)) {
+        return false;
+    }
+    const auto& shape = tensor->shape;
+    const auto& rawShape = tensor->tensor->rawshape;
+    return shape.size() > 1 && rawShape.size() == shape.size() && rawShape.back() == 1;
+}
+
 bool AlignmentUtils::IsValidForLastDimCheck(const LogicalTensorPtr& tensor)
 {
     return tensor != nullptr && tensor->tensor != nullptr && !tensor->shape.empty();
