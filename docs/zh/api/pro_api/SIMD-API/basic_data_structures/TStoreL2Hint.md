@@ -20,18 +20,9 @@ GM数据写入的L2 Cache策略枚举，用于store和store_tile接口。该参�
 
 ```python
 PYPTO_DECLARE_ENUM(TStoreL2Hint,
-    NormalFirstVictim,
-    NormalLastVictim,
-    NormalPersistent,
-    NotAllocClean
+    NormalFirstVictim,  # 默认策略，正常分配L2 Cache，优先淘汰。
+    NormalLastVictim,   # 正常分配L2 Cache，降低被淘汰的优先级。
+    NormalPersistent,   # 正常分配L2 Cache，并使用持久化策略。
+    NotAllocClean       # 不分配新的L2 Cache行，并使用Clean策略。
 )
 ```
-
-## 参数说明
-
-| 枚举值 | 说明 |
-|---|---|
-| NormalFirstVictim | 默认策略，正常分配L2 Cache，优先淘汰。 |
-| NormalLastVictim | 正常分配L2 Cache，降低被淘汰的优先级。 |
-| NormalPersistent | 正常分配L2 Cache，并使用持久化策略。 |
-| NotAllocClean | 不分配新的L2 Cache行，并使用Clean策略。 |

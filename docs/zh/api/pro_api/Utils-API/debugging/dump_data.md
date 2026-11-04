@@ -41,7 +41,7 @@ pypto_pro.language.dump_data(
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| data | 输入 | 要打印的Tensor或Tile。Tensor支持ND和NZ布局，暂不支持pypto_pro.language.DT_INT4、pypto_pro.language.DT_UINT4、pypto_pro.language.DT_FP4和pypto_pro.language.DT_HF4；Tile不支持L0A Buffer、L0B Buffer、L0A_MX Buffer和L0B_MX Buffer。 |
+| data | 输入 | 要打印的Tensor或Tile。Tensor和Tile均暂不支持pypto_pro.language.DT_INT4、pypto_pro.language.DT_UINT4、pypto_pro.language.DT_FP4和pypto_pro.language.DT_HF4；Tile不支持L0A Buffer、L0B Buffer、L0A_MX Buffer和L0B_MX Buffer。 |
 | offsets | 输入 | 可选，窗口起始偏移（各维）。取值为由整型常量或运行时整型标量表达式组成的序列（列表或元组），长度须等于数据的维数；须与shapes同时提供。NZ Tensor窗口的N方向offset须按dtype对应的C0对齐。 |
 | shapes | 输入 | 可选，窗口大小（各维）。取值为由整型常量或运行时整型标量表达式组成的序列（列表或元组），长度须等于数据的维数；须与offsets同时提供。 |
 | workspace | 输入 | 保留参数，无需传入。 |
