@@ -14,6 +14,7 @@
  */
 
 #include "passes/pass_utils/subfunc_utils.h"
+#include "passes/pass_utils/pass_token_utils.h"
 #include "passes/block_graph_pass/mix_subgraph_split/mix_call_operation_builder.h"
 #include "interface/tensor/irbuilder.h"
 
@@ -35,6 +36,7 @@ Status MixCallOperationBuilder::CreateCallOps(Function& rootFunc, const std::vec
         uint64_t wrapId = nextWrapId_++;
         APASS_LOG_DEBUG_F(Elements::Operation, "Assigning wrapId=%lu for original callOp %d", wrapId,
                           originalCallOp->GetOpMagic());
+        std::vector<Operation*> replacementCalls;
         for (size_t i = 0; i < components.size(); i++) {
             CallOpCreationInfo info;
             info.leafFunc = newFunctions[i];
@@ -56,9 +58,16 @@ Status MixCallOperationBuilder::CreateCallOps(Function& rootFunc, const std::vec
             }
             // 记录这个call op的信息
             callOpInfos.push_back(info);
+            replacementCalls.push_back(info.createdCallOp);
+            for (const auto& token : originalCallOp->tokens_) {
+                PassTokenUtils::AddTokenConsumer(rootFunc, token, *info.createdCallOp);
+            }
             APASS_LOG_DEBUG_F(Elements::Operation, "Created call op %d in info for component %zu (wrapId=%lu)",
                               info.createdCallOp->GetOpMagic(), info.componentIndex, wrapId);
         }
+        // A split call completes only after all of its components. Reconnect every
+        // surviving consumer before the original call and its tokens are removed.
+        PassTokenUtils::MoveResultTokensToProducers(rootFunc, {originalCallOp}, replacementCalls, {});
     }
     return SUCCESS;
 }

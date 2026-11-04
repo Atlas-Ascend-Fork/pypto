@@ -14,6 +14,7 @@
  */
 
 #include "passes/block_graph_pass/mix_subgraph_split.h"
+#include "passes/pass_utils/pass_token_utils.h"
 #include "passes/pass_utils/pass_utils.h"
 #include "interface/utils/id_gen.h"
 
@@ -845,6 +846,7 @@ void MixSubgraphSplit::DeleteOriginalMixCallOps(Function& rootFunc, const std::v
     if (callOpsToDelete.empty()) {
         return;
     }
+    PassTokenUtils::CleanupDeletedTokenDependency(rootFunc, callOpsToDelete);
     for (auto* callOp : callOpsToDelete) {
         if (callOp != nullptr && !callOp->IsDeleted()) {
             callOp->SetAsDeleted();

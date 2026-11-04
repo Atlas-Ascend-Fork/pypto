@@ -21,6 +21,7 @@
 #undef private
 #undef protected
 #include "computational_graph_builder.h"
+#include "passes/pass_utils/pass_token_utils.h"
 #include "interface/tensor/irbuilder.h"
 
 namespace npu {
@@ -445,6 +446,74 @@ TEST_F(MixSubgraphSplitTest, TestSingleMixSubgraphBasicSplit)
 
     // 4. 验证结果
     VerifyBasicSplitResult(status, *rootFuncPtr, mixFuncPtr.get(), &callOp);
+}
+
+TEST_F(MixSubgraphSplitTest, PreservesCallTokenDependencies)
+{
+    auto root = CreateTestRootFunction();
+    FunctionHash hash;
+    auto mix = CreateMixSubgraph(root, hash);
+    auto& call = CreateCallOp(root, programId, hash);
+    auto& before = IRBuilder().CreateTensorOpStmt(*root, Opcode::OP_ADD, {}, {});
+    auto& after = IRBuilder().CreateTensorOpStmt(*root, Opcode::OP_ADD, {}, {});
+    auto& fanout = IRBuilder().CreateTensorOpStmt(*root, Opcode::OP_ADD, {}, {});
+    PassTokenUtils::LinkTokenDependency(*root, before, call);
+    PassTokenUtils::LinkTokenDependency(*root, call, after);
+    PassTokenUtils::LinkTokenDependency(*root, call, fanout);
+    auto inputToken = before.result_token_.front();
+    auto oldResult = call.result_token_.front();
+
+    MixSubgraphSplit splitter;
+    ASSERT_EQ(splitter.RunOnFunction(*root), SUCCESS);
+    auto calls = root->GetCallopList();
+    ASSERT_EQ(calls.size(), 2);
+    EXPECT_TRUE(root->GetVarDependency().GetConsumers(oldResult).empty());
+    EXPECT_TRUE(root->GetVarDependency().GetProducers(oldResult).empty());
+    EXPECT_EQ(root->GetVarDependency().GetConsumers(inputToken).size(), calls.size());
+    for (auto* replacement : calls) {
+        ASSERT_EQ(replacement->tokens_.size(), 1);
+        EXPECT_EQ(replacement->tokens_.front(), inputToken);
+        ASSERT_EQ(replacement->result_token_.size(), 1);
+        const auto& token = replacement->result_token_.front();
+        EXPECT_EQ(root->GetVarDependency().GetProducers(token).size(), 1);
+        EXPECT_EQ(root->GetVarDependency().GetConsumers(token).size(), 2);
+        EXPECT_NE(std::find(after.tokens_.begin(), after.tokens_.end(), token), after.tokens_.end());
+        EXPECT_NE(std::find(fanout.tokens_.begin(), fanout.tokens_.end(), token), fanout.tokens_.end());
+    }
+}
+
+TEST_F(MixSubgraphSplitTest, PreservesTokensBetweenSplitCalls)
+{
+    auto root = CreateTestRootFunction();
+    FunctionHash hash;
+    auto mix = CreateMixSubgraph(root, hash);
+    auto& first = CreateCallOp(root, programId, hash);
+    auto& second = CreateCallOp(root, programId, hash);
+    PassTokenUtils::LinkTokenDependency(*root, first, second);
+    auto oldToken = first.result_token_.front();
+
+    MixSubgraphSplit splitter;
+    ASSERT_EQ(splitter.RunOnFunction(*root), SUCCESS);
+    auto calls = root->GetCallopList();
+    ASSERT_EQ(calls.size(), 4);
+    size_t producers = 0;
+    size_t consumers = 0;
+    for (auto* call : calls) {
+        if (!call->result_token_.empty()) {
+            ++producers;
+            EXPECT_TRUE(call->tokens_.empty());
+            const auto& token = call->result_token_.front();
+            EXPECT_EQ(root->GetVarDependency().GetProducers(token).size(), 1);
+            EXPECT_EQ(root->GetVarDependency().GetConsumers(token).size(), 2);
+        } else {
+            ++consumers;
+            EXPECT_EQ(call->tokens_.size(), 2);
+        }
+    }
+    EXPECT_EQ(producers, 2);
+    EXPECT_EQ(consumers, 2);
+    EXPECT_TRUE(root->GetVarDependency().GetProducers(oldToken).empty());
+    EXPECT_TRUE(root->GetVarDependency().GetConsumers(oldToken).empty());
 }
 
 // 辅助函数1：为非Mix子图创建callOp（这个函数会被CreateNonMixFunctions调用，所以要放在前面）
