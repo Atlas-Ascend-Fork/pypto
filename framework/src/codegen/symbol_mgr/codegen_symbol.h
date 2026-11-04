@@ -123,6 +123,13 @@ struct TileTensor {
             }
             if (linearOffset != 0 && bufType != BUF_L1) {
                 // append linear offset, e.g. UBTileTensorFP32Dim2_1 ubTensor_1((uint64_t)((float *)UB_S0_E4096 + 32))
+                // DT_FP4_E2M1 / DT_FP4_E1M2 are 4-bit elements, but the C pointer type (float4_*x2_t) is one
+                // byte holding two of them. Pointer addition counts storage units, matching GetLinearAddr's >> 1.
+                if (dtype == DT_FP4_E2M1 || dtype == DT_FP4_E1M2) {
+                    ASSERT(GenCodeErr::TENSOR_SHAPE_INVALID, linearOffset % 2 == 0)
+                        << "fp4 logical offset must be even, offset: " << linearOffset;
+                    linearOffset /= 2;
+                }
                 oss << "((" << CodeGenDataTypeStr(dtype) << " *)" << bufVar << " + " << linearOffset << ")";
             } else {
                 oss << bufVar;

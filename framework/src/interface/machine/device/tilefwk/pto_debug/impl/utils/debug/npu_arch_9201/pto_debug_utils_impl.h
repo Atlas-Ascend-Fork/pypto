@@ -105,7 +105,7 @@ __simd_callee__ constexpr inline uint32_t get_vf_debug_reserved_ub_size()
 __simd_callee__ inline uint64_t get_vf_debug_reserved_ub_addr()
 {
 #if !(defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0)
-    return static_cast<uint64_t>(__cce_scalar::get_shmem_sz()) - get_vf_debug_reserved_ub_size();
+    return static_cast<uint64_t>(get_shmem_sz()) - get_vf_debug_reserved_ub_size();
 #else
     return 0;
 #endif
@@ -174,7 +174,7 @@ __aicore__ inline void ringbuf_wait_rts_sync_impl()
 
 __aicore__ inline uint32_t pto_debug_get_core_idx_impl()
 {
-    constexpr uint32_t dumpCoreNums = 108;
+    constexpr uint32_t dumpCoreNums = 140;
     return get_coreid() % dumpCoreNums;
 }
 
