@@ -75,7 +75,8 @@ __aicore__ inline void TTransDataNCHW2NC1HWC0(DST dst, TMP tmpTensor, INPUT inpu
     using tmpDstTileData = pto::ConvTile<pto::TileType::Vec, typename INPUT::Type, dstBufferSize, pto::Layout::NC1HWC0,
                                          pto::ConvTileShape<dstTileN, dstTileC1, dstTileH, dstTileW, dstTileC0>,
                                          pto::ConvTileShape<tileN, tileC1, tileH, tileW, C0>>;
-    using tmpTileData = pto::Tile<pto::TileType::Vec, typename INPUT::Type, 1, C0, pto::BLayout::RowMajor, 1, C0>;
+    using tmpTileData = pto::Tile<pto::TileType::Vec, typename INPUT::Type, tileH * tileW, C0, pto::BLayout::RowMajor,
+                                  tileH * tileW, C0>;
     inputTileData convInput;
     tmpDstTileData convTmpDst;
     tmpTileData tmpAreaTile;
@@ -233,7 +234,9 @@ __aicore__ inline void TTransDataNC1HWC02NCHW(DST dst, TMP tmpTensor, INPUT inpu
     using tmpDstTileData = pto::ConvTile<pto::TileType::Vec, typename INPUT::Type, dstBufferSize, pto::Layout::NCHW,
                                          pto::ConvTileShape<dstTileN, dstTileC, dstTileH, dstTileW>,
                                          pto::ConvTileShape<tileN, tileC1 * C0, tileH, tileW>>;
-    using tmpTileData = pto::Tile<pto::TileType::Vec, typename INPUT::Type, 1, C0, pto::BLayout::RowMajor, 1, C0>;
+    constexpr auto tmpTileAlignedW = (tileW + C0 - 1) / C0 * C0;
+    using tmpTileData = pto::Tile<pto::TileType::Vec, typename INPUT::Type, tileH * tmpTileAlignedW, C0,
+                                  pto::BLayout::RowMajor, tileH * tmpTileAlignedW, C0>;
     inputTileData convInput;
     tmpDstTileData convTmpDst;
     tmpTileData tmpAreaTile;

@@ -459,7 +459,7 @@ void HandleNCHW5DimFormat(Function& function, const LogicalTensorPtr& dstTensor,
     auto& op = function.AddOperation(Opcode::OP_NC1HWC02NCHW, {realInput}, {tmpDstTile, tmpTile});
     constexpr int shapeOffset = NUM_VALUE_8;
     for (int i = 0; i < SHAPE_DIM5; i++) {
-        tileParams[shapeOffset + i] = SymbolicScalar(inputTile->GetShape()[i]);
+        tileParams[shapeOffset + i] = SymbolicScalar(realInput->GetShape()[i]);
     }
     SetTransDataOffsetWithValid(op, tileParams);
     auto tmpDstValidTile = tmpDstTile->View(function, dstTensorTile->GetShape(), Offset{0, 0, 0, 0});
@@ -529,7 +529,7 @@ void HandleNCDHW6DimFormat(Function& function, const LogicalTensorPtr& dstTensor
     auto& op = function.AddOperation(Opcode::OP_NDC1HWC02NCDHW, {realInput}, {tmpDstTile, tmpTile});
     constexpr int shapeOffset = NUM_VALUE_9;
     for (int i = 0; i < SHAPE_DIM5; i++) {
-        tileParams[shapeOffset + i] = SymbolicScalar(realInputTile->GetShape()[i]);
+        tileParams[shapeOffset + i] = SymbolicScalar(realInput->GetShape()[i]);
     }
     SetTransDataOffsetWithValid(op, tileParams);
     auto tmpDstValidTile = tmpDstTile->View(function, dstTensorTile->GetShape(), Offset{0, 0, 0, 0, 0});
