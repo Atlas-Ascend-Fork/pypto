@@ -389,7 +389,7 @@ static std::string ValidCols(const std::string& tile_cpp_name)
 // PTO's multi-matrix TLOAD consumes a 3D view in element units.
 static void EmitMergedTLoad(codegen::CCECodegen& codegen, const std::string& out, const std::string& src,
                             const std::string& inner, const ir::CallPtr& op, const ir::MakeTuple* offsets,
-                            bool transposed, int64_t capacity)
+                            bool transposed, int64_t capacity, const std::string& l2_hint_template)
 {
     const auto tensor_var = ir::As<ir::Var>(op->args_[1]);
     const auto tensor = ir::As<ir::TensorType>(tensor_var->GetType());
@@ -425,7 +425,7 @@ static void EmitMergedTLoad(codegen::CCECodegen& codegen, const std::string& out
     codegen.Emit("    const int32_t __merged_count = (__merged_valid + __merged_rows - 1) / __merged_rows;");
     const auto bound = codegen.BindGlobalTensor(tensor_var, op, "__merged_src", transposed ? columns : "__merged_rows",
                                                 transposed ? "__merged_rows" : columns, "__merged_count");
-    codegen.Emit("    TLOAD(" + out + ", " + bound + ");");
+    EmitTemplated(codegen, "TLOAD", {l2_hint_template}, {out, bound});
     codegen.Emit("}");
 }
 
@@ -464,6 +464,9 @@ static std::string MakeBlockOutLoadCodegenCCE(const ir::CallPtr& op, codegen::Co
     std::string offset = codegen.ComputeTensorOffset(src_tensor_type, offsets_tuple);
     std::string src_ptr = codegen.GetPointer(src_tensor_var);
     std::string out_name = cce::GetOperandAsCode(codegen, op->args_[0]);
+    const std::string l2_hint_template = op->HasKwarg("l2_cache_mode") ? ir::EnumToString(static_cast<ir::TLoadL2Hint>(
+                                                                             op->GetKwarg<int>("l2_cache_mode"))) :
+                                                                         "";
 
     // Merged-row load: `tile_dims` names three tensor axes and the destination Tile's row index
     // is the flattening of the first two (row = i_outer * nd_inner + i_inner). TLOAD's
@@ -501,13 +504,14 @@ static std::string MakeBlockOutLoadCodegenCCE(const ir::CallPtr& op, codegen::Co
             n_value_expr = cce::GetOperandAsCode(codegen, src_tensor_type->shape_[static_cast<size_t>(tile_dims[1])]);
         }
 
-        EmitMergedTLoad(codegen, out_name, src_ptr, n_value_expr, op, offsets_tuple.get(), is_transpose, rows);
+        EmitMergedTLoad(codegen, out_name, src_ptr, n_value_expr, op, offsets_tuple.get(), is_transpose, rows,
+                        l2_hint_template);
         return "";
     }
 
     const std::string bound = codegen.BindGlobalTensor(src_tensor_var_ptr, op, src_ptr + " + " + offset,
                                                        ValidRows(out_name), ValidCols(out_name));
-    codegen.Emit("TLOAD(" + out_name + ", " + bound + ");");
+    EmitTemplated(codegen, "TLOAD", {l2_hint_template}, {out_name, bound});
     return "";
 }
 
@@ -543,6 +547,9 @@ static std::string MakeBlockOutStoreCodegenCCE(const ir::CallPtr& op, codegen::C
 
     const std::string dst_tensor_access = codegen.BindGlobalTensor(dst_tensor_var_ptr, op, dst_ptr + " + " + offset,
                                                                    ValidRows(src_tile), ValidCols(src_tile));
+    const std::string l2_hint_template = op->HasKwarg("l2_cache_mode") ? ir::EnumToString(static_cast<ir::TStoreL2Hint>(
+                                                                             op->GetKwarg<int>("l2_cache_mode"))) :
+                                                                         "";
 
     auto fp_tile_type = op->args_.size() == 4 ? ir::As<ir::TileType>(op->args_[3]->GetType()) : nullptr;
     if (fp_tile_type != nullptr) {
@@ -551,7 +558,8 @@ static std::string MakeBlockOutStoreCodegenCCE(const ir::CallPtr& op, codegen::C
                               fp_tile_type->memref_.value()->memorySpace_ == ir::MemorySpace::Scaling)
             << "block.store scale Tile must be allocated in Scaling memory";
         std::string fp_tile = cce::GetOperandAsCode(codegen, op->args_[3]);
-        // TSTORE<[STPhase,] TileData, GlobalData, FpTileData[, AtomicType, ReluPreMode]>(dst, src, fp).
+        // TSTORE<[TStoreL2Hint,] [STPhase,] TileData, GlobalData, FpTileData[, AtomicType, ReluPreMode]>(dst, src,
+        // fp).
         // ReluPreMode can only be pinned by also pinning the AtomicType before it.
         std::string phase_template = GetSTPhaseCCE(op);
         std::string relu_template = op->HasKwarg("relu_pre_mode") ?
@@ -561,7 +569,8 @@ static std::string MakeBlockOutStoreCodegenCCE(const ir::CallPtr& op, codegen::C
         std::string src_type = TileTypeStringForTemplate(codegen, src_tile, op->args_[1]);
         std::string fp_type = TileTypeStringForTemplate(codegen, fp_tile, op->args_[3]);
         EmitTemplated(codegen, "TSTORE",
-                      {phase_template, src_type, TypeOf(dst_tensor_access), fp_type, atomic_template, relu_template},
+                      {l2_hint_template, phase_template, src_type, TypeOf(dst_tensor_access), fp_type, atomic_template,
+                       relu_template},
                       {dst_tensor_access, src_tile, fp_tile});
         return "";
     }
@@ -612,20 +621,22 @@ static std::string MakeBlockOutStoreCodegenCCE(const ir::CallPtr& op, codegen::C
         codegen.Emit("set_atomic_add();");
     }
 
-    // Emit TSTORE
-    // When phase is present, STPhase is the first template parameter of TSTORE
-    // (per pto-isa pto_instr.hpp UF-aware overloads at lines 224/240/257/275).
+    // Emit TSTORE. When both are present, TStoreL2Hint precedes STPhase in the PTO-ISA overload.
     std::string src_type = TileTypeStringForTemplate(codegen, src_tile, op->args_[1]);
 
     if (!relu_template.empty()) {
-        // TSTORE<[STPhase,] TileData, GlobalData, AtomicType::AtomicNone, ReluPreMode>(dst, src[, preQuant])
+        // TSTORE<[TStoreL2Hint,] [STPhase,] TileData, GlobalData, AtomicType::AtomicNone, ReluPreMode>(dst, src[,
+        // preQuant])
         EmitTemplated(codegen, "TSTORE",
-                      {phase_template, src_type, TypeOf(dst_tensor_access), "AtomicType::AtomicNone", relu_template},
+                      {l2_hint_template, phase_template, src_type, TypeOf(dst_tensor_access), "AtomicType::AtomicNone",
+                       relu_template},
                       {args});
-    } else if (op->args_.size() > 3 || !phase_template.empty()) {
-        // TSTORE<[STPhase,] TileData, GlobalData>(dst, src, preQuant)  -  default AtomicType & ReluPreMode
+    } else if (op->args_.size() > 3 || !phase_template.empty() || !l2_hint_template.empty()) {
+        // TSTORE<[TStoreL2Hint,] [STPhase,] TileData, GlobalData>(dst, src, preQuant) - default AtomicType &
+        // ReluPreMode
         // pre_quant_scalar is the optional trailing operand (args_[3]).
-        EmitTemplated(codegen, "TSTORE", {phase_template, src_type, TypeOf(dst_tensor_access)}, {args});
+        EmitTemplated(codegen, "TSTORE", {l2_hint_template, phase_template, src_type, TypeOf(dst_tensor_access)},
+                      {args});
     } else {
         EmitTemplated(codegen, "TSTORE", {}, {args});
     }

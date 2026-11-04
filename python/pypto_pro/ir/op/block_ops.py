@@ -41,6 +41,8 @@ from pypto.pypto_impl.ir import (
     STPhase,
     TensorLayout,
     TilePad,
+    TLoadL2Hint,
+    TStoreL2Hint,
 )
 from pypto.pypto_impl.ir import TileType as _IRTileType  # IR-level TileType (C++ binding);
 from pypto_pro.ir._utils import (
@@ -124,6 +126,16 @@ class FillPadMode(enum.Enum):
     NORMAL = 0
     EXPAND = 1
     INPLACE = 2
+
+
+def _l2_cache_mode_attr(l2_cache_mode, expected_type: type, op_name: str) -> dict[str, int]:
+    if l2_cache_mode is None or isinstance(getattr(l2_cache_mode, "type", None), _ir_core.NoneType):
+        return {}
+    if not isinstance(l2_cache_mode, expected_type):
+        raise InvalidType(
+            f"{op_name}: l2_cache_mode expects {expected_type.__name__}, got {type(l2_cache_mode).__name__}"
+        )
+    return {"l2_cache_mode": l2_cache_mode.value}
 
 
 def _compute_absolute_offsets(
@@ -276,6 +288,7 @@ def _ir_load(
     *,
     span: Span | None = None,
     order: list[int] | None = None,
+    l2_cache_mode: TLoadL2Hint | None = None,
 ) -> Expr:
     op_name = "load"
     actual_span = span or _span()
@@ -292,7 +305,7 @@ def _ir_load(
     if nd_inner is not None and _const_int_value(offsets_tuple.elements[tile_dims[1]]) != 0:
         raise InvalidArgument(f"{op_name}: a merged-row load's middle axis offset must be a compile-time zero")
 
-    kwargs: dict[str, Any] = {}
+    kwargs: dict[str, Any] = _l2_cache_mode_attr(l2_cache_mode, TLoadL2Hint, op_name)
     if nd_inner is not None:
         kwargs["nd_inner"] = nd_inner
     if is_transpose:
@@ -312,6 +325,7 @@ def _ir_load_tile(
     *,
     span: Span | None = None,
     order: list[int] | None = None,
+    l2_cache_mode: TLoadL2Hint | None = None,
 ) -> Expr:
     op_name = "load_tile"
     actual_span = span or _span()
@@ -345,7 +359,7 @@ def _ir_load_tile(
     )
     _validate_offsets(op_name, abs_offsets.elements, src_tensor.type.shape)
     _check_layout_dtype("load_tile", src_tensor, dst_tile, is_transpose=is_transpose)
-    kwargs: dict[str, Any] = {}
+    kwargs: dict[str, Any] = _l2_cache_mode_attr(l2_cache_mode, TLoadL2Hint, op_name)
     if is_transpose:
         kwargs["is_transpose"] = is_transpose
     if order is not None and tile_dims is not None:
@@ -394,6 +408,7 @@ def _ir_store(
     order: list[int] | None = None,
     atomic: AtomicType = AtomicType.AtomicNone,
     phase: STPhase | None = None,
+    l2_cache_mode: TStoreL2Hint | None = None,
 ) -> Expr:
     op_name = "store"
     actual_span = span or _span()
@@ -440,6 +455,7 @@ def _ir_store(
         atomic=atomic,
         phase=phase,
     )
+    kwargs.update(_l2_cache_mode_attr(l2_cache_mode, TStoreL2Hint, op_name))
     operands: list[Expr] = [dst_tensor, src_tile, offsets_tuple]
     if fp_tile is not None:
         operands.append(fp_tile)
@@ -459,6 +475,7 @@ def _ir_store_tile(
     order: list[int] | None = None,
     atomic: AtomicType = AtomicType.AtomicNone,
     phase: STPhase | None = None,
+    l2_cache_mode: TStoreL2Hint | None = None,
 ) -> Expr:
     op_name = "store_tile"
     actual_span = span or _span()
@@ -513,6 +530,7 @@ def _ir_store_tile(
         atomic=atomic,
         phase=phase,
     )
+    kwargs.update(_l2_cache_mode_attr(l2_cache_mode, TStoreL2Hint, op_name))
     operands: list[Expr] = [dst_tensor, src_tile, abs_offsets]
     if fp_tile is not None:
         operands.append(fp_tile)

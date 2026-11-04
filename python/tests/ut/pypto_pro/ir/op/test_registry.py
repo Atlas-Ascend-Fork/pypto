@@ -33,8 +33,8 @@ def test_block_visible_ops_are_registered(op_name):
     "op_name, attrs",
     [
         ("block.cast", {"target_type", "mode"}),
-        ("block.load", {"is_transpose", "tile_dims"}),
-        ("block.store", {"atomic", "phase", "relu_pre_mode"}),
+        ("block.load", {"is_transpose", "tile_dims", "l2_cache_mode"}),
+        ("block.store", {"atomic", "phase", "relu_pre_mode", "l2_cache_mode"}),
         ("block.move", {"acc_to_vec_mode", "phase", "relu_pre_mode"}),
     ],
 )

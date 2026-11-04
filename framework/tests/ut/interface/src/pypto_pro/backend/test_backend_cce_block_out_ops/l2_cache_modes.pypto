@@ -1,0 +1,93 @@
+// vector l2 cache modes
+#if defined(__DAV_VEC__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void kernel_impl_vector(__gm__ half* tensor_ptr)
+{
+
+    using tensorShapeDim5 = pto::TileShape2D<half, pto::DYNAMIC, pto::DYNAMIC, Layout::ND>;
+    using tensorStrideDim5 = pto::Stride<-1, -1, -1, -1, -1>;
+    using tensorType = GlobalTensor<half, tensorShapeDim5, tensorStrideDim5, Layout::ND>;
+    tensorType tensor(tensor_ptr, tensorShapeDim5(), tensorStrideDim5(1, 1, 1, 32, 1));
+
+    using tile_Type = SyncedTile<Tile<TileType::Vec, half, 16, 16, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0>;
+    tile_Type tile{tile_Type::PtoTile(16, 16), {}};
+    tensor.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(tile.tile.GetValidRow()), static_cast<int64_t>(tile.tile.GetValidCol()));
+    TASSIGN(tensor, tensor_ptr + (0 * (32) + 0));
+    TLOAD<TLoadL2Hint::NormalFirstVictim>(tile.tile, tensor);
+    tensor.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(tile.tile.GetValidRow()), static_cast<int64_t>(tile.tile.GetValidCol()));
+    TASSIGN(tensor, tensor_ptr + (0 * (32) + 0));
+    TLOAD<TLoadL2Hint::NormalLastVictim>(tile.tile, tensor);
+    tensor.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(tile.tile.GetValidRow()), static_cast<int64_t>(tile.tile.GetValidCol()));
+    TASSIGN(tensor, tensor_ptr + (0 * (32) + 0));
+    TLOAD<TLoadL2Hint::NormalPersistent>(tile.tile, tensor);
+    tensor.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(tile.tile.GetValidRow()), static_cast<int64_t>(tile.tile.GetValidCol()));
+    TASSIGN(tensor, tensor_ptr + (0 * (32) + 0));
+    TLOAD<TLoadL2Hint::NotAllocKeep>(tile.tile, tensor);
+    tensor.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(tile.tile.GetValidRow()), static_cast<int64_t>(tile.tile.GetValidCol()));
+    TASSIGN(tensor, tensor_ptr + (0 * (32) + 0));
+    TLOAD<TLoadL2Hint::NotAllocClean>(tile.tile, tensor);
+    tensor.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(tile.tile.GetValidRow()), static_cast<int64_t>(tile.tile.GetValidCol()));
+    TASSIGN(tensor, tensor_ptr + (0 * (32) + 0));
+    TLOAD<TLoadL2Hint::NotAllocDrop>(tile.tile, tensor);
+    tensor.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(tile.tile.GetValidRow()), static_cast<int64_t>(tile.tile.GetValidCol()));
+    TASSIGN(tensor, tensor_ptr + (0 * (32) + 0));
+    TSTORE<TStoreL2Hint::NormalFirstVictim, decltype(tile.tile), std::remove_reference_t<decltype(tensor)>>(tensor, tile.tile);
+    tensor.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(tile.tile.GetValidRow()), static_cast<int64_t>(tile.tile.GetValidCol()));
+    TASSIGN(tensor, tensor_ptr + (0 * (32) + 0));
+    TSTORE<TStoreL2Hint::NormalLastVictim, decltype(tile.tile), std::remove_reference_t<decltype(tensor)>>(tensor, tile.tile);
+    tensor.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(tile.tile.GetValidRow()), static_cast<int64_t>(tile.tile.GetValidCol()));
+    TASSIGN(tensor, tensor_ptr + (0 * (32) + 0));
+    TSTORE<TStoreL2Hint::NormalPersistent, decltype(tile.tile), std::remove_reference_t<decltype(tensor)>>(tensor, tile.tile);
+    tensor.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(tile.tile.GetValidRow()), static_cast<int64_t>(tile.tile.GetValidCol()));
+    TASSIGN(tensor, tensor_ptr + (0 * (32) + 0));
+    TSTORE<TStoreL2Hint::NotAllocClean, decltype(tile.tile), std::remove_reference_t<decltype(tensor)>>(tensor, tile.tile);
+}
+#endif
+// cube l2 cache modes with phase and scaling
+#if defined(__DAV_CUBE__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void kernel_impl_cube(__gm__ float* fp32_tensor_ptr, __gm__ int8_t* int8_tensor_ptr)
+{
+
+    using fp32_tensorShapeDim5 = pto::TileShape2D<float, pto::DYNAMIC, pto::DYNAMIC, Layout::ND>;
+    using fp32_tensorStrideDim5 = pto::Stride<-1, -1, -1, -1, -1>;
+    using fp32_tensorType = GlobalTensor<float, fp32_tensorShapeDim5, fp32_tensorStrideDim5, Layout::ND>;
+    fp32_tensorType fp32_tensor(fp32_tensor_ptr, fp32_tensorShapeDim5(), fp32_tensorStrideDim5(1, 1, 1, 32, 1));
+
+    using int8_tensorShapeDim5 = pto::TileShape2D<int8_t, pto::DYNAMIC, pto::DYNAMIC, Layout::ND>;
+    using int8_tensorStrideDim5 = pto::Stride<-1, -1, -1, -1, -1>;
+    using int8_tensorType = GlobalTensor<int8_t, int8_tensorShapeDim5, int8_tensorStrideDim5, Layout::ND>;
+    int8_tensorType int8_tensor(int8_tensor_ptr, int8_tensorShapeDim5(), int8_tensorStrideDim5(1, 1, 1, 32, 1));
+
+    using acc_tile_Type = SyncedTile<Tile<TileType::Acc, float, 16, 16, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 0>;
+    acc_tile_Type acc_tile{acc_tile_Type::PtoTile(16, 16), {}};
+    TASSIGN(acc_tile.tile, 0x0);
+    using scaling_tile_Type = SyncedTile<Tile<TileType::Scaling, int64_t, 1, 16, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0>;
+    scaling_tile_Type scaling_tile{scaling_tile_Type::PtoTile(1, 16), {}};
+    TASSIGN(scaling_tile.tile, 0x0);
+    fp32_tensor.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(acc_tile.tile.GetValidRow()), static_cast<int64_t>(acc_tile.tile.GetValidCol()));
+    TASSIGN(fp32_tensor, fp32_tensor_ptr + (0 * (32) + 0));
+    TSTORE<TStoreL2Hint::NormalPersistent, STPhase::Final, decltype(acc_tile.tile), std::remove_reference_t<decltype(fp32_tensor)>>(fp32_tensor, acc_tile.tile);
+    int8_tensor.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(acc_tile.tile.GetValidRow()), static_cast<int64_t>(acc_tile.tile.GetValidCol()));
+    TASSIGN(int8_tensor, int8_tensor_ptr + (0 * (32) + 0));
+    TSTORE<TStoreL2Hint::NotAllocClean, STPhase::Final, decltype(acc_tile.tile), std::remove_reference_t<decltype(int8_tensor)>, decltype(scaling_tile.tile)>(int8_tensor, acc_tile.tile, scaling_tile.tile);
+}
+#endif

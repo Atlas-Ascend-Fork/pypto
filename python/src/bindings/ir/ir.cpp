@@ -613,6 +613,20 @@ void BindTypeClass(py::module_& ir)
         .value("SINGLE_CACHE_LINE", ir::CacheLine::SINGLE_CACHE_LINE, "Single cache line")
         .value("ENTIRE_DATA_CACHE", ir::CacheLine::ENTIRE_DATA_CACHE, "Entire data cache");
 
+    py::enum_<ir::TLoadL2Hint>(ir, "TLoadL2Hint", "L2 cache hint for GM loads")
+        .value("NormalFirstVictim", ir::TLoadL2Hint::NormalFirstVictim, "Normal first-victim policy")
+        .value("NormalLastVictim", ir::TLoadL2Hint::NormalLastVictim, "Normal last-victim policy")
+        .value("NormalPersistent", ir::TLoadL2Hint::NormalPersistent, "Normal persistent policy")
+        .value("NotAllocKeep", ir::TLoadL2Hint::NotAllocKeep, "Do not allocate; keep policy")
+        .value("NotAllocClean", ir::TLoadL2Hint::NotAllocClean, "Do not allocate; clean policy")
+        .value("NotAllocDrop", ir::TLoadL2Hint::NotAllocDrop, "Do not allocate; drop policy");
+
+    py::enum_<ir::TStoreL2Hint>(ir, "TStoreL2Hint", "L2 cache hint for GM stores")
+        .value("NormalFirstVictim", ir::TStoreL2Hint::NormalFirstVictim, "Normal first-victim policy")
+        .value("NormalLastVictim", ir::TStoreL2Hint::NormalLastVictim, "Normal last-victim policy")
+        .value("NormalPersistent", ir::TStoreL2Hint::NormalPersistent, "Normal persistent policy")
+        .value("NotAllocClean", ir::TStoreL2Hint::NotAllocClean, "Do not allocate; clean policy");
+
     py::enum_<ir::DcciDst>(ir, "DcciDst", "DCCI destination")
         .value("AUTO", ir::DcciDst::AUTO, "Auto: tensor->CACHELINE_OUT, tile->CACHELINE_UB")
         .value("CACHELINE_OUT", ir::DcciDst::CACHELINE_OUT, "Cache line out")

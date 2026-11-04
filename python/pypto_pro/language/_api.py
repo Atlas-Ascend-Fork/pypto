@@ -40,6 +40,8 @@ from pypto.ir import (
     RoundMode,
     SaturationFlagMode,
     STPhase,
+    TLoadL2Hint,
+    TStoreL2Hint,
 )
 from pypto_pro.ir.op.block_ops import FillPadMode
 
@@ -95,6 +97,7 @@ def load(
     offsets: Offset,
     *,
     order: Optional[List[int]] = None,
+    l2_cache_mode: Optional[TLoadL2Hint] = None,
 ) -> None:
     """Load data from GM Tensor into on-chip Tile by absolute element coordinates.
 
@@ -134,12 +137,20 @@ def load(
             the transposed operand. Any other permutation of the three axes is rejected.
             Merged orders are currently unsupported for Vec (UB), load_tile and store.
             A UB reinterpret can reshape already packed data, but cannot gather separated GM regions.
+        l2_cache_mode: Optional L2 cache hint for this GM read. ``None`` uses the PTO-ISA default
+            ``TLoadL2Hint.NormalFirstVictim``.
     """
 
 
 @_api_decl
 def load_tile(
-    dst_tile: Tile, src_tensor: Tensor, /, tile_offsets: Offset, *, order: Optional[List[int]] = None
+    dst_tile: Tile,
+    src_tensor: Tensor,
+    /,
+    tile_offsets: Offset,
+    *,
+    order: Optional[List[int]] = None,
+    l2_cache_mode: Optional[TLoadL2Hint] = None,
 ) -> None:
     """Load data from GM Tensor into on-chip Tile by tile-block index.
 
@@ -156,6 +167,8 @@ def load_tile(
             Ascending order (e.g. ``[0, 1]``) loads without transposition;
             descending order (e.g. ``[1, 0]``) loads with transposition (DN layout).
             Default: last N axes ascending (N = Tile ndim), i.e. no transposition.
+        l2_cache_mode: Optional L2 cache hint for this GM read. ``None`` uses the PTO-ISA default
+            ``TLoadL2Hint.NormalFirstVictim``.
     """
 
 
@@ -171,6 +184,7 @@ def store(
     order: Optional[List[int]] = None,
     atomic: AtomicType = AtomicType.AtomicNone,
     phase: Optional[STPhase] = None,
+    l2_cache_mode: Optional[TStoreL2Hint] = None,
 ) -> None:
     """Store on-chip Tile back to GM Tensor by absolute element coordinates.
 
@@ -204,6 +218,8 @@ def store(
         atomic: Atomic write mode — ``pl.AtomicType.AtomicNone`` (overwrite) or
             ``pl.AtomicType.AtomicAdd`` (atomic accumulate)
         phase: Fixpipe drain phase — ``pl.STPhase.Partial`` or ``pl.STPhase.Final``
+        l2_cache_mode: Optional L2 cache hint for this GM write. ``None`` uses the PTO-ISA default
+            ``TStoreL2Hint.NormalFirstVictim``.
     """
 
 
@@ -219,6 +235,7 @@ def store_tile(
     order: Optional[List[int]] = None,
     atomic: AtomicType = AtomicType.AtomicNone,
     phase: Optional[STPhase] = None,
+    l2_cache_mode: Optional[TStoreL2Hint] = None,
 ) -> None:
     """Store on-chip Tile back to GM Tensor by tile-block index.
 
@@ -249,6 +266,8 @@ def store_tile(
         atomic: Atomic write mode — ``pl.AtomicType.AtomicNone`` (overwrite) or
             ``pl.AtomicType.AtomicAdd`` (atomic accumulate)
         phase: Fixpipe drain phase — ``pl.STPhase.Partial`` or ``pl.STPhase.Final``
+        l2_cache_mode: Optional L2 cache hint for this GM write. ``None`` uses the PTO-ISA default
+            ``TStoreL2Hint.NormalFirstVictim``.
     """
 
 

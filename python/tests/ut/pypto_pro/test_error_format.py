@@ -694,7 +694,7 @@ def test_a_keyword_only_argument_given_positionally_is_named_in_the_hint():
     rendered = _render(kernel)
     assert "too many positional arguments" in rendered.head["reason"]
     assert rendered.caret_under() == "[1, 0]"
-    assert rendered.hint.endswith("order must be passed by keyword")
+    assert rendered.hint.endswith("order, l2_cache_mode must be passed by keyword")
 
 
 def test_a_near_miss_keyword_is_offered_the_name_it_resembles():
@@ -721,7 +721,7 @@ def test_a_keyword_resembling_nothing_is_only_told_what_the_op_accepts():
     assert rendered.caret_under() == "zzzz"
     assert "did you mean" not in rendered.hint
     # dst_tile and src_tensor are positional-only, so neither can be named
-    assert rendered.hint == "pl.load() takes offsets, order"
+    assert rendered.hint == "pl.load() takes offsets, order, l2_cache_mode"
 
 
 def test_a_keyword_repeating_a_positional_argument_names_that_position():

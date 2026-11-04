@@ -30,6 +30,7 @@ pypto_pro.language.store(
     order: Optional[List[int]] = None,
     atomic: AtomicType = AtomicType.AtomicNone,
     phase: Optional[STPhase] = None,
+    l2_cache_mode: Optional[TStoreL2Hint] = None,
 ) -> None
 ```
 
@@ -45,6 +46,7 @@ pypto_pro.language.store(
 | order | 输入 | 可选，维度映射，List[int]类型，指定源Tile各维度对应的目标Tensor维度。<br>- 各维度编号必须在目标Tensor的维度范围内、不能重复。<br>- 仅支持按升序排列。<br>- 省略时对应目标Tensor的最后两个维度。GM分型为NZ时，只能指定为目标Tensor的最后两个维度。<br>- 当Tensor为1维时，不支持传入order参数。 |
 | atomic | 输入 | 可选，原子写模式，[pypto_pro.language.AtomicType](../basic_data_structures/AtomicType.md)类型。 |
 | phase | 输入 | 可选，unitFlag机制，[pypto_pro.language.STPhase](../basic_data_structures/STPhase.md)类型。 |
+| l2_cache_mode | 输入 | 可选，本次GM写入的L2 Cache策略，[pypto_pro.language.TStoreL2Hint](../basic_data_structures/TStoreL2Hint.md)类型。默认使用NormalFirstVictim。 |
 
 ## 约束说明
 

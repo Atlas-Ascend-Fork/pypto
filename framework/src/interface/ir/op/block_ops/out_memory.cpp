@@ -121,6 +121,7 @@ REGISTER_OP("block.load")
     .add_argument("offsets", "Offset tuple per dimension (MakeTuple)")
     .set_attr<bool>("is_transpose")
     .set_attr<std::vector<int>>("tile_dims")
+    .set_attr<int>("l2_cache_mode")
     // Merged-row load: rows per ND matrix when `tile_dims` names 3 tensor axes and the Tile's
     // row index is the flattening of the first two. -1 reads the extent from the source type
     // for dynamic values or constants exceeding int. TLOAD lowering bounds it to a supported matrix extent.
@@ -150,6 +151,7 @@ REGISTER_OP("block.store")
     .set_attr<int>("relu_pre_mode")
     .set_attr<int>("atomic")
     .set_attr<int>("phase")
+    .set_attr<int>("l2_cache_mode")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3 || args.size() == 4)

@@ -11,8 +11,11 @@
 #include "gtest/gtest.h"
 
 #include <any>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -152,6 +155,27 @@ std::string RunCodegen(const std::string& op_name, const ir::CallPtr& call)
         info->codegen_func(call, codegen);
     }
     return codegen.GetEmittedCode();
+}
+
+std::string ReadCodegenGolden(const std::string& filename)
+{
+    namespace fs = std::filesystem;
+    const fs::path relative_path = fs::path("framework/tests/ut/interface/src/pypto_pro/backend") /
+                                   "test_backend_cce_block_out_ops" / filename;
+    fs::path path = fs::path(__FILE__).parent_path() / "test_backend_cce_block_out_ops" / filename;
+    for (fs::path dir = fs::current_path(); !fs::exists(path) && dir != dir.root_path(); dir = dir.parent_path()) {
+        path = dir / relative_path;
+    }
+    std::ifstream input(path);
+    EXPECT_TRUE(input.is_open()) << path.string();
+    std::ostringstream contents;
+    contents << input.rdbuf();
+    return contents.str();
+}
+
+void AppendCodegenSection(std::string& generated, const std::string& name, const std::string& code)
+{
+    generated += "// " + name + "\n" + code;
 }
 
 std::string RunSsbufCodegen(const std::string& op_name)
@@ -712,6 +736,76 @@ TEST(BackendCCEBlockOutOps, Load)
     EXPECT_CONTAINS(code, "TASSIGN(tensor, raw_ptr + ");
     EXPECT_CONTAINS(code, "TLOAD(out.tile, tensor);");
     EXPECT_CONTAINS(code, "SetShape");
+}
+
+TEST(BackendCCEBlockOutOps, L2CacheModeCodegenThroughFullProgram)
+{
+    const std::vector<std::pair<ir::TLoadL2Hint, std::string>> load_cases = {
+        {ir::TLoadL2Hint::NormalFirstVictim, "TLoadL2Hint::NormalFirstVictim"},
+        {ir::TLoadL2Hint::NormalLastVictim, "TLoadL2Hint::NormalLastVictim"},
+        {ir::TLoadL2Hint::NormalPersistent, "TLoadL2Hint::NormalPersistent"},
+        {ir::TLoadL2Hint::NotAllocKeep, "TLoadL2Hint::NotAllocKeep"},
+        {ir::TLoadL2Hint::NotAllocClean, "TLoadL2Hint::NotAllocClean"},
+        {ir::TLoadL2Hint::NotAllocDrop, "TLoadL2Hint::NotAllocDrop"},
+    };
+    const std::vector<std::pair<ir::TStoreL2Hint, std::string>> store_cases = {
+        {ir::TStoreL2Hint::NormalFirstVictim, "TStoreL2Hint::NormalFirstVictim"},
+        {ir::TStoreL2Hint::NormalLastVictim, "TStoreL2Hint::NormalLastVictim"},
+        {ir::TStoreL2Hint::NormalPersistent, "TStoreL2Hint::NormalPersistent"},
+        {ir::TStoreL2Hint::NotAllocClean, "TStoreL2Hint::NotAllocClean"},
+    };
+
+    auto tensor = MakeTensorVar("tensor", {32, 32}, ir::DataType::FP16);
+    auto tile = MakeVar("tile", MakeTileType({16, 16}, ir::DataType::FP16, std::nullopt, ir::HardwareInfo{}));
+    std::vector<ir::StmtPtr> vector_stmts = {MakeTileAssign(tile)};
+    for (const auto& load_case : load_cases) {
+        const auto mode = load_case.first;
+        auto load = MakeCallWithKwargs("block.load", {tile, tensor, MakeOffsets(0, 0)},
+                                       {{"l2_cache_mode", static_cast<int>(mode)}});
+        vector_stmts.push_back(std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown()));
+    }
+    for (const auto& store_case : store_cases) {
+        const auto mode = store_case.first;
+        auto store = MakeCallWithKwargs("block.store", {tensor, tile, MakeOffsets(0, 0)},
+                                        {{"l2_cache_mode", static_cast<int>(mode)}});
+        vector_stmts.push_back(std::make_shared<const ir::EvalStmt>(store, ir::Span::Unknown()));
+    }
+    const auto vector_code = GenerateKernel(vector_stmts, {tensor}, ir::SectionKind::Vector);
+
+    auto fp32_tensor = MakeTensorVar("fp32_tensor", {32, 32}, ir::DataType::FP32);
+    auto int8_tensor = MakeTensorVar("int8_tensor", {32, 32}, ir::DataType::INT8);
+    auto acc_hw = ir::HardwareInfo(ir::TileLayout::col_major, ir::TileLayout::row_major, 1024);
+    auto acc_tile = MakeVar("acc_tile",
+                            MakeTileType({16, 16}, ir::DataType::FP32, MakeMemRef(ir::MemorySpace::Acc), acc_hw));
+    auto scaling_tile = MakeVar("scaling_tile", MakeTileType({1, 16}, ir::DataType::INT64,
+                                                             MakeMemRef(ir::MemorySpace::Scaling), ir::HardwareInfo{}));
+    auto phase_store = MakeCallWithKwargs("block.store", {fp32_tensor, acc_tile, MakeOffsets(0, 0)},
+                                          {{"l2_cache_mode", static_cast<int>(ir::TStoreL2Hint::NormalPersistent)},
+                                           {"phase", static_cast<int>(ir::STPhase::Final)}});
+    auto scaling_store = MakeCallWithKwargs("block.store", {int8_tensor, acc_tile, MakeOffsets(0, 0), scaling_tile},
+                                            {{"phase", static_cast<int>(ir::STPhase::Final)},
+                                             {"l2_cache_mode", static_cast<int>(ir::TStoreL2Hint::NotAllocClean)}});
+    const auto cube_code = GenerateKernel({MakeTileAssign(acc_tile), MakeTileAssign(scaling_tile),
+                                           std::make_shared<const ir::EvalStmt>(phase_store, ir::Span::Unknown()),
+                                           std::make_shared<const ir::EvalStmt>(scaling_store, ir::Span::Unknown())},
+                                          {fp32_tensor, int8_tensor}, ir::SectionKind::Cube);
+
+    std::string generated;
+    AppendCodegenSection(generated, "vector l2 cache modes", vector_code);
+    AppendCodegenSection(generated, "cube l2 cache modes with phase and scaling", cube_code);
+    EXPECT_EQ(generated, ReadCodegenGolden("l2_cache_modes.pypto"));
+
+    for (const auto& load_case : load_cases) {
+        const auto& expected = load_case.second;
+        EXPECT_CONTAINS(vector_code, "TLOAD<" + expected + ">(tile.tile, tensor);");
+    }
+    for (const auto& store_case : store_cases) {
+        const auto& expected = store_case.second;
+        EXPECT_CONTAINS(vector_code, "TSTORE<" + expected + ", decltype(tile.tile),");
+    }
+    EXPECT_CONTAINS(cube_code, "TSTORE<TStoreL2Hint::NormalPersistent, STPhase::Final, decltype(acc_tile.tile),");
+    EXPECT_CONTAINS(cube_code, "TSTORE<TStoreL2Hint::NotAllocClean, STPhase::Final, decltype(acc_tile.tile), "
+                               "std::remove_reference_t<decltype(int8_tensor)>, decltype(scaling_tile.tile)>");
 }
 
 TEST(BackendCCEBlockOutOps, InitOutput)

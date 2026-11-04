@@ -55,6 +55,8 @@ __all__ = [
     "SyncCoreType",
     "SkCap",
     "CacheLine",
+    "TLoadL2Hint",
+    "TStoreL2Hint",
     "DcciDst",
     "MemDsb",
     "DT_FP4",
@@ -275,6 +277,8 @@ from pypto.ir import (
     StoreDist,
     STPhase,
     SyncCoreType,
+    TLoadL2Hint,
+    TStoreL2Hint,
     VFRoundMode,
 )
 from pypto.pypto_impl.ir import (

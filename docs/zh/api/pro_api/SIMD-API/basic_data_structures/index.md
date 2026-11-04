@@ -20,6 +20,8 @@ ReluPreMode
 RoundMode
 STPhase
 SyncCoreType
+TLoadL2Hint
+TStoreL2Hint
 Tensor
 TensorLayout
 TilePad

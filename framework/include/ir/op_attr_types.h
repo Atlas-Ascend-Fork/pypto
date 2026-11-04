@@ -144,6 +144,11 @@ PYPTO_DECLARE_ENUM(SyncCoreType, AIV_ONLY, AIC_ONLY, MIX)
 
 PYPTO_DECLARE_ENUM(CacheLine, SINGLE_CACHE_LINE, ENTIRE_DATA_CACHE)
 
+PYPTO_DECLARE_ENUM(TLoadL2Hint, NormalFirstVictim, NormalLastVictim, NormalPersistent, NotAllocKeep, NotAllocClean,
+                   NotAllocDrop)
+
+PYPTO_DECLARE_ENUM(TStoreL2Hint, NormalFirstVictim, NormalLastVictim, NormalPersistent, NotAllocClean)
+
 PYPTO_DECLARE_ENUM(DcciDst, AUTO, CACHELINE_OUT, CACHELINE_UB, CACHELINE_ALL, CACHELINE_ATOMIC)
 
 PYPTO_DECLARE_ENUM(MemDsb, ALL, DDR, UB)
