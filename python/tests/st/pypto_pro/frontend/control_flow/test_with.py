@@ -218,15 +218,15 @@ WITH_SECTION_CUBE_KERNELS = {
 }
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_with_section_cube():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
     device = ST_DEVICE
     torch.npu.set_device(device)
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
-        logging.info("Current device is not Ascend950, skip.")
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
+        logging.info("Current device is not Ascend950/Ascend960, skip.")
         return
     torch.manual_seed(0)
     for _pl_dt, tdt, label, atol, rtol in DTYPES_FLOAT:
@@ -320,13 +320,13 @@ def with_section_cube_shape_generalization_kernel(
         pl.system.set_mm_layout_transform(enabled=False)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_with_section_cube_shape_generalization():
     device = ST_DEVICE
     torch.npu.set_device(device)
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
-        logging.info("Current device is not Ascend950, skip.")
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
+        logging.info("Current device is not Ascend950/Ascend960, skip.")
         return
     torch.manual_seed(0)
     x_shapes = [(128, 128)]
@@ -403,7 +403,7 @@ def with_section_vf_min_exp_kernel(
         pl.store(out_exp, t_out1, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_with_section_vf_min_exp():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -451,7 +451,7 @@ def with_section_if_fp16_kernel(
                 pl.store_tile(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_with_section_if():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -552,13 +552,13 @@ def with_cube_then_vector_kernel(
         pl.store(out, ov, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_with_cube_then_vector():
     device = ST_DEVICE
     torch.npu.set_device(device)
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
-        logging.info("Current device is not Ascend950, skip.")
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
+        logging.info("Current device is not Ascend950/Ascend960, skip.")
         return
     torch.manual_seed(0)
     a = torch.randn(64, 32, device=device, dtype=torch.float16)
@@ -669,13 +669,13 @@ def with_cube_then_vf_kernel(
         pl.store(out, ov, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_with_cube_then_vf():
     device = ST_DEVICE
     torch.npu.set_device(device)
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
-        logging.info("Current device is not Ascend950, skip.")
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
+        logging.info("Current device is not Ascend950/Ascend960, skip.")
         return
     torch.manual_seed(0)
     a = torch.randn(64, 32, device=device, dtype=torch.float16)

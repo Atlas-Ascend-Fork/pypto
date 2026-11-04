@@ -21,7 +21,7 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-pytestmark = pytest.mark.soc("950")
+pytestmark = pytest.mark.soc("950", "960")
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 TILE = 64

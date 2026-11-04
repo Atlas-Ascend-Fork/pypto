@@ -38,14 +38,14 @@ DIM = 16
 TILE = 64
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
 
 
 @pl.jit(auto_mutex=True)
@@ -70,11 +70,11 @@ def _mixed_order_kernel(
         pl.store(middle, middle_tile, [0, 0, 0, 0], order=[2, 3])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_mixed_order_loads_of_one_tensor():
     """Each load walks the axes its own ``order`` names, not the first load's."""
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
 
     x = torch.rand([DIM, DIM, DIM, DIM], device=device, dtype=torch.float16)
@@ -135,7 +135,7 @@ def _row_major_and_transposed_kernel(
         pl.store(product, acc_l0c.current(), [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_major_and_transposed_loads_of_one_tensor():
     """order=[0, 1] and order=[1, 0] on one tensor, the pair that motivated the fix.
 
@@ -143,7 +143,7 @@ def test_row_major_and_transposed_loads_of_one_tensor():
     row-major load then had to read through -- so the two could not coexist at all.
     """
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
 
     x = torch.rand([TILE, TILE], device=device, dtype=torch.float16)
@@ -177,7 +177,7 @@ def _default_order_gamma_kernel(
 @pytest.mark.soc("950")
 def test_default_order_loads_each_gamma_row():
     """Omitting order copies contiguous columns from the requested gamma head."""
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     # Unique, exactly representable BF16 values expose both wrong heads and wrong column offsets.
     x = torch.arange(3 * 64, dtype=torch.float32).reshape(3, 64).to(dtype=torch.bfloat16, device=ST_DEVICE)
     out = torch.zeros([3, 32], dtype=torch.bfloat16, device=ST_DEVICE)

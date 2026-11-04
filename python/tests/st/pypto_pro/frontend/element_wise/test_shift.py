@@ -25,14 +25,14 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
 
 
 @pl.jit(auto_mutex=True)
@@ -71,10 +71,10 @@ def shr_kernel(a: pl.Tensor[[64, 64], pl.DT_INT32],
         pl.store(out, cur_out, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_shl():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.arange(1, 64 * 64 + 1, device=device, dtype=torch.int32).reshape(64, 64)
     b = (torch.arange(64 * 64, device=device, dtype=torch.int32).reshape(64, 64) % 8) + 1
@@ -85,10 +85,10 @@ def test_shl():
     logging.info("test_shl passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_shr():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = (torch.arange(64 * 64, device=device, dtype=torch.int32).reshape(64, 64) + 2) * 4
     b = (torch.arange(64 * 64, device=device, dtype=torch.int32).reshape(64, 64) % 8) + 1

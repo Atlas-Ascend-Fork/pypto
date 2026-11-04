@@ -159,7 +159,7 @@ def kernel_bias_dtype_bf16(
         pl.store_tile(out, ac, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_err_bias_dtype_fp16():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -169,7 +169,7 @@ def test_err_bias_dtype_fp16():
     _run_expect_error(kernel_bias_dtype_fp16, a, b, bias, out)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_err_bias_dtype_bf16():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.bfloat16)
@@ -364,7 +364,7 @@ def kernel_bias_mem_mat(
         pl.store_tile(out, ac, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_err_bias_mem_right():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -374,7 +374,7 @@ def test_err_bias_mem_right():
     _run_expect_error(kernel_bias_mem_right, a, b, bias, out)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_err_bias_mem_vec():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -384,7 +384,7 @@ def test_err_bias_mem_vec():
     _run_expect_error(kernel_bias_mem_vec, a, b, bias, out)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_err_bias_mem_mat():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -451,7 +451,7 @@ def kernel_bias_load_direct(
         pl.store_tile(out, ac, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_err_bias_load_direct():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -526,7 +526,7 @@ def kernel_bias_shape_full_2d(
         pl.store_tile(out, ac, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_err_bias_shape_full_2d():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -677,7 +677,7 @@ def kernel_bias_last_block(
         pl.system.set_mm_layout_transform(enabled=False)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_err_matmul_bias_middle_block():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -692,7 +692,7 @@ def test_err_matmul_bias_middle_block():
     assert max_diff > 1.0, f"Expected wrong result (max_diff > 1.0), got {max_diff}"
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_err_matmul_bias_last_block():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -897,7 +897,7 @@ def kernel_move_vec_to_bias(
         pl.store_tile(out, ac, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_err_move_left_to_bias():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -907,7 +907,7 @@ def test_err_move_left_to_bias():
     _run_expect_error(kernel_move_left_to_bias, a, b, bias, out)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_err_move_acc_to_bias():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)
@@ -917,7 +917,7 @@ def test_err_move_acc_to_bias():
     _run_expect_error(kernel_move_acc_to_bias, a, b, bias, out)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_err_move_vec_to_bias():
     torch.npu.set_device(DEVICE_ID)
     a = torch.randn(TILE, TILE, device=DEVICE, dtype=torch.float16)

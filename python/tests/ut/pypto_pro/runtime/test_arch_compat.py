@@ -57,7 +57,7 @@ def test_parse_arch_legacy_a2_a3_map_to_2201_without_warning():
 
 
 def test_parse_arch_unknown_raises():
-    for bad in ("future", "a6", ""):
+    for bad in ("future", "a7", ""):
         with pytest.raises(InvalidVal):
             normalize_arch(bad)
 
@@ -120,3 +120,21 @@ def test_platform_arch_is_enum():
 
     arch = get_platform_info().arch
     assert arch is None or isinstance(arch, NpuArch)
+
+
+def test_a6_canonical_and_enum_forms():
+    assert normalize_arch("9201") == NpuArch.DAV_9201
+    assert normalize_arch(" 9201 ") == NpuArch.DAV_9201
+    assert normalize_arch(NpuArch.DAV_9201) == NpuArch.DAV_9201
+    assert str(NpuArch.DAV_9201) == "9201"
+
+
+def test_a6_alias_warns_and_configures_canonical_env(monkeypatch):
+    from pypto_pro.runtime.jit import _setup_arch_env, get_current_arch
+
+    monkeypatch.delenv("PYPTOPRO_JIT_ARCH", raising=False)
+    with pytest.warns(DeprecationWarning, match="'a6' is deprecated"):
+        parsed = normalize_arch("a6")
+    assert _setup_arch_env(parsed) == NpuArch.DAV_9201
+    assert os.environ["PYPTOPRO_JIT_ARCH"] == "9201"
+    assert get_current_arch() == NpuArch.DAV_9201

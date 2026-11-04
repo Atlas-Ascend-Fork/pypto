@@ -817,6 +817,19 @@ def _ir_move(
         (MemorySpace.Acc, MemorySpace.Vec),
     }:
         raise NotSupported("move: acc_to_vec_mode is only supported for Acc-to-Vec moves")
+
+    from pypto_pro.runtime.jit import get_current_arch
+
+    _dual_modes = {AccToVecMode.DualModeSplitM, AccToVecMode.DualModeSplitN}
+    if acc_to_vec_mode in _dual_modes:
+        if get_current_arch() == NpuArch.DAV_9201:
+            raise NotSupported(
+                "move: acc_to_vec_mode DualModeSplitM/DualModeSplitN is not yet supported on "
+                "arch 'a6' because pto-isa does not currently support dual-destination Acc-to-Vec moves "
+                "on dav-9201",
+                span=actual_span,
+            )
+
     if relu_pre_mode is not None and (_src_mem, _dst_mem) not in {
         (MemorySpace.Acc, MemorySpace.Vec),
         (MemorySpace.Acc, MemorySpace.Mat),
@@ -858,7 +871,6 @@ def _ir_move(
     if offset_tuple is not None:
         _validate_transfer_offset_alignment("move", "extract", src_tile, dst_tile, offset_tuple.elements)
 
-    _dual_modes = {AccToVecMode.DualModeSplitM, AccToVecMode.DualModeSplitN}
     if is_quant and acc_to_vec_mode in _dual_modes:
         raise NotSupported(
             "scale cannot be combined with dual-mode acc_to_vec_mode — the fixpipe dual-destination "
@@ -1926,12 +1938,12 @@ def _apply_default_layout(tt: "TileType") -> None:
     from pypto_pro.runtime.jit import get_current_arch
 
     arch = get_current_arch()
-    layout_dict = _DEFAULT_LAYOUTS_A5 if arch == NpuArch.DAV_3510 else _DEFAULT_LAYOUTS_A3
+    layout_dict = _DEFAULT_LAYOUTS_A5 if arch in (NpuArch.DAV_3510, NpuArch.DAV_9201) else _DEFAULT_LAYOUTS_A3
     default_layout = layout_dict.get(tt.target_memory)
 
     if tt.target_memory in (MemorySpace.ScaleLeft, MemorySpace.ScaleRight):
         if default_layout is None:
-            raise InvalidVal(f"{tt.target_memory.name} is only supported on 3510, got architecture '{arch}'")
+            raise InvalidVal(f"{tt.target_memory.name} is only supported on 3510/9201, got architecture '{arch}'")
 
     if default_layout is None:
         return
@@ -1955,7 +1967,7 @@ def _apply_default_layout(tt: "TileType") -> None:
         allowed_layouts = {_DEFAULT_LAYOUTS_A3[MemorySpace.Left], _DEFAULT_LAYOUTS_A5[MemorySpace.Left]}
     elif tt.target_memory == MemorySpace.Mat:
         allowed_layouts.add(TensorLayout.ZN)
-        if arch == NpuArch.DAV_3510:
+        if arch in (NpuArch.DAV_3510, NpuArch.DAV_9201):
             allowed_layouts.update({TensorLayout.ND, TensorLayout.DN})
         elif tt.dtype in (DataType.UINT64, DataType.INT64):
             allowed_layouts.add(TensorLayout.ND)
@@ -1963,7 +1975,7 @@ def _apply_default_layout(tt: "TileType") -> None:
             allowed_layouts.update({TensorLayout.ZZ, TensorLayout.NN})
 
     if (
-        arch == NpuArch.DAV_3510
+        arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)
         and tt.target_memory in (MemorySpace.Left, MemorySpace.Right, MemorySpace.Acc)
         and tt.layout in _REJECTED_LAYOUTS_ON_A5
     ):
@@ -2423,6 +2435,7 @@ _A5_MATMUL_DTYPE_COMBOS = (
 
 _MATMUL_DTYPE_COMBOS = {
     NpuArch.DAV_3510: _A5_MATMUL_DTYPE_COMBOS,
+    NpuArch.DAV_9201: _A5_MATMUL_DTYPE_COMBOS,
 }
 
 
@@ -2525,7 +2538,7 @@ _COMPACT_VALUES = frozenset({0, 1, 2, 3})
 
 
 # ---------------------------------------------------------------------------
-# Layout × dtype 合法组合表（按平台 arch 分；当前仅 a5 配置，后续 a6 等平台按行补充）
+# Layout × dtype 合法组合表（按平台 arch 分；A6 当前复用 A5 规则）。
 #
 # 每个合法组合是一个六元组 (src_loc, dst_loc, src_layout, dst_layout, src_dtype, dst_dtype)，
 # 均为 pto-isa 实际支持（static_assert 允许范围）且经真实上板实测。
@@ -3323,13 +3336,16 @@ _A5_INSERT_QUANT_COMBOS = (
 )
 
 _LAYOUT_DTYPE_COMBOS = {
-    "load": {NpuArch.DAV_3510: (_A5_LOAD_COMBOS, None)},
-    "load_tile": {NpuArch.DAV_3510: (_A5_LOAD_COMBOS, None)},
-    "store": {NpuArch.DAV_3510: (_A5_STORE_COMBOS, _A5_STORE_QUANT_COMBOS)},
-    "store_tile": {NpuArch.DAV_3510: (_A5_STORE_COMBOS, _A5_STORE_QUANT_COMBOS)},
-    "move": {NpuArch.DAV_3510: (_A5_MOVE_COMBOS, _A5_MOVE_QUANT_COMBOS)},
-    "extract": {NpuArch.DAV_3510: (_A5_EXTRACT_COMBOS, _A5_INSERT_QUANT_COMBOS)},
-    "insert": {NpuArch.DAV_3510: (_A5_INSERT_COMBOS, _A5_INSERT_QUANT_COMBOS)},
+    "load": {arch: (_A5_LOAD_COMBOS, None) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
+    "load_tile": {arch: (_A5_LOAD_COMBOS, None) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
+    "store": {arch: (_A5_STORE_COMBOS, _A5_STORE_QUANT_COMBOS) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
+    "store_tile": {arch: (_A5_STORE_COMBOS, _A5_STORE_QUANT_COMBOS) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
+    "move": {arch: (_A5_MOVE_COMBOS, _A5_MOVE_QUANT_COMBOS) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
+    "extract": {
+        arch: (_A5_EXTRACT_COMBOS, _A5_INSERT_QUANT_COMBOS)
+        for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)
+    },
+    "insert": {arch: (_A5_INSERT_COMBOS, _A5_INSERT_QUANT_COMBOS) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
 }
 
 

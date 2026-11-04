@@ -551,7 +551,7 @@ WHILE_HIGH_DIM_ADD_KERNELS = [
 # ===================================================================
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_add():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -573,7 +573,7 @@ def test_while_add():
         logging.info("%s passed!", case)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_shape_generalization():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -590,7 +590,7 @@ def test_while_shape_generalization():
             logging.info("test_while_shape_generalization [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_sub():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -607,7 +607,7 @@ def test_while_sub():
             logging.info("test_while_sub [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_mul():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -624,7 +624,7 @@ def test_while_mul():
             logging.info("test_while_mul [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_mul_add():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -641,7 +641,7 @@ def test_while_mul_add():
             logging.info("test_while_mul_add [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_tail():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -658,7 +658,7 @@ def test_while_tail():
         logging.info("test_while_tail passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_4d_add():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -686,7 +686,7 @@ def test_while_4d_add():
         logging.info("%s passed!", case)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_high_dim_add():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -700,7 +700,7 @@ def test_while_high_dim_add():
         logging.info("test_while_high_dim_add [%s] passed! shape=%s", case_name, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_large_shape():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -829,7 +829,7 @@ def while_truthiness_int_kernel(
             i = i + 1
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_and():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -846,7 +846,7 @@ def test_while_and():
     logging.info("test_while_and passed")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_ternary_expr():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -864,7 +864,7 @@ def test_while_ternary_expr():
     logging.info("test_while_ternary_expr passed")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_truthiness_int():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -915,7 +915,7 @@ def while_not_ge_kernel(
             i = i + 1
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_not_ge():
     device = ST_DEVICE
     torch.npu.set_device(device)

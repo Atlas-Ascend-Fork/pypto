@@ -26,14 +26,14 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
 
 
 # ===========================================================================
@@ -57,10 +57,10 @@ def getval_setval_kernel(
         pl.store(a, tile_a, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_getval_setval():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.rand(64, 128, device=device, dtype=torch.float16)
     a_orig_00 = a[0, 0].item()
@@ -90,10 +90,10 @@ def transpose_kernel(
         pl.store(out, cur_out, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_transpose():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.rand(64, 64, device=device, dtype=torch.float16)
     out = torch.zeros(64, 64, device=device, dtype=torch.float16)
@@ -129,10 +129,10 @@ def tensor_getval_setval_5d_kernel(
     tensor5d[1, 1, 1, 1, 1] = value
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_tensor_getval_setval():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     scale_val = 2.5
     scale_tensor = torch.zeros(2, device=device, dtype=torch.float32)
     scale_tensor[0] = scale_val
@@ -173,10 +173,10 @@ def ptr_make_tensor_getval_setval_kernel(
     tensor_view[1] = scale
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_ptr_make_tensor_getval_setval():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     scale_val = 3.14
     data = torch.zeros(2, device=device, dtype=torch.float32)
     data[0] = scale_val

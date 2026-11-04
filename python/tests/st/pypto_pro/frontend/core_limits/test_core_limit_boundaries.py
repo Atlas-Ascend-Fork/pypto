@@ -9,10 +9,10 @@
 """Boundary and state-transition tests for core limits, using device-written worker counts."""
 
 import pytest
-from test_core_limits import DEVICE_ID, KERNELS, _check, _outputs
+from test_core_limits import DEVICE_ID, KERNELS, _check, _mixed_blocks, _outputs
 import torch
 
-pytestmark = pytest.mark.soc("950")
+pytestmark = pytest.mark.soc("950", "960")
 
 
 @pytest.fixture
@@ -61,8 +61,8 @@ def test_direct_call_uses_the_scope_budget(stream, kind):
 
 
 @pytest.mark.parametrize("kind", range(3), ids=["cube", "vector", "mixed"])
-@pytest.mark.parametrize("update,expected", [({"cube_num": 3}, (3, 16, 3)), ({"vector_num": 5}, (8, 5, 2))])
-def test_partial_stream_update(stream, kind, update, expected):
+@pytest.mark.parametrize("update,cube_vec", [({"cube_num": 3}, (3, 16)), ({"vector_num": 5}, (8, 5))])
+def test_partial_stream_update(stream, kind, update, cube_vec):
     """Updating only one resource must preserve the other engine's independently configured budget."""
     outputs = _outputs()
     torch.npu.synchronize()
@@ -71,7 +71,7 @@ def test_partial_stream_update(stream, kind, update, expected):
     with torch.npu.stream(stream):
         KERNELS[kind](*outputs)
     stream.synchronize()
-    _check(outputs, kind, expected[kind])
+    _check(outputs, kind, (cube_vec[0], cube_vec[1], _mixed_blocks(*cube_vec))[kind])
 
 
 @pytest.mark.parametrize("kind", range(3), ids=["cube", "vector", "mixed"])
@@ -81,13 +81,13 @@ def test_cached_kernel_alternates_streams(stream, kind):
     torch.npu.set_stream_limit(stream, 3, 8)
     torch.npu.set_stream_limit(other, 6, 4)
     try:
-        for target, blocks in [(stream, (3, 8, 3)), (other, (6, 4, 2)), (stream, (3, 8, 3))]:
+        for target, cube, vector in [(stream, 3, 8), (other, 6, 4), (stream, 3, 8)]:
             outputs = _outputs()
             torch.npu.synchronize()
             with torch.npu.stream(target):
                 KERNELS[kind](*outputs)
             target.synchronize()
-            _check(outputs, kind, blocks[kind])
+            _check(outputs, kind, (cube, vector, _mixed_blocks(cube, vector))[kind])
     finally:
         other.synchronize()
         torch.npu.reset_stream_limit(other)
@@ -105,8 +105,13 @@ def test_unused_engine_does_not_constrain_launch(stream, kind, limits, blocks):
     _check(outputs, kind, blocks)
 
 
+@pytest.mark.soc("950")
 def test_insufficient_mixed_budget_rejects_without_device_writes(stream):
-    """Reject before launching any synchronized participants, then allow reuse after the budget is corrected."""
+    """Reject before launching any synchronized participants, then allow reuse after the budget is corrected.
+
+    A5-only: the rejection depends on the 1:2 ratio (one mixed block needs two vector cores), which does
+    not exist on A6 (1:1).
+    """
     outputs = _outputs()
     torch.npu.synchronize()
     launcher = KERNELS[2][stream, 2]

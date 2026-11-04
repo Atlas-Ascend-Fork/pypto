@@ -79,7 +79,7 @@ def _heavy_golden(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 class TestSoSizeVerification:
     """Validates that tilingkey dead-code elimination reduces .so size."""
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_light_branch_correctness(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -95,7 +95,7 @@ class TestSoSizeVerification:
         z_ref = (x.float() + y.float()).half()
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_heavy_branch_correctness(self):
         device = ST_DEVICE
         torch.npu.set_device(device)

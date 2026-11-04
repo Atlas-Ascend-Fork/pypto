@@ -73,7 +73,7 @@ def add_kernel(
                 pl.store_tile(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_add():
     device = ST_DEVICE
     torch.npu.set_device(device)

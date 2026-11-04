@@ -138,14 +138,14 @@ def scale_phase_final_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_phase_partial():
     """Test scale + Partial phase fusion."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -167,14 +167,14 @@ def test_phase_partial():
     logging.info("test_phase_partial passed.")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_phase_final():
     """Test scale + Final phase fusion."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -243,14 +243,14 @@ def scale_atomic_add_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_atomic_add():
     """Test scale + AtomicAdd fusion."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -287,7 +287,7 @@ def test_atomic_add():
 # ============================================================================
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_order_descending_rejected():
     """store 的 order 仅支持升序；降序 order=[1, 0] 应在解析期被拒绝。
 

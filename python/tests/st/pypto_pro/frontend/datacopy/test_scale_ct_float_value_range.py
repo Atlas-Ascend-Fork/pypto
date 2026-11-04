@@ -131,7 +131,7 @@ def _make_ct_kernel(scale_value: float):
 # 输入通过 matmul(q, k)（k=eye），因此输出 == q，便于 golden 计算
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("m,n", [(64, 64), (48, 96), (96, 96)], ids=["full", "row_tail", "dual_tail"])
 @pytest.mark.parametrize(
     "scale_value,pattern",
@@ -150,7 +150,7 @@ def test_ct_float_scale_value_range(scale_value, pattern, m, n):
     """编译期 float scale 值域：与 clamp(round(x * scale)) golden 对比"""
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
         pytest.skip(f"Current device is {torch.npu.get_device_name()}")
 
     kernel = _make_ct_kernel(scale_value)

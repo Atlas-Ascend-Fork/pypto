@@ -29,8 +29,8 @@ def _check_npu():
     try:
         torch.npu.set_device(ST_DEVICE)
         name = torch.npu.get_device_name()
-        if "Ascend950" not in name:
-            pytest.skip(f"Device {name} is not A5 (Ascend950). Skip.")
+        if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
@@ -93,7 +93,7 @@ def printf_doc_examples_kernel(
         pl.printf("tmp1 = %d\n", tmp1)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_printf_doc_examples():
     """Verify all printf.md documentation examples produce correct device log output.
 

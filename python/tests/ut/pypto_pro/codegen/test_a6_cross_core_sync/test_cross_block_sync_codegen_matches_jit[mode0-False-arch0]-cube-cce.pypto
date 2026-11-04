@@ -1,0 +1,18 @@
+#if defined(__DAV_CUBE__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void kernel_impl_cube(int32_t event_id_0)
+{
+
+    ffts_cross_core_sync(PIPE_MTE3, getFFTSMsg(0, 3));
+    return;
+}
+#endif

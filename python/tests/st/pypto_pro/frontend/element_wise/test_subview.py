@@ -135,8 +135,8 @@ def _is_a5() -> bool:
         logging.info("NPU unavailable: %s", exc)
         return False
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        logging.info("Current device is %s, not A5 (Ascend950). Skip.", name)
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        logging.info("Current device is %s, not A5/A6 (Ascend950/Ascend960). Skip.", name)
         return False
     return True
 
@@ -164,7 +164,7 @@ def tile_subview_kernel(
         pl.store(out, sub, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_tile_subview():
     if not _is_a5():
         return
@@ -205,7 +205,7 @@ def tile_subview_vshape_kernel(
         pl.store(out1, sub1, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_tile_subview_valid_shape():
     if not _is_a5():
         return
@@ -262,7 +262,7 @@ def tile_subview_vf_kernel(
         pl.store(vf_out, vf_dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_tile_subview_vf():
     if not _is_a5():
         return

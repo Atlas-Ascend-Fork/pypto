@@ -12,6 +12,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import re
+
+import pytest
+
 
 def duration_estimate(seconds: float):
     """Annotate a test case with an estimated duration."""
@@ -21,3 +26,15 @@ def duration_estimate(seconds: float):
         return func
 
     return decorator
+
+
+@pytest.fixture
+def assert_a6_golden(request):
+    """Compare the complete A6 regression output with its checked-in golden."""
+    def check(actual, label="ir"):
+        printed = re.sub(r"memref_id=\d+", "memref_id=<id>", str(actual))
+        path = Path(request.path).with_suffix("") / f"{request.node.name}-{label}.pypto"
+        golden = path.read_text(encoding="utf-8")
+        assert printed.rstrip("\n") == golden.rstrip("\n")
+
+    return check

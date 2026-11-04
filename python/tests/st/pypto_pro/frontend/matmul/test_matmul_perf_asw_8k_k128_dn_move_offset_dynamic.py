@@ -233,7 +233,7 @@ def _run_case(m, n, k):
     logging.info("  PASS")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_perf_asw_8k_k128_dn_move_offset_dynamic():
     # (M, N, K): one compiled kernel serves all. N fully arbitrary; M arbitrary with #M-tiles
     # a multiple of 4 (ASW); K arbitrary. The 8K-K128 regime is large M/N with small K.

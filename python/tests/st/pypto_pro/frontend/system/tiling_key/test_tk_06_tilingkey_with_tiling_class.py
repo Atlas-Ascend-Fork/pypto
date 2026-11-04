@@ -96,7 +96,7 @@ def _make_tiling(opkind_val):
 
 
 # ---- 简单用例 -----------------------------------------------------------
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_key_change_tiling_fixed():
     """key 变化 + tiling 固定"""
     device = ST_DEVICE
@@ -115,7 +115,7 @@ def test_key_change_tiling_fixed():
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_key_fixed_tiling_change():
     """key 固定 + tiling 变化"""
     device = ST_DEVICE
@@ -142,7 +142,7 @@ def test_key_fixed_tiling_change():
     torch.testing.assert_close(z2, z_ref_mul, atol=1e-2, rtol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_both_change():
     """key 和 tiling 都变化"""
     device = ST_DEVICE
@@ -168,7 +168,7 @@ def test_both_change():
 
 
 # ---- 复杂用例 -----------------------------------------------------------
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_multi_block_key_tiling():
     """多核 blocks=4 + key + tiling 组合"""
     device = ST_DEVICE
@@ -187,7 +187,7 @@ def test_multi_block_key_tiling():
     torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_key_op_select_tiling_data_2():
     """不同 key 值穿越所有合法组合"""
     device = ST_DEVICE
@@ -209,7 +209,7 @@ def test_key_op_select_tiling_data_2():
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_larger_tensor_key_tiling():
     """更大 tensor 尺寸 key + tiling 组合"""
     device = ST_DEVICE

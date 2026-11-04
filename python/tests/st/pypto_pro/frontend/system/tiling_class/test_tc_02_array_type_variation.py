@@ -257,7 +257,7 @@ def kernel_all_types(
 class TestArrayTypeSingle:
     """Simple cases: single Array type in tiling class."""
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_int_only(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -274,7 +274,7 @@ class TestArrayTypeSingle:
         z_ref = (x.float() + y.float()).half()
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_float_only(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -291,7 +291,7 @@ class TestArrayTypeSingle:
         z_ref = (x.float() + y.float()).half()
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_bool_only(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -312,7 +312,7 @@ class TestArrayTypeSingle:
 class TestArrayTypeMixed:
     """Complex cases: mixed Array types in one tiling class."""
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_int_and_float(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -330,7 +330,7 @@ class TestArrayTypeMixed:
         z_ref = (x.float() + y.float()).half()
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_int_and_bool(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -348,7 +348,7 @@ class TestArrayTypeMixed:
         z_ref = (x.float() + y.float()).half()
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_all_three_types(self):
         device = ST_DEVICE
         torch.npu.set_device(device)

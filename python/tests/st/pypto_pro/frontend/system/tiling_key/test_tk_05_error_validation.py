@@ -81,7 +81,7 @@ kernel_single = _make_kernel(TkSingle)
 # ---- 反例: 直接调用 (不使用 [...] 语法) ----------------------------------
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_direct_call_no_brackets():
     with pytest.raises(NotSupported):
         import torch

@@ -98,13 +98,13 @@ def _run_float_divmod_case(lhs, rhs, expected_quotient):
     return out.cpu()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_runtime_int_truediv_and_bool_numeric_semantics():
     _run_scalar_case(7, 2, 3.5, [8, 1, 3, 2, 1, 1])
     _run_scalar_case(1, 2, 0.5, [7, 0, 2, 3, 0, 1])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_runtime_float_floordiv_and_mod_semantics():
     for lhs, rhs, expected_quotient in [
         (7.0, 2.0, 3.0),
@@ -121,7 +121,7 @@ def test_runtime_float_floordiv_and_mod_semantics():
     assert not torch.signbit(positive_zero).item()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize(
     "lhs,rhs,expected_quotient",
     FLOAT_FLOORDIV_OVERFLOW_CASES,
@@ -130,7 +130,7 @@ def test_runtime_float_floordiv_preserves_overflow(lhs, rhs, expected_quotient):
     _run_float_divmod_case(lhs, rhs, expected_quotient)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_float_divmod_defines_static_tile_shape():
     torch.npu.set_device(ST_DEVICE)
     src = torch.arange(8, dtype=torch.float32, device=ST_DEVICE).reshape(1, 8)

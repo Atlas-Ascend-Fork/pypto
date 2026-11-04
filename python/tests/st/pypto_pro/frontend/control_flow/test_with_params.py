@@ -391,7 +391,7 @@ def make_if_func_bool_expr_kernel(dtype_label, name_suffix=""):
 # ===================================================================
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("pl_dt,tdt,label,atol,rtol", DTYPES_ALL, ids=[entry[2] for entry in DTYPES_ALL])
 def test_for_scalar_stop(pl_dt, tdt, label, atol, rtol):
     device = ST_DEVICE
@@ -409,7 +409,7 @@ def test_for_scalar_stop(pl_dt, tdt, label, atol, rtol):
     logging.info("test_for_scalar_stop [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_scalar_step():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -425,7 +425,7 @@ def test_for_scalar_step():
         logging.info("test_for_scalar_step [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_scalar_flag():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -446,7 +446,7 @@ def test_if_scalar_flag():
         logging.info("test_if_scalar_flag [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_scalar_cond():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -462,7 +462,7 @@ def test_while_scalar_cond():
         logging.info("test_while_scalar_cond [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_if_break_scalar():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -481,7 +481,7 @@ def test_for_if_break_scalar():
 
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_func_range_bound():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -497,7 +497,7 @@ def test_func_range_bound():
         logging.info("test_func_range_bound [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_func_bool_expr():
     device = ST_DEVICE
     torch.npu.set_device(device)

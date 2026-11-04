@@ -1,0 +1,33 @@
+#if defined(__DAV_CUBE__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void kernel_impl_cube(__gm__ half* x_0)
+{
+
+    int64_t _tuple_anchor_0_0[] = {static_cast<int64_t>(0)};
+    using _tg_src_group_tiles_0_0_Type = SyncedTile<Tile<TileType::Mat, half, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1>;
+    _tg_src_group_tiles_0_0_Type _tg_src_group_tiles_0_0{_tg_src_group_tiles_0_0_Type::PtoTile(64, 64), {0}};
+    TASSIGN(_tg_src_group_tiles_0_0.tile, 0x0);
+    SyncedTile<Tile<TileType::Mat, half, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1> _tg_src_group_tiles_0[] = {static_cast<SyncedTile<Tile<TileType::Mat, half, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1>>(_tg_src_group_tiles_0_0)};
+    int64_t _tuple_anchor_1_0[] = {static_cast<int64_t>(1)};
+    using _tg_dst_group_tiles_0_0_Type = SyncedTile<Tile<TileType::Left, half, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1>;
+    _tg_dst_group_tiles_0_0_Type _tg_dst_group_tiles_0_0{_tg_dst_group_tiles_0_0_Type::PtoTile(64, 64), {1}};
+    TASSIGN(_tg_dst_group_tiles_0_0.tile, 0x0);
+    SyncedTile<Tile<TileType::Left, half, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1> _tg_dst_group_tiles_0[] = {static_cast<SyncedTile<Tile<TileType::Left, half, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1>>(_tg_dst_group_tiles_0_0)};
+    int64_t _tuple_anchor_2_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(0)};
+    get_buf(PIPE_MTE1, 1, 0);
+    get_buf(PIPE_MTE1, 0, 0);
+    TEXTRACT<Tile<TileType::Left, half, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, Tile<TileType::Mat, half, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>>(_tg_dst_group_tiles_0[0].tile, _tg_src_group_tiles_0[0].tile, 0, 0);
+    rls_buf(PIPE_MTE1, 1, 0);
+    rls_buf(PIPE_MTE1, 0, 0);
+    return;
+}
+#endif

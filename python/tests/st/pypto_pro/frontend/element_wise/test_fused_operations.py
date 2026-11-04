@@ -116,7 +116,7 @@ def partadd_kernel(
 # ============================================================================
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_mul_add_dst():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -130,7 +130,7 @@ def test_mul_add_dst():
     logging.info("test_mul_add_dst passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_fused_mul_add_relu():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -144,7 +144,7 @@ def test_fused_mul_add_relu():
     logging.info("test_fused_mul_add_relu passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_partadd():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)

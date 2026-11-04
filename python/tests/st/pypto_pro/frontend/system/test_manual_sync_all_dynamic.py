@@ -38,14 +38,14 @@ DYNAMIC_SHAPES = [
 ]
 
 
-def _require_a5() -> None:
+def _require_a5_or_a6() -> None:
     try:
         torch.npu.set_device(ST_DEVICE)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
-        pytest.skip(f"Current device is {device_name}, not A5 (Ascend950)")
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {device_name}, not A5/A6 (Ascend950/Ascend960)")
 
 
 # === T11: HARD AIC_ONLY followed by HARD MIX ========================================
@@ -107,12 +107,12 @@ def _make_inputs(shape):
     return x, y, out
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", DYNAMIC_SHAPES)
 @pytest.mark.parametrize("used_cores", [1, 2], ids=["one-core", "two-cores"])
 def test_t11_e02_e03_hard_aic_mix(shape, used_cores):
     """T11: AIC_ONLY and MIX HARD barriers execute with the requested launch count."""
-    _require_a5()
+    _require_a5_or_a6()
     x, y, out = _make_inputs(shape)
     t11_hard_aic_mix[None, used_cores](x, y, out)
     torch.npu.synchronize()

@@ -1,0 +1,7 @@
+program #entry() {
+    function _dynamic_sync_kernel incast(tensor<1, int32_t, tensor_view<, , ND, %x_ptr>> %x_0, int32_t %event_id_0) outcast() #entry(false) #type(Opaque) {
+        system.set_cross_core_dyn(%event_id_0, pipe=5, sync_mode=2);
+        system.wait_cross_core_dyn(%event_id_0, pipe=5, sync_mode=2);
+        return;
+    }
+}

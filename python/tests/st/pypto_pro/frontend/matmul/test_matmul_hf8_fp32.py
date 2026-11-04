@@ -57,13 +57,13 @@ def _ceil_blocks(total, tile):
 _SCALE_ONE = 1.0
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
-    if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        pytest.skip("not A5/A6")
 
 
 # #####################################################################################
@@ -1758,7 +1758,7 @@ _COMBOS = [
 @pytest.fixture(scope="module")
 def _device():
     dev = ST_DEVICE
-    _require_a5(dev)
+    _require_a5_or_a6(dev)
     return dev
 
 
@@ -1773,7 +1773,7 @@ _TT_SHAPES = [
 ]
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
 def test_t01(in_dtype, out_dtype, mkn, _device):
@@ -1781,7 +1781,7 @@ def test_t01(in_dtype, out_dtype, mkn, _device):
     _run(make_matmul_mnk_if, in_dtype, out_dtype, _device, mkn=mkn)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
 def test_t02_no_phase(in_dtype, out_dtype, mkn, _device):
@@ -1789,7 +1789,7 @@ def test_t02_no_phase(in_dtype, out_dtype, mkn, _device):
     _run(make_matmul_no_phase, in_dtype, out_dtype, _device, mkn=mkn)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype", ["hf8", "fp32"])
 def test_t03_atomic(in_dtype, mkn, _device):
@@ -1801,7 +1801,7 @@ def test_t03_atomic(in_dtype, mkn, _device):
     _run(make_matmul_atomic, in_dtype, "fp32", _device, mkn=mkn, block_dim=1)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape_id,m,k,n", _TT_SHAPES, ids=[s[0] for s in _TT_SHAPES])
 @pytest.mark.parametrize("in_dtype", ["hf8", "fp32"])
 def test_t04_transpose(in_dtype, shape_id, m, k, n, _device):
@@ -1821,7 +1821,7 @@ def test_t04_transpose(in_dtype, shape_id, m, k, n, _device):
     )
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("out_dtype", _QUANT_OUTS)
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype", ["hf8", "fp32"])
@@ -1830,7 +1830,7 @@ def test_t06_quant_scalar(in_dtype, out_dtype, mkn, _device):
     _run(make_matmul_quant_scalar, in_dtype, out_dtype, _device, mkn=mkn)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("out_dtype", _QUANT_OUTS)
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype", ["hf8", "fp32"])
@@ -1842,7 +1842,7 @@ def test_t07_fp_tile(in_dtype, out_dtype, mkn, _device):
     _run(make_matmul_fp_tile, in_dtype, out_dtype, _device, mkn=mkn, scales=scales)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
 def test_t08_tile_offsets(in_dtype, out_dtype, mkn, _device):
@@ -1850,7 +1850,7 @@ def test_t08_tile_offsets(in_dtype, out_dtype, mkn, _device):
     _run(make_matmul_tile_offsets, in_dtype, out_dtype, _device, mkn=mkn)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
 def test_t09_tile_transpose(in_dtype, out_dtype, mkn, _device):
@@ -1868,7 +1868,7 @@ def test_t09_tile_transpose(in_dtype, out_dtype, mkn, _device):
     )
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
 def test_t10_tile_mixed(in_dtype, out_dtype, mkn, _device):
@@ -1876,7 +1876,7 @@ def test_t10_tile_mixed(in_dtype, out_dtype, mkn, _device):
     _run(make_matmul_tile_mixed, in_dtype, out_dtype, _device, mkn=mkn)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
 def test_t11_batched_tile_order(in_dtype, out_dtype, mkn, _device):
@@ -1895,7 +1895,7 @@ def test_t11_batched_tile_order(in_dtype, out_dtype, mkn, _device):
     )
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("mkn", [v[1] for v in _MKN_VARIANTS], ids=[v[0] for v in _MKN_VARIANTS])
 @pytest.mark.parametrize("in_dtype", ["hf8", "fp32"])
 def test_t12_katomic_multicore(in_dtype, mkn, _device):
@@ -1916,7 +1916,7 @@ def test_t12_katomic_multicore(in_dtype, mkn, _device):
     )
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("in_dtype,out_dtype", _COMBOS)
 def test_t13_insert(in_dtype, out_dtype, _device):
     """A staged GM -> UB -> L1 by pl.insert, i.e. whether UB -> L1 carries the input dtype.
@@ -1932,7 +1932,7 @@ def test_t13_insert(in_dtype, out_dtype, _device):
 # #####################################################################################
 if __name__ == "__main__":
     dev = ST_DEVICE
-    _require_a5(dev)
+    _require_a5_or_a6(dev)
 
     # Call the pytest test functions directly so both entry points share one code path.
     # Argument order must match each test's signature after the parametrize decorators.

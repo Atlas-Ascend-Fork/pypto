@@ -129,3 +129,109 @@ def test_limited_matmul(limits, capture):
     torch.testing.assert_close(actual, golden, rtol=0, atol=0)
     print(f"mixed matmul limits={limits} capture={capture}: max_abs_error={(actual - golden).abs().max().item()}, "
           "exact_match=100%")
+
+
+@pl.jit(auto_mutex=True)
+def limited_matmul_a6(
+    a: pl.Tensor[[CV_M, CV_TILE_K], pl.DT_FP16],
+    b: pl.Tensor[[CV_TILE_K, CV_TILE_N], pl.DT_FP16],
+    out: pl.Tensor[[CV_M, CV_TILE_N], pl.DT_FP32],
+):
+    """A6 (1 Cube : 1 Vector) variant: full-M Acc->Vec move, no dual split."""
+    a_l1_group = pl.make_tile_group(
+        type=pl.TileType(
+            shape=[CV_TILE_M, CV_TILE_K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        addrs=0x0000,
+        mutex_ids=[0],
+    )
+    b_l1_group = pl.make_tile_group(
+        type=pl.TileType(
+            shape=[CV_TILE_K, CV_TILE_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        addrs=0x4000,
+        mutex_ids=[1],
+    )
+    a_l0a_group = pl.make_tile_group(
+        type=pl.TileType(
+            shape=[CV_TILE_M, CV_TILE_K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left),
+        addrs=0x0000,
+        mutex_ids=[2],
+    )
+    b_l0b_group = pl.make_tile_group(
+        type=pl.TileType(
+            shape=[CV_TILE_K, CV_TILE_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Right),
+        addrs=0x0000,
+        mutex_ids=[3],
+    )
+    acc_group = pl.make_tile_group(
+        type=pl.TileType(
+            shape=[CV_TILE_M, CV_TILE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc),
+        addrs=0x0000,
+        mutex_ids=[8],
+    )
+    vec_tile = pl.make_tile(
+        pl.TileType(
+            shape=[CV_TILE_M, CV_TILE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addr=0x0000,
+    )
+
+    with pl.section_cube():
+        core_id = pl.get_block_idx()
+        for tile_index in pl.range(core_id, CV_NUM_TILES, pl.get_block_num()):
+            row = tile_index * CV_TILE_M
+            a_l1 = a_l1_group.current()
+            b_l1 = b_l1_group.current()
+            a_l0a = a_l0a_group.current()
+            b_l0b = b_l0b_group.current()
+            acc = acc_group.current()
+
+            pl.load(a_l1, a, [row, 0])
+            pl.load(b_l1, b, [0, 0])
+            pl.move(a_l0a, a_l1)
+            pl.move(b_l0b, b_l1)
+            pl.matmul(acc, a_l0a, b_l0b)
+
+            pl.system.wait_cross_core(pipe=pl.PipeType.FIX, event_id=6)
+            pl.move(vec_tile, acc, acc_to_vec_mode=pl.AccToVecMode.SingleModeVec0)
+            pl.system.set_cross_core(pipe=pl.PipeType.FIX, event_id=0)
+
+    with pl.section_vector():
+        vector_core_id = pl.get_block_idx()
+        pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=6)
+
+        for tile_index in pl.range(vector_core_id, CV_NUM_TILES, pl.get_block_num()):
+            row = tile_index * CV_TILE_M
+            pl.system.wait_cross_core(pipe=pl.PipeType.MTE3, event_id=0)
+            pl.store(out, vec_tile, [row, 0])
+            pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=6)
+
+
+@pytest.mark.soc("960")
+@pytest.mark.parametrize("limits", [(4, 16), (8, 5)])
+@pytest.mark.parametrize("capture", [False, True], ids=["eager", "graph"])
+def test_limited_matmul_a6(limits, capture):
+    """A6 (1:1) variant: full-M vector store exercises the limited group's cross-core waits."""
+    torch.npu.set_device(DEVICE_ID)
+    a_host = (torch.arange(CV_M * CV_TILE_K).reshape(CV_M, CV_TILE_K) % 17).to(torch.float16)
+    b_host = (torch.arange(CV_TILE_K * CV_TILE_N).reshape(CV_TILE_K, CV_TILE_N) % 13).to(torch.float16)
+    golden = a_host.float() @ b_host.float()
+    a = a_host.to(f"npu:{DEVICE_ID}")
+    b = b_host.to(f"npu:{DEVICE_ID}")
+    out = torch.zeros((CV_M, CV_TILE_N), dtype=torch.float32, device=a.device)
+    s = torch.npu.Stream()
+    torch.npu.synchronize()
+    with torch.npu.npugraph_ex.scope.limit_core_num(*limits, stream=s), torch.npu.stream(s):
+        limited_matmul_a6(a, b, out)
+        s.synchronize()
+        if capture:
+            out.zero_()
+            torch.npu.synchronize()
+            graph = torch.npu.NPUGraph()
+            with torch.npu.graph(graph, stream=s):
+                limited_matmul_a6(a, b, out)
+    if capture:
+        graph.replay()
+    torch.npu.synchronize()
+    actual = out.cpu()
+    torch.testing.assert_close(actual, golden, rtol=0, atol=0)
+    print(f"mixed matmul (a6 1:1) limits={limits} capture={capture}: "
+          f"max_abs_error={(actual - golden).abs().max().item()}, exact_match=100%")

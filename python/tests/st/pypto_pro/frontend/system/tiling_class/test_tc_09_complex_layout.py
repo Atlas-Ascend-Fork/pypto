@@ -144,7 +144,7 @@ def _run_complex_test(
 class TestComplexLayoutNPUKernel:
     """Complex cases: verify all 7 tiling fields are accessible on NPU with 3 combinations."""
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_combo1_scalar_a_0_add(self):
         _run_complex_test(
             scalar_a=0,
@@ -157,7 +157,7 @@ class TestComplexLayoutNPUKernel:
             expected_op="add",
         )
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_combo2_scalar_a_1_sub(self):
         _run_complex_test(
             scalar_a=1,
@@ -170,7 +170,7 @@ class TestComplexLayoutNPUKernel:
             expected_op="sub",
         )
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_combo3_scalar_a_2_sub_rev(self):
         _run_complex_test(
             scalar_a=2,

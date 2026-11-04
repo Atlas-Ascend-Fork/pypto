@@ -64,3 +64,31 @@ def test_npugraph_ex_scope(kind, explicit_stream):
         torch.npu.synchronize()
         _check(first, kind, 6 if kind == 1 else 3)
         _check(second, kind, 2 if kind == 1 else 1)
+
+
+@pytest.mark.soc("960")
+@pytest.mark.parametrize("kind", [1, 2], ids=["vector", "mixed"])
+@pytest.mark.parametrize("explicit_stream", [False, True], ids=["implicit_scope", "explicit_scope"])
+def test_npugraph_ex_scope_a6(kind, explicit_stream):
+    """A6 (1:1) variant: mixed block budget is min(cube, vector), not min(cube, vector//2)."""
+    torch.npu.set_device(DEVICE_ID)
+    x = torch.zeros(1, device=f"npu:{DEVICE_ID}")
+    # Warm the JIT outside capture while preserving the custom-op boundary in the FX graph.
+    _probe(x, kind)
+    torch.npu.synchronize()
+
+    def model(x):
+        scope_stream = torch.npu.current_stream() if explicit_stream else None
+        with torch.npu.npugraph_ex.scope.limit_core_num(4, 6, stream=scope_stream):
+            first = _probe(x, kind)
+        with torch.npu.npugraph_ex.scope.limit_core_num(2, 2, stream=scope_stream):
+            second = _probe(x, kind)
+        return first, second
+
+    compiled = torch.compile(model, backend="npugraph_ex", dynamic=False, fullgraph=True)
+    for _ in range(3):
+        first, second = compiled(x)
+        torch.npu.synchronize()
+        # Scope 1: min(4, 6) = 4 blocks at 1:1; scope 2: min(2, 2) = 2 blocks.
+        _check(first, kind, 6 if kind == 1 else 4, ratio=1)
+        _check(second, kind, 2, ratio=1)

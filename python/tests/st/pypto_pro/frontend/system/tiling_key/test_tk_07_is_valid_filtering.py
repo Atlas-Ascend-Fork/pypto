@@ -86,20 +86,20 @@ def _run_test(key, ref_fn, shape=(128, 256)):
 
 
 # ---- 简单用例 --------------------------------------------------------------
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_valid_combo_1_0_add():
     """(A=1, B=0) 通过 is_valid → sub."""
     _run_test({"a": 1, "b": 0}, lambda a, b: a - b)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_valid_combo_2_2_mul():
     """(A=2, B=2) 通过 is_valid → mul."""
     _run_test({"a": 2, "b": 2}, lambda a, b: a * b)
 
 
 # ---- 复杂用例: 所有通过 is_valid 的组合 NPU 全流程验证 --------------------
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_all_valid_combos_npu():
     """遍历 3x3=9 → 过滤 (0,0) → 剩余 8 种组合，全部上板精度验证."""
     device = ST_DEVICE

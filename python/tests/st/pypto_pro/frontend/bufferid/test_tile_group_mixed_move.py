@@ -52,14 +52,14 @@ CV_NUM_CORES = 2
 CV_M = CV_TILE_M * CV_NUM_TILES
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
 
 
 def _make_fp16_pattern(shape, modulus, device=ST_DEVICE):
@@ -75,7 +75,7 @@ def _make_fp16_pattern(shape, modulus, device=ST_DEVICE):
 # =============================================================================
 # Pure Cube: move(tile, tile_group)
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def cube_move_tile_group_to_tile_kernel(
     a: pl.Tensor[[CUBE_M, CUBE_K], pl.DT_FP16],
     b: pl.Tensor[[CUBE_K, CUBE_N], pl.DT_FP16],
@@ -137,7 +137,7 @@ def cube_move_tile_group_to_tile_kernel(
 # =============================================================================
 # Pure Cube: move(tile_group, tile)
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def cube_move_tile_to_tile_group_kernel(
     a: pl.Tensor[[CUBE_M, CUBE_K], pl.DT_FP16],
     b: pl.Tensor[[CUBE_K, CUBE_N], pl.DT_FP16],
@@ -200,7 +200,7 @@ def cube_move_tile_to_tile_group_kernel(
 # =============================================================================
 # Pure Vector: group -> tile -> group
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def vector_mixed_move_both_directions_kernel(
     source: pl.Tensor[[VEC_M, VEC_TILE_N], pl.DT_FP16],
     middle_out: pl.Tensor[[VEC_M, VEC_TILE_N], pl.DT_FP16],
@@ -238,7 +238,7 @@ def vector_mixed_move_both_directions_kernel(
 # =============================================================================
 # Cube/Vector: move(Vec tile, Acc tile_group)
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def cv_move_acc_group_to_vec_tile_kernel(
     a: pl.Tensor[[CV_M, CV_TILE_K], pl.DT_FP16],
     b: pl.Tensor[[CV_TILE_K, CV_TILE_N], pl.DT_FP16],
@@ -340,27 +340,27 @@ def _assert_matmul_close(out, golden):
         )
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_cube_move_tile_group_to_tile():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     a, b, out, golden = _cube_inputs()
     cube_move_tile_group_to_tile_kernel[None, 1](a, b, out)
     torch.npu.synchronize()
     _assert_matmul_close(out, golden)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_cube_move_tile_to_tile_group():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     a, b, out, golden = _cube_inputs()
     cube_move_tile_to_tile_group_kernel[None, 1](a, b, out)
     torch.npu.synchronize()
     _assert_matmul_close(out, golden)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_vector_mixed_move_both_directions():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     source = _make_fp16_pattern([VEC_M, VEC_TILE_N], 19)
     middle_out = torch.zeros([VEC_M, VEC_TILE_N], device=ST_DEVICE, dtype=torch.float16)
     out = torch.zeros([VEC_M, VEC_TILE_N], device=ST_DEVICE, dtype=torch.float16)
@@ -383,7 +383,7 @@ def _cv_inputs():
 
 @pytest.mark.soc("950")
 def test_cv_move_acc_group_to_vec_tile():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     a, b, out, golden = _cv_inputs()
     cv_move_acc_group_to_vec_tile_kernel[None, CV_NUM_CORES](a, b, out)
     torch.npu.synchronize()
@@ -395,3 +395,86 @@ if __name__ == "__main__":
     test_cube_move_tile_to_tile_group()
     test_vector_mixed_move_both_directions()
     test_cv_move_acc_group_to_vec_tile()
+
+
+@pl.jit(auto_mutex=True)
+def cv_move_acc_group_to_vec_tile_kernel_a6(
+    a: pl.Tensor[[CV_M, CV_TILE_K], pl.DT_FP16],
+    b: pl.Tensor[[CV_TILE_K, CV_TILE_N], pl.DT_FP16],
+    out: pl.Tensor[[CV_M, CV_TILE_N], pl.DT_FP32],
+):
+    """Reuse one managed Acc tile across two iterations per Cube core."""
+    a_l1_group = pl.make_tile_group(
+        type=pl.TileType(
+            shape=[CV_TILE_M, CV_TILE_K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        addrs=0x0000,
+        mutex_ids=[0],
+    )
+    b_l1_group = pl.make_tile_group(
+        type=pl.TileType(
+            shape=[CV_TILE_K, CV_TILE_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        addrs=0x4000,
+        mutex_ids=[1],
+    )
+    a_l0a_group = pl.make_tile_group(
+        type=pl.TileType(
+            shape=[CV_TILE_M, CV_TILE_K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left),
+        addrs=0x0000,
+        mutex_ids=[2],
+    )
+    b_l0b_group = pl.make_tile_group(
+        type=pl.TileType(
+            shape=[CV_TILE_K, CV_TILE_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Right),
+        addrs=0x0000,
+        mutex_ids=[3],
+    )
+    acc_group = pl.make_tile_group(
+        type=pl.TileType(
+            shape=[CV_TILE_M, CV_TILE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc),
+        addrs=0x0000,
+        mutex_ids=[8],
+    )
+    vec_tile = pl.make_tile(
+        pl.TileType(
+            shape=[CV_TILE_M, CV_TILE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addr=0x0000,
+    )
+
+    with pl.section_cube():
+        core_id = pl.get_block_idx()
+        for tile_index in pl.range(core_id, CV_NUM_TILES, CV_NUM_CORES):
+            row = tile_index * CV_TILE_M
+            a_l1 = a_l1_group.current()
+            b_l1 = b_l1_group.current()
+            a_l0a = a_l0a_group.current()
+            b_l0b = b_l0b_group.current()
+            acc = acc_group.current()
+
+            pl.load(a_l1, a, [row, 0])
+            pl.load(b_l1, b, [0, 0])
+            pl.move(a_l0a, a_l1)
+            pl.move(b_l0b, b_l1)
+            pl.matmul(acc, a_l0a, b_l0b)
+
+            # The Vector halves acknowledge the previous use of the ordinary Vec tile.
+            pl.system.wait_cross_core(pipe=pl.PipeType.FIX, event_id=6)
+            pl.move(vec_tile, acc, acc_to_vec_mode=pl.AccToVecMode.SingleModeVec0)
+            pl.system.set_cross_core(pipe=pl.PipeType.FIX, event_id=0)
+
+    with pl.section_vector():
+        vector_core_id = pl.get_block_idx()
+        pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=6)
+
+        for tile_index in pl.range(vector_core_id, CV_NUM_TILES, CV_NUM_CORES):
+            row = tile_index * CV_TILE_M
+            pl.system.wait_cross_core(pipe=pl.PipeType.MTE3, event_id=0)
+            pl.store(out, vec_tile, [row, 0])
+            pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=6)
+
+
+@pytest.mark.soc("960")
+def test_cv_move_acc_group_to_vec_tile_a6():
+    a, b, out, golden = _cv_inputs()
+    cv_move_acc_group_to_vec_tile_kernel_a6[None, CV_NUM_CORES](a, b, out)
+    torch.npu.synchronize()
+    _assert_matmul_close(out, golden)

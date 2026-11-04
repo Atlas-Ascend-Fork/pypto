@@ -537,9 +537,13 @@ def launch(
 
 def _parse_simt_launch(parser: Any, call: ast.Call, local_name: str, callee_template: Callable) -> Expr:
     """Parse ``simt_func[threads](args...)`` and lower it to ``simt.launch`` IR."""
+    from pypto.pypto_impl import NpuArch
     from pypto_pro.language.parser.decorator import get_simt_max_threads
+    from pypto_pro.runtime.jit import get_current_arch
 
     span = parser.span_tracker.get_span(call)
+    if get_current_arch() == NpuArch.DAV_9201:
+        raise NotSupported("SIMT vector-function launch is not supported on A6 (arch='9201')", span=span)
     if parser._current_func_type in (
         _ir_core.FunctionType.SimtVF,
         _ir_core.FunctionType.SimtCallee,

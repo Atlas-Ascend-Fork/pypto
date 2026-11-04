@@ -284,7 +284,7 @@ def scale_dynamic_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("m,n", [(64, 64), (48, 96), (96, 96)], ids=["full", "row_tail", "dual_tail"])
 def test_scale_store_per_tensor(m, n):
     """编译期 float scale per-tensor store，覆盖完整/行尾/双尾块有效区。"""
@@ -292,7 +292,7 @@ def test_scale_store_per_tensor(m, n):
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -315,7 +315,7 @@ def test_scale_store_per_tensor(m, n):
     logging.info("test_scale_store_per_tensor[%s,%s] passed.", m, n)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_scale_store_random_input():
     """随机输入 per-tensor 量化：golden = clamp(round(raw_ref * scale))。
 
@@ -328,7 +328,7 @@ def test_scale_store_random_input():
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -350,13 +350,13 @@ def test_scale_store_random_input():
     logging.info("test_scale_store_random_input passed.")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_scale_move_per_tensor():
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -374,13 +374,13 @@ def test_scale_move_per_tensor():
     logging.info("test_scale_move_per_tensor passed.")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_scale_dynamic():
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 

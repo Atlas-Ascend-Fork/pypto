@@ -65,7 +65,7 @@ def kernel_index_npu(
 class TestArrayIndexPositive:
     """Positive cases: literal integer index is valid."""
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_array_with_values_and_npu_execute(self):
         device = ST_DEVICE
         torch.npu.set_device(device)

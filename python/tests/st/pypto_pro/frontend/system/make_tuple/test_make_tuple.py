@@ -47,7 +47,7 @@ def tuple_scalar_kernel(
         pl.setval(out, 1, t.second - t.first)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_tuple_scalar():
     """测试 pl.make_tuple 打包标量字段并通过 .字段名 访问的场景。
 
@@ -79,7 +79,7 @@ def tuple_int64_kernel(
         pl.setval(out, 1, t.big + t.small)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_tuple_int64():
     """测试 pl.make_tuple 使用 INT64 标量字段 + 与 pl.max 组合使用的场景。
 
@@ -113,7 +113,7 @@ def tuple_in_loop_kernel(
         pl.setval(out, 0, acc.v)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_tuple_in_loop():
     """测试 pl.make_tuple 在 for 循环内部打包并通过 struct 字段中转的场景。
 
@@ -152,7 +152,7 @@ def tuple_if_else_kernel(
         pl.setval(out, 2, t.lo + t.hi)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_tuple_if_else():
     """测试 pl.make_tuple 在 for + if/else 分支中聚合结果的场景。
 
@@ -185,7 +185,7 @@ def tuple_many_fields_kernel(
         pl.setval(out, 0, t.f1 + t.f2 + t.f3 + t.f4 + t.f5 + t.f6 + t.f7 + t.f8)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_tuple_many_fields():
     """测试 pl.make_tuple 打包 8 个字段的场景，验证字段数量上限。
 

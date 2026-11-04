@@ -163,13 +163,13 @@ def _quant_golden(x: torch.Tensor, scale: float, dst_dtype) -> torch.Tensor:
     raise AssertionError(f"unexpected dtype {dst_dtype}")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("m,n", [(64, 64), (50, 64)], ids=["full", "row_tail"])
 def test_fp32_acc_to_uint8_scalar(m, n):
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
-        logging.info("skip: not Ascend950")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        logging.info("skip: not Ascend950/Ascend960")
         return
     vm, vn = min(m, 64), min(n, 64)
     q = torch.randn(m, n, device=device, dtype=torch.float32)
@@ -181,13 +181,13 @@ def test_fp32_acc_to_uint8_scalar(m, n):
     torch.testing.assert_close(out[:vm, :vn].to(torch.int32), expected[:vm, :vn].to(torch.int32), rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("m,n", [(64, 64), (50, 64)], ids=["full", "row_tail"])
 def test_fp32_acc_to_bf16_scalar(m, n):
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
-        logging.info("skip: not Ascend950")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        logging.info("skip: not Ascend950/Ascend960")
         return
     vm, vn = min(m, 64), min(n, 64)
     q = torch.randn(m, n, device=device, dtype=torch.float32)
@@ -199,13 +199,13 @@ def test_fp32_acc_to_bf16_scalar(m, n):
     torch.testing.assert_close(out[:vm, :vn], expected[:vm, :vn], rtol=0, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("m,n", [(64, 64), (50, 64)], ids=["full", "row_tail"])
 def test_int32_acc_to_uint8_scalar(m, n):
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
-        logging.info("skip: not Ascend950")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        logging.info("skip: not Ascend950/Ascend960")
         return
     vm, vn = min(m, 64), min(n, 64)
     q = torch.randint(-8, 9, (m, n), device=device, dtype=torch.int8)
@@ -217,13 +217,13 @@ def test_int32_acc_to_uint8_scalar(m, n):
     torch.testing.assert_close(out[:vm, :vn].to(torch.int32), expected[:vm, :vn].to(torch.int32), rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("m,n", [(64, 64), (50, 64)], ids=["full", "row_tail"])
 def test_int32_acc_to_bf16_scalar(m, n):
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
-        logging.info("skip: not Ascend950")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        logging.info("skip: not Ascend950/Ascend960")
         return
     vm, vn = min(m, 64), min(n, 64)
     q = torch.randint(-8, 9, (m, n), device=device, dtype=torch.int8)
@@ -235,7 +235,7 @@ def test_int32_acc_to_bf16_scalar(m, n):
     torch.testing.assert_close(out[:vm, :vn], expected[:vm, :vn], rtol=0, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.xfail(
     reason="per-channel UINT8 first-invocation instability on new CANN (9.2.0 weekly); "
     "bit46=1 semantics verified via in-process warm-up, tracked as framework issue",
@@ -245,8 +245,8 @@ def test_int32_acc_to_uint8_per_channel():
     m, n = 64, 64
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
-        logging.info("skip: not Ascend950")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        logging.info("skip: not Ascend950/Ascend960")
         return
     vm, vn = min(m, 64), min(n, 64)
     q = torch.randint(-8, 9, (m, n), device=device, dtype=torch.int8)
@@ -259,13 +259,13 @@ def test_int32_acc_to_uint8_per_channel():
     torch.testing.assert_close(out[:vm, :vn].to(torch.int32), expected[:vm, :vn].to(torch.int32), rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_int32_acc_to_bf16_per_channel():
     m, n = 64, 64
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
-        logging.info("skip: not Ascend950")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        logging.info("skip: not Ascend950/Ascend960")
         return
     vm, vn = min(m, 64), min(n, 64)
     q = torch.randint(-8, 9, (m, n), device=device, dtype=torch.int8)

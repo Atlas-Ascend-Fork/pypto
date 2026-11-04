@@ -71,7 +71,7 @@ def kernel_valid(
                 pl.store(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_valid_on_npu_add():
     """合法 TilingKey 上板 — add 运算（OpType=0）。"""
     device = ST_DEVICE
@@ -89,7 +89,7 @@ def test_valid_on_npu_add():
     torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_valid_on_npu_sub():
     """合法 TilingKey 上板 — sub 运算（OpType=1）。"""
     device = ST_DEVICE
@@ -107,7 +107,7 @@ def test_valid_on_npu_sub():
     torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_valid_on_npu_mul():
     """合法 TilingKey 上板 — mul 运算（OpType=2）。"""
     device = ST_DEVICE

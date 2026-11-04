@@ -63,13 +63,13 @@ N_SQ = 128
 TILE_SQ = 128
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
-    if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        pytest.skip("not A5/A6")
 
 
 def _inputs(device, shape, dtype=torch.float16):
@@ -1488,84 +1488,84 @@ def t25_nsq_per_channel_scale_phase(
 @pytest.fixture(scope="module")
 def _device():
     dev = ST_DEVICE
-    _require_a5(dev)
+    _require_a5_or_a6(dev)
     return dev
 
 
 # --- Part A: Non-square tests ---
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t01(_device):
     a = _inputs(_device, [M_NSQ, K_NSQ])
     b = _inputs(_device, [K_NSQ, N_NSQ])
     _run(t01_nsq_nd_nz_single, a, b, a, b, [M_NSQ, N_NSQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t02(_device):
     a = _inputs(_device, [M_NSQ, 256])
     b = _inputs(_device, [256, N_NSQ])
     _run(t02_nsq_nd_nz_kloop_if, a, b, a, b, [M_NSQ, N_NSQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t03(_device):
     a = _inputs(_device, [M_NSQ, K_NSQ])
     b = _inputs(_device, [K_NSQ, N_NSQ])
     _run(t03_nsq_dn_zn_single, a, b.t().contiguous(), a, b, [M_NSQ, N_NSQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t05(_device):
     a = _inputs(_device, [M_NSQ, 256])
     b = _inputs(_device, [256, N_NSQ])
     _run(t05_nsq_dn_zn_kloop, a, b.t().contiguous(), a, b, [M_NSQ, N_NSQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t06(_device):
     a = _inputs(_device, [M_NSQ, 200])
     b = _inputs(_device, [200, N_NSQ])
     _run(t06_nsq_dn_zn_kloop_tail, a, b.t().contiguous(), a, b, [M_NSQ, N_NSQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t07(_device):
     a = _inputs(_device, [M_NSQ, K_NSQ])
     b = _inputs(_device, [K_NSQ, N_NSQ])
     _run(t07_nsq_dn_zn_tn_single, a.t().contiguous(), b, a, b, [M_NSQ, N_NSQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t09(_device):
     a = _inputs(_device, [M_NSQ, K_NSQ])
     b = _inputs(_device, [K_NSQ, N_NSQ])
     _run(t09_nsq_dn_zn_tn_kloop_if, a.t().contiguous(), b, a, b, [M_NSQ, N_NSQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t10(_device):
     a = _inputs(_device, [M_NSQ, K_NSQ])
     b = _inputs(_device, [K_NSQ, N_NSQ])
     _run(t10_nsq_dn_zn_tn_kloop_tail, a.t().contiguous(), b, a, b, [M_NSQ, N_NSQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t11(_device):
     a = _inputs(_device, [M_NSQ, K_NSQ])
     b = _inputs(_device, [K_NSQ, N_NSQ])
     _run(t11_nsq_dn_zn_tt_single, a.t().contiguous(), b.t().contiguous(), a, b, [M_NSQ, N_NSQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t12(_device):
     a = _inputs(_device, [M_NSQ, 256])
     b = _inputs(_device, [256, N_NSQ])
     _run(t12_nsq_dn_zn_tt_kloop, a.t().contiguous(), b.t().contiguous(), a, b, [M_NSQ, N_NSQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t13(_device):
     a = _inputs(_device, [M_NSQ, K_NSQ])
     b = _inputs(_device, [K_NSQ, N_NSQ])
@@ -1575,35 +1575,35 @@ def test_t13(_device):
 # --- Part B: Square tests ---
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t14(_device):
     a = _inputs(_device, [M_SQ, K_SQ])
     b = _inputs(_device, [K_SQ, N_SQ])
     _run(t14_sq_nd_nz_single, a, b, a, b, [M_SQ, N_SQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t15(_device):
     a = _inputs(_device, [M_SQ, 256])
     b = _inputs(_device, [256, N_SQ])
     _run(t15_sq_nd_nz_kloop_if, a, b, a, b, [M_SQ, N_SQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t16(_device):
     a = _inputs(_device, [128, 384])
     b = _inputs(_device, [384, 128])
     _run(t16_sq_nd_nz_kacc_3blocks, a, b, a, b, [128, 128], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t17(_device):
     a = _inputs(_device, [256, 64])
     b = _inputs(_device, [64, 64])
     _run(t17_sq_nd_nz_m_tiling, a, b, a, b, [256, 64], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t18(_device):
     a = _inputs(_device, [200, 128])
     b = _inputs(_device, [128, 128])
@@ -1616,7 +1616,7 @@ def test_t18(_device):
     torch.testing.assert_close(out[:72, :], ref, rtol=2e-2, atol=2e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t19(_device):
     a = _inputs(_device, [64, 64], dtype=torch.float32)
     b = _inputs(_device, [64, 64], dtype=torch.float32)
@@ -1629,42 +1629,42 @@ def test_t19(_device):
     torch.testing.assert_close(out, ref, rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t20(_device):
     a = _inputs(_device, [M_SQ, K_SQ])
     b = _inputs(_device, [K_SQ, N_SQ])
     _run(t20_sq_dn_zn_single, a, b.t().contiguous(), a, b, [M_SQ, N_SQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t21(_device):
     a = _inputs(_device, [M_SQ, K_SQ])
     b = _inputs(_device, [K_SQ, N_SQ])
     _run(t21_sq_dn_zn_kloop, a, b.t().contiguous(), a, b, [M_SQ, N_SQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t22(_device):
     a = _inputs(_device, [M_SQ, K_SQ])
     b = _inputs(_device, [K_SQ, N_SQ])
     _run(t22_sq_dn_zn_tn_kloop_if, a.t().contiguous(), b, a, b, [M_SQ, N_SQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t23(_device):
     a = _inputs(_device, [M_SQ, K_SQ])
     b = _inputs(_device, [K_SQ, N_SQ])
     _run(t23_sq_dn_zn_tt_kloop_if, a.t().contiguous(), b.t().contiguous(), a, b, [M_SQ, N_SQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t24(_device):
     a = _inputs(_device, [M_SQ, 200])
     b = _inputs(_device, [200, N_SQ])
     _run(t24_sq_dn_zn_kloop_tail, a, b.t().contiguous(), a, b, [M_SQ, N_SQ], _device)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t25_per_channel_scale_phase(_device):
     # Integer-valued inputs so raw_ref * scale lands exactly on integers: no
     # round-half ambiguity between torch (half-to-even) and the hardware FixPipe,
@@ -1695,7 +1695,7 @@ def test_t25_per_channel_scale_phase(_device):
 # #####################################################################################
 if __name__ == "__main__":
     dev = ST_DEVICE
-    _require_a5(dev)
+    _require_a5_or_a6(dev)
 
     all_tests = [
         # Part A: Non-square (t01 ~ t13)

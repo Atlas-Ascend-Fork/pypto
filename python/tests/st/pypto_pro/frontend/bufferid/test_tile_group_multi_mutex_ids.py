@@ -38,14 +38,14 @@ NUM_TILES = 8
 FULL_ROWS = TILE_ROWS * NUM_TILES
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+    if not any(arch in name for arch in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {name}, not A5 or A6. Skip.")
 
 
 @pl.vector_function
@@ -67,7 +67,7 @@ def _select_tile_with_if_else(true_tile, false_tile, choose_true):
     return selected_tile
 
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def mixed_width_groups_kernel(
     source: pl.Tensor[[FULL_ROWS, TILE_COLS], pl.DT_FP16],
     output: pl.Tensor[[FULL_ROWS, TILE_COLS], pl.DT_FP16],
@@ -97,9 +97,9 @@ def mixed_width_groups_kernel(
             pl.store(output, output_tile, [row, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_mixed_single_and_multi_id_tile_groups():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     torch.manual_seed(0)
     source = torch.rand([FULL_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     output = torch.zeros([FULL_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16)
@@ -136,7 +136,7 @@ L0B_K_WIDE = 256
 L0B_N = 128
 
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def cube_vector_multi_id_kernel(
     a: pl.Tensor[[CUBE_M, CUBE_N], pl.DT_FP32],
     b: pl.Tensor[[CUBE_M, CUBE_K], pl.DT_FP16],
@@ -194,7 +194,7 @@ def cube_vector_multi_id_kernel(
         pl.store(out, vec_group[3], [row_offset, 0])
 
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def dynamic_multi_id_patterns_kernel(
     a: pl.Tensor[[DYN_FULL_ROWS, TILE_COLS], pl.DT_FP16],
     b: pl.Tensor[[DYN_FULL_ROWS, TILE_COLS], pl.DT_FP16],
@@ -227,7 +227,7 @@ def dynamic_multi_id_patterns_kernel(
             pl.store(offset_out, offset_tile_a, [row, 0])
 
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def same_group_overlapping_slots_kernel(
     a: pl.Tensor[[TILE_ROWS, TILE_COLS], pl.DT_FP16],
     b: pl.Tensor[[TILE_ROWS, TILE_COLS], pl.DT_FP16],
@@ -245,7 +245,7 @@ def same_group_overlapping_slots_kernel(
         pl.store(out, tile_a, [0, 0])
 
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def subfunction_tile_if_else_kernel(
     true_source: pl.Tensor[[FULL_ROWS, TILE_COLS], pl.DT_FP16],
     false_source: pl.Tensor[[FULL_ROWS, TILE_COLS], pl.DT_FP16],
@@ -272,7 +272,7 @@ def subfunction_tile_if_else_kernel(
 
 @pytest.mark.soc("950")
 def test_cube_vector_multi_mutex_id():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.rand([CUBE_M, CUBE_N], device=ST_DEVICE, dtype=torch.float32) * 2.0 - 1.0
     b = torch.rand([CUBE_M, CUBE_K], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
@@ -284,9 +284,9 @@ def test_cube_vector_multi_mutex_id():
     torch.testing.assert_close(out.cpu().float(), golden, rtol=3e-3, atol=3e-3)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_dynamic_multi_id_patterns():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.rand([DYN_FULL_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     b = torch.rand([DYN_FULL_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
@@ -299,9 +299,9 @@ def test_dynamic_multi_id_patterns():
     torch.testing.assert_close(offset_out.cpu().float(), golden, rtol=3e-3, atol=3e-3)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_same_group_overlapping_slots_in_one_op():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.rand([TILE_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     b = torch.rand([TILE_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
@@ -312,9 +312,9 @@ def test_same_group_overlapping_slots_in_one_op():
     torch.testing.assert_close(out.cpu().float(), golden, rtol=3e-3, atol=3e-3)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_subfunction_tile_if_else():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     torch.manual_seed(0)
     true_source = torch.rand([FULL_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     false_source = torch.rand([FULL_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 + 2.0
@@ -331,7 +331,7 @@ def test_subfunction_tile_if_else():
     torch.testing.assert_close(out.cpu().float(), golden, rtol=3e-3, atol=3e-3)
 
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def l0a_l0b_overlap_same_id_kernel(
     a: pl.Tensor[[L0A_M, L0A_K_WIDE], pl.DT_FP16],
     b: pl.Tensor[[L0B_K_WIDE, L0B_N], pl.DT_FP16],
@@ -387,9 +387,9 @@ def l0a_l0b_overlap_same_id_kernel(
                 pl.store(out, acc[0], [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_l0a_l0b_overlap_same_id():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.rand([L0A_M, L0A_K_WIDE], device=ST_DEVICE, dtype=torch.float16) * 0.1
     b = torch.rand([L0B_K_WIDE, L0B_N], device=ST_DEVICE, dtype=torch.float16) * 0.1
@@ -407,3 +407,72 @@ if __name__ == "__main__":
     test_same_group_overlapping_slots_in_one_op()
     test_subfunction_tile_if_else()
     test_l0a_l0b_overlap_same_id()
+
+
+@pl.jit(auto_mutex=True)
+def cube_vector_multi_id_kernel_a6(
+    a: pl.Tensor[[CUBE_M, CUBE_N], pl.DT_FP32],
+    b: pl.Tensor[[CUBE_M, CUBE_K], pl.DT_FP16],
+    c: pl.Tensor[[CUBE_K, CUBE_N], pl.DT_FP16],
+    out: pl.Tensor[[CUBE_M, CUBE_N], pl.DT_FP32],
+):
+    b_l1 = pl.make_tile_group(
+        type=pl.TileType(shape=[CUBE_M, CUBE_K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        addrs=0x0000,
+        mutex_ids=[[0, 1]],
+    )
+    c_l1 = pl.make_tile_group(
+        type=pl.TileType(shape=[CUBE_K, CUBE_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        addrs=0x2000,
+        mutex_ids=[[2, 3]],
+    )
+    b_left = pl.make_tile_group(
+        type=pl.TileType(shape=[CUBE_M, CUBE_K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left),
+        addrs=0x0000,
+        mutex_ids=[4],
+    )
+    c_right = pl.make_tile_group(
+        type=pl.TileType(shape=[CUBE_K, CUBE_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Right),
+        addrs=0x0000,
+        mutex_ids=[5],
+    )
+    tile_acc = pl.make_tile(
+        pl.TileType(shape=[CUBE_M, CUBE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc),
+        addr=0x0000,
+    )
+    vec_group = pl.make_tile_group(
+        type=pl.TileType(shape=[CUBE_M, CUBE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addrs=0x0000,
+        mutex_ids=[[6, 7], [8, 9], [10, 11], [12, 13]],
+    )
+
+    with pl.section_cube():
+        pl.load(b_l1[0], b, [0, 0])
+        pl.load(c_l1[0], c, [0, 0])
+        pl.move(b_left[0], b_l1[0])
+        pl.move(c_right[0], c_l1[0])
+        pl.matmul(tile_acc, b_left[0], c_right[0])
+        pl.system.sync_src(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
+        pl.move(vec_group[0], tile_acc, acc_to_vec_mode=pl.AccToVecMode.SingleModeVec0)
+        pl.system.set_cross_core(pipe=pl.PipeType.FIX, event_id=0)
+
+    with pl.section_vector():
+        pl.system.wait_cross_core(pipe=pl.PipeType.V, event_id=0)
+        pl.load(vec_group[1], a, [0, 0])
+        pl.add(vec_group[2], vec_group[1], vec_group[0])
+        pl.move(vec_group[3], vec_group[2])
+        pl.store(out, vec_group[3], [0, 0])
+
+
+@pytest.mark.soc("960")
+def test_cube_vector_multi_mutex_id_a6():
+    torch.manual_seed(0)
+    a = torch.rand([CUBE_M, CUBE_N], device=ST_DEVICE, dtype=torch.float32) * 2.0 - 1.0
+    b = torch.rand([CUBE_M, CUBE_K], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
+    c = torch.rand([CUBE_K, CUBE_N], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
+    out = torch.zeros([CUBE_M, CUBE_N], device=ST_DEVICE, dtype=torch.float32)
+    cube_vector_multi_id_kernel_a6(a, b, c, out)
+    torch.npu.synchronize()
+    golden = a.cpu().float() + (b.cpu().float() @ c.cpu().float())
+    torch.testing.assert_close(out.cpu().float(), golden, rtol=3e-3, atol=3e-3)

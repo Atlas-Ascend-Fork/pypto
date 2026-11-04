@@ -172,7 +172,7 @@ def _run_case(rows, cols):
     logging.info("  PASS")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_softmax_tile_group_vf():
     # (rows, cols): both dynamic. Cover single-register N, multi-register N,
     # register-unaligned N (partial tail lane), partial row-tiles, and multicore.

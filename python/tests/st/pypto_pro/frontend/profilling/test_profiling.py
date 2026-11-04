@@ -39,8 +39,8 @@ def _check_npu():
     try:
         torch.npu.set_device(ST_DEVICE)
         name = torch.npu.get_device_name()
-        if "Ascend950" not in name:
-            pytest.skip(f"Device {name} is not A5 (Ascend950). Skip.")
+        if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
@@ -143,7 +143,7 @@ def _case(kind):
     )
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.skip(reason="parallel read/write")
 @pytest.mark.parametrize("kind", ["cube", "vector", "mixed"])
 @pytest.mark.parametrize("mode", ["graph_before_collection", "eager", "graph"])
@@ -218,7 +218,7 @@ def test_profiler_api_outputs(tmp_path, kind, mode):
         logging.info("Trace file: %s, events=%d", trace_file, len(events))
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("warm_kernel", [False, True], ids=["loaded_during_collection", "loaded_before_collection"])
 def test_tensor_reports_stop_with_collection(tmp_path, monkeypatch, warm_kernel):
     """Count reporting before/during/after collection, including loading a library while profiling."""
@@ -284,7 +284,7 @@ def test_tensor_reports_stop_with_collection(tmp_path, monkeypatch, warm_kernel)
         assert counts() == (session + 1, 0), "Tensor reports continued after collection stopped"
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.skip(reason="parallel read/write")
 def test_graph_replay_preserves_each_launch_shape(tmp_path):
     """Two tasks of one dynamic kernel retain distinct shapes across profiled replays."""

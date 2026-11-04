@@ -29,8 +29,8 @@ def _check_npu():
     try:
         torch.npu.set_device(ST_DEVICE)
         name = torch.npu.get_device_name()
-        if "Ascend950" not in name:
-            pytest.skip(f"Device {name} is not A5 (Ascend950). Skip.")
+        if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
 
@@ -49,7 +49,7 @@ def dump_data_tensor_kernel(
             pl.dump_data(out, loc=True, flag="tensor_loc")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_dump_data_tensor_full_window_and_loc():
     _check_npu()
     expected = torch.arange(32, device=ST_DEVICE, dtype=torch.int32) * 2
@@ -84,7 +84,7 @@ def dump_data_vec_kernel(
         pl.store(out, result, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_dump_data_vec_full_window_and_loc():
     _check_npu()
     a = torch.arange(32 * 64, device=ST_DEVICE, dtype=torch.int32).reshape(32, 64)
@@ -204,7 +204,7 @@ def dump_data_dynamic_offset_kernel(
         pl.store(out, result, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_dump_data_dynamic_offset():
     _check_npu()
     a = torch.arange(32 * 32, device=ST_DEVICE, dtype=torch.int32).reshape(32, 32)
@@ -248,7 +248,7 @@ def dump_data_control_flow_kernel(
             index = index + 1
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_dump_data_control_flow():
     _check_npu()
     a = torch.arange(64 * 32, device=ST_DEVICE, dtype=torch.int32).reshape(64, 32)
@@ -309,7 +309,7 @@ def dump_data_cube_levels_kernel(
         pl.store(out, acc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_dump_data_cube_levels():
     _check_npu()
     a = torch.randn(16, 16, device=ST_DEVICE, dtype=torch.float16)

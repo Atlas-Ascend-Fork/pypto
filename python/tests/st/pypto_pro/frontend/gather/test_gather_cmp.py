@@ -125,7 +125,7 @@ def compute_expected(src_data, k_value):
 
 
 @pl.jit()
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_gather_cmp():
     device = ST_DEVICE
     torch.npu.set_device(device)

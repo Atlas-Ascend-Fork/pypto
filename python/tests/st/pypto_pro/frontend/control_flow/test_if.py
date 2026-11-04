@@ -430,7 +430,7 @@ DEEPLY_NESTED_IF_KERNELS = {
 # ===================================================================
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_else():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -455,7 +455,7 @@ def test_if_else():
 
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_elif_else():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -474,7 +474,7 @@ def test_if_elif_else():
         logging.info("test_if_elif_else [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_nested_if():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -493,7 +493,7 @@ def test_nested_if():
         logging.info("test_nested_if [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_relu():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -720,7 +720,7 @@ IF_ELIF_CONST_KERNELS = {
 }
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_always_false():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -736,7 +736,7 @@ def test_if_always_false():
         logging.info("test_if_always_false [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_deeply_nested_if():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -756,7 +756,7 @@ def test_deeply_nested_if():
         logging.info("test_deeply_nested_if [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_lt_const():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -774,7 +774,7 @@ def test_if_lt_const():
         logging.info("test_if_lt_const [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_ge_const_mul():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -792,7 +792,7 @@ def test_if_ge_const_mul():
         logging.info("test_if_ge_const_mul [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_jt_const():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -810,7 +810,7 @@ def test_if_jt_const():
         logging.info("test_if_jt_const [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_ij_cmp():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -834,7 +834,7 @@ def test_if_ij_cmp():
         logging.info("test_if_ij_cmp [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_elif_const():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -891,7 +891,7 @@ def if_and_kernel(
                 pl.store_tile(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_and():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -944,7 +944,7 @@ def ternary_expr_kernel(
                 pl.store_tile(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_ternary_expr():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -1031,7 +1031,7 @@ def _compound_bool_ref(x_f, y_f, i_tiles, j_tiles):
     return z_ref
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_compound_12():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -1141,7 +1141,7 @@ def _ternary_deep_ref(x_f, y_f, i_tiles, j_tiles):
     return z_ref
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_ternary_12():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -1191,7 +1191,7 @@ def if_while_compound_mixed_kernel(
                 j = j + 1
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_while_compound_mixed():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -1253,7 +1253,7 @@ def if_truthiness_int_kernel(
                 pl.store_tile(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_truthiness_int():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -1315,7 +1315,7 @@ def if_in_operator_kernel(
                 pl.store_tile(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_in_operator():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -1383,7 +1383,7 @@ def if_not_in_operator_kernel(
                 pl.store_tile(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_not_in_operator():
     device = ST_DEVICE
     torch.npu.set_device(device)

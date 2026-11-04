@@ -84,13 +84,13 @@ def _run_npu_test(key, ref_fn, shape=(128, 256)):
 # ---- 简单用例 (NPU 全流程验证 64-bit 正例) ---------------------------------
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_64bits_add_npu():
     """64-bit TilingKey, A=0 走 add 分支"""
     _run_npu_test({"a": 0, "b": 0}, lambda a, b: a + b)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_64bits_sub_npu():
     """64-bit TilingKey, A=1 走 sub 分支"""
     _run_npu_test({"a": 1, "b": 0}, lambda a, b: a - b)

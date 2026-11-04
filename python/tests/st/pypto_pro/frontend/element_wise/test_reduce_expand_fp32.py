@@ -28,14 +28,14 @@ ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 K_VALUE = 2.0
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
 
 
 # ===========================================================================
@@ -91,7 +91,7 @@ def col_sum_kernel(a: pl.Tensor[[64, 128], pl.DT_FP32], out: pl.Tensor[[1, 128],
 
 def _run_col_reduce(kernel, ref_fn):
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn(64, 128, device=device, dtype=torch.float32)
     out = torch.zeros(1, 128, device=device, dtype=torch.float32)
@@ -100,19 +100,19 @@ def _run_col_reduce(kernel, ref_fn):
     torch.testing.assert_close(out, ref_fn(a), rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_col_min():
     _run_col_reduce(col_min_kernel, lambda a: a.min(dim=0, keepdim=True).values)
     logging.info("col_min result equal!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_col_max():
     _run_col_reduce(col_max_kernel, lambda a: a.max(dim=0, keepdim=True).values)
     logging.info("col_max result equal!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_col_sum():
     _run_col_reduce(col_sum_kernel, lambda a: a.sum(dim=0, keepdim=True))
     logging.info("col_sum result equal!")
@@ -155,7 +155,7 @@ def row_sum_kernel(a: pl.Tensor[[64, 128], pl.DT_FP32], out: pl.Tensor[[64, 1], 
 
 def _run_row_reduce(kernel, ref_fn):
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn(64, 128, device=device, dtype=torch.float32)
     out = torch.zeros(64, 1, device=device, dtype=torch.float32)
@@ -164,13 +164,13 @@ def _run_row_reduce(kernel, ref_fn):
     torch.testing.assert_close(out, ref_fn(a), rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_max():
     _run_row_reduce(row_max_kernel, lambda a: a.max(dim=1, keepdim=True).values)
     logging.info("row_max result equal!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_sum():
     _run_row_reduce(row_sum_kernel, lambda a: a.sum(dim=1, keepdim=True))
     logging.info("row_sum result equal!")
@@ -198,10 +198,10 @@ def col_expand_sub_kernel(
         pl.store(out, cur_out, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_col_expand_sub():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn(64, 128, device=device, dtype=torch.float32)
     v = torch.randn(1, 128, device=device, dtype=torch.float32)
@@ -274,7 +274,7 @@ def row_expand_div_kernel(
 
 def _run_row_expand(kernel, ref_fn):
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn(64, 128, device=device, dtype=torch.float32)
     v = torch.randn(64, 1, device=device, dtype=torch.float32).abs() + 0.5  # 避免除0
@@ -284,19 +284,19 @@ def _run_row_expand(kernel, ref_fn):
     torch.testing.assert_close(out, ref_fn(a, v), rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_expand_sub():
     _run_row_expand(row_expand_sub_kernel, lambda a, v: a - v)
     logging.info("row_expand_sub result equal!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_expand_mul():
     _run_row_expand(row_expand_mul_kernel, lambda a, v: a * v)
     logging.info("row_expand_mul result equal!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_expand_div():
     _run_row_expand(row_expand_div_kernel, lambda a, v: a / v)
     logging.info("row_expand_div result equal!")
@@ -315,10 +315,10 @@ def expands_kernel(dummy: pl.Tensor[[64, 64], pl.DT_FP32], out: pl.Tensor[[64, 6
         pl.store(out, cur_out, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_expands():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     dummy = torch.zeros(64, 64, device=device, dtype=torch.float32)
     out = torch.zeros(64, 64, device=device, dtype=torch.float32)
@@ -348,7 +348,7 @@ def row_min_kernel(a: pl.Tensor[[64, 128], pl.DT_FP32], out: pl.Tensor[[64, 1], 
         pl.store(out, cur_out, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_min():
     _run_row_reduce(row_min_kernel, lambda a: a.min(dim=1, keepdim=True).values)
     logging.info("row_min result equal!")
@@ -397,7 +397,7 @@ def col_expand_div_kernel(
 
 def _run_col_expand(kernel, ref_fn):
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn(64, 128, device=device, dtype=torch.float32)
     v = torch.randn(1, 128, device=device, dtype=torch.float32).abs() + 0.5  # 避免除0
@@ -407,13 +407,13 @@ def _run_col_expand(kernel, ref_fn):
     torch.testing.assert_close(out, ref_fn(a, v), rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_col_expand_mul():
     _run_col_expand(col_expand_mul_kernel, lambda a, v: a * v)
     logging.info("col_expand_mul result equal!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_col_expand_div():
     _run_col_expand(col_expand_div_kernel, lambda a, v: a / v)
     logging.info("col_expand_div result equal!")

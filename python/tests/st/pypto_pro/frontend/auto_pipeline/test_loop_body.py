@@ -125,7 +125,7 @@ def hand_back_slot(g):
 # ---------------------------------------------------------------------------
 
 
-@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
 def loop_body_shapes(
     src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
 ):
@@ -159,7 +159,7 @@ def loop_body_shapes(
         tick = tick + 1                   # zone 3: prepares the NEXT iteration
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_loop_body_shapes_on_device():
     """Iteration ki must see the scale zone 1 computed for it, not another beat's."""
     torch.npu.set_device(ST_DEVICE)
@@ -175,7 +175,7 @@ def test_loop_body_shapes_on_device():
     assert (out[:NT * TM].float().cpu() - golden[:NT * TM].cpu()).abs().max().item() <= ATOL
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_allowed_shapes_are_placed_correctly():
     src = _generated(loop_body_shapes)
     body = src[src.index("for ki in pl.range"):].split("for _pl_drain")[0]
@@ -206,7 +206,7 @@ def test_allowed_shapes_are_placed_correctly():
     assert at("consume(") < at("tick = tick + 1")
 
 
-@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
 def struct_filled_in_by_helper(
     src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
 ):
@@ -230,7 +230,7 @@ def struct_filled_in_by_helper(
             consume(ki, sh, leftg)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_zone1_call_runs_before_the_snapshot():
     """A zone-1 call that assigns nothing but fills in a struct still supplies the snapshot."""
     src = _generated(struct_filled_in_by_helper)
@@ -246,7 +246,7 @@ def test_zone1_call_runs_before_the_snapshot():
 # ---------------------------------------------------------------------------
 
 
-@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
 def stmt_between_stages(
     src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
 ):
@@ -270,7 +270,7 @@ def stmt_between_stages(
             consume(ki, sh, leftg)
 
 
-@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
 def section_without_stage_between_stages(
     src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
 ):
@@ -298,7 +298,7 @@ def section_without_stage_between_stages(
             consume(ki, sh, leftg)
 
 
-@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
 def stmt_beside_stage_in_section(
     src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
 ):
@@ -321,7 +321,7 @@ def stmt_beside_stage_in_section(
             consume(ki, sh, leftg)
 
 
-@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
 def slot_taken_in_loop_body(
     src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
 ):
@@ -344,7 +344,7 @@ def slot_taken_in_loop_body(
             consume(ki, sh, leftg)
 
 
-@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
 def slot_taken_inside_a_helper(
     src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
 ):
@@ -368,7 +368,7 @@ def slot_taken_inside_a_helper(
             consume(ki, sh, leftg)
 
 
-@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
 def cross_core_touched_outside_stage(
     src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
 ):
@@ -401,7 +401,7 @@ def take_slot(k, sh, leftg):
     pl.move(left, shared)
 
 
-@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
 def helper_returns_a_slot(
     src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
 ):
@@ -423,7 +423,7 @@ def helper_returns_a_slot(
             take_slot(ki, sh, leftg)
 
 
-@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
 def stage_call_without_a_section(
     src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
 ):
@@ -445,7 +445,7 @@ def stage_call_without_a_section(
             consume(ki, sh, leftg)
 
 
-@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
 def one_stage_called_twice(
     src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
 ):
@@ -518,7 +518,7 @@ def return_in_outer_loop(
             return                            # the drain sits after the OUTER loop
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize(
     "kernel, message",
     [

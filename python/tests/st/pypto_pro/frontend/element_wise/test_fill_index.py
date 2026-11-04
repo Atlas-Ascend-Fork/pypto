@@ -48,7 +48,7 @@ def fill_index_kernel(
 # ============================================================================
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_fill_index():
     torch.npu.set_device(ST_DEVICE)
     m_val, n_val = 1, 64

@@ -62,7 +62,7 @@ def cast_dedup_db_kernel(
         pl.store(dst, f16_tile, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_cast_dedup_double_buffer():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -124,7 +124,7 @@ def vf_dedup_db_kernel(
         pl.store(dst, out_tile, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_vf_dedup_double_buffer():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -173,7 +173,7 @@ def vf_partial_overlap_kernel(
         pl.store(dst, tile_b, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_vf_dedup_partial_overlap():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -228,7 +228,7 @@ def vf_three_transitive_kernel(
         pl.store(dst, tile_c, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_vf_dedup_three_transitive():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -277,7 +277,7 @@ def vf_no_overlap_kernel(
         pl.store(dst, tile_b, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_vf_no_dedup_no_overlap():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -330,7 +330,7 @@ def vf_partial_group_kernel(
         pl.store(dst, tile_c, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_vf_dedup_partial_group():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -383,7 +383,7 @@ def vf_three_same_kernel(
         pl.store(dst, tile_c, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_vf_dedup_three_same():
     device = ST_DEVICE
     torch.npu.set_device(device)

@@ -27,12 +27,12 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
         name = torch.npu.get_device_name()
-        if "Ascend950" not in name:
-            pytest.skip(f"Device {name} is not A5 (Ascend950). Skip.")
+        if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
 
@@ -90,10 +90,10 @@ def call_kernel_tensor_alias(
         pl.store(out, ac, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_load_tensor_alias():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn([64, 64], device=device, dtype=torch.float16)
     b = torch.eye(64, device=device, dtype=torch.float16)
@@ -155,10 +155,10 @@ def call_kernel_tile_alias(
         pl.store(out, ac, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_load_tile_alias():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn([64, 64], device=device, dtype=torch.float16)
     b = torch.eye(64, device=device, dtype=torch.float16)
@@ -216,10 +216,10 @@ def call_kernel_tile_alias_rebind(
         pl.store(out, ac, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_tile_alias_after_source_rebind():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn([TILE, TILE], device=device, dtype=torch.float16)
     b = torch.eye(TILE, device=device, dtype=torch.float16)

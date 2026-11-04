@@ -33,14 +33,14 @@ ROWS, COLS = 64, 128
 OFFSETS_PER_ROW = COLS // BLOCK_ELEMS  # 8
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
 
 
 # ===========================================================================
@@ -115,10 +115,10 @@ def gathermask_p7_kernel(
         pl.store(dst, tile_dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_gathermask_p1():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     src = torch.rand(64, 128, device=device, dtype=torch.float16)
     dst = torch.zeros(64, 64, device=device, dtype=torch.float16)
@@ -128,10 +128,10 @@ def test_gathermask_p1():
     logging.info("gathermask pattern_mode=1 result equal!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_gathermask_p2():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     src = torch.rand(64, 128, device=device, dtype=torch.float16)
     dst = torch.zeros(64, 64, device=device, dtype=torch.float16)
@@ -141,10 +141,10 @@ def test_gathermask_p2():
     logging.info("gathermask pattern_mode=2 result equal!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_gathermask_p7():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     src = torch.rand(64, 128, device=device, dtype=torch.float16)
     dst = torch.zeros(64, 128, device=device, dtype=torch.float16)
@@ -189,10 +189,10 @@ def gatherb_kernel(
         pl.store(dst, tile_dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_gatherb_identity():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     src = torch.rand([ROWS, COLS], device=device, dtype=torch.float16)
     # identity：每个 offset 指向行顺序对应的 32 字节块

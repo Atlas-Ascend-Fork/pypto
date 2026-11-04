@@ -220,7 +220,7 @@ def _run_case(shape, opkind, ref_fn, op_name):
     logging.info("dynamic-rank %s %s (rank=%d, numel=%d) passed!", op_name, list(shape), rank, numel)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_add_dynamic_rank():
     shapes = [
         [512, 512],  # rank 2 -> M=512,  N=512   -> 4x4 full tiles (no tail)

@@ -67,8 +67,8 @@ def _check_npu():
     try:
         torch.npu.set_device(ST_DEVICE)
         name = torch.npu.get_device_name()
-        if "Ascend950" not in name:
-            pytest.skip(f"Device {name} is not A5 (Ascend950). Skip.")
+        if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
@@ -195,7 +195,7 @@ print("DONE")
 """
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_oob_load_aicore_error():
     """load_tile 越界读取触发 AICORE 异常：上抛 + dump + 离线复现 + 定位。
 
@@ -340,7 +340,7 @@ def _assert_dump_and_repro(work_dir: str, *, expect_workspace: bool = False) -> 
         f"Linked device ELF not persisted to dump dir:\n{os.listdir(dump_dir)}"
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_fusion_dump_and_repro():
     """cv 融合 kernel 的异常：dump 产物生成且离线复现成功。
 
@@ -427,7 +427,7 @@ print("DONE")
 """
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_cube_dump_and_repro():
     """纯 cube kernel 的 fixpipe 越界异常：上抛 + dump + 离线复现 + 定位。
 
@@ -501,7 +501,7 @@ print("DONE")
 """
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_ptr_scalar_dump_and_repro():
     """pl.Ptr + scalar 入参 kernel 的越界异常：上抛 + dump + 离线复现 + 定位。
 

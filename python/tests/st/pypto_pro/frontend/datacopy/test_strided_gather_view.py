@@ -46,8 +46,8 @@ def _is_a5() -> bool:
         logging.info("NPU unavailable: %s", exc)
         return False
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        logging.info("Current device is %s, not A5 (Ascend950). Skip.", name)
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        logging.info("Current device is %s, not A5/A6 (Ascend950/Ascend960). Skip.", name)
         return False
     return True
 
@@ -72,7 +72,7 @@ def strided_view_basic_kernel(
         pl.store(out, tile, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_strided_view_basic():
     if not _is_a5():
         return
@@ -122,7 +122,7 @@ def gather_view_kernel(
             pl.store(out, tile, [2 * i, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_gather_64_lines_with_strided_views():
     if not _is_a5():
         return

@@ -27,13 +27,13 @@ ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 SIGNED_INT8_FLAG = 1 << 46
 
 
-def _require_a5(device: str) -> None:
+def _require_a5_or_a6(device: str) -> None:
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
-    if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        pytest.skip("not A5/A6")
 
 
 def _scale_bits(scale: float) -> int:
@@ -1306,11 +1306,11 @@ _T02_CASES = [pytest.param(None, id="n_tail"), *_dtype_params("scalar")]
 _T03_CASES = [pytest.param(None, id="n_tail_relu"), *_dtype_params("scaling")]
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("case", _T01_CASES)
 def test_t01_l0c_to_l1_tmov(case):
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     if case is not None:
         label, actual, expected, atol = _run_dtype_and_layout_case(case, device, "t01")
         torch.npu.synchronize()
@@ -1328,11 +1328,11 @@ def test_t01_l0c_to_l1_tmov(case):
     _assert_result("t01 TMOV", out, values @ first_rhs, atol=1e-3)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("case", _T02_CASES)
 def test_t02_l0c_to_l1_scalar_tmov(case):
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     if case is not None:
         label, actual, expected, atol = _run_dtype_and_layout_case(case, device, "t02")
         torch.npu.synchronize()
@@ -1352,11 +1352,11 @@ def test_t02_l0c_to_l1_scalar_tmov(case):
     _assert_result("t02 scalar TMOV N-tail", out, expected, atol=1)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("case", _T03_CASES)
 def test_t03_l0c_to_l1_scaling_tmov(case):
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     if case is not None:
         label, actual, expected, atol = _run_dtype_and_layout_case(case, device, "t03")
         torch.npu.synchronize()
@@ -1377,10 +1377,10 @@ def test_t03_l0c_to_l1_scaling_tmov(case):
     _assert_result("t03 Scaling Tile TMOV + ReLU N-tail", out, expected, atol=1)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t04_l0c_to_l1_extract():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     scale = 0.5
     values = (torch.arange(64 * 64, dtype=torch.float32).reshape(64, 64) % 17 - 8).to(device)
     identity_fp32 = torch.eye(64, dtype=torch.float32, device=device)
@@ -1412,10 +1412,10 @@ def test_t04_l0c_to_l1_extract():
     _assert_result("t04 TEXTRACT Scaling Tile + ReLU tail", scaling_tile_out, scaling_tile_expected, atol=1)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t05_l0c_to_l1_insert():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     values = (torch.arange(16 * 64, dtype=torch.float32).reshape(16, 64) % 17 - 8).to(device)
     first_rhs = torch.eye(64, 32, dtype=torch.float32, device=device)
     seed = torch.full((64, 64), -7, dtype=torch.int8, device=device)

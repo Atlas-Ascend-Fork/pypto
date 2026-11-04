@@ -1,0 +1,26 @@
+#if defined(__DAV_CUBE__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void kernel_impl_cube(__gm__ float* x_0)
+{
+
+    int64_t shape_0[] = {static_cast<int64_t>(32), static_cast<int64_t>(64)};
+    using src_0_Type = SyncedTile<Tile<TileType::Acc, float, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 0>;
+    src_0_Type src_0{src_0_Type::PtoTile(64, 64), {}};
+    TASSIGN(src_0.tile, 0x0);
+    using dst_0_Type = SyncedTile<Tile<TileType::Vec, float, 32, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0>;
+    dst_0_Type dst_0{dst_0_Type::PtoTile(32, 64), {}};
+    TASSIGN(dst_0.tile, 0x0);
+    src_0.tile.SetValidShape((src_0.tile.GetValidRow() + 1) / 2 * 2, src_0.tile.GetValidCol());
+    TMOV<decltype(dst_0.tile), decltype(src_0.tile), AccToVecMode::DualModeSplitM>(dst_0.tile, src_0.tile);
+    return;
+}
+#endif

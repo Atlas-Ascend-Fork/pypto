@@ -43,19 +43,20 @@ _ARCH_MAP = {
     "DAV_1001": NpuArch.DAV_1001,
     "DAV_2201": NpuArch.DAV_2201,
     "DAV_3510": NpuArch.DAV_3510,
+    "DAV_9201": NpuArch.DAV_9201,
 }
 
 _ARCH_INPUT_TO_ENUM = {str(member): member for member in NpuArch.__members__.values() if member != NpuArch.DAV_UNKNOWN}
-_LEGACY_TO_CANONICAL = {"a5": "3510", "a2": "2201", "a3": "2201"}
-_DEPRECATED_INPUTS = {"a5"}
+_LEGACY_TO_CANONICAL = {"a5": "3510", "a6": "9201", "a2": "2201", "a3": "2201"}
+_DEPRECATED_INPUTS = {"a5", "a6"}
 
 
 def normalize_arch(value: str | NpuArch) -> NpuArch:
     """Resolve any accepted arch input to its canonical NpuArch.
 
     Accepts the __NPU_ARCH__ version number ("3510"), NpuArch values, and
-    legacy internal names; "a5" emits a DeprecationWarning and resolves
-    to DAV_3510. Unregistered NpuArch values collapse to DAV_UNKNOWN,
+    legacy internal names; "a5"/"a6" emit DeprecationWarning and resolve
+    to DAV_3510/DAV_9201. Unregistered NpuArch values collapse to DAV_UNKNOWN,
     which downstream checks reject.
     """
     if isinstance(value, NpuArch):
@@ -89,8 +90,8 @@ class PlatformInfo:
         """Infer compilation arch from SOC version string.
 
         Returns:
-            NpuArch.DAV_3510 for DAV_3510 (950 series), NpuArch.DAV_2201 for DAV_2201,
-            NpuArch.DAV_1001 for DAV_1001, None if unknown.
+            NpuArch.DAV_3510 for DAV_3510 (950 series), NpuArch.DAV_9201 for DAV_9201,
+            NpuArch.DAV_2201 for DAV_2201, NpuArch.DAV_1001 for DAV_1001, None if unknown.
         """
         if not self.soc_version:
             return None
@@ -104,7 +105,7 @@ def _get_npu_arch() -> str:
     """Get NPU architecture string via pypto_impl binding.
 
     Returns:
-        NPUArch string like "DAV_2201", "DAV_3510", or "" if unavailable.
+        NPUArch string like "DAV_2201", "DAV_3510", "DAV_9201", or "" if unavailable.
     """
     try:
         from pypto import pypto_impl

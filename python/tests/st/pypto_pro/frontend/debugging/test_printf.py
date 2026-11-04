@@ -33,8 +33,8 @@ def _check_npu():
     try:
         torch.npu.set_device(ST_DEVICE)
         name = torch.npu.get_device_name()
-        if "Ascend950" not in name:
-            pytest.skip(f"Device {name} is not A5 (Ascend950). Skip.")
+        if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
@@ -59,7 +59,7 @@ def printf_di_kernel(
         out[0] = 1
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_printf_di():
     _check_npu()
     logging.info("------------test_printf_di--------------")
@@ -87,7 +87,7 @@ def printf_u_kernel(
         out[0] = 2
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_printf_u():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -109,7 +109,7 @@ def printf_f_kernel(
         out[0] = 3
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_printf_f():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -134,7 +134,7 @@ def printf_x_kernel(
         out[0] = 4
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_printf_x():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -156,7 +156,7 @@ def printf_ptr_kernel(
         out[0] = 6
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_printf_ptr():
     _check_npu()
     logging.info("------------test_printf_ptr--------------")
@@ -180,7 +180,7 @@ def printf_text_loc_kernel(
         out[0] = 5
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_printf_text_loc():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -204,7 +204,7 @@ def printf_for_loop_kernel(
         out[0] = sum_val
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_printf_for_loop():
     _check_npu()
     logging.info("------------test_printf_for_loop--------------")
@@ -237,7 +237,7 @@ def printf_if_else_kernel(
     "flag,expected_value",
     [(True, 100), (False, -100)],
 )
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_printf_if_else(flag, expected_value):
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -261,7 +261,7 @@ def printf_while_kernel(
         out[0] = x
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_printf_while():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -285,7 +285,7 @@ def printf_loc_combo_kernel(
         pl.printf("loc_combo: post setval out[0]=%d\n", v_i32, loc=True)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_printf_loc_combo():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)

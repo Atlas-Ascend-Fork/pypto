@@ -1718,13 +1718,6 @@ def _codegen_target_cce(
         if wrapper is None:
             raise
         raise wrapper(str(exc), span=span_of_spec_message(str(exc))) from None
-    if "ffts_cross_core_sync" in cpp_code and arch == NpuArch.DAV_3510:
-        extra_headers = "#include <pto/npu/a5/custom/TSyncCVID.hpp>"
-        guard = {
-            ir.SectionKind.Cube: "#if defined(__DAV_CUBE__)",
-            ir.SectionKind.Vector: "#if defined(__DAV_VEC__)",
-        }[target]
-        cpp_code = cpp_code.replace(guard, guard + "\n" + extra_headers, 1)
     tiling_headers = dict(cce_codegen.get_tiling_headers())
 
     # CCE emits the body as `__aicore__ inline void <name>_impl(...)`; derive the launcher ABI
@@ -2263,8 +2256,8 @@ def _setup_arch_env(arch: NpuArch) -> NpuArch:
     """Validate *arch* and export the env vars used by compilation."""
     if not arch:
         raise InvalidVal("arch must not be empty")
-    if arch != NpuArch.DAV_3510:
-        raise NotSupported(f"PyPTO Pro only supports arch '3510', got '{arch}'")
+    if arch not in (NpuArch.DAV_3510, NpuArch.DAV_9201):
+        raise NotSupported(f"PyPTO Pro only supports arch '3510' or '9201', got '{arch}'")
     os.environ["PYPTOPRO_JIT_ARCH"] = str(arch)
     return arch
 
@@ -2519,8 +2512,8 @@ def jit(
     performs lazy compilation on first call and supports bracket-launch syntax.
 
     Args:
-        arch: Target architecture ("3510" -- the __NPU_ARCH__ version; "a5" is a
-            deprecated alias; or None for auto-detect).
+        arch: Target architecture ("3510" or "9201" -- the __NPU_ARCH__ version;
+            "a5"/"a6" are deprecated aliases; or None for auto-detect).
         auto_mutex: Boolean flag to enable automatic mutex lock/unlock insertion.
         name: Custom kernel name for build artifact path isolation.
         pipeline: PipelineConfig for automatic preload pipeline transformation.

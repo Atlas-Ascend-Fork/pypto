@@ -1,0 +1,29 @@
+#if defined(__DAV_VEC__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include "CopyTiling_tiling.h"
+#include <pypto_dump.h>
+__aicore__ inline void _tiling_copy_impl_vector(__gm__ int32_t* x_0, __gm__ uint8_t* tiling_0_ptr)
+{
+
+    constexpr uint32_t tiling_0_all_bytes = sizeof(CopyTiling);
+    CopyTiling tiling_0;
+    __ubuf__ uint8_t *tiling_0_in_ub = (__ubuf__ uint8_t *)get_imm(0);
+    constexpr uint32_t tiling_0_len_burst = (tiling_0_all_bytes + 31) / 32;
+    copy_gm_to_ubuf_align_v2((__ubuf__ uint8_t *)tiling_0_in_ub, (__gm__ uint8_t *)tiling_0_ptr, 0, 1, tiling_0_len_burst * 32, 0, 0, false, false, 0, 0, 0, false);
+    set_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
+    wait_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
+    copy_data_align64((uint8_t*)&tiling_0, (__ubuf__ uint8_t *)tiling_0_in_ub, tiling_0_all_bytes);
+
+    auto _expr_tmp_0_0 = tiling_0.total;
+    pypto::aicore::printf("%lld", static_cast<long long>(_expr_tmp_0_0));
+    return;
+}
+#endif

@@ -1,0 +1,4 @@
+__global__ __cube__ void probe()
+{
+    probe_impl();
+}

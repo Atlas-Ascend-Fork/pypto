@@ -297,13 +297,13 @@ def per_channel_dequant_store_kernel(
 # ============================================================================
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("scale_value", [2.0, -1.0, 0.5])
 def test_golden_per_tensor_int8(scale_value):
     """FP32->INT8 编译期 float scale，与 Torch golden 精确对比"""
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
         pytest.skip(f"Current device is {torch.npu.get_device_name()}")
 
     kernel = _make_per_tensor_store_kernel(scale_value)
@@ -320,12 +320,12 @@ def test_golden_per_tensor_int8(scale_value):
     logging.info("test_golden_per_tensor_int8(scale=%s) passed.", scale_value)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_golden_per_tensor_int8_saturation():
     """FP32->INT8 大 scale 饱和路径"""
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
         pytest.skip(f"Current device is {torch.npu.get_device_name()}")
 
     kernel = _make_per_tensor_store_kernel(1e6)
@@ -342,12 +342,12 @@ def test_golden_per_tensor_int8_saturation():
     logging.info("test_golden_per_tensor_int8_saturation passed.")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_golden_per_tensor_relu():
     """FP32->INT8 编译期 float scale + ReLU 融合，与 Torch golden 对比"""
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
         pytest.skip(f"Current device is {torch.npu.get_device_name()}")
 
     kernel = _make_per_tensor_relu_kernel(2.0)
@@ -369,13 +369,13 @@ def test_golden_per_tensor_relu():
 # ============================================================================
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("scale_value", [2.0, 0.5])
 def test_golden_dynamic_scale(scale_value):
     """动态 scale（运行时 INT32 位编码），与 Torch golden 对比"""
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
         pytest.skip(f"Current device is {torch.npu.get_device_name()}")
 
     q = _make_q(device)
@@ -397,12 +397,12 @@ def test_golden_dynamic_scale(scale_value):
 # ============================================================================
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_golden_per_channel_int8():
     """per-channel 量化（uniform scale tensor），与 Torch golden 对比"""
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
         pytest.skip(f"Current device is {torch.npu.get_device_name()}")
 
     q = _make_q(device)
@@ -420,12 +420,12 @@ def test_golden_per_channel_int8():
     logging.info("test_golden_per_channel_int8 passed.")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_golden_per_channel_varying():
     """per-channel 量化（逐列不同 scale），与 Torch golden 对比"""
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
         pytest.skip(f"Current device is {torch.npu.get_device_name()}")
 
     q = _make_q(device)
@@ -444,12 +444,12 @@ def test_golden_per_channel_varying():
     logging.info("test_golden_per_channel_varying passed.")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_golden_per_channel_dequant_fp16():
     """per-channel 反量化（INT32 Acc -> FP16），与 Torch golden 对比"""
     device = ST_DEVICE
     torch.npu.set_device(device)
-    if "Ascend950" not in torch.npu.get_device_name():
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
         pytest.skip(f"Current device is {torch.npu.get_device_name()}")
 
     q = torch.randint(-4, 4, (64, 64), dtype=torch.int8, device=device)

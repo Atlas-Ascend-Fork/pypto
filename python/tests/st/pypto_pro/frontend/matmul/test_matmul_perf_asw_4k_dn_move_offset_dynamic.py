@@ -256,7 +256,7 @@ def _run_case(m, n, k):
     logging.info("  PASS")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_perf_asw_4k_dn_move_offset_dynamic():
     # (M, N, K): one compiled kernel serves all. N is fully arbitrary; M is arbitrary with
     # #M-tiles a multiple of 4 (ASW); K is fully arbitrary. Tails on every axis are exercised.

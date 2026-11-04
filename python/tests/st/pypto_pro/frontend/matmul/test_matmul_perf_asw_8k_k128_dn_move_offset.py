@@ -231,7 +231,7 @@ def run_perf_test(num_iters: int = 20, warmup: int = 3):
     return trimmed_avg_us, tflops
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_perf_asw_8k_k128_dn_move_offset():
     run_perf_test()
 

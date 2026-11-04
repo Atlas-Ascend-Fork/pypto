@@ -63,7 +63,7 @@ def kernel_add_size4(
 class TestArrayConstructValid:
     """Positive cases: correctly-sized Array construction and NPU kernel."""
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_valid_kernel_npu(self):
         """Construct valid int[4], run add kernel, verify accuracy."""
         device = ST_DEVICE

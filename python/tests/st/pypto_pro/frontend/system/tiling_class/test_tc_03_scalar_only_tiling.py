@@ -258,7 +258,7 @@ def kernel_float_multi_user(
 class TestScalarOnlySimple:
     """Simple cases: single scalar field in tiling class."""
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_int_only(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -274,7 +274,7 @@ class TestScalarOnlySimple:
         z_ref = (x.float() + y.float()).half()
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_float_only(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -290,7 +290,7 @@ class TestScalarOnlySimple:
         z_ref = (x.float() + y.float()).half()
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_bool_only(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -310,7 +310,7 @@ class TestScalarOnlySimple:
 class TestScalarOnlyComplex:
     """Complex cases: mixed scalar fields or field combinations."""
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_int_and_float(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -326,7 +326,7 @@ class TestScalarOnlyComplex:
         z_ref = (x.float() + y.float()).half()
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_all_scalars_mixed(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -342,7 +342,7 @@ class TestScalarOnlyComplex:
         z_ref = (x.float() - y.float()).half()
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_float_multi_user(self):
         device = ST_DEVICE
         torch.npu.set_device(device)

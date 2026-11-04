@@ -342,9 +342,9 @@ def test_matmul_mx_acc_rejects_invalid_phase():
         (ir.MemorySpace.ScaleRight, ir.TensorLayout.NN, [2, 64]),
     ],
 )
-def test_mx_scale_tile_defaults_to_fractal_32(target_memory, layout, shape, monkeypatch):
-    if target_memory in (ir.MemorySpace.ScaleLeft, ir.MemorySpace.ScaleRight):
-        monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "3510")
+@pytest.mark.parametrize("arch", ["3510", "9201"])
+def test_mx_scale_tile_defaults_to_fractal_32(target_memory, layout, shape, monkeypatch, arch):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", arch)
     tile_type = TileType(
         shape=shape, dtype=DataType.FP8E8M0, target_memory=target_memory, layout=layout
     )
@@ -360,8 +360,9 @@ def test_mx_scale_tile_defaults_to_fractal_32(target_memory, layout, shape, monk
         (ir.MemorySpace.ScaleRight, ir.TensorLayout.NN, [2, 64]),
     ],
 )
-def test_mx_scale_tile_rejects_non_32_fractal(target_memory, layout, shape, monkeypatch):
-    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "3510")
+@pytest.mark.parametrize("arch", ["3510", "9201"])
+def test_mx_scale_tile_rejects_non_32_fractal(target_memory, layout, shape, monkeypatch, arch):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", arch)
     with pytest.raises(ValueError, match="require fractal=32"):
         TileType(
             shape=shape,

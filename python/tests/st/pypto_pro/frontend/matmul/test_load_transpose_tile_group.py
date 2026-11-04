@@ -35,13 +35,13 @@ K = 128
 N = 32
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
-    if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        pytest.skip("not A5/A6")
 
 
 # nn: left as-is (NZ [M,K]), right as-is (NZ [K,N]).
@@ -238,32 +238,32 @@ def _run(kernel, a_arg, b_arg, a, b):
 
 @pytest.fixture(scope="module")
 def _ab():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.randn([M, K], device=ST_DEVICE, dtype=torch.float16)
     b = torch.randn([K, N], device=ST_DEVICE, dtype=torch.float16)
     return a, b
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_group_nn(_ab):
     a, b = _ab
     _run(k_nn_group, a, b, a, b)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_group_nt(_ab):
     a, b = _ab
     _run(k_nt_group, a, b.t().contiguous(), a, b)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_group_tn(_ab):
     a, b = _ab
     _run(k_tn_group, a.t().contiguous(), b, a, b)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_group_tt(_ab):
     a, b = _ab
     _run(k_tt_group, a.t().contiguous(), b.t().contiguous(), a, b)
@@ -271,7 +271,7 @@ def test_group_tt(_ab):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.randn([M, K], device=ST_DEVICE, dtype=torch.float16)
     b = torch.randn([K, N], device=ST_DEVICE, dtype=torch.float16)

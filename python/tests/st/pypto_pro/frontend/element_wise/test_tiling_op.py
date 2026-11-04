@@ -81,7 +81,7 @@ def tiling_op_kernel(
                 pl.store(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_tiling_op():
     device = ST_DEVICE
     torch.npu.set_device(device)

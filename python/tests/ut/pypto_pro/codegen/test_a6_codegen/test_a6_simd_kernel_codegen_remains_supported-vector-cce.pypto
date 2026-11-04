@@ -1,0 +1,42 @@
+#if defined(__DAV_VEC__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void kernel_impl_vector(__gm__ float* x_0_ptr, __gm__ float* out_0_ptr)
+{
+
+    using x_0ShapeDim5 = pto::TileShape2D<float, pto::DYNAMIC, pto::DYNAMIC, Layout::ND>;
+    using x_0StrideDim5 = pto::Stride<-1, -1, -1, -1, -1>;
+    using x_0Type = GlobalTensor<float, x_0ShapeDim5, x_0StrideDim5, Layout::ND>;
+    x_0Type x_0(x_0_ptr, x_0ShapeDim5(), x_0StrideDim5(1, 1, 1, 8, 1));
+
+    using out_0ShapeDim5 = pto::TileShape2D<float, pto::DYNAMIC, pto::DYNAMIC, Layout::ND>;
+    using out_0StrideDim5 = pto::Stride<-1, -1, -1, -1, -1>;
+    using out_0Type = GlobalTensor<float, out_0ShapeDim5, out_0StrideDim5, Layout::ND>;
+    out_0Type out_0(out_0_ptr, out_0ShapeDim5(), out_0StrideDim5(1, 1, 1, 8, 1));
+
+    using src_0_Type = SyncedTile<Tile<TileType::Vec, float, 1, 8, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0>;
+    src_0_Type src_0{src_0_Type::PtoTile(1, 8), {}};
+    TASSIGN(src_0.tile, 0x0);
+    using dst_0_Type = SyncedTile<Tile<TileType::Vec, float, 1, 8, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0>;
+    dst_0_Type dst_0{dst_0_Type::PtoTile(1, 8), {}};
+    TASSIGN(dst_0.tile, 0x20);
+    int64_t _tuple_anchor_0_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(0)};
+    x_0.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(src_0.tile.GetValidRow()), static_cast<int64_t>(src_0.tile.GetValidCol()));
+    TASSIGN(x_0, x_0_ptr + (0 * (8) + 0));
+    TLOAD(src_0.tile, x_0);
+    TADD(dst_0.tile, src_0.tile, src_0.tile);
+    int64_t _tuple_anchor_1_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(0)};
+    out_0.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(dst_0.tile.GetValidRow()), static_cast<int64_t>(dst_0.tile.GetValidCol()));
+    TASSIGN(out_0, out_0_ptr + (0 * (8) + 0));
+    TSTORE(out_0, dst_0.tile);
+    return;
+}
+#endif

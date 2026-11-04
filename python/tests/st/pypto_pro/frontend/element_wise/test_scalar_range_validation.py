@@ -38,7 +38,6 @@ import os
 from pypto_pro import ir
 from pypto_pro._errors import OutOfRange
 import pypto_pro.language as pl
-from pypto_pro.runtime.platform import NpuArch
 import pytest
 import torch
 import torch_npu  # noqa: F401 — registers npu backend
@@ -64,8 +63,8 @@ def _check_npu():
     try:
         torch.npu.set_device(ST_DEVICE)
         name = torch.npu.get_device_name()
-        if "Ascend950" not in name:
-            pytest.skip(f"Device {name} is not A5 (Ascend950). Skip.")
+        if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
@@ -78,9 +77,9 @@ def _run(kernel, *args, **kwargs):
 
 
 def _compile_to_cce(kernel) -> str:
-    from pypto_pro.runtime.jit import _assemble_cv_source, _parse_and_codegen_targets
+    from pypto_pro.runtime.jit import _assemble_cv_source, _parse_and_codegen_targets, get_current_arch
 
-    cube, vector = _parse_and_codegen_targets(kernel.to_kernel_def(), NpuArch.DAV_3510, "")
+    cube, vector = _parse_and_codegen_targets(kernel.to_kernel_def(), get_current_arch(), "")
     return _assemble_cv_source(cube, vector).content
 
 
@@ -168,7 +167,7 @@ def kernel_and_int8_boundary(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize(
     ("kernel", "scalar"),
     [(kernel_and_int8_above_max, 300), (kernel_and_int8_below_min, -129)],
@@ -187,7 +186,7 @@ def test_and_int8_rejects_scalar_outside_dtype_range(kernel, scalar):
         _run(kernel, a, out)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_and_int8_boundary_scalar_runs_on_device():
     _assert_ir_scalar(kernel_and_int8_boundary, "block.ands", 127, pl.DT_INT8, index=2)
 
@@ -261,7 +260,7 @@ def kernel_and_uint8_boundary(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize(
     ("kernel", "scalar"),
     [(kernel_and_uint8_above_max, 256), (kernel_and_uint8_negative, -1)],
@@ -280,7 +279,7 @@ def test_and_uint8_rejects_scalar_outside_dtype_range(kernel, scalar):
         _run(kernel, a, out)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_and_uint8_negative_scalar_names_the_signedness():
     """A negative into an unsigned dtype is the case the old code wrapped silently."""
     if not _check_npu():
@@ -292,7 +291,7 @@ def test_and_uint8_negative_scalar_names_the_signedness():
         _run(kernel_and_uint8_negative, a, out)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_and_uint8_boundary_scalar_runs_on_device():
     _assert_ir_scalar(kernel_and_uint8_boundary, "block.ands", 255, pl.DT_UINT8, index=2)
 
@@ -337,7 +336,7 @@ def kernel_expands_uint64_boundary(
         pl.store(out, tile, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_expands_uint64_rejects_scalar_above_the_storage_band():
     """UINT64_MAX + 1 cannot be carried by ir.ConstInt at all, whatever the tile dtype."""
     with pytest.raises(
@@ -347,7 +346,7 @@ def test_expands_uint64_rejects_scalar_above_the_storage_band():
         _compile_to_cce(kernel_expands_uint64_above_band)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_expands_uint64_boundary_scalar_is_emitted_as_an_unsigned_literal():
     """UINT64_MAX is stored folded as the int64 image -1 and must come back out unsigned.
 
@@ -395,7 +394,7 @@ def kernel_expands_int64_boundary(
         pl.store(out, tile, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_expands_int64_rejects_scalar_above_the_dtype_max():
     """INT64_MAX + 1 fits the storage band as a uint64 constant; only the dtype check rejects it."""
     with pytest.raises(
@@ -408,7 +407,7 @@ def test_expands_int64_rejects_scalar_above_the_dtype_max():
         _compile_to_cce(kernel_expands_int64_above_max)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_expands_int64_boundary_scalar_runs_on_device():
     # INT64_MAX is inside the storage band, so it is carried as-is rather than folded.
     _assert_ir_scalar(kernel_expands_int64_boundary, "block.expands", INT64_MAX, pl.DT_INT64, index=1)

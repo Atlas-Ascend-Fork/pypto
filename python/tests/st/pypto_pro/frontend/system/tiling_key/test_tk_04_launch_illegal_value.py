@@ -78,13 +78,13 @@ def _run_npu_test(key, ref_fn, shape=(128, 256)):
 
 
 # ---- 简单用例：正例 --------------------------------------------------------
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_strictval_0_add():
     """StrictVal=0 应走 add 分支"""
     _run_npu_test({"StrictVal": 0}, lambda a, b: a + b)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_strictval_1_sub():
     """StrictVal=1 应走 sub 分支"""
     _run_npu_test({"StrictVal": 1}, lambda a, b: a - b)

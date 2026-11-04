@@ -55,6 +55,95 @@ def _require_a5(device):
 
 
 @pl.jit()
+def insert_zn_left_kernel_a6(
+    d: pl.Tensor[[K, M], pl.DT_FP16],  # P produced CONTRACTION-major: d[key, query] = P^T
+    v: pl.Tensor[[K, N], pl.DT_FP16],  # V[key, d]
+    out: pl.Tensor[[M, N], pl.DT_FP32],
+):
+    # LEFT-operand L1 buffer, declared ZN (FA's p_mat). This is what encodes the transpose.
+    p_mat = pl.make_tile(
+        pl.TileType(shape=[M, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.ZN),
+        addr=0x20000,
+    )
+
+    with pl.section_vector():
+
+        # vector holds P contraction-major, [M(key), SUB(query)] per subcore (FA [TKV, TS_HALF])
+        tile_d = pl.make_tile(
+            pl.TileType(shape=[K, M], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec), addr=0x0000
+        )
+        tile_nz = pl.make_tile(
+            pl.TileType(shape=[K, M], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, layout=pl.NZ),
+            addr=0x4000,
+        )
+
+        pl.load(tile_d, d, [0, 0])  # d[:, off:off+SUB] -> [M, SUB]
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
+        pl.move(tile_nz, tile_d)  # ND -> NZ (same shape)
+        pl.system.sync_src(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=2)
+        pl.system.sync_dst(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=2)
+        pl.insert(p_mat, tile_nz, [0, 0])  # NZ tile -> ZN Mat, column offset (FA-style)
+        pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=2)
+
+    with pl.section_cube():
+        v_mat = pl.make_tile(
+            pl.TileType(shape=[K, N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
+            addr=0x0000,
+        )
+        p_left = pl.make_tile(
+            pl.TileType(shape=[M, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left, layout=pl.NZ),
+            addr=0x0000,
+        )
+        v_right = pl.make_tile(
+            pl.TileType(shape=[K, N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Right, layout=pl.ZN),
+            addr=0x0000,
+        )
+        c_l0c = pl.make_tile(
+            pl.TileType(shape=[M, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc, layout=pl.NZ, fractal=1024),
+            addr=0x0000,
+        )
+
+        pl.load(v_mat, v, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE1, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE1, event_id=0)
+        pl.move(v_right, v_mat)  # V -> L0B
+
+        pl.system.wait_cross_core(pipe=pl.PipeType.MTE1, event_id=2, sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+        pl.move(p_left, p_mat)  # Mat(ZN) -> Left(NZ): SFractal mismatch -> TRANSPOSE
+
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE1, wait_pipe=pl.PipeType.M, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE1, wait_pipe=pl.PipeType.M, event_id=0)
+        pl.matmul(c_l0c, p_left, v_right)  # out = P @ V = d^T @ V
+
+        pl.system.sync_src(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
+        pl.store(out, c_l0c, [0, 0])
+
+
+
+
+@pytest.mark.soc("960")
+def test_insert_zn_left_kernel_a6():
+    device = ST_DEVICE
+    torch.manual_seed(0)
+    d = torch.randn([K, M], device=device, dtype=torch.float16)  # = P^T (contraction-major)
+    v = torch.randn([K, N], device=device, dtype=torch.float16)
+    out = torch.zeros([M, N], device=device, dtype=torch.float32)
+
+    insert_zn_left_kernel_a6(d, v, out)
+    torch.npu.synchronize()
+
+    ref = torch.matmul(d.float().t(), v.float())  # P @ V, with P = d^T
+    diff = (out - ref).abs().max().item()
+    logging.info("max|out - (d^T @ v)| = %s", diff)
+    torch.testing.assert_close(out, ref, rtol=2e-2, atol=2e-2)
+    logging.info("insert_zn_left_kernel OK: on-chip transpose via ZN-insert (no pl.transpose, no GM)")
+
+
+
+
+@pl.jit()
 def insert_zn_left_kernel(
     d: pl.Tensor[[K, M], pl.DT_FP16],  # P produced CONTRACTION-major: d[key, query] = P^T
     v: pl.Tensor[[K, N], pl.DT_FP16],  # V[key, d]

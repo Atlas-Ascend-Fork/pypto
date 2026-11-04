@@ -648,9 +648,31 @@ def test_simt_auto_mutex_emits_pipe_v_lock_unlock_around_launch():
     assert "pipe_barrier(PIPE_ALL);" not in cpp
 
 
-def test_simt_codegen_rejects_pre_a5_architecture():
+@pytest.mark.parametrize("arch", ["1001", "2201", "3003", "3113"])
+def test_simt_codegen_rejects_unsupported_architecture(arch):
     with pytest.raises(NotSupported, match="requires arch='3510'"):
-        _compile_to_cce(_simt_tile_codegen_kernel, arch="a3")
+        _compile_to_cce(_simt_tile_codegen_kernel, arch=arch)
+
+
+def test_simt_direct_codegen_rejects_a6(monkeypatch, assert_a6_golden):
+    from pypto.pypto_impl import NpuArch, ir
+    from pypto.pypto_impl.codegen import CCECodegen
+
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "3510")
+    program, matched = _simt_callee_codegen_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+    assert matched
+    assert program.get_function("_callee_entry").func_type == ir.FunctionType.SimtVF
+    assert program.get_function("_callee_apply").func_type == ir.FunctionType.SimtCallee
+    assert_a6_golden(program)
+    with pytest.raises(RuntimeError, match="SIMT direct CCE generation currently requires arch='3510'"):
+        CCECodegen(ir.SectionKind.Vector).generate_single(program, NpuArch.DAV_9201)
+
+
+def test_simt_codegen_rejects_a6_at_launch(monkeypatch):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "9201")
+    with pytest.raises(NotSupported, match="SIMT vector-function launch is not supported on A6"):
+        _compile_to_cce(_simt_tile_codegen_kernel, arch="9201")
 
 
 def test_simt_kernel_cast_in_helper_includes_compiler_overloads():

@@ -259,6 +259,91 @@ def cross_core_kernel(
         pl.store(out, c_l0c, [0, 0])
 
 
+@pl.jit()
+def cross_core_kernel_a6(
+    x: pl.Tensor[[64, 64], pl.DT_FP32],
+    y: pl.Tensor[[64, 64], pl.DT_FP32],
+    rhs: pl.Tensor[[64, 64], pl.DT_FP32],
+    out: pl.Tensor[[64, 64], pl.DT_FP32],
+):
+    """A6 (1:1) variant: the single vector core handles the full 64 rows, no subcore split."""
+    v1_mat = pl.make_tile(
+        pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
+        addr=0x10000,
+    )
+
+    with pl.section_vector():
+        tile_x = pl.make_tile(
+            pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec), addr=0x0000
+        )
+        tile_y = pl.make_tile(
+            pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec), addr=0x4000
+        )
+        tile_sum = pl.make_tile(
+            pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec), addr=0x8000
+        )
+        tile_nz = pl.make_tile(
+            pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.NZ),
+            addr=0xC000,
+        )
+
+        pl.load(tile_x, x, [0, 0])
+        pl.load(tile_y, y, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
+        pl.add(tile_sum, tile_x, tile_y)
+        pl.move(tile_nz, tile_sum)
+        pl.system.sync_src(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=2)
+        pl.system.sync_dst(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=2)
+        pl.insert(v1_mat, tile_nz, [0, 0])
+        pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=2)
+
+    with pl.section_cube():
+        rhs_mat = pl.make_tile(
+            pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
+            addr=0x0000,
+        )
+        v1_left = pl.make_tile(
+            pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Left, layout=pl.NZ),
+            addr=0x0000,
+        )
+        rhs_right = pl.make_tile(
+            pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Right, layout=pl.ZN),
+            addr=0x0000,
+        )
+        c_l0c = pl.make_tile(
+            pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc, layout=pl.NZ, fractal=1024),
+            addr=0x0000,
+        )
+
+        pl.load(rhs_mat, rhs, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE1, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE1, event_id=0)
+        pl.move(rhs_right, rhs_mat)
+        pl.system.wait_cross_core(pipe=pl.PipeType.MTE1, event_id=2, sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+        pl.move(v1_left, v1_mat)
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE1, wait_pipe=pl.PipeType.M, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE1, wait_pipe=pl.PipeType.M, event_id=0)
+        pl.matmul(c_l0c, v1_left, rhs_right)
+        pl.system.sync_src(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
+        pl.store(out, c_l0c, [0, 0])
+
+
+@pytest.mark.soc("960")
+def test_set_cross_core_wait_cross_core_a6():
+    device = ST_DEVICE
+    torch.manual_seed(0)
+    x = torch.randn(64, 64, device=device, dtype=torch.float32)
+    y = torch.randn(64, 64, device=device, dtype=torch.float32)
+    rhs = torch.randn(64, 64, device=device, dtype=torch.float32)
+    out = torch.zeros(64, 64, device=device, dtype=torch.float32)
+    cross_core_kernel_a6(x, y, rhs, out)
+    torch.npu.synchronize()
+    ref = torch.matmul((x + y).float(), rhs.float())
+    torch.testing.assert_close(out, ref, rtol=1e-2, atol=1e-2)
+
+
 @pytest.mark.soc("950")
 def test_set_cross_core_wait_cross_core():
     device = ST_DEVICE

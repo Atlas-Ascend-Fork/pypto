@@ -131,7 +131,7 @@ def sort32_tail_kernel(
 # ============================================================================
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_mrgsort():
     """Smoke test: verify mrgsort kernel compiles and runs without crash.
 
@@ -152,7 +152,7 @@ def test_mrgsort():
     logging.info("test_mrgsort passed (smoke test)!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_mrgsort2():
     """Smoke test: verify mrgsort2 kernel compiles and runs without crash.
 
@@ -173,7 +173,7 @@ def test_mrgsort2():
     logging.info("test_mrgsort2 passed (smoke test)!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_sort32():
     torch.npu.set_device(ST_DEVICE)
     a = torch.randn(1, 32, device=ST_DEVICE, dtype=torch.float16)
@@ -184,7 +184,7 @@ def test_sort32():
     logging.info("test_sort32 passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_sort32_tail():
     torch.npu.set_device(ST_DEVICE)
     a = torch.randn(1, 16, device=ST_DEVICE, dtype=torch.float16)

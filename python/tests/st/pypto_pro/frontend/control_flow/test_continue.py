@@ -322,7 +322,7 @@ def for_3layer_continue_fp16_kernel(
                     pl.store_tile(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_continue():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -355,7 +355,7 @@ def test_for_continue():
         logging.info("%s passed!", case)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_continue():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -373,7 +373,7 @@ def test_while_continue():
             logging.info("test_while_continue [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_while_continue():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -391,7 +391,7 @@ def test_for_while_continue():
             logging.info("test_for_while_continue [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_3layer_continue():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -446,7 +446,7 @@ def continue_unaligned_fp16_kernel(
                 pl.store(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_continue_unaligned_shape():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -580,7 +580,7 @@ def while_continue_mid_fp16_kernel(
             i = i + 1
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_continue_mid():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -598,7 +598,7 @@ def test_for_continue_mid():
         logging.info("test_for_continue_mid passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_continue_end():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -615,7 +615,7 @@ def test_for_continue_end():
         logging.info("test_for_continue_end passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_continue_mid():
     device = ST_DEVICE
     torch.npu.set_device(device)

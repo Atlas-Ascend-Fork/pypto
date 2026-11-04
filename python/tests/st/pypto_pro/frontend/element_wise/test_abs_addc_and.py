@@ -48,8 +48,8 @@ def _check_npu():
     try:
         torch.npu.set_device(ST_DEVICE)
         name = torch.npu.get_device_name()
-        if "Ascend950" not in name:
-            pytest.skip(f"Device {name} is not A5 (Ascend950). Skip.")
+        if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
@@ -149,7 +149,7 @@ def kernel_add_fp32_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_add_fp32():
     if not _check_npu():
         return
@@ -161,7 +161,7 @@ def test_add_fp32():
     torch.testing.assert_close(out, a + b, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_add_fp32_scalar():
     if not _check_npu():
         return
@@ -172,7 +172,7 @@ def test_add_fp32_scalar():
     torch.testing.assert_close(out, a + SCALAR_VAL, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_add_int32():
     if not _check_npu():
         return
@@ -184,7 +184,7 @@ def test_add_int32():
     torch.testing.assert_close(out, a + b, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_add_fp32_unaligned():
     if not _check_npu():
         return
@@ -284,7 +284,7 @@ def kernel_sub_fp32_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_sub_fp32():
     if not _check_npu():
         return
@@ -296,7 +296,7 @@ def test_sub_fp32():
     torch.testing.assert_close(out, a - b, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_sub_fp32_scalar():
     if not _check_npu():
         return
@@ -307,7 +307,7 @@ def test_sub_fp32_scalar():
     torch.testing.assert_close(out, a - SCALAR_VAL, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_sub_int32():
     if not _check_npu():
         return
@@ -319,7 +319,7 @@ def test_sub_int32():
     torch.testing.assert_close(out, a - b, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_sub_fp32_unaligned():
     if not _check_npu():
         return
@@ -419,7 +419,7 @@ def kernel_mul_fp32_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_mul_fp32():
     if not _check_npu():
         return
@@ -431,7 +431,7 @@ def test_mul_fp32():
     torch.testing.assert_close(out, a * b, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_mul_fp32_scalar():
     if not _check_npu():
         return
@@ -442,7 +442,7 @@ def test_mul_fp32_scalar():
     torch.testing.assert_close(out, a * SCALAR_VAL, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_mul_int32():
     if not _check_npu():
         return
@@ -454,7 +454,7 @@ def test_mul_int32():
     torch.testing.assert_close(out, a * b, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_mul_fp32_unaligned():
     if not _check_npu():
         return
@@ -536,7 +536,7 @@ def kernel_and_int32_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_and_int32():
     if not _check_npu():
         return
@@ -548,7 +548,7 @@ def test_and_int32():
     torch.testing.assert_close(out, a & b, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_and_int16():
     if not _check_npu():
         return
@@ -560,7 +560,7 @@ def test_and_int16():
     torch.testing.assert_close(out, a & b, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_and_int32_unaligned():
     if not _check_npu():
         return
@@ -642,7 +642,7 @@ def kernel_maximum_fp32_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_maximum_fp32():
     if not _check_npu():
         return
@@ -654,7 +654,7 @@ def test_maximum_fp32():
     torch.testing.assert_close(out, torch.maximum(a, b), rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_maximum_int32():
     if not _check_npu():
         return
@@ -666,7 +666,7 @@ def test_maximum_int32():
     torch.testing.assert_close(out, torch.maximum(a, b), rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_maximum_fp32_unaligned():
     if not _check_npu():
         return
@@ -738,7 +738,7 @@ def kernel_neg_fp32_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_neg_fp32():
     if not _check_npu():
         return
@@ -749,7 +749,7 @@ def test_neg_fp32():
     torch.testing.assert_close(out, -a, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_neg_int32():
     if not _check_npu():
         return
@@ -760,7 +760,7 @@ def test_neg_int32():
     torch.testing.assert_close(out, -a, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_neg_fp32_unaligned():
     if not _check_npu():
         return
@@ -831,7 +831,7 @@ def kernel_abs_fp32_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_abs_fp32():
     if not _check_npu():
         return
@@ -842,7 +842,7 @@ def test_abs_fp32():
     torch.testing.assert_close(out, torch.abs(a), rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_abs_int32():
     if not _check_npu():
         return
@@ -853,7 +853,7 @@ def test_abs_int32():
     torch.testing.assert_close(out, torch.abs(a), rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_abs_fp32_unaligned():
     if not _check_npu():
         return
@@ -908,7 +908,7 @@ def kernel_axpy_fp32_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_axpy_fp32():
     if not _check_npu():
         return
@@ -920,7 +920,7 @@ def test_axpy_fp32():
     torch.testing.assert_close(out, ref, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_axpy_fp32_unaligned():
     if not _check_npu():
         return
@@ -992,7 +992,7 @@ def kernel_relu_fp32_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_relu_fp32():
     if not _check_npu():
         return
@@ -1003,7 +1003,7 @@ def test_relu_fp32():
     torch.testing.assert_close(out, torch.relu(a), rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_relu_int32():
     if not _check_npu():
         return
@@ -1014,7 +1014,7 @@ def test_relu_int32():
     torch.testing.assert_close(out, torch.relu(a), rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_relu_fp32_unaligned():
     if not _check_npu():
         return
@@ -1098,7 +1098,7 @@ def kernel_xor_int32_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_xor_int32():
     if not _check_npu():
         return
@@ -1110,7 +1110,7 @@ def test_xor_int32():
     torch.testing.assert_close(out, a ^ b, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_xor_int16():
     if not _check_npu():
         return
@@ -1122,7 +1122,7 @@ def test_xor_int16():
     torch.testing.assert_close(out, a ^ b, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_xor_int32_unaligned():
     if not _check_npu():
         return
@@ -1197,7 +1197,7 @@ def kernel_cast_fp32_to_int32_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_cast_fp32_to_int32():
     if not _check_npu():
         return
@@ -1208,7 +1208,7 @@ def test_cast_fp32_to_int32():
     torch.testing.assert_close(out, a.to(torch.int32), rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_cast_int32_to_fp32():
     if not _check_npu():
         return
@@ -1219,7 +1219,7 @@ def test_cast_int32_to_fp32():
     torch.testing.assert_close(out, a.to(torch.float32), rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_cast_fp32_to_int32_unaligned():
     if not _check_npu():
         return
@@ -1321,7 +1321,7 @@ def kernel_eq_fp32_unaligned(
         pl.store(out, t_out, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_eq_fp32():
     if not _check_npu():
         return
@@ -1334,7 +1334,7 @@ def test_eq_fp32():
     torch.testing.assert_close(out, (a == b).to(torch.float32), rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_eq_int32():
     if not _check_npu():
         return
@@ -1347,7 +1347,7 @@ def test_eq_int32():
     torch.testing.assert_close(out, (a == b).to(torch.int32), rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_eq_fp32_unaligned():
     if not _check_npu():
         return
@@ -1419,7 +1419,7 @@ def kernel_select_fp32_unaligned(
         pl.store(out, t_out, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_select_fp32():
     if not _check_npu():
         return
@@ -1432,7 +1432,7 @@ def test_select_fp32():
     torch.testing.assert_close(out, ref, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_select_fp32_unaligned():
     if not _check_npu():
         return
@@ -1533,7 +1533,7 @@ def kernel_div_fp32_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_div_fp32():
     if not _check_npu():
         return
@@ -1545,7 +1545,7 @@ def test_div_fp32():
     torch.testing.assert_close(out, a / b, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_div_fp32_scalar():
     if not _check_npu():
         return
@@ -1556,7 +1556,7 @@ def test_div_fp32_scalar():
     torch.testing.assert_close(out, a / SCALAR_VAL, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_div_int32():
     if not _check_npu():
         return
@@ -1568,7 +1568,7 @@ def test_div_int32():
     torch.testing.assert_close(out, a // b, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_div_fp32_unaligned():
     if not _check_npu():
         return
@@ -1625,7 +1625,7 @@ def kernel_sum_fp32_row_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_sum_fp32_row():
     if not _check_npu():
         return
@@ -1636,7 +1636,7 @@ def test_sum_fp32_row():
     torch.testing.assert_close(out[0, 0], a.sum(dim=1).squeeze(0), rtol=1e-3, atol=1e-3)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_sum_fp32_row_unaligned():
     if not _check_npu():
         return
@@ -1694,7 +1694,7 @@ def kernel_load_store_fp32_unaligned(
         pl.store(out, ta, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_load_store_fp32():
     if not _check_npu():
         return
@@ -1705,7 +1705,7 @@ def test_load_store_fp32():
     torch.testing.assert_close(out, a, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_load_store_int32():
     if not _check_npu():
         return
@@ -1716,7 +1716,7 @@ def test_load_store_int32():
     torch.testing.assert_close(out, a, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_load_store_fp32_unaligned():
     if not _check_npu():
         return
@@ -1757,7 +1757,7 @@ def kernel_expands_int32(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_expands_fp32():
     if not _check_npu():
         return
@@ -1767,7 +1767,7 @@ def test_expands_fp32():
                                rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_expands_int32():
     if not _check_npu():
         return
@@ -1823,7 +1823,7 @@ def kernel_transpose_int16(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_transpose_fp32():
     if not _check_npu():
         return
@@ -1834,7 +1834,7 @@ def test_transpose_fp32():
     torch.testing.assert_close(out, a.t(), rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_transpose_int16():
     if not _check_npu():
         return
@@ -1894,7 +1894,7 @@ def kernel_add_relu_fp32_unaligned(
         pl.store(out, tc, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_add_relu_fp32():
     if not _check_npu():
         return
@@ -1906,7 +1906,7 @@ def test_add_relu_fp32():
     torch.testing.assert_close(out, torch.relu(a + b), rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_add_relu_fp32_unaligned():
     if not _check_npu():
         return

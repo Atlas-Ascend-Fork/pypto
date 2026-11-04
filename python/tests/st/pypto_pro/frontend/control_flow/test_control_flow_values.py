@@ -201,7 +201,7 @@ def _swap_expected(x, n):
     return [x + n % 2, x + 1 - n % 2]
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("n", range(5))
 @pytest.mark.parametrize(
     "kernel, expected",

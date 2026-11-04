@@ -41,6 +41,141 @@ TILE_N = 64
 
 
 @pl.jit(auto_mutex=True)
+def tiled_matmul_add_db_a6(
+    a: pl.Tensor[[M_SIZE, K_SIZE], pl.DT_FP16],
+    b: pl.Tensor[[K_SIZE, N_SIZE], pl.DT_FP16],
+    x: pl.Tensor[[M_SIZE, N_SIZE], pl.DT_FP32],
+    out: pl.Tensor[[M_SIZE, N_SIZE], pl.DT_FP32],
+    workspace: pl.Tensor[[M_SIZE, N_SIZE], pl.DT_FP32],
+):
+
+    # ========== Buffer declarations ==========
+    # L1 double buffer (rotate via next())
+    a_l1_db = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE_M, K_SIZE], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        addrs=0x00000,
+        mutex_ids=[0, 1],
+    )
+    b_l1_db = pl.make_tile_group(
+        type=pl.TileType(shape=[K_SIZE, TILE_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        addrs=0x04000,
+        mutex_ids=[2, 3],
+    )
+
+    # L0A / L0B (single tile)
+    a_left = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE_M, K_SIZE], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left),
+        addrs=0x0000,
+        mutex_ids=[4],
+    )
+    b_right = pl.make_tile_group(
+        type=pl.TileType(shape=[K_SIZE, TILE_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Right),
+        addrs=0x0000,
+        mutex_ids=[5],
+    )
+
+    acc = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE_M, TILE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc),
+        addrs=0x0000,
+        mutex_ids=[6],
+    )
+
+    mm_res_ub = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE_M, TILE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addrs=0x0000,
+        mutex_ids=[7],
+    )
+    x_ub = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE_M, TILE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addrs=0x4000,
+        mutex_ids=[8],
+    )
+    out_ub = pl.make_tile_group(
+        type=pl.TileType(shape=[TILE_M, TILE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addrs=0x8000,
+        mutex_ids=[9],
+    )
+
+    # ========== Cube Section ==========
+    with pl.section_cube():
+        for i in pl.range(0, M_SIZE, TILE_M):
+            for j in pl.range(0, N_SIZE, TILE_N):
+                # next() rotates: ping ->pong ->ping ->...
+                cur_a = a_l1_db.next()
+                cur_b = b_l1_db.next()
+                al = a_left.current()
+                br = b_right.current()
+                ac = acc.current()
+
+                pl.load(cur_a, a, [i, 0])
+                pl.load(cur_b, b, [0, j])
+                pl.move(al, cur_a)
+                pl.move(br, cur_b)
+                pl.matmul(ac, al, br)
+                pl.store(workspace, ac, [i, j])
+
+                # Cross-core ->Vector
+                pl.system.set_cross_core(pipe=pl.PipeType.FIX, event_id=0)
+
+    # ========== Vector Section ==========
+    with pl.section_vector():
+
+        for i in pl.range(0, M_SIZE, TILE_M):
+            for j in pl.range(0, N_SIZE, TILE_N):
+
+                pl.system.wait_cross_core(pipe=pl.PipeType.MTE2, event_id=0)
+
+                mm = mm_res_ub.current()
+                xb = x_ub.current()
+                ob = out_ub.current()
+                pl.load(mm, workspace, [i, j])
+                pl.load(xb, x, [i, j])
+                pl.add(ob, mm, xb)
+                pl.store(out, ob, [i, j])
+
+
+# ============================================================================
+# Alias kept for the end-to-end NPU test below.
+# ============================================================================
+
+
+# ============================================================================
+# Tests
+# ============================================================================
+
+
+
+
+@pytest.mark.soc("960")
+def test_tiled_matmul_add_db_a6_npu():
+    """End-to-end NPU test (A6 only)."""
+
+    device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
+    torch.npu.set_device(device_id)
+    device = f"npu:{device_id}"
+    device_name = torch.npu.get_device_name()
+    if "Ascend960" not in device_name:
+        pytest.skip(f"Device {device_name} is not A6 (Ascend960). Skip.")
+
+    torch.manual_seed(42)
+    a = torch.randn(M_SIZE, K_SIZE, device=device, dtype=torch.float16)
+    b = torch.randn(K_SIZE, N_SIZE, device=device, dtype=torch.float16)
+    x = torch.randn(M_SIZE, N_SIZE, device=device, dtype=torch.float32)
+    out = torch.zeros(M_SIZE, N_SIZE, device=device, dtype=torch.float32)
+    workspace = torch.zeros(M_SIZE, N_SIZE, device=device, dtype=torch.float32)
+
+    tiled_matmul_add_db_a6[None, 1](a, b, x, out, workspace)
+    torch.npu.synchronize()
+
+    out_ref = torch.matmul(a.float(), b.float()) + x
+    torch.testing.assert_close(out, out_ref, rtol=1e-2, atol=1e-2)
+    logging.info("result equal!")
+
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+
+@pl.jit(auto_mutex=True)
 def tiled_matmul_add_db(
     a: pl.Tensor[[M_SIZE, K_SIZE], pl.DT_FP16],
     b: pl.Tensor[[K_SIZE, N_SIZE], pl.DT_FP16],

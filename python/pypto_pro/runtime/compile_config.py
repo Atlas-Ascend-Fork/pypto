@@ -195,6 +195,22 @@ def device_framework_include_dir() -> str | None:
     return fwk_include if os.path.isdir(fwk_include) else None
 
 
+_COMMON_LLVM_ARCH_ARGS = (
+    "-mllvm",
+    "-tile-fusion-skip-reduceop-fusion=true",
+    "-mllvm",
+    "-tile-fusion-skip-legality-check=false",
+    "-O3",
+    "--cce-disable-kernel-global-attr-check",
+    "--enable-pto-tile-fusion",
+    "-Wno-parentheses-equality",
+    "-Wno-unused-command-line-argument",
+    "-Werror",
+    "-Wno-c++20-extensions",
+    "-Wno-cce-compat",
+)
+
+
 _DEFAULT_CCE_JIT_COMPILE_CONFIG = JitCompileConfig(
     backend=CCE_BACKEND,
     kernel_targets={
@@ -213,11 +229,17 @@ _DEFAULT_CCE_JIT_COMPILE_CONFIG = JitCompileConfig(
             "cube": KernelTarget("dav-3510", aic_per_block=1, aiv_per_block=0, fat_object=False),
             "vec": KernelTarget("dav-3510", aic_per_block=0, aiv_per_block=1, fat_object=False),
         },
+        NpuArch.DAV_9201: {
+            "cube_vec": KernelTarget("dav-9201", aic_per_block=1, aiv_per_block=1, fat_object=True),
+            "cube": KernelTarget("dav-9201", aic_per_block=1, aiv_per_block=0, fat_object=False),
+            "vec": KernelTarget("dav-9201", aic_per_block=0, aiv_per_block=1, fat_object=False),
+        },
     },
     memory_arch_flags={
         NpuArch.DAV_1001: "-DMEMORY_BASE",
         NpuArch.DAV_2201: "-DMEMORY_BASE",
         NpuArch.DAV_3510: "-DREGISTER_BASE",
+        NpuArch.DAV_9201: "-DREGISTER_BASE",
     },
     arch_flags=("--npu-arch={npu_arch}",),
     # ASC derives fat objects from the explicit __mix__ entry qualifier.
@@ -273,20 +295,8 @@ _DEFAULT_CCE_JIT_COMPILE_CONFIG = JitCompileConfig(
             "-Werror",
             "-Wno-cce-compat",
         ),
-        NpuArch.DAV_3510: (
-            "-mllvm",
-            "-tile-fusion-skip-reduceop-fusion=true",
-            "-mllvm",
-            "-tile-fusion-skip-legality-check=false",
-            "-O3",
-            "--cce-disable-kernel-global-attr-check",
-            "--enable-pto-tile-fusion",
-            "-Wno-parentheses-equality",
-            "-Wno-unused-command-line-argument",
-            "-Werror",
-            "-Wno-c++20-extensions",
-            "-Wno-cce-compat",
-        ),
+        NpuArch.DAV_3510: _COMMON_LLVM_ARCH_ARGS,
+        NpuArch.DAV_9201: _COMMON_LLVM_ARCH_ARGS,
     },
     runtime_include_dirs=(
         "{ascend_home}/include",

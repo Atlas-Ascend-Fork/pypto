@@ -43,7 +43,17 @@ def _require_a5(device):
         pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
 
 
-@pl.jit(arch="3510", auto_mutex=True)
+def _require_a5_or_a6(device):
+    try:
+        torch.npu.set_device(device)
+    except RuntimeError as exc:
+        pytest.skip(f"NPU unavailable: {exc}")
+    name = torch.npu.get_device_name()
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+
+
+@pl.jit(auto_mutex=True)
 def getval_setval_am_kernel(a: pl.Tensor[[64, 128], pl.DT_FP16]):
     tt = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
     a_db = pl.make_tile_group(type=tt, addrs=[0x00000], mutex_ids=[20])
@@ -77,7 +87,7 @@ def getval_struct_field_am_kernel(
         out[1] = message.values[0]
 
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def getval_while_condition_am_kernel(
     a: pl.Tensor[[64, 128], pl.DT_FP16],
     out: pl.Tensor[[1], pl.DT_INT64],
@@ -121,10 +131,10 @@ def _run_and_measure(a: torch.Tensor):
     return details["max_diff"], details
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_getval_setval_auto_mutex():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.rand(64, 128, device=device, dtype=torch.float16) * 2.0 - 1.0
     max_diff, d = _run_and_measure(a)
@@ -150,10 +160,10 @@ def test_getval_struct_field_auto_mutex():
     torch.testing.assert_close(out.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_getval_while_condition_auto_mutex():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.zeros(64, 128, device=device, dtype=torch.float16)
     a[0, :3] = 1.0

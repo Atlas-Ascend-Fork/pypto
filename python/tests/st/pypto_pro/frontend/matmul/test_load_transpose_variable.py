@@ -45,13 +45,13 @@ MA1 = 0x10000
 SZ = 32768
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
-    if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        pytest.skip("not A5/A6")
 
 
 def load_left(dst, src, order):
@@ -127,7 +127,7 @@ def k_transpose_helper_var(
 @pytest.fixture(scope="module")
 def _ab():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn([M, K], device=device, dtype=torch.float16)
     b = torch.randn([K, N], device=device, dtype=torch.float16)
@@ -145,20 +145,20 @@ def _run(kernel, a_arg, b_arg, a, b):
     torch.testing.assert_close(out, ref, rtol=2e-2, atol=2e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_transpose_literal(_ab):
     a, b = _ab
     _run(k_transpose_lit, a.t().contiguous(), b, a, b)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_transpose_local_var(_ab):
     """order from a local list assignment (assignment-fold path)."""
     a, b = _ab
     _run(k_transpose_local_var, a.t().contiguous(), b, a, b)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_transpose_helper_var(_ab):
     """order threaded through an inlined helper parameter (inline-fold path)."""
     a, b = _ab
@@ -168,7 +168,7 @@ def test_transpose_helper_var(_ab):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn([M, K], device=device, dtype=torch.float16)
     b = torch.randn([K, N], device=device, dtype=torch.float16)

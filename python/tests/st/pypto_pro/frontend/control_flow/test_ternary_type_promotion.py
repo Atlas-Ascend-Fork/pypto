@@ -218,7 +218,7 @@ def ternary_promote_used_size_kernel(
         pl.setval(out, 1, k_used_size)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_ternary_promote_nested_int():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -236,7 +236,7 @@ def test_ternary_promote_nested_int():
     logging.info("test_ternary_promote_nested_int passed")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_ternary_promote_nested_float():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -253,7 +253,7 @@ def test_ternary_promote_nested_float():
     logging.info("test_ternary_promote_nested_float passed")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_ternary_promote_used_size():
     device = ST_DEVICE
     torch.npu.set_device(device)

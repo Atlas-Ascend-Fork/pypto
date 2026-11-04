@@ -69,7 +69,7 @@ def _for_swap_carry_kernel(x: pl.DT_INT64, out: pl.Tensor[[1, 3], pl.DT_INT64]):
         out[0, 1] = right
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("x", [0, 1, 2, 3, 4, 8, 9, 15, 16, 31, 32, 2147395600])
 def test_while_isqrt_carry(x):
     device = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
@@ -80,7 +80,7 @@ def test_while_isqrt_carry(x):
     assert out.cpu().tolist() == [[math.isqrt(x), 0, 0]]
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize(
     "kernel, expected",
     [(_while_swap_carry_kernel, [8, 7, 1]), (_for_swap_carry_kernel, [8, 7, 0])],

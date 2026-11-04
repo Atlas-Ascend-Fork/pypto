@@ -92,16 +92,16 @@ def _run_npu_test(kernel, key, ref_fn, shape=(128, 256)):
 # ---- 简单用例 (NPU 全流程验证正例) -----------------------------------------
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_bits_1_add():
     _run_npu_test(kernel_bits1, {"OpType": 0}, lambda a, b: a + b)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_bits_2_add():
     _run_npu_test(kernel_bits2, {"OpType": 0}, lambda a, b: a + b)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_bits_2_sub():
     _run_npu_test(kernel_bits2, {"OpType": 3}, lambda a, b: a - b)

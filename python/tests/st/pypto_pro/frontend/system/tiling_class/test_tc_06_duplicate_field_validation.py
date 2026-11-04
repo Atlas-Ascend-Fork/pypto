@@ -69,7 +69,7 @@ def kernel_multi_array(
 class TestMultiArrayCoexistence:
     """Positive test: verify multi-Array field coexistence with NPU execution."""
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_multi_array_coexistence_compute(self):
         device = ST_DEVICE
         torch.npu.set_device(device)

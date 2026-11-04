@@ -93,7 +93,7 @@ def advance_block_traversal_kernel(
         pl.store(out, tile_a, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_advance_block_traversal():
     device = ST_DEVICE
     torch.npu.set_device(device)

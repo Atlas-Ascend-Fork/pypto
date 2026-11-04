@@ -307,9 +307,11 @@ def _is_case_match_soc(item, target_soc):
             supported_socs = [soc.strip() for soc in supported_socs]
         elif isinstance(supported_socs[0], list):
             supported_socs = [soc.strip() for soc in supported_socs[0]]
-    # Core matching logic: soc 260 maps to tag "950", all others map to "910"
+    # Core matching logic: soc 260 → "950" (A5), 270 → "960" (A6), others → "910"
     if target_soc == 260:
         target_tag = "950"
+    elif target_soc == 270:
+        target_tag = "960"
     else:
         target_tag = "910"
     return target_tag in supported_socs
@@ -323,8 +325,8 @@ def pytest_collection_modifyitems(config, items):
     if not items:
         return
     first_item = items[0]
-    item_path = str(first_item.fspath)
-    has_ut = "ut" in item_path.lower()
+    item_path = str(first_item.fspath).replace("\\", "/")
+    has_ut = "/ut/" in item_path.lower()
 
     def _is_verify_case(item):
         # Host pass_verify cases: python/tests/ut/interpreter (formerly tests/verify)

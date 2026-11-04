@@ -85,14 +85,14 @@ def move_fp32_to_fp16_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_move_fp32_to_fp16():
     """FP32 Acc -> FP16 Vec with scale."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -159,14 +159,14 @@ def move_int32_to_int8_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_move_int32_to_int8():
     """INT32 Acc -> INT8 Vec with scale."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -244,7 +244,7 @@ MOVE_SCALE_VALUES = [-2.0, 0.0, 0.5, 1e-6, 1e6]
 MOVE_SCALE_IDS = ["negative", "zero", "fraction", "very_small", "very_large"]
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("scale_value", MOVE_SCALE_VALUES, ids=MOVE_SCALE_IDS)
 def test_move_scale_value(scale_value):
     """Acc->Vec move deqScalar value range (negative/zero/fraction/small/large)."""
@@ -252,7 +252,7 @@ def test_move_scale_value(scale_value):
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -325,14 +325,14 @@ def move_relu_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_move_relu():
     """Move with ReLU fusion."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -400,14 +400,14 @@ def move_dynamic_scale_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_move_dynamic_scale():
     """Move with dynamic scale."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -470,14 +470,14 @@ def store_bf16_to_fp16_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_store_bf16_to_fp16():
     """BF16 matmul -> FP16 output (no scale)."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -532,14 +532,14 @@ def store_fp16_to_bf16_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_store_fp16_to_bf16():
     """FP16 matmul -> BF16 output (no scale)."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -595,14 +595,14 @@ def store_scale_boundary_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_store_scale_boundary():
     """Store with scale=10.0 (moderate scale value)."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -660,14 +660,14 @@ def store_data_sparse_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_store_data_sparse():
     """Store with sparse input data (90% zeros)."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -739,14 +739,14 @@ def store_data_periodic_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_store_data_periodic():
     """Store with periodic input data (sine wave)."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -806,14 +806,14 @@ def store_dynamic_scale_int64_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_store_dynamic_scale_int64():
     """Store with INT64 dynamic scale."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -880,14 +880,14 @@ def store_multiple_calls_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_store_multiple_calls():
     """Multiple store calls with different scales."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -973,14 +973,14 @@ def per_channel_int32_to_fp16_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_per_channel_int32_to_fp16():
     """Per-channel INT32 -> FP16 dequantization."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -1069,14 +1069,14 @@ def per_channel_move_int32_to_fp16_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_per_channel_move_int32_to_fp16():
     """Per-channel move INT32 -> FP16 dequantization."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -1151,7 +1151,7 @@ def per_channel_store_tile_single_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_per_channel_store_tile_offset():
     """Per-channel store_tile with multiple tile offsets, region-level golden check.
 
@@ -1166,7 +1166,7 @@ def test_per_channel_store_tile_offset():
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -1251,14 +1251,14 @@ def per_channel_store_tile_dynamic_scale_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_per_channel_store_tile_dynamic_scale():
     """Per-channel store_tile with dynamic scale tensor."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -1323,14 +1323,14 @@ def no_quant_store_fp32_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_no_quant_store_fp32():
     """Baseline: FP32 store without quantization."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -1385,14 +1385,14 @@ def no_quant_store_int32_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_no_quant_store_int32():
     """Baseline: INT32 store without quantization."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -1457,14 +1457,14 @@ def no_quant_move_fp32_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_no_quant_move_fp32():
     """Baseline: FP32 move without quantization."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -1519,14 +1519,14 @@ def no_quant_store_tile_fp32_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_no_quant_store_tile_fp32():
     """Baseline: FP32 store_tile without quantization."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 

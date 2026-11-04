@@ -27,8 +27,8 @@ def _check_npu():
     try:
         torch.npu.set_device(ST_DEVICE)
         name = torch.npu.get_device_name()
-        if "Ascend950" not in name:
-            pytest.skip(f"Device {name} is not A5 (Ascend950). Skip.")
+        if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
@@ -55,7 +55,7 @@ def pto_assert_doc_examples_kernel(
         out[0] = 1
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_pto_assert_doc_examples():
     """Verify all pto_assert.md documentation examples with True conditions.
 
@@ -85,7 +85,7 @@ def pto_assert_fail_example_kernel(
         out[0] = 1
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_pto_assert_fail_example():
     """Trigger assertion failure to capture device log output format.
 

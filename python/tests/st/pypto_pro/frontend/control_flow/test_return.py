@@ -359,7 +359,7 @@ PLAIN_DEF_RETURN_HELPERS_KERNELS = {
 # ===================================================================
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_return_early():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -382,7 +382,7 @@ def test_return_early():
         logging.info("%s passed!", case)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_return_in_if():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -402,7 +402,7 @@ def test_return_in_if():
             logging.info("test_return_in_if [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_plain_def_return_helpers():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -617,7 +617,7 @@ def for_while_if_return_else_kernel(
 # ===================================================================
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -636,7 +636,7 @@ def test_while_return():
     logging.info("test_while_return passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_if_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -655,7 +655,7 @@ def test_while_if_return():
     logging.info("test_while_if_return passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_while_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -674,7 +674,7 @@ def test_for_while_return():
     logging.info("test_for_while_return passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_4layer_if_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -693,7 +693,7 @@ def test_for_4layer_if_return():
     logging.info("test_for_4layer_if_return passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_while_if_return_else():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -786,7 +786,7 @@ def for_3layer_direct_return_kernel(
                 return
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_direct_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -805,7 +805,7 @@ def test_for_direct_return():
     logging.info("test_for_direct_return passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_3layer_direct_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -864,7 +864,7 @@ def for_while_8layer_return_kernel(
                 i1 = i1 + 1
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_while_8layer_return():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -920,7 +920,7 @@ def return_unaligned_fp16_kernel(
                 pl.store(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_return_unaligned_shape():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -996,7 +996,7 @@ def return_tile_group_kernel(
         pl.store(out, ac, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_return_tile_group_kernel():
     """LOAD-N01: Basic load to L1 (FP16), verify via matmul-with-identity."""
     device = ST_DEVICE

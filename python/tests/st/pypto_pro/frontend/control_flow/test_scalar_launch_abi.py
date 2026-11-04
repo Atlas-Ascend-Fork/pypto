@@ -49,7 +49,7 @@ def scalar_launch_abi_kernel(
         pl.setval(unsigned_out, 0, u64)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("capture", [False, True], ids=["eager", "graph"])
 @pytest.mark.parametrize("upper,shape,float_bits", [
     (False, (65, 96), 0x80000000),

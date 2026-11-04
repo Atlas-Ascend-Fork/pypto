@@ -44,14 +44,14 @@ _C0_BYTES = 32
 _FRACTAL_NZ_ROW = 16
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
 
 
 def _nz_geometry(rows, cols, itemsize, compact):
@@ -107,7 +107,7 @@ def _make_kernel(rows, cols, torch_dtype, compact, src_rows, flat_rows, c0, nz_b
 
 def _run(rows, cols, torch_dtype, compact=1, src_rows=None):
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     src_rows = rows if src_rows is None else src_rows
 
     itemsize = torch.empty((), dtype=torch_dtype).element_size()
@@ -133,61 +133,61 @@ def _run(rows, cols, torch_dtype, compact=1, src_rows=None):
     )
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_single_column_group():
     """fp16 spans 128 elements per register, so 128 columns is exactly one group."""
     _run(32, 128, torch.float16)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_two_column_groups():
     """Two groups, so the step between them is exercised at all."""
     _run(32, 256, torch.float16)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_four_column_groups():
     """More groups than the 8 panels one store scatters across, so the step compounds."""
     _run(16, 512, torch.float16)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_single_source_row():
     """One row per group: the row walk runs once and must still land each group."""
     _run(16, 256, torch.float16, src_rows=1)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_source_shorter_than_destination():
     """The destination's fractal geometry comes from its own valid rows, not the source's."""
     _run(32, 256, torch.float16, src_rows=17)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_plus_one_compact():
     """compact=2 pads each panel by a row, changing the between-group step."""
     _run(32, 256, torch.float16, compact=2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_plus_one_compact_partial_rows():
     """The padded-panel step together with a short source."""
     _run(32, 256, torch.float16, compact=2, src_rows=17)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_fp32_narrower_group():
     """fp32 spans 64 elements per register, so 256 columns is four groups."""
     _run(32, 256, torch.float32)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_int8_byte_path():
     """1-byte dtypes are reinterpreted as uint8_t before the walk."""
     _run(32, 512, torch.int8)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_int8_byte_path_partial_rows():
     """The byte path with a short source, covering its pointer handling too."""
     _run(32, 512, torch.int8, src_rows=9)

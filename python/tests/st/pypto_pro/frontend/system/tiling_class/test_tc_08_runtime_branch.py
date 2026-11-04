@@ -69,7 +69,7 @@ def kernel_branch(
 class TestRuntimeBranch:
     """Test all 3 branches: add, sub, mul via tiling.opkind[0]."""
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_opkind_0_add(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -88,7 +88,7 @@ class TestRuntimeBranch:
         z_ref = (x.float() + y.float()).half()
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_opkind_1_sub(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -107,7 +107,7 @@ class TestRuntimeBranch:
         z_ref = (x.float() - y.float()).half()
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_opkind_2_mul(self):
         device = ST_DEVICE
         torch.npu.set_device(device)

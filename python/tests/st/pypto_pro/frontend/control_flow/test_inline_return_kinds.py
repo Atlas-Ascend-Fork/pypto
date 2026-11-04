@@ -250,7 +250,7 @@ def inline_return_tile_kernel(
         pl.store_tile(z, tile_c, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("flag, expected", [(True, [5, 6, 11]), (False, [15, 16, 31])])
 def test_inline_return_pair(flag, expected):
     """同构 tuple 返回值经背景数组合流后,两个元素都写回正确。"""
@@ -258,7 +258,7 @@ def test_inline_return_pair(flag, expected):
     assert _run(inline_return_pair_kernel, 3, flag, 5) == expected
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("flag, expected", [(True, [5, 6, 11]), (False, [15, 16, 31])])
 def test_inline_return_named_tuple(flag, expected):
     """具名 tuple 返回值平铺成叶子槽后,.lo / .hi 仍读到本分支写入的值。"""
@@ -266,7 +266,7 @@ def test_inline_return_named_tuple(flag, expected):
     assert _run(inline_return_named_tuple_kernel, 3, flag, 5) == expected
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("flag, expected", [(True, [5, 6, 11]), (False, [15, 16, 31])])
 def test_inline_return_struct(flag, expected):
     """struct 返回值作为整体对象合流:两个分支各建一个 struct,整体赋值给同一个槽。"""
@@ -274,7 +274,7 @@ def test_inline_return_struct(flag, expected):
     assert _run(inline_return_struct_kernel, 3, flag, 5) == expected
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("flag, expected", [(True, [5, 6, 7, 13]), (False, [15, 16, 17, 33])])
 def test_inline_return_struct_array(flag, expected):
     """struct 数组:同构 tuple 走背景数组,两个 struct 元素逐个拷贝进同一个数组槽。"""
@@ -282,7 +282,7 @@ def test_inline_return_struct_array(flag, expected):
     assert _run(inline_return_struct_array_kernel, 4, flag, 5) == expected
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("flag, expected", [(True, [5, 11, 6]), (False, [15, 31, 0])])
 def test_inline_return_struct_in_tuple(flag, expected):
     """struct 嵌在异构 tuple 里:struct 元素作为一个整体叶子合流,字段读回仍走合流后的对象。"""
@@ -290,7 +290,7 @@ def test_inline_return_struct_in_tuple(flag, expected):
     assert _run(inline_return_struct_in_tuple_kernel, 3, flag, 5) == expected
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("flag, expected", [(True, [5, 6, 11]), (False, [15, 16, 0])])
 def test_inline_return_aggregate(flag, expected):
     """异构 tuple:嵌套的同构部分走数组,bool 走独立叶子槽,两者都随分支写回。"""
@@ -298,7 +298,7 @@ def test_inline_return_aggregate(flag, expected):
     assert _run(inline_return_aggregate_kernel, 3, flag, 5) == expected
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("base, expected", [(7, [7]), (0, [100])])
 def test_inline_return_nothing(base, expected):
     """全 bare return 的 helper:提前退出跳过后续写入,且不产生任何返回值槽。"""
@@ -306,7 +306,7 @@ def test_inline_return_nothing(base, expected):
     assert _run(inline_return_nothing_kernel, 1, base) == expected
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("flag", [True, False])
 def test_inline_return_tile(flag):
     """tile 返回值:合流槽被整体拷贝覆盖,存出的必须是被选中那个 tile 的内容。
@@ -400,7 +400,7 @@ def inline_return_shapes_kernel(
         pl.setval(out, 5, total)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize(
     "flag, limit, value, expected",
     [

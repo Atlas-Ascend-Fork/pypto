@@ -247,8 +247,9 @@ def test_sync_rejects_all_wait_pipe_in_parser():
         func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
-def test_sync_rejects_aic_only_path_in_vector_section():
-    @pl.jit(auto_mutex=False)
+@pytest.mark.parametrize("arch", ["3510", "9201"])
+def test_sync_rejects_aic_only_path_in_vector_section(arch):
+    @pl.jit(arch=arch, auto_mutex=False)
     def func(_jit_entry: pl.DT_INT64):
         with pl.section_vector():
             pl.system.sync_src(
@@ -257,12 +258,13 @@ def test_sync_rejects_aic_only_path_in_vector_section():
                 event_id=0,
             )
 
-    with pytest.raises(NotSupported, match="unsupported 3510 synchronization path on AIV"):
+    with pytest.raises(NotSupported, match="unsupported synchronization path on AIV"):
         func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
-def test_sync_rejects_aiv_only_path_in_cube_section():
-    @pl.jit(auto_mutex=False)
+@pytest.mark.parametrize("arch", ["3510", "9201"])
+def test_sync_rejects_aiv_only_path_in_cube_section(arch):
+    @pl.jit(arch=arch, auto_mutex=False)
     def func(_jit_entry: pl.DT_INT64):
         with pl.section_cube():
             pl.system.sync_dst(
@@ -271,12 +273,13 @@ def test_sync_rejects_aiv_only_path_in_cube_section():
                 event_id=0,
             )
 
-    with pytest.raises(NotSupported, match="unsupported 3510 synchronization path on AIC"):
+    with pytest.raises(NotSupported, match="unsupported synchronization path on AIC"):
         func.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
 
 
-def test_sync_rejects_unsupported_aic_pipe_path():
-    @pl.jit(auto_mutex=False)
+@pytest.mark.parametrize("arch", ["3510", "9201"])
+def test_sync_rejects_unsupported_aic_pipe_path(arch):
+    @pl.jit(arch=arch, auto_mutex=False)
     def func(_jit_entry: pl.DT_INT64):
         with pl.section_cube():
             pl.system.sync_src(
@@ -285,7 +288,7 @@ def test_sync_rejects_unsupported_aic_pipe_path():
                 event_id=0,
             )
 
-    with pytest.raises(NotSupported, match="unsupported 3510 synchronization path on AIC"):
+    with pytest.raises(NotSupported, match="unsupported synchronization path on AIC"):
         func.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
 
 

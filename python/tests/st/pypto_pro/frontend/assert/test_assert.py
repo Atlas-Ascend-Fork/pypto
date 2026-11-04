@@ -32,8 +32,8 @@ def _check_npu():
     try:
         torch.npu.set_device(ST_DEVICE)
         name = torch.npu.get_device_name()
-        if "Ascend950" not in name:
-            pytest.skip(f"Device {name} is not A5 (Ascend950). Skip.")
+        if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
@@ -53,7 +53,7 @@ def assert_cond_only_kernel(
         out[0] = 1
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_assert_cond_only():
     """测试 pl.pto_assert 的最简用法——仅传入条件参数（无消息），验证条件为真时断言通过、不阻断执行。
 
@@ -125,7 +125,7 @@ def assert_for_loop_kernel(
         out[0] = acc
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_assert_for_loop():
     """测试 pl.pto_assert 在 for 循环内的使用，验证断言在循环控制流中每轮迭代能正确检查条件。
 
@@ -206,7 +206,7 @@ def assert_fail_kernel(
         out[0] = 1
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_assert_fail_expected():
     """测试 pl.pto_assert(False) 的断言失败行为：条件为 False 时仅记录设备日志，不抛 host 侧 Python 异常。
 

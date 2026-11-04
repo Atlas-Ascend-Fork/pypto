@@ -53,8 +53,8 @@ def _check_npu():
     try:
         torch.npu.set_device(ST_DEVICE)
         name = torch.npu.get_device_name()
-        if "Ascend950" not in name:
-            pytest.skip(f"Device {name} is not A5 (Ascend950). Skip.")
+        if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
@@ -120,7 +120,7 @@ def add_dynamic(
                 pl.store_tile(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_dynamic_one_variant_for_all_shapes():
     """DYNAMIC-only kernel: 3 distinct shapes must compile exactly once."""
     _check_npu()
@@ -160,7 +160,7 @@ def add_static(
                 pl.store_tile(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_static_one_variant_per_distinct_shape():
     """Fully-STATIC kernel: 3 distinct shapes must compile 3 variants; a repeat reuses."""
     _check_npu()
@@ -200,7 +200,7 @@ def add_mixed(
                 pl.store_tile(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_mixed_dynamic_axis_change_reuses_static_axis_change_recompiles():
     """[DYNAMIC, STATIC]: N changes reuse; M changes (STATIC) recompile.
 
@@ -247,7 +247,7 @@ def add_ellipsis(
                 pl.store_tile(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_ellipsis_tail_expands_to_static_dims():
     """[DYNAMIC, ...]: first axis is DYNAMIC (reused), tail axes are STATIC (recompile).
 
@@ -293,7 +293,7 @@ def add_ellipsis_3d(
                     pl.store_tile(z, tile_c, [b, i, j], order=[1, 2])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_ellipsis_accepts_higher_rank():
     """[DYNAMIC, ...] must accept a 3-D tensor whose tail expands to two STATIC dims."""
     _check_npu()

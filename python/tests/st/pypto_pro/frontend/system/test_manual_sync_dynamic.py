@@ -109,14 +109,14 @@ SYNC_ALL_SHAPES = [
 ]
 
 
-def _require_a5() -> None:
+def _require_a5_or_a6() -> None:
     try:
         torch.npu.set_device(ST_DEVICE)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
-        pytest.skip(f"Current device is {device_name}, not A5 (Ascend950)")
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {device_name}, not A5/A6 (Ascend950/Ascend960)")
 
 
 # === T01: vector pipeline + dynamic event/mutex + buffer reuse =====================
@@ -920,7 +920,7 @@ def _make_inputs(shape):
 
 
 def _check_add(kernel, shape, *extra_args, used_cores=1):
-    _require_a5()
+    _require_a5_or_a6()
     x, y, out = _make_inputs(shape)
     kernel[None, used_cores](x, y, out, *extra_args)
     torch.npu.synchronize()
@@ -929,7 +929,7 @@ def _check_add(kernel, shape, *extra_args, used_cores=1):
 
 
 def _check_dynamic_control_flow(shape, event_id, condition):
-    _require_a5()
+    _require_a5_or_a6()
     x, y, out = _make_inputs(shape)
     scratch = torch.full(shape, -12345.0, device=ST_DEVICE, dtype=torch.float32)
     t09_dynamic_control_flow[None, 1](x, y, out, scratch, event_id, condition)
@@ -940,7 +940,7 @@ def _check_dynamic_control_flow(shape, event_id, condition):
 
 
 def _check_mte2_skipped_consumer(shape):
-    _require_a5()
+    _require_a5_or_a6()
     torch.manual_seed(0)
     x = torch.randn(shape, device=ST_DEVICE, dtype=torch.float32)
     sentinel = -12345.0
@@ -953,7 +953,7 @@ def _check_mte2_skipped_consumer(shape):
 
 
 def _check_mte3_overlapping_stores(shape):
-    _require_a5()
+    _require_a5_or_a6()
     torch.manual_seed(0)
     x = torch.randn(shape, device=ST_DEVICE, dtype=torch.float32)
     out = torch.empty((1, shape[1]), device=ST_DEVICE, dtype=torch.float32)
@@ -963,7 +963,7 @@ def _check_mte3_overlapping_stores(shape):
 
 
 def _make_cube_barrier_inputs(shape, out_rows=64):
-    _require_a5()
+    _require_a5_or_a6()
     m, k, n = shape
     torch.manual_seed(0)
     # Small integers are represented exactly by FP16 and keep the synchronization
@@ -999,7 +999,7 @@ def _check_mte1_barrier(kernel, shape):
 
 
 def _check_cube(shape):
-    _require_a5()
+    _require_a5_or_a6()
     m, k, n = shape
     torch.manual_seed(0)
     a = torch.randint(-2, 3, (m, k), dtype=torch.int32).to(device=ST_DEVICE, dtype=torch.float16)
@@ -1011,7 +1011,7 @@ def _check_cube(shape):
 
 
 def _check_scalar(shape):
-    _require_a5()
+    _require_a5_or_a6()
     torch.manual_seed(0)
     x = torch.randint(-100, 100, shape, device=ST_DEVICE, dtype=torch.int32)
     out = torch.empty_like(x)
@@ -1022,27 +1022,27 @@ def _check_scalar(shape):
     torch.testing.assert_close(out, ref, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", DYNAMIC_SHAPES)
 def test_t01_a01_a04_a07_a08_b06_b09_f01_f02_f05_f06_i02_i03_i05(shape):
     """T01: vector producer/consumer order, ping-pong IDs, mutexes and tails."""
     _check_add(t01_vector_event_mutex_reuse, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t01_large_shape_stresses_event_mutex_reuse():
     """T01 stress: 2048x2048 executes 65536 tile iterations with address reuse."""
     _check_add(t01_vector_event_mutex_reuse, LARGE_DYNAMIC_SHAPE)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_i01_same_jit_kernel_runs_sequential_dynamic_shapes():
     """I01: one JIT object executes several shapes sequentially in one test process."""
     for shape in ((1, 64), (3, 96), (2, 128), (5, 192)):
         _check_add(t01_vector_event_mutex_reuse, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", DYNAMIC_SHAPES)
 @pytest.mark.parametrize("use_first_event", [True, False], ids=["if", "else"])
 def test_t02_a06_b08_c01_c02_i05_runtime_if_else(shape, use_first_event):
@@ -1050,56 +1050,56 @@ def test_t02_a06_b08_c01_c02_i05_runtime_if_else(shape, use_first_event):
     _check_add(t02_runtime_if_else_event, shape, use_first_event)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("use_first_event", [True, False], ids=["if", "else"])
 def test_t02_large_shape_stresses_transitive_reverse_release(use_first_event):
     """T02 stress: MTE3->MTE2 closes 4096 iterations on either runtime branch."""
     _check_add(t02_runtime_if_else_event, REUSE_STRESS_SHAPE, use_first_event)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", BARRIER_MTE2_SHAPES)
 def test_t03a_d04_mte2_skipped_consumer(shape):
     """D04: bar_mte2 orders same-UB WAW after iterations that skip consumption."""
     _check_mte2_skipped_consumer(shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", BARRIER_MTE3_SHAPES)
 def test_t03b_d05_mte3_overlapping_stores(shape):
     """D05: bar_mte3 orders consecutive stores that overwrite the same GM range."""
     _check_mte3_overlapping_stores(shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", DYNAMIC_SHAPES)
 def test_t03c_d07_d08_d09_d10_d11_barrier_control_flow(shape):
     """D07-D11: control-flow barriers preserve ordering."""
     _check_add(t03c_barrier_control_flow, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", CUBE_MTE1_BARRIER_SHAPES)
 def test_t03d_d03_mte1_skipped_consumer(shape):
     """D03: bar_mte1 drains wide MTE1 writes before the same L0A is reused."""
     _check_mte1_barrier(t03d_mte1_skipped_consumer, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", CUBE_M_FIX_BARRIER_SHAPES)
 def test_t03e_d02_m_overlapping_matmuls(shape):
     """D02: bar_m orders matmul -> matmul_acc through their shared Acc tile."""
     _check_m_barrier(shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", CUBE_M_FIX_BARRIER_SHAPES)
 def test_t03f_d06_fix_overlapping_stores(shape):
     """D06: bar_fix orders distinct FIX stores that overwrite the same GM range."""
     _check_fix_barrier(shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", SYNC_ALL_SHAPES)
 @pytest.mark.parametrize("used_cores", [1, 2], ids=["one-core", "two-cores"])
 def test_t04_e01_hard_aiv_sync_all(shape, used_cores):
@@ -1107,53 +1107,53 @@ def test_t04_e01_hard_aiv_sync_all(shape, used_cores):
     _check_add(t04_hard_aiv_sync_all, shape, used_cores=used_cores)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", DYNAMIC_SHAPES)
 def test_t05_h01_h02_h03_h04_h05_auto_mutex_with_all_manual_sync_forms(shape):
     """T05: in-core manual sync remains correct alongside one cross-subcore pair."""
     _check_add(t05_auto_mutex_manual_sync_barrier, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t05_large_shape_stresses_manual_and_auto_mutex_coexistence():
     """T05 stress: mixed manual/automatic synchronization over 2048x2048."""
     _check_add(t05_auto_mutex_manual_sync_barrier, LARGE_DYNAMIC_SHAPE)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", CUBE_DYNAMIC_SHAPES)
 def test_t06_a02_a05_a09_a10_a11_cube_pipeline(shape):
     """T06: complete forward/reverse cube dependencies and buffer reuse."""
     _check_cube(shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", DYNAMIC_SHAPES)
 def test_t07_a03_scalar_pipeline(shape):
     """T07: MTE2->S->MTE3 synchronization with runtime shape scalar use."""
     _check_scalar(shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t07_large_shape_stresses_scalar_tile_reuse():
     """T07 stress: MTE2/S/MTE3 and reverse release repeat over 2048x2048."""
     _check_scalar(LARGE_DYNAMIC_SHAPE)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", DYNAMIC_SHAPES)
 def test_t08_b01_b02_b03_b04_b05_b07_static_event_forms(shape):
     """T08: all compile-time event ID spellings execute on the same vector flow."""
     _check_add(t08_static_event_forms, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t08_large_shape_stresses_transitive_reverse_release():
     """T08 stress: MTE3->MTE2 protects 4096 static-ID iterations."""
     _check_add(t08_static_event_forms, REUSE_STRESS_SHAPE)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", DYNAMIC_SHAPES)
 @pytest.mark.parametrize("condition", [True, False], ids=["ternary-first", "ternary-second"])
 def test_t09_b10_c03_c04_c05_c06_i04_dynamic_control_flow(shape, condition):
@@ -1161,14 +1161,14 @@ def test_t09_b10_c03_c04_c05_c06_i04_dynamic_control_flow(shape, condition):
     _check_dynamic_control_flow(shape, 6, condition)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("condition", [True, False], ids=["dynamic-id", "derived-id"])
 def test_t09_large_shape_stresses_loop_local_reverse_release(condition):
     """T09 stress: local tiles close 4096 iterations while event 5 remains pending."""
     _check_dynamic_control_flow(REUSE_STRESS_SHAPE, 6, condition)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("shape", DYNAMIC_SHAPES)
 @pytest.mark.parametrize("condition", [True, False], ids=["mutex-8", "mutex-9"])
 def test_t10_f03_f04_f07_f08_f09_mutex_id_forms(shape, condition):
@@ -1176,7 +1176,7 @@ def test_t10_f03_f04_f07_f08_f09_mutex_id_forms(shape, condition):
     _check_add(t10_mutex_id_forms, shape, condition)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("condition", [True, False], ids=["mutex-8", "mutex-9"])
 def test_t10_large_shape_stresses_mutex_pipeline_reuse(condition):
     """T10 stress: mutex forms coexist with 4096 closed pipeline iterations."""

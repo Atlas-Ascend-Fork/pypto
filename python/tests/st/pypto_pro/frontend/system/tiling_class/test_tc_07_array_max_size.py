@@ -138,7 +138,7 @@ def kernel_size2048(
 class TestArrayMaxSizePositive:
     """Positive cases: N within 2048 limit should work."""
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_array_size_512(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -157,7 +157,7 @@ class TestArrayMaxSizePositive:
         z_ref = (x.float() + y.float()).half()
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_array_size_1024(self):
         device = ST_DEVICE
         torch.npu.set_device(device)
@@ -176,7 +176,7 @@ class TestArrayMaxSizePositive:
         z_ref = (x.float() + y.float()).half()
         torch.testing.assert_close(z, z_ref, atol=1e-2, rtol=1e-2)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_array_size_2048(self):
         device = ST_DEVICE
         torch.npu.set_device(device)

@@ -49,6 +49,181 @@ NEG_INF = -1e30
 #   Cube 保存 QK，Vector 段按 [M半块, N块] 视图跨全部 N 块完成 Softmax
 # =============================================================================
 @pl.jit(auto_mutex=True)
+def matmul_softmax_kernel_a6(
+    a: pl.Tensor[[pl.DYNAMIC, K_SIZE], pl.DT_FP16],
+    b: pl.Tensor[[K_SIZE, pl.DYNAMIC], pl.DT_FP16],
+    out: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
+    workspace: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
+):
+    m = a.shape[0]
+    n = b.shape[1]
+    n_tiles = (n + TILE_N - 1) // TILE_N
+    valid_m = pl.min(TILE_M, m)
+
+    # ---- Cube Tile：直接计算 QK = A @ B ----
+    tt_a_mat = pl.TileType(
+        shape=[TILE_M, K_SIZE], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, valid_shape=[-1, -1]
+    )
+    tt_b_mat = pl.TileType(
+        shape=[K_SIZE, TILE_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, valid_shape=[-1, -1]
+    )
+    tt_left = pl.TileType(
+        shape=[TILE_M, K_SIZE], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left, valid_shape=[-1, -1], compact=1
+    )
+    tt_right = pl.TileType(
+        shape=[K_SIZE, TILE_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Right, valid_shape=[-1, -1], compact=1
+    )
+    tt_acc = pl.TileType(
+        shape=[TILE_M, TILE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc, valid_shape=[-1, -1], compact=1
+    )
+
+    a_l1 = pl.make_tile_group(type=tt_a_mat, addrs=0x0000, mutex_ids=[0])
+    b_l1 = pl.make_tile_group(type=tt_b_mat, addrs=0x4000, mutex_ids=[1])
+    a_l0a = pl.make_tile_group(type=tt_left, addrs=0x0000, mutex_ids=[2])
+    b_l0b = pl.make_tile_group(type=tt_right, addrs=0x0000, mutex_ids=[3])
+    qk_l0c = pl.make_tile_group(type=tt_acc, addrs=0x0000, mutex_ids=[4])
+
+    # ---- Vector Tile：每个 AIV 处理最多 32 个 M 行，沿 N 块分三遍完成 Softmax ----
+    tt_vec = pl.TileType(
+        shape=[TILE_M, TILE_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1]
+    )
+    tt_red = pl.TileType(
+        shape=[TILE_M, 1], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, layout=pl.DN, valid_shape=[-1, -1]
+    )
+    # 行归约使用 [M半块, 1] 的 DN 视图，逐元素合并使用同一内存的行主序视图。
+    tt_red_rm = pl.TileType(
+        shape=[1, TILE_M], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1]
+    )
+
+    qk_vec = pl.make_tile_group(type=tt_vec, addrs=0x0000, mutex_ids=[5])
+    tmp_vec = pl.make_tile_group(type=tt_vec, addrs=0x4000, mutex_ids=[6])
+    exp_vec = pl.make_tile_group(type=tt_vec, addrs=0x8000, mutex_ids=[7])
+    red_vec = pl.make_tile_group(type=tt_red, addrs=0xC000, mutex_ids=[8])
+    red_rm = pl.make_tile_group(type=tt_red_rm, addrs=0xC000, mutex_ids=[9])
+    global_max = pl.make_tile_group(type=tt_red, addrs=0xC100, mutex_ids=[10])
+    global_max_rm = pl.make_tile_group(type=tt_red_rm, addrs=0xC100, mutex_ids=[11])
+    global_sum = pl.make_tile_group(type=tt_red, addrs=0xC200, mutex_ids=[12])
+    global_sum_rm = pl.make_tile_group(type=tt_red_rm, addrs=0xC200, mutex_ids=[13])
+
+    # ==== Cube: workspace = QK，N 轴分块 ====
+    with pl.section_cube():
+        cur_a_l1 = a_l1.current()
+        cur_b_l1 = b_l1.current()
+        cur_a_l0a = a_l0a.current()
+        cur_b_l0b = b_l0b.current()
+        cur_qk_l0c = qk_l0c.current()
+        for nj in pl.range(0, n_tiles, 1):
+            n_off = nj * TILE_N
+            valid_n = pl.min(TILE_N, n - n_off)
+            pl.set_validshape(cur_qk_l0c, [valid_m, valid_n])
+            pl.set_validshape(cur_a_l1, [valid_m, K_SIZE])
+            pl.set_validshape(cur_b_l1, [K_SIZE, valid_n])
+            pl.load(cur_a_l1, a, [0, 0])
+            pl.load(cur_b_l1, b, [0, n_off])
+            pl.set_validshape(cur_a_l0a, [valid_m, K_SIZE])
+            pl.set_validshape(cur_b_l0b, [K_SIZE, valid_n])
+            pl.move(cur_a_l0a, cur_a_l1)
+            pl.move(cur_b_l0b, cur_b_l1)
+            pl.matmul(cur_qk_l0c, cur_a_l0a, cur_b_l0b)
+            pl.store(workspace, cur_qk_l0c, [0, n_off])
+        pl.system.set_cross_core(pipe=pl.PipeType.FIX, event_id=0)
+
+    # ==== Vector: 在 QK 上沿 N 方向分块计算 Softmax ====
+    with pl.section_vector():
+        pl.system.wait_cross_core(pipe=pl.PipeType.MTE2, event_id=0)
+        m_off = 0
+        if m_off < m:
+            valid_rows = pl.min(TILE_M, m)
+            cur_qk = qk_vec.current()
+            cur_tmp = tmp_vec.current()
+            cur_exp = exp_vec.current()
+            cur_red = red_vec.current()
+            cur_red_rm = red_rm.current()
+            cur_global_max = global_max.current()
+            cur_global_max_rm = global_max_rm.current()
+            cur_global_sum = global_sum.current()
+            cur_global_sum_rm = global_sum_rm.current()
+            pl.set_validshape(cur_red, [valid_rows, 1])
+            pl.set_validshape(cur_red_rm, [1, valid_rows])
+            pl.set_validshape(cur_global_max, [valid_rows, 1])
+            pl.set_validshape(cur_global_max_rm, [1, valid_rows])
+            pl.set_validshape(cur_global_sum, [valid_rows, 1])
+            pl.set_validshape(cur_global_sum_rm, [1, valid_rows])
+
+            # 第一遍：合并所有 N 块的行最大值。
+            for nj in pl.range(0, n_tiles, 1):
+                n_off = nj * TILE_N
+                valid_n = pl.min(TILE_N, n - n_off)
+                pl.set_validshape(cur_qk, [valid_rows, valid_n])
+                pl.set_validshape(cur_tmp, [valid_rows, valid_n])
+                pl.load(cur_qk, workspace, [0, n_off])
+                pl.maximum(cur_red, cur_qk, cur_tmp, dim=0)
+                if nj == 0:
+                    pl.mul(cur_global_max_rm, cur_red_rm, 1.0)
+                else:
+                    pl.maximum(cur_global_max_rm, cur_global_max_rm, cur_red_rm)
+
+            # 第二遍：基于全局最大值累加所有 N 块的 exp 和。
+            for nj in pl.range(0, n_tiles, 1):
+                n_off = nj * TILE_N
+                valid_n = pl.min(TILE_N, n - n_off)
+                pl.set_validshape(cur_qk, [valid_rows, valid_n])
+                pl.set_validshape(cur_tmp, [valid_rows, valid_n])
+                pl.set_validshape(cur_exp, [valid_rows, valid_n])
+                pl.load(cur_qk, workspace, [0, n_off])
+                pl.expand_sub(cur_exp, cur_qk, cur_global_max, dim=0)
+                pl.exp(cur_exp, cur_exp)
+                pl.sum(cur_red, cur_exp, cur_tmp, dim=0)
+                if nj == 0:
+                    pl.mul(cur_global_sum_rm, cur_red_rm, 1.0)
+                else:
+                    pl.add(cur_global_sum_rm, cur_global_sum_rm, cur_red_rm)
+
+            # 第三遍：逐块归一化并直接写回 out。
+            for nj in pl.range(0, n_tiles, 1):
+                n_off = nj * TILE_N
+                valid_n = pl.min(TILE_N, n - n_off)
+                pl.set_validshape(cur_qk, [valid_rows, valid_n])
+                pl.set_validshape(cur_exp, [valid_rows, valid_n])
+                pl.load(cur_qk, workspace, [0, n_off])
+                pl.expand_sub(cur_exp, cur_qk, cur_global_max, dim=0)
+                pl.exp(cur_exp, cur_exp)
+                pl.expand_div(cur_exp, cur_exp, cur_global_sum, dim=0)
+                pl.store(out, cur_exp, [0, n_off])
+
+
+
+@pytest.mark.parametrize(
+    "m,n",
+    [
+        (32, 64),
+        (33, 64),
+        (64, 64),
+        (48, 48),
+        (48, 1000),
+        (48, 1024),
+        (16, 4096),
+    ],
+)
+@pytest.mark.soc("960")
+def test_matmul_softmax_kernel_a6(m, n):
+    device = ST_DEVICE
+    torch.manual_seed(0)
+    a = torch.randn(m, K_SIZE, device=device, dtype=torch.float16) * 0.1
+    b = torch.randn(K_SIZE, n, device=device, dtype=torch.float16) * 0.1
+    out = torch.zeros(m, n, device=device, dtype=torch.float32)
+    workspace = torch.zeros(m, n, device=device, dtype=torch.float32)
+
+    matmul_softmax_kernel_a6(a, b, out, workspace)
+    torch.npu.synchronize()
+
+    matmul_golden = torch.matmul(a.float(), b.float())
+    torch.testing.assert_close(workspace, matmul_golden, rtol=1e-2, atol=1e-2)
+    golden = torch.softmax(matmul_golden, dim=-1)
+    torch.testing.assert_close(out, golden, rtol=1e-2, atol=1e-2)
+
+
+@pl.jit(auto_mutex=True)
 def matmul_softmax_kernel(
     a: pl.Tensor[[pl.DYNAMIC, K_SIZE], pl.DT_FP16],
     b: pl.Tensor[[K_SIZE, pl.DYNAMIC], pl.DT_FP16],

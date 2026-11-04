@@ -101,14 +101,14 @@ def store_tile_basic_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_store_tile_basic():
     """Test store_tile basic scenario."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -178,7 +178,7 @@ def store_tile_offset_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("tile_row,tile_col", [(0, 1), (1, 0), (1, 1)], ids=["0_1", "1_0", "1_1"])
 def test_store_tile_offset(tile_row, tile_col):
     """store_tile with different tile offsets (single K=64 block product)."""
@@ -186,7 +186,7 @@ def test_store_tile_offset(tile_row, tile_col):
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -254,14 +254,14 @@ def store_tile_relu_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_store_tile_relu():
     """Test store_tile + ReLU fusion."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -340,7 +340,7 @@ def per_channel_store_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def _per_channel_scale_values(pattern: str) -> list:
     """Generate a per-column [1, 64] scale pattern."""
     if pattern == "varying":
@@ -356,7 +356,7 @@ def _per_channel_scale_values(pattern: str) -> list:
     raise ValueError(f"unknown pattern {pattern}")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("pattern", ["varying", "alternating", "extreme", "zero", "negative"])
 def test_per_channel_scale_pattern(pattern):
     """Per-channel (scale=Tile) store with different per-column scale patterns."""
@@ -364,7 +364,7 @@ def test_per_channel_scale_pattern(pattern):
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -451,14 +451,14 @@ def per_channel_move_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_per_channel_move_varying_scale():
     """Test per-channel move with varying scale values."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -541,14 +541,14 @@ def per_channel_store_tile_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_per_channel_store_tile():
     """Test per-channel store_tile basic scenario."""
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 

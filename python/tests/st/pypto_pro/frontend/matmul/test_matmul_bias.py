@@ -191,7 +191,7 @@ def kernel_bias_dynamic_m(
                 pl.store_tile(out, ac, [mi, ni])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_fp16():
     """FP16 input + FP32 bias: basic correctness + Mat(FP16)→Bias(FP32) move type conversion."""
     torch.npu.set_device(DEVICE_ID)
@@ -205,7 +205,7 @@ def test_matmul_bias_fp16():
     torch.testing.assert_close(out, torch.matmul(a.float(), b.float()).half() + bias, rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_bf16():
     """BF16 input + FP32 bias: basic correctness + Mat(BF16)→Bias(FP32) move type conversion."""
     torch.npu.set_device(DEVICE_ID)
@@ -219,7 +219,7 @@ def test_matmul_bias_bf16():
     torch.testing.assert_close(out, torch.matmul(a.float(), b.float()).to(torch.bfloat16) + bias, rtol=5e-2, atol=5e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_dynamic_m():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -372,33 +372,33 @@ def _run_single(kernel, has_bias):
         torch.testing.assert_close(out, torch.matmul(a.float(), b.float()).half(), rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_no_bias_positional():
     _run_single(kernel_no_bias_positional, has_bias=False)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_positional():
     _run_single(kernel_bias_positional, has_bias=True)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_keyword():
     """bias_tile keyword is rejected: only positional bias_tile is supported."""
     _run_expect_keyword_error(kernel_bias_keyword)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_no_bias_with_phase():
     _run_single(kernel_no_bias_phase, has_bias=False)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_positional_with_phase():
     _run_single(kernel_bias_positional_phase, has_bias=True)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_keyword_with_phase():
     """bias_tile keyword is rejected even with phase: only positional bias_tile is supported."""
     _run_expect_keyword_error(kernel_bias_keyword_phase)
@@ -467,7 +467,7 @@ def kernel_mn_4tiles(
                 pl.store_tile(out, ac, [mi, ni])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_n_2tiles():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -480,7 +480,7 @@ def test_matmul_bias_n_2tiles():
     torch.testing.assert_close(out, torch.matmul(a.float(), b.float()).half() + bias, rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_mn_4tiles():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -528,7 +528,7 @@ def kernel_m_4tiles(
             pl.store_tile(out, ac, [mi, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_m_4tiles():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -748,7 +748,7 @@ def kernel_bias_phase_final(
         pl.system.set_mm_layout_transform(enabled=False)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_k_split():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -761,7 +761,7 @@ def test_matmul_bias_k_split():
     torch.testing.assert_close(out, torch.matmul(a.float(), b.float()).half() + bias, rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_k2_split():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -774,7 +774,7 @@ def test_matmul_bias_k2_split():
     torch.testing.assert_close(out, torch.matmul(a.float(), b.float()).half() + bias, rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_k4_split():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -787,7 +787,7 @@ def test_matmul_bias_k4_split():
     torch.testing.assert_close(out, torch.matmul(a.float(), b.float()).half() + bias, rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_mnk_split():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -800,7 +800,7 @@ def test_matmul_bias_mnk_split():
     torch.testing.assert_close(out, torch.matmul(a.float(), b.float()).half() + bias, rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_mnk_k2_split():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -813,7 +813,7 @@ def test_matmul_bias_mnk_k2_split():
     torch.testing.assert_close(out, torch.matmul(a.float(), b.float()).half() + bias, rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_phase_final():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -902,7 +902,7 @@ def kernel_regress_matmul_acc(
         pl.system.set_mm_layout_transform(enabled=False)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_regress_matmul_no_bias():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -914,7 +914,7 @@ def test_regress_matmul_no_bias():
     torch.testing.assert_close(out, torch.matmul(a.float(), b.float()).half(), rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_regress_matmul_no_bias_phase():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -926,7 +926,7 @@ def test_regress_matmul_no_bias_phase():
     torch.testing.assert_close(out, torch.matmul(a.float(), b.float()).half(), rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_regress_matmul_acc():
     torch.npu.set_device(DEVICE_ID)
     torch.manual_seed(42)
@@ -1039,7 +1039,7 @@ def kernel_bias_m_tail(
             pl.store(out, ac, [mi, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_m_tail():
     """M-axis tail (M=200, tile=128, tail=72) with bias: valid_shape on a/acc."""
     torch.npu.set_device(DEVICE_ID)
@@ -1087,7 +1087,7 @@ def kernel_bias_n_tail(
             pl.store(out, ac, [0, ni])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_n_tail():
     """N-axis tail (N=200, tile=128, tail=72) with bias: valid_shape on b/bias/acc."""
     torch.npu.set_device(DEVICE_ID)
@@ -1144,7 +1144,7 @@ def kernel_bias_k_tail(
         pl.system.set_mm_layout_transform(enabled=False)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_k_tail():
     """K-axis tail (K=200, tile=128, tail=72) with bias: K-split + valid_shape on last K-block."""
     torch.npu.set_device(DEVICE_ID)
@@ -1211,7 +1211,7 @@ def kernel_bias_mnk_tail(
         pl.system.set_mm_layout_transform(enabled=False)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_matmul_bias_mnk_tail():
     """MNK combined tail (M=N=K=200, tile=128, tail=72) with bias: all three axes have tail."""
     torch.npu.set_device(DEVICE_ID)

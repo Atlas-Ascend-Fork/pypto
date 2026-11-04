@@ -1,0 +1,7 @@
+program #entry() {
+    function _tiling_copy incast(ptr<int32_t> %x_0, tuple<int64_t> %tiling_0) outcast() #entry(false) #type(Opaque) {
+        int64_t %_expr_tmp_0_0 = getitem(%tiling_0, 0);
+        debug.printf(%_expr_tmp_0_0, format="%d", show_location=false);
+        return;
+    }
+}

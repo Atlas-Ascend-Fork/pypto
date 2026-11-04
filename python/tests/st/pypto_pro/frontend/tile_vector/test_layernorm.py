@@ -208,7 +208,7 @@ def _run_case(rows, cols):
     logging.info("  PASS")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_layernorm_tile_group_vf():
     # partial row-tiles, and multicore.
     cases = [

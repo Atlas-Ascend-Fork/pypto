@@ -47,7 +47,7 @@ def struct_basic_kernel(
         pl.setval(out, 0, ctx.val + ctx.base)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_basic():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -71,7 +71,7 @@ def struct_for_accum_kernel(
         pl.setval(out, 0, acc.total)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_for_accum():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -98,7 +98,7 @@ def struct_conditional_kernel(
         pl.setval(out, 1, br.part)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_conditional():
     _check_npu()
     out = torch.zeros(2, device=ST_DEVICE, dtype=torch.int32)
@@ -125,7 +125,7 @@ def struct_alias_for_kernel(
         pl.setval(out, 1, s.acc)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_alias_for():
     _check_npu()
     out = torch.zeros(2, device=ST_DEVICE, dtype=torch.int32)
@@ -169,7 +169,7 @@ def struct_multi_cross_nested_kernel(
         pl.setval(out, 3, recorder.val)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_multi_cross_nested():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -219,7 +219,7 @@ def struct_multi_alias_const_kernel(
         pl.setval(out, 5, aggregator.v)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_multi_alias_const():
     _check_npu()
     out = torch.zeros(6, device=ST_DEVICE, dtype=torch.int32)
@@ -252,7 +252,7 @@ def struct_chain_alias_kernel(
         pl.setval(out, 1, holder.flag)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_chain_alias():
     _check_npu()
     out = torch.zeros(2, device=ST_DEVICE, dtype=torch.int32)
@@ -298,7 +298,7 @@ def struct_pass_by_ref_kernel(
         pl.setval(out, 1, data.count)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_pass_by_ref():
     _check_npu()
     out = torch.zeros(2, device=ST_DEVICE, dtype=torch.int32)

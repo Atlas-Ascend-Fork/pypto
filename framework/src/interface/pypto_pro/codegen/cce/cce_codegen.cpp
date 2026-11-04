@@ -700,9 +700,9 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& program, npu::tile_
         return emitter_.GetCode();
     }
 
-    // 3510 uses hardware synchronization; other architectures require FFTS setup.
+    // A5/A6 use hardware synchronization; other architectures require FFTS setup.
     bool has_cross_sync = DetectCrossCoreSyncOps(kernel_func->body_);
-    bool needs_ffts = has_cross_sync && (arch_ != npu::tile_fwk::NPUArch::DAV_3510);
+    bool needs_ffts = has_cross_sync && !IsRegisterBasedArch();
 
     ResetFunctionGenerationState();
     RegisterTilingStructTypes(kernel_func);
@@ -2832,8 +2832,15 @@ void CCECodegen::EmitTilingStructCopy(const ir::FunctionPtr& func)
         auto emit_vector_copy = [&]() {
             emitter_.EmitLine("__ubuf__ uint8_t *" + name + "_in_ub = (__ubuf__ uint8_t *)get_imm(0);");
             emitter_.EmitLine("constexpr uint32_t " + name + "_len_burst = (" + name + "_all_bytes + 31) / 32;");
-            emitter_.EmitLine("copy_gm_to_ubuf_align_v2((__ubuf__ uint8_t *)" + name + "_in_ub, (__gm__ uint8_t *)" +
-                              name + "_ptr, 0, 1, " + name + "_len_burst * 32, 0, 0, false, 0, 0, 0);");
+            if (GetArch() == npu::tile_fwk::NPUArch::DAV_9201) {
+                emitter_.EmitLine("copy_gm_to_ubuf_align_v2((__ubuf__ uint8_t *)" + name +
+                                  "_in_ub, (__gm__ uint8_t *)" + name + "_ptr, 0, 1, " + name +
+                                  "_len_burst * 32, 0, 0, false, false, 0, 0, 0, false);");
+            } else {
+                emitter_.EmitLine("copy_gm_to_ubuf_align_v2((__ubuf__ uint8_t *)" + name +
+                                  "_in_ub, (__gm__ uint8_t *)" + name + "_ptr, 0, 1, " + name +
+                                  "_len_burst * 32, 0, 0, false, 0, 0, 0);");
+            }
             emitter_.EmitLine("set_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);");
             emitter_.EmitLine("wait_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);");
             emitter_.EmitLine("copy_data_align64((uint8_t*)&" + name + ", (__ubuf__ uint8_t *)" + name + "_in_ub, " +

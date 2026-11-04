@@ -71,7 +71,7 @@ def test_asc_targets_keep_entry_profiling_and_launch_geometry_consistent(
         assert "pyptoProfInfo.blockNums = blockDim;" in caller
     assert memory in flags
     assert f"ResolveLaunchBlockDim<{cores[0]}, {cores[1]}>" in caller
-    if arch in ("a2", "a3"):
+    if arch in (NpuArch.DAV_1001, NpuArch.DAV_2201):
         llvm_args = config.build_llvm_args(arch)
         assert llvm_args[llvm_args.index("-include") + 1] == "kernel_operator.h"
 
@@ -138,10 +138,35 @@ def test_architecture_specific_mixed_geometry_is_independent(future_config):
     assert "__mix__(1, 1)" in jit._make_global_entry("probe", [], target=future)
 
 
+@pytest.mark.parametrize("cube,vector,qualifier,cores", [
+    (True, True, "__mix__(1, 1)", (1, 1)),
+    (True, False, "__cube__", (1, 0)),
+    (False, True, "__vector__", (0, 1)),
+])
+def test_a6_target_uses_dav_9201_and_one_to_one_geometry(cube, vector, qualifier, cores, assert_a6_golden):
+    config = get_jit_compile_config()
+    target = config.resolve_kernel_target(NpuArch.DAV_9201, has_cube=cube, has_vector=vector)
+    flags = config.build_bisheng_flags(
+        toolkit_home="/toolkit", arch=NpuArch.DAV_9201, target=target, enable_print_debug=False
+    )
+    caller = jit._generate_caller_cpp([], "kernel.cpp", "probe", target=target)
+    entry = jit._make_global_entry("probe", [], target=target)
+    assert_a6_golden(caller, "caller")
+    assert_a6_golden(entry, "entry")
+
+    assert target.npu_arch == "dav-9201"
+    assert (target.aic_per_block, target.aiv_per_block) == cores
+    assert f"__global__ {qualifier} void probe(" in entry
+    assert f"ResolveLaunchBlockDim<{cores[0]}, {cores[1]}>" in caller
+    assert "--npu-arch=dav-9201" in flags
+    assert "-DREGISTER_BASE" in flags
+    assert config.build_llvm_args(NpuArch.DAV_9201) == config.build_llvm_args(NpuArch.DAV_3510)
+
+
 def test_missing_architecture_is_not_assumed_to_use_a5_geometry():
     """Unknown arch names are rejected at the parse boundary; unconfigured members fail loudly."""
-    with pytest.raises(InvalidVal, match="unknown arch.*a6"):
-        normalize_arch("a6")
+    with pytest.raises(InvalidVal, match="unknown arch.*a7"):
+        normalize_arch("a7")
     with pytest.raises(InvalidVal, match="does not define kernel_targets"):
         get_jit_compile_config().resolve_kernel_target(NpuArch.DAV_3113, has_cube=True, has_vector=True)
 

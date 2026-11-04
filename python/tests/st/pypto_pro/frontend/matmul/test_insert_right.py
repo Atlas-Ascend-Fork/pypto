@@ -52,6 +52,88 @@ def _require_a5(device):
 
 
 @pl.jit()
+def insert_zn_right_kernel_a6(
+    lhs: pl.Tensor[[M, K], pl.DT_FP16],
+    d: pl.Tensor[[K, N], pl.DT_FP16],  # right-operand data; matmul uses B = d^T
+    out: pl.Tensor[[M, N], pl.DT_FP32],
+):
+    # RIGHT-operand L1 buffer declared ZN -> the Mat(ZN)->Right(ZN) move transposes it.
+    rhs_mat = pl.make_tile(
+        pl.TileType(shape=[K, N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
+        addr=0x20000,
+    )
+
+    with pl.section_vector():
+        tile_d = pl.make_tile(
+            pl.TileType(shape=[K, N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec), addr=0x0000
+        )
+        tile_nz = pl.make_tile(
+            pl.TileType(shape=[K, N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, layout=pl.NZ),
+            addr=0x4000,
+        )
+        pl.load(tile_d, d, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
+        pl.move(tile_nz, tile_d)  # ND -> NZ (same shape)
+        pl.system.sync_src(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=2)
+        pl.system.sync_dst(set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=2)
+        pl.insert(rhs_mat, tile_nz, [0, 0])  # NZ tile -> ZN Mat, column offset (FA-style)
+        pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=2)
+
+    with pl.section_cube():
+        lhs_mat = pl.make_tile(
+            pl.TileType(shape=[M, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
+            addr=0x0000,
+        )
+        lhs_left = pl.make_tile(
+            pl.TileType(shape=[M, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left, layout=pl.NZ),
+            addr=0x0000,
+        )
+        rhs_right = pl.make_tile(
+            pl.TileType(shape=[K, N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Right, layout=pl.ZN),
+            addr=0x0000,
+        )
+        c_l0c = pl.make_tile(
+            pl.TileType(shape=[M, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc, layout=pl.NZ, fractal=1024),
+            addr=0x0000,
+        )
+
+        pl.load(lhs_mat, lhs, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE1, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE1, event_id=0)
+        pl.move(lhs_left, lhs_mat)
+        pl.system.wait_cross_core(pipe=pl.PipeType.MTE1, event_id=2, sync_mode=pl.CrossCoreSyncMode.INTRA_BLOCK)
+        pl.move(rhs_right, rhs_mat)  # Mat(ZN) -> Right(ZN): TRANSPOSE
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE1, wait_pipe=pl.PipeType.M, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE1, wait_pipe=pl.PipeType.M, event_id=0)
+        pl.matmul(c_l0c, lhs_left, rhs_right)  # out = L @ d^T
+        pl.system.sync_src(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
+        pl.store(out, c_l0c, [0, 0])
+
+
+
+
+@pytest.mark.soc("960")
+def test_insert_zn_right_kernel_a6():
+    device = ST_DEVICE
+    torch.manual_seed(0)
+    lhs = torch.randn([M, K], device=device, dtype=torch.float16)
+    d = torch.randn([K, N], device=device, dtype=torch.float16)
+    out = torch.zeros([M, N], device=device, dtype=torch.float32)
+
+    insert_zn_right_kernel_a6(lhs, d, out)
+    torch.npu.synchronize()
+
+    ref = torch.matmul(lhs.float(), d.float())  # B = d^T, transposed on-chip
+    logging.info("max|out - L@d^T| = %s", (out - ref).abs().max().item())
+    torch.testing.assert_close(out, ref, rtol=2e-2, atol=2e-2)
+    logging.info("insert_zn_right_kernel OK: right operand transposed on-chip (no pl.transpose, no GM)")
+
+
+
+
+@pl.jit()
 def insert_zn_right_kernel(
     lhs: pl.Tensor[[M, K], pl.DT_FP16],
     d: pl.Tensor[[K, N], pl.DT_FP16],  # right-operand data; matmul uses B = d^T

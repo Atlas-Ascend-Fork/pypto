@@ -21,8 +21,10 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pypto_pro.language as pl
+from pypto_pro.runtime.platform import NpuArch
 import pytest
 import torch
 import torch_npu  # noqa: F401 - installs torch.npu
@@ -98,13 +100,26 @@ def _outputs():
     return tuple(torch.zeros(SIZE, dtype=torch.int32, device=f"npu:{DEVICE_ID}") for _ in range(3))
 
 
-def _check(outputs, kind, blocks):
+def _cv_ratio():
+    """Vector cores per cube block: A5 = 2, A6 = 1."""
+    from pypto_pro.runtime.platform import get_platform_info
+
+    return 1 if get_platform_info().arch == NpuArch.DAV_9201 else 2
+
+
+def _mixed_blocks(cube, vector):
+    """Mixed kernel's launchable block count for the given cube/vector budgets."""
+    return min(cube, vector // _cv_ratio())
+
+
+def _check(outputs, kind, blocks, ratio=None):
     expected = [torch.zeros(SIZE, dtype=torch.int32).reshape(-1, 32) for _ in range(3)]
     if kind != 1:
         expected[0][:blocks, 0] = blocks
         expected[0][:blocks, 1] = 1
     if kind != 0:
-        ratio = 2 if kind == 2 else 1
+        if ratio is None:
+            ratio = _cv_ratio() if kind == 2 else 1
         expected[1][:blocks * ratio, 0] = blocks
         expected[1][:blocks * ratio, 1] = ratio
     expected[2][:TASKS, 0] = torch.arange(TASKS, dtype=torch.int32) * 3 + 7
@@ -112,6 +127,29 @@ def _check(outputs, kind, blocks):
         actual = actual.cpu().reshape(-1, 32)
         torch.testing.assert_close(actual, reference, rtol=0, atol=0)
     print(f"kind={kind} blocks={blocks}: count/work max_abs_error=0, exact_match=100%")
+
+@pytest.mark.soc("950", "960")
+@pytest.mark.skip_jit_discovery(reason="Host-only core-ratio regression")
+@pytest.mark.parametrize(
+    "arch,ratio,blocks",
+    [(NpuArch.DAV_3510, 2, 3), (NpuArch.DAV_9201, 1, 4)],
+)
+def test_core_ratio_uses_arch_enum(monkeypatch, arch, ratio, blocks):
+    monkeypatch.setattr(
+        "pypto_pro.runtime.platform.get_platform_info", lambda: SimpleNamespace(arch=arch)
+    )
+    assert _cv_ratio() == ratio
+    assert _mixed_blocks(4, 6) == blocks
+
+    outputs = tuple(torch.zeros(SIZE, dtype=torch.int32) for _ in range(3))
+    cube, vector, work = (tensor.reshape(-1, 32) for tensor in outputs)
+    cube[:4, 0] = 4
+    cube[:4, 1] = 1
+    vector[:4 * ratio, 0] = 4
+    vector[:4 * ratio, 1] = ratio
+    work[:TASKS, 0] = torch.arange(TASKS, dtype=torch.int32) * 3 + 7
+    _check(outputs, 2, 4)
+
 
 @pytest.mark.parametrize("kind", range(3), ids=["cube", "vector", "mixed"])
 @pytest.mark.parametrize("limits", [(4, 10), (8, 5)])

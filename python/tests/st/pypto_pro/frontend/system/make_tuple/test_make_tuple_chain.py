@@ -26,21 +26,21 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
 
 
 # =============================================================================
 # Chain attribute access: t.a.b (nested make_tuple)
 # =============================================================================
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def make_tuple_chain_attr_kernel(
     out: pl.Tensor[[1], pl.DT_INT32],
 ):
@@ -51,9 +51,9 @@ def make_tuple_chain_attr_kernel(
         pl.setval(out, 0, val)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_make_tuple_chain_attr():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_attr_kernel(out)
     torch.npu.synchronize()
@@ -65,7 +65,7 @@ def test_make_tuple_chain_attr():
 # Three-level chain: t.a.b.v
 # =============================================================================
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def make_tuple_chain_three_level_kernel(
     out: pl.Tensor[[1], pl.DT_INT32],
 ):
@@ -76,9 +76,9 @@ def make_tuple_chain_three_level_kernel(
         pl.setval(out, 0, root.a.b.v)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_make_tuple_chain_three_level():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_three_level_kernel(out)
     torch.npu.synchronize()
@@ -90,7 +90,7 @@ def test_make_tuple_chain_three_level():
 # make_tuple wrapping tile_group: t.field.next()
 # =============================================================================
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def make_tuple_chain_tile_group_next_kernel(
     a: pl.Tensor[[64, 128], pl.DT_FP16],
 ):
@@ -104,9 +104,9 @@ def make_tuple_chain_tile_group_next_kernel(
         pl.store(a, t, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_make_tuple_chain_tile_group_next():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     a = torch.randn(64, 128, device=ST_DEVICE, dtype=torch.float16)
     expected = a.float().exp().half()
     make_tuple_chain_tile_group_next_kernel[None, 1](a)
@@ -118,7 +118,7 @@ def test_make_tuple_chain_tile_group_next():
 # make_tuple wrapping tile_group: t.field.current()
 # =============================================================================
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def make_tuple_chain_tile_group_current_kernel(
     a: pl.Tensor[[64, 128], pl.DT_FP16],
 ):
@@ -133,9 +133,9 @@ def make_tuple_chain_tile_group_current_kernel(
         pl.store(a, cur, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_make_tuple_chain_tile_group_current():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     a = torch.randn(64, 128, device=ST_DEVICE, dtype=torch.float16)
     expected = a.float().exp().half()
     make_tuple_chain_tile_group_current_kernel[None, 1](a)
@@ -147,7 +147,7 @@ def test_make_tuple_chain_tile_group_current():
 # Four-level chain: t.a.b.c.d
 # =============================================================================
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def make_tuple_chain_four_level_kernel(
     out: pl.Tensor[[1], pl.DT_INT32],
 ):
@@ -159,9 +159,9 @@ def make_tuple_chain_four_level_kernel(
         pl.setval(out, 0, root.a.b.c.w)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_make_tuple_chain_four_level():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_four_level_kernel(out)
     torch.npu.synchronize()
@@ -173,7 +173,7 @@ def test_make_tuple_chain_four_level():
 # Chain reads in arithmetic: t.a.x * 2 + t.a.y
 # =============================================================================
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def make_tuple_chain_arithmetic_kernel(
     out: pl.Tensor[[1], pl.DT_INT32],
 ):
@@ -183,9 +183,9 @@ def make_tuple_chain_arithmetic_kernel(
         pl.setval(out, 0, outer.a.x * 2 + outer.a.y)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_make_tuple_chain_arithmetic():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_arithmetic_kernel(out)
     torch.npu.synchronize()
@@ -197,7 +197,7 @@ def test_make_tuple_chain_arithmetic():
 # make_tuple wrapping a struct_array element: t.s.v
 # =============================================================================
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def make_tuple_chain_struct_array_elem_kernel(
     out: pl.Tensor[[1], pl.DT_INT32],
 ):
@@ -208,9 +208,9 @@ def make_tuple_chain_struct_array_elem_kernel(
         pl.setval(out, 0, t.s.v)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_make_tuple_chain_struct_array_elem():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_struct_array_elem_kernel(out)
     torch.npu.synchronize()
@@ -222,7 +222,7 @@ def test_make_tuple_chain_struct_array_elem():
 # make_tuple wrapping tile_group: t.field.previous()
 # =============================================================================
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def make_tuple_chain_tile_group_previous_kernel(
     a: pl.Tensor[[64, 128], pl.DT_FP16],
 ):
@@ -236,9 +236,9 @@ def make_tuple_chain_tile_group_previous_kernel(
         pl.store(a, t, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_make_tuple_chain_tile_group_previous():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     a = torch.randn(64, 128, device=ST_DEVICE, dtype=torch.float16)
     expected = a.float().exp().half()
     make_tuple_chain_tile_group_previous_kernel[None, 1](a)
@@ -250,7 +250,7 @@ def test_make_tuple_chain_tile_group_previous():
 # make_tuple wrapping tile_group: double buffer via t.field.next() in a loop
 # =============================================================================
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def make_tuple_chain_double_buffer_loop_kernel(
     a: pl.Tensor[[128, 128], pl.DT_FP16],
 ):
@@ -265,9 +265,9 @@ def make_tuple_chain_double_buffer_loop_kernel(
             pl.store(a, t, [i * 64, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_make_tuple_chain_double_buffer_loop():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     a = torch.randn(128, 128, device=ST_DEVICE, dtype=torch.float16)
     expected = a.float().exp().half()
     make_tuple_chain_double_buffer_loop_kernel[None, 1](a)
@@ -279,7 +279,7 @@ def test_make_tuple_chain_double_buffer_loop():
 # make_tuple wrapping tile_group: ring buffer wraps around 3 slots
 # =============================================================================
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def make_tuple_chain_ring_buffer_loop_kernel(
     a: pl.Tensor[[256, 128], pl.DT_FP16],
 ):
@@ -294,9 +294,9 @@ def make_tuple_chain_ring_buffer_loop_kernel(
             pl.store(a, t, [i * 64, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_make_tuple_chain_ring_buffer_loop():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     a = torch.randn(256, 128, device=ST_DEVICE, dtype=torch.float16)
     expected = a.float().exp().half()
     make_tuple_chain_ring_buffer_loop_kernel[None, 1](a)
@@ -308,7 +308,7 @@ def test_make_tuple_chain_ring_buffer_loop():
 # Chain reads accumulated in a for loop
 # =============================================================================
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def make_tuple_chain_loop_accum_kernel(
     out: pl.Tensor[[1], pl.DT_INT32],
 ):
@@ -321,9 +321,9 @@ def make_tuple_chain_loop_accum_kernel(
         pl.setval(out, 0, total)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_make_tuple_chain_loop_accum():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_loop_accum_kernel(out)
     torch.npu.synchronize()
@@ -335,7 +335,7 @@ def test_make_tuple_chain_loop_accum():
 # Chain reads selected by an if/else branch
 # =============================================================================
 
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def make_tuple_chain_if_branch_kernel(
     out: pl.Tensor[[1], pl.DT_INT32],
 ):
@@ -351,9 +351,9 @@ def make_tuple_chain_if_branch_kernel(
         pl.setval(out, 0, total)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_make_tuple_chain_if_branch():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_if_branch_kernel(out)
     torch.npu.synchronize()

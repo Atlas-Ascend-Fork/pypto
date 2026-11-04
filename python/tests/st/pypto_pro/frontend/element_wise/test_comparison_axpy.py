@@ -28,14 +28,14 @@ ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 ALPHA = 2.0
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
 
 
 # ===========================================================================
@@ -72,10 +72,10 @@ def gt_select_kernel(
         pl.store(out, tile_out, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_gt_select():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn(64, 64, device=device, dtype=torch.float32)
     b = torch.randn(64, 64, device=device, dtype=torch.float32)
@@ -107,10 +107,10 @@ def axpy_kernel(
         pl.store(y, tile_y, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_axpy():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     x = torch.randn(64, 64, device=device, dtype=torch.float32)
     y = torch.randn(64, 64, device=device, dtype=torch.float32)

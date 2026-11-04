@@ -205,22 +205,22 @@ def _run_kernel(kernel_func, tiling_cls, arr_size, arr_values, selector_at_0, sh
 class TestArraySizeCompute:
     """Complex cases: verify numerical correctness for large N values."""
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_array_size_32_compute(self):
         full_values = list(range(32))
         _run_kernel(kernel_size32, TilingSize32, 32, full_values, 0)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_array_size_64_compute(self):
         full_values = list(range(64))
         _run_kernel(kernel_size64, TilingSize64, 64, full_values, 0)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_array_size_128_compute(self):
         full_values = list(range(128))
         _run_kernel(kernel_size128, TilingSize128, 128, full_values, 0)
 
-    @pytest.mark.soc("950")
+    @pytest.mark.soc("950", "960")
     def test_array_size_256_compute(self):
         full_values = list(range(256))
         _run_kernel(kernel_size256, TilingSize256, 256, full_values, 0)

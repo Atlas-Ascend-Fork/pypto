@@ -176,6 +176,14 @@ public:
     /** \brief Get the target architecture */
     npu::tile_fwk::NPUArch GetArch() const { return arch_; }
 
+    bool IsRegisterBasedArch() const
+    {
+        return arch_ == npu::tile_fwk::NPUArch::DAV_3510 || arch_ == npu::tile_fwk::NPUArch::DAV_9201;
+    }
+
+    /** \brief CV ratio feature: A5 has two Vector cores per Cube, A6 has one. */
+    int GetVectorCoresPerCube() const { return arch_ == npu::tile_fwk::NPUArch::DAV_9201 ? 1 : 2; }
+
     /** \brief Get the fixed Cube/Vector target selected for this generation. */
     ir::SectionKind GetTarget() const { return target_; }
 

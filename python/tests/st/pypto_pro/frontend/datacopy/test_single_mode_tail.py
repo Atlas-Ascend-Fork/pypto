@@ -39,13 +39,13 @@ K = 128
 N = 128
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
-    if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        pytest.skip("not A5/A6")
 
 
 def _inputs(device, shape, dtype=torch.float16):
@@ -134,11 +134,11 @@ def call_kernel_single_vec0(
 @pytest.fixture(scope="module")
 def _device():
     dev = ST_DEVICE
-    _require_a5(dev)
+    _require_a5_or_a6(dev)
     return dev
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_single_vec0_odd_tail(_device):
     m_total = 289
     a = _inputs(_device, [m_total, K])
@@ -153,5 +153,5 @@ def test_single_vec0_odd_tail(_device):
 
 if __name__ == "__main__":
     dev = ST_DEVICE
-    _require_a5(dev)
+    _require_a5_or_a6(dev)
     test_single_vec0_odd_tail(dev)

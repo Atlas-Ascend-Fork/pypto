@@ -302,7 +302,7 @@ def while_if_break_inner_kernel(
             i = i + 1
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_break():
     # Let kernel discovery reach every variant before validating any output.
     checks = []
@@ -325,7 +325,7 @@ def test_for_break():
         logging.info("%s passed!", case)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_break():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -343,7 +343,7 @@ def test_while_break():
             logging.info("test_while_break [%s] passed! shape=%s", label, shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_if_break_inner():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -361,7 +361,7 @@ def test_for_if_break_inner():
         logging.info("test_for_if_break_inner passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_if_break_inner():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -450,7 +450,7 @@ def for_while_8layer_break_kernel(
                 break
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_while_8layer_break():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -511,7 +511,7 @@ def for_break_first_kernel(
                 break
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_break_first():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -570,7 +570,7 @@ def for_while_if_not_break_continue_kernel(
                 j = j + 1
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_while_if_not_break_continue():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -626,7 +626,7 @@ def break_unaligned_fp16_kernel(
                 break
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_break_unaligned_shape():
     device = ST_DEVICE
     torch.npu.set_device(device)

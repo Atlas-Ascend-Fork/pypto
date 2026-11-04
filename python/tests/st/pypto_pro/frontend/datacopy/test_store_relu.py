@@ -86,13 +86,13 @@ def store_relu_cce_kernel(
         pl.dump_data(relu_out, offsets=[0, 0], shapes=[8, 8])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_store_relu_cce():
     device = ST_DEVICE
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 

@@ -1,0 +1,4 @@
+__global__ __vector__ void probe()
+{
+    probe_impl();
+}

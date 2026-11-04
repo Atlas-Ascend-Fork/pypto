@@ -25,17 +25,19 @@ Complements test_block_ops.py, which covers block ops in general.
 """
 
 from pypto_pro._errors import (
+    CapacityUnknown,
     DynamicShapeUnsupported,
     InvalidArgument,
     InvalidOperation,
     InvalidTile,
     InvalidType,
+    OutOfRange,
 )
 from pypto_pro.ir.op.block_ops import make_mutex_tile_expr, tile_slot_size
 import pypto_pro.language as pl
 import pytest
 
-from pypto.pypto_impl import ir
+from pypto.pypto_impl import NpuArch, ir
 
 
 def _span() -> ir.Span:
@@ -205,6 +207,29 @@ def test_builder_enforces_the_alignment_of_each_memory_space(memory_space, align
 def test_builder_leaves_unaligned_spaces_alone():
     """DDR has no enforced tile alignment, so any address is accepted."""
     assert make_mutex_tile_expr([64, 64], pl.DT_FP16, pl.MemorySpace.DDR, addr=1).kwargs["memref_addr"] == 1
+
+
+def test_a6_warns_and_skips_unknown_capacity(monkeypatch, assert_a6_golden):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "9201")
+
+    def unknown_capacity(arch, memory_space):
+        assert arch == NpuArch.DAV_9201
+        assert memory_space == "Vec"
+        return 0
+
+    monkeypatch.setattr("pypto_pro.runtime.platform.get_memory_limit", unknown_capacity)
+    with pytest.warns(CapacityUnknown, match="Cannot determine Vec capacity"):
+        tile = make_mutex_tile_expr([1, 32], pl.DT_FP16, pl.MemorySpace.Vec, addr=0)
+    assert_a6_golden(tile)
+    assert tile.kwargs["memref_addr"] == 0
+
+
+@pytest.mark.parametrize("arch", ["3510", "9201"])
+def test_known_capacity_is_validated(arch, monkeypatch):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", arch)
+    monkeypatch.setattr("pypto_pro.runtime.platform.get_memory_limit", lambda _arch, _memory_space: 32)
+    with pytest.raises(OutOfRange, match="exceeds Vec capacity"):
+        make_mutex_tile_expr([1, 32], pl.DT_FP16, pl.MemorySpace.Vec, addr=0)
 
 
 # ---------------------------------------------------------------------------

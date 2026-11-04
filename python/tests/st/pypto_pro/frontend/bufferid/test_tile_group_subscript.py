@@ -44,6 +44,10 @@ REPEATED_FULL_M = REPEATED_TILE_M * REPEATED_NTILE
 MM_M, MM_K, MM_N = 256, 128, 256
 MM_TILE = 128
 
+CV_M = 64
+CV_K = 64
+CV_N = 64
+
 VF_TILE_ROWS = 128
 VF_TILE_COLS = 128
 VF_VALID_COLS = 64
@@ -62,7 +66,7 @@ def _vec_tile_type():
 # Test 1: TileGroup 动态下标访问
 #         TileGroup dynamic subscript
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def dynamic_index_kernel(
     a: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
     out: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
@@ -84,7 +88,7 @@ def dynamic_index_kernel(
 # Test 2: mutex_ids=None 时通过 depth 创建 TileGroup
 #         TileGroup depth with mutex_ids=None
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def no_mutex_none_kernel(
     a: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
     out: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
@@ -121,7 +125,7 @@ def pipeline_mixed_subscript_stage(k, a, out, g):
     pl.store(out, tile, [k * TILE_M, 0])
 
 
-@pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
 def pipeline_stage_subscript_kernel(
     a: pl.Tensor[[PIPELINE_FULL_M, TILE_N], pl.DT_FP16],
     out: pl.Tensor[[PIPELINE_FULL_M, TILE_N], pl.DT_FP16],
@@ -136,7 +140,7 @@ def pipeline_stage_subscript_kernel(
 # Test 4: 重复 mutex ID 的 16 槽轮转访问
 #         Round-robin access with repeated mutex IDs
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def repeated_mutex_ids_kernel(
     a: pl.Tensor[[REPEATED_FULL_M, TILE_N], pl.DT_FP16],
     out: pl.Tensor[[REPEATED_FULL_M, TILE_N], pl.DT_FP16],
@@ -166,7 +170,7 @@ def repeated_mutex_ids_kernel(
 # Test 5: 两个 Tile 槽并行存活的预取场景
 #         Prefetch with two live Tile slots
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def prefetch_kernel(
     a: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
     out: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
@@ -196,7 +200,7 @@ def prefetch_kernel(
 # Test 6: 同一算子访问两个 Tile 槽
 #          Two Tile slots used by one operation
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def two_slots_one_op_kernel(
     a: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
     out: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
@@ -223,7 +227,7 @@ def two_slots_one_op_kernel(
 # Test 7: 循环携带 g[0] 和 g[3] 后执行 add
 #          Loop-carried g[0] and g[3] add
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def four_slots_loop_carried_add_kernel(
     a: pl.Tensor[[TILE_M, TILE_N], pl.DT_FP16],
     b: pl.Tensor[[TILE_M, TILE_N], pl.DT_FP16],
@@ -252,7 +256,7 @@ def four_slots_loop_carried_add_kernel(
 # Test 8: if/else 合并重叠 mutex 候选 ID
 #          Merge overlapping mutex candidates across if/else
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def ifelse_overlapping_mutex_ids_kernel(
     a: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
     out: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
@@ -287,7 +291,7 @@ def ifelse_overlapping_mutex_ids_kernel(
 # Test 9: TileGroup 边界内常量下标访问
 #          TileGroup bounded constant subscripts
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def bounded_constant_index_kernel(
     a: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
     out: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
@@ -313,7 +317,7 @@ def bounded_constant_index_kernel(
 # Test 10: 下标 Tile 的 getval/setval 标量访问
 #          Scalar getval/setval on a subscript-selected Tile
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def getval_setval_kernel(
     a: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
     out: pl.Tensor[[FULL_M, TILE_N], pl.DT_FP16],
@@ -352,7 +356,7 @@ def getval_setval_kernel(
 # Test 11: Cube 双缓冲矩阵乘
 #          Cube double-buffered matmul
 # =============================================================================
-@pl.jit(arch="3510", auto_mutex=True)
+@pl.jit(auto_mutex=True)
 def matmul_subscript_kernel(
     a: pl.Tensor[[MM_M, MM_K], pl.DT_FP16],
     b: pl.Tensor[[MM_K, MM_N], pl.DT_FP16],
@@ -456,7 +460,7 @@ def tile_group_alias_patterns_vf_kernel(
         pl.load(tile_pong, x, [0, VF_VALID_COLS])
         vf_add_64_columns(tile_pong, 3.0)
         pl.store(shifted_out, tile_pong, [0, VF_VALID_COLS])
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_subscript_dynamic_index():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -475,7 +479,7 @@ def test_subscript_dynamic_index():
         logging.info("test_subscript_dynamic_index passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_subscript_depth_without_mutex_ids():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -491,7 +495,7 @@ def test_subscript_depth_without_mutex_ids():
         logging.info("test_subscript_depth_without_mutex_ids passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_pipeline_stage_mixed_subscripts():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -507,7 +511,7 @@ def test_pipeline_stage_mixed_subscripts():
         logging.info("test_pipeline_stage_mixed_subscripts passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_subscript_repeated_mutex_ids_round_robin():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -523,7 +527,7 @@ def test_subscript_repeated_mutex_ids_round_robin():
         logging.info("test_subscript_repeated_mutex_ids_round_robin passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_subscript_prefetch_two_slots_live():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -539,7 +543,7 @@ def test_subscript_prefetch_two_slots_live():
         logging.info("test_subscript_prefetch_two_slots_live passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_subscript_two_slots_in_one_op():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -555,7 +559,7 @@ def test_subscript_two_slots_in_one_op():
         logging.info("test_subscript_two_slots_in_one_op passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_subscript_four_slots_loop_carried_add():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -572,7 +576,7 @@ def test_subscript_four_slots_loop_carried_add():
         logging.info("test_subscript_four_slots_loop_carried_add passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_subscript_ifelse_overlapping_mutex_ids():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -588,7 +592,7 @@ def test_subscript_ifelse_overlapping_mutex_ids():
         logging.info("test_subscript_ifelse_overlapping_mutex_ids passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_subscript_bounded_constant_indices():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -607,7 +611,7 @@ def test_subscript_bounded_constant_indices():
         logging.info("test_subscript_bounded_constant_indices passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_subscript_getval_setval():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -629,7 +633,7 @@ def test_subscript_getval_setval():
         logging.info("test_subscript_getval_setval passed! shape=%s", shape)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_subscript_matmul_double_buffer():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -646,7 +650,7 @@ def test_subscript_matmul_double_buffer():
         logging.info("test_subscript_matmul_double_buffer passed! shape=%s", [m, k, n])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_tile_group_alias_patterns_vf():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -681,3 +685,88 @@ if __name__ == "__main__":
     test_subscript_matmul_double_buffer()
     test_tile_group_alias_patterns_vf()
     logging.info("\nAll tests passed!")
+
+
+@pl.jit(auto_mutex=True)
+def cube_vector_four_mutex_kernel_a6(
+    a: pl.Tensor[[CV_M, CV_N], pl.DT_FP32],
+    b: pl.Tensor[[CV_M, CV_K], pl.DT_FP16],
+    c: pl.Tensor[[CV_K, CV_N], pl.DT_FP16],
+    out: pl.Tensor[[CV_M, CV_N], pl.DT_FP32],
+):
+    """Compute a + b @ c with Cube and Vector while using mutex IDs 0..3."""
+    b_l1 = pl.make_tile_group(
+        type=pl.TileType(shape=[CV_M, CV_K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        addrs=0x0000,
+        mutex_ids=[0],
+    )
+    c_l1 = pl.make_tile_group(
+        type=pl.TileType(shape=[CV_K, CV_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        addrs=0x2000,
+        mutex_ids=[1],
+    )
+    b_left = pl.make_tile_group(
+        type=pl.TileType(shape=[CV_M, CV_K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left),
+        addrs=0x0000,
+        mutex_ids=[2],
+    )
+    c_right = pl.make_tile_group(
+        type=pl.TileType(shape=[CV_K, CV_N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Right),
+        addrs=0x0000,
+        mutex_ids=[3],
+    )
+    tile_acc = pl.make_tile(
+        pl.TileType(shape=[CV_M, CV_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc),
+        addr=0x0000,
+    )
+    vec_group = pl.make_tile_group(
+        type=pl.TileType(shape=[CV_M, CV_N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+        addrs=0x0000,
+        mutex_ids=[0, 1, 2, 3],
+    )
+    tile_product = vec_group[1]
+
+    with pl.section_cube():
+        tile_b_l1 = b_l1[0]
+        tile_c_l1 = c_l1[0]
+        tile_b_left = b_left[0]
+        tile_c_right = c_right[0]
+        pl.load(tile_b_l1, b, [0, 0])
+        pl.load(tile_c_l1, c, [0, 0])
+        pl.move(tile_b_left, tile_b_l1)
+        pl.move(tile_c_right, tile_c_l1)
+        pl.matmul(tile_acc, tile_b_left, tile_c_right)
+        pl.system.sync_src(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
+        pl.move(tile_product, tile_acc, acc_to_vec_mode=pl.AccToVecMode.SingleModeVec0)
+        pl.system.set_cross_core(pipe=pl.PipeType.FIX, event_id=0)
+
+    with pl.section_vector():
+        pl.system.wait_cross_core(pipe=pl.PipeType.V, event_id=0)
+
+        tile_a = vec_group[0]
+        tile_sum = vec_group[2]
+        tile_out = vec_group[3]
+
+        pl.load(tile_a, a, [0, 0])
+        pl.add(tile_sum, tile_a, tile_product)
+        pl.move(tile_out, tile_sum)
+        pl.store(out, tile_out, [0, 0])
+
+
+@pytest.mark.soc("960")
+def test_cube_vector_four_mutex_a6():
+    device = ST_DEVICE
+    torch.npu.set_device(device)
+    torch.manual_seed(0)
+    shapes = [[CV_M, CV_K, CV_N]]
+    for m, k, n in shapes:
+        a = torch.rand([m, n], device=device, dtype=torch.float32) * 2.0 - 1.0
+        b = torch.rand([m, k], device=device, dtype=torch.float16) * 0.1
+        c = torch.rand([k, n], device=device, dtype=torch.float16) * 0.1
+        out = torch.zeros([m, n], device=device, dtype=torch.float32)
+        cube_vector_four_mutex_kernel_a6(a, b, c, out)
+        torch.npu.synchronize()
+        golden = a.cpu() + b.cpu().float() @ c.cpu().float()
+        torch.testing.assert_close(out.cpu(), golden, rtol=5e-3, atol=5e-3)
+        logging.info("test_cube_vector_four_mutex passed! shape=%s", [m, k, n])

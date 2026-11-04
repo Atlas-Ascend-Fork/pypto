@@ -58,7 +58,7 @@ def min_const_kernel(
         out[2] = pl.min(7, 7)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_min_const():
     """测试 pl.min 使用 Python int 常量作为参数的场景。
 
@@ -132,7 +132,7 @@ def min_for_kernel(
         out[0] = m.v
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_min_for():
     """测试 pl.min 在 for 循环中作为 running min 累加器的场景。
 
@@ -184,7 +184,7 @@ def min_while_kernel(
         out[0] = acc.best
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_min_while():
     """测试 pl.min 在 while 循环控制流中作为 running min 累加器的场景。
 
@@ -230,7 +230,7 @@ def min_builtin_kernel(
         out[2] = min(7, 7)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_min_builtin():
     """测试 Python 内置 min() 在前端解析时自动转换为 pl.min 的场景。
 

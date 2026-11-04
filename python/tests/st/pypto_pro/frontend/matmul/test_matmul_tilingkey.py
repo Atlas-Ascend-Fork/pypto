@@ -42,13 +42,13 @@ class MatmulTilingKey:
     TileBlock = TilingKeyField(bits=1, values=[0, 1])
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
-    if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        pytest.skip("not A5/A6")
 
 
 @pl.jit(auto_mutex=True, tiling_key=MatmulTilingKey, compile_timeout=300)
@@ -124,7 +124,7 @@ def matmul_tilingkey(
                 pl.store_tile(out, acc, [m_tile_idx, n_tile_idx])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize(
     ("dtype_key", "tile_key", "torch_dtype", "rtol", "atol"),
     [
@@ -137,7 +137,7 @@ def matmul_tilingkey(
 def test_matmul_tilingkey(dtype_key, tile_key, torch_dtype, rtol, atol):
     """All dtype/block key combinations use the matching specialized TileTypes."""
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(42)
     a = torch.randn(M_DIM, D_DIM, device=device, dtype=torch_dtype)
     b = torch.randn(D_DIM, N_DIM, device=device, dtype=torch_dtype)

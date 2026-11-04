@@ -32,14 +32,14 @@ MAX_SCALAR = 0.0
 MIN_SCALAR = 1.0
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
 
 
 @pl.jit(auto_mutex=True)
@@ -107,9 +107,9 @@ def vector_fp32_kernel(
         pl.store(out, cur_out, [1216, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_vector_fp32_operations():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.randn(64, 64, device=ST_DEVICE)
     b = torch.randn(64, 64, device=ST_DEVICE)
@@ -167,10 +167,10 @@ def xor_kernel(
         pl.store(out, cur_out, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_xor():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     a = torch.arange(64 * 64, device=device, dtype=torch.int32).reshape(64, 64) + 2
     b = (torch.arange(64 * 64, device=device, dtype=torch.int32).reshape(64, 64) % 16) + 1
     out = torch.zeros((64, 64), device=device, dtype=torch.int32)
@@ -202,10 +202,10 @@ def fused_mul_add_kernel(
         pl.store(c, cur_c, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_fused_mul_add():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn(64, 64, device=device, dtype=torch.float32)
     b = torch.randn(64, 64, device=device, dtype=torch.float32)
@@ -243,9 +243,9 @@ def fused_cast_kernel(
         pl.store(out, cur_out, [128, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_fused_cast_operations():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.randn(64, 64, device=ST_DEVICE, dtype=torch.float16)
     b = torch.randn(64, 64, device=ST_DEVICE, dtype=torch.float16)

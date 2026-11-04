@@ -40,7 +40,7 @@ MAX_EVENT_ID = 15  # cross-core event ids
 MAX_FLAG_EVENT_ID = 7  # set_flag / wait_flag event ids
 MAX_MUTEX_ID = 31  # tile mutex ids
 
-# A5 intra-core flag paths are execution-side specific. The maps are
+# A5/A6 intra-core flag paths are execution-side specific. The maps are
 # directional: each key is set_pipe and its value contains valid wait_pipe values.
 _A5_AIC_SYNC_WAIT_PIPES = {
     PipeType.MTE1: (PipeType.MTE2, PipeType.M, PipeType.MTE3, PipeType.FIX),
@@ -120,7 +120,7 @@ def _validate_sync_pipes(
     if wait_pipe not in supported_wait_pipes:
         supported = ", ".join(str(pipe) for pipe in supported_wait_pipes)
         raise NotSupported(
-            f"unsupported 3510 synchronization path{side}: {set_pipe} -> {wait_pipe}; "
+            f"unsupported synchronization path{side}: {set_pipe} -> {wait_pipe}; "
             f"supported wait_pipe values for {set_pipe}: {supported}"
         )
 
@@ -434,7 +434,7 @@ def dsb(*, scope: MemDsb = MemDsb.ALL, span: Span | None = None) -> Call:
 
 
 # ============================================================================
-# Mutex (Buffer-ID Token) — A5 only
+# Mutex (Buffer-ID Token) — A5/A6
 # ----------------------------------------------------------------------------
 # Alternative to event-id based sync_src/sync_dst: uses a buffer-id token
 # (MutexID, range 0-31) to enforce ordering between pipes. Lowered to
@@ -487,7 +487,7 @@ def mutex_lock(
     mutex_id: Expr,
     span: Span | None = None,
 ) -> Call:
-    """Acquire a Mutex buffer-id token on ``pipe`` (A5).
+    """Acquire a Mutex buffer-id token on ``pipe`` (A5/A6).
 
     Blocks the ``pipe`` instruction queue until the previous holder of
     ``mutex_id`` releases it via :func:`mutex_unlock`.
@@ -514,7 +514,7 @@ def mutex_unlock(
     mutex_id: Expr,
     span: Span | None = None,
 ) -> Call:
-    """Release a previously acquired Mutex buffer-id token on ``pipe`` (A5).
+    """Release a previously acquired Mutex buffer-id token on ``pipe`` (A5/A6).
 
     Must be paired with :func:`mutex_lock` on the same ``pipe`` and
     ``mutex_id``.

@@ -66,7 +66,7 @@ def add_kernel(
                 pl.store_tile(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_add():
     device = ST_DEVICE
     torch.npu.set_device(device)
@@ -122,7 +122,7 @@ def add_kernel_bare_name_aliases(
                 store_tile_op(z, tile_c, [i, j])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_add_bare_name_aliases():
     """A block op imported under a bare name must lower to that op on device.
 

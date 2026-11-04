@@ -56,7 +56,7 @@ def struct_many_fields_kernel(
         pl.setval(out, 0, s.f1 + s.f2 + s.f3 + s.f4 + s.f5 + s.f6 + s.f7 + s.f8)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_many_fields():
     """验证 struct 支持 8 个字段，且字段可多次修改"""
     _check_npu()
@@ -85,7 +85,7 @@ def struct_in_loop_kernel(
         pl.setval(out, 0, total)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_in_loop():
     """验证可以在 for 循环内创建 struct"""
     _check_npu()
@@ -112,7 +112,7 @@ def struct_in_branch_kernel(
         pl.setval(out, 0, s.v)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_in_branch():
     """验证可以在 if/else 分支内修改 struct 字段（struct 须在分支外创建）"""
     _check_npu()

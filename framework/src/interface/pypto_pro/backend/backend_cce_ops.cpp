@@ -1132,23 +1132,25 @@ static std::string MakeCrossCoreSetCodegenCCE(const ir::CallPtr& op, codegen::Co
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
     auto pipe = op->GetKwarg<int>("pipe");
     std::string pipe_str = PipeTypeToCCEString(static_cast<ir::PipeType>(pipe));
-    bool is_a5 = (codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510);
     auto sync_mode = static_cast<ir::CrossCoreSyncMode>(op->GetKwarg<int>("sync_mode"));
     bool is_intra_unicast = sync_mode == ir::CrossCoreSyncMode::INTRA_BLOCK ||
                             sync_mode == ir::CrossCoreSyncMode::UNICAST_BLOCK;
-    if (is_a5 && is_intra_unicast) {
-        // A5 + INTRA_BLOCK or UNICAST_BLOCK: set_intra_block
-        //     CUBE→VEC: INTRA_BLOCK expands to two calls (v0: id, v1: id+16); UNICAST_BLOCK single call
+    if (codegen.IsRegisterBasedArch() && is_intra_unicast) {
+        // CUBE→VEC: INTRA_BLOCK signals both vectors only on a 1:2 target; UNICAST_BLOCK signals one.
         //     VEC→CUBE: single set
         if (codegen.GetTarget() == ir::SectionKind::Cube && sync_mode == ir::CrossCoreSyncMode::INTRA_BLOCK) {
             if (is_dynamic) {
                 std::string event_id = cce::GetOperandAsCode(codegen, op->args_[0]);
                 codegen.Emit("set_intra_block(" + pipe_str + ", " + event_id + ");");
-                codegen.Emit("set_intra_block(" + pipe_str + ", " + event_id + " + 16);");
+                if (codegen.GetVectorCoresPerCube() == 2) {
+                    codegen.Emit("set_intra_block(" + pipe_str + ", " + event_id + " + 16);");
+                }
             } else {
                 int event_id = op->GetKwarg<int>("event_id");
                 codegen.Emit("set_intra_block(" + pipe_str + ", " + std::to_string(event_id) + ");");
-                codegen.Emit("set_intra_block(" + pipe_str + ", " + std::to_string(event_id + 16) + ");");
+                if (codegen.GetVectorCoresPerCube() == 2) {
+                    codegen.Emit("set_intra_block(" + pipe_str + ", " + std::to_string(event_id + 16) + ");");
+                }
             }
         } else {
             if (is_dynamic) {
@@ -1160,7 +1162,7 @@ static std::string MakeCrossCoreSetCodegenCCE(const ir::CallPtr& op, codegen::Co
             }
         }
     } else {
-        // non-A5, or A5 + INTER_BLOCK / INTER_SUBBLOCK: ffts_cross_core_sync
+        // Legacy arch, or modern INTER_BLOCK / INTER_SUBBLOCK: ffts_cross_core_sync
         std::string mode_str = std::to_string(static_cast<int>(sync_mode));
         if (is_dynamic) {
             std::string event_id = cce::GetOperandAsCode(codegen, op->args_[0]);
@@ -1200,22 +1202,22 @@ static std::string MakeCrossCoreWaitCodegenCCE(const ir::CallPtr& op, codegen::C
     bool is_intra_unicast = (sync_mode == ir::CrossCoreSyncMode::INTRA_BLOCK ||
                              sync_mode == ir::CrossCoreSyncMode::UNICAST_BLOCK);
     bool wait_two_vec_subcores = (sync_mode == ir::CrossCoreSyncMode::INTRA_BLOCK);
-    bool is_a5 = (codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510);
-    if (is_a5 && is_intra_unicast) {
-        // A5 + INTRA_BLOCK(2) or UNICAST_BLOCK(3): wait_intra_block
-        //     CUBE waiting for VEC: INTRA_BLOCK expands to two calls (v0: id, v1: id+16); UNICAST_BLOCK single call
+    if (codegen.IsRegisterBasedArch() && is_intra_unicast) {
+        // CUBE waiting for VEC: INTRA_BLOCK waits for both vectors only on a 1:2 target.
         //     VEC waiting for CUBE: single wait
         if (codegen.GetTarget() == ir::SectionKind::Cube && wait_two_vec_subcores) {
             EmitWaitIntraBlockCCE(codegen, op, pipe_str, is_dynamic);
-            EmitWaitIntraBlockCCE(codegen, op, pipe_str, is_dynamic, 16);
+            if (codegen.GetVectorCoresPerCube() == 2) {
+                EmitWaitIntraBlockCCE(codegen, op, pipe_str, is_dynamic, 16);
+            }
         } else {
             EmitWaitIntraBlockCCE(codegen, op, pipe_str, is_dynamic);
         }
     } else {
-        // non-A5, or A5 + INTER_BLOCK(0) / INTER_SUBBLOCK(1): wait_flag_dev
+        // Legacy arch, or modern INTER_BLOCK(0) / INTER_SUBBLOCK(1): wait_flag_dev
         std::string event_id = is_dynamic ? cce::GetOperandAsCode(codegen, op->args_[0]) :
                                             std::to_string(op->GetKwarg<int>("event_id"));
-        if (is_a5) {
+        if (codegen.IsRegisterBasedArch()) {
             codegen.Emit("wait_flag_dev(" + pipe_str + ", " + event_id + ");");
         } else {
             codegen.Emit("wait_flag_dev(" + event_id + ");");
@@ -2280,7 +2282,7 @@ REGISTER_BACKEND_OP(BackendCCE, "system.set_mm_layout_transform")
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
         auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
         auto enabled = op->GetKwarg<int>("enabled");
-        if (codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510) {
+        if (codegen.IsRegisterBasedArch()) {
             // Direct register manipulation: MM_LAYOUT_MODE_BIT = 51
             if (enabled) {
                 codegen.Emit("set_ctrl(sbitset1(get_ctrl(), 51));");

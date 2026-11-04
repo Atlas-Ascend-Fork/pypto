@@ -149,7 +149,7 @@ SHAPES = [(TILE, TILE), (48, 96), (96, 96)]
 SHAPE_IDS = ["full", "row_tail", "dual_tail"]
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("m,n", SHAPES, ids=SHAPE_IDS)
 @pytest.mark.parametrize("scale_value,pattern", list(zip(SCALE_VALUES, SCALE_PATTERNS)), ids=SCALE_IDS)
 def test_scale_value_range(scale_value, pattern, m, n):
@@ -158,7 +158,7 @@ def test_scale_value_range(scale_value, pattern, m, n):
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 
@@ -176,7 +176,7 @@ def test_scale_value_range(scale_value, pattern, m, n):
     logging.info("test_scale_value_range[%s,%s] passed.", scale_value, (m, n))
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("m,n", SHAPES, ids=SHAPE_IDS)
 @pytest.mark.parametrize("pattern,scale_value", list(zip(INPUT_PATTERNS, INPUT_SCALES)), ids=INPUT_PATTERNS)
 def test_input_pattern(pattern, scale_value, m, n):
@@ -185,7 +185,7 @@ def test_input_pattern(pattern, scale_value, m, n):
     torch.npu.set_device(device)
 
     device_name = torch.npu.get_device_name()
-    if "Ascend950" not in device_name:
+    if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
         logging.info("Current device is %s, skip.", device_name)
         return
 

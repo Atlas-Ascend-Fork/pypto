@@ -29,18 +29,18 @@ ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 SENTINEL = -9.0
 
 
-def _require_a5(device: str) -> None:
+def _require_a5_or_a6(device: str) -> None:
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
-    if "Ascend950" not in torch.npu.get_device_name():
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
         pytest.skip("NZ GM transfer ST requires Ascend950")
 
 
 @pytest.fixture(scope="module")
 def device() -> str:
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     return ST_DEVICE
 
 
@@ -385,7 +385,7 @@ _NZ_E2E_CASES = [
 ]
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize(
     "kernel,valid_m,valid_n,row_offset,col_offset",
     [case[1:] for case in _NZ_E2E_CASES],
@@ -456,7 +456,7 @@ def nz_vec_non_aligned_logical_shape_kernel(
         pl.store(out, vec, [64, 48])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t01_2d_dynamic_nz_non_aligned_logical_shape(device: str) -> None:
     logical = _matrix(70, 50, torch.float16, device, bias=2.0)
     inp = _to_nz(logical)
@@ -574,7 +574,7 @@ def nz_cube_mnk_tiled_tail_kernel(
                 pl.store_tile(out, acc, [m_idx, n_idx], phase=pl.STPhase.Final)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t01_2d_nz_mnk_tiled_tail(device: str) -> None:
     a_logical = _matrix(96, 96, torch.float16, device)
     b_logical = _matrix(96, 32, torch.float16, device, bias=0.5)
@@ -633,7 +633,7 @@ vec_fp16_tile_kernel = _make_vec_roundtrip_kernel(
 )
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t02_vec_nz_element_and_tile_offsets(device: str) -> None:
     logical = _matrix(96, 96, torch.float16, device)
     inp = _to_nz(logical)
@@ -667,7 +667,7 @@ _VEC_DTYPE_KERNELS = {
 }
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize(
     "label,pl_dtype,torch_dtype,c0",
     _VEC_DTYPE_CASES,
@@ -753,7 +753,7 @@ def vec_nz_runtime_windows_kernel(
         pl.store(out, vec, [32, 32])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t02_vec_nz_runtime_windows(device: str) -> None:
     logical = _matrix(96, 96, torch.float16, device)
     out = _nz_filled((96, 96), torch.float16, SENTINEL, device)
@@ -877,7 +877,7 @@ def l0c_nz_direct_store_kernel(
         pl.store(relu_out, plain_acc, [32, 32], relu_pre_mode=pl.ReluPreMode.NormalRelu)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t03_l0c_nz_direct_store_variants(device: str) -> None:
     a_logical = _matrix(64, 64, torch.float16, device)
     b_logical = torch.eye(64, dtype=torch.float16, device=device)
@@ -973,7 +973,7 @@ def l0c_nz_phase_store_kernel(
         pl.store(out, acc, [32, 32], scale=0.5, phase=pl.STPhase.Final)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t03_l0c_nz_partial_final_phase(device: str) -> None:
     a_logical = _matrix(64, 64, torch.float16, device)
     b_logical = torch.eye(64, dtype=torch.float16, device=device)
@@ -1055,7 +1055,7 @@ def l0c_nz_via_vec_kernel(
             pl.store(out, vec_group[0], [32, 32])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t03_l0c_nz_partial_m_multi_fractal_via_vec(device: str) -> None:
     a_logical = _matrix(64, 64, torch.float16, device)
     b_logical = torch.eye(64, dtype=torch.float16, device=device)
@@ -1125,7 +1125,7 @@ def l0c_nz_multicore_atomic_kernel(
         pl.store(out, acc, [0, 16], atomic=pl.AtomicType.AtomicAdd)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t03_l0c_nz_multicore_atomic_tail(device: str) -> None:
     a_logical = _matrix(32, 128, torch.float16, device)
     b_logical = _matrix(128, 32, torch.float16, device, bias=0.25)
@@ -1251,7 +1251,7 @@ def nz_high_dimensional_mnk_quant_kernel(
                             phase=pl.STPhase.Final,
                         )
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t04_high_dimensional_dynamic_nz_mnk_quantized(device: str) -> None:
     a_shape = (2, 3, 96, 96)
     b_shape = (2, 3, 96, 64)
@@ -1315,7 +1315,7 @@ def nz_high_dimensional_vec_windows_kernel(
         pl.store_tile(out, vec, [1, 2, 1, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t05_high_dimensional_dynamic_nz_vec_windows(device: str) -> None:
     shape = (2, 3, 96, 96)
     logical = torch.empty(shape, dtype=torch.float16, device=device)
@@ -1400,7 +1400,7 @@ def nz_high_dimensional_l0c_via_vec_kernel(
             pl.store(out, vec_group[0], [1, 2, 32, 32])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_t06_high_dimensional_dynamic_nz_l0c_via_vec(device: str) -> None:
     shape = (2, 3, 64, 64)
     a_logical = torch.empty(shape, dtype=torch.float16)

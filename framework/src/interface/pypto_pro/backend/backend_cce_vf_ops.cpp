@@ -3908,17 +3908,30 @@ static std::string EmitVFShift(const ir::CallPtr& op, codegen::CodegenBase& code
     } else if (ShiftAmountIsRegister(op, codegen)) {
         DataType shift_dt = GetExprDtype(op->args_[2]);
         DataType shift_need = DataType::INT8;
+        DataType shift_unsigned = DataType::UINT8;
         if (src_dt.GetBit() == 16) {
             shift_need = DataType::INT16;
+            shift_unsigned = DataType::UINT16;
         } else if (src_dt.GetBit() == 32) {
             shift_need = DataType::INT32;
-        } else if (src_dt.GetBit() == 64) {
-            shift_need = DataType::INT64;
+            shift_unsigned = DataType::UINT32;
         }
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, shift_dt == shift_need)
-            << op_name << " (vector) shift register must be the signed type matching the " << DTypeStr(src_dt)
-            << " data width, expected " << DTypeStr(shift_need) << ", got " << DTypeStr(shift_dt);
-        codegen.Emit(vector_instruction + "(" + dst + ", " + src + ", " + shift + ", " + mask + ", " + mode + ");");
+        // A5's __VF_BINARY_OP overloads take the signed shift operand; A6 (920r1)
+        // defines vshl/vshr in the __VF_SHFT_OP registry, which requires the unsigned
+        // type of the data width (u8/u16/u32). Accept either same-width form here and
+        // reinterpret for the A6 call below.
+        const bool is_a6 = codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_9201;
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION,
+                          shift_dt == shift_need || (is_a6 && shift_dt == shift_unsigned))
+            << op_name << " (vector) shift register must be the " << (is_a6 ? "signed or unsigned " : "signed ")
+            << "type matching the " << DTypeStr(src_dt) << " data width, expected " << DTypeStr(shift_need)
+            << (is_a6 ? " or " + DTypeStr(shift_unsigned) : "") << ", got " << DTypeStr(shift_dt);
+        std::string shift_operand = shift;
+        if (is_a6 && shift_dt != shift_unsigned) {
+            shift_operand = "(RegTensor<" + shift_unsigned.ToCTypeString() + ">&)" + shift;
+        }
+        codegen.Emit(vector_instruction + "(" + dst + ", " + src + ", " + shift_operand + ", " + mask + ", " + mode +
+                     ");");
     } else {
         codegen.Emit(scalar_instruction + "(" + dst + ", " + src + ", (int16_t)(" + shift + "), " + mask + ", " + mode +
                      ");");

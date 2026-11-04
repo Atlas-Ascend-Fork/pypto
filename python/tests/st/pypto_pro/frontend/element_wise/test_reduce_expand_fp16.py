@@ -388,7 +388,7 @@ def col_expand_min_kernel(
 # ============================================================================
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_reduce_sum():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -400,7 +400,7 @@ def test_row_reduce_sum():
     logging.info("test_row_reduce_sum passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_reduce_max():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -412,7 +412,7 @@ def test_row_reduce_max():
     logging.info("test_row_reduce_max passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_argmax():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -424,7 +424,7 @@ def test_row_argmax():
     logging.info("test_row_argmax passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_argmin():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -436,7 +436,7 @@ def test_row_argmin():
     logging.info("test_row_argmin passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_expand_max():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -449,7 +449,7 @@ def test_row_expand_max():
     logging.info("test_row_expand_max passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_row_expand_min():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -462,7 +462,7 @@ def test_row_expand_min():
     logging.info("test_row_expand_min passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_col_reduce_sum():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -474,7 +474,7 @@ def test_col_reduce_sum():
     logging.info("test_col_reduce_sum passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_col_argmax():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -486,7 +486,7 @@ def test_col_argmax():
     logging.info("test_col_argmax passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_col_argmin():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -498,7 +498,7 @@ def test_col_argmin():
     logging.info("test_col_argmin passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_col_expand_max():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -511,7 +511,7 @@ def test_col_expand_max():
     logging.info("test_col_expand_max passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_col_expand_min():
     torch.npu.set_device(ST_DEVICE)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)

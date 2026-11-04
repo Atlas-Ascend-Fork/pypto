@@ -1,0 +1,19 @@
+#if defined(__DAV_CUBE__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void _dynamic_sync_kernel_impl_cube(__gm__ int32_t* x_0_ptr, int32_t event_id_0)
+{
+
+    set_intra_block(PIPE_S, event_id_0);
+    wait_intra_block(PIPE_S, event_id_0);
+    return;
+}
+#endif

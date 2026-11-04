@@ -3378,7 +3378,7 @@ def _run_all_kernels(a_fp32, b_fp32, device):
     return results
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_vf_basic_ops():
     device = ST_DEVICE
     torch.npu.set_device(device)

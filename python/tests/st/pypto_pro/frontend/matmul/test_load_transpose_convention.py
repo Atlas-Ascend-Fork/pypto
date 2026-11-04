@@ -54,13 +54,13 @@ MA1 = 0x10000
 SZ = 32768
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
-    if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+    if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
+        pytest.skip("not A5/A6")
 
 
 # ------------------------------------------------------------------------------------------------
@@ -227,35 +227,35 @@ def _run(kernel, a_arg, b_arg, a, b):
 @pytest.fixture(scope="module")
 def _ab():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn([M, K], device=device, dtype=torch.float16)
     b = torch.randn([K, N], device=device, dtype=torch.float16)
     return a, b
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_load_nn(_ab):
     """left as-is (NZ [M,K]), right as-is (NZ [K,N])."""
     a, b = _ab
     _run(k_nn, a, b, a, b)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_load_nt(_ab):
     """left as-is; right transpose-loaded from GM B^T [N,K] -> ZN [K,N]."""
     a, b = _ab
     _run(k_nt, a, b.t().contiguous(), a, b)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_load_tn(_ab):
     """left transpose-loaded from GM A^T [K,M] -> ZN [M,K]; right as-is."""
     a, b = _ab
     _run(k_tn, a.t().contiguous(), b, a, b)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_load_tt(_ab):
     """both operands transpose-loaded."""
     a, b = _ab
@@ -265,7 +265,7 @@ def test_load_tt(_ab):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     device = ST_DEVICE
-    _require_a5(device)
+    _require_a5_or_a6(device)
     torch.manual_seed(0)
     a = torch.randn([M, K], device=device, dtype=torch.float16)
     b = torch.randn([K, N], device=device, dtype=torch.float16)

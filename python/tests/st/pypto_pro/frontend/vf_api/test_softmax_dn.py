@@ -366,7 +366,7 @@ def simulate_vsstb_layout(x_exp_fp16, device):
     return out_buf
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_softmax_dn():
     device = ST_DEVICE
     torch.npu.set_device(device)

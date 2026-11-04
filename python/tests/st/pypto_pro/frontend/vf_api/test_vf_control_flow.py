@@ -316,8 +316,8 @@ def _check_npu():
     try:
         torch.npu.set_device(_device())
         name = torch.npu.get_device_name()
-        if "Ascend950" not in name:
-            pytest.skip(f"Device {name} is not A5 (Ascend950). Skip.")
+        if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
@@ -336,7 +336,7 @@ def _expected_with_sentinel(base, touched):
     return expected
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_range_start_stop_step():
     if not _check_npu():
         return
@@ -351,7 +351,7 @@ def test_for_range_start_stop_step():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_elif_else():
     if not _check_npu():
         return
@@ -371,7 +371,7 @@ def test_if_elif_else():
         torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0, msg=f"mode={mode}")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_loop_carried_scalar():
     if not _check_npu():
         return
@@ -386,7 +386,7 @@ def test_while_loop_carried_scalar():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_break_exits_loop():
     if not _check_npu():
         return
@@ -402,7 +402,7 @@ def test_break_exits_loop():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_continue_skips_iteration():
     if not _check_npu():
         return
@@ -418,7 +418,7 @@ def test_continue_skips_iteration():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_nested_for_loops():
     if not _check_npu():
         return
@@ -435,7 +435,7 @@ def test_nested_for_loops():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_combined_control_flow():
     if not _check_npu():
         return
@@ -488,7 +488,7 @@ def _ternary_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_ternary_scalar_select_rejected():
     if not _check_npu():
         return
@@ -1587,7 +1587,7 @@ def _arith_condition_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_runtime_step_rejected():
     if not _check_npu():
         return
@@ -1602,7 +1602,7 @@ def test_for_runtime_step_rejected():
         _runtime_step_kernel[None, 1](x, y, count, step)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_branch_scalar_phi():
     if not _check_npu():
         return
@@ -1618,7 +1618,7 @@ def test_if_branch_scalar_phi():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_three_level_nested_if():
     if not _check_npu():
         return
@@ -1634,7 +1634,7 @@ def test_three_level_nested_if():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_two_sequential_loops():
     if not _check_npu():
         return
@@ -1652,7 +1652,7 @@ def test_two_sequential_loops():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_continue_in_if_else_both_branches():
     if not _check_npu():
         return
@@ -1672,7 +1672,7 @@ def test_continue_in_if_else_both_branches():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_conditional_loop():
     if not _check_npu():
         return
@@ -1694,7 +1694,7 @@ def test_conditional_loop():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_break_inner_loop_only():
     if not _check_npu():
         return
@@ -1709,7 +1709,7 @@ def test_break_inner_loop_only():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_runtime_start():
     if not _check_npu():
         return
@@ -1725,7 +1725,7 @@ def test_for_runtime_start():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_loop_trip_edges():
     if not _check_npu():
         return
@@ -1744,7 +1744,7 @@ def test_loop_trip_edges():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_loop_carried_scalar():
     if not _check_npu():
         return
@@ -1760,7 +1760,7 @@ def test_for_loop_carried_scalar():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_while_true_guard_break_rejected():
     if not _check_npu():
         return
@@ -1775,7 +1775,7 @@ def test_while_true_guard_break_rejected():
         _while_true_kernel[None, 1](x, y, count)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_bool_op_conditions():
     if not _check_npu():
         return
@@ -1805,7 +1805,7 @@ def test_bool_op_conditions():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_not_equal_branch_select():
     if not _check_npu():
         return
@@ -1828,7 +1828,7 @@ def test_not_equal_branch_select():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_break_under_nested_if():
     if not _check_npu():
         return
@@ -1850,7 +1850,7 @@ def test_break_under_nested_if():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_elif_no_else_phi():
     if not _check_npu():
         return
@@ -1867,7 +1867,7 @@ def test_if_elif_no_else_phi():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_loop_inside_if_inside_loop():
     if not _check_npu():
         return
@@ -1883,7 +1883,7 @@ def test_loop_inside_if_inside_loop():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_single_arg_inner_range():
     if not _check_npu():
         return
@@ -1898,7 +1898,7 @@ def test_single_arg_inner_range():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_expression_loop_bounds():
     if not _check_npu():
         return
@@ -1913,7 +1913,7 @@ def test_expression_loop_bounds():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_two_carried_scalars_with_conditional_update():
     if not _check_npu():
         return
@@ -1930,7 +1930,7 @@ def test_two_carried_scalars_with_conditional_update():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_comparison_result_guard_break():
     if not _check_npu():
         return
@@ -1946,7 +1946,7 @@ def test_comparison_result_guard_break():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_two_break_sites():
     if not _check_npu():
         return
@@ -1973,7 +1973,7 @@ def test_two_break_sites():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_store_inside_branches():
     if not _check_npu():
         return
@@ -1992,7 +1992,7 @@ def test_store_inside_branches():
     torch.testing.assert_close(y.cpu(), x.cpu() - 1.0, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_conditional_store_only():
     if not _check_npu():
         return
@@ -2011,7 +2011,7 @@ def test_conditional_store_only():
     torch.testing.assert_close(y.cpu(), torch.full((1, N), SENTINEL), rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_break_then_sequential_loop():
     if not _check_npu():
         return
@@ -2035,7 +2035,7 @@ def test_break_then_sequential_loop():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_loop_in_else_branch():
     if not _check_npu():
         return
@@ -2051,7 +2051,7 @@ def test_loop_in_else_branch():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_carried_value_across_loops():
     if not _check_npu():
         return
@@ -2066,7 +2066,7 @@ def test_carried_value_across_loops():
     torch.testing.assert_close(y.cpu(), x.cpu() + 1.0, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_condition_on_carried_scalar():
     if not _check_npu():
         return
@@ -2082,7 +2082,7 @@ def test_condition_on_carried_scalar():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_continue_in_inner_loop():
     if not _check_npu():
         return
@@ -2097,7 +2097,7 @@ def test_continue_in_inner_loop():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_flag_based_double_break():
     if not _check_npu():
         return
@@ -2113,7 +2113,7 @@ def test_flag_based_double_break():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_runtime_single_arg_range():
     if not _check_npu():
         return
@@ -2129,7 +2129,7 @@ def test_runtime_single_arg_range():
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_grouped_bool_conditions():
     if not _check_npu():
         return
@@ -2151,7 +2151,7 @@ def test_grouped_bool_conditions():
     torch.testing.assert_close(y.cpu(), x.cpu() + 1.0, rtol=0, atol=0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_arithmetic_in_condition():
     if not _check_npu():
         return
@@ -2202,7 +2202,7 @@ def _runtime_scalar_phi_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.xfail(
     raises=RuntimeError,
     strict=False,
@@ -2270,7 +2270,7 @@ def _if_else_same_dst_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_else_same_dst_vf_chain():
     if not _check_npu():
         return
@@ -2312,7 +2312,7 @@ def _sequential_vf_ops_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_sequential_vf_ops_same_reg():
     if not _check_npu():
         return
@@ -2353,7 +2353,7 @@ def _vf_chain_loop_kernel(
         pl.store(y, outputs.current(), [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_vf_chain_in_loop():
     if not _check_npu():
         return
@@ -2396,7 +2396,7 @@ def _three_level_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_three_level_vf_call():
     if not _check_npu():
         return
@@ -2436,7 +2436,7 @@ def _triple_nested_kernel(
         pl.store(y, outputs.current(), [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_triple_nested_for():
     if not _check_npu():
         return
@@ -2485,7 +2485,7 @@ def _four_level_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_four_level_nesting():
     if not _check_npu():
         return
@@ -2529,7 +2529,7 @@ def _shadow_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 @pytest.mark.skip(
     reason="Nested-loop induction-variable shadowing crashes the device "
     "(npuSynchronize device error type 3, code 507035) and the poisoned "
@@ -2583,7 +2583,7 @@ def _two_vf_kernel(
         pl.store(y, tmp, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_two_vf_calls_share_tile():
     if not _check_npu():
         return
@@ -2630,7 +2630,7 @@ def _scalar_redef_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_scalar_redefinition_across_scopes():
     if not _check_npu():
         return
@@ -2684,7 +2684,7 @@ def _both_branch_for_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_if_else_both_branches_have_for():
     if not _check_npu():
         return
@@ -2704,7 +2704,7 @@ def test_for_if_else_both_branches_have_for():
 # 其后用例会因设备上下文污染级联失败，需按首个崩溃点定位。
 # ---------------------------------------------------------------------------
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_scalar_type_evolution():
     if not _check_npu():
         return
@@ -2755,7 +2755,7 @@ def _type_evolution_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_augassign_chained_sequential_loops():
     if not _check_npu():
         return
@@ -2809,7 +2809,7 @@ def _augassign_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_const_condition_ternary_in_vf_rejected():
     if not _check_npu():
         return
@@ -2858,7 +2858,7 @@ def _const_ternary_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_if_elif_else_five_branches():
     if not _check_npu():
         return
@@ -2908,7 +2908,7 @@ def _five_branch_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_boolop_conditions():
     if not _check_npu():
         return
@@ -2958,7 +2958,7 @@ def _boolop_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_nested_invariant_ifs_pass_empty():
     if not _check_npu():
         return
@@ -3007,7 +3007,7 @@ def _nested_if_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_reg_chain_around_scalar_flow():
     if not _check_npu():
         return
@@ -3052,7 +3052,7 @@ def _reg_around_flow_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_five_level_for_nesting():
     if not _check_npu():
         return
@@ -3097,7 +3097,7 @@ def _five_level_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_runtime_ternary_at_kernel():
     if not _check_npu():
         return
@@ -3138,7 +3138,7 @@ def _kernel_ternary_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_kernel_while_runtime_condition():
     if not _check_npu():
         return
@@ -3183,7 +3183,7 @@ def _kernel_while_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_for_continue_and_break():
     if not _check_npu():
         return
@@ -3230,7 +3230,7 @@ def _continue_break_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_vf_call_chain_control_flow():
     if not _check_npu():
         return
@@ -3289,7 +3289,7 @@ def _chain_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_vf_if_branches_call_different_vfs():
     if not _check_npu():
         return
@@ -3343,7 +3343,7 @@ def _dispatch_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_tuple_swap_in_loop():
     if not _check_npu():
         return
@@ -3391,7 +3391,7 @@ def _tuple_swap_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_two_vector_sections():
     if not _check_npu():
         return

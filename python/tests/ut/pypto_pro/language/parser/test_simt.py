@@ -285,6 +285,57 @@ def test_simt_tile_function_and_launch_build_vector_program():
     assert "simt.launch" in str(program)
 
 
+@pytest.mark.parametrize(
+    "kernel,launch",
+    [(_simt_tile_kernel, "_tile_add[256]"), (_simt_gm_kernel, "_gm_add[256]")],
+    ids=["tile", "tensor"],
+)
+def test_a6_simt_launch_reports_dsl_location(kernel, launch, monkeypatch):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "9201")
+
+    with pytest.raises(NotSupported, match="SIMT vector-function launch is not supported on A6") as exc_info:
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+    error = exc_info.value
+    message = str(error)
+    assert "arch='9201'" in message
+    assert error.span is not None
+    assert error.span["filename"] == __file__
+    assert error.span["line"] > 0
+    assert error.span["column"] > 0
+    assert f"--> {__file__}:{error.span['line']}:" in message
+    assert launch in message
+
+
+def test_a6_simd_kernel_does_not_parse_unused_simt_function(monkeypatch, assert_a6_golden):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "9201")
+
+    @pl.vector_function(mode="simt", max_threads=1)
+    def unused():
+        return
+
+    @pl.jit(arch="9201", auto_mutex=False)
+    def kernel(x: pl.Tensor[[1, 8], pl.DT_FP32], out: pl.Tensor[[1, 8], pl.DT_FP32]):
+        tile_type = pl.TileType(shape=[1, 8], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        src = pl.make_tile(tile_type, addr=0)
+        dst = pl.make_tile(tile_type, addr=32)
+        with pl.section_vector():
+            pl.load(src, x, [0, 0])
+            pl.add(dst, src, src)
+            pl.store(out, dst, [0, 0])
+
+    kernel_def = kernel.to_kernel_def()
+    program, matched = kernel_def.parse_target_program(ir.SectionKind.Vector)
+
+    assert_a6_golden(program)
+    assert callable(unused)
+    assert matched
+    assert set(program.functions) == {"kernel"}
+    assert "block.add" in str(program)
+    assert "simt.launch" not in str(program)
+    assert not kernel_def.requires_simt
+
+
 def test_simt_callee_records_type_calls_and_reachable_dependencies():
     program, matched = _simt_callee_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     callee = program.get_function("_callee_add")

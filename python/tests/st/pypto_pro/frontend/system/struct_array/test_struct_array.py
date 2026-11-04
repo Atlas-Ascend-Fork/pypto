@@ -54,7 +54,7 @@ def struct_array_basic_kernel(
         pl.setval(out, 0, c0.a + c1.b + c2.a)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_basic():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -82,7 +82,7 @@ def struct_array_for_loop_kernel(
             pl.setval(out, i, ctx.vid + ctx.count)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_for_loop():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -117,7 +117,7 @@ def struct_array_conditional_kernel(
         pl.setval(out, 2, v4.tag + v4.val)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_conditional():
     _check_npu()
     out = torch.zeros(3, device=ST_DEVICE, dtype=torch.int32)
@@ -148,7 +148,7 @@ def struct_array_break_kernel(
         pl.setval(out, 0, c0.snap + c1.snap + c2.snap + c3.snap)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_break():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -181,7 +181,7 @@ def struct_array_cross_assign_kernel(
             pl.setval(out, i, b.v)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_cross_assign():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -211,7 +211,7 @@ def struct_and_array_aggregate_kernel(
         pl.setval(out, 1, agg.cnt)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_and_array_aggregate():
     _check_npu()
     out = torch.zeros(2, device=ST_DEVICE, dtype=torch.int32)
@@ -240,7 +240,7 @@ def struct_array_alias_for_kernel(
             pl.setval(out, i, s.v)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_alias_for():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -294,7 +294,7 @@ def struct_array_triple_ring_kernel(
         pl.setval(out, 3, c1.snap)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_triple_ring():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -355,7 +355,7 @@ def struct_array_while_alias_nested_kernel(
         pl.setval(out, 5, tracker.acc)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_while_alias_nested():
     _check_npu()
     out = torch.zeros(6, device=ST_DEVICE, dtype=torch.int32)
@@ -393,7 +393,7 @@ def struct_array_chain_alias_kernel(
             pl.setval(out, i, s.val + s.tag)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_chain_alias():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -441,7 +441,7 @@ def struct_array_pass_by_ref_kernel(
             pl.setval(out, i, s.acc)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_pass_by_ref():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)

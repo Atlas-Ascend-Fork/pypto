@@ -175,13 +175,13 @@ def fillpad_expand_dynamic_cce_kernel(
         pl.system.bar_all()
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_fillpad_dynamic_cce():
     _print_case_header("test_fillpad_dynamic_cce")
     _run_fillpad_cce_case("fillpad_dynamic_cce", fillpad_dynamic_cce_kernel, (8, 8), "output", ST_DEVICE)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_fillpad_inplace_dynamic_cce():
     _print_case_header("test_fillpad_inplace_dynamic_cce")
     _run_fillpad_cce_case(
@@ -193,7 +193,7 @@ def test_fillpad_inplace_dynamic_cce():
     )
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_fillpad_expand_dynamic_cce():
     _print_case_header("test_fillpad_expand_dynamic_cce")
     _run_fillpad_cce_case("fillpad_expand_dynamic_cce", fillpad_expand_dynamic_cce_kernel, (8, 16), "output", ST_DEVICE)

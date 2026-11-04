@@ -29,14 +29,14 @@ M = 64
 N = 128
 
 
-def _require_a5(device):
+def _require_a5_or_a6(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
-    if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+    if not any(soc in name for soc in ("Ascend950", "Ascend960")):
+        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
 
 
 @pl.jit(auto_mutex=True)
@@ -99,9 +99,9 @@ def partmul_kernel(x: pl.Tensor[[M, N], pl.DT_FP16],
         pl.store(out, tout, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_partmax():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     torch.manual_seed(0)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
     y = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -114,9 +114,9 @@ def test_partmax():
     logging.info("test_partmax passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_partmin():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     torch.manual_seed(0)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
     y = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
@@ -129,9 +129,9 @@ def test_partmin():
     logging.info("test_partmin passed!")
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_partmul():
-    _require_a5(ST_DEVICE)
+    _require_a5_or_a6(ST_DEVICE)
     torch.manual_seed(0)
     x = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)
     y = torch.randn(M, N, device=ST_DEVICE, dtype=torch.float16)

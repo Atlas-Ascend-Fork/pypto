@@ -26,6 +26,7 @@ void BindPlatform(py::module_& m)
     arch_enum.value("DAV_1001", NPUArch::DAV_1001);
     arch_enum.value("DAV_2201", NPUArch::DAV_2201);
     arch_enum.value("DAV_3510", NPUArch::DAV_3510);
+    arch_enum.value("DAV_9201", NPUArch::DAV_9201);
     arch_enum.value("DAV_3003", NPUArch::DAV_3003);
     arch_enum.value("DAV_3113", NPUArch::DAV_3113);
     arch_enum.value("DAV_UNKNOWN", NPUArch::DAV_UNKNOWN);

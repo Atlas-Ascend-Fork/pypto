@@ -45,7 +45,7 @@ def _scalar_vf_kernel(
         pl.store(y, dst, [0, 0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_scalar_operations_in_vf():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)

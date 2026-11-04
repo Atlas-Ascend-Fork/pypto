@@ -55,7 +55,7 @@ def struct_arr_field_write_all_kernel(
             pl.setval(out, i, s.arr[i])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_field_write_all():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -76,7 +76,7 @@ def struct_arr_field_write_read_modify_kernel(
         pl.setval(out, 0, s.arr[0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_field_write_read_modify():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -98,7 +98,7 @@ def struct_arr_field_write_in_loop_kernel(
             pl.setval(out, i, s.arr[i])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_field_write_in_loop():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -124,7 +124,7 @@ def struct_arr_field_for_sum_kernel(
         pl.setval(out, 0, total)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_arr_field_for_sum():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -146,7 +146,7 @@ def struct_arr_field_for_fill_kernel(
             pl.setval(out, i, s.arr[i])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_arr_field_for_fill():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -168,7 +168,7 @@ def struct_arr_field_for_accum_from_scalar_kernel(
             pl.setval(out, i, s.acc[i])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_arr_field_for_accum_from_scalar():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -196,7 +196,7 @@ def struct_arr_field_if_branch_kernel(
         pl.setval(out, 0, s.arr[0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_arr_field_if_branch():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -221,7 +221,7 @@ def struct_arr_field_if_else_diff_idx_kernel(
         pl.setval(out, 1, s.arr[1])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_arr_field_if_else_diff_idx():
     _check_npu()
     out = torch.zeros(2, device=ST_DEVICE, dtype=torch.int32)
@@ -248,7 +248,7 @@ def struct_arr_field_alias_loop_kernel(
             pl.setval(out, i, s.arr[i])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_arr_field_alias_loop():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -270,7 +270,7 @@ def struct_arr_field_chain_alias_kernel(
         pl.setval(out, 0, s.arr[0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_arr_field_chain_alias():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
@@ -301,7 +301,7 @@ def struct_arr_field_pass_by_ref_kernel(
             pl.setval(out, i, s.arr[i])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_arr_field_pass_by_ref():
     _check_npu()
     out = torch.zeros(3, device=ST_DEVICE, dtype=torch.int32)
@@ -332,7 +332,7 @@ def struct_mixed_scalar_array_ops_kernel(
         pl.setval(out, 4, s.offsets[3])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_mixed_scalar_array_ops():
     _check_npu()
     out = torch.zeros(5, device=ST_DEVICE, dtype=torch.int32)
@@ -354,7 +354,7 @@ def struct_multi_array_cross_ref_kernel(
             pl.setval(out, i, s.a[i])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_multi_array_cross_ref():
     _check_npu()
     out = torch.zeros(3, device=ST_DEVICE, dtype=torch.int32)
@@ -381,7 +381,7 @@ def two_struct_array_field_copy_kernel(
             pl.setval(out, i, b.arr[i])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_two_struct_array_field_copy():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -436,7 +436,7 @@ def run_info_scenario_kernel(
         pl.setval(out, 5, run_infos.kv_inner_offset[1] + run_infos.kv_inner_offset[2])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_run_info_scenario():
     _check_npu()
     out = torch.zeros(6, device=ST_DEVICE, dtype=torch.int32)
@@ -461,7 +461,7 @@ def struct_arr_field_whole_assign_overwrite_kernel(
             pl.setval(out, i, s.arr[i])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_field_whole_assign_overwrite():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -482,7 +482,7 @@ def struct_arr_field_whole_assign_fp32_kernel(
             pl.setval(out, i, s.farr[i])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_field_whole_assign_fp32():
     _check_npu()
     out = torch.zeros(3, device=ST_DEVICE, dtype=torch.float32)
@@ -510,7 +510,7 @@ def struct_arr_field_whole_assign_mixed_kernel(
         pl.setval(out, 4, s.arr[3])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_array_field_whole_assign_mixed():
     _check_npu()
     out = torch.zeros(5, device=ST_DEVICE, dtype=torch.int32)
@@ -539,7 +539,7 @@ def struct_fp32_arr_write_read_kernel(
             pl.setval(out, i, s.farr[i])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_fp32_arr_write_read():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.float32)
@@ -561,7 +561,7 @@ def struct_fp32_arr_loop_fill_kernel(
             pl.setval(out, i, s.farr[i])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_fp32_arr_loop_fill():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.float32)
@@ -583,7 +583,7 @@ def struct_fp32_arr_accum_kernel(
         pl.setval(out, 0, total)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_fp32_arr_accum():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.float32)
@@ -604,7 +604,7 @@ def struct_fp32_arr_modify_kernel(
         pl.setval(out, 0, s.farr[0])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_fp32_arr_modify():
     _check_npu()
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.float32)
@@ -629,7 +629,7 @@ def struct_bool_arr_read_init_kernel(
                 pl.setval(out, i, 0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_bool_arr_read_init():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -654,7 +654,7 @@ def struct_bool_arr_write_read_kernel(
                 pl.setval(out, i, 0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_bool_arr_write_read():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -682,7 +682,7 @@ def struct_bool_arr_loop_cond_kernel(
                 pl.setval(out, i, 0)
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_bool_arr_loop_cond():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -714,7 +714,7 @@ def struct_ext_list_arr_kernel(
         pl.setval(out, 3, s.arr[1])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_ext_list_arr():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
@@ -753,7 +753,7 @@ def struct_two_list_fields_kernel(
         pl.setval(out, 3, s.arr1[99])
 
 
-@pytest.mark.soc("950")
+@pytest.mark.soc("950", "960")
 def test_struct_two_list_fields():
     _check_npu()
     out = torch.zeros(4, device=ST_DEVICE, dtype=torch.int32)
