@@ -23,6 +23,56 @@
 namespace pypto {
 namespace ir {
 
+TEST(ScalarExprBasicTest, RejectsStorageOnlyScalarArithmetic)
+{
+    for (auto dtype : {DataType::FP4, DataType::FP8E4M3FN, DataType::FP8E5M2, DataType::FP8E8M0, DataType::FP4E2M1,
+                       DataType::FP4E1M2, DataType::HF4, DataType::HF8, DataType::INT4, DataType::UINT4}) {
+        EXPECT_TRUE(dtype.IsStorageOnly());
+        auto value = std::make_shared<const Var>("value", std::make_shared<const ScalarType>(dtype), Span::Unknown());
+        EXPECT_THROW((void)MakeMin(value, value), ValueError);
+        EXPECT_THROW((void)MakeMax(value, value), ValueError);
+        EXPECT_THROW((void)MakeAdd(value, value), ValueError);
+    }
+    for (auto dtype : {DataType::BOOL, DataType::INT8, DataType::UINT8, DataType::INT64, DataType::UINT64,
+                       DataType::INDEX, DataType::FP16, DataType::BF16, DataType::FP32, DataType::FP64}) {
+        EXPECT_FALSE(dtype.IsStorageOnly());
+    }
+}
+
+TEST(ScalarExprBasicTest, LogicalOperationsPreserveNumericOperands)
+{
+    for (auto dtype : {DataType::BOOL, DataType::INT32, DataType::INT64, DataType::UINT64, DataType::FP32}) {
+        auto left = std::make_shared<const Var>("left", std::make_shared<const ScalarType>(dtype), Span::Unknown());
+        for (auto floating : {DataType::FP16, DataType::BF16, DataType::FP32}) {
+            auto right = std::make_shared<const Var>("right", std::make_shared<const ScalarType>(floating),
+                                                     Span::Unknown());
+            for (auto make_op : {MakeAnd, MakeOr, MakeXor}) {
+                for (bool reverse : {false, true}) {
+                    const auto& lhs = reverse ? right : left;
+                    const auto& rhs = reverse ? left : right;
+                    auto result = std::dynamic_pointer_cast<const BinaryExpr>(make_op(lhs, rhs, Span::Unknown()));
+                    ASSERT_NE(result, nullptr);
+                    EXPECT_EQ(result->left_, lhs);
+                    EXPECT_EQ(result->right_, rhs);
+                    EXPECT_EQ(GetScalarDtype(result), DataType::BOOL);
+                }
+            }
+        }
+    }
+}
+
+TEST(ScalarExprBasicTest, IntegerTrueDivisionPromotesToFloat32)
+{
+    for (auto dtype : {DataType::BOOL, DataType::INT32, DataType::INT64, DataType::UINT64}) {
+        auto value = std::make_shared<const Var>("value", std::make_shared<const ScalarType>(dtype), Span::Unknown());
+        auto result = std::dynamic_pointer_cast<const FloatDiv>(MakeFloatDiv(value, value));
+        ASSERT_NE(result, nullptr);
+        EXPECT_EQ(GetScalarDtype(result), DataType::FP32);
+        EXPECT_EQ(GetScalarDtype(result->left_), DataType::FP32);
+        EXPECT_EQ(GetScalarDtype(result->right_), DataType::FP32);
+    }
+}
+
 // ============================================================================
 // ConstInt Tests
 // ============================================================================

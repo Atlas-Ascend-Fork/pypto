@@ -1532,12 +1532,9 @@ static std::string MakeGetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
 
     auto result_type = ir::As<ir::ScalarType>(op->GetType());
     INTERNAL_CHECK(result_type) << "getval result must be ScalarType";
-    auto cast_result_if_dtype_changed = [](std::string result, const ir::DataType& result_dtype,
-                                           const ir::DataType& input_dtype) {
-        if (result_dtype != input_dtype) {
-            return "(" + result_dtype.ToCTypeString() + ")(" + result + ")";
-        }
-        return result;
+    auto cast_result_if_dtype_changed = [&codegen](std::string result, const ir::DataType& result_dtype,
+                                                   const ir::DataType& input_dtype) {
+        return codegen.ScalarCast(result, input_dtype, result_dtype);
     };
 
     auto first_type = op->args_[0]->GetType();
@@ -1604,9 +1601,15 @@ static std::string MakeSetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
         << "setval requires 3 arguments, but got " << op->args_.size();
 
     auto first_type = op->args_[0]->GetType();
-    if (ir::As<ir::TileType>(first_type)) {
-        std::string offset = codegen.GetExprAsCode(op->args_[1]);
+    auto scalar_value = [&](const ir::DataType& destination) {
+        auto type = ir::As<ir::ScalarType>(op->args_[2]->GetType());
+        INTERNAL_CHECK(type) << "setval value must be ScalarType";
         std::string value = codegen.GetExprAsCode(op->args_[2]);
+        return codegen.ScalarCast(value, type->dtype_, destination);
+    };
+    if (auto tile_type = ir::As<ir::TileType>(first_type)) {
+        std::string offset = codegen.GetExprAsCode(op->args_[1]);
+        std::string value = scalar_value(tile_type->dtype_);
         if (codegen.IsInSimtContext()) {
             std::string tile = codegen.GetExprAsCode(op->args_[0]);
             codegen.Emit(tile + "[" + offset + "] = " + value + ";");
@@ -1625,7 +1628,7 @@ static std::string MakeSetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
         << "setval requires TensorType";
     std::string tensor_name = codegen.GetVarName(tensor_var);
     std::string offset = codegen.GetExprAsCode(op->args_[1]);
-    std::string value = codegen.GetExprAsCode(op->args_[2]);
+    std::string value = scalar_value(tensor_type->dtype_);
     std::string dtype_str = codegen.GetTypeString(tensor_type->dtype_);
 
     std::string tensor_ptr = codegen.GetPointer(tensor_name);

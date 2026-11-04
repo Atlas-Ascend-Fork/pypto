@@ -318,6 +318,13 @@ public:
                (code_ >= kBrainFloatRangeStart && code_ <= kBrainFloatRangeEnd);
     }
 
+    /// Low-precision storage formats that cannot participate in scalar expressions.
+    [[nodiscard]] bool IsStorageOnly() const
+    {
+        return code_ == kInt4Code || code_ == kUInt4Code || (code_ >= kFp4Code && code_ <= kFp8e5m2Code) ||
+               (code_ >= kFp8e8m0Code && code_ <= kFp4e1m2Code) || (code_ >= kHf4Code && code_ <= kHf8Code);
+    }
+
     /**
      * \brief Check if this data type is a signed integer type
      *

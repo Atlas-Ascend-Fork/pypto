@@ -1,0 +1,21 @@
+#if defined(__DAV_VEC__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void kernel_impl_vector()
+{
+    set_mask_norm();
+    set_vector_mask(-1, -1);
+
+    using tile_Type = SyncedTile<Tile<TileType::Vec, int32_t, 16, 16, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0>;
+    tile_Type tile{tile_Type::PtoTile(16, 16), {}};
+    auto val = ((int64_t)tile.tile.GetValue(3));
+}
+#endif

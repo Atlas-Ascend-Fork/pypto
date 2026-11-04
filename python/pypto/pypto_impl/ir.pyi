@@ -77,9 +77,13 @@ class DataType:
             The C-style type string
         """
 
+    def is_storage_only(self) -> bool:
+        """Whether this low-precision format is unsupported in scalar expressions."""
+
     def is_float(self) -> bool:
         """
-        Check if this data type is a floating point type (FP4, FP4E2M1, FP4E1M2, FP8, FP8E4M3FN, FP8E5M2, FP8E8M0, FP16, FP32, BF16, HF4, HF8).
+        Check if this data type is a floating point type
+        (FP4, FP4E2M1, FP4E1M2, FP8, FP8E4M3FN, FP8E5M2, FP8E8M0, FP16, FP32, BF16, HF4, HF8).
 
         Returns:
             True if the data type is a floating point type, False otherwise
@@ -1690,8 +1694,8 @@ class Function(IRNode):
         ...
 
     def parse_attrs(self) -> dict[str, Any]:
-    """Return applied backend config; config is None for a generic IR function."""
-    ...
+        """Return applied backend config; config is None for a generic IR function."""
+        ...
 
     def __init__(
         self,

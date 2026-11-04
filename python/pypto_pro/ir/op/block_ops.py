@@ -49,6 +49,7 @@ from pypto_pro.ir._utils import (
     _to_make_tuple,
     require_const_int,
     require_int,
+    require_scalar_dtype,
     unwrap_type,
 )
 
@@ -1182,20 +1183,6 @@ def _ir_set_validshape(
     return _ir_core.create_op_call(block_ir_op("set_validshape"), [tile, shape_0, shape_1], {}, actual_span)
 
 
-_SCALAR_UNSUPPORTED_DTYPES: tuple[DataType, ...] = (
-    DataType.FP4,
-    DataType.FP8E4M3FN,
-    DataType.FP8E5M2,
-    DataType.FP8E8M0,
-    DataType.FP4E2M1,
-    DataType.FP4E1M2,
-    DataType.INT4,
-    DataType.UINT4,
-    DataType.HF4,
-    DataType.HF8,
-)
-
-
 def _check_scalar_access_supported(op_name: str, container: Expr, span: Span) -> None:
     """Validate the container constraints for scalar getval/setval access."""
     tile_type = container.type
@@ -1210,13 +1197,9 @@ def _check_scalar_access_supported(op_name: str, container: Expr, span: Span) ->
                 parser_retry=True,
             )
 
-    dtype = container.type.dtype
-    if any(dtype == d for d in _SCALAR_UNSUPPORTED_DTYPES):
-        raise NotSupported(
-            f"{op_name} does not support container dtype {dtype}; "
-            "low-precision types (FP4/FP8/INT4/UINT4/HF4/HF8) are storage-only "
-            "and cannot be used in scalar expressions"
-        )
+    require_scalar_dtype(
+        container.type.dtype, subject=f"{op_name} does not support container", span=span,
+    )
 
 
 def _validate_load_operands(

@@ -19,7 +19,7 @@
   lhs/rhs 为标量 Expr 或 Python int。标量级别（区别于 tile 级逐元素的 pl.maximum）。
 
 数据类型覆盖:
-  Python int 常量 / INT32 标量 / INT64 标量 / FP32 标量 (pl.const)
+  Python int 常量 / INT32 标量 / INT64 标量 / FP32 标量 (pl.const) / BF16 标量
 
 控制流覆盖:
   for 循环 / if-else / while 循环 / 作为循环边界
@@ -116,6 +116,43 @@ def max_fp32_kernel(
         c = pl.const(2.5, pl.DT_FP32)
         out[0] = pl.max(a, b)
         out[1] = pl.max(b, c)
+
+
+@pl.jit()
+def max_bf16_kernel(
+    lhs: pl.Tensor[[8], pl.DT_BF16],
+    rhs: pl.Tensor[[8], pl.DT_BF16],
+    out: pl.Tensor[[5, 8], pl.DT_BF16],
+):
+    with pl.section_vector():
+        for i in pl.range(8):
+            a = lhs[i]
+            b = rhs[i]
+            out[0, i] = pl.max(a, b)
+            out[1, i] = pl.max(b, a)
+            out[2, i] = pl.max(a, pl.const(0.5, pl.DT_BF16))
+            out[3, i] = pl.max(pl.const(0.5, pl.DT_BF16), b)
+            out[4, i] = pl.max(a, pl.max(b, pl.const(0.5, pl.DT_BF16)))
+
+
+@pytest.mark.soc("950")
+def test_max_bf16():
+    """Compare runtime BF16 scalars, including values outside FP16's range."""
+    torch.npu.set_device(ST_DEVICE)
+    lhs = torch.tensor([-3.5, 2.5, 1.0078125, -1.0078125, 1e20, -1e20, 1e-20, 0.5], dtype=torch.bfloat16)
+    rhs = torch.tensor([2.5, -3.5, 1.015625, -1.015625, -1e20, 1e20, 2e-20, 0.5], dtype=torch.bfloat16)
+    out = torch.empty((5, 8), device=ST_DEVICE, dtype=torch.bfloat16)
+    max_bf16_kernel[None, 1](lhs.to(ST_DEVICE), rhs.to(ST_DEVICE), out)
+    torch.npu.synchronize()
+    constant = torch.tensor(0.5, dtype=torch.bfloat16)
+    expected = torch.stack((
+        torch.maximum(lhs, rhs),
+        torch.maximum(rhs, lhs),
+        torch.maximum(lhs, constant),
+        torch.maximum(constant, rhs),
+        torch.maximum(lhs, torch.maximum(rhs, constant)),
+    ))
+    torch.testing.assert_close(out.cpu(), expected, rtol=0, atol=0)
 
 
 # =============================================================================

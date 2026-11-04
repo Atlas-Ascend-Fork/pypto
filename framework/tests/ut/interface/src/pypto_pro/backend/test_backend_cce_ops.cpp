@@ -12,6 +12,9 @@
 
 #include <any>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -52,6 +55,16 @@ public:
     void SetInVFSection(bool value) { in_vf_section_ = value; }
     void RegisterVarName(const ir::VarPtr& var, const std::string& name) { context_.RegisterVar(var, name); }
 };
+
+void ExpectScalarAccessCode(const std::string& generated, const std::string& name)
+{
+    const auto path = std::filesystem::path(CCE_SCALAR_ACCESS_TEST_DATA_DIR) / (name + ".pypto");
+    std::ifstream expected(path);
+    ASSERT_TRUE(expected.is_open()) << path;
+    std::ostringstream content;
+    content << expected.rdbuf();
+    EXPECT_EQ(generated, content.str()) << path;
+}
 
 ir::ExprPtr MakeConstInt(int64_t value, ir::DataType dtype = ir::DataType::INT64)
 {
@@ -805,7 +818,7 @@ TEST(BackendCceOpsTest, BlockMakeTileAndSetValTile)
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
-    EXPECT_NE(generated.find(".SetValue(5, 42);"), std::string::npos);
+    ExpectScalarAccessCode(generated, "setval_tile");
 }
 
 TEST(BackendCceOpsTest, BlockGetValTile)
@@ -827,7 +840,7 @@ TEST(BackendCceOpsTest, BlockGetValTile)
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
-    EXPECT_NE(generated.find("(int64_t)(tile.tile.GetValue(3))"), std::string::npos);
+    ExpectScalarAccessCode(generated, "getval_tile");
 }
 
 // ============================================================================
@@ -860,7 +873,7 @@ TEST(BackendCceOpsTest, BlockGetValTensorInt32CastsResult)
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_2201);
-    EXPECT_NE(generated.find("(int64_t)(*((__gm__ int32_t*)"), std::string::npos);
+    ExpectScalarAccessCode(generated, "getval_tensor_int32");
 }
 
 TEST(BackendCceOpsTest, BlockGetValTensorUint64DoesNotCastResult)
@@ -888,7 +901,7 @@ TEST(BackendCceOpsTest, BlockSetValTensor)
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_2201);
     EXPECT_NE(generated.find("*((__gm__ float*)"), std::string::npos);
-    EXPECT_NE(generated.find("+ 5) = 42;"), std::string::npos);
+    ExpectScalarAccessCode(generated, "setval_tensor");
 }
 
 // ============================================================================

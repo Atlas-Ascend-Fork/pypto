@@ -36,9 +36,10 @@ pypto_pro.language.min(
 ## 约束说明
 
 - **仅用于标量**：用于循环边界、索引计算等场景
+- 不支持仅用于存储的低精度类型：DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_FP4、DT_FP4E2M1、DT_FP4E1M2、DT_HF8、DT_HF4、DT_INT4、DT_UINT4。
 - **Tile逐元素取最小值**：使用pypto_pro.language.minimum
 - **不支持多参数**：仅接受恰好2个参数，min(a, b, c)不支持
-- **同类别约束**：两个操作数须同为整型或同为浮点型，混合int/float会报错
+- **类型提升**：混合整型和浮点型操作数时，两侧操作数转换为DT_FP32后比较。
 
 ## 返回值说明
 

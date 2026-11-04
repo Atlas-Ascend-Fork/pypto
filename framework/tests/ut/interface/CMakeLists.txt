@@ -26,9 +26,15 @@ PTO_Fwk_UTest_AddCaseLib(
         TARGET ${_Target}
         SOURCES ${_Sources}
         PRIVATE_INCLUDE_DIRECTORIES ${PTO_FWK_SRC_ROOT}/framework/include/pypto_pro
+                                    ${PTO_FWK_SRC_ROOT}/python/pypto_pro/include
         LINK_LIBRARIES ${LinkLibraries}
 )
 
 target_compile_definitions(${_Target} PRIVATE
         IO_TEXT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/ir/test_io_text_dump_data"
+)
+
+set_source_files_properties(src/pypto_pro/backend/test_backend_cce_ops.cpp PROPERTIES
+        COMPILE_DEFINITIONS
+        CCE_SCALAR_ACCESS_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/pypto_pro/backend/test_backend_cce_ops_data"
 )

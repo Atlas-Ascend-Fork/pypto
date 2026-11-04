@@ -24,6 +24,7 @@ ValueError/TypeError 会被 parse_target_program 包装为 NotSupported，
 
 from pypto_pro._errors import (
     InvalidArgument,
+    InvalidFormat,
     InvalidOperation,
     InvalidShape,
     InvalidTile,
@@ -339,7 +340,8 @@ def test_err_per_channel_n1_tile():
 
     q, k = _make_qk()
     out = torch.zeros(64, 64, dtype=torch.int8)
-    with pytest.raises(NotSupported, match=r"shape \[1, N\].*row == 1"):
+    # Scaling requires ND; a [N, 1] tile cannot satisfy ND alignment, so construction rejects it first.
+    with pytest.raises(InvalidFormat, match=r"last axis is 1 requires layout DN"):
         kernel(q, k, out)
 
 

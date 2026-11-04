@@ -243,7 +243,7 @@ def test_struct_mixed_dtype_array_fields():
         iv: pl.DT_INT64 = s.ints[0]
         fv: pl.DT_FP32 = s.floats[1]
         bv: pl.DT_INT64 = s.bools[0]
-        _test_result = iv + fv + bv
+        _test_result = pl.astype(iv, pl.DT_FP32) + fv + pl.astype(bv, pl.DT_FP32)
 
     kernel_program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     kernel = kernel_program.get_function(kernel.__name__)

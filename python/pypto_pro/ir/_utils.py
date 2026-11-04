@@ -23,6 +23,7 @@ __all__ = [
     "require_const_bool",
     "require_const_int",
     "require_int",
+    "require_scalar_dtype",
     "unwrap_type",
 ]
 
@@ -33,7 +34,19 @@ import inspect
 from pypto.pypto_impl import ir as _ir
 from pypto.pypto_impl.ir import DataType
 
-from .._errors import InvalidType, InvalidVal
+from .._errors import InvalidType, InvalidVal, NotSupported
+
+
+def require_scalar_dtype(dtype: DataType, *, subject: str, span: _ir.Span | None = None) -> None:
+    """Reject storage-only formats at a scalar construction or access boundary."""
+    if dtype.is_storage_only():
+        raise NotSupported(
+            f"{subject} dtype {dtype}; low-precision types are storage-only "
+            "and cannot be used in scalar expressions",
+            span=span,
+            hint="Use a supported scalar dtype; for supported FP8/FP4 register conversions, use pl.Vf.astype",
+            parser_retry=True,
+        )
 
 
 def _const_int_value(value: object) -> int | None:

@@ -141,7 +141,6 @@ def histogram_uint16_msb_kernel_cce(
         pl.store(histogram_out, tile_dst, [0, 0])
 
 
-@pl.jit()
 @pytest.mark.soc("950", "960")
 def test_histogram_uint16_msb():
     """Test histogram with uint16 input, MSB mode (bits 15-8)."""
@@ -248,7 +247,6 @@ def histogram_uint16_lsb_kernel_cce(
         pl.store(histogram_out, tile_dst, [0, 0])
 
 
-@pl.jit()
 @pytest.mark.soc("950", "960")
 def test_histogram_uint16_lsb():
     """Test histogram with uint16 input, LSB mode (bits 7-0, filtered by MSB)."""
@@ -396,7 +394,6 @@ def histogram_uint32_byte3_kernel_cce(
         pl.store(histogram_out, tile_dst, [0, 0])
 
 
-@pl.jit()
 @pytest.mark.soc("950", "960")
 def test_histogram_uint32_byte3():
     """Test histogram with uint16 input, MSB mode (bits 15-8), ROWS_U32 rows.

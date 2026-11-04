@@ -99,7 +99,7 @@ def getval_while_condition_am_kernel(
         t = a_db.next()
         pl.load(t, a, [0, 0])
         i: pl.DT_INT64 = 0
-        while t[0, i] > 0:
+        while t[0, i] > pl.const(0, pl.DT_FP16):
             i = i + 1
             if i >= 8:
                 break

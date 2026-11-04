@@ -57,6 +57,8 @@ enum class ScalarCategory {
 inline ScalarCategory GetNumericCategory(const DataType& dtype, const std::string& opName,
                                          const Span& span = Span::Unknown())
 {
+    IRCHECK(!dtype.IsStorageOnly()) << "Operator '" << opName << "' does not support storage-only scalar dtype "
+                                    << dtype.ToString() << " at " << span.ToString();
     if (dtype.IsFloat()) {
         return ScalarCategory::FLOAT;
     }

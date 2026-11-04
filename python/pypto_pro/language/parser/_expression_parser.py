@@ -357,7 +357,7 @@ class ExpressionParserMixin:
                                   span: ir.Span) -> None:
         """Reject scalar division-family ops inside a vector function.
 
-        '/' always promotes to a scalar FloatDiv, and float '//', '%' emit
+        '/' constructs a scalar FloatDiv, and float '//', '%' emit
         float math; neither can be lowered inside the VF vector scope.
         """
         if self.inline_vf_depth == 0:
@@ -438,9 +438,8 @@ class ExpressionParserMixin:
                 parser_retry=True,
             )
 
-        # Map AST operators to IR builder names. Everything is routed through
-        # ``make_binary`` so mixed int/float operands (e.g. ``1.0 / G`` or ``1.0 + G``
-        # with ``G`` an index Var) get Python-consistent promotion to float.
+        # Route AST operators through the IR builders so scalar promotion and
+        # validation apply before constant folding as well as to runtime expressions.
         op_map = {
             ast.Add: "add",
             ast.Sub: "sub",

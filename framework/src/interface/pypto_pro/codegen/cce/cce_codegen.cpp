@@ -629,13 +629,15 @@ std::vector<ir::FunctionPtr> OrderSimtCallees(const std::map<std::string, ir::Fu
 
 } // namespace
 
-std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& program, npu::tile_fwk::NPUArch arch)
+std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& input_program, npu::tile_fwk::NPUArch arch)
 {
-    PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, program != nullptr)
+    PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, input_program != nullptr)
         << "Cannot generate code for null program";
+    auto program = LowerScalarExpressionsForCCE()(input_program);
 
     ResetFunctionGenerationState();
     needs_simt_atomic_header_ = false;
+    needs_scalar_helpers_ = false;
     current_kernel_type_ = ir::FunctionType::OPAQUE;
     arch_ = arch;
     PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, arch_ != npu::tile_fwk::NPUArch::DAV_UNKNOWN)
@@ -729,6 +731,9 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& program, npu::tile_
     emitter_.EmitLine("#include <pypto_dump.h>");
     if (HasWindowParam(kernel_func)) {
         emitter_.EmitLine("#include <pypto_distribute.h>");
+    }
+    if (needs_scalar_helpers_) {
+        emitter_.EmitLine("#include <pypto_scalar.h>");
     }
     emitter_.EmitRaw(function_code);
     emitter_.EmitLine("#endif");
@@ -1253,9 +1258,7 @@ void CCECodegen::EmitFullPhiIf(const ir::IfStmtPtr& op)
         EmitVariable(return_var, nullptr, true);
     }
 
-    VisitExpr(op->condition_);
-    std::string condition = current_expr_value_;
-    current_expr_value_ = "";
+    std::string condition = GetExprAsCode(op->condition_);
 
     emitter_.EmitLine("if (" + condition + ") {");
     emitter_.IncreaseIndent();
@@ -1622,9 +1625,7 @@ void CCECodegen::VisitStmt_(const ir::WhileStmtPtr& op)
     // The condition is re-evaluated each iteration, so emit it inline in the while header.
     // Comparison/logical exprs lower to pure C++ expression strings (see IMPLEMENT_BINARY_OP),
     // so they are safe to place directly in `while (...)`.
-    VisitExpr(op->condition_);
-    std::string condition = current_expr_value_;
-    current_expr_value_ = "";
+    std::string condition = GetExprAsCode(op->condition_);
 
     EmitLoop("while (" + condition + ") {", op->body_, op->iterArgs_, op->returnVars_, iter_arg_names, true);
 }
@@ -1721,6 +1722,9 @@ void CCECodegen::VisitExpr_(const ir::ConstFloatPtr& op)
         current_expr_value_ = val > 0 ? "__builtin_huge_valf()" : "(-__builtin_huge_valf())";
     } else {
         current_expr_value_ = FormatFloatCLiteral(val) + "f";
+    }
+    if (op->dtype() == DataType::BF16 || op->dtype() == DataType::FP16) {
+        current_expr_value_ = ScalarCast(current_expr_value_, DataType::FP32, op->dtype());
     }
 }
 
@@ -2238,17 +2242,46 @@ std::string BuildPythonDivModExpression(const std::string& left, const std::stri
     return BuildPythonIntegerDivModExpression(left, right, dtype, return_remainder);
 }
 
+std::string BuildBFloat16MinMaxExpression(const std::string& left, const std::string& right, const std::string& op)
+{
+    // BF16 occupies the upper 16 bits of FP32. Keep the expanded bit patterns in scalar registers:
+    // bisheng can spill integer/FP32 bitcasts around FP32 arithmetic, including __builtin_bit_cast.
+    // The "l" constraint selects 64-bit scalar registers; MIN/MAX.f32 consumes their low 32 bits.
+    std::ostringstream code;
+    code << "({bfloat16_t __pypto_lhs = " << left << ";"
+         << "bfloat16_t __pypto_rhs = " << right << ";"
+         << "uint64_t __pypto_lhs_bits = (uint64_t)reinterpret_cast<uint16_t&>(__pypto_lhs) << 16;"
+         << "uint64_t __pypto_rhs_bits = (uint64_t)reinterpret_cast<uint16_t&>(__pypto_rhs) << 16;"
+         << "uint64_t __pypto_result;"
+         << "asm(\"" << op << ".f32 %0, %1, %2\" : \"=l\"(__pypto_result) : "
+         << "\"l\"(__pypto_lhs_bits), \"l\"(__pypto_rhs_bits));"
+         << "uint16_t __pypto_result_bits = __pypto_result >> 16;"
+         << "reinterpret_cast<bfloat16_t&>(__pypto_result_bits);})";
+    return code.str();
+}
+
 } // namespace
+
+std::string CCECodegen::ScalarCast(const std::string& value, const DataType& source, const DataType& target)
+{
+    if (source == target) {
+        return value;
+    }
+    const std::string cpp_type = target.ToCTypeString();
+    if (!IsInSimtContext() && (source == DataType::BF16 || target == DataType::BF16)) {
+        needs_scalar_helpers_ = true;
+        return "pypto_scalar::Cast<" + cpp_type + ">(" + value + ")";
+    }
+    return "((" + cpp_type + ")" + value + ")";
+}
 
 #define IMPLEMENT_BINARY_OP(OpType, OpName, CppOp)                                                   \
     void CCECodegen::VisitExpr_(const ir::OpType##Ptr& op)                                           \
     {                                                                                                \
         PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op != nullptr) \
             << "Internal error: null " << (OpName);                                                  \
-        VisitExpr(op->left_);                                                                        \
-        std::string left = current_expr_value_;                                                      \
-        VisitExpr(op->right_);                                                                       \
-        std::string right = current_expr_value_;                                                     \
+        std::string left = GetExprAsCode(op->left_);                                                 \
+        std::string right = GetExprAsCode(op->right_);                                               \
         current_expr_value_ = "(" + left + " " + (CppOp) + " " + right + ")";                        \
     }
 
@@ -2269,7 +2302,6 @@ IMPLEMENT_BINARY_OP(Ge, "Ge", ">=")
 // Logical operators
 IMPLEMENT_BINARY_OP(And, "And", "&&")
 IMPLEMENT_BINARY_OP(Or, "Or", "||")
-IMPLEMENT_BINARY_OP(Xor, "Xor", "^")
 
 // Bitwise operators
 IMPLEMENT_BINARY_OP(BitAnd, "BitAnd", "&")
@@ -2280,6 +2312,15 @@ IMPLEMENT_BINARY_OP(BitShiftRight, "BitShiftRight", ">>")
 
 #undef IMPLEMENT_BINARY_OP
 
+void CCECodegen::VisitExpr_(const ir::XorPtr& op)
+{
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op != nullptr)
+        << "Internal error: null Xor";
+    const std::string left = GetExprAsCode(op->left_);
+    const std::string right = GetExprAsCode(op->right_);
+    current_expr_value_ = "((bool)(" + left + ") != (bool)(" + right + "))";
+}
+
 // C++ signed division truncates toward zero, and C++ has no floating-point modulo operator.
 // Lower both integer and floating-point FloorDiv/FloorMod explicitly to match Python semantics.
 void CCECodegen::VisitExpr_(const ir::FloorDivPtr& op)
@@ -2289,11 +2330,8 @@ void CCECodegen::VisitExpr_(const ir::FloorDivPtr& op)
     auto scalar_type = ir::As<ir::ScalarType>(op->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, scalar_type != nullptr)
         << "Internal error: FloorDiv result must be a scalar";
-    VisitExpr(op->left_);
-    const std::string left = current_expr_value_;
-    VisitExpr(op->right_);
-    const std::string right = current_expr_value_;
-
+    const std::string left = GetExprAsCode(op->left_);
+    const std::string right = GetExprAsCode(op->right_);
     current_expr_value_ = BuildPythonDivModExpression(left, right, scalar_type->dtype_, false);
 }
 
@@ -2304,11 +2342,8 @@ void CCECodegen::VisitExpr_(const ir::FloorModPtr& op)
     auto scalar_type = ir::As<ir::ScalarType>(op->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, scalar_type != nullptr)
         << "Internal error: FloorMod result must be a scalar";
-    VisitExpr(op->left_);
-    const std::string left = current_expr_value_;
-    VisitExpr(op->right_);
-    const std::string right = current_expr_value_;
-
+    const std::string left = GetExprAsCode(op->left_);
+    const std::string right = GetExprAsCode(op->right_);
     current_expr_value_ = BuildPythonDivModExpression(left, right, scalar_type->dtype_, true);
 }
 
@@ -2323,6 +2358,11 @@ void CCECodegen::VisitExpr_(const ir::MinPtr& op)
     std::string left = current_expr_value_;
     VisitExpr(op->right_);
     std::string right = current_expr_value_;
+    if (scalar_type && scalar_type->dtype_ == DataType::BF16) {
+        current_expr_value_ = IsInSimtContext() ? "__min(" + left + ", " + right + ")" :
+                                                  BuildBFloat16MinMaxExpression(left, right, "min");
+        return;
+    }
     current_expr_value_ = "min((" + cpp_type + ")(" + left + "), (" + cpp_type + ")(" + right + "))";
 }
 
@@ -2336,6 +2376,11 @@ void CCECodegen::VisitExpr_(const ir::MaxPtr& op)
     std::string left = current_expr_value_;
     VisitExpr(op->right_);
     std::string right = current_expr_value_;
+    if (scalar_type && scalar_type->dtype_ == DataType::BF16) {
+        current_expr_value_ = IsInSimtContext() ? "__max(" + left + ", " + right + ")" :
+                                                  BuildBFloat16MinMaxExpression(left, right, "max");
+        return;
+    }
     current_expr_value_ = "max((" + cpp_type + ")(" + left + "), (" + cpp_type + ")(" + right + "))";
 }
 
@@ -2357,15 +2402,27 @@ void CCECodegen::VisitExpr_(const ir::PowPtr& op)
     {                                                                                                \
         PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op != nullptr) \
             << "Internal error: null " << (OpName);                                                  \
-        VisitExpr(op->operand_);                                                                     \
-        current_expr_value_ = std::string("(") + (CppOp) + current_expr_value_ + ")";                \
+        const std::string operand = GetExprAsCode(op->operand_);                                     \
+        current_expr_value_ = std::string("(") + (CppOp) + operand + ")";                            \
     }
 
-IMPLEMENT_UNARY_OP(Neg, "Neg", "-")
 IMPLEMENT_UNARY_OP(Not, "Not", "!")
 IMPLEMENT_UNARY_OP(BitNot, "BitNot", "~")
 
 #undef IMPLEMENT_UNARY_OP
+
+void CCECodegen::VisitExpr_(const ir::NegPtr& op)
+{
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op != nullptr)
+        << "Internal error: null Neg";
+    VisitExpr(op->operand_);
+    if (ir::GetScalarDtype(op->operand_) == DataType::BF16 && !IsInSimtContext()) {
+        needs_scalar_helpers_ = true;
+        current_expr_value_ = "pypto_scalar::ChangeSign<false>(" + current_expr_value_ + ")";
+    } else {
+        current_expr_value_ = "(-" + current_expr_value_ + ")";
+    }
+}
 
 // Special unary operators
 void CCECodegen::VisitExpr_(const ir::AbsPtr& op)
@@ -2381,14 +2438,21 @@ void CCECodegen::VisitExpr_(const ir::CastPtr& op)
 {
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op != nullptr)
         << "Internal error: null Cast";
-    VisitExpr(op->operand_);
-    std::string operand = current_expr_value_;
+    const auto operand = GetExprAsCode(op->operand_);
 
-    auto scalar_type = std::dynamic_pointer_cast<const ir::ScalarType>(op->GetType());
+    const auto scalar_type = ir::As<ir::ScalarType>(op->GetType());
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalar_type != nullptr) << "Cast target must be ScalarType";
 
-    std::string cpp_type = scalar_type->dtype_.ToCTypeString();
-    current_expr_value_ = "((" + cpp_type + ")" + operand + ")";
+    const auto source_type = op->operand_->GetType();
+    if (auto source = ir::As<ir::ScalarType>(source_type)) {
+        current_expr_value_ = ScalarCast(operand, source->dtype_, scalar_type->dtype_);
+        return;
+    }
+
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, ir::As<ir::PtrType>(source_type) != nullptr)
+        << "Cast operand must be ScalarType or PtrType";
+    // Optional-pointer checks cast the address, not the pointed-to element value.
+    current_expr_value_ = "((" + scalar_type->dtype_.ToCTypeString() + ")" + operand + ")";
 }
 
 // ========================================================================

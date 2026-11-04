@@ -616,6 +616,177 @@ TEST(CCECodegenTest, HandlesStaticTupleGetItemWithoutBackingArray)
     EXPECT_EQ(codegen.GetExprAsCode(item), "22");
 }
 
+static ir::StmtPtr LowerScalarStatement(const ir::StmtPtr& stmt)
+{
+    auto span = ir::Span::Unknown();
+    auto function = std::make_shared<const ir::Function>(
+        "kernel", std::vector<ir::VarPtr>{}, std::vector<ir::TypePtr>{}, stmt, span, ir::FunctionType::IN_CORE, true);
+    auto program = std::make_shared<const ir::Program>(std::vector<ir::FunctionPtr>{function}, "test", span,
+                                                       std::make_shared<ir::IRDebugInfo>());
+    return LowerScalarExpressionsForCCE()(program)->functions_.at("kernel")->body_->stmts_[0];
+}
+
+TEST(CCECodegenTest, CastsPointerAddressesWithoutScalarConversion)
+{
+    auto span = ir::Span::Unknown();
+    for (auto target : {ir::SectionKind::Cube, ir::SectionKind::Vector}) {
+        for (auto dtype : {ir::DataType::UINT8, ir::DataType::BF16}) {
+            auto ptr = MakeVar("ptr", std::make_shared<const ir::PtrType>(dtype));
+            auto address = std::make_shared<const ir::Cast>(ptr, ir::DataType::UINT64, span);
+            auto result = MakeVar("address", std::make_shared<const ir::ScalarType>(ir::DataType::UINT64));
+            auto body = std::make_shared<const ir::AssignStmt>(result, address, span);
+            CCECodegen codegen(target);
+            auto cpp = codegen.GenerateSingle(MakeProgram(body, {ptr}), npu::tile_fwk::NPUArch::DAV_3510);
+            EXPECT_NE(cpp.find("((uint64_t)ptr)"), std::string::npos);
+            EXPECT_EQ(cpp.find("pypto_scalar::Cast"), std::string::npos);
+            EXPECT_EQ(cpp.find("#include <pypto_scalar.h>"), std::string::npos);
+        }
+    }
+}
+
+TEST(CCECodegenTest, NormalizesNestedScalarConditionsToBool)
+{
+    const ir::Span span("condition.py", 7, 3);
+    auto body = std::make_shared<ir::SeqStmts>(std::vector<ir::StmtPtr>{}, span);
+    for (auto dtype : {ir::DataType::BOOL, ir::DataType::INT32, ir::DataType::UINT64, ir::DataType::INDEX,
+                       ir::DataType::FP16, ir::DataType::BF16, ir::DataType::FP32}) {
+        SCOPED_TRACE(dtype.ToString());
+        auto condition = std::make_shared<ir::Var>("condition", std::make_shared<ir::ScalarType>(dtype), span);
+        auto loop = std::make_shared<ir::WhileStmt>(condition, std::vector<ir::IterArgPtr>{}, body,
+                                                    std::vector<ir::VarPtr>{}, span);
+        auto branch = std::make_shared<ir::IfStmt>(condition, loop, loop, std::vector<ir::VarPtr>{}, span);
+        auto normalized = ir::As<ir::IfStmt>(LowerScalarStatement(branch));
+        auto then_loop = ir::As<ir::WhileStmt>(normalized->thenBody_->stmts_[0]);
+        auto else_loop = ir::As<ir::WhileStmt>((*normalized->elseBody_)->stmts_[0]);
+        for (const auto& result : {normalized->condition_, then_loop->condition_, else_loop->condition_}) {
+            ASSERT_EQ(ir::As<ir::ScalarType>(result->GetType())->dtype_, ir::DataType::BOOL);
+            if (dtype == ir::DataType::BOOL) {
+                EXPECT_EQ(result, condition);
+            } else {
+                auto cast = ir::As<ir::Cast>(result);
+                ASSERT_NE(cast, nullptr);
+                EXPECT_EQ(cast->operand_, condition);
+                EXPECT_EQ(cast->span_.ToString(), span.ToString());
+            }
+        }
+        // Lowering is idempotent and does not mutate the input shared IR.
+        EXPECT_EQ(LowerScalarStatement(normalized), normalized);
+        EXPECT_EQ(branch->condition_, condition);
+        EXPECT_EQ(loop->condition_, condition);
+    }
+}
+
+TEST(CCECodegenTest, PreservesBooleanConstantConditions)
+{
+    auto span = ir::Span::Unknown();
+    auto body = std::make_shared<ir::SeqStmts>(std::vector<ir::StmtPtr>{}, span);
+    for (bool value : {false, true}) {
+        auto condition = std::make_shared<ir::ConstBool>(value, span);
+        auto branch = std::make_shared<ir::IfStmt>(condition, body, std::nullopt, std::vector<ir::VarPtr>{}, span);
+        auto loop = std::make_shared<ir::WhileStmt>(condition, std::vector<ir::IterArgPtr>{}, body,
+                                                    std::vector<ir::VarPtr>{}, span);
+        EXPECT_EQ(LowerScalarStatement(branch), branch);
+        EXPECT_EQ(LowerScalarStatement(loop), loop);
+    }
+}
+
+TEST(CCECodegenTest, EmitsBooleanCastsForBFloat16Conditions)
+{
+    auto condition = MakeVar("condition", std::make_shared<const ir::ScalarType>(ir::DataType::BF16));
+    auto branch = std::make_shared<const ir::IfStmt>(condition,
+                                                     std::make_shared<const ir::ReturnStmt>(ir::Span::Unknown()),
+                                                     std::nullopt, std::vector<ir::VarPtr>{}, ir::Span::Unknown());
+    auto loop = std::make_shared<const ir::WhileStmt>(condition, std::vector<ir::IterArgPtr>{},
+                                                      std::make_shared<const ir::BreakStmt>(ir::Span::Unknown()),
+                                                      std::vector<ir::VarPtr>{}, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{branch, loop}, ir::Span::Unknown());
+    for (auto target : {ir::SectionKind::Cube, ir::SectionKind::Vector}) {
+        CCECodegen codegen(target);
+        auto generated = codegen.GenerateSingle(MakeProgram(body, {condition}), npu::tile_fwk::NPUArch::DAV_3510);
+        EXPECT_NE(generated.find("if (pypto_scalar::Cast<bool>(condition)) {"), std::string::npos);
+        EXPECT_NE(generated.find("while (pypto_scalar::Cast<bool>(condition)) {"), std::string::npos);
+        EXPECT_EQ(generated.find("pypto_scalar::Cast<float>(condition)"), std::string::npos);
+    }
+}
+
+TEST(CCECodegenTest, EmitsBFloat16ScalarHelpersInVFSection)
+{
+    auto bf16_type = std::make_shared<const ir::ScalarType>(ir::DataType::BF16);
+    auto lhs = MakeVar("lhs", bf16_type);
+    auto rhs = MakeVar("rhs", bf16_type);
+    auto converted = MakeVar("converted", std::make_shared<const ir::ScalarType>(ir::DataType::FP32));
+    auto equal = MakeVar("equal", std::make_shared<const ir::ScalarType>(ir::DataType::BOOL));
+    auto negative = MakeVar("negative", bf16_type);
+    auto cast = std::make_shared<const ir::Cast>(lhs, ir::DataType::FP32, ir::Span::Unknown());
+    auto comparison = std::make_shared<const ir::Eq>(lhs, rhs, ir::DataType::BOOL, ir::Span::Unknown());
+    auto negation = std::make_shared<const ir::Neg>(rhs, ir::DataType::BF16, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::SeqStmts>(
+        std::vector<ir::StmtPtr>{std::make_shared<const ir::AssignStmt>(converted, cast, ir::Span::Unknown()),
+                                 std::make_shared<const ir::AssignStmt>(equal, comparison, ir::Span::Unknown()),
+                                 std::make_shared<const ir::AssignStmt>(negative, negation, ir::Span::Unknown())},
+        ir::Span::Unknown());
+    auto section = std::make_shared<const ir::SectionStmt>(ir::SectionKind::VF, body, ir::Span::Unknown());
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    auto generated = codegen.GenerateSingle(MakeProgram(section, {lhs, rhs}), npu::tile_fwk::NPUArch::DAV_3510);
+
+    EXPECT_NE(generated.find("#include <pypto_scalar.h>"), std::string::npos);
+    EXPECT_NE(generated.find("__VEC_SCOPE__ {"), std::string::npos);
+    EXPECT_NE(generated.find("converted = pypto_scalar::Cast<float>(lhs);"), std::string::npos);
+    EXPECT_NE(generated.find("equal = (pypto_scalar::Cast<float>(lhs) == pypto_scalar::Cast<float>(rhs));"),
+              std::string::npos);
+    EXPECT_NE(generated.find("negative = pypto_scalar::ChangeSign<false>(rhs);"), std::string::npos);
+}
+
+TEST(CCECodegenTest, EmitsBFloat16MinMaxInScalarRegisters)
+{
+    auto scalar_type = std::make_shared<const ir::ScalarType>(ir::DataType::BF16);
+    auto lhs = MakeVar("lhs", scalar_type);
+    auto rhs = MakeVar("rhs", scalar_type);
+    auto minimum = std::make_shared<const ir::Min>(lhs, rhs, ir::DataType::BF16, ir::Span::Unknown());
+    auto maximum = std::make_shared<const ir::Max>(lhs, rhs, ir::DataType::BF16, ir::Span::Unknown());
+    auto nested = std::make_shared<const ir::Max>(minimum, rhs, ir::DataType::BF16, ir::Span::Unknown());
+
+    for (auto target : {ir::SectionKind::Cube, ir::SectionKind::Vector}) {
+        CCECodegen codegen(target);
+        const std::string min_code = codegen.GetExprAsCode(minimum);
+        const std::string max_code = codegen.GetExprAsCode(maximum);
+        EXPECT_NE(min_code.find("asm(\"min.f32 %0, %1, %2\""), std::string::npos);
+        EXPECT_NE(max_code.find("asm(\"max.f32 %0, %1, %2\""), std::string::npos);
+        for (const auto& code : {min_code, max_code}) {
+            EXPECT_EQ(CountOccurrences(code, "bfloat16_t __pypto_lhs = lhs;"), 1U);
+            EXPECT_EQ(CountOccurrences(code, "bfloat16_t __pypto_rhs = rhs;"), 1U);
+            EXPECT_NE(code.find("reinterpret_cast<uint16_t&>(__pypto_lhs) << 16"), std::string::npos);
+            EXPECT_NE(code.find("reinterpret_cast<uint16_t&>(__pypto_rhs) << 16"), std::string::npos);
+            EXPECT_NE(code.find("uint64_t __pypto_lhs_bits"), std::string::npos);
+            EXPECT_NE(code.find("uint64_t __pypto_rhs_bits"), std::string::npos);
+            EXPECT_NE(code.find("\"=l\"(__pypto_result)"), std::string::npos);
+            EXPECT_NE(code.find("\"l\"(__pypto_lhs_bits), \"l\"(__pypto_rhs_bits)"), std::string::npos);
+            EXPECT_NE(code.find("uint16_t __pypto_result_bits = __pypto_result >> 16"), std::string::npos);
+            EXPECT_EQ(code.find("reinterpret_cast<float&>"), std::string::npos);
+            EXPECT_NE(code.find("reinterpret_cast<bfloat16_t&>(__pypto_result_bits);})"), std::string::npos);
+        }
+        const std::string nested_code = codegen.GetExprAsCode(nested);
+        EXPECT_NE(nested_code.find(min_code), std::string::npos);
+        EXPECT_EQ(CountOccurrences(nested_code, "reinterpret_cast<bfloat16_t&>(__pypto_result_bits)"), 2U);
+    }
+}
+
+TEST(CCECodegenTest, KeepsNativeMinMaxForOtherScalarTypes)
+{
+    for (auto dtype : {ir::DataType::FP16, ir::DataType::FP32, ir::DataType::INT32, ir::DataType::INT64}) {
+        auto scalar_type = std::make_shared<const ir::ScalarType>(dtype);
+        auto lhs = MakeVar("lhs", scalar_type);
+        auto rhs = MakeVar("rhs", scalar_type);
+        auto minimum = std::make_shared<const ir::Min>(lhs, rhs, dtype, ir::Span::Unknown());
+        auto maximum = std::make_shared<const ir::Max>(lhs, rhs, dtype, ir::Span::Unknown());
+        CCECodegen codegen(ir::SectionKind::Vector);
+        const std::string cpp_type = dtype.ToCTypeString();
+        EXPECT_EQ(codegen.GetExprAsCode(minimum), "min((" + cpp_type + ")(lhs), (" + cpp_type + ")(rhs))");
+        EXPECT_EQ(codegen.GetExprAsCode(maximum), "max((" + cpp_type + ")(lhs), (" + cpp_type + ")(rhs))");
+    }
+}
+
 TEST(CCECodegenTest, EmitsPythonSemanticsForFloorDivAndMod)
 {
     auto scalar_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);

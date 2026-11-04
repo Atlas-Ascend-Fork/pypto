@@ -30,7 +30,7 @@ def make_binary(op_name: str, left: _ir.Expr, right: _ir.Expr, span: _ir.Span | 
 
 
 def truediv(left: _ir.Expr, right: _ir.Expr, span: _ir.Span | None = None) -> _ir.Expr:
-    """True division with Python-consistent promotion (kept for backward compat)."""
+    """True division, converting integer operands to FP32."""
     return make_binary("truediv", left, right, span)
 
 

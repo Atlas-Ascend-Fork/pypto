@@ -173,7 +173,7 @@ def _while_getval_condition_kernel(
         tile = tile_group.next()
         pl.load(tile, a, [0, 0])
         i = 0
-        while tile[0, i] > 0:
+        while tile[0, i] > pl.const(0, pl.DT_FP16):
             i = i + 1
             if i >= 2:
                 break

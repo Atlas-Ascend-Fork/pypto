@@ -132,11 +132,13 @@ def _make_tile_scale_kernel(src_name, acc_name, dst_name):
             pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE1, event_id=0)
             pl.move(q_left, q_mat)
             pl.move(k_right, k_mat)
+            # Mat->Scaling runs on FIX, so MTE1 dependencies do not protect this read.
+            pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.FIX, event_id=1)
+            pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.FIX, event_id=1)
             pl.move(fp_tile, fp_mat)
+            pl.system.bar_fix()
             pl.system.sync_src(set_pipe=pl.PipeType.MTE1, wait_pipe=pl.PipeType.M, event_id=0)
             pl.system.sync_dst(set_pipe=pl.PipeType.MTE1, wait_pipe=pl.PipeType.M, event_id=0)
-            pl.system.sync_src(set_pipe=pl.PipeType.MTE1, wait_pipe=pl.PipeType.FIX, event_id=1)
-            pl.system.sync_dst(set_pipe=pl.PipeType.MTE1, wait_pipe=pl.PipeType.FIX, event_id=1)
             pl.matmul(acc, q_left, k_right)
             pl.system.sync_src(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
             pl.system.sync_dst(set_pipe=pl.PipeType.M, wait_pipe=pl.PipeType.FIX, event_id=0)
@@ -148,9 +150,8 @@ def _make_tile_scale_kernel(src_name, acc_name, dst_name):
 
 
 def _make_scale_tensor(device: str, scale_value: float, n: int) -> torch.Tensor:
-    """INT64 scale bits；bit46 置 1（signed 标志，修正负值 clamp 语义）"""
+    """Encode FP32 scale bits; keep bit 46 clear for unsigned requantization."""
     scale_bits = struct.unpack("!I", struct.pack("!f", scale_value))[0]
-    scale_bits |= 1 << 46
     return torch.tensor([scale_bits] * n, dtype=torch.int64, device=device).reshape(1, n)
 
 
@@ -249,7 +250,8 @@ def test_int32_acc_to_uint8_per_channel():
         logging.info("skip: not Ascend950/Ascend960")
         return
     vm, vn = min(m, 64), min(n, 64)
-    q = torch.randint(-8, 9, (m, n), device=device, dtype=torch.int8)
+    # Cover negative clamping and scaled values above the signed INT8 upper bound.
+    q = torch.arange(-128, 128, device=device, dtype=torch.int32).to(torch.int8).repeat(m * n // 256).reshape(m, n)
     k = torch.eye(n, device=device, dtype=torch.int8)
     out = torch.zeros((m, n), device=device, dtype=torch.uint8)
     scale_param = _make_scale_tensor(device, SCALE, 64)

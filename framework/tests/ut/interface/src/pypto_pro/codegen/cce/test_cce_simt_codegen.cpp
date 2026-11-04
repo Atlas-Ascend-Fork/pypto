@@ -538,6 +538,32 @@ ir::ProgramPtr MakeSimtKernelProgram()
 
 } // namespace
 
+TEST(CCESimtCodegenTest, BFloat16ScalarExpressionsKeepNativeSimtOperations)
+{
+    auto bf16 = Scalar(ir::DataType::BF16);
+    auto left = Var("left", bf16);
+    auto right = Var("right", bf16);
+    auto sum = std::make_shared<const ir::Add>(left, right, ir::DataType::BF16, Sp());
+    auto body = Assign(Var("result", bf16), sum);
+    for (auto kind : {ir::FunctionType::SIMT_VF, ir::FunctionType::SIMT_CALLEE, ir::FunctionType::SIMT_KERNEL}) {
+        auto function = std::make_shared<const ir::Function>(
+            "bf16_ops", std::vector<ir::VarPtr>{left, right}, std::vector<ir::TypePtr>{}, body, Sp(), kind,
+            kind == ir::FunctionType::SIMT_KERNEL, Kwargs{{ir::kMaxThreadsAttr, 32}});
+        std::vector<ir::FunctionPtr> functions{function};
+        if (kind != ir::FunctionType::SIMT_KERNEL) {
+            functions.push_back(std::make_shared<const ir::Function>("kernel", std::vector<ir::VarPtr>{},
+                                                                     std::vector<ir::TypePtr>{}, Seq({}), Sp(),
+                                                                     ir::FunctionType::IN_CORE, true));
+        }
+        auto program = std::make_shared<const ir::Program>(functions, "bf16_simt", Sp(),
+                                                           std::make_shared<ir::IRDebugInfo>());
+        CCECodegen codegen(ir::SectionKind::Vector);
+        auto generated = codegen.GenerateSingle(program, npu::tile_fwk::NPUArch::DAV_3510);
+        EXPECT_NE(generated.find("result = (left + right);"), std::string::npos);
+        EXPECT_EQ(generated.find("pypto_scalar::"), std::string::npos);
+    }
+}
+
 TEST(CCESimtCodegenTest, GeneratesContextCalleesMemoryAccessAndLaunch)
 {
     CCECodegen codegen(ir::SectionKind::Vector);

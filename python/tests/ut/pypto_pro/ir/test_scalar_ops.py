@@ -132,45 +132,57 @@ class TestNumericPromotion:
             _assert_cast_dtype(promoted_int, expected_dtype)
 
     @pytest.mark.parametrize(
-        ("make_op", "op_type"),
+        ("make_op", "op_type", "result_dtype"),
         [
-            (ir.add, ir.Add),
-            (ir.sub, ir.Sub),
-            (ir.mul, ir.Mul),
-            (ir.min_, ir.Min),
-            (ir.max_, ir.Max),
+            (ir.add, ir.Add, DataType.FP32),
+            (ir.sub, ir.Sub, DataType.FP32),
+            (ir.mul, ir.Mul, DataType.FP32),
+            (ir.truediv, ir.FloatDiv, DataType.FP32),
+            (ir.floordiv, ir.FloorDiv, DataType.FP32),
+            (ir.mod, ir.FloorMod, DataType.FP32),
+            (ir.pow, ir.Pow, DataType.FP32),
+            (ir.min_, ir.Min, DataType.FP32),
+            (ir.max_, ir.Max, DataType.FP32),
+            (ir.eq, ir.Eq, DataType.BOOL),
+            (ir.ne, ir.Ne, DataType.BOOL),
+            (ir.lt, ir.Lt, DataType.BOOL),
+            (ir.le, ir.Le, DataType.BOOL),
+            (ir.gt, ir.Gt, DataType.BOOL),
+            (ir.ge, ir.Ge, DataType.BOOL),
         ],
     )
-    def test_bool_and_float_promote_to_fp32(self, make_op, op_type):
-        """Mixed bool/float operands are both promoted to FP32."""
-        right = _var("x", DataType.FP16)
-        result = make_op(_bool(), right)
-
-        assert isinstance(result, op_type)
-        _assert_dtype(result, DataType.FP32)
-        _assert_cast_dtype(result.left, DataType.FP32)
-        _assert_cast_dtype(result.right, DataType.FP32)
-
-    @pytest.mark.parametrize(
-        ("make_op", "op_type"),
-        [
-            (ir.add, ir.Add),
-            (ir.sub, ir.Sub),
-            (ir.mul, ir.Mul),
-            (ir.min_, ir.Min),
-            (ir.max_, ir.Max),
-        ],
-    )
-    def test_mixed_int_float_promotes_to_fp32(self, make_op, op_type):
-        """Mixed integer/float operands are both promoted to FP32."""
-        left = _var("x", DataType.INT64)
-        right = _var("y", DataType.FP16)
+    @pytest.mark.parametrize("integer_dtype", [DataType.BOOL, DataType.INT32, DataType.INT64, DataType.UINT64])
+    @pytest.mark.parametrize("floating_dtype", [DataType.FP16, DataType.BF16, DataType.FP32])
+    @pytest.mark.parametrize("integer_on_left", [True, False])
+    def test_mixed_categories_promote_operands_to_fp32(
+        self, make_op, op_type, result_dtype, integer_dtype, floating_dtype, integer_on_left
+    ):
+        integer = _var("integer", integer_dtype)
+        floating = _var("floating", floating_dtype)
+        left, right = (integer, floating) if integer_on_left else (floating, integer)
         result = make_op(left, right)
 
         assert isinstance(result, op_type)
-        _assert_dtype(result, DataType.FP32)
-        _assert_cast_dtype(result.left, DataType.FP32)
-        _assert_cast_dtype(result.right, DataType.FP32)
+        _assert_dtype(result, result_dtype)
+        for promoted, original in [(result.left, left), (result.right, right)]:
+            if original.type.dtype == DataType.FP32:
+                assert promoted is original
+            else:
+                _assert_cast_dtype(promoted, DataType.FP32)
+                assert promoted.operand is original
+
+    @pytest.mark.parametrize("make_op", [ir.add, ir.min_, ir.max_, ir.truediv])
+    @pytest.mark.parametrize("integer_dtype", [DataType.BOOL, DataType.INT32, DataType.INT64, DataType.UINT64])
+    @pytest.mark.parametrize("floating_dtype", [DataType.FP16, DataType.BF16, DataType.FP32])
+    def test_explicit_integer_to_float_cast(self, make_op, integer_dtype, floating_dtype):
+        """An explicit cast keeps the selected float dtype instead of implicitly promoting to FP32."""
+        integer = _var("integer", integer_dtype)
+        floating = _var("floating", floating_dtype)
+        cast_integer = ir.cast(integer, floating_dtype)
+        result = make_op(cast_integer, floating)
+        _assert_dtype(result, floating_dtype)
+        assert result.left is cast_integer
+        assert result.right is floating
 
     def test_float_operands_promote_to_wider_dtype(self):
         """Two float operands retain the wider floating dtype."""
@@ -205,15 +217,6 @@ class TestNumericPromotion:
         _assert_cast_dtype(result.left, DataType.INT64)
         _assert_cast_dtype(result.right, DataType.INT64)
 
-    @pytest.mark.parametrize("make_compare", [ir.eq, ir.ne, ir.lt, ir.le, ir.gt, ir.ge])
-    def test_mixed_int_float_comparison_promotes_operands_to_fp32(self, make_compare):
-        """Mixed-category comparisons use FP32 operands and return BOOL."""
-        result = make_compare(_var("x", DataType.INT64), _var("y", DataType.FP16))
-
-        _assert_dtype(result, DataType.BOOL)
-        _assert_cast_dtype(result.left, DataType.FP32)
-        _assert_cast_dtype(result.right, DataType.FP32)
-
     @pytest.mark.parametrize("make_op", [ir.floordiv, ir.mod, ir.pow])
     def test_other_numeric_ops_promote_bool_and_int_to_int64(self, make_op):
         """Floor division, modulo, and power use the same bool promotion."""
@@ -223,27 +226,9 @@ class TestNumericPromotion:
         _assert_cast_dtype(result.left, DataType.INT64)
         _assert_cast_dtype(result.right, DataType.INT64)
 
-    @pytest.mark.parametrize(
-        ("make_op", "op_type"),
-        [
-            (ir.floordiv, ir.FloorDiv),
-            (ir.mod, ir.FloorMod),
-            (ir.pow, ir.Pow),
-        ],
-    )
-    def test_floor_div_mod_and_pow_mixed_int_float_promote_to_fp32(self, make_op, op_type):
-        """All numeric binary helpers promote mixed categories to FP32."""
-        right = _var("y", DataType.FP32)
-        result = make_op(_var("x", DataType.INT32), right)
-
-        assert isinstance(result, op_type)
-        _assert_dtype(result, DataType.FP32)
-        _assert_cast_dtype(result.left, DataType.FP32)
-        assert result.right is right
-
 
 class TestTrueDivisionPromotion:
-    """Tests for Python true-division result types."""
+    """Tests for integer-to-FP32 true division and same-category floating operands."""
 
     @pytest.mark.parametrize(
         ("left_dtype", "right_dtype"),
@@ -254,22 +239,11 @@ class TestTrueDivisionPromotion:
         ],
     )
     def test_integer_like_operands_promote_to_fp32(self, left_dtype, right_dtype):
-        """True division of integer-like operands casts both sides to FP32."""
         left = _bool() if left_dtype == DataType.BOOL else _var("x", left_dtype)
         right = _bool(False) if right_dtype == DataType.BOOL else _var("y", right_dtype)
         result = ir.truediv(left, right)
 
         assert isinstance(result, ir.FloatDiv)
-        _assert_dtype(result, DataType.FP32)
-        _assert_dtype(result.left, DataType.FP32)
-        _assert_dtype(result.right, DataType.FP32)
-
-    def test_mixed_int_float_promotes_to_fp32(self):
-        """True division with mixed categories promotes both operands to FP32."""
-        left = _var("x", DataType.INT64)
-        right = _var("y", DataType.FP16)
-        result = ir.truediv(left, right)
-
         _assert_dtype(result, DataType.FP32)
         _assert_cast_dtype(result.left, DataType.FP32)
         _assert_cast_dtype(result.right, DataType.FP32)

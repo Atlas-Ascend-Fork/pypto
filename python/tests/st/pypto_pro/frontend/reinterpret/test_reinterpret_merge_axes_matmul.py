@@ -725,6 +725,7 @@ def test_transposed_left_is_really_transposed():
     assert (out - ref.transpose(2, 3)).abs().max().item() > 1.0, "transposed and plain products are indistinguishable"
 
 
+@pytest.mark.soc("950")
 def test_merged_order_must_be_ascending_or_its_exact_reverse():
     """A merged order naming a non-innermost column axis is rejected, not silently reinterpreted.
 
@@ -972,6 +973,7 @@ def test_merged_load_dynamic_inner_remainder_and_width(inner):
     torch.testing.assert_close(out, torch.full_like(out, 7.0), rtol=0, atol=0)
 
 
+@pytest.mark.soc("950")
 @pytest.mark.parametrize("g", [0, 3, 256])
 def test_full_grouped_matmul_rejects_nondivisor_before_launch(g):
     with pytest.raises(ValueError, match="G to divide M_TILE"):

@@ -25,9 +25,9 @@ lenBurst=validRow, i.e. ROWS *contiguous* elements, not a strided column. Readin
 column is what ``order=[1, 0]`` is for (see test_load_order_variants.py).
 """
 
-import glob
 import logging
 import os
+from pathlib import Path
 import re
 
 import pypto_pro.language as pl
@@ -137,11 +137,8 @@ def test_compact_column_tile_is_emitted_and_round_trips():
     torch.testing.assert_close(column_out.flatten(), x.flatten()[:ROWS])
 
     # Read back the kernel this run actually compiled, rather than re-deriving it.
-    generated = glob.glob(
-        os.path.join("build", "*_compact_column_kernel__*", "**", "kernel.cpp"), recursive=True
-    )
-    assert generated, "no generated kernel.cpp found for the compact column kernel"
-    source = max(generated, key=os.path.getmtime)
+    compiled = _compact_column_kernel._ensure_compiled((x, column_out))
+    source = Path(compiled.build_dir) / "kernel.cpp"
     with open(source, encoding="utf-8") as handle:
         column_type = re.search(
             r"using _tg_column_group_tiles_0_0_Type = SyncedTile<(Tile<[^;]*>), [0-9]+>;", handle.read()

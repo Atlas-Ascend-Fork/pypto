@@ -453,7 +453,7 @@ def test_complex_float_event_id_expression_is_rejected_by_parser():
 
         @pl.jit(auto_mutex=False)
         def func(base: pl.DT_INT64):
-            event_id = (base * 3 + 1) / 2
+            event_id = pl.astype(base * 3 + 1, pl.DT_FP32) / 2.0
             pl.system.sync_src(
                 set_pipe=pl.PipeType.MTE2,
                 wait_pipe=pl.PipeType.V,
@@ -469,7 +469,7 @@ def test_complex_float_mutex_id_expression_is_rejected_by_parser():
 
         @pl.jit(auto_mutex=False)
         def func(base: pl.DT_INT64):
-            mutex_id = (base * 3 + 1) / 2
+            mutex_id = pl.astype(base * 3 + 1, pl.DT_FP32) / 2.0
             pl.system.mutex_lock(
                 pipe=pl.PipeType.MTE2,
                 mutex_id=mutex_id,
@@ -506,11 +506,11 @@ def test_control_flow_float_event_id_expression_is_rejected_by_parser():
 
         @pl.jit(auto_mutex=False)
         def func(base: pl.DT_INT64):
-            event_id = (base + 1) / 2
+            event_id = pl.astype(base + 1, pl.DT_FP32) / 2.0
             if base > 4:
-                event_id = (base * 3 + 1) / 2
+                event_id = pl.astype(base * 3 + 1, pl.DT_FP32) / 2.0
             else:
-                event_id = (base * 5 + 1) / 2
+                event_id = pl.astype(base * 5 + 1, pl.DT_FP32) / 2.0
             pl.system.sync_src(
                 set_pipe=pl.PipeType.MTE2,
                 wait_pipe=pl.PipeType.V,

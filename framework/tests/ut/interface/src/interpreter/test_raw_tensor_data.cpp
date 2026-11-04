@@ -19,8 +19,9 @@
 #include <string>
 #include <fstream>
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <unistd.h>
-#include <sys/stat.h>
 
 #include "interface/inner/tilefwk.h"
 #include "interface/interpreter/raw_tensor_data.h"
@@ -29,8 +30,6 @@
 namespace npu::tile_fwk {
 
 namespace {
-constexpr const char* TMP_DIR = "/tmp/opencode";
-
 template <typename T>
 LogicalTensorDataPtr makeTensorData(DataType t, const std::vector<int64_t>& shape, const T& val)
 {
@@ -45,7 +44,6 @@ LogicalTensorDataPtr makeTensorData(DataType t, const std::vector<int64_t>& shap
     return std::make_shared<LogicalTensorData>(RawTensorData::CreateTensor(data, vals));
 }
 
-std::string tmpPath(const std::string& name) { return std::string(TMP_DIR) + "/" + name; }
 } // namespace
 
 class RawTensorDataTest : public testing::Test {
@@ -54,8 +52,19 @@ public:
     {
         Program::GetInstance().Reset();
         config::Reset();
-        mkdir(TMP_DIR, 0755);
+        char directory[] = "/tmp/pypto-raw-tensor-ut-XXXXXX";
+        const char* created = mkdtemp(directory);
+        ASSERT_NE(created, nullptr);
+        tmp_dir_ = created;
     }
+
+    void TearDown() override { std::filesystem::remove_all(tmp_dir_); }
+
+protected:
+    std::string tmpPath(const std::string& name) const { return tmp_dir_ + "/" + name; }
+
+private:
+    std::string tmp_dir_;
 };
 
 // ===== DumpRange (nullptr branch) / DumpCoord / DumpData =====

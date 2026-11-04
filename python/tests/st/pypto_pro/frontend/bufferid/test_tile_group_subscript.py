@@ -333,7 +333,7 @@ def getval_setval_kernel(
         first = g[0]
         pl.load(first, a, [0, 0])
         index: pl.DT_INT64 = 0
-        while first[0, index] > 0:
+        while first[0, index] > pl.const(0, pl.DT_FP16):
             index = index + 1
             if index >= 8:
                 break

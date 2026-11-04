@@ -35,6 +35,7 @@
 #include "ir/scalar_expr_ops.h"
 #include "ir/stmt.h"
 #include "ir/type.h"
+#include "ir/transforms/passes.h"
 #include "tilefwk/platform.h"
 
 namespace pypto {
@@ -69,6 +70,9 @@ struct TensorDef {
 
 /// Build a side-effect-free FP32 fmod expression for CCE device code.
 [[nodiscard]] std::string BuildFP32FmodExpression(const std::string& lhs, const std::string& rhs);
+
+/// Legalize scalar arithmetic and conditions before Pro CCE emission; preserve SIMT arithmetic.
+[[nodiscard]] ir::Pass LowerScalarExpressionsForCCE();
 
 /// Definition of one user-visible C++ class materialized from a TupleType.
 struct StructDefinition {
@@ -142,6 +146,7 @@ public:
     void Emit(const std::string& line) override;
     bool needs_simt_atomic_header_ = false;
     std::string GetExprAsCode(const ir::ExprPtr& expr) override;
+    std::string ScalarCast(const std::string& value, const ir::DataType& source, const ir::DataType& target);
     std::string GetGeneratedType(const ir::TypePtr& type) const;
 
     /// Resolve a tuple-typed expression to the MakeTuple backing it (the tuple counterpart of
@@ -573,6 +578,7 @@ private:
     npu::tile_fwk::NPUArch arch_ = npu::tile_fwk::NPUArch::DAV_2201; ///< Target architecture
     const ir::SectionKind target_;                                   ///< Fixed Cube/Vector target for this generator
     bool in_vf_section_ = false;                                     ///< True only while emitting a nested VF section
+    bool needs_scalar_helpers_ = false;
     /// Actual IR type of the SIMT function being emitted.
     ir::FunctionType current_function_type_ = ir::FunctionType::OPAQUE;
     /// Kernel entry type for GenerateSingle; preserved across per-function resets.

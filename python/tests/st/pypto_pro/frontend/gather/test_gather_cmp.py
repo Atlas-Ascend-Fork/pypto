@@ -124,7 +124,6 @@ def compute_expected(src_data, k_value):
     return gt_indices, eq_indices
 
 
-@pl.jit()
 @pytest.mark.soc("950", "960")
 def test_gather_cmp():
     device = ST_DEVICE

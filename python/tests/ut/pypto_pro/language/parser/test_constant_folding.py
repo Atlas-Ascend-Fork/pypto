@@ -110,7 +110,7 @@ def test_all_binary_and_comparison_operators_fold():
         add = 7 + 3
         sub = 7 - 3
         mul = 7 * 3
-        truediv = 7 / 2
+        truediv = 7.0 / 2.0
         floordiv = 7 // 3
         mod = 7 % 3
         bit_and = 7 & 3
@@ -168,6 +168,50 @@ def test_mixed_numeric_constants_fold_to_fp32():
     _assert_constant(values["mixed_compare"], True, ir.DataType.BOOL)
     _assert_constant(values["typed_float"], 2.0, ir.DataType.FP32)
     _assert_constant(values["typed_bool"], False, ir.DataType.BOOL)
+
+
+@pytest.mark.parametrize("operator", ["add", "compare", "min", "max"])
+def test_mixed_numeric_runtime_operands_promote_to_fp32(operator):
+    @pl.jit(auto_mutex=False)
+    def mixed_numeric(integer: pl.DT_INT32, floating: pl.DT_FP32):
+        if operator == "add":
+            result = integer + floating
+        elif operator == "compare":
+            result = integer < floating
+        elif operator == "min":
+            result = pl.min(integer, floating)
+        else:
+            result = max(integer, floating)
+
+    program, _ = mixed_numeric.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    result = _assignments(program.get_function("mixed_numeric"))["result"]
+    assert isinstance(result, {"add": ir.Add, "compare": ir.Lt, "min": ir.Min, "max": ir.Max}[operator])
+    assert result.type.dtype == (ir.DataType.BOOL if operator == "compare" else ir.DataType.FP32)
+    assert isinstance(result.left, ir.Cast)
+    assert result.left.type.dtype == ir.DataType.FP32
+    assert result.left.operand.type.dtype == ir.DataType.INT32
+    assert isinstance(result.right, ir.Var)
+    assert result.right.type.dtype == ir.DataType.FP32
+
+
+@pytest.mark.parametrize("literal", [False, True], ids=["runtime", "literal"])
+def test_integer_true_division_promotes_to_fp32(literal):
+    @pl.jit(auto_mutex=False)
+    def integer_division(value: pl.DT_INT32):
+        if literal:
+            result = 5 / 2
+        else:
+            result = value / 2
+
+    program, _ = integer_division.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    result = _assignments(program.get_function("integer_division"))["result"]
+    if literal:
+        _assert_constant(result, 2.5, ir.DataType.FP32)
+    else:
+        assert isinstance(result, ir.FloatDiv)
+        assert result.type.dtype == ir.DataType.FP32
+        assert result.left.type.dtype == ir.DataType.FP32
+        assert result.right.type.dtype == ir.DataType.FP32
 
 
 def test_bool_numeric_and_unary_result_dtypes():
@@ -239,7 +283,7 @@ def test_bool_ops_accept_bool_int_and_float_truthiness_but_return_bool():
 def test_pl_and_builtin_min_max_fold_with_numeric_promotion():
     @pl.jit(auto_mutex=False)
     def folded_min_max(_jit_entry: pl.DT_INT64):
-        pl_min = pl.min(3, 2)
+        pl_min = pl.min(3, 2.5)
         pl_max = pl.max(1.5, 2)
         builtin_min = min(True, 2)
         builtin_max = max(pl.const(1, pl.DT_INT32), 2.5)
@@ -248,7 +292,7 @@ def test_pl_and_builtin_min_max_fold_with_numeric_promotion():
     folded_min_max = folded_min_max_program.get_function(folded_min_max.__name__)
 
     values = _assignments(folded_min_max)
-    _assert_constant(values["pl_min"], 2, ir.DataType.INT64)
+    _assert_constant(values["pl_min"], 2.5, ir.DataType.FP32)
     _assert_constant(values["pl_max"], 2.0, ir.DataType.FP32)
     _assert_constant(values["builtin_min"], 1, ir.DataType.INT64)
     _assert_constant(values["builtin_max"], 2.5, ir.DataType.FP32)
@@ -268,15 +312,15 @@ def test_invalid_shift_keeps_validated_ir_node():
 
 def test_compile_time_zero_divisor_is_rejected():
     @pl.jit(auto_mutex=False)
-    def truediv_zero(value: pl.DT_INT32):
-        result = value / 0
+    def truediv_zero(value: pl.DT_FP32):
+        result = value / 0.0
 
     @pl.jit(auto_mutex=False)
     def floordiv_zero(value: pl.DT_INT32):
         result = value // 0
 
     @pl.jit(auto_mutex=False)
-    def modulo_zero(value: pl.DT_INT32):
+    def modulo_zero(value: pl.DT_FP32):
         result = value % -0.0
 
     for kernel, operator in ((truediv_zero, "/"), (floordiv_zero, "//"), (modulo_zero, "%")):
@@ -284,17 +328,20 @@ def test_compile_time_zero_divisor_is_rejected():
             kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
-@pytest.mark.parametrize("dtype", [pl.DT_FP16, pl.DT_BF16, pl.DT_FP32])
 @pytest.mark.parametrize(
-    "lhs,rhs",
+    "dtype,lhs,rhs",
     [
-        (-7.0, 2.0),
-        (7.0, -2.0),
-        (-7.0, -2.0),
-        (1.5, 0.5),
-        (1.0, 0.1),
-        (0.0, -2.0),
-        (-0.0, 2.0),
+        pytest.param(dtype, lhs, rhs, id=f"{lhs}-{rhs}-dtype{index}")
+        for lhs, rhs in [
+            (-7.0, 2.0),
+            (7.0, -2.0),
+            (-7.0, -2.0),
+            (1.5, 0.5),
+            (1.0, 0.1),
+            (0.0, -2.0),
+            (-0.0, 2.0),
+        ]
+        for index, dtype in enumerate([pl.DT_FP16, pl.DT_BF16, pl.DT_FP32])
     ],
 )
 def test_float_divmod_constants_fold_with_promoted_dtype(dtype, lhs, rhs):
@@ -308,10 +355,15 @@ def test_float_divmod_constants_fold_with_promoted_dtype(dtype, lhs, rhs):
 
     program, _ = folded_float.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     values = _assignments(program.get_function(folded_float.__name__))
-    _assert_constant(values["quotient"], lhs // rhs, dtype)
-    _assert_constant(values["remainder"], lhs % rhs, dtype)
-    assert math.copysign(1.0, values["quotient"].value) == math.copysign(1.0, lhs // rhs)
-    assert math.copysign(1.0, values["remainder"].value) == math.copysign(1.0, lhs % rhs)
+    expected_quotient, expected_remainder = lhs // rhs, lhs % rhs
+    # Current frontend folding uses Python float precision, independently of the IR dtype.
+    # Keep exact assertions so device-precision expectations cannot pass by tolerance.
+    assert values["quotient"].type.dtype == dtype
+    assert values["remainder"].type.dtype == dtype
+    assert values["quotient"].value == expected_quotient
+    assert values["remainder"].value == expected_remainder
+    assert math.copysign(1.0, values["quotient"].value) == math.copysign(1.0, expected_quotient)
+    assert math.copysign(1.0, values["remainder"].value) == math.copysign(1.0, expected_remainder)
 
 
 def test_float_divmod_constants_can_define_static_tile_shape():

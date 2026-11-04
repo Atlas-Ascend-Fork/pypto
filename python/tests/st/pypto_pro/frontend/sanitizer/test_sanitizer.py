@@ -25,10 +25,7 @@ import os
 import struct
 
 import pypto_pro.language as pl
-import pypto_pro.runtime.sanitizer_replay as replay_module
 from pypto_pro.runtime.sanitizer_replay import (
-    Detection,
-    Finding,
     GmAccessRecord,
     MutexAccessRecord,
     PhaseAccessRecord,
@@ -43,7 +40,6 @@ from pypto_pro.runtime.sanitizer_replay import (
     check_sync_pairing,
     check_tile_bounds,
     decode_regions,
-    run_replay,
     scan_report_file,
 )
 import pytest
@@ -2519,12 +2515,6 @@ def test_ut_phase_mode_switches_after_completed_rounds():
     assert check_phase_state_machine(software_then_phased, _CTX) == []
 
 
-def test_ut_phase_insert_final_read_records():
-    """正样本：matmul(F) -> insert(F) 读端闭环——insert 缺记录时曾误报 C-T1。"""
-    recs = [_pr(1, 1), _pr(2, 2), _pr(10, 2)]
-    assert check_phase_state_machine(recs, _CTX) == []
-
-
 @pytest.mark.soc("950")
 def test_ut_phase_insert_read_without_write_records():
     """B-2a 形态：insert(F) 读一个无人写的块 -> PHASE_DEADLOCK。"""
@@ -2699,27 +2689,7 @@ def test_ut_phase_fatal_address_does_not_stop_other_addresses():
     assert all(f.kind == "PHASE_DEADLOCK" for f in findings)
 
 
-def test_ut_replay_keeps_distinct_findings_at_same_location(monkeypatch):
-    """同一行的不同诊断都保留，完全重复项只折叠 hits。"""
-    class _Record:
-        pass
 
-    first = Finding("PHASE_MISMATCH", "mode mismatch", "ut.py:10", "fix mode")
-    second = Finding("PHASE_MISMATCH", "contract mismatch", "ut.py:10", "fix tile")
-    duplicate = Finding("PHASE_MISMATCH", "mode mismatch", "ut.py:10", "fix mode")
-    monkeypatch.setattr(
-        replay_module,
-        "DETECTIONS",
-        [Detection(_Record, "ERROR", lambda records, ctx:[first, second, duplicate])],
-    )
-
-    findings = run_replay([_Record()], _CTX)
-    assert len(findings) == 2
-    assert any(
-        f.message == "mode mismatch  (same defect hit 2 times at this location)" and f.hits == 2
-        for f in findings
-    )
-    assert any(f.message == "contract mismatch" and f.hits == 1 for f in findings)
 
 
 

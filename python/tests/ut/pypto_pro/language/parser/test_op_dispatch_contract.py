@@ -47,6 +47,9 @@ class _DType(enum.Enum):
     def is_float(self):
         return self in (self.FP32, self.FP64)
 
+    def is_storage_only(self):
+        return False
+
 
 class _Span:
     def __init__(self, filename="test.py", begin_line=1, begin_column=1, end_line=1, end_column=1):
@@ -166,7 +169,7 @@ def runtime(monkeypatch):
     module("pypto.pypto_impl", ir=ir)
     module("pypto.pypto_impl.ir", **ir.__dict__, Call=_Expr, Function=_Expr)
     ir.RoundMode = enum.Enum("RoundMode", ["CAST_NONE"])
-    module(
+    utils = module(
         "pypto_pro.ir._utils", _get_span_or_capture=lambda span: span or _Span(),
         _normalize_expr=lambda value, span: value,
     )
@@ -327,15 +330,17 @@ def runtime(monkeypatch):
         ], type_ignores=[])
         function_globals = {
             "ast": ast, "ir": ir, "_ir_core": ir,
+            "require_scalar_dtype": getattr(utils, "require_scalar_dtype", None),
             **errors.__dict__, **extra,
         }
         exec(compile(ast.fix_missing_locations(module_tree), relative, "exec"), function_globals)
         return types.SimpleNamespace(**{name: function_globals[name] for name in names})
 
     tuple_helpers = load_functions(
-        "ir/_utils.py", ("_normalize_expr", "_to_make_tuple"), _ir=ir, DataType=_DType,
+        "ir/_utils.py", ("_normalize_expr", "_to_make_tuple", "require_scalar_dtype"), _ir=ir, DataType=_DType,
     )
     namespace["_to_make_tuple"] = tuple_helpers._to_make_tuple
+    utils.require_scalar_dtype = tuple_helpers.require_scalar_dtype
 
     return types.SimpleNamespace(
         registry=registry, Parser=Parser, errors=errors, ir=ir,

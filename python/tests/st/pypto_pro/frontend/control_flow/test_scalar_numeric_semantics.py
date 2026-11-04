@@ -64,6 +64,8 @@ def scalar_float_static_shape_kernel(src: pl.Tensor[[1, 8], pl.DT_FP32], out: pl
     tile = pl.make_tile(tile_type, addr=0)
     with pl.section_vector():
         pl.load(tile, src, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=0)
         pl.store(out, tile, [0, 0])
 
 

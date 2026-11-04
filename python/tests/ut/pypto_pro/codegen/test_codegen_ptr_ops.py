@@ -12,6 +12,7 @@
 
 import pypto_pro.language as pl
 from pypto_pro.runtime.platform import NpuArch
+import pytest
 
 
 def _compile_to_cce(kernel) -> str:
@@ -96,3 +97,24 @@ def test_tensor_view_cce_rebases_pointer_and_keeps_stride():
     # row pitch rather than a contiguous 64.
     assert "((__gm__ half*)(src_0_ptr)) + 2080" in cpp
     assert "(1, 1, 1, 128, 1)" in cpp
+
+
+@pytest.mark.parametrize("dtype", [pl.DT_UINT8, pl.DT_BF16])
+def test_optional_pointer_null_checks_codegen(dtype):
+    @pl.jit
+    def kernel(p: pl.Ptr[dtype], out: pl.Tensor[[2], pl.DT_INT32]):
+        with pl.section_vector():
+            if p is None:
+                out[0] = 1
+            else:
+                out[0] = 0
+            if p is not None:
+                out[1] = 1
+            else:
+                out[1] = 0
+
+    cpp = _compile_to_cce(kernel)
+    assert "((uint64_t)p_0)" in cpp
+    assert "== 0" in cpp
+    assert "!= 0" in cpp
+    assert "pypto_scalar::Cast" not in cpp

@@ -1514,6 +1514,10 @@ def const(value: Union[int, float], dtype: DType, /) -> Scalar:
 def astype(x: Union[int, float], dtype: DType, /) -> Scalar:
     """Convert a runtime scalar expression to ``dtype``.
 
+    Storage-only dtypes (FP8, FP4, HF8, HF4, INT4 and UINT4) are not supported
+    as either the source or destination. For supported FP8/FP4 register
+    conversions, use ``pl.Vf.astype``.
+
     Args:
         x: Source scalar expression
         dtype: Destination data type, e.g. ``pl.DT_INT32``

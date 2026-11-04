@@ -1,0 +1,19 @@
+#if defined(__DAV_VEC__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void kernel_impl_vector(__gm__ float* data_ptr)
+{
+    set_mask_norm();
+    set_vector_mask(-1, -1);
+
+    *((__gm__ float*)data_ptr + 5) = ((float)42);
+}
+#endif

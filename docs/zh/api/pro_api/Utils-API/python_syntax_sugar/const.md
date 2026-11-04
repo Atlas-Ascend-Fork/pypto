@@ -31,7 +31,7 @@ result = pypto_pro.language.const(value, dtype, /)
 
 ## 约束说明
 
-无。
+- 不支持仅用于存储的低精度类型：DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_FP4、DT_FP4E2M1、DT_FP4E1M2、DT_HF8、DT_HF4、DT_INT4、DT_UINT4。
 
 ## 返回值说明
 

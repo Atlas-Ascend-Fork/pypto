@@ -16,7 +16,8 @@ import ast
 from pypto.pypto_impl import ir as _ir_core
 from pypto.pypto_impl.ir import Expr, Span
 
-from ..._errors import InvalidType
+from ..._errors import InvalidType, argument_span
+from .._utils import require_scalar_dtype
 from ._op_registry import op_impl, op_impl_ast
 
 
@@ -264,6 +265,7 @@ def _parse_typed_constant(self, call: ast.Call) -> Expr:
     value = -literal.value if literal is not node else literal.value
     dtype = self.parse_expression(call.args[1])
     self._check_declared_types("const", [value, dtype], {}, span, self.span_tracker.argument_spans(call))
+    require_scalar_dtype(dtype, subject="pl.const() does not support", span=argument_span(1, span))
     if dtype == _ir_core.DataType.BOOL:
         check_fits_dtype(value, dtype, subject="value", span=span, api="pl.const")
         return _ir_core.ConstBool(bool(value), span)
@@ -275,4 +277,8 @@ def _parse_typed_constant(self, call: ast.Call) -> Expr:
 
 @op_impl("astype")
 def _build_scalar_astype(self, value: Expr, dtype, /, *, span: Span) -> Expr:
+    for position, role, scalar_dtype in ((0, "source", value.type.dtype), (1, "destination", dtype)):
+        require_scalar_dtype(
+            scalar_dtype, subject=f"pl.astype() does not support {role}", span=argument_span(position, span),
+        )
     return _ir_core.cast(value, dtype, span)
