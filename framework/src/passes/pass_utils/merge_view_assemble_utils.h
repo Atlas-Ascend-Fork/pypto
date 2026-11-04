@@ -249,7 +249,11 @@ public:
     Status AppendMergedViewOperations(Function& function);
     Status AppendMergedAssembleOperations(Function& function);
 
-    // Remove legacy result tokens replaced by per-merged-op new tokens.
+    // Old tokens can also be inputs of another recorded merge. Reconnect those
+    // consumers after every replacement producer has been materialized.
+    std::unordered_map<ir::VarPtr, std::vector<ir::VarPtr>> replacementTokens_;
+
+    // Reconnect live consumers before removing the replaced legacy tokens.
     void CleanupLegacyResultTokens(Function& function);
 
     // Cleanup methods

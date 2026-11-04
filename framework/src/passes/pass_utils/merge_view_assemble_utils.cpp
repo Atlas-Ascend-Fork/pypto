@@ -411,7 +411,8 @@ void ClearLinearTokenDependency(Function& function, const std::vector<Operation*
 }
 
 void ApplyLinearTokenDependency(Function& function, Operation& mergedOp,
-                                const MergeViewAssembleUtils::TokenDependency& tokenDependency)
+                                const MergeViewAssembleUtils::TokenDependency& tokenDependency,
+                                std::unordered_map<ir::VarPtr, std::vector<ir::VarPtr>>& replacementTokens)
 {
     for (const auto& token : tokenDependency.inputTokens) {
         AddTokenConsumer(function, token, mergedOp);
@@ -425,6 +426,7 @@ void ApplyLinearTokenDependency(Function& function, Operation& mergedOp,
         // 扇出场景下同一旧 token 被多条链共享时，每条链的 merged op 各产一个新 token，
         // 消费者等待全部新 token，与原语义（等旧 token 的唯一生产者）保持一致。
         auto newToken = IRBuilder().CreateTokenVar(mergedOp.GetSpan());
+        AddUnique(replacementTokens[resultToken], newToken);
         AddUnique(mergedOp.result_token_, newToken);
         function.GetVarDependency().AddProducer(newToken, ToStmtPtr(mergedOp));
         if (index < tokenDependency.resultTokenConsumers.size()) {
@@ -644,6 +646,7 @@ Status MergeViewAssembleUtils::Initialize()
     tokenDependencyTensorMagics_.clear();
     tokenDependencyOps_.clear();
     dependencyCache_.clear();
+    replacementTokens_.clear();
     return SUCCESS;
 }
 
@@ -1266,8 +1269,20 @@ void MergeViewAssembleUtils::CleanupLegacyResultTokens(Function& function)
         auto consumers = dependency.GetConsumers(token);
         for (const auto& consumerStmt : consumers) {
             auto* consumer = ToOperation(consumerStmt);
-            if (consumer != nullptr) {
-                RemoveToken(*consumer, token);
+            if (consumer == nullptr) {
+                continue;
+            }
+            RemoveToken(*consumer, token);
+            if (consumer->IsDeleted()) {
+                continue;
+            }
+            // A sibling chain may already have replaced this consumer. Its new op
+            // still waits the old token collected during planning; transfer that
+            // wait to every replacement producer before removing the old Var.
+            for (const auto& replacement : replacementTokens_.at(token)) {
+                if (!dependency.HasProducer(replacement, consumerStmt)) {
+                    AddTokenConsumer(function, replacement, *consumer);
+                }
             }
         }
         dependency.RemoveVar(token);
@@ -1304,7 +1319,7 @@ Status MergeViewAssembleUtils::AppendMergedViewOperations(Function& function)
         if (viewOp.hasIsGemv) {
             mergedViewOp.SetAttr(OpAttributeKey::isGemv, viewOp.isGemvValue);
         }
-        ApplyLinearTokenDependency(function, mergedViewOp, viewOp.tokenDependency);
+        ApplyLinearTokenDependency(function, mergedViewOp, viewOp.tokenDependency, replacementTokens_);
         viewOp.output->UpdateDynValidShape(viewOp.dynValidShape);
     }
     return SUCCESS;
@@ -1327,7 +1342,7 @@ Status MergeViewAssembleUtils::AppendMergedAssembleOperations(Function& function
         if (!assembleOp.rmwModeAttr.empty()) {
             mergedAssembleOp.SetAttribute(assembleOp.rmwModeAttr, 1L);
         }
-        ApplyLinearTokenDependency(function, mergedAssembleOp, assembleOp.tokenDependency);
+        ApplyLinearTokenDependency(function, mergedAssembleOp, assembleOp.tokenDependency, replacementTokens_);
         if (assembleOp.atomicFromReduceAcc) {
             mergedAssembleOp.SetAttribute(ATOMIC_FROM_REDUCE_ACC_ATTR, true);
         }

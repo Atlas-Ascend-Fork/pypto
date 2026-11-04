@@ -185,6 +185,82 @@ void BuildLargeSharedTensorMergeableChains(ComputationalGraphBuilder& graph, int
     ASSERT_TRUE(graph.SetInCast(inputs));
     ASSERT_TRUE(graph.SetOutCast(outputs));
 }
+
+struct OverlappingProducerGroupGraph {
+    LogicalTensorPtr firstInput;
+    LogicalTensorPtr secondInput;
+    LogicalTensorPtr middle;
+    ir::VarPtr oldWawToken;
+    std::vector<LogicalTensorPtr> outputs;
+    std::vector<Operation*> finalConsumers;
+};
+
+OverlappingProducerGroupGraph BuildOverlappingProducerGroup(Function& function, Opcode opcode, bool fullOverwrite,
+                                                            bool reverseOrder, bool fanout)
+{
+    IRBuilder builder;
+    OverlappingProducerGroupGraph graph;
+    graph.firstInput = builder.CreateTensorVar(function, DataType::DT_FP32, {fullOverwrite ? 4 : 3, 4});
+    graph.secondInput = builder.CreateTensorVar(function, DataType::DT_FP32, {fullOverwrite ? 4 : 2, 4});
+    graph.middle = builder.CreateTensorVar(function, DataType::DT_FP32, {4, 4});
+    function.inCasts_ = {graph.firstInput, graph.secondInput};
+    auto& first = builder.CreateTensorOpStmt(function, opcode, {graph.firstInput}, {graph.middle});
+    first.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+    auto& second = builder.CreateTensorOpStmt(function, opcode, {graph.secondInput}, {graph.middle});
+    second.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{fullOverwrite ? 0 : 2, 0}));
+    graph.oldWawToken = reverseOrder ? AddTokenEdge(function, second, first) : AddTokenEdge(function, first, second);
+    for (int index = 0; index < (fanout ? 2 : 1); ++index) {
+        auto output = builder.CreateTensorVar(function, DataType::DT_FP32, {4 + index * 2, 4});
+        auto finalOutput = builder.CreateTensorVar(function, DataType::DT_FP32, {4 + index * 2, 4});
+        auto& downstream = builder.CreateTensorOpStmt(function, Opcode::OP_ASSEMBLE, {graph.middle}, {output});
+        downstream.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{index, 0}));
+        auto& consumer = builder.CreateTensorOpStmt(function, Opcode::OP_ABS, {output}, {finalOutput});
+        AddTokenEdge(function, downstream, consumer);
+        function.outCasts_.emplace_back(finalOutput);
+        graph.outputs.emplace_back(output);
+        graph.finalConsumers.emplace_back(&consumer);
+    }
+    function.BuildTensorMap();
+    return graph;
+}
+
+void ExpectOverlappingProducerWriteOrder(Function& function, const OverlappingProducerGroupGraph& graph,
+                                         bool reverseOrder)
+{
+    EXPECT_EQ(function.GetTensorMap().GetTensorByMagic(graph.middle->GetMagic()), nullptr);
+    EXPECT_TRUE(function.GetVarDependency().GetProducers(graph.oldWawToken).empty());
+    for (size_t index = 0; index < graph.outputs.size(); ++index) {
+        Operation* firstReplacement = nullptr;
+        Operation* secondReplacement = nullptr;
+        for (auto* producer : graph.outputs[index]->GetProducers()) {
+            if (producer->GetIOperands().front() == graph.firstInput) {
+                firstReplacement = producer;
+            }
+            if (producer->GetIOperands().front() == graph.secondInput) {
+                secondReplacement = producer;
+            }
+        }
+        ASSERT_NE(firstReplacement, nullptr);
+        ASSERT_NE(secondReplacement, nullptr);
+        auto* before = reverseOrder ? secondReplacement : firstReplacement;
+        auto* after = reverseOrder ? firstReplacement : secondReplacement;
+        bool ordered = false;
+        for (const auto& token : after->tokens_) {
+            EXPECT_EQ(function.GetVarDependency().GetProducers(token).size(), 1);
+            EXPECT_TRUE(function.GetVarDependency().HasConsumer(token, ToStmtPtr(*after)));
+            ordered |= function.GetVarDependency().HasProducer(token, ToStmtPtr(*before));
+        }
+        EXPECT_TRUE(ordered);
+        for (auto* producer : {firstReplacement, secondReplacement}) {
+            bool waited = false;
+            for (const auto& token : producer->result_token_) {
+                waited |= function.GetVarDependency().HasConsumer(token, ToStmtPtr(*graph.finalConsumers[index]));
+            }
+            EXPECT_TRUE(waited);
+        }
+    }
+}
+
 } // namespace
 
 TEST_F(MergeViewAssembleTest, LegacyStopperUsesArchitectureDespiteUnrelatedTokenAndMarker)
@@ -1637,8 +1713,8 @@ TEST_F(MergeViewAssembleTest, CompleteProducerGroupFusesAndPreservesTokens)
     }
     ASSERT_EQ(replacements.size(), 2);
     ASSERT_EQ(output->GetProducers().size(), 2);
-    // 旧 wawToken 被清理：两条合并链写入 output 的不相交区域（coverage 保证），
-    // WAW 顺序随之消解；downstream 的结果 token 扇出为两条链各自的新 token。
+    // Old tokens are replaced after both chains exist. Preserve their ordering
+    // and let the final consumer wait on each replacement of the shared tail.
     EXPECT_EQ(function->GetVarDependency().GetProducers(wawToken).size(), 0);
     EXPECT_EQ(finalConsumer.tokens_.size(), 2);
     for (auto* replacement : replacements) {
@@ -1651,6 +1727,29 @@ TEST_F(MergeViewAssembleTest, CompleteProducerGroupFusesAndPreservesTokens)
         EXPECT_TRUE(waitedByFinalConsumer);
     }
     EXPECT_EQ(function->GetTensorMap().GetTensorByMagic(middle->GetMagic()), nullptr);
+}
+
+TEST_F(MergeViewAssembleTest, OverlappingProducerGroupFusesAndPreservesWriteOrder)
+{
+    for (auto opcode : {Opcode::OP_ASSEMBLE, Opcode::OP_CONTRACT}) {
+        for (bool fullOverwrite : {true, false}) {
+            for (bool reverseOrder : {false, true}) {
+                for (bool fanout : {false, true}) {
+                    SCOPED_TRACE(static_cast<int>(opcode));
+                    SCOPED_TRACE(fullOverwrite);
+                    SCOPED_TRACE(reverseOrder);
+                    SCOPED_TRACE(fanout);
+                    Program program;
+                    auto function = std::make_unique<Function>(program, "overlapping_group", "overlapping_group",
+                                                               nullptr);
+                    auto graph = BuildOverlappingProducerGroup(*function, opcode, fullOverwrite, reverseOrder, fanout);
+                    MergeViewAssemble pass;
+                    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+                    ASSERT_NO_FATAL_FAILURE(ExpectOverlappingProducerWriteOrder(*function, graph, reverseOrder));
+                }
+            }
+        }
+    }
 }
 
 TEST_F(MergeViewAssembleTest, ProducerGroupMapsDataCoveredTokensToMatchingReplacement)
