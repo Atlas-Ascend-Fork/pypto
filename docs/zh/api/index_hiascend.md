@@ -553,6 +553,7 @@
       - [pypto_pro.language.system.wait_pre_task_end](pro_api/SIMD-API/synchronization/wait_pre_task_end.md)
     - [缓存控制](pro_api/SIMD-API/cache_control/index.md)
       - [pypto_pro.language.system.dcci](pro_api/SIMD-API/cache_control/dcci.md)
+      - [pypto_pro.language.system.icache_preload](pro_api/SIMD-API/cache_control/icache_preload.md)
     - [系统访问变量](pro_api/SIMD-API/system_variables/index.md)
       - [pypto_pro.language.get_block_idx](pro_api/SIMD-API/system_variables/get_block_idx.md)
       - [pypto_pro.language.get_block_num](pro_api/SIMD-API/system_variables/get_block_num.md)

@@ -254,6 +254,16 @@ class System:
 
     @staticmethod
     @_api_decl
+    def icache_preload(prefetch_len: int) -> None:
+        """Preload subsequent kernel instructions into ICache.
+
+        Args:
+            prefetch_len: Preload length in 2 KiB units. Ascend 950 supports
+                values in [0, 15] on AIC and [0, 7] on AIV.
+        """
+
+    @staticmethod
+    @_api_decl
     def set_mm_layout_transform(*, enabled: bool) -> None:
         """Set the matmul layout transform mode for the fixpipe drain direction.
 

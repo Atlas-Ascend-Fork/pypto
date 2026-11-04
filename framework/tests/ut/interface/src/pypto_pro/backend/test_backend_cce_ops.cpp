@@ -14,9 +14,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <sstream>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -36,6 +36,17 @@
 namespace pypto {
 namespace backend {
 namespace {
+
+std::string ReadBackendCodegenGolden(const std::string& filename)
+{
+    const auto source_dir = std::filesystem::path(IO_TEXT_TEST_DATA_DIR).parent_path().parent_path();
+    const auto path = source_dir / "pypto_pro/backend" / filename;
+    std::ifstream input(path);
+    EXPECT_TRUE(input.is_open()) << path;
+    std::ostringstream content;
+    content << input.rdbuf();
+    return content.str();
+}
 
 std::vector<ir::ExprPtr> MakeTileOperands(const ir::TypePtr& type)
 {
@@ -227,6 +238,33 @@ TEST(BackendCceOpsTest, GetCycle)
     const auto* info = BackendCCE::Instance().GetOpInfo("get_cycle");
     ASSERT_NE(info, nullptr);
     EXPECT_EQ(info->pipe, ir::PipeType::V);
+}
+
+TEST(BackendCceOpsTest, ICachePreloadUsesAscendC)
+{
+    auto call = std::make_shared<const ir::Call>("system.icache_preload", std::vector<ir::ExprPtr>{MakeConstInt(2)},
+                                                 ir::Span::Unknown());
+    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+
+    codegen::CCECodegen codegen(ir::SectionKind::Vector);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
+    EXPECT_EQ(generated, ReadBackendCodegenGolden("test_backend_cce_ops.pypto"));
+}
+
+TEST(BackendCceOpsTest, ICachePreloadRejectsUnsupportedArch)
+{
+    auto call = std::make_shared<const ir::Call>("system.icache_preload", std::vector<ir::ExprPtr>{MakeConstInt(2)},
+                                                 ir::Span::Unknown());
+    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+
+    codegen::CCECodegen codegen(ir::SectionKind::Vector);
+    try {
+        (void)codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+        FAIL() << "Expected DAV_2201 ICache preload codegen to fail";
+    } catch (const npu::tile_fwk::Error& error) {
+        EXPECT_NE(std::string(error.what()).find("system.icache_preload is only supported on DAV_3510 (Ascend 950)"),
+                  std::string::npos);
+    }
 }
 
 TEST(BackendCceOpsTest, GetSubBlockIdx)

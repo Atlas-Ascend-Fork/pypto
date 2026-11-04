@@ -39,6 +39,8 @@ from ._op_registry import op_impl
 MAX_EVENT_ID = 15  # cross-core event ids
 MAX_FLAG_EVENT_ID = 7  # set_flag / wait_flag event ids
 MAX_MUTEX_ID = 31  # tile mutex ids
+MAX_AIC_ICACHE_PRELOAD_LEN = 15
+MAX_AIV_ICACHE_PRELOAD_LEN = 7
 
 # A5/A6 intra-core flag paths are execution-side specific. The maps are
 # directional: each key is set_pipe and its value contains valid wait_pipe values.
@@ -433,6 +435,12 @@ def dsb(*, scope: MemDsb = MemDsb.ALL, span: Span | None = None) -> Call:
     return _ir_core.create_op_call("system.dsb", [], {"scope": scope}, actual_span)
 
 
+def icache_preload(prefetch_len: Expr, *, span: Span | None = None) -> Call:
+    """Preload subsequent instructions into ICache through AscendC."""
+    actual_span = _get_span_or_capture(span)
+    return _ir_core.create_op_call("system.icache_preload", [prefetch_len], {}, actual_span)
+
+
 # ============================================================================
 # Mutex (Buffer-ID Token) — A5/A6
 # ----------------------------------------------------------------------------
@@ -686,6 +694,23 @@ def _build_dcci(self, *args, span: Span, **kwargs):
 @op_impl("system.dsb")
 def _build_dsb(self, *args, span: Span, **kwargs):
     return dsb(*args, span=span, **kwargs)
+
+
+@op_impl("system.icache_preload")
+def _build_icache_preload(self, prefetch_len, *, span: Span):
+    max_len = (
+        MAX_AIC_ICACHE_PRELOAD_LEN
+        if self.target == _ir_core.SectionKind.Cube
+        else MAX_AIV_ICACHE_PRELOAD_LEN
+    )
+    with current_span(span):
+        require_int(
+            prefetch_len,
+            subject="prefetch_len",
+            lower_bound=0,
+            upper_bound=max_len,
+        )
+    return icache_preload(prefetch_len, span=span)
 
 
 @op_impl("system.mutex_lock")

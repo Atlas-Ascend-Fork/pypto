@@ -1933,6 +1933,8 @@ def _add_kernel_header(result: CodegenResult) -> CodegenResult:
         # Early-start inter-task sync (SK cap bits 1/2) lives in the AscendC common
         # interface header, which pto-inst.hpp does not pull in.
         header += "\n#include <basic_api/kernel_operator_common_intf.h>\n"
+    if "AscendC::ICachePreLoad" in result.content:
+        header += "\n#include <basic_api/kernel_operator_cache_intf.h>\n"
     return dataclasses.replace(
         result,
         content=f"{header}\n{result.content.lstrip()}",

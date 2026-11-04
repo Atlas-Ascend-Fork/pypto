@@ -117,6 +117,22 @@ TEST(SyncOpsMutexTest, DynamicMutexRejectsMisalignedCandidateGroups)
 
 class SyncOpsDcciTest : public testing::Test {};
 
+TEST(SyncOpsICacheTest, PreloadAcceptsIntegerScalar)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto prefetchLen = MakeScalarVar("prefetch_len", DataType::INT64);
+    auto call = reg.Create("system.icache_preload", {prefetchLen}, Sp());
+    ASSERT_NE(call, nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
+}
+
+TEST(SyncOpsICacheTest, PreloadRejectsFloatingPointScalar)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto prefetchLen = MakeScalarVar("prefetch_len", DataType::FP32);
+    EXPECT_THROW((void)reg.Create("system.icache_preload", {prefetchLen}, Sp()), npu::tile_fwk::Error);
+}
+
 TEST_F(SyncOpsDcciTest, Dcci_TensorTarget_TupleOffset_ReturnsUnknown)
 {
     auto& reg = OpRegistry::GetInstance();

@@ -321,6 +321,17 @@ def test_debug_codegen_uses_vendored_pto_debug_entrypoints(tmp_path):
     assert "__ENABLE_ASC_PRINTF__" not in result.content
 
 
+def test_icache_preload_codegen_includes_ascendc_cache_interface(tmp_path):
+    result = jit.CodegenResult(
+        build_dir=str(tmp_path), content="AscendC::ICachePreLoad(2);", kernel_name="probe", kernel_params=[],
+        caller_cross_core_sync=False, bisheng_cross_sync=False, needs_print_debug=False,
+        has_cube=False, has_vector=True,
+    )
+    result = jit._add_kernel_header(result)
+    golden = Path(__file__).with_suffix(".pypto").read_text(encoding="utf-8")
+    assert result.content.rstrip("\n") == golden.rstrip("\n")
+
+
 def test_compilation_preserves_target_for_cached_launch_and_debug(monkeypatch, tmp_path):
     """The compiled object must retain the exact descriptor selected when its binary was built."""
     config = get_jit_compile_config()

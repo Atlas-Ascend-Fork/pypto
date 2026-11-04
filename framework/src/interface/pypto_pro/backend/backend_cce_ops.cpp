@@ -1114,6 +1114,18 @@ REGISTER_BACKEND_OP(BackendCCE, "system.dcci")
         return MakeDcciCodegenCCE(op, codegen_base);
     });
 
+REGISTER_BACKEND_OP(BackendCCE, "system.icache_preload")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
+        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
+            << "system.icache_preload requires one argument";
+        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
+            << "system.icache_preload is only supported on DAV_3510 (Ascend 950)";
+        codegen.Emit("AscendC::ICachePreLoad(" + cce::GetOperandAsCode(codegen, op->args_[0]) + ");");
+        return "";
+    });
+
 // ============================================================================
 // Cross-core Sync Operations
 // ============================================================================

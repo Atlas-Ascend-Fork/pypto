@@ -272,6 +272,19 @@ REGISTER_OP("system.dcci")
         return GetUnknownType();
     });
 
+REGISTER_OP("system.icache_preload")
+    .set_description("Preload subsequent instructions into ICache through AscendC")
+    .set_op_category("SyncOp")
+    .add_argument("prefetch_len", "Preload length in 2 KiB units")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+            << "system.icache_preload requires one argument";
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[0]))
+            << "system.icache_preload: prefetch_len must be an integer scalar";
+        return GetNoneType();
+    });
+
 // ============================================================================
 // Mutex (Buffer-ID Token) Ops — A5 only
 // ----------------------------------------------------------------------------

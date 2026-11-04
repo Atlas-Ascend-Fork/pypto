@@ -12,7 +12,7 @@
 
 import pypto_pro
 from pypto_pro import ir
-from pypto_pro._errors import InvalidArgument, InvalidOperation, InvalidType, NotSupported, OutOfRange
+from pypto_pro._errors import InvalidArgument, InvalidOperation, InvalidType, InvalidVal, NotSupported, OutOfRange
 from pypto_pro.ir.op import system_ops
 import pypto_pro.language as pl
 import pytest
@@ -259,6 +259,25 @@ def test_sync_rejects_aic_only_path_in_vector_section(arch):
             )
 
     with pytest.raises(NotSupported, match="unsupported synchronization path on AIV"):
+        func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("prefetch_len", [-1, 8])
+def test_icache_preload_validates_vector_range(prefetch_len):
+    @pl.jit(auto_mutex=False)
+    def func(_jit_entry: pl.DT_INT64):
+        pl.system.icache_preload(prefetch_len)
+
+    with pytest.raises(InvalidVal, match="prefetch_len must be"):
+        func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_icache_preload_rejects_non_integer_length():
+    @pl.jit(auto_mutex=False)
+    def func(_jit_entry: pl.DT_INT64):
+        pl.system.icache_preload(1.5)
+
+    with pytest.raises(InvalidType, match="prefetch_len"):
         func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
