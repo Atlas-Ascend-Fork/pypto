@@ -143,6 +143,13 @@ private:
 
     Status HasNonZeroSliceFromOffset(const LogicalTensorPtr& tensor, bool& hasNonZero);
 
+    Status ShouldSkipDirectPathUpgradeForBothSideOffsets(Operation& op, MemoryType sourceType, MemoryType targetType,
+                                                         const std::string& reason, bool& skip);
+
+    Status HasDirectAssembleConsumerDownstream(const LogicalTensorPtr& tensor, bool& hasDirect);
+
+    Status HasNonZeroViewFromOffsetUpstream(const LogicalTensorPtr& tensor, bool& hasNonZero);
+
     Status KeepSplitReshapeUb(Operation& operation, const LogicalTensorPtr& input, const LogicalTensorPtr& output,
                               bool& kept);
     bool CanUseReshapeUb2L1Path(const LogicalTensorPtr& output);
@@ -211,6 +218,8 @@ private:
     size_t CalcNzStorageSize(const LogicalTensorPtr& tensor) const;
     size_t CalcNzAlignedSize(const LogicalTensorPtr& tensor) const;
     Status CalcLineOffset(const Shape& shape, const Offset& offset, int64_t& lineOffset) const;
+
+    bool HasNonZeroOffsetElement(const Offset& offset) const;
 
     Status AssignConfirmedMemoryTypesLegacy(Function& function);
     Status AssignViewAttrMemoryTypeLegacy(Operation& operation);

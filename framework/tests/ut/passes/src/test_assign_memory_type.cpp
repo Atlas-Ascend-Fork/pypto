@@ -13,6 +13,8 @@
  * \brief Unit test for assign_memory_type pass.
  */
 
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <tuple>
 #include <vector>
@@ -3672,9 +3674,215 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBAssembleDirectPathNotDdrFallback)
         originFunction = Program::GetInstance().GetFunctionByRawName(
             "TENSOR_TestL0C2UBAssembleDirectPathNotDdrFallback");
         ASSERT_NE(originFunction, nullptr) << "Function pointer is null";
+
         EXPECT_EQ(CountMemoryPath(originFunction, MemoryType::MEM_L0C, MemoryType::MEM_DEVICE_DDR), 0);
         EXPECT_GE(CountMemoryPath(originFunction, MemoryType::MEM_L0C, MemoryType::MEM_UB), 1);
     }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+// L0C→UB 直连升级的单侧偏移正例: 与 TestL0C2UBAssembleDirectPathNotDdrFallback 同构, vec tile(32,32)
+// 小于张量(64,64)使 slice 以非零 fromOffset 读取 middle; 但 slice 输出直接喂 vec 计算(EXP/ADD 为非
+// 透明算子), 目的侧无非零 toOffset —— 单侧偏移可正常使能, 直连升级保留。
+TEST_F(AssignMemoryTypeTest, TestL0C2UBAssembleFromOffsetOnlyKeepsDirectPath)
+{
+    auto shapes = PrepareA5Platform();
+    PROGRAM("AssignMemoryTest")
+    {
+        Tensor inputA(DataType::DT_FP16, shapes.shapeA, "A");
+        Tensor inputB(DataType::DT_FP16, shapes.shapeB, "B");
+        Tensor inputC(DataType::DT_FP32, shapes.shapeC, "C");
+        Tensor ubAssembleOut(DataType::DT_FP32, shapes.shapeC, "ubAssembleOut");
+        Tensor out(DataType::DT_FP32, shapes.shapeC, "output");
+        SetFullTestStrategy();
+        Function* originFunction = nullptr;
+
+        config::SetBuildStatic(true);
+        FUNCTION("TestL0C2UBAssembleFromOffsetOnlyKeepsDirectPath", {inputA, inputB, inputC, ubAssembleOut, out})
+        {
+            TileShape::Current().SetCubeTile({NUM_32, NUM_32}, {NUM_64, NUM_64}, {NUM_64, NUM_64});
+            Tensor ab = Matrix::Matmul(out.GetDataType(), inputA, inputB);
+            Assemble(ab, {0, 0}, ubAssembleOut);
+            TileShape::Current().SetVecTile(NUM_32, NUM_32);
+            ubAssembleOut = Exp(ubAssembleOut);
+            out = Add(ab, inputC);
+        }
+
+        originFunction = Program::GetInstance().GetFunctionByRawName(
+            "TENSOR_TestL0C2UBAssembleFromOffsetOnlyKeepsDirectPath");
+        ASSERT_NE(originFunction, nullptr) << "Function pointer is null";
+
+        EXPECT_EQ(CountMemoryPath(originFunction, MemoryType::MEM_L0C, MemoryType::MEM_DEVICE_DDR), 0);
+        EXPECT_GE(CountMemoryPath(originFunction, MemoryType::MEM_L0C, MemoryType::MEM_UB), 1)
+            << "single-side from offset should keep L0C->UB direct path";
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+// L0C→UB 直连升级的双侧偏移负例(SmallToLarge 形态): matmul 输出(L0C)经带非零偏移的 View
+// (from≠0)读出子块, Assemble 以非零 toOffset(to≠0)组装进 middle, middle 再被 vec 计算按
+// tile 切片消费(view(from≠0) - [register_copy] - contract(to≠0) 场景)—— 双侧偏移不得使能
+// 直连, 应拒绝升级、经 DDR 中转。
+TEST_F(AssignMemoryTypeTest, TestL0C2UBBothSideOffsetsSmallToLargeDdrFallback)
+{
+    auto shapes = PrepareA5Platform();
+    PROGRAM("AssignMemoryTest")
+    {
+        Tensor inputA(DataType::DT_FP16, shapes.shapeA, "A");
+        Tensor inputB(DataType::DT_FP16, shapes.shapeB, "B");
+        Tensor inputC(DataType::DT_FP32, shapes.shapeC, "C");
+        Tensor out(DataType::DT_FP32, shapes.shapeC, "output");
+        SetFullTestStrategy();
+        Function* originFunction = nullptr;
+
+        config::SetBuildStatic(true);
+        FUNCTION("TestL0C2UBBothSideOffsetsSmallToLargeDdrFallback", {inputA, inputB, inputC, out})
+        {
+            TileShape::Current().SetCubeTile({NUM_64, NUM_64}, {NUM_64, NUM_64}, {NUM_64, NUM_64});
+            Tensor ab = Matrix::Matmul(out.GetDataType(), inputA, inputB);
+            TileShape::Current().SetVecTile(NUM_32, NUM_32);
+            Tensor v = View(ab, std::vector<int64_t>{NUM_64, NUM_32}, {0, NUM_32});
+            Tensor ubAssembleOut(DataType::DT_FP32, shapes.shapeC, "ubAssembleOut");
+            Assemble(v, {0, NUM_32}, ubAssembleOut);
+            out = Add(ubAssembleOut, inputC);
+        }
+
+        originFunction = Program::GetInstance().GetFunctionByRawName(
+            "TENSOR_TestL0C2UBBothSideOffsetsSmallToLargeDdrFallback");
+        ASSERT_NE(originFunction, nullptr) << "Function pointer is null";
+
+        EXPECT_EQ(CountMemoryPath(originFunction, MemoryType::MEM_L0C, MemoryType::MEM_UB), 0)
+            << "both-side offsets should not enable L0C->UB direct path";
+        EXPECT_GE(CountMemoryPath(originFunction, MemoryType::MEM_L0C, MemoryType::MEM_DEVICE_DDR), 1);
+        EXPECT_GE(CountMemoryPath(originFunction, MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_UB), 1);
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+// L0C→UB 直连升级双侧偏移负例(经 register_copy 穿透, 复刻 kernel 报错链):
+// SLICE(from≠0) → REGISTER_COPY → ASSEMBLE(to≠0) —— 与 kernel 报错场景同构(Pass_11 图:
+// %1681 ─SLICE(from=[112,32])→ %1016 ─REGISTER_COPY→ %1088 ─ASSEMBLE(to=[112,32])→ %14),
+// guard 的 dst 侧必须穿透 register_copy 链才能发现 to≠0; 双侧同时非零应拒绝升级、经 DDR 中转。
+TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallBothSideOffsetsThroughRegisterCopyDdrFallback)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    Platform::Instance().ReloadMemoryPaths("3510");
+    ComputationalGraphBuilder G;
+    Shape abShape{NUM_32, NUM_32};
+    Shape midShape{NUM_32, NUM_32};
+    Shape tileShape{NUM_16, NUM_16};
+    G.AddTensors(DataType::DT_FP16, abShape, {MemoryType::MEM_L0A, MemoryType::MEM_L0B}, {"l0a_in", "l0b_in"});
+    G.AddTensors(DataType::DT_FP16, midShape, {MemoryType::MEM_L0C}, {"mm_out"});
+    Shape reshapeShape{NUM_64, NUM_16};
+    Shape outShape{NUM_128, NUM_16};
+    G.AddTensors(DataType::DT_FP16, midShape, {MemoryType::MEM_UNKNOWN}, {"middle"});
+    G.AddTensors(DataType::DT_FP16, midShape, {MemoryType::MEM_UB}, {"ubAssembled"});
+    G.AddTensors(DataType::DT_FP16, reshapeShape, {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
+                 {"reshaped", "ubIn", "added"});
+    G.AddTensors(DataType::DT_FP16, outShape, {MemoryType::MEM_UNKNOWN}, {"out"});
+    G.AddTensors(DataType::DT_FP16, tileShape,
+                 {MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN,
+                  MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN},
+                 {"t00", "t01", "t10", "t11", "r00", "r01", "r10", "r11"});
+
+    G.AddOp(Opcode::OP_A_MUL_B, {"l0a_in", "l0b_in"}, {"mm_out"}, "mm");
+    G.AddOp(Opcode::OP_CONTRACT, {"mm_out"}, {"middle"}, "contract");
+    G.GetOp("contract")
+        ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{0, 0}));
+    const std::vector<std::vector<int64_t>> tilePos = {{0, 0}, {0, NUM_16}, {NUM_16, 0}, {NUM_16, NUM_16}};
+    const std::vector<std::string> tiles = {"t00", "t01", "t10", "t11"};
+    const std::vector<std::string> rcs = {"r00", "r01", "r10", "r11"};
+    for (size_t i = 0; i < tilePos.size(); i++) {
+        G.AddOp(Opcode::OP_SLICE, {"middle"}, {tiles[i]}, "slice_" + tiles[i]);
+        G.GetOp("slice_" + tiles[i])->SetOpAttribute(std::make_shared<ViewOpAttribute>(tilePos[i], MemoryType::MEM_UB));
+        G.AddOp(Opcode::OP_REGISTER_COPY, {tiles[i]}, {rcs[i]}, "rc_" + rcs[i]);
+        G.AddOp(Opcode::OP_ASSEMBLE, {rcs[i]}, {"ubAssembled"}, "asm_" + rcs[i]);
+        G.GetOp("asm_" + rcs[i])->SetOpAttribute(std::make_shared<AssembleOpAttribute>(tilePos[i]));
+    }
+    // assemble 为核内(UB)算子: 组装后继续 vec 计算, 再经 contract 出核
+    G.AddOp(Opcode::OP_RESHAPE, {"ubAssembled"}, {"reshaped"}, "reshape");
+    G.AddOp(Opcode::OP_ADD, {"reshaped", "ubIn"}, {"added"}, "add");
+    G.AddOp(Opcode::OP_CONTRACT, {"added"}, {"out"}, "contract_out");
+    G.GetOp("contract_out")
+        ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, std::vector<int64_t>{NUM_64, 0}));
+
+    G.SetInCast({"l0a_in", "l0b_in", "ubIn"});
+    G.SetOutCast({"out"});
+    Function* func = G.GetFunction();
+    AssignMemoryType assignMemoryType;
+    EXPECT_EQ(assignMemoryType.RunOnFunction(*func), SUCCESS);
+    EXPECT_EQ(CountMemoryPath(func, MemoryType::MEM_L0C, MemoryType::MEM_UB), 0)
+        << "both-side offsets through register_copy should not enable L0C->UB direct path";
+    EXPECT_GT(CountMemoryPath(func, MemoryType::MEM_L0C, MemoryType::MEM_DEVICE_DDR), 0)
+        << "L0C->DDR fallback should exist after both-side offsets intercept";
+    EXPECT_GT(CountMemoryPath(func, MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_UB), 0);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+// L0C→UB 直连升级负例(目的侧直连 assemble 不看 toOffset 值): 与
+// TestL0C2UBLargeToSmallBothSideOffsetsThroughRegisterCopyDdrFallback 同构, 但 assemble 的
+// toOffset 全零——FoldL0C2UBCopyOffset 的失败条件只看 copy 的 fromOffset 是否非立即零,
+// assemble 的 toOffset 是否为零不影响其 abort, 故 from≠0 + 直连 assemble(to=0) 同样必须
+// 拒绝升级、经 DDR 中转。
+TEST_F(AssignMemoryTypeTest, TestL0C2UBFromOffsetDirectAssembleZeroToDdrFallback)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    Platform::Instance().ReloadMemoryPaths("3510");
+    ComputationalGraphBuilder G;
+    Shape abShape{NUM_32, NUM_32};
+    Shape midShape{NUM_32, NUM_32};
+    Shape tileShape{NUM_16, NUM_16};
+    G.AddTensors(DataType::DT_FP16, abShape, {MemoryType::MEM_L0A, MemoryType::MEM_L0B}, {"l0a_in", "l0b_in"});
+    G.AddTensors(DataType::DT_FP16, midShape, {MemoryType::MEM_L0C}, {"mm_out"});
+    Shape reshapeShape{NUM_64, NUM_16};
+    Shape outShape{NUM_128, NUM_16};
+    G.AddTensors(DataType::DT_FP16, midShape, {MemoryType::MEM_UNKNOWN}, {"middle"});
+    G.AddTensors(DataType::DT_FP16, midShape, {MemoryType::MEM_UB}, {"ubAssembled"});
+    G.AddTensors(DataType::DT_FP16, reshapeShape, {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
+                 {"reshaped", "ubIn", "added"});
+    G.AddTensors(DataType::DT_FP16, outShape, {MemoryType::MEM_UNKNOWN}, {"out"});
+    G.AddTensors(DataType::DT_FP16, tileShape,
+                 {MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN,
+                  MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN, MemoryType::MEM_UNKNOWN},
+                 {"t00", "t01", "t10", "t11", "r00", "r01", "r10", "r11"});
+
+    G.AddOp(Opcode::OP_A_MUL_B, {"l0a_in", "l0b_in"}, {"mm_out"}, "mm");
+    G.AddOp(Opcode::OP_CONTRACT, {"mm_out"}, {"middle"}, "contract");
+    G.GetOp("contract")
+        ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{0, 0}));
+    const std::vector<std::vector<int64_t>> tilePos = {{0, 0}, {0, NUM_16}, {NUM_16, 0}, {NUM_16, NUM_16}};
+    const std::vector<std::string> tiles = {"t00", "t01", "t10", "t11"};
+    const std::vector<std::string> rcs = {"r00", "r01", "r10", "r11"};
+    for (size_t i = 0; i < tilePos.size(); i++) {
+        G.AddOp(Opcode::OP_SLICE, {"middle"}, {tiles[i]}, "slice_" + tiles[i]);
+        G.GetOp("slice_" + tiles[i])->SetOpAttribute(std::make_shared<ViewOpAttribute>(tilePos[i], MemoryType::MEM_UB));
+        G.AddOp(Opcode::OP_REGISTER_COPY, {tiles[i]}, {rcs[i]}, "rc_" + rcs[i]);
+        G.AddOp(Opcode::OP_ASSEMBLE, {rcs[i]}, {"ubAssembled"}, "asm_" + rcs[i]);
+        G.GetOp("asm_" + rcs[i])->SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+    }
+    // assemble 为核内(UB)算子: 组装后继续 vec 计算, 再经 contract 出核
+    G.AddOp(Opcode::OP_RESHAPE, {"ubAssembled"}, {"reshaped"}, "reshape");
+    G.AddOp(Opcode::OP_ADD, {"reshaped", "ubIn"}, {"added"}, "add");
+    G.AddOp(Opcode::OP_CONTRACT, {"added"}, {"out"}, "contract_out");
+    G.GetOp("contract_out")
+        ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, std::vector<int64_t>{NUM_64, 0}));
+
+    G.SetInCast({"l0a_in", "l0b_in", "ubIn"});
+    G.SetOutCast({"out"});
+    Function* func = G.GetFunction();
+    AssignMemoryType assignMemoryType;
+    EXPECT_EQ(assignMemoryType.RunOnFunction(*func), SUCCESS);
+    EXPECT_EQ(CountMemoryPath(func, MemoryType::MEM_L0C, MemoryType::MEM_UB), 0)
+        << "non-zero fromOffset with direct assemble(zero to) should not enable L0C->UB direct path";
+    EXPECT_GT(CountMemoryPath(func, MemoryType::MEM_L0C, MemoryType::MEM_DEVICE_DDR), 0)
+        << "L0C->DDR fallback should exist after direct assemble(zero to) intercept";
+    EXPECT_GT(CountMemoryPath(func, MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_UB), 0);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
     Platform::Instance().ReloadMemoryPaths("2201");
 }

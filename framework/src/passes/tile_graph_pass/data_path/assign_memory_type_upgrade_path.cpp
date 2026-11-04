@@ -16,6 +16,7 @@
 #include "assign_memory_type.h"
 
 #include <algorithm>
+#include <unordered_set>
 #include <utility>
 
 #include "passes/pass_log/pass_log.h"
@@ -380,10 +381,213 @@ bool AssignMemoryType::AreAllSliceConsumerShapesPreserved(const LogicalTensorPtr
     return true;
 }
 
+// 偏移是否携带非零分量: 逐元素判定, 不经 CalcLineOffset 折算行偏移。
+// rawshape 含动态维(-1)时折算结果不可靠(负 stride 会把非零偏移算成 <= 0 而漏判),
+// 而"是否携带偏移"只需看分量本身, 与 shape 无关。
+bool AssignMemoryType::HasNonZeroOffsetElement(const Offset& offset) const
+{
+    return std::any_of(offset.begin(), offset.end(), [](int64_t value) { return value != 0; });
+}
+
+// 目的侧直连消费检查: 从 tensor 沿消费方向仅穿透寄存器拷贝(register_copy)链, 链上存在
+// ASSEMBLE/CONTRACT 消费者即判定目的侧存在直连消费(不看 toOffset 值——FoldL0C2UBCopyOffset
+// 的失败条件只看 copy 的 fromOffset 是否非立即零, assemble 的 toOffset 是否为零不影响其
+// abort 与否, 故 to=0 的直连 assemble 同样必须拦截); view/slice 及计算算子为链路终点,
+// 不穿透——中间隔着这些算子时已不构成同一条直连通路的消费关系。
+Status AssignMemoryType::HasDirectAssembleConsumerDownstream(const LogicalTensorPtr& tensor, bool& hasDirect)
+{
+    hasDirect = false;
+    if (tensor == nullptr) {
+        return SUCCESS;
+    }
+    std::vector<LogicalTensorPtr> pending = {tensor};
+    std::unordered_set<LogicalTensorPtr> visited;
+    while (!pending.empty()) {
+        auto current = pending.back();
+        pending.pop_back();
+        if (current == nullptr || !visited.insert(current).second) {
+            continue;
+        }
+        for (auto* consumerOp : current->GetConsumers()) {
+            if (consumerOp == nullptr) {
+                continue;
+            }
+            if (consumerOp->GetOpcode() == Opcode::OP_REGISTER_COPY) {
+                for (auto& nextTensor : consumerOp->GetOOperands()) {
+                    pending.push_back(nextTensor);
+                }
+                continue;
+            }
+            if (consumerOp->GetOpcode() == Opcode::OP_ASSEMBLE || consumerOp->GetOpcode() == Opcode::OP_CONTRACT) {
+                hasDirect = true;
+                return SUCCESS;
+            }
+        }
+    }
+    return SUCCESS;
+}
+
+// 源侧偏移收集: 从 tensor 沿生产方向仅穿透寄存器拷贝(register_copy)链, 遇到携带非零
+// fromOffset 的 SLICE/VIEW 即判定源侧存在偏移(直连 copy 将以该偏移读取源 buffer 内部
+// tile); 其余算子均为链路终点, 不穿透。偏移携带口径与 fold 对齐: 静态分量逐元素非零,
+// 或符号偏移(fromDynOffset)非空, 均视为携带——fold 侧判定为"非立即零即携带"。
+Status AssignMemoryType::HasNonZeroViewFromOffsetUpstream(const LogicalTensorPtr& tensor, bool& hasNonZero)
+{
+    hasNonZero = false;
+    if (tensor == nullptr) {
+        return SUCCESS;
+    }
+    std::vector<LogicalTensorPtr> pending = {tensor};
+    std::unordered_set<LogicalTensorPtr> visited;
+    while (!pending.empty()) {
+        auto current = pending.back();
+        pending.pop_back();
+        if (current == nullptr || !visited.insert(current).second) {
+            continue;
+        }
+        for (auto* producerOp : current->GetProducers()) {
+            if (producerOp == nullptr) {
+                continue;
+            }
+            if (producerOp->GetOpcode() == Opcode::OP_REGISTER_COPY) {
+                for (auto& nextTensor : producerOp->GetIOperands()) {
+                    pending.push_back(nextTensor);
+                }
+                continue;
+            }
+            if (producerOp->GetOpcode() == Opcode::OP_SLICE || producerOp->GetOpcode() == Opcode::OP_VIEW) {
+                auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(producerOp->GetOpAttribute());
+                if (viewAttr != nullptr &&
+                    (HasNonZeroOffsetElement(viewAttr->GetFromOffset()) || !viewAttr->GetFromDynOffset().empty())) {
+                    hasNonZero = true;
+                    return SUCCESS;
+                }
+            }
+        }
+    }
+    return SUCCESS;
+}
+
+// 跨内存直连升级的双侧偏移校验(通用, 与具体内存类型无关):
+// 直连升级会把 contract/slice 边界物化为一条直连 copy —— 源侧(sourceType)读取 + 目的侧
+// (targetType)写入。不变量: 同一条直连通路上, 源侧累计读取偏移与目的侧累计写入偏移不得
+// 同时非零——双侧偏移无法被底层直写正确表达, 也无法被 ReplaceTensor 的直写折叠(如
+// FoldL0C2UBCopyOffset)消化。偏移携带口径与 fold 对齐: 静态分量逐元素非零, 或符号偏移
+// (dynOffset)非空, 均视为携带。contract/slice 图中直连跨越只有两种形态, 按入口 op 的
+// opcode 区分:
+//   SLICE 入口(SmallToLarge, middle=slice 输入升级后驻留 targetType): 跨越点为生产者
+//     contract —— dst = contract 自身 toOffset(写目的侧 middle),
+//     from = contract 输入沿生产方向仅穿透 register_copy 链遇到的 view/slice fromOffset;
+//   CONTRACT 入口(LargeToSmall, middle=contract 输出升级后驻留 sourceType): 跨越点为
+//     slice 消费者 —— from = slice 自身 fromOffset(源侧 middle 的读取位置),
+//     dst = slice 输出沿消费方向仅穿透 register_copy 链存在 assemble/contract 直连消费
+//     (不看 toOffset 值——fold 的失败条件只看 copy 的 fromOffset 是否非立即零, assemble
+//     的 toOffset 为零不影响其 abort, 故 from≠0 + 直连 assemble(to=0) 同样必须拦截;
+//     copy 输出直接喂 vec 计算时 fold 前置条件不成立, 不受此条约束)。
+Status AssignMemoryType::ShouldSkipDirectPathUpgradeForBothSideOffsets(Operation& op, MemoryType sourceType,
+                                                                       MemoryType targetType, const std::string& reason,
+                                                                       bool& skip)
+{
+    skip = false;
+    if (op.GetOpcode() == Opcode::OP_SLICE) {
+        if (op.iOperand.empty() || op.iOperand.front() == nullptr) {
+            return SUCCESS;
+        }
+        auto middle = op.iOperand.front();
+        bool toNonZero = false;
+        for (auto* producer : middle->GetProducers()) {
+            if (producer == nullptr) {
+                continue;
+            }
+            auto assembleAttr = std::dynamic_pointer_cast<AssembleOpAttribute>(producer->GetOpAttribute());
+            if (assembleAttr != nullptr &&
+                (HasNonZeroOffsetElement(assembleAttr->GetToOffset()) || !assembleAttr->GetToDynOffset().empty())) {
+                toNonZero = true;
+                break;
+            }
+        }
+        if (!toNonZero) {
+            return SUCCESS;
+        }
+        bool fromNonZero = false;
+        for (auto* producer : middle->GetProducers()) {
+            if (producer == nullptr || producer->GetIOperands().empty()) {
+                continue;
+            }
+            bool producerFromNonZero = false;
+            RETURN_IF_NOT_SUCCESS(
+                HasNonZeroViewFromOffsetUpstream(producer->GetIOperands().front(), producerFromNonZero));
+            if (producerFromNonZero) {
+                fromNonZero = true;
+                break;
+            }
+        }
+        if (fromNonZero) {
+            APASS_LOG_DEBUG_F(Elements::Tensor,
+                              "Skip %s upgrade for tensor[%d]: %s->%s direct path carries both from and to offsets.",
+                              reason.c_str(), middle->GetMagic(), BriefMemoryTypeToString(sourceType).c_str(),
+                              BriefMemoryTypeToString(targetType).c_str());
+            skip = true;
+        }
+        return SUCCESS;
+    }
+    if (op.GetOpcode() == Opcode::OP_CONTRACT) {
+        if (op.oOperand.empty() || op.oOperand.front() == nullptr) {
+            return SUCCESS;
+        }
+        auto middle = op.oOperand.front();
+        bool fromNonZero = false;
+        for (auto* sliceConsumer : middle->GetConsumers()) {
+            if (sliceConsumer == nullptr || sliceConsumer->GetOpcode() != Opcode::OP_SLICE) {
+                continue;
+            }
+            auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(sliceConsumer->GetOpAttribute());
+            if (viewAttr != nullptr &&
+                (HasNonZeroOffsetElement(viewAttr->GetFromOffset()) || !viewAttr->GetFromDynOffset().empty())) {
+                fromNonZero = true;
+                break;
+            }
+        }
+        if (!fromNonZero) {
+            return SUCCESS;
+        }
+        bool dstPresent = false;
+        for (auto* sliceConsumer : middle->GetConsumers()) {
+            if (sliceConsumer == nullptr || sliceConsumer->GetOpcode() != Opcode::OP_SLICE ||
+                sliceConsumer->GetOOperands().empty()) {
+                continue;
+            }
+            bool sliceDstPresent = false;
+            RETURN_IF_NOT_SUCCESS(
+                HasDirectAssembleConsumerDownstream(sliceConsumer->GetOOperands().front(), sliceDstPresent));
+            if (sliceDstPresent) {
+                dstPresent = true;
+                break;
+            }
+        }
+        if (dstPresent) {
+            APASS_LOG_DEBUG_F(Elements::Tensor,
+                              "Skip %s upgrade for tensor[%d]: %s->%s direct path carries non-zero from offset "
+                              "with direct assemble consumer.",
+                              reason.c_str(), middle->GetMagic(), BriefMemoryTypeToString(sourceType).c_str(),
+                              BriefMemoryTypeToString(targetType).c_str());
+            skip = true;
+        }
+        return SUCCESS;
+    }
+    return SUCCESS;
+}
+
 Status AssignMemoryType::ProcessL0C2UBSmallToLarge(Function& function)
 {
     for (auto& op : function.Operations()) {
         if (op.GetOpcode() != Opcode::OP_SLICE) {
+            continue;
+        }
+        bool skipUpgrade = false;
+        RETURN_IF_NOT_SUCCESS(ShouldSkipDirectPathUpgradeForBothSideOffsets(op, MemoryType::MEM_L0C, MemoryType::MEM_UB,
+                                                                            "ProcessL0C2UBSmallToLarge", skipUpgrade));
+        if (skipUpgrade) {
             continue;
         }
         // conv 多维 tile 放开 2 维限制 (requireMatrixShape=false)，对齐校验按维数分派
@@ -397,6 +601,12 @@ Status AssignMemoryType::ProcessL0C2UBLargeToSmall(Function& function)
 {
     for (auto& op : function.Operations()) {
         if (op.GetOpcode() != Opcode::OP_CONTRACT) {
+            continue;
+        }
+        bool skipUpgrade = false;
+        RETURN_IF_NOT_SUCCESS(ShouldSkipDirectPathUpgradeForBothSideOffsets(op, MemoryType::MEM_L0C, MemoryType::MEM_UB,
+                                                                            "ProcessL0C2UBLargeToSmall", skipUpgrade));
+        if (skipUpgrade) {
             continue;
         }
         // conv 多维 tile 放开 2 维限制 (requireMatrixShape=false)，对齐校验按维数分派
