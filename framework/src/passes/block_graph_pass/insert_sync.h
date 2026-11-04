@@ -17,6 +17,7 @@
 #define PASS_INSERT_SYNC_H
 
 #include <queue>
+#include <optional>
 #include "interface/utils/common.h"
 #include "interface/function/function.h"
 #include "interface/operation/operation.h"
@@ -38,8 +39,10 @@ constexpr uint64_t LEFT_OFFSET3 = 8;
 constexpr uint64_t LEFT_OFFSET4 = 24;
 constexpr uint64_t MAX_POP = 8;
 // 两个op之间插入的set_flag/wait_flag数量的最大值为192
-constexpr uint64_t SEQUENCE_IDX = 300;
-constexpr uint64_t HALF_SEQUENCE_IDX = 150;
+// Reserve separate slots for the previous op's sets, a reclaim barrier, and this op's waits.
+constexpr uint64_t SEQUENCE_IDX = 1024;
+constexpr uint64_t HALF_SEQUENCE_IDX = 512;
+constexpr uint64_t RECLAIM_PREFIX_OFFSET = 768;
 constexpr uint64_t FORCE_SYNC_OP_NUM = 15;
 constexpr uint64_t NUM15 = 15;
 constexpr uint64_t NUM31 = 31;
@@ -363,6 +366,108 @@ private:
         }
     };
 
+    // EventResource already identifies a directed, physical intra-core slot.
+    // A consumed generation must never authorize reuse of a newer instance.
+    struct EventInstanceId {
+        EventResource resource;
+        uint64_t generation;
+        bool operator==(const EventInstanceId& other) const
+        {
+            return resource == other.resource && generation == other.generation;
+        }
+    };
+    struct EventInstanceIdHash {
+        size_t operator()(const EventInstanceId& id) const noexcept
+        {
+            auto hash = EventResourceHash{}(id.resource);
+            HashCombine(hash, id.generation);
+            return hash;
+        }
+    };
+    using ConsumedInstances = std::unordered_set<EventInstanceId, EventInstanceIdHash>;
+    enum class InstanceState { Allocated, WaitInserted, Retired, Cancelled };
+    struct EventInstance {
+        EventInstanceId id;
+        PipePairEx pipes;
+        size_t setIdx;
+        size_t waitIdx;
+        ConsumedInstances setSnapshot;
+        Operation* setOp{nullptr};
+        Operation* waitOp{nullptr};
+        InstanceState state{InstanceState::Allocated};
+        bool intraCore;
+    };
+
+    // Owns all event-instance transitions; the scheduler only reads instances.
+    class EventInstanceTracker {
+    public:
+        const std::vector<EventInstance>& Instances() const { return eventInstances_; }
+        const EventInstance* Find(size_t setIdx, size_t waitIdx) const;
+        ConsumedInstances Known(const PipeCoreRealEx& pipe) const;
+        void MergeConsumed(ConsumedInstances& destination, const ConsumedInstances& snapshot) const;
+        bool HasActive(const EventResource& resource) const { return activeInstance_.count(resource) != 0; }
+        bool CanAllocate(const EventResource& resource, const ConsumedInstances& consumed) const;
+        Status Allocate(const EventResource& resource, const PipePairEx& pipes, size_t setIdx, size_t waitIdx);
+        Status RecordSet(const EventResource& resource, const PipePairEx& pipes, size_t setIdx, size_t waitIdx,
+                         Operation& syncOp, bool intraCore);
+        Status Consume(size_t setIdx, size_t waitIdx, Operation& syncOp);
+        Status CancelPending(size_t setIdx, size_t waitIdx);
+        Status MergePending(size_t set1, size_t wait1, size_t set2, size_t wait2);
+        Status RetireConsumed(size_t setIdx, size_t waitIdx);
+        void ForgetProofs();
+
+    private:
+        std::vector<EventInstance> eventInstances_;
+        std::unordered_map<EventResource, size_t, EventResourceHash> activeInstance_;
+        std::unordered_map<EventResource, uint64_t, EventResourceHash> eventGeneration_;
+        std::unordered_map<PipeCoreRealEx, ConsumedInstances, PipeCoreRealExHash> knownConsumed_;
+        std::unordered_map<std::pair<size_t, size_t>, size_t, IndexVecHash> eventInstanceByDep_;
+    };
+
+    struct ReclaimBarrier {
+        std::vector<Operation*> ops;
+        std::vector<CoreTypeDetail> cores;
+    };
+    std::vector<ReclaimBarrier> reclaimBarriers_;
+    Status ReclaimIntraCoreEvents(Function& function, size_t boundary, const PipePairEx& pp,
+                                  std::vector<IndexOp>& syncedOpLog);
+    bool IsIntraCoreEvent(const PipePairEx& pp) const;
+    EventResource GetEventResource(const PipePairEx& pp, int eventId) const;
+    ConsumedInstances ProjectConsumedInstances(const DepOp& op, const PipeCoreRealEx& source) const;
+    std::vector<int> GetAvailableIntraEventIds(const PipePairEx& pp, const ConsumedInstances& consumed);
+    Status AllocateIntraEvent(const PipePairEx& pp, int& eventId, size_t setIdx, size_t waitIdx);
+    Status RecordEventSet(const PipePairEx& pp, int eventId, size_t setIdx, size_t waitIdx, Operation& syncOp);
+    Status RecordEventWait(size_t setIdx, size_t waitIdx, Operation& syncOp);
+    struct IntraEventCapacityFailure {
+        size_t setIdx;
+        size_t waitIdx;
+        PipePairEx pipes;
+        size_t required;
+        size_t available;
+    };
+    std::optional<IntraEventCapacityFailure> AnalyzeIntraEventCapacity(const DepOp& op);
+    void LogIntraEventCapacityFailure(const IntraEventCapacityFailure& failure) const;
+    struct EventDependencyGraph {
+        std::vector<std::vector<size_t>> successors;
+        std::vector<size_t> inDegree;
+        std::vector<std::pair<size_t, bool>> nodes;   // Event-instance index and whether the node is a set.
+        std::vector<std::array<size_t, 2>> positions; // Set and wait node indices for each instance.
+    };
+    Status BuildEventDependencyGraph(const std::vector<Operation*>& opList, EventDependencyGraph& graph) const;
+    Status AddReclaimBarrierEdges(const std::vector<Operation*>& opList, EventDependencyGraph& graph) const;
+    Status ValidateEventGraphAcyclic(const EventDependencyGraph& graph) const;
+    Status ValidateEventReuseOrder(const EventDependencyGraph& graph) const;
+    Status ValidateEventReuse(const std::vector<Operation*>& opList) const;
+    bool BuildReplayIssueOrder(const std::vector<DepOp>& plan, std::vector<size_t>& order) const;
+    bool MergeDependenciesForReplay(std::vector<DepOp>& plan, const PipePairEx& pipes,
+                                    std::vector<size_t>& order) const;
+    bool AdvanceReturningWaitForReplay(std::vector<DepOp>& plan, const IntraEventCapacityFailure& failure,
+                                       std::vector<size_t>& order) const;
+    bool AddReturningDependencyForReplay(std::vector<DepOp>& plan, const IntraEventCapacityFailure& failure,
+                                         std::vector<size_t>& order) const;
+    void ResetForReplay(const std::vector<DepOp>& plan, const std::vector<IssueQueue>& queues,
+                        const std::vector<size_t>& order);
+
     std::string PipeSeqName(PipeSeq seq) const;
     PipeSeq GetPipeSeq(PipeCoreRealEx pipe);
     PipeCoreRealEx GetPipeFromSeq(PipeSeq seq);
@@ -400,11 +505,9 @@ private:
     Status GetDepInfo(std::vector<IndexOp>& syncedOpLog, const PipePairEx& pipePairEx, DataDepInfo& depInfo);
     Status RelaxFakeDataDep(std::vector<IndexOp>& syncedOpLog);
     bool CheckIssuedOp(const DepOp& op);
-    bool ConstructDepInfo(DataDepInfo& depInfo, std::vector<IndexOp>& syncedOpLog, int i);
-    bool FindDataDep(DataDepInfo& depInfo, std::vector<IndexOp>& syncedOpLog, int i);
     bool FindMaxOverlap(DataDepInfo& depInfo, int& maxOverlapDepIdx);
     bool GenSyncOp(PipeCoreRealEx set, PipeCoreRealEx wait, int eventId, bool isSet, Operation& op);
-    Status GetEventId(const PipePairEx& pp, int& eventId, size_t setIdx, size_t& waitIdx,
+    Status GetEventId(const PipePairEx& pp, int& eventId, size_t setIdx, size_t waitIdx,
                       std::vector<IndexOp>& syncedOpLog, Function& function);
     bool HasFreeEventId(const PipePairEx& pp);
     bool BufOverlap(const TileRange& range1, const TileRange& range2) const;
@@ -424,7 +527,7 @@ private:
     void RemoveEventResourceFromSyncArriveStatus(const PipePairEx& pp, int eventId);
     std::deque<int>* GetCrossCoreEventIdQPtr(const PipePairEx& pp);
     void RemoveEventIdFromCrossCoreQueues(int eventId);
-    void RemoveSetIntraBlockAndOpDep(std::vector<IndexOp>& syncedOpLog);
+    Status RemoveSetIntraBlockAndOpDep(std::vector<IndexOp>& syncedOpLog);
     void AddCrossCoreForceSyncOps(size_t setIdx, std::vector<IndexOp>& syncedOpLog, Function& function);
     void CreateForceSyncOp(Opcode opcode, PipeType pipe, CoreType core, AIVCore aivCore, uint64_t& insertIdx,
                            Function& function, std::vector<IndexOp>& syncedOpLog);
@@ -432,7 +535,6 @@ private:
     // CV eventId 耗尽时插入的兜底 force 同步序列（BAR_ALL/FFTS/WAIT_FLAG_DEV）
     const std::unordered_set<Operation*>& GetForceSyncOps() const { return forceSyncOps_; }
     std::deque<int>& GetFreeEventIdQueue(const PipePairEx& pp);
-    int GetSyncSrcLogIdx(const std::vector<IndexOp>& syncedOpLog, int i);
     int GetMaxEventId(const PipePairEx& pp);
     std::string DumpLatestPipeDepMap();
     void BuildTensorRangeMap(Operation* op);
@@ -445,6 +547,7 @@ private:
     // Cube: MTE2, MTE1, M, FIX, Vector: MTE2, V, MTE3
     std::vector<IssueQueue> issueState_;
     std::unordered_map<PipePairEx, std::deque<int>, PipePairExHash> freeEventId_;
+    EventInstanceTracker eventState_;
 
     // set pipe可用的eventid
     std::unordered_map<PipeCoreRealEx, std::array<std::deque<int>, NUM2>, PipeCoreRealExHash> crossCoreFreeEventId_;
@@ -498,8 +601,8 @@ private:
     static SyncSignature GetSyncSignature(int eventId, PipeType setPipe, PipeType waitPipe);
     // 配对标识 = 硬件事件三元组 (eventId, setPipe, waitPipe)：GenSyncOp 对 OP_SYNC_SRC/OP_SYNC_DST
     // 均按 {set.pipe, wait.pipe} 写入 syncQueue_，codegen 的 set_flag/wait_flag 用相同参数序
-    // (PrintSyncInSingleKernel 只换助记符)，故 set/wait 两侧取同一签名；eventId 由 freeEventId_
-    // 按有序 pipe 对 (PipePairEx) 分池，反向 pipe 对同号属复用而非同对。
+    // (PrintSyncInSingleKernel 只换助记符)，故 set/wait 两侧取同一签名；核内 eventId
+    // 按有序 pipe 对 (PipePairEx) 分池，并由 EventInstanceTracker 校验复用；反向同号为独立资源。
     // cluster 信息
     struct ClusterInfo {
         size_t firstIdx{SIZE_MAX};
