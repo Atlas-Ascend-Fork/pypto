@@ -1847,7 +1847,7 @@ void SingleBatch3D(int64_t bIdx, int64_t batchSizeA, int64_t batchSizeB, int64_t
     AddAMulBNode(tensorGraphNodes, attrParam, batchParam);
     Tensor cTensor3D = Reshape(cTensor, {1, cTensor.GetShape()[0], cTensor.GetShape()[1]},
                                std::vector<SymbolicScalar>({bValid, mValid, nValid}));
-    Assemble(cTensor3D, {bIdx, 0, 0}, result);
+    Assemble(cTensor3D, {bIdx, 0, 0}, result, true);
     result.GetStorage()->UpdateDynValidShape({std::max(aValidShape3D[0], bValidShape3D[0]), mValid, nValid});
 }
 
@@ -1973,7 +1973,7 @@ void SingleBatch4D(int64_t bIdx1, int64_t bIdx2, int64_t batchSizeA1, int64_t ba
     AddAMulBNode(tensorGraphNodes, attrParam, batchParam);
     Tensor cTensor4D = Reshape(cTensor, {1, 1, cTensor.GetShape()[0], cTensor.GetShape()[1]},
                                std::vector<SymbolicScalar>({b0Valid, b1Valid, mValid, nValid}));
-    Assemble(cTensor4D, {bIdx1, bIdx2, 0, 0}, result);
+    Assemble(cTensor4D, {bIdx1, bIdx2, 0, 0}, result, true);
     result.GetStorage()->UpdateDynValidShape(
         {std::max(aValidShape4D[0], bValidShape4D[0]), std::max(aValidShape4D[1], bValidShape4D[1]), mValid, nValid});
 }
@@ -2115,7 +2115,7 @@ static Tensor ConstructBatchGmAccumulationTensorGraph3D(DataType outType, const 
                                                             cubeTile, bValid, mValidShape, nValidShape);
         Tensor batchResult3D = Reshape(cTensor, {1, cTensor.GetShape()[0], cTensor.GetShape()[1]},
                                        std::vector<SymbolicScalar>({bValid, mValidShape, nValidShape}));
-        Assemble(batchResult3D, {bIdx, 0, 0}, result);
+        Assemble(batchResult3D, {bIdx, 0, 0}, result, true);
     }
     result.GetStorage()->UpdateDynValidShape({std::max(aValidShape3D[0], bValidShape3D[0]), mValidShape, nValidShape});
     TileShape::Current().SetVecTile(oriVecTile);
@@ -2164,7 +2164,7 @@ static Tensor ConstructBatchGmAccumulationTensorGraph4D(DataType outType, const 
                                                                 cubeTile, b0Valid * b1Valid, mValidShape, nValidShape);
             Tensor batchResult4D = Reshape(cTensor, {1, 1, cTensor.GetShape()[0], cTensor.GetShape()[1]},
                                            std::vector<SymbolicScalar>({b0Valid, b1Valid, mValidShape, nValidShape}));
-            Assemble(batchResult4D, {bIdx1, bIdx2, 0, 0}, result);
+            Assemble(batchResult4D, {bIdx1, bIdx2, 0, 0}, result, true);
         }
     }
     result.GetStorage()->UpdateDynValidShape({std::max(aValidShape4D[0], bValidShape4D[0]),
@@ -2328,7 +2328,7 @@ Tensor ConstructBatchMatmulMXTensorGraph3D(DataType dataType, const Tensor& aMat
         auto cValidShape2D = cTensor.GetStorage()->GetDynValidShape();
         Tensor cTensor3D = Reshape(cTensor, {1, cTensor.GetShape()[0], cTensor.GetShape()[1]},
                                    std::vector<SymbolicScalar>({bValid, mValid, nValid}));
-        Assemble(cTensor3D, {bIdx, 0, 0}, result);
+        Assemble(cTensor3D, {bIdx, 0, 0}, result, true);
         result.GetStorage()->UpdateDynValidShape({std::max(aValidShape3D[0], bValidShape3D[0]), mValid, nValid});
     }
     TileShape::Current().SetVecTile(oriVecTile);
@@ -2397,7 +2397,7 @@ Tensor ConstructBatchMatmulMXTensorGraph4D(DataType dataType, const Tensor& aMat
             auto cValidShape2D = cTensor.GetStorage()->GetDynValidShape();
             Tensor cTensor4D = Reshape(cTensor, {1, 1, cTensor.GetShape()[0], cTensor.GetShape()[1]},
                                        std::vector<SymbolicScalar>({b0Valid, b1Valid, mValid, nValid}));
-            Assemble(cTensor4D, {bIdx1, bIdx2, 0, 0}, result);
+            Assemble(cTensor4D, {bIdx1, bIdx2, 0, 0}, result, true);
             result.GetStorage()->UpdateDynValidShape({std::max(aValidShape4D[0], bValidShape4D[0]),
                                                       std::max(aValidShape4D[1], bValidShape4D[1]), mValid, nValid});
         }
@@ -2480,7 +2480,7 @@ Tensor TransposedBatchMatmul(DataType dataType, const Tensor& aMatrix, const Ten
         MatmulGraphNodes tensorGraphNodes(aTensor.GetStorage(), bTensor.GetStorage());
         tensorGraphNodes.outTensorPtr = cTensor.GetStorage();
         AddAMulBNode(tensorGraphNodes, attrParam);
-        Assemble(cTensor, {0, bIdx * nSize}, cMatrix);
+        Assemble(cTensor, {0, bIdx * nSize}, cMatrix, true);
     }
     Tensor result = Reshape(cMatrix, {mSize, batchSizeA, nSize});
     TileShape::Current().SetVecTile(oriVecTile);

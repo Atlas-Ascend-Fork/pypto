@@ -325,6 +325,11 @@ private:
             operation->GetInplaceIndex(0) >= 0) {
             return op;
         }
+        // Parallel Assemble opts out of read/write token inference.
+        if (operation && operation->GetOpcode() == npu::tile_fwk::Opcode::OP_ASSEMBLE &&
+            operation->GetBoolAttribute(npu::tile_fwk::OpAttributeKey::parallel)) {
+            return op;
+        }
 
         std::vector<TensorAccess> writes;
         std::unordered_set<RawTensor*> writtenRaws;

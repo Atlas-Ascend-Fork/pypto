@@ -233,3 +233,17 @@ def test_for_read_output():
 
     func = _run_infer_token_pass(foo, _tensor(), _tensor("aux"), _tensor("out"))
     check_snapshot(func, IR_14)
+
+
+IR_15 = _GOLDEN_DIR / "test_infer_pass_test_batch_matmul.pypto"
+def test_batch_matmul_parallel_assemble_skips_tokens():
+    """Batch matmul's parallel Assemble operations skip token inference."""
+    def foo(a, b):
+        pypto.set_vec_tile_shapes(16, 16)
+        pypto.set_cube_tile_shapes([16, 16], [16, 16], [16, 16])
+        pypto.matmul(a, b, out_dtype=pypto.DT_FP32)
+
+    a = pypto.Tensor((1, 2, 16, 16), pypto.DT_FP16, name="a")
+    b = pypto.Tensor((1, 2, 16, 16), pypto.DT_FP16, name="b")
+    func = _run_infer_token_pass(foo, a, b)
+    check_snapshot(func, IR_15)
