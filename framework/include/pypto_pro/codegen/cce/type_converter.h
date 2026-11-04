@@ -35,15 +35,15 @@ public:
     /**
      * \brief Convert MutexTileType to its complete runtime descriptor type
      *
-     * \param tile_type The ir::MutexTileTypePtr
+     * \param tileType The ir::MutexTileTypePtr
      * \param rows The number of rows
      * \param cols The number of columns
      * \return SyncedTile<PTO Tile type, mutex count>; plain tiles have count zero.
      */
-    [[nodiscard]] std::string ConvertTileType(const ir::MutexTileTypePtr& tile_type, int64_t rows, int64_t cols) const;
+    [[nodiscard]] std::string ConvertTileType(const ir::MutexTileTypePtr& tileType, int64_t rows, int64_t cols) const;
 
     /// Underlying PTO descriptor type used by instruction templates and descriptor construction.
-    [[nodiscard]] std::string ConvertPtoTileType(const ir::TileTypePtr& tile_type, int64_t rows, int64_t cols) const;
+    [[nodiscard]] std::string ConvertPtoTileType(const ir::TileTypePtr& tileType, int64_t rows, int64_t cols) const;
 
     /**
      * \brief Convert MemorySpace to pto-isa TileType string
@@ -87,10 +87,10 @@ public:
      * - ...
      * - 7 → "EVENT_ID7"
      *
-     * \param event_id The event ID (must be in range [0, 7])
+     * \param eventId The event ID (must be in range [0, 7])
      * \return C++ event ID string with "EVENT_ID" prefix
      */
-    [[nodiscard]] std::string ConvertEventId(int event_id) const;
+    [[nodiscard]] std::string ConvertEventId(int eventId) const;
 
     /**
      * \brief Convert cast round mode (int) to pto-isa RoundMode string

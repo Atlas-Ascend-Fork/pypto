@@ -39,11 +39,11 @@ void IRVerifier::AddRule(PropertyVerifierPtr rule)
     }
 }
 
-void IRVerifier::EnableRule(const std::string& name) { disabled_rules_.erase(name); }
+void IRVerifier::EnableRule(const std::string& name) { disabledRules_.erase(name); }
 
-void IRVerifier::DisableRule(const std::string& name) { disabled_rules_.insert(name); }
+void IRVerifier::DisableRule(const std::string& name) { disabledRules_.insert(name); }
 
-bool IRVerifier::IsRuleEnabled(const std::string& name) const { return disabled_rules_.count(name) == 0; }
+bool IRVerifier::IsRuleEnabled(const std::string& name) const { return disabledRules_.count(name) == 0; }
 
 std::vector<Diagnostic> IRVerifier::Verify(const ProgramPtr& program) const
 {
@@ -51,7 +51,7 @@ std::vector<Diagnostic> IRVerifier::Verify(const ProgramPtr& program) const
         return {};
     }
 
-    std::vector<Diagnostic> all_diagnostics;
+    std::vector<Diagnostic> allDiagnostics;
 
     // Run all enabled verifiers on the program
     // Each verifier internally decides whether to iterate over functions
@@ -66,10 +66,10 @@ std::vector<Diagnostic> IRVerifier::Verify(const ProgramPtr& program) const
         }
 
         // Run the verifier with the full program
-        rule->Verify(program, all_diagnostics);
+        rule->Verify(program, allDiagnostics);
     }
 
-    return all_diagnostics;
+    return allDiagnostics;
 }
 
 void IRVerifier::VerifyOrThrow(const ProgramPtr& program) const
@@ -77,9 +77,9 @@ void IRVerifier::VerifyOrThrow(const ProgramPtr& program) const
     auto diagnostics = Verify(program);
 
     // Check if there are any errors (not just warnings)
-    bool has_errors = std::any_of(diagnostics.begin(), diagnostics.end(),
-                                  [](const Diagnostic& d) { return d.severity == DiagnosticSeverity::ERROR; });
-    if (has_errors) {
+    bool hasErrors = std::any_of(diagnostics.begin(), diagnostics.end(),
+                                 [](const Diagnostic& d) { return d.severity == DiagnosticSeverity::ERROR; });
+    if (hasErrors) {
         std::string report = GenerateReport(diagnostics);
         throw VerificationError(report, std::move(diagnostics));
     }
@@ -90,13 +90,13 @@ std::string IRVerifier::GenerateReport(const std::vector<Diagnostic>& diagnostic
     std::ostringstream oss;
 
     // Count errors and warnings
-    size_t error_count = 0;
-    size_t warning_count = 0;
+    size_t errorCount = 0;
+    size_t warningCount = 0;
     for (const auto& d : diagnostics) {
         if (d.severity == DiagnosticSeverity::ERROR) {
-            error_count++;
+            errorCount++;
         } else {
-            warning_count++;
+            warningCount++;
         }
     }
 
@@ -104,7 +104,7 @@ std::string IRVerifier::GenerateReport(const std::vector<Diagnostic>& diagnostic
     oss << "IR Verification Report\n";
     oss << "======================\n";
     oss << "Total diagnostics: " << diagnostics.size() << " (";
-    oss << error_count << " errors, " << warning_count << " warnings)\n\n";
+    oss << errorCount << " errors, " << warningCount << " warnings)\n\n";
 
     if (diagnostics.empty()) {
         oss << "Status: PASSED\n";
@@ -116,9 +116,9 @@ std::string IRVerifier::GenerateReport(const std::vector<Diagnostic>& diagnostic
         const auto& d = diagnostics[i];
 
         // Severity label
-        std::string severity_str = (d.severity == DiagnosticSeverity::ERROR) ? "ERROR" : "WARNING";
+        std::string severityStr = (d.severity == DiagnosticSeverity::ERROR) ? "ERROR" : "WARNING";
 
-        oss << "[" << (i + 1) << "] " << severity_str << " - " << d.ruleName << "\n";
+        oss << "[" << (i + 1) << "] " << severityStr << " - " << d.ruleName << "\n";
         oss << "  Message: " << d.message << "\n";
         oss << "  Location: " << d.span.Filename() << ":" << d.span.BeginLine() << ":" << d.span.BeginColumn() << "\n";
         oss << "  Error Code: " << d.errorCode << "\n";
@@ -126,10 +126,10 @@ std::string IRVerifier::GenerateReport(const std::vector<Diagnostic>& diagnostic
     }
 
     // Summary
-    if (error_count > 0) {
-        oss << "Status: FAILED (" << error_count << " error(s) found)\n";
+    if (errorCount > 0) {
+        oss << "Status: FAILED (" << errorCount << " error(s) found)\n";
     } else {
-        oss << "Status: PASSED with " << warning_count << " warning(s)\n";
+        oss << "Status: PASSED with " << warningCount << " warning(s)\n";
     }
 
     return oss.str();

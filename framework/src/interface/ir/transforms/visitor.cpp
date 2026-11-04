@@ -97,8 +97,8 @@ void IRVisitor::VisitType(const TypePtr& type)
 
 void IRVisitor::VisitVarLike_(const VarPtr& op)
 {
-    if (auto tensor_type = As<TensorType>(op->GetType())) {
-        for (const auto& dim : tensor_type->shape_) {
+    if (auto tensorType = As<TensorType>(op->GetType())) {
+        for (const auto& dim : tensorType->shape_) {
             VisitExpr(dim);
         }
     }

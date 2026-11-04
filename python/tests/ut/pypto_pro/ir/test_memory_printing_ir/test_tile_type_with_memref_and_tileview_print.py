@@ -33,12 +33,7 @@ def test_tile_type_with_memref_and_tileview_print():
         ir.ConstInt(16, DataType.INT64, span),
         ir.ConstInt(16, DataType.INT64, span),
     ]
-    stride = [
-        ir.ConstInt(1, DataType.INT64, span),
-        ir.ConstInt(16, DataType.INT64, span),
-    ]
-    start_offset = ir.ConstInt(0, DataType.INT64, span)
-    tv = ir.TileView(valid_shape, stride, start_offset)
+    tv = ir.TileView(valid_shape)
 
     tile_type = ir.TileType(shape, DataType.FP16, memref, tv)
     printed = str(tile_type)

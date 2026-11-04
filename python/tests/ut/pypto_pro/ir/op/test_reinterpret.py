@@ -104,7 +104,7 @@ def test_dtype_override_keeps_other_attributes():
     _assert_same_buffer(_memref_fields(new), _memref_fields(src))
     # valid_shape is NOT inherited: the new handle starts dynamic (-1).
     tv = new.type.tile_view
-    assert tv is None or len(list(tv.valid_shape)) == 0
+    assert [dim.value for dim in tv.valid_shape] == [-1, -1]
 
 
 def test_shape_override_keeps_footprint():
@@ -177,7 +177,7 @@ def test_valid_shape_is_not_inherited():
     src = _src_tile([64, 64], pl.DT_FP16, addr=0x2000, size=8192, valid_shape=[32, 32])
     new = _ir_reinterpret(src, shape=[16, 16], span=_span())
     tv = new.type.tile_view
-    assert tv is None or len(list(tv.valid_shape)) == 0  # dynamic / -1 semantics
+    assert [dim.value for dim in tv.valid_shape] == [-1, -1]
 
 
 def test_footprint_exactly_equal_is_accepted():

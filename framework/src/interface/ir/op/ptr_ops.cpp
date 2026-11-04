@@ -46,44 +46,44 @@ TypePtr DeduceAddPtrType([[maybe_unused]] const std::vector<ExprPtr>& args,
         << "ptr.addptr requires exactly 2 arguments (ptr, offset), but got " << args.size();
 
     // First argument must be PtrType
-    auto ptr_type = As<PtrType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, ptr_type)
+    auto ptrType = As<PtrType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, ptrType)
         << "ptr.addptr requires first argument to be a PtrType, but got " << args[0]->GetType()->TypeName()
         << ". Use pl.Ptr[dtype] to annotate pointer parameters.";
 
     // Second argument must be ScalarType with integer or index dtype
-    auto offset_type = As<ScalarType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offset_type)
+    auto offsetType = As<ScalarType>(args[1]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType)
         << "ptr.addptr requires second argument (offset) to be a ScalarType, but got "
         << args[1]->GetType()->TypeName();
     PRO_IR_CHECK(ExternalError::INVALID_TYPE,
-                 offset_type->dtype_.IsInt() || offset_type->dtype_ == DataType(DataType::INDEX))
-        << "ptr.addptr offset must have integer or index dtype, but got " << offset_type->dtype_.ToString();
+                 offsetType->dtype_.IsInt() || offsetType->dtype_ == DataType(DataType::INDEX))
+        << "ptr.addptr offset must have integer or index dtype, but got " << offsetType->dtype_.ToString();
 
     // Return the same PtrType (pointer is advanced but still points to same element type),
     // with base_ptr/offset annotations for codegen indirect-select support.
-    ExprPtr new_base_ptr;
-    ExprPtr new_offset;
+    ExprPtr newBasePtr;
+    ExprPtr newOffset;
 
-    if (ptr_type->base_ptr.has_value()) {
+    if (ptrType->base_ptr.has_value()) {
         // Chained addptr: propagate base from the input ptr, fold offsets if possible.
-        new_base_ptr = *ptr_type->base_ptr;
-        if (auto c1 = As<ConstInt>(*ptr_type->offset)) {
+        newBasePtr = *ptrType->base_ptr;
+        if (auto c1 = As<ConstInt>(*ptrType->offset)) {
             if (auto c2 = As<ConstInt>(args[1])) {
-                new_offset = std::make_shared<ConstInt>(c1->value_ + c2->value_, DataType::INT64, args[1]->span_);
+                newOffset = std::make_shared<ConstInt>(c1->value_ + c2->value_, DataType::INT64, args[1]->span_);
             } else {
-                new_offset = std::make_shared<Add>(*ptr_type->offset, args[1], DataType::INT64, args[1]->span_);
+                newOffset = std::make_shared<Add>(*ptrType->offset, args[1], DataType::INT64, args[1]->span_);
             }
         } else {
-            new_offset = std::make_shared<Add>(*ptr_type->offset, args[1], DataType::INT64, args[1]->span_);
+            newOffset = std::make_shared<Add>(*ptrType->offset, args[1], DataType::INT64, args[1]->span_);
         }
     } else {
         // Direct addptr on a function parameter — record base and offset directly.
-        new_base_ptr = args[0];
-        new_offset = args[1];
+        newBasePtr = args[0];
+        newOffset = args[1];
     }
 
-    return std::make_shared<PtrType>(ptr_type->dtype_, new_base_ptr, new_offset);
+    return std::make_shared<PtrType>(ptrType->dtype_, newBasePtr, newOffset);
 }
 
 REGISTER_OP("ptr.addptr")
@@ -105,24 +105,24 @@ TypePtr DeduceMakePtrType([[maybe_unused]] const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
         << "ptr.make_ptr requires exactly 1 argument (ptr), but got " << args.size();
 
-    auto ptr_type = As<PtrType>(args[0]->GetType());
-    auto tensor_type = As<TensorType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, ptr_type || tensor_type)
+    auto ptrType = As<PtrType>(args[0]->GetType());
+    auto tensorType = As<TensorType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, ptrType || tensorType)
         << "ptr.make_ptr requires first argument to be a PtrType or TensorType, but got "
         << args[0]->GetType()->TypeName()
         << ". Use pl.Ptr[dtype] for pointer params or pl.Tensor[[shape], dtype] for tensor params.";
 
     // The new element dtype: explicit 'dtype' kwarg if given, otherwise keep the source dtype
     // (an identity reinterpret / address extraction).
-    DataType source_dtype = ptr_type ? ptr_type->dtype_ : tensor_type->dtype_;
-    DataType result_dtype = GetOpKwarg<DataType>(kwargs, "dtype", std::optional<DataType>(source_dtype));
+    DataType sourceDtype = ptrType ? ptrType->dtype_ : tensorType->dtype_;
+    DataType resultDtype = GetOpKwarg<DataType>(kwargs, "dtype", std::optional<DataType>(sourceDtype));
 
     // Preserve the base_ptr/offset codegen annotations from a PtrType source so that a
     // make_ptr derived from an addptr chain still carries its indirect-select metadata.
-    if (ptr_type && ptr_type->base_ptr.has_value() && ptr_type->offset.has_value()) {
-        return std::make_shared<PtrType>(result_dtype, *ptr_type->base_ptr, *ptr_type->offset);
+    if (ptrType && ptrType->base_ptr.has_value() && ptrType->offset.has_value()) {
+        return std::make_shared<PtrType>(resultDtype, *ptrType->base_ptr, *ptrType->offset);
     }
-    return std::make_shared<PtrType>(result_dtype);
+    return std::make_shared<PtrType>(resultDtype);
 }
 
 REGISTER_OP("ptr.make_ptr")
@@ -149,11 +149,11 @@ TypePtr DeduceMakeTensorType([[maybe_unused]] const std::vector<ExprPtr>& args,
     //   - a TensorType: re-view an existing tensor, reusing its underlying data pointer with a
     //     new shape/stride (and optionally a new dtype). args[0] itself is stored as the view's
     //     source expr; the CCE codegen resolves the tensor's base pointer from it.
-    DataType source_dtype;
-    if (auto ptr_type = As<PtrType>(args[0]->GetType())) {
-        source_dtype = ptr_type->dtype_;
-    } else if (auto src_tensor_type = As<TensorType>(args[0]->GetType())) {
-        source_dtype = src_tensor_type->dtype_;
+    DataType sourceDtype;
+    if (auto ptrType = As<PtrType>(args[0]->GetType())) {
+        sourceDtype = ptrType->dtype_;
+    } else if (auto srcTensorType = As<TensorType>(args[0]->GetType())) {
+        sourceDtype = srcTensorType->dtype_;
     } else {
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, false)
             << "ptr.make_tensor requires first argument to be a PtrType or TensorType, but got "
@@ -162,24 +162,24 @@ TypePtr DeduceMakeTensorType([[maybe_unused]] const std::vector<ExprPtr>& args,
     }
 
     // Second argument must be MakeTuple (shape)
-    auto shape_tuple = As<MakeTuple>(args[1]);
-    PRO_IR_CHECK(ExternalError::INVALID_SHAPE, shape_tuple) << "ptr.make_tensor requires shape to be a MakeTuple";
+    auto shapeTuple = As<MakeTuple>(args[1]);
+    PRO_IR_CHECK(ExternalError::INVALID_SHAPE, shapeTuple) << "ptr.make_tensor requires shape to be a MakeTuple";
 
     // Third argument must be MakeTuple (stride); an empty tuple means implicit contiguous stride.
-    auto stride_tuple = As<MakeTuple>(args[2]);
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, stride_tuple) << "ptr.make_tensor requires stride to be a MakeTuple";
+    auto strideTuple = As<MakeTuple>(args[2]);
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, strideTuple) << "ptr.make_tensor requires stride to be a MakeTuple";
 
-    const auto& stride = stride_tuple->elements_;
+    const auto& stride = strideTuple->elements_;
     if (!stride.empty()) {
-        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, shape_tuple->elements_.size() == stride.size())
-            << "ptr.make_tensor shape rank (" << shape_tuple->elements_.size() << ") must match stride rank ("
+        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, shapeTuple->elements_.size() == stride.size())
+            << "ptr.make_tensor shape rank (" << shapeTuple->elements_.size() << ") must match stride rank ("
             << stride.size() << ")";
     }
 
     // Element dtype: use the explicit 'dtype' kwarg if provided, otherwise derive it from the
     // source pointer/tensor's element type. This lets callers reinterpret a raw byte pointer
     // (e.g. uint8) as a typed view (e.g. fp16) without baking the dtype into the pointer parameter.
-    DataType result_dtype = GetOpKwarg<DataType>(kwargs, "dtype", std::optional<DataType>(source_dtype));
+    DataType resultDtype = GetOpKwarg<DataType>(kwargs, "dtype", std::optional<DataType>(sourceDtype));
 
     // A sub-byte element has no address of its own: two FP4 values share a byte, so the axis they
     // are packed along -- the innermost one -- has to be contiguous. Any other stride there cannot
@@ -187,17 +187,17 @@ TypePtr DeduceMakeTensorType([[maybe_unused]] const std::vector<ExprPtr>& args,
     // is added to a pointer whose element type is a packed pair. Reject it here, while the op's
     // span still points at the user's make_tensor call.
     constexpr size_t kBitsPerByte = 8;
-    if (!stride.empty() && result_dtype.GetBit() < kBitsPerByte) {
+    if (!stride.empty() && resultDtype.GetBit() < kBitsPerByte) {
         auto innermost = As<ConstInt>(stride.back());
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, innermost != nullptr && innermost->value_ == 1)
-            << "ptr.make_tensor: a " << result_dtype.ToString()
+            << "ptr.make_tensor: a " << resultDtype.ToString()
             << " view must be contiguous along its innermost axis (stride 1), because two elements "
             << "share a byte there and a half-byte cannot be addressed; got "
             << (innermost != nullptr ? std::to_string(innermost->value_) : std::string("a runtime stride"));
     }
 
     TensorView tv(stride, TensorLayout::ND, args[0]);
-    return std::make_shared<TensorType>(shape_tuple->elements_, result_dtype, std::nullopt, tv);
+    return std::make_shared<TensorType>(shapeTuple->elements_, resultDtype, std::nullopt, tv);
 }
 
 REGISTER_OP("ptr.make_tensor")

@@ -34,7 +34,7 @@ std::unordered_set<const Var*> CollectStmtVarRefs(const StmtPtr& stmt);
 /// Collect all Var references from a list of stmts.
 /// If skip_iter_updates, recursively skip YieldStmt/BreakStmt/ContinueStmt
 /// (their values are iter_arg updates, not uses).
-std::unordered_set<const Var*> CollectStmtVarRefs(const std::vector<StmtPtr>& stmts, bool skip_iter_updates = false);
+std::unordered_set<const Var*> CollectStmtVarRefs(const std::vector<StmtPtr>& stmts, bool skipIterUpdates = false);
 
 /// Flatten a SeqStmtsPtr body to its stmts vector (returns empty if null).
 const std::vector<StmtPtr>& FlattenBody(const SeqStmtsPtr& body);

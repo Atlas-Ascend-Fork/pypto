@@ -44,122 +44,122 @@ using npu::tile_fwk::ExternalError;
 
 namespace {
 
-DataType GetValResultDtype(const DataType& element_dtype, bool preserve_dtype)
+DataType GetValResultDtype(const DataType& elementDtype, bool preserveDtype)
 {
-    if (preserve_dtype || !element_dtype.IsInt()) {
-        return element_dtype;
+    if (preserveDtype || !elementDtype.IsInt()) {
+        return elementDtype;
     }
-    return element_dtype == DataType::UINT64 ? DataType::UINT64 : DataType::INT64;
+    return elementDtype == DataType::UINT64 ? DataType::UINT64 : DataType::INT64;
 }
 
 } // namespace
 
 TypePtr DeduceBlockGetBlockIdxType([[maybe_unused]] const std::vector<ExprPtr>& args,
                                    [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
-                                   const std::string& op_name)
+                                   const std::string& opName)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0)
-        << "The operator " << op_name << " requires no arguments, but got " << args.size();
+        << "The operator " << opName << " requires no arguments, but got " << args.size();
 
     return std::make_shared<ScalarType>(DataType::INT64);
 }
 
 TypePtr DeduceBlockCreateMutexTileType([[maybe_unused]] const std::vector<ExprPtr>& args,
                                        [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
-                                       const std::string& op_name)
+                                       const std::string& opName)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
-        << "The operator " << op_name << " requires shape, valid_shape and mutex_ids";
-    auto mutex_ids = As<MakeTuple>(args[2]);
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, mutex_ids != nullptr)
+        << "The operator " << opName << " requires shape, valid_shape and mutex_ids";
+    auto mutexIds = As<MakeTuple>(args[2]);
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, mutexIds != nullptr)
         << "make_mutex_tile mutex_ids must be a fixed-size tuple";
 
     // Extract dtype attribute
     DataType dtype = GetOpKwarg<DataType>(kwargs, "dtype");
 
     // First argument must be MakeTuple with static ConstInt elements
-    auto shape_tuple = As<MakeTuple>(args[0]);
-    PRO_IR_CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, shape_tuple)
-        << "The operator " << op_name
+    auto shapeTuple = As<MakeTuple>(args[0]);
+    PRO_IR_CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, shapeTuple)
+        << "The operator " << opName
         << " requires first argument to be a MakeTuple expression with static shape values, but got "
         << args[0]->TypeName();
-    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, shape_tuple->elements_.size() == 0x2)
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, shapeTuple->elements_.size() == 0x2)
         << "TileType only supports rank-2 shape; "
         << "for a 1-D tensor with shape [N], use TileType shape [N, 1] or [1, N], "
         << "and keep the same convention for all tile shapes of that tensor";
 
     // Validate all elements are ConstInt (static compile-time constants)
-    std::vector<ExprPtr> tile_shape;
-    tile_shape.reserve(shape_tuple->elements_.size());
+    std::vector<ExprPtr> tileShape;
+    tileShape.reserve(shapeTuple->elements_.size());
 
-    for (size_t i = 0; i < shape_tuple->elements_.size(); ++i) {
-        auto const_int = As<ConstInt>(shape_tuple->elements_[i]);
-        PRO_IR_CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, const_int)
-            << "The operator " << op_name << " shape element " << i
-            << " must be a compile-time constant (ConstInt), but got " << shape_tuple->elements_[i]->TypeName();
-        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, const_int->value_ > 0)
-            << "The operator " << op_name << " shape element " << i << " must be positive, got " << const_int->value_;
-        tile_shape.push_back(shape_tuple->elements_[i]);
+    for (size_t i = 0; i < shapeTuple->elements_.size(); ++i) {
+        auto constInt = As<ConstInt>(shapeTuple->elements_[i]);
+        PRO_IR_CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, constInt)
+            << "The operator " << opName << " shape element " << i
+            << " must be a compile-time constant (ConstInt), but got " << shapeTuple->elements_[i]->TypeName();
+        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, constInt->value_ > 0)
+            << "The operator " << opName << " shape element " << i << " must be positive, got " << constInt->value_;
+        tileShape.push_back(shapeTuple->elements_[i]);
     }
 
-    TileView tile_view;
+    TileView tileView;
 
-    auto valid_shape_tuple = As<MakeTuple>(args[1]);
-    if (valid_shape_tuple)
-        tile_view.validShape = valid_shape_tuple->elements_;
+    auto validShapeTuple = As<MakeTuple>(args[1]);
+    if (validShapeTuple)
+        tileView.validShape = validShapeTuple->elements_;
 
-    HardwareInfo hw_info;
+    HardwareInfo hwInfo;
 
     int blayout = GetOpKwarg<int>(kwargs, "blayout", -1);
     if (blayout >= 0) {
-        hw_info.blayout = static_cast<TileLayout>(blayout);
+        hwInfo.blayout = static_cast<TileLayout>(blayout);
     }
 
     int slayout = GetOpKwarg<int>(kwargs, "slayout", -1);
     if (slayout >= 0) {
-        hw_info.slayout = static_cast<TileLayout>(slayout);
+        hwInfo.slayout = static_cast<TileLayout>(slayout);
     }
 
     int fractal = GetOpKwarg<int>(kwargs, "fractal", -1);
     if (fractal >= 0) {
-        hw_info.fractal = static_cast<uint64_t>(fractal);
+        hwInfo.fractal = static_cast<uint64_t>(fractal);
     }
 
     int pad = GetOpKwarg<int>(kwargs, "pad", -1);
     if (pad >= 0) {
-        hw_info.pad = static_cast<TilePad>(pad);
+        hwInfo.pad = static_cast<TilePad>(pad);
     }
 
     int compact = GetOpKwarg<int>(kwargs, "compact", -1);
     if (compact >= 0) {
-        hw_info.compact = static_cast<CompactMode>(compact);
+        hwInfo.compact = static_cast<CompactMode>(compact);
     }
     // If explicit memref kwargs are provided (addr + size + id), attach a MemRef to the TileType.
     // This allows the PTO codegen to emit pto.alloc_tile with base_addr directly from the IR,
     // without requiring the init_memref pass.
-    MemorySpace target_memory = GetOpKwarg<MemorySpace>(kwargs, "target_memory",
-                                                        std::optional<MemorySpace>(MemorySpace::Vec));
+    MemorySpace targetMemory = GetOpKwarg<MemorySpace>(kwargs, "target_memory",
+                                                       std::optional<MemorySpace>(MemorySpace::Vec));
 
-    bool has_memref = false;
+    bool hasMemref = false;
     for (const auto& kwarg : kwargs) {
         if (kwarg.first == "memref_id") {
-            has_memref = true;
+            hasMemref = true;
             break;
         }
     }
-    if (has_memref) {
-        int64_t addr_val = GetOpKwarg<int>(kwargs, "memref_addr");
-        int64_t size_val = GetOpKwarg<int>(kwargs, "memref_size");
-        uint64_t id_val = static_cast<uint64_t>(GetOpKwarg<int>(kwargs, "memref_id"));
-        auto addr_expr = std::make_shared<ConstInt>(addr_val, DataType::INT64, Span::Unknown());
-        MemRefPtr memref = std::make_shared<MemRef>(target_memory, addr_expr, static_cast<uint64_t>(size_val), id_val);
+    if (hasMemref) {
+        int64_t addrVal = GetOpKwarg<int>(kwargs, "memref_addr");
+        int64_t sizeVal = GetOpKwarg<int>(kwargs, "memref_size");
+        uint64_t idVal = static_cast<uint64_t>(GetOpKwarg<int>(kwargs, "memref_id"));
+        auto addrExpr = std::make_shared<ConstInt>(addrVal, DataType::INT64, Span::Unknown());
+        MemRefPtr memref = std::make_shared<MemRef>(targetMemory, addrExpr, static_cast<uint64_t>(sizeVal), idVal);
         return std::make_shared<MutexTileType>(
-            TileType(tile_shape, dtype, std::optional<MemRefPtr>(memref), tile_view, hw_info),
-            static_cast<uint32_t>(mutex_ids->elements_.size()));
+            TileType(tileShape, dtype, std::optional<MemRefPtr>(memref), tileView, hwInfo),
+            static_cast<uint32_t>(mutexIds->elements_.size()));
     }
 
-    return std::make_shared<MutexTileType>(TileType(tile_shape, dtype, std::nullopt, tile_view, hw_info),
-                                           static_cast<uint32_t>(mutex_ids->elements_.size()));
+    return std::make_shared<MutexTileType>(TileType(tileShape, dtype, std::nullopt, tileView, hwInfo),
+                                           static_cast<uint32_t>(mutexIds->elements_.size()));
 }
 
 TypePtr DeduceGetValType([[maybe_unused]] const std::vector<ExprPtr>& args,
@@ -168,22 +168,22 @@ TypePtr DeduceGetValType([[maybe_unused]] const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x2)
         << "getval requires exactly 2 arguments, but got " << args.size();
 
-    auto first_type = args[0]->GetType();
-    auto offset_type = As<ScalarType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offset_type)
+    auto firstType = args[0]->GetType();
+    auto offsetType = As<ScalarType>(args[1]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType)
         << "getval requires offset to be ScalarType, but got " << args[1]->GetType()->TypeName();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offset_type->dtype_.IsInt())
-        << "getval offset must have integer dtype, but got " << offset_type->dtype_.ToString();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType->dtype_.IsInt())
+        << "getval offset must have integer dtype, but got " << offsetType->dtype_.ToString();
 
     // SIMT element reads preserve their storage dtype; SIMD scalar reads retain integer widening.
-    const bool preserve_dtype = GetOpKwarg<bool>(kwargs, "preserve_dtype", false);
-    if (auto tile_type = As<TileType>(first_type)) {
-        return std::make_shared<ScalarType>(GetValResultDtype(tile_type->dtype_, preserve_dtype));
+    const bool preserveDtype = GetOpKwarg<bool>(kwargs, "preserve_dtype", false);
+    if (auto tileType = As<TileType>(firstType)) {
+        return std::make_shared<ScalarType>(GetValResultDtype(tileType->dtype_, preserveDtype));
     }
-    auto tensor_type = As<TensorType>(first_type);
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensor_type)
-        << "getval requires first argument to be TileType or TensorType, but got " << first_type->TypeName();
-    return std::make_shared<ScalarType>(GetValResultDtype(tensor_type->dtype_, preserve_dtype));
+    auto tensorType = As<TensorType>(firstType);
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensorType)
+        << "getval requires first argument to be TileType or TensorType, but got " << firstType->TypeName();
+    return std::make_shared<ScalarType>(GetValResultDtype(tensorType->dtype_, preserveDtype));
 }
 
 TypePtr DeduceTileValidShapeType(const std::vector<ExprPtr>& args,
@@ -202,8 +202,8 @@ TypePtr DeduceTileAddrType(const std::vector<ExprPtr>& args,
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
         << "block.tile_addr requires exactly one argument (tile), but got " << args.size();
-    auto tile_type = As<TileType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tile_type)
+    auto tileType = As<TileType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tileType)
         << "block.tile_addr requires a TileType argument, but got " << args[0]->GetType()->TypeName();
     return std::make_shared<ScalarType>(DataType::INT64);
 }
@@ -214,18 +214,18 @@ TypePtr DeduceSetValType([[maybe_unused]] const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x3)
         << "setval requires exactly 3 arguments, but got " << args.size();
 
-    auto first_type = args[0]->GetType();
-    auto offset_type = As<ScalarType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offset_type)
+    auto firstType = args[0]->GetType();
+    auto offsetType = As<ScalarType>(args[1]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType)
         << "setval requires offset to be ScalarType, but got " << args[1]->GetType()->TypeName();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offset_type->dtype_.IsInt())
-        << "setval offset must have integer dtype, but got " << offset_type->dtype_.ToString();
-    auto value_type = As<ScalarType>(args[2]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, value_type)
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType->dtype_.IsInt())
+        << "setval offset must have integer dtype, but got " << offsetType->dtype_.ToString();
+    auto valueType = As<ScalarType>(args[2]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, valueType)
         << "setval requires value to be ScalarType, but got " << args[2]->GetType()->TypeName();
 
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TileType>(first_type) || As<TensorType>(first_type))
-        << "setval requires first argument to be TileType or TensorType, but got " << first_type->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TileType>(firstType) || As<TensorType>(firstType))
+        << "setval requires first argument to be TileType or TensorType, but got " << firstType->TypeName();
     return GetNoneType();
 }
 
@@ -271,17 +271,17 @@ REGISTER_OP("get_subblock_num")
 
 // Pointer to the i-th tensor inside a runtime-variadic (DYNAMIC) input descriptor. Returns a
 // PtrType; build a typed view with pl.make_tensor(ptr, shape, stride, dtype=...).
-TypePtr DeduceBlockDynamicInputPtrType(const std::vector<ExprPtr>& args, const std::string& op_name)
+TypePtr DeduceBlockDynamicInputPtrType(const std::vector<ExprPtr>& args, const std::string& opName)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
-        << "The operator " << op_name << " requires 2 arguments (x, i), but got " << args.size();
+        << "The operator " << opName << " requires 2 arguments (x, i), but got " << args.size();
     // Whether i is an integer index is settled by the frontend; reading x's dtype only
     // needs it to be a pointer.
-    auto desc_type = As<PtrType>(args[0] ? args[0]->GetType() : nullptr);
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, desc_type != nullptr)
-        << "The operator " << op_name << " requires a PtrType as its first argument, got "
+    auto descType = As<PtrType>(args[0] ? args[0]->GetType() : nullptr);
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, descType != nullptr)
+        << "The operator " << opName << " requires a PtrType as its first argument, got "
         << (args[0] ? args[0]->GetType()->TypeName() : std::string("null"));
-    return std::make_shared<PtrType>(desc_type->dtype_);
+    return std::make_shared<PtrType>(descType->dtype_);
 }
 
 REGISTER_OP("dynamic_input_ptr")
@@ -296,10 +296,10 @@ REGISTER_OP("dynamic_input_ptr")
 
 // Shape entry of the i-th tensor inside a runtime-variadic (DYNAMIC) input descriptor
 // (dim != 0 form). Returns an INT64 scalar (the length of that axis).
-TypePtr DeduceBlockDynamicInputDimType(const std::vector<ExprPtr>& args, const std::string& op_name)
+TypePtr DeduceBlockDynamicInputDimType(const std::vector<ExprPtr>& args, const std::string& opName)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
-        << "The operator " << op_name << " requires 3 arguments (x, i, axis), but got " << args.size();
+        << "The operator " << opName << " requires 3 arguments (x, i, axis), but got " << args.size();
     return std::make_shared<ScalarType>(DataType::INT64);
 }
 
@@ -463,19 +463,19 @@ TypePtr DeduceSubViewType([[maybe_unused]] const std::vector<ExprPtr>& args,
     // The valid_shape argument is consumed by codegen to auto-emit SetValidShape.
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x3)
         << "block.subview requires exactly 3 arguments (container, offset, valid_shape), but got " << args.size();
-    auto container_type = args[0]->GetType();
-    if (auto tile_type = As<TileType>(container_type)) {
+    auto containerType = args[0]->GetType();
+    if (auto tileType = As<TileType>(containerType)) {
         // A subview keeps the source Tile's physical storage description, but its
         // runtime SetValidShape must not be overridden by a source tile_view.
-        auto result = std::make_shared<TileType>(tile_type->shape_, tile_type->dtype_, tile_type->memref_, std::nullopt,
-                                                 tile_type->hardwareInfo_);
-        if (auto mutex_type = As<MutexTileType>(container_type))
-            return std::make_shared<MutexTileType>(*result, mutex_type->mutexCount_);
+        auto result = std::make_shared<TileType>(tileType->shape_, tileType->dtype_, tileType->memref_, std::nullopt,
+                                                 tileType->hardwareInfo_);
+        if (auto mutexType = As<MutexTileType>(containerType))
+            return std::make_shared<MutexTileType>(*result, mutexType->mutexCount_);
         return result;
     }
 
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, false)
-        << "block.subview requires first argument to be TileType, but got " << container_type->TypeName();
+        << "block.subview requires first argument to be TileType, but got " << containerType->TypeName();
     return nullptr;
 }
 
@@ -533,8 +533,8 @@ REGISTER_OP("block.reinterpret")
         hw.slayout = static_cast<TileLayout>(GetOpKwarg<int>(kwargs, "slayout"));
         auto result = std::make_shared<TileType>(shape->elements_, GetOpKwarg<DataType>(kwargs, "dtype"),
                                                  source->memref_, std::nullopt, hw);
-        if (auto mutex_type = As<MutexTileType>(source))
-            return std::make_shared<MutexTileType>(*result, mutex_type->mutexCount_);
+        if (auto mutexType = As<MutexTileType>(source))
+            return std::make_shared<MutexTileType>(*result, mutexType->mutexCount_);
         return result;
     });
 

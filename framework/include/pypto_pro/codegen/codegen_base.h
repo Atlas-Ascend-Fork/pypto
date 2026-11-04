@@ -100,13 +100,13 @@ protected:
      *
      * Subclasses call this from VisitExpr_(Call) when the op has no platform codegen.
      *
-     * \param op_name IR operation name (e.g., "block.load")
+     * \param opName IR operation name (e.g., "block.load")
      */
-    [[noreturn]] void ThrowNoCodegenForCall(const std::string& op_name) const
+    [[noreturn]] void ThrowNoCodegenForCall(const std::string& opName) const
     {
         using npu::tile_fwk::ExternalError;
         PRO_CODEGEN_THROW(::pypto::ir::ValueError, ExternalError::KEY_ERROR)
-            << "No codegen registered for operation: " << op_name;
+            << "No codegen registered for operation: " << opName;
     }
 
     /**

@@ -409,17 +409,19 @@ def test_make_tile_group_bwd_fwd_ids_ignored_for_compat():
 # ---------------------------------------------------------------------------
 
 
-def test_valid_dynamic_valid_shape_allowed():
+@pytest.mark.parametrize("valid_shape", [None, [-1, -1]])
+def test_valid_dynamic_valid_shape_allowed(valid_shape):
     @pl.jit
     def k(x: pl.Tensor[[64, 64], pl.DT_FP16]):
         tt = pl.TileType(
-            shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1]
+            shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, valid_shape=valid_shape
         )
         g = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[0])
         pl.load(g.next(), x, [0, 0])
 
     ir_str = str(_parse(k))
     assert "block.make_mutex_tile" in ir_str
+    assert "tile_view<-1 x -1>" in ir_str
 
 
 def test_valid_contiguous_addrs_expansion():

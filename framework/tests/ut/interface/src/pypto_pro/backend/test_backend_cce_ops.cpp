@@ -62,8 +62,8 @@ class TestableCCECodegen : public codegen::CCECodegen {
 public:
     using codegen::CCECodegen::CCECodegen;
     std::string GetEmittedCode() const { return emitter_.GetCode(); }
-    void SetCurrentResultTarget(std::string target) { current_target_var_ = std::move(target); }
-    void SetInVFSection(bool value) { in_vf_section_ = value; }
+    void SetCurrentResultTarget(std::string target) { currentTargetVar_ = std::move(target); }
+    void SetInVFSection(bool value) { inVfSection_ = value; }
     void RegisterVarName(const ir::VarPtr& var, const std::string& name) { context_.RegisterVar(var, name); }
 };
 
@@ -152,7 +152,7 @@ std::string RunCodegen(const std::string& op_name, const ir::CallPtr& call, Test
     if (info == nullptr) {
         return "";
     }
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     return codegen.GetEmittedCode();
 }
 
@@ -193,9 +193,9 @@ TEST(BackendCceOpsTest, GetBlockIdxUsesBlockMetaAccessorOnBothTargets)
     ASSERT_NE(info, nullptr);
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    EXPECT_EQ(info->codegen_func(call, codegen), "(int64_t)(__pypto_block_idx_value())");
+    EXPECT_EQ(info->codegenFunc(call, codegen), "(int64_t)(__pypto_block_idx_value())");
     codegen::CCECodegen cube_codegen(ir::SectionKind::Cube);
-    EXPECT_EQ(info->codegen_func(call, cube_codegen), "(int64_t)(__pypto_block_idx_value())");
+    EXPECT_EQ(info->codegenFunc(call, cube_codegen), "(int64_t)(__pypto_block_idx_value())");
 }
 
 TEST(BackendCceOpsTest, GetBlockNum)
@@ -220,7 +220,7 @@ TEST(BackendCceOpsTest, GetSpr)
     EXPECT_EQ(info->pipe, ir::PipeType::V);
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    EXPECT_EQ(info->codegen_func(call, codegen), "get_ar()");
+    EXPECT_EQ(info->codegenFunc(call, codegen), "get_ar()");
 }
 
 TEST(BackendCceOpsTest, GetCycle)
@@ -290,10 +290,10 @@ TEST(BackendCceOpsTest, GetSubBlockNumIsTargetSpecific)
     EXPECT_EQ(info->pipe, ir::PipeType::V);
 
     codegen::CCECodegen cube_codegen(ir::SectionKind::Cube);
-    EXPECT_EQ(info->codegen_func(call, cube_codegen), "(int64_t)(1)");
+    EXPECT_EQ(info->codegenFunc(call, cube_codegen), "(int64_t)(1)");
 
     codegen::CCECodegen vector_codegen(ir::SectionKind::Vector);
-    EXPECT_EQ(info->codegen_func(call, vector_codegen), "(int64_t)(get_subblockdim())");
+    EXPECT_EQ(info->codegenFunc(call, vector_codegen), "(int64_t)(get_subblockdim())");
 }
 
 TEST(BackendCceOpsTest, DebugTrap)
@@ -339,7 +339,7 @@ TEST(BackendCceOpsTest, AdditionalPipelineBarriers)
         EXPECT_EQ(info->pipe, ir::PipeType::S);
 
         TestableCCECodegen codegen(ir::SectionKind::Vector);
-        EXPECT_EQ(info->codegen_func(call, codegen), "");
+        EXPECT_EQ(info->codegenFunc(call, codegen), "");
         EXPECT_NE(codegen.GetEmittedCode().find(expected), std::string::npos);
     }
 }
@@ -799,7 +799,7 @@ TEST(BackendCceOpsTest, PtrMakePtrExtractsRegisteredTensorPointer)
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.RegisterVarName(tensor, "src");
     codegen.RegisterPointer("src", "src_raw_ptr");
-    EXPECT_EQ(info->codegen_func(call, codegen), "((__gm__ half*)(src_raw_ptr))");
+    EXPECT_EQ(info->codegenFunc(call, codegen), "((__gm__ half*)(src_raw_ptr))");
 }
 
 TEST(BackendCceOpsTest, PtrMakePtrFallsBackToTensorData)
@@ -813,7 +813,7 @@ TEST(BackendCceOpsTest, PtrMakePtrFallsBackToTensorData)
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.RegisterVarName(tensor, "src");
-    EXPECT_EQ(info->codegen_func(call, codegen), "((__gm__ half*)(src.data()))");
+    EXPECT_EQ(info->codegenFunc(call, codegen), "((__gm__ half*)(src.data()))");
 }
 
 TEST(BackendCceOpsTest, PtrMakePtrRejectsInvalidSourceAndResultTypes)
@@ -828,11 +828,11 @@ TEST(BackendCceOpsTest, PtrMakePtrRejectsInvalidSourceAndResultTypes)
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto invalid_source = std::make_shared<const ir::Call>("ptr.make_ptr", std::vector<ir::ExprPtr>{scalar}, ptr_type,
                                                            ir::Span::Unknown());
-    EXPECT_THROW((void)info->codegen_func(invalid_source, codegen), npu::tile_fwk::Error);
+    EXPECT_THROW((void)info->codegenFunc(invalid_source, codegen), npu::tile_fwk::Error);
 
     auto invalid_result = std::make_shared<const ir::Call>("ptr.make_ptr", std::vector<ir::ExprPtr>{ptr}, scalar_type,
                                                            ir::Span::Unknown());
-    EXPECT_THROW((void)info->codegen_func(invalid_result, codegen), npu::tile_fwk::Error);
+    EXPECT_THROW((void)info->codegenFunc(invalid_result, codegen), npu::tile_fwk::Error);
 }
 
 // ============================================================================
@@ -960,7 +960,7 @@ TEST(BackendCceOpsTest, BlockSubviewUsesRuntimeAddressAndResultTarget)
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.SetCurrentResultTarget("view");
-    EXPECT_EQ(info->codegen_func(call, codegen), "view");
+    EXPECT_EQ(info->codegenFunc(call, codegen), "view");
 
     auto generated = codegen.GetEmittedCode();
     EXPECT_NE(generated.find("pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(3, 0)"),
@@ -983,7 +983,7 @@ TEST(BackendCceOpsTest, BlockSubviewUsesDynamicTileGroupAddressAndGeneratedName)
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.RegisterVarName(tile, "tiles[index]");
-    auto result = info->codegen_func(call, codegen);
+    auto result = info->codegenFunc(call, codegen);
 
     EXPECT_EQ(result, "tiles_index__tile_view_0");
     auto generated = codegen.GetEmittedCode();
@@ -1011,7 +1011,7 @@ TEST(BackendCceOpsTest, BlockSubviewUsesRuntimeAddressWithStaticMemRef)
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.SetCurrentResultTarget("memref_view");
-    EXPECT_EQ(info->codegen_func(call, codegen), "memref_view");
+    EXPECT_EQ(info->codegenFunc(call, codegen), "memref_view");
     EXPECT_NE(codegen.GetEmittedCode().find("pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(2, 0)"),
               std::string::npos);
     EXPECT_NE(codegen.GetEmittedCode().find("TASSIGN(memref_view.tile, (uint64_t)tile.tile.data() + "),
@@ -1031,7 +1031,7 @@ TEST(BackendCceOpsTest, BlockSubviewInVFSectionReturnsPointerArithmetic)
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.SetInVFSection(true);
-    EXPECT_EQ(info->codegen_func(call, codegen),
+    EXPECT_EQ(info->codegenFunc(call, codegen),
               "(vf_tile_ptr_0 + pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(7, 0))");
     EXPECT_TRUE(codegen.GetEmittedCode().empty());
 }
@@ -1054,7 +1054,7 @@ TEST(BackendCceOpsTest, BlockSubviewInVFSectionUsesNzElementOffset)
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.SetInVFSection(true);
-    EXPECT_EQ(info->codegen_func(call, codegen),
+    EXPECT_EQ(info->codegenFunc(call, codegen),
               "(vf_tile_ptr_0 + pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(16, 16))");
     EXPECT_TRUE(codegen.GetEmittedCode().empty());
 }
@@ -1077,7 +1077,7 @@ TEST(BackendCceOpsTest, BlockSubviewUsesDnElementOffset)
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.SetCurrentResultTarget("view");
-    EXPECT_EQ(info->codegen_func(call, codegen), "view");
+    EXPECT_EQ(info->codegenFunc(call, codegen), "view");
     EXPECT_NE(codegen.GetEmittedCode().find("pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(3, 5)"),
               std::string::npos);
 }
@@ -1093,7 +1093,7 @@ TEST(BackendCceOpsTest, BlockSubviewInVFSectionSupportsScalarOffset)
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.SetInVFSection(true);
-    EXPECT_EQ(info->codegen_func(call, codegen), "(vf_tile_ptr_0 + (7))");
+    EXPECT_EQ(info->codegenFunc(call, codegen), "(vf_tile_ptr_0 + (7))");
 }
 
 // ============================================================================
@@ -1640,7 +1640,7 @@ TEST(BackendCceOpsTest, GetSaturationFlag_Cast)
     const auto* info = BackendCCE::Instance().GetOpInfo("get_saturation_flag");
     ASSERT_NE(info, nullptr);
     TestableCCECodegen codegen(ir::SectionKind::Vector);
-    auto result = info->codegen_func(call, codegen);
+    auto result = info->codegenFunc(call, codegen);
     EXPECT_NE(result.find("get_ctrl()"), std::string::npos);
     EXPECT_NE(result.find("59"), std::string::npos);
     EXPECT_NE(result.find("== 0"), std::string::npos);
@@ -1654,7 +1654,7 @@ TEST(BackendCceOpsTest, GetSaturationFlag_Int)
     const auto* info = BackendCCE::Instance().GetOpInfo("get_saturation_flag");
     ASSERT_NE(info, nullptr);
     TestableCCECodegen codegen(ir::SectionKind::Vector);
-    auto result = info->codegen_func(call, codegen);
+    auto result = info->codegenFunc(call, codegen);
     EXPECT_NE(result.find("get_ctrl()"), std::string::npos);
     EXPECT_NE(result.find("53"), std::string::npos);
     EXPECT_NE(result.find("!= 0"), std::string::npos);
@@ -1717,7 +1717,7 @@ TEST(BackendCceOpsTest, GetCtrlSpr_SingleBit)
     const auto* info = BackendCCE::Instance().GetOpInfo("get_ctrl_spr");
     ASSERT_NE(info, nullptr);
     TestableCCECodegen codegen(ir::SectionKind::Vector);
-    auto result = info->codegen_func(call, codegen);
+    auto result = info->codegenFunc(call, codegen);
     EXPECT_NE(result.find("get_ctrl()"), std::string::npos);
     EXPECT_NE(result.find("48"), std::string::npos);
 }
@@ -1731,7 +1731,7 @@ TEST(BackendCceOpsTest, GetCtrlSpr_FullRange)
     const auto* info = BackendCCE::Instance().GetOpInfo("get_ctrl_spr");
     ASSERT_NE(info, nullptr);
     TestableCCECodegen codegen(ir::SectionKind::Vector);
-    auto result = info->codegen_func(call, codegen);
+    auto result = info->codegenFunc(call, codegen);
     EXPECT_NE(result.find("get_ctrl()"), std::string::npos);
 }
 
@@ -1744,7 +1744,7 @@ TEST(BackendCceOpsTest, GetCtrlSpr_InvalidRange_Throws)
     const auto* info = BackendCCE::Instance().GetOpInfo("get_ctrl_spr");
     ASSERT_NE(info, nullptr);
     TestableCCECodegen codegen(ir::SectionKind::Vector);
-    EXPECT_THROW((void)info->codegen_func(call, codegen), npu::tile_fwk::Error);
+    EXPECT_THROW((void)info->codegenFunc(call, codegen), npu::tile_fwk::Error);
 }
 
 TEST(BackendCceOpsTest, ResetCtrlSpr_SingleBit)

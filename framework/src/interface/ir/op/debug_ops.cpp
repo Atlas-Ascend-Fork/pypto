@@ -109,15 +109,15 @@ bool IsPrintfIndexType(const DataType& dtype) { return dtype == DataType::INDEX;
 bool IsPrintfBoolType(const DataType& dtype) { return dtype == DataType::BOOL; }
 
 template <typename InputType>
-TypePtr DeduceDebugDumpType(const std::vector<ExprPtr>& args, const std::string& op_name,
-                            const std::string& input_type_name)
+TypePtr DeduceDebugDumpType(const std::vector<ExprPtr>& args, const std::string& opName,
+                            const std::string& inputTypeName)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1 || args.size() == 3)
-        << op_name << " requires 1 argument (input) or 3 arguments (input, offsets, shapes), but got " << args.size();
+        << opName << " requires 1 argument (input) or 3 arguments (input, offsets, shapes), but got " << args.size();
 
-    auto input_type = As<InputType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, input_type)
-        << op_name << " requires first argument to be a " << input_type_name << ", but got "
+    auto inputType = As<InputType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, inputType)
+        << opName << " requires first argument to be a " << inputTypeName << ", but got "
         << args[0]->GetType()->TypeName();
 
     if (args.size() == 1) {
@@ -125,14 +125,14 @@ TypePtr DeduceDebugDumpType(const std::vector<ExprPtr>& args, const std::string&
     }
 
     auto offsets = As<MakeTuple>(args[1]);
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsets) << op_name << " requires offsets to be a MakeTuple";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsets) << opName << " requires offsets to be a MakeTuple";
 
     auto shapes = As<MakeTuple>(args[2]);
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, shapes) << op_name << " requires shapes to be a MakeTuple";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, shapes) << opName << " requires shapes to be a MakeTuple";
 
-    const size_t rank = input_type->shape_.size();
+    const size_t rank = inputType->shape_.size();
     PRO_IR_CHECK(ExternalError::INVALID_SHAPE, offsets->elements_.size() == rank && shapes->elements_.size() == rank)
-        << op_name << " offsets/shapes must match input rank " << rank << ", got " << offsets->elements_.size()
+        << opName << " offsets/shapes must match input rank " << rank << ", got " << offsets->elements_.size()
         << " offsets and " << shapes->elements_.size() << " shapes";
 
     return GetUnknownType();
@@ -141,16 +141,16 @@ TypePtr DeduceDebugDumpType(const std::vector<ExprPtr>& args, const std::string&
 TypePtr DeduceDebugPrintfType([[maybe_unused]] const std::vector<ExprPtr>& args,
                               [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    bool found_format = false;
+    bool foundFormat = false;
     std::string format;
     for (const auto& [key, value] : kwargs) {
         if (key == "format") {
             format = AnyCast<std::string>(value, "kwarg key: format");
-            found_format = true;
+            foundFormat = true;
             break;
         }
     }
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, found_format) << "debug.printf requires 'format' kwarg";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, foundFormat) << "debug.printf requires 'format' kwarg";
 
     auto conversions = ParsePrintfConversions(format);
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, conversions.size() == args.size())
@@ -159,17 +159,17 @@ TypePtr DeduceDebugPrintfType([[maybe_unused]] const std::vector<ExprPtr>& args,
     for (size_t i = 0; i < args.size(); ++i) {
         char conversion = conversions[i];
         if (conversion == 'p') {
-            auto ptr_type = As<PtrType>(args[i]->GetType());
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, ptr_type)
+            auto ptrType = As<PtrType>(args[i]->GetType());
+            PRO_IR_CHECK(ExternalError::INVALID_TYPE, ptrType)
                 << "debug.printf argument " << i << " with '%p' must be PtrType, but got "
                 << args[i]->GetType()->TypeName();
             continue;
         }
-        auto scalar_type = As<ScalarType>(args[i]->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar_type)
+        auto scalarType = As<ScalarType>(args[i]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalarType)
             << "debug.printf argument " << i << " must be ScalarType, but got " << args[i]->GetType()->TypeName();
 
-        const DataType& dtype = scalar_type->dtype_;
+        const DataType& dtype = scalarType->dtype_;
         if (conversion == 'f') {
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, dtype == DataType::FP32)
                 << "debug.printf conversion '%f' requires FP32 scalar, but got " << dtype.ToString();
@@ -199,41 +199,40 @@ TypePtr DeduceDebugAssertType([[maybe_unused]] const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() >= 1)
         << "debug.assert requires at least 1 argument (condition), but got " << args.size();
 
-    bool found_condition_text = false;
-    bool found_format = false;
-    std::string condition_text;
+    bool foundConditionText = false;
+    bool foundFormat = false;
+    std::string conditionText;
     std::string format;
     for (const auto& [key, value] : kwargs) {
         if (key == "condition_text") {
-            condition_text = AnyCast<std::string>(value, "kwarg key: condition_text");
-            found_condition_text = true;
+            conditionText = AnyCast<std::string>(value, "kwarg key: condition_text");
+            foundConditionText = true;
         } else if (key == "format") {
             format = AnyCast<std::string>(value, "kwarg key: format");
-            found_format = true;
+            foundFormat = true;
         }
     }
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, found_condition_text)
-        << "debug.assert requires 'condition_text' kwarg";
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, found_format) << "debug.assert requires 'format' kwarg";
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, !condition_text.empty())
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, foundConditionText) << "debug.assert requires 'condition_text' kwarg";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, foundFormat) << "debug.assert requires 'format' kwarg";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, !conditionText.empty())
         << "debug.assert requires non-empty condition_text";
 
-    auto scalar_type = As<ScalarType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar_type)
+    auto scalarType = As<ScalarType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalarType)
         << "debug.assert requires condition to be ScalarType, but got " << args[0]->GetType()->TypeName();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar_type->dtype_ == DataType::BOOL)
-        << "debug.assert requires bool scalar condition, but got " << scalar_type->dtype_.ToString();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalarType->dtype_ == DataType::BOOL)
+        << "debug.assert requires bool scalar condition, but got " << scalarType->dtype_.ToString();
 
     auto conversions = ParsePrintfConversions(format);
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, conversions.size() == args.size() - 1)
         << "debug.assert format expects " << conversions.size() << " scalar arguments, but got " << (args.size() - 1);
 
     for (size_t i = 1; i < args.size(); ++i) {
-        auto printf_arg = As<ScalarType>(args[i]->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, printf_arg)
+        auto printfArg = As<ScalarType>(args[i]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, printfArg)
             << "debug.assert argument " << (i - 1) << " must be ScalarType, but got " << args[i]->GetType()->TypeName();
 
-        const DataType& dtype = printf_arg->dtype_;
+        const DataType& dtype = printfArg->dtype_;
         char conversion = conversions[i - 1];
         if (conversion == 'f') {
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, dtype == DataType::FP32)

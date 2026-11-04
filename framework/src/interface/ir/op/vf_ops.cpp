@@ -65,13 +65,13 @@ TypePtr DeduceVFBitCastType(const std::vector<ExprPtr>& args,
         }
     }
     if (!args.empty()) {
-        if (auto tile_type = As<TileType>(args[0]->GetType())) {
-            return std::make_shared<TileType>(tile_type->shape_, target, tile_type->memref_, tile_type->tileView_,
-                                              tile_type->hardwareInfo_);
+        if (auto tileType = As<TileType>(args[0]->GetType())) {
+            return std::make_shared<TileType>(tileType->shape_, target, tileType->memref_, tileType->tileView_,
+                                              tileType->hardwareInfo_);
         }
-        if (auto tensor_type = As<TensorType>(args[0]->GetType())) {
-            return std::make_shared<TensorType>(tensor_type->shape_, target, tensor_type->memref_,
-                                                tensor_type->tensor_view_);
+        if (auto tensorType = As<TensorType>(args[0]->GetType())) {
+            return std::make_shared<TensorType>(tensorType->shape_, target, tensorType->memref_,
+                                                tensorType->tensor_view_);
         }
     }
     return std::make_shared<ScalarType>(target);

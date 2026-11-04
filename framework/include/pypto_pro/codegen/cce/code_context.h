@@ -57,9 +57,9 @@ public:
      * after the tensor variable itself).
      *
      * \param var The IR variable
-     * \param cpp_name The C++ name to associate with this variable
+     * \param cppName The C++ name to associate with this variable
      */
-    void RegisterVar(const ir::VarPtr& var, const std::string& cpp_name);
+    void RegisterVar(const ir::VarPtr& var, const std::string& cppName);
 
     /**
      * \brief Clear all state
@@ -69,11 +69,11 @@ public:
     /**
      * \brief Check if a C++ name was auto-registered (cross-section reference)
      */
-    [[nodiscard]] bool IsAutoRegistered(const std::string& cpp_name) const;
+    [[nodiscard]] bool IsAutoRegistered(const std::string& cppName) const;
 
 private:
-    std::unordered_map<std::string, std::string> name_to_cpp_; ///< Mapping from IR var name to C++ name
-    std::unordered_set<std::string> auto_registered_; ///< Variables auto-registered from cross-section SSA references
+    std::unordered_map<std::string, std::string> nameToCpp_; ///< Mapping from IR var name to C++ name
+    std::unordered_set<std::string> autoRegistered_; ///< Variables auto-registered from cross-section SSA references
 };
 
 } // namespace codegen

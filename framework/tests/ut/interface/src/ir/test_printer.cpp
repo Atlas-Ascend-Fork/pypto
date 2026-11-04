@@ -213,6 +213,9 @@ TEST_F(IRPrinterTest, TestPrintTypes)
     auto tile = std::make_shared<TileType>(std::vector<ExprPtr>{std::make_shared<ConstInt>(4, DataType::INT64, Sp())},
                                            DataType::FP32);
     EXPECT_NE(PrintType(tile).find("Tile"), std::string::npos);
+    EXPECT_NE(PrintType(tile).find("TileView(valid_shape=[-1])"), std::string::npos);
+    EXPECT_EQ(PrintType(tile).find("stride="), std::string::npos);
+    EXPECT_EQ(PrintType(tile).find("start_offset="), std::string::npos);
 
     // TileType with memref
     auto tileMr = std::make_shared<TileType>(std::vector<ExprPtr>{std::make_shared<ConstInt>(4, DataType::INT64, Sp())},

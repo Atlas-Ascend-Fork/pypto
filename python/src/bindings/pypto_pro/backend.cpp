@@ -41,10 +41,10 @@ using pypto::ir::MemorySpace;
 
 void BindBackend(py::module_& m)
 {
-    py::module_ backend_mod = m.def_submodule("backend", "PyPTO Backend module");
+    py::module_ backendMod = m.def_submodule("backend", "PyPTO Backend module");
 
     // ========== Mem class ==========
-    py::class_<Mem>(backend_mod, "Mem", "Memory component")
+    py::class_<Mem>(backendMod, "Mem", "Memory component")
         .def(py::init<MemorySpace, uint64_t, uint64_t>(), py::arg("mem_type"), py::arg("mem_size"),
              py::arg("alignment"), "Create a memory component")
         .def_property_readonly("mem_type", &Mem::GetMemType, "Memory space type")
@@ -57,7 +57,7 @@ void BindBackend(py::module_& m)
         });
 
     // ========== Core class ==========
-    py::class_<Core>(backend_mod, "Core", "Processing core")
+    py::class_<Core>(backendMod, "Core", "Processing core")
         .def(py::init<CoreType, std::vector<Mem>>(), py::arg("core_type"), py::arg("mems"), "Create a processing core")
         .def_property_readonly("core_type", &Core::GetCoreType, "Core type (CUBE or VECTOR)")
         .def_property_readonly("mems", &Core::GetMems, "List of memory components")
@@ -67,7 +67,7 @@ void BindBackend(py::module_& m)
         });
 
     // ========== Cluster class ==========
-    py::class_<Cluster>(backend_mod, "Cluster", "Cluster of processing cores")
+    py::class_<Cluster>(backendMod, "Cluster", "Cluster of processing cores")
         .def(py::init<std::map<Core, int>>(), py::arg("core_counts"), "Create cluster from core counts map")
         .def(py::init<const Core&, int>(), py::arg("core"), py::arg("count"), "Create cluster with single core type")
         .def_property_readonly("core_counts", &Cluster::GetCoreCounts, "Map of core configurations to counts")
@@ -77,7 +77,7 @@ void BindBackend(py::module_& m)
         });
 
     // ========== Die class ==========
-    py::class_<Die>(backend_mod, "Die", "Die containing clusters")
+    py::class_<Die>(backendMod, "Die", "Die containing clusters")
         .def(py::init<std::map<Cluster, int>>(), py::arg("cluster_counts"), "Create die from cluster counts map")
         .def(py::init<const Cluster&, int>(), py::arg("cluster"), py::arg("count"),
              "Create die with single cluster type")
@@ -90,7 +90,7 @@ void BindBackend(py::module_& m)
         });
 
     // ========== SoC class ==========
-    py::class_<SoC>(backend_mod, "SoC", "System on Chip")
+    py::class_<SoC>(backendMod, "SoC", "System on Chip")
         .def(py::init<std::map<Die, int>>(), py::arg("die_counts"), "Create SoC from die counts map")
         .def(py::init<const Die&, int>(), py::arg("die"), py::arg("count"), "Create SoC with single die type")
         .def_property_readonly("die_counts", &SoC::GetDieCounts, "Map of die configurations to counts")
@@ -104,16 +104,16 @@ void BindBackend(py::module_& m)
         });
 
     // ========== Backend abstract base class ==========
-    py::class_<Backend>(backend_mod, "Backend", "Abstract backend base class")
+    py::class_<Backend>(backendMod, "Backend", "Abstract backend base class")
         .def("get_type_name", &Backend::GetTypeName, "Get backend type name")
         .def(
             "get_op_pipe",
-            [](const Backend& backend, const std::string& op_name) -> std::optional<ir::PipeType> {
-                const auto* op_info = backend.GetOpInfo(op_name);
-                if (op_info == nullptr) {
+            [](const Backend& backend, const std::string& opName) -> std::optional<ir::PipeType> {
+                const auto* opInfo = backend.GetOpInfo(opName);
+                if (opInfo == nullptr) {
                     return std::nullopt;
                 }
-                return op_info->pipe;
+                return opInfo->pipe;
             },
             py::arg("op_name"), "Get an operator's fixed pipeline, or None if argument-dependent or unregistered")
         .def("find_mem_path", &Backend::FindMemPath, py::arg("from_mem"), py::arg("to_mem"),
@@ -123,7 +123,7 @@ void BindBackend(py::module_& m)
             "soc", [](const Backend& backend) -> const SoC& { return backend.GetSoC(); }, "Get SoC object");
 
     // ========== BackendCCE concrete implementation ==========
-    py::class_<BackendCCE, Backend>(backend_mod, "BackendCCE", "CCE backend implementation")
+    py::class_<BackendCCE, Backend>(backendMod, "BackendCCE", "CCE backend implementation")
         .def_static("instance", &BackendCCE::Instance, py::return_value_policy::reference,
                     "Get singleton instance of CCE backend");
 }

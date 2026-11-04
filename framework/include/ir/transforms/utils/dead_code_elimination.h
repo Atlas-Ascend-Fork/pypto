@@ -34,7 +34,7 @@ void CollectAllAssignStmts(const std::vector<StmtPtr>& stmts, std::vector<std::s
 /// A removable TensorOpStmt stays live when either one of its result variables,
 /// one of its result tensor memoryIds, or its result token is transitively consumed
 /// by a non-removable (live-root) statement.
-std::vector<StmtPtr> EliminateDeadCode(const std::vector<StmtPtr>& stmts, const RemovablePredicate& is_removable);
+std::vector<StmtPtr> EliminateDeadCode(const std::vector<StmtPtr>& stmts, const RemovablePredicate& isRemovable);
 
 /// Eliminate dead code from a statement list using the default removable predicate.
 std::vector<StmtPtr> EliminateDeadCode(const std::vector<StmtPtr>& stmts);

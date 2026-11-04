@@ -57,8 +57,8 @@ using npu::tile_fwk::ExternalError;
 
 static int NextDebugDumpId()
 {
-    static int next_debug_dump_id = 0;
-    return next_debug_dump_id++;
+    static int nextDebugDumpId = 0;
+    return nextDebugDumpId++;
 }
 
 static std::string JoinExpressions(const std::vector<std::string>& expressions, const std::string& delimiter)
@@ -72,9 +72,9 @@ static std::string JoinExpressions(const std::vector<std::string>& expressions, 
     return oss.str();
 }
 
-static void EmitDebugLocationHeaderCCE(codegen::CCECodegen& codegen, const ir::Span& span, const std::string& op_name)
+static void EmitDebugLocationHeaderCCE(codegen::CCECodegen& codegen, const ir::Span& span, const std::string& opName)
 {
-    std::string header = debug_printf::FormatDebugLocationHeader(span, op_name);
+    std::string header = debug_printf::FormatDebugLocationHeader(span, opName);
     if (!header.empty()) {
         codegen.Emit("pypto::aicore::printf(\"" + debug_printf::EscapeStringLiteral(header + "\n") + "\");");
     }
@@ -90,25 +90,25 @@ static bool NeedsPtoPrintfUnsignedLongLong(const DataType& dtype, char conversio
     return (conversion == 'u' || conversion == 'x') && (dtype == DataType::UINT64 || dtype == DataType::INDEX);
 }
 
-static std::string RewritePtoPrintfFormatForScalarType(const std::string& format_segment, char conversion,
+static std::string RewritePtoPrintfFormatForScalarType(const std::string& formatSegment, char conversion,
                                                        const DataType& dtype)
 {
-    const bool signed_long_long = NeedsPtoPrintfSignedLongLong(dtype, conversion);
-    const bool unsigned_long_long = NeedsPtoPrintfUnsignedLongLong(dtype, conversion);
-    if (!signed_long_long && !unsigned_long_long) {
-        return format_segment;
+    const bool signedLongLong = NeedsPtoPrintfSignedLongLong(dtype, conversion);
+    const bool unsignedLongLong = NeedsPtoPrintfUnsignedLongLong(dtype, conversion);
+    if (!signedLongLong && !unsignedLongLong) {
+        return formatSegment;
     }
 
-    size_t conv_idx = debug_printf::FindPrintfConversionIndex(format_segment);
-    std::string rewritten = format_segment;
+    size_t convIdx = debug_printf::FindPrintfConversionIndex(formatSegment);
+    std::string rewritten = formatSegment;
     if (conversion == 'd') {
-        rewritten.replace(conv_idx, 1, "lld");
+        rewritten.replace(convIdx, 1, "lld");
     } else if (conversion == 'i') {
-        rewritten.replace(conv_idx, 1, "lli");
+        rewritten.replace(convIdx, 1, "lli");
     } else if (conversion == 'u') {
-        rewritten.replace(conv_idx, 1, "llu");
+        rewritten.replace(convIdx, 1, "llu");
     } else {
-        rewritten.replace(conv_idx, 1, "llx");
+        rewritten.replace(convIdx, 1, "llx");
     }
     return rewritten;
 }
@@ -137,9 +137,9 @@ static std::string CastPtoPrintfArgIfNeeded(const std::string& arg, const DataTy
 }
 
 static std::string BuildPtoPrintfCall(const std::string& format, const std::vector<std::string>& args,
-                                      const std::vector<DataType>& arg_dtypes)
+                                      const std::vector<DataType>& argDtypes)
 {
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == arg_dtypes.size())
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == argDtypes.size())
         << "debug.printf argument/type count mismatch";
 
     auto segments = debug_printf::ParsePrintfSegments(format);
@@ -150,87 +150,85 @@ static std::string BuildPtoPrintfCall(const std::string& format, const std::vect
         return "";
     }
 
-    std::string rewritten_format = segments.empty() ? format : "";
-    std::vector<std::string> rewritten_args;
+    std::string rewrittenFormat = segments.empty() ? format : "";
+    std::vector<std::string> rewrittenArgs;
     for (size_t i = 0; i < segments.size(); ++i) {
-        rewritten_format += RewritePtoPrintfFormatForScalarType(segments[i].format_segment, segments[i].conversion,
-                                                                arg_dtypes[i]);
-        rewritten_args.push_back(CastPtoPrintfArgIfNeeded(args[i], arg_dtypes[i], segments[i].conversion));
+        rewrittenFormat += RewritePtoPrintfFormatForScalarType(segments[i].formatSegment, segments[i].conversion,
+                                                               argDtypes[i]);
+        rewrittenArgs.push_back(CastPtoPrintfArgIfNeeded(args[i], argDtypes[i], segments[i].conversion));
     }
 
-    std::string call = "pypto::aicore::printf(\"" + debug_printf::EscapeStringLiteral(rewritten_format) + "\"";
-    for (const auto& arg : rewritten_args) {
+    std::string call = "pypto::aicore::printf(\"" + debug_printf::EscapeStringLiteral(rewrittenFormat) + "\"";
+    for (const auto& arg : rewrittenArgs) {
         call += ", " + arg;
     }
     return call + ");";
 }
 
-static std::vector<std::string> BuildTensorDumpStride(codegen::CCECodegen& codegen,
-                                                      const ir::TensorTypePtr& tensor_type)
+static std::vector<std::string> BuildTensorDumpStride(codegen::CCECodegen& codegen, const ir::TensorTypePtr& tensorType)
 {
-    const size_t rank = tensor_type->shape_.size();
+    const size_t rank = tensorType->shape_.size();
     std::vector<std::string> stride(rank, "1");
-    if (cce::IsNZTensorType(tensor_type)) {
+    if (cce::IsNZTensorType(tensorType)) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, rank >= 2)
             << "debug.dump_tensor NZ lowering requires a tensor rank of at least 2";
-        const size_t row_axis = rank - 2;
-        const int64_t c0 = cce::GetNZInnerCols(tensor_type->dtype_);
-        const std::string padded_rows = codegen.ComputeAlignedShapeDimension(tensor_type->shape_[row_axis], 16);
-        const std::string padded_cols = codegen.ComputeAlignedShapeDimension(tensor_type->shape_[rank - 1], c0);
-        for (size_t axis = 0; axis < row_axis; ++axis) {
+        const size_t rowAxis = rank - 2;
+        const int64_t c0 = cce::GetNZInnerCols(tensorType->dtype_);
+        const std::string paddedRows = codegen.ComputeAlignedShapeDimension(tensorType->shape_[rowAxis], 16);
+        const std::string paddedCols = codegen.ComputeAlignedShapeDimension(tensorType->shape_[rank - 1], c0);
+        for (size_t axis = 0; axis < rowAxis; ++axis) {
             std::vector<std::string> factors;
-            for (size_t inner = axis + 1; inner < row_axis; ++inner) {
-                factors.push_back(codegen.GetExprAsCode(tensor_type->shape_[inner]));
+            for (size_t inner = axis + 1; inner < rowAxis; ++inner) {
+                factors.push_back(codegen.GetExprAsCode(tensorType->shape_[inner]));
             }
-            factors.push_back(padded_rows);
-            factors.push_back(padded_cols);
+            factors.push_back(paddedRows);
+            factors.push_back(paddedCols);
             stride[axis] = "(" + JoinExpressions(factors, " * ") + ")";
         }
-        stride[row_axis] = padded_rows;
+        stride[rowAxis] = paddedRows;
         stride[rank - 1] = std::to_string(c0);
         return stride;
     }
 
-    return codegen.BuildTensorStrideExpressions(tensor_type);
+    return codegen.BuildTensorStrideExpressions(tensorType);
 }
 
-static void EmitDumpMetadataCCE(codegen::CCECodegen& codegen, const ir::CallPtr& op, const std::string& op_name)
+static void EmitDumpMetadataCCE(codegen::CCECodegen& codegen, const ir::CallPtr& op, const std::string& opName)
 {
     if (op->GetKwarg<bool>("show_location", false)) {
-        EmitDebugLocationHeaderCCE(codegen, op->span_, op_name);
+        EmitDebugLocationHeaderCCE(codegen, op->span_, opName);
     }
-    std::string dump_flag = op->HasKwarg("dump_flag") ? op->GetKwarg<std::string>("dump_flag") : "";
-    if (dump_flag.empty()) {
+    std::string dumpFlag = op->HasKwarg("dump_flag") ? op->GetKwarg<std::string>("dump_flag") : "";
+    if (dumpFlag.empty()) {
         return;
     }
-    codegen.Emit("pypto::aicore::printf(\"[flag] %s\\n\", \"" + debug_printf::EscapeStringLiteral(dump_flag) + "\");");
+    codegen.Emit("pypto::aicore::printf(\"[flag] %s\\n\", \"" + debug_printf::EscapeStringLiteral(dumpFlag) + "\");");
 }
 
-static std::string MakeDebugDumpTensorCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDebugDumpTensorCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1 || op->args_.size() == 3)
         << "debug.dump_tensor requires 1 or 3 arguments, but got " << op->args_.size();
-    auto tensor_var = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tensor_var) << "debug.dump_tensor first argument must be a Var";
-    auto tensor_type = ir::As<ir::TensorType>(tensor_var->GetType());
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tensor_type)
-        << "debug.dump_tensor first argument must be TensorType";
-    const int debug_id = NextDebugDumpId();
-    const std::string tensor_name = codegen.GetVarName(tensor_var);
-    std::string base_ptr = codegen.GetPointer(tensor_name);
-    if (base_ptr.empty()) {
-        base_ptr = tensor_name + ".data()";
+    auto tensorVar = ir::As<ir::Var>(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tensorVar) << "debug.dump_tensor first argument must be a Var";
+    auto tensorType = ir::As<ir::TensorType>(tensorVar->GetType());
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tensorType) << "debug.dump_tensor first argument must be TensorType";
+    const int debugId = NextDebugDumpId();
+    const std::string tensorName = codegen.GetVarName(tensorVar);
+    std::string basePtr = codegen.GetPointer(tensorName);
+    if (basePtr.empty()) {
+        basePtr = tensorName + ".data()";
     }
-    const std::string metadata_prefix = "__debug_dump_tensor_" + std::to_string(debug_id);
-    const std::string source_shape_name = metadata_prefix + "_source_shape";
-    const std::string offsets_name = metadata_prefix + "_offsets";
-    const std::string shape_name = metadata_prefix + "_shape";
-    const std::string stride_name = metadata_prefix + "_stride";
-    const size_t rank = tensor_type->shape_.size();
+    const std::string metadataPrefix = "__debug_dump_tensor_" + std::to_string(debugId);
+    const std::string sourceShapeName = metadataPrefix + "_source_shape";
+    const std::string offsetsName = metadataPrefix + "_offsets";
+    const std::string shapeName = metadataPrefix + "_shape";
+    const std::string strideName = metadataPrefix + "_stride";
+    const size_t rank = tensorType->shape_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, rank >= 1 && rank <= 5)
         << "debug.dump_tensor currently supports tensor rank 1..5, but got " << rank;
-    const auto get_expr_codes = [&codegen](const std::vector<ir::ExprPtr>& expressions) {
+    const auto getExprCodes = [&codegen](const std::vector<ir::ExprPtr>& expressions) {
         std::vector<std::string> result;
         result.reserve(expressions.size());
         for (const auto& expression : expressions) {
@@ -239,54 +237,52 @@ static std::string MakeDebugDumpTensorCodegenCCE(const ir::CallPtr& op, codegen:
         return result;
     };
     std::vector<std::string> offsets(rank, "0");
-    std::vector<ir::ExprPtr> shape_exprs = tensor_type->shape_;
-    const bool is_nz = cce::IsNZTensorType(tensor_type);
+    std::vector<ir::ExprPtr> shapeExprs = tensorType->shape_;
+    const bool isNz = cce::IsNZTensorType(tensorType);
     if (op->args_.size() == 3) {
-        auto offsets_tuple = ir::As<ir::MakeTuple>(op->args_[1]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, offsets_tuple)
+        auto offsetsTuple = ir::As<ir::MakeTuple>(op->args_[1]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, offsetsTuple)
             << "debug.dump_tensor second argument must be a tuple (offsets)";
-        auto shapes_tuple = ir::As<ir::MakeTuple>(op->args_[2]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, shapes_tuple)
+        auto shapesTuple = ir::As<ir::MakeTuple>(op->args_[2]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, shapesTuple)
             << "debug.dump_tensor third argument must be a tuple (shapes)";
-        offsets = get_expr_codes(offsets_tuple->elements_);
-        shape_exprs = shapes_tuple->elements_;
-        if (is_nz) {
-            const size_t col_axis = tensor_type->shape_.size() - 1;
-            const int64_t c0 = cce::GetNZInnerCols(tensor_type->dtype_);
-            const auto known_col_offset = ir::GetConstantDimension(offsets_tuple->elements_[col_axis]);
+        offsets = getExprCodes(offsetsTuple->elements_);
+        shapeExprs = shapesTuple->elements_;
+        if (isNz) {
+            const size_t colAxis = tensorType->shape_.size() - 1;
+            const int64_t c0 = cce::GetNZInnerCols(tensorType->dtype_);
+            const auto knownColOffset = ir::GetConstantDimension(offsetsTuple->elements_[colAxis]);
             PRO_CODEGEN_CHECK(ExternalError::INVALID_FORMAT,
-                              !known_col_offset.has_value() || known_col_offset.value() % c0 == 0)
+                              !knownColOffset.has_value() || knownColOffset.value() % c0 == 0)
                 << "debug.dump_tensor: NZ column offset must be divisible by C0";
         }
     }
-    const auto source_shape = get_expr_codes(tensor_type->shape_);
-    const auto shape = get_expr_codes(shape_exprs);
-    const auto stride = BuildTensorDumpStride(codegen, tensor_type);
+    const auto sourceShape = getExprCodes(tensorType->shape_);
+    const auto shape = getExprCodes(shapeExprs);
+    const auto stride = BuildTensorDumpStride(codegen, tensorType);
 
-    const std::string layout_name = is_nz ? "NZ" : "ND";
-    const std::string layout = "pypto::aicore::DumpLayout::" + layout_name;
+    const std::string layoutName = isNz ? "NZ" : "ND";
+    const std::string layout = "pypto::aicore::DumpLayout::" + layoutName;
 
     EmitDumpMetadataCCE(codegen, op, "dump_tensor");
-    const std::string rank_str = std::to_string(rank);
-    codegen.Emit("int64_t " + source_shape_name + "[" + rank_str + "] = {" + JoinExpressions(source_shape, ", ") +
-                 "};");
-    codegen.Emit("int64_t " + offsets_name + "[" + rank_str + "] = {" + JoinExpressions(offsets, ", ") + "};");
-    codegen.Emit("int64_t " + shape_name + "[" + rank_str + "] = {" + JoinExpressions(shape, ", ") + "};");
-    codegen.Emit("int64_t " + stride_name + "[" + rank_str + "] = {" + JoinExpressions(stride, ", ") + "};");
-    const std::string view_name = metadata_prefix + "_view";
-    const std::string inner_rows = is_nz ? "16" : "1";
-    const std::string inner_cols = is_nz ? stride_name + "[" + std::to_string(rank - 1) + "]" : "1";
-    codegen.Emit("const pypto::aicore::DumpTensorView " + view_name + " = {" + source_shape_name + ", " + offsets_name +
-                 ", " + shape_name + ", " + stride_name + ", " + rank_str + "U, " + inner_rows + ", " + inner_cols +
-                 "};");
-    codegen.Emit("PYPTO_DUMP_TENSOR(" + layout + ", " + rank_str + ", " + base_ptr + ", " + std::to_string(debug_id) +
-                 ", " + view_name + ");");
+    const std::string rankStr = std::to_string(rank);
+    codegen.Emit("int64_t " + sourceShapeName + "[" + rankStr + "] = {" + JoinExpressions(sourceShape, ", ") + "};");
+    codegen.Emit("int64_t " + offsetsName + "[" + rankStr + "] = {" + JoinExpressions(offsets, ", ") + "};");
+    codegen.Emit("int64_t " + shapeName + "[" + rankStr + "] = {" + JoinExpressions(shape, ", ") + "};");
+    codegen.Emit("int64_t " + strideName + "[" + rankStr + "] = {" + JoinExpressions(stride, ", ") + "};");
+    const std::string viewName = metadataPrefix + "_view";
+    const std::string innerRows = isNz ? "16" : "1";
+    const std::string innerCols = isNz ? strideName + "[" + std::to_string(rank - 1) + "]" : "1";
+    codegen.Emit("const pypto::aicore::DumpTensorView " + viewName + " = {" + sourceShapeName + ", " + offsetsName +
+                 ", " + shapeName + ", " + strideName + ", " + rankStr + "U, " + innerRows + ", " + innerCols + "};");
+    codegen.Emit("PYPTO_DUMP_TENSOR(" + layout + ", " + rankStr + ", " + basePtr + ", " + std::to_string(debugId) +
+                 ", " + viewName + ");");
     return "";
 }
 
-static std::string MakeDebugPrintfCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDebugPrintfCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
 
     std::string format = op->GetKwarg<std::string>("format");
     if (op->GetKwarg<bool>("show_location", false)) {
@@ -297,72 +293,72 @@ static std::string MakeDebugPrintfCodegenCCE(const ir::CallPtr& op, codegen::Cod
     }
 
     std::vector<std::string> args;
-    std::vector<DataType> arg_dtypes;
+    std::vector<DataType> argDtypes;
     args.reserve(op->args_.size());
-    arg_dtypes.reserve(op->args_.size());
+    argDtypes.reserve(op->args_.size());
 
     for (size_t i = 0; i < op->args_.size(); ++i) {
         args.emplace_back(codegen.GetExprAsCode(op->args_[i]));
         if (ir::As<ir::PtrType>(op->args_[i]->GetType())) {
             // Pointer arguments are passed directly to PTO printf.
-            arg_dtypes.emplace_back(DataType::INT64);
+            argDtypes.emplace_back(DataType::INT64);
         } else {
-            auto scalar_type = ir::As<ir::ScalarType>(op->args_[i]->GetType());
-            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalar_type)
+            auto scalarType = ir::As<ir::ScalarType>(op->args_[i]->GetType());
+            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalarType)
                 << "debug.printf argument must be ScalarType in CCE lowering";
-            arg_dtypes.emplace_back(scalar_type->dtype_);
+            argDtypes.emplace_back(scalarType->dtype_);
         }
     }
 
-    std::string call = BuildPtoPrintfCall(format, args, arg_dtypes);
+    std::string call = BuildPtoPrintfCall(format, args, argDtypes);
     if (!call.empty()) {
         codegen.Emit(call);
     }
     return "";
 }
 
-static std::string MakeDebugDumpTileCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDebugDumpTileCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1 || op->args_.size() == 3)
         << "debug.dump_tile requires 1 argument (tile) or 3 arguments (tile, offsets, shapes), but got "
         << op->args_.size();
     const std::string src = cce::GetOperandAsCode(codegen, op->args_[0]);
-    auto tile_type = ir::As<ir::TileType>(op->args_[0]->GetType());
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tile_type) << "debug.dump_tile first argument must be TileType";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, tile_type->shape_.size() == 2)
+    auto tileType = ir::As<ir::TileType>(op->args_[0]->GetType());
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tileType) << "debug.dump_tile first argument must be TileType";
+    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, tileType->shape_.size() == 2)
         << "debug.dump_tile CCE lowering currently only supports 2D tiles";
     PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE,
-                      ir::As<ir::ConstInt>(tile_type->shape_[0]) && ir::As<ir::ConstInt>(tile_type->shape_[1]))
+                      ir::As<ir::ConstInt>(tileType->shape_[0]) && ir::As<ir::ConstInt>(tileType->shape_[1]))
         << "debug.dump_tile CCE lowering requires static physical tile shape";
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, tile_type->memref_.has_value())
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, tileType->memref_.has_value())
         << "debug.dump_tile requires tile to have a memref";
 
-    std::string row_offset = "0";
-    std::string col_offset = "0";
-    std::string rows = codegen.GetExprAsCode(tile_type->shape_[0]);
-    std::string cols = codegen.GetExprAsCode(tile_type->shape_[1]);
+    std::string rowOffset = "0";
+    std::string colOffset = "0";
+    std::string rows = codegen.GetExprAsCode(tileType->shape_[0]);
+    std::string cols = codegen.GetExprAsCode(tileType->shape_[1]);
     if (op->args_.size() == 3) {
         auto offsets = ir::As<ir::MakeTuple>(op->args_[1]);
         auto shapes = ir::As<ir::MakeTuple>(op->args_[2]);
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, offsets && shapes)
             << "debug.dump_tile offsets and shapes must be tuples";
-        row_offset = codegen.GetExprAsCode(offsets->elements_[0]);
-        col_offset = codegen.GetExprAsCode(offsets->elements_[1]);
+        rowOffset = codegen.GetExprAsCode(offsets->elements_[0]);
+        colOffset = codegen.GetExprAsCode(offsets->elements_[1]);
         rows = codegen.GetExprAsCode(shapes->elements_[0]);
         cols = codegen.GetExprAsCode(shapes->elements_[1]);
     }
 
-    const int debug_id = NextDebugDumpId();
-    const auto tile_layout = cce::GetTileTensorLayout(tile_type->hardwareInfo_.value_or(ir::HardwareInfo{}));
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_FORMAT, tile_layout.has_value())
+    const int debugId = NextDebugDumpId();
+    const auto tileLayout = cce::GetTileTensorLayout(tileType->hardwareInfo_.value_or(ir::HardwareInfo{}));
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_FORMAT, tileLayout.has_value())
         << "debug.dump_tile has an unsupported Tile layout";
-    const std::string layout_name = ir::EnumToString(tile_layout.value());
-    const std::string layout = "pypto::aicore::DumpLayout::" + layout_name.substr(layout_name.find("::") + 2);
+    const std::string layoutName = ir::EnumToString(tileLayout.value());
+    const std::string layout = "pypto::aicore::DumpLayout::" + layoutName.substr(layoutName.find("::") + 2);
 
     EmitDumpMetadataCCE(codegen, op, "dump_tile");
     codegen.Emit("PYPTO_DUMP_TILE_WINDOW(" + layout + ", " +
-                 JoinExpressions({src, std::to_string(debug_id), row_offset, col_offset, rows, cols}, ", ") + ");");
+                 JoinExpressions({src, std::to_string(debugId), rowOffset, colOffset, rows, cols}, ", ") + ");");
     return "";
 }
 
@@ -371,10 +367,10 @@ static std::string MakeDebugDumpTileCodegenCCE(const ir::CallPtr& op, codegen::C
 // (AIV: global AIV index; AIC: AIC index) and resolves to the SuperKernel per-core
 // record or the raw builtin at compile time (__PYPTO_SK_BLOCK__), so the generated
 // source is identical for both builds.
-static std::string MakeBlockGetBlockIdxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeBlockGetBlockIdxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 0) << "get_block_idx requires no arguments";
-    (void)codegen_base;
+    (void)codegenBase;
     return "(int64_t)(__pypto_block_idx_value())";
 }
 
@@ -386,20 +382,20 @@ static std::string MakeBlockGetBlockIdxCodegenCCE(const ir::CallPtr& op, codegen
 // Reading it directly keeps the op independent of the AscendC list-tensor header (no include is
 // injected) and identical on the pto-isa (direct-launch) and OPC paths, matching dynamic_input_dim.
 // Returns a pointer expression (not a value); a following ptr.make_tensor turns it into a typed view.
-static std::string MakeBlockDynamicInputPtrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeBlockDynamicInputPtrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "dynamic_input_ptr requires 2 arguments";
-    auto& cg = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& cg = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     std::string x = cg.GetExprAsCode(op->args_[0]);
     std::string i = cg.GetExprAsCode(op->args_[1]);
-    auto ptr_type = ir::As<ir::PtrType>(op->GetType());
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, ptr_type != nullptr) << "dynamic_input_ptr result must be a PtrType";
-    std::string ctype = ptr_type->dtype_.ToCTypeString();
+    auto ptrType = ir::As<ir::PtrType>(op->GetType());
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, ptrType != nullptr) << "dynamic_input_ptr result must be a PtrType";
+    std::string ctype = ptrType->dtype_.ToCTypeString();
     // Unmapped dtypes (DT_INT4/DT_UINT4/DT_FP4/DT_HF4) would fall back to "unknown"; fail loudly
     // instead of emitting a broken `__gm__ unknown*`.
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, ctype != "unknown")
-        << "dynamic_input_ptr: descriptor dtype " << ptr_type->dtype_.ToString()
+        << "dynamic_input_ptr: descriptor dtype " << ptrType->dtype_.ToString()
         << " has no C type mapping (DT_INT4/DT_UINT4/DT_FP4/DT_HF4 are not usable here)";
     std::string word0 = "*reinterpret_cast<__gm__ uint64_t*>(" + x + ")";
     return "(reinterpret_cast<__gm__ " + ctype + "*>(*(reinterpret_cast<__gm__ uint64_t*>(" +
@@ -413,11 +409,11 @@ static std::string MakeBlockDynamicInputPtrCodegenCCE(const ir::CallPtr& op, cod
 //   word[0] = dataPtrOffset; word[1] = dim(low32) | count(high32);
 //   shape structs: <count> entries of (1+dim) words at word[1..];
 //   tensor i's shape[axis] is word[1 + i*(1 + dim) + 1 + axis].
-static std::string MakeBlockDynamicInputDimCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeBlockDynamicInputDimCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "dynamic_input_dim requires 3 arguments";
-    auto& cg = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& cg = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     std::string x = cg.GetExprAsCode(op->args_[0]);
     std::string i = cg.GetExprAsCode(op->args_[1]);
     std::string axis = cg.GetExprAsCode(op->args_[2]);
@@ -463,9 +459,9 @@ static void DeclareTile(codegen::CCECodegen& codegen, const ir::TileTypePtr& typ
 }
 
 // Construct the complete descriptor at the allocation op, where all operands are in scope.
-static std::string MakeBlockCreateMutexTileCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeBlockCreateMutexTileCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const auto target = codegen.GetCurrentResultTarget();
     auto type = ir::As<ir::TileType>(op->GetType());
     std::vector<std::string> ids;
@@ -487,27 +483,27 @@ static std::string MakeBlockCreateMutexTileCodegenCCE(const ir::CallPtr& op, cod
 // GetExprAsCode instead of relying on PtrType base/offset annotations (those are ptoas-only).
 // The view's access_shape/is_transpose/tile_dims come from the prescanned TensorDefs, looked up
 // by the assignment target name -- one per layout its accesses need. Returns "" (no inline value).
-static std::string MakeBlockMakeTensorCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeBlockMakeTensorCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& cg = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& cg = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string name = cg.GetCurrentResultTarget();
     // The source of the view is either a raw pointer (PtrType) or an existing tensor (TensorType,
     // re-viewed with a new shape/stride). Resolve the base pointer accordingly and record the
     // source element dtype.
-    std::string ptr_code;
-    ir::DataType source_dtype;
-    if (auto ptr_type = ir::As<ir::PtrType>(op->args_[0]->GetType())) {
-        ptr_code = cce::GetOperandAsCode(cg, op->args_[0]);
-        source_dtype = ptr_type->dtype_;
-    } else if (auto src_tensor_type = ir::As<ir::TensorType>(op->args_[0]->GetType())) {
+    std::string ptrCode;
+    ir::DataType sourceDtype;
+    if (auto ptrType = ir::As<ir::PtrType>(op->args_[0]->GetType())) {
+        ptrCode = cce::GetOperandAsCode(cg, op->args_[0]);
+        sourceDtype = ptrType->dtype_;
+    } else if (auto srcTensorType = ir::As<ir::TensorType>(op->args_[0]->GetType())) {
         // Re-view of an existing tensor: reuse its already-registered base pointer (a function
         // parameter's "<name>_ptr" or an earlier make_tensor view's pointer).
-        auto src_var = std::dynamic_pointer_cast<const ir::Var>(op->args_[0]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_var != nullptr)
+        auto srcVar = std::dynamic_pointer_cast<const ir::Var>(op->args_[0]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcVar != nullptr)
             << "ptr.make_tensor from a tensor requires the source to be a tensor variable";
-        const std::string src_name = cg.GetVarName(src_var);
-        ptr_code = cg.HasPointer(src_name) ? cg.GetPointer(src_name) : (src_name + ".data()");
-        source_dtype = src_tensor_type->dtype_;
+        const std::string srcName = cg.GetVarName(srcVar);
+        ptrCode = cg.HasPointer(srcName) ? cg.GetPointer(srcName) : (srcName + ".data()");
+        sourceDtype = srcTensorType->dtype_;
     } else {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false)
             << "ptr.make_tensor source must be a PtrType or TensorType";
@@ -516,11 +512,11 @@ static std::string MakeBlockMakeTensorCodegenCCE(const ir::CallPtr& op, codegen:
     // pointer reinterpreted as an fp16 view via ptr.make_tensor(..., dtype=FP16)). The
     // GlobalTensor<element_type> instance is constructed from this pointer, so reinterpret-cast
     // the base pointer to the view element type when the dtypes differ (a no-op when they match).
-    auto tensor_type = ir::As<ir::TensorType>(op->GetType());
-    if (tensor_type && !(source_dtype == tensor_type->dtype_)) {
-        ptr_code = "(__gm__ " + tensor_type->dtype_.ToCTypeString() + "*)(" + ptr_code + ")";
+    auto tensorType = ir::As<ir::TensorType>(op->GetType());
+    if (tensorType && !(sourceDtype == tensorType->dtype_)) {
+        ptrCode = "(__gm__ " + tensorType->dtype_.ToCTypeString() + "*)(" + ptrCode + ")";
     }
-    cg.RegisterPointer(name, ptr_code);
+    cg.RegisterPointer(name, ptrCode);
     for (const codegen::TensorDef* def : cg.GetTensorDefs(name)) {
         cg.GenerateGlobalTensorTypeDeclaration(*def);
     }
@@ -530,9 +526,9 @@ static std::string MakeBlockMakeTensorCodegenCCE(const ir::CallPtr& op, codegen:
 // Helper for ptr.addptr / advancing a raw pointer by an element offset. Emits no
 // statement; returns the pointer-arithmetic expression so the result var maps to
 // it (used as a base address by a subsequent ptr.make_tensor).
-static std::string MakePtrAddPtrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakePtrAddPtrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "ptr.addptr requires 2 arguments: ptr, offset";
     std::string ptr = cce::GetOperandAsCode(codegen, op->args_[0]);
@@ -543,40 +539,39 @@ static std::string MakePtrAddPtrCodegenCCE(const ir::CallPtr& op, codegen::Codeg
 // Helper for ptr.make_ptr / reinterpreting a raw pointer (or extracting a pointer from a
 // tensor) as a different element type. Emits no statement; returns the expression so the
 // result var maps to it (used as a base address by a subsequent ptr.addptr / ptr.make_tensor).
-static std::string MakePtrMakePtrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakePtrMakePtrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
         << "ptr.make_ptr requires 1 argument: ptr";
     std::string ptr;
-    if (auto ptr_type = ir::As<ir::PtrType>(op->args_[0]->GetType())) {
+    if (auto ptrType = ir::As<ir::PtrType>(op->args_[0]->GetType())) {
         ptr = cce::GetOperandAsCode(codegen, op->args_[0]);
     } else if (ir::As<ir::TensorType>(op->args_[0]->GetType())) {
-        auto src_var = std::dynamic_pointer_cast<const ir::Var>(op->args_[0]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_var != nullptr)
+        auto srcVar = std::dynamic_pointer_cast<const ir::Var>(op->args_[0]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcVar != nullptr)
             << "ptr.make_ptr from a tensor requires the source to be a tensor variable";
-        const std::string src_name = codegen.GetVarName(src_var);
-        ptr = codegen.HasPointer(src_name) ? codegen.GetPointer(src_name) : (src_name + ".data()");
+        const std::string srcName = codegen.GetVarName(srcVar);
+        ptr = codegen.HasPointer(srcName) ? codegen.GetPointer(srcName) : (srcName + ".data()");
     } else {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false) << "ptr.make_ptr source must be a PtrType or TensorType";
     }
-    auto result_ptr_type = ir::As<ir::PtrType>(op->GetType());
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, result_ptr_type != nullptr)
-        << "ptr.make_ptr result must be a PtrType";
-    return "((__gm__ " + result_ptr_type->dtype_.ToCTypeString() + "*)(" + ptr + "))";
+    auto resultPtrType = ir::As<ir::PtrType>(op->GetType());
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, resultPtrType != nullptr) << "ptr.make_ptr result must be a PtrType";
+    return "((__gm__ " + resultPtrType->dtype_.ToCTypeString() + "*)(" + ptr + "))";
 }
 
 static std::string MakeBlockReinterpretCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(base);
-    auto tile_type = ir::As<ir::TileType>(op->GetType());
+    auto tileType = ir::As<ir::TileType>(op->GetType());
     const std::string target = codegen.GetCurrentResultTarget();
     PRO_CODEGEN_IRCHECK(ExternalError::INVALID_OPERATION, !target.empty())
         << "reinterpret must be assigned to an IR value";
-    std::string source_tile = cce::GetOperandAsCode(codegen, op->args_[0]);
-    DeclareTile(codegen, tile_type, target, TileConstructorArgs(codegen, tile_type),
+    std::string sourceTile = cce::GetOperandAsCode(codegen, op->args_[0]);
+    DeclareTile(codegen, tileType, target, TileConstructorArgs(codegen, tileType),
                 InheritedMutexIds(codegen, op->args_[0]));
-    codegen.Emit("TASSIGN(" + target + ".tile, (uint64_t)" + source_tile + ".data());");
+    codegen.Emit("TASSIGN(" + target + ".tile, (uint64_t)" + sourceTile + ".data());");
     return target;
 }
 
@@ -650,9 +645,9 @@ REGISTER_BACKEND_OP(BackendCCE, "dynamic_input_dim")
     });
 
 // Helper function for get_spr (reads AR special purpose register via get_ar())
-static std::string MakeGetSprCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeGetSprCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    (void)codegen_base;
+    (void)codegenBase;
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 0) << "get_spr requires no arguments";
     return "get_ar()";
 }
@@ -662,9 +657,9 @@ REGISTER_BACKEND_OP(BackendCCE, "get_spr")
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) { return MakeGetSprCodegenCCE(op, codegen); });
 
 // Helper function for get_cycle (reads the system cycle counter via get_sys_cnt())
-static std::string MakeGetCycleCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeGetCycleCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    (void)codegen_base;
+    (void)codegenBase;
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 0) << "get_cycle requires no arguments";
     return "(int64_t)(get_sys_cnt())";
 }
@@ -679,7 +674,7 @@ REGISTER_BACKEND_OP(BackendCCE, "get_cycle")
 // Saturation flag (CTRL register bit manipulation)
 // ============================================================================
 
-static int8_t GetSaturationModeBit(ir::SaturationFlagMode mode, const std::string& op_name)
+static int8_t GetSaturationModeBit(ir::SaturationFlagMode mode, const std::string& opName)
 {
     switch (mode) {
         case ir::SaturationFlagMode::FLOAT:
@@ -691,7 +686,7 @@ static int8_t GetSaturationModeBit(ir::SaturationFlagMode mode, const std::strin
         case ir::SaturationFlagMode::CAST:
             return 59;
         default:
-            PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, false) << op_name << ": unsupported mode";
+            PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, false) << opName << ": unsupported mode";
             return -1;
     }
 }
@@ -704,9 +699,9 @@ static bool IsInvertedPolarity(ir::SaturationFlagMode mode)
            mode == ir::SaturationFlagMode::CAST;
 }
 
-static std::string MakeSetSaturationFlagCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeSetSaturationFlagCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->HasKwarg("mode"))
         << "set_saturation_flag requires 'mode' kwarg";
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->HasKwarg("enable"))
@@ -719,13 +714,13 @@ static std::string MakeSetSaturationFlagCodegenCCE(const ir::CallPtr& op, codege
 
     // For inverted polarity: enable=true → set bit to 0 (sbitset0), enable=false → set bit to 1 (sbitset1)
     // For normal polarity (INT): enable=true → set bit to 1 (sbitset1), enable=false → set bit to 0 (sbitset0)
-    std::string set_fn;
+    std::string setFn;
     if (inverted) {
-        set_fn = enable ? "sbitset0" : "sbitset1";
+        setFn = enable ? "sbitset0" : "sbitset1";
     } else {
-        set_fn = enable ? "sbitset1" : "sbitset0";
+        setFn = enable ? "sbitset1" : "sbitset0";
     }
-    codegen.Emit("set_ctrl(" + set_fn + "(get_ctrl(), " + std::to_string(bit) + "));");
+    codegen.Emit("set_ctrl(" + setFn + "(get_ctrl(), " + std::to_string(bit) + "));");
     return "";
 }
 
@@ -735,9 +730,9 @@ REGISTER_BACKEND_OP(BackendCCE, "set_saturation_flag")
         return MakeSetSaturationFlagCodegenCCE(op, codegen);
     });
 
-static std::string MakeGetSaturationFlagCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeGetSaturationFlagCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    (void)codegen_base;
+    (void)codegenBase;
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->HasKwarg("mode"))
         << "get_saturation_flag requires 'mode' kwarg";
     auto mode = static_cast<ir::SaturationFlagMode>(op->GetKwarg<int>("mode"));
@@ -763,45 +758,45 @@ REGISTER_BACKEND_OP(BackendCCE, "get_saturation_flag")
 // ============================================================================
 
 // A5 writable CTRL bits: 6-10 (range), 45, 48, 50, 53, 59, 60 (single bits)
-static void CheckCtrlBitRange(int8_t startBit, int8_t endBit, const std::string& op_name)
+static void CheckCtrlBitRange(int8_t startBit, int8_t endBit, const std::string& opName)
 {
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, startBit >= 0 && endBit < 64 && startBit <= endBit)
-        << op_name << ": invalid bit range [" << static_cast<int>(startBit) << ", " << static_cast<int>(endBit)
+        << opName << ": invalid bit range [" << static_cast<int>(startBit) << ", " << static_cast<int>(endBit)
         << "], must be 0 <= startBit <= endBit < 64";
     bool valid = (6 <= startBit && startBit <= 10 && 6 <= endBit && endBit <= 10) ||
                  (startBit == endBit && (startBit == 45 || startBit == 48 || startBit == 50 || startBit == 53 ||
                                          startBit == 59 || startBit == 60));
     PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, valid)
-        << op_name << ": bits [" << static_cast<int>(startBit) << ", " << static_cast<int>(endBit)
+        << opName << ": bits [" << static_cast<int>(startBit) << ", " << static_cast<int>(endBit)
         << "] are not writable on current device. Writable: bits 6-10, 45, 48, 50, 53, 59, 60";
 }
 
-static std::string MakeSetCtrlSprCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeSetCtrlSprCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "set_ctrl_spr requires 3 args (start_bit, end_bit, value)";
-    auto start_val = ir::As<ir::ConstInt>(op->args_[0]);
-    auto end_val = ir::As<ir::ConstInt>(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, start_val != nullptr && end_val != nullptr)
+    auto startVal = ir::As<ir::ConstInt>(op->args_[0]);
+    auto endVal = ir::As<ir::ConstInt>(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, startVal != nullptr && endVal != nullptr)
         << "set_ctrl_spr: start_bit and end_bit must be compile-time constants";
-    int8_t startBit = static_cast<int8_t>(start_val->value_);
-    int8_t endBit = static_cast<int8_t>(end_val->value_);
+    int8_t startBit = static_cast<int8_t>(startVal->value_);
+    int8_t endBit = static_cast<int8_t>(endVal->value_);
     CheckCtrlBitRange(startBit, endBit, "set_ctrl_spr");
-    auto value_const = ir::As<ir::ConstInt>(op->args_[2]);
-    if (value_const != nullptr && startBit >= 6 && endBit <= 10) {
+    auto valueConst = ir::As<ir::ConstInt>(op->args_[2]);
+    if (valueConst != nullptr && startBit >= 6 && endBit <= 10) {
         // CTRL[8:6]=3'b111 (atomic operand dtype) and CTRL[10:9]=2'b11 (atomic op
         // type) are undefined encodings that fault the device — reject up front.
-        int64_t v = value_const->value_ & ((int64_t(1) << (endBit - startBit + 1)) - 1);
+        int64_t v = valueConst->value_ & ((int64_t(1) << (endBit - startBit + 1)) - 1);
         if (startBit <= 6 && endBit >= 8 && ((v >> (6 - startBit)) & 0x7) == 0x7) {
             PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false)
-                << "set_ctrl_spr: value " << value_const->value_
+                << "set_ctrl_spr: value " << valueConst->value_
                 << " sets CTRL[8:6]=3'b111, an undefined atomic operand dtype "
                 << "(supported: 0-6 = none/float/half/int16/int32/int8/bfloat16)";
         }
         if (startBit <= 9 && endBit >= 10 && ((v >> (9 - startBit)) & 0x3) == 0x3) {
             PRO_CODEGEN_CHECK(ExternalError::NAME_ERROR, false)
-                << "set_ctrl_spr: value " << value_const->value_
+                << "set_ctrl_spr: value " << valueConst->value_
                 << " sets CTRL[10:9]=2'b11, an undefined atomic op type "
                 << "(supported: 0-2 = ADD/MAX/MIN)";
         }
@@ -823,17 +818,17 @@ REGISTER_BACKEND_OP(BackendCCE, "set_ctrl_spr")
         return MakeSetCtrlSprCodegenCCE(op, codegen);
     });
 
-static std::string MakeGetCtrlSprCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeGetCtrlSprCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    (void)codegen_base;
+    (void)codegenBase;
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "get_ctrl_spr requires 2 args (start_bit, end_bit)";
-    auto start_val = ir::As<ir::ConstInt>(op->args_[0]);
-    auto end_val = ir::As<ir::ConstInt>(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, start_val != nullptr && end_val != nullptr)
+    auto startVal = ir::As<ir::ConstInt>(op->args_[0]);
+    auto endVal = ir::As<ir::ConstInt>(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, startVal != nullptr && endVal != nullptr)
         << "get_ctrl_spr: start_bit and end_bit must be compile-time constants";
-    int8_t startBit = static_cast<int8_t>(start_val->value_);
-    int8_t endBit = static_cast<int8_t>(end_val->value_);
+    int8_t startBit = static_cast<int8_t>(startVal->value_);
+    int8_t endBit = static_cast<int8_t>(endVal->value_);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, startBit >= 0 && endBit < 64 && startBit <= endBit)
         << "get_ctrl_spr: invalid bit range [" << static_cast<int>(startBit) << ", " << static_cast<int>(endBit) << "]";
     if (endBit - startBit == 63) {
@@ -849,17 +844,17 @@ REGISTER_BACKEND_OP(BackendCCE, "get_ctrl_spr")
         return MakeGetCtrlSprCodegenCCE(op, codegen);
     });
 
-static std::string MakeResetCtrlSprCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeResetCtrlSprCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "reset_ctrl_spr requires 2 args (start_bit, end_bit)";
-    auto start_val = ir::As<ir::ConstInt>(op->args_[0]);
-    auto end_val = ir::As<ir::ConstInt>(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, start_val != nullptr && end_val != nullptr)
+    auto startVal = ir::As<ir::ConstInt>(op->args_[0]);
+    auto endVal = ir::As<ir::ConstInt>(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, startVal != nullptr && endVal != nullptr)
         << "reset_ctrl_spr: start_bit and end_bit must be compile-time constants";
-    int8_t startBit = static_cast<int8_t>(start_val->value_);
-    int8_t endBit = static_cast<int8_t>(end_val->value_);
+    int8_t startBit = static_cast<int8_t>(startVal->value_);
+    int8_t endBit = static_cast<int8_t>(endVal->value_);
     CheckCtrlBitRange(startBit, endBit, "reset_ctrl_spr");
     constexpr int64_t defaultCtrl = 0x1000000000000008LL;
     if (endBit - startBit == 63) {
@@ -892,11 +887,11 @@ REGISTER_BACKEND_OP(BackendCCE, "reset_ctrl_spr")
 // ============================================================================
 
 [[maybe_unused]] static std::string MakeTileTransposeCodegenCCE(const ir::CallPtr& op,
-                                                                codegen::CodegenBase& codegen_base)
+                                                                codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    std::string target_var = codegen.GetCurrentResultTarget();
-    std::string input_var = cce::GetOperandAsCode(codegen, op->args_[0]);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    std::string targetVar = codegen.GetCurrentResultTarget();
+    std::string inputVar = cce::GetOperandAsCode(codegen, op->args_[0]);
     auto axis1 = codegen.GetConstIntValue(op->args_[1]);
     auto axis2 = codegen.GetConstIntValue(op->args_[2]);
     int64_t ndim = static_cast<int64_t>(ir::As<ir::TileType>(op->args_[0]->GetType())->shape_.size());
@@ -910,7 +905,7 @@ REGISTER_BACKEND_OP(BackendCCE, "reset_ctrl_spr")
         << "tile.transpose: axis1 and axis2 must be in range [0, " << ndim << "), but got axis1=" << axis1
         << ", axis2=" << axis2;
 
-    codegen.Emit("TTRANS(" + target_var + ", " + input_var + ");");
+    codegen.Emit("TTRANS(" + targetVar + ", " + inputVar + ");");
     return "";
 }
 
@@ -942,49 +937,49 @@ static std::string PipeTypeToCCEString(ir::PipeType pipe)
     }
 }
 
-static std::string EnumValueName(const char* full_name)
+static std::string EnumValueName(const char* fullName)
 {
-    const char* sep = std::strrchr(full_name, ':');
-    return sep ? std::string(sep + 1) : std::string(full_name);
+    const char* sep = std::strrchr(fullName, ':');
+    return sep ? std::string(sep + 1) : std::string(fullName);
 }
 
-static std::string NormalizeDcciCacheLine(int cache_line)
+static std::string NormalizeDcciCacheLine(int cacheLine)
 {
-    auto cl = static_cast<ir::CacheLine>(cache_line);
+    auto cl = static_cast<ir::CacheLine>(cacheLine);
     return EnumValueName(ir::EnumToString(cl));
 }
 
-static std::string NormalizeDcciDst(int dst, bool is_tile)
+static std::string NormalizeDcciDst(int dst, bool isTile)
 {
     auto d = static_cast<ir::DcciDst>(dst);
     if (d == ir::DcciDst::AUTO) {
-        return is_tile ? "CACHELINE_UB" : "CACHELINE_OUT";
+        return isTile ? "CACHELINE_UB" : "CACHELINE_OUT";
     }
     return EnumValueName(ir::EnumToString(d));
 }
 
-static std::string MakeDcciCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDcciCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1 || op->args_.size() == 2)
         << "system.dcci requires 1 or 2 arguments, got " << op->args_.size();
 
-    int cache_line_int = op->HasKwarg("cache_line") ? op->GetKwarg<int>("cache_line") : 1; // ENTIRE_DATA_CACHE
-    int dst_int = op->HasKwarg("dst") ? op->GetKwarg<int>("dst") : 0;                      // AUTO
+    int cacheLineInt = op->HasKwarg("cache_line") ? op->GetKwarg<int>("cache_line") : 1; // ENTIRE_DATA_CACHE
+    int dstInt = op->HasKwarg("dst") ? op->GetKwarg<int>("dst") : 0;                     // AUTO
 
-    const std::string cache_line = NormalizeDcciCacheLine(cache_line_int);
+    const std::string cacheLine = NormalizeDcciCacheLine(cacheLineInt);
 
-    auto tensor_type = ir::As<ir::TensorType>(op->args_[0]->GetType());
-    if (tensor_type != nullptr) {
-        auto tensor_var_ptr = std::dynamic_pointer_cast<const ir::Var>(op->args_[0]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tensor_var_ptr != nullptr)
+    auto tensorType = ir::As<ir::TensorType>(op->args_[0]->GetType());
+    if (tensorType != nullptr) {
+        auto tensorVarPtr = std::dynamic_pointer_cast<const ir::Var>(op->args_[0]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tensorVarPtr != nullptr)
             << "system.dcci: tensor target must be a Var";
-        std::string tensor_var = codegen.GetVarName(tensor_var_ptr);
+        std::string tensorVar = codegen.GetVarName(tensorVarPtr);
         std::string offset = "0";
         if (op->args_.size() == 2) {
-            auto offsets_tuple = std::dynamic_pointer_cast<const ir::MakeTuple>(op->args_[1]);
-            if (offsets_tuple != nullptr) {
-                offset = codegen.ComputeTensorOffset(tensor_type, offsets_tuple);
+            auto offsetsTuple = std::dynamic_pointer_cast<const ir::MakeTuple>(op->args_[1]);
+            if (offsetsTuple != nullptr) {
+                offset = codegen.ComputeTensorOffset(tensorType, offsetsTuple);
             } else {
                 PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
                                   ir::As<ir::ScalarType>(op->args_[1]->GetType()) != nullptr)
@@ -992,22 +987,22 @@ static std::string MakeDcciCodegenCCE(const ir::CallPtr& op, codegen::CodegenBas
                 offset = cce::GetOperandAsCode(codegen, op->args_[1]);
             }
         }
-        std::string tensor_ptr = codegen.GetPointer(tensor_var);
-        if (tensor_ptr.empty()) {
-            tensor_ptr = tensor_var + ".data()";
+        std::string tensorPtr = codegen.GetPointer(tensorVar);
+        if (tensorPtr.empty()) {
+            tensorPtr = tensorVar + ".data()";
         }
-        const std::string dst_attr = NormalizeDcciDst(dst_int, false);
-        codegen.Emit("dcci(reinterpret_cast<__gm__ void*>(" + tensor_ptr + " + " + offset + "), " + cache_line + ", " +
-                     dst_attr + ");");
+        const std::string dstAttr = NormalizeDcciDst(dstInt, false);
+        codegen.Emit("dcci(reinterpret_cast<__gm__ void*>(" + tensorPtr + " + " + offset + "), " + cacheLine + ", " +
+                     dstAttr + ");");
         return "";
     }
 
-    auto tile_type = ir::As<ir::TileType>(op->args_[0]->GetType());
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tile_type != nullptr)
+    auto tileType = ir::As<ir::TileType>(op->args_[0]->GetType());
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tileType != nullptr)
         << "system.dcci: target must be TensorType or TileType";
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, tile_type->memref_.has_value())
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, tileType->memref_.has_value())
         << "system.dcci: tile target must have an allocated memory space";
-    if (tile_type->memref_.value()->memorySpace_ != ir::MemorySpace::Vec) {
+    if (tileType->memref_.value()->memorySpace_ != ir::MemorySpace::Vec) {
         PRO_CODEGEN_THROW(::pypto::ir::ValueError, ExternalError::INVALID_OPERATION)
             << "system.dcci: tile target must be allocated in Vec memory";
     }
@@ -1017,107 +1012,107 @@ static std::string MakeDcciCodegenCCE(const ir::CallPtr& op, codegen::CodegenBas
     if (op->args_.size() == 2) {
         offset = cce::GetOperandAsCode(codegen, op->args_[1]);
     }
-    const std::string dst_attr = NormalizeDcciDst(dst_int, true);
-    codegen.Emit("dcci(reinterpret_cast<__ubuf__ void*>(" + tile + ".data() + " + offset + "), " + cache_line + ", " +
-                 dst_attr + ");");
+    const std::string dstAttr = NormalizeDcciDst(dstInt, true);
+    codegen.Emit("dcci(reinterpret_cast<__ubuf__ void*>(" + tile + ".data() + " + offset + "), " + cacheLine + ", " +
+                 dstAttr + ");");
     return "";
 }
 
 REGISTER_BACKEND_OP(BackendCCE, "system.bar_m")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
         (void)op;
-        dynamic_cast<codegen::CCECodegen&>(codegen_base).Emit("pipe_barrier(PIPE_M);");
+        dynamic_cast<codegen::CCECodegen&>(codegenBase).Emit("pipe_barrier(PIPE_M);");
         return "";
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "system.bar_mte1")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
         (void)op;
-        dynamic_cast<codegen::CCECodegen&>(codegen_base).Emit("pipe_barrier(PIPE_MTE1);");
+        dynamic_cast<codegen::CCECodegen&>(codegenBase).Emit("pipe_barrier(PIPE_MTE1);");
         return "";
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "system.bar_mte2")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
         (void)op;
-        dynamic_cast<codegen::CCECodegen&>(codegen_base).Emit("pipe_barrier(PIPE_MTE2);");
+        dynamic_cast<codegen::CCECodegen&>(codegenBase).Emit("pipe_barrier(PIPE_MTE2);");
         return "";
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "system.bar_mte3")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
         (void)op;
-        dynamic_cast<codegen::CCECodegen&>(codegen_base).Emit("pipe_barrier(PIPE_MTE3);");
+        dynamic_cast<codegen::CCECodegen&>(codegenBase).Emit("pipe_barrier(PIPE_MTE3);");
         return "";
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "system.bar_fix")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
         (void)op;
-        dynamic_cast<codegen::CCECodegen&>(codegen_base).Emit("pipe_barrier(PIPE_FIX);");
+        dynamic_cast<codegen::CCECodegen&>(codegenBase).Emit("pipe_barrier(PIPE_FIX);");
         return "";
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "system.bar_all")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
         (void)op;
-        dynamic_cast<codegen::CCECodegen&>(codegen_base).Emit("pipe_barrier(PIPE_ALL);");
+        dynamic_cast<codegen::CCECodegen&>(codegenBase).Emit("pipe_barrier(PIPE_ALL);");
         return "";
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "system.set_mask_count")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
         (void)op;
-        dynamic_cast<codegen::CCECodegen&>(codegen_base).Emit("set_mask_count();");
+        dynamic_cast<codegen::CCECodegen&>(codegenBase).Emit("set_mask_count();");
         return "";
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "system.set_mask_norm")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
         (void)op;
-        dynamic_cast<codegen::CCECodegen&>(codegen_base).Emit("set_mask_norm();");
+        dynamic_cast<codegen::CCECodegen&>(codegenBase).Emit("set_mask_norm();");
         return "";
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "system.set_vec_mask")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
-        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
+        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
             << "system.set_vec_mask requires 2 arguments, but got " << op->args_.size();
-        std::string mask_high = cce::GetOperandAsCode(codegen, op->args_[0]);
-        std::string mask_low = cce::GetOperandAsCode(codegen, op->args_[1]);
-        codegen.Emit("set_vector_mask(" + mask_high + ", " + mask_low + ");");
+        std::string maskHigh = cce::GetOperandAsCode(codegen, op->args_[0]);
+        std::string maskLow = cce::GetOperandAsCode(codegen, op->args_[1]);
+        codegen.Emit("set_vector_mask(" + maskHigh + ", " + maskLow + ");");
         return "";
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "system.reset_mask")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
         (void)op;
-        dynamic_cast<codegen::CCECodegen&>(codegen_base)
+        dynamic_cast<codegen::CCECodegen&>(codegenBase)
             .Emit("set_vector_mask(static_cast<uint64_t>(-1), static_cast<uint64_t>(-1));");
         return "";
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "system.dcci")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
-        return MakeDcciCodegenCCE(op, codegen_base);
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
+        return MakeDcciCodegenCCE(op, codegenBase);
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "system.icache_preload")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
-        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
+        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
             << "system.icache_preload requires one argument";
         PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
@@ -1138,101 +1133,99 @@ REGISTER_BACKEND_OP(BackendCCE, "system.icache_preload")
 // Cross-core WAIT: wait_flag_dev / wait_intra_block
 // SET signals completion from a pipe; WAIT blocks until the other core signals.
 
-static std::string MakeCrossCoreSetCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base,
-                                              bool is_dynamic)
+static std::string MakeCrossCoreSetCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase, bool isDynamic)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     auto pipe = op->GetKwarg<int>("pipe");
-    std::string pipe_str = PipeTypeToCCEString(static_cast<ir::PipeType>(pipe));
-    auto sync_mode = static_cast<ir::CrossCoreSyncMode>(op->GetKwarg<int>("sync_mode"));
-    bool is_intra_unicast = sync_mode == ir::CrossCoreSyncMode::INTRA_BLOCK ||
-                            sync_mode == ir::CrossCoreSyncMode::UNICAST_BLOCK;
-    if (codegen.IsRegisterBasedArch() && is_intra_unicast) {
+    std::string pipeStr = PipeTypeToCCEString(static_cast<ir::PipeType>(pipe));
+    auto syncMode = static_cast<ir::CrossCoreSyncMode>(op->GetKwarg<int>("sync_mode"));
+    bool isIntraUnicast = syncMode == ir::CrossCoreSyncMode::INTRA_BLOCK ||
+                          syncMode == ir::CrossCoreSyncMode::UNICAST_BLOCK;
+    if (codegen.IsRegisterBasedArch() && isIntraUnicast) {
         // CUBE→VEC: INTRA_BLOCK signals both vectors only on a 1:2 target; UNICAST_BLOCK signals one.
         //     VEC→CUBE: single set
-        if (codegen.GetTarget() == ir::SectionKind::Cube && sync_mode == ir::CrossCoreSyncMode::INTRA_BLOCK) {
-            if (is_dynamic) {
-                std::string event_id = cce::GetOperandAsCode(codegen, op->args_[0]);
-                codegen.Emit("set_intra_block(" + pipe_str + ", " + event_id + ");");
+        if (codegen.GetTarget() == ir::SectionKind::Cube && syncMode == ir::CrossCoreSyncMode::INTRA_BLOCK) {
+            if (isDynamic) {
+                std::string eventId = cce::GetOperandAsCode(codegen, op->args_[0]);
+                codegen.Emit("set_intra_block(" + pipeStr + ", " + eventId + ");");
                 if (codegen.GetVectorCoresPerCube() == 2) {
-                    codegen.Emit("set_intra_block(" + pipe_str + ", " + event_id + " + 16);");
+                    codegen.Emit("set_intra_block(" + pipeStr + ", " + eventId + " + 16);");
                 }
             } else {
-                int event_id = op->GetKwarg<int>("event_id");
-                codegen.Emit("set_intra_block(" + pipe_str + ", " + std::to_string(event_id) + ");");
+                int eventId = op->GetKwarg<int>("event_id");
+                codegen.Emit("set_intra_block(" + pipeStr + ", " + std::to_string(eventId) + ");");
                 if (codegen.GetVectorCoresPerCube() == 2) {
-                    codegen.Emit("set_intra_block(" + pipe_str + ", " + std::to_string(event_id + 16) + ");");
+                    codegen.Emit("set_intra_block(" + pipeStr + ", " + std::to_string(eventId + 16) + ");");
                 }
             }
         } else {
-            if (is_dynamic) {
-                std::string event_id = cce::GetOperandAsCode(codegen, op->args_[0]);
-                codegen.Emit("set_intra_block(" + pipe_str + ", " + event_id + ");");
+            if (isDynamic) {
+                std::string eventId = cce::GetOperandAsCode(codegen, op->args_[0]);
+                codegen.Emit("set_intra_block(" + pipeStr + ", " + eventId + ");");
             } else {
-                int event_id = op->GetKwarg<int>("event_id");
-                codegen.Emit("set_intra_block(" + pipe_str + ", " + std::to_string(event_id) + ");");
+                int eventId = op->GetKwarg<int>("event_id");
+                codegen.Emit("set_intra_block(" + pipeStr + ", " + std::to_string(eventId) + ");");
             }
         }
     } else {
         // Legacy arch, or modern INTER_BLOCK / INTER_SUBBLOCK: ffts_cross_core_sync
-        std::string mode_str = std::to_string(static_cast<int>(sync_mode));
-        if (is_dynamic) {
-            std::string event_id = cce::GetOperandAsCode(codegen, op->args_[0]);
-            codegen.Emit("ffts_cross_core_sync(" + pipe_str + ", getFFTSMsg(" + mode_str + ", " + event_id + "));");
+        std::string modeStr = std::to_string(static_cast<int>(syncMode));
+        if (isDynamic) {
+            std::string eventId = cce::GetOperandAsCode(codegen, op->args_[0]);
+            codegen.Emit("ffts_cross_core_sync(" + pipeStr + ", getFFTSMsg(" + modeStr + ", " + eventId + "));");
         } else {
-            int event_id = op->GetKwarg<int>("event_id");
-            codegen.Emit("ffts_cross_core_sync(" + pipe_str + ", getFFTSMsg(" + mode_str + ", " +
-                         std::to_string(event_id) + "));");
+            int eventId = op->GetKwarg<int>("event_id");
+            codegen.Emit("ffts_cross_core_sync(" + pipeStr + ", getFFTSMsg(" + modeStr + ", " +
+                         std::to_string(eventId) + "));");
         }
     }
     return "";
 }
 
-static void EmitWaitIntraBlockCCE(codegen::CCECodegen& codegen, const ir::CallPtr& op, const std::string& pipe_str,
-                                  bool is_dynamic, int event_id_offset = 0)
+static void EmitWaitIntraBlockCCE(codegen::CCECodegen& codegen, const ir::CallPtr& op, const std::string& pipeStr,
+                                  bool isDynamic, int eventIdOffset = 0)
 {
-    if (is_dynamic) {
-        std::string event_id = cce::GetOperandAsCode(codegen, op->args_[0]);
-        if (event_id_offset != 0) {
-            event_id += " + " + std::to_string(event_id_offset);
+    if (isDynamic) {
+        std::string eventId = cce::GetOperandAsCode(codegen, op->args_[0]);
+        if (eventIdOffset != 0) {
+            eventId += " + " + std::to_string(eventIdOffset);
         }
-        codegen.Emit("wait_intra_block(" + pipe_str + ", " + event_id + ");");
+        codegen.Emit("wait_intra_block(" + pipeStr + ", " + eventId + ");");
         return;
     }
 
-    int event_id = op->GetKwarg<int>("event_id") + event_id_offset;
-    codegen.Emit("wait_intra_block(" + pipe_str + ", " + std::to_string(event_id) + ");");
+    int eventId = op->GetKwarg<int>("event_id") + eventIdOffset;
+    codegen.Emit("wait_intra_block(" + pipeStr + ", " + std::to_string(eventId) + ");");
 }
 
-static std::string MakeCrossCoreWaitCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base,
-                                               bool is_dynamic)
+static std::string MakeCrossCoreWaitCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase, bool isDynamic)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     auto pipe = op->GetKwarg<int>("pipe");
-    std::string pipe_str = PipeTypeToCCEString(static_cast<ir::PipeType>(pipe));
-    auto sync_mode = static_cast<ir::CrossCoreSyncMode>(op->GetKwarg<int>("sync_mode"));
-    bool is_intra_unicast = (sync_mode == ir::CrossCoreSyncMode::INTRA_BLOCK ||
-                             sync_mode == ir::CrossCoreSyncMode::UNICAST_BLOCK);
-    bool wait_two_vec_subcores = (sync_mode == ir::CrossCoreSyncMode::INTRA_BLOCK);
-    if (codegen.IsRegisterBasedArch() && is_intra_unicast) {
+    std::string pipeStr = PipeTypeToCCEString(static_cast<ir::PipeType>(pipe));
+    auto syncMode = static_cast<ir::CrossCoreSyncMode>(op->GetKwarg<int>("sync_mode"));
+    bool isIntraUnicast = (syncMode == ir::CrossCoreSyncMode::INTRA_BLOCK ||
+                           syncMode == ir::CrossCoreSyncMode::UNICAST_BLOCK);
+    bool waitTwoVecSubcores = (syncMode == ir::CrossCoreSyncMode::INTRA_BLOCK);
+    if (codegen.IsRegisterBasedArch() && isIntraUnicast) {
         // CUBE waiting for VEC: INTRA_BLOCK waits for both vectors only on a 1:2 target.
         //     VEC waiting for CUBE: single wait
-        if (codegen.GetTarget() == ir::SectionKind::Cube && wait_two_vec_subcores) {
-            EmitWaitIntraBlockCCE(codegen, op, pipe_str, is_dynamic);
+        if (codegen.GetTarget() == ir::SectionKind::Cube && waitTwoVecSubcores) {
+            EmitWaitIntraBlockCCE(codegen, op, pipeStr, isDynamic);
             if (codegen.GetVectorCoresPerCube() == 2) {
-                EmitWaitIntraBlockCCE(codegen, op, pipe_str, is_dynamic, 16);
+                EmitWaitIntraBlockCCE(codegen, op, pipeStr, isDynamic, 16);
             }
         } else {
-            EmitWaitIntraBlockCCE(codegen, op, pipe_str, is_dynamic);
+            EmitWaitIntraBlockCCE(codegen, op, pipeStr, isDynamic);
         }
     } else {
         // Legacy arch, or modern INTER_BLOCK(0) / INTER_SUBBLOCK(1): wait_flag_dev
-        std::string event_id = is_dynamic ? cce::GetOperandAsCode(codegen, op->args_[0]) :
-                                            std::to_string(op->GetKwarg<int>("event_id"));
+        std::string eventId = isDynamic ? cce::GetOperandAsCode(codegen, op->args_[0]) :
+                                          std::to_string(op->GetKwarg<int>("event_id"));
         if (codegen.IsRegisterBasedArch()) {
-            codegen.Emit("wait_flag_dev(" + pipe_str + ", " + event_id + ");");
+            codegen.Emit("wait_flag_dev(" + pipeStr + ", " + eventId + ");");
         } else {
-            codegen.Emit("wait_flag_dev(" + event_id + ");");
+            codegen.Emit("wait_flag_dev(" + eventId + ");");
         }
     }
     return "";
@@ -1267,15 +1260,15 @@ REGISTER_BACKEND_OP(BackendCCE, "system.wait_cross_core_dyn")
 // ============================================================================
 
 static std::string MakeSyncCodegenCCE(const std::string& intrinsic, const ir::CallPtr& op,
-                                      codegen::CodegenBase& codegen_base)
+                                      codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    auto set_pipe = static_cast<ir::PipeType>(op->GetKwarg<int>("set_pipe"));
-    auto wait_pipe = static_cast<ir::PipeType>(op->GetKwarg<int>("wait_pipe"));
-    std::string set_pipe_str = PipeTypeToCCEString(set_pipe);
-    std::string wait_pipe_str = PipeTypeToCCEString(wait_pipe);
-    std::string event_id = cce::GetOperandAsCode(codegen, op->args_[0]);
-    codegen.Emit(intrinsic + "(" + set_pipe_str + ", " + wait_pipe_str + ", (event_t)" + event_id + ");");
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    auto setPipe = static_cast<ir::PipeType>(op->GetKwarg<int>("set_pipe"));
+    auto waitPipe = static_cast<ir::PipeType>(op->GetKwarg<int>("wait_pipe"));
+    std::string setPipeStr = PipeTypeToCCEString(setPipe);
+    std::string waitPipeStr = PipeTypeToCCEString(waitPipe);
+    std::string eventId = cce::GetOperandAsCode(codegen, op->args_[0]);
+    codegen.Emit(intrinsic + "(" + setPipeStr + ", " + waitPipeStr + ", (event_t)" + eventId + ");");
     return "";
 }
 
@@ -1313,15 +1306,15 @@ REGISTER_BACKEND_OP(BackendCCE, "debug.printf")
 // Debug operations: assert and trap
 // ============================================================================
 
-static std::string MakeDebugAssertCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDebugAssertCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
 
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 1)
         << "debug.assert requires at least 1 argument (condition)";
 
     std::string condition = cce::GetOperandAsCode(codegen, op->args_[0]);
-    std::string condition_text = op->GetKwarg<std::string>("condition_text");
+    std::string conditionText = op->GetKwarg<std::string>("condition_text");
     std::string format = op->GetKwarg<std::string>("format");
 
     codegen.Emit("if (!(" + condition + ")) {");
@@ -1330,36 +1323,36 @@ static std::string MakeDebugAssertCodegenCCE(const ir::CallPtr& op, codegen::Cod
         std::string location = debug_printf::FormatDebugLocation(op->span_);
         if (!location.empty()) {
             codegen.Emit("  pypto::aicore::printf(\"" +
-                         debug_printf::EscapeStringLiteral(location + " Assertion failed: " + condition_text + "\n") +
+                         debug_printf::EscapeStringLiteral(location + " Assertion failed: " + conditionText + "\n") +
                          "\");");
         } else {
             codegen.Emit("  pypto::aicore::printf(\"" +
-                         debug_printf::EscapeStringLiteral("Assertion failed: " + condition_text + "\n") + "\");");
+                         debug_printf::EscapeStringLiteral("Assertion failed: " + conditionText + "\n") + "\");");
         }
     } else {
         codegen.Emit("  pypto::aicore::printf(\"" +
-                     debug_printf::EscapeStringLiteral("Assertion failed: " + condition_text + "\n") + "\");");
+                     debug_printf::EscapeStringLiteral("Assertion failed: " + conditionText + "\n") + "\");");
     }
 
     if (!format.empty()) {
         std::vector<std::string> args;
-        std::vector<DataType> arg_dtypes;
+        std::vector<DataType> argDtypes;
         for (size_t i = 1; i < op->args_.size(); ++i) {
             args.emplace_back(cce::GetOperandAsCode(codegen, op->args_[i]));
-            auto scalar_type = ir::As<ir::ScalarType>(op->args_[i]->GetType());
-            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalar_type) << "debug.assert argument must be ScalarType";
-            arg_dtypes.emplace_back(scalar_type->dtype_);
+            auto scalarType = ir::As<ir::ScalarType>(op->args_[i]->GetType());
+            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalarType) << "debug.assert argument must be ScalarType";
+            argDtypes.emplace_back(scalarType->dtype_);
         }
-        codegen.Emit("  " + BuildPtoPrintfCall(format, args, arg_dtypes));
+        codegen.Emit("  " + BuildPtoPrintfCall(format, args, argDtypes));
     }
 
     codegen.Emit("}");
     return "";
 }
 
-static std::string MakeDebugTrapCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegen_base)
+static std::string MakeDebugTrapCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     codegen.Emit("trap();");
     return "";
 }
@@ -1409,11 +1402,11 @@ void EmitSanitizerLogPrologue(codegen::CCECodegen& codegen, const std::string& l
     // contract: the Vector target computes the global AIV index, so each
     // sub-block gets its own region even when several AIVs run under one
     // AIC block.
-    std::string block_idx;
+    std::string blockIdx;
     if (codegen.GetTarget() == ir::SectionKind::Vector) {
-        block_idx = "(int32_t)(__pypto_block_num_value() + __pypto_block_idx_value())";
+        blockIdx = "(int32_t)(__pypto_block_num_value() + __pypto_block_idx_value())";
     } else {
-        block_idx = "(int32_t)(__pypto_block_idx_value())";
+        blockIdx = "(int32_t)(__pypto_block_idx_value())";
     }
 
     // Append-mode logging, no atomics: each executing sub-block targets its own
@@ -1424,7 +1417,7 @@ void EmitSanitizerLogPrologue(codegen::CCECodegen& codegen, const std::string& l
     // u32-word offset of the first free record (read, incremented, written
     // back); buffer size = sub_block_count * (capacity + 1) * 4 bytes.
     codegen.Emit("if (" + log + " != 0) {");
-    codegen.Emit("  int32_t __log_block = " + block_idx + ";");
+    codegen.Emit("  int32_t __log_block = " + blockIdx + ";");
     codegen.Emit("  __gm__ uint32_t* __log_base = reinterpret_cast<__gm__ uint32_t*>(" + log +
                  ") + "
                  "static_cast<uint64_t>(__log_block) * (static_cast<uint64_t>(" +
@@ -1434,34 +1427,34 @@ void EmitSanitizerLogPrologue(codegen::CCECodegen& codegen, const std::string& l
 
 } // namespace
 
-static std::string MakeSanitizerLogCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeSanitizerLogCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // args = [det_id, field..., log_ptr, capacity, span_id] -> at least the
     // det_id, the two hidden buffer parameters and the span id.
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, op->args_.size() >= 4)
         << "block.sanitizer_log requires (det_id, field..., log_ptr, capacity, span_id)";
 
     const size_t n = op->args_.size();
-    std::string det_id = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string detId = cce::GetOperandAsCode(codegen, op->args_[0]);
     // Hidden log-buffer parameters: resolve their final (SSA-suffixed) names.
     std::string log = cce::GetOperandAsCode(codegen, op->args_[n - 3]);
     std::string capacity = cce::GetOperandAsCode(codegen, op->args_[n - 2]);
-    std::string span_id = cce::GetOperandAsCode(codegen, op->args_[n - 1]);
+    std::string spanId = cce::GetOperandAsCode(codegen, op->args_[n - 1]);
     // Record size in u32 words: det_id + fields + span_id (fields exclude the
     // hidden log/capacity parameters).
-    const uint32_t rec_u32 = static_cast<uint32_t>(n) - 2u;
+    const uint32_t recU32 = static_cast<uint32_t>(n) - 2u;
 
     EmitSanitizerLogPrologue(codegen, log, capacity);
-    codegen.Emit("  if (__log_off + " + std::to_string(rec_u32) + "u <= static_cast<uint32_t>(" + capacity + ")) {");
+    codegen.Emit("  if (__log_off + " + std::to_string(recU32) + "u <= static_cast<uint32_t>(" + capacity + ")) {");
     codegen.Emit("    __gm__ uint32_t* __log_rec = __log_base + 1u + __log_off;");
-    codegen.Emit("    __log_rec[0] = static_cast<uint32_t>(" + det_id + ");  // det_id");
+    codegen.Emit("    __log_rec[0] = static_cast<uint32_t>(" + detId + ");  // det_id");
     for (size_t i = 1; i + 3 < n; ++i) {
         codegen.Emit("    __log_rec[" + std::to_string(i) + "] = static_cast<int32_t>(" +
                      cce::GetOperandAsCode(codegen, op->args_[i]) + ");");
     }
-    codegen.Emit("    __log_rec[" + std::to_string(rec_u32 - 1u) + "] = static_cast<uint32_t>(" + span_id + ");");
-    codegen.Emit("    __log_base[0] = __log_off + " + std::to_string(rec_u32) + "u;");
+    codegen.Emit("    __log_rec[" + std::to_string(recU32 - 1u) + "] = static_cast<uint32_t>(" + spanId + ");");
+    codegen.Emit("    __log_base[0] = __log_off + " + std::to_string(recU32) + "u;");
     // Flush the record (and the counter update) to DDR before the next
     // instruction executes.  The instrumentation record is written by the S
     // pipe as a posted GM write; without a barrier the record can sit in the
@@ -1482,9 +1475,9 @@ REGISTER_BACKEND_OP(BackendCCE, "block.sanitizer_log").set_pipe(ir::PipeType::S)
 // Shared block.tile_addr helper. Keep the original Tile expression in the IR so
 // CCE codegen can use the same MakeTuple/TileGroup materialization as the
 // instrumented operation, then read the selected runtime Tile's data address.
-static std::string MakeTileAddrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeTileAddrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
         << "block.tile_addr requires one Tile argument";
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, ir::As<ir::TileType>(op->args_[0]->GetType()) != nullptr)
@@ -1520,11 +1513,11 @@ REGISTER_BACKEND_OP(BackendCCE, "get_subblock_idx")
 
 REGISTER_BACKEND_OP(BackendCCE, "get_subblock_num")
     .set_pipe(ir::PipeType::V)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 0)
             << "get_subblock_num requires no arguments";
         // Matches AscendC GetTaskRation(): AIC returns 1, AIV returns get_subblockdim().
-        auto& cg = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+        auto& cg = dynamic_cast<codegen::CCECodegen&>(codegenBase);
         const auto target = cg.GetTarget();
         if (target == ir::SectionKind::Vector) {
             return std::string("(int64_t)(get_subblockdim())");
@@ -1536,63 +1529,62 @@ REGISTER_BACKEND_OP(BackendCCE, "get_subblock_num")
 // GetVal/SetVal Operations (unified: tile and tensor)
 // ============================================================================
 
-static std::string MakeGetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeGetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "getval requires 2 arguments, but got " << op->args_.size();
 
-    auto result_type = ir::As<ir::ScalarType>(op->GetType());
-    INTERNAL_CHECK(result_type) << "getval result must be ScalarType";
-    auto cast_result_if_dtype_changed = [&codegen](std::string result, const ir::DataType& result_dtype,
-                                                   const ir::DataType& input_dtype) {
-        return codegen.ScalarCast(result, input_dtype, result_dtype);
+    auto resultType = ir::As<ir::ScalarType>(op->GetType());
+    INTERNAL_CHECK(resultType) << "getval result must be ScalarType";
+    auto castResultIfDtypeChanged = [&codegen](std::string result, const ir::DataType& resultDtype,
+                                               const ir::DataType& inputDtype) {
+        return codegen.ScalarCast(result, inputDtype, resultDtype);
     };
 
-    auto first_type = op->args_[0]->GetType();
-    if (auto tile_type = ir::As<ir::TileType>(first_type)) {
+    auto firstType = op->args_[0]->GetType();
+    if (auto tileType = ir::As<ir::TileType>(firstType)) {
         std::string offset = codegen.GetExprAsCode(op->args_[1]);
         if (codegen.IsInSimtContext()) {
             std::string tile = codegen.GetExprAsCode(op->args_[0]);
-            return cast_result_if_dtype_changed(tile + "[" + offset + "]", result_type->dtype_, tile_type->dtype_);
+            return castResultIfDtypeChanged(tile + "[" + offset + "]", resultType->dtype_, tileType->dtype_);
         }
         std::string tile = cce::GetOperandAsCode(codegen, op->args_[0]);
-        return cast_result_if_dtype_changed(tile + ".GetValue(" + offset + ")", result_type->dtype_, tile_type->dtype_);
+        return castResultIfDtypeChanged(tile + ".GetValue(" + offset + ")", resultType->dtype_, tileType->dtype_);
     }
 
-    auto tensor_var = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensor_var)
+    auto tensorVar = ir::As<ir::Var>(op->args_[0]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensorVar)
         << "getval requires tensor to be a Var";
-    auto tensor_type = ir::As<ir::TensorType>(tensor_var->GetType());
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensor_type)
+    auto tensorType = ir::As<ir::TensorType>(tensorVar->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensorType)
         << "getval requires TensorType";
-    std::string tensor_name = codegen.GetVarName(tensor_var);
+    std::string tensorName = codegen.GetVarName(tensorVar);
     std::string offset = codegen.GetExprAsCode(op->args_[1]);
-    std::string dtype_str = codegen.GetTypeString(tensor_type->dtype_);
+    std::string dtypeStr = codegen.GetTypeString(tensorType->dtype_);
 
-    std::string tensor_ptr = codegen.GetPointer(tensor_name);
+    std::string tensorPtr = codegen.GetPointer(tensorName);
 
     if (codegen.GetCurrentKernelType() == ir::FunctionType::SIMT_KERNEL) {
-        return cast_result_if_dtype_changed("(" + tensor_ptr + ")[" + offset + "]", result_type->dtype_,
-                                            tensor_type->dtype_);
+        return castResultIfDtypeChanged("(" + tensorPtr + ")[" + offset + "]", resultType->dtype_, tensorType->dtype_);
     }
-    return cast_result_if_dtype_changed("*((__gm__ " + dtype_str + "*)" + tensor_ptr + " + " + offset + ")",
-                                        result_type->dtype_, tensor_type->dtype_);
+    return castResultIfDtypeChanged("*((__gm__ " + dtypeStr + "*)" + tensorPtr + " + " + offset + ")",
+                                    resultType->dtype_, tensorType->dtype_);
 }
 
-static std::string MakeWindowGetCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeWindowGetCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "dist.window_get requires 2 arguments, but got " << op->args_.size();
 
     // The window param has no local C++ variable (only its registered pointer), so the
     // pointer name must be resolved through the registry — never GetExprAsCode on the var.
-    auto window_var = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, window_var)
+    auto windowVar = ir::As<ir::Var>(op->args_[0]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, windowVar)
         << "dist.window_get requires window to be a Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ir::As<ir::WindowType>(window_var->GetType()))
+                               ir::As<ir::WindowType>(windowVar->GetType()))
         << "dist.window_get requires window to have WindowType";
     auto field = ir::As<ir::ConstInt>(op->args_[1]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, field != nullptr)
@@ -1602,26 +1594,26 @@ static std::string MakeWindowGetCodegenCCE(const ir::CallPtr& op, codegen::Codeg
     PRO_CODEGEN_CHECK(ExternalError::OUT_OF_RANGE, member != nullptr)
         << "dist.window_get field index " << field->value_
         << " is not a scalar field (remote_ptrs array reads are not supported yet)";
-    const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
-    return "((__gm__ dist::Window*)" + window_ptr + ")->" + member;
+    const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
+    return "((__gm__ dist::Window*)" + windowPtr + ")->" + member;
 }
 
-static std::string MakeSetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeSetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "setval requires 3 arguments, but got " << op->args_.size();
 
-    auto first_type = op->args_[0]->GetType();
-    auto scalar_value = [&](const ir::DataType& destination) {
+    auto firstType = op->args_[0]->GetType();
+    auto scalarValue = [&](const ir::DataType& destination) {
         auto type = ir::As<ir::ScalarType>(op->args_[2]->GetType());
         INTERNAL_CHECK(type) << "setval value must be ScalarType";
         std::string value = codegen.GetExprAsCode(op->args_[2]);
         return codegen.ScalarCast(value, type->dtype_, destination);
     };
-    if (auto tile_type = ir::As<ir::TileType>(first_type)) {
+    if (auto tileType = ir::As<ir::TileType>(firstType)) {
         std::string offset = codegen.GetExprAsCode(op->args_[1]);
-        std::string value = scalar_value(tile_type->dtype_);
+        std::string value = scalarValue(tileType->dtype_);
         if (codegen.IsInSimtContext()) {
             std::string tile = codegen.GetExprAsCode(op->args_[0]);
             codegen.Emit(tile + "[" + offset + "] = " + value + ";");
@@ -1632,30 +1624,30 @@ static std::string MakeSetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
         return "";
     }
 
-    auto tensor_var = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensor_var)
+    auto tensorVar = ir::As<ir::Var>(op->args_[0]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensorVar)
         << "setval requires tensor to be a Var";
-    auto tensor_type = ir::As<ir::TensorType>(tensor_var->GetType());
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensor_type)
+    auto tensorType = ir::As<ir::TensorType>(tensorVar->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensorType)
         << "setval requires TensorType";
-    std::string tensor_name = codegen.GetVarName(tensor_var);
+    std::string tensorName = codegen.GetVarName(tensorVar);
     std::string offset = codegen.GetExprAsCode(op->args_[1]);
-    std::string value = scalar_value(tensor_type->dtype_);
-    std::string dtype_str = codegen.GetTypeString(tensor_type->dtype_);
+    std::string value = scalarValue(tensorType->dtype_);
+    std::string dtypeStr = codegen.GetTypeString(tensorType->dtype_);
 
-    std::string tensor_ptr = codegen.GetPointer(tensor_name);
+    std::string tensorPtr = codegen.GetPointer(tensorName);
 
     if (codegen.GetCurrentKernelType() == ir::FunctionType::SIMT_KERNEL) {
-        codegen.Emit("(" + tensor_ptr + ")[" + offset + "] = " + value + ";");
+        codegen.Emit("(" + tensorPtr + ")[" + offset + "] = " + value + ";");
         return "";
     }
-    codegen.Emit("*((__gm__ " + dtype_str + "*)" + tensor_ptr + " + " + offset + ") = " + value + ";");
+    codegen.Emit("*((__gm__ " + dtypeStr + "*)" + tensorPtr + " + " + offset + ") = " + value + ";");
     return "";
 }
 
-static std::string MakeTileValidShapeCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeTileValidShapeCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT,
                       op->args_.size() == 1 && ir::As<ir::TileType>(op->args_[0]->GetType()))
         << "block.tile_valid_shape requires one Tile argument";
@@ -1694,28 +1686,28 @@ static std::string DistTimeoutLiteral(int64_t timeoutCycles)
     return timeoutCycles == 0 ? "INT64_MAX" : std::to_string(timeoutCycles) + "LL";
 }
 
-static std::string MakeDistBarrierCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDistBarrierCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
         << "dist.barrier requires 1 argument, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.barrier requires the Vector target (the barrier helper launches a SIMT VF)";
 
-    auto window_var = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, window_var)
+    auto windowVar = ir::As<ir::Var>(op->args_[0]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, windowVar)
         << "dist.barrier requires window to be a Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ir::As<ir::WindowType>(window_var->GetType()))
+                               ir::As<ir::WindowType>(windowVar->GetType()))
         << "dist.barrier requires window to have WindowType";
 
     const int64_t timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
     const bool syncLocal = !op->HasKwarg("sync_local") || op->GetKwarg<bool>("sync_local");
     const bool flushStore = !op->HasKwarg("flush_store") || op->GetKwarg<bool>("flush_store");
 
-    const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
+    const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
     codegen.Emit("pypto::dist::barrier<" + DistTimeoutLiteral(timeoutCycles) + ", " + (syncLocal ? "true" : "false") +
-                 ", " + (flushStore ? "true" : "false") + ">(reinterpret_cast<__gm__ dist::Window*>(" + window_ptr +
+                 ", " + (flushStore ? "true" : "false") + ">(reinterpret_cast<__gm__ dist::Window*>(" + windowPtr +
                  "));");
     return "";
 }
@@ -1726,19 +1718,19 @@ REGISTER_BACKEND_OP(BackendCCE, "dist.barrier")
         return MakeDistBarrierCodegenCCE(op, codegen);
     });
 
-static std::string MakeDistNotifyCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDistNotifyCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "dist.notify requires 4 arguments, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.notify requires the Vector target (the signal helpers run in the vector section)";
 
-    auto window_var = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, window_var)
+    auto windowVar = ir::As<ir::Var>(op->args_[0]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, windowVar)
         << "dist.notify requires window to be a Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ir::As<ir::WindowType>(window_var->GetType()))
+                               ir::As<ir::WindowType>(windowVar->GetType()))
         << "dist.notify requires window to have WindowType";
 
     const int notifyOp = op->HasKwarg("notify_op") ? op->GetKwarg<int>("notify_op") : 0;
@@ -1749,26 +1741,26 @@ static std::string MakeDistNotifyCodegenCCE(const ir::CallPtr& op, codegen::Code
     const std::string slot = codegen.GetExprAsCode(op->args_[1]);
     const std::string val = codegen.GetExprAsCode(op->args_[2]);
     const std::string peer = codegen.GetExprAsCode(op->args_[3]);
-    const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
+    const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
     codegen.Emit("pypto::dist::notify<" + std::to_string(notifyOp) + ", " + (flushStore ? "true" : "false") +
-                 ">(reinterpret_cast<__gm__ dist::Window*>(" + window_ptr + "), " + "static_cast<int64_t>(" + slot +
+                 ">(reinterpret_cast<__gm__ dist::Window*>(" + windowPtr + "), " + "static_cast<int64_t>(" + slot +
                  "), static_cast<int64_t>(" + val + "), " + "static_cast<int32_t>(" + peer + "));");
     return "";
 }
 
-static std::string MakeDistNotifyAllCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDistNotifyAllCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "dist.notify_all requires 3 arguments, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.notify_all requires the Vector target (the helper launches a SIMT VF)";
 
-    auto window_var = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, window_var)
+    auto windowVar = ir::As<ir::Var>(op->args_[0]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, windowVar)
         << "dist.notify_all requires window to be a Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ir::As<ir::WindowType>(window_var->GetType()))
+                               ir::As<ir::WindowType>(windowVar->GetType()))
         << "dist.notify_all requires window to have WindowType";
 
     const int notifyOp = op->HasKwarg("notify_op") ? op->GetKwarg<int>("notify_op") : 0;
@@ -1778,26 +1770,26 @@ static std::string MakeDistNotifyAllCodegenCCE(const ir::CallPtr& op, codegen::C
 
     const std::string slot = codegen.GetExprAsCode(op->args_[1]);
     const std::string val = codegen.GetExprAsCode(op->args_[2]);
-    const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
+    const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
     codegen.Emit("pypto::dist::notify_all<" + std::to_string(notifyOp) + ", " + (flushStore ? "true" : "false") +
-                 ">(reinterpret_cast<__gm__ dist::Window*>(" + window_ptr + "), static_cast<int64_t>(" + slot +
+                 ">(reinterpret_cast<__gm__ dist::Window*>(" + windowPtr + "), static_cast<int64_t>(" + slot +
                  "), static_cast<int64_t>(" + val + "));");
     return "";
 }
 
-static std::string MakeDistWaitCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDistWaitCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "dist.wait requires 3 arguments, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.wait requires the Vector target (the wait helper spins on the vector pipe)";
 
-    auto window_var = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, window_var)
+    auto windowVar = ir::As<ir::Var>(op->args_[0]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, windowVar)
         << "dist.wait requires window to be a Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ir::As<ir::WindowType>(window_var->GetType()))
+                               ir::As<ir::WindowType>(windowVar->GetType()))
         << "dist.wait requires window to have WindowType";
 
     const int cmp = op->HasKwarg("cmp") ? op->GetKwarg<int>("cmp") : 0;
@@ -1809,8 +1801,8 @@ static std::string MakeDistWaitCodegenCCE(const ir::CallPtr& op, codegen::Codege
 
     const std::string slot = codegen.GetExprAsCode(op->args_[1]);
     const std::string val = codegen.GetExprAsCode(op->args_[2]);
-    const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
-    codegen.Emit("pypto::dist::wait<" + std::to_string(cmp) + ">(reinterpret_cast<__gm__ dist::Window*>(" + window_ptr +
+    const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
+    codegen.Emit("pypto::dist::wait<" + std::to_string(cmp) + ">(reinterpret_cast<__gm__ dist::Window*>(" + windowPtr +
                  "), " + "static_cast<int64_t>(" + slot + "), static_cast<int64_t>(" + val + "), " +
                  std::to_string(timeoutCycles) + "LL);");
     return "";
@@ -1839,19 +1831,19 @@ static std::string DistUbAddrLiteral(int64_t ubAddr)
     return "static_cast<uint64_t>(" + std::to_string(ubAddr) + "ULL)";
 }
 
-static std::string MakeDistCreateChannelCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDistCreateChannelCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "dist.channel requires 2 arguments, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.channel requires the Vector target (the write engine runs on the AIV)";
 
-    auto window_var = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, window_var)
+    auto windowVar = ir::As<ir::Var>(op->args_[0]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, windowVar)
         << "dist.channel requires window to be a Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ir::As<ir::WindowType>(window_var->GetType()))
+                               ir::As<ir::WindowType>(windowVar->GetType()))
         << "dist.channel requires window to have WindowType";
 
     const int64_t ubAddr = op->HasKwarg("ub_addr") ? op->GetKwarg<int>("ub_addr") : 0;
@@ -1859,45 +1851,45 @@ static std::string MakeDistCreateChannelCodegenCCE(const ir::CallPtr& op, codege
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, !target.empty())
         << "dist.channel must be the RHS of an assignment";
 
-    const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
-    codegen.Emit("auto " + target + " = pypto::dist::Channel(reinterpret_cast<__gm__ dist::Window*>(" + window_ptr +
+    const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
+    codegen.Emit("auto " + target + " = pypto::dist::Channel(reinterpret_cast<__gm__ dist::Window*>(" + windowPtr +
                  "), reinterpret_cast<__ubuf__ uint8_t*>(" + DistUbAddrLiteral(ubAddr) + "), static_cast<int32_t>(" +
                  codegen.GetExprAsCode(op->args_[1]) + "));");
     return "";
 }
 
-static std::string MakeDistChannelWriteCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDistChannelWriteCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "dist.channel_write requires 4 arguments, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.channel_write requires the Vector target (the write engine runs on the AIV)";
 
-    auto tensor_var = ir::As<ir::Var>(op->args_[3]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensor_var)
+    auto tensorVar = ir::As<ir::Var>(op->args_[3]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensorVar)
         << "dist.channel_write source must be a tensor Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ir::As<ir::TensorType>(tensor_var->GetType()))
+                               ir::As<ir::TensorType>(tensorVar->GetType()))
         << "dist.channel_write source must have TensorType";
 
     const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
     const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
-    const std::string tensor_ptr = codegen.GetPointer(codegen.GetVarName(tensor_var));
+    const std::string tensorPtr = codegen.GetPointer(codegen.GetVarName(tensorVar));
     // The channel binds the peer (jetty, peer metadata, remote base) at construction, so the
     // transfer carries only the destination offset, source and length.
     codegen.Emit(channel + ".Write<" + DistTimeoutLiteral(timeoutCycles) + ", " + (submit ? "true" : "false") + ">(" +
                  "static_cast<int64_t>(" + codegen.GetExprAsCode(op->args_[1]) +
-                 "), reinterpret_cast<__gm__ uint8_t*>(" + tensor_ptr + "), static_cast<int64_t>(" +
+                 "), reinterpret_cast<__gm__ uint8_t*>(" + tensorPtr + "), static_cast<int64_t>(" +
                  codegen.GetExprAsCode(op->args_[2]) + "));");
     return "";
 }
 
-static std::string MakeDistChannelWriteValueCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDistChannelWriteValueCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "dist.channel_write_value requires 3 arguments, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
@@ -1906,45 +1898,45 @@ static std::string MakeDistChannelWriteValueCodegenCCE(const ir::CallPtr& op, co
     const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
     const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
     const ir::DataType dtype = op->GetKwarg<ir::DataType>("dtype");
-    const std::string dtype_str = codegen.GetTypeString(dtype);
+    const std::string dtypeStr = codegen.GetTypeString(dtype);
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
-    codegen.Emit(channel + ".WriteValue<" + DistTimeoutLiteral(timeoutCycles) + ", " + dtype_str + ", " +
+    codegen.Emit(channel + ".WriteValue<" + DistTimeoutLiteral(timeoutCycles) + ", " + dtypeStr + ", " +
                  (submit ? "true" : "false") + ">(static_cast<int64_t>(" + codegen.GetExprAsCode(op->args_[1]) +
-                 "), static_cast<" + dtype_str + ">(" + codegen.GetExprAsCode(op->args_[2]) + "));");
+                 "), static_cast<" + dtypeStr + ">(" + codegen.GetExprAsCode(op->args_[2]) + "));");
     return "";
 }
 
-static std::string MakeDistChannelWriteNotifyCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDistChannelWriteNotifyCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 6)
         << "dist.channel_write_notify requires 6 arguments, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.channel_write_notify requires the Vector target (the write engine runs on the AIV)";
 
-    auto tensor_var = ir::As<ir::Var>(op->args_[3]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensor_var)
+    auto tensorVar = ir::As<ir::Var>(op->args_[3]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensorVar)
         << "dist.channel_write_notify source must be a tensor Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ir::As<ir::TensorType>(tensor_var->GetType()))
+                               ir::As<ir::TensorType>(tensorVar->GetType()))
         << "dist.channel_write_notify source must have TensorType";
 
     const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
-    const std::string tensor_ptr = codegen.GetPointer(codegen.GetVarName(tensor_var));
+    const std::string tensorPtr = codegen.GetPointer(codegen.GetVarName(tensorVar));
     codegen.Emit(channel + ".WriteNotify<" + DistTimeoutLiteral(timeoutCycles) + ">(static_cast<int64_t>(" +
-                 codegen.GetExprAsCode(op->args_[1]) + "), reinterpret_cast<__gm__ uint8_t*>(" + tensor_ptr +
+                 codegen.GetExprAsCode(op->args_[1]) + "), reinterpret_cast<__gm__ uint8_t*>(" + tensorPtr +
                  "), static_cast<int64_t>(" + codegen.GetExprAsCode(op->args_[2]) + "), static_cast<int64_t>(" +
                  codegen.GetExprAsCode(op->args_[4]) + "), static_cast<int64_t>(" +
                  codegen.GetExprAsCode(op->args_[5]) + "));");
     return "";
 }
 
-static std::string MakeDistChannelSubmitCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDistChannelSubmitCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
         << "dist.channel_submit requires 1 argument, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
@@ -1954,9 +1946,9 @@ static std::string MakeDistChannelSubmitCodegenCCE(const ir::CallPtr& op, codege
     return "";
 }
 
-static std::string MakeDistChannelDrainCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDistChannelDrainCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
         << "dist.channel_drain requires 1 argument, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
@@ -1967,9 +1959,9 @@ static std::string MakeDistChannelDrainCodegenCCE(const ir::CallPtr& op, codegen
     return "";
 }
 
-static std::string MakeDistChannelIsExclusiveCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeDistChannelIsExclusiveCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
         << "dist.channel_is_exclusive requires 1 argument, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
@@ -2019,48 +2011,48 @@ REGISTER_BACKEND_OP(BackendCCE, "dist.channel_is_exclusive")
         return MakeDistChannelIsExclusiveCodegenCCE(op, codegen);
     });
 
-static std::string MakeDistAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base,
+static std::string MakeDistAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase,
                                             const char* helper)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 6 || op->args_.size() == 7)
         << op->name_ << " requires 6 or 7 arguments: window, base_bytes, offsets, shape, peer, value(s)";
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << op->name_ << " requires the Vector target (scalar atomics run on the AIV)";
 
-    auto window_var = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, window_var)
+    auto windowVar = ir::As<ir::Var>(op->args_[0]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, windowVar)
         << op->name_ << " requires window to be a Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ir::As<ir::WindowType>(window_var->GetType()))
+                               ir::As<ir::WindowType>(windowVar->GetType()))
         << op->name_ << " requires window to have WindowType";
-    auto shape_tuple = ir::As<ir::MakeTuple>(op->args_[3]);
+    auto shapeTuple = ir::As<ir::MakeTuple>(op->args_[3]);
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               shape_tuple != nullptr && !shape_tuple->elements_.empty())
+                               shapeTuple != nullptr && !shapeTuple->elements_.empty())
         << op->name_ << " shape must be a non-empty tuple of view dimensions";
 
     const ir::DataType dtype = op->GetKwarg<ir::DataType>("dtype");
-    const std::string dtype_str = codegen.GetTypeString(dtype);
+    const std::string dtypeStr = codegen.GetTypeString(dtype);
 
     // Coordinate form flattens through the view shape; the scalar form is already linear.
-    std::string elem_off;
-    if (auto offsets_tuple = ir::As<ir::MakeTuple>(op->args_[2])) {
-        const auto view_type = std::make_shared<const ir::TensorType>(shape_tuple->elements_, dtype, std::nullopt);
-        elem_off = codegen.ComputeTensorOffset(view_type, offsets_tuple);
+    std::string elemOff;
+    if (auto offsetsTuple = ir::As<ir::MakeTuple>(op->args_[2])) {
+        const auto viewType = std::make_shared<const ir::TensorType>(shapeTuple->elements_, dtype, std::nullopt);
+        elemOff = codegen.ComputeTensorOffset(viewType, offsetsTuple);
     } else {
-        elem_off = codegen.GetExprAsCode(op->args_[2]);
+        elemOff = codegen.GetExprAsCode(op->args_[2]);
     }
 
     const std::string peer = codegen.GetExprAsCode(op->args_[4]);
-    const std::string base_bytes = codegen.GetExprAsCode(op->args_[1]);
-    const std::string window_ptr = codegen.GetPointer(codegen.GetVarName(window_var));
+    const std::string baseBytes = codegen.GetExprAsCode(op->args_[1]);
+    const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
 
     std::ostringstream call;
-    call << helper << "<" << dtype_str << ">(reinterpret_cast<__gm__ dist::Window*>(" << window_ptr
-         << "), static_cast<int32_t>(" << peer << "), static_cast<int64_t>(" << base_bytes << "), static_cast<int64_t>("
-         << elem_off << ")";
+    call << helper << "<" << dtypeStr << ">(reinterpret_cast<__gm__ dist::Window*>(" << windowPtr
+         << "), static_cast<int32_t>(" << peer << "), static_cast<int64_t>(" << baseBytes << "), static_cast<int64_t>("
+         << elemOff << ")";
     for (size_t i = 5; i < op->args_.size(); ++i) {
-        call << ", static_cast<" << dtype_str << ">(" << codegen.GetExprAsCode(op->args_[i]) << ")";
+        call << ", static_cast<" << dtypeStr << ">(" << codegen.GetExprAsCode(op->args_[i]) << ")";
     }
     call << ")";
 
@@ -2104,73 +2096,73 @@ REGISTER_BACKEND_OP(BackendCCE, "block.tile_valid_shape")
 // Tile in non-VF section: emits TASSIGN with new shape, returns the new tile
 // variable name.
 // ============================================================================
-static std::string MakeBlockSubviewCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeBlockSubviewCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
 
-    auto tile_type = ir::As<ir::TileType>(op->args_[0]->GetType());
-    auto offset_tuple = ir::As<ir::MakeTuple>(op->args_[1]);
-    const bool is_vf = codegen.IsInVFSection();
+    auto tileType = ir::As<ir::TileType>(op->args_[0]->GetType());
+    auto offsetTuple = ir::As<ir::MakeTuple>(op->args_[1]);
+    const bool isVf = codegen.IsInVFSection();
 
     // VF also uses block.subview for tile + linear_offset.
-    if (offset_tuple == nullptr) {
-        CHECK(is_vf) << "block.subview offset must be a 2D tuple outside VF linear-offset access";
-        const std::string base_ptr = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/false);
-        return codegen.RecordVFTileSubviewPointer("(" + base_ptr + " + (" + codegen.GetExprAsCode(op->args_[1]) + "))");
+    if (offsetTuple == nullptr) {
+        CHECK(isVf) << "block.subview offset must be a 2D tuple outside VF linear-offset access";
+        const std::string basePtr = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/false);
+        return codegen.RecordVFTileSubviewPointer("(" + basePtr + " + (" + codegen.GetExprAsCode(op->args_[1]) + "))");
     }
 
-    const std::string row_expr = cce::GetOperandAsCode(codegen, offset_tuple->elements_[0]);
-    const std::string col_expr = cce::GetOperandAsCode(codegen, offset_tuple->elements_[1]);
-    const std::string base_tile = cce::GetOperandAsCode(codegen, op->args_[0]);
-    const std::string elem_off = "pto::GetTileOffset<std::remove_reference_t<decltype(" + base_tile + ")>>(" +
-                                 row_expr + ", " + col_expr + ")";
+    const std::string rowExpr = cce::GetOperandAsCode(codegen, offsetTuple->elements_[0]);
+    const std::string colExpr = cce::GetOperandAsCode(codegen, offsetTuple->elements_[1]);
+    const std::string baseTile = cce::GetOperandAsCode(codegen, op->args_[0]);
+    const std::string elemOff = "pto::GetTileOffset<std::remove_reference_t<decltype(" + baseTile + ")>>(" + rowExpr +
+                                ", " + colExpr + ")";
 
     // VF only needs pointer arithmetic and does not create a Tile descriptor.
-    if (is_vf) {
-        const std::string base_ptr = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/false);
-        return codegen.RecordVFTileSubviewPointer("(" + base_ptr + " + " + elem_off + ")");
+    if (isVf) {
+        const std::string basePtr = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/false);
+        return codegen.RecordVFTileSubviewPointer("(" + basePtr + " + " + elemOff + ")");
     }
 
-    const int dtype_bits = static_cast<int>(tile_type->dtype_.GetBit());
-    const std::string byte_offset_expr = "((" + elem_off + ")*" + std::to_string(dtype_bits) + "/8)";
+    const int dtypeBits = static_cast<int>(tileType->dtype_.GetBit());
+    const std::string byteOffsetExpr = "((" + elemOff + ")*" + std::to_string(dtypeBits) + "/8)";
 
-    const std::string base_addr = "(uint64_t)" + base_tile + ".data()";
+    const std::string baseAddr = "(uint64_t)" + baseTile + ".data()";
 
     // Sub-window valid_shape from args[2] (computed by parser as the intersection
     // of slice size and original valid_shape - start).
-    auto shape_tuple = ir::As<ir::MakeTuple>(op->args_[2]);
-    std::string vs_row = cce::GetOperandAsCode(codegen, shape_tuple->elements_[0]);
-    std::string vs_col = cce::GetOperandAsCode(codegen, shape_tuple->elements_[1]);
+    auto shapeTuple = ir::As<ir::MakeTuple>(op->args_[2]);
+    std::string vsRow = cce::GetOperandAsCode(codegen, shapeTuple->elements_[0]);
+    std::string vsCol = cce::GetOperandAsCode(codegen, shapeTuple->elements_[1]);
 
     // Build type with original shape (preserves row_stride) but WITHOUT tileView_,
     // so valid_shape template params are -1 (dynamic). This is required because
     // subview calls SetValidShape at runtime, which only works when the template
     // valid_shape params are DYNAMIC (-1).
-    auto subview_type = ir::As<ir::TileType>(op->GetType());
+    auto subviewType = ir::As<ir::TileType>(op->GetType());
 
     // Sanitize base_tile into a valid C++ identifier prefix
-    std::string base_tile_id = base_tile;
-    for (char& c : base_tile_id)
+    std::string baseTileId = baseTile;
+    for (char& c : baseTileId)
         if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_')
             c = '_';
-    std::string temp_name = codegen.GetCurrentResultTarget().empty() ?
-                                (base_tile_id + "_view_" + std::to_string(codegen.GetTileOffsetCounter())) :
-                                codegen.GetCurrentResultTarget();
+    std::string tempName = codegen.GetCurrentResultTarget().empty() ?
+                               (baseTileId + "_view_" + std::to_string(codegen.GetTileOffsetCounter())) :
+                               codegen.GetCurrentResultTarget();
 
     // The descriptor and its binding are created at the source value's execution point.
-    std::string temp_addr = base_addr + " + " + byte_offset_expr;
-    const std::string descriptor = temp_name + ".tile";
-    DeclareTile(codegen, subview_type, temp_name, vs_row + ", " + vs_col, InheritedMutexIds(codegen, op->args_[0]));
-    codegen.Emit("TASSIGN(" + descriptor + ", " + temp_addr + ");");
-    codegen.Emit(descriptor + ".SetValidShape(" + vs_row + ", " + vs_col + ");");
+    std::string tempAddr = baseAddr + " + " + byteOffsetExpr;
+    const std::string descriptor = tempName + ".tile";
+    DeclareTile(codegen, subviewType, tempName, vsRow + ", " + vsCol, InheritedMutexIds(codegen, op->args_[0]));
+    codegen.Emit("TASSIGN(" + descriptor + ", " + tempAddr + ");");
+    codegen.Emit(descriptor + ".SetValidShape(" + vsRow + ", " + vsCol + ");");
 
-    return temp_name;
+    return tempName;
 }
 
 REGISTER_BACKEND_OP(BackendCCE, "block.subview")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
-        return MakeBlockSubviewCodegenCCE(op, codegen_base);
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
+        return MakeBlockSubviewCodegenCCE(op, codegenBase);
     });
 
 // ============================================================================
@@ -2180,10 +2172,10 @@ REGISTER_BACKEND_OP(BackendCCE, "block.subview")
 // API: get_buf(PIPE_MTE2, mutexId, 0);  rls_buf(PIPE_MTE2, mutexId, 0);
 // ============================================================================
 
-static std::string MakeMutexBufCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base,
+static std::string MakeMutexBufCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase,
                                           const std::string& intrinsic)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     auto pipe = static_cast<ir::PipeType>(op->GetKwarg<int>("pipe"));
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
         << "dynamic mutex requires one scalar mutex ID";
@@ -2192,14 +2184,14 @@ static std::string MakeMutexBufCodegenCCE(const ir::CallPtr& op, codegen::Codege
     return "";
 }
 
-static std::string MakeMutexLockDynCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeMutexLockDynCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return MakeMutexBufCodegenCCE(op, codegen_base, "get_buf");
+    return MakeMutexBufCodegenCCE(op, codegenBase, "get_buf");
 }
 
-static std::string MakeMutexUnlockDynCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeMutexUnlockDynCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return MakeMutexBufCodegenCCE(op, codegen_base, "rls_buf");
+    return MakeMutexBufCodegenCCE(op, codegenBase, "rls_buf");
 }
 
 REGISTER_BACKEND_OP(BackendCCE, "system.mutex_lock_dyn")
@@ -2223,21 +2215,21 @@ REGISTER_BACKEND_OP(BackendCCE, "system.vf_scope_args").f_codegen([](const ir::C
 // ============================================================================
 // Delegates to pto-isa SYNCALL<SyncCoreType>().
 
-static std::string MakeSystemSyncAllCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeSystemSyncAllCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
 
-    auto core_type = static_cast<ir::SyncCoreType>(op->HasKwarg("core_type") ? op->GetKwarg<int>("core_type") : 2);
+    auto coreType = static_cast<ir::SyncCoreType>(op->HasKwarg("core_type") ? op->GetKwarg<int>("core_type") : 2);
 
-    std::string core_type_tok;
-    if (core_type == ir::SyncCoreType::AIV_ONLY)
-        core_type_tok = "SyncCoreType::AIVOnly";
-    else if (core_type == ir::SyncCoreType::AIC_ONLY)
-        core_type_tok = "SyncCoreType::AICOnly";
+    std::string coreTypeTok;
+    if (coreType == ir::SyncCoreType::AIV_ONLY)
+        coreTypeTok = "SyncCoreType::AIVOnly";
+    else if (coreType == ir::SyncCoreType::AIC_ONLY)
+        coreTypeTok = "SyncCoreType::AICOnly";
     else
-        core_type_tok = "SyncCoreType::Mix";
+        coreTypeTok = "SyncCoreType::Mix";
 
-    codegen.Emit("SYNCALL<" + core_type_tok + ">();");
+    codegen.Emit("SYNCALL<" + coreTypeTok + ">();");
     return "";
 }
 
@@ -2247,12 +2239,12 @@ REGISTER_BACKEND_OP(BackendCCE, "system.sync_all")
         return MakeSystemSyncAllCodegenCCE(op, codegen);
     });
 
-static std::string MakeSystemDsbCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string MakeSystemDsbCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
 
-    int scope_int = op->HasKwarg("scope") ? op->GetKwarg<int>("scope") : 0; // MemDsb::ALL
-    const auto scope = static_cast<ir::MemDsb>(scope_int);
+    int scopeInt = op->HasKwarg("scope") ? op->GetKwarg<int>("scope") : 0; // MemDsb::ALL
+    const auto scope = static_cast<ir::MemDsb>(scopeInt);
 
     // MemDsb members drop the toolchain's DSB_ prefix; prepend it to recover the
     // intrinsic token: MemDsb::DDR -> dsb(DSB_DDR).
@@ -2272,9 +2264,9 @@ REGISTER_BACKEND_OP(BackendCCE, "system.dsb").set_pipe(ir::PipeType::S).f_codege
 REGISTER_BACKEND_OP(BackendCCE, "system.wait_pre_task_end")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        auto& cce_codegen = dynamic_cast<codegen::CCECodegen&>(codegen);
+        auto& cceCodegen = dynamic_cast<codegen::CCECodegen&>(codegen);
         bool force = op->HasKwarg("force") ? op->GetKwarg<bool>("force") : false;
-        cce_codegen.Emit(force ? "AscendC::WaitPreTaskEnd<true>();" : "AscendC::WaitPreTaskEnd();");
+        cceCodegen.Emit(force ? "AscendC::WaitPreTaskEnd<true>();" : "AscendC::WaitPreTaskEnd();");
         return "";
     });
 
@@ -2285,17 +2277,17 @@ REGISTER_BACKEND_OP(BackendCCE, "system.wait_pre_task_end")
 REGISTER_BACKEND_OP(BackendCCE, "system.set_next_task_start")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        auto& cce_codegen = dynamic_cast<codegen::CCECodegen&>(codegen);
+        auto& cceCodegen = dynamic_cast<codegen::CCECodegen&>(codegen);
         bool force = op->HasKwarg("force") ? op->GetKwarg<bool>("force") : false;
-        cce_codegen.Emit(force ? "AscendC::SetNextTaskStart<PIPE_MTE3, PIPE_FIX, true>();" :
-                                 "AscendC::SetNextTaskStart();");
+        cceCodegen.Emit(force ? "AscendC::SetNextTaskStart<PIPE_MTE3, PIPE_FIX, true>();" :
+                                "AscendC::SetNextTaskStart();");
         return "";
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "system.set_mm_layout_transform")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
-        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
+        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
         auto enabled = op->GetKwarg<int>("enabled");
         if (codegen.IsRegisterBasedArch()) {
             // Direct register manipulation: MM_LAYOUT_MODE_BIT = 51

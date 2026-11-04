@@ -128,16 +128,7 @@ void IRTextDumper::VisitType_(const TileTypePtr& op)
     stream_ << IR_PUN_COMMA << " " << op->dtype_.ToCTypeString();
     stream_ << IR_PUN_COMMA << " " << IR_KW_TILE_VIEW << IR_PUN_LT;
     if (op->tileView_.has_value()) {
-        const auto& tv = op->tileView_.value();
-        PrintShape(tv.validShape);
-        stream_ << IR_PUN_COMMA << " ";
-        PrintShape(tv.stride);
-        stream_ << IR_PUN_COMMA << " ";
-        if (tv.startOffset) {
-            VisitExpr(tv.startOffset);
-        } else {
-            stream_ << IR_KW_NULL;
-        }
+        PrintShape(op->tileView_->validShape);
     }
     stream_ << IR_PUN_GT;
     stream_ << IR_PUN_COMMA << " " << IR_KW_HW_INFO << IR_PUN_LT;

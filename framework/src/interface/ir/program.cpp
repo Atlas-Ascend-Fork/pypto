@@ -30,15 +30,14 @@ namespace ir {
 Program::Program(const std::vector<FunctionPtr>& functions, std::string name, Span span, IRDebugInfoPtr debugInfo)
     : IRNode(std::move(span)), name_(std::move(name)), debugInfo_(std::move(debugInfo))
 {
-    std::set<std::string> function_names;
+    std::set<std::string> functionNames;
     for (const auto& func : functions) {
         INTERNAL_CHECK(func) << "Program constructor encountered null function";
-        auto func_name = func->name_;
-        INTERNAL_CHECK(!func_name.empty()) << "Program constructor encountered empty function name";
-        CHECK(function_names.find(func_name) == function_names.end())
-            << "Duplicate function name \"" << func_name << "\"";
-        function_names.insert(func_name);
-        functions_.emplace(func_name, func);
+        auto funcName = func->name_;
+        INTERNAL_CHECK(!funcName.empty()) << "Program constructor encountered empty function name";
+        CHECK(functionNames.find(funcName) == functionNames.end()) << "Duplicate function name \"" << funcName << "\"";
+        functionNames.insert(funcName);
+        functions_.emplace(funcName, func);
     }
 }
 

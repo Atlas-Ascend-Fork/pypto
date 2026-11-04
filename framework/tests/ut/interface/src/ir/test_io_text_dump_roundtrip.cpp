@@ -52,6 +52,30 @@ static VarPtr Var_(const std::string& name, DataType dt = DataType::INT32)
 
 class IoTextDumpRoundTripTest : public testing::Test {};
 
+TEST_F(IoTextDumpRoundTripTest, TileTypeDynamicValidShapeRoundTrip)
+{
+    auto type = std::make_shared<TileType>(std::vector<int64_t>{4, 8}, DataType::FP32, std::nullopt, std::nullopt);
+    const std::string expected = "tile<4 x 8, float, tile_view<-1 x -1>, hw_info<>>";
+    EXPECT_EQ(TextDumpType(type), expected);
+    for (const auto& text : {expected, std::string("tile<4 x 8, float, tile_view<>, hw_info<>>")}) {
+        std::string error;
+        auto loaded = As<TileType>(TextLoadType(text, error));
+        ASSERT_TRUE(error.empty()) << error;
+        ASSERT_NE(loaded, nullptr);
+        ASSERT_TRUE(loaded->tileView_.has_value());
+        ASSERT_EQ(loaded->tileView_->validShape.size(), 2);
+        EXPECT_EQ(TextDumpType(loaded), expected);
+    }
+}
+
+TEST_F(IoTextDumpRoundTripTest, RejectsRemovedTileViewFields)
+{
+    std::string error;
+    auto loaded = TextLoadType("tile<4 x 8, float, tile_view<4 x 8, 8 x 1, 0>, hw_info<>>", error);
+    EXPECT_EQ(loaded, nullptr);
+    EXPECT_FALSE(error.empty());
+}
+
 TEST_F(IoTextDumpRoundTripTest, MutexTileTypePreservesCount)
 {
     for (uint32_t count : {0U, 2U}) {

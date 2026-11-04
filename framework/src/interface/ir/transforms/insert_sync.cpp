@@ -66,10 +66,10 @@ std::optional<PipeType> Pipe(const CallPtr& call)
 
 bool SkipAcc(const CallPtr& call)
 {
-    static const std::set<std::string> phase_ops{"block.matmul",     "block.matmul_bias",   "block.matmul_acc",
-                                                 "block.matmul_mx",  "block.matmul_mx_acc", "block.store",
-                                                 "block.store_tile", "block.move",          "block.insert"};
-    if (!phase_ops.count(call->name_))
+    static const std::set<std::string> phaseOps{"block.matmul",     "block.matmul_bias",   "block.matmul_acc",
+                                                "block.matmul_mx",  "block.matmul_mx_acc", "block.store",
+                                                "block.store_tile", "block.move",          "block.insert"};
+    if (!phaseOps.count(call->name_))
         return false;
     int phase = call->GetKwarg<int>("phase", 0);
     return phase == static_cast<int>(AccPhase::Partial) || phase == static_cast<int>(AccPhase::Final);
@@ -121,9 +121,9 @@ public:
 
 private:
     std::unordered_map<ExprPtr, SlotCandidates> candidates_;
-    std::vector<VarPtr> yield_targets_;
-    std::vector<VarPtr> continue_targets_;
-    std::vector<VarPtr> break_targets_;
+    std::vector<VarPtr> yieldTargets_;
+    std::vector<VarPtr> continueTargets_;
+    std::vector<VarPtr> breakTargets_;
     bool changed_ = false;
 
     void VisitExpr(const ExprPtr& op) override
@@ -160,15 +160,15 @@ private:
     void VisitExpr_(const GetItemExprPtr& op) override
     {
         IRVisitor::VisitExpr_(op);
-        auto tuple_type = As<TupleType>(op->value_->GetType());
-        if (!tuple_type)
+        auto tupleType = As<TupleType>(op->value_->GetType());
+        if (!tupleType)
             return;
         SlotCandidates result(MutexSlots(op->GetType()));
         const auto& base = GetCandidates(op->value_);
         auto index = As<ConstInt>(op->slice_);
         size_t offset = 0;
-        for (size_t i = 0; i < tuple_type->types_.size(); ++i) {
-            auto size = MutexSlots(tuple_type->types_[i]);
+        for (size_t i = 0; i < tupleType->types_.size(); ++i) {
+            auto size = MutexSlots(tupleType->types_[i]);
             if (!index || index->value_ == static_cast<int64_t>(i))
                 MergeCandidates(result, SlotCandidates(base.begin() + offset, base.begin() + offset + size), op->span_);
             offset += size;
@@ -201,7 +201,7 @@ private:
         // Empty sources contribute nothing; empty targets have no slots to track.
         if (into.empty() || from.empty())
             return false;
-        pro::SpanScope span_scope(span);
+        pro::SpanScope spanScope(span);
         PRO_IR_IRCHECK(ExternalError::INVALID_TYPE, into.size() == from.size())
             << "Inconsistent mutex ID counts in control flow or dynamic tuple selection";
         bool changed = false;
@@ -233,31 +233,31 @@ private:
 
     void VisitStmt_(const IfStmtPtr& op) override
     {
-        auto saved = std::move(yield_targets_);
-        yield_targets_ = op->returnVars_;
+        auto saved = std::move(yieldTargets_);
+        yieldTargets_ = op->returnVars_;
         IRVisitor::VisitStmt_(op);
-        yield_targets_ = std::move(saved);
+        yieldTargets_ = std::move(saved);
     }
 
     template <class Loop>
-    void LoopBody(const Loop& op, bool is_for)
+    void LoopBody(const Loop& op, bool isFor)
     {
-        auto old_continue = std::move(continue_targets_);
-        auto old_break = std::move(break_targets_);
-        continue_targets_.clear();
+        auto oldContinue = std::move(continueTargets_);
+        auto oldBreak = std::move(breakTargets_);
+        continueTargets_.clear();
         for (const auto& arg : op->iterArgs_)
-            continue_targets_.push_back(arg->iterVar_);
+            continueTargets_.push_back(arg->iterVar_);
         // Match the parser: for merges every jump into each carried variable;
         // while keeps break results separate from initial/continue values.
-        break_targets_ = is_for ? continue_targets_ : op->returnVars_;
+        breakTargets_ = isFor ? continueTargets_ : op->returnVars_;
         IRVisitor::VisitStmt_(op);
         for (const auto& arg : op->iterArgs_)
             Merge(arg->iterVar_, arg->initValue_);
-        if (is_for)
+        if (isFor)
             for (size_t i = 0; i < op->returnVars_.size(); ++i)
-                Merge(op->returnVars_[i], continue_targets_[i]);
-        continue_targets_ = std::move(old_continue);
-        break_targets_ = std::move(old_break);
+                Merge(op->returnVars_[i], continueTargets_[i]);
+        continueTargets_ = std::move(oldContinue);
+        breakTargets_ = std::move(oldBreak);
     }
 
     void VisitStmt_(const ForStmtPtr& op) override { LoopBody(op, true); }
@@ -265,17 +265,17 @@ private:
     void VisitStmt_(const YieldStmtPtr& op) override
     {
         IRVisitor::VisitStmt_(op);
-        Merge(yield_targets_, op->value_);
+        Merge(yieldTargets_, op->value_);
     }
     void VisitStmt_(const ContinueStmtPtr& op) override
     {
         IRVisitor::VisitStmt_(op);
-        Merge(continue_targets_, op->value_);
+        Merge(continueTargets_, op->value_);
     }
     void VisitStmt_(const BreakStmtPtr& op) override
     {
         IRVisitor::VisitStmt_(op);
-        Merge(break_targets_, op->value_);
+        Merge(breakTargets_, op->value_);
     }
 };
 

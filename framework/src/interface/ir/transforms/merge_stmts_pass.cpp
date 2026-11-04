@@ -665,7 +665,7 @@ private:
     {
         std::vector<StmtPtr> collected;
 
-        auto merge_survivor = [&](auto& ifstmt, auto& survivor, auto& conds) {
+        auto mergeSurvivor = [&](auto& ifstmt, auto& survivor, auto& conds) {
             VarExprMap local;
             auto ops = SpliceSurvivor(ifstmt, survivor, conds, local);
             // `local` maps this dead-if's return vars to THIS survivor's outputs. Apply it to the
@@ -690,11 +690,11 @@ private:
                 auto cls = ClassifyIfBranches(ifStmt, condPath);
                 if (cls.thenDead) {
                     if (ifStmt->elseBody_)
-                        merge_survivor(ifStmt, *ifStmt->elseBody_, cls.elseConds);
+                        mergeSurvivor(ifStmt, *ifStmt->elseBody_, cls.elseConds);
                     continue;
                 }
                 if (cls.elseDead) {
-                    merge_survivor(ifStmt, ifStmt->thenBody_, cls.thenConds);
+                    mergeSurvivor(ifStmt, ifStmt->thenBody_, cls.thenConds);
                     continue;
                 }
                 std::reverse(collected.begin(), collected.end());

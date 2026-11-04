@@ -800,10 +800,21 @@ class ShapedType(Type):
         ...
 
 
+class TileView:
+    """Valid shape of a tile; TileType fills an empty shape with dynamic dimensions."""
+
+    valid_shape: list[Expr]
+
+    @overload
+    def __init__(self) -> None: ...
+    @overload
+    def __init__(self, valid_shape: Sequence[Expr]) -> None: ...
+
+
 class TileType(ShapedType):
     """Tile data type, storage and layout information."""
 
-    tile_view: Final[Any]
+    tile_view: Final[TileView | None]
     hardware_info: Final[Any]
 
     def __init__(
@@ -811,7 +822,7 @@ class TileType(ShapedType):
         shape: Sequence[int] | Sequence[Expr],
         dtype: DataType,
         memref: MemRef | None = None,
-        tile_view: Any = None,
+        tile_view: TileView | None = None,
         hardware_info: Any = None,
     ) -> None: ...
 

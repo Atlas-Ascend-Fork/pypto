@@ -48,13 +48,13 @@ public:
      * Generates a variable name from the ID (e.g., "mem_ddr_0") and creates
      * a MemRefType for the type. Calls Var constructor with these values.
      *
-     * \param memory_space Memory space (DDR, Vec, Mat, etc.)
+     * \param memorySpace Memory space (DDR, Vec, Mat, etc.)
      * \param addr Starting address expression
      * \param size Size in bytes
      * \param id Unique identifier (used to generate variable name)
      * \param span Source location (defaults to Span::Unknown())
      */
-    MemRef(MemorySpace memory_space, ExprPtr addr, uint64_t size, uint64_t id, Span span = Span::Unknown());
+    MemRef(MemorySpace memorySpace, ExprPtr addr, uint64_t size, uint64_t id, Span span = Span::Unknown());
 
     /**
      * \brief Constructor without explicit ID (id defaults to 0)
@@ -62,7 +62,7 @@ public:
      * Backwards-compatible 4-arg constructor for call sites that do not
      * track an allocation counter.
      */
-    MemRef(MemorySpace memory_space, ExprPtr addr, uint64_t size, Span span = Span::Unknown());
+    MemRef(MemorySpace memorySpace, ExprPtr addr, uint64_t size, Span span = Span::Unknown());
 
     [[nodiscard]] ObjectKind GetKind() const override { return ObjectKind::MemRef; }
     [[nodiscard]] std::string TypeName() const override { return "MemRef"; }

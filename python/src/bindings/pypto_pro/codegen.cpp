@@ -26,10 +26,10 @@ using namespace pypto::ir;      // NOLINT(build/namespaces)
 void BindCodegen(py::module_& m)
 {
     // Create a new 'codegen' submodule
-    py::module_ codegen_module = m.def_submodule("codegen", "Code generation module for converting IR to pto-isa C++");
+    py::module_ codegenModule = m.def_submodule("codegen", "Code generation module for converting IR to pto-isa C++");
 
     // TypeConverter class for type conversions
-    py::class_<TypeConverter>(codegen_module, "TypeConverter", "Utility for converting IR types to pto-isa C++ types")
+    py::class_<TypeConverter>(codegenModule, "TypeConverter", "Utility for converting IR types to pto-isa C++ types")
         .def(py::init<>(), "Create a type converter")
         .def("ConvertPipeType", &TypeConverter::ConvertPipeType, py::arg("pipe"),
              "Convert PipeType to pto-isa pipe type string\n\n"
@@ -57,7 +57,7 @@ void BindCodegen(py::module_& m)
              "    Stride type string with 5D padding");
 
     // CCECodegen - CCE/pto-isa C++ code generator (unified in codegen module)
-    py::class_<CCECodegen>(codegen_module, "CCECodegen",
+    py::class_<CCECodegen>(codegenModule, "CCECodegen",
                            "CCE code generator for converting PyPTO IR to pto-isa C++ code")
         .def(py::init<SectionKind>(), py::arg("target"),
              "Create a CCE code generator for one fixed Cube or Vector target")

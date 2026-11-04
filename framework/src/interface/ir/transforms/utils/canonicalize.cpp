@@ -33,10 +33,10 @@ using utils::CollectStmtVarRefs;
 using utils::CollectVarUses;
 using utils::StmtsEqual;
 
-std::vector<ExprPtr> MakeReturnVars(const std::vector<ExprPtr>& values, const std::vector<size_t>& kept_indices)
+std::vector<ExprPtr> MakeReturnVars(const std::vector<ExprPtr>& values, const std::vector<size_t>& keptIndices)
 {
     std::vector<ExprPtr> result;
-    for (size_t idx : kept_indices) {
+    for (size_t idx : keptIndices) {
         INTERNAL_CHECK(idx < values.size());
         result.push_back(values[idx]);
     }
@@ -319,8 +319,8 @@ SeqStmtsPtr CanonicalizeSeqStmts(const SeqStmtsPtr& seq, const std::vector<size_
                 [whileStmt](const std::vector<IterArgPtr>& ia, const SeqStmtsPtr& body, const std::vector<VarPtr>& rv) {
                     return std::make_shared<const WhileStmt>(whileStmt->condition_, ia, body, rv, whileStmt->span_);
                 });
-        } else if (auto if_stmt = std::dynamic_pointer_cast<const IfStmt>(stmts[idx])) {
-            result[idx] = CanonicalizeIfStmt(if_stmt, suffix);
+        } else if (auto ifStmt = std::dynamic_pointer_cast<const IfStmt>(stmts[idx])) {
+            result[idx] = CanonicalizeIfStmt(ifStmt, suffix);
         } else if (auto section = std::dynamic_pointer_cast<const SectionStmt>(stmts[idx])) {
             result[idx] = CanonicalizeSectionStmt(section);
         } else {

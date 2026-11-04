@@ -38,12 +38,12 @@ namespace ir {
 
 // Report the memory space of a tile, or nullopt when the tile carries no
 // memref yet (nothing to check in that case).
-inline std::optional<MemorySpace> GetTileMemSpace(const TileTypePtr& tile_type)
+inline std::optional<MemorySpace> GetTileMemSpace(const TileTypePtr& tileType)
 {
-    if (tile_type->memref_ == std::nullopt) {
+    if (tileType->memref_ == std::nullopt) {
         return std::nullopt;
     }
-    return (*tile_type->memref_)->memorySpace_;
+    return (*tileType->memref_)->memorySpace_;
 }
 
 // Format the allowed memory spaces of CheckTileArg for diagnostics, e.g. "Vec or Mat".
@@ -72,21 +72,21 @@ inline std::string MemorySpacesToString(std::initializer_list<MemorySpace> space
  *
  * \param args Operator argument expressions
  * \param idx Index of the argument to validate
- * \param op_name Operator name for diagnostics
+ * \param opName Operator name for diagnostics
  * \param spaces Allowed memory spaces for the tile
  */
-inline void CheckTileArg(const std::vector<ExprPtr>& args, size_t idx, const std::string& op_name,
+inline void CheckTileArg(const std::vector<ExprPtr>& args, size_t idx, const std::string& opName,
                          std::initializer_list<MemorySpace> spaces)
 {
     using npu::tile_fwk::ExternalError; // Block-scoped: short enum names without leaking to includers
-    auto tile_type = As<TileType>(args[idx]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tile_type)
-        << "The operator " << op_name << " requires argument " << idx << " to be TileType, but got "
+    auto tileType = As<TileType>(args[idx]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tileType)
+        << "The operator " << opName << " requires argument " << idx << " to be TileType, but got "
         << args[idx]->GetType()->TypeName();
-    auto space = GetTileMemSpace(tile_type);
+    auto space = GetTileMemSpace(tileType);
     PRO_IR_CHECK(ExternalError::INVALID_OPERATION,
                  space == std::nullopt || std::find(spaces.begin(), spaces.end(), *space) != spaces.end())
-        << "The operator " << op_name << " requires argument " << idx << " to be a " << MemorySpacesToString(spaces)
+        << "The operator " << opName << " requires argument " << idx << " to be a " << MemorySpacesToString(spaces)
         << " tile, but got " << MemorySpaceToString(space.value_or(MemorySpace::DDR));
 }
 

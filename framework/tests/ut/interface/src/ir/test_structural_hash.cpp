@@ -408,8 +408,7 @@ TEST_F(IRStructHashTest, TestHashTileType)
 TEST_F(IRStructHashTest, TestHashTileTypeWithTileView)
 {
     auto d16 = std::make_shared<ConstInt>(16, DataType::INT64, Sp());
-    auto off0 = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
-    TileView tv({d16}, {d16}, off0);
+    TileView tv({d16});
 
     auto t1 = std::make_shared<TileType>(std::vector<ExprPtr>{d16}, DataType::FP32, std::nullopt, tv);
     auto t2 = std::make_shared<TileType>(std::vector<ExprPtr>{d16}, DataType::FP32, std::nullopt, tv);
@@ -417,6 +416,20 @@ TEST_F(IRStructHashTest, TestHashTileTypeWithTileView)
 
     auto t3 = std::make_shared<TileType>(std::vector<ExprPtr>{d16}, DataType::FP32);
     EXPECT_NE(structural_hash(t1), structural_hash(t3));
+}
+
+TEST_F(IRStructHashTest, DefaultAndExplicitDynamicTileViewsMatch)
+{
+    std::vector<int64_t> shape = {16, 32};
+    auto dynamicDim = std::make_shared<ConstInt>(-1, DataType::INT64, Sp());
+    auto defaultType = std::make_shared<TileType>(shape, DataType::FP32, std::nullopt, std::nullopt);
+    auto emptyType = std::make_shared<TileType>(shape, DataType::FP32, std::nullopt, TileView{});
+    auto explicitType = std::make_shared<TileType>(shape, DataType::FP32, std::nullopt,
+                                                   TileView({dynamicDim, dynamicDim}));
+    EXPECT_TRUE(structural_equal(defaultType, emptyType));
+    EXPECT_TRUE(structural_equal(defaultType, explicitType));
+    EXPECT_EQ(structural_hash(defaultType), structural_hash(emptyType));
+    EXPECT_EQ(structural_hash(defaultType), structural_hash(explicitType));
 }
 
 TEST_F(IRStructHashTest, TestHashTileTypeWithHardwareInfo)

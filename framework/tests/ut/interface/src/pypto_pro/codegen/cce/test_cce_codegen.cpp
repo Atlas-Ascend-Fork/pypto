@@ -248,12 +248,12 @@ TEST(CCECodegenHeaderTest, CoversTensorDefDefaults)
 
     TensorDef tensor_def;
     tensor_def.var = tensor_var;
-    tensor_def.access_shape = {MakeConstInt(16), MakeConstInt(16)};
+    tensor_def.accessShape = {MakeConstInt(16), MakeConstInt(16)};
 
     EXPECT_EQ(tensor_def.var, tensor_var);
-    EXPECT_EQ(tensor_def.access_shape.size(), 2);
-    EXPECT_FALSE(tensor_def.tile_dims.has_value());
-    EXPECT_FALSE(tensor_def.is_transpose);
+    EXPECT_EQ(tensor_def.accessShape.size(), 2);
+    EXPECT_FALSE(tensor_def.tileDims.has_value());
+    EXPECT_FALSE(tensor_def.isTranspose);
 }
 
 TEST(CCECodegenTest, KeepsSeparateVFTilePointersForPostUpdate)

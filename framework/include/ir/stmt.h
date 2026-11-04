@@ -182,8 +182,8 @@ public:
             if (auto seq = AsMut(s)) {
                 // Recursively flatten nested SeqStmts
                 for (const auto& inner : seq->stmts_) {
-                    if (auto inner_seq = AsMut(inner)) {
-                        flat.insert(flat.end(), inner_seq->stmts_.begin(), inner_seq->stmts_.end());
+                    if (auto innerSeq = AsMut(inner)) {
+                        flat.insert(flat.end(), innerSeq->stmts_.begin(), innerSeq->stmts_.end());
                     } else {
                         flat.push_back(inner);
                     }
@@ -439,13 +439,13 @@ public:
 
     /// Get a typed attribute value (returns default_value if key not found)
     template <typename T>
-    [[nodiscard]] T GetAttr(const std::string& key, const T& default_value = T{}) const
+    [[nodiscard]] T GetAttr(const std::string& key, const T& defaultValue = T{}) const
     {
         for (const auto& [k, v] : attrs_) {
             if (k == key)
                 return AnyCast<T>(v, "for_stmt attr key: " + key);
         }
-        return default_value;
+        return defaultValue;
     }
 
     /// Check if an attribute exists
@@ -656,10 +656,10 @@ public:
     std::string opcode_;
     std::vector<ExprPtr> args_;
 
-    ScalarOpStmt(VarPtr result, VarPtr result_token, std::string opcode, std::vector<ExprPtr> args, Span span)
+    ScalarOpStmt(VarPtr result, VarPtr resultToken, std::string opcode, std::vector<ExprPtr> args, Span span)
         : Stmt(std::move(span)),
           result_(std::move(result)),
-          result_token_(std::move(result_token)),
+          result_token_(std::move(resultToken)),
           opcode_(std::move(opcode)),
           args_(std::move(args))
     {}
@@ -696,22 +696,22 @@ public:
     std::vector<VarPtr> tokens_;
     std::vector<std::pair<std::string, std::any>> attrs_;
 
-    TensorOpStmt(std::vector<VarPtr> result, std::vector<VarPtr> result_token, std::string opcode,
+    TensorOpStmt(std::vector<VarPtr> result, std::vector<VarPtr> resultToken, std::string opcode,
                  std::vector<ExprPtr> args, std::vector<VarPtr> tokens,
                  std::vector<std::pair<std::string, std::any>> attrs, Span span)
         : Stmt(std::move(span)),
           result_(std::move(result)),
-          result_token_(std::move(result_token)),
+          result_token_(std::move(resultToken)),
           opcode_(std::move(opcode)),
           args_(std::move(args)),
           tokens_(std::move(tokens)),
           attrs_(std::move(attrs))
     {}
 
-    TensorOpStmt(std::vector<VarPtr> result, VarPtr result_token, std::string opcode, std::vector<ExprPtr> args,
+    TensorOpStmt(std::vector<VarPtr> result, VarPtr resultToken, std::string opcode, std::vector<ExprPtr> args,
                  std::vector<VarPtr> tokens, std::vector<std::pair<std::string, std::any>> attrs, Span span)
         : TensorOpStmt(std::move(result),
-                       result_token ? std::vector<VarPtr>{std::move(result_token)} : std::vector<VarPtr>{},
+                       resultToken ? std::vector<VarPtr>{std::move(resultToken)} : std::vector<VarPtr>{},
                        std::move(opcode), std::move(args), std::move(tokens), std::move(attrs), std::move(span))
     {}
 

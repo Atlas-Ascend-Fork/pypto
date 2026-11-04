@@ -27,30 +27,30 @@ namespace ir {
 // Thread-local current context (top of stack)
 thread_local PassContext* PassContext::current_ = nullptr;
 // CallbackInstrument
-CallbackInstrument::CallbackInstrument(Callback before_pass, Callback after_pass, std::string name)
-    : before_pass_(std::move(before_pass)), after_pass_(std::move(after_pass)), name_(std::move(name))
+CallbackInstrument::CallbackInstrument(Callback beforePass, Callback afterPass, std::string name)
+    : beforePass_(std::move(beforePass)), afterPass_(std::move(afterPass)), name_(std::move(name))
 {}
 
 void CallbackInstrument::RunBeforePass(const Pass& pass, const ProgramPtr& program)
 {
-    if (before_pass_)
-        before_pass_(pass, program);
+    if (beforePass_)
+        beforePass_(pass, program);
 }
 
 void CallbackInstrument::RunAfterPass(const Pass& pass, const ProgramPtr& program)
 {
-    if (after_pass_)
-        after_pass_(pass, program);
+    if (afterPass_)
+        afterPass_(pass, program);
 }
 
 std::string CallbackInstrument::GetName() const { return name_; }
 
 // PassContext
-PassContext::PassContext(std::vector<PassInstrumentPtr> instruments, VerificationLevel verification_level)
-    : instruments_(std::move(instruments)), verification_level_(verification_level), previous_(nullptr)
+PassContext::PassContext(std::vector<PassInstrumentPtr> instruments, VerificationLevel verificationLevel)
+    : instruments_(std::move(instruments)), verificationLevel_(verificationLevel), previous_(nullptr)
 {}
 
-VerificationLevel PassContext::GetVerificationLevel() const { return verification_level_; }
+VerificationLevel PassContext::GetVerificationLevel() const { return verificationLevel_; }
 
 const std::vector<PassInstrumentPtr>& PassContext::GetInstruments() const { return instruments_; }
 

@@ -31,49 +31,49 @@ namespace {
 
 class VarUseCollector : public IRVisitor {
 public:
-    std::unordered_set<const Var*> var_uses;
+    std::unordered_set<const Var*> varUses;
 
     // When set, skip Yield/Break/Continue statements (and their carried-value
     // expressions) at any nesting depth: a terminator only forwards loop
     // carries, it is not a real use of the carried variable.
-    explicit VarUseCollector(bool skip_iter_updates = false) : skip_iter_updates_(skip_iter_updates) {}
+    explicit VarUseCollector(bool skipIterUpdates = false) : skipIterUpdates_(skipIterUpdates) {}
 
 private:
     using IRVisitor::VisitExpr_;
     using IRVisitor::VisitStmt_;
     void VisitExpr_(const VarPtr& op) override
     {
-        var_uses.insert(op.get());
+        varUses.insert(op.get());
         IRVisitor::VisitExpr_(op);
     }
     void VisitExpr_(const MemRefPtr& op) override
     {
-        var_uses.insert(op.get());
+        varUses.insert(op.get());
         IRVisitor::VisitExpr_(op);
     }
     // Symbolic scalar expressions (if conditions, scalar yield/continue values) keep their
     // operand vars in RawSymbolicExpression, invisible to the base visitor's traversal.
     void VisitExpr_(const ScalarExprPtr& op) override
     {
-        npu::tile_fwk::SymbolicScalar::FromExpr(op).GetVarRefs(var_uses);
+        npu::tile_fwk::SymbolicScalar::FromExpr(op).GetVarRefs(varUses);
     }
     void VisitStmt_(const YieldStmtPtr& op) override
     {
-        if (!skip_iter_updates_) {
+        if (!skipIterUpdates_) {
             IRVisitor::VisitStmt_(op);
             CollectValueTypeRefs(op->value_);
         }
     }
     void VisitStmt_(const BreakStmtPtr& op) override
     {
-        if (!skip_iter_updates_) {
+        if (!skipIterUpdates_) {
             IRVisitor::VisitStmt_(op);
             CollectValueTypeRefs(op->value_);
         }
     }
     void VisitStmt_(const ContinueStmtPtr& op) override
     {
-        if (!skip_iter_updates_) {
+        if (!skipIterUpdates_) {
             IRVisitor::VisitStmt_(op);
             CollectValueTypeRefs(op->value_);
         }
@@ -82,7 +82,7 @@ private:
     void VisitStmt_(const TensorOpStmtPtr& op) override
     {
         IRVisitor::VisitStmt_(op);
-        CollectScalarVarRefs(op, var_uses);
+        CollectScalarVarRefs(op, varUses);
     }
 
     // A terminator forwards carried values, and a carried tensor's dynvalidshape may reference
@@ -93,13 +93,13 @@ private:
         for (const auto& v : values) {
             if (auto lt = npu::tile_fwk::AsLogicalTensor(v)) {
                 for (auto& shape : lt->GetDynValidShape()) {
-                    shape.GetVarRefs(var_uses);
+                    shape.GetVarRefs(varUses);
                 }
             }
         }
     }
 
-    bool skip_iter_updates_;
+    bool skipIterUpdates_;
 };
 
 } // namespace
@@ -109,23 +109,23 @@ std::unordered_set<const Var*> CollectVarUses(const ExprPtr& expr)
     VarUseCollector collector;
     if (expr)
         collector.VisitExpr(expr);
-    return std::move(collector.var_uses);
+    return std::move(collector.varUses);
 }
 
 std::unordered_set<const Var*> CollectStmtVarRefs(const StmtPtr& stmt)
 {
     VarUseCollector collector;
     collector.VisitStmt(stmt);
-    return std::move(collector.var_uses);
+    return std::move(collector.varUses);
 }
 
-std::unordered_set<const Var*> CollectStmtVarRefs(const std::vector<StmtPtr>& stmts, bool skip_iter_updates)
+std::unordered_set<const Var*> CollectStmtVarRefs(const std::vector<StmtPtr>& stmts, bool skipIterUpdates)
 {
-    VarUseCollector collector(skip_iter_updates);
+    VarUseCollector collector(skipIterUpdates);
     for (const auto& s : stmts) {
         collector.VisitStmt(s);
     }
-    return std::move(collector.var_uses);
+    return std::move(collector.varUses);
 }
 
 const std::vector<StmtPtr>& FlattenBody(const SeqStmtsPtr& body)

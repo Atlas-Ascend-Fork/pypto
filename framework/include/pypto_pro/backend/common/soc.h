@@ -46,11 +46,11 @@ public:
     /**
      * \brief Construct a memory component
      *
-     * \param mem_type Memory space type
-     * \param mem_size Memory size in bytes
+     * \param memType Memory space type
+     * \param memSize Memory size in bytes
      * \param alignment Memory alignment requirement in bytes
      */
-    Mem(ir::MemorySpace mem_type, uint64_t mem_size, uint64_t alignment);
+    Mem(ir::MemorySpace memType, uint64_t memSize, uint64_t alignment);
 
     // Allow copy and move for container storage
     Mem(const Mem&) = default;
@@ -58,8 +58,8 @@ public:
     Mem(Mem&&) = default;
     Mem& operator=(Mem&&) = default;
 
-    [[nodiscard]] ir::MemorySpace GetMemType() const { return mem_type_; }
-    [[nodiscard]] uint64_t GetMemSize() const { return mem_size_; }
+    [[nodiscard]] ir::MemorySpace GetMemType() const { return memType_; }
+    [[nodiscard]] uint64_t GetMemSize() const { return memSize_; }
     [[nodiscard]] uint64_t GetAlignment() const { return alignment_; }
 
     // Comparison operators for map key support
@@ -67,8 +67,8 @@ public:
     bool operator==(const Mem& other) const;
 
 private:
-    ir::MemorySpace mem_type_;
-    uint64_t mem_size_;
+    ir::MemorySpace memType_;
+    uint64_t memSize_;
     uint64_t alignment_;
 };
 
@@ -83,10 +83,10 @@ public:
     /**
      * \brief Construct a processing core
      *
-     * \param core_type Type of core (CUBE or VECTOR)
+     * \param coreType Type of core (CUBE or VECTOR)
      * \param mems Vector of memory components
      */
-    Core(ir::CoreType core_type, std::vector<Mem> mems);
+    Core(ir::CoreType coreType, std::vector<Mem> mems);
 
     // Allow copy and move for container storage
     Core(const Core&) = default;
@@ -94,7 +94,7 @@ public:
     Core(Core&&) = default;
     Core& operator=(Core&&) = default;
 
-    [[nodiscard]] ir::CoreType GetCoreType() const { return core_type_; }
+    [[nodiscard]] ir::CoreType GetCoreType() const { return coreType_; }
     [[nodiscard]] const std::vector<Mem>& GetMems() const { return mems_; }
 
     // Comparison operators for map key support
@@ -102,7 +102,7 @@ public:
     bool operator==(const Core& other) const;
 
 private:
-    ir::CoreType core_type_;
+    ir::CoreType coreType_;
     std::vector<Mem> mems_;
 };
 
@@ -118,9 +118,9 @@ public:
     /**
      * \brief Construct a cluster
      *
-     * \param core_counts Map from core configuration to count
+     * \param coreCounts Map from core configuration to count
      */
-    explicit Cluster(std::map<Core, int> core_counts);
+    explicit Cluster(std::map<Core, int> coreCounts);
 
     /**
      * \brief Convenience constructor for single core type
@@ -136,7 +136,7 @@ public:
     Cluster(Cluster&&) = default;
     Cluster& operator=(Cluster&&) = default;
 
-    [[nodiscard]] const std::map<Core, int>& GetCoreCounts() const { return core_counts_; }
+    [[nodiscard]] const std::map<Core, int>& GetCoreCounts() const { return coreCounts_; }
     [[nodiscard]] int TotalCoreCount() const;
 
     // Comparison operators for map key support
@@ -144,7 +144,7 @@ public:
     bool operator==(const Cluster& other) const;
 
 private:
-    std::map<Core, int> core_counts_;
+    std::map<Core, int> coreCounts_;
 };
 
 /**
@@ -159,9 +159,9 @@ public:
     /**
      * \brief Construct a die
      *
-     * \param cluster_counts Map from cluster configuration to count
+     * \param clusterCounts Map from cluster configuration to count
      */
-    explicit Die(std::map<Cluster, int> cluster_counts);
+    explicit Die(std::map<Cluster, int> clusterCounts);
 
     /**
      * \brief Convenience constructor for single cluster type
@@ -177,7 +177,7 @@ public:
     Die(Die&&) = default;
     Die& operator=(Die&&) = default;
 
-    [[nodiscard]] const std::map<Cluster, int>& GetClusterCounts() const { return cluster_counts_; }
+    [[nodiscard]] const std::map<Cluster, int>& GetClusterCounts() const { return clusterCounts_; }
     [[nodiscard]] int TotalClusterCount() const;
     [[nodiscard]] int TotalCoreCount() const;
 
@@ -186,7 +186,7 @@ public:
     bool operator==(const Die& other) const;
 
 private:
-    std::map<Cluster, int> cluster_counts_;
+    std::map<Cluster, int> clusterCounts_;
 };
 
 /**
@@ -201,19 +201,19 @@ public:
     /**
      * \brief Construct a SoC
      *
-     * \param die_counts Map from die configuration to count
-     * \param mem_graph Memory hierarchy adjacency list (optional)
+     * \param dieCounts Map from die configuration to count
+     * \param memGraph Memory hierarchy adjacency list (optional)
      */
-    explicit SoC(std::map<Die, int> die_counts, std::map<ir::MemorySpace, std::vector<ir::MemorySpace>> mem_graph = {});
+    explicit SoC(std::map<Die, int> dieCounts, std::map<ir::MemorySpace, std::vector<ir::MemorySpace>> memGraph = {});
 
     /**
      * \brief Convenience constructor for single die type
      *
      * \param die Single die configuration
      * \param count Number of dies with this configuration
-     * \param mem_graph Memory hierarchy adjacency list (optional)
+     * \param memGraph Memory hierarchy adjacency list (optional)
      */
-    SoC(const Die& die, int count, std::map<ir::MemorySpace, std::vector<ir::MemorySpace>> mem_graph = {});
+    SoC(const Die& die, int count, std::map<ir::MemorySpace, std::vector<ir::MemorySpace>> memGraph = {});
 
     // Disable copy and move to enforce immutability
     SoC(const SoC&) = delete;
@@ -221,18 +221,18 @@ public:
     SoC(SoC&&) = delete;
     SoC& operator=(SoC&&) = delete;
 
-    [[nodiscard]] const std::map<Die, int>& GetDieCounts() const { return die_counts_; }
+    [[nodiscard]] const std::map<Die, int>& GetDieCounts() const { return dieCounts_; }
     [[nodiscard]] const std::map<ir::MemorySpace, std::vector<ir::MemorySpace>>& GetMemoryGraph() const
     {
-        return mem_graph_;
+        return memGraph_;
     }
     [[nodiscard]] int TotalDieCount() const;
     [[nodiscard]] int TotalClusterCount() const;
     [[nodiscard]] int TotalCoreCount() const;
 
 private:
-    std::map<Die, int> die_counts_;
-    std::map<ir::MemorySpace, std::vector<ir::MemorySpace>> mem_graph_;
+    std::map<Die, int> dieCounts_;
+    std::map<ir::MemorySpace, std::vector<ir::MemorySpace>> memGraph_;
 };
 
 /*!

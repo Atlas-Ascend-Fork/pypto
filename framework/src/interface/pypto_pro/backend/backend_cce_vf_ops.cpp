@@ -38,10 +38,10 @@ namespace backend {
 using ir::DataType;
 using npu::tile_fwk::ExternalError;
 
-static std::string VFEnumValueName(const char* full_name)
+static std::string VFEnumValueName(const char* fullName)
 {
-    const char* sep = std::strrchr(full_name, ':');
-    return sep ? std::string(sep + 1) : std::string(full_name);
+    const char* sep = std::strrchr(fullName, ':');
+    return sep ? std::string(sep + 1) : std::string(fullName);
 }
 
 // The dist kwarg is type-erased to a raw int at the Python/C++ boundary
@@ -50,14 +50,14 @@ static std::string VFEnumValueName(const char* full_name)
 // are not a valid enumerator of the op's own dist enum — EnumToString yields
 // "UNKNOWN" for those — e.g. the load-only DINTLV/E2B_B16+ values passed to
 // store_align. In-range cross-enum values are undetectable here.
-static std::string VFCheckedDistName(int dist_val, bool is_load, const std::string& op_name)
+static std::string VFCheckedDistName(int distVal, bool isLoad, const std::string& opName)
 {
-    const char* full_name = is_load ? ir::EnumToString(static_cast<ir::LoadDist>(dist_val)) :
-                                      ir::EnumToString(static_cast<ir::StoreDist>(dist_val));
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, std::strcmp(full_name, "UNKNOWN") != 0)
-        << op_name << " dist=" << dist_val << " is not a valid " << (is_load ? "ir::LoadDist" : "ir::StoreDist")
+    const char* fullName = isLoad ? ir::EnumToString(static_cast<ir::LoadDist>(distVal)) :
+                                    ir::EnumToString(static_cast<ir::StoreDist>(distVal));
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, std::strcmp(fullName, "UNKNOWN") != 0)
+        << opName << " dist=" << distVal << " is not a valid " << (isLoad ? "ir::LoadDist" : "ir::StoreDist")
         << " enumerator";
-    return VFEnumValueName(full_name);
+    return VFEnumValueName(fullName);
 }
 
 // Format a DataType for log messages in the frontend DT_XXX style.
@@ -70,9 +70,9 @@ static bool IsDstMaskReg(const ir::CallPtr& op, codegen::CCECodegen& codegen, si
 {
     if (idx >= op->args_.size())
         return false;
-    auto dst_var = ir::As<ir::Var>(op->args_[idx]);
-    if (dst_var) {
-        return codegen.IsMaskRegVar(codegen.GetVarName(dst_var));
+    auto dstVar = ir::As<ir::Var>(op->args_[idx]);
+    if (dstVar) {
+        return codegen.IsMaskRegVar(codegen.GetVarName(dstVar));
     }
     return false;
 }
@@ -81,21 +81,21 @@ static bool IsDstMaskReg(const ir::CallPtr& op, codegen::CCECodegen& codegen, si
 // RegTensor declaration
 // ============================================================================
 
-static std::string EmitVFRegTensor(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFRegTensor(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     auto dtype = op->GetKwarg<DataType>("dtype");
-    std::string reg_name = codegen.GetCurrentResultTarget();
+    std::string regName = codegen.GetCurrentResultTarget();
     std::string decl;
     if (dtype == DataType::INT4) {
-        decl = "vector_s4x2 " + reg_name + ";";
+        decl = "vector_s4x2 " + regName + ";";
     } else if (dtype == DataType::UINT4) {
-        decl = "vector_u4x2 " + reg_name + ";";
+        decl = "vector_u4x2 " + regName + ";";
     } else {
-        decl = "RegTensor<" + dtype.ToCTypeString() + "> " + reg_name + ";";
+        decl = "RegTensor<" + dtype.ToCTypeString() + "> " + regName + ";";
     }
     codegen.HoistRegTensorDecl(decl);
-    codegen.RegisterRegTensorVar(reg_name);
+    codegen.RegisterRegTensorVar(regName);
     return "";
 }
 
@@ -103,12 +103,12 @@ static std::string EmitVFRegTensor(const ir::CallPtr& op, codegen::CodegenBase& 
 // MaskReg declaration (no initialization — unlike create_mask which emits pset)
 // ============================================================================
 
-static std::string EmitVFMaskReg(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMaskReg(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    std::string reg_name = codegen.GetCurrentResultTarget();
-    codegen.HoistRegTensorDecl("MaskReg " + reg_name + ";");
-    codegen.RegisterMaskRegVar(reg_name);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    std::string regName = codegen.GetCurrentResultTarget();
+    codegen.HoistRegTensorDecl("MaskReg " + regName + ";");
+    codegen.RegisterMaskRegVar(regName);
     return "";
 }
 
@@ -131,12 +131,12 @@ static DataType GetExprDtype(const ir::ExprPtr& expr, DataType fallback = DataTy
 // backends via backend_utils so float->int truncation is uniform.
 
 // For ops that only support ZEROING: return "MODE_ZEROING", reject MERGING.
-static std::string VFZeroingOnly(const ir::CallPtr& op, const std::string& op_name)
+static std::string VFZeroingOnly(const ir::CallPtr& op, const std::string& opName)
 {
     if (op->HasKwarg("mode")) {
         auto mode = static_cast<ir::MergeMode>(op->GetKwarg<int>("mode"));
         PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, mode == ir::MergeMode::ZEROING)
-            << op_name << " only supports ZEROING mode on current device";
+            << opName << " only supports ZEROING mode on current device";
     }
     return "MODE_ZEROING";
 }
@@ -161,7 +161,7 @@ static bool IsB16Type(DataType dt) { return dt.GetBit() == 16; }
 // After call, {prefix}_lo_ holds the low 32 bits and {prefix}_hi_ holds the
 // high 32 bits of each b64 element (32 meaningful elements in positions 0-31).
 // ============================================================================
-static void EmitB64Deinterleave(codegen::CCECodegen& codegen, const std::string& prefix, const std::string& b64_reg)
+static void EmitB64Deinterleave(codegen::CCECodegen& codegen, const std::string& prefix, const std::string& b64Reg)
 {
     std::string lo = prefix + "_lo_";
     std::string hi = prefix + "_hi_";
@@ -174,19 +174,19 @@ static void EmitB64Deinterleave(codegen::CCECodegen& codegen, const std::string&
     codegen.Emit("RegTensor<uint32_t> " + dump + ";");
     codegen.Emit("MaskReg " + m + " = pset_b32(PAT_ALL);");
     codegen.Emit("vdup(" + zero + ", 0, " + m + ", MODE_ZEROING);");
-    codegen.Emit("vdintlv(" + lo + ", " + hi + ", (RegTensor<uint32_t>&)" + b64_reg + ", " + zero + ");");
+    codegen.Emit("vdintlv(" + lo + ", " + hi + ", (RegTensor<uint32_t>&)" + b64Reg + ", " + zero + ");");
 }
 
 // ============================================================================
 // B64 helper: interleave b32 low/high halves into a b64 RegTensor.
 // Emits a vintlv instruction that combines lo and hi into b64_dst.
 // ============================================================================
-static void EmitB64Interleave(codegen::CCECodegen& codegen, const std::string& b64_dst, const std::string& lo,
+static void EmitB64Interleave(codegen::CCECodegen& codegen, const std::string& b64Dst, const std::string& lo,
                               const std::string& hi, const std::string& prefix)
 {
     std::string dump = prefix + "_idump_";
     codegen.Emit("RegTensor<uint32_t> " + dump + ";");
-    codegen.Emit("vintlv((RegTensor<uint32_t>&)" + b64_dst + ", " + dump + ", (RegTensor<uint32_t>&)" + lo +
+    codegen.Emit("vintlv((RegTensor<uint32_t>&)" + b64Dst + ", " + dump + ", (RegTensor<uint32_t>&)" + lo +
                  ", (RegTensor<uint32_t>&)" + hi + ");");
 }
 
@@ -202,20 +202,20 @@ static void EmitB64Zeroing(codegen::CCECodegen& codegen, const std::string& dst,
 {
     std::string zero = prefix + "_zero64_";
     std::string m = prefix + "_zm_";
-    std::string packed_m = prefix + "_pm_";
-    std::string expanded_m = prefix + "_em_";
-    std::string dump_m = prefix + "_dm_";
+    std::string packedM = prefix + "_pm_";
+    std::string expandedM = prefix + "_em_";
+    std::string dumpM = prefix + "_dm_";
     codegen.Emit("RegTensor<uint32_t> " + zero + ";");
     codegen.Emit("MaskReg " + m + " = pset_b32(PAT_ALL);");
     codegen.Emit("vdup(" + zero + ", 0, " + m + ", MODE_ZEROING);");
     // Pack b64 mask to b32, then expand back to b32 width (mirrors AscendC
     // CopyMerging: ppack + pintlv_b32)
-    codegen.Emit("MaskReg " + packed_m + ";");
-    codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
-    codegen.Emit("MaskReg " + expanded_m + ", " + dump_m + ";");
-    codegen.Emit("pintlv_b32(" + expanded_m + ", " + dump_m + ", " + packed_m + ", " + packed_m + ");");
+    codegen.Emit("MaskReg " + packedM + ";");
+    codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
+    codegen.Emit("MaskReg " + expandedM + ", " + dumpM + ";");
+    codegen.Emit("pintlv_b32(" + expandedM + ", " + dumpM + ", " + packedM + ", " + packedM + ");");
     codegen.Emit("vsel((RegTensor<uint32_t>&)" + dst + ", (RegTensor<uint32_t>&)" + src + ", " + zero + ", " +
-                 expanded_m + ");");
+                 expandedM + ");");
 }
 
 // ============================================================================
@@ -232,23 +232,23 @@ static void EmitB64Bitwise(codegen::CCECodegen& codegen, const std::string& inst
                            const std::vector<std::string>& srcs, const std::string& dst, const std::string& mask,
                            const std::string& mode, const std::string& prefix)
 {
-    std::string packed_m = prefix + "_pm_";
-    codegen.Emit("MaskReg " + packed_m + ";");
-    codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
-    std::string lo_args;
-    std::string hi_args;
+    std::string packedM = prefix + "_pm_";
+    codegen.Emit("MaskReg " + packedM + ";");
+    codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
+    std::string loArgs;
+    std::string hiArgs;
     for (size_t i = 0; i < srcs.size(); ++i) {
         EmitB64Deinterleave(codegen, prefix + "s" + std::to_string(i), srcs[i]);
-        lo_args += prefix + "s" + std::to_string(i) + "_lo_, ";
-        hi_args += prefix + "s" + std::to_string(i) + "_hi_, ";
+        loArgs += prefix + "s" + std::to_string(i) + "_lo_, ";
+        hiArgs += prefix + "s" + std::to_string(i) + "_hi_, ";
     }
-    std::string lo_d = prefix + "_lod_";
-    std::string hi_d = prefix + "_hid_";
-    codegen.Emit("RegTensor<uint32_t> " + lo_d + ";");
-    codegen.Emit("RegTensor<uint32_t> " + hi_d + ";");
-    codegen.Emit(instruction + "(" + lo_d + ", " + lo_args + packed_m + ", " + mode + ");");
-    codegen.Emit(instruction + "(" + hi_d + ", " + hi_args + packed_m + ", " + mode + ");");
-    EmitB64Interleave(codegen, dst, lo_d, hi_d, prefix + "_ilv");
+    std::string loD = prefix + "_lod_";
+    std::string hiD = prefix + "_hid_";
+    codegen.Emit("RegTensor<uint32_t> " + loD + ";");
+    codegen.Emit("RegTensor<uint32_t> " + hiD + ";");
+    codegen.Emit(instruction + "(" + loD + ", " + loArgs + packedM + ", " + mode + ");");
+    codegen.Emit(instruction + "(" + hiD + ", " + hiArgs + packedM + ", " + mode + ");");
+    EmitB64Interleave(codegen, dst, loD, hiD, prefix + "_ilv");
 }
 
 // ============================================================================
@@ -265,108 +265,108 @@ static void EmitB64ReduceSum(codegen::CCECodegen& codegen, const std::string& ds
     codegen.Emit("MaskReg " + pm + ";");
     codegen.Emit("ppack(" + pm + ", " + mask + ", LOWER);");
     EmitB64Deinterleave(codegen, p + "s", src);
-    const std::string lo_s = p + "s_lo_";
-    const std::string hi_s = p + "s_hi_";
-    const std::string low_f = p + "lowf_";
-    const std::string low_r = p + "lowr_";
-    const std::string mid_r = p + "midr_";
-    const std::string hi_r = p + "hir_";
-    const std::string tmp_r = p + "tmpr_";
+    const std::string loS = p + "s_lo_";
+    const std::string hiS = p + "s_hi_";
+    const std::string lowF = p + "lowf_";
+    const std::string lowR = p + "lowr_";
+    const std::string midR = p + "midr_";
+    const std::string hiR = p + "hir_";
+    const std::string tmpR = p + "tmpr_";
     const std::string lo32 = p + "lo32_";
     const std::string dump = p + "dump_";
-    codegen.Emit("RegTensor<uint32_t> " + low_f + ";");
-    codegen.Emit("RegTensor<uint32_t> " + low_r + ";");
-    codegen.Emit("RegTensor<uint32_t> " + mid_r + ";");
-    codegen.Emit("RegTensor<uint32_t> " + hi_r + ";");
-    codegen.Emit("RegTensor<uint32_t> " + tmp_r + ";");
+    codegen.Emit("RegTensor<uint32_t> " + lowF + ";");
+    codegen.Emit("RegTensor<uint32_t> " + lowR + ";");
+    codegen.Emit("RegTensor<uint32_t> " + midR + ";");
+    codegen.Emit("RegTensor<uint32_t> " + hiR + ";");
+    codegen.Emit("RegTensor<uint32_t> " + tmpR + ";");
     codegen.Emit("RegTensor<uint32_t> " + lo32 + ";");
     codegen.Emit("RegTensor<uint32_t> " + dump + ";");
-    codegen.Emit("vdup(" + low_f + ", (int32_t)0xFFFF, " + pm + ", MODE_ZEROING);");
-    codegen.Emit("vand(" + low_r + ", " + low_f + ", " + lo_s + ", " + pm + ", MODE_ZEROING);");
-    codegen.Emit("vcadd(" + low_r + ", " + low_r + ", " + pm + ", MODE_ZEROING);");
-    codegen.Emit("vshrs(" + mid_r + ", " + lo_s + ", (int16_t)16, " + pm + ", MODE_ZEROING);");
-    codegen.Emit("vcadd(" + mid_r + ", " + mid_r + ", " + pm + ", MODE_ZEROING);");
-    codegen.Emit("vcadd(" + hi_r + ", " + hi_s + ", " + pm + ", MODE_ZEROING);");
-    codegen.Emit("vshrs(" + tmp_r + ", " + low_r + ", (int16_t)16, " + pm + ", MODE_ZEROING);");
-    codegen.Emit("vadd(" + mid_r + ", " + mid_r + ", " + tmp_r + ", " + pm + ", MODE_ZEROING);");
-    codegen.Emit("vshrs(" + tmp_r + ", " + mid_r + ", (int16_t)16, " + pm + ", MODE_ZEROING);");
-    codegen.Emit("vadd(" + hi_r + ", " + hi_r + ", " + tmp_r + ", " + pm + ", MODE_ZEROING);");
-    codegen.Emit("vand(" + low_r + ", " + low_r + ", " + low_f + ", " + pm + ", MODE_ZEROING);");
-    codegen.Emit("vand(" + mid_r + ", " + mid_r + ", " + low_f + ", " + pm + ", MODE_ZEROING);");
-    codegen.Emit("vintlv((RegTensor<uint16_t>&)" + lo32 + ", (RegTensor<uint16_t>&)" + tmp_r +
-                 ", (RegTensor<uint16_t>&)" + low_r + ", (RegTensor<uint16_t>&)" + mid_r + ");");
+    codegen.Emit("vdup(" + lowF + ", (int32_t)0xFFFF, " + pm + ", MODE_ZEROING);");
+    codegen.Emit("vand(" + lowR + ", " + lowF + ", " + loS + ", " + pm + ", MODE_ZEROING);");
+    codegen.Emit("vcadd(" + lowR + ", " + lowR + ", " + pm + ", MODE_ZEROING);");
+    codegen.Emit("vshrs(" + midR + ", " + loS + ", (int16_t)16, " + pm + ", MODE_ZEROING);");
+    codegen.Emit("vcadd(" + midR + ", " + midR + ", " + pm + ", MODE_ZEROING);");
+    codegen.Emit("vcadd(" + hiR + ", " + hiS + ", " + pm + ", MODE_ZEROING);");
+    codegen.Emit("vshrs(" + tmpR + ", " + lowR + ", (int16_t)16, " + pm + ", MODE_ZEROING);");
+    codegen.Emit("vadd(" + midR + ", " + midR + ", " + tmpR + ", " + pm + ", MODE_ZEROING);");
+    codegen.Emit("vshrs(" + tmpR + ", " + midR + ", (int16_t)16, " + pm + ", MODE_ZEROING);");
+    codegen.Emit("vadd(" + hiR + ", " + hiR + ", " + tmpR + ", " + pm + ", MODE_ZEROING);");
+    codegen.Emit("vand(" + lowR + ", " + lowR + ", " + lowF + ", " + pm + ", MODE_ZEROING);");
+    codegen.Emit("vand(" + midR + ", " + midR + ", " + lowF + ", " + pm + ", MODE_ZEROING);");
+    codegen.Emit("vintlv((RegTensor<uint16_t>&)" + lo32 + ", (RegTensor<uint16_t>&)" + tmpR +
+                 ", (RegTensor<uint16_t>&)" + lowR + ", (RegTensor<uint16_t>&)" + midR + ");");
     codegen.Emit("vintlv((RegTensor<uint32_t>&)" + dst + ", (RegTensor<uint32_t>&)" + dump +
-                 ", (RegTensor<uint32_t>&)" + lo32 + ", (RegTensor<uint32_t>&)" + hi_r + ");");
+                 ", (RegTensor<uint32_t>&)" + lo32 + ", (RegTensor<uint32_t>&)" + hiR + ");");
 }
 
 static void EmitB64ReduceMaxMin(codegen::CCECodegen& codegen, const std::string& dst, const std::string& src,
-                                const std::string& mask, bool is_max, bool is_signed)
+                                const std::string& mask, bool isMax, bool isSigned)
 {
     const std::string p = dst + "_b64rm_";
     const std::string pm = p + "pm";
     codegen.Emit("MaskReg " + pm + ";");
     codegen.Emit("ppack(" + pm + ", " + mask + ", LOWER);");
     EmitB64Deinterleave(codegen, p + "s", src);
-    const std::string lo_s = p + "s_lo_";
-    const std::string hi_s = p + "s_hi_";
-    const std::string red = is_max ? "vcmax" : "vcmin";
-    const std::string hi_r = p + "hir_";
+    const std::string loS = p + "s_lo_";
+    const std::string hiS = p + "s_hi_";
+    const std::string red = isMax ? "vcmax" : "vcmin";
+    const std::string hiR = p + "hir_";
     const std::string bcast = p + "bc_";
-    const std::string eq_m = p + "eqm_";
-    const std::string lo_r = p + "lor_";
+    const std::string eqM = p + "eqm_";
+    const std::string loR = p + "lor_";
     const std::string dump = p + "dump_";
-    codegen.Emit("MaskReg " + eq_m + ";");
-    codegen.Emit("RegTensor<uint32_t> " + hi_r + ";");
+    codegen.Emit("MaskReg " + eqM + ";");
+    codegen.Emit("RegTensor<uint32_t> " + hiR + ";");
     codegen.Emit("RegTensor<uint32_t> " + bcast + ";");
-    codegen.Emit("RegTensor<uint32_t> " + lo_r + ";");
+    codegen.Emit("RegTensor<uint32_t> " + loR + ";");
     codegen.Emit("RegTensor<uint32_t> " + dump + ";");
     // The hi half holds the SIGNED b32 view of an int64 element: the hi-half
     // reduce must compare signed for INT64 (a negative int64 has a hi half
     // that is huge when viewed as u32; mirrors Int64RowMinMax's s32/u32
     // split). The lo half is an unsigned magnitude in both cases.
-    const std::string hi_sc = is_signed ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
-    codegen.Emit(red + "(" + hi_sc + hi_r + ", " + hi_sc + hi_s + ", " + pm + ", MODE_ZEROING);");
+    const std::string hiSc = isSigned ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
+    codegen.Emit(red + "(" + hiSc + hiR + ", " + hiSc + hiS + ", " + pm + ", MODE_ZEROING);");
     // Register broadcast uses the 5-arg vdup (mask + POS + MODE); the 4-arg
     // form only accepts a scalar (mirrors Int64RowMinMax's highDup broadcast).
-    codegen.Emit("vdup(" + bcast + ", " + hi_r + ", " + pm + ", POS_LOWEST, MODE_ZEROING);");
-    codegen.Emit("vcmp_eq(" + eq_m + ", " + bcast + ", " + hi_s + ", " + pm + ");");
-    codegen.Emit(red + "(" + lo_r + ", " + lo_s + ", " + eq_m + ", MODE_ZEROING);");
+    codegen.Emit("vdup(" + bcast + ", " + hiR + ", " + pm + ", POS_LOWEST, MODE_ZEROING);");
+    codegen.Emit("vcmp_eq(" + eqM + ", " + bcast + ", " + hiS + ", " + pm + ");");
+    codegen.Emit(red + "(" + loR + ", " + loS + ", " + eqM + ", MODE_ZEROING);");
     codegen.Emit("vintlv((RegTensor<uint32_t>&)" + dst + ", (RegTensor<uint32_t>&)" + dump +
-                 ", (RegTensor<uint32_t>&)" + lo_r + ", (RegTensor<uint32_t>&)" + hi_r + ");");
+                 ", (RegTensor<uint32_t>&)" + loR + ", (RegTensor<uint32_t>&)" + hiR + ");");
 }
 
 static void EmitB64Div(codegen::CCECodegen& codegen, const std::string& dst, const std::string& src0,
-                       const std::string& src1, const std::string& mask, bool is_signed)
+                       const std::string& src1, const std::string& mask, bool isSigned)
 {
     const std::string p = dst + "_div_";
-    const std::string all_m = p + "_allm_";
+    const std::string allM = p + "_allm_";
     const std::string pm = p + "_pm_";
     const std::string cy = p + "_cy_";
     const std::string cy1 = p + "_cy1_";
-    codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
+    codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
     codegen.Emit("MaskReg " + pm + ";");
     codegen.Emit("MaskReg " + cy + ";");
     codegen.Emit("MaskReg " + cy1 + ";");
     codegen.Emit("ppack(" + pm + ", " + mask + ", LOWER);");
     // Deinterleave the b64 sources into lo/hi u32 half pairs (each half has 64
     // lanes: 32 meaningful + 32 zeros from the deinterleave zero operand).
-    const std::string s0 = p + "s0", s0_lo = s0 + "_lo", s0_hi = s0 + "_hi";
-    const std::string s1 = p + "s1", s1_lo = s1 + "_lo", s1_hi = s1 + "_hi";
-    const std::string z = p + "z", z_lo = z + "_lo", z_hi = z + "_hi";
+    const std::string s0 = p + "s0", s0Lo = s0 + "_lo", s0Hi = s0 + "_hi";
+    const std::string s1 = p + "s1", s1Lo = s1 + "_lo", s1Hi = s1 + "_hi";
+    const std::string z = p + "z", zLo = z + "_lo", zHi = z + "_hi";
     const std::string dz = p + "_dz";
-    codegen.Emit("RegTensor<uint32_t> " + s0_lo + ";");
-    codegen.Emit("RegTensor<uint32_t> " + s0_hi + ";");
-    codegen.Emit("RegTensor<uint32_t> " + s1_lo + ";");
-    codegen.Emit("RegTensor<uint32_t> " + s1_hi + ";");
-    codegen.Emit("RegTensor<uint32_t> " + z_lo + ";");
-    codegen.Emit("RegTensor<uint32_t> " + z_hi + ";");
+    codegen.Emit("RegTensor<uint32_t> " + s0Lo + ";");
+    codegen.Emit("RegTensor<uint32_t> " + s0Hi + ";");
+    codegen.Emit("RegTensor<uint32_t> " + s1Lo + ";");
+    codegen.Emit("RegTensor<uint32_t> " + s1Hi + ";");
+    codegen.Emit("RegTensor<uint32_t> " + zLo + ";");
+    codegen.Emit("RegTensor<uint32_t> " + zHi + ";");
     codegen.Emit("RegTensor<uint32_t> " + dz + ";");
-    codegen.Emit("vdup(" + z_lo + ", 0, " + all_m + ", MODE_ZEROING);");
-    codegen.Emit("vdup(" + z_hi + ", 0, " + all_m + ", MODE_ZEROING);");
-    codegen.Emit("vdintlv((RegTensor<uint32_t>&)" + s0_lo + ", (RegTensor<uint32_t>&)" + s0_hi +
-                 ", (RegTensor<uint32_t>&)" + src0 + ", (RegTensor<uint32_t>&)" + z_lo + ");");
-    codegen.Emit("vdintlv((RegTensor<uint32_t>&)" + s1_lo + ", (RegTensor<uint32_t>&)" + s1_hi +
-                 ", (RegTensor<uint32_t>&)" + src1 + ", (RegTensor<uint32_t>&)" + z_hi + ");");
+    codegen.Emit("vdup(" + zLo + ", 0, " + allM + ", MODE_ZEROING);");
+    codegen.Emit("vdup(" + zHi + ", 0, " + allM + ", MODE_ZEROING);");
+    codegen.Emit("vdintlv((RegTensor<uint32_t>&)" + s0Lo + ", (RegTensor<uint32_t>&)" + s0Hi +
+                 ", (RegTensor<uint32_t>&)" + src0 + ", (RegTensor<uint32_t>&)" + zLo + ");");
+    codegen.Emit("vdintlv((RegTensor<uint32_t>&)" + s1Lo + ", (RegTensor<uint32_t>&)" + s1Hi +
+                 ", (RegTensor<uint32_t>&)" + src1 + ", (RegTensor<uint32_t>&)" + zHi + ");");
     // Composite b64 helper emissions over {x_lo, x_hi} u32 half pairs.
     auto VmulUsingU32 = [&](const std::string& d, const std::string& a, const std::string& b, const std::string& m) {
         codegen.Emit("vmull((RegTensor<uint32_t>&)" + d + "_lo, (RegTensor<uint32_t>&)" + d +
@@ -417,9 +417,9 @@ static void EmitB64Div(codegen::CCECodegen& codegen, const std::string& dst, con
         codegen.Emit("vcmp_lt(" + d + "_hlt, " + a + "_hi, " + b + "_hi, " + m + ");");
         codegen.Emit("psel(" + d + ", " + d + "_llt, " + d + "_hlt, " + d + "_heq);");
     };
-    auto VbrU32 = [&](const std::string& d, const std::string& hi_val, const std::string& lo_val) {
-        codegen.Emit("vdup(" + d + "_hi, (int32_t)(" + hi_val + "), " + all_m + ", MODE_ZEROING);");
-        codegen.Emit("vdup(" + d + "_lo, (int32_t)(" + lo_val + "), " + all_m + ", MODE_ZEROING);");
+    auto VbrU32 = [&](const std::string& d, const std::string& hiVal, const std::string& loVal) {
+        codegen.Emit("vdup(" + d + "_hi, (int32_t)(" + hiVal + "), " + allM + ", MODE_ZEROING);");
+        codegen.Emit("vdup(" + d + "_lo, (int32_t)(" + loVal + "), " + allM + ", MODE_ZEROING);");
     };
     auto DeclPair = [&](const std::string& base) {
         codegen.Emit("RegTensor<uint32_t> " + base + "_lo;");
@@ -463,8 +463,8 @@ static void EmitB64Div(codegen::CCECodegen& codegen, const std::string& dst, con
     // Abs of src0/src1 via hi-half sign compare + borrow-chain neg + vsel
     // (mirrors AbsUsingS32). Unsigned passes through unchanged.
     const std::string abs0 = p + "abs0", abs1 = p + "abs1";
-    const std::string abs0_lo = abs0 + "_lo", abs0_hi = abs0 + "_hi";
-    const std::string abs1_lo = abs1 + "_lo", abs1_hi = abs1 + "_hi";
+    const std::string abs0Lo = abs0 + "_lo", abs0Hi = abs0 + "_hi";
+    const std::string abs1Lo = abs1 + "_lo", abs1Hi = abs1 + "_hi";
     DeclPair(abs0);
     DeclPair(abs1);
     const std::string ac0 = p + "ac0", ac1 = p + "ac1", ac2 = p + "ac2";
@@ -481,32 +481,32 @@ static void EmitB64Div(codegen::CCECodegen& codegen, const std::string& dst, con
     codegen.Emit("MaskReg " + bc2 + ";");
     codegen.Emit("RegTensor<int32_t> " + bt20 + ";");
     codegen.Emit("RegTensor<int32_t> " + bt30 + ";");
-    if (is_signed) {
-        codegen.Emit("vcmp_lt(" + p + "ac0, (RegTensor<int32_t>&)" + s0_hi + ", (RegTensor<int32_t>&)" + z_hi + ", " +
+    if (isSigned) {
+        codegen.Emit("vcmp_lt(" + p + "ac0, (RegTensor<int32_t>&)" + s0Hi + ", (RegTensor<int32_t>&)" + zHi + ", " +
                      pm + ");");
-        codegen.Emit("vsubc(" + p + "ac1, (RegTensor<int32_t>&)" + p + "at20, (RegTensor<int32_t>&)" + z_lo +
-                     ", (RegTensor<int32_t>&)" + s0_lo + ", " + p + "ac0);");
-        codegen.Emit("vsubcs(" + p + "ac2, (RegTensor<int32_t>&)" + p + "at30, (RegTensor<int32_t>&)" + z_hi +
-                     ", (RegTensor<int32_t>&)" + s0_hi + ", " + p + "ac1, " + pm + ");");
-        codegen.Emit("vsel((RegTensor<int32_t>&)" + abs0_lo + ", (RegTensor<int32_t>&)" + p +
-                     "at20, (RegTensor<int32_t>&)" + s0_lo + ", " + p + "ac0);");
-        codegen.Emit("vsel((RegTensor<int32_t>&)" + abs0_hi + ", (RegTensor<int32_t>&)" + p +
-                     "at30, (RegTensor<int32_t>&)" + s0_hi + ", " + p + "ac0);");
-        codegen.Emit("vcmp_lt(" + p + "bc0, (RegTensor<int32_t>&)" + s1_hi + ", (RegTensor<int32_t>&)" + z_hi + ", " +
+        codegen.Emit("vsubc(" + p + "ac1, (RegTensor<int32_t>&)" + p + "at20, (RegTensor<int32_t>&)" + zLo +
+                     ", (RegTensor<int32_t>&)" + s0Lo + ", " + p + "ac0);");
+        codegen.Emit("vsubcs(" + p + "ac2, (RegTensor<int32_t>&)" + p + "at30, (RegTensor<int32_t>&)" + zHi +
+                     ", (RegTensor<int32_t>&)" + s0Hi + ", " + p + "ac1, " + pm + ");");
+        codegen.Emit("vsel((RegTensor<int32_t>&)" + abs0Lo + ", (RegTensor<int32_t>&)" + p +
+                     "at20, (RegTensor<int32_t>&)" + s0Lo + ", " + p + "ac0);");
+        codegen.Emit("vsel((RegTensor<int32_t>&)" + abs0Hi + ", (RegTensor<int32_t>&)" + p +
+                     "at30, (RegTensor<int32_t>&)" + s0Hi + ", " + p + "ac0);");
+        codegen.Emit("vcmp_lt(" + p + "bc0, (RegTensor<int32_t>&)" + s1Hi + ", (RegTensor<int32_t>&)" + zHi + ", " +
                      pm + ");");
-        codegen.Emit("vsubc(" + p + "bc1, (RegTensor<int32_t>&)" + p + "bt20, (RegTensor<int32_t>&)" + z_lo +
-                     ", (RegTensor<int32_t>&)" + s1_lo + ", " + p + "bc0);");
-        codegen.Emit("vsubcs(" + p + "bc2, (RegTensor<int32_t>&)" + p + "bt30, (RegTensor<int32_t>&)" + z_hi +
-                     ", (RegTensor<int32_t>&)" + s1_hi + ", " + p + "bc1, " + pm + ");");
-        codegen.Emit("vsel((RegTensor<int32_t>&)" + abs1_lo + ", (RegTensor<int32_t>&)" + p +
-                     "bt20, (RegTensor<int32_t>&)" + s1_lo + ", " + p + "bc0);");
-        codegen.Emit("vsel((RegTensor<int32_t>&)" + abs1_hi + ", (RegTensor<int32_t>&)" + p +
-                     "bt30, (RegTensor<int32_t>&)" + s1_hi + ", " + p + "bc0);");
+        codegen.Emit("vsubc(" + p + "bc1, (RegTensor<int32_t>&)" + p + "bt20, (RegTensor<int32_t>&)" + zLo +
+                     ", (RegTensor<int32_t>&)" + s1Lo + ", " + p + "bc0);");
+        codegen.Emit("vsubcs(" + p + "bc2, (RegTensor<int32_t>&)" + p + "bt30, (RegTensor<int32_t>&)" + zHi +
+                     ", (RegTensor<int32_t>&)" + s1Hi + ", " + p + "bc1, " + pm + ");");
+        codegen.Emit("vsel((RegTensor<int32_t>&)" + abs1Lo + ", (RegTensor<int32_t>&)" + p +
+                     "bt20, (RegTensor<int32_t>&)" + s1Lo + ", " + p + "bc0);");
+        codegen.Emit("vsel((RegTensor<int32_t>&)" + abs1Hi + ", (RegTensor<int32_t>&)" + p +
+                     "bt30, (RegTensor<int32_t>&)" + s1Hi + ", " + p + "bc0);");
     } else {
-        codegen.Emit("vmov((RegTensor<int32_t>&)" + abs0_lo + ", (RegTensor<int32_t>&)" + s0_lo + ");");
-        codegen.Emit("vmov((RegTensor<int32_t>&)" + abs0_hi + ", (RegTensor<int32_t>&)" + s0_hi + ");");
-        codegen.Emit("vmov((RegTensor<int32_t>&)" + abs1_lo + ", (RegTensor<int32_t>&)" + s1_lo + ");");
-        codegen.Emit("vmov((RegTensor<int32_t>&)" + abs1_hi + ", (RegTensor<int32_t>&)" + s1_hi + ");");
+        codegen.Emit("vmov((RegTensor<int32_t>&)" + abs0Lo + ", (RegTensor<int32_t>&)" + s0Lo + ");");
+        codegen.Emit("vmov((RegTensor<int32_t>&)" + abs0Hi + ", (RegTensor<int32_t>&)" + s0Hi + ");");
+        codegen.Emit("vmov((RegTensor<int32_t>&)" + abs1Lo + ", (RegTensor<int32_t>&)" + s1Lo + ");");
+        codegen.Emit("vmov((RegTensor<int32_t>&)" + abs1Hi + ", (RegTensor<int32_t>&)" + s1Hi + ");");
     }
     // 64-bit constants: qZero = all-ones (div-by-zero result); one = 1.
     const std::string qz = p + "qz", c1 = p + "c1";
@@ -517,54 +517,54 @@ static void EmitB64Div(codegen::CCECodegen& codegen, const std::string& dst, con
     VbrU32(qz, "-1", "-1");
     VbrU32(c1, "0", "1");
     // zeroMask: divisor == 0 (VcmpEqUsingU32 on both halves).
-    const std::string zero_m = p + "zm", nonzero_m = p + "nzm";
-    const std::string one_m = p + "om", nonone_m = p + "nom";
-    codegen.Emit("MaskReg " + zero_m + ", " + zero_m + "_l, " + zero_m + "_h;");
-    codegen.Emit("MaskReg " + nonzero_m + ";");
-    codegen.Emit("MaskReg " + one_m + ", " + one_m + "_l, " + one_m + "_h;");
-    codegen.Emit("MaskReg " + nonone_m + ";");
-    VcmpEqUsingU32(zero_m, s1, z, pm);
-    codegen.Emit("pnot(" + nonzero_m + ", " + zero_m + ", " + pm + ");");
+    const std::string zeroM = p + "zm", nonzeroM = p + "nzm";
+    const std::string oneM = p + "om", nononeM = p + "nom";
+    codegen.Emit("MaskReg " + zeroM + ", " + zeroM + "_l, " + zeroM + "_h;");
+    codegen.Emit("MaskReg " + nonzeroM + ";");
+    codegen.Emit("MaskReg " + oneM + ", " + oneM + "_l, " + oneM + "_h;");
+    codegen.Emit("MaskReg " + nononeM + ";");
+    VcmpEqUsingU32(zeroM, s1, z, pm);
+    codegen.Emit("pnot(" + nonzeroM + ", " + zeroM + ", " + pm + ");");
     // oneMask: abs(divisor) == 1.
-    VcmpEqUsingU32(one_m, abs1, c1, pm);
-    codegen.Emit("pnot(" + nonone_m + ", " + one_m + ", " + pm + ");");
+    VcmpEqUsingU32(oneM, abs1, c1, pm);
+    codegen.Emit("pnot(" + nononeM + ", " + oneM + ", " + pm + ");");
     // Newton work mask + (unsigned-only) pre-checks (mirrors DivU64Impl):
     // divisor > INT64_MAX (hi half negative as int32) invalidates the f32
     // reciprocal path; the quotient is 1 (src0 >= src1) or 0 (src0 < src1).
     // usrc1_m keeps the "large divisor" meaning until the final bypass select,
     // so the work-mask construction uses a separate notlarge_m mask.
-    const std::string work_m = p + "wm", usrc1_m = p + "u1m", srccmp_m = p + "scm", cmpdiv_m = p + "cdm";
+    const std::string workM = p + "wm", usrc1M = p + "u1m", srccmpM = p + "scm", cmpdivM = p + "cdm";
     const std::string ge0 = p + "ge0";
-    const std::string notlarge_m = p + "nlm";
-    const std::string q = p + "q", q_lo = q + "_lo", q_hi = q + "_hi";
-    codegen.Emit("MaskReg " + work_m + ";");
-    codegen.Emit("MaskReg " + usrc1_m + ";");
-    codegen.Emit("MaskReg " + srccmp_m + ";");
-    codegen.Emit("MaskReg " + cmpdiv_m + ";");
+    const std::string notlargeM = p + "nlm";
+    const std::string q = p + "q", qLo = q + "_lo", qHi = q + "_hi";
+    codegen.Emit("MaskReg " + workM + ";");
+    codegen.Emit("MaskReg " + usrc1M + ";");
+    codegen.Emit("MaskReg " + srccmpM + ";");
+    codegen.Emit("MaskReg " + cmpdivM + ";");
     codegen.Emit("MaskReg " + ge0 + ";");
-    codegen.Emit("MaskReg " + notlarge_m + ";");
+    codegen.Emit("MaskReg " + notlargeM + ";");
     // Temp masks written by VcmpGeUsingU32/VcmpLtUsingU32 (shared across call
     // sites, declared once here).
-    codegen.Emit("MaskReg " + srccmp_m + "_heq, " + srccmp_m + "_lge, " + srccmp_m + "_hge;");
-    codegen.Emit("MaskReg " + srccmp_m + "_llt, " + srccmp_m + "_hlt;");
+    codegen.Emit("MaskReg " + srccmpM + "_heq, " + srccmpM + "_lge, " + srccmpM + "_hge;");
+    codegen.Emit("MaskReg " + srccmpM + "_llt, " + srccmpM + "_hlt;");
     codegen.Emit("MaskReg " + ge0 + "_heq, " + ge0 + "_lge, " + ge0 + "_hge;");
-    DeclU32(q_lo);
-    DeclU32(q_hi);
-    if (!is_signed) {
-        codegen.Emit("vcmp_lt(" + usrc1_m + ", (RegTensor<int32_t>&)" + s1_hi + ", (RegTensor<int32_t>&)" + z_hi +
+    DeclU32(qLo);
+    DeclU32(qHi);
+    if (!isSigned) {
+        codegen.Emit("vcmp_lt(" + usrc1M + ", (RegTensor<int32_t>&)" + s1Hi + ", (RegTensor<int32_t>&)" + zHi + ", " +
+                     pm + ");");
+        VcmpGeUsingU32(srccmpM, s0, s1, pm);
+        codegen.Emit("pand(" + cmpdivM + ", " + srccmpM + ", " + usrc1M + ", " + pm + ");");
+        VselUsingU32(q, c1, z, cmpdivM);
+        VcmpLtUsingU32(srccmpM, s0, s1, pm);
+        codegen.Emit("pand(" + cmpdivM + ", " + srccmpM + ", " + usrc1M + ", " + pm + ");");
+        VselUsingU32(q, z, c1, cmpdivM);
+        codegen.Emit("vcmp_ge(" + notlargeM + ", (RegTensor<int32_t>&)" + s1Hi + ", (RegTensor<int32_t>&)" + zHi +
                      ", " + pm + ");");
-        VcmpGeUsingU32(srccmp_m, s0, s1, pm);
-        codegen.Emit("pand(" + cmpdiv_m + ", " + srccmp_m + ", " + usrc1_m + ", " + pm + ");");
-        VselUsingU32(q, c1, z, cmpdiv_m);
-        VcmpLtUsingU32(srccmp_m, s0, s1, pm);
-        codegen.Emit("pand(" + cmpdiv_m + ", " + srccmp_m + ", " + usrc1_m + ", " + pm + ");");
-        VselUsingU32(q, z, c1, cmpdiv_m);
-        codegen.Emit("vcmp_ge(" + notlarge_m + ", (RegTensor<int32_t>&)" + s1_hi + ", (RegTensor<int32_t>&)" + z_hi +
-                     ", " + pm + ");");
-        codegen.Emit("pand(" + work_m + ", " + nonzero_m + ", " + notlarge_m + ", " + pm + ");");
-        codegen.Emit("pand(" + work_m + ", " + work_m + ", " + nonone_m + ", " + pm + ");");
+        codegen.Emit("pand(" + workM + ", " + nonzeroM + ", " + notlargeM + ", " + pm + ");");
+        codegen.Emit("pand(" + workM + ", " + workM + ", " + nononeM + ", " + pm + ");");
     } else {
-        codegen.Emit("pand(" + work_m + ", " + nonone_m + ", " + nonzero_m + ", " + pm + ");");
+        codegen.Emit("pand(" + workM + ", " + nononeM + ", " + nonzeroM + ", " + pm + ");");
     }
     // Newton-Raphson reciprocal refinement.
     const std::string t2 = p + "t2f", t3 = p + "t3f", t4 = p + "t4u";
@@ -573,8 +573,8 @@ static void EmitB64Div(codegen::CCECodegen& codegen, const std::string& dst, con
     const std::string ci0 = p + "ci0", ci1 = p + "ci1";
     const std::string t5 = p + "t5", t6 = p + "t6", t7 = p + "t7", t8 = p + "t8", t9 = p + "t9";
     const std::string d0 = p + "d0", d1 = p + "d1";
-    const std::string t5_lo = t5 + "_lo", t5_hi = t5 + "_hi";
-    const std::string t6_lo = t6 + "_lo", t6_hi = t6 + "_hi";
+    const std::string t5Lo = t5 + "_lo", t5Hi = t5 + "_hi";
+    const std::string t6Lo = t6 + "_lo", t6Hi = t6 + "_hi";
     codegen.Emit("RegTensor<float> " + t2 + ";");
     codegen.Emit("RegTensor<float> " + t3 + ";");
     codegen.Emit("RegTensor<float> " + t2o + ";");
@@ -607,70 +607,70 @@ static void EmitB64Div(codegen::CCECodegen& codegen, const std::string& dst, con
     // values for the lo/hi sources (mirrors Int64ToFloat's (vector_s32&)
     // casts; mixing s32 dsts with u32 srcs matches no overload).
     codegen.Emit("vintlv((RegTensor<int32_t>&)" + prl + ", (RegTensor<int32_t>&)" + prh + ", (RegTensor<int32_t>&)" +
-                 abs1_lo + ", (RegTensor<int32_t>&)" + abs1_hi + ");");
-    codegen.Emit("vcvt(" + t2 + ", " + prl + ", " + all_m + ", ROUND_R, PART_EVEN);");
-    codegen.Emit("vcvt(" + t2o + ", " + prh + ", " + all_m + ", ROUND_R, PART_EVEN);");
+                 abs1Lo + ", (RegTensor<int32_t>&)" + abs1Hi + ");");
+    codegen.Emit("vcvt(" + t2 + ", " + prl + ", " + allM + ", ROUND_R, PART_EVEN);");
+    codegen.Emit("vcvt(" + t2o + ", " + prh + ", " + allM + ", ROUND_R, PART_EVEN);");
     codegen.Emit("vdintlv((RegTensor<float>&)" + t2c + ", (RegTensor<float>&)" + t2d + ", (RegTensor<float>&)" + t2 +
                  ", (RegTensor<float>&)" + t2o + ");");
     // F32PreProcess(t4, t3, t2c): 1.0 / divisor_f32, then the f32 exponent bias.
-    codegen.Emit("vdup(" + t3 + ", 1.0f, " + all_m + ", MODE_ZEROING);");
-    codegen.Emit("vdiv(" + t3 + ", " + t3 + ", " + t2c + ", " + work_m + ", MODE_ZEROING);");
-    codegen.Emit("vadds(" + t4 + ", (RegTensor<uint32_t>&)" + t3 + ", (int32_t)0x1FFFFFFE, " + work_m + ");");
+    codegen.Emit("vdup(" + t3 + ", 1.0f, " + allM + ", MODE_ZEROING);");
+    codegen.Emit("vdiv(" + t3 + ", " + t3 + ", " + t2c + ", " + workM + ", MODE_ZEROING);");
+    codegen.Emit("vadds(" + t4 + ", (RegTensor<uint32_t>&)" + t3 + ", (int32_t)0x1FFFFFFE, " + workM + ");");
     // VcvtF322S64(t5, t4): f32 -> s64 (the 6-arg overload: ROUND + RS + PART).
     codegen.Emit("vintlv(" + cf0 + ", " + cf1 + ", (RegTensor<float>&)" + t4 + ", (RegTensor<float>&)" + t4 + ");");
-    codegen.Emit("vcvt(" + ci0 + ", " + cf0 + ", " + all_m + ", ROUND_Z, RS_DISABLE, PART_EVEN);");
-    codegen.Emit("vcvt(" + ci1 + ", " + cf1 + ", " + all_m + ", ROUND_Z, RS_DISABLE, PART_EVEN);");
-    codegen.Emit("vdintlv((RegTensor<int32_t>&)" + t5_lo + ", (RegTensor<int32_t>&)" + t5_hi +
-                 ", (RegTensor<int32_t>&)" + ci0 + ", (RegTensor<int32_t>&)" + ci1 + ");");
+    codegen.Emit("vcvt(" + ci0 + ", " + cf0 + ", " + allM + ", ROUND_Z, RS_DISABLE, PART_EVEN);");
+    codegen.Emit("vcvt(" + ci1 + ", " + cf1 + ", " + allM + ", ROUND_Z, RS_DISABLE, PART_EVEN);");
+    codegen.Emit("vdintlv((RegTensor<int32_t>&)" + t5Lo + ", (RegTensor<int32_t>&)" + t5Hi + ", (RegTensor<int32_t>&)" +
+                 ci0 + ", (RegTensor<int32_t>&)" + ci1 + ");");
     // Newton refinement: t6 = -(abs1 * t5) + 1.
-    VmulUsingU32(t6, abs1, t5, work_m);
-    VnotInPlace(t6, work_m);
-    AddB64(t6, t6, c1, work_m);
-    codegen.Emit("vdup(" + t4 + ", 0, " + all_m + ", MODE_ZEROING);");
+    VmulUsingU32(t6, abs1, t5, workM);
+    VnotInPlace(t6, workM);
+    AddB64(t6, t6, c1, workM);
+    codegen.Emit("vdup(" + t4 + ", 0, " + allM + ", MODE_ZEROING);");
     // Refinement rounds via B128Calc (128-bit square/product high parts).
-    B128Calc(p + "r1", t5, t6, t4, work_m);
-    VaddUsingU32(t7, t5, t6, work_m);
-    VmulUsingU32(t6, abs1, t7, work_m);
-    VnotInPlace(t6, work_m);
-    AddB64(t6, t6, c1, work_m);
-    B128Calc(p + "r2", t7, t6, t4, work_m);
-    VaddUsingU32(t6, t7, t6, work_m);
-    B128Calc(p + "r3", abs0, t6, t4, work_m);
+    B128Calc(p + "r1", t5, t6, t4, workM);
+    VaddUsingU32(t7, t5, t6, workM);
+    VmulUsingU32(t6, abs1, t7, workM);
+    VnotInPlace(t6, workM);
+    AddB64(t6, t6, c1, workM);
+    B128Calc(p + "r2", t7, t6, t4, workM);
+    VaddUsingU32(t6, t7, t6, workM);
+    B128Calc(p + "r3", abs0, t6, t4, workM);
     // Final correction: two conditional subtract + increment rounds.
-    VmulUsingU32(t7, t6, abs1, work_m);
-    VsubUsingU32(t7, abs0, t7, work_m);
-    VcmpGeUsingU32(ge0, t7, abs1, work_m);
+    VmulUsingU32(t7, t6, abs1, workM);
+    VsubUsingU32(t7, abs0, t7, workM);
+    VcmpGeUsingU32(ge0, t7, abs1, workM);
     VsubUsingU32(t8, t7, abs1, ge0);
     AddB64(t9, t6, c1, ge0);
     VselUsingU32(t7, t8, t7, ge0);
     VselUsingU32(t6, t9, t6, ge0);
-    VcmpGeUsingU32(ge0, t7, abs1, work_m);
+    VcmpGeUsingU32(ge0, t7, abs1, workM);
     AddB64(t9, t6, c1, ge0);
     VselUsingU32(t6, t9, t6, ge0);
-    VselUsingU32(t6, abs0, t6, one_m);
-    if (!is_signed) {
-        VselUsingU32(t6, q, t6, usrc1_m);
+    VselUsingU32(t6, abs0, t6, oneM);
+    if (!isSigned) {
+        VselUsingU32(t6, q, t6, usrc1M);
     }
     // DivSignCal + negate the quotient when the operand signs differ (signed).
     // The negation (0 - q) runs under the full mask (mirrors
     // Int64DivSignedRestoreSign: the negate happens on every lane and the
     // following vsel picks the original quotient on same-sign lanes).
-    if (is_signed) {
-        const std::string s0ge_m = p + "s0ge", s1ge_m = p + "s1ge", sign_m = p + "sign";
-        codegen.Emit("MaskReg " + s0ge_m + ", " + s1ge_m + ", " + sign_m + ";");
-        codegen.Emit("vcmp_ge(" + s0ge_m + ", (RegTensor<int32_t>&)" + s0_hi + ", (RegTensor<int32_t>&)" + z_lo + ", " +
+    if (isSigned) {
+        const std::string s0geM = p + "s0ge", s1geM = p + "s1ge", signM = p + "sign";
+        codegen.Emit("MaskReg " + s0geM + ", " + s1geM + ", " + signM + ";");
+        codegen.Emit("vcmp_ge(" + s0geM + ", (RegTensor<int32_t>&)" + s0Hi + ", (RegTensor<int32_t>&)" + zLo + ", " +
                      pm + ");");
-        codegen.Emit("vcmp_ge(" + s1ge_m + ", (RegTensor<int32_t>&)" + s1_hi + ", (RegTensor<int32_t>&)" + z_lo + ", " +
+        codegen.Emit("vcmp_ge(" + s1geM + ", (RegTensor<int32_t>&)" + s1Hi + ", (RegTensor<int32_t>&)" + zLo + ", " +
                      pm + ");");
-        codegen.Emit("pxor(" + sign_m + ", " + s0ge_m + ", " + s1ge_m + ", " + pm + ");");
-        codegen.Emit("pnot(" + sign_m + ", " + sign_m + ", " + pm + ");");
-        VsubUsingU32(t8, z, t6, all_m);
-        VselUsingU32(t6, t6, t8, sign_m);
+        codegen.Emit("pxor(" + signM + ", " + s0geM + ", " + s1geM + ", " + pm + ");");
+        codegen.Emit("pnot(" + signM + ", " + signM + ", " + pm + ");");
+        VsubUsingU32(t8, z, t6, allM);
+        VselUsingU32(t6, t6, t8, signM);
     }
     // Divisor == 0 -> all-ones quotient; assemble the interleaved dst.
-    VselUsingU32(t6, qz, t6, zero_m);
+    VselUsingU32(t6, qz, t6, zeroM);
     codegen.Emit("vintlv((RegTensor<uint32_t>&)" + dst + ", (RegTensor<uint32_t>&)" + d1 + ", (RegTensor<uint32_t>&)" +
-                 t6_lo + ", (RegTensor<uint32_t>&)" + t6_hi + ");");
+                 t6Lo + ", (RegTensor<uint32_t>&)" + t6Hi + ");");
 }
 
 // Check if a DataType lacks a direct vdup/vlds/vsts intrinsic overload and
@@ -713,24 +713,24 @@ static std::string GetB8Cast(DataType dt) { return NeedsB8Reinterpret(dt) ? "(Re
 // offset `row * cols + col` using the tile's shape[1] (number of columns).
 // Otherwise, emit the expression directly (integer offset, AddrReg, etc.).
 // Returns empty string if the argument is not an offset (caller should skip).
-static std::string ResolveOffsetArg(codegen::CCECodegen& codegen, const ir::ExprPtr& offset_expr,
-                                    const ir::ExprPtr& tile_expr)
+static std::string ResolveOffsetArg(codegen::CCECodegen& codegen, const ir::ExprPtr& offsetExpr,
+                                    const ir::ExprPtr& tileExpr)
 {
-    if (auto tuple = ir::As<ir::MakeTuple>(offset_expr)) {
+    if (auto tuple = ir::As<ir::MakeTuple>(offsetExpr)) {
         if (tuple->elements_.size() == 2) {
-            std::string row_str = codegen.GetExprAsCode(tuple->elements_[0]);
-            std::string col_str = codegen.GetExprAsCode(tuple->elements_[1]);
+            std::string rowStr = codegen.GetExprAsCode(tuple->elements_[0]);
+            std::string colStr = codegen.GetExprAsCode(tuple->elements_[1]);
             // Get cols from tile shape[1]
-            std::string cols_str = "1";
-            if (auto tile_type = ir::As<ir::TileType>(tile_expr->GetType())) {
-                if (tile_type->shape_.size() >= 2) {
-                    cols_str = codegen.GetExprAsCode(tile_type->shape_[1]);
+            std::string colsStr = "1";
+            if (auto tileType = ir::As<ir::TileType>(tileExpr->GetType())) {
+                if (tileType->shape_.size() >= 2) {
+                    colsStr = codegen.GetExprAsCode(tileType->shape_[1]);
                 }
             }
-            return "((" + row_str + ") * (" + cols_str + ") + (" + col_str + "))";
+            return "((" + rowStr + ") * (" + colsStr + ") + (" + colStr + "))";
         }
     }
-    return codegen.GetExprAsCode(offset_expr);
+    return codegen.GetExprAsCode(offsetExpr);
 }
 
 // ============================================================================
@@ -757,9 +757,9 @@ static ir::MaskPattern RemapB64MaskPattern(ir::MaskPattern pattern)
     }
 }
 
-static std::string EmitVFCreateMask(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFCreateMask(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // pattern defaults to ALL, dtype defaults to FP32 — either kwarg may be omitted.
     auto pattern = op->HasKwarg("pattern") ? static_cast<ir::MaskPattern>(op->GetKwarg<int>("pattern")) :
                                              ir::MaskPattern::ALL;
@@ -769,13 +769,13 @@ static std::string EmitVFCreateMask(const ir::CallPtr& op, codegen::CodegenBase&
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
                       IsB8Type(dtype) || dtype.GetBit() == 16 || dtype.GetBit() == 32 || dtype.GetBit() == 64)
         << "vf.create_mask dtype must be b8/b16/b32/b64, got " << DTypeStr(dtype);
-    bool is_b64 = (dtype.GetBit() == 64);
-    if (is_b64) {
+    bool isB64 = (dtype.GetBit() == 64);
+    if (isB64) {
         pattern = RemapB64MaskPattern(pattern);
     }
-    std::string reg_name = codegen.GetCurrentResultTarget();
-    codegen.Emit("MaskReg " + reg_name + ";");
-    codegen.RegisterMaskRegVar(reg_name);
+    std::string regName = codegen.GetCurrentResultTarget();
+    codegen.Emit("MaskReg " + regName + ";");
+    codegen.RegisterMaskRegVar(regName);
     // Map pypto pattern enum to CCE PAT_* constant
     std::string pat;
     switch (pattern) {
@@ -840,15 +840,15 @@ static std::string EmitVFCreateMask(const ir::CallPtr& op, codegen::CodegenBase&
     // b64 (INT64/UINT64): pset_b32 + punpack(LOWER) — punpack expands each bit
     // into a pair to match the 2-bit-per-element mask width for 8-byte elements.
     if (IsB8Type(dtype)) {
-        codegen.Emit(reg_name + " = pset_b8(" + pat + ");");
-    } else if (dtype.GetBit() == 32 || is_b64) {
-        codegen.Emit(reg_name + " = pset_b32(" + pat + ");");
-        if (is_b64) {
-            codegen.Emit("punpack(" + reg_name + ", " + reg_name + ", LOWER);");
+        codegen.Emit(regName + " = pset_b8(" + pat + ");");
+    } else if (dtype.GetBit() == 32 || isB64) {
+        codegen.Emit(regName + " = pset_b32(" + pat + ");");
+        if (isB64) {
+            codegen.Emit("punpack(" + regName + ", " + regName + ", LOWER);");
         }
     } else {
         // FP16, BF16, UINT16, INT16 etc. (2 bytes)
-        codegen.Emit(reg_name + " = pset_b16(" + pat + ");");
+        codegen.Emit(regName + " = pset_b16(" + pat + ");");
     }
     return "";
 }
@@ -857,40 +857,40 @@ static std::string EmitVFCreateMask(const ir::CallPtr& op, codegen::CodegenBase&
 // Duplicate — scalar broadcast
 // ============================================================================
 
-static std::string EmitVFDuplicate(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFDuplicate(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // args: [dst, src, (optional) mask]
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 2 && op->args_.size() <= 3)
         << "vf.full requires 2-3 args (dst, src[, mask])";
     // vdup supports b8/b16/b32/b64 element widths (bool, int, float, FP8/FP4/HF8 types)
-    DataType src_dt = GetExprDtype(op->args_[1], DataType::FP32);
+    DataType srcDt = GetExprDtype(op->args_[1], DataType::FP32);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (IsB8Type(src_dt) || src_dt.GetBit() == 16 || src_dt.GetBit() == 32 || src_dt.GetBit() == 64))
-        << "vf.full src only supports b8/b16/b32/b64 types, got " << DTypeStr(src_dt);
+                      (IsB8Type(srcDt) || srcDt.GetBit() == 16 || srcDt.GetBit() == 32 || srcDt.GetBit() == 64))
+        << "vf.full src only supports b8/b16/b32/b64 types, got " << DTypeStr(srcDt);
     // MERGING is not supported by the underlying vdup/vbr instructions on current device.
     VFZeroingOnly(op, "vf.full");
     // The fill width follows the DST tile. The Scalar-mode ``dtype`` kwarg is
     // what the frontend uses to declare dst (a bare int literal is INT64, so it
     // must not be compared against dst nor route a b16/b32 fill into the b64
     // split path).
-    DataType dst_dt = GetExprDtype(op->args_[0]);
+    DataType dstDt = GetExprDtype(op->args_[0]);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src_str = codegen.GetExprAsCode(op->args_[1]);
+    std::string srcStr = codegen.GetExprAsCode(op->args_[1]);
     // Detect vector-source broadcast: either explicit pos kwarg, or src is a RegTensor variable.
     std::string pos = "";
     if (op->HasKwarg("pos")) {
         pos = VFEnumValueName(ir::EnumToString(static_cast<ir::DuplicatePos>(op->GetKwarg<int>("pos"))));
     }
-    bool is_vector_src = !pos.empty();
-    if (!is_vector_src) {
-        auto src_var = ir::As<ir::Var>(op->args_[1]);
-        if (src_var) {
-            std::string src_name = codegen.GetVarName(src_var);
-            is_vector_src = codegen.IsRegTensorVar(src_name);
+    bool isVectorSrc = !pos.empty();
+    if (!isVectorSrc) {
+        auto srcVar = ir::As<ir::Var>(op->args_[1]);
+        if (srcVar) {
+            std::string srcName = codegen.GetVarName(srcVar);
+            isVectorSrc = codegen.IsRegTensorVar(srcName);
         }
     }
-    if (is_vector_src) {
+    if (isVectorSrc) {
         // Vector-source broadcast (Tensor mode): vdup(dst, src_vec, mask, POS_xxx, MODE)
         // pos kwarg: "LOWEST" -> POS_LOWEST, "HIGHEST" -> POS_HIGHEST
         if (pos.empty() || pos == "LOWEST")
@@ -899,24 +899,24 @@ static std::string EmitVFDuplicate(const ir::CallPtr& op, codegen::CodegenBase& 
             pos = "POS_HIGHEST";
         std::string mode = VFZeroingOnly(op, "vf.full");
         // FP4/HF8/HF4/INT4/UINT4 lack a vdup overload — reinterpret as uint8_t
-        std::string cast = GetB8Cast(src_dt);
+        std::string cast = GetB8Cast(srcDt);
         // Tensor mode always requires a mask (vdup(dstReg, srcReg, mask))
         if (op->args_.size() >= 3) {
             std::string mask = codegen.GetExprAsCode(op->args_[2]);
-            codegen.Emit("vdup(" + cast + dst + ", " + cast + src_str + ", " + mask + ", " + pos + ", " + mode + ");");
+            codegen.Emit("vdup(" + cast + dst + ", " + cast + srcStr + ", " + mask + ", " + pos + ", " + mode + ");");
         } else {
             // No mask provided — create an ALL mask inline for Tensor mode
-            static int dup_mask_counter = 0;
-            std::string mask_var = "__dup_mask_" + std::to_string(dup_mask_counter++);
+            static int dupMaskCounter = 0;
+            std::string maskVar = "__dup_mask_" + std::to_string(dupMaskCounter++);
             std::string pat = "PAT_ALL";
-            std::string pset_fn = "pset_b32";
-            if (IsB8Type(src_dt))
-                pset_fn = "pset_b8";
-            else if (src_dt.GetBit() == 16)
-                pset_fn = "pset_b16";
-            codegen.Emit("MaskReg " + mask_var + " = " + pset_fn + "(" + pat + ");");
-            codegen.RegisterMaskRegVar(mask_var);
-            codegen.Emit("vdup(" + cast + dst + ", " + cast + src_str + ", " + mask_var + ", " + pos + ", " + mode +
+            std::string psetFn = "pset_b32";
+            if (IsB8Type(srcDt))
+                psetFn = "pset_b8";
+            else if (srcDt.GetBit() == 16)
+                psetFn = "pset_b16";
+            codegen.Emit("MaskReg " + maskVar + " = " + psetFn + "(" + pat + ");");
+            codegen.RegisterMaskRegVar(maskVar);
+            codegen.Emit("vdup(" + cast + dst + ", " + cast + srcStr + ", " + maskVar + ", " + pos + ", " + mode +
                          ");");
         }
     } else if (op->args_.size() >= 3) {
@@ -925,43 +925,43 @@ static std::string EmitVFDuplicate(const ir::CallPtr& op, codegen::CodegenBase& 
         std::string mode = VFZeroingOnly(op, "vf.full");
         // The fill width follows DST: an int literal is INT64 and must not route
         // a b16/b32 fill into the b64 split path.
-        if (dst_dt.GetBit() == 64) {
+        if (dstDt.GetBit() == 64) {
             // B64 has no vdup single-register overload; create two b32 halves,
             // vdup each with packed b32 mask, then vintlv into b64 dst
             // (mirrors AscendC DuplicateB64Impl + MaskPack).
             std::string p = dst + "_dup_";
-            std::string packed_m = p + "_pm_";
-            codegen.Emit("MaskReg " + packed_m + ";");
-            codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
-            std::string lo_d = p + "_lo_";
-            std::string hi_d = p + "_hi_";
-            std::string cast_type = (dst_dt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
-            codegen.Emit("RegTensor<uint32_t> " + lo_d + ";");
-            codegen.Emit("RegTensor<uint32_t> " + hi_d + ";");
-            codegen.Emit("vdup(" + lo_d + ", (uint32_t)(" + cast_type + "(" + src_str + ")), " + packed_m + ", " +
+            std::string packedM = p + "_pm_";
+            codegen.Emit("MaskReg " + packedM + ";");
+            codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
+            std::string loD = p + "_lo_";
+            std::string hiD = p + "_hi_";
+            std::string castType = (dstDt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
+            codegen.Emit("RegTensor<uint32_t> " + loD + ";");
+            codegen.Emit("RegTensor<uint32_t> " + hiD + ";");
+            codegen.Emit("vdup(" + loD + ", (uint32_t)(" + castType + "(" + srcStr + ")), " + packedM + ", " + mode +
+                         ");");
+            codegen.Emit("vdup(" + hiD + ", (uint32_t)((" + castType + "(" + srcStr + ")) >> 32), " + packedM + ", " +
                          mode + ");");
-            codegen.Emit("vdup(" + hi_d + ", (uint32_t)((" + cast_type + "(" + src_str + ")) >> 32), " + packed_m +
-                         ", " + mode + ");");
-            EmitB64Interleave(codegen, dst, lo_d, hi_d, p + "_ilv");
+            EmitB64Interleave(codegen, dst, loD, hiD, p + "_ilv");
         } else {
-            codegen.Emit("vdup(" + dst + ", " + src_str + ", " + mask + ", " + mode + ");");
+            codegen.Emit("vdup(" + dst + ", " + srcStr + ", " + mask + ", " + mode + ");");
         }
     } else {
         // Scalar broadcast without mask: vbr(dst, scalar)
-        if (dst_dt.GetBit() == 64) {
+        if (dstDt.GetBit() == 64) {
             // B64 has no vbr single-register overload; create two b32 halves,
             // vbr each, then vintlv into b64 dst (mirrors AscendC DuplicateB64Impl).
             std::string p = dst + "_br_";
-            std::string lo_d = p + "_lo_";
-            std::string hi_d = p + "_hi_";
-            std::string cast_type = (dst_dt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
-            codegen.Emit("RegTensor<uint32_t> " + lo_d + ";");
-            codegen.Emit("RegTensor<uint32_t> " + hi_d + ";");
-            codegen.Emit("vbr(" + lo_d + ", (uint32_t)(" + cast_type + "(" + src_str + ")));");
-            codegen.Emit("vbr(" + hi_d + ", (uint32_t)((" + cast_type + "(" + src_str + ")) >> 32));");
-            EmitB64Interleave(codegen, dst, lo_d, hi_d, p + "_ilv");
+            std::string loD = p + "_lo_";
+            std::string hiD = p + "_hi_";
+            std::string castType = (dstDt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
+            codegen.Emit("RegTensor<uint32_t> " + loD + ";");
+            codegen.Emit("RegTensor<uint32_t> " + hiD + ";");
+            codegen.Emit("vbr(" + loD + ", (uint32_t)(" + castType + "(" + srcStr + ")));");
+            codegen.Emit("vbr(" + hiD + ", (uint32_t)((" + castType + "(" + srcStr + ")) >> 32));");
+            EmitB64Interleave(codegen, dst, loD, hiD, p + "_ilv");
         } else {
-            codegen.Emit("vbr(" + dst + ", " + src_str + ");");
+            codegen.Emit("vbr(" + dst + ", " + srcStr + ");");
         }
     }
     return "";
@@ -972,13 +972,13 @@ static std::string EmitVFDuplicate(const ir::CallPtr& op, codegen::CodegenBase& 
 // ============================================================================
 
 static std::string GetUBufPtr(codegen::CCECodegen& codegen, const ir::ExprPtr& expr,
-                              const std::string& cast_type = "float", bool is_post_update = false)
+                              const std::string& castType = "float", bool isPostUpdate = false)
 {
-    std::string ptr = codegen.GetOrCreateVFTilePtr(expr, is_post_update);
-    std::string tile_ctype = GetExprDtype(expr, DataType::FP32).ToCTypeString();
-    if (cast_type == tile_ctype)
+    std::string ptr = codegen.GetOrCreateVFTilePtr(expr, isPostUpdate);
+    std::string tileCtype = GetExprDtype(expr, DataType::FP32).ToCTypeString();
+    if (castType == tileCtype)
         return ptr;
-    return "(__ubuf__ " + cast_type + " *)" + ptr;
+    return "(__ubuf__ " + castType + " *)" + ptr;
 }
 
 // ============================================================================
@@ -986,9 +986,9 @@ static std::string GetUBufPtr(codegen::CCECodegen& codegen, const ir::ExprPtr& e
 // Replaces: LoadAlign, LoadAlignMode, LoadAlignPostUpdate, LoadAlignPostupdate, LoadAlignUnpackV2
 // ============================================================================
 
-static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // 4-arg form: deinterleave load_align(dst0, dst1, ptr, offset, dist="DINTLV_Bxx")
     if (op->args_.size() == 4) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("data_copy_mode"))
@@ -999,60 +999,60 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
             << "vf.load_align 4-arg (de-interleave) form does not support repeat_stride";
         // 4-arg de-interleave form requires both dsts to be RegTensor (not MaskReg)
         for (int i = 0; i < 2; i++) {
-            auto dst_v = ir::As<ir::Var>(op->args_[i]);
-            if (dst_v != nullptr) {
-                PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, !codegen.IsMaskRegVar(codegen.GetVarName(dst_v)))
+            auto dstV = ir::As<ir::Var>(op->args_[i]);
+            if (dstV != nullptr) {
+                PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, !codegen.IsMaskRegVar(codegen.GetVarName(dstV)))
                     << "vf.load_align 4-arg (de-interleave) form requires RegTensor dst, " << "but args[" << i
                     << "] is a MaskReg";
             }
         }
         std::string dst0 = codegen.GetExprAsCode(op->args_[0]);
         std::string dst1 = codegen.GetExprAsCode(op->args_[1]);
-        std::string offset_str = ResolveOffsetArg(codegen, op->args_[3], op->args_[2]);
-        DataType dst_dt = GetExprDtype(op->args_[0]);
+        std::string offsetStr = ResolveOffsetArg(codegen, op->args_[3], op->args_[2]);
+        DataType dstDt = GetExprDtype(op->args_[0]);
         // The dual-load instruction loads both dsts at dst0's element width:
         // dst1 must have the same bit width (equal-width reinterpreting views
         // stay legal, mirroring the de_interleave validation).
-        DataType dst1_dt = GetExprDtype(op->args_[1]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_dt.GetBit() == dst1_dt.GetBit())
+        DataType dst1Dt = GetExprDtype(op->args_[1]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dstDt.GetBit() == dst1Dt.GetBit())
             << "vf.load_align 4-arg (de-interleave) requires dst0 and dst1 to have the same bit width, got dst0="
-            << DTypeStr(dst_dt) << " dst1=" << DTypeStr(dst1_dt);
+            << DTypeStr(dstDt) << " dst1=" << DTypeStr(dst1Dt);
         // Pointer type follows the register's declared dtype. When it differs
         // from the tile's dtype, adjust the offset by the element-width ratio so
         // the byte address stays correct (mirrors b64→b32 stride*2).
-        std::string ptr_type = DtypeToPtrType(dst_dt);
-        std::string ub_ptr = GetUBufPtr(codegen, op->args_[2], ptr_type);
-        DataType tile_dt = GetExprDtype(op->args_[2], dst_dt);
-        std::string cast = GetB8Cast(dst_dt);
-        std::string effective_offset = offset_str;
-        if (tile_dt.GetBit() != dst_dt.GetBit() && !offset_str.empty()) {
-            effective_offset = "(" + offset_str + ") * " + std::to_string(tile_dt.GetBit()) + " / " +
-                               std::to_string(dst_dt.GetBit());
+        std::string ptrType = DtypeToPtrType(dstDt);
+        std::string ubPtr = GetUBufPtr(codegen, op->args_[2], ptrType);
+        DataType tileDt = GetExprDtype(op->args_[2], dstDt);
+        std::string cast = GetB8Cast(dstDt);
+        std::string effectiveOffset = offsetStr;
+        if (tileDt.GetBit() != dstDt.GetBit() && !offsetStr.empty()) {
+            effectiveOffset = "(" + offsetStr + ") * " + std::to_string(tileDt.GetBit()) + " / " +
+                              std::to_string(dstDt.GetBit());
         }
-        std::string dintlv_mode;
+        std::string dintlvMode;
         if (op->HasKwarg("dist")) {
-            dintlv_mode = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/true, "vf.load_align");
+            dintlvMode = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/true, "vf.load_align");
             PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT,
-                              dintlv_mode == "DINTLV_B8" || dintlv_mode == "DINTLV_B16" || dintlv_mode == "DINTLV_B32")
-                << "vf.load_align 4-arg (de-interleave) form requires dist=DINTLV_B8/B16/B32, got " << dintlv_mode;
+                              dintlvMode == "DINTLV_B8" || dintlvMode == "DINTLV_B16" || dintlvMode == "DINTLV_B32")
+                << "vf.load_align 4-arg (de-interleave) form requires dist=DINTLV_B8/B16/B32, got " << dintlvMode;
         } else {
-            if (IsB8Type(dst_dt))
-                dintlv_mode = "DINTLV_B8";
-            else if (IsB16Type(dst_dt))
-                dintlv_mode = "DINTLV_B16";
+            if (IsB8Type(dstDt))
+                dintlvMode = "DINTLV_B8";
+            else if (IsB16Type(dstDt))
+                dintlvMode = "DINTLV_B16";
             else
-                dintlv_mode = "DINTLV_B32";
+                dintlvMode = "DINTLV_B32";
         }
-        bool post_update = false;
+        bool postUpdate = false;
         if (op->HasKwarg("post_update")) {
-            post_update = op->GetKwarg<bool>("post_update");
+            postUpdate = op->GetKwarg<bool>("post_update");
         }
-        if (post_update) {
-            codegen.Emit("vlds(" + cast + dst0 + ", " + cast + dst1 + ", " + ub_ptr + ", " + effective_offset + ", " +
-                         dintlv_mode + ", POST_UPDATE);");
+        if (postUpdate) {
+            codegen.Emit("vlds(" + cast + dst0 + ", " + cast + dst1 + ", " + ubPtr + ", " + effectiveOffset + ", " +
+                         dintlvMode + ", POST_UPDATE);");
         } else {
-            codegen.Emit("vlds(" + cast + dst0 + ", " + cast + dst1 + ", " + ub_ptr + ", " + effective_offset + ", " +
-                         dintlv_mode + ");");
+            codegen.Emit("vlds(" + cast + dst0 + ", " + cast + dst1 + ", " + ubPtr + ", " + effectiveOffset + ", " +
+                         dintlvMode + ");");
         }
         return "";
     }
@@ -1065,37 +1065,37 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("repeat_stride"))
             << "vf.load_align 2-arg form does not support repeat_stride";
         std::string dst = codegen.GetExprAsCode(op->args_[0]);
-        DataType dst_dt = GetExprDtype(op->args_[0]);
-        bool dst_is_mask = false;
-        if (auto dst_v = ir::As<ir::Var>(op->args_[0])) {
-            dst_is_mask = codegen.IsMaskRegVar(codegen.GetVarName(dst_v));
+        DataType dstDt = GetExprDtype(op->args_[0]);
+        bool dstIsMask = false;
+        if (auto dstV = ir::As<ir::Var>(op->args_[0])) {
+            dstIsMask = codegen.IsMaskRegVar(codegen.GetVarName(dstV));
         }
-        if (dst_is_mask) {
+        if (dstIsMask) {
             std::string mode = "NORM";
             if (op->HasKwarg("dist")) {
                 mode = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/true, "vf.load_align");
                 PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, mode == "NORM" || mode == "US" || mode == "DS")
                     << "vf.load_align 2-arg (MaskReg) only supports NORM/US/DS dist, got " << mode;
             }
-            std::string plds_ptr = GetUBufPtr(codegen, op->args_[1], "uint32_t");
-            codegen.Emit("plds(" + dst + ", " + plds_ptr + ", 0, " + mode + ");");
+            std::string pldsPtr = GetUBufPtr(codegen, op->args_[1], "uint32_t");
+            codegen.Emit("plds(" + dst + ", " + pldsPtr + ", 0, " + mode + ");");
         } else {
             // RegTensor 2-arg form: vlds with hardcoded NORM, dist kwarg not supported
             if (op->HasKwarg("dist")) {
-                auto dist_val = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/true, "vf.load_align");
-                PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, dist_val == "NORM")
-                    << "vf.load_align 2-arg (RegTensor) only supports NORM dist, got " << dist_val;
+                auto distVal = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/true, "vf.load_align");
+                PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, distVal == "NORM")
+                    << "vf.load_align 2-arg (RegTensor) only supports NORM dist, got " << distVal;
             }
-            std::string ptr_type = DtypeToPtrType(dst_dt);
-            std::string ub_ptr = GetUBufPtr(codegen, op->args_[1], ptr_type);
-            std::string cast = GetB8Cast(dst_dt);
+            std::string ptrType = DtypeToPtrType(dstDt);
+            std::string ubPtr = GetUBufPtr(codegen, op->args_[1], ptrType);
+            std::string cast = GetB8Cast(dstDt);
             // B64 types (INT64/UINT64): load as b32 (mirrors AscendC DataCopyImpl
             // b64 RegTraitNumOne: vlds((RegTensor<uint32_t>&)reg, uint32_t* ptr, 0, NORM))
-            if (dst_dt.GetBit() == 64) {
-                std::string b32_ptr = GetUBufPtr(codegen, op->args_[1], "uint32_t");
-                codegen.Emit("vlds((RegTensor<uint32_t>&)" + dst + ", " + b32_ptr + ", 0, NORM);");
+            if (dstDt.GetBit() == 64) {
+                std::string b32Ptr = GetUBufPtr(codegen, op->args_[1], "uint32_t");
+                codegen.Emit("vlds((RegTensor<uint32_t>&)" + dst + ", " + b32Ptr + ", 0, NORM);");
             } else {
-                codegen.Emit("vlds(" + cast + dst + ", " + ub_ptr + ", 0, NORM);");
+                codegen.Emit("vlds(" + cast + dst + ", " + ubPtr + ", 0, NORM);");
             }
         }
         return "";
@@ -1103,23 +1103,23 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.load_align requires 2, 3, or 4 args (dst, src_ptr[, offset]) or (dst0, dst1, src_ptr, offset)";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string offset_str = ResolveOffsetArg(codegen, op->args_[2], op->args_[1]);
-    DataType dst_dt = GetExprDtype(op->args_[0]);
+    std::string offsetStr = ResolveOffsetArg(codegen, op->args_[2], op->args_[1]);
+    DataType dstDt = GetExprDtype(op->args_[0]);
     // Pointer type follows the register's declared dtype. When it differs from
     // the tile's dtype, adjust the offset by the element-width ratio so the byte
     // address stays correct (mirrors b64→b32 stride*2).
-    std::string ptr_type = DtypeToPtrType(dst_dt);
-    DataType tile_dt = GetExprDtype(op->args_[1], dst_dt);
+    std::string ptrType = DtypeToPtrType(dstDt);
+    DataType tileDt = GetExprDtype(op->args_[1], dstDt);
     // Is the destination a MaskReg? (routes to pld/plds instead of vld/vlds)
-    bool dst_is_mask = false;
-    if (auto dst_v = ir::As<ir::Var>(op->args_[0])) {
-        dst_is_mask = codegen.IsMaskRegVar(codegen.GetVarName(dst_v));
+    bool dstIsMask = false;
+    if (auto dstV = ir::As<ir::Var>(op->args_[0])) {
+        dstIsMask = codegen.IsMaskRegVar(codegen.GetVarName(dstV));
     }
     // Offset adjustment only for RegTensor path (MaskReg always uses uint32_t ptr)
-    std::string effective_offset = offset_str;
-    if (!dst_is_mask && tile_dt.GetBit() != dst_dt.GetBit()) {
-        effective_offset = "(" + offset_str + ") * " + std::to_string(tile_dt.GetBit()) + " / " +
-                           std::to_string(dst_dt.GetBit());
+    std::string effectiveOffset = offsetStr;
+    if (!dstIsMask && tileDt.GetBit() != dstDt.GetBit()) {
+        effectiveOffset = "(" + offsetStr + ") * " + std::to_string(tileDt.GetBit()) + " / " +
+                          std::to_string(dstDt.GetBit());
     }
     // Determine mode from kwargs (dist kwarg is legacy alias for mode).
     // MaskReg (plds) and RegTensor (vlds) paths share the same LoadDist enum:
@@ -1134,154 +1134,154 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
         << "vf.load_align with 3 args (single dst) does not support DINTLV dist, "
         << "use 4-arg form: dst0, dst1 = vf.load_align(src, offset, dist=...)";
     // AddrReg offset path: MaskReg dst -> pld, RegTensor dst -> vld
-    if (codegen.IsAddrRegVar(offset_str)) {
-        std::string ub_ptr = GetUBufPtr(codegen, op->args_[1], dst_is_mask ? "uint32_t" : ptr_type);
-        if (dst_is_mask) {
-            codegen.Emit("pld(" + dst + ", " + ub_ptr + ", " + offset_str + ", " + mode + ");");
+    if (codegen.IsAddrRegVar(offsetStr)) {
+        std::string ubPtr = GetUBufPtr(codegen, op->args_[1], dstIsMask ? "uint32_t" : ptrType);
+        if (dstIsMask) {
+            codegen.Emit("pld(" + dst + ", " + ubPtr + ", " + offsetStr + ", " + mode + ");");
         } else {
-            codegen.Emit("vld(" + dst + ", " + ub_ptr + ", " + effective_offset + ", " + mode + ");");
+            codegen.Emit("vld(" + dst + ", " + ubPtr + ", " + effectiveOffset + ", " + mode + ");");
         }
         return "";
     }
     // Check for DataBlock load path (vsldb)
-    std::string data_copy_mode = "NORM";
+    std::string dataCopyMode = "NORM";
     if (op->HasKwarg("data_copy_mode")) {
-        data_copy_mode = VFEnumValueName(
+        dataCopyMode = VFEnumValueName(
             ir::EnumToString(static_cast<ir::DataCopyMode>(op->GetKwarg<int>("data_copy_mode"))));
     }
-    bool post_update = false;
+    bool postUpdate = false;
     if (op->HasKwarg("post_update")) {
-        post_update = op->GetKwarg<bool>("post_update");
+        postUpdate = op->GetKwarg<bool>("post_update");
     }
     // vsldb path (non-contiguous datablock load). Accept both DATA_BLOCK_LOAD
     // (pypto legacy name) and DATA_BLOCK_COPY so
     // code written against either naming does not silently fall back to vlds.
-    if (data_copy_mode == "DATA_BLOCK_LOAD" || data_copy_mode == "DATA_BLOCK_COPY") {
+    if (dataCopyMode == "DATA_BLOCK_LOAD" || dataCopyMode == "DATA_BLOCK_COPY") {
         // In DataBlock mode, args[2] is a mask register, not an offset.
         // Verify the user didn't pass an integer/AddrReg offset by mistake.
-        auto mask_var = ir::As<ir::Var>(op->args_[2]);
-        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, mask_var != nullptr)
+        auto maskVar = ir::As<ir::Var>(op->args_[2]);
+        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, maskVar != nullptr)
             << "vf.load_align with data_copy_mode=DATA_BLOCK_COPY requires args[2] to be a "
             << "mask register, but got an offset value (offset is not supported in DataBlock mode)";
         // Verify args[2] is actually a MaskReg, not a Tile or other Var type
-        std::string mask_name = codegen.GetVarName(mask_var);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsMaskRegVar(mask_name))
+        std::string maskName = codegen.GetVarName(maskVar);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsMaskRegVar(maskName))
             << "vf.load_align with data_copy_mode=DATA_BLOCK_COPY requires args[2] to be a "
-            << "mask register, but got a non-mask variable '" << mask_name << "'";
+            << "mask register, but got a non-mask variable '" << maskName << "'";
         // DataBlock mode requires RegTensor dst (not MaskReg)
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, !dst_is_mask)
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, !dstIsMask)
             << "vf.load_align with data_copy_mode=DATA_BLOCK_COPY does not support MaskReg dst";
         // vsldb only supports b8/b16/b32 (not b64)
         // vsldb path: load_align(dst, ptr, mask, data_copy_mode=..., block_stride=N, ...)
-        std::string mask_reg = codegen.GetExprAsCode(op->args_[2]);
-        std::string block_stride = "0";
-        std::string repeat_stride = "0";
+        std::string maskReg = codegen.GetExprAsCode(op->args_[2]);
+        std::string blockStride = "0";
+        std::string repeatStride = "0";
         if (op->HasKwarg("block_stride")) {
-            block_stride = std::to_string(op->GetKwarg<int>("block_stride"));
+            blockStride = std::to_string(op->GetKwarg<int>("block_stride"));
         }
         if (op->HasKwarg("repeat_stride")) {
-            repeat_stride = std::to_string(op->GetKwarg<int>("repeat_stride"));
+            repeatStride = std::to_string(op->GetKwarg<int>("repeat_stride"));
         }
-        if (post_update) {
-            std::string ub_ptr = codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
-            codegen.Emit("vsldb(" + dst + ", " + ub_ptr + ", (" + block_stride + " << 16u) | (" + repeat_stride +
-                         " & 0xFFFFU), " + mask_reg + ", POST_UPDATE);");
+        if (postUpdate) {
+            std::string ubPtr = codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
+            codegen.Emit("vsldb(" + dst + ", " + ubPtr + ", (" + blockStride + " << 16u) | (" + repeatStride +
+                         " & 0xFFFFU), " + maskReg + ", POST_UPDATE);");
         } else {
-            std::string ub_ptr = GetUBufPtr(codegen, op->args_[1], ptr_type);
-            codegen.Emit("vsldb(" + dst + ", " + ub_ptr + ", (" + block_stride + " << 16u), " + mask_reg + ");");
+            std::string ubPtr = GetUBufPtr(codegen, op->args_[1], ptrType);
+            codegen.Emit("vsldb(" + dst + ", " + ubPtr + ", (" + blockStride + " << 16u), " + maskReg + ");");
         }
         return "";
     }
     // Route by dst variable type: MaskReg → plds, RegTensor → vlds
-    if (dst_is_mask) {
+    if (dstIsMask) {
         // plds path: dst is MaskReg, pointer is always uint32_t*
         // pld/plds: only supports NORM/US/DS dist
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, mode == "NORM" || mode == "US" || mode == "DS")
             << "vf.load_align (MaskReg) only supports NORM/US/DS dist, got " << mode;
-        std::string plds_mode = mode; // pass through NORM/US/DS directly
-        std::string plds_ptr;
-        if (post_update) {
-            plds_ptr = codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
-            codegen.Emit("plds(" + dst + ", " + plds_ptr + ", " + offset_str + ", " + plds_mode + ", POST_UPDATE);");
+        std::string pldsMode = mode; // pass through NORM/US/DS directly
+        std::string pldsPtr;
+        if (postUpdate) {
+            pldsPtr = codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
+            codegen.Emit("plds(" + dst + ", " + pldsPtr + ", " + offsetStr + ", " + pldsMode + ", POST_UPDATE);");
         } else {
-            plds_ptr = GetUBufPtr(codegen, op->args_[1], "uint32_t");
-            codegen.Emit("plds(" + dst + ", " + plds_ptr + ", " + offset_str + ", " + plds_mode + ");");
+            pldsPtr = GetUBufPtr(codegen, op->args_[1], "uint32_t");
+            codegen.Emit("plds(" + dst + ", " + pldsPtr + ", " + offsetStr + ", " + pldsMode + ");");
         }
         return "";
     }
     // vlds path: dst is RegTensor
     // Get UB pointer (post_update uses reference-based ptr)
-    std::string ub_ptr;
-    if (post_update) {
-        ub_ptr = codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
+    std::string ubPtr;
+    if (postUpdate) {
+        ubPtr = codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
     } else {
-        ub_ptr = GetUBufPtr(codegen, op->args_[1], ptr_type);
+        ubPtr = GetUBufPtr(codegen, op->args_[1], ptrType);
     }
     // Determine vlds mode string
-    std::string vlds_mode;
+    std::string vldsMode;
     if (mode == "NORM") {
-        vlds_mode = "NORM";
+        vldsMode = "NORM";
     } else if (mode == "BRC") {
-        if (IsB8Type(dst_dt))
-            vlds_mode = "BRC_B8";
-        else if (IsB16Type(dst_dt))
-            vlds_mode = "BRC_B16";
+        if (IsB8Type(dstDt))
+            vldsMode = "BRC_B8";
+        else if (IsB16Type(dstDt))
+            vldsMode = "BRC_B16";
         else
-            vlds_mode = "BRC_B32";
+            vldsMode = "BRC_B32";
     } else if (mode == "US") {
-        if (IsB8Type(dst_dt))
-            vlds_mode = "US_B8";
+        if (IsB8Type(dstDt))
+            vldsMode = "US_B8";
         else
-            vlds_mode = "US_B16";
+            vldsMode = "US_B16";
     } else if (mode == "DS") {
-        if (IsB8Type(dst_dt))
-            vlds_mode = "DS_B8";
+        if (IsB8Type(dstDt))
+            vldsMode = "DS_B8";
         else
-            vlds_mode = "DS_B16";
+            vldsMode = "DS_B16";
     } else if (mode == "UNPK") {
-        if (IsB8Type(dst_dt))
-            vlds_mode = "UNPK_B8";
-        else if (IsB16Type(dst_dt))
-            vlds_mode = "UNPK_B16";
+        if (IsB8Type(dstDt))
+            vldsMode = "UNPK_B8";
+        else if (IsB16Type(dstDt))
+            vldsMode = "UNPK_B16";
         else
-            vlds_mode = "UNPK_B32";
+            vldsMode = "UNPK_B32";
     } else if (mode == "UNPK4") {
-        vlds_mode = "UNPK4_B8";
+        vldsMode = "UNPK4_B8";
     } else if (mode == "BLK") {
-        vlds_mode = "BLK";
+        vldsMode = "BLK";
     } else if (mode == "E2B") {
-        if (IsB16Type(dst_dt))
-            vlds_mode = "E2B_B16";
+        if (IsB16Type(dstDt))
+            vldsMode = "E2B_B16";
         else
-            vlds_mode = "E2B_B32";
+            vldsMode = "E2B_B32";
     } else {
         // Fallback: pass through directly (e.g. BRC_B32, DS_B16, E2B_B32, etc.)
-        vlds_mode = mode;
+        vldsMode = mode;
     }
-    std::string cast = GetB8Cast(dst_dt);
+    std::string cast = GetB8Cast(dstDt);
     // B64 types (INT64/UINT64): load as b32 (mirrors AscendC DataCopyImpl b64
     // path, which passes the resolved dist through unchanged)
-    if (dst_dt.GetBit() == 64) {
-        std::string b32_ptr;
-        if (post_update) {
-            b32_ptr = codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
-            std::string post_offset = "(" + effective_offset + ") * 2";
-            codegen.Emit("vlds((RegTensor<uint32_t>&)" + dst + ", (__ubuf__ uint32_t*&)" + b32_ptr + ", " +
-                         post_offset + ", " + vlds_mode + ", POST_UPDATE);");
+    if (dstDt.GetBit() == 64) {
+        std::string b32Ptr;
+        if (postUpdate) {
+            b32Ptr = codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
+            std::string postOffset = "(" + effectiveOffset + ") * 2";
+            codegen.Emit("vlds((RegTensor<uint32_t>&)" + dst + ", (__ubuf__ uint32_t*&)" + b32Ptr + ", " + postOffset +
+                         ", " + vldsMode + ", POST_UPDATE);");
         } else {
-            b32_ptr = GetUBufPtr(codegen, op->args_[1], "uint32_t");
-            codegen.Emit("vlds((RegTensor<uint32_t>&)" + dst + ", " + b32_ptr + ", " + effective_offset + ", " +
-                         vlds_mode + ");");
+            b32Ptr = GetUBufPtr(codegen, op->args_[1], "uint32_t");
+            codegen.Emit("vlds((RegTensor<uint32_t>&)" + dst + ", " + b32Ptr + ", " + effectiveOffset + ", " +
+                         vldsMode + ");");
         }
-    } else if (post_update) {
+    } else if (postUpdate) {
         // B64 register types need stride doubled (postUpdateStride * 2 for 8-byte elements)
-        std::string post_offset = effective_offset;
-        if (dst_dt.GetBit() == 64) {
-            post_offset = "(" + effective_offset + ") * 2";
+        std::string postOffset = effectiveOffset;
+        if (dstDt.GetBit() == 64) {
+            postOffset = "(" + effectiveOffset + ") * 2";
         }
-        codegen.Emit("vlds(" + cast + dst + ", " + ub_ptr + ", " + post_offset + ", " + vlds_mode + ", POST_UPDATE);");
+        codegen.Emit("vlds(" + cast + dst + ", " + ubPtr + ", " + postOffset + ", " + vldsMode + ", POST_UPDATE);");
     } else {
-        codegen.Emit("vlds(" + cast + dst + ", " + ub_ptr + ", " + effective_offset + ", " + vlds_mode + ");");
+        codegen.Emit("vlds(" + cast + dst + ", " + ubPtr + ", " + effectiveOffset + ", " + vldsMode + ");");
     }
     return "";
 }
@@ -1290,28 +1290,28 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
 // StoreAlign — vsts
 // ============================================================================
 
-static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // args: [dst_ptr, src_reg, mask, (optional) block_stride, (optional) repeat_stride]
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 2)
         << "vf.store_align requires at least 2 args (dst_ptr, src_reg)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
     // vsts supports b8/b16/b32/b64 element widths
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      IsB8Type(src_dt) || src_dt.GetBit() == 16 || src_dt.GetBit() == 32 || src_dt.GetBit() == 64)
-        << "vf.store_align only supports b8/b16/b32/b64 types, got " << DTypeStr(src_dt);
-    std::string src_reg = codegen.GetExprAsCode(op->args_[1]);
-    std::string cast = GetB8Cast(src_dt);
+                      IsB8Type(srcDt) || srcDt.GetBit() == 16 || srcDt.GetBit() == 32 || srcDt.GetBit() == 64)
+        << "vf.store_align only supports b8/b16/b32/b64 types, got " << DTypeStr(srcDt);
+    std::string srcReg = codegen.GetExprAsCode(op->args_[1]);
+    std::string cast = GetB8Cast(srcDt);
     // MaskReg src path: when args[1] is a MaskReg, dispatch to psts/pst (mask store)
-    bool src_is_mask = false;
-    if (auto src_v = ir::As<ir::Var>(op->args_[1])) {
-        src_is_mask = codegen.IsMaskRegVar(codegen.GetVarName(src_v));
+    bool srcIsMask = false;
+    if (auto srcV = ir::As<ir::Var>(op->args_[1])) {
+        srcIsMask = codegen.IsMaskRegVar(codegen.GetVarName(srcV));
     }
     // vsts stores raw register bits; GetUBufPtr already casts the dst pointer
     // to the src register type (equivalent to AscendC's (RegTensor<T>&) cast),
     // so no runtime dtype compatibility check is needed here.
-    if (src_is_mask) {
+    if (srcIsMask) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("data_copy_mode"))
             << "vf.store_align (MaskReg src) does not support data_copy_mode";
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("block_stride"))
@@ -1330,23 +1330,23 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
         }
         // AddrReg offset path: 3rd arg is AddrReg -> pst(mask, ptr, areg, dist)
         if (op->args_.size() >= 3) {
-            std::string third_arg = codegen.GetExprAsCode(op->args_[2]);
-            if (codegen.IsAddrRegVar(third_arg)) {
-                std::string ub_ptr = GetUBufPtr(codegen, op->args_[0], "uint32_t");
-                codegen.Emit("pst(" + src_reg + ", " + ub_ptr + ", " + third_arg + ", " + dist + ");");
+            std::string thirdArg = codegen.GetExprAsCode(op->args_[2]);
+            if (codegen.IsAddrRegVar(thirdArg)) {
+                std::string ubPtr = GetUBufPtr(codegen, op->args_[0], "uint32_t");
+                codegen.Emit("pst(" + srcReg + ", " + ubPtr + ", " + thirdArg + ", " + dist + ");");
                 return "";
             }
             // Post-update path: int offset with post_update kwarg
-            bool post_update = op->HasKwarg("post_update") && op->GetKwarg<bool>("post_update");
-            if (post_update) {
-                std::string ptr_var = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
-                codegen.Emit("psts(" + src_reg + ", " + ptr_var + ", " + third_arg + ", " + dist + ", POST_UPDATE);");
+            bool postUpdate = op->HasKwarg("post_update") && op->GetKwarg<bool>("post_update");
+            if (postUpdate) {
+                std::string ptrVar = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
+                codegen.Emit("psts(" + srcReg + ", " + ptrVar + ", " + thirdArg + ", " + dist + ", POST_UPDATE);");
                 return "";
             }
         }
         // Default: psts with offset=0
-        std::string ub_ptr = GetUBufPtr(codegen, op->args_[0], "uint32_t");
-        codegen.Emit("psts(" + src_reg + ", " + ub_ptr + ", 0, " + dist + ");");
+        std::string ubPtr = GetUBufPtr(codegen, op->args_[0], "uint32_t");
+        codegen.Emit("psts(" + srcReg + ", " + ubPtr + ", 0, " + dist + ");");
         return "";
     }
     // Resolve the dist kwarg for the single-source paths (vst/vsts). The MaskReg
@@ -1360,15 +1360,15 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
     }
     if (dist.empty()) {
         // Auto-select default dist based on src dtype (uses NORM_B8/B16/B32 by element width)
-        DataType src_dtype = DataType::FP32;
-        if (auto scalar_type = ir::As<ir::ScalarType>(op->args_[1]->GetType())) {
-            src_dtype = scalar_type->dtype_;
-        } else if (auto tile_type_tmp = ir::As<ir::TileType>(op->args_[0]->GetType())) {
-            src_dtype = tile_type_tmp->dtype_;
+        DataType srcDtype = DataType::FP32;
+        if (auto scalarType = ir::As<ir::ScalarType>(op->args_[1]->GetType())) {
+            srcDtype = scalarType->dtype_;
+        } else if (auto tileTypeTmp = ir::As<ir::TileType>(op->args_[0]->GetType())) {
+            srcDtype = tileTypeTmp->dtype_;
         }
-        if (IsB8Type(src_dtype))
+        if (IsB8Type(srcDtype))
             dist = "NORM_B8";
-        else if (IsB16Type(src_dtype))
+        else if (IsB16Type(srcDtype))
             dist = "NORM_B16";
         else
             dist = "NORM_B32";
@@ -1422,13 +1422,13 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
     // The resolved dist is honored here as well (previously the dist kwarg was
     // silently ignored in this path and NORM_Bx was always used).
     if (op->args_.size() >= 4) {
-        std::string addr_reg = codegen.GetExprAsCode(op->args_[3]);
-        if (codegen.IsAddrRegVar(addr_reg)) {
+        std::string addrReg = codegen.GetExprAsCode(op->args_[3]);
+        if (codegen.IsAddrRegVar(addrReg)) {
             // Verify args[2] is a MaskReg
-            auto mask_var_4 = ir::As<ir::Var>(op->args_[2]);
-            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, mask_var_4 != nullptr)
+            auto maskVar4 = ir::As<ir::Var>(op->args_[2]);
+            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, maskVar4 != nullptr)
                 << "vf.store_align (AddrReg) requires args[2] to be a mask register, but got non-Var type";
-            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsMaskRegVar(codegen.GetVarName(mask_var_4)))
+            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsMaskRegVar(codegen.GetVarName(maskVar4)))
                 << "vf.store_align (AddrReg) requires args[2] to be a mask register";
             // vst has no post mode — the AddrReg offset must be recreated each
             // iteration via vf.create_addr_reg
@@ -1444,76 +1444,76 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
             PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT,
                               dist != "INTLV_B8" && dist != "INTLV_B16" && dist != "INTLV_B32")
                 << "vf.store_align (AddrReg) does not support INTLV dist (requires two source registers), got " << dist;
-            std::string mask_reg = codegen.GetExprAsCode(op->args_[2]);
-            std::string ptr_type = "float";
-            if (auto scalar_type = ir::As<ir::ScalarType>(op->args_[1]->GetType())) {
-                ptr_type = DtypeToPtrType(scalar_type->dtype_);
+            std::string maskReg = codegen.GetExprAsCode(op->args_[2]);
+            std::string ptrType = "float";
+            if (auto scalarType = ir::As<ir::ScalarType>(op->args_[1]->GetType())) {
+                ptrType = DtypeToPtrType(scalarType->dtype_);
             }
-            std::string dst_ptr = GetUBufPtr(codegen, op->args_[0], ptr_type);
-            std::string vst_src = cast + src_reg;
-            std::string vst_mask = mask_reg;
-            if (src_dt.GetBit() == 64) {
+            std::string dstPtr = GetUBufPtr(codegen, op->args_[0], ptrType);
+            std::string vstSrc = cast + srcReg;
+            std::string vstMask = maskReg;
+            if (srcDt.GetBit() == 64) {
                 // b64: simulate with b32 vst — reinterpret the register/pointer as
                 // int32 and expand the b64-element mask to per-b32-lane bits
                 // (ppack + pintlv_b32, mirrors the AscendC DataCopyImpl vst-areg
                 // b64 path); dist passes through unchanged
-                std::string packed_mask = mask_reg + "_b32lo_";
-                std::string dump_mask = mask_reg + "_b32hi_";
-                codegen.Emit("MaskReg " + packed_mask + ";");
-                codegen.Emit("MaskReg " + dump_mask + ";");
-                codegen.Emit("ppack(" + packed_mask + ", " + mask_reg + ", LOWER);");
-                codegen.Emit("pintlv_b32(" + packed_mask + ", " + dump_mask + ", " + packed_mask + ", " + packed_mask +
+                std::string packedMask = maskReg + "_b32lo_";
+                std::string dumpMask = maskReg + "_b32hi_";
+                codegen.Emit("MaskReg " + packedMask + ";");
+                codegen.Emit("MaskReg " + dumpMask + ";");
+                codegen.Emit("ppack(" + packedMask + ", " + maskReg + ", LOWER);");
+                codegen.Emit("pintlv_b32(" + packedMask + ", " + dumpMask + ", " + packedMask + ", " + packedMask +
                              ");");
-                vst_src = "(RegTensor<int32_t>&)" + src_reg;
-                vst_mask = packed_mask;
-                dst_ptr = GetUBufPtr(codegen, op->args_[0], "int32_t");
+                vstSrc = "(RegTensor<int32_t>&)" + srcReg;
+                vstMask = packedMask;
+                dstPtr = GetUBufPtr(codegen, op->args_[0], "int32_t");
             }
-            codegen.Emit("vst(" + vst_src + ", " + dst_ptr + ", " + addr_reg + ", " + dist + ", " + vst_mask + ");");
+            codegen.Emit("vst(" + vstSrc + ", " + dstPtr + ", " + addrReg + ", " + dist + ", " + vstMask + ");");
             return "";
         }
     }
-    bool post_update = false;
+    bool postUpdate = false;
     if (op->HasKwarg("post_update")) {
-        post_update = op->GetKwarg<bool>("post_update");
+        postUpdate = op->GetKwarg<bool>("post_update");
     }
-    std::string data_copy_mode = "NORM";
+    std::string dataCopyMode = "NORM";
     if (op->HasKwarg("data_copy_mode")) {
-        data_copy_mode = VFEnumValueName(
+        dataCopyMode = VFEnumValueName(
             ir::EnumToString(static_cast<ir::DataCopyMode>(op->GetKwarg<int>("data_copy_mode"))));
     }
     // Pointer type follows the register's declared dtype. When it differs from
     // the tile's dtype, the offset/stride must be adjusted by the element-width
     // ratio so the byte address stays correct (mirrors b64→b32
     // stride*2). No register cast needed — the register is already src_dt.
-    std::string ptr_type = DtypeToPtrType(src_dt);
-    DataType tile_dt = DataType::FP32;
-    auto tile_type = ir::As<ir::TileType>(op->args_[0]->GetType());
-    if (tile_type) {
-        tile_dt = tile_type->dtype_;
-    } else if (auto scalar_type = ir::As<ir::ScalarType>(op->args_[1]->GetType())) {
-        tile_dt = scalar_type->dtype_;
+    std::string ptrType = DtypeToPtrType(srcDt);
+    DataType tileDt = DataType::FP32;
+    auto tileType = ir::As<ir::TileType>(op->args_[0]->GetType());
+    if (tileType) {
+        tileDt = tileType->dtype_;
+    } else if (auto scalarType = ir::As<ir::ScalarType>(op->args_[1]->GetType())) {
+        tileDt = scalarType->dtype_;
     } else {
-        tile_dt = src_dt;
+        tileDt = srcDt;
     }
-    std::string width_op;
-    if (tile_dt.GetBit() != src_dt.GetBit()) {
-        width_op = " * " + std::to_string(tile_dt.GetBit()) + " / " + std::to_string(src_dt.GetBit());
+    std::string widthOp;
+    if (tileDt.GetBit() != srcDt.GetBit()) {
+        widthOp = " * " + std::to_string(tileDt.GetBit()) + " / " + std::to_string(srcDt.GetBit());
     }
     // INTLV modes need two src registers: args = [dst_ptr, src_reg, src1, mask]
-    bool is_intlv = (dist == "INTLV_B8" || dist == "INTLV_B16" || dist == "INTLV_B32");
+    bool isIntlv = (dist == "INTLV_B8" || dist == "INTLV_B16" || dist == "INTLV_B32");
     // INTLV requires 4 args; 4-arg with args[2] as register (not mask) requires INTLV
     // Skip this check for post_update path (4 args = dst, src, mask, stride is valid)
-    if (is_intlv) {
+    if (isIntlv) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
             << "vf.store_align INTLV requires 4 args (dst_ptr, src_reg, src1, mask)";
-    } else if (op->args_.size() == 4 && !src_is_mask && !post_update) {
-        auto third_arg_var = ir::As<ir::Var>(op->args_[2]);
+    } else if (op->args_.size() == 4 && !srcIsMask && !postUpdate) {
+        auto thirdArgVar = ir::As<ir::Var>(op->args_[2]);
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT,
-                          third_arg_var == nullptr || codegen.IsMaskRegVar(codegen.GetVarName(third_arg_var)))
+                          thirdArgVar == nullptr || codegen.IsMaskRegVar(codegen.GetVarName(thirdArgVar)))
             << "vf.store_align with 4 args where args[2] is a register (not mask) requires INTLV dist, " << "got "
             << dist;
     }
-    if (is_intlv) {
+    if (isIntlv) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
             << "vf.store_align INTLV requires 4 args (dst_ptr, src_reg, src1, mask)";
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("data_copy_mode"))
@@ -1525,134 +1525,134 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("repeat_stride"))
             << "vf.store_align INTLV mode does not support repeat_stride";
         // INTLV mode: args[2] is src1 (second source register), args[3] is mask
-        auto intlv_mask_var = ir::As<ir::Var>(op->args_[3]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, intlv_mask_var != nullptr)
+        auto intlvMaskVar = ir::As<ir::Var>(op->args_[3]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, intlvMaskVar != nullptr)
             << "vf.store_align INTLV requires args[3] to be a mask register, but got non-Var type";
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsMaskRegVar(codegen.GetVarName(intlv_mask_var)))
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsMaskRegVar(codegen.GetVarName(intlvMaskVar)))
             << "vf.store_align INTLV requires args[3] to be a mask register";
         std::string src1 = codegen.GetExprAsCode(op->args_[2]);
-        std::string mask_reg = codegen.GetExprAsCode(op->args_[3]);
+        std::string maskReg = codegen.GetExprAsCode(op->args_[3]);
         // vsts 2-source overload (__VF_VSTSX2) does not exist for FP32;
         // cast to UINT32 (same 32-bit width) to use the UINT32 overload.
-        std::string intlv_ptr_type = ptr_type;
-        if (src_dt == DataType::FP32) {
-            src_reg = "(RegTensor<uint32_t> &)" + src_reg;
+        std::string intlvPtrType = ptrType;
+        if (srcDt == DataType::FP32) {
+            srcReg = "(RegTensor<uint32_t> &)" + srcReg;
             src1 = "(RegTensor<uint32_t> &)" + src1;
-            intlv_ptr_type = "uint32_t";
+            intlvPtrType = "uint32_t";
         }
-        std::string dst_ptr = GetUBufPtr(codegen, op->args_[0], intlv_ptr_type);
-        codegen.Emit("vsts(" + cast + src_reg + ", " + cast + src1 + ", " + dst_ptr + ", 0, " + dist + ", " + mask_reg +
+        std::string dstPtr = GetUBufPtr(codegen, op->args_[0], intlvPtrType);
+        codegen.Emit("vsts(" + cast + srcReg + ", " + cast + src1 + ", " + dstPtr + ", 0, " + dist + ", " + maskReg +
                      ");");
-    } else if (data_copy_mode == "DATA_BLOCK_LOAD" || data_copy_mode == "DATA_BLOCK_COPY") {
+    } else if (dataCopyMode == "DATA_BLOCK_LOAD" || dataCopyMode == "DATA_BLOCK_COPY") {
         // Accept both DATA_BLOCK_LOAD (pypto legacy name) and DATA_BLOCK_COPY
         //, consistent with load_align behavior.
         // vsstb only supports b8/b16/b32 (not b64)
-        DataType dc_src_dt = GetExprDtype(op->args_[1]);
+        DataType dcSrcDt = GetExprDtype(op->args_[1]);
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                          dc_src_dt.GetBit() == 8 || dc_src_dt.GetBit() == 16 || dc_src_dt.GetBit() == 32)
-            << "vf.store_align (DATA_BLOCK_COPY) only supports b8/b16/b32, got " << DTypeStr(dc_src_dt);
+                          dcSrcDt.GetBit() == 8 || dcSrcDt.GetBit() == 16 || dcSrcDt.GetBit() == 32)
+            << "vf.store_align (DATA_BLOCK_COPY) only supports b8/b16/b32, got " << DTypeStr(dcSrcDt);
         // In DataBlock mode, args[2] is a mask register
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 3)
             << "vf.store_align (DATA_BLOCK_COPY) requires at least 3 args (dst_ptr, src_reg, mask)";
-        auto db_mask_var = ir::As<ir::Var>(op->args_[2]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, db_mask_var != nullptr)
+        auto dbMaskVar = ir::As<ir::Var>(op->args_[2]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dbMaskVar != nullptr)
             << "vf.store_align (DATA_BLOCK_COPY) requires args[2] to be a mask register, but got non-Var type";
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsMaskRegVar(codegen.GetVarName(db_mask_var)))
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsMaskRegVar(codegen.GetVarName(dbMaskVar)))
             << "vf.store_align (DATA_BLOCK_COPY) requires args[2] to be a mask register";
-        std::string mask_reg = codegen.GetExprAsCode(op->args_[2]);
-        std::string block_stride = "0";
-        std::string repeat_stride = "0";
+        std::string maskReg = codegen.GetExprAsCode(op->args_[2]);
+        std::string blockStride = "0";
+        std::string repeatStride = "0";
         if (op->args_.size() >= 4) {
-            block_stride = codegen.GetExprAsCode(op->args_[3]);
+            blockStride = codegen.GetExprAsCode(op->args_[3]);
         } else if (op->HasKwarg("block_stride")) {
-            block_stride = std::to_string(op->GetKwarg<int>("block_stride"));
+            blockStride = std::to_string(op->GetKwarg<int>("block_stride"));
         }
         if (op->args_.size() >= 5) {
-            repeat_stride = codegen.GetExprAsCode(op->args_[4]);
+            repeatStride = codegen.GetExprAsCode(op->args_[4]);
         } else if (op->HasKwarg("repeat_stride")) {
-            repeat_stride = std::to_string(op->GetKwarg<int>("repeat_stride"));
+            repeatStride = std::to_string(op->GetKwarg<int>("repeat_stride"));
         }
-        if (post_update) {
-            std::string ptr_var = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
-            codegen.Emit("vsstb(" + cast + src_reg + ", " + ptr_var + ", " + "(" + block_stride + " << 16u) | (" +
-                         repeat_stride + " & 0xFFFFU), " + mask_reg + ", POST_UPDATE);");
+        if (postUpdate) {
+            std::string ptrVar = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
+            codegen.Emit("vsstb(" + cast + srcReg + ", " + ptrVar + ", " + "(" + blockStride + " << 16u) | (" +
+                         repeatStride + " & 0xFFFFU), " + maskReg + ", POST_UPDATE);");
         } else {
-            std::string dst_ptr = GetUBufPtr(codegen, op->args_[0], ptr_type);
-            codegen.Emit("vsstb(" + cast + src_reg + ", " + dst_ptr + ", " + "(" + block_stride + " << 16u) | (" +
-                         repeat_stride + " & 0xFFFFU), " + mask_reg + ");");
+            std::string dstPtr = GetUBufPtr(codegen, op->args_[0], ptrType);
+            codegen.Emit("vsstb(" + cast + srcReg + ", " + dstPtr + ", " + "(" + blockStride + " << 16u) | (" +
+                         repeatStride + " & 0xFFFFU), " + maskReg + ");");
         }
-    } else if (post_update) {
+    } else if (postUpdate) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 3)
             << "vf.store_align (post_update) requires at least 3 args (dst_ptr, src_reg, mask)";
-        auto pu_mask_var = ir::As<ir::Var>(op->args_[2]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, pu_mask_var != nullptr)
+        auto puMaskVar = ir::As<ir::Var>(op->args_[2]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, puMaskVar != nullptr)
             << "vf.store_align requires args[2] to be a mask register, but got non-Var type";
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsMaskRegVar(codegen.GetVarName(pu_mask_var)))
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsMaskRegVar(codegen.GetVarName(puMaskVar)))
             << "vf.store_align requires args[2] to be a mask register";
-        std::string mask_reg = codegen.GetExprAsCode(op->args_[2]);
+        std::string maskReg = codegen.GetExprAsCode(op->args_[2]);
         std::string stride = (op->args_.size() >= 4) ? codegen.GetExprAsCode(op->args_[3]) : "0";
         // B64 register types need stride doubled (postUpdateStride * 2)
-        std::string effective_stride = stride;
-        if (src_dt.GetBit() == 64) {
-            effective_stride = "(" + stride + ") * 2";
-        } else if (!width_op.empty()) {
-            effective_stride = "(" + stride + ")" + width_op;
+        std::string effectiveStride = stride;
+        if (srcDt.GetBit() == 64) {
+            effectiveStride = "(" + stride + ") * 2";
+        } else if (!widthOp.empty()) {
+            effectiveStride = "(" + stride + ")" + widthOp;
         }
-        std::string ptr_var = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
+        std::string ptrVar = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
         // B64 types: use b32 vsts with ppack+pintlv_b32 mask splitting (mirrors AscendC
         // DataCopyImpl post_update b64 path). The b64 register is reinterpreted as
         // RegTensor<uint32_t>& and stored via b32 vsts with the split mask.
-        if (src_dt.GetBit() == 64) {
-            std::string p = src_reg + "_b64pu_";
+        if (srcDt.GetBit() == 64) {
+            std::string p = srcReg + "_b64pu_";
             std::string tm = p + "tm_";
             std::string m0 = p + "m0_";
             std::string m1 = p + "m1_";
             codegen.Emit("MaskReg " + tm + ";");
-            codegen.Emit("ppack(" + tm + ", " + mask_reg + ", LOWER);");
+            codegen.Emit("ppack(" + tm + ", " + maskReg + ", LOWER);");
             codegen.Emit("MaskReg " + m0 + ", " + m1 + ";");
             codegen.Emit("pintlv_b32(" + m0 + ", " + m1 + ", " + tm + ", " + tm + ");");
-            codegen.Emit("vsts((RegTensor<uint32_t>&)" + src_reg + ", (__ubuf__ uint32_t*&)" + ptr_var + ", " +
-                         effective_stride + ", " + dist + ", " + m0 + ", POST_UPDATE);");
+            codegen.Emit("vsts((RegTensor<uint32_t>&)" + srcReg + ", (__ubuf__ uint32_t*&)" + ptrVar + ", " +
+                         effectiveStride + ", " + dist + ", " + m0 + ", POST_UPDATE);");
         } else {
-            codegen.Emit("vsts(" + cast + src_reg + ", " + ptr_var + ", " + effective_stride + ", " + dist + ", " +
-                         mask_reg + ", POST_UPDATE);");
+            codegen.Emit("vsts(" + cast + srcReg + ", " + ptrVar + ", " + effectiveStride + ", " + dist + ", " +
+                         maskReg + ", POST_UPDATE);");
         }
     } else {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 3)
             << "vf.store_align requires at least 3 args (dst_ptr, src_reg, mask)";
-        auto def_mask_var = ir::As<ir::Var>(op->args_[2]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, def_mask_var != nullptr)
+        auto defMaskVar = ir::As<ir::Var>(op->args_[2]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, defMaskVar != nullptr)
             << "vf.store_align requires args[2] to be a mask register, but got non-Var type";
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsMaskRegVar(codegen.GetVarName(def_mask_var)))
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsMaskRegVar(codegen.GetVarName(defMaskVar)))
             << "vf.store_align requires args[2] to be a mask register";
-        std::string mask_reg = codegen.GetExprAsCode(op->args_[2]);
-        std::string dst_ptr = GetUBufPtr(codegen, op->args_[0], ptr_type);
-        std::string offset_str = "0";
+        std::string maskReg = codegen.GetExprAsCode(op->args_[2]);
+        std::string dstPtr = GetUBufPtr(codegen, op->args_[0], ptrType);
+        std::string offsetStr = "0";
         if (op->args_.size() >= 4) {
-            offset_str = ResolveOffsetArg(codegen, op->args_[3], op->args_[0]);
+            offsetStr = ResolveOffsetArg(codegen, op->args_[3], op->args_[0]);
         }
-        std::string effective_offset = offset_str;
-        if (!width_op.empty()) {
-            effective_offset = "(" + offset_str + ")" + width_op;
+        std::string effectiveOffset = offsetStr;
+        if (!widthOp.empty()) {
+            effectiveOffset = "(" + offsetStr + ")" + widthOp;
         }
         // B64 types (INT64/UINT64): use b32 vsts with ppack+pintlv_b32 mask splitting
         // (mirrors AscendC DataCopyImpl b64 path). The b64 register is reinterpreted
         // as RegTensor<uint32_t>& and stored via b32 vsts with the split mask.
-        if (src_dt.GetBit() == 64) {
-            std::string p = src_reg + "_b64st_";
+        if (srcDt.GetBit() == 64) {
+            std::string p = srcReg + "_b64st_";
             std::string tm = p + "tm_";
             std::string m0 = p + "m0_";
             std::string m1 = p + "m1_";
             codegen.Emit("MaskReg " + tm + ";");
-            codegen.Emit("ppack(" + tm + ", " + mask_reg + ", LOWER);");
+            codegen.Emit("ppack(" + tm + ", " + maskReg + ", LOWER);");
             codegen.Emit("MaskReg " + m0 + ", " + m1 + ";");
             codegen.Emit("pintlv_b32(" + m0 + ", " + m1 + ", " + tm + ", " + tm + ");");
-            std::string b32_ptr = GetUBufPtr(codegen, op->args_[0], "uint32_t");
-            codegen.Emit("vsts((RegTensor<uint32_t>&)" + src_reg + ", " + b32_ptr + ", " + effective_offset + ", " +
-                         dist + ", " + m0 + ");");
+            std::string b32Ptr = GetUBufPtr(codegen, op->args_[0], "uint32_t");
+            codegen.Emit("vsts((RegTensor<uint32_t>&)" + srcReg + ", " + b32Ptr + ", " + effectiveOffset + ", " + dist +
+                         ", " + m0 + ");");
         } else {
-            codegen.Emit("vsts(" + cast + src_reg + ", " + dst_ptr + ", " + effective_offset + ", " + dist + ", " +
-                         mask_reg + ");");
+            codegen.Emit("vsts(" + cast + srcReg + ", " + dstPtr + ", " + effectiveOffset + ", " + dist + ", " +
+                         maskReg + ");");
         }
     }
     return "";
@@ -1662,9 +1662,9 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
 // MemBar — mem_bar
 // ============================================================================
 
-static std::string EmitVFMemBar(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMemBar(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     std::string mode = "VST_VLD";
     if (op->HasKwarg("mode")) {
         mode = VFEnumValueName(ir::EnumToString(static_cast<ir::MemBarMode>(op->GetKwarg<int>("mode"))));
@@ -1677,31 +1677,31 @@ static std::string EmitVFMemBar(const ir::CallPtr& op, codegen::CodegenBase& cod
 // Max — vmax
 // ============================================================================
 
-static std::string EmitVFMax(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMax(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // Parser args order: [dst, src0, src1, mask]
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.max requires 4 args (dst, src0, src1, mask)";
-    DataType s0_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s0_dt) || s0_dt == DataType::FP16 ||
-                                                    s0_dt == DataType::FP32 || s0_dt == DataType::BF16))
-        << "vf.max src only supports supported types, got " << DTypeStr(s0_dt);
-    DataType s1_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s1_dt) || s1_dt == DataType::FP16 ||
-                                                    s1_dt == DataType::FP32 || s1_dt == DataType::BF16))
-        << "vf.max src only supports supported types, got " << DTypeStr(s1_dt);
-    DataType vf_max_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0_dt == vf_max_dst_dt && s1_dt == vf_max_dst_dt)
-        << "vf.max requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vf_max_dst_dt)
-        << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
+    DataType s0Dt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s0Dt) || s0Dt == DataType::FP16 ||
+                                                    s0Dt == DataType::FP32 || s0Dt == DataType::BF16))
+        << "vf.max src only supports supported types, got " << DTypeStr(s0Dt);
+    DataType s1Dt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s1Dt) || s1Dt == DataType::FP16 ||
+                                                    s1Dt == DataType::FP32 || s1Dt == DataType::BF16))
+        << "vf.max src only supports supported types, got " << DTypeStr(s1Dt);
+    DataType vfMaxDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0Dt == vfMaxDstDt && s1Dt == vfMaxDstDt)
+        << "vf.max requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vfMaxDstDt)
+        << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     // MERGING is not supported by the underlying vmax instruction on current device.
     std::string mode = VFZeroingOnly(op, "vf.max");
-    if (s0_dt.GetBit() == 64) {
+    if (s0Dt.GetBit() == 64) {
         // B64 max via deinterleave + b32 compare + vsel + interleave.
         // For INT64: compare high halves (signed), then low halves (unsigned) on tie.
         // For UINT64: compare high halves (unsigned), then low halves (unsigned) on tie.
@@ -1710,41 +1710,41 @@ static std::string EmitVFMax(const ir::CallPtr& op, codegen::CodegenBase& codege
         EmitB64Deinterleave(codegen, p + "s1", src1);
         std::string lo0 = p + "s0_lo_", hi0 = p + "s0_hi_";
         std::string lo1 = p + "s1_lo_", hi1 = p + "s1_hi_";
-        std::string all_m = p + "_allm_";
-        codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
+        std::string allM = p + "_allm_";
+        codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
         // Compare high halves
-        std::string hi_gt = p + "_higt_";
-        std::string hi_eq = p + "_hieq_";
-        std::string lo_gt = p + "_logt_";
-        codegen.Emit("MaskReg " + hi_gt + ";");
-        codegen.Emit("MaskReg " + hi_eq + ";");
-        codegen.Emit("MaskReg " + lo_gt + ";");
-        if (s0_dt == DataType::INT64) {
-            codegen.Emit("vcmp_gt(" + hi_gt + ", (RegTensor<int32_t>&)" + hi0 + ", (RegTensor<int32_t>&)" + hi1 + ", " +
-                         all_m + ");");
-            codegen.Emit("vcmp_eq(" + hi_eq + ", (RegTensor<int32_t>&)" + hi0 + ", (RegTensor<int32_t>&)" + hi1 + ", " +
-                         all_m + ");");
+        std::string hiGt = p + "_higt_";
+        std::string hiEq = p + "_hieq_";
+        std::string loGt = p + "_logt_";
+        codegen.Emit("MaskReg " + hiGt + ";");
+        codegen.Emit("MaskReg " + hiEq + ";");
+        codegen.Emit("MaskReg " + loGt + ";");
+        if (s0Dt == DataType::INT64) {
+            codegen.Emit("vcmp_gt(" + hiGt + ", (RegTensor<int32_t>&)" + hi0 + ", (RegTensor<int32_t>&)" + hi1 + ", " +
+                         allM + ");");
+            codegen.Emit("vcmp_eq(" + hiEq + ", (RegTensor<int32_t>&)" + hi0 + ", (RegTensor<int32_t>&)" + hi1 + ", " +
+                         allM + ");");
         } else {
-            codegen.Emit("vcmp_gt(" + hi_gt + ", " + hi0 + ", " + hi1 + ", " + all_m + ");");
-            codegen.Emit("vcmp_eq(" + hi_eq + ", " + hi0 + ", " + hi1 + ", " + all_m + ");");
+            codegen.Emit("vcmp_gt(" + hiGt + ", " + hi0 + ", " + hi1 + ", " + allM + ");");
+            codegen.Emit("vcmp_eq(" + hiEq + ", " + hi0 + ", " + hi1 + ", " + allM + ");");
         }
-        codegen.Emit("vcmp_gt(" + lo_gt + ", " + lo0 + ", " + lo1 + ", " + all_m + ");");
+        codegen.Emit("vcmp_gt(" + loGt + ", " + lo0 + ", " + lo1 + ", " + allM + ");");
         // Combine: src0 > src1 iff hi_gt OR (hi_eq AND lo_gt)
-        std::string eq_lo = p + "_eqlo_";
-        std::string s0_gt = p + "_s0gt_";
-        codegen.Emit("MaskReg " + eq_lo + ";");
-        codegen.Emit("MaskReg " + s0_gt + ";");
-        codegen.Emit("pand(" + eq_lo + ", " + hi_eq + ", " + lo_gt + ", " + all_m + ");");
-        codegen.Emit("por(" + s0_gt + ", " + hi_gt + ", " + eq_lo + ", " + all_m + ");");
+        std::string eqLo = p + "_eqlo_";
+        std::string s0Gt = p + "_s0gt_";
+        codegen.Emit("MaskReg " + eqLo + ";");
+        codegen.Emit("MaskReg " + s0Gt + ";");
+        codegen.Emit("pand(" + eqLo + ", " + hiEq + ", " + loGt + ", " + allM + ");");
+        codegen.Emit("por(" + s0Gt + ", " + hiGt + ", " + eqLo + ", " + allM + ");");
         // Select: dst = src0 > src1 ? src0 : src1 (per b32 half)
-        std::string lo_dst = p + "_lod_";
-        std::string hi_dst = p + "_hid_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_dst + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_dst + ";");
-        codegen.Emit("vsel(" + lo_dst + ", " + lo0 + ", " + lo1 + ", " + s0_gt + ");");
-        codegen.Emit("vsel(" + hi_dst + ", " + hi0 + ", " + hi1 + ", " + s0_gt + ");");
+        std::string loDst = p + "_lod_";
+        std::string hiDst = p + "_hid_";
+        codegen.Emit("RegTensor<uint32_t> " + loDst + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiDst + ";");
+        codegen.Emit("vsel(" + loDst + ", " + lo0 + ", " + lo1 + ", " + s0Gt + ");");
+        codegen.Emit("vsel(" + hiDst + ", " + hi0 + ", " + hi1 + ", " + s0Gt + ");");
         // Interleave back to b64
-        EmitB64Interleave(codegen, dst, lo_dst, hi_dst, p + "_ilv");
+        EmitB64Interleave(codegen, dst, loDst, hiDst, p + "_ilv");
         // Apply ZEROING
         EmitB64Zeroing(codegen, dst, dst, mask, p + "_zero");
     } else {
@@ -1757,50 +1757,50 @@ static std::string EmitVFMax(const ir::CallPtr& op, codegen::CodegenBase& codege
 // Add — vadd
 // ============================================================================
 
-static std::string EmitVFAdd(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFAdd(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.add requires 4 args (dst, src0, src1, mask)";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    DataType s0_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s0_dt) || s0_dt == DataType::FP16 ||
-                                                    s0_dt == DataType::FP32 || s0_dt == DataType::BF16))
-        << "vf.add src0 only supports INT/UINT/FP16/FP32/BF16, got " << DTypeStr(s0_dt);
-    DataType dst_dt = GetExprDtype(op->args_[0]);
-    DataType s1_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_dt == s0_dt && dst_dt == s1_dt)
-        << "vf.add requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(dst_dt)
-        << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
+    DataType s0Dt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s0Dt) || s0Dt == DataType::FP16 ||
+                                                    s0Dt == DataType::FP32 || s0Dt == DataType::BF16))
+        << "vf.add src0 only supports INT/UINT/FP16/FP32/BF16, got " << DTypeStr(s0Dt);
+    DataType dstDt = GetExprDtype(op->args_[0]);
+    DataType s1Dt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dstDt == s0Dt && dstDt == s1Dt)
+        << "vf.add requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(dstDt)
+        << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
     // MERGING is not supported by the underlying vadd instruction on current device.
     std::string mode = VFZeroingOnly(op, "vf.add");
-    if (s0_dt.GetBit() == 64) {
+    if (s0Dt.GetBit() == 64) {
         // B64 add: Mirrors AscendC AddB64Impl (vaddc + vaddcs carry-chain).
         // Uses CalTraitOneByTransToTraitTwo pattern: ppack mask, deinterleave both sources,
         // AddB64 (vaddc + vaddcs), interleave back.
         std::string p = dst + "_add_";
-        std::string b32_cast = (s0_dt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
-        std::string packed_m = p + "_pm_";
-        codegen.Emit("MaskReg " + packed_m + ";");
-        codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
+        std::string b32Cast = (s0Dt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
+        std::string packedM = p + "_pm_";
+        codegen.Emit("MaskReg " + packedM + ";");
+        codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
         EmitB64Deinterleave(codegen, p + "s0", src0);
         EmitB64Deinterleave(codegen, p + "s1", src1);
         std::string lo0 = p + "s0_lo_", hi0 = p + "s0_hi_";
         std::string lo1 = p + "s1_lo_", hi1 = p + "s1_hi_";
         std::string carry = p + "_carry_";
-        std::string lo_d = p + "_lod_";
-        std::string hi_d = p + "_hid_";
+        std::string loD = p + "_lod_";
+        std::string hiD = p + "_hid_";
         codegen.Emit("MaskReg " + carry + ";");
-        codegen.Emit("RegTensor<uint32_t> " + lo_d + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_d + ";");
-        codegen.Emit("vaddc(" + carry + ", " + b32_cast + lo_d + ", " + b32_cast + lo0 + ", " + b32_cast + lo1 + ", " +
-                     packed_m + ");");
-        codegen.Emit("vaddcs(" + carry + ", " + b32_cast + hi_d + ", " + b32_cast + hi0 + ", " + b32_cast + hi1 + ", " +
-                     carry + ", " + packed_m + ");");
-        EmitB64Interleave(codegen, dst, lo_d, hi_d, p + "_ilv");
+        codegen.Emit("RegTensor<uint32_t> " + loD + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiD + ";");
+        codegen.Emit("vaddc(" + carry + ", " + b32Cast + loD + ", " + b32Cast + lo0 + ", " + b32Cast + lo1 + ", " +
+                     packedM + ");");
+        codegen.Emit("vaddcs(" + carry + ", " + b32Cast + hiD + ", " + b32Cast + hi0 + ", " + b32Cast + hi1 + ", " +
+                     carry + ", " + packedM + ");");
+        EmitB64Interleave(codegen, dst, loD, hiD, p + "_ilv");
     } else {
         codegen.Emit("vadd(" + dst + ", " + src0 + ", " + src1 + ", " + mask + ", " + mode + ");");
     }
@@ -1811,49 +1811,49 @@ static std::string EmitVFAdd(const ir::CallPtr& op, codegen::CodegenBase& codege
 // Sub — vsub
 // ============================================================================
 
-static std::string EmitVFSub(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFSub(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.sub requires 4 args (dst, src0, src1, mask)";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    DataType s0_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s0_dt) || s0_dt == DataType::FP16 ||
-                                                    s0_dt == DataType::FP32 || s0_dt == DataType::BF16))
-        << "vf.sub src0 only supports INT/UINT/FP16/FP32/BF16, got " << DTypeStr(s0_dt);
-    DataType dst_dt = GetExprDtype(op->args_[0]);
-    DataType s1_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_dt == s0_dt && dst_dt == s1_dt)
-        << "vf.sub requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(dst_dt)
-        << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
+    DataType s0Dt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s0Dt) || s0Dt == DataType::FP16 ||
+                                                    s0Dt == DataType::FP32 || s0Dt == DataType::BF16))
+        << "vf.sub src0 only supports INT/UINT/FP16/FP32/BF16, got " << DTypeStr(s0Dt);
+    DataType dstDt = GetExprDtype(op->args_[0]);
+    DataType s1Dt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dstDt == s0Dt && dstDt == s1Dt)
+        << "vf.sub requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(dstDt)
+        << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
     std::string mode = VFZeroingOnly(op, "vf.sub");
-    if (s0_dt.GetBit() == 64) {
+    if (s0Dt.GetBit() == 64) {
         // B64 sub: Mirrors AscendC SubB64Impl (vsubc + vsubcs borrow-chain).
         // Uses CalTraitOneByTransToTraitTwo pattern: ppack mask, deinterleave both sources,
         // SubB64 (vsubc + vsubcs), interleave back.
         std::string p = dst + "_sub_";
-        std::string b32_cast = (s0_dt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
-        std::string packed_m = p + "_pm_";
-        codegen.Emit("MaskReg " + packed_m + ";");
-        codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
+        std::string b32Cast = (s0Dt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
+        std::string packedM = p + "_pm_";
+        codegen.Emit("MaskReg " + packedM + ";");
+        codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
         EmitB64Deinterleave(codegen, p + "s0", src0);
         EmitB64Deinterleave(codegen, p + "s1", src1);
         std::string lo0 = p + "s0_lo_", hi0 = p + "s0_hi_";
         std::string lo1 = p + "s1_lo_", hi1 = p + "s1_hi_";
         std::string borrow = p + "_borrow_";
-        std::string lo_d = p + "_lod_";
-        std::string hi_d = p + "_hid_";
+        std::string loD = p + "_lod_";
+        std::string hiD = p + "_hid_";
         codegen.Emit("MaskReg " + borrow + ";");
-        codegen.Emit("RegTensor<uint32_t> " + lo_d + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_d + ";");
-        codegen.Emit("vsubc(" + borrow + ", " + b32_cast + lo_d + ", " + b32_cast + lo0 + ", " + b32_cast + lo1 + ", " +
-                     packed_m + ");");
-        codegen.Emit("vsubcs(" + borrow + ", " + b32_cast + hi_d + ", " + b32_cast + hi0 + ", " + b32_cast + hi1 +
-                     ", " + borrow + ", " + packed_m + ");");
-        EmitB64Interleave(codegen, dst, lo_d, hi_d, p + "_ilv");
+        codegen.Emit("RegTensor<uint32_t> " + loD + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiD + ";");
+        codegen.Emit("vsubc(" + borrow + ", " + b32Cast + loD + ", " + b32Cast + lo0 + ", " + b32Cast + lo1 + ", " +
+                     packedM + ");");
+        codegen.Emit("vsubcs(" + borrow + ", " + b32Cast + hiD + ", " + b32Cast + hi0 + ", " + b32Cast + hi1 + ", " +
+                     borrow + ", " + packedM + ");");
+        EmitB64Interleave(codegen, dst, loD, hiD, p + "_ilv");
     } else {
         codegen.Emit("vsub(" + dst + ", " + src0 + ", " + src1 + ", " + mask + ", " + mode + ");");
     }
@@ -1871,9 +1871,9 @@ static std::string EmitVFSub(const ir::CallPtr& op, codegen::CodegenBase& codege
 // because vand/vxor/vor operate on raw bits.
 // ============================================================================
 
-static std::string EmitVFAnd(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFAnd(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.and_ requires 4 args (dst, src0, src1, mask)";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
@@ -1884,41 +1884,41 @@ static std::string EmitVFAnd(const ir::CallPtr& op, codegen::CodegenBase& codege
         codegen.Emit("pand(" + dst + ", " + src0 + ", " + src1 + ", " + mask + ");");
         return "";
     }
-    DataType dst_dt = GetExprDtype(op->args_[0]);
-    DataType s0_dt = GetExprDtype(op->args_[1]);
+    DataType dstDt = GetExprDtype(op->args_[0]);
+    DataType s0Dt = GetExprDtype(op->args_[1]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      s0_dt == DataType::INT8 || s0_dt == DataType::UINT8 || s0_dt == DataType::BOOL ||
-                          s0_dt == DataType::FP8E4M3FN || s0_dt == DataType::FP8E5M2 || s0_dt == DataType::FP8E8M0 ||
-                          s0_dt == DataType::HF8 || s0_dt == DataType::INT16 || s0_dt == DataType::UINT16 ||
-                          s0_dt == DataType::FP16 || s0_dt == DataType::BF16 || s0_dt == DataType::INT32 ||
-                          s0_dt == DataType::UINT32 || s0_dt == DataType::FP32 || s0_dt == DataType::INT64 ||
-                          s0_dt == DataType::UINT64)
+                      s0Dt == DataType::INT8 || s0Dt == DataType::UINT8 || s0Dt == DataType::BOOL ||
+                          s0Dt == DataType::FP8E4M3FN || s0Dt == DataType::FP8E5M2 || s0Dt == DataType::FP8E8M0 ||
+                          s0Dt == DataType::HF8 || s0Dt == DataType::INT16 || s0Dt == DataType::UINT16 ||
+                          s0Dt == DataType::FP16 || s0Dt == DataType::BF16 || s0Dt == DataType::INT32 ||
+                          s0Dt == DataType::UINT32 || s0Dt == DataType::FP32 || s0Dt == DataType::INT64 ||
+                          s0Dt == DataType::UINT64)
         << "vf.and_ src0 only supports "
            "INT8/UINT8/INT16/UINT16/FP16/BF16/INT32/UINT32/FP32/FP8E4M3FN/FP8E5M2/FP8E8M0/HF8/INT64/UINT64, got "
-        << DTypeStr(s0_dt);
-    DataType s1_dt = GetExprDtype(op->args_[2]);
+        << DTypeStr(s0Dt);
+    DataType s1Dt = GetExprDtype(op->args_[2]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      s1_dt == DataType::INT8 || s1_dt == DataType::UINT8 || s1_dt == DataType::BOOL ||
-                          s1_dt == DataType::FP8E4M3FN || s1_dt == DataType::FP8E5M2 || s1_dt == DataType::FP8E8M0 ||
-                          s1_dt == DataType::HF8 || s1_dt == DataType::INT16 || s1_dt == DataType::UINT16 ||
-                          s1_dt == DataType::FP16 || s1_dt == DataType::BF16 || s1_dt == DataType::INT32 ||
-                          s1_dt == DataType::UINT32 || s1_dt == DataType::FP32 || s1_dt == DataType::INT64 ||
-                          s1_dt == DataType::UINT64)
+                      s1Dt == DataType::INT8 || s1Dt == DataType::UINT8 || s1Dt == DataType::BOOL ||
+                          s1Dt == DataType::FP8E4M3FN || s1Dt == DataType::FP8E5M2 || s1Dt == DataType::FP8E8M0 ||
+                          s1Dt == DataType::HF8 || s1Dt == DataType::INT16 || s1Dt == DataType::UINT16 ||
+                          s1Dt == DataType::FP16 || s1Dt == DataType::BF16 || s1Dt == DataType::INT32 ||
+                          s1Dt == DataType::UINT32 || s1Dt == DataType::FP32 || s1Dt == DataType::INT64 ||
+                          s1Dt == DataType::UINT64)
         << "vf.and_ src1 only supports "
            "INT8/UINT8/INT16/UINT16/FP16/BF16/INT32/UINT32/FP32/FP8E4M3FN/FP8E5M2/FP8E8M0/HF8/INT64/UINT64, got "
-        << DTypeStr(s1_dt);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_dt == s0_dt && dst_dt == s1_dt)
-        << "vf.and_ requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(dst_dt)
-        << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
-    std::string cast_prefix = "(RegTensor<" + dst_dt.ToCTypeString() + "> &)";
-    std::string s0_expr = (s0_dt == dst_dt) ? src0 : (cast_prefix + src0);
-    std::string s1_expr = (s1_dt == dst_dt) ? src1 : (cast_prefix + src1);
+        << DTypeStr(s1Dt);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dstDt == s0Dt && dstDt == s1Dt)
+        << "vf.and_ requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(dstDt)
+        << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
+    std::string castPrefix = "(RegTensor<" + dstDt.ToCTypeString() + "> &)";
+    std::string s0Expr = (s0Dt == dstDt) ? src0 : (castPrefix + src0);
+    std::string s1Expr = (s1Dt == dstDt) ? src1 : (castPrefix + src1);
     std::string mode = VFZeroingOnly(op, "vf.and_");
-    if (dst_dt.GetBit() == 64) {
+    if (dstDt.GetBit() == 64) {
         // B64 bitwise via b32 vand (mirrors AscendC AndImpl b64 path, see EmitB64Bitwise).
-        EmitB64Bitwise(codegen, "vand", {s0_expr, s1_expr}, dst, mask, mode, dst + "_and_");
+        EmitB64Bitwise(codegen, "vand", {s0Expr, s1Expr}, dst, mask, mode, dst + "_and_");
     } else {
-        codegen.Emit("vand(" + dst + ", " + s0_expr + ", " + s1_expr + ", " + mask + ", " + mode + ");");
+        codegen.Emit("vand(" + dst + ", " + s0Expr + ", " + s1Expr + ", " + mask + ", " + mode + ");");
     }
     return "";
 }
@@ -1930,75 +1930,75 @@ static std::string EmitVFAnd(const ir::CallPtr& op, codegen::CodegenBase& codege
 // because vxor/vor operate on raw bits.
 // ============================================================================
 
-static std::string EmitVFBinaryBitwise(const ir::CallPtr& op, codegen::CodegenBase& codegen_base,
-                                       const std::string& op_name, const std::string& instruction)
+static std::string EmitVFBinaryBitwise(const ir::CallPtr& op, codegen::CodegenBase& codegenBase,
+                                       const std::string& opName, const std::string& instruction)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
-        << op_name << " requires 4 args (dst, src0, src1, mask)";
+        << opName << " requires 4 args (dst, src0, src1, mask)";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     if (IsDstMaskReg(op, codegen)) {
-        std::string p_instr = "p" + instruction.substr(1);
-        codegen.Emit(p_instr + "(" + dst + ", " + src0 + ", " + src1 + ", " + mask + ");");
+        std::string pInstr = "p" + instruction.substr(1);
+        codegen.Emit(pInstr + "(" + dst + ", " + src0 + ", " + src1 + ", " + mask + ");");
         return "";
     }
-    DataType dst_dt = GetExprDtype(op->args_[0]);
-    DataType s0_dt = GetExprDtype(op->args_[1]);
+    DataType dstDt = GetExprDtype(op->args_[0]);
+    DataType s0Dt = GetExprDtype(op->args_[1]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      s0_dt == DataType::INT8 || s0_dt == DataType::UINT8 || s0_dt == DataType::BOOL ||
-                          s0_dt == DataType::FP8E4M3FN || s0_dt == DataType::FP8E5M2 || s0_dt == DataType::FP8E8M0 ||
-                          s0_dt == DataType::HF8 || s0_dt == DataType::INT16 || s0_dt == DataType::UINT16 ||
-                          s0_dt == DataType::FP16 || s0_dt == DataType::BF16 || s0_dt == DataType::INT32 ||
-                          s0_dt == DataType::UINT32 || s0_dt == DataType::FP32 || s0_dt == DataType::INT64 ||
-                          s0_dt == DataType::UINT64)
-        << op_name
+                      s0Dt == DataType::INT8 || s0Dt == DataType::UINT8 || s0Dt == DataType::BOOL ||
+                          s0Dt == DataType::FP8E4M3FN || s0Dt == DataType::FP8E5M2 || s0Dt == DataType::FP8E8M0 ||
+                          s0Dt == DataType::HF8 || s0Dt == DataType::INT16 || s0Dt == DataType::UINT16 ||
+                          s0Dt == DataType::FP16 || s0Dt == DataType::BF16 || s0Dt == DataType::INT32 ||
+                          s0Dt == DataType::UINT32 || s0Dt == DataType::FP32 || s0Dt == DataType::INT64 ||
+                          s0Dt == DataType::UINT64)
+        << opName
         << " src0 only supports "
            "INT8/UINT8/INT16/UINT16/FP16/BF16/INT32/UINT32/FP32/FP8E4M3FN/FP8E5M2/FP8E8M0/HF8/INT64/UINT64, got "
-        << DTypeStr(s0_dt);
-    DataType s1_dt = GetExprDtype(op->args_[2]);
+        << DTypeStr(s0Dt);
+    DataType s1Dt = GetExprDtype(op->args_[2]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      s1_dt == DataType::INT8 || s1_dt == DataType::UINT8 || s1_dt == DataType::BOOL ||
-                          s1_dt == DataType::FP8E4M3FN || s1_dt == DataType::FP8E5M2 || s1_dt == DataType::FP8E8M0 ||
-                          s1_dt == DataType::HF8 || s1_dt == DataType::INT16 || s1_dt == DataType::UINT16 ||
-                          s1_dt == DataType::FP16 || s1_dt == DataType::BF16 || s1_dt == DataType::INT32 ||
-                          s1_dt == DataType::UINT32 || s1_dt == DataType::FP32 || s1_dt == DataType::INT64 ||
-                          s1_dt == DataType::UINT64)
-        << op_name
+                      s1Dt == DataType::INT8 || s1Dt == DataType::UINT8 || s1Dt == DataType::BOOL ||
+                          s1Dt == DataType::FP8E4M3FN || s1Dt == DataType::FP8E5M2 || s1Dt == DataType::FP8E8M0 ||
+                          s1Dt == DataType::HF8 || s1Dt == DataType::INT16 || s1Dt == DataType::UINT16 ||
+                          s1Dt == DataType::FP16 || s1Dt == DataType::BF16 || s1Dt == DataType::INT32 ||
+                          s1Dt == DataType::UINT32 || s1Dt == DataType::FP32 || s1Dt == DataType::INT64 ||
+                          s1Dt == DataType::UINT64)
+        << opName
         << " src1 only supports "
            "INT8/UINT8/INT16/UINT16/FP16/BF16/INT32/UINT32/FP32/FP8E4M3FN/FP8E5M2/FP8E8M0/HF8/INT64/UINT64, got "
-        << DTypeStr(s1_dt);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_dt == s0_dt && dst_dt == s1_dt)
-        << op_name << " requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(dst_dt)
-        << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
-    std::string cast_prefix = "(RegTensor<" + dst_dt.ToCTypeString() + "> &)";
-    std::string s0_expr = (s0_dt == dst_dt) ? src0 : (cast_prefix + src0);
-    std::string s1_expr = (s1_dt == dst_dt) ? src1 : (cast_prefix + src1);
-    std::string mode = VFZeroingOnly(op, op_name);
-    if (dst_dt.GetBit() == 64) {
+        << DTypeStr(s1Dt);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dstDt == s0Dt && dstDt == s1Dt)
+        << opName << " requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(dstDt)
+        << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
+    std::string castPrefix = "(RegTensor<" + dstDt.ToCTypeString() + "> &)";
+    std::string s0Expr = (s0Dt == dstDt) ? src0 : (castPrefix + src0);
+    std::string s1Expr = (s1Dt == dstDt) ? src1 : (castPrefix + src1);
+    std::string mode = VFZeroingOnly(op, opName);
+    if (dstDt.GetBit() == 64) {
         // B64 bitwise via b32 instruction (mirrors AscendC XorImpl/OrImpl b64 path, see EmitB64Bitwise).
         std::string p = dst + "_" + instruction.substr(1) + "_";
-        EmitB64Bitwise(codegen, instruction, {s0_expr, s1_expr}, dst, mask, mode, p);
+        EmitB64Bitwise(codegen, instruction, {s0Expr, s1Expr}, dst, mask, mode, p);
     } else {
-        codegen.Emit(instruction + "(" + dst + ", " + s0_expr + ", " + s1_expr + ", " + mask + ", " + mode + ");");
+        codegen.Emit(instruction + "(" + dst + ", " + s0Expr + ", " + s1Expr + ", " + mask + ", " + mode + ");");
     }
     return "";
 }
 
-static std::string EmitVFXor(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFXor(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return EmitVFBinaryBitwise(op, codegen_base, "vf.xor", "vxor");
+    return EmitVFBinaryBitwise(op, codegenBase, "vf.xor", "vxor");
 }
 
 // ============================================================================
 // Or — vor
 // ============================================================================
 
-static std::string EmitVFOr(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFOr(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return EmitVFBinaryBitwise(op, codegen_base, "vf.or_", "vor");
+    return EmitVFBinaryBitwise(op, codegenBase, "vf.or_", "vor");
 }
 
 // ============================================================================
@@ -2007,13 +2007,13 @@ static std::string EmitVFOr(const ir::CallPtr& op, codegen::CodegenBase& codegen
 // ============================================================================
 
 // Shared reduction emitter. `reduce_mode` is one of "SUM"/"MAX"/"MIN".
-static std::string EmitVFReduceImpl(const ir::CallPtr& op, codegen::CodegenBase& codegen_base,
-                                    const std::string& reduce_mode)
+static std::string EmitVFReduceImpl(const ir::CallPtr& op, codegen::CodegenBase& codegenBase,
+                                    const std::string& reduceMode)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << op->name_ << " requires 3 args (dst, src, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
     bool datablock = false;
     if (op->HasKwarg("datablock")) {
         datablock = op->GetKwarg<bool>("datablock");
@@ -2021,59 +2021,59 @@ static std::string EmitVFReduceImpl(const ir::CallPtr& op, codegen::CodegenBase&
     if (datablock) {
         // Datablock reduce only supports b16/b32 (no b64, no BF16)
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                          (src_dt.GetBit() == 16 || src_dt.GetBit() == 32) &&
-                              (IsArithIntType(src_dt) || src_dt == DataType::FP16 || src_dt == DataType::FP32))
-            << op->name_ << " (datablock) src only supports b16/b32 INT/UINT/FP16/FP32, got " << DTypeStr(src_dt);
-        DataType reduce_dst_dt = GetExprDtype(op->args_[0]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == reduce_dst_dt)
-            << op->name_ << " requires src and dst to have the same type, got dst=" << DTypeStr(reduce_dst_dt)
-            << " src=" << DTypeStr(src_dt);
+                          (srcDt.GetBit() == 16 || srcDt.GetBit() == 32) &&
+                              (IsArithIntType(srcDt) || srcDt == DataType::FP16 || srcDt == DataType::FP32))
+            << op->name_ << " (datablock) src only supports b16/b32 INT/UINT/FP16/FP32, got " << DTypeStr(srcDt);
+        DataType reduceDstDt = GetExprDtype(op->args_[0]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == reduceDstDt)
+            << op->name_ << " requires src and dst to have the same type, got dst=" << DTypeStr(reduceDstDt)
+            << " src=" << DTypeStr(srcDt);
     } else {
         // Non-datablock reduce supports b16/b32/b64 (no BF16)
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                          (src_dt.GetBit() == 16 || src_dt.GetBit() == 32 || src_dt.GetBit() == 64) &&
-                              (IsArithIntType(src_dt) || src_dt == DataType::FP16 || src_dt == DataType::FP32))
-            << op->name_ << " src only supports b16/b32/b64 INT/UINT/FP16/FP32, got " << DTypeStr(src_dt);
-        DataType reduce_dst_dt = GetExprDtype(op->args_[0]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == reduce_dst_dt)
-            << op->name_ << " requires src and dst to have the same type, got dst=" << DTypeStr(reduce_dst_dt)
-            << " src=" << DTypeStr(src_dt);
+                          (srcDt.GetBit() == 16 || srcDt.GetBit() == 32 || srcDt.GetBit() == 64) &&
+                              (IsArithIntType(srcDt) || srcDt == DataType::FP16 || srcDt == DataType::FP32))
+            << op->name_ << " src only supports b16/b32/b64 INT/UINT/FP16/FP32, got " << DTypeStr(srcDt);
+        DataType reduceDstDt = GetExprDtype(op->args_[0]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == reduceDstDt)
+            << op->name_ << " requires src and dst to have the same type, got dst=" << DTypeStr(reduceDstDt)
+            << " src=" << DTypeStr(srcDt);
     }
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
     // vcadd for 16-bit int requires 32-bit accumulator: s16→s32, u16→u32
-    if (!datablock && reduce_mode == "SUM") {
-        if (src_dt == DataType::INT16) {
+    if (!datablock && reduceMode == "SUM") {
+        if (srcDt == DataType::INT16) {
             dst = "(RegTensor<int32_t>&)" + dst;
-        } else if (src_dt == DataType::UINT16) {
+        } else if (srcDt == DataType::UINT16) {
             dst = "(RegTensor<uint32_t>&)" + dst;
         }
     }
     std::string intrinsic;
-    if (reduce_mode == "SUM")
+    if (reduceMode == "SUM")
         intrinsic = datablock ? "vcgadd" : "vcadd";
-    else if (reduce_mode == "MAX")
+    else if (reduceMode == "MAX")
         intrinsic = datablock ? "vcgmax" : "vcmax";
     else
         intrinsic = datablock ? "vcgmin" : "vcmin";
     // reduce ops use "merge_mode" kwarg (not "mode")
     std::string mode = "MODE_ZEROING";
     if (op->HasKwarg("merge_mode")) {
-        auto merge_mode = static_cast<ir::MergeMode>(op->GetKwarg<int>("merge_mode"));
-        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, merge_mode == ir::MergeMode::ZEROING)
+        auto mergeMode = static_cast<ir::MergeMode>(op->GetKwarg<int>("merge_mode"));
+        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, mergeMode == ir::MergeMode::ZEROING)
             << op->name_ << " only supports ZEROING mode on current device, but got MERGING";
-        mode = merge_mode == ir::MergeMode::MERGING ? "MODE_MERGING" : "MODE_ZEROING";
+        mode = mergeMode == ir::MergeMode::MERGING ? "MODE_MERGING" : "MODE_ZEROING";
     }
-    if (!datablock && src_dt.GetBit() == 64) {
+    if (!datablock && srcDt.GetBit() == 64) {
         // B64 reduce (INT64/UINT64): no native b64 vcadd/vcmax/vcmin. Defer to
         // the b64 emulation helpers (mirrors AscendC ReduceSumB64Impl /
         // ReduceMaxB64Impl / ReduceMinB64Impl). The result lands in element 0
         // of dst; the remaining dst lanes are don't-care.
-        if (reduce_mode == "SUM") {
+        if (reduceMode == "SUM") {
             EmitB64ReduceSum(codegen, dst, src, mask);
         } else {
-            EmitB64ReduceMaxMin(codegen, dst, src, mask, reduce_mode == "MAX", src_dt == DataType::INT64);
+            EmitB64ReduceMaxMin(codegen, dst, src, mask, reduceMode == "MAX", srcDt == DataType::INT64);
         }
         return "";
     }
@@ -2081,78 +2081,76 @@ static std::string EmitVFReduceImpl(const ir::CallPtr& op, codegen::CodegenBase&
     return "";
 }
 
-static std::string EmitVFReduceSum(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFReduceSum(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return EmitVFReduceImpl(op, codegen_base, "SUM");
+    return EmitVFReduceImpl(op, codegenBase, "SUM");
 }
 
-static std::string EmitVFReduceMax(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFReduceMax(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return EmitVFReduceImpl(op, codegen_base, "MAX");
+    return EmitVFReduceImpl(op, codegenBase, "MAX");
 }
 
-static std::string EmitVFReduceMin(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFReduceMin(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return EmitVFReduceImpl(op, codegen_base, "MIN");
+    return EmitVFReduceImpl(op, codegenBase, "MIN");
 }
 
 // ============================================================================
 // Mul — vmul
 // ============================================================================
 
-static std::string EmitVFMul(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMul(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.mul requires 4 args (dst, src0, src1, mask)";
-    DataType s0_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (s0_dt.GetBit() == 16 || s0_dt.GetBit() == 32 || s0_dt.GetBit() == 64))
-        << "vf.mul src only supports supported types, got " << DTypeStr(s0_dt);
-    DataType s1_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (s1_dt.GetBit() == 16 || s1_dt.GetBit() == 32 || s1_dt.GetBit() == 64))
-        << "vf.mul src only supports supported types, got " << DTypeStr(s1_dt);
-    DataType vf_mul_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0_dt == vf_mul_dst_dt && s1_dt == vf_mul_dst_dt)
-        << "vf.mul requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vf_mul_dst_dt)
-        << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
+    DataType s0Dt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (s0Dt.GetBit() == 16 || s0Dt.GetBit() == 32 || s0Dt.GetBit() == 64))
+        << "vf.mul src only supports supported types, got " << DTypeStr(s0Dt);
+    DataType s1Dt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (s1Dt.GetBit() == 16 || s1Dt.GetBit() == 32 || s1Dt.GetBit() == 64))
+        << "vf.mul src only supports supported types, got " << DTypeStr(s1Dt);
+    DataType vfMulDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0Dt == vfMulDstDt && s1Dt == vfMulDstDt)
+        << "vf.mul requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vfMulDstDt)
+        << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.mul");
-    if (s0_dt.GetBit() == 64) {
+    if (s0Dt.GetBit() == 64) {
         // B64 mul: Mirrors AscendC MulB64Impl (vmull + vmula).
         // MulB64Impl uses B64TraitOneToTraitTwo to split both sources into b32 halves,
         // then vmull (32x32→64 long multiply) + vmula (cross-term accumulate).
         std::string p = dst + "_mul_";
         // AscendC MulB64Impl: vmull always uses uint32_t (unsigned 32x32→64);
         // vmula uses int32_t for int64_t (signed cross-term), uint32_t for uint64_t.
-        std::string vmull_cast = "(RegTensor<uint32_t>&)";
-        std::string vmula_cast = (s0_dt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
+        std::string vmullCast = "(RegTensor<uint32_t>&)";
+        std::string vmulaCast = (s0Dt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
         // Pack b64 mask to b32 (mirrors MaskPack in CalTraitOneByTransToTraitTwo)
-        std::string packed_m = p + "_pm_";
-        codegen.Emit("MaskReg " + packed_m + ";");
-        codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
+        std::string packedM = p + "_pm_";
+        codegen.Emit("MaskReg " + packedM + ";");
+        codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
         // Deinterleave src0 and src1 to b32 halves
         EmitB64Deinterleave(codegen, p + "s0", src0);
         EmitB64Deinterleave(codegen, p + "s1", src1);
         std::string lo0 = p + "s0_lo_", hi0 = p + "s0_hi_";
         std::string lo1 = p + "s1_lo_", hi1 = p + "s1_hi_";
         // MulB64: vmull (lo0 × lo1 → dst_lo, dst_hi) + vmula (lo0 × hi1 → dst_hi) + vmula (hi0 × lo1 → dst_hi)
-        std::string lo_d = p + "_lod_";
-        std::string hi_d = p + "_hid_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_d + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_d + ";");
-        codegen.Emit("vmull(" + vmull_cast + lo_d + ", " + vmull_cast + hi_d + ", " + vmull_cast + lo0 + ", " +
-                     vmull_cast + lo1 + ", " + packed_m + ");");
-        codegen.Emit("vmula(" + vmula_cast + hi_d + ", " + vmula_cast + lo0 + ", " + vmula_cast + hi1 + ", " +
-                     packed_m + ", MODE_ZEROING);");
-        codegen.Emit("vmula(" + vmula_cast + hi_d + ", " + vmula_cast + hi0 + ", " + vmula_cast + lo1 + ", " +
-                     packed_m + ", MODE_ZEROING);");
+        std::string loD = p + "_lod_";
+        std::string hiD = p + "_hid_";
+        codegen.Emit("RegTensor<uint32_t> " + loD + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiD + ";");
+        codegen.Emit("vmull(" + vmullCast + loD + ", " + vmullCast + hiD + ", " + vmullCast + lo0 + ", " + vmullCast +
+                     lo1 + ", " + packedM + ");");
+        codegen.Emit("vmula(" + vmulaCast + hiD + ", " + vmulaCast + lo0 + ", " + vmulaCast + hi1 + ", " + packedM +
+                     ", MODE_ZEROING);");
+        codegen.Emit("vmula(" + vmulaCast + hiD + ", " + vmulaCast + hi0 + ", " + vmulaCast + lo1 + ", " + packedM +
+                     ", MODE_ZEROING);");
         // Interleave back (mirrors B64TraitTwoToTraitOne)
-        EmitB64Interleave(codegen, dst, lo_d, hi_d, p + "_ilv");
+        EmitB64Interleave(codegen, dst, loD, hiD, p + "_ilv");
     } else {
         codegen.Emit("vmul(" + dst + ", " + src0 + ", " + src1 + ", " + mask + ", " + mode + ");");
     }
@@ -2163,23 +2161,21 @@ static std::string EmitVFMul(const ir::CallPtr& op, codegen::CodegenBase& codege
 // MulAddDst — vmula (hardware FMA: dst = src0 * src1 + dst)
 // ============================================================================
 
-static std::string EmitVFMulAddDst(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMulAddDst(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.mul_add_dst requires 4 args (dst, src0, src1, mask)";
-    DataType s0_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (s0_dt.GetBit() == 16 || s0_dt.GetBit() == 32 || s0_dt.GetBit() == 64))
-        << "vf.mul_add_dst src only supports supported types, got " << DTypeStr(s0_dt);
-    DataType s1_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (s1_dt.GetBit() == 16 || s1_dt.GetBit() == 32 || s1_dt.GetBit() == 64))
-        << "vf.mul_add_dst src only supports supported types, got " << DTypeStr(s1_dt);
-    DataType vf_mul_add_dst_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0_dt == vf_mul_add_dst_dst_dt && s1_dt == vf_mul_add_dst_dst_dt)
-        << "vf.mul_add_dst requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vf_mul_add_dst_dst_dt)
-        << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
+    DataType s0Dt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (s0Dt.GetBit() == 16 || s0Dt.GetBit() == 32 || s0Dt.GetBit() == 64))
+        << "vf.mul_add_dst src only supports supported types, got " << DTypeStr(s0Dt);
+    DataType s1Dt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (s1Dt.GetBit() == 16 || s1Dt.GetBit() == 32 || s1Dt.GetBit() == 64))
+        << "vf.mul_add_dst src only supports supported types, got " << DTypeStr(s1Dt);
+    DataType vfMulAddDstDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0Dt == vfMulAddDstDstDt && s1Dt == vfMulAddDstDstDt)
+        << "vf.mul_add_dst requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vfMulAddDstDstDt)
+        << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
@@ -2193,48 +2189,48 @@ static std::string EmitVFMulAddDst(const ir::CallPtr& op, codegen::CodegenBase& 
 // Div — vdiv
 // ============================================================================
 
-static std::string EmitVFDiv(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFDiv(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.div requires 4 args (dst, src0, src1, mask)";
-    DataType s0_dt = GetExprDtype(op->args_[1]);
+    DataType s0Dt = GetExprDtype(op->args_[1]);
     // No vdiv overloads for 8-bit ints (mirrors AscendC DivImpl: u16..i64 + half/float).
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (IsArithIntType(s0_dt) || s0_dt == DataType::FP16 || s0_dt == DataType::FP32) &&
-                          s0_dt != DataType::INT8 && s0_dt != DataType::UINT8)
-        << "vf.div src0 only supports INT16/UINT16/INT32/UINT32/INT64/UINT64/FP16/FP32, got " << DTypeStr(s0_dt);
-    DataType s1_dt = GetExprDtype(op->args_[2]);
+                      (IsArithIntType(s0Dt) || s0Dt == DataType::FP16 || s0Dt == DataType::FP32) &&
+                          s0Dt != DataType::INT8 && s0Dt != DataType::UINT8)
+        << "vf.div src0 only supports INT16/UINT16/INT32/UINT32/INT64/UINT64/FP16/FP32, got " << DTypeStr(s0Dt);
+    DataType s1Dt = GetExprDtype(op->args_[2]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (IsArithIntType(s1_dt) || s1_dt == DataType::FP16 || s1_dt == DataType::FP32) &&
-                          s1_dt != DataType::INT8 && s1_dt != DataType::UINT8)
-        << "vf.div src1 only supports INT16/UINT16/INT32/UINT32/INT64/UINT64/FP16/FP32, got " << DTypeStr(s1_dt);
-    DataType vf_div_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0_dt == vf_div_dst_dt && s1_dt == vf_div_dst_dt)
-        << "vf.div requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vf_div_dst_dt)
-        << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
-    const bool use_precision = op->HasKwarg("precision") && op->GetKwarg<bool>("precision");
+                      (IsArithIntType(s1Dt) || s1Dt == DataType::FP16 || s1Dt == DataType::FP32) &&
+                          s1Dt != DataType::INT8 && s1Dt != DataType::UINT8)
+        << "vf.div src1 only supports INT16/UINT16/INT32/UINT32/INT64/UINT64/FP16/FP32, got " << DTypeStr(s1Dt);
+    DataType vfDivDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0Dt == vfDivDstDt && s1Dt == vfDivDstDt)
+        << "vf.div requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vfDivDstDt)
+        << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
+    const bool usePrecision = op->HasKwarg("precision") && op->GetKwarg<bool>("precision");
     // High-precision mode supports FP16/FP32 only; validated up front before
     // any emission (B64 division and integer types take the standard path).
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, !use_precision || s0_dt == DataType::FP16 || s0_dt == DataType::FP32)
-        << "vf.div high-precision mode only supports FP16/FP32, got " << DTypeStr(s0_dt);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, !usePrecision || s0Dt == DataType::FP16 || s0Dt == DataType::FP32)
+        << "vf.div high-precision mode only supports FP16/FP32, got " << DTypeStr(s0Dt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.div");
-    if (s0_dt.GetBit() == 64) {
+    if (s0Dt.GetBit() == 64) {
         // B64 division (INT64/UINT64): Newton-Raphson reciprocal refinement
         // mirroring AscendC DivS64Impl / DivU64Impl. No native b64 vdiv.
-        EmitB64Div(codegen, dst, src0, src1, mask, s0_dt == DataType::INT64);
+        EmitB64Div(codegen, dst, src0, src1, mask, s0Dt == DataType::INT64);
         return "";
     }
-    if (use_precision) {
+    if (usePrecision) {
         // Mirrors AscendC high-precision division: error-complementation
         // quotient correction with inf/nan/zero bypass and subnormal-input
         // scaling. FP32 follows DivPrecisionImpl (vec_binary_impl.h:868-976);
         // FP16 follows DivIEEE754HalfImpl (vec_binary_impl.h:1199-1413).
-        if (s0_dt == DataType::FP16) {
+        if (s0Dt == DataType::FP16) {
             // IEEE754 manual half division: normalize subnormal inputs by 2^10,
             // standardize exponents, divide, then compensate, clamp overflow/
             // underflow and bypass inf/zero/nan lanes.
@@ -2383,8 +2379,8 @@ static std::string EmitVFDiv(const ir::CallPtr& op, codegen::CodegenBase& codege
         }
         const std::string p = dst + "_p_";
         const std::string pall = p + "all", nz = p + "nz", infnan = p + "infn", z = p + "z", q0 = p + "q0";
-        const std::string m_inf = p + "minf", m_zero = p + "mzero", m_scale = p + "mscale";
-        const std::string m_cmp = p + "mcmp", expbits = p + "expb", scratch = p + "scr", expo = p + "expo";
+        const std::string mInf = p + "minf", mZero = p + "mzero", mScale = p + "mscale";
+        const std::string mCmp = p + "mcmp", expbits = p + "expb", scratch = p + "scr", expo = p + "expo";
         const std::string kreg = p + "k", thrvec = p + "thr", zerovec = p + "zv", newexp = p + "newexp";
         const std::string scalebits = p + "sb", scale = p + "sc", one = p + "one";
         const std::string asc = p + "asc", bsc = p + "bsc", y = p + "y";
@@ -2394,17 +2390,17 @@ static std::string EmitVFDiv(const ir::CallPtr& op, codegen::CodegenBase& codege
         codegen.Emit("RegTensor<uint32_t> " + infnan + ";");
         codegen.Emit("RegTensor<float> " + z + ";");
         codegen.Emit("RegTensor<float> " + q0 + ";");
-        codegen.Emit("MaskReg " + m_inf + ";");
-        codegen.Emit("MaskReg " + m_zero + ";");
+        codegen.Emit("MaskReg " + mInf + ";");
+        codegen.Emit("MaskReg " + mZero + ";");
         // Inf/nan/zero bypass (DivPrecisionImpl:908-914): set the sign bit of the
         // quotient, then >= 0xFF800000 (unsigned) catches +/-Inf, +/-0 and NaNs.
         codegen.Emit("vdup(" + nz + ", (int32_t)0x80000000, " + pall + ", " + mode + ");");
         codegen.Emit("vdiv(" + z + ", " + src0 + ", " + src1 + ", " + mask + ", " + mode + ");");
         codegen.Emit("vor(" + infnan + ", (RegTensor<uint32_t>&)" + z + ", " + nz + ", " + mask + ", " + mode + ");");
         codegen.Emit("vmov(" + q0 + ", " + z + ");");
-        codegen.Emit("vcmps_eq(" + m_zero + ", " + z + ", 0.0f, " + mask + ");");
-        codegen.Emit("vcmps_ge(" + m_inf + ", " + infnan + ", (uint32_t)0xFF800000, " + mask + ");");
-        codegen.Emit("por(" + m_inf + ", " + m_inf + ", " + m_zero + ", " + mask + ");");
+        codegen.Emit("vcmps_eq(" + mZero + ", " + z + ", 0.0f, " + mask + ");");
+        codegen.Emit("vcmps_ge(" + mInf + ", " + infnan + ", (uint32_t)0xFF800000, " + mask + ");");
+        codegen.Emit("por(" + mInf + ", " + mInf + ", " + mZero + ", " + mask + ");");
         // Subnormal-input scaling (DivPrecisionImpl:916-950): scale a/b by 2^k with
         // k = max(-64 - exp(a), 0) so the residual stays in the normal range.
         codegen.Emit("RegTensor<uint32_t> " + expbits + ";");
@@ -2420,7 +2416,7 @@ static std::string EmitVFDiv(const ir::CallPtr& op, codegen::CodegenBase& codege
         codegen.Emit("RegTensor<float> " + asc + ";");
         codegen.Emit("RegTensor<float> " + bsc + ";");
         codegen.Emit("RegTensor<float> " + y + ";");
-        codegen.Emit("MaskReg " + m_scale + ";");
+        codegen.Emit("MaskReg " + mScale + ";");
         codegen.Emit("vdup(" + scratch + ", (int32_t)0x7F800000, " + mask + ", " + mode + ");");
         codegen.Emit("vand(" + expbits + ", (RegTensor<uint32_t>&)" + src0 + ", " + scratch + ", " + mask + ", " +
                      mode + ");");
@@ -2428,16 +2424,16 @@ static std::string EmitVFDiv(const ir::CallPtr& op, codegen::CodegenBase& codege
         codegen.Emit("vdup(" + scratch + ", (int32_t)127, " + mask + ", " + mode + ");");
         codegen.Emit("vsub(" + expo + ", (RegTensor<int32_t>&)" + expbits + ", (RegTensor<int32_t>&)" + scratch + ", " +
                      mask + ", " + mode + ");");
-        codegen.Emit("vcmps_lt(" + m_scale + ", " + expo + ", (int32_t)-64, " + mask + ");");
+        codegen.Emit("vcmps_lt(" + mScale + ", " + expo + ", (int32_t)-64, " + mask + ");");
         codegen.Emit("vdup(" + thrvec + ", (int32_t)-64, " + mask + ", " + mode + ");");
         codegen.Emit("vdup(" + zerovec + ", (int32_t)0, " + mask + ", " + mode + ");");
         codegen.Emit("vsub(" + kreg + ", " + thrvec + ", " + expo + ", " + mask + ", " + mode + ");");
         codegen.Emit("vmax(" + kreg + ", " + kreg + ", " + zerovec + ", " + mask + ", " + mode + ");");
-        codegen.Emit("vadds(" + newexp + ", " + kreg + ", (int32_t)127, " + m_scale + ", " + mode + ");");
-        codegen.Emit("vshls(" + scalebits + ", (RegTensor<uint32_t>&)" + newexp + ", (int16_t)23, " + m_scale + ", " +
+        codegen.Emit("vadds(" + newexp + ", " + kreg + ", (int32_t)127, " + mScale + ", " + mode + ");");
+        codegen.Emit("vshls(" + scalebits + ", (RegTensor<uint32_t>&)" + newexp + ", (int16_t)23, " + mScale + ", " +
                      mode + ");");
         codegen.Emit("vdup(" + one + ", 1.0f, " + mask + ", " + mode + ");");
-        codegen.Emit("vsel(" + scale + ", (RegTensor<float>&)" + scalebits + ", " + one + ", " + m_scale + ");");
+        codegen.Emit("vsel(" + scale + ", (RegTensor<float>&)" + scalebits + ", " + one + ", " + mScale + ");");
         codegen.Emit("vmul(" + asc + ", " + src0 + ", " + scale + ", " + mask + ", " + mode + ");");
         codegen.Emit("vmul(" + bsc + ", " + src1 + ", " + scale + ", " + mask + ", " + mode + ");");
         // Corrected quotient (DivPrecisionImpl:952-975): r = a' - x1*b', pick the
@@ -2449,7 +2445,7 @@ static std::string EmitVFDiv(const ir::CallPtr& op, codegen::CodegenBase& codege
         codegen.Emit("RegTensor<float> " + rnext + ";");
         codegen.Emit("RegTensor<float> " + zpre + ";");
         codegen.Emit("RegTensor<float> " + znext + ";");
-        codegen.Emit("MaskReg " + m_cmp + ";");
+        codegen.Emit("MaskReg " + mCmp + ";");
         codegen.Emit("vmov(" + r + ", " + asc + ");");
         codegen.Emit("vmula(" + r + ", " + z + ", " + y + ", " + mask + ", " + mode + ");");
         codegen.Emit("vadds((RegTensor<int32_t>&)" + zpre + ", (RegTensor<int32_t>&)" + z + ", (int32_t)-1, " + mask +
@@ -2463,12 +2459,12 @@ static std::string EmitVFDiv(const ir::CallPtr& op, codegen::CodegenBase& codege
         codegen.Emit("vabs(" + r + ", " + r + ", " + mask + ", " + mode + ");");
         codegen.Emit("vabs(" + rpre + ", " + rpre + ", " + mask + ", " + mode + ");");
         codegen.Emit("vabs(" + rnext + ", " + rnext + ", " + mask + ", " + mode + ");");
-        codegen.Emit("vcmp_lt(" + m_cmp + ", " + r + ", " + rpre + ", " + mask + ");");
-        codegen.Emit("vsel(" + r + ", " + r + ", " + rpre + ", " + m_cmp + ");");
-        codegen.Emit("vsel(" + z + ", " + z + ", " + zpre + ", " + m_cmp + ");");
-        codegen.Emit("vcmp_lt(" + m_cmp + ", " + rnext + ", " + r + ", " + mask + ");");
-        codegen.Emit("vsel(" + z + ", " + znext + ", " + z + ", " + m_cmp + ");");
-        codegen.Emit("vsel(" + dst + ", " + q0 + ", " + z + ", " + m_inf + ");");
+        codegen.Emit("vcmp_lt(" + mCmp + ", " + r + ", " + rpre + ", " + mask + ");");
+        codegen.Emit("vsel(" + r + ", " + r + ", " + rpre + ", " + mCmp + ");");
+        codegen.Emit("vsel(" + z + ", " + z + ", " + zpre + ", " + mCmp + ");");
+        codegen.Emit("vcmp_lt(" + mCmp + ", " + rnext + ", " + r + ", " + mask + ");");
+        codegen.Emit("vsel(" + z + ", " + znext + ", " + z + ", " + mCmp + ");");
+        codegen.Emit("vsel(" + dst + ", " + q0 + ", " + z + ", " + mInf + ");");
     } else {
         codegen.Emit("vdiv(" + dst + ", " + src0 + ", " + src1 + ", " + mask + ", " + mode + ");");
     }
@@ -2479,78 +2475,77 @@ static std::string EmitVFDiv(const ir::CallPtr& op, codegen::CodegenBase& codege
 // Muls — vmuls
 // ============================================================================
 
-static std::string EmitVFMuls(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMuls(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // Parser args order: [dst, src, scalar, mask]
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.muls requires 4 args (dst, src, scalar, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (src_dt == DataType::INT16 || src_dt == DataType::UINT16 || src_dt == DataType::INT32 ||
-                       src_dt == DataType::UINT32 || src_dt == DataType::INT64 || src_dt == DataType::UINT64 ||
-                       src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.muls src only supports INT16/UINT16/INT32/UINT32/INT64/UINT64/FP16/FP32, got " << DTypeStr(src_dt);
-    DataType scalar_dt = GetExprDtype(op->args_[2]);
-    if (scalar_dt == DataType::INDEX || scalar_dt == DataType::INT64) {
-        scalar_dt = src_dt;
+                      (srcDt == DataType::INT16 || srcDt == DataType::UINT16 || srcDt == DataType::INT32 ||
+                       srcDt == DataType::UINT32 || srcDt == DataType::INT64 || srcDt == DataType::UINT64 ||
+                       srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.muls src only supports INT16/UINT16/INT32/UINT32/INT64/UINT64/FP16/FP32, got " << DTypeStr(srcDt);
+    DataType scalarDt = GetExprDtype(op->args_[2]);
+    if (scalarDt == DataType::INDEX || scalarDt == DataType::INT64) {
+        scalarDt = srcDt;
     }
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (scalar_dt == DataType::INT16 || scalar_dt == DataType::UINT16 || scalar_dt == DataType::INT32 ||
-                       scalar_dt == DataType::UINT32 || scalar_dt == DataType::INT64 || scalar_dt == DataType::UINT64 ||
-                       scalar_dt == DataType::FP16 || scalar_dt == DataType::FP32))
-        << "vf.muls scalar only supports INT16/UINT16/INT32/UINT32/INT64/UINT64/FP16/FP32, got " << DTypeStr(scalar_dt);
-    DataType vf_muls_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_muls_dst_dt)
-        << "vf.muls requires src and dst to have the same type, got dst=" << DTypeStr(vf_muls_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+                      (scalarDt == DataType::INT16 || scalarDt == DataType::UINT16 || scalarDt == DataType::INT32 ||
+                       scalarDt == DataType::UINT32 || scalarDt == DataType::INT64 || scalarDt == DataType::UINT64 ||
+                       scalarDt == DataType::FP16 || scalarDt == DataType::FP32))
+        << "vf.muls scalar only supports INT16/UINT16/INT32/UINT32/INT64/UINT64/FP16/FP32, got " << DTypeStr(scalarDt);
+    DataType vfMulsDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfMulsDstDt)
+        << "vf.muls requires src and dst to have the same type, got dst=" << DTypeStr(vfMulsDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
-    std::string scalar_str = codegen.GetExprAsCode(op->args_[2]);
+    std::string scalarStr = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.muls");
-    scalar_str = cce::CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
-    if (src_dt.GetBit() == 64) {
+    scalarStr = cce::CoerceScalarToInt(op->args_[2], srcDt, scalarStr);
+    if (srcDt.GetBit() == 64) {
         // B64 Muls: dst = src * scalar. Mirrors AscendC MulsImpl: Duplicate(scalar) + Mul(src, scalar_reg).
         std::string p = dst + "_muls_";
-        std::string cast_type = (src_dt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
+        std::string castType = (srcDt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
         // AscendC MulB64Impl: vmull always uses uint32_t (unsigned 32x32→64);
         // vmula uses int32_t for int64_t (signed cross-term), uint32_t for uint64_t.
-        std::string vmull_cast = "(RegTensor<uint32_t>&)";
-        std::string vmula_cast = (src_dt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
+        std::string vmullCast = "(RegTensor<uint32_t>&)";
+        std::string vmulaCast = (srcDt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
         // Pack b64 mask to b32 (mirrors MaskPack in CalTraitOneByTransToTraitTwo)
-        std::string packed_m = p + "_pm_";
-        codegen.Emit("MaskReg " + packed_m + ";");
-        codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
+        std::string packedM = p + "_pm_";
+        codegen.Emit("MaskReg " + packedM + ";");
+        codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
         // Broadcast scalar to b32 halves (mirrors DuplicateB64Impl)
-        std::string all_m = p + "_allm_";
-        codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
-        std::string lo_sc = p + "_losc_";
-        std::string hi_sc = p + "_hisc_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_sc + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_sc + ";");
-        codegen.Emit("vdup(" + lo_sc + ", (int32_t)(" + cast_type + "(" + scalar_str + ")), " + all_m +
-                     ", MODE_ZEROING);");
-        codegen.Emit("vdup(" + hi_sc + ", (int32_t)((" + cast_type + "(" + scalar_str + ")) >> 32), " + all_m +
+        std::string allM = p + "_allm_";
+        codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
+        std::string loSc = p + "_losc_";
+        std::string hiSc = p + "_hisc_";
+        codegen.Emit("RegTensor<uint32_t> " + loSc + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiSc + ";");
+        codegen.Emit("vdup(" + loSc + ", (int32_t)(" + castType + "(" + scalarStr + ")), " + allM + ", MODE_ZEROING);");
+        codegen.Emit("vdup(" + hiSc + ", (int32_t)((" + castType + "(" + scalarStr + ")) >> 32), " + allM +
                      ", MODE_ZEROING);");
         // Deinterleave src to b32 halves (mirrors B64TraitOneToTraitTwo)
         EmitB64Deinterleave(codegen, p + "s", src);
-        std::string lo_s = p + "s_lo_", hi_s = p + "s_hi_";
+        std::string loS = p + "s_lo_", hiS = p + "s_hi_";
         // MulB64: vmull (lo_s × lo_sc → dst_lo, dst_hi) + vmula (lo_s × hi_sc → dst_hi) + vmula (hi_s × lo_sc → dst_hi)
-        std::string lo_d = p + "_lod_";
-        std::string hi_d = p + "_hid_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_d + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_d + ";");
-        codegen.Emit("vmull(" + vmull_cast + lo_d + ", " + vmull_cast + hi_d + ", " + vmull_cast + lo_s + ", " +
-                     vmull_cast + lo_sc + ", " + packed_m + ");");
-        codegen.Emit("vmula(" + vmula_cast + hi_d + ", " + vmula_cast + lo_s + ", " + vmula_cast + hi_sc + ", " +
-                     packed_m + ", MODE_ZEROING);");
-        codegen.Emit("vmula(" + vmula_cast + hi_d + ", " + vmula_cast + hi_s + ", " + vmula_cast + lo_sc + ", " +
-                     packed_m + ", MODE_ZEROING);");
+        std::string loD = p + "_lod_";
+        std::string hiD = p + "_hid_";
+        codegen.Emit("RegTensor<uint32_t> " + loD + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiD + ";");
+        codegen.Emit("vmull(" + vmullCast + loD + ", " + vmullCast + hiD + ", " + vmullCast + loS + ", " + vmullCast +
+                     loSc + ", " + packedM + ");");
+        codegen.Emit("vmula(" + vmulaCast + hiD + ", " + vmulaCast + loS + ", " + vmulaCast + hiSc + ", " + packedM +
+                     ", MODE_ZEROING);");
+        codegen.Emit("vmula(" + vmulaCast + hiD + ", " + vmulaCast + hiS + ", " + vmulaCast + loSc + ", " + packedM +
+                     ", MODE_ZEROING);");
         // Interleave back (mirrors B64TraitTwoToTraitOne)
-        EmitB64Interleave(codegen, dst, lo_d, hi_d, p + "_ilv");
+        EmitB64Interleave(codegen, dst, loD, hiD, p + "_ilv");
     } else {
-        codegen.Emit("vmuls(" + dst + ", " + src + ", " + scalar_str + ", " + mask + ", " + mode + ");");
+        codegen.Emit("vmuls(" + dst + ", " + src + ", " + scalarStr + ", " + mask + ", " + mode + ");");
     }
     return "";
 }
@@ -2559,31 +2554,31 @@ static std::string EmitVFMuls(const ir::CallPtr& op, codegen::CodegenBase& codeg
 // Ln — vln (natural logarithm, basic precision)
 // ============================================================================
 
-static std::string EmitVFUnary(const ir::CallPtr& op, codegen::CodegenBase& codegen_base, const std::string& op_name,
+static std::string EmitVFUnary(const ir::CallPtr& op, codegen::CodegenBase& codegenBase, const std::string& opName,
                                const std::string& instruction)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
-        << op_name << " requires 3 args (dst, src, mask)";
+        << opName << " requires 3 args (dst, src, mask)";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
-    std::string mode = VFZeroingOnly(op, op_name);
+    std::string mode = VFZeroingOnly(op, opName);
     codegen.Emit(instruction + "(" + dst + ", " + src + ", " + mask + ", " + mode + ");");
     return "";
 }
 
-static std::string EmitVFLn(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFLn(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.ln src only supports FP16/FP32, got " << DTypeStr(src_dt);
-    DataType vf_ln_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_ln_dst_dt)
-        << "vf.ln requires src and dst to have the same type, got dst=" << DTypeStr(vf_ln_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.ln src only supports FP16/FP32, got " << DTypeStr(srcDt);
+    DataType vfLnDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfLnDstDt)
+        << "vf.ln requires src and dst to have the same type, got dst=" << DTypeStr(vfLnDstDt)
+        << " src=" << DTypeStr(srcDt);
     if (op->HasKwarg("precision") && op->GetKwarg<bool>("precision")) {
-        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
         std::string dst = codegen.GetExprAsCode(op->args_[0]);
         std::string src = codegen.GetExprAsCode(op->args_[1]);
         std::string mask = codegen.GetExprAsCode(op->args_[2]);
@@ -2592,12 +2587,12 @@ static std::string EmitVFLn(const ir::CallPtr& op, codegen::CodegenBase& codegen
         std::string tp = dst + "_tmp_";
         std::string sc = dst + "_srcc_";
         std::string dc = dst + "_dstc_";
-        std::string ctype = src_dt.ToCTypeString();
+        std::string ctype = srcDt.ToCTypeString();
         codegen.Emit("MaskReg " + mc + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + tp + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + sc + " = (RegTensor<" + ctype + ">&)" + src + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + dc + ";");
-        if (src_dt == DataType::FP16) {
+        if (srcDt == DataType::FP16) {
             codegen.Emit("union { uint16_t i; half f; } " + dst + "_thr_ = {0x03FF};");
             codegen.Emit("vcmps_lt(" + mc + ", " + sc + ", " + dst + "_thr_.f, " + mask + ");");
             codegen.Emit("vmuls(" + tp + ", " + sc + ", 1024.0f, " + mask + ", " + mode + ");");
@@ -2616,24 +2611,24 @@ static std::string EmitVFLn(const ir::CallPtr& op, codegen::CodegenBase& codegen
         }
         return "";
     }
-    return EmitVFUnary(op, codegen_base, "vf.ln", "vln");
+    return EmitVFUnary(op, codegenBase, "vf.ln", "vln");
 }
 
 // ============================================================================
 // Log — vln (natural logarithm, same as Ln on A5/dav_3510)
 // ============================================================================
 
-static std::string EmitVFLog(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFLog(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.log src only supports FP16/FP32, got " << DTypeStr(src_dt);
-    DataType vf_log_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_log_dst_dt)
-        << "vf.log requires src and dst to have the same type, got dst=" << DTypeStr(vf_log_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.log src only supports FP16/FP32, got " << DTypeStr(srcDt);
+    DataType vfLogDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfLogDstDt)
+        << "vf.log requires src and dst to have the same type, got dst=" << DTypeStr(vfLogDstDt)
+        << " src=" << DTypeStr(srcDt);
     if (op->HasKwarg("precision") && op->GetKwarg<bool>("precision")) {
-        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
         std::string dst = codegen.GetExprAsCode(op->args_[0]);
         std::string src = codegen.GetExprAsCode(op->args_[1]);
         std::string mask = codegen.GetExprAsCode(op->args_[2]);
@@ -2642,12 +2637,12 @@ static std::string EmitVFLog(const ir::CallPtr& op, codegen::CodegenBase& codege
         std::string tp = dst + "_tmp_";
         std::string sc = dst + "_srcc_";
         std::string dc = dst + "_dstc_";
-        std::string ctype = src_dt.ToCTypeString();
+        std::string ctype = srcDt.ToCTypeString();
         codegen.Emit("MaskReg " + mc + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + tp + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + sc + " = (RegTensor<" + ctype + ">&)" + src + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + dc + ";");
-        if (src_dt == DataType::FP16) {
+        if (srcDt == DataType::FP16) {
             codegen.Emit("union { uint16_t i; half f; } " + dst + "_thr_ = {0x03FF};");
             codegen.Emit("vcmps_lt(" + mc + ", " + sc + ", " + dst + "_thr_.f, " + mask + ");");
             codegen.Emit("vmuls(" + tp + ", " + sc + ", 1024.0f, " + mask + ", " + mode + ");");
@@ -2666,36 +2661,36 @@ static std::string EmitVFLog(const ir::CallPtr& op, codegen::CodegenBase& codege
         }
         return "";
     }
-    return EmitVFUnary(op, codegen_base, "vf.log", "vln");
+    return EmitVFUnary(op, codegenBase, "vf.log", "vln");
 }
 
 // ============================================================================
 // Min — vmin
 // ============================================================================
 
-static std::string EmitVFMin(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMin(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.min requires 4 args (dst, src0, src1, mask)";
-    DataType s0_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s0_dt) || s0_dt == DataType::FP16 ||
-                                                    s0_dt == DataType::FP32 || s0_dt == DataType::BF16))
-        << "vf.min src only supports supported types, got " << DTypeStr(s0_dt);
-    DataType s1_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s1_dt) || s1_dt == DataType::FP16 ||
-                                                    s1_dt == DataType::FP32 || s1_dt == DataType::BF16))
-        << "vf.min src only supports supported types, got " << DTypeStr(s1_dt);
-    DataType vf_min_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0_dt == vf_min_dst_dt && s1_dt == vf_min_dst_dt)
-        << "vf.min requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vf_min_dst_dt)
-        << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
+    DataType s0Dt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s0Dt) || s0Dt == DataType::FP16 ||
+                                                    s0Dt == DataType::FP32 || s0Dt == DataType::BF16))
+        << "vf.min src only supports supported types, got " << DTypeStr(s0Dt);
+    DataType s1Dt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s1Dt) || s1Dt == DataType::FP16 ||
+                                                    s1Dt == DataType::FP32 || s1Dt == DataType::BF16))
+        << "vf.min src only supports supported types, got " << DTypeStr(s1Dt);
+    DataType vfMinDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0Dt == vfMinDstDt && s1Dt == vfMinDstDt)
+        << "vf.min requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vfMinDstDt)
+        << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.min");
-    if (s0_dt.GetBit() == 64) {
+    if (s0Dt.GetBit() == 64) {
         // B64 min via deinterleave + b32 compare + vsel + interleave.
         // min = src1 when src0 > src1, else src0 (i.e., pick the smaller).
         std::string p = dst + "_min_";
@@ -2703,38 +2698,38 @@ static std::string EmitVFMin(const ir::CallPtr& op, codegen::CodegenBase& codege
         EmitB64Deinterleave(codegen, p + "s1", src1);
         std::string lo0 = p + "s0_lo_", hi0 = p + "s0_hi_";
         std::string lo1 = p + "s1_lo_", hi1 = p + "s1_hi_";
-        std::string all_m = p + "_allm_";
-        codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
-        std::string hi_gt = p + "_higt_";
-        std::string hi_eq = p + "_hieq_";
-        std::string lo_gt = p + "_logt_";
-        codegen.Emit("MaskReg " + hi_gt + ";");
-        codegen.Emit("MaskReg " + hi_eq + ";");
-        codegen.Emit("MaskReg " + lo_gt + ";");
-        if (s0_dt == DataType::INT64) {
-            codegen.Emit("vcmp_gt(" + hi_gt + ", (RegTensor<int32_t>&)" + hi0 + ", (RegTensor<int32_t>&)" + hi1 + ", " +
-                         all_m + ");");
-            codegen.Emit("vcmp_eq(" + hi_eq + ", (RegTensor<int32_t>&)" + hi0 + ", (RegTensor<int32_t>&)" + hi1 + ", " +
-                         all_m + ");");
+        std::string allM = p + "_allm_";
+        codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
+        std::string hiGt = p + "_higt_";
+        std::string hiEq = p + "_hieq_";
+        std::string loGt = p + "_logt_";
+        codegen.Emit("MaskReg " + hiGt + ";");
+        codegen.Emit("MaskReg " + hiEq + ";");
+        codegen.Emit("MaskReg " + loGt + ";");
+        if (s0Dt == DataType::INT64) {
+            codegen.Emit("vcmp_gt(" + hiGt + ", (RegTensor<int32_t>&)" + hi0 + ", (RegTensor<int32_t>&)" + hi1 + ", " +
+                         allM + ");");
+            codegen.Emit("vcmp_eq(" + hiEq + ", (RegTensor<int32_t>&)" + hi0 + ", (RegTensor<int32_t>&)" + hi1 + ", " +
+                         allM + ");");
         } else {
-            codegen.Emit("vcmp_gt(" + hi_gt + ", " + hi0 + ", " + hi1 + ", " + all_m + ");");
-            codegen.Emit("vcmp_eq(" + hi_eq + ", " + hi0 + ", " + hi1 + ", " + all_m + ");");
+            codegen.Emit("vcmp_gt(" + hiGt + ", " + hi0 + ", " + hi1 + ", " + allM + ");");
+            codegen.Emit("vcmp_eq(" + hiEq + ", " + hi0 + ", " + hi1 + ", " + allM + ");");
         }
-        codegen.Emit("vcmp_gt(" + lo_gt + ", " + lo0 + ", " + lo1 + ", " + all_m + ");");
-        std::string eq_lo = p + "_eqlo_";
-        std::string s0_gt = p + "_s0gt_";
-        codegen.Emit("MaskReg " + eq_lo + ";");
-        codegen.Emit("MaskReg " + s0_gt + ";");
-        codegen.Emit("pand(" + eq_lo + ", " + hi_eq + ", " + lo_gt + ", " + all_m + ");");
-        codegen.Emit("por(" + s0_gt + ", " + hi_gt + ", " + eq_lo + ", " + all_m + ");");
+        codegen.Emit("vcmp_gt(" + loGt + ", " + lo0 + ", " + lo1 + ", " + allM + ");");
+        std::string eqLo = p + "_eqlo_";
+        std::string s0Gt = p + "_s0gt_";
+        codegen.Emit("MaskReg " + eqLo + ";");
+        codegen.Emit("MaskReg " + s0Gt + ";");
+        codegen.Emit("pand(" + eqLo + ", " + hiEq + ", " + loGt + ", " + allM + ");");
+        codegen.Emit("por(" + s0Gt + ", " + hiGt + ", " + eqLo + ", " + allM + ");");
         // Select: min = src0 > src1 ? src1 : src0 (pick smaller)
-        std::string lo_dst = p + "_lod_";
-        std::string hi_dst = p + "_hid_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_dst + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_dst + ";");
-        codegen.Emit("vsel(" + lo_dst + ", " + lo1 + ", " + lo0 + ", " + s0_gt + ");");
-        codegen.Emit("vsel(" + hi_dst + ", " + hi1 + ", " + hi0 + ", " + s0_gt + ");");
-        EmitB64Interleave(codegen, dst, lo_dst, hi_dst, p + "_ilv");
+        std::string loDst = p + "_lod_";
+        std::string hiDst = p + "_hid_";
+        codegen.Emit("RegTensor<uint32_t> " + loDst + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiDst + ";");
+        codegen.Emit("vsel(" + loDst + ", " + lo1 + ", " + lo0 + ", " + s0Gt + ");");
+        codegen.Emit("vsel(" + hiDst + ", " + hi1 + ", " + hi0 + ", " + s0Gt + ");");
+        EmitB64Interleave(codegen, dst, loDst, hiDst, p + "_ilv");
         EmitB64Zeroing(codegen, dst, dst, mask, p + "_zero");
     } else {
         codegen.Emit("vmin(" + dst + ", " + src0 + ", " + src1 + ", " + mask + ", " + mode + ");");
@@ -2746,22 +2741,22 @@ static std::string EmitVFMin(const ir::CallPtr& op, codegen::CodegenBase& codege
 // Exp — vexp
 // ============================================================================
 
-static std::string EmitVFExp(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFExp(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.exp requires 3 args (dst, src, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.exp src only supports FP16/FP32, got " << DTypeStr(src_dt);
-    DataType vf_exp_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_exp_dst_dt)
-        << "vf.exp requires src and dst to have the same type, got dst=" << DTypeStr(vf_exp_dst_dt)
-        << " src=" << DTypeStr(src_dt);
-    DataType exp_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == exp_dst_dt)
-        << "vf.exp requires src and dst to have the same type, got dst=" << DTypeStr(exp_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.exp src only supports FP16/FP32, got " << DTypeStr(srcDt);
+    DataType vfExpDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfExpDstDt)
+        << "vf.exp requires src and dst to have the same type, got dst=" << DTypeStr(vfExpDstDt)
+        << " src=" << DTypeStr(srcDt);
+    DataType expDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == expDstDt)
+        << "vf.exp requires src and dst to have the same type, got dst=" << DTypeStr(expDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
@@ -2771,12 +2766,12 @@ static std::string EmitVFExp(const ir::CallPtr& op, codegen::CodegenBase& codege
         std::string tw = dst + "_two_";
         std::string t0 = dst + "_t0_";
         std::string t1 = dst + "_t1_";
-        std::string ctype = src_dt.ToCTypeString();
+        std::string ctype = srcDt.ToCTypeString();
         codegen.Emit("MaskReg " + ms + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + tw + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + t0 + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + t1 + ";");
-        if (src_dt == DataType::FP16) {
+        if (srcDt == DataType::FP16) {
             codegen.Emit("union { uint16_t i; half f; } " + dst + "_thr_ = {0x03FF};");
         } else {
             codegen.Emit("union { uint32_t i; float f; } " + dst + "_thr_ = {0x007FFFFF};");
@@ -2798,67 +2793,67 @@ static std::string EmitVFExp(const ir::CallPtr& op, codegen::CodegenBase& codege
 // Abs — vabs
 // ============================================================================
 
-static std::string EmitVFAbs(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFAbs(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.abs requires 3 args (dst, src, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (IsArithSignedIntType(src_dt) || src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.abs src only supports INT8/INT16/INT32/INT64/FP16/FP32, got " << DTypeStr(src_dt);
-    DataType vf_abs_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_abs_dst_dt)
-        << "vf.abs requires src and dst to have the same type, got dst=" << DTypeStr(vf_abs_dst_dt)
-        << " src=" << DTypeStr(src_dt);
-    DataType abs_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == abs_dst_dt)
-        << "vf.abs requires src and dst to have the same type, got dst=" << DTypeStr(abs_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+                      (IsArithSignedIntType(srcDt) || srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.abs src only supports INT8/INT16/INT32/INT64/FP16/FP32, got " << DTypeStr(srcDt);
+    DataType vfAbsDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfAbsDstDt)
+        << "vf.abs requires src and dst to have the same type, got dst=" << DTypeStr(vfAbsDstDt)
+        << " src=" << DTypeStr(srcDt);
+    DataType absDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == absDstDt)
+        << "vf.abs requires src and dst to have the same type, got dst=" << DTypeStr(absDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
     std::string mode = VFZeroingOnly(op, "vf.abs");
-    if (src_dt == DataType::INT64) {
+    if (srcDt == DataType::INT64) {
         // B64 abs: abs(x) = x if x >= 0, -x if x < 0.
         // Mirrors AscendC AbsB64Impl: vbr(0) + vcmp_lt + Sub(vsubc) + SubC(vsubcs) + vsel.
         std::string p = dst + "_abs_";
         // Deinterleave src to get b32 low/high halves
         EmitB64Deinterleave(codegen, p + "s", src);
-        std::string lo_s = p + "s_lo_", hi_s = p + "s_hi_";
-        std::string all_m = p + "_allm_";
-        codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
+        std::string loS = p + "s_lo_", hiS = p + "s_hi_";
+        std::string allM = p + "_allm_";
+        codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
         // Zero register (vbr equivalent)
-        std::string zero_reg = p + "_zero_";
-        codegen.Emit("RegTensor<int32_t> " + zero_reg + ";");
-        codegen.Emit("vdup(" + zero_reg + ", 0, " + all_m + ", MODE_ZEROING);");
+        std::string zeroReg = p + "_zero_";
+        codegen.Emit("RegTensor<int32_t> " + zeroReg + ";");
+        codegen.Emit("vdup(" + zeroReg + ", 0, " + allM + ", MODE_ZEROING);");
         // Sign mask: hi_s < 0 (signed)
-        std::string sign_m = p + "_sign_";
-        codegen.Emit("MaskReg " + sign_m + ";");
-        codegen.Emit("vcmp_lt(" + sign_m + ", (RegTensor<int32_t>&)" + hi_s + ", (RegTensor<int32_t>&)" + zero_reg +
-                     ", " + all_m + ");");
+        std::string signM = p + "_sign_";
+        codegen.Emit("MaskReg " + signM + ";");
+        codegen.Emit("vcmp_lt(" + signM + ", (RegTensor<int32_t>&)" + hiS + ", (RegTensor<int32_t>&)" + zeroReg + ", " +
+                     allM + ");");
         // Negate via borrow-chain sub: neg = 0 - src
         // vsubc: borrow = (0 < lo_s), neg_lo = 0 - lo_s
         // vsubcs: neg_hi = 0 - hi_s - borrow
         std::string borrow = p + "_borrow_";
-        std::string lo_n = p + "_nlo_";
-        std::string hi_n = p + "_nhi_";
+        std::string loN = p + "_nlo_";
+        std::string hiN = p + "_nhi_";
         codegen.Emit("MaskReg " + borrow + ";");
-        codegen.Emit("RegTensor<int32_t> " + lo_n + ";");
-        codegen.Emit("RegTensor<int32_t> " + hi_n + ";");
-        codegen.Emit("vsubc(" + borrow + ", " + lo_n + ", " + zero_reg + ", (RegTensor<int32_t>&)" + lo_s + ", " +
-                     sign_m + ");");
-        codegen.Emit("vsubcs(" + borrow + ", " + hi_n + ", " + zero_reg + ", (RegTensor<int32_t>&)" + hi_s + ", " +
-                     borrow + ", " + sign_m + ");");
+        codegen.Emit("RegTensor<int32_t> " + loN + ";");
+        codegen.Emit("RegTensor<int32_t> " + hiN + ";");
+        codegen.Emit("vsubc(" + borrow + ", " + loN + ", " + zeroReg + ", (RegTensor<int32_t>&)" + loS + ", " + signM +
+                     ");");
+        codegen.Emit("vsubcs(" + borrow + ", " + hiN + ", " + zeroReg + ", (RegTensor<int32_t>&)" + hiS + ", " +
+                     borrow + ", " + signM + ");");
         // Select: if negative -> neg, else -> src (per b32 half)
         // All vsel operands must be the same type (int32_t).
-        std::string lo_dst = p + "_lod_";
-        std::string hi_dst = p + "_hid_";
-        codegen.Emit("RegTensor<int32_t> " + lo_dst + ";");
-        codegen.Emit("RegTensor<int32_t> " + hi_dst + ";");
-        codegen.Emit("vsel(" + lo_dst + ", " + lo_n + ", (RegTensor<int32_t>&)" + lo_s + ", " + sign_m + ");");
-        codegen.Emit("vsel(" + hi_dst + ", " + hi_n + ", (RegTensor<int32_t>&)" + hi_s + ", " + sign_m + ");");
-        EmitB64Interleave(codegen, dst, lo_dst, hi_dst, p + "_ilv");
+        std::string loDst = p + "_lod_";
+        std::string hiDst = p + "_hid_";
+        codegen.Emit("RegTensor<int32_t> " + loDst + ";");
+        codegen.Emit("RegTensor<int32_t> " + hiDst + ";");
+        codegen.Emit("vsel(" + loDst + ", " + loN + ", (RegTensor<int32_t>&)" + loS + ", " + signM + ");");
+        codegen.Emit("vsel(" + hiDst + ", " + hiN + ", (RegTensor<int32_t>&)" + hiS + ", " + signM + ");");
+        EmitB64Interleave(codegen, dst, loDst, hiDst, p + "_ilv");
         EmitB64Zeroing(codegen, dst, dst, mask, p + "_zero");
     } else {
         codegen.Emit("vabs(" + dst + ", " + src + ", " + mask + ", " + mode + ");");
@@ -2870,23 +2865,23 @@ static std::string EmitVFAbs(const ir::CallPtr& op, codegen::CodegenBase& codege
 // Not — vnot
 // ============================================================================
 
-static std::string EmitVFNot(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFNot(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.not_ requires 3 args (dst, src, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      src_dt == DataType::INT8 || src_dt == DataType::UINT8 || src_dt == DataType::BOOL ||
-                          src_dt == DataType::INT16 || src_dt == DataType::UINT16 || src_dt == DataType::INT32 ||
-                          src_dt == DataType::UINT32 || src_dt == DataType::FP16 || src_dt == DataType::FP32 ||
-                          src_dt == DataType::INT64 || src_dt == DataType::UINT64)
+                      srcDt == DataType::INT8 || srcDt == DataType::UINT8 || srcDt == DataType::BOOL ||
+                          srcDt == DataType::INT16 || srcDt == DataType::UINT16 || srcDt == DataType::INT32 ||
+                          srcDt == DataType::UINT32 || srcDt == DataType::FP16 || srcDt == DataType::FP32 ||
+                          srcDt == DataType::INT64 || srcDt == DataType::UINT64)
         << "vf.not_ src only supports INT8/UINT8/INT16/UINT16/INT32/UINT32/FP16/FP32/INT64/UINT64, got "
-        << DTypeStr(src_dt);
-    DataType not_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == not_dst_dt)
-        << "vf.not_ requires src and dst to have the same type, got dst=" << DTypeStr(not_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+        << DTypeStr(srcDt);
+    DataType notDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == notDstDt)
+        << "vf.not_ requires src and dst to have the same type, got dst=" << DTypeStr(notDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
@@ -2895,7 +2890,7 @@ static std::string EmitVFNot(const ir::CallPtr& op, codegen::CodegenBase& codege
         return "";
     }
     std::string mode = VFZeroingOnly(op, "vf.not_");
-    if (src_dt.GetBit() == 64) {
+    if (srcDt.GetBit() == 64) {
         // B64 bitwise via b32 vnot (mirrors AscendC NotImpl b64 path, see EmitB64Bitwise).
         EmitB64Bitwise(codegen, "vnot", {src}, dst, mask, mode, dst + "_not_");
     } else {
@@ -2908,22 +2903,22 @@ static std::string EmitVFNot(const ir::CallPtr& op, codegen::CodegenBase& codege
 // Sqrt — vsqrt
 // ============================================================================
 
-static std::string EmitVFSqrt(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFSqrt(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.sqrt requires 3 args (dst, src, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.sqrt src only supports FP16/FP32, got " << DTypeStr(src_dt);
-    DataType vf_sqrt_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_sqrt_dst_dt)
-        << "vf.sqrt requires src and dst to have the same type, got dst=" << DTypeStr(vf_sqrt_dst_dt)
-        << " src=" << DTypeStr(src_dt);
-    DataType sqrt_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == sqrt_dst_dt)
-        << "vf.sqrt requires src and dst to have the same type, got dst=" << DTypeStr(sqrt_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.sqrt src only supports FP16/FP32, got " << DTypeStr(srcDt);
+    DataType vfSqrtDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfSqrtDstDt)
+        << "vf.sqrt requires src and dst to have the same type, got dst=" << DTypeStr(vfSqrtDstDt)
+        << " src=" << DTypeStr(srcDt);
+    DataType sqrtDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == sqrtDstDt)
+        << "vf.sqrt requires src and dst to have the same type, got dst=" << DTypeStr(sqrtDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
@@ -2933,12 +2928,12 @@ static std::string EmitVFSqrt(const ir::CallPtr& op, codegen::CodegenBase& codeg
         std::string tp = dst + "_tmp_";
         std::string sc = dst + "_srcc_";
         std::string dc = dst + "_dstc_";
-        std::string ctype = src_dt.ToCTypeString();
+        std::string ctype = srcDt.ToCTypeString();
         codegen.Emit("MaskReg " + mc + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + tp + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + sc + " = (RegTensor<" + ctype + ">&)" + src + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + dc + ";");
-        if (src_dt == DataType::FP16) {
+        if (srcDt == DataType::FP16) {
             codegen.Emit("union { uint16_t i; half f; } " + dst + "_thr_ = {0x03FF};");
             codegen.Emit("vcmps_lt(" + mc + ", " + sc + ", " + dst + "_thr_.f, " + mask + ");");
             codegen.Emit("vmuls(" + tp + ", " + sc + ", 4096.0f, " + mask + ", " + mode + ");");
@@ -2968,64 +2963,64 @@ static std::string EmitVFSqrt(const ir::CallPtr& op, codegen::CodegenBase& codeg
 // Relu — vrelu
 // ============================================================================
 
-static std::string EmitVFRelu(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFRelu(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.relu requires 3 args (dst, src, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src_dt == DataType::INT32 || src_dt == DataType::INT64 ||
-                                                    src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.relu src only supports INT32/INT64/FP16/FP32, got " << DTypeStr(src_dt);
-    DataType vf_relu_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_relu_dst_dt)
-        << "vf.relu requires src and dst to have the same type, got dst=" << DTypeStr(vf_relu_dst_dt)
-        << " src=" << DTypeStr(src_dt);
-    DataType relu_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == relu_dst_dt)
-        << "vf.relu requires src and dst to have the same type, got dst=" << DTypeStr(relu_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (srcDt == DataType::INT32 || srcDt == DataType::INT64 ||
+                                                    srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.relu src only supports INT32/INT64/FP16/FP32, got " << DTypeStr(srcDt);
+    DataType vfReluDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfReluDstDt)
+        << "vf.relu requires src and dst to have the same type, got dst=" << DTypeStr(vfReluDstDt)
+        << " src=" << DTypeStr(srcDt);
+    DataType reluDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == reluDstDt)
+        << "vf.relu requires src and dst to have the same type, got dst=" << DTypeStr(reluDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
     std::string mode = VFZeroingOnly(op, "vf.relu");
-    if (src_dt == DataType::INT64) {
+    if (srcDt == DataType::INT64) {
         // B64 relu (mirrors AscendC ReluB64Impl: Maxs(src, 0)): deinterleave +
         // scalar(0) two-stage compare + vsel + interleave. No native b64 vrelu.
         std::string p = dst + "_relu_";
-        std::string packed_m = p + "_pm_";
-        codegen.Emit("MaskReg " + packed_m + ";");
-        codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
+        std::string packedM = p + "_pm_";
+        codegen.Emit("MaskReg " + packedM + ";");
+        codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
         EmitB64Deinterleave(codegen, p + "s", src);
-        std::string lo_s = p + "s_lo_", hi_s = p + "s_hi_";
-        std::string all_m = p + "_allm_";
-        codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
-        std::string lo_sc = p + "_losc_", hi_sc = p + "_hisc_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_sc + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_sc + ";");
-        codegen.Emit("vdup(" + lo_sc + ", (int32_t)0, " + all_m + ", MODE_ZEROING);");
-        codegen.Emit("vdup(" + hi_sc + ", (int32_t)0, " + all_m + ", MODE_ZEROING);");
+        std::string loS = p + "s_lo_", hiS = p + "s_hi_";
+        std::string allM = p + "_allm_";
+        codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
+        std::string loSc = p + "_losc_", hiSc = p + "_hisc_";
+        codegen.Emit("RegTensor<uint32_t> " + loSc + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiSc + ";");
+        codegen.Emit("vdup(" + loSc + ", (int32_t)0, " + allM + ", MODE_ZEROING);");
+        codegen.Emit("vdup(" + hiSc + ", (int32_t)0, " + allM + ", MODE_ZEROING);");
         // src > 0 iff hi > 0 (signed) OR (hi == 0 AND lo > 0, unsigned).
-        std::string hi_gt = p + "_higt_", hi_eq = p + "_hieq_", lo_gt = p + "_logt_";
-        std::string eq_lo = p + "_eqlo_", gt = p + "_gt_";
-        codegen.Emit("MaskReg " + hi_gt + ";");
-        codegen.Emit("MaskReg " + hi_eq + ";");
-        codegen.Emit("MaskReg " + lo_gt + ";");
-        codegen.Emit("MaskReg " + eq_lo + ";");
+        std::string hiGt = p + "_higt_", hiEq = p + "_hieq_", loGt = p + "_logt_";
+        std::string eqLo = p + "_eqlo_", gt = p + "_gt_";
+        codegen.Emit("MaskReg " + hiGt + ";");
+        codegen.Emit("MaskReg " + hiEq + ";");
+        codegen.Emit("MaskReg " + loGt + ";");
+        codegen.Emit("MaskReg " + eqLo + ";");
         codegen.Emit("MaskReg " + gt + ";");
-        codegen.Emit("vcmp_gt(" + hi_gt + ", (RegTensor<int32_t>&)" + hi_s + ", (RegTensor<int32_t>&)" + hi_sc + ", " +
-                     packed_m + ");");
-        codegen.Emit("vcmp_eq(" + hi_eq + ", (RegTensor<int32_t>&)" + hi_s + ", (RegTensor<int32_t>&)" + hi_sc + ", " +
-                     packed_m + ");");
-        codegen.Emit("vcmp_gt(" + lo_gt + ", " + lo_s + ", " + lo_sc + ", " + packed_m + ");");
-        codegen.Emit("pand(" + eq_lo + ", " + hi_eq + ", " + lo_gt + ", " + packed_m + ");");
-        codegen.Emit("por(" + gt + ", " + hi_gt + ", " + eq_lo + ", " + packed_m + ");");
-        std::string lo_d = p + "_lod_", hi_d = p + "_hid_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_d + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_d + ";");
-        codegen.Emit("vsel(" + lo_d + ", " + lo_s + ", " + lo_sc + ", " + gt + ");");
-        codegen.Emit("vsel(" + hi_d + ", " + hi_s + ", " + hi_sc + ", " + gt + ");");
-        EmitB64Interleave(codegen, dst, lo_d, hi_d, p + "_ilv");
+        codegen.Emit("vcmp_gt(" + hiGt + ", (RegTensor<int32_t>&)" + hiS + ", (RegTensor<int32_t>&)" + hiSc + ", " +
+                     packedM + ");");
+        codegen.Emit("vcmp_eq(" + hiEq + ", (RegTensor<int32_t>&)" + hiS + ", (RegTensor<int32_t>&)" + hiSc + ", " +
+                     packedM + ");");
+        codegen.Emit("vcmp_gt(" + loGt + ", " + loS + ", " + loSc + ", " + packedM + ");");
+        codegen.Emit("pand(" + eqLo + ", " + hiEq + ", " + loGt + ", " + packedM + ");");
+        codegen.Emit("por(" + gt + ", " + hiGt + ", " + eqLo + ", " + packedM + ");");
+        std::string loD = p + "_lod_", hiD = p + "_hid_";
+        codegen.Emit("RegTensor<uint32_t> " + loD + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiD + ";");
+        codegen.Emit("vsel(" + loD + ", " + loS + ", " + loSc + ", " + gt + ");");
+        codegen.Emit("vsel(" + hiD + ", " + hiS + ", " + hiSc + ", " + gt + ");");
+        EmitB64Interleave(codegen, dst, loD, hiD, p + "_ilv");
         EmitB64Zeroing(codegen, dst, dst, mask, p + "_zero");
         return "";
     }
@@ -3037,58 +3032,58 @@ static std::string EmitVFRelu(const ir::CallPtr& op, codegen::CodegenBase& codeg
 // Neg — vneg
 // ============================================================================
 
-static std::string EmitVFNeg(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFNeg(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.neg requires 3 args (dst, src, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (IsArithSignedIntType(src_dt) || src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.neg src only supports INT8/INT16/INT32/INT64/FP16/FP32, got " << DTypeStr(src_dt);
-    DataType vf_neg_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_neg_dst_dt)
-        << "vf.neg requires src and dst to have the same type, got dst=" << DTypeStr(vf_neg_dst_dt)
-        << " src=" << DTypeStr(src_dt);
-    DataType neg_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == neg_dst_dt)
-        << "vf.neg requires src and dst to have the same type, got dst=" << DTypeStr(neg_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+                      (IsArithSignedIntType(srcDt) || srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.neg src only supports INT8/INT16/INT32/INT64/FP16/FP32, got " << DTypeStr(srcDt);
+    DataType vfNegDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfNegDstDt)
+        << "vf.neg requires src and dst to have the same type, got dst=" << DTypeStr(vfNegDstDt)
+        << " src=" << DTypeStr(srcDt);
+    DataType negDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == negDstDt)
+        << "vf.neg requires src and dst to have the same type, got dst=" << DTypeStr(negDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
     std::string mode = VFZeroingOnly(op, "vf.neg");
-    if (src_dt == DataType::INT64 || src_dt == DataType::UINT64) {
+    if (srcDt == DataType::INT64 || srcDt == DataType::UINT64) {
         // B64 neg: dst = 0 - src. Mirrors AscendC NegB64Impl: Duplicate(0) + Sub(0, src).
         // Sub for b64 uses vsubc + vsubcs borrow-chain (mirrors SubB64Impl).
         std::string p = dst + "_neg_";
-        std::string b32_cast = (src_dt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
+        std::string b32Cast = (srcDt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
         // Pack b64 mask to b32 (mirrors MaskPack in CalTraitOneByTransToTraitTwo)
-        std::string packed_m = p + "_pm_";
-        codegen.Emit("MaskReg " + packed_m + ";");
-        codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
+        std::string packedM = p + "_pm_";
+        codegen.Emit("MaskReg " + packedM + ";");
+        codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
         // Zero register (vbr equivalent)
-        std::string all_m = p + "_allm_";
-        codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
-        std::string zero_reg = p + "_zero_";
-        codegen.Emit("RegTensor<int32_t> " + zero_reg + ";");
-        codegen.Emit("vdup(" + zero_reg + ", 0, " + all_m + ", MODE_ZEROING);");
+        std::string allM = p + "_allm_";
+        codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
+        std::string zeroReg = p + "_zero_";
+        codegen.Emit("RegTensor<int32_t> " + zeroReg + ";");
+        codegen.Emit("vdup(" + zeroReg + ", 0, " + allM + ", MODE_ZEROING);");
         // Deinterleave src to b32 halves (mirrors B64TraitOneToTraitTwo)
         EmitB64Deinterleave(codegen, p + "s", src);
-        std::string lo_s = p + "s_lo_", hi_s = p + "s_hi_";
+        std::string loS = p + "s_lo_", hiS = p + "s_hi_";
         // SubB64: vsubc + vsubcs (borrow-chain sub: 0 - src)
         std::string borrow = p + "_borrow_";
-        std::string lo_d = p + "_lod_";
-        std::string hi_d = p + "_hid_";
+        std::string loD = p + "_lod_";
+        std::string hiD = p + "_hid_";
         codegen.Emit("MaskReg " + borrow + ";");
-        codegen.Emit("RegTensor<uint32_t> " + lo_d + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_d + ";");
-        codegen.Emit("vsubc(" + borrow + ", " + b32_cast + lo_d + ", " + b32_cast + zero_reg + ", " + b32_cast + lo_s +
-                     ", " + packed_m + ");");
-        codegen.Emit("vsubcs(" + borrow + ", " + b32_cast + hi_d + ", " + b32_cast + zero_reg + ", " + b32_cast + hi_s +
-                     ", " + borrow + ", " + packed_m + ");");
+        codegen.Emit("RegTensor<uint32_t> " + loD + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiD + ";");
+        codegen.Emit("vsubc(" + borrow + ", " + b32Cast + loD + ", " + b32Cast + zeroReg + ", " + b32Cast + loS + ", " +
+                     packedM + ");");
+        codegen.Emit("vsubcs(" + borrow + ", " + b32Cast + hiD + ", " + b32Cast + zeroReg + ", " + b32Cast + hiS +
+                     ", " + borrow + ", " + packedM + ");");
         // Interleave back (mirrors B64TraitTwoToTraitOne)
-        EmitB64Interleave(codegen, dst, lo_d, hi_d, p + "_ilv");
+        EmitB64Interleave(codegen, dst, loD, hiD, p + "_ilv");
     } else {
         codegen.Emit("vneg(" + dst + ", " + src + ", " + mask + ", " + mode + ");");
     }
@@ -3099,75 +3094,74 @@ static std::string EmitVFNeg(const ir::CallPtr& op, codegen::CodegenBase& codege
 // Adds — vadds (scalar addition)
 // ============================================================================
 
-static std::string EmitVFAdds(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFAdds(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.adds requires 4 args (dst, src, scalar, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(src_dt) || src_dt == DataType::FP16 ||
-                                                    src_dt == DataType::FP32 || src_dt == DataType::BF16))
-        << "vf.adds src only supports supported types, got " << DTypeStr(src_dt);
-    DataType scalar_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (scalar_dt.IsInt() || scalar_dt == DataType::FP16 ||
-                                                    scalar_dt == DataType::FP32 || scalar_dt == DataType::BF16))
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(srcDt) || srcDt == DataType::FP16 ||
+                                                    srcDt == DataType::FP32 || srcDt == DataType::BF16))
+        << "vf.adds src only supports supported types, got " << DTypeStr(srcDt);
+    DataType scalarDt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (scalarDt.IsInt() || scalarDt == DataType::FP16 ||
+                                                    scalarDt == DataType::FP32 || scalarDt == DataType::BF16))
         << "vf.adds scalar only supports INT8/UINT8/INT16/UINT16/INT32/UINT32/INT64/UINT64/FP16/FP32/BF16, got "
-        << DTypeStr(scalar_dt);
-    DataType vf_adds_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_adds_dst_dt)
-        << "vf.adds requires src and dst to have the same type, got dst=" << DTypeStr(vf_adds_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+        << DTypeStr(scalarDt);
+    DataType vfAddsDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfAddsDstDt)
+        << "vf.adds requires src and dst to have the same type, got dst=" << DTypeStr(vfAddsDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
-    std::string scalar_str = codegen.GetExprAsCode(op->args_[2]);
+    std::string scalarStr = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.adds");
-    scalar_str = cce::CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
-    if (src_dt.GetBit() == 64) {
+    scalarStr = cce::CoerceScalarToInt(op->args_[2], srcDt, scalarStr);
+    if (srcDt.GetBit() == 64) {
         // B64 Adds: dst = src + scalar.
         // Mirrors AscendC AddsImpl: Duplicate(scalar) + Add(src, scalar_reg).
         // Duplicate → DuplicateB64Impl (vdup b32 halves → interleave to b64).
         // Add → CalTraitOneByTransToTraitTwo (ppack mask → deinterleave both
         // → AddB64Impl: vaddc + vaddcs → interleave back).
         std::string p = dst + "_adds_";
-        std::string cast_type = (src_dt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
-        std::string b32_cast = (src_dt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
+        std::string castType = (srcDt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
+        std::string b32Cast = (srcDt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
         // 1. Pack b64 mask to b32 (mirrors MaskPack in CalTraitOneByTransToTraitTwo)
-        std::string packed_m = p + "_pm_";
-        codegen.Emit("MaskReg " + packed_m + ";");
-        codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
+        std::string packedM = p + "_pm_";
+        codegen.Emit("MaskReg " + packedM + ";");
+        codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
         // 2. Broadcast scalar to b32 halves (mirrors DuplicateB64Impl)
-        std::string all_m = p + "_allm_";
-        codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
-        std::string lo_sc = p + "_losc_";
-        std::string hi_sc = p + "_hisc_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_sc + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_sc + ";");
-        codegen.Emit("vdup(" + lo_sc + ", (int32_t)(" + cast_type + "(" + scalar_str + ")), " + all_m +
-                     ", MODE_ZEROING);");
-        codegen.Emit("vdup(" + hi_sc + ", (int32_t)((" + cast_type + "(" + scalar_str + ")) >> 32), " + all_m +
+        std::string allM = p + "_allm_";
+        codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
+        std::string loSc = p + "_losc_";
+        std::string hiSc = p + "_hisc_";
+        codegen.Emit("RegTensor<uint32_t> " + loSc + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiSc + ";");
+        codegen.Emit("vdup(" + loSc + ", (int32_t)(" + castType + "(" + scalarStr + ")), " + allM + ", MODE_ZEROING);");
+        codegen.Emit("vdup(" + hiSc + ", (int32_t)((" + castType + "(" + scalarStr + ")) >> 32), " + allM +
                      ", MODE_ZEROING);");
         // 3. Deinterleave src to b32 halves (mirrors B64TraitOneToTraitTwo)
         EmitB64Deinterleave(codegen, p + "s", src);
-        std::string lo_s = p + "s_lo_", hi_s = p + "s_hi_";
+        std::string loS = p + "s_lo_", hiS = p + "s_hi_";
         // 4. AddB64: vaddc + vaddcs (mirrors AddB64Impl, using packed b32 mask)
         std::string carry = p + "_carry_";
-        std::string lo_d = p + "_lod_";
-        std::string hi_d = p + "_hid_";
+        std::string loD = p + "_lod_";
+        std::string hiD = p + "_hid_";
         codegen.Emit("MaskReg " + carry + ";");
-        codegen.Emit("RegTensor<uint32_t> " + lo_d + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_d + ";");
-        codegen.Emit("vaddc(" + carry + ", " + b32_cast + lo_d + ", " + b32_cast + lo_s + ", " + b32_cast + lo_sc +
-                     ", " + packed_m + ");");
-        codegen.Emit("vaddcs(" + carry + ", " + b32_cast + hi_d + ", " + b32_cast + hi_s + ", " + b32_cast + hi_sc +
-                     ", " + carry + ", " + packed_m + ");");
+        codegen.Emit("RegTensor<uint32_t> " + loD + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiD + ";");
+        codegen.Emit("vaddc(" + carry + ", " + b32Cast + loD + ", " + b32Cast + loS + ", " + b32Cast + loSc + ", " +
+                     packedM + ");");
+        codegen.Emit("vaddcs(" + carry + ", " + b32Cast + hiD + ", " + b32Cast + hiS + ", " + b32Cast + hiSc + ", " +
+                     carry + ", " + packedM + ");");
         // 5. Interleave back (mirrors B64TraitTwoToTraitOne)
-        EmitB64Interleave(codegen, dst, lo_d, hi_d, p + "_ilv");
+        EmitB64Interleave(codegen, dst, loD, hiD, p + "_ilv");
         // No separate EmitB64Zeroing — AscendC ZEROING mode relies on vaddc/vaddcs
         // producing 0 for inactive elements (mask-controlled). The packed b32 mask
         // ensures correct element selection.
     } else {
-        codegen.Emit("vadds(" + dst + ", " + src + ", " + scalar_str + ", " + mask + ", " + mode + ");");
+        codegen.Emit("vadds(" + dst + ", " + src + ", " + scalarStr + ", " + mask + ", " + mode + ");");
     }
     return "";
 }
@@ -3176,81 +3170,81 @@ static std::string EmitVFAdds(const ir::CallPtr& op, codegen::CodegenBase& codeg
 // Mins — vmins (scalar minimum)
 // ============================================================================
 
-static std::string EmitVFMins(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMins(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.mins requires 4 args (dst, src, scalar, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(src_dt) || src_dt == DataType::FP16 ||
-                                                    src_dt == DataType::FP32 || src_dt == DataType::BF16))
-        << "vf.mins src only supports supported types, got " << DTypeStr(src_dt);
-    DataType scalar_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (scalar_dt.IsInt() || scalar_dt == DataType::FP16 ||
-                                                    scalar_dt == DataType::FP32 || scalar_dt == DataType::BF16))
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(srcDt) || srcDt == DataType::FP16 ||
+                                                    srcDt == DataType::FP32 || srcDt == DataType::BF16))
+        << "vf.mins src only supports supported types, got " << DTypeStr(srcDt);
+    DataType scalarDt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (scalarDt.IsInt() || scalarDt == DataType::FP16 ||
+                                                    scalarDt == DataType::FP32 || scalarDt == DataType::BF16))
         << "vf.mins scalar only supports INT8/UINT8/INT16/UINT16/INT32/UINT32/INT64/UINT64/FP16/FP32/BF16, got "
-        << DTypeStr(scalar_dt);
-    DataType vf_mins_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_mins_dst_dt)
-        << "vf.mins requires src and dst to have the same type, got dst=" << DTypeStr(vf_mins_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+        << DTypeStr(scalarDt);
+    DataType vfMinsDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfMinsDstDt)
+        << "vf.mins requires src and dst to have the same type, got dst=" << DTypeStr(vfMinsDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
-    std::string scalar_str = codegen.GetExprAsCode(op->args_[2]);
+    std::string scalarStr = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.mins");
-    scalar_str = cce::CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
-    if (src_dt.GetBit() == 64) {
+    scalarStr = cce::CoerceScalarToInt(op->args_[2], srcDt, scalarStr);
+    if (srcDt.GetBit() == 64) {
         // B64 mins: min(src, scalar) via deinterleave + scalar compare + vsel + interleave.
         std::string p = dst + "_mins_";
         EmitB64Deinterleave(codegen, p + "s", src);
-        std::string lo_s = p + "s_lo_", hi_s = p + "s_hi_";
-        std::string all_m = p + "_allm_";
-        codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
+        std::string loS = p + "s_lo_", hiS = p + "s_hi_";
+        std::string allM = p + "_allm_";
+        codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
         // Broadcast scalar to b32 halves
-        std::string cast_type = (src_dt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
-        std::string lo_scalar = p + "_losc_";
-        std::string hi_scalar = p + "_hisc_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_scalar + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_scalar + ";");
-        codegen.Emit("vdup(" + lo_scalar + ", (int32_t)(" + cast_type + "(" + scalar_str + ")), " + all_m +
+        std::string castType = (srcDt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
+        std::string loScalar = p + "_losc_";
+        std::string hiScalar = p + "_hisc_";
+        codegen.Emit("RegTensor<uint32_t> " + loScalar + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiScalar + ";");
+        codegen.Emit("vdup(" + loScalar + ", (int32_t)(" + castType + "(" + scalarStr + ")), " + allM +
                      ", MODE_ZEROING);");
-        codegen.Emit("vdup(" + hi_scalar + ", (int32_t)((" + cast_type + "(" + scalar_str + ")) >> 32), " + all_m +
+        codegen.Emit("vdup(" + hiScalar + ", (int32_t)((" + castType + "(" + scalarStr + ")) >> 32), " + allM +
                      ", MODE_ZEROING);");
         // Compare: src < scalar → pick src, else pick scalar
-        std::string hi_lt = p + "_hilt_";
-        std::string hi_eq = p + "_hieq_";
-        std::string lo_lt = p + "_lolt_";
-        codegen.Emit("MaskReg " + hi_lt + ";");
-        codegen.Emit("MaskReg " + hi_eq + ";");
-        codegen.Emit("MaskReg " + lo_lt + ";");
-        if (src_dt == DataType::INT64) {
-            codegen.Emit("vcmp_lt(" + hi_lt + ", (RegTensor<int32_t>&)" + hi_s + ", (RegTensor<int32_t>&)" + hi_scalar +
-                         ", " + all_m + ");");
-            codegen.Emit("vcmp_eq(" + hi_eq + ", (RegTensor<int32_t>&)" + hi_s + ", (RegTensor<int32_t>&)" + hi_scalar +
-                         ", " + all_m + ");");
+        std::string hiLt = p + "_hilt_";
+        std::string hiEq = p + "_hieq_";
+        std::string loLt = p + "_lolt_";
+        codegen.Emit("MaskReg " + hiLt + ";");
+        codegen.Emit("MaskReg " + hiEq + ";");
+        codegen.Emit("MaskReg " + loLt + ";");
+        if (srcDt == DataType::INT64) {
+            codegen.Emit("vcmp_lt(" + hiLt + ", (RegTensor<int32_t>&)" + hiS + ", (RegTensor<int32_t>&)" + hiScalar +
+                         ", " + allM + ");");
+            codegen.Emit("vcmp_eq(" + hiEq + ", (RegTensor<int32_t>&)" + hiS + ", (RegTensor<int32_t>&)" + hiScalar +
+                         ", " + allM + ");");
         } else {
-            codegen.Emit("vcmp_lt(" + hi_lt + ", " + hi_s + ", " + hi_scalar + ", " + all_m + ");");
-            codegen.Emit("vcmp_eq(" + hi_eq + ", " + hi_s + ", " + hi_scalar + ", " + all_m + ");");
+            codegen.Emit("vcmp_lt(" + hiLt + ", " + hiS + ", " + hiScalar + ", " + allM + ");");
+            codegen.Emit("vcmp_eq(" + hiEq + ", " + hiS + ", " + hiScalar + ", " + allM + ");");
         }
-        codegen.Emit("vcmp_lt(" + lo_lt + ", " + lo_s + ", " + lo_scalar + ", " + all_m + ");");
-        std::string eq_lo = p + "_eqlo_";
-        std::string s_lt = p + "_slt_";
-        codegen.Emit("MaskReg " + eq_lo + ";");
-        codegen.Emit("MaskReg " + s_lt + ";");
-        codegen.Emit("pand(" + eq_lo + ", " + hi_eq + ", " + lo_lt + ", " + all_m + ");");
-        codegen.Emit("por(" + s_lt + ", " + hi_lt + ", " + eq_lo + ", " + all_m + ");");
+        codegen.Emit("vcmp_lt(" + loLt + ", " + loS + ", " + loScalar + ", " + allM + ");");
+        std::string eqLo = p + "_eqlo_";
+        std::string sLt = p + "_slt_";
+        codegen.Emit("MaskReg " + eqLo + ";");
+        codegen.Emit("MaskReg " + sLt + ";");
+        codegen.Emit("pand(" + eqLo + ", " + hiEq + ", " + loLt + ", " + allM + ");");
+        codegen.Emit("por(" + sLt + ", " + hiLt + ", " + eqLo + ", " + allM + ");");
         // Select: min = src < scalar ? src : scalar
-        std::string lo_dst = p + "_lod_";
-        std::string hi_dst = p + "_hid_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_dst + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_dst + ";");
-        codegen.Emit("vsel(" + lo_dst + ", " + lo_s + ", " + lo_scalar + ", " + s_lt + ");");
-        codegen.Emit("vsel(" + hi_dst + ", " + hi_s + ", " + hi_scalar + ", " + s_lt + ");");
-        EmitB64Interleave(codegen, dst, lo_dst, hi_dst, p + "_ilv");
+        std::string loDst = p + "_lod_";
+        std::string hiDst = p + "_hid_";
+        codegen.Emit("RegTensor<uint32_t> " + loDst + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiDst + ";");
+        codegen.Emit("vsel(" + loDst + ", " + loS + ", " + loScalar + ", " + sLt + ");");
+        codegen.Emit("vsel(" + hiDst + ", " + hiS + ", " + hiScalar + ", " + sLt + ");");
+        EmitB64Interleave(codegen, dst, loDst, hiDst, p + "_ilv");
         EmitB64Zeroing(codegen, dst, dst, mask, p + "_zero");
     } else {
-        codegen.Emit("vmins(" + dst + ", " + src + ", " + scalar_str + ", " + mask + ", " + mode + ");");
+        codegen.Emit("vmins(" + dst + ", " + src + ", " + scalarStr + ", " + mask + ", " + mode + ");");
     }
     return "";
 }
@@ -3259,80 +3253,80 @@ static std::string EmitVFMins(const ir::CallPtr& op, codegen::CodegenBase& codeg
 // Maxs — vmaxs (scalar maximum)
 // ============================================================================
 
-static std::string EmitVFMaxs(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMaxs(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.maxs requires 4 args (dst, src, scalar, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(src_dt) || src_dt == DataType::FP16 ||
-                                                    src_dt == DataType::FP32 || src_dt == DataType::BF16))
-        << "vf.maxs src only supports supported types, got " << DTypeStr(src_dt);
-    DataType scalar_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (scalar_dt.IsInt() || scalar_dt == DataType::FP16 ||
-                                                    scalar_dt == DataType::FP32 || scalar_dt == DataType::BF16))
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(srcDt) || srcDt == DataType::FP16 ||
+                                                    srcDt == DataType::FP32 || srcDt == DataType::BF16))
+        << "vf.maxs src only supports supported types, got " << DTypeStr(srcDt);
+    DataType scalarDt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (scalarDt.IsInt() || scalarDt == DataType::FP16 ||
+                                                    scalarDt == DataType::FP32 || scalarDt == DataType::BF16))
         << "vf.maxs scalar only supports INT8/UINT8/INT16/UINT16/INT32/UINT32/INT64/UINT64/FP16/FP32/BF16, got "
-        << DTypeStr(scalar_dt);
-    DataType vf_maxs_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_maxs_dst_dt)
-        << "vf.maxs requires src and dst to have the same type, got dst=" << DTypeStr(vf_maxs_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+        << DTypeStr(scalarDt);
+    DataType vfMaxsDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfMaxsDstDt)
+        << "vf.maxs requires src and dst to have the same type, got dst=" << DTypeStr(vfMaxsDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
-    std::string scalar_str = codegen.GetExprAsCode(op->args_[2]);
+    std::string scalarStr = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.maxs");
-    scalar_str = cce::CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
-    if (src_dt.GetBit() == 64) {
+    scalarStr = cce::CoerceScalarToInt(op->args_[2], srcDt, scalarStr);
+    if (srcDt.GetBit() == 64) {
         // B64 maxs: max(src, scalar) via deinterleave + scalar compare + vsel + interleave.
         std::string p = dst + "_maxs_";
         EmitB64Deinterleave(codegen, p + "s", src);
-        std::string lo_s = p + "s_lo_", hi_s = p + "s_hi_";
-        std::string all_m = p + "_allm_";
-        codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
-        std::string cast_type = (src_dt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
-        std::string lo_scalar = p + "_losc_";
-        std::string hi_scalar = p + "_hisc_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_scalar + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_scalar + ";");
-        codegen.Emit("vdup(" + lo_scalar + ", (int32_t)(" + cast_type + "(" + scalar_str + ")), " + all_m +
+        std::string loS = p + "s_lo_", hiS = p + "s_hi_";
+        std::string allM = p + "_allm_";
+        codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
+        std::string castType = (srcDt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
+        std::string loScalar = p + "_losc_";
+        std::string hiScalar = p + "_hisc_";
+        codegen.Emit("RegTensor<uint32_t> " + loScalar + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiScalar + ";");
+        codegen.Emit("vdup(" + loScalar + ", (int32_t)(" + castType + "(" + scalarStr + ")), " + allM +
                      ", MODE_ZEROING);");
-        codegen.Emit("vdup(" + hi_scalar + ", (int32_t)((" + cast_type + "(" + scalar_str + ")) >> 32), " + all_m +
+        codegen.Emit("vdup(" + hiScalar + ", (int32_t)((" + castType + "(" + scalarStr + ")) >> 32), " + allM +
                      ", MODE_ZEROING);");
         // Compare: src > scalar → pick src, else pick scalar
-        std::string hi_gt = p + "_higt_";
-        std::string hi_eq = p + "_hieq_";
-        std::string lo_gt = p + "_logt_";
-        codegen.Emit("MaskReg " + hi_gt + ";");
-        codegen.Emit("MaskReg " + hi_eq + ";");
-        codegen.Emit("MaskReg " + lo_gt + ";");
-        if (src_dt == DataType::INT64) {
-            codegen.Emit("vcmp_gt(" + hi_gt + ", (RegTensor<int32_t>&)" + hi_s + ", (RegTensor<int32_t>&)" + hi_scalar +
-                         ", " + all_m + ");");
-            codegen.Emit("vcmp_eq(" + hi_eq + ", (RegTensor<int32_t>&)" + hi_s + ", (RegTensor<int32_t>&)" + hi_scalar +
-                         ", " + all_m + ");");
+        std::string hiGt = p + "_higt_";
+        std::string hiEq = p + "_hieq_";
+        std::string loGt = p + "_logt_";
+        codegen.Emit("MaskReg " + hiGt + ";");
+        codegen.Emit("MaskReg " + hiEq + ";");
+        codegen.Emit("MaskReg " + loGt + ";");
+        if (srcDt == DataType::INT64) {
+            codegen.Emit("vcmp_gt(" + hiGt + ", (RegTensor<int32_t>&)" + hiS + ", (RegTensor<int32_t>&)" + hiScalar +
+                         ", " + allM + ");");
+            codegen.Emit("vcmp_eq(" + hiEq + ", (RegTensor<int32_t>&)" + hiS + ", (RegTensor<int32_t>&)" + hiScalar +
+                         ", " + allM + ");");
         } else {
-            codegen.Emit("vcmp_gt(" + hi_gt + ", " + hi_s + ", " + hi_scalar + ", " + all_m + ");");
-            codegen.Emit("vcmp_eq(" + hi_eq + ", " + hi_s + ", " + hi_scalar + ", " + all_m + ");");
+            codegen.Emit("vcmp_gt(" + hiGt + ", " + hiS + ", " + hiScalar + ", " + allM + ");");
+            codegen.Emit("vcmp_eq(" + hiEq + ", " + hiS + ", " + hiScalar + ", " + allM + ");");
         }
-        codegen.Emit("vcmp_gt(" + lo_gt + ", " + lo_s + ", " + lo_scalar + ", " + all_m + ");");
-        std::string eq_lo = p + "_eqlo_";
-        std::string s_gt = p + "_sgt_";
-        codegen.Emit("MaskReg " + eq_lo + ";");
-        codegen.Emit("MaskReg " + s_gt + ";");
-        codegen.Emit("pand(" + eq_lo + ", " + hi_eq + ", " + lo_gt + ", " + all_m + ");");
-        codegen.Emit("por(" + s_gt + ", " + hi_gt + ", " + eq_lo + ", " + all_m + ");");
+        codegen.Emit("vcmp_gt(" + loGt + ", " + loS + ", " + loScalar + ", " + allM + ");");
+        std::string eqLo = p + "_eqlo_";
+        std::string sGt = p + "_sgt_";
+        codegen.Emit("MaskReg " + eqLo + ";");
+        codegen.Emit("MaskReg " + sGt + ";");
+        codegen.Emit("pand(" + eqLo + ", " + hiEq + ", " + loGt + ", " + allM + ");");
+        codegen.Emit("por(" + sGt + ", " + hiGt + ", " + eqLo + ", " + allM + ");");
         // Select: max = src > scalar ? src : scalar
-        std::string lo_dst = p + "_lod_";
-        std::string hi_dst = p + "_hid_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_dst + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_dst + ";");
-        codegen.Emit("vsel(" + lo_dst + ", " + lo_s + ", " + lo_scalar + ", " + s_gt + ");");
-        codegen.Emit("vsel(" + hi_dst + ", " + hi_s + ", " + hi_scalar + ", " + s_gt + ");");
-        EmitB64Interleave(codegen, dst, lo_dst, hi_dst, p + "_ilv");
+        std::string loDst = p + "_lod_";
+        std::string hiDst = p + "_hid_";
+        codegen.Emit("RegTensor<uint32_t> " + loDst + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiDst + ";");
+        codegen.Emit("vsel(" + loDst + ", " + loS + ", " + loScalar + ", " + sGt + ");");
+        codegen.Emit("vsel(" + hiDst + ", " + hiS + ", " + hiScalar + ", " + sGt + ");");
+        EmitB64Interleave(codegen, dst, loDst, hiDst, p + "_ilv");
         EmitB64Zeroing(codegen, dst, dst, mask, p + "_zero");
     } else {
-        codegen.Emit("vmaxs(" + dst + ", " + src + ", " + scalar_str + ", " + mask + ", " + mode + ");");
+        codegen.Emit("vmaxs(" + dst + ", " + src + ", " + scalarStr + ", " + mask + ", " + mode + ");");
     }
     return "";
 }
@@ -3341,25 +3335,25 @@ static std::string EmitVFMaxs(const ir::CallPtr& op, codegen::CodegenBase& codeg
 // LeakyRelu — vlrelu
 // ============================================================================
 
-static std::string EmitVFLeakyRelu(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFLeakyRelu(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.leaky_relu requires 4 args (dst, src, alpha, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.leaky_relu src only supports supported types, got " << DTypeStr(src_dt);
-    DataType alpha_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (alpha_dt == DataType::FP16 || alpha_dt == DataType::FP32))
-        << "vf.leaky_relu scalar only supports FP16/FP32, got " << DTypeStr(alpha_dt);
-    DataType vf_leaky_relu_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_leaky_relu_dst_dt)
-        << "vf.leaky_relu requires src and dst to have the same type, got dst=" << DTypeStr(vf_leaky_relu_dst_dt)
-        << " src=" << DTypeStr(src_dt);
-    DataType lrelu_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == lrelu_dst_dt)
-        << "vf.leaky_relu requires src and dst to have the same type, got dst=" << DTypeStr(lrelu_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.leaky_relu src only supports supported types, got " << DTypeStr(srcDt);
+    DataType alphaDt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (alphaDt == DataType::FP16 || alphaDt == DataType::FP32))
+        << "vf.leaky_relu scalar only supports FP16/FP32, got " << DTypeStr(alphaDt);
+    DataType vfLeakyReluDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfLeakyReluDstDt)
+        << "vf.leaky_relu requires src and dst to have the same type, got dst=" << DTypeStr(vfLeakyReluDstDt)
+        << " src=" << DTypeStr(srcDt);
+    DataType lreluDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == lreluDstDt)
+        << "vf.leaky_relu requires src and dst to have the same type, got dst=" << DTypeStr(lreluDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string alpha = codegen.GetExprAsCode(op->args_[2]);
@@ -3373,9 +3367,9 @@ static std::string EmitVFLeakyRelu(const ir::CallPtr& op, codegen::CodegenBase& 
 // Interleave — vintlv
 // ============================================================================
 
-static std::string EmitVFInterleave(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFInterleave(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.interleave requires 4 args (dst0, dst1, src0, src1)";
     std::string dst0 = codegen.GetExprAsCode(op->args_[0]);
@@ -3391,31 +3385,31 @@ static std::string EmitVFInterleave(const ir::CallPtr& op, codegen::CodegenBase&
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
                           dtype.GetBit() == 8 || dtype.GetBit() == 16 || dtype.GetBit() == 32)
             << "vf.interleave (MaskReg) only supports b8/b16/b32, got " << DTypeStr(dtype);
-        std::string pintlv_op;
+        std::string pintlvOp;
         if (dtype == DataType::UINT8 || dtype == DataType::INT8) {
-            pintlv_op = "pintlv_b8";
+            pintlvOp = "pintlv_b8";
         } else if (dtype.GetBit() == 16) {
-            pintlv_op = "pintlv_b16";
+            pintlvOp = "pintlv_b16";
         } else {
-            pintlv_op = "pintlv_b32";
+            pintlvOp = "pintlv_b32";
         }
-        codegen.Emit(pintlv_op + "(" + dst0 + ", " + dst1 + ", " + src0 + ", " + src1 + ");");
+        codegen.Emit(pintlvOp + "(" + dst0 + ", " + dst1 + ", " + src0 + ", " + src1 + ");");
         return "";
     }
     // vintlv requires src0/src1 to be b8/b16/b32/b64
-    DataType src0_dt = GetExprDtype(op->args_[2]);
-    DataType src1_dt = GetExprDtype(op->args_[3]);
+    DataType src0Dt = GetExprDtype(op->args_[2]);
+    DataType src1Dt = GetExprDtype(op->args_[3]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (IsB8Type(src0_dt) || src0_dt.GetBit() == 16 || src0_dt.GetBit() == 32 || src0_dt.GetBit() == 64))
-        << "vf.interleave only supports b8/b16/b32/b64 types, got " << DTypeStr(src0_dt);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src0_dt == src1_dt))
-        << "vf.interleave requires src0 and src1 to have the same type, got src0=" << DTypeStr(src0_dt)
-        << " src1=" << DTypeStr(src1_dt);
-    DataType dst0_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src0_dt == dst0_dt)
-        << "vf.interleave requires src and dst to have the same type, got dst=" << DTypeStr(dst0_dt)
-        << " src=" << DTypeStr(src0_dt);
-    if (src0_dt.GetBit() == 64) {
+                      (IsB8Type(src0Dt) || src0Dt.GetBit() == 16 || src0Dt.GetBit() == 32 || src0Dt.GetBit() == 64))
+        << "vf.interleave only supports b8/b16/b32/b64 types, got " << DTypeStr(src0Dt);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src0Dt == src1Dt))
+        << "vf.interleave requires src0 and src1 to have the same type, got src0=" << DTypeStr(src0Dt)
+        << " src1=" << DTypeStr(src1Dt);
+    DataType dst0Dt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src0Dt == dst0Dt)
+        << "vf.interleave requires src and dst to have the same type, got dst=" << DTypeStr(dst0Dt)
+        << " src=" << DTypeStr(src0Dt);
+    if (src0Dt.GetBit() == 64) {
         codegen.Emit("vintlv((RegTensor<uint32_t>&)" + dst0 + ", (RegTensor<uint32_t>&)" + dst1 +
                      ", (RegTensor<uint32_t>&)" + src0 + ", (RegTensor<uint32_t>&)" + src1 + ");");
     } else {
@@ -3428,18 +3422,18 @@ static std::string EmitVFInterleave(const ir::CallPtr& op, codegen::CodegenBase&
 // PairReduceSum — vcpadd
 // ============================================================================
 
-static std::string EmitVFPairReduceSum(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFPairReduceSum(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.pair_reduce_sum requires 3 args (dst, src, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.pair_reduce_sum src only supports FP16/FP32, got " << DTypeStr(src_dt);
-    DataType prs_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == prs_dst_dt)
-        << "vf.pair_reduce_sum requires src and dst to have the same type, got dst=" << DTypeStr(prs_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.pair_reduce_sum src only supports FP16/FP32, got " << DTypeStr(srcDt);
+    DataType prsDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == prsDstDt)
+        << "vf.pair_reduce_sum requires src and dst to have the same type, got dst=" << DTypeStr(prsDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
@@ -3452,35 +3446,35 @@ static std::string EmitVFPairReduceSum(const ir::CallPtr& op, codegen::CodegenBa
 // AbsSub — vabsdif (absolute difference: |src0 - src1|)
 // ============================================================================
 
-static std::string EmitVFAbsSub(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFAbsSub(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.abs_sub requires 4 args (dst, src0, src1, mask)";
-    DataType s0_dt = GetExprDtype(op->args_[1]);
+    DataType s0Dt = GetExprDtype(op->args_[1]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (s0_dt == DataType::FP16 || s0_dt == DataType::FP32 || s0_dt == DataType::INT64))
-        << "vf.abs_sub src0 only supports FP16/FP32/INT64, got " << DTypeStr(s0_dt);
-    DataType s1_dt = GetExprDtype(op->args_[2]);
+                      (s0Dt == DataType::FP16 || s0Dt == DataType::FP32 || s0Dt == DataType::INT64))
+        << "vf.abs_sub src0 only supports FP16/FP32/INT64, got " << DTypeStr(s0Dt);
+    DataType s1Dt = GetExprDtype(op->args_[2]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (s1_dt == DataType::FP16 || s1_dt == DataType::FP32 || s1_dt == DataType::INT64))
-        << "vf.abs_sub src1 only supports FP16/FP32/INT64, got " << DTypeStr(s1_dt);
-    DataType vf_abs_sub_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0_dt == vf_abs_sub_dst_dt && s1_dt == vf_abs_sub_dst_dt)
-        << "vf.abs_sub requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vf_abs_sub_dst_dt)
-        << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
+                      (s1Dt == DataType::FP16 || s1Dt == DataType::FP32 || s1Dt == DataType::INT64))
+        << "vf.abs_sub src1 only supports FP16/FP32/INT64, got " << DTypeStr(s1Dt);
+    DataType vfAbsSubDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0Dt == vfAbsSubDstDt && s1Dt == vfAbsSubDstDt)
+        << "vf.abs_sub requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vfAbsSubDstDt)
+        << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.abs_sub");
-    if (s0_dt == DataType::INT64) {
+    if (s0Dt == DataType::INT64) {
         // B64 abs_sub: |src0 - src1| = abs(vsub(src0, src1)).
         // vsub has no b64 single-register overload; use deinterleave + vsub/vsubc
         // borrow-chain (mirrors AscendC SubB64Impl for int64_t).
         std::string p = dst + "_abssub_";
-        std::string diff_m = p + "_diffm_";
-        codegen.Emit("MaskReg " + diff_m + " = pset_b32(PAT_ALL);");
+        std::string diffM = p + "_diffm_";
+        codegen.Emit("MaskReg " + diffM + " = pset_b32(PAT_ALL);");
         // Deinterleave both sources to b32 low/high halves
         EmitB64Deinterleave(codegen, p + "s0", src0);
         EmitB64Deinterleave(codegen, p + "s1", src1);
@@ -3488,49 +3482,49 @@ static std::string EmitVFAbsSub(const ir::CallPtr& op, codegen::CodegenBase& cod
         std::string lo1 = p + "s1_lo_", hi1 = p + "s1_hi_";
         // Sub with borrow: diff_lo = src0_lo - src1_lo, borrow = (src0_lo < src1_lo)
         std::string borrow = p + "_borrow_";
-        std::string lo_d = p + "_dl_";
-        std::string hi_d = p + "_dh_";
+        std::string loD = p + "_dl_";
+        std::string hiD = p + "_dh_";
         codegen.Emit("MaskReg " + borrow + ";");
-        codegen.Emit("RegTensor<int32_t> " + lo_d + ";");
-        codegen.Emit("RegTensor<int32_t> " + hi_d + ";");
-        codegen.Emit("vsubc(" + borrow + ", " + lo_d + ", (RegTensor<int32_t>&)" + lo0 + ", (RegTensor<int32_t>&)" +
-                     lo1 + ", " + diff_m + ");");
-        codegen.Emit("vsubcs(" + borrow + ", " + hi_d + ", (RegTensor<int32_t>&)" + hi0 + ", (RegTensor<int32_t>&)" +
-                     hi1 + ", " + borrow + ", " + diff_m + ");");
+        codegen.Emit("RegTensor<int32_t> " + loD + ";");
+        codegen.Emit("RegTensor<int32_t> " + hiD + ";");
+        codegen.Emit("vsubc(" + borrow + ", " + loD + ", (RegTensor<int32_t>&)" + lo0 + ", (RegTensor<int32_t>&)" +
+                     lo1 + ", " + diffM + ");");
+        codegen.Emit("vsubcs(" + borrow + ", " + hiD + ", (RegTensor<int32_t>&)" + hi0 + ", (RegTensor<int32_t>&)" +
+                     hi1 + ", " + borrow + ", " + diffM + ");");
         // Now diff = {lo_d, hi_d}. Compute abs via sign check + negate.
-        std::string all_m = p + "_allm_";
-        codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
+        std::string allM = p + "_allm_";
+        codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
         // Zero register (vbr equivalent)
-        std::string zero_reg = p + "_zero_";
-        codegen.Emit("RegTensor<int32_t> " + zero_reg + ";");
-        codegen.Emit("vdup(" + zero_reg + ", 0, " + all_m + ", MODE_ZEROING);");
+        std::string zeroReg = p + "_zero_";
+        codegen.Emit("RegTensor<int32_t> " + zeroReg + ";");
+        codegen.Emit("vdup(" + zeroReg + ", 0, " + allM + ", MODE_ZEROING);");
         // Sign mask: hi_d < 0 (signed)
-        std::string sign_m = p + "_sign_";
-        codegen.Emit("MaskReg " + sign_m + ";");
-        codegen.Emit("vcmp_lt(" + sign_m + ", (RegTensor<int32_t>&)" + hi_d + ", (RegTensor<int32_t>&)" + zero_reg +
-                     ", " + all_m + ");");
+        std::string signM = p + "_sign_";
+        codegen.Emit("MaskReg " + signM + ";");
+        codegen.Emit("vcmp_lt(" + signM + ", (RegTensor<int32_t>&)" + hiD + ", (RegTensor<int32_t>&)" + zeroReg + ", " +
+                     allM + ");");
         // Negate via borrow-chain sub: neg = 0 - diff
         // vsubc: borrow = (0 < lo_d), neg_lo = 0 - lo_d
         // vsubcs: neg_hi = 0 - hi_d - borrow
         std::string borrow2 = p + "_borrow2_";
-        std::string lo_n = p + "_nlo_";
-        std::string hi_n = p + "_nhi_";
+        std::string loN = p + "_nlo_";
+        std::string hiN = p + "_nhi_";
         codegen.Emit("MaskReg " + borrow2 + ";");
-        codegen.Emit("RegTensor<int32_t> " + lo_n + ";");
-        codegen.Emit("RegTensor<int32_t> " + hi_n + ";");
-        codegen.Emit("vsubc(" + borrow2 + ", " + lo_n + ", " + zero_reg + ", (RegTensor<int32_t>&)" + lo_d + ", " +
-                     sign_m + ");");
-        codegen.Emit("vsubcs(" + borrow2 + ", " + hi_n + ", " + zero_reg + ", (RegTensor<int32_t>&)" + hi_d + ", " +
-                     borrow2 + ", " + sign_m + ");");
+        codegen.Emit("RegTensor<int32_t> " + loN + ";");
+        codegen.Emit("RegTensor<int32_t> " + hiN + ";");
+        codegen.Emit("vsubc(" + borrow2 + ", " + loN + ", " + zeroReg + ", (RegTensor<int32_t>&)" + loD + ", " + signM +
+                     ");");
+        codegen.Emit("vsubcs(" + borrow2 + ", " + hiN + ", " + zeroReg + ", (RegTensor<int32_t>&)" + hiD + ", " +
+                     borrow2 + ", " + signM + ");");
         // Select: if negative -> neg, else -> diff (per b32 half)
         // All vsel operands must be the same type (int32_t).
-        std::string lo_dst = p + "_lod_";
-        std::string hi_dst = p + "_hid_";
-        codegen.Emit("RegTensor<int32_t> " + lo_dst + ";");
-        codegen.Emit("RegTensor<int32_t> " + hi_dst + ";");
-        codegen.Emit("vsel(" + lo_dst + ", " + lo_n + ", (RegTensor<int32_t>&)" + lo_d + ", " + sign_m + ");");
-        codegen.Emit("vsel(" + hi_dst + ", " + hi_n + ", (RegTensor<int32_t>&)" + hi_d + ", " + sign_m + ");");
-        EmitB64Interleave(codegen, dst, lo_dst, hi_dst, p + "_ilv");
+        std::string loDst = p + "_lod_";
+        std::string hiDst = p + "_hid_";
+        codegen.Emit("RegTensor<int32_t> " + loDst + ";");
+        codegen.Emit("RegTensor<int32_t> " + hiDst + ";");
+        codegen.Emit("vsel(" + loDst + ", " + loN + ", (RegTensor<int32_t>&)" + loD + ", " + signM + ");");
+        codegen.Emit("vsel(" + hiDst + ", " + hiN + ", (RegTensor<int32_t>&)" + hiD + ", " + signM + ");");
+        EmitB64Interleave(codegen, dst, loDst, hiDst, p + "_ilv");
         EmitB64Zeroing(codegen, dst, dst, mask, p + "_zero");
     } else {
         codegen.Emit("vabsdif(" + dst + ", " + src0 + ", " + src1 + ", " + mask + ", " + mode + ");");
@@ -3542,87 +3536,86 @@ static std::string EmitVFAbsSub(const ir::CallPtr& op, codegen::CodegenBase& cod
 // Axpy — vaxpy (accumulate: dst = src * scalar + dst)
 // ============================================================================
 
-static std::string EmitVFAxpy(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFAxpy(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.axpy requires 4 args (dst, src, scalar, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src_dt == DataType::FP16 || src_dt == DataType::FP32 ||
-                                                    src_dt == DataType::INT64 || src_dt == DataType::UINT64))
-        << "vf.axpy src only supports FP16/FP32/INT64/UINT64, got " << DTypeStr(src_dt);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (srcDt == DataType::FP16 || srcDt == DataType::FP32 ||
+                                                    srcDt == DataType::INT64 || srcDt == DataType::UINT64))
+        << "vf.axpy src only supports FP16/FP32/INT64/UINT64, got " << DTypeStr(srcDt);
     // vaxpy supports half/float/uint64_t/int64_t
-    DataType scalar_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalar_dt == DataType::FP16 || scalar_dt == DataType::FP32 ||
-                                                       scalar_dt == DataType::UINT64 || scalar_dt == DataType::INT64 ||
-                                                       scalar_dt == DataType::INDEX)
-        << "vf.axpy scalar only supports FP16/FP32/UINT64/INT64, got " << DTypeStr(scalar_dt);
-    DataType vf_axpy_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_axpy_dst_dt)
-        << "vf.axpy requires src and dst to have the same type, got dst=" << DTypeStr(vf_axpy_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+    DataType scalarDt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalarDt == DataType::FP16 || scalarDt == DataType::FP32 ||
+                                                       scalarDt == DataType::UINT64 || scalarDt == DataType::INT64 ||
+                                                       scalarDt == DataType::INDEX)
+        << "vf.axpy scalar only supports FP16/FP32/UINT64/INT64, got " << DTypeStr(scalarDt);
+    DataType vfAxpyDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfAxpyDstDt)
+        << "vf.axpy requires src and dst to have the same type, got dst=" << DTypeStr(vfAxpyDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
-    std::string scalar_str = codegen.GetExprAsCode(op->args_[2]);
+    std::string scalarStr = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     std::string mode = VFZeroingOnly(op, "vf.axpy");
-    scalar_str = cce::CoerceScalarToInt(op->args_[2], src_dt, scalar_str);
-    if (src_dt == DataType::INT64 || src_dt == DataType::UINT64) {
+    scalarStr = cce::CoerceScalarToInt(op->args_[2], srcDt, scalarStr);
+    if (srcDt == DataType::INT64 || srcDt == DataType::UINT64) {
         // B64 Axpy: dst = src * scalar + dst → Muls (Duplicate + MulB64Impl) + Add (AddB64Impl).
         // Mirrors AscendC AxpyImpl for b64.
         std::string p = dst + "_axpy_";
-        std::string cast_type = (src_dt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
+        std::string castType = (srcDt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
         // AscendC MulB64Impl: vmull always uses uint32_t (unsigned 32x32→64);
         // vmula uses int32_t for int64_t (signed cross-term), uint32_t for uint64_t.
-        std::string vmull_cast = "(RegTensor<uint32_t>&)";
-        std::string vmula_cast = (src_dt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
-        std::string b32_cast = (src_dt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
+        std::string vmullCast = "(RegTensor<uint32_t>&)";
+        std::string vmulaCast = (srcDt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
+        std::string b32Cast = (srcDt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
         // 1. Pack b64 mask to b32 (mirrors MaskPack in CalTraitOneByTransToTraitTwo)
-        std::string packed_m = p + "_pm_";
-        codegen.Emit("MaskReg " + packed_m + ";");
-        codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
+        std::string packedM = p + "_pm_";
+        codegen.Emit("MaskReg " + packedM + ";");
+        codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
         // 2. Broadcast scalar as b32 halves (mirrors DuplicateB64Impl)
-        std::string all_m = p + "_allm_";
-        codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
-        std::string lo_sc = p + "_losc_";
-        std::string hi_sc = p + "_hisc_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_sc + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_sc + ";");
-        codegen.Emit("vdup(" + lo_sc + ", (int32_t)(" + cast_type + "(" + scalar_str + ")), " + all_m +
-                     ", MODE_ZEROING);");
-        codegen.Emit("vdup(" + hi_sc + ", (int32_t)((" + cast_type + "(" + scalar_str + ")) >> 32), " + all_m +
+        std::string allM = p + "_allm_";
+        codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
+        std::string loSc = p + "_losc_";
+        std::string hiSc = p + "_hisc_";
+        codegen.Emit("RegTensor<uint32_t> " + loSc + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiSc + ";");
+        codegen.Emit("vdup(" + loSc + ", (int32_t)(" + castType + "(" + scalarStr + ")), " + allM + ", MODE_ZEROING);");
+        codegen.Emit("vdup(" + hiSc + ", (int32_t)((" + castType + "(" + scalarStr + ")) >> 32), " + allM +
                      ", MODE_ZEROING);");
         // 3. Deinterleave src
         EmitB64Deinterleave(codegen, p + "s", src);
-        std::string lo_s = p + "s_lo_", hi_s = p + "s_hi_";
+        std::string loS = p + "s_lo_", hiS = p + "s_hi_";
         // 4. MulB64: vmull + vmula (32×32→64 long multiply)
-        std::string mul_lo = p + "_mul_lo_";
-        std::string mul_hi = p + "_mul_hi_";
-        codegen.Emit("RegTensor<uint32_t> " + mul_lo + ";");
-        codegen.Emit("RegTensor<uint32_t> " + mul_hi + ";");
-        codegen.Emit("vmull(" + vmull_cast + mul_lo + ", " + vmull_cast + mul_hi + ", " + vmull_cast + lo_s + ", " +
-                     vmull_cast + lo_sc + ", " + packed_m + ");");
-        codegen.Emit("vmula(" + vmula_cast + mul_hi + ", " + vmula_cast + lo_s + ", " + vmula_cast + hi_sc + ", " +
-                     packed_m + ", MODE_ZEROING);");
-        codegen.Emit("vmula(" + vmula_cast + mul_hi + ", " + vmula_cast + hi_s + ", " + vmula_cast + lo_sc + ", " +
-                     packed_m + ", MODE_ZEROING);");
+        std::string mulLo = p + "_mul_lo_";
+        std::string mulHi = p + "_mul_hi_";
+        codegen.Emit("RegTensor<uint32_t> " + mulLo + ";");
+        codegen.Emit("RegTensor<uint32_t> " + mulHi + ";");
+        codegen.Emit("vmull(" + vmullCast + mulLo + ", " + vmullCast + mulHi + ", " + vmullCast + loS + ", " +
+                     vmullCast + loSc + ", " + packedM + ");");
+        codegen.Emit("vmula(" + vmulaCast + mulHi + ", " + vmulaCast + loS + ", " + vmulaCast + hiSc + ", " + packedM +
+                     ", MODE_ZEROING);");
+        codegen.Emit("vmula(" + vmulaCast + mulHi + ", " + vmulaCast + hiS + ", " + vmulaCast + loSc + ", " + packedM +
+                     ", MODE_ZEROING);");
         // 5. Deinterleave dst (for AddB64: dst = mul_result + dst)
         EmitB64Deinterleave(codegen, p + "d", dst);
-        std::string lo_d = p + "d_lo_", hi_d = p + "d_hi_";
+        std::string loD = p + "d_lo_", hiD = p + "d_hi_";
         // 6. AddB64: vaddc + vaddcs (carry-chain add, using packed b32 mask)
         std::string carry = p + "_carry_";
-        std::string add_lo = p + "_add_lo_";
-        std::string add_hi = p + "_add_hi_";
+        std::string addLo = p + "_add_lo_";
+        std::string addHi = p + "_add_hi_";
         codegen.Emit("MaskReg " + carry + ";");
-        codegen.Emit("RegTensor<uint32_t> " + add_lo + ";");
-        codegen.Emit("RegTensor<uint32_t> " + add_hi + ";");
-        codegen.Emit("vaddc(" + carry + ", " + b32_cast + add_lo + ", " + b32_cast + mul_lo + ", " + b32_cast + lo_d +
-                     ", " + packed_m + ");");
-        codegen.Emit("vaddcs(" + carry + ", " + b32_cast + add_hi + ", " + b32_cast + mul_hi + ", " + b32_cast + hi_d +
-                     ", " + carry + ", " + packed_m + ");");
-        EmitB64Interleave(codegen, dst, add_lo, add_hi, p + "_ilv");
+        codegen.Emit("RegTensor<uint32_t> " + addLo + ";");
+        codegen.Emit("RegTensor<uint32_t> " + addHi + ";");
+        codegen.Emit("vaddc(" + carry + ", " + b32Cast + addLo + ", " + b32Cast + mulLo + ", " + b32Cast + loD + ", " +
+                     packedM + ");");
+        codegen.Emit("vaddcs(" + carry + ", " + b32Cast + addHi + ", " + b32Cast + mulHi + ", " + b32Cast + hiD + ", " +
+                     carry + ", " + packedM + ");");
+        EmitB64Interleave(codegen, dst, addLo, addHi, p + "_ilv");
     } else {
-        codegen.Emit("vaxpy(" + dst + ", " + src + ", " + scalar_str + ", " + mask + ", " + mode + ");");
+        codegen.Emit("vaxpy(" + dst + ", " + src + ", " + scalarStr + ", " + mask + ", " + mode + ");");
     }
     return "";
 }
@@ -3631,23 +3624,23 @@ static std::string EmitVFAxpy(const ir::CallPtr& op, codegen::CodegenBase& codeg
 // Madd — vmadd (multiply-accumulate: dst = src0 * src1 + dst)
 // ============================================================================
 
-static std::string EmitVFMulDstAdd(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMulDstAdd(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.mul_dst_add requires 4 args (dst, src0, src1, mask)";
-    DataType s0_dt = GetExprDtype(op->args_[1]);
+    DataType s0Dt = GetExprDtype(op->args_[1]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (s0_dt == DataType::FP16 || s0_dt == DataType::FP32 || s0_dt == DataType::BF16))
-        << "vf.mul_dst_add src0 only supports FP16/FP32/BF16, got " << DTypeStr(s0_dt);
-    DataType s1_dt = GetExprDtype(op->args_[2]);
+                      (s0Dt == DataType::FP16 || s0Dt == DataType::FP32 || s0Dt == DataType::BF16))
+        << "vf.mul_dst_add src0 only supports FP16/FP32/BF16, got " << DTypeStr(s0Dt);
+    DataType s1Dt = GetExprDtype(op->args_[2]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (s1_dt == DataType::FP16 || s1_dt == DataType::FP32 || s1_dt == DataType::BF16))
-        << "vf.mul_dst_add src1 only supports FP16/FP32/BF16, got " << DTypeStr(s1_dt);
-    DataType vf_mul_dst_add_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0_dt == vf_mul_dst_add_dst_dt && s1_dt == vf_mul_dst_add_dst_dt)
-        << "vf.mul_dst_add requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vf_mul_dst_add_dst_dt)
-        << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
+                      (s1Dt == DataType::FP16 || s1Dt == DataType::FP32 || s1Dt == DataType::BF16))
+        << "vf.mul_dst_add src1 only supports FP16/FP32/BF16, got " << DTypeStr(s1Dt);
+    DataType vfMulDstAddDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0Dt == vfMulDstAddDstDt && s1Dt == vfMulDstAddDstDt)
+        << "vf.mul_dst_add requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(vfMulDstAddDstDt)
+        << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
     // vmadd supports u16/i16/u32/i32/half/float/bf/i64/u64
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
@@ -3662,63 +3655,63 @@ static std::string EmitVFMulDstAdd(const ir::CallPtr& op, codegen::CodegenBase& 
 // Pack — vpack (narrow data type)
 // ============================================================================
 
-static std::string EmitVFPack(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFPack(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2) << "vf.pack requires 2 args (dst, src)";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string part = "LOWER";
     if (op->HasKwarg("part")) {
-        int part_val = op->GetKwarg<int>("part");
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, part_val == static_cast<int>(ir::PackPart::LOWER) ||
-                                                               part_val == static_cast<int>(ir::PackPart::UPPER))
-            << "vf.pack part must be PackPart::LOWER or PackPart::UPPER, got " << part_val;
-        part = VFEnumValueName(ir::EnumToString(static_cast<ir::PackPart>(part_val)));
+        int partVal = op->GetKwarg<int>("part");
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, partVal == static_cast<int>(ir::PackPart::LOWER) ||
+                                                               partVal == static_cast<int>(ir::PackPart::UPPER))
+            << "vf.pack part must be PackPart::LOWER or PackPart::UPPER, got " << partVal;
+        part = VFEnumValueName(ir::EnumToString(static_cast<ir::PackPart>(partVal)));
     }
     if (IsDstMaskReg(op, codegen)) {
-        std::string cce_half = (part == "LOWER" || part == "LOWEST") ? "LOWER" : "HIGHER";
-        codegen.Emit("ppack(" + dst + ", " + src + ", " + cce_half + ");");
+        std::string cceHalf = (part == "LOWER" || part == "LOWEST") ? "LOWER" : "HIGHER";
+        codegen.Emit("ppack(" + dst + ", " + src + ", " + cceHalf + ");");
         return "";
     }
 
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    DataType dst_dt = GetExprDtype(op->args_[0]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    DataType dstDt = GetExprDtype(op->args_[0]);
     // Validate (dst, src) as a pair (mirrors AscendC PackImpl SupportType
     // tuples): dst is always unsigned and half the src width; src may be
     // signed or unsigned.
     //   (UINT8, INT16|UINT16), (UINT16, INT32|UINT32), (UINT32, INT64|UINT64)
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (dst_dt == DataType::UINT8 && (src_dt == DataType::INT16 || src_dt == DataType::UINT16)) ||
-                          (dst_dt == DataType::UINT16 && (src_dt == DataType::INT32 || src_dt == DataType::UINT32)) ||
-                          (dst_dt == DataType::UINT32 && (src_dt == DataType::INT64 || src_dt == DataType::UINT64)))
+                      (dstDt == DataType::UINT8 && (srcDt == DataType::INT16 || srcDt == DataType::UINT16)) ||
+                          (dstDt == DataType::UINT16 && (srcDt == DataType::INT32 || srcDt == DataType::UINT32)) ||
+                          (dstDt == DataType::UINT32 && (srcDt == DataType::INT64 || srcDt == DataType::UINT64)))
         << "vf.pack supports UINT8<-INT16/UINT16, UINT16<-INT32/UINT32, UINT32<-INT64/UINT64 pairs, got dst="
-        << DTypeStr(dst_dt) << " src=" << DTypeStr(src_dt);
+        << DTypeStr(dstDt) << " src=" << DTypeStr(srcDt);
 
-    if (src_dt.GetBit() == 64) {
+    if (srcDt.GetBit() == 64) {
         // 64-bit source → 32-bit dst: use DeInterleave with a zero register,
         // mirroring PackImpl<..., part>(dst, src) for 8-byte src.
-        std::string part_check = (part == "LOWER" || part == "LOWEST") ? "LOWEST" : "HIGHEST";
-        std::string zero_var = dst + "_pack_zero_";
-        std::string dump_var = dst + "_pack_dump_";
-        std::string mask_var = dst + "_pack_mask_";
-        codegen.Emit("RegTensor<uint32_t> " + zero_var + ";");
-        codegen.Emit("RegTensor<uint32_t> " + dump_var + ";");
-        codegen.Emit("MaskReg " + mask_var + " = pset_b32(PAT_ALL);");
-        codegen.Emit("vdup(" + zero_var + ", 0, " + mask_var + ", MODE_ZEROING);");
-        if (part_check == "LOWEST") {
-            codegen.Emit("vdintlv((RegTensor<uint32_t>&)" + dst + ", " + dump_var + ", " + "(RegTensor<uint32_t>&)" +
-                         src + ", " + zero_var + ");");
+        std::string partCheck = (part == "LOWER" || part == "LOWEST") ? "LOWEST" : "HIGHEST";
+        std::string zeroVar = dst + "_pack_zero_";
+        std::string dumpVar = dst + "_pack_dump_";
+        std::string maskVar = dst + "_pack_mask_";
+        codegen.Emit("RegTensor<uint32_t> " + zeroVar + ";");
+        codegen.Emit("RegTensor<uint32_t> " + dumpVar + ";");
+        codegen.Emit("MaskReg " + maskVar + " = pset_b32(PAT_ALL);");
+        codegen.Emit("vdup(" + zeroVar + ", 0, " + maskVar + ", MODE_ZEROING);");
+        if (partCheck == "LOWEST") {
+            codegen.Emit("vdintlv((RegTensor<uint32_t>&)" + dst + ", " + dumpVar + ", " + "(RegTensor<uint32_t>&)" +
+                         src + ", " + zeroVar + ");");
         } else {
-            codegen.Emit("vdintlv((RegTensor<uint32_t>&)" + dst + ", " + dump_var + ", " + zero_var +
+            codegen.Emit("vdintlv((RegTensor<uint32_t>&)" + dst + ", " + dumpVar + ", " + zeroVar +
                          ", (RegTensor<uint32_t>&)" + src + ");");
         }
     } else {
         // MODE_UNKNOWN mirrors AscendC: the C API asc_pack_impl (npu_arch_3510)
         // passes MODE_UNKNOWN and Reg::PackImpl omits the mode (intrinsic
         // default), leaving the half not selected by part unspecified.
-        std::string cce_part = (part == "LOWER" || part == "LOWEST") ? "LOWER" : "HIGHER";
-        codegen.Emit("vpack(" + dst + ", " + src + ", " + cce_part + ", MODE_UNKNOWN);");
+        std::string ccePart = (part == "LOWER" || part == "LOWEST") ? "LOWER" : "HIGHER";
+        codegen.Emit("vpack(" + dst + ", " + src + ", " + ccePart + ", MODE_UNKNOWN);");
     }
     return "";
 }
@@ -3727,69 +3720,69 @@ static std::string EmitVFPack(const ir::CallPtr& op, codegen::CodegenBase& codeg
 // Unpack — vunpack (widen data type)
 // ============================================================================
 
-static std::string EmitVFUnpack(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFUnpack(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2) << "vf.unpack requires 2 args (dst, src)";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string part = "LOWER";
     if (op->HasKwarg("part")) {
-        int part_val = op->GetKwarg<int>("part");
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, part_val == static_cast<int>(ir::PackPart::LOWER) ||
-                                                               part_val == static_cast<int>(ir::PackPart::UPPER))
-            << "vf.unpack part must be PackPart::LOWER or PackPart::UPPER, got " << part_val;
-        part = VFEnumValueName(ir::EnumToString(static_cast<ir::PackPart>(part_val)));
+        int partVal = op->GetKwarg<int>("part");
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, partVal == static_cast<int>(ir::PackPart::LOWER) ||
+                                                               partVal == static_cast<int>(ir::PackPart::UPPER))
+            << "vf.unpack part must be PackPart::LOWER or PackPart::UPPER, got " << partVal;
+        part = VFEnumValueName(ir::EnumToString(static_cast<ir::PackPart>(partVal)));
     }
 
     if (IsDstMaskReg(op, codegen)) {
-        std::string cce_half = (part == "LOWER" || part == "LOWEST") ? "LOWER" : "HIGHER";
-        codegen.Emit("punpack(" + dst + ", " + src + ", " + cce_half + ");");
+        std::string cceHalf = (part == "LOWER" || part == "LOWEST") ? "LOWER" : "HIGHER";
+        codegen.Emit("punpack(" + dst + ", " + src + ", " + cceHalf + ");");
         return "";
     }
 
-    DataType dst_dt = GetExprDtype(op->args_[0]);
-    DataType src_dt = GetExprDtype(op->args_[1]);
+    DataType dstDt = GetExprDtype(op->args_[0]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
     // Validate (dst, src) as a pair (mirrors AscendC UnPackImpl SupportType
     // tuples): dst is double the src width with matching signedness. FP and
     // other types are rejected here instead of failing late in bisheng
     // compilation.
     //   (INT16, INT8), (UINT16, UINT8), (INT32, INT16),
     //   (UINT32, UINT16), (INT64, INT32), (UINT64, UINT32)
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (dst_dt == DataType::INT16 && src_dt == DataType::INT8) ||
-                                                       (dst_dt == DataType::UINT16 && src_dt == DataType::UINT8) ||
-                                                       (dst_dt == DataType::INT32 && src_dt == DataType::INT16) ||
-                                                       (dst_dt == DataType::UINT32 && src_dt == DataType::UINT16) ||
-                                                       (dst_dt == DataType::INT64 && src_dt == DataType::INT32) ||
-                                                       (dst_dt == DataType::UINT64 && src_dt == DataType::UINT32))
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (dstDt == DataType::INT16 && srcDt == DataType::INT8) ||
+                                                       (dstDt == DataType::UINT16 && srcDt == DataType::UINT8) ||
+                                                       (dstDt == DataType::INT32 && srcDt == DataType::INT16) ||
+                                                       (dstDt == DataType::UINT32 && srcDt == DataType::UINT16) ||
+                                                       (dstDt == DataType::INT64 && srcDt == DataType::INT32) ||
+                                                       (dstDt == DataType::UINT64 && srcDt == DataType::UINT32))
         << "vf.unpack supports INT16<-INT8, UINT16<-UINT8, INT32<-INT16, UINT32<-UINT16, INT64<-INT32, "
            "UINT64<-UINT32 pairs, got dst="
-        << DTypeStr(dst_dt) << " src=" << DTypeStr(src_dt);
+        << DTypeStr(dstDt) << " src=" << DTypeStr(srcDt);
 
-    if (dst_dt.GetBit() == 64) {
-        std::string src_ctype = src_dt.ToCTypeString();
-        std::string part_check = (part == "LOWER" || part == "LOWEST") ? "LOWEST" : "HIGHEST";
-        std::string pad_var = dst + "_unpack_pad_";
-        std::string dump_var = dst + "_unpack_dump_";
-        std::string mask_var = dst + "_unpack_mask_";
-        codegen.Emit("RegTensor<" + src_ctype + "> " + pad_var + ";");
-        codegen.Emit("RegTensor<" + src_ctype + "> " + dump_var + ";");
-        codegen.Emit("MaskReg " + mask_var + " = pset_b32(PAT_ALL);");
-        if (src_dt == DataType::INT32) {
-            codegen.Emit("vshrs(" + pad_var + ", " + src + ", 31, " + mask_var + ", MODE_ZEROING);");
+    if (dstDt.GetBit() == 64) {
+        std::string srcCtype = srcDt.ToCTypeString();
+        std::string partCheck = (part == "LOWER" || part == "LOWEST") ? "LOWEST" : "HIGHEST";
+        std::string padVar = dst + "_unpack_pad_";
+        std::string dumpVar = dst + "_unpack_dump_";
+        std::string maskVar = dst + "_unpack_mask_";
+        codegen.Emit("RegTensor<" + srcCtype + "> " + padVar + ";");
+        codegen.Emit("RegTensor<" + srcCtype + "> " + dumpVar + ";");
+        codegen.Emit("MaskReg " + maskVar + " = pset_b32(PAT_ALL);");
+        if (srcDt == DataType::INT32) {
+            codegen.Emit("vshrs(" + padVar + ", " + src + ", 31, " + maskVar + ", MODE_ZEROING);");
         } else {
-            codegen.Emit("vdup(" + pad_var + ", 0, " + mask_var + ", MODE_ZEROING);");
+            codegen.Emit("vdup(" + padVar + ", 0, " + maskVar + ", MODE_ZEROING);");
         }
-        if (part_check == "LOWEST") {
-            codegen.Emit("vintlv((RegTensor<" + src_ctype + ">&)" + dst + ", " + dump_var + ", " + "(RegTensor<" +
-                         src_ctype + ">&)" + src + ", " + pad_var + ");");
+        if (partCheck == "LOWEST") {
+            codegen.Emit("vintlv((RegTensor<" + srcCtype + ">&)" + dst + ", " + dumpVar + ", " + "(RegTensor<" +
+                         srcCtype + ">&)" + src + ", " + padVar + ");");
         } else {
-            codegen.Emit("vintlv(" + dump_var + ", (RegTensor<" + src_ctype + ">&)" + dst + ", " + "(RegTensor<" +
-                         src_ctype + ">&)" + src + ", " + pad_var + ");");
+            codegen.Emit("vintlv(" + dumpVar + ", (RegTensor<" + srcCtype + ">&)" + dst + ", " + "(RegTensor<" +
+                         srcCtype + ">&)" + src + ", " + padVar + ");");
         }
     } else {
-        std::string cce_part = (part == "LOWER" || part == "LOWEST") ? "LOWER" : "HIGHER";
-        codegen.Emit("vunpack(" + dst + ", " + src + ", " + cce_part + ");");
+        std::string ccePart = (part == "LOWER" || part == "LOWEST") ? "LOWER" : "HIGHER";
+        codegen.Emit("vunpack(" + dst + ", " + src + ", " + ccePart + ");");
     }
     return "";
 }
@@ -3798,19 +3791,19 @@ static std::string EmitVFUnpack(const ir::CallPtr& op, codegen::CodegenBase& cod
 // PRelu — vprelu (parametric ReLU with per-element slope)
 // ============================================================================
 
-static std::string EmitVFPRelu(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFPRelu(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.prelu requires 4 args (dst, src, slope, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.prelu src only supports supported types, got " << DTypeStr(src_dt);
-    DataType slope_dt = GetExprDtype(op->args_[2]);
-    DataType prelu_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == prelu_dst_dt && slope_dt == prelu_dst_dt)
-        << "vf.prelu requires dst, src, slope to have the same type, got dst=" << DTypeStr(prelu_dst_dt)
-        << " src=" << DTypeStr(src_dt) << " slope=" << DTypeStr(slope_dt);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.prelu src only supports supported types, got " << DTypeStr(srcDt);
+    DataType slopeDt = GetExprDtype(op->args_[2]);
+    DataType preluDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == preluDstDt && slopeDt == preluDstDt)
+        << "vf.prelu requires dst, src, slope to have the same type, got dst=" << DTypeStr(preluDstDt)
+        << " src=" << DTypeStr(srcDt) << " slope=" << DTypeStr(slopeDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string slope = codegen.GetExprAsCode(op->args_[2]);
@@ -3835,113 +3828,112 @@ static bool ShiftAmountIsRegister(const ir::CallPtr& op, codegen::CCECodegen& co
     // Integer literals are always scalar shifts — no need to consult the registry.
     if (ir::As<ir::ConstInt>(op->args_[2]))
         return false;
-    auto shift_var = ir::As<ir::Var>(op->args_[2]);
-    if (!shift_var)
+    auto shiftVar = ir::As<ir::Var>(op->args_[2]);
+    if (!shiftVar)
         return false;
-    return codegen.IsRegTensorVar(codegen.GetVarName(shift_var));
+    return codegen.IsRegTensorVar(codegen.GetVarName(shiftVar));
 }
 
-static std::string EmitVFShift(const ir::CallPtr& op, codegen::CodegenBase& codegen_base, const std::string& op_name,
-                               const std::string& vector_instruction, const std::string& scalar_instruction)
+static std::string EmitVFShift(const ir::CallPtr& op, codegen::CodegenBase& codegenBase, const std::string& opName,
+                               const std::string& vectorInstruction, const std::string& scalarInstruction)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
-        << op_name << " requires 4 args (dst, src, shift, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == DataType::INT8 || src_dt == DataType::UINT8 ||
-                                                       src_dt == DataType::INT16 || src_dt == DataType::UINT16 ||
-                                                       src_dt == DataType::INT32 || src_dt == DataType::UINT32 ||
-                                                       src_dt == DataType::INT64 || src_dt == DataType::UINT64)
-        << op_name << " src only supports integer types, got " << DTypeStr(src_dt);
-    DataType shift_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == shift_dst_dt)
-        << op_name << " requires src and dst to have the same type, got dst=" << DTypeStr(shift_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+        << opName << " requires 4 args (dst, src, shift, mask)";
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == DataType::INT8 || srcDt == DataType::UINT8 ||
+                                                       srcDt == DataType::INT16 || srcDt == DataType::UINT16 ||
+                                                       srcDt == DataType::INT32 || srcDt == DataType::UINT32 ||
+                                                       srcDt == DataType::INT64 || srcDt == DataType::UINT64)
+        << opName << " src only supports integer types, got " << DTypeStr(srcDt);
+    DataType shiftDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == shiftDstDt)
+        << opName << " requires src and dst to have the same type, got dst=" << DTypeStr(shiftDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string shift = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    std::string mode = VFZeroingOnly(op, op_name);
-    if (src_dt.GetBit() == 64) {
+    std::string mode = VFZeroingOnly(op, opName);
+    if (srcDt.GetBit() == 64) {
         // B64 shift via deinterleave + b32 shift + cross-half carry + interleave.
         // Scalar shift only (shift amount is a compile-time or runtime scalar).
         std::string p = dst + "_shift_";
         EmitB64Deinterleave(codegen, p + "s", src);
-        std::string lo_s = p + "s_lo_", hi_s = p + "s_hi_";
-        std::string all_m = p + "_allm_";
-        codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
-        std::string lo_dst = p + "_lod_";
-        std::string hi_dst = p + "_hid_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_dst + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_dst + ";");
-        if (op_name == "vf.shift_left") {
+        std::string loS = p + "s_lo_", hiS = p + "s_hi_";
+        std::string allM = p + "_allm_";
+        codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
+        std::string loDst = p + "_lod_";
+        std::string hiDst = p + "_hid_";
+        codegen.Emit("RegTensor<uint32_t> " + loDst + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiDst + ";");
+        if (opName == "vf.shift_left") {
             // Left shift: lo_dst = lo << N, carry = lo >> (32-N), hi_dst = (hi << N) | carry
             std::string carry = p + "_carry_";
             codegen.Emit("RegTensor<uint32_t> " + carry + ";");
-            codegen.Emit("vshls(" + lo_dst + ", " + lo_s + ", (int16_t)(" + shift + "), " + all_m + ", MODE_ZEROING);");
-            codegen.Emit("vshrs(" + carry + ", " + lo_s + ", (int16_t)(32 - (" + shift + ")), " + all_m +
+            codegen.Emit("vshls(" + loDst + ", " + loS + ", (int16_t)(" + shift + "), " + allM + ", MODE_ZEROING);");
+            codegen.Emit("vshrs(" + carry + ", " + loS + ", (int16_t)(32 - (" + shift + ")), " + allM +
                          ", MODE_ZEROING);");
-            codegen.Emit("vshls(" + hi_dst + ", " + hi_s + ", (int16_t)(" + shift + "), " + all_m + ", MODE_ZEROING);");
-            codegen.Emit("vor(" + hi_dst + ", " + hi_dst + ", " + carry + ", " + all_m + ", MODE_ZEROING);");
+            codegen.Emit("vshls(" + hiDst + ", " + hiS + ", (int16_t)(" + shift + "), " + allM + ", MODE_ZEROING);");
+            codegen.Emit("vor(" + hiDst + ", " + hiDst + ", " + carry + ", " + allM + ", MODE_ZEROING);");
         } else {
             // Right shift: for INT64 (arithmetic), for UINT64 (logical)
             std::string carry = p + "_carry_";
             codegen.Emit("RegTensor<uint32_t> " + carry + ";");
-            if (src_dt == DataType::INT64) {
+            if (srcDt == DataType::INT64) {
                 // Arithmetic right shift: sign-extend hi. The vshrs overload
                 // requires dst and src to have the same signedness, so the hi
                 // half is shifted in the int32 domain on both sides (mirrors
                 // AscendC ShiftR<int32_t>).
-                codegen.Emit("vshrs((RegTensor<int32_t>&)" + hi_dst + ", (RegTensor<int32_t>&)" + hi_s +
-                             ", (int16_t)(" + shift + "), " + all_m + ", MODE_ZEROING);");
+                codegen.Emit("vshrs((RegTensor<int32_t>&)" + hiDst + ", (RegTensor<int32_t>&)" + hiS + ", (int16_t)(" +
+                             shift + "), " + allM + ", MODE_ZEROING);");
             } else {
-                codegen.Emit("vshrs(" + hi_dst + ", " + hi_s + ", (int16_t)(" + shift + "), " + all_m +
+                codegen.Emit("vshrs(" + hiDst + ", " + hiS + ", (int16_t)(" + shift + "), " + allM +
                              ", MODE_ZEROING);");
             }
-            codegen.Emit("vshls(" + carry + ", " + hi_s + ", (int16_t)(32 - (" + shift + ")), " + all_m +
+            codegen.Emit("vshls(" + carry + ", " + hiS + ", (int16_t)(32 - (" + shift + ")), " + allM +
                          ", MODE_ZEROING);");
-            codegen.Emit("vshrs(" + lo_dst + ", " + lo_s + ", (int16_t)(" + shift + "), " + all_m + ", MODE_ZEROING);");
-            codegen.Emit("vor(" + lo_dst + ", " + lo_dst + ", " + carry + ", " + all_m + ", MODE_ZEROING);");
+            codegen.Emit("vshrs(" + loDst + ", " + loS + ", (int16_t)(" + shift + "), " + allM + ", MODE_ZEROING);");
+            codegen.Emit("vor(" + loDst + ", " + loDst + ", " + carry + ", " + allM + ", MODE_ZEROING);");
         }
-        EmitB64Interleave(codegen, dst, lo_dst, hi_dst, p + "_ilv");
+        EmitB64Interleave(codegen, dst, loDst, hiDst, p + "_ilv");
         EmitB64Zeroing(codegen, dst, dst, mask, p + "_zero");
     } else if (ShiftAmountIsRegister(op, codegen)) {
-        DataType shift_dt = GetExprDtype(op->args_[2]);
-        DataType shift_need = DataType::INT8;
-        DataType shift_unsigned = DataType::UINT8;
-        if (src_dt.GetBit() == 16) {
-            shift_need = DataType::INT16;
-            shift_unsigned = DataType::UINT16;
-        } else if (src_dt.GetBit() == 32) {
-            shift_need = DataType::INT32;
-            shift_unsigned = DataType::UINT32;
+        DataType shiftDt = GetExprDtype(op->args_[2]);
+        DataType shiftNeed = DataType::INT8;
+        DataType shiftUnsigned = DataType::UINT8;
+        if (srcDt.GetBit() == 16) {
+            shiftNeed = DataType::INT16;
+            shiftUnsigned = DataType::UINT16;
+        } else if (srcDt.GetBit() == 32) {
+            shiftNeed = DataType::INT32;
+            shiftUnsigned = DataType::UINT32;
         }
         // A5's __VF_BINARY_OP overloads take the signed shift operand; A6 (920r1)
         // defines vshl/vshr in the __VF_SHFT_OP registry, which requires the unsigned
         // type of the data width (u8/u16/u32). Accept either same-width form here and
         // reinterpret for the A6 call below.
-        const bool is_a6 = codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_9201;
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION,
-                          shift_dt == shift_need || (is_a6 && shift_dt == shift_unsigned))
-            << op_name << " (vector) shift register must be the " << (is_a6 ? "signed or unsigned " : "signed ")
-            << "type matching the " << DTypeStr(src_dt) << " data width, expected " << DTypeStr(shift_need)
-            << (is_a6 ? " or " + DTypeStr(shift_unsigned) : "") << ", got " << DTypeStr(shift_dt);
-        std::string shift_operand = shift;
-        if (is_a6 && shift_dt != shift_unsigned) {
-            shift_operand = "(RegTensor<" + shift_unsigned.ToCTypeString() + ">&)" + shift;
+        const bool isA6 = codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_9201;
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, shiftDt == shiftNeed || (isA6 && shiftDt == shiftUnsigned))
+            << opName << " (vector) shift register must be the " << (isA6 ? "signed or unsigned " : "signed ")
+            << "type matching the " << DTypeStr(srcDt) << " data width, expected " << DTypeStr(shiftNeed)
+            << (isA6 ? " or " + DTypeStr(shiftUnsigned) : "") << ", got " << DTypeStr(shiftDt);
+        std::string shiftOperand = shift;
+        if (isA6 && shiftDt != shiftUnsigned) {
+            shiftOperand = "(RegTensor<" + shiftUnsigned.ToCTypeString() + ">&)" + shift;
         }
-        codegen.Emit(vector_instruction + "(" + dst + ", " + src + ", " + shift_operand + ", " + mask + ", " + mode +
+        codegen.Emit(vectorInstruction + "(" + dst + ", " + src + ", " + shiftOperand + ", " + mask + ", " + mode +
                      ");");
     } else {
-        codegen.Emit(scalar_instruction + "(" + dst + ", " + src + ", (int16_t)(" + shift + "), " + mask + ", " + mode +
+        codegen.Emit(scalarInstruction + "(" + dst + ", " + src + ", (int16_t)(" + shift + "), " + mask + ", " + mode +
                      ");");
     }
     return "";
 }
 
-static std::string EmitVFShiftLeft(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFShiftLeft(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return EmitVFShift(op, codegen_base, "vf.shift_left", "vshl", "vshls");
+    return EmitVFShift(op, codegenBase, "vf.shift_left", "vshl", "vshls");
 }
 
 // ============================================================================
@@ -3951,37 +3943,37 @@ static std::string EmitVFShiftLeft(const ir::CallPtr& op, codegen::CodegenBase& 
 // RegTensor registry), not the op name.
 // ============================================================================
 
-static std::string EmitVFShiftRight(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFShiftRight(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return EmitVFShift(op, codegen_base, "vf.shift_right", "vshr", "vshrs");
+    return EmitVFShift(op, codegenBase, "vf.shift_right", "vshr", "vshrs");
 }
 
 // ============================================================================
 // Mull — vmull (long multiply: 32x32->64, lo/hi split)
 // ============================================================================
 
-static std::string EmitVFMull(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMull(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 5)
         << "vf.mull requires 5 args (dst_lo, dst_hi, src0, src1, mask)";
-    DataType s0_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (s0_dt == DataType::INT32 || s0_dt == DataType::UINT32))
-        << "vf.mull src only supports supported types, got " << DTypeStr(s0_dt);
-    DataType s1_dt = GetExprDtype(op->args_[3]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (s1_dt == DataType::INT32 || s1_dt == DataType::UINT32))
-        << "vf.mull src only supports supported types, got " << DTypeStr(s1_dt);
-    DataType dst_lo_dt = GetExprDtype(op->args_[0]);
-    DataType dst_hi_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_lo_dt == s0_dt && dst_hi_dt == s0_dt && s0_dt == s1_dt)
-        << "vf.mull requires dst_lo, dst_hi, src0, src1 to have the same type, got dst_lo=" << DTypeStr(dst_lo_dt)
-        << " dst_hi=" << DTypeStr(dst_hi_dt) << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
-    std::string dst_lo = codegen.GetExprAsCode(op->args_[0]);
-    std::string dst_hi = codegen.GetExprAsCode(op->args_[1]);
+    DataType s0Dt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (s0Dt == DataType::INT32 || s0Dt == DataType::UINT32))
+        << "vf.mull src only supports supported types, got " << DTypeStr(s0Dt);
+    DataType s1Dt = GetExprDtype(op->args_[3]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (s1Dt == DataType::INT32 || s1Dt == DataType::UINT32))
+        << "vf.mull src only supports supported types, got " << DTypeStr(s1Dt);
+    DataType dstLoDt = GetExprDtype(op->args_[0]);
+    DataType dstHiDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dstLoDt == s0Dt && dstHiDt == s0Dt && s0Dt == s1Dt)
+        << "vf.mull requires dst_lo, dst_hi, src0, src1 to have the same type, got dst_lo=" << DTypeStr(dstLoDt)
+        << " dst_hi=" << DTypeStr(dstHiDt) << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
+    std::string dstLo = codegen.GetExprAsCode(op->args_[0]);
+    std::string dstHi = codegen.GetExprAsCode(op->args_[1]);
     std::string src0 = codegen.GetExprAsCode(op->args_[2]);
     std::string src1 = codegen.GetExprAsCode(op->args_[3]);
     std::string mask = codegen.GetExprAsCode(op->args_[4]);
-    codegen.Emit("vmull(" + dst_lo + ", " + dst_hi + ", " + src0 + ", " + src1 + ", " + mask + ");");
+    codegen.Emit("vmull(" + dstLo + ", " + dstHi + ", " + src0 + ", " + src1 + ", " + mask + ");");
     return "";
 }
 
@@ -3989,26 +3981,26 @@ static std::string EmitVFMull(const ir::CallPtr& op, codegen::CodegenBase& codeg
 // Addc — vaddcs (add with carry)
 // ============================================================================
 
-static std::string EmitVFAddc(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFAddc(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 6)
         << "vf.addc requires 6 args (carry_out, dst, src0, src1, carry_in, mask)";
-    DataType s0_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0_dt == DataType::INT32 || s0_dt == DataType::UINT32)
-        << "vf.addc src0 only supports INT32/UINT32, got " << DTypeStr(s0_dt);
-    DataType dst_dt = GetExprDtype(op->args_[1]);
-    DataType s1_dt = GetExprDtype(op->args_[3]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_dt == s0_dt && dst_dt == s1_dt)
-        << "vf.addc requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(dst_dt)
-        << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
-    std::string carry_out = codegen.GetExprAsCode(op->args_[0]);
+    DataType s0Dt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0Dt == DataType::INT32 || s0Dt == DataType::UINT32)
+        << "vf.addc src0 only supports INT32/UINT32, got " << DTypeStr(s0Dt);
+    DataType dstDt = GetExprDtype(op->args_[1]);
+    DataType s1Dt = GetExprDtype(op->args_[3]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dstDt == s0Dt && dstDt == s1Dt)
+        << "vf.addc requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(dstDt)
+        << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
+    std::string carryOut = codegen.GetExprAsCode(op->args_[0]);
     std::string dst = codegen.GetExprAsCode(op->args_[1]);
     std::string src0 = codegen.GetExprAsCode(op->args_[2]);
     std::string src1 = codegen.GetExprAsCode(op->args_[3]);
-    std::string carry_in = codegen.GetExprAsCode(op->args_[4]);
+    std::string carryIn = codegen.GetExprAsCode(op->args_[4]);
     std::string mask = codegen.GetExprAsCode(op->args_[5]);
-    codegen.Emit("vaddcs(" + carry_out + ", " + dst + ", " + src0 + ", " + src1 + ", " + carry_in + ", " + mask + ");");
+    codegen.Emit("vaddcs(" + carryOut + ", " + dst + ", " + src0 + ", " + src1 + ", " + carryIn + ", " + mask + ");");
     return "";
 }
 
@@ -4016,27 +4008,26 @@ static std::string EmitVFAddc(const ir::CallPtr& op, codegen::CodegenBase& codeg
 // Subc — vsubcs (subtract with borrow)
 // ============================================================================
 
-static std::string EmitVFSubc(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFSubc(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 6)
         << "vf.subc requires 6 args (borrow_out, dst, src0, src1, borrow_in, mask)";
-    DataType s0_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0_dt == DataType::INT32 || s0_dt == DataType::UINT32)
-        << "vf.subc src0 only supports INT32/UINT32, got " << DTypeStr(s0_dt);
-    DataType dst_dt = GetExprDtype(op->args_[1]);
-    DataType s1_dt = GetExprDtype(op->args_[3]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_dt == s0_dt && dst_dt == s1_dt)
-        << "vf.subc requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(dst_dt)
-        << " src0=" << DTypeStr(s0_dt) << " src1=" << DTypeStr(s1_dt);
-    std::string borrow_out = codegen.GetExprAsCode(op->args_[0]);
+    DataType s0Dt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0Dt == DataType::INT32 || s0Dt == DataType::UINT32)
+        << "vf.subc src0 only supports INT32/UINT32, got " << DTypeStr(s0Dt);
+    DataType dstDt = GetExprDtype(op->args_[1]);
+    DataType s1Dt = GetExprDtype(op->args_[3]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dstDt == s0Dt && dstDt == s1Dt)
+        << "vf.subc requires dst, src0, src1 to have the same type, got dst=" << DTypeStr(dstDt)
+        << " src0=" << DTypeStr(s0Dt) << " src1=" << DTypeStr(s1Dt);
+    std::string borrowOut = codegen.GetExprAsCode(op->args_[0]);
     std::string dst = codegen.GetExprAsCode(op->args_[1]);
     std::string src0 = codegen.GetExprAsCode(op->args_[2]);
     std::string src1 = codegen.GetExprAsCode(op->args_[3]);
-    std::string borrow_in = codegen.GetExprAsCode(op->args_[4]);
+    std::string borrowIn = codegen.GetExprAsCode(op->args_[4]);
     std::string mask = codegen.GetExprAsCode(op->args_[5]);
-    codegen.Emit("vsubcs(" + borrow_out + ", " + dst + ", " + src0 + ", " + src1 + ", " + borrow_in + ", " + mask +
-                 ");");
+    codegen.Emit("vsubcs(" + borrowOut + ", " + dst + ", " + src0 + ", " + src1 + ", " + borrowIn + ", " + mask + ");");
     return "";
 }
 
@@ -4051,69 +4042,68 @@ static std::string EmitVFSubc(const ir::CallPtr& op, codegen::CodegenBase& codeg
 
 // Emit int→float vcvt step. Returns the float dtype used (FP16 or FP32).
 // For unavailable src→f16 paths (u16, u32, s32), routes through f32 instead.
-static DataType EmitIntToFloatVcvt(codegen::CCECodegen& codegen, const std::string& dst_reg, const std::string& src_reg,
+static DataType EmitIntToFloatVcvt(codegen::CCECodegen& codegen, const std::string& dstReg, const std::string& srcReg,
                                    const std::string& mask, const std::string& part, const std::string& round,
-                                   const std::string& mode, DataType src_dt)
+                                   const std::string& mode, DataType srcDt)
 {
-    if (src_dt.GetBit() == 8) {
+    if (srcDt.GetBit() == 8) {
         // b8→f16: widening → vcvt(dst, src, mask, PART, MODE) — 5 args
-        codegen.Emit("vcvt(" + dst_reg + ", " + src_reg + ", " + mask + ", " + part + ", " + mode + ");");
+        codegen.Emit("vcvt(" + dstReg + ", " + srcReg + ", " + mask + ", " + part + ", " + mode + ");");
         return DataType::FP16;
     }
-    if (src_dt == DataType::INT16) {
+    if (srcDt == DataType::INT16) {
         // s16→f16: same-width → vcvt(dst, src, mask, ROUND, MODE) — 5 args
-        codegen.Emit("vcvt(" + dst_reg + ", " + src_reg + ", " + mask + ", " + round + ", " + mode + ");");
+        codegen.Emit("vcvt(" + dstReg + ", " + srcReg + ", " + mask + ", " + round + ", " + mode + ");");
         return DataType::FP16;
     }
     // b32 (s32/u32): s32→f32 same-width. u32 needs reinterpret as s32 first.
-    std::string effective_src = src_reg;
-    if (src_dt == DataType::UINT32)
-        effective_src = "(RegTensor<int32_t> &)" + src_reg;
+    std::string effectiveSrc = srcReg;
+    if (srcDt == DataType::UINT32)
+        effectiveSrc = "(RegTensor<int32_t> &)" + srcReg;
     // s32→f32: same-width → vcvt(dst, src, mask, ROUND, MODE) — 5 args
-    codegen.Emit("vcvt(" + dst_reg + ", " + effective_src + ", " + mask + ", " + round + ", " + mode + ");");
+    codegen.Emit("vcvt(" + dstReg + ", " + effectiveSrc + ", " + mask + ", " + round + ", " + mode + ");");
     return DataType::FP32;
 }
 
 // Emit float→int vcvt step. float_dt is always FP16 (from EmitIntToFloatVcvt).
-static void EmitFloatToIntVcvt(codegen::CCECodegen& codegen, const std::string& dst_reg, const std::string& src_reg,
+static void EmitFloatToIntVcvt(codegen::CCECodegen& codegen, const std::string& dstReg, const std::string& srcReg,
                                const std::string& mask, const std::string& part, const std::string& round,
-                               const std::string& sat, const std::string& mode, DataType dst_dt)
+                               const std::string& sat, const std::string& mode, DataType dstDt)
 {
-    if (dst_dt.GetBit() == 8) {
+    if (dstDt.GetBit() == 8) {
         // float→b8: narrower-int → vcvt(dst, src, mask, ROUND, SAT, PART, MODE) — 7 args
-        codegen.Emit("vcvt(" + dst_reg + ", " + src_reg + ", " + mask + ", " + round + ", " + sat + ", " + part + ", " +
+        codegen.Emit("vcvt(" + dstReg + ", " + srcReg + ", " + mask + ", " + round + ", " + sat + ", " + part + ", " +
                      mode + ");");
-    } else if (dst_dt.GetBit() == 16) {
+    } else if (dstDt.GetBit() == 16) {
         // f16→b16: same-width → vcvt(dst, src, mask, ROUND, RS, MODE) — 5 args
-        codegen.Emit("vcvt(" + dst_reg + ", " + src_reg + ", " + mask + ", " + round + ", " + sat + ", " + mode + ");");
+        codegen.Emit("vcvt(" + dstReg + ", " + srcReg + ", " + mask + ", " + round + ", " + sat + ", " + mode + ");");
     } else {
         // f16→b32: wider-int → vcvt(dst, src, mask, ROUND, PART, MODE) — 6 args
-        codegen.Emit("vcvt(" + dst_reg + ", " + src_reg + ", " + mask + ", " + round + ", " + part + ", " + mode +
-                     ");");
+        codegen.Emit("vcvt(" + dstReg + ", " + srcReg + ", " + mask + ", " + round + ", " + part + ", " + mode + ");");
     }
 }
 
-static std::string EmitVFExpSub(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFExpSub(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // Parser args order: [dst, src, max, mask]
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.exp_sub requires 4 args (dst, src, max, mask)";
     // vexpdiff: dst must be FP32, src can be FP32 or FP16
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == DataType::FP32 || src_dt == DataType::FP16)
-        << "vf.exp_sub only supports FP32/FP16 src, got " << DTypeStr(src_dt);
-    DataType dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_dt == DataType::FP32)
-        << "vf.exp_sub destination only supports FP32, got " << DTypeStr(dst_dt);
-    DataType max_dt = GetExprDtype(op->args_[2]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == DataType::FP32 || srcDt == DataType::FP16)
+        << "vf.exp_sub only supports FP32/FP16 src, got " << DTypeStr(srcDt);
+    DataType dstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dstDt == DataType::FP32)
+        << "vf.exp_sub destination only supports FP32, got " << DTypeStr(dstDt);
+    DataType maxDt = GetExprDtype(op->args_[2]);
     // vexpdiff: src0 and src1 must be the same type (both float or both half)
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == max_dt)
-        << "vf.exp_sub requires src and max to have the same type, got src=" << DTypeStr(src_dt)
-        << " max=" << DTypeStr(max_dt);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == maxDt)
+        << "vf.exp_sub requires src and max to have the same type, got src=" << DTypeStr(srcDt)
+        << " max=" << DTypeStr(maxDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
-    std::string max_reg = codegen.GetExprAsCode(op->args_[2]);
+    std::string maxReg = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     // layout kwarg selects the result half: ZERO -> PART_EVEN (default), ONE -> PART_ODD.
     // vexpdiff: only supports RegLayout ZERO/ONE
@@ -4125,7 +4115,7 @@ static std::string EmitVFExpSub(const ir::CallPtr& op, codegen::CodegenBase& cod
         if (layout == "ONE")
             part = "PART_ODD";
     }
-    codegen.Emit("vexpdif(" + dst + ", " + src + ", " + max_reg + ", " + mask + ", " + part + ");");
+    codegen.Emit("vexpdif(" + dst + ", " + src + ", " + maxReg + ", " + mask + ", " + part + ");");
     return "";
 }
 
@@ -4133,24 +4123,24 @@ static std::string EmitVFExpSub(const ir::CallPtr& op, codegen::CodegenBase& cod
 // Cast — vcvt
 // ============================================================================
 
-static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // Parser args order: [dst, src, mask]
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.astype requires 3 args (dst, src, mask)";
     // vcvt: src and dst must have different types
-    DataType src_dtype = GetExprDtype(op->args_[1], DataType::FP32);
-    DataType dst_dtype = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dtype != dst_dtype)
-        << "vf.astype: src and dst must have different types (both are " << DTypeStr(src_dtype) << ")";
+    DataType srcDtype = GetExprDtype(op->args_[1], DataType::FP32);
+    DataType dstDtype = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDtype != dstDtype)
+        << "vf.astype: src and dst must have different types (both are " << DTypeStr(srcDtype) << ")";
     // vcvt has no uint64 overloads on this device, and the AscendC Cast micro
     // instruction it mirrors doesn't support uint64 either — reject early
     // instead of failing late in bisheng.
     PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR,
-                      src_dtype != DataType::UINT64 && dst_dtype != DataType::UINT64)
-        << "vf.astype does not support DT_UINT64 (no vcvt overload), got src=" << DTypeStr(src_dtype)
-        << " dst=" << DTypeStr(dst_dtype);
+                      srcDtype != DataType::UINT64 && dstDtype != DataType::UINT64)
+        << "vf.astype does not support DT_UINT64 (no vcvt overload), got src=" << DTypeStr(srcDtype)
+        << " dst=" << DTypeStr(dstDtype);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
@@ -4163,12 +4153,12 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
                           layout == "ZERO" || layout == "ONE" || layout == "TWO" || layout == "THREE")
             << "vf.astype only supports layout ZERO/ONE/TWO/THREE, got " << layout;
     }
-    std::string round_mode = "CAST_RINT";
+    std::string roundMode = "CAST_RINT";
     if (op->HasKwarg("round_mode")) {
-        round_mode = VFEnumValueName(ir::EnumToString(static_cast<ir::VFRoundMode>(op->GetKwarg<int>("round_mode"))));
+        roundMode = VFEnumValueName(ir::EnumToString(static_cast<ir::VFRoundMode>(op->GetKwarg<int>("round_mode"))));
     }
     // A5 vcvt only supports MODE_ZEROING at the instruction level.
-    std::string mode_value = VFZeroingOnly(op, "vf.astype");
+    std::string modeValue = VFZeroingOnly(op, "vf.astype");
     std::string part;
     if (layout == "ZERO")
         part = "PART_EVEN";
@@ -4180,17 +4170,17 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
         part = "PART_THREE";
     else
         part = "PART_EVEN";
-    std::string part_pp;
+    std::string partPp;
     if (layout == "ZERO")
-        part_pp = "PART_P0";
+        partPp = "PART_P0";
     else if (layout == "ONE")
-        part_pp = "PART_P1";
+        partPp = "PART_P1";
     else if (layout == "TWO")
-        part_pp = "PART_P2";
+        partPp = "PART_P2";
     else if (layout == "THREE")
-        part_pp = "PART_P3";
+        partPp = "PART_P3";
     else
-        part_pp = "PART_P0";
+        partPp = "PART_P0";
     // Map round_mode to ::ROUND constants (dav_3510 GetRound mapping):
     //   CAST_RINT  → ROUND_R (round to nearest even)
     //   CAST_ROUND → ROUND_A (round to nearest, away from zero)
@@ -4201,28 +4191,28 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
     //   CAST_HYBRID→ ROUND_H (3510 only, not supported by all vcvt overloads)
     //   unknown    → ROUND_R (safe fallback, universally supported)
     std::string round;
-    if (round_mode == "CAST_RINT")
+    if (roundMode == "CAST_RINT")
         round = "ROUND_R";
-    else if (round_mode == "CAST_ROUND")
+    else if (roundMode == "CAST_ROUND")
         round = "ROUND_A";
-    else if (round_mode == "CAST_FLOOR")
+    else if (roundMode == "CAST_FLOOR")
         round = "ROUND_F";
-    else if (round_mode == "CAST_CEIL")
+    else if (roundMode == "CAST_CEIL")
         round = "ROUND_C";
-    else if (round_mode == "CAST_TRUNC")
+    else if (roundMode == "CAST_TRUNC")
         round = "ROUND_Z";
-    else if (round_mode == "CAST_ODD")
+    else if (roundMode == "CAST_ODD")
         round = "ROUND_O"; // only supported by widening float→float vcvt overloads
-    else if (round_mode == "CAST_HYBRID")
+    else if (roundMode == "CAST_HYBRID")
         round = "ROUND_H"; // only supported by widening float→float vcvt overloads
     else
         round = "ROUND_R"; // unknown → ROUND_R (safe fallback)
     // Get saturation kwarg (default: disabled)
     std::string sat = "RS_DISABLE";
     if (op->HasKwarg("saturate")) {
-        std::string sat_val = VFEnumValueName(
+        std::string satVal = VFEnumValueName(
             ir::EnumToString(static_cast<ir::SaturateMode>(op->GetKwarg<int>("saturate"))));
-        if (sat_val == "ON" || sat_val == "ENABLE")
+        if (satVal == "ON" || satVal == "ENABLE")
             sat = "RS_ENABLE";
     }
     // Determine if narrowing or widening conversion based on src/dst dtype.
@@ -4233,31 +4223,31 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
     // FLOAT→FLOAT same-width (FP16→BF16): ROUND + MODE (no RS, no PART)
     // INT→INT narrowing: RS + PART + MODE (no ROUND)
     // Cross-width INT↔FLOAT (S16→FP32, S32→FP16, FP32→S64, S64→FP32): ROUND + PART + MODE
-    bool is_widening = false;
-    bool is_int_to_float = false;
-    bool is_float_to_same_int = false;     // FP32→S32, FP16→S16 (same-width float→int)
-    bool is_float_to_narrower_int = false; // FP16→INT8/UINT8, BF16→INT8/UINT8 (2x narrowing float→int)
-    bool is_float_to_wider_int = false;    // FP16→S32, BF16→S32 (widening float→int)
-    bool is_int_2x_narrowing = false;      // 2x narrowing with RS: b32→b16, b16→u8, b64→b32
-    bool is_int_4x_narrowing = false;      // 4x narrowing with RS: b32→u8
-    bool is_int_4x_widening = false;       // 4x int widening: b8→b32 (PART_P0/P1/P2/P3 only)
-    bool is_cross_width = false;           // cross-width INT↔FLOAT with ROUND + PART + MODE
-    bool is_s4_widening = false;           // INT4→FP16/BF16/INT16 (vcvt_s42f16/bf16/s16)
-    bool is_s4_narrowing = false;          // FP16→INT4 (vcvt_f162s4)
-    bool is_s16_to_s4 = false;             // INT16→INT4 (two-step: s16→f16→s4, mirroring AscendC Cast)
-    bool is_int_int_two_step = false;      // int→int via f16 intermediate (cross-sign widening, int→INT8 narrowing)
+    bool isWidening = false;
+    bool isIntToFloat = false;
+    bool isFloatToSameInt = false;     // FP32→S32, FP16→S16 (same-width float→int)
+    bool isFloatToNarrowerInt = false; // FP16→INT8/UINT8, BF16→INT8/UINT8 (2x narrowing float→int)
+    bool isFloatToWiderInt = false;    // FP16→S32, BF16→S32 (widening float→int)
+    bool isInt2xNarrowing = false;     // 2x narrowing with RS: b32→b16, b16→u8, b64→b32
+    bool isInt4xNarrowing = false;     // 4x narrowing with RS: b32→u8
+    bool isInt4xWidening = false;      // 4x int widening: b8→b32 (PART_P0/P1/P2/P3 only)
+    bool isCrossWidth = false;         // cross-width INT↔FLOAT with ROUND + PART + MODE
+    bool isS4Widening = false;         // INT4→FP16/BF16/INT16 (vcvt_s42f16/bf16/s16)
+    bool isS4Narrowing = false;        // FP16→INT4 (vcvt_f162s4)
+    bool isS16ToS4 = false;            // INT16→INT4 (two-step: s16→f16→s4, mirroring AscendC Cast)
+    bool isIntIntTwoStep = false;      // int→int via f16 intermediate (cross-sign widening, int→INT8 narrowing)
     // FP8/FP4 low-precision conversions
-    bool is_fp_widen_pp = false;          // 4x widening PP: FP8→FP32, FP4→BF16 → vcvt(dst,src,mask,PART_PP,MODE)
-    bool is_fp_narrow_rnd_sat_pp = false; // 4x narrowing RND_SAT_PP: FP32→FP8 → vcvt(dst,src,mask,ROUND,SAT)
-    bool is_fp_narrow_rnd_pp = false;     // 4x narrowing RND_PP: BF16→FP4 → vcvt(dst,src,mask,ROUND,PART_PP,MODE)
+    bool isFpWidenPp = false;        // 4x widening PP: FP8→FP32, FP4→BF16 → vcvt(dst,src,mask,PART_PP,MODE)
+    bool isFpNarrowRndSatPp = false; // 4x narrowing RND_SAT_PP: FP32→FP8 → vcvt(dst,src,mask,ROUND,SAT)
+    bool isFpNarrowRndPp = false;    // 4x narrowing RND_PP: BF16→FP4 → vcvt(dst,src,mask,ROUND,PART_PP,MODE)
     // S4 (INT4) special instructions: vcvt_s42f16, vcvt_s42bf16, vcvt_s42s16, vcvt_f162s4
-    if (src_dtype == DataType::INT4 &&
-        (dst_dtype == DataType::FP16 || dst_dtype == DataType::BF16 || dst_dtype == DataType::INT16)) {
-        is_s4_widening = true;
-    } else if (dst_dtype == DataType::INT4 && src_dtype == DataType::FP16) {
-        is_s4_narrowing = true;
-    } else if (dst_dtype == DataType::INT4 && src_dtype == DataType::INT16) {
-        is_s16_to_s4 = true;
+    if (srcDtype == DataType::INT4 &&
+        (dstDtype == DataType::FP16 || dstDtype == DataType::BF16 || dstDtype == DataType::INT16)) {
+        isS4Widening = true;
+    } else if (dstDtype == DataType::INT4 && srcDtype == DataType::FP16) {
+        isS4Narrowing = true;
+    } else if (dstDtype == DataType::INT4 && srcDtype == DataType::INT16) {
+        isS16ToS4 = true;
     }
     // Widening cases: vcvt(dst, src, mask, PART, MODE) — no ROUND/RS
     // FP16→FP32, BF16→FP32, INT16→INT32, UINT16→UINT32, INT8→INT16, UINT8→UINT16,
@@ -4265,100 +4255,100 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
     // Cross-sign s→u 2x widening: INT16→UINT32 (AscendC layoutMerge partCondition supports this)
     // NOTE: Cross-sign u→s widening (u8→s16, u16→s32) and s8→u16 are NOT supported by hardware.
     // NOTE: u32→s64 is NOT supported (only s32→s64 is).
-    else if ((src_dtype == DataType::FP16 && dst_dtype == DataType::FP32) ||
-             (src_dtype == DataType::BF16 && dst_dtype == DataType::FP32) ||
-             (src_dtype == DataType::UINT16 && dst_dtype == DataType::UINT32) ||
-             (src_dtype == DataType::INT16 && dst_dtype == DataType::INT32) ||
-             (src_dtype == DataType::INT16 && dst_dtype == DataType::UINT32) ||
-             (src_dtype == DataType::INT8 && dst_dtype == DataType::INT16) ||
-             (src_dtype == DataType::UINT8 && dst_dtype == DataType::UINT16) ||
-             (src_dtype == DataType::INT8 && dst_dtype == DataType::FP16) ||
-             (src_dtype == DataType::UINT8 && dst_dtype == DataType::FP16) ||
-             (src_dtype == DataType::INT32 && dst_dtype == DataType::INT64) ||
-             (src_dtype == DataType::INT16 && dst_dtype == DataType::FP32) ||
-             (src_dtype == DataType::UINT16 && dst_dtype == DataType::FP32) ||
-             (src_dtype == DataType::HF8 && dst_dtype == DataType::FP16)) {
-        is_widening = true;
+    else if ((srcDtype == DataType::FP16 && dstDtype == DataType::FP32) ||
+             (srcDtype == DataType::BF16 && dstDtype == DataType::FP32) ||
+             (srcDtype == DataType::UINT16 && dstDtype == DataType::UINT32) ||
+             (srcDtype == DataType::INT16 && dstDtype == DataType::INT32) ||
+             (srcDtype == DataType::INT16 && dstDtype == DataType::UINT32) ||
+             (srcDtype == DataType::INT8 && dstDtype == DataType::INT16) ||
+             (srcDtype == DataType::UINT8 && dstDtype == DataType::UINT16) ||
+             (srcDtype == DataType::INT8 && dstDtype == DataType::FP16) ||
+             (srcDtype == DataType::UINT8 && dstDtype == DataType::FP16) ||
+             (srcDtype == DataType::INT32 && dstDtype == DataType::INT64) ||
+             (srcDtype == DataType::INT16 && dstDtype == DataType::FP32) ||
+             (srcDtype == DataType::UINT16 && dstDtype == DataType::FP32) ||
+             (srcDtype == DataType::HF8 && dstDtype == DataType::FP16)) {
+        isWidening = true;
     }
     // INT→FLOAT same-width or FLOAT→FLOAT same-width: vcvt(dst, src, mask, ROUND, MODE_ZEROING)
     // S32/U32→FP32, S16/U16→FP16, FP16→BF16, BF16→FP16
-    else if (((src_dtype == DataType::INT32 || src_dtype == DataType::UINT32) && dst_dtype == DataType::FP32) ||
-             ((src_dtype == DataType::INT16 || src_dtype == DataType::UINT16) && dst_dtype == DataType::FP16) ||
-             (src_dtype == DataType::FP16 && dst_dtype == DataType::BF16) ||
-             (src_dtype == DataType::BF16 && dst_dtype == DataType::FP16)) {
-        is_int_to_float = true;
+    else if (((srcDtype == DataType::INT32 || srcDtype == DataType::UINT32) && dstDtype == DataType::FP32) ||
+             ((srcDtype == DataType::INT16 || srcDtype == DataType::UINT16) && dstDtype == DataType::FP16) ||
+             (srcDtype == DataType::FP16 && dstDtype == DataType::BF16) ||
+             (srcDtype == DataType::BF16 && dstDtype == DataType::FP16)) {
+        isIntToFloat = true;
     }
     // FLOAT→same-width-INT: vcvt(dst, src, mask, ROUND, RS, MODE_ZEROING) — no PART
     // FP32→S32/U32, FP16→S16/U16 (same element width)
-    else if ((src_dtype == DataType::FP32 && (dst_dtype == DataType::INT32 || dst_dtype == DataType::UINT32)) ||
-             (src_dtype == DataType::FP16 && (dst_dtype == DataType::INT16 || dst_dtype == DataType::UINT16))) {
-        is_float_to_same_int = true;
+    else if ((srcDtype == DataType::FP32 && (dstDtype == DataType::INT32 || dstDtype == DataType::UINT32)) ||
+             (srcDtype == DataType::FP16 && (dstDtype == DataType::INT16 || dstDtype == DataType::UINT16))) {
+        isFloatToSameInt = true;
     }
     // FLOAT→narrower-INT (2x narrowing): vcvt(dst, src, mask, ROUND, RS, PART, MODE_ZEROING)
     // FP16→INT8/UINT8, BF16→INT8/UINT8 (b16→b8, uses __VF_VCVTFI_SAT_PART with PART_EVEN/ODD)
-    else if ((src_dtype == DataType::FP16 || src_dtype == DataType::BF16) &&
-             (dst_dtype == DataType::INT8 || dst_dtype == DataType::UINT8)) {
-        is_float_to_narrower_int = true;
+    else if ((srcDtype == DataType::FP16 || srcDtype == DataType::BF16) &&
+             (dstDtype == DataType::INT8 || dstDtype == DataType::UINT8)) {
+        isFloatToNarrowerInt = true;
     }
     // FLOAT→wider-INT: vcvt(dst, src, mask, ROUND, PART, MODE_ZEROING) — no RS
     // FP16→S32/U32, BF16→S32/U32 (half-width float to full-width int)
-    else if ((src_dtype == DataType::FP16 && (dst_dtype == DataType::INT32 || dst_dtype == DataType::UINT32)) ||
-             (src_dtype == DataType::BF16 && (dst_dtype == DataType::INT32 || dst_dtype == DataType::UINT32))) {
-        is_float_to_wider_int = true;
+    else if ((srcDtype == DataType::FP16 && (dstDtype == DataType::INT32 || dstDtype == DataType::UINT32)) ||
+             (srcDtype == DataType::BF16 && (dstDtype == DataType::INT32 || dstDtype == DataType::UINT32))) {
+        isFloatToWiderInt = true;
     }
     // Cross-width INT↔FLOAT: vcvt(dst, src, mask, ROUND, PART, MODE_ZEROING)
     // S32/U32→FP16, FP32→S64, S64→FP32
     // (S16/U16→FP32 moved to is_widening — uses __VF_VCVTIF_PART with PART+MODE only)
-    else if (((src_dtype == DataType::INT32 || src_dtype == DataType::UINT32) && dst_dtype == DataType::FP16) ||
-             (src_dtype == DataType::FP32 && dst_dtype == DataType::INT64) ||
-             (src_dtype == DataType::INT64 && dst_dtype == DataType::FP32)) {
-        is_cross_width = true;
+    else if (((srcDtype == DataType::INT32 || srcDtype == DataType::UINT32) && dstDtype == DataType::FP16) ||
+             (srcDtype == DataType::FP32 && dstDtype == DataType::INT64) ||
+             (srcDtype == DataType::INT64 && dstDtype == DataType::FP32)) {
+        isCrossWidth = true;
     }
     // INT→INT 4x narrowing to UINT8 (b32→u8): vcvt(dst, src, mask, RS, PART_PP, MODE) — 6 args
     // __VF_VCVTII_SAT_PP: uses PART_P0/P1/P2/P3, supports RS parameter
-    else if ((src_dtype == DataType::INT32 || src_dtype == DataType::UINT32) && dst_dtype == DataType::UINT8) {
-        is_int_4x_narrowing = true;
+    else if ((srcDtype == DataType::INT32 || srcDtype == DataType::UINT32) && dstDtype == DataType::UINT8) {
+        isInt4xNarrowing = true;
     }
     // INT→INT 2x narrowing to UINT8/INT16/UINT16 (b16→u8, b32→b16, b64→b32): vcvt(dst, src, mask, RS, PART, MODE) — 6
     // args
     // __VF_VCVTII_SAT_PART: uses PART_EVEN/ODD, supports RS parameter
-    else if (((src_dtype == DataType::INT32 || src_dtype == DataType::UINT32) &&
-              (dst_dtype == DataType::INT16 || dst_dtype == DataType::UINT16)) ||
-             ((src_dtype == DataType::INT16 || src_dtype == DataType::UINT16) && dst_dtype == DataType::UINT8) ||
-             (src_dtype == DataType::INT64 && (dst_dtype == DataType::INT32 || dst_dtype == DataType::UINT32))) {
-        is_int_2x_narrowing = true;
+    else if (((srcDtype == DataType::INT32 || srcDtype == DataType::UINT32) &&
+              (dstDtype == DataType::INT16 || dstDtype == DataType::UINT16)) ||
+             ((srcDtype == DataType::INT16 || srcDtype == DataType::UINT16) && dstDtype == DataType::UINT8) ||
+             (srcDtype == DataType::INT64 && (dstDtype == DataType::INT32 || dstDtype == DataType::UINT32))) {
+        isInt2xNarrowing = true;
     }
     // INT→INT 4x widening (b8→b32): vcvt(dst, src, mask, PART_PP, MODE_ZEROING)
     // __VF_VCVTII_PP: uses PART_P0/P1/P2/P3
     // NOTE: Cross-sign 4x widening (s8→u32, u8→s32) is NOT supported by hardware.
-    else if ((src_dtype == DataType::INT8 && dst_dtype == DataType::INT32) ||
-             (src_dtype == DataType::UINT8 && dst_dtype == DataType::UINT32)) {
-        is_int_4x_widening = true;
+    else if ((srcDtype == DataType::INT8 && dstDtype == DataType::INT32) ||
+             (srcDtype == DataType::UINT8 && dstDtype == DataType::UINT32)) {
+        isInt4xWidening = true;
     }
     // FP8/FP4 4x widening (PP mode): FP8→FP32, FP4→BF16
     // __VF_VCVTFF_PP: vcvt(dst, src, mask, PART_PP, MODE_ZEROING) — 5 args
-    else if (((src_dtype == DataType::FP8E4M3FN || src_dtype == DataType::FP8E5M2 || src_dtype == DataType::HF8) &&
-              dst_dtype == DataType::FP32) ||
-             ((src_dtype == DataType::FP4E2M1 || src_dtype == DataType::FP4E1M2) && dst_dtype == DataType::BF16)) {
-        is_fp_widen_pp = true;
+    else if (((srcDtype == DataType::FP8E4M3FN || srcDtype == DataType::FP8E5M2 || srcDtype == DataType::HF8) &&
+              dstDtype == DataType::FP32) ||
+             ((srcDtype == DataType::FP4E2M1 || srcDtype == DataType::FP4E1M2) && dstDtype == DataType::BF16)) {
+        isFpWidenPp = true;
     }
     // FP8/FP4 4x narrowing with SAT (RND_SAT_PP): FP32→FP8
     // __VF_VCVTFF_RND_SAT_PP: vcvt(dst, src, mask, ROUND, SAT) — 5 args
-    else if (src_dtype == DataType::FP32 &&
-             (dst_dtype == DataType::FP8E4M3FN || dst_dtype == DataType::FP8E5M2 || dst_dtype == DataType::HF8)) {
-        is_fp_narrow_rnd_sat_pp = true;
+    else if (srcDtype == DataType::FP32 &&
+             (dstDtype == DataType::FP8E4M3FN || dstDtype == DataType::FP8E5M2 || dstDtype == DataType::HF8)) {
+        isFpNarrowRndSatPp = true;
     }
     // FP4 4x narrowing without SAT (RND_PP): BF16→FP4
     // __VF_VCVTFF_RND_PP: vcvt(dst, src, mask, ROUND, PART_PP, MODE_ZEROING) — 6 args
-    else if (src_dtype == DataType::BF16 && (dst_dtype == DataType::FP4E2M1 || dst_dtype == DataType::FP4E1M2)) {
-        is_fp_narrow_rnd_pp = true;
+    else if (srcDtype == DataType::BF16 && (dstDtype == DataType::FP4E2M1 || dstDtype == DataType::FP4E1M2)) {
+        isFpNarrowRndPp = true;
     }
     // Remaining int→int paths not directly supported by hardware vcvt overloads:
     // cross-sign widening (u→s, s→u) and int→INT8 narrowing.
     // Route through f16 intermediate (two-step), mirroring AscendC's s16→f16→s4 approach.
-    if (src_dtype.IsInt() && dst_dtype.IsInt() && !is_s4_widening && !is_s4_narrowing && !is_s16_to_s4 &&
-        !is_widening && !is_int_4x_widening && !is_int_4x_narrowing && !is_int_2x_narrowing) {
-        is_int_int_two_step = true;
+    if (srcDtype.IsInt() && dstDtype.IsInt() && !isS4Widening && !isS4Narrowing && !isS16ToS4 && !isWidening &&
+        !isInt4xWidening && !isInt4xNarrowing && !isInt2xNarrowing) {
+        isIntIntTwoStep = true;
     }
 
     // Validate round_mode against the specific vcvt overload constraints:
@@ -4371,51 +4361,51 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
     // - is_fp_widen_pp (FP8→FP32, FP4→BF16): no round_mode (UNKNOWN)
     // - is_s4_widening (INT4→FP16/BF16/INT16): no round_mode (UNKNOWN)
     // - is_int_2x_narrowing / is_int_4x_narrowing / is_int_4x_widening / is_s16_to_s4: no round_mode
-    if (is_widening || is_fp_widen_pp || is_s4_widening || is_s16_to_s4 || is_int_2x_narrowing || is_int_4x_narrowing ||
-        is_int_4x_widening) {
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("round_mode") || round_mode == "CAST_RINT")
+    if (isWidening || isFpWidenPp || isS4Widening || isS16ToS4 || isInt2xNarrowing || isInt4xNarrowing ||
+        isInt4xWidening) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("round_mode") || roundMode == "CAST_RINT")
             << "vf.astype: round_mode is not applicable for this widening/no-precision-loss "
-            << "conversion path (src=" << DTypeStr(src_dtype) << ", dst=" << DTypeStr(dst_dtype)
+            << "conversion path (src=" << DTypeStr(srcDtype) << ", dst=" << DTypeStr(dstDtype)
             << "), only default CAST_RINT is accepted";
     }
-    if (is_int_to_float || is_float_to_same_int || is_float_to_narrower_int || is_fp_narrow_rnd_pp ||
-        is_float_to_wider_int || is_cross_width || is_int_int_two_step) {
+    if (isIntToFloat || isFloatToSameInt || isFloatToNarrowerInt || isFpNarrowRndPp || isFloatToWiderInt ||
+        isCrossWidth || isIntIntTwoStep) {
         PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, round != "ROUND_O" && round != "ROUND_H")
             << "vf.astype: round_mode CAST_ODD/CAST_HYBRID is not supported for this conversion path "
-            << "(src=" << DTypeStr(src_dtype) << ", dst=" << DTypeStr(dst_dtype) << "), "
+            << "(src=" << DTypeStr(srcDtype) << ", dst=" << DTypeStr(dstDtype) << "), "
             << "supported values are CAST_RINT/CAST_ROUND/CAST_FLOOR/CAST_CEIL/CAST_TRUNC";
     }
-    if (is_fp_narrow_rnd_sat_pp) {
-        if (dst_dtype == DataType::HF8) {
+    if (isFpNarrowRndSatPp) {
+        if (dstDtype == DataType::HF8) {
             // FP32→HF8: only CAST_ROUND/CAST_HYBRID. Default CAST_RINT is invalid,
             // so if user didn't specify, silently use CAST_ROUND (the hardware default).
             if (!op->HasKwarg("round_mode")) {
                 round = "ROUND_A";
             } else {
                 PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, round == "ROUND_A" || round == "ROUND_H")
-                    << "vf.astype: FP32→HF8 only supports round_mode CAST_ROUND/CAST_HYBRID, got " << round_mode;
+                    << "vf.astype: FP32→HF8 only supports round_mode CAST_ROUND/CAST_HYBRID, got " << roundMode;
             }
         } else {
             // FP32→FP8E4M3FN/FP8E5M2: only CAST_RINT. Default is CAST_RINT, so
             // not specifying round_mode is fine.
             if (op->HasKwarg("round_mode")) {
                 PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, round == "ROUND_R")
-                    << "vf.astype: FP32→FP8E4M3FN/FP8E5M2 only supports round_mode CAST_RINT, got " << round_mode;
+                    << "vf.astype: FP32→FP8E4M3FN/FP8E5M2 only supports round_mode CAST_RINT, got " << roundMode;
             }
         }
     }
-    if (src_dtype == DataType::FP16 && dst_dtype == DataType::HF8) {
+    if (srcDtype == DataType::FP16 && dstDtype == DataType::HF8) {
         // FP16→HF8: only CAST_ROUND/CAST_HYBRID. Default CAST_RINT is invalid,
         // so if user didn't specify, silently use CAST_ROUND.
         if (!op->HasKwarg("round_mode")) {
             round = "ROUND_A";
         } else {
             PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, round == "ROUND_A" || round == "ROUND_H")
-                << "vf.astype: FP16→HF8 only supports round_mode CAST_ROUND/CAST_HYBRID, got " << round_mode;
+                << "vf.astype: FP16→HF8 only supports round_mode CAST_ROUND/CAST_HYBRID, got " << roundMode;
         }
     }
     // FP16→INT4 (is_s4_narrowing): R/A/F/C/Z only (no O/H)
-    if (is_s4_narrowing) {
+    if (isS4Narrowing) {
         PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, round != "ROUND_O" && round != "ROUND_H")
             << "vf.astype: round_mode CAST_ODD/CAST_HYBRID is not supported for FP16→INT4, "
             << "supported values are CAST_RINT/CAST_ROUND/CAST_FLOOR/CAST_CEIL/CAST_TRUNC";
@@ -4432,13 +4422,13 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
     // - is_fp_narrow_rnd_sat_pp: saturate is mandatory (always RS_ENABLE)
     // - is_fp_narrow_rnd_pp (BF16→FP4): saturate not applicable (UNKNOWN)
     // - FP→FP32 (widening float): only OFF (non-saturated)
-    if (is_widening || is_fp_widen_pp || is_s4_widening || is_int_4x_widening || is_fp_narrow_rnd_pp ||
-        (is_int_to_float && !(src_dtype == DataType::BF16 && dst_dtype == DataType::FP16))) {
+    if (isWidening || isFpWidenPp || isS4Widening || isInt4xWidening || isFpNarrowRndPp ||
+        (isIntToFloat && !(srcDtype == DataType::BF16 && dstDtype == DataType::FP16))) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("saturate") || sat == "RS_DISABLE")
-            << "vf.astype: saturate is not applicable for this conversion path " << "(src=" << DTypeStr(src_dtype)
-            << ", dst=" << DTypeStr(dst_dtype) << ")";
+            << "vf.astype: saturate is not applicable for this conversion path " << "(src=" << DTypeStr(srcDtype)
+            << ", dst=" << DTypeStr(dstDtype) << ")";
     }
-    if (is_int_4x_narrowing) {
+    if (isInt4xNarrowing) {
         // b32→b8 (4x narrowing): saturate is always enabled (RS_ENABLE). Default is RS_DISABLE,
         // so if user didn't specify, silently enable it.
         if (!op->HasKwarg("saturate")) {
@@ -4449,7 +4439,7 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
                 << "OFF is not supported for this path";
         }
     }
-    if (is_fp_narrow_rnd_sat_pp) {
+    if (isFpNarrowRndSatPp) {
         // FP32→FP8: saturate is always enabled (RS_ENABLE). Default is RS_DISABLE,
         // so if user didn't specify, silently enable it.
         if (!op->HasKwarg("saturate")) {
@@ -4460,7 +4450,7 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
                 << "OFF is not supported for this path";
         }
     }
-    if (dst_dtype == DataType::FP32 && src_dtype.GetBit() < 32 && (src_dtype.IsFloat() || src_dtype == DataType::HF8)) {
+    if (dstDtype == DataType::FP32 && srcDtype.GetBit() < 32 && (srcDtype.IsFloat() || srcDtype == DataType::HF8)) {
         // FP→FP32 widening: only non-saturated mode
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, sat == "RS_DISABLE")
             << "vf.astype: conversion to FP32 only supports saturate=OFF (non-saturated mode)";
@@ -4469,64 +4459,63 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
     // - Same-width conversions (is_int_to_float, is_float_to_same_int): layout not applicable
     // - FP16→BF16 and BF16→FP16 (same-width float→float): layout not applicable
     // - FP32→INT64 and INT64→FP32: same 64-bit width, layout not applicable
-    if (is_int_to_float || is_float_to_same_int || (src_dtype == DataType::FP16 && dst_dtype == DataType::BF16) ||
-        (src_dtype == DataType::BF16 && dst_dtype == DataType::FP16) ||
-        (src_dtype == DataType::FP32 && dst_dtype == DataType::INT64) ||
-        (src_dtype == DataType::INT64 && dst_dtype == DataType::FP32)) {
+    if (isIntToFloat || isFloatToSameInt || (srcDtype == DataType::FP16 && dstDtype == DataType::BF16) ||
+        (srcDtype == DataType::BF16 && dstDtype == DataType::FP16) ||
+        (srcDtype == DataType::FP32 && dstDtype == DataType::INT64) ||
+        (srcDtype == DataType::INT64 && dstDtype == DataType::FP32)) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("layout") || layout == "ZERO")
             << "vf.astype: layout is not applicable for this same-width conversion path "
-            << "(src=" << DTypeStr(src_dtype) << ", dst=" << DTypeStr(dst_dtype) << ")";
+            << "(src=" << DTypeStr(srcDtype) << ", dst=" << DTypeStr(dstDtype) << ")";
     }
     // FP8/FP4 widening: layout supports ZERO/ONE/TWO/THREE (4x expansion)
     // FP8/FP4 2x widening (HF8→FP16): layout supports ZERO/ONE only
-    if (is_fp_widen_pp) {
-        if (src_dtype == DataType::HF8 && dst_dtype == DataType::FP16) {
+    if (isFpWidenPp) {
+        if (srcDtype == DataType::HF8 && dstDtype == DataType::FP16) {
             PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, layout == "ZERO" || layout == "ONE")
                 << "vf.astype: HF8→FP16 only supports layout ZERO/ONE, got " << layout;
-        } else if (src_dtype == DataType::FP8E8M0 && dst_dtype == DataType::BF16) {
+        } else if (srcDtype == DataType::FP8E8M0 && dstDtype == DataType::BF16) {
             PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, layout == "ZERO" || layout == "ONE")
                 << "vf.astype: FP8E8M0→BF16 only supports layout ZERO/ONE, got " << layout;
         }
         // FP8E4M3FN/FP8E5M2→FP32 and FP4→BF16 support all four layouts
     }
     // 2x widening (is_widening): layout supports ZERO/ONE only
-    if (is_widening) {
+    if (isWidening) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, layout == "ZERO" || layout == "ONE")
             << "vf.astype: 2x widening conversion only supports layout ZERO/ONE, got " << layout
-            << " (src=" << DTypeStr(src_dtype) << ", dst=" << DTypeStr(dst_dtype) << ")";
+            << " (src=" << DTypeStr(srcDtype) << ", dst=" << DTypeStr(dstDtype) << ")";
     }
     // 4x int widening (b8→b32): layout supports ZERO/ONE/TWO/THREE
-    if (is_int_4x_widening) {
+    if (isInt4xWidening) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT,
                           layout == "ZERO" || layout == "ONE" || layout == "TWO" || layout == "THREE")
             << "vf.astype: 4x int widening conversion only supports layout ZERO/ONE/TWO/THREE, got " << layout
-            << " (src=" << DTypeStr(src_dtype) << ", dst=" << DTypeStr(dst_dtype) << ")";
+            << " (src=" << DTypeStr(srcDtype) << ", dst=" << DTypeStr(dstDtype) << ")";
     }
     // 4x int narrowing (b32→u8) and INT16→INT4: layout supports ZERO/ONE/TWO/THREE
-    if (is_int_4x_narrowing || is_s16_to_s4) {
+    if (isInt4xNarrowing || isS16ToS4) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT,
                           layout == "ZERO" || layout == "ONE" || layout == "TWO" || layout == "THREE")
             << "vf.astype: 4x int narrowing conversion only supports layout ZERO/ONE/TWO/THREE, got " << layout
-            << " (src=" << DTypeStr(src_dtype) << ", dst=" << DTypeStr(dst_dtype) << ")";
+            << " (src=" << DTypeStr(srcDtype) << ", dst=" << DTypeStr(dstDtype) << ")";
     }
     // Float narrowing with PART (partCondition in AscendC): layout supports ZERO/ONE only.
     // This covers FP32→FP16, FP32→BF16, FP16→HF8, FP16→UINT8, FP16→INT8, BF16→INT32, FP32→INT16,
     // FP32→INT64 (all use vcvt(dst,src,mask,ROUND,SAT,PART,MODE) — 7 args).
     // AscendC: static_assert(SupportEnum<layoutMode, RegLayout::ZERO, RegLayout::ONE>());
-    if (!is_s4_widening && !is_s4_narrowing && !is_s16_to_s4 && !is_widening && !is_fp_widen_pp && !is_int_to_float &&
-        !is_float_to_same_int && !is_float_to_narrower_int && !is_float_to_wider_int && !is_cross_width &&
-        !is_int_2x_narrowing && !is_int_int_two_step && !is_int_4x_narrowing && !is_int_4x_widening &&
-        !is_fp_narrow_rnd_sat_pp && !is_fp_narrow_rnd_pp &&
-        !(src_dtype == DataType::FP16 && dst_dtype == DataType::BF16) &&
-        !(src_dtype == DataType::BF16 && dst_dtype == DataType::FP16) &&
-        !(src_dtype == DataType::FP32 && dst_dtype == DataType::INT64) &&
-        !(src_dtype == DataType::INT64 && dst_dtype == DataType::FP32)) {
+    if (!isS4Widening && !isS4Narrowing && !isS16ToS4 && !isWidening && !isFpWidenPp && !isIntToFloat &&
+        !isFloatToSameInt && !isFloatToNarrowerInt && !isFloatToWiderInt && !isCrossWidth && !isInt2xNarrowing &&
+        !isIntIntTwoStep && !isInt4xNarrowing && !isInt4xWidening && !isFpNarrowRndSatPp && !isFpNarrowRndPp &&
+        !(srcDtype == DataType::FP16 && dstDtype == DataType::BF16) &&
+        !(srcDtype == DataType::BF16 && dstDtype == DataType::FP16) &&
+        !(srcDtype == DataType::FP32 && dstDtype == DataType::INT64) &&
+        !(srcDtype == DataType::INT64 && dstDtype == DataType::FP32)) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, layout == "ZERO" || layout == "ONE")
-            << "vf.astype: layout only supports ZERO/ONE for this conversion path " << "(src=" << DTypeStr(src_dtype)
-            << ", dst=" << DTypeStr(dst_dtype) << "), got " << layout;
+            << "vf.astype: layout only supports ZERO/ONE for this conversion path " << "(src=" << DTypeStr(srcDtype)
+            << ", dst=" << DTypeStr(dstDtype) << "), got " << layout;
         // Round mode validation for fallback (partCondition) paths:
         // FP32→FP16: supports CAST_ODD but NOT CAST_HYBRID
-        if (src_dtype == DataType::FP32 && dst_dtype == DataType::FP16) {
+        if (srcDtype == DataType::FP32 && dstDtype == DataType::FP16) {
             PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, round != "ROUND_H")
                 << "vf.astype: FP32→FP16 does not support round_mode CAST_HYBRID, "
                 << "supported values are CAST_RINT/CAST_ROUND/CAST_FLOOR/CAST_CEIL/CAST_TRUNC/CAST_ODD";
@@ -4535,33 +4524,33 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
             // support CAST_RINT/CAST_ROUND/CAST_FLOOR/CAST_CEIL/CAST_TRUNC only (no CAST_ODD/CAST_HYBRID)
             PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, round != "ROUND_O" && round != "ROUND_H")
                 << "vf.astype: round_mode CAST_ODD/CAST_HYBRID is not supported for this conversion path "
-                << "(src=" << DTypeStr(src_dtype) << ", dst=" << DTypeStr(dst_dtype) << "), "
+                << "(src=" << DTypeStr(srcDtype) << ", dst=" << DTypeStr(dstDtype) << "), "
                 << "supported values are CAST_RINT/CAST_ROUND/CAST_FLOOR/CAST_CEIL/CAST_TRUNC";
         }
     }
-    if (is_s4_widening) {
+    if (isS4Widening) {
         // INT4→FP16/BF16/INT16: specialized vcvt_s42*
-        if (dst_dtype == DataType::FP16) {
-            codegen.Emit("vcvt_s42f16(" + dst + ", " + src + ", " + mask + ", " + part_pp + ", " + mode_value + ");");
-        } else if (dst_dtype == DataType::BF16) {
-            codegen.Emit("vcvt_s42bf16(" + dst + ", " + src + ", " + mask + ", " + part_pp + ", " + mode_value + ");");
+        if (dstDtype == DataType::FP16) {
+            codegen.Emit("vcvt_s42f16(" + dst + ", " + src + ", " + mask + ", " + partPp + ", " + modeValue + ");");
+        } else if (dstDtype == DataType::BF16) {
+            codegen.Emit("vcvt_s42bf16(" + dst + ", " + src + ", " + mask + ", " + partPp + ", " + modeValue + ");");
         } else {
-            codegen.Emit("vcvt_s42s16(" + dst + ", " + src + ", " + mask + ", " + part_pp + ", " + mode_value + ");");
+            codegen.Emit("vcvt_s42s16(" + dst + ", " + src + ", " + mask + ", " + partPp + ", " + modeValue + ");");
         }
-    } else if (is_s4_narrowing) {
+    } else if (isS4Narrowing) {
         // FP16→INT4: vcvt_f162s4
-        codegen.Emit("vcvt_f162s4(" + dst + ", " + src + ", " + mask + ", " + round + ", " + sat + ", " + part_pp +
-                     ", " + mode_value + ");");
-    } else if (is_widening) {
+        codegen.Emit("vcvt_f162s4(" + dst + ", " + src + ", " + mask + ", " + round + ", " + sat + ", " + partPp +
+                     ", " + modeValue + ");");
+    } else if (isWidening) {
         // vcvt(dst, src, mask, PART, MODE_ZEROING)
-        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + part + ", " + mode_value + ");");
-    } else if (is_int_to_float) {
+        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + part + ", " + modeValue + ");");
+    } else if (isIntToFloat) {
         // vcvt(dst, src, mask, ROUND, MODE_ZEROING)
-        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + mode_value + ");");
-    } else if (is_float_to_same_int) {
+        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + modeValue + ");");
+    } else if (isFloatToSameInt) {
         // vcvt(dst, src, mask, ROUND, RS, MODE_ZEROING) — no PART
-        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + sat + ", " + mode_value + ");");
-    } else if (src_dtype == DataType::FP32 && dst_dtype == DataType::INT64) {
+        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + sat + ", " + modeValue + ");");
+    } else if (srcDtype == DataType::FP32 && dstDtype == DataType::INT64) {
         // FP32→INT64: __VF_VCVTFI_SAT_PART(f32, s64) — the overload takes
         // (dst, src, mask, ROUND, RS, PART, MODE): the 5th arg is the
         // rounding-saturation flag and the 6th is PART_EVEN/PART_ODD (mirrors
@@ -4569,37 +4558,37 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, layout == "ZERO" || layout == "ONE")
             << "vf.astype FP32->INT64 only supports layout ZERO/ONE, got " << layout;
         codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + sat + ", " + part + ", " +
-                     mode_value + ");");
-    } else if (is_float_to_wider_int || is_cross_width) {
+                     modeValue + ");");
+    } else if (isFloatToWiderInt || isCrossWidth) {
         // vcvt(dst, src, mask, ROUND, PART, MODE_ZEROING) — no RS
-        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + part + ", " + mode_value + ");");
-    } else if (is_float_to_narrower_int) {
+        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + part + ", " + modeValue + ");");
+    } else if (isFloatToNarrowerInt) {
         // FLOAT→narrower-INT (2x narrowing): FP16→INT8/UINT8, BF16→INT8/UINT8
         // AscendC CastOperator<T,U,RoundMode,SatMode,RegLayout,MaskMergeMode> emits:
         //   vcvt(dstReg, srcReg, mask, roundModeValue, satModeValue, partModeValue, modeValue)
         // satMode is passed through directly (NO_SAT → RS_DISABLE, SAT → RS_ENABLE).
         codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + sat + ", " + part + ", " +
-                     mode_value + ");");
-    } else if (is_int_4x_widening) {
+                     modeValue + ");");
+    } else if (isInt4xWidening) {
         // 4x int widening (b8→b32): vcvt(dst, src, mask, PART_PP, MODE_ZEROING) — 5 args
-        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + part_pp + ", " + mode_value + ");");
-    } else if (is_int_4x_narrowing) {
+        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + partPp + ", " + modeValue + ");");
+    } else if (isInt4xNarrowing) {
         // 4x int narrowing to UINT8 (b32→u8): vcvt(dst, src, mask, RS, PART_PP, MODE) — 6 args
-        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + sat + ", " + part_pp + ", " + mode_value + ");");
-    } else if (is_int_2x_narrowing) {
+        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + sat + ", " + partPp + ", " + modeValue + ");");
+    } else if (isInt2xNarrowing) {
         // 2x int narrowing with RS (b32→b16, b16→u8, b64→b32): vcvt(dst, src, mask, RS, PART, MODE) — 6 args
-        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + sat + ", " + part + ", " + mode_value + ");");
-    } else if (is_s16_to_s4) {
+        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + sat + ", " + part + ", " + modeValue + ");");
+    } else if (isS16ToS4) {
         // INT16→INT4: two-step conversion mirroring AscendC CastOperator (s16→f16→s4).
         // AscendC hardcodes RoundMode::CAST_RINT for both steps (round_mode not in trait).
         // Step 1: vcvt(tmp_f16, src_s16, mask, ROUND_R, MODE) — s16→f16 (5 args, rndMergeCast)
         // Step 2: vcvt_f162s4(dst_s4, tmp_f16, mask, ROUND_R, SAT, PART_PP, MODE) — f16→s4 (7 args)
         std::string tmp = dst + "_f16_tmp";
         codegen.HoistRegTensorDecl("RegTensor<half> " + tmp + ";");
-        codegen.Emit("vcvt(" + tmp + ", " + src + ", " + mask + ", ROUND_R, " + mode_value + ");");
-        codegen.Emit("vcvt_f162s4(" + dst + ", " + tmp + ", " + mask + ", ROUND_R, " + sat + ", " + part_pp + ", " +
-                     mode_value + ");");
-    } else if (is_int_int_two_step) {
+        codegen.Emit("vcvt(" + tmp + ", " + src + ", " + mask + ", ROUND_R, " + modeValue + ");");
+        codegen.Emit("vcvt_f162s4(" + dst + ", " + tmp + ", " + mask + ", ROUND_R, " + sat + ", " + partPp + ", " +
+                     modeValue + ");");
+    } else if (isIntIntTwoStep) {
         // Multi-step int→int for paths not directly supported by hardware vcvt overloads.
         // Available int→float overloads: b8→f16, s16→f16, s16→f32, s32→f32
         // NOT available: u16→f16, u16→f32, u32→f32, s32→f16
@@ -4610,70 +4599,69 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
         // 3. u16 src + b8 dst: four-step u16→u32→f32→f16→dst (u16→f16 not available)
         // 4. u16 src + b32 dst: u16→u32 widening + dst cast (zero-extend, semantically correct)
         // 5. same-width cross-sign (u16→s16, s32→u32, u32→s32): reinterpret cast, no instruction
-        std::string dst_c_type = dst_dtype.ToCTypeString();
-        bool src_to_f16_ok = (src_dtype.GetBit() == 8) || (src_dtype == DataType::INT16);
-        bool src_is_b32 = (src_dtype == DataType::INT32 || src_dtype == DataType::UINT32);
-        bool dst_is_b8 = (dst_dtype.GetBit() == 8);
-        bool dst_is_b32 = (dst_dtype.GetBit() == 32);
-        bool same_width = (src_dtype.GetBit() == dst_dtype.GetBit());
+        std::string dstCType = dstDtype.ToCTypeString();
+        bool srcToF16Ok = (srcDtype.GetBit() == 8) || (srcDtype == DataType::INT16);
+        bool srcIsB32 = (srcDtype == DataType::INT32 || srcDtype == DataType::UINT32);
+        bool dstIsB8 = (dstDtype.GetBit() == 8);
+        bool dstIsB32 = (dstDtype.GetBit() == 32);
+        bool sameWidth = (srcDtype.GetBit() == dstDtype.GetBit());
 
-        if (src_to_f16_ok) {
+        if (srcToF16Ok) {
             // Two-step: src→f16→dst
             std::string tmp = dst + "_f16_tmp";
             codegen.HoistRegTensorDecl("RegTensor<half> " + tmp + ";");
-            EmitIntToFloatVcvt(codegen, tmp, src, mask, part, round, mode_value, src_dtype);
-            EmitFloatToIntVcvt(codegen, dst, tmp, mask, part, round, sat, mode_value, dst_dtype);
-        } else if (src_is_b32 && dst_is_b8) {
+            EmitIntToFloatVcvt(codegen, tmp, src, mask, part, round, modeValue, srcDtype);
+            EmitFloatToIntVcvt(codegen, dst, tmp, mask, part, round, sat, modeValue, dstDtype);
+        } else if (srcIsB32 && dstIsB8) {
             // Three-step: src→f32→f16→dst (s32→f32→f16→s8, u32 reinterpreted as s32 first)
-            std::string tmp_f32 = dst + "_f32_tmp";
-            std::string tmp_f16 = dst + "_f16_tmp";
-            codegen.HoistRegTensorDecl("RegTensor<float> " + tmp_f32 + ";");
-            codegen.HoistRegTensorDecl("RegTensor<half> " + tmp_f16 + ";");
-            EmitIntToFloatVcvt(codegen, tmp_f32, src, mask, part, round, mode_value, src_dtype);
+            std::string tmpF32 = dst + "_f32_tmp";
+            std::string tmpF16 = dst + "_f16_tmp";
+            codegen.HoistRegTensorDecl("RegTensor<float> " + tmpF32 + ";");
+            codegen.HoistRegTensorDecl("RegTensor<half> " + tmpF16 + ";");
+            EmitIntToFloatVcvt(codegen, tmpF32, src, mask, part, round, modeValue, srcDtype);
             // f32→f16: float narrowing → vcvt(tmp_f16, tmp_f32, mask, ROUND, SAT, PART, MODE) — 7 args
-            codegen.Emit("vcvt(" + tmp_f16 + ", " + tmp_f32 + ", " + mask + ", " + round + ", " + sat + ", " + part +
-                         ", " + mode_value + ");");
-            EmitFloatToIntVcvt(codegen, dst, tmp_f16, mask, part, round, sat, mode_value, dst_dtype);
-        } else if (src_dtype == DataType::UINT16 && dst_is_b8) {
+            codegen.Emit("vcvt(" + tmpF16 + ", " + tmpF32 + ", " + mask + ", " + round + ", " + sat + ", " + part +
+                         ", " + modeValue + ");");
+            EmitFloatToIntVcvt(codegen, dst, tmpF16, mask, part, round, sat, modeValue, dstDtype);
+        } else if (srcDtype == DataType::UINT16 && dstIsB8) {
             // Four-step: u16→u32→f32→f16→dst (u16→f16 not available, so widen to u32 first)
-            std::string tmp_u32 = dst + "_u32_tmp";
-            std::string tmp_f32 = dst + "_f32_tmp";
-            std::string tmp_f16 = dst + "_f16_tmp";
-            codegen.HoistRegTensorDecl("RegTensor<uint32_t> " + tmp_u32 + ";");
-            codegen.HoistRegTensorDecl("RegTensor<float> " + tmp_f32 + ";");
-            codegen.HoistRegTensorDecl("RegTensor<half> " + tmp_f16 + ";");
+            std::string tmpU32 = dst + "_u32_tmp";
+            std::string tmpF32 = dst + "_f32_tmp";
+            std::string tmpF16 = dst + "_f16_tmp";
+            codegen.HoistRegTensorDecl("RegTensor<uint32_t> " + tmpU32 + ";");
+            codegen.HoistRegTensorDecl("RegTensor<float> " + tmpF32 + ";");
+            codegen.HoistRegTensorDecl("RegTensor<half> " + tmpF16 + ";");
             // u16→u32: widening → vcvt(tmp_u32, src, mask, PART, MODE) — 5 args
-            codegen.Emit("vcvt(" + tmp_u32 + ", " + src + ", " + mask + ", " + part + ", " + mode_value + ");");
-            EmitIntToFloatVcvt(codegen, tmp_f32, tmp_u32, mask, part, round, mode_value, DataType::UINT32);
+            codegen.Emit("vcvt(" + tmpU32 + ", " + src + ", " + mask + ", " + part + ", " + modeValue + ");");
+            EmitIntToFloatVcvt(codegen, tmpF32, tmpU32, mask, part, round, modeValue, DataType::UINT32);
             // f32→f16: float narrowing → vcvt(tmp_f16, tmp_f32, mask, ROUND, SAT, PART, MODE) — 7 args
-            codegen.Emit("vcvt(" + tmp_f16 + ", " + tmp_f32 + ", " + mask + ", " + round + ", " + sat + ", " + part +
-                         ", " + mode_value + ");");
-            EmitFloatToIntVcvt(codegen, dst, tmp_f16, mask, part, round, sat, mode_value, dst_dtype);
-        } else if (src_dtype == DataType::UINT16 && dst_is_b32) {
+            codegen.Emit("vcvt(" + tmpF16 + ", " + tmpF32 + ", " + mask + ", " + round + ", " + sat + ", " + part +
+                         ", " + modeValue + ");");
+            EmitFloatToIntVcvt(codegen, dst, tmpF16, mask, part, round, sat, modeValue, dstDtype);
+        } else if (srcDtype == DataType::UINT16 && dstIsB32) {
             // u16→s32: u16→u32 widening with dst cast (zero-extend preserves value)
-            std::string u32_c_type = DataType::UINT32.ToCTypeString();
-            codegen.Emit("vcvt((RegTensor<" + u32_c_type + "> &)" + dst + ", " + src + ", " + mask + ", " + part +
-                         ", " + mode_value + ");");
-        } else if (same_width && src_dtype != dst_dtype) {
+            std::string u32CType = DataType::UINT32.ToCTypeString();
+            codegen.Emit("vcvt((RegTensor<" + u32CType + "> &)" + dst + ", " + src + ", " + mask + ", " + part + ", " +
+                         modeValue + ");");
+        } else if (sameWidth && srcDtype != dstDtype) {
             // Same-width cross-sign (u16→s16, s32→u32, u32→s32): reinterpret cast
-            codegen.Emit(dst + " = (RegTensor<" + dst_c_type + "> &)" + src + ";");
+            codegen.Emit(dst + " = (RegTensor<" + dstCType + "> &)" + src + ";");
         }
-    } else if (is_fp_widen_pp) {
+    } else if (isFpWidenPp) {
         // FP8/FP4 4x widening PP: vcvt(dst, src, mask, PART_PP, MODE_ZEROING)
-        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + part_pp + ", " + mode_value + ");");
-    } else if (is_fp_narrow_rnd_sat_pp) {
+        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + partPp + ", " + modeValue + ");");
+    } else if (isFpNarrowRndSatPp) {
         // FP32→FP8 4x narrowing RND_SAT_PP: vcvt(dst, src, mask, ROUND, SAT, PART_PP, MODE_ZEROING)
-        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + sat + ", " + part_pp + ", " +
-                     mode_value + ");");
-    } else if (is_fp_narrow_rnd_pp) {
+        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + sat + ", " + partPp + ", " +
+                     modeValue + ");");
+    } else if (isFpNarrowRndPp) {
         // BF16→FP4 4x narrowing RND_PP: vcvt(dst, src, mask, ROUND, PART_PP, MODE_ZEROING)
-        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + part_pp + ", " + mode_value +
-                     ");");
+        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + partPp + ", " + modeValue + ");");
     } else {
         // Float narrowing (FP32→FP16, FP32→BF16, FP16→INT8, etc.)
         // vcvt(dst, src, mask, ROUND, RS, PART, MODE_ZEROING)
         codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + sat + ", " + part + ", " +
-                     mode_value + ");");
+                     modeValue + ");");
     }
     return "";
 }
@@ -4682,9 +4670,9 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
 // DeInterleave — vdintlv
 // ============================================================================
 
-static std::string EmitVFDeInterleave(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFDeInterleave(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // Parser args order: [dst0, dst1, src0, src1]
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.de_interleave requires 4 args (dst0, dst1, src0, src1)";
@@ -4701,15 +4689,15 @@ static std::string EmitVFDeInterleave(const ir::CallPtr& op, codegen::CodegenBas
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
                           dtype.GetBit() == 8 || dtype.GetBit() == 16 || dtype.GetBit() == 32)
             << "vf.de_interleave (MaskReg) only supports b8/b16/b32, got " << DTypeStr(dtype);
-        std::string pdintlv_op;
+        std::string pdintlvOp;
         if (dtype == DataType::UINT8 || dtype == DataType::INT8) {
-            pdintlv_op = "pdintlv_b8";
+            pdintlvOp = "pdintlv_b8";
         } else if (dtype.GetBit() == 16) {
-            pdintlv_op = "pdintlv_b16";
+            pdintlvOp = "pdintlv_b16";
         } else {
-            pdintlv_op = "pdintlv_b32";
+            pdintlvOp = "pdintlv_b32";
         }
-        codegen.Emit(pdintlv_op + "(" + dst0 + ", " + dst1 + ", " + src0 + ", " + src1 + ");");
+        codegen.Emit(pdintlvOp + "(" + dst0 + ", " + dst1 + ", " + src0 + ", " + src1 + ");");
         return "";
     }
     // DeInterleave requires all four operands to have the same dtype (mirrors
@@ -4717,23 +4705,23 @@ static std::string EmitVFDeInterleave(const ir::CallPtr& op, codegen::CodegenBas
     // vdintlv is keyed on that element type). Cross-dtype reinterpretation is
     // the caller's job — cast explicitly first, e.g. the
     // `(RegTensor<uint8_t>&)vreg0U16` pattern in vf_topk.h:60.
-    DataType dst_dt = GetExprDtype(op->args_[0]);
-    DataType dst1_dt = GetExprDtype(op->args_[1]);
-    DataType s0_dt = GetExprDtype(op->args_[2]);
-    DataType s1_dt = GetExprDtype(op->args_[3]);
+    DataType dstDt = GetExprDtype(op->args_[0]);
+    DataType dst1Dt = GetExprDtype(op->args_[1]);
+    DataType s0Dt = GetExprDtype(op->args_[2]);
+    DataType s1Dt = GetExprDtype(op->args_[3]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (IsB8Type(s0_dt) || s0_dt.GetBit() == 16 || s0_dt.GetBit() == 32 || s0_dt.GetBit() == 64))
-        << "vf.de_interleave only supports b8/b16/b32/b64 types, got " << DTypeStr(s0_dt);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0_dt == s1_dt)
-        << "vf.de_interleave requires src0 and src1 to have the same type, got src0=" << DTypeStr(s0_dt)
-        << " src1=" << DTypeStr(s1_dt);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0_dt == dst_dt)
-        << "vf.de_interleave requires dst0 and src0 to have the same type, got dst0=" << DTypeStr(dst_dt)
-        << " src0=" << DTypeStr(s0_dt);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst1_dt == dst_dt)
-        << "vf.de_interleave requires dst0 and dst1 to have the same type, got dst0=" << DTypeStr(dst_dt)
-        << " dst1=" << DTypeStr(dst1_dt);
-    if (dst_dt.GetBit() == 64) {
+                      (IsB8Type(s0Dt) || s0Dt.GetBit() == 16 || s0Dt.GetBit() == 32 || s0Dt.GetBit() == 64))
+        << "vf.de_interleave only supports b8/b16/b32/b64 types, got " << DTypeStr(s0Dt);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0Dt == s1Dt)
+        << "vf.de_interleave requires src0 and src1 to have the same type, got src0=" << DTypeStr(s0Dt)
+        << " src1=" << DTypeStr(s1Dt);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0Dt == dstDt)
+        << "vf.de_interleave requires dst0 and src0 to have the same type, got dst0=" << DTypeStr(dstDt)
+        << " src0=" << DTypeStr(s0Dt);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst1Dt == dstDt)
+        << "vf.de_interleave requires dst0 and dst1 to have the same type, got dst0=" << DTypeStr(dstDt)
+        << " dst1=" << DTypeStr(dst1Dt);
+    if (dstDt.GetBit() == 64) {
         codegen.Emit("vdintlv((RegTensor<uint32_t>&)" + dst0 + ", (RegTensor<uint32_t>&)" + dst1 +
                      ", (RegTensor<uint32_t>&)" + src0 + ", (RegTensor<uint32_t>&)" + src1 + ");");
     } else {
@@ -4746,56 +4734,55 @@ static std::string EmitVFDeInterleave(const ir::CallPtr& op, codegen::CodegenBas
 // Select — vsel
 // ============================================================================
 
-static std::string EmitVFSelect(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFSelect(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // Parser args order: [dst, src_true, src_false, mask]
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.select requires 4 args (dst, src_true, src_false, mask)";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src_true = codegen.GetExprAsCode(op->args_[1]);
-    std::string src_false = codegen.GetExprAsCode(op->args_[2]);
+    std::string srcTrue = codegen.GetExprAsCode(op->args_[1]);
+    std::string srcFalse = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     if (IsDstMaskReg(op, codegen)) {
-        codegen.Emit("psel(" + dst + ", " + src_true + ", " + src_false + ", " + mask + ");");
+        codegen.Emit("psel(" + dst + ", " + srcTrue + ", " + srcFalse + ", " + mask + ");");
         return "";
     }
     // Doc: select supports BOOL/INT8/UINT8/INT16/UINT16/FP16/BF16/INT32/UINT32/FP32/INT64/UINT64
-    DataType dst_dt = GetExprDtype(op->args_[0]);
+    DataType dstDt = GetExprDtype(op->args_[0]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      IsB8Type(dst_dt) || dst_dt.GetBit() == 16 || dst_dt.GetBit() == 32 || dst_dt.GetBit() == 64)
-        << "vf.select only supports b8/b16/b32/b64 types, got " << DTypeStr(dst_dt);
-    DataType st_dt = GetExprDtype(op->args_[1]);
-    DataType sf_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      dst_dt.GetBit() == st_dt.GetBit() && dst_dt.GetBit() == sf_dt.GetBit())
-        << "vf.select requires dst, src_true, src_false to have the same bit width, got dst=" << dst_dt.GetBit()
-        << "-bit src_true=" << st_dt.GetBit() << "-bit src_false=" << sf_dt.GetBit() << "-bit";
-    if (dst_dt.GetBit() == 64) {
+                      IsB8Type(dstDt) || dstDt.GetBit() == 16 || dstDt.GetBit() == 32 || dstDt.GetBit() == 64)
+        << "vf.select only supports b8/b16/b32/b64 types, got " << DTypeStr(dstDt);
+    DataType stDt = GetExprDtype(op->args_[1]);
+    DataType sfDt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dstDt.GetBit() == stDt.GetBit() && dstDt.GetBit() == sfDt.GetBit())
+        << "vf.select requires dst, src_true, src_false to have the same bit width, got dst=" << dstDt.GetBit()
+        << "-bit src_true=" << stDt.GetBit() << "-bit src_false=" << sfDt.GetBit() << "-bit";
+    if (dstDt.GetBit() == 64) {
         // B64 select: deinterleave both sources, vsel on both b32 halves, interleave back.
         // Mirrors AscendC SelectImpl: B64TraitOneToTraitTwo + vsel(reg[0], reg[1]) + B64TraitTwoToTraitOne.
         std::string p = dst + "_sel_";
-        EmitB64Deinterleave(codegen, p + "t", src_true);
-        EmitB64Deinterleave(codegen, p + "f", src_false);
+        EmitB64Deinterleave(codegen, p + "t", srcTrue);
+        EmitB64Deinterleave(codegen, p + "f", srcFalse);
         std::string lot = p + "t_lo_", hit = p + "t_hi_";
         std::string lof = p + "f_lo_", hif = p + "f_hi_";
         // Pack b64 mask to b32 for vsel (mirrors MaskPack in AscendC)
-        std::string packed_m = p + "_pm_";
-        codegen.Emit("MaskReg " + packed_m + ";");
-        codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
-        std::string lo_dst = p + "_lod_";
-        std::string hi_dst = p + "_hid_";
-        codegen.Emit("RegTensor<uint32_t> " + lo_dst + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_dst + ";");
-        codegen.Emit("vsel(" + lo_dst + ", " + lot + ", " + lof + ", " + packed_m + ");");
-        codegen.Emit("vsel(" + hi_dst + ", " + hit + ", " + hif + ", " + packed_m + ");");
-        EmitB64Interleave(codegen, dst, lo_dst, hi_dst, p + "_ilv");
+        std::string packedM = p + "_pm_";
+        codegen.Emit("MaskReg " + packedM + ";");
+        codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
+        std::string loDst = p + "_lod_";
+        std::string hiDst = p + "_hid_";
+        codegen.Emit("RegTensor<uint32_t> " + loDst + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiDst + ";");
+        codegen.Emit("vsel(" + loDst + ", " + lot + ", " + lof + ", " + packedM + ");");
+        codegen.Emit("vsel(" + hiDst + ", " + hit + ", " + hif + ", " + packedM + ");");
+        EmitB64Interleave(codegen, dst, loDst, hiDst, p + "_ilv");
         return "";
     }
-    std::string cast_prefix = "(RegTensor<" + dst_dt.ToCTypeString() + "> &)";
-    std::string st_expr = (st_dt == dst_dt) ? src_true : (cast_prefix + src_true);
-    std::string sf_expr = (sf_dt == dst_dt) ? src_false : (cast_prefix + src_false);
-    codegen.Emit("vsel(" + dst + ", " + st_expr + ", " + sf_expr + ", " + mask + ");");
+    std::string castPrefix = "(RegTensor<" + dstDt.ToCTypeString() + "> &)";
+    std::string stExpr = (stDt == dstDt) ? srcTrue : (castPrefix + srcTrue);
+    std::string sfExpr = (sfDt == dstDt) ? srcFalse : (castPrefix + srcFalse);
+    codegen.Emit("vsel(" + dst + ", " + stExpr + ", " + sfExpr + ", " + mask + ");");
     return "";
 }
 
@@ -4803,49 +4790,49 @@ static std::string EmitVFSelect(const ir::CallPtr& op, codegen::CodegenBase& cod
 // UpdateMask — plt_b32/plt_b16
 // ============================================================================
 
-static std::string EmitVFUpdateMask(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFUpdateMask(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
         << "vf.update_mask requires 1 arg (scalar)";
     std::string scalar = codegen.GetExprAsCode(op->args_[0]);
-    std::string reg_name = codegen.GetCurrentResultTarget();
+    std::string regName = codegen.GetCurrentResultTarget();
     // Default to b32 (float), use dtype kwarg to select b16 or b8
-    bool use_b8 = false;
-    bool use_b16 = false;
-    bool use_b64 = false;
+    bool useB8 = false;
+    bool useB16 = false;
+    bool useB64 = false;
     if (op->HasKwarg("dtype")) {
         auto dtype = op->GetKwarg<DataType>("dtype");
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
                           IsB8Type(dtype) || dtype.GetBit() == 16 || dtype.GetBit() == 32 || dtype.GetBit() == 64)
             << "vf.update_mask dtype must be b8/b16/b32/b64, got " << DTypeStr(dtype);
-        use_b8 = (dtype == DataType::UINT8 || dtype == DataType::INT8);
-        use_b16 = (dtype.GetBit() == 16);
-        use_b64 = (dtype.GetBit() == 64);
+        useB8 = (dtype == DataType::UINT8 || dtype == DataType::INT8);
+        useB16 = (dtype.GetBit() == 16);
+        useB64 = (dtype.GetBit() == 64);
     }
     // plt_b32/plt_b16 requires uint32_t& reference, so declare a variable first
-    std::string scalar_var = "_vf_mask_scalar_" + std::to_string(codegen.GetTileOffsetCounter());
-    codegen.Emit("uint32_t " + scalar_var + " = (uint32_t)" + scalar + ";");
-    codegen.Emit("MaskReg " + reg_name + ";");
-    codegen.RegisterMaskRegVar(reg_name);
-    if (use_b8) {
-        codegen.Emit(reg_name + " = plt_b8(" + scalar_var + ", POST_UPDATE);");
-    } else if (use_b16) {
-        codegen.Emit(reg_name + " = plt_b16(" + scalar_var + ", POST_UPDATE);");
+    std::string scalarVar = "_vf_mask_scalar_" + std::to_string(codegen.GetTileOffsetCounter());
+    codegen.Emit("uint32_t " + scalarVar + " = (uint32_t)" + scalar + ";");
+    codegen.Emit("MaskReg " + regName + ";");
+    codegen.RegisterMaskRegVar(regName);
+    if (useB8) {
+        codegen.Emit(regName + " = plt_b8(" + scalarVar + ", POST_UPDATE);");
+    } else if (useB16) {
+        codegen.Emit(regName + " = plt_b16(" + scalarVar + ", POST_UPDATE);");
     } else {
         // b32 and b64 both use plt_b32; b64 additionally needs punpack to expand
         // each bit into a pair, matching the 2-bit-per-element mask width.
-        codegen.Emit(reg_name + " = plt_b32(" + scalar_var + ", POST_UPDATE);");
-        if (use_b64) {
-            codegen.Emit("punpack(" + reg_name + ", " + reg_name + ", LOWER);");
+        codegen.Emit(regName + " = plt_b32(" + scalarVar + ", POST_UPDATE);");
+        if (useB64) {
+            codegen.Emit("punpack(" + regName + ", " + regName + ", LOWER);");
         }
     }
     return "";
 }
 
-static std::string EmitVFHistograms(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFHistograms(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // args: [dst, src, mask]
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.histograms requires 3 args (dst, src, mask)";
@@ -4853,191 +4840,191 @@ static std::string EmitVFHistograms(const ir::CallPtr& op, codegen::CodegenBase&
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
     // vhist: src must be uint8_t, dst is derived from src and cast to uint16_t
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == DataType::UINT8)
-        << "vf.histograms source only supports UINT8, got " << DTypeStr(src_dt);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == DataType::UINT8)
+        << "vf.histograms source only supports UINT8, got " << DTypeStr(srcDt);
     // Reinterpret src as RegTensor<uint8_t>& if its dtype isn't u8
-    std::string bin_type = VFEnumValueName(ir::EnumToString(static_cast<ir::BinType>(op->GetKwarg<int>("bin_type"))));
-    std::string bin_const = (bin_type == "BIN1") ? "Bin_N1" : "Bin_N0";
-    std::string src_expr = (src_dt == DataType::UINT8) ? src : ("(RegTensor<uint8_t> &)" + src);
+    std::string binType = VFEnumValueName(ir::EnumToString(static_cast<ir::BinType>(op->GetKwarg<int>("bin_type"))));
+    std::string binConst = (binType == "BIN1") ? "Bin_N1" : "Bin_N0";
+    std::string srcExpr = (srcDt == DataType::UINT8) ? src : ("(RegTensor<uint8_t> &)" + src);
     // hist_type: ACCUMULATE (chistv2, default) or FREQUENCY (dhistv2)
-    std::string hist_type = "ACCUMULATE";
+    std::string histType = "ACCUMULATE";
     if (op->HasKwarg("hist_type")) {
-        hist_type = VFEnumValueName(ir::EnumToString(static_cast<ir::HistType>(op->GetKwarg<int>("hist_type"))));
+        histType = VFEnumValueName(ir::EnumToString(static_cast<ir::HistType>(op->GetKwarg<int>("hist_type"))));
     }
-    std::string dst_cast = "(RegTensor<uint16_t> &)";
-    if (hist_type == "FREQUENCY") {
-        codegen.Emit("dhistv2(" + dst_cast + dst + ", " + src_expr + ", " + mask + ", " + bin_const + ");");
+    std::string dstCast = "(RegTensor<uint16_t> &)";
+    if (histType == "FREQUENCY") {
+        codegen.Emit("dhistv2(" + dstCast + dst + ", " + srcExpr + ", " + mask + ", " + binConst + ");");
     } else {
-        codegen.Emit("chistv2(" + dst_cast + dst + ", " + src_expr + ", " + mask + ", " + bin_const + ");");
+        codegen.Emit("chistv2(" + dstCast + dst + ", " + srcExpr + ", " + mask + ", " + binConst + ");");
     }
     return "";
 }
 
-static std::string EmitVFCompareImpl(const ir::CallPtr& op, codegen::CodegenBase& codegen_base,
-                                     const std::string& cmp_mode)
+static std::string EmitVFCompareImpl(const ir::CallPtr& op, codegen::CodegenBase& codegenBase,
+                                     const std::string& cmpMode)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // args: [dst, src0, src1, mask_src]
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << op->name_ << " requires 4 args (dst, src0, src1, mask)";
-    std::string mask_dst = codegen.GetExprAsCode(op->args_[0]);
+    std::string maskDst = codegen.GetExprAsCode(op->args_[0]);
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
-    std::string mask_src = codegen.GetExprAsCode(op->args_[3]);
+    std::string maskSrc = codegen.GetExprAsCode(op->args_[3]);
     // vcmp supports: u8,s8,u16,s16,u32,s32,half,float,bf16,u64,s64 (no bool, no FP8)
-    DataType s0_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s0_dt) || s0_dt == DataType::FP16 ||
-                                                    s0_dt == DataType::FP32 || s0_dt == DataType::BF16))
-        << op->name_ << " source only supports INT/UINT/FP16/FP32/BF16, got " << DTypeStr(s0_dt);
-    DataType s1_dt = GetExprDtype(op->args_[2]);
+    DataType s0Dt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (IsArithIntType(s0Dt) || s0Dt == DataType::FP16 ||
+                                                    s0Dt == DataType::FP32 || s0Dt == DataType::BF16))
+        << op->name_ << " source only supports INT/UINT/FP16/FP32/BF16, got " << DTypeStr(s0Dt);
+    DataType s1Dt = GetExprDtype(op->args_[2]);
     // FP8/FP4 types have no vcmp overloads (mirrors AscendC CompareImpl):
     // reject them for either compared operand.
-    auto is_fp8_fp4 = [](DataType dt) {
+    auto isFp8Fp4 = [](DataType dt) {
         return dt == DataType::FP8E4M3FN || dt == DataType::FP8E5M2 || dt == DataType::FP8E8M0 || dt == DataType::HF8 ||
                dt == DataType::FP4 || dt == DataType::FP4E2M1 || dt == DataType::FP4E1M2 || dt == DataType::HF4;
     };
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, !is_fp8_fp4(s0_dt) && !is_fp8_fp4(s1_dt))
-        << op->name_ << " does not support FP8/FP4 compare types, got src0=" << DTypeStr(s0_dt)
-        << " src1=" << DTypeStr(s1_dt);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, !isFp8Fp4(s0Dt) && !isFp8Fp4(s1Dt))
+        << op->name_ << " does not support FP8/FP4 compare types, got src0=" << DTypeStr(s0Dt)
+        << " src1=" << DTypeStr(s1Dt);
     // Bit width check: in scalar path, uses is_convertible (allows int64 scalar -> int32 reg)
     // so we defer the strict check to the vector-vector path only.
     // Here we just ensure s1 is not a wider type that can't convert (e.g. float vs int).
-    bool is_scalar_src = true;
-    auto src1_var = ir::As<ir::Var>(op->args_[2]);
-    if (src1_var) {
-        std::string src1_name = codegen.GetVarName(src1_var);
-        is_scalar_src = !codegen.IsRegTensorVar(src1_name);
+    bool isScalarSrc = true;
+    auto src1Var = ir::As<ir::Var>(op->args_[2]);
+    if (src1Var) {
+        std::string src1Name = codegen.GetVarName(src1Var);
+        isScalarSrc = !codegen.IsRegTensorVar(src1Name);
     }
-    if (!is_scalar_src) {
+    if (!isScalarSrc) {
         // AscendC CompareImpl takes both sources as the same register type U —
         // mixed dtypes (even equal bit width) are rejected, no reinterpret casts.
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0_dt == s1_dt)
-            << op->name_ << " requires src0 and src1 to have the same type, got src0=" << DTypeStr(s0_dt)
-            << " src1=" << DTypeStr(s1_dt);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0Dt == s1Dt)
+            << op->name_ << " requires src0 and src1 to have the same type, got src0=" << DTypeStr(s0Dt)
+            << " src1=" << DTypeStr(s1Dt);
     } else {
         // Scalar compare: is_convertible allows scalar to be wider than reg
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s1_dt.GetBit() >= s0_dt.GetBit())
-            << op->name_ << " scalar must be convertible to reg type, got src0=" << DTypeStr(s0_dt)
-            << " scalar=" << DTypeStr(s1_dt);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s1Dt.GetBit() >= s0Dt.GetBit())
+            << op->name_ << " scalar must be convertible to reg type, got src0=" << DTypeStr(s0Dt)
+            << " scalar=" << DTypeStr(s1Dt);
     }
     std::string suffix = "eq";
-    if (cmp_mode == "NE")
+    if (cmpMode == "NE")
         suffix = "ne";
-    else if (cmp_mode == "LT")
+    else if (cmpMode == "LT")
         suffix = "lt";
-    else if (cmp_mode == "GT")
+    else if (cmpMode == "GT")
         suffix = "gt";
-    else if (cmp_mode == "GE")
+    else if (cmpMode == "GE")
         suffix = "ge";
-    else if (cmp_mode == "LE")
+    else if (cmpMode == "LE")
         suffix = "le";
-    if (is_scalar_src) {
-        src1 = cce::CoerceScalarToInt(op->args_[2], s0_dt, src1);
-        if (s0_dt.GetBit() == 64) {
+    if (isScalarSrc) {
+        src1 = cce::CoerceScalarToInt(op->args_[2], s0Dt, src1);
+        if (s0Dt.GetBit() == 64) {
             // B64 scalar compare: deinterleave src0, broadcast scalar halves, compare b32.
             // Must pack b64 mask to b32 (MaskPack) and unpack result (MaskUnPack),
             // matching AscendC CompareImpl for b64 RegTraitNumOne.
-            std::string p = mask_dst + "_cmps_";
-            std::string packed_m = p + "_pm_";
-            codegen.Emit("MaskReg " + packed_m + ";");
-            codegen.Emit("ppack(" + packed_m + ", " + mask_src + ", LOWER);");
+            std::string p = maskDst + "_cmps_";
+            std::string packedM = p + "_pm_";
+            codegen.Emit("MaskReg " + packedM + ";");
+            codegen.Emit("ppack(" + packedM + ", " + maskSrc + ", LOWER);");
             EmitB64Deinterleave(codegen, p + "s", src0);
-            std::string lo_s = p + "s_lo_", hi_s = p + "s_hi_";
-            std::string cast_type = (s0_dt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
-            std::string lo_sc = p + "_losc_";
-            std::string hi_sc = p + "_hisc_";
-            codegen.Emit("RegTensor<uint32_t> " + lo_sc + ";");
-            codegen.Emit("RegTensor<uint32_t> " + hi_sc + ";");
-            codegen.Emit("vdup(" + lo_sc + ", (int32_t)(" + cast_type + "(" + src1 + ")), " + packed_m +
+            std::string loS = p + "s_lo_", hiS = p + "s_hi_";
+            std::string castType = (s0Dt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
+            std::string loSc = p + "_losc_";
+            std::string hiSc = p + "_hisc_";
+            codegen.Emit("RegTensor<uint32_t> " + loSc + ";");
+            codegen.Emit("RegTensor<uint32_t> " + hiSc + ";");
+            codegen.Emit("vdup(" + loSc + ", (int32_t)(" + castType + "(" + src1 + ")), " + packedM +
                          ", MODE_ZEROING);");
-            codegen.Emit("vdup(" + hi_sc + ", (int32_t)((" + cast_type + "(" + src1 + ")) >> 32), " + packed_m +
+            codegen.Emit("vdup(" + hiSc + ", (int32_t)((" + castType + "(" + src1 + ")) >> 32), " + packedM +
                          ", MODE_ZEROING);");
             // Compare high halves
-            std::string hi_r = p + "_hir_";
-            std::string hi_eq = p + "_hieq_";
-            codegen.Emit("MaskReg " + hi_r + ";");
-            codegen.Emit("MaskReg " + hi_eq + ";");
-            if (s0_dt == DataType::INT64) {
-                codegen.Emit("vcmp_" + suffix + "(" + hi_r + ", (RegTensor<int32_t>&)" + hi_s +
-                             ", (RegTensor<int32_t>&)" + hi_sc + ", " + packed_m + ");");
-                codegen.Emit("vcmp_eq(" + hi_eq + ", (RegTensor<int32_t>&)" + hi_s + ", (RegTensor<int32_t>&)" + hi_sc +
-                             ", " + packed_m + ");");
+            std::string hiR = p + "_hir_";
+            std::string hiEq = p + "_hieq_";
+            codegen.Emit("MaskReg " + hiR + ";");
+            codegen.Emit("MaskReg " + hiEq + ";");
+            if (s0Dt == DataType::INT64) {
+                codegen.Emit("vcmp_" + suffix + "(" + hiR + ", (RegTensor<int32_t>&)" + hiS +
+                             ", (RegTensor<int32_t>&)" + hiSc + ", " + packedM + ");");
+                codegen.Emit("vcmp_eq(" + hiEq + ", (RegTensor<int32_t>&)" + hiS + ", (RegTensor<int32_t>&)" + hiSc +
+                             ", " + packedM + ");");
             } else {
-                codegen.Emit("vcmp_" + suffix + "(" + hi_r + ", " + hi_s + ", " + hi_sc + ", " + packed_m + ");");
-                codegen.Emit("vcmp_eq(" + hi_eq + ", " + hi_s + ", " + hi_sc + ", " + packed_m + ");");
+                codegen.Emit("vcmp_" + suffix + "(" + hiR + ", " + hiS + ", " + hiSc + ", " + packedM + ");");
+                codegen.Emit("vcmp_eq(" + hiEq + ", " + hiS + ", " + hiSc + ", " + packedM + ");");
             }
             // Compare low halves (always unsigned) for equality tie-break
-            std::string lo_r = p + "_lor_";
-            codegen.Emit("MaskReg " + lo_r + ";");
-            codegen.Emit("vcmp_" + suffix + "(" + lo_r + ", " + lo_s + ", " + lo_sc + ", " + packed_m + ");");
+            std::string loR = p + "_lor_";
+            codegen.Emit("MaskReg " + loR + ";");
+            codegen.Emit("vcmp_" + suffix + "(" + loR + ", " + loS + ", " + loSc + ", " + packedM + ");");
             // For EQ: result = hi_eq AND lo_eq (lo_r is eq result)
             // For NE: result = NOT(hi_eq AND lo_eq)
             // For GT/GE/LT/LE: psel(lowCmp, highCmp, highEq) — if highEq pick lowCmp, else pick highCmp.
             // Matches AscendC CompareScalarImpl b64 path.
-            if (cmp_mode == "EQ") {
-                codegen.Emit("pand(" + mask_dst + ", " + hi_eq + ", " + lo_r + ", " + packed_m + ");");
-            } else if (cmp_mode == "NE") {
+            if (cmpMode == "EQ") {
+                codegen.Emit("pand(" + maskDst + ", " + hiEq + ", " + loR + ", " + packedM + ");");
+            } else if (cmpMode == "NE") {
                 // NE: low_ne OR high_ne. lo_r is vcmp_ne(low), hi_r is vcmp_ne(high).
-                codegen.Emit("por(" + mask_dst + ", " + lo_r + ", " + hi_r + ", " + packed_m + ");");
+                codegen.Emit("por(" + maskDst + ", " + loR + ", " + hiR + ", " + packedM + ");");
             } else {
-                codegen.Emit("psel(" + mask_dst + ", " + lo_r + ", " + hi_r + ", " + hi_eq + ");");
+                codegen.Emit("psel(" + maskDst + ", " + loR + ", " + hiR + ", " + hiEq + ");");
             }
-            codegen.Emit("punpack(" + mask_dst + ", " + mask_dst + ", LOWER);");
+            codegen.Emit("punpack(" + maskDst + ", " + maskDst + ", LOWER);");
         } else {
-            codegen.Emit("vcmps_" + suffix + "(" + mask_dst + ", " + src0 + ", " + src1 + ", " + mask_src + ");");
+            codegen.Emit("vcmps_" + suffix + "(" + maskDst + ", " + src0 + ", " + src1 + ", " + maskSrc + ");");
         }
     } else {
-        if (s0_dt.GetBit() == 64) {
+        if (s0Dt.GetBit() == 64) {
             // B64 vector compare: deinterleave both sources, compare b32 halves.
             // Must pack b64 mask to b32 (MaskPack) and unpack result (MaskUnPack),
             // matching AscendC CompareImpl for b64 RegTraitNumOne.
-            std::string p = mask_dst + "_cmpv_";
-            std::string packed_m = p + "_pm_";
-            codegen.Emit("MaskReg " + packed_m + ";");
-            codegen.Emit("ppack(" + packed_m + ", " + mask_src + ", LOWER);");
+            std::string p = maskDst + "_cmpv_";
+            std::string packedM = p + "_pm_";
+            codegen.Emit("MaskReg " + packedM + ";");
+            codegen.Emit("ppack(" + packedM + ", " + maskSrc + ", LOWER);");
             EmitB64Deinterleave(codegen, p + "s0", src0);
             EmitB64Deinterleave(codegen, p + "s1", src1);
             std::string lo0 = p + "s0_lo_", hi0 = p + "s0_hi_";
             std::string lo1 = p + "s1_lo_", hi1 = p + "s1_hi_";
-            std::string hi_r = p + "_hir_";
-            std::string hi_eq = p + "_hieq_";
-            codegen.Emit("MaskReg " + hi_r + ";");
-            codegen.Emit("MaskReg " + hi_eq + ";");
-            if (s0_dt == DataType::INT64) {
-                codegen.Emit("vcmp_" + suffix + "(" + hi_r + ", (RegTensor<int32_t>&)" + hi0 +
-                             ", (RegTensor<int32_t>&)" + hi1 + ", " + packed_m + ");");
-                codegen.Emit("vcmp_eq(" + hi_eq + ", (RegTensor<int32_t>&)" + hi0 + ", (RegTensor<int32_t>&)" + hi1 +
-                             ", " + packed_m + ");");
+            std::string hiR = p + "_hir_";
+            std::string hiEq = p + "_hieq_";
+            codegen.Emit("MaskReg " + hiR + ";");
+            codegen.Emit("MaskReg " + hiEq + ";");
+            if (s0Dt == DataType::INT64) {
+                codegen.Emit("vcmp_" + suffix + "(" + hiR + ", (RegTensor<int32_t>&)" + hi0 +
+                             ", (RegTensor<int32_t>&)" + hi1 + ", " + packedM + ");");
+                codegen.Emit("vcmp_eq(" + hiEq + ", (RegTensor<int32_t>&)" + hi0 + ", (RegTensor<int32_t>&)" + hi1 +
+                             ", " + packedM + ");");
             } else {
-                codegen.Emit("vcmp_" + suffix + "(" + hi_r + ", " + hi0 + ", " + hi1 + ", " + packed_m + ");");
-                codegen.Emit("vcmp_eq(" + hi_eq + ", " + hi0 + ", " + hi1 + ", " + packed_m + ");");
+                codegen.Emit("vcmp_" + suffix + "(" + hiR + ", " + hi0 + ", " + hi1 + ", " + packedM + ");");
+                codegen.Emit("vcmp_eq(" + hiEq + ", " + hi0 + ", " + hi1 + ", " + packedM + ");");
             }
-            std::string lo_r = p + "_lor_";
-            codegen.Emit("MaskReg " + lo_r + ";");
-            codegen.Emit("vcmp_" + suffix + "(" + lo_r + ", " + lo0 + ", " + lo1 + ", " + packed_m + ");");
-            if (cmp_mode == "EQ") {
-                codegen.Emit("pand(" + mask_dst + ", " + hi_eq + ", " + lo_r + ", " + packed_m + ");");
-            } else if (cmp_mode == "NE") {
+            std::string loR = p + "_lor_";
+            codegen.Emit("MaskReg " + loR + ";");
+            codegen.Emit("vcmp_" + suffix + "(" + loR + ", " + lo0 + ", " + lo1 + ", " + packedM + ");");
+            if (cmpMode == "EQ") {
+                codegen.Emit("pand(" + maskDst + ", " + hiEq + ", " + loR + ", " + packedM + ");");
+            } else if (cmpMode == "NE") {
                 // NE: low_ne OR high_ne. lo_r is vcmp_ne(low), hi_r is vcmp_ne(high).
-                codegen.Emit("por(" + mask_dst + ", " + lo_r + ", " + hi_r + ", " + packed_m + ");");
+                codegen.Emit("por(" + maskDst + ", " + loR + ", " + hiR + ", " + packedM + ");");
             } else {
                 // GT/GE/LT/LE: psel(lowCmp, highCmp, highEq) — if highEq pick lowCmp, else pick highCmp.
                 // Matches AscendC CompareInt64Impl/CompareUint64Impl.
-                codegen.Emit("psel(" + mask_dst + ", " + lo_r + ", " + hi_r + ", " + hi_eq + ");");
+                codegen.Emit("psel(" + maskDst + ", " + loR + ", " + hiR + ", " + hiEq + ");");
             }
-            codegen.Emit("punpack(" + mask_dst + ", " + mask_dst + ", LOWER);");
+            codegen.Emit("punpack(" + maskDst + ", " + maskDst + ", LOWER);");
         } else {
             // Same-type operands (enforced above): no reinterpret casts needed.
-            codegen.Emit("vcmp_" + suffix + "(" + mask_dst + ", " + src0 + ", " + src1 + ", " + mask_src + ");");
+            codegen.Emit("vcmp_" + suffix + "(" + maskDst + ", " + src0 + ", " + src1 + ", " + maskSrc + ");");
         }
     }
     return "";
 }
 
-static std::string EmitVFSqueeze(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFSqueeze(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // Parser args order: [dst, src, mask]
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.squeeze requires 3 args (dst, src, mask)";
@@ -5047,23 +5034,23 @@ static std::string EmitVFSqueeze(const ir::CallPtr& op, codegen::CodegenBase& co
     // vsqz requires dst & src to share the same vector element type. Reinterpret
     // src as RegTensor<dst-dtype>& if necessary (mirrors vf_topk.h pattern of
     // `(RegTensor<u32>&)idxC` before passing to Squeeze).
-    DataType dst_dt = GetExprDtype(op->args_[0]);
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (src_dt == DataType::INT8 || src_dt == DataType::UINT8 || src_dt == DataType::INT16 ||
-                       src_dt == DataType::UINT16 || src_dt == DataType::INT32 || src_dt == DataType::UINT32 ||
-                       src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.squeeze src only supports INT8/UINT8/INT16/UINT16/INT32/UINT32/FP16/FP32, got " << DTypeStr(src_dt);
+    DataType dstDt = GetExprDtype(op->args_[0]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(
+        ExternalError::INVALID_TYPE,
+        (srcDt == DataType::INT8 || srcDt == DataType::UINT8 || srcDt == DataType::INT16 || srcDt == DataType::UINT16 ||
+         srcDt == DataType::INT32 || srcDt == DataType::UINT32 || srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.squeeze src only supports INT8/UINT8/INT16/UINT16/INT32/UINT32/FP16/FP32, got " << DTypeStr(srcDt);
     // Doc: dst supports the same type list as src
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (dst_dt == DataType::INT8 || dst_dt == DataType::UINT8 || dst_dt == DataType::INT16 ||
-                       dst_dt == DataType::UINT16 || dst_dt == DataType::INT32 || dst_dt == DataType::UINT32 ||
-                       dst_dt == DataType::FP16 || dst_dt == DataType::FP32))
-        << "vf.squeeze dst only supports INT8/UINT8/INT16/UINT16/INT32/UINT32/FP16/FP32, got " << DTypeStr(dst_dt);
-    std::string dst_expr = dst;
-    std::string src_expr = src;
-    if (dst_dt != src_dt) {
-        src_expr = "(RegTensor<" + dst_dt.ToCTypeString() + "> &)" + src;
+    PRO_CODEGEN_CHECK(
+        ExternalError::INVALID_TYPE,
+        (dstDt == DataType::INT8 || dstDt == DataType::UINT8 || dstDt == DataType::INT16 || dstDt == DataType::UINT16 ||
+         dstDt == DataType::INT32 || dstDt == DataType::UINT32 || dstDt == DataType::FP16 || dstDt == DataType::FP32))
+        << "vf.squeeze dst only supports INT8/UINT8/INT16/UINT16/INT32/UINT32/FP16/FP32, got " << DTypeStr(dstDt);
+    std::string dstExpr = dst;
+    std::string srcExpr = src;
+    if (dstDt != srcDt) {
+        srcExpr = "(RegTensor<" + dstDt.ToCTypeString() + "> &)" + src;
     }
     // mode kwarg: "STORED" (default) or "NO_STORED"
     // backward compat: gather_mode="STORE_REG" / "NO_STORE_REG"
@@ -5075,47 +5062,47 @@ static std::string EmitVFSqueeze(const ir::CallPtr& op, codegen::CodegenBase& co
         else
             mode = "MODE_STORED";
     }
-    codegen.Emit("vsqz(" + dst_expr + ", " + src_expr + ", " + mask + ", " + mode + ");");
+    codegen.Emit("vsqz(" + dstExpr + ", " + srcExpr + ", " + mask + ", " + mode + ");");
     return "";
 }
 
-static std::string EmitVFArange(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFArange(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // args: [dst, start]
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "vf.arange requires 2 args (dst, start)";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string start = codegen.GetExprAsCode(op->args_[1]);
-    DataType dst_dt = GetExprDtype(op->args_[0]);
+    DataType dstDt = GetExprDtype(op->args_[0]);
     // vci: supports INT8/UINT8/INT16/UINT16/INT32/UINT32/INT64/FP16/FP32 (no UINT64)
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      dst_dt == DataType::INT8 || dst_dt == DataType::UINT8 || dst_dt == DataType::INT16 ||
-                          dst_dt == DataType::UINT16 || dst_dt == DataType::INT32 || dst_dt == DataType::UINT32 ||
-                          dst_dt == DataType::INT64 || dst_dt == DataType::FP16 || dst_dt == DataType::FP32)
-        << "vf.arange only supports INT8/UINT8/INT16/UINT16/INT32/UINT32/INT64/FP16/FP32, got " << DTypeStr(dst_dt);
+                      dstDt == DataType::INT8 || dstDt == DataType::UINT8 || dstDt == DataType::INT16 ||
+                          dstDt == DataType::UINT16 || dstDt == DataType::INT32 || dstDt == DataType::UINT32 ||
+                          dstDt == DataType::INT64 || dstDt == DataType::FP16 || dstDt == DataType::FP32)
+        << "vf.arange only supports INT8/UINT8/INT16/UINT16/INT32/UINT32/INT64/FP16/FP32, got " << DTypeStr(dstDt);
     // vci: scalarValue must be convertible to RegTensor data type
     // is_convertible<U, ActualT>() — start must be convertible to dst type.
     // This allows e.g. int64(index) start with int32 dst (narrowing conversion).
     // Only reject if start is smaller than dst (would lose data).
     // index_order kwarg selects the direction: INCREASE_ORDER (default) ->
     // dst[i] = start + i; DECREASE_ORDER -> dst[i] = start - i.
-    bool is_decrease = false;
+    bool isDecrease = false;
     if (op->HasKwarg("index_order")) {
         auto o = static_cast<ir::IndexOrder>(op->GetKwarg<int>("index_order"));
         if (o == ir::IndexOrder::DECREASE_ORDER)
-            is_decrease = true;
+            isDecrease = true;
     }
     // vci accepts signed integer types (int8/int16/int32) and float types (half/float).
     // Unsigned types (uint8/uint16/uint32) have no vci overload — cast to signed.
     // Signed and float types are passed directly (no cast needed).
-    std::string elem_type = dst_dt.ToCTypeString();
-    if (dst_dt == DataType::UINT8)
-        elem_type = "int8_t";
-    else if (dst_dt == DataType::UINT16)
-        elem_type = "int16_t";
-    else if (dst_dt == DataType::UINT32)
-        elem_type = "int32_t";
+    std::string elemType = dstDt.ToCTypeString();
+    if (dstDt == DataType::UINT8)
+        elemType = "int8_t";
+    else if (dstDt == DataType::UINT16)
+        elemType = "int16_t";
+    else if (dstDt == DataType::UINT32)
+        elemType = "int32_t";
     // b64 (INT64/UINT64): single vci does not support 8-byte elements.
     // Build the index in u32 halves, fold in the 64-bit start scalar with a
     // carry chain (mirrors EmitVFAdds' b64 scalar add: vdup the scalar halves,
@@ -5125,19 +5112,19 @@ static std::string EmitVFArange(const ir::CallPtr& op, codegen::CodegenBase& cod
     // bisheng overload takes vector_2xvl_s64 512B register pairs.)
     // NOTE: DECREASE_ORDER assumes non-negative results (no borrow from the
     // low half into the sign-extended high half).
-    if (dst_dt == DataType::INT64 || dst_dt == DataType::UINT64) {
+    if (dstDt == DataType::INT64 || dstDt == DataType::UINT64) {
         std::string lo = dst + "_b64_lo_";
         std::string hi = dst + "_b64_hi_";
         std::string dump = dst + "_b64_dump_";
         std::string m = dst + "_b64_m_";
-        std::string cast_type = (dst_dt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
-        std::string b32_cast = (dst_dt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
+        std::string castType = (dstDt == DataType::INT64) ? "(int64_t)" : "(uint64_t)";
+        std::string b32Cast = (dstDt == DataType::INT64) ? "(RegTensor<int32_t>&)" : "(RegTensor<uint32_t>&)";
         codegen.Emit("RegTensor<int32_t> " + lo + ";");
         codegen.Emit("RegTensor<int32_t> " + hi + ";");
         codegen.Emit("RegTensor<int32_t> " + dump + ";");
         codegen.Emit("MaskReg " + m + " = pset_b32(PAT_ALL);");
         codegen.Emit("vci(" + lo + ", 0, INC_ORDER);");
-        if (is_decrease) {
+        if (isDecrease) {
             codegen.Emit("vneg(" + lo + ", " + lo + ", " + m + ", MODE_ZEROING);");
             // Sign-extend the negated low half: lane 0 keeps hi=0, lanes i>=1
             // extend to 0xFFFFFFFF so the pair holds the b64 value -i.
@@ -5145,18 +5132,18 @@ static std::string EmitVFArange(const ir::CallPtr& op, codegen::CodegenBase& cod
         } else {
             codegen.Emit("vdup(" + hi + ", 0, " + m + ", MODE_ZEROING);");
         }
-        std::string sc_lo = dst + "_b64_sclo_";
-        std::string sc_hi = dst + "_b64_schi_";
+        std::string scLo = dst + "_b64_sclo_";
+        std::string scHi = dst + "_b64_schi_";
         std::string carry = dst + "_b64_carry_";
-        codegen.Emit("RegTensor<uint32_t> " + sc_lo + ";");
-        codegen.Emit("RegTensor<uint32_t> " + sc_hi + ";");
+        codegen.Emit("RegTensor<uint32_t> " + scLo + ";");
+        codegen.Emit("RegTensor<uint32_t> " + scHi + ";");
         codegen.Emit("MaskReg " + carry + ";");
-        codegen.Emit("vdup(" + sc_lo + ", (int32_t)(" + cast_type + "(" + start + ")), " + m + ", MODE_ZEROING);");
-        codegen.Emit("vdup(" + sc_hi + ", (int32_t)((" + cast_type + "(" + start + ")) >> 32), " + m +
+        codegen.Emit("vdup(" + scLo + ", (int32_t)(" + castType + "(" + start + ")), " + m + ", MODE_ZEROING);");
+        codegen.Emit("vdup(" + scHi + ", (int32_t)((" + castType + "(" + start + ")) >> 32), " + m +
                      ", MODE_ZEROING);");
-        codegen.Emit("vaddc(" + carry + ", " + b32_cast + lo + ", " + b32_cast + lo + ", " + b32_cast + sc_lo + ", " +
-                     m + ");");
-        codegen.Emit("vaddcs(" + carry + ", " + b32_cast + hi + ", " + b32_cast + hi + ", " + b32_cast + sc_hi + ", " +
+        codegen.Emit("vaddc(" + carry + ", " + b32Cast + lo + ", " + b32Cast + lo + ", " + b32Cast + scLo + ", " + m +
+                     ");");
+        codegen.Emit("vaddcs(" + carry + ", " + b32Cast + hi + ", " + b32Cast + hi + ", " + b32Cast + scHi + ", " +
                      carry + ", " + m + ");");
         codegen.Emit("vintlv((RegTensor<uint32_t> &)" + dst + ", (RegTensor<uint32_t> &)" + dump +
                      ", (RegTensor<uint32_t> &)" + lo + ", (RegTensor<uint32_t> &)" + hi + ");");
@@ -5164,23 +5151,23 @@ static std::string EmitVFArange(const ir::CallPtr& op, codegen::CodegenBase& cod
     }
     // Non-b64: vci INC_ORDER generates value, value+1, ..., value+VL-1.
     // vci DEC_ORDER generates value+VL-1, value+VL-2, ..., value.
-    std::string order_str = is_decrease ? "DEC_ORDER" : "INC_ORDER";
-    if (elem_type != dst_dt.ToCTypeString()) {
-        codegen.Emit("vci((RegTensor<" + elem_type + "> &)" + dst + ", " + start + ", " + order_str + ");");
+    std::string orderStr = isDecrease ? "DEC_ORDER" : "INC_ORDER";
+    if (elemType != dstDt.ToCTypeString()) {
+        codegen.Emit("vci((RegTensor<" + elemType + "> &)" + dst + ", " + start + ", " + orderStr + ");");
     } else {
-        codegen.Emit("vci(" + dst + ", " + start + ", " + order_str + ");");
+        codegen.Emit("vci(" + dst + ", " + start + ", " + orderStr + ");");
     }
     return "";
 }
 
-static std::string EmitVFGather(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFGather(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // Two forms, dispatched by src argument type:
     //   Reg-to-Reg: args = [dst, src_reg, indices]  — no mask, src/dst same type
     //   UB-to-Reg:  args = [dst, src_ub, indices, mask] — with mask, b8 zero-extends to b16
-    auto src_tile_type = ir::As<ir::TileType>(op->args_[1]->GetType());
-    if (!src_tile_type) {
+    auto srcTileType = ir::As<ir::TileType>(op->args_[1]->GetType());
+    if (!srcTileType) {
         // Reg-to-Reg form
         PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, op->args_.size() == 3)
             << "vf.gather (reg→reg) requires exactly 3 args (dst, src, indices), "
@@ -5191,29 +5178,29 @@ static std::string EmitVFGather(const ir::CallPtr& op, codegen::CodegenBase& cod
         // same bit width — e.g. FP16 src with BF16 dst must be rejected); b64 is
         // not supported (vselr limitation, mirrors AscendC GatherImpl
         // SupportBytes<1,2,4> and the gather.md reg→reg type table).
-        DataType dst_dt = GetExprDtype(op->args_[0]);
-        DataType src_dt = GetExprDtype(op->args_[1]);
-        DataType idx_dt = GetExprDtype(op->args_[2]);
-        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, src_dt.GetBit() != 64)
-            << "vf.gather (reg→reg) does not support b64 types (vselr limitation), got " << DTypeStr(src_dt);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src_dt.GetBit() == idx_dt.GetBit()))
-            << "vf.gather (reg→reg) requires index bit width to match src, got src=" << DTypeStr(src_dt)
-            << " index=" << DTypeStr(idx_dt);
-        DataType gather_dst_dt = GetExprDtype(op->args_[0]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == gather_dst_dt)
-            << "vf.gather (reg→reg) requires src and dst to have the same type, got dst=" << DTypeStr(gather_dst_dt)
-            << " src=" << DTypeStr(src_dt);
+        DataType dstDt = GetExprDtype(op->args_[0]);
+        DataType srcDt = GetExprDtype(op->args_[1]);
+        DataType idxDt = GetExprDtype(op->args_[2]);
+        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, srcDt.GetBit() != 64)
+            << "vf.gather (reg→reg) does not support b64 types (vselr limitation), got " << DTypeStr(srcDt);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (srcDt.GetBit() == idxDt.GetBit()))
+            << "vf.gather (reg→reg) requires index bit width to match src, got src=" << DTypeStr(srcDt)
+            << " index=" << DTypeStr(idxDt);
+        DataType gatherDstDt = GetExprDtype(op->args_[0]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == gatherDstDt)
+            << "vf.gather (reg→reg) requires src and dst to have the same type, got dst=" << DTypeStr(gatherDstDt)
+            << " src=" << DTypeStr(srcDt);
         std::string dst = codegen.GetExprAsCode(op->args_[0]);
         std::string src = codegen.GetExprAsCode(op->args_[1]);
         std::string indices = codegen.GetExprAsCode(op->args_[2]);
-        std::string cast_type = "uint32_t";
-        if (dst_dt.GetBit() <= 8) {
-            cast_type = "uint8_t";
-        } else if (dst_dt.GetBit() == 16) {
-            cast_type = "uint16_t";
+        std::string castType = "uint32_t";
+        if (dstDt.GetBit() <= 8) {
+            castType = "uint8_t";
+        } else if (dstDt.GetBit() == 16) {
+            castType = "uint16_t";
         }
-        codegen.Emit("vselr((RegTensor<" + cast_type + ">&)" + dst + ", (RegTensor<" + cast_type + ">&)" + src +
-                     ", (RegTensor<" + cast_type + ">&)" + indices + ");");
+        codegen.Emit("vselr((RegTensor<" + castType + ">&)" + dst + ", (RegTensor<" + castType + ">&)" + src +
+                     ", (RegTensor<" + castType + ">&)" + indices + ");");
         return "";
     }
 
@@ -5222,165 +5209,165 @@ static std::string EmitVFGather(const ir::CallPtr& op, codegen::CodegenBase& cod
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.gather requires 4 args (dst, src, indices, mask)";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    DataType dst_dt = GetExprDtype(op->args_[0]);
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    DataType idx_dt = GetExprDtype(op->args_[2]);
+    DataType dstDt = GetExprDtype(op->args_[0]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    DataType idxDt = GetExprDtype(op->args_[2]);
     std::string indices = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
 
     // Check mode: DATA_BLOCK_LOAD -> block gather, otherwise -> per-element gather
-    bool is_datablock = false;
+    bool isDatablock = false;
     if (op->HasKwarg("data_copy_mode")) {
         auto mode = static_cast<ir::DataCopyMode>(op->GetKwarg<int>("data_copy_mode"));
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT,
                           mode == ir::DataCopyMode::NORM || mode == ir::DataCopyMode::DATA_BLOCK_LOAD)
             << "vf.gather only supports data_copy_mode=NORM or DATA_BLOCK_LOAD, got "
             << VFEnumValueName(ir::EnumToString(mode));
-        is_datablock = (mode == ir::DataCopyMode::DATA_BLOCK_LOAD);
-        if (!is_datablock) {
+        isDatablock = (mode == ir::DataCopyMode::DATA_BLOCK_LOAD);
+        if (!isDatablock) {
             PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("block_stride"))
                 << "vf.gather (NORM mode) does not support block_stride";
         }
     }
 
-    if (is_datablock) {
+    if (isDatablock) {
         // DataCopyGatherB: dst b8/b16/b32/b64, index must be uint32_t
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idx_dt == DataType::UINT32)
-            << "vf.gather (DATA_BLOCK_LOAD) index must be UINT32, got " << DTypeStr(idx_dt);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idxDt == DataType::UINT32)
+            << "vf.gather (DATA_BLOCK_LOAD) index must be UINT32, got " << DTypeStr(idxDt);
         // Block gather: always casts to signed types (s8/s16/s32/s64)
         // and uses int8_t*/int16_t*/int32_t*/int64_t* for the UB pointer.
-        std::string signed_c_type;
-        if (dst_dt.GetBit() <= 8) {
-            signed_c_type = "int8_t";
-        } else if (dst_dt.GetBit() == 16) {
-            signed_c_type = "int16_t";
-        } else if (dst_dt.GetBit() == 32) {
-            signed_c_type = "int32_t";
+        std::string signedCType;
+        if (dstDt.GetBit() <= 8) {
+            signedCType = "int8_t";
+        } else if (dstDt.GetBit() == 16) {
+            signedCType = "int16_t";
+        } else if (dstDt.GetBit() == 32) {
+            signedCType = "int32_t";
         } else {
-            signed_c_type = "int64_t";
+            signedCType = "int64_t";
         }
-        std::string gb_ub_ptr = GetUBufPtr(codegen, op->args_[1], signed_c_type);
-        codegen.Emit("vgatherb((RegTensor<" + signed_c_type + ">&)" + dst + ", " + gb_ub_ptr +
-                     ", (RegTensor<uint32_t> &)" + indices + ", " + mask + ");");
+        std::string gbUbPtr = GetUBufPtr(codegen, op->args_[1], signedCType);
+        codegen.Emit("vgatherb((RegTensor<" + signedCType + ">&)" + dst + ", " + gbUbPtr + ", (RegTensor<uint32_t> &)" +
+                     indices + ", " + mask + ");");
     } else {
         // DataCopyGather: specific src-dst-index type combinations
         // src b8 -> dst b16 + idx u16; src b16 -> dst b16 + idx u16/u32;
         // src b32 -> dst b32 + idx u32; src b64 -> dst b64 + idx u32/u64
-        bool is_b16_src = (dst_dt == DataType::INT16 || dst_dt == DataType::UINT16 || dst_dt == DataType::FP16 ||
-                           dst_dt == DataType::BF16);
-        bool use_vgather2_bc = is_b16_src && (idx_dt.GetBit() >= 32);
-        if (dst_dt.GetBit() == 16) {
-            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt.GetBit() == 8 || src_dt.GetBit() == 16)
-                << "vf.gather (NORM) b16 dst requires b8/b16 src, got src=" << DTypeStr(src_dt);
-            if (!use_vgather2_bc) {
-                PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idx_dt == DataType::UINT16)
+        bool isB16Src = (dstDt == DataType::INT16 || dstDt == DataType::UINT16 || dstDt == DataType::FP16 ||
+                         dstDt == DataType::BF16);
+        bool useVgather2Bc = isB16Src && (idxDt.GetBit() >= 32);
+        if (dstDt.GetBit() == 16) {
+            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt.GetBit() == 8 || srcDt.GetBit() == 16)
+                << "vf.gather (NORM) b16 dst requires b8/b16 src, got src=" << DTypeStr(srcDt);
+            if (!useVgather2Bc) {
+                PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idxDt == DataType::UINT16)
                     << "vf.gather (NORM) b16 dst requires UINT16 index (or UINT32 for vgather2_bc), got "
-                    << DTypeStr(idx_dt);
+                    << DTypeStr(idxDt);
             } else {
-                PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idx_dt == DataType::UINT32)
-                    << "vf.gather (NORM) b16 dst with vgather2_bc requires UINT32 index, got " << DTypeStr(idx_dt);
+                PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idxDt == DataType::UINT32)
+                    << "vf.gather (NORM) b16 dst with vgather2_bc requires UINT32 index, got " << DTypeStr(idxDt);
             }
-        } else if (dst_dt.GetBit() == 32) {
-            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt.GetBit() == 32)
-                << "vf.gather (NORM) b32 requires b32 src, got src=" << DTypeStr(src_dt);
-            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idx_dt == DataType::UINT32)
-                << "vf.gather (NORM) b32 dst requires UINT32 index, got " << DTypeStr(idx_dt);
-        } else if (dst_dt.GetBit() == 64) {
-            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt.GetBit() == 64)
-                << "vf.gather (NORM) b64 requires b64 src, got src=" << DTypeStr(src_dt);
-            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idx_dt == DataType::UINT32)
-                << "vf.gather (NORM) b64 dst requires UINT32 index, got " << DTypeStr(idx_dt);
+        } else if (dstDt.GetBit() == 32) {
+            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt.GetBit() == 32)
+                << "vf.gather (NORM) b32 requires b32 src, got src=" << DTypeStr(srcDt);
+            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idxDt == DataType::UINT32)
+                << "vf.gather (NORM) b32 dst requires UINT32 index, got " << DTypeStr(idxDt);
+        } else if (dstDt.GetBit() == 64) {
+            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt.GetBit() == 64)
+                << "vf.gather (NORM) b64 requires b64 src, got src=" << DTypeStr(srcDt);
+            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idxDt == DataType::UINT32)
+                << "vf.gather (NORM) b64 dst requires UINT32 index, got " << DTypeStr(idxDt);
         }
-        if (dst_dt.GetBit() == 64) {
+        if (dstDt.GetBit() == 64) {
             // B64 gather: vgather2 has no b64 single-register overload.
             // Mirrors AscendC DataCopyGatherB64Impl: pack mask, compute odd/even
             // b32 indices (index*2, index*2+1), vgather2 each b32 half, interleave.
             std::string p = dst + "_gather_";
-            std::string packed_m = p + "_pm_";
-            std::string vl32_m = p + "_vl32_";
-            std::string all_m = p + "_allm_";
-            std::string and_m = p + "_andm_";
-            std::string lo_idx = p + "_loi_";
-            std::string hi_idx = p + "_hii_";
-            std::string lo_reg = p + "_lor_";
-            std::string hi_reg = p + "_hir_";
-            std::string tmp_reg = p + "_tmp_";
-            codegen.Emit("MaskReg " + packed_m + ";");
-            codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
+            std::string packedM = p + "_pm_";
+            std::string vl32M = p + "_vl32_";
+            std::string allM = p + "_allm_";
+            std::string andM = p + "_andm_";
+            std::string loIdx = p + "_loi_";
+            std::string hiIdx = p + "_hii_";
+            std::string loReg = p + "_lor_";
+            std::string hiReg = p + "_hir_";
+            std::string tmpReg = p + "_tmp_";
+            codegen.Emit("MaskReg " + packedM + ";");
+            codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
             // MaskAnd with VL32: b64 has 32 elements → 64 b32 slots after ppack,
             // but only first 32 b32 slots are valid. Mirrors AscendC
             // DataCopyGatherB64Impl: MaskAnd(dstMask, dstMask, lowerMask, preg).
-            codegen.Emit("MaskReg " + vl32_m + " = pset_b32(PAT_VL32);");
-            codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
-            codegen.Emit("MaskReg " + and_m + ";");
-            codegen.Emit("pand(" + and_m + ", " + packed_m + ", " + vl32_m + ", " + all_m + ");");
-            codegen.Emit("RegTensor<uint32_t> " + lo_idx + ";");
-            codegen.Emit("RegTensor<uint32_t> " + hi_idx + ";");
-            codegen.Emit("vmuls(" + lo_idx + ", (RegTensor<uint32_t> &)" + indices + ", (uint32_t)2, " + and_m +
+            codegen.Emit("MaskReg " + vl32M + " = pset_b32(PAT_VL32);");
+            codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
+            codegen.Emit("MaskReg " + andM + ";");
+            codegen.Emit("pand(" + andM + ", " + packedM + ", " + vl32M + ", " + allM + ");");
+            codegen.Emit("RegTensor<uint32_t> " + loIdx + ";");
+            codegen.Emit("RegTensor<uint32_t> " + hiIdx + ";");
+            codegen.Emit("vmuls(" + loIdx + ", (RegTensor<uint32_t> &)" + indices + ", (uint32_t)2, " + andM +
                          ", MODE_ZEROING);");
-            codegen.Emit("vadds(" + hi_idx + ", " + lo_idx + ", (uint32_t)1, " + and_m + ", MODE_ZEROING);");
-            codegen.Emit("RegTensor<uint32_t> " + lo_reg + ";");
-            codegen.Emit("RegTensor<uint32_t> " + hi_reg + ";");
-            std::string ub_ptr = GetUBufPtr(codegen, op->args_[1], "uint32_t");
-            codegen.Emit("vgather2(" + lo_reg + ", " + ub_ptr + ", " + lo_idx + ", " + and_m + ");");
-            codegen.Emit("vgather2(" + hi_reg + ", " + ub_ptr + ", " + hi_idx + ", " + and_m + ");");
-            EmitB64Interleave(codegen, dst, lo_reg, hi_reg, p + "_ilv");
+            codegen.Emit("vadds(" + hiIdx + ", " + loIdx + ", (uint32_t)1, " + andM + ", MODE_ZEROING);");
+            codegen.Emit("RegTensor<uint32_t> " + loReg + ";");
+            codegen.Emit("RegTensor<uint32_t> " + hiReg + ";");
+            std::string ubPtr = GetUBufPtr(codegen, op->args_[1], "uint32_t");
+            codegen.Emit("vgather2(" + loReg + ", " + ubPtr + ", " + loIdx + ", " + andM + ");");
+            codegen.Emit("vgather2(" + hiReg + ", " + ubPtr + ", " + hiIdx + ", " + andM + ");");
+            EmitB64Interleave(codegen, dst, loReg, hiReg, p + "_ilv");
             return "";
         }
-        std::string idx_c_type = use_vgather2_bc ? "uint32_t" : ((dst_dt.GetBit() >= 32) ? "uint32_t" : "uint16_t");
-        std::string dst_expr = dst;
-        std::string ub_ptr = GetUBufPtr(codegen, op->args_[1], src_dt.ToCTypeString());
-        if (dst_dt == DataType::INT8 || dst_dt == DataType::UINT8) {
-            dst_expr = "(RegTensor<int16_t>&)" + dst;
-            ub_ptr = GetUBufPtr(codegen, op->args_[1], "int8_t");
-        } else if (is_b16_src) {
+        std::string idxCType = useVgather2Bc ? "uint32_t" : ((dstDt.GetBit() >= 32) ? "uint32_t" : "uint16_t");
+        std::string dstExpr = dst;
+        std::string ubPtr = GetUBufPtr(codegen, op->args_[1], srcDt.ToCTypeString());
+        if (dstDt == DataType::INT8 || dstDt == DataType::UINT8) {
+            dstExpr = "(RegTensor<int16_t>&)" + dst;
+            ubPtr = GetUBufPtr(codegen, op->args_[1], "int8_t");
+        } else if (isB16Src) {
             // vgather2_bc b16 overload expects vector_s16& (RegTensor<int16_t>&).
             // The b16 element occupies the lower 16 bits of each 32-bit slot;
             // the upper 16 bits are zero. Both vgather2 and vgather2_bc use the
             // same dst cast for b16 source types.
-            dst_expr = "(RegTensor<int16_t>&)" + dst;
-            ub_ptr = GetUBufPtr(codegen, op->args_[1], "int16_t");
-        } else if (dst_dt.GetBit() == 32) {
-            dst_expr = "(RegTensor<int32_t>&)" + dst;
-            ub_ptr = GetUBufPtr(codegen, op->args_[1], "int32_t");
+            dstExpr = "(RegTensor<int16_t>&)" + dst;
+            ubPtr = GetUBufPtr(codegen, op->args_[1], "int16_t");
+        } else if (dstDt.GetBit() == 32) {
+            dstExpr = "(RegTensor<int32_t>&)" + dst;
+            ubPtr = GetUBufPtr(codegen, op->args_[1], "int32_t");
         }
-        std::string instr = use_vgather2_bc ? "vgather2_bc" : "vgather2";
-        codegen.Emit(instr + "(" + dst_expr + ", " + ub_ptr + ", (RegTensor<" + idx_c_type + "> &)" + indices + ", " +
+        std::string instr = useVgather2Bc ? "vgather2_bc" : "vgather2";
+        codegen.Emit(instr + "(" + dstExpr + ", " + ubPtr + ", (RegTensor<" + idxCType + "> &)" + indices + ", " +
                      mask + ");");
     }
     return "";
 }
 
-static std::string EmitVFStoreUnAlign(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFStoreUnAlign(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // MaskReg src path: when args[1] is a MaskReg, dispatch to pstu
-    bool src_is_mask = false;
-    if (auto src_v = ir::As<ir::Var>(op->args_[1])) {
-        src_is_mask = codegen.IsMaskRegVar(codegen.GetVarName(src_v));
+    bool srcIsMask = false;
+    if (auto srcV = ir::As<ir::Var>(op->args_[1])) {
+        srcIsMask = codegen.IsMaskRegVar(codegen.GetVarName(srcV));
     }
-    if (src_is_mask) {
+    if (srcIsMask) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
             << "vf.store_unalign mask path requires 3 args (ptr, mask, ureg)";
         // DataCopyUnAlign: only supports b16/b32 (SupportBytes<T, 2, 4>)
-        DataType tile_dt = GetExprDtype(op->args_[0]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tile_dt.GetBit() == 16 || tile_dt.GetBit() == 32)
-            << "vf.store_unalign (mask path) only supports b16/b32 tile types, got " << DTypeStr(tile_dt);
+        DataType tileDt = GetExprDtype(op->args_[0]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tileDt.GetBit() == 16 || tileDt.GetBit() == 32)
+            << "vf.store_unalign (mask path) only supports b16/b32 tile types, got " << DTypeStr(tileDt);
         std::string vreg = codegen.GetExprAsCode(op->args_[1]);
-        DataType mask_dt = GetExprDtype(op->args_[1], DataType::UINT16);
-        int elem_bytes = static_cast<int>(mask_dt.GetBit() / 8);
-        if (elem_bytes <= 0)
-            elem_bytes = 4;
+        DataType maskDt = GetExprDtype(op->args_[1], DataType::UINT16);
+        int elemBytes = static_cast<int>(maskDt.GetBit() / 8);
+        if (elemBytes <= 0)
+            elemBytes = 4;
         // pstu only accepts uint16_t* or uint32_t* (DataCopyUnAlignImpl
         // casts to unsigned regardless of template T). b16→uint16_t, b32→uint32_t.
-        std::string ptr_type = (elem_bytes <= 2) ? "uint16_t" : "uint32_t";
+        std::string ptrType = (elemBytes <= 2) ? "uint16_t" : "uint32_t";
         // pstu modifies the pointer in-place (*&), so use post-update ref.
         // AscendC signature: pstu(ureg, mask, (__ubuf__ uint32_t*&)dstAddr)
         // The & in the cast is required so pstu advances the cursor, otherwise
         // vstar in store_unalign_post would overwrite pstu's output at the same address.
-        std::string tile_ptr = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
+        std::string tilePtr = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
         std::string ureg = codegen.GetExprAsCode(op->args_[2]);
-        codegen.Emit("pstu(" + ureg + ", " + vreg + ", (__ubuf__ " + ptr_type + " *&)" + tile_ptr + ");");
+        codegen.Emit("pstu(" + ureg + ", " + vreg + ", (__ubuf__ " + ptrType + " *&)" + tilePtr + ");");
         return "";
     }
     // 4-arg form: vstus(ureg, stride, vreg, dst, POST_UPDATE) or
@@ -5389,16 +5376,16 @@ static std::string EmitVFStoreUnAlign(const ir::CallPtr& op, codegen::CodegenBas
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.store_unalign requires 4 args (dst, vreg, ureg, stride|areg); "
         << "use vf.squeeze_store_unalign for strideless (vstur) mode";
-    DataType src_dt = GetExprDtype(op->args_[1]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
     // vstus/vstu support b8/b16/b32/b64 element widths. b8 covers the 4-bit
     // FP4 types (packed 2-per-byte), mirroring the load_unalign side and the
     // DataCopyUnAlignImpl b8->uint8_t cast rule.
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      IsB8Type(src_dt) || src_dt.GetBit() == 16 || src_dt.GetBit() == 32 || src_dt.GetBit() == 64)
-        << "vf.store_unalign source only supports b8/b16/b32/b64 types, got " << DTypeStr(src_dt);
-    auto ureg_var = ir::As<ir::Var>(op->args_[2]);
-    if (ureg_var) {
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsUnalignRegVar(codegen.GetVarName(ureg_var)))
+                      IsB8Type(srcDt) || srcDt.GetBit() == 16 || srcDt.GetBit() == 32 || srcDt.GetBit() == 64)
+        << "vf.store_unalign source only supports b8/b16/b32/b64 types, got " << DTypeStr(srcDt);
+    auto uregVar = ir::As<ir::Var>(op->args_[2]);
+    if (uregVar) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsUnalignRegVar(codegen.GetVarName(uregVar)))
             << "vf.store_unalign requires the ureg argument to be an UnalignReg (from vf.unalign_reg_for_store)";
     }
     // AscendC DataCopyUnAlignImpl cast rules (dav_3510 store_impl.h):
@@ -5407,54 +5394,54 @@ static std::string EmitVFStoreUnAlign(const ir::CallPtr& op, codegen::CodegenBas
     //   b32 → int32_t
     //   b64 → int32_t (RegTraitNumOne: simulated as b32 with stride×2 for vstus;
     //                  cast to int32_t for vstu — no stride scaling)
-    bool is_b64 = (src_dt.GetBit() == 64);
-    DataType cast_dt = src_dt;
-    if (IsB8Type(src_dt)) {
-        cast_dt = DataType::UINT8;
-    } else if (src_dt.GetBit() == 32 || is_b64) {
-        cast_dt = DataType::INT32;
+    bool isB64 = (srcDt.GetBit() == 64);
+    DataType castDt = srcDt;
+    if (IsB8Type(srcDt)) {
+        castDt = DataType::UINT8;
+    } else if (srcDt.GetBit() == 32 || isB64) {
+        castDt = DataType::INT32;
     }
-    std::string base_c_type = cast_dt.ToCTypeString();
-    std::string tile_ptr_var = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
+    std::string baseCType = castDt.ToCTypeString();
+    std::string tilePtrVar = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
     std::string vreg = codegen.GetExprAsCode(op->args_[1]);
     std::string ureg = codegen.GetExprAsCode(op->args_[2]);
-    std::string vreg_expr = (cast_dt == src_dt) ? vreg : ("(RegTensor<" + base_c_type + "> &)" + vreg);
-    std::string fourth_arg = codegen.GetExprAsCode(op->args_[3]);
-    std::string ptr_cast = "(__ubuf__ " + base_c_type + " *&)";
-    if (codegen.IsAddrRegVar(fourth_arg)) {
+    std::string vregExpr = (castDt == srcDt) ? vreg : ("(RegTensor<" + baseCType + "> &)" + vreg);
+    std::string fourthArg = codegen.GetExprAsCode(op->args_[3]);
+    std::string ptrCast = "(__ubuf__ " + baseCType + " *&)";
+    if (codegen.IsAddrRegVar(fourthArg)) {
         // vstu(ureg, areg, vreg, dst, POST_UPDATE|NORM) — AddrReg-based unaligned store.
         // AscendC DataCopyUnAlignImpl passes postValue to vstu's 5th arg, so both
         // post modes are valid for the AddrReg form.
-        bool post_update = op->HasKwarg("post_update") && op->GetKwarg<bool>("post_update");
-        std::string pu = post_update ? "POST_UPDATE" : "NORM";
-        codegen.Emit("vstu(" + ureg + ", " + fourth_arg + ", " + vreg_expr + ", " + ptr_cast + tile_ptr_var + ", " +
-                     pu + ");");
+        bool postUpdate = op->HasKwarg("post_update") && op->GetKwarg<bool>("post_update");
+        std::string pu = postUpdate ? "POST_UPDATE" : "NORM";
+        codegen.Emit("vstu(" + ureg + ", " + fourthArg + ", " + vregExpr + ", " + ptrCast + tilePtrVar + ", " + pu +
+                     ");");
     } else {
         // vstus(ureg, stride, vreg, dst, POST_UPDATE)
         // Stride requires post_update=True — the stride operand is postUpdateStride in
         // AscendC DataCopyUnAlignImpl, so a bare stride without advancing is meaningless.
-        bool post_update = op->HasKwarg("post_update") && op->GetKwarg<bool>("post_update");
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, post_update)
+        bool postUpdate = op->HasKwarg("post_update") && op->GetKwarg<bool>("post_update");
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, postUpdate)
             << "vf.store_unalign: stride is only supported with post_update=True. For a non-advancing store, "
             << "use vf.squeeze_store_unalign";
         // b64: stride must be doubled to account for b32 simulation of b64 elements.
-        std::string stride = is_b64 ? ("(" + fourth_arg + ") * 2") : fourth_arg;
-        codegen.Emit("vstus(" + ureg + ", " + stride + ", " + vreg_expr + ", " + ptr_cast + tile_ptr_var +
+        std::string stride = isB64 ? ("(" + fourthArg + ") * 2") : fourthArg;
+        codegen.Emit("vstus(" + ureg + ", " + stride + ", " + vregExpr + ", " + ptrCast + tilePtrVar +
                      ", POST_UPDATE);");
     }
     return "";
 }
 
-static std::string EmitVFStoreUnAlignPost(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFStoreUnAlignPost(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 3)
         << "vf.store_unalign_post requires 3 args (dst, ureg, stride|areg); "
         << "use vf.squeeze_store_unalign_post for strideless (vstar) mode";
-    DataType tile_dt = GetExprDtype(op->args_[0]);
-    auto ureg_var = ir::As<ir::Var>(op->args_[1]);
-    if (ureg_var) {
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsUnalignRegVar(codegen.GetVarName(ureg_var)))
+    DataType tileDt = GetExprDtype(op->args_[0]);
+    auto uregVar = ir::As<ir::Var>(op->args_[1]);
+    if (uregVar) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsUnalignRegVar(codegen.GetVarName(uregVar)))
             << "vf.store_unalign_post requires the ureg argument to be an UnalignReg (from vf.unalign_reg_for_store)";
     }
     // AscendC DataCopyUnAlignPostImpl cast rules (dav_3510 store_impl.h):
@@ -5463,37 +5450,37 @@ static std::string EmitVFStoreUnAlignPost(const ir::CallPtr& op, codegen::Codege
     //   b32 → int32_t
     //   b64 → int32_t (simulated as b32 with stride×2 for vstas; cast to
     //                  int32_t for vsta — no stride scaling)
-    bool is_b64 = (tile_dt.GetBit() == 64);
-    DataType cast_dt = tile_dt;
-    if (IsB8Type(tile_dt)) {
-        cast_dt = DataType::UINT8;
-    } else if (tile_dt.GetBit() == 32 || is_b64) {
-        cast_dt = DataType::INT32;
+    bool isB64 = (tileDt.GetBit() == 64);
+    DataType castDt = tileDt;
+    if (IsB8Type(tileDt)) {
+        castDt = DataType::UINT8;
+    } else if (tileDt.GetBit() == 32 || isB64) {
+        castDt = DataType::INT32;
     }
-    std::string base_c_type = cast_dt.ToCTypeString();
-    std::string tile_ptr_var = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
+    std::string baseCType = castDt.ToCTypeString();
+    std::string tilePtrVar = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
     std::string ureg = codegen.GetExprAsCode(op->args_[1]);
-    std::string third_arg = codegen.GetExprAsCode(op->args_[2]);
-    bool post_update = op->HasKwarg("post_update") && op->GetKwarg<bool>("post_update");
-    std::string ptr_cast = "(__ubuf__ " + base_c_type + " *&)";
-    if (codegen.IsAddrRegVar(third_arg)) {
+    std::string thirdArg = codegen.GetExprAsCode(op->args_[2]);
+    bool postUpdate = op->HasKwarg("post_update") && op->GetKwarg<bool>("post_update");
+    std::string ptrCast = "(__ubuf__ " + baseCType + " *&)";
+    if (codegen.IsAddrRegVar(thirdArg)) {
         // vsta(ureg, dst, areg) — AddrReg-based unaligned store post.
         // vsta has no post mode; post_update kwarg is not applicable in this mode.
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("post_update"))
             << "vf.store_unalign_post (AddrReg mode) does not support post_update; "
             << "vsta has no post mode parameter";
-        codegen.Emit("vsta(" + ureg + ", " + ptr_cast + tile_ptr_var + ", " + third_arg + ");");
+        codegen.Emit("vsta(" + ureg + ", " + ptrCast + tilePtrVar + ", " + thirdArg + ");");
         return "";
     }
     // vstas always requires __ubuf__ T*& (lvalue ref).
     // POST_UPDATE: 4 args (ureg, ptr, stride, POST_UPDATE)
     // NORM: 3 args (ureg, ptr, stride) — no Post argument
     // b64: stride must be doubled to account for b32 simulation of b64 elements.
-    std::string stride = is_b64 ? ("(" + third_arg + ") * 2") : third_arg;
-    if (post_update) {
-        codegen.Emit("vstas(" + ureg + ", " + ptr_cast + tile_ptr_var + ", " + stride + ", POST_UPDATE);");
+    std::string stride = isB64 ? ("(" + thirdArg + ") * 2") : thirdArg;
+    if (postUpdate) {
+        codegen.Emit("vstas(" + ureg + ", " + ptrCast + tilePtrVar + ", " + stride + ", POST_UPDATE);");
     } else {
-        codegen.Emit("vstas(" + ureg + ", " + ptr_cast + tile_ptr_var + ", " + stride + ");");
+        codegen.Emit("vstas(" + ureg + ", " + ptrCast + tilePtrVar + ", " + stride + ");");
     }
     return "";
 }
@@ -5504,48 +5491,48 @@ static std::string EmitVFStoreUnAlignPost(const ir::CallPtr& op, codegen::Codege
 // vf.squeeze_store_unalign_post. The AR register (written by squeeze) provides
 // the valid byte count; vstur uses it as the implicit stride.
 // ============================================================================
-static std::string EmitVFSqueezeStoreUnAlign(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFSqueezeStoreUnAlign(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.squeeze_store_unalign requires 3 args (dst, src, align_reg)";
     // Squeeze path does not support mask_reg src — use vf.store_unalign (pstu) for mask store.
-    if (auto src_v = ir::As<ir::Var>(op->args_[1])) {
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, !codegen.IsMaskRegVar(codegen.GetVarName(src_v)))
+    if (auto srcV = ir::As<ir::Var>(op->args_[1])) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, !codegen.IsMaskRegVar(codegen.GetVarName(srcV)))
             << "vf.squeeze_store_unalign does not support MaskReg src; use vf.store_unalign instead";
     }
-    auto ureg_var = ir::As<ir::Var>(op->args_[2]);
-    if (ureg_var) {
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsUnalignRegVar(codegen.GetVarName(ureg_var)))
+    auto uregVar = ir::As<ir::Var>(op->args_[2]);
+    if (uregVar) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsUnalignRegVar(codegen.GetVarName(uregVar)))
             << "vf.squeeze_store_unalign requires the align_reg argument to be an UnalignReg"
             << " (from vf.unalign_reg_for_store)";
     }
-    DataType src_dt = GetExprDtype(op->args_[1]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
     // vstur supports b8/b16/b32/b64 element widths
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      src_dt.GetBit() == 8 || src_dt.GetBit() == 16 || src_dt.GetBit() == 32 || src_dt.GetBit() == 64)
-        << "vf.squeeze_store_unalign source only supports b8/b16/b32/b64 types, got " << DTypeStr(src_dt);
+                      srcDt.GetBit() == 8 || srcDt.GetBit() == 16 || srcDt.GetBit() == 32 || srcDt.GetBit() == 64)
+        << "vf.squeeze_store_unalign source only supports b8/b16/b32/b64 types, got " << DTypeStr(srcDt);
     // AscendC DataCopyUnAlignImpl cast rules (dav_3510 store_impl.h:496-518):
     //   b8  → uint8_t (line 506)
     //   b16 → no cast  (line 515, else branch uses original type)
     //   b32 → int32_t  (line 511)
     //   b64 → int64_t  (line 513)
-    DataType cast_dt = src_dt;
-    if (src_dt.GetBit() == 32) {
-        cast_dt = DataType::INT32;
-    } else if (src_dt.GetBit() == 64) {
-        cast_dt = DataType::INT64;
-    } else if (IsB8Type(src_dt)) {
-        cast_dt = DataType::UINT8;
+    DataType castDt = srcDt;
+    if (srcDt.GetBit() == 32) {
+        castDt = DataType::INT32;
+    } else if (srcDt.GetBit() == 64) {
+        castDt = DataType::INT64;
+    } else if (IsB8Type(srcDt)) {
+        castDt = DataType::UINT8;
     }
-    std::string base_c_type = cast_dt.ToCTypeString();
-    std::string tile_ptr_var = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
+    std::string baseCType = castDt.ToCTypeString();
+    std::string tilePtrVar = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
     std::string vreg = codegen.GetExprAsCode(op->args_[1]);
     std::string ureg = codegen.GetExprAsCode(op->args_[2]);
-    std::string vreg_expr = (cast_dt == src_dt) ? vreg : ("(RegTensor<" + base_c_type + "> &)" + vreg);
+    std::string vregExpr = (castDt == srcDt) ? vreg : ("(RegTensor<" + baseCType + "> &)" + vreg);
     // vstur takes __ubuf__ T* (not *&)
-    std::string ptr_cast = "(__ubuf__ " + base_c_type + " *)";
-    codegen.Emit("vstur(" + ureg + ", " + vreg_expr + ", " + ptr_cast + tile_ptr_var + ", POST_UPDATE);");
+    std::string ptrCast = "(__ubuf__ " + baseCType + " *)";
+    codegen.Emit("vstur(" + ureg + ", " + vregExpr + ", " + ptrCast + tilePtrVar + ", POST_UPDATE);");
     return "";
 }
 
@@ -5554,19 +5541,19 @@ static std::string EmitVFSqueezeStoreUnAlign(const ir::CallPtr& op, codegen::Cod
 // register for remaining byte count). Must be paired with
 // vf.squeeze_store_unalign.
 // ============================================================================
-static std::string EmitVFSqueezeStoreUnAlignPost(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFSqueezeStoreUnAlignPost(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "vf.squeeze_store_unalign_post requires 2 args (dst, align_reg)";
-    DataType tile_dt = GetExprDtype(op->args_[0]);
+    DataType tileDt = GetExprDtype(op->args_[0]);
     // vstar supports b8/b16/b32/b64 element widths
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      IsB8Type(tile_dt) || tile_dt.GetBit() == 16 || tile_dt.GetBit() == 32 || tile_dt.GetBit() == 64)
-        << "vf.squeeze_store_unalign_post only supports b8/b16/b32/b64 types, got " << DTypeStr(tile_dt);
-    auto ureg_var = ir::As<ir::Var>(op->args_[1]);
-    if (ureg_var) {
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsUnalignRegVar(codegen.GetVarName(ureg_var)))
+                      IsB8Type(tileDt) || tileDt.GetBit() == 16 || tileDt.GetBit() == 32 || tileDt.GetBit() == 64)
+        << "vf.squeeze_store_unalign_post only supports b8/b16/b32/b64 types, got " << DTypeStr(tileDt);
+    auto uregVar = ir::As<ir::Var>(op->args_[1]);
+    if (uregVar) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsUnalignRegVar(codegen.GetVarName(uregVar)))
             << "vf.squeeze_store_unalign_post requires the align_reg argument to be an UnalignReg"
             << " (from vf.unalign_reg_for_store)";
     }
@@ -5575,35 +5562,35 @@ static std::string EmitVFSqueezeStoreUnAlignPost(const ir::CallPtr& op, codegen:
     //   b16 → no cast  (line 534, else branch uses original type)
     //   b32 → int32_t  (line 530)
     //   b64 → int64_t  (line 532)
-    DataType cast_dt = tile_dt;
-    if (tile_dt.GetBit() == 32) {
-        cast_dt = DataType::INT32;
-    } else if (tile_dt.GetBit() == 64) {
-        cast_dt = DataType::INT64;
-    } else if (IsB8Type(tile_dt)) {
-        cast_dt = DataType::UINT8;
+    DataType castDt = tileDt;
+    if (tileDt.GetBit() == 32) {
+        castDt = DataType::INT32;
+    } else if (tileDt.GetBit() == 64) {
+        castDt = DataType::INT64;
+    } else if (IsB8Type(tileDt)) {
+        castDt = DataType::UINT8;
     }
-    std::string base_c_type = cast_dt.ToCTypeString();
-    std::string tile_ptr_var = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
+    std::string baseCType = castDt.ToCTypeString();
+    std::string tilePtrVar = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
     std::string ureg = codegen.GetExprAsCode(op->args_[1]);
     // vstar takes __ubuf__ T* (not *&)
-    std::string ptr_cast = "(__ubuf__ " + base_c_type + " *)";
-    codegen.Emit("vstar(" + ureg + ", " + ptr_cast + tile_ptr_var + ");");
+    std::string ptrCast = "(__ubuf__ " + baseCType + " *)";
+    codegen.Emit("vstar(" + ureg + ", " + ptrCast + tilePtrVar + ");");
     return "";
 }
 
-static std::string EmitVFUnalignRegForStore(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegen_base)
+static std::string EmitVFUnalignRegForStore(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    std::string reg_name = codegen.GetCurrentResultTarget();
-    codegen.Emit("UnalignReg " + reg_name + ";");
-    codegen.RegisterUnalignRegVar(reg_name);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    std::string regName = codegen.GetCurrentResultTarget();
+    codegen.Emit("UnalignReg " + regName + ";");
+    codegen.RegisterUnalignRegVar(regName);
     return "";
 }
 
-static std::string EmitVFClearSpr(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegen_base)
+static std::string EmitVFClearSpr(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     codegen.Emit("sprclr(SPR_AR);");
     return "";
 }
@@ -5612,12 +5599,12 @@ static std::string EmitVFClearSpr(const ir::CallPtr& /*op*/, codegen::CodegenBas
 // UnalignRegForLoad — declare unaligned load register
 // ============================================================================
 
-static std::string EmitVFUnalignRegForLoad(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegen_base)
+static std::string EmitVFUnalignRegForLoad(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    std::string reg_name = codegen.GetCurrentResultTarget();
-    codegen.Emit("UnalignReg " + reg_name + ";");
-    codegen.RegisterUnalignRegVar(reg_name);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    std::string regName = codegen.GetCurrentResultTarget();
+    codegen.Emit("UnalignReg " + regName + ";");
+    codegen.RegisterUnalignRegVar(regName);
     return "";
 }
 
@@ -5625,15 +5612,15 @@ static std::string EmitVFUnalignRegForLoad(const ir::CallPtr& /*op*/, codegen::C
 // LoadUnalignPre — vldas (setup unaligned load)
 // ============================================================================
 
-static std::string EmitVFLoadUnalignPre(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFLoadUnalignPre(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "vf.load_unalign_pre requires 2 args (ureg, src_ptr)";
     std::string ureg = codegen.GetExprAsCode(op->args_[0]);
-    auto ureg_var = ir::As<ir::Var>(op->args_[0]);
-    if (ureg_var) {
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsUnalignRegVar(codegen.GetVarName(ureg_var)))
+    auto uregVar = ir::As<ir::Var>(op->args_[0]);
+    if (uregVar) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsUnalignRegVar(codegen.GetVarName(uregVar)))
             << "vf.load_unalign_pre requires the first argument to be an UnalignReg (from vf.load_unalign_init), got "
             << ureg;
     }
@@ -5642,24 +5629,24 @@ static std::string EmitVFLoadUnalignPre(const ir::CallPtr& op, codegen::CodegenB
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
                       IsB8Type(dt) || dt.GetBit() == 16 || dt.GetBit() == 32 || dt.GetBit() == 64)
         << "vf.load_unalign_pre only supports b8/b16/b32/b64 types, got " << DTypeStr(dt);
-    int elem_bytes = static_cast<int>(dt.GetBit() / 8);
-    if (elem_bytes <= 0)
-        elem_bytes = 4;
-    std::string ptr_type;
-    if (elem_bytes == 1) {
-        ptr_type = "uint8_t";
-    } else if (elem_bytes == 8) {
-        ptr_type = "uint32_t";
-    } else if (elem_bytes == 4) {
-        ptr_type = "int32_t";
+    int elemBytes = static_cast<int>(dt.GetBit() / 8);
+    if (elemBytes <= 0)
+        elemBytes = 4;
+    std::string ptrType;
+    if (elemBytes == 1) {
+        ptrType = "uint8_t";
+    } else if (elemBytes == 8) {
+        ptrType = "uint32_t";
+    } else if (elemBytes == 4) {
+        ptrType = "int32_t";
     } else {
         if (dt == DataType::FP16 || dt == DataType::BF16)
-            ptr_type = "half";
+            ptrType = "half";
         else
-            ptr_type = "uint16_t";
+            ptrType = "uint16_t";
     }
-    std::string src_ptr = GetUBufPtr(codegen, op->args_[1], ptr_type);
-    codegen.Emit("vldas(" + ureg + ", " + src_ptr + ");");
+    std::string srcPtr = GetUBufPtr(codegen, op->args_[1], ptrType);
+    codegen.Emit("vldas(" + ureg + ", " + srcPtr + ");");
     return "";
 }
 
@@ -5667,9 +5654,9 @@ static std::string EmitVFLoadUnalignPre(const ir::CallPtr& op, codegen::CodegenB
 // LoadUnalign — vldus (unaligned load body, supports 3-arg and 4-arg strided)
 // ============================================================================
 
-static std::string EmitVFLoadUnalign(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFLoadUnalign(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     // Call forms (args include the leading dst register; stride is positional):
     //   (dst, ureg, src)                                    -> non-advancing vldus
     //   (dst, ureg, src, stride)                            -> POST_UPDATE vldus
@@ -5681,41 +5668,41 @@ static std::string EmitVFLoadUnalign(const ir::CallPtr& op, codegen::CodegenBase
         << "vf.load_unalign requires 3-4 args (dst, ureg, src_ptr [, stride]), got " << op->args_.size();
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string ureg = codegen.GetExprAsCode(op->args_[1]);
-    auto ureg_var = ir::As<ir::Var>(op->args_[1]);
-    if (ureg_var) {
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsUnalignRegVar(codegen.GetVarName(ureg_var)))
+    auto uregVar = ir::As<ir::Var>(op->args_[1]);
+    if (uregVar) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, codegen.IsUnalignRegVar(codegen.GetVarName(uregVar)))
             << "vf.load_unalign requires the ureg argument to be an UnalignReg (from vf.load_unalign_init), got "
             << ureg;
     }
-    DataType dst_dt = GetExprDtype(op->args_[0]);
+    DataType dstDt = GetExprDtype(op->args_[0]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (IsB8Type(dst_dt) || dst_dt.GetBit() == 16 || dst_dt.GetBit() == 32 || dst_dt.GetBit() == 64))
-        << "vf.load_unalign only supports b8/b16/b32/b64 types, got " << DTypeStr(dst_dt);
+                      (IsB8Type(dstDt) || dstDt.GetBit() == 16 || dstDt.GetBit() == 32 || dstDt.GetBit() == 64))
+        << "vf.load_unalign only supports b8/b16/b32/b64 types, got " << DTypeStr(dstDt);
     // vldus supports b8/b16/b32/b64 element widths
-    std::string ptr_type = dst_dt.ToCTypeString();
+    std::string ptrType = dstDt.ToCTypeString();
     if (op->args_.size() == 4) {
         // Passing the stride argument selects POST_UPDATE — vldus has no
         // "stride without advancing" mode.
         std::string stride = codegen.GetExprAsCode(op->args_[3]);
-        std::string src_ptr = codegen.GetOrCreateVFTilePtr(op->args_[2], /*is_post_update=*/true);
-        int elem_bytes = static_cast<int>(dst_dt.GetBit() / 8);
-        if (elem_bytes <= 0)
-            elem_bytes = 4;
-        bool is_b64 = (elem_bytes == 8);
+        std::string srcPtr = codegen.GetOrCreateVFTilePtr(op->args_[2], /*is_post_update=*/true);
+        int elemBytes = static_cast<int>(dstDt.GetBit() / 8);
+        if (elemBytes <= 0)
+            elemBytes = 4;
+        bool isB64 = (elemBytes == 8);
         // AscendC cast rules (dav_m510 load_impl.h DataCopyUnAlignImpl):
         //   vldus (stride): b64 is simulated as uint32_t with stride*2, else native
-        std::string eff_ptr_type = is_b64 ? "uint32_t" : ptr_type;
-        std::string dst_expr = is_b64 ? ("(RegTensor<uint32_t>&)" + dst) : dst;
-        if (eff_ptr_type != "float") {
-            src_ptr = "(__ubuf__ " + eff_ptr_type + " *&)" + src_ptr;
+        std::string effPtrType = isB64 ? "uint32_t" : ptrType;
+        std::string dstExpr = isB64 ? ("(RegTensor<uint32_t>&)" + dst) : dst;
+        if (effPtrType != "float") {
+            srcPtr = "(__ubuf__ " + effPtrType + " *&)" + srcPtr;
         }
-        std::string effective_stride = is_b64 ? ("(" + stride + ") * 2") : stride;
-        codegen.Emit("vldus(" + dst_expr + ", " + ureg + ", " + src_ptr + ", " + effective_stride + ", POST_UPDATE);");
+        std::string effectiveStride = isB64 ? ("(" + stride + ") * 2") : stride;
+        codegen.Emit("vldus(" + dstExpr + ", " + ureg + ", " + srcPtr + ", " + effectiveStride + ", POST_UPDATE);");
         return "";
     }
     // Stride-less form: non-advancing vldus.
-    std::string src_ptr = GetUBufPtr(codegen, op->args_[2], ptr_type);
-    codegen.Emit("vldus(" + dst + ", " + ureg + ", " + src_ptr + ");");
+    std::string srcPtr = GetUBufPtr(codegen, op->args_[2], ptrType);
+    codegen.Emit("vldus(" + dst + ", " + ureg + ", " + srcPtr + ");");
     return "";
 }
 
@@ -5723,76 +5710,75 @@ static std::string EmitVFLoadUnalign(const ir::CallPtr& op, codegen::CodegenBase
 // Scatter — vscatter (scatter store by indices)
 // ============================================================================
 
-static std::string EmitVFScatter(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFScatter(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.scatter requires 4 args (base_ptr, src, index, mask)";
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string index = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    DataType idx_dt = GetExprDtype(op->args_[2]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    DataType idxDt = GetExprDtype(op->args_[2]);
     // Doc: src supports DT_INT8,DT_UINT8,DT_INT16,DT_UINT16,DT_FP16,DT_BF16,
     // DT_INT32,DT_UINT32,DT_FP32,DT_INT64,DT_UINT64
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      src_dt == DataType::INT8 || src_dt == DataType::UINT8 || src_dt == DataType::BOOL ||
-                          src_dt == DataType::INT16 || src_dt == DataType::UINT16 || src_dt == DataType::FP16 ||
-                          src_dt == DataType::BF16 || src_dt == DataType::INT32 || src_dt == DataType::UINT32 ||
-                          src_dt == DataType::FP32 || src_dt == DataType::INT64 || src_dt == DataType::UINT64)
+                      srcDt == DataType::INT8 || srcDt == DataType::UINT8 || srcDt == DataType::BOOL ||
+                          srcDt == DataType::INT16 || srcDt == DataType::UINT16 || srcDt == DataType::FP16 ||
+                          srcDt == DataType::BF16 || srcDt == DataType::INT32 || srcDt == DataType::UINT32 ||
+                          srcDt == DataType::FP32 || srcDt == DataType::INT64 || srcDt == DataType::UINT64)
         << "vf.scatter only supports INT8/UINT8/INT16/UINT16/FP16/BF16/INT32/UINT32/FP32/INT64/UINT64, got "
-        << DTypeStr(src_dt);
-    if (src_dt.GetBit() == 8 || src_dt.GetBit() == 16) {
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idx_dt == DataType::UINT16)
-            << "vf.scatter b8/b16 src requires UINT16 index, got " << DTypeStr(idx_dt);
-    } else if (src_dt.GetBit() == 32) {
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idx_dt == DataType::UINT32)
-            << "vf.scatter b32 src requires UINT32 index, got " << DTypeStr(idx_dt);
+        << DTypeStr(srcDt);
+    if (srcDt.GetBit() == 8 || srcDt.GetBit() == 16) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idxDt == DataType::UINT16)
+            << "vf.scatter b8/b16 src requires UINT16 index, got " << DTypeStr(idxDt);
+    } else if (srcDt.GetBit() == 32) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idxDt == DataType::UINT32)
+            << "vf.scatter b32 src requires UINT32 index, got " << DTypeStr(idxDt);
     } else {
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idx_dt == DataType::UINT32 || idx_dt == DataType::UINT64)
-            << "vf.scatter b64 src requires UINT32/UINT64 index, got " << DTypeStr(idx_dt);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idxDt == DataType::UINT32 || idxDt == DataType::UINT64)
+            << "vf.scatter b64 src requires UINT32/UINT64 index, got " << DTypeStr(idxDt);
     }
-    std::string base_c_type = src_dt.ToCTypeString();
-    std::string base_ptr = GetUBufPtr(codegen, op->args_[0], base_c_type);
-    if (src_dt.GetBit() == 64) {
+    std::string baseCType = srcDt.ToCTypeString();
+    std::string basePtr = GetUBufPtr(codegen, op->args_[0], baseCType);
+    if (srcDt.GetBit() == 64) {
         // B64 scatter: vscatter has no b64 single-register overload.
         // Mirrors AscendC DataCopyScatterB64Impl: pack mask, compute odd/even
         // b32 indices (index*2, index*2+1), deinterleave src into b32 halves,
         // vscatter each half.
         std::string p = src + "_scatter_";
-        std::string packed_m = p + "_pm_";
-        std::string vl32_m = p + "_vl32_";
-        std::string all_m = p + "_allm_";
-        std::string and_m = p + "_andm_";
-        std::string odd_idx = p + "_oi_";
-        std::string even_idx = p + "_ei_";
-        std::string lo_reg = p + "_lor_";
-        std::string hi_reg = p + "_hir_";
+        std::string packedM = p + "_pm_";
+        std::string vl32M = p + "_vl32_";
+        std::string allM = p + "_allm_";
+        std::string andM = p + "_andm_";
+        std::string oddIdx = p + "_oi_";
+        std::string evenIdx = p + "_ei_";
+        std::string loReg = p + "_lor_";
+        std::string hiReg = p + "_hir_";
         std::string dump = p + "_dump_";
-        codegen.Emit("MaskReg " + packed_m + ";");
-        codegen.Emit("ppack(" + packed_m + ", " + mask + ", LOWER);");
-        codegen.Emit("MaskReg " + vl32_m + " = pset_b32(PAT_VL32);");
-        codegen.Emit("MaskReg " + all_m + " = pset_b32(PAT_ALL);");
-        codegen.Emit("MaskReg " + and_m + ";");
-        codegen.Emit("pand(" + and_m + ", " + packed_m + ", " + vl32_m + ", " + all_m + ");");
-        codegen.Emit("RegTensor<uint32_t> " + odd_idx + ";");
-        codegen.Emit("RegTensor<uint32_t> " + even_idx + ";");
-        codegen.Emit("vmuls(" + odd_idx + ", (RegTensor<uint32_t> &)" + index + ", (uint32_t)2, " + and_m +
+        codegen.Emit("MaskReg " + packedM + ";");
+        codegen.Emit("ppack(" + packedM + ", " + mask + ", LOWER);");
+        codegen.Emit("MaskReg " + vl32M + " = pset_b32(PAT_VL32);");
+        codegen.Emit("MaskReg " + allM + " = pset_b32(PAT_ALL);");
+        codegen.Emit("MaskReg " + andM + ";");
+        codegen.Emit("pand(" + andM + ", " + packedM + ", " + vl32M + ", " + allM + ");");
+        codegen.Emit("RegTensor<uint32_t> " + oddIdx + ";");
+        codegen.Emit("RegTensor<uint32_t> " + evenIdx + ";");
+        codegen.Emit("vmuls(" + oddIdx + ", (RegTensor<uint32_t> &)" + index + ", (uint32_t)2, " + andM +
                      ", MODE_ZEROING);");
-        codegen.Emit("vadds(" + even_idx + ", " + odd_idx + ", (uint32_t)1, " + and_m + ", MODE_ZEROING);");
-        codegen.Emit("RegTensor<uint32_t> " + lo_reg + ";");
-        codegen.Emit("RegTensor<uint32_t> " + hi_reg + ";");
+        codegen.Emit("vadds(" + evenIdx + ", " + oddIdx + ", (uint32_t)1, " + andM + ", MODE_ZEROING);");
+        codegen.Emit("RegTensor<uint32_t> " + loReg + ";");
+        codegen.Emit("RegTensor<uint32_t> " + hiReg + ";");
         codegen.Emit("RegTensor<uint32_t> " + dump + ";");
-        codegen.Emit("vdintlv(" + lo_reg + ", " + hi_reg + ", (RegTensor<uint32_t>&)" + src +
-                     ", (RegTensor<uint32_t>&)" + src + ");");
-        std::string ub_ptr = GetUBufPtr(codegen, op->args_[0], "uint32_t");
-        codegen.Emit("vscatter(" + lo_reg + ", " + ub_ptr + ", " + odd_idx + ", " + and_m + ");");
-        codegen.Emit("vscatter(" + hi_reg + ", " + ub_ptr + ", " + even_idx + ", " + and_m + ");");
+        codegen.Emit("vdintlv(" + loReg + ", " + hiReg + ", (RegTensor<uint32_t>&)" + src + ", (RegTensor<uint32_t>&)" +
+                     src + ");");
+        std::string ubPtr = GetUBufPtr(codegen, op->args_[0], "uint32_t");
+        codegen.Emit("vscatter(" + loReg + ", " + ubPtr + ", " + oddIdx + ", " + andM + ");");
+        codegen.Emit("vscatter(" + hiReg + ", " + ubPtr + ", " + evenIdx + ", " + andM + ");");
         return "";
     }
-    std::string idx_c_type = (src_dt.GetBit() >= 32) ? "uint32_t" : "uint16_t";
-    codegen.Emit("vscatter(" + src + ", " + base_ptr + ", (RegTensor<" + idx_c_type + "> &)" + index + ", " + mask +
-                 ");");
+    std::string idxCType = (srcDt.GetBit() >= 32) ? "uint32_t" : "uint16_t";
+    codegen.Emit("vscatter(" + src + ", " + basePtr + ", (RegTensor<" + idxCType + "> &)" + index + ", " + mask + ");");
     return "";
 }
 
@@ -5800,19 +5786,19 @@ static std::string EmitVFScatter(const ir::CallPtr& op, codegen::CodegenBase& co
 // Unsqueeze — vusqz (expand mask bits into register)
 // ============================================================================
 
-static std::string EmitVFUnsqueeze(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFUnsqueeze(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
         << "vf.unsqueeze requires 2 args (dst, mask)";
     // PrefixSum (vusqz): int8/uint8/int16/uint16/int32/uint32 only
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string mask = codegen.GetExprAsCode(op->args_[1]);
-    DataType dst_dt = GetExprDtype(op->args_[0]);
+    DataType dstDt = GetExprDtype(op->args_[0]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (dst_dt == DataType::INT8 || dst_dt == DataType::UINT8 || dst_dt == DataType::INT16 ||
-                       dst_dt == DataType::UINT16 || dst_dt == DataType::INT32 || dst_dt == DataType::UINT32))
-        << "vf.unsqueeze dst only supports INT8/UINT8/INT16/UINT16/INT32/UINT32, got " << DTypeStr(dst_dt);
+                      (dstDt == DataType::INT8 || dstDt == DataType::UINT8 || dstDt == DataType::INT16 ||
+                       dstDt == DataType::UINT16 || dstDt == DataType::INT32 || dstDt == DataType::UINT32))
+        << "vf.unsqueeze dst only supports INT8/UINT8/INT16/UINT16/INT32/UINT32, got " << DTypeStr(dstDt);
     codegen.Emit("vusqz(" + dst + ", " + mask + ");");
     return "";
 }
@@ -5821,44 +5807,44 @@ static std::string EmitVFUnsqueeze(const ir::CallPtr& op, codegen::CodegenBase& 
 // Truncate — vtrc with ROUND_Z (alias for Round with round_mode=TRUNC)
 // ============================================================================
 
-static std::string EmitVFTruncate(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFTruncate(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.truncate requires 3 args (dst, src, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      src_dt == DataType::FP16 || src_dt == DataType::BF16 || src_dt == DataType::FP32)
-        << "vf.truncate src only supports FP16/BF16/FP32, got " << DTypeStr(src_dt);
-    DataType vf_truncate_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_truncate_dst_dt)
-        << "vf.truncate requires src and dst to have the same type, got dst=" << DTypeStr(vf_truncate_dst_dt)
-        << " src=" << DTypeStr(src_dt);
-    DataType trc_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == trc_dst_dt)
-        << "vf.truncate requires src and dst to have the same type, got dst=" << DTypeStr(trc_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+                      srcDt == DataType::FP16 || srcDt == DataType::BF16 || srcDt == DataType::FP32)
+        << "vf.truncate src only supports FP16/BF16/FP32, got " << DTypeStr(srcDt);
+    DataType vfTruncateDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfTruncateDstDt)
+        << "vf.truncate requires src and dst to have the same type, got dst=" << DTypeStr(vfTruncateDstDt)
+        << " src=" << DTypeStr(srcDt);
+    DataType trcDstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == trcDstDt)
+        << "vf.truncate requires src and dst to have the same type, got dst=" << DTypeStr(trcDstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
-    std::string round_const = "ROUND_Z";
+    std::string roundConst = "ROUND_Z";
     if (op->HasKwarg("round_mode")) {
         auto rm = static_cast<ir::VFRoundMode>(op->GetKwarg<int>("round_mode"));
         if (rm == ir::VFRoundMode::CAST_RINT)
-            round_const = "ROUND_R";
+            roundConst = "ROUND_R";
         else if (rm == ir::VFRoundMode::CAST_CEIL)
-            round_const = "ROUND_C";
+            roundConst = "ROUND_C";
         else if (rm == ir::VFRoundMode::CAST_FLOOR)
-            round_const = "ROUND_F";
+            roundConst = "ROUND_F";
         else if (rm == ir::VFRoundMode::CAST_TRUNC)
-            round_const = "ROUND_Z";
+            roundConst = "ROUND_Z";
         else
             PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false)
                 << "vf.truncate only supports round_mode CAST_RINT/CAST_CEIL/CAST_FLOOR/CAST_TRUNC, got "
                 << VFEnumValueName(ir::EnumToString(rm));
     }
     std::string mode = VFZeroingOnly(op, "vf.truncate");
-    codegen.Emit("vtrc(" + dst + ", " + src + ", " + round_const + ", " + mask + ", " + mode + ");");
+    codegen.Emit("vtrc(" + dst + ", " + src + ", " + roundConst + ", " + mask + ", " + mode + ");");
     return "";
 }
 
@@ -5866,38 +5852,38 @@ static std::string EmitVFTruncate(const ir::CallPtr& op, codegen::CodegenBase& c
 // MaskGenWithRegTensor — movvp (generate MaskReg from RegTensor bit offset)
 // ============================================================================
 
-static std::string EmitVFMaskGenWithRegTensor(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMaskGenWithRegTensor(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
         << "vf.mask_gen_with_reg_tensor requires 1 arg (src)";
     std::string src = codegen.GetExprAsCode(op->args_[0]);
-    std::string mask_dst = codegen.GetCurrentResultTarget();
-    codegen.Emit("MaskReg " + mask_dst + ";");
-    codegen.RegisterMaskRegVar(mask_dst);
+    std::string maskDst = codegen.GetCurrentResultTarget();
+    codegen.Emit("MaskReg " + maskDst + ";");
+    codegen.RegisterMaskRegVar(maskDst);
     std::string offset = "0";
     if (op->HasKwarg("offset")) {
         offset = std::to_string(op->GetKwarg<int>("offset"));
     }
-    DataType src_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt.GetBit() == 16 || src_dt.GetBit() == 32)
-        << "vf.mask_gen_with_reg_tensor source only supports b16/b32 types, got " << DTypeStr(src_dt);
+    DataType srcDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt.GetBit() == 16 || srcDt.GetBit() == 32)
+        << "vf.mask_gen_with_reg_tensor source only supports b16/b32 types, got " << DTypeStr(srcDt);
     // offset must be 0~15 for b16, 0~31 for b32
-    int offset_val = 0;
+    int offsetVal = 0;
     if (op->HasKwarg("offset")) {
-        offset_val = op->GetKwarg<int>("offset");
+        offsetVal = op->GetKwarg<int>("offset");
     }
-    if (src_dt.GetBit() == 16) {
-        PRO_CODEGEN_CHECK(ExternalError::OUT_OF_RANGE, offset_val >= 0 && offset_val <= 15)
-            << "vf.mask_gen_with_reg_tensor offset must be 0~15 for b16, got " << offset_val;
+    if (srcDt.GetBit() == 16) {
+        PRO_CODEGEN_CHECK(ExternalError::OUT_OF_RANGE, offsetVal >= 0 && offsetVal <= 15)
+            << "vf.mask_gen_with_reg_tensor offset must be 0~15 for b16, got " << offsetVal;
     } else {
-        PRO_CODEGEN_CHECK(ExternalError::OUT_OF_RANGE, offset_val >= 0 && offset_val <= 31)
-            << "vf.mask_gen_with_reg_tensor offset must be 0~31 for b32, got " << offset_val;
+        PRO_CODEGEN_CHECK(ExternalError::OUT_OF_RANGE, offsetVal >= 0 && offsetVal <= 31)
+            << "vf.mask_gen_with_reg_tensor offset must be 0~31 for b32, got " << offsetVal;
     }
-    if (src_dt.GetBit() == 16) {
-        codegen.Emit("movvp(" + mask_dst + ", (RegTensor<uint16_t> &)" + src + ", " + offset + ");");
+    if (srcDt.GetBit() == 16) {
+        codegen.Emit("movvp(" + maskDst + ", (RegTensor<uint16_t> &)" + src + ", " + offset + ");");
     } else {
-        codegen.Emit("movvp(" + mask_dst + ", (RegTensor<uint32_t> &)" + src + ", " + offset + ");");
+        codegen.Emit("movvp(" + maskDst + ", (RegTensor<uint32_t> &)" + src + ", " + offset + ");");
     }
     return "";
 }
@@ -5907,10 +5893,10 @@ static std::string EmitVFMaskGenWithRegTensor(const ir::CallPtr& op, codegen::Co
 // Replaces: GetMaskSprB32, GetMaskSprB16
 // ============================================================================
 
-static std::string EmitVFGetMaskSpr(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFGetMaskSpr(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    std::string reg_name = codegen.GetCurrentResultTarget();
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    std::string regName = codegen.GetCurrentResultTarget();
     std::string width = "B32";
     if (op->HasKwarg("width"))
         width = VFEnumValueName(ir::EnumToString(static_cast<ir::MaskWidth>(op->GetKwarg<int>("width"))));
@@ -5918,10 +5904,10 @@ static std::string EmitVFGetMaskSpr(const ir::CallPtr& op, codegen::CodegenBase&
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, width == "B16" || width == "B32")
         << "vf.get_mask_spr only supports B16/B32 width, got " << width;
     if (width == "B16")
-        codegen.Emit("MaskReg " + reg_name + " = movp_b16();");
+        codegen.Emit("MaskReg " + regName + " = movp_b16();");
     else
-        codegen.Emit("MaskReg " + reg_name + " = movp_b32();");
-    codegen.RegisterMaskRegVar(reg_name);
+        codegen.Emit("MaskReg " + regName + " = movp_b32();");
+    codegen.RegisterMaskRegVar(regName);
     return "";
 }
 
@@ -6257,18 +6243,18 @@ REGISTER_BACKEND_OP(BackendCCE, "vf.get_mask_spr")
 // Log2 — composite: vln + vmuls(1/ln2) = ln(x) * 1.4426950408889634
 // ============================================================================
 
-static std::string EmitVFLog2(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFLog2(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.log2 requires 3 args (dst, src, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.log2 src only supports FP16/FP32, got " << DTypeStr(src_dt);
-    DataType vf_log2_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_log2_dst_dt)
-        << "vf.log2 requires src and dst to have the same type, got dst=" << DTypeStr(vf_log2_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.log2 src only supports FP16/FP32, got " << DTypeStr(srcDt);
+    DataType vfLog2DstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfLog2DstDt)
+        << "vf.log2 requires src and dst to have the same type, got dst=" << DTypeStr(vfLog2DstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
@@ -6278,12 +6264,12 @@ static std::string EmitVFLog2(const ir::CallPtr& op, codegen::CodegenBase& codeg
         std::string tp = dst + "_tmp_";
         std::string sc = dst + "_srcc_";
         std::string dc = dst + "_dstc_";
-        std::string ctype = src_dt.ToCTypeString();
+        std::string ctype = srcDt.ToCTypeString();
         codegen.Emit("MaskReg " + mc + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + tp + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + sc + " = (RegTensor<" + ctype + ">&)" + src + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + dc + ";");
-        if (src_dt == DataType::FP16) {
+        if (srcDt == DataType::FP16) {
             codegen.Emit("union { uint16_t i; half f; } " + dst + "_thr_ = {0x03FF};");
             codegen.Emit("vcmps_lt(" + mc + ", " + sc + ", " + dst + "_thr_.f, " + mask + ");");
             codegen.Emit("vmuls(" + tp + ", " + sc + ", 1024.0f, " + mask + ", " + mode + ");");
@@ -6313,18 +6299,18 @@ static std::string EmitVFLog2(const ir::CallPtr& op, codegen::CodegenBase& codeg
 // Log10 — composite: vln + vmuls(1/ln10) = ln(x) * 0.4342944819032518
 // ============================================================================
 
-static std::string EmitVFLog10(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFLog10(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.log10 requires 3 args (dst, src, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (src_dt == DataType::FP16 || src_dt == DataType::FP32))
-        << "vf.log10 src only supports FP16/FP32, got " << DTypeStr(src_dt);
-    DataType vf_log10_dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_log10_dst_dt)
-        << "vf.log10 requires src and dst to have the same type, got dst=" << DTypeStr(vf_log10_dst_dt)
-        << " src=" << DTypeStr(src_dt);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (srcDt == DataType::FP16 || srcDt == DataType::FP32))
+        << "vf.log10 src only supports FP16/FP32, got " << DTypeStr(srcDt);
+    DataType vfLog10DstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfLog10DstDt)
+        << "vf.log10 requires src and dst to have the same type, got dst=" << DTypeStr(vfLog10DstDt)
+        << " src=" << DTypeStr(srcDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
@@ -6334,12 +6320,12 @@ static std::string EmitVFLog10(const ir::CallPtr& op, codegen::CodegenBase& code
         std::string tp = dst + "_tmp_";
         std::string sc = dst + "_srcc_";
         std::string dc = dst + "_dstc_";
-        std::string ctype = src_dt.ToCTypeString();
+        std::string ctype = srcDt.ToCTypeString();
         codegen.Emit("MaskReg " + mc + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + tp + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + sc + " = (RegTensor<" + ctype + ">&)" + src + ";");
         codegen.Emit("RegTensor<" + ctype + "> " + dc + ";");
-        if (src_dt == DataType::FP16) {
+        if (srcDt == DataType::FP16) {
             codegen.Emit("union { uint16_t i; half f; } " + dst + "_thr_ = {0x03FF};");
             codegen.Emit("vcmps_lt(" + mc + ", " + sc + ", " + dst + "_thr_.f, " + mask + ");");
             codegen.Emit("vmuls(" + tp + ", " + sc + ", 1024.0f, " + mask + ", " + mode + ");");
@@ -6369,24 +6355,24 @@ static std::string EmitVFLog10(const ir::CallPtr& op, codegen::CodegenBase& code
 // MulsCast — vmulscvt (fused multiply-scalar-cast: dst(fp16) = cast(src(fp32) * scalar))
 // ============================================================================
 
-static std::string EmitVFMulsCast(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMulsCast(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "vf.muls_cast requires 4 args (dst, src, scalar, mask)";
-    DataType src_dt = GetExprDtype(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == DataType::FP32)
-        << "vf.muls_cast source only supports FP32, got " << DTypeStr(src_dt);
-    DataType dst_dt = GetExprDtype(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_dt == DataType::FP16)
-        << "vf.muls_cast destination only supports FP16, got " << DTypeStr(dst_dt);
+    DataType srcDt = GetExprDtype(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == DataType::FP32)
+        << "vf.muls_cast source only supports FP32, got " << DTypeStr(srcDt);
+    DataType dstDt = GetExprDtype(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dstDt == DataType::FP16)
+        << "vf.muls_cast destination only supports FP16, got " << DTypeStr(dstDt);
     // FusedMulsCast: scalar must be float (Tuple<half, float, float>)
-    DataType scalar_dt = GetExprDtype(op->args_[2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalar_dt == DataType::FP32)
-        << "vf.muls_cast scalar only supports FP32, got " << DTypeStr(scalar_dt);
+    DataType scalarDt = GetExprDtype(op->args_[2]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalarDt == DataType::FP32)
+        << "vf.muls_cast scalar only supports FP32, got " << DTypeStr(scalarDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
-    std::string scalar_str = codegen.GetExprAsCode(op->args_[2]);
+    std::string scalarStr = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     // layout kwarg selects the result half: ZERO -> PART_EVEN (default), ONE -> PART_ODD.
     // FusedMulsCast: only supports RegLayout ZERO/ONE
@@ -6398,7 +6384,7 @@ static std::string EmitVFMulsCast(const ir::CallPtr& op, codegen::CodegenBase& c
         if (layout == "ONE")
             part = "PART_ODD";
     }
-    codegen.Emit("vmulscvt(" + dst + ", " + src + ", " + scalar_str + ", " + mask + ", " + part + ");");
+    codegen.Emit("vmulscvt(" + dst + ", " + src + ", " + scalarStr + ", " + mask + ", " + part + ");");
     return "";
 }
 
@@ -6418,35 +6404,35 @@ REGISTER_BACKEND_OP(BackendCCE, "vf.muls_cast")
 // Load (unified) — vldas + vldus all-in-one unaligned load
 // ============================================================================
 
-static std::string EmitVFLoad(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFLoad(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 2 && op->args_.size() <= 3)
         << "vf.load requires 2-3 args (dst, src_ptr[, stride])";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    DataType dst_dt = GetExprDtype(op->args_[0]);
+    DataType dstDt = GetExprDtype(op->args_[0]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      (IsB8Type(dst_dt) || dst_dt.GetBit() == 16 || dst_dt.GetBit() == 32 || dst_dt.GetBit() == 64))
-        << "vf.load only supports b8/b16/b32/b64 types, got " << DTypeStr(dst_dt);
+                      (IsB8Type(dstDt) || dstDt.GetBit() == 16 || dstDt.GetBit() == 32 || dstDt.GetBit() == 64))
+        << "vf.load only supports b8/b16/b32/b64 types, got " << DTypeStr(dstDt);
     // vldas/vldus support b8/b16/b32/b64 element widths
-    int elem_bytes = static_cast<int>(dst_dt.GetBit() / 8);
-    if (elem_bytes <= 0)
-        elem_bytes = 4;
+    int elemBytes = static_cast<int>(dstDt.GetBit() / 8);
+    if (elemBytes <= 0)
+        elemBytes = 4;
     // vldas and vldus both use the native dtype pointer (matches asc_load C-API).
     // For b8 types that lack a direct vldas/vldus overload, reinterpret as uint8_t.
-    std::string ptr_type = NeedsB8Reinterpret(dst_dt) ? "uint8_t" : dst_dt.ToCTypeString();
-    static int load_counter = 0;
-    std::string ureg_name = "__ureg_ld_" + std::to_string(load_counter++);
-    codegen.Emit("UnalignReg " + ureg_name + ";");
+    std::string ptrType = NeedsB8Reinterpret(dstDt) ? "uint8_t" : dstDt.ToCTypeString();
+    static int loadCounter = 0;
+    std::string uregName = "__ureg_ld_" + std::to_string(loadCounter++);
+    codegen.Emit("UnalignReg " + uregName + ";");
     if (op->args_.size() == 3) {
-        std::string src_ptr = GetUBufPtr(codegen, op->args_[1], ptr_type, /*is_post_update=*/true);
+        std::string srcPtr = GetUBufPtr(codegen, op->args_[1], ptrType, /*is_post_update=*/true);
         std::string stride = codegen.GetExprAsCode(op->args_[2]);
-        codegen.Emit("vldas(" + ureg_name + ", " + src_ptr + ");");
-        codegen.Emit("vldus(" + dst + ", " + ureg_name + ", " + src_ptr + ", " + stride + ", POST_UPDATE);");
+        codegen.Emit("vldas(" + uregName + ", " + srcPtr + ");");
+        codegen.Emit("vldus(" + dst + ", " + uregName + ", " + srcPtr + ", " + stride + ", POST_UPDATE);");
     } else {
-        std::string src_ptr = GetUBufPtr(codegen, op->args_[1], ptr_type);
-        codegen.Emit("vldas(" + ureg_name + ", " + src_ptr + ");");
-        codegen.Emit("vldus(" + dst + ", " + ureg_name + ", " + src_ptr + ");");
+        std::string srcPtr = GetUBufPtr(codegen, op->args_[1], ptrType);
+        codegen.Emit("vldas(" + uregName + ", " + srcPtr + ");");
+        codegen.Emit("vldus(" + dst + ", " + uregName + ", " + srcPtr + ");");
     }
     return "";
 }
@@ -6455,59 +6441,59 @@ static std::string EmitVFLoad(const ir::CallPtr& op, codegen::CodegenBase& codeg
 // Store (unified) — vstus + vstas all-in-one unaligned store
 // ============================================================================
 
-static std::string EmitVFStore(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFStore(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 2 && op->args_.size() <= 3)
         << "vf.store requires 2-3 args (dst_ptr, src[, count])";
-    DataType src_dt = GetExprDtype(op->args_[1]);
+    DataType srcDt = GetExprDtype(op->args_[1]);
     // vstus/vstas support b8/b16/b32/b64 element widths
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      IsB8Type(src_dt) || src_dt.GetBit() == 16 || src_dt.GetBit() == 32 || src_dt.GetBit() == 64)
-        << "vf.store only supports b8/b16/b32/b64 types, got " << DTypeStr(src_dt);
+                      IsB8Type(srcDt) || srcDt.GetBit() == 16 || srcDt.GetBit() == 32 || srcDt.GetBit() == 64)
+        << "vf.store only supports b8/b16/b32/b64 types, got " << DTypeStr(srcDt);
     // Check src/dst dtype consistency (doc: src and dst must have the same dtype)
-    DataType tile_dt = GetExprDtype(op->args_[0], src_dt);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tile_dt == src_dt)
-        << "vf.store requires src and dst to have the same dtype, got src=" << DTypeStr(src_dt)
-        << " dst=" << DTypeStr(tile_dt);
-    int elem_bytes = static_cast<int>(src_dt.GetBit() / 8);
-    if (elem_bytes <= 0)
-        elem_bytes = 4;
+    DataType tileDt = GetExprDtype(op->args_[0], srcDt);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tileDt == srcDt)
+        << "vf.store requires src and dst to have the same dtype, got src=" << DTypeStr(srcDt)
+        << " dst=" << DTypeStr(tileDt);
+    int elemBytes = static_cast<int>(srcDt.GetBit() / 8);
+    if (elemBytes <= 0)
+        elemBytes = 4;
     // Determine count (positional arg, default 256B/elem_bytes)
     std::string count;
-    int max_count = 256 / elem_bytes;
+    int maxCount = 256 / elemBytes;
     if (op->args_.size() == 3) {
         count = codegen.GetExprAsCode(op->args_[2]);
-        auto const_int = std::dynamic_pointer_cast<const ir::ConstInt>(op->args_[2]);
-        if (const_int != nullptr) {
-            PRO_CODEGEN_CHECK(ExternalError::OUT_OF_RANGE, const_int->value_ <= max_count)
-                << "vf.store count must not exceed 256B/sizeof(dtype) = " << max_count << ", got " << const_int->value_;
+        auto constInt = std::dynamic_pointer_cast<const ir::ConstInt>(op->args_[2]);
+        if (constInt != nullptr) {
+            PRO_CODEGEN_CHECK(ExternalError::OUT_OF_RANGE, constInt->value_ <= maxCount)
+                << "vf.store count must not exceed 256B/sizeof(dtype) = " << maxCount << ", got " << constInt->value_;
         }
     } else {
-        count = std::to_string(max_count);
+        count = std::to_string(maxCount);
     }
-    std::string ptr_type = NeedsB8Reinterpret(src_dt) ? "uint8_t" : src_dt.ToCTypeString();
-    std::string src_expr = codegen.GetExprAsCode(op->args_[1]);
+    std::string ptrType = NeedsB8Reinterpret(srcDt) ? "uint8_t" : srcDt.ToCTypeString();
+    std::string srcExpr = codegen.GetExprAsCode(op->args_[1]);
     // vstus/vstas use POST_UPDATE so the pointer is advanced internally by vstus
     // and vstas flushes the tail at the advanced position. This matches AscendC
     // StoreImpl which always uses POST_MODE_UPDATE via DataCopyUnAlignImpl.
-    std::string dst_ptr = GetUBufPtr(codegen, op->args_[0], ptr_type, /*is_post_update=*/true);
-    static int store_counter = 0;
-    std::string ureg_name = "__ureg_st_" + std::to_string(store_counter++);
-    codegen.Emit("UnalignReg " + ureg_name + ";");
+    std::string dstPtr = GetUBufPtr(codegen, op->args_[0], ptrType, /*is_post_update=*/true);
+    static int storeCounter = 0;
+    std::string uregName = "__ureg_st_" + std::to_string(storeCounter++);
+    codegen.Emit("UnalignReg " + uregName + ";");
     // B64 single-register: vstus/vstas have no 8-byte-element overload; reinterpret
     // as uint32_t pairs and double the count (mirrors AscendC DataCopyUnAlignImpl
     // b64 path; bitwise-identical for both INT64 and UINT64).
-    if (src_dt.GetBit() == 64) {
-        std::string b32_count = "(" + count + ") * 2";
-        std::string ptr_var = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
-        std::string b32_ptr = "(__ubuf__ uint32_t*&)" + ptr_var;
-        codegen.Emit("vstus(" + ureg_name + ", " + b32_count + ", (RegTensor<uint32_t>&)" +
-                     codegen.GetExprAsCode(op->args_[1]) + ", " + b32_ptr + ", POST_UPDATE);");
-        codegen.Emit("vstas(" + ureg_name + ", " + b32_ptr + ", 0, POST_UPDATE);");
+    if (srcDt.GetBit() == 64) {
+        std::string b32Count = "(" + count + ") * 2";
+        std::string ptrVar = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
+        std::string b32Ptr = "(__ubuf__ uint32_t*&)" + ptrVar;
+        codegen.Emit("vstus(" + uregName + ", " + b32Count + ", (RegTensor<uint32_t>&)" +
+                     codegen.GetExprAsCode(op->args_[1]) + ", " + b32Ptr + ", POST_UPDATE);");
+        codegen.Emit("vstas(" + uregName + ", " + b32Ptr + ", 0, POST_UPDATE);");
     } else {
-        codegen.Emit("vstus(" + ureg_name + ", " + count + ", " + src_expr + ", " + dst_ptr + ", POST_UPDATE);");
-        codegen.Emit("vstas(" + ureg_name + ", " + dst_ptr + ", 0, POST_UPDATE);");
+        codegen.Emit("vstus(" + uregName + ", " + count + ", " + srcExpr + ", " + dstPtr + ", POST_UPDATE);");
+        codegen.Emit("vstas(" + uregName + ", " + dstPtr + ", 0, POST_UPDATE);");
     }
     return "";
 }
@@ -6534,12 +6520,12 @@ REGISTER_BACKEND_OP(BackendCCE, "vf.store")
 // CreateAddrReg — AddrReg declaration + vag_b8/b16/b32 intrinsic
 // ============================================================================
 
-static std::string EmitVFCreateAddrReg(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFCreateAddrReg(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 1 && op->args_.size() <= 4)
         << "vf.create_addr_reg requires 1-4 strides";
-    std::string reg_name = codegen.GetCurrentResultTarget();
+    std::string regName = codegen.GetCurrentResultTarget();
     // Determine element width from dtype kwarg (default b32)
     DataType dt = DataType::FP32;
     if (op->HasKwarg("dtype")) {
@@ -6549,31 +6535,31 @@ static std::string EmitVFCreateAddrReg(const ir::CallPtr& op, codegen::CodegenBa
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
                       IsB8Type(dt) || dt.GetBit() == 16 || dt.GetBit() == 32 || dt.GetBit() == 64)
         << "vf.create_addr_reg dtype must be b8/b16/b32/b64, got " << DTypeStr(dt);
-    std::string vag_fn;
+    std::string vagFn;
     if (dt == DataType::UINT8 || dt == DataType::INT8)
-        vag_fn = "vag_b8";
+        vagFn = "vag_b8";
     else if (dt.GetBit() == 16)
-        vag_fn = "vag_b16";
+        vagFn = "vag_b16";
     else
-        vag_fn = "vag_b32";
+        vagFn = "vag_b32";
     // Collect stride args. For b64, each stride is doubled.
-    std::string stride_args;
+    std::string strideArgs;
     for (size_t i = 0; i < op->args_.size(); ++i) {
         std::string stride = codegen.GetExprAsCode(op->args_[i]);
         if (dt == DataType::UINT64 || dt == DataType::INT64) {
             stride = "(" + stride + ") * 2";
         }
-        if (!stride_args.empty())
-            stride_args += ", ";
-        stride_args += stride;
+        if (!strideArgs.empty())
+            strideArgs += ", ";
+        strideArgs += stride;
     }
     // AddrReg (vector_address) must be declared and initialized in a single
     // statement (bisheng rejects a separate declaration + assignment). Emit the
     // declaration and vag_* initializer together, matching the
     // `AddrReg x = CreateAddrReg<T>(...)` usage. The vag_* must sit inside the
     // physical loop it is bound to (HardwareLoop).
-    codegen.Emit("AddrReg " + reg_name + " = " + vag_fn + "(" + stride_args + ");");
-    codegen.RegisterAddrRegVar(reg_name);
+    codegen.Emit("AddrReg " + regName + " = " + vagFn + "(" + strideArgs + ");");
+    codegen.RegisterAddrRegVar(regName);
     return "";
 }
 
@@ -6581,50 +6567,50 @@ static std::string EmitVFCreateAddrReg(const ir::CallPtr& op, codegen::CodegenBa
 // Move — vmov (RegTensor) / pmov (MaskReg), with or without mask
 // ============================================================================
 
-static std::string EmitVFMove(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFMove(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2 || op->args_.size() == 3)
         << "vf.move requires 2 args (dst, src) or 3 args (dst, src, mask)";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     // Detect dst type: MaskReg vs RegTensor
-    bool is_mask_dst = false;
-    auto dst_var = ir::As<ir::Var>(op->args_[0]);
-    if (dst_var) {
-        is_mask_dst = codegen.IsMaskRegVar(codegen.GetVarName(dst_var));
+    bool isMaskDst = false;
+    auto dstVar = ir::As<ir::Var>(op->args_[0]);
+    if (dstVar) {
+        isMaskDst = codegen.IsMaskRegVar(codegen.GetVarName(dstVar));
     }
-    if (!is_mask_dst) {
-        DataType src_dt = GetExprDtype(op->args_[1]);
+    if (!isMaskDst) {
+        DataType srcDt = GetExprDtype(op->args_[1]);
         // AscendC Move supports bool + the standard int/float types; the FP8/FP4
         // family and 4-bit ints are not part of the Move contract.
-        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR,
-                          src_dt == DataType::BOOL || IsArithIntType(src_dt) || src_dt == DataType::FP16 ||
-                              src_dt == DataType::BF16 || src_dt == DataType::FP32)
+        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, srcDt == DataType::BOOL || IsArithIntType(srcDt) ||
+                                                                    srcDt == DataType::FP16 ||
+                                                                    srcDt == DataType::BF16 || srcDt == DataType::FP32)
             << "vf.move src only supports BOOL/INT8/UINT8/INT16/UINT16/INT32/UINT32/INT64/UINT64/FP16/BF16/FP32, got "
-            << DTypeStr(src_dt);
-        DataType vf_move_dst_dt = GetExprDtype(op->args_[0]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_dt == vf_move_dst_dt)
-            << "vf.move requires src and dst to have the same type, got dst=" << DTypeStr(vf_move_dst_dt)
-            << " src=" << DTypeStr(src_dt);
+            << DTypeStr(srcDt);
+        DataType vfMoveDstDt = GetExprDtype(op->args_[0]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt == vfMoveDstDt)
+            << "vf.move requires src and dst to have the same type, got dst=" << DTypeStr(vfMoveDstDt)
+            << " src=" << DTypeStr(srcDt);
     }
     if (op->args_.size() == 3) {
         std::string mask = codegen.GetExprAsCode(op->args_[2]);
-        if (is_mask_dst) {
+        if (isMaskDst) {
             codegen.Emit("pmov(" + dst + ", " + src + ", " + mask + ");");
         } else {
             // vf.move only supports MERGING mode (AscendC Copy/Move default).
             if (op->HasKwarg("mode")) {
-                auto mode_val = static_cast<ir::MergeMode>(op->GetKwarg<int>("mode"));
-                PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, mode_val == ir::MergeMode::MERGING)
+                auto modeVal = static_cast<ir::MergeMode>(op->GetKwarg<int>("mode"));
+                PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, modeVal == ir::MergeMode::MERGING)
                     << "vf.move only supports MERGING mode on current device";
             }
             std::string mode = "MODE_MERGING";
-            DataType src_dt = GetExprDtype(op->args_[1]);
-            if (src_dt == DataType::BOOL) {
+            DataType srcDt = GetExprDtype(op->args_[1]);
+            if (srcDt == DataType::BOOL) {
                 codegen.Emit("vmov((RegTensor<int8_t>&)" + dst + ", (RegTensor<int8_t>&)" + src + ", " + mask + ", " +
                              mode + ");");
-            } else if (src_dt.GetBit() == 64) {
+            } else if (srcDt.GetBit() == 64) {
                 std::string p = dst + "_mov_";
                 std::string tm = p + "tm_";
                 std::string m0 = p + "m0_";
@@ -6640,7 +6626,7 @@ static std::string EmitVFMove(const ir::CallPtr& op, codegen::CodegenBase& codeg
             }
         }
     } else {
-        if (is_mask_dst) {
+        if (isMaskDst) {
             codegen.Emit("pmov(" + dst + ", " + src + ");");
         } else {
             codegen.Emit("vmov(" + dst + ", " + src + ");");
@@ -6663,17 +6649,17 @@ REGISTER_BACKEND_OP(BackendCCE, "vf.move")
 // BitCast — type reinterpretation (no instruction, just C++ reference cast)
 // ============================================================================
 
-static std::string EmitVFBitCast(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+static std::string EmitVFBitCast(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1 || op->args_.size() == 2)
         << "vf.bit_cast requires 1 arg (src) or 2 args (dst, src)";
-    DataType target_dt = op->GetKwarg<DataType>("dtype");
+    DataType targetDt = op->GetKwarg<DataType>("dtype");
     std::string src = codegen.GetExprAsCode(op->args_.back());
     if (op->args_.size() == 2) {
         // Assignment form: dst = vf.bit_cast(src, dtype=xxx)
         std::string dst = codegen.GetExprAsCode(op->args_[0]);
-        codegen.Emit(dst + " = (RegTensor<" + target_dt.ToCTypeString() + ">&)" + src + ";");
+        codegen.Emit(dst + " = (RegTensor<" + targetDt.ToCTypeString() + ">&)" + src + ";");
     } else {
         // Nested form: vf.bit_cast(src, dtype=xxx) used as expression argument.
         // Return the cast expression directly so it inlines into the parent op's
@@ -6686,7 +6672,7 @@ static std::string EmitVFBitCast(const ir::CallPtr& op, codegen::CodegenBase& co
         if (!codegen.GetCurrentResultTarget().empty()) {
             codegen.RegisterRegTensorVar(codegen.GetCurrentResultTarget());
         }
-        return "(RegTensor<" + target_dt.ToCTypeString() + "> &)" + src;
+        return "(RegTensor<" + targetDt.ToCTypeString() + "> &)" + src;
     }
     return "";
 }

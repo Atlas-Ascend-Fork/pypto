@@ -184,10 +184,10 @@ Pass ConvertTensorToBlockOps();
 /**
  * \brief Create a verifier pass with configurable rules
  *
- * \param disabled_rules Vector of rule names to disable
+ * \param disabledRules Vector of rule names to disable
  * \return Pass that runs IR verification
  */
-Pass RunVerifier(const std::vector<std::string>& disabled_rules = {});
+Pass RunVerifier(const std::vector<std::string>& disabledRules = {});
 
 /**
  * \brief Create an aggressive dead code elimination pass

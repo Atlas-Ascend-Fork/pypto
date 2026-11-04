@@ -98,13 +98,13 @@ enum class Precedence : int {
 
 Precedence GetPrecedence(const ExprPtr& expr);
 bool IsRightAssociative(const ExprPtr& expr);
-bool NeedsParensForPrint(const ExprPtr& parent, const ExprPtr& child, bool is_left);
+bool NeedsParensForPrint(const ExprPtr& parent, const ExprPtr& child, bool isLeft);
 void PrintIRNodeWithVisitor(IRVisitor& visitor, std::ostream& stream, const IRNodePtr& node);
 void PrintChildExprWithParens(IRVisitor& visitor, std::ostream& stream, const ExprPtr& parent, const ExprPtr& child,
-                              bool is_left);
+                              bool isLeft);
 void PrintReturnStmtValues(IRVisitor& visitor, std::ostream& stream, const std::vector<ExprPtr>& values);
-void PrintFunctionReturnAnnotation(std::ostream& stream, const std::vector<TypePtr>& return_types,
-                                   const std::function<std::string(const TypePtr&)>& print_type);
+void PrintFunctionReturnAnnotation(std::ostream& stream, const std::vector<TypePtr>& returnTypes,
+                                   const std::function<std::string(const TypePtr&)>& printType);
 
 std::string PythonPrint(const IRNodePtr& node, const std::string& prefix = "ir", bool concise = false);
 std::string PythonPrint(const TypePtr& type, const std::string& prefix = "ir");

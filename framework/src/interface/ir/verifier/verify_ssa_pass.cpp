@@ -107,7 +107,7 @@ public:
 
 private:
     std::vector<Diagnostic>& diagnostics_;
-    std::unordered_map<const Var*, int> var_assignment_count_;
+    std::unordered_map<const Var*, int> varAssignmentCount_;
     // Scope stack of defined vars (pointer identity). A var is in scope if present in any active scope.
     std::vector<std::unordered_set<const Var*>> scopes_;
 
@@ -160,27 +160,27 @@ private:
     /**
      * \brief Verify ForStmt specific constraints
      */
-    void VerifyForStmt(const ForStmtPtr& for_stmt);
+    void VerifyForStmt(const ForStmtPtr& forStmt);
 
     /**
      * \brief Verify WhileStmt specific constraints
      */
-    void VerifyWhileStmt(const WhileStmtPtr& while_stmt);
+    void VerifyWhileStmt(const WhileStmtPtr& whileStmt);
 
     /**
      * \brief Verify IfStmt specific constraints
      */
-    void VerifyIfStmt(const IfStmtPtr& if_stmt);
+    void VerifyIfStmt(const IfStmtPtr& ifStmt);
 };
 
 void SSAVerifier::CheckVariableAssignment(const VarPtr& var)
 {
     const Var* key = var.get();
-    var_assignment_count_[key]++;
+    varAssignmentCount_[key]++;
 
-    if (var_assignment_count_[key] > 1) {
+    if (varAssignmentCount_[key] > 1) {
         std::ostringstream msg;
-        msg << "Variable '" << var->name_ << "' is assigned more than once (" << var_assignment_count_[key]
+        msg << "Variable '" << var->name_ << "' is assigned more than once (" << varAssignmentCount_[key]
             << " times), violating SSA form";
         RecordError(ssa::ErrorType::MULTIPLE_ASSIGNMENT, msg.str(), var->span_);
     }
@@ -201,84 +201,84 @@ void SSAVerifier::RecordUseBeforeDef(const VarPtr& var)
 
 StmtPtr SSAVerifier::GetLastStmt(const StmtPtr& stmt) { return GetLastStmtFromSeq(stmt); }
 
-void SSAVerifier::VerifyForStmt(const ForStmtPtr& for_stmt)
+void SSAVerifier::VerifyForStmt(const ForStmtPtr& forStmt)
 {
     // iter_args and return_vars correspond one-to-one.
-    if (for_stmt->iterArgs_.size() != for_stmt->returnVars_.size()) {
+    if (forStmt->iterArgs_.size() != forStmt->returnVars_.size()) {
         RecordError(ssa::ErrorType::ARITY_MISMATCH, "ForStmt iter_args count must equal return_vars count",
-                    for_stmt->span_);
+                    forStmt->span_);
     }
 
     // If iter_args is non-empty, the body must end with a value-producing terminator
     // (YieldStmt or ContinueStmt) whose value count matches the iter_args count.
-    if (!for_stmt->iterArgs_.empty()) {
-        StmtPtr last_stmt = GetLastStmt(for_stmt->body_);
-        if (!last_stmt || !(As<YieldStmt>(last_stmt) || As<ContinueStmt>(last_stmt))) {
+    if (!forStmt->iterArgs_.empty()) {
+        StmtPtr lastStmt = GetLastStmt(forStmt->body_);
+        if (!lastStmt || !(As<YieldStmt>(lastStmt) || As<ContinueStmt>(lastStmt))) {
             RecordError(ssa::ErrorType::MISSING_YIELD,
-                        "ForStmt with iter_args must end with a YieldStmt or ContinueStmt", for_stmt->span_);
-        } else if (TerminatorValueCount(last_stmt) != for_stmt->iterArgs_.size()) {
+                        "ForStmt with iter_args must end with a YieldStmt or ContinueStmt", forStmt->span_);
+        } else if (TerminatorValueCount(lastStmt) != forStmt->iterArgs_.size()) {
             RecordError(ssa::ErrorType::ARITY_MISMATCH,
-                        "ForStmt body terminator value count must equal iter_args count", for_stmt->span_);
+                        "ForStmt body terminator value count must equal iter_args count", forStmt->span_);
         }
     }
 }
 
-void SSAVerifier::VerifyWhileStmt(const WhileStmtPtr& while_stmt)
+void SSAVerifier::VerifyWhileStmt(const WhileStmtPtr& whileStmt)
 {
     // iter_args and return_vars correspond one-to-one.
-    if (while_stmt->iterArgs_.size() != while_stmt->returnVars_.size()) {
+    if (whileStmt->iterArgs_.size() != whileStmt->returnVars_.size()) {
         RecordError(ssa::ErrorType::ARITY_MISMATCH, "WhileStmt iter_args count must equal return_vars count",
-                    while_stmt->span_);
+                    whileStmt->span_);
     }
 
     // If iter_args is non-empty, the body must end with a value-producing terminator
     // (YieldStmt or ContinueStmt) whose value count matches the iter_args count.
-    if (!while_stmt->iterArgs_.empty()) {
-        StmtPtr last_stmt = GetLastStmt(while_stmt->body_);
-        if (!last_stmt || !(As<YieldStmt>(last_stmt) || As<ContinueStmt>(last_stmt))) {
+    if (!whileStmt->iterArgs_.empty()) {
+        StmtPtr lastStmt = GetLastStmt(whileStmt->body_);
+        if (!lastStmt || !(As<YieldStmt>(lastStmt) || As<ContinueStmt>(lastStmt))) {
             RecordError(ssa::ErrorType::MISSING_YIELD,
-                        "WhileStmt with iter_args must end with a YieldStmt or ContinueStmt", while_stmt->span_);
-        } else if (TerminatorValueCount(last_stmt) != while_stmt->iterArgs_.size()) {
+                        "WhileStmt with iter_args must end with a YieldStmt or ContinueStmt", whileStmt->span_);
+        } else if (TerminatorValueCount(lastStmt) != whileStmt->iterArgs_.size()) {
             RecordError(ssa::ErrorType::ARITY_MISMATCH,
-                        "WhileStmt body terminator value count must equal iter_args count", while_stmt->span_);
+                        "WhileStmt body terminator value count must equal iter_args count", whileStmt->span_);
         }
     }
 }
 
-void SSAVerifier::VerifyIfStmt(const IfStmtPtr& if_stmt)
+void SSAVerifier::VerifyIfStmt(const IfStmtPtr& ifStmt)
 {
     // Check only if return_vars is not empty
-    if (if_stmt->returnVars_.empty()) {
+    if (ifStmt->returnVars_.empty()) {
         return;
     }
 
     // Check 1: else_body must exist
-    if (!if_stmt->elseBody_.has_value()) {
-        RecordError(ssa::ErrorType::MISSING_YIELD, "IfStmt with return_vars must have else branch", if_stmt->span_);
+    if (!ifStmt->elseBody_.has_value()) {
+        RecordError(ssa::ErrorType::MISSING_YIELD, "IfStmt with return_vars must have else branch", ifStmt->span_);
         return;
     }
 
     // Check 2: Both then_body and else_body must end with YieldStmt
-    StmtPtr then_last = GetLastStmt(if_stmt->thenBody_);
-    StmtPtr else_last = GetLastStmt(if_stmt->elseBody_.value());
+    StmtPtr thenLast = GetLastStmt(ifStmt->thenBody_);
+    StmtPtr elseLast = GetLastStmt(ifStmt->elseBody_.value());
 
-    auto then_yield = As<YieldStmt>(then_last);
-    auto else_yield = As<YieldStmt>(else_last);
+    auto thenYield = As<YieldStmt>(thenLast);
+    auto elseYield = As<YieldStmt>(elseLast);
 
-    if (!then_yield) {
+    if (!thenYield) {
         RecordError(ssa::ErrorType::MISSING_YIELD, "IfStmt then branch must end with YieldStmt when return_vars exist",
-                    if_stmt->span_);
-    } else if (then_yield->value_.size() != if_stmt->returnVars_.size()) {
+                    ifStmt->span_);
+    } else if (thenYield->value_.size() != ifStmt->returnVars_.size()) {
         RecordError(ssa::ErrorType::ARITY_MISMATCH, "IfStmt then-branch yield value count must equal return_vars count",
-                    if_stmt->span_);
+                    ifStmt->span_);
     }
 
-    if (!else_yield) {
+    if (!elseYield) {
         RecordError(ssa::ErrorType::MISSING_YIELD, "IfStmt else branch must end with YieldStmt when return_vars exist",
-                    if_stmt->span_);
-    } else if (else_yield->value_.size() != if_stmt->returnVars_.size()) {
+                    ifStmt->span_);
+    } else if (elseYield->value_.size() != ifStmt->returnVars_.size()) {
         RecordError(ssa::ErrorType::ARITY_MISMATCH, "IfStmt else-branch yield value count must equal return_vars count",
-                    if_stmt->span_);
+                    ifStmt->span_);
     }
 }
 
@@ -334,9 +334,9 @@ void SSAVerifier::VisitStmt_(const AssignStmtPtr& op)
 void SSAVerifier::VisitStmt_(const ForStmtPtr& op)
 {
     // Check return_vars for multiple assignments
-    for (const auto& return_var : op->returnVars_) {
-        if (return_var) {
-            CheckVariableAssignment(return_var);
+    for (const auto& returnVar : op->returnVars_) {
+        if (returnVar) {
+            CheckVariableAssignment(returnVar);
         }
     }
 
@@ -348,18 +348,18 @@ void SSAVerifier::VisitStmt_(const ForStmtPtr& op)
     if (op->step_)
         VisitExpr(op->step_);
 
-    for (const auto& iter_arg : op->iterArgs_) {
-        if (iter_arg && iter_arg->initValue_) {
-            VisitExpr(iter_arg->initValue_);
+    for (const auto& iterArg : op->iterArgs_) {
+        if (iterArg && iterArg->initValue_) {
+            VisitExpr(iterArg->initValue_);
         }
     }
 
     // Loop body scope: only loopVar and iter_args' iterVar are in scope inside the body.
     PushScope();
     Define(op->loopVar_);
-    for (const auto& iter_arg : op->iterArgs_) {
-        if (iter_arg) {
-            Define(iter_arg->iterVar_);
+    for (const auto& iterArg : op->iterArgs_) {
+        if (iterArg) {
+            Define(iterArg->iterVar_);
         }
     }
     if (op->body_) {
@@ -368,8 +368,8 @@ void SSAVerifier::VisitStmt_(const ForStmtPtr& op)
     PopScope();
 
     // return_vars are loop outputs: defined in the enclosing scope after the loop.
-    for (const auto& return_var : op->returnVars_) {
-        Define(return_var);
+    for (const auto& returnVar : op->returnVars_) {
+        Define(returnVar);
     }
 
     // Verify ForStmt specific constraints
@@ -379,25 +379,25 @@ void SSAVerifier::VisitStmt_(const ForStmtPtr& op)
 void SSAVerifier::VisitStmt_(const WhileStmtPtr& op)
 {
     // Check return_vars for multiple assignments
-    for (const auto& return_var : op->returnVars_) {
-        if (return_var) {
-            CheckVariableAssignment(return_var);
+    for (const auto& returnVar : op->returnVars_) {
+        if (returnVar) {
+            CheckVariableAssignment(returnVar);
         }
     }
 
     // iter_args' initValue are evaluated in the outer scope before the loop.
-    for (const auto& iter_arg : op->iterArgs_) {
-        if (iter_arg && iter_arg->initValue_) {
-            VisitExpr(iter_arg->initValue_);
+    for (const auto& iterArg : op->iterArgs_) {
+        if (iterArg && iterArg->initValue_) {
+            VisitExpr(iterArg->initValue_);
         }
     }
 
     // Loop body scope: iter_args' iterVar are in scope inside the body. The condition references
     // iter_args, so it is evaluated inside the body scope (after defining iter_args).
     PushScope();
-    for (const auto& iter_arg : op->iterArgs_) {
-        if (iter_arg) {
-            Define(iter_arg->iterVar_);
+    for (const auto& iterArg : op->iterArgs_) {
+        if (iterArg) {
+            Define(iterArg->iterVar_);
         }
     }
     if (op->condition_) {
@@ -409,8 +409,8 @@ void SSAVerifier::VisitStmt_(const WhileStmtPtr& op)
     PopScope();
 
     // return_vars are loop outputs: defined in the enclosing scope after the loop.
-    for (const auto& return_var : op->returnVars_) {
-        Define(return_var);
+    for (const auto& returnVar : op->returnVars_) {
+        Define(returnVar);
     }
 
     // Verify WhileStmt specific constraints
@@ -420,9 +420,9 @@ void SSAVerifier::VisitStmt_(const WhileStmtPtr& op)
 void SSAVerifier::VisitStmt_(const IfStmtPtr& op)
 {
     // Check return_vars for multiple assignments
-    for (const auto& return_var : op->returnVars_) {
-        if (return_var) {
-            CheckVariableAssignment(return_var);
+    for (const auto& returnVar : op->returnVars_) {
+        if (returnVar) {
+            CheckVariableAssignment(returnVar);
         }
     }
 
@@ -444,8 +444,8 @@ void SSAVerifier::VisitStmt_(const IfStmtPtr& op)
     }
 
     // return_vars are phi outputs: defined in the enclosing scope after the if.
-    for (const auto& return_var : op->returnVars_) {
-        Define(return_var);
+    for (const auto& returnVar : op->returnVars_) {
+        Define(returnVar);
     }
 
     // Verify IfStmt specific constraints

@@ -64,7 +64,7 @@ def _tile_type_init_wrapper(
                Integers are automatically converted to ConstInt(dim, DataType.INT64, Span.unknown()).
         dtype: Element data type
         memref: Optional memory reference
-        tile_view: Optional tile view information
+        tile_view: Optional valid shape; omitted or empty valid shape defaults to -1 for each dimension
         hardware_info: Optional hardware-specific tile information
     """
     shape_exprs = _normalize_shape(shape)

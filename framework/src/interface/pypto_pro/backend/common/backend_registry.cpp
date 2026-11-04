@@ -31,30 +31,30 @@ BackendRegistry& BackendRegistry::Instance()
     return instance;
 }
 
-void BackendRegistry::Register(const std::string& type_name, CreateFunc func)
+void BackendRegistry::Register(const std::string& typeName, CreateFunc func)
 {
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, registry_.find(type_name) == registry_.end())
-        << "Backend type already registered: " << type_name;
-    registry_[type_name] = std::move(func);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, registry_.find(typeName) == registry_.end())
+        << "Backend type already registered: " << typeName;
+    registry_[typeName] = std::move(func);
 }
 
-std::unique_ptr<Backend> BackendRegistry::Create(const std::string& type_name, const std::shared_ptr<const SoC>& soc)
+std::unique_ptr<Backend> BackendRegistry::Create(const std::string& typeName, const std::shared_ptr<const SoC>& soc)
 {
-    (void)type_name;
+    (void)typeName;
     (void)soc;
     PRO_CODEGEN_THROW(::pypto::ir::ValueError, npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR)
         << "Cannot create backend instances via registry - backends are singletons. "
         << "Use BackendCCE::Instance() instead.";
 }
 
-bool BackendRegistry::IsRegistered(const std::string& type_name) const
+bool BackendRegistry::IsRegistered(const std::string& typeName) const
 {
-    return registry_.find(type_name) != registry_.end();
+    return registry_.find(typeName) != registry_.end();
 }
 
-std::unique_ptr<Backend> CreateBackendFromRegistry(const std::string& type_name, const std::shared_ptr<const SoC>& soc)
+std::unique_ptr<Backend> CreateBackendFromRegistry(const std::string& typeName, const std::shared_ptr<const SoC>& soc)
 {
-    (void)type_name;
+    (void)typeName;
     (void)soc;
     PRO_CODEGEN_THROW(::pypto::ir::ValueError, npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR)
         << "Cannot create backend instances via registry - backends are singletons. "
@@ -72,7 +72,7 @@ bool RegisterBackendCCE()
     return true;
 }
 
-static bool backend_cce_registered = RegisterBackendCCE();
+static bool backendCceRegistered = RegisterBackendCCE();
 } // namespace
 
 } // namespace backend

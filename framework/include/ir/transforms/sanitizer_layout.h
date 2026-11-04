@@ -128,10 +128,10 @@ constexpr SanitizerRecordLayout kSanitizerRecordLayouts[] = {
 
 /// Layout lookup by wire det_id; nullptr when the id is unknown (a newer
 /// device build than this host, or corrupt data).
-inline const SanitizerRecordLayout* FindSanitizerRecordLayout(uint32_t det_id)
+inline const SanitizerRecordLayout* FindSanitizerRecordLayout(uint32_t detId)
 {
     for (const auto& desc : kSanitizerRecordLayouts) {
-        if (static_cast<uint32_t>(desc.det) == det_id) {
+        if (static_cast<uint32_t>(desc.det) == detId) {
             return &desc;
         }
     }

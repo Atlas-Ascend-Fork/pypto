@@ -151,17 +151,17 @@ public:
         INTERNAL_CHECK(program) << "FunctionPass cannot run on null program";
 
         // Apply the function transform to each function in the program
-        std::vector<FunctionPtr> transformed_functions;
-        transformed_functions.reserve(program->functions_.size());
+        std::vector<FunctionPtr> transformedFunctions;
+        transformedFunctions.reserve(program->functions_.size());
 
         for (const auto& entry : program->functions_) {
             const auto& func = entry.second;
-            FunctionPtr transformed_func = transform_(func);
-            transformed_functions.push_back(transformed_func);
+            FunctionPtr transformedFunc = transform_(func);
+            transformedFunctions.push_back(transformedFunc);
         }
 
         // Create a new program with the transformed functions
-        return std::make_shared<const Program>(transformed_functions, program->name_, program->span_);
+        return std::make_shared<const Program>(transformedFunctions, program->name_, program->span_);
     }
 
     [[nodiscard]] std::string GetName() const override { return name_.empty() ? "FunctionPass" : name_; }
@@ -192,17 +192,17 @@ Pass CreateFunctionPass(std::function<FunctionPtr(const FunctionPtr&)> transform
     return Pass(std::make_shared<FunctionPassImpl>(std::move(transform), name, properties));
 }
 
-Pass RunVerifier(const std::vector<std::string>& disabled_rules)
+Pass RunVerifier(const std::vector<std::string>& disabledRules)
 {
-    auto disabled_rules_snapshot = std::make_shared<const std::vector<std::string>>(disabled_rules);
+    auto disabledRulesSnapshot = std::make_shared<const std::vector<std::string>>(disabledRules);
     return CreateProgramPass(
-        [disabled_rules_snapshot](const ProgramPtr& program) -> ProgramPtr {
+        [disabledRulesSnapshot](const ProgramPtr& program) -> ProgramPtr {
             // Create default verifier with all rules
             IRVerifier verifier = IRVerifier::CreateDefault();
 
             // Disable requested rules
-            for (const auto& rule_name : *disabled_rules_snapshot) {
-                verifier.DisableRule(rule_name);
+            for (const auto& ruleName : *disabledRulesSnapshot) {
+                verifier.DisableRule(ruleName);
             }
 
             // Run verification and collect diagnostics

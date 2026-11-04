@@ -25,7 +25,7 @@ def test_builder_round_trip():
 
     # Create complex tile type with builder
     memref = ib.memref(ir.MemorySpace.Right, 0x200, 1024, 36)
-    tv = ib.tile_view([32, 32], [1, 32], 0)
+    tv = ib.tile_view([32, 32])
     tile_t = ib.tile_type([32, 32], DataType.FP32, memref=memref, tile_view=tv)
 
     # Print to Python syntax

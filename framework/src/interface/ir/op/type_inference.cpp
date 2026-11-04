@@ -43,11 +43,11 @@ BroadcastResult BroadcastShapes(const std::vector<ExprPtr>& shape1, const std::v
     }
 
     // Broadcast from right to left
-    size_t max_ndim = std::max(shape1.size(), shape2.size());
-    std::vector<ExprPtr> result_shape;
-    result_shape.reserve(max_ndim);
+    size_t maxNdim = std::max(shape1.size(), shape2.size());
+    std::vector<ExprPtr> resultShape;
+    resultShape.reserve(maxNdim);
 
-    for (size_t i = 0; i < max_ndim; ++i) {
+    for (size_t i = 0; i < maxNdim; ++i) {
         // Get dimensions from right to left
         int64_t idx1 = static_cast<int64_t>(shape1.size()) - 1 - i; // NOLINT
         int64_t idx2 = static_cast<int64_t>(shape2.size()) - 1 - i; // NOLINT
@@ -57,30 +57,30 @@ BroadcastResult BroadcastShapes(const std::vector<ExprPtr>& shape1, const std::v
 
         // If one dimension is missing, use the other
         if (!dim1) {
-            result_shape.push_back(dim2);
+            resultShape.push_back(dim2);
             continue;
         }
         if (!dim2) {
-            result_shape.push_back(dim1);
+            resultShape.push_back(dim1);
             continue;
         }
 
         // Check if dimensions are equal
         if (DimensionsEqual(dim1, dim2)) {
-            result_shape.push_back(dim1);
+            resultShape.push_back(dim1);
             continue;
         }
 
         // Check if either dimension is 1 (broadcastable)
-        auto const_dim1 = GetConstantDimension(dim1);
-        auto const_dim2 = GetConstantDimension(dim2);
+        auto constDim1 = GetConstantDimension(dim1);
+        auto constDim2 = GetConstantDimension(dim2);
 
-        if (const_dim1 && *const_dim1 == 1) {
-            result_shape.push_back(dim2);
+        if (constDim1 && *constDim1 == 1) {
+            resultShape.push_back(dim2);
             continue;
         }
-        if (const_dim2 && *const_dim2 == 1) {
-            result_shape.push_back(dim1);
+        if (constDim2 && *constDim2 == 1) {
+            resultShape.push_back(dim1);
             continue;
         }
 
@@ -91,8 +91,8 @@ BroadcastResult BroadcastShapes(const std::vector<ExprPtr>& shape1, const std::v
     }
 
     // Reverse result since we built it from right to left
-    std::reverse(result_shape.begin(), result_shape.end());
-    return BroadcastResult::Success(std::move(result_shape));
+    std::reverse(resultShape.begin(), resultShape.end());
+    return BroadcastResult::Success(std::move(resultShape));
 }
 
 std::optional<DataType> PromoteDataTypes(DataType dtype1, DataType dtype2)
@@ -103,12 +103,12 @@ std::optional<DataType> PromoteDataTypes(DataType dtype1, DataType dtype2)
     }
 
     // Float types take precedence
-    bool is_float1 = dtype1.IsFloat();
-    bool is_float2 = dtype2.IsFloat();
-    if (is_float1 && !is_float2) {
+    bool isFloat1 = dtype1.IsFloat();
+    bool isFloat2 = dtype2.IsFloat();
+    if (isFloat1 && !isFloat2) {
         return dtype1;
     }
-    if (is_float2 && !is_float1) {
+    if (isFloat2 && !isFloat1) {
         return dtype2;
     }
 
@@ -124,10 +124,10 @@ std::optional<DataType> PromoteDataTypes(DataType dtype1, DataType dtype2)
     }
 
     // Same size - prefer signed over unsigned for integers
-    if (!is_float1 && dtype1.IsSignedInt()) {
+    if (!isFloat1 && dtype1.IsSignedInt()) {
         return dtype1;
     }
-    if (!is_float2 && dtype2.IsSignedInt()) {
+    if (!isFloat2 && dtype2.IsSignedInt()) {
         return dtype2;
     }
 
@@ -198,34 +198,33 @@ std::vector<ExprPtr> ExtractShape(const TypePtr& type)
     return {};
 }
 
-TileScalarTypes RequireTileScalarArgs(const std::vector<ExprPtr>& args, const std::string& op_name,
-                                      size_t expected_args)
+TileScalarTypes RequireTileScalarArgs(const std::vector<ExprPtr>& args, const std::string& opName, size_t expectedArgs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == expected_args)
-        << "The operator " << op_name << " requires exactly " << expected_args << " arguments, but got " << args.size();
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == expectedArgs)
+        << "The operator " << opName << " requires exactly " << expectedArgs << " arguments, but got " << args.size();
 
-    auto tile_type = As<TileType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tile_type)
-        << "The operator " << op_name << " requires first argument to be a TileType, but got "
+    auto tileType = As<TileType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tileType)
+        << "The operator " << opName << " requires first argument to be a TileType, but got "
         << args[0]->GetType()->TypeName();
 
-    auto scalar_type = As<ScalarType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar_type)
-        << "The operator " << op_name << " requires second argument to be a ScalarType, but got "
+    auto scalarType = As<ScalarType>(args[1]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalarType)
+        << "The operator " << opName << " requires second argument to be a ScalarType, but got "
         << args[1]->GetType()->TypeName();
 
-    return {tile_type, scalar_type};
+    return {tileType, scalarType};
 }
 
 TypePtr DeduceBlockOutType(const std::vector<ExprPtr>& args,
                            [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
-                           const std::string& op_name, size_t expected_args)
+                           const std::string& opName, size_t expectedArgs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == expected_args)
-        << "The operator " << op_name << " requires exactly " << expected_args << " arguments, but got " << args.size();
-    auto out_type = As<TileType>(args.front()->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, out_type)
-        << "The operator " << op_name << " requires first argument (out) to be TileType, but got "
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == expectedArgs)
+        << "The operator " << opName << " requires exactly " << expectedArgs << " arguments, but got " << args.size();
+    auto outType = As<TileType>(args.front()->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, outType)
+        << "The operator " << opName << " requires first argument (out) to be TileType, but got "
         << args.front()->GetType()->TypeName();
     return GetNoneType();
 }
@@ -233,8 +232,8 @@ TypePtr DeduceBlockOutType(const std::vector<ExprPtr>& args,
 std::optional<int64_t> GetConstantDimension(const ExprPtr& dim)
 {
     // Try to cast to ConstInt
-    if (auto const_int = As<ConstInt>(dim)) {
-        return const_int->value_;
+    if (auto constInt = As<ConstInt>(dim)) {
+        return constInt->value_;
     }
 
     // Not a constant
@@ -245,11 +244,11 @@ int64_t ComputeStaticShapeProduct(const std::vector<ExprPtr>& shape)
 {
     int64_t product = 1;
     for (const auto& dim : shape) {
-        auto const_dim = GetConstantDimension(dim);
-        if (!const_dim) {
+        auto constDim = GetConstantDimension(dim);
+        if (!constDim) {
             return -1;
         }
-        product *= *const_dim;
+        product *= *constDim;
     }
     return product;
 }
@@ -272,22 +271,22 @@ bool DimensionsEqual(const ExprPtr& dim1, const ExprPtr& dim2)
     return false;
 }
 
-bool IsBroadcastable(const ExprPtr& source_dim, const ExprPtr& target_dim)
+bool IsBroadcastable(const ExprPtr& sourceDim, const ExprPtr& targetDim)
 {
     // If dimensions are equal, they're broadcastable
-    if (DimensionsEqual(source_dim, target_dim)) {
+    if (DimensionsEqual(sourceDim, targetDim)) {
         return true;
     }
 
     // Check if source is constant 1
-    auto const_source = GetConstantDimension(source_dim);
-    if (const_source && *const_source == 1) {
+    auto constSource = GetConstantDimension(sourceDim);
+    if (constSource && *constSource == 1) {
         return true;
     }
 
     // Check if target is constant 1
-    auto const_target = GetConstantDimension(target_dim);
-    if (const_target && *const_target == 1) {
+    auto constTarget = GetConstantDimension(targetDim);
+    if (constTarget && *constTarget == 1) {
         return true;
     }
 
@@ -306,9 +305,9 @@ std::string FormatShape(const std::vector<ExprPtr>& shape)
         if (i > 0) {
             oss << ", ";
         }
-        auto const_dim = GetConstantDimension(shape[i]);
-        if (const_dim) {
-            oss << *const_dim;
+        auto constDim = GetConstantDimension(shape[i]);
+        if (constDim) {
+            oss << *constDim;
         } else {
             oss << "?";
         }

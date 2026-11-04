@@ -165,13 +165,13 @@ public:
 
     /// Get a typed attribute value (returns default_value if key not found)
     template <typename T>
-    [[nodiscard]] T GetAttr(const std::string& key, const T& default_value = T{}) const
+    [[nodiscard]] T GetAttr(const std::string& key, const T& defaultValue = T{}) const
     {
         for (const auto& [k, v] : attrs_) {
             if (k == key)
                 return AnyCast<T>(v, "function attr key: " + key);
         }
-        return default_value;
+        return defaultValue;
     }
 
     /// Check if an attribute exists

@@ -88,17 +88,17 @@ static std::string ToLowerCase(const std::string& str)
 }
 
 // 5-arg constructor (block semantics, with explicit id)
-MemRef::MemRef(MemorySpace memory_space, ExprPtr addr, uint64_t size, uint64_t id, Span span)
-    : Var("mem_" + ToLowerCase(MemorySpaceToString(memory_space)) + "_" + std::to_string(id), GetMemRefType(),
+MemRef::MemRef(MemorySpace memorySpace, ExprPtr addr, uint64_t size, uint64_t id, Span span)
+    : Var("mem_" + ToLowerCase(MemorySpaceToString(memorySpace)) + "_" + std::to_string(id), GetMemRefType(),
           std::move(span)),
-      memorySpace_(memory_space),
+      memorySpace_(memorySpace),
       addr_(std::move(addr)),
       size_(size)
 {}
 
 // 4-arg constructor (id_ defaults to 0, for callers that do not track allocation counter)
-MemRef::MemRef(MemorySpace memory_space, ExprPtr addr, uint64_t size, Span span)
-    : MemRef(memory_space, std::move(addr), size, 0, std::move(span))
+MemRef::MemRef(MemorySpace memorySpace, ExprPtr addr, uint64_t size, Span span)
+    : MemRef(memorySpace, std::move(addr), size, 0, std::move(span))
 {}
 
 // Aliasing analysis (merged from outer version)
@@ -107,12 +107,12 @@ bool MemRef::MayAlias(const MemRefPtr& a, const MemRefPtr& b)
     if (a->memorySpace_ != b->memorySpace_)
         return false;
 
-    auto off_a = As<ConstInt>(a->addr_);
-    auto off_b = As<ConstInt>(b->addr_);
-    if (off_a && off_b) {
-        int64_t end_a = off_a->value_ + static_cast<int64_t>(a->size_);
-        int64_t end_b = off_b->value_ + static_cast<int64_t>(b->size_);
-        return off_a->value_ < end_b && off_b->value_ < end_a;
+    auto offA = As<ConstInt>(a->addr_);
+    auto offB = As<ConstInt>(b->addr_);
+    if (offA && offB) {
+        int64_t endA = offA->value_ + static_cast<int64_t>(a->size_);
+        int64_t endB = offB->value_ + static_cast<int64_t>(b->size_);
+        return offA->value_ < endB && offB->value_ < endA;
     }
     return true; // same memory space, symbolic offsets → conservatively alias
 }
@@ -121,10 +121,10 @@ bool MemRef::SameAllocation(const MemRefPtr& a, const MemRefPtr& b)
 {
     if (a->memorySpace_ != b->memorySpace_ || a->size_ != b->size_)
         return false;
-    auto off_a = As<ConstInt>(a->addr_);
-    auto off_b = As<ConstInt>(b->addr_);
-    if (off_a && off_b) {
-        return off_a->value_ == off_b->value_;
+    auto offA = As<ConstInt>(a->addr_);
+    auto offB = As<ConstInt>(b->addr_);
+    if (offA && offB) {
+        return offA->value_ == offB->value_;
     }
     return a->addr_ == b->addr_;
 }

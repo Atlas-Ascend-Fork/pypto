@@ -123,7 +123,7 @@ std::string Invoke(CapturingCCECodegen& codegen, const std::string& name, std::v
     }
     EXPECT_EQ(info->pipe, ir::PipeType::V) << name;
     codegen.SetTarget(target);
-    EXPECT_TRUE(info->codegen_func(MakeCall(name, std::move(args), std::move(kwargs)), codegen).empty());
+    EXPECT_TRUE(info->codegenFunc(MakeCall(name, std::move(args), std::move(kwargs)), codegen).empty());
     return codegen.Emitted().substr(emitted_size);
 }
 
@@ -227,7 +227,7 @@ TEST(BackendCCEVFOpsTest, RegistersExpectedVectorFunctionOperations)
         const auto* info = BackendCCE::Instance().GetOpInfo(name);
         ASSERT_NE(info, nullptr) << name;
         EXPECT_EQ(info->pipe, ir::PipeType::V) << name;
-        EXPECT_TRUE(static_cast<bool>(info->codegen_func)) << name;
+        EXPECT_TRUE(static_cast<bool>(info->codegenFunc)) << name;
     }
 }
 
@@ -2473,9 +2473,9 @@ TEST(BackendCCEVFOpsTest, BitCastEmitsReferenceCast)
 
     // Nested (1-arg) form: the inline reference cast is RETURNED for the parent
     // op to inline, not emitted.
-    auto ret = info->codegen_func(MakeCall("vf.bit_cast", {bf16_reg}, {{"dtype", ir::DataType::UINT16}}), codegen);
+    auto ret = info->codegenFunc(MakeCall("vf.bit_cast", {bf16_reg}, {{"dtype", ir::DataType::UINT16}}), codegen);
     EXPECT_EQ(ret, "(RegTensor<uint16_t> &)bf16_reg");
-    ret = info->codegen_func(MakeCall("vf.bit_cast", {u32_reg}, {{"dtype", ir::DataType::UINT32}}), codegen);
+    ret = info->codegenFunc(MakeCall("vf.bit_cast", {u32_reg}, {{"dtype", ir::DataType::UINT32}}), codegen);
     EXPECT_EQ(ret, "(RegTensor<uint32_t> &)u32_reg");
 
     // Assignment (2-arg) form: view register bound to the reference cast.

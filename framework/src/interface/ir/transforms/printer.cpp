@@ -97,8 +97,8 @@ Precedence GetPrecedence(const ExprPtr& expr)
     };
 
     INTERNAL_CHECK(expr) << "Expression is null";
-    const Expr& expr_ref = *expr;
-    const auto it = kPrecedenceMap.find(std::type_index(typeid(expr_ref)));
+    const Expr& exprRef = *expr;
+    const auto it = kPrecedenceMap.find(std::type_index(typeid(exprRef)));
     if (it != kPrecedenceMap.end()) {
         return it->second;
     }
@@ -113,19 +113,19 @@ bool IsRightAssociative(const ExprPtr& expr)
     return IsA<Pow>(expr);
 }
 
-bool NeedsParensForPrint(const ExprPtr& parent, const ExprPtr& child, bool is_left)
+bool NeedsParensForPrint(const ExprPtr& parent, const ExprPtr& child, bool isLeft)
 {
-    Precedence parent_prec = GetPrecedence(parent);
-    Precedence child_prec = GetPrecedence(child);
-    if (child_prec < parent_prec) {
+    Precedence parentPrec = GetPrecedence(parent);
+    Precedence childPrec = GetPrecedence(child);
+    if (childPrec < parentPrec) {
         return true;
     }
 
-    if (child_prec == parent_prec) {
+    if (childPrec == parentPrec) {
         if (IsRightAssociative(parent)) {
-            return is_left;
+            return isLeft;
         } else {
-            return !is_left;
+            return !isLeft;
         }
     }
     return false;
@@ -147,16 +147,16 @@ void PrintIRNodeWithVisitor(IRVisitor& visitor, std::ostream& stream, const IRNo
 }
 
 void PrintChildExprWithParens(IRVisitor& visitor, std::ostream& stream, const ExprPtr& parent, const ExprPtr& child,
-                              bool is_left)
+                              bool isLeft)
 {
-    bool needs_parens = NeedsParensForPrint(parent, child, is_left);
-    if (needs_parens) {
+    bool needsParens = NeedsParensForPrint(parent, child, isLeft);
+    if (needsParens) {
         stream << "(";
     }
 
     visitor.VisitExpr(child);
 
-    if (needs_parens) {
+    if (needsParens) {
         stream << ")";
     }
 }
@@ -174,19 +174,19 @@ void PrintReturnStmtValues(IRVisitor& visitor, std::ostream& stream, const std::
     }
 }
 
-void PrintFunctionReturnAnnotation(std::ostream& stream, const std::vector<TypePtr>& return_types,
-                                   const std::function<std::string(const TypePtr&)>& print_type)
+void PrintFunctionReturnAnnotation(std::ostream& stream, const std::vector<TypePtr>& returnTypes,
+                                   const std::function<std::string(const TypePtr&)>& printType)
 {
-    if (!return_types.empty()) {
+    if (!returnTypes.empty()) {
         stream << " -> ";
-        if (return_types.size() == 1) {
-            stream << print_type(return_types[0]);
+        if (returnTypes.size() == 1) {
+            stream << printType(returnTypes[0]);
         } else {
             stream << "tuple[";
-            for (size_t i = 0; i < return_types.size(); ++i) {
+            for (size_t i = 0; i < returnTypes.size(); ++i) {
                 if (i > 0)
                     stream << ", ";
-                stream << print_type(return_types[i]);
+                stream << printType(returnTypes[i]);
             }
             stream << "]";
         }
@@ -325,31 +325,31 @@ static void PrintKwargValue(std::ostream& stream, const std::string& prefix, con
     }
 }
 
-void PrintIterArgNames(std::ostringstream& stream, const std::vector<IterArgPtr>& iter_args)
+void PrintIterArgNames(std::ostringstream& stream, const std::vector<IterArgPtr>& iterArgs)
 {
     stream << "(";
-    for (size_t i = 0; i < iter_args.size(); ++i) {
+    for (size_t i = 0; i < iterArgs.size(); ++i) {
         if (i > 0)
             stream << ", ";
-        stream << iter_args[i]->iterVar_->name_;
+        stream << iterArgs[i]->iterVar_->name_;
     }
-    if (iter_args.size() == 1) {
+    if (iterArgs.size() == 1) {
         stream << ",";
     }
     stream << ")";
 }
 
 template <typename VisitExprFn>
-void PrintIterArgInitValues(std::ostringstream& stream, const std::vector<IterArgPtr>& iter_args,
-                            const VisitExprFn& visit_expr)
+void PrintIterArgInitValues(std::ostringstream& stream, const std::vector<IterArgPtr>& iterArgs,
+                            const VisitExprFn& visitExpr)
 {
     stream << "init_values=(";
-    for (size_t i = 0; i < iter_args.size(); ++i) {
+    for (size_t i = 0; i < iterArgs.size(); ++i) {
         if (i > 0)
             stream << ", ";
-        visit_expr(iter_args[i]->initValue_);
+        visitExpr(iterArgs[i]->initValue_);
     }
-    if (iter_args.size() == 1) {
+    if (iterArgs.size() == 1) {
         stream << ",";
     }
     stream << ")";
@@ -357,7 +357,7 @@ void PrintIterArgInitValues(std::ostringstream& stream, const std::vector<IterAr
 
 template <typename VisitExprFn>
 void PrintForRangeHeader(std::ostringstream& stream, const std::string& prefix, const ForStmtPtr& op,
-                         const VisitExprFn& visit_expr)
+                         const VisitExprFn& visitExpr)
 {
     stream << "for " << op->loopVar_->name_;
     if (!op->iterArgs_.empty()) {
@@ -366,15 +366,15 @@ void PrintForRangeHeader(std::ostringstream& stream, const std::string& prefix, 
     }
 
     stream << " in " << prefix << ".range(";
-    visit_expr(op->start_);
+    visitExpr(op->start_);
     stream << ", ";
-    visit_expr(op->stop_);
+    visitExpr(op->stop_);
     stream << ", ";
-    visit_expr(op->step_);
+    visitExpr(op->step_);
 
     if (!op->iterArgs_.empty()) {
         stream << ", ";
-        PrintIterArgInitValues(stream, op->iterArgs_, visit_expr);
+        PrintIterArgInitValues(stream, op->iterArgs_, visitExpr);
     }
     if (!op->attrs_.empty()) {
         stream << ", attrs={";
@@ -393,12 +393,12 @@ void PrintForRangeHeader(std::ostringstream& stream, const std::string& prefix, 
 
 template <typename VisitExprFn>
 void PrintWhileIterArgsHeader(std::ostringstream& stream, const std::string& prefix, const WhileStmtPtr& op,
-                              const VisitExprFn& visit_expr)
+                              const VisitExprFn& visitExpr)
 {
     stream << "for ";
     PrintIterArgNames(stream, op->iterArgs_);
     stream << " in " << prefix << ".while_(";
-    PrintIterArgInitValues(stream, op->iterArgs_, visit_expr);
+    PrintIterArgInitValues(stream, op->iterArgs_, visitExpr);
     stream << "):\n";
 }
 } // namespace
@@ -452,18 +452,18 @@ private:
     void PrintStmtBlock(const StmtPtr& stmt);
 
     // Statement body visitor with SSA-style handling
-    void VisitStmtBody(const StmtPtr& body, const std::vector<VarPtr>& return_vars = {});
+    void VisitStmtBody(const StmtPtr& body, const std::vector<VarPtr>& returnVars = {});
     void VisitFunctionBody(const StmtPtr& body);
 
     // If `stmt` is a value-carrying terminator (yield/break/continue) and `return_vars` is
     // non-empty, print it as `return_vars = <terminator>`
-    bool PrintTerminator(const StmtPtr& stmt, const std::vector<VarPtr>& return_vars);
+    bool PrintTerminator(const StmtPtr& stmt, const std::vector<VarPtr>& returnVars);
 
     // Binary/unary operator helpers (reuse precedence logic)
-    void PrintBinaryOp(const BinaryExprPtr& op, const char* op_symbol);
-    void PrintFunctionBinaryOp(const BinaryExprPtr& op, const char* func_name);
-    void PrintChild(const ExprPtr& parent, const ExprPtr& child, bool is_left);
-    void PrintCallKwargs(const CallPtr& op, bool need_comma);
+    void PrintBinaryOp(const BinaryExprPtr& op, const char* opSymbol);
+    void PrintFunctionBinaryOp(const BinaryExprPtr& op, const char* funcName);
+    void PrintChild(const ExprPtr& parent, const ExprPtr& child, bool isLeft);
+    void PrintCallKwargs(const CallPtr& op, bool needComma);
 
     // Shape printing helper
     void PrintShapeDims(std::ostringstream& oss, const std::vector<ExprPtr>& shape);
@@ -474,9 +474,9 @@ private:
 
     // MemRef and TileView printing helpers
     std::string PrintMemRef(const MemRef& memref);
-    std::string PrintTileView(const TileView& tile_view);
-    std::string PrintHardwareInfo(const HardwareInfo& hw_info);
-    std::string PrintTensorView(const TensorView& tensor_view);
+    std::string PrintTileView(const TileView& tileView);
+    std::string PrintHardwareInfo(const HardwareInfo& hwInfo);
+    std::string PrintTensorView(const TensorView& tensorView);
 };
 
 // DataTypeToPythonString removed — now uses DTypeToString from dtype.h
@@ -493,88 +493,88 @@ std::string IRPrinter::Print(const IRNodePtr& node)
 
 std::string IRPrinter::Print(const TypePtr& type)
 {
-    if (auto scalar_type = As<ScalarType>(type)) {
+    if (auto scalarType = As<ScalarType>(type)) {
         // Print as pl.Scalar[pl.INT64] for proper round-trip support
-        return prefix_ + ".Scalar[" + prefix_ + "." + DTypeToString(scalar_type->dtype_) + "]";
+        return prefix_ + ".Scalar[" + prefix_ + "." + DTypeToString(scalarType->dtype_) + "]";
     }
 
-    if (auto tensor_type = As<TensorType>(type)) {
+    if (auto tensorType = As<TensorType>(type)) {
         std::ostringstream oss;
         // Subscript-style: pl.Tensor[[shape], dtype]
         oss << prefix_ << ".Tensor[[";
-        PrintShapeDims(oss, tensor_type->shape_);
-        oss << "], " << prefix_ << "." << DTypeToString(tensor_type->dtype_);
+        PrintShapeDims(oss, tensorType->shape_);
+        oss << "], " << prefix_ << "." << DTypeToString(tensorType->dtype_);
 
-        if (tensor_type->tensor_view_.has_value()) {
-            oss << ", tensor_view=" << PrintTensorView(tensor_type->tensor_view_.value());
+        if (tensorType->tensor_view_.has_value()) {
+            oss << ", tensor_view=" << PrintTensorView(tensorType->tensor_view_.value());
         }
 
         // Add optional memref as positional arg
-        if (tensor_type->memref_.has_value()) {
-            oss << ", " << PrintMemRef(*tensor_type->memref_.value());
+        if (tensorType->memref_.has_value()) {
+            oss << ", " << PrintMemRef(*tensorType->memref_.value());
         }
 
         oss << "]";
         return oss.str();
     }
 
-    if (auto tile_type = As<TileType>(type)) {
+    if (auto tileType = As<TileType>(type)) {
         std::ostringstream oss;
-        auto mutex_type = As<MutexTileType>(type);
-        if (mutex_type)
+        auto mutexType = As<MutexTileType>(type);
+        if (mutexType)
             oss << prefix_ << ".MutexTileType(";
         oss << prefix_ << ".TileType([";
-        PrintShapeDims(oss, tile_type->shape_);
-        oss << "], " << prefix_ << "." << DTypeToString(tile_type->dtype_);
+        PrintShapeDims(oss, tileType->shape_);
+        oss << "], " << prefix_ << "." << DTypeToString(tileType->dtype_);
 
-        if (tile_type->memref_.has_value()) {
-            oss << ", " << PrintMemRef(*tile_type->memref_.value());
+        if (tileType->memref_.has_value()) {
+            oss << ", " << PrintMemRef(*tileType->memref_.value());
         }
 
-        if (tile_type->tileView_.has_value()) {
-            oss << ", tile_view=" << PrintTileView(tile_type->tileView_.value());
+        if (tileType->tileView_.has_value()) {
+            oss << ", tile_view=" << PrintTileView(tileType->tileView_.value());
         }
 
-        if (tile_type->hardwareInfo_.has_value()) {
-            oss << ", hardware_info=" << PrintHardwareInfo(tile_type->hardwareInfo_.value());
+        if (tileType->hardwareInfo_.has_value()) {
+            oss << ", hardware_info=" << PrintHardwareInfo(tileType->hardwareInfo_.value());
         }
 
         oss << ")";
-        if (mutex_type)
-            oss << ", " << mutex_type->mutexCount_ << ")";
+        if (mutexType)
+            oss << ", " << mutexType->mutexCount_ << ")";
         return oss.str();
     }
 
-    if (auto tuple_type = As<TupleType>(type)) {
+    if (auto tupleType = As<TupleType>(type)) {
         std::ostringstream oss;
-        if (tuple_type->types_.empty()) {
+        if (tupleType->types_.empty()) {
             oss << prefix_ << ".Tuple[()]";
         } else {
             oss << prefix_ << ".Tuple[";
-            for (size_t i = 0; i < tuple_type->types_.size(); ++i) {
+            for (size_t i = 0; i < tupleType->types_.size(); ++i) {
                 if (i > 0)
                     oss << ", ";
-                oss << Print(tuple_type->types_[i]);
+                oss << Print(tupleType->types_[i]);
             }
             oss << "]";
         }
         return oss.str();
     }
 
-    if (auto memref_type = As<MemRefType>(type)) {
+    if (auto memrefType = As<MemRefType>(type)) {
         return prefix_ + ".MemRefType";
     }
 
-    if (auto window_type = As<WindowType>(type)) {
+    if (auto windowType = As<WindowType>(type)) {
         return prefix_ + ".WindowType";
     }
 
-    if (auto ptr_type = As<PtrType>(type)) {
+    if (auto ptrType = As<PtrType>(type)) {
         return prefix_ + ".Ptr";
     }
 
-    if (auto token_type = As<TokenType>(type)) {
-        switch (token_type->kind_) {
+    if (auto tokenType = As<TokenType>(type)) {
+        switch (tokenType->kind_) {
             case TokenKind::READ:
                 return prefix_ + ".ReadToken";
             case TokenKind::WRITE:
@@ -585,11 +585,11 @@ std::string IRPrinter::Print(const TypePtr& type)
         }
     }
 
-    if (auto none_type = As<NoneType>(type)) {
+    if (auto noneType = As<NoneType>(type)) {
         return prefix_ + ".None";
     }
 
-    if (auto logical_tensor_type = As<LogicalTensorType>(type)) {
+    if (auto logicalTensorType = As<LogicalTensorType>(type)) {
         return prefix_ + ".Tensor";
     }
 
@@ -649,40 +649,40 @@ void IRPrinter::VisitExpr_(const GetItemExprPtr& op)
 
 void IRPrinter::VisitExpr_(const ScalarExprPtr& op)
 {
-    auto scalar_type = As<ScalarType>(op->GetType());
-    INTERNAL_CHECK_SPAN(scalar_type, op->span_) << "ScalarExpr has non-scalar type";
+    auto scalarType = As<ScalarType>(op->GetType());
+    INTERNAL_CHECK_SPAN(scalarType, op->span_) << "ScalarExpr has non-scalar type";
     stream_ << DumpScalarExpr(op);
 }
 
 // Binary and unary operators - reuse from base printer logic
-void IRPrinter::PrintChild(const ExprPtr& parent, const ExprPtr& child, bool is_left)
+void IRPrinter::PrintChild(const ExprPtr& parent, const ExprPtr& child, bool isLeft)
 {
-    PrintChildExprWithParens(*this, stream_, parent, child, is_left);
+    PrintChildExprWithParens(*this, stream_, parent, child, isLeft);
 }
 
-void IRPrinter::PrintBinaryOp(const BinaryExprPtr& op, const char* op_symbol)
+void IRPrinter::PrintBinaryOp(const BinaryExprPtr& op, const char* opSymbol)
 {
     PrintChild(op, op->left_, true);
-    stream_ << " " << op_symbol << " ";
+    stream_ << " " << opSymbol << " ";
     PrintChild(op, op->right_, false);
 }
 
-void IRPrinter::PrintFunctionBinaryOp(const BinaryExprPtr& op, const char* func_name)
+void IRPrinter::PrintFunctionBinaryOp(const BinaryExprPtr& op, const char* funcName)
 {
-    stream_ << prefix_ << "." << func_name << "(";
+    stream_ << prefix_ << "." << funcName << "(";
     VisitExpr(op->left_);
     stream_ << ", ";
     VisitExpr(op->right_);
     stream_ << ")";
 }
 
-void IRPrinter::PrintCallKwargs(const CallPtr& op, bool need_comma)
+void IRPrinter::PrintCallKwargs(const CallPtr& op, bool needComma)
 {
     for (const auto& [key, value] : op->kwargs_) {
-        if (need_comma) {
+        if (needComma) {
             stream_ << ", ";
         }
-        need_comma = true;
+        needComma = true;
         stream_ << key << "=";
         PrintKwargValue(stream_, prefix_, key, value);
     }
@@ -725,8 +725,8 @@ void IRPrinter::VisitExpr_(const BitShiftRightPtr& op) { PrintBinaryOp(op, ">>")
 void IRPrinter::VisitExpr_(const NegPtr& op)
 {
     stream_ << "-";
-    Precedence operand_prec = GetPrecedence(op->operand_);
-    if (operand_prec < Precedence::kUnary) {
+    Precedence operandPrec = GetPrecedence(op->operand_);
+    if (operandPrec < Precedence::kUnary) {
         stream_ << "(";
         VisitExpr(op->operand_);
         stream_ << ")";
@@ -744,18 +744,18 @@ void IRPrinter::VisitExpr_(const AbsPtr& op)
 
 void IRPrinter::VisitExpr_(const CastPtr& op)
 {
-    auto scalar_type = As<ScalarType>(op->GetType());
-    INTERNAL_CHECK_SPAN(scalar_type, op->span_) << "Cast has non-scalar type";
+    auto scalarType = As<ScalarType>(op->GetType());
+    INTERNAL_CHECK_SPAN(scalarType, op->span_) << "Cast has non-scalar type";
     stream_ << prefix_ << ".cast(";
     VisitExpr(op->operand_);
-    stream_ << ", " << prefix_ << "." << DTypeToString(scalar_type->dtype_) << ")";
+    stream_ << ", " << prefix_ << "." << DTypeToString(scalarType->dtype_) << ")";
 }
 
 void IRPrinter::VisitExpr_(const NotPtr& op)
 {
     stream_ << "not ";
-    Precedence operand_prec = GetPrecedence(op->operand_);
-    if (operand_prec < Precedence::kNot) {
+    Precedence operandPrec = GetPrecedence(op->operand_);
+    if (operandPrec < Precedence::kNot) {
         stream_ << "(";
         VisitExpr(op->operand_);
         stream_ << ")";
@@ -767,8 +767,8 @@ void IRPrinter::VisitExpr_(const NotPtr& op)
 void IRPrinter::VisitExpr_(const BitNotPtr& op)
 {
     stream_ << "~";
-    Precedence operand_prec = GetPrecedence(op->operand_);
-    if (operand_prec < Precedence::kUnary) {
+    Precedence operandPrec = GetPrecedence(op->operand_);
+    if (operandPrec < Precedence::kUnary) {
         stream_ << "(";
         VisitExpr(op->operand_);
         stream_ << ")";
@@ -956,11 +956,11 @@ void IRPrinter::VisitStmt_(const TensorOpStmtPtr& op)
         auto attrs = GetOperationAttrDict(op);
         if (!attrs.empty()) {
             stream_ << ", attrs=[";
-            bool need_comma = false;
+            bool needComma = false;
             for (auto [name, val] : attrs) {
-                if (need_comma)
+                if (needComma)
                     stream_ << ", ";
-                need_comma = true;
+                needComma = true;
                 PrintKwargValue(stream_, prefix_, name, val);
             }
             stream_ << "]";
@@ -988,14 +988,14 @@ void IRPrinter::VisitStmt_(const ScalarOpStmtPtr& op)
 
 void IRPrinter::VisitStmt_(const SectionStmtPtr& op)
 {
-    static const std::unordered_map<SectionKind, std::string> section_kind_to_name = {
+    static const std::unordered_map<SectionKind, std::string> sectionKindToName = {
         {SectionKind::Vector, "section_vector"},
         {SectionKind::Cube, "section_cube"},
         {SectionKind::VF, "section_vf"},
     };
 
-    auto it = section_kind_to_name.find(op->sectionKind_);
-    INTERNAL_CHECK(it != section_kind_to_name.end())
+    auto it = sectionKindToName.find(op->sectionKind_);
+    INTERNAL_CHECK(it != sectionKindToName.end())
         << "Internal error: Unknown SectionKind in printer: " << SectionKindToString(op->sectionKind_);
 
     stream_ << "with " << prefix_ << "." << it->second << "():\n";
@@ -1006,9 +1006,9 @@ void IRPrinter::VisitStmt_(const SectionStmtPtr& op)
 
 void IRPrinter::VisitStmt_(const StmtPtr& op) { stream_ << op->TypeName(); }
 
-bool IRPrinter::PrintTerminator(const StmtPtr& stmt, const std::vector<VarPtr>& return_vars)
+bool IRPrinter::PrintTerminator(const StmtPtr& stmt, const std::vector<VarPtr>& returnVars)
 {
-    auto has_values = [](const StmtPtr& s) -> bool {
+    auto hasValues = [](const StmtPtr& s) -> bool {
         if (auto yield = As<YieldStmt>(s)) {
             return !yield->value_.empty();
         }
@@ -1020,34 +1020,34 @@ bool IRPrinter::PrintTerminator(const StmtPtr& stmt, const std::vector<VarPtr>& 
         }
         return false;
     };
-    if (return_vars.empty() || !has_values(stmt)) {
+    if (returnVars.empty() || !hasValues(stmt)) {
         return false;
     }
     stream_ << GetIndent();
-    for (size_t i = 0; i < return_vars.size(); ++i) {
+    for (size_t i = 0; i < returnVars.size(); ++i) {
         if (i > 0)
             stream_ << ", ";
-        stream_ << return_vars[i]->name_;
+        stream_ << returnVars[i]->name_;
     }
     stream_ << " = ";
     VisitStmt(stmt);
     return true;
 }
 
-void IRPrinter::VisitStmtBody(const StmtPtr& body, const std::vector<VarPtr>& return_vars)
+void IRPrinter::VisitStmtBody(const StmtPtr& body, const std::vector<VarPtr>& returnVars)
 {
-    if (auto seq_stmts = As<SeqStmts>(body)) {
+    if (auto seqStmts = As<SeqStmts>(body)) {
         // Process each statement in sequence
-        if (seq_stmts->stmts_.empty()) {
+        if (seqStmts->stmts_.empty()) {
             stream_ << GetIndent() << "pass";
             return;
         }
-        for (size_t i = 0; i < seq_stmts->stmts_.size(); ++i) {
-            auto& stmt = seq_stmts->stmts_[i];
-            if (i < seq_stmts->stmts_.size() - 1) {
+        for (size_t i = 0; i < seqStmts->stmts_.size(); ++i) {
+            auto& stmt = seqStmts->stmts_[i];
+            if (i < seqStmts->stmts_.size() - 1) {
                 PrintStmtBlock(stmt);
                 stream_ << "\n";
-            } else if (!PrintTerminator(stmt, return_vars)) {
+            } else if (!PrintTerminator(stmt, returnVars)) {
                 PrintStmtBlock(stmt);
             }
         }
@@ -1058,38 +1058,38 @@ void IRPrinter::VisitStmtBody(const StmtPtr& body, const std::vector<VarPtr>& re
 
 void IRPrinter::VisitFunctionBody(const StmtPtr& body)
 {
-    if (auto seq_stmts = As<SeqStmts>(body)) {
-        if (seq_stmts->stmts_.empty()) {
+    if (auto seqStmts = As<SeqStmts>(body)) {
+        if (seqStmts->stmts_.empty()) {
             stream_ << GetIndent() << "pass";
         } else {
-            for (size_t i = 0; i < seq_stmts->stmts_.size(); ++i) {
+            for (size_t i = 0; i < seqStmts->stmts_.size(); ++i) {
                 // Convert yield to return in function context
-                if (auto yield_stmt = As<YieldStmt>(seq_stmts->stmts_[i])) {
+                if (auto yieldStmt = As<YieldStmt>(seqStmts->stmts_[i])) {
                     stream_ << GetIndent() << "return";
-                    if (!yield_stmt->value_.empty()) {
+                    if (!yieldStmt->value_.empty()) {
                         stream_ << " ";
-                        for (size_t j = 0; j < yield_stmt->value_.size(); ++j) {
+                        for (size_t j = 0; j < yieldStmt->value_.size(); ++j) {
                             if (j > 0)
                                 stream_ << ", ";
-                            VisitExpr(yield_stmt->value_[j]);
+                            VisitExpr(yieldStmt->value_[j]);
                         }
                     }
                 } else {
-                    PrintStmtBlock(seq_stmts->stmts_[i]);
+                    PrintStmtBlock(seqStmts->stmts_[i]);
                 }
-                if (i < seq_stmts->stmts_.size() - 1) {
+                if (i < seqStmts->stmts_.size() - 1) {
                     stream_ << "\n";
                 }
             }
         }
-    } else if (auto yield_stmt = As<YieldStmt>(body)) {
+    } else if (auto yieldStmt = As<YieldStmt>(body)) {
         stream_ << GetIndent() << "return";
-        if (!yield_stmt->value_.empty()) {
+        if (!yieldStmt->value_.empty()) {
             stream_ << " ";
-            for (size_t i = 0; i < yield_stmt->value_.size(); ++i) {
+            for (size_t i = 0; i < yieldStmt->value_.size(); ++i) {
                 if (i > 0)
                     stream_ << ", ";
-                VisitExpr(yield_stmt->value_[i]);
+                VisitExpr(yieldStmt->value_[i]);
             }
         }
     } else {
@@ -1152,14 +1152,14 @@ void IRPrinter::VisitProgram(const ProgramPtr& program)
 
 std::string IRPrinter::PrintExprForType(const ExprPtr& expr)
 {
-    if (auto const_int = As<ConstInt>(expr)) {
-        return std::to_string(const_int->value_);
+    if (auto constInt = As<ConstInt>(expr)) {
+        return std::to_string(constInt->value_);
     }
     if (auto var = As<Var>(expr)) {
         return var->name_;
     }
-    IRPrinter temp_printer(prefix_);
-    return temp_printer.Print(expr);
+    IRPrinter tempPrinter(prefix_);
+    return tempPrinter.Print(expr);
 }
 
 void IRPrinter::PrintShapeDims(std::ostringstream& oss, const std::vector<ExprPtr>& shape)
@@ -1176,8 +1176,8 @@ void IRPrinter::PrintExprList(std::ostringstream& oss, const std::vector<ExprPtr
     for (size_t i = 0; i < exprs.size(); ++i) {
         if (i > 0)
             oss << ", ";
-        IRPrinter temp_printer(prefix_);
-        oss << temp_printer.Print(exprs[i]);
+        IRPrinter tempPrinter(prefix_);
+        oss << tempPrinter.Print(exprs[i]);
     }
 }
 
@@ -1187,52 +1187,47 @@ std::string IRPrinter::PrintMemRef(const MemRef& memref)
     oss << prefix_ << ".MemRef(";
     oss << prefix_ << ".MemorySpace." << MemorySpaceToString(memref.memorySpace_) << ", ";
 
-    IRPrinter temp_printer(prefix_);
-    oss << temp_printer.Print(memref.addr_);
+    IRPrinter tempPrinter(prefix_);
+    oss << tempPrinter.Print(memref.addr_);
     // Print size
     oss << ", " << memref.size_ << ")";
     return oss.str();
 }
 
-std::string IRPrinter::PrintTileView(const TileView& tile_view)
+std::string IRPrinter::PrintTileView(const TileView& tileView)
 {
     std::ostringstream oss;
     oss << prefix_ << ".TileView(valid_shape=[";
-    PrintExprList(oss, tile_view.validShape);
-    oss << "], stride=[";
-    PrintExprList(oss, tile_view.stride);
-    oss << "], start_offset=";
-    IRPrinter temp_printer(prefix_);
-    oss << temp_printer.Print(tile_view.startOffset);
-    oss << ")";
+    PrintExprList(oss, tileView.validShape);
+    oss << "])";
     return oss.str();
 }
 
-std::string IRPrinter::PrintHardwareInfo(const HardwareInfo& hw_info)
+std::string IRPrinter::PrintHardwareInfo(const HardwareInfo& hwInfo)
 {
     std::ostringstream oss;
     oss << prefix_ << ".HardwareInfo(";
-    oss << "blayout=" << prefix_ << ".TileLayout." << TileLayoutToPythonName(hw_info.blayout);
-    oss << ", slayout=" << prefix_ << ".TileLayout." << TileLayoutToPythonName(hw_info.slayout);
-    oss << ", fractal=" << hw_info.fractal;
-    oss << ", pad=" << prefix_ << ".TilePad." << TilePadToPythonName(hw_info.pad);
-    oss << ", compact=" << prefix_ << ".CompactMode." << CompactModeToPythonName(hw_info.compact);
+    oss << "blayout=" << prefix_ << ".TileLayout." << TileLayoutToPythonName(hwInfo.blayout);
+    oss << ", slayout=" << prefix_ << ".TileLayout." << TileLayoutToPythonName(hwInfo.slayout);
+    oss << ", fractal=" << hwInfo.fractal;
+    oss << ", pad=" << prefix_ << ".TilePad." << TilePadToPythonName(hwInfo.pad);
+    oss << ", compact=" << prefix_ << ".CompactMode." << CompactModeToPythonName(hwInfo.compact);
     oss << ")";
     return oss.str();
 }
 
-std::string IRPrinter::PrintTensorView(const TensorView& tensor_view)
+std::string IRPrinter::PrintTensorView(const TensorView& tensorView)
 {
     std::ostringstream oss;
     oss << prefix_ << ".TensorView(";
-    if (!tensor_view.validShape.empty()) {
+    if (!tensorView.validShape.empty()) {
         oss << "valid_shape=[";
-        PrintExprList(oss, tensor_view.validShape);
+        PrintExprList(oss, tensorView.validShape);
         oss << "], ";
     }
     oss << "stride=[";
-    PrintExprList(oss, tensor_view.stride);
-    oss << "], layout=" << prefix_ << ".TensorLayout." << TensorLayoutToPythonName(tensor_view.layout);
+    PrintExprList(oss, tensorView.stride);
+    oss << "], layout=" << prefix_ << ".TensorLayout." << TensorLayoutToPythonName(tensorView.layout);
     oss << ")";
     return oss.str();
 }

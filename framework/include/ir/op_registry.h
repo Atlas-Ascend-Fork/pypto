@@ -97,7 +97,7 @@ public:
             << "Operator '" + name_ + "' has no description. Use .set_description() to provide one.";
 
         // Check op_category is set
-        PRO_IR_CHECK(npu::tile_fwk::InternalError::COMMON_INNER_ERROR, op_category_.has_value())
+        PRO_IR_CHECK(npu::tile_fwk::InternalError::COMMON_INNER_ERROR, opCategory_.has_value())
             << "Operator '" + name_ + "' has no category. Use .set_op_category() to provide one.";
 
         // Check arguments are defined (either with arguments or marked as no_argument)
@@ -106,7 +106,7 @@ public:
                    "' has no argument definition. Use .add_argument() or .no_argument() to define arguments.";
 
         // Check deduce_type is set
-        PRO_IR_CHECK(npu::tile_fwk::InternalError::COMMON_INNER_ERROR, deduce_type_.has_value())
+        PRO_IR_CHECK(npu::tile_fwk::InternalError::COMMON_INNER_ERROR, deduceType_.has_value())
             << "Operator '" + name_ + "' has no type deduction function. Use .f_deduce_type() to provide one.";
 
         return op_;
@@ -140,9 +140,9 @@ public:
      */
     [[nodiscard]] inline const std::string& GetOpCategory() const
     {
-        PRO_IR_CHECK(npu::tile_fwk::InternalError::COMMON_INNER_ERROR, op_category_.has_value())
+        PRO_IR_CHECK(npu::tile_fwk::InternalError::COMMON_INNER_ERROR, opCategory_.has_value())
             << "Operator '" + name_ + "' has no category";
-        return *op_category_;
+        return *opCategory_;
     }
 
     /**
@@ -157,9 +157,9 @@ public:
                                                      const std::vector<std::pair<std::string, std::any>>&)>&
     GetDeduceType() const
     {
-        PRO_IR_CHECK(npu::tile_fwk::InternalError::COMMON_INNER_ERROR, deduce_type_.has_value())
+        PRO_IR_CHECK(npu::tile_fwk::InternalError::COMMON_INNER_ERROR, deduceType_.has_value())
             << "Operator '" + name_ + "' has no type deduction function";
-        return *deduce_type_;
+        return *deduceType_;
     }
 
     /**
@@ -190,9 +190,9 @@ public:
      */
     inline OpRegistryEntry& set_op_category(std::string category)
     {
-        PRO_IR_CHECK(ExternalError::INVALID_OPERATION, !op_category_.has_value())
+        PRO_IR_CHECK(ExternalError::INVALID_OPERATION, !opCategory_.has_value())
             << "Operator '" + name_ + "' category is already set";
-        op_category_ = std::move(category);
+        opCategory_ = std::move(category);
         return *this;
     }
 
@@ -255,9 +255,9 @@ public:
     inline OpRegistryEntry& f_deduce_type(
         std::function<TypePtr(const std::vector<ExprPtr>&, const std::vector<std::pair<std::string, std::any>>&)> dt)
     {
-        PRO_IR_CHECK(ExternalError::INVALID_OPERATION, !deduce_type_.has_value())
+        PRO_IR_CHECK(ExternalError::INVALID_OPERATION, !deduceType_.has_value())
             << "Operator '" + name_ + "' type deduction function is already set";
-        deduce_type_ = std::move(dt);
+        deduceType_ = std::move(dt);
         return *this;
     }
 
@@ -334,12 +334,12 @@ private:
     OpPtr op_;                               ///< Operator instance
     std::string name_;                       ///< Operator name (unique identifier)
     std::optional<std::string> description_; ///< Human-readable description
-    std::optional<std::string> op_category_; ///< Operator category (e.g., "TensorOp", "BlockOp", "ScalarOp")
+    std::optional<std::string> opCategory_;  ///< Operator category (e.g., "TensorOp", "BlockOp", "ScalarOp")
     std::optional<std::vector<std::pair<std::string, std::string>>>
         arguments_; ///< Argument specifications (name, description)
     std::optional<
         std::function<TypePtr(const std::vector<ExprPtr>&, const std::vector<std::pair<std::string, std::any>>&)>>
-        deduce_type_; ///< Type deduction function
+        deduceType_; ///< Type deduction function
 };
 
 /**
@@ -373,10 +373,10 @@ public:
      * Creates a new operator registry entry that can be configured using
      * the fluent API (set_description, add_argument, f_deduce_type, etc.).
      *
-     * \param op_name Name of the operator (e.g., "block.add", "block.mul")
+     * \param opName Name of the operator (e.g., "block.add", "block.mul")
      * \throws ValueError if operator is already registered
      */
-    OpRegistryEntry& Register(const std::string& op_name);
+    OpRegistryEntry& Register(const std::string& opName);
 
     /**
      * \brief Create a Call expression for a registered operator
@@ -384,13 +384,13 @@ public:
      * Looks up the operator by name, validates arguments, deduces the result type,
      * and creates a Call expression with proper typing.
      *
-     * \param op_name Name of the operator to call
+     * \param opName Name of the operator to call
      * \param args Arguments to pass to the operator
      * \param span Source location information
      * \return Shared pointer to Call expression with deduced type
      * \throws pypto::ValueError if operator not found or argument count invalid
      */
-    [[nodiscard]] CallPtr Create(const std::string& op_name, const std::vector<ExprPtr>& args, Span span) const;
+    [[nodiscard]] CallPtr Create(const std::string& opName, const std::vector<ExprPtr>& args, Span span) const;
 
     /**
      * \brief Create a Call expression with kwargs for a registered operator
@@ -398,44 +398,44 @@ public:
      * Looks up the operator by name, validates arguments, deduces the result type
      * using both args and kwargs, and creates a Call expression with proper typing.
      *
-     * \param op_name Name of the operator to call
+     * \param opName Name of the operator to call
      * \param args Positional Expr arguments
      * \param kwargs Keyword arguments (metadata)
      * \param span Source location information
      * \return Shared pointer to Call expression with deduced type
      * \throws ValueError if operator not found or invalid arguments
      */
-    [[nodiscard]] CallPtr Create(const std::string& op_name, const std::vector<ExprPtr>& args,
+    [[nodiscard]] CallPtr Create(const std::string& opName, const std::vector<ExprPtr>& args,
                                  const std::vector<std::pair<std::string, std::any>>& kwargs, Span span) const;
 
     /**
      * \brief Check if an operator is registered
      *
-     * \param op_name Name of the operator
+     * \param opName Name of the operator
      * \return true if the operator is registered
      */
-    [[nodiscard]] bool IsRegistered(const std::string& op_name) const
+    [[nodiscard]] bool IsRegistered(const std::string& opName) const
     {
-        return registry_.find(op_name) != registry_.end();
+        return registry_.find(opName) != registry_.end();
     }
 
     /**
      * \brief Get the operator registry entry by name
      *
-     * \param op_name Name of the operator
+     * \param opName Name of the operator
      * \return Const reference to the operator registry entry
      * \throws ValueError if operator not found
      */
-    [[nodiscard]] const OpRegistryEntry& GetEntry(const std::string& op_name) const;
+    [[nodiscard]] const OpRegistryEntry& GetEntry(const std::string& opName) const;
 
     /**
      * \brief Get the operator instance by name
      *
-     * \param op_name Name of the operator
+     * \param opName Name of the operator
      * \return Shared pointer to the operator instance
      * \throws ValueError if operator not found
      */
-    [[nodiscard]] OpPtr GetOp(const std::string& op_name) const;
+    [[nodiscard]] OpPtr GetOp(const std::string& opName) const;
 
 private:
     OpRegistry() = default;
@@ -452,13 +452,13 @@ private:
  * MemorySpace kwargs require the MemorySpace enum type.
  *
  * \param kwargs The kwargs to validate
- * \param allowed_kwargs Map of allowed kwarg keys to expected types
- * \param op_name Operator name for error messages
+ * \param allowedKwargs Map of allowed kwarg keys to expected types
+ * \param opName Operator name for error messages
  * \throws ValueError if unknown kwarg
  * \throws TypeError if type mismatch
  */
 void ValidateKwargs(const std::vector<std::pair<std::string, std::any>>& kwargs,
-                    const std::unordered_map<std::string, std::type_index>& allowed_kwargs, const std::string& op_name);
+                    const std::unordered_map<std::string, std::type_index>& allowedKwargs, const std::string& opName);
 
 /**
  * \brief Helper macro for operator registration

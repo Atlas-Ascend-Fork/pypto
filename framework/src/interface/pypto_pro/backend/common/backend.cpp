@@ -35,10 +35,10 @@ using npu::tile_fwk::ExternalError;
 namespace {
 
 template <typename CoreT>
-std::optional<uint64_t> FindMemSizeInCore(const CoreT& core, ir::MemorySpace mem_type)
+std::optional<uint64_t> FindMemSizeInCore(const CoreT& core, ir::MemorySpace memType)
 {
     for (const auto& mem : core.GetMems()) {
-        if (mem.GetMemType() == mem_type) {
+        if (mem.GetMemType() == memType) {
             return mem.GetMemSize();
         }
     }
@@ -46,10 +46,10 @@ std::optional<uint64_t> FindMemSizeInCore(const CoreT& core, ir::MemorySpace mem
 }
 
 template <typename ClusterT>
-std::optional<uint64_t> FindMemSizeInCluster(const ClusterT& cluster, ir::MemorySpace mem_type)
+std::optional<uint64_t> FindMemSizeInCluster(const ClusterT& cluster, ir::MemorySpace memType)
 {
-    for (const auto& core_entry : cluster.GetCoreCounts()) {
-        if (auto size = FindMemSizeInCore(core_entry.first, mem_type)) {
+    for (const auto& coreEntry : cluster.GetCoreCounts()) {
+        if (auto size = FindMemSizeInCore(coreEntry.first, memType)) {
             return size;
         }
     }
@@ -57,10 +57,10 @@ std::optional<uint64_t> FindMemSizeInCluster(const ClusterT& cluster, ir::Memory
 }
 
 template <typename DieT>
-std::optional<uint64_t> FindMemSizeInDie(const DieT& die, ir::MemorySpace mem_type)
+std::optional<uint64_t> FindMemSizeInDie(const DieT& die, ir::MemorySpace memType)
 {
-    for (const auto& cluster_entry : die.GetClusterCounts()) {
-        if (auto size = FindMemSizeInCluster(cluster_entry.first, mem_type)) {
+    for (const auto& clusterEntry : die.GetClusterCounts()) {
+        if (auto size = FindMemSizeInCluster(clusterEntry.first, memType)) {
             return size;
         }
     }
@@ -77,7 +77,7 @@ std::vector<ir::MemorySpace> Backend::FindMemPath(ir::MemorySpace from, ir::Memo
         return {from};
     }
 
-    const auto& mem_graph = soc_->GetMemoryGraph();
+    const auto& memGraph = soc_->GetMemoryGraph();
 
     // BFS to find shortest path
     std::queue<ir::MemorySpace> queue;
@@ -93,8 +93,8 @@ std::vector<ir::MemorySpace> Backend::FindMemPath(ir::MemorySpace from, ir::Memo
         auto current = queue.front();
         queue.pop();
 
-        auto it = mem_graph.find(current);
-        if (it == mem_graph.end()) {
+        auto it = memGraph.find(current);
+        if (it == memGraph.end()) {
             continue;
         }
 
@@ -128,10 +128,10 @@ std::vector<ir::MemorySpace> Backend::FindMemPath(ir::MemorySpace from, ir::Memo
     return path;
 }
 
-uint64_t Backend::GetMemSize(ir::MemorySpace mem_type) const
+uint64_t Backend::GetMemSize(ir::MemorySpace memType) const
 {
-    for (const auto& die_entry : soc_->GetDieCounts()) {
-        if (auto size = FindMemSizeInDie(die_entry.first, mem_type)) {
+    for (const auto& dieEntry : soc_->GetDieCounts()) {
+        if (auto size = FindMemSizeInDie(dieEntry.first, memType)) {
             return *size;
         }
     }
@@ -140,21 +140,21 @@ uint64_t Backend::GetMemSize(ir::MemorySpace mem_type) const
 
 // ========== Operator Registration ==========
 
-BackendOpRegistryEntry Backend::RegisterOp(const std::string& op_name) { return BackendOpRegistryEntry(this, op_name); }
+BackendOpRegistryEntry Backend::RegisterOp(const std::string& opName) { return BackendOpRegistryEntry(this, opName); }
 
-void Backend::FinalizeOpRegistration(const std::string& op_name, std::optional<ir::PipeType> pipe,
+void Backend::FinalizeOpRegistration(const std::string& opName, std::optional<ir::PipeType> pipe,
                                      BackendCodegenFunc func)
 {
-    if (backend_op_registry_.find(op_name) != backend_op_registry_.end()) {
+    if (backendOpRegistry_.find(opName) != backendOpRegistry_.end()) {
         return;
     }
-    backend_op_registry_[op_name] = BackendOpInfo{pipe, std::move(func)};
+    backendOpRegistry_[opName] = BackendOpInfo{pipe, std::move(func)};
 }
 
-const Backend::BackendOpInfo* Backend::GetOpInfo(const std::string& op_name) const
+const Backend::BackendOpInfo* Backend::GetOpInfo(const std::string& opName) const
 {
-    auto it = backend_op_registry_.find(op_name);
-    if (it != backend_op_registry_.end()) {
+    auto it = backendOpRegistry_.find(opName);
+    if (it != backendOpRegistry_.end()) {
         return &it->second;
     }
     return nullptr;
@@ -165,23 +165,23 @@ const Backend::BackendOpInfo* Backend::GetOpInfo(const std::string& op_name) con
 BackendOpRegistryEntry& BackendOpRegistryEntry::set_pipe(ir::PipeType pipe)
 {
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, !pipe_.has_value())
-        << "Pipe type already set for op '" << op_name_ << "'";
+        << "Pipe type already set for op '" << opName_ << "'";
     pipe_ = pipe;
     return *this;
 }
 
 BackendOpRegistryEntry& BackendOpRegistryEntry::f_codegen(BackendCodegenFunc func)
 {
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, !codegen_func_.has_value())
-        << "Codegen function already set for op '" << op_name_ << "'";
-    codegen_func_ = std::move(func);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, !codegenFunc_.has_value())
+        << "Codegen function already set for op '" << opName_ << "'";
+    codegenFunc_ = std::move(func);
     return *this;
 }
 
 BackendOpRegistryEntry::~BackendOpRegistryEntry()
 {
-    if (backend_ && codegen_func_.has_value()) {
-        backend_->FinalizeOpRegistration(op_name_, pipe_, std::move(*codegen_func_));
+    if (backend_ && codegenFunc_.has_value()) {
+        backend_->FinalizeOpRegistration(opName_, pipe_, std::move(*codegenFunc_));
     }
 }
 

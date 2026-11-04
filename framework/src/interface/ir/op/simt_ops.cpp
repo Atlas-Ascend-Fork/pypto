@@ -71,11 +71,11 @@ TypePtr DeduceSimtWarpSizeType(const std::vector<ExprPtr>& args,
     return std::make_shared<ScalarType>(DataType(DataType::INT32));
 }
 
-TypePtr DeduceSimtSyncType(const std::string& op_name, const std::vector<ExprPtr>& args,
+TypePtr DeduceSimtSyncType(const std::string& opName, const std::vector<ExprPtr>& args,
                            const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.empty()) << op_name << " does not accept positional arguments";
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << op_name << " does not accept keyword arguments";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.empty()) << opName << " does not accept positional arguments";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << opName << " does not accept keyword arguments";
     return GetNoneType();
 }
 
@@ -100,96 +100,96 @@ bool IsSimtCastStandardRoundMode(RoundMode mode)
            mode == RoundMode::CAST_FLOOR || mode == RoundMode::CAST_CEIL || mode == RoundMode::CAST_TRUNC;
 }
 
-bool IsSimtCastFromInt8OrUint8Supported(DataType target_dtype, RoundMode mode)
+bool IsSimtCastFromInt8OrUint8Supported(DataType targetDtype, RoundMode mode)
 {
-    if (IsSimtCastIntegerDtype(target_dtype)) {
+    if (IsSimtCastIntegerDtype(targetDtype)) {
         return mode == RoundMode::CAST_NONE;
     }
     return false;
 }
 
-bool IsSimtCastFromInt16OrUint16Supported(DataType target_dtype, RoundMode mode)
+bool IsSimtCastFromInt16OrUint16Supported(DataType targetDtype, RoundMode mode)
 {
-    if (IsSimtCastIntegerDtype(target_dtype)) {
+    if (IsSimtCastIntegerDtype(targetDtype)) {
         return mode == RoundMode::CAST_NONE;
     }
-    if (target_dtype == DataType::FP16 || target_dtype == DataType::BF16) {
+    if (targetDtype == DataType::FP16 || targetDtype == DataType::BF16) {
         return mode == RoundMode::CAST_RINT || mode == RoundMode::CAST_FLOOR || mode == RoundMode::CAST_CEIL ||
                mode == RoundMode::CAST_TRUNC;
     }
     return false;
 }
 
-bool IsSimtCastFromWideIntegerSupported(DataType target_dtype, RoundMode mode)
+bool IsSimtCastFromWideIntegerSupported(DataType targetDtype, RoundMode mode)
 {
-    if (IsSimtCastIntegerDtype(target_dtype)) {
+    if (IsSimtCastIntegerDtype(targetDtype)) {
         return mode == RoundMode::CAST_NONE;
     }
-    if (target_dtype == DataType::FP16 || target_dtype == DataType::BF16) {
+    if (targetDtype == DataType::FP16 || targetDtype == DataType::BF16) {
         return mode == RoundMode::CAST_RINT || mode == RoundMode::CAST_ROUND || mode == RoundMode::CAST_FLOOR ||
                mode == RoundMode::CAST_CEIL || mode == RoundMode::CAST_TRUNC;
     }
-    if (target_dtype == DataType::FP32) {
+    if (targetDtype == DataType::FP32) {
         return IsSimtCastStandardRoundMode(mode);
     }
     return false;
 }
 
-bool IsSimtCastFromFp16OrBf16Supported(DataType target_dtype, RoundMode mode)
+bool IsSimtCastFromFp16OrBf16Supported(DataType targetDtype, RoundMode mode)
 {
-    if (target_dtype == DataType::FP32) {
+    if (targetDtype == DataType::FP32) {
         return mode == RoundMode::CAST_NONE;
     }
-    if (target_dtype == DataType::FP16 || target_dtype == DataType::BF16 || target_dtype == DataType::INT32 ||
-        target_dtype == DataType::INT64 || target_dtype == DataType::UINT32 || target_dtype == DataType::UINT64) {
+    if (targetDtype == DataType::FP16 || targetDtype == DataType::BF16 || targetDtype == DataType::INT32 ||
+        targetDtype == DataType::INT64 || targetDtype == DataType::UINT32 || targetDtype == DataType::UINT64) {
         return mode == RoundMode::CAST_RINT || mode == RoundMode::CAST_ROUND || mode == RoundMode::CAST_FLOOR ||
                mode == RoundMode::CAST_CEIL || mode == RoundMode::CAST_TRUNC;
     }
-    if (target_dtype == DataType::INT8 || target_dtype == DataType::UINT8) {
+    if (targetDtype == DataType::INT8 || targetDtype == DataType::UINT8) {
         return mode == RoundMode::CAST_TRUNC;
     }
-    if (target_dtype == DataType::INT16 || target_dtype == DataType::UINT16) {
+    if (targetDtype == DataType::INT16 || targetDtype == DataType::UINT16) {
         return mode == RoundMode::CAST_RINT || mode == RoundMode::CAST_FLOOR || mode == RoundMode::CAST_CEIL ||
                mode == RoundMode::CAST_TRUNC;
     }
     return false;
 }
 
-bool IsSimtCastFromFp32Supported(DataType target_dtype, RoundMode mode)
+bool IsSimtCastFromFp32Supported(DataType targetDtype, RoundMode mode)
 {
-    if (target_dtype == DataType::FP16) {
+    if (targetDtype == DataType::FP16) {
         return mode == RoundMode::CAST_ODD || IsSimtCastStandardRoundMode(mode);
     }
-    if (target_dtype == DataType::BF16 || target_dtype == DataType::INT32 || target_dtype == DataType::INT64 ||
-        target_dtype == DataType::UINT32 || target_dtype == DataType::UINT64) {
+    if (targetDtype == DataType::BF16 || targetDtype == DataType::INT32 || targetDtype == DataType::INT64 ||
+        targetDtype == DataType::UINT32 || targetDtype == DataType::UINT64) {
         return IsSimtCastStandardRoundMode(mode);
     }
     return false;
 }
 
-bool IsSimtCastSupported(DataType source_dtype, DataType target_dtype, RoundMode mode)
+bool IsSimtCastSupported(DataType sourceDtype, DataType targetDtype, RoundMode mode)
 {
-    if (source_dtype == target_dtype) {
+    if (sourceDtype == targetDtype) {
         if (mode != RoundMode::CAST_NONE) {
             return false;
         }
-        return IsSimtCastSupportedDtype(source_dtype);
+        return IsSimtCastSupportedDtype(sourceDtype);
     }
-    if (source_dtype == DataType::INT8 || source_dtype == DataType::UINT8) {
-        return IsSimtCastFromInt8OrUint8Supported(target_dtype, mode);
+    if (sourceDtype == DataType::INT8 || sourceDtype == DataType::UINT8) {
+        return IsSimtCastFromInt8OrUint8Supported(targetDtype, mode);
     }
-    if (source_dtype == DataType::INT16 || source_dtype == DataType::UINT16) {
-        return IsSimtCastFromInt16OrUint16Supported(target_dtype, mode);
+    if (sourceDtype == DataType::INT16 || sourceDtype == DataType::UINT16) {
+        return IsSimtCastFromInt16OrUint16Supported(targetDtype, mode);
     }
-    if (source_dtype == DataType::INT32 || source_dtype == DataType::UINT32 || source_dtype == DataType::INT64 ||
-        source_dtype == DataType::UINT64) {
-        return IsSimtCastFromWideIntegerSupported(target_dtype, mode);
+    if (sourceDtype == DataType::INT32 || sourceDtype == DataType::UINT32 || sourceDtype == DataType::INT64 ||
+        sourceDtype == DataType::UINT64) {
+        return IsSimtCastFromWideIntegerSupported(targetDtype, mode);
     }
-    if (source_dtype == DataType::FP16 || source_dtype == DataType::BF16) {
-        return IsSimtCastFromFp16OrBf16Supported(target_dtype, mode);
+    if (sourceDtype == DataType::FP16 || sourceDtype == DataType::BF16) {
+        return IsSimtCastFromFp16OrBf16Supported(targetDtype, mode);
     }
-    if (source_dtype == DataType::FP32) {
-        return IsSimtCastFromFp32Supported(target_dtype, mode);
+    if (sourceDtype == DataType::FP32) {
+        return IsSimtCastFromFp32Supported(targetDtype, mode);
     }
     return false;
 }
@@ -198,30 +198,30 @@ TypePtr DeduceSimtCastType(const std::vector<ExprPtr>& args,
                            const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1) << "simt.cast requires one scalar argument";
-    auto source_type = As<ScalarType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, source_type) << "simt.cast value must be a scalar";
+    auto sourceType = As<ScalarType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, sourceType) << "simt.cast value must be a scalar";
 
-    DataType target_dtype = GetOpKwarg<DataType>(kwargs, "target_type");
+    DataType targetDtype = GetOpKwarg<DataType>(kwargs, "target_type");
     auto mode = static_cast<RoundMode>(GetOpKwarg<int>(kwargs, "mode"));
-    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsSimtCastSupported(source_type->dtype_, target_dtype, mode))
-        << "simt.cast does not support " << source_type->dtype_.ToString() << " -> " << target_dtype.ToString()
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsSimtCastSupported(sourceType->dtype_, targetDtype, mode))
+        << "simt.cast does not support " << sourceType->dtype_.ToString() << " -> " << targetDtype.ToString()
         << " with mode " << EnumToString(mode);
-    return std::make_shared<ScalarType>(target_dtype);
+    return std::make_shared<ScalarType>(targetDtype);
 }
 
-bool IsSimtBitcastSupported(DataType source_dtype, DataType target_dtype)
+bool IsSimtBitcastSupported(DataType sourceDtype, DataType targetDtype)
 {
-    if (source_dtype == DataType::FP16 || source_dtype == DataType::BF16) {
-        return target_dtype == DataType::INT16 || target_dtype == DataType::UINT16;
+    if (sourceDtype == DataType::FP16 || sourceDtype == DataType::BF16) {
+        return targetDtype == DataType::INT16 || targetDtype == DataType::UINT16;
     }
-    if (source_dtype == DataType::INT16 || source_dtype == DataType::UINT16) {
-        return target_dtype == DataType::FP16 || target_dtype == DataType::BF16;
+    if (sourceDtype == DataType::INT16 || sourceDtype == DataType::UINT16) {
+        return targetDtype == DataType::FP16 || targetDtype == DataType::BF16;
     }
-    if (source_dtype == DataType::FP32) {
-        return target_dtype == DataType::INT32 || target_dtype == DataType::UINT32;
+    if (sourceDtype == DataType::FP32) {
+        return targetDtype == DataType::INT32 || targetDtype == DataType::UINT32;
     }
-    if (source_dtype == DataType::INT32 || source_dtype == DataType::UINT32) {
-        return target_dtype == DataType::FP32;
+    if (sourceDtype == DataType::INT32 || sourceDtype == DataType::UINT32) {
+        return targetDtype == DataType::FP32;
     }
     return false;
 }
@@ -230,61 +230,59 @@ TypePtr DeduceSimtBitcastType(const std::vector<ExprPtr>& args,
                               const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1) << "simt.bitcast requires one scalar argument";
-    auto source_type = As<ScalarType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, source_type) << "simt.bitcast value must be a scalar";
+    auto sourceType = As<ScalarType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, sourceType) << "simt.bitcast value must be a scalar";
 
-    DataType target_dtype = GetOpKwarg<DataType>(kwargs, "target_type");
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, source_type->dtype_.GetBit() == target_dtype.GetBit())
+    DataType targetDtype = GetOpKwarg<DataType>(kwargs, "target_type");
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, sourceType->dtype_.GetBit() == targetDtype.GetBit())
         << "simt.bitcast requires source and target dtypes to have the same bit width, got "
-        << source_type->dtype_.ToString() << " (" << source_type->dtype_.GetBit() << " bits) -> "
-        << target_dtype.ToString() << " (" << target_dtype.GetBit() << " bits)";
-    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsSimtBitcastSupported(source_type->dtype_, target_dtype))
-        << "simt.bitcast does not support " << source_type->dtype_.ToString() << " -> " << target_dtype.ToString();
-    return std::make_shared<ScalarType>(target_dtype);
+        << sourceType->dtype_.ToString() << " (" << sourceType->dtype_.GetBit() << " bits) -> "
+        << targetDtype.ToString() << " (" << targetDtype.GetBit() << " bits)";
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsSimtBitcastSupported(sourceType->dtype_, targetDtype))
+        << "simt.bitcast does not support " << sourceType->dtype_.ToString() << " -> " << targetDtype.ToString();
+    return std::make_shared<ScalarType>(targetDtype);
 }
 
-bool IsDtypeInList(const DataType& dtype, std::initializer_list<DataType> supported_dtypes)
+bool IsDtypeInList(const DataType& dtype, std::initializer_list<DataType> supportedDtypes)
 {
-    for (const auto& supported_dtype : supported_dtypes) {
-        if (dtype == supported_dtype) {
+    for (const auto& supportedDtype : supportedDtypes) {
+        if (dtype == supportedDtype) {
             return true;
         }
     }
     return false;
 }
 
-TypePtr DeduceSimtAtomicType(const std::string& op_name, size_t operand_count,
-                             std::initializer_list<DataType> ub_dtypes, std::initializer_list<DataType> gm_dtypes,
-                             const std::vector<ExprPtr>& args,
+TypePtr DeduceSimtAtomicType(const std::string& opName, size_t operandCount, std::initializer_list<DataType> ubDtypes,
+                             std::initializer_list<DataType> gmDtypes, const std::vector<ExprPtr>& args,
                              const std::vector<std::pair<std::string, std::any>>& kwargs,
-                             std::initializer_list<DataType> no_result_dtypes = {})
+                             std::initializer_list<DataType> noResultDtypes = {})
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == operand_count + 2)
-        << op_name << " requires container, offset, and " << operand_count << " scalar operand(s)";
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << op_name << " does not accept keyword arguments";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == operandCount + 2)
+        << opName << " requires container, offset, and " << operandCount << " scalar operand(s)";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << opName << " does not accept keyword arguments";
 
-    auto tile_type = As<TileType>(args[0]->GetType());
-    auto tensor_type = As<TensorType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tile_type || tensor_type)
-        << op_name << " container must be a Tile or Tensor";
-    DataType dtype = tile_type ? tile_type->dtype_ : tensor_type->dtype_;
-    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsDtypeInList(dtype, tile_type ? ub_dtypes : gm_dtypes))
-        << op_name << " does not support dtype " << dtype.ToString() << " on " << (tile_type ? "UB Tile" : "GM Tensor");
+    auto tileType = As<TileType>(args[0]->GetType());
+    auto tensorType = As<TensorType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tileType || tensorType)
+        << opName << " container must be a Tile or Tensor";
+    DataType dtype = tileType ? tileType->dtype_ : tensorType->dtype_;
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsDtypeInList(dtype, tileType ? ubDtypes : gmDtypes))
+        << opName << " does not support dtype " << dtype.ToString() << " on " << (tileType ? "UB Tile" : "GM Tensor");
 
-    auto offset_type = As<ScalarType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE,
-                 offset_type && offset_type->dtype_ != DataType::BOOL &&
-                     (offset_type->dtype_.IsInt() || offset_type->dtype_ == DataType::INDEX))
-        << op_name << " offset must be a non-bool integer scalar";
+    auto offsetType = As<ScalarType>(args[1]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType && offsetType->dtype_ != DataType::BOOL &&
+                                                  (offsetType->dtype_.IsInt() || offsetType->dtype_ == DataType::INDEX))
+        << opName << " offset must be a non-bool integer scalar";
 
-    for (size_t i = 0; i < operand_count; ++i) {
-        auto operand_type = As<ScalarType>(args[i + 2]->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, operand_type) << op_name << " operand " << i << " must be a scalar";
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, operand_type->dtype_ == dtype)
-            << op_name << " operand " << i << " dtype must match target dtype " << dtype.ToString() << ", but got "
-            << operand_type->dtype_.ToString();
+    for (size_t i = 0; i < operandCount; ++i) {
+        auto operandType = As<ScalarType>(args[i + 2]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, operandType) << opName << " operand " << i << " must be a scalar";
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, operandType->dtype_ == dtype)
+            << opName << " operand " << i << " dtype must match target dtype " << dtype.ToString() << ", but got "
+            << operandType->dtype_.ToString();
     }
-    if (IsDtypeInList(dtype, no_result_dtypes)) {
+    if (IsDtypeInList(dtype, noResultDtypes)) {
         return GetNoneType();
     }
     return std::make_shared<ScalarType>(dtype);
@@ -302,221 +300,219 @@ std::string FormatSupportedDtypes(std::initializer_list<DataType> dtypes)
     return result;
 }
 
-TypePtr DeduceSimtWarpNoArgType(const std::string& op_name, DataType result_dtype, const std::vector<ExprPtr>& args,
+TypePtr DeduceSimtWarpNoArgType(const std::string& opName, DataType resultDtype, const std::vector<ExprPtr>& args,
                                 const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.empty()) << op_name << " does not accept positional arguments";
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << op_name << " does not accept keyword arguments";
-    return std::make_shared<ScalarType>(result_dtype);
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.empty()) << opName << " does not accept positional arguments";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << opName << " does not accept keyword arguments";
+    return std::make_shared<ScalarType>(resultDtype);
 }
 
-TypePtr DeduceSimtWarpVoteType(const std::string& op_name, DataType result_dtype, const std::vector<ExprPtr>& args,
+TypePtr DeduceSimtWarpVoteType(const std::string& opName, DataType resultDtype, const std::vector<ExprPtr>& args,
                                const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1) << op_name << " requires exactly one predicate";
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << op_name << " does not accept keyword arguments";
-    auto predicate_type = As<ScalarType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, predicate_type) << op_name << " predicate must be a scalar";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1) << opName << " requires exactly one predicate";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << opName << " does not accept keyword arguments";
+    auto predicateType = As<ScalarType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, predicateType) << opName << " predicate must be a scalar";
     PRO_IR_CHECK(ExternalError::INVALID_TYPE,
-                 predicate_type->dtype_ == DataType::BOOL || predicate_type->dtype_ == DataType::INT32)
-        << op_name << " predicate must have BOOL or INT32 dtype, got " << predicate_type->dtype_.ToString();
-    return std::make_shared<ScalarType>(result_dtype);
+                 predicateType->dtype_ == DataType::BOOL || predicateType->dtype_ == DataType::INT32)
+        << opName << " predicate must have BOOL or INT32 dtype, got " << predicateType->dtype_.ToString();
+    return std::make_shared<ScalarType>(resultDtype);
 }
 
-ScalarTypePtr DeduceSimtWarpShuffleCommonType(const std::string& op_name, const std::string& control_name,
+ScalarTypePtr DeduceSimtWarpShuffleCommonType(const std::string& opName, const std::string& controlName,
                                               const std::vector<ExprPtr>& args,
                                               const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
-        << op_name << " requires value, " << control_name << ", and width";
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << op_name << " does not accept keyword arguments";
+        << opName << " requires value, " << controlName << ", and width";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << opName << " does not accept keyword arguments";
 
-    auto value_type = As<ScalarType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, value_type) << op_name << " value must be a scalar";
+    auto valueType = As<ScalarType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, valueType) << opName << " value must be a scalar";
     PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR,
-                 IsDtypeInList(value_type->dtype_, {DataType::INT32, DataType::UINT32, DataType::INT64,
-                                                    DataType::UINT64, DataType::FP16, DataType::BF16, DataType::FP32}))
-        << op_name << " supports only INT32, UINT32, INT64, UINT64, FP16, BF16, and FP32 values, got "
-        << value_type->dtype_.ToString();
+                 IsDtypeInList(valueType->dtype_, {DataType::INT32, DataType::UINT32, DataType::INT64, DataType::UINT64,
+                                                   DataType::FP16, DataType::BF16, DataType::FP32}))
+        << opName << " supports only INT32, UINT32, INT64, UINT64, FP16, BF16, and FP32 values, got "
+        << valueType->dtype_.ToString();
 
-    auto width_type = As<ScalarType>(args[2]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, width_type && width_type->dtype_ == DataType::INT32)
-        << op_name << " width must be an INT32 scalar";
+    auto widthType = As<ScalarType>(args[2]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, widthType && widthType->dtype_ == DataType::INT32)
+        << opName << " width must be an INT32 scalar";
     auto width = As<ConstInt>(args[2]);
     if (width) {
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT,
                      width->value_ >= 1 && width->value_ <= 32 && (width->value_ & (width->value_ - 1)) == 0)
-            << op_name << " width must be one of 1, 2, 4, 8, 16, or 32";
+            << opName << " width must be one of 1, 2, 4, 8, 16, or 32";
     }
-    return std::make_shared<ScalarType>(value_type->dtype_);
+    return std::make_shared<ScalarType>(valueType->dtype_);
 }
 
-TypePtr DeduceSimtWarpShflType(const std::string& op_name, const std::vector<ExprPtr>& args,
+TypePtr DeduceSimtWarpShflType(const std::string& opName, const std::vector<ExprPtr>& args,
                                const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    auto value_type = DeduceSimtWarpShuffleCommonType(op_name, "src_lane", args, kwargs);
-    auto src_lane_type = As<ScalarType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, src_lane_type) << op_name << " src_lane must be a scalar";
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, src_lane_type->dtype_ == DataType::INT32)
-        << op_name << " src_lane must have " << DataType::INT32.ToString() << " dtype, got "
-        << src_lane_type->dtype_.ToString();
+    auto valueType = DeduceSimtWarpShuffleCommonType(opName, "src_lane", args, kwargs);
+    auto srcLaneType = As<ScalarType>(args[1]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, srcLaneType) << opName << " src_lane must be a scalar";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, srcLaneType->dtype_ == DataType::INT32)
+        << opName << " src_lane must have " << DataType::INT32.ToString() << " dtype, got "
+        << srcLaneType->dtype_.ToString();
 
-    auto src_lane = As<ConstInt>(args[1]);
-    if (src_lane) {
-        PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, src_lane->value_ >= 0 && src_lane->value_ < 32)
-            << op_name << " src_lane must be in [0, 31]";
+    auto srcLane = As<ConstInt>(args[1]);
+    if (srcLane) {
+        PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, srcLane->value_ >= 0 && srcLane->value_ < 32)
+            << opName << " src_lane must be in [0, 31]";
     }
-    return value_type;
+    return valueType;
 }
 
-TypePtr DeduceSimtWarpShflUpDownType(const std::string& op_name, const std::vector<ExprPtr>& args,
+TypePtr DeduceSimtWarpShflUpDownType(const std::string& opName, const std::vector<ExprPtr>& args,
                                      const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    auto value_type = DeduceSimtWarpShuffleCommonType(op_name, "delta", args, kwargs);
-    auto delta_type = As<ScalarType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, delta_type) << op_name << " delta must be a scalar";
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, delta_type->dtype_ == DataType::UINT32)
-        << op_name << " delta must have " << DataType::UINT32.ToString() << " dtype, got "
-        << delta_type->dtype_.ToString();
+    auto valueType = DeduceSimtWarpShuffleCommonType(opName, "delta", args, kwargs);
+    auto deltaType = As<ScalarType>(args[1]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, deltaType) << opName << " delta must be a scalar";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, deltaType->dtype_ == DataType::UINT32)
+        << opName << " delta must have " << DataType::UINT32.ToString() << " dtype, got "
+        << deltaType->dtype_.ToString();
 
     auto delta = As<ConstInt>(args[1]);
     if (delta) {
         PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, delta->value_ >= 0 && delta->value_ < 32)
-            << op_name << " delta must be in [0, 31]";
+            << opName << " delta must be in [0, 31]";
     }
-    return value_type;
+    return valueType;
 }
 
-TypePtr DeduceSimtWarpShflXorType(const std::string& op_name, const std::vector<ExprPtr>& args,
+TypePtr DeduceSimtWarpShflXorType(const std::string& opName, const std::vector<ExprPtr>& args,
                                   const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    auto value_type = DeduceSimtWarpShuffleCommonType(op_name, "lane_mask", args, kwargs);
-    auto lane_mask_type = As<ScalarType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, lane_mask_type) << op_name << " lane_mask must be a scalar";
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, lane_mask_type->dtype_ == DataType::INT32)
-        << op_name << " lane_mask must have " << DataType::INT32.ToString() << " dtype, got "
-        << lane_mask_type->dtype_.ToString();
+    auto valueType = DeduceSimtWarpShuffleCommonType(opName, "lane_mask", args, kwargs);
+    auto laneMaskType = As<ScalarType>(args[1]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, laneMaskType) << opName << " lane_mask must be a scalar";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, laneMaskType->dtype_ == DataType::INT32)
+        << opName << " lane_mask must have " << DataType::INT32.ToString() << " dtype, got "
+        << laneMaskType->dtype_.ToString();
 
-    auto lane_mask = As<ConstInt>(args[1]);
-    if (lane_mask) {
-        PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, lane_mask->value_ >= 0 && lane_mask->value_ < 32)
-            << op_name << " lane_mask must be in [0, 31]";
+    auto laneMask = As<ConstInt>(args[1]);
+    if (laneMask) {
+        PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, laneMask->value_ >= 0 && laneMask->value_ < 32)
+            << opName << " lane_mask must be in [0, 31]";
         auto width = As<ConstInt>(args[2]);
-        PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, !width || lane_mask->value_ < width->value_)
-            << op_name << " lane_mask must be less than width";
+        PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, !width || laneMask->value_ < width->value_)
+            << opName << " lane_mask must be less than width";
     }
-    return value_type;
+    return valueType;
 }
 
-TypePtr DeduceSimtMathType(const std::string& op_name, size_t operand_count,
-                           std::initializer_list<DataType> supported_dtypes, const std::vector<ExprPtr>& args,
-                           std::optional<DataType> result_dtype = std::nullopt)
+TypePtr DeduceSimtMathType(const std::string& opName, size_t operandCount,
+                           std::initializer_list<DataType> supportedDtypes, const std::vector<ExprPtr>& args,
+                           std::optional<DataType> resultDtype = std::nullopt)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == operand_count)
-        << op_name << " requires exactly " << operand_count << " scalar operand(s)";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == operandCount)
+        << opName << " requires exactly " << operandCount << " scalar operand(s)";
 
     DataType dtype = DataType::BOOL;
     for (size_t i = 0; i < args.size(); ++i) {
-        auto scalar_type = As<ScalarType>(args[i]->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar_type) << op_name << " operand " << i << " must be a scalar";
+        auto scalarType = As<ScalarType>(args[i]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalarType) << opName << " operand " << i << " must be a scalar";
         if (i == 0) {
-            dtype = scalar_type->dtype_;
-            PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsDtypeInList(dtype, supported_dtypes))
-                << op_name << " supports only " << FormatSupportedDtypes(supported_dtypes) << ", got "
+            dtype = scalarType->dtype_;
+            PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsDtypeInList(dtype, supportedDtypes))
+                << opName << " supports only " << FormatSupportedDtypes(supportedDtypes) << ", got "
                 << dtype.ToString();
         } else {
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar_type->dtype_ == dtype)
-                << op_name << " requires operands with the same dtype, got " << dtype.ToString() << " and "
-                << scalar_type->dtype_.ToString();
+            PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalarType->dtype_ == dtype)
+                << opName << " requires operands with the same dtype, got " << dtype.ToString() << " and "
+                << scalarType->dtype_.ToString();
         }
     }
-    return std::make_shared<ScalarType>(result_dtype.value_or(dtype));
+    return std::make_shared<ScalarType>(resultDtype.value_or(dtype));
 }
 
-TypePtr DeduceSimtRintRoundType(const std::string& op_name, const std::vector<ExprPtr>& args,
+TypePtr DeduceSimtRintRoundType(const std::string& opName, const std::vector<ExprPtr>& args,
                                 const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
-        << op_name << " requires exactly one scalar operand";
-    auto source_type = As<ScalarType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, source_type) << op_name << " value must be a scalar";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1) << opName << " requires exactly one scalar operand";
+    auto sourceType = As<ScalarType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, sourceType) << opName << " value must be a scalar";
     PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR,
-                 IsDtypeInList(source_type->dtype_, {DataType::FP16, DataType::BF16, DataType::FP32}))
-        << op_name << " value supports only fp16, bf16, and fp32, got " << source_type->dtype_.ToString();
+                 IsDtypeInList(sourceType->dtype_, {DataType::FP16, DataType::BF16, DataType::FP32}))
+        << opName << " value supports only fp16, bf16, and fp32, got " << sourceType->dtype_.ToString();
 
-    DataType target_dtype = GetOpKwarg<DataType>(kwargs, "target_type");
-    if (target_dtype == DataType::INT64) {
-        PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, source_type->dtype_ == DataType::FP32)
-            << op_name << " supports dtype=int64 only for an fp32 value, got value=" << source_type->dtype_.ToString();
+    DataType targetDtype = GetOpKwarg<DataType>(kwargs, "target_type");
+    if (targetDtype == DataType::INT64) {
+        PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, sourceType->dtype_ == DataType::FP32)
+            << opName << " supports dtype=int64 only for an fp32 value, got value=" << sourceType->dtype_.ToString();
         return std::make_shared<ScalarType>(DataType::INT64);
     }
-    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, target_dtype == source_type->dtype_)
-        << op_name << " does not support value=" << source_type->dtype_.ToString()
-        << " with dtype=" << target_dtype.ToString();
-    return std::make_shared<ScalarType>(target_dtype);
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, targetDtype == sourceType->dtype_)
+        << opName << " does not support value=" << sourceType->dtype_.ToString()
+        << " with dtype=" << targetDtype.ToString();
+    return std::make_shared<ScalarType>(targetDtype);
 }
 
 TypePtr DeduceSimtLaunchType(const std::vector<ExprPtr>& args,
                              const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     PRO_IR_CHECK(ExternalError::INVALID_SHAPE, args.size() >= 3) << "simt.launch requires three launch dimensions";
-    int64_t total_threads = 1;
+    int64_t totalThreads = 1;
     for (std::size_t i = 0; i < 3; ++i) {
-        auto dim_type = As<ScalarType>(args[i]->GetType());
+        auto dimType = As<ScalarType>(args[i]->GetType());
         PRO_IR_CHECK(ExternalError::INVALID_SHAPE,
-                     dim_type && dim_type->dtype_.IsInt() && dim_type->dtype_ != DataType(DataType::BOOL))
+                     dimType && dimType->dtype_.IsInt() && dimType->dtype_ != DataType(DataType::BOOL))
             << "simt.launch dimensions must be non-bool integer scalars";
         auto dim = As<ConstInt>(args[i]);
         PRO_IR_CHECK(ExternalError::INVALID_SHAPE, dim && dim->value_ > 0 && dim->value_ <= 2048)
             << "simt.launch dimensions must be compile-time integers in [1, 2048], got dim[" << i
             << "]=" << (dim ? dim->value_ : -1);
-        total_threads *= dim->value_;
+        totalThreads *= dim->value_;
     }
-    PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, total_threads <= 2048)
-        << "simt.launch total thread count must not exceed 2048, got total_threads=" << total_threads;
-    int max_threads = GetOpKwarg<int>(kwargs, "max_threads");
-    PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, max_threads >= 1 && max_threads <= 2048)
+    PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, totalThreads <= 2048)
+        << "simt.launch total thread count must not exceed 2048, got total_threads=" << totalThreads;
+    int maxThreads = GetOpKwarg<int>(kwargs, "max_threads");
+    PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, maxThreads >= 1 && maxThreads <= 2048)
         << "simt.launch max_threads must be in [1, 2048]";
-    PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, total_threads <= max_threads)
-        << "simt.launch threads " << total_threads << " exceed callee max_threads " << max_threads;
+    PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, totalThreads <= maxThreads)
+        << "simt.launch threads " << totalThreads << " exceed callee max_threads " << maxThreads;
     for (std::size_t i = 3; i < args.size(); ++i) {
-        auto arg_type = args[i]->GetType();
-        if (auto tile_type = As<TileType>(arg_type)) {
-            PRO_IR_CHECK(ExternalError::INVALID_SHAPE, tile_type->shape_.size() == 2)
+        auto argType = args[i]->GetType();
+        if (auto tileType = As<TileType>(argType)) {
+            PRO_IR_CHECK(ExternalError::INVALID_SHAPE, tileType->shape_.size() == 2)
                 << "simt.launch Tile argument must have a two-dimensional shape";
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<Var>(args[i]) != nullptr)
                 << "simt.launch Tile argument must be a Var";
-            for (const auto& dim : tile_type->shape_) {
+            for (const auto& dim : tileType->shape_) {
                 PRO_IR_CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, As<ConstInt>(dim) != nullptr)
                     << "simt.launch Tile argument must have a static shape";
             }
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, tile_type->dtype_.GetBit() >= 8)
+            PRO_IR_CHECK(ExternalError::INVALID_TYPE, tileType->dtype_.GetBit() >= 8)
                 << "simt.launch Tile argument has a sub-byte element dtype";
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, tile_type->memref_.has_value())
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, tileType->memref_.has_value())
                 << "simt.launch Tile argument has no memory reference";
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, (*tile_type->memref_)->memorySpace_ == MemorySpace::Vec)
+            PRO_IR_CHECK(ExternalError::INVALID_TYPE, (*tileType->memref_)->memorySpace_ == MemorySpace::Vec)
                 << "simt.launch Tile argument must be a Vec-memory Tile";
-            PRO_IR_CHECK(ExternalError::INVALID_FORMAT,
-                         tile_type->hardwareInfo_.has_value() &&
-                             tile_type->hardwareInfo_->blayout == TileLayout::row_major &&
-                             tile_type->hardwareInfo_->slayout == TileLayout::none_box)
+            PRO_IR_CHECK(ExternalError::INVALID_FORMAT, tileType->hardwareInfo_.has_value() &&
+                                                            tileType->hardwareInfo_->blayout == TileLayout::row_major &&
+                                                            tileType->hardwareInfo_->slayout == TileLayout::none_box)
                 << "simt.launch Tile argument must be an ND Vec Tile";
-        } else if (auto tensor_type = As<TensorType>(arg_type)) {
-            PRO_IR_CHECK(ExternalError::INVALID_SHAPE, !tensor_type->shape_.empty())
+        } else if (auto tensorType = As<TensorType>(argType)) {
+            PRO_IR_CHECK(ExternalError::INVALID_SHAPE, !tensorType->shape_.empty())
                 << "simt.launch Tensor argument must have a non-empty shape";
-            for (const auto& dim : tensor_type->shape_) {
+            for (const auto& dim : tensorType->shape_) {
                 PRO_IR_CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, As<ConstInt>(dim) != nullptr)
                     << "simt.launch Tensor argument must have a static shape";
             }
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensor_type->dtype_.GetBit() >= 8)
+            PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensorType->dtype_.GetBit() >= 8)
                 << "simt.launch Tensor argument has a sub-byte element dtype";
             PRO_IR_CHECK(ExternalError::INVALID_FORMAT,
-                         tensor_type->tensor_view_.has_value() && tensor_type->tensor_view_->layout == TensorLayout::ND)
+                         tensorType->tensor_view_.has_value() && tensorType->tensor_view_->layout == TensorLayout::ND)
                 << "simt.launch Tensor argument must use ND layout";
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<Var>(args[i]) != nullptr)
                 << "simt.launch Tensor argument must be a Var";
         } else {
-            PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, As<ScalarType>(arg_type))
+            PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, As<ScalarType>(argType))
                 << "simt.launch supports only Tile, Tensor, and scalar arguments";
         }
     }
@@ -529,54 +525,53 @@ TypePtr DeduceSimtSadType(const std::vector<ExprPtr>& args,
                           const std::vector<std::pair<std::string, std::any>>& /*kwargs*/)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3) << "simt.sad requires exactly 3 scalar operands";
-    auto lhs_type = As<ScalarType>(args[0]->GetType());
-    auto rhs_type = As<ScalarType>(args[1]->GetType());
-    auto addend_type = As<ScalarType>(args[2]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, lhs_type) << "simt.sad lhs must be a scalar";
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, rhs_type) << "simt.sad rhs must be a scalar";
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, addend_type) << "simt.sad addend must be a scalar";
+    auto lhsType = As<ScalarType>(args[0]->GetType());
+    auto rhsType = As<ScalarType>(args[1]->GetType());
+    auto addendType = As<ScalarType>(args[2]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, lhsType) << "simt.sad lhs must be a scalar";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, rhsType) << "simt.sad rhs must be a scalar";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, addendType) << "simt.sad addend must be a scalar";
     PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR,
-                 lhs_type->dtype_ == DataType::INT32 || lhs_type->dtype_ == DataType::UINT32)
-        << "simt.sad lhs supports only int32, uint32, got " << lhs_type->dtype_.ToString();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, rhs_type->dtype_ == lhs_type->dtype_)
-        << "simt.sad lhs and rhs must have the same dtype, got lhs=" << lhs_type->dtype_.ToString()
-        << ", rhs=" << rhs_type->dtype_.ToString();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, addend_type->dtype_ == DataType::UINT32)
-        << "simt.sad addend must be uint32, got " << addend_type->dtype_.ToString();
+                 lhsType->dtype_ == DataType::INT32 || lhsType->dtype_ == DataType::UINT32)
+        << "simt.sad lhs supports only int32, uint32, got " << lhsType->dtype_.ToString();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, rhsType->dtype_ == lhsType->dtype_)
+        << "simt.sad lhs and rhs must have the same dtype, got lhs=" << lhsType->dtype_.ToString()
+        << ", rhs=" << rhsType->dtype_.ToString();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, addendType->dtype_ == DataType::UINT32)
+        << "simt.sad addend must be uint32, got " << addendType->dtype_.ToString();
     return std::make_shared<ScalarType>(DataType::UINT32);
 }
 
-TypePtr DeduceSimtMathSignature(const std::string& op_name, std::initializer_list<DataType> operand_dtypes,
-                                DataType result_dtype, const std::vector<ExprPtr>& args)
+TypePtr DeduceSimtMathSignature(const std::string& opName, std::initializer_list<DataType> operandDtypes,
+                                DataType resultDtype, const std::vector<ExprPtr>& args)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == operand_dtypes.size())
-        << op_name << " requires exactly " << operand_dtypes.size() << " scalar operand(s)";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == operandDtypes.size())
+        << opName << " requires exactly " << operandDtypes.size() << " scalar operand(s)";
     size_t index = 0;
-    for (const auto& expected_dtype : operand_dtypes) {
-        auto scalar_type = As<ScalarType>(args[index]->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar_type)
-            << op_name << " operand " << index << " must be a scalar";
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar_type->dtype_ == expected_dtype)
-            << op_name << " operand " << index << " must be " << expected_dtype.ToString() << ", got "
-            << scalar_type->dtype_.ToString();
+    for (const auto& expectedDtype : operandDtypes) {
+        auto scalarType = As<ScalarType>(args[index]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalarType) << opName << " operand " << index << " must be a scalar";
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalarType->dtype_ == expectedDtype)
+            << opName << " operand " << index << " must be " << expectedDtype.ToString() << ", got "
+            << scalarType->dtype_.ToString();
         ++index;
     }
-    return std::make_shared<ScalarType>(result_dtype);
+    return std::make_shared<ScalarType>(resultDtype);
 }
 
 TypePtr DeduceSimtScalbnType(const std::vector<ExprPtr>& args,
                              const std::vector<std::pair<std::string, std::any>>& /*kwargs*/)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2) << "simt.scalbn requires exactly 2 scalar operands";
-    auto value_type = As<ScalarType>(args[0]->GetType());
-    auto exponent_type = As<ScalarType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, value_type) << "simt.scalbn value must be a scalar";
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, exponent_type) << "simt.scalbn exponent must be a scalar";
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, value_type->dtype_ == DataType::FP32)
-        << "simt.scalbn value must be fp32, got " << value_type->dtype_.ToString();
+    auto valueType = As<ScalarType>(args[0]->GetType());
+    auto exponentType = As<ScalarType>(args[1]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, valueType) << "simt.scalbn value must be a scalar";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, exponentType) << "simt.scalbn exponent must be a scalar";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, valueType->dtype_ == DataType::FP32)
+        << "simt.scalbn value must be fp32, got " << valueType->dtype_.ToString();
     PRO_IR_CHECK(ExternalError::INVALID_TYPE,
-                 exponent_type->dtype_ == DataType::INT32 || exponent_type->dtype_ == DataType::INT64)
-        << "simt.scalbn exponent must be int32 or int64, got " << exponent_type->dtype_.ToString();
+                 exponentType->dtype_ == DataType::INT32 || exponentType->dtype_ == DataType::INT64)
+        << "simt.scalbn exponent must be int32 or int64, got " << exponentType->dtype_.ToString();
     return std::make_shared<ScalarType>(DataType::FP32);
 }
 
@@ -584,9 +579,9 @@ TypePtr DeduceSimtMulI32ToI64Type(const std::vector<ExprPtr>& args,
                                   const std::vector<std::pair<std::string, std::any>>& /*kwargs*/)
 {
     DeduceSimtMathType("simt.mul_i32_to_i64", 2, {DataType::INT32, DataType::UINT32}, args);
-    auto input_type = As<ScalarType>(args[0]->GetType());
-    DataType result_dtype = input_type->dtype_ == DataType::INT32 ? DataType::INT64 : DataType::UINT64;
-    return std::make_shared<ScalarType>(result_dtype);
+    auto inputType = As<ScalarType>(args[0]->GetType());
+    DataType resultDtype = inputType->dtype_ == DataType::INT32 ? DataType::INT64 : DataType::UINT64;
+    return std::make_shared<ScalarType>(resultDtype);
 }
 
 REGISTER_OP("simt.thread_idx")

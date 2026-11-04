@@ -35,38 +35,38 @@ OpConversionRegistry& OpConversionRegistry::GetInstance()
 // bindings.
 OpConversionRegistry::OpConversionRegistry() = default;
 
-void OpConversionRegistry::RegisterSimple(const std::string& from_op, const std::string& to_op)
+void OpConversionRegistry::RegisterSimple(const std::string& fromOp, const std::string& toOp)
 {
     // Capture to_op by value for the lambda
-    conversions_[from_op] = [to_op](const std::vector<ExprPtr>& args,
-                                    const std::vector<std::pair<std::string, std::any>>& kwargs,
-                                    const Span& span) -> ConversionResult {
+    conversions_[fromOp] = [toOp](const std::vector<ExprPtr>& args,
+                                  const std::vector<std::pair<std::string, std::any>>& kwargs,
+                                  const Span& span) -> ConversionResult {
         auto& reg = OpRegistry::GetInstance();
         CallPtr call;
         if (kwargs.empty()) {
-            call = reg.Create(to_op, args, span);
+            call = reg.Create(toOp, args, span);
         } else {
-            call = reg.Create(to_op, args, kwargs, span);
+            call = reg.Create(toOp, args, kwargs, span);
         }
         return ConversionResult{call};
     };
 }
 
-void OpConversionRegistry::RegisterCustom(const std::string& from_op, ConversionFunc func)
+void OpConversionRegistry::RegisterCustom(const std::string& fromOp, ConversionFunc func)
 {
-    conversions_[from_op] = std::move(func);
+    conversions_[fromOp] = std::move(func);
 }
 
-const ConversionFunc* OpConversionRegistry::Lookup(const std::string& op_name) const
+const ConversionFunc* OpConversionRegistry::Lookup(const std::string& opName) const
 {
-    auto it = conversions_.find(op_name);
+    auto it = conversions_.find(opName);
     if (it == conversions_.end()) {
         return nullptr;
     }
     return &it->second;
 }
 
-bool OpConversionRegistry::HasConversion(const std::string& op_name) const { return conversions_.count(op_name) > 0; }
+bool OpConversionRegistry::HasConversion(const std::string& opName) const { return conversions_.count(opName) > 0; }
 
 } // namespace ir
 } // namespace pypto

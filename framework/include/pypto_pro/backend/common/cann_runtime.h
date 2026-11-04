@@ -31,7 +31,7 @@ public:
     CannRuntime& operator=(const CannRuntime&) = delete;
 
     /** Returns true if libruntime.so was loaded and rtGetSocSpec was resolved. */
-    bool IsAvailable() const { return soc_spec_func_ != nullptr; }
+    bool IsAvailable() const { return socSpecFunc_ != nullptr; }
 
     /**
      * \brief Query a SoC spec value.
@@ -48,7 +48,7 @@ private:
     ~CannRuntime();
 
     using GetSocSpecFunc = int (*)(const char*, const char*, char*, uint32_t);
-    GetSocSpecFunc soc_spec_func_ = nullptr;
+    GetSocSpecFunc socSpecFunc_ = nullptr;
     void* handle_ = nullptr;
 };
 

@@ -47,14 +47,14 @@ namespace codegen {
 /// tensor_type = ir::As<ir::TensorType>(var->GetType()); the base pointer is the view's
 /// source pointer (ptr.make_tensor) or "<name>_ptr" for a plain tensor parameter.
 struct TensorDef {
-    ir::VarPtr var;                            ///< tensor variable (parameter or ptr.make_tensor view)
-    std::string cce_name;                      ///< emitted declaration name: the tensor's plain cce name for the
-                                               ///< first layout it is accessed with, "<name>__v<n>" for each later one
-    std::vector<ir::ExprPtr> access_shape;     ///< access window shape (tile-derived) from load/store
-    std::optional<std::vector<int>> tile_dims; ///< tile_dims kwarg for strided views (if any)
-    bool is_transpose = false;                 ///< loaded with is_transpose=true (needs Layout::DN)
-    bool is_merged = false;                    ///< multi-matrix load with three dynamic shape dimensions
-    std::string layout;                        ///< explicit Layout enum (MX loads); else derived from the above
+    ir::VarPtr var;                           ///< tensor variable (parameter or ptr.make_tensor view)
+    std::string cceName;                      ///< emitted declaration name: the tensor's plain cce name for the
+                                              ///< first layout it is accessed with, "<name>__v<n>" for each later one
+    std::vector<ir::ExprPtr> accessShape;     ///< access window shape (tile-derived) from load/store
+    std::optional<std::vector<int>> tileDims; ///< tile_dims kwarg for strided views (if any)
+    bool isTranspose = false;                 ///< loaded with is_transpose=true (needs Layout::DN)
+    bool isMerged = false;                    ///< multi-matrix load with three dynamic shape dimensions
+    std::string layout;                       ///< explicit Layout enum (MX loads); else derived from the above
 };
 
 /**
@@ -79,8 +79,8 @@ struct StructDefinition {
     std::string name;
     std::vector<std::string> fields;
     std::vector<ir::TypePtr> types;
-    bool is_tiling = false;
-    bool requires_volatile = false;
+    bool isTiling = false;
+    bool requiresVolatile = false;
 };
 
 /**
@@ -100,7 +100,7 @@ protected:
 public:
     /// Per-axis element strides of a tensor, innermost first at "1". Public because the
     /// block.load backend needs them to drive a merged-row nd2nz directly.
-    std::vector<std::string> BuildTensorStrideExpressions(const ir::TensorTypePtr& tensor_type);
+    std::vector<std::string> BuildTensorStrideExpressions(const ir::TensorTypePtr& tensorType);
 
     /** \brief Construct a CCE code generator for one fixed Cube/Vector target. */
     explicit CCECodegen(ir::SectionKind target);
@@ -111,10 +111,10 @@ public:
      * This is the same header format emitted during full kernel codegen, but does not
      * require a Program or run any IR passes.
      */
-    [[nodiscard]] static std::string GenerateTilingHeader(const std::string& type_name,
+    [[nodiscard]] static std::string GenerateTilingHeader(const std::string& typeName,
                                                           const std::vector<std::string>& fields,
                                                           const std::vector<ir::TypePtr>& types,
-                                                          bool requires_volatile = false);
+                                                          bool requiresVolatile = false);
 
     /**
      * \brief Generate a single C++ file from a PyPTO IR Program
@@ -139,12 +139,12 @@ public:
      * guarded `struct <ClassName> { ... };`). The kernel.cpp `#include`s these by name;
      * the caller (jit.py) writes them next to kernel.cpp in the build dir.
      */
-    [[nodiscard]] const std::map<std::string, std::string>& GetTilingHeaders() const { return tiling_headers_; }
+    [[nodiscard]] const std::map<std::string, std::string>& GetTilingHeaders() const { return tilingHeaders_; }
 
     // CodegenBase interface (unified API for operator codegen callbacks)
-    [[nodiscard]] std::string GetCurrentResultTarget() const override { return current_target_var_; }
+    [[nodiscard]] std::string GetCurrentResultTarget() const override { return currentTargetVar_; }
     void Emit(const std::string& line) override;
-    bool needs_simt_atomic_header_ = false;
+    bool needsSimtAtomicHeader_ = false;
     std::string GetExprAsCode(const ir::ExprPtr& expr) override;
     std::string ScalarCast(const std::string& value, const ir::DataType& source, const ir::DataType& target);
     std::string GetGeneratedType(const ir::TypePtr& type) const;
@@ -154,29 +154,29 @@ public:
     ir::MakeTuplePtr GetExprAsMakeTuple(const ir::ExprPtr& expr);
     [[nodiscard]] std::string GetTypeString(const ir::DataType& dtype) const override;
     /// True when currently generating code inside a VF section (CCE __VEC_SCOPE__).
-    [[nodiscard]] bool IsInVFSection() const { return in_vf_section_; }
+    [[nodiscard]] bool IsInVFSection() const { return inVfSection_; }
     /// True when emitting a 3510 SIMT VF, callee, or SIMT kernel body.
     [[nodiscard]] bool IsInSimtContext() const
     {
-        return current_function_type_ == ir::FunctionType::SIMT_VF ||
-               current_function_type_ == ir::FunctionType::SIMT_CALLEE ||
-               current_function_type_ == ir::FunctionType::SIMT_KERNEL;
+        return currentFunctionType_ == ir::FunctionType::SIMT_VF ||
+               currentFunctionType_ == ir::FunctionType::SIMT_CALLEE ||
+               currentFunctionType_ == ir::FunctionType::SIMT_KERNEL;
     }
-    [[nodiscard]] ir::FunctionType GetCurrentKernelType() const { return current_kernel_type_; }
-    int GetTileOffsetCounter() { return tile_offset_counter_++; }
+    [[nodiscard]] ir::FunctionType GetCurrentKernelType() const { return currentKernelType_; }
+    int GetTileOffsetCounter() { return tileOffsetCounter_++; }
     /// Resolve a VF tile expr (plain tile or `tile[offset]`) to its `__ubuf__` pointer, typed as the
     /// tile element and hoisted before `__VEC_SCOPE__`. A `tile[offset]` load reuses the rvalue
     /// `(vf_tile_ptr_N + off)`; otherwise a `vf_tile_ptr_N` is declared once and cached. With
     /// `is_post_update`, the access gets its own hoisted variable, kept separate from a plain base
     /// pointer to the same tile (e.g. a POST_UPDATE store cursor that must not alias a base load),
     /// and even a `tile[offset]` materialises a real lvalue var rather than the shared rvalue.
-    std::string GetOrCreateVFTilePtr(const ir::ExprPtr& expr, bool is_post_update = false);
+    std::string GetOrCreateVFTilePtr(const ir::ExprPtr& expr, bool isPostUpdate = false);
     /// Mark a VF block.subview result as a pointer expression, including linear offsets.
     std::string RecordVFTileSubviewPointer(std::string code);
     int64_t GetConstIntValue(const ir::ExprPtr& expr) override;
     std::string GetVarName(const ir::VarPtr& var) override;
 
-    const TypeConverter& GetTypeConverter() const { return type_converter_; }
+    const TypeConverter& GetTypeConverter() const { return typeConverter_; }
 
     /** \brief Get the target architecture */
     npu::tile_fwk::NPUArch GetArch() const { return arch_; }
@@ -193,40 +193,40 @@ public:
     ir::SectionKind GetTarget() const { return target_; }
 
     /** \brief Register a VF RegTensor variable (called from EmitVFRegTensor). */
-    void RegisterRegTensorVar(const std::string& cpp_name) { reg_tensor_vars_.insert(cpp_name); }
+    void RegisterRegTensorVar(const std::string& cppName) { regTensorVars_.insert(cppName); }
 
     /** \brief Push a RegTensor declaration to the hoisting buffer (emitted at __VEC_SCOPE__ top). */
-    void HoistRegTensorDecl(const std::string& decl) { vf_reg_hoisted_decls_.push_back(decl); }
+    void HoistRegTensorDecl(const std::string& decl) { vfRegHoistedDecls_.push_back(decl); }
 
     /** \brief Check if a C++ variable name was declared as a VF RegTensor. */
-    bool IsRegTensorVar(const std::string& cpp_name) const { return reg_tensor_vars_.count(cpp_name) > 0; }
+    bool IsRegTensorVar(const std::string& cppName) const { return regTensorVars_.count(cppName) > 0; }
 
     /** \brief Register a VF MaskReg variable (called from EmitVFCreateMask/Compare/etc). */
-    void RegisterMaskRegVar(const std::string& cpp_name) { mask_reg_vars_.insert(cpp_name); }
+    void RegisterMaskRegVar(const std::string& cppName) { maskRegVars_.insert(cppName); }
 
     /** \brief Check if a C++ variable name was declared as a VF MaskReg. */
-    bool IsMaskRegVar(const std::string& cpp_name) const { return mask_reg_vars_.count(cpp_name) > 0; }
+    bool IsMaskRegVar(const std::string& cppName) const { return maskRegVars_.count(cppName) > 0; }
 
     /** \brief Register a VF AddrReg variable (called from EmitVFCreateAddrReg). */
-    void RegisterAddrRegVar(const std::string& cpp_name) { addr_reg_vars_.insert(cpp_name); }
+    void RegisterAddrRegVar(const std::string& cppName) { addrRegVars_.insert(cppName); }
 
     /** \brief Check if a C++ variable name was declared as a VF AddrReg. */
-    bool IsAddrRegVar(const std::string& cpp_name) const { return addr_reg_vars_.count(cpp_name) > 0; }
+    bool IsAddrRegVar(const std::string& cppName) const { return addrRegVars_.count(cppName) > 0; }
 
     /** \brief Register a VF UnalignReg variable (called from EmitVFUnalignRegForStore/Load). */
-    void RegisterUnalignRegVar(const std::string& cpp_name) { unalign_reg_vars_.insert(cpp_name); }
+    void RegisterUnalignRegVar(const std::string& cppName) { unalignRegVars_.insert(cppName); }
 
     /** \brief Check if a C++ variable name was declared as a VF UnalignReg. */
-    bool IsUnalignRegVar(const std::string& cpp_name) const { return unalign_reg_vars_.count(cpp_name) > 0; }
+    bool IsUnalignRegVar(const std::string& cppName) const { return unalignRegVars_.count(cppName) > 0; }
 
     /** \brief Map logical tensor coordinates to a layout-aware physical element offset. */
-    std::string ComputeTensorOffset(const ir::TensorTypePtr& tensor_type, const ir::MakeTuplePtr& offsets);
+    std::string ComputeTensorOffset(const ir::TensorTypePtr& tensorType, const ir::MakeTuplePtr& offsets);
 
     /** \brief Render a shape dimension rounded up to an alignment, folding constants when possible. */
     std::string ComputeAlignedShapeDimension(const ir::ExprPtr& dimension, int64_t alignment);
 
-    const ir::Span& GetCurrentStmtSpan() const { return current_stmt_span_; }
-    const ir::Span& GetCurrentExprSpan() const { return current_expr_span_; }
+    const ir::Span& GetCurrentStmtSpan() const { return currentStmtSpan_; }
+    const ir::Span& GetCurrentExprSpan() const { return currentExprSpan_; }
 
     /**
      * \brief Register a tensor variable's underlying raw pointer (CCE-specific).
@@ -235,12 +235,12 @@ public:
      * raw pointer expression. Used for GlobalTensor construction and TASSIGN address
      * computation in block.load/store. Same-key re-registration with a different value warns.
      */
-    void RegisterPointer(const std::string& tensor_var_name, const std::string& ptr_name);
+    void RegisterPointer(const std::string& tensorVarName, const std::string& ptrName);
 
     /**
      * \brief Get pointer name for a variable (CCE-specific)
      */
-    std::string GetPointer(const std::string& var_name);
+    std::string GetPointer(const std::string& varName);
 
     /**
      * \brief Check whether a raw pointer mapping has been registered (non-throwing).
@@ -248,13 +248,13 @@ public:
      * Distinguishes a tensor parameter / view (pointer already registered) from an
      * IfStmt phi return var (pointer not yet known).
      */
-    [[nodiscard]] bool HasPointer(const std::string& var_name) const;
+    [[nodiscard]] bool HasPointer(const std::string& varName) const;
 
     /**
      * \brief Register a struct TupleType definition for deferred class emission.
      */
-    void RegisterStructDefinition(const ir::TupleTypePtr& tuple_type, const std::string& type_name,
-                                  const std::vector<std::string>& fields, bool is_tiling);
+    void RegisterStructDefinition(const ir::TupleTypePtr& tupleType, const std::string& typeName,
+                                  const std::vector<std::string>& fields, bool isTiling);
 
     /** \brief Get the emitted C++ member type for a struct field. */
     [[nodiscard]] std::string GetStructFieldTypeString(const ir::TypePtr& type) const;
@@ -284,7 +284,7 @@ public:
      * literals, dynamic dims reference runtime scalars). Returns a unique instance name
      * ("<base>__io<n>"), so repeated calls each get their own declaration with no dedup.
      */
-    std::string DeclareFlatGlobalTensor(const ir::VarPtr& tensor_var, const std::string& numel_expr);
+    std::string DeclareFlatGlobalTensor(const ir::VarPtr& tensorVar, const std::string& numelExpr);
     /**
      * \brief Look up every prescanned layout variant of a tensor by its cce variable name.
      *
@@ -303,9 +303,9 @@ public:
      * Merged loads supply descriptor rows/cols and a matrix count. All accesses retain the
      * source strides initialized by their declaration.
      */
-    [[nodiscard]] std::string BindGlobalTensor(const ir::VarPtr& tensor_var, const ir::CallPtr& op,
-                                               const std::string& pointer_expr, const std::string& valid_rows,
-                                               const std::string& valid_cols, const std::string& matrix_count = "");
+    [[nodiscard]] std::string BindGlobalTensor(const ir::VarPtr& tensorVar, const ir::CallPtr& op,
+                                               const std::string& pointerExpr, const std::string& validRows,
+                                               const std::string& validCols, const std::string& matrixCount = "");
 
     /**
      * \brief Emit a per-call-site GlobalTensor over a peer window payload (dist.get/dist.put).
@@ -317,10 +317,10 @@ public:
      * expression (element-typed pointer), *tile* the tile's C++ name for the valid window.
      * Returns the instance name to pass to TLOAD/TSTORE.
      */
-    [[nodiscard]] std::string BindDistGlobalTensor(const ir::TensorTypePtr& view_type, const ir::MakeTuplePtr& offsets,
-                                                   const std::optional<std::vector<int>>& tile_dims, bool is_transpose,
-                                                   const std::vector<ir::ExprPtr>& tile_shape,
-                                                   const std::string& remote_base, const std::string& tile);
+    [[nodiscard]] std::string BindDistGlobalTensor(const ir::TensorTypePtr& viewType, const ir::MakeTuplePtr& offsets,
+                                                   const std::optional<std::vector<int>>& tileDims, bool isTranspose,
+                                                   const std::vector<ir::ExprPtr>& tileShape,
+                                                   const std::string& remoteBase, const std::string& tile);
 
 protected:
     // Override visitor methods for code generation - Statements
@@ -387,9 +387,9 @@ private:
      * \brief Emit yield-assignment code for if-stmt return variables.
      *
      * For each return variable, writes the buffered YieldStmt expression to the
-     * corresponding return variable and clears yield_buffer_ when done.
+     * corresponding return variable and clears yieldBuffer_ when done.
      */
-    void EmitYieldAssignments(const std::vector<ir::VarPtr>& return_vars);
+    void EmitYieldAssignments(const std::vector<ir::VarPtr>& returnVars);
 
     /**
      * \brief Emit full phi-style IfStmt codegen.
@@ -428,7 +428,7 @@ private:
     std::vector<std::pair<ir::VarPtr, ir::TileTypePtr>> CollectTileVariables(const ir::StmtPtr& stmt);
 
     /// Collect one TensorDef per accessed tensor var *and layout variant* from block.load/store
-    /// access windows into tensor_defs_, keyed by (tensor cce name, layout key) (parameters and
+    /// access windows into tensorDefs_, keyed by (tensor cce name, layout key) (parameters and
     /// ptr.make_tensor views both collected; used for prologue param-tensor emission and
     /// in-place view emission at the make_tensor op).
     void CollectTensorDefs(const ir::FunctionPtr& func);
@@ -439,10 +439,10 @@ private:
      * Converts a vector of shape expressions (assumed to be ConstInt)
      * into a vector of integer dimensions.
      *
-     * \param shape_exprs Vector of shape expressions (ConstInt)
+     * \param shapeExprs Vector of shape expressions (ConstInt)
      * \return Vector of integer dimensions
      */
-    std::vector<int64_t> ExtractShapeDimensions(const std::vector<ir::ExprPtr>& shape_exprs) const;
+    std::vector<int64_t> ExtractShapeDimensions(const std::vector<ir::ExprPtr>& shapeExprs) const;
 
     /**
      * \brief Register each tiling TupleType parameter for deferred header emission.
@@ -467,12 +467,12 @@ private:
      * Emits __aicore__ inline void <name>_impl_cube/vector with target setup
      * and tiling and Tensor declarations.
      */
-    void GenerateSinglePrologue(const ir::FunctionPtr& func, bool has_cross_sync);
+    void GenerateSinglePrologue(const ir::FunctionPtr& func, bool hasCrossSync);
     std::string BuildSimtFunctionSignature(const ir::FunctionPtr& func);
     void GenerateSimtFunction(const ir::FunctionPtr& func);
     std::string GenerateSimtCalleeCall(const ir::CallPtr& op, const ir::FunctionPtr& callee);
     void ResetFunctionGenerationState();
-    std::unordered_set<std::string> vf_tile_subview_pointer_codes_;
+    std::unordered_set<std::string> vfTileSubviewPointerCodes_;
 
     bool DetectCrossCoreSyncOps(const ir::StmtPtr& stmt);
 
@@ -528,7 +528,7 @@ private:
      * Collects dynamic dim variables, builds the parameter list, emits the opening
      * brace, registers dynamic dims, and emits FFTS setup if needed.
      */
-    void EmitSingleFunctionSignature(const ir::FunctionPtr& func, bool has_cross_sync);
+    void EmitSingleFunctionSignature(const ir::FunctionPtr& func, bool hasCrossSync);
 
     /**
      * \brief Emit GlobalTensor declarations for one target Program.
@@ -539,18 +539,18 @@ private:
     void EmitSingleTensorDeclarations(const ir::FunctionPtr& func);
 
     // --- Offset computation helpers ---
-    std::string ComputeStrideOffset(const ir::TensorTypePtr& tensor_type, const ir::MakeTuplePtr& offsets);
-    std::string ComputeNZStrideOffset(const ir::TensorTypePtr& tensor_type, const ir::MakeTuplePtr& offsets);
+    std::string ComputeStrideOffset(const ir::TensorTypePtr& tensorType, const ir::MakeTuplePtr& offsets);
+    std::string ComputeNZStrideOffset(const ir::TensorTypePtr& tensorType, const ir::MakeTuplePtr& offsets);
 
     // --- Phase 7: GenerateGlobalTensorTypeDeclaration helpers ---
 
     /// Whether an access walks the tensor down columns: transposed, or a single-column window.
-    static bool IsDNAccessLayout(const std::vector<int64_t>& shape_dims, bool is_transpose);
+    static bool IsDNAccessLayout(const std::vector<int64_t>& shapeDims, bool isTranspose);
 
     /// The Stride ctor arguments an access walks the tensor with, row/col exchanged when transposed.
-    std::string BuildAccessStrideArgs(const ir::TensorTypePtr& tensor_type,
-                                      const std::optional<std::vector<int>>& tile_dims, bool is_transpose, bool is_mx,
-                                      bool is_merged = false);
+    std::string BuildAccessStrideArgs(const ir::TensorTypePtr& tensorType,
+                                      const std::optional<std::vector<int>>& tileDims, bool isTranspose, bool isMx,
+                                      bool isMerged = false);
 
     /**
      * \brief Emit one GlobalTensor instance over a declaration made by GenerateGlobalTensorTypeDeclaration.
@@ -558,43 +558,43 @@ private:
      * Renders `<decl>Type <instance>(<pointer>, <decl>ShapeDim5(<shape_args>), <decl>StrideDim5(<stride_args>));`.
      * When both metadata argument strings are empty, only the pointer is emitted.
      */
-    void EmitGlobalTensorInstance(const std::string& instance_name, const std::string& decl_name,
-                                  const std::string& pointer_expr, const std::string& shape_args,
-                                  const std::string& stride_args);
+    void EmitGlobalTensorInstance(const std::string& instanceName, const std::string& declName,
+                                  const std::string& pointerExpr, const std::string& shapeArgs,
+                                  const std::string& strideArgs);
 
     // Dual-mode context for expression visitor pattern
-    std::string current_target_var_;              ///< INPUT: Assignment target variable name (for Call expressions)
-    std::string current_expr_value_;              ///< OUTPUT: Inline C++ value for scalar / tile expressions
-    ir::MakeTuplePtr current_tuple_;              ///< OUTPUT: underlying MakeTuple for tuple-typed expressions
-    std::vector<ir::ExprPtr> yield_buffer_;       ///< If-branch Yield expressions awaiting phi assignment
-    const ir::IRDebugInfo* debug_info_ = nullptr; ///< Program tuple metadata, required at codegen entry
-    std::map<std::string, std::string> tiling_headers_;          ///< Tiling struct headers (filename -> content)
-    std::map<std::string, StructDefinition> struct_definitions_; ///< Struct type name ->definition
+    std::string currentTargetVar_;               ///< INPUT: Assignment target variable name (for Call expressions)
+    std::string currentExprValue_;               ///< OUTPUT: Inline C++ value for scalar / tile expressions
+    ir::MakeTuplePtr currentTuple_;              ///< OUTPUT: underlying MakeTuple for tuple-typed expressions
+    std::vector<ir::ExprPtr> yieldBuffer_;       ///< If-branch Yield expressions awaiting phi assignment
+    const ir::IRDebugInfo* debugInfo_ = nullptr; ///< Program tuple metadata, required at codegen entry
+    std::map<std::string, std::string> tilingHeaders_;          ///< Tiling struct headers (filename -> content)
+    std::map<std::string, StructDefinition> structDefinitions_; ///< Struct type name ->definition
 
     CodeEmitter emitter_;                                            ///< Code emitter for structured output
     CodeContext context_;                                            ///< Context for variable tracking
-    TypeConverter type_converter_;                                   ///< Type converter
+    TypeConverter typeConverter_;                                    ///< Type converter
     const backend::Backend* backend_;                                ///< CCE backend instance (for op info, core type)
     npu::tile_fwk::NPUArch arch_ = npu::tile_fwk::NPUArch::DAV_2201; ///< Target architecture
     const ir::SectionKind target_;                                   ///< Fixed Cube/Vector target for this generator
-    bool in_vf_section_ = false;                                     ///< True only while emitting a nested VF section
-    bool needs_scalar_helpers_ = false;
+    bool inVfSection_ = false;                                       ///< True only while emitting a nested VF section
+    bool needsScalarHelpers_ = false;
     /// Actual IR type of the SIMT function being emitted.
-    ir::FunctionType current_function_type_ = ir::FunctionType::OPAQUE;
+    ir::FunctionType currentFunctionType_ = ir::FunctionType::OPAQUE;
     /// Kernel entry type for GenerateSingle; preserved across per-function resets.
-    ir::FunctionType current_kernel_type_ = ir::FunctionType::OPAQUE;
-    std::map<std::string, ir::FunctionPtr> simt_callees_;
-    std::unordered_map<std::string, std::string> tensor_to_pointer_; ///< Tensor var name ->raw pointer expression
+    ir::FunctionType currentKernelType_ = ir::FunctionType::OPAQUE;
+    std::map<std::string, ir::FunctionPtr> simtCallees_;
+    std::unordered_map<std::string, std::string> tensorToPointer_; ///< Tensor var name ->raw pointer expression
     /// Prescan: (tensor cce name, layout key) ->TensorDef. One entry per layout an access needs,
     /// so every variant of one tensor is a contiguous range (see GetTensorDefs).
-    std::map<std::pair<std::string, std::string>, TensorDef> tensor_defs_;
-    int flat_tensor_decl_count_ = 0; ///< Monotonic suffix for DeclareFlatGlobalTensor names, reset per function
+    std::map<std::pair<std::string, std::string>, TensorDef> tensorDefs_;
+    int flatTensorDeclCount_ = 0; ///< Monotonic suffix for DeclareFlatGlobalTensor names, reset per function
 
     std::map<std::pair<bool, std::string>, std::string>
-        vf_tile_ptrs_; ///< (is_post_update, VF tile expr code) -> hoisted vf_tile_ptr_N var. A dedicated var (e.g. a
-                       ///< POST_UPDATE store cursor) and a plain base pointer to the same tile are kept separate, so a
-                       ///< cursor store does not corrupt a base load of the same tile.
-    std::vector<std::string> section_hoisted_decls_; ///< VF section decls hoisted before __VEC_SCOPE__ (pre mem_bar)
+        vfTilePtrs_; ///< (is_post_update, VF tile expr code) -> hoisted vf_tile_ptr_N var. A dedicated var (e.g. a
+                     ///< POST_UPDATE store cursor) and a plain base pointer to the same tile are kept separate, so a
+                     ///< cursor store does not corrupt a base load of the same tile.
+    std::vector<std::string> sectionHoistedDecls_; ///< VF section decls hoisted before __VEC_SCOPE__ (pre mem_bar)
 
     struct LoopWritebackTargets {
         std::vector<ir::VarPtr> continueVars;
@@ -602,37 +602,37 @@ private:
     };
 
     /// Per active loop, keep separate continue and break write-back slots.
-    std::vector<LoopWritebackTargets> loop_target_stack_;
+    std::vector<LoopWritebackTargets> loopTargetStack_;
 
-    int tile_offset_counter_ = 0; ///< Counter for unique tile-offset GetItemExpr temp names
-    int vf_tile_ptr_counter_ = 0; ///< Counter for unique VF base-ptr var names (vf_tile_ptr_N)
+    int tileOffsetCounter_ = 0; ///< Counter for unique tile-offset GetItemExpr temp names
+    int vfTilePtrCounter_ = 0;  ///< Counter for unique VF base-ptr var names (vf_tile_ptr_N)
 
     /// Track VF RegTensor variable names (C++ names set by EmitVFRegTensor)
-    std::set<std::string> reg_tensor_vars_;
+    std::set<std::string> regTensorVars_;
 
     /// RegTensor declarations to hoist to the top of __VEC_SCOPE__ (avoid loop-interior placement)
-    std::vector<std::string> vf_reg_hoisted_decls_;
+    std::vector<std::string> vfRegHoistedDecls_;
 
     /// Track VF MaskReg variable names (C++ names set by EmitVFCreateMask/Compare/etc)
-    std::set<std::string> mask_reg_vars_;
+    std::set<std::string> maskRegVars_;
 
     /// Track VF AddrReg variable names (C++ names set by EmitVFCreateAddrReg)
-    std::set<std::string> addr_reg_vars_;
+    std::set<std::string> addrRegVars_;
 
     /// Track VF UnalignReg variable names (C++ names set by EmitVFUnalignRegForStore/Load)
-    std::set<std::string> unalign_reg_vars_;
+    std::set<std::string> unalignRegVars_;
 
     // Tuple Var C++ name -> the MakeTuple that was assigned to it.
     // Populated during body codegen by VisitStmt_(AssignStmtPtr) on tuple-typed lhs:
-    // VisitExpr(rhs) drives current_tuple_ through MakeTuple literals, tuple-var aliases,
+    // VisitExpr(rhs) drives currentTuple_ through MakeTuple literals, tuple-var aliases,
     // and chained static GetItem, all via the visitExpr chain. ForStmt iterArg/returnVar
     // are propagated in VisitStmt_(ForStmtPtr).
-    std::map<std::string, ir::MakeTuplePtr> tuple_var_to_make_tuple_;
+    std::map<std::string, ir::MakeTuplePtr> tupleVarToMakeTuple_;
 
     // Array-valued MakeTuple object -> its unique C++ backing array. Parser constant
     // propagation can replace tuple Vars with their MakeTuple, so array identity
     // follows the IR object rather than a particular Var name.
-    std::map<const ir::MakeTuple*, std::string> tuple_backing_arr_;
+    std::map<const ir::MakeTuple*, std::string> tupleBackingArr_;
 
     /**
      * \brief Whether all element types of a tuple are structurally identical.
@@ -643,17 +643,17 @@ private:
     bool IsHomogeneousTuple(const ir::TupleTypePtr& tt) const;
 
     /// Semantic metadata registered for one exact tuple type, or null for a plain tuple.
-    const ir::TupleTypeInfo* GetTupleTypeInfo(const ir::TupleTypePtr& tuple_type) const;
+    const ir::TupleTypeInfo* GetTupleTypeInfo(const ir::TupleTypePtr& tupleType) const;
 
     /// The C++ struct type name registered for a tuple type, or null if it is not a struct.
     /// Reads the parser's side table, so the answer does not depend on how far codegen has
     /// walked the body.
-    const std::string* GetStructName(const ir::TupleTypePtr& tuple_type) const;
+    const std::string* GetStructName(const ir::TupleTypePtr& tupleType) const;
 
     /**
      * \brief Whether a tuple is represented as a C++ array (vs. flattened leaf slots).
      *
-     * Pure function of the type: it reads only the TupleType and debug_info_, which is
+     * Pure function of the type: it reads only the TupleType and debugInfo_, which is
      * captured once at GenerateSingle entry, so it does not depend on how far codegen has
      * walked the body.
      *
@@ -666,19 +666,19 @@ private:
      * \brief Collect element C++ names from a tuple value expression.
      *
      * Body-codegen use. visitExpr-driven: VisitExpr(tuple_value) resolves the
-     * underlying MakeTuple into current_tuple_, then each element is VisitExpr'd
-     * to produce its C++ name in current_expr_value_. Dynamic-GetItem callers
+     * underlying MakeTuple into currentTuple_, then each element is VisitExpr'd
+     * to produce its C++ name in currentExprValue_. Dynamic-GetItem callers
      * guarantee all elements are tile/scalar Var or const literals, so each
-     * element visit yields a non-empty current_expr_value_.
+     * element visit yields a non-empty currentExprValue_.
      * Returns empty vector on failure.
      */
-    std::vector<std::string> CollectTupleElemNames(const ir::ExprPtr& tuple_value);
+    std::vector<std::string> CollectTupleElemNames(const ir::ExprPtr& tupleValue);
 
-    std::string BuildDynamicTupleArrayDecl(const ir::TypePtr& elem_type, const std::vector<std::string>& elem_names,
-                                           const std::string& arr_name) const;
+    std::string BuildDynamicTupleArrayDecl(const ir::TypePtr& elemType, const std::vector<std::string>& elemNames,
+                                           const std::string& arrName) const;
 
-    ir::Span current_stmt_span_;
-    ir::Span current_expr_span_;
+    ir::Span currentStmtSpan_;
+    ir::Span currentExprSpan_;
 };
 
 } // namespace codegen

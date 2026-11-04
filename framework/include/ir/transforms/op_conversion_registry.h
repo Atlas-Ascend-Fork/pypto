@@ -80,33 +80,33 @@ public:
      * Creates a ConversionFunc that calls OpRegistry::Create with the target name.
      * Re-registering the same from_op replaces the previous rule.
      *
-     * \param from_op Source op name (e.g., "block.add")
-     * \param to_op Target op name (e.g., "block.add")
+     * \param fromOp Source op name (e.g., "block.add")
+     * \param toOp Target op name (e.g., "block.add")
      */
-    void RegisterSimple(const std::string& from_op, const std::string& to_op);
+    void RegisterSimple(const std::string& fromOp, const std::string& toOp);
 
     /**
      * \brief Register a custom conversion function
      *
      * Re-registering the same from_op replaces the previous rule.
      *
-     * \param from_op Source op name (e.g., "block.matmul")
+     * \param fromOp Source op name (e.g., "block.matmul")
      * \param func Custom conversion function
      */
-    void RegisterCustom(const std::string& from_op, ConversionFunc func);
+    void RegisterCustom(const std::string& fromOp, ConversionFunc func);
 
     /**
      * \brief Look up a conversion rule for an op
      *
-     * \param op_name The operator name to look up
+     * \param opName The operator name to look up
      * \return Pointer to the ConversionFunc, or nullptr if not registered
      */
-    [[nodiscard]] const ConversionFunc* Lookup(const std::string& op_name) const;
+    [[nodiscard]] const ConversionFunc* Lookup(const std::string& opName) const;
 
     /**
      * \brief Check if a conversion rule exists for an op
      */
-    [[nodiscard]] bool HasConversion(const std::string& op_name) const;
+    [[nodiscard]] bool HasConversion(const std::string& opName) const;
 
 private:
     OpConversionRegistry();
@@ -117,10 +117,10 @@ private:
 /**
  * \brief Helper macro for simple op conversion registration
  */
-#define REGISTER_OP_CONVERSION(FromOp, ToOp)                                                                         \
-    static bool PYPTO_STR_CONCAT(                                                                                    \
-        op_conv_reg_, __COUNTER__) = (::pypto::ir::OpConversionRegistry::GetInstance().RegisterSimple(FromOp, ToOp), \
-                                      true)
+#define REGISTER_OP_CONVERSION(FromOp, ToOp)                                                                       \
+    static bool PYPTO_STR_CONCAT(                                                                                  \
+        opConvReg_, __COUNTER__) = (::pypto::ir::OpConversionRegistry::GetInstance().RegisterSimple(FromOp, ToOp), \
+                                    true)
 
 } // namespace ir
 } // namespace pypto

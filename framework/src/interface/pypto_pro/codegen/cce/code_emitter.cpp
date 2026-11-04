@@ -28,13 +28,13 @@ void CodeEmitter::EmitLine(const std::string& line)
     buffer_ << "\n";
 }
 
-void CodeEmitter::IncreaseIndent() { indent_level_++; }
+void CodeEmitter::IncreaseIndent() { indentLevel_++; }
 
 void CodeEmitter::DecreaseIndent()
 {
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, indent_level_ > 0)
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, indentLevel_ > 0)
         << "Internal error: cannot decrease indent level below 0";
-    indent_level_--;
+    indentLevel_--;
 }
 
 std::string CodeEmitter::GetCode() const { return buffer_.str(); }
@@ -45,12 +45,12 @@ void CodeEmitter::Clear()
 {
     buffer_.str("");
     buffer_.clear();
-    indent_level_ = 0;
+    indentLevel_ = 0;
 }
 
 std::string CodeEmitter::GetIndent() const
 {
-    return std::string(static_cast<size_t>(indent_level_ * kIndentSpaces), ' ');
+    return std::string(static_cast<size_t>(indentLevel_ * kIndentSpaces), ' ');
 }
 
 } // namespace codegen

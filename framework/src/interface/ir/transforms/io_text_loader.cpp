@@ -564,15 +564,7 @@ IRTextParserOptionalTileViewPtr IRTextParser::ParseTileTypeTileView()
     std::optional<TileView> tileView;
     if (!CheckToken(IRTextLexerTokenKind::PunGt)) {
         MUST_VALID(validShape, ParseShape());
-        MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunComma));
-        MUST_VALID(stride, ParseShape());
-        MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunComma));
-        ExprPtr startOffset = nullptr;
-        if (!CheckToken(IRTextLexerTokenKind::KwNull)) {
-            MUST_VALID(offset, ParseExpr());
-            startOffset = offset;
-        }
-        tileView = TileView(validShape->data, stride->data, startOffset);
+        tileView = TileView(validShape->data);
     }
 
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunGt));

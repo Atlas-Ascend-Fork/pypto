@@ -36,7 +36,7 @@ type                    ::= 'unknown' | dtype | 'memref_type' | 'token' | 'none'
 type_list               ::= type { ',' type };
 shape                   ::= expr { 'x' expr };
 tensor_view             ::= 'tensor_view' '<' [ shape ',' shape ',' ident [ ',' expr ] ] '>';
-tile_view               ::= 'tile_view' '<' [ shape ',' shape ',' ( expr | 'null' ) ] '>';
+tile_view               ::= 'tile_view' '<' [ shape ] '>';
 hw_info                 ::= 'hw_info' '<' [ ident ',' ident ',' int ',' ident    ',' ident ] '>';
 v0_logical_tensor       ::= 'v0_logical_tensor';
 ```

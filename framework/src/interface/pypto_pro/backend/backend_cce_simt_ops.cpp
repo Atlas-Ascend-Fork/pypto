@@ -40,8 +40,8 @@ namespace {
 
 const char* GetSimtAxisName(int axis)
 {
-    constexpr const char* axis_names[] = {"x", "y", "z"};
-    return axis_names[axis];
+    constexpr const char* axisNames[] = {"x", "y", "z"};
+    return axisNames[axis];
 }
 
 std::string MakeSimtThreadIdxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& /*codegen_base*/)
@@ -74,30 +74,30 @@ std::string MakeSimtWarpSizeCodegenCCE(const ir::CallPtr& /*op*/, codegen::Codeg
     return "warpSize";
 }
 
-std::string MakeSimtSyncthreadsCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegen_base)
+std::string MakeSimtSyncthreadsCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     codegen.Emit("__sync_workitems();");
     return "";
 }
 
-std::string MakeSimtThreadfenceBlockCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegen_base)
+std::string MakeSimtThreadfenceBlockCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     codegen.Emit("__threadfence_block();");
     return "";
 }
 
-std::string MakeSimtThreadfenceCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegen_base)
+std::string MakeSimtThreadfenceCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     codegen.Emit("__threadfence();");
     return "";
 }
 
-std::string MakeSimtWarpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base, const char* intrinsic)
+std::string MakeSimtWarpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase, const char* intrinsic)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     std::ostringstream call;
     call << intrinsic << "(";
     for (size_t i = 0; i < op->args_.size(); ++i) {
@@ -152,182 +152,179 @@ const char* GetSimtCastIntrinsicCCE(ir::DataType dtype)
     return "__cvt_uint64_t";
 }
 
-std::string MakeSimtCastIntrinsicCallCCE(ir::DataType target_dtype, ir::RoundMode mode, const char* saturation,
+std::string MakeSimtCastIntrinsicCallCCE(ir::DataType targetDtype, ir::RoundMode mode, const char* saturation,
                                          const std::string& operand)
 {
-    const char* intrinsic = GetSimtCastIntrinsicCCE(target_dtype);
+    const char* intrinsic = GetSimtCastIntrinsicCCE(targetDtype);
     return std::string(intrinsic) + "<" + GetSimtCastRoundModeCCE(mode) + ", " + saturation + ">(" + operand + ")";
 }
 
-std::string MakeSimtCastNarrowIntegerCCE(ir::DataType target_dtype, ir::RoundMode mode, const std::string& operand)
+std::string MakeSimtCastNarrowIntegerCCE(ir::DataType targetDtype, ir::RoundMode mode, const std::string& operand)
 {
     // A5 has no direct low-float-to-8/16-bit scalar conversion. Match the reference semantics by converting to
     // a 32-bit carrier first, then clamp before narrowing. This is fixed per-conversion behavior, not public SatMode.
-    const bool is_signed = target_dtype == ir::DataType::INT8 || target_dtype == ir::DataType::INT16;
-    const ir::DataType carrier_dtype = is_signed ? ir::DataType::INT32 : ir::DataType::UINT32;
-    const std::string converted = MakeSimtCastIntrinsicCallCCE(carrier_dtype, mode,
+    const bool isSigned = targetDtype == ir::DataType::INT8 || targetDtype == ir::DataType::INT16;
+    const ir::DataType carrierDtype = isSigned ? ir::DataType::INT32 : ir::DataType::UINT32;
+    const std::string converted = MakeSimtCastIntrinsicCallCCE(carrierDtype, mode,
                                                                "RoundingSaturation::RS_ENABLE_VALUE", operand);
 
-    const char* upper_bound = nullptr;
-    const char* lower_bound = nullptr;
-    if (target_dtype == ir::DataType::INT8) {
-        upper_bound = "127";
-        lower_bound = "-128";
-    } else if (target_dtype == ir::DataType::UINT8) {
-        upper_bound = "255U";
-    } else if (target_dtype == ir::DataType::INT16) {
-        upper_bound = "32767";
-        lower_bound = "-32768";
+    const char* upperBound = nullptr;
+    const char* lowerBound = nullptr;
+    if (targetDtype == ir::DataType::INT8) {
+        upperBound = "127";
+        lowerBound = "-128";
+    } else if (targetDtype == ir::DataType::UINT8) {
+        upperBound = "255U";
+    } else if (targetDtype == ir::DataType::INT16) {
+        upperBound = "32767";
+        lowerBound = "-32768";
     } else {
-        upper_bound = "65535U";
+        upperBound = "65535U";
     }
 
-    const std::string target_type = target_dtype.ToCTypeString();
-    const std::string carrier_type = carrier_dtype.ToCTypeString();
+    const std::string targetType = targetDtype.ToCTypeString();
+    const std::string carrierType = carrierDtype.ToCTypeString();
     std::ostringstream s;
-    s << "({" << carrier_type << " __simt_cast_value = " << converted << ";"
-      << "__simt_cast_value > " << upper_bound << " ? (" << target_type << ")" << upper_bound << " : ";
-    if (is_signed) {
-        s << "(__simt_cast_value < " << lower_bound << " ? (" << target_type << ")" << lower_bound << " : ("
-          << target_type << ")__simt_cast_value);";
+    s << "({" << carrierType << " __simt_cast_value = " << converted << ";"
+      << "__simt_cast_value > " << upperBound << " ? (" << targetType << ")" << upperBound << " : ";
+    if (isSigned) {
+        s << "(__simt_cast_value < " << lowerBound << " ? (" << targetType << ")" << lowerBound << " : (" << targetType
+          << ")__simt_cast_value);";
     } else {
-        s << "(" << target_type << ")__simt_cast_value;";
+        s << "(" << targetType << ")__simt_cast_value;";
     }
     s << "})";
     return s.str();
 }
 
-std::string MakeSimtCastPlainCCE(ir::DataType target_dtype, const std::string& operand)
+std::string MakeSimtCastPlainCCE(ir::DataType targetDtype, const std::string& operand)
 {
-    return "((" + target_dtype.ToCTypeString() + ")" + operand + ")";
+    return "((" + targetDtype.ToCTypeString() + ")" + operand + ")";
 }
 
-std::string MakeSimtCastFromFp16OrBf16CCE(ir::DataType target_dtype, ir::RoundMode mode, const std::string& operand)
+std::string MakeSimtCastFromFp16OrBf16CCE(ir::DataType targetDtype, ir::RoundMode mode, const std::string& operand)
 {
-    if (target_dtype == ir::DataType::FP16 || target_dtype == ir::DataType::BF16 ||
-        target_dtype == ir::DataType::FP32) {
-        return MakeSimtCastIntrinsicCallCCE(target_dtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", operand);
+    if (targetDtype == ir::DataType::FP16 || targetDtype == ir::DataType::BF16 || targetDtype == ir::DataType::FP32) {
+        return MakeSimtCastIntrinsicCallCCE(targetDtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", operand);
     }
     if (mode != ir::RoundMode::CAST_NONE &&
-        (target_dtype == ir::DataType::INT32 || target_dtype == ir::DataType::UINT32)) {
-        return MakeSimtCastIntrinsicCallCCE(target_dtype, mode, "RoundingSaturation::RS_ENABLE_VALUE", operand);
+        (targetDtype == ir::DataType::INT32 || targetDtype == ir::DataType::UINT32)) {
+        return MakeSimtCastIntrinsicCallCCE(targetDtype, mode, "RoundingSaturation::RS_ENABLE_VALUE", operand);
     }
     if (mode != ir::RoundMode::CAST_NONE &&
-        (target_dtype == ir::DataType::INT64 || target_dtype == ir::DataType::UINT64)) {
+        (targetDtype == ir::DataType::INT64 || targetDtype == ir::DataType::UINT64)) {
         const std::string fp32 = MakeSimtCastIntrinsicCallCCE(ir::DataType::FP32, mode,
                                                               "RoundingSaturation::RS_ENABLE_VALUE", operand);
-        return MakeSimtCastIntrinsicCallCCE(target_dtype, mode, "RoundingSaturation::RS_ENABLE_VALUE", fp32);
+        return MakeSimtCastIntrinsicCallCCE(targetDtype, mode, "RoundingSaturation::RS_ENABLE_VALUE", fp32);
     }
     if (mode != ir::RoundMode::CAST_NONE &&
-        (target_dtype == ir::DataType::INT8 || target_dtype == ir::DataType::UINT8 ||
-         target_dtype == ir::DataType::INT16 || target_dtype == ir::DataType::UINT16)) {
-        return MakeSimtCastNarrowIntegerCCE(target_dtype, mode, operand);
+        (targetDtype == ir::DataType::INT8 || targetDtype == ir::DataType::UINT8 ||
+         targetDtype == ir::DataType::INT16 || targetDtype == ir::DataType::UINT16)) {
+        return MakeSimtCastNarrowIntegerCCE(targetDtype, mode, operand);
     }
-    return MakeSimtCastPlainCCE(target_dtype, operand);
+    return MakeSimtCastPlainCCE(targetDtype, operand);
 }
 
-std::string MakeSimtCastFromFp32CCE(ir::DataType target_dtype, ir::RoundMode mode, const std::string& operand)
+std::string MakeSimtCastFromFp32CCE(ir::DataType targetDtype, ir::RoundMode mode, const std::string& operand)
 {
-    if (target_dtype == ir::DataType::FP16 || target_dtype == ir::DataType::BF16) {
-        return MakeSimtCastIntrinsicCallCCE(target_dtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", operand);
+    if (targetDtype == ir::DataType::FP16 || targetDtype == ir::DataType::BF16) {
+        return MakeSimtCastIntrinsicCallCCE(targetDtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", operand);
     }
     if (mode != ir::RoundMode::CAST_NONE &&
-        (target_dtype == ir::DataType::INT32 || target_dtype == ir::DataType::UINT32 ||
-         target_dtype == ir::DataType::INT64 || target_dtype == ir::DataType::UINT64)) {
-        return MakeSimtCastIntrinsicCallCCE(target_dtype, mode, "RoundingSaturation::RS_ENABLE_VALUE", operand);
+        (targetDtype == ir::DataType::INT32 || targetDtype == ir::DataType::UINT32 ||
+         targetDtype == ir::DataType::INT64 || targetDtype == ir::DataType::UINT64)) {
+        return MakeSimtCastIntrinsicCallCCE(targetDtype, mode, "RoundingSaturation::RS_ENABLE_VALUE", operand);
     }
-    return MakeSimtCastPlainCCE(target_dtype, operand);
+    return MakeSimtCastPlainCCE(targetDtype, operand);
 }
 
-std::string MakeSimtCastFromInt16OrUint16CCE(ir::DataType source_dtype, ir::DataType target_dtype, ir::RoundMode mode,
+std::string MakeSimtCastFromInt16OrUint16CCE(ir::DataType sourceDtype, ir::DataType targetDtype, ir::RoundMode mode,
                                              const std::string& operand)
 {
-    if (mode != ir::RoundMode::CAST_NONE &&
-        (target_dtype == ir::DataType::FP16 || target_dtype == ir::DataType::BF16)) {
-        const ir::DataType carrier_dtype = source_dtype == ir::DataType::INT16 ? ir::DataType::INT32 :
-                                                                                 ir::DataType::UINT32;
-        const std::string widened = "((" + carrier_dtype.ToCTypeString() + ")" + operand + ")";
-        return MakeSimtCastIntrinsicCallCCE(target_dtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", widened);
+    if (mode != ir::RoundMode::CAST_NONE && (targetDtype == ir::DataType::FP16 || targetDtype == ir::DataType::BF16)) {
+        const ir::DataType carrierDtype = sourceDtype == ir::DataType::INT16 ? ir::DataType::INT32 :
+                                                                               ir::DataType::UINT32;
+        const std::string widened = "((" + carrierDtype.ToCTypeString() + ")" + operand + ")";
+        return MakeSimtCastIntrinsicCallCCE(targetDtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", widened);
     }
-    return MakeSimtCastPlainCCE(target_dtype, operand);
+    return MakeSimtCastPlainCCE(targetDtype, operand);
 }
 
-std::string MakeSimtCastFromInt32OrUint32CCE(ir::DataType target_dtype, ir::RoundMode mode, const std::string& operand)
+std::string MakeSimtCastFromInt32OrUint32CCE(ir::DataType targetDtype, ir::RoundMode mode, const std::string& operand)
 {
-    if (mode != ir::RoundMode::CAST_NONE && (target_dtype == ir::DataType::FP16 || target_dtype == ir::DataType::BF16 ||
-                                             target_dtype == ir::DataType::FP32)) {
-        return MakeSimtCastIntrinsicCallCCE(target_dtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", operand);
+    if (mode != ir::RoundMode::CAST_NONE &&
+        (targetDtype == ir::DataType::FP16 || targetDtype == ir::DataType::BF16 || targetDtype == ir::DataType::FP32)) {
+        return MakeSimtCastIntrinsicCallCCE(targetDtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", operand);
     }
-    return MakeSimtCastPlainCCE(target_dtype, operand);
+    return MakeSimtCastPlainCCE(targetDtype, operand);
 }
 
-std::string MakeSimtCastFromInt64OrUint64CCE(ir::DataType source_dtype, ir::DataType target_dtype, ir::RoundMode mode,
+std::string MakeSimtCastFromInt64OrUint64CCE(ir::DataType sourceDtype, ir::DataType targetDtype, ir::RoundMode mode,
                                              const std::string& operand)
 {
-    if (mode != ir::RoundMode::CAST_NONE &&
-        (target_dtype == ir::DataType::FP16 || target_dtype == ir::DataType::BF16)) {
+    if (mode != ir::RoundMode::CAST_NONE && (targetDtype == ir::DataType::FP16 || targetDtype == ir::DataType::BF16)) {
         // The A5 uint64-to-BF16 reference path always uses nearest-even for the uint64-to-FP32 carrier conversion.
-        const auto fp32_mode = source_dtype == ir::DataType::UINT64 && target_dtype == ir::DataType::BF16 ?
-                                   ir::RoundMode::CAST_RINT :
-                                   mode;
-        const std::string fp32 = MakeSimtCastIntrinsicCallCCE(ir::DataType::FP32, fp32_mode,
+        const auto fp32Mode = sourceDtype == ir::DataType::UINT64 && targetDtype == ir::DataType::BF16 ?
+                                  ir::RoundMode::CAST_RINT :
+                                  mode;
+        const std::string fp32 = MakeSimtCastIntrinsicCallCCE(ir::DataType::FP32, fp32Mode,
                                                               "RoundingSaturation::RS_DISABLE_VALUE", operand);
-        return MakeSimtCastIntrinsicCallCCE(target_dtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", fp32);
+        return MakeSimtCastIntrinsicCallCCE(targetDtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", fp32);
     }
-    if (mode != ir::RoundMode::CAST_NONE && target_dtype == ir::DataType::FP32) {
-        return MakeSimtCastIntrinsicCallCCE(target_dtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", operand);
+    if (mode != ir::RoundMode::CAST_NONE && targetDtype == ir::DataType::FP32) {
+        return MakeSimtCastIntrinsicCallCCE(targetDtype, mode, "RoundingSaturation::RS_DISABLE_VALUE", operand);
     }
-    return MakeSimtCastPlainCCE(target_dtype, operand);
+    return MakeSimtCastPlainCCE(targetDtype, operand);
 }
 
-std::string MakeSimtCastCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtCastCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    auto source_type = ir::As<ir::ScalarType>(op->args_[0]->GetType());
-    auto target_type = ir::As<ir::ScalarType>(op->GetType());
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    auto sourceType = ir::As<ir::ScalarType>(op->args_[0]->GetType());
+    auto targetType = ir::As<ir::ScalarType>(op->GetType());
 
-    const auto source_dtype = source_type->dtype_;
-    const auto target_dtype = target_type->dtype_;
+    const auto sourceDtype = sourceType->dtype_;
+    const auto targetDtype = targetType->dtype_;
     const auto mode = static_cast<ir::RoundMode>(op->GetKwarg<int>("mode"));
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
-    if (source_dtype == target_dtype) {
+    if (sourceDtype == targetDtype) {
         return operand;
     }
 
-    if (source_dtype == ir::DataType::INT16 || source_dtype == ir::DataType::UINT16) {
-        return MakeSimtCastFromInt16OrUint16CCE(source_dtype, target_dtype, mode, operand);
+    if (sourceDtype == ir::DataType::INT16 || sourceDtype == ir::DataType::UINT16) {
+        return MakeSimtCastFromInt16OrUint16CCE(sourceDtype, targetDtype, mode, operand);
     }
-    if (source_dtype == ir::DataType::INT32 || source_dtype == ir::DataType::UINT32) {
-        return MakeSimtCastFromInt32OrUint32CCE(target_dtype, mode, operand);
+    if (sourceDtype == ir::DataType::INT32 || sourceDtype == ir::DataType::UINT32) {
+        return MakeSimtCastFromInt32OrUint32CCE(targetDtype, mode, operand);
     }
-    if (source_dtype == ir::DataType::INT64 || source_dtype == ir::DataType::UINT64) {
-        return MakeSimtCastFromInt64OrUint64CCE(source_dtype, target_dtype, mode, operand);
+    if (sourceDtype == ir::DataType::INT64 || sourceDtype == ir::DataType::UINT64) {
+        return MakeSimtCastFromInt64OrUint64CCE(sourceDtype, targetDtype, mode, operand);
     }
-    if (source_dtype == ir::DataType::FP16 || source_dtype == ir::DataType::BF16) {
-        return MakeSimtCastFromFp16OrBf16CCE(target_dtype, mode, operand);
+    if (sourceDtype == ir::DataType::FP16 || sourceDtype == ir::DataType::BF16) {
+        return MakeSimtCastFromFp16OrBf16CCE(targetDtype, mode, operand);
     }
-    if (source_dtype == ir::DataType::FP32) {
-        return MakeSimtCastFromFp32CCE(target_dtype, mode, operand);
+    if (sourceDtype == ir::DataType::FP32) {
+        return MakeSimtCastFromFp32CCE(targetDtype, mode, operand);
     }
-    return MakeSimtCastPlainCCE(target_dtype, operand);
+    return MakeSimtCastPlainCCE(targetDtype, operand);
 }
 
-std::string MakeSimtBitcastCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtBitcastCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    auto source_type = ir::As<ir::ScalarType>(op->args_[0]->GetType());
-    auto target_type = ir::As<ir::ScalarType>(op->GetType());
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    auto sourceType = ir::As<ir::ScalarType>(op->args_[0]->GetType());
+    auto targetType = ir::As<ir::ScalarType>(op->GetType());
 
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     std::ostringstream s;
-    s << "({union {" << source_type->dtype_.ToCTypeString() << " source;" << target_type->dtype_.ToCTypeString()
+    s << "({union {" << sourceType->dtype_.ToCTypeString() << " source;" << targetType->dtype_.ToCTypeString()
       << " target;} __simt_bitcast_data;"
       << "__simt_bitcast_data.source = (" << operand << ");"
       << "__simt_bitcast_data.target;})";
     return s.str();
 }
 
-std::string MakeSimtTrigFP32Codegen(const std::string& operand, bool is_sin)
+std::string MakeSimtTrigFP32Codegen(const std::string& operand, bool isSin)
 {
     std::ostringstream s;
     s << "({"
@@ -384,7 +381,7 @@ std::string MakeSimtTrigFP32Codegen(const std::string& operand, bool is_sin)
       << "__c = __fma(__yy, __c, -5.00000000e-1f);"
       << "__c = __fma(__yy, __c, 1.00000000e+0f);"
       << "if (__q & 2) { __s = -__s; __c = -__c; }";
-    if (is_sin) {
+    if (isSin) {
         s << "if (__q & 1) { __s = __c; }"
           << "__s;";
     } else {
@@ -693,11 +690,11 @@ struct SimtUnaryCodegenInput {
     std::string operand;
 };
 
-SimtUnaryCodegenInput GetSimtUnaryCodegenInput(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+SimtUnaryCodegenInput GetSimtUnaryCodegenInput(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    auto scalar_type = ir::As<ir::ScalarType>(op->args_[0]->GetType());
-    return {scalar_type->dtype_, codegen.GetExprAsCode(op->args_[0])};
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    auto scalarType = ir::As<ir::ScalarType>(op->args_[0]->GetType());
+    return {scalarType->dtype_, codegen.GetExprAsCode(op->args_[0])};
 }
 
 std::string ConvertSimtFloatInputToFP32(const SimtUnaryCodegenInput& input)
@@ -742,9 +739,9 @@ std::string MakeSimtAtanFP32Codegen(const std::string& operand)
     return s.str();
 }
 
-std::string MakeSimtExp10CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtExp10CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const SimtUnaryCodegenInput input{ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_,
                                       codegen.GetExprAsCode(op->args_[0])};
     if (input.dtype == ir::DataType::FP16) {
@@ -777,9 +774,9 @@ std::string MakeSimtExp10CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtLog10CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtLog10CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const SimtUnaryCodegenInput input{ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_,
                                       codegen.GetExprAsCode(op->args_[0])};
     if (input.dtype == ir::DataType::FP16) {
@@ -801,9 +798,9 @@ std::string MakeSimtLog10CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return ConvertSimtFloatResultFromFP32(input.dtype, MakeSimtLog10FP32Codegen(value));
 }
 
-std::string MakeSimtRcpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtRcpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const SimtUnaryCodegenInput input{ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_,
                                       codegen.GetExprAsCode(op->args_[0])};
     if (input.dtype == ir::DataType::FP16)
@@ -811,21 +808,21 @@ std::string MakeSimtRcpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     return "(static_cast<bfloat16_t>(1.0f) / (" + input.operand + "))";
 }
 
-std::string MakeSimtTanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtTanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     return ConvertSimtFloatResultFromFP32(input.dtype, MakeSimtTanFP32Codegen(ConvertSimtFloatInputToFP32(input)));
 }
 
-std::string MakeSimtAtanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtAtanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     return ConvertSimtFloatResultFromFP32(input.dtype, MakeSimtAtanFP32Codegen(ConvertSimtFloatInputToFP32(input)));
 }
 
-std::string MakeSimtExpm1CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtExpm1CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const SimtUnaryCodegenInput input{ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_,
                                       codegen.GetExprAsCode(op->args_[0])};
     const std::string value = ConvertSimtFloatInputToFP32(input);
@@ -854,9 +851,9 @@ std::string MakeSimtExpm1CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtLogbCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtLogbCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const std::string operand = ConvertSimtFloatInputToFP32(input);
     std::ostringstream s;
     s << "({float __logb_x = (" << operand << ");"
@@ -870,9 +867,9 @@ std::string MakeSimtLogbCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtCoshCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtCoshCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const std::string operand = ConvertSimtFloatInputToFP32(input);
     std::ostringstream s;
     s << "({float __cosh_x = (" << operand << ");"
@@ -897,9 +894,9 @@ std::string MakeSimtCoshCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtSinhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtSinhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const std::string operand = ConvertSimtFloatInputToFP32(input);
     std::ostringstream s;
     s << "({float __sinh_x = (" << operand << ");"
@@ -935,9 +932,9 @@ std::string MakeSimtSinhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtAsinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtAsinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const std::string operand = ConvertSimtFloatInputToFP32(input);
     std::ostringstream s;
     s << "({float __asin_x = (" << operand << ");"
@@ -965,9 +962,9 @@ std::string MakeSimtAsinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtAcosCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtAcosCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const std::string operand = ConvertSimtFloatInputToFP32(input);
     std::ostringstream s;
     s << "({float __acos_x = (" << operand << ");"
@@ -1000,9 +997,9 @@ std::string MakeSimtAcosCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtCbrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtCbrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const SimtUnaryCodegenInput input{ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_,
                                       codegen.GetExprAsCode(op->args_[0])};
     const std::string value = ConvertSimtFloatInputToFP32(input);
@@ -1023,23 +1020,23 @@ std::string MakeSimtCbrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtMaxNanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtMaxNanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     return std::string("__hmax_nan(") + codegen.GetExprAsCode(op->args_[0]) + ", " +
            codegen.GetExprAsCode(op->args_[1]) + ")";
 }
 
-std::string MakeSimtMinNanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtMinNanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     return std::string("__hmin_nan(") + codegen.GetExprAsCode(op->args_[0]) + ", " +
            codegen.GetExprAsCode(op->args_[1]) + ")";
 }
 
-std::string MakeSimtAtan2CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtAtan2CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string y = codegen.GetExprAsCode(op->args_[0]);
     const std::string x = codegen.GetExprAsCode(op->args_[1]);
     std::ostringstream s;
@@ -1083,9 +1080,9 @@ std::string MakeSimtAtan2CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return s.str();
 }
 
-std::string MakeSimtCopysignCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtCopysignCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string magnitude = codegen.GetExprAsCode(op->args_[0]);
     const std::string sign = codegen.GetExprAsCode(op->args_[1]);
     std::ostringstream s;
@@ -1096,9 +1093,9 @@ std::string MakeSimtCopysignCodegenCCE(const ir::CallPtr& op, codegen::CodegenBa
     return s.str();
 }
 
-std::string MakeSimtNextafterCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtNextafterCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string value = codegen.GetExprAsCode(op->args_[0]);
     const std::string direction = codegen.GetExprAsCode(op->args_[1]);
     std::ostringstream s;
@@ -1112,9 +1109,9 @@ std::string MakeSimtNextafterCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
     return s.str();
 }
 
-std::string MakeSimtSinpiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtSinpiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const std::string operand = ConvertSimtFloatInputToFP32(input);
     std::ostringstream s;
     s << "({float __sinpi_x = (" << operand << ");"
@@ -1152,9 +1149,9 @@ std::string MakeSimtSinpiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtCospiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtCospiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const std::string operand = ConvertSimtFloatInputToFP32(input);
     std::ostringstream s;
     s << "({float __cospi_x = (" << operand << ");"
@@ -1187,9 +1184,9 @@ std::string MakeSimtCospiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtTanpiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtTanpiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const std::string operand = ConvertSimtFloatInputToFP32(input);
     std::ostringstream s;
     s << "({float __tanpi_x = (" << operand << ");"
@@ -1227,9 +1224,9 @@ std::string MakeSimtTanpiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtAtanhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtAtanhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const std::string operand = ConvertSimtFloatInputToFP32(input);
     std::ostringstream s;
     s << "({float __atanh_x = (" << operand << ");"
@@ -1246,9 +1243,9 @@ std::string MakeSimtAtanhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtAcoshCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtAcoshCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const std::string operand = ConvertSimtFloatInputToFP32(input);
     std::ostringstream s;
     s << "({float __acosh_x = (" << operand << ");"
@@ -1276,9 +1273,9 @@ std::string MakeSimtAcoshCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtAsinhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtAsinhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const std::string operand = ConvertSimtFloatInputToFP32(input);
     std::ostringstream s;
     s << "({float __asinh_x = (" << operand << ");"
@@ -1312,9 +1309,9 @@ std::string MakeSimtAsinhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtRcbrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtRcbrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const std::string operand = ConvertSimtFloatInputToFP32(input);
     std::ostringstream s;
     s << "({float __rcbrt_x = (" << operand << ");"
@@ -1352,9 +1349,9 @@ std::string MakeSimtRcbrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string MakeSimtIlogbCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtIlogbCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     std::ostringstream s;
     s << "({float __ilogb_x = (" << operand << ");"
@@ -1367,16 +1364,16 @@ std::string MakeSimtIlogbCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return s.str();
 }
 
-std::string MakeSimtSignbitCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtSignbitCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     return "signbitf(" + operand + ")";
 }
 
-std::string MakeSimtAbsCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtAbsCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const auto& dtype = input.dtype;
     const auto& a = input.operand;
     if (dtype == ir::DataType::INT32 || dtype == ir::DataType::INT64)
@@ -1391,30 +1388,30 @@ std::string MakeSimtAbsCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
            type + "&>(__abs_bits);})";
 }
 
-std::string MakeSimtSqrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtSqrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const auto& dtype = input.dtype;
     const auto& a = input.operand;
     if (dtype == ir::DataType::FP32)
         return MakeSimtSqrtFP32Codegen(a);
     if (dtype == ir::DataType::FP16)
         return "__sqrtf(" + a + ")";
-    const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-    return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + MakeSimtSqrtFP32Codegen(cvt_in) + ")";
+    const std::string cvtIn = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
+    return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + MakeSimtSqrtFP32Codegen(cvtIn) + ")";
 }
 
-std::string MakeSimtRsqrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtRsqrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const auto& dtype = input.dtype;
     const std::string value = ConvertSimtFloatInputToFP32(input);
     return ConvertSimtFloatResultFromFP32(dtype, "(1.0f / " + MakeSimtSqrtFP32Codegen(value) + ")");
 }
 
-std::string MakeSimtExpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtExpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const auto& dtype = input.dtype;
     const auto& a = input.operand;
     if (dtype == ir::DataType::FP16) {
@@ -1443,9 +1440,9 @@ std::string MakeSimtExpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     return ConvertSimtFloatResultFromFP32(dtype, s.str());
 }
 
-std::string MakeSimtExp2CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtExp2CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const auto& dtype = input.dtype;
     if (dtype == ir::DataType::FP16) {
         std::ostringstream s;
@@ -1464,9 +1461,9 @@ std::string MakeSimtExp2CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     return ConvertSimtFloatResultFromFP32(dtype, MakeSimtExp2FP32Codegen(value));
 }
 
-std::string MakeSimtLogCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtLogCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const auto& dtype = input.dtype;
     const auto& a = input.operand;
     if (dtype == ir::DataType::FP16) {
@@ -1485,9 +1482,9 @@ std::string MakeSimtLogCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     return ConvertSimtFloatResultFromFP32(dtype, result);
 }
 
-std::string MakeSimtLog2CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtLog2CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const auto& dtype = input.dtype;
     const std::string value = ConvertSimtFloatInputToFP32(input);
     if (dtype == ir::DataType::FP16) {
@@ -1500,15 +1497,15 @@ std::string MakeSimtLog2CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     return ConvertSimtFloatResultFromFP32(dtype, MakeSimtLog2FP32Codegen(value));
 }
 
-std::string MakeSimtLog1pCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtLog1pCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     return MakeSimtLog1pFP32Codegen(input.operand);
 }
 
-std::string MakeSimtTanhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtTanhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const auto& dtype = input.dtype;
     const std::string value = ConvertSimtFloatInputToFP32(input);
     std::ostringstream s;
@@ -1528,24 +1525,24 @@ std::string MakeSimtTanhCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     return ConvertSimtFloatResultFromFP32(dtype, s.str());
 }
 
-std::string MakeSimtRintCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtRintCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const auto& a = input.operand;
-    const auto result_dtype = ir::As<ir::ScalarType>(op->GetType())->dtype_;
-    if (result_dtype == ir::DataType::INT64) {
+    const auto resultDtype = ir::As<ir::ScalarType>(op->GetType())->dtype_;
+    if (resultDtype == ir::DataType::INT64) {
         return "__cvt_int64_t<ROUND::R, RoundingSaturation::RS_ENABLE_VALUE>(" + a + ")";
     }
     return "__rintf(" + a + ")";
 }
 
-std::string MakeSimtRoundCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtRoundCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const auto& dtype = input.dtype;
     const auto& a = input.operand;
-    const auto result_dtype = ir::As<ir::ScalarType>(op->GetType())->dtype_;
-    if (result_dtype == ir::DataType::INT64) {
+    const auto resultDtype = ir::As<ir::ScalarType>(op->GetType())->dtype_;
+    if (resultDtype == ir::DataType::INT64) {
         return "__cvt_int64_t<ROUND::A, RoundingSaturation::RS_ENABLE_VALUE>(" + a + ")";
     }
     if (dtype == ir::DataType::FP32)
@@ -1556,21 +1553,21 @@ std::string MakeSimtRoundCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return "__cvt_bfloat16_t<ROUND::A, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
 }
 
-std::string MakeSimtFloorCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtFloorCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     return "__floorf(" + input.operand + ")";
 }
 
-std::string MakeSimtCeilCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtCeilCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     return "__ceilf(" + input.operand + ")";
 }
 
-std::string MakeSimtTruncCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtTruncCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const auto& dtype = input.dtype;
     const auto& a = input.operand;
     if (dtype == ir::DataType::FP32)
@@ -1580,78 +1577,78 @@ std::string MakeSimtTruncCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return "((" + a + " > (bfloat16_t)0) ? __floorf(" + a + ") : __ceilf(" + a + "))";
 }
 
-std::string MakeSimtIsnanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtIsnanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     return "__isnan(" + input.operand + ")";
 }
 
-std::string MakeSimtIsinfCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtIsinfCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     return "__isinf(" + input.operand + ")";
 }
 
-std::string MakeSimtIsfiniteCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtIsfiniteCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     return "__isfinite(" + input.operand + ")";
 }
 
-std::string MakeSimtPopcountCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtPopcountCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     if (input.dtype == ir::DataType::UINT32) {
         return "__popc((unsigned int)(" + input.operand + "))";
     }
     return "__popc((unsigned long long)(" + input.operand + "))";
 }
 
-std::string MakeSimtMulHiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtMulHiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     const char* intrinsic;
-    const char* operand_type;
+    const char* operandType;
     if (input.dtype == ir::DataType::INT32) {
         intrinsic = "__mulhi";
-        operand_type = "int";
+        operandType = "int";
     } else if (input.dtype == ir::DataType::UINT32) {
         intrinsic = "__umulhi";
-        operand_type = "unsigned int";
+        operandType = "unsigned int";
     } else if (input.dtype == ir::DataType::INT64) {
         intrinsic = "__mul64hi";
-        operand_type = "long long";
+        operandType = "long long";
     } else {
         intrinsic = "__umul64hi";
-        operand_type = "unsigned long long";
+        operandType = "unsigned long long";
     }
-    return "((" + input.dtype.ToCTypeString() + ")" + intrinsic + "((" + operand_type + ")(" + input.operand + "), (" +
-           operand_type + ")(" + rhs + ")))";
+    return "((" + input.dtype.ToCTypeString() + ")" + intrinsic + "((" + operandType + ")(" + input.operand + "), (" +
+           operandType + ")(" + rhs + ")))";
 }
 
-std::string MakeSimtFmodCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtFmodCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     return pypto::codegen::BuildFP32FmodExpression(input.operand, rhs);
 }
 
-std::string MakeSimtSinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtSinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const auto& dtype = input.dtype;
     const auto& a = input.operand;
     if (dtype == ir::DataType::FP32)
         return MakeSimtTrigFP32Codegen(a, true);
     if (dtype == ir::DataType::FP16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__sin_x)";
+        const std::string cvtIn = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__sin_x)";
         std::ostringstream s;
         s << "({half __sin_x = (" << a << ");"
           << "half __sin_result = __cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>("
-          << MakeSimtTrigFP32Codegen(cvt_in, true) << ");"
+          << MakeSimtTrigFP32Codegen(cvtIn, true) << ");"
           << "half __sin_correction = static_cast<half>(-0.0f);"
           << "if (__sin_x == static_cast<half>(0.2093505859375f)) {"
           << "__sin_correction = static_cast<half>(0.0001220703125f);"
@@ -1665,24 +1662,24 @@ std::string MakeSimtSinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
           << "__fma(__sin_result, static_cast<half>(1.0f), __sin_correction);})";
         return s.str();
     }
-    const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-    return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + MakeSimtTrigFP32Codegen(cvt_in, true) +
+    const std::string cvtIn = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
+    return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + MakeSimtTrigFP32Codegen(cvtIn, true) +
            ")";
 }
 
-std::string MakeSimtCosCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtCosCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    const auto input = GetSimtUnaryCodegenInput(op, codegen_base);
+    const auto input = GetSimtUnaryCodegenInput(op, codegenBase);
     const auto& dtype = input.dtype;
     const auto& a = input.operand;
     if (dtype == ir::DataType::FP32)
         return MakeSimtTrigFP32Codegen(a, false);
     if (dtype == ir::DataType::FP16) {
-        const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__cos_x)";
+        const std::string cvtIn = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__cos_x)";
         std::ostringstream s;
         s << "({half __cos_x = (" << a << ");"
           << "half __cos_result = __cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>("
-          << MakeSimtTrigFP32Codegen(cvt_in, false) << ");"
+          << MakeSimtTrigFP32Codegen(cvtIn, false) << ");"
           << "half __cos_correction = static_cast<half>(0.0f);"
           << "if (__cos_x == static_cast<half>(0.0584716796875f) ||"
           << " __cos_x == static_cast<half>(-0.0584716796875f)) {"
@@ -1691,21 +1688,21 @@ std::string MakeSimtCosCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
           << "__fma(__cos_result, static_cast<half>(1.0f), __cos_correction);})";
         return s.str();
     }
-    const std::string cvt_in = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
-    return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" +
-           MakeSimtTrigFP32Codegen(cvt_in, false) + ")";
+    const std::string cvtIn = "__cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + a + ")";
+    return "__cvt_bfloat16_t<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(" + MakeSimtTrigFP32Codegen(cvtIn, false) +
+           ")";
 }
 
-std::string MakeSimtMinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtMinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    auto scalar_type = ir::As<ir::ScalarType>(op->args_[0]->GetType());
-    const auto& dtype = scalar_type->dtype_;
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    auto scalarType = ir::As<ir::ScalarType>(op->args_[0]->GetType());
+    const auto& dtype = scalarType->dtype_;
     const std::string a = codegen.GetExprAsCode(op->args_[0]);
     const std::string b = codegen.GetExprAsCode(op->args_[1]);
     if (dtype.IsInt()) {
-        std::string cpp_type = dtype.ToCTypeString();
-        return "min((" + cpp_type + ")(" + a + "), (" + cpp_type + ")(" + b + "))";
+        std::string cppType = dtype.ToCTypeString();
+        return "min((" + cppType + ")(" + a + "), (" + cppType + ")(" + b + "))";
     }
     if (dtype == ir::DataType::FP32) {
         return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __fminf(" + a + ", " + b + ")))";
@@ -1716,16 +1713,16 @@ std::string MakeSimtMinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __min(" + a + ", " + b + ")))";
 }
 
-std::string MakeSimtMaxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtMaxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    auto scalar_type = ir::As<ir::ScalarType>(op->args_[0]->GetType());
-    const auto& dtype = scalar_type->dtype_;
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    auto scalarType = ir::As<ir::ScalarType>(op->args_[0]->GetType());
+    const auto& dtype = scalarType->dtype_;
     const std::string a = codegen.GetExprAsCode(op->args_[0]);
     const std::string b = codegen.GetExprAsCode(op->args_[1]);
     if (dtype.IsInt()) {
-        std::string cpp_type = dtype.ToCTypeString();
-        return "max((" + cpp_type + ")(" + a + "), (" + cpp_type + ")(" + b + "))";
+        std::string cppType = dtype.ToCTypeString();
+        return "max((" + cppType + ")(" + a + "), (" + cppType + ")(" + b + "))";
     }
     if (dtype == ir::DataType::FP32) {
         return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __fmaxf(" + a + ", " + b + ")))";
@@ -1736,35 +1733,35 @@ std::string MakeSimtMaxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __max(" + a + ", " + b + ")))";
 }
 
-std::string MakeSimtFmaCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtFmaCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     return "__fma(" + codegen.GetExprAsCode(op->args_[0]) + ", " + codegen.GetExprAsCode(op->args_[1]) + ", " +
            codegen.GetExprAsCode(op->args_[2]) + ")";
 }
 
-std::string MakeSimtAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base, const char* intrinsic,
-                                     const char* kernel_intrinsic)
+std::string MakeSimtAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase, const char* intrinsic,
+                                     const char* kernelIntrinsic)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    auto tile_type = ir::As<ir::TileType>(op->args_[0]->GetType());
-    const bool simt_kernel = codegen.GetCurrentKernelType() == ir::FunctionType::SIMT_KERNEL;
-    if (simt_kernel) {
-        codegen.needs_simt_atomic_header_ = true;
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    auto tileType = ir::As<ir::TileType>(op->args_[0]->GetType());
+    const bool simtKernel = codegen.GetCurrentKernelType() == ir::FunctionType::SIMT_KERNEL;
+    if (simtKernel) {
+        codegen.needsSimtAtomicHeader_ = true;
     }
 
     std::string base;
-    if (tile_type) {
+    if (tileType) {
         base = codegen.GetExprAsCode(op->args_[0]);
     } else {
-        auto tensor_var = ir::As<ir::Var>(op->args_[0]);
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tensor_var != nullptr)
+        auto tensorVar = ir::As<ir::Var>(op->args_[0]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tensorVar != nullptr)
             << op->name_ << " Tensor container must be a Var";
-        base = codegen.GetPointer(codegen.GetVarName(tensor_var));
+        base = codegen.GetPointer(codegen.GetVarName(tensorVar));
     }
     std::string offset = codegen.GetExprAsCode(op->args_[1]);
     std::stringstream call;
-    call << (simt_kernel ? kernel_intrinsic : intrinsic) << "(" << base << " + (" << offset << ")";
+    call << (simtKernel ? kernelIntrinsic : intrinsic) << "(" << base << " + (" << offset << ")";
     for (size_t i = 2; i < op->args_.size(); ++i) {
         call << ", " << codegen.GetExprAsCode(op->args_[i]);
     }
@@ -1778,33 +1775,33 @@ std::string MakeSimtAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
     return result;
 }
 
-std::string MakeSimtLaunchCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtLaunchCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, !codegen.IsInSimtContext())
         << "Nested simt.launch is not supported";
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "simt.launch requires the Vector target";
-    int64_t thread_dims[3] = {};
+    int64_t threadDims[3] = {};
     for (size_t i = 0; i < 3; ++i) {
         auto dim = ir::As<ir::ConstInt>(op->args_[i]);
-        thread_dims[i] = dim->value_;
+        threadDims[i] = dim->value_;
     }
 
     std::ostringstream call;
-    call << "cce::async_invoke<" << op->GetKwarg<std::string>("callee") << ">(cce::dim3{" << thread_dims[0] << ", "
-         << thread_dims[1] << ", " << thread_dims[2] << "}";
+    call << "cce::async_invoke<" << op->GetKwarg<std::string>("callee") << ">(cce::dim3{" << threadDims[0] << ", "
+         << threadDims[1] << ", " << threadDims[2] << "}";
     for (size_t i = 3; i < op->args_.size(); ++i) {
-        auto arg_type = op->args_[i]->GetType();
-        auto tile_type = ir::As<ir::TileType>(arg_type);
-        if (tile_type != nullptr) {
+        auto argType = op->args_[i]->GetType();
+        auto tileType = ir::As<ir::TileType>(argType);
+        if (tileType != nullptr) {
             std::string tile = cce::GetOperandAsCode(codegen, op->args_[i]);
-            call << ", (__ubuf__ " << tile_type->dtype_.ToCTypeString() << "*)" << tile << ".data()";
+            call << ", (__ubuf__ " << tileType->dtype_.ToCTypeString() << "*)" << tile << ".data()";
             call << ", (uint32_t)" << tile << ".GetValidRow(), (uint32_t)" << tile << ".GetValidCol()";
-        } else if (auto tensor_type = ir::As<ir::TensorType>(arg_type)) {
-            auto tensor_var = ir::As<ir::Var>(op->args_[i]);
-            std::string tensor_name = codegen.GetVarName(tensor_var);
-            call << ", (__gm__ " << tensor_type->dtype_.ToCTypeString() << "*)" << codegen.GetPointer(tensor_name);
+        } else if (auto tensorType = ir::As<ir::TensorType>(argType)) {
+            auto tensorVar = ir::As<ir::Var>(op->args_[i]);
+            std::string tensorName = codegen.GetVarName(tensorVar);
+            call << ", (__gm__ " << tensorType->dtype_.ToCTypeString() << "*)" << codegen.GetPointer(tensorName);
         } else {
             call << ", " << codegen.GetExprAsCode(op->args_[i]);
         }
@@ -1816,129 +1813,129 @@ std::string MakeSimtLaunchCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
 
 } // namespace
 
-std::string MakeSimtBrevCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtBrevCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
-    const char* cpp_type = dtype == ir::DataType::UINT32 ? "unsigned int" : "unsigned long long";
-    return "__brev((" + std::string(cpp_type) + ")(" + operand + "))";
+    const char* cppType = dtype == ir::DataType::UINT32 ? "unsigned int" : "unsigned long long";
+    return "__brev((" + std::string(cppType) + ")(" + operand + "))";
 }
 
-std::string MakeSimtClzCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtClzCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
-    const char* cpp_type = dtype == ir::DataType::INT32 ? "int" : "long long";
-    return "__clz((" + std::string(cpp_type) + ")(" + operand + "))";
+    const char* cppType = dtype == ir::DataType::INT32 ? "int" : "long long";
+    return "__clz((" + std::string(cppType) + ")(" + operand + "))";
 }
 
-std::string MakeSimtFfsCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtFfsCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
-    const char* cpp_type = dtype == ir::DataType::INT32 ? "int" : "long long";
-    return "__ffs((" + std::string(cpp_type) + ")(" + operand + "))";
+    const char* cppType = dtype == ir::DataType::INT32 ? "int" : "long long";
+    return "__ffs((" + std::string(cppType) + ")(" + operand + "))";
 }
 
-std::string MakeSimtBytePermCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtBytePermCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     const std::string selector = codegen.GetExprAsCode(op->args_[2]);
     return "__byte_perm((unsigned int)(" + lhs + "), (unsigned int)(" + rhs + "), (unsigned int)(" + selector + "))";
 }
 
-std::string MakeSimtSadCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtSadCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     const std::string addend = codegen.GetExprAsCode(op->args_[2]);
     const char* intrinsic = dtype == ir::DataType::INT32 ? "__sad" : "__usad";
-    const char* operand_type = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
-    return std::string(intrinsic) + "((" + operand_type + ")(" + lhs + "), (" + operand_type + ")(" + rhs +
+    const char* operandType = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
+    return std::string(intrinsic) + "((" + operandType + ")(" + lhs + "), (" + operandType + ")(" + rhs +
            "), (unsigned int)(" + addend + "))";
 }
 
-std::string MakeSimtMul24CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtMul24CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     const char* intrinsic = dtype == ir::DataType::INT32 ? "__mul24" : "__umul24";
-    const char* operand_type = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
-    return std::string(intrinsic) + "((" + operand_type + ")(" + lhs + "), (" + operand_type + ")(" + rhs + "))";
+    const char* operandType = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
+    return std::string(intrinsic) + "((" + operandType + ")(" + lhs + "), (" + operandType + ")(" + rhs + "))";
 }
 
-std::string MakeSimtHaddCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtHaddCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     const char* intrinsic = dtype == ir::DataType::INT32 ? "__hadd" : "__uhadd";
-    const char* operand_type = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
-    return std::string(intrinsic) + "((" + operand_type + ")(" + lhs + "), (" + operand_type + ")(" + rhs + "))";
+    const char* operandType = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
+    return std::string(intrinsic) + "((" + operandType + ")(" + lhs + "), (" + operandType + ")(" + rhs + "))";
 }
 
-std::string MakeSimtRhaddCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtRhaddCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     const char* intrinsic = dtype == ir::DataType::INT32 ? "__rhadd" : "__urhadd";
-    const char* operand_type = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
-    return std::string(intrinsic) + "((" + operand_type + ")(" + lhs + "), (" + operand_type + ")(" + rhs + "))";
+    const char* operandType = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
+    return std::string(intrinsic) + "((" + operandType + ")(" + lhs + "), (" + operandType + ")(" + rhs + "))";
 }
 
-std::string MakeSimtFmaReluCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtFmaReluCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     const std::string addend = codegen.GetExprAsCode(op->args_[2]);
     return "__hfma_relu((" + lhs + "), (" + rhs + "), (" + addend + "))";
 }
 
-std::string MakeSimtUnorderedCompareCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base,
+std::string MakeSimtUnorderedCompareCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase,
                                                const char* intrinsic)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     return std::string(intrinsic) + "((" + lhs + "), (" + rhs + "))";
 }
 
-std::string MakeSimtEquCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtEquCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return MakeSimtUnorderedCompareCodegenCCE(op, codegen_base, "__hequ");
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, "__hequ");
 }
 
-std::string MakeSimtLeuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtLeuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return MakeSimtUnorderedCompareCodegenCCE(op, codegen_base, "__hleu");
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, "__hleu");
 }
 
-std::string MakeSimtGeuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtGeuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return MakeSimtUnorderedCompareCodegenCCE(op, codegen_base, "__hgeu");
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, "__hgeu");
 }
 
-std::string MakeSimtLtuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtLtuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return MakeSimtUnorderedCompareCodegenCCE(op, codegen_base, "__hltu");
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, "__hltu");
 }
 
-std::string MakeSimtGtuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtGtuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return MakeSimtUnorderedCompareCodegenCCE(op, codegen_base, "__hgtu");
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, "__hgtu");
 }
 
 std::string MakeSimtNormSqrtFP32Codegen(const std::string& operand)
@@ -1961,12 +1958,12 @@ std::string MakeSimtNormSqrtFP32Codegen(const std::string& operand)
     return s.str();
 }
 
-std::string MakeSimtHypotCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtHypotCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
-    const std::string sqrt_scaled = MakeSimtNormSqrtFP32Codegen("__square_sum");
+    const std::string sqrtScaled = MakeSimtNormSqrtFP32Codegen("__square_sum");
     std::ostringstream s;
     s << "({float __x = __fabsf(" << lhs << "), __y = __fabsf(" << rhs << ");"
       << "uint32_t __xb = reinterpret_cast<uint32_t&>(__x), __yb = reinterpret_cast<uint32_t&>(__y);"
@@ -1977,7 +1974,7 @@ std::string MakeSimtHypotCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
       << "float __scale = reinterpret_cast<float&>(__scale_bits);"
       << "float __scaled_min = __min * __scale, __scaled_max = __max * __scale;"
       << "float __square_sum = __fma(__scaled_max, __scaled_max, __scaled_min * __scaled_min);"
-      << "float __sqrt_scaled = " << sqrt_scaled << ";"
+      << "float __sqrt_scaled = " << sqrtScaled << ";"
       << "uint32_t __restore_bits = __bucket | 0x00800000u;"
       << "float __result = __max != 0.0f ? reinterpret_cast<float&>(__restore_bits) * __sqrt_scaled : __max;"
       << "if (__min_bits == 0x7f800000u) {"
@@ -1985,9 +1982,9 @@ std::string MakeSimtHypotCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return s.str();
 }
 
-std::string MakeSimtPowCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtPowCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     std::ostringstream s;
@@ -2063,9 +2060,9 @@ std::string MakeSimtPowCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     return s.str();
 }
 
-std::string MakeSimtRhypotCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtRhypotCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     std::ostringstream s;
@@ -2082,9 +2079,9 @@ std::string MakeSimtRhypotCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
     return s.str();
 }
 
-std::string MakeSimtFdimCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtFdimCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     std::ostringstream s;
@@ -2095,9 +2092,9 @@ std::string MakeSimtFdimCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     return s.str();
 }
 
-std::string MakeSimtRemainderCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtRemainderCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     // Binary long division computes fmod and the quotient's low bit. The low bit
@@ -2129,13 +2126,13 @@ std::string MakeSimtRemainderCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
     return s.str();
 }
 
-std::string MakeSimtNorm3dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtNorm3dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string x = codegen.GetExprAsCode(op->args_[0]);
     const std::string y = codegen.GetExprAsCode(op->args_[1]);
     const std::string z = codegen.GetExprAsCode(op->args_[2]);
-    const std::string sqrt_scaled = MakeSimtNormSqrtFP32Codegen("__square_sum");
+    const std::string sqrtScaled = MakeSimtNormSqrtFP32Codegen("__square_sum");
     std::ostringstream s;
     s << "({float __a = __fabsf(" << x << "), __b = __fabsf(" << y << "), __c = __fabsf(" << z << ");"
       << "float __max_ab = __isnan(__a) ? __b : (__isnan(__b) ? __a : __fmaxf(__a, __b));"
@@ -2148,7 +2145,7 @@ std::string MakeSimtNorm3dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
       << "float __scaled_max = __max * __scale, __square_sum = __scaled_middle * __scaled_middle;"
       << "__square_sum = __fma(__scaled_min, __scaled_min, __square_sum);"
       << "__square_sum = __fma(__scaled_max, __scaled_max, __square_sum);"
-      << "float __sqrt_scaled = " << sqrt_scaled << ", __sum = __a + __b + __c, __result = __sum;"
+      << "float __sqrt_scaled = " << sqrtScaled << ", __sum = __a + __b + __c, __result = __sum;"
       << "if (__sum > __max) { uint32_t __restore_bits = __bucket | 0x00800000u;"
       << "__result = reinterpret_cast<float&>(__restore_bits) * __sqrt_scaled; }"
       << "if (__max_bits == 0x7f800000u) {"
@@ -2156,9 +2153,9 @@ std::string MakeSimtNorm3dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
     return s.str();
 }
 
-std::string MakeSimtRnorm3dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtRnorm3dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string x = codegen.GetExprAsCode(op->args_[0]);
     const std::string y = codegen.GetExprAsCode(op->args_[1]);
     const std::string z = codegen.GetExprAsCode(op->args_[2]);
@@ -2187,14 +2184,14 @@ std::string MakeSimtRnorm3dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBas
     return s.str();
 }
 
-std::string MakeSimtNorm4dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtNorm4dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string x = codegen.GetExprAsCode(op->args_[0]);
     const std::string y = codegen.GetExprAsCode(op->args_[1]);
     const std::string z = codegen.GetExprAsCode(op->args_[2]);
     const std::string w = codegen.GetExprAsCode(op->args_[3]);
-    const std::string sqrt_scaled = MakeSimtNormSqrtFP32Codegen("__square_sum");
+    const std::string sqrtScaled = MakeSimtNormSqrtFP32Codegen("__square_sum");
     std::ostringstream s;
     s << "({float __a = __fabsf(" << x << "), __b = __fabsf(" << y << "), __c = __fabsf(" << z << "), __d = __fabsf("
       << w << ");"
@@ -2212,7 +2209,7 @@ std::string MakeSimtNorm4dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
       << "__square_sum = __fma(__scaled2, __scaled2, __square_sum);"
       << "__square_sum = __fma(__scaled0, __scaled0, __square_sum);"
       << "__square_sum = __fma(__scaled_max, __scaled_max, __square_sum);"
-      << "float __sqrt_scaled = " << sqrt_scaled << ", __sum = __a + __b + __d + __c, __result = __sum;"
+      << "float __sqrt_scaled = " << sqrtScaled << ", __sum = __a + __b + __d + __c, __result = __sum;"
       << "if (__sum > __max) { uint32_t __restore_bits = __bucket | 0x00800000u;"
       << "__result = reinterpret_cast<float&>(__restore_bits) * __sqrt_scaled; }"
       << "if (__max_bits == 0x7f800000u) {"
@@ -2220,9 +2217,9 @@ std::string MakeSimtNorm4dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
     return s.str();
 }
 
-std::string MakeSimtRnorm4dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtRnorm4dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string x = codegen.GetExprAsCode(op->args_[0]);
     const std::string y = codegen.GetExprAsCode(op->args_[1]);
     const std::string z = codegen.GetExprAsCode(op->args_[2]);
@@ -2257,9 +2254,9 @@ std::string MakeSimtRnorm4dCodegenCCE(const ir::CallPtr& op, codegen::CodegenBas
     return s.str();
 }
 
-std::string MakeSimtLdexpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtLdexpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string value = codegen.GetExprAsCode(op->args_[0]);
     const std::string exponent = codegen.GetExprAsCode(op->args_[1]);
     std::ostringstream s;
@@ -2283,15 +2280,15 @@ std::string MakeSimtLdexpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return s.str();
 }
 
-std::string MakeSimtScalbnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtScalbnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string value = codegen.GetExprAsCode(op->args_[0]);
     const std::string exponent = codegen.GetExprAsCode(op->args_[1]);
-    const auto exponent_dtype = ir::As<ir::ScalarType>(op->args_[1]->GetType())->dtype_;
+    const auto exponentDtype = ir::As<ir::ScalarType>(op->args_[1]->GetType())->dtype_;
     std::ostringstream s;
     s << "({float __x = (" << value << "); int32_t __n;";
-    if (exponent_dtype == ir::DataType::INT64) {
+    if (exponentDtype == ir::DataType::INT64) {
         s << "int64_t __long_n = (int64_t)(" << exponent << ");"
           << "if (__long_n > 278) { __n = 278; } else if (__long_n < -278) { __n = -278; }"
           << "else { __n = (int32_t)__long_n; }";
@@ -2364,9 +2361,9 @@ std::string MakeSimtLgammaSinpiFP32Codegen(const std::string& operand)
     return s.str();
 }
 
-std::string MakeSimtTgammaCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtTgammaCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     std::ostringstream s;
     s << "({float __x = (" << operand << "), __abs_input = __fabsf(__x), __result;"
@@ -2504,14 +2501,14 @@ std::string MakeSimtTgammaCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
     return s.str();
 }
 
-std::string MakeSimtLgammaCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtLgammaCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
-    const std::string small_log = MakeSimtGammaLnFP32Codegen("__small_value");
-    const std::string large_log = MakeSimtGammaLnFP32Codegen("__abs_x");
+    const std::string smallLog = MakeSimtGammaLnFP32Codegen("__small_value");
+    const std::string largeLog = MakeSimtGammaLnFP32Codegen("__abs_x");
     const std::string sinpi = MakeSimtLgammaSinpiFP32Codegen("__abs_x");
-    const std::string reflection_log = MakeSimtGammaLnFP32Codegen("__abs_x * __fabsf(__sinpi)");
+    const std::string reflectionLog = MakeSimtGammaLnFP32Codegen("__abs_x * __fabsf(__sinpi)");
     std::ostringstream s;
     s << "({float __x = (" << operand << "), __abs_x = __fabsf(__x), __result = 0.0f;"
       << "if (__isinf(__abs_x)) { __result = __abs_x; }"
@@ -2523,7 +2520,7 @@ std::string MakeSimtLgammaCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
       << "__small_value = __fma(__small_value, __abs_x, 0.5772154f);"
       << "__small_value = __fma(__small_value, __abs_x, 0.0f);"
       << "__small_value = __fma(__small_value, __abs_x, __abs_x);"
-      << "__result = -(" << small_log << ");"
+      << "__result = -(" << smallLog << ");"
       << "if (__small_value == 0.0f) { __result = __builtin_inff(); } }"
       << "else if (__abs_x < 1.5f) { float __one_minus_x = 1.0f - __abs_x;"
       << "__result = __fma(0.045882664f, __one_minus_x, 0.10373967f);"
@@ -2562,19 +2559,19 @@ std::string MakeSimtLgammaCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
       << "float __correction = __fma(0.00077783066f, __inv_square, -0.0027776553f);"
       << "__correction = __fma(__correction, __inv_square, 0.083333276f);"
       << "__correction = __fma(__correction, __inv_abs_x, 0.0f);"
-      << "float __half_log_product = (" << large_log << ") * 0.5f * (__abs_x - 0.5f);"
+      << "float __half_log_product = (" << largeLog << ") * 0.5f * (__abs_x - 0.5f);"
       << "__result = __half_log_product - __abs_x + __half_log_product + __correction + 0.9189385f; }"
       << "if (__x < 0.0f) { if (__floorf(__abs_x) == __abs_x) { __result = __builtin_inff(); }"
-      << "else if (__abs_x < 9.9999996e-20f) { __result = -(" << large_log << "); }"
-      << "else { float __sinpi = " << sinpi << "; float __reflection_log = " << reflection_log << ";"
+      << "else if (__abs_x < 9.9999996e-20f) { __result = -(" << largeLog << "); }"
+      << "else { float __sinpi = " << sinpi << "; float __reflection_log = " << reflectionLog << ";"
       << "float __reflection = 1.14472985f - __reflection_log; __result = __fma(__reflection, 1.0f, -__result); } }"
       << "__result;})";
     return s.str();
 }
 
-std::string MakeSimtErfOpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtErfOpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     const std::string exp2 = MakeSimtExp2FP32Codegen("__exponent");
     std::ostringstream s;
@@ -2595,9 +2592,9 @@ std::string MakeSimtErfOpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return s.str();
 }
 
-std::string MakeSimtErfcOpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtErfcOpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     std::ostringstream s;
     s << "({float __x = (" << operand << "), __a = __fabsf(__x);"
@@ -2636,9 +2633,9 @@ std::string MakeSimtErfcOpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
     return s.str();
 }
 
-std::string MakeSimtErfinvCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtErfinvCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     const std::string log2 = MakeSimtLog2FP32Codegen("__temp");
     std::ostringstream s;
@@ -2659,16 +2656,16 @@ std::string MakeSimtErfinvCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
     return s.str();
 }
 
-std::string MakeSimtErfcinvCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtErfcinvCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
-    const std::string central_log2 = MakeSimtLog2FP32Codegen("__product");
-    const std::string tail_log2 = MakeSimtLog2FP32Codegen("__selected");
+    const std::string centralLog2 = MakeSimtLog2FP32Codegen("__product");
+    const std::string tailLog2 = MakeSimtLog2FP32Codegen("__selected");
     std::ostringstream s;
     s << "({float __x = (" << operand << "), __opposite = -__x, __term = 2.0f - __x, __r;"
       << "if (__x <= 1.9966f && __x >= 0.0034f) { float __product = __term * __x;"
-      << "float __w = -(" << central_log2 << ");"
+      << "float __w = -(" << centralLog2 << ");"
       << "float __p = __fma(__w, -2.5172708e-10f, 9.427429e-9f);"
       << "__p = __fma(__w, __p, -1.2054752e-7f); __p = __fma(__w, __p, 2.1697005e-7f);"
       << "__p = __fma(__w, __p, 8.0621484e-6f); __p = __fma(__w, __p, -3.1675492e-5f);"
@@ -2676,7 +2673,7 @@ std::string MakeSimtErfcinvCodegenCCE(const ir::CallPtr& op, codegen::CodegenBas
       << "__p = __fma(__w, __p, 0.16082023f); __p = __fma(__w, __p, 0.8862269f);"
       << "__r = __fma(__p, __opposite, __p); }"
       << "else { bool __high = __x > 1.0f; float __selected = __high ? __term : __x;"
-      << "float __w = -(" << tail_log2 << "), __s = 1.0f / __sqrtf(__w);"
+      << "float __w = -(" << tailLog2 << "), __s = 1.0f / __sqrtf(__w);"
       << "float __p = __fma(__s, -63.113224f, 127.48469f);"
       << "__p = __fma(__s, __p, -114.10568f); __p = __fma(__s, __p, 60.325786f);"
       << "__p = __fma(__s, __p, -21.789892f); __p = __fma(__s, __p, 6.467409f);"
@@ -2686,9 +2683,9 @@ std::string MakeSimtErfcinvCodegenCCE(const ir::CallPtr& op, codegen::CodegenBas
     return s.str();
 }
 
-std::string MakeSimtErfcxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtErfcxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     const std::string exp2 = MakeSimtExp2FP32Codegen("__exp_arg");
     std::ostringstream s;
@@ -2729,9 +2726,9 @@ std::string MakeSimtErfcxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     return s.str();
 }
 
-std::string MakeSimtNormcdfCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtNormcdfCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     const std::string exp2 = MakeSimtExp2FP32Codegen("__exp_residual * 1.4426950216293335f");
     std::ostringstream s;
@@ -2786,17 +2783,17 @@ std::string MakeSimtNormcdfCodegenCCE(const ir::CallPtr& op, codegen::CodegenBas
     return s.str();
 }
 
-std::string MakeSimtNormcdfinvCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtNormcdfinvCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
-    const std::string central_log2 = MakeSimtLog2FP32Codegen("__product");
-    const std::string tail_log2 = MakeSimtLog2FP32Codegen("__selected");
+    const std::string centralLog2 = MakeSimtLog2FP32Codegen("__product");
+    const std::string tailLog2 = MakeSimtLog2FP32Codegen("__selected");
     std::ostringstream s;
     s << "({float __x = (" << operand << "), __double_x = __x + __x;"
       << "float __opposite = -__double_x, __term = 2.0f - __double_x, __r;"
       << "if (__double_x >= 0.0034f && __double_x <= 1.9966f) { float __product = __term * __double_x;"
-      << "float __w = -(" << central_log2 << ");"
+      << "float __w = -(" << centralLog2 << ");"
       << "float __p = __fma(-2.51727084e-10f, __w, 9.42742862e-09f);"
       << "__p = __fma(__p, __w, -1.20547526e-07f); __p = __fma(__p, __w, 2.16970051e-07f);"
       << "__p = __fma(__p, __w, 8.06214848e-06f); __p = __fma(__p, __w, -3.16754922e-05f);"
@@ -2804,7 +2801,7 @@ std::string MakeSimtNormcdfinvCodegenCCE(const ir::CallPtr& op, codegen::Codegen
       << "__p = __fma(__p, __w, 0.160820231f); __p = __fma(__p, __w, 0.886226892f);"
       << "__r = __fma(__p, __opposite, __p); }"
       << "else { float __selected = __double_x <= 1.0f ? __double_x : __term;"
-      << "float __w = 1.0f / __sqrtf(-(" << tail_log2 << "));"
+      << "float __w = 1.0f / __sqrtf(-(" << tailLog2 << "));"
       << "float __p = __fma(-63.113224f, __w, 127.484688f);"
       << "__p = __fma(__p, __w, -114.105682f); __p = __fma(__p, __w, 60.3257866f);"
       << "__p = __fma(__p, __w, -21.7898922f); __p = __fma(__p, __w, 6.46740913f);"
@@ -2815,7 +2812,7 @@ std::string MakeSimtNormcdfinvCodegenCCE(const ir::CallPtr& op, codegen::Codegen
     return s.str();
 }
 
-std::string MakeSimtBesselMiddleTrigFP32Codegen(const std::string& alpha, bool is_sin)
+std::string MakeSimtBesselMiddleTrigFP32Codegen(const std::string& alpha, bool isSin)
 {
     std::ostringstream s;
     s << "({float __bessel_alpha = (" << alpha << "); __bessel_alpha = __bessel_alpha * 0.0f + __bessel_alpha;"
@@ -2838,7 +2835,7 @@ std::string MakeSimtBesselMiddleTrigFP32Codegen(const std::string& alpha, bool i
       << "float __bessel_cube = __fma(__bessel_reduced, __bessel_square, 0.0f);"
       << "__bessel_sin = __fma(__bessel_sin, __bessel_cube, __bessel_reduced);"
       << "if ((__bessel_quadrant & 2) != 0) { __bessel_sin = -__bessel_sin; __bessel_cos = -__bessel_cos; }";
-    if (is_sin) {
+    if (isSin) {
         s << "if ((__bessel_quadrant & 1) != 0) { __bessel_sin = __bessel_cos; } __bessel_sin;";
     } else {
         s << "if ((__bessel_quadrant & 1) != 0) { __bessel_cos = -__bessel_sin; } __bessel_cos;";
@@ -2847,9 +2844,9 @@ std::string MakeSimtBesselMiddleTrigFP32Codegen(const std::string& alpha, bool i
     return s.str();
 }
 
-std::string MakeSimtBesselHugeCosFP32Codegen(const std::string& alpha, const std::string& phase_shift)
+std::string MakeSimtBesselHugeCosFP32Codegen(const std::string& alpha, const std::string& phaseShift)
 {
-    const std::string cos_value = MakeSimtTrigFP32Codegen("__bessel_reduced - (" + phase_shift + ")", false);
+    const std::string cosValue = MakeSimtTrigFP32Codegen("__bessel_reduced - (" + phaseShift + ")", false);
     std::ostringstream s;
     s << "({float __bessel_alpha = (" << alpha << "), __bessel_reduced = __bessel_alpha;"
       << "int32_t __bessel_quadrant = 0; if (__bessel_alpha >= 105615.0f) {"
@@ -2883,14 +2880,14 @@ std::string MakeSimtBesselHugeCosFP32Codegen(const std::string& alpha, const std
       << "__bessel_pi -= (int64_t)__bessel_hi_part; float __bessel_lo_part = (float)__bessel_pi;"
       << "__bessel_reduced = (__bessel_hi_part + __bessel_lo_part) * 3.4061215800865545e-19f;"
       << "__bessel_quadrant &= 3;"
-      << "__bessel_reduced += (float)__bessel_quadrant * 1.5707963705062866f; }" << cos_value << ";})";
+      << "__bessel_reduced += (float)__bessel_quadrant * 1.5707963705062866f; }" << cosValue << ";})";
     return s.str();
 }
 
 std::string MakeSimtJ0Codegen(const std::string& operand)
 {
-    const std::string middle_value = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", false);
-    const std::string huge_cos_value = MakeSimtBesselHugeCosFP32Codegen("__alpha", "0.7853981852531433f");
+    const std::string middleValue = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", false);
+    const std::string hugeCosValue = MakeSimtBesselHugeCosFP32Codegen("__alpha", "0.7853981852531433f");
     std::ostringstream s;
     s << "({float __x = (" << operand << "), __a = __fabsf(__x), __r; uint32_t __ab = reinterpret_cast<uint32_t&>(__a);"
       << "if (__ab > 0x7f800000u) { __r = __x; }"
@@ -2911,7 +2908,7 @@ std::string MakeSimtJ0Codegen(const std::string& operand)
       << "float __alpha = __fma(1.6380658830915178f, __inv2, -0.2095703125f);"
       << "__alpha = __fma(__alpha, __inv2, 0.06510416666666666f);"
       << "__alpha = __fma(__alpha, __inv2, -0.125f); __alpha = __fma(__alpha, __inv, __a);"
-      << "__r = __beta * (1.0f / __sqrtf(__a)) * 0.7978846f * (" << middle_value << "); }"
+      << "__r = __beta * (1.0f / __sqrtf(__a)) * 0.7978846f * (" << middleValue << "); }"
       << "else { float __inv = 1.0f / __a, __inv2 = __inv * __inv;"
       << "float __alpha_poly = __fma(__inv2, 1.139649510383606f, -0.20532675087451935f);"
       << "__alpha_poly = __fma(__inv2, __alpha_poly, 0.06509173661470413f);"
@@ -2921,14 +2918,14 @@ std::string MakeSimtJ0Codegen(const std::string& operand)
       << "__beta = __fma(__inv2, __beta, 0.10337056964635849f);"
       << "__beta = __fma(__inv2, __beta, -0.062499724328517914f);"
       << "__beta = __fma(__inv2, __beta, 1.0f);"
-      << "__r = __beta * (1.0f / __sqrtf(__a)) * 0.7978845834732056f * (" << huge_cos_value << "); } __r;})";
+      << "__r = __beta * (1.0f / __sqrtf(__a)) * 0.7978845834732056f * (" << hugeCosValue << "); } __r;})";
     return s.str();
 }
 
 std::string MakeSimtJ1Codegen(const std::string& operand)
 {
-    const std::string middle_value = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", true);
-    const std::string huge_cos_value = MakeSimtBesselHugeCosFP32Codegen("__alpha", "2.356194496154785f");
+    const std::string middleValue = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", true);
+    const std::string hugeCosValue = MakeSimtBesselHugeCosFP32Codegen("__alpha", "2.356194496154785f");
     std::ostringstream s;
     s << "({float __x = (" << operand << "), __a = __fabsf(__x), __r; uint32_t __ab = reinterpret_cast<uint32_t&>(__a);"
       << "if (__ab > 0x7f800000u) { __r = __x; }"
@@ -2949,7 +2946,7 @@ std::string MakeSimtJ1Codegen(const std::string& operand)
       << "float __alpha = __fma(-2.3693978445870534f, __inv2, 0.3708984375f);"
       << "__alpha = __fma(__alpha, __inv2, -0.1640625f);"
       << "__alpha = __fma(__alpha, __inv2, 0.375f); __alpha = __fma(__alpha, __inv, __a);"
-      << "__r = __beta * (1.0f / __sqrtf(__a)) * 0.7978846f * (" << middle_value << "); }"
+      << "__r = __beta * (1.0f / __sqrtf(__a)) * 0.7978846f * (" << middleValue << "); }"
       << "else { float __inv = 1.0f / __a, __inv2 = __inv * __inv;"
       << "float __alpha_poly = __fma(__inv2, -1.5799448490142822f, 0.36148586869239807f);"
       << "__alpha_poly = __fma(__inv2, __alpha_poly, -0.164012610912323f);"
@@ -2959,16 +2956,16 @@ std::string MakeSimtJ1Codegen(const std::string& operand)
       << "__beta = __fma(__inv2, __beta, -0.1929156482219696f);"
       << "__beta = __fma(__inv2, __beta, 0.18749825656414032f);"
       << "__beta = __fma(__inv2, __beta, 1.0f);"
-      << "__r = __beta * (1.0f / __sqrtf(__a)) * 0.7978845834732056f * (" << huge_cos_value << "); }"
+      << "__r = __beta * (1.0f / __sqrtf(__a)) * 0.7978845834732056f * (" << hugeCosValue << "); }"
       << "if (__ab <= 0x7f800000u && (reinterpret_cast<uint32_t&>(__x) & 0x80000000u)) { __r = -__r; } __r;})";
     return s.str();
 }
 
 std::string MakeSimtY0Codegen(const std::string& operand)
 {
-    const std::string middle_value = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", true);
-    const std::string huge_cos_value = MakeSimtBesselHugeCosFP32Codegen("__alpha", "2.356194496154785f");
-    const std::string log_value = MakeSimtLogFP32Codegen("__x");
+    const std::string middleValue = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", true);
+    const std::string hugeCosValue = MakeSimtBesselHugeCosFP32Codegen("__alpha", "2.356194496154785f");
+    const std::string logValue = MakeSimtLogFP32Codegen("__x");
     std::ostringstream s;
     s << "({float __x = (" << operand
       << "), __r; uint32_t __b = reinterpret_cast<uint32_t&>(__x), __a = __b & 0x7fffffffu;"
@@ -2980,7 +2977,7 @@ std::string MakeSimtY0Codegen(const std::string& operand)
          "-1.652431533e-02f);"
       << "__p = __fma(__p, __x, 1.196180186e-04f); __p = __fma(__p, __x, 1.775911068e-01f);"
       << "__p = __fma(__p, __x, 7.436880598e-07f); __p = __fma(__p, __x, -7.380430393e-02f);"
-      << "__r = 0.636619772367f * (" << MakeSimtJ0Codegen("__j0_input") << ") * (" << log_value << ") + __p; }"
+      << "__r = 0.636619772367f * (" << MakeSimtJ0Codegen("__j0_input") << ") * (" << logValue << ") + __p; }"
       << "else if (__x < 2.197141326f) { float __d = (__x - 0.893576980f) + 1.33579787e-8f;"
       << "float __p = -4.485103697e-03f; __p = __fma(__p, __d, 3.231012427e-02f);"
       << "__p = __fma(__p, __d, -1.014045593e-01f); __p = __fma(__p, __d, 1.847167541e-01f);"
@@ -3004,7 +3001,7 @@ std::string MakeSimtY0Codegen(const std::string& operand)
       << "float __alpha = __fma(1.6380658830915178f, __inv2, -0.2095703125f);"
       << "__alpha = __fma(__alpha, __inv2, 0.06510416666666666f); __alpha = __fma(__alpha, __inv2, -0.125f);"
       << "__alpha = __fma(__alpha, __inv, __x);"
-      << "__r = __beta * (1.0f / __sqrtf(__x)) * 0.7978846f * (" << middle_value << "); }"
+      << "__r = __beta * (1.0f / __sqrtf(__x)) * 0.7978846f * (" << middleValue << "); }"
       << "else { float __inv = 1.0f / __x, __inv2 = __inv * __inv;"
       << "float __alpha_poly = __fma(__inv2, 1.1000176668167114f, -0.2039303183555603f);"
       << "__alpha_poly = __fma(__inv2, __alpha_poly, 0.06507780402898788f);"
@@ -3013,15 +3010,15 @@ std::string MakeSimtY0Codegen(const std::string& operand)
       << "float __beta = __fma(__inv2, -0.39924582839012146f, 0.10197055339813232f);"
       << "__beta = __fma(__inv2, __beta, -0.06249268725514412f);"
       << "__beta = __fma(__inv2, __beta, 1.0f);"
-      << "__r = __beta * (1.0f / __sqrtf(__x)) * 0.7978845834732056f * (" << huge_cos_value << "); } __r;})";
+      << "__r = __beta * (1.0f / __sqrtf(__x)) * 0.7978845834732056f * (" << hugeCosValue << "); } __r;})";
     return s.str();
 }
 
 std::string MakeSimtY1Codegen(const std::string& operand)
 {
-    const std::string middle_value = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", false);
-    const std::string huge_cos_value = MakeSimtBesselHugeCosFP32Codegen("__alpha", "3.9269907474517822f");
-    const std::string log_value = MakeSimtLogFP32Codegen("__x");
+    const std::string middleValue = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", false);
+    const std::string hugeCosValue = MakeSimtBesselHugeCosFP32Codegen("__alpha", "3.9269907474517822f");
+    const std::string logValue = MakeSimtLogFP32Codegen("__x");
     std::ostringstream s;
     s << "({float __x = (" << operand
       << "), __r; uint32_t __b = reinterpret_cast<uint32_t&>(__x), __a = __b & 0x7fffffffu;"
@@ -3034,7 +3031,7 @@ std::string MakeSimtY1Codegen(const std::string& operand)
       << "__p = __fma(__p, __x, 3.643335439e-04f); __p = __fma(__p, __x, 5.419222886e-02f);"
       << "__p = __fma(__p, __x, 3.339972037e-05f); __p = __fma(__p, __x, -1.960600316e-01f);"
       << "__p = __fma(__p, __x, 6.24278e-08f); __r = 0.636619772367f * (" << MakeSimtJ1Codegen("__j1_input") << ") * ("
-      << log_value << ") - 0.636619772367f / __x + __p; }"
+      << logValue << ") - 0.636619772367f / __x + __p; }"
       << "else if (__x < 3.0f) { float __d = (__x - 2.19714141f) + 8.28892723e-8f;"
       << "float __p = -7.210192066e-05f; __p = __fma(__p, __d, 6.665645689e-05f);"
       << "__p = __fma(__p, __d, -3.106003176e-05f); __p = __fma(__p, __d, 2.276838750e-04f);"
@@ -3057,7 +3054,7 @@ std::string MakeSimtY1Codegen(const std::string& operand)
       << "float __alpha = __fma(-2.3693978445870534f, __inv2, 0.3708984375f);"
       << "__alpha = __fma(__alpha, __inv2, -0.1640625f); __alpha = __fma(__alpha, __inv2, 0.375f);"
       << "__alpha = __fma(__alpha, __inv, __x);"
-      << "__r = -__beta * (1.0f / __sqrtf(__x)) * 0.7978846f * (" << middle_value << "); }"
+      << "__r = -__beta * (1.0f / __sqrtf(__x)) * 0.7978846f * (" << middleValue << "); }"
       << "else { float __inv = 1.0f / __x, __inv2 = __inv * __inv;"
       << "float __alpha_poly = __fma(__inv2, -1.7881368398666382f, 0.36611685156822205f);"
       << "__alpha_poly = __fma(__inv2, __alpha_poly, -0.1640450656414032f);"
@@ -3066,21 +3063,21 @@ std::string MakeSimtY1Codegen(const std::string& operand)
       << "float __beta = __fma(__inv2, 0.6503810882568359f, -0.1920607089996338f);"
       << "__beta = __fma(__inv2, __beta, 0.18749521672725677f);"
       << "__beta = __fma(__inv2, __beta, 1.0f);"
-      << "__r = __beta * (1.0f / __sqrtf(__x)) * 0.7978845834732056f * (" << huge_cos_value << "); } __r;})";
+      << "__r = __beta * (1.0f / __sqrtf(__x)) * 0.7978845834732056f * (" << hugeCosValue << "); } __r;})";
     return s.str();
 }
 
-std::string MakeSimtJnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtJnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string order = codegen.GetExprAsCode(op->args_[0]);
     const std::string value = codegen.GetExprAsCode(op->args_[1]);
-    const std::string asymptotic_sin_x = MakeSimtTrigFP32Codegen("__ax", true);
-    const std::string asymptotic_cos_x = MakeSimtTrigFP32Codegen("__ax", false);
-    const std::string asymptotic_sin_phase = MakeSimtTrigFP32Codegen("__phase", true);
-    const std::string asymptotic_cos_phase = MakeSimtTrigFP32Codegen("__phase", false);
-    const std::string asymptotic_sqrt = MakeSimtSqrtFP32Codegen("__amplitude_argument");
-    const std::string series_log = MakeSimtLogFP32Codegen("__log_input");
+    const std::string asymptoticSinX = MakeSimtTrigFP32Codegen("__ax", true);
+    const std::string asymptoticCosX = MakeSimtTrigFP32Codegen("__ax", false);
+    const std::string asymptoticSinPhase = MakeSimtTrigFP32Codegen("__phase", true);
+    const std::string asymptoticCosPhase = MakeSimtTrigFP32Codegen("__phase", false);
+    const std::string asymptoticSqrt = MakeSimtSqrtFP32Codegen("__amplitude_argument");
+    const std::string seriesLog = MakeSimtLogFP32Codegen("__log_input");
     std::ostringstream s;
     s << "({int32_t __n = (int32_t)(" << order << "); float __x = (" << value
       << "), __r; uint32_t __xb = reinterpret_cast<uint32_t&>(__x), __a = __xb & 0x7fffffffu;"
@@ -3098,9 +3095,9 @@ std::string MakeSimtJnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& co
       << "float __amp_term = 1.0f + (__mu - 1.0f) / (2.0f * __txq);"
       << "__amp_term += 3.0f * (__mu - 1.0f) * (__mu - 9.0f) / (__txq * __txq * 8.0f);"
       << "float __amplitude_argument = __amp_term * 2.0f / (3.1415927410125732f * __ax);"
-      << "float __amplitude = " << asymptotic_sqrt << ";"
-      << "float __sin_x = " << asymptotic_sin_x << ", __cos_x = " << asymptotic_cos_x << ";"
-      << "float __sin_phase = " << asymptotic_sin_phase << ", __cos_phase = " << asymptotic_cos_phase << ";"
+      << "float __amplitude = " << asymptoticSqrt << ";"
+      << "float __sin_x = " << asymptoticSinX << ", __cos_x = " << asymptoticCosX << ";"
+      << "float __sin_phase = " << asymptoticSinPhase << ", __cos_phase = " << asymptoticCosPhase << ";"
       << "float __offset = (float)__n / 2.0f + 0.25f, __offset_two = __offset + __offset;"
       << "int32_t __offset_quadrant = __cvt_int32_t<ROUND::R, RoundingSaturation::RS_ENABLE_VALUE>(__offset_two);"
       << "float __offset_rounded = __cvt_float<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(__offset_quadrant);"
@@ -3127,9 +3124,9 @@ std::string MakeSimtJnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& co
       << "float __next = 2.0f * (float)__k * __current / __ax - __prev; __prev = __current; __current = __next; }"
       << "__r = __sign * __current; }"
       << "else if ((float)__n > __ax * __ax / 10.0f) { float __log_input = __ax / 2.0f;"
-      << "float __prefix = (float)__n * (" << series_log << ");"
+      << "float __prefix = (float)__n * (" << seriesLog << ");"
       << "for (int32_t __i = 2; __i <= __n; ++__i) { __log_input = (float)__i;"
-      << "__prefix -= (" << series_log << "); }"
+      << "__prefix -= (" << seriesLog << "); }"
       << "if (__prefix <= -87.3365478515625f) { float __half_prefix = __expf(__prefix * 0.5f);"
       << "__prefix = __half_prefix * __half_prefix; } else { __prefix = __expf(__prefix); }"
       << "float __mult = __ax * 0.5f; __mult *= -__mult;"
@@ -3148,16 +3145,16 @@ std::string MakeSimtJnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& co
     return s.str();
 }
 
-std::string MakeSimtYnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtYnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string order = codegen.GetExprAsCode(op->args_[0]);
     const std::string value = codegen.GetExprAsCode(op->args_[1]);
-    const std::string asymptotic_sin_x = MakeSimtTrigFP32Codegen("__x", true);
-    const std::string asymptotic_cos_x = MakeSimtTrigFP32Codegen("__x", false);
-    const std::string asymptotic_sin_shift = MakeSimtTrigFP32Codegen("__phase_shift - __phase", true);
-    const std::string asymptotic_cos_shift = MakeSimtTrigFP32Codegen("__phase_shift - __phase", false);
-    const std::string asymptotic_sqrt = MakeSimtSqrtFP32Codegen("__amplitude_argument");
+    const std::string asymptoticSinX = MakeSimtTrigFP32Codegen("__x", true);
+    const std::string asymptoticCosX = MakeSimtTrigFP32Codegen("__x", false);
+    const std::string asymptoticSinShift = MakeSimtTrigFP32Codegen("__phase_shift - __phase", true);
+    const std::string asymptoticCosShift = MakeSimtTrigFP32Codegen("__phase_shift - __phase", false);
+    const std::string asymptoticSqrt = MakeSimtSqrtFP32Codegen("__amplitude_argument");
     std::ostringstream s;
     s << "({int32_t __n = (int32_t)(" << order << "); float __x = (" << value
       << "), __r, __yn_input = __x; uint32_t __a = reinterpret_cast<uint32_t&>(__x) & 0x7fffffffu;"
@@ -3177,10 +3174,10 @@ std::string MakeSimtYnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& co
       << "__amp_term += 15.0f * (__mu - 1.0f) * (__mu - 9.0f) * (__mu - 25.0f) /"
       << " (__txq * __txq * __txq * 48.0f);"
       << "float __amplitude_argument = __amp_term * 2.0f / (3.1415927410125732f * __x);"
-      << "float __amplitude = " << asymptotic_sqrt << ";"
+      << "float __amplitude = " << asymptoticSqrt << ";"
       << "float __phase_shift = (float)__n * 3.1415927410125732f / 2.0f + 0.7853981852531433f;"
-      << "float __sin_x = " << asymptotic_sin_x << ", __cos_x = " << asymptotic_cos_x << ";"
-      << "float __sin_shift = " << asymptotic_sin_shift << ", __cos_shift = " << asymptotic_cos_shift << ";"
+      << "float __sin_x = " << asymptoticSinX << ", __cos_x = " << asymptoticCosX << ";"
+      << "float __sin_shift = " << asymptoticSinShift << ", __cos_shift = " << asymptoticCosShift << ";"
       << "__r = (__sin_x * __cos_shift - __cos_x * __sin_shift) * __amplitude; }"
       << "else { bool __invalid = false; float __inv = 1.0f / __x;"
       << "__inv = __fma(__inv, __fma(-__x, __inv, 1.0f), __inv); float __two_over_x = __fma(__inv, 2.0f, 0.0f);"
@@ -3197,9 +3194,9 @@ std::string MakeSimtYnCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& co
     return s.str();
 }
 
-std::string MakeSimtCylBesselI0CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtCylBesselI0CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     std::ostringstream s;
     s << "({float __x = (" << operand << "), __a = __fabsf(__x), __r; uint32_t __ab = reinterpret_cast<uint32_t&>(__a);"
@@ -3220,9 +3217,9 @@ std::string MakeSimtCylBesselI0CodegenCCE(const ir::CallPtr& op, codegen::Codege
     return s.str();
 }
 
-std::string MakeSimtCylBesselI1CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtCylBesselI1CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     std::ostringstream s;
     s << "({float __x = (" << operand << "), __a = __fabsf(__x), __r; uint32_t __ab = reinterpret_cast<uint32_t&>(__a);"
@@ -3244,48 +3241,48 @@ std::string MakeSimtCylBesselI1CodegenCCE(const ir::CallPtr& op, codegen::Codege
     return s.str();
 }
 
-std::string MakeSimtJ0CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtJ0CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     return MakeSimtJ0Codegen(operand);
 }
 
-std::string MakeSimtJ1CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtJ1CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     return MakeSimtJ1Codegen(operand);
 }
 
-std::string MakeSimtY0CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtY0CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     return MakeSimtY0Codegen(operand);
 }
 
-std::string MakeSimtY1CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtY1CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     return MakeSimtY1Codegen(operand);
 }
 
-std::string MakeSimtSaturateCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtSaturateCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
     return "__saturatef((float)(" + operand + "))";
 }
 
-std::string MakeSimtMulI32ToI64CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+std::string MakeSimtMulI32ToI64CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    const auto input_type = ir::As<ir::ScalarType>(op->args_[0]->GetType());
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    const auto inputType = ir::As<ir::ScalarType>(op->args_[0]->GetType());
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
-    if (input_type->dtype_ == ir::DataType::INT32) {
+    if (inputType->dtype_ == ir::DataType::INT32) {
         return "__mul_i32toi64((int)(" + lhs + "), (int)(" + rhs + "))";
     }
     return "__mul_i32toi64((unsigned int)(" + lhs + "), (unsigned int)(" + rhs + "))";
@@ -3312,11 +3309,11 @@ REGISTER_BACKEND_OP(BackendCCE, "simt.threadfence_block")
     .f_codegen(MakeSimtThreadfenceBlockCodegenCCE);
 REGISTER_BACKEND_OP(BackendCCE, "simt.threadfence").set_pipe(ir::PipeType::S).f_codegen(MakeSimtThreadfenceCodegenCCE);
 
-#define REGISTER_SIMT_WARP_BACKEND_OP(OpName, Intrinsic)                           \
-    REGISTER_BACKEND_OP(BackendCCE, "simt." OpName)                                \
-        .set_pipe(ir::PipeType::S)                                                 \
-        .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) { \
-            return MakeSimtWarpCodegenCCE(op, codegen_base, Intrinsic);            \
+#define REGISTER_SIMT_WARP_BACKEND_OP(OpName, Intrinsic)                          \
+    REGISTER_BACKEND_OP(BackendCCE, "simt." OpName)                               \
+        .set_pipe(ir::PipeType::S)                                                \
+        .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) { \
+            return MakeSimtWarpCodegenCCE(op, codegenBase, Intrinsic);            \
         })
 
 REGISTER_SIMT_WARP_BACKEND_OP("lane_id", "laneid");
@@ -3488,11 +3485,11 @@ REGISTER_BACKEND_OP(BackendCCE, "simt.min").set_pipe(ir::PipeType::S).f_codegen(
 REGISTER_BACKEND_OP(BackendCCE, "simt.max").set_pipe(ir::PipeType::S).f_codegen(MakeSimtMaxCodegenCCE);
 REGISTER_BACKEND_OP(BackendCCE, "simt.fma").set_pipe(ir::PipeType::S).f_codegen(MakeSimtFmaCodegenCCE);
 
-#define REGISTER_SIMT_ATOMIC_BACKEND_OP(Name, Intrinsic)                                          \
-    REGISTER_BACKEND_OP(BackendCCE, "simt." Name)                                                 \
-        .set_pipe(ir::PipeType::S)                                                                \
-        .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) -> std::string { \
-            return MakeSimtAtomicCodegenCCE(op, codegen_base, Intrinsic, "__" Name);              \
+#define REGISTER_SIMT_ATOMIC_BACKEND_OP(Name, Intrinsic)                                         \
+    REGISTER_BACKEND_OP(BackendCCE, "simt." Name)                                                \
+        .set_pipe(ir::PipeType::S)                                                               \
+        .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) -> std::string { \
+            return MakeSimtAtomicCodegenCCE(op, codegenBase, Intrinsic, "__" Name);              \
         })
 
 REGISTER_SIMT_ATOMIC_BACKEND_OP("atomic_add", "atomicAdd");

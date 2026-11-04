@@ -47,25 +47,25 @@ REGISTER_OP("struct.create")
     .set_attr<std::vector<std::string>>("fields")
     .f_deduce_type([](const std::vector<ExprPtr>& args,
                       const std::vector<std::pair<std::string, std::any>>& kwargs) -> TypePtr {
-        std::string struct_name;
+        std::string structName;
         std::vector<std::string> fields;
-        bool has_name = false;
-        bool has_fields = false;
+        bool hasName = false;
+        bool hasFields = false;
         for (const auto& [key, value] : kwargs) {
             if (key == "name") {
-                struct_name = std::any_cast<std::string>(value);
-                has_name = true;
+                structName = std::any_cast<std::string>(value);
+                hasName = true;
             } else if (key == "fields") {
                 fields = std::any_cast<std::vector<std::string>>(value);
-                has_fields = true;
+                hasFields = true;
             }
         }
-        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, has_name)
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, hasName)
             << "struct.create requires kwarg 'name' (C++ struct type name)";
-        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, has_fields)
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, hasFields)
             << "struct.create requires kwarg 'fields' (list of field names)";
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsValidIdentifier(struct_name))
-            << "struct.create 'name' must be a valid C identifier, got '" << struct_name << "'";
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsValidIdentifier(structName))
+            << "struct.create 'name' must be a valid C identifier, got '" << structName << "'";
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, fields.size() == args.size())
             << "struct.create: fields count (" << fields.size() << ") must match args count (" << args.size() << ")";
         std::set<std::string> seen;
@@ -75,17 +75,17 @@ REGISTER_OP("struct.create")
             PRO_IR_CHECK(ExternalError::INVALID_OPERATION, seen.insert(f).second)
                 << "struct.create field name '" << f << "' is duplicated";
         }
-        std::vector<TypePtr> field_types;
-        field_types.reserve(args.size());
+        std::vector<TypePtr> fieldTypes;
+        fieldTypes.reserve(args.size());
         for (size_t i = 0; i < args.size(); ++i) {
             PRO_IR_CHECK(npu::tile_fwk::InternalError::COMMON_INNER_ERROR, args[i])
                 << "struct.create arg #" << i << " is null";
-            field_types.push_back(args[i]->GetType());
+            fieldTypes.push_back(args[i]->GetType());
         }
         // Positional TupleType: field names live in IRDebugInfo (registered by the
         // parser from the op's 'fields' kwarg), not on the type.
         (void)fields;
-        return std::make_shared<TupleType>(std::move(field_types));
+        return std::make_shared<TupleType>(std::move(fieldTypes));
     });
 
 REGISTER_OP("struct.set")
@@ -107,15 +107,15 @@ REGISTER_OP("struct.set")
             PRO_IR_CHECK(npu::tile_fwk::InternalError::COMMON_INNER_ERROR, args[1]) << "struct.set: index arg is null";
         }
         PRO_IR_CHECK(npu::tile_fwk::InternalError::COMMON_INNER_ERROR, args.back()) << "struct.set: value arg is null";
-        bool has_field = false;
+        bool hasField = false;
         for (const auto& [key, value] : kwargs) {
             if (key == "field") {
                 PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsValidIdentifier(std::any_cast<std::string>(value)))
                     << "struct.set 'field' must be a valid identifier";
-                has_field = true;
+                hasField = true;
             }
         }
-        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, has_field)
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, hasField)
             << "struct.set requires kwarg 'field' (the C++ field name to write)";
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, args[0]->GetType()->GetKind() == ObjectKind::TupleType)
             << "struct.set: base must have TupleType";

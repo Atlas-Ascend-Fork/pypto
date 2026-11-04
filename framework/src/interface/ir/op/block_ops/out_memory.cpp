@@ -48,62 +48,62 @@ using npu::tile_fwk::ExternalError;
 
 static TypePtr DeduceBlockOutFillPadType([[maybe_unused]] const std::vector<ExprPtr>& args,
                                          [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
-                                         const std::string& op_name, bool allow_expand,
-                                         bool require_shared_backing_storage = false)
+                                         const std::string& opName, bool allowExpand,
+                                         bool requireSharedBackingStorage = false)
 {
-    auto result_type = DeduceBlockOutType(args, kwargs, op_name, 2);
-    auto out_type = As<TileType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, out_type) << op_name << ": out must be TileType";
-    auto src_type = As<TileType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, src_type) << op_name << ": src must be TileType";
-    PRO_IR_CHECK(ExternalError::INVALID_VAL, out_type->hardwareInfo_.has_value())
-        << op_name << ": out tile must carry hardware_info metadata";
+    auto resultType = DeduceBlockOutType(args, kwargs, opName, 2);
+    auto outType = As<TileType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, outType) << opName << ": out must be TileType";
+    auto srcType = As<TileType>(args[1]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, srcType) << opName << ": src must be TileType";
+    PRO_IR_CHECK(ExternalError::INVALID_VAL, outType->hardwareInfo_.has_value())
+        << opName << ": out tile must carry hardware_info metadata";
 
-    HardwareInfo hw = out_type->hardwareInfo_.value();
-    int pad_value = static_cast<int>(hw.pad);
+    HardwareInfo hw = outType->hardwareInfo_.value();
+    int padValue = static_cast<int>(hw.pad);
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT,
-                 pad_value >= static_cast<int>(TilePad::null) && pad_value <= static_cast<int>(TilePad::min))
-        << op_name << ": out.hardware_info.pad must be one of TilePad.null/zero/max/min";
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, pad_value != static_cast<int>(TilePad::null))
-        << op_name << ": out.hardware_info.pad must not be TilePad.null";
+                 padValue >= static_cast<int>(TilePad::null) && padValue <= static_cast<int>(TilePad::min))
+        << opName << ": out.hardware_info.pad must be one of TilePad.null/zero/max/min";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, padValue != static_cast<int>(TilePad::null))
+        << opName << ": out.hardware_info.pad must not be TilePad.null";
 
-    if (require_shared_backing_storage) {
-        PRO_IR_CHECK(ExternalError::INVALID_OPERATION, src_type->memref_.has_value() && out_type->memref_.has_value())
-            << op_name << ": src and out must share backing storage";
-        auto src_memref = src_type->memref_.value();
-        auto out_memref = out_type->memref_.value();
-        PRO_IR_CHECK(ExternalError::INVALID_OPERATION, src_memref->memorySpace_ == out_memref->memorySpace_ &&
-                                                           structural_equal(src_memref->addr_, out_memref->addr_))
-            << op_name << ": src and out must share backing storage";
+    if (requireSharedBackingStorage) {
+        PRO_IR_CHECK(ExternalError::INVALID_OPERATION, srcType->memref_.has_value() && outType->memref_.has_value())
+            << opName << ": src and out must share backing storage";
+        auto srcMemref = srcType->memref_.value();
+        auto outMemref = outType->memref_.value();
+        PRO_IR_CHECK(ExternalError::INVALID_OPERATION, srcMemref->memorySpace_ == outMemref->memorySpace_ &&
+                                                           structural_equal(srcMemref->addr_, outMemref->addr_))
+            << opName << ": src and out must share backing storage";
 
-        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, src_type->shape_.size() == 0x2 && out_type->shape_.size() == 0x2)
-            << op_name << ": src/out tile shapes must be rank-2";
-        auto src_rows = As<ConstInt>(src_type->shape_[0]);
-        auto src_cols = As<ConstInt>(src_type->shape_[1]);
-        auto out_rows = As<ConstInt>(out_type->shape_[0]);
-        auto out_cols = As<ConstInt>(out_type->shape_[1]);
-        PRO_IR_CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, src_rows && src_cols && out_rows && out_cols)
-            << op_name << ": src/out tile shapes must be static";
+        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, srcType->shape_.size() == 0x2 && outType->shape_.size() == 0x2)
+            << opName << ": src/out tile shapes must be rank-2";
+        auto srcRows = As<ConstInt>(srcType->shape_[0]);
+        auto srcCols = As<ConstInt>(srcType->shape_[1]);
+        auto outRows = As<ConstInt>(outType->shape_[0]);
+        auto outCols = As<ConstInt>(outType->shape_[1]);
+        PRO_IR_CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, srcRows && srcCols && outRows && outCols)
+            << opName << ": src/out tile shapes must be static";
         PRO_IR_CHECK(ExternalError::INVALID_SHAPE,
-                     out_rows->value_ == src_rows->value_ && out_cols->value_ == src_cols->value_)
-            << op_name << ": src and out tile rows/cols must match";
+                     outRows->value_ == srcRows->value_ && outCols->value_ == srcCols->value_)
+            << opName << ": src and out tile rows/cols must match";
     }
 
-    if (allow_expand) {
-        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, src_type->shape_.size() == 0x2 && out_type->shape_.size() == 0x2)
-            << op_name << ": src/out tile shapes must be rank-2";
+    if (allowExpand) {
+        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, srcType->shape_.size() == 0x2 && outType->shape_.size() == 0x2)
+            << opName << ": src/out tile shapes must be rank-2";
 
-        auto src_rows = As<ConstInt>(src_type->shape_[0]);
-        auto src_cols = As<ConstInt>(src_type->shape_[1]);
-        auto out_rows = As<ConstInt>(out_type->shape_[0]);
-        auto out_cols = As<ConstInt>(out_type->shape_[1]);
-        PRO_IR_CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, src_rows && src_cols && out_rows && out_cols)
-            << op_name << ": src/out tile shapes must be static";
+        auto srcRows = As<ConstInt>(srcType->shape_[0]);
+        auto srcCols = As<ConstInt>(srcType->shape_[1]);
+        auto outRows = As<ConstInt>(outType->shape_[0]);
+        auto outCols = As<ConstInt>(outType->shape_[1]);
+        PRO_IR_CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, srcRows && srcCols && outRows && outCols)
+            << opName << ": src/out tile shapes must be static";
         PRO_IR_CHECK(ExternalError::INVALID_SHAPE,
-                     out_rows->value_ >= src_rows->value_ && out_cols->value_ >= src_cols->value_)
-            << op_name << ": out tile rows/cols must be >= src tile rows/cols";
+                     outRows->value_ >= srcRows->value_ && outCols->value_ >= srcCols->value_)
+            << opName << ": out tile rows/cols must be >= src tile rows/cols";
     }
-    return result_type;
+    return resultType;
 }
 
 // ---------------------------------------------------------------------------
@@ -156,8 +156,8 @@ REGISTER_OP("block.store")
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3 || args.size() == 4)
             << "block.store requires 3 or 4 arguments, got " << args.size();
-        auto out_type = As<TensorType>(args[0]->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, out_type) << "block.store: arg 0 must be TensorType";
+        auto outType = As<TensorType>(args[0]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, outType) << "block.store: arg 0 must be TensorType";
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TileType>(args[1]->GetType()))
             << "block.store: arg 1 must be TileType";
         auto offsets = As<MakeTuple>(args[2]);
@@ -167,7 +167,7 @@ REGISTER_OP("block.store")
                          As<ScalarType>(args[3]->GetType()) || As<TileType>(args[3]->GetType()))
                 << "block.store: arg 3 (scale) must be ScalarType or TileType";
         }
-        return out_type;
+        return outType;
     });
 
 // block.move: (out, src_tile, [offset], [scale]) -> NoneType
@@ -186,8 +186,8 @@ REGISTER_OP("block.move")
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() >= 2 && args.size() <= 4)
             << "The operator block.move requires 2 to 4 arguments, but got " << args.size();
-        auto out_type = As<TileType>(args[0]->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, out_type) << "block.move: first argument (out) must be TileType";
+        auto outType = As<TileType>(args[0]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, outType) << "block.move: first argument (out) must be TileType";
         // Optional trailing operands are distinguished by type: TupleType is the 2D offset,
         // ScalarType is a scalar scale, and TileType is a Scaling Tile.
         for (size_t i = 2; i < args.size(); ++i) {
@@ -215,8 +215,8 @@ REGISTER_OP("block.insert")
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 4 || args.size() == 5)
             << "The operator block.insert requires 4 or 5 arguments, but got " << args.size();
-        auto out_type = As<TileType>(args[0]->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, out_type) << "block.insert: first argument (out) must be TileType";
+        auto outType = As<TileType>(args[0]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, outType) << "block.insert: first argument (out) must be TileType";
         return GetNoneType();
     });
 
@@ -339,8 +339,8 @@ REGISTER_OP("block.init_output")
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 4)
             << "block.init_output requires 4 arguments, got " << args.size();
-        auto tensor_type = As<TensorType>(args[0]->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensor_type) << "block.init_output: arg 0 must be a TensorType";
+        auto tensorType = As<TensorType>(args[0]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensorType) << "block.init_output: arg 0 must be a TensorType";
         return GetNoneType();
     });
 

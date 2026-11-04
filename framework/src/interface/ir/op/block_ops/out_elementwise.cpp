@@ -48,10 +48,10 @@ using npu::tile_fwk::ExternalError;
 // ---------------------------------------------------------------------------
 
 // Validate that args[idx] is ScalarType.
-static void CheckScalarArg([[maybe_unused]] const std::vector<ExprPtr>& args, size_t idx, const std::string& op_name)
+static void CheckScalarArg([[maybe_unused]] const std::vector<ExprPtr>& args, size_t idx, const std::string& opName)
 {
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<ScalarType>(args[idx]->GetType()))
-        << "The operator " << op_name << " requires argument " << idx << " to be ScalarType, but got "
+        << "The operator " << opName << " requires argument " << idx << " to be ScalarType, but got "
         << args[idx]->GetType()->TypeName();
 }
 
@@ -63,38 +63,38 @@ static void CheckScalarArg([[maybe_unused]] const std::vector<ExprPtr>& args, si
 // space list instead.
 static TypePtr DeduceBlockOutBinaryTile([[maybe_unused]] const std::vector<ExprPtr>& args,
                                         [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
-                                        const std::string& op_name)
+                                        const std::string& opName)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x3)
-        << op_name << " requires 3 arguments (out, lhs, rhs)";
-    CheckTileArg(args, 0, op_name, {MemorySpace::Vec});
-    CheckTileArg(args, 1, op_name, {MemorySpace::Vec}); // NOLINT: lhs index
-    CheckTileArg(args, 2, op_name, {MemorySpace::Vec}); // NOLINT: rhs index
-    return DeduceBlockOutType(args, kwargs, op_name, 0x3);
+        << opName << " requires 3 arguments (out, lhs, rhs)";
+    CheckTileArg(args, 0, opName, {MemorySpace::Vec});
+    CheckTileArg(args, 1, opName, {MemorySpace::Vec}); // NOLINT: lhs index
+    CheckTileArg(args, 2, opName, {MemorySpace::Vec}); // NOLINT: rhs index
+    return DeduceBlockOutType(args, kwargs, opName, 0x3);
 }
 
 // Type deduction for (out:TileType, TileType, ScalarType) -> NoneType.
 static TypePtr DeduceBlockOutBinaryScalar([[maybe_unused]] const std::vector<ExprPtr>& args,
                                           [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
-                                          const std::string& op_name)
+                                          const std::string& opName)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x3)
-        << op_name << " requires 3 arguments (out, tile, scalar)";
-    CheckTileArg(args, 0, op_name, {MemorySpace::Vec});
-    CheckTileArg(args, 1, op_name, {MemorySpace::Vec}); // NOLINT: lhs index
-    CheckScalarArg(args, 2, op_name);                   // NOLINT: rhs index
-    return DeduceBlockOutType(args, kwargs, op_name, 0x3);
+        << opName << " requires 3 arguments (out, tile, scalar)";
+    CheckTileArg(args, 0, opName, {MemorySpace::Vec});
+    CheckTileArg(args, 1, opName, {MemorySpace::Vec}); // NOLINT: lhs index
+    CheckScalarArg(args, 2, opName);                   // NOLINT: rhs index
+    return DeduceBlockOutType(args, kwargs, opName, 0x3);
 }
 
 // Type deduction for (out:TileType, TileType) -> NoneType  (unary).
 static TypePtr DeduceBlockOutUnary([[maybe_unused]] const std::vector<ExprPtr>& args,
                                    [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
-                                   const std::string& op_name)
+                                   const std::string& opName)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x2) << op_name << " requires 2 arguments (out, src)";
-    CheckTileArg(args, 0, op_name, {MemorySpace::Vec});
-    CheckTileArg(args, 1, op_name, {MemorySpace::Vec});
-    return DeduceBlockOutType(args, kwargs, op_name, 0x2);
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x2) << opName << " requires 2 arguments (out, src)";
+    CheckTileArg(args, 0, opName, {MemorySpace::Vec});
+    CheckTileArg(args, 1, opName, {MemorySpace::Vec});
+    return DeduceBlockOutType(args, kwargs, opName, 0x2);
 }
 
 // ---------------------------------------------------------------------------
@@ -230,13 +230,13 @@ REGISTER_OP("block.gather")
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         // Index form: 3 or 4 args (out, src, indices) or (out, src, indices, tmp)
         if (args.size() == 3 || args.size() == 4) {
-            bool has_cmp_mode = false;
+            bool hasCmpMode = false;
             for (const auto& [key, val] : kwargs) {
                 (void)val;
                 if (key == "cmp_mode")
-                    has_cmp_mode = true;
+                    hasCmpMode = true;
             }
-            if (!has_cmp_mode) {
+            if (!hasCmpMode) {
                 return DeduceBlockOutType(args, kwargs, "block.gather", args.size());
             }
         }
@@ -449,12 +449,12 @@ REGISTER_OP("block.cmps")
 // instead of the shared Vec-only one.
 static TypePtr DeduceBlockOutExpands([[maybe_unused]] const std::vector<ExprPtr>& args,
                                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
-                                     const std::string& op_name)
+                                     const std::string& opName)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x2)
-        << op_name << " requires 2 arguments (out, scalar)";
-    CheckTileArg(args, 0, op_name, {MemorySpace::Vec, MemorySpace::Mat});
-    return DeduceBlockOutType(args, kwargs, op_name, 0x2);
+        << opName << " requires 2 arguments (out, scalar)";
+    CheckTileArg(args, 0, opName, {MemorySpace::Vec, MemorySpace::Mat});
+    return DeduceBlockOutType(args, kwargs, opName, 0x2);
 }
 
 REGISTER_OP("block.expands")
@@ -520,8 +520,8 @@ REGISTER_OP("block.quant")
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3 || args.size() == 4)
             << "block.quant requires 3 args (sym) or 4 args (asym), got " << args.size();
-        auto out_type = As<TileType>(args.front()->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, out_type) << "block.quant: first argument (out) must be TileType";
+        auto outType = As<TileType>(args.front()->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, outType) << "block.quant: first argument (out) must be TileType";
         return GetNoneType();
     });
 

@@ -44,7 +44,7 @@ TEST(BackendCommonTest, SupportsPointerPrintfConversion)
 
     auto segments = debug_printf::ParsePrintfSegments("address=%p");
     ASSERT_EQ(segments.size(), 1);
-    EXPECT_EQ(segments[0].format_segment, "address=%p");
+    EXPECT_EQ(segments[0].formatSegment, "address=%p");
     EXPECT_EQ(segments[0].conversion, 'p');
 }
 

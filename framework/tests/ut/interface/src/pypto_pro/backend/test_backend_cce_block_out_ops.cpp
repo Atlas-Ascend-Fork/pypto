@@ -44,7 +44,7 @@ TEST(BackendCceBlockOutOpsTest, ArgumentDependentPipesKeepTheirCodegenRegistrati
         const auto* info = BackendCCE::Instance().GetOpInfo(name);
         ASSERT_NE(info, nullptr) << name;
         EXPECT_FALSE(info->pipe.has_value()) << name;
-        EXPECT_TRUE(static_cast<bool>(info->codegen_func)) << name;
+        EXPECT_TRUE(static_cast<bool>(info->codegenFunc)) << name;
     }
 }
 
@@ -62,7 +62,7 @@ class TestableCCECodegen : public codegen::CCECodegen {
 public:
     using codegen::CCECodegen::CCECodegen;
     std::string GetEmittedCode() { return emitter_.GetCode(); }
-    void SetCurrentTargetVar(const std::string& var) { current_target_var_ = var; }
+    void SetCurrentTargetVar(const std::string& var) { currentTargetVar_ = var; }
 };
 
 ir::ExprPtr MakeConstInt(int64_t value)
@@ -152,7 +152,7 @@ std::string RunCodegen(const std::string& op_name, const ir::CallPtr& call)
     auto* info = BackendCCE::Instance().GetOpInfo(op_name);
     EXPECT_NE(info, nullptr);
     if (info != nullptr) {
-        info->codegen_func(call, codegen);
+        info->codegenFunc(call, codegen);
     }
     return codegen.GetEmittedCode();
 }
@@ -731,7 +731,7 @@ TEST(BackendCCEBlockOutOps, Load)
     auto call = MakeCall("block.load", {out_var, tensor_var, MakeOffsets(0, 0)});
     auto* info = BackendCCE::Instance().GetOpInfo("block.load");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "TASSIGN(tensor, raw_ptr + ");
     EXPECT_CONTAINS(code, "TLOAD(out.tile, tensor);");
@@ -816,7 +816,7 @@ TEST(BackendCCEBlockOutOps, InitOutput)
     auto call = MakeCall("block.init_output", {tensor, MakeConstInt(0), MakeConstInt(4096), MakeConstInt(0)});
     auto* info = BackendCCE::Instance().GetOpInfo("block.init_output");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     // In-place flat declaration: fresh [1, numel] ND view, numel = product of shape dims
     // (constant-folded here), stride matching the [1, numel] row-major view.
@@ -849,7 +849,7 @@ TEST(BackendCCEBlockOutOps, InitOutput_FloatValueNotCasted)
     auto call = MakeCall("block.init_output", {tensor, MakeConstInt(8), MakeConstInt(100), value});
     auto* info = BackendCCE::Instance().GetOpInfo("block.init_output");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "__io_i += 4096)");
     EXPECT_CONTAINS(code, "TEXPANDS(tensor__io0_tile, 1.5f);");
@@ -865,7 +865,7 @@ TEST(BackendCCEBlockOutOps, InitOutput_IntTensorValueNotCasted)
     auto call = MakeCall("block.init_output", {tensor, MakeConstInt(0), MakeConstInt(512), MakeConstInt(3)});
     auto* info = BackendCCE::Instance().GetOpInfo("block.init_output");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "__io_i += 8192)");
     EXPECT_CONTAINS(code, "TEXPANDS(tensor__io0_tile, 3);");
@@ -883,7 +883,7 @@ TEST(BackendCCEBlockOutOps, InitOutput_B64ChunkClampedTo64)
     auto call = MakeCall("block.init_output", {tensor, MakeConstInt(0), MakeConstInt(1024), MakeConstInt(0)});
     auto* info = BackendCCE::Instance().GetOpInfo("block.init_output");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "pto::Tile<pto::TileType::Vec, int64_t, 1, 64,");
     EXPECT_CONTAINS(code, "tensor__io0_tile(1, 64);");
@@ -901,7 +901,7 @@ TEST(BackendCCEBlockOutOps, InitOutput_NzTensorUsesFlatNdView)
     auto call = MakeCall("block.init_output", {tensor, MakeConstInt(0), MakeConstInt(128 * 128), MakeConstInt(0)});
     auto* info = BackendCCE::Instance().GetOpInfo("block.init_output");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "using tensor__io0ShapeDim5 = pto::TileShape2D<half, pto::DYNAMIC, pto::DYNAMIC, "
                           "Layout::ND>;");
@@ -1446,7 +1446,7 @@ TEST(BackendCCEBlockOutOps, Store)
     auto call = MakeCall("block.store", {tensor_var, tile_var, MakeOffsets(0, 0)});
     auto* info = BackendCCE::Instance().GetOpInfo("block.store");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "TASSIGN(tensor, raw_ptr + ");
     EXPECT_CONTAINS(code, "TSTORE(tensor, tile.tile);");
@@ -1488,7 +1488,7 @@ TEST(BackendCCEBlockOutOps, StoreWithPhase)
         "block.store", {MakeVar("tensor", tensor_type), MakeVar("tile", tile_type), MakeOffsets(0, 0)}, {{"phase", 1}});
     auto* info = BackendCCE::Instance().GetOpInfo("block.store");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "STPhase::Partial");
     EXPECT_CONTAINS(code, "TSTORE<");
@@ -1504,7 +1504,7 @@ TEST(BackendCCEBlockOutOps, StoreWithPreQuant)
                                          MakeConstInt(42)});
     auto* info = BackendCCE::Instance().GetOpInfo("block.store");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "static_cast<uint64_t>(42)");
     EXPECT_CONTAINS(code, "TSTORE<");
@@ -1520,7 +1520,7 @@ TEST(BackendCCEBlockOutOps, StoreWithPreQuantInt8)
                                          MakeConstInt(42)});
     auto* info = BackendCCE::Instance().GetOpInfo("block.store");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "(1ULL << 46)");
     EXPECT_CONTAINS(code, "TSTORE<");
@@ -1537,7 +1537,7 @@ TEST(BackendCCEBlockOutOps, StoreWithReluPreMode)
                                    {{"relu_pre_mode", 0}});
     auto* info = BackendCCE::Instance().GetOpInfo("block.store");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "ReluPreMode::NormalRelu");
     EXPECT_CONTAINS(code, "AtomicType::AtomicNone");
@@ -1556,7 +1556,7 @@ TEST(BackendCCEBlockOutOps, StoreWithAtomic)
                                        {{"atomic", 1}});
         auto* info = BackendCCE::Instance().GetOpInfo("block.store");
         ASSERT_NE(info, nullptr);
-        info->codegen_func(call, codegen);
+        info->codegenFunc(call, codegen);
         auto code = codegen.GetEmittedCode();
         EXPECT_CONTAINS(code, "set_atomic_add();");
         EXPECT_CONTAINS(code, "set_atomic_none();");
@@ -1576,7 +1576,7 @@ TEST(BackendCCEBlockOutOps, StoreWithScalingTile)
                                          MakeVar("fp", scaling_tile)});
     auto* info = BackendCCE::Instance().GetOpInfo("block.store");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "TASSIGN(tensor, raw_ptr + ");
     EXPECT_CONTAINS(code, "TSTORE<");
@@ -1598,7 +1598,7 @@ TEST(BackendCCEBlockOutOps, StoreWithScalingTileAndPhase)
         {{"phase", static_cast<int>(ir::STPhase::Final)}});
     auto* info = BackendCCE::Instance().GetOpInfo("block.store");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "TSTORE<STPhase::Final,");
     EXPECT_CONTAINS(code, ">(tensor, tile.tile, fp.tile);");
@@ -1619,7 +1619,7 @@ TEST(BackendCCEBlockOutOps, StoreWithScalingTileAndReluPhase)
         {{"phase", static_cast<int>(ir::STPhase::Final)}, {"relu_pre_mode", 0}});
     auto* info = BackendCCE::Instance().GetOpInfo("block.store");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "TSTORE<STPhase::Final,");
     EXPECT_CONTAINS(code, "AtomicType::AtomicNone");
@@ -2127,7 +2127,7 @@ TEST(BackendCCEBlockOutOps, StructCreate)
                                                  tuple_type, ir::Span::Unknown());
     auto* info = BackendCCE::Instance().GetOpInfo("struct.create");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "MyStruct result = {");
     EXPECT_CONTAINS(code, ".f0=v0");
@@ -2150,7 +2150,7 @@ TEST(BackendCCEBlockOutOps, StructCreateCastsScalarInitializerToFieldType)
 
     auto* info = BackendCCE::Instance().GetOpInfo("struct.create");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
 
     EXPECT_CONTAINS(codegen.GetEmittedCode(), ".workId=static_cast<int64_t>(work_id)");
 }
@@ -2220,7 +2220,7 @@ TEST(BackendCCEBlockOutOps, StructCreate_WithArrayField)
                                                  tuple_type, ir::Span::Unknown());
     auto* info = BackendCCE::Instance().GetOpInfo("struct.create");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "MyStruct result = {");
     EXPECT_CONTAINS(code, ".x=static_cast<int64_t>(42)");
@@ -2251,7 +2251,7 @@ TEST(BackendCCEBlockOutOps, StructCreate_MultipleArrayFields)
                                                  tuple_type, ir::Span::Unknown());
     auto* info = BackendCCE::Instance().GetOpInfo("struct.create");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "DualArr result = {");
     EXPECT_CONTAINS(code, ".a={static_cast<int64_t>(1), static_cast<int64_t>(2)}");
@@ -2281,7 +2281,7 @@ TEST(BackendCCEBlockOutOps, StructCreate_MixedScalarArray)
                                                  tuple_type, ir::Span::Unknown());
     auto* info = BackendCCE::Instance().GetOpInfo("struct.create");
     ASSERT_NE(info, nullptr);
-    info->codegen_func(call, codegen);
+    info->codegenFunc(call, codegen);
     auto code = codegen.GetEmittedCode();
     EXPECT_CONTAINS(code, "Mixed result = {");
     EXPECT_CONTAINS(code, ".x=static_cast<int64_t>(42)");

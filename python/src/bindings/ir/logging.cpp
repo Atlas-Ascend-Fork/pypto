@@ -36,18 +36,18 @@ void LogEvent(const std::string& message) { pypto::Logger(LogLevel::EVENT, __LIN
 
 void BindError(py::module_& m)
 {
-    static py::exception<ir::Error> exc_error(m, "Error", PyExc_Exception);
-    static py::exception<ir::ValueError> exc_value_error(m, "ValueError", PyExc_ValueError);
-    static py::exception<ir::TypeError> exc_type_error(m, "TypeError", PyExc_TypeError);
-    static py::exception<ir::RuntimeError> exc_runtime_error(m, "RuntimeError", PyExc_RuntimeError);
-    static py::exception<ir::NotImplementedError> exc_not_implemented_error(m, "NotImplementedError",
-                                                                            PyExc_NotImplementedError);
-    static py::exception<ir::IndexError> exc_index_error(m, "IndexError", PyExc_IndexError);
-    static py::exception<ir::AssertionError> exc_assertion_error(m, "AssertionError", PyExc_AssertionError);
-    static py::exception<ir::InternalError> exc_internal_error(m, "InternalError", PyExc_RuntimeError);
+    static py::exception<ir::Error> excError(m, "Error", PyExc_Exception);
+    static py::exception<ir::ValueError> excValueError(m, "ValueError", PyExc_ValueError);
+    static py::exception<ir::TypeError> excTypeError(m, "TypeError", PyExc_TypeError);
+    static py::exception<ir::RuntimeError> excRuntimeError(m, "RuntimeError", PyExc_RuntimeError);
+    static py::exception<ir::NotImplementedError> excNotImplementedError(m, "NotImplementedError",
+                                                                         PyExc_NotImplementedError);
+    static py::exception<ir::IndexError> excIndexError(m, "IndexError", PyExc_IndexError);
+    static py::exception<ir::AssertionError> excAssertionError(m, "AssertionError", PyExc_AssertionError);
+    static py::exception<ir::InternalError> excInternalError(m, "InternalError", PyExc_RuntimeError);
 
-    PyObject* internal_error_type = exc_internal_error.ptr();
-    PyObject_SetAttrString(internal_error_type, "__module__", PyUnicode_FromString("pypto"));
+    PyObject* internalErrorType = excInternalError.ptr();
+    PyObject_SetAttrString(internalErrorType, "__module__", PyUnicode_FromString("pypto"));
 
     // Merged translator: use GetFullMessage() from pypto_impl for richer error messages
     py::register_exception_translator([](std::exception_ptr p) {
@@ -68,7 +68,7 @@ void BindError(py::module_& m)
         } catch (const ir::AssertionError& e) {
             PyErr_SetString(PyExc_AssertionError, e.GetFullMessage().c_str());
         } catch (const ir::InternalError& e) {
-            PyErr_SetString(exc_internal_error.ptr(), e.GetFullMessage().c_str());
+            PyErr_SetString(excInternalError.ptr(), e.GetFullMessage().c_str());
         } catch (const ir::Error& e) {
             PyErr_SetString(PyExc_Exception, e.GetFullMessage().c_str());
         } catch (const npu::tile_fwk::Error& e) {
@@ -108,25 +108,25 @@ void BindLogging(py::module_& m)
     // Test helper (from pypto_impl)
     m.def(
         "raise_error",
-        [](const std::string& error_type, const std::string& message) {
-            if (error_type == "ValueError") {
+        [](const std::string& errorType, const std::string& message) {
+            if (errorType == "ValueError") {
                 throw ir::ValueError(message);
-            } else if (error_type == "TypeError") {
+            } else if (errorType == "TypeError") {
                 throw ir::TypeError(message);
-            } else if (error_type == "RuntimeError") {
+            } else if (errorType == "RuntimeError") {
                 throw ir::RuntimeError(message);
-            } else if (error_type == "NotImplementedError") {
+            } else if (errorType == "NotImplementedError") {
                 throw ir::NotImplementedError(message);
-            } else if (error_type == "IndexError") {
+            } else if (errorType == "IndexError") {
                 throw ir::IndexError(message);
-            } else if (error_type == "Error") {
+            } else if (errorType == "Error") {
                 throw ir::Error(message);
-            } else if (error_type == "AssertionError") {
+            } else if (errorType == "AssertionError") {
                 throw ir::AssertionError(message);
-            } else if (error_type == "InternalError") {
+            } else if (errorType == "InternalError") {
                 throw ir::InternalError(message);
             } else {
-                throw ir::Error("Unknown error type: " + error_type);
+                throw ir::Error("Unknown error type: " + errorType);
             }
         },
         py::arg("error_type"), py::arg("message"), "Raise a C++ error for testing error handling");

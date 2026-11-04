@@ -165,7 +165,7 @@ public:
 
 private:
     std::vector<PropertyVerifierPtr> rules_;
-    std::unordered_set<std::string> disabled_rules_;
+    std::unordered_set<std::string> disabledRules_;
 };
 
 } // namespace ir

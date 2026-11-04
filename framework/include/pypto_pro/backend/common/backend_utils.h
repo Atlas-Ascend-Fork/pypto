@@ -31,15 +31,15 @@ namespace backend {
 
 namespace round_mode {
 
-int FindIndex(const std::string& mode, const std::string& op_name);
+int FindIndex(const std::string& mode, const std::string& opName);
 
 } // namespace round_mode
 
 namespace gather {
 
 struct CompareAttrs {
-    bool has_cmp_mode = false;
-    int cmp_mode = 0;
+    bool hasCmpMode = false;
+    int cmpMode = 0;
     int offset = 0;
 };
 
@@ -60,20 +60,20 @@ std::string GetOperandAsCode(codegen::CCECodegen& codegen, const ir::ExprPtr& ex
 /// like the CCE tensor-declaration collector treat every contract op as a
 /// tile-tensor transfer.
 struct AccessArgIndices {
-    int tensor_arg_idx = -1;
-    int tile_arg_idx = -1;
-    int offsets_arg_idx = -1;
+    int tensorArgIdx = -1;
+    int tileArgIdx = -1;
+    int offsetsArgIdx = -1;
 };
 
-AccessArgIndices ResolveAccessArgIndices(const std::string& op_name);
+AccessArgIndices ResolveAccessArgIndices(const std::string& opName);
 
 /// Derive the Tile's ND/DN/NZ/ZN/NN/ZZ layout from its block/scatter layout pair.
-std::optional<ir::TensorLayout> GetTileTensorLayout(const ir::HardwareInfo& hardware_info);
-bool IsNZTensorType(const ir::TensorTypePtr& tensor_type);
+std::optional<ir::TensorLayout> GetTileTensorLayout(const ir::HardwareInfo& hardwareInfo);
+bool IsNZTensorType(const ir::TensorTypePtr& tensorType);
 /// Whether a block.load is an MX scale load. Such a load declares its own GlobalTensor at the
 /// op -- TileShape2D maps rows/cols into layout-specific dims that the shared per-layout
 /// declaration cannot express -- so it never reads the prologue declaration.
-bool IsMXLoad(const ir::TensorTypePtr& tensor_type, const ir::TileTypePtr& tile_type);
+bool IsMXLoad(const ir::TensorTypePtr& tensorType, const ir::TileTypePtr& tileType);
 /// Whether *op* is a block.load that lowers through the MX path (see IsMXLoad).
 bool IsMXLoadCall(const ir::CallPtr& op);
 /// The Layout enum an MX load walks its tensor with: the A/B role comes from the destination
@@ -81,10 +81,10 @@ bool IsMXLoadCall(const ir::CallPtr& op);
 std::string MXLoadLayoutName(const ir::CallPtr& op);
 /// The two tensor axes an MX load walks, defaulted from the rank when no order was given, with
 /// the MX preconditions checked (a trailing physical phase axis of 2, never selected as an axis).
-std::vector<int> MXLoadTileDims(const ir::CallPtr& op, const ir::TensorTypePtr& tensor_type);
+std::vector<int> MXLoadTileDims(const ir::CallPtr& op, const ir::TensorTypePtr& tensorType);
 int64_t GetNZInnerCols(const ir::DataType& dtype);
-void ValidateNZTransfer(const std::string& op_name, const ir::CallPtr& op, const ir::ExprPtr& tile_expr,
-                        const ir::MakeTuplePtr& offsets, const ir::TensorTypePtr& tensor_type);
+void ValidateNZTransfer(const std::string& opName, const ir::CallPtr& op, const ir::ExprPtr& tileExpr,
+                        const ir::MakeTuplePtr& offsets, const ir::TensorTypePtr& tensorType);
 
 /// Emit *scalar_expr* as a truncated integer literal when *dtype* is an integer
 /// (fraction dropped, value masked/sign-extended to the dtype width); return *original*
@@ -92,23 +92,23 @@ void ValidateNZTransfer(const std::string& op_name, const ir::CallPtr& op, const
 /// Shared by every backend that takes a scalar operand on an integer destination so a
 /// float constant is truncated uniformly instead of emitted as a bare float literal
 /// that trips -Wliteral-conversion.
-std::string CoerceScalarToInt(const ir::ExprPtr& scalar_expr, const ir::DataType& dtype, const std::string& original);
+std::string CoerceScalarToInt(const ir::ExprPtr& scalarExpr, const ir::DataType& dtype, const std::string& original);
 
 } // namespace cce
 
 namespace debug_printf {
 
 struct PrintfSegment {
-    std::string format_segment;
+    std::string formatSegment;
     char conversion;
 };
 
 std::string EscapeStringLiteral(const std::string& text);
 std::string QuoteMlirStringLiteral(const std::string& text);
 std::string FormatDebugLocation(const ir::Span& span);
-std::string FormatDebugLocationHeader(const ir::Span& span, const std::string& op_name);
+std::string FormatDebugLocationHeader(const ir::Span& span, const std::string& opName);
 bool IsSupportedPrintfConversion(char conversion);
-size_t FindPrintfConversionIndex(const std::string& format_segment);
+size_t FindPrintfConversionIndex(const std::string& formatSegment);
 std::vector<PrintfSegment> ParsePrintfSegments(const std::string& format);
 
 } // namespace debug_printf

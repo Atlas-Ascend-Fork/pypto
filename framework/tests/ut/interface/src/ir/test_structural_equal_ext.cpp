@@ -513,18 +513,16 @@ TEST_F(IRStructEqTypeTest, TestTileTypeWithTileView)
 {
     auto d16a = std::make_shared<ConstInt>(16, DataType::INT64, Sp());
     auto d16b = std::make_shared<ConstInt>(16, DataType::INT64, Sp());
-    auto off0a = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
-    auto off0b = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
 
-    TileView tv1({d16a}, {d16a}, off0a);
-    TileView tv2({d16b}, {d16b}, off0b);
+    TileView tv1({d16a});
+    TileView tv2({d16b});
 
     auto tl1 = std::make_shared<TileType>(std::vector<ExprPtr>{d16a}, DataType::FP32, std::nullopt, tv1);
     auto tl2 = std::make_shared<TileType>(std::vector<ExprPtr>{d16b}, DataType::FP32, std::nullopt, tv2);
     EXPECT_TRUE(structural_equal(tl1, tl2));
 
     auto d32 = std::make_shared<ConstInt>(32, DataType::INT64, Sp());
-    TileView tv3({d32}, {d16a}, off0a);
+    TileView tv3({d32});
     auto tl3 = std::make_shared<TileType>(std::vector<ExprPtr>{d16a}, DataType::FP32, std::nullopt, tv3);
     EXPECT_FALSE(structural_equal(tl1, tl3));
 }
@@ -546,11 +544,10 @@ TEST_F(IRStructEqTypeTest, TestTileTypeWithHardwareInfo)
     EXPECT_THROW(assert_structural_equal(tl1, tl3), npu::tile_fwk::Error);
 }
 
-TEST_F(IRStructEqTypeTest, TestTileTypeTileViewPresenceMismatch)
+TEST_F(IRStructEqTypeTest, TestTileTypeStaticAndDynamicValidShapeMismatch)
 {
     auto d16 = std::make_shared<ConstInt>(16, DataType::INT64, Sp());
-    auto off0 = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
-    TileView tv({d16}, {d16}, off0);
+    TileView tv({d16});
 
     auto tl1 = std::make_shared<TileType>(std::vector<ExprPtr>{d16}, DataType::FP32, std::nullopt, tv);
     auto tl2 = std::make_shared<TileType>(std::vector<ExprPtr>{d16}, DataType::FP32);
@@ -1139,28 +1136,6 @@ TEST_F(IRStructEqAssertTest, TestAssertHardwareInfoPadMismatch)
     }
 }
 
-TEST_F(IRStructEqAssertTest, TestAssertTileViewStartOffsetMismatch)
-{
-    auto d16 = std::make_shared<ConstInt>(16, DataType::INT64, Sp());
-    auto off0 = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
-    auto off100 = std::make_shared<ConstInt>(100, DataType::INT64, Sp());
-
-    TileView tv1({d16}, {d16}, off0);
-    TileView tv2({d16}, {d16}, off100);
-
-    auto tl1 = std::make_shared<TileType>(std::vector<ExprPtr>{d16}, DataType::FP32, std::nullopt, tv1);
-    auto tl2 = std::make_shared<TileType>(std::vector<ExprPtr>{d16}, DataType::FP32, std::nullopt, tv2);
-
-    try {
-        assert_structural_equal(tl1, tl2);
-        FAIL() << "Expected npu::tile_fwk::Error";
-    } catch (const npu::tile_fwk::Error& e) {
-        std::string msg = e.what();
-        EXPECT_TRUE(msg.find("TileView") != std::string::npos || msg.find("start_offset") != std::string::npos ||
-                    msg.find("int64_t") != std::string::npos);
-    }
-}
-
 TEST_F(IRStructEqAssertTest, TestAssertCallNameMismatch)
 {
     auto a = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
@@ -1213,11 +1188,10 @@ TEST_F(IRStructEqAssertTest, TestAssertIterArgIterVarMismatch)
     EXPECT_THROW(assert_structural_equal(Node(for1), Node(for2)), npu::tile_fwk::Error);
 }
 
-TEST_F(IRStructEqAssertTest, TestAssertTileTypeTileViewPresenceMismatch)
+TEST_F(IRStructEqAssertTest, TestAssertTileTypeStaticAndDynamicValidShapeMismatch)
 {
     auto d16 = std::make_shared<ConstInt>(16, DataType::INT64, Sp());
-    auto off0 = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
-    TileView tv({d16}, {d16}, off0);
+    TileView tv({d16});
 
     auto t1 = std::make_shared<TileType>(std::vector<ExprPtr>{d16}, DataType::FP32, std::nullopt, tv);
     auto t2 = std::make_shared<TileType>(std::vector<ExprPtr>{d16}, DataType::FP32);

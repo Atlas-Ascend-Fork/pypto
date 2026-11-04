@@ -52,12 +52,12 @@ public:
     /**
      * \brief Get current indentation level
      */
-    int GetIndentLevel() const { return indent_level_; }
+    int GetIndentLevel() const { return indentLevel_; }
 
     /**
      * \brief Set indentation level (used for save/restore around buffer manipulation)
      */
-    void SetIndentLevel(int level) { indent_level_ = level; }
+    void SetIndentLevel(int level) { indentLevel_ = level; }
 
     /**
      * \brief Get the currently accumulated code
@@ -80,7 +80,7 @@ private:
     std::string GetIndent() const;
 
     std::stringstream buffer_; ///< Buffer for accumulated code
-    int indent_level_{0};      ///< Current indentation level (0-based)
+    int indentLevel_{0};       ///< Current indentation level (0-based)
 
     static constexpr int kIndentSpaces = 4; ///< Number of spaces per indent level
 };

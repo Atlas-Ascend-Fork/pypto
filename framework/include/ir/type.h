@@ -263,26 +263,19 @@ struct HardwareInfo {
 /**
  * \brief Tile view representation
  *
- * Represents the view information for a tile, including valid shape,
- * stride, and start offset. This is used by TileType to track how
- * a tile views its underlying memory.
+ * Represents the valid shape of a tile. TileType fills omitted dimensions
+ * with the dynamic dimension marker.
  */
 struct TileView {
     std::vector<ExprPtr> validShape; ///< Valid shape dimensions
-    std::vector<ExprPtr> stride;     ///< Stride for each dimension
-    ExprPtr startOffset;             ///< Starting offset
 
     TileView() = default;
 
-    TileView(std::vector<ExprPtr> validShapeIn, std::vector<ExprPtr> strideIn, ExprPtr startOffsetIn)
-        : validShape(std::move(validShapeIn)), stride(std::move(strideIn)), startOffset(std::move(startOffsetIn))
-    {}
+    explicit TileView(std::vector<ExprPtr> validShapeIn) : validShape(std::move(validShapeIn)) {}
 
     static constexpr auto GetFieldDescriptors()
     {
-        return std::make_tuple(reflection::UsualField(&TileView::validShape, "valid_shape"),
-                               reflection::UsualField(&TileView::stride, "stride"),
-                               reflection::UsualField(&TileView::startOffset, "start_offset"));
+        return std::make_tuple(reflection::UsualField(&TileView::validShape, "valid_shape"));
     }
 };
 
@@ -415,41 +408,31 @@ using TensorTypePtr = std::shared_ptr<const TensorType>;
  */
 class TileType : public ShapedType {
 public:
-    std::optional<TileView> tileView_;         ///< Optional tile view information
+    std::optional<TileView> tileView_;         ///< Tile view; omitted valid shape defaults to dynamic dimensions
     std::optional<HardwareInfo> hardwareInfo_; ///< Optional hardware-specific tile information
 
-    TileType(std::vector<ExprPtr> shape, DataType dtype)
-        : ShapedType(dtype, std::move(shape)), tileView_(std::nullopt), hardwareInfo_(std::nullopt)
+    TileType(std::vector<ExprPtr> shape, DataType dtype) : TileType(std::move(shape), dtype, std::nullopt, std::nullopt)
     {}
 
     TileType(std::vector<ExprPtr> shape, DataType dtype, MemRefPtr memref)
-        : ShapedType(dtype, std::move(shape), std::move(memref)), tileView_(std::nullopt), hardwareInfo_(std::nullopt)
+        : TileType(std::move(shape), dtype, std::optional<MemRefPtr>(std::move(memref)), std::nullopt)
     {}
 
     TileType(std::vector<ExprPtr> shape, DataType dtype, std::optional<MemRefPtr> memref)
-        : ShapedType(dtype, std::move(shape), std::move(memref)), tileView_(std::nullopt), hardwareInfo_(std::nullopt)
+        : TileType(std::move(shape), dtype, std::move(memref), std::nullopt)
     {}
 
     TileType(const std::vector<int64_t>& shape, DataType dtype, std::optional<MemRefPtr> memref,
-             std::optional<TileView> tileView, std::optional<HardwareInfo> hardwareInfo = std::nullopt)
-        : ShapedType(dtype, shape, std::move(memref)),
-          tileView_(std::move(tileView)),
-          hardwareInfo_(std::move(hardwareInfo))
-    {}
+             std::optional<TileView> tileView, std::optional<HardwareInfo> hardwareInfo = std::nullopt);
 
     TileType(std::vector<ExprPtr> shape, DataType dtype, MemRefPtr memref, std::optional<TileView> tileView,
              std::optional<HardwareInfo> hardwareInfo = std::nullopt)
-        : ShapedType(dtype, std::move(shape), std::move(memref)),
-          tileView_(std::move(tileView)),
-          hardwareInfo_(std::move(hardwareInfo))
+        : TileType(std::move(shape), dtype, std::optional<MemRefPtr>(std::move(memref)), std::move(tileView),
+                   std::move(hardwareInfo))
     {}
 
     TileType(std::vector<ExprPtr> shape, DataType dtype, std::optional<MemRefPtr> memref,
-             std::optional<TileView> tileView, std::optional<HardwareInfo> hardwareInfo = std::nullopt)
-        : ShapedType(dtype, std::move(shape), std::move(memref)),
-          tileView_(std::move(tileView)),
-          hardwareInfo_(std::move(hardwareInfo))
-    {}
+             std::optional<TileView> tileView, std::optional<HardwareInfo> hardwareInfo = std::nullopt);
 
     [[nodiscard]] ObjectKind GetKind() const override { return ObjectKind::TileType; }
     [[nodiscard]] std::string TypeName() const override { return "TileType"; }

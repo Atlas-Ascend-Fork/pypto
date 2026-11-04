@@ -41,29 +41,29 @@ public:
     /**
      * \brief Register a backend type
      *
-     * \param type_name Backend type name (e.g., "CCE")
+     * \param typeName Backend type name (e.g., "CCE")
      * \param func Factory function that creates backend from SoC
      */
-    void Register(const std::string& type_name, CreateFunc func);
+    void Register(const std::string& typeName, CreateFunc func);
 
     /**
      * \brief Create a backend instance (deprecated for singleton backends)
      *
      * Backends are singletons; this always throws. Use BackendCCE::Instance() instead.
      *
-     * \param type_name Backend type name
+     * \param typeName Backend type name
      * \param soc SoC structure (includes memory hierarchy)
      * \throws ValueError always (backends are singletons, not created via registry)
      */
-    std::unique_ptr<Backend> Create(const std::string& type_name, const std::shared_ptr<const SoC>& soc);
+    std::unique_ptr<Backend> Create(const std::string& typeName, const std::shared_ptr<const SoC>& soc);
 
     /**
      * \brief Check if a type is registered
      *
-     * \param type_name Backend type name to check
+     * \param typeName Backend type name to check
      * \return true if registered, false otherwise
      */
-    [[nodiscard]] bool IsRegistered(const std::string& type_name) const;
+    [[nodiscard]] bool IsRegistered(const std::string& typeName) const;
 
 private:
     BackendRegistry() = default;
@@ -75,11 +75,11 @@ private:
  *
  * Backends are singletons; this always throws. Use BackendCCE::Instance() instead.
  *
- * \param type_name Backend type name
+ * \param typeName Backend type name
  * \param soc SoC structure (includes memory hierarchy)
  * \throws ValueError always (backends are singletons, not created via registry)
  */
-std::unique_ptr<Backend> CreateBackendFromRegistry(const std::string& type_name, const std::shared_ptr<const SoC>& soc);
+std::unique_ptr<Backend> CreateBackendFromRegistry(const std::string& typeName, const std::shared_ptr<const SoC>& soc);
 
 } // namespace backend
 } // namespace pypto

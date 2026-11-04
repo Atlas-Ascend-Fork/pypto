@@ -114,8 +114,8 @@ void BindIRBuilder(py::module_& m)
         // For loop building
         .def(
             "begin_for_loop",
-            [](IRBuilder& self, const ir::VarPtr& loop_var, const ir::ExprPtr& start, const ir::ExprPtr& stop,
-               const ir::ExprPtr& step, const ir::Span& span) { self.BeginForLoop(loop_var, start, stop, step, span); },
+            [](IRBuilder& self, const ir::VarPtr& loopVar, const ir::ExprPtr& start, const ir::ExprPtr& stop,
+               const ir::ExprPtr& step, const ir::Span& span) { self.BeginForLoop(loopVar, start, stop, step, span); },
             py::arg("loop_var"), py::arg("start"), py::arg("stop"), py::arg("step"), py::arg("span"),
             "Begin building a for loop.\n\n"
             "Creates a new for loop context. Must be closed with end_for_loop().\n\n"
@@ -418,10 +418,10 @@ void BindIRBuilder(py::module_& m)
              "    SymbolicScalar: The created scalar variable")
         .def(
             "create_tensor_op_stmt",
-            [](IRBuilder& self, std::vector<ir::VarPtr> result, ir::VarPtr result_token, std::string opcode,
+            [](IRBuilder& self, std::vector<ir::VarPtr> result, ir::VarPtr resultToken, std::string opcode,
                std::vector<ir::ExprPtr> args, std::vector<ir::VarPtr> tokens, py::dict attrs, ir::Span span) {
-                auto attr_list = pypto::ir::ConvertAttrDict(attrs);
-                return self.CreateTensorOpStmt(result, result_token, opcode, args, tokens, attr_list, span);
+                auto attrList = pypto::ir::ConvertAttrDict(attrs);
+                return self.CreateTensorOpStmt(result, resultToken, opcode, args, tokens, attrList, span);
             },
             py::arg("result"), py::arg("result_token"), py::arg("opcode"), py::arg("args"), py::arg("tokens"),
             py::arg("attrs"), py::arg("span"),
@@ -484,15 +484,15 @@ void BindIRBuilder(py::module_& m)
 
         .def(
             "create_for_stmt",
-            [](IRBuilder& self, const ir::VarPtr& loop_var, const ir::ExprPtr& start, const ir::ExprPtr& stop,
-               const ir::ExprPtr& step, const std::vector<ir::IterArgPtr>& iter_args, const ir::StmtPtr& body,
-               const std::vector<ir::VarPtr>& return_vars, const ir::Span& span, const py::object& attrs) {
-                py::dict attr_dict;
+            [](IRBuilder& self, const ir::VarPtr& loopVar, const ir::ExprPtr& start, const ir::ExprPtr& stop,
+               const ir::ExprPtr& step, const std::vector<ir::IterArgPtr>& iterArgs, const ir::StmtPtr& body,
+               const std::vector<ir::VarPtr>& returnVars, const ir::Span& span, const py::object& attrs) {
+                py::dict attrDict;
                 if (!attrs.is_none()) {
-                    attr_dict = attrs.cast<py::dict>();
+                    attrDict = attrs.cast<py::dict>();
                 }
-                auto attr_list = pypto::ir::ConvertAttrDict(attr_dict);
-                return self.CreateForStmt(loop_var, start, stop, step, iter_args, body, return_vars, span, attr_list);
+                auto attrList = pypto::ir::ConvertAttrDict(attrDict);
+                return self.CreateForStmt(loopVar, start, stop, step, iterArgs, body, returnVars, span, attrList);
             },
             py::arg("loop_var"), py::arg("start"), py::arg("stop"), py::arg("step"), py::arg("iter_args"),
             py::arg("body"), py::arg("return_vars"), py::arg("span"), py::arg("attrs") = py::none(),

@@ -42,22 +42,22 @@ GetItemExpr::GetItemExpr(ExprPtr value, ExprPtr slice, Span span)
     CHECK(value_) << "GetItemExpr requires a non-null value";
     CHECK(slice_) << "GetItemExpr requires a non-null slice";
 
-    auto value_type = value_->GetType();
+    auto valueType = value_->GetType();
 
-    auto tuple_type = As<TupleType>(value_type);
-    CHECK(tuple_type) << "GetItemExpr requires value to have TupleType, got " << value_type->TypeName();
+    auto tupleType = As<TupleType>(valueType);
+    CHECK(tupleType) << "GetItemExpr requires value to have TupleType, got " << valueType->TypeName();
 
-    if (auto const_idx = As<ConstInt>(slice_)) {
-        int index = static_cast<int>(const_idx->value_);
-        CHECK(index >= 0 && index < static_cast<int>(tuple_type->types_.size()))
-            << "GetItemExpr index " << index << " out of bounds for tuple with " << tuple_type->types_.size()
+    if (auto constIdx = As<ConstInt>(slice_)) {
+        int index = static_cast<int>(constIdx->value_);
+        CHECK(index >= 0 && index < static_cast<int>(tupleType->types_.size()))
+            << "GetItemExpr index " << index << " out of bounds for tuple with " << tupleType->types_.size()
             << " elements";
-        type_ = tuple_type->types_[index];
+        type_ = tupleType->types_[index];
     } else {
-        CHECK(!tuple_type->types_.empty()) << "GetItemExpr: cannot index into an empty tuple";
-        const auto& first = tuple_type->types_[0];
-        for (size_t i = 1; i < tuple_type->types_.size(); ++i) {
-            CHECK(structural_equal(first, tuple_type->types_[i]))
+        CHECK(!tupleType->types_.empty()) << "GetItemExpr: cannot index into an empty tuple";
+        const auto& first = tupleType->types_[0];
+        for (size_t i = 1; i < tupleType->types_.size(); ++i) {
+            CHECK(structural_equal(first, tupleType->types_[i]))
                 << "GetItemExpr with dynamic index requires all tuple elements to have the same type, "
                 << "but element 0 and element " << i << " differ";
         }

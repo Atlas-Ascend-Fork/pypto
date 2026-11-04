@@ -70,7 +70,7 @@ TEST(BackendCceDynamicInputPtrTest, EmitsDirectDescriptorRead)
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.RegisterVarName(x, "x");
     codegen.RegisterVarName(i, "i");
-    auto expr = info->codegen_func(call, codegen);
+    auto expr = info->codegenFunc(call, codegen);
     // Reads the descriptor head word (byte offset) and indexes the address array with the element type.
     EXPECT_EQ(expr.find("ListTensorDesc"), std::string::npos);
     EXPECT_NE(expr.find("reinterpret_cast<__gm__ uint64_t*>"), std::string::npos);
@@ -109,7 +109,7 @@ TEST(BackendCceDynamicInputPtrTest, EmitsElementTypePerWidth)
         TestableCCECodegen codegen(ir::SectionKind::Vector);
         codegen.RegisterVarName(x, "x");
         codegen.RegisterVarName(i, "i");
-        auto expr = info->codegen_func(call, codegen);
+        auto expr = info->codegenFunc(call, codegen);
         EXPECT_NE(expr.find(c.ctype), std::string::npos) << "missing " << c.ctype;
     }
 }
@@ -129,7 +129,7 @@ TEST(BackendCceDynamicInputPtrTest, UnmappableDescriptorDtypeThrows)
         TestableCCECodegen codegen(ir::SectionKind::Vector);
         codegen.RegisterVarName(x, "x");
         codegen.RegisterVarName(i, "i");
-        EXPECT_THROW((void)info->codegen_func(call, codegen), npu::tile_fwk::Error) << "dtype " << dt.ToString();
+        EXPECT_THROW((void)info->codegenFunc(call, codegen), npu::tile_fwk::Error) << "dtype " << dt.ToString();
     }
 }
 

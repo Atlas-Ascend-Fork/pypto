@@ -51,9 +51,9 @@ struct BroadcastResult {
     /**
      * \brief Create a successful broadcast result
      */
-    static BroadcastResult Success(std::vector<ExprPtr> result_shape)
+    static BroadcastResult Success(std::vector<ExprPtr> resultShape)
     {
-        return BroadcastResult{true, std::move(result_shape), ""};
+        return BroadcastResult{true, std::move(resultShape), ""};
     }
 
     /**
@@ -145,34 +145,34 @@ std::vector<ExprPtr> ExtractShape(const TypePtr& type);
  * \brief Validate a TileType + ScalarType argument pair and return the narrowed types
  *
  * \param args Operator argument expressions
- * \param op_name Operator name for diagnostics
- * \param expected_args Expected argument count
+ * \param opName Operator name for diagnostics
+ * \param expectedArgs Expected argument count
  * \return The first argument as TileType and the second argument as ScalarType
  */
-TileScalarTypes RequireTileScalarArgs(const std::vector<ExprPtr>& args, const std::string& op_name,
-                                      size_t expected_args = 2);
+TileScalarTypes RequireTileScalarArgs(const std::vector<ExprPtr>& args, const std::string& opName,
+                                      size_t expectedArgs = 2);
 
 /**
  * \brief Validate the output Tile argument and return NoneType for explicit-output operators
  */
 TypePtr DeduceBlockOutType(const std::vector<ExprPtr>& args,
-                           const std::vector<std::pair<std::string, std::any>>& kwargs, const std::string& op_name,
-                           size_t expected_args);
+                           const std::vector<std::pair<std::string, std::any>>& kwargs, const std::string& opName,
+                           size_t expectedArgs);
 
 /**
  * \brief Read an operator keyword argument, optionally falling back to a default value
  */
 template <typename T>
 T GetOpKwarg(const std::vector<std::pair<std::string, std::any>>& kwargs, const std::string& key,
-             const std::optional<T>& default_value = std::nullopt)
+             const std::optional<T>& defaultValue = std::nullopt)
 {
     for (const auto& kwarg : kwargs) {
         if (kwarg.first == key) {
             return AnyCast<T>(kwarg.second, "kwarg key: " + key);
         }
     }
-    if (default_value) {
-        return *default_value;
+    if (defaultValue) {
+        return *defaultValue;
     }
     using npu::tile_fwk::ExternalError; // Block-scoped: short enum names without leaking to includers
     PRO_IR_THROW(::pypto::ir::ValueError, ExternalError::INVALID_ARGUMENT) << "Missing kwarg: " << key;
@@ -215,11 +215,11 @@ bool DimensionsEqual(const ExprPtr& dim1, const ExprPtr& dim2);
  * - It's a constant 1
  * - The target dimension is a constant 1
  *
- * \param source_dim Source dimension
- * \param target_dim Target dimension
+ * \param sourceDim Source dimension
+ * \param targetDim Target dimension
  * \return true if source can be broadcast to target
  */
-bool IsBroadcastable(const ExprPtr& source_dim, const ExprPtr& target_dim);
+bool IsBroadcastable(const ExprPtr& sourceDim, const ExprPtr& targetDim);
 
 /**
  * \brief Format a shape vector as a string for error messages

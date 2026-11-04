@@ -31,11 +31,10 @@ def test_builder_tile_view():
     ib = IRBuilder()
 
     # Create tile view with integer dimensions
-    tv = ib.tile_view([16, 16], [1, 16], 0)
+    tv = ib.tile_view([16, 16])
 
     assert isinstance(tv, ir.TileView)
     assert len(tv.valid_shape) == 2
-    assert len(tv.stride) == 2
 
 
 def test_builder_tensor_type():
@@ -84,7 +83,7 @@ def test_builder_tile_type_with_memref_and_tileview():
 
     # Create memref and tile view
     memref = ib.memref(ir.MemorySpace.Left, 0, 512, 35)
-    tv = ib.tile_view([16, 16], [1, 16], 0)
+    tv = ib.tile_view([16, 16])
 
     # Tile type with memref and tile_view
     tile_t = ib.tile_type([16, 16], DataType.FP16, memref=memref, tile_view=tv)

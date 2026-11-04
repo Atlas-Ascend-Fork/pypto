@@ -81,62 +81,62 @@ std::string ConvertCompactModeToPTOValue(ir::CompactMode compact)
     }
 }
 
-void ApplyTileViewValidShape(const ir::TileTypePtr& tile_type, int64_t rows, int64_t cols, std::string& type_rows,
-                             std::string& type_cols)
+void ApplyTileViewValidShape(const ir::TileTypePtr& tileType, int64_t rows, int64_t cols, std::string& typeRows,
+                             std::string& typeCols)
 {
-    if (!tile_type->tileView_.has_value()) {
+    if (!tileType->tileView_.has_value()) {
         return;
     }
-    const auto& tv = tile_type->tileView_.value();
+    const auto& tv = tileType->tileView_.value();
     if (tv.validShape.empty()) {
         return;
     }
-    std::string resolved_rows = tv.validShape.size() >= 1 ? ResolveValidShapeDim(tv.validShape[0], rows) : "";
-    std::string resolved_cols = tv.validShape.size() >= 2 ? ResolveValidShapeDim(tv.validShape[1], cols) : "";
-    if (!resolved_rows.empty()) {
-        type_rows = resolved_rows;
+    std::string resolvedRows = tv.validShape.size() >= 1 ? ResolveValidShapeDim(tv.validShape[0], rows) : "";
+    std::string resolvedCols = tv.validShape.size() >= 2 ? ResolveValidShapeDim(tv.validShape[1], cols) : "";
+    if (!resolvedRows.empty()) {
+        typeRows = resolvedRows;
     }
-    if (!resolved_cols.empty()) {
-        type_cols = resolved_cols;
+    if (!resolvedCols.empty()) {
+        typeCols = resolvedCols;
     }
 }
 
 } // namespace
 
-std::string TypeConverter::ConvertTileType(const ir::MutexTileTypePtr& tile_type, int64_t rows, int64_t cols) const
+std::string TypeConverter::ConvertTileType(const ir::MutexTileTypePtr& tileType, int64_t rows, int64_t cols) const
 {
-    return "SyncedTile<" + ConvertPtoTileType(tile_type, rows, cols) + ", " + std::to_string(tile_type->mutexCount_) +
+    return "SyncedTile<" + ConvertPtoTileType(tileType, rows, cols) + ", " + std::to_string(tileType->mutexCount_) +
            ">";
 }
 
-std::string TypeConverter::ConvertPtoTileType(const ir::TileTypePtr& tile_type, int64_t rows, int64_t cols) const
+std::string TypeConverter::ConvertPtoTileType(const ir::TileTypePtr& tileType, int64_t rows, int64_t cols) const
 {
-    std::ostringstream type_alias;
-    if (!tile_type->memref_.has_value()) {
+    std::ostringstream typeAlias;
+    if (!tileType->memref_.has_value()) {
         // No memref: IfStmt return variable or intermediate tile.
-        std::string tile_type_str = "TileType::Vec";
+        std::string tileTypeStr = "TileType::Vec";
         std::string BLayout = "RowMajor";
         std::string SLayout = "NoneBox";
         std::string fractal = "512";
-        std::string pad_value;
+        std::string padValue;
         // Default valid_shape template params to -1 (dynamic); overridden when user provides explicit values.
-        std::string type_rows = "-1";
-        std::string type_cols = "-1";
-        std::string compact_value;
-        if (tile_type->hardwareInfo_.has_value()) {
-            const auto& hw = tile_type->hardwareInfo_.value();
+        std::string typeRows = "-1";
+        std::string typeCols = "-1";
+        std::string compactValue;
+        if (tileType->hardwareInfo_.has_value()) {
+            const auto& hw = tileType->hardwareInfo_.value();
             BLayout = ConvertTileLayout(hw.blayout);
             SLayout = ConvertTileLayout(hw.slayout);
             fractal = std::to_string(hw.fractal);
-            pad_value = ConvertTilePadToPTOValue(hw.pad);
-            compact_value = ConvertCompactModeToPTOValue(hw.compact);
+            padValue = ConvertTilePadToPTOValue(hw.pad);
+            compactValue = ConvertCompactModeToPTOValue(hw.compact);
             using TL = ir::TileLayout;
             if (hw.blayout == TL::col_major && hw.slayout == TL::row_major)
-                tile_type_str = "TileType::Mat";
+                tileTypeStr = "TileType::Mat";
             else if (hw.blayout == TL::row_major && hw.slayout == TL::row_major)
-                tile_type_str = "TileType::Left";
+                tileTypeStr = "TileType::Left";
             else if (hw.blayout == TL::row_major && hw.slayout == TL::col_major)
-                tile_type_str = "TileType::Right";
+                tileTypeStr = "TileType::Right";
         }
         // A single-column tile has only its rows left to align, so ColMajor is the one encoding
         // the ISA accepts (BLayout::RowMajor requires Cols * sizeof(DType) % 32 == 0). It settles
@@ -144,58 +144,58 @@ std::string TypeConverter::ConvertPtoTileType(const ir::TileTypePtr& tile_type, 
         if (cols == 1) {
             BLayout = "ColMajor";
         }
-        ApplyTileViewValidShape(tile_type, rows, cols, type_rows, type_cols);
-        type_alias << "Tile<" << tile_type_str << ", " << tile_type->dtype_.ToCTypeString() << ", " << rows << ", "
-                   << cols << ", BLayout::" << BLayout << ", " << type_rows << ", " << type_cols
-                   << ", SLayout::" << SLayout << ", " << fractal;
-        if (!pad_value.empty()) {
-            type_alias << ", " << pad_value;
+        ApplyTileViewValidShape(tileType, rows, cols, typeRows, typeCols);
+        typeAlias << "Tile<" << tileTypeStr << ", " << tileType->dtype_.ToCTypeString() << ", " << rows << ", " << cols
+                  << ", BLayout::" << BLayout << ", " << typeRows << ", " << typeCols << ", SLayout::" << SLayout
+                  << ", " << fractal;
+        if (!padValue.empty()) {
+            typeAlias << ", " << padValue;
         }
-        if (!compact_value.empty()) {
-            type_alias << ", " << compact_value;
+        if (!compactValue.empty()) {
+            typeAlias << ", " << compactValue;
         }
-        type_alias << ">";
-        return type_alias.str();
+        typeAlias << ">";
+        return typeAlias.str();
     }
-    ir::MemorySpace space = (*tile_type->memref_)->memorySpace_; // NOLINT(bugprone-unchecked-optional-access)
-    std::string tile_type_str = ConvertMemorySpaceToTileType(space);
+    ir::MemorySpace space = (*tileType->memref_)->memorySpace_; // NOLINT(bugprone-unchecked-optional-access)
+    std::string tileTypeStr = ConvertMemorySpaceToTileType(space);
 
     // TODO(YunjiQin): BLayout and SLayout should be determined by the tile format
     std::string BLayout = "RowMajor";
     std::string SLayout = "NoneBox";
     std::string fractal = "512";
-    std::string pad_value;
-    std::string compact_value;
+    std::string padValue;
+    std::string compactValue;
     // Default valid_shape template params to -1 (dynamic); overridden when user provides explicit values.
-    std::string type_rows = "-1";
-    std::string type_cols = "-1";
+    std::string typeRows = "-1";
+    std::string typeCols = "-1";
 
-    if (tile_type->hardwareInfo_.has_value()) {
-        const auto& hw = tile_type->hardwareInfo_.value();
+    if (tileType->hardwareInfo_.has_value()) {
+        const auto& hw = tileType->hardwareInfo_.value();
         BLayout = ConvertTileLayout(hw.blayout);
         SLayout = ConvertTileLayout(hw.slayout);
         fractal = std::to_string(hw.fractal);
-        pad_value = ConvertTilePadToPTOValue(hw.pad);
-        compact_value = ConvertCompactModeToPTOValue(hw.compact);
+        padValue = ConvertTilePadToPTOValue(hw.pad);
+        compactValue = ConvertCompactModeToPTOValue(hw.compact);
     }
     // See the no-memref path above: a single-column tile settles its block layout by shape,
     // and only its block layout.
     if (cols == 1) {
         BLayout = "ColMajor";
     }
-    ApplyTileViewValidShape(tile_type, rows, cols, type_rows, type_cols);
-    type_alias << "Tile<" << tile_type_str << ", " << tile_type->dtype_.ToCTypeString() << ", " << rows << ", " << cols
-               << ", BLayout::" << BLayout << ", " << type_rows << ", " << type_cols << ", SLayout::" << SLayout << ", "
-               << fractal;
-    if (!pad_value.empty()) {
-        type_alias << ", " << pad_value;
+    ApplyTileViewValidShape(tileType, rows, cols, typeRows, typeCols);
+    typeAlias << "Tile<" << tileTypeStr << ", " << tileType->dtype_.ToCTypeString() << ", " << rows << ", " << cols
+              << ", BLayout::" << BLayout << ", " << typeRows << ", " << typeCols << ", SLayout::" << SLayout << ", "
+              << fractal;
+    if (!padValue.empty()) {
+        typeAlias << ", " << padValue;
     }
-    if (!compact_value.empty()) {
-        type_alias << ", " << compact_value;
+    if (!compactValue.empty()) {
+        typeAlias << ", " << compactValue;
     }
-    type_alias << ">";
+    typeAlias << ">";
 
-    return type_alias.str();
+    return typeAlias.str();
 }
 
 std::string TypeConverter::ConvertMemorySpaceToTileType(ir::MemorySpace space) const
@@ -257,11 +257,11 @@ std::string TypeConverter::ConvertPipeType(ir::PipeType pipe) const
     PRO_CODEGEN_THROW(::pypto::ir::ValueError, ExternalError::INVALID_ARGUMENT) << "Invalid PipeType value";
 }
 
-std::string TypeConverter::ConvertEventId(int event_id) const
+std::string TypeConverter::ConvertEventId(int eventId) const
 {
-    PRO_CODEGEN_CHECK(ExternalError::OUT_OF_RANGE, event_id >= 0 && event_id <= 7)
-        << "Event ID must be in range [0, 7], got " << event_id;
-    return "EVENT_ID" + std::to_string(event_id);
+    PRO_CODEGEN_CHECK(ExternalError::OUT_OF_RANGE, eventId >= 0 && eventId <= 7)
+        << "Event ID must be in range [0, 7], got " << eventId;
+    return "EVENT_ID" + std::to_string(eventId);
 }
 
 std::string TypeConverter::ConvertCastRoundMode(int mode) const
@@ -292,12 +292,12 @@ std::string TypeConverter::GenerateShapeType(const std::vector<int64_t>& dims) c
     oss << "pto::Shape<";
 
     // Pad to 5 dimensions with leading 1s
-    const size_t target_dims = 5;
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, dims.size() <= target_dims)
-        << "Cannot generate Shape with more than " << target_dims << " dimensions, got " << dims.size();
+    const size_t targetDims = 5;
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, dims.size() <= targetDims)
+        << "Cannot generate Shape with more than " << targetDims << " dimensions, got " << dims.size();
 
     // Add leading 1s for padding
-    for (size_t i = 0; i < target_dims - dims.size(); ++i) {
+    for (size_t i = 0; i < targetDims - dims.size(); ++i) {
         oss << "1, ";
     }
 
@@ -321,12 +321,12 @@ std::string TypeConverter::GenerateStrideType(const std::vector<int64_t>& shape)
     oss << "pto::Stride<";
 
     // Pad to 5 dimensions with leading 1s
-    const size_t target_dims = 5;
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, shape.size() <= target_dims)
-        << "Cannot generate Stride with more than " << target_dims << " dimensions, got " << shape.size();
+    const size_t targetDims = 5;
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, shape.size() <= targetDims)
+        << "Cannot generate Stride with more than " << targetDims << " dimensions, got " << shape.size();
 
     // Add leading 1s for padding
-    for (size_t i = 0; i < target_dims - shape.size(); ++i) {
+    for (size_t i = 0; i < targetDims - shape.size(); ++i) {
         oss << "1, ";
     }
 

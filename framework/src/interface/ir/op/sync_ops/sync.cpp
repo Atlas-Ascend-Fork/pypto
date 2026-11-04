@@ -46,8 +46,8 @@ TypePtr DeduceNoneType([[maybe_unused]] const std::vector<ExprPtr>& args,
 
 bool IsIntScalar(const ExprPtr& expr)
 {
-    auto scalar_type = As<ScalarType>(expr->GetType());
-    return scalar_type && (scalar_type->dtype_.IsInt() || scalar_type->dtype_ == DataType::INDEX);
+    auto scalarType = As<ScalarType>(expr->GetType());
+    return scalarType && (scalarType->dtype_.IsInt() || scalarType->dtype_ == DataType::INDEX);
 }
 
 TypePtr DeduceMutexDynType(const std::vector<ExprPtr>& args,
@@ -255,15 +255,15 @@ REGISTER_OP("system.dcci")
         (void)kwargs;
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1 || args.size() == 2)
             << "system.dcci requires 1 or 2 arguments, got " << args.size();
-        auto target_type = args[0]->GetType();
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(target_type) || As<TileType>(target_type))
-            << "system.dcci: target must be TensorType or TileType, but got " << target_type->TypeName();
-        if (As<TensorType>(target_type) && args.size() == 2) {
+        auto targetType = args[0]->GetType();
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(targetType) || As<TileType>(targetType))
+            << "system.dcci: target must be TensorType or TileType, but got " << targetType->TypeName();
+        if (As<TensorType>(targetType) && args.size() == 2) {
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsDcciTensorOffset(args[1]))
                 << "system.dcci: tensor target offset must be a per-dimension list/tuple "
                 << "or a scalar integer element offset";
         }
-        if (As<TileType>(target_type) && args.size() == 2) {
+        if (As<TileType>(targetType) && args.size() == 2) {
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[1]))
                 << "system.dcci: tile target offset must be a scalar integer element offset (int or index Expr).\n"
                 << " Example: dcci(tile, 0) - cache invalidation starting at element offset 0\n"

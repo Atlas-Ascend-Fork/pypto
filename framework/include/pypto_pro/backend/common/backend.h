@@ -65,9 +65,9 @@ public:
      * \brief Construct registration entry
      *
      * \param backend Backend instance to register to
-     * \param op_name Operator name
+     * \param opName Operator name
      */
-    BackendOpRegistryEntry(Backend* backend, std::string op_name) : backend_(backend), op_name_(std::move(op_name)) {}
+    BackendOpRegistryEntry(Backend* backend, std::string opName) : backend_(backend), opName_(std::move(opName)) {}
 
     /**
      * \brief Set pipeline type
@@ -101,9 +101,9 @@ public:
 
 private:
     Backend* backend_;
-    std::string op_name_;
+    std::string opName_;
     std::optional<ir::PipeType> pipe_;
-    std::optional<BackendCodegenFunc> codegen_func_;
+    std::optional<BackendCodegenFunc> codegenFunc_;
 };
 
 // Macro for registering backend operators with fluent interface
@@ -127,7 +127,7 @@ public:
      */
     struct BackendOpInfo {
         std::optional<ir::PipeType> pipe;
-        BackendCodegenFunc codegen_func;
+        BackendCodegenFunc codegenFunc;
     };
 
     virtual ~Backend() = default;
@@ -143,29 +143,29 @@ public:
      *
      * Returns a registration entry for fluent interface configuration.
      *
-     * \param op_name Operator name
+     * \param opName Operator name
      * \return Registration entry for method chaining
      */
-    BackendOpRegistryEntry RegisterOp(const std::string& op_name);
+    BackendOpRegistryEntry RegisterOp(const std::string& opName);
 
     /**
      * \brief Finalize operator registration
      *
      * Internal method called by BackendOpRegistryEntry destructor.
      *
-     * \param op_name Operator name
+     * \param opName Operator name
      * \param pipe Fixed pipeline type, or nullopt for argument-dependent operations
      * \param func Code generation function
      */
-    void FinalizeOpRegistration(const std::string& op_name, std::optional<ir::PipeType> pipe, BackendCodegenFunc func);
+    void FinalizeOpRegistration(const std::string& opName, std::optional<ir::PipeType> pipe, BackendCodegenFunc func);
 
     /**
      * \brief Get backend-specific operator information
      *
-     * \param op_name Operator name
+     * \param opName Operator name
      * \return Pointer to operator info, or nullptr if not registered
      */
-    [[nodiscard]] const BackendOpInfo* GetOpInfo(const std::string& op_name) const;
+    [[nodiscard]] const BackendOpInfo* GetOpInfo(const std::string& opName) const;
 
     /**
      * \brief Find memory path from source to destination
@@ -184,10 +184,10 @@ public:
      * Returns the size of a single memory component of the given type.
      * If the type exists in multiple cores, returns the size from the first occurrence.
      *
-     * \param mem_type Memory space type
+     * \param memType Memory space type
      * \return Memory size in bytes, or 0 if not found
      */
-    [[nodiscard]] uint64_t GetMemSize(ir::MemorySpace mem_type) const;
+    [[nodiscard]] uint64_t GetMemSize(ir::MemorySpace memType) const;
 
     /**
      * \brief Get backend type name
@@ -216,7 +216,7 @@ protected:
     Backend() = default;
 
     const SoC* soc_{nullptr};
-    std::unordered_map<std::string, BackendOpInfo> backend_op_registry_{};
+    std::unordered_map<std::string, BackendOpInfo> backendOpRegistry_{};
 };
 
 } // namespace backend

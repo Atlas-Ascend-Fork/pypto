@@ -116,13 +116,13 @@ private:
      */
     void CheckIsScalarType(const ExprPtr& expr, const std::string& context, const Span& span);
 
-    void CheckLoopIterArgYieldTypes(const std::vector<IterArgPtr>& iter_args, const std::vector<VarPtr>& return_vars,
-                                    const YieldStmtPtr& yield_stmt, const std::string& context, const Span& span);
-    void CheckLoopIterArgYieldTypeAt(const std::vector<IterArgPtr>& iter_args, const std::vector<VarPtr>& return_vars,
-                                     const YieldStmtPtr& yield_stmt, size_t index, const std::string& context,
+    void CheckLoopIterArgYieldTypes(const std::vector<IterArgPtr>& iterArgs, const std::vector<VarPtr>& returnVars,
+                                    const YieldStmtPtr& yieldStmt, const std::string& context, const Span& span);
+    void CheckLoopIterArgYieldTypeAt(const std::vector<IterArgPtr>& iterArgs, const std::vector<VarPtr>& returnVars,
+                                     const YieldStmtPtr& yieldStmt, size_t index, const std::string& context,
                                      const Span& span);
-    void CheckIfReturnYieldTypes(const IfStmtPtr& op, const YieldStmtPtr& then_yield, const YieldStmtPtr& else_yield);
-    void CheckIfReturnYieldTypeAt(const IfStmtPtr& op, const YieldStmtPtr& then_yield, const YieldStmtPtr& else_yield,
+    void CheckIfReturnYieldTypes(const IfStmtPtr& op, const YieldStmtPtr& thenYield, const YieldStmtPtr& elseYield);
+    void CheckIfReturnYieldTypeAt(const IfStmtPtr& op, const YieldStmtPtr& thenYield, const YieldStmtPtr& elseYield,
                                   size_t index);
 };
 
@@ -206,13 +206,13 @@ void TypeChecker::CheckTypeEquality(const TypePtr& type1, const TypePtr& type2, 
             // Try to compare as constants
             if (!IsSameConstant(dim1, dim2)) {
                 // Check if both are ConstInt but different values
-                auto const_int1 = As<ConstInt>(dim1);
-                auto const_int2 = As<ConstInt>(dim2);
-                if (const_int1 && const_int2) {
+                auto constInt1 = As<ConstInt>(dim1);
+                auto constInt2 = As<ConstInt>(dim2);
+                if (constInt1 && constInt2) {
                     std::ostringstream msg;
                     msg << "Shape dimension mismatch in " << context << ": " << desc1 << " dimension[" << i
-                        << "] = " << const_int1->value_ << ", but " << desc2 << " dimension[" << i
-                        << "] = " << const_int2->value_;
+                        << "] = " << constInt1->value_ << ", but " << desc2 << " dimension[" << i
+                        << "] = " << constInt2->value_;
                     RecordError(typecheck::ErrorType::SHAPE_VALUE_MISMATCH, msg.str(), span);
                 }
                 // For symbolic dimensions, we skip detailed checking
@@ -228,10 +228,10 @@ bool TypeChecker::IsSameConstant(const ExprPtr& expr1, const ExprPtr& expr2) con
         return false;
 
     // Check if both are ConstInt
-    auto const_int1 = As<ConstInt>(expr1);
-    auto const_int2 = As<ConstInt>(expr2);
-    if (const_int1 && const_int2) {
-        return const_int1->value_ == const_int2->value_;
+    auto constInt1 = As<ConstInt>(expr1);
+    auto constInt2 = As<ConstInt>(expr2);
+    if (constInt1 && constInt2) {
+        return constInt1->value_ == constInt2->value_;
     }
 
     // For symbolic expressions, we consider them potentially equal if they have the same structure
@@ -250,11 +250,11 @@ void TypeChecker::CheckIsScalarType(const ExprPtr& expr, const std::string& cont
         msg << context << " must be ScalarType, but got " << expr->GetType()->TypeName();
 
         // Determine error type based on context
-        auto error_type = (context.find("condition") != std::string::npos) ?
-                              typecheck::ErrorType::IF_CONDITION_MUST_BE_SCALAR :
-                              typecheck::ErrorType::FOR_RANGE_MUST_BE_SCALAR;
+        auto errorType = (context.find("condition") != std::string::npos) ?
+                             typecheck::ErrorType::IF_CONDITION_MUST_BE_SCALAR :
+                             typecheck::ErrorType::FOR_RANGE_MUST_BE_SCALAR;
 
-        RecordError(error_type, msg.str(), span);
+        RecordError(errorType, msg.str(), span);
     }
 }
 
@@ -276,10 +276,10 @@ void TypeChecker::VisitStmt_(const ForStmtPtr& op)
 
     // Check type consistency between iter_args initValue, yield values, and return_vars
     if (!op->iterArgs_.empty()) {
-        StmtPtr last_stmt = GetLastStmt(op->body_);
-        auto yield_stmt = As<YieldStmt>(last_stmt);
-        if (yield_stmt) {
-            CheckLoopIterArgYieldTypes(op->iterArgs_, op->returnVars_, yield_stmt, "ForStmt", op->span_);
+        StmtPtr lastStmt = GetLastStmt(op->body_);
+        auto yieldStmt = As<YieldStmt>(lastStmt);
+        if (yieldStmt) {
+            CheckLoopIterArgYieldTypes(op->iterArgs_, op->returnVars_, yieldStmt, "ForStmt", op->span_);
         }
     }
 
@@ -287,51 +287,51 @@ void TypeChecker::VisitStmt_(const ForStmtPtr& op)
     IRVisitor::VisitStmt_(op);
 }
 
-void TypeChecker::CheckLoopIterArgYieldTypes(const std::vector<IterArgPtr>& iter_args,
-                                             const std::vector<VarPtr>& return_vars, const YieldStmtPtr& yield_stmt,
+void TypeChecker::CheckLoopIterArgYieldTypes(const std::vector<IterArgPtr>& iterArgs,
+                                             const std::vector<VarPtr>& returnVars, const YieldStmtPtr& yieldStmt,
                                              const std::string& context, const Span& span)
 {
-    const size_t num_iter_args = iter_args.size();
-    const size_t num_yield_values = yield_stmt->value_.size();
-    const size_t num_return_vars = return_vars.size();
-    if (num_iter_args != num_yield_values || num_iter_args != num_return_vars) {
+    const size_t numIterArgs = iterArgs.size();
+    const size_t numYieldValues = yieldStmt->value_.size();
+    const size_t numReturnVars = returnVars.size();
+    if (numIterArgs != numYieldValues || numIterArgs != numReturnVars) {
         std::ostringstream msg;
-        msg << context << " size mismatch: iter_args=" << num_iter_args << ", yield values=" << num_yield_values
-            << ", return_vars=" << num_return_vars;
+        msg << context << " size mismatch: iter_args=" << numIterArgs << ", yield values=" << numYieldValues
+            << ", return_vars=" << numReturnVars;
         RecordError(typecheck::ErrorType::SIZE_MISMATCH, msg.str(), span);
         return;
     }
 
-    for (size_t i = 0; i < num_iter_args; ++i) {
-        CheckLoopIterArgYieldTypeAt(iter_args, return_vars, yield_stmt, i, context, span);
+    for (size_t i = 0; i < numIterArgs; ++i) {
+        CheckLoopIterArgYieldTypeAt(iterArgs, returnVars, yieldStmt, i, context, span);
     }
 }
 
-void TypeChecker::CheckLoopIterArgYieldTypeAt(const std::vector<IterArgPtr>& iter_args,
-                                              const std::vector<VarPtr>& return_vars, const YieldStmtPtr& yield_stmt,
+void TypeChecker::CheckLoopIterArgYieldTypeAt(const std::vector<IterArgPtr>& iterArgs,
+                                              const std::vector<VarPtr>& returnVars, const YieldStmtPtr& yieldStmt,
                                               size_t index, const std::string& context, const Span& span)
 {
-    const auto& iter_arg = iter_args[index];
-    const auto& yield_value = yield_stmt->value_[index];
-    const auto& return_var = return_vars[index];
+    const auto& iterArg = iterArgs[index];
+    const auto& yieldValue = yieldStmt->value_[index];
+    const auto& returnVar = returnVars[index];
 
-    if (!iter_arg || !iter_arg->initValue_ || !yield_value || !return_var)
+    if (!iterArg || !iterArg->initValue_ || !yieldValue || !returnVar)
         return;
 
-    auto init_type = iter_arg->initValue_->GetType();
-    auto iter_type = iter_arg->iterVar_->GetType();
-    auto yield_type = yield_value->GetType();
-    auto return_type = return_var->GetType();
-    if (!init_type || !iter_type || !yield_type || !return_type)
+    auto initType = iterArg->initValue_->GetType();
+    auto iterType = iterArg->iterVar_->GetType();
+    auto yieldType = yieldValue->GetType();
+    auto returnType = returnVar->GetType();
+    if (!initType || !iterType || !yieldType || !returnType)
         return;
 
-    if (!As<UnknownType>(init_type)) {
-        CheckTypeEquality(init_type, iter_type, context, "iter_arg[" + std::to_string(index) + "] initValue",
+    if (!As<UnknownType>(initType)) {
+        CheckTypeEquality(initType, iterType, context, "iter_arg[" + std::to_string(index) + "] initValue",
                           "iter_arg[" + std::to_string(index) + "] variable", span);
     }
-    CheckTypeEquality(iter_type, yield_type, context, "iter_arg[" + std::to_string(index) + "] variable",
+    CheckTypeEquality(iterType, yieldType, context, "iter_arg[" + std::to_string(index) + "] variable",
                       "yield value[" + std::to_string(index) + "]", span);
-    CheckTypeEquality(iter_type, return_type, context, "iter_arg[" + std::to_string(index) + "] variable",
+    CheckTypeEquality(iterType, returnType, context, "iter_arg[" + std::to_string(index) + "] variable",
                       "return_var[" + std::to_string(index) + "]", span);
 }
 
@@ -347,10 +347,10 @@ void TypeChecker::VisitStmt_(const WhileStmtPtr& op)
 
     // Check type consistency between iter_args initValue, yield values, and return_vars
     if (!op->iterArgs_.empty()) {
-        StmtPtr last_stmt = GetLastStmt(op->body_);
-        auto yield_stmt = As<YieldStmt>(last_stmt);
-        if (yield_stmt)
-            CheckLoopIterArgYieldTypes(op->iterArgs_, op->returnVars_, yield_stmt, "WhileStmt", op->span_);
+        StmtPtr lastStmt = GetLastStmt(op->body_);
+        auto yieldStmt = As<YieldStmt>(lastStmt);
+        if (yieldStmt)
+            CheckLoopIterArgYieldTypes(op->iterArgs_, op->returnVars_, yieldStmt, "WhileStmt", op->span_);
     }
 
     // Continue with default traversal
@@ -369,14 +369,14 @@ void TypeChecker::VisitStmt_(const IfStmtPtr& op)
 
     // Check type consistency only if return_vars is not empty
     if (!op->returnVars_.empty() && op->elseBody_.has_value()) {
-        StmtPtr then_last = GetLastStmt(op->thenBody_);
-        StmtPtr else_last = GetLastStmt(op->elseBody_.value());
+        StmtPtr thenLast = GetLastStmt(op->thenBody_);
+        StmtPtr elseLast = GetLastStmt(op->elseBody_.value());
 
-        auto then_yield = As<YieldStmt>(then_last);
-        auto else_yield = As<YieldStmt>(else_last);
+        auto thenYield = As<YieldStmt>(thenLast);
+        auto elseYield = As<YieldStmt>(elseLast);
 
-        if (then_yield && else_yield) {
-            CheckIfReturnYieldTypes(op, then_yield, else_yield);
+        if (thenYield && elseYield) {
+            CheckIfReturnYieldTypes(op, thenYield, elseYield);
         }
     }
 
@@ -384,43 +384,43 @@ void TypeChecker::VisitStmt_(const IfStmtPtr& op)
     IRVisitor::VisitStmt_(op);
 }
 
-void TypeChecker::CheckIfReturnYieldTypes(const IfStmtPtr& op, const YieldStmtPtr& then_yield,
-                                          const YieldStmtPtr& else_yield)
+void TypeChecker::CheckIfReturnYieldTypes(const IfStmtPtr& op, const YieldStmtPtr& thenYield,
+                                          const YieldStmtPtr& elseYield)
 {
-    size_t num_then_values = then_yield->value_.size();
-    size_t num_else_values = else_yield->value_.size();
-    size_t num_return_vars = op->returnVars_.size();
-    if (num_then_values != num_else_values || num_then_values != num_return_vars) {
+    size_t numThenValues = thenYield->value_.size();
+    size_t numElseValues = elseYield->value_.size();
+    size_t numReturnVars = op->returnVars_.size();
+    if (numThenValues != numElseValues || numThenValues != numReturnVars) {
         std::ostringstream msg;
-        msg << "IfStmt size mismatch: then yield=" << num_then_values << ", else yield=" << num_else_values
-            << ", return_vars=" << num_return_vars;
+        msg << "IfStmt size mismatch: then yield=" << numThenValues << ", else yield=" << numElseValues
+            << ", return_vars=" << numReturnVars;
         RecordError(typecheck::ErrorType::SIZE_MISMATCH, msg.str(), op->span_);
         return;
     }
 
-    for (size_t i = 0; i < num_then_values; ++i) {
-        CheckIfReturnYieldTypeAt(op, then_yield, else_yield, i);
+    for (size_t i = 0; i < numThenValues; ++i) {
+        CheckIfReturnYieldTypeAt(op, thenYield, elseYield, i);
     }
 }
 
-void TypeChecker::CheckIfReturnYieldTypeAt(const IfStmtPtr& op, const YieldStmtPtr& then_yield,
-                                           const YieldStmtPtr& else_yield, size_t index)
+void TypeChecker::CheckIfReturnYieldTypeAt(const IfStmtPtr& op, const YieldStmtPtr& thenYield,
+                                           const YieldStmtPtr& elseYield, size_t index)
 {
-    const auto& then_value = then_yield->value_[index];
-    const auto& else_value = else_yield->value_[index];
+    const auto& thenValue = thenYield->value_[index];
+    const auto& elseValue = elseYield->value_[index];
 
-    if (!then_value || !else_value)
+    if (!thenValue || !elseValue)
         return;
 
-    auto then_type = then_value->GetType();
-    auto else_type = else_value->GetType();
-    if (!then_type || !else_type)
+    auto thenType = thenValue->GetType();
+    auto elseType = elseValue->GetType();
+    if (!thenType || !elseType)
         return;
 
-    if (IsA<NoneType>(then_type) || IsA<NoneType>(else_type))
+    if (IsA<NoneType>(thenType) || IsA<NoneType>(elseType))
         return;
 
-    CheckTypeEquality(then_type, else_type, "IfStmt", "then yield value[" + std::to_string(index) + "]",
+    CheckTypeEquality(thenType, elseType, "IfStmt", "then yield value[" + std::to_string(index) + "]",
                       "else yield value[" + std::to_string(index) + "]", op->span_);
 }
 

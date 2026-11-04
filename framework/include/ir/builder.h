@@ -115,11 +115,11 @@ public:
      *
      * Finalizes the function and pops the function context from the stack.
      *
-     * \param end_span Source location for end of function
+     * \param endSpan Source location for end of function
      * \return The built function
      * \throws RuntimeError if not inside a function context
      */
-    FunctionPtr EndFunction(const Span& end_span);
+    FunctionPtr EndFunction(const Span& endSpan);
 
     // ========== For Loop Building ==========
 
@@ -129,7 +129,7 @@ public:
      * Creates a new for loop context and pushes it onto the context stack.
      * Must be closed with EndForLoop().
      *
-     * \param loop_var Loop variable
+     * \param loopVar Loop variable
      * \param start Start value expression
      * \param stop Stop value expression
      * \param step Step value expression
@@ -137,7 +137,7 @@ public:
      * \param kind Loop kind (Sequential or Parallel, default: Sequential)
      * \throws RuntimeError if not inside a function or another loop
      */
-    void BeginForLoop(const VarPtr& loop_var, const ExprPtr& start, const ExprPtr& stop, const ExprPtr& step,
+    void BeginForLoop(const VarPtr& loopVar, const ExprPtr& start, const ExprPtr& stop, const ExprPtr& step,
                       const Span& span);
 
     /**
@@ -145,10 +145,10 @@ public:
      *
      * Iteration arguments are loop-carried values (SSA-style).
      *
-     * \param iter_arg Iteration argument with initial value
+     * \param iterArg Iteration argument with initial value
      * \throws RuntimeError if not inside a for loop context
      */
-    void AddIterArg(const IterArgPtr& iter_arg);
+    void AddIterArg(const IterArgPtr& iterArg);
 
     /**
      * \brief Add a return variable to the current for loop
@@ -166,12 +166,12 @@ public:
      *
      * Finalizes the loop and pops the loop context from the stack.
      *
-     * \param end_span Source location for end of loop
+     * \param endSpan Source location for end of loop
      * \return The built for statement
      * \throws RuntimeError if not inside a for loop context
      * \throws RuntimeError if number of return variables doesn't match iteration arguments
      */
-    StmtPtr EndForLoop(const Span& end_span);
+    StmtPtr EndForLoop(const Span& endSpan);
 
     // ========== While Loop Building ==========
 
@@ -192,10 +192,10 @@ public:
      *
      * Iteration arguments are loop-carried values (SSA-style).
      *
-     * \param iter_arg Iteration argument with initial value
+     * \param iterArg Iteration argument with initial value
      * \throws RuntimeError if not inside a while loop context
      */
-    void AddWhileIterArg(const IterArgPtr& iter_arg);
+    void AddWhileIterArg(const IterArgPtr& iterArg);
 
     /**
      * \brief Add a return variable to the current while loop
@@ -224,12 +224,12 @@ public:
      *
      * Finalizes the loop and pops the loop context from the stack.
      *
-     * \param end_span Source location for end of loop
+     * \param endSpan Source location for end of loop
      * \return The built while statement
      * \throws RuntimeError if not inside a while loop context
      * \throws RuntimeError if number of return variables doesn't match iteration arguments
      */
-    StmtPtr EndWhileLoop(const Span& end_span);
+    StmtPtr EndWhileLoop(const Span& endSpan);
 
     // ========== If Statement Building ==========
 
@@ -271,16 +271,16 @@ public:
      *
      * Finalizes the if statement and pops the context from the stack.
      *
-     * \param end_span Source location for end of if
+     * \param endSpan Source location for end of if
      * \return The built if statement
      * \throws RuntimeError if not inside an if context
      */
-    StmtPtr EndIf(const Span& end_span);
+    StmtPtr EndIf(const Span& endSpan);
 
     // ========== Section Building ==========
 
-    void BeginSection(SectionKind section_kind, const Span& span);
-    StmtPtr EndSection(const Span& end_span);
+    void BeginSection(SectionKind sectionKind, const Span& span);
+    StmtPtr EndSection(const Span& endSpan);
 
     // ========== Statement Recording ==========
 
@@ -345,7 +345,7 @@ public:
     BreakStmtPtr Break(const Span& span);
     ContinueStmtPtr Continue(const Span& span);
 
-    void UpdateJumpValues(const StmtPtr& jump_op, std::vector<ExprPtr> values);
+    void UpdateJumpValues(const StmtPtr& jumpOp, std::vector<ExprPtr> values);
 
     // ========== Context State Queries ==========
 
@@ -411,11 +411,11 @@ public:
      *
      * Finalizes the program and pops the program context from the stack.
      *
-     * \param end_span Source location for end of program
+     * \param endSpan Source location for end of program
      * \return The built program
      * \throws RuntimeError if not inside a program context
      */
-    ProgramPtr EndProgram(const Span& end_span);
+    ProgramPtr EndProgram(const Span& endSpan);
 
     /**
      * \brief Check if currently inside a program
@@ -443,13 +443,13 @@ public:
      * Returns the return types for a function if it has been added to the program.
      * Returns empty vector if not inside a program or function not yet added.
      *
-     * \param func_name Function name
+     * \param funcName Function name
      * \return Vector of return types
      */
-    [[nodiscard]] std::vector<TypePtr> GetFunctionReturnTypes(const std::string& func_name) const;
+    [[nodiscard]] std::vector<TypePtr> GetFunctionReturnTypes(const std::string& funcName) const;
 
 private:
-    std::vector<std::shared_ptr<BuildContext>> context_stack_;
+    std::vector<std::shared_ptr<BuildContext>> contextStack_;
 
     // Helper to get current context with type checking
     template <typename T>
@@ -507,26 +507,26 @@ private:
  */
 class FunctionContext : public BuildContext {
 public:
-    FunctionContext(std::string name, Span span, FunctionType func_type = FunctionType::OPAQUE)
-        : BuildContext(Type::FUNCTION, std::move(span)), name_(std::move(name)), func_type_(func_type)
+    FunctionContext(std::string name, Span span, FunctionType funcType = FunctionType::OPAQUE)
+        : BuildContext(Type::FUNCTION, std::move(span)), name_(std::move(name)), funcType_(funcType)
     {}
 
     void AddParam(const VarPtr& param) { params_.push_back(param); }
-    void AddReturnType(const TypePtr& type) { return_types_.push_back(type); }
+    void AddReturnType(const TypePtr& type) { returnTypes_.push_back(type); }
 
     void AddStmt(const StmtPtr& stmt) override { stmts_.push_back(stmt); }
     [[nodiscard]] const std::string& GetName() const { return name_; }
     [[nodiscard]] const std::vector<VarPtr>& GetParams() const { return params_; }
-    [[nodiscard]] const std::vector<TypePtr>& GetReturnTypes() const { return return_types_; }
-    [[nodiscard]] FunctionType GetFuncType() const { return func_type_; }
+    [[nodiscard]] const std::vector<TypePtr>& GetReturnTypes() const { return returnTypes_; }
+    [[nodiscard]] FunctionType GetFuncType() const { return funcType_; }
     [[nodiscard]] const std::vector<std::pair<std::string, std::any>>& GetAttrs() const { return attrs_; }
 
 private:
     std::string name_;
-    FunctionType func_type_;
+    FunctionType funcType_;
     std::vector<std::pair<std::string, std::any>> attrs_;
     std::vector<VarPtr> params_;
-    std::vector<TypePtr> return_types_;
+    std::vector<TypePtr> returnTypes_;
 };
 
 /**
@@ -534,34 +534,34 @@ private:
  */
 class ForLoopContext : public BuildContext {
 public:
-    ForLoopContext(VarPtr loop_var, ExprPtr start, ExprPtr stop, ExprPtr step, Span span)
+    ForLoopContext(VarPtr loopVar, ExprPtr start, ExprPtr stop, ExprPtr step, Span span)
         : BuildContext(Type::FOR_LOOP, std::move(span)),
-          loop_var_(std::move(loop_var)),
+          loopVar_(std::move(loopVar)),
           start_(std::move(start)),
           stop_(std::move(stop)),
           step_(std::move(step))
     {}
 
-    void AddIterArg(const IterArgPtr& iter_arg) { iter_args_.push_back(iter_arg); }
-    void AddReturnVar(const VarPtr& var) { return_vars_.push_back(var); }
+    void AddIterArg(const IterArgPtr& iterArg) { iterArgs_.push_back(iterArg); }
+    void AddReturnVar(const VarPtr& var) { returnVars_.push_back(var); }
 
     void AddStmt(const StmtPtr& stmt) override { stmts_.push_back(stmt); }
-    [[nodiscard]] const VarPtr& GetLoopVar() const { return loop_var_; }
+    [[nodiscard]] const VarPtr& GetLoopVar() const { return loopVar_; }
     [[nodiscard]] const ExprPtr& GetStart() const { return start_; }
     [[nodiscard]] const ExprPtr& GetStop() const { return stop_; }
     [[nodiscard]] const ExprPtr& GetStep() const { return step_; }
-    [[nodiscard]] const std::vector<IterArgPtr>& GetIterArgs() const { return iter_args_; }
-    [[nodiscard]] const std::vector<VarPtr>& GetReturnVars() const { return return_vars_; }
+    [[nodiscard]] const std::vector<IterArgPtr>& GetIterArgs() const { return iterArgs_; }
+    [[nodiscard]] const std::vector<VarPtr>& GetReturnVars() const { return returnVars_; }
     [[nodiscard]] const std::vector<std::pair<std::string, std::any>>& GetAttrs() const { return attrs_; }
 
 private:
-    VarPtr loop_var_;
+    VarPtr loopVar_;
     ExprPtr start_;
     ExprPtr stop_;
     ExprPtr step_;
     std::vector<std::pair<std::string, std::any>> attrs_;
-    std::vector<IterArgPtr> iter_args_;
-    std::vector<VarPtr> return_vars_;
+    std::vector<IterArgPtr> iterArgs_;
+    std::vector<VarPtr> returnVars_;
 };
 
 /**
@@ -573,19 +573,19 @@ public:
         : BuildContext(Type::WHILE_LOOP, std::move(span)), condition_(std::move(condition))
     {}
 
-    void AddIterArg(const IterArgPtr& iter_arg) { iter_args_.push_back(iter_arg); }
-    void AddReturnVar(const VarPtr& var) { return_vars_.push_back(var); }
+    void AddIterArg(const IterArgPtr& iterArg) { iterArgs_.push_back(iterArg); }
+    void AddReturnVar(const VarPtr& var) { returnVars_.push_back(var); }
     void SetCondition(const ExprPtr& condition) { condition_ = condition; }
 
     void AddStmt(const StmtPtr& stmt) override { stmts_.push_back(stmt); }
     [[nodiscard]] const ExprPtr& GetCondition() const { return condition_; }
-    [[nodiscard]] const std::vector<IterArgPtr>& GetIterArgs() const { return iter_args_; }
-    [[nodiscard]] const std::vector<VarPtr>& GetReturnVars() const { return return_vars_; }
+    [[nodiscard]] const std::vector<IterArgPtr>& GetIterArgs() const { return iterArgs_; }
+    [[nodiscard]] const std::vector<VarPtr>& GetReturnVars() const { return returnVars_; }
 
 private:
     ExprPtr condition_;
-    std::vector<IterArgPtr> iter_args_;
-    std::vector<VarPtr> return_vars_;
+    std::vector<IterArgPtr> iterArgs_;
+    std::vector<VarPtr> returnVars_;
 };
 
 /**
@@ -599,23 +599,23 @@ public:
 
     void BeginElseBranch()
     {
-        in_else_branch_ = true;
-        else_stmts_.clear();
+        inElseBranch_ = true;
+        elseStmts_.clear();
     }
 
-    void AddReturnVar(const VarPtr& var) { return_vars_.push_back(var); }
+    void AddReturnVar(const VarPtr& var) { returnVars_.push_back(var); }
 
-    void AddStmt(const StmtPtr& stmt) override { (in_else_branch_ ? else_stmts_ : stmts_).push_back(stmt); }
+    void AddStmt(const StmtPtr& stmt) override { (inElseBranch_ ? elseStmts_ : stmts_).push_back(stmt); }
     [[nodiscard]] const ExprPtr& GetCondition() const { return condition_; }
-    [[nodiscard]] bool InElseBranch() const { return in_else_branch_; }
-    [[nodiscard]] const std::vector<StmtPtr>& GetElseStmts() const { return else_stmts_; }
-    [[nodiscard]] const std::vector<VarPtr>& GetReturnVars() const { return return_vars_; }
+    [[nodiscard]] bool InElseBranch() const { return inElseBranch_; }
+    [[nodiscard]] const std::vector<StmtPtr>& GetElseStmts() const { return elseStmts_; }
+    [[nodiscard]] const std::vector<VarPtr>& GetReturnVars() const { return returnVars_; }
 
 private:
     ExprPtr condition_;
-    bool in_else_branch_ = false;
-    std::vector<StmtPtr> else_stmts_;
-    std::vector<VarPtr> return_vars_;
+    bool inElseBranch_ = false;
+    std::vector<StmtPtr> elseStmts_;
+    std::vector<VarPtr> returnVars_;
 };
 
 /**
@@ -623,15 +623,15 @@ private:
  */
 class SectionContext : public BuildContext {
 public:
-    SectionContext(SectionKind section_kind, Span span)
-        : BuildContext(Type::SECTION, std::move(span)), section_kind_(section_kind)
+    SectionContext(SectionKind sectionKind, Span span)
+        : BuildContext(Type::SECTION, std::move(span)), sectionKind_(sectionKind)
     {}
 
     void AddStmt(const StmtPtr& stmt) override { stmts_.push_back(stmt); }
-    [[nodiscard]] SectionKind GetSectionKind() const { return section_kind_; }
+    [[nodiscard]] SectionKind GetSectionKind() const { return sectionKind_; }
 
 private:
-    SectionKind section_kind_;
+    SectionKind sectionKind_;
 };
 
 /**
@@ -666,10 +666,10 @@ public:
     /**
      * \brief Get return types for a function by name
      *
-     * \param func_name Function name
+     * \param funcName Function name
      * \return Vector of return types, or empty vector if function not yet added
      */
-    [[nodiscard]] std::vector<TypePtr> GetReturnTypes(const std::string& func_name) const;
+    [[nodiscard]] std::vector<TypePtr> GetReturnTypes(const std::string& funcName) const;
 
     // ProgramContext doesn't accumulate statements
     void AddStmt(const StmtPtr&) override
@@ -680,7 +680,7 @@ public:
 private:
     std::string name_;
     std::vector<FunctionPtr> functions_;
-    std::map<std::string, std::vector<TypePtr>> return_types_; // Track return types for each function
+    std::map<std::string, std::vector<TypePtr>> returnTypes_; // Track return types for each function
 };
 
 } // namespace ir

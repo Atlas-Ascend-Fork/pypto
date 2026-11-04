@@ -44,10 +44,10 @@ StmtPtr MakeStmtBody(const std::vector<StmtPtr>& stmts, const Span& span)
     return std::make_shared<SeqStmts>(stmts, span);
 }
 
-Span MakeCombinedSpan(const Span& begin_span, const Span& end_span)
+Span MakeCombinedSpan(const Span& beginSpan, const Span& endSpan)
 {
-    return Span(begin_span.Filename(), begin_span.BeginLine(), begin_span.BeginColumn(), end_span.EndLine(),
-                end_span.EndColumn());
+    return Span(beginSpan.Filename(), beginSpan.BeginLine(), beginSpan.BeginColumn(), endSpan.EndLine(),
+                endSpan.EndColumn());
 }
 
 /**
@@ -61,70 +61,70 @@ Span MakeCombinedSpan(const Span& begin_span, const Span& end_span)
  * perform. Non-scalar or cross-category (int vs float) mismatches are left untouched so
  * the type verifier still reports them.
  *
- * \param then_stmts Statements of the then branch (last one is the YieldStmt); mutated in place.
- * \param else_stmts Statements of the else branch (last one is the YieldStmt); mutated in place.
- * \param return_vars Phi return vars; retyped in place when a branch pair is promoted.
+ * \param thenStmts Statements of the then branch (last one is the YieldStmt); mutated in place.
+ * \param elseStmts Statements of the else branch (last one is the YieldStmt); mutated in place.
+ * \param returnVars Phi return vars; retyped in place when a branch pair is promoted.
  */
-void ReconcileIfReturnVarTypes(std::vector<StmtPtr>& then_stmts, std::vector<StmtPtr>& else_stmts,
-                               std::vector<VarPtr>& return_vars)
+void ReconcileIfReturnVarTypes(std::vector<StmtPtr>& thenStmts, std::vector<StmtPtr>& elseStmts,
+                               std::vector<VarPtr>& returnVars)
 {
-    if (return_vars.empty() || then_stmts.empty() || else_stmts.empty()) {
+    if (returnVars.empty() || thenStmts.empty() || elseStmts.empty()) {
         return;
     }
-    auto then_yield = std::dynamic_pointer_cast<const YieldStmt>(then_stmts.back());
-    auto else_yield = std::dynamic_pointer_cast<const YieldStmt>(else_stmts.back());
-    if (!then_yield || !else_yield) {
+    auto thenYield = std::dynamic_pointer_cast<const YieldStmt>(thenStmts.back());
+    auto elseYield = std::dynamic_pointer_cast<const YieldStmt>(elseStmts.back());
+    if (!thenYield || !elseYield) {
         return;
     }
-    const size_t count = return_vars.size();
-    if (then_yield->value_.size() != count || else_yield->value_.size() != count) {
+    const size_t count = returnVars.size();
+    if (thenYield->value_.size() != count || elseYield->value_.size() != count) {
         return;
     }
 
-    std::vector<ExprPtr> then_values = then_yield->value_;
-    std::vector<ExprPtr> else_values = else_yield->value_;
+    std::vector<ExprPtr> thenValues = thenYield->value_;
+    std::vector<ExprPtr> elseValues = elseYield->value_;
     bool changed = false;
     for (size_t i = 0; i < count; ++i) {
-        const ExprPtr& then_value = then_values[i];
-        const ExprPtr& else_value = else_values[i];
-        if (!then_value || !else_value) {
+        const ExprPtr& thenValue = thenValues[i];
+        const ExprPtr& elseValue = elseValues[i];
+        if (!thenValue || !elseValue) {
             continue;
         }
-        auto then_scalar = std::dynamic_pointer_cast<const ScalarType>(then_value->GetType());
-        auto else_scalar = std::dynamic_pointer_cast<const ScalarType>(else_value->GetType());
-        if (!then_scalar || !else_scalar) {
+        auto thenScalar = std::dynamic_pointer_cast<const ScalarType>(thenValue->GetType());
+        auto elseScalar = std::dynamic_pointer_cast<const ScalarType>(elseValue->GetType());
+        if (!thenScalar || !elseScalar) {
             continue;
         }
-        DataType then_dtype = then_scalar->dtype_;
-        DataType else_dtype = else_scalar->dtype_;
-        if (then_dtype == else_dtype) {
+        DataType thenDtype = thenScalar->dtype_;
+        DataType elseDtype = elseScalar->dtype_;
+        if (thenDtype == elseDtype) {
             continue;
         }
         // Only reconcile a matching numeric category (both int or both float); bool and
         // int/float mismatches stay errors for the verifier to surface.
-        bool both_int = then_dtype.IsInt() && else_dtype.IsInt();
-        bool both_float = then_dtype.IsFloat() && else_dtype.IsFloat();
-        if (!both_int && !both_float) {
+        bool bothInt = thenDtype.IsInt() && elseDtype.IsInt();
+        bool bothFloat = thenDtype.IsFloat() && elseDtype.IsFloat();
+        if (!bothInt && !bothFloat) {
             continue;
         }
-        DataType promoted = PromoteSameCategoryDtype(then_dtype, else_dtype, "ternary", return_vars[i]->span_);
-        then_values[i] = MaybeCast(then_value, promoted, then_yield->span_);
-        else_values[i] = MaybeCast(else_value, promoted, else_yield->span_);
-        return_vars[i] = std::make_shared<Var>(return_vars[i]->name_, std::make_shared<ScalarType>(promoted),
-                                               return_vars[i]->span_);
+        DataType promoted = PromoteSameCategoryDtype(thenDtype, elseDtype, "ternary", returnVars[i]->span_);
+        thenValues[i] = MaybeCast(thenValue, promoted, thenYield->span_);
+        elseValues[i] = MaybeCast(elseValue, promoted, elseYield->span_);
+        returnVars[i] = std::make_shared<Var>(returnVars[i]->name_, std::make_shared<ScalarType>(promoted),
+                                              returnVars[i]->span_);
         changed = true;
     }
     if (!changed) {
         return;
     }
-    then_stmts.back() = std::make_shared<YieldStmt>(std::move(then_values), then_yield->span_);
-    else_stmts.back() = std::make_shared<YieldStmt>(std::move(else_values), else_yield->span_);
+    thenStmts.back() = std::make_shared<YieldStmt>(std::move(thenValues), thenYield->span_);
+    elseStmts.back() = std::make_shared<YieldStmt>(std::move(elseValues), elseYield->span_);
 }
 
-std::string MakeLoopReturnVarsMismatchMessage(const char* loop_kind, size_t iter_arg_count, size_t return_var_count)
+std::string MakeLoopReturnVarsMismatchMessage(const char* loopKind, size_t iterArgCount, size_t returnVarCount)
 {
     std::ostringstream oss;
-    oss << loop_kind << " loop has " << iter_arg_count << " iteration arguments but " << return_var_count
+    oss << loopKind << " loop has " << iterArgCount << " iteration arguments but " << returnVarCount
         << " return variables. They must match.";
     return oss.str();
 }
@@ -144,7 +144,7 @@ void IRBuilder::BeginFunction(const std::string& name, const Span& span, Functio
                            CurrentContext()->GetBeginSpan().ToString());
     }
 
-    context_stack_.push_back(std::make_shared<FunctionContext>(name, span, type));
+    contextStack_.push_back(std::make_shared<FunctionContext>(name, span, type));
 }
 
 VarPtr IRBuilder::FuncArg(const std::string& name, const TypePtr& type, const Span& span)
@@ -162,54 +162,54 @@ void IRBuilder::ReturnType(const TypePtr& type)
     static_cast<FunctionContext*>(CurrentContext())->AddReturnType(type);
 }
 
-FunctionPtr IRBuilder::EndFunction(const Span& end_span)
+FunctionPtr IRBuilder::EndFunction(const Span& endSpan)
 {
     ValidateInFunction("EndFunction");
 
-    auto* func_ctx = static_cast<FunctionContext*>(CurrentContext());
+    auto* funcCtx = static_cast<FunctionContext*>(CurrentContext());
 
     // Build body from accumulated statements
     StmtPtr body;
-    const auto& stmts = func_ctx->GetStmts();
+    const auto& stmts = funcCtx->GetStmts();
     if (stmts.empty()) {
         // Empty body - create empty SeqStmts
-        body = std::make_shared<SeqStmts>(std::vector<StmtPtr>(), end_span);
+        body = std::make_shared<SeqStmts>(std::vector<StmtPtr>(), endSpan);
     } else if (stmts.size() == 1) {
         body = stmts[0];
     } else {
-        body = std::make_shared<SeqStmts>(stmts, end_span);
+        body = std::make_shared<SeqStmts>(stmts, endSpan);
     }
 
     // Combine begin and end spans
-    auto combinedSpan = MakeCombinedSpan(func_ctx->GetBeginSpan(), end_span);
+    auto combinedSpan = MakeCombinedSpan(funcCtx->GetBeginSpan(), endSpan);
 
     // Create function
-    auto func = std::make_shared<Function>(func_ctx->GetName(), func_ctx->GetParams(), func_ctx->GetReturnTypes(), body,
-                                           combinedSpan, func_ctx->GetFuncType(), false, func_ctx->GetAttrs());
+    auto func = std::make_shared<Function>(funcCtx->GetName(), funcCtx->GetParams(), funcCtx->GetReturnTypes(), body,
+                                           combinedSpan, funcCtx->GetFuncType(), false, funcCtx->GetAttrs());
 
     // Pop context
-    context_stack_.pop_back();
+    contextStack_.pop_back();
 
     return func;
 }
 
 // ========== For Loop Building ==========
 
-void IRBuilder::BeginForLoop(const VarPtr& loop_var, const ExprPtr& start, const ExprPtr& stop, const ExprPtr& step,
+void IRBuilder::BeginForLoop(const VarPtr& loopVar, const ExprPtr& start, const ExprPtr& stop, const ExprPtr& step,
                              const Span& span)
 {
-    if (context_stack_.empty()) {
+    if (contextStack_.empty()) {
         throw RuntimeError("Cannot begin for loop: not inside a function or another valid context at " +
                            span.ToString());
     }
 
-    context_stack_.push_back(std::make_shared<ForLoopContext>(loop_var, start, stop, step, span));
+    contextStack_.push_back(std::make_shared<ForLoopContext>(loopVar, start, stop, step, span));
 }
 
-void IRBuilder::AddIterArg(const IterArgPtr& iter_arg)
+void IRBuilder::AddIterArg(const IterArgPtr& iterArg)
 {
     ValidateInLoop("AddIterArg");
-    static_cast<ForLoopContext*>(CurrentContext())->AddIterArg(iter_arg);
+    static_cast<ForLoopContext*>(CurrentContext())->AddIterArg(iterArg);
 }
 
 void IRBuilder::AddReturnVar(const VarPtr& var)
@@ -218,57 +218,57 @@ void IRBuilder::AddReturnVar(const VarPtr& var)
     static_cast<ForLoopContext*>(CurrentContext())->AddReturnVar(var);
 }
 
-StmtPtr IRBuilder::EndForLoop(const Span& end_span)
+StmtPtr IRBuilder::EndForLoop(const Span& endSpan)
 {
     ValidateInLoop("EndForLoop");
 
-    auto* loop_ctx = static_cast<ForLoopContext*>(CurrentContext());
+    auto* loopCtx = static_cast<ForLoopContext*>(CurrentContext());
 
     // Validate iter_args and return_vars match
-    if (loop_ctx->GetIterArgs().size() != loop_ctx->GetReturnVars().size()) {
+    if (loopCtx->GetIterArgs().size() != loopCtx->GetReturnVars().size()) {
         // Pop context before throwing to maintain stack consistency
-        context_stack_.pop_back();
+        contextStack_.pop_back();
 
         throw RuntimeError(
-            MakeLoopReturnVarsMismatchMessage("For", loop_ctx->GetIterArgs().size(), loop_ctx->GetReturnVars().size()));
+            MakeLoopReturnVarsMismatchMessage("For", loopCtx->GetIterArgs().size(), loopCtx->GetReturnVars().size()));
     }
 
-    auto body = MakeStmtBody(loop_ctx->GetStmts(), end_span);
+    auto body = MakeStmtBody(loopCtx->GetStmts(), endSpan);
 
-    auto combinedSpan = MakeCombinedSpan(loop_ctx->GetBeginSpan(), end_span);
+    auto combinedSpan = MakeCombinedSpan(loopCtx->GetBeginSpan(), endSpan);
 
     // Create for statement
-    auto for_stmt = std::make_shared<ForStmt>(loop_ctx->GetLoopVar(), loop_ctx->GetStart(), loop_ctx->GetStop(),
-                                              loop_ctx->GetStep(), loop_ctx->GetIterArgs(), body,
-                                              loop_ctx->GetReturnVars(), combinedSpan);
+    auto forStmt = std::make_shared<ForStmt>(loopCtx->GetLoopVar(), loopCtx->GetStart(), loopCtx->GetStop(),
+                                             loopCtx->GetStep(), loopCtx->GetIterArgs(), body, loopCtx->GetReturnVars(),
+                                             combinedSpan);
 
     // Pop context
-    context_stack_.pop_back();
+    contextStack_.pop_back();
 
     // Emit to parent context if it exists
-    if (!context_stack_.empty()) {
-        CurrentContext()->AddStmt(for_stmt);
+    if (!contextStack_.empty()) {
+        CurrentContext()->AddStmt(forStmt);
     }
 
-    return for_stmt;
+    return forStmt;
 }
 
 // ========== While Loop Building ==========
 
 void IRBuilder::BeginWhileLoop(const ExprPtr& condition, const Span& span)
 {
-    if (context_stack_.empty()) {
+    if (contextStack_.empty()) {
         throw RuntimeError("Cannot begin while loop: not inside a function or another valid context at " +
                            span.ToString());
     }
 
-    context_stack_.push_back(std::make_shared<WhileLoopContext>(condition, span));
+    contextStack_.push_back(std::make_shared<WhileLoopContext>(condition, span));
 }
 
-void IRBuilder::AddWhileIterArg(const IterArgPtr& iter_arg)
+void IRBuilder::AddWhileIterArg(const IterArgPtr& iterArg)
 {
     ValidateInWhileLoop("AddWhileIterArg");
-    static_cast<WhileLoopContext*>(CurrentContext())->AddIterArg(iter_arg);
+    static_cast<WhileLoopContext*>(CurrentContext())->AddIterArg(iterArg);
 }
 
 void IRBuilder::AddWhileReturnVar(const VarPtr& var)
@@ -283,55 +283,55 @@ void IRBuilder::SetWhileLoopCondition(const ExprPtr& condition)
     static_cast<WhileLoopContext*>(CurrentContext())->SetCondition(condition);
 }
 
-StmtPtr IRBuilder::EndWhileLoop(const Span& end_span)
+StmtPtr IRBuilder::EndWhileLoop(const Span& endSpan)
 {
     ValidateInWhileLoop("EndWhileLoop");
 
-    auto* loop_ctx = static_cast<WhileLoopContext*>(CurrentContext());
+    auto* loopCtx = static_cast<WhileLoopContext*>(CurrentContext());
 
     // Validate iter_args and return_vars match
-    if (loop_ctx->GetIterArgs().size() != loop_ctx->GetReturnVars().size()) {
+    if (loopCtx->GetIterArgs().size() != loopCtx->GetReturnVars().size()) {
         // Pop context before throwing to maintain stack consistency
-        context_stack_.pop_back();
+        contextStack_.pop_back();
 
-        throw RuntimeError(MakeLoopReturnVarsMismatchMessage("While", loop_ctx->GetIterArgs().size(),
-                                                             loop_ctx->GetReturnVars().size()));
+        throw RuntimeError(
+            MakeLoopReturnVarsMismatchMessage("While", loopCtx->GetIterArgs().size(), loopCtx->GetReturnVars().size()));
     }
 
-    auto body = MakeStmtBody(loop_ctx->GetStmts(), end_span);
-    auto combinedSpan = MakeCombinedSpan(loop_ctx->GetBeginSpan(), end_span);
+    auto body = MakeStmtBody(loopCtx->GetStmts(), endSpan);
+    auto combinedSpan = MakeCombinedSpan(loopCtx->GetBeginSpan(), endSpan);
     // Create while statement
-    auto while_stmt = std::make_shared<WhileStmt>(loop_ctx->GetCondition(), loop_ctx->GetIterArgs(), body,
-                                                  loop_ctx->GetReturnVars(), combinedSpan);
+    auto whileStmt = std::make_shared<WhileStmt>(loopCtx->GetCondition(), loopCtx->GetIterArgs(), body,
+                                                 loopCtx->GetReturnVars(), combinedSpan);
 
     // Pop context
-    context_stack_.pop_back();
+    contextStack_.pop_back();
 
     // Emit to parent context if it exists
-    if (!context_stack_.empty()) {
-        CurrentContext()->AddStmt(while_stmt);
+    if (!contextStack_.empty()) {
+        CurrentContext()->AddStmt(whileStmt);
     }
 
-    return while_stmt;
+    return whileStmt;
 }
 
 // ========== If Statement Building ==========
 
 void IRBuilder::BeginIf(const ExprPtr& condition, const Span& span)
 {
-    IRCHECK(!context_stack_.empty()) << "Cannot begin if statement: not inside a function or another valid context at "
-                                     << span.ToString();
-    context_stack_.push_back(std::make_shared<IfStmtContext>(condition, span));
+    IRCHECK(!contextStack_.empty()) << "Cannot begin if statement: not inside a function or another valid context at "
+                                    << span.ToString();
+    contextStack_.push_back(std::make_shared<IfStmtContext>(condition, span));
 }
 
 void IRBuilder::BeginElse(const Span& span)
 {
     ValidateInIf("BeginElse");
 
-    auto* if_ctx = static_cast<IfStmtContext*>(CurrentContext());
-    IRCHECK(!if_ctx->InElseBranch()) << "Cannot begin else branch: already in else branch at " << span.ToString();
+    auto* ifCtx = static_cast<IfStmtContext*>(CurrentContext());
+    IRCHECK(!ifCtx->InElseBranch()) << "Cannot begin else branch: already in else branch at " << span.ToString();
 
-    if_ctx->BeginElseBranch();
+    ifCtx->BeginElseBranch();
 }
 
 void IRBuilder::AddIfReturnVar(const VarPtr& var)
@@ -340,89 +340,89 @@ void IRBuilder::AddIfReturnVar(const VarPtr& var)
     static_cast<IfStmtContext*>(CurrentContext())->AddReturnVar(var);
 }
 
-StmtPtr IRBuilder::EndIf(const Span& end_span)
+StmtPtr IRBuilder::EndIf(const Span& endSpan)
 {
     ValidateInIf("EndIf");
 
-    auto* if_ctx = static_cast<IfStmtContext*>(CurrentContext());
+    auto* ifCtx = static_cast<IfStmtContext*>(CurrentContext());
 
-    std::vector<StmtPtr> then_stmts = if_ctx->GetStmts();
-    std::vector<StmtPtr> else_stmts = if_ctx->GetElseStmts();
-    std::vector<VarPtr> return_vars = if_ctx->GetReturnVars();
+    std::vector<StmtPtr> thenStmts = ifCtx->GetStmts();
+    std::vector<StmtPtr> elseStmts = ifCtx->GetElseStmts();
+    std::vector<VarPtr> returnVars = ifCtx->GetReturnVars();
 
     // Promote differing but same-category scalar branch types to a common dtype
     // before building the phi.
-    if (if_ctx->InElseBranch()) {
-        ReconcileIfReturnVarTypes(then_stmts, else_stmts, return_vars);
+    if (ifCtx->InElseBranch()) {
+        ReconcileIfReturnVarTypes(thenStmts, elseStmts, returnVars);
     }
 
     // Build then body
-    StmtPtr then_body = MakeStmtBody(then_stmts, end_span);
+    StmtPtr thenBody = MakeStmtBody(thenStmts, endSpan);
 
     // Build else body (optional)
-    std::optional<StmtPtr> else_body;
-    if (if_ctx->InElseBranch() && !else_stmts.empty()) {
-        else_body = MakeStmtBody(else_stmts, end_span);
+    std::optional<StmtPtr> elseBody;
+    if (ifCtx->InElseBranch() && !elseStmts.empty()) {
+        elseBody = MakeStmtBody(elseStmts, endSpan);
     }
 
     // Combine begin and end spans
-    auto combinedSpan = MakeCombinedSpan(if_ctx->GetBeginSpan(), end_span);
+    auto combinedSpan = MakeCombinedSpan(ifCtx->GetBeginSpan(), endSpan);
 
     // Create if statement
-    auto if_stmt = std::make_shared<IfStmt>(if_ctx->GetCondition(), then_body, else_body, return_vars, combinedSpan);
+    auto ifStmt = std::make_shared<IfStmt>(ifCtx->GetCondition(), thenBody, elseBody, returnVars, combinedSpan);
     // Pop context
-    context_stack_.pop_back();
+    contextStack_.pop_back();
 
     // Emit to parent context if it exists
-    if (!context_stack_.empty()) {
-        CurrentContext()->AddStmt(if_stmt);
+    if (!contextStack_.empty()) {
+        CurrentContext()->AddStmt(ifStmt);
     }
 
-    return if_stmt;
+    return ifStmt;
 }
 
 // ========== Section Building ==========
 
-void IRBuilder::BeginSection(SectionKind section_kind, const Span& span)
+void IRBuilder::BeginSection(SectionKind sectionKind, const Span& span)
 {
-    CHECK(!context_stack_.empty()) << "Cannot begin section: not inside a function or another valid context at "
-                                   << span.ToString();
-    context_stack_.push_back(std::make_shared<SectionContext>(section_kind, span));
+    CHECK(!contextStack_.empty()) << "Cannot begin section: not inside a function or another valid context at "
+                                  << span.ToString();
+    contextStack_.push_back(std::make_shared<SectionContext>(sectionKind, span));
 }
 
-StmtPtr IRBuilder::EndSection(const Span& end_span)
+StmtPtr IRBuilder::EndSection(const Span& endSpan)
 {
-    CHECK(!context_stack_.empty() && CurrentContext()->GetType() == BuildContext::Type::SECTION)
-        << "Cannot end section: not inside a section context at " << end_span.ToString();
+    CHECK(!contextStack_.empty() && CurrentContext()->GetType() == BuildContext::Type::SECTION)
+        << "Cannot end section: not inside a section context at " << endSpan.ToString();
 
-    auto* section_ctx = static_cast<SectionContext*>(CurrentContext());
+    auto* sectionCtx = static_cast<SectionContext*>(CurrentContext());
 
     // Build body
     StmtPtr body;
-    const auto& stmts = section_ctx->GetStmts();
+    const auto& stmts = sectionCtx->GetStmts();
     if (stmts.empty()) {
-        body = std::make_shared<SeqStmts>(std::vector<StmtPtr>(), end_span);
+        body = std::make_shared<SeqStmts>(std::vector<StmtPtr>(), endSpan);
     } else if (stmts.size() == 1) {
         body = stmts[0];
     } else {
-        body = std::make_shared<SeqStmts>(stmts, end_span);
+        body = std::make_shared<SeqStmts>(stmts, endSpan);
     }
 
     // Combine spans
-    auto combinedSpan = MakeCombinedSpan(section_ctx->GetBeginSpan(), end_span);
+    auto combinedSpan = MakeCombinedSpan(sectionCtx->GetBeginSpan(), endSpan);
 
     // Create section statement
-    auto section_stmt = std::make_shared<SectionStmt>(section_ctx->GetSectionKind(), body, combinedSpan);
+    auto sectionStmt = std::make_shared<SectionStmt>(sectionCtx->GetSectionKind(), body, combinedSpan);
 
     // Pop context
-    context_stack_.pop_back();
+    contextStack_.pop_back();
 
     // Emit to parent context if it exists
-    if (!context_stack_.empty()) {
-        CurrentContext()->AddStmt(section_stmt);
+    if (!contextStack_.empty()) {
+        CurrentContext()->AddStmt(sectionStmt);
     }
 
-    return section_stmt;
+    return sectionStmt;
 }
 
 // ========== Program Building ==========
@@ -435,7 +435,7 @@ void IRBuilder::BeginProgram(const std::string& name, const Span& span)
                            CurrentContext()->GetBeginSpan().ToString());
     }
 
-    context_stack_.push_back(std::make_shared<ProgramContext>(name, span));
+    contextStack_.push_back(std::make_shared<ProgramContext>(name, span));
 }
 
 void IRBuilder::AddFunction(const FunctionPtr& func)
@@ -444,31 +444,31 @@ void IRBuilder::AddFunction(const FunctionPtr& func)
     static_cast<ProgramContext*>(CurrentContext())->AddFunction(func);
 }
 
-void IRBuilder::SetInsertPoint(std::shared_ptr<InsertPoint> ctx) { context_stack_.push_back(ctx); }
+void IRBuilder::SetInsertPoint(std::shared_ptr<InsertPoint> ctx) { contextStack_.push_back(ctx); }
 
-void IRBuilder::ClearInsertPoint() { context_stack_.pop_back(); }
+void IRBuilder::ClearInsertPoint() { contextStack_.pop_back(); }
 
-ProgramPtr IRBuilder::EndProgram(const Span& end_span)
+ProgramPtr IRBuilder::EndProgram(const Span& endSpan)
 {
     ValidateInProgram("EndProgram");
 
-    auto* prog_ctx = static_cast<ProgramContext*>(CurrentContext());
+    auto* progCtx = static_cast<ProgramContext*>(CurrentContext());
 
     // Combine begin and end spans
-    auto combinedSpan = MakeCombinedSpan(prog_ctx->GetBeginSpan(), end_span);
+    auto combinedSpan = MakeCombinedSpan(progCtx->GetBeginSpan(), endSpan);
 
     // Create program from functions vector
-    auto program = std::make_shared<Program>(prog_ctx->GetFunctions(), prog_ctx->GetName(), combinedSpan);
+    auto program = std::make_shared<Program>(progCtx->GetFunctions(), progCtx->GetName(), combinedSpan);
 
     // Pop context
-    context_stack_.pop_back();
+    contextStack_.pop_back();
 
     return program;
 }
 
 bool IRBuilder::InProgram() const
 {
-    for (const auto& ctx : context_stack_) {
+    for (const auto& ctx : contextStack_) {
         if (ctx->GetType() == BuildContext::Type::PROGRAM) {
             return true;
         }
@@ -476,13 +476,13 @@ bool IRBuilder::InProgram() const
     return false;
 }
 
-std::vector<TypePtr> IRBuilder::GetFunctionReturnTypes(const std::string& func_name) const
+std::vector<TypePtr> IRBuilder::GetFunctionReturnTypes(const std::string& funcName) const
 {
     // Find the program context in the stack
-    for (const auto& ctx : context_stack_) {
+    for (const auto& ctx : contextStack_) {
         if (ctx->GetType() == BuildContext::Type::PROGRAM) {
-            auto* prog_ctx = static_cast<const ProgramContext*>(ctx.get());
-            return prog_ctx->GetReturnTypes(func_name);
+            auto* progCtx = static_cast<const ProgramContext*>(ctx.get());
+            return progCtx->GetReturnTypes(funcName);
         }
     }
     return {};
@@ -492,7 +492,7 @@ std::vector<TypePtr> IRBuilder::GetFunctionReturnTypes(const std::string& func_n
 
 void IRBuilder::Emit(const StmtPtr& stmt)
 {
-    if (context_stack_.empty()) {
+    if (contextStack_.empty()) {
         throw RuntimeError("Cannot emit statement: not inside any context");
     }
 
@@ -514,47 +514,47 @@ VarPtr IRBuilder::Var(const std::string& name, const TypePtr& type, const Span& 
 
 ReturnStmtPtr IRBuilder::Return(const std::vector<ExprPtr>& values, const Span& span)
 {
-    auto return_stmt = std::make_shared<ReturnStmt>(values, span);
-    Emit(return_stmt);
-    return return_stmt;
+    auto returnStmt = std::make_shared<ReturnStmt>(values, span);
+    Emit(returnStmt);
+    return returnStmt;
 }
 
 ReturnStmtPtr IRBuilder::Return(const Span& span)
 {
-    auto return_stmt = std::make_shared<ReturnStmt>(span);
-    Emit(return_stmt);
-    return return_stmt;
+    auto returnStmt = std::make_shared<ReturnStmt>(span);
+    Emit(returnStmt);
+    return returnStmt;
 }
 
 BreakStmtPtr IRBuilder::Break(const Span& span)
 {
-    auto break_stmt = std::make_shared<BreakStmt>(span);
-    Emit(break_stmt);
-    return break_stmt;
+    auto breakStmt = std::make_shared<BreakStmt>(span);
+    Emit(breakStmt);
+    return breakStmt;
 }
 
 ContinueStmtPtr IRBuilder::Continue(const Span& span)
 {
-    auto continue_stmt = std::make_shared<ContinueStmt>(span);
-    Emit(continue_stmt);
-    return continue_stmt;
+    auto continueStmt = std::make_shared<ContinueStmt>(span);
+    Emit(continueStmt);
+    return continueStmt;
 }
 
-void IRBuilder::UpdateJumpValues(const StmtPtr& jump_op, std::vector<ExprPtr> values)
+void IRBuilder::UpdateJumpValues(const StmtPtr& jumpOp, std::vector<ExprPtr> values)
 {
-    IRCHECK(jump_op != nullptr) << "Jump statement must not be null";
-    switch (jump_op->GetKind()) {
+    IRCHECK(jumpOp != nullptr) << "Jump statement must not be null";
+    switch (jumpOp->GetKind()) {
         case ObjectKind::YieldStmt:
-            const_cast<YieldStmt*>(static_cast<const YieldStmt*>(jump_op.get()))->value_ = std::move(values);
+            const_cast<YieldStmt*>(static_cast<const YieldStmt*>(jumpOp.get()))->value_ = std::move(values);
             return;
         case ObjectKind::BreakStmt:
-            const_cast<BreakStmt*>(static_cast<const BreakStmt*>(jump_op.get()))->value_ = std::move(values);
+            const_cast<BreakStmt*>(static_cast<const BreakStmt*>(jumpOp.get()))->value_ = std::move(values);
             return;
         case ObjectKind::ContinueStmt:
-            const_cast<ContinueStmt*>(static_cast<const ContinueStmt*>(jump_op.get()))->value_ = std::move(values);
+            const_cast<ContinueStmt*>(static_cast<const ContinueStmt*>(jumpOp.get()))->value_ = std::move(values);
             return;
         default:
-            IRCHECK(false) << "Expected YieldStmt, BreakStmt, or ContinueStmt, got " << jump_op->TypeName();
+            IRCHECK(false) << "Expected YieldStmt, BreakStmt, or ContinueStmt, got " << jumpOp->TypeName();
     }
 }
 
@@ -562,15 +562,15 @@ void IRBuilder::UpdateJumpValues(const StmtPtr& jump_op, std::vector<ExprPtr> va
 
 BuildContext* IRBuilder::CurrentContext()
 {
-    if (context_stack_.empty()) {
+    if (contextStack_.empty()) {
         return nullptr;
     }
-    return context_stack_.back().get();
+    return contextStack_.back().get();
 }
 
 bool IRBuilder::InFunction() const
 {
-    for (const auto& ctx : context_stack_) {
+    for (const auto& ctx : contextStack_) {
         if (ctx->GetType() == BuildContext::Type::FUNCTION) {
             return true;
         }
@@ -580,26 +580,26 @@ bool IRBuilder::InFunction() const
 
 bool IRBuilder::InLoop() const
 {
-    if (context_stack_.empty()) {
+    if (contextStack_.empty()) {
         return false;
     }
-    return context_stack_.back()->GetType() == BuildContext::Type::FOR_LOOP;
+    return contextStack_.back()->GetType() == BuildContext::Type::FOR_LOOP;
 }
 
 bool IRBuilder::InIf() const
 {
-    if (context_stack_.empty()) {
+    if (contextStack_.empty()) {
         return false;
     }
-    return context_stack_.back()->GetType() == BuildContext::Type::IF_STMT;
+    return contextStack_.back()->GetType() == BuildContext::Type::IF_STMT;
 }
 
 bool IRBuilder::InWhileLoop() const
 {
-    if (context_stack_.empty()) {
+    if (contextStack_.empty()) {
         return false;
     }
-    return context_stack_.back()->GetType() == BuildContext::Type::WHILE_LOOP;
+    return contextStack_.back()->GetType() == BuildContext::Type::WHILE_LOOP;
 }
 
 // ========== Private Helpers ==========
@@ -648,15 +648,15 @@ void ProgramContext::AddFunction(const FunctionPtr& func)
     INTERNAL_CHECK(func) << "Cannot add null function to program";
 
     // Store return types for this function
-    return_types_[func->name_] = func->returnTypes_;
+    returnTypes_[func->name_] = func->returnTypes_;
 
     functions_.push_back(func);
 }
 
-std::vector<TypePtr> ProgramContext::GetReturnTypes(const std::string& func_name) const
+std::vector<TypePtr> ProgramContext::GetReturnTypes(const std::string& funcName) const
 {
-    auto it = return_types_.find(func_name);
-    if (it != return_types_.end()) {
+    auto it = returnTypes_.find(funcName);
+    if (it != returnTypes_.end()) {
         return it->second;
     }
     return {};

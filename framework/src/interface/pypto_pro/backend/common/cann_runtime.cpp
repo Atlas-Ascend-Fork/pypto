@@ -27,20 +27,20 @@ CannRuntime::CannRuntime()
 {
 #ifdef BUILD_WITH_CANN
     // Try ASCEND_CANN_PACKAGE_PATH first, then fall back to system library path
-    const char* cann_path = std::getenv("ASCEND_CANN_PACKAGE_PATH");
-    if (cann_path != nullptr) {
-        std::string so_path = std::string(cann_path) + "/lib64/libruntime.so";
-        handle_ = dlopen(so_path.c_str(), RTLD_LAZY | RTLD_LOCAL);
+    const char* cannPath = std::getenv("ASCEND_CANN_PACKAGE_PATH");
+    if (cannPath != nullptr) {
+        std::string soPath = std::string(cannPath) + "/lib64/libruntime.so";
+        handle_ = dlopen(soPath.c_str(), RTLD_LAZY | RTLD_LOCAL);
     }
     if (handle_ == nullptr) {
         handle_ = dlopen("libruntime.so", RTLD_LAZY | RTLD_LOCAL);
     }
     if (handle_ != nullptr) {
-        soc_spec_func_ = reinterpret_cast<GetSocSpecFunc>(dlsym(handle_, "rtGetSocSpec"));
+        socSpecFunc_ = reinterpret_cast<GetSocSpecFunc>(dlsym(handle_, "rtGetSocSpec"));
     }
     if (handle_ == nullptr) {
         IR_LOGW() << "CANN libruntime.so not found; SoC specs will use hardcoded defaults.";
-    } else if (soc_spec_func_ == nullptr) {
+    } else if (socSpecFunc_ == nullptr) {
         IR_LOGW() << "rtGetSocSpec not found in libruntime.so; SoC specs will use hardcoded defaults.";
     }
 #endif
@@ -61,11 +61,11 @@ CannRuntime& CannRuntime::Instance()
 
 bool CannRuntime::GetSocSpec(const std::string& column, const std::string& key, std::string& val) const
 {
-    if (soc_spec_func_ == nullptr) {
+    if (socSpecFunc_ == nullptr) {
         return false;
     }
     char buf[kBufSize] = {};
-    int ret = soc_spec_func_(column.c_str(), key.c_str(), buf, kBufSize);
+    int ret = socSpecFunc_(column.c_str(), key.c_str(), buf, kBufSize);
     if (ret != 0) {
         return false;
     }

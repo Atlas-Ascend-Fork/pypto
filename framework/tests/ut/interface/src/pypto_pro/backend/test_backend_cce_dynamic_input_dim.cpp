@@ -71,7 +71,7 @@ TEST(BackendCceDynamicInputDimTest, EmitsWordReadWithTrapGuard)
     codegen.RegisterVarName(x, "x");
     codegen.RegisterVarName(i, "i");
     codegen.RegisterVarName(axis, "a");
-    auto expr = info->codegen_func(call, codegen);
+    auto expr = info->codegenFunc(call, codegen);
     EXPECT_NE(expr.find("reinterpret_cast<__gm__ int64_t*>"), std::string::npos);
     EXPECT_NE(expr.find("0 <= "), std::string::npos);  // a negative axis is rejected too, not only axis >= dim
     EXPECT_NE(expr.find("trap()"), std::string::npos); // out-of-range axis traps, not silent garbage

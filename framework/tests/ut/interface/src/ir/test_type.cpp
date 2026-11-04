@@ -111,8 +111,6 @@ TEST(IRTypeTest, TestTileViewDefaultConstructor)
     // Test TileView default construction
     TileView tileView;
     ASSERT_TRUE(tileView.validShape.empty());
-    ASSERT_TRUE(tileView.stride.empty());
-    ASSERT_EQ(tileView.startOffset, nullptr);
 }
 
 TEST(IRTypeTest, TestTileViewWithParameters)
@@ -120,16 +118,11 @@ TEST(IRTypeTest, TestTileViewWithParameters)
     // Test TileView with parameters
     auto const1 = std::make_shared<ConstInt>(16, DataType::INT32, Span::Unknown());
     auto const2 = std::make_shared<ConstInt>(32, DataType::INT32, Span::Unknown());
-    auto const3 = std::make_shared<ConstInt>(1, DataType::INT32, Span::Unknown());
-    auto offset = std::make_shared<ConstInt>(0, DataType::INT32, Span::Unknown());
 
     std::vector<ExprPtr> validShape = {const1, const2};
-    std::vector<ExprPtr> stride = {const3, const3};
 
-    TileView tileView(validShape, stride, offset);
-    ASSERT_EQ(tileView.validShape.size(), 2);
-    ASSERT_EQ(tileView.stride.size(), 2);
-    ASSERT_NE(tileView.startOffset, nullptr);
+    TileView tileView(validShape);
+    ASSERT_EQ(tileView.validShape, validShape);
 }
 
 // ============================================================================
@@ -254,7 +247,8 @@ TEST(IRTypeTest, TestTileType1D)
     ASSERT_NE(tileType, nullptr);
     ASSERT_EQ(tileType->TypeName(), "TileType");
     ASSERT_EQ(tileType->shape_.size(), 1);
-    ASSERT_FALSE(tileType->tileView_.has_value());
+    ASSERT_TRUE(tileType->tileView_.has_value());
+    ASSERT_EQ(std::dynamic_pointer_cast<const ConstInt>(tileType->tileView_->validShape.at(0))->value_, -1);
 }
 
 TEST(IRTypeTest, TestTileType2D)
@@ -298,17 +292,45 @@ TEST(IRTypeTest, TestTileTypeWithTileView)
 
     auto validDim1 = std::make_shared<ConstInt>(8, DataType::INT32, Span::Unknown());
     auto validDim2 = std::make_shared<ConstInt>(8, DataType::INT32, Span::Unknown());
-    auto stride1 = std::make_shared<ConstInt>(1, DataType::INT32, Span::Unknown());
-    auto stride2 = std::make_shared<ConstInt>(1, DataType::INT32, Span::Unknown());
-    auto offset = std::make_shared<ConstInt>(0, DataType::INT32, Span::Unknown());
 
-    TileView tileView({validDim1, validDim2}, {stride1, stride2}, offset);
+    TileView tileView({validDim1, validDim2});
 
     auto tileType = std::make_shared<TileType>(shape, DataType::FP32, memref, tileView);
     ASSERT_NE(tileType, nullptr);
     ASSERT_TRUE(tileType->tileView_.has_value());
-    ASSERT_EQ(tileType->tileView_->validShape.size(), 2);
-    ASSERT_EQ(tileType->tileView_->stride.size(), 2);
+    ASSERT_EQ(tileType->tileView_->validShape, tileView.validShape);
+}
+
+TEST(IRTypeTest, TileTypeConstructorsDefaultToDynamicValidShape)
+{
+    auto dim = std::make_shared<ConstInt>(16, DataType::INT64, Span::Unknown());
+    auto addr = std::make_shared<ConstInt>(0, DataType::INT64, Span::Unknown());
+    MemRefPtr memref = std::make_shared<MemRef>(MemorySpace::Vec, addr, 512);
+    for (size_t rank : {1U, 2U, 3U}) {
+        std::vector<ExprPtr> shape(rank, dim);
+        std::vector<TileType> types = {
+            TileType(shape, DataType::FP32),
+            TileType(shape, DataType::FP32, memref),
+            TileType(shape, DataType::FP32, std::optional<MemRefPtr>(memref)),
+            TileType(shape, DataType::FP32, std::nullopt),
+            TileType(std::vector<int64_t>(rank, 16), DataType::FP32, memref, std::nullopt),
+            TileType(std::vector<int64_t>(rank, 16), DataType::FP32, memref, TileView{}),
+            TileType(shape, DataType::FP32, memref, std::nullopt),
+            TileType(shape, DataType::FP32, memref, TileView{}),
+            TileType(shape, DataType::FP32, std::nullopt, std::nullopt),
+            TileType(shape, DataType::FP32, std::nullopt, TileView{}),
+        };
+        for (const auto& type : types) {
+            ASSERT_TRUE(type.tileView_.has_value());
+            ASSERT_EQ(type.tileView_->validShape.size(), rank);
+            for (const auto& validDim : type.tileView_->validShape) {
+                auto value = std::dynamic_pointer_cast<const ConstInt>(validDim);
+                ASSERT_NE(value, nullptr);
+                EXPECT_EQ(value->value_, -1);
+                EXPECT_EQ(std::dynamic_pointer_cast<const ScalarType>(value->GetType())->dtype_, DataType::INT64);
+            }
+        }
+    }
 }
 
 TEST(IRTypeTest, TestTileTypeInvalidDimensions)

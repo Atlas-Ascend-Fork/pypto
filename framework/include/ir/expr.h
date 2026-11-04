@@ -367,18 +367,18 @@ public:
      *
      * \tparam T Type of the kwarg value
      * \param key Kwarg key
-     * \param default_value Default value if key doesn't exist
+     * \param defaultValue Default value if key doesn't exist
      * \return The kwarg value or default
      */
     template <typename T>
-    T GetKwarg(const std::string& key, const T& default_value = T{}) const
+    T GetKwarg(const std::string& key, const T& defaultValue = T{}) const
     {
         for (const auto& [k, v] : kwargs_) {
             if (k == key) {
                 return AnyCast<T>(v, "kwarg key: " + key);
             }
         }
-        return default_value;
+        return defaultValue;
     }
 
     /**

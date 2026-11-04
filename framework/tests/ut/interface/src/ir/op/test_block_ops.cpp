@@ -407,7 +407,11 @@ TEST_F(BlockOpsMemoryTest, Subview_TilePreservesPhysicalTypeAndMemRef)
     EXPECT_EQ(result_type->dtype_, source_type->dtype_);
     EXPECT_EQ(result_type->shape_, source_type->shape_);
     EXPECT_EQ(result_type->memref_, source_type->memref_);
-    EXPECT_FALSE(result_type->tileView_.has_value());
+    ASSERT_TRUE(result_type->tileView_.has_value());
+    ASSERT_EQ(result_type->tileView_->validShape.size(), 2);
+    for (const auto& dim : result_type->tileView_->validShape) {
+        EXPECT_EQ(As<ConstInt>(dim)->value_, -1);
+    }
 }
 
 TEST_F(BlockOpsMemoryTest, Subview_WrongArgCount_Throws)

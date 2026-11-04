@@ -628,16 +628,12 @@ class IRBuilder:
     def tile_view(
         self,
         valid_shape: Sequence[int | ir.Expr],
-        stride: Sequence[int | ir.Expr],
-        start_offset: int | ir.Expr,
         span: ir.Span | None = None,
     ) -> ir.TileView:
         """Create a TileView with normalized expressions.
 
         Args:
             valid_shape: Valid shape dimensions (list of int or Expr)
-            stride: Stride for each dimension (list of int or Expr)
-            start_offset: Starting offset (int or Expr)
             span: Optional explicit span. If None, captured from call site.
 
         Returns:
@@ -645,15 +641,11 @@ class IRBuilder:
 
         Example:
             >>> valid_shape = [16, 16]
-            >>> stride = [1, 16]
-            >>> start_offset = 0
-            >>> tv = ib.tile_view(valid_shape, stride, start_offset)
+            >>> tv = ib.tile_view(valid_shape)
         """
         actual_span = span if span is not None else self.capture_call_span()
         valid_shape_exprs = [_normalize_expr(dim, actual_span) for dim in valid_shape]
-        stride_exprs = [_normalize_expr(s, actual_span) for s in stride]
-        start_offset_expr = _normalize_expr(start_offset, actual_span)
-        return ir.TileView(valid_shape_exprs, stride_exprs, start_offset_expr)
+        return ir.TileView(valid_shape_exprs)
 
     def tensor_view(
         self,
@@ -738,7 +730,7 @@ class IRBuilder:
             >>> tile_t = ib.tile_type([16, 16], DataType.FP16)
             >>> # Tile type with memref and tile_view
             >>> memref = ib.memref(ir.MemorySpace.Left, 0, 512)
-            >>> tv = ib.tile_view([16, 16], [1, 16], 0)
+            >>> tv = ib.tile_view([16, 16])
             >>> tile_t = ib.tile_type([16, 16], DataType.FP16, memref=memref, tile_view=tv)
         """
         actual_span = span if span is not None else self.capture_call_span()
