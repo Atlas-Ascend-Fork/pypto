@@ -66,20 +66,6 @@ struct TokenSnapshot {
     std::vector<Operation*> consumers;
 };
 
-// A candidate chain is identified by its operation suffix.  Shared-tail groups
-// contain many chains with the same suffix, so indexing the operation that starts
-// each suffix avoids repeatedly scanning the whole group.
-struct OperationPathHash {
-    size_t operator()(const std::vector<Operation*>& path) const
-    {
-        size_t value = 0;
-        for (auto* operation : path) {
-            value ^= std::hash<Operation*>{}(operation) + 0x9e3779b9 + (value << 6) + (value >> 2);
-        }
-        return value;
-    }
-};
-
 // Collects every token touching the affected ops: from the ops' own result/input token
 // lists plus the var dependency registry entries whose producer or consumer is affected.
 std::vector<ir::VarPtr> CollectAffectedTokens(Function& function, const std::unordered_set<Operation*>& affected)
@@ -590,6 +576,55 @@ bool HasDataPath(Operation* producer, Operation* consumer)
 
 } // namespace
 
+// Intern (operation, suffix ID) pairs instead of copying and hashing whole paths.
+void AssembleChainIndex::AddChain(const std::vector<Operation*>& chain)
+{
+    missingSiblingCache_.clear();
+    size_t suffix = 0;
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        auto [entry, inserted] = suffixIds_[*it].try_emplace(suffix, nextSuffixId_);
+        if (inserted) {
+            ++nextSuffixId_;
+        }
+        suffix = entry->second;
+    }
+}
+
+bool AssembleChainIndex::HasCompleteChain(const std::vector<Operation*>& chain) const
+{
+    std::vector<size_t> suffixes(chain.size() + 1, 0);
+    for (size_t end = chain.size(); end > 0; --end) {
+        auto operation = suffixIds_.find(chain[end - 1]);
+        if (operation == suffixIds_.end()) {
+            return false;
+        }
+        auto suffix = operation->second.find(suffixes[end]);
+        if (suffix == operation->second.end()) {
+            return false;
+        }
+        suffixes[end - 1] = suffix->second;
+    }
+    std::unordered_set<Operation*> chainOps(chain.begin(), chain.end());
+    for (size_t index = 0; index + 1 < chain.size(); ++index) {
+        const auto& middle = chain[index]->oOperand.front();
+        auto [cached, inserted] = missingSiblingCache_[middle->GetMagic()].try_emplace(suffixes[index + 1]);
+        if (inserted) {
+            for (auto* sibling : middle->GetProducers()) {
+                auto starts = suffixIds_.find(sibling);
+                if (starts == suffixIds_.end() || starts->second.count(suffixes[index + 1]) == 0) {
+                    cached->second.emplace_back(sibling);
+                }
+            }
+        }
+        for (auto* sibling : cached->second) {
+            if (chainOps.count(sibling) == 0) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 Status MergeViewAssembleUtils::MergeViewAssemble(Function& function)
 {
     MergeViewAssembleUtils mergeViewAssembleUtils;
@@ -633,6 +668,7 @@ Status MergeViewAssembleUtils::Initialize()
     useTokenSemantics_ = false;
     hasAnyTokenSemantics_ = false;
     visitedOp_.clear();
+    assembleRestartOps_.clear();
     viewOpToAppend_.clear();
     assembleOpToAppend_.clear();
     pendingAssembleChains_.clear();
@@ -642,6 +678,9 @@ Status MergeViewAssembleUtils::Initialize()
     candidateOps_.clear();
     recordedMergeInputMagics_.clear();
     coverageCache_.clear();
+    for (auto& cache : middleExtensionCache_) {
+        cache.clear();
+    }
     tokenSemanticOps_.clear();
     tokenDependencyTensorMagics_.clear();
     tokenDependencyOps_.clear();
@@ -1181,9 +1220,14 @@ Status MergeViewAssembleUtils::ProcessCandidateChains(Function& function)
         if (op == nullptr || op->IsDeleted()) {
             continue;
         }
-        if (visitedOp_.count(op->GetOpMagic()) != 0) {
+        // A prefix-dependent stop does not finish this op's paths as a fresh
+        // start. Candidates are topologically ordered, so it is still ahead of
+        // the root whose traversal requested the restart. No graph mutation has
+        // happened yet: this is still candidate discovery.
+        if (visitedOp_.count(op->GetOpMagic()) != 0 && assembleRestartOps_.count(op->GetOpMagic()) == 0) {
             continue;
         }
+        assembleRestartOps_.erase(op->GetOpMagic());
         useTokenSemantics_ = tokenSemanticOps_.count(op) != 0;
         Status processStatus = SUCCESS;
         std::vector<Operation*> chain;
@@ -1668,6 +1712,18 @@ bool MergeViewAssembleUtils::CanExtendThroughMiddle(Function& function, Operatio
         return false;
     }
     const auto& middle = currentOp.oOperand.front();
+    auto& cache = middleExtensionCache_[useTokenSemantics_ ? 1 : 0];
+    auto cached = cache.find(middle->GetMagic());
+    if (cached != cache.end()) {
+        return cached->second;
+    }
+    bool result = ComputeCanExtendThroughMiddle(function, middle);
+    cache.emplace(middle->GetMagic(), result);
+    return result;
+}
+
+bool MergeViewAssembleUtils::ComputeCanExtendThroughMiddle(Function& function, const LogicalTensorPtr& middle)
+{
     std::vector<Operation*> currentProducers(middle->GetProducers().begin(), middle->GetProducers().end());
     if (useTokenSemantics_ && HasSplitVersionContribution(middle, currentProducers)) {
         return false;
@@ -1728,15 +1784,17 @@ Status MergeViewAssembleUtils::ProcessAssembleConsumers(Function& function, cons
         }
         if (IsAssembleLikeOpcode(op->GetOpcode())) {
             int consumerScopeId = op->GetScopeId();
-            if (effectiveScopeId != -1 && consumerScopeId != -1 && effectiveScopeId != consumerScopeId) {
-                chainEnd = true;
-                continue;
-            }
-            if (!CanMergeAssembleLikeChain(chain, op->GetOpcode())) {
-                chainEnd = true;
-                continue;
-            }
-            if (!IsRmwModeAttrCompatible(chain, *op)) {
+            const bool scopeConflict = effectiveScopeId != -1 && consumerScopeId != -1 &&
+                                       effectiveScopeId != consumerScopeId;
+            if (scopeConflict || !CanMergeAssembleLikeChain(chain, op->GetOpcode()) ||
+                !IsRmwModeAttrCompatible(chain, *op)) {
+                // A CONTRACT, scope or RMW inherited from the prefix can block
+                // this edge even when the current op could start a legal chain.
+                // Preserve that start for the initial candidate traversal; token
+                // chains retain their existing traversal policy.
+                if (!useTokenSemantics_ && chain.size() > 1) {
+                    assembleRestartOps_.insert(chain.back()->GetOpMagic());
+                }
                 chainEnd = true;
                 continue;
             }
@@ -1778,39 +1836,13 @@ bool MergeViewAssembleUtils::HasCompleteAssembleGroup(const std::vector<size_t>&
     // Coverage alone is insufficient: every sibling must have an accepted path through
     // the same suffix. A sibling rejected by scope, opcode, token or cycle gates leaves
     // the entire shared-tail group unchanged.
-    //
-    // Index all accepted (start operation, suffix) pairs once. The previous
-    // implementation searched every candidate chain for every sibling, which made a
-    // group with N shared-tail chains take O(N^3) work. Looking up a sibling in this
-    // index is O(1) on average, reducing the check to O(number of chain edges and
-    // producers), with the suffix construction cost proportional to chain length.
-    using Path = std::vector<Operation*>;
-    using StartsBySuffix = std::unordered_map<Path, std::unordered_set<Operation*>, OperationPathHash>;
-    StartsBySuffix startsBySuffix;
+    AssembleChainIndex candidates;
     for (size_t candidateIndex : group) {
-        const auto& candidate = pendingAssembleChains_[candidateIndex];
-        for (size_t start = 0; start + 1 < candidate.size(); ++start) {
-            Path suffix(candidate.begin() + start + 1, candidate.end());
-            startsBySuffix[suffix].insert(candidate[start]);
-        }
+        candidates.AddChain(pendingAssembleChains_[candidateIndex]);
     }
-
     for (size_t candidateIndex : group) {
-        const auto& chain = pendingAssembleChains_[candidateIndex];
-        for (size_t index = 0; index + 1 < chain.size(); ++index) {
-            Path suffix(chain.begin() + index + 1, chain.end());
-            const auto starts = startsBySuffix.find(suffix);
-            if (starts == startsBySuffix.end()) {
-                return false;
-            }
-            for (auto* sibling : chain[index]->oOperand.front()->GetProducers()) {
-                if (std::find(chain.begin(), chain.end(), sibling) != chain.end()) {
-                    continue;
-                }
-                if (starts->second.count(sibling) == 0) {
-                    return false;
-                }
-            }
+        if (!candidates.HasCompleteChain(pendingAssembleChains_[candidateIndex])) {
+            return false;
         }
     }
     return true;
@@ -1818,6 +1850,12 @@ bool MergeViewAssembleUtils::HasCompleteAssembleGroup(const std::vector<size_t>&
 
 Status MergeViewAssembleUtils::CommitAssembleChains(Function& function)
 {
+    // Restarted legacy paths can overlap: [prefix, back] and [back, tail].
+    // Commit only marks their tails deleted; operands, attributes and producer
+    // sets remain intact, so later paths still use the original graph description.
+    // Do not filter IsDeleted() here: even sibling paths share a marked tail.
+    // AppendMergedOperations creates all replacements before CleanUp erases any
+    // marked op or tensor, preserving producers for every replacement input.
     std::unordered_map<Operation*, std::vector<size_t>> groups;
     for (size_t index = 0; index < pendingAssembleChains_.size(); ++index) {
         groups[pendingAssembleChains_[index].back()].emplace_back(index);

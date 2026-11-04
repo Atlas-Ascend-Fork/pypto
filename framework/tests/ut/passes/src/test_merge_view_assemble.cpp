@@ -34,6 +34,7 @@
 #include "ut_json/ut_json_tool.h"
 #include "passes/tile_graph_pass/graph_optimization/merge_view_assemble.h"
 #include "passes/pass_utils/graph_utils.h"
+#include "passes/pass_utils/merge_view_assemble_utils.h"
 #include "passes/tile_graph_pass/graph_optimization/process_atomic.h"
 #include <fstream>
 #include <vector>
@@ -1913,6 +1914,202 @@ TEST_F(MergeViewAssembleTest, NestedCompleteProducerGroupFusionsCollapseThroughA
     EXPECT_TRUE(concatMiddle->GetConsumers().empty());
 }
 
+// Two producer chains share a two-operation suffix. The shared suffix must be
+// considered complete for both chains before either chain is committed.
+TEST_F(MergeViewAssembleTest, CompleteProducerGroupWithSharedMultiOpSuffixFuses)
+{
+    Program program;
+    auto function = std::make_unique<Function>(program, "shared_multi_op_suffix", "shared_multi_op_suffix", nullptr);
+    IRBuilder builder;
+    auto firstInput = builder.CreateTensorVar(*function, DataType::DT_FP32, {2, 4});
+    auto secondInput = builder.CreateTensorVar(*function, DataType::DT_FP32, {2, 4});
+    auto middle = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+    auto suffixMiddle = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+    auto output = builder.CreateTensorVar(*function, DataType::DT_FP32, {4, 4});
+    function->inCasts_ = {firstInput, secondInput};
+    function->outCasts_ = {output};
+
+    auto& first = builder.CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {firstInput}, {middle});
+    first.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+    auto& second = builder.CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {secondInput}, {middle});
+    second.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{2, 0}));
+    auto& suffix = builder.CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {middle}, {suffixMiddle});
+    suffix.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+    auto& tail = builder.CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {suffixMiddle}, {output});
+    tail.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+    function->BuildTensorMap();
+
+    MergeViewAssemble pass;
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+
+    std::vector<Operation*> replacements;
+    for (auto& op : function->Operations(false)) {
+        if (op.GetOpcode() != Opcode::OP_ASSEMBLE) {
+            continue;
+        }
+        replacements.emplace_back(&op);
+        EXPECT_EQ(op.GetOOperands().front(), output);
+    }
+    ASSERT_EQ(replacements.size(), 2);
+    ASSERT_EQ(output->GetProducers().size(), 2);
+    for (auto* replacement : replacements) {
+        auto attr = std::dynamic_pointer_cast<AssembleOpAttribute>(replacement->GetOpAttribute());
+        ASSERT_NE(attr, nullptr);
+        auto input = replacement->GetIOperands().front();
+        EXPECT_TRUE(input == firstInput || input == secondInput);
+        EXPECT_EQ(attr->GetToOffset(),
+                  input == firstInput ? std::vector<int64_t>({0, 0}) : std::vector<int64_t>({2, 0}));
+    }
+    EXPECT_TRUE(middle->GetProducers().empty());
+    EXPECT_TRUE(middle->GetConsumers().empty());
+    EXPECT_TRUE(suffixMiddle->GetProducers().empty());
+    EXPECT_TRUE(suffixMiddle->GetConsumers().empty());
+}
+
+TEST_F(MergeViewAssembleTest, AssembleChainIndexRejectsUnindexedSuffix)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {4, 4}, {"input", "middle", "output", "side_output"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {"input"}, {"middle"}, "first", true));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {"middle"}, {"output"}, "tail", true));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {"middle"}, {"side_output"}, "side", true));
+    std::vector<Operation*> chain{graph.GetOp("first"), graph.GetOp("tail")};
+    AssembleChainIndex index;
+    EXPECT_FALSE(index.HasCompleteChain(chain));
+
+    // Both operations are indexed, but first is only indexed with a different suffix.
+    index.AddChain({graph.GetOp("first"), graph.GetOp("side")});
+    index.AddChain({graph.GetOp("tail")});
+    EXPECT_FALSE(index.HasCompleteChain(chain));
+
+    index.AddChain(chain);
+    EXPECT_TRUE(index.HasCompleteChain(chain));
+}
+
+TEST_F(MergeViewAssembleTest, AssembleChainIndexCachesEachSuffixAndInvalidatesOnAdd)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {4, 4},
+                                 {"first_input", "second_input", "middle", "output", "side_output"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {"first_input"}, {"middle"}, "first", true));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {"second_input"}, {"middle"}, "second", true));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {"middle"}, {"output"}, "tail", true));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {"middle"}, {"side_output"}, "side", true));
+    auto* first = graph.GetOp("first");
+    auto* second = graph.GetOp("second");
+    auto* tail = graph.GetOp("tail");
+    auto* side = graph.GetOp("side");
+    AssembleChainIndex index;
+    index.AddChain({first, tail});
+    EXPECT_FALSE(index.HasCompleteChain({first, tail}));
+    index.AddChain({second, tail});
+    EXPECT_TRUE(index.HasCompleteChain({first, tail}));
+    EXPECT_TRUE(index.HasCompleteChain({second, tail}));
+
+    // A complete tail must not make a different, incomplete suffix look complete.
+    index.AddChain({first, side});
+    EXPECT_TRUE(index.HasCompleteChain({first, tail}));
+    EXPECT_FALSE(index.HasCompleteChain({first, side}));
+    index.AddChain({second, side});
+    EXPECT_TRUE(index.HasCompleteChain({first, side}));
+    EXPECT_TRUE(index.HasCompleteChain({second, side}));
+}
+
+namespace {
+struct LegacyRestartTensors {
+    LogicalTensorPtr firstInput;
+    LogicalTensorPtr secondInput;
+    LogicalTensorPtr prefixOutput;
+    LogicalTensorPtr middle;
+    LogicalTensorPtr output;
+};
+
+LegacyRestartTensors BuildLegacyRestartGraph(Function& function, bool scopeConflict, bool reverse, bool sideReader)
+{
+    IRBuilder builder;
+    LegacyRestartTensors tensors{builder.CreateTensorVar(function, DataType::DT_FP32, {2, 4}),
+                                 builder.CreateTensorVar(function, DataType::DT_FP32, {2, 4}),
+                                 builder.CreateTensorVar(function, DataType::DT_FP32, {2, 4}),
+                                 builder.CreateTensorVar(function, DataType::DT_FP32, {4, 4}),
+                                 builder.CreateTensorVar(function, DataType::DT_FP32, {6, 4})};
+    function.inCasts_ = {tensors.firstInput, tensors.secondInput};
+    function.outCasts_ = {tensors.output};
+    auto add = [&](Opcode opcode, const LogicalTensorPtr& input, const LogicalTensorPtr& target,
+                   int64_t row) -> Operation& {
+        auto& op = builder.CreateTensorOpStmt(function, opcode, {input}, {target});
+        op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{row, 0}));
+        return op;
+    };
+    auto& prefix = add(scopeConflict ? Opcode::OP_ASSEMBLE : Opcode::OP_CONTRACT, tensors.firstInput,
+                       tensors.prefixOutput, 0);
+    for (bool secondProducer : {reverse, !reverse}) {
+        add(Opcode::OP_ASSEMBLE, secondProducer ? tensors.secondInput : tensors.prefixOutput, tensors.middle,
+            secondProducer ? 2 : 0);
+    }
+    auto& tail = add(Opcode::OP_CONTRACT, tensors.middle, tensors.output, 1);
+    if (scopeConflict) {
+        prefix.SetScopeId(1);
+        tail.SetScopeId(2);
+    }
+    if (sideReader) {
+        auto sideOutput = builder.CreateTensorVar(function, DataType::DT_FP32, {4, 4});
+        builder.CreateTensorOpStmt(function, Opcode::OP_ABS, {tensors.middle}, {sideOutput});
+        function.outCasts_.emplace_back(sideOutput);
+    }
+    function.BuildTensorMap();
+    return tensors;
+}
+
+void CheckLegacyRestartResult(const LegacyRestartTensors& tensors, bool scopeConflict, bool sideReader)
+{
+    ASSERT_EQ(tensors.output->GetProducers().size(), 2);
+    std::unordered_set<LogicalTensorPtr> mergedInputs;
+    for (auto* producer : tensors.output->GetProducers()) {
+        EXPECT_EQ(producer->GetOpcode(), Opcode::OP_CONTRACT);
+        auto input = producer->GetIOperands().front();
+        mergedInputs.insert(input);
+        auto attr = std::dynamic_pointer_cast<AssembleOpAttribute>(producer->GetOpAttribute());
+        ASSERT_NE(attr, nullptr);
+        EXPECT_EQ(attr->GetToOffset(),
+                  input == tensors.prefixOutput ? std::vector<int64_t>({1, 0}) : std::vector<int64_t>({3, 0}));
+        if (scopeConflict) {
+            EXPECT_EQ(producer->GetScopeId(), 2);
+        }
+    }
+    EXPECT_EQ(mergedInputs, (std::unordered_set<LogicalTensorPtr>{tensors.prefixOutput, tensors.secondInput}));
+    ASSERT_EQ(tensors.prefixOutput->GetProducers().size(), 1);
+    EXPECT_EQ((*tensors.prefixOutput->GetProducers().begin())->GetIOperands().front(), tensors.firstInput);
+    if (sideReader) {
+        EXPECT_EQ(tensors.middle->GetProducers().size(), 2);
+        EXPECT_EQ(tensors.middle->GetConsumers().size(), 1);
+    } else {
+        EXPECT_TRUE(tensors.middle->GetProducers().empty());
+        EXPECT_TRUE(tensors.middle->GetConsumers().empty());
+    }
+}
+} // namespace
+
+// C0 -> A1 -> C3 and A2 -> C3 share C3. A1 must restart as a root after
+// inheriting C0's CONTRACT or scope conflict; both A1/C3 and A2/C3 must fuse.
+TEST_F(MergeViewAssembleTest, LegacyPrefixConflictRestartsSharedTailChain)
+{
+    NpuArchScope arch(NPUArch::DAV_3510);
+    for (bool scopeConflict : {false, true}) {
+        for (bool reverse : {false, true}) {
+            for (bool sideReader : {false, true}) {
+                SCOPED_TRACE(testing::Message() << "scopeConflict=" << scopeConflict << ", reverse=" << reverse
+                                                << ", sideReader=" << sideReader);
+                Program program;
+                Function function(program, "legacy_restart", "legacy_restart", nullptr);
+                auto tensors = BuildLegacyRestartGraph(function, scopeConflict, reverse, sideReader);
+                MergeViewAssemble pass;
+                ASSERT_EQ(pass.RunOnFunction(function), SUCCESS);
+                ASSERT_NO_FATAL_FAILURE(CheckLegacyRestartResult(tensors, scopeConflict, sideReader));
+            }
+        }
+    }
+}
+
 TEST_F(MergeViewAssembleTest, ProducerGroupWithIntermediateViewConsumerKeepsDataEdge)
 {
     NpuArchScope arch(NPUArch::DAV_3510);
@@ -2734,6 +2931,54 @@ TEST_F(MergeViewAssembleTest, IndependentLiveTokenChainsPerfGuard)
     std::cout << "IndependentLiveTokenChainsPerfGuard elapsed: " << elapsedMs << " ms" << std::endl;
     constexpr int64_t thresholdMs = 3000;
     EXPECT_LT(elapsedMs, thresholdMs);
+}
+
+TEST_F(MergeViewAssembleTest, LargeProducerGroupWithSharedTailPerfGuard)
+{
+    constexpr int count = 8192;
+    constexpr int64_t rows = 16;
+    Program program;
+    auto function = std::make_unique<Function>(program, "large_shared_tail", "large_shared_tail", nullptr);
+    IRBuilder builder;
+    auto middle = builder.CreateTensorVar(*function, DataType::DT_FP32, {count * rows, 16});
+    auto output = builder.CreateTensorVar(*function, DataType::DT_FP32, {count * rows, 16});
+    std::unordered_map<int, int64_t> inputOffsets;
+    for (int index = 0; index < count; ++index) {
+        auto input = builder.CreateTensorVar(*function, DataType::DT_FP32, {rows, 16});
+        function->inCasts_.emplace_back(input);
+        inputOffsets.emplace(input->GetMagic(), index * rows);
+        auto& producer = builder.CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {input}, {middle});
+        producer.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{index * rows, 0}));
+    }
+    auto& tail = builder.CreateTensorOpStmt(*function, Opcode::OP_ASSEMBLE, {middle}, {output});
+    tail.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+    function->outCasts_ = {output};
+    function->BuildTensorMap();
+
+    MergeViewAssemble pass;
+    const auto start = std::chrono::steady_clock::now();
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                                 start)
+                               .count();
+    ASSERT_EQ(function->Operations(false).size(), static_cast<size_t>(count));
+    ASSERT_EQ(output->GetProducers().size(), static_cast<size_t>(count));
+    for (auto& op : function->Operations(false)) {
+        ASSERT_EQ(op.GetOpcode(), Opcode::OP_CONTRACT);
+        ASSERT_EQ(op.GetIOperands().size(), 1);
+        ASSERT_EQ(op.GetOOperands().front(), output);
+        auto input = inputOffsets.find(op.GetIOperands().front()->GetMagic());
+        ASSERT_NE(input, inputOffsets.end());
+        auto attr = std::dynamic_pointer_cast<AssembleOpAttribute>(op.GetOpAttribute());
+        ASSERT_NE(attr, nullptr);
+        EXPECT_EQ(attr->GetToOffset(), std::vector<int64_t>({input->second, 0}));
+        inputOffsets.erase(input);
+    }
+    EXPECT_TRUE(inputOffsets.empty());
+    EXPECT_TRUE(middle->GetProducers().empty());
+    EXPECT_TRUE(middle->GetConsumers().empty());
+    std::cout << "LargeProducerGroupWithSharedTailPerfGuard elapsed: " << elapsedMs << " ms" << std::endl;
+    EXPECT_LT(elapsedMs, 3000);
 }
 
 TEST_F(MergeViewAssembleTest, BuilderLargeSharedTensorMergeableChainsPerfGuard)

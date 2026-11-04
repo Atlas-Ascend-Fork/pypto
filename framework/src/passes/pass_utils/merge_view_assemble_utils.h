@@ -16,6 +16,7 @@
 #ifndef PASS_MERGE_VIEW_ASSEMBLE_UTILS_H_
 #define PASS_MERGE_VIEW_ASSEMBLE_UTILS_H_
 
+#include <array>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -25,6 +26,21 @@
 #include "interface/configs/config_manager.h"
 
 namespace npu::tile_fwk {
+// Indexes exact assemble-chain suffixes for shared-tail validation.
+class AssembleChainIndex {
+public:
+    void AddChain(const std::vector<Operation*>& chain);
+    bool HasCompleteChain(const std::vector<Operation*>& chain) const;
+
+private:
+    // ID 0 denotes the empty suffix; other IDs identify exact operation sequences.
+    std::unordered_map<Operation*, std::unordered_map<size_t, size_t>> suffixIds_;
+    size_t nextSuffixId_ = 1;
+    // Producer sets are stable while validating a group. Cache missing paths, not
+    // the chain-specific result: a producer in the current chain is exempt.
+    mutable std::unordered_map<int, std::unordered_map<size_t, std::vector<Operation*>>> missingSiblingCache_;
+};
+
 // Merge semantics are selected from each chain's IR, independently of the frontend
 // logical-tensor construction option. Coverage and shared-tail checks protect both modes.
 class MergeViewAssembleUtils {
@@ -259,6 +275,8 @@ public:
     // Cleanup methods
     void EraseLegacyRedundantAssembles(Function& function) const;
     Status CleanUp(Function& function);
+
+private:
     // Current chain semantics. It is reset at each candidate chain start.
     bool useTokenSemantics_ = false;
     // Whole-graph preparation state; it does not select the semantics of a chain.
@@ -270,6 +288,8 @@ public:
     // edges. Replacement operations are appended after all chain safety checks.
     std::unordered_map<Operation*, DependencyCacheEntry> dependencyCache_;
     std::unordered_set<int> visitedOp_;
+    // Legacy chain ends blocked by their prefix must remain eligible as roots.
+    std::unordered_set<int> assembleRestartOps_;
     std::unordered_map<int, const ConsumerCacheEntry*> consumerCache_;
     std::unordered_map<int, ConsumerCacheEntry> tensorConsumerCache_;
     std::unordered_map<int, std::vector<LogicalTensorPtr>> rawTensorVersions_;
@@ -283,6 +303,10 @@ public:
     std::unordered_set<int> recordedMergeInputMagics_;
     // Per-middle coverage results for the current invocation (see HasCompleteStaticCoverage).
     mutable std::unordered_map<int, bool> coverageCache_;
+    // Assemble producers and their attributes remain intact until all candidate
+    // chains have been collected. Keep the split-version gate separate by semantics.
+    std::array<std::unordered_map<int, bool>, 2> middleExtensionCache_;
+    bool ComputeCanExtendThroughMiddle(Function& function, const LogicalTensorPtr& middle);
     IRBuilder irBuilder_;
 };
 } // namespace npu::tile_fwk
