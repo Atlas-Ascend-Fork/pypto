@@ -57,7 +57,7 @@ INLINE void TStoreConv2DNZ2NZ(T& dst, U& src, const OffsetInfo& offsetInfo, cons
     if (realCutW <= 0) {
         return;
     }
-    for (int64_t loopH = 0; loopH < (realM / realCutW); loopH++) {
+    for (int64_t loopH = 0; realCutW > 0 && loopH < (realM / realCutW); loopH++) {
         globalData dstGlobal((__gm__ typename T::Type*)(dst.GetAddr() + gmOffset),
                              shapeDim(dstShapeC1, dstShapeH, dstShapeW),
                              strideDim(dstStrideN, dstStrideC1, dstStrideH, dstStrideW, dstStrideC0));
@@ -106,7 +106,7 @@ INLINE void TStoreConv3DNZ2NZ(T& dst, U& src, const OffsetInfo& offsetInfo, cons
     using shapeDim = pto::Shape<1, -1, -1, -1, -1>;
     using strideDim = pto::Stride<-1, -1, -1, -1, -1>;
     using globalData = pto::GlobalTensor<typename T::Type, shapeDim, strideDim, pto::Layout::NDC1HWC0>;
-    for (int64_t loopH = 0; loopH < (realM / realCutW); loopH++) {
+    for (int64_t loopH = 0; realCutW > 0 && loopH < (realM / realCutW); loopH++) {
         globalData dstGlobal((__gm__ typename T::Type*)(dst.GetAddr() + gmOffset),
                              shapeDim(dstShapeD, dstShapeC1, dstShapeH, dstShapeW),
                              strideDim(dstStrideN, dstStrideD, dstStrideC1, dstStrideH, dstStrideW));

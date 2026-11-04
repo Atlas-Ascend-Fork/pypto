@@ -178,7 +178,7 @@ Status GenerateMoveOp::CollapseTransFormatL1Consumer(Operation& op, ViewOpAttrib
 
     auto copyAttr = std::make_shared<CopyOpAttribute>(
         OpImmediate::Specified(viewOpAttribute->GetFromTensorOffset()), viewOpAttribute->GetTo(),
-        OpImmediate::Specified(op.iOperand.front()->shape),
+        OpImmediate::Specified(viewOutput->GetShape()),
         OpImmediate::Specified(op.iOperand.front()->tensor->GetDynRawShape()),
         OpImmediate::Specified(viewOpAttribute->GetToDynValidShape()));
     op.GetOOperands()[0]->UpdateDynValidShape(viewOpAttribute->GetToDynValidShape());

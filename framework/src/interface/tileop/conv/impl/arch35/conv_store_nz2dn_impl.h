@@ -51,7 +51,7 @@ INLINE void TStoreConv2DNZ2DN(T& dst, U& src, const OffsetInfo& offsetInfo, cons
                                pto::CompactMode::Null>;
     using globalData = pto::GlobalTensor<typename T::Type, shapeDim4, strideDim4, pto::Layout::NCHW>;
     // 分块搬出，每次搬出cutW大小的数据
-    for (int64_t loopH = 0; loopH < (realM / realCutW); loopH++) {
+    for (int64_t loopH = 0; realCutW > 0 && loopH < (realM / realCutW); loopH++) {
         globalData dstGlobal((__gm__ typename T::Type*)(dst.GetAddr() + gmOffset), shapeDim4(dstN, dstC, dstH, dstW),
                              strideDim4(dstStrideN, dstStrideC, dstStrideH, dstStrideW));
         tileData srcL0C(realCutW, realN);
@@ -96,7 +96,7 @@ INLINE void TStoreConv3DNZ2DN(T& dst, U& src, const OffsetInfo& offsetInfo, cons
                                pto::CompactMode::Null>;
     using globalData = pto::GlobalTensor<typename T::Type, shapeDim5, strideDim5, pto::Layout::NCDHW>;
     // 分块搬出，每次搬出cutW大小的数据
-    for (int64_t loopH = 0; loopH < (realM / realCutW); loopH++) {
+    for (int64_t loopH = 0; realCutW > 0 && loopH < (realM / realCutW); loopH++) {
         int64_t gmOffset = CalStoreOffsetNCDHW(shapeInfo, offsetInfo, loopH);
         globalData dstGlobal((__gm__ typename T::Type*)(dst.GetAddr() + gmOffset),
                              shapeDim5(dstN, dstC, dstD, dstH, dstW),
@@ -210,7 +210,7 @@ INLINE void TCopyL0C2UBConv2DNZ2DN(T& dst, U& src, const OffsetInfo& offsetInfo,
     // 分块搬出，每次搬出cutW大小的数据；循环次数为有效窗口行数 (realM/realCutW=validH)，
     // 防止大搬小 (一个 L0C 块跨多个 UB tile) 时越界；单次搬出按整分形宽 (nSize×cutW)，
     // 保证 32B 对齐写入 (realCutW<16 的部分行写在跨核可见性上有问题)
-    for (int64_t loopH = 0; loopH < (realM / realCutW); loopH++) {
+    for (int64_t loopH = 0; realCutW > 0 && loopH < (realM / realCutW); loopH++) {
         __ubuf__ typename T::Type* dstAddr = (__ubuf__
                                               typename T::Type*)(dst.GetAddr() + ubOffset * sizeof(typename T::Type));
         __cc__ typename U::Type* srcAddr = (__cc__ typename U::Type*)(src.GetAddr() +
@@ -270,7 +270,7 @@ INLINE void TCopyL0C2UBConv3DNZ2DN(T& dst, U& src, const OffsetInfo& offsetInfo,
     // 分块搬出，每次搬出cutW大小的数据；循环次数为有效窗口行数 (realM/realCutW=validH)，
     // 防止大搬小 (一个 L0C 块跨多个 UB tile) 时越界；单次搬出按整分形宽 (nSize×cutW)，
     // 保证 32B 对齐写入 (realCutW<16 的部分行写在跨核可见性上有问题)
-    for (int64_t loopH = 0; loopH < (realM / realCutW); loopH++) {
+    for (int64_t loopH = 0; realCutW > 0 && loopH < (realM / realCutW); loopH++) {
         __ubuf__ typename T::Type* dstAddr = (__ubuf__
                                               typename T::Type*)(dst.GetAddr() + ubOffset * sizeof(typename T::Type));
         __cc__ typename U::Type* srcAddr = (__cc__ typename U::Type*)(src.GetAddr() +
