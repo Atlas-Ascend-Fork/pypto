@@ -2984,8 +2984,8 @@ INLINE void DrcoParallelLeaderPoll(DrcoEntryState* state, bool& drained)
     if (drained && winFront == winRear) {
         // 终止发布：stop=1；front/rear 复位（退出路径无他核观察）——防下次执行误判残留 slot
         DrcoAtomicExchToU32(&win->stop, uint32_t(1));
-        win->front = 0;
-        win->rear = 0;
+        DrcoAtomicExchToU32(&win->front, 0u);
+        DrcoAtomicExchToU32(&win->rear, 0u);
     }
 }
 
@@ -3060,8 +3060,8 @@ INLINE void KernelEntryDrcoParallel(DrcoEntryState* state)
     }
     // block0 退出协议：队列复位 + indexFinished++；
     if (isBlock0) {
-        state->deviceTaskReadyQueue->head = 0;
-        state->deviceTaskReadyQueue->tail = 0;
+        DrcoAtomicExchToU32(&state->deviceTaskReadyQueue->head, 0u);
+        DrcoAtomicExchToU32(&state->deviceTaskReadyQueue->tail, 0u);
         uint64_t finished = DrcoGmLoad(&state->runtimeDataRingBufferHeadData->indexFinished.value) + 1;
         DrcoGmStore(&state->runtimeDataRingBufferHeadData->indexFinished.value, finished);
     }
