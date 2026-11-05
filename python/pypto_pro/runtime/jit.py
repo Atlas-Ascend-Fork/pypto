@@ -72,9 +72,6 @@ KERNEL_HEADER_SINGLE = """\
 
 #include <cstdint>
 #include <pypto_block_meta.h>
-#if defined(__DAV_VEC__) && defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
-#include "jetty/hcomm_jetty.h"
-#endif
 #include <pto/pto-inst.hpp>
 
 using namespace pto;

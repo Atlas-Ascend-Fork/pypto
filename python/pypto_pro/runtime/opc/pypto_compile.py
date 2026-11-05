@@ -305,13 +305,6 @@ def _compile_target_options(kernel_type: KernelMetaType, enable_c310_rules: bool
     return options
 
 
-_JETTY_PREINCLUDE = (
-    "#if defined(__DAV_VEC__) && defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)\n"
-    '#include "jetty/hcomm_jetty.h"\n'
-    "#endif\n"
-)
-
-
 def _gen_infer_cpp(cg, tilingkey_header: str, kernel_cpp: str, kernel_type: KernelMetaType) -> str:
     sig, names = _signature_parts(cg.entry_params)
     ws_idx = len(names) - 2 if len(names) >= 2 else None
@@ -324,8 +317,7 @@ def _gen_infer_cpp(cg, tilingkey_header: str, kernel_cpp: str, kernel_type: Kern
         )
         inner[ws_idx] = "usrWorkspace"
     return (
-        _JETTY_PREINCLUDE
-        + '#include "kernel_operator.h"\n'
+        '#include "kernel_operator.h"\n'
         f'#include "{tilingkey_header}"\n'
         f"{kernel_cpp}\n"
         f'extern "C" __global__ AICORE void {cg.kernel_name}({sig})\n'
@@ -641,8 +633,7 @@ def _gen_key_src(kernel_cpp_path, origin_func, impl_name, entry_params, kernel_n
     inner = list(names)
     kernel_type = compile_info.tiling_key_kernel_type[str(packed)]
     return (
-        _JETTY_PREINCLUDE
-        + '#include "kernel_operator.h"\n'
+        '#include "kernel_operator.h"\n'
         f'#include "{kernel_cpp_path}"\n'
         f"__aicore__ inline __attribute__((always_inline)) void ascendc_auto_gen_{origin_func}_kernel({sig})\n"
         "{\n"
