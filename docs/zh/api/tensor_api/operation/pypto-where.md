@@ -69,7 +69,7 @@ where(
 
 ## 返回值说明
 
-result ：Tensor，Shape由输入的广播得到，详细广播场景可看上文。数据类型和input、other保持一致。
+result：Tensor，Shape由输入的广播得到，详细广播场景可看上文。数据类型和input、other保持一致。
 
 ## 约束说明
 
