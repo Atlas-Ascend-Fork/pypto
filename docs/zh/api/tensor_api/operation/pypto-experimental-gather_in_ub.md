@@ -73,9 +73,9 @@ gather_in_ub(param: Tensor, indices: Tensor, block_table: Tensor,
 
 TileShape的维度设置须与输出张量保持一致，用于控制输出Tile块的大小。
 
-以输入$ param[token_size,hidden_dim]$ 、索引 $indices[1,k]$ 、轴 $\text{axis}=-2$ 、输出 $output[k,hidden_dim]$  为例：
+以输入$ param[token_size,hidden_dim]$、索引 $indices[1,k]$、轴 $\text{axis}=-2$、输出 $output[k,hidden_dim]$  为例：
 
-设TileShape为$[k_1, hidden_dim_1]$，该配置直接作用于输出output的各维度，同时映射至输入与索引。其中 $k_1$ 切分indices的k维，$ hidden_dim_1$ 切分param的特征维 $hidden_dim$ 。Tile内存占用须满足约束 $b_1 \cdot k_1 \cdot hidden_dim_1 \cdot \text{sizeof}(\mathbf{output}) < \text{UB_Size}$
+设TileShape为$[k_1, hidden_dim_1]$，该配置直接作用于输出output的各维度，同时映射至输入与索引。其中 $k_1$ 切分indices的k维，$ hidden_dim_1$ 切分param的特征维 $hidden_dim$。Tile内存占用须满足约束 $b_1 \cdot k_1 \cdot hidden_dim_1 \cdot \text{sizeof}(\mathbf{output}) < \text{UB_Size}$
 
 ### 接口调用示例
 
