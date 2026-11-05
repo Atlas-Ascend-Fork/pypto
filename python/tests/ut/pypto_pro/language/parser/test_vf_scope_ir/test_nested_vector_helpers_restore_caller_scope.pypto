@@ -1,0 +1,17 @@
+program #entry() {
+    function inner incast() outcast() #entry(false) #type(SimdCallee) {
+        reg<pred_reg,uint16_t> %mask_0 = vf.create_mask();
+        return;
+    }
+    function kernel incast(int64_t %n_0) outcast() #entry(false) #type(Opaque) {
+        simd.call(callee=outer);
+        simd.call(callee=outer);
+        int64_t %block_0 = get_block_idx();
+        return;
+    }
+    function outer incast() outcast() #entry(false) #type(SimdVF) {
+        inner();
+        inner();
+        return;
+    }
+}

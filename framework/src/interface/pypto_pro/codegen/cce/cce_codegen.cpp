@@ -106,8 +106,6 @@ CCECodegen::CCECodegen(ir::SectionKind target) : backend_(backend::GetBackend())
 }
 
 // ============================================================================
-// Helper function inlining
-// ============================================================================
 
 namespace {
 
@@ -474,29 +472,19 @@ void CCECodegen::ResetFunctionGenerationState()
     currentTargetVar_.clear();
     currentExprValue_.clear();
     currentTuple_.reset();
-    currentStmtSpan_ = ir::Span::Unknown();
-    currentExprSpan_ = ir::Span::Unknown();
 
     tupleVarToMakeTuple_.clear();
     tupleBackingArr_.clear();
     loopTargetStack_.clear();
     yieldBuffer_.clear();
 
-    vfTilePtrs_.clear();
-    vfTileSubviewPointerCodes_.clear();
-    sectionHoistedDecls_.clear();
-    vfRegHoistedDecls_.clear();
-    regTensorVars_.clear();
-    maskRegVars_.clear();
-    addrRegVars_.clear();
     tileOffsetCounter_ = 0;
-    vfTilePtrCounter_ = 0;
-    inVfSection_ = false;
     currentFunctionType_ = ir::FunctionType::OPAQUE;
 }
 
-std::string CCECodegen::BuildSimtFunctionSignature(const ir::FunctionPtr& func)
+std::string CCECodegen::BuildVfFunctionSignature(const ir::FunctionPtr& func)
 {
+    const bool isSimt = IsSimtFuncType(func->funcType_);
     std::ostringstream sig;
     if (func->funcType_ == ir::FunctionType::SIMT_VF) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, func->HasAttr(ir::kMaxThreadsAttr))
@@ -504,7 +492,7 @@ std::string CCECodegen::BuildSimtFunctionSignature(const ir::FunctionPtr& func)
         sig << "__simt_vf__ __launch_bounds__(" << func->GetAttr<int>(ir::kMaxThreadsAttr) << ") inline void ";
     } else if (func->funcType_ == ir::FunctionType::SIMT_KERNEL) {
         sig << "__aicore__ inline void ";
-    } else {
+    } else if (func->funcType_ == ir::FunctionType::SIMT_CALLEE) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, func->returnTypes_.size() <= 1)
             << "SIMT callee '" << func->name_ << "' has multiple return values";
         const char* qualifier = GetCurrentKernelType() == ir::FunctionType::SIMT_KERNEL ? "__aicore__" :
@@ -517,6 +505,10 @@ std::string CCECodegen::BuildSimtFunctionSignature(const ir::FunctionPtr& func)
                 << "SIMT callee '" << func->name_ << "' must return a scalar or void";
             sig << qualifier << " inline " << returnType->dtype_.ToCTypeString() << " ";
         }
+    } else if (func->funcType_ == ir::FunctionType::SIMD_VF) {
+        sig << "__simd_vf__ inline void ";
+    } else {
+        sig << "__simd_callee__ inline void ";
     }
     sig << func->name_ << (func->funcType_ == ir::FunctionType::SIMT_KERNEL ? "_impl" : "") << "(";
     bool first = true;
@@ -532,16 +524,20 @@ std::string CCECodegen::BuildSimtFunctionSignature(const ir::FunctionPtr& func)
             if (GetCurrentKernelType() == ir::FunctionType::SIMT_KERNEL) {
                 sig << tensorType->dtype_.ToCTypeString() << "* " << paramName;
             } else {
+                PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, isSimt)
+                    << "SIMD VF function '" << func->name_ << "' supports only TileType and ScalarType parameters";
                 sig << "__gm__ " << tensorType->dtype_.ToCTypeString() << "* " << paramName;
             }
             RegisterPointer(paramName, paramName);
         } else if (auto tileType = ir::As<ir::TileType>(param->GetType())) {
             sig << "__ubuf__ " << tileType->dtype_.ToCTypeString() << "* " << paramName;
-            sig << ", uint32_t " << paramName << "__valid_row";
-            sig << ", uint32_t " << paramName << "__valid_col";
+            if (isSimt) {
+                sig << ", uint32_t " << paramName << "__valid_row";
+                sig << ", uint32_t " << paramName << "__valid_col";
+            }
         } else {
             PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, false)
-                << "SIMT function '" << func->name_
+                << (isSimt ? "SIMT function '" : "SIMD VF function '") << func->name_
                 << "' supports only TensorType, TileType, and ScalarType parameters";
         }
         context_.RegisterVar(param, paramName);
@@ -550,19 +546,17 @@ std::string CCECodegen::BuildSimtFunctionSignature(const ir::FunctionPtr& func)
     return sig.str();
 }
 
-void CCECodegen::GenerateSimtFunction(const ir::FunctionPtr& func)
+void CCECodegen::GenerateVfFunction(const ir::FunctionPtr& func)
 {
     PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                      func != nullptr && (func->funcType_ == ir::FunctionType::SIMT_VF ||
-                                          func->funcType_ == ir::FunctionType::SIMT_CALLEE ||
-                                          func->funcType_ == ir::FunctionType::SIMT_KERNEL))
-        << "GenerateSimtFunction expects a SIMT_VF, SIMT_CALLEE, or SIMT_KERNEL function";
+                      func != nullptr && (IsSimtFuncType(func->funcType_) || IsSimdFuncType(func->funcType_)))
+        << "GenerateVfFunction expects a SIMT_VF/SIMT_CALLEE/SIMT_KERNEL/SIMD_VF/SIMD_CALLEE function";
 
     ResetFunctionGenerationState();
     currentFunctionType_ = func->funcType_;
 
     try {
-        emitter_.EmitLine(BuildSimtFunctionSignature(func));
+        emitter_.EmitLine(BuildVfFunctionSignature(func));
         emitter_.EmitLine("{");
         emitter_.IncreaseIndent();
         GenerateBody(func);
@@ -576,7 +570,7 @@ void CCECodegen::GenerateSimtFunction(const ir::FunctionPtr& func)
 
 namespace {
 
-class SimtCalleeCallCollector : public ir::IRVisitor {
+class VfCalleeCallCollector : public ir::IRVisitor {
 public:
     using ir::IRVisitor::VisitExpr_;
 
@@ -595,7 +589,7 @@ bool HasWindowParam(const ir::FunctionPtr& func)
                        [](const ir::VarPtr& param) { return ir::As<ir::WindowType>(param->GetType()) != nullptr; });
 }
 
-std::vector<ir::FunctionPtr> OrderSimtCallees(const std::map<std::string, ir::FunctionPtr>& callees)
+std::vector<ir::FunctionPtr> OrderVfCallees(const std::map<std::string, ir::FunctionPtr>& callees)
 {
     std::unordered_set<std::string> active;
     std::unordered_set<std::string> orderedNames;
@@ -606,8 +600,8 @@ std::vector<ir::FunctionPtr> OrderSimtCallees(const std::map<std::string, ir::Fu
             return;
         }
         PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, active.insert(func->name_).second)
-            << "Recursive SIMT callee call involving '" << func->name_ << "' is not supported";
-        SimtCalleeCallCollector collector;
+            << "Recursive callee call involving '" << func->name_ << "' is not supported";
+        VfCalleeCallCollector collector;
         collector.VisitStmt(func->body_);
         for (const auto& name : collector.calls_) {
             auto it = callees.find(name);
@@ -651,7 +645,9 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& inputProgram, npu::
 
     ir::FunctionPtr kernelFunc;
     std::vector<ir::FunctionPtr> simtFuncs;
+    std::vector<ir::FunctionPtr> simdVfFuncs;
     simtCallees_.clear();
+    simdCallees_.clear();
     for (const auto& funcEntry : program->functions_) {
         const auto& func = funcEntry.second;
         if (func->funcType_ == ir::FunctionType::SIMT_VF) {
@@ -660,6 +656,14 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& inputProgram, npu::
         }
         if (func->funcType_ == ir::FunctionType::SIMT_CALLEE) {
             simtCallees_[func->name_] = func;
+            continue;
+        }
+        if (func->funcType_ == ir::FunctionType::SIMD_VF) {
+            simdVfFuncs.push_back(func);
+            continue;
+        }
+        if (func->funcType_ == ir::FunctionType::SIMD_CALLEE) {
+            simdCallees_[func->name_] = func;
             continue;
         }
         if (func->funcType_ == ir::FunctionType::ORCHESTRATION) {
@@ -678,20 +682,27 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& inputProgram, npu::
         PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, arch_ == npu::tile_fwk::NPUArch::DAV_3510)
             << "SIMT direct CCE generation currently requires arch='3510'";
     }
+    if (!simdVfFuncs.empty() || !simdCallees_.empty()) {
+        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, target_ == ir::SectionKind::Vector)
+            << "SIMD VF functions can only be generated for the Vector target";
+    }
 
     emitter_.Clear();
     tilingHeaders_.clear();
     structDefinitions_.clear();
 
-    for (const auto& simtCallee : OrderSimtCallees(simtCallees_)) {
-        GenerateSimtFunction(simtCallee);
+    // SIMT callee/vector functions are emitted once, before their caller: either
+    // the SIMT kernel itself or a non-SIMT kernel that launches them via
+    // simt.launch.
+    for (const auto& simtCallee : OrderVfCallees(simtCallees_)) {
+        GenerateVfFunction(simtCallee);
     }
     for (const auto& simtFunc : simtFuncs) {
-        GenerateSimtFunction(simtFunc);
+        GenerateVfFunction(simtFunc);
     }
 
     if (kernelFunc->funcType_ == ir::FunctionType::SIMT_KERNEL) {
-        GenerateSimtFunction(kernelFunc);
+        GenerateVfFunction(kernelFunc);
         if (needsSimtAtomicHeader_) {
             return "#if defined(__DAV_VEC__)\n"
                    "#include \"__clang_cce_simt_atomic.h\"\n"
@@ -700,6 +711,21 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& inputProgram, npu::
         }
         return emitter_.GetCode();
     }
+
+    std::string simtFuncCode = emitter_.GetCode();
+    emitter_.Clear();
+
+    // SIMD VF functions are standalone __simd_vf__/__simd_callee__ definitions
+    // emitted before the kernel that calls them. They are collected separately
+    // because only they depend on the framework VF support header.
+    for (const auto& simdCallee : OrderVfCallees(simdCallees_)) {
+        GenerateVfFunction(simdCallee);
+    }
+    for (const auto& simdVfFunc : simdVfFuncs) {
+        GenerateVfFunction(simdVfFunc);
+    }
+    std::string simdFuncCode = emitter_.GetCode();
+    emitter_.Clear();
 
     // A5/A6 use hardware synchronization; other architectures require FFTS setup.
     bool hasCrossSync = DetectCrossCoreSyncOps(kernelFunc->body_);
@@ -712,6 +738,7 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& inputProgram, npu::
 
     std::string functionCode = emitter_.GetCode();
     emitter_.Clear();
+
     if (target_ == ir::SectionKind::Cube) {
         emitter_.EmitLine("#if defined(__DAV_CUBE__)");
     } else {
@@ -733,6 +760,20 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& inputProgram, npu::
     }
     if (needsScalarHelpers_) {
         emitter_.EmitLine("#include <pypto_scalar.h>");
+    }
+    // RtWrap and the _vag_bXX_N wrappers live in the framework support header;
+    // only the SIMD VF/callee functions use them, so it is pulled in exactly
+    // when such functions exist.
+    if (target_ == ir::SectionKind::Vector && !simdFuncCode.empty()) {
+        emitter_.EmitLine("#include <pypto_vf_support.h>");
+    }
+    // The vector-function definitions precede the impl function: its body calls
+    // them, so the definitions must come first in the translation unit.
+    if (!simtFuncCode.empty()) {
+        emitter_.EmitRaw(simtFuncCode);
+    }
+    if (!simdFuncCode.empty()) {
+        emitter_.EmitRaw(simdFuncCode);
     }
     emitter_.EmitRaw(functionCode);
     emitter_.EmitLine("#endif");
@@ -898,74 +939,10 @@ void CCECodegen::VisitStmt_(const ir::SectionStmtPtr& op)
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op != nullptr)
         << "Internal error: null SectionStmt";
 
-    // VF section: emit a __VEC_SCOPE__ { ... } block with all tile->ptr base declarations
-    // hoisted to just before the scope (section_hoist), so they never sit after a mem_bar.
-    if (op->sectionKind_ == ir::SectionKind::VF) {
-        PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                                   target_ == ir::SectionKind::Vector)
-            << "VF section is only valid in a Vector target Program";
-        // VF sections do not nest, so the hoist buffer must be empty on entry.
-        PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, sectionHoistedDecls_.empty());
-
-        int savedIndent = emitter_.GetIndentLevel();
-        std::string preScope = emitter_.GetCode();
-        emitter_.Clear();
-        emitter_.SetIndentLevel(savedIndent);
-
-        PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, !inVfSection_)
-            << "Nested VF sections are not supported";
-        inVfSection_ = true;
-        vfRegHoistedDecls_.clear();
-
-        emitter_.EmitLine("__VEC_SCOPE__ {");
-        emitter_.IncreaseIndent();
-
-        // Capture header position so RegTensor declarations can be hoisted to the
-        // top of __VEC_SCOPE__ body (must be inside the scope but before any loops).
-        std::string scopeHeader = emitter_.GetCode();
-        int bodyIndent = emitter_.GetIndentLevel();
-        emitter_.Clear();
-        emitter_.SetIndentLevel(bodyIndent);
-
-        if (op->body_) {
-            VisitStmt(op->body_); // auto-declare pushes RegTensor decls to vfRegHoistedDecls_
-        }
-
-        std::string scopeBody = emitter_.GetCode();
-        emitter_.Clear();
-        emitter_.SetIndentLevel(bodyIndent);
-
-        // Reassemble: header + hoisted RegTensor decls + body
-        emitter_.EmitRaw(scopeHeader);
-        for (const auto& decl : vfRegHoistedDecls_) {
-            emitter_.EmitLine(decl);
-        }
-        vfRegHoistedDecls_.clear();
-        emitter_.EmitRaw(scopeBody);
-
-        emitter_.DecreaseIndent();
-        emitter_.EmitLine("}");
-        inVfSection_ = false;
-
-        std::string scopeCode = emitter_.GetCode();
-        emitter_.Clear();
-        emitter_.SetIndentLevel(savedIndent);
-        emitter_.EmitRaw(preScope);
-        // vf_tile_ptr_N names are globally unique, so the hoisted decls can sit before __VEC_SCOPE__
-        // at this scope level without colliding across sections.
-        for (const auto& decl : sectionHoistedDecls_) {
-            emitter_.EmitLine(decl); // flush before __VEC_SCOPE__ (ahead of every mem_bar inside)
-        }
-        sectionHoistedDecls_.clear();
-        emitter_.EmitRaw(scopeCode);
-
-        vfTilePtrs_.clear();
-        vfTileSubviewPointerCodes_.clear();
-        return;
-    }
-
+    // SIMD VF functions are standalone functions generated by GenerateVfFunction;
+    // no SectionStmt can survive into CCE codegen.
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, false)
-        << "Cube/Vector SectionStmt must be projected before CCE CodeGen";
+        << "SectionStmt must be eliminated or projected before CCE CodeGen";
 }
 
 bool CCECodegen::DetectCrossCoreSyncOps(const ir::StmtPtr& stmt)
@@ -1000,18 +977,12 @@ bool CCECodegen::DetectCrossCoreSyncOps(const ir::StmtPtr& stmt)
 // span parameter to each. SpanScope ignores an invalid span.
 void CCECodegen::VisitStmt(const ir::StmtPtr& stmt)
 {
-    if (stmt) {
-        currentStmtSpan_ = stmt->span_;
-    }
     const pypto::pro::SpanScope spanScope(stmt ? stmt->span_ : ir::Span::Unknown());
     ir::IRVisitor::VisitStmt(stmt);
 }
 
 void CCECodegen::VisitExpr(const ir::ExprPtr& expr)
 {
-    if (expr) {
-        currentExprSpan_ = expr->span_;
-    }
     const pypto::pro::SpanScope spanScope(expr ? expr->span_ : ir::Span::Unknown());
     ir::IRVisitor::VisitExpr(expr);
 }
@@ -1049,13 +1020,16 @@ void CCECodegen::VisitStmt_(const ir::AssignStmtPtr& op)
 
     if (!currentExprValue_.empty()) {
         auto varType = targetVar->GetType();
-        bool isTile = ir::As<ir::TileType>(varType) != nullptr;
+        auto tileType = ir::As<ir::TileType>(varType);
         bool isTuple = ir::As<ir::TupleType>(varType) != nullptr;
         bool rhsIsVar = ir::As<ir::Var>(op->value_) != nullptr;
-        // Tile/tuple aliases and simple var-to-var copies: register as alias (no code emitted).
-        // Scalar complex expressions: emit "auto x = expr;" so codegen hoists the expression
-        // into a C++ local variable rather than inlining it at every use site.
-        if (isTile || isTuple || rhsIsVar) {
+        if (tileType != nullptr && IsInSimdContext()) {
+            emitter_.EmitLine("__ubuf__ " + tileType->dtype_.ToCTypeString() + " *" + varName + " = " +
+                              currentExprValue_ + ";");
+            context_.RegisterVar(targetVar, varName);
+        } else if (tileType != nullptr || isTuple || rhsIsVar || context_.HasVarName(currentExprValue_)) {
+            // Tile/tuple aliases, simple var-to-var copies, and tuple items that
+            // are already-declared variables: register as alias (no code emitted).
             context_.RegisterVar(targetVar, currentExprValue_);
         } else {
             // Scalar non-trivial expression: emit a local variable declaration so the
@@ -1096,14 +1070,13 @@ void CCECodegen::VisitStmt_(const ir::EvalStmtPtr& op)
         << "Internal error: EvalStmt has null expression";
 
     // Backend side-effect ops emit their statements while visiting the expression. A direct
-    // SimtCallee call instead returns its call text, which must be emitted here. Results from
-    // all other evaluation expressions are intentionally discarded.
+    // VF callee/VF function call instead returns its call text, which must be emitted here.
+    // Results from all other evaluation expressions are intentionally discarded.
     auto call = ir::As<ir::Call>(op->expr_);
-    bool isSimtCalleeCall = IsInSimtContext() && call != nullptr &&
-                            simtCallees_.find(call->name_) != simtCallees_.end();
+    bool isVfCall = call != nullptr && FindCallableCallee(call->name_) != nullptr;
     currentExprValue_ = "";
     VisitExpr(op->expr_);
-    if (isSimtCalleeCall && !currentExprValue_.empty()) {
+    if (isVfCall && !currentExprValue_.empty()) {
         emitter_.EmitLine(currentExprValue_ + ";");
     }
     currentExprValue_ = "";
@@ -1182,6 +1155,26 @@ std::string CCECodegen::GetGeneratedType(const ir::TypePtr& type) const
     if (auto scalarType = ir::As<ir::ScalarType>(type)) {
         return scalarType->dtype_.ToCTypeString();
     }
+    if (auto regType = ir::As<ir::RegType>(type)) {
+        switch (regType->regtype_) {
+            case ir::RegKind::VecReg:
+                if (regType->dtype_ == DataType::INT4) {
+                    return "vector_s4x2";
+                }
+                if (regType->dtype_ == DataType::UINT4) {
+                    return "vector_u4x2";
+                }
+                return "RtWrap<" + regType->dtype_.ToCTypeString() + ">";
+            case ir::RegKind::PredReg:
+                return "MaskReg";
+            case ir::RegKind::AddrReg:
+                return "AddrReg";
+            case ir::RegKind::UnalignReg:
+                return "UnalignReg";
+            default:
+                break;
+        }
+    }
     if (auto ptrType = ir::As<ir::PtrType>(type)) {
         return "__gm__ " + ptrType->dtype_.ToCTypeString() + "*";
     }
@@ -1249,6 +1242,17 @@ bool CCECodegen::IsArrayTuple(const ir::TupleTypePtr& tt) const
 
 void CCECodegen::EmitFullPhiIf(const ir::IfStmtPtr& op)
 {
+    // A runtime scalar phi if/else inside a __simd_vf__ body is not supported:
+    // bisheng's VF instruction selection cannot legalize a runtime scalar
+    // condition branch, and there is no select rewrite for it. Reject the
+    // writing style up front instead of emitting broken code.
+    for (const auto& returnVar : op->returnVars_) {
+        auto scalarTy = ir::As<ir::ScalarType>(returnVar->GetType());
+        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR,
+                          !IsInSimdContext() || scalarTy == nullptr || IsBoolDtype(scalarTy->dtype_))
+            << "if/else producing a runtime scalar phi is not supported inside a SIMD VF function";
+    }
+
     // Declare the phi slots before the `if`: a phi has no initial value, but its C++ shape
     // follows from its type alone, including a struct name, which codegen seeds from IRDebugInfo
     // at entry rather than discovering as it walks the branches.
@@ -1427,8 +1431,9 @@ void CCECodegen::EmitTupleVariable(const std::string& name, const ir::TupleTypeP
 
 std::vector<std::string> CCECodegen::RegisterLoopIterArgs(const std::vector<ir::IterArgPtr>& iterArgs)
 {
-    // Registration only: the declarations are emitted by EmitLoop after the body has been
-    // traversed, because a slot whose init is UnknownType is not fully typed until then.
+    // Registration only: EmitLoop emits each iter-arg declaration inline right
+    // before the loop header (and its body uses), so the declarations are
+    // never written here.
     std::vector<std::string> iterArgNames;
     iterArgNames.reserve(iterArgs.size());
 
@@ -1543,16 +1548,17 @@ void CCECodegen::VisitStmt_(const ir::ForStmtPtr& op)
     currentExprValue_ = "";
 
     // --- Emit for-loop with hoisting ---
-    // In __VEC_SCOPE__, bisheng requires uint16_t loop variables AND the bound expression to also
-    // resolve to uint16_t (otherwise -Wcce-compat -Werror fails the build), so cast inside a VF section.
-    std::string loopType = IsInVFSection() ? "uint16_t" : "int64_t";
-    std::string stopExpr = IsInVFSection() ? ("(uint16_t)(" + stop + ")") : stop;
-    // Perf: in a VF section, hoist a NON-constant loop bound into a `const` local
+    // In a __simd_vf__ body, bisheng requires uint16_t loop variables AND the bound expression to
+    // also resolve to uint16_t (otherwise -Wcce-compat -Werror fails the build), so cast inside a
+    // SIMD VF function. SIMT bodies use int64_t loops like the kernel.
+    std::string loopType = IsInSimdContext() ? "uint16_t" : "int64_t";
+    std::string stopExpr = IsInSimdContext() ? ("(uint16_t)(" + stop + ")") : stop;
+    // Perf: in a SIMD VF body, hoist a NON-constant loop bound into a `const` local
     // and use that as the trip count.  A literal-constant bound is already ideal,
     // so it is left inline.  Binding a variable bound to a const evaluates it once
     // and lets the bisheng VF compiler treat the trip count as loop-invariant
     // (enabling unrolling / vectorization it would otherwise skip).
-    if (IsInVFSection() && !stopCi) {
+    if (IsInSimdContext() && !stopCi) {
         std::string boundName = loopVarName + "_ub";
         emitter_.EmitLine("const uint16_t " + boundName + " = " + stopExpr + ";");
         stopExpr = boundName;
@@ -1692,6 +1698,7 @@ void CCECodegen::VisitExpr_(const ir::VarPtr& op)
     // Positional tuple Var: produce the underlying MakeTuple in currentTuple_
     // (with _0 SSA fallback). Empty currentExprValue_ signals "no direct identifier".
     currentTuple_ = (it != tupleVarToMakeTuple_.end()) ? it->second : nullptr;
+
     currentExprValue_ = context_.GetVarName(op);
 }
 
@@ -1736,32 +1743,21 @@ void CCECodegen::VisitExpr_(const ir::ConstBoolPtr& op)
 
 std::string CCECodegen::GetOrCreateVFTilePtr(const ir::ExprPtr& expr, bool isPostUpdate)
 {
-    std::string code = GetExprAsCode(expr);
-    // Key on is_post_update so a dedicated cursor (e.g. a POST_UPDATE store target) and a plain
-    // base pointer to the same tile are kept as independent hoisted vars — a cursor that is
-    // mutated in place must not be shared with a base-pointer load/store of the same tile.
-    auto cacheKey = std::make_pair(isPostUpdate, code);
-    auto it = vfTilePtrs_.find(cacheKey);
-    if (it != vfTilePtrs_.end())
-        return it->second;
-
     auto tileType = ir::As<ir::TileType>(expr->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tileType != nullptr)
         << "GetOrCreateVFTilePtr expects a tile expr, got " << expr->TypeName();
-    std::string elemCtype = tileType->dtype_.ToCTypeString();
+    std::string code = GetExprAsCode(expr);
 
-    // tile[offset] is the rvalue `(vf_tile_ptr_N + off)`; a load uses it as-is, no new variable.
-    bool isSubviewPointer = vfTileSubviewPointerCodes_.count(code) != 0;
-    if (isSubviewPointer && !isPostUpdate)
-        return code;
-
-    // Declare a vf_tile_ptr_N once, cached and hoisted before __VEC_SCOPE__: plain tile -> base from
-    // .tile.data(); post_update -> a cursor the intrinsic advances in place.
-    std::string var = "vf_tile_ptr_" + std::to_string(vfTilePtrCounter_++);
-    std::string init = isSubviewPointer ? code : ("(__ubuf__ " + elemCtype + " *)" + code + ".tile.data()");
-    sectionHoistedDecls_.push_back("__ubuf__ " + elemCtype + " *" + var + " = " + init + ";");
-    vfTilePtrs_[cacheKey] = var;
-    return var;
+    // POST_UPDATE advances the pointer operand in place, so it must be a
+    // modifiable lvalue: a tile parameter or a tile-typed binding (both real
+    // __ubuf__* variables in a SIMD body). An unbound offset expression is an
+    // rvalue and cannot be advanced — bind it to a variable first.
+    if (isPostUpdate) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, ir::As<ir::Var>(expr) != nullptr)
+            << "POST_UPDATE requires a named tile variable (bind the expression first: base = tile + offset), got "
+            << expr->TypeName();
+    }
+    return code;
 }
 
 void CCECodegen::VisitExpr_(const ir::GetItemExprPtr& op)
@@ -1837,35 +1833,25 @@ void CCECodegen::VisitExpr_(const ir::GetItemExprPtr& op)
 // otherwise inherit whichever tuple the previous visit left behind. Clearing on the way out
 // keeps that same leftover from reaching whatever is parsed next.
 
-std::string CCECodegen::RecordVFTileSubviewPointer(std::string code)
-{
-    vfTileSubviewPointerCodes_.insert(code);
-    return code;
-}
-
 std::string CCECodegen::GetExprAsCode(const ir::ExprPtr& expr)
 {
-    auto savedSpan = currentExprSpan_;
     currentExprValue_ = "";
     currentTuple_ = nullptr;
     VisitExpr(expr);
     auto result = currentExprValue_;
     currentExprValue_ = "";
     currentTuple_ = nullptr;
-    currentExprSpan_ = savedSpan;
     return result;
 }
 
 ir::MakeTuplePtr CCECodegen::GetExprAsMakeTuple(const ir::ExprPtr& expr)
 {
-    auto savedSpan = currentExprSpan_;
     currentExprValue_ = "";
     currentTuple_ = nullptr;
     VisitExpr(expr);
     auto result = currentTuple_;
     currentExprValue_ = "";
     currentTuple_ = nullptr;
-    currentExprSpan_ = savedSpan;
     return result;
 }
 
@@ -2014,11 +2000,33 @@ std::string CCECodegen::ComputeNZStrideOffset(const ir::TensorTypePtr& tensorTyp
 // Call Expression Visitor (uses operator registry codegen functions)
 // ========================================================================
 
-std::string CCECodegen::GenerateSimtCalleeCall(const ir::CallPtr& op, const ir::FunctionPtr& callee)
+ir::FunctionPtr CCECodegen::FindCallableCallee(const std::string& name) const
 {
+    if (IsInSimtContext()) {
+        auto simtCallee = simtCallees_.find(name);
+        if (simtCallee != simtCallees_.end()) {
+            return simtCallee->second;
+        }
+        return nullptr;
+    }
+    if (IsInSimdContext()) {
+        auto simdCallee = simdCallees_.find(name);
+        if (simdCallee != simdCallees_.end()) {
+            return simdCallee->second;
+        }
+        return nullptr;
+    }
+    // Kernel-side VF calls use the registered "simd.call" op (analogous to
+    // simt.launch); there is no direct-name VF call from the kernel body.
+    return nullptr;
+}
+
+std::string CCECodegen::GenerateVfCalleeCall(const ir::CallPtr& op, const ir::FunctionPtr& callee)
+{
+    const bool isSimt = IsSimtFuncType(callee->funcType_);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == callee->params_.size())
-        << "SIMT callee '" << callee->name_ << "' expects " << callee->params_.size() << " arguments, got "
-        << op->args_.size();
+        << (isSimt ? "SIMT callee '" : "SIMD callee '") << callee->name_ << "' expects " << callee->params_.size()
+        << " arguments, got " << op->args_.size();
 
     std::ostringstream call;
     call << callee->name_ << "(";
@@ -2033,14 +2041,22 @@ std::string CCECodegen::GenerateSimtCalleeCall(const ir::CallPtr& op, const ir::
 
     for (size_t i = 0; i < op->args_.size(); ++i) {
         const auto& actual = op->args_[i];
-        append(GetExprAsCode(actual));
-        if (ir::As<ir::TileType>(callee->params_[i]->GetType())) {
-            auto actualVar = ir::As<ir::Var>(actual);
-            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, actualVar != nullptr)
-                << "SIMT Tile callee arguments must be named Tile variables";
-            std::string actualName = context_.SanitizeName(actualVar);
-            append(actualName + "__valid_row");
-            append(actualName + "__valid_col");
+        if (isSimt) {
+            append(GetExprAsCode(actual));
+            if (ir::As<ir::TileType>(callee->params_[i]->GetType())) {
+                auto actualVar = ir::As<ir::Var>(actual);
+                PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, actualVar != nullptr)
+                    << "SIMT Tile callee arguments must be named Tile variables";
+                std::string actualName = context_.SanitizeName(actualVar);
+                append(actualName + "__valid_row");
+                append(actualName + "__valid_col");
+            }
+        } else {
+            // Inside a __simd_vf__/__simd_callee__ body, tile params are already
+            // __ubuf__ pointers — pass the argument code directly. Kernel-side
+            // VF calls never reach this helper: they use the registered
+            // "simd.call" op.
+            append(GetExprAsCode(actual));
         }
     }
     call << ")";
@@ -2052,12 +2068,11 @@ void CCECodegen::VisitExpr_(const ir::CallPtr& op)
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op != nullptr)
         << "Internal error: null Call";
 
-    if (IsInSimtContext()) {
-        auto simtCallee = simtCallees_.find(op->name_);
-        if (simtCallee != simtCallees_.end()) {
-            currentExprValue_ = GenerateSimtCalleeCall(op, simtCallee->second);
-            return;
-        }
+    // SIMT callee call from a SIMT body, SIMD callee call from within a
+    // __simd_vf__/__simd_callee__ body, or SIMD VF call from the kernel body.
+    if (auto callee = FindCallableCallee(op->name_)) {
+        currentExprValue_ = GenerateVfCalleeCall(op, callee);
+        return;
     }
 
     PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, backend_ != nullptr)
@@ -2065,81 +2080,6 @@ void CCECodegen::VisitExpr_(const ir::CallPtr& op)
     const auto* opInfo = backend_->GetOpInfo(op->name_);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, opInfo != nullptr)
         << "Unknown call '" << op->name_ << "' reached CCE codegen; helper calls must be inlined";
-
-    // Auto-declare RegTensor for VF compute ops whose dst variable hasn't been
-    // declared yet. This handles the VF assignment form (dst = vf.xxx(...))
-    // where the RegTensor let-binding may end up inside a loop body.
-    // Only applies to compute ops where args[0] is a register (not a tile/store dst).
-    if (op->name_.rfind("vf.", 0) == 0 && !op->args_.empty()) {
-        // Skip store/side-effect ops — args[0] is a tile pointer, not a register
-        static const std::set<std::string> skipOps = {
-            "vf.store_align",
-            "vf.store_unalign",
-            "vf.store_unalign_post",
-            "vf.store",
-            "vf.scatter",
-            "vf.store_align_pack",
-            "vf.store_align_intlv",
-            "vf.store_align_pack_postupdate",
-            "vf.mem_bar",
-            "vf.clear_spr",
-            "vf.create_mask",
-            "vf.update_mask",
-            "vf.reg_tensor",
-            "vf.mask_reg",
-            "vf.create_addr_reg",
-            "vf.move",
-            "vf.unalign_reg_for_store",
-            "vf.load_unalign_init",
-            "vf.load_unalign_pre",
-            "vf.get_mask_spr",
-            "vf.mask_gen_with_reg_tensor",
-            "vf.compare",
-            "vf.compares",
-            "vf.bit_cast",
-        };
-        if (skipOps.count(op->name_) == 0) {
-            static const std::set<std::string> dualDstOps = {
-                "vf.interleave",
-                "vf.de_interleave",
-                "vf.mull",
-            };
-            bool isDualDst = dualDstOps.count(op->name_) > 0;
-
-            for (size_t dstIdx = 0; dstIdx < (isDualDst ? 2 : 1); ++dstIdx) {
-                auto dstVar = ir::As<ir::Var>(op->args_[dstIdx]);
-                if (!dstVar)
-                    continue;
-                std::string dstName = GetVarName(dstVar);
-                if (dstName.empty() || IsRegTensorVar(dstName) || IsMaskRegVar(dstName))
-                    continue;
-                // Skip if the variable name contains '[' or '(' — it's a tile
-                // group index expression, not a simple register variable.
-                if (dstName.find('[') != std::string::npos || dstName.find('(') != std::string::npos)
-                    continue;
-
-                // Determine dtype: prefer the dst var's own type, then source args.
-                DataType dt = DataType::FP32;
-                auto dstType = op->args_[dstIdx]->GetType();
-                if (auto dstSt = ir::As<ir::ScalarType>(dstType)) {
-                    dt = dstSt->dtype_;
-                } else if (auto dstSh = ir::As<ir::ShapedType>(dstType)) {
-                    dt = dstSh->dtype_;
-                } else {
-                    size_t firstSrcIdx = isDualDst ? 2 : 1;
-                    if (op->args_.size() > firstSrcIdx) {
-                        auto srcType = op->args_[firstSrcIdx]->GetType();
-                        if (auto srcSt = ir::As<ir::ScalarType>(srcType))
-                            dt = srcSt->dtype_;
-                        else if (auto srcSh = ir::As<ir::ShapedType>(srcType))
-                            dt = srcSh->dtype_;
-                    }
-                }
-                vfRegHoistedDecls_.push_back("RegTensor<" + dt.ToCTypeString() + "> " + dstName + ";");
-                RegisterRegTensorVar(dstName);
-            }
-        }
-    }
 
     std::string result = opInfo->codegenFunc(op, *this);
     currentExprValue_ = result;
@@ -2467,71 +2407,6 @@ int64_t CCECodegen::ExtractConstInt(const ir::ExprPtr& expr) const
 
 namespace {
 
-/**
- * \brief Helper visitor for collecting TileType variables from IR
- *
- * Traverses the IR tree and collects all variables with TileType.
- * Uses the visitor pattern for clean, extensible traversal.
- */
-class TileCollector : public ir::IRVisitor {
-    using ir::IRVisitor::VisitExpr_;
-    using ir::IRVisitor::VisitStmt_;
-
-public:
-    std::vector<std::pair<ir::VarPtr, ir::TileTypePtr>> tileVars_;
-
-    // Extract the first TileType from a possibly nested TupleType
-    static ir::TileTypePtr ExtractLeafTileType(const ir::TypePtr& type)
-    {
-        if (auto tile = std::dynamic_pointer_cast<const ir::TileType>(type)) {
-            return tile;
-        }
-        if (auto tuple = std::dynamic_pointer_cast<const ir::TupleType>(type)) {
-            for (const auto& elem : tuple->types_) {
-                auto result = ExtractLeafTileType(elem);
-                if (result)
-                    return result;
-            }
-        }
-        return nullptr;
-    }
-
-    // Recursively collect all TileTypes from a type (handles TupleType nesting)
-    static void CollectTileTypesFromType(const ir::TypePtr& type, std::vector<ir::TileTypePtr>& result)
-    {
-        if (auto tile = std::dynamic_pointer_cast<const ir::TileType>(type)) {
-            result.push_back(tile);
-        } else if (auto tuple = std::dynamic_pointer_cast<const ir::TupleType>(type)) {
-            for (const auto& elem : tuple->types_) {
-                CollectTileTypesFromType(elem, result);
-            }
-        }
-    }
-
-    void VisitStmt_(const ir::AssignStmtPtr& op) override
-    {
-        auto targetVar = op->var_;
-        auto varType = targetVar->GetType();
-        // Direct TileType variable
-        if (auto tileType = std::dynamic_pointer_cast<const ir::TileType>(varType)) {
-            tileVars_.emplace_back(targetVar, tileType);
-            return;
-        }
-        // TupleType variable (from make_tile or double-buffer patterns):
-        // Expand each TileType element as a separate tile with indexed name.
-        if (std::dynamic_pointer_cast<const ir::TupleType>(varType)) {
-            std::vector<ir::TileTypePtr> tileTypes;
-            CollectTileTypesFromType(varType, tileTypes);
-            for (size_t i = 0; i < tileTypes.size(); ++i) {
-                // Tuple leaves use a dedicated namespace so they cannot collide with SSA versions.
-                auto elemVar = std::make_shared<ir::Var>(TupleItemName(targetVar->name_, i), tileTypes[i],
-                                                         targetVar->span_);
-                tileVars_.emplace_back(elemVar, tileTypes[i]);
-            }
-        }
-    }
-};
-
 // Access window shape: the tile operand's shape, which is what the access transfers.
 std::optional<std::vector<ir::ExprPtr>> ResolveAccessShape(const ir::CallPtr& op,
                                                            const backend::cce::AccessArgIndices& indices)
@@ -2691,17 +2566,6 @@ std::string TensorLayoutVariantKey(const ir::CallPtr& op)
         }
     }
     return key;
-}
-
-std::vector<std::pair<ir::VarPtr, ir::TileTypePtr>> CCECodegen::CollectTileVariables(const ir::StmtPtr& stmt)
-{
-    if (!stmt) {
-        return {};
-    }
-
-    TileCollector collector;
-    collector.VisitStmt(stmt);
-    return collector.tileVars_;
 }
 
 void CCECodegen::CollectTensorDefs(const ir::FunctionPtr& func)

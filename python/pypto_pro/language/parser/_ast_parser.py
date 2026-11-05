@@ -137,6 +137,10 @@ class ASTParser(
 ):
     """Parses Python AST and builds IR using IRBuilder."""
 
+    def _in_vf_body(self) -> bool:
+        """True while parsing a __simd_vf__/__simd_callee__ function body."""
+        return self._current_func_type in (ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee)
+
     def __init__(
         self,
         source_file: str,
@@ -237,11 +241,9 @@ class ASTParser(
         self.inline_func_cache: dict[int, Any] = {}
         self.inline_call_stack: list[int] = []
         self.inline_counter: int = 0
-        self.simt_func_cache: dict[int, ir.Function] = {}
-        self.simt_call_stack: list[int] = []
+        self.vf_func_cache: dict[tuple, ir.Function] = {}
+        self.vf_call_stack: list[int] = []
         self._simt_entry_type = ir.FunctionType.Opaque
-        # Nested vector helpers share the outermost VF section.
-        self.inline_vf_depth: int = 0
 
         # Counter for anonymous buffer tile variables (auto-named _buf_tile_N).
         self._buf_tile_counter: int = 0
@@ -397,8 +399,8 @@ class ASTParser(
         self,
         func_def: ast.FunctionDef,
         func_type: ir.FunctionType = ir.FunctionType.Opaque,
-        is_vector_function: bool = False,
         callsite_param_types: dict[str, ir.Type] | None = None,
+        const_param_values: dict[str, ir.Expr] | None = None,
         func_attrs: dict[str, Any] | None = None,
     ) -> ir.Function:
         """Parse function definition and build IR.
@@ -406,22 +408,32 @@ class ASTParser(
         Args:
             func_def: AST FunctionDef node
             func_type: Function type (default: Opaque)
-            is_vector_function: If True, wrap the entire function body in an
-                implicit ``ir.SectionKind.VF`` section scope (for
-                ``@pl.vector_function`` decorated functions).
 
             callsite_param_types: Concrete parameter types supplied while parsing
-                a SIMT function at its call site.
+                a SIMT or SIMD VF function at its call site.
+
+            const_param_values: Compile-time constant call-site arguments keyed
+                by parameter name, supplied while instantiating a SIMD VF
+                function. The parameter name resolves to the constant inside the
+                body (folding ``if`` conditions on it), and the parameter is
+                specialized out of the emitted signature.
+
             func_attrs: Attributes attached to the parsed IR function.
 
         Returns:
             IR Function object
         """
-        if callsite_param_types is not None and func_type not in (
+        if (
+            callsite_param_types is not None or const_param_values is not None
+        ) and func_type not in (
             ir.FunctionType.SimtVF,
             ir.FunctionType.SimtCallee,
+            ir.FunctionType.SimdVF,
+            ir.FunctionType.SimdCallee,
         ):
-            raise NotSupported("callsite_param_types is only supported for SIMT functions")
+            raise NotSupported(
+                "callsite_param_types/const_param_values is only supported for SIMT/SIMD VF functions"
+            )
 
         func_name = func_def.name
         self._gemm_used_names.update(node.id for node in ast.walk(func_def) if isinstance(node, ast.Name))
@@ -468,6 +480,12 @@ class ASTParser(
 
         with self.builder.function(func_name, func_span, func_type=func_type) as f:
             for parameter_index, arg in enumerate(args_to_process):
+                const_value = const_param_values.get(arg.arg) if const_param_values is not None else None
+                if const_value is not None:
+                    self.scope_manager.define_var(
+                        arg.arg, const_value, allow_redef=True, span=self.span_tracker.get_span(arg)
+                    )
+                    continue
                 callsite_type = callsite_param_types.get(arg.arg) if callsite_param_types is not None else None
                 self._parse_function_param(arg, f, parameter_index, callsite_type)
 
@@ -482,18 +500,11 @@ class ASTParser(
                         continue  # Skip docstring
                 body_stmts.append(stmt)
 
-            if is_vector_function:
-                # @pl.vector_function: the entire body is a VF section scope.
-                with self.builder.section(ir.SectionKind.VF, func_span):
-                    self.scope_manager.enter_scope("section")
-                    self.inline_vf_depth += 1
-                    try:
-                        self._parse_statement_list(body_stmts)
-                    finally:
-                        self.inline_vf_depth -= 1
-                        self.scope_manager.exit_scope(leak_vars=False)
-            else:
-                self._parse_statement_list(body_stmts)
+            # Standalone __simd_vf__/__simd_callee__ body: the "inside a VF
+            # body" semantics (UINT16 loop-bound clamps, tile+offset pointer
+            # arithmetic) are keyed off
+            # the function type via _in_vf_body() rather than a counter.
+            self._parse_statement_list(body_stmts)
 
             if self.scope_manager.current_scope.jump_kind is None:
                 self.builder.emit(ir.ReturnStmt([], self._current_span()))
@@ -603,7 +614,6 @@ class ASTParser(
 
     @_dispatch_statement.register
     def _parse_while_statement(self, stmt: ast.While) -> None:
-        self._reject_while_in_vf(stmt)
         self.parse_while_loop(stmt)
 
     @_dispatch_statement.register

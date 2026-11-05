@@ -11,6 +11,9 @@
 
 import ast
 import inspect
+import os
+from pathlib import Path
+import re
 import textwrap
 
 from pypto_pro import ir
@@ -30,25 +33,38 @@ def _parse_body(body, *, vector_function=False, target=ir.SectionKind.Vector, cl
         debug_info=ir.IRDebugInfo(),
         closure_vars={"pl": pl, "vf": vf, **(closure or {})},
     )
-    return parser.parse_function(ast.parse(source).body[0], is_vector_function=vector_function)
+    func_type = ir.FunctionType.SimdVF if vector_function else ir.FunctionType.Opaque
+    return parser.parse_function(ast.parse(source).body[0], func_type=func_type)
 
 
-@pytest.mark.parametrize("namespace", ["vf", "pl.Vf", "vectors", "pl.vf"])
+def _check_ir_snapshot(printed: str, name: str) -> None:
+    """Pin one VF TextDump under test_vf_scope_ir/; PYPTO_RENDER_IR=1 rewrites it."""
+    text = re.sub(r"memref_id=\d+", "memref_id=<id>", printed).strip() + "\n"
+    golden = Path(__file__).with_name("test_vf_scope_ir") / f"{name}.pypto"
+    if os.environ.get("PYPTO_RENDER_IR"):
+        golden.parent.mkdir(parents=True, exist_ok=True)
+        golden.write_text(text, encoding="utf-8")
+        return
+    if not golden.exists():
+        pytest.skip(f"missing IR golden {golden.name}; run with PYPTO_RENDER_IR=1 to generate")
+    assert text == golden.read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize("statement", [
-    "mask = {ns}.create_mask()",
-    "reg = {ns}.arange(0, dtype=pl.DT_INT32)",
-    "low, high = {ns}.de_interleave(missing_a, missing_b)",
-    "{ns}.store_align(missing_tile, missing_reg, missing_mask)",
-    "value = 1 + {ns}.get_spr(missing_reg)",
+    "mask = vf.create_mask()",
+    "reg = vf.arange(0, dtype=pl.DT_INT32)",
+    "low, high = vf.de_interleave(missing_a, missing_b)",
+    "vf.store_align(missing_tile, missing_reg, missing_mask)",
+    "value = 1 + vf.get_spr(missing_reg)",
 ])
 @pytest.mark.parametrize("section", [None, "section_vector", "section_cube"])
-def test_vf_operations_require_vector_function(namespace, statement, section):
-    body = statement.format(ns=namespace)
+def test_vf_operations_require_vector_function(statement, section):
+    body = statement
     target = ir.SectionKind.Cube if section == "section_cube" else ir.SectionKind.Vector
     if section:
         body = f"with pl.{section}():\n" + textwrap.indent(body, "    ")
     with pytest.raises(InvalidOperation, match="can only be used inside @pl.vector_function") as error:
-        _parse_body(body, target=target, closure={"vectors": vf})
+        _parse_body(body, target=target)
     assert error.value.span["filename"] == __file__
     assert error.value.span["line"] == (3 if section else 2)
     assert "Move VF register operations" in error.value.hint
@@ -143,18 +159,12 @@ def test_pl_error_reports_the_decorated_helper_source():
     ("reg = sequence(0, dtype=pl.DT_INT32)", {"sequence": vf.arange}, False),
     ("block = get_block()", {"get_block": pl.get_block_idx}, True),
 ])
-def test_operation_aliases_cannot_bypass_scope_checks(body, closure, vector_function):
-    with pytest.raises(PyptoProError, match="@pl.vector_function"):
+def test_operation_aliases_are_not_resolved_as_ops(body, closure, vector_function):
+    # Aliased spellings are unsupported by design: an operation is only its own
+    # name, so an alias inlines as a plain (void) callable and can neither run
+    # as an op nor bypass the execution-domain gate.
+    with pytest.raises(PyptoProError):
         _parse_body(body, vector_function=vector_function, closure=closure)
-
-
-def test_vf_operation_aliases_work_inside_vector_function():
-    func = _parse_body(
-        "mask = make_mask()\nreg = sequence(0, dtype=pl.DT_INT32)",
-        vector_function=True,
-        closure={"make_mask": vf.create_mask, "sequence": vf.arange},
-    )
-    assert func.body.stmts[0].section_kind == ir.SectionKind.VF
 
 
 def test_scalar_operations_remain_valid_in_vector_function():
@@ -162,27 +172,25 @@ def test_scalar_operations_remain_valid_in_vector_function():
         "value = pl.min(n, 64)\nvalue = pl.max(value, 0)\nvalue = value + pl.const(1, pl.DT_INT64)",
         vector_function=True,
     )
-    body = func.body.stmts[0].body.stmts
+    body = func.body.stmts
     assert isinstance(body[0].value, ir.Min)
     assert isinstance(body[1].value, ir.Max)
     assert isinstance(body[2].value, ir.Add)
+    _check_ir_snapshot(str(func), "test_scalar_operations_remain_valid_in_vector_function")
 
 
-@pytest.mark.parametrize("namespace", ["vf", "pl.Vf", "vectors", "pl.vf"])
-def test_vf_range_and_constants_remain_valid(namespace):
+def test_vf_range_and_constants_remain_valid():
     func = _parse_body(
-        textwrap.dedent(f"""\
+        textwrap.dedent("""\
         for i in pl.range(n):
-            mask = {namespace}.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
-            reg = {namespace}.full(1.0, mask, dtype=pl.DT_FP32)
+            mask = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
+            reg = vf.full(1.0, mask, dtype=pl.DT_FP32)
         """),
         vector_function=True,
-        closure={"vectors": vf},
     )
-    section = func.body.stmts[0]
-    assert isinstance(section, ir.SectionStmt)
-    assert section.section_kind == ir.SectionKind.VF
-    assert isinstance(section.body.stmts[0], ir.ForStmt)
+    loop = func.body.stmts[0]
+    assert isinstance(loop, ir.ForStmt)
+    _check_ir_snapshot(str(func), "test_vf_range_and_constants_remain_valid")
 
 
 @pytest.mark.parametrize("after", [False, True])
@@ -211,9 +219,12 @@ def test_nested_vector_helpers_restore_caller_scope(after):
     else:
         program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
         func = program.get_function(kernel.__name__)
-        sections = [stmt for stmt in func.body.stmts if isinstance(stmt, ir.SectionStmt)]
-        assert len(sections) == 2
-        assert all(section.section_kind == ir.SectionKind.VF for section in sections)
+        calls = [
+            stmt.expr for stmt in func.body.stmts
+            if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == "simd.call"
+        ]
+        assert len(calls) == 2
+        _check_ir_snapshot(str(program), "test_nested_vector_helpers_restore_caller_scope")
 
 
 # One helper per accessor: the parser reads these from source, so the cursor call has to be
@@ -222,21 +233,21 @@ def test_nested_vector_helpers_restore_caller_scope(after):
 def _advance_next(group):
     tile = group.next()
     reg = vf.load_align(tile, 0)
-    vf.store_align(tile, reg, vf.create_mask(), 0)
+    vf.store_align(tile, reg, vf.create_mask(dtype=pl.DT_FP32), 0)
 
 
 @pl.vector_function
 def _advance_current(group):
     tile = group.current()
     reg = vf.load_align(tile, 0)
-    vf.store_align(tile, reg, vf.create_mask(), 0)
+    vf.store_align(tile, reg, vf.create_mask(dtype=pl.DT_FP32), 0)
 
 
 @pl.vector_function
 def _advance_previous(group):
     tile = group.previous()
     reg = vf.load_align(tile, 0)
-    vf.store_align(tile, reg, vf.create_mask(), 0)
+    vf.store_align(tile, reg, vf.create_mask(dtype=pl.DT_FP32), 0)
 
 
 def _tile_group_kernel(advance):

@@ -107,6 +107,10 @@ protected:
         using npu::tile_fwk::ExternalError;
         PRO_CODEGEN_THROW(::pypto::ir::ValueError, ExternalError::KEY_ERROR)
             << "No codegen registered for operation: " << opName;
+        // The ErrLogger temporary above throws from its destructor; the explicit
+        // throw below is unreachable and only satisfies -Wreturn-type on
+        // toolchains that do not honor [[noreturn]] destructors.
+        throw ::pypto::ir::ValueError("No codegen registered for operation: " + opName);
     }
 
     /**

@@ -556,7 +556,7 @@ def make_quant_lightning_indexer_vf_kernel(
                 mutex_ids=[7, 8],
             )
 
-            # ACC: single make_tile_group for matmul + fixpipe (auto_mutex handles M↔FIX sync)
+            # ACC: single make_tile_group for matmul + fixpipe (auto_mutex handles M→FIX sync)
             acc_group = pl.make_tile_group(
                 type=pl.TileType(
                     shape=[m_cube_runtime, TS], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc, compact=1
@@ -565,7 +565,7 @@ def make_quant_lightning_indexer_vf_kernel(
                 mutex_ids=[9, 10],
             )
 
-            # UB dst: ND0 and ND1 each as make_tile_group (auto_mutex handles FIX↔V sync)
+            # UB dst: ND0 and ND1 each as make_tile_group (auto_mutex handles FIX→UB sync)
             mm1_nd0_group = pl.make_tile_group(
                 type=pl.TileType(shape=[m_half_runtime, TS], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
                 addrs=[va_mm1_vec_ping, va_mm1_vec_pong],
@@ -623,11 +623,11 @@ def make_quant_lightning_indexer_vf_kernel(
                         pl.set_validshape(right_slot, [TD, k_valid])
                         pl.set_validshape(left_slot, [gs1_valid, TD])
 
-                        # Move Q/K -> L0A/L0B (NBuffer auto_mutex handles MTE1↔M sync)
+                        # Move Q/K -> L0A/L0B (NBuffer auto_mutex handles MTE1→M sync)
                         pl.move(left_slot, q_slot)
                         pl.move(right_slot, k_slot)
 
-                        # Matmul: write to ACC (make_tile_group auto_mutex handles M↔FIX sync)
+                        # Matmul: write to ACC (make_tile_group auto_mutex handles M→FIX sync)
                         acc_tile = acc_group.next()
                         pl.set_validshape(acc_tile, [gs1_valid, k_valid])
                         pl.matmul(acc_tile, left_slot, right_slot)
@@ -691,7 +691,7 @@ def make_quant_lightning_indexer_vf_kernel(
                 pl.TileType(shape=[1, sk_align128], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
                 addr=va_kscale_f32,
             )
-            # score_u16_sk: make_tile_group (auto_mutex handles V↔MTE3 sync)
+            # score_u16_sk: make_tile_group (auto_mutex handles V→MTE3 sync)
             score_u16_sk_group = pl.make_tile_group(
                 type=pl.TileType(shape=[sq_rows_per_sub, TS], dtype=pl.DT_UINT16, target_memory=pl.MemorySpace.Vec),
                 addrs=[va_score_u16_sk_ping, va_score_u16_sk_pong],
@@ -752,7 +752,7 @@ def make_quant_lightning_indexer_vf_kernel(
 
                     # ---- Phase 1: load weight/qscale as DT_FP16, cast to DT_FP32 ----
                     # weight/qscale: load FP16 [2, n1] into [2, 16] tile (col padded, 32B-aligned).
-                    # auto_mutex on these tile-group slots provides the load↔cast sync.
+                    # auto_mutex on these tile-group slots provides the load→cast sync.
                     weight_f16_slot = weight_f16_group.next()
                     qscale_f16_slot = qscale_f16_group.next()
                     pl.set_validshape(weight_f16_slot, [sq_rows_per_sub, n1])
@@ -778,7 +778,7 @@ def make_quant_lightning_indexer_vf_kernel(
                         # kscale: load 2048 DT_FP16 every 16 sk_tiles, before cross_core wait
                         if sk_tile_id % kscale_batch == 0:
                             kscale_batch_start = (sk_tile_id // kscale_batch) * kscale_batch_elems
-                            # auto_mutex on the kscale_f16 tile-group slot provides load↔cast sync.
+                            # auto_mutex on the kscale_f16 tile-group slot provides load→cast sync.
                             kscale_f16_slot = kscale_f16_group.next()
                             pl.set_validshape(kscale_f16_slot, [1, kscale_batch_elems])
                             pl.load(kscale_f16_slot, k_scale, [b_id, kscale_batch_start, 0], order=[0, 1])
@@ -1106,7 +1106,7 @@ def test_quant_lightning_indexer_vf():
     logging.info("\n=== Test QuantLightningIndexer VF ===")
 
     test_cases = [
-        (1, 64, 1, 8192, 8192, HEAD_DIM, 2048, 28, 0, "fp8"),  # 950 默认流预算 28 cube 核
+        (1, 64, 1, 8192, 8192, HEAD_DIM, 2048, 28, 0, "fp8"),
     ]
 
     for b, n1, n2, sq, sk, d, topk, num_cores, sparse_mode, input_dtype in test_cases:

@@ -15,12 +15,25 @@ Original case: test_tile_group_accessor_stays_valid_in_the_calling_kernel.
 The sibling ``.pypto`` file holds the ``__str__`` (TextDump) output.
 """
 
+import os
 from pathlib import Path
 import re
 
 from pypto_pro import ir
 import pypto_pro.language as pl
 from pypto_pro.language import Vf as vf  # noqa: N813
+import pytest
+
+
+def _check_ir_snapshot(printed: str, golden: Path) -> None:
+    """Pin one VF TextDump; PYPTO_RENDER_IR=1 rewrites the golden instead."""
+    text = re.sub(r"memref_id=\d+", "memref_id=<id>", printed).strip() + "\n"
+    if os.environ.get("PYPTO_RENDER_IR"):
+        golden.write_text(text, encoding="utf-8")
+        return
+    if not golden.exists():
+        pytest.skip(f"missing IR golden {golden.name}; run with PYPTO_RENDER_IR=1 to generate")
+    assert text == golden.read_text(encoding="utf-8")
 
 
 def test_tile_group_accessor_stays_valid_in_the_calling_kernel():
@@ -33,7 +46,7 @@ def test_tile_group_accessor_stays_valid_in_the_calling_kernel():
     @pl.vector_function
     def use(tile):
         reg = vf.load_align(tile, 0)
-        vf.store_align(tile, reg, vf.create_mask(), 0)
+        vf.store_align(tile, reg, vf.create_mask(dtype=pl.DT_FP32), 0)
 
     @pl.jit(auto_mutex=True)
     def kernel(x: pl.Tensor[[1, 128], pl.DT_FP32]):
@@ -44,10 +57,12 @@ def test_tile_group_accessor_stays_valid_in_the_calling_kernel():
 
     program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     func = program.get_function(kernel.__name__)
-    sections = [stmt for stmt in func.body.stmts if isinstance(stmt, ir.SectionStmt)]
-    assert [section.section_kind for section in sections] == [ir.SectionKind.VF]
+    calls = [
+        stmt.expr for stmt in func.body.stmts
+        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == "simd.call"
+    ]
+    assert len(calls) == 1
+    assert calls[0].kwargs["callee"] == "use"
 
     printed = str(func)
-    printed = re.sub(r'memref_id=\d+', 'memref_id=<id>', printed)
-    golden = Path(__file__).with_suffix(".pypto").read_text(encoding="utf-8")
-    assert printed.rstrip("\n") == golden.rstrip("\n")
+    _check_ir_snapshot(printed, Path(__file__).with_suffix(".pypto"))

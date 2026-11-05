@@ -1,0 +1,9 @@
+function kernel incast(int64_t %n_0) outcast() #entry(false) #type(SimdVF) {
+    for %i__iterator_0 inrange 0, %n_0, 1 iter { } {
+        int64_t %i_0 = %i__iterator_0;
+        reg<pred_reg,uint16_t> %mask_0 = vf.create_mask(pattern=0, dtype=float);
+        reg<vec_reg,float> %reg_0 = vf.full(1.0, %mask_0, dtype=float);
+        continue;
+    }
+    return;
+}

@@ -105,6 +105,7 @@ DEFINE_KIND_TRAIT(TokenType, ObjectKind::TokenType);
 DEFINE_KIND_TRAIT(NoneType, ObjectKind::NoneType);
 DEFINE_KIND_TRAIT(LogicalTensorType, ObjectKind::LogicalTensorType);
 DEFINE_KIND_TRAIT(WindowType, ObjectKind::WindowType);
+DEFINE_KIND_TRAIT(RegType, ObjectKind::RegType);
 
 // Other IR node types
 DEFINE_KIND_TRAIT(Function, ObjectKind::Function);
@@ -202,9 +203,11 @@ struct KindTrait<UnaryExpr> {
 template <>
 struct KindTrait<Type> {
     static constexpr ObjectKind kinds[] = {
-        ObjectKind::UnknownType,       ObjectKind::ScalarType,    ObjectKind::ShapedType, ObjectKind::TensorType,
-        ObjectKind::TileType,          ObjectKind::MutexTileType, ObjectKind::TupleType,  ObjectKind::TokenType,
-        ObjectKind::LogicalTensorType, ObjectKind::PtrType,       ObjectKind::NoneType,   ObjectKind::WindowType};
+        ObjectKind::UnknownType, ObjectKind::ScalarType, ObjectKind::ShapedType,
+        ObjectKind::TensorType,  ObjectKind::TileType,   ObjectKind::MutexTileType,
+        ObjectKind::TupleType,   ObjectKind::TokenType,  ObjectKind::LogicalTensorType,
+        ObjectKind::PtrType,     ObjectKind::NoneType,   ObjectKind::WindowType,
+        ObjectKind::RegType};
     static constexpr size_t count = sizeof(kinds) / sizeof(ObjectKind);
 };
 

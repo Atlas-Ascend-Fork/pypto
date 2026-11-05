@@ -261,6 +261,7 @@ protected:
     virtual R VisitType_(const TokenTypePtr& op, Args... args) = 0;
     virtual R VisitType_(const NoneTypePtr& op, Args... args) = 0;
     virtual R VisitType_(const LogicalTensorTypePtr& op, Args... args) = 0;
+    virtual R VisitType_(const RegTypePtr& op, Args... args) = 0;
 };
 
 #define TYPE_FUNCTOR_DISPATCH(OpType)                       \
@@ -280,6 +281,7 @@ R TypeFunctor<R, Args...>::VisitType(const TypePtr& type, Args... args)
     TYPE_FUNCTOR_DISPATCH(TokenType);
     TYPE_FUNCTOR_DISPATCH(NoneType);
     TYPE_FUNCTOR_DISPATCH(LogicalTensorType);
+    TYPE_FUNCTOR_DISPATCH(RegType);
     TYPE_FUNCTOR_DISPATCH(MemRefType);
     TYPE_FUNCTOR_DISPATCH(UnknownType);
 

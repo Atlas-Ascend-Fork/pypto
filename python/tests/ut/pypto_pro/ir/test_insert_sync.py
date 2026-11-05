@@ -6,7 +6,6 @@ import re
 
 from pypto_pro._errors import NameNotFound
 import pypto_pro.language as pl
-from pypto_pro.language import Vf as vf  # noqa: N813
 from pypto_pro.runtime.platform import NpuArch
 import pytest
 
@@ -408,121 +407,6 @@ def test_matmul_with_bias_preserves_acc_phase_synchronization(phase):
     expected = [1, 2, 3] if phase in (pl.AccPhase.Partial, pl.AccPhase.Final) else [0, 1, 2, 3]
     assert [call.args[0].value for call in calls(program, "system.mutex_lock_dyn")] == expected
     assert [call.args[0].value for call in calls(program, "system.mutex_unlock_dyn")] == expected
-
-
-@pl.vector_function
-def vf_choose_tile(a, b, out, unused, flag):
-    if flag:
-        source = a
-    else:
-        source = b
-    value = vf.load_align(source, 0)
-    vf.store_align(out, value, vf.update_mask(32, dtype=pl.DT_FP32), 0)
-
-
-@pl.vector_function
-def vf_loop_tile(a, b, out, unused, count):
-    source = a
-    for _ in pl.range(count):
-        value = vf.load_align(source, 0)
-        vf.store_align(out, value, vf.update_mask(32, dtype=pl.DT_FP32), 0)
-        source = b
-
-
-@pl.vector_function
-def vf_offset_tile(a, b, out, unused, offset):
-    source = a + offset
-    value = vf.load_align(source, 0)
-    vf.store_align(out, value, vf.update_mask(32, dtype=pl.DT_FP32), 0)
-
-
-@pl.vector_function
-def vf_nested_tile(a, b, out, unused, offset):
-    vf_offset_tile(a, b, out, unused, offset)
-
-
-@pl.vector_function
-def vf_rebind_tile(a, b, out, unused, flag):
-    if flag:
-        a = b
-    value = vf.load_align(a, 0)
-    vf.store_align(out, value, vf.update_mask(32, dtype=pl.DT_FP32), 0)
-
-
-@pytest.mark.parametrize("helper", [vf_choose_tile, vf_loop_tile, vf_offset_tile, vf_nested_tile, vf_rebind_tile])
-def test_vf_synchronizes_declared_arguments_at_section_boundary(helper):
-    @pl.jit(auto_mutex=True)
-    def kernel(index: pl.DT_INT64):
-        tt = pl.TileType(shape=[1, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
-        group = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[0, 1, 2, 3])
-        with pl.section_vector():
-            helper(group[0], group[1], group[2], group[3], index)
-
-    program = parse(kernel)
-    assert not list(calls(program, "system.mutex_lock_dyn"))
-    declarations = list(calls(program, "system.vf_scope_args"))
-    assert len(declarations) == 1
-    assert isinstance(declarations[0].type, ir.NoneType)
-    assert len(declarations[0].args) == 4  # Scalar arguments are not synchronization operands.
-    program = ir.Pass.insert_sync()(program)
-    body = next(iter(program.functions.values())).body
-    all_stmts = list(statements(body))
-    section = next(
-        stmt for stmt in all_stmts if isinstance(stmt, ir.SectionStmt) and stmt.section_kind == ir.SectionKind.VF
-    )
-    locks = list(calls(program, "system.mutex_lock_dyn"))
-    unlocks = list(calls(program, "system.mutex_unlock_dyn"))
-    assert section.body.stmts[0].expr.name == "system.vf_scope_args"
-    # Match the original parser: all Tile arguments, including unused ones, participate.
-    assert [call.args[0].value for call in locks] == [0, 1, 2, 3]
-    assert [call.args[0].value for call in unlocks] == [0, 1, 2, 3]
-    assert all(call.args[0].type.dtype == pl.DT_INT64 for call in locks + unlocks)
-    assert not list(calls(program, "block.tile_mutex_id"))
-    section_index = all_stmts.index(section)
-    for i, stmt in enumerate(all_stmts):
-        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call):
-            if stmt.expr.name == "system.mutex_lock_dyn":
-                assert i < section_index
-            elif stmt.expr.name == "system.mutex_unlock_dyn":
-                assert i > section_index
-    assert not any(
-        isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call)
-        and stmt.expr.name.startswith("system.mutex_") for stmt in statements(section.body)
-    )
-
-
-@pytest.mark.parametrize("auto_mutex", [False, True])
-def test_vf_dynamic_mutex_setup_stays_outside_scope(auto_mutex):
-    mutex_ids = [0, 1] if auto_mutex else None
-
-    @pl.vector_function
-    def copy_tile(source, target, count):
-        value = vf.load_align(source, 0)
-        vf.store_align(target, value, vf.update_mask(count, dtype=pl.DT_FP32), 0)
-
-    @pl.jit(auto_mutex=auto_mutex)
-    def kernel(i: pl.DT_INT64, j: pl.DT_INT64):
-        tt = pl.TileType(shape=[1, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
-        group = pl.make_tile_group(type=tt, addrs=0, mutex_ids=mutex_ids, depth=2)
-        with pl.section_vector():
-            copy_tile(group[i], group[j], 32)
-
-    assert len(list(calls(parse(kernel), "system.vf_scope_args"))) == 1
-    code = cpp(kernel)
-    assert "vf_scope_args" not in code
-    scope = re.search(r"__VEC_SCOPE__\s*\{.*?\n\s*\}", code, re.DOTALL)
-    assert scope, code
-    assert "__sync_" not in scope.group()
-    assert "get_buf(" not in scope.group() and "rls_buf(" not in scope.group()
-    if auto_mutex:
-        before, after = code[:scope.start()], code[scope.end():]
-        assert before.count(".mutex_ids[0]") == 2
-        assert before.count(" != ") == 1
-        assert before.count("get_buf(PIPE_V") == 2
-        assert after.count("rls_buf(PIPE_V") == 2
-        assert "get_buf(" not in after and "rls_buf(" not in before
-    else:
-        assert "get_buf(" not in code and "rls_buf(" not in code
 
 
 @pl.jit(auto_mutex=True)

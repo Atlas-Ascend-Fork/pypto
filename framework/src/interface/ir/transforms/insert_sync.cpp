@@ -37,7 +37,8 @@ bool DescriptorOnly(const std::string& name)
 std::optional<PipeType> Pipe(const CallPtr& call)
 {
     const auto& name = call->name_;
-    if ((name.rfind("block.", 0) != 0 && name.rfind("dist.", 0) != 0 && name != "simt.launch") || DescriptorOnly(name))
+    if ((name.rfind("block.", 0) != 0 && name.rfind("dist.", 0) != 0 && name != "simt.launch" && name != "simd.call") ||
+        DescriptorOnly(name))
         return std::nullopt;
     auto info = backend::BackendCCE::Instance().GetOpInfo(name);
     if (info && info->pipe)
@@ -439,6 +440,7 @@ Pass pass::InsertSync()
             for (auto& entry : functions) {
                 auto& function = entry.second;
                 if (function->funcType_ == FunctionType::SIMT_VF || function->funcType_ == FunctionType::SIMT_CALLEE ||
+                    function->funcType_ == FunctionType::SIMD_VF || function->funcType_ == FunctionType::SIMD_CALLEE ||
                     function->funcType_ == FunctionType::ORCHESTRATION)
                     continue;
                 SyncInserter inserter(function);

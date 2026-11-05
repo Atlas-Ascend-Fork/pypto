@@ -9,6 +9,21 @@ template<class Tile, uint32_t N> struct SyncedTile {
 };
 #endif
 #include <pypto_dump.h>
+#include <pypto_vf_support.h>
+__simd_vf__ inline void _register_shift(__ubuf__ int32_t* src_0, __ubuf__ int32_t* shift_0, __ubuf__ int32_t* dst_0)
+{
+    MaskReg mask_0;
+    mask_0 = pset_b32(PAT_ALL);
+    RtWrap<int32_t> value_0;
+    vlds(value_0, src_0, 0, NORM);
+    RtWrap<int32_t> amount_0;
+    vlds(amount_0, shift_0, 0, NORM);
+    RtWrap<int32_t> result_0;
+    vshl(result_0, value_0, amount_0, mask_0, MODE_ZEROING);
+    vsts(result_0, dst_0, 0, NORM_B32, mask_0);
+    return;
+}
+
 __aicore__ inline void _shift_kernel_impl_vector(__gm__ int32_t* x_0)
 {
 
@@ -21,20 +36,7 @@ __aicore__ inline void _shift_kernel_impl_vector(__gm__ int32_t* x_0)
     using dst_0_Type = SyncedTile<Tile<TileType::Vec, int32_t, 1, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0>;
     dst_0_Type dst_0{dst_0_Type::PtoTile(1, 64), {}};
     TASSIGN(dst_0.tile, 0x200);
-    __ubuf__ int32_t *vf_tile_ptr_0 = (__ubuf__ int32_t *)src_0.tile.data();
-    __ubuf__ int32_t *vf_tile_ptr_1 = (__ubuf__ int32_t *)shift_0.tile.data();
-    __ubuf__ int32_t *vf_tile_ptr_2 = (__ubuf__ int32_t *)dst_0.tile.data();
-    __VEC_SCOPE__ {
-        RegTensor<int32_t> __inline_0_value_0;
-        RegTensor<int32_t> __inline_0_amount_0;
-        RegTensor<int32_t> __inline_0_result_0;
-        MaskReg __inline_0_mask_0;
-        __inline_0_mask_0 = pset_b32(PAT_ALL);
-        vlds(__inline_0_value_0, vf_tile_ptr_0, 0, NORM);
-        vlds(__inline_0_amount_0, vf_tile_ptr_1, 0, NORM);
-        vshl(__inline_0_result_0, __inline_0_value_0, __inline_0_amount_0, __inline_0_mask_0, MODE_ZEROING);
-        vsts(__inline_0_result_0, vf_tile_ptr_2, 0, NORM_B32, __inline_0_mask_0);
-    }
+    _register_shift((__ubuf__ int32_t *)src_0.tile.data(), (__ubuf__ int32_t *)shift_0.tile.data(), (__ubuf__ int32_t *)dst_0.tile.data());
     return;
 }
 #endif

@@ -771,6 +771,37 @@ class ScalarType(Type):
         """
 
 
+class RegKind(enum.Enum):
+    """VF register category carried by RegType."""
+
+    VecReg: Final
+    """Plain vector register."""
+    PredReg: Final
+    """Mask register."""
+    AddrReg: Final
+    """Address (offset) register."""
+    UnalignReg: Final
+    """Unaligned load/store register."""
+
+
+class RegType(Type):
+    """VF register type representation."""
+
+    regtype: Final[RegKind]
+    """Register category."""
+
+    dtype: Final[DataType]
+    """Data type."""
+
+    def __init__(self, regtype: RegKind, dtype: DataType) -> None:
+        """Create a VF register type.
+
+        Args:
+            regtype: Register category
+            dtype: Data type
+        """
+
+
 class ShapedType(Type):
     """Base class for shaped types (tensors and tiles)."""
 
@@ -933,6 +964,8 @@ class FunctionType(enum.IntEnum):
     - SimtVF: 3510 SIMT vector function launched from an AIV kernel
     - SimtCallee: 3510 helper callable from SIMT functions
     - SimtKernel: 3510 SIMT kernel launched directly from host
+    - SimdVF: 3510 SIMD vector function (__simd_vf__) launched from an AIV kernel
+    - SimdCallee: 3510 SIMD helper callable from SIMD functions
     """
 
     Opaque = ...
@@ -942,6 +975,8 @@ class FunctionType(enum.IntEnum):
     SimtVF = ...
     SimtCallee = ...
     SimtKernel = ...
+    SimdVF = ...
+    SimdCallee = ...
 
 
 class PtrType(Type):

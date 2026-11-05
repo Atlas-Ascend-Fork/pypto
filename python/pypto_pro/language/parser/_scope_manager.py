@@ -175,7 +175,6 @@ class ScopeManager:
         self.strict_ssa = strict_ssa
         self.scopes: list[LocalScope] = [LocalScope("global")]
         self.assignments: dict[str, int] = {}
-        self.mask_reg_vars: set[str] = set()
         self.if_info: ControlFlowInfo | None = None
         self.loop_info: ControlFlowInfo | None = None
 
@@ -210,13 +209,6 @@ class ScopeManager:
             yield
         finally:
             self.loop_info = old_info
-
-    def register_mask_reg_var(self, name: str) -> None:
-        """Mark a variable as a MaskReg for unified VF destination inference."""
-        self.mask_reg_vars.add(name)
-
-    def is_mask_reg_var(self, name: str) -> bool:
-        return name in self.mask_reg_vars
 
     def define_var(self, name: str, value: Any, allow_redef: bool = False, span: Any | None = None) -> None:
         """Define a source variable in the current local scope."""

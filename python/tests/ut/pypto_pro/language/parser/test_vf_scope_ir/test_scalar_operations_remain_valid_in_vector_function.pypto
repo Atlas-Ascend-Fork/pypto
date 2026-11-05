@@ -1,0 +1,6 @@
+function kernel incast(int64_t %n_0) outcast() #entry(false) #type(SimdVF) {
+    int64_t %value_0 = (%n_0 min 64);
+    int64_t %value_1 = (%value_0 max 0);
+    int64_t %value_2 = (%value_1 add 1);
+    return;
+}

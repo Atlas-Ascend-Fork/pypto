@@ -156,14 +156,22 @@ def _walk_stmts(stmt):
         yield stmt
 
 
-def _assert_scalar_operand(program, op_name, value, index=2):
-    """Check the stored operand without relying on SSA names or lossy float printing."""
-    calls = [
-        stmt.expr
-        for func in program.functions.values()
-        for stmt in _walk_stmts(func.body)
-        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == op_name
-    ]
+def _assert_scalar_operand(program, op_name, value, index=1):
+    """Check the stored operand without relying on SSA names or lossy float printing.
+
+    Default index=1 matches value form (src=0, scalar=1).
+    Block ops and ops whose scalar is not the second operand pass index explicitly.
+    """
+    calls = []
+    for func in program.functions.values():
+        for stmt in _walk_stmts(func.body):
+            expr = None
+            if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call):
+                expr = stmt.expr
+            elif isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call):
+                expr = stmt.value
+            if expr is not None and expr.name == op_name:
+                calls.append(expr)
     assert len(calls) == 1
     call = calls[0]
     scalar = call.args[index]
@@ -462,7 +470,7 @@ def test_tile_scalar_op_accepts_a_scalar_that_fits():
     program, _ = _parse_tile_scalar_kernel(pl.DT_INT8, 127)
 
     # A scalar rhs sends pl.add through the tile-scalar chokepoint, i.e. block.adds.
-    _assert_scalar_operand(program, "block.adds", 127)
+    _assert_scalar_operand(program, "block.adds", 127, index=2)
 
 
 # ---------------------------------------------------------------------------
@@ -529,7 +537,7 @@ def test_type_changing_op_checks_the_scalar_against_the_source_dtype():
     program, _ = _parse_with_body(pl.DT_FP32, _muls_cast_body(70000.0))
 
     call = _assert_scalar_operand(program, "vf.muls_cast", 70000.0)
-    assert call.args[0].type.dtype == ir.DataType.FP16
+    assert call.type.dtype == ir.DataType.FP16
     assert call.args[1].type.dtype == ir.DataType.FP32
 
 
@@ -561,7 +569,7 @@ def test_op_without_a_runtime_operand_falls_back_to_the_dtype_kwarg():
 def test_op_without_a_runtime_operand_accepts_a_value_that_fits():
     program, _ = _parse_with_body(pl.DT_FP16, _full_body(pl.DT_FP16, 65504.0))
 
-    call = _assert_scalar_operand(program, "vf.full", 65504.0, index=1)
+    call = _assert_scalar_operand(program, "vf.full", 65504.0, index=0)
     assert call.kwargs["dtype"] == ir.DataType.FP16
 
 
@@ -648,7 +656,6 @@ def _full_no_dtype_kwarg_body(scalar):
 def test_scalar_is_checked_against_the_inferred_dst_dtype_not_another_source():
     program, _ = _parse_with_body(pl.DT_FP16, _full_no_dtype_kwarg_body(70000.0))
 
-    text = str(program)
-    assert "vf.full" in text
-    # The dst is fp32 ("float"), which is why 70000.0 is legal here.
-    assert "vf.reg_tensor(dtype=float)" in text
+    # The dst is deduced as fp32 from the literal, which is why 70000.0 is legal here.
+    call = _assert_scalar_operand(program, "vf.full", 70000.0, index=0)
+    assert call.type.dtype == ir.DataType.FP32

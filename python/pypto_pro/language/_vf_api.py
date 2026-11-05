@@ -7,16 +7,16 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Python API declarations for the PyPTO VF namespace (``pl.vf.xxx``).
+"""Python API declarations for the PyPTO VF namespace (``vf.xxx``).
 
 These declarations exist so that:
-- IDE "Go to Definition" works for every ``pl.vf.xxx`` call
+- IDE "Go to Definition" works for every ``vf.xxx`` call
 - Python catches typos at import time
 - Type checkers can validate argument types
 - Docstrings document the user-facing calling convention
 
 None of these functions are meant to be called at runtime.  Inside a PyPTO
-kernel the AST parser intercepts every ``pl.vf.xxx`` call before Python executes
+kernel the AST parser intercepts every ``vf.xxx`` call before Python executes
 it.  Outside a kernel, calling a declaration raises ``RuntimeError``.
 """
 
@@ -46,7 +46,7 @@ from pypto.ir import (
 from ._api import DType, _api_decl
 
 # ===================================================================
-# VF namespace (``pl.vf.*``)
+# VF namespace (``vf.*``)
 # ===================================================================
 
 
@@ -137,7 +137,8 @@ class Vf:
     def load_align(tile, offset=None, /, *, dist: Optional[LoadDist] = None,
                    dtype: Optional[DType] = None, post_update: bool = False,
                    block_stride=None, repeat_stride=None,
-                   data_copy_mode: Optional[DataCopyMode] = None):
+                   data_copy_mode: Optional[DataCopyMode] = None,
+                   is_reg: bool = True):
         """Load aligned data from a UB Tile into a VF register (vlds instruction).
 
         Loads contiguous data from the source UB Tile at the given element
@@ -161,7 +162,9 @@ class Vf:
 
         Kwargs:
             dist: ``pl.LoadDist`` value selecting load distribution pattern
-                (e.g. ``pl.LoadDist.BRC``, ``pl.LoadDist.US``, ``pl.LoadDist.BRC_B32``)
+                (e.g. ``pl.LoadDist.BRC``, ``pl.LoadDist.US``, ``pl.LoadDist.BRC_B32``).
+                ``DINTLV_B*`` selects the dual-dst de-interleave form:
+                ``even, odd = vf.load_align(src, off, dist=pl.LoadDist.DINTLV_B16)``.
             dtype: Data type for type-specific variants (e.g. ``pl.DT_UINT32``).
                 Supports all b8 types including FP8 (``DT_FP8E4M3FN``/``DT_FP8E5M2``/
                 ``DT_FP8E8M0``/``DT_HF8``) and b4-packed FP4 (``DT_FP4E2M1``/
@@ -173,9 +176,18 @@ class Vf:
             data_copy_mode: ``pl.DataCopyMode.DATA_BLOCK_COPY`` (AscendC's name for
                 the non-contiguous datablock load) selects the vsldb instruction.
                 ``DATA_BLOCK_LOAD`` is accepted as an equivalent legacy alias.
+            is_reg: Selects the destination kind for ``dist`` = NORM (and for
+                the no-dist form): ``True`` (default) loads into a data register
+                (RegTensor, vlds); ``False`` loads into a predicate register
+                (MaskReg, plds). Other dist values keep their own dst kind
+                (US/DS -> MaskReg, DINTLV_B* -> RegTensor pair) and ignore
+                ``is_reg``; ``is_reg=False`` together with ``dist=DINTLV_B*``
+                is rejected. ``data_copy_mode=DATA_BLOCK_COPY`` never supports
+                a MaskReg dst.
 
         Returns:
-            Destination register (``RegTensor``) with loaded data.
+            Destination register: ``RegTensor`` by default, ``MaskReg`` when
+            ``is_reg=False`` (or when ``dist`` selects a mask form).
         """
 
     @staticmethod
@@ -508,6 +520,29 @@ class Vf:
 
         Returns:
             Destination register (``RegTensor``), updated in-place.
+        """
+
+    @staticmethod
+    @_api_decl
+    def mul_add_dst_acc(dst, src0, src1, preg, /, *, mode: Optional[MergeMode] = None):
+        r"""Fused multiply-add into destination, with an explicit accumulate source.
+
+        ``dst`` is a plain SSA argument supplying the addend; the backend
+        copies it into the fresh SSA dst before the ``vmula`` accumulate.
+
+        .. math:: dstReg_i = srcReg0_i \times srcReg1_i + dstReg_i
+
+        Args:
+            dst: Addend source register
+            src0: First multiplicand register
+            src1: Second multiplicand register
+            preg: Predicate mask register
+
+        Kwargs:
+            mode: ``pl.MergeMode.ZEROING`` (default). MERGING mode is not supported on current device.
+
+        Returns:
+            Destination register (``RegTensor``).
         """
 
     @staticmethod
@@ -900,6 +935,29 @@ class Vf:
 
     @staticmethod
     @_api_decl
+    def histogram_acc(dst, src, preg, /, *, bin_type: Optional[BinType] = None,
+                      hist_type: Optional[HistType] = None):
+        """Histogram accumulation with an explicit accumulate source.
+
+        ``dst`` is a plain SSA argument; the backend copies it into the fresh
+        SSA dst before the ``chistv2``/``dhistv2`` accumulate.
+
+        Args:
+            dst: Base histogram register
+            src: Source register (data to bin)
+            preg: Predicate mask register
+
+        Kwargs:
+            bin_type: ``pl.BinType.BIN0`` (default) or ``pl.BinType.BIN1`` --- selects bin mapping
+            hist_type: ``pl.HistType.ACCUMULATE`` (default, chistv2) or
+                ``pl.HistType.FREQUENCY`` (dhistv2)
+
+        Returns:
+            Destination histogram register with accumulated values.
+        """
+
+    @staticmethod
+    @_api_decl
     def eq(src0, src1, preg, /):
         """Element-wise equality comparison.
 
@@ -1016,11 +1074,13 @@ class Vf:
 
         Fills each lane with a sequential value.  The per-lane step is fixed
         at +/-1 (a hardware property of vci); use a following ``vf.muls`` to
-        scale the step if needed.  ``index_order`` selects the direction::
+        scale the step if needed.  ``dtype`` is mandatory: the start value is a
+        scalar literal and cannot decide the sequence element type.
+        ``index_order`` selects the direction::
 
-            dst = vf.arange(start)                                          # dst[i] = start + i (INC)
-            dst = vf.arange(start, index_order=pl.IndexOrder.INCREASE_ORDER)  # same as default
-            dst = vf.arange(start, index_order=pl.IndexOrder.DECREASE_ORDER)  # dst[i] = start - i (DEC)
+            dst = vf.arange(start, dtype=pl.DT_INT32)  # dst[i] = start + i (INC)
+            dst = vf.arange(start, dtype=pl.DT_INT32, index_order=pl.IndexOrder.INCREASE_ORDER)  # same
+            dst = vf.arange(start, dtype=pl.DT_INT32, index_order=pl.IndexOrder.DECREASE_ORDER)
 
         .. math::
             dstReg_i = start + i \quad (\text{INC, default})
@@ -1028,6 +1088,7 @@ class Vf:
 
         Args:
             start: Starting value (scalar)
+            dtype: Destination element type (required)
 
         Kwargs:
             index_order: ``pl.IndexOrder.INCREASE_ORDER`` (default, dst[i]=start+i)
@@ -1470,6 +1531,29 @@ class Vf:
 
     @staticmethod
     @_api_decl
+    def axpy_acc(dst, src, scalar, preg, /, *, mode: Optional[MergeMode] = None):
+        r"""Fused AXPY with an explicit accumulate source.
+
+        ``dst`` is a plain SSA argument supplying the addend; the backend
+        copies it into the fresh SSA dst before the ``vaxpy`` accumulate.
+
+        .. math:: dstReg_i = srcReg_i \times scalar + dstReg_i
+
+        Args:
+            dst: Addend source register
+            src: Source register
+            scalar: Scalar multiplier
+            preg: Predicate mask register
+
+        Kwargs:
+            mode: ``pl.MergeMode.ZEROING`` (default). MERGING mode is not supported on current device.
+
+        Returns:
+            Destination register (``RegTensor``).
+        """
+
+    @staticmethod
+    @_api_decl
     def bit_cast(src, /, *, dtype: DType):
         r"""Bitwise type reinterpretation of a register.
 
@@ -1528,6 +1612,35 @@ class Vf:
 
         Returns:
             Destination register (``RegTensor``), updated in-place.
+        """
+
+    @staticmethod
+    @_api_decl
+    def mul_dst_add_acc(dst, src0, src1, preg, /, *, mode: Optional[MergeMode] = None):
+        r"""Multiply-dst-add with an explicit dst operand: dst = dst * src0 + src1.
+
+        For each lane ``i`` where ``mask[i]`` is active, multiplies ``dst[i]``
+        by ``src0[i]``, adds ``src1[i]`` to the product, and writes the sum
+        back to ``dst[i]``.  The destination register is both read (as
+        multiplicand) and written.  Maps to hardware ``vmadd`` instruction
+        (AscendC MulDstAdd).
+
+        .. math:: dstReg_i = dstReg_i \times srcReg0_i + srcReg1_i
+
+        ``dst`` is a plain SSA argument supplying the multiplicand; the
+        backend copies it into the fresh SSA dst before the ``vmadd``.
+
+        Args:
+            dst: Multiplicand source register
+            src0: First multiplicand register
+            src1: Addend register
+            preg: Predicate mask register
+
+        Kwargs:
+            mode: ``pl.MergeMode.ZEROING`` (default). MERGING mode is not supported on current device.
+
+        Returns:
+            Destination register (``RegTensor``).
         """
 
     @staticmethod
@@ -1869,16 +1982,24 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def truncate(src, preg, /, *, mode: Optional[MergeMode] = None):
-        """Truncate to integer (round toward zero): ``dst[i] = trunc(src[i])``
+    def truncate(src, preg, /, *, round_mode: Optional[VFRoundMode] = None,
+                 mode: Optional[MergeMode] = None):
+        """Convert float elements to their integer values: ``dst[i] = trunc(src[i])``
 
-        Maps to hardware ``vtrc`` with ROUND_Z mode.
+        Maps to hardware ``vtrc``. The default rounding is round-to-nearest
+        (``CAST_RINT``), matching the AscendC Truncate implementation which
+        resolves an unset round mode (CAST_NONE) to CAST_RINT; pass
+        ``round_mode`` to select an explicit rounding (e.g. ``CAST_TRUNC`` for
+        truncation toward zero).
 
         Args:
             src: Source register
             preg: Predicate mask register
 
         Kwargs:
+            round_mode: ``pl.VFRoundMode.CAST_RINT`` (default) / ``CAST_ROUND`` /
+                ``CAST_FLOOR`` / ``CAST_CEIL`` / ``CAST_TRUNC``
+                (``CAST_ODD`` / ``CAST_HYBRID`` are not supported)
             mode: ``pl.MergeMode.ZEROING`` (default). MERGING mode is not supported on current device.
 
         Returns:
@@ -1961,6 +2082,34 @@ class Vf:
         Args:
             src: Source register (RegTensor or MaskReg)
             preg: Optional mask register
+
+        Kwargs:
+            mode: ``pl.MergeMode.MERGING`` (default, only supported mode).
+                Supports b8/b16/b32/b64 element widths.
+
+        Returns:
+            Destination register (``RegTensor`` or ``MaskReg``, matching the
+            source type).
+        """
+
+    @staticmethod
+    @_api_decl
+    def move_acc(dst, src, preg, /, *, mode: Optional[MergeMode] = None):
+        r"""Masked move with an explicit accumulate source (vmov/pmov, MODE_MERGING).
+
+        For each lane where ``preg`` is active, copies ``src`` into ``dst``;
+        masked-out positions retain the old value supplied by ``dst``.
+        ``dst`` is a plain SSA argument (the value being accumulated from),
+        like ``mul_dst_add_acc``: the backend first copies it into the fresh SSA
+        dst, then applies the masked move.
+
+        .. math:: dstReg_i = preg_i ? srcReg_i : dstReg_i
+
+        Args:
+            dst: Accumulate source register (the old dst; RegTensor or
+                MaskReg, matching src)
+            src: Source register (RegTensor or MaskReg, matching dst)
+            preg: Predicate mask register
 
         Kwargs:
             mode: ``pl.MergeMode.MERGING`` (default, only supported mode).

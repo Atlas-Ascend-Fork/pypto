@@ -124,6 +124,76 @@ public:
 using ScalarTypePtr = std::shared_ptr<const ScalarType>;
 
 /**
+ * \brief VF register kind carried by RegType
+ *
+ * One IR class covers every VF register category; the kind distinguishes
+ * plain vector registers, mask registers, address (offset) registers and
+ * unaligned load/store registers.
+ */
+enum class RegKind : uint8_t {
+    VecReg,
+    PredReg,
+    AddrReg,
+    UnalignReg,
+};
+
+/**
+ * \brief Reg type representation
+ *
+ * Represents a VF (Vector Function) register type with a register category
+ * and a data type. Distinct from ScalarType to provide type-level
+ * identification of VF registers in the IR, enabling true SSA def-use chains
+ * for VF operations.
+ */
+class RegType : public Type {
+public:
+    RegKind regtype_;
+    DataType dtype_;
+
+    explicit RegType(RegKind regtype, DataType dtype) : regtype_(regtype), dtype_(dtype) {}
+
+    [[nodiscard]] ObjectKind GetKind() const override { return ObjectKind::RegType; }
+    [[nodiscard]] std::string TypeName() const override { return "RegType"; }
+
+    static constexpr auto GetFieldDescriptors()
+    {
+        return std::tuple_cat(Type::GetFieldDescriptors(),
+                              std::make_tuple(reflection::UsualField(&RegType::regtype_, "regtype"),
+                                              reflection::UsualField(&RegType::dtype_, "dtype")));
+    }
+};
+
+using RegTypePtr = std::shared_ptr<const RegType>;
+
+/** \brief True when *type* is a plain vector RegTensor register. */
+[[nodiscard]] inline bool IsRegTensor(const TypePtr& type)
+{
+    auto reg = std::dynamic_pointer_cast<const RegType>(type);
+    return reg != nullptr && reg->regtype_ == RegKind::VecReg;
+}
+
+/** \brief True when *type* is a VF mask register. */
+[[nodiscard]] inline bool IsMaskReg(const TypePtr& type)
+{
+    auto reg = std::dynamic_pointer_cast<const RegType>(type);
+    return reg != nullptr && reg->regtype_ == RegKind::PredReg;
+}
+
+/** \brief True when *type* is a VF address (offset) register. */
+[[nodiscard]] inline bool IsAddrReg(const TypePtr& type)
+{
+    auto reg = std::dynamic_pointer_cast<const RegType>(type);
+    return reg != nullptr && reg->regtype_ == RegKind::AddrReg;
+}
+
+/** \brief True when *type* is a VF unaligned load/store register. */
+[[nodiscard]] inline bool IsUnalignReg(const TypePtr& type)
+{
+    auto reg = std::dynamic_pointer_cast<const RegType>(type);
+    return reg != nullptr && reg->regtype_ == RegKind::UnalignReg;
+}
+
+/**
  * \brief Tensor layout enumeration
  *
  * Used by both Tensor (global memory) and Tile (on-chip buffer) layers.

@@ -414,8 +414,7 @@ def test_cce_named_tuple_return_uses_aggregate_slots():
     # Both branches write the fields, and `.lo` / `.hi` read back through them.
     assert body.count("__inline_0_return_val_4__item_0 = ") == 2
     assert body.count("__inline_0_return_val_4__item_1 = ") == 2
-    assert "= __inline_0_return_val_4__item_0;" in body
-    assert "= __inline_0_return_val_4__item_1;" in body
+    assert "__inline_0_return_val_4__item_0 + __inline_0_return_val_4__item_1" in body
 
 
 def test_cce_struct_return_merges_as_a_single_object():

@@ -29,10 +29,12 @@ attr_list               ::= { attr }
 ```ebnf
 type                    ::= 'unknown' | dtype | 'memref_type' | 'token' | 'none'
                          |  'ptr' '<' dtype '>'
+                         |  'reg' '<' reg_kind ',' dtype '>'
                          |  'tuple' '<' [ type_list ] '>'
                          |  'tensor' '<' shape ',' dtype ',' tensor_view '>'
                          |  'tile' '<' shape ',' dtype ',' tile_view ',' hw_info '>'
                          |  v0_logical_tensor;
+reg_kind                ::= 'vec_reg' | 'pred_reg' | 'addr_reg' | 'unalign_reg';
 type_list               ::= type { ',' type };
 shape                   ::= expr { 'x' expr };
 tensor_view             ::= 'tensor_view' '<' [ shape ',' shape ',' ident [ ',' expr ] ] '>';

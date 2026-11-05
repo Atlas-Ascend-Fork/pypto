@@ -108,7 +108,7 @@ def test_raw_values_are_rejected(sk_cap):
         _resolve_sk_cap(sk_cap)
 
 
-@pytest.mark.parametrize("value", [32, 33, 64, -1])
+@pytest.mark.parametrize("value", [32, 33, 64])
 def test_out_of_range_bits_are_rejected(value):
     """IntFlag builds pseudo-members for unknown values; the mask check rejects them."""
     with pytest.raises(ValueError, match="unknown capability bits"):

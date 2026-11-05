@@ -1,19 +1,17 @@
 program #entry() {
+    function _register_shift incast(mutex_tile<tile<1 x 64, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %shift_0, mutex_tile<tile<1 x 64, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
+        reg<pred_reg,uint16_t> %mask_0 = vf.create_mask(pattern=0, dtype=int32_t);
+        reg<vec_reg,int32_t> %value_0 = vf.load_align(%src_0, 0, dtype=int32_t);
+        reg<vec_reg,int32_t> %amount_0 = vf.load_align(%shift_0, 0, dtype=int32_t);
+        reg<vec_reg,int32_t> %result_0 = vf.shift_left(%value_0, %amount_0, %mask_0);
+        vf.store_align(%dst_0, %result_0, %mask_0);
+        return;
+    }
     function _shift_kernel incast(ptr<int32_t> %x_0) outcast() #entry(false) #type(Opaque) {
         mutex_tile<tile<1 x 64, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=int32_t, target_memory=Vec, compact=1, memref_addr=0, memref_size=256, memref_id=<id>);
         mutex_tile<tile<1 x 64, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %shift_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=int32_t, target_memory=Vec, compact=1, memref_addr=256, memref_size=256, memref_id=<id>);
         mutex_tile<tile<1 x 64, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=int32_t, target_memory=Vec, compact=1, memref_addr=512, memref_size=256, memref_id=<id>);
-        section VF {
-            system.vf_scope_args(%src_0, %shift_0, %dst_0);
-            int32_t %__inline_0_mask_0 = vf.create_mask(pattern=0, dtype=int32_t);
-            int32_t %__inline_0_value_0 = vf.reg_tensor(dtype=int32_t);
-            vf.load_align(%__inline_0_value_0, %src_0, 0);
-            int32_t %__inline_0_amount_0 = vf.reg_tensor(dtype=int32_t);
-            vf.load_align(%__inline_0_amount_0, %shift_0, 0);
-            int32_t %__inline_0_result_0 = vf.reg_tensor(dtype=int32_t);
-            vf.shift_left(%__inline_0_result_0, %__inline_0_value_0, %__inline_0_amount_0, %__inline_0_mask_0);
-            vf.store_align(%dst_0, %__inline_0_result_0, %__inline_0_mask_0);
-        }
+        simd.call(%src_0, %shift_0, %dst_0, callee=_register_shift);
         return;
     }
 }

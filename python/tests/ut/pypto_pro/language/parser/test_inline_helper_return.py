@@ -10,7 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 
 from pypto_pro import ir
-from pypto_pro._errors import InvalidOperation, NameNotFound, PyptoProError
+from pypto_pro._errors import InvalidOperation, NameNotFound, NotSupported, PyptoProError
 import pypto_pro.language as pl
 import pytest
 
@@ -391,12 +391,12 @@ def test_tile_valid_shape_rejects_invalid_index(index):
         invalid_valid_shape.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
-def test_vector_function_rejects_explicit_return():
+def test_vector_function_rejects_return_value():
     @pl.vector_function
     def invalid_vf():
-        return
+        return 1
 
-    with pytest.raises(InvalidOperation, match="cannot contain return"):
+    with pytest.raises(NotSupported, match="returning values is not supported"):
 
         @pl.jit(auto_mutex=False)
         def caller(value: pl.DT_INT64):

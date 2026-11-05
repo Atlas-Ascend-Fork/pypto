@@ -118,6 +118,7 @@ protected:
     void VisitType_(const TokenTypePtr& op) override;
     void VisitType_(const NoneTypePtr& op) override;
     void VisitType_(const LogicalTensorTypePtr& op) override;
+    void VisitType_(const RegTypePtr& op) override;
 
     /// Override to handle ALL binary expressions (Add, Sub, Mul, ...) in one method.
     /// Default: visits left and right children.

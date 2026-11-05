@@ -252,10 +252,11 @@ def example_vf_int64(src_tile, dst_tile):
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_INT64)
     reg_a = vf.load_align(src_tile, 0)
     ureg = vf.unalign_reg_for_store()
+    dst_base = dst_tile
     vf.store_unalign(dst_tile, reg_a, ureg, 64, post_update=True)
     vf.store_unalign_post(dst_tile, ureg, 0, post_update=True)
     reg_out = reg_a
-    vf.store_align(dst_tile, reg_out, preg)
+    vf.store_align(dst_base, reg_out, preg)
 
 @pl.jit()
 def example_kernel_int64(

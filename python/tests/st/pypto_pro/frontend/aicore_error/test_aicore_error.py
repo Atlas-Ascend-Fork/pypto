@@ -105,9 +105,14 @@ def _run_subprocess(script_path: Path, work_dir: str, timeout: int = 300) -> sub
 
 def _run_repro(work_dir: str, timeout: int = 300) -> subprocess.CompletedProcess:
     dump_dir = os.path.join(work_dir, "extra-info", "data-dump", str(ST_DEVICE_ID))
+    # The tool's own inner timeout (default 600s) exceeds this gate, so a
+    # hanging repro run is killed from outside without any of its own
+    # diagnostics. Pass a smaller -t so the tool times out first and reports
+    # the timeout-class result (and its singlecommit diagnosis) itself.
+    tool_timeout = max(timeout - 60, 60)
     try:
         return subprocess.run(
-            [sys.executable, str(_REPRO_SCRIPT), "-p", dump_dir],
+            [sys.executable, str(_REPRO_SCRIPT), "-p", dump_dir, "-t", str(tool_timeout)],
             capture_output=True, text=True, timeout=timeout, env=_make_env(work_dir), cwd=work_dir,
         )
     except subprocess.TimeoutExpired:

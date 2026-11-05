@@ -24,7 +24,6 @@ from ..._errors import (
     InvalidVal,
     NotSupported,
     OutOfRange,
-    current_span,
 )
 from ._tuple_type_registry import TupleTypeKind
 
@@ -84,18 +83,6 @@ class AssignmentParserMixin:
         target = stmt.targets[0]
         span = self.span_tracker.get_span(stmt)
 
-        # Intercept VF op assignment form: reg = vf.xxx(...) or reg_lo, reg_hi = vf.xxx(...)
-        # Only for compute ops that have dst registers (dst_count > 0).
-        # Declaration ops (create_mask, RegTensor, compare, etc.) use normal return-value
-        # assignment and must NOT be intercepted.
-        vf_op = self._is_vf_op_call(stmt.value)
-        if vf_op is not None:
-            self._validate_op_scope(f"vf.{vf_op}", stmt.value)
-            dst_count = self._get_vf_op_dst_count(vf_op)
-            if dst_count is not None and dst_count > 0:
-                self._parse_vf_assignment(target, stmt, vf_op, span)
-                return
-
         if isinstance(target, ast.Tuple):
             self._parse_tuple_unpacking(target, stmt)
             return
@@ -118,186 +105,6 @@ class AssignmentParserMixin:
             hint="Only `var = ...`, `a.field = ...` (struct), `tensor[i] = ...`, "
             "or tuple unpacking are supported",
         )
-
-    # Ops where dst type differs from src type — dtype kwarg is mandatory.
-    _TYPE_CHANGING_OPS = frozenset({"astype", "muls_cast", "pack", "unpack", "bit_cast"})
-
-    @staticmethod
-    def _infer_src_dtype(parsed_src_args: list) -> DataType | None:
-        """The dtype of the first source that carries one, or None if no source does."""
-        for src_expr in parsed_src_args:
-            dtype = getattr(getattr(src_expr, 'type', None), 'dtype', None)
-            if dtype is not None:
-                return dtype
-        return None
-
-    def _parse_vf_assignment(
-        self,
-        target: ast.expr,
-        stmt: ast.Assign,
-        vf_op_name: str,
-        span: ir.Span,
-    ) -> None:
-        """Handle ``reg = vf.xxx(src, ...)`` assignment form.
-
-        Transparently rewrites to the statement form by:
-        1. Emitting a ``vf.reg_tensor(dtype=...)`` declaration for the LHS variable
-           (if not already declared), so the CCE backend emits ``RegTensor<T> var;``.
-        2. Inserting the LHS variable(s) as dst arg(s) at the front of the call.
-        3. Emitting the call as an EvalStmt (side-effect).
-
-        The dtype is inferred from the first source-register argument. For ops
-        with only scalar sources (e.g. ``vf.full(0.0, preg)``), the user
-        must pass ``dtype=pl.DT_FP32`` as a kwarg on the VF call.
-
-        Supports:
-            reg = vf.add(a, b, preg)              → RegTensor reg; vf.add(reg, a, b, preg)
-            reg_lo, reg_hi = vf.mull(a, b, preg)  → RegTensor reg_lo, reg_hi; vf.mull(reg_lo, reg_hi, a, b, pred)
-        """
-        # This form never reaches parse_op_call, so it carries the declaration gate
-        # itself. It runs on the call as written, before the dst args are inserted
-        # and before any argument is parsed. The call is the location, not the whole
-        # statement: the assignment target is not what the gate is rejecting.
-        self._check_declared_params(
-            f"vf.{vf_op_name}", stmt.value, self.span_tracker.get_span(stmt.value)
-        )
-
-        dst_count = self._get_vf_op_dst_count(vf_op_name)
-
-        call = stmt.value  # ast.Call
-
-        # Determine dst variable names.
-        # Some ops (like load_align with DINTLV mode) can produce 2 outputs even
-        # though their static dst_count is 1.  When the LHS is a tuple and
-        # dst_count == 1, promote to 2-dst form so the backend receives the
-        # correct 4-arg call (dst0, dst1, ptr, offset).
-        actual_dst_count = dst_count
-        if dst_count == 1 and isinstance(target, ast.Tuple) and len(target.elts) == 2:
-            actual_dst_count = 2
-
-        if actual_dst_count == 1:
-            if not isinstance(target, ast.Name):
-                raise InvalidType(
-                    f"vf.{vf_op_name} assignment target must be a variable name, got {ast.unparse(target)}",
-                    span=span,
-                )
-            dst_names = [target.id]
-            dst_targets = [target]
-        elif actual_dst_count == 2:
-            if not isinstance(target, ast.Tuple) or len(target.elts) != 2:
-                raise NotSupported(
-                    f"vf.{vf_op_name} produces 2 outputs, use tuple unpacking: reg0, reg1 = vf.{vf_op_name}(...)",
-                    span=span,
-                )
-            for elt in target.elts:
-                if not isinstance(elt, ast.Name):
-                    raise NotSupported(
-                        f"Tuple unpacking target must be variable names, got {ast.unparse(elt)}",
-                        span=span,
-                    )
-            dst_names = [target.elts[0].id, target.elts[1].id]
-            dst_targets = [target.elts[0], target.elts[1]]
-
-        # Parse sources before declaring destinations, so self-references still
-        # read the previous register. VF keyword attributes are compile-time metadata.
-        parsed_src_args = [self.parse_expression(src_arg) for src_arg in call.args]
-        parsed_kwargs = {keyword.arg: self.parse_expression(keyword.value) for keyword in call.keywords}
-        argument_spans = self.span_tracker.argument_spans(call)
-        self._check_declared_types(
-            f"vf.{vf_op_name}", parsed_src_args, parsed_kwargs, span, argument_spans,
-        )
-        with current_span(self.span_tracker.get_span(call), argument_spans):
-            parsed_kwargs = {
-                key: self.require_const_value(
-                    value, key, expects="attribute", hint="VF attributes must be known at compile time.",
-                )
-                for key, value in parsed_kwargs.items()
-            }
-        dtype_val = parsed_kwargs.pop("dtype", None)
-
-        # Detect MaskReg data source — reused both for the type-changing-op
-        # dtype exemption and for dst-kind inference below.
-        # Only the first positional arg is checked: it is always a data source,
-        # never the predicate mask (prego), which is always the LAST positional
-        # arg. Checking all args would mistake preg for a MaskReg data source
-        # and wrongly declare the dst as MaskReg (e.g. vf.or_(reg_a, reg_b, preg)).
-        first_arg = call.args[0] if call.args else None
-        is_mask_src = (
-            isinstance(first_arg, ast.Name)
-            and self.scope_manager.is_mask_reg_var(first_arg.id)
-        )
-
-        # For type-changing ops (vf.astype), dtype kwarg is mandatory because
-        # the dst type differs from src type.  Unified ops (pack, unpack) only
-        # change type for the RegTensor variant; the MaskReg variant preserves
-        # the source type, so dtype= is not required when sources are MaskReg.
-        if dtype_val is None and vf_op_name in self._TYPE_CHANGING_OPS and not is_mask_src:
-            raise InvalidType(
-                f"vf.{vf_op_name} requires explicit dtype kwarg because dst type differs from src. "
-                f"Example: vf.{vf_op_name}(src, mask, dtype=pl.DT_FP16)",
-                span=span,
-                parser_retry=True,
-            )
-
-        # Step 1: Infer dtype from the already parsed source registers.
-        src_dtype = self._infer_src_dtype(parsed_src_args)
-
-        if dtype_val is None:
-            dtype_val = src_dtype
-
-        if dtype_val is None:
-            raise InvalidType(
-                f"Cannot infer dtype for vf.{vf_op_name} assignment. "
-                f"Pass dtype=pl.DT_FP32 (or appropriate type) as a kwarg.",
-                span=span,
-                parser_retry=True,
-            )
-
-        # A scalar operand is checked against the dtype it is actually encoded in. That is dtype_val
-        # -- the dst dtype -- except for a type-changing op, where dtype_val names the dst and the
-        # operand still lives in the source domain (vf.muls_cast scales an fp32 src, then casts).
-        operand_dtype = src_dtype if vf_op_name in self._TYPE_CHANGING_OPS else dtype_val
-        self._check_vf_scalar_operands(vf_op_name, parsed_src_args, operand_dtype, span)
-
-        # Re-inject dtype into kwargs iff the backend op carries it as an IR
-        # attribute; otherwise it has already been stripped above.
-        ir_op_name = f"vf.{vf_op_name}"
-        if ir.is_op_registered(ir_op_name) and ir.get_op(ir_op_name).has_attr("dtype"):
-            parsed_kwargs["dtype"] = dtype_val
-
-        # Step 2: Declare dst variables (first definition only). For existing
-        # variables, reuse them directly — do NOT create a new register, as that
-        # would lose the accumulated value in self-referential ops.
-        # Ops in _VF_MASK_DST_OPS produce MaskReg dst(s); declare them via
-        # vf.mask_reg. Unified ops (move, interleave, etc.) infer the dst kind
-        # from source operands: if any source is a known MaskReg variable, the
-        # dst is declared as MaskReg.
-        is_mask_dst = self._is_vf_mask_dst_op(vf_op_name)
-        if not is_mask_dst and vf_op_name in self._VF_UNIFIED_OPS:
-            is_mask_dst = is_mask_src
-        decl_op = "vf.mask_reg" if is_mask_dst else "vf.reg_tensor"
-        dst_vars = []
-        for name, _ in zip(dst_names, dst_targets):
-            existing = self.scope_manager.lookup_var_bounded(name)
-            if existing is None:
-                self.current_target_name = name
-                decl_call = ir.create_op_call(decl_op, [], {"dtype": dtype_val}, span)
-                var = self.builder.let(name, decl_call, span=span)
-                self.scope_manager.define_var(name, var, span=span)
-                if is_mask_dst:
-                    self.scope_manager.register_mask_reg_var(name)
-                dst_vars.append(var)
-            else:
-                dst_vars.append(existing)
-
-        # Step 3: Construct the VF op call with dst vars + parsed src args.
-        # vf.shift_left / vf.shift_right are unified ops: the backend codegen
-        # picks the per-lane (vshl/vshr) vs uniform-scalar (vshls/vshrs) form
-        # from the shift-amount argument type (see EmitVFShiftLeft/Right), so no
-        # special routing is needed here.
-        all_args = dst_vars + parsed_src_args
-        call_expr = ir.create_op_call(ir_op_name, all_args, parsed_kwargs, span)
-        self.builder.emit(ir.EvalStmt(call_expr, span))
 
     def _parse_tuple_unpacking(self, target: ast.Tuple, stmt: ast.Assign) -> None:
         span = self.span_tracker.get_span(stmt)
@@ -370,11 +177,6 @@ class AssignmentParserMixin:
             self._mark_make_tuple_anchor(value_expr)
             self._transfer_tile_group_metadata(var, value_expr)
             self.scope_manager.define_var(var_name, var, span=span)
-            # Track MaskReg-producing VF ops (create_mask, update_mask, etc.)
-            # so unified ops can infer dst register kind from source operands.
-            vf_op = self._is_vf_op_call(stmt.value)
-            if vf_op is not None and vf_op in self._VF_MASK_PRODUCING_OPS:
-                self.scope_manager.register_mask_reg_var(var_name)
             self._update_var_envs(var, value_expr)
         else:
             self.scope_manager.define_var(var_name, value_expr, span=span)

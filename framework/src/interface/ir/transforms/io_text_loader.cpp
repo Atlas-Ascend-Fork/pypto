@@ -516,6 +516,28 @@ TypePtr IRTextParser::ParseTypeMutexTile()
     return std::make_shared<MutexTileType>(*As<TileType>(tile), static_cast<uint32_t>(value));
 }
 
+TypePtr IRTextParser::ParseTypeReg()
+{
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwReg));
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunLt));
+    RegKind kind;
+    if (CheckToken(IRTextLexerTokenKind::KwVecReg, true)) {
+        kind = RegKind::VecReg;
+    } else if (CheckToken(IRTextLexerTokenKind::KwPredReg, true)) {
+        kind = RegKind::PredReg;
+    } else if (CheckToken(IRTextLexerTokenKind::KwAddrReg, true)) {
+        kind = RegKind::AddrReg;
+    } else if (CheckToken(IRTextLexerTokenKind::KwUnalignReg, true)) {
+        kind = RegKind::UnalignReg;
+    } else {
+        return nullptr;
+    }
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunComma));
+    MUST_VALID(dt, ParseDType());
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunGt));
+    return std::make_shared<RegType>(kind, dt->data);
+}
+
 IRTextParserOptionalTensorViewPtr IRTextParser::ParserTensorTypeTensorView()
 {
     // tensor_view<...> or tensor_view<>
@@ -633,6 +655,7 @@ TypePtr IRTextParser::ParseType()
         {IRTextLexerTokenKind::KwTensor, &IRTextParser::ParseTypeTensor},
         {IRTextLexerTokenKind::KwTile, &IRTextParser::ParseTypeTile},
         {IRTextLexerTokenKind::KwMutexTile, &IRTextParser::ParseTypeMutexTile},
+        {IRTextLexerTokenKind::KwReg, &IRTextParser::ParseTypeReg},
         {IRTextLexerTokenKind::TokIdent, &IRTextParser::ParseTypeScalar},
     };
     auto it = dispatch.find(Peek().kind);

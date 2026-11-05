@@ -75,8 +75,6 @@ std::string CodeContext::GetVarName(const ir::VarPtr& var)
     return cppName;
 }
 
-bool CodeContext::IsAutoRegistered(const std::string& cppName) const { return autoRegistered_.count(cppName) > 0; }
-
 void CodeContext::RegisterVar(const ir::VarPtr& var, const std::string& cppName)
 {
     PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, var != nullptr)

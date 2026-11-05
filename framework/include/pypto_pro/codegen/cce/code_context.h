@@ -67,9 +67,16 @@ public:
     void Clear();
 
     /**
-     * \brief Check if a C++ name was auto-registered (cross-section reference)
+     * \brief True when *name* is a known variable C++ name
+     *
+     * An expression that evaluates to a known variable name is a plain
+     * reference (alias), not a value that must be materialized into a fresh
+     * local declaration.
      */
-    [[nodiscard]] bool IsAutoRegistered(const std::string& cppName) const;
+    [[nodiscard]] bool HasVarName(const std::string& name) const
+    {
+        return autoRegistered_.count(name) > 0 || nameToCpp_.count(name) > 0;
+    }
 
 private:
     std::unordered_map<std::string, std::string> nameToCpp_; ///< Mapping from IR var name to C++ name

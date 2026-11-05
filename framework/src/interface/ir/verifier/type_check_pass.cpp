@@ -150,11 +150,31 @@ void TypeChecker::CheckTypeEquality(const TypePtr& type1, const TypePtr& type2, 
         return;
     }
 
-    // For ScalarType, check dtype
-    if (type1->GetKind() == ObjectKind::ScalarType) {
-        auto scalar1 = std::dynamic_pointer_cast<const ScalarType>(type1);
-        auto scalar2 = std::dynamic_pointer_cast<const ScalarType>(type2);
-        if (scalar1 && scalar2 && scalar1->dtype_ != scalar2->dtype_) {
+    // For dtype-only types (ScalarType, RegType), check dtype
+    auto getDtype = [](const TypePtr& t) -> DataType {
+        if (t->GetKind() == ObjectKind::ScalarType)
+            return std::dynamic_pointer_cast<const ScalarType>(t)->dtype_;
+        return std::dynamic_pointer_cast<const RegType>(t)->dtype_;
+    };
+    if (type1->GetKind() == ObjectKind::ScalarType || type1->GetKind() == ObjectKind::RegType) {
+        if (type1->GetKind() == ObjectKind::RegType) {
+            auto reg1 = std::dynamic_pointer_cast<const RegType>(type1);
+            auto reg2 = std::dynamic_pointer_cast<const RegType>(type2);
+            if (reg1->regtype_ != reg2->regtype_) {
+                std::ostringstream msg;
+                msg << "Type kind mismatch in " << context << ": " << desc1 << " regtype "
+                    << static_cast<unsigned>(reg1->regtype_) << " != " << desc2 << " regtype "
+                    << static_cast<unsigned>(reg2->regtype_);
+                RecordError(typecheck::ErrorType::TYPE_KIND_MISMATCH, msg.str(), span);
+                return;
+            }
+        }
+        // A MaskReg dtype is a passive placeholder, not a semantic attribute:
+        // structural_equal/hash deliberately ignore it (instruction variants are
+        // selected from the call's kwargs), so the verifier must ignore it too.
+        const bool maskReg = type1->GetKind() == ObjectKind::RegType &&
+                             std::dynamic_pointer_cast<const RegType>(type1)->regtype_ == RegKind::PredReg;
+        if (!maskReg && getDtype(type1) != getDtype(type2)) {
             std::ostringstream msg;
             msg << "Dtype mismatch in " << context << ": " << desc1 << " dtype != " << desc2 << " dtype";
             RecordError(typecheck::ErrorType::DTYPE_MISMATCH, msg.str(), span);

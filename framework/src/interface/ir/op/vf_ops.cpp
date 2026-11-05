@@ -18,13 +18,16 @@
  */
 
 #include <any>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "core/any_cast.h"
+#include "core/error.h"
 #include "core/logging.h"
 #include "ir/kind_traits.h"
+#include "ir/op_attr_types.h"
 #include "ir/op_registry.h"
 #include "ir/type.h"
 
@@ -39,79 +42,250 @@ TypePtr DeduceVFUnknownType([[maybe_unused]] const std::vector<ExprPtr>& args,
     return GetUnknownType();
 }
 
-TypePtr DeduceVFScalarType([[maybe_unused]] const std::vector<ExprPtr>& args,
-                           [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+static DataType VfDeduceDataDtype(const std::vector<ExprPtr>& args,
+                                  const std::vector<std::pair<std::string, std::any>>& kwargs);
+
+// MaskReg dtype is not a semantic attribute: instruction variants are selected
+// from the call's kwargs by the backend, never from this type. Always carry the
+// UINT16 placeholder (the historical mask-register default).
+TypePtr DeduceVFMaskType([[maybe_unused]] const std::vector<ExprPtr>& args,
+                         [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    for (const auto& [key, value] : kwargs) {
-        if (key == "dtype") {
-            return std::make_shared<ScalarType>(AnyCast<DataType>(value, "kwarg: dtype"));
-        }
-    }
-    return std::make_shared<ScalarType>(DataType::FP32);
+    return std::make_shared<RegType>(RegKind::PredReg, DataType::UINT16);
 }
 
-// Bit-cast keeps the source's register nature: casting a RegTensor view must
-// deduce a TileType of the target dtype (same shape/memref/tile view), so a
-// materialized temp is declared as RegTensor<T> — a ScalarType deduction would
-// emit a scalar temp that cannot hold the vector register.
-TypePtr DeduceVFBitCastType(const std::vector<ExprPtr>& args,
+// Compare ops carry the compared register's dtype as a passive placeholder
+// (instruction variants are selected from the call's kwargs, never from this
+// type).
+TypePtr DeduceVFMaskTypeFromSrc(const std::vector<ExprPtr>& args,
+                                [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    if (!args.empty()) {
+        if (IsRegTensor(args[0]->GetType())) {
+            return std::make_shared<RegType>(RegKind::PredReg, As<RegType>(args[0]->GetType())->dtype_);
+        }
+        if (auto st = As<ScalarType>(args[0]->GetType())) {
+            return std::make_shared<RegType>(RegKind::PredReg, st->dtype_);
+        }
+    }
+    return std::make_shared<RegType>(RegKind::PredReg, DataType::UINT16);
+}
+
+TypePtr DeduceVFAddrRegType([[maybe_unused]] const std::vector<ExprPtr>& args,
                             const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    DataType target = DataType::FP32;
     for (const auto& [key, value] : kwargs) {
         if (key == "dtype") {
-            target = AnyCast<DataType>(value, "kwarg: dtype");
-            break;
+            return std::make_shared<RegType>(RegKind::AddrReg, AnyCast<DataType>(value, "kwarg: dtype"));
         }
     }
-    if (!args.empty()) {
-        if (auto tileType = As<TileType>(args[0]->GetType())) {
-            return std::make_shared<TileType>(tileType->shape_, target, tileType->memref_, tileType->tileView_,
-                                              tileType->hardwareInfo_);
-        }
-        if (auto tensorType = As<TensorType>(args[0]->GetType())) {
-            return std::make_shared<TensorType>(tensorType->shape_, target, tensorType->memref_,
-                                                tensorType->tensor_view_);
-        }
-    }
-    return std::make_shared<ScalarType>(target);
+    return std::make_shared<RegType>(RegKind::AddrReg, DataType::UINT32);
 }
 
-TypePtr DeduceVFMaskType([[maybe_unused]] const std::vector<ExprPtr>& args,
-                         const std::vector<std::pair<std::string, std::any>>& kwargs)
+TypePtr DeduceVFUnalignRegType([[maybe_unused]] const std::vector<ExprPtr>& args,
+                               [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    return std::make_shared<RegType>(RegKind::UnalignReg, DataType::UINT32);
+}
+
+// ============================================================================
+// Type deduction for value-form calls (the single deduce entry point)
+//
+// A value-form Call carries only its source args; f_deduce_type computes the
+// destination register type(s) — RegTensor / MaskReg / a TupleType of them for
+// dual-dst ops — from the args and kwargs alone (arg-complete, like block
+// ops), which the codegen mirrors when synthesizing the dst declaration.
+// ============================================================================
+
+// dtype kwarg wins; otherwise the first data-carrying source's dtype decides.
+// Single RegTensor dst.
+TypePtr DeduceVFRegType(const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    return std::make_shared<RegType>(RegKind::VecReg, VfDeduceDataDtype(args, kwargs));
+}
+
+// Unified ops: the dst register kind follows the first source (MaskReg src →
+// MaskReg dst).
+TypePtr DeduceVFRegLikeType(const std::vector<ExprPtr>& args,
+                            const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    if (!args.empty() && IsMaskReg(args[0]->GetType())) {
+        return std::make_shared<RegType>(RegKind::PredReg, VfDeduceDataDtype(args, kwargs));
+    }
+    return std::make_shared<RegType>(RegKind::VecReg, VfDeduceDataDtype(args, kwargs));
+}
+
+// Type-changing ops with fixed RegTensor dst: the dtype kwarg is mandatory
+// because the dst type differs from the src and no default can be inferred.
+TypePtr DeduceVFTypeChangingRegType([[maybe_unused]] const std::vector<ExprPtr>& args,
+                                    const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     for (const auto& [key, value] : kwargs) {
         if (key == "dtype") {
-            return std::make_shared<ScalarType>(AnyCast<DataType>(value, "kwarg: dtype"));
+            return std::make_shared<RegType>(RegKind::VecReg, AnyCast<DataType>(value, "kwarg: dtype"));
         }
     }
-    return std::make_shared<ScalarType>(DataType::UINT16);
+    throw TypeError("vf type-changing op requires an explicit dtype kwarg because the dst type "
+                    "differs from the src. Example: vf.astype(src, mask, dtype=pl.DT_FP16)");
 }
 
-TypePtr DeduceVFFromDstArg([[maybe_unused]] const std::vector<ExprPtr>& args,
-                           [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+// Type-changing unified ops (pack/unpack): the dtype kwarg is mandatory for
+// RegTensor sources; the kind follows the source (MaskReg src → MaskReg dst).
+TypePtr DeduceVFTypeChangingLikeType(const std::vector<ExprPtr>& args,
+                                     const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    if (!args.empty()) {
-        return args[0]->GetType();
+    for (const auto& [key, value] : kwargs) {
+        if (key == "dtype") {
+            auto dt = AnyCast<DataType>(value, "kwarg: dtype");
+            if (!args.empty() && IsMaskReg(args[0]->GetType())) {
+                return std::make_shared<RegType>(RegKind::PredReg, dt);
+            }
+            return std::make_shared<RegType>(RegKind::VecReg, dt);
+        }
     }
-    return std::make_shared<ScalarType>(DataType::FP32);
+    if (!args.empty()) {
+        if (IsMaskReg(args[0]->GetType())) {
+            return std::make_shared<RegType>(RegKind::PredReg, As<RegType>(args[0]->GetType())->dtype_);
+        }
+    }
+    throw TypeError("vf type-changing op requires an explicit dtype kwarg because the dst type "
+                    "differs from the src. Example: vf.pack(src, mask, dtype=pl.DT_FP16)");
 }
+
+// arange: the dtype kwarg is mandatory. The start value is a scalar literal
+// whose dtype is only a placeholder, so it cannot decide the element type of
+// the generated sequence.
+TypePtr DeduceVFArangeType([[maybe_unused]] const std::vector<ExprPtr>& args,
+                           const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    for (const auto& [key, value] : kwargs) {
+        if (key == "dtype") {
+            return std::make_shared<RegType>(RegKind::VecReg, AnyCast<DataType>(value, "kwarg: dtype"));
+        }
+    }
+    throw TypeError("vf.arange requires an explicit dtype kwarg because the destination element type "
+                    "cannot be inferred from the start value. Example: vf.arange(0, dtype=pl.DT_INT32)");
+}
+
+// histograms: the hardware chistv2/dhistv2 counters are always uint16 bins.
+TypePtr DeduceVFHistogramsType([[maybe_unused]] const std::vector<ExprPtr>& args,
+                               [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    return std::make_shared<RegType>(RegKind::VecReg, DataType::UINT16);
+}
+
+// First data-carrying dtype: the dtype kwarg wins, otherwise the first
+// RegTensor / Scalar / Shaped / MaskReg source's dtype.
+static DataType VfDeduceDataDtype(const std::vector<ExprPtr>& args,
+                                  const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    for (const auto& [key, value] : kwargs) {
+        if (key == "dtype") {
+            return AnyCast<DataType>(value, "kwarg: dtype");
+        }
+    }
+    for (const auto& arg : args) {
+        auto type = arg->GetType();
+        if (IsRegTensor(type)) {
+            return As<RegType>(type)->dtype_;
+        }
+        if (auto st = As<ScalarType>(type)) {
+            return st->dtype_;
+        }
+        if (auto sh = As<ShapedType>(type)) {
+            return sh->dtype_;
+        }
+        if (IsMaskReg(type)) {
+            return As<RegType>(type)->dtype_;
+        }
+    }
+    throw TypeError("vf op requires an explicit dtype kwarg or a data-carrying source "
+                    "operand to deduce the result dtype");
+}
+
+// load_align: the value-form call carries [tile, (offset | mask)]. The dst kind
+// follows the dist kwarg: US/DS dists produce a MaskReg dst (plds), DINTLV_B*
+// produces a pair of RegTensor dsts (the de-interleave load), every other dist
+// a RegTensor (vlds). NORM is the only kind-ambiguous dist (plds/mask vs
+// vlds/data): is_reg selects its kind (False -> MaskReg, True or absent ->
+// RegTensor) and is ignored for every other dist.
+TypePtr DeduceVFLoadAlignType(const std::vector<ExprPtr>& args,
+                              const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    bool hasIsReg = false;
+    bool isMaskNorm = false;
+    for (const auto& [key, value] : kwargs) {
+        if (key == "is_reg") {
+            hasIsReg = true;
+            isMaskNorm = !AnyCast<bool>(value, "kwarg: is_reg");
+        }
+    }
+    for (const auto& [key, value] : kwargs) {
+        if (key == "dist") {
+            auto dist = static_cast<LoadDist>(AnyCast<int>(value, "kwarg: dist"));
+            switch (dist) {
+                case LoadDist::DINTLV_B8:
+                case LoadDist::DINTLV_B16:
+                case LoadDist::DINTLV_B32: {
+                    if (hasIsReg && isMaskNorm) {
+                        throw TypeError("vf.load_align is_reg=False (MaskReg dst) does not support "
+                                        "the DINTLV_B* de-interleave dist");
+                    }
+                    auto elem = std::make_shared<RegType>(RegKind::VecReg, VfDeduceDataDtype(args, kwargs));
+                    return std::make_shared<TupleType>(std::vector<TypePtr>{elem, elem});
+                }
+                case LoadDist::US:
+                case LoadDist::US_B8:
+                case LoadDist::US_B16:
+                case LoadDist::DS:
+                case LoadDist::DS_B8:
+                case LoadDist::DS_B16:
+                    return std::make_shared<RegType>(RegKind::PredReg, VfDeduceDataDtype(args, kwargs));
+                case LoadDist::NORM:
+                    return std::make_shared<RegType>(isMaskNorm ? RegKind::PredReg : RegKind::VecReg,
+                                                     VfDeduceDataDtype(args, kwargs));
+                default:
+                    return std::make_shared<RegType>(RegKind::VecReg, VfDeduceDataDtype(args, kwargs));
+            }
+        }
+    }
+    return std::make_shared<RegType>(isMaskNorm ? RegKind::PredReg : RegKind::VecReg, VfDeduceDataDtype(args, kwargs));
+}
+
+// mull: the 64-bit product is a pair of RegTensor halves.
+TypePtr DeduceVFRegPairOfFirstSrc(const std::vector<ExprPtr>& args,
+                                  const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    auto elem = std::make_shared<RegType>(RegKind::VecReg, VfDeduceDataDtype(args, kwargs));
+    return std::make_shared<TupleType>(std::vector<TypePtr>{elem, elem});
+}
+
+// interleave/de_interleave: the dst kind follows the first source
+// (MaskReg src keeps the mask pair dialect).
+TypePtr DeduceVFPairLikeFirstSrc(const std::vector<ExprPtr>& args,
+                                 const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    bool maskKind = !args.empty() && IsMaskReg(args[0]->GetType());
+    const DataType dt = VfDeduceDataDtype(args, kwargs);
+    TypePtr elem;
+    if (maskKind) {
+        elem = std::make_shared<RegType>(RegKind::PredReg, dt);
+    } else {
+        elem = std::make_shared<RegType>(RegKind::VecReg, dt);
+    }
+    return std::make_shared<TupleType>(std::vector<TypePtr>{elem, elem});
+}
+
+// addc/subc: (carry-out MaskReg, dst RegTensor).
+TypePtr DeduceVFCarryPairOfFirstSrc(const std::vector<ExprPtr>& args,
+                                    const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    const DataType dt = VfDeduceDataDtype(args, kwargs);
+    return std::make_shared<TupleType>(std::vector<TypePtr>{std::make_shared<RegType>(RegKind::PredReg, dt),
+                                                            std::make_shared<RegType>(RegKind::VecReg, dt)});
+}
+
 } // namespace
-
-// Register declaration
-REGISTER_OP("vf.reg_tensor")
-    .set_op_category("VFOp")
-    .set_description("Declare a vector register")
-    .no_argument()
-    .set_attr<DataType>("dtype")
-    .f_deduce_type(DeduceVFScalarType);
-
-REGISTER_OP("vf.mask_reg")
-    .set_op_category("VFOp")
-    .set_description("Declare a mask register (without initialization)")
-    .no_argument()
-    .set_attr<DataType>("dtype")
-    .f_deduce_type(DeduceVFMaskType);
 
 // Mask
 REGISTER_OP("vf.create_mask")
@@ -132,12 +306,14 @@ REGISTER_OP("vf.full")
     .set_attr<int>("mode")
     .set_attr<int>("pos")
     .set_attr<DataType>("dtype")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 // Data transfer
 REGISTER_OP("vf.load_align")
     .set_op_category("VFOp")
-    .set_description("Unified vlds/plds load (MaskReg dst via dist kwarg, RegTensor dst via dist kwarg)")
+    .set_description("Unified vlds/plds load: MaskReg dst via US/DS dist (or is_reg=False with NORM), "
+                     "RegTensor otherwise; "
+                     "dual dst via dist=DINTLV_B* (lo, hi = vf.load_align(...))")
     .add_argument("dst", "Destination register")
     .add_argument("src", "Source UB pointer")
     .add_argument("offset", "Element offset or post-update stride")
@@ -146,7 +322,9 @@ REGISTER_OP("vf.load_align")
     .set_attr<int>("repeat_stride")
     .set_attr<bool>("post_update")
     .set_attr<int>("dist")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .set_attr<bool>("is_reg")
+    .set_attr<DataType>("dtype")
+    .f_deduce_type(DeduceVFLoadAlignType);
 
 REGISTER_OP("vf.store_align")
     .set_op_category("VFOp")
@@ -171,7 +349,7 @@ REGISTER_OP("vf.max")
     .add_argument("src1", "Source register 1")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.add")
     .set_op_category("VFOp")
@@ -181,7 +359,7 @@ REGISTER_OP("vf.add")
     .add_argument("src1", "Source register 1")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.sub")
     .set_op_category("VFOp")
@@ -191,7 +369,7 @@ REGISTER_OP("vf.sub")
     .add_argument("src1", "Source register 1")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.and_")
     .set_op_category("VFOp")
@@ -201,7 +379,7 @@ REGISTER_OP("vf.and_")
     .add_argument("src1", "Source register 1")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegLikeType);
 
 REGISTER_OP("vf.xor")
     .set_op_category("VFOp")
@@ -211,7 +389,7 @@ REGISTER_OP("vf.xor")
     .add_argument("src1", "Source register 1")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegLikeType);
 
 REGISTER_OP("vf.or_")
     .set_op_category("VFOp")
@@ -221,7 +399,7 @@ REGISTER_OP("vf.or_")
     .add_argument("src1", "Source register 1")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegLikeType);
 
 // Unified reduction: supports mode=SUM/MAX/MIN (new) and reduce_type=ADD/MAX (legacy)
 REGISTER_OP("vf.reduce_sum")
@@ -232,7 +410,7 @@ REGISTER_OP("vf.reduce_sum")
     .add_argument("mask", "Mask register")
     .set_attr<bool>("datablock")
     .set_attr<int>("merge_mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.reduce_max")
     .set_op_category("VFOp")
@@ -242,7 +420,7 @@ REGISTER_OP("vf.reduce_max")
     .add_argument("mask", "Mask register")
     .set_attr<bool>("datablock")
     .set_attr<int>("merge_mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.reduce_min")
     .set_op_category("VFOp")
@@ -252,7 +430,7 @@ REGISTER_OP("vf.reduce_min")
     .add_argument("mask", "Mask register")
     .set_attr<bool>("datablock")
     .set_attr<int>("merge_mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.mul")
     .set_op_category("VFOp")
@@ -262,7 +440,7 @@ REGISTER_OP("vf.mul")
     .add_argument("src1", "Source register 1")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.mul_add_dst")
     .set_op_category("VFOp")
@@ -272,7 +450,17 @@ REGISTER_OP("vf.mul_add_dst")
     .add_argument("src1", "Source register 1 (multiplicand)")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
+
+REGISTER_OP("vf.mul_add_dst_acc")
+    .set_op_category("VFOp")
+    .set_description("Fused multiply-add with explicit dst: dst = src0 * src1 + old (vmula)")
+    .add_argument("dst", "Destination/accumulator register (read+write)")
+    .add_argument("src0", "Source register 0 (multiplicand)")
+    .add_argument("src1", "Source register 1 (multiplicand)")
+    .add_argument("mask", "Mask register")
+    .set_attr<int>("mode")
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.div")
     .set_op_category("VFOp")
@@ -283,7 +471,7 @@ REGISTER_OP("vf.div")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
     .set_attr<bool>("precision")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.muls")
     .set_op_category("VFOp")
@@ -293,7 +481,7 @@ REGISTER_OP("vf.muls")
     .add_argument("scalar", "Scalar multiplier")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.ln")
     .set_op_category("VFOp")
@@ -303,7 +491,7 @@ REGISTER_OP("vf.ln")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
     .set_attr<bool>("precision")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.log")
     .set_op_category("VFOp")
@@ -313,7 +501,7 @@ REGISTER_OP("vf.log")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
     .set_attr<bool>("precision")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.min")
     .set_op_category("VFOp")
@@ -323,7 +511,7 @@ REGISTER_OP("vf.min")
     .add_argument("src1", "Source register 1")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.exp")
     .set_op_category("VFOp")
@@ -333,7 +521,7 @@ REGISTER_OP("vf.exp")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
     .set_attr<bool>("precision")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.abs")
     .set_op_category("VFOp")
@@ -342,7 +530,7 @@ REGISTER_OP("vf.abs")
     .add_argument("src", "Source register")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.not_")
     .set_op_category("VFOp")
@@ -351,7 +539,7 @@ REGISTER_OP("vf.not_")
     .add_argument("src", "Source register")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegLikeType);
 
 REGISTER_OP("vf.sqrt")
     .set_op_category("VFOp")
@@ -361,7 +549,7 @@ REGISTER_OP("vf.sqrt")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
     .set_attr<bool>("precision")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.relu")
     .set_op_category("VFOp")
@@ -370,7 +558,7 @@ REGISTER_OP("vf.relu")
     .add_argument("src", "Source register")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.neg")
     .set_op_category("VFOp")
@@ -379,7 +567,7 @@ REGISTER_OP("vf.neg")
     .add_argument("src", "Source register")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.adds")
     .set_op_category("VFOp")
@@ -389,7 +577,7 @@ REGISTER_OP("vf.adds")
     .add_argument("scalar", "Scalar addend")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.mins")
     .set_op_category("VFOp")
@@ -399,7 +587,7 @@ REGISTER_OP("vf.mins")
     .add_argument("scalar", "Scalar value")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.maxs")
     .set_op_category("VFOp")
@@ -409,7 +597,7 @@ REGISTER_OP("vf.maxs")
     .add_argument("scalar", "Scalar value")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.leaky_relu")
     .set_op_category("VFOp")
@@ -419,7 +607,7 @@ REGISTER_OP("vf.leaky_relu")
     .add_argument("alpha", "Negative slope scalar")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.interleave")
     .set_op_category("VFOp")
@@ -429,7 +617,7 @@ REGISTER_OP("vf.interleave")
     .add_argument("src0", "Source register 0")
     .add_argument("src1", "Source register 1")
     .set_attr<DataType>("dtype")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFPairLikeFirstSrc);
 
 REGISTER_OP("vf.pair_reduce_sum")
     .set_op_category("VFOp")
@@ -438,7 +626,7 @@ REGISTER_OP("vf.pair_reduce_sum")
     .add_argument("src", "Source register")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.abs_sub")
     .set_op_category("VFOp")
@@ -448,7 +636,7 @@ REGISTER_OP("vf.abs_sub")
     .add_argument("src1", "Source register 1")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.axpy")
     .set_op_category("VFOp")
@@ -458,7 +646,17 @@ REGISTER_OP("vf.axpy")
     .add_argument("scalar", "Scalar multiplier")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
+
+REGISTER_OP("vf.axpy_acc")
+    .set_op_category("VFOp")
+    .set_description("Accumulate with explicit dst: dst = src * scalar + old (vaxpy)")
+    .add_argument("dst", "Destination/accumulator register (read+write)")
+    .add_argument("src", "Source register")
+    .add_argument("scalar", "Scalar multiplier")
+    .add_argument("mask", "Mask register")
+    .set_attr<int>("mode")
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.bit_cast")
     .set_op_category("VFOp")
@@ -466,7 +664,7 @@ REGISTER_OP("vf.bit_cast")
     .add_argument("dst", "Destination register")
     .add_argument("src", "Source register")
     .set_attr<DataType>("dtype")
-    .f_deduce_type(DeduceVFBitCastType);
+    .f_deduce_type(DeduceVFTypeChangingRegType);
 
 REGISTER_OP("vf.mul_dst_add")
     .set_op_category("VFOp")
@@ -476,23 +674,35 @@ REGISTER_OP("vf.mul_dst_add")
     .add_argument("src1", "Source register 1")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
+
+REGISTER_OP("vf.mul_dst_add_acc")
+    .set_op_category("VFOp")
+    .set_description("Multiply-add with an explicit dst operand: dst = dst * src0 + src1 (vmadd)")
+    .add_argument("dst", "Destination/accumulator register (read+write)")
+    .add_argument("src0", "Source register 0")
+    .add_argument("src1", "Source register 1")
+    .add_argument("mask", "Mask register")
+    .set_attr<int>("mode")
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.pack")
     .set_op_category("VFOp")
     .set_description("Pack/narrow data type (e.g. u16->u8). vpack for RegTensor, ppack for MaskReg.")
     .add_argument("dst", "Destination register")
     .add_argument("src", "Source register")
+    .set_attr<DataType>("dtype")
     .set_attr<int>("part")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFTypeChangingLikeType);
 
 REGISTER_OP("vf.unpack")
     .set_op_category("VFOp")
     .set_description("Unpack/widen data type (e.g. u8->u16). vunpack for RegTensor, punpack for MaskReg.")
     .add_argument("dst", "Destination register")
     .add_argument("src", "Source register")
+    .set_attr<DataType>("dtype")
     .set_attr<int>("part")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFTypeChangingLikeType);
 
 REGISTER_OP("vf.prelu")
     .set_op_category("VFOp")
@@ -502,7 +712,7 @@ REGISTER_OP("vf.prelu")
     .add_argument("slope", "Slope register (per-element)")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.shift_left")
     .set_op_category("VFOp")
@@ -512,7 +722,7 @@ REGISTER_OP("vf.shift_left")
     .add_argument("shift", "Integer scalar, or same-width 8/16/32-bit register (signed; also unsigned on DAV_9201)")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.shift_right")
     .set_op_category("VFOp")
@@ -522,7 +732,7 @@ REGISTER_OP("vf.shift_right")
     .add_argument("shift", "Integer scalar, or same-width 8/16/32-bit register (signed; also unsigned on DAV_9201)")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.mull")
     .set_op_category("VFOp")
@@ -532,7 +742,7 @@ REGISTER_OP("vf.mull")
     .add_argument("src0", "Source register 0")
     .add_argument("src1", "Source register 1")
     .add_argument("mask", "Mask register")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegPairOfFirstSrc);
 
 REGISTER_OP("vf.addc")
     .set_op_category("VFOp")
@@ -543,7 +753,7 @@ REGISTER_OP("vf.addc")
     .add_argument("src1", "Source register 1")
     .add_argument("carry_in", "Input carry flag register")
     .add_argument("mask", "Mask register")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFCarryPairOfFirstSrc);
 
 REGISTER_OP("vf.subc")
     .set_op_category("VFOp")
@@ -554,7 +764,7 @@ REGISTER_OP("vf.subc")
     .add_argument("src1", "Source register 1")
     .add_argument("borrow_in", "Input borrow flag register")
     .add_argument("mask", "Mask register")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFCarryPairOfFirstSrc);
 
 REGISTER_OP("vf.exp_sub")
     .set_op_category("VFOp")
@@ -564,7 +774,8 @@ REGISTER_OP("vf.exp_sub")
     .add_argument("max", "Max register")
     .add_argument("mask", "Mask register")
     .set_attr<int>("layout")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .set_attr<DataType>("dtype")
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.astype")
     .set_op_category("VFOp")
@@ -572,11 +783,12 @@ REGISTER_OP("vf.astype")
     .add_argument("dst", "Destination register")
     .add_argument("src", "Source register")
     .add_argument("mask", "Mask register")
+    .set_attr<DataType>("dtype")
     .set_attr<int>("layout")
     .set_attr<int>("round_mode")
     .set_attr<int>("saturate")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFTypeChangingRegType);
 
 REGISTER_OP("vf.de_interleave")
     .set_op_category("VFOp")
@@ -586,7 +798,7 @@ REGISTER_OP("vf.de_interleave")
     .add_argument("src0", "Source register 0")
     .add_argument("src1", "Source register 1")
     .set_attr<DataType>("dtype")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFPairLikeFirstSrc);
 
 REGISTER_OP("vf.select")
     .set_op_category("VFOp")
@@ -595,7 +807,7 @@ REGISTER_OP("vf.select")
     .add_argument("src_true", "True branch register")
     .add_argument("src_false", "False branch register")
     .add_argument("mask", "Mask register")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegLikeType);
 
 REGISTER_OP("vf.update_mask")
     .set_op_category("VFOp")
@@ -620,7 +832,18 @@ REGISTER_OP("vf.histograms")
     .add_argument("mask", "Mask register")
     .set_attr<int>("bin_type")
     .set_attr<int>("hist_type")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFHistogramsType);
+
+REGISTER_OP("vf.histogram_acc")
+    .set_op_category("VFOp")
+    .set_description("Histogram accumulation with explicit dst")
+    .add_argument("dst", "Destination histogram register")
+    .add_argument("src", "Source register")
+    .add_argument("mask", "Mask register")
+    .set_attr<int>("bin_type")
+    .set_attr<int>("hist_type")
+    .f_deduce_type(DeduceVFHistogramsType);
+
 REGISTER_OP("vf.eq")
     .set_op_category("VFOp")
     .set_description("Equality compare and generate mask")
@@ -628,7 +851,7 @@ REGISTER_OP("vf.eq")
     .add_argument("src0", "First source register")
     .add_argument("src1", "Second source register")
     .add_argument("mask_src", "Source mask register")
-    .f_deduce_type(DeduceVFMaskType);
+    .f_deduce_type(DeduceVFMaskTypeFromSrc);
 
 REGISTER_OP("vf.ne")
     .set_op_category("VFOp")
@@ -637,7 +860,7 @@ REGISTER_OP("vf.ne")
     .add_argument("src0", "First source register")
     .add_argument("src1", "Second source register")
     .add_argument("mask_src", "Source mask register")
-    .f_deduce_type(DeduceVFMaskType);
+    .f_deduce_type(DeduceVFMaskTypeFromSrc);
 
 REGISTER_OP("vf.lt")
     .set_op_category("VFOp")
@@ -646,7 +869,7 @@ REGISTER_OP("vf.lt")
     .add_argument("src0", "First source register")
     .add_argument("src1", "Second source register")
     .add_argument("mask_src", "Source mask register")
-    .f_deduce_type(DeduceVFMaskType);
+    .f_deduce_type(DeduceVFMaskTypeFromSrc);
 
 REGISTER_OP("vf.gt")
     .set_op_category("VFOp")
@@ -655,7 +878,7 @@ REGISTER_OP("vf.gt")
     .add_argument("src0", "First source register")
     .add_argument("src1", "Second source register")
     .add_argument("mask_src", "Source mask register")
-    .f_deduce_type(DeduceVFMaskType);
+    .f_deduce_type(DeduceVFMaskTypeFromSrc);
 
 REGISTER_OP("vf.le")
     .set_op_category("VFOp")
@@ -664,7 +887,7 @@ REGISTER_OP("vf.le")
     .add_argument("src0", "First source register")
     .add_argument("src1", "Second source register")
     .add_argument("mask_src", "Source mask register")
-    .f_deduce_type(DeduceVFMaskType);
+    .f_deduce_type(DeduceVFMaskTypeFromSrc);
 
 REGISTER_OP("vf.ge")
     .set_op_category("VFOp")
@@ -673,23 +896,24 @@ REGISTER_OP("vf.ge")
     .add_argument("src0", "First source register")
     .add_argument("src1", "Second source register")
     .add_argument("mask_src", "Source mask register")
-    .f_deduce_type(DeduceVFMaskType);
-REGISTER_OP("vf.squeeze")
+    .f_deduce_type(DeduceVFMaskTypeFromSrc);
 
+REGISTER_OP("vf.squeeze")
     .set_op_category("VFOp")
     .set_description("Squeeze mask to indices")
     .add_argument("dst", "Destination register")
     .add_argument("src", "Source register")
     .add_argument("mask", "Mask register")
     .set_attr<int>("gather_mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.arange")
     .set_op_category("VFOp")
     .set_description("Generate index sequence (index_order=INCREASE_ORDER: vci INC_ORDER, DECREASE_ORDER: DEC_ORDER)")
     .add_argument("dst", "Destination register")
     .set_attr<int>("index_order")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .set_attr<DataType>("dtype")
+    .f_deduce_type(DeduceVFArangeType);
 
 REGISTER_OP("vf.gather")
     .set_op_category("VFOp")
@@ -705,7 +929,7 @@ REGISTER_OP("vf.gather")
     .add_argument("indices", "Index register")
     .add_argument("mask", "Mask register (required for UB form, omitted for Reg form)")
     .set_attr<int>("data_copy_mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 // Two calling conventions (codegen branches on arg count):
 //   store_unalign:      3 args [dst, src, align_reg] -> vstur (strideless)
@@ -749,7 +973,7 @@ REGISTER_OP("vf.unalign_reg_for_store")
     .set_op_category("VFOp")
     .set_description("Declare unaligned register for store")
     .no_argument()
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFUnalignRegType);
 
 REGISTER_OP("vf.clear_spr")
     .set_op_category("VFOp")
@@ -761,7 +985,7 @@ REGISTER_OP("vf.load_unalign_init")
     .set_op_category("VFOp")
     .set_description("Declare unaligned register for load")
     .no_argument()
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFUnalignRegType);
 
 REGISTER_OP("vf.load_unalign_pre")
     .set_op_category("VFOp")
@@ -777,7 +1001,7 @@ REGISTER_OP("vf.load_unalign")
     .add_argument("ureg", "UnalignRegForLoad register")
     .add_argument("src_ptr", "Source UB pointer")
     .add_argument("stride", "Post-update stride in bytes (passing it selects POST_UPDATE mode)")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.scatter")
     .set_op_category("VFOp")
@@ -793,16 +1017,18 @@ REGISTER_OP("vf.unsqueeze")
     .set_description("Unsqueeze mask bits to register (vusqz)")
     .add_argument("dst", "Destination register")
     .add_argument("mask", "Mask register to unsqueeze")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.truncate")
     .set_op_category("VFOp")
-    .set_description("Truncate to integer (vtrc with ROUND_Z, alias of Round with round_mode=TRUNC)")
+    .set_description(
+        "Convert float to integer register (vtrc; rounding via round_mode kwarg, default CAST_RINT/ROUND_R)")
     .add_argument("dst", "Destination register")
     .add_argument("src", "Source register")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .set_attr<int>("round_mode")
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.mask_gen_with_reg_tensor")
     .set_op_category("VFOp")
@@ -816,7 +1042,7 @@ REGISTER_OP("vf.get_mask_spr")
     .set_description("Get mask from special purpose register (movp_b32/b16 via kwarg width)")
     .no_argument()
     .set_attr<int>("width")
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFMaskType);
 
 REGISTER_OP("vf.log2")
     .set_op_category("VFOp")
@@ -826,7 +1052,7 @@ REGISTER_OP("vf.log2")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
     .set_attr<bool>("precision")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.log10")
     .set_op_category("VFOp")
@@ -836,7 +1062,7 @@ REGISTER_OP("vf.log10")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")
     .set_attr<bool>("precision")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.muls_cast")
     .set_op_category("VFOp")
@@ -845,8 +1071,9 @@ REGISTER_OP("vf.muls_cast")
     .add_argument("src", "Source register (fp32)")
     .add_argument("scalar", "Scalar multiplier")
     .add_argument("mask", "Mask register")
+    .set_attr<DataType>("dtype")
     .set_attr<int>("layout")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFTypeChangingRegType);
 
 // mask_and/or/xor/not/mov/sel/pack/unpack/interleave/deinterleave have been
 // merged into their unified counterparts (and_, or_, ..., move, select,
@@ -855,7 +1082,8 @@ REGISTER_OP("vf.muls_cast")
 
 // vf.mask_load/mask_store/mask_store_unalign IR registrations removed —
 // the parser redirects these to vf.load_align/vf.store_align/vf.store_unalign
-// which dispatch via IsMaskRegVar (matching AscendC's function-overloading model).
+// which dispatch on the destination register's IR type (RegTensor vs MaskReg,
+// matching AscendC's function-overloading model).
 
 REGISTER_OP("vf.load")
     .set_op_category("VFOp")
@@ -863,7 +1091,7 @@ REGISTER_OP("vf.load")
     .add_argument("dst", "Destination register")
     .add_argument("src_ptr", "Source UB pointer")
     .add_argument("stride", "Post-update stride (optional, triggers POST_UPDATE mode)")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP("vf.store")
     .set_op_category("VFOp")
@@ -881,7 +1109,7 @@ REGISTER_OP("vf.create_addr_reg")
     .add_argument("stride2", "Loop axis 2 stride (optional)")
     .add_argument("stride3", "Loop axis 3 stride (optional)")
     .set_attr<DataType>("dtype")
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFAddrRegType);
 
 REGISTER_OP("vf.move")
     .set_op_category("VFOp")
@@ -893,7 +1121,33 @@ REGISTER_OP("vf.move")
     .add_argument("src", "Source register")
     .add_argument("mask", "Mask register (optional)")
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFFromDstArg);
+    .f_deduce_type(DeduceVFRegLikeType);
+
+REGISTER_OP("vf.move_acc")
+    .set_op_category("VFOp")
+    .set_description("Masked move with an explicit accumulate source: the old dst is an "
+                     "explicit argument copy-fetched into the fresh SSA dst, then "
+                     "vmov/pmov with MODE_MERGING (masked-out lanes keep the old value)")
+    .add_argument("dst", "Destination/accumulator register (read+write) (RegTensor or MaskReg)")
+    .add_argument("src", "Source register")
+    .add_argument("mask", "Mask register")
+    .set_attr<int>("mode")
+    .f_deduce_type(DeduceVFRegLikeType);
+
+// Kernel-side SIMD VF launch: carries the callee name and its runtime arguments;
+// the called function is a separate SIMD_VF/SIMD_CALLEE IR Function.
+TypePtr DeduceSimdCallType([[maybe_unused]] const std::vector<ExprPtr>& args,
+                           [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    return GetNoneType();
+}
+
+REGISTER_OP("simd.call")
+    .set_op_category("VFOp")
+    .set_description("Launch a SIMD vector function from an AIV kernel")
+    .add_argument("args", "Runtime arguments passed to the callee (variadic)")
+    .set_attr<std::string>("callee")
+    .f_deduce_type(DeduceSimdCallType);
 
 } // namespace ir
 } // namespace pypto

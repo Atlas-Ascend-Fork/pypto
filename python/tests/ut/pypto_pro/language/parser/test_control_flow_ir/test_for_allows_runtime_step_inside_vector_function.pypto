@@ -1,0 +1,34 @@
+program #entry() {
+    function func incast(tensor<1 x 128, float, tensor_view<, , ND, %x_ptr>> %x_0, tensor<1 x 128, float, tensor_view<, , ND, %y_ptr>> %y_0, int64_t %count_0, int64_t %step_0) outcast() #entry(false) #type(Opaque) {
+        tuple<int64_t, int64_t> %closure_allowed_0 = tuple(5, 6);
+        tuple<int64_t> %_tuple_anchor_0_0 = tuple(0);
+        tuple<int64_t> %_tuple_anchor_1_0 = tuple(0);
+        mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1> %_tg_inputs_tiles_0_0 = block.make_mutex_tile(tuple(1, 128), tuple(), tuple(0), dtype=float, target_memory=Vec, compact=1, memref_addr=0, memref_size=512, memref_id=<id>);
+        tuple<mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1>> %_tg_inputs_tiles_0 = tuple(%_tg_inputs_tiles_0_0);
+        tuple<tuple<mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1>>> %inputs_0 = tuple(%_tg_inputs_tiles_0);
+        tuple<int64_t> %_tuple_anchor_2_0 = tuple(512);
+        tuple<int64_t> %_tuple_anchor_3_0 = tuple(1);
+        mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1> %_tg_outputs_tiles_0_0 = block.make_mutex_tile(tuple(1, 128), tuple(), tuple(1), dtype=float, target_memory=Vec, compact=1, memref_addr=512, memref_size=512, memref_id=<id>);
+        tuple<mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1>> %_tg_outputs_tiles_0 = tuple(%_tg_outputs_tiles_0_0);
+        tuple<tuple<mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1>>> %outputs_0 = tuple(%_tg_outputs_tiles_0);
+        mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1> %_expr_tmp_4_0 = getitem(%_tg_inputs_tiles_0, 0);
+        mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1> %_expr_tmp_5_0 = getitem(%_tg_outputs_tiles_0, 0);
+        simd.call(%_expr_tmp_4_0, %_expr_tmp_5_0, %count_0, %step_0, callee=probe_vf);
+        return;
+    }
+    function probe_vf incast(mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1> %src_0, mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1> %dst_0, int64_t %count_0, int64_t %step_0) outcast() #entry(false) #type(SimdVF) {
+        tuple<int64_t, int64_t> %closure_allowed_0 = tuple(5, 6);
+        for %offset__iterator_0 inrange 0, %count_0, %step_0 iter { } {
+            int64_t %offset_0 = %offset__iterator_0;
+            int64_t %_expr_tmp_0_0 = (%count_0 sub %offset_0);
+            int64_t %_expr_tmp_1_0 = (%_expr_tmp_0_0 min 64);
+            int64_t %active_0 = (0 max %_expr_tmp_1_0);
+            reg<pred_reg,uint16_t> %mask_0 = vf.update_mask(%active_0, dtype=float);
+            reg<vec_reg,float> %reg_0 = vf.load_align(%src_0, %offset_0);
+            reg<vec_reg,float> %reg_1 = vf.adds(%reg_0, 1.0, %mask_0);
+            vf.store_align(%dst_0, %reg_1, %mask_0, %offset_0);
+            continue;
+        }
+        return;
+    }
+}

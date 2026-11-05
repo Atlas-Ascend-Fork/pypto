@@ -67,6 +67,28 @@ ir::ProgramPtr MakeProgram(const ir::StmtPtr& body, const std::vector<ir::VarPtr
                                                ir::Span::Unknown(), std::move(debug_info));
 }
 
+// Build a two-function program in the standalone VF model: a SIMD_VF function
+// plus the IN_CORE kernel that calls it (the shape the frontend lowers a
+// @simd_vf function into; SectionStmt(VF) no longer reaches CCE codegen).
+ir::ProgramPtr MakeVfProgram(const std::string& vfName, const ir::StmtPtr& vf_body,
+                             const std::vector<ir::VarPtr>& vfParams, const std::vector<ir::ExprPtr>& callArgs,
+                             const std::vector<ir::VarPtr>& kernelParams)
+{
+    auto debug_info = std::make_shared<ir::IRDebugInfo>();
+    auto vfFunction = std::make_shared<const ir::Function>(vfName, vfParams, std::vector<ir::TypePtr>{}, vf_body,
+                                                           ir::Span::Unknown(), ir::FunctionType::SIMD_VF, false);
+    auto callExpr = std::make_shared<const ir::Call>(
+        "simd.call", callArgs, std::vector<std::pair<std::string, std::any>>{{"callee", vfName}},
+        std::make_shared<const ir::ScalarType>(ir::DataType::INT64), ir::Span::Unknown());
+    auto kernelBody = std::make_shared<const ir::SeqStmts>(
+        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(callExpr, ir::Span::Unknown())},
+        ir::Span::Unknown());
+    auto kernel = std::make_shared<const ir::Function>("kernel", kernelParams, std::vector<ir::TypePtr>{}, kernelBody,
+                                                       ir::Span::Unknown(), ir::FunctionType::IN_CORE, true);
+    return std::make_shared<const ir::Program>(std::vector<ir::FunctionPtr>{vfFunction, kernel}, "test_program",
+                                               ir::Span::Unknown(), std::move(debug_info));
+}
+
 size_t CountOccurrences(const std::string& text, const std::string& needle)
 {
     size_t count = 0;
@@ -87,23 +109,12 @@ TEST(CCECodegenHeaderTest, CoversHeaderOnlyStateAccessors)
     EXPECT_TRUE(codegen.GetCurrentResultTarget().empty());
     EXPECT_EQ(codegen.GetArch(), npu::tile_fwk::NPUArch::DAV_2201);
     EXPECT_EQ(codegen.GetTarget(), ir::SectionKind::Vector);
-    EXPECT_FALSE(codegen.IsInVFSection());
+    EXPECT_FALSE(codegen.IsInSimdContext());
+    EXPECT_FALSE(codegen.IsInSimtContext());
     EXPECT_TRUE(codegen.GetTilingHeaders().empty());
     EXPECT_EQ(codegen.GetTypeConverter().ConvertEventId(3), "EVENT_ID3");
 
-    codegen.RegisterRegTensorVar("reg_tensor");
-    EXPECT_TRUE(codegen.IsRegTensorVar("reg_tensor"));
-    EXPECT_FALSE(codegen.IsRegTensorVar("other_reg_tensor"));
-    codegen.HoistRegTensorDecl("RegTensor<float> reg_tensor;");
-
-    codegen.RegisterMaskRegVar("mask_reg");
-    EXPECT_TRUE(codegen.IsMaskRegVar("mask_reg"));
-    EXPECT_FALSE(codegen.IsMaskRegVar("other_mask_reg"));
-
-    codegen.RegisterAddrRegVar("addr_reg");
-    EXPECT_TRUE(codegen.IsAddrRegVar("addr_reg"));
-    EXPECT_FALSE(codegen.IsAddrRegVar("other_addr_reg"));
-
+    codegen.Emit("RegTensor<float> reg_tensor;");
     EXPECT_EQ(codegen.GetTileOffsetCounter(), 0);
     EXPECT_EQ(codegen.GetTileOffsetCounter(), 1);
 }
@@ -256,7 +267,7 @@ TEST(CCECodegenHeaderTest, CoversTensorDefDefaults)
     EXPECT_FALSE(tensor_def.isTranspose);
 }
 
-TEST(CCECodegenTest, KeepsSeparateVFTilePointersForPostUpdate)
+TEST(CCECodegenTest, PostUpdateAdvancesNamedTileVariable)
 {
     CCECodegen codegen(ir::SectionKind::Vector);
     auto tile_type = std::make_shared<const ir::MutexTileType>(
@@ -265,9 +276,16 @@ TEST(CCECodegenTest, KeepsSeparateVFTilePointersForPostUpdate)
         0);
     auto tile = MakeVar("tile", tile_type);
 
+    // A named tile variable is a modifiable lvalue: the intrinsic advances its
+    // pointer in place, so post_update resolves to the same name.
     std::string base_ptr = codegen.GetOrCreateVFTilePtr(tile);
     EXPECT_EQ(codegen.GetOrCreateVFTilePtr(tile), base_ptr);
-    EXPECT_NE(codegen.GetOrCreateVFTilePtr(tile, true), base_ptr);
+    EXPECT_EQ(codegen.GetOrCreateVFTilePtr(tile, true), base_ptr);
+
+    // An unbound tile expression is an rvalue and cannot be advanced in place.
+    auto offsetExpr = std::make_shared<const ir::Call>(
+        "block.subview", std::vector<ir::ExprPtr>{tile, MakeConstInt(128)}, tile_type, ir::Span::Unknown());
+    EXPECT_ANY_THROW(codegen.GetOrCreateVFTilePtr(offsetExpr, true));
 }
 
 TEST(CCECodegenTest, GeneratesNativeLoopJumpsAndReturn)
@@ -451,10 +469,11 @@ TEST(CCECodegenTest, SnapshotsSingleAggregateBeforePermutingItsLeaves)
 TEST(CCECodegenTest, PreservesSingleIterationLoopForAddrReg)
 {
     auto scalar_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
+    auto addrRegType = std::make_shared<const ir::RegType>(ir::RegKind::AddrReg, ir::DataType::UINT32);
     auto loop_var = MakeVar("i", scalar_type);
-    auto addr_reg = MakeVar("addr", scalar_type);
+    auto addr_reg = MakeVar("addr", addrRegType);
     auto create_addr = std::make_shared<const ir::Call>("vf.create_addr_reg", std::vector<ir::ExprPtr>{MakeConstInt(1)},
-                                                        scalar_type, ir::Span::Unknown());
+                                                        addrRegType, ir::Span::Unknown());
     auto assign = std::make_shared<const ir::AssignStmt>(addr_reg, create_addr, ir::Span::Unknown());
     auto for_loop = std::make_shared<const ir::ForStmt>(loop_var, MakeConstInt(0), MakeConstInt(1), MakeConstInt(1),
                                                         std::vector<ir::IterArgPtr>{}, assign,
@@ -465,7 +484,7 @@ TEST(CCECodegenTest, PreservesSingleIterationLoopForAddrReg)
 
     EXPECT_NE(generated.find("for (int64_t i"), std::string::npos);
     EXPECT_NE(generated.find("AddrReg addr"), std::string::npos);
-    EXPECT_NE(generated.find("vag_b32(1)"), std::string::npos);
+    EXPECT_NE(generated.find("_vag_b32_1(1)"), std::string::npos);
 }
 
 TEST(CCECodegenTest, UsesOneBackingArrayForDynamicAndStaticTupleReads)
@@ -725,13 +744,13 @@ TEST(CCECodegenTest, EmitsBFloat16ScalarHelpersInVFSection)
                                  std::make_shared<const ir::AssignStmt>(equal, comparison, ir::Span::Unknown()),
                                  std::make_shared<const ir::AssignStmt>(negative, negation, ir::Span::Unknown())},
         ir::Span::Unknown());
-    auto section = std::make_shared<const ir::SectionStmt>(ir::SectionKind::VF, body, ir::Span::Unknown());
+    auto program = MakeVfProgram("vf_body", body, {lhs, rhs}, {lhs, rhs}, {lhs, rhs});
 
     CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(section, {lhs, rhs}), npu::tile_fwk::NPUArch::DAV_3510);
+    auto generated = codegen.GenerateSingle(program, npu::tile_fwk::NPUArch::DAV_3510);
 
     EXPECT_NE(generated.find("#include <pypto_scalar.h>"), std::string::npos);
-    EXPECT_NE(generated.find("__VEC_SCOPE__ {"), std::string::npos);
+    EXPECT_NE(generated.find("__simd_vf__ inline void vf_body"), std::string::npos);
     EXPECT_NE(generated.find("converted = pypto_scalar::Cast<float>(lhs);"), std::string::npos);
     EXPECT_NE(generated.find("equal = (pypto_scalar::Cast<float>(lhs) == pypto_scalar::Cast<float>(rhs));"),
               std::string::npos);
@@ -1115,40 +1134,49 @@ TEST(CCECodegenTest, ResolvesTensorAliasAndTransposeLayout)
 
 TEST(CCECodegenTest, HoistsAutoDeclaredVFDestinations)
 {
-    auto fp32_type = std::make_shared<const ir::ScalarType>(ir::DataType::FP32);
-    auto int32_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT32);
-    auto dst0 = MakeVar("dst0", fp32_type);
-    auto dst1 = MakeVar("dst1", fp32_type);
-    auto src0 = MakeVar("src0", fp32_type);
-    auto src1 = MakeVar("src1", fp32_type);
-    auto mask = MakeVar("mask", int32_type);
-    auto add = std::make_shared<const ir::Call>("vf.add", std::vector<ir::ExprPtr>{dst0, src0, src1, mask}, fp32_type,
-                                                ir::Span::Unknown());
-    auto interleave = std::make_shared<const ir::Call>(
-        "vf.interleave", std::vector<ir::ExprPtr>{dst0, dst1, src0, src1}, fp32_type, ir::Span::Unknown());
-    auto vf_body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(add, ir::Span::Unknown()),
-                                 std::make_shared<const ir::EvalStmt>(interleave, ir::Span::Unknown())},
+    // Value-form SSA: the call carries its SOURCES only — the destination is
+    // the assign target (LHS). Codegen declares the destination register from
+    // the assign target and patches it in as the leading argument before the
+    // backend sees the call (decl-before-first-use is what bisheng requires
+    // in __simd_vf__ bodies).
+    auto fp32Scalar = std::make_shared<const ir::ScalarType>(ir::DataType::FP32);
+    auto int32Scalar = std::make_shared<const ir::ScalarType>(ir::DataType::INT32);
+    auto regFp32 = std::make_shared<const ir::RegType>(ir::RegKind::VecReg, ir::DataType::FP32);
+    auto src0 = MakeVar("src0", fp32Scalar);
+    auto src1 = MakeVar("src1", fp32Scalar);
+    auto mask = MakeVar("mask", int32Scalar);
+    auto dst0 = MakeVar("dst0", regFp32);
+    auto dst1 = MakeVar("dst1", regFp32);
+    auto add0 = std::make_shared<const ir::AssignStmt>(
+        dst0,
+        std::make_shared<const ir::Call>("vf.add", std::vector<ir::ExprPtr>{src0, src1, mask}, regFp32,
+                                         ir::Span::Unknown()),
         ir::Span::Unknown());
-    auto vf_section = std::make_shared<const ir::SectionStmt>(ir::SectionKind::VF, vf_body, ir::Span::Unknown());
+    auto add1 = std::make_shared<const ir::AssignStmt>(
+        dst1,
+        std::make_shared<const ir::Call>("vf.add", std::vector<ir::ExprPtr>{src0, src1, mask}, regFp32,
+                                         ir::Span::Unknown()),
+        ir::Span::Unknown());
+    auto vf_body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{add0, add1}, ir::Span::Unknown());
 
     CCECodegen codegen(ir::SectionKind::Vector);
-    std::string generated = codegen.GenerateSingle(MakeProgram(vf_section, {src0, src1, mask}),
-                                                   npu::tile_fwk::NPUArch::DAV_3510);
+    std::string generated = codegen.GenerateSingle(
+        MakeVfProgram("vf_body", vf_body, {src0, src1, mask}, {src0, src1, mask}, {src0, src1, mask}),
+        npu::tile_fwk::NPUArch::DAV_3510);
 
-    EXPECT_EQ(CountOccurrences(generated, "RegTensor<float> "), 2);
-    size_t first_decl = generated.find("RegTensor<float>");
-    size_t add_pos = generated.find("vadd(");
-    size_t interleave_pos = generated.find("vintlv(");
+    EXPECT_EQ(CountOccurrences(generated, "RtWrap<float> "), 2);
+    size_t first_decl = generated.find("RtWrap<float>");
+    size_t firstAdd = generated.find("vadd(");
     ASSERT_NE(first_decl, std::string::npos);
-    ASSERT_NE(add_pos, std::string::npos);
-    ASSERT_NE(interleave_pos, std::string::npos);
-    EXPECT_LT(first_decl, add_pos);
-    EXPECT_LT(first_decl, interleave_pos);
+    ASSERT_NE(firstAdd, std::string::npos);
+    EXPECT_LT(first_decl, firstAdd);
 }
 
 TEST(CCECodegenTest, HoistsDynamicVFLoopBoundAsUint16)
 {
+    // In a __simd_vf__ body a non-constant loop bound is hoisted into a const
+    // uint16_t local so the bisheng VF compiler can treat the trip count as
+    // loop-invariant (enabling unrolling / vectorization).
     auto scalar_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
     auto loop_var = MakeVar("i", scalar_type);
     auto limit = MakeVar("limit", scalar_type);
@@ -1156,10 +1184,10 @@ TEST(CCECodegenTest, HoistsDynamicVFLoopBoundAsUint16)
     auto for_loop = std::make_shared<const ir::ForStmt>(loop_var, MakeConstInt(0), limit, MakeConstInt(1),
                                                         std::vector<ir::IterArgPtr>{}, loop_body,
                                                         std::vector<ir::VarPtr>{}, ir::Span::Unknown());
-    auto vf_section = std::make_shared<const ir::SectionStmt>(ir::SectionKind::VF, for_loop, ir::Span::Unknown());
 
     CCECodegen codegen(ir::SectionKind::Vector);
-    std::string generated = codegen.GenerateSingle(MakeProgram(vf_section, {limit}), npu::tile_fwk::NPUArch::DAV_3510);
+    std::string generated = codegen.GenerateSingle(MakeVfProgram("vf_loop", for_loop, {limit}, {limit}, {limit}),
+                                                   npu::tile_fwk::NPUArch::DAV_3510);
 
     EXPECT_NE(generated.find("const uint16_t i_ub = (uint16_t)(limit)"), std::string::npos);
     EXPECT_NE(generated.find("for (uint16_t i = 0; i < i_ub; i += 1)"), std::string::npos);

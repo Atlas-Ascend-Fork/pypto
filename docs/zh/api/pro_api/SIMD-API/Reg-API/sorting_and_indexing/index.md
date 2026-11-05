@@ -5,5 +5,6 @@
 :titlesonly:
 
 arange
+histogram_acc
 histograms
 ```

@@ -1862,7 +1862,7 @@ def _vf_kernel_49_truncate_maskgen_0(in_a, in_b, t_f0, t_f1):
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     reg_a = vf.load_align(in_a, 0)
     reg_b = vf.load_align(in_b, 0)
-    reg_dst = vf.truncate(reg_a, preg)
+    reg_dst = vf.truncate(reg_a, preg, round_mode=pl.VFRoundMode.CAST_TRUNC)
     vf.store_align(t_f0, reg_dst, preg)
     # Test mask_gen_with_reg_tensor: generate mask from DT_UINT32 reg bit 0
     # Load input b as uint32 (reinterpret), generate mask from bit 0, use with select
@@ -3053,8 +3053,7 @@ def kernel_86_datablock_copy(
 def _vf_kernel_88_maskdist_0(in_a, t_f0):
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     reg_a = vf.load_align(in_a, 0)
-    mreg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
-    mreg = vf.load_align(in_a, dist=pl.LoadDist.NORM)
+    mreg = vf.load_align(in_a, dist=pl.LoadDist.NORM, is_reg=False)
     reg_dst = vf.add(reg_a, reg_a, mreg)
     vf.store_align(t_f0, reg_dst, preg)
 

@@ -100,6 +100,28 @@ void IRTextDumper::VisitType_(const UnknownTypePtr&) { stream_ << IR_KW_UNKNOWN;
 
 void IRTextDumper::VisitType_(const ScalarTypePtr& op) { stream_ << op->dtype_.ToCTypeString(); }
 
+void IRTextDumper::VisitType_(const RegTypePtr& op)
+{
+    stream_ << IR_KW_REG << IR_PUN_LT;
+    switch (op->regtype_) {
+        case RegKind::VecReg:
+            stream_ << IR_KW_VECREG;
+            break;
+        case RegKind::PredReg:
+            stream_ << IR_KW_PREDREG;
+            break;
+        case RegKind::AddrReg:
+            stream_ << IR_KW_ADDRREG;
+            break;
+        case RegKind::UnalignReg:
+            stream_ << IR_KW_UNALIGNREG;
+            break;
+        default:
+            break;
+    }
+    stream_ << IR_PUN_COMMA << op->dtype_.ToCTypeString() << IR_PUN_GT;
+}
+
 void IRTextDumper::VisitType_(const TensorTypePtr& op)
 {
     stream_ << IR_KW_TENSOR << IR_PUN_LT;

@@ -2102,13 +2102,13 @@ static std::string MakeBlockSubviewCodegenCCE(const ir::CallPtr& op, codegen::Co
 
     auto tileType = ir::As<ir::TileType>(op->args_[0]->GetType());
     auto offsetTuple = ir::As<ir::MakeTuple>(op->args_[1]);
-    const bool isVf = codegen.IsInVFSection();
+    const bool isVf = codegen.IsInSimdContext();
 
     // VF also uses block.subview for tile + linear_offset.
     if (offsetTuple == nullptr) {
         CHECK(isVf) << "block.subview offset must be a 2D tuple outside VF linear-offset access";
         const std::string basePtr = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/false);
-        return codegen.RecordVFTileSubviewPointer("(" + basePtr + " + (" + codegen.GetExprAsCode(op->args_[1]) + "))");
+        return "(" + basePtr + " + (" + codegen.GetExprAsCode(op->args_[1]) + "))";
     }
 
     const std::string rowExpr = cce::GetOperandAsCode(codegen, offsetTuple->elements_[0]);
@@ -2120,7 +2120,7 @@ static std::string MakeBlockSubviewCodegenCCE(const ir::CallPtr& op, codegen::Co
     // VF only needs pointer arithmetic and does not create a Tile descriptor.
     if (isVf) {
         const std::string basePtr = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/false);
-        return codegen.RecordVFTileSubviewPointer("(" + basePtr + " + " + elemOff + ")");
+        return "(" + basePtr + " + " + elemOff + ")";
     }
 
     const int dtypeBits = static_cast<int>(tileType->dtype_.GetBit());

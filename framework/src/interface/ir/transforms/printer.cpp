@@ -498,6 +498,21 @@ std::string IRPrinter::Print(const TypePtr& type)
         return prefix_ + ".Scalar[" + prefix_ + "." + DTypeToString(scalarType->dtype_) + "]";
     }
 
+    if (auto regType = As<RegType>(type)) {
+        switch (regType->regtype_) {
+            case RegKind::VecReg:
+                return prefix_ + ".RegTensor[" + prefix_ + "." + DTypeToString(regType->dtype_) + "]";
+            case RegKind::PredReg:
+                return prefix_ + ".MaskReg[" + prefix_ + "." + DTypeToString(regType->dtype_) + "]";
+            case RegKind::AddrReg:
+                return prefix_ + ".AddrReg[" + prefix_ + "." + DTypeToString(regType->dtype_) + "]";
+            case RegKind::UnalignReg:
+                return prefix_ + ".UnalignReg[" + prefix_ + "." + DTypeToString(regType->dtype_) + "]";
+            default:
+                break;
+        }
+    }
+
     if (auto tensorType = As<TensorType>(type)) {
         std::ostringstream oss;
         // Subscript-style: pl.Tensor[[shape], dtype]

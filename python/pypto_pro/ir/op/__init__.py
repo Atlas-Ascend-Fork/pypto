@@ -23,6 +23,7 @@ __all__ = [
     "ptr",
     "scalar",
     "simt",
+    "vf",
 ]
 
 
@@ -33,3 +34,4 @@ from . import ptr_ops as ptr
 from . import scalar_ops as scalar
 from . import simt_ops as simt
 from . import system_ops as system
+from . import vf_ops as vf

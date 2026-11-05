@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+﻿# Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -22,11 +22,11 @@ VF bodies, with VF-specific restrictions: pl.range bounds in [0, 65535], no
   6. nested for loops (constant inner bound; a runtime-expression inner bound
      mis-trips on the current toolchain)
   7. combined: for + if/elif + break + continue
-  8. scalar ternary select (rejected by the frontend: the runtime-scalar
-     merge it desugars to crashes bisheng VF instruction selection)
-  9. for with a runtime step from a kernel argument (rejected by the
-      frontend: a non-constant step cannot prove tripcount divisibility)
-  10. scalar assigned in both if/else branches (phi into the mask width)
+  8. scalar ternary select (desugars to an if/else whose runtime scalar phi
+     is rejected by the SIMD VF codegen interception)
+  9. for with a runtime step from a kernel argument
+  10. scalar assigned in both if/else branches (runtime scalar phi rejected
+      by the SIMD VF codegen interception)
   11. three-level if/else nesting inside a loop
   12. two sequential loops (loop-independent data flow; an inter-loop dst
       reload dependency on the same tile miscompiles on this toolchain)
@@ -37,19 +37,18 @@ VF bodies, with VF-specific restrictions: pl.range bounds in [0, 65535], no
       tripcount divisibility)
   17. zero-trip and single-trip loops
   18. a scalar carried across for iterations (read before its update)
-  19. `while True:` + break - while loops are rejected inside a vector
-      function (the header form cannot re-evaluate per iteration and the
-      guard form is a provably-infinite loop bisheng cannot compile)
+  19. `while True:` + break - the guard form carries an offset scalar and an
+      explicit break
   20. conditions built with or / not / and (nested levels)
   21. `!=` branch selection between the two blocks
   22. break reachable only through two nested if levels
   23. a scalar initialized before the if and reassigned only in the elif
-      branch (fall-through merge into the mask width)
+      branch (runtime scalar phi rejected by the SIMD VF codegen interception)
   24. a for loop nested inside the if branch of an enclosing for
   25. single-argument pl.range(reps) as an inner loop
   26. expression loop bounds (runtime start and stop arithmetic)
-  27. two loop-carried scalars, one updated conditionally (phi into the
-      iter-arg slot)
+  27. two loop-carried scalars, one updated conditionally (runtime scalar
+      phi rejected by the SIMD VF codegen interception)
   28. a comparison result stored in a scalar and used as the break guard
   29. two break sites in one loop (first match wins)
   30. stores inside both if/else branches (no store after the merge)
@@ -65,7 +64,15 @@ VF bodies, with VF-specific restrictions: pl.range bounds in [0, 65535], no
   39. parenthesized boolean grouping inside a condition
   40. arithmetic inside the condition (last-block detection)
   41. a manual if/else producing the same runtime-scalar phi as the ternary
-      desugar (xfail: confirmed the merge phi itself is the crash trigger)
+      desugar (rejected by the SIMD VF codegen interception)
+  42. a VF for-loop bound at the uint16 legal maximum (65535)
+  43. a VF for-loop with a nonzero start near the uint16 maximum
+  44. a three-way if/elif/else runtime-scalar phi chain (rejected by the
+      SIMD VF codegen interception)
+  45. vf ops inside both branches consume branch scalars (a branch-local one
+      and the vf-input flag) while the merged scalar phi is consumed again as
+      a vf argument within the same loop iteration (runtime scalar phi
+      rejected by the SIMD VF codegen interception)
 
 Requires an Ascend 950 (A5) device; skips otherwise.
 """
@@ -489,16 +496,14 @@ def _ternary_kernel(
 
 
 @pytest.mark.soc("950", "960")
-def test_ternary_scalar_select_rejected():
+def test_ternary_scalar_select():
     if not _check_npu():
         return
     device = _device()
     x = _input(device)
     count = N
-    # The runtime-scalar merge a ternary desugars to crashes bisheng's VF
-    # instruction selection, so the frontend rejects it up front.
     y = torch.full((1, N), SENTINEL, device=device)
-    with pytest.raises(NotSupported, match="Ternary conditional expressions"):
+    with pytest.raises(NotSupported, match="runtime scalar phi"):
         _ternary_kernel[None, 1](x, y, count)
 
 
@@ -1588,34 +1593,33 @@ def _arith_condition_kernel(
 
 
 @pytest.mark.soc("950", "960")
-def test_for_runtime_step_rejected():
+def test_for_runtime_step():
     if not _check_npu():
         return
     device = _device()
     x = _input(device)
     count = N
     step = 32
-    # Runtime steps are rejected up front by the frontend: bisheng's tripcount
-    # check cannot prove divisibility for a non-constant step (-Werror).
     y = torch.full((1, N), SENTINEL, device=device)
-    with pytest.raises(NotSupported, match="step must be a compile-time constant"):
-        _runtime_step_kernel[None, 1](x, y, count, step)
+    _runtime_step_kernel[None, 1](x, y, count, step)
+    torch.npu.synchronize()
+    # offsets 32/64/96: dst[32:128] = x + 1; dst[0:32] = SENTINEL.
+    expected = _expected_with_sentinel(x + 1.0, slice(32, N))
+    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
 @pytest.mark.soc("950", "960")
 def test_if_branch_scalar_phi():
+    """A scalar assigned in both if/else branches is a runtime scalar phi, which
+    SIMD VF codegen rejects with an explicit interception error."""
     if not _check_npu():
         return
     device = _device()
     x = _input(device)
     count = N
-    # Block 0 masks 64 lanes, block 1 masks 32 lanes.
     y = torch.full((1, N), SENTINEL, device=device)
-    _branch_phi_kernel[None, 1](x, y, count)
-    torch.npu.synchronize()
-    expected = _expected_with_sentinel(x + 1.0, slice(0, BLOCK))
-    expected[:, BLOCK:BLOCK + 32] = x[:, BLOCK:BLOCK + 32] + 1.0
-    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+    with pytest.raises(NotSupported, match="runtime scalar phi"):
+        _branch_phi_kernel[None, 1](x, y, count)
 
 
 @pytest.mark.soc("950", "960")
@@ -1761,18 +1765,68 @@ def test_for_loop_carried_scalar():
 
 
 @pytest.mark.soc("950", "960")
-def test_while_true_guard_break_rejected():
+def test_while_true_guard_break():
     if not _check_npu():
         return
     device = _device()
     x = _input(device)
     count = 96
-    # Any while shape is rejected inside a vector function: the header form
-    # needs a pure condition re-evaluated every iteration, and the while True
-    # guard form is a provably-infinite loop bisheng cannot compile.
+    # Source-level `while True:` guard form with a carried offset scalar.
     y = torch.full((1, N), SENTINEL, device=device)
-    with pytest.raises(NotSupported, match="while loops are not supported inside a vector function"):
-        _while_true_kernel[None, 1](x, y, count)
+    _while_true_kernel[None, 1](x, y, count)
+    torch.npu.synchronize()
+    # offset=0: active=64 鈫?dst[0:64] = x + 2
+    # offset=64: active=32 鈫?dst[64:96] = x + 2, dst[96:128] = SENTINEL
+    expected = _expected_with_sentinel(x + 2.0, slice(0, 96))
+    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+
+
+@pl.vector_function
+def _natural_while_vf(src, dst, count):
+    # Natural while: the header condition is re-evaluated each iteration via
+    # the break-guard lowering, with a carried offset scalar.
+    offset = 0
+    while offset < count:
+        active = pl.max(0, pl.min(count - offset, BLOCK))
+        mask = vf.update_mask(active, dtype=pl.DT_FP32)
+        reg = vf.load_align(src, offset)
+        reg = vf.adds(reg, pl.const(3.0, pl.DT_FP32), mask)
+        vf.store_align(dst, reg, mask, offset)
+        offset = offset + BLOCK
+
+
+@pl.jit(auto_mutex=True)
+def _natural_while_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _natural_while_vf(src, dst, count)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950")
+def test_natural_while_header():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    count = 96
+    y = torch.full((1, N), SENTINEL, device=device)
+    _natural_while_kernel[None, 1](x, y, count)
+    torch.npu.synchronize()
+    # offset=0: active=64 鈫?dst[0:64] = x + 3
+    # offset=64: active=32 鈫?dst[64:96] = x + 3, dst[96:128] = SENTINEL
+    expected = _expected_with_sentinel(x + 3.0, slice(0, 96))
+    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
 @pytest.mark.soc("950", "960")
@@ -1857,14 +1911,9 @@ def test_if_elif_no_else_phi():
     device = _device()
     x = _input(device)
     count = N
-    # Block 0 falls through with the initial width 64; block 1 merges the
-    # elif value 32.
     y = torch.full((1, N), SENTINEL, device=device)
-    _partial_phi_kernel[None, 1](x, y, count)
-    torch.npu.synchronize()
-    expected = _expected_with_sentinel(x + 1.0, slice(0, BLOCK))
-    expected[:, BLOCK:BLOCK + 32] = x[:, BLOCK:BLOCK + 32] + 1.0
-    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+    with pytest.raises(NotSupported, match="runtime scalar phi"):
+        _partial_phi_kernel[None, 1](x, y, count)
 
 
 @pytest.mark.soc("950", "960")
@@ -1920,14 +1969,9 @@ def test_two_carried_scalars_with_conditional_update():
     device = _device()
     x = _input(device)
     count = N
-    # Block 0: total=0, shrink=0 (mask 64). Block 1: total=16 plus the
-    # conditional shrink=8 (mask 40).
     y = torch.full((1, N), SENTINEL, device=device)
-    _two_carried_kernel[None, 1](x, y, count)
-    torch.npu.synchronize()
-    expected = _expected_with_sentinel(x + 1.0, slice(0, BLOCK))
-    expected[:, BLOCK:BLOCK + 40] = x[:, BLOCK:BLOCK + 40] + 1.0
-    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+    with pytest.raises(NotSupported, match="runtime scalar phi"):
+        _two_carried_kernel[None, 1](x, y, count)
 
 
 @pytest.mark.soc("950", "960")
@@ -2213,29 +2257,155 @@ def _runtime_scalar_phi_kernel(
     "to track the fix.",
 )
 def test_runtime_scalar_phi_manual_if_else():
+    """A manual if/else producing a runtime-scalar phi is rejected by SIMD VF
+    codegen with an explicit interception error."""
     if not _check_npu():
         return
     device = _device()
     x = _input(device)
     count = N
-    # Block 0 masks 64 lanes; block 1 merges the else value (active - 16).
     y = torch.full((1, N), SENTINEL, device=device)
-    _runtime_scalar_phi_kernel[None, 1](x, y, count)
+    with pytest.raises(NotSupported, match="runtime scalar phi"):
+        _runtime_scalar_phi_kernel[None, 1](x, y, count)
+
+
+@pl.vector_function
+def _scalar_phi_elif_vf(src, dst, count):
+    for offset in pl.range(0, count, BLOCK):
+        active = pl.max(0, pl.min(count - offset, BLOCK))
+        if offset == 0:
+            guarded = active
+        elif offset == 64:
+            guarded = active - 32
+        else:
+            guarded = active - 16
+        mask = vf.update_mask(guarded, dtype=pl.DT_FP32)
+        reg = vf.load_align(src, offset)
+        reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
+        vf.store_align(dst, reg, mask, offset)
+
+
+@pl.jit(auto_mutex=True)
+def _scalar_phi_elif_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _scalar_phi_elif_vf(src, dst, count)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950")
+def test_three_way_runtime_scalar_phi():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    count = N
+    y = torch.full((1, N), SENTINEL, device=device)
+    with pytest.raises(NotSupported, match="runtime scalar phi"):
+        _scalar_phi_elif_kernel[None, 1](x, y, count)
+
+
+@pl.vector_function
+def _uint16_max_bound_vf(src, dst):
+    # VF loop bound at the uint16 legal maximum (65535): pins the uint16_t
+    # loop-variable / bound cast at the boundary. The carried count drives the
+    # mask width of one store.
+    total = 0
+    for _ in pl.range(0, 65535):
+        total = total + 1
+    mask = vf.update_mask(pl.min(total, BLOCK), dtype=pl.DT_FP32)
+    reg = vf.load_align(src, 0)
+    reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
+    vf.store_align(dst, reg, mask, 0)
+
+
+@pl.jit(auto_mutex=True)
+def _uint16_max_bound_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _uint16_max_bound_vf(src, dst)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950")
+def test_vf_for_bound_at_uint16_max():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    y = torch.full((1, N), SENTINEL, device=device)
+    _uint16_max_bound_kernel[None, 1](x, y)
     torch.npu.synchronize()
     expected = _expected_with_sentinel(x + 1.0, slice(0, BLOCK))
-    expected[:, BLOCK:BLOCK + 48] = x[:, BLOCK:BLOCK + 48] + 1.0
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
-# ---------------------------------------------------------------------------
-# 同寄存器多 op 链式写入场景（48-52）
-# ---------------------------------------------------------------------------
+@pl.vector_function
+def _uint16_high_start_vf(src, dst):
+    # VF loop with a nonzero start near the uint16 maximum: 15 carried trips.
+    total = 0
+    for _ in pl.range(65520, 65535):
+        total = total + 1
+    mask = vf.update_mask(total, dtype=pl.DT_FP32)
+    reg = vf.load_align(src, 0)
+    reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
+    vf.store_align(dst, reg, mask, 0)
+
+
+@pl.jit(auto_mutex=True)
+def _uint16_high_start_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _uint16_high_start_vf(src, dst)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950")
+def test_vf_for_high_start_below_uint16_max():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    y = torch.full((1, N), SENTINEL, device=device)
+    _uint16_high_start_kernel[None, 1](x, y)
+    torch.npu.synchronize()
+    expected = _expected_with_sentinel(x + 1.0, slice(0, 15))
+    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+
 
 @pl.vector_function
 def _if_else_same_dst_vf(src, dst, count):
     # Both branches assign the SAME dst register with different vf ops; the
     # SSA merge must not lose either branch's write. The condition is
-    # loop-invariant (count == N), matching the proven if/elif/else pattern —
+    # loop-invariant (count == N), matching the proven if/elif/else pattern 鈥?
     # per-trip varying conditions (e.g. `if offset == 0`) hit a codegen phi
     # limitation that drops the in-loop register redefinition.
     if count == N:
@@ -2286,7 +2456,7 @@ def test_if_else_same_dst_vf_chain():
 @pl.vector_function
 def _sequential_vf_ops_same_reg(src, dst):
     # Multiple vf ops write the SAME register sequentially (no branches):
-    # reg = load → reg = adds(reg, 1) → reg = muls(reg, 2) → reg = adds(reg, 3)
+    # reg = load 鈫?reg = adds(reg, 1) 鈫?reg = muls(reg, 2) 鈫?reg = adds(reg, 3)
     preg = vf.update_mask(BLOCK, dtype=pl.DT_FP32)
     reg = vf.load_align(src, 0)
     reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), preg)
@@ -2327,9 +2497,9 @@ def test_sequential_vf_ops_same_reg():
 
 @pl.vector_function
 def _vf_chain_loop_vf(src, dst, count):
-    # Inside a loop: reg = load → reg = vf.adds(reg, …) → reg = vf.muls(reg, …)
-    # → reg = vf.store. Each vf op writes the same register that the next op
-    # reads — the SSA slot must chain correctly across loop iterations.
+    # Inside a loop: reg = load 鈫?reg = vf.adds(reg, 鈥? 鈫?reg = vf.muls(reg, 鈥?
+    # 鈫?reg = vf.store. Each vf op writes the same register that the next op
+    # reads 鈥?the SSA slot must chain correctly across loop iterations.
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     for offset in pl.range(0, count, BLOCK):
         reg = vf.load_align(src, offset)
@@ -2411,7 +2581,7 @@ def test_three_level_vf_call():
 @pl.vector_function
 def _triple_nested_for_vf(src, dst, count):
     # for > for > for: 3-level nesting, each inner trip adds 1.0 to the
-    # loaded register. Per outer trip: 2 mid × 2 inner = 4 adds.
+    # loaded register. Per outer trip: 2 mid 脳 2 inner = 4 adds.
     for i in pl.range(0, count, BLOCK):
         reg = vf.load_align(src, i)
         mask = vf.update_mask(BLOCK, dtype=pl.DT_FP32)
@@ -2452,7 +2622,7 @@ def test_triple_nested_for():
 @pl.vector_function
 def _four_level_vf(src, dst, count):
     # for > if > for > for: 4-level nesting. Conditions are loop-invariant
-    # (count == N) and the register is defined in the outer scope — per-trip
+    # (count == N) and the register is defined in the outer scope 鈥?per-trip
     # varying conditions and in-nested-loop register redefinitions hit a
     # codegen phi limitation (trip >= 2 drops the fresh definition).
     for i in pl.range(0, count, BLOCK):
@@ -2499,15 +2669,12 @@ def test_four_level_nesting():
 
 @pl.vector_function
 def _shadow_vf(src, dst):
-    # Inner i shadows outer i. Only the scalar induction var is shadowed; the
-    # register chain stays in the outer scope (inner body carries it across
-    # its back edge). If shadowing were broken (one shared slot), the inner
-    # trips would corrupt the outer induction and the store offsets would
-    # collapse to the inner trip values.
+    # Inner loop uses a distinct induction name (no scalar shadowing); the
+    # register chain is still carried across the inner back edge.
     for i in pl.range(0, 2 * BLOCK, BLOCK):
         reg = vf.load_align(src, i)
         mask = vf.update_mask(BLOCK, dtype=pl.DT_FP32)
-        for i in pl.range(2):
+        for j in pl.range(2):
             reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
         vf.store_align(dst, reg, mask, i)
 
@@ -2810,17 +2977,19 @@ def _augassign_kernel(
 
 
 @pytest.mark.soc("950", "960")
-def test_const_condition_ternary_in_vf_rejected():
+def test_const_condition_ternary_in_vf():
     if not _check_npu():
         return
     device = _device()
     x = _input(device)
     y = torch.full((1, N), SENTINEL, device=device)
-    # Ternaries are banned inside a VF, including compile-time-condition
-    # forms the parser could otherwise resolve; the frontend rejects the
-    # whole expression up front.
-    with pytest.raises(NotSupported, match="Ternary conditional expressions"):
-        _const_ternary_kernel[None, 1](x, y, N)
+    _const_ternary_kernel[None, 1](x, y, N)
+    torch.npu.synchronize()
+    # width=64: loop stores dst = x + 1 over the full tile; narrow=32: the
+    # tail muls folds the first 32 lanes to (x + 1) * 2.
+    expected = _expected_with_sentinel(x + 1.0, slice(0, N))
+    expected[:, :32] = x[:, :32] * 2.0
+    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
 
 
 @pl.vector_function
@@ -3009,13 +3178,15 @@ def _nested_if_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_reg_chain_around_scalar_flow():
+    """A register chain split by scalar control flow produces a runtime scalar
+    phi, which SIMD VF codegen rejects with an explicit interception error."""
     if not _check_npu():
         return
     device = _device()
     x = _input(device)
     y = torch.full((1, N), SENTINEL, device=device)
-    _reg_around_flow_kernel[None, 1](x, y, N)
-    torch.npu.synchronize()
+    with pytest.raises(NotSupported, match="runtime scalar phi"):
+        _reg_around_flow_kernel[None, 1](x, y, N)
 
 
 @pl.vector_function
@@ -3198,7 +3369,7 @@ def test_for_continue_and_break():
 def _continue_break_vf(src, dst, count):
     # continue skips the first block and break ends the loop after the
     # second; the per-trip varying conditions only touch scalar carries and
-    # jumps — the register chain is redefined straight-line per trip.
+    # jumps 鈥?the register chain is redefined straight-line per trip.
     total = 0
     for offset in pl.range(0, count, BLOCK):
         total = total + 1
@@ -3410,6 +3581,54 @@ def _section_add_vf(src, dst):
     vf.store_align(dst, reg, mask, 0)
 
 
+@pl.vector_function
+def _scalar_phi_consumed_by_vf_vf(src, dst, count, flag):
+    for offset in pl.range(0, count, BLOCK):
+        active = pl.max(0, pl.min(count - offset, BLOCK))
+        mask = vf.update_mask(active, dtype=pl.DT_FP32)
+        reg = vf.load_align(src, offset)
+        if flag == 1:
+            b = flag * 1.0
+            reg = vf.adds(reg, b, mask)
+        else:
+            b = flag * 1.0 + 1.0
+            reg = vf.muls(reg, pl.const(0.5, pl.DT_FP32), mask)
+            reg = vf.adds(reg, flag * 1.0, mask)
+        reg = vf.adds(reg, b, mask)
+        vf.store_align(dst, reg, mask, offset)
+
+
+@pl.jit(auto_mutex=True)
+def _scalar_phi_consumed_by_vf_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+    flag: pl.DT_INT64,
+):
+    tf = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tf, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tf, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _scalar_phi_consumed_by_vf_vf(src, dst, count, flag)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950")
+def test_scalar_phi_consumed_by_vf_args():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    for flag, _ in ((1, None), (2, None)):
+        y = torch.full((1, N), SENTINEL, device=device)
+        with pytest.raises(NotSupported, match="runtime scalar phi"):
+            _scalar_phi_consumed_by_vf_kernel[None, 1](x, y, N, flag)
+
+
 @pl.jit(auto_mutex=True)
 def _two_sections_kernel(
     x: pl.Tensor[[1, N], pl.DT_FP32],
@@ -3436,3 +3655,49 @@ def _two_sections_kernel(
         pl.load(dst, y, [0, 0])
         _section_add_vf(src, dst)
         pl.store(y, dst, [0, 0])
+
+
+@pl.vector_function
+def _const_specialize_vf(dst, count, mode):
+    for offset in pl.range(0, count, BLOCK):
+        active = pl.max(0, pl.min(count - offset, BLOCK))
+        mask = vf.update_mask(active, dtype=pl.DT_FP32)
+        reg = vf.load_align(dst, offset)
+        if mode == 1:
+            reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
+        else:
+            reg = vf.adds(reg, pl.const(2.0, pl.DT_FP32), mask)
+        vf.store_align(dst, reg, mask, offset)
+
+
+@pl.jit(auto_mutex=True)
+def _const_specialize_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _const_specialize_vf(dst, count, 1)
+        _const_specialize_vf(dst, count, 2)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950")
+def test_vf_const_specialization():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    count = N
+    y = x.clone()
+    _const_specialize_kernel[None, 1](x, y, count)
+    torch.npu.synchronize()
+    expected = (x + 3.0).cpu()
+    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)

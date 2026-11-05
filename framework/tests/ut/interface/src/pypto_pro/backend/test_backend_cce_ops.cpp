@@ -63,7 +63,10 @@ public:
     using codegen::CCECodegen::CCECodegen;
     std::string GetEmittedCode() const { return emitter_.GetCode(); }
     void SetCurrentResultTarget(std::string target) { currentTargetVar_ = std::move(target); }
-    void SetInVFSection(bool value) { inVfSection_ = value; }
+    void SetInSimdContext(bool value)
+    {
+        currentFunctionType_ = value ? ir::FunctionType::SIMD_VF : ir::FunctionType::OPAQUE;
+    }
     void RegisterVarName(const ir::VarPtr& var, const std::string& name) { context_.RegisterVar(var, name); }
 };
 
@@ -1030,9 +1033,9 @@ TEST(BackendCceOpsTest, BlockSubviewInVFSectionReturnsPointerArithmetic)
     ASSERT_NE(info, nullptr);
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
-    codegen.SetInVFSection(true);
+    codegen.SetInSimdContext(true);
     EXPECT_EQ(info->codegenFunc(call, codegen),
-              "(vf_tile_ptr_0 + pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(7, 0))");
+              "(tile + pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(7, 0))");
     EXPECT_TRUE(codegen.GetEmittedCode().empty());
 }
 
@@ -1053,9 +1056,9 @@ TEST(BackendCceOpsTest, BlockSubviewInVFSectionUsesNzElementOffset)
     ASSERT_NE(info, nullptr);
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
-    codegen.SetInVFSection(true);
+    codegen.SetInSimdContext(true);
     EXPECT_EQ(info->codegenFunc(call, codegen),
-              "(vf_tile_ptr_0 + pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(16, 16))");
+              "(tile + pto::GetTileOffset<std::remove_reference_t<decltype(tile.tile)>>(16, 16))");
     EXPECT_TRUE(codegen.GetEmittedCode().empty());
 }
 
@@ -1092,8 +1095,8 @@ TEST(BackendCceOpsTest, BlockSubviewInVFSectionSupportsScalarOffset)
     ASSERT_NE(info, nullptr);
 
     TestableCCECodegen codegen(ir::SectionKind::Vector);
-    codegen.SetInVFSection(true);
-    EXPECT_EQ(info->codegenFunc(call, codegen), "(vf_tile_ptr_0 + (7))");
+    codegen.SetInSimdContext(true);
+    EXPECT_EQ(info->codegenFunc(call, codegen), "(tile + (7))");
 }
 
 // ============================================================================

@@ -74,6 +74,11 @@
 #define IR_KW_TILE_VIEW "tile_view"
 #define IR_KW_MEMREF "memref"
 #define IR_KW_MEMREF_TYPE "memref_type"
+#define IR_KW_VECREG "vec_reg"
+#define IR_KW_PREDREG "pred_reg"
+#define IR_KW_ADDRREG "addr_reg"
+#define IR_KW_UNALIGNREG "unalign_reg"
+#define IR_KW_REG "reg"
 #define IR_KWV0_LOGICAL_TENSOR "v0_logical_tensor"
 #define IR_KW_HW_INFO "hw_info"
 #define IR_KW_TRUE "true"
@@ -193,6 +198,11 @@ enum class IRTextLexerTokenKind {
     KwTileView,
     KwMemref,
     KwMemrefType,
+    KwReg,
+    KwVecReg,
+    KwPredReg,
+    KwAddrReg,
+    KwUnalignReg,
     KwV0LogicalTensor,
     KwHwInfo,
     KwTrue,
@@ -339,6 +349,11 @@ static inline const npu::tile_fwk::BiMap<IRTextLexerTokenKind>& IRTextGetLexerTo
         {IRTextLexerTokenKind::KwTileView, IR_KW_TILE_VIEW},
         {IRTextLexerTokenKind::KwMemref, IR_KW_MEMREF},
         {IRTextLexerTokenKind::KwMemrefType, IR_KW_MEMREF_TYPE},
+        {IRTextLexerTokenKind::KwReg, IR_KW_REG},
+        {IRTextLexerTokenKind::KwVecReg, IR_KW_VECREG},
+        {IRTextLexerTokenKind::KwPredReg, IR_KW_PREDREG},
+        {IRTextLexerTokenKind::KwAddrReg, IR_KW_ADDRREG},
+        {IRTextLexerTokenKind::KwUnalignReg, IR_KW_UNALIGNREG},
         {IRTextLexerTokenKind::KwV0LogicalTensor, IR_KWV0_LOGICAL_TENSOR},
         {IRTextLexerTokenKind::KwHwInfo, IR_KW_HW_INFO},
         {IRTextLexerTokenKind::KwTrue, IR_KW_TRUE},
@@ -483,6 +498,7 @@ protected:
     void VisitType_(const TokenTypePtr& op) override;
     void VisitType_(const NoneTypePtr& op) override;
     void VisitType_(const LogicalTensorTypePtr& op) override;
+    void VisitType_(const RegTypePtr& op) override;
 
     void VisitStmt_(const AssignStmtPtr& op) override;
     void VisitStmt_(const SeqStmtsPtr& op) override;

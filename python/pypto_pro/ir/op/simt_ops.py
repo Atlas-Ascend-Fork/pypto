@@ -184,8 +184,8 @@ def _parse_simt_launch(parser: Any, call: ast.Call, local_name: str, callee_temp
     thread_dims = [parser.parse_expression(dim) for dim in thread_nodes]
 
     launch_args = [parser.parse_expression(arg) for arg in call.args]
-    callee = parser._instantiate_simt_function(local_name, callee_template, launch_args, call.args, span)
-    parser._validate_simt_function_arguments(callee, launch_args, call.args, span)
+    callee = parser._instantiate_simt_function(local_name, callee_template, launch_args, span)
+    parser._validate_vf_function_arguments(callee, launch_args, call.args, span, kind="SIMT function")
     result = _simt_builder(launch, callee, threads=tuple(thread_dims), args=launch_args, span=span)
     parser.requires_simt = True
     return result

@@ -85,6 +85,10 @@ void IRVisitor::VisitType(const TypePtr& type)
         VisitType_(op);
         return;
     }
+    if (auto op = As<RegType>(type)) {
+        VisitType_(op);
+        return;
+    }
     if (auto op = As<MemRefType>(type)) {
         VisitType_(op);
         return;
@@ -356,6 +360,7 @@ void IRVisitor::VisitType_(const PtrTypePtr&) {}
 void IRVisitor::VisitType_(const TokenTypePtr&) {}
 void IRVisitor::VisitType_(const NoneTypePtr&) {}
 void IRVisitor::VisitType_(const LogicalTensorTypePtr&) {}
+void IRVisitor::VisitType_(const RegTypePtr&) {}
 
 } // namespace ir
 } // namespace pypto

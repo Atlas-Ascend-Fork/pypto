@@ -18,6 +18,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -82,6 +83,19 @@ struct StructDefinition {
     bool isTiling = false;
     bool requiresVolatile = false;
 };
+
+/// True for a SIMT function type (`__simt_vf__` / `__simt_callee__` / `__simt_kernel__`).
+[[nodiscard]] inline bool IsSimtFuncType(ir::FunctionType type)
+{
+    return type == ir::FunctionType::SIMT_VF || type == ir::FunctionType::SIMT_CALLEE ||
+           type == ir::FunctionType::SIMT_KERNEL;
+}
+
+/// True for a SIMD VF function type (`__simd_vf__` / `__simd_callee__`).
+[[nodiscard]] inline bool IsSimdFuncType(ir::FunctionType type)
+{
+    return type == ir::FunctionType::SIMD_VF || type == ir::FunctionType::SIMD_CALLEE;
+}
 
 /**
  * \brief CCE code generator for converting PyPTO IR to pto-isa C++ code
@@ -156,23 +170,19 @@ public:
     /// True when currently generating code inside a VF section (CCE __VEC_SCOPE__).
     [[nodiscard]] bool IsInVFSection() const { return inVfSection_; }
     /// True when emitting a 3510 SIMT VF, callee, or SIMT kernel body.
-    [[nodiscard]] bool IsInSimtContext() const
-    {
-        return currentFunctionType_ == ir::FunctionType::SIMT_VF ||
-               currentFunctionType_ == ir::FunctionType::SIMT_CALLEE ||
-               currentFunctionType_ == ir::FunctionType::SIMT_KERNEL;
-    }
+    [[nodiscard]] bool IsInSimtContext() const { return IsSimtFuncType(currentFunctionType_); }
     [[nodiscard]] ir::FunctionType GetCurrentKernelType() const { return currentKernelType_; }
+    /// True when emitting a `__simd_vf__` or `__simd_callee__` body.
+    [[nodiscard]] bool IsInSimdContext() const { return IsSimdFuncType(currentFunctionType_); }
     int GetTileOffsetCounter() { return tileOffsetCounter_++; }
-    /// Resolve a VF tile expr (plain tile or `tile[offset]`) to its `__ubuf__` pointer, typed as the
-    /// tile element and hoisted before `__VEC_SCOPE__`. A `tile[offset]` load reuses the rvalue
-    /// `(vf_tile_ptr_N + off)`; otherwise a `vf_tile_ptr_N` is declared once and cached. With
-    /// `is_post_update`, the access gets its own hoisted variable, kept separate from a plain base
-    /// pointer to the same tile (e.g. a POST_UPDATE store cursor that must not alias a base load),
-    /// and even a `tile[offset]` materialises a real lvalue var rather than the shared rvalue.
+    /// Resolve a VF tile expr to its `__ubuf__` pointer code. In the standalone
+    /// function model a plain tile Var is a `__ubuf__` pointer parameter and a
+    /// tile-typed binding is a real `__ubuf__` pointer variable — both returned
+    /// by name (modifiable lvalues). An offset expression (`tile + off`) is an
+    /// rvalue and valid for non-advancing operands only; `is_post_update`
+    /// requires a named tile variable, whose pointer the intrinsic advances
+    /// in place.
     std::string GetOrCreateVFTilePtr(const ir::ExprPtr& expr, bool isPostUpdate = false);
-    /// Mark a VF block.subview result as a pointer expression, including linear offsets.
-    std::string RecordVFTileSubviewPointer(std::string code);
     int64_t GetConstIntValue(const ir::ExprPtr& expr) override;
     std::string GetVarName(const ir::VarPtr& var) override;
 
@@ -192,41 +202,17 @@ public:
     /** \brief Get the fixed Cube/Vector target selected for this generation. */
     ir::SectionKind GetTarget() const { return target_; }
 
-    /** \brief Register a VF RegTensor variable (called from EmitVFRegTensor). */
-    void RegisterRegTensorVar(const std::string& cppName) { regTensorVars_.insert(cppName); }
+    /** \brief Bind an IR variable to its generated C++ name. */
+    void RegisterVar(const ir::VarPtr& var, const std::string& cppName) { context_.RegisterVar(var, cppName); }
 
-    /** \brief Push a RegTensor declaration to the hoisting buffer (emitted at __VEC_SCOPE__ top). */
-    void HoistRegTensorDecl(const std::string& decl) { vfRegHoistedDecls_.push_back(decl); }
-
-    /** \brief Check if a C++ variable name was declared as a VF RegTensor. */
-    bool IsRegTensorVar(const std::string& cppName) const { return regTensorVars_.count(cppName) > 0; }
-
-    /** \brief Register a VF MaskReg variable (called from EmitVFCreateMask/Compare/etc). */
-    void RegisterMaskRegVar(const std::string& cppName) { maskRegVars_.insert(cppName); }
-
-    /** \brief Check if a C++ variable name was declared as a VF MaskReg. */
-    bool IsMaskRegVar(const std::string& cppName) const { return maskRegVars_.count(cppName) > 0; }
-
-    /** \brief Register a VF AddrReg variable (called from EmitVFCreateAddrReg). */
-    void RegisterAddrRegVar(const std::string& cppName) { addrRegVars_.insert(cppName); }
-
-    /** \brief Check if a C++ variable name was declared as a VF AddrReg. */
-    bool IsAddrRegVar(const std::string& cppName) const { return addrRegVars_.count(cppName) > 0; }
-
-    /** \brief Register a VF UnalignReg variable (called from EmitVFUnalignRegForStore/Load). */
-    void RegisterUnalignRegVar(const std::string& cppName) { unalignRegVars_.insert(cppName); }
-
-    /** \brief Check if a C++ variable name was declared as a VF UnalignReg. */
-    bool IsUnalignRegVar(const std::string& cppName) const { return unalignRegVars_.count(cppName) > 0; }
+    /** \brief Bind a tuple Var name to the MakeTuple holding its elements. */
+    void RegisterTuple(const std::string& name, const ir::MakeTuplePtr& tuple) { tupleVarToMakeTuple_[name] = tuple; }
 
     /** \brief Map logical tensor coordinates to a layout-aware physical element offset. */
     std::string ComputeTensorOffset(const ir::TensorTypePtr& tensorType, const ir::MakeTuplePtr& offsets);
 
     /** \brief Render a shape dimension rounded up to an alignment, folding constants when possible. */
     std::string ComputeAlignedShapeDimension(const ir::ExprPtr& dimension, int64_t alignment);
-
-    const ir::Span& GetCurrentStmtSpan() const { return currentStmtSpan_; }
-    const ir::Span& GetCurrentExprSpan() const { return currentExprSpan_; }
 
     /**
      * \brief Register a tensor variable's underlying raw pointer (CCE-specific).
@@ -307,20 +293,18 @@ public:
                                                const std::string& pointerExpr, const std::string& validRows,
                                                const std::string& validCols, const std::string& matrixCount = "");
 
-    /**
-     * \brief Emit a per-call-site GlobalTensor over a peer window payload (dist.get/dist.put).
-     *
-     * Window views have no prescan declaration (those are keyed to kernel tensor params), so
-     * unlike BindGlobalTensor this declares a private alias set + instance at the call site.
-     * *view_type* is the DTensor view as a synthetic contiguous tensor (offset flattening and
-     * strides reuse the block.load/block.store helpers); *remote_base* is the peer payload
-     * expression (element-typed pointer), *tile* the tile's C++ name for the valid window.
-     * Returns the instance name to pass to TLOAD/TSTORE.
-     */
     [[nodiscard]] std::string BindDistGlobalTensor(const ir::TensorTypePtr& viewType, const ir::MakeTuplePtr& offsets,
                                                    const std::optional<std::vector<int>>& tileDims, bool isTranspose,
                                                    const std::vector<ir::ExprPtr>& tileShape,
                                                    const std::string& remoteBase, const std::string& tile);
+
+    /// Resolve a call name to the SIMT/SIMD callee or SIMD VF function callable
+    /// from the current context; null when it is not a VF-family call.
+    [[nodiscard]] ir::FunctionPtr FindCallableCallee(const std::string& name) const;
+    /// Emit the CCE call text for one VF-family call, marshalling tile
+    /// arguments per calling convention (SIMT valid_row/col; SIMD __ubuf__
+    /// pointer conversion at the kernel boundary).
+    std::string GenerateVfCalleeCall(const ir::CallPtr& op, const ir::FunctionPtr& callee);
 
 protected:
     // Override visitor methods for code generation - Statements
@@ -416,17 +400,6 @@ private:
      */
     int64_t ExtractConstInt(const ir::ExprPtr& expr) const;
 
-    /**
-     * \brief Collect all TileType variables from function body
-     *
-     * Recursively traverses the statement tree to find all variables
-     * with TileType that need Tile declarations in the prologue.
-     *
-     * \param stmt The statement to scan (typically func->body_)
-     * \return Vector of (Var, TileType) pairs
-     */
-    std::vector<std::pair<ir::VarPtr, ir::TileTypePtr>> CollectTileVariables(const ir::StmtPtr& stmt);
-
     /// Collect one TensorDef per accessed tensor var *and layout variant* from block.load/store
     /// access windows into tensorDefs_, keyed by (tensor cce name, layout key) (parameters and
     /// ptr.make_tensor views both collected; used for prologue param-tensor emission and
@@ -468,22 +441,27 @@ private:
      * and tiling and Tensor declarations.
      */
     void GenerateSinglePrologue(const ir::FunctionPtr& func, bool hasCrossSync);
-    std::string BuildSimtFunctionSignature(const ir::FunctionPtr& func);
-    void GenerateSimtFunction(const ir::FunctionPtr& func);
-    std::string GenerateSimtCalleeCall(const ir::CallPtr& op, const ir::FunctionPtr& callee);
+    /// Build the CCE signature (prefix, params, tile marshalling) for a standalone
+    /// SIMT or SIMD VF function.
+    std::string BuildVfFunctionSignature(const ir::FunctionPtr& func);
+    /// Emit one standalone SIMT (__simt_vf__/__simt_callee__) or SIMD
+    /// (__simd_vf__/__simd_callee__) function. RegTensor/MaskReg declarations
+    /// are emitted inline before their first use; tile bindings materialize
+    /// real `__ubuf__` pointer variables, and POST_UPDATE advances the named
+    /// pointer in place (no framework-supplied cursors).
+    void GenerateVfFunction(const ir::FunctionPtr& func);
     void ResetFunctionGenerationState();
-    std::unordered_set<std::string> vfTileSubviewPointerCodes_;
 
     bool DetectCrossCoreSyncOps(const ir::StmtPtr& stmt);
 
     // --- Phase 5: ForStmt helpers ---
 
     /**
-     * \brief Register loop iteration arguments and emit their initialization.
+     * \brief Register loop iteration arguments.
      *
-     * Unknown init values use the uninitialized declaration path; all other init
-     * values use the initialized declaration path. Returns the sanitized names
-     * of each iter-arg for later yield assignment. Shared by ForStmt and WhileStmt.
+     * Registration only: EmitLoop emits each iter-arg declaration inline right
+     * before the loop header. Returns the sanitized names of each iter-arg for
+     * later yield assignment. Shared by ForStmt and WhileStmt.
      */
     std::vector<std::string> RegisterLoopIterArgs(const std::vector<ir::IterArgPtr>& iterArgs);
 
@@ -584,17 +562,12 @@ private:
     /// Kernel entry type for GenerateSingle; preserved across per-function resets.
     ir::FunctionType currentKernelType_ = ir::FunctionType::OPAQUE;
     std::map<std::string, ir::FunctionPtr> simtCallees_;
+    std::map<std::string, ir::FunctionPtr> simdCallees_;
     std::unordered_map<std::string, std::string> tensorToPointer_; ///< Tensor var name ->raw pointer expression
     /// Prescan: (tensor cce name, layout key) ->TensorDef. One entry per layout an access needs,
     /// so every variant of one tensor is a contiguous range (see GetTensorDefs).
     std::map<std::pair<std::string, std::string>, TensorDef> tensorDefs_;
     int flatTensorDeclCount_ = 0; ///< Monotonic suffix for DeclareFlatGlobalTensor names, reset per function
-
-    std::map<std::pair<bool, std::string>, std::string>
-        vfTilePtrs_; ///< (is_post_update, VF tile expr code) -> hoisted vf_tile_ptr_N var. A dedicated var (e.g. a
-                     ///< POST_UPDATE store cursor) and a plain base pointer to the same tile are kept separate, so a
-                     ///< cursor store does not corrupt a base load of the same tile.
-    std::vector<std::string> sectionHoistedDecls_; ///< VF section decls hoisted before __VEC_SCOPE__ (pre mem_bar)
 
     struct LoopWritebackTargets {
         std::vector<ir::VarPtr> continueVars;
@@ -605,22 +578,12 @@ private:
     std::vector<LoopWritebackTargets> loopTargetStack_;
 
     int tileOffsetCounter_ = 0; ///< Counter for unique tile-offset GetItemExpr temp names
-    int vfTilePtrCounter_ = 0;  ///< Counter for unique VF base-ptr var names (vf_tile_ptr_N)
 
-    /// Track VF RegTensor variable names (C++ names set by EmitVFRegTensor)
-    std::set<std::string> regTensorVars_;
+    // Tile type dedup: maps tile_type_str ->alias name already emitted
+    std::map<std::string, std::string> emittedTileTypes_;
 
-    /// RegTensor declarations to hoist to the top of __VEC_SCOPE__ (avoid loop-interior placement)
-    std::vector<std::string> vfRegHoistedDecls_;
-
-    /// Track VF MaskReg variable names (C++ names set by EmitVFCreateMask/Compare/etc)
-    std::set<std::string> maskRegVars_;
-
-    /// Track VF AddrReg variable names (C++ names set by EmitVFCreateAddrReg)
-    std::set<std::string> addrRegVars_;
-
-    /// Track VF UnalignReg variable names (C++ names set by EmitVFUnalignRegForStore/Load)
-    std::set<std::string> unalignRegVars_;
+    /// Track emitted tile reference aliases to avoid C++ redefinition errors
+    std::set<std::string> emittedTileAliases_;
 
     // Tuple Var C++ name -> the MakeTuple that was assigned to it.
     // Populated during body codegen by VisitStmt_(AssignStmtPtr) on tuple-typed lhs:
@@ -676,9 +639,6 @@ private:
 
     std::string BuildDynamicTupleArrayDecl(const ir::TypePtr& elemType, const std::vector<std::string>& elemNames,
                                            const std::string& arrName) const;
-
-    ir::Span currentStmtSpan_;
-    ir::Span currentExprSpan_;
 };
 
 } // namespace codegen

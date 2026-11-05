@@ -363,6 +363,20 @@ void BindTypeClass(py::module_& ir)
     scalarTypeClass.def(py::init<DataType>(), py::arg("dtype"), "Create a scalar type");
     BindFields<ScalarType>(scalarTypeClass);
 
+    // RegKind - VF register category carried by RegType
+    py::enum_<RegKind>(ir, "RegKind", "VF register category")
+        .value("VecReg", RegKind::VecReg)
+        .value("PredReg", RegKind::PredReg)
+        .value("AddrReg", RegKind::AddrReg)
+        .value("UnalignReg", RegKind::UnalignReg)
+        .export_values();
+
+    // RegType - const shared_ptr
+    auto regTypeClass = py::class_<RegType, Type, std::shared_ptr<RegType>>(ir, "RegType",
+                                                                            "VF register type representation");
+    regTypeClass.def(py::init<RegKind, DataType>(), py::arg("regtype"), py::arg("dtype"), "Create a VF register type");
+    BindFields<RegType>(regTypeClass);
+
     // PtrType - const shared_ptr
     auto ptrTypeClass = py::class_<PtrType, Type, std::shared_ptr<PtrType>>(
         ir, "PtrType", "Pointer type representation (!pto.ptr<dtype>)");
@@ -1483,6 +1497,8 @@ void BindProgram(py::module_& ir)
         .value("SimtVF", FunctionType::SIMT_VF, "3510 SIMT vector function launched from an AIV kernel")
         .value("SimtCallee", FunctionType::SIMT_CALLEE, "3510 helper callable from SIMT functions")
         .value("SimtKernel", FunctionType::SIMT_KERNEL, "3510 SIMT kernel launched from host")
+        .value("SimdVF", FunctionType::SIMD_VF, "3510 SIMD vector function (__simd_vf__) launched from an AIV kernel")
+        .value("SimdCallee", FunctionType::SIMD_CALLEE, "3510 SIMD helper callable from SIMD functions")
         .export_values();
 
     // Function - const shared_ptr

@@ -111,6 +111,7 @@ enum class ObjectKind {
     TupleType,
     LogicalTensorType,
     WindowType,
+    RegType,
 
     // Other IR node kinds
     Function,

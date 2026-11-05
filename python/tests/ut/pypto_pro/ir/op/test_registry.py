@@ -140,12 +140,13 @@ def test_vf_bit_cast_has_dtype_attr():
     assert ir.get_op("vf.bit_cast").has_attr("dtype")
 
 
-def test_vf_bit_cast_deduce_keeps_tile_type():
-    # The deducer must preserve the register (TileType) nature of the source so a
-    # materialized temp is declared as RegTensor<T>, not as a scalar.
+def test_vf_bit_cast_deduce_keeps_register_type():
+    # The deducer must produce a register result so a materialized temp is declared
+    # as RegTensor<T>, not as a scalar.
     span = ir.Span.unknown()
-    src = ir.Var("bf16_reg", ir.TileType([ir.ConstInt(64, DataType.INDEX, span)], DataType.BF16), span)
+    src = ir.Var("bf16_reg", ir.RegType(ir.RegKind.VecReg, DataType.BF16), span)
     call = ir.create_op_call("vf.bit_cast", [src], {"dtype": DataType.UINT16}, span)
 
-    assert isinstance(call.type, ir.TileType)
+    assert isinstance(call.type, ir.RegType)
+    assert call.type.regtype == ir.RegKind.VecReg
     assert call.type.dtype == DataType.UINT16

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from pypto.pypto_impl import ir
 from pypto.pypto_impl.ir import DataType
@@ -59,9 +59,7 @@ def _target_names(target: ast.expr) -> set[str]:
     return set()
 
 
-def collect_written_vars(
-    statements: list[ast.stmt], *, ignore_assignment: Callable[[ast.Assign], bool] | None = None
-) -> set[str]:
+def collect_written_vars(statements: list[ast.stmt]) -> set[str]:
     """Collect names that a control-flow region can rebind.
 
     A Python-visible for target is an assignment too: an enclosing branch or
@@ -71,8 +69,6 @@ def collect_written_vars(
 
     def visit(stmt: ast.stmt) -> None:
         if isinstance(stmt, ast.Assign):
-            if ignore_assignment is not None and ignore_assignment(stmt):
-                return
             for target in stmt.targets:
                 writes.update(_target_names(target))
         elif isinstance(stmt, ast.AugAssign):
@@ -147,16 +143,14 @@ class ControlFlowParserMixin:
         self._empty_control_flow_values.add(value.name)
 
     def collect_written_vars(self, statements: list[ast.stmt]) -> set[str]:
-        """Collect source rebindings, excluding mutable VF register writes."""
+        """Collect source rebindings.
 
-        def is_vf_register_write(stmt: ast.Assign) -> bool:
-            op_name = self._is_vf_op_call(stmt.value)
-            if op_name is None:
-                return False
-            dst_count = self._get_vf_op_dst_count(op_name)
-            return dst_count is not None and dst_count > 0
-
-        return collect_written_vars(statements, ignore_assignment=is_vf_register_write)
+        VF register writes are included so that SSA phi nodes are created for
+        them in loops and if/else branches.  Each ``reg = vf.xxx(...)`` produces
+        a fresh SSA name via ``builder.let``, so the phi correctly merges the
+        pre-region value with the value produced inside the region.
+        """
+        return collect_written_vars(statements)
 
     def _parse_statement_list(self, statements: list[ast.stmt]) -> JumpKind | None:
         """Parse statements until the current scope has terminated."""
@@ -520,39 +514,6 @@ class ControlFlowParserMixin:
             self.scope_manager.define_var(name, return_var, allow_redef=True, span=span)
             self._update_phi_constant(return_var, state)
 
-    def _reject_while_in_vf(self, stmt: ast.While) -> None:
-        """Reject every ``while`` loop inside a vector function.
-
-        No while shape survives bisheng's ``.vector.thread`` constraints: the
-        header form needs a pure condition re-evaluated every iteration (which
-        rules out subscripts and calls), and the ``while True`` + break-guard
-        fallback is a provably-infinite loop the toolchain rejects. With no
-        viable lowering, all while loops are rejected up front. Kernel-level
-        while loops keep both lowerings.
-        """
-        if self.inline_vf_depth == 0:
-            return
-        raise NotSupported(
-            "while loops are not supported inside a vector function",
-            span=self.span_tracker.get_span(stmt),
-            hint="Use `for offset in pl.range(start, stop, step)` and carry the "
-            "induction scalar through the for loop, or hoist the loop to the "
-            "kernel level.",
-        )
-
-    def _reject_vf_runtime_step(self, node) -> None:
-        """Reject a runtime pl.range() step inside a vector function.
-
-        The toolchain rejects runtime-step loops under -Werror because the
-        trip count is not provably divisible.
-        """
-        raise NotSupported(
-            "pl.range() step must be a compile-time constant inside a vector function",
-            span=self.span_tracker.get_span(node),
-            hint="The toolchain rejects runtime-step loops under -Werror because the "
-            "trip count is not provably divisible; use a constant step.",
-        )
-
     def parse_while_loop(self, stmt: ast.While) -> None:
         """Lower a natural while to ``while True`` with an SSA-carrying break guard."""
         self._validate_loop_orelse(stmt)
@@ -675,7 +636,7 @@ class ControlFlowParserMixin:
         attr = self._get_with_context_attr(stmt)
         span = self.span_tracker.get_span(stmt)
 
-        if attr in ("section_vector", "section_cube") and self.inline_vf_depth:
+        if attr in ("section_vector", "section_cube") and self._in_vf_body():
             raise InvalidOperation(
                 f"Section 'pl.{attr}' cannot be nested inside @pl.vector_function",
                 span=span,
@@ -710,11 +671,6 @@ class ControlFlowParserMixin:
             stmt: Return AST node
         """
         span = self.span_tracker.get_span(stmt)
-        if self.inline_vf_depth != 0:
-            raise InvalidOperation(
-                "Vector function cannot contain return",
-                span=span,
-            )
 
         if _is_bare_return(stmt):
             self.builder.emit(ir.ReturnStmt([], span))
@@ -934,12 +890,10 @@ class ControlFlowParserMixin:
 
         found, value = ExprEvaluator.ir_to_python_value(expr)
         if not found:
-            if is_step and self.inline_vf_depth > 0:
-                self._reject_vf_runtime_step(node)
             return
         value = from_storage_int(expr.value, expr.type.dtype)
 
-        in_vf = self.inline_vf_depth > 0
+        in_vf = self._in_vf_body()
         hi = _UINT16_MAX if in_vf else INT64_MAX
         if is_step:
             lo = 1
@@ -969,7 +923,7 @@ class ControlFlowParserMixin:
             return
 
         peak = s + ((t - s - 1) // p) * p + p
-        hi = _UINT16_MAX if self.inline_vf_depth > 0 else INT64_MAX
+        hi = _UINT16_MAX if self._in_vf_body() else INT64_MAX
         if peak > hi:
             raise OutOfRange(
                 f"pl.range(): loop variable reaches {peak} on the final step, exceeding {hi}",

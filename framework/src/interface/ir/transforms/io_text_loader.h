@@ -193,6 +193,7 @@ public:
     TypePtr ParseTypeTile();
     TypePtr ParseTypeMutexTile();
     TypePtr ParseTypeScalar();
+    TypePtr ParseTypeReg();
     IRTextParserOptionalTensorViewPtr ParserTensorTypeTensorView();
     TypePtr ParseTensorType();
     IRTextParserOptionalTileViewPtr ParseTileTypeTileView();

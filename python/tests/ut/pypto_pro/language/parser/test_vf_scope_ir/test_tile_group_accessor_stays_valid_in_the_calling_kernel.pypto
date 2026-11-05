@@ -9,12 +9,6 @@ function kernel incast(tensor<1 x 128, float, tensor_view<, , ND, %x_ptr>> %x_0)
     struct.set(%_tg_group_cursor_0, (getitem(%_tg_group_cursor_0, 0) add 1), field=cursor);
     int64_t %_bufidx_0_0 = (getitem(%_tg_group_cursor_0, 0) mod 2);
     mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1> %_expr_tmp_2_0 = getitem(%_tg_group_tiles_0, %_bufidx_0_0);
-    section VF {
-        system.vf_scope_args(%_expr_tmp_2_0);
-        float %__inline_0_reg_0 = vf.reg_tensor(dtype=float);
-        vf.load_align(%__inline_0_reg_0, %_expr_tmp_2_0, 0);
-        uint16_t %_expr_tmp_3_0 = vf.create_mask();
-        vf.store_align(%_expr_tmp_2_0, %__inline_0_reg_0, %_expr_tmp_3_0, 0);
-    }
+    simd.call(%_expr_tmp_2_0, callee=use);
     return;
 }

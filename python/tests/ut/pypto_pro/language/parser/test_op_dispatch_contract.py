@@ -159,7 +159,10 @@ def runtime(monkeypatch):
         TupleType=_TupleType, PtrType=type("PtrType", (), {}), NoneType=_NoneType,
         WindowType=type("WindowType", (), {}),
         Span=_Span, DataType=_DType, MemorySpace=types.SimpleNamespace(Vec="vec"),
-        FunctionType=types.SimpleNamespace(SimtVF="simt", SimtCallee="simt_callee", SimtKernel="simt_kernel"),
+        FunctionType=types.SimpleNamespace(
+            SimtVF="simt", SimtCallee="simt_callee", SimtKernel="simt_kernel",
+            SimdVF="simd_vf", SimdCallee="simd_callee",
+        ),
         SectionKind=types.SimpleNamespace(Cube="cube", Vector="vector"),
     )
     for name in (
@@ -229,7 +232,7 @@ def runtime(monkeypatch):
     helper_names = {
         "_dispatch_ast_op",
         "_dispatch_op", "_check_declared_params", "_check_declared_types", "_validate_op_scope",
-        "require_const_value", "_parse_vf_op", "parse_op_call",
+        "require_const_value", "parse_op_call",
     }
     call_tree = ast.parse((_SOURCE / "language/parser/_call_parser.py").read_text(encoding="utf-8"))
     mixin = next(node for node in call_tree.body if isinstance(node, ast.ClassDef) and node.name == "CallParserMixin")
@@ -267,7 +270,6 @@ def runtime(monkeypatch):
             self.evaluated = []
             self._current_func_type = "simt"
             self.folded = None
-            self.inline_vf_depth = 0
             self.target = ir.SectionKind.Cube
             self.expr_evaluator = types.SimpleNamespace(
                 ir_to_python_value=_constant_value, try_eval_expr=lambda node: (False, None),
@@ -659,28 +661,6 @@ def test_assert_condition_text_uses_the_call_site_for_a_preexisting_ir_value(run
     assert value.span is definition_span
 
 
-def test_vf_attribute_conversion_consumes_ir_values(runtime):
-    def declaration(*, flag: "bool"):
-        pass
-    runtime.declare("vf.example", declaration)
-    runtime.ir.create_op_call = lambda name, args, attrs, span: attrs
-    parser = runtime.Parser("vf.example(flag=False)")
-    assert parser._parse_vf_op("example", parser.call) == {"flag": False}
-
-
-def test_vf_runtime_attribute_rejection_keeps_ir_location(runtime):
-    def declaration(*, flag: "bool"):
-        pass
-    runtime.declare("vf.example", declaration)
-    source = "vf.example(flag=runtime_flag)"
-    column = source.index("runtime_flag") + 1
-    value = _Expr(_ScalarType(_DType.BOOL), _Span(begin_column=column, end_column=column + len("runtime_flag") - 1))
-    parser = runtime.Parser(source, {"runtime_flag": value})
-    with pytest.raises(runtime.errors.InvalidType, match="compile-time attribute") as error:
-        parser._parse_vf_op("example", parser.call)
-    assert error.value.span.begin_column == source.index("runtime_flag") + 1
-
-
 def test_duplicate_registration_is_rejected(runtime):
     def build(self, span, /):
         pass
@@ -982,8 +962,7 @@ def test_indexed_simt_launch_passes_scope_validation_in_an_ordinary_kernel(runti
 @pytest.mark.parametrize("op_name", ["simt.launch", "simt.syncthreads"])
 def test_simt_operations_remain_forbidden_inside_inline_vf(runtime, op_name):
     parser = runtime.Parser("entry[1](undefined)")
-    parser._current_func_type = "ordinary_kernel"
-    parser.inline_vf_depth = 1
+    parser._current_func_type = runtime.ir.FunctionType.SimdVF
     parser._TILE_GROUP_ACCESSORS = frozenset()
     parser._VF_SCALAR_PL_OPS = frozenset()
     with pytest.raises(runtime.errors.NotSupported, match="is not supported inside @pl.vector_function"):

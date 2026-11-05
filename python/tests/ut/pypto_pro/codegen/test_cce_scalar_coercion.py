@@ -70,9 +70,9 @@ def _vadds_arg(cpp: str) -> str:
 
 
 def _vf_adds_scalar(ir_text: str) -> str:
-    """The scalar operand of the vf.adds statement in the IR, i.e. its third argument."""
+    """The scalar operand of the vf.adds expression in the IR (value form: src, scalar, mask)."""
     line = next(ln for ln in ir_text.splitlines() if "vf.adds(" in ln)
-    return line.split("vf.adds(", 1)[1].split(",")[2].strip()
+    return line.split("vf.adds(", 1)[1].split(",")[1].strip()
 
 
 @pytest.mark.soc("950")
@@ -108,7 +108,6 @@ def test_float_scalar_keeps_its_float_form_for_a_float_dtype():
     kernel = _adds_kernel(pl.DT_FP32, 1.5, 4)
 
     ir_text = _parse_to_ir(kernel)
-    assert "vf.reg_tensor(dtype=float)" in ir_text
     assert _vf_adds_scalar(ir_text) == "1.5"
 
     cpp = _compile_to_cce(kernel)

@@ -169,6 +169,24 @@ TEST_F(IoTextDumpRoundTripTest, TestTypeRoundTrip)
     EXPECT_EQ(TextDumpType(TextLoadType("tensor<4 x 8, float, tensor_view<>>", error)),
               "tensor<4 x 8, float, tensor_view<>>");
     EXPECT_TRUE(error.empty());
+
+    // VF register kinds keep their category through dump/load.
+    EXPECT_EQ(TextDumpType(std::make_shared<RegType>(RegKind::VecReg, DataType::FP32)), "reg<vec_reg,float>");
+    EXPECT_EQ(TextDumpType(TextLoadType("reg<vec_reg,float>", error)), "reg<vec_reg,float>");
+    EXPECT_TRUE(error.empty());
+
+    EXPECT_EQ(TextDumpType(std::make_shared<RegType>(RegKind::PredReg, DataType::UINT8)), "reg<pred_reg,uint8_t>");
+    EXPECT_EQ(TextDumpType(TextLoadType("reg<pred_reg,uint8_t>", error)), "reg<pred_reg,uint8_t>");
+    EXPECT_TRUE(error.empty());
+
+    EXPECT_EQ(TextDumpType(std::make_shared<RegType>(RegKind::AddrReg, DataType::INT64)), "reg<addr_reg,int64_t>");
+    EXPECT_EQ(TextDumpType(TextLoadType("reg<addr_reg,int64_t>", error)), "reg<addr_reg,int64_t>");
+    EXPECT_TRUE(error.empty());
+
+    EXPECT_EQ(TextDumpType(std::make_shared<RegType>(RegKind::UnalignReg, DataType::UINT32)),
+              "reg<unalign_reg,uint32_t>");
+    EXPECT_EQ(TextDumpType(TextLoadType("reg<unalign_reg,uint32_t>", error)), "reg<unalign_reg,uint32_t>");
+    EXPECT_TRUE(error.empty());
 }
 
 // ---- Statement round-trip ----

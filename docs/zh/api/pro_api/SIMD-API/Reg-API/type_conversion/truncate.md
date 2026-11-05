@@ -14,9 +14,9 @@
 
 ## 功能说明
 
-将源操作数src中的浮点数元素截断为整数值（保留原数据类型），并存入目的操作数dst。
+将源操作数src中的浮点数元素按round_mode转换为整数值（保留原数据类型），并存入目的操作数dst。
 
-如下图所示，浮点数3.7和-2.3经截断后分别变为3.0和-2.0，即丢弃小数部分仅保留整数部分，数据类型保持不变：
+round_mode默认为pypto_pro.language.VFRoundMode.CAST_RINT（四舍六入五成双），此时3.7、-2.3分别变为4.0、-2.0；显式指定round_mode=pypto_pro.language.VFRoundMode.CAST_TRUNC时才执行向零截断，3.7、-2.3分别变为3.0、-2.0，即丢弃小数部分。下图和公式以pypto_pro.language.VFRoundMode.CAST_TRUNC为例，数据类型保持不变：
 
 $$dstReg_i = \text{trunc}(srcReg_i)$$
 
@@ -25,7 +25,7 @@ $$dstReg_i = \text{trunc}(srcReg_i)$$
 ## 函数原型
 
 ```python
-truncate(src, preg, /, *, mode: Optional[MergeMode] = None) -> dst
+truncate(src, preg, /, *, round_mode: Optional[VFRoundMode] = None, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明
@@ -34,6 +34,7 @@ truncate(src, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 |---|---|---|
 | src | 输入 | 源操作数，[reg_tensor](../basic_data_structures/reg_tensor.md)，源操作数src与目的操作数dst的数据类型保持一致。支持的数据类型为：DT_FP16、DT_BF16、DT_FP32。 |
 | preg | 输入 | [mask_reg](../basic_data_structures/mask_reg.md)，mask未筛选的元素在dst中置零。 - DT_FP32类型只支持不饱和模式。 |
+| round_mode | 输入 | 可选，[VFRoundMode](../basic_data_structures/VFRoundMode.md)枚举类型，浮点舍入模式。默认pypto_pro.language.VFRoundMode.CAST_RINT。支持pypto_pro.language.VFRoundMode: CAST_RINT/CAST_ROUND/CAST_FLOOR/CAST_CEIL/CAST_TRUNC；CAST_ODD/CAST_HYBRID不支持。 |
 | mode | 输入 | 可选，对应[MergeMode](../basic_data_structures/MergeMode.md)类型。<br>- pypto_pro.language.MergeMode.ZEROING（默认），preg未筛选的元素在dst中置0。<br>- pypto_pro.language.MergeMode.MERGING当前不支持。 |
 
 ## 约束说明
@@ -56,7 +57,7 @@ import torch_npu
 def example_vf(src_tile, dst_tile):
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     src_reg = vf.load_align(src_tile, 0)
-    dst_reg = vf.truncate(src_reg, preg)
+    dst_reg = vf.truncate(src_reg, preg, round_mode=pl.VFRoundMode.CAST_TRUNC)
     vf.store_align(dst_tile, dst_reg, preg)
 
 @pl.jit()

@@ -42,10 +42,7 @@ from . import _argument_checker
 from ._control_flow_parser import _is_bare_return
 from ._expr_evaluator import ExprEvaluator
 from ._span_tracker import SpanTracker
-from .diagnostics import (
-    check_const_expr_fits_dtype,
-    check_in_range,
-)
+from .diagnostics import check_in_range
 
 # Largest thread count a SIMT function may declare.
 _MAX_SIMT_THREADS = 2048
@@ -241,7 +238,6 @@ class _InlineFunctionTemplate:
 
     func_def: ast.FunctionDef
     closure_vars: dict[str, Any]
-    is_vector_function: bool
     span_tracker: SpanTracker
 
 
@@ -336,10 +332,27 @@ _BUILTIN_TO_OP: dict[str, str] = {
 def _dtypes_compatible(a: ir.DataType, b: ir.DataType) -> bool:
     """Lenient dtype compatibility: same dtype, or both integer-like / both float-like.
 
-    Different numeric dtypes of the same family (e.g. INT32 and INT64, FP16 and FP32) are
-    interconvertible and treated as compatible.
+    Different numeric dtypes of the same family (e.g. INT32 and INT64, FP16 and FP32)
+    are interconvertible and treated as compatible.
     """
     return a == b or (a.is_int() and b.is_int()) or (a.is_float() and b.is_float())
+
+
+def _is_const_arg(arg: ir.Expr) -> bool:
+    """True for call-site arguments that SIMD VF instantiation specializes out."""
+    return isinstance(arg, (ir.ConstBool, ir.ConstInt))
+
+
+def _const_name_value(const: ir.Expr) -> str:
+    """Render a compile-time constant for a specialized function-name suffix.
+
+    Booleans carry a ``b`` prefix so a ``True`` specialization can never collide
+    with an integer ``1`` specialization under the same parameter name.
+    """
+    value = const.value
+    if isinstance(const, ir.ConstBool):
+        return "b1" if value else "b0"
+    return str(value).replace("-", "n")
 
 
 def _types_compatible(annotated: ir.Type, actual: ir.Type) -> bool:
@@ -430,158 +443,9 @@ def _validate_simt_parameters(func: ir.Function, role: str, *, entry_type: ir.Fu
 class CallParserMixin:
     """Mixin containing call and operation parsing methods for ``ASTParser``."""
 
-    # Mapping of VF kwarg names to their expected enum classes (tuple of types).
-    # When a kwarg value resolves to an instance of any mapped enum, its .value
-    # VF enum kwarg validation: if a kwarg is mapped to enum classes, the parser
-    # passes the enum object through to ConvertKwargsDict (which extracts .value as int).
-    # If a raw string is passed for a mapped kwarg, the parser raises an error.
-    _VF_KWARG_ENUMS: dict[str, tuple] = {}
-
     # -------------------------------------------------------------------------
-    # VF ops
+    # VF execution-domain rules
     # -------------------------------------------------------------------------
-
-    # VF op names are now unified to snake_case across Python API, IR, and C++
-    # backend. This map is kept for potential future name aliasing; currently
-    # all entries are identity (Python name == IR op name).
-    _VF_OP_NAME_MAP: dict[str, str] = {}
-
-    # --- VF assignment-form support --------------------------------------------
-
-    # Number of destination registers at the front of the arg list for each VF op.
-    # 0 = no dst (store/side-effect ops, or already return-value ops like compare).
-    # 1 = single dst at args_[0].
-    # 2 = two dsts at args_[0], args_[1].
-    _VF_OP_DST_COUNT: dict[str, int] = {
-        # 1 dst
-        "add": 1,
-        "sub": 1,
-        "mul": 1,
-        "div": 1,
-        "max": 1,
-        "min": 1,
-        "and_": 1,
-        "or_": 1,
-        "xor": 1,
-        "abs_sub": 1,
-        "select": 1,
-        "shift_left": 1,
-        "shift_right": 1,
-        "prelu": 1,
-        "ln": 1,
-        "log": 1,
-        "exp": 1,
-        "abs": 1,
-        "not_": 1,
-        "sqrt": 1,
-        "relu": 1,
-        "neg": 1,
-        "pair_reduce_sum": 1,
-        "squeeze": 1,
-        "truncate": 1,
-        "astype": 1,
-        "log2": 1,
-        "log10": 1,
-        "reduce_sum": 1,
-        "reduce_max": 1,
-        "reduce_min": 1,
-        "muls": 1,
-        "adds": 1,
-        "subs": 1,
-        "mins": 1,
-        "maxs": 1,
-        "leaky_relu": 1,
-        "muls_cast": 1,
-        "axpy": 1,
-        "exp_sub": 1,
-        "mul_add_dst": 1,
-        "mul_dst_add": 1,
-        "pack": 1,
-        "unpack": 1,
-        "arange": 1,
-        "unsqueeze": 1,
-        "full": 1,
-        "load_align": 1,
-        "load": 1,
-        "load_unalign": 1,
-        "gather": 1,
-        "move": 1,
-        "eq": 1,
-        "ne": 1,
-        "lt": 1,
-        "gt": 1,
-        "le": 1,
-        "ge": 1,
-        "histograms": 1,
-        "bit_cast": 1,
-        # 2 dsts
-        "interleave": 2,
-        "de_interleave": 2,
-        "mull": 2,
-        "addc": 2,
-        "subc": 2,
-        # 0 dst (no assignment form)
-        "store_align": 0,
-        "store_unalign": 0,
-        "store_unalign_post": 0,
-        "squeeze_store_unalign": 0,
-        "squeeze_store_unalign_post": 0,
-        "scatter": 0,
-        "store": 0,
-        "mem_bar": 0,
-        "clear_spr": 0,
-        "load_unalign_pre": 0,
-        "store_align_pack": 0,
-        "store_align_intlv": 0,
-        "store_align_pack_postupdate": 0,
-    }
-
-    # VF ops whose dst(s) are MaskReg (not RegTensor). The assignment parser
-    # declares these via vf.create_mask instead of vf.reg_tensor.
-    _VF_MASK_DST_OPS: frozenset[str] = frozenset(
-        {
-            "eq",
-            "ne",
-            "lt",
-            "gt",
-            "le",
-            "ge",
-        }
-    )
-
-    # Ops that support both RegTensor and MaskReg dsts. When the dst is freshly
-    # declared, its register kind is inferred from the source operands: if any
-    # source argument is a known MaskReg variable, the dst is declared as
-    # MaskReg; otherwise RegTensor.
-    _VF_UNIFIED_OPS: frozenset[str] = frozenset(
-        {
-            "move",
-            "and_",
-            "or_",
-            "xor",
-            "not_",
-            "select",
-            "pack",
-            "unpack",
-            "interleave",
-            "de_interleave",
-            "load_align",
-            "store_align",
-            "store_unalign",
-            "squeeze_store_unalign",
-        }
-    )
-
-    # VF ops whose return value is a MaskReg (used by _parse_name_assignment to
-    # track MaskReg variables for unified-op dst inference).
-    _VF_MASK_PRODUCING_OPS: frozenset[str] = frozenset(
-        {
-            "create_mask",
-            "update_mask",
-            "get_mask_spr",
-            "mask_gen_with_reg_tensor",
-        }
-    )
 
     # The pl.* calls a VF body may still make. Everything in the body lowers into
     # one VEC_SCOPE, which bisheng requires to hold VF instructions only, so the
@@ -647,57 +511,24 @@ class CallParserMixin:
         """Check if an AST statement is a docstring (string constant expression)."""
         return isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str)
 
-    def _is_vf_op_call(self, call_node: ast.expr) -> str | None:
-        """Check if an AST node is a ``vf.xxx(...)`` call.
-
-        Returns the VF op name (e.g. ``"add"``) if yes, ``None`` otherwise.
-        """
-        if not isinstance(call_node, ast.Call):
-            return None
-        op_name = self._extract_op_name(call_node.func)
-        if op_name is None or not op_name.startswith("vf."):
-            return None
-        return op_name[3:]  # strip "vf." prefix
-
     @staticmethod
     def _inline_param_list(func_def: ast.FunctionDef) -> list[ast.arg]:
         return list(func_def.args.args)
 
     @staticmethod
-    def _inline_local_names(func_def: ast.FunctionDef, params: list[ast.arg]) -> set[str]:
-        """Collect names local to a helper body, including nested block bindings."""
-        names = {param.arg for param in params}
+    def _inline_assigned_names(func_def: ast.FunctionDef) -> set[str]:
+        """Collect every name the helper body assigns to (Store/Del), skipping nested functions.
 
-        class _Collector(ast.NodeVisitor):
-            def generic_visit(self, node):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-                    return None
-                if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-                    names.add(node.id)
-                    return None
-                return super().generic_visit(node)
-
-        collector = _Collector()
-        for stmt in func_def.body:
-            collector.visit(stmt)
-        return names
-
-    @staticmethod
-    def _inline_reassigned_params(func_def: ast.FunctionDef, params: list[ast.arg]) -> set[str]:
-        """Return helper parameters that are rebound by its body.
-
-        A directly inlined parameter normally aliases the caller expression.  If
-        the helper assigns to it, however, it needs its own IR definition before
-        entering control flow so the parser can carry it through branches and loops.
+        One walk serves both callers: local names are the params plus the assigned names, and
+        reassigned parameters are the intersection of the two.
         """
-        param_names = {param.arg for param in params}
         assigned: set[str] = set()
 
         class _Collector(ast.NodeVisitor):
             def generic_visit(self, node):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                     return None
-                if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)) and node.id in param_names:
+                if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
                     assigned.add(node.id)
                     return None
                 return super().generic_visit(node)
@@ -797,103 +628,6 @@ class CallParserMixin:
         if fn.__closure__ and fn.__code__.co_freevars:
             fn_closure.update(dict(zip(fn.__code__.co_freevars, (c.cell_contents for c in fn.__closure__))))
         return fn_closure
-
-    @classmethod
-    def _init_vf_kwarg_enums(cls):
-        if cls._VF_KWARG_ENUMS:
-            return
-        from pypto.ir import (
-            BinType,
-            CastLayout,
-            CompareMode,
-            DataCopyMode,
-            DuplicatePos,
-            HistType,
-            IndexOrder,
-            LoadDist,
-            MaskPattern,
-            MaskWidth,
-            MemBarMode,
-            MergeMode,
-            PackPart,
-            ReduceMode,
-            SaturateMode,
-            SqueezeMode,
-            StoreDist,
-            VFRoundMode,
-        )
-
-        cls._VF_KWARG_ENUMS = {
-            "pattern": (MaskPattern,),
-            "mode": (MergeMode, MemBarMode),
-            "merge_mode": (MergeMode,),
-            "reduce_mode": (ReduceMode,),
-            "reduce_type": (ReduceMode,),
-            "cmp_mode": (CompareMode,),
-            "pos": (DuplicatePos,),
-            "layout": (CastLayout,),
-            "round_mode": (VFRoundMode,),
-            "saturate": (SaturateMode,),
-            "bin_type": (BinType,),
-            "hist_type": (HistType,),
-            "gather_mode": (SqueezeMode,),
-            "part": (PackPart,),
-            "width": (MaskWidth,),
-            "dist": (LoadDist, StoreDist),
-            "data_copy_mode": (DataCopyMode,),
-            "index_order": (IndexOrder,),
-        }
-
-    @classmethod
-    def _get_vf_op_dst_count(cls, op_name: str) -> int | None:
-        """Return the number of dst registers for a VF op, or None if unknown."""
-        return cls._VF_OP_DST_COUNT.get(op_name)
-
-    @classmethod
-    def _is_vf_mask_dst_op(cls, op_name: str) -> bool:
-        """Return True if the VF op's dst(s) are MaskReg (not RegTensor)."""
-        return op_name in cls._VF_MASK_DST_OPS
-
-    # VF ops that take a literal scalar as a *value* operand, and are therefore
-    # range-checked against the operand dtype. Everywhere else a numeric literal is
-    # an offset, a repeat count or a bit pattern, none of which live in that dtype.
-    # shift_left / shift_right are deliberately absent: their docs define a shift
-    # wider than the type as yielding 0, so an "out of range" shift is legal. So is
-    # bit_cast, whose operand is a bit pattern rather than a value.
-    _VF_SCALAR_OPERAND_OPS = frozenset({
-        "adds",
-        "subs",
-        "muls",
-        "mins",
-        "maxs",
-        "axpy",
-        "leaky_relu",
-        "muls_cast",
-        "full",
-        "eq",
-        "ne",
-        "lt",
-        "gt",
-        "le",
-        "ge",
-        "arange",
-    })
-
-    def _check_vf_scalar_operands(
-        self,
-        op_name: str,
-        args: list,
-        dtype: ir.DataType | None,
-        span: ir.Span,
-    ) -> None:
-        """Reject a literal scalar operand of ``vf.<op_name>`` that ``dtype`` cannot represent.
-
-        Non-constant operands carry no value to check and are skipped.
-        """
-        if dtype is None or op_name not in self._VF_SCALAR_OPERAND_OPS:
-            return
-        for arg in args:
-            check_const_expr_fits_dtype(arg, dtype, span=span, api=f"vf.{op_name}")
 
     def parse_call(self, call: ast.Call) -> Any:
         """Parse function call.
@@ -1024,7 +758,11 @@ class CallParserMixin:
         if op_func is not None:
             return self._dispatch_op(op_name, call, op_func)
         if op_name.startswith("vf."):
-            return self._parse_vf_op(op_name[3:], call)
+            raise InvalidOperation(
+                f"Unknown vf operation: '{op_name}'",
+                span=span,
+                parser_retry=True,
+            )
         raise NotSupported(f"Unsupported operation call: {ast.unparse(call)}", span=span, parser_retry=True)
 
     def _dispatch_ast_op(self, op_name: str, call: ast.Call, ast_handler: Callable):
@@ -1112,15 +850,16 @@ class CallParserMixin:
                 span=span,
                 hint="Place the barrier with its Cube operations; use cross-core synchronization for a handover",
             )
+        in_vf = self._current_func_type in (ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee)
         if op_name.startswith("vf."):
-            if self.inline_vf_depth == 0:
+            if not in_vf:
                 raise InvalidOperation(
                     f"Operation '{op_name}' can only be used inside @pl.vector_function",
                     span=span,
                     hint="Move VF register operations into a @pl.vector_function helper and call it from the kernel.",
                 )
             return
-        if self.inline_vf_depth == 0:
+        if not in_vf:
             return
         if op_name in self._TILE_GROUP_ACCESSORS:
             raise InvalidOperation(
@@ -1170,8 +909,8 @@ class CallParserMixin:
                 span=span,
             )
         args = [self.parse_expression(arg) for arg in call.args]
-        callee = self._instantiate_simt_function(local_name, fn, args, call.args, span)
-        self._validate_simt_function_arguments(callee, args, call.args, span)
+        callee = self._instantiate_simt_function(local_name, fn, args, span)
+        self._validate_vf_function_arguments(callee, args, call.args, span, kind="SIMT function")
         return self._make_call_with_return_type(ir.Op(callee.name), args, callee.return_types, span)
 
     def _instantiate_simt_function(
@@ -1179,11 +918,9 @@ class CallParserMixin:
         local_name: str,
         fn: Callable,
         args: list[ir.Expr],
-        arg_nodes: list[ast.expr],
         span,
     ) -> ir.Function:
         """Parse a marked SIMT callable once its actual argument types are known."""
-        from ._ast_parser import ASTParser
         from .decorator import get_simt_max_threads
 
         max_threads = get_simt_max_threads(fn)
@@ -1193,13 +930,70 @@ class CallParserMixin:
                 raise InvalidType("max_threads must be an integer")
             check_in_range(max_threads, 1, _MAX_SIMT_THREADS, subject="max_threads", error=ValueError)
 
-        cached = self.simt_func_cache.get(id(fn))
+        func_type = ir.FunctionType.SimtVF if launchable else ir.FunctionType.SimtCallee
+        cached = self.vf_func_cache.get((id(fn), func_type, ()))
         if cached is not None:
-            self._register_simt_external(cached, span)
+            self._register_vf_external(cached, span)
             return cached
-        if id(fn) in self.simt_call_stack:
+
+        parsed, _params = self._instantiate_vf_body(
+            local_name,
+            fn,
+            args,
+            span,
+            decorator_label='@pl.vector_function(mode="simt")',
+            recursion_label='helper @pl.vector_function(mode="simt")',
+            role="SIMT function" if launchable else "SIMT callee",
+            func_type=func_type,
+            void_return_only=launchable,
+            void_return_context='@pl.vector_function(mode="simt", max_threads=...)',
+        )
+        _validate_simt_parameters(
+            parsed, "SIMT function" if launchable else "SIMT helper", entry_type=self._simt_entry_type
+        )
+        if launchable:
+            result = ir.Function(
+                parsed.name,
+                list(parsed.params),
+                list(parsed.return_types),
+                parsed.body,
+                parsed.span,
+                func_type,
+                parsed.entry,
+                {"max_threads": max_threads},
+            )
+        else:
+            result = parsed
+        self._register_vf_external(result, span)
+        self.vf_func_cache[(id(fn), func_type, ())] = result
+        return result
+
+    def _instantiate_vf_body(
+        self,
+        local_name: str,
+        fn: Callable,
+        args: list[ir.Expr],
+        span,
+        *,
+        decorator_label: str,
+        recursion_label: str,
+        role: str,
+        func_type: ir.FunctionType,
+        void_return_only: bool,
+        void_return_context: str,
+    ):
+        """Shared instantiation core for SIMT/SIMD VF templates.
+
+        Checks recursion, retrieves the template source, validates the
+        parameter list, and parses the body into a standalone function
+        prototype. Returns ``(parsed, params)``: ``parsed`` is the prototype
+        (params/return types/body) and ``params`` the AST parameter list.
+        """
+        from ._ast_parser import ASTParser
+
+        if id(fn) in self.vf_call_stack:
             raise NotSupported(
-                f'Recursive helper @pl.vector_function(mode="simt") call involving {fn.__name__!r} is not supported',
+                f"Recursive {recursion_label} call involving {fn.__name__!r} is not supported",
                 span=span,
             )
 
@@ -1207,7 +1001,7 @@ class CallParserMixin:
             local_name,
             fn,
             span,
-            '@pl.vector_function(mode="simt")',
+            decorator_label,
         )
         func_args = func_def.args
         if (
@@ -1219,20 +1013,23 @@ class CallParserMixin:
             or func_args.kw_defaults
         ):
             raise NotSupported(
-                f"SIMT function '{fn.__name__}' only supports required positional parameters",
+                f"{role} '{fn.__name__}' only supports required positional parameters",
                 span=span,
             )
         params = list(func_args.args)
         if len(args) != len(params):
-            role = "SIMT function" if launchable else "SIMT callee"
             raise InvalidVal(
                 f"{role} '{fn.__name__}' expects {len(params)} argument(s), got {len(args)}",
                 span=span,
                 parser_retry=True,
             )
 
-        func_type = ir.FunctionType.SimtVF if launchable else ir.FunctionType.SimtCallee
-        role = "SIMT function" if launchable else "SIMT helper"
+        const_param_values = None
+        if func_type in (ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee):
+            const_param_values = {
+                param.arg: arg for param, arg in zip(params, args) if _is_const_arg(arg)
+            } or None
+
         parser = ASTParser(
             source_file,
             source_lines,
@@ -1243,68 +1040,30 @@ class CallParserMixin:
             debug_info=self.debug_info,
             tilingkey_consts=self._tilingkey_consts,
             datatype_consts=self._datatype_consts,
-            void_return_only=launchable,
-            void_return_context='@pl.vector_function(mode="simt", max_threads=...)',
+            void_return_only=void_return_only,
+            void_return_context=void_return_context,
             allow_early_return=True,
         )
         parser.external_funcs = self.external_funcs
-        parser.simt_func_cache = self.simt_func_cache
-        parser.simt_call_stack = self.simt_call_stack
+        parser.vf_func_cache = self.vf_func_cache
+        parser.vf_call_stack = self.vf_call_stack
         parser._simt_entry_type = self._simt_entry_type
 
-        self.simt_call_stack.append(id(fn))
+        self.vf_call_stack.append(id(fn))
         try:
             parsed = parser.parse_function(
                 func_def,
                 func_type=func_type,
                 callsite_param_types={param.arg: actual.type for param, actual in zip(params, args)},
+                const_param_values=const_param_values,
             )
-            _validate_simt_parameters(parsed, role, entry_type=self._simt_entry_type)
-            if launchable:
-                result = ir.Function(
-                    parsed.name,
-                    list(parsed.params),
-                    list(parsed.return_types),
-                    parsed.body,
-                    parsed.span,
-                    func_type,
-                    parsed.entry,
-                    {"max_threads": max_threads},
-                )
-            else:
-                result = parsed
-            self._register_simt_external(result, span)
-            self.simt_func_cache[id(fn)] = result
         finally:
-            self.simt_call_stack.pop()
+            self.vf_call_stack.pop()
 
-        return result
+        return parsed, params
 
-    def _validate_simt_function_arguments(
-        self,
-        callee: ir.Function,
-        args: list[ir.Expr],
-        arg_nodes: list[ast.expr],
-        span,
-    ) -> None:
-        """Validate call-site arguments against an instantiated SIMT signature."""
-        if len(args) != len(callee.params):
-            raise InvalidVal(
-                f"SIMT function '{callee.name}' expects {len(callee.params)} argument(s), got {len(args)}",
-                span=span,
-                parser_retry=True,
-            )
-        for param, actual, actual_node in zip(callee.params, args, arg_nodes):
-            _check_type_compatible(
-                param.type,
-                actual.type,
-                what="SIMT parameter",
-                name=param.name,
-                span=self.span_tracker.get_span(actual_node),
-            )
-
-    def _register_simt_external(self, func: ir.Function, span) -> None:
-        """Register one instantiated SIMT function in the enclosing Program."""
+    def _register_vf_external(self, func: ir.Function, span) -> None:
+        """Register one instantiated SIMT/SIMD VF function in the enclosing Program."""
         if func.name in self.external_funcs and self.external_funcs[func.name] is not func:
             raise InvalidOperation(
                 f"Conflicting external functions with name '{func.name}'",
@@ -1312,23 +1071,148 @@ class CallParserMixin:
             )
         self.external_funcs[func.name] = func
 
+    def _validate_vf_function_arguments(
+        self,
+        callee: ir.Function,
+        args: list[ir.Expr],
+        arg_nodes: list[ast.expr],
+        span,
+        *,
+        kind: str,
+    ) -> None:
+        """Validate call-site arguments against an instantiated VF signature."""
+        if len(args) != len(callee.params):
+            raise InvalidVal(
+                f"{kind} '{callee.name}' expects {len(callee.params)} argument(s), got {len(args)}",
+                span=span,
+                parser_retry=True,
+            )
+        for param, actual, actual_node in zip(callee.params, args, arg_nodes):
+            _check_type_compatible(
+                param.type,
+                actual.type,
+                what=f"{kind} parameter",
+                name=param.name,
+                span=self.span_tracker.get_span(actual_node),
+            )
+
+    def _parse_simd_template_call(
+        self,
+        local_name: str,
+        fn: Callable,
+        call: ast.Call,
+        func_type: ir.FunctionType,
+    ) -> tuple[ir.Function, list[ir.Expr], ir.Span]:
+        """Shared body of a SIMD VF call: parse args, instantiate the callee as
+        *func_type* and validate the runtime arguments. The caller assembles the
+        call form that matches its own function type: ``_parse_simd_kernel_call``
+        builds the registered "simd.call" op (the SIMD analog of "simt.launch"),
+        ``_parse_simd_inbody_call`` a direct named call (like SIMT callee calls).
+        """
+        span = self.span_tracker.get_span(call)
+        if call.keywords or any(isinstance(arg, ast.Starred) for arg in call.args):
+            raise InvalidArgument(
+                '@pl.vector_function calls accept positional arguments only',
+                span=span,
+            )
+        args = [self.parse_expression(arg) for arg in call.args]
+
+        callee = self._instantiate_simd_function(local_name, fn, args, span, func_type)
+        runtime_args = [a for a in args if not _is_const_arg(a)]
+        runtime_arg_nodes = [n for n, a in zip(call.args, args) if not _is_const_arg(a)]
+        self._validate_vf_function_arguments(callee, runtime_args, runtime_arg_nodes, span, kind="VF function")
+        return callee, runtime_args, span
+
+    def _parse_simd_kernel_call(self, local_name: str, fn: Callable, call: ast.Call) -> ir.Expr:
+        """Kernel-side SIMD VF call: the registered "simd.call" op carries the
+        callee name as a kwarg. Kernel-side SIMD functions are always void, so
+        the call is assembled directly like simt.launch (no return type to
+        attach)."""
+        callee, runtime_args, span = self._parse_simd_template_call(
+            local_name, fn, call, ir.FunctionType.SimdVF
+        )
+        return ir.create_op_call("simd.call", runtime_args, {"callee": callee.name}, span)
+
+    def _parse_simd_inbody_call(self, local_name: str, fn: Callable, call: ast.Call) -> ir.Expr:
+        """In-body SIMD VF call: a direct named call (like SIMT callee calls),
+        carrying the callee's return types."""
+        callee, runtime_args, span = self._parse_simd_template_call(
+            local_name, fn, call, ir.FunctionType.SimdCallee
+        )
+        return self._make_call_with_return_type(ir.Op(callee.name), runtime_args, callee.return_types, span)
+
+    def _instantiate_simd_function(
+        self,
+        local_name: str,
+        fn: Callable,
+        args: list[ir.Expr],
+        span,
+        func_type: ir.FunctionType,
+    ) -> ir.Function:
+        """Parse a SIMD vector-function once per callable/type/constant specialization.
+
+        Later call sites reuse the cached function and are validated against its
+        parameter types by ``_parse_simd_template_call`` (the same contract SIMT
+        follows).
+        """
+        const_flags = [_is_const_arg(arg) for arg in args]
+        const_spec = tuple(
+            (idx, type(arg).__name__, arg.value)
+            for idx, arg in enumerate(args)
+            if const_flags[idx]
+        )
+        cache_key = (id(fn), func_type, const_spec)
+        cached = self.vf_func_cache.get(cache_key)
+        if cached is not None:
+            self._register_vf_external(cached, span)
+            return cached
+
+        parsed, params = self._instantiate_vf_body(
+            local_name,
+            fn,
+            args,
+            span,
+            decorator_label='@pl.vector_function',
+            recursion_label='@pl.vector_function',
+            role="VF function" if func_type == ir.FunctionType.SimdVF else "VF callee",
+            func_type=func_type,
+            void_return_only=True,
+            void_return_context='@pl.vector_function',
+        )
+        specialized_name = parsed.name
+        if const_spec:
+            suffix = "_".join(
+                f"{param.arg}_{_const_name_value(arg)}"
+                for param, arg in zip(params, args)
+                if _is_const_arg(arg)
+            )
+            specialized_name = f"{parsed.name}__{suffix}"
+        result = ir.Function(
+            specialized_name,
+            list(parsed.params),
+            list(parsed.return_types),
+            parsed.body,
+            parsed.span,
+            func_type,
+            parsed.entry,
+        )
+        self._register_vf_external(result, span)
+        self.vf_func_cache[cache_key] = result
+        return result
+
     def _inline_template(self, func_name: str, fn: Callable, span) -> _InlineFunctionTemplate:
         template = self.inline_func_cache.get(id(fn))
         if template is not None:
             return template
-        from .decorator import is_vector_function
-
-        is_vf = is_vector_function(fn)
         source_info = self._retrieve_function_source(
             func_name,
             fn,
             span,
-            "@pl.vector_function" if is_vf else "an annotated Python helper",
+            "an annotated Python helper",
         )
         template = _InlineFunctionTemplate(
             func_def=source_info[4],
             closure_vars=self._build_function_closure(fn),
-            is_vector_function=is_vf,
             span_tracker=SpanTracker(source_info[0], source_info[1], source_info[2], source_info[3]),
         )
         self.inline_func_cache[id(fn)] = template
@@ -1386,9 +1270,12 @@ class CallParserMixin:
         """Expand a Python helper body directly into the caller's IR builder.
 
         For SIMT functions, routes to ``_parse_simt_template_call`` instead of
-        inlining. For regular callables, expands the body directly.
+        inlining. For SIMD VF functions, routes by caller function type to
+        ``_parse_simd_kernel_call`` / ``_parse_simd_inbody_call`` to emit a
+        standalone ``__simd_vf__``/``__simd_callee__`` function.
+        For regular callables, expands the body directly.
         """
-        from .decorator import get_simt_max_threads, is_simt_function
+        from .decorator import get_simt_max_threads, is_simt_function, is_vector_function
 
         if is_simt_function(fn):
             if self._current_func_type in (
@@ -1407,13 +1294,22 @@ class CallParserMixin:
                 span=self.span_tracker.get_span(call),
             )
 
+        if is_vector_function(fn):
+            if self._current_func_type in (ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee):
+                return self._parse_simd_inbody_call(func_name, fn, call)
+            return self._parse_simd_kernel_call(func_name, fn, call)
+
         span = self.span_tracker.get_span(call)
-        template = self._inline_template(func_name, fn, span)
-        if self.inline_vf_depth != 0 and not template.is_vector_function:
+        in_simd_vf = self._current_func_type in (ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee)
+        if in_simd_vf:
+            # VF functions route to _parse_simd_inbody_call above, so any
+            # helper reaching the inline path inside a VF body is a plain
+            # Python function, which cannot be spliced into a VF body.
             raise InvalidOperation(
                 f"Vector function cannot call non-vector inline function '{func_name}'",
                 span=span,
             )
+        template = self._inline_template(func_name, fn, span)
         if id(fn) in self.inline_call_stack:
             raise InvalidOperation(
                 f"Recursive inline function call detected for '{func_name}'",
@@ -1425,12 +1321,14 @@ class CallParserMixin:
         try:
             bound = self._bind_inline_arguments(func_name, template.func_def, call, span)
             params = self._inline_param_list(template.func_def)
+            param_names = {param.arg for param in params}
+            assigned_names = self._inline_assigned_names(template.func_def)
             inline_id = self.inline_counter
             self.inline_counter += 1
             prefix = f"__inline_{inline_id}_"
             return_val_name = f"{prefix}return_val"
             returned_name = f"{prefix}returned"
-            local_names = self._inline_local_names(template.func_def, params)
+            local_names = param_names | assigned_names
             # The helper may itself use `return_val` or `returned`. Renaming
             # those locals must not capture the synthetic return value/flag.
             used_names = {f"{prefix}{name}" for name in local_names}
@@ -1439,20 +1337,16 @@ class CallParserMixin:
                 return_val_name += "_"
             while returned_name in used_names:
                 returned_name += "_"
-            reassigned_params = self._inline_reassigned_params(template.func_def, params)
+            # A parameter the helper rebinds must first become a real local IR
+            # value; binding it directly to the caller expression leaves no
+            # version for SSA to merge when the assignment is nested in control flow.
+            reassigned_params = param_names & assigned_names
             func_def = copy.deepcopy(template.func_def)
             renamer = _InlineLocalRenamer(local_names, prefix)
             body = [renamer.visit(stmt) for stmt in func_def.body if not self._is_docstring(stmt)]
-            lower_inline_return = not template.is_vector_function
-            if lower_inline_return:
-                body = _InlineReturnLowerer(return_val_name, returned_name).lower(body, func_def)
-            else:
-                ast.fix_missing_locations(func_def)
+            body = _InlineReturnLowerer(return_val_name, returned_name).lower(body, func_def)
 
             self.inline_call_stack.append(id(fn))
-            is_outermost_vf = template.is_vector_function and self.inline_vf_depth == 0
-            if template.is_vector_function:
-                self.inline_vf_depth += 1
             self.scope_manager.enter_scope("inline")
 
             old_span_tracker = self.span_tracker
@@ -1474,111 +1368,17 @@ class CallParserMixin:
                     self.scope_manager.define_var(renamed_name, value, allow_redef=True)
                     self._update_var_envs(value, expr)
 
-                if lower_inline_return:
-                    undefined_return = self.builder.var(return_val_name, ir.NoneType.get(), span)
-                    self._mark_empty_control_flow_value(undefined_return)
-                    self.scope_manager.define_var(
-                        return_val_name, undefined_return, allow_redef=True, span=span
-                    )
+                undefined_return = self.builder.var(return_val_name, ir.NoneType.get(), span)
+                self._mark_empty_control_flow_value(undefined_return)
+                self.scope_manager.define_var(
+                    return_val_name, undefined_return, allow_redef=True, span=span
+                )
 
-                if is_outermost_vf:
-                    with self.builder.section(ir.SectionKind.VF, span):
-                        # Preserve caller values before the body can rebind its parameters.
-                        tile_args = [
-                            expr for expr, _ in bound.values()
-                            if isinstance(expr, ir.Expr) and isinstance(expr.type, ir.TileType)
-                        ]
-                        self.builder.eval_stmt(ir.create_op_call("system.vf_scope_args", tile_args, {}, span), span)
-                        self.scope_manager.enter_scope("section")
-                        try:
-                            self._parse_statement_list(body)
-                        finally:
-                            self.scope_manager.exit_scope(leak_vars=False)
-                else:
-                    self._parse_statement_list(body)
-                if template.is_vector_function:
-                    return None
+                self._parse_statement_list(body)
                 return self.lookup_expr_by_name(return_val_name)
             finally:
                 self.span_tracker = old_span_tracker
                 self.scope_manager.exit_scope(leak_vars=False)
                 self.inline_call_stack.pop()
-                if template.is_vector_function:
-                    self.inline_vf_depth -= 1
         finally:
             self.expr_evaluator.closure_vars = old_closure
-
-    # -------------------------------------------------------------------------
-    # Keyword argument resolution helpers
-    # -------------------------------------------------------------------------
-
-    def _parse_vf_op(self, op_name: str, call: ast.Call) -> ir.Expr:
-        """Parse a VF API operation call: vf.{op_name}(...).
-
-        VF ops directly emit VF instructions. Arguments and kwargs are passed
-        through to ir.create_op_call with the "vf." prefix.
-
-        Note: auto_mutex is NOT applied per-vf-op here, because bisheng requires
-        VEC_SCOPE to contain only VF instructions (get_buf/rls_buf are plain CCE
-        intrinsics and cause "Do not know how to expand this operator's operand"
-        errors if emitted inside the scope). InsertSync uses system.vf_scope_args
-        to insert synchronization around the whole VF section.
-
-        Args:
-            op_name: Name of the VF operation (without ``vf.`` prefix).
-            call: Call AST node.
-
-        Returns:
-            IR expression for the VF op call.
-        """
-        span = self.span_tracker.get_span(call)
-        self._check_declared_params(f"vf.{op_name}", call, span)
-
-        # Reject the legacy statement form `vf.xxx(dst, ...)` for ops that produce
-        # a result. Only store/side-effect ops (dst_count == 0) may be called as a
-        # bare statement; all others must use the assignment form `dst = vf.xxx(...)`.
-        # (The assignment form is handled in _assignment_parser, which never routes
-        # through here — so reaching this point means it's a statement-form call.)
-        dst_count = self._VF_OP_DST_COUNT.get(op_name)
-        if dst_count is not None and dst_count > 0 and op_name != "bit_cast":
-            if dst_count == 1:
-                correct = f"dst = vf.{op_name}(...)"
-            else:
-                dst_list = ", ".join(f"dst{i}" for i in range(dst_count))
-                correct = f"{dst_list} = vf.{op_name}(...)"
-            raise InvalidVal(
-                f"vf.{op_name} produces a result and must use the assignment form. "
-                f"The statement form vf.{op_name}(dst, ...) is no longer supported.",
-                span=span,
-                hint=f"Use: {correct}",
-            )
-
-        # Block direct use of vf.reg_tensor / vf.mask_reg — registers are now
-        # declared implicitly by the assignment form (dst = vf.xxx(...)); users
-        # cannot call them directly.
-        if op_name in ("reg_tensor", "mask_reg"):
-            raise InvalidOperation(
-                f"vf.{op_name} cannot be called directly. VF registers are declared "
-                "automatically by the assignment form.",
-                span=span,
-                hint="Use: dst = vf.load_align(...)  # or any VF compute op",
-            )
-
-        args = [self.parse_expression(arg) for arg in call.args]
-        kwargs = {keyword.arg: self.parse_expression(keyword.value) for keyword in call.keywords}
-        argument_spans = self.span_tracker.argument_spans(call)
-        self._check_declared_types(
-            f"vf.{op_name}", args, kwargs, span, argument_spans,
-        )
-        with current_span(span, argument_spans):
-            kwargs = {
-                key: self.require_const_value(
-                    value, key, expects="attribute", hint="VF attributes must be known at compile time.",
-                )
-                for key, value in kwargs.items()
-            }
-
-        # No scalar-range check here: every op that takes a scalar value operand produces a result,
-        # so the guard above has already rejected its statement form. The assignment form is checked
-        # in _parse_vf_assignment, which is the only path those ops can reach.
-        return ir.create_op_call(f"vf.{op_name}", args, kwargs, span)

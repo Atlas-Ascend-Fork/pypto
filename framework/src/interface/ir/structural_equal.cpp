@@ -688,6 +688,20 @@ bool StructuralEqualImpl<AssertMode>::EqualType(const TypePtr& lhs, const TypePt
                             " != ", rhsScalar->dtype_.ToString(), ")");
         }
         return true;
+    } else if (auto lhsReg = As<RegType>(lhs)) {
+        auto rhsReg = As<RegType>(rhs);
+        if (!rhsReg) {
+            return IRAssert({}, "Type cast failed for RegType");
+        }
+        if (lhsReg->regtype_ != rhsReg->regtype_) {
+            return IRAssert({}, "RegType regtype mismatch (", static_cast<unsigned>(lhsReg->regtype_),
+                            " != ", static_cast<unsigned>(rhsReg->regtype_), ")");
+        }
+        if (lhsReg->regtype_ != RegKind::PredReg && lhsReg->dtype_ != rhsReg->dtype_) {
+            return IRAssert({}, "RegType dtype mismatch (", lhsReg->dtype_.ToString(),
+                            " != ", rhsReg->dtype_.ToString(), ")");
+        }
+        return true;
     } else if (auto lhsTensor = As<TensorType>(lhs)) {
         auto rhsTensor = As<TensorType>(rhs);
         if (!rhsTensor) {

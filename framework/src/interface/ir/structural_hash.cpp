@@ -359,6 +359,11 @@ StructuralHasher::ResultType StructuralHasher::HashType(const TypePtr& type)
             dtype = CanonicalizeForSyntaxScalarDtype(dtype);
         }
         h = HashCombine(h, static_cast<ResultType>(std::hash<uint8_t>{}(dtype.Code())));
+    } else if (auto regType = As<RegType>(type)) {
+        h = HashCombine(h, static_cast<ResultType>(std::hash<uint8_t>{}(static_cast<uint8_t>(regType->regtype_))));
+        if (regType->regtype_ != RegKind::PredReg) {
+            h = HashCombine(h, static_cast<ResultType>(std::hash<uint8_t>{}(regType->dtype_.Code())));
+        }
     } else if (auto tensorType = As<TensorType>(type)) {
         h = HashCombine(h, static_cast<ResultType>(std::hash<uint8_t>{}(tensorType->dtype_.Code())));
         h = HashCombine(h, static_cast<ResultType>(tensorType->shape_.size()));
