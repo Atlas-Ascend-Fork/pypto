@@ -686,6 +686,7 @@ class JitCallableWrapper:
                     get_torch_npu()
                     pypto_impl.LaunchKernelTorch(self, _current_stream(), torch_tensors, tensor_defs)
             else:
+                self._runtime_options["device_sched_parallelism"] = 1
                 pto_tensors = self._convert_tensors_with_metadata(torch_tensors, tensor_defs)
                 with pypto.options("jit_scope"):
                     self._set_config_option()
