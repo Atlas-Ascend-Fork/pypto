@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 #include "device_exception_dump.h"
+#include "machine/runtime/runner/aicore_launch_args.h"
 #include "tilefwk/pypto_fwk_log.h"
 #include "adapter/api/runtime_api.h"
 #include "interface/machine/device/tilefwk/aikernel_data.h"
@@ -37,8 +38,6 @@
 using namespace npu::tile_fwk;
 namespace npu::tile_fwk::dynamic {
 void FillExceptionKernelDisplayName(const char* kernelName, AdxExceptionDumpInfo* exceptionDumpInfo);
-
-constexpr int32_t MAX_AICPU_ARG_NUM = 7;
 
 static bool PackAndDumpBundle(const std::vector<uint8_t>& kernelBinary, const DyndevFunctionAttribute* dynAttr,
                               const char* kernelName, const char* suffix)
@@ -208,16 +207,17 @@ int32_t GetDeviceExceptionDumpInfo(RtAicoreExDetailInfo& aicoreExceptionInfo, Ad
         return static_cast<int32_t>(npu::tile_fwk::MachineError::DUMP_DFX);
     }
 
-    auto aicoreArgsize = sizeof(void*) * MAX_AICPU_ARG_NUM;
-    // Check it maybe pto
-    if (argsSize != aicoreArgsize) {
-        MACHINE_LOGW("GetDeviceExceptionDumpInfo failed: argsize not from pto info");
+    const size_t headerBytes = AicoreLaunchSlotsBytes();
+    // Launch args contain a fixed header followed by an optional IO address arena.
+    if (argsSize < headerBytes) {
+        MACHINE_LOGW("Skip exception args: argsSize=%u, required headerBytes=%zu", argsSize, headerBytes);
         return 0;
     }
 
-    // memcpy D2H
-    std::vector<void*> kernelArg(MAX_AICPU_ARG_NUM, nullptr);
-    int rc = RuntimeMemcpyDirect(kernelArg.data(), argsSize, kernelArgAddr, argsSize, RtMemcpyKind::DEVICE_TO_HOST);
+    // Only parse the fixed header; preserve the full argsSize for the exception dump below.
+    std::vector<void*> kernelArg(kAicoreLaunchArgSlots, nullptr);
+    int rc = RuntimeMemcpyDirect(kernelArg.data(), headerBytes, kernelArgAddr, headerBytes,
+                                 RtMemcpyKind::DEVICE_TO_HOST);
     if (rc != 0) {
         MACHINE_LOGW("GetDeviceExceptionDumpInfo D2H memcpy failed: ret=%d", rc);
         return rc;

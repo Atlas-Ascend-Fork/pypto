@@ -195,6 +195,55 @@ TEST_F(DeviceExceptionDumpTest, TestAicoreExceptionWithValidTensors)
     EXPECT_EQ(dumpInfo.extraTensorNum, 2);
 }
 
+TEST_F(DeviceExceptionDumpTest, TestAicoreExceptionWithExtendedLaunchArgs)
+{
+    char kernelName[] = "PyPTO_ExtendedLaunchArgs";
+    int64_t inputOutputInfo[2] = {2, 0};
+    std::vector<uint8_t> tensorBuf0(32, 0xAB);
+    std::vector<uint8_t> tensorBuf1(16, 0xCD);
+    DevTensorData tensorData[2] = {};
+    tensorData[0].address = reinterpret_cast<uint64_t>(tensorBuf0.data());
+    tensorData[0].dataType = static_cast<int32_t>(DataType::DT_FP32);
+    tensorData[0].shape.dim[0] = 2;
+    tensorData[0].shape.dim[1] = 4;
+    tensorData[0].shape.dimSize = 2;
+    tensorData[1].address = reinterpret_cast<uint64_t>(tensorBuf1.data());
+    tensorData[1].dataType = static_cast<int32_t>(DataType::DT_FP32);
+    tensorData[1].shape.dim[0] = 4;
+    tensorData[1].shape.dimSize = 1;
+
+    // Cover the fixed header, a different arena size, and the reported 152-byte launch args.
+    for (size_t extraSlots : {0U, 3U, 12U}) {
+        SCOPED_TRACE(extraSlots);
+        std::vector<void*> kernelArg(MAX_AICPU_ARG_NUM + extraSlots, nullptr);
+        kernelArg[KERNEL_NAME_IDX] = kernelName;
+        kernelArg[INPUT_OUTPUT_IDX] = inputOutputInfo;
+        kernelArg[TENSOR_DATA_IDX] = tensorData;
+        RtExceptionInfo exceptionInfo = {};
+        AdxExceptionDumpInfo dumpInfo = {};
+        uint32_t realSize = 0;
+        AdxExceptionDumpMode mode = AdxExceptionDumpMode::ADX_DUMP_MODE_NONE;
+        auto& args = exceptionInfo.expandInfo.u.aicoreInfo.exceptionArgs;
+        exceptionInfo.expandInfo.type = RtExceptionExpandType::AICORE;
+        args.argAddr = kernelArg.data();
+        args.argsize = static_cast<uint32_t>(kernelArg.size() * sizeof(void*));
+
+        ASSERT_EQ(ExceptionDumpCallBack(&exceptionInfo, &dumpInfo, 1, &realSize, &mode), 0);
+        EXPECT_EQ(mode, AdxExceptionDumpMode::ADX_DUMP_MODE_OVERWRITE);
+        EXPECT_EQ(realSize, 1);
+        EXPECT_EQ(dumpInfo.argAddr, args.argAddr);
+        EXPECT_EQ(dumpInfo.argssize, args.argsize);
+        EXPECT_EQ(dumpInfo.extraTensorNum, 2);
+        EXPECT_STREQ(dumpInfo.kernelDisplayName, kernelName);
+        for (size_t i = 0; i < 2; i++) {
+            EXPECT_EQ(dumpInfo.tensorInfo[i].tensorAddr, reinterpret_cast<int64_t*>(tensorData[i].address));
+            EXPECT_EQ(dumpInfo.tensorInfo[i].tensorSize, i == 0 ? tensorBuf0.size() : tensorBuf1.size());
+        }
+        EXPECT_EQ(dumpInfo.tensorInfo[0].shape, (std::vector<int64_t>{2, 4}));
+        EXPECT_EQ(dumpInfo.tensorInfo[1].shape, (std::vector<int64_t>{4}));
+    }
+}
+
 TEST_F(DeviceExceptionDumpTest, TestAicoreExceptionWithZeroAddressTensor)
 {
     char kernelName[] = "PyPTO_ZeroAddrKernel";
