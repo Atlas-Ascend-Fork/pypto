@@ -350,6 +350,48 @@ TEST_F(RemoveRedundantReshapeTest, TestViewReshapeReorderWithMatmul)
     EXPECT_EQ(matmulCount, 1) << "MatMul should be preserved";
 }
 
+TEST_F(RemoveRedundantReshapeTest, TestCascadedViewReshapeCastReorder)
+{
+    Function function(Program::GetInstance(), "CascadedViewReshapeCast", "CascadedViewReshapeCast", nullptr);
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, {8, 128}, CreateTestConstIntVector({8, 128}));
+    auto first = IRBuilder().CreateTensorVar(DT_FP32, {4, 128}, CreateTestConstIntVector({4, 128}));
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, {1, 128}, CreateTestConstIntVector({1, 128}));
+    auto reshaped = IRBuilder().CreateTensorVar(DT_FP32, {128}, CreateTestConstIntVector({128}));
+    auto castOutput = IRBuilder().CreateTensorVar(DT_FP16, {128}, CreateTestConstIntVector({128}));
+    // A separate MatMul satisfies the function gate without consuming the reshape output.
+    auto lhs = IRBuilder().CreateTensorVar(DT_FP32, {4, 4}, CreateTestConstIntVector({4, 4}));
+    auto rhs = IRBuilder().CreateTensorVar(DT_FP32, {4, 4}, CreateTestConstIntVector({4, 4}));
+    auto result = IRBuilder().CreateTensorVar(DT_FP32, {4, 4}, CreateTestConstIntVector({4, 4}));
+    auto& firstView = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_VIEW, {input}, {first});
+    firstView.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{2, 0}));
+    auto& secondView = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_VIEW, {first}, {middle});
+    secondView.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{1, 0}));
+    auto& reshape = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_RESHAPE, {middle}, {reshaped});
+    auto& cast = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_CAST, {reshaped}, {castOutput});
+    IRBuilder().CreateTensorOpStmt(function, Opcode::OP_A_MUL_B, {lhs, rhs}, {result});
+    const int reshapeMagic = reshape.GetOpMagic();
+    function.inCasts_ = {input, lhs, rhs};
+    function.outCasts_ = {castOutput, result};
+
+    ViewReshapeAssembleReorderUtils utils;
+    ASSERT_EQ(utils.Process(function), SUCCESS);
+    auto ops = function.Operations();
+    EXPECT_TRUE(IsOpRemoved(ops, reshapeMagic));
+    auto* newReshape = FindOpByOpcode(ops, Opcode::OP_RESHAPE);
+    ASSERT_NE(newReshape, nullptr);
+    EXPECT_EQ(newReshape->GetIOperands().front(), input);
+    EXPECT_EQ(newReshape->GetOOperands().front()->GetShape(), Shape({1024}));
+    auto* newView = FindOpByOpcode(ops, Opcode::OP_VIEW);
+    ASSERT_NE(newView, nullptr);
+    EXPECT_EQ(newView->GetIOperands().front(), newReshape->GetOOperands().front());
+    EXPECT_EQ(newView->GetOOperands().front(), reshaped);
+    auto attr = std::dynamic_pointer_cast<ViewOpAttribute>(newView->GetOpAttribute());
+    ASSERT_NE(attr, nullptr);
+    EXPECT_EQ(attr->GetFromOffset(), std::vector<int64_t>({384}));
+    EXPECT_EQ(cast.GetIOperands().front(), reshaped);
+    EXPECT_EQ(cast.GetOOperands().front(), castOutput);
+}
+
 TEST_F(RemoveRedundantReshapeTest, TestViewReshapeReorderMixPatternWithMatmul)
 {
     Function function(Program::GetInstance(), "TestViewReshapeReorderMix", "TestViewReshapeReorderMix", nullptr);
@@ -741,6 +783,41 @@ TEST_F(RemoveRedundantReshapeTest, TestReshapeAssembleReorderWithConcreteDynVali
         }
     }
     EXPECT_EQ(matmulCount, 1);
+}
+
+/*
+ * Reshape->Assemble whose input is produced by a kirin950 macro instruction (EPILOGUE)
+ * MatMul, e.g. OP_A_MUL_BT_EPILOGUE.
+ */
+TEST_F(RemoveRedundantReshapeTest, TestReshapeAssembleRecordWithEpilogueMatmulProducer)
+{
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "EpilogueReshapeAssemble",
+                                                      "EpilogueReshapeAssemble", nullptr);
+    ASSERT_NE(currFunctionPtr, nullptr);
+
+    std::vector<int64_t> matmulShape = {256};
+    std::vector<int64_t> operandShape = {16, 16};
+    std::vector<int64_t> middleShape = {16, 16};
+    std::vector<int64_t> outputShape = {16, 16};
+    auto lhs = IRBuilder().CreateTensorVar(DT_FP32, operandShape, CreateTestConstIntVector(operandShape));
+    auto rhs = IRBuilder().CreateTensorVar(DT_FP32, operandShape, CreateTestConstIntVector(operandShape));
+    auto matmulOut = IRBuilder().CreateTensorVar(DT_FP32, matmulShape, CreateTestConstIntVector(matmulShape));
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, middleShape, CreateTestConstIntVector(middleShape));
+    auto output = IRBuilder().CreateTensorVar(DT_FP32, outputShape, CreateTestConstIntVector(outputShape));
+
+    IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_A_MUL_BT_EPILOGUE, {lhs, rhs}, {matmulOut});
+    auto& reshapeOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_RESHAPE, {matmulOut}, {middle});
+    auto& assembleOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_ASSEMBLE, {middle}, {output});
+    assembleOp.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+
+    currFunctionPtr->inCasts_ = {lhs, rhs};
+    currFunctionPtr->outCasts_ = {output};
+
+    ViewReshapeAssembleReorderUtils utils;
+    EXPECT_EQ(utils.TryRecordReshapeAssemble(*currFunctionPtr, reshapeOp), SUCCESS);
+    ASSERT_EQ(utils.reshapeAssembleRecords_.size(), 1U)
+        << "Reshape->Assemble reorder should be recorded for the EPILOGUE MatMul producer";
+    EXPECT_EQ(utils.reshapeAssembleRecords_.front().input, matmulOut);
 }
 
 TEST_F(RemoveRedundantReshapeTest, TestInferInputDynRawShapeFromOutputRejectsNullArgs)

@@ -94,7 +94,7 @@ bool HasNegativeDynRawShape(const LogicalTensorPtr& tensor, const SymbolicShape&
            HasNegativeDynDim(rawTensor->GetDynRawShape());
 }
 
-bool HasTargetMatmulOp(Function& function)
+bool HasTargetMatmulOp(const Operation& op)
 {
     static const std::unordered_set<Opcode> kTargetMatmulOps = {
         Opcode::OP_A_MUL_B, Opcode::OP_A_MULACC_B,
@@ -102,14 +102,13 @@ bool HasTargetMatmulOp(Function& function)
         // view/reshape/assemble 重排，batch（3D/4D）matmul 与其它平台行为不一致。
         Opcode::OP_A_MUL_B_EPILOGUE, Opcode::OP_A_MULACC_B_EPILOGUE, Opcode::OP_A_MUL_BT_EPILOGUE,
         Opcode::OP_A_MULACC_BT_EPILOGUE, Opcode::OP_AT_MUL_B_EPILOGUE, Opcode::OP_AT_MUL_BT_EPILOGUE};
-    auto opList = function.Operations().DuplicatedOpList();
-    return std::any_of(opList.begin(), opList.end(),
-                       [](Operation* op) { return kTargetMatmulOps.count(op->GetOpcode()) > 0; });
+    return kTargetMatmulOps.count(op.GetOpcode()) > 0;
 }
 
-bool IsTargetMatmulOp(const Operation& op)
+bool HasTargetMatmulOp(Function& function)
 {
-    return op.GetOpcode() == Opcode::OP_A_MULACC_B || op.GetOpcode() == Opcode::OP_A_MUL_B;
+    auto opList = function.Operations().DuplicatedOpList();
+    return std::any_of(opList.begin(), opList.end(), [](Operation* op) { return HasTargetMatmulOp(*op); });
 }
 
 bool CanReorderFunction(Function& function)
@@ -155,32 +154,10 @@ Operation* GetSingleConsumer(const LogicalTensorPtr& tensor)
     return *tensor->GetConsumers().begin();
 }
 
-bool HasMatmulConsumerThroughView(const LogicalTensorPtr& tensor)
-{
-    if (tensor == nullptr) {
-        return false;
-    }
-    return std::any_of(tensor->GetConsumers().begin(), tensor->GetConsumers().end(), [](Operation* consumer) {
-        if (consumer == nullptr) {
-            return false;
-        }
-        if (IsTargetMatmulOp(*consumer)) {
-            return true;
-        }
-        if (consumer->GetOpcode() != Opcode::OP_VIEW || !HasSingleInput(*consumer) || !HasSingleOutput(*consumer)) {
-            return false;
-        }
-        const auto& output = consumer->GetOOperands().front();
-        return output != nullptr &&
-               std::any_of(output->GetConsumers().begin(), output->GetConsumers().end(),
-                           [](Operation* matmul) { return matmul != nullptr && IsTargetMatmulOp(*matmul); });
-    });
-}
-
 bool IsMatmulOrAssembledMatmulOutput(const LogicalTensorPtr& tensor)
 {
     Operation* producer = GetSingleProducer(tensor);
-    if (producer != nullptr && IsTargetMatmulOp(*producer)) {
+    if (producer != nullptr && HasTargetMatmulOp(*producer)) {
         return true;
     }
     if (tensor == nullptr || tensor->GetProducers().empty()) {
@@ -191,7 +168,7 @@ bool IsMatmulOrAssembledMatmulOutput(const LogicalTensorPtr& tensor)
             return false;
         }
         Operation* matmul = GetSingleProducer(assemble->GetIOperands().front());
-        return matmul != nullptr && IsTargetMatmulOp(*matmul);
+        return matmul != nullptr && HasTargetMatmulOp(*matmul);
     });
 }
 
@@ -547,9 +524,6 @@ Status ViewReshapeAssembleReorderUtils::TryRecordViewReshape(Function& function,
         return SUCCESS;
     }
     auto& reshapeOp = *match.secondOp;
-    if (!HasMatmulConsumerThroughView(match.output)) {
-        return SUCCESS;
-    }
     auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(viewOp.GetOpAttribute());
     if (viewAttr == nullptr) {
         APASS_LOG_ERROR_F(Elements::Operation, "View op[%d] missing ViewOpAttribute.", viewOp.GetOpMagic());
