@@ -23,9 +23,9 @@
 
 ## 功能说明
 
-实现input 、mat2矩阵的矩阵乘运算，计算公式为：out = input @ mat2
+实现input、mat2矩阵的矩阵乘运算，计算公式为：out = input @ mat2
 
-- input 、mat2为源操作数，input为左矩阵；mat2为右矩阵。
+- input、mat2为源操作数，input为左矩阵；mat2为右矩阵。
 - out为目的操作数，存放矩阵乘结果的矩阵。
 
 ## 注意事项
