@@ -74,6 +74,22 @@ ir::ExprPtr MakeGetInputShapeDimExpr(const std::string& argName, int64_t dim)
                                           Builder().CreateConstInt(dim).Raw()});
 }
 
+ir::ExprPtr MakeGetInputDataExpr(const std::string& argName)
+{
+    return std::make_shared<RawSymbolicExpression>(
+        SymbolicOpcode::T_MOP_CALL,
+        std::vector<RawSymbolicScalarPtr>{SymNode("RUNTIME_GetInputData"), SymNode(argName), SymNode("RUNTIME_int32_t"),
+                                          Builder().CreateConstInt(0).Raw()});
+}
+
+ir::ExprPtr MakeGetTensorDataExpr(const std::string& argName)
+{
+    return std::make_shared<RawSymbolicExpression>(
+        SymbolicOpcode::T_MOP_CALL,
+        std::vector<RawSymbolicScalarPtr>{SymNode("RUNTIME_GetTensorDataInt32Dim1"), SymNode(argName),
+                                          Builder().CreateConstInt(0).Raw()});
+}
+
 struct DynFuncFixture {
     std::shared_ptr<Function> dynFunc;
     std::shared_ptr<DyndevFunctionAttribute> dynAttr;
@@ -434,6 +450,51 @@ TEST_F(TestSuite_IrBackend, InsertCacheStopForContrlFlow_AllCases)
     }
 }
 
+TEST_F(TestSuite_IrBackend, InsertCacheStopForIfCond_AllCases)
+{
+    // Null dyndev attribute: no crash, flags unchanged.
+    {
+        DynFuncFixture fixture;
+        fixture.dynFunc->SetDyndevAttribute(nullptr);
+        auto ifStmt = Builder().CreateIfStmt(MakeGetInputDataExpr("ARG_x"), Builder().CreateSeqStmts({}, Sp()),
+                                             std::nullopt, {}, Sp());
+        ValDependTensorMeta meta;
+        InsertCacheStopForIfCond(ifStmt.get(), fixture.dynFunc.get(), meta);
+        EXPECT_FALSE(meta.hasValueDepend);
+        EXPECT_FALSE(meta.disableCtrlFlowCache);
+    }
+    // Plain symbol cond: no value-depend flags.
+    {
+        DynFuncFixture fixture;
+        auto ifStmt = Builder().CreateIfStmt(MakeSymbolExpr("cond_var"), Builder().CreateSeqStmts({}, Sp()),
+                                             std::nullopt, {}, Sp());
+        ValDependTensorMeta meta;
+        InsertCacheStopForIfCond(ifStmt.get(), fixture.dynFunc.get(), meta);
+        EXPECT_FALSE(meta.hasValueDepend);
+        EXPECT_FALSE(meta.disableCtrlFlowCache);
+    }
+    // GetInputData cond: hasValueDepend only; ctrl-flow cache stays enabled (value-hash validated).
+    {
+        DynFuncFixture fixture;
+        auto ifStmt = Builder().CreateIfStmt(MakeGetInputDataExpr("ARG_x"), Builder().CreateSeqStmts({}, Sp()),
+                                             std::nullopt, {}, Sp());
+        ValDependTensorMeta meta;
+        InsertCacheStopForIfCond(ifStmt.get(), fixture.dynFunc.get(), meta);
+        EXPECT_TRUE(meta.hasValueDepend);
+        EXPECT_FALSE(meta.disableCtrlFlowCache);
+    }
+    // GetTensorData cond: both hasValueDepend and disableCtrlFlowCache.
+    {
+        DynFuncFixture fixture;
+        auto ifStmt = Builder().CreateIfStmt(MakeGetTensorDataExpr("ARG_x"), Builder().CreateSeqStmts({}, Sp()),
+                                             std::nullopt, {}, Sp());
+        ValDependTensorMeta meta;
+        InsertCacheStopForIfCond(ifStmt.get(), fixture.dynFunc.get(), meta);
+        EXPECT_TRUE(meta.hasValueDepend);
+        EXPECT_TRUE(meta.disableCtrlFlowCache);
+    }
+}
+
 TEST_F(TestSuite_IrBackend, InsertWaitAicoreStartForControlFlow_AllCases)
 {
     {
@@ -452,6 +513,62 @@ TEST_F(TestSuite_IrBackend, InsertWaitAicoreStartForControlFlow_AllCases)
         ValDependTensorMeta meta;
         InsertWaitAicoreStartForControlFlow(AsForStmt(forStmt).get(), 1, oss, meta);
         EXPECT_TRUE(oss.str().empty());
+    }
+}
+
+TEST_F(TestSuite_IrBackend, InsertWaitAicoreStartForIfCond_AllCases)
+{
+    // Immediate cond: no wait.
+    {
+        auto ifStmt = Builder().CreateIfStmt(Builder().CreateConstInt(1).AsExpr(), Builder().CreateSeqStmts({}, Sp()),
+                                             std::nullopt, {}, Sp());
+        std::ostringstream oss;
+        ValDependTensorMeta meta;
+        InsertWaitAicoreStartForIfCond(ifStmt.get(), 1, oss, meta);
+        EXPECT_TRUE(oss.str().empty());
+    }
+    // Plain symbol cond: no wait.
+    {
+        auto ifStmt = Builder().CreateIfStmt(MakeSymbolExpr("cond_var"), Builder().CreateSeqStmts({}, Sp()),
+                                             std::nullopt, {}, Sp());
+        std::ostringstream oss;
+        ValDependTensorMeta meta;
+        InsertWaitAicoreStartForIfCond(ifStmt.get(), 1, oss, meta);
+        EXPECT_TRUE(oss.str().empty());
+    }
+    // GetInputData cond on core-dependent tensor: wait inserted and tensor name collected.
+    {
+        auto ifStmt = Builder().CreateIfStmt(MakeGetInputDataExpr("ARG_x"), Builder().CreateSeqStmts({}, Sp()),
+                                             std::nullopt, {}, Sp());
+        std::ostringstream oss;
+        ValDependTensorMeta meta;
+        meta.tensorNameToDependCore["ARG_x"] = true;
+        InsertWaitAicoreStartForIfCond(ifStmt.get(), 1, oss, meta);
+        EXPECT_TRUE(oss.str().find("WaitAicoreStart(startArgs)") != std::string::npos);
+        EXPECT_EQ(meta.valueDependTensorNames.count("ARG_x"), 1u);
+    }
+    // GetInputData cond on host-ready tensor: no wait.
+    {
+        auto ifStmt = Builder().CreateIfStmt(MakeGetInputDataExpr("ARG_x"), Builder().CreateSeqStmts({}, Sp()),
+                                             std::nullopt, {}, Sp());
+        std::ostringstream oss;
+        ValDependTensorMeta meta;
+        meta.tensorNameToDependCore["ARG_x"] = false;
+        InsertWaitAicoreStartForIfCond(ifStmt.get(), 1, oss, meta);
+        EXPECT_TRUE(oss.str().empty());
+    }
+    // GetInputData nested in arithmetic cond (operand recursion): wait inserted.
+    {
+        auto nestedCond = std::make_shared<RawSymbolicExpression>(
+            SymbolicOpcode::T_BOP_ADD,
+            std::vector<RawSymbolicScalarPtr>{ExprPtrToSymbolicScalar(MakeGetInputDataExpr("ARG_x")).Raw(),
+                                              Builder().CreateConstInt(1).Raw()});
+        auto ifStmt = Builder().CreateIfStmt(nestedCond, Builder().CreateSeqStmts({}, Sp()), std::nullopt, {}, Sp());
+        std::ostringstream oss;
+        ValDependTensorMeta meta;
+        meta.tensorNameToDependCore["ARG_x"] = true;
+        InsertWaitAicoreStartForIfCond(ifStmt.get(), 1, oss, meta);
+        EXPECT_TRUE(oss.str().find("WaitAicoreStart(startArgs)") != std::string::npos);
     }
 }
 
