@@ -73,6 +73,8 @@ transpose(input: Tensor, dim0: int, dim1: int) -> Tensor
 
     预留的临时空间为：t0 \* t1 \* align\(t2,16\) \* align\(t3,32 / sizeof\(DT\_FP32\)\)
 
+    说明：动态 shape（维度为符号量，如用 view\_shape 整块覆盖输入的场景）下，末两维合轴转置的中间结果物化进 UB 时，末维同样按 32 字节对齐放大。框架会按 UB 容量对该中间结果自动做列分块（每段单独 reshape、转置并写回，单段占用不超过 UB 可用预算），避免出现 `Alloc tensor ... exceeds MEM_UB size ...` 的 UB 越界报错。
+
 6. Tensor数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_FP16，DT_BF16，DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_FP32，DT_INT32，DT_UINT32，DT_HF8，DT_FP8E4M3，DT_FP8E5M2，DT_FP8E8M0

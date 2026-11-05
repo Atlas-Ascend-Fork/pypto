@@ -471,7 +471,6 @@ static Tensor TransposeMerged2DDynamic(const Tensor& self, const MergedTranspose
     if (perm[0] > 0) {
         tmp3DValid = {srcValid[perm[1]], srcValid[perm[0] - 1], srcValid[perm[0]]};
     }
-    auto tmp3D = Reshape(tmpOutput, tmp3DShape, tmp3DValid);
     Tensor result(self.GetStorage()->Datatype(), resultShape);
     result.GetStorage()->UpdateDynValidShape(resultValid);
     // 尾块步长：按"每列（一次搬 pre*rows 个元素）占用的字节"反推一次能搬多少列，
@@ -481,9 +480,70 @@ static Tensor TransposeMerged2DDynamic(const Tensor& self, const MergedTranspose
     int64_t rowSliceBytes = pre * AlignUp(rows, alignRows) * dtypeBytes;
     int64_t colTile = Merged2DTailBudgetBytes() / std::max<int64_t>(1, rowSliceBytes);
     colTile = std::max<int64_t>(1, std::min(cols, colTile) / VNCHWCONV_REPEAT * VNCHWCONV_REPEAT);
-    TileShape::Current().SetVecTile({colTile, pre, rows});
-    CALL(InnerTranspose, *Program::GetInstance().GetCurrentFunction(), tmp3D.GetStorage(), result.GetStorage(),
-         std::vector<int>{0, 1});
+
+    // 列分块：3D 视图 [cols, pre, rows] 物化进 UB 时末维要按 32B 对齐补齐（UB tensor 行按
+    // 32B 存储，如 int8 的末维 2 按 32 元素分配），行数窄、列数多的形状会被放大十几倍，
+    // 整块 reshape 物化直接超出 UB（RESHAPE_COPY_IN 分配失败）。按 UB 预算把 cols 切成
+    // 若干段，每段单独 reshape + 转置到独立的段结果 tensor，再用 Assemble 写回 result 的
+    // 列区间（同 Cat 的分段拼装方式）；能整块放下时保持原路径不变。
+    // 注意：循环内多次写 result 必须走 assemble 语义（OP_ASSEMBLE + ASSEMBLE_DST 标记），
+    // 直接写 result 的视图会因 slot 未标记，运行期 workspace 分配报 WORKSPACE_ITER_INVALID。
+    // 段大小启发式：UB 约束按单个 op 的 in/out buffer 校验（ScheduleState::CheckOpBufferSize，
+    // 逻辑 tensor 不累计驻留 UB），因此从预算里扣减 tmpOutput 并非正确性要求，只是把段切小的
+    // 保守化；tmpOutput 逻辑尺寸超过预算时扣减会归零，用 UbBytes()/4 兜底，避免 colChunk 退化
+    // 为 1 使循环段数失控。
+    int64_t padElem = BLOCK_SIZE / dtypeBytes;
+    int64_t colMatBytes = pre * AlignUp(rows, padElem) * dtypeBytes; // 物化后每列实际占用的 UB
+    int64_t matBytes = cols * colMatBytes;
+    int64_t tmp2DBytes = cols * pre * rows * dtypeBytes; // 2D 转置输出驻留 UB 的大小（按逻辑元素数）
+    int64_t chunkBudget = OpUbBudgetBytes() - std::min(tmp2DBytes, OpUbBudgetBytes());
+    chunkBudget = std::max<int64_t>(chunkBudget, UbBytes() / 4);
+    // 合轴后的 result 恒为 [pre, cols, rows]（3D），其它情况不做分块，保持原路径。
+    bool canChunk = resultShape.size() == NUM_VALUE_3;
+    if (!canChunk || matBytes <= chunkBudget) {
+        auto tmp3D = Reshape(tmpOutput, tmp3DShape, tmp3DValid);
+        TileShape::Current().SetVecTile({colTile, pre, rows});
+        CALL(InnerTranspose, *Program::GetInstance().GetCurrentFunction(), tmp3D.GetStorage(), result.GetStorage(),
+             std::vector<int>{0, 1});
+        TileShape::Current().SetVecTile(outerVecTile);
+        return result;
+    }
+    int64_t colChunk = std::max<int64_t>(1, std::min(chunkBudget / std::max<int64_t>(colMatBytes, 1), cols));
+    std::vector<int64_t> tmpChunkShape = {0, pre * rows};
+    std::vector<int64_t> tmpChunkOffset = {0, 0};
+    std::vector<int64_t> tmpChunk3DShape = {0, pre, rows};
+    std::vector<int64_t> chunkResultShape = {resultShape[0], 0, resultShape[NUM_VALUE_2]};
+    std::vector<SymbolicScalar> chunkResultOffset(resultShape.size(), 0);
+    // 段内 reshape 时沿用 2D plan 的 vecTile（末维 = pre*rows，天然 32B 对齐）；转置段临时
+    // tensor 的 fwkop 若继承 3D 转置的 vecTile（末维 = rows），rows < 32B/esz 时会触发
+    // "lastDimBytes % BLOCK_SIZE == 0" 的 tile 对齐校验失败。
+    auto reshapeVecTile = plan.vecTile;
+    reshapeVecTile.back() = plan.inputShape.back();
+    TileShape::Current().SetVecTile(reshapeVecTile);
+    for (int64_t c = 0; c < cols; c += colChunk) {
+        int64_t chunk = std::min(colChunk, cols - c);
+        // 每段：取 tmpOutput 的行视图 reshape 成 [chunk, pre, rows]（视图的 valid 随偏移自动
+        // 截断，运行时不足整段的尾块按实际 valid 处理），转置到本段的独立结果 tensor。
+        tmpChunkShape[0] = chunk;
+        tmpChunkOffset[0] = c;
+        auto tmpChunk = View(tmpOutput, tmpChunkShape, tmpChunkOffset);
+        auto viewValid = tmpChunk.GetStorage()->GetDynValidShape();
+        if (viewValid.empty()) {
+            viewValid = SymbolicScalar::FromConcrete(tmpChunkShape);
+        }
+        std::vector<SymbolicScalar> tmp3DChunkValid = {viewValid[0], tmp3DValid[1], tmp3DValid[2]};
+        tmpChunk3DShape[0] = chunk;
+        auto tmp3DChunk = Reshape(tmpChunk, tmpChunk3DShape, tmp3DChunkValid);
+        chunkResultShape[1] = chunk;
+        Tensor chunkResult(tmp3DChunk.GetStorage()->Datatype(), chunkResultShape);
+        chunkResult.GetStorage()->UpdateDynValidShape({tmp3DValid[1], viewValid[0], tmp3DValid[2]});
+        TileShape::Current().SetVecTile({colTile, pre, rows});
+        CALL(InnerTranspose, *Program::GetInstance().GetCurrentFunction(), tmp3DChunk.GetStorage(),
+             chunkResult.GetStorage(), std::vector<int>{0, 1});
+        TileShape::Current().SetVecTile(reshapeVecTile);
+        chunkResultOffset[1] = SymbolicScalar(c);
+        Assemble(chunkResult, chunkResultOffset, result);
+    }
     TileShape::Current().SetVecTile(outerVecTile);
     return result;
 }
