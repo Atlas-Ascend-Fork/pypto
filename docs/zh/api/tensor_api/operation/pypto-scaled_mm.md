@@ -23,9 +23,9 @@
 
 ## 功能说明
 
-实现mat_a 、mat_b矩阵的mx量化矩阵乘运算，计算公式为：out = (mat_a \* scale_a) @ (mat_b \* scale_b)
+实现mat_a、mat_b矩阵的mx量化矩阵乘运算，计算公式为：out = (mat_a \* scale_a) @ (mat_b \* scale_b)
 
-- mat_a 、mat_b 、scale_a 、scale_b为源操作数，mat_a为左矩阵；mat_b为右矩阵；scale_a为左矩阵量化参数；scale_b为右矩阵量化参数。
+- mat_a、mat_b、scale_a、scale_b为源操作数，mat_a为左矩阵；mat_b为右矩阵；scale_a为左矩阵量化参数；scale_b为右矩阵量化参数。
 - out为目的操作数，存放矩阵乘结果的矩阵。
 
 ## 函数原型
