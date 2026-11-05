@@ -19,8 +19,51 @@
 #include "tileop/distributed/comm_context.h"
 
 #include <cinttypes>
+#if !defined(__DEVICE__)
+#include <exception>
+#endif
 
 namespace npu::tile_fwk::dynamic {
+
+namespace {
+#if !defined(__DEVICE__)
+// AOT CF binary has no C++ EH unwind info. Catch host throws (DEV_ASSERT → MACHINE_ASSERT)
+// in every runtime-call trampoline before returning into AOT frames.
+inline void* AotRuntimeCallFailureSentinel(int stage, DeviceExecuteContext* ctx)
+{
+    if (stage == static_cast<int>(RuntimeCallStage::T_RUNTIME_CALL_ROOT_ALLOC) ||
+        stage == static_cast<int>(RuntimeCallStage::T_RUNTIME_CALL_ROOT_STITCH)) {
+        return RUNTIME_FUNCKEY_ERROR;
+    }
+    // GET_DIE_ID callers cast the return to int8_t*; keep a valid pointer after catch.
+    if (stage == static_cast<int>(RuntimeCallStage::T_RUNTIME_CALL_GET_DIE_ID) && ctx != nullptr) {
+        return static_cast<void*>(&ctx->loopDieId_);
+    }
+    return nullptr;
+}
+#endif
+
+// Host: EH guard around raw entry. Device: zero-cost forward (DEV_ASSERT aborts, no throw).
+template <RuntimeCallEntryType kRaw, int kStage>
+void* RuntimeCallEntry(void* ctx_, uint64_t arg)
+{
+#if defined(__DEVICE__)
+    return kRaw(ctx_, arg);
+#else
+    DeviceExecuteContext* ctx = static_cast<DeviceExecuteContext*>(ctx_);
+    try {
+        return kRaw(ctx_, arg);
+    } catch (const std::exception&) {
+        // Assert/Error already logged at throw site; only convert to soft-fail for AOT.
+        if (ctx != nullptr) {
+            ctx->SetErrorState(DEVICE_MACHINE_ERROR);
+        }
+        return AotRuntimeCallFailureSentinel(kStage, ctx);
+    }
+#endif
+}
+} // namespace
+
 bool DeviceExecuteContext::DuppedRootCached()
 {
     if (!controlFlowCacheActivated) {
@@ -194,13 +237,19 @@ int DeviceExecuteContext::RunControlFlow(DevStartArgs* startArgs)
 {
     PerfBegin(PERF_EVT_CONTROL_FLOW);
     RuntimeCallEntryType runtimeCallList[static_cast<uint32_t>(RuntimeCallStage::T_RUNTIME_CALL_MAX)] = {
-        DeviceExecuteRuntimeCallRootAlloc,
-        DeviceExecuteRuntimeCallRootStitch,
-        DeviceExecuteRuntimeCallLog,
-        DeviceExecuteRuntimeCallShmemAllocator,
-        DeviceExecuteRuntimeCallSlotMarkNeedAlloc,
-        DeviceExecuteRuntimeCallGetLoopDieId,
-        DeviceExecuteRuntimeCallSetLoopDieId,
+        &RuntimeCallEntry<&DeviceExecuteContext::DeviceExecuteRuntimeCallRootAlloc,
+                          RuntimeCallStage::T_RUNTIME_CALL_ROOT_ALLOC>,
+        &RuntimeCallEntry<&DeviceExecuteContext::DeviceExecuteRuntimeCallRootStitch,
+                          RuntimeCallStage::T_RUNTIME_CALL_ROOT_STITCH>,
+        &RuntimeCallEntry<&DeviceExecuteContext::DeviceExecuteRuntimeCallLog, RuntimeCallStage::T_RUNTIME_CALL_LOG>,
+        &RuntimeCallEntry<&DeviceExecuteContext::DeviceExecuteRuntimeCallShmemAllocator,
+                          RuntimeCallStage::T_RUNTIME_CALL_SHMEM_ALLOC>,
+        &RuntimeCallEntry<&DeviceExecuteContext::DeviceExecuteRuntimeCallSlotMarkNeedAlloc,
+                          RuntimeCallStage::T_RUNTIME_CALL_SLOT_MARK_NEED_ALLOC>,
+        &RuntimeCallEntry<&DeviceExecuteContext::DeviceExecuteRuntimeCallGetLoopDieId,
+                          RuntimeCallStage::T_RUNTIME_CALL_GET_DIE_ID>,
+        &RuntimeCallEntry<&DeviceExecuteContext::DeviceExecuteRuntimeCallSetLoopDieId,
+                          RuntimeCallStage::T_RUNTIME_CALL_SET_DIE_ID>,
     };
     int originalErrorState = this->GetErrorState();
     execProg.controlFlowBinary.CallControlFlow(this, symbolTable.data(), runtimeCallList, startArgs);
