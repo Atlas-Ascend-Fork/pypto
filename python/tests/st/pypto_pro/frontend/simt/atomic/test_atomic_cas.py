@@ -27,9 +27,9 @@ def atomic_cas_ub_all_dtypes(
     uint32_tile,
     fp32_tile,
 ):
-    pl.simt.atomic_cas(int32_tile[0, 0], 0, 7)
-    pl.simt.atomic_cas(uint32_tile[0, 0], 0, 7)
-    pl.simt.atomic_cas(fp32_tile[0, 0], 0.0, 7.0)
+    pl.simt.atomic_cas(int32_tile, [0, 0], 0, 7)
+    pl.simt.atomic_cas(uint32_tile, [0, 0], 0, 7)
+    pl.simt.atomic_cas(fp32_tile, [0, 0], 0.0, 7.0)
 
 @pl.jit(auto_mutex=True)
 def simt_atomic_cas_ub_all_dtypes(
@@ -89,11 +89,11 @@ def atomic_cas_gm_all_dtypes(
     int64_state: pl.Tensor[[1, ELEMENTS], pl.DT_INT64],
     uint64_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT64],
 ):
-    pl.simt.atomic_cas(int32_state[0, 0], 0, 7)
-    pl.simt.atomic_cas(uint32_state[0, 0], 0, 7)
-    pl.simt.atomic_cas(fp32_state[0, 0], 0.0, 7.0)
-    pl.simt.atomic_cas(int64_state[0, 0], 0, 7)
-    pl.simt.atomic_cas(uint64_state[0, 0], 0, 7)
+    pl.simt.atomic_cas(int32_state, [0, 0], 0, 7)
+    pl.simt.atomic_cas(uint32_state, [0, 0], 0, 7)
+    pl.simt.atomic_cas(fp32_state, [0, 0], 0.0, 7.0)
+    pl.simt.atomic_cas(int64_state, [0, 0], 0, 7)
+    pl.simt.atomic_cas(uint64_state, [0, 0], 0, 7)
 
 @pl.jit()
 def simt_atomic_cas_gm_all_dtypes(
@@ -126,7 +126,7 @@ def atomic_cas_winner_gm(
     old_values: pl.Tensor[[1, 32], pl.DT_INT32],
 ):
     tid = pl.simt.linear_thread_idx()
-    old_values[0, tid] = pl.simt.atomic_cas(state[0, 0], 0, 1)
+    old_values[0, tid] = pl.simt.atomic_cas(state, [0, 0], 0, 1)
 
 @pl.jit()
 def simt_atomic_cas_winner_gm(

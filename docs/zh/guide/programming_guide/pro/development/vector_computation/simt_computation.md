@@ -140,7 +140,7 @@ SIMT中的数据对象包括Scalar、Tensor和Tile，分别用于表达线程私
 | Tensor | GM，全局内存 | tensor[i, j]等完整标量下标 | 非零Rank、静态Shape、ND布局；索引可在运行时计算，程序须保证索引有效。 |
 | Tile | UB，共享内存 | tile[row, col] | 仅用于混合编程，静态二维Shape、UB、ND布局；由外层Kernel创建和管理。 |
 
-Tensor和Tile元素位宽不得小于8 bit，具体Scalar计算和原子操作还须满足各接口的数据类型约束。Tensor和Tile作为函数参数时须以完整对象传入，不支持Slice或Tile Subview；元素读取所得的Scalar可用于Scalar参数。
+SIMT中的Tensor和Tile元素支持DT_BOOL、DT_INT8、DT_INT16、DT_INT32、DT_INT64、DT_UINT8、DT_UINT16、DT_UINT32、DT_UINT64、DT_FP16、DT_BF16和DT_FP32。具体Scalar计算和原子操作还须满足各接口的数据类型约束。Tensor和Tile作为函数参数时须以完整对象传入，不支持Slice或Tile Subview；元素读取所得的Scalar可用于Scalar参数。
 
 Tensor解析后的Shape必须为静态，不支持pypto_pro.language.DYNAMIC维度；使用pypto_pro.language.STATIC特化的维度须在启动时解析为静态值。运行期索引不等于动态Tensor Shape。
 
@@ -300,9 +300,9 @@ SIMT函数可以使用公共Scalar表达式，还提供以下常用功能，此�
 
 多个线程向同一元素累加、更新最值或修改状态时，普通的“读取、计算、写回”可能丢失其他线程的更新。例如，多个线程同时执行counter[0, 0] = counter[0, 0] + 1，不能保证最终结果等于参与线程数。
 
-此时可使用[原子操作API](../../../../../api/pro_api/SIMT-API/atomic/index.md)。例如，counter为DT_INT32 Tensor时，可在SIMT函数体内调用`pypto_pro.language.simt.atomic_add(counter[0, 0], 1)`完成一次原子累加：
+此时可使用[原子操作API](../../../../../api/pro_api/SIMT-API/atomic/index.md)。例如，counter为DT_INT32 Tensor时，可在SIMT函数体内调用`pypto_pro.language.simt.atomic_add(counter, [0, 0], 1)`完成一次原子累加：
 
-- target须直接使用Tensor或Tile的单元素下标表达式；SIMT kernel使用GM Tensor目标，混合编程也可使用UB Tile目标。
+- target传入容器，offset传入逐轴元素坐标，例如[0, 0]。SIMT kernel的目标为GM Tensor，混合编程也可使用UB Tile。
 - 原子操作的数据类型、输入值和返回值须满足对应接口约束，部分类型不返回更新前的值。
 - 计数器等共享状态须在并发更新开始前初始化完成，例如在Host侧准备零值Tensor。
 - 原子操作保护目标元素的更新，不提供跨线程块屏障，也不保证其他地址的数据已就绪。

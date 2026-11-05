@@ -30,11 +30,11 @@ def atomic_add_ub_all_dtypes(
     bf16_tile,
     fp32_tile,
 ):
-    pl.simt.atomic_add(int32_tile[0, 0], 1)
-    pl.simt.atomic_add(uint32_tile[0, 0], 1)
-    pl.simt.atomic_add(fp16_tile[0, 0], 1.0)
-    pl.simt.atomic_add(bf16_tile[0, 0], 1.0)
-    pl.simt.atomic_add(fp32_tile[0, 0], 1.0)
+    pl.simt.atomic_add(int32_tile, [0, 0], 1)
+    pl.simt.atomic_add(uint32_tile, [0, 0], 1)
+    pl.simt.atomic_add(fp16_tile, [0, 0], 1.0)
+    pl.simt.atomic_add(bf16_tile, [0, 0], 1.0)
+    pl.simt.atomic_add(fp32_tile, [0, 0], 1.0)
 
 @pl.jit(auto_mutex=True)
 def simt_atomic_add_ub_all_dtypes(
@@ -116,13 +116,13 @@ def atomic_add_gm_all_dtypes(
     int64_state: pl.Tensor[[1, ELEMENTS], pl.DT_INT64],
     uint64_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT64],
 ):
-    pl.simt.atomic_add(int32_state[0, 0], 1)
-    pl.simt.atomic_add(uint32_state[0, 0], 1)
-    pl.simt.atomic_add(fp16_state[0, 0], 1.0)
-    pl.simt.atomic_add(bf16_state[0, 0], 1.0)
-    pl.simt.atomic_add(fp32_state[0, 0], 1.0)
-    pl.simt.atomic_add(int64_state[0, 0], 1)
-    pl.simt.atomic_add(uint64_state[0, 0], 1)
+    pl.simt.atomic_add(int32_state, [0, 0], 1)
+    pl.simt.atomic_add(uint32_state, [0, 0], 1)
+    pl.simt.atomic_add(fp16_state, [0, 0], 1.0)
+    pl.simt.atomic_add(bf16_state, [0, 0], 1.0)
+    pl.simt.atomic_add(fp32_state, [0, 0], 1.0)
+    pl.simt.atomic_add(int64_state, [0, 0], 1)
+    pl.simt.atomic_add(uint64_state, [0, 0], 1)
 
 @pl.jit()
 def simt_atomic_add_gm_all_dtypes(
@@ -160,7 +160,7 @@ def atomic_add_return_value_gm(
     state: pl.Tensor[[1, 1], pl.DT_INT32],
     old_values: pl.Tensor[[1, 1], pl.DT_INT32],
 ):
-    old_values[0, 0] = pl.simt.atomic_add(state[0, 0], 5)
+    old_values[0, 0] = pl.simt.atomic_add(state, [0, 0], 5)
 
 @pl.jit()
 def simt_atomic_add_return_value_gm(

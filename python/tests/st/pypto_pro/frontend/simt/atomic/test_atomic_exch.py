@@ -27,9 +27,9 @@ def atomic_exch_ub_all_dtypes(
     uint32_tile,
     fp32_tile,
 ):
-    pl.simt.atomic_exch(int32_tile[0, 0], 7)
-    pl.simt.atomic_exch(uint32_tile[0, 0], 7)
-    pl.simt.atomic_exch(fp32_tile[0, 0], 7.0)
+    pl.simt.atomic_exch(int32_tile, [0, 0], 7)
+    pl.simt.atomic_exch(uint32_tile, [0, 0], 7)
+    pl.simt.atomic_exch(fp32_tile, [0, 0], 7.0)
 
 @pl.jit(auto_mutex=True)
 def simt_atomic_exch_ub_all_dtypes(
@@ -89,11 +89,11 @@ def atomic_exch_gm_all_dtypes(
     int64_state: pl.Tensor[[1, ELEMENTS], pl.DT_INT64],
     uint64_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT64],
 ):
-    pl.simt.atomic_exch(int32_state[0, 0], 7)
-    pl.simt.atomic_exch(uint32_state[0, 0], 7)
-    pl.simt.atomic_exch(fp32_state[0, 0], 7.0)
-    pl.simt.atomic_exch(int64_state[0, 0], 7)
-    pl.simt.atomic_exch(uint64_state[0, 0], 7)
+    pl.simt.atomic_exch(int32_state, [0, 0], 7)
+    pl.simt.atomic_exch(uint32_state, [0, 0], 7)
+    pl.simt.atomic_exch(fp32_state, [0, 0], 7.0)
+    pl.simt.atomic_exch(int64_state, [0, 0], 7)
+    pl.simt.atomic_exch(uint64_state, [0, 0], 7)
 
 @pl.jit()
 def simt_atomic_exch_gm_all_dtypes(
@@ -126,7 +126,7 @@ def atomic_exch_contention_gm(
     old_values: pl.Tensor[[1, 32], pl.DT_INT32],
 ):
     tid = pl.simt.linear_thread_idx()
-    old_values[0, tid] = pl.simt.atomic_exch(state[0, 0], pl.simt.cast(tid, pl.DT_INT32))
+    old_values[0, tid] = pl.simt.atomic_exch(state, [0, 0], pl.simt.cast(tid, pl.DT_INT32))
 
 @pl.jit()
 def simt_atomic_exch_contention_gm(

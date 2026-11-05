@@ -29,11 +29,11 @@ def atomic_max_ub_all_dtypes(
     bf16_tile,
     fp32_tile,
 ):
-    pl.simt.atomic_max(int32_tile[0, 0], 7)
-    pl.simt.atomic_max(uint32_tile[0, 0], 7)
-    pl.simt.atomic_max(fp16_tile[0, 0], 7.0)
-    pl.simt.atomic_max(bf16_tile[0, 0], 7.0)
-    pl.simt.atomic_max(fp32_tile[0, 0], 7.0)
+    pl.simt.atomic_max(int32_tile, [0, 0], 7)
+    pl.simt.atomic_max(uint32_tile, [0, 0], 7)
+    pl.simt.atomic_max(fp16_tile, [0, 0], 7.0)
+    pl.simt.atomic_max(bf16_tile, [0, 0], 7.0)
+    pl.simt.atomic_max(fp32_tile, [0, 0], 7.0)
 
 @pl.jit(auto_mutex=True)
 def simt_atomic_max_ub_all_dtypes(
@@ -115,13 +115,13 @@ def atomic_max_gm_all_dtypes(
     int64_state: pl.Tensor[[1, ELEMENTS], pl.DT_INT64],
     uint64_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT64],
 ):
-    pl.simt.atomic_max(int32_state[0, 0], 7)
-    pl.simt.atomic_max(uint32_state[0, 0], 7)
-    pl.simt.atomic_max(fp16_state[0, 0], 7.0)
-    pl.simt.atomic_max(bf16_state[0, 0], 7.0)
-    pl.simt.atomic_max(fp32_state[0, 0], 7.0)
-    pl.simt.atomic_max(int64_state[0, 0], 7)
-    pl.simt.atomic_max(uint64_state[0, 0], 7)
+    pl.simt.atomic_max(int32_state, [0, 0], 7)
+    pl.simt.atomic_max(uint32_state, [0, 0], 7)
+    pl.simt.atomic_max(fp16_state, [0, 0], 7.0)
+    pl.simt.atomic_max(bf16_state, [0, 0], 7.0)
+    pl.simt.atomic_max(fp32_state, [0, 0], 7.0)
+    pl.simt.atomic_max(int64_state, [0, 0], 7)
+    pl.simt.atomic_max(uint64_state, [0, 0], 7)
 
 @pl.jit()
 def simt_atomic_max_gm_all_dtypes(
@@ -159,7 +159,7 @@ def atomic_max_return_value_gm(
     state: pl.Tensor[[1, 1], pl.DT_INT32],
     old_values: pl.Tensor[[1, 1], pl.DT_INT32],
 ):
-    old_values[0, 0] = pl.simt.atomic_max(state[0, 0], 12)
+    old_values[0, 0] = pl.simt.atomic_max(state, [0, 0], 12)
 
 @pl.jit()
 def simt_atomic_max_return_value_gm(

@@ -26,8 +26,8 @@ def atomic_and_ub_all_dtypes(
     int32_tile,
     uint32_tile,
 ):
-    pl.simt.atomic_and(int32_tile[0, 0], 0xFF)
-    pl.simt.atomic_and(uint32_tile[0, 0], 0xFF)
+    pl.simt.atomic_and(int32_tile, [0, 0], 0xFF)
+    pl.simt.atomic_and(uint32_tile, [0, 0], 0xFF)
 
 @pl.jit(auto_mutex=True)
 def simt_atomic_and_ub_all_dtypes(
@@ -76,10 +76,10 @@ def atomic_and_gm_all_dtypes(
     int64_state: pl.Tensor[[1, ELEMENTS], pl.DT_INT64],
     uint64_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT64],
 ):
-    pl.simt.atomic_and(int32_state[0, 0], 0xFF)
-    pl.simt.atomic_and(uint32_state[0, 0], 0xFF)
-    pl.simt.atomic_and(int64_state[0, 0], 0xFF)
-    pl.simt.atomic_and(uint64_state[0, 0], 0xFF)
+    pl.simt.atomic_and(int32_state, [0, 0], 0xFF)
+    pl.simt.atomic_and(uint32_state, [0, 0], 0xFF)
+    pl.simt.atomic_and(int64_state, [0, 0], 0xFF)
+    pl.simt.atomic_and(uint64_state, [0, 0], 0xFF)
 
 @pl.jit()
 def simt_atomic_and_gm_all_dtypes(
@@ -110,7 +110,7 @@ def atomic_and_return_value_gm(
     state: pl.Tensor[[1, 1], pl.DT_INT32],
     old_values: pl.Tensor[[1, 1], pl.DT_INT32],
 ):
-    old_values[0, 0] = pl.simt.atomic_and(state[0, 0], 0x0F)
+    old_values[0, 0] = pl.simt.atomic_and(state, [0, 0], 0x0F)
 
 @pl.jit()
 def simt_atomic_and_return_value_gm(

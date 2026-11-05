@@ -35,7 +35,7 @@ def publish_with_threadfence_block(
 
     values[0, tid] = 1
     pl.simt.threadfence_block()
-    ticket = pl.simt.atomic_add(completed[0, 0], 1)
+    ticket = pl.simt.atomic_add(completed, [0, 0], 1)
     if ticket == THREADS - 1:
         total: pl.DT_INT32 = 0
         for index in pl.range(THREADS):

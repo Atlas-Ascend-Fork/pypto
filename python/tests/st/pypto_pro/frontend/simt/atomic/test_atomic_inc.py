@@ -23,7 +23,7 @@ ELEMENTS = 64
 
 @pl.vector_function(mode="simt", max_threads=THREADS)
 def atomic_inc_ub(uint32_tile):
-    pl.simt.atomic_inc(uint32_tile[0, 0], 255)
+    pl.simt.atomic_inc(uint32_tile, [0, 0], 255)
 
 @pl.jit(auto_mutex=True)
 def simt_atomic_inc_ub(uint32_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT32]):
@@ -54,8 +54,8 @@ def atomic_inc_gm_all_dtypes(
     uint32_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT32],
     uint64_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT64],
 ):
-    pl.simt.atomic_inc(uint32_state[0, 0], 255)
-    pl.simt.atomic_inc(uint64_state[0, 0], 255)
+    pl.simt.atomic_inc(uint32_state, [0, 0], 255)
+    pl.simt.atomic_inc(uint64_state, [0, 0], 255)
 
 @pl.jit()
 def simt_atomic_inc_gm_all_dtypes(
@@ -84,7 +84,7 @@ def atomic_inc_return_value_gm(
     state: pl.Tensor[[1, 1], pl.DT_UINT32],
     old_values: pl.Tensor[[1, 1], pl.DT_UINT32],
 ):
-    old_values[0, 0] = pl.simt.atomic_inc(state[0, 0], 5)
+    old_values[0, 0] = pl.simt.atomic_inc(state, [0, 0], 5)
 
 @pl.jit()
 def simt_atomic_inc_return_value_gm(

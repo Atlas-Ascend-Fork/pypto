@@ -23,17 +23,17 @@ GRID_THREAD_BLOCKS = 4
 @pl.vector_function(mode="simt")
 def _integer_atomics(state, old, counters, old_counters):
     tid = pl.simt.linear_thread_idx()
-    old[0, tid] = pl.simt.atomic_add(state[0, tid], 3)
-    old[1, tid] = pl.simt.atomic_sub(state[1, tid], 1)
-    old[2, tid] = pl.simt.atomic_exch(state[2, tid], 3)
-    old[3, tid] = pl.simt.atomic_max(state[3, tid], 3)
-    old[4, tid] = pl.simt.atomic_min(state[4, tid], 3)
-    old[5, tid] = pl.simt.atomic_cas(state[5, tid], 7, 3)
-    old[6, tid] = pl.simt.atomic_and(state[6, tid], 3)
-    old[7, tid] = pl.simt.atomic_or(state[7, tid], 3)
-    old[8, tid] = pl.simt.atomic_xor(state[8, tid], 3)
-    old_counters[0, tid] = pl.simt.atomic_inc(counters[0, tid], 5)
-    old_counters[1, tid] = pl.simt.atomic_dec(counters[1, tid], 5)
+    old[0, tid] = pl.simt.atomic_add(state, [0, tid], 3)
+    old[1, tid] = pl.simt.atomic_sub(state, [1, tid], 1)
+    old[2, tid] = pl.simt.atomic_exch(state, [2, tid], 3)
+    old[3, tid] = pl.simt.atomic_max(state, [3, tid], 3)
+    old[4, tid] = pl.simt.atomic_min(state, [4, tid], 3)
+    old[5, tid] = pl.simt.atomic_cas(state, [5, tid], 7, 3)
+    old[6, tid] = pl.simt.atomic_and(state, [6, tid], 3)
+    old[7, tid] = pl.simt.atomic_or(state, [7, tid], 3)
+    old[8, tid] = pl.simt.atomic_xor(state, [8, tid], 3)
+    old_counters[0, tid] = pl.simt.atomic_inc(counters, [0, tid], 5)
+    old_counters[1, tid] = pl.simt.atomic_dec(counters, [1, tid], 5)
 
 
 @pl.jit(mode="simt", max_threads=THREADS)
@@ -79,7 +79,7 @@ def test_simt_kernel_integer_atomics():
 @pl.vector_function(mode="simt")
 def _atomic_tickets(state, tickets):
     index = pl.simt.block_idx().x * pl.simt.block_dim().x + pl.simt.thread_idx().x
-    tickets[index] = pl.simt.atomic_add(state[0], 1)
+    tickets[index] = pl.simt.atomic_add(state, [0], 1)
 
 
 @pl.jit(mode="simt", max_threads=THREADS)
@@ -105,9 +105,9 @@ def test_simt_kernel_atomic_add_contention():
 
 @pl.vector_function(mode="simt")
 def _float_atomics(state):
-    pl.simt.atomic_add(state[0, 0], 1.0)
-    pl.simt.atomic_max(state[1, 0], 2.0)
-    pl.simt.atomic_min(state[2, 0], -2.0)
+    pl.simt.atomic_add(state, [0, 0], 1.0)
+    pl.simt.atomic_max(state, [1, 0], 2.0)
+    pl.simt.atomic_min(state, [2, 0], -2.0)
 
 
 @pl.jit(mode="simt", max_threads=THREADS)
@@ -129,12 +129,12 @@ def test_simt_kernel_float_atomics():
 @pl.vector_function(mode="simt")
 def _float_atomic_returns(state, old):
     tid = pl.simt.linear_thread_idx()
-    old[0, tid] = pl.simt.atomic_add(state[0, tid], 3.0)
-    old[1, tid] = pl.simt.atomic_sub(state[1, tid], 1.0)
-    old[2, tid] = pl.simt.atomic_exch(state[2, tid], 3.0)
-    old[3, tid] = pl.simt.atomic_max(state[3, tid], 3.0)
-    old[4, tid] = pl.simt.atomic_min(state[4, tid], 3.0)
-    old[5, tid] = pl.simt.atomic_cas(state[5, tid], 7.0, 3.0)
+    old[0, tid] = pl.simt.atomic_add(state, [0, tid], 3.0)
+    old[1, tid] = pl.simt.atomic_sub(state, [1, tid], 1.0)
+    old[2, tid] = pl.simt.atomic_exch(state, [2, tid], 3.0)
+    old[3, tid] = pl.simt.atomic_max(state, [3, tid], 3.0)
+    old[4, tid] = pl.simt.atomic_min(state, [4, tid], 3.0)
+    old[5, tid] = pl.simt.atomic_cas(state, [5, tid], 7.0, 3.0)
 
 
 @pl.jit(mode="simt", max_threads=THREADS)
@@ -167,17 +167,17 @@ def test_simt_kernel_float_atomic_return_values():
 @pl.vector_function(mode="simt")
 def _contended_atomics(state, old, counters, old_counters):
     tid = pl.simt.linear_thread_idx()
-    old[0, tid] = pl.simt.atomic_add(state[0, 0], 3)
-    old[1, tid] = pl.simt.atomic_sub(state[1, 0], 1)
-    old[2, tid] = pl.simt.atomic_exch(state[2, 0], 3)
-    old[3, tid] = pl.simt.atomic_max(state[3, 0], 3)
-    old[4, tid] = pl.simt.atomic_min(state[4, 0], 3)
-    old[5, tid] = pl.simt.atomic_cas(state[5, 0], 7, 3)
-    old[6, tid] = pl.simt.atomic_and(state[6, 0], 3)
-    old[7, tid] = pl.simt.atomic_or(state[7, 0], 3)
-    old[8, tid] = pl.simt.atomic_xor(state[8, 0], 3)
-    old_counters[0, tid] = pl.simt.atomic_inc(counters[0, 0], 5)
-    old_counters[1, tid] = pl.simt.atomic_dec(counters[1, 0], 5)
+    old[0, tid] = pl.simt.atomic_add(state, [0, 0], 3)
+    old[1, tid] = pl.simt.atomic_sub(state, [1, 0], 1)
+    old[2, tid] = pl.simt.atomic_exch(state, [2, 0], 3)
+    old[3, tid] = pl.simt.atomic_max(state, [3, 0], 3)
+    old[4, tid] = pl.simt.atomic_min(state, [4, 0], 3)
+    old[5, tid] = pl.simt.atomic_cas(state, [5, 0], 7, 3)
+    old[6, tid] = pl.simt.atomic_and(state, [6, 0], 3)
+    old[7, tid] = pl.simt.atomic_or(state, [7, 0], 3)
+    old[8, tid] = pl.simt.atomic_xor(state, [8, 0], 3)
+    old_counters[0, tid] = pl.simt.atomic_inc(counters, [0, 0], 5)
+    old_counters[1, tid] = pl.simt.atomic_dec(counters, [1, 0], 5)
 
 
 @pl.jit(mode="simt", max_threads=THREADS)

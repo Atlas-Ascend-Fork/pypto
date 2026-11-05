@@ -43,7 +43,7 @@ data[0] = value
 # 保证前面的data写入先于后面的ready更新对其他线程可见。
 pl.simt.threadfence()
 
-pl.simt.atomic_exch(ready[0], 1)
+pl.simt.atomic_exch(ready, [0], 1)
 ```
 
 上述代码建立的顺序关系如下：

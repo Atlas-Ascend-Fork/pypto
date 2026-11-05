@@ -117,6 +117,7 @@ class _MakeTuple(_Expr):
 class _TileType:
     def __init__(self, dtype):
         self.dtype = dtype
+        self.shape = [_ConstInt(1)]
 
 
 class _DispatchError(Exception):
@@ -169,13 +170,16 @@ def runtime(monkeypatch):
     module("pypto.pypto_impl", ir=ir)
     module("pypto.pypto_impl.ir", **ir.__dict__, Call=_Expr, Function=_Expr)
     ir.RoundMode = enum.Enum("RoundMode", ["CAST_NONE"])
+    module("pypto_pro.ir._limits", from_storage_int=lambda value, dtype: value)
     utils = module(
         "pypto_pro.ir._utils", _get_span_or_capture=lambda span: span or _Span(),
+        _const_int_value=lambda value: value.value if isinstance(value, _ConstInt) else None,
         _normalize_expr=lambda value, span: value,
+        _to_make_tuple=lambda value, span: value if isinstance(value, _MakeTuple) else _MakeTuple(value, span),
     )
     error_names = (
         "CommonExternal", "InvalidArgument", "InvalidOperation", "InvalidShape",
-        "InvalidType", "InvalidVal", "NotSupported",
+        "InvalidType", "InvalidVal", "NotSupported", "OutOfRange",
     )
     errors = module("pypto_pro._errors", **{name: type(name, (_DispatchError,), {}) for name in error_names})
     errors.error_class_of_spec_message = lambda message: None
@@ -238,13 +242,15 @@ def runtime(monkeypatch):
                             and node.name == "ExpressionParserMixin")
     helper_class.body.extend(
         node for node in expression_mixin.body
-        if isinstance(node, ast.FunctionDef) and node.name in ("parse_list", "parse_tuple_literal")
+        if isinstance(node, ast.FunctionDef)
+        and node.name in ("parse_list", "parse_tuple_literal", "_validate_subscript_value")
     )
     helper_module = ast.Module(body=[
         ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), helper_class,
     ], type_ignores=[])
     namespace = {
         "ast": ast, "ir": ir, "inspect": inspect, "_argument_checker": checker,
+        "_const_int_value": utils._const_int_value,
         "_OP_REGISTRY": registry._OP_REGISTRY, "_AST_OP_REGISTRY": registry._AST_OP_REGISTRY,
         "ExprEvaluator": types.SimpleNamespace(ir_to_python_value=_constant_value), **errors.__dict__,
     }
@@ -290,9 +296,6 @@ def runtime(monkeypatch):
 
         def _make_scalar_constant(self, value, dtype, span):
             return _make_constant(value, dtype, span)
-
-        def _parse_scalar_subscript_index(self, container, node, span):
-            return self.parse_expression(node)
 
         def _fold_const_binop(self, op_name, result, span):
             return self.folded
@@ -762,18 +765,18 @@ def test_legacy_struct_fields_can_use_framework_parameter_names(runtime):
 
 
 @pytest.mark.parametrize("source", [
-    "pl.simt.atomic_example(tile[0], 1)", "pl.simt.atomic_example(value=1, target=tile[0])",
+    "pl.simt.atomic_example(tile, [0], 1)", "pl.simt.atomic_example(value=1, target=tile, offset=[0])",
 ])
-def test_atomic_legacy_parser_preserves_target_and_contextual_literal_dtype(runtime, source):
-    def declaration(target: "int", value: "int"):
+def test_atomic_impl_receives_parsed_coordinates_and_types_constants(runtime, source):
+    def declaration(target, offset, value: "int"):
         pass
     runtime.declare("simt.atomic_example", declaration)
     simt = runtime.simt_module()
 
-    @runtime.registry.op_impl_ast("simt.atomic_example")
-    def parse(self, call):
-        return simt._parse_atomic_call(
-            self, "simt.atomic_example", lambda *args, **kwargs: args, ("value",), call,
+    @runtime.registry.op_impl("simt.atomic_example")
+    def build(self, target, offset, value, *, span):
+        return simt._build_atomic_call(
+            self, lambda *args, **kwargs: args, target, offset, [("value", value)], span,
         )
 
     tile = _Expr(_TileType(_DType.INT32))
@@ -781,40 +784,42 @@ def test_atomic_legacy_parser_preserves_target_and_contextual_literal_dtype(runt
     container, offset, value = parser.run("simt.atomic_example")
     assert container is tile and offset.value == 0
     assert value.value == 1 and value.type.dtype == _DType.INT32
-    assert parser.evaluated == ["tile", "0"]
+    assert len(parser.evaluated) == 4 and set(parser.evaluated) == {"tile", "[0]", "0", "1"}
 
 
 def test_atomic_operand_variable_retains_its_declared_dtype(runtime):
-    def declaration(target, value):
+    def declaration(target, offset, value):
         pass
     runtime.declare("simt.example", declaration)
     simt = runtime.simt_module()
 
-    @runtime.registry.op_impl_ast("simt.example")
-    def parse(self, call):
-        return simt._parse_atomic_call(self, "simt.example", lambda *args, **kwargs: args[2], ("value",), call)
+    @runtime.registry.op_impl("simt.example")
+    def build(self, target, offset, value, *, span):
+        return simt._build_atomic_call(self, lambda *args, **kwargs: args[2], target, offset, [("value", value)], span)
 
     value = _Expr(_ScalarType(_DType.INT64))
-    parser = runtime.Parser("pl.simt.example(tile[0], value)", {"tile": _Expr(_TileType(_DType.INT32)), "value": value})
+    parser = runtime.Parser(
+        "pl.simt.example(tile, [0], value)", {"tile": _Expr(_TileType(_DType.INT32)), "value": value},
+    )
     assert parser.run("simt.example") is value
 
 
 def test_atomic_integer_target_rejects_float_literal(runtime):
-    def declaration(target, value):
+    def declaration(target, offset, value):
         pass
     runtime.declare("simt.example", declaration)
     simt = runtime.simt_module()
 
-    @runtime.registry.op_impl_ast("simt.example")
-    def parse(self, call):
-        return simt._parse_atomic_call(self, "simt.example", lambda *args, **kwargs: None, ("value",), call)
+    @runtime.registry.op_impl("simt.example")
+    def build(self, target, offset, value, *, span):
+        return simt._build_atomic_call(self, lambda *args, **kwargs: None, target, offset, [("value", value)], span)
 
-    parser = runtime.Parser("pl.simt.example(tile[0], 1.5)", {"tile": _Expr(_TileType(_DType.INT32))})
+    parser = runtime.Parser("pl.simt.example(tile, [0], 1.5)", {"tile": _Expr(_TileType(_DType.INT32))})
     with pytest.raises(runtime.errors.InvalidType, match="requires an integer value"):
         parser.run("simt.example")
 
 
-def test_warp_legacy_parser_preserves_control_dtypes(runtime):
+def test_warp_impl_preserves_control_dtypes(runtime):
     runtime.ir.create_op_call = lambda name, args, attrs, span: (name, args)
     runtime.simt_module()
     value = _Expr(_ScalarType(_DType.INT32))
@@ -823,7 +828,29 @@ def test_warp_legacy_parser_preserves_control_dtypes(runtime):
     assert name == "simt.warp_shfl_up" and operands[0] is value
     assert operands[1].value == 1 and operands[1].type.dtype == _DType.UINT32
     assert operands[2].value == 32 and operands[2].type.dtype == _DType.INT32
-    assert parser.evaluated == ["value"]
+    assert parser.evaluated == ["value", "1"]
+
+
+@pytest.mark.parametrize("operation", ["warp_all", "warp_any", "warp_ballot"])
+def test_warp_vote_constants_use_int32_after_parsing(runtime, operation):
+    runtime.ir.create_op_call = lambda name, args, attrs, span: (name, args)
+    runtime.simt_module()
+    parser = runtime.Parser(f"pl.simt.{operation}(predicate=1)")
+    name, operands = parser.run(f"simt.{operation}")
+    assert name == f"simt.{operation}"
+    assert operands[0].value == 1 and operands[0].type.dtype == _DType.INT32
+    assert parser.evaluated == ["1"]
+
+
+def test_simt_operations_use_value_registration(runtime):
+    runtime.simt_module()
+    expected = {
+        "atomic_add", "atomic_sub", "atomic_exch", "atomic_max", "atomic_min",
+        "atomic_inc", "atomic_dec", "atomic_cas", "atomic_and", "atomic_or", "atomic_xor",
+        "warp_all", "warp_any", "warp_ballot", "warp_shfl", "warp_shfl_up", "warp_shfl_down", "warp_shfl_xor",
+    }
+    assert all(f"simt.{name}" in runtime.registry._OP_REGISTRY for name in expected)
+    assert not any(name.startswith("simt.") for name in runtime.registry._AST_OP_REGISTRY)
 
 
 @pytest.mark.parametrize("operation", ["min", "max"])
@@ -884,30 +911,35 @@ def test_production_named_tuple_accepts_fields_named_like_framework_parameters(r
     assert {name: value.value for name, value in fields.items()} == {"span": 1, "context": 2, "self": 3, "_fields": 4}
 
 
-def test_production_atomic_builder_receives_reference_and_typed_value(runtime):
-    def declaration(target: "int", value: "int"):
+@pytest.mark.parametrize("operation", [
+    "atomic_add", "atomic_sub", "atomic_exch", "atomic_max", "atomic_min", "atomic_and", "atomic_or", "atomic_xor",
+])
+@pytest.mark.parametrize("arguments", ["tile, [0], 1", "value=1, target=tile, offset=[0]"])
+def test_production_atomic_builder_receives_reference_and_typed_value(runtime, operation, arguments):
+    def declaration(target, offset, value: "int"):
         pass
-    runtime.declare("simt.atomic_add", declaration)
+    runtime.declare(f"simt.{operation}", declaration)
     runtime.ir.create_op_call = lambda name, args, attrs, span: (name, args, attrs)
     runtime.load("pypto_pro.ir.op.simt_ops", "ir/op/simt_ops.py")
     tile = _Expr(_TileType(_DType.INT32))
-    parser = runtime.Parser("pl.simt.atomic_add(value=1, target=tile[0])", {"tile": tile})
-    name, args, attrs = parser.run("simt.atomic_add")
-    assert name == "simt.atomic_add" and args[0] is tile
+    parser = runtime.Parser(f"pl.simt.{operation}({arguments})", {"tile": tile})
+    name, args, attrs = parser.run(f"simt.{operation}")
+    assert name == f"simt.{operation}" and args[0] is tile
     assert args[1].value == 0 and args[2].type.dtype == _DType.INT32
-    assert parser.evaluated == ["tile", "0"]
+    assert len(parser.evaluated) == 4 and set(parser.evaluated) == {"tile", "[0]", "0", "1"}
 
 
-def test_legacy_atomic_rejects_a_scalar_target_container(runtime):
-    def declaration(target, value):
+def test_atomic_type_gate_rejects_scalar_target(runtime):
+    def declaration(target, offset, value):
         pass
+    declaration.__annotations__["target"] = "Union[Tile, Tensor]"
     runtime.declare("simt.atomic_add", declaration)
     runtime.simt_module()
-    source = "pl.simt.atomic_add(scalar[0], 1)"
+    source = "pl.simt.atomic_add(scalar, [0], 1)"
     parser = runtime.Parser(source, {"scalar": _Expr(_ScalarType(_DType.INT32))})
-    with pytest.raises(runtime.errors.InvalidType, match="target container must be a Tile or Tensor") as error:
+    with pytest.raises(runtime.errors.InvalidType, match=r"target expects Union\[Tile, Tensor\]") as error:
         parser.run("simt.atomic_add")
-    assert error.value.span.begin_column == source.index("scalar[0]") + 1
+    assert error.value.span.begin_column == source.index("scalar") + 1
 
 
 @pytest.mark.parametrize("op_name", ["thread_idx", "syncthreads", "cast", "sqrt", "atomic_add", "warp_all", "launch"])

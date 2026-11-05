@@ -20,7 +20,8 @@
 
 ```python
 pypto_pro.language.simt.atomic_dec(
-    target: Union[int, float],
+    target: Union[Tile, Tensor],
+    offset: Sequence[int],
     limit: Union[int, float],
 ) -> Scalar
 ```
@@ -29,7 +30,8 @@ pypto_pro.language.simt.atomic_dec(
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| target | 输入 | 目的操作数，必须直接传入Tile或Tensor的单元素下标访问表达式，例如ub_tile[0, 0]或gm_tensor[0, 0]。<br>- UB Tile：必须位于UB，使用ND，支持DT_UINT32。<br>- GM Tensor：必须为ND，支持DT_UINT32、DT_UINT64。 |
+| target | 输入 | 目的容器，传入Tile或Tensor，通过offset指定要更新的元素。<br>- UB Tile：必须位于UB，使用ND，支持DT_UINT32。<br>- GM Tensor：必须为ND，支持DT_UINT32、DT_UINT64。 |
+| offset | 输入 | 元素坐标序列，每个轴对应一个非负整数标量，例如[0, col]。坐标数量必须与target的维数一致，静态坐标必须在对应维度范围内。 |
 | limit | 输入 | 源操作数，整型常量或运行时整型标量表达式，表示计数上界。数据类型必须与target一致；整数字面量按target的数据类型处理。 |
 
 ## 约束说明
@@ -51,7 +53,7 @@ def allocate_reverse_ring_slot(
     slots: pl.Tensor[[1, 256], pl.DT_UINT32],
 ):
     tid = pl.simt.linear_thread_idx()
-    slots[0, tid] = pl.simt.atomic_dec(ticket[0, 0], 255)
+    slots[0, tid] = pl.simt.atomic_dec(ticket, [0, 0], 255)
 
 
 @pl.jit()

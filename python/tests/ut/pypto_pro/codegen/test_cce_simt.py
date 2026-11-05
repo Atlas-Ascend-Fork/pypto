@@ -232,7 +232,7 @@ def _atomic_add_ub(
     value: pl.DT_INT32,
 ):
     tid = pl.simt.linear_thread_idx()
-    old_values[0, tid] = pl.simt.atomic_add(dst[0, 0], value)
+    old_values[0, tid] = pl.simt.atomic_add(dst, [0, 0], value)
 
 
 @pl.vector_function(mode="simt", max_threads=32)
@@ -242,12 +242,12 @@ def _atomic_add_gm(
     value: pl.DT_INT64,
 ):
     tid = pl.simt.linear_thread_idx()
-    old_values[0, tid] = pl.simt.atomic_add(dst[0, 0], value)
+    old_values[0, tid] = pl.simt.atomic_add(dst, [0, 0], value)
 
 
 @pl.vector_function(mode="simt", max_threads=1)
 def _atomic_add_discard(dst, value: pl.DT_INT32):
-    pl.simt.atomic_add(dst[0, 0], value)
+    pl.simt.atomic_add(dst, [0, 0], value)
 
 
 @pl.vector_function(mode="simt", max_threads=1)
@@ -255,12 +255,12 @@ def _atomic_half_discard(
     ub,
     gm: pl.Tensor[[1, 3], pl.DT_BF16],
 ):
-    pl.simt.atomic_add(ub[0, 0], 1.0)
-    pl.simt.atomic_max(ub[0, 1], 2.0)
-    pl.simt.atomic_min(ub[0, 2], 3.0)
-    pl.simt.atomic_add(gm[0, 0], 1.0)
-    pl.simt.atomic_max(gm[0, 1], 2.0)
-    pl.simt.atomic_min(gm[0, 2], 3.0)
+    pl.simt.atomic_add(ub, [0, 0], 1.0)
+    pl.simt.atomic_max(ub, [0, 1], 2.0)
+    pl.simt.atomic_min(ub, [0, 2], 3.0)
+    pl.simt.atomic_add(gm, [0, 0], 1.0)
+    pl.simt.atomic_max(gm, [0, 1], 2.0)
+    pl.simt.atomic_min(gm, [0, 2], 3.0)
 
 
 @pl.jit
@@ -412,17 +412,17 @@ def test_half_precision_atomic_codegen_emits_void_ub_and_gm_calls():
 def test_atomic_codegen_uses_entry_mode_in_kernel_and_helper(mode):
     @pl.vector_function(mode="simt")
     def update(state, old):
-        old[0] = pl.simt.atomic_add(state[0], 3)
-        old[1] = pl.simt.atomic_cas(state[1], 7, 3)
+        old[0] = pl.simt.atomic_add(state, [0], 3)
+        old[1] = pl.simt.atomic_cas(state, [1], 7, 3)
 
     @pl.vector_function(mode="simt", max_threads=32)
     def vf(state, old):
-        old[2] = pl.simt.atomic_add(state[2], 1)
+        old[2] = pl.simt.atomic_add(state, [2], 1)
         update(state, old)
 
     @pl.jit(mode="simt", max_threads=32)
     def pure(state: pl.Tensor[[3], pl.DT_UINT64], old: pl.Tensor[[3], pl.DT_UINT64]):
-        old[2] = pl.simt.atomic_add(state[2], 1)
+        old[2] = pl.simt.atomic_add(state, [2], 1)
         update(state, old)
 
     @pl.jit
@@ -451,9 +451,9 @@ def test_atomic_codegen_uses_entry_mode_in_kernel_and_helper(mode):
 def test_half_atomic_in_helper_includes_compiler_overloads(dtype):
     @pl.vector_function(mode="simt")
     def update(state):
-        pl.simt.atomic_add(state[0], 1.0)
-        pl.simt.atomic_max(state[1], 2.0)
-        pl.simt.atomic_min(state[2], -2.0)
+        pl.simt.atomic_add(state, [0], 1.0)
+        pl.simt.atomic_max(state, [1], 2.0)
+        pl.simt.atomic_min(state, [2], -2.0)
 
     @pl.jit(mode="simt", max_threads=32)
     def kernel(state: pl.Tensor[[3], dtype]):

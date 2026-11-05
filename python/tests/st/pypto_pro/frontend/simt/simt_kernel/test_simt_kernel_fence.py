@@ -58,7 +58,7 @@ def _publish_in_thread_block(out, values, completed):
     tid = pl.simt.linear_thread_idx()
     values[tid] = 1
     pl.simt.threadfence_block()
-    ticket = pl.simt.atomic_add(completed[0], 1)
+    ticket = pl.simt.atomic_add(completed, [0], 1)
     if ticket == THREADS - 1:
         total: pl.DT_INT32 = 0
         for index in pl.range(THREADS):
@@ -93,7 +93,7 @@ def _threadfence(out, values, completed):
     thread_block_id = pl.simt.block_idx().x
     values[thread_block_id] = 1
     pl.simt.threadfence()
-    ticket = pl.simt.atomic_add(completed[0], 1)
+    ticket = pl.simt.atomic_add(completed, [0], 1)
     if ticket == GRID_THREAD_BLOCKS - 1:
         total: pl.DT_INT32 = 0
         for index in pl.range(GRID_THREAD_BLOCKS):

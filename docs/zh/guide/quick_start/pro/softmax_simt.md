@@ -62,11 +62,11 @@ THREADS = 256
        pl.simt.syncthreads()
 
        value = src_tile[0, tid]
-       pl.simt.atomic_max(stats_tile[0, 0], value)
+       pl.simt.atomic_max(stats_tile, [0, 0], value)
        pl.simt.syncthreads()
 
        exp_value = pl.simt.exp(value - stats_tile[0, 0])
-       pl.simt.atomic_add(stats_tile[0, 1], exp_value)
+       pl.simt.atomic_add(stats_tile, [0, 1], exp_value)
        pl.simt.syncthreads()
 
        out_tile[0, tid] = exp_value / stats_tile[0, 1]

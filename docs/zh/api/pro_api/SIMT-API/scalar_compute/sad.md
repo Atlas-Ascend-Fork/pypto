@@ -40,6 +40,7 @@ pypto_pro.language.simt.sad(
 
 - 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 - lhs与rhs必须同为DT_INT32或同为DT_UINT32，不支持混合输入。
+- 当lhs与rhs为DT_INT32时，绝对差以DT_INT32表示。为避免溢出，lhs与rhs之差的绝对值须在DT_INT32的表示范围内。
 
 ## 返回值说明
 

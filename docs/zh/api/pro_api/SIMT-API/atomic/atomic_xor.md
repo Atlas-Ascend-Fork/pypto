@@ -20,7 +20,8 @@
 
 ```python
 pypto_pro.language.simt.atomic_xor(
-    target: Union[int, float],
+    target: Union[Tile, Tensor],
+    offset: Sequence[int],
     value: Union[int, float],
 ) -> Scalar
 ```
@@ -29,7 +30,8 @@ pypto_pro.language.simt.atomic_xor(
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| target | 输入 | 目的操作数，必须直接传入Tile或Tensor的单元素下标访问表达式，例如ub_tile[0, 0]或gm_tensor[0, 0]。<br>- UB Tile：必须位于UB，使用ND，支持DT_INT32、DT_UINT32。<br>- GM Tensor：必须为ND，支持DT_INT32、DT_UINT32、DT_INT64、DT_UINT64。 |
+| target | 输入 | 目的容器，传入Tile或Tensor，通过offset指定要更新的元素。<br>- UB Tile：必须位于UB，使用ND，支持DT_INT32、DT_UINT32。<br>- GM Tensor：必须为ND，支持DT_INT32、DT_UINT32、DT_INT64、DT_UINT64。 |
+| offset | 输入 | 元素坐标序列，每个轴对应一个非负整数标量，例如[0, col]。坐标数量必须与target的维数一致，静态坐标必须在对应维度范围内。 |
 | value | 输入 | 源操作数，整型常量或运行时整型标量表达式，表示按位异或掩码。数据类型必须与target一致；整数字面量按target的数据类型处理。 |
 
 ## 约束说明
@@ -52,7 +54,7 @@ def compute_hit_parity(
 ):
     tid = pl.simt.linear_thread_idx()
     if hit[0, tid] != 0:
-        pl.simt.atomic_xor(parity[0, 0], 1)
+        pl.simt.atomic_xor(parity, [0, 0], 1)
 
 
 @pl.jit()

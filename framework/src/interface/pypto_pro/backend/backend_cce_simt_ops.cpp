@@ -2846,10 +2846,10 @@ std::string MakeSimtBesselMiddleTrigFP32Codegen(const std::string& alpha, bool i
 
 std::string MakeSimtBesselHugeCosFP32Codegen(const std::string& alpha, const std::string& phaseShift)
 {
+    // Callers select this reducer for finite alpha >= 105615.0f.
     const std::string cosValue = MakeSimtTrigFP32Codegen("__bessel_reduced - (" + phaseShift + ")", false);
     std::ostringstream s;
-    s << "({float __bessel_alpha = (" << alpha << "), __bessel_reduced = __bessel_alpha;"
-      << "int32_t __bessel_quadrant = 0; if (__bessel_alpha >= 105615.0f) {"
+    s << "({float __bessel_alpha = (" << alpha << ");"
       << "uint32_t __bessel_bits = reinterpret_cast<uint32_t&>(__bessel_alpha);"
       << "int32_t __bessel_exp = (int32_t)(((__bessel_bits & 0x7f800000u) >> 23) - 127);"
       << "uint32_t __bessel_table_index = (uint32_t)__bessel_exp >> 5;"
@@ -2872,21 +2872,34 @@ std::string MakeSimtBesselHugeCosFP32Codegen(const std::string& alpha, const std
       << "uint64_t __bessel_product = (uint64_t)__bessel_mantissa * __bessel_lo;"
       << "__bessel_product = (uint64_t)__bessel_mantissa * __bessel_mid + (__bessel_product >> 32);"
       << "__bessel_product = ((uint64_t)(__bessel_mantissa * __bessel_hi) << 32) + __bessel_product;"
-      << "__bessel_quadrant = (int32_t)(__bessel_product >> 62);"
+      << "int32_t __bessel_quadrant = (int32_t)(__bessel_product >> 62);"
       << "__bessel_product &= 0x3fffffffffffffffull;"
       << "if ((__bessel_product & 0x2000000000000000ull) != 0) {"
       << "__bessel_product -= 0x4000000000000000ull; ++__bessel_quadrant; }"
       << "int64_t __bessel_pi = (int64_t)__bessel_product; float __bessel_hi_part = (float)__bessel_pi;"
       << "__bessel_pi -= (int64_t)__bessel_hi_part; float __bessel_lo_part = (float)__bessel_pi;"
-      << "__bessel_reduced = (__bessel_hi_part + __bessel_lo_part) * 3.4061215800865545e-19f;"
+      << "float __bessel_reduced = (__bessel_hi_part + __bessel_lo_part) * 3.4061215800865545e-19f;"
       << "__bessel_quadrant &= 3;"
-      << "__bessel_reduced += (float)__bessel_quadrant * 1.5707963705062866f; }" << cosValue << ";})";
+      << "__bessel_reduced += (float)__bessel_quadrant * 1.5707963705062866f;" << cosValue << ";})";
     return s.str();
+}
+
+std::string MakeSimtBesselTrigFP32Codegen(const std::string& alpha, bool isSin)
+{
+    const std::string middleValue = MakeSimtBesselMiddleTrigFP32Codegen("__bessel_phase_input", isSin);
+    const std::string largeValue = MakeSimtBesselHugeCosFP32Codegen(
+        "__bessel_phase_input", isSin ? "2.356194496154785f" : "0.7853981852531433f");
+    // The middle reducer's pi/2 split has a residual of about 1.715e-15, amplified by its quotient.
+    // Use the 105615.0f Payne-Hanek cutoff from ASC's __internal_j0f_huge_range (math_functions_impl.h)
+    // while retaining the caller's alpha/beta approximations.
+    // The sine case follows sin(alpha - pi/4) = cos(alpha - 3*pi/4).
+    return "({float __bessel_phase_input = (" + alpha + "); __bessel_phase_input >= 105615.0f ? (" + largeValue +
+           ") : (" + middleValue + ");})";
 }
 
 std::string MakeSimtJ0Codegen(const std::string& operand)
 {
-    const std::string middleValue = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", false);
+    const std::string middleValue = MakeSimtBesselTrigFP32Codegen("__alpha", false);
     const std::string hugeCosValue = MakeSimtBesselHugeCosFP32Codegen("__alpha", "0.7853981852531433f");
     std::ostringstream s;
     s << "({float __x = (" << operand << "), __a = __fabsf(__x), __r; uint32_t __ab = reinterpret_cast<uint32_t&>(__a);"
@@ -2924,7 +2937,7 @@ std::string MakeSimtJ0Codegen(const std::string& operand)
 
 std::string MakeSimtJ1Codegen(const std::string& operand)
 {
-    const std::string middleValue = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", true);
+    const std::string middleValue = MakeSimtBesselTrigFP32Codegen("__alpha", true);
     const std::string hugeCosValue = MakeSimtBesselHugeCosFP32Codegen("__alpha", "2.356194496154785f");
     std::ostringstream s;
     s << "({float __x = (" << operand << "), __a = __fabsf(__x), __r; uint32_t __ab = reinterpret_cast<uint32_t&>(__a);"
@@ -2963,7 +2976,7 @@ std::string MakeSimtJ1Codegen(const std::string& operand)
 
 std::string MakeSimtY0Codegen(const std::string& operand)
 {
-    const std::string middleValue = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", true);
+    const std::string middleValue = MakeSimtBesselTrigFP32Codegen("__alpha", true);
     const std::string hugeCosValue = MakeSimtBesselHugeCosFP32Codegen("__alpha", "2.356194496154785f");
     const std::string logValue = MakeSimtLogFP32Codegen("__x");
     std::ostringstream s;
@@ -3016,7 +3029,7 @@ std::string MakeSimtY0Codegen(const std::string& operand)
 
 std::string MakeSimtY1Codegen(const std::string& operand)
 {
-    const std::string middleValue = MakeSimtBesselMiddleTrigFP32Codegen("__alpha", false);
+    const std::string middleValue = MakeSimtBesselTrigFP32Codegen("__alpha", false);
     const std::string hugeCosValue = MakeSimtBesselHugeCosFP32Codegen("__alpha", "3.9269907474517822f");
     const std::string logValue = MakeSimtLogFP32Codegen("__x");
     std::ostringstream s;

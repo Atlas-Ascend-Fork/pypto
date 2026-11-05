@@ -20,7 +20,8 @@
 
 ```python
 pypto_pro.language.simt.atomic_add(
-    target: Union[int, float],
+    target: Union[Tile, Tensor],
+    offset: Sequence[int],
     value: Union[int, float],
 ) -> Optional[Scalar]
 ```
@@ -29,7 +30,8 @@ pypto_pro.language.simt.atomic_add(
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| target | 输入 | 目的操作数，必须直接传入Tile或Tensor的单元素下标访问表达式，例如ub_tile[0, 0]或gm_tensor[0, 0]。<br>- UB Tile：必须位于UB，使用ND，支持DT_INT32、DT_UINT32、DT_FP16、DT_BF16、DT_FP32。<br>- GM Tensor：必须为ND，支持DT_INT32、DT_UINT32、DT_FP16、DT_BF16、DT_FP32、DT_INT64、DT_UINT64。 |
+| target | 输入 | 目的容器，传入Tile或Tensor，通过offset指定要更新的元素。<br>- UB Tile：必须位于UB，使用ND，支持DT_INT32、DT_UINT32、DT_FP16、DT_BF16、DT_FP32。<br>- GM Tensor：必须为ND，支持DT_INT32、DT_UINT32、DT_FP16、DT_BF16、DT_FP32、DT_INT64、DT_UINT64。 |
+| offset | 输入 | 元素坐标序列，每个轴对应一个非负整数标量，例如[0, col]。坐标数量必须与target的维数一致，静态坐标必须在对应维度范围内。 |
 | value | 输入 | 源操作数，整型或浮点型常量，或相应类型的运行时标量表达式，表示累加值。数据类型必须与target一致；数值字面量按target的数据类型处理，整数目的操作数不接受浮点字面量。 |
 
 ## 约束说明
@@ -51,7 +53,7 @@ def atomic_add_histogram_gm(
     histogram: pl.Tensor[[1, 16], pl.DT_INT32],
 ):
     tid = pl.simt.linear_thread_idx()
-    pl.simt.atomic_add(histogram[0, tid % 16], 1)
+    pl.simt.atomic_add(histogram, [0, tid % 16], 1)
 
 
 @pl.jit()

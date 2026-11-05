@@ -28,7 +28,7 @@ from typing import Any, Union
 
 from pypto.ir import RoundMode
 
-from ._api import DType, Scalar, _api_decl
+from ._api import DType, Offset, Scalar, Tensor, Tile, _api_decl
 
 
 class Simt:
@@ -479,62 +479,64 @@ class Simt:
 
     @staticmethod
     @_api_decl
-    def atomic_add(target: Union[int, float], value: Union[int, float]) -> Scalar | None:
+    def atomic_add(target: Union[Tile, Tensor], offset: Offset, value: Union[int, float]) -> Scalar | None:
         """Atomically add ``value`` to one Tile or Tensor element.
 
-        ``target`` must be written directly as a subscript expression such as
-        ``tile[row, col]`` or ``tensor[index]``. FP16/BF16 targets return no value;
+        ``target`` is a Tile or Tensor. ``offset`` contains one element coordinate
+        per axis, such as ``[row, col]`` or ``[index]``. FP16/BF16 targets return no value;
         other supported dtypes return the element value observed before the update.
         """
 
     @staticmethod
     @_api_decl
-    def atomic_sub(target: Union[int, float], value: Union[int, float]) -> Scalar:
+    def atomic_sub(target: Union[Tile, Tensor], offset: Offset, value: Union[int, float]) -> Scalar:
         """Atomically subtract ``value`` from one Tile or Tensor element and return its old value."""
 
     @staticmethod
     @_api_decl
-    def atomic_exch(target: Union[int, float], value: Union[int, float]) -> Scalar:
+    def atomic_exch(target: Union[Tile, Tensor], offset: Offset, value: Union[int, float]) -> Scalar:
         """Atomically replace one Tile or Tensor element and return its old value."""
 
     @staticmethod
     @_api_decl
-    def atomic_max(target: Union[int, float], value: Union[int, float]) -> Scalar | None:
+    def atomic_max(target: Union[Tile, Tensor], offset: Offset, value: Union[int, float]) -> Scalar | None:
         """Atomically update an element with its maximum; FP16/BF16 return no value."""
 
     @staticmethod
     @_api_decl
-    def atomic_min(target: Union[int, float], value: Union[int, float]) -> Scalar | None:
+    def atomic_min(target: Union[Tile, Tensor], offset: Offset, value: Union[int, float]) -> Scalar | None:
         """Atomically update an element with its minimum; FP16/BF16 return no value."""
 
     @staticmethod
     @_api_decl
-    def atomic_inc(target: Union[int, float], limit: Union[int, float]) -> Scalar:
+    def atomic_inc(target: Union[Tile, Tensor], offset: Offset, limit: Union[int, float]) -> Scalar:
         """Atomically increment and wrap one unsigned counter element, returning its old value."""
 
     @staticmethod
     @_api_decl
-    def atomic_dec(target: Union[int, float], limit: Union[int, float]) -> Scalar:
+    def atomic_dec(target: Union[Tile, Tensor], offset: Offset, limit: Union[int, float]) -> Scalar:
         """Atomically decrement and wrap one unsigned counter element, returning its old value."""
 
     @staticmethod
     @_api_decl
-    def atomic_cas(target: Union[int, float], compare: Union[int, float], value: Union[int, float]) -> Scalar:
+    def atomic_cas(
+        target: Union[Tile, Tensor], offset: Offset, compare: Union[int, float], value: Union[int, float],
+    ) -> Scalar:
         """Atomically compare and exchange one Tile or Tensor element, returning its old value."""
 
     @staticmethod
     @_api_decl
-    def atomic_and(target: Union[int, float], value: Union[int, float]) -> Scalar:
+    def atomic_and(target: Union[Tile, Tensor], offset: Offset, value: Union[int, float]) -> Scalar:
         """Atomically apply bitwise AND to one Tile or Tensor element and return its old value."""
 
     @staticmethod
     @_api_decl
-    def atomic_or(target: Union[int, float], value: Union[int, float]) -> Scalar:
+    def atomic_or(target: Union[Tile, Tensor], offset: Offset, value: Union[int, float]) -> Scalar:
         """Atomically apply bitwise OR to one Tile or Tensor element and return its old value."""
 
     @staticmethod
     @_api_decl
-    def atomic_xor(target: Union[int, float], value: Union[int, float]) -> Scalar:
+    def atomic_xor(target: Union[Tile, Tensor], offset: Offset, value: Union[int, float]) -> Scalar:
         """Atomically apply bitwise XOR to one Tile or Tensor element and return its old value."""
 
     @staticmethod

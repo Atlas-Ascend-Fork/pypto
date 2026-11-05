@@ -30,7 +30,7 @@ def publish_with_threadfence(
     block_id = pl.simt.block_idx().x
     values[0, block_id] = 1
     pl.simt.threadfence()
-    ticket = pl.simt.atomic_add(completed[0, 0], 1)
+    ticket = pl.simt.atomic_add(completed, [0, 0], 1)
     if ticket == GRID_BLOCKS - 1:
         total: pl.DT_INT32 = 0
         for index in pl.range(GRID_BLOCKS):

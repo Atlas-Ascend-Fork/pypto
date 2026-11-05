@@ -1018,38 +1018,24 @@ def test_shuffle_accepts_runtime_controls_with_asc_dtypes():
     assert function_ir.count("simt.warp_shfl") == 4
 
 
-def test_warp_controls_evaluate_the_whole_constant_expression_before_ir_range_checks():
-    @pl.vector_function(mode="simt", max_threads=32)
-    def wide_controls(value: pl.DT_FP32):
-        pl.simt.warp_all(18446744073709551616 - 18446744073709551615)
-        pl.simt.warp_any(predicate=18446744073709551616 - 18446744073709551615)
-        pl.simt.warp_ballot(18446744073709551616 - 18446744073709551615)
-        pl.simt.warp_shfl(value, 18446744073709551616 - 18446744073709551615)
-        pl.simt.warp_shfl_up(value, delta=18446744073709551616 - 18446744073709551615)
-        pl.simt.warp_shfl_down(value, 18446744073709551616 - 18446744073709551615)
-        pl.simt.warp_shfl_xor(value, 1, width=(1 << 70) - (1 << 70) + 32)
+@pytest.mark.parametrize("use_shuffle", [False, True])
+def test_warp_controls_follow_expression_range_checks(use_shuffle):
+    if use_shuffle:
+        @pl.vector_function(mode="simt", max_threads=32)
+        def wide_controls(value: pl.DT_FP32):
+            pl.simt.warp_shfl_xor(value, 1, width=(1 << 70) - (1 << 70) + 32)
+    else:
+        @pl.vector_function(mode="simt", max_threads=32)
+        def wide_controls(value: pl.DT_FP32):
+            pl.simt.warp_all(18446744073709551616 - 18446744073709551615)
 
     @pl.jit(auto_mutex=False)
     def kernel(value: pl.DT_FP32):
         with pl.section_vector():
             wide_controls[32](value)
 
-    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-    calls = [
-        stmt.expr for stmt in program.get_function("wide_controls").body.stmts
-        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call)
-    ]
-    assert len(calls) == 7
-    for call in calls:
-        if len(call.args) == 1:
-            assert call.args[0].value == 1
-            assert call.args[0].type.dtype == ir.DataType.INT32
-        else:
-            expected = (
-                ir.DataType.UINT32 if call.name in ("simt.warp_shfl_up", "simt.warp_shfl_down") else ir.DataType.INT32
-            )
-            assert call.args[1].value == 1 and call.args[1].type.dtype == expected
-            assert call.args[2].value == 32 and call.args[2].type.dtype == ir.DataType.INT32
+    with pytest.raises(OutOfRange):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
 def test_warp_operation_rejected_outside_simt_function():
@@ -1069,7 +1055,7 @@ def _atomic_add_tile(
     value: pl.DT_INT32,
 ):
     tid = pl.simt.linear_thread_idx()
-    old_values[0, tid] = pl.simt.atomic_add(dst[0, 0], value)
+    old_values[0, tid] = pl.simt.atomic_add(dst, [0, 0], value)
 
 
 @pl.vector_function(mode="simt", max_threads=32)
@@ -1079,7 +1065,7 @@ def _atomic_add_tensor(
     value: pl.DT_INT64,
 ):
     tid = pl.simt.linear_thread_idx()
-    old_values[0, tid] = pl.simt.atomic_add(dst[0, 0], value)
+    old_values[0, tid] = pl.simt.atomic_add(dst, [0, 0], value)
 
 
 @pl.vector_function(mode="simt")
@@ -1090,16 +1076,16 @@ def _atomic_rmw_ops(
     int_value: pl.DT_INT32,
     uint_value: pl.DT_UINT32,
 ):
-    pl.simt.atomic_sub(numeric[0, 0], int_value)
-    pl.simt.atomic_exch(numeric[0, 0], int_value)
-    pl.simt.atomic_max(numeric[0, 0], int_value)
-    pl.simt.atomic_min(numeric[0, 0], int_value)
-    pl.simt.atomic_cas(numeric[0, 0], int_value, int_value)
-    pl.simt.atomic_and(bitwise[0, 0], uint_value)
-    pl.simt.atomic_or(bitwise[0, 0], uint_value)
-    pl.simt.atomic_xor(bitwise[0, 0], uint_value)
-    pl.simt.atomic_inc(counter[0, 0], uint_value)
-    pl.simt.atomic_dec(counter[0, 0], uint_value)
+    pl.simt.atomic_sub(numeric, [0, 0], int_value)
+    pl.simt.atomic_exch(numeric, [0, 0], int_value)
+    pl.simt.atomic_max(numeric, [0, 0], int_value)
+    pl.simt.atomic_min(numeric, [0, 0], int_value)
+    pl.simt.atomic_cas(numeric, [0, 0], int_value, int_value)
+    pl.simt.atomic_and(bitwise, [0, 0], uint_value)
+    pl.simt.atomic_or(bitwise, [0, 0], uint_value)
+    pl.simt.atomic_xor(bitwise, [0, 0], uint_value)
+    pl.simt.atomic_inc(counter, [0, 0], uint_value)
+    pl.simt.atomic_dec(counter, [0, 0], uint_value)
 
 
 @pl.vector_function(mode="simt", max_threads=1)
@@ -1210,7 +1196,7 @@ def _parse_tile_scalar_function(function, tile_dtype, scalar_dtype):
     return program.get_function(function.__name__)
 
 
-def test_atomic_add_preserves_tile_lvalue_and_returns_old_value():
+def test_atomic_add_uses_tile_coordinates_and_returns_old_value():
     program, matched = _atomic_add_tile_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     function_ir = str(program.get_function("_atomic_add_tile"))
 
@@ -1238,8 +1224,8 @@ def test_atomic_add_accepts_loaded_elements(dtype, use_tile):
     @pl.vector_function(mode="simt")
     def loaded_values(dst, values):
         value = values[0, 0]
-        pl.simt.atomic_add(dst[0, 0], value)
-        pl.simt.atomic_add(dst[0, 1], values[0, 1])
+        pl.simt.atomic_add(dst, [0, 0], value)
+        pl.simt.atomic_add(dst, [0, 1], values[0, 1])
 
     if use_tile:
         function = _parse_two_tile_function(loaded_values, dtype, dtype)
@@ -1270,38 +1256,85 @@ def test_atomic_add_accepts_loaded_elements(dtype, use_tile):
 def test_atomic_add_contextually_types_numeric_literals():
     @pl.vector_function(mode="simt")
     def literal_values(unsigned, signed):
-        old = pl.simt.atomic_add(unsigned[0, 0], 1)
-        signed[0, 0] = pl.simt.atomic_add(signed[0, 0], -1)
+        old = pl.simt.atomic_add(unsigned, [0, 0], 1)
+        signed[0, 0] = pl.simt.atomic_add(signed, [0, 0], -1)
         unsigned[0, 0] = old
 
     function_ir = str(_parse_two_tile_function(literal_values, pl.DT_UINT32, pl.DT_INT32))
     assert function_ir.count("simt.atomic_add") == 2
 
 
-def test_atomic_add_requires_direct_subscript_target():
+def test_atomic_add_rejects_old_subscript_signature():
     @pl.vector_function(mode="simt")
-    def scalar_alias(dst, value: pl.DT_INT32):
-        current = dst[0, 0]
-        pl.simt.atomic_add(current, value)
+    def old_signature(dst, value: pl.DT_INT32):
+        pl.simt.atomic_add(dst[0, 0], value)
 
-    with pytest.raises(InvalidVal, match="direct Tile or Tensor subscript"):
-        _parse_tile_scalar_function(scalar_alias, pl.DT_INT32, pl.DT_INT32)
+    with pytest.raises(InvalidArgument, match="value"):
+        _parse_tile_scalar_function(old_signature, pl.DT_INT32, pl.DT_INT32)
 
 
-def test_atomic_add_rejects_slice_target():
+def test_atomic_add_rejects_scalar_target():
     @pl.vector_function(mode="simt")
-    def slice_target(dst, value: pl.DT_INT32):
-        pl.simt.atomic_add(dst[0:1, 0:1], value)
+    def scalar_target(dst, value: pl.DT_INT32):
+        pl.simt.atomic_add(value, [0, 0], value)
 
-    with pytest.raises(NotSupported, match="does not support slices"):
-        _parse_tile_scalar_function(slice_target, pl.DT_INT32, pl.DT_INT32)
+    with pytest.raises(InvalidType, match="target"):
+        _parse_tile_scalar_function(scalar_target, pl.DT_INT32, pl.DT_INT32)
+
+
+@pytest.mark.parametrize("offset, error, message", [
+    ([0], InvalidShape, "rank"),
+    ([0, 0, 0], InvalidShape, "rank"),
+    ([-1, 0], InvalidVal, "non-negative"),
+    ([0, 32], OutOfRange, "out of range"),
+    ([0, 1.0], InvalidType, "integer scalar"),
+    ([0, True], InvalidType, "integer scalar"),
+    (0, InvalidType, "offset"),
+])
+def test_atomic_coordinates_are_validated(offset, error, message):
+    @pl.vector_function(mode="simt")
+    def invalid_offset(dst):
+        pl.simt.atomic_add(dst, offset, 1)
+
+    with pytest.raises(error, match=message):
+        _parse_one_tile_function(invalid_offset, pl.DT_INT32)
+
+
+def test_subscript_rank_is_checked_before_parsing_indices():
+    @pl.vector_function(mode="simt")
+    def invalid_subscript(dst):
+        dst[0, 0] = dst[0, 0, 18446744073709551616]
+
+    with pytest.raises(InvalidShape, match="Subscript has 3 indices but container has rank 2"):
+        _parse_one_tile_function(invalid_subscript, pl.DT_INT32)
+
+
+def test_atomic_coordinates_use_subscript_linearization():
+    @pl.vector_function(mode="simt")
+    def coordinates(dst):
+        row = pl.simt.cast(pl.simt.thread_idx().x, pl.DT_INT32)
+        col = pl.simt.cast(pl.simt.thread_idx().y, pl.DT_INT32)
+        old = pl.simt.atomic_add(value=1, offset=[row, col], target=dst)
+        dst[row, col] = old
+
+    function = _parse_one_tile_function(coordinates, pl.DT_INT32, shape=(4, 8))
+    calls = [
+        stmt.value for stmt in function.body.stmts
+        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call)
+    ]
+    atomic = next(call for call in calls if call.name == "simt.atomic_add")
+    store = next(stmt.expr for stmt in function.body.stmts
+                 if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call)
+                 and stmt.expr.name == "block.setval")
+    assert ir.structural_equal(atomic.args[1], store.args[1])
+    assert all(call.name != "block.getval" for call in calls)
 
 
 @pytest.mark.parametrize("dtype", [pl.DT_FP16, pl.DT_BF16])
 def test_half_precision_atomic_result_cannot_be_returned(dtype):
     @pl.vector_function(mode="simt")
     def add_result(dst) -> None:
-        return pl.simt.atomic_add(dst[0, 0], 1.0)
+        return pl.simt.atomic_add(dst, [0, 0], 1.0)
 
     with pytest.raises(InvalidVal, match="must return None or one scalar value"):
         _parse_one_tile_function(add_result, dtype)
@@ -1310,13 +1343,13 @@ def test_half_precision_atomic_result_cannot_be_returned(dtype):
 def test_atomic_add_rejects_float_literal_for_integer_target():
     @pl.vector_function(mode="simt")
     def float_literal(dst):
-        pl.simt.atomic_add(dst[0, 0], 1.0)
+        pl.simt.atomic_add(dst, [0, 0], 1.0)
 
     with pytest.raises(InvalidType, match="requires an integer value"):
         _parse_one_tile_function(float_literal, pl.DT_INT32)
 
 
-def test_atomic_rmw_interfaces_preserve_lvalue_and_build_distinct_ir_ops():
+def test_atomic_rmw_interfaces_build_distinct_ir_ops():
     program, _ = _atomic_rmw_ops_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     function_ir = str(program.get_function("_atomic_rmw_ops"))
 
@@ -1339,7 +1372,7 @@ def test_atomic_rmw_interfaces_preserve_lvalue_and_build_distinct_ir_ops():
 def test_atomic_cas_contextually_types_compare_and_value_literals():
     @pl.vector_function(mode="simt")
     def literal_operands(dst):
-        old = pl.simt.atomic_cas(dst[0, 0], 0, 1)
+        old = pl.simt.atomic_cas(dst, [0, 0], 0, 1)
         dst[0, 0] = old
 
     assert "simt.atomic_cas" in str(_parse_one_tile_function(literal_operands, pl.DT_UINT32))
@@ -1348,7 +1381,7 @@ def test_atomic_cas_contextually_types_compare_and_value_literals():
 def test_atomic_counter_supports_gm_uint64():
     @pl.vector_function(mode="simt", max_threads=1)
     def uint64_counter(dst: pl.Tensor[[1], pl.DT_UINT64], limit: pl.DT_UINT64):
-        pl.simt.atomic_dec(dst[0], limit)
+        pl.simt.atomic_dec(dst, [0], limit)
 
     @pl.jit(auto_mutex=False)
     def kernel(dst: pl.Tensor[[1], pl.DT_UINT64], limit: pl.DT_UINT64):
@@ -1359,6 +1392,25 @@ def test_atomic_counter_supports_gm_uint64():
     uint64_counter = program.get_function(uint64_counter.__name__)
 
     assert "simt.atomic_dec" in str(uint64_counter)
+
+
+def test_atomic_uint64_literal_preserves_unsigned_value():
+    @pl.vector_function(mode="simt", max_threads=1)
+    def uint64_literal(dst: pl.Tensor[[1], pl.DT_UINT64]):
+        pl.simt.atomic_exch(dst, [0], 18446744073709551615)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(dst: pl.Tensor[[1], pl.DT_UINT64]):
+        with pl.section_vector():
+            uint64_literal[1](dst)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function = program.get_function("uint64_literal")
+    call = next(stmt.expr for stmt in function.body.stmts
+                if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call)
+                and stmt.expr.name == "simt.atomic_exch")
+    assert call.args[2].type.dtype == ir.DataType.UINT64
+    assert call.args[2].value == -1
 
 
 def test_simt_cast_is_not_exported_as_shared_language_api():

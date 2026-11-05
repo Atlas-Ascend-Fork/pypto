@@ -10,6 +10,7 @@
 
 """A5 system tests for SIMT scalar Bessel interfaces."""
 
+import logging
 import math
 import os
 
@@ -160,6 +161,54 @@ def test_j0_fp32_with_tile_operands():
     expected = torch.special.bessel_j0(source)
     expected[0, [0, 6]] = 0.0
     torch.testing.assert_close(output.cpu(), expected, rtol=0.0005, atol=5e-06, equal_nan=True)
+
+
+def _check_bessel_fp32_tile_accuracy(kernel, input_value, reference):
+    torch.npu.set_device(ST_DEVICE)
+    source = torch.full((1, ELEMENTS), input_value, dtype=torch.float32)
+    output = torch.empty_like(source, device=ST_DEVICE)
+    kernel[1](source.to(ST_DEVICE), output)
+    torch.npu.synchronize()
+
+    actual = output.cpu().to(torch.float64)
+    expected = torch.full_like(actual, reference)
+    relative_error = (actual - expected).abs() / expected.abs()
+    logging.info(
+        "%s(fp32_input=%.17g): actual=%.9g reference=%.17g max_relative_error=%.9g",
+        kernel.__name__, source[0, 0].item(), actual[0, 0].item(), reference, relative_error.max().item(),
+    )
+    # The usual 5e-6 absolute tolerance would hide relative errors in the decaying tail.
+    torch.testing.assert_close(actual, expected, rtol=0.0005, atol=0)
+
+
+@pytest.mark.soc("950")
+@pytest.mark.parametrize(
+    ("input_value", "reference"),
+    [
+        (8.0, 0.17165080713755390609),
+        (9.0, -9.03336111828761343360e-2),
+        (16.0, -1.74899073983629184828e-1),
+        (32.0, 1.38079009746555923759e-1),
+        (105614.9921875, 2.42939547004085426370e-3),
+        (105615.0, 2.42655054895566530700e-3),
+        (105615.0078125, 2.42355752394779203569e-3),
+        (1e6, 3.31043013739873740988e-4),
+        (1e9, 2.46874718862691951144e-5),
+        (9.9e12, -8.41918629080968205264e-8),
+        (1e13, 2.17024994126219814694e-7),
+        (10000000876544.0, 1.62297538219433337413e-7),
+        (1e20, 7.95978945272244524996e-11),
+        (3.4028234663852886e38, 1.01279820264082199891e-20),
+    ],
+    ids=[
+        "8", "9", "16", "32", "below_reduction_cutoff", "reduction_cutoff", "above_reduction_cutoff",
+        "1e6", "1e9", "9.9e12", "1e13", "above_1e13", "1e20", "fp32_max",
+    ],
+)
+def test_j0_fp32_huge_arguments_with_tile_operands(input_value, reference):
+    # References use the exact FP32 inputs, including 9900000280576 and 9999999827968.
+    # High-precision references: J0 power series up to 32, https://dlmf.nist.gov/10.17.E3 otherwise.
+    _check_bessel_fp32_tile_accuracy(simt_j0_tile, input_value, reference)
 
 # -------------------------------------------------------- j1 ---------------------------------------------------------
 
@@ -469,3 +518,20 @@ def test_yn_int32_fp32_with_tile_operands():
     simt_yn_tile(order.to(ST_DEVICE), source.to(ST_DEVICE), output)
     torch.npu.synchronize()
     torch.testing.assert_close(output.cpu(), bessel_yn_golden(order, source), rtol=0.0005, atol=5e-06, equal_nan=True)
+
+
+@pytest.mark.soc("950")
+@pytest.mark.parametrize(
+    ("kernel", "input_value", "reference"),
+    [
+        pytest.param(simt_j1_tile, 9.9e12, -2.39200242285566645970e-7, id="j1_9.9e12"),
+        pytest.param(simt_j1_tile, 1e13, 1.28693940247646966895e-7, id="j1_1e13"),
+        pytest.param(simt_y0_tile, 9.9e12, -2.39200242285562393856e-7, id="y0_9.9e12"),
+        pytest.param(simt_y0_tile, 1e13, 1.28693940247636115645e-7, id="y0_1e13"),
+        pytest.param(simt_y1_tile, 9.9e12, 8.41918629080847397064e-8, id="y1_9.9e12"),
+        pytest.param(simt_y1_tile, 1e13, -2.17024994126213379997e-7, id="y1_1e13"),
+    ],
+)
+def test_bessel_fp32_huge_arguments_with_tile_operands(kernel, input_value, reference):
+    # References use https://dlmf.nist.gov/10.17.E3 and E4 at the exact FP32 inputs.
+    _check_bessel_fp32_tile_accuracy(kernel, input_value, reference)
