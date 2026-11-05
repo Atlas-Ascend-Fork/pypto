@@ -35,7 +35,7 @@ set_cache_policy(self, policy: CachePolicy, value: bool) -> None
 
 | 参数名  | 输入/输出 | 说明                                                                 |
 |---------|-----------|----------------------------------------------------------------------|
-| policy  | 输入      | 缓存策略类型,可选值为：<br> - CachePolicy.NONE_CACHEABLE：芯片提供了L2 Cache能力，但是有些算子的特点导致有L2 Cache反而不如没有L2 Cache，配置后此tensor不会经过L2 Cache，例如有以下常用场景：<br>   - 类似于weight这种常量，如果算子仅访问从out读取一次，不复用，则没有必要进L2；<br>   - 输出shape过大，下层算子最先使用的内存不是上层算子最后的输出结果，进L2后反而触发下层算子回写out，导致性能恶化。 |
+| policy  | 输入      | 缓存策略类型，可选值为：<br> - CachePolicy.NONE_CACHEABLE：芯片提供了L2 Cache能力，但是有些算子的特点导致有L2 Cache反而不如没有L2 Cache，配置后此tensor不会经过L2 Cache，例如有以下常用场景：<br>   - 类似于weight这种常量，如果算子仅访问从out读取一次，不复用，则没有必要进L2；<br>   - 输出shape过大，下层算子最先使用的内存不是上层算子最后的输出结果，进L2后反而触发下层算子回写out，导致性能恶化。 |
 | value   | 输入      | 是否启用该缓存策略。 |
 
 ## 返回值说明
