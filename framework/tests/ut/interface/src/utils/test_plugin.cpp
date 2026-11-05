@@ -28,29 +28,33 @@ using namespace npu::tile_fwk;
 TEST(PluginTest, Basic)
 {
     struct Compute {
-        static std::string ComputeAdd(const std::string& filepath, const std::string& source)
+        static int ComputeAdd(const std::string& filepath, std::string& source)
         {
-            return source + "Add" + filepath;
+            source += "Add" + filepath;
+            return 0;
         }
-        static std::string ComputeSub(const std::string& filepath, const std::string& source)
+        static int ComputeSub(const std::string& filepath, std::string& source)
         {
-            return source + "Sub" + filepath;
+            source += "Sub" + filepath;
+            return 0;
         }
     };
     PluginManager& manager = PluginManager::GetInstance();
 
-    EXPECT_TRUE(manager.AddPluginCodegenSrc("add", Compute::ComputeAdd));
-    EXPECT_FALSE(manager.AddPluginCodegenSrc("add", Compute::ComputeSub));
-    EXPECT_TRUE(manager.AddPluginCodegenSrc("sub", Compute::ComputeSub));
+    EXPECT_TRUE(manager.AddPlugin<PluginCodegenSrc>("add", Compute::ComputeAdd));
+    EXPECT_FALSE(manager.AddPlugin<PluginCodegenSrc>("add", Compute::ComputeSub));
+    EXPECT_TRUE(manager.AddPlugin<PluginCodegenSrc>("sub", Compute::ComputeSub));
 
     EXPECT_EQ(2, manager.GetPlugin<PluginCodegenSrc>().size());
 
-    std::string code = manager.RunPluginCodegenSrc("1", "2");
+    std::string code = "2";
+    manager.RunPlugin<PluginCodegenSrc>("1", code);
     EXPECT_EQ("2Add1Sub1", code);
 
     manager.ClearPlugin();
     EXPECT_EQ(0, manager.GetPlugin<PluginCodegenSrc>().size());
 
-    std::string code2 = manager.RunPluginCodegenSrc("1", "2");
+    std::string code2 = "2";
+    manager.RunPlugin<PluginCodegenSrc>("1", code2);
     EXPECT_EQ("2", code2);
 }

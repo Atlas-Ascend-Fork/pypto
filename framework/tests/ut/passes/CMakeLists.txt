@@ -16,6 +16,7 @@ PTO_Fwk_UTest_AddCaseLib(
         TARGET ${_Target}
         SOURCES ${_Sources}
         LINK_LIBRARIES
+        LD_LIBRARIES_EXT pgo_vf
 )
 add_custom_command(
         TARGET ${_Target} PRE_BUILD

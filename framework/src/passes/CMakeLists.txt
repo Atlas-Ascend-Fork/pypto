@@ -9,6 +9,8 @@
 # -----------------------------------------------------------------------------------------------------------
 
 file(GLOB_RECURSE _Passes_Srcs *.cpp)
+list(FILTER _Passes_Srcs EXCLUDE REGEX "/block_graph_pass/pgo_vf/")
 #PTO_Fwk_Debug_Source_List(NAME "_Passes_Srcs" LIST ${_Passes_Srcs} DETAIL OFF)
 
 target_sources(tile_fwk_interface PRIVATE ${_Passes_Srcs})
+add_subdirectory(block_graph_pass/pgo_vf)

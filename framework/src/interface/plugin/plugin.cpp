@@ -15,7 +15,71 @@
 
 #include "plugin.h"
 
+#include <dlfcn.h>
+#include <utility>
+
+#include "interface/plugin/plugin_name.h"
+#include "tilefwk/tilefwk_log.h"
+
 namespace npu::tile_fwk {
+
+namespace {
+using GetVersionEntry = const char* (*)();
+} // namespace
+
+SharedLibrary::SharedLibrary(std::string libName, std::string libVersion)
+    : libName_(std::move(libName)), libVersion_(std::move(libVersion))
+{}
+
+SharedLibrary::~SharedLibrary() { Unload(); }
+
+bool SharedLibrary::Load()
+{
+    if (handle_ != nullptr) {
+        return true;
+    }
+
+    std::string library = "lib" + libName_ + ".so";
+    void* handle = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (handle == nullptr) {
+        const char* error = dlerror();
+        PYPTO_HOST_LOG_WITHOUT_MODULE(DLOG_WARN, "SharedLibrary: dlopen %s failed: %s", library.c_str(),
+                                      error == nullptr ? "unknown" : error);
+        return false;
+    }
+
+    auto getVersion = reinterpret_cast<GetVersionEntry>(dlsym(handle, PLUGIN_STR(PLUGIN_GET_VERSION_NAME)));
+    if (getVersion == nullptr) {
+        PYPTO_HOST_LOG_WITHOUT_MODULE(DLOG_WARN, "SharedLibrary: %s is missing %s", library.c_str(),
+                                      PLUGIN_STR(PLUGIN_GET_VERSION_NAME));
+        dlclose(handle);
+        return false;
+    }
+
+    const char* actual = getVersion();
+    if (actual == nullptr || std::string(actual) != libVersion_) {
+        PYPTO_HOST_LOG_WITHOUT_MODULE(DLOG_WARN, "SharedLibrary: %s version %s != expected %s", library.c_str(),
+                                      actual == nullptr ? "<null>" : actual, libVersion_.c_str());
+        dlclose(handle);
+        return false;
+    }
+
+    handle_ = handle;
+    return true;
+}
+
+void SharedLibrary::Unload()
+{
+    if (handle_ != nullptr) {
+        dlclose(handle_);
+        handle_ = nullptr;
+    }
+}
+
+void* SharedLibrary::GetSymbolAddress(const std::string& name) const
+{
+    return handle_ == nullptr ? nullptr : dlsym(handle_, name.c_str());
+}
 
 PluginManager& PluginManager::GetInstance()
 {
@@ -37,27 +101,6 @@ void PluginManager::ClearPlugin()
 {
     pluginListDict_.clear();
     pluginDict_.clear();
-}
-
-bool PluginManager::AddPluginCodegenSrc(const std::string& name, const PluginCodegenSrc::EntryType& rawEntry)
-{
-    auto entry = std::make_shared<PluginCodegenSrc::EntryType>(rawEntry);
-    std::shared_ptr<PluginCodegenSrc> plugin = std::make_shared<PluginCodegenSrc>(name, entry);
-    std::shared_ptr<PluginBase> pluginBase = std::static_pointer_cast<PluginBase>(plugin);
-    return AddPlugin(pluginBase);
-}
-
-std::string PluginManager::RunPluginCodegenSrc(const std::string& filepath, const std::string& source)
-{
-    std::string sourceResult = source;
-    std::vector<std::shared_ptr<PluginCodegenSrc>> pluginList = GetPlugin<PluginCodegenSrc>();
-    if (pluginList.size() != 0) {
-        for (size_t k = 0; k < pluginList.size(); k++) {
-            auto plugin = pluginList[k];
-            sourceResult = plugin->Call(filepath, sourceResult);
-        }
-    }
-    return sourceResult;
 }
 
 } // namespace npu::tile_fwk
