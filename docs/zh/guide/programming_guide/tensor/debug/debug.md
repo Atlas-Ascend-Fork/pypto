@@ -264,7 +264,7 @@ Ascend 950PR&950DT系列产品 支持以下两种仿真模式，均通过`cannsi
 <!-- npu="x90,9030,9050" id3 -->
 ### Kirin9030/KirinX90/Kirin9050
 
-Kirin不支持pypto直接调用device推理，需要通过Kirin算子部署过程，通过CANNKIT-NPUProfiling工具上板执行，请参考[Kirin NPU部署流程](../pytorch_integration.md) 。Kirin场景支持CPU仿真环境中进行测试体验：
+Kirin不支持pypto直接调用device推理，需要通过Kirin算子部署过程，通过CANNKIT-NPUProfiling工具上板执行，请参考[Kirin NPU部署流程](../pytorch_integration.md)。Kirin场景支持CPU仿真环境中进行测试体验：
 
 - 精度仿真：支持用户在CPU环境获取算子运算结果（精度仿真依赖CANN软件包）。
 
