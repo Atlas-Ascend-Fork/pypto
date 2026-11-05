@@ -44,7 +44,7 @@ __setitem__(self, key, value)
 
 ## 约束说明
 
-1. 对于slice（切片对象，格式为start:end:step），当前功能暂时不支持step设置,值默认固定为1。
+1. 对于slice（切片对象，格式为start:end:step），当前功能暂时不支持step设置，值默认固定为1。
 
    未支持示例：a\[1:2:2, :\]。
 
