@@ -102,6 +102,8 @@ void VisitIfStmtForControlFlow(IrBackendContext& ctx, FunctionCache& cache, Link
                                std::vector<std::string>& exprSrcFiles, ValDependTensorMeta& valDependTensorMeta)
 {
     const auto* getInputCseMap = ResolveGetInputCseMap(ctx);
+    InsertCacheStopForIfCond(ifStmt.get(), dynFunc, valDependTensorMeta);
+    InsertWaitAicoreStartForIfCond(ifStmt.get(), indent, controlFlowOss, valDependTensorMeta);
     auto cond = SymbolicExpressionTable::BuildExpression(ExprPtrToSymbolicScalar(ifStmt->condition_).Raw(),
                                                          getInputCseMap);
     controlFlowOss << std::setw(indent * TABSIZE) << ' ' << "if (" << cond << ") {\n";
@@ -243,6 +245,22 @@ void InsertCacheStopForContrlFlow(IrBackendContext& ctx, const ir::ForStmt* forS
     }
 }
 
+void InsertCacheStopForIfCond(const ir::IfStmt* ifStmt, Function* dynFunc, ValDependTensorMeta& valDependTensorMeta)
+{
+    auto currDynFuncAttr = Program::GetInstance().GetCurrentDynamicFunction()->GetDyndevAttribute();
+    if (currDynFuncAttr == nullptr) {
+        return;
+    }
+    IrParseValueDependDesc(dynFunc, {ifStmt->condition_});
+    auto valueDependDesc = currDynFuncAttr->valueDependDescDict[dynFunc];
+    if (valueDependDesc.getInputDataCount + valueDependDesc.getTensorDataCount != 0) {
+        valDependTensorMeta.hasValueDepend = true;
+    }
+    if (valueDependDesc.getTensorDataCount != 0) {
+        valDependTensorMeta.disableCtrlFlowCache = true;
+    }
+}
+
 void InsertWaitAicoreStartForControlFlow(const ir::ForStmt* forStmt, int indent, std::ostringstream& controlFlowOss,
                                          ValDependTensorMeta& valDependTensorMeta)
 {
@@ -263,6 +281,20 @@ void InsertWaitAicoreStartForControlFlow(const ir::ForStmt* forStmt, int indent,
         }
     }
     if (needWaitAicoreStart) {
+        controlFlowOss << std::setw(indent * TABSIZE) << ' ' << "WaitAicoreStart(startArgs);\n";
+    }
+}
+
+void InsertWaitAicoreStartForIfCond(const ir::IfStmt* ifStmt, int indent, std::ostringstream& controlFlowOss,
+                                    ValDependTensorMeta& valDependTensorMeta)
+{
+    SymbolicScalar condScalar = ExprPtrToSymbolicScalar(ifStmt->condition_);
+    if (!condScalar.IsValid() || condScalar.IsImmediate()) {
+        return;
+    }
+    if (SymbolicExpressionTable::CheckExprDependCore(condScalar.Raw(), valDependTensorMeta.tensorNameToDependCore,
+                                                     valDependTensorMeta.valDependMap,
+                                                     valDependTensorMeta.valueDependTensorNames)) {
         controlFlowOss << std::setw(indent * TABSIZE) << ' ' << "WaitAicoreStart(startArgs);\n";
     }
 }
