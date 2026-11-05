@@ -166,12 +166,12 @@ TEST_F(TestRemoveRedundantTokenPass, OverlappingWritesWithWriteTokenMergeResults
     EXPECT_TRUE(HasDirectWriteTokenDependency(assembles[0], assembles[1]));
 }
 
-TEST_F(TestRemoveRedundantTokenPass, FullOutputMergesIntoLiveAssembleResult)
+TEST_F(TestRemoveRedundantTokenPass, FullOutputKeepsSeparateAssembleResult)
 {
     auto source = Tensor(DT_FP32, {16, 16}, "source");
 
     ProgramBuilder p;
-    p.BeginFunction("FullOutputMerges", {source});
+    p.BeginFunction("FullOutputKeepsSeparate", {source});
 
     auto output = Full(Element(DT_FP32, 0.0f), DT_FP32, {16, 16});
     Assemble(source, {0, 0}, output);
@@ -181,11 +181,11 @@ TEST_F(TestRemoveRedundantTokenPass, FullOutputMergesIntoLiveAssembleResult)
     auto result = pypto::ir::pass::RemoveRedundantTokenPass()(inferred);
 
     ASSERT_NE(result, nullptr);
-    auto full = GetOperation(result, "FullOutputMerges", Opcode::OP_VEC_DUP);
-    auto assembles = GetAssembles(result, "FullOutputMerges");
+    auto full = GetOperation(result, "FullOutputKeepsSeparate", Opcode::OP_VEC_DUP);
+    auto assembles = GetAssembles(result, "FullOutputKeepsSeparate");
     ASSERT_NE(full, nullptr);
     ASSERT_EQ(assembles.size(), 1u);
-    EXPECT_EQ(full->result_[0], assembles[0]->result_[0]);
+    EXPECT_NE(full->result_[0], assembles[0]->result_[0]);
     EXPECT_TRUE(HasDirectWriteTokenDependency(full, assembles[0]));
 }
 

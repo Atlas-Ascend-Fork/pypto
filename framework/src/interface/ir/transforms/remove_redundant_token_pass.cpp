@@ -277,11 +277,21 @@ private:
         return producers;
     }
 
+    static bool IsWriteback(const TensorOpStmtPtr& op)
+    {
+        return op->opcode_ == "ASSEMBLE" || op->opcode_ == "ATOMIC_RMW";
+    }
+
     class DataUseCollector : public IRVisitor {
     public:
         using IRVisitor::VisitStmt_;
 
         const std::unordered_set<const Var*>& Uses() const { return uses_; }
+
+        bool HasMixedProducers(const RawTensor* raw) const
+        {
+            return copyProducers_.count(raw) != 0 && ordinaryProducers_.count(raw) != 0;
+        }
 
     private:
         void VisitVarLike_(const VarPtr& op) override { uses_.insert(op.get()); }
@@ -290,6 +300,14 @@ private:
 
         void VisitStmt_(const TensorOpStmtPtr& op) override
         {
+            const bool isCopy = IsWriteback(op);
+            auto& producers = isCopy ? copyProducers_ : ordinaryProducers_;
+            for (const auto& result : op->result_) {
+                auto tensor = AsLogicalTensor(result);
+                if (tensor && tensor->GetRawTensor()) {
+                    producers.insert(tensor->GetRawTensor().get());
+                }
+            }
             for (const auto& arg : op->args_) {
                 VisitExpr(arg);
             }
@@ -326,6 +344,8 @@ private:
         }
 
         std::unordered_set<const Var*> uses_;
+        std::unordered_set<const RawTensor*> copyProducers_;
+        std::unordered_set<const RawTensor*> ordinaryProducers_;
     };
 
     struct ProducerResult {
@@ -379,21 +399,25 @@ private:
 
         bool changed = false;
         for (const auto& group : BuildProducerResultGroups(nodes)) {
-            auto sink = group.back().output;
-            // Each read ends a version chain. Merge unread predecessors directly
-            // into that consumed version, or into the final version for an unread tail.
-            for (size_t index = group.size() - 1; index > 0; --index) {
-                const auto& candidate = group[index - 1];
-                if (useCollector.Uses().count(candidate.output.get()) != 0) {
-                    sink = candidate.output;
+            const bool mixedProducers = useCollector.HasMixedProducers(group.front().output->GetRawTensor().get());
+            LogicalTensorPtr mergeTarget;
+            for (auto it = group.rbegin(); it != group.rend(); ++it) {
+                auto& producer = nodes[it->nodeIndex];
+                // Ordinary outputs cannot join or connect writeback chains in a mixed group.
+                if (mixedProducers && !IsWriteback(producer.op)) {
+                    mergeTarget = nullptr;
                     continue;
                 }
-                if (candidate.output == sink) {
+                // A chain ends at a consumed version, or at its last unread version.
+                if (!mergeTarget || useCollector.Uses().count(it->output.get()) != 0) {
+                    mergeTarget = it->output;
                     continue;
                 }
-                nodes[candidate.nodeIndex].results[0] = sink;
-                nodes[candidate.nodeIndex].changed = true;
-                changed = true;
+                if (it->output != mergeTarget) {
+                    producer.results[0] = mergeTarget;
+                    producer.changed = true;
+                    changed = true;
+                }
             }
         }
         return changed;

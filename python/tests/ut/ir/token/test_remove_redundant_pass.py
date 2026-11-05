@@ -11,6 +11,8 @@
 
 from pathlib import Path
 
+import pytest
+
 import pypto
 from pypto import ir
 from pypto.pil.compile_pipeline import compile_new_ir
@@ -471,8 +473,8 @@ BEFORE_IR_19 = _GOLDEN_DIR / "BEFORE_IR_19.pypto"
 IR_19 = _GOLDEN_DIR / "IR_19.pypto"
 
 
-def test_unused_inplace_versions_merge_to_last_assemble():
-    """Merge the reshape and earlier write into the last unread alias version."""
+def test_unused_assemble_tail_merges_after_inplace_reshape():
+    """Keep RESHAPE separate while merging the unread ASSEMBLE tail."""
     def foo(src, aux, out):
         alias = pypto.reshape(aux, [32, 8], inplace=True)
         pypto.assemble(src, [0, 0], alias)
@@ -491,8 +493,8 @@ BEFORE_IR_20 = _GOLDEN_DIR / "BEFORE_IR_20.pypto"
 IR_20 = _GOLDEN_DIR / "IR_20.pypto"
 
 
-def test_multiple_assembles_merge_to_last_consumed_version():
-    """Merge all unread predecessors into the final version read by ADDS."""
+def test_consumed_assemble_versions_merge_after_inplace_reshape():
+    """Merge ASSEMBLE outputs read by ADDS while keeping RESHAPE separate."""
     def foo(src, aux, out):
         alias = pypto.reshape(aux, [32, 8], inplace=True)
         pypto.assemble(src, [0, 0], alias)
@@ -504,3 +506,37 @@ def test_multiple_assembles_merge_to_last_consumed_version():
         foo, _tensor((8, 8), "src"), _tensor((16, 16), "aux"), _tensor((32, 8), "out"))
     check_snapshot(before_remove, BEFORE_IR_20)
     check_snapshot(after_remove, IR_20)
+
+
+@pytest.mark.parametrize("write", [pypto.assemble, pypto.atomic_add])
+def test_mixed_consumers_allow_unread_versions_to_merge(write):
+    """Ordinary readers do not prevent unread copy/atomic versions from merging."""
+    def foo(src, aux, copied, out):
+        write(src, [0, 0], aux)
+        write(src, [8, 0], aux)
+        write(aux, [0, 0], copied)
+        pypto.assemble(aux + 1.0, [0, 0], out)
+
+    before_remove, after_remove = _run_passes(
+        foo, _tensor((8, 16), "src"), _tensor((16, 16), "aux"),
+        _tensor((16, 16), "copied"), _tensor((16, 16), "out"))
+    check_snapshot(before_remove, _GOLDEN_DIR / f"BEFORE_IR_mixed_{write.__name__}.pypto")
+    check_snapshot(after_remove, _GOLDEN_DIR / f"IR_mixed_{write.__name__}.pypto")
+
+
+def test_assemble_and_atomic_outputs_merge():
+    """Merge unread ASSEMBLE output into a later ATOMIC_RMW output on the same raw."""
+    def foo(src, aux):
+        pypto.assemble(src, [0, 0], aux)
+        pypto.atomic_add(src, [8, 0], aux)
+
+    before_remove, after_remove = _run_passes(
+        foo, _tensor((8, 16), "src"), _tensor((16, 16), "aux"))
+    check_snapshot(before_remove, _GOLDEN_DIR / "BEFORE_IR_assemble_atomic.pypto")
+    check_snapshot(after_remove, _GOLDEN_DIR / "IR_assemble_atomic.pypto")
+    writes = [
+        op for op in after_remove.body
+        if isinstance(op, ir.TensorOpStmt) and op.opcode in ("ASSEMBLE", "ATOMIC_RMW")
+    ]
+    assert len(writes) == 2
+    assert writes[0].result[0] is writes[1].result[0]
