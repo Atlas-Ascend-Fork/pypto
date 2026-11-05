@@ -47,10 +47,32 @@ void BinaryBrcinlineInferFunc(Operation* op, std::vector<std::vector<SymbolicSca
     }
 }
 
-REGISTER_INFER_SHAPE_FUNC(OP_ADD, Opcode::OP_ADD, BinaryBrcinlineInferFunc);
-REGISTER_INFER_SHAPE_FUNC(OP_SUB, Opcode::OP_SUB, BinaryBrcinlineInferFunc);
-REGISTER_INFER_SHAPE_FUNC(OP_MUL, Opcode::OP_MUL, BinaryBrcinlineInferFunc);
-REGISTER_INFER_SHAPE_FUNC(OP_DIV, Opcode::OP_DIV, BinaryBrcinlineInferFunc);
+void ArithmeticBinaryInferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& outValidShapes)
+{
+    BinaryBrcinlineInferFunc(op, outValidShapes);
+    const auto& lhs = op->GetIOperands()[0];
+    const auto& rhs = op->GetIOperands()[1];
+    const auto& lhsValid = lhs->GetDynValidShape();
+    const auto& rhsValid = rhs->GetDynValidShape();
+    std::vector<int64_t> brcOperand;
+    op->GetAttr(OpAttributeKey::brcOperand, brcOperand);
+    for (size_t i = 0; i < lhsValid.size(); ++i) {
+        if (lhs->GetShape()[i] != rhs->GetShape()[i] || (!brcOperand.empty() && brcOperand[i] != 0)) {
+            continue;
+        }
+        // Min folds identical extents and bounds differing extents even after
+        // InferParamIndex has replaced static valid shapes with symbols.
+        auto valid = lhsValid[i].Min(rhsValid[i]);
+        for (auto& outputValidShape : outValidShapes) {
+            outputValidShape[i] = valid;
+        }
+    }
+}
+
+REGISTER_INFER_SHAPE_FUNC(OP_ADD, Opcode::OP_ADD, ArithmeticBinaryInferFunc);
+REGISTER_INFER_SHAPE_FUNC(OP_SUB, Opcode::OP_SUB, ArithmeticBinaryInferFunc);
+REGISTER_INFER_SHAPE_FUNC(OP_MUL, Opcode::OP_MUL, ArithmeticBinaryInferFunc);
+REGISTER_INFER_SHAPE_FUNC(OP_DIV, Opcode::OP_DIV, ArithmeticBinaryInferFunc);
 REGISTER_INFER_SHAPE_FUNC(OP_MAXIMUM, Opcode::OP_MAXIMUM, BinaryBrcinlineInferFunc);
 REGISTER_INFER_SHAPE_FUNC(OP_MINIMUM, Opcode::OP_MINIMUM, BinaryBrcinlineInferFunc);
 REGISTER_INFER_SHAPE_FUNC(OP_AXPY, Opcode::OP_AXPY, BinaryBrcinlineInferFunc);

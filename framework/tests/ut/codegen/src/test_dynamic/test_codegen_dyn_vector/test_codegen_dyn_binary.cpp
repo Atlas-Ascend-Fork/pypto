@@ -291,11 +291,12 @@ TLoad(ubTensor_2, gmTensor_3, Coord2Dim((RUNTIME_COA_GET_PARAM_OFFSET(2, 1, 0)),
 SUBKERNEL_PHASE2
 set_flag(PIPE_MTE2, PIPE_V, EVENT_ID1);
 wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID1);
-TAdd<LastUse3Dim<0, 0, 1>>(ubTensor_0, ubTensor_0, ubTensor_2);
+UBTileTensorFP32Dim2_0 ubTensor_4((uint64_t)UB_S0_E16384_T, (Shape2Dim((RUNTIME_Min(sym_60_dim_0, sym_61_dim_0)), (RUNTIME_Min(sym_60_dim_1, sym_61_dim_1)))));
+TAdd<LastUse3Dim<0, 0, 1>>(ubTensor_4, ubTensor_0, ubTensor_2);
 set_flag(PIPE_V, PIPE_MTE3, EVENT_ID1);
 wait_flag(PIPE_V, PIPE_MTE3, EVENT_ID1);
 GMTileTensorFP32Dim2_1 gmTensor_7((__gm__ float*)(RUNTIME_GET_PARAM_ADDR(RUNTIME_param, 2, 19)), DynLayout2Dim(Shape2Dim((RUNTIME_COA_GET_PARAM_RAW_SHAPE(2, 19, 0)), (RUNTIME_COA_GET_PARAM_RAW_SHAPE(2, 19, 1))), Stride2Dim(GET_PARAM_STRIDE_DIM_2((RUNTIME_COA_GET_PARAM_RAW_SHAPE(2, 19, 0)), (RUNTIME_COA_GET_PARAM_RAW_SHAPE(2, 19, 1))))));
-TStoreVec<TStoreConfigVec<pto::AtomicType::AtomicNone>>(gmTensor_7, ubTensor_0, Coord2Dim((RUNTIME_COA_GET_PARAM_OFFSET(2, 19, 0)), (RUNTIME_COA_GET_PARAM_OFFSET(2, 19, 1))));
+TStoreVec<TStoreConfigVec<pto::AtomicType::AtomicNone>>(gmTensor_7, ubTensor_4, Coord2Dim((RUNTIME_COA_GET_PARAM_OFFSET(2, 19, 0)), (RUNTIME_COA_GET_PARAM_OFFSET(2, 19, 1))));
 }
 )!!!";
 #else
@@ -391,7 +392,7 @@ TEST_F(TestCodegenDynBinary, TestDivHighPrecisionFP16)
 
     const std::string res = GenCodeByFunction(*function);
     std::string expect =
-        R"!!!(TDiv<pto::DivAlgorithm::HIGH_PRECISION, LastUse3Dim<0, 0, 1>>(ubTensor_0, ubTensor_0, ubTensor_2);
+        R"!!!(TDiv<pto::DivAlgorithm::HIGH_PRECISION, LastUse3Dim<0, 0, 1>>(ubTensor_4, ubTensor_0, ubTensor_2);
 )!!!";
     CheckStringExist(expect, res);
 }
@@ -421,7 +422,7 @@ TEST_F(TestCodegenDynBinary, TestDivIntrinsicPrecision)
 
     const std::string res = GenCodeByFunction(*function);
     std::string expect =
-        R"!!!(TDiv<pto::DivAlgorithm::DEFAULT, LastUse3Dim<0, 0, 1>>(ubTensor_0, ubTensor_0, ubTensor_2);
+        R"!!!(TDiv<pto::DivAlgorithm::DEFAULT, LastUse3Dim<0, 0, 1>>(ubTensor_4, ubTensor_0, ubTensor_2);
 )!!!";
     CheckStringExist(expect, res);
 }

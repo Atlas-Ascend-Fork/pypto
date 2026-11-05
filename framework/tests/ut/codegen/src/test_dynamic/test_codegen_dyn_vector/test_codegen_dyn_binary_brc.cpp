@@ -74,7 +74,7 @@ TEST_F(TestCodegenDynBinaryBrc, TestAddBrcTileTensorDynamic)
                 op.SetAttribute(OpAttributeKey::brcOperand, std::vector<int64_t>{0, 0, 0, 0, 1});
                 std::string res = GenOpCodeFromOp(*function, op);
                 std::string expect =
-                    R"!!!(TAdd<LastUse3Dim<0, 0, 1>, 0, 0, 0, 0, 1>(ubTensor_0, ubTensor_0, ubTensor_2);
+                    R"!!!(TAdd<LastUse3Dim<0, 0, 1>, 0, 0, 0, 0, 1>(ubTensor_0, ubTensor_1, ubTensor_2);
 )!!!";
                 EXPECT_EQ(res, expect);
                 break;
