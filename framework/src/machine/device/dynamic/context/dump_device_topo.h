@@ -23,6 +23,10 @@
 
 namespace npu::tile_fwk::dynamic::topo_dump {
 
+/// Host-only stitch verify/dump gate. True when runtime_debug_mode == VERIFY.
+/// Default false so stitch hot path skips CheckStitch / topo dump without a rebuild.
+bool DumpEnabled();
+
 void DumpProducerCellAccess(uint32_t devTaskId, int slotIdx, uint32_t devNextIdx, DevAscendFunction& devRootSrc,
                             DevAscendFunctionOutcast& outcast, const DeviceExecuteSlot& slot,
                             const uint64_t* expressionList);

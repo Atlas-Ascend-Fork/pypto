@@ -17,7 +17,9 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstring>
 #include "test_machine_common.h"
+#include "machine/utils/dynamic/dev_encode_program_ctrlflow_cache.h"
 
 struct EmulationLauncherTest : UnitTestBase {
 protected:
@@ -129,6 +131,35 @@ TEST_F(EmulationLauncherTest, CreateHostCtrlFlowCache_DirectCall)
 
     DevControlFlowCache* cache = EmulationLauncher::CreateHostCtrlFlowCache(devProg, func, memUtils);
     EXPECT_NE(cache, nullptr);
+}
+
+// CreateHostCtrlFlowCache only zeros the metadata prefix; AllocateCache must still return a zero slab
+// even if the unused payload was poisoned (simulates AllocDev without full memset).
+TEST_F(EmulationLauncherTest, CreateHostCtrlFlowCache_AllocateCacheZerosPoisonedPayload)
+{
+    auto* func = GetFunc();
+    ASSERT_NE(func, nullptr);
+
+    EmulationMemoryUtils memUtils;
+    DevAscendProgram* devProg = DeviceLauncher::GetDevProg(func);
+    ASSERT_NE(devProg, nullptr);
+
+    DevControlFlowCache* cache = EmulationLauncher::CreateHostCtrlFlowCache(devProg, func, memUtils);
+    ASSERT_NE(cache, nullptr);
+    EXPECT_EQ(cache->deviceTaskCount, 0U);
+    EXPECT_FALSE(cache->isRecording);
+    EXPECT_EQ(cache->cacheDataOffset, 0U);
+    ASSERT_GE(cache->cacheData.size(), 256U);
+
+    std::memset(cache->cacheData.Data(), 0xCD, 256);
+    constexpr uint64_t kReq = 48;
+    void* slab = cache->AllocateCache(kReq);
+    ASSERT_NE(slab, nullptr);
+    const uint64_t reserved = (kReq + CFGCACHE_ALIGN - 1) / CFGCACHE_ALIGN * CFGCACHE_ALIGN;
+    auto* bytes = static_cast<uint8_t*>(slab);
+    for (uint64_t i = 0; i < reserved; ++i) {
+        EXPECT_EQ(bytes[i], 0) << "offset " << i;
+    }
 }
 
 // Covers: EmulationBuildControlFlowCache standalone with real IO data

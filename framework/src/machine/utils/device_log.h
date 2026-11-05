@@ -208,9 +208,18 @@ inline void DeviceLogSplitDebug(const char* func, const char* format, Args... ar
 #define DEV_IF_DEBUG if (true)
 #define DEV_IF_INFO if (true)
 
-#define DEV_VERBOSE_DEBUG_SPLIT(fmt, args...) PYPTO_SIM_LOG(DLOG_DEBUG, MACHINE, fmt, ##args)
-#define DEV_VERBOSE_DEBUG(fmt, args...) PYPTO_SIM_LOG(DLOG_DEBUG, MACHINE, fmt, ##args)
-#define DEV_VERBOSE_INFO(fmt, args...) PYPTO_SIM_LOG(DLOG_INFO, MACHINE, fmt, ##args)
+#define DEV_VERBOSE_DEBUG_SPLIT(fmt, args...)                                   \
+    do {                                                                        \
+        DEV_IF_VERBOSE_LOG { PYPTO_SIM_LOG(DLOG_DEBUG, MACHINE, fmt, ##args); } \
+    } while (0)
+#define DEV_VERBOSE_DEBUG(fmt, args...)                                         \
+    do {                                                                        \
+        DEV_IF_VERBOSE_LOG { PYPTO_SIM_LOG(DLOG_DEBUG, MACHINE, fmt, ##args); } \
+    } while (0)
+#define DEV_VERBOSE_INFO(fmt, args...)                                         \
+    do {                                                                       \
+        DEV_IF_VERBOSE_LOG { PYPTO_SIM_LOG(DLOG_INFO, MACHINE, fmt, ##args); } \
+    } while (0)
 #define DEV_DEBUG_SPLIT(fmt, args...) PYPTO_SIM_LOG(DLOG_DEBUG, MACHINE, fmt, ##args)
 #define DEV_DEBUG(fmt, args...) PYPTO_SIM_LOG(DLOG_DEBUG, MACHINE, fmt, ##args)
 #define DEV_INFO(fmt, args...) PYPTO_SIM_LOG(DLOG_INFO, MACHINE, fmt, ##args)

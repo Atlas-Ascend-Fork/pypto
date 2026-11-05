@@ -164,11 +164,17 @@ DevControlFlowCache* EmulationLauncher::CreateHostCtrlFlowCache(DevAscendProgram
     uintdevptr_t initOffset = reinterpret_cast<uintdevptr_t>(encodeCtrlCache.data);
     InitHostCtrlFlowCacheLayout(encodeCtrlCache, devProg, dyndevAttr, initOffset);
     uint32_t ctrlCacheAllocSize = encodeCtrlCache.GetSize();
-    DevControlFlowCache* hostCtrlFlowCache = reinterpret_cast<DevControlFlowCache*>(
-        memUtils.AllocZero(ctrlCacheAllocSize, nullptr));
-    if (hostCtrlFlowCache == nullptr) {
+    // cacheData 是容量上限（默认 100MB），录制只写 used 部分。只清 cacheData 之前的元数据前缀；
+    // payload 在 AllocateCache 按块清零，避免整块 memset。
+    // 9.2.0 EmulationMemoryUtils::AllocDev 无 align 参数，此处不做 64B aligned_alloc。
+    uint8_t* rawCache = memUtils.AllocDev(ctrlCacheAllocSize, nullptr);
+    if (rawCache == nullptr) {
         return nullptr;
     }
+    const uint64_t headerBytes = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(encodeCtrlCache.cacheData.Data()) -
+                                                       reinterpret_cast<uintptr_t>(&encodeCtrlCache));
+    (void)memset_s(rawCache, headerBytes, 0, headerBytes);
+    DevControlFlowCache* hostCtrlFlowCache = reinterpret_cast<DevControlFlowCache*>(rawCache);
     hostCtrlFlowCache->allCacheSize = ctrlCacheAllocSize;
     initOffset = reinterpret_cast<uintdevptr_t>(hostCtrlFlowCache->data);
     InitHostCtrlFlowCacheLayout(*hostCtrlFlowCache, devProg, dyndevAttr, initOffset);

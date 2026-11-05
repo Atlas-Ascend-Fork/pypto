@@ -114,9 +114,11 @@ void PartialUpdateStitchOneConsumerList(DevAscendFunctionDupped& nextDup, DevAsc
         }
         DEV_IF_NONDEVICE
         {
-            topo_dump::DumpConsumerCellAccess(static_cast<uint32_t>(devTaskId), slotIdx,
-                                              static_cast<uint32_t>(devNextIdx), *nextSrc, consumer, cellMatchTableDesc,
-                                              expressionList);
+            if (unlikely(topo_dump::DumpEnabled())) {
+                topo_dump::DumpConsumerCellAccess(static_cast<uint32_t>(devTaskId), slotIdx,
+                                                  static_cast<uint32_t>(devNextIdx), *nextSrc, consumer,
+                                                  cellMatchTableDesc, expressionList);
+            }
         }
 
         CellMatchStitchEnhance(consumerOffset, consumerValidShape, cellMatchTableDesc,
@@ -148,6 +150,9 @@ void DeviceStitchContext::CheckStitch(DevAscendFunctionDupped* stitchedList, int
 {
     DEV_IF_NONDEVICE
     {
+        if (likely(!topo_dump::DumpEnabled())) {
+            return;
+        }
         uint32_t dynPredCount = 0;
         uint32_t dynSuccCount = 0;
         for (int k = 0; k <= size; k++) {
@@ -322,6 +327,9 @@ static void ValidateAndDumpStitchEdge(const DevAscendFunctionDupped& producerDup
                                       size_t consumerIdx, size_t consumerOperationIdx,
                                       DeviceStitchContext::StitchKind debugStitchKind, int debugSlotIdx)
 {
+    if (likely(!topo_dump::DumpEnabled())) {
+        return;
+    }
     if (producerOperationIdx >= producerDup.GetSource()->GetOperationSize()) {
         DEV_ERROR(ProgEncodeErr::STITCH_HANDLE_INDEX_OUT_OF_RANGE,
                   "#ctrl.task.pre.stitch.handle: producerOperationIdx %zu exceeds the size of GetOperation %zu",
@@ -377,8 +385,10 @@ void DeviceStitchContext::HandleOneStitch(DevAscendFunctionDupped& producerDup, 
 
     DEV_IF_NONDEVICE
     {
-        ValidateAndDumpStitchEdge(producerDup, consumerDup, producerOperationIdx, consumerIdx, consumerOperationIdx,
-                                  debugStitchKind, debugSlotIdx);
+        if (unlikely(topo_dump::DumpEnabled())) {
+            ValidateAndDumpStitchEdge(producerDup, consumerDup, producerOperationIdx, consumerIdx, consumerOperationIdx,
+                                      debugStitchKind, debugSlotIdx);
+        }
     }
 }
 
@@ -454,9 +464,11 @@ uint64_t DeviceStitchContext::FullCoverDefaultUpdateStitch(DevAscendFunctionDupp
                                      consumer.operationIdx);
         DEV_IF_NONDEVICE
         {
-            topo_dump::DumpConsumerCellAccess(static_cast<uint32_t>(devTaskId), slotIdx,
-                                              static_cast<uint32_t>(devNextIdx), *nextSrc, consumer, cellMatchTableDesc,
-                                              expressionList);
+            if (unlikely(topo_dump::DumpEnabled())) {
+                topo_dump::DumpConsumerCellAccess(static_cast<uint32_t>(devTaskId), slotIdx,
+                                                  static_cast<uint32_t>(devNextIdx), *nextSrc, consumer,
+                                                  cellMatchTableDesc, expressionList);
+            }
         }
         CellMatchHandle<HandleCellMatchFull>(fullCoverOffset, fullCoverValidShape, cellMatchTableDesc,
                                              fullUpdateTableData, &matchCount, &prevDup, &nextDup, devNextIdx,

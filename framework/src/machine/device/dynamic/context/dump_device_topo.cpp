@@ -27,6 +27,13 @@
 namespace npu::tile_fwk::dynamic::topo_dump {
 
 #ifndef __DEVICE__
+
+bool DumpEnabled()
+{
+    static const bool cached = (config::GetDebugOption<int64_t>(CFG_RUNTIME_DBEUG_MODE) == CFG_RUNTIME_DEBUG_VERIFY);
+    return cached;
+}
+
 namespace {
 
 void OpenIfPathChanged(std::ofstream& ofs, std::string& lastPath, const std::string& path, const char* header)
@@ -42,12 +49,6 @@ void OpenIfPathChanged(std::ofstream& ofs, std::string& lastPath, const std::str
     if (ofs.is_open()) {
         ofs << header << '\n';
     }
-}
-
-inline bool DumpEnabled()
-{
-    static const bool cached = (config::GetDebugOption<int64_t>(CFG_RUNTIME_DBEUG_MODE) == CFG_RUNTIME_DEBUG_VERIFY);
-    return cached;
 }
 
 struct CellMatchHandleCollect {
@@ -166,6 +167,8 @@ void DumpStitchEdge(const DevAscendFunctionDupped& producerDup, const DevAscendF
 }
 
 #else // __DEVICE__
+
+bool DumpEnabled() { return false; }
 
 void DumpProducerCellAccess(uint32_t, int, uint32_t, DevAscendFunction&, DevAscendFunctionOutcast&,
                             const DeviceExecuteSlot&, const uint64_t*)
