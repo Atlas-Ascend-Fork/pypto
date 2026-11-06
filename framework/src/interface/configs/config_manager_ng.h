@@ -73,8 +73,6 @@ constexpr const char* EXPERIMENTAL_PGO_UPDATE = "experimental_pgo_update";
 // host
 constexpr const char* COMPILE_STAGE = "compile_stage";
 constexpr const char* COMPILE_MONITOR_ENABLE = "compile_monitor_enable";
-constexpr const char* INTERVAL_SEC = "compile_monitor_print_interval";
-constexpr const char* TIMEOUT_SEC = "compile_timeout_stage";
 constexpr const char* TOTAL_TIMEOUT_SEC = "compile_timeout";
 constexpr int64_t CS_ALL_COMPLETE = 0;
 constexpr int64_t CS_TENSOR_GRAPH = 1;

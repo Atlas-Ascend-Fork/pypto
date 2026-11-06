@@ -468,8 +468,6 @@ def set_host_options(
     compile_stage: Optional[CompStage] = None,
     compile_monitor_enable: Optional[int] = None,
     compile_timeout: Optional[int] = None,
-    compile_timeout_stage: Optional[int] = None,
-    compile_monitor_print_interval: Optional[int] = None,
 ) -> None:
     """
     Set host options.
@@ -480,17 +478,13 @@ def set_host_options(
         Control the compilation phase.
 
     compile_monitor_enable : int
-        Control compiler monitor mode (Watchdog). 0 disables monitor, 1 enables monitor without pass details,
-        2 enables monitor with pass details. Default is 1 (enabled).
+        Control compiler monitor mode (Watchdog). 0 disables monitor and ignores compile_timeout,
+        1 enables monitor without pass details and writes a WARNING log in real time on timeout,
+        2 enables monitor with pass details and also prints the WARNING to screen on timeout.
+        Default is 1 (enabled).
 
     compile_timeout : int
         Control the timeout duration for the entire compilation process.
-
-    compile_timeout_stage : int
-        Control the timeout duration of a certain stage of the compilation process.
-
-    compile_monitor_print_interval : int
-        Control the frequency of printing the compilation progress for a certain stage.
     """
     options_dict = {k: v.value if isinstance(v, CompStage) else v for k, v in locals().items() if v is not None}
     set_options(host_options=options_dict)

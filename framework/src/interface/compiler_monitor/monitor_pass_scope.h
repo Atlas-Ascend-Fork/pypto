@@ -30,7 +30,7 @@ public:
           start_(std::chrono::high_resolution_clock::now())
     {
         MonitorManager::Instance().StartPassCompile(strategy_, passIdentifier_, passIndex_, functionName_,
-                                                    functionIndex_, functionOpSize_);
+                                                    functionIndex_);
     }
 
     ~MonitorPassCompileScope()
@@ -60,8 +60,6 @@ public:
         double elapsed = std::chrono::duration<double>(end - start_).count();
         MonitorManager::Instance().RecordPassCompileTime(strategy_, passIdentifier_, passIndex_, functionName_,
                                                          functionIndex_, functionOpSize_, elapsed, success);
-        MonitorManager::Instance().EndPassCompile(strategy_, passIdentifier_, passIndex_, functionName_,
-                                                  functionIndex_);
     }
 
 private:

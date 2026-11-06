@@ -76,14 +76,19 @@ Kernel代码编译失败。
 
 ### 整体耗时
 
-Compiler Monitor 默认开启（Watchdog 机制）。编译开始时在 INFO 日志中记录总超时阈值及调整方式；编译总耗时超过阈值时在 WARNING 日志中记录超时摘要（瓶颈阶段、各阶段耗时）：
+Compiler Monitor 默认开启（Watchdog 机制）。编译总耗时超过 `compile_timeout` 阈值时，立即（无需等待编译结束）落盘 WARNING 日志，日志包含阈值、调整阈值的方式，以及已编译完成阶段与当前超时阶段的耗时：
 
 ```log
-[Compiler Monitor] Threshold: 600s | You can adjust the timeout threshold via pypto.set_host_options(compile_timeout=...)
-[Compiler Monitor] Threshold: 600s | DetectedStage: CodeGen | Prepare: 12s | Pass: 45s | HostMachine: 86s | CodeGen: 1712s
+[Compiler Monitor] Compile timeout | Threshold: 600s | You can adjust the timeout threshold via pypto.set_host_options(compile_timeout=...) | Total elapsed: 615.2s | Stage elapsed: Prepare: 12.0s | Pass: 45.0s | HostMachine: 86.0s | CodeGen(current): 472.2s
 ```
 
-编译总耗时未超过阈值时，仅在 INFO 日志中记录阈值提示。可通过 `pypto.set_host_options(compile_monitor_enable=0)` 关闭监控，或设置 `compile_timeout` 调整总超时阈值。
+超时告警只在首次超过阈值时输出一次，后续尚未开始的阶段不会出现在日志中。可通过 `pypto.set_host_options(compile_monitor_enable=0)` 关闭监控（此时不受 `compile_timeout` 影响），或设置 `compile_timeout` 调整总超时阈值。
+
+`compile_monitor_enable` 取值说明：
+
+- `0`：关闭监控，不受 `compile_timeout` 影响。
+- `1`：开启监控，关闭 Pass 明细；超时仅落盘 WARNING 日志。
+- `2`：开启监控，开启 Pass 明细；编译过程中实时打屏 Pass 进度，超时时同时打屏与落盘 WARNING 日志。
 
 主要编译阶段顺序（从前到后）：
 
@@ -91,8 +96,6 @@ Compiler Monitor 默认开启（Watchdog 机制）。编译开始时在 INFO 日
 2. **Pass**：图编译 Pass
 3. **HostMachine**：动态场景下的控制流构建/编译、AI Core连接与Encode等
 4. **CodeGen**：CCE 代码生成及二进制编译（含 FuncToBin 子阶段，不单独展示）
-
-瓶颈阶段判定：将 `compile_timeout` 均分到上述四个阶段，耗时超过该平均阈值的阶段记入 `DetectedStage`。
 
 ### 单kernel文件编译时长
 

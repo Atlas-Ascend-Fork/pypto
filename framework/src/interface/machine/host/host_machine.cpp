@@ -222,7 +222,6 @@ void HostMachine::SubTask(Function* function)
                   function->GetMagicName().c_str());
     MonitorManager::Instance().SetCurrentFunctionName(function->GetMagicName());
     MonitorManager::Instance().SetCurrentFuncOpSize(static_cast<int>(function->GetOperationSize()));
-    MonitorManager::Instance().SetFuncSumOpSize(function->GetOperationSize());
 
     task->SetFunctionIndex(function_done_idx);
     MonitorManager::Instance().SetCurrentFunctionIndex(task->GetFunctionIndex());

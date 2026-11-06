@@ -25,7 +25,7 @@ class TestMonitorPassScope : public MonitorTestFixtureBase {};
 
 TEST_F(TestMonitorPassScope, BasicScopeFinishSuccess)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(2);
     MonitorManager::Instance().SetCurrentFunctionIndex(1);
     MonitorManager::Instance().SetCurrentFunctionName("func_1");
@@ -47,7 +47,7 @@ TEST_F(TestMonitorPassScope, BasicScopeFinishSuccess)
 
 TEST_F(TestMonitorPassScope, ScopeFinishFailure)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(2);
     MonitorManager::Instance().SetCurrentFunctionIndex(1);
     MonitorManager::Instance().SetCurrentFunctionName("func_1");
@@ -69,7 +69,7 @@ TEST_F(TestMonitorPassScope, ScopeFinishFailure)
 
 TEST_F(TestMonitorPassScope, DestructorCallsFinishFalseWhenNotFinished)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(2);
     MonitorManager::Instance().SetCurrentFunctionIndex(1);
     MonitorManager::Instance().SetCurrentFunctionName("func_1");
@@ -89,7 +89,7 @@ TEST_F(TestMonitorPassScope, DestructorCallsFinishFalseWhenNotFinished)
 
 TEST_F(TestMonitorPassScope, FinishAtWithExplicitEndTime)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(2);
     MonitorManager::Instance().SetCurrentFunctionIndex(1);
     MonitorManager::Instance().SetCurrentFunctionName("func_1");
@@ -112,7 +112,7 @@ TEST_F(TestMonitorPassScope, FinishAtWithExplicitEndTime)
 
 TEST_F(TestMonitorPassScope, DoubleFinishIgnored)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(2);
     MonitorManager::Instance().SetCurrentFunctionIndex(1);
     MonitorManager::Instance().SetCurrentFunctionName("func_1");
@@ -134,7 +134,7 @@ TEST_F(TestMonitorPassScope, DoubleFinishIgnored)
 
 TEST_F(TestMonitorPassScope, MultipleScopesSequential)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(2);
     MonitorManager::Instance().SetCurrentFunctionIndex(1);
     MonitorManager::Instance().SetCurrentFunctionName("func_1");
@@ -167,7 +167,7 @@ TEST_F(TestMonitorPassScope, MultipleScopesSequential)
 
 TEST_F(TestMonitorPassScope, GetStartTimeReturnsConstructionTime)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(1);
     MonitorManager::Instance().SetCurrentFunctionIndex(0);
     MonitorManager::Instance().SetCurrentFunctionName("func_0");

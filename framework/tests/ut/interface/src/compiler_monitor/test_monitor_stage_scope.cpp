@@ -24,7 +24,7 @@ class TestMonitorStageScope : public MonitorTestFixtureBase {};
 
 TEST_F(TestMonitorStageScope, SimpleStageScopePass)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(2);
     MonitorManager::Instance().SetCurrentFunctionIndex(1);
     MonitorManager::Instance().SetCurrentFunctionName("func_1");
@@ -46,7 +46,7 @@ TEST_F(TestMonitorStageScope, SimpleStageScopePass)
 
 TEST_F(TestMonitorStageScope, SimpleStageScopeCodeGen)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(1);
 
     {
@@ -61,7 +61,7 @@ TEST_F(TestMonitorStageScope, SimpleStageScopeCodeGen)
 
 TEST_F(TestMonitorStageScope, RootFuncStageScope)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(3);
     MonitorManager::Instance().SetRootFuncCount(2);
 
@@ -82,7 +82,7 @@ TEST_F(TestMonitorStageScope, RootFuncStageScope)
 
 TEST_F(TestMonitorStageScope, NestedStageScopeCodeGenAndFuncToBin)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(3);
     MonitorManager::Instance().SetRootFuncCount(1);
 
@@ -114,7 +114,7 @@ TEST_F(TestMonitorStageScope, NestedStageScopeCodeGenAndFuncToBin)
 
 TEST_F(TestMonitorStageScope, MultipleRootFuncScopesConcurrent)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(4);
     MonitorManager::Instance().SetRootFuncCount(2);
 
@@ -136,7 +136,7 @@ TEST_F(TestMonitorStageScope, MultipleRootFuncScopesConcurrent)
 
 TEST_F(TestMonitorStageScope, HostMachineStageScope)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(1);
     MonitorManager::Instance().BeginHostMachineCompileGroup(3);
 
@@ -155,7 +155,7 @@ TEST_F(TestMonitorStageScope, HostMachineStageScope)
 
 TEST_F(TestMonitorStageScope, StageScopeAccumulatesElapsedTotals)
 {
-    MonitorManager::Instance().Initialize(true, 60, -1.0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(2);
     MonitorManager::Instance().SetCurrentFunctionIndex(1);
 

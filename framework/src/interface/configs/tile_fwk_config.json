@@ -39,9 +39,7 @@
     "host": {
         "compile_stage": 0,
         "compile_monitor_enable":1,
-        "compile_timeout": 600,
-        "compile_timeout_stage": 0,
-        "compile_monitor_print_interval": 60
+        "compile_timeout": 600
     },
     "codegen": {
         "cce_split_threshold_tile_ops": 200,

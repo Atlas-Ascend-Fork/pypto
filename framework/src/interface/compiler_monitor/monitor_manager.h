@@ -36,7 +36,6 @@ struct ActiveStageInfo {
     std::string functionName;
     int functionOpSize{0};
     int rootFuncOpSize{0};
-    bool warningPrinted{false};
 };
 
 struct PassCompileTiming {
@@ -50,23 +49,11 @@ struct PassCompileTiming {
     bool success;
 };
 
-struct CurrentPassInfo {
-    bool active{false};
-    int functionIndex{0};
-    std::string functionName;
-    int functionOpSize{0};
-    std::string strategy;
-    std::string passIdentifier;
-    size_t passIndex{0};
-    std::chrono::steady_clock::time_point startTime;
-};
-
 class MonitorManager {
 public:
     static MonitorManager& Instance();
 
-    void Initialize(bool enable, int intervalSec, double timeoutSec, int totalTimeoutSec,
-                    bool passDetailEnable = false);
+    void Initialize(bool enable, int totalTimeoutSec, bool passDetailEnable = false);
     void Shutdown();
 
     void StartStage(const std::string& name, int rootFuncIndex = -1, const std::string& rootFuncName = "",
@@ -97,14 +84,12 @@ public:
 
     void TryEndPrepareStage();
 
+    void CheckAndEmitTotalTimeout();
     void NotifyCompilationFinished();
 
-    void SetCompilerMonitorOptions(bool enable, int intervalSec, double timeoutSec, int totalTimeoutSec,
-                                   bool passDetailEnable = false);
+    void SetCompilerMonitorOptions(bool enable, int totalTimeoutSec, bool passDetailEnable = false);
     bool IsEnabled() const;
     bool IsPassDetailEnabled() const;
-    int GetIntervalSec() const;
-    double GetTimeoutSec() const;
     int GetTotalTimeoutSec() const;
     std::string GetCurrentStageName() const;
     std::chrono::steady_clock::time_point GetStageStartTime() const;
@@ -113,32 +98,18 @@ public:
     int GetCurrentFunctionIndex() const;
     std::unordered_map<std::string, double> GetStageElapsedTotals() const;
 
-    void SetStageTimeoutFlag(const std::string& name);
-    bool GetStageTimeoutFlag(const std::string& name);
-    void SetActiveStageWarningPrinted(const std::string& name, int rootFuncIndex);
-    void RecordTimedOutStage(const std::string& name, double elapsed);
-
     std::string GetCurrentFunctionName() const;
     void SetCurrentFunctionName(const std::string& name);
     int GetCurrentFuncOpSize() const;
     void SetCurrentFuncOpSize(int opSize, bool updateActiveStage = false);
-    int GetFuncSumOpSize() const;
-    void SetFuncSumOpSize(size_t opSize, bool reset = false);
     double GetTotalElapsed() const;
     void PrintCurrentTotalElapsed(std::string strTemp = "");
 
     std::vector<ActiveStageInfo> GetActiveStages() const;
 
-    int GetProcessingThresholdSec() const;
-    void SetProcessingThresholdSec(int sec);
     int GetProgressWidth() const;
-    static double CalcPassStageTimeoutSec(int opSize);
-    static std::string FormatPassDurationForLog(double seconds);
     void StartPassCompile(const std::string& strategy, const std::string& passIdentifier, size_t passIndex,
-                          const std::string& functionName, int functionIndex, int functionOpSize);
-    void EndPassCompile(const std::string& strategy, const std::string& passIdentifier, size_t passIndex,
-                        const std::string& functionName, int functionIndex);
-    std::string GetCurrentPassDescription() const;
+                          const std::string& functionName, int functionIndex);
     void RecordPassCompileTime(const std::string& strategy, const std::string& passIdentifier, size_t passIndex,
                                const std::string& functionName, int functionIndex, int functionOpSize,
                                double elapsedSec, bool success);
@@ -154,20 +125,18 @@ private:
     void MaybeStartTotalClock();
     void PrintCompilationFinished();
     double ComputeTotalElapsed() const;
-    void PrintWatchdogSummary(double totalElapsed);
     void PrintDetailSummary(double totalElapsed);
+    std::string BuildTimeoutWarningLocked(double totalElapsed) const;
+    std::string BuildStageElapsedSummaryLocked() const;
     void EndStageInternal(const std::string& name, int rootFuncIndex, const std::string& rootFuncName,
                           const std::chrono::steady_clock::time_point& startTime, int rootFuncIndexOriginal,
                           int rootFuncOpSize, int functionIndex, const std::string& functionName, int functionOpSize);
     std::string BuildStageFinishMsg(const std::string& name, int rootFuncIndex, const std::string& rootFuncName,
                                     double elapsed, double totalElapsed, int functionIndex,
                                     const std::string& functionName, int functionOpSize, int rootFuncOpSize) const;
-    void CheckStageTimeoutOnEnd(const std::string& name, double elapsed, int functionOpSize, int functionIndex,
-                                const std::string& functionName, bool stageWarningPrinted);
-    std::string BuildPassCompileTimingsForFunction(int functionIndex, const std::string& functionName) const;
     std::string BuildPassFunctionHeaderLocked(int functionIndex, const std::string& functionName,
                                               const std::string& strategy = "") const;
-    std::string BuildPassProgressLineLocked(const std::string& passIdentifier, size_t passIndex, int functionOpSize,
+    std::string BuildPassProgressLineLocked(const std::string& passIdentifier, size_t passIndex,
                                             const std::string& status, double elapsedSec, bool success) const;
 
     mutable std::mutex mutex_;
@@ -176,11 +145,10 @@ private:
     bool initialized_{false};
     bool pythonStageEnded_{false};
 
-    bool enable_{false};
-    bool passDetailEnable_{false};
+    std::atomic<bool> enable_{false};
+    std::atomic<bool> passDetailEnable_{false};
     bool stageDoing_{false};
-    std::atomic<int> intervalSec_{60};
-    std::atomic<double> timeoutSec_{0.0};
+    bool totalTimeoutEmitted_{false};
     std::atomic<int> totalTimeoutSec_{600};
 
     std::string currentFunction_;
@@ -188,11 +156,8 @@ private:
     std::chrono::steady_clock::time_point totalStart_;
     std::chrono::steady_clock::time_point stageStart_;
     std::unordered_map<std::string, double> stageElapsedTotals_;
-    std::map<std::string, bool> stageTimeoutFlag_;
-    std::map<std::string, double> summaryTimedOutStages_;
     std::vector<PassCompileTiming> passCompileTimings_;
     std::map<std::string, double> passElapsedTotals_;
-    CurrentPassInfo currentPass_;
     int lastPassDetailFunctionIndex_{-1};
     std::string lastPassDetailFunctionName_;
     std::string lastPassDetailStrategy_;
@@ -204,7 +169,6 @@ private:
     ActiveStageInfo suspendedCodeGen_;
 
     int currentFuncOpsize_{0};
-    int funcSumOpsize_{0};
     int totalFunctionCount_{0};
     int currentFunctionIndex_{0};
     int nextFunctionIndex_{1};
@@ -213,7 +177,6 @@ private:
     int nextRootFuncIndex_{1};
     std::string currentRootFunc_;
     double lastTotalElapsed_{0.0};
-    int processingThresholdSec_{60};
 
     int hostMachineTotalSteps_{0};
     int hostMachineNextStep_{1};

@@ -1,6 +1,6 @@
 /**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
- * This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
@@ -10,149 +10,138 @@
 
 /*!
  * \file test_monitor_watchdog.cpp
- * \brief Unit tests for Watchdog mode (compile_monitor_enable=1): banner, summary, output suppression
+ * \brief Unit tests for compiler monitor total-timeout watchdog behavior.
  */
 
+#include <algorithm>
 #include <chrono>
-#include <cstdlib>
+#include <dirent.h>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <string>
+#include <sys/types.h>
 #include <thread>
-#include <unordered_map>
-#include <utility>
-#include <vector>
+#include <unistd.h>
 
 #define private public
 #include "interface/compiler_monitor/monitor_manager.h"
 #undef private
 #include "gtest/gtest.h"
+#include "tilefwk/pypto_fwk_log.h"
 #include "monitor_test_fixture.h"
 #include "interface/compiler_monitor/monitor_impl.h"
+#include "utils/host_log/log_manager.h"
 
 using namespace npu::tile_fwk;
 
-class TestMonitorWatchdog : public MonitorTestFixtureBase {};
-
-// --- RecordTimedOutStage: safe, idempotent, stores elapsed ---
-
-TEST_F(TestMonitorWatchdog, RecordTimedOutStageSafeAndIdempotent)
+namespace {
+std::string FindLatestHostLogFile()
 {
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 600);
-    MonitorManager::Instance().RecordTimedOutStage("Pass", 100.0);
-    MonitorManager::Instance().RecordTimedOutStage("CodeGen", 15.0);
-    MonitorManager::Instance().RecordTimedOutStage("Pass", 200.0);
-
-    const auto& stages = MonitorManager::Instance().summaryTimedOutStages_;
-    EXPECT_EQ(stages.size(), 2u);
-    EXPECT_EQ(stages.count("Pass"), 1u);
-    EXPECT_EQ(stages.count("CodeGen"), 1u);
-    EXPECT_NEAR(stages.at("Pass"), 100.0, 0.01);
+    const std::string dir = LogManager::Instance().GetHostLogDir();
+    DIR* dirPtr = opendir(dir.c_str());
+    if (dirPtr == nullptr) {
+        return "";
+    }
+    const std::string prefix = "pypto-log-" + std::to_string(getpid()) + "_";
+    std::string latest;
+    struct dirent* entry = nullptr;
+    while ((entry = readdir(dirPtr)) != nullptr) {
+        std::string name = entry->d_name;
+        if (name.rfind(prefix, 0) == 0 && name.size() > 4 && name.substr(name.size() - 4) == ".log" && name > latest) {
+            latest = name;
+        }
+    }
+    closedir(dirPtr);
+    return latest.empty() ? "" : dir + "/" + latest;
 }
 
-// --- Watchdog mode: passDetailEnable_ is false when mode=1, true when mode=2 ---
+std::string ReadFileContent(const std::string& path)
+{
+    std::ifstream input(path);
+    if (!input.is_open()) {
+        return "";
+    }
+    return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+}
+
+std::string ReadLogBetweenMarkers(const std::string& beginMarker, const std::string& endMarker)
+{
+    const std::string content = ReadFileContent(FindLatestHostLogFile());
+    auto beginPos = content.rfind(beginMarker);
+    if (beginPos == std::string::npos) {
+        return "";
+    }
+    beginPos = content.find('\n', beginPos);
+    if (beginPos == std::string::npos) {
+        return "";
+    }
+    auto endPos = content.find(endMarker, beginPos);
+    if (endPos == std::string::npos) {
+        return content.substr(beginPos);
+    }
+    return content.substr(beginPos, endPos - beginPos);
+}
+} // namespace
+
+class TestMonitorWatchdog : public MonitorTestFixtureBase {};
 
 TEST_F(TestMonitorWatchdog, PassDetailEnableFlag)
 {
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 600, false);
+    MonitorManager::Instance().Initialize(true, 600, false);
     EXPECT_FALSE(MonitorManager::Instance().IsPassDetailEnabled());
     MonitorManager::Instance().NotifyCompilationFinished();
 
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 600, true);
+    MonitorManager::Instance().Initialize(true, 600, true);
     EXPECT_TRUE(MonitorManager::Instance().IsPassDetailEnabled());
     MonitorManager::Instance().NotifyCompilationFinished();
 
-    MonitorManager::Instance().Initialize(false, 60, 0.0, 600, false);
+    MonitorManager::Instance().Initialize(false, 600, false);
     EXPECT_FALSE(MonitorManager::Instance().IsEnabled());
 }
 
-// --- summaryTimedOutStages_ cleared on re-init ---
-
-TEST_F(TestMonitorWatchdog, SummaryClearedOnReinit)
+TEST_F(TestMonitorWatchdog, TotalTimeoutFlagClearedOnReinit)
 {
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 600, false);
-    MonitorManager::Instance().RecordTimedOutStage("Pass", 100.0);
-    EXPECT_EQ(MonitorManager::Instance().summaryTimedOutStages_.size(), 1u);
+    MonitorManager::Instance().Initialize(true, 600, false);
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        MonitorManager::Instance().totalTimeoutEmitted_ = true;
+    }
     MonitorManager::Instance().NotifyCompilationFinished();
 
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 600, false);
-    EXPECT_EQ(MonitorManager::Instance().summaryTimedOutStages_.size(), 0u);
+    MonitorManager::Instance().Initialize(true, 600, false);
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        EXPECT_FALSE(MonitorManager::Instance().totalTimeoutEmitted_);
+    }
+    MonitorManager::Instance().NotifyCompilationFinished();
 }
-
-// --- PrintCurrentTotalElapsed: no crash in both modes ---
 
 TEST_F(TestMonitorWatchdog, PrintCurrentTotalElapsedNoCrash)
 {
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 600, false);
+    MonitorManager::Instance().Initialize(true, 600, false);
     MonitorManager::Instance().PrintCurrentTotalElapsed("test");
     MonitorManager::Instance().NotifyCompilationFinished();
 
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 600, true);
+    MonitorManager::Instance().Initialize(true, 600, true);
     MonitorManager::Instance().PrintCurrentTotalElapsed("test");
 }
 
-// --- RecordPassCompileTime in non-detail: records timing, detects timeout ---
-
-TEST_F(TestMonitorWatchdog, RecordPassCompileTimeNonDetailMode)
-{
-    // timeoutSec_ > 0 enables stage timeout; Pass uses ops-scaled threshold (1000 ops ≈ 0.1s).
-    MonitorManager::Instance().Initialize(true, 60, 1.0, 600, false);
-    MonitorManager::Instance().SetTotalFunctionCount(2);
-    MonitorManager::Instance().SetCurrentFunctionIndex(1);
-    MonitorManager::Instance().SetCurrentFunctionName("func_1");
-
-    MonitorManager::Instance().StartStage("Pass");
-    MonitorManager::Instance().StartPassCompile("StratA", "Pass1", 0, "func_1", 1, 1000);
-    MonitorManager::Instance().RecordPassCompileTime("StratA", "Pass1", 0, "func_1", 1, 1000, 0.5, true);
-    MonitorManager::Instance().EndPassCompile("StratA", "Pass1", 0, "func_1", 1);
-    MonitorManager::Instance().EndStage("Pass");
-
-    auto timings = MonitorManager::Instance().GetPassCompileTimings();
-    EXPECT_EQ(timings.size(), 1u);
-    EXPECT_EQ(timings[0].strategy, "StratA");
-    EXPECT_NEAR(timings[0].elapsedSec, 0.5, 0.01);
-
-    EXPECT_EQ(MonitorManager::Instance().summaryTimedOutStages_.count("Pass"), 1u);
-}
-
-// --- RecordPassCompileTime in non-detail: no timeout when timeoutSec_ disabled ---
-
-TEST_F(TestMonitorWatchdog, RecordPassCompileTimeNoTimeoutWhenUnderThreshold)
-{
-    // compile_timeout_stage <= 0 disables stage timeout detection.
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 600, false);
-    MonitorManager::Instance().SetTotalFunctionCount(2);
-    MonitorManager::Instance().SetCurrentFunctionIndex(1);
-    MonitorManager::Instance().SetCurrentFunctionName("func_1");
-
-    MonitorManager::Instance().StartStage("Pass");
-    MonitorManager::Instance().StartPassCompile("StratA", "Pass1", 0, "func_1", 1, 1000);
-    MonitorManager::Instance().RecordPassCompileTime("StratA", "Pass1", 0, "func_1", 1, 1000, 0.5, true);
-    MonitorManager::Instance().EndPassCompile("StratA", "Pass1", 0, "func_1", 1);
-    MonitorManager::Instance().EndStage("Pass");
-
-    EXPECT_EQ(MonitorManager::Instance().summaryTimedOutStages_.size(), 0u);
-}
-
-// --- TryEndPrepareStage: no crash in both modes ---
-
 TEST_F(TestMonitorWatchdog, TryEndPrepareStageNoCrash)
 {
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 600, false);
+    MonitorManager::Instance().Initialize(true, 600, false);
     MonitorManager::Instance().TryEndPrepareStage();
     auto totals = MonitorManager::Instance().GetStageElapsedTotals();
     EXPECT_NE(totals.find("Prepare"), totals.end());
     MonitorManager::Instance().NotifyCompilationFinished();
 
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 600, true);
+    MonitorManager::Instance().Initialize(true, 600, true);
     MonitorManager::Instance().TryEndPrepareStage();
 }
 
-// --- EndStage: no crash, records elapsed in both modes ---
-
 TEST_F(TestMonitorWatchdog, EndStageRecordsElapsed)
 {
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 600, false);
+    MonitorManager::Instance().Initialize(true, 600, false);
     MonitorManager::Instance().SetTotalFunctionCount(1);
     MonitorManager::Instance().SetCurrentFunctionIndex(0);
     MonitorManager::Instance().SetCurrentFunctionName("func_0");
@@ -162,114 +151,17 @@ TEST_F(TestMonitorWatchdog, EndStageRecordsElapsed)
     EXPECT_NE(totals.find("CodeGen"), totals.end());
     MonitorManager::Instance().NotifyCompilationFinished();
 
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 600, true);
+    MonitorManager::Instance().Initialize(true, 600, true);
     MonitorManager::Instance().SetTotalFunctionCount(1);
     MonitorManager::Instance().SetCurrentFunctionIndex(0);
     MonitorManager::Instance().SetCurrentFunctionName("func_0");
     MonitorManager::Instance().StartStage("CodeGen");
     MonitorManager::Instance().EndStage("CodeGen");
 }
-
-// --- Stage timeout: CodeGen timeout, no false positive, disabled when <= 0 ---
-
-TEST_F(TestMonitorWatchdog, StageTimeoutFallback)
-{
-    MonitorManager::Instance().Initialize(true, 60, 0.001, 600, false);
-    MonitorManager::Instance().SetTotalFunctionCount(1);
-    MonitorManager::Instance().SetCurrentFunctionIndex(0);
-    MonitorManager::Instance().SetCurrentFunctionName("func_0");
-    MonitorManager::Instance().StartStage("CodeGen");
-    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-    MonitorManager::Instance().EndStage("CodeGen");
-    EXPECT_EQ(MonitorManager::Instance().summaryTimedOutStages_.count("CodeGen"), 1u);
-    MonitorManager::Instance().NotifyCompilationFinished();
-
-    MonitorManager::Instance().Initialize(true, 60, 10.0, 600, false);
-    MonitorManager::Instance().SetTotalFunctionCount(1);
-    MonitorManager::Instance().SetCurrentFunctionIndex(0);
-    MonitorManager::Instance().SetCurrentFunctionName("func_0");
-    MonitorManager::Instance().StartStage("CodeGen");
-    MonitorManager::Instance().EndStage("CodeGen");
-    EXPECT_EQ(MonitorManager::Instance().summaryTimedOutStages_.size(), 0u);
-    MonitorManager::Instance().NotifyCompilationFinished();
-
-    // compile_timeout_stage <= 0 disables stage timeout.
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 600, false);
-    MonitorManager::Instance().SetTotalFunctionCount(1);
-    MonitorManager::Instance().SetCurrentFunctionIndex(0);
-    MonitorManager::Instance().SetCurrentFunctionName("func_0");
-    MonitorManager::Instance().StartStage("CodeGen");
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    MonitorManager::Instance().EndStage("CodeGen");
-    EXPECT_EQ(MonitorManager::Instance().summaryTimedOutStages_.size(), 0u);
-}
-
-// --- Prepare stage timeout ---
-
-TEST_F(TestMonitorWatchdog, PrepareStageTimeout)
-{
-    MonitorManager::Instance().Initialize(true, 60, 0.001, 600, false);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-    MonitorManager::Instance().TryEndPrepareStage();
-    EXPECT_EQ(MonitorManager::Instance().summaryTimedOutStages_.count("Prepare"), 1u);
-}
-
-// --- Detail mode (mode=2): Pass stage timeout triggers WARNING print via CheckStageTimeoutOnEnd / tick ---
-
-TEST_F(TestMonitorWatchdog, DetailModePassStageTimeoutPrintsWarning)
-{
-    // timeoutSec_ > 0 enables Pass stage timeout (ops-scaled; 1 op ≈ 0.45ms with base 90s).
-    // Detail mode prints WARNING but does not record into summaryTimedOutStages_ (Watchdog-only map).
-    MonitorManager::Instance().Initialize(true, 60, 1.0, 600, true);
-    MonitorManager::Instance().SetTotalFunctionCount(2);
-    MonitorManager::Instance().SetCurrentFunctionIndex(1);
-    MonitorManager::Instance().SetCurrentFunctionName("func_1");
-    MonitorManager::Instance().SetCurrentFuncOpSize(1);
-
-    MonitorManager::Instance().StartStage("Pass");
-    MonitorManager::Instance().StartPassCompile("StratA", "Pass1", 0, "func_1", 1, 1);
-    MonitorManager::Instance().RecordPassCompileTime("StratA", "Pass1", 0, "func_1", 1, 1, 0.5, true);
-    MonitorManager::Instance().EndPassCompile("StratA", "Pass1", 0, "func_1", 1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    MonitorManager::Instance().EndStage("Pass");
-    // Smoke: path completes; WARNING is emitted on stdout (see CI log), not via summaryTimedOutStages_.
-}
-
-// --- Detail mode: background thread tick triggers WARNING for generic stage (HandleGenericStage) ---
-
-TEST_F(TestMonitorWatchdog, DetailModeGenericStageTimeoutViaTick)
-{
-    MonitorManager::Instance().Initialize(true, 60, 0.001, 600, true);
-    MonitorManager::Instance().SetTotalFunctionCount(2);
-    MonitorManager::Instance().SetCurrentFunctionIndex(1);
-    MonitorManager::Instance().SetCurrentFunctionName("func_1");
-
-    MonitorManager::Instance().StartStage("CodeGen");
-    std::this_thread::sleep_for(std::chrono::milliseconds(2100));
-    MonitorManager::Instance().EndStage("CodeGen");
-}
-
-// --- Detail mode: background thread tick triggers WARNING for Pass stage (EmitPassStageTimeoutWarningIfNeeded) ---
-
-TEST_F(TestMonitorWatchdog, DetailModePassTimeoutViaTick)
-{
-    MonitorManager::Instance().Initialize(true, 60, 0.001, 600, true);
-    MonitorManager::Instance().SetTotalFunctionCount(2);
-    MonitorManager::Instance().SetCurrentFunctionIndex(1);
-    MonitorManager::Instance().SetCurrentFunctionName("func_1");
-
-    MonitorManager::Instance().StartStage("Pass");
-    MonitorManager::Instance().StartPassCompile("StratA", "Pass1", 0, "func_1", 1, 1000);
-    std::this_thread::sleep_for(std::chrono::milliseconds(2100));
-    MonitorManager::Instance().EndPassCompile("StratA", "Pass1", 0, "func_1", 1);
-    MonitorManager::Instance().EndStage("Pass");
-}
-
-// --- Detail mode: background thread tick triggers total timeout (PrintTotalTimeOut) ---
 
 TEST_F(TestMonitorWatchdog, DetailModeTotalTimeoutViaTick)
 {
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 1, true);
+    MonitorManager::Instance().Initialize(true, 1, true);
     MonitorManager::Instance().SetTotalFunctionCount(1);
     MonitorManager::Instance().SetCurrentFunctionIndex(0);
     MonitorManager::Instance().SetCurrentFunctionName("func_0");
@@ -277,71 +169,184 @@ TEST_F(TestMonitorWatchdog, DetailModeTotalTimeoutViaTick)
     MonitorManager::Instance().StartStage("CodeGen");
     std::this_thread::sleep_for(std::chrono::milliseconds(2100));
     MonitorManager::Instance().EndStage("CodeGen");
-    EXPECT_EQ(MonitorManager::Instance().summaryTimedOutStages_.count("Total"), 1u);
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        EXPECT_TRUE(MonitorManager::Instance().totalTimeoutEmitted_);
+    }
 }
 
-// --- Detail mode: background thread tick triggers WARNING for FuncToBin stage (HandleFuncToBin) ---
-
-TEST_F(TestMonitorWatchdog, DetailModeFuncToBinTimeoutViaTick)
+TEST_F(TestMonitorWatchdog, CheckAndEmitTotalTimeoutOnce)
 {
-    MonitorManager::Instance().Initialize(true, 60, 0.001, 600, true);
-    MonitorManager::Instance().SetTotalFunctionCount(3);
-    MonitorManager::Instance().SetRootFuncCount(1);
+    MonitorManager::Instance().Initialize(true, 10, false);
+    MonitorManager::Instance().impl_->StopMonitoring();
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        MonitorManager::Instance().stageElapsedTotals_["Prepare"] = 1.0;
+        MonitorManager::Instance().stageElapsedTotals_["Pass"] = 1.0;
+        MonitorManager::Instance().totalStart_ = std::chrono::steady_clock::now() - std::chrono::seconds(12);
+    }
 
-    int idx = MonitorManager::Instance().PrepareNextRootFunc();
-    MonitorManager::Instance().StartStage(STAGE_FUNC_TO_BIN, idx, "root_func_1", 100);
-    std::this_thread::sleep_for(std::chrono::milliseconds(2100));
-    MonitorManager::Instance().EndStage(STAGE_FUNC_TO_BIN, idx, "root_func_1", 100);
+    MonitorManager::Instance().CheckAndEmitTotalTimeout();
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        EXPECT_TRUE(MonitorManager::Instance().totalTimeoutEmitted_);
+    }
+    EXPECT_NEAR(MonitorManager::Instance().GetTotalElapsed(), 12.0, 0.05);
+
+    double recordedElapsed = MonitorManager::Instance().GetTotalElapsed();
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        MonitorManager::Instance().stageElapsedTotals_["CodeGen"] = 8.0;
+    }
+    MonitorManager::Instance().CheckAndEmitTotalTimeout();
+    EXPECT_DOUBLE_EQ(MonitorManager::Instance().GetTotalElapsed(), recordedElapsed);
 }
 
-// --- Detail mode: background thread tick triggers WARNING for HostMachine stage (HandleHostMachine) ---
-
-TEST_F(TestMonitorWatchdog, DetailModeHostMachineTimeoutViaTick)
+TEST_F(TestMonitorWatchdog, DisabledModeIgnoresTotalTimeout)
 {
-    MonitorManager::Instance().Initialize(true, 60, 0.001, 600, true);
-    MonitorManager::Instance().SetTotalFunctionCount(1);
-    MonitorManager::Instance().BeginHostMachineCompileGroup(1);
-
-    int step = MonitorManager::Instance().AllocHostMachineStepIndex();
-    MonitorManager::Instance().StartStage(STAGE_HOST_MACHINE, step, "hm_step_1", 100);
-    std::this_thread::sleep_for(std::chrono::milliseconds(2100));
-    MonitorManager::Instance().EndStage(STAGE_HOST_MACHINE, step, "hm_step_1", 100);
+    MonitorManager::Instance().SetCompilerMonitorOptions(false, 10, false);
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        MonitorManager::Instance().totalTimeoutEmitted_ = false;
+        MonitorManager::Instance().totalStart_ = std::chrono::steady_clock::now() - std::chrono::seconds(100);
+    }
+    MonitorManager::Instance().CheckAndEmitTotalTimeout();
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        EXPECT_FALSE(MonitorManager::Instance().totalTimeoutEmitted_);
+    }
 }
 
-// --- Detail mode: background thread tick triggers processing heartbeat for generic stage ---
-
-TEST_F(TestMonitorWatchdog, DetailModeGenericStageProcessingHeartbeat)
+TEST_F(TestMonitorWatchdog, TimeoutWarningListsCompletedAndCurrentStagesOnly)
 {
-    MonitorManager::Instance().SetProcessingThresholdSec(0);
-    MonitorManager::Instance().Initialize(true, 1, 0.001, 600, true);
+    MonitorManager::Instance().Initialize(true, 10, false);
     MonitorManager::Instance().SetTotalFunctionCount(1);
     MonitorManager::Instance().SetCurrentFunctionIndex(0);
     MonitorManager::Instance().SetCurrentFunctionName("func_0");
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        MonitorManager::Instance().stageElapsedTotals_["Prepare"] = 1.0;
+        MonitorManager::Instance().stageElapsedTotals_["Pass"] = 2.0;
+    }
 
-    MonitorManager::Instance().StartStage("CodeGen");
-    std::this_thread::sleep_for(std::chrono::milliseconds(2100));
-    MonitorManager::Instance().EndStage("CodeGen");
-    MonitorManager::Instance().SetProcessingThresholdSec(60);
+    MonitorManager::Instance().StartStage("HostMachine");
+    MonitorManager::Instance().impl_->StopMonitoring();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        std::string summary = MonitorManager::Instance().BuildStageElapsedSummaryLocked();
+        EXPECT_NE(summary.find("Prepare"), std::string::npos);
+        EXPECT_NE(summary.find("Pass"), std::string::npos);
+        EXPECT_NE(summary.find("HostMachine(current)"), std::string::npos);
+        EXPECT_EQ(summary.find("CodeGen"), std::string::npos);
+
+        std::string warning = MonitorManager::Instance().BuildTimeoutWarningLocked(12.0);
+        EXPECT_NE(warning.find("Threshold: 10s"), std::string::npos);
+        EXPECT_NE(warning.find("pypto.set_host_options(compile_timeout=...)"), std::string::npos);
+    }
+
+    MonitorManager::Instance().EndStage("HostMachine");
 }
 
-// --- Watchdog summary: prints DetectedStage line when total timeout ---
-
-TEST_F(TestMonitorWatchdog, WatchdogSummaryPrintsDetectedStageOnTotalTimeout)
+TEST_F(TestMonitorWatchdog, DisabledModeWritesNoMonitorLogToFile)
 {
-    MonitorManager::Instance().Initialize(true, 60, 0.0, 10, false);
-    MonitorManager::Instance().SetTotalFunctionCount(2);
+    MonitorManager::Instance().Initialize(false, 600, false);
+    COMPILER_EVENT("MONITOR_LOG_MARK_BEGIN_DISABLED");
+    MonitorManager::Instance().StartStage("Pass");
+    MonitorManager::Instance().EndStage("Pass");
+    MonitorManager::Instance().NotifyCompilationFinished();
+    COMPILER_EVENT("MONITOR_LOG_MARK_END_DISABLED");
 
-    // Total overtime but no single stage exceeds avg threshold (10/4=2.5s).
-    MonitorManager::Instance().stageElapsedTotals_["Prepare"] = 1.0;
-    MonitorManager::Instance().stageElapsedTotals_["Pass"] = 1.0;
-    MonitorManager::Instance().stageElapsedTotals_["HostMachine"] = 1.0;
-    MonitorManager::Instance().stageElapsedTotals_["CodeGen"] = 1.0;
-    MonitorManager::Instance().totalStart_ = std::chrono::steady_clock::now() - std::chrono::seconds(12);
-    MonitorManager::Instance().PrintWatchdogSummary(12.0);
-    EXPECT_NEAR(MonitorManager::Instance().GetTotalElapsed(), 12.0, 0.01);
+    const std::string segment = ReadLogBetweenMarkers("MONITOR_LOG_MARK_BEGIN_DISABLED",
+                                                      "MONITOR_LOG_MARK_END_DISABLED");
+    EXPECT_EQ(segment.find("[Compiler Monitor]"), std::string::npos);
+    EXPECT_EQ(segment.find("Compile timeout"), std::string::npos);
+}
 
-    // CodeGen exceeds avg threshold: summary still prints DetectedStage only (no function list).
-    MonitorManager::Instance().stageElapsedTotals_["CodeGen"] = 8.0;
-    MonitorManager::Instance().PrintWatchdogSummary(12.0);
-    EXPECT_NEAR(MonitorManager::Instance().GetTotalElapsed(), 12.0, 0.01);
+TEST_F(TestMonitorWatchdog, ExistingShortCaseWritesNoTimeoutWarningToFile)
+{
+    COMPILER_EVENT("MONITOR_LOG_MARK_BEGIN_NO_TIMEOUT");
+    MonitorManager::Instance().Initialize(true, 600, false);
+    MonitorManager::Instance().impl_->StopMonitoring();
+    MonitorManager::Instance().CheckAndEmitTotalTimeout();
+    COMPILER_EVENT("MONITOR_LOG_MARK_END_NO_TIMEOUT");
+    MonitorManager::Instance().NotifyCompilationFinished();
+
+    const std::string segment = ReadLogBetweenMarkers("MONITOR_LOG_MARK_BEGIN_NO_TIMEOUT",
+                                                      "MONITOR_LOG_MARK_END_NO_TIMEOUT");
+    EXPECT_EQ(segment.find("Threshold:"), std::string::npos);
+    EXPECT_EQ(segment.find("Compile timeout"), std::string::npos);
+}
+
+TEST_F(TestMonitorWatchdog, DetailModeInitWritesNoThresholdBannerToFile)
+{
+    COMPILER_EVENT("MONITOR_LOG_MARK_BEGIN_NO_BANNER_MODE2");
+    MonitorManager::Instance().Initialize(true, 600, true);
+    MonitorManager::Instance().impl_->StopMonitoring();
+    COMPILER_EVENT("MONITOR_LOG_MARK_END_NO_BANNER_MODE2");
+    MonitorManager::Instance().NotifyCompilationFinished();
+
+    const std::string segment = ReadLogBetweenMarkers("MONITOR_LOG_MARK_BEGIN_NO_BANNER_MODE2",
+                                                      "MONITOR_LOG_MARK_END_NO_BANNER_MODE2");
+    EXPECT_EQ(segment.find("Threshold:"), std::string::npos);
+}
+
+TEST_F(TestMonitorWatchdog, Mode2TimeoutWritesWarningToScreen)
+{
+    MonitorManager::Instance().Initialize(true, 1, true);
+    MonitorManager::Instance().impl_->StopMonitoring();
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        MonitorManager::Instance().totalTimeoutEmitted_ = false;
+        MonitorManager::Instance().totalStart_ = std::chrono::steady_clock::now() - std::chrono::seconds(2);
+        MonitorManager::Instance().stageStart_ = MonitorManager::Instance().totalStart_;
+    }
+    testing::internal::CaptureStdout();
+    MonitorManager::Instance().CheckAndEmitTotalTimeout();
+    const std::string screen = testing::internal::GetCapturedStdout();
+    MonitorManager::Instance().NotifyCompilationFinished();
+
+    EXPECT_NE(screen.find("Compile timeout"), std::string::npos);
+    EXPECT_NE(screen.find("Threshold: 1s"), std::string::npos);
+    EXPECT_NE(screen.find("Stage elapsed:"), std::string::npos);
+}
+
+TEST_F(TestMonitorWatchdog, Mode1TimeoutWritesNoWarningToScreen)
+{
+    MonitorManager::Instance().Initialize(true, 1, false);
+    MonitorManager::Instance().impl_->StopMonitoring();
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        MonitorManager::Instance().totalTimeoutEmitted_ = false;
+        MonitorManager::Instance().totalStart_ = std::chrono::steady_clock::now() - std::chrono::seconds(2);
+        MonitorManager::Instance().stageStart_ = MonitorManager::Instance().totalStart_;
+    }
+    testing::internal::CaptureStdout();
+    MonitorManager::Instance().CheckAndEmitTotalTimeout();
+    const std::string screen = testing::internal::GetCapturedStdout();
+    MonitorManager::Instance().NotifyCompilationFinished();
+
+    EXPECT_EQ(screen.find("Compile timeout"), std::string::npos);
+}
+
+TEST_F(TestMonitorWatchdog, TimeoutWritesExpectedMonitorLogToFile)
+{
+    MonitorManager::Instance().Initialize(true, 1, false);
+    MonitorManager::Instance().impl_->StopMonitoring();
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        MonitorManager::Instance().totalTimeoutEmitted_ = false;
+        MonitorManager::Instance().totalStart_ = std::chrono::steady_clock::now() - std::chrono::seconds(2);
+        MonitorManager::Instance().stageStart_ = MonitorManager::Instance().totalStart_;
+    }
+    COMPILER_EVENT("MONITOR_LOG_MARK_BEGIN_TIMEOUT");
+    MonitorManager::Instance().CheckAndEmitTotalTimeout();
+    COMPILER_EVENT("MONITOR_LOG_MARK_END_TIMEOUT");
+    MonitorManager::Instance().NotifyCompilationFinished();
+
+    const std::string segment = ReadLogBetweenMarkers("MONITOR_LOG_MARK_BEGIN_TIMEOUT", "MONITOR_LOG_MARK_END_TIMEOUT");
+    EXPECT_NE(segment.find("Compile timeout"), std::string::npos);
+    EXPECT_NE(segment.find("Threshold: 1s"), std::string::npos);
+    EXPECT_NE(segment.find("Stage elapsed:"), std::string::npos);
+    EXPECT_EQ(segment.find("DetectedStage"), std::string::npos);
 }

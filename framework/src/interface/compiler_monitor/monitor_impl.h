@@ -32,7 +32,6 @@ public:
 
 private:
     void MonitorLoop();
-    void PrintTotalTimeOut(double totalElapsed, int totalTimeoutSec);
 
     MonitorManager* manager_;
     std::unique_ptr<std::thread> thread_;

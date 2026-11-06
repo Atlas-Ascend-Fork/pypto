@@ -592,12 +592,6 @@ class JitCallableWrapper:
             )
         if "compile_timeout" not in self._host_options:
             self._host_options["compile_timeout"] = pypto.get_host_options().get("compile_timeout", 600)
-        if "compile_timeout_stage" not in self._host_options:
-            self._host_options["compile_timeout_stage"] = pypto.get_host_options().get("compile_timeout_stage", 0)
-        if "compile_monitor_print_interval" not in self._host_options:
-            self._host_options["compile_monitor_print_interval"] = pypto.get_host_options().get(
-                "compile_monitor_print_interval", 60
-            )
 
     def _get_or_create_kmodule(self, non_tensor_values: dict[str, Any]) -> None:
         """Set self.kwargs and resolve kmodule from cache or create new."""

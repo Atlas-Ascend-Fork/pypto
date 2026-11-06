@@ -31,18 +31,12 @@ public:
 
     void SetUp() override {}
 
-    void TearDown() override
-    {
-        MonitorManager::Instance().NotifyCompilationFinished();
-        MonitorManager::Instance().SetProcessingThresholdSec(60);
-    }
+    void TearDown() override { MonitorManager::Instance().NotifyCompilationFinished(); }
 };
 
 TEST_F(CompilerMonitor, CompilerMonitorInitial)
 {
-    MonitorManager::Instance().Initialize(true, 2, 4, 5);
-    MonitorManager::Instance().SetStageTimeoutFlag("Pass");
-    MonitorManager::Instance().GetStageTimeoutFlag("Pass");
+    MonitorManager::Instance().Initialize(true, 5);
     MonitorManager::Instance().GetStageStartTime();
     MonitorManager::Instance().GetStageElapsedTotals();
 }
@@ -57,7 +51,7 @@ TEST_F(CompilerMonitor, FormatUnknownOpCountAsNotAvailable)
 
 TEST_F(CompilerMonitor, CompilerMonitorImpl)
 {
-    MonitorManager::Instance().Initialize(true, 1, 4, 5);
+    MonitorManager::Instance().Initialize(true, 5);
     MonitorManager::Instance().SetTotalFunctionCount(5);
     MonitorManager::Instance().SetCurrentFunctionIndex(3);
     sleep(2);
@@ -65,7 +59,7 @@ TEST_F(CompilerMonitor, CompilerMonitorImpl)
 
 TEST_F(CompilerMonitor, CompilerMonitorTestPrint)
 {
-    MonitorManager::Instance().Initialize(true, 1, 4, 5);
+    MonitorManager::Instance().Initialize(true, 5);
     MonitorManager::Instance().SetTotalFunctionCount(5);
     MonitorManager::Instance().SetCurrentFunctionIndex(3);
     MonitorManager::Instance().StartStage("Pass");
@@ -76,7 +70,7 @@ TEST_F(CompilerMonitor, CompilerMonitorTestPrint)
 
 TEST_F(CompilerMonitor, CompilerMonitorRootFuncBasic)
 {
-    MonitorManager::Instance().Initialize(true, 2, 4, 5);
+    MonitorManager::Instance().Initialize(true, 5);
     MonitorManager::Instance().SetTotalFunctionCount(3);
     MonitorManager::Instance().SetRootFuncCount(4);
 
@@ -108,7 +102,7 @@ TEST_F(CompilerMonitor, CompilerMonitorRootFuncBasic)
 
 TEST_F(CompilerMonitor, CompilerMonitorFuncToBinStage)
 {
-    MonitorManager::Instance().Initialize(true, 2, 4, 5);
+    MonitorManager::Instance().Initialize(true, 5);
     MonitorManager::Instance().SetTotalFunctionCount(3);
     MonitorManager::Instance().SetRootFuncCount(2);
     MonitorManager::Instance().SetCurrentFunctionIndex(1);
@@ -126,7 +120,7 @@ TEST_F(CompilerMonitor, CompilerMonitorFuncToBinStage)
 
 TEST_F(CompilerMonitor, CompilerMonitorStageScopeRootFunc)
 {
-    MonitorManager::Instance().Initialize(true, 2, 4, 5);
+    MonitorManager::Instance().Initialize(true, 5);
     MonitorManager::Instance().SetTotalFunctionCount(2);
     MonitorManager::Instance().SetRootFuncCount(2);
 
@@ -143,8 +137,7 @@ TEST_F(CompilerMonitor, CompilerMonitorStageScopeRootFunc)
 
 TEST_F(CompilerMonitor, CompilerMonitorFuncToBinProcessing)
 {
-    MonitorManager::Instance().SetProcessingThresholdSec(1);
-    MonitorManager::Instance().Initialize(true, 1, 0, 600);
+    MonitorManager::Instance().Initialize(true, 600);
     MonitorManager::Instance().SetTotalFunctionCount(4);
     MonitorManager::Instance().SetRootFuncCount(3);
 
@@ -183,8 +176,7 @@ TEST_F(CompilerMonitor, CompilerMonitorFuncToBinProcessing)
 
 TEST_F(CompilerMonitor, CompilerMonitorAllStageProcessingPaths)
 {
-    MonitorManager::Instance().SetProcessingThresholdSec(1);
-    MonitorManager::Instance().Initialize(true, 1, 2, 600);
+    MonitorManager::Instance().Initialize(true, 600);
 
     MonitorManager::Instance().SetTotalFunctionCount(4);
     MonitorManager::Instance().SetCurrentFunctionIndex(2);
@@ -203,29 +195,9 @@ TEST_F(CompilerMonitor, CompilerMonitorAllStageProcessingPaths)
     MonitorManager::Instance().EndStage("CodeGen");
 }
 
-TEST_F(CompilerMonitor, CompilerMonitorTimeoutSecZero)
-{
-    // compile_timeout_stage == 0 disables stage timeout; stages should complete without timeout.
-    MonitorManager::Instance().SetProcessingThresholdSec(1);
-    MonitorManager::Instance().Initialize(true, 1, 0, 600);
-    EXPECT_EQ(MonitorManager::Instance().GetTimeoutSec(), 0.0);
-    MonitorManager::Instance().SetTotalFunctionCount(2);
-    MonitorManager::Instance().SetRootFuncCount(1);
-    MonitorManager::Instance().SetCurrentFunctionIndex(1);
-    MonitorManager::Instance().SetCurrentFunctionName("func_1");
-
-    MonitorManager::Instance().StartStage("Pass");
-    sleep(1);
-    MonitorManager::Instance().EndStage("Pass");
-
-    int idx = MonitorManager::Instance().PrepareNextRootFunc();
-    MonitorManager::Instance().StartStage(STAGE_FUNC_TO_BIN, idx, "root_func_1");
-    MonitorManager::Instance().EndStage(STAGE_FUNC_TO_BIN, idx, "root_func_1");
-}
-
 TEST_F(CompilerMonitor, CompilerMonitorHostMachineStepGroup)
 {
-    MonitorManager::Instance().Initialize(true, 2, 4, 5);
+    MonitorManager::Instance().Initialize(true, 5);
     MonitorManager::Instance().BeginHostMachineCompileGroup(4);
     EXPECT_EQ(MonitorManager::Instance().GetHostMachineTotalSteps(), 4);
     EXPECT_EQ(MonitorManager::Instance().AllocHostMachineStepIndex(), 1);
@@ -233,7 +205,7 @@ TEST_F(CompilerMonitor, CompilerMonitorHostMachineStepGroup)
     EXPECT_EQ(MonitorManager::Instance().AllocHostMachineStepIndex(), 3);
     EXPECT_EQ(MonitorManager::Instance().AllocHostMachineStepIndex(), 4);
 
-    MonitorManager::Instance().SetCompilerMonitorOptions(false, 2, 4, 5);
+    MonitorManager::Instance().SetCompilerMonitorOptions(false, 5);
     EXPECT_EQ(MonitorManager::Instance().AllocHostMachineStepIndex(), -1);
 }
 

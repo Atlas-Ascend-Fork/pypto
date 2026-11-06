@@ -462,8 +462,7 @@ public:
         COMPILER_LOGI("New frontend compile from torch begin once.");
         // Prepare stage starts here and ends at Program::UpdateCompileTask() for NEW
         // "Prepare" 在Initialize中设置
-        MonitorManager::Instance().Initialize(compileMonitorEnable, intervalSec, timeoutSec, totalTimeoutSec,
-                                              compileMonitorPassDetailEnable);
+        MonitorManager::Instance().Initialize(compileMonitorEnable, totalTimeoutSec, compileMonitorPassDetailEnable);
         auto compile = py::getattr(module, "compile");
         compile(torch_tensors, tensor_defs);
         return RegisterLastCompiledKernel();
@@ -597,12 +596,6 @@ private:
                 compileMonitorEnable = compileMonitorMode > 0;
                 compileMonitorPassDetailEnable = compileMonitorMode == 0x2;
             }
-            if (host_options.contains("compile_monitor_print_interval")) {
-                intervalSec = host_options["compile_monitor_print_interval"].cast<int>();
-            }
-            if (host_options.contains("compile_timeout_stage")) {
-                timeoutSec = static_cast<double>(host_options["compile_timeout_stage"].cast<int>());
-            }
             if (host_options.contains("compile_timeout")) {
                 totalTimeoutSec = host_options["compile_timeout"].cast<int>();
             }
@@ -615,8 +608,6 @@ private:
     LaunchMode launchMode_{LaunchMode::DEVICE_RT};
     bool compileMonitorEnable{false};
     bool compileMonitorPassDetailEnable{false};
-    int intervalSec{60};
-    double timeoutSec{static_cast<double>(config::GetHostOption<int>(TIMEOUT_SEC))};
     int totalTimeoutSec{600};
     bool isReadyOnHostTensorsSet_{false};
 
