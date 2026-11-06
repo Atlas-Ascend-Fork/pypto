@@ -35,6 +35,13 @@
 
 namespace npu::tile_fwk {
 
+void CodeGenNPU::GenFuncBodyForSplit(Function& subFunc, Function& topFunc, std::ostringstream& oss,
+                                     CceOriginalFunctionBody& body)
+{
+    body.supported = false;
+    GenFuncBody(subFunc, topFunc, oss);
+}
+
 void FloatSpecValMgr::UpdateByOp(const Operation& op)
 {
     std::vector<Element> eles;
@@ -61,14 +68,14 @@ void FloatSpecValMgr::UpdateByOp(const Operation& op)
     }
 }
 
-void FloatSpecValMgr::PrintFloatSpecVal(std::ostringstream& oss)
+void FloatSpecValMgr::PrintFloatSpecVal(std::ostringstream& oss, PreambleDefinitions* definitions)
 {
     // print statement like: union {float f; uint32_t u;} float_inf = {.u = 0x7F800000};
     for (const auto& fs : floatSpecVals_) {
         std::string dtypeCCE = DataType2CCEStr(fs.dtype);
-        oss << "union "
-            << "{" << dtypeCCE << " f; "
-            << "uint32_t u;} " << fs.GetFsVarName() << " = {.u = " << fs.GetFsValueStr() << "};\n";
+        const auto code = "union {" + dtypeCCE + " f; uint32_t u;} " + fs.GetFsVarName() +
+                          " = {.u = " + fs.GetFsValueStr() + "};\n";
+        EmitPreambleDefinition(oss, fs.GetFsVarName(), code, definitions);
     }
 }
 
@@ -167,6 +174,7 @@ std::string CodeGenNPU::GenFuncHeader(Function& topFunc, CompileInfo& compileInf
     compileInfo.SetKernelName(kernelName);
     funcHeader << kernelName;
     // kernel func param
+    // Keep parameter names and order in sync with the entry calls in PlanCceSplit (cce_split.cpp).
     funcHeader << "(" << GM_PARAM_TYPE_FOR_DYN
                << "* param, int64_t GMStackBase, __gm__ int64_t *hcclContext, __gm__ FedProfLeafTaskProf* taskStat)";
     auto funcDec = funcHeader.str() + ";";
@@ -239,7 +247,8 @@ std::string BuildDynParamInfo(const DynParamInfo& info)
 
 // GET_PARAM_OFFSET_BY_IDX(param, n, base, dim, idx)
 // GET_PARAM_VALID_SHAPE_BY_IDX(param, n, base, dim, idx)
-void CodeGenNPU::GenDynParamForExpr(std::ostringstream& oss, const Function& func) const
+void CodeGenNPU::GenDynParamForExpr(std::ostringstream& oss, const Function& func,
+                                    PreambleDefinitions* definitions) const
 {
     if (!func.IsUnderDynamicFunction()) {
         return;
@@ -259,7 +268,7 @@ void CodeGenNPU::GenDynParamForExpr(std::ostringstream& oss, const Function& fun
             }
             std::string params = BuildDynParamInfo(info);
             dynParamExpr.append(params).append(STMT_END);
-            oss << dynParamExpr;
+            EmitPreambleDefinition(oss, dynParam.first, dynParamExpr, definitions);
         }
     }
 
@@ -267,7 +276,7 @@ void CodeGenNPU::GenDynParamForExpr(std::ostringstream& oss, const Function& fun
         if (!dynParam.second.replacedSymbol.empty()) {
             std::string dynParamExpr = "uint64_t " + dynParam.first + " = ";
             dynParamExpr.append(dynParam.second.replacedSymbol).append(STMT_END);
-            oss << dynParamExpr;
+            EmitPreambleDefinition(oss, dynParam.first, dynParamExpr, definitions);
         }
     }
 }
@@ -278,10 +287,12 @@ void CodeGenNPU::GenCode(Function& topFunc)
                   topFunc.GetFunctionHash().c_str());
 
     Prepare(topFunc);
+    const auto splitThreshold = config::GetCodeGenOption<int64_t>(CCE_SPLIT_THRESHOLD_TILE_OPS);
+    ASSERT(CmpCodeErr::CMD_CHECK_FAILED, splitThreshold >= 0) << "cce_split_threshold_tile_ops must be nonnegative";
 
     std::deque<std::function<void(void)>> tasks;
     for (auto& subFuncPair : topFunc.rootFunc_->programs_) {
-        std::function task = [this, subFuncPair, &topFunc]() {
+        std::function task = [this, subFuncPair, &topFunc, splitThreshold]() {
             CODEGEN_LOGI(" ----- subprogram id [%lu] -----", subFuncPair.first);
             auto subFunc = subFuncPair.second;
             if (HandleForAICpuSubFunc(*subFunc)) {
@@ -291,11 +302,25 @@ void CodeGenNPU::GenCode(Function& topFunc)
             CompileInfo compileInfo(topFunc, ctx, subFuncPair, isCube);
             std::ostringstream leafKernelFunc;
             GenFuncBodyBefore(subFuncPair, topFunc, compileInfo, leafKernelFunc);
-            GenFuncBody(*subFunc, topFunc, leafKernelFunc);
+            CceOriginalFunctionBody originalBody;
+            // The total op count is an upper bound on the operations counted for splitting.
+            const bool shouldTrySplit = splitThreshold > 0 &&
+                                        subFunc->Operations(false).size() > static_cast<uint64_t>(splitThreshold);
+            if (shouldTrySplit) {
+                GenFuncBodyForSplit(*subFunc, topFunc, leafKernelFunc, originalBody);
+            } else {
+                GenFuncBody(*subFunc, topFunc, leafKernelFunc);
+            }
             GenFuncEnd(leafKernelFunc);
 #ifdef BUILD_WITH_CANN
             if (std::getenv(ENV_ASCEND_HOME_PATH.c_str()) != nullptr) {
-                GenCodeToBinaryTask(leafKernelFunc, compileInfo, "");
+                if (!shouldTrySplit) {
+                    CODEGEN_LOGD("CCE split: kernel=%s, split=false", compileInfo.GetKernelName().c_str());
+                }
+                if (!shouldTrySplit ||
+                    !GenSplitTasks(topFunc, compileInfo, originalBody, leafKernelFunc.str(), splitThreshold)) {
+                    GenCodeToBinaryTask(leafKernelFunc, compileInfo, "");
+                }
             }
 #endif
             UpdateSubFunc(subFuncPair, compileInfo);
@@ -303,13 +328,78 @@ void CodeGenNPU::GenCode(Function& topFunc)
         tasks.push_back(task);
     }
     unsigned threadNum = GetCGThreadNum();
-    ParallelExecuteAndWait(threadNum, tasks);
+    try {
+        ParallelExecuteAndWait(threadNum, tasks);
 
 #ifdef BUILD_WITH_CANN
-    if (std::getenv(ENV_ASCEND_HOME_PATH.c_str()) != nullptr) {
-        ExecuteParallelCompile(topFunc);
-    }
+        if (std::getenv(ENV_ASCEND_HOME_PATH.c_str()) != nullptr) {
+            ExecuteParallelCompile(topFunc);
+        }
 #endif
+    } catch (...) {
+        compileTasks_.clear();
+        throw;
+    }
+}
+
+bool CodeGenNPU::GenSplitTasks(Function& topFunc, const CompileInfo& compileInfo, const CceOriginalFunctionBody& body,
+                               const std::string& originalCode, int64_t threshold) const
+{
+    const std::string stem = compileInfo.GetCCEAbsPath().substr(0, compileInfo.GetCCEAbsPath().size() - 4);
+    const std::string headerPath = stem + "_parts.h";
+    const std::string headerName = headerPath.substr(headerPath.find_last_of('/') + 1);
+    std::ostringstream includes;
+    GenInclude(topFunc, includes);
+    const auto& declaration = compileInfo.GetFuncDeclare();
+    const auto pos = declaration.find('(');
+    ASSERT(GenCodeErr::GEN_OP_CODE_FAILED, pos != std::string::npos && declaration.back() == ';')
+        << "Invalid leaf declaration for CCE splitting";
+    const auto plan = PlanCceSplit(body, includes.str(), compileInfo.GetKernelName(),
+                                   declaration.substr(pos, declaration.size() - pos - 1), headerName, threshold);
+
+    CODEGEN_LOGD("CCE split: kernel=%s, split=%s", compileInfo.GetKernelName().c_str(),
+                 plan.parts.empty() ? "false" : "true");
+    if (plan.parts.empty()) {
+        return false;
+    }
+    auto dump = [this](const std::string& path, const std::string& text) {
+        std::ostringstream contents;
+        contents << text;
+        DumpCode(path, contents);
+    };
+    dump(compileInfo.GetCCEAbsPath(), originalCode);
+    dump(headerPath, plan.header);
+    std::vector<std::string> objects;
+    auto compile = [&](const std::string& suffix, const std::string& source) {
+        CompileInfo partInfo = compileInfo;
+        partInfo.SetCCEAbsPath(stem + suffix + ".cpp");
+        partInfo.SetBinAbsPath(stem + suffix + ".o");
+        dump(partInfo.GetCCEAbsPath(), source);
+        CompileTaskInfo task;
+        task.inputPath = partInfo.GetCCEAbsPath();
+        task.outputPath = partInfo.GetBinAbsPath();
+        task.compileCmd = PrepareCmd(partInfo, "");
+        task.dependencies = {headerPath};
+        CollectCompileTask(task);
+        objects.push_back(task.outputPath);
+    };
+    compile("_entry", plan.entry);
+    for (const auto& part : plan.parts) {
+        const std::string suffix = part.name.substr(compileInfo.GetKernelName().size());
+        compile(suffix, part.source);
+    }
+    CompileTaskInfo link;
+    link.outputPath = compileInfo.GetBinAbsPath();
+    link.dependencies = objects;
+    link.publishFrom = link.outputPath + ".split.tmp";
+    std::string inputs;
+    for (const auto& object : objects) {
+        inputs += QuoteCceBuildArg(object) + " ";
+    }
+    link.compileCmd = "ld.lld -m aicorelinux -Ttext=0 -static -r -o " + QuoteCceBuildArg(link.publishFrom) + " " +
+                      inputs;
+    CollectCompileTask(link);
+    return true;
 }
 
 void CodeGenNPU::UpdateSubFunc(std::pair<uint64_t, Function*> subFuncPair, const CompileInfo& compileInfo) const
@@ -360,7 +450,7 @@ std::string CodeGenNPU::PrepareCmd(const CompileInfo& compileInfo, const std::st
 
     const std::string srcFile = compileInfo.GetCCEAbsPath();
     const std::string objFile = compileInfo.GetBinAbsPath();
-    oss << "-o " << objFile << " " << srcFile;
+    oss << "-o " << QuoteCceBuildArg(objFile) << " " << QuoteCceBuildArg(srcFile);
 
     std::string compileCmd = oss.str();
 
@@ -815,36 +905,14 @@ std::string CodeGenNPU::GetOutputDir() const
 
 void CodeGenNPU::GenerateMakefile(const std::string& makefilePath) const
 {
+    const auto contents = RenderCceMakefile(compileTasks_);
     std::ofstream makefile(makefilePath);
     if (!makefile.is_open()) {
         ASSERT(CmpCodeErr::FILE_IO_FAILED, false) << "Failed to create Makefile: " << makefilePath;
         return;
     }
 
-    // 任务按并行完成顺序入列，排序后写出才能让Makefile内容与线程调度无关
-    std::sort(compileTasks_.begin(), compileTasks_.end(),
-              [](const CompileTaskInfo& lhs, const CompileTaskInfo& rhs) { return lhs.outputPath < rhs.outputPath; });
-
-    makefile << "# Auto-generated Makefile for parallel compilation\n";
-
-    makefile << "all: ";
-    for (const auto& task : compileTasks_) {
-        makefile << task.outputPath << " ";
-    }
-    makefile << "\n\n";
-
-    for (const auto& task : compileTasks_) {
-        makefile << task.outputPath << ": " << task.inputPath << "\n";
-        makefile << "\t@" << task.compileCmd << "\n\n";
-    }
-
-    makefile << ".PHONY: all clean\n\n";
-    makefile << "clean:\n";
-    makefile << "\t@rm -f ";
-    for (const auto& task : compileTasks_) {
-        makefile << task.outputPath << " ";
-    }
-    makefile << "\n";
+    makefile << contents;
 
     makefile.close();
     CODEGEN_LOGI("Generated Makefile: %s with %zu tasks", makefilePath.c_str(), compileTasks_.size());
@@ -875,9 +943,9 @@ void CodeGenNPU::ExecuteParallelCompile(const Function& topFunc)
         .append(topFunc.GetFunctionHash())
         .append(".compile");
 
-    GenerateMakefile(makefilePath);
+    makeCmd << " -f " << QuoteCceBuildArg(makefilePath);
 
-    makeCmd << " -f " << makefilePath;
+    GenerateMakefile(makefilePath);
 
     CODEGEN_LOGI("Top Function magic: %d, hash: %s: Starting parallel compilation: %u jobs, %zu tasks",
                  topFunc.GetFuncMagic(), topFunc.GetFunctionHash().c_str(), parallelJobs, compileTasks_.size());

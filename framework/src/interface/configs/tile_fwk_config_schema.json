@@ -498,6 +498,16 @@
                 "en": "Generate C-like code that runs on the Device side, which serves as input to the Bisheng Compiler for compiling into Device-side executable binaries"
             },
             "properties": {
+                "cce_split_threshold_tile_ops": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9223372036854775807,
+                    "default": 200,
+                    "label": {
+                        "zh": "CCE源码拆分目标非同步操作数；0关闭，仅在安全边界拆分，允许超限",
+                        "en": "CCE source split target in non-synchronization operations; 0 disables splitting. Indivisible regions may exceed the target."
+                    }
+                },
                 "support_dynamic_aligned": {
                     "type": "boolean",
                     "label": {

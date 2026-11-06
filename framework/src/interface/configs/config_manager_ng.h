@@ -89,6 +89,7 @@ constexpr const char* PLATFORM_SOC_VERSION = "soc_version";
 constexpr const char* ENABLE_PMU_TRACE = "enable_pmu_trace";
 constexpr const char* VF_OPTIONS = "vf_options";
 constexpr const char* VF_COMPILER = "vf_compiler";
+constexpr const char* CCE_SPLIT_THRESHOLD_TILE_OPS = "cce_split_threshold_tile_ops";
 
 /* flow virifer tools KEYs */
 const std::string KEY_ENABLE_PASS_VERIFY = "enable_pass_verify";

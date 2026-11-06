@@ -44,6 +44,7 @@
         "compile_monitor_print_interval": 60
     },
     "codegen": {
+        "cce_split_threshold_tile_ops": 200,
         "support_dynamic_aligned": false,
         "soc_version": "",
         "enable_pmu_trace": false,

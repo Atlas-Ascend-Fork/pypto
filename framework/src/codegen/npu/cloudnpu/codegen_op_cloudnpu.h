@@ -17,6 +17,7 @@
 #define CODEGEN_OP_CLOUDNPU_H
 
 #include "codegen/npu/codegen_op_npu.h"
+#include "codegen/npu/cce_split.h"
 
 namespace npu::tile_fwk {
 
@@ -25,6 +26,7 @@ public:
     explicit CodeGenOpCloudNPU(const CodeGenOpNPUCtx& ctx);
 
     ~CodeGenOpCloudNPU() override = default;
+    CceSplitRegion GetSplitRegion();
 
 private:
     void GetGmParamIdx(const Operation& oper);

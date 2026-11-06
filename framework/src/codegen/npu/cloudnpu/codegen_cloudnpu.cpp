@@ -134,6 +134,28 @@ bisheng::cce::mark_stamp<PIPE_MTE3, ${id_value}$>();
 
 void CodeGenCloudNPU::GenFuncBody(Function& subFunc, Function& topFunc, std::ostringstream& oss)
 {
+    GenFuncBodyImpl(subFunc, topFunc, oss, nullptr);
+}
+
+void CodeGenCloudNPU::GenFuncBodyForSplit(Function& subFunc, Function& topFunc, std::ostringstream& oss,
+                                          CceOriginalFunctionBody& body)
+{
+    const bool supportedArch = platform_ == NPUArch::DAV_2201 || platform_ == NPUArch::DAV_3510 ||
+                               platform_ == NPUArch::DAV_1001;
+    if (!supportedArch || config::IsFixedCceMode() || IsAicorePrintEnabled() || IsEnablePMUTrace() ||
+        config::GetDebugOption<int64_t>(CFG_RUNTIME_DBEUG_MODE) != CFG_DEBUG_NONE ||
+        config::GetDebugOption<int64_t>(CFG_COMPILE_DBEUG_MODE) != CFG_DEBUG_NONE ||
+        !ConfigManager::Instance().GetCodeGenConfig(KEY_FORCE_OVERWRITE, true)) {
+        body.supported = false;
+        GenFuncBody(subFunc, topFunc, oss);
+        return;
+    }
+    GenFuncBodyImpl(subFunc, topFunc, oss, &body);
+}
+
+void CodeGenCloudNPU::GenFuncBodyImpl(Function& subFunc, Function& topFunc, std::ostringstream& oss,
+                                      CceOriginalFunctionBody* body)
+{
     PrintPMUTraceAhead(subFunc, oss);
 
     OperationsViewer operationList = subFunc.Operations(false);
@@ -164,19 +186,32 @@ void CodeGenCloudNPU::GenFuncBody(Function& subFunc, Function& topFunc, std::ost
         floatSpecValMgr.UpdateByOp(op);
 
         CodeGenOpCloudNPU cop({symbolMgr, topFunc, subFunc, op, ctx.isMainBlock, ctx.isDynamicAligned, forBlkMgr});
+        CceSplitRegion region;
+        if (body != nullptr) {
+            // GenOpCode closes loops and clears their symbol mappings. Snapshot dependencies first.
+            region = cop.GetSplitRegion();
+        }
         std::string tileOpSourceCode = cop.GenOpCode();
         ASSERT(GenCodeErr::GEN_OP_CODE_FAILED, tileOpSourceCode.find(CG_ERROR) == tileOpSourceCode.npos)
             << "Generate code of op failed, op is " << op.Dump();
+
+        if (body != nullptr) {
+            region.code = tileOpSourceCode;
+            body->regions.push_back(std::move(region));
+        }
 
         tileOpSourceRegion.append(symbolMgr->GenNewTileTensorDefs());
         tileOpSourceRegion.append(tileOpSourceCode);
         CODEGEN_LOGI("------------------------ Op CodeGenNPU Finish -----------------------");
     }
 
-    floatSpecValMgr.PrintFloatSpecVal(oss);
-    symbolMgr->PrintAddrAllocs(oss);
-    GenDynParamForExpr(oss, subFunc);
-    symbolMgr->GenUsingList(oss);
+    std::ostringstream preamble;
+    auto* definitions = body == nullptr ? nullptr : &body->preambleDefinitions;
+    floatSpecValMgr.PrintFloatSpecVal(preamble, definitions);
+    symbolMgr->PrintAddrAllocs(preamble, definitions);
+    GenDynParamForExpr(preamble, subFunc, definitions);
+    symbolMgr->GenUsingList(preamble, definitions);
+    oss << preamble.str();
     oss << tileOpSourceRegion;
 
     PrintPMUTraceAfter(oss);

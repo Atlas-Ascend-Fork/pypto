@@ -27,6 +27,9 @@ public:
 
 private:
     void GenFuncBody(Function& subFunc, Function& topFunc, std::ostringstream& oss) override;
+    void GenFuncBodyForSplit(Function& subFunc, Function& topFunc, std::ostringstream& oss,
+                             CceOriginalFunctionBody& body) override;
+    void GenFuncBodyImpl(Function& subFunc, Function& topFunc, std::ostringstream& oss, CceOriginalFunctionBody* body);
 
     void BuildIncludes(std::ostringstream& oss) const override;
 

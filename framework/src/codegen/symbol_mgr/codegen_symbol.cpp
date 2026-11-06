@@ -218,12 +218,12 @@ std::string SymbolManager::QueryTileTensorFullDimByTensorInLoop(const std::strin
     return fullDimTensorName;
 }
 
-void SymbolManager::GenUsingList(std::ostringstream& oss)
+void SymbolManager::GenUsingList(std::ostringstream& oss, PreambleDefinitions* definitions)
 {
     for (const auto& usingPair : tileTensorUsing_) {
         const std::string& usingName = usingPair.first;
         const TileTensorUsing& tileTensorUsing = usingPair.second;
-        oss << "using " << usingName << " = " << tileTensorUsing.ToString();
+        EmitPreambleDefinition(oss, usingName, "using " + usingName + " = " + tileTensorUsing.ToString(), definitions);
     }
 }
 
@@ -246,13 +246,15 @@ std::string SymbolManager::GenNewTileTensorDefs()
     return oss.str();
 }
 
-void SymbolManager::PrintAddrAllocs(std::ostringstream& oss) const
+void SymbolManager::PrintAddrAllocs(std::ostringstream& oss, PreambleDefinitions* definitions) const
 {
     for (const auto& addrAlloc : addrAllocs_) {
         if (tensorUseNormalAlloc_.find(addrAlloc.allocKey) != tensorUseNormalAlloc_.end()) {
-            oss << addrAlloc.allocNormal;
+            EmitPreambleDefinition(oss, definitions == nullptr ? "" : key2VariableName_.at(addrAlloc.allocKey),
+                                   addrAlloc.allocNormal, definitions);
         }
-        oss << addrAlloc.allocForTileTensor;
+        EmitPreambleDefinition(oss, definitions == nullptr ? "" : key2VariableNameTileTensor_.at(addrAlloc.allocKey),
+                               addrAlloc.allocForTileTensor, definitions);
     }
 }
 

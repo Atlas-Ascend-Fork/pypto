@@ -31,6 +31,7 @@
 #include "tilefwk/error_code.h"
 #include "tilefwk/platform.h"
 #include "symbol_id_gen.h"
+#include "codegen/utils/codegen_preamble.h"
 
 namespace npu::tile_fwk {
 const std::string TILE_TENSOR = "TileTensor";
@@ -331,7 +332,7 @@ public:
     void InsertTensorNameInLoopToFullDim(const std::string& tensorName, const std::string& fullDimTensorName);
     std::string QueryTileTensorFullDimByTensorInLoop(const std::string& tensorName);
 
-    void GenUsingList(std::ostringstream& oss);
+    void GenUsingList(std::ostringstream& oss, PreambleDefinitions* definitions = nullptr);
     std::string GenTileTensorDefList();
     std::string GenNewTileTensorDefs();
 
@@ -352,7 +353,7 @@ public:
         tensorUseNormalAlloc_.insert(CreateAllocKey(tensor));
     }
     void RecordTensorAddrAlloc(const AddrAlloc& addrAlloc) { addrAllocs_.emplace_back(addrAlloc); }
-    void PrintAddrAllocs(std::ostringstream& oss) const;
+    void PrintAddrAllocs(std::ostringstream& oss, PreambleDefinitions* definitions = nullptr) const;
 
 private:
     std::string GenTensorUsingName(const TileTensorUsing& tileTensorUsing)

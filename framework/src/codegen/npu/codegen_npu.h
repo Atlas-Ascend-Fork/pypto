@@ -30,17 +30,12 @@
 #include "codegen/symbol_mgr/codegen_symbol.h"
 #include "codegen/codegen_common.h"
 #include "interface/configs/config_manager.h"
+#include "codegen/npu/cce_split.h"
 
 namespace npu::tile_fwk {
 const std::string ENV_ASCEND_HOME_PATH = "ASCEND_HOME_PATH";
 const std::string ENV_PTO_TILE_LIB_CODE_PATH = "PTO_TILE_LIB_CODE_PATH";
 constexpr const int64_t CODE_RESERVED_SIZE = 1024 * 1024;
-
-struct CompileTaskInfo {
-    std::string outputPath;
-    std::string inputPath;
-    std::string compileCmd;
-};
 
 /* The 64-bit subTilingKey embedded in the kernel name must be reproducible under
  * multi-threaded codegen; otherwise fixed-CCE debug cannot match on-disk symbol
@@ -172,11 +167,15 @@ protected:
     void GenCommentBeforeFuncHeader(Function& subFunc, std::ostringstream& oss) const;
     std::string GenFuncHeader(Function& topFunc, CompileInfo& compileInfo) const;
     virtual void GenFuncBody(Function& subFunc, Function& topFunc, std::ostringstream& oss) = 0;
+    virtual void GenFuncBodyForSplit(Function& subFunc, Function& topFunc, std::ostringstream& oss,
+                                     CceOriginalFunctionBody& body);
     void GenFuncEnd(std::ostringstream& oss) const;
     static std::string GenKernelName(Function& topFunc, const CompileInfo& compileInfo);
 
     void GenCodeToBinaryTask(std::ostringstream& code, const CompileInfo& compileInfo,
                              const std::string& compileOptions) const;
+    bool GenSplitTasks(Function& topFunc, const CompileInfo& compileInfo, const CceOriginalFunctionBody& body,
+                       const std::string& originalCode, int64_t threshold) const;
     bool IsNeedDumpCode(const std::string& inputFile) const;
     void DumpCode(const std::string& name, std::ostringstream& code) const;
     int DoCompileCmd(const std::string& compileCmd) const;
@@ -192,7 +191,8 @@ protected:
     void GenAlloc(const std::shared_ptr<SymbolManager>& sm, BufferType bufferType,
                   const std::shared_ptr<LogicalTensor>& tensor);
 
-    void GenDynParamForExpr(std::ostringstream& oss, const Function& func) const;
+    void GenDynParamForExpr(std::ostringstream& oss, const Function& func,
+                            PreambleDefinitions* definitions = nullptr) const;
 
     bool HandleForAICpuSubFunc(Function& subFunc);
 
@@ -217,7 +217,7 @@ protected:
 class FloatSpecValMgr {
 public:
     void UpdateByOp(const Operation& op);
-    void PrintFloatSpecVal(std::ostringstream& oss);
+    void PrintFloatSpecVal(std::ostringstream& oss, PreambleDefinitions* definitions = nullptr);
 
 private:
     std::set<FloatSpecVal> floatSpecVals_;

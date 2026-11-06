@@ -30,7 +30,7 @@
 ```python
 set_codegen_options(*,
                     support_dynamic_aligned: bool = None,
-                    enable_pmu_trace: bool = None)
+                    enable_pmu_trace: bool = None) -> None
 ```
 
 <!-- npu="x90,9030,9050" id14 -->
