@@ -114,12 +114,14 @@ private:
     bool IsBeCovered(Function& function, const LogicalTensorPtr& largeTensor,
                      const std::vector<std::pair<LogicalTensorPtr, Offset>>& toTensorInfos);
     bool HasDuplicateToTile(const std::vector<std::pair<LogicalTensorPtr, Offset>>& toTensorInfos);
+    bool HasDuplicateToTensor(const std::vector<std::pair<LogicalTensorPtr, Offset>>& toTensorInfos);
     bool IsOperandUbConfirmed(const Operation& op, const LogicalTensorPtr& tensor, bool isOutput);
     bool IsUbConfirmed(const LogicalTensorPtr& largeTensor);
     bool RegisterMixedConsumerTensorIfNeeded(const LogicalTensorPtr& logicalTensor, bool allConsumersView);
     Shape AdjustLcmTileShapeForTailBlock(const Shape& lcmShape, const Shape& tileOffset,
                                          const LogicalTensorPtr& largeTensor);
-    bool CheckOverlapCoverage(const LogicalTensors& overlaps, const Shape& lcmTileShape);
+    bool CheckOverlapCoverage(const LogicalTensorPtr& largeTensor, const LogicalTensors& overlaps,
+                              const Shape& lcmTileShape);
     void ProcessTileSplit(Function& function, const LogicalTensorPtr& largeTensor, const Shape& lcmTileShape,
                           const Shape& tileOffset, const OverlapSearchIndex& toIndex,
                           const OverlapSearchIndex& fromIndex, LogicalTensors& overlaps, LogicalTensors& dualOverlaps);

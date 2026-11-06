@@ -2736,6 +2736,96 @@ TEST_F(SplitLargeFanoutTensorTest, MixedConsumerNonUbSliceContract_ShouldSkip)
     EXPECT_EQ(CountOpsWithInputMagic(*function, Opcode::OP_SLICE, largeTensorMagic), 2);
 }
 
+TEST_F(SplitLargeFanoutTensorTest, OverlappingWritesWithHoleKeepOriginalRead)
+{
+    for (bool enableSlice : {false, true}) {
+        config::SetPassOption("enable_slice", enableSlice);
+        ComputationalGraphBuilder graph;
+        AddTensorsWithDDR(graph, {{"a", {8, 16, 16}},
+                                  {"b", {8, 16, 16}},
+                                  {"c", {8, 16, 16}},
+                                  {"largeTensor", {20, 16, 16}},
+                                  {"head", {8, 16, 16}},
+                                  {"tail", {4, 16, 16}}});
+        for (const auto& [input, offset] :
+             std::vector<std::pair<std::string, Offset>>{{"a", {0, 0, 0}}, {"b", {8, 0, 0}}, {"c", {4, 0, 0}}}) {
+            graph.AddOp(enableSlice ? Opcode::OP_CONTRACT : Opcode::OP_ASSEMBLE, {input}, {"largeTensor"}, input);
+            graph.GetOp(input)->SetOpAttribute(
+                std::make_shared<AssembleOpAttribute>(MemoryType::MEM_DEVICE_DDR, offset));
+        }
+        for (const auto& [output, offset] :
+             std::vector<std::pair<std::string, Offset>>{{"head", {0, 0, 0}}, {"tail", {16, 0, 0}}}) {
+            graph.AddOp(enableSlice ? Opcode::OP_SLICE : Opcode::OP_VIEW, {"largeTensor"}, {output}, output);
+            graph.GetOp(output)->SetOpAttribute(std::make_shared<ViewOpAttribute>(offset, MemoryType::MEM_DEVICE_DDR));
+        }
+        graph.SetInCast({"a", "b", "c"});
+        graph.SetOutCast({"head", "tail"});
+        auto function = graph.GetFunction();
+        auto largeTensor = graph.GetTensor("largeTensor");
+        SplitLargeFanoutTensor pass;
+        pass.Init();
+        pass.CollectLargeTensor(*function);
+        EXPECT_FALSE(
+            pass.CheckOverlapCoverage(largeTensor, {graph.GetTensor("b"), graph.GetTensor("c")}, {16, 16, 16}));
+        EXPECT_TRUE(pass.CheckOverlapCoverage(largeTensor, {graph.GetTensor("a"), graph.GetTensor("b")}, {16, 16, 16}));
+        pass.SplitLargeTensor(*function);
+        // The valid head split survives. Overlapping [4,12) and [8,16)
+        // cannot cover [4,20), so the unwritten tail must keep its original source.
+        EXPECT_NE(graph.GetOp("head")->GetIOperands().front(), largeTensor);
+        EXPECT_EQ(graph.GetOp("tail")->GetIOperands().front(), largeTensor);
+        EXPECT_EQ(pass.RunOnFunction(*function), SUCCESS);
+        std::set<LogicalTensorPtr> incasts(function->GetIncast().begin(), function->GetIncast().end());
+        for (const auto& op : function->Operations()) {
+            for (const auto& input : op.GetIOperands()) {
+                EXPECT_TRUE(!input->GetProducers().empty() || incasts.count(input) > 0)
+                    << "Undriven tensor " << input->GetMagic() << " consumed by " << op.GetOpMagic();
+            }
+        }
+    }
+}
+
+TEST_F(SplitLargeFanoutTensorTest, DuplicateAssembleInputKeepsOriginalRead)
+{
+    for (bool enableSlice : {false, true}) {
+        config::SetPassOption("enable_slice", enableSlice);
+        ComputationalGraphBuilder graph;
+        AddTensorsWithDDR(graph, {{"a", {8, 16, 16}}, {"largeTensor", {24, 16, 16}}, {"head", {8, 16, 16}}});
+        for (const auto& [name, offset] :
+             std::vector<std::pair<std::string, Offset>>{{"assemble0", {0, 0, 0}}, {"assemble1", {8, 0, 0}}}) {
+            graph.AddOp(enableSlice ? Opcode::OP_CONTRACT : Opcode::OP_ASSEMBLE, {"a"}, {"largeTensor"}, name);
+            graph.GetOp(name)->SetOpAttribute(
+                std::make_shared<AssembleOpAttribute>(MemoryType::MEM_DEVICE_DDR, offset));
+        }
+        for (const auto& [output, offset] : std::vector<std::pair<std::string, Offset>>{{"head", {0, 0, 0}}}) {
+            graph.AddOp(enableSlice ? Opcode::OP_SLICE : Opcode::OP_VIEW, {"largeTensor"}, {output}, output);
+            graph.GetOp(output)->SetOpAttribute(std::make_shared<ViewOpAttribute>(offset, MemoryType::MEM_DEVICE_DDR));
+        }
+        graph.SetInCast({"a"});
+        graph.SetOutCast({"head"});
+        auto function = graph.GetFunction();
+        auto largeTensor = graph.GetTensor("largeTensor");
+        SplitLargeFanoutTensor pass;
+        pass.Init();
+        pass.CollectLargeTensor(*function);
+        // The same input appears twice with equal total volume; the reverse lookup
+        // yields one identical write position, so coverage cannot be proven.
+        EXPECT_FALSE(
+            pass.CheckOverlapCoverage(largeTensor, {graph.GetTensor("a"), graph.GetTensor("a")}, {16, 16, 16}));
+        pass.SplitLargeTensor(*function);
+        // The duplicated input leaves the write positions ambiguous; the whole large
+        // tensor must keep its original connections instead of splitting.
+        EXPECT_EQ(graph.GetOp("head")->GetIOperands().front(), largeTensor);
+        EXPECT_EQ(pass.RunOnFunction(*function), SUCCESS);
+        std::set<LogicalTensorPtr> incasts(function->GetIncast().begin(), function->GetIncast().end());
+        for (const auto& op : function->Operations()) {
+            for (const auto& input : op.GetIOperands()) {
+                EXPECT_TRUE(!input->GetProducers().empty() || incasts.count(input) > 0)
+                    << "Undriven tensor " << input->GetMagic() << " consumed by " << op.GetOpMagic();
+            }
+        }
+    }
+}
+
 TEST_F(SplitLargeFanoutTensorTest, BuilderLargeLinearFanoutPerfGuard)
 {
     int viewCount = 2048, assemblesPerView = 2, assembleCount = viewCount * assemblesPerView;

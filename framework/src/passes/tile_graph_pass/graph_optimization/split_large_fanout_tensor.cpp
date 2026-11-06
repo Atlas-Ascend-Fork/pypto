@@ -1047,6 +1047,23 @@ bool SplitLargeFanoutTensor::HasDuplicateToTile(const std::vector<std::pair<Logi
     return false;
 }
 
+bool SplitLargeFanoutTensor::HasDuplicateToTensor(const std::vector<std::pair<LogicalTensorPtr, Offset>>& toTensorInfos)
+{
+    // Match logical tensor identity, as FindAssembleFamilyProducer looks up its consumers.
+    // Distinct logical tensors sharing a raw tensor need not have ambiguous writes.
+    // Writes to another output logical tensor are conservatively rejected by the coverage lookup.
+    std::map<LogicalTensorPtr, int> countMap;
+    for (const auto& toTensorInfo : toTensorInfos) {
+        countMap[toTensorInfo.first]++;
+    }
+    for (const auto& pair : countMap) {
+        if (pair.second > 1) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void insertShapeIfNotDup(std::multiset<Shape, ShapeComparator>& set, const Shape& shape)
 {
     auto range = set.equal_range(shape);
@@ -1070,6 +1087,15 @@ void SplitLargeFanoutTensor::SplitLargeTensor(Function& function)
         }
         // 验证Assemble成LargeTensor的tileTensor们(的Offset)需要彼此不同
         if (HasDuplicateToTile(toInfoMap_[rawMagic])) {
+            continue;
+        }
+        // 同一输入tensor被多个assemble写入同一largeTensor时，写入区域存在歧义，无法可靠判定覆盖，
+        // 保守放弃拆分以保留原读取连接，避免拆分出无生产者的tensor导致断图
+        if (HasDuplicateToTensor(toInfoMap_[rawMagic])) {
+            APASS_LOG_INFO_F(Elements::Tensor,
+                             "Skip SplitLargeTensor for magic[%d] since some input tensor is assembled into the "
+                             "large tensor more than once.",
+                             largeTensor->GetMagic());
             continue;
         }
         for (const auto& toShape : toShapes_[largeTensor]) {
@@ -1175,7 +1201,8 @@ Shape SplitLargeFanoutTensor::AdjustLcmTileShapeForTailBlock(const Shape& lcmSha
     return lcmTileShape;
 }
 
-bool SplitLargeFanoutTensor::CheckOverlapCoverage(const LogicalTensors& overlaps, const Shape& lcmTileShape)
+bool SplitLargeFanoutTensor::CheckOverlapCoverage(const LogicalTensorPtr& largeTensor, const LogicalTensors& overlaps,
+                                                  const Shape& lcmTileShape)
 {
     auto [lcmTileArea, lcmOverflow] = CommonUtils::SafeMultiplyShape(lcmTileShape);
     if (lcmOverflow || lcmTileArea == -1) {
@@ -1189,7 +1216,34 @@ bool SplitLargeFanoutTensor::CheckOverlapCoverage(const LogicalTensors& overlaps
         }
         overlapTotalArea += area;
     }
-    return overlapTotalArea == lcmTileArea;
+    if (overlapTotalArea != lcmTileArea) {
+        return false;
+    }
+    // Collected writes are contained in the tile. Equal total volume proves full
+    // coverage only if the writes are disjoint; overlapping writes can hide holes.
+    std::vector<Offset> offsets;
+    for (const auto& overlap : overlaps) {
+        auto assembleOp = FindAssembleFamilyProducer(overlap, largeTensor);
+        auto attr = assembleOp == nullptr ? nullptr :
+                                            dynamic_cast<AssembleOpAttribute*>(assembleOp->GetOpAttribute().get());
+        if (attr == nullptr) {
+            APASS_LOG_DEBUG_F(Elements::Tensor,
+                              "Skip overlap coverage check for large tensor[%d], overlap[%d]: "
+                              "assemble op[%d] has no AssembleOpAttribute or was not found.",
+                              largeTensor->GetMagic(), overlap->GetMagic(),
+                              assembleOp == nullptr ? -1 : assembleOp->GetOpMagic());
+            return false;
+        }
+        const auto& offset = attr->GetToOffset();
+        for (size_t i = 0; i < offsets.size(); ++i) {
+            if (CalcOverlapByOffsetShape(offset, overlap->shape, offsets[i], overlaps[i]->shape) !=
+                OverlapStatus::NO_OVER_LAP) {
+                return false;
+            }
+        }
+        offsets.push_back(offset);
+    }
+    return true;
 }
 
 void SplitLargeFanoutTensor::ProcessTileSplit(Function& function, const LogicalTensorPtr& largeTensor,
@@ -1205,7 +1259,7 @@ void SplitLargeFanoutTensor::ProcessTileSplit(Function& function, const LogicalT
                           overlaps.size(), dualOverlaps.size());
         return;
     }
-    if (!CheckOverlapCoverage(overlaps, lcmTileShape)) {
+    if (!CheckOverlapCoverage(largeTensor, overlaps, lcmTileShape)) {
         APASS_LOG_DEBUG_F(
             Elements::Tensor,
             "Split large tensor miss, this lcmTile(shape %s, offset %s) of largeTensor %d is not filled up by all "
@@ -1225,6 +1279,9 @@ void SplitLargeFanoutTensor::ProcessTileSplit(Function& function, const LogicalT
         CreateOpFor1toM(function, largeTensor, lcmTileShape, tileOffset, overlaps, dualOverlaps);
     } else if (!isMixedConsumer) {
         FilterOverlaps(function, largeTensor, overlaps, dualOverlaps);
+        if (overlaps.empty()) {
+            return;
+        }
         CreateOpForMtoM(function, largeTensor, lcmTileShape, tileOffset, overlaps, dualOverlaps);
     }
 }
