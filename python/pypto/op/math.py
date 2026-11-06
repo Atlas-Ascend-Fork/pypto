@@ -57,6 +57,13 @@ def _clip_scalar_to_dtype(tensor_dtype, value):
     return value
 
 
+def _check_integer_scalar(op_name, value):
+    if not isinstance(value, int):
+        raise PyptoError(
+            0xF00001, TypeError(f"Scalar operand for {op_name} must be an integer, but got {type(value)}.")
+        )
+
+
 @op_wrapper
 def add(input_tensor: Tensor, other: Union[Tensor, float, int]) -> Tensor:
     """Computes the element-wise addition of `input_tensor` and `other`.
@@ -2100,8 +2107,10 @@ def bitwise_right_shift(input: Union[Tensor, int], other: Union[Tensor, int]) ->
     if isinstance(input, pypto_impl.Tensor) and isinstance(other, pypto_impl.Tensor):
         return pypto_impl.BitwiseRightShift(input, other)
     elif isinstance(input, pypto_impl.Tensor):
+        _check_integer_scalar("bitwise_right_shift", other)
         return pypto_impl.BitwiseRightShift(input, pypto_impl.Element(input.dtype, other))
     else:
+        _check_integer_scalar("bitwise_right_shift", input)
         return pypto_impl.BitwiseRightShift(pypto_impl.Element(other.dtype, input), other)
 
 
@@ -2147,8 +2156,10 @@ def bitwise_left_shift(input: Union[Tensor, int], other: Union[Tensor, int]) -> 
     if isinstance(input, pypto_impl.Tensor) and isinstance(other, pypto_impl.Tensor):
         return pypto_impl.BitwiseLeftShift(input, other)
     elif isinstance(input, pypto_impl.Tensor):
+        _check_integer_scalar("bitwise_left_shift", other)
         return pypto_impl.BitwiseLeftShift(input, pypto_impl.Element(input.dtype, other))
     else:
+        _check_integer_scalar("bitwise_left_shift", input)
         return pypto_impl.BitwiseLeftShift(pypto_impl.Element(other.dtype, input), other)
 
 
@@ -2377,6 +2388,7 @@ def gcd(input: Tensor, other: Union[Tensor, int]) -> Tensor:
     if isinstance(other, pypto_impl.Tensor):
         return pypto_impl.Gcd(input, other)
     else:
+        _check_integer_scalar("gcd", other)
         return pypto_impl.Gcd(input, pypto_impl.Element(input.dtype, other))
 
 
