@@ -35,7 +35,7 @@ def _make_workload_tile(tile_type, addr):
 def swiglu_grad(a, b, grad, sigmoid, grad_s, grad_tmp, da, db):
     """SwiGLU backward: a straight element-wise graph with two outputs.
 
-    AscendC: SwiGluGradBaseKernel<T>::Compute, arch35 (A5).
+    AscendC: SwiGluGradBaseKernel<T>::Compute, arch35 (3510).
     https://gitcode.com/cann/ops-nn/blob/a59460abfe0623082657ed98d976092dda0b6eca/activation/swi_glu_grad/op_kernel/arch35/swi_glu_grad_base.h
 
     Forward: output = SiLU(a) * b.
@@ -105,7 +105,7 @@ def fa_online_softmax(
 ):
     """Online softmax update for one subsequent KV block in DN layout.
 
-    AscendC: ProcessVec1DnUpdateVF, arch35 (A5), FP32 scores / FP16 output,
+    AscendC: ProcessVec1DnUpdateVF, arch35 (3510), FP32 scores / FP16 output,
     hasAtten=false, hasSink=false, pScale=1.
     https://gitcode.com/cann/ops-transformer/blob/ca5169fbc95c4e0044af1ef987b841a78455f758/attention/common/op_kernel/arch35/vf/vf_mul_sel_softmaxflashv2_cast_nz_dn.h
 
@@ -212,7 +212,7 @@ def mhc_pre_sinkhorn(
 ):
     """The batched 4x4 Sinkhorn region of MHC PreSinkhorn.
 
-    AscendC: VFProcessCombFragCompact, arch35 (A5).
+    AscendC: VFProcessCombFragCompact, arch35 (3510).
     https://gitcode.com/cann/ops-transformer/blob/ca5169fbc95c4e0044af1ef987b841a78455f758/mhc/mhc_pre_sinkhorn/op_kernel/arch35/mhc_pre_sinkhorn_base_arch35.h
 
     For each 4x4 matrix, i is its row and j its column:

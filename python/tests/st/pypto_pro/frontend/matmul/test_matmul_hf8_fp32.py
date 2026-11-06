@@ -57,13 +57,13 @@ def _ceil_blocks(total, tile):
 _SCALE_ONE = 1.0
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
-        pytest.skip("not A5/A6")
+        pytest.skip("not 3510/9201")
 
 
 # #####################################################################################
@@ -1416,7 +1416,7 @@ def make_matmul_tile_order(
 #
 # HiF8 is 1 sign bit + a variable-length "dot" field that selects the exponent/mantissa
 # split (tapered precision), with no per-group scale -- a plain elementwise fp32 -> hif8
-# cast using ROUND_A (round away from zero on ties) as the A5 hardware requires.
+# cast using ROUND_A (round away from zero on ties) as the 3510 hardware requires.
 # #####################################################################################
 
 
@@ -1758,7 +1758,7 @@ _COMBOS = [
 @pytest.fixture(scope="module")
 def _device():
     dev = ST_DEVICE
-    _require_a5_or_a6(dev)
+    _require_3510_or_9201(dev)
     return dev
 
 
@@ -1932,7 +1932,7 @@ def test_t13_insert(in_dtype, out_dtype, _device):
 # #####################################################################################
 if __name__ == "__main__":
     dev = ST_DEVICE
-    _require_a5_or_a6(dev)
+    _require_3510_or_9201(dev)
 
     # Call the pytest test functions directly so both entry points share one code path.
     # Argument order must match each test's signature after the parametrize decorators.

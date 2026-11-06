@@ -52,14 +52,14 @@ CV_NUM_CORES = 2
 CV_M = CV_TILE_M * CV_NUM_TILES
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510/9201 (Ascend950/Ascend960). Skip.")
 
 
 def _make_fp16_pattern(shape, modulus, device=ST_DEVICE):
@@ -342,7 +342,7 @@ def _assert_matmul_close(out, golden):
 
 @pytest.mark.soc("950", "960")
 def test_cube_move_tile_group_to_tile():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     a, b, out, golden = _cube_inputs()
     cube_move_tile_group_to_tile_kernel[None, 1](a, b, out)
     torch.npu.synchronize()
@@ -351,7 +351,7 @@ def test_cube_move_tile_group_to_tile():
 
 @pytest.mark.soc("950", "960")
 def test_cube_move_tile_to_tile_group():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     a, b, out, golden = _cube_inputs()
     cube_move_tile_to_tile_group_kernel[None, 1](a, b, out)
     torch.npu.synchronize()
@@ -360,7 +360,7 @@ def test_cube_move_tile_to_tile_group():
 
 @pytest.mark.soc("950", "960")
 def test_vector_mixed_move_both_directions():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     source = _make_fp16_pattern([VEC_M, VEC_TILE_N], 19)
     middle_out = torch.zeros([VEC_M, VEC_TILE_N], device=ST_DEVICE, dtype=torch.float16)
     out = torch.zeros([VEC_M, VEC_TILE_N], device=ST_DEVICE, dtype=torch.float16)
@@ -383,7 +383,7 @@ def _cv_inputs():
 
 @pytest.mark.soc("950")
 def test_cv_move_acc_group_to_vec_tile():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     a, b, out, golden = _cv_inputs()
     cv_move_acc_group_to_vec_tile_kernel[None, CV_NUM_CORES](a, b, out)
     torch.npu.synchronize()
@@ -398,7 +398,7 @@ if __name__ == "__main__":
 
 
 @pl.jit(auto_mutex=True)
-def cv_move_acc_group_to_vec_tile_kernel_a6(
+def cv_move_acc_group_to_vec_tile_kernel_9201(
     a: pl.Tensor[[CV_M, CV_TILE_K], pl.DT_FP16],
     b: pl.Tensor[[CV_TILE_K, CV_TILE_N], pl.DT_FP16],
     out: pl.Tensor[[CV_M, CV_TILE_N], pl.DT_FP32],
@@ -473,8 +473,8 @@ def cv_move_acc_group_to_vec_tile_kernel_a6(
 
 
 @pytest.mark.soc("960")
-def test_cv_move_acc_group_to_vec_tile_a6():
+def test_cv_move_acc_group_to_vec_tile_9201():
     a, b, out, golden = _cv_inputs()
-    cv_move_acc_group_to_vec_tile_kernel_a6[None, CV_NUM_CORES](a, b, out)
+    cv_move_acc_group_to_vec_tile_kernel_9201[None, CV_NUM_CORES](a, b, out)
     torch.npu.synchronize()
     _assert_matmul_close(out, golden)

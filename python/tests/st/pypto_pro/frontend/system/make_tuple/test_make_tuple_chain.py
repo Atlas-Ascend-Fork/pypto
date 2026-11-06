@@ -26,14 +26,14 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510/9201 (Ascend950/Ascend960). Skip.")
 
 
 # =============================================================================
@@ -53,7 +53,7 @@ def make_tuple_chain_attr_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_make_tuple_chain_attr():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_attr_kernel(out)
     torch.npu.synchronize()
@@ -78,7 +78,7 @@ def make_tuple_chain_three_level_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_make_tuple_chain_three_level():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_three_level_kernel(out)
     torch.npu.synchronize()
@@ -106,7 +106,7 @@ def make_tuple_chain_tile_group_next_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_make_tuple_chain_tile_group_next():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     a = torch.randn(64, 128, device=ST_DEVICE, dtype=torch.float16)
     expected = a.float().exp().half()
     make_tuple_chain_tile_group_next_kernel[None, 1](a)
@@ -135,7 +135,7 @@ def make_tuple_chain_tile_group_current_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_make_tuple_chain_tile_group_current():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     a = torch.randn(64, 128, device=ST_DEVICE, dtype=torch.float16)
     expected = a.float().exp().half()
     make_tuple_chain_tile_group_current_kernel[None, 1](a)
@@ -161,7 +161,7 @@ def make_tuple_chain_four_level_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_make_tuple_chain_four_level():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_four_level_kernel(out)
     torch.npu.synchronize()
@@ -185,7 +185,7 @@ def make_tuple_chain_arithmetic_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_make_tuple_chain_arithmetic():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_arithmetic_kernel(out)
     torch.npu.synchronize()
@@ -210,7 +210,7 @@ def make_tuple_chain_struct_array_elem_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_make_tuple_chain_struct_array_elem():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_struct_array_elem_kernel(out)
     torch.npu.synchronize()
@@ -238,7 +238,7 @@ def make_tuple_chain_tile_group_previous_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_make_tuple_chain_tile_group_previous():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     a = torch.randn(64, 128, device=ST_DEVICE, dtype=torch.float16)
     expected = a.float().exp().half()
     make_tuple_chain_tile_group_previous_kernel[None, 1](a)
@@ -267,7 +267,7 @@ def make_tuple_chain_double_buffer_loop_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_make_tuple_chain_double_buffer_loop():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     a = torch.randn(128, 128, device=ST_DEVICE, dtype=torch.float16)
     expected = a.float().exp().half()
     make_tuple_chain_double_buffer_loop_kernel[None, 1](a)
@@ -296,7 +296,7 @@ def make_tuple_chain_ring_buffer_loop_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_make_tuple_chain_ring_buffer_loop():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     a = torch.randn(256, 128, device=ST_DEVICE, dtype=torch.float16)
     expected = a.float().exp().half()
     make_tuple_chain_ring_buffer_loop_kernel[None, 1](a)
@@ -323,7 +323,7 @@ def make_tuple_chain_loop_accum_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_make_tuple_chain_loop_accum():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_loop_accum_kernel(out)
     torch.npu.synchronize()
@@ -353,7 +353,7 @@ def make_tuple_chain_if_branch_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_make_tuple_chain_if_branch():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
     make_tuple_chain_if_branch_kernel(out)
     torch.npu.synchronize()

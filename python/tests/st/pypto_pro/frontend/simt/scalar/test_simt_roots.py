@@ -8,7 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""A5 system tests for SIMT scalar root interfaces."""
+"""3510 system tests for SIMT scalar root interfaces."""
 
 import os
 

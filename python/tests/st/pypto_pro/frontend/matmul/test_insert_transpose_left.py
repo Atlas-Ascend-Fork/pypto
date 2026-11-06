@@ -45,17 +45,17 @@ K = 128  # V is [M, D]
 SUB = M // 2  # 32, subcore split along the query axis
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+        pytest.skip("not 3510")
 
 
 @pl.jit()
-def insert_zn_left_kernel_a6(
+def insert_zn_left_kernel_9201(
     d: pl.Tensor[[K, M], pl.DT_FP16],  # P produced CONTRACTION-major: d[key, query] = P^T
     v: pl.Tensor[[K, N], pl.DT_FP16],  # V[key, d]
     out: pl.Tensor[[M, N], pl.DT_FP32],
@@ -124,14 +124,14 @@ def insert_zn_left_kernel_a6(
 
 
 @pytest.mark.soc("960")
-def test_insert_zn_left_kernel_a6():
+def test_insert_zn_left_kernel_9201():
     device = ST_DEVICE
     torch.manual_seed(0)
     d = torch.randn([K, M], device=device, dtype=torch.float16)  # = P^T (contraction-major)
     v = torch.randn([K, N], device=device, dtype=torch.float16)
     out = torch.zeros([M, N], device=device, dtype=torch.float32)
 
-    insert_zn_left_kernel_a6(d, v, out)
+    insert_zn_left_kernel_9201(d, v, out)
     torch.npu.synchronize()
 
     ref = torch.matmul(d.float().t(), v.float())  # P @ V, with P = d^T
@@ -215,7 +215,7 @@ def insert_zn_left_kernel(
 @pytest.mark.soc("950")
 def test_insert_zn_left_kernel():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     torch.manual_seed(0)
     d = torch.randn([K, M], device=device, dtype=torch.float16)  # = P^T (contraction-major)
     v = torch.randn([K, N], device=device, dtype=torch.float16)

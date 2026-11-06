@@ -1518,7 +1518,7 @@ def test_fa_perf_nbuf():
         tq = sum(seq_q_list)
         tkv = sum(seq_kv_list)
         logging.info(
-            "\nFA-TND-DN-A5 (b=%s, seq_q=%s, seq_kv=%s, n=%s, d=%s) window=%s cores=%s",
+            "\nFA-TND-DN-3510 (b=%s, seq_q=%s, seq_kv=%s, n=%s, d=%s) window=%s cores=%s",
             b,
             seq_q_list,
             seq_kv_list,

@@ -110,7 +110,7 @@ def test_generate_binary_headers_emits_only_tiling_headers(monkeypatch, tmp_path
 
 def test_prepare_binary_headers_loads_the_kernel_file(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "a3")
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "3510")
 
     binary_dir = Path(prepare_binary_headers(__file__))
 
@@ -128,7 +128,7 @@ def test_pypto_compile_op_sets_up_explicit_arch(monkeypatch):
     def stop_after_arch_setup(*args, **kwargs):
         raise RuntimeError("stop after arch setup")
 
-    monkeypatch.setenv("PYPTO_JIT_ARCH", "a2")
+    monkeypatch.setenv("PYPTO_JIT_ARCH", "9999")
     monkeypatch.setattr(jit_runtime, "_setup_arch_env", lambda arch: received_arch.append(arch) or arch)
     monkeypatch.setattr(compile_module, "_setup_options", stop_after_arch_setup)
 
@@ -161,7 +161,7 @@ def test_kernel_type_from_target_uses_configured_core_ratio(aic_per_block, aiv_p
         (True, True, KernelMetaType.KERNEL_TYPE_MIX_AIC_1_2),
     ],
 )
-def test_kernel_type_from_codegen_reuses_a5_target_config(has_cube, has_vector, expected):
+def test_kernel_type_from_codegen_reuses_3510_target_config(has_cube, has_vector, expected):
     codegen_result = SimpleNamespace(has_cube=has_cube, has_vector=has_vector)
 
     assert _kernel_type_from_codegen(codegen_result, NpuArch.DAV_3510) is expected

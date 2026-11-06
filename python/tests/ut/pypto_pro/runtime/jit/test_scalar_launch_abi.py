@@ -40,8 +40,6 @@ def native_scalar_launcher(tmp_path_factory):
     if compiler is None:
         pytest.skip("bisheng is required to compile the scalar launch adapters")
     root = tmp_path_factory.mktemp("scalar_launch_abi")
-    (root / "runtime").mkdir()
-    (root / "runtime/rt_ffts.h").write_text("#pragma once\n")
     (root / "pypto_launch.h").write_text("""#pragma once
 #include <cstdint>
 namespace pypto {
@@ -49,12 +47,11 @@ template<int, int> int64_t ResolveLaunchBlockDim(uint32_t n, void*) { return n; 
 }
 """)
     params = [(typ, f"v{i}", False) for i, (typ, _) in enumerate(SCALARS)]
-    # Exercise a pointer between narrow scalars, trailing dimensions and the hidden
-    # cross-core-sync pointer. None may shift when a preceding scalar is widened.
+    # Exercise a pointer between narrow scalars and trailing dimensions.
+    # Neither may shift when a preceding scalar is widened.
     params.insert(1, ("uint64_t", "out", True))
     params.extend([("int64_t", "rows", False), ("int64_t", "cols", False)])
-    entry_params = params + [("int64_t", "ffts_addr", True)]
-    signature = ", ".join(f"{typ}{'*' if ptr else ''} {name}" for typ, name, ptr in entry_params)
+    signature = ", ".join(f"{typ}{'*' if ptr else ''} {name}" for typ, name, ptr in params)
     stores = "\n".join(
         f"    std::memcpy(&out[{i}], &v{i}, sizeof(v{i}));" for i in range(len(SCALARS))
     )
@@ -62,18 +59,11 @@ template<int, int> int64_t ResolveLaunchBlockDim(uint32_t n, void*) { return n; 
 #define __global__
 #define __vector__
 #define __gm__
-static int64_t syncCookie = 0x12345678;
-static void rtGetC2cCtrlAddr(uint64_t* addr, uint32_t* size)
-{{
-    *addr = reinterpret_cast<uint64_t>(&syncCookie);
-    *size = sizeof(syncCookie);
-}}
 static void probe_impl({signature})
 {{
 {stores}
     out[10] = rows;
     out[11] = cols;
-    out[12] = *ffts_addr;
 }}
 """)
     target = jit.get_jit_compile_config().resolve_kernel_target(NpuArch.DAV_3510, has_cube=False, has_vector=True)
@@ -84,8 +74,8 @@ static void probe_impl({signature})
 }
 """
     caller = jit._generate_caller_cpp(
-        params, "kernel.cpp", "probe", has_cross_core_sync=True, target=target,
-        global_entry=jit._make_global_entry("probe", entry_params, target=target),
+        params, "kernel.cpp", "probe", target=target,
+        global_entry=jit._make_global_entry("probe", params, target=target),
     )
     # The launch-slot check is a test-only helper: splice it in right before the
     # launcher so it is declared before its first use.
@@ -127,7 +117,7 @@ def test_scalar_launch_round_trip(native_scalar_launcher, upper, float_bits):
         values.append(value)
     # Compare bytes, including signed zero/NaN payloads and the full uint64 range.
     expected = [int.from_bytes(bytes(ctype(value)), "little") for (_, ctype), value in zip(SCALARS, values)]
-    out = (ctypes.c_uint64 * 13)()
+    out = (ctypes.c_uint64 * 12)()
     values.insert(1, ctypes.addressof(out))
     assert native_scalar_launcher.call_kernel(1, None, *values, 65, 96) == 1
-    assert list(out) == [*expected, 65, 96, 0x12345678]
+    assert list(out) == [*expected, 65, 96]

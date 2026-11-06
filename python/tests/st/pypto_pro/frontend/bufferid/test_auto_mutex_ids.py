@@ -30,14 +30,14 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510 (Ascend950). Skip.")
 
 
 # ===========================================================================
@@ -78,7 +78,7 @@ def auto_over_32_kernel(
 @pytest.mark.soc("950")
 def test_auto_more_than_32_tiles_runs_with_balanced_id_reuse():
     """A single AUTO group with 33 slots forces balanced reuse across the 32-ID pool."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(4)
     source = torch.rand([OVER_32_FULL_ROWS, OVER_32_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     output = torch.zeros_like(source)
@@ -147,7 +147,7 @@ def auto_and_manual_guard_paths_kernel(
 @pytest.mark.soc("950")
 def test_auto_and_manual_runtime_guard_paths():
     """AUTO must land on a manual ID when all 32 are taken and avoid the IDs each mixed op locks."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(24)
     source = torch.rand([GUARD_FULL_ROWS, GUARD_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     output = torch.zeros_like(source)
@@ -214,7 +214,7 @@ def auto_if_merge_manual_candidates_kernel(
 @pytest.mark.soc("950")
 def test_auto_if_merge_manual_candidates_with_auto_tile():
     """An if-merged manual/AUTO Tile must retain every possible mutex ID for the following add."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(25)
     source = torch.rand([IF_MERGE_FULL_ROWS, IF_MERGE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     output = torch.zeros_like(source)
@@ -286,7 +286,7 @@ def auto_partial_alias_matching_manual_id_kernel(
 @pytest.mark.soc("950")
 def test_auto_partial_alias_reuses_per_slot_manual_id():
     """AUTO half-tiles inherit the per-slot manual ID of the full tile they overlap."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(12)
     source = torch.rand([ALIAS_FULL_ROWS, ALIAS_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     output = torch.zeros_like(source)
@@ -357,7 +357,7 @@ def auto_three_groups_partial_vec_overlap_kernel(
 @pytest.mark.soc("950")
 def test_auto_three_groups_share_ids_for_overlapping_vec_addresses():
     """Three AUTO groups overlapping in every Vec address pattern receive consistent IDs."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(23)
     source = torch.rand([TRIPLE_FULL_ROWS, TRIPLE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     output = torch.zeros_like(source)
@@ -407,7 +407,7 @@ def auto_noncontiguous_over_32_kernel(
 @pytest.mark.soc("950")
 def test_auto_noncontiguous_more_than_32_slots():
     """Gapped addresses visited in a permuted order still yield correct alias components."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(16)
     source = torch.rand([NONCONTIG_FULL_ROWS, NONCONTIG_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     output = torch.zeros_like(source)
@@ -472,7 +472,7 @@ def auto_nested_helper_permuted_slots_kernel(
 @pytest.mark.soc("950")
 def test_auto_nested_helper_calls_with_permuted_slots():
     """Groups created inside a nested Python helper join one whole-kernel plan with permuted slots."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(14)
     lhs = torch.rand([NESTED_FULL_ROWS, NESTED_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     torch.manual_seed(15)
@@ -536,7 +536,7 @@ def auto_helper_compile_time_branches_kernel(
 @pytest.mark.soc("950")
 def test_auto_helper_compile_time_branch_calls():
     """A helper's compile-time if/else builds groups at different addresses; both branches plan correctly."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(22)
     source = torch.rand([BRANCH_FULL_ROWS, BRANCH_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     output = torch.zeros_like(source)
@@ -625,7 +625,7 @@ def auto_cube_vector_kernel(
 @pytest.mark.soc("950")
 def test_auto_cube_vector_targets_use_independent_pools():
     """Cube and Vector targets draw from independent 32-ID pools within one kernel."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(5)
     a = (torch.rand([CV_M, CV_N], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0).to(torch.float32)
     torch.manual_seed(6)

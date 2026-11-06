@@ -26,14 +26,14 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510 (Ascend950). Skip.")
 
 
 # ===========================================================================
@@ -95,7 +95,7 @@ def bar_m_kernel(
 @pytest.mark.soc("950")
 def test_bar_m():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     torch.manual_seed(0)
     a = torch.randn(TILE, TILE, device=device, dtype=torch.float16)
     b = torch.randn(TILE, TILE, device=device, dtype=torch.float16)
@@ -170,7 +170,7 @@ def mm_layout_kernel(
 @pytest.mark.soc("950")
 def test_set_mm_layout_transform():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     torch.manual_seed(0)
     a = torch.randn(TILE_ACC, K_SIZE_ACC, device=device, dtype=torch.float16)
     b = torch.randn(K_SIZE_ACC, TILE_ACC, device=device, dtype=torch.float16)
@@ -260,13 +260,13 @@ def cross_core_kernel(
 
 
 @pl.jit()
-def cross_core_kernel_a6(
+def cross_core_kernel_9201(
     x: pl.Tensor[[64, 64], pl.DT_FP32],
     y: pl.Tensor[[64, 64], pl.DT_FP32],
     rhs: pl.Tensor[[64, 64], pl.DT_FP32],
     out: pl.Tensor[[64, 64], pl.DT_FP32],
 ):
-    """A6 (1:1) variant: the single vector core handles the full 64 rows, no subcore split."""
+    """9201 (1:1) variant: the single vector core handles the full 64 rows, no subcore split."""
     v1_mat = pl.make_tile(
         pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
         addr=0x10000,
@@ -331,14 +331,14 @@ def cross_core_kernel_a6(
 
 
 @pytest.mark.soc("960")
-def test_set_cross_core_wait_cross_core_a6():
+def test_set_cross_core_wait_cross_core_9201():
     device = ST_DEVICE
     torch.manual_seed(0)
     x = torch.randn(64, 64, device=device, dtype=torch.float32)
     y = torch.randn(64, 64, device=device, dtype=torch.float32)
     rhs = torch.randn(64, 64, device=device, dtype=torch.float32)
     out = torch.zeros(64, 64, device=device, dtype=torch.float32)
-    cross_core_kernel_a6(x, y, rhs, out)
+    cross_core_kernel_9201(x, y, rhs, out)
     torch.npu.synchronize()
     ref = torch.matmul((x + y).float(), rhs.float())
     torch.testing.assert_close(out, ref, rtol=1e-2, atol=1e-2)
@@ -347,7 +347,7 @@ def test_set_cross_core_wait_cross_core_a6():
 @pytest.mark.soc("950")
 def test_set_cross_core_wait_cross_core():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     torch.manual_seed(0)
     x = torch.randn(64, 64, device=device, dtype=torch.float32)
     y = torch.randn(64, 64, device=device, dtype=torch.float32)

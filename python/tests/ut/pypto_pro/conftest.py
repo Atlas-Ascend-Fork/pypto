@@ -29,8 +29,8 @@ def duration_estimate(seconds: float):
 
 
 @pytest.fixture
-def assert_a6_golden(request):
-    """Compare the complete A6 regression output with its checked-in golden."""
+def assert_9201_golden(request):
+    """Compare the complete 9201 regression output with its checked-in golden."""
     def check(actual, label="ir"):
         printed = re.sub(r"memref_id=\d+", "memref_id=<id>", str(actual))
         path = Path(request.path).with_suffix("") / f"{request.node.name}-{label}.pypto"

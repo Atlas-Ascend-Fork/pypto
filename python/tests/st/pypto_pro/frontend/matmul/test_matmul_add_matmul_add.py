@@ -20,7 +20,7 @@ import torch
 
 
 @pl.jit()
-def matmul_add_matmul_add_a6(
+def matmul_add_matmul_add_9201(
     q: pl.Tensor[[64, 64], pl.DT_FP32],
     k: pl.Tensor[[64, 64], pl.DT_FP32],
     v: pl.Tensor[[64, 64], pl.DT_FP32],
@@ -155,7 +155,7 @@ def matmul_add_matmul_add_a6(
 
 
 @pytest.mark.soc("960")
-def test_matmul_add_matmul_add_a6():
+def test_matmul_add_matmul_add_9201():
 
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)
@@ -163,7 +163,7 @@ def test_matmul_add_matmul_add_a6():
 
     device_name = torch.npu.get_device_name()
     if "Ascend960" not in device_name:
-        pytest.skip(f"Device {device_name} is not A6 (Ascend960). Skip.")
+        pytest.skip(f"Device {device_name} is not 9201 (Ascend960). Skip.")
     shape = [64, 64]
     torch.manual_seed(0)
     dtype = torch.float32
@@ -175,7 +175,7 @@ def test_matmul_add_matmul_add_a6():
     x2 = torch.randn(shape, device=device, dtype=dtype)
     out = torch.zeros(shape, device=device, dtype=dtype)
 
-    matmul_add_matmul_add_a6(q, k, v, x1, x2, out)
+    matmul_add_matmul_add_9201(q, k, v, x1, x2, out)
     torch.npu.synchronize()
 
     c1 = torch.matmul(q, k)

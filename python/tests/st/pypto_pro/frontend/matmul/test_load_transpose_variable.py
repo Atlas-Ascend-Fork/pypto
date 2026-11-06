@@ -45,13 +45,13 @@ MA1 = 0x10000
 SZ = 32768
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
-        pytest.skip("not A5/A6")
+        pytest.skip("not 3510/9201")
 
 
 def load_left(dst, src, order):
@@ -127,7 +127,7 @@ def k_transpose_helper_var(
 @pytest.fixture(scope="module")
 def _ab():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.randn([M, K], device=device, dtype=torch.float16)
     b = torch.randn([K, N], device=device, dtype=torch.float16)
@@ -168,7 +168,7 @@ def test_transpose_helper_var(_ab):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.randn([M, K], device=device, dtype=torch.float16)
     b = torch.randn([K, N], device=device, dtype=torch.float16)

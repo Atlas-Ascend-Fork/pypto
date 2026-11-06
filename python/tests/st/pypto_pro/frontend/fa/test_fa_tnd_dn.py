@@ -66,7 +66,7 @@ RA1 = Q_F16
 CA0 = 0
 CA1 = QK_F32
 
-# ---- VEC addresses (248KB on a5) ----
+# ---- VEC addresses (248KB on 3510) ----
 VB4_KV = TKV * TS_HALF * 4
 VB2_KV = TKV * TS_HALF * 2
 VB6_DN = (TKV + 1) * TS_HALF * 2
@@ -725,7 +725,7 @@ def flash_attention_ref_tnd(q_tnd, k_tnd, v_tnd, seq_q_list, seq_kv_list, d):
 
 
 @pytest.mark.soc("950")
-def test_fa_tnd_a5():
+def test_fa_tnd_3510():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)
     device = f"npu:{device_id}"
@@ -749,7 +749,7 @@ def test_fa_tnd_a5():
         tq = sum(seq_q_list)
         tkv = sum(seq_kv_list)
         logging.info(
-            "\nFA-TND-DN-A5 (b=%s, seq_q=%s, seq_kv=%s, n=%s, d=%s) cores=%s",
+            "\nFA-TND-DN-3510 (b=%s, seq_q=%s, seq_kv=%s, n=%s, d=%s) cores=%s",
             b,
             seq_q_list,
             seq_kv_list,
@@ -786,7 +786,7 @@ def test_fa_tnd_a5():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    logging.info("FA TND DN on A5 CCE")
+    logging.info("FA TND DN on 3510 CCE")
     logging.info("%s", '=' * 60)
-    test_fa_tnd_a5()
+    test_fa_tnd_3510()
     logging.info("\nAll FlashAttention TND DN tests passed!")

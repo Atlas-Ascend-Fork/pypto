@@ -7,7 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Frontend runtime example for gathering non-contiguous GM lines on A5 CCE.
+"""Frontend runtime example for gathering non-contiguous GM lines on 3510 CCE.
 
 ``pl.make_tensor(source, shape, stride)`` builds a tensor view with its own stride, so a single
 ``pl.load`` can gather rows that are far apart in GM. The stride is supplied at runtime (here
@@ -39,7 +39,7 @@ N_PAIRS = 32  # number of pl.load ops, each loading a [2, LINE] tile
 OUT_LINES = N_PAIRS * 2  # 64 gathered lines
 
 
-def _is_a5() -> bool:
+def _is_3510() -> bool:
     try:
         torch.npu.set_device(ST_DEVICE)
     except RuntimeError as exc:  # pragma: no cover - environment dependent
@@ -47,7 +47,7 @@ def _is_a5() -> bool:
         return False
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        logging.info("Current device is %s, not A5/A6 (Ascend950/Ascend960). Skip.", name)
+        logging.info("Current device is %s, not 3510/9201 (Ascend950/Ascend960). Skip.", name)
         return False
     return True
 
@@ -74,7 +74,7 @@ def strided_view_basic_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_strided_view_basic():
-    if not _is_a5():
+    if not _is_3510():
         return
     device = ST_DEVICE
     torch.manual_seed(0)
@@ -124,7 +124,7 @@ def gather_view_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_gather_64_lines_with_strided_views():
-    if not _is_a5():
+    if not _is_3510():
         return
     device = ST_DEVICE
     torch.manual_seed(1)

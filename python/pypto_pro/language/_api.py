@@ -1658,9 +1658,9 @@ def get_spr() -> int:
 def get_cycle() -> int:
     """Read the device system cycle counter (get_sys_cnt instruction).
 
-    Returns the current value of the AI Core system counter. The counter
-    frequency differs by chip (e.g. 50MHz on A2/A3, 1000MHz on A5), so use
-    differences between two reads to measure elapsed cycles.
+    Returns the current value of the AI Core system counter. The counter runs
+    at 1000MHz on 3510, so use differences between two reads to measure
+    elapsed cycles.
 
     ``get_sys_cnt()`` is an ``__aicore__`` instruction and cannot be used
     inside ``@pl.vector_function``. Call this in the ``@pl.jit`` kernel body.
@@ -1722,7 +1722,7 @@ def set_ctrl_spr(start_bit: int, end_bit: int, value: int, /) -> None:
     Args:
         start_bit: Start bit index (0-63), compile-time constant.
         end_bit: End bit index (0-63), compile-time constant.
-            Writable bits on A5: 6-10, 45, 48, 50, 53, 59, 60.
+            Writable bits on 3510: 6-10, 45, 48, 50, 53, 59, 60.
         value: Value to write into the bit range.
     """
 
@@ -1754,7 +1754,7 @@ def reset_ctrl_spr(start_bit: int, end_bit: int, /) -> None:
     Args:
         start_bit: Start bit index (0-63), compile-time constant.
         end_bit: End bit index (0-63), compile-time constant.
-            Writable bits on A5: 6-10, 45, 48, 50, 53, 59, 60.
+            Writable bits on 3510: 6-10, 45, 48, 50, 53, 59, 60.
     """
 
 

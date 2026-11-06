@@ -30,14 +30,14 @@ ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 NUM_CORES = 2
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510/9201 (Ascend950/Ascend960). Skip.")
 
 
 # ===========================================================================
@@ -69,7 +69,7 @@ def gather_kernel(
 @pytest.mark.soc("950", "960")
 def test_gather():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     shape = [64, 128]
     src = torch.rand(shape, device=device, dtype=torch.float16)
@@ -114,7 +114,7 @@ def multicore_add_kernel(
 @pytest.mark.soc("950", "960")
 def test_multicore_block_vars():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     shape = [128, 128]
     x = torch.rand(shape, device=device, dtype=torch.float16)
@@ -157,7 +157,7 @@ def subblock_add_kernel(
 @pytest.mark.soc("950", "960")
 def test_subblock_idx():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     x = torch.randn(64, 64, device=device, dtype=torch.float32)
     y = torch.randn(64, 64, device=device, dtype=torch.float32)

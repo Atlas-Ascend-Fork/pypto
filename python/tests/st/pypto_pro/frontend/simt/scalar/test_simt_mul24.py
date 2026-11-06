@@ -8,7 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""A5 system tests for the SIMT mul24 interface with Tile operands."""
+"""3510 system tests for the SIMT mul24 interface with Tile operands."""
 
 import os
 

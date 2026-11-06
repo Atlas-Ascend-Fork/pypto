@@ -28,14 +28,14 @@ ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 K_VALUE = 2.0
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510/9201 (Ascend950/Ascend960). Skip.")
 
 
 # ===========================================================================
@@ -91,7 +91,7 @@ def col_sum_kernel(a: pl.Tensor[[64, 128], pl.DT_FP32], out: pl.Tensor[[1, 128],
 
 def _run_col_reduce(kernel, ref_fn):
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.randn(64, 128, device=device, dtype=torch.float32)
     out = torch.zeros(1, 128, device=device, dtype=torch.float32)
@@ -155,7 +155,7 @@ def row_sum_kernel(a: pl.Tensor[[64, 128], pl.DT_FP32], out: pl.Tensor[[64, 1], 
 
 def _run_row_reduce(kernel, ref_fn):
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.randn(64, 128, device=device, dtype=torch.float32)
     out = torch.zeros(64, 1, device=device, dtype=torch.float32)
@@ -201,7 +201,7 @@ def col_expand_sub_kernel(
 @pytest.mark.soc("950", "960")
 def test_col_expand_sub():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.randn(64, 128, device=device, dtype=torch.float32)
     v = torch.randn(1, 128, device=device, dtype=torch.float32)
@@ -274,7 +274,7 @@ def row_expand_div_kernel(
 
 def _run_row_expand(kernel, ref_fn):
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.randn(64, 128, device=device, dtype=torch.float32)
     v = torch.randn(64, 1, device=device, dtype=torch.float32).abs() + 0.5  # 避免除0
@@ -318,7 +318,7 @@ def expands_kernel(dummy: pl.Tensor[[64, 64], pl.DT_FP32], out: pl.Tensor[[64, 6
 @pytest.mark.soc("950", "960")
 def test_expands():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     dummy = torch.zeros(64, 64, device=device, dtype=torch.float32)
     out = torch.zeros(64, 64, device=device, dtype=torch.float32)
@@ -397,7 +397,7 @@ def col_expand_div_kernel(
 
 def _run_col_expand(kernel, ref_fn):
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.randn(64, 128, device=device, dtype=torch.float32)
     v = torch.randn(1, 128, device=device, dtype=torch.float32).abs() + 0.5  # 避免除0

@@ -19,7 +19,7 @@ whose layout flips the fractal). The transpose is realized entirely by the Mat->
     * Mat layout = ZN  -> Right ZN : TRANSPOSE      (B = inserted data ^T)      <-- used here
   (LEFT operand is symmetric: Mat NZ->Left NZ = identity, Mat ZN->Left NZ = transpose.)
 
-Verified on A5: with rhs_mat=ZN, out == L @ d^T (max diff ~1.5e-5); with rhs_mat=NZ it is
+Verified on 3510: with rhs_mat=ZN, out == L @ d^T (max diff ~1.5e-5); with rhs_mat=NZ it is
 L @ d instead. Square N so the FA-style insert (tile.dim0 == matbuf.dim0) fits.
 
   out[M, N] = L[M, N] @ B[N, N],   B = (vector data d)^T
@@ -42,17 +42,17 @@ SUB_N = 32
 K = 128
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+        pytest.skip("not 3510")
 
 
 @pl.jit()
-def insert_zn_right_kernel_a6(
+def insert_zn_right_kernel_9201(
     lhs: pl.Tensor[[M, K], pl.DT_FP16],
     d: pl.Tensor[[N, K], pl.DT_FP16],  # right-operand data; matmul uses B = d^T
     out: pl.Tensor[[M, N], pl.DT_FP32],
@@ -115,14 +115,14 @@ def insert_zn_right_kernel_a6(
 
 
 @pytest.mark.soc("960")
-def test_insert_zn_right_kernel_a6():
+def test_insert_zn_right_kernel_9201():
     device = ST_DEVICE
     torch.manual_seed(0)
     lhs = torch.randn([M, K], device=device, dtype=torch.float16)
     d = torch.randn([N, K], device=device, dtype=torch.float16)
     out = torch.zeros([M, N], device=device, dtype=torch.float32)
 
-    insert_zn_right_kernel_a6(lhs, d, out)
+    insert_zn_right_kernel_9201(lhs, d, out)
     torch.npu.synchronize()
 
     ref = torch.matmul(lhs.float(), d.float().t())  # B = d^T, transposed on-chip
@@ -199,7 +199,7 @@ def insert_zn_right_kernel(
 @pytest.mark.soc("950")
 def test_insert_zn_right_kernel():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     torch.manual_seed(0)
     lhs = torch.randn([M, K], device=device, dtype=torch.float16)
     d = torch.randn([N, K], device=device, dtype=torch.float16)

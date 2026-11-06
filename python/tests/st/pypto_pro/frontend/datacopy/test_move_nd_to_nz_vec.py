@@ -44,14 +44,14 @@ _C0_BYTES = 32
 _FRACTAL_NZ_ROW = 16
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510/9201 (Ascend950/Ascend960). Skip.")
 
 
 def _nz_geometry(rows, cols, itemsize, compact):
@@ -107,7 +107,7 @@ def _make_kernel(rows, cols, torch_dtype, compact, src_rows, flat_rows, c0, nz_b
 
 def _run(rows, cols, torch_dtype, compact=1, src_rows=None):
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     src_rows = rows if src_rows is None else src_rows
 
     itemsize = torch.empty((), dtype=torch_dtype).element_size()

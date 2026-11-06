@@ -21,7 +21,7 @@ pytestmark = pytest.mark.soc("950")
 DEVICE = f"npu:{int(os.environ.get('TILE_FWK_DEVICE_ID', 0))}"
 
 
-def _require_a5():
+def _require_3510():
     torch.npu.set_device(DEVICE)
     if "Ascend950" not in torch.npu.get_device_name():
         pytest.skip("GEMM regressions require Ascend950")
@@ -164,7 +164,7 @@ _ORDINARY_IDS = [
 
 @pytest.mark.parametrize("options", _ORDINARY_CASES, ids=_ORDINARY_IDS)
 def test_gemm_numbers_and_store_bounds(options):
-    _require_a5()
+    _require_3510()
     params = dict(m=64, n=64, k=128, valid_m=64, valid_n=64, valid_k=128)
     params.update(options)
     m, n, k = params["m"], params["n"], params["k"]
@@ -227,7 +227,7 @@ def gemm_double_buffered_rows(a: pl.Tensor[[pl.DYNAMIC, 128], pl.DT_FP16],
 
 
 def test_gemm_double_buffered_rows():
-    _require_a5()
+    _require_3510()
     generator = torch.Generator().manual_seed(53)
     a = torch.randn((264, 128), generator=generator, dtype=torch.float16)
     b = torch.randn((128, 64), generator=generator, dtype=torch.float16)

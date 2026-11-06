@@ -59,7 +59,7 @@ RA1 = Q_F16
 CA0 = 0
 CA1 = QK_F32
 
-# ---- VEC addresses (248KB on a5) ----
+# ---- VEC addresses (248KB on 3510) ----
 VB4_KV = TKV * TS_HALF * 4  # [TKV, TS_HALF] FP32 = 32KB
 VB2_KV = TKV * TS_HALF * 2  # [TKV, TS_HALF] FP16 = 16KB
 VB6_DN = (TKV + 1) * TS_HALF * 2  # [TKV+1, TS_HALF] FP16 = 16512B
@@ -77,7 +77,7 @@ VA0 = 0  # qk_vec  [TKV, TS_HALF] FP32
 VA1 = _align_up(VA0 + VB4_KV)  # tmp_vec [TKV, TS_HALF] FP32
 VA2 = _align_up(VA1 + VB4_KV)  # p_f16   [TKV, TS_HALF] FP16
 VA3 = _align_up(VA2 + VB2_KV)  # reduce_dst / reduce_dst_rm
-# Keep the whole VEC layout on 1KB boundaries; A5 CCE is stricter about
+# Keep the whole VEC layout on 1KB boundaries; 3510 CCE is stricter about
 # VEC address alignment than the older A3 path. The causal path also adds
 # mask/TSEL scratch tiles after the DN perf-kernel buffers.
 VA_GMAX0 = _align_up(VA3 + VB_RED)  # global_max slot 0
@@ -212,7 +212,7 @@ def apply_diag_mask(
     # stored as mask[k, q] = 1 when q > k. Loading with Q offset +1 makes the
     # diagonal block produce 1 for keep positions and 0 for masked positions.
     # TCMPS(EQ 0) flips that to the TSEL predicate: 1 selects neg_inf.
-    # Current A5 TCMPS/TSEL expects the full [TKV, TS_HALF] uint8 descriptor.
+    # Current 3510 TCMPS/TSEL expects the full [TKV, TS_HALF] uint8 descriptor.
     pl.load(mask_u8_dn, attn_mask, [ki * TKV, qi * TS + sub_id * TS_HALF + 1])
     pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
     pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=0)
@@ -741,7 +741,7 @@ def make_causal_mask_dn_fixed_2048_u8(device):
 
 
 @pytest.mark.soc("950")
-def test_fa_causal_bn_a5():
+def test_fa_causal_bn_3510():
     device = ST_DEVICE
     torch.npu.set_device(device)
     torch.manual_seed(42)
@@ -754,7 +754,7 @@ def test_fa_causal_bn_a5():
         (1, 384, 1, 384, TD, 2),
         (1, 8192, 1, 8192, TD, 24),
     ]:
-        logging.info("\nFA-BNSD-causal-DN-A5 (b=%s, sq=%s, n=%s, skv=%s, d=%s) cores=%s", b, sq, n, skv, d, num_cores)
+        logging.info("\nFA-BNSD-causal-DN-3510 (b=%s, sq=%s, n=%s, skv=%s, d=%s) cores=%s", b, sq, n, skv, d, num_cores)
         q = torch.rand((b, n, sq, d), device=device, dtype=torch.float16)
         k = torch.rand((b, n, skv, d), device=device, dtype=torch.float16)
         v = torch.rand((b, n, skv, d), device=device, dtype=torch.float16)
@@ -775,7 +775,7 @@ def test_fa_causal_bn_a5():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    logging.info("FA BNSD causal DN on A5 CCE")
+    logging.info("FA BNSD causal DN on 3510 CCE")
     logging.info("%s", '=' * 60)
-    test_fa_causal_bn_a5()
+    test_fa_causal_bn_3510()
     logging.info("\nAll FlashAttention DN tests passed!")

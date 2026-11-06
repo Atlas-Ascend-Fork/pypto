@@ -34,13 +34,13 @@ N = 64
 K = 128
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
-        pytest.skip("not A5/A6")
+        pytest.skip("not 3510/9201")
 
 
 @pl.jit()
@@ -103,7 +103,7 @@ def insert_full_transpose_left_kernel(
 @pytest.mark.soc("950", "960")
 def test_insert_full_transpose_left_kernel():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     d = torch.randn([K, M], device=device, dtype=torch.float16)
     v = torch.randn([K, N], device=device, dtype=torch.float16)

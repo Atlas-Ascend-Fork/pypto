@@ -38,14 +38,14 @@ NUM_TILES = 8
 FULL_ROWS = TILE_ROWS * NUM_TILES
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if not any(arch in name for arch in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {name}, not A5 or A6. Skip.")
+        pytest.skip(f"Current device is {name}, not 3510 or 9201. Skip.")
 
 
 @pl.vector_function
@@ -99,7 +99,7 @@ def mixed_width_groups_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_mixed_single_and_multi_id_tile_groups():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     torch.manual_seed(0)
     source = torch.rand([FULL_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     output = torch.zeros([FULL_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16)
@@ -272,7 +272,7 @@ def subfunction_tile_if_else_kernel(
 
 @pytest.mark.soc("950")
 def test_cube_vector_multi_mutex_id():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.rand([CUBE_M, CUBE_N], device=ST_DEVICE, dtype=torch.float32) * 2.0 - 1.0
     b = torch.rand([CUBE_M, CUBE_K], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
@@ -286,7 +286,7 @@ def test_cube_vector_multi_mutex_id():
 
 @pytest.mark.soc("950", "960")
 def test_dynamic_multi_id_patterns():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.rand([DYN_FULL_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     b = torch.rand([DYN_FULL_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
@@ -301,7 +301,7 @@ def test_dynamic_multi_id_patterns():
 
 @pytest.mark.soc("950", "960")
 def test_same_group_overlapping_slots_in_one_op():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.rand([TILE_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     b = torch.rand([TILE_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
@@ -314,7 +314,7 @@ def test_same_group_overlapping_slots_in_one_op():
 
 @pytest.mark.soc("950", "960")
 def test_subfunction_tile_if_else():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     torch.manual_seed(0)
     true_source = torch.rand([FULL_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     false_source = torch.rand([FULL_ROWS, TILE_COLS], device=ST_DEVICE, dtype=torch.float16) * 2.0 + 2.0
@@ -389,7 +389,7 @@ def l0a_l0b_overlap_same_id_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_l0a_l0b_overlap_same_id():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.rand([L0A_M, L0A_K_WIDE], device=ST_DEVICE, dtype=torch.float16) * 0.1
     b = torch.rand([L0B_K_WIDE, L0B_N], device=ST_DEVICE, dtype=torch.float16) * 0.1
@@ -410,7 +410,7 @@ if __name__ == "__main__":
 
 
 @pl.jit(auto_mutex=True)
-def cube_vector_multi_id_kernel_a6(
+def cube_vector_multi_id_kernel_9201(
     a: pl.Tensor[[CUBE_M, CUBE_N], pl.DT_FP32],
     b: pl.Tensor[[CUBE_M, CUBE_K], pl.DT_FP16],
     c: pl.Tensor[[CUBE_K, CUBE_N], pl.DT_FP16],
@@ -466,13 +466,13 @@ def cube_vector_multi_id_kernel_a6(
 
 
 @pytest.mark.soc("960")
-def test_cube_vector_multi_mutex_id_a6():
+def test_cube_vector_multi_mutex_id_9201():
     torch.manual_seed(0)
     a = torch.rand([CUBE_M, CUBE_N], device=ST_DEVICE, dtype=torch.float32) * 2.0 - 1.0
     b = torch.rand([CUBE_M, CUBE_K], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     c = torch.rand([CUBE_K, CUBE_N], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     out = torch.zeros([CUBE_M, CUBE_N], device=ST_DEVICE, dtype=torch.float32)
-    cube_vector_multi_id_kernel_a6(a, b, c, out)
+    cube_vector_multi_id_kernel_9201(a, b, c, out)
     torch.npu.synchronize()
     golden = a.cpu().float() + (b.cpu().float() @ c.cpu().float())
     torch.testing.assert_close(out.cpu().float(), golden, rtol=3e-3, atol=3e-3)

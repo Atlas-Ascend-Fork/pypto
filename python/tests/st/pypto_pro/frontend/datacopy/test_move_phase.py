@@ -29,14 +29,14 @@ TILE = 128
 K_SIZE_ACC = 256     # 2 K-blocks for accumulation
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510/9201 (Ascend950/Ascend960). Skip.")
 
 
 @pl.jit(auto_mutex=True)
@@ -94,7 +94,7 @@ def move_phase_kernel(
 @pytest.mark.soc("950", "960")
 def test_move_phase():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.randn(TILE, K_SIZE_ACC, device=device, dtype=torch.float16)
     b = torch.randn(K_SIZE_ACC, TILE, device=device, dtype=torch.float16)

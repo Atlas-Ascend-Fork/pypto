@@ -585,7 +585,7 @@ def test_move_allows_static_window_to_exceed_shape(offset):
 
 
 def test_move_allows_window_that_fits_runtime_valid_shape():
-    @pl.jit(arch="a5", auto_mutex=False)
+    @pl.jit(arch="3510", auto_mutex=False)
     def main(_jit_entry: pl.DT_INT64):
         src_type = pl.TileType(
             shape=[128, 192], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ
@@ -619,7 +619,7 @@ def test_insert_allows_static_window_to_exceed_shape(offset):
 
 
 def test_insert_transpose_checks_destination_axes_in_source_order():
-    @pl.jit(arch="a5", auto_mutex=False)
+    @pl.jit(arch="3510", auto_mutex=False)
     def main(_jit_entry: pl.DT_INT64):
         src_type = pl.TileType(
             shape=[64, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, layout=pl.NZ
@@ -635,7 +635,7 @@ def test_insert_transpose_checks_destination_axes_in_source_order():
 
 
 def test_insert_accepts_tile_slice_window():
-    @pl.jit(arch="a5", auto_mutex=False)
+    @pl.jit(arch="3510", auto_mutex=False)
     def main(_jit_entry: pl.DT_INT64):
         src_type = pl.TileType(
             shape=[16, 4096], dtype=pl.DT_INT8, target_memory=pl.MemorySpace.Vec, layout=pl.ND
@@ -770,7 +770,7 @@ def test_acc_to_mat_insert_with_scaling_tile_preserves_operand():
 
 @pytest.mark.parametrize("layout", [pl.ND, pl.DN])
 @pytest.mark.parametrize("arch", ["3510", "9201"])
-def test_modern_acc_to_mat_move_accepts_supported_destination_layouts(monkeypatch, arch, layout, assert_a6_golden):
+def test_modern_acc_to_mat_move_accepts_supported_destination_layouts(monkeypatch, arch, layout, assert_9201_golden):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", arch)
 
     @pl.jit(auto_mutex=False)
@@ -782,7 +782,7 @@ def test_modern_acc_to_mat_move_accepts_supported_destination_layouts(monkeypatc
         pl.move(dst, src)
 
     program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
-    assert_a6_golden(program.get_function(main.__name__))
+    assert_9201_golden(program.get_function(main.__name__))
     assert "block.move" in _program_ir(program.get_function(main.__name__))
 
 
@@ -1024,7 +1024,7 @@ def test_mat_to_cube_move_with_offset_rejects_tmov_only_layout_conversion(src_la
     ],
 )
 def test_mat_to_cube_move_without_offset_uses_move_layout_rules(
-    monkeypatch, arch, src_layout, dst_memory, dst_layout, assert_a6_golden
+    monkeypatch, arch, src_layout, dst_memory, dst_layout, assert_9201_golden
 ):
     """Without an offset, both architectures use the TMOV layout rules."""
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", arch)
@@ -1042,7 +1042,7 @@ def test_mat_to_cube_move_without_offset_uses_move_layout_rules(
         pl.move(dst, src)
 
     program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
-    assert_a6_golden(program.get_function(main.__name__))
+    assert_9201_golden(program.get_function(main.__name__))
 
 
 def test_vec_to_vec_move_rejects_unsupported_int64_dtype():
@@ -1539,7 +1539,7 @@ def test_modern_rejects_zz_nn_for_cube_buffers(monkeypatch, arch, memory, layout
 
 
 @pytest.mark.parametrize("arch", ["3510", "9201"])
-def test_modern_allows_regular_cube_buffer_layouts(monkeypatch, arch, assert_a6_golden):
+def test_modern_allows_regular_cube_buffer_layouts(monkeypatch, arch, assert_9201_golden):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", arch)
 
     @pl.jit(auto_mutex=False)
@@ -1554,7 +1554,7 @@ def test_modern_allows_regular_cube_buffer_layouts(monkeypatch, arch, assert_a6_
 
     create_tile_program, _ = create_tile.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     create_tile = create_tile_program.get_function(create_tile.__name__)
-    assert_a6_golden(create_tile)
+    assert_9201_golden(create_tile)
 
     stmt = create_tile.body.stmts[0] if hasattr(create_tile.body, "stmts") else create_tile.body
     assert isinstance(stmt.var.type.hardware_info, _ir.HardwareInfo)

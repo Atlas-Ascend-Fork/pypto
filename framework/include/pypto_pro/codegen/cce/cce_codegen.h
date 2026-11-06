@@ -137,7 +137,7 @@ public:
      * - PTO-style function signature
      * - Target-specific function naming and DAV macro guards
      * - constexpr for compile-time constants
-     * - FFTS support for cross-core sync
+     * - Cross-core sync lowering
      *
      * SIMT kernels emit a __global__ entry directly.
      *
@@ -196,7 +196,7 @@ public:
         return arch_ == npu::tile_fwk::NPUArch::DAV_3510 || arch_ == npu::tile_fwk::NPUArch::DAV_9201;
     }
 
-    /** \brief CV ratio feature: A5 has two Vector cores per Cube, A6 has one. */
+    /** \brief CV ratio feature: 3510 has two Vector cores per Cube, 9201 has one. */
     int GetVectorCoresPerCube() const { return arch_ == npu::tile_fwk::NPUArch::DAV_9201 ? 1 : 2; }
 
     /** \brief Get the fixed Cube/Vector target selected for this generation. */
@@ -440,7 +440,7 @@ private:
      * Emits __aicore__ inline void <name>_impl_cube/vector with target setup
      * and tiling and Tensor declarations.
      */
-    void GenerateSinglePrologue(const ir::FunctionPtr& func, bool hasCrossSync);
+    void GenerateSinglePrologue(const ir::FunctionPtr& func);
     /// Build the CCE signature (prefix, params, tile marshalling) for a standalone
     /// SIMT or SIMD VF function.
     std::string BuildVfFunctionSignature(const ir::FunctionPtr& func);
@@ -451,8 +451,6 @@ private:
     /// pointer in place (no framework-supplied cursors).
     void GenerateVfFunction(const ir::FunctionPtr& func);
     void ResetFunctionGenerationState();
-
-    bool DetectCrossCoreSyncOps(const ir::StmtPtr& stmt);
 
     // --- Phase 5: ForStmt helpers ---
 
@@ -504,9 +502,9 @@ private:
      * \brief Emit the __global__ AICORE function signature and opening boilerplate.
      *
      * Collects dynamic dim variables, builds the parameter list, emits the opening
-     * brace, registers dynamic dims, and emits FFTS setup if needed.
+     * brace and registers dynamic dims.
      */
-    void EmitSingleFunctionSignature(const ir::FunctionPtr& func, bool hasCrossSync);
+    void EmitSingleFunctionSignature(const ir::FunctionPtr& func);
 
     /**
      * \brief Emit GlobalTensor declarations for one target Program.
@@ -549,13 +547,13 @@ private:
     std::map<std::string, std::string> tilingHeaders_;          ///< Tiling struct headers (filename -> content)
     std::map<std::string, StructDefinition> structDefinitions_; ///< Struct type name ->definition
 
-    CodeEmitter emitter_;                                            ///< Code emitter for structured output
-    CodeContext context_;                                            ///< Context for variable tracking
-    TypeConverter typeConverter_;                                    ///< Type converter
-    const backend::Backend* backend_;                                ///< CCE backend instance (for op info, core type)
-    npu::tile_fwk::NPUArch arch_ = npu::tile_fwk::NPUArch::DAV_2201; ///< Target architecture
-    const ir::SectionKind target_;                                   ///< Fixed Cube/Vector target for this generator
-    bool inVfSection_ = false;                                       ///< True only while emitting a nested VF section
+    CodeEmitter emitter_;                                               ///< Code emitter for structured output
+    CodeContext context_;                                               ///< Context for variable tracking
+    TypeConverter typeConverter_;                                       ///< Type converter
+    const backend::Backend* backend_;                                   ///< CCE backend for op info and core type
+    npu::tile_fwk::NPUArch arch_ = npu::tile_fwk::NPUArch::DAV_UNKNOWN; ///< Target architecture
+    const ir::SectionKind target_;                                      ///< Fixed Cube/Vector target for this generator
+    bool inVfSection_ = false;                                          ///< True inside a nested VF section
     bool needsScalarHelpers_ = false;
     /// Actual IR type of the SIMT function being emitted.
     ir::FunctionType currentFunctionType_ = ir::FunctionType::OPAQUE;

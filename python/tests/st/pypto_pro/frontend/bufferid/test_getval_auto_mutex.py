@@ -33,24 +33,24 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510 (Ascend950). Skip.")
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510/9201 (Ascend950/Ascend960). Skip.")
 
 
 @pl.jit(auto_mutex=True)
@@ -134,7 +134,7 @@ def _run_and_measure(a: torch.Tensor):
 @pytest.mark.soc("950", "960")
 def test_getval_setval_auto_mutex():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.rand(64, 128, device=device, dtype=torch.float16) * 2.0 - 1.0
     max_diff, d = _run_and_measure(a)
@@ -148,7 +148,7 @@ def test_getval_setval_auto_mutex():
 @pytest.mark.soc("950")
 def test_getval_struct_field_auto_mutex():
     """Both struct write forms must read the preceding vector operation's result."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     a_cpu = torch.arange(64 * 128, dtype=torch.float32).reshape(64, 128)
     a = a_cpu.to(ST_DEVICE)
     out = torch.zeros(2, device=ST_DEVICE, dtype=torch.float32)
@@ -163,7 +163,7 @@ def test_getval_struct_field_auto_mutex():
 @pytest.mark.soc("950", "960")
 def test_getval_while_condition_auto_mutex():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.zeros(64, 128, device=device, dtype=torch.float16)
     a[0, :3] = 1.0

@@ -79,7 +79,7 @@ RA1 = KT_F16
 CA0 = 0
 CA1 = QK_HALF_F32
 
-# ---- VEC addresses (248KB on a5) ----
+# ---- VEC addresses (248KB on 3510) ----
 VB4_KV = TS_HALF * TKV * 4
 VB2_KV = TS_HALF * TKV * 2
 VB4 = TS_HALF * TD * 4
@@ -299,7 +299,7 @@ def softmax_body(
     stiles,
 ) -> None:
     """Softmax body (no cross-core sync, no store). Uses static independent vars.
-    On a5 with 2 sub-blocks, each sub-block handles half the 64-row tile.
+    On 3510 with 2 sub-blocks, each sub-block handles half the 64-row tile.
     Both sub-blocks share row_off, so they jointly cover rows [row_off, row_off+64).
     """
     qk_vec_buf = stiles.qk_vec_buf

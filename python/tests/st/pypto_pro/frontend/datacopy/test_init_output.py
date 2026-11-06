@@ -47,14 +47,14 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510 (Ascend950). Skip.")
 
 
 def _nz_raw_copy(dst_ptr: int, src: torch.Tensor, kind: int, nbytes: int) -> None:
@@ -100,7 +100,7 @@ def init_output_scalar_cases(
 
 @pytest.mark.soc("950")
 def test_init_output_scalar_cases():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     # name, shape, dtype, initial value, (offset, size, fill value) regions.
     # The order matches the kernel signature. Overlapping regions are applied in order.
     cases = [
@@ -190,7 +190,7 @@ def init_output_dynamic(
 def test_init_output_dynamic():
     """Dynamic forms: 3D FP32 + 4D FP16 per-core sharding, loop-var INT64, shape-expr values."""
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     dims3 = (4, 32, 100)      # 12800 elems, FP32
     dims4 = (2, 3, 17, 19)    # 1938 elems, FP16, smaller tail
     n64 = 130
@@ -326,7 +326,7 @@ def init_output_matmul_integration(
 @pytest.mark.soc("950")
 def test_init_output_matmul_integration():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     torch.manual_seed(42)
     b = torch.randn([K_IO, N_IO], device=device, dtype=torch.float16)
     ws_in = torch.full([M_IO, K_IO], 99.0, device=device, dtype=torch.float16)
@@ -368,7 +368,7 @@ def init_output_float_value_on_int(
 @pytest.mark.soc("950")
 def test_init_output_float_value_on_int():
     """A float value on an integer tensor is truncated toward zero, not rejected."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     # Non-zero sentinels so an unfilled element would be visible.
     out_i8 = torch.full([32], 7, dtype=torch.int8).to(ST_DEVICE)
     out_u8 = torch.full([32], 7, dtype=torch.uint8).to(ST_DEVICE)

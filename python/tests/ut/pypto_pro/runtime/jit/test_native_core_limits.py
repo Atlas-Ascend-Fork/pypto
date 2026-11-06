@@ -33,7 +33,6 @@ def native_launchers(tmp_path_factory):
     """Link real generated callers against controlled limits and record every launch and query."""
     root = tmp_path_factory.mktemp("native_core_limits")
     (root / "acl").mkdir()
-    (root / "runtime").mkdir()
     (root / "acl/acl_rt.h").write_text("""#pragma once
 #include <cstdint>
 using aclError = int32_t;
@@ -42,19 +41,18 @@ constexpr aclError ACL_SUCCESS = 0;
 enum aclrtDevResLimitType { ACL_RT_DEV_RES_CUBE_CORE = 0, ACL_RT_DEV_RES_VECTOR_CORE = 1 };
 extern "C" aclError aclrtGetStreamResLimit(aclrtStream, aclrtDevResLimitType, uint32_t*);
 """)
-    (root / "runtime/rt_ffts.h").write_text("")
     (root / "fake_kernel.h").write_text("")
     harness = """#include <acl/acl_rt.h>
 static uint32_t budgets[2], errors[2], queries[2];
 static void* queryStreams[2];
-static uint32_t launches, blocks, syncSetups;
+static uint32_t launches, blocks;
 extern "C" void reset(uint32_t cube, uint32_t vector, uint32_t cubeError, uint32_t vectorError)
 {
     budgets[0] = cube;
     budgets[1] = vector;
     errors[0] = cubeError;
     errors[1] = vectorError;
-    queries[0] = queries[1] = launches = blocks = syncSetups = 0;
+    queries[0] = queries[1] = launches = blocks = 0;
     queryStreams[0] = queryStreams[1] = nullptr;
 }
 extern "C" aclError aclrtGetStreamResLimit(aclrtStream stream, aclrtDevResLimitType type, uint32_t* value)
@@ -68,14 +66,7 @@ extern "C" uint32_t launch_count() { return launches; }
 extern "C" uint32_t launched_blocks() { return blocks; }
 extern "C" uint32_t query_count(uint32_t type) { return queries[type]; }
 extern "C" void* query_stream(uint32_t type) { return queryStreams[type]; }
-extern "C" uint32_t sync_setup_count() { return syncSetups; }
-static void rtGetC2cCtrlAddr(uint64_t* address, uint32_t* length)
-{
-    ++syncSetups;
-    *address = 0;
-    *length = 0;
-}
-static void RecordLaunch(uint32_t dim, void*, int64_t* = nullptr)
+static void RecordLaunch(uint32_t dim, void*)
 {
     ++launches;
     blocks = dim;
@@ -89,22 +80,21 @@ static void RecordLaunch(uint32_t dim, void*, int64_t* = nullptr)
         NpuArch.DAV_3003: {"cube_vec": jit.KernelTarget("test-mixed-1-1", 1, 1, True)},
     })
     modes = {
-        "cube": (NpuArch.DAV_3510, True, False, False),
-        "vector": (NpuArch.DAV_3510, False, True, False),
-        "mixed": (NpuArch.DAV_3510, True, True, False),
-        "mixed_1_1": (NpuArch.DAV_3003, True, True, False),
-        "sync": (NpuArch.DAV_3510, True, True, True),
+        "cube": (NpuArch.DAV_3510, True, False),
+        "vector": (NpuArch.DAV_3510, False, True),
+        "mixed": (NpuArch.DAV_3510, True, True),
+        "mixed_1_1": (NpuArch.DAV_3003, True, True),
     }
-    for name, (arch, has_cube, has_vec, cross_sync) in modes.items():
+    for name, (arch, has_cube, has_vec) in modes.items():
         caller = jit._generate_caller_cpp(
-            [], "fake_kernel.h", "probe", has_cross_core_sync=cross_sync,
+            [], "fake_kernel.h", "probe",
             target=config.resolve_kernel_target(arch, has_cube=has_cube, has_vector=has_vec),
         )
         caller = caller.replace("call_kernel(", f"call_kernel_{name}(")
         # Substitute only the device launch syntax: all surrounding host code is real.
         caller = caller.replace(
             "probe<<<blockDim, nullptr, stream>>>(",
-            "RecordLaunch(blockDim, stream" + (", " if cross_sync else ""),
+            "RecordLaunch(blockDim, stream",
         )
         harness += caller
     source = root / "native_launchers.cpp"
@@ -120,7 +110,7 @@ static void RecordLaunch(uint32_t dim, void*, int64_t* = nullptr)
     lib = ctypes.CDLL(str(library))
     lib.reset.argtypes = [ctypes.c_uint32] * 4
     lib.reset.restype = None
-    for name in ("launch_count", "launched_blocks", "sync_setup_count"):
+    for name in ("launch_count", "launched_blocks"):
         getattr(lib, name).argtypes = []
         getattr(lib, name).restype = ctypes.c_uint32
     lib.query_count.argtypes = [ctypes.c_uint32]
@@ -150,8 +140,6 @@ static void RecordLaunch(uint32_t dim, void*, int64_t* = nullptr)
         ("mixed", 20, 2, 0, 1, (1, 1)),
         ("mixed_1_1", 8, 5, 5, 5, (1, 1)),
         ("mixed_1_1", 8, 5, 0, 5, (1, 1)),
-        ("sync", 8, 5, 2, 2, (1, 1)),
-        ("sync", 8, 5, 0, 2, (1, 1)),
     ],
 )
 def test_native_launch_counts(native_launchers, mode, cube, vector, requested, expected, queries):
@@ -168,7 +156,6 @@ def test_native_launch_counts(native_launchers, mode, cube, vector, requested, e
     assert tuple(lib.query_count(i) for i in range(2)) == queries
     for i, count in enumerate(queries):
         assert lib.query_stream(i) == (0x1234 if count else None)
-    assert lib.sync_setup_count() == (1 if mode == "sync" else 0)
 
 
 @pytest.mark.parametrize(
@@ -181,16 +168,14 @@ def test_native_launch_counts(native_launchers, mode, cube, vector, requested, e
         ("mixed", 20, 9, 20, -0x500000004),
         ("mixed", 20, 2, 12, -0x500000001),
         ("mixed_1_1", 8, 5, 12, -0x500000005),
-        ("sync", 8, 5, 12, -0x500000002),
     ],
 )
 def test_native_requests_above_budget_reject_launch(native_launchers, mode, cube, vector, requested, expected):
-    """An explicit request the stream cannot host must fail before any device launch or sync setup."""
+    """An explicit request the stream cannot host must fail before any device launch."""
     lib = native_launchers
     lib.reset(cube, vector, 0, 0)
     assert getattr(lib, f"call_kernel_{mode}")(requested, 0x1234) == expected
     assert lib.launch_count() == 0
-    assert lib.sync_setup_count() == 0
 
 
 @pytest.mark.parametrize(
@@ -204,16 +189,15 @@ def test_native_requests_above_budget_reject_launch(native_launchers, mode, cube
         (8, 16, 0xFFFFFFFF, 0, -0x3FFFFFFFF),
     ],
 )
-def test_native_errors_prevent_launch_and_sync_setup(
+def test_native_errors_prevent_launch(
     native_launchers, cube, vector, cube_error, vector_error, expected,
 ):
-    """Fault injection exercises real native-to-Python error bits and rejects before any synchronized participant."""
+    """Fault injection exercises real native-to-Python error bits and rejects before any mixed launch."""
     lib = native_launchers
     lib.reset(cube, vector, cube_error, vector_error)
-    result = lib.call_kernel_sync(12, 0x1234)
+    result = lib.call_kernel_mixed(12, 0x1234)
     assert result == expected
     assert lib.launch_count() == 0
-    assert lib.sync_setup_count() == 0
 
 
 @pytest.mark.parametrize("mode,cube,vector,cube_error,vector_error", [

@@ -29,14 +29,14 @@ TILE = 64
 TILE_LARGE = 128
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510 (Ascend950). Skip.")
 
 
 def _inputs(device, shape, dtype=torch.float16):
@@ -1448,7 +1448,7 @@ def call_kernel_move_acc_to_vec_tail(
 @pytest.mark.soc("950")
 def test_basic_fp16():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE, TILE])
     b = torch.eye(TILE, device=device, dtype=torch.float16)
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1460,7 +1460,7 @@ def test_basic_fp16():
 @pytest.mark.soc("950")
 def test_basic_bf16():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE, TILE], dtype=torch.bfloat16)
     b = torch.eye(TILE, device=device, dtype=torch.bfloat16)
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1472,7 +1472,7 @@ def test_basic_bf16():
 @pytest.mark.soc("950")
 def test_basic_fp32():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE, TILE], dtype=torch.float32)
     b = torch.eye(TILE, device=device, dtype=torch.float32)
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1484,7 +1484,7 @@ def test_basic_fp32():
 @pytest.mark.soc("950")
 def test_offset_row():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE_LARGE, TILE])
     b = torch.eye(TILE, device=device, dtype=torch.float16)
     out = torch.zeros([TILE_LARGE, TILE], device=device, dtype=torch.float32)
@@ -1496,7 +1496,7 @@ def test_offset_row():
 @pytest.mark.soc("950")
 def test_offset_col():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE, TILE_LARGE])
     b = torch.eye(TILE, device=device, dtype=torch.float16)
     out = torch.zeros([TILE, TILE_LARGE], device=device, dtype=torch.float32)
@@ -1508,7 +1508,7 @@ def test_offset_col():
 @pytest.mark.soc("950")
 def test_offset_both():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE_LARGE, TILE_LARGE])
     b = torch.eye(TILE, device=device, dtype=torch.float16)
     out = torch.zeros([TILE_LARGE, TILE_LARGE], device=device, dtype=torch.float32)
@@ -1520,7 +1520,7 @@ def test_offset_both():
 @pytest.mark.soc("950")
 def test_tile_offset():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE_LARGE, TILE])
     b = torch.eye(TILE, device=device, dtype=torch.float16)
     out = torch.zeros([TILE_LARGE, TILE_LARGE], device=device, dtype=torch.float32)
@@ -1532,7 +1532,7 @@ def test_tile_offset():
 @pytest.mark.soc("950")
 def test_dn_transpose():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     k = _inputs(device, [TILE, TILE])
     q = _inputs(device, [TILE, TILE])
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1545,7 +1545,7 @@ def test_dn_transpose():
 @pytest.mark.soc("950")
 def test_4d_tile_dims():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [2, 4, TILE, TILE])
     b = torch.eye(TILE, device=device, dtype=torch.float16)
     out = torch.zeros([2, 4, TILE, TILE], device=device, dtype=torch.float32)
@@ -1557,7 +1557,7 @@ def test_4d_tile_dims():
 @pytest.mark.soc("950")
 def test_for_loop():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [256, TILE])
     b = torch.eye(TILE, device=device, dtype=torch.float16)
     out = torch.zeros([256, TILE], device=device, dtype=torch.float32)
@@ -1569,7 +1569,7 @@ def test_for_loop():
 @pytest.mark.soc("950")
 def test_if_else():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE_LARGE, TILE])
     b = torch.eye(TILE, device=device, dtype=torch.float16)
     out0 = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1584,7 +1584,7 @@ def test_if_else():
 @pytest.mark.soc("950")
 def test_while_for_ifelse():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [256, TILE])
     b = torch.eye(TILE, device=device, dtype=torch.float16)
     out = torch.zeros([256, TILE], device=device, dtype=torch.float32)
@@ -1596,7 +1596,7 @@ def test_while_for_ifelse():
 @pytest.mark.soc("950")
 def test_tail_row():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [72, TILE_LARGE])
     b = torch.eye(TILE_LARGE, device=device, dtype=torch.float16)
     out = torch.zeros([72, TILE_LARGE], device=device, dtype=torch.float32)
@@ -1608,7 +1608,7 @@ def test_tail_row():
 @pytest.mark.soc("950")
 def test_tail_loop():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [328, TILE_LARGE])
     b = torch.eye(TILE_LARGE, device=device, dtype=torch.float16)
     out = torch.zeros([328, TILE_LARGE], device=device, dtype=torch.float32)
@@ -1620,7 +1620,7 @@ def test_tail_loop():
 @pytest.mark.soc("950")
 def test_tail_pad_zero():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [200, TILE_LARGE])
     b = torch.eye(TILE_LARGE, device=device, dtype=torch.float16)
     out = torch.zeros([TILE_LARGE, TILE_LARGE], device=device, dtype=torch.float32)
@@ -1633,7 +1633,7 @@ def test_tail_pad_zero():
 @pytest.mark.soc("950")
 def test_store_relu():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE, TILE])
     b = _inputs(device, [TILE, TILE])
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1645,7 +1645,7 @@ def test_store_relu():
 @pytest.mark.soc("950")
 def test_store_atomic_add():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE, TILE])
     b = torch.eye(TILE, device=device, dtype=torch.float16)
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1657,7 +1657,7 @@ def test_store_atomic_add():
 @pytest.mark.soc("950")
 def test_store_phase_final():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE, 192])
     b = _inputs(device, [192, TILE])
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1669,7 +1669,7 @@ def test_store_phase_final():
 @pytest.mark.soc("950")
 def test_move_offset_k():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE, TILE_LARGE])
     b = torch.eye(TILE, device=device, dtype=torch.float16)
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1681,7 +1681,7 @@ def test_move_offset_k():
 @pytest.mark.soc("950")
 def test_move_offset_m():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE, TILE])
     b = _inputs(device, [TILE_LARGE, TILE])
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1693,7 +1693,7 @@ def test_move_offset_m():
 @pytest.mark.soc("950")
 def test_move_acc_to_vec_single():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE, TILE])
     b = _inputs(device, [TILE, TILE])
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1705,7 +1705,7 @@ def test_move_acc_to_vec_single():
 @pytest.mark.soc("950")
 def test_move_acc_to_vec_dual_m():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE, TILE])
     b = _inputs(device, [TILE, TILE])
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1717,7 +1717,7 @@ def test_move_acc_to_vec_dual_m():
 @pytest.mark.soc("950")
 def test_move_acc_to_vec_dual_n():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE, TILE])
     b = _inputs(device, [TILE, TILE])
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1729,7 +1729,7 @@ def test_move_acc_to_vec_dual_n():
 @pytest.mark.soc("950")
 def test_move_acc_to_vec_relu():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [TILE, TILE])
     b = torch.eye(TILE, device=device, dtype=torch.float16)
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1741,7 +1741,7 @@ def test_move_acc_to_vec_relu():
 @pytest.mark.soc("950")
 def test_move_acc_to_vec_tail():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [40, TILE])
     b = torch.eye(TILE, device=device, dtype=torch.float16)
     out = torch.zeros([TILE, TILE], device=device, dtype=torch.float32)
@@ -1753,7 +1753,7 @@ def test_move_acc_to_vec_tail():
 @pytest.mark.soc("950")
 def test_store_order_descending():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [2, 4, TILE, TILE])
     out = torch.zeros([2, 4, TILE, TILE], device=device, dtype=torch.float32)
     with pytest.raises(InvalidVal, match="order must be ascending"):
@@ -1763,7 +1763,7 @@ def test_store_order_descending():
 @pytest.mark.soc("950")
 def test_store_tile_order_descending():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     a = _inputs(device, [2, 4, TILE, TILE])
     out = torch.zeros([2, 4, TILE, TILE], device=device, dtype=torch.float32)
     with pytest.raises(InvalidVal, match="order must be ascending"):

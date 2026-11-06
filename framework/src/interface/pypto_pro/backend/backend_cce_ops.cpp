@@ -757,7 +757,7 @@ REGISTER_BACKEND_OP(BackendCCE, "get_saturation_flag")
 // CTRL SPR direct access (SetCtrlSpr / GetCtrlSpr / ResetCtrlSpr)
 // ============================================================================
 
-// A5 writable CTRL bits: 6-10 (range), 45, 48, 50, 53, 59, 60 (single bits)
+// 3510 writable CTRL bits: 6-10 (range), 45, 48, 50, 53, 59, 60 (single bits)
 static void CheckCtrlBitRange(int8_t startBit, int8_t endBit, const std::string& opName)
 {
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, startBit >= 0 && endBit < 64 && startBit <= endBit)
@@ -1128,8 +1128,8 @@ REGISTER_BACKEND_OP(BackendCCE, "system.icache_preload")
 // Cross-core SET: ffts_cross_core_sync(PIPE_xxx, getFFTSMsg(mode, event_id))
 //   - INTER_BLOCK(0): inter-core sync
 //   - INTER_SUBBLOCK(1): intra-core AIV-to-AIV sync
-//   - INTRA_BLOCK(2): intra-core AIC↔AIV both subcores (A5 uses set_intra_block)
-//   - UNICAST_BLOCK(3): intra-core AIC↔AIV one subcore (A5 uses set_intra_block)
+//   - INTRA_BLOCK(2): intra-core AIC↔AIV both subcores (3510 uses set_intra_block)
+//   - UNICAST_BLOCK(3): intra-core AIC↔AIV one subcore (3510 uses set_intra_block)
 // Cross-core WAIT: wait_flag_dev / wait_intra_block
 // SET signals completion from a pipe; WAIT blocks until the other core signals.
 
@@ -1141,7 +1141,7 @@ static std::string MakeCrossCoreSetCodegenCCE(const ir::CallPtr& op, codegen::Co
     auto syncMode = static_cast<ir::CrossCoreSyncMode>(op->GetKwarg<int>("sync_mode"));
     bool isIntraUnicast = syncMode == ir::CrossCoreSyncMode::INTRA_BLOCK ||
                           syncMode == ir::CrossCoreSyncMode::UNICAST_BLOCK;
-    if (codegen.IsRegisterBasedArch() && isIntraUnicast) {
+    if (isIntraUnicast) {
         // CUBE→VEC: INTRA_BLOCK signals both vectors only on a 1:2 target; UNICAST_BLOCK signals one.
         //     VEC→CUBE: single set
         if (codegen.GetTarget() == ir::SectionKind::Cube && syncMode == ir::CrossCoreSyncMode::INTRA_BLOCK) {
@@ -1168,7 +1168,7 @@ static std::string MakeCrossCoreSetCodegenCCE(const ir::CallPtr& op, codegen::Co
             }
         }
     } else {
-        // Legacy arch, or modern INTER_BLOCK / INTER_SUBBLOCK: ffts_cross_core_sync
+        // 3510/9201 INTER_BLOCK / INTER_SUBBLOCK: ffts_cross_core_sync
         std::string modeStr = std::to_string(static_cast<int>(syncMode));
         if (isDynamic) {
             std::string eventId = cce::GetOperandAsCode(codegen, op->args_[0]);
@@ -1207,7 +1207,7 @@ static std::string MakeCrossCoreWaitCodegenCCE(const ir::CallPtr& op, codegen::C
     bool isIntraUnicast = (syncMode == ir::CrossCoreSyncMode::INTRA_BLOCK ||
                            syncMode == ir::CrossCoreSyncMode::UNICAST_BLOCK);
     bool waitTwoVecSubcores = (syncMode == ir::CrossCoreSyncMode::INTRA_BLOCK);
-    if (codegen.IsRegisterBasedArch() && isIntraUnicast) {
+    if (isIntraUnicast) {
         // CUBE waiting for VEC: INTRA_BLOCK waits for both vectors only on a 1:2 target.
         //     VEC waiting for CUBE: single wait
         if (codegen.GetTarget() == ir::SectionKind::Cube && waitTwoVecSubcores) {
@@ -1219,14 +1219,10 @@ static std::string MakeCrossCoreWaitCodegenCCE(const ir::CallPtr& op, codegen::C
             EmitWaitIntraBlockCCE(codegen, op, pipeStr, isDynamic);
         }
     } else {
-        // Legacy arch, or modern INTER_BLOCK(0) / INTER_SUBBLOCK(1): wait_flag_dev
+        // 3510 + INTER_BLOCK(0) / INTER_SUBBLOCK(1): wait_flag_dev
         std::string eventId = isDynamic ? cce::GetOperandAsCode(codegen, op->args_[0]) :
                                           std::to_string(op->GetKwarg<int>("event_id"));
-        if (codegen.IsRegisterBasedArch()) {
-            codegen.Emit("wait_flag_dev(" + pipeStr + ", " + eventId + ");");
-        } else {
-            codegen.Emit("wait_flag_dev(" + eventId + ");");
-        }
+        codegen.Emit("wait_flag_dev(" + pipeStr + ", " + eventId + ");");
     }
     return "";
 }
@@ -1395,7 +1391,7 @@ void EmitSanitizerLogPrologue(codegen::CCECodegen& codegen, const std::string& l
     // region silently drop records). The Vector part is therefore offset by
     // the block count: Cube covers [0, block_num), Vector covers
     // [block_num, block_num + block_num * subblockdim) = at most [N, 3N)
-    // with the A5 1:2 C/V pairing, which the host allocation's configured
+    // with the 3510 1:2 C/V pairing, which the host allocation's configured
     // region envelope holds exactly. A
     // vector-only kernel wastes the first block_num regions, which is safe.
     // Sub-block addressing follows the established get_block_idx() backend-op
@@ -2166,7 +2162,7 @@ REGISTER_BACKEND_OP(BackendCCE, "block.subview")
     });
 
 // ============================================================================
-// Mutex (Buffer-ID Token) - A5 CCE Codegen
+// Mutex (Buffer-ID Token) - 3510 CCE Codegen
 // ----------------------------------------------------------------------------
 // Lowers system.mutex_lock/unlock to CCE intrinsics get_buf/rls_buf.
 // API: get_buf(PIPE_MTE2, mutexId, 0);  rls_buf(PIPE_MTE2, mutexId, 0);
@@ -2272,7 +2268,7 @@ REGISTER_BACKEND_OP(BackendCCE, "system.wait_pre_task_end")
 
 // Early-start inter-task sync (set_next_task_start, dual of wait_pre_task_end):
 // instructions after the call overlap the *next* sub-kernel. FORCE is SetNextTaskStart's
-// third template parameter (after the AIV/AIC pipe selectors); the A5 (__NPU_ARCH__ not
+// third template parameter (after the AIV/AIC pipe selectors); the 3510 (__NPU_ARCH__ not
 // 1001/2002) defaults are PIPE_MTE3 / PIPE_FIX, so the forced form spells them out.
 REGISTER_BACKEND_OP(BackendCCE, "system.set_next_task_start")
     .set_pipe(ir::PipeType::S)
@@ -2289,13 +2285,11 @@ REGISTER_BACKEND_OP(BackendCCE, "system.set_mm_layout_transform")
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
         auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
         auto enabled = op->GetKwarg<int>("enabled");
-        if (codegen.IsRegisterBasedArch()) {
-            // Direct register manipulation: MM_LAYOUT_MODE_BIT = 51
-            if (enabled) {
-                codegen.Emit("set_ctrl(sbitset1(get_ctrl(), 51));");
-            } else {
-                codegen.Emit("set_ctrl(sbitset0(get_ctrl(), 51));");
-            }
+        // Direct register manipulation: MM_LAYOUT_MODE_BIT = 51
+        if (enabled) {
+            codegen.Emit("set_ctrl(sbitset1(get_ctrl(), 51));");
+        } else {
+            codegen.Emit("set_ctrl(sbitset0(get_ctrl(), 51));");
         }
         return "";
     });

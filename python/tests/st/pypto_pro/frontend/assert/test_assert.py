@@ -33,7 +33,7 @@ def _check_npu():
         torch.npu.set_device(ST_DEVICE)
         name = torch.npu.get_device_name()
         if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
+            pytest.skip(f"Device {name} is not 3510/9201 (Ascend950/Ascend960). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")

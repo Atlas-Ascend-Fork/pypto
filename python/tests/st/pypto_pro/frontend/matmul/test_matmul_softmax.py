@@ -25,14 +25,14 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5():
+def _require_3510():
     try:
         torch.npu.set_device(ST_DEVICE)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510 (Ascend950). Skip.")
 
 
 TILE_M = 64
@@ -49,7 +49,7 @@ NEG_INF = -1e30
 #   Cube 保存 QK，Vector 段按 [M半块, N块] 视图跨全部 N 块完成 Softmax
 # =============================================================================
 @pl.jit(auto_mutex=True)
-def matmul_softmax_kernel_a6(
+def matmul_softmax_kernel_9201(
     a: pl.Tensor[[pl.DYNAMIC, K_SIZE], pl.DT_FP16],
     b: pl.Tensor[[K_SIZE, pl.DYNAMIC], pl.DT_FP16],
     out: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
@@ -206,7 +206,7 @@ def matmul_softmax_kernel_a6(
     ],
 )
 @pytest.mark.soc("960")
-def test_matmul_softmax_kernel_a6(m, n):
+def test_matmul_softmax_kernel_9201(m, n):
     device = ST_DEVICE
     torch.manual_seed(0)
     a = torch.randn(m, K_SIZE, device=device, dtype=torch.float16) * 0.1
@@ -214,7 +214,7 @@ def test_matmul_softmax_kernel_a6(m, n):
     out = torch.zeros(m, n, device=device, dtype=torch.float32)
     workspace = torch.zeros(m, n, device=device, dtype=torch.float32)
 
-    matmul_softmax_kernel_a6(a, b, out, workspace)
+    matmul_softmax_kernel_9201(a, b, out, workspace)
     torch.npu.synchronize()
 
     matmul_golden = torch.matmul(a.float(), b.float())
@@ -382,7 +382,7 @@ def matmul_softmax_kernel(
 )
 @pytest.mark.soc("950")
 def test_matmul_softmax_kernel(m, n):
-    _require_a5()
+    _require_3510()
     device = ST_DEVICE
     torch.manual_seed(0)
     a = torch.randn(m, K_SIZE, device=device, dtype=torch.float16) * 0.1
@@ -593,7 +593,7 @@ def matmul_softmax_vf_kernel(
 )
 @pytest.mark.soc("950")
 def test_matmul_softmax_vf_kernel(m, n):
-    _require_a5()
+    _require_3510()
     device = ST_DEVICE
     torch.manual_seed(0)
     a = torch.randn(m, K_SIZE, device=device, dtype=torch.float16) * 0.1

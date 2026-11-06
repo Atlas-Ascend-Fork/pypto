@@ -107,7 +107,7 @@ TEST(CCECodegenHeaderTest, CoversHeaderOnlyStateAccessors)
     CCECodegen codegen(ir::SectionKind::Vector);
 
     EXPECT_TRUE(codegen.GetCurrentResultTarget().empty());
-    EXPECT_EQ(codegen.GetArch(), npu::tile_fwk::NPUArch::DAV_2201);
+    EXPECT_EQ(codegen.GetArch(), npu::tile_fwk::NPUArch::DAV_UNKNOWN);
     EXPECT_EQ(codegen.GetTarget(), ir::SectionKind::Vector);
     EXPECT_FALSE(codegen.IsInSimdContext());
     EXPECT_FALSE(codegen.IsInSimtContext());
@@ -143,23 +143,37 @@ TEST(CCECodegenHeaderTest, RejectsNonCubeOrVectorTarget)
     EXPECT_THROW((void)CCECodegen(ir::SectionKind::VF), npu::tile_fwk::Error);
 }
 
-TEST(CCECodegenTest, EmitsTargetSpecificGuardsNamesAndVectorSetup)
+TEST(CCECodegenTest, RejectsUnsupportedArchitecturesBeforeGeneratingCode)
+{
+    auto body = std::make_shared<const ir::ReturnStmt>(ir::Span::Unknown());
+    auto program = MakeProgram(body);
+    for (auto target : {ir::SectionKind::Cube, ir::SectionKind::Vector}) {
+        for (auto arch : {npu::tile_fwk::NPUArch::DAV_1001, npu::tile_fwk::NPUArch::DAV_2201,
+                          npu::tile_fwk::NPUArch::DAV_UNKNOWN}) {
+            SCOPED_TRACE(static_cast<int>(arch));
+            CCECodegen codegen(target);
+            EXPECT_THROW((void)codegen.GenerateSingle(program, arch), npu::tile_fwk::Error);
+        }
+    }
+}
+
+TEST(CCECodegenTest, EmitsTargetSpecificGuardsAndNames)
 {
     auto body = std::make_shared<const ir::ReturnStmt>(ir::Span::Unknown());
 
     CCECodegen cube_codegen(ir::SectionKind::Cube);
-    auto cube = cube_codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto cube = cube_codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(cube.find("#if defined(__DAV_CUBE__)"), std::string::npos);
     EXPECT_NE(cube.find("kernel_impl_cube("), std::string::npos);
     EXPECT_EQ(cube.find("set_mask_norm();"), std::string::npos);
     EXPECT_EQ(cube.find("set_vector_mask(-1, -1);"), std::string::npos);
 
     CCECodegen vector_codegen(ir::SectionKind::Vector);
-    auto vector = vector_codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto vector = vector_codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(vector.find("#if defined(__DAV_VEC__)"), std::string::npos);
     EXPECT_NE(vector.find("kernel_impl_vector("), std::string::npos);
-    EXPECT_NE(vector.find("set_mask_norm();"), std::string::npos);
-    EXPECT_NE(vector.find("set_vector_mask(-1, -1);"), std::string::npos);
+    EXPECT_EQ(vector.find("set_mask_norm();"), std::string::npos);
+    EXPECT_EQ(vector.find("set_vector_mask(-1, -1);"), std::string::npos);
 }
 
 TEST(CCECodegenTest, EmitsInt64DynamicTensorDimensions)

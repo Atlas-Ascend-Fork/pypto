@@ -688,7 +688,7 @@ if __name__ == "__main__":
 
 
 @pl.jit(auto_mutex=True)
-def cube_vector_four_mutex_kernel_a6(
+def cube_vector_four_mutex_kernel_9201(
     a: pl.Tensor[[CV_M, CV_N], pl.DT_FP32],
     b: pl.Tensor[[CV_M, CV_K], pl.DT_FP16],
     c: pl.Tensor[[CV_K, CV_N], pl.DT_FP16],
@@ -755,7 +755,7 @@ def cube_vector_four_mutex_kernel_a6(
 
 
 @pytest.mark.soc("960")
-def test_cube_vector_four_mutex_a6():
+def test_cube_vector_four_mutex_9201():
     device = ST_DEVICE
     torch.npu.set_device(device)
     torch.manual_seed(0)
@@ -765,7 +765,7 @@ def test_cube_vector_four_mutex_a6():
         b = torch.rand([m, k], device=device, dtype=torch.float16) * 0.1
         c = torch.rand([k, n], device=device, dtype=torch.float16) * 0.1
         out = torch.zeros([m, n], device=device, dtype=torch.float32)
-        cube_vector_four_mutex_kernel_a6(a, b, c, out)
+        cube_vector_four_mutex_kernel_9201(a, b, c, out)
         torch.npu.synchronize()
         golden = a.cpu() + b.cpu().float() @ c.cpu().float()
         torch.testing.assert_close(out.cpu(), golden, rtol=5e-3, atol=5e-3)

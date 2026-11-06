@@ -26,14 +26,14 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510/9201 (Ascend950/Ascend960). Skip.")
 
 
 # ===========================================================================
@@ -64,7 +64,7 @@ def sync_src_dst_kernel(
 @pytest.mark.soc("950", "960")
 def test_sync_src_dst():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.randn(64, 64, device=device, dtype=torch.float32)
     b = torch.randn(64, 64, device=device, dtype=torch.float32)
@@ -102,7 +102,7 @@ def bar_all_kernel(
 @pytest.mark.soc("950", "960")
 def test_bar_all():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     x = torch.rand(128, 64, device=device, dtype=torch.float16)
     out = torch.empty(128, 64, device=device, dtype=torch.float16)

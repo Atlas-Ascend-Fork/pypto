@@ -26,14 +26,14 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510/9201 (Ascend950/Ascend960). Skip.")
 
 
 # ===========================================================================
@@ -60,7 +60,7 @@ def getval_setval_kernel(
 @pytest.mark.soc("950", "960")
 def test_getval_setval():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.rand(64, 128, device=device, dtype=torch.float16)
     a_orig_00 = a[0, 0].item()
@@ -93,7 +93,7 @@ def transpose_kernel(
 @pytest.mark.soc("950", "960")
 def test_transpose():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.rand(64, 64, device=device, dtype=torch.float16)
     out = torch.zeros(64, 64, device=device, dtype=torch.float16)
@@ -132,7 +132,7 @@ def tensor_getval_setval_5d_kernel(
 @pytest.mark.soc("950", "960")
 def test_tensor_getval_setval():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     scale_val = 2.5
     scale_tensor = torch.zeros(2, device=device, dtype=torch.float32)
     scale_tensor[0] = scale_val
@@ -176,7 +176,7 @@ def ptr_make_tensor_getval_setval_kernel(
 @pytest.mark.soc("950", "960")
 def test_ptr_make_tensor_getval_setval():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     scale_val = 3.14
     data = torch.zeros(2, device=device, dtype=torch.float32)
     data[0] = scale_val

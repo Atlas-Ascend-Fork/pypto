@@ -56,9 +56,9 @@ static __aicore__ inline int64_t __pypto_raw_block_idx()
 // - The first dimension is one slot per raw block index. The index is the
 //   hardware block index (AIV: blockIdx * subblockdim + subblockid), so the table
 //   needs max vector_core_cnt rows. 72 is the maximum across the platforms this
-//   CANN release supports (A5/DAV_3510 959x/95Ax: 36 AIC x 2 subblocks = 72;
-//   DAV_2201 max 48; smaller SKUs fewer). Bump PYPTO_SK_BLOCK_SLOTS whenever a
-//   supported platform exceeds it.
+//   CANN release supports (DAV_3510 959x/95Ax: 36 AIC x 2 subblocks = 72;
+//   smaller SKUs fewer). Bump PYPTO_SK_BLOCK_SLOTS whenever a supported
+//   platform exceeds it.
 // - The seed helpers validate the slot through __pypto_checked_block_idx(): an
 //   out-of-range index traps instead of silently writing past the table. The
 //   read-only accessors rely on the seed having run first, which the JIT

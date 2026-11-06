@@ -180,7 +180,7 @@ TEST(BackendCceOpsTest, GetBlockIdx)
     auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Cube);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("(int64_t)(__pypto_block_idx_value())"), std::string::npos);
 }
 
@@ -210,7 +210,7 @@ TEST(BackendCceOpsTest, GetBlockNum)
     auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("(int64_t)(__pypto_block_num_value())"), std::string::npos);
 }
 
@@ -235,7 +235,7 @@ TEST(BackendCceOpsTest, GetCycle)
     auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("(int64_t)(get_sys_cnt())"), std::string::npos);
 
     const auto* info = BackendCCE::Instance().GetOpInfo("get_cycle");
@@ -265,8 +265,7 @@ TEST(BackendCceOpsTest, ICachePreloadRejectsUnsupportedArch)
         (void)codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
         FAIL() << "Expected DAV_2201 ICache preload codegen to fail";
     } catch (const npu::tile_fwk::Error& error) {
-        EXPECT_NE(std::string(error.what()).find("system.icache_preload is only supported on DAV_3510 (Ascend 950)"),
-                  std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("PyPTO Pro only supports arch '3510' or '9201'"), std::string::npos);
     }
 }
 
@@ -279,7 +278,7 @@ TEST(BackendCceOpsTest, GetSubBlockIdx)
     auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("(int64_t)(get_subblockid())"), std::string::npos);
 }
 
@@ -322,7 +321,7 @@ TEST(BackendCceOpsTest, BarM)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("pipe_barrier(PIPE_M);"), std::string::npos);
 }
 
@@ -353,7 +352,7 @@ TEST(BackendCceOpsTest, BarAll)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("pipe_barrier(PIPE_ALL);"), std::string::npos);
 }
 
@@ -368,7 +367,7 @@ TEST(BackendCceOpsTest, SetMaskCount)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("set_mask_count();"), std::string::npos);
 }
 
@@ -379,7 +378,7 @@ TEST(BackendCceOpsTest, SetMaskNorm)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("set_mask_norm();"), std::string::npos);
 }
 
@@ -389,7 +388,7 @@ TEST(BackendCceOpsTest, ResetMask)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("set_vector_mask(static_cast<uint64_t>(-1), static_cast<uint64_t>(-1));"),
               std::string::npos);
 }
@@ -401,7 +400,7 @@ TEST(BackendCceOpsTest, SetVecMask)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("set_vector_mask(255, 128);"), std::string::npos);
 }
 
@@ -417,7 +416,7 @@ TEST(BackendCceOpsTest, SyncSrc)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("set_flag(PIPE_V, PIPE_S, (event_t)3);"), std::string::npos);
 }
 
@@ -429,7 +428,7 @@ TEST(BackendCceOpsTest, SyncDst)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("wait_flag(PIPE_V, PIPE_S, (event_t)3);"), std::string::npos);
 }
 
@@ -463,7 +462,7 @@ TEST(BackendCceOpsTest, SyncSrcDyn)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {event_id}), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body, {event_id}), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("set_flag(PIPE_M, PIPE_V, (event_t)event_id);"), std::string::npos);
 }
 
@@ -476,39 +475,15 @@ TEST(BackendCceOpsTest, SyncDstDyn)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {event_id}), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body, {event_id}), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("wait_flag(PIPE_M, PIPE_V, (event_t)event_id);"), std::string::npos);
 }
 
 // ============================================================================
-// Cross-core sync ops - non-A5 path (tested via EvalStmt)
+// Cross-core sync ops - 3510 INTER_BLOCK path
 // ============================================================================
 
-TEST(BackendCceOpsTest, SetCrossCoreA3)
-{
-    Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 0}, {"event_id", 2}};
-    auto call = std::make_shared<const ir::Call>("system.set_cross_core", std::vector<ir::ExprPtr>{}, kwargs,
-                                                 ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
-    EXPECT_NE(generated.find("ffts_cross_core_sync(PIPE_V, getFFTSMsg(0, 2));"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, WaitCrossCoreA3)
-{
-    Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 0}, {"event_id", 2}};
-    auto call = std::make_shared<const ir::Call>("system.wait_cross_core", std::vector<ir::ExprPtr>{}, kwargs,
-                                                 ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
-
-    codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
-    EXPECT_NE(generated.find("wait_flag_dev(2);"), std::string::npos);
-}
-
-TEST(BackendCceOpsTest, SetCrossCoreDynA3)
+TEST(BackendCceOpsTest, SetCrossCoreDyn3510InterBlock)
 {
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 0}};
     auto call = std::make_shared<const ir::Call>("system.set_cross_core_dyn", std::vector<ir::ExprPtr>{MakeConstInt(7)},
@@ -516,11 +491,11 @@ TEST(BackendCceOpsTest, SetCrossCoreDynA3)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("ffts_cross_core_sync(PIPE_V, getFFTSMsg(0, 7));"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, WaitCrossCoreDynA3)
+TEST(BackendCceOpsTest, WaitCrossCoreDyn3510InterBlock)
 {
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 0}};
     auto call = std::make_shared<const ir::Call>(
@@ -528,15 +503,11 @@ TEST(BackendCceOpsTest, WaitCrossCoreDynA3)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
-    EXPECT_NE(generated.find("wait_flag_dev(7);"), std::string::npos);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
+    EXPECT_NE(generated.find("wait_flag_dev(PIPE_V, 7);"), std::string::npos);
 }
 
-// ============================================================================
-// Cross-core sync ops - A5 INTER_BLOCK path
-// ============================================================================
-
-TEST(BackendCceOpsTest, SetCrossCoreA5InterBlock)
+TEST(BackendCceOpsTest, SetCrossCore3510InterBlock)
 {
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 0}, {"event_id", 2}};
     auto call = std::make_shared<const ir::Call>("system.set_cross_core", std::vector<ir::ExprPtr>{}, kwargs,
@@ -548,7 +519,7 @@ TEST(BackendCceOpsTest, SetCrossCoreA5InterBlock)
     EXPECT_NE(generated.find("ffts_cross_core_sync(PIPE_V, getFFTSMsg(0, 2));"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, WaitCrossCoreA5InterBlock)
+TEST(BackendCceOpsTest, WaitCrossCore3510InterBlock)
 {
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 0}, {"event_id", 2}};
     auto call = std::make_shared<const ir::Call>("system.wait_cross_core", std::vector<ir::ExprPtr>{}, kwargs,
@@ -561,10 +532,10 @@ TEST(BackendCceOpsTest, WaitCrossCoreA5InterBlock)
 }
 
 // ============================================================================
-// Cross-core sync ops - A5 INTRA_BLOCK path (non-cube section)
+// Cross-core sync ops - 3510 INTRA_BLOCK path (non-cube section)
 // ============================================================================
 
-TEST(BackendCceOpsTest, SetCrossCoreA5IntraBlock)
+TEST(BackendCceOpsTest, SetCrossCore3510IntraBlock)
 {
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 2}, {"event_id", 3}};
     auto call = std::make_shared<const ir::Call>("system.set_cross_core", std::vector<ir::ExprPtr>{}, kwargs,
@@ -576,7 +547,7 @@ TEST(BackendCceOpsTest, SetCrossCoreA5IntraBlock)
     EXPECT_NE(generated.find("set_intra_block(PIPE_V, 3);"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, WaitCrossCoreA5IntraBlock)
+TEST(BackendCceOpsTest, WaitCrossCore3510IntraBlock)
 {
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 2}, {"event_id", 3}};
     auto call = std::make_shared<const ir::Call>("system.wait_cross_core", std::vector<ir::ExprPtr>{}, kwargs,
@@ -588,7 +559,7 @@ TEST(BackendCceOpsTest, WaitCrossCoreA5IntraBlock)
     EXPECT_NE(generated.find("wait_intra_block(PIPE_V, 3);"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, SetCrossCoreDynA5IntraBlock)
+TEST(BackendCceOpsTest, SetCrossCoreDyn3510IntraBlock)
 {
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 2}};
     auto call = std::make_shared<const ir::Call>("system.set_cross_core_dyn", std::vector<ir::ExprPtr>{MakeConstInt(8)},
@@ -600,7 +571,7 @@ TEST(BackendCceOpsTest, SetCrossCoreDynA5IntraBlock)
     EXPECT_NE(generated.find("set_intra_block(PIPE_V, 8);"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, WaitCrossCoreDynA5IntraBlock)
+TEST(BackendCceOpsTest, WaitCrossCoreDyn3510IntraBlock)
 {
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 2}};
     auto call = std::make_shared<const ir::Call>(
@@ -612,7 +583,7 @@ TEST(BackendCceOpsTest, WaitCrossCoreDynA5IntraBlock)
     EXPECT_NE(generated.find("wait_intra_block(PIPE_V, 8);"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, CubeCrossCoreA5IntraBlockSignalsBothVectorSubcores)
+TEST(BackendCceOpsTest, CubeCrossCore3510IntraBlockSignalsBothVectorSubcores)
 {
     Kwargs static_kwargs = {{"pipe", 4}, {"sync_mode", 2}, {"event_id", 3}};
     auto set_call = std::make_shared<const ir::Call>("system.set_cross_core", std::vector<ir::ExprPtr>{}, static_kwargs,
@@ -632,7 +603,7 @@ TEST(BackendCceOpsTest, CubeCrossCoreA5IntraBlockSignalsBothVectorSubcores)
     EXPECT_NE(generated.find("wait_intra_block(PIPE_V, 19);"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, CubeCrossCoreDynamicA5IntraBlockSignalsBothVectorSubcores)
+TEST(BackendCceOpsTest, CubeCrossCoreDynamic3510IntraBlockSignalsBothVectorSubcores)
 {
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 2}};
     auto event_id = MakeVar("event_id", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
@@ -663,7 +634,7 @@ TEST(BackendCceOpsTest, MutexLock)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("get_buf(PIPE_S, 1, 0);"), std::string::npos);
 }
 
@@ -673,7 +644,7 @@ TEST(BackendCceOpsTest, MutexUnlock)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("rls_buf(PIPE_S, 1, 0);"), std::string::npos);
 }
 
@@ -683,7 +654,7 @@ TEST(BackendCceOpsTest, MutexLockDyn)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("get_buf(PIPE_S, 2, 0);"), std::string::npos);
 }
 
@@ -693,7 +664,7 @@ TEST(BackendCceOpsTest, MutexUnlockDyn)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("rls_buf(PIPE_S, 2, 0);"), std::string::npos);
 }
 
@@ -731,7 +702,7 @@ TEST(BackendCceOpsTest, DynamicVMutexIsAlwaysEmitted)
 }
 
 // ============================================================================
-// A5-specific: set_mm_layout_transform
+// 3510-specific: set_mm_layout_transform
 // ============================================================================
 
 TEST(BackendCceOpsTest, SetMmLayoutTransformEnabled)
@@ -772,7 +743,7 @@ TEST(BackendCceOpsTest, PtrAddPtr)
     auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {ptr_var}), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body, {ptr_var}), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("+ 10)"), std::string::npos);
 }
 
@@ -786,7 +757,7 @@ TEST(BackendCceOpsTest, PtrMakePtr)
     auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {ptr_var}), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body, {ptr_var}), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("__gm__ float*"), std::string::npos);
 }
 
@@ -858,7 +829,7 @@ TEST(BackendCceOpsTest, BlockMakeTileAndSetValTile)
                                                      ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     ExpectScalarAccessCode(generated, "setval_tile");
 }
 
@@ -880,7 +851,7 @@ TEST(BackendCceOpsTest, BlockGetValTile)
                                                      ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     ExpectScalarAccessCode(generated, "getval_tile");
 }
 
@@ -898,7 +869,7 @@ TEST(BackendCceOpsTest, BlockGetValTensor)
     auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("*((__gm__ float*)"), std::string::npos);
     EXPECT_NE(generated.find("+ 5)"), std::string::npos);
 }
@@ -913,7 +884,7 @@ TEST(BackendCceOpsTest, BlockGetValTensorInt32CastsResult)
     auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_3510);
     ExpectScalarAccessCode(generated, "getval_tensor_int32");
 }
 
@@ -927,7 +898,7 @@ TEST(BackendCceOpsTest, BlockGetValTensorUint64DoesNotCastResult)
     auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("*((__gm__ uint64_t*)"), std::string::npos);
     EXPECT_EQ(generated.find("(uint64_t)(*((__gm__ uint64_t*)"), std::string::npos);
 }
@@ -940,7 +911,7 @@ TEST(BackendCceOpsTest, BlockSetValTensor)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("*((__gm__ float*)"), std::string::npos);
     ExpectScalarAccessCode(generated, "setval_tensor");
 }
@@ -1111,7 +1082,7 @@ TEST(BackendCceOpsTest, SyncAllHardMix)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("SYNCALL<SyncCoreType::Mix>();"), std::string::npos);
 }
 
@@ -1123,7 +1094,7 @@ TEST(BackendCceOpsTest, SyncAllHardAIVOnly)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("SYNCALL<SyncCoreType::AIVOnly>();"), std::string::npos);
 }
 
@@ -1138,7 +1109,7 @@ TEST(BackendCceOpsTest, DcciTensorDefaultKwargs)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("dcci("), std::string::npos);
     EXPECT_NE(generated.find("ENTIRE_DATA_CACHE"), std::string::npos);
     EXPECT_NE(generated.find("CACHELINE_OUT"), std::string::npos);
@@ -1153,7 +1124,7 @@ TEST(BackendCceOpsTest, DcciTensorWithOffsetAndKwargs)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("dcci("), std::string::npos);
     EXPECT_NE(generated.find("SINGLE_CACHE_LINE"), std::string::npos);
     EXPECT_NE(generated.find("CACHELINE_UB"), std::string::npos);
@@ -1190,7 +1161,7 @@ TEST(BackendCceOpsTest, DcciTileDefaultKwargs)
                                                      ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("dcci("), std::string::npos);
     EXPECT_NE(generated.find("__ubuf__ void*"), std::string::npos);
     EXPECT_NE(generated.find("ENTIRE_DATA_CACHE"), std::string::npos);
@@ -1534,7 +1505,7 @@ TEST(BackendCceOpsTest, DebugPrintf)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("pypto::aicore::printf"), std::string::npos);
 }
 
@@ -1546,7 +1517,7 @@ TEST(BackendCceOpsTest, DebugAssert)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("if (!("), std::string::npos);
     EXPECT_NE(generated.find("kernel.py"), std::string::npos);
     EXPECT_NE(generated.find("Assertion failed: x > 0"), std::string::npos);
@@ -1560,7 +1531,7 @@ TEST(BackendCceOpsTest, DebugAssertWithFormatAndArgs)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("if (!("), std::string::npos);
     EXPECT_NE(generated.find("pypto::aicore::printf"), std::string::npos);
 }
@@ -1573,7 +1544,7 @@ TEST(BackendCceOpsTest, DebugAssertWithTextOnlyFormat)
     auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
-    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_2201);
+    auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("pypto::aicore::printf(\"flag is false\\n\")"), std::string::npos);
 }
 

@@ -74,7 +74,7 @@ VF bodies, with VF-specific restrictions: pl.range bounds in [0, 65535], no
       a vf argument within the same loop iteration (runtime scalar phi
       rejected by the SIMD VF codegen interception)
 
-Requires an Ascend 950 (A5) device; skips otherwise.
+Requires an Ascend 950 (3510) device; skips otherwise.
 """
 
 import os
@@ -324,7 +324,7 @@ def _check_npu():
         torch.npu.set_device(_device())
         name = torch.npu.get_device_name()
         if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
+            pytest.skip(f"Device {name} is not 3510/9201 (Ascend950/Ascend960). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")

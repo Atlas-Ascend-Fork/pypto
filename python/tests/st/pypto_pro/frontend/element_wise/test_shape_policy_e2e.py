@@ -11,7 +11,7 @@
 
 """End-to-end shape-policy verification on real NPU.
 
-These tests launch simple element-wise add kernels on A5 hardware to confirm that each
+These tests launch simple element-wise add kernels on 3510 hardware to confirm that each
 shape-policy combination (DYNAMIC / STATIC / mixed / ellipsis) produces numerically correct
 results across multiple runtime shapes, and that the compile cache behaves as specified:
 
@@ -23,7 +23,7 @@ Each test asserts BOTH correctness (vs torch golden) and cache size (vs expected
 count), so a regression that produces right numbers but wrong caching — or vice versa —
 is caught.
 
-Requires an Ascend 950 (A5) device; skips otherwise.
+Requires an Ascend 950 (3510) device; skips otherwise.
 """
 
 import logging
@@ -54,7 +54,7 @@ def _check_npu():
         torch.npu.set_device(ST_DEVICE)
         name = torch.npu.get_device_name()
         if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-            pytest.skip(f"Device {name} is not A5/A6 (Ascend950/Ascend960). Skip.")
+            pytest.skip(f"Device {name} is not 3510/9201 (Ascend950/Ascend960). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")

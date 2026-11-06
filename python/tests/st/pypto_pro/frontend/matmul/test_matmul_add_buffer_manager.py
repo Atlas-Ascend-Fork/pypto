@@ -41,7 +41,7 @@ TILE_N = 64
 
 
 @pl.jit(auto_mutex=True)
-def tiled_matmul_add_db_a6(
+def tiled_matmul_add_db_9201(
     a: pl.Tensor[[M_SIZE, K_SIZE], pl.DT_FP16],
     b: pl.Tensor[[K_SIZE, N_SIZE], pl.DT_FP16],
     x: pl.Tensor[[M_SIZE, N_SIZE], pl.DT_FP32],
@@ -147,15 +147,15 @@ def tiled_matmul_add_db_a6(
 
 
 @pytest.mark.soc("960")
-def test_tiled_matmul_add_db_a6_npu():
-    """End-to-end NPU test (A6 only)."""
+def test_tiled_matmul_add_db_9201_npu():
+    """End-to-end NPU test (9201 only)."""
 
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)
     device = f"npu:{device_id}"
     device_name = torch.npu.get_device_name()
     if "Ascend960" not in device_name:
-        pytest.skip(f"Device {device_name} is not A6 (Ascend960). Skip.")
+        pytest.skip(f"Device {device_name} is not 9201 (Ascend960). Skip.")
 
     torch.manual_seed(42)
     a = torch.randn(M_SIZE, K_SIZE, device=device, dtype=torch.float16)
@@ -164,7 +164,7 @@ def test_tiled_matmul_add_db_a6_npu():
     out = torch.zeros(M_SIZE, N_SIZE, device=device, dtype=torch.float32)
     workspace = torch.zeros(M_SIZE, N_SIZE, device=device, dtype=torch.float32)
 
-    tiled_matmul_add_db_a6[None, 1](a, b, x, out, workspace)
+    tiled_matmul_add_db_9201[None, 1](a, b, x, out, workspace)
     torch.npu.synchronize()
 
     out_ref = torch.matmul(a.float(), b.float()) + x
@@ -283,14 +283,14 @@ def tiled_matmul_add_db(
 
 @pytest.mark.soc("950")
 def test_tiled_matmul_add_db_npu():
-    """End-to-end NPU test (A5 only)."""
+    """End-to-end NPU test (3510 only)."""
 
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)
     device = f"npu:{device_id}"
     device_name = torch.npu.get_device_name()
     if "Ascend950" not in device_name:
-        logging.info("Current device is %s, not A5. Skip.", device_name)
+        logging.info("Current device is %s, not 3510. Skip.", device_name)
         return
 
     torch.manual_seed(42)

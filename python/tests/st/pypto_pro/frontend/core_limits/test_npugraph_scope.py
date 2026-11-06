@@ -69,8 +69,8 @@ def test_npugraph_ex_scope(kind, explicit_stream):
 @pytest.mark.soc("960")
 @pytest.mark.parametrize("kind", [1, 2], ids=["vector", "mixed"])
 @pytest.mark.parametrize("explicit_stream", [False, True], ids=["implicit_scope", "explicit_scope"])
-def test_npugraph_ex_scope_a6(kind, explicit_stream):
-    """A6 (1:1) variant: mixed block budget is min(cube, vector), not min(cube, vector//2)."""
+def test_npugraph_ex_scope_9201(kind, explicit_stream):
+    """9201 (1:1) variant: mixed block budget is min(cube, vector), not min(cube, vector//2)."""
     torch.npu.set_device(DEVICE_ID)
     x = torch.zeros(1, device=f"npu:{DEVICE_ID}")
     # Warm the JIT outside capture while preserving the custom-op boundary in the FX graph.

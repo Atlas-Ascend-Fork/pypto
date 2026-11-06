@@ -635,6 +635,8 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& inputProgram, npu::
     arch_ = arch;
     PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, arch_ != npu::tile_fwk::NPUArch::DAV_UNKNOWN)
         << "unknown arch '" << npu::tile_fwk::NPUArchToString(arch_) << "'";
+    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsRegisterBasedArch())
+        << "PyPTO Pro only supports arch '3510' or '9201', got '" << npu::tile_fwk::NPUArchToString(arch_) << "'";
 
     // Parser-produced Programs always carry the tuple metadata table created at
     // the top-level parse entry. Codegen relies on absence *within* that table to
@@ -727,13 +729,9 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& inputProgram, npu::
     std::string simdFuncCode = emitter_.GetCode();
     emitter_.Clear();
 
-    // A5/A6 use hardware synchronization; other architectures require FFTS setup.
-    bool hasCrossSync = DetectCrossCoreSyncOps(kernelFunc->body_);
-    bool needsFfts = hasCrossSync && !IsRegisterBasedArch();
-
     ResetFunctionGenerationState();
     RegisterTilingStructTypes(kernelFunc);
-    GenerateSinglePrologue(kernelFunc, needsFfts);
+    GenerateSinglePrologue(kernelFunc);
     GenerateBody(kernelFunc);
 
     std::string functionCode = emitter_.GetCode();
@@ -807,7 +805,7 @@ std::vector<ir::VarPtr> CollectDynamicDimVars(const ir::FunctionPtr& func)
 // Phase 6 helpers: GenerateSinglePrologue sub-functions
 // ========================================================================
 
-void CCECodegen::EmitSingleFunctionSignature(const ir::FunctionPtr& func, bool hasCrossSync)
+void CCECodegen::EmitSingleFunctionSignature(const ir::FunctionPtr& func)
 {
     // Collect dynamic dim variables from tensor shapes (first-occurrence order)
     std::vector<ir::VarPtr> dynDimVars = CollectDynamicDimVars(func);
@@ -880,11 +878,6 @@ void CCECodegen::EmitSingleFunctionSignature(const ir::FunctionPtr& func, bool h
         first = false;
         sig << "int64_t " << context_.SanitizeName(dynVar);
     }
-    if (hasCrossSync) {
-        if (!first)
-            sig << ", ";
-        sig << "__gm__ int64_t* ffts_addr";
-    }
     sig << ")";
 
     emitter_.EmitLine(sig.str());
@@ -897,14 +890,6 @@ void CCECodegen::EmitSingleFunctionSignature(const ir::FunctionPtr& func, bool h
         context_.RegisterVar(dynVar, paramName);
     }
 
-    // Emit set_ffts_base_addr if cross-core sync
-    if (hasCrossSync) {
-        emitter_.EmitLine("set_ffts_base_addr((unsigned long)ffts_addr);");
-    }
-    if (target_ == ir::SectionKind::Vector && arch_ == npu::tile_fwk::NPUArch::DAV_2201) {
-        emitter_.EmitLine("set_mask_norm();");
-        emitter_.EmitLine("set_vector_mask(-1, -1);");
-    }
     emitter_.EmitLine("");
 }
 
@@ -925,9 +910,9 @@ void CCECodegen::EmitSingleTensorDeclarations(const ir::FunctionPtr& func)
     }
 }
 
-void CCECodegen::GenerateSinglePrologue(const ir::FunctionPtr& func, bool hasCrossSync)
+void CCECodegen::GenerateSinglePrologue(const ir::FunctionPtr& func)
 {
-    EmitSingleFunctionSignature(func, hasCrossSync);
+    EmitSingleFunctionSignature(func);
     // Tiling struct variable definition + GM copy must come first: the very next decls
     // (tensors/tiles with dynamic shapes) and the body read `tiling.field`.
     EmitTilingStructCopy(func);
@@ -943,33 +928,6 @@ void CCECodegen::VisitStmt_(const ir::SectionStmtPtr& op)
     // no SectionStmt can survive into CCE codegen.
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, false)
         << "SectionStmt must be eliminated or projected before CCE CodeGen";
-}
-
-bool CCECodegen::DetectCrossCoreSyncOps(const ir::StmtPtr& stmt)
-{
-    if (!stmt)
-        return false;
-
-    class CrossCoreSyncDetector : public ir::IRVisitor {
-        using ir::IRVisitor::VisitExpr_;
-        using ir::IRVisitor::VisitStmt_;
-
-    public:
-        bool found = false;
-        void VisitExpr_(const ir::CallPtr& op) override
-        {
-            const std::string& name = op->name_;
-            if (name == "system.set_cross_core" || name == "system.wait_cross_core" ||
-                name == "system.set_cross_core_dyn" || name == "system.wait_cross_core_dyn") {
-                found = true;
-            }
-            ir::IRVisitor::VisitExpr_(op);
-        }
-    };
-
-    CrossCoreSyncDetector detector;
-    detector.VisitStmt(stmt);
-    return detector.found;
 }
 
 // The two generic dispatch entries are the only gate the codegen walk passes, so

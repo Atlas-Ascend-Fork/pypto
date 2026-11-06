@@ -11,8 +11,6 @@ template<class Tile, uint32_t N> struct SyncedTile {
 #include <pypto_dump.h>
 __aicore__ inline void kernel_impl_vector(__gm__ int32_t* data_ptr)
 {
-    set_mask_norm();
-    set_vector_mask(-1, -1);
 
     auto val = ((int64_t)*((__gm__ int32_t*)data_ptr + 5));
 }

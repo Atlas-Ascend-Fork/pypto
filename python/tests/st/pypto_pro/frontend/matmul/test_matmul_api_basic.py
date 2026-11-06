@@ -63,13 +63,13 @@ N_SQ = 128
 TILE_SQ = 128
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
-        pytest.skip("not A5/A6")
+        pytest.skip("not 3510/9201")
 
 
 def _inputs(device, shape, dtype=torch.float16):
@@ -1488,7 +1488,7 @@ def t25_nsq_per_channel_scale_phase(
 @pytest.fixture(scope="module")
 def _device():
     dev = ST_DEVICE
-    _require_a5_or_a6(dev)
+    _require_3510_or_9201(dev)
     return dev
 
 
@@ -1695,7 +1695,7 @@ def test_t25_per_channel_scale_phase(_device):
 # #####################################################################################
 if __name__ == "__main__":
     dev = ST_DEVICE
-    _require_a5_or_a6(dev)
+    _require_3510_or_9201(dev)
 
     all_tests = [
         # Part A: Non-square (t01 ~ t13)

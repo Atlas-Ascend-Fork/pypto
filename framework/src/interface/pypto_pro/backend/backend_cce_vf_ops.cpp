@@ -10,7 +10,7 @@
 
 /**
  * @file backend_950_cce_vf_ops.cpp
- * \brief CCE backend op registration for VF API operations (A5 target).
+ * \brief CCE backend op registration for VF API operations (3510 target).
  *
  * VF ops directly emit CCE intrinsics (vlds, vmax, vdup, etc.) without
  * going through the PTO-ISA intermediate layer.
@@ -2590,7 +2590,7 @@ static std::string EmitVFLn(const ir::CallPtr& op, codegen::CodegenBase& codegen
 }
 
 // ============================================================================
-// Log — vln (natural logarithm, same as Ln on A5/dav_3510)
+// Log — vln (natural logarithm, same as Ln on dav_3510)
 // ============================================================================
 
 static std::string EmitVFLog(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
@@ -3842,17 +3842,18 @@ static std::string EmitVFShift(const ir::CallPtr& op, codegen::CodegenBase& code
             shiftNeed = DataType::INT32;
             shiftUnsigned = DataType::UINT32;
         }
-        // A5's __VF_BINARY_OP overloads take the signed shift operand; A6 (920r1)
+        // 3510's __VF_BINARY_OP overloads take the signed shift operand; 9201 (920r1)
         // defines vshl/vshr in the __VF_SHFT_OP registry, which requires the unsigned
         // type of the data width (u8/u16/u32). Accept either same-width form here and
-        // reinterpret for the A6 call below.
-        const bool isA6 = codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_9201;
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, shiftDt == shiftNeed || (isA6 && shiftDt == shiftUnsigned))
-            << opName << " (vector) shift register must be the " << (isA6 ? "signed or unsigned " : "signed ")
+        // reinterpret for the 9201 call below.
+        const bool is9201 = codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_9201;
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION,
+                          shiftDt == shiftNeed || (is9201 && shiftDt == shiftUnsigned))
+            << opName << " (vector) shift register must be the " << (is9201 ? "signed or unsigned " : "signed ")
             << "type matching the " << DTypeStr(srcDt) << " data width, expected " << DTypeStr(shiftNeed)
-            << (isA6 ? " or " + DTypeStr(shiftUnsigned) : "") << ", got " << DTypeStr(shiftDt);
+            << (is9201 ? " or " + DTypeStr(shiftUnsigned) : "") << ", got " << DTypeStr(shiftDt);
         std::string shiftOperand = shift;
-        if (isA6 && shiftDt != shiftUnsigned) {
+        if (is9201 && shiftDt != shiftUnsigned) {
             shiftOperand = "(RegTensor<" + shiftUnsigned.ToCTypeString() + ">&)" + shift;
         }
         codegen.Emit(vectorInstruction + "(" + dst + ", " + src + ", " + shiftOperand + ", " + mask + ", " + mode +
@@ -4095,7 +4096,7 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
     if (op->HasKwarg("round_mode")) {
         roundMode = VFEnumValueName(ir::EnumToString(static_cast<ir::VFRoundMode>(op->GetKwarg<int>("round_mode"))));
     }
-    // A5 vcvt only supports MODE_ZEROING at the instruction level.
+    // 3510 vcvt only supports MODE_ZEROING at the instruction level.
     std::string modeValue = VFZeroingOnly(op, "vf.astype");
     std::string part;
     if (layout == "ZERO")

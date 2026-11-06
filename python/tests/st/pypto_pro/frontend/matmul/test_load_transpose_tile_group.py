@@ -35,13 +35,13 @@ K = 128
 N = 32
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
-        pytest.skip("not A5/A6")
+        pytest.skip("not 3510/9201")
 
 
 # nn: left as-is (NZ [M,K]), right as-is (NZ [K,N]).
@@ -238,7 +238,7 @@ def _run(kernel, a_arg, b_arg, a, b):
 
 @pytest.fixture(scope="module")
 def _ab():
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.randn([M, K], device=ST_DEVICE, dtype=torch.float16)
     b = torch.randn([K, N], device=ST_DEVICE, dtype=torch.float16)
@@ -271,7 +271,7 @@ def test_group_tt(_ab):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.randn([M, K], device=ST_DEVICE, dtype=torch.float16)
     b = torch.randn([K, N], device=ST_DEVICE, dtype=torch.float16)

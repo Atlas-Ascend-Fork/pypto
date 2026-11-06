@@ -76,7 +76,7 @@ RA1 = Q_F16
 CA0 = 0
 CA1 = QK_HALF_F32
 
-# ---- VEC addresses (248KB on a5) ----
+# ---- VEC addresses (248KB on 3510) ----
 VB4_KV = TS_HALF * TKV * 4
 VB2_KV = TS_HALF * TKV * 2
 VB4 = TS_HALF * TD * 4

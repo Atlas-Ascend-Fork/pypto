@@ -141,7 +141,7 @@ def _parse_simt_launch(parser: Any, call: ast.Call, local_name: str, callee_temp
 
     span = parser.span_tracker.get_span(call)
     if get_current_arch() == NpuArch.DAV_9201:
-        raise NotSupported("SIMT vector-function launch is not supported on A6 (arch='9201')", span=span)
+        raise NotSupported("SIMT vector-function launch is not supported on 9201 (arch='9201')", span=span)
     if parser._current_func_type in (
         _ir_core.FunctionType.SimtVF,
         _ir_core.FunctionType.SimtCallee,

@@ -31,14 +31,14 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5_or_a6() -> None:
+def _require_3510_or_9201() -> None:
     try:
         torch.npu.set_device(ST_DEVICE)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     device_name = torch.npu.get_device_name()
     if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {device_name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+        pytest.skip(f"Current device is {device_name}, not 3510/9201 (Ascend950/Ascend960). Skip.")
 
 
 # mutex_lock.md and mutex_unlock.md: one input UB crosses MTE2 -> V and one output
@@ -95,7 +95,7 @@ def sync_all_kernel(
 @pytest.mark.soc("950", "960")
 def test_mutex_lock_unlock_doc_example():
     """Manual mutex is the only MTE2 -> V -> MTE3 ordering mechanism."""
-    _require_a5_or_a6()
+    _require_3510_or_9201()
     torch.manual_seed(0)
     x = torch.randn((64, 64), device=ST_DEVICE, dtype=torch.float32)
     out = torch.empty_like(x)
@@ -115,7 +115,7 @@ def test_sync_all_doc_example(used_cores):
     This case checks barrier participation/liveness and operator precision. It
     does not claim to verify cross-core GM data visibility.
     """
-    _require_a5_or_a6()
+    _require_3510_or_9201()
     torch.manual_seed(0)
     x = torch.randn((2048, 64), device=ST_DEVICE, dtype=torch.float32)
     out = torch.empty_like(x)

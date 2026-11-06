@@ -33,8 +33,8 @@ def _dynamic_sync_kernel(x: pl.Tensor[[1], pl.DT_INT32], event_id: pl.DT_INT32):
 
 @pytest.mark.parametrize("kernel", [_static_sync_kernel, _dynamic_sync_kernel])
 @pytest.mark.parametrize("arch,expected_calls", [(NpuArch.DAV_3510, 2), (NpuArch.DAV_9201, 1)])
-def test_cube_intra_block_sync_uses_cv_ratio(kernel, arch, expected_calls, a6_codegen):
-    cube, _ = a6_codegen(kernel.to_kernel_def(), arch)
+def test_cube_intra_block_sync_uses_cv_ratio(kernel, arch, expected_calls, codegen_9201):
+    cube, _ = codegen_9201(kernel.to_kernel_def(), arch)
     cpp = cube.content
 
     assert cpp.count("set_intra_block(PIPE_S,") == expected_calls
@@ -46,7 +46,7 @@ def test_cube_intra_block_sync_uses_cv_ratio(kernel, arch, expected_calls, a6_co
 @pytest.mark.parametrize("arch", [NpuArch.DAV_3510, NpuArch.DAV_9201])
 @pytest.mark.parametrize("dynamic", [False, True])
 @pytest.mark.parametrize("mode", [pl.CrossCoreSyncMode.INTER_BLOCK, pl.CrossCoreSyncMode.INTER_SUBBLOCK])
-def test_cross_block_sync_codegen_matches_jit(arch, dynamic, mode, monkeypatch, a6_codegen, assert_a6_golden):
+def test_cross_block_sync_codegen_matches_jit(arch, dynamic, mode, monkeypatch, codegen_9201, assert_9201_golden):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", str(arch))
 
     @pl.jit(auto_mutex=False)
@@ -63,10 +63,10 @@ def test_cross_block_sync_codegen_matches_jit(arch, dynamic, mode, monkeypatch, 
                 pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=3, sync_mode=mode)
 
     kernel_def = kernel.to_kernel_def()
-    cube, vector = a6_codegen(kernel_def, arch)
+    cube, vector = codegen_9201(kernel_def, arch)
     for target, result in ((ir.SectionKind.Cube, cube), (ir.SectionKind.Vector, vector)):
         program, _ = kernel_def.parse_target_program(target)
-        assert_a6_golden(program, f"{target.name.lower()}-ir")
+        assert_9201_golden(program, f"{target.name.lower()}-ir")
         raw = CCECodegen(target).generate_single(program, arch)
         assert "ffts_cross_core_sync" in raw
         assert result.content == raw

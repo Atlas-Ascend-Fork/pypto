@@ -9,7 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""ST: pl.dynamic_input_ptr on Ascend A5.
+"""ST: pl.dynamic_input_ptr on Ascend 3510.
 
 A PyPTO kernel consumes a runtime-variadic (DYNAMIC) input by decoding the
 list-tensor descriptor the framework passes.  The ST synthesizes that descriptor
@@ -30,14 +30,14 @@ ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 P = 256
 
 
-def _require_a5():
+def _require_3510():
     try:
         torch.npu.set_device(ST_DEVICE)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510 (Ascend950). Skip.")
 
 
 def _build_list_tensor_desc(addrs):
@@ -104,7 +104,7 @@ def dynamic_input_ptr_sum(
 
 @pytest.mark.soc("950")
 def test_dynamic_input_ptr():
-    _require_a5()
+    _require_3510()
 
     torch.manual_seed(0)
     # N tensors allocated independently (not contiguous), addressed via the descriptor.
@@ -126,7 +126,7 @@ def test_dynamic_input_ptr():
 @pytest.mark.soc("950")
 def test_dynamic_input_ptr_shaped():
     """dim != 0 descriptor form (each entry carries a shape value)."""
-    _require_a5()
+    _require_3510()
 
     torch.manual_seed(0)
     for count in (1, 3, 7):
@@ -190,7 +190,7 @@ def _build_ptr_sum_kernel(dt):
 @pytest.mark.soc("950")
 def test_dynamic_input_ptr_dtype_matrix():
     """Every element width (64/32/16/8-bit) reads through the descriptor correctly."""
-    _require_a5()
+    _require_3510()
 
     for dt, torch_dt in DTYPE_MATRIX:
         kernel = _build_ptr_sum_kernel(dt)
@@ -228,7 +228,7 @@ def dynamic_input_ptr_uint8_view(
 @pytest.mark.soc("950")
 def test_dynamic_input_ptr_uint8_view():
     """pl.make_tensor(dtype=) re-views the descriptor's tensor (here: raw uint8 bytes)."""
-    _require_a5()
+    _require_3510()
 
     torch.manual_seed(0)
     nb = P * 4

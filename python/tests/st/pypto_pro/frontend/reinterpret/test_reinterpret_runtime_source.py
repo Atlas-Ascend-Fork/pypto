@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # Licensed under the CANN Open Software License Agreement Version 2.0.
-"""Check runtime-selected addresses and descriptor independence on A5."""
+"""Check runtime-selected addresses and descriptor independence on 3510."""
 
 import os
 

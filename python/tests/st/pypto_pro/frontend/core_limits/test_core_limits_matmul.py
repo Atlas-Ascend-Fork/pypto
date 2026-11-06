@@ -132,12 +132,12 @@ def test_limited_matmul(limits, capture):
 
 
 @pl.jit(auto_mutex=True)
-def limited_matmul_a6(
+def limited_matmul_9201(
     a: pl.Tensor[[CV_M, CV_TILE_K], pl.DT_FP16],
     b: pl.Tensor[[CV_TILE_K, CV_TILE_N], pl.DT_FP16],
     out: pl.Tensor[[CV_M, CV_TILE_N], pl.DT_FP32],
 ):
-    """A6 (1 Cube : 1 Vector) variant: full-M Acc->Vec move, no dual split."""
+    """9201 (1 Cube : 1 Vector) variant: full-M Acc->Vec move, no dual split."""
     a_l1_group = pl.make_tile_group(
         type=pl.TileType(
             shape=[CV_TILE_M, CV_TILE_K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
@@ -208,8 +208,8 @@ def limited_matmul_a6(
 @pytest.mark.soc("960")
 @pytest.mark.parametrize("limits", [(4, 16), (8, 5)])
 @pytest.mark.parametrize("capture", [False, True], ids=["eager", "graph"])
-def test_limited_matmul_a6(limits, capture):
-    """A6 (1:1) variant: full-M vector store exercises the limited group's cross-core waits."""
+def test_limited_matmul_9201(limits, capture):
+    """9201 (1:1) variant: full-M vector store exercises the limited group's cross-core waits."""
     torch.npu.set_device(DEVICE_ID)
     a_host = (torch.arange(CV_M * CV_TILE_K).reshape(CV_M, CV_TILE_K) % 17).to(torch.float16)
     b_host = (torch.arange(CV_TILE_K * CV_TILE_N).reshape(CV_TILE_K, CV_TILE_N) % 13).to(torch.float16)
@@ -220,18 +220,18 @@ def test_limited_matmul_a6(limits, capture):
     s = torch.npu.Stream()
     torch.npu.synchronize()
     with torch.npu.npugraph_ex.scope.limit_core_num(*limits, stream=s), torch.npu.stream(s):
-        limited_matmul_a6(a, b, out)
+        limited_matmul_9201(a, b, out)
         s.synchronize()
         if capture:
             out.zero_()
             torch.npu.synchronize()
             graph = torch.npu.NPUGraph()
             with torch.npu.graph(graph, stream=s):
-                limited_matmul_a6(a, b, out)
+                limited_matmul_9201(a, b, out)
     if capture:
         graph.replay()
     torch.npu.synchronize()
     actual = out.cpu()
     torch.testing.assert_close(actual, golden, rtol=0, atol=0)
-    print(f"mixed matmul (a6 1:1) limits={limits} capture={capture}: "
+    print(f"mixed matmul (9201 1:1) limits={limits} capture={capture}: "
           f"max_abs_error={(actual - golden).abs().max().item()}, exact_match=100%")

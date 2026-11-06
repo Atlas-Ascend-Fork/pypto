@@ -10,7 +10,7 @@
 """scale 量化扩展输出 dtype 正向测试（UINT8 / BF16）。
 
 此前 UINT8 输出、FP32/INT32→BF16 带 scale 组合被守卫错误拒绝（守卫继承自 A2/A3）。
-上板实测（Ascend 950PR）确认 pto-isa A5 的 QF322B8_PRE/REQ8/VREQ8 支持 UINT8 量化、
+上板实测（Ascend 950PR）确认 pto-isa 3510 的 QF322B8_PRE/REQ8/VREQ8 支持 UINT8 量化、
 QS322BF16_PRE/QF322BF16_PRE 支持 BF16 量化，数值与 golden 位级一致。
 守卫移除后，本文件覆盖：
 - FP32(acc) → UINT8（标量 scale）

@@ -9,7 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Tiling op test (A5 CCE): verifies struct-tiling with array fields end-to-end on NPU.
+"""Tiling op test (3510 CCE): verifies struct-tiling with array fields end-to-end on NPU.
 
 The tiling class mixes scalar and int[N] fields. ``opkind`` is an int[8]
 whose real operation selector lives at ``opkind[4]``; the kernel reads ``tiling.opkind[4]``

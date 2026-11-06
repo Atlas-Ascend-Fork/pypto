@@ -10,7 +10,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""FlashAttention with a tilingkey-templated attention-mask switch (A5 CCE).
+"""FlashAttention with a tilingkey-templated attention-mask switch (3510 CCE).
 
 This mirrors ``test_fa_perf_tkv_preload_dn_vf_bufid_bsnd.py`` but promotes the
 "needs attention mask" decision from a Python literal to a **tilingkey template

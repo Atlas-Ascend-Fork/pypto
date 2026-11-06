@@ -69,7 +69,7 @@ void BindCodegen(py::module_& m)
             py::arg("program"), py::arg("arch"),
             "Generate a single C++ file from a target-specific PyPTO IR Program. "
             "Runs IR passes and generates an AICORE function with its target guard, "
-            "constexpr scalars, and FFTS support. Returns C++ code as a single string.")
+            "constexpr scalars, and cross-core sync lowering. Returns C++ code as a single string.")
         .def(
             "get_tiling_headers", [](const CCECodegen& self) { return self.GetTilingHeaders(); },
             "Tiling struct headers from the last generate_single call, as a dict mapping "

@@ -209,7 +209,7 @@ def test_builder_leaves_unaligned_spaces_alone():
     assert make_mutex_tile_expr([64, 64], pl.DT_FP16, pl.MemorySpace.DDR, addr=1).kwargs["memref_addr"] == 1
 
 
-def test_a6_warns_and_skips_unknown_capacity(monkeypatch, assert_a6_golden):
+def test_9201_warns_and_skips_unknown_capacity(monkeypatch, assert_9201_golden):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "9201")
 
     def unknown_capacity(arch, memory_space):
@@ -220,7 +220,7 @@ def test_a6_warns_and_skips_unknown_capacity(monkeypatch, assert_a6_golden):
     monkeypatch.setattr("pypto_pro.runtime.platform.get_memory_limit", unknown_capacity)
     with pytest.warns(CapacityUnknown, match="Cannot determine Vec capacity"):
         tile = make_mutex_tile_expr([1, 32], pl.DT_FP16, pl.MemorySpace.Vec, addr=0)
-    assert_a6_golden(tile)
+    assert_9201_golden(tile)
     assert tile.kwargs["memref_addr"] == 0
 
 

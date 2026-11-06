@@ -51,7 +51,7 @@ from ._api import DType, _api_decl
 
 
 class Vf:
-    """Vector Function unit operations (A5 architecture).
+    """Vector Function unit operations (3510 architecture).
 
     Used inside ``@pl.vector_function`` decorated functions.  Compute ops
     produce a result and must use the assignment form ``dst = vf.xxx(...)``;

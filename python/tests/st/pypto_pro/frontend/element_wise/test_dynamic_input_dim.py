@@ -9,7 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""ST: pl.dynamic_input_dim on Ascend A5.
+"""ST: pl.dynamic_input_dim on Ascend 3510.
 
 A runtime-variadic (DYNAMIC) input descriptor in the ``dim != 0`` form carries one shape
 value per tensor axis.  The ST synthesizes such a descriptor (dim == 1 / 2 / 3) and checks
@@ -32,14 +32,14 @@ ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 MAX_AXIS = 4  # upper bound on the axes this ST exercises (dim <= MAX_AXIS)
 
 
-def _require_a5():
+def _require_3510():
     try:
         torch.npu.set_device(ST_DEVICE)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510 (Ascend950). Skip.")
 
 
 def _build_list_tensor_desc_shaped(addrs, dim, shapes):
@@ -78,7 +78,7 @@ def dynamic_input_dim_read(
 
 @pytest.mark.soc("950")
 def test_dynamic_input_dim():
-    _require_a5()
+    _require_3510()
 
     torch.manual_seed(0)
     # Generic over dim: the descriptor's shape stride is 1 + dim at runtime.

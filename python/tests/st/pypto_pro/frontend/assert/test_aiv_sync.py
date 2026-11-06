@@ -11,7 +11,7 @@
 
 """AIV 间同步（INTER_SUBBLOCK）功能验证 — 验证同一 AI Core 内部两个 AIV 子核之间的 barrier 同步。
 
-A5 架构中一个 AI Core 含 1 AIC + 2 AIV。sync_mode=INTER_SUBBLOCK 的 set_cross_core 实现
+3510 架构中一个 AI Core 含 1 AIC + 2 AIV。sync_mode=INTER_SUBBLOCK 的 set_cross_core 实现
 AIV-to-AIV 的 barrier：两个 AIV 都 set 后，wait 才能通过。
 
 通过 enable_sync=True 验证同步生效。
@@ -38,7 +38,7 @@ def _check_npu():
         torch.npu.set_device(ST_DEVICE)
         name = torch.npu.get_device_name()
         if "Ascend950" not in name:
-            pytest.skip(f"Device {name} is not A5 (Ascend950). Skip.")
+            pytest.skip(f"Device {name} is not 3510 (Ascend950). Skip.")
         return True
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")

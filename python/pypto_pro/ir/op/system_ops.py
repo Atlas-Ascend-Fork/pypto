@@ -42,9 +42,9 @@ MAX_MUTEX_ID = 31  # tile mutex ids
 MAX_AIC_ICACHE_PRELOAD_LEN = 15
 MAX_AIV_ICACHE_PRELOAD_LEN = 7
 
-# A5/A6 intra-core flag paths are execution-side specific. The maps are
+# 3510/9201 intra-core flag paths are execution-side specific. The maps are
 # directional: each key is set_pipe and its value contains valid wait_pipe values.
-_A5_AIC_SYNC_WAIT_PIPES = {
+_3510_AIC_SYNC_WAIT_PIPES = {
     PipeType.MTE1: (PipeType.MTE2, PipeType.M, PipeType.MTE3, PipeType.FIX),
     PipeType.MTE2: (
         PipeType.MTE1,
@@ -65,7 +65,7 @@ _A5_AIC_SYNC_WAIT_PIPES = {
     ),
 }
 
-_A5_AIV_SYNC_WAIT_PIPES = {
+_3510_AIV_SYNC_WAIT_PIPES = {
     PipeType.MTE2: (PipeType.V, PipeType.MTE3, PipeType.S),
     PipeType.MTE3: (PipeType.V, PipeType.MTE2, PipeType.S),
     PipeType.V: (PipeType.MTE2, PipeType.MTE3, PipeType.S),
@@ -115,7 +115,7 @@ def _validate_sync_pipes(
         raise InvalidOperation(f"set_pipe and wait_pipe must differ, got {set_pipe}")
 
     is_cube = target == _ir_core.SectionKind.Cube
-    sync_wait_pipes = _A5_AIC_SYNC_WAIT_PIPES if is_cube else _A5_AIV_SYNC_WAIT_PIPES
+    sync_wait_pipes = _3510_AIC_SYNC_WAIT_PIPES if is_cube else _3510_AIV_SYNC_WAIT_PIPES
     supported_wait_pipes = sync_wait_pipes.get(set_pipe, ())
     side = " on AIC" if is_cube else " on AIV"
 
@@ -442,7 +442,7 @@ def icache_preload(prefetch_len: Expr, *, span: Span | None = None) -> Call:
 
 
 # ============================================================================
-# Mutex (Buffer-ID Token) — A5/A6
+# Mutex (Buffer-ID Token) — 3510/9201
 # ----------------------------------------------------------------------------
 # Alternative to event-id based sync_src/sync_dst: uses a buffer-id token
 # (MutexID, range 0-31) to enforce ordering between pipes. Lowered to
@@ -495,7 +495,7 @@ def mutex_lock(
     mutex_id: Expr,
     span: Span | None = None,
 ) -> Call:
-    """Acquire a Mutex buffer-id token on ``pipe`` (A5/A6).
+    """Acquire a Mutex buffer-id token on ``pipe`` (3510/9201).
 
     Blocks the ``pipe`` instruction queue until the previous holder of
     ``mutex_id`` releases it via :func:`mutex_unlock`.
@@ -522,7 +522,7 @@ def mutex_unlock(
     mutex_id: Expr,
     span: Span | None = None,
 ) -> Call:
-    """Release a previously acquired Mutex buffer-id token on ``pipe`` (A5/A6).
+    """Release a previously acquired Mutex buffer-id token on ``pipe`` (3510/9201).
 
     Must be paired with :func:`mutex_lock` on the same ``pipe`` and
     ``mutex_id``.

@@ -56,24 +56,24 @@ TILE_M, TILE_N, TILE_K = 64, 64, 64
 
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if "Ascend950" not in name:
-        pytest.skip(f"Current device is {name}, not A5 (Ascend950). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510 (Ascend950). Skip.")
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510/9201 (Ascend950/Ascend960). Skip.")
 
 
 def _inputs(device, shape, dtype=torch.float16):
@@ -118,7 +118,7 @@ def clean_kernel(
 @pytest.mark.soc("950", "960")
 def test_gm_out_of_bounds_detected():
     """负样本：GM 访问超出逻辑 shape 应被回放检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M, TILE_N])
     z = torch.zeros([TILE_M, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -131,7 +131,7 @@ def test_gm_out_of_bounds_detected():
 @pytest.mark.soc("950", "960")
 def test_clean_no_false_positive():
     """正样本：合法访问不应有任何回放检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M, TILE_N])
     z = torch.zeros([TILE_M, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     clean_kernel(x, z)
@@ -163,7 +163,7 @@ def overlap_kernel(
 @pytest.mark.soc("950", "960")
 def test_tile_overlap_detected():
     """负样本：两个 tile 物理地址区间相交应被检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M, TILE_N])
     z = torch.zeros([TILE_M, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -197,7 +197,7 @@ def tile_ok_kernel(
 @pytest.mark.soc("950", "960")
 def test_tile_ok_no_false_positive():
     """正样本：合法访问不误报。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M, TILE_N])
     z = torch.zeros([TILE_M, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     tile_ok_kernel(x, z)
@@ -225,7 +225,7 @@ def tile_dim_oob_kernel(
 @pytest.mark.soc("950", "960")
 def test_tile_dim_oob_detected():
     """负样本：运行时有效窗口超出 TileType 声明维度应由回放检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M * 2, TILE_N])
     z = torch.zeros([TILE_M * 2, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -259,7 +259,7 @@ def tile_move_offset_oob_kernel(
 @pytest.mark.soc("950", "960")
 def test_tile_move_offset_oob_detected():
     """负样本：move 目标 offset+window 超出声明维度应被运行时回放检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M * 2, TILE_N])
     z = torch.zeros([TILE_M * 2, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -396,7 +396,7 @@ def rank1_clean_kernel(
 @pytest.mark.soc("950")
 def test_rank1_column_tile_oob_detected():
     """负样本：rank-1 列向量 tile 越界应被检出（win_ax 乘积窗口修复）。"""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     x = _inputs(ST_DEVICE, [R1_LEN])
     z = torch.zeros([R1_LEN], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -410,7 +410,7 @@ def test_rank1_column_tile_oob_detected():
 @pytest.mark.soc("950")
 def test_rank1_row_tile_oob_detected():
     """负样本：rank-1 行向量 tile 越界应被检出（回归）。"""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     x = _inputs(ST_DEVICE, [R1_LEN])
     z = torch.zeros([R1_LEN], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -424,7 +424,7 @@ def test_rank1_row_tile_oob_detected():
 @pytest.mark.soc("950")
 def test_rank1_tile_clean():
     """正样本：rank-1 边界贴合访问不应误报。"""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     x = _inputs(ST_DEVICE, [R1_LEN])
     z = torch.zeros([R1_LEN], device=ST_DEVICE, dtype=torch.float16)
     rank1_clean_kernel(x, z)
@@ -467,7 +467,7 @@ def order_nontrailing_clean_kernel(
 @pytest.mark.soc("950")
 def test_order_nontrailing_oob_detected():
     """负样本：非尾部 order 的窗口越界（S 轴）应被检出（win_ax 修复）。"""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     x = _inputs(ST_DEVICE, list(O4))
     z = torch.zeros(list(O4), device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -481,7 +481,7 @@ def test_order_nontrailing_oob_detected():
 @pytest.mark.soc("950")
 def test_order_nontrailing_clean():
     """正样本：非尾部 order 干净访问不应误报。"""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     x = _inputs(ST_DEVICE, list(O4))
     z = torch.zeros(list(O4), device=ST_DEVICE, dtype=torch.float16)
     order_nontrailing_clean_kernel(x, z)
@@ -509,7 +509,7 @@ def transpose_oob_kernel(
 @pytest.mark.soc("950")
 def test_transpose_window_axes_detected():
     """负样本：转置 load 的窗口贴轴交换后，M 轴越界应按 acc_row 窗口检出。"""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     x = _inputs(ST_DEVICE, [128, 96])
     with pytest.raises(SanitizerReplayError) as exc_info:
         transpose_oob_kernel(x)
@@ -569,7 +569,7 @@ def gm_5d_oob_kernel(
 @pytest.mark.soc("950", "960")
 def test_gm_5d_oob_detected():
     """负样本：5 维 tensor 第 4 维偏移越界应被检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, list(D5))
     z = torch.zeros(list(D5), device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -603,7 +603,7 @@ def no_sanitizer_kernel(
 @pytest.mark.soc("950", "960")
 def test_no_sanitizer_unchanged():
     """默认不开 sanitizer：kernel 正常执行且不产生回放报告。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M, TILE_N])
     z = torch.zeros([TILE_M, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     no_sanitizer_kernel(x, z)
@@ -655,7 +655,7 @@ def loop_ok_kernel(
 @pytest.mark.soc("950", "960")
 def test_loop_mid_iteration_oob_detected():
     """循环中间轮越界必须被检出（记录追加，不被末轮覆盖）。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M * 2 - 32, TILE_N])
     z = torch.zeros([TILE_M * 2 - 32, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -668,7 +668,7 @@ def test_loop_mid_iteration_oob_detected():
 @pytest.mark.soc("950", "960")
 def test_loop_ok_no_false_positive():
     """合法循环（每轮读写各自区间）不应误报。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M * 2, TILE_N])
     z = torch.zeros([TILE_M * 2, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     loop_ok_kernel(x, z)
@@ -888,7 +888,7 @@ def _mm_inputs(device):
 @pytest.mark.soc("950")
 def test_mm_complex_clean_no_false_positive():
     """正样本：3 层循环 + 4 嵌套分支 + 8 核 ASW matmul，不误报且结果正确。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     a, b = _mm_inputs(ST_DEVICE)
     out = torch.zeros([MM_ROWS, MM_COLS], device=ST_DEVICE, dtype=torch.float16)
     mm_complex_clean_kernel[None, 8](a, b, out)
@@ -901,7 +901,7 @@ def test_mm_complex_clean_no_false_positive():
 @pytest.mark.soc("950")
 def test_mm_complex_oob_detected():
     """负样本：K 宽块 load 列偏移 +8，仅 N 尾块（j=256, valid_n=48）越界。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     a, b = _mm_inputs(ST_DEVICE)
     out = torch.zeros([MM_ROWS, MM_COLS], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -963,7 +963,7 @@ def mutex_unpaired_lock_kernel(
 @pytest.mark.soc("950", "960")
 def test_mutex_ok_no_false_positive():
     """正样本：mutex lock/unlock 正确配对，不误报。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M, TILE_N])
     z = torch.zeros([TILE_M, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     mutex_ok_kernel(x, z)
@@ -974,7 +974,7 @@ def test_mutex_ok_no_false_positive():
 @pytest.mark.soc("950", "960")
 def test_mutex_unlock_before_lock_detected():
     """负样本：unlock 无前置 lock 应检出 MUTEX_UNLOCK_BEFORE_LOCK。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M, TILE_N])
     z = torch.zeros([TILE_M, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -987,7 +987,7 @@ def test_mutex_unlock_before_lock_detected():
 @pytest.mark.soc("950", "960")
 def test_mutex_unpaired_lock_detected():
     """负样本：lock 无配对 unlock 应检出 UNPAIRED_MUTEX_LOCK。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M, TILE_N])
     z = torch.zeros([TILE_M, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -1116,7 +1116,7 @@ def cv_top_tiles_clean_kernel(
 @pytest.mark.soc("950")
 def test_cv_top_level_tiles_no_self_overlap():
     """正样本：顶层 tile 声明进入两个 program 只登记一次，不得误报自重叠。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.rand([CV_M, CV_N], device=ST_DEVICE, dtype=torch.float32) * 2.0 - 1.0
     b = torch.rand([CV_M, CV_K], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
@@ -1195,7 +1195,7 @@ def cv_cube_oob_kernel(
 @pytest.mark.soc("950")
 def test_cv_cube_oob_detected():
     """负样本：混合 kernel 中 Cube 段的 GM 越界必须被检出（不被 Vector 记录覆盖）。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     torch.manual_seed(0)
     a = torch.rand([CV_M, CV_N], device=ST_DEVICE, dtype=torch.float32) * 2.0 - 1.0
     b = torch.rand([CV_M, CV_K], device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
@@ -1234,7 +1234,7 @@ def transpose_load_clean_kernel(
 @pytest.mark.soc("950", "960")
 def test_transpose_load_clean_no_false_positive():
     """正样本：非方阵转置 load 不得误报 GM_OUT_OF_BOUNDS。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [64, 128])
     transpose_load_clean_kernel(x)
     torch.npu.synchronize()
@@ -1269,7 +1269,7 @@ def dynamic_validshape_oob_kernel(
 @pytest.mark.soc("950", "960")
 def test_dynamic_validshape_oob_detected():
     """负样本：动态 set_validshape 窗口超出 tile 声明维度应被运行时检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [128, 64])
     z = torch.zeros([128, 64], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -1295,7 +1295,7 @@ def setval_linear_oob_kernel(
 @pytest.mark.soc("950", "960")
 def test_setval_linear_oob_detected():
     """负样本：setval 线性偏移超出 tensor 元素数应被检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = torch.zeros([64], device=ST_DEVICE, dtype=torch.int32)
     with pytest.raises(SanitizerReplayError) as exc_info:
         setval_linear_oob_kernel(x)
@@ -1330,7 +1330,7 @@ def group_move_offset_oob_kernel(
 @pytest.mark.soc("950", "960")
 def test_group_move_offset_oob_detected():
     """负样本：group 静态下标 move 的 offset+窗口超限应被检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [128, 64])
     z = torch.zeros([128, 64], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -1369,7 +1369,7 @@ def cursor_move_offset_oob_kernel(
 @pytest.mark.soc("950", "960")
 def test_cursor_move_offset_oob_detected():
     """负样本：group 游标 next() 的 move 偏移越界应被检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [128, 64])
     z = torch.zeros([128, 64], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -1409,7 +1409,7 @@ def move_asymmetric_clean_kernel(
 @pytest.mark.soc("950", "960")
 def test_move_asymmetric_clean_no_false_positive():
     """正样本：非对称 tile 的 move 不得因 offset 归属错误而误报。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [64, 64])
     z = torch.zeros([64, 64], device=ST_DEVICE, dtype=torch.float16)
     move_asymmetric_clean_kernel(x, z)
@@ -1446,7 +1446,7 @@ def make_tensor_oob_kernel(
 @pytest.mark.soc("950", "960")
 def test_make_tensor_oob_detected():
     """负样本：kernel 内 make_tensor 视图的越界访问应被检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [64, 64])
     z = torch.zeros([64, 64], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -1479,7 +1479,7 @@ def tensor_alias_oob_kernel(
 @pytest.mark.soc("950", "960")
 def test_tensor_alias_oob_detected():
     """负样本：别名 tensor 的越界访问应被检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [64, 64])
     z = torch.zeros([64, 64], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -1511,7 +1511,7 @@ def make_tensor_clean_kernel(
 @pytest.mark.soc("950", "960")
 def test_make_tensor_clean_no_false_positive():
     """正样本：kernel 内视图与别名的合法访问不误报。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [64, 64])
     z = torch.zeros([64, 64], device=ST_DEVICE, dtype=torch.float16)
     make_tensor_clean_kernel(x, z)
@@ -1544,7 +1544,7 @@ def view_over_source_kernel(
 @pytest.mark.soc("950", "960")
 def test_view_over_source_detected():
     """负样本：视图声明超出源 tensor 分配应在声明期检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [128, 128])
     z = torch.zeros([128, 128], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -1583,7 +1583,7 @@ def chained_view_clean_kernel(
 @pytest.mark.soc("950", "960")
 def test_chained_view_clean_no_false_positive():
     """正样本：链式视图（递归到根）与指针源视图不误报。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [128, 128])
     p_src = _inputs(ST_DEVICE, [64, 64])
     z = torch.zeros([128, 128], device=ST_DEVICE, dtype=torch.float16)
@@ -1619,7 +1619,7 @@ def wide_stride_view_kernel(
 @pytest.mark.soc("950", "960")
 def test_wide_stride_view_detected():
     """负样本：大跨度 stride 的视图 footprint 超源应被检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [128, 128])
     z = torch.zeros([128, 128], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -1652,7 +1652,7 @@ def dtype_reinterpret_view_kernel(
 @pytest.mark.soc("950", "960")
 def test_dtype_reinterpret_view_clean():
     """正样本：字节级等宽的跨 dtype 视图不误报。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [128, 128])
     z = torch.zeros([128, 128], device=ST_DEVICE, dtype=torch.float16)
     dtype_reinterpret_view_kernel(x, z)
@@ -1689,7 +1689,7 @@ def dynamic_view_oob_kernel(
 @pytest.mark.soc("950", "960")
 def test_dynamic_view_oob_detected():
     """负样本：动态 shape 视图的越界访问应由运行时真值检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [128, 128])
     z = torch.zeros([128, 128], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -1722,7 +1722,7 @@ def dynamic_view_over_source_kernel(
 @pytest.mark.soc("950", "960")
 def test_dynamic_view_over_source_detected():
     """负样本：动态 shape 视图的 footprint 超源应被运行时检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [64, 64])
     z = torch.zeros([64, 64], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -1756,7 +1756,7 @@ def tile_getval_oob_kernel(
 @pytest.mark.soc("950", "960")
 def test_tile_getval_oob_detected():
     """负样本：Tile 容器 getval 线性越界应被检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [64, 64])
     z = torch.zeros([64, 64], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -1785,7 +1785,7 @@ def tile_getval_clean_kernel(
 @pytest.mark.soc("950", "960")
 def test_tile_getval_clean_no_false_positive():
     """正样本：Tile 容器 getval 末元素访问不误报。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [64, 64])
     z = torch.zeros([64, 64], device=ST_DEVICE, dtype=torch.float16)
     tile_getval_clean_kernel(x, z)
@@ -1829,7 +1829,7 @@ def alias_rebind_clean_kernel(
 @pytest.mark.soc("950", "960")
 def test_alias_rebind_clean_no_false_positive():
     """正样本：固定指向语义下经别名的合法访问不误报。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [64, 256])
     z = torch.zeros([64, 256], device=ST_DEVICE, dtype=torch.float16)
     alias_rebind_clean_kernel(x, z)
@@ -1871,7 +1871,7 @@ def alias_rebind_oob_kernel(
 @pytest.mark.soc("950", "960")
 def test_alias_rebind_oob_detected():
     """负样本：超出别名所指视图的访问应被检出。"""
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [64, 256])
     z = torch.zeros([64, 256], device=ST_DEVICE, dtype=torch.float16)
     with pytest.raises(SanitizerReplayError) as exc_info:
@@ -1910,7 +1910,7 @@ def test_named_kernel_sanitizer_instrumented():
     @pl.jit(name=...) 与函数名不同时插桩被静默跳过、隐藏参数未追加，
     launch 报 InvalidType: Expected 2 args, got 4。
     """
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     x = _inputs(ST_DEVICE, [TILE_M, TILE_N])
     z = torch.zeros([TILE_M, TILE_N], device=ST_DEVICE, dtype=torch.float16)
     named_clean_kernel(x, z)
@@ -1984,7 +1984,7 @@ def phase_clean_software_sync_kernel(
 
 @pytest.mark.soc("950")
 def test_phase_clean_software_sync():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     logging.info("------------test_phase_clean_software_sync--------------")
     a = _phase_inputs(ST_DEVICE)
     b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
@@ -2018,7 +2018,7 @@ def phase_clean_kchain_kernel(
 
 @pytest.mark.soc("950")
 def test_phase_clean_kchain():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     logging.info("------------test_phase_clean_kchain--------------")
     a = _phase_inputs(ST_DEVICE)
     b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
@@ -2063,7 +2063,7 @@ def phase_control_flow_group_kernel(
 
 @pytest.mark.soc("950")
 def test_phase_control_flow_group_address_is_not_misresolved():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     logging.info("------------test_phase_control_flow_group_address_is_not_misresolved--------------")
     a = _phase_inputs(ST_DEVICE)
     b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
@@ -2101,7 +2101,7 @@ def phase_clean_insert_final_kernel(
 
 @pytest.mark.soc("950")
 def test_phase_clean_insert_final():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     logging.info("------------test_phase_clean_insert_final--------------")
     a = _phase_inputs(ST_DEVICE)
     b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
@@ -2132,7 +2132,7 @@ def phase_a1_mixed_sync_kernel(
 
 @pytest.mark.soc("950")
 def test_phase_a1_mixed_sync_detected():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     logging.info("------------test_phase_a1_mixed_sync_detected--------------")
     a = _phase_inputs(ST_DEVICE)
     b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
@@ -2170,7 +2170,7 @@ def phase_ct1_dangling_final_write_kernel(
 
 @pytest.mark.soc("950")
 def test_phase_ct1_dangling_final_write_detected():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     logging.info("------------test_phase_ct1_dangling_final_write_detected--------------")
     a = _phase_inputs(ST_DEVICE)
     b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
@@ -2213,7 +2213,7 @@ def phase_d1_acc_chain_head_kernel(
 
 @pytest.mark.soc("950")
 def test_phase_d1_acc_chain_head_detected():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     logging.info("------------test_phase_d1_acc_chain_head_detected--------------")
     a = _phase_inputs(ST_DEVICE, m=2 * M_DIM)
     b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
@@ -2247,7 +2247,7 @@ def phase_mid_overwrite_kernel(
 
 @pytest.mark.soc("950")
 def test_phase_mid_overwrite_detected():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     logging.info("------------test_phase_mid_overwrite_detected--------------")
     a = _phase_inputs(ST_DEVICE)
     b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
@@ -2284,7 +2284,7 @@ def phase_write_mixing_kernel(
 
 @pytest.mark.soc("950")
 def test_phase_write_mixing_detected():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     logging.info("------------test_phase_write_mixing_detected--------------")
     a = _phase_inputs(ST_DEVICE)
     b = torch.randn(K_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float16)
@@ -2732,7 +2732,7 @@ def sync_clean_basic_kernel(
 
 @pytest.mark.soc("950")
 def test_sync_clean_basic():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     logging.info("------------test_sync_clean_basic--------------")
     a = torch.randn(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
     b = torch.randn(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
@@ -2770,7 +2770,7 @@ def sync_clean_reuse_kernel(
 
 @pytest.mark.soc("950")
 def test_sync_clean_reuse():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     logging.info("------------test_sync_clean_reuse--------------")
     a = torch.randn(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
     out = torch.zeros(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
@@ -2804,7 +2804,7 @@ def sync_s1_missing_dst_kernel(
 
 @pytest.mark.soc("950")
 def test_sync_s1_missing_dst_detected():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     logging.info("------------test_sync_s1_missing_dst_detected--------------")
     a = torch.randn(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)
     b = torch.randn(M_DIM, N_DIM, device=ST_DEVICE, dtype=torch.float32)

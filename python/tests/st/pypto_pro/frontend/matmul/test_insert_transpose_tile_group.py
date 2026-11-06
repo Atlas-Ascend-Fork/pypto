@@ -37,18 +37,18 @@ SUB = M // 2
 SUB_N = N // 2
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+        pytest.skip("not 3510")
 
 
 # --- LEFT transpose, insert into a group (mirror test_insert_transpose_left.py) --------------
 @pl.jit()
-def insert_group_transpose_left_a6(
+def insert_group_transpose_left_9201(
     d: pl.Tensor[[K, M], pl.DT_FP16], v: pl.Tensor[[K, N], pl.DT_FP16], out: pl.Tensor[[M, N], pl.DT_FP32]
 ):
     p_mat_db = pl.make_tile_group(
@@ -110,12 +110,12 @@ def insert_group_transpose_left_a6(
 # --- RIGHT transpose, insert into a group (mirror test_insert_transpose_right.py) ------------
 
 @pytest.mark.soc("960")
-def test_insert_group_transpose_left_a6():
+def test_insert_group_transpose_left_9201():
     torch.manual_seed(0)
     d = torch.randn([K, M], device=ST_DEVICE, dtype=torch.float16)
     v = torch.randn([K, N], device=ST_DEVICE, dtype=torch.float16)
     out = torch.zeros([M, N], device=ST_DEVICE, dtype=torch.float32)
-    insert_group_transpose_left_a6(d, v, out)
+    insert_group_transpose_left_9201(d, v, out)
     torch.npu.synchronize()
     ref = torch.matmul(d.float().t(), v.float())
     logging.info("insert_group_transpose_left: max|out - d^T@v| = %s", (out - ref).abs().max().item())
@@ -187,7 +187,7 @@ def insert_group_transpose_left(
 
 # --- RIGHT transpose, insert into a group (mirror test_insert_transpose_right.py) ------------
 @pl.jit()
-def insert_group_transpose_right_a6(
+def insert_group_transpose_right_9201(
     lhs: pl.Tensor[[M, K], pl.DT_FP16], d: pl.Tensor[[N, K], pl.DT_FP16], out: pl.Tensor[[M, N], pl.DT_FP32]
 ):
     rhs_mat_db = pl.make_tile_group(
@@ -250,12 +250,12 @@ def insert_group_transpose_right_a6(
 # group Mat NZ [M, K] same-shape -> Left NZ [M, K]: must NOT be swapped.
 
 @pytest.mark.soc("960")
-def test_insert_group_transpose_right_a6():
+def test_insert_group_transpose_right_9201():
     torch.manual_seed(0)
     lhs = torch.randn([M, K], device=ST_DEVICE, dtype=torch.float16)
     d = torch.randn([N, K], device=ST_DEVICE, dtype=torch.float16)
     out = torch.zeros([M, N], device=ST_DEVICE, dtype=torch.float32)
-    insert_group_transpose_right_a6(lhs, d, out)
+    insert_group_transpose_right_9201(lhs, d, out)
     torch.npu.synchronize()
     ref = torch.matmul(lhs.float(), d.float().t())
     logging.info("insert_group_transpose_right: max|out - L@d^T| = %s", (out - ref).abs().max().item())
@@ -328,7 +328,7 @@ def insert_group_transpose_right(
 # --- LEFT no-transpose, insert into a group (mirror test_insert_left.py) ---------------------
 # group Mat NZ [M, K] same-shape -> Left NZ [M, K]: must NOT be swapped.
 @pl.jit()
-def insert_group_left_a6(
+def insert_group_left_9201(
     d: pl.Tensor[[M, K], pl.DT_FP16], v: pl.Tensor[[K, N], pl.DT_FP16], out: pl.Tensor[[M, N], pl.DT_FP32]
 ):
     p_mat_db = pl.make_tile_group(
@@ -391,12 +391,12 @@ def insert_group_left_a6(
 # group Mat NZ [K, N] same-shape -> Right ZN [K, N]: must NOT be swapped.
 
 @pytest.mark.soc("960")
-def test_insert_group_left_a6():
+def test_insert_group_left_9201():
     torch.manual_seed(0)
     d = torch.randn([M, K], device=ST_DEVICE, dtype=torch.float16)
     v = torch.randn([K, N], device=ST_DEVICE, dtype=torch.float16)
     out = torch.zeros([M, N], device=ST_DEVICE, dtype=torch.float32)
-    insert_group_left_a6(d, v, out)
+    insert_group_left_9201(d, v, out)
     torch.npu.synchronize()
     ref = torch.matmul(d.float(), v.float())
     logging.info("insert_group_left: max|out - d@v| = %s", (out - ref).abs().max().item())
@@ -469,7 +469,7 @@ def insert_group_left(
 # --- RIGHT no-transpose, insert into a group (mirror test_insert_right.py) -------------------
 # group Mat NZ [K, N] same-shape -> Right ZN [K, N]: must NOT be swapped.
 @pl.jit()
-def insert_group_right_a6(
+def insert_group_right_9201(
     lhs: pl.Tensor[[M, K], pl.DT_FP16], d: pl.Tensor[[K, N], pl.DT_FP16], out: pl.Tensor[[M, N], pl.DT_FP32]
 ):
     rhs_mat_db = pl.make_tile_group(
@@ -530,12 +530,12 @@ def insert_group_right_a6(
 
 
 @pytest.mark.soc("960")
-def test_insert_group_right_a6():
+def test_insert_group_right_9201():
     torch.manual_seed(0)
     lhs = torch.randn([M, K], device=ST_DEVICE, dtype=torch.float16)
     d = torch.randn([K, N], device=ST_DEVICE, dtype=torch.float16)
     out = torch.zeros([M, N], device=ST_DEVICE, dtype=torch.float32)
-    insert_group_right_a6(lhs, d, out)
+    insert_group_right_9201(lhs, d, out)
     torch.npu.synchronize()
     ref = torch.matmul(lhs.float(), d.float())
     logging.info("insert_group_right: max|out - L@d| = %s", (out - ref).abs().max().item())
@@ -607,7 +607,7 @@ def insert_group_right(
 
 @pytest.mark.soc("950")
 def test_insert_group_left():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(0)
     d = torch.randn([M, K], device=ST_DEVICE, dtype=torch.float16)
     v = torch.randn([K, N], device=ST_DEVICE, dtype=torch.float16)
@@ -621,7 +621,7 @@ def test_insert_group_left():
 
 @pytest.mark.soc("950")
 def test_insert_group_right():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(0)
     lhs = torch.randn([M, K], device=ST_DEVICE, dtype=torch.float16)
     d = torch.randn([K, N], device=ST_DEVICE, dtype=torch.float16)
@@ -635,7 +635,7 @@ def test_insert_group_right():
 
 @pytest.mark.soc("950")
 def test_insert_group_transpose_left():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(0)
     d = torch.randn([K, M], device=ST_DEVICE, dtype=torch.float16)
     v = torch.randn([K, N], device=ST_DEVICE, dtype=torch.float16)
@@ -649,7 +649,7 @@ def test_insert_group_transpose_left():
 
 @pytest.mark.soc("950")
 def test_insert_group_transpose_right():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(0)
     lhs = torch.randn([M, K], device=ST_DEVICE, dtype=torch.float16)
     d = torch.randn([N, K], device=ST_DEVICE, dtype=torch.float16)

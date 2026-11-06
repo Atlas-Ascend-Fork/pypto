@@ -8,7 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""A5 ST for manually inserted synchronization with dynamic tensor shapes.
+"""3510 ST for manually inserted synchronization with dynamic tensor shapes.
 
 Scenario ID prefixes used in test names and comments:
   - A: ``sync_src``/``sync_dst`` pipeline and buffer-dependency scenarios
@@ -109,14 +109,14 @@ SYNC_ALL_SHAPES = [
 ]
 
 
-def _require_a5_or_a6() -> None:
+def _require_3510_or_9201() -> None:
     try:
         torch.npu.set_device(ST_DEVICE)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     device_name = torch.npu.get_device_name()
     if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {device_name}, not A5/A6 (Ascend950/Ascend960)")
+        pytest.skip(f"Current device is {device_name}, not 3510/9201 (Ascend950/Ascend960)")
 
 
 # === T01: vector pipeline + dynamic event/mutex + buffer reuse =====================
@@ -920,7 +920,7 @@ def _make_inputs(shape):
 
 
 def _check_add(kernel, shape, *extra_args, used_cores=1):
-    _require_a5_or_a6()
+    _require_3510_or_9201()
     x, y, out = _make_inputs(shape)
     kernel[None, used_cores](x, y, out, *extra_args)
     torch.npu.synchronize()
@@ -929,7 +929,7 @@ def _check_add(kernel, shape, *extra_args, used_cores=1):
 
 
 def _check_dynamic_control_flow(shape, event_id, condition):
-    _require_a5_or_a6()
+    _require_3510_or_9201()
     x, y, out = _make_inputs(shape)
     scratch = torch.full(shape, -12345.0, device=ST_DEVICE, dtype=torch.float32)
     t09_dynamic_control_flow[None, 1](x, y, out, scratch, event_id, condition)
@@ -940,7 +940,7 @@ def _check_dynamic_control_flow(shape, event_id, condition):
 
 
 def _check_mte2_skipped_consumer(shape):
-    _require_a5_or_a6()
+    _require_3510_or_9201()
     torch.manual_seed(0)
     x = torch.randn(shape, device=ST_DEVICE, dtype=torch.float32)
     sentinel = -12345.0
@@ -953,7 +953,7 @@ def _check_mte2_skipped_consumer(shape):
 
 
 def _check_mte3_overlapping_stores(shape):
-    _require_a5_or_a6()
+    _require_3510_or_9201()
     torch.manual_seed(0)
     x = torch.randn(shape, device=ST_DEVICE, dtype=torch.float32)
     out = torch.empty((1, shape[1]), device=ST_DEVICE, dtype=torch.float32)
@@ -963,7 +963,7 @@ def _check_mte3_overlapping_stores(shape):
 
 
 def _make_cube_barrier_inputs(shape, out_rows=64):
-    _require_a5_or_a6()
+    _require_3510_or_9201()
     m, k, n = shape
     torch.manual_seed(0)
     # Small integers are represented exactly by FP16 and keep the synchronization
@@ -999,7 +999,7 @@ def _check_mte1_barrier(kernel, shape):
 
 
 def _check_cube(shape):
-    _require_a5_or_a6()
+    _require_3510_or_9201()
     m, k, n = shape
     torch.manual_seed(0)
     a = torch.randint(-2, 3, (m, k), dtype=torch.int32).to(device=ST_DEVICE, dtype=torch.float16)
@@ -1011,7 +1011,7 @@ def _check_cube(shape):
 
 
 def _check_scalar(shape):
-    _require_a5_or_a6()
+    _require_3510_or_9201()
     torch.manual_seed(0)
     x = torch.randint(-100, 100, shape, device=ST_DEVICE, dtype=torch.int32)
     out = torch.empty_like(x)

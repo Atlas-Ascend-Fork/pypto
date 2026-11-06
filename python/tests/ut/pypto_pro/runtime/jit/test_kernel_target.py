@@ -37,7 +37,6 @@ def future_config():
 
 
 @pytest.mark.parametrize("arch,npu_arch,memory", [
-    (NpuArch.DAV_2201, "dav-2201", "-DMEMORY_BASE"),
     (NpuArch.DAV_3510, "dav-3510", "-DREGISTER_BASE"),
 ])
 @pytest.mark.parametrize("cube,vector,qualifier,cores,kernel_type", [
@@ -71,9 +70,6 @@ def test_asc_targets_keep_entry_profiling_and_launch_geometry_consistent(
         assert "pyptoProfInfo.blockNums = blockDim;" in caller
     assert memory in flags
     assert f"ResolveLaunchBlockDim<{cores[0]}, {cores[1]}>" in caller
-    if arch in (NpuArch.DAV_1001, NpuArch.DAV_2201):
-        llvm_args = config.build_llvm_args(arch)
-        assert llvm_args[llvm_args.index("-include") + 1] == "kernel_operator.h"
 
 
 def test_simt_launcher_bakes_inferred_dynamic_ub_into_generated_caller():
@@ -131,9 +127,9 @@ def test_simt_kernel_caller_emits_entry_and_launch(monkeypatch, tmp_path, max_th
 
 def test_architecture_specific_mixed_geometry_is_independent(future_config):
     """A future 1:1 target must not overwrite the 1:2 rule of an existing architecture."""
-    a5 = future_config.resolve_kernel_target(NpuArch.DAV_3510, has_cube=True, has_vector=True)
+    target_3510 = future_config.resolve_kernel_target(NpuArch.DAV_3510, has_cube=True, has_vector=True)
     future = future_config.resolve_kernel_target(NpuArch.DAV_3003, has_cube=True, has_vector=True)
-    assert (a5.aic_per_block, a5.aiv_per_block) == (1, 2)
+    assert (target_3510.aic_per_block, target_3510.aiv_per_block) == (1, 2)
     assert (future.aic_per_block, future.aiv_per_block) == (1, 1)
     assert "__mix__(1, 1)" in jit._make_global_entry("probe", [], target=future)
 
@@ -143,7 +139,7 @@ def test_architecture_specific_mixed_geometry_is_independent(future_config):
     (True, False, "__cube__", (1, 0)),
     (False, True, "__vector__", (0, 1)),
 ])
-def test_a6_target_uses_dav_9201_and_one_to_one_geometry(cube, vector, qualifier, cores, assert_a6_golden):
+def test_9201_target_uses_dav_9201_and_one_to_one_geometry(cube, vector, qualifier, cores, assert_9201_golden):
     config = get_jit_compile_config()
     target = config.resolve_kernel_target(NpuArch.DAV_9201, has_cube=cube, has_vector=vector)
     flags = config.build_bisheng_flags(
@@ -151,8 +147,8 @@ def test_a6_target_uses_dav_9201_and_one_to_one_geometry(cube, vector, qualifier
     )
     caller = jit._generate_caller_cpp([], "kernel.cpp", "probe", target=target)
     entry = jit._make_global_entry("probe", [], target=target)
-    assert_a6_golden(caller, "caller")
-    assert_a6_golden(entry, "entry")
+    assert_9201_golden(caller, "caller")
+    assert_9201_golden(entry, "entry")
 
     assert target.npu_arch == "dav-9201"
     assert (target.aic_per_block, target.aiv_per_block) == cores
@@ -163,7 +159,7 @@ def test_a6_target_uses_dav_9201_and_one_to_one_geometry(cube, vector, qualifier
     assert config.build_llvm_args(NpuArch.DAV_9201) == config.build_llvm_args(NpuArch.DAV_3510)
 
 
-def test_missing_architecture_is_not_assumed_to_use_a5_geometry():
+def test_missing_architecture_is_not_assumed_to_use_3510_geometry():
     """Unknown arch names are rejected at the parse boundary; unconfigured members fail loudly."""
     with pytest.raises(InvalidVal, match="unknown arch.*a7"):
         normalize_arch("a7")
@@ -211,8 +207,8 @@ def test_shared_library_and_caller_use_the_same_resolved_target(monkeypatch, tmp
 
     monkeypatch.setattr(jit, "_run_bisheng", compile_stub)
     cg = jit.CodegenResult(
-        build_dir=str(tmp_path), content="", kernel_name="probe", kernel_params=[],
-        caller_cross_core_sync=True, bisheng_cross_sync=True, needs_print_debug=True,
+        build_dir=str(tmp_path), content="", kernel_name="probe",
+        bisheng_cross_sync=True, needs_print_debug=True,
         has_cube=True, has_vector=True, required_dynamic_ub_size=16 * 1024,
     )
     library = jit._build_jit_so(cg, arch, clean_up=False, compile_timeout=30, target=target)
@@ -283,8 +279,8 @@ def test_shared_library_forwards_sk_cap_into_compiler_flags(monkeypatch, tmp_pat
 
     monkeypatch.setattr(jit, "_run_bisheng", compile_stub)
     cg = jit.CodegenResult(
-        build_dir=str(tmp_path), content="", kernel_name="probe", kernel_params=[],
-        caller_cross_core_sync=False, bisheng_cross_sync=False, needs_print_debug=False,
+        build_dir=str(tmp_path), content="", kernel_name="probe",
+        bisheng_cross_sync=False, needs_print_debug=False,
         has_cube=True, has_vector=True,
     )
     jit._build_jit_so(cg, NpuArch.DAV_3510, clean_up=False, compile_timeout=30,
@@ -308,8 +304,6 @@ def test_debug_codegen_uses_vendored_pto_debug_entrypoints(tmp_path):
         build_dir=str(tmp_path),
         content=content,
         kernel_name="probe",
-        kernel_params=[],
-        caller_cross_core_sync=False,
         bisheng_cross_sync=False,
         needs_print_debug=True,
         has_cube=False,
@@ -323,8 +317,8 @@ def test_debug_codegen_uses_vendored_pto_debug_entrypoints(tmp_path):
 
 def test_icache_preload_codegen_includes_ascendc_cache_interface(tmp_path):
     result = jit.CodegenResult(
-        build_dir=str(tmp_path), content="AscendC::ICachePreLoad(2);", kernel_name="probe", kernel_params=[],
-        caller_cross_core_sync=False, bisheng_cross_sync=False, needs_print_debug=False,
+        build_dir=str(tmp_path), content="AscendC::ICachePreLoad(2);", kernel_name="probe",
+        bisheng_cross_sync=False, needs_print_debug=False,
         has_cube=False, has_vector=True,
     )
     result = jit._add_kernel_header(result)
@@ -341,8 +335,8 @@ def test_compilation_preserves_target_for_cached_launch_and_debug(monkeypatch, t
     monkeypatch.setattr(jit, "get_jit_compile_config", lambda: config_proxy)
     monkeypatch.setattr(jit, "_setup_arch_env", lambda arch: arch)
     cg = jit.CodegenResult(
-        build_dir=str(tmp_path), content="", kernel_name="probe", kernel_params=[],
-        caller_cross_core_sync=False, bisheng_cross_sync=False, needs_print_debug=False,
+        build_dir=str(tmp_path), content="", kernel_name="probe",
+        bisheng_cross_sync=False, needs_print_debug=False,
         has_cube=True, has_vector=True,
     )
     monkeypatch.setattr(jit, "_codegen", lambda *_args, **_kwargs: cg)

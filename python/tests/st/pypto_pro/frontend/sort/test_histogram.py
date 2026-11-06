@@ -26,7 +26,7 @@ THISTOGRAM Constraints (from PTOAS docs):
   8. idx must have exactly 1 column
   9. dst shape[1] >= 256
 
-Note: THISTOGRAM is only supported on A5, not A2/A3.
+Note: THISTOGRAM is only supported on 3510, not A2/A3.
 """
 
 import logging

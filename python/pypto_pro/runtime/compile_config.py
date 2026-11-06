@@ -214,16 +214,6 @@ _COMMON_LLVM_ARCH_ARGS = (
 _DEFAULT_CCE_JIT_COMPILE_CONFIG = JitCompileConfig(
     backend=CCE_BACKEND,
     kernel_targets={
-        NpuArch.DAV_1001:{
-            "cube_vec": KernelTarget("dav-2201", aic_per_block=1, aiv_per_block=2, fat_object=True),
-            "cube": KernelTarget("dav-2201", aic_per_block=1, aiv_per_block=0, fat_object=False),
-            "vec": KernelTarget("dav-2201", aic_per_block=0, aiv_per_block=1, fat_object=False),
-        },
-        NpuArch.DAV_2201: {
-            "cube_vec": KernelTarget("dav-2201", aic_per_block=1, aiv_per_block=2, fat_object=True),
-            "cube": KernelTarget("dav-2201", aic_per_block=1, aiv_per_block=0, fat_object=False),
-            "vec": KernelTarget("dav-2201", aic_per_block=0, aiv_per_block=1, fat_object=False),
-        },
         NpuArch.DAV_3510: {
             "cube_vec": KernelTarget("dav-3510", aic_per_block=1, aiv_per_block=2, fat_object=True),
             "cube": KernelTarget("dav-3510", aic_per_block=1, aiv_per_block=0, fat_object=False),
@@ -236,8 +226,6 @@ _DEFAULT_CCE_JIT_COMPILE_CONFIG = JitCompileConfig(
         },
     },
     memory_arch_flags={
-        NpuArch.DAV_1001: "-DMEMORY_BASE",
-        NpuArch.DAV_2201: "-DMEMORY_BASE",
         NpuArch.DAV_3510: "-DREGISTER_BASE",
         NpuArch.DAV_9201: "-DREGISTER_BASE",
     },
@@ -275,26 +263,6 @@ _DEFAULT_CCE_JIT_COMPILE_CONFIG = JitCompileConfig(
         "--cce-auto-sync=off",
     ),
     llvm_arch_args={
-        NpuArch.DAV_1001: (
-            "-include",
-            "kernel_operator.h",
-            "-O3",
-            "--cce-disable-kernel-global-attr-check",
-            "-Wno-parentheses-equality",
-            "-Wno-unused-command-line-argument",
-            "-Werror",
-            "-Wno-cce-compat",
-        ),
-        NpuArch.DAV_2201: (
-            "-include",
-            "kernel_operator.h",
-            "-O3",
-            "--cce-disable-kernel-global-attr-check",
-            "-Wno-parentheses-equality",
-            "-Wno-unused-command-line-argument",
-            "-Werror",
-            "-Wno-cce-compat",
-        ),
         NpuArch.DAV_3510: _COMMON_LLVM_ARCH_ARGS,
         NpuArch.DAV_9201: _COMMON_LLVM_ARCH_ARGS,
     },

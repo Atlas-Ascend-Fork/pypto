@@ -9,7 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Representative DSL-to-CCE integration tests for the A5 SIMT path.
+"""Representative DSL-to-CCE integration tests for the 3510 SIMT path.
 
 Exhaustive dtype contracts and operation-to-intrinsic mappings belong to the
 native tests. This module covers representative frontend-to-backend behavior.
@@ -650,11 +650,11 @@ def test_simt_auto_mutex_emits_pipe_v_lock_unlock_around_launch():
 
 @pytest.mark.parametrize("arch", ["1001", "2201", "3003", "3113"])
 def test_simt_codegen_rejects_unsupported_architecture(arch):
-    with pytest.raises(NotSupported, match="requires arch='3510'"):
+    with pytest.raises(NotSupported, match="only supports arch '3510'"):
         _compile_to_cce(_simt_tile_codegen_kernel, arch=arch)
 
 
-def test_simt_direct_codegen_rejects_a6(monkeypatch, assert_a6_golden):
+def test_simt_direct_codegen_rejects_9201(monkeypatch, assert_9201_golden):
     from pypto.pypto_impl import NpuArch, ir
     from pypto.pypto_impl.codegen import CCECodegen
 
@@ -664,14 +664,14 @@ def test_simt_direct_codegen_rejects_a6(monkeypatch, assert_a6_golden):
     assert matched
     assert program.get_function("_callee_entry").func_type == ir.FunctionType.SimtVF
     assert program.get_function("_callee_apply").func_type == ir.FunctionType.SimtCallee
-    assert_a6_golden(program)
+    assert_9201_golden(program)
     with pytest.raises(RuntimeError, match="SIMT direct CCE generation currently requires arch='3510'"):
         CCECodegen(ir.SectionKind.Vector).generate_single(program, NpuArch.DAV_9201)
 
 
-def test_simt_codegen_rejects_a6_at_launch(monkeypatch):
+def test_simt_codegen_rejects_9201_at_launch(monkeypatch):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "9201")
-    with pytest.raises(NotSupported, match="SIMT vector-function launch is not supported on A6"):
+    with pytest.raises(NotSupported, match="SIMT vector-function launch is not supported on 9201"):
         _compile_to_cce(_simt_tile_codegen_kernel, arch="9201")
 
 

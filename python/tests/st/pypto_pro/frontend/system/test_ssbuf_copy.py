@@ -20,14 +20,14 @@ ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510/9201 (Ascend950/Ascend960). Skip.")
 
 
 @pl.jit()
@@ -53,7 +53,7 @@ def ssbuf_copy_kernel(out: pl.Tensor[[3], pl.DT_INT32]):
 @pytest.mark.soc("950", "960")
 def test_ssbuf_copy_kernel():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     out = torch.full((3,), -1, dtype=torch.int32, device=device)
     ssbuf_copy_kernel(out)
     torch.npu.synchronize()

@@ -109,8 +109,8 @@ def test_unused_engine_does_not_constrain_launch(stream, kind, limits, blocks):
 def test_insufficient_mixed_budget_rejects_without_device_writes(stream):
     """Reject before launching any synchronized participants, then allow reuse after the budget is corrected.
 
-    A5-only: the rejection depends on the 1:2 ratio (one mixed block needs two vector cores), which does
-    not exist on A6 (1:1).
+    3510-only: the rejection depends on the 1:2 ratio (one mixed block needs two vector cores), which does
+    not exist on 9201 (1:1).
     """
     outputs = _outputs()
     torch.npu.synchronize()

@@ -10,7 +10,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""A5 matmul specialization through parser-side tiling-key constant propagation.
+"""3510 matmul specialization through parser-side tiling-key constant propagation.
 
 ``Dtype`` selects the input tile dtype (0: FP16, 1: BF16), while ``TileBlock``
 selects the M/N block size (0: 64, 1: 128).  The reduction dimension stays at
@@ -42,13 +42,13 @@ class MatmulTilingKey:
     TileBlock = TilingKeyField(bits=1, values=[0, 1])
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
-        pytest.skip("not A5/A6")
+        pytest.skip("not 3510/9201")
 
 
 @pl.jit(auto_mutex=True, tiling_key=MatmulTilingKey, compile_timeout=300)
@@ -137,7 +137,7 @@ def matmul_tilingkey(
 def test_matmul_tilingkey(dtype_key, tile_key, torch_dtype, rtol, atol):
     """All dtype/block key combinations use the matching specialized TileTypes."""
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(42)
     a = torch.randn(M_DIM, D_DIM, device=device, dtype=torch_dtype)
     b = torch.randn(D_DIM, N_DIM, device=device, dtype=torch_dtype)

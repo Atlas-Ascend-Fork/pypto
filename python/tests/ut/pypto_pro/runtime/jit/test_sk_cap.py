@@ -40,8 +40,8 @@ def _sk_bind_line(sk_cap: int) -> str:
 
 def _cg(**overrides) -> CodegenResult:
     return CodegenResult(
-        build_dir="", content="", kernel_name="k", kernel_params=[],
-        caller_cross_core_sync=False, bisheng_cross_sync=False, needs_print_debug=False,
+        build_dir="", content="", kernel_name="k",
+        bisheng_cross_sync=False, needs_print_debug=False,
         **overrides,
     )
 

@@ -101,7 +101,7 @@ def _outputs():
 
 
 def _cv_ratio():
-    """Vector cores per cube block: A5 = 2, A6 = 1."""
+    """Vector cores per cube block: 3510 = 2, 9201 = 1."""
     from pypto_pro.runtime.platform import get_platform_info
 
     return 1 if get_platform_info().arch == NpuArch.DAV_9201 else 2

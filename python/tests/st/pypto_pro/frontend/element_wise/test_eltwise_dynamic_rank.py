@@ -9,7 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Dynamic-rank element-wise op on Ascend A5 (rank 2..4, all inputs same shape).
+"""Dynamic-rank element-wise op on Ascend 3510 (rank 2..4, all inputs same shape).
 
 Unlike ``test_add.py`` (dynamic shape, *fixed* rank 2), this kernel accepts the
 inputs as raw pointers (``pl.Ptr``) and receives the logical shape through a

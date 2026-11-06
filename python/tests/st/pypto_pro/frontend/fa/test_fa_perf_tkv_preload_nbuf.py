@@ -576,5 +576,5 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     logging.info("FA perf with NBuffer + auto_mutex (QK_PRELOAD=%s, FIFO=%s)", QK_PRELOAD, FIFO_SIZE)
     logging.info("%s", '=' * 60)
-    test_fa_perf_nbuf()  # uncomment on A5 NPU
+    test_fa_perf_nbuf()  # uncomment on 3510 NPU
     logging.info("\nParse test passed!")

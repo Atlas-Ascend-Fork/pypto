@@ -70,13 +70,13 @@ L1_X, L1_W = 0x00000, 0x10000
 L0A, L0B, L0C = 0x0, 0x0, 0x0
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+        pytest.skip("not 3510")
 
 
 @pl.jit(auto_mutex=True)
@@ -594,7 +594,7 @@ def _run(kernel, g, dtype, device, s_tiles=2, ncol=2 * N_TILE, d=2 * K_TILE, b_n
 def test_grouped_matmul_all_dynamic(g):
     """Full tiled matmul with every dim dynamic, G included: nValue and ndNum are runtime."""
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     out, ref = _run(grouped_matmul_fp16, g, torch.float16, device)
     diff = (out - ref).abs().max().item()
     logging.info("grouped_matmul all-dynamic G=%d: max|out - ref| = %s", g, diff)
@@ -606,7 +606,7 @@ def test_grouped_matmul_all_dynamic(g):
 def test_grouped_matmul_all_dynamic_bf16(g):
     """Same, in BF16."""
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     out, ref = _run(grouped_matmul_bf16, g, torch.bfloat16, device)
     diff = (out - ref).abs().max().item()
     logging.info("grouped_matmul bf16 G=%d: max|out - ref| = %s", g, diff)
@@ -618,7 +618,7 @@ def test_grouped_matmul_all_dynamic_bf16(g):
 def test_grouped_matmul_static_g(g):
     """G pinned in the signature, so codegen folds nValue/ndNum to constants."""
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     out, ref = _run(_make_static_g_matmul(g), g, torch.float16, device)
     diff = (out - ref).abs().max().item()
     logging.info("grouped_matmul static-G G=%d: max|out - ref| = %s", g, diff)
@@ -633,7 +633,7 @@ def test_grouped_matmul_rejects_wrong_row_grouping():
     still look plausible, since both orderings produce the same set of rows.
     """
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     g = 4
     out, ref = _run(grouped_matmul_fp16, g, torch.float16, device)
     torch.testing.assert_close(out, ref, rtol=2e-2, atol=2e-2)
@@ -690,7 +690,7 @@ def test_grouped_matmul_transposed_left(g):
     probe of this path reproduced x^T exactly.
     """
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     out, ref = _run_transposed(g, torch.float16, device)
     diff = (out - ref).abs().max().item()
     logging.info("grouped_matmul transposed-left G=%d: max|out - ref| = %s", g, diff)
@@ -702,7 +702,7 @@ def test_grouped_matmul_transposed_left(g):
 def test_grouped_matmul_as_right(g):
     """The merged load feeding the RIGHT operand: Mat(NZ) -> Right(ZN) is the ordinary move."""
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     out, ref = _run_as_right(g, torch.float16, device)
     diff = (out - ref).abs().max().item()
     logging.info("grouped_matmul as-right G=%d: max|out - ref| = %s", g, diff)
@@ -718,7 +718,7 @@ def test_transposed_left_is_really_transposed():
     Pinning D == NCOL makes both products the same shape, so only the values distinguish them.
     """
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     g = 4
     out, ref = _run_transposed(g, torch.float16, device, ncol=2 * K_TILE, d=2 * K_TILE)
     torch.testing.assert_close(out, ref, rtol=2e-2, atol=2e-2)
@@ -790,7 +790,7 @@ def test_grouped_matmul_right_merged_transposed(g):
     layout rather than a fractal flip.
     """
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     out, ref = _run_right_transposed(g, torch.float16, device)
     diff = (out - ref).abs().max().item()
     logging.info("grouped_matmul right-merged-transposed G=%d: max|out - ref| = %s", g, diff)
@@ -807,7 +807,7 @@ def test_grouped_matmul_right_merged_transposed_by_order(g):
     that does not flip the fractal, so the label alone carries the transpose all the way to L0B.
     """
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     out, ref = _run_right_transposed(g, torch.float16, device,
                                      kernel=grouped_matmul_right_merged_transposed_by_order)
     diff = (out - ref).abs().max().item()
@@ -828,7 +828,7 @@ def test_right_merged_transposed_spellings_agree_exactly(g):
     kernel that transferred nothing at all, since both sides accumulate the same zeros.
     """
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     out_view, ref = _run_right_transposed(g, torch.float16, device)
     out_order, _ = _run_right_transposed(g, torch.float16, device,
                                          kernel=grouped_matmul_right_merged_transposed_by_order)
@@ -844,7 +844,7 @@ def test_right_merged_transposed_spellings_agree_exactly(g):
 def test_grouped_matmul_both_merged_transposed(g):
     """Both operands merged from one grouped Tensor, with the left one transposed."""
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     out, ref = _run_both_merged(g, torch.float16, device)
     diff = (out - ref).abs().max().item()
     logging.info("grouped_matmul both-merged G=%d: max|out - ref| = %s", g, diff)
@@ -860,7 +860,7 @@ def test_both_merged_result_is_symmetric():
     symmetry catches a left/right mix-up that still produced a [D, D] output.
     """
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     out, ref = _run_both_merged(4, torch.float16, device)
     torch.testing.assert_close(out, ref, rtol=3e-2, atol=3e-2)
     # merged^T @ merged is symmetric by construction; a swapped-operand result would not be.
@@ -876,7 +876,7 @@ def test_right_merged_transposed_is_really_transposed():
     distinguish them.
     """
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     g = 4
     # s_tiles=1 with g=4 gives rows = M_TILE = 128; d = 128 matches it.
     out, ref = _run_right_transposed(g, torch.float16, device, s_tiles=1, d=M_TILE)
@@ -944,7 +944,7 @@ def merged_load_valid_rows(
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("inner,valid", [(4, 16), (4, 18), (32, 16)])
 def test_merged_load_respects_runtime_valid_rows(inner, valid):
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     x = torch.arange(64 * 2 * inner, device=ST_DEVICE, dtype=torch.float32)
     x = x.reshape(1, 64, 2, inner, 1).expand(1, 64, 2, inner, 64).contiguous().half()
     w = torch.eye(64, device=ST_DEVICE, dtype=torch.float16)
@@ -962,7 +962,7 @@ def test_merged_load_respects_runtime_valid_rows(inner, valid):
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("inner", [3, 65536])
 def test_merged_load_dynamic_inner_remainder_and_width(inner):
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     outer = (128 + inner - 1) // inner
     x = torch.full([1, outer, 2, inner, 64], 7.0, device=ST_DEVICE, dtype=torch.float16)
     x[:, :, 1] = 11.0
@@ -1022,7 +1022,7 @@ def _make_merged_dtype_matmul(dtype, transposed, inner_extent=DYN):
 @pytest.mark.parametrize("inner", [2, 3])
 def test_merged_load_element_widths(dtype, torch_dtype, transposed, inner):
     """Exercise C0=32 for FP8 and C0=8 for FP32, including a partial ND matrix."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     outer = 1 + (32 + inner - 1) // inner
     shape = (1, outer, 2, inner, 64)
     torch.manual_seed(9)
@@ -1044,7 +1044,7 @@ def test_merged_load_element_widths(dtype, torch_dtype, transposed, inner):
 @pytest.mark.parametrize("transposed", [False, True])
 def test_merged_load_static_inner_matches_dynamic(inner, transposed):
     """Static and dynamic G load the same rows, across matrix boundaries or within one matrix."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     outer = 1 + (32 + inner - 1) // inner
     shape = (1, outer, 2, inner, 64)
     torch.manual_seed(9)
@@ -1123,7 +1123,7 @@ def _make_merged_window_kernel(transposed, matrix_stride=0):
 @pytest.mark.parametrize("columns", [35, 64])
 def test_merged_load_runtime_window(transposed, inner, valid, columns):
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     torch.manual_seed(73)
     host = torch.randint(-4, 5, (1, 1 + (128 + inner - 1) // inner, 2, inner, 64)).half()
     x = host.to(device)
@@ -1144,7 +1144,7 @@ def test_merged_load_runtime_window(transposed, inner, valid, columns):
 @pytest.mark.parametrize("matrix_stride", [2**31, 2**32])
 def test_merged_single_matrix_does_not_use_outer_stride(transposed, matrix_stride):
     """Full and tail-only loads keep an unused wide matrix stride in their descriptor."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(74)
     host = torch.randint(-4, 5, (1, 1, 2, 128, 64)).half()
     x = host.to(ST_DEVICE)
@@ -1211,7 +1211,7 @@ def _make_reused_merged_descriptor_kernel(use_view):
 @pytest.mark.parametrize("inner", [4, 32])
 def test_merged_load_reuses_descriptors_across_windows_and_layouts(use_view, inner):
     """Reuse strides across short/full windows and select distinct strides for different axes."""
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     torch.manual_seed(91)
     host = torch.randint(-2, 3, (1, 128, 2, inner, 80)).half()
     x = host.to(ST_DEVICE)

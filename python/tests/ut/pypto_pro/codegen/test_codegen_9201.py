@@ -8,7 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""Architecture-specific lowering retained when merging A6 support into master."""
+"""Architecture-specific lowering retained when merging 9201 support into master."""
 
 from dataclasses import dataclass
 import re
@@ -33,9 +33,9 @@ def _tiling_copy(x: pl.Ptr[pl.DT_INT32], tiling: CopyTiling):
 
 
 @pytest.mark.parametrize("arch,argc", [(NpuArch.DAV_3510, 11), (NpuArch.DAV_9201, 13)])
-def test_tiling_copy_intrinsic_signature(arch, argc, monkeypatch, a6_codegen):
+def test_tiling_copy_intrinsic_signature(arch, argc, monkeypatch, codegen_9201):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", str(arch))
-    _, vector = a6_codegen(_tiling_copy.to_kernel_def(), arch)
+    _, vector = codegen_9201(_tiling_copy.to_kernel_def(), arch)
     call = re.search(r"copy_gm_to_ubuf_align_v2\(([^\n]+)\);", vector.content)
     assert call is not None
     args = [arg.strip() for arg in call.group(1).split(",")]
@@ -49,7 +49,7 @@ def test_tiling_copy_intrinsic_signature(arch, argc, monkeypatch, a6_codegen):
 @pytest.mark.parametrize("memory", [pl.MemorySpace.Left, pl.MemorySpace.Right])
 @pytest.mark.parametrize("auto_mutex", [False, True])
 @pytest.mark.parametrize("with_offset", [False, True], ids=["whole_tile", "explicit_zero_offset"])
-def test_mat_to_operand_move_uses_offset_instruction(arch, memory, auto_mutex, with_offset, monkeypatch, a6_codegen):
+def test_mat_to_operand_move_uses_offset_instruction(arch, memory, auto_mutex, with_offset, monkeypatch, codegen_9201):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", str(arch))
     @pl.jit(auto_mutex=auto_mutex)
     def kernel(x: pl.Ptr[pl.DT_FP16]):
@@ -69,7 +69,7 @@ def test_mat_to_operand_move_uses_offset_instruction(arch, memory, auto_mutex, w
             else:
                 pl.move(dst, src)
 
-    cube, _ = a6_codegen(kernel.to_kernel_def(), arch)
+    cube, _ = codegen_9201(kernel.to_kernel_def(), arch)
     assert ("get_buf(PIPE_MTE1," in cube.content) == auto_mutex
     instruction = "TEXTRACT" if with_offset else "TMOV"
     assert instruction + "(" in cube.content or instruction + "<" in cube.content
@@ -79,7 +79,7 @@ def test_mat_to_operand_move_uses_offset_instruction(arch, memory, auto_mutex, w
         assert "TEXTRACT" not in cube.content
 
 
-def test_a6_simd_kernel_codegen_remains_supported(monkeypatch, a6_codegen):
+def test_9201_simd_kernel_codegen_remains_supported(monkeypatch, codegen_9201):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "9201")
 
     @pl.jit(arch="9201", auto_mutex=False)
@@ -93,7 +93,7 @@ def test_a6_simd_kernel_codegen_remains_supported(monkeypatch, a6_codegen):
             pl.store(out, dst, [0, 0])
 
     kernel_def = kernel.to_kernel_def()
-    cube, vector = a6_codegen(kernel_def, NpuArch.DAV_9201)
+    cube, vector = codegen_9201(kernel_def, NpuArch.DAV_9201)
 
     assert cube is None
     assert "TADD(" in vector.content or "TADD<" in vector.content
@@ -122,9 +122,9 @@ def _shift_kernel(x: pl.Ptr[pl.DT_INT32]):
 
 
 @pytest.mark.parametrize("arch", [NpuArch.DAV_3510, NpuArch.DAV_9201])
-def test_register_shift_unsigned_operand_is_a6_only(arch, monkeypatch, a6_codegen):
+def test_register_shift_unsigned_operand_is_9201_only(arch, monkeypatch, codegen_9201):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", str(arch))
-    _, vector = a6_codegen(_shift_kernel.to_kernel_def(), arch)
+    _, vector = codegen_9201(_shift_kernel.to_kernel_def(), arch)
     assert "vshl(" in vector.content
     assert ("(RegTensor<uint32_t>&)" in vector.content) == (arch == NpuArch.DAV_9201)
 
@@ -134,7 +134,7 @@ def test_register_shift_unsigned_operand_is_a6_only(arch, monkeypatch, a6_codege
     "mode,shape",
     [(pl.AccToVecMode.DualModeSplitM, [32, 64]), (pl.AccToVecMode.DualModeSplitN, [64, 32])],
 )
-def test_dual_destination_move_retains_a5_and_rejects_a6(arch, mode, shape, monkeypatch, a6_codegen):
+def test_dual_destination_move_retains_3510_and_rejects_9201(arch, mode, shape, monkeypatch, codegen_9201):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", str(arch))
     @pl.jit(auto_mutex=False)
     def kernel(x: pl.Ptr[pl.DT_FP32]):
@@ -145,7 +145,7 @@ def test_dual_destination_move_retains_a5_and_rejects_a6(arch, mode, shape, monk
 
     if arch == NpuArch.DAV_9201:
         with pytest.raises(NotSupported, match="DualModeSplitM/DualModeSplitN"):
-            a6_codegen(kernel.to_kernel_def(), arch)
+            codegen_9201(kernel.to_kernel_def(), arch)
     else:
-        cube, _ = a6_codegen(kernel.to_kernel_def(), arch)
+        cube, _ = codegen_9201(kernel.to_kernel_def(), arch)
         assert "TMOV" in cube.content

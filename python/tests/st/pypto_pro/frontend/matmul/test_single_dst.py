@@ -202,7 +202,7 @@ def test_matmul_add_matmul_add():
 
 
 @pl.jit()
-def matmul_add_matmul_add_cce_a6(
+def matmul_add_matmul_add_cce_9201(
     q: pl.Tensor[[64, 64], pl.DT_FP32],
     k: pl.Tensor[[64, 64], pl.DT_FP32],
     v: pl.Tensor[[64, 64], pl.DT_FP32],
@@ -211,7 +211,7 @@ def matmul_add_matmul_add_cce_a6(
     out: pl.Tensor[[64, 64], pl.DT_FP32],
     workspace: pl.Tensor[[64, 64], pl.DT_FP32],
 ):
-    """A6 (1:1) variant: full-M Vec tiles and a SingleModeVec0 move, no subcore split."""
+    """9201 (1:1) variant: full-M Vec tiles and a SingleModeVec0 move, no subcore split."""
     mm1_res = pl.make_tile(
         pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec), addr=0x0000)
     mm2_res = pl.make_tile(
@@ -312,7 +312,7 @@ def matmul_add_matmul_add_cce_a6(
 
 
 @pytest.mark.soc("960")
-def test_matmul_add_matmul_add_a6():
+def test_matmul_add_matmul_add_9201():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)
     device = f"npu:{device_id}"
@@ -329,7 +329,7 @@ def test_matmul_add_matmul_add_a6():
     out = torch.zeros(shape, device=device, dtype=dtype)
     workspace = torch.zeros(shape, device=device, dtype=dtype)
 
-    matmul_add_matmul_add_cce_a6[None, 1](q, k, v, x1, x2, out, workspace)
+    matmul_add_matmul_add_cce_9201[None, 1](q, k, v, x1, x2, out, workspace)
     torch.npu.synchronize()
 
     c1 = torch.matmul(q, k)

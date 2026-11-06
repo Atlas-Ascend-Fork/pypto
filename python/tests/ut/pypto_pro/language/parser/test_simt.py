@@ -9,7 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Parser tests for the Tile-first A5 SIMT frontend."""
+"""Parser tests for the Tile-first 3510 SIMT frontend."""
 
 import ast
 
@@ -290,10 +290,10 @@ def test_simt_tile_function_and_launch_build_vector_program():
     [(_simt_tile_kernel, "_tile_add[256]"), (_simt_gm_kernel, "_gm_add[256]")],
     ids=["tile", "tensor"],
 )
-def test_a6_simt_launch_reports_dsl_location(kernel, launch, monkeypatch):
+def test_9201_simt_launch_reports_dsl_location(kernel, launch, monkeypatch):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "9201")
 
-    with pytest.raises(NotSupported, match="SIMT vector-function launch is not supported on A6") as exc_info:
+    with pytest.raises(NotSupported, match="SIMT vector-function launch is not supported on 9201") as exc_info:
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
     error = exc_info.value
@@ -307,7 +307,7 @@ def test_a6_simt_launch_reports_dsl_location(kernel, launch, monkeypatch):
     assert launch in message
 
 
-def test_a6_simd_kernel_does_not_parse_unused_simt_function(monkeypatch, assert_a6_golden):
+def test_9201_simd_kernel_does_not_parse_unused_simt_function(monkeypatch, assert_9201_golden):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "9201")
 
     @pl.vector_function(mode="simt", max_threads=1)
@@ -327,7 +327,7 @@ def test_a6_simd_kernel_does_not_parse_unused_simt_function(monkeypatch, assert_
     kernel_def = kernel.to_kernel_def()
     program, matched = kernel_def.parse_target_program(ir.SectionKind.Vector)
 
-    assert_a6_golden(program)
+    assert_9201_golden(program)
     assert callable(unused)
     assert matched
     assert set(program.functions) == {"kernel"}

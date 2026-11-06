@@ -43,14 +43,14 @@ ROWS = 64
 COLS = 64
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {name}, not A5/A6 (Ascend950/Ascend960). Skip.")
+        pytest.skip(f"Current device is {name}, not 3510/9201 (Ascend950/Ascend960). Skip.")
 
 
 @pl.jit(auto_mutex=True)
@@ -79,7 +79,7 @@ def _column_and_full_kernel(
 def test_column_and_full_access_of_one_tensor():
     """Both windows read correctly, so each went through the declaration matching its layout."""
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
 
     # arange makes every element distinguishable, so a wrong layout cannot coincidentally pass.
     x = torch.arange(ROWS * COLS, device=device, dtype=torch.float32).reshape(ROWS, COLS)
@@ -126,7 +126,7 @@ def test_compact_column_tile_is_emitted_and_round_trips():
     therefore asserted directly -- that is the part that regressed before.
     """
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
 
     x = torch.arange(ROWS * COLS, device=device, dtype=torch.float32).reshape(ROWS, COLS)
     column_out = torch.zeros(ROWS, 1, device=device, dtype=torch.float32)

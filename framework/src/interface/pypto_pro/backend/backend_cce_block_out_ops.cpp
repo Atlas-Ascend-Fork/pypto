@@ -224,7 +224,7 @@ static std::string MakeBlockOutScalarCodegenCCE(const std::string& cceOpName, co
 // Helper: Block explicit-output binary op with a trailing scratch tile
 // - args = [dst, lhs, rhs]
 // Emits: OP(dst, lhs, rhs, rhs);
-// For intrinsics whose C++ signature carries a trailing tmp tile that the A5
+// For intrinsics whose C++ signature carries a trailing tmp tile that the 3510
 // implementation accepts but ignores (e.g. TREM); reusing the rhs operand
 // satisfies the signature without an extra allocation.
 // ============================================================================
@@ -1180,7 +1180,7 @@ static std::string MakeBlockOutTransposeCodegenCCE(const ir::CallPtr& op, codege
         << "block.transpose: expected 2 args (dst, src), got " << op->args_.size();
     std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
     std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
-    // A5 CCE builtin requires the explicit tmp operand for TTRANS.
+    // 3510 CCE builtin requires the explicit tmp operand for TTRANS.
     // Reuse the source tile as the temporary buffer, matching PTO ISA demos.
     codegen.Emit("TTRANS(" + dst + ", " + src + ", " + src + ");");
     return "";
@@ -1393,7 +1393,7 @@ static std::string MakeBlockOutBinaryCastCodegenCCE(const std::string& cceOpName
 // ============================================================================
 // block.mul_add_dst  - args = [out, lhs, rhs]
 // Semantics: out = (lhs * rhs) + out
-// Emits: TMULA(out, lhs, rhs);  (A5 fused multiply-accumulate: dst += src0*src1)
+// Emits: TMULA(out, lhs, rhs);  (3510 fused multiply-accumulate: dst += src0*src1)
 // ============================================================================
 static std::string MakeBlockOutMulAddDstCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
@@ -1410,7 +1410,7 @@ static std::string MakeBlockOutMulAddDstCodegenCCE(const ir::CallPtr& op, codege
 // ============================================================================
 // block.fused_mul_add  - args = [out, lhs, rhs]
 // Semantics: out = (lhs * out) + rhs
-// Emits: TMADD(out, lhs, rhs);  (A5 fused multiply-add: dst = dst*src0 + src1)
+// Emits: TMADD(out, lhs, rhs);  (3510 fused multiply-add: dst = dst*src0 + src1)
 // ============================================================================
 static std::string MakeBlockOutFusedMulAddCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {

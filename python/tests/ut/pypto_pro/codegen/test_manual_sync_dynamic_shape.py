@@ -11,7 +11,7 @@
 """Supplemental dynamic-shape CCE checks for manual in-core synchronization.
 
 The case IDs in this file correspond to the review matrix in the repository
-root ``example`` file.  Positive interface behaviour is covered by A5 ST; this
+root ``example`` file.  Positive interface behaviour is covered by 3510 ST; this
 file only inspects lowering details that are not directly observable from an
 ST result, such as exact instruction spelling, count, order, and control-flow
 placement.  It is supplementary and must not be counted as positive interface

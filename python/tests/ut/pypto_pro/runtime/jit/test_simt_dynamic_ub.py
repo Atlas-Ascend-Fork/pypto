@@ -36,7 +36,7 @@ def test_dynamic_ub_inference(requires_simt, tile_high_water, expected_dynamic_u
     assert jit._infer_dynamic_ub_size(requires_simt, tile_high_water) == expected_dynamic_ub
 
 
-def test_dynamic_ub_inference_rejects_tile_beyond_a5_user_ub():
+def test_dynamic_ub_inference_rejects_tile_beyond_3510_user_ub():
     with pytest.raises(OutOfRange) as exc_info:
         jit._infer_dynamic_ub_size(True, 216 * 1024 + 32)
     message = str(exc_info.value)

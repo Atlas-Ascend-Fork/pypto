@@ -8,7 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""A5 system test for multicore SIMT execution and three-dimensional thread context."""
+"""3510 system test for multicore SIMT execution and three-dimensional thread context."""
 
 import os
 

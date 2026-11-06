@@ -844,7 +844,7 @@ def _ir_move(
         if get_current_arch() == NpuArch.DAV_9201:
             raise NotSupported(
                 "move: acc_to_vec_mode DualModeSplitM/DualModeSplitN is not yet supported on "
-                "arch 'a6' because pto-isa does not currently support dual-destination Acc-to-Vec moves "
+                "arch '9201' because pto-isa does not currently support dual-destination Acc-to-Vec moves "
                 "on dav-9201",
                 span=actual_span,
             )
@@ -1131,7 +1131,7 @@ def _ir_xor(self, out: Expr, lhs: Expr, rhs: Expr, tmp: Expr, *, span: Span | No
 
         _check_dtype_match("xor", dt, getattr(lhs.type, "dtype", None))
         check_const_expr_fits_dtype(rhs, dt, span=span, api="pl.xor")
-        # TXORS carries a trailing unused tmp operand (A2A3 API compatibility).
+        # TXORS carries a trailing unused tmp operand in the pto-isa signature.
         return _ir_core.create_op_call(block_ir_op("xors"), [out, lhs, rhs, tmp], {}, span or _span())
     _check_dtype_match("xor", dt, getattr(lhs.type, "dtype", None), getattr(rhs.type, "dtype", None))
     return _ir_core.create_op_call(block_ir_op("xor"), [out, lhs, rhs, tmp], {}, span or _span())
@@ -1248,7 +1248,7 @@ def _validate_merged_row_load(
 
     The Tile's row index is then the flattening of two tensor axes,
     ``row = i_outer * inner + i_inner`` -- which is what lets a Tensor [B, S, N, G, D] feed a
-    matmul that wants (S, G) as one axis. A5's nd2nz DMA issues it as ``ndNum`` ND matrices of
+    matmul that wants (S, G) as one axis. 3510's nd2nz DMA issues it as ``ndNum`` ND matrices of
     ``inner`` rows each, through TLOAD. This returns ``inner``,
     or None when the call is the ordinary 2-axis form.
 
@@ -1451,12 +1451,12 @@ _ROW_EXPAND_DTYPES: tuple[DataType, ...] = _BINARY_DTYPES
 _FLOAT_UNARY_DTYPES: tuple[DataType, ...] = (DataType.FP16, DataType.FP32)
 # TRECIP delegates to TDIVS(dst, 1, src), which also admits integer 1/x.
 _RECIP_DTYPES: tuple[DataType, ...] = (DataType.INT16, DataType.INT32, DataType.FP16, DataType.FP32)
-# TREM/TREMS (A5): half/float/int16/uint16/int32/uint32/int64/uint64.
+# TREM/TREMS (3510): half/float/int16/uint16/int32/uint32/int64/uint64.
 _REM_DTYPES: tuple[DataType, ...] = (
     DataType.INT16, DataType.UINT16, DataType.INT32, DataType.UINT32,
     DataType.INT64, DataType.UINT64, DataType.FP16, DataType.FP32,
 )
-# TROWPROD (A5): half/float/int16/int32; TCOLPROD adds uint16/uint32/bfloat16.
+# TROWPROD (3510): half/float/int16/int32; TCOLPROD adds uint16/uint32/bfloat16.
 _ROW_PROD_DTYPES: tuple[DataType, ...] = (
     DataType.INT16, DataType.INT32, DataType.FP16, DataType.FP32,
 )
@@ -1464,20 +1464,20 @@ _COL_PROD_DTYPES: tuple[DataType, ...] = (
     DataType.INT16, DataType.UINT16, DataType.INT32, DataType.UINT32,
     DataType.FP16, DataType.FP32, DataType.BF16,
 )
-# TROWARGMAX/TROWARGMIN (A5) 3-arg idx-only form: half/float source, 32-bit index.
+# TROWARGMAX/TROWARGMIN (3510) 3-arg idx-only form: half/float source, 32-bit index.
 _ARG_IDX32_DTYPES: tuple[DataType, ...] = (DataType.INT32, DataType.UINT32)
 # TGATHER/TSCATTER index tiles are 16/32-bit integers.
 _GATHER_IDX_DTYPES: tuple[DataType, ...] = (
     DataType.INT16, DataType.UINT16, DataType.INT32, DataType.UINT32,
 )
-# TMRGSORT/TSORT32 (A5) operate on half/float only.
+# TMRGSORT/TSORT32 (3510) operate on half/float only.
 _SORT_DTYPES: tuple[DataType, ...] = (DataType.FP16, DataType.FP32)
-# THISTOGRAM (A5) counts 16/32-bit unsigned source elements into a u32 bin tile
+# THISTOGRAM (3510) counts 16/32-bit unsigned source elements into a u32 bin tile
 # with a u8 filter index (mirrors the block.histogram IR registration).
 _HISTOGRAM_SRC_DTYPES: tuple[DataType, ...] = (DataType.UINT16, DataType.UINT32)
 _HISTOGRAM_IDX_DTYPES: tuple[DataType, ...] = (DataType.UINT8,)
 _HISTOGRAM_DST_DTYPES: tuple[DataType, ...] = (DataType.UINT32,)
-# TCI (A5) fills 16/32-bit integer tiles with arithmetic sequences.
+# TCI (3510) fills 16/32-bit integer tiles with arithmetic sequences.
 _FILL_INDEX_DTYPES: tuple[DataType, ...] = (
     DataType.INT16, DataType.UINT16, DataType.INT32, DataType.UINT32,
 )
@@ -1599,7 +1599,7 @@ def _ir_setval(container: Expr, offset: Expr, value: Expr, *, span: Span | None 
 
 
 def _check_transpose_align(out: Expr, src: Expr, dt: DataType | None) -> None:
-    """TTRANS (A5) statically asserts ``Cols * sizeof(T) % 32 == 0`` on both tiles.
+    """TTRANS (3510) statically asserts ``Cols * sizeof(T) % 32 == 0`` on both tiles.
 
     The swap always targets the last two dimensions; static-only (dynamic
     shapes are skipped — never over-rejects).
@@ -1665,7 +1665,7 @@ def _ir_fillpad(self,
     span: Span | None = None,
     mode: FillPadMode = FillPadMode.NORMAL,
 ) -> Expr:
-    # TFillPad (A5) specializes on 1/2/4-byte elements (sub-byte types are
+    # TFillPad (3510) specializes on 1/2/4-byte elements (sub-byte types are
     # filled as byte patterns) and requires dst/src to share the element size.
     out_dt = getattr(out.type, "dtype", None)
     src_dt = getattr(src.type, "dtype", None)
@@ -1781,7 +1781,7 @@ def _ir_quant(self,
     mode: QuantMode = QuantMode.SYM,
     offset: Expr | None = None,
 ) -> Expr:
-    # A5 TQUANT: INT8_SYM converts FP32→INT8, INT8_ASYM converts FP32→UINT8;
+    # 3510 TQUANT: INT8_SYM converts FP32→INT8, INT8_ASYM converts FP32→UINT8;
     # both consume FP32 scale/offset tiles.
     _check_dtype("quant", getattr(src.type, "dtype", None), (DataType.FP32,))
     _check_dtype("quant", getattr(scale.type, "dtype", None), (DataType.FP32,))
@@ -1801,7 +1801,7 @@ def _ir_quant(self,
 
 @op_impl("dequant")
 def _ir_dequant(self, out: Expr, src: Expr, scale: Expr, offset: Expr, *, span: Span | None = None) -> Expr:
-    # A5 TDEQUANT: FP32 output from INT8/INT16 sources with FP32 scale/offset tiles.
+    # 3510 TDEQUANT: FP32 output from INT8/INT16 sources with FP32 scale/offset tiles.
     _check_dtype("dequant", getattr(out.type, "dtype", None), (DataType.FP32,))
     _check_dtype("dequant", getattr(src.type, "dtype", None), (DataType.INT8, DataType.INT16))
     _check_dtype("dequant", getattr(scale.type, "dtype", None), (DataType.FP32,))
@@ -1846,8 +1846,8 @@ def _is_fractal_transpose(a: TensorLayout, b: TensorLayout) -> bool:
     return _FRACTAL_TRANSPOSE.get(a) == b
 
 
-# A5 cube buffers (L0A/L0B/L0C) do not support these layouts.
-_REJECTED_LAYOUTS_ON_A5 = (TensorLayout.ZZ, TensorLayout.NN)
+# 3510 cube buffers (L0A/L0B/L0C) do not support these layouts.
+_REJECTED_LAYOUTS_ON_3510 = (TensorLayout.ZZ, TensorLayout.NN)
 
 
 def _tile_layout(tile_type: "_IRTileType") -> "TensorLayout | None":
@@ -1858,15 +1858,7 @@ def _tile_layout(tile_type: "_IRTileType") -> "TensorLayout | None":
     return _BS_TO_LAYOUT.get((int(hw.blayout), int(hw.slayout)))
 
 
-_DEFAULT_LAYOUTS_A3: dict[MemorySpace, TensorLayout] = {
-    MemorySpace.Mat: TensorLayout.NZ,
-    MemorySpace.Left: TensorLayout.ZZ,
-    MemorySpace.Right: TensorLayout.ZN,
-    MemorySpace.Scaling: TensorLayout.ND,
-    MemorySpace.Acc: TensorLayout.NZ,
-}
-
-_DEFAULT_LAYOUTS_A5: dict[MemorySpace, TensorLayout] = {
+_DEFAULT_LAYOUTS_3510: dict[MemorySpace, TensorLayout] = {
     MemorySpace.Mat: TensorLayout.NZ,
     MemorySpace.Left: TensorLayout.NZ,
     MemorySpace.Right: TensorLayout.ZN,
@@ -1939,12 +1931,10 @@ def _apply_default_layout(tt: "TileType") -> None:
     from pypto_pro.runtime.jit import get_current_arch
 
     arch = get_current_arch()
-    layout_dict = _DEFAULT_LAYOUTS_A5 if arch in (NpuArch.DAV_3510, NpuArch.DAV_9201) else _DEFAULT_LAYOUTS_A3
+    if arch not in (NpuArch.DAV_3510, NpuArch.DAV_9201):
+        raise NotSupported(f"PyPTO Pro only supports arch '3510' or '9201', got '{arch}'")
+    layout_dict = _DEFAULT_LAYOUTS_3510
     default_layout = layout_dict.get(tt.target_memory)
-
-    if tt.target_memory in (MemorySpace.ScaleLeft, MemorySpace.ScaleRight):
-        if default_layout is None:
-            raise InvalidVal(f"{tt.target_memory.name} is only supported on 3510/9201, got architecture '{arch}'")
 
     if default_layout is None:
         return
@@ -1964,21 +1954,14 @@ def _apply_default_layout(tt: "TileType") -> None:
         tt.fractal = _MX_SCALE_FRACTAL
 
     allowed_layouts = {default_layout}
-    if tt.target_memory == MemorySpace.Left:
-        allowed_layouts = {_DEFAULT_LAYOUTS_A3[MemorySpace.Left], _DEFAULT_LAYOUTS_A5[MemorySpace.Left]}
-    elif tt.target_memory == MemorySpace.Mat:
-        allowed_layouts.add(TensorLayout.ZN)
-        if arch in (NpuArch.DAV_3510, NpuArch.DAV_9201):
-            allowed_layouts.update({TensorLayout.ND, TensorLayout.DN})
-        elif tt.dtype in (DataType.UINT64, DataType.INT64):
-            allowed_layouts.add(TensorLayout.ND)
+    if tt.target_memory == MemorySpace.Mat:
+        allowed_layouts.update({TensorLayout.ZN, TensorLayout.ND, TensorLayout.DN})
         if tt.dtype == DataType.FP8E8M0:
             allowed_layouts.update({TensorLayout.ZZ, TensorLayout.NN})
 
     if (
-        arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)
-        and tt.target_memory in (MemorySpace.Left, MemorySpace.Right, MemorySpace.Acc)
-        and tt.layout in _REJECTED_LAYOUTS_ON_A5
+        tt.target_memory in (MemorySpace.Left, MemorySpace.Right, MemorySpace.Acc)
+        and tt.layout in _REJECTED_LAYOUTS_ON_3510
     ):
         raise InvalidVal(
             f"{tt.target_memory.name} tiles do not support {tt.layout.name} layout on '{arch}'; "
@@ -1999,11 +1982,11 @@ def _apply_default_layout(tt: "TileType") -> None:
             tt.fractal = _ACC_FRACTAL
 
 
-# A5 MOVE / INSERT / MATMUL dtype and layout validation.
+# 3510 MOVE / INSERT / MATMUL dtype and layout validation.
 _ANY_LAYOUT = object()
 
-# Layout/dtype combinations shared by TMOV and TEXTRACT on A5.
-_A5_MOVE_EXTRACT_COMMON_COMBOS = (
+# Layout/dtype combinations shared by TMOV and TEXTRACT on 3510.
+_3510_MOVE_EXTRACT_COMMON_COMBOS = (
     # Mat -> Left.
     ("Mat", "Left", TensorLayout.NZ, TensorLayout.NZ, DataType.INT8, DataType.INT8),
     ("Mat", "Left", TensorLayout.NZ, TensorLayout.NZ, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
@@ -2143,10 +2126,10 @@ _A5_MOVE_EXTRACT_COMMON_COMBOS = (
     ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.INT32, DataType.INT32),
 )
 
-_A5_MOVE_COMBOS = (
-    *_A5_MOVE_EXTRACT_COMMON_COMBOS,
+_3510_MOVE_COMBOS = (
+    *_3510_MOVE_EXTRACT_COMMON_COMBOS,
 
-    # Additional layout/dtype combinations supported only by TMOV on A5.
+    # Additional layout/dtype combinations supported only by TMOV on 3510.
     # Mat -> Left/Right layouts rejected by TEXTRACT.
     ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.INT8, DataType.INT8),
     ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
@@ -2260,7 +2243,7 @@ _A5_MOVE_COMBOS = (
 )
 
 
-_A5_MOVE_QUANT_COMBOS = (
+_3510_MOVE_QUANT_COMBOS = (
     # Acc -> Vec, scalar/vector quantized.
     # Supported quantized dtype conversions:
     # FP32 -> INT8 / UINT8 / HF8 / FP16 / BF16 / FP8E4M3FN / FP32
@@ -2339,7 +2322,7 @@ _A5_MOVE_QUANT_COMBOS = (
 )
 
 
-_A5_INSERT_COMBOS = (
+_3510_INSERT_COMBOS = (
     # Vec -> Vec; ND -> ND, NZ -> NZ
     ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.INT8, DataType.INT8),
     ("Vec", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.INT32, DataType.INT32),
@@ -2410,11 +2393,11 @@ _A5_INSERT_COMBOS = (
 )
 
 # A move carrying an offset is emitted as TEXTRACT, not TMOV. TEXTRACT is a
-# strict subset of TMOV on A5, so reuse only the explicitly shared combinations.
-_A5_EXTRACT_COMBOS = _A5_MOVE_EXTRACT_COMMON_COMBOS
+# strict subset of TMOV on 3510, so reuse only the explicitly shared combinations.
+_3510_EXTRACT_COMBOS = _3510_MOVE_EXTRACT_COMMON_COMBOS
 
 
-_A5_MATMUL_DTYPE_COMBOS = (
+_3510_MATMUL_DTYPE_COMBOS = (
     # INT8
     (DataType.INT8, DataType.INT8, DataType.INT32),
 
@@ -2435,8 +2418,8 @@ _A5_MATMUL_DTYPE_COMBOS = (
 
 
 _MATMUL_DTYPE_COMBOS = {
-    NpuArch.DAV_3510: _A5_MATMUL_DTYPE_COMBOS,
-    NpuArch.DAV_9201: _A5_MATMUL_DTYPE_COMBOS,
+    NpuArch.DAV_3510: _3510_MATMUL_DTYPE_COMBOS,
+    NpuArch.DAV_9201: _3510_MATMUL_DTYPE_COMBOS,
 }
 
 
@@ -2539,7 +2522,7 @@ _COMPACT_VALUES = frozenset({0, 1, 2, 3})
 
 
 # ---------------------------------------------------------------------------
-# Layout × dtype 合法组合表（按平台 arch 分；A6 当前复用 A5 规则）。
+# Layout × dtype 合法组合表（按平台 arch 分；9201 当前复用 3510 规则）。
 #
 # 每个合法组合是一个六元组 (src_loc, dst_loc, src_layout, dst_layout, src_dtype, dst_dtype)，
 # 均为 pto-isa 实际支持（static_assert 允许范围）且经真实上板实测。
@@ -2571,8 +2554,8 @@ def _operand_dtype(type_: "_IRTileType | _ir_core.TensorType") -> "DataType | No
     return getattr(type_, "dtype", None)
 
 
-# a5 load 合法组合表（load / load_tile 共用）
-_A5_LOAD_COMBOS = (
+# 3510 load 合法组合表（load / load_tile 共用）
+_3510_LOAD_COMBOS = (
     # ND → ND（同位宽组合）
     ("GM", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.FP4E2M1, DataType.FP4E2M1),
     ("GM", "Vec", TensorLayout.ND, TensorLayout.ND, DataType.FP4E2M1, DataType.FP4E1M2),
@@ -3064,8 +3047,8 @@ _A5_LOAD_COMBOS = (
     ("GM", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.UINT64, DataType.UINT64),
 )
 
-# a5 store 合法组合表（store / store_tile 共用，非量化路径）
-_A5_STORE_COMBOS = (
+# 3510 store 合法组合表（store / store_tile 共用，非量化路径）
+_3510_STORE_COMBOS = (
     # ND → ND（17 种 × 同位宽组合）
     ("Vec", "GM", TensorLayout.ND, TensorLayout.ND, DataType.FP4E2M1, DataType.FP4E2M1),
     ("Vec", "GM", TensorLayout.ND, TensorLayout.ND, DataType.FP4E2M1, DataType.FP4E1M2),
@@ -3294,8 +3277,8 @@ _A5_STORE_COMBOS = (
     ("Acc", "GM", TensorLayout.NZ, TensorLayout.NZ, DataType.INT32, DataType.BF16),
 )
 
-# a5 store 量化合法组合表（store / store_tile 带 scale）
-_A5_STORE_QUANT_COMBOS = (
+# 3510 store 量化合法组合表（store / store_tile 带 scale）
+_3510_STORE_QUANT_COMBOS = (
     # FP32 累加量化：NZ → ND / NZ → NZ
     ("Acc", "GM", TensorLayout.NZ, TensorLayout.ND, DataType.FP32, DataType.INT8),
     ("Acc", "GM", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.INT8),
@@ -3323,7 +3306,7 @@ _A5_STORE_QUANT_COMBOS = (
 )
 
 
-_A5_INSERT_QUANT_COMBOS = (
+_3510_INSERT_QUANT_COMBOS = (
     ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.INT8),
     ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.UINT8),
     ("Acc", "Mat", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP16),
@@ -3337,16 +3320,19 @@ _A5_INSERT_QUANT_COMBOS = (
 )
 
 _LAYOUT_DTYPE_COMBOS = {
-    "load": {arch: (_A5_LOAD_COMBOS, None) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
-    "load_tile": {arch: (_A5_LOAD_COMBOS, None) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
-    "store": {arch: (_A5_STORE_COMBOS, _A5_STORE_QUANT_COMBOS) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
-    "store_tile": {arch: (_A5_STORE_COMBOS, _A5_STORE_QUANT_COMBOS) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
-    "move": {arch: (_A5_MOVE_COMBOS, _A5_MOVE_QUANT_COMBOS) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
-    "extract": {
-        arch: (_A5_EXTRACT_COMBOS, _A5_INSERT_QUANT_COMBOS)
+    "load": {arch: (_3510_LOAD_COMBOS, None) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
+    "load_tile": {arch: (_3510_LOAD_COMBOS, None) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
+    "store": {arch: (_3510_STORE_COMBOS, _3510_STORE_QUANT_COMBOS) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
+    "store_tile": {
+        arch: (_3510_STORE_COMBOS, _3510_STORE_QUANT_COMBOS)
         for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)
     },
-    "insert": {arch: (_A5_INSERT_COMBOS, _A5_INSERT_QUANT_COMBOS) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
+    "move": {arch: (_3510_MOVE_COMBOS, _3510_MOVE_QUANT_COMBOS) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
+    "extract": {
+        arch: (_3510_EXTRACT_COMBOS, _3510_INSERT_QUANT_COMBOS)
+        for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)
+    },
+    "insert": {arch: (_3510_INSERT_COMBOS, _3510_INSERT_QUANT_COMBOS) for arch in (NpuArch.DAV_3510, NpuArch.DAV_9201)},
 }
 
 
@@ -3395,7 +3381,7 @@ def _check_layout_dtype(
         return
     combos_entry = combos_by_arch.get(arch)
     if combos_entry is None:
-        # 该平台暂未配置支持表（如 a3）——不做硬拦截，后续按平台补表后自动生效。
+        # 该架构暂未配置支持表——不做硬拦截，后续按平台补表后自动生效。
         return
     combos = combos_entry[1] if quant else combos_entry[0]
     if combos is None:
@@ -4301,7 +4287,7 @@ def _ir_sum(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None, 
 
 @op_impl("prod")
 def _ir_prod(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
-    # TROWPROD and TCOLPROD admit different dtype sets on A5; validate per dim
+    # TROWPROD and TCOLPROD admit different dtype sets on 3510; validate per dim
     # (TROWPROD: half/float/int16/int32; TCOLPROD adds uint16/uint32/bfloat16).
     dt = getattr(src.type, "dtype", None)
     _check_dtype_match("prod", getattr(out.type, "dtype", None), dt)
@@ -4310,7 +4296,7 @@ def _ir_prod(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None,
 
 @op_impl("argmax")
 def _ir_argmax(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
-    # A5 TROWARGMAX/TROWARGMIN (3-arg idx-only form): half/float source,
+    # 3510 TROWARGMAX/TROWARGMIN (3-arg idx-only form): half/float source,
     # 32-bit index destination.
     _check_dtype("argmax", getattr(src.type, "dtype", None), _FLOAT_UNARY_DTYPES)
     _check_dtype("argmax", getattr(out.type, "dtype", None), _ARG_IDX32_DTYPES)
@@ -4319,7 +4305,7 @@ def _ir_argmax(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = Non
 
 @op_impl("argmin")
 def _ir_argmin(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
-    # A5 TROWARGMIN/TCOLARGMIN (3-arg idx-only form): half/float source,
+    # 3510 TROWARGMIN/TCOLARGMIN (3-arg idx-only form): half/float source,
     # 32-bit index destination.
     _check_dtype("argmin", getattr(src.type, "dtype", None), _FLOAT_UNARY_DTYPES)
     _check_dtype("argmin", getattr(out.type, "dtype", None), _ARG_IDX32_DTYPES)
@@ -4445,7 +4431,7 @@ def _ir_expand_expdif(
 
 # ---------------------------------------------------------------------------
 # Partial merge / gather / scatter / sort / histogram ops
-# (validation mirrors the pto-isa A5 TxxxCheck functions)
+# (validation mirrors the pto-isa 3510 TxxxCheck functions)
 # ---------------------------------------------------------------------------
 @op_impl("partadd")
 def _ir_partadd(self, out: Expr, src0: Expr, src1: Expr, *, span: Span | None = None) -> Expr:
@@ -4473,7 +4459,7 @@ def _ir_partmin(self, out: Expr, src0: Expr, src1: Expr, *, span: Span | None = 
 
 @op_impl("partmul")
 def _ir_partmul(self, out: Expr, src0: Expr, src1: Expr, *, span: Span | None = None) -> Expr:
-    # TPARTMUL (A5) has no 8-bit variants.
+    # TPARTMUL (3510) has no 8-bit variants.
     dt = getattr(out.type, "dtype", None)
     _check_dtype("partmul", dt, _MUL_DTYPES)
     _check_dtype_match("partmul", dt, getattr(src0.type, "dtype", None), getattr(src1.type, "dtype", None))
@@ -4511,7 +4497,7 @@ def _ir_gather(self, out: Expr, src: Expr, indices_or_k_value: Expr, tmp_or_cdst
 
 @op_impl("gatherb")
 def _ir_gatherb(self, out: Expr, src: Expr, offsets: Expr, *, span: Span | None = None) -> Expr:
-    # TGATHERB (A5): 1/2/4-byte destination elements, 32-bit byte-offset tiles.
+    # TGATHERB (3510): 1/2/4-byte destination elements, 32-bit byte-offset tiles.
     out_dt = getattr(out.type, "dtype", None)
     if out_dt is not None and out_dt.get_bit() not in (8, 16, 32):
         raise InvalidType(f"gatherb: unsupported out dtype {out_dt}, supported: b8/b16/b32")
@@ -4529,7 +4515,7 @@ def _ir_gathermask(self, out: Expr, src: Expr, *, span: Span | None = None, **kw
 
 @op_impl("scatter")
 def _ir_scatter(self, out: Expr, src: Expr, idx: Expr, *, span: Span | None = None) -> Expr:
-    # TSCATTER (A5) index pairing: b8→b16, b16→b16, b32→b32, b64→b32.
+    # TSCATTER (3510) index pairing: b8→b16, b16→b16, b32→b32, b64→b32.
     src_dt = getattr(src.type, "dtype", None)
     _check_dtype_match("scatter", src_dt, getattr(out.type, "dtype", None))
     idx_dt = getattr(idx.type, "dtype", None)
@@ -4545,7 +4531,7 @@ def _ir_scatter(self, out: Expr, src: Expr, idx: Expr, *, span: Span | None = No
 
 @op_impl("sort32")
 def _ir_sort32(self, dst: Expr, src: Expr, idx: Expr, tmp: Expr | None = None, *, span: Span | None = None) -> Expr:
-    # TSORT32 (A5): half/float values with uint32 indices.
+    # TSORT32 (3510): half/float values with uint32 indices.
     dt = getattr(src.type, "dtype", None)
     _check_dtype("sort32", dt, _SORT_DTYPES)
     _check_dtype_match("sort32", dt, getattr(dst.type, "dtype", None))
@@ -4558,7 +4544,7 @@ def _ir_sort32(self, dst: Expr, src: Expr, idx: Expr, tmp: Expr | None = None, *
 def _ir_mrgsort(self, dst: Expr, src: Expr, *, span: Span | None = None, **kwargs) -> Expr:
     with current_span(argument_span("block_len", span)):
         kwargs["block_len"] = require_const_int(kwargs["block_len"], subject="'block_len'")
-    # TMRGSORT (A5): half/float only.
+    # TMRGSORT (3510): half/float only.
     dt = getattr(src.type, "dtype", None)
     _check_dtype("mrgsort", dt, _SORT_DTYPES)
     _check_dtype_match("mrgsort", dt, getattr(dst.type, "dtype", None))
@@ -4574,7 +4560,7 @@ def _ir_mrgsort2(
             kwargs["exhausted"], "exhausted", expects="bool",
             hint="exhausted must be known at compile time.",
         )
-    # TMRGSORT (A5): half/float only. Reorder to the backend argument layout
+    # TMRGSORT (3510): half/float only. Reorder to the backend argument layout
     # [dst, src0, tmp, src1, ...] — the plain fall-through produced misordered
     # IR args that the CCE codegen read as (dst=src0, src0=src1, tmp=dst, src1=tmp).
     dt = getattr(src0.type, "dtype", None)
@@ -4592,7 +4578,7 @@ def _ir_histogram(self, dst: Expr, src: Expr, idx: Expr, *, span: Span | None = 
         kwargs["is_msb"], "is_msb", expects="bool",
         hint="is_msb must be known at compile time.",
     )
-    # THISTOGRAM (A5): u16/u32 source, u8 filter index, u32 bin destination.
+    # THISTOGRAM (3510): u16/u32 source, u8 filter index, u32 bin destination.
     _check_dtype("histogram", getattr(src.type, "dtype", None), _HISTOGRAM_SRC_DTYPES)
     _check_dtype("histogram", getattr(idx.type, "dtype", None), _HISTOGRAM_IDX_DTYPES)
     _check_dtype("histogram", getattr(dst.type, "dtype", None), _HISTOGRAM_DST_DTYPES)
@@ -4601,7 +4587,7 @@ def _ir_histogram(self, dst: Expr, src: Expr, idx: Expr, *, span: Span | None = 
 
 @op_impl("fill_index")
 def _ir_fill_index(self, out: Expr, start: Expr, *, span: Span | None = None) -> Expr:
-    # TCI (A5): 16/32-bit integer tiles.
+    # TCI (3510): 16/32-bit integer tiles.
     _check_dtype("fill_index", getattr(out.type, "dtype", None), _FILL_INDEX_DTYPES)
     return _ir_core.create_op_call(block_ir_op("fill_index"), [out, start], {}, span or _span())
 
@@ -4741,7 +4727,7 @@ def _check_mx_scale_tile(
                 f"expected {expected_shape} for {data_name} shape {data_shape}, got {scale_shape}."
             )
 
-    # A5 mad_mx receives only the L0A/L0B data pointers and derives the
+    # 3510 mad_mx receives only the L0A/L0B data pointers and derives the
     # corresponding L0AMX/L0BMX address by shifting right four bits.  Skip
     # auto-allocated tiles or non-constant addresses, which cannot be proven here.
     data_memref = data_type.memref

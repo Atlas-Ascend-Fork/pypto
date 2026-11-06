@@ -9,7 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Tile subview tests for A[] slice syntax on A5.
+"""Tile subview tests for A[] slice syntax on 3510.
 
 Tests cover:
 
@@ -128,7 +128,7 @@ def _assert_nz_storage_equal(actual: torch.Tensor, expected: torch.Tensor) -> No
     torch.testing.assert_close(actual_storage, expected_storage, rtol=0, atol=0)
 
 
-def _is_a5() -> bool:
+def _is_3510() -> bool:
     try:
         torch.npu.set_device(ST_DEVICE)
     except RuntimeError as exc:
@@ -136,7 +136,7 @@ def _is_a5() -> bool:
         return False
     name = torch.npu.get_device_name()
     if not any(soc in name for soc in ("Ascend950", "Ascend960")):
-        logging.info("Current device is %s, not A5/A6 (Ascend950/Ascend960). Skip.", name)
+        logging.info("Current device is %s, not 3510/9201 (Ascend950/Ascend960). Skip.", name)
         return False
     return True
 
@@ -166,7 +166,7 @@ def tile_subview_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_tile_subview():
-    if not _is_a5():
+    if not _is_3510():
         return
     device = ST_DEVICE
     torch.manual_seed(0)
@@ -207,7 +207,7 @@ def tile_subview_vshape_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_tile_subview_valid_shape():
-    if not _is_a5():
+    if not _is_3510():
         return
     device = ST_DEVICE
     torch.manual_seed(1)
@@ -264,7 +264,7 @@ def tile_subview_vf_kernel(
 
 @pytest.mark.soc("950", "960")
 def test_tile_subview_vf():
-    if not _is_a5():
+    if not _is_3510():
         return
     device = ST_DEVICE
     torch.manual_seed(2)
@@ -331,7 +331,7 @@ def tile_subview_dn_kernel(
 
 @pytest.mark.soc("950")
 def test_tile_subview_dn():
-    if not _is_a5():
+    if not _is_3510():
         return
 
     inp_cpu = torch.arange(16 * 128, dtype=torch.float16).reshape(16, 128)
@@ -427,7 +427,7 @@ def _make_nz_subview_expected(logical: torch.Tensor, c0: int) -> torch.Tensor:
 )
 def test_tile_subview_nz_dtype_byte_offset(label, pl_dtype, torch_dtype, c0):
     del pl_dtype
-    if not _is_a5():
+    if not _is_3510():
         return
 
     logical = _make_nz_subview_input(torch_dtype, c0)
@@ -535,7 +535,7 @@ def tile_subview_l1_nz_zn_kernel(
 
 @pytest.mark.soc("950")
 def test_tile_subview_l1_nz_zn():
-    if not _is_a5():
+    if not _is_3510():
         return
 
     a_cpu = ((torch.arange(64 * 64, dtype=torch.float32).reshape(64, 64) % 31) - 15).to(torch.float16)
@@ -643,7 +643,7 @@ def tile_subview_l0c_store_kernel(
 
 @pytest.mark.soc("950")
 def test_tile_subview_l0c_store():
-    if not _is_a5():
+    if not _is_3510():
         return
 
     values = (torch.arange(64 * 64, dtype=torch.float32).reshape(64, 64) % 13) - 6
@@ -773,7 +773,7 @@ def tile_subview_cube_composite_kernel(
 
 @pytest.mark.soc("950")
 def test_tile_subview_cube_composite():
-    if not _is_a5():
+    if not _is_3510():
         return
 
     a_values = (torch.arange(96 * 96, dtype=torch.float32).reshape(96, 96) % 11) - 5

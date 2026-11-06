@@ -7,7 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""A5 NPU coverage for Python-compatible scalar numeric semantics."""
+"""3510 NPU coverage for Python-compatible scalar numeric semantics."""
 
 import math
 import os

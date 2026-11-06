@@ -9,7 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Element-wise add on Ascend A5 using make_tile_group double buffer.
+"""Element-wise add on Ascend 3510 using make_tile_group double buffer.
 
 Shape: [M, N] with M=8192, N=4096, each core processes 128*4096.
 Uses make_tile_group with auto_mutex for synchronization (no manual sync_src/sync_dst).

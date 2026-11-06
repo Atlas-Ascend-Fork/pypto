@@ -44,13 +44,13 @@ TILE_HALF = TILE // 2  # 64
 NUM_M_TILES = 3  # 2 full + 1 tail
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+        pytest.skip("not 3510")
 
 
 def _inputs(device, shape, dtype=torch.float16):
@@ -246,7 +246,7 @@ def call_kernel_split_n(
 @pytest.fixture(scope="module")
 def _device():
     dev = ST_DEVICE
-    _require_a5(dev)
+    _require_3510(dev)
     return dev
 
 
@@ -317,7 +317,7 @@ def test_split_n_tail_st_16(_device):
 
 if __name__ == "__main__":
     dev = ST_DEVICE
-    _require_a5(dev)
+    _require_3510(dev)
     test_split_m_odd_tail(dev)
     test_split_m_even_tail(dev)
     test_split_n_odd_tail(dev)

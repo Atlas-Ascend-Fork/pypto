@@ -62,13 +62,13 @@ _TT_SHAPES = [
 ]
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+        pytest.skip("not 3510")
 
 
 _MX_DTYPES = {
@@ -934,7 +934,7 @@ def _make_mx_insert_kernel(dtype_label):
             # The GM output verifies the ACC -> UB transfer numerically.
             pl.store(out, acc_vec, [row_offset, 0])
             if is_fp4:
-                # A5 converts FP32 to packed FP4 through BF16.
+                # 3510 converts FP32 to packed FP4 through BF16.
                 pl.cast(bf16_vec, acc_vec, mode=pl.RoundMode.CAST_ROUND)
                 pl.cast(mx_vec_nd, bf16_vec, mode=pl.RoundMode.CAST_ROUND)
                 # Follow PTO-ISA's MXFP4 quant path: reinterpret the packed
@@ -976,7 +976,7 @@ def _make_mx_scale_ub_kernel(rows, cols):
         out_mg = pl.make_tensor(out, [rows, cols], [cols, 1])
         scale_ub_group = pl.make_tile_group(
             type=pl.TileType(
-                # A5 TSTORE requires an ND Vec Tile's static row width to be
+                # 3510 TSTORE requires an ND Vec Tile's static row width to be
                 # 32-byte aligned. E8M0 is B8; valid width remains the runtime G.
                 shape=[TILE, E8M0_UB_ALIGNED_COLS], dtype=pl.DT_FP8E8M0,
                 target_memory=pl.MemorySpace.Vec, layout=pl.ND,
@@ -1265,7 +1265,7 @@ def _make_scale_params(scales, device, out_dtype_label):
         payload |= 1 << 46
     params = torch.from_numpy(payload).reshape(1, -1).to(device)
 
-    # A5 FixPipe deqTensor keeps sign + exponent + the top 10 mantissa bits
+    # 3510 FixPipe deqTensor keeps sign + exponent + the top 10 mantissa bits
     # from each FP32 scale parameter (pto-isa masks with 0xFFFFE000).
     effective_scales = (scale_bits & np.uint32(0xFFFFE000)).view(np.float32)
     return params, effective_scales.copy()
@@ -1524,7 +1524,7 @@ def _run_mx_scale_mg_to_ub(device):
 
 @pytest.fixture(scope="module")
 def _device():
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     return ST_DEVICE
 
 
@@ -1677,7 +1677,7 @@ def test_t15_mx_bias_fp32_phase(a_dtype_label, b_dtype_label, _device):
 
 
 if __name__ == "__main__":
-    _require_a5(ST_DEVICE)
+    _require_3510(ST_DEVICE)
     _cases = []
 
     # t01 owns the exhaustive dtype-direction matrix.

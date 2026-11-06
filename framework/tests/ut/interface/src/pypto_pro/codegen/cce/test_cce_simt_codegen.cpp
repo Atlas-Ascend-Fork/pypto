@@ -628,7 +628,7 @@ TEST(CCESimtCodegenTest, RejectsUnsupportedTargetAndArchitecture)
                  npu::tile_fwk::Error);
 
     CCECodegen vector_codegen(ir::SectionKind::Vector);
-    EXPECT_THROW((void)vector_codegen.GenerateSingle(MakeSimtProgram(), npu::tile_fwk::NPUArch::DAV_2201),
+    EXPECT_THROW((void)vector_codegen.GenerateSingle(MakeSimtProgram(), npu::tile_fwk::NPUArch::DAV_3003),
                  npu::tile_fwk::Error);
 }
 
@@ -819,7 +819,7 @@ TEST(CCESimtCodegenTest, RejectsSimtKernelUnsupportedTargetAndArchitecture)
                  npu::tile_fwk::Error);
 
     CCECodegen vector_codegen(ir::SectionKind::Vector);
-    EXPECT_THROW((void)vector_codegen.GenerateSingle(MakeSimtKernelProgram(), npu::tile_fwk::NPUArch::DAV_2201),
+    EXPECT_THROW((void)vector_codegen.GenerateSingle(MakeSimtKernelProgram(), npu::tile_fwk::NPUArch::DAV_3003),
                  npu::tile_fwk::Error);
 }
 

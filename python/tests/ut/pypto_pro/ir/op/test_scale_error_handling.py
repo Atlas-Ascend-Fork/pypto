@@ -38,7 +38,7 @@ import torch
 
 pytestmark = pytest.mark.skipif(
     get_platform_info().arch != NpuArch.DAV_3510,
-    reason="PyPTO Pro only supports arch '3510'",
+    reason="These scale error-handling tests currently run only on arch '3510'",
 )
 
 

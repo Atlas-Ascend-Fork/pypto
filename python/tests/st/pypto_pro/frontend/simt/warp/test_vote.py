@@ -8,7 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""A5 end-to-end tests for the SIMT Warp Vote interfaces."""
+"""3510 end-to-end tests for the SIMT Warp Vote interfaces."""
 
 import os
 

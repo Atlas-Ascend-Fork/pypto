@@ -29,7 +29,7 @@ ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 SENTINEL = -9.0
 
 
-def _require_a5_or_a6(device: str) -> None:
+def _require_3510_or_9201(device: str) -> None:
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
@@ -40,7 +40,7 @@ def _require_a5_or_a6(device: str) -> None:
 
 @pytest.fixture(scope="module")
 def device() -> str:
-    _require_a5_or_a6(ST_DEVICE)
+    _require_3510_or_9201(ST_DEVICE)
     return ST_DEVICE
 
 

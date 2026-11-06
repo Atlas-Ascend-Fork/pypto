@@ -8,7 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""A5 generalized system test for the SIMT abs interface."""
+"""3510 generalized system test for the SIMT abs interface."""
 
 import os
 

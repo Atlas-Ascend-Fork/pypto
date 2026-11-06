@@ -58,7 +58,7 @@ RA1 = Q_F16
 CA0 = 0
 CA1 = QK_F32
 
-# ---- VEC addresses (248KB on a5) ----
+# ---- VEC addresses (248KB on 3510) ----
 VB4_KV = TKV * TS_HALF * 4  # [TKV, TS_HALF] FP32 = 32KB
 VB2_KV = TKV * TS_HALF * 2  # [TKV, TS_HALF] FP16 = 16KB
 VB6_DN = (TKV + 1) * TS_HALF * 2  # [TKV+1, TS_HALF] FP16 = 16512B
@@ -76,7 +76,7 @@ VA0 = 0  # qk_vec  [TKV, TS_HALF] FP32
 VA1 = _align_up(VA0 + VB4_KV)  # tmp_vec [TKV, TS_HALF] FP32
 VA2 = _align_up(VA1 + VB4_KV)  # p_f16   [TKV, TS_HALF] FP16
 VA3 = _align_up(VA2 + VB2_KV)  # reduce_dst / reduce_dst_rm
-# Keep the whole VEC layout on 1KB boundaries; A5 CCE is stricter about
+# Keep the whole VEC layout on 1KB boundaries; 3510 CCE is stricter about
 # VEC address alignment than the older A3 path.
 VA_GMAX0 = _align_up(VA3 + VB_RED)  # global_max slot 0
 VA_GMAX1 = _align_up(VA_GMAX0 + VB_RED)  # global_max slot 1
@@ -831,7 +831,7 @@ def flash_attention_ref_bn(q, k, v, d):
 
 
 @pytest.mark.soc("950")
-def test_fa_bn_a5():
+def test_fa_bn_3510():
     device = ST_DEVICE
     torch.npu.set_device(device)
     torch.manual_seed(42)
@@ -843,7 +843,7 @@ def test_fa_bn_a5():
         (8, 256, 2, 256, TD, 6),
         (2, 512, 1, 256, TD, 4),
     ]:
-        logging.info("\nFA-BNSD-DN-A5 (b=%s, sq=%s, n=%s, skv=%s, d=%s) cores=%s", b, sq, n, skv, d, num_cores)
+        logging.info("\nFA-BNSD-DN-3510 (b=%s, sq=%s, n=%s, skv=%s, d=%s) cores=%s", b, sq, n, skv, d, num_cores)
         q = torch.rand((b, n, sq, d), device=device, dtype=torch.float16)
         k = torch.rand((b, n, skv, d), device=device, dtype=torch.float16)
         v = torch.rand((b, n, skv, d), device=device, dtype=torch.float16)
@@ -868,7 +868,7 @@ def test_fa_bn_a5():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    logging.info("FA BNSD DN on A5 CCE")
+    logging.info("FA BNSD DN on 3510 CCE")
     logging.info("%s", '=' * 60)
-    test_fa_bn_a5()
+    test_fa_bn_3510()
     logging.info("\nAll FlashAttention DN tests passed!")

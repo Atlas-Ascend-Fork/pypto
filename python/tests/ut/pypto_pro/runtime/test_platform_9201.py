@@ -8,7 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""A6 arch detection."""
+"""9201 arch detection."""
 
 from pypto_pro.runtime.jit import _setup_arch_env
 from pypto_pro.runtime.platform import PlatformInfo
@@ -17,7 +17,7 @@ from pypto import pypto_impl
 from pypto.pypto_impl import NpuArch
 
 
-def test_a6_runtime_arch_mapping(monkeypatch):
+def test_9201_runtime_arch_mapping(monkeypatch):
     original_arch = pypto_impl.GetNPUArch()
     try:
         pypto_impl.SetNPUArch("9201")

@@ -8,7 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""A5 all-core ST for dynamic-shape ``pl.system.sync_all``.
+"""3510 all-core ST for dynamic-shape ``pl.system.sync_all``.
 
 The E prefix identifies ``sync_all`` scenarios:
   - E01: HARD+AIV_ONLY, covered by ``test_manual_sync_dynamic.py``
@@ -38,14 +38,14 @@ DYNAMIC_SHAPES = [
 ]
 
 
-def _require_a5_or_a6() -> None:
+def _require_3510_or_9201() -> None:
     try:
         torch.npu.set_device(ST_DEVICE)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     device_name = torch.npu.get_device_name()
     if not any(soc in device_name for soc in ("Ascend950", "Ascend960")):
-        pytest.skip(f"Current device is {device_name}, not A5/A6 (Ascend950/Ascend960)")
+        pytest.skip(f"Current device is {device_name}, not 3510/9201 (Ascend950/Ascend960)")
 
 
 # === T11: HARD AIC_ONLY followed by HARD MIX ========================================
@@ -112,7 +112,7 @@ def _make_inputs(shape):
 @pytest.mark.parametrize("used_cores", [1, 2], ids=["one-core", "two-cores"])
 def test_t11_e02_e03_hard_aic_mix(shape, used_cores):
     """T11: AIC_ONLY and MIX HARD barriers execute with the requested launch count."""
-    _require_a5_or_a6()
+    _require_3510_or_9201()
     x, y, out = _make_inputs(shape)
     t11_hard_aic_mix[None, used_cores](x, y, out)
     torch.npu.synchronize()

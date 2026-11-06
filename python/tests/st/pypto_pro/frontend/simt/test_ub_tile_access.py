@@ -8,7 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""A5 end-to-end tests for SIMT UB Tile access, runtime Valid Shape, and dynamic UB inference."""
+"""3510 end-to-end tests for SIMT UB Tile access, runtime Valid Shape, and dynamic UB inference."""
 
 import os
 

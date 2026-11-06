@@ -78,7 +78,7 @@ LA0 = 0  # left_db   (2 slots)
 RA0 = 0  # right_db  (2 slots)
 CA0 = 0  # acc_db    (4 slots)
 
-# ---- VEC addresses (248KB on a5) ----
+# ---- VEC addresses (248KB on 3510) ----
 VB4_KV = TS_HALF * TKV * 4
 VB2_KV = TS_HALF * 2 * (TKV // 2 + 1) * 2
 VB2_KV_HALF = VB2_KV // 2

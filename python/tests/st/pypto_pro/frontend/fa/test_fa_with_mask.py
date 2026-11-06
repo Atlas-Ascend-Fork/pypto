@@ -1820,7 +1820,7 @@ def test_fa_perf_nbuf():
         tq = sum(seq_q_list)
         tkv = sum(seq_kv_list)
         logging.info(
-            "\nFA-TND-DN-A5 (b=%s, seq_q=%s, seq_kv=%s, n=%s, d=%s) rules=%s cores=%s",
+            "\nFA-TND-DN-3510 (b=%s, seq_q=%s, seq_kv=%s, n=%s, d=%s) rules=%s cores=%s",
             b,
             seq_q_list,
             seq_kv_list,
@@ -1882,5 +1882,5 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     logging.info("FA perf with NBuffer + auto_mutex (QK_PRELOAD=%s, FIFO=%s)", QK_PRELOAD, FIFO_SIZE)
     logging.info("%s", '=' * 60)
-    test_fa_perf_nbuf()  # uncomment on A5 NPU
+    test_fa_perf_nbuf()  # uncomment on 3510 NPU
     logging.info("\nParse test passed!")

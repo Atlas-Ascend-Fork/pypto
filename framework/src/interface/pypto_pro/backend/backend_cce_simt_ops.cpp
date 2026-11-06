@@ -10,7 +10,7 @@
 
 /**
  * @file backend_cce_simt_ops.cpp
- * \brief Direct CCE lowering for the A5 SIMT context and launch operations.
+ * \brief Direct CCE lowering for the 3510 SIMT context and launch operations.
  */
 
 #include <cstddef>
@@ -161,7 +161,7 @@ std::string MakeSimtCastIntrinsicCallCCE(ir::DataType targetDtype, ir::RoundMode
 
 std::string MakeSimtCastNarrowIntegerCCE(ir::DataType targetDtype, ir::RoundMode mode, const std::string& operand)
 {
-    // A5 has no direct low-float-to-8/16-bit scalar conversion. Match the reference semantics by converting to
+    // 3510 has no direct low-float-to-8/16-bit scalar conversion. Match the reference semantics by converting to
     // a 32-bit carrier first, then clamp before narrowing. This is fixed per-conversion behavior, not public SatMode.
     const bool isSigned = targetDtype == ir::DataType::INT8 || targetDtype == ir::DataType::INT16;
     const ir::DataType carrierDtype = isSigned ? ir::DataType::INT32 : ir::DataType::UINT32;
@@ -263,7 +263,7 @@ std::string MakeSimtCastFromInt64OrUint64CCE(ir::DataType sourceDtype, ir::DataT
                                              const std::string& operand)
 {
     if (mode != ir::RoundMode::CAST_NONE && (targetDtype == ir::DataType::FP16 || targetDtype == ir::DataType::BF16)) {
-        // The A5 uint64-to-BF16 reference path always uses nearest-even for the uint64-to-FP32 carrier conversion.
+        // The 3510 uint64-to-BF16 reference path always uses nearest-even for the uint64-to-FP32 carrier conversion.
         const auto fp32Mode = sourceDtype == ir::DataType::UINT64 && targetDtype == ir::DataType::BF16 ?
                                   ir::RoundMode::CAST_RINT :
                                   mode;

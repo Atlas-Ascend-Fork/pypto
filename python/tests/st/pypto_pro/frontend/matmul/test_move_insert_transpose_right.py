@@ -9,7 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Verify pl.move auto-dispatch to insert (Rule A, ZN/NZ transpose sub-block) on A5.
+"""Verify pl.move auto-dispatch to insert (Rule A, ZN/NZ transpose sub-block) on 3510.
 
 Same shape pattern as test_insert_transpose_right.py, but uses pl.move instead of pl.insert.
 Rule A fires because dst Mat(ZN) [K, N] and src Vec(NZ) [SUB_N, K] are fractal-transpose
@@ -35,17 +35,17 @@ SUB_N = 32
 K = 128
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+        pytest.skip("not 3510")
 
 
 @pl.jit()
-def move_insert_transpose_right_kernel_a6(
+def move_insert_transpose_right_kernel_9201(
     lhs: pl.Tensor[[M, K], pl.DT_FP16],
     d: pl.Tensor[[N, K], pl.DT_FP16],
     out: pl.Tensor[[M, N], pl.DT_FP32],
@@ -100,14 +100,14 @@ def move_insert_transpose_right_kernel_a6(
 
 
 @pytest.mark.soc("960")
-def test_move_insert_transpose_right_kernel_a6():
+def test_move_insert_transpose_right_kernel_9201():
     device = ST_DEVICE
     torch.manual_seed(0)
     lhs = torch.randn([M, K], device=device, dtype=torch.float16)
     d = torch.randn([N, K], device=device, dtype=torch.float16)
     out = torch.zeros([M, N], device=device, dtype=torch.float32)
 
-    move_insert_transpose_right_kernel_a6(lhs, d, out)
+    move_insert_transpose_right_kernel_9201(lhs, d, out)
     torch.npu.synchronize()
 
     ref = torch.matmul(lhs.float(), d.float().t())
@@ -177,7 +177,7 @@ def move_insert_transpose_right_kernel(
 @pytest.mark.soc("950")
 def test_move_insert_transpose_right_kernel():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     torch.manual_seed(0)
     lhs = torch.randn([M, K], device=device, dtype=torch.float16)
     d = torch.randn([N, K], device=device, dtype=torch.float16)

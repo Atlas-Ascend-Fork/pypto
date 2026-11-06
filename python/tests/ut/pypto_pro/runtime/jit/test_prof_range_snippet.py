@@ -201,7 +201,7 @@ def test_caller_embeds_metadata_around_launch_static(simt_kernel):
                                                             has_vector=vector is not None)
     cg = cube or vector
     content = _generate_caller_cpp(
-        kernel_params=cg.kernel_params,
+        kernel_params=cg.entry_params,
         kernel_cpp_name="kernel.cpp",
         kernel_name=cg.kernel_name,
         target=target,
@@ -251,7 +251,7 @@ def test_metadata_checks_collection_and_capture_independently():
                                                             has_vector=vector is not None)
     cg = cube or vector
     content = _generate_caller_cpp(
-        kernel_params=cg.kernel_params,
+        kernel_params=cg.entry_params,
         kernel_cpp_name="kernel.cpp",
         kernel_name=cg.kernel_name,
         target=target,

@@ -7,7 +7,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Simplified frontend runtime example for pl.store(..., relu_pre_mode=...) on A5 CCE."""
+"""Simplified frontend runtime example for pl.store(..., relu_pre_mode=...) on 3510 CCE."""
 
 import logging
 import os

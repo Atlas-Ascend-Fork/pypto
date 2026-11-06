@@ -9,7 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""GM-load layout convention for Mat matmul operands (verified on A5).
+"""GM-load layout convention for Mat matmul operands (verified on 3510).
 
 Convention under test (the "is_transpose <-> layout/shape" rule):
 
@@ -54,13 +54,13 @@ MA1 = 0x10000
 SZ = 32768
 
 
-def _require_a5_or_a6(device):
+def _require_3510_or_9201(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if not any(soc in torch.npu.get_device_name() for soc in ("Ascend950", "Ascend960")):
-        pytest.skip("not A5/A6")
+        pytest.skip("not 3510/9201")
 
 
 # ------------------------------------------------------------------------------------------------
@@ -227,7 +227,7 @@ def _run(kernel, a_arg, b_arg, a, b):
 @pytest.fixture(scope="module")
 def _ab():
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.randn([M, K], device=device, dtype=torch.float16)
     b = torch.randn([K, N], device=device, dtype=torch.float16)
@@ -265,7 +265,7 @@ def test_load_tt(_ab):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     device = ST_DEVICE
-    _require_a5_or_a6(device)
+    _require_3510_or_9201(device)
     torch.manual_seed(0)
     a = torch.randn([M, K], device=device, dtype=torch.float16)
     b = torch.randn([K, N], device=device, dtype=torch.float16)

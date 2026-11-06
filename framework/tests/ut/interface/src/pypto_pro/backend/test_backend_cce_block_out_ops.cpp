@@ -250,7 +250,7 @@ struct SimpleOpParam {
     std::string op_name;
     std::string cce_op;
     // Optional argument appended after the standard operands, for intrinsics
-    // whose A5 signature carries a trailing scratch tile that codegen fills by
+    // whose 3510 signature carries a trailing scratch tile that codegen fills by
     // reusing an existing operand (e.g. TREM/TREMS reuse the rhs/tile).
     std::string trailing_arg;
     // User-provided ctor so the two-argument entries stay legal under

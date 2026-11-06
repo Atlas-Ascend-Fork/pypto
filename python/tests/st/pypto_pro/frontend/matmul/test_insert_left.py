@@ -45,13 +45,13 @@ K = 128  # V is [M, D]
 SUB = K // 2  # 64, subcore split along the query axis
 
 
-def _require_a5(device):
+def _require_3510(device):
     try:
         torch.npu.set_device(device)
     except RuntimeError as exc:
         pytest.skip(f"NPU unavailable: {exc}")
     if "Ascend950" not in torch.npu.get_device_name():
-        pytest.skip("not A5")
+        pytest.skip("not 3510")
 
 
 @pl.jit()
@@ -124,12 +124,12 @@ def insert_zn_left_kernel(
 
 
 @pl.jit()
-def insert_zn_left_kernel_a6(
+def insert_zn_left_kernel_9201(
     d: pl.Tensor[[M, K], pl.DT_FP16],
     v: pl.Tensor[[K, N], pl.DT_FP16],
     out: pl.Tensor[[M, N], pl.DT_FP32],
 ):
-    """A6 (1:1) variant: the single vector core handles the full K, no subcore split."""
+    """9201 (1:1) variant: the single vector core handles the full K, no subcore split."""
     p_mat = pl.make_tile(
         pl.TileType(shape=[M, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
         addr=0x20000,
@@ -189,25 +189,25 @@ def insert_zn_left_kernel_a6(
 
 
 @pytest.mark.soc("960")
-def test_insert_zn_left_kernel_a6():
+def test_insert_zn_left_kernel_9201():
     device = ST_DEVICE
     torch.manual_seed(0)
     d = torch.randn([M, K], device=device, dtype=torch.float16)
     v = torch.randn([K, N], device=device, dtype=torch.float16)
     out = torch.zeros([M, N], device=device, dtype=torch.float32)
 
-    insert_zn_left_kernel_a6(d, v, out)
+    insert_zn_left_kernel_9201(d, v, out)
     torch.npu.synchronize()
 
     ref = torch.matmul(d.float(), v.float())
     torch.testing.assert_close(out, ref, rtol=2e-2, atol=2e-2)
-    logging.info("insert_zn_left_kernel_a6 OK")
+    logging.info("insert_zn_left_kernel_9201 OK")
 
 
 @pytest.mark.soc("950")
 def test_insert_zn_left_kernel():
     device = ST_DEVICE
-    _require_a5(device)
+    _require_3510(device)
     torch.manual_seed(0)
     d = torch.randn([M, K], device=device, dtype=torch.float16)  # = P^T (contraction-major)
     v = torch.randn([K, N], device=device, dtype=torch.float16)

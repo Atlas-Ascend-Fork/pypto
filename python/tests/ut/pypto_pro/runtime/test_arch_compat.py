@@ -16,7 +16,6 @@
 """Arch identity and legacy-alias compatibility tests."""
 
 import os
-import warnings
 
 from pypto_pro._errors import InvalidVal, NotSupported
 from pypto_pro.runtime.platform import NpuArch, normalize_arch
@@ -30,7 +29,7 @@ def test_parse_arch_canonical_forms():
 
 def test_parse_arch_accepts_enum_values():
     assert normalize_arch(NpuArch.DAV_3510) == NpuArch.DAV_3510
-    assert normalize_arch(NpuArch.DAV_2201) == NpuArch.DAV_2201
+    assert normalize_arch(NpuArch.DAV_3003) == NpuArch.DAV_3003
 
 
 def test_parse_arch_collapses_unregistered_enum_values_to_unknown():
@@ -49,11 +48,10 @@ def test_parse_arch_legacy_a5_maps_to_3510_with_deprecation():
         assert normalize_arch("a5") == NpuArch.DAV_3510
 
 
-def test_parse_arch_legacy_a2_a3_map_to_2201_without_warning():
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        assert normalize_arch("a2") == NpuArch.DAV_2201
-        assert normalize_arch("a3") == NpuArch.DAV_2201
+def test_parse_arch_rejects_a2_a3():
+    for bad in ("a2", "a3"):
+        with pytest.raises(InvalidVal):
+            normalize_arch(bad)
 
 
 def test_parse_arch_unknown_raises():
@@ -84,7 +82,7 @@ def test_setup_arch_env_rejects_non_3510():
     from pypto_pro.runtime.jit import _setup_arch_env
 
     with pytest.raises(NotSupported, match="only supports arch '3510'"):
-        _setup_arch_env(NpuArch.DAV_2201)
+        _setup_arch_env(NpuArch.DAV_3003)
 
 
 def test_get_current_arch_env_a5_warns_and_canonicalises(monkeypatch):
@@ -122,19 +120,18 @@ def test_platform_arch_is_enum():
     assert arch is None or isinstance(arch, NpuArch)
 
 
-def test_a6_canonical_and_enum_forms():
+def test_9201_canonical_and_enum_forms():
     assert normalize_arch("9201") == NpuArch.DAV_9201
     assert normalize_arch(" 9201 ") == NpuArch.DAV_9201
     assert normalize_arch(NpuArch.DAV_9201) == NpuArch.DAV_9201
     assert str(NpuArch.DAV_9201) == "9201"
 
 
-def test_a6_alias_warns_and_configures_canonical_env(monkeypatch):
+def test_9201_configures_canonical_env(monkeypatch):
     from pypto_pro.runtime.jit import _setup_arch_env, get_current_arch
 
     monkeypatch.delenv("PYPTOPRO_JIT_ARCH", raising=False)
-    with pytest.warns(DeprecationWarning, match="'a6' is deprecated"):
-        parsed = normalize_arch("a6")
+    parsed = normalize_arch("9201")
     assert _setup_arch_env(parsed) == NpuArch.DAV_9201
     assert os.environ["PYPTOPRO_JIT_ARCH"] == "9201"
     assert get_current_arch() == NpuArch.DAV_9201
