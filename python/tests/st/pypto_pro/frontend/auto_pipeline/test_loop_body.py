@@ -116,7 +116,7 @@ def fill_in(box, v):
 
 
 def hand_back_slot(g):
-    """Returns a slot: the caller binds it to a name that resolves to no buffer."""
+    """Returns a slot, so the caller holds it under a name of its own."""
     return g.next()
 
 
@@ -239,6 +239,49 @@ def test_zone1_call_runs_before_the_snapshot():
     call = next(i for i, line in enumerate(lines) if "fill_in(box, 2.0)" in line)
     fill = next(i for i, line in enumerate(lines) if line.startswith("_pl_ctx_0.f ="))
     assert call < fill, "the call must run before the snapshot reads the struct"
+
+
+@pl.pipeline.stage
+def take_slot(k, sh, leftg):
+    shared = hand_back_slot(sh)
+    left = leftg.next()
+    pl.move(left, shared)
+
+
+@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
+def helper_returns_a_slot(
+    src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
+):
+    sh = pl.make_tile_group(
+        type=pl.TileType(shape=[TM, TN], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.ZN),
+        addrs=[0x0000, 0x8000], mutex_ids=[0, 1], fwd_ids=[0, 1], bwd_ids=[2, 3])
+    with pl.section_cube():
+        leftg = pl.make_tile_group(
+            type=pl.TileType(shape=[TM, TN], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left, layout=pl.NZ),
+            addrs=[0x0000, 0x2000], mutex_ids=[4, 5])
+    with pl.section_vector():
+        ub = pl.make_tile_group(
+            type=pl.TileType(shape=[TM, TN], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
+            addrs=[0x0000, 0x2000], mutex_ids=[6, 7])
+    for ki in pl.range(0, NT):
+        with pl.section_vector():
+            produce(ki, 2.0, src, out, sh, ub)
+        with pl.section_cube():
+            take_slot(ki, sh, leftg)
+
+
+@pytest.mark.soc("950", "960")
+def test_slot_handed_back_by_a_helper_is_synchronised():
+    """A slot reaching a stage through a helper's return value is still the group's slot."""
+    src = _generated(helper_returns_a_slot)
+    body = src[src.index("for ki in pl.range"):].split("for _pl_drain")[0]
+    lines = [line.strip() for line in body.splitlines()]
+    call = next(i for i, line in enumerate(lines) if line.startswith("take_slot("))
+
+    # The read `pl.move` makes of the returned slot is a read of `sh`, so the consumer's
+    # call is wrapped like any other: it waits for the producer and hands the slot back.
+    assert "wait_cross_core(pipe=pl.PipeType.MTE1, event_id=_pl_fwd_ids_sh[" in lines[call - 1]
+    assert "set_cross_core(pipe=pl.PipeType.MTE1, event_id=_pl_bwd_ids_sh[" in lines[call + 1]
 
 
 # ---------------------------------------------------------------------------
@@ -394,35 +437,6 @@ def cross_core_touched_outside_stage(
             move_between(cur_sh, cur_left)    # zone 3, but on a buffer sync tracks
 
 
-@pl.pipeline.stage
-def take_slot(k, sh, leftg):
-    shared = hand_back_slot(sh)
-    left = leftg.next()
-    pl.move(left, shared)
-
-
-@pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
-def helper_returns_a_slot(
-    src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
-):
-    sh = pl.make_tile_group(
-        type=pl.TileType(shape=[TM, TN], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.ZN),
-        addrs=[0x0000, 0x8000], mutex_ids=[0, 1], fwd_ids=[0, 1], bwd_ids=[2, 3])
-    with pl.section_cube():
-        leftg = pl.make_tile_group(
-            type=pl.TileType(shape=[TM, TN], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left, layout=pl.NZ),
-            addrs=[0x0000, 0x2000], mutex_ids=[4, 5])
-    with pl.section_vector():
-        ub = pl.make_tile_group(
-            type=pl.TileType(shape=[TM, TN], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
-            addrs=[0x0000, 0x2000], mutex_ids=[6, 7])
-    for ki in pl.range(0, NT):
-        with pl.section_vector():
-            produce(ki, 2.0, src, out, sh, ub)
-        with pl.section_cube():
-            take_slot(ki, sh, leftg)
-
-
 @pl.jit(auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
 def stage_call_without_a_section(
     src: pl.Tensor[[FULL_M, TN], pl.DT_FP16], out: pl.Tensor[[FULL_M, TN], pl.DT_FP16]
@@ -528,7 +542,6 @@ def return_in_outer_loop(
         (slot_taken_in_loop_body, "takes a slot from tile group"),
         (slot_taken_inside_a_helper, "takes a slot from tile group"),
         (cross_core_touched_outside_stage, "cross-core sync tracks"),
-        (helper_returns_a_slot, "a tile or tile group"),
         (stage_call_without_a_section, "not inside a `with pl.section_cube"),
         (one_stage_called_twice, "called more than once"),
         (return_in_pipeline_loop, "`return` inside the pipeline loop"),
@@ -536,7 +549,7 @@ def return_in_outer_loop(
     ],
 )
 def test_refused_shapes(kernel, message):
-    # 8 of the parametrised shapes raise InvalidOperation and three raise
+    # 8 of the parametrised shapes raise InvalidOperation and two raise
     # NotSupported, whose builtin bases differ, so the shared base is what fits.
     with pytest.raises(PyptoProError, match=message):
         _generated(kernel)

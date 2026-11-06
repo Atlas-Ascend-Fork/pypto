@@ -23,9 +23,10 @@ Both buffers live in one uint8 workspace and reinterpret it with ``dtype=``. The
 is filled with a sentinel first, so a slot written at the wrong offset or with the wrong
 size shows up as a changed byte in a row's padding or past the last slot.
 
-Two more, smaller kernels (vector -> gm_a -> cube) write their slot shape as a list of
-runtime expressions, so the slot offset is computed on device instead of folded into a
-constant. One declares the slot with two axes, the other with three.
+Three more, smaller kernels (vector -> gm_a -> cube) write a pitched slot, so its size goes
+through max(shape[i] * stride[i]). Two write the layout as expressions over compile-time
+values, one with two axes and one with three; the third reads its pitch on device, so the
+size can only be spanned at runtime.
 """
 
 import ast
@@ -382,7 +383,9 @@ def _guarded_bodies(src: str) -> list[list[str]]:
 
 
 # The event-id variables each buffer is declared with in _vcv_kernel.
-_IDS = {"gm_a": ("fwd_a", "bwd_a"), "gm_b": ("fwd_b", "bwd_b")}
+# Each direction's ids are declared in a variable of the framework's own ahead of the loop,
+# whatever the declaration wrote them as.
+_IDS = {buf: (f"_pl_fwd_ids_{buf}", f"_pl_bwd_ids_{buf}") for buf in ("gm_a", "gm_b")}
 
 _PICK = re.compile(
     r"^(_pl_gm_(\w+)) = pl\.make_tensor\(pl\.addptr\(pl\.make_ptr\(\2\), (\w+)\._pl_task_id % (\d+) \* (\d+)\)"
@@ -458,7 +461,13 @@ def dyn_matmul(k, gm_a, b, out, mat_a, mat_b, left, right, acc):
     pl.store(out, c, [k * TM, 0])
 
 
-def _dyn_kernel(name: str):
+def _declare_gm_a(ptr, rows, pitch):
+    """Declare the GM cross-core buffer from a helper instead of in the kernel body."""
+    return pl.make_tensor(ptr, [rows, K], [pitch, 1], dtype=pl.DT_FP16,
+                          depth=DYN_DEPTH, fwd_ids=[0, 1], bwd_ids=[2, 3])
+
+
+def _dyn_kernel(name: str, factory: bool = False):
     @pl.jit(arch="3510", auto_mutex=True, name=name, pipeline=pl.pipeline.PipelineConfig(preload=1))
     def dyn(
         src: pl.Tensor[[CORES * NT * TM, K], pl.DT_FP16],
@@ -469,10 +478,12 @@ def _dyn_kernel(name: str):
         core_id = pl.get_block_idx() // pl.get_subblock_num()
         task_base = core_id * NT
         ws_core = pl.addptr(ws, core_id * DYN_PER_CORE)
-        # rows comes off the input shape, so the slot size is an expression, not a constant.
         rows = src.shape[0] // (CORES * NT)
-        gm_a = pl.make_tensor(ws_core, [rows, K], [DYN_PITCH, 1], dtype=pl.DT_FP16,
-                              depth=DYN_DEPTH, fwd_ids=[0, 1], bwd_ids=[2, 3])
+        if factory:
+            gm_a = _declare_gm_a(ws_core, rows, DYN_PITCH)
+        else:
+            gm_a = pl.make_tensor(ws_core, [rows, K], [DYN_PITCH, 1], dtype=pl.DT_FP16,
+                                  depth=DYN_DEPTH, fwd_ids=[0, 1], bwd_ids=[2, 3])
         with pl.section_cube():
             mat_a = pl.make_tile_group(
                 type=pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
@@ -571,10 +582,60 @@ def _dyn3_kernel(name: str):
     return dyn3
 
 
-def _check_dyn(name: str, build, expect_size: str):
-    """Run a runtime-shaped kernel and check the slot size it picked with."""
+def _dynrt_kernel(name: str, factory: bool = False):
+    @pl.jit(arch="3510", auto_mutex=True, name=name, pipeline=pl.pipeline.PipelineConfig(preload=1))
+    def dynrt(
+        src: pl.Tensor[[CORES * NT * TM, K], pl.DT_FP16],
+        b: pl.Tensor[[K, N], pl.DT_FP16],
+        pitch_in: pl.Tensor[[1, 1], pl.DT_INT32],
+        ws: pl.Ptr[pl.DT_UINT8],
+        out: pl.Tensor[[CORES * NT * TM, N], pl.DT_FP32],
+    ):
+        core_id = pl.get_block_idx() // pl.get_subblock_num()
+        task_base = core_id * NT
+        ws_core = pl.addptr(ws, core_id * DYN_PER_CORE)
+        # Read on device, so no axis of the stride is known while parsing.
+        pitch = pitch_in[0, 0]
+        if factory:
+            gm_a = _declare_gm_a(ws_core, TM, pitch)
+        else:
+            gm_a = pl.make_tensor(ws_core, [TM, K], [pitch, 1], dtype=pl.DT_FP16,
+                                  depth=DYN_DEPTH, fwd_ids=[0, 1], bwd_ids=[2, 3])
+        with pl.section_cube():
+            mat_a = pl.make_tile_group(
+                type=pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+                addrs=0x00000, mutex_ids=[0, 1])
+            mat_b = pl.make_tile_group(
+                type=pl.TileType(shape=[K, N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+                addrs=0x10000, mutex_ids=[2, 3])
+            left = pl.make_tile_group(
+                type=pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left),
+                addrs=0x0000, mutex_ids=[4])
+            right = pl.make_tile_group(
+                type=pl.TileType(shape=[K, N], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Right),
+                addrs=0x0000, mutex_ids=[5])
+            acc = pl.make_tile_group(
+                type=pl.TileType(shape=[TM, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc),
+                addrs=0x0000, mutex_ids=[6])
+        with pl.section_vector():
+            ub_a = pl.make_tile_group(
+                type=pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
+                addrs=0x00000, mutex_ids=[7, 8])
+
+        for i in pl.range(0, NT):
+            with pl.section_vector():
+                vcv_scale(task_base + i, src, gm_a, ub_a)
+            with pl.section_cube():
+                dyn_matmul(task_base + i, gm_a, b, out, mat_a, mat_b, left, right, acc)
+
+    return dynrt
+
+
+def _check_dyn(name: str, build, expect_size: str, pitch_arg: bool = False):
+    """Run a pitched-slot kernel and check the slot size it picked with."""
     kernel = build(name)
-    pick = next(s for s in _generated(kernel).splitlines() if "_pl_gm_gm_a = " in s)
+    generated = _generated(kernel)
+    pick = next(s for s in generated.splitlines() if "_pl_gm_gm_a = " in s)
     assert expect_size in pick, pick
 
     torch.manual_seed(13)
@@ -582,7 +643,11 @@ def _check_dyn(name: str, build, expect_size: str):
     b = torch.rand((K, N), device=ST_DEVICE, dtype=torch.float16) * 2.0 - 1.0
     ws = torch.full((CORES * DYN_PER_CORE,), SENTINEL, device=ST_DEVICE, dtype=torch.uint8)
     out = torch.zeros((CORES * NT * TM, N), device=ST_DEVICE, dtype=torch.float32)
-    kernel[None, CORES](src, b, ws, out)
+    if pitch_arg:
+        pitch = torch.full((1, 1), DYN_PITCH, device=ST_DEVICE, dtype=torch.int32)
+        kernel[None, CORES](src, b, pitch, ws, out)
+    else:
+        kernel[None, CORES](src, b, ws, out)
     torch.npu.synchronize()
 
     golden = (src.cpu().float() * S0).half().float() @ b.cpu().float()
@@ -599,20 +664,52 @@ def _check_dyn(name: str, build, expect_size: str):
 
 
 @pytest.mark.soc("950")
-def test_gm_dynamic_slot_shape():
-    """A slot shape of runtime expressions: the size stays an expression and still addresses right."""
+def test_gm_pitched_slot_shape():
+    """A slot shape written as expressions over compile-time values: one slot spans TM * pitch."""
     torch.npu.set_device(ST_DEVICE)
-    _check_dyn("gm_dynamic_slot_shape", _dyn_kernel, "% 2 * max(rows * DYN_PITCH, K * 1)")
+    _check_dyn("gm_pitched_slot_shape", _dyn_kernel, f"% 2 * {TM * DYN_PITCH})")
 
 
 @pytest.mark.soc("950")
-def test_gm_dynamic_slot_shape_3d():
-    """Three axes: the per-axis max nests, because the kernel-side max takes two arguments."""
+def test_gm_pitched_slot_shape_3d():
+    """Three axes, so the size is the largest of the three spans rather than the first."""
+    torch.npu.set_device(ST_DEVICE)
+    _check_dyn("gm_pitched_slot_shape_3d", _dyn3_kernel, f"% 2 * {TM * DYN_PITCH})")
+
+
+@pytest.mark.soc("950")
+def test_gm_runtime_stride():
+    """A pitch read on device: the size is spanned axis by axis, off a bound stride."""
     torch.npu.set_device(ST_DEVICE)
     _check_dyn(
-        "gm_dynamic_slot_shape_3d",
-        _dyn3_kernel,
-        "% 2 * max(max(1 * (rows * DYN_PITCH), rows * DYN_PITCH), K * 1)",
+        "gm_runtime_stride",
+        _dynrt_kernel,
+        "% 2 * max(gm_a.shape[0] * gm_a.stride[0], gm_a.shape[1] * gm_a.stride[1])",
+        pitch_arg=True,
+    )
+
+
+@pytest.mark.soc("950")
+def test_gm_factory_const_stride():
+    """A buffer declared by a helper: its slot size still folds, so nothing is read back."""
+    torch.npu.set_device(ST_DEVICE)
+    _check_dyn(
+        "gm_factory_const_stride",
+        lambda name: _dyn_kernel(name, factory=True),
+        f"% 2 * {TM * DYN_PITCH})",
+    )
+
+
+@pytest.mark.soc("950")
+def test_gm_factory_runtime_stride():
+    """A buffer declared by a helper, with a stride only the device knows: the slot size and
+    the slot's own view both read the stride off the declared view."""
+    torch.npu.set_device(ST_DEVICE)
+    _check_dyn(
+        "gm_factory_runtime_stride",
+        lambda name: _dynrt_kernel(name, factory=True),
+        "% 2 * max(gm_a.shape[0] * gm_a.stride[0], gm_a.shape[1] * gm_a.stride[1])",
+        pitch_arg=True,
     )
 
 
@@ -746,7 +843,7 @@ def no_depth_kernel(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT_F
 
 
 @pl.jit(arch="3510", auto_mutex=True, pipeline=pl.pipeline.PipelineConfig(preload=1))
-def unknown_shape_kernel(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT_FP16]):
+def shape_off_an_input_kernel(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT_FP16]):
     gm_a = pl.make_tensor(ws, src.shape, depth=2, fwd_ids=[0, 1], bwd_ids=[2, 3])
     with pl.section_cube():
         mat_a = pl.make_tile_group(
@@ -763,17 +860,25 @@ def unknown_shape_kernel(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl
             consume(gm_a, mat_a)
 
 
+def test_gm_shape_off_an_input():
+    """A slot shape taken off another tensor: the parse resolves it like any other."""
+    pick = next(
+        line for line in _generated(shape_off_an_input_kernel).splitlines() if "_pl_gm_gm_a = " in line
+    )
+    assert f"% 2 * {NT * TM * K})" in pick, pick
+    assert "gm_a.shape)" in pick, pick
+
+
 @pytest.mark.parametrize(
     "kernel, message",
     [
         (lambda:no_depth_kernel, "needs depth="),
         (lambda:_gm_decl_kernel(0, "gm_zero_depth"), "needs depth="),
         (lambda:_gm_decl_kernel(1, "gm_too_few_slots"), "slots are live at once"),
-        (lambda:unknown_shape_kernel, "cannot determine the slot size"),
-        (lambda:helper_decl_kernel, "declares a buffer with `pl.make_tensor()`"),
+        (lambda:helper_decl_kernel, "a buffer declared with `pl.make_tensor()`"),
         (lambda:outside_stage_kernel, "is not inside a stage"),
     ],
-    ids=["no_depth", "zero_depth", "too_few_slots", "unknown_shape", "declared_in_helper", "outside_stage"],
+    ids=["no_depth", "zero_depth", "too_few_slots", "declared_in_helper", "outside_stage"],
 )
 def test_refused(kernel, message):
     with pytest.raises(Exception, match=re.escape(message)):

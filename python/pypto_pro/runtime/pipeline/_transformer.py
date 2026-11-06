@@ -24,12 +24,11 @@ from ._astutil import (
     PL_STRUCT_ARG,
     PL_TASK_ID_FIELD,
     call_name,
-    gm_slot_size,
     slot_accessor,
     slot_index_field,
     task_id_var,
 )
-from ._cross_core_scanner import BufferDecl
+from ._cross_core_scanner import CrossCoreBuffer
 from ._stage import is_pipeline_stage
 from ._sync_graph import SyncPlan, build_graph, plan_sync, sites_for
 from ._validate import validate_names
@@ -205,7 +204,7 @@ def _sites_for_stage(sync: SyncPlan, stage) -> tuple:
 
 
 def _build_lifted_id_decls(info: PipelineInfo, sync: SyncPlan) -> list[ast.stmt]:
-    """Declare this pipeline's event-id variables: the lifted fwd/bwd lists it uses, then the
+    """Declare this pipeline's lifted variables: the fwd/bwd id lists it uses, then the id
     groups allocated for its address reuse.
 
     The buffer's ids_node was rewritten to a Name, so sync code uses `var[idx]` instead of
@@ -749,11 +748,28 @@ def _transform_body(
     )
 
 
-def _field_init(info: PipelineInfo, field_name: str) -> ast.expr:
-    """The initializer a ctx field is declared with. The two bookkeeping fields are integers."""
+def _field_init(info: PipelineInfo, field_name: str, section_kind: str) -> ast.expr:
+    """The initializer a ctx field is declared with in ``section_kind``. The two bookkeeping
+    fields are integers."""
     if field_name in info.ctx_sources:
-        return info.ctx_sources[field_name][2]
+        return info.ctx_sources[field_name][2][section_kind]
     return ast.Constant(value=0)
+
+
+def _ctx_array_assign(info: PipelineInfo, depth: int, section_kind: str) -> ast.Assign:
+    """`_pl_ctx_arr = pl.struct_array(depth, 'PipeCtx', <field>=<init>, ...)` as
+    ``section_kind`` declares it."""
+    keywords = [ast.keyword(arg=f, value=_field_init(info, f, section_kind)) for f in info.ctx_fields]
+    ctx_call = ast.Call(
+        func=ast.Attribute(value=ast.Name(id="pl", ctx=ast.Load()), attr="struct_array", ctx=ast.Load()),
+        args=[ast.Constant(value=depth), ast.Constant(value=_ctx_struct_name(info.loop_index))],
+        keywords=keywords,
+    )
+    return ast.Assign(
+        targets=[ast.Name(id=_ctx_arr_name(info.loop_index), ctx=ast.Store())],
+        value=ctx_call,
+        lineno=0,
+    )
 
 
 def _build_declarations(info: PipelineInfo, depth: int, sync: SyncPlan) -> list[ast.stmt]:
@@ -765,18 +781,13 @@ def _build_declarations(info: PipelineInfo, depth: int, sync: SyncPlan) -> list[
     """
     stmts = []
 
-    keywords = [ast.keyword(arg=f, value=_field_init(info, f)) for f in info.ctx_fields]
-    ctx_call = ast.Call(
-        func=ast.Attribute(value=ast.Name(id="pl", ctx=ast.Load()), attr="struct_array", ctx=ast.Load()),
-        args=[ast.Constant(value=depth), ast.Constant(value=_ctx_struct_name(info.loop_index))],
-        keywords=keywords,
-    )
-    ctx_assign = ast.Assign(
-        targets=[ast.Name(id=_ctx_arr_name(info.loop_index), ctx=ast.Store())],
-        value=ctx_call,
-        lineno=0,
-    )
-    stmts.append(ctx_assign)
+    # Each target compiles its own ctx array, so a field whose type differs between the two
+    # sections is declared once per section; otherwise one declaration serves both.
+    ctx_assigns = {kind: _ctx_array_assign(info, depth, kind) for kind in ("cube", "vector")}
+    if ast.dump(ctx_assigns["cube"]) == ast.dump(ctx_assigns["vector"]):
+        stmts.append(ctx_assigns["cube"])
+    else:
+        stmts.extend(_wrap_in_section(kind, [assign]) for kind, assign in ctx_assigns.items())
 
     _pl_task_id_assign = ast.Assign(
         targets=[ast.Name(id=task_id_var(info.loop_index), ctx=ast.Store())],
@@ -1087,11 +1098,11 @@ def _build_stage_args(stage, arg_mapping: list, ctx_var: str, info: PipelineInfo
 
 
 def _gm_buffers(info: PipelineInfo) -> dict:
-    """``{name: BufferDecl}`` for the GM buffers that rotate through more than one slot."""
+    """``{name: CrossCoreBuffer}`` for the GM buffers that rotate through more than one slot."""
     return {
-        name: buf.decl
+        name: buf
         for name, buf in info.sync.buffers.items()
-        if buf.decl is not None and buf.decl.memory == MemorySpace.DDR and info.sync.slot_counts.get(name, 1) > 1
+        if buf.facts.memory == MemorySpace.DDR and info.sync.slot_counts.get(name, 1) > 1
     }
 
 
@@ -1100,24 +1111,81 @@ def _gm_slot_var(name: str) -> str:
     return f"_pl_gm_{name}"
 
 
+def _shape_of(name: str) -> ast.Attribute:
+    """``<name>.shape``."""
+    return ast.Attribute(value=ast.Name(id=name, ctx=ast.Load()), attr="shape", ctx=ast.Load())
+
+
+def _stride_of(name: str) -> ast.Attribute:
+    """``<name>.stride``."""
+    return ast.Attribute(value=ast.Name(id=name, ctx=ast.Load()), attr="stride", ctx=ast.Load())
+
+
+def _axis_of(layout: ast.expr, axis: int) -> ast.Subscript:
+    """``<layout>[axis]``."""
+    return ast.Subscript(value=copy.deepcopy(layout), slice=ast.Constant(value=axis), ctx=ast.Load())
+
+
+def _gm_slot_extent(name: str, buf: CrossCoreBuffer) -> ast.expr:
+    """How many elements one slot of a GM buffer spans: the number the parse folded, else
+    ``max(shape[i] * stride[i])``, or ``prod(shape)`` with no stride."""
+    if buf.facts.slot_size is not None:
+        return ast.Constant(value=buf.facts.slot_size)
+    axes = [_axis_of(_shape_of(name), axis) for axis in range(buf.facts.dims)]
+    if buf.facts.has_stride:
+        spans = [
+            ast.BinOp(left=axis, op=ast.Mult(), right=_axis_of(_stride_of(name), index))
+            for index, axis in enumerate(axes)
+        ]
+        size = spans[0]
+        for span in spans[1:]:
+            size = ast.Call(func=ast.Name(id="max", ctx=ast.Load()), args=[size, span], keywords=[])
+    else:
+        size = axes[0]
+        for axis in axes[1:]:
+            size = ast.BinOp(left=size, op=ast.Mult(), right=axis)
+    return ast.fix_missing_locations(size)
+
+
 def _select_gm_slots(call: ast.Call, index_expr: ast.expr, info: PipelineInfo) -> list[ast.stmt]:
     """Hand a stage call the slot of each GM buffer its task uses, in place.
 
-    Each argument naming such a buffer is replaced by ``_pl_gm_<name>``; the returned
-    statements bind it to slot ``index_expr % depth``.
+    Each argument that reaches such a buffer is replaced by ``_pl_gm_<declared name>``; the
+    returned statements bind it to slot ``index_expr % depth``. The argument is resolved
+    through the probe's buffer_vars, so an argument that only aliases the buffer selects the
+    slot the way the declared name would — and under the declared name, so two spellings of
+    one buffer share the one assignment.
     """
     gm = _gm_buffers(info)
-    stmts = []
+    stmts: list[ast.stmt] = []
+    bound: set[str] = set()
     for pos, arg in enumerate(call.args):
-        if not (isinstance(arg, ast.Name) and arg.id in gm):
+        if not isinstance(arg, ast.Name):
             continue
-        stmts.append(_build_gm_slot_assign(arg.id, gm[arg.id], index_expr, info))
-        call.args[pos] = ast.Name(id=_gm_slot_var(arg.id), ctx=ast.Load())
+        reached = [name for name in info.buffer_vars.get(arg.id, (arg.id,)) if name in gm]
+        if not reached:
+            continue
+        if len(reached) > 1:
+            raise NotSupported(
+                f"pipeline: argument '{arg.id}' of this stage call reaches more than one GM "
+                f"buffer ({', '.join(sorted(reached))}), so which buffer's slot the task "
+                f"should be handed depends on the path taken. The slot is selected at the "
+                f"call site, before the branch is known.\n"
+                f"Pass one buffer, choosing between them inside the stage.",
+                span=span_of(arg),
+            )
+        name = reached[0]
+        if name not in bound:
+            stmts.append(_build_gm_slot_assign(name, gm[name], index_expr, info))
+            bound.add(name)
+        call.args[pos] = ast.Name(id=_gm_slot_var(name), ctx=ast.Load())
     return stmts
 
 
-def _build_gm_slot_assign(name: str, decl: BufferDecl, index_expr: ast.expr, info: PipelineInfo) -> ast.Assign:
-    """``_pl_gm_<name> = pl.make_tensor(pl.addptr(pl.make_ptr(<name>), k * size), shape[, stride])``."""
+def _build_gm_slot_assign(
+    name: str, buf: CrossCoreBuffer, index_expr: ast.expr, info: PipelineInfo
+) -> ast.Assign:
+    """``_pl_gm_<name> = pl.make_tensor(pl.addptr(pl.make_ptr(<name>), k * size), <name>.shape[, stride])``."""
 
     def pl_call(fn: str, args: list) -> ast.Call:
         return ast.Call(
@@ -1129,12 +1197,11 @@ def _build_gm_slot_assign(name: str, decl: BufferDecl, index_expr: ast.expr, inf
     slot_idx = ast.BinOp(
         left=copy.deepcopy(index_expr), op=ast.Mod(), right=ast.Constant(value=info.sync.slot_counts[name])
     )
-    size = gm_slot_size(decl.shape_node, decl.stride_node, info.closure_vars)
-    offset = ast.BinOp(left=slot_idx, op=ast.Mult(), right=size)
+    offset = ast.BinOp(left=slot_idx, op=ast.Mult(), right=_gm_slot_extent(name, buf))
     ptr = pl_call("addptr", [pl_call("make_ptr", [ast.Name(id=name, ctx=ast.Load())]), offset])
-    layout = [copy.deepcopy(decl.shape_node)]
-    if decl.stride_node is not None:
-        layout.append(copy.deepcopy(decl.stride_node))
+    layout = [_shape_of(name)]
+    if buf.facts.has_stride:
+        layout.append(_stride_of(name))
     return ast.Assign(
         targets=[ast.Name(id=_gm_slot_var(name), ctx=ast.Store())],
         value=pl_call("make_tensor", [ptr, *layout]),

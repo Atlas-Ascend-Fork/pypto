@@ -1,0 +1,32 @@
+function kernel incast(int64_t %entry_0, ptr<float> %p_0, tensor<64 x 128, float, tensor_view<, , ND, %t_ptr>> %t_0) outcast() #entry(false) #type(Opaque) {
+    tuple<int64_t, int64_t, int64_t> %_tuple_anchor_0_0 = tuple(4, 64, 128);
+    tensor<4 x 64 x 128, float, tensor_view<, , ND, %p_0>> %row_major_0 = ptr.make_tensor(%p_0, tuple(4, 64, 128), tuple());
+    tuple<int64_t, int64_t> %_tuple_anchor_1_0 = tuple(4, 2);
+    tuple<int64_t, int64_t> %_tuple_anchor_2_0 = tuple(8192, 128);
+    tensor<4 x 2, float, tensor_view<, 8192 x 128, ND, %p_0>> %leading_0 = ptr.make_tensor(%p_0, tuple(4, 2), tuple(8192, 128));
+    tuple<int64_t, int64_t> %_tuple_anchor_3_0 = tuple(4, 2);
+    tuple<int64_t, int64_t> %_tuple_anchor_4_0 = tuple(128, 1);
+    tensor<4 x 2, float, tensor_view<, 128 x 1, ND, %p_0>> %trailing_0 = ptr.make_tensor(%p_0, tuple(4, 2), tuple(128, 1));
+    tuple<int64_t, int64_t, int64_t> %_tuple_anchor_5_0 = tuple(4, %entry_0, 128);
+    tensor<4 x %entry_0 x 128, float, tensor_view<, , ND, %p_0>> %runtime_extent_0 = ptr.make_tensor(%p_0, tuple(4, %entry_0, 128), tuple());
+    tuple<int64_t, int64_t> %_tuple_anchor_6_0 = tuple(4, 2);
+    int64_t %_expr_tmp_7_0 = (%entry_0 mul 128);
+    tuple<int64_t, int64_t> %_tuple_anchor_8_0 = tuple(%_expr_tmp_7_0, 128);
+    tensor<4 x 2, float, tensor_view<, %_expr_tmp_7_0 x 128, ND, %p_0>> %past_runtime_0 = ptr.make_tensor(%p_0, tuple(4, 2), tuple(%_expr_tmp_7_0, 128));
+    tuple<int64_t, int64_t> %_tuple_anchor_9_0 = tuple(4, 2);
+    tuple<int64_t, int64_t> %_tuple_anchor_10_0 = tuple(128, 1);
+    tensor<4 x 2, float, tensor_view<, 128 x 1, ND, %p_0>> %param_axes_0 = ptr.make_tensor(%p_0, tuple(4, 2), tuple(128, 1));
+    tuple<int64_t, int64_t> %_tuple_anchor_11_0 = tuple(64, 128);
+    tuple<int64_t, int64_t> %_tuple_anchor_12_0 = tuple(256, 1);
+    tensor<64 x 128, float, tensor_view<, 256 x 1, ND, %p_0>> %pitched_0 = ptr.make_tensor(%p_0, tuple(64, 128), tuple(256, 1));
+    tuple<int64_t, int64_t> %_tuple_anchor_13_0 = tuple(64, 128);
+    tuple<int64_t, int64_t> %_tuple_anchor_14_0 = tuple(256, 1);
+    tensor<64 x 128, float, tensor_view<, 256 x 1, ND, %p_0>> %whole_declared_0 = ptr.make_tensor(%p_0, tuple(64, 128), tuple(256, 1));
+    tuple<int64_t, int64_t, int64_t> %_tuple_anchor_15_0 = tuple(4, 64, 128);
+    tuple<int64_t, int64_t, int64_t> %_tuple_anchor_16_0 = tuple(8192, 128, 1);
+    tensor<4 x 64 x 128, float, tensor_view<, 8192 x 128 x 1, ND, %p_0>> %whole_row_major_0 = ptr.make_tensor(%p_0, tuple(4, 64, 128), tuple(8192, 128, 1));
+    tuple<int64_t, int64_t> %_tuple_anchor_17_0 = tuple(64, 128);
+    tuple<int64_t, int64_t> %_tuple_anchor_18_0 = tuple(128, 1);
+    tensor<64 x 128, float, tensor_view<, 128 x 1, ND, %p_0>> %whole_param_0 = ptr.make_tensor(%p_0, tuple(64, 128), tuple(128, 1));
+    return;
+}

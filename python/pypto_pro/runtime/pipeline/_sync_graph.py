@@ -138,18 +138,8 @@ def _slot_count(info, buffer: str) -> int:
 
     Read from the declaration's normalized depth/ID-list length. AUTO groups have no IDs
     yet during pipeline transformation, so depth is the authoritative structural count.
-    Address ranges remain only a fallback for older analysis inputs.
     """
-    count = info.sync.slot_counts.get(buffer)
-    if count:
-        return count
-    ranges = info.sync.addr_ranges.get(buffer)
-    if ranges:
-        return len(ranges[1])
-    raise InvalidOperation(
-        f"pipeline: cannot determine the slot count of buffer '{buffer}'. Its "
-        f"make_tile_group needs a statically resolvable depth or mutex_ids list."
-    )
+    return info.sync.slot_counts[buffer]
 
 
 def build_regions(addr_overlaps, touched: set) -> dict:
@@ -284,6 +274,7 @@ def build_graph(info, schedule: list) -> SyncGraph:
                     if "W" in candidate.acc.role and candidate.acc.buffer == event.acc.buffer:
                         record("RAW", candidate, event)
                         break
+            if "W" not in event.acc.role:
                 continue
 
             # WAR: this write must wait for every batch still living on the slot. Walk
@@ -299,6 +290,7 @@ def build_graph(info, schedule: list) -> SyncGraph:
                     e
                     for e in lane
                     if "R" in e.acc.role
+                    and e is not event  # an RW event does not wait for its own read
                     and e.acc.buffer == previous_write.acc.buffer
                     and e.task == previous_write.task
                 ]

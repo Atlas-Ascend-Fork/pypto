@@ -32,6 +32,7 @@ __all__ = [
     "CapacityUnknown",
     "CheckSkipped",
     "MutexMismatch",
+    "UntrackedTile",
     "warn_check_skipped",
     "argument_span",
     "remembered_span",
@@ -397,6 +398,10 @@ class CheckSkipped(PyptoProWarning):
 
 class MutexMismatch(PyptoProWarning):
     """Overlapping manually configured Tile buffers have no shared mutex ID."""
+
+
+class UntrackedTile(PyptoProWarning):
+    """A tile reaching no pl.make_tile_group() declaration, which the automatic pipeline cannot sync."""
 
 
 _WARNING_REGISTRIES: dict[str, dict] = {}

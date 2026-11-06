@@ -268,6 +268,7 @@ def runtime(monkeypatch):
             self.call = ast.parse(source, mode="eval").body
             self.values = values or {}
             self.evaluated = []
+            self.recorded = []
             self._current_func_type = "simt"
             self.folded = None
             self.target = ir.SectionKind.Cube
@@ -308,6 +309,9 @@ def runtime(monkeypatch):
             if name.startswith("simt.") or name in registry._AST_OP_REGISTRY:
                 return self.parse_op_call(self.call)
             return self._dispatch_op(name, self.call, registry._OP_REGISTRY[name])
+
+        def _record_op_access(self, op_name, operands, keyword_names, span):
+            self.recorded.append((op_name, operands, keyword_names))
 
         def _route_ir_node_method(self, call):
             return None

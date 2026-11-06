@@ -781,7 +781,15 @@ class CallParserMixin:
         argument_spans = self.span_tracker.argument_spans(call)
         self._check_declared_types(op_name, args, kwargs, span, argument_spans)
         with current_span(span, argument_spans):
-            return op_func(self, *args, **kwargs, span=span)
+            result = op_func(self, *args, **kwargs, span=span)
+        self._record_op_access(
+            op_name,
+            [(position, None, arg) for position, arg in enumerate(args)]
+            + [(None, keyword, value) for keyword, value in kwargs.items()],
+            tuple(kwargs),
+            span,
+        )
+        return result
 
     def _mx_slot_addrs(self, value: ir.Expr) -> tuple[int, ...] | None:
         if self.is_runtime_slot(value):
@@ -1029,6 +1037,19 @@ class CallParserMixin:
             const_param_values = {
                 param.arg: arg for param, arg in zip(params, args) if _is_const_arg(arg)
             } or None
+        # A parse recording accesses for the automatic pipeline collects the ops of the whole
+        # kernel in one place, and a vector function is called as one op: the ops of its body
+        # belong to the statement holding the call, so they are parsed into the caller's facts
+        # under the caller's recording site.
+        record_accesses = self.auto_pipeline_enabled and func_type in (
+            ir.FunctionType.SimdVF,
+            ir.FunctionType.SimdCallee,
+        )
+        callsite_param_buffers = (
+            {param.arg: self.buffer_refs_of(actual) for param, actual in zip(params, args)}
+            if record_accesses
+            else None
+        )
 
         parser = ASTParser(
             source_file,
@@ -1043,11 +1064,15 @@ class CallParserMixin:
             void_return_only=void_return_only,
             void_return_context=void_return_context,
             allow_early_return=True,
+            auto_pipeline=record_accesses,
         )
         parser.external_funcs = self.external_funcs
         parser.vf_func_cache = self.vf_func_cache
         parser.vf_call_stack = self.vf_call_stack
         parser._simt_entry_type = self._simt_entry_type
+        if record_accesses:
+            parser.parse_facts = self.parse_facts
+            parser._access_site = self._access_site
 
         self.vf_call_stack.append(id(fn))
         try:
@@ -1056,6 +1081,7 @@ class CallParserMixin:
                 func_type=func_type,
                 callsite_param_types={param.arg: actual.type for param, actual in zip(params, args)},
                 const_param_values=const_param_values,
+                callsite_param_buffers=callsite_param_buffers,
             )
         finally:
             self.vf_call_stack.pop()
@@ -1153,7 +1179,15 @@ class CallParserMixin:
 
         Later call sites reuse the cached function and are validated against its
         parameter types by ``_parse_simd_template_call`` (the same contract SIMT
-        follows).
+        follows). A tile argument is not part of the specialization: it is passed as a
+        parameter, so one function serves every call site.
+
+        A parse that records accesses for the automatic pipeline instantiates the body at
+        every call site even so, and keeps the cached function. Which buffer a tile argument
+        reaches is a fact about the call rather than about the function, and it is recorded
+        only while the body is parsed, so a cached call site would otherwise contribute no
+        accesses at all. Such a parse discards the IR it builds, hence the prototype of a
+        repeat is dropped and the cached function is the one returned.
         """
         const_flags = [_is_const_arg(arg) for arg in args]
         const_spec = tuple(
@@ -1163,7 +1197,7 @@ class CallParserMixin:
         )
         cache_key = (id(fn), func_type, const_spec)
         cached = self.vf_func_cache.get(cache_key)
-        if cached is not None:
+        if cached is not None and not self.auto_pipeline_enabled:
             self._register_vf_external(cached, span)
             return cached
 
@@ -1179,6 +1213,10 @@ class CallParserMixin:
             void_return_only=True,
             void_return_context='@pl.vector_function',
         )
+        if cached is not None:
+            # The body was parsed for this call site's accesses; the function is the cached one.
+            self._register_vf_external(cached, span)
+            return cached
         specialized_name = parsed.name
         if const_spec:
             suffix = "_".join(
@@ -1346,6 +1384,12 @@ class CallParserMixin:
             body = [renamer.visit(stmt) for stmt in func_def.body if not self._is_docstring(stmt)]
             body = _InlineReturnLowerer(return_val_name, returned_name).lower(body, func_def)
 
+            # The ops this expansion emits are recorded under the call, which is also
+            # registered here as expanded.
+            old_access_site = self._access_site
+            if not self.inline_call_stack:
+                self._access_site = (call.lineno, call.col_offset)
+                self.parse_facts.op_accesses.setdefault(self._access_site, [])
             self.inline_call_stack.append(id(fn))
             self.scope_manager.enter_scope("inline")
 
@@ -1380,5 +1424,6 @@ class CallParserMixin:
                 self.span_tracker = old_span_tracker
                 self.scope_manager.exit_scope(leak_vars=False)
                 self.inline_call_stack.pop()
+                self._access_site = old_access_site
         finally:
             self.expr_evaluator.closure_vars = old_closure

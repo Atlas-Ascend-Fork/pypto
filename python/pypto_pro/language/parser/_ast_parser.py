@@ -21,6 +21,7 @@ from typing import Any
 
 from pypto.pypto_impl import ir
 from pypto_pro.ir import IRBuilder
+from pypto_pro.ir.op.ptr_ops import TensorFacts
 
 from ..._errors import (
     CommonInner,
@@ -30,6 +31,8 @@ from ..._errors import (
     InvalidVal,
     NotSupported,
     PyptoProError,
+    UntrackedTile,
+    _warn_located,
     current_span,
 )
 from ..typing._tiling import get_tiling_fields, get_tiling_tuple_type, is_tiling_class
@@ -112,6 +115,26 @@ class BufferRef:
     slot: int | None  # None when any slot may be referred to
 
 
+@dataclass(frozen=True, eq=False)
+class Operand:
+    """One argument of an op that refers to a buffer."""
+
+    position: int | None  # index among the positional arguments as written
+    keyword: str | None  # keyword name when passed by keyword
+    buffers: tuple[BufferRef, ...]
+
+
+@dataclass(frozen=True, eq=False)
+class OpAccess:
+    """One op the parse emitted, with the arguments that refer to a buffer."""
+
+    op_name: str  # "move", "getval", "setval", "vf.load_align", ...
+    operands: tuple[Operand, ...]
+    keyword_names: tuple[str, ...]  # every keyword the call wrote
+    in_vf: bool  # whether the op is inside a vector function
+    span: ir.Span
+
+
 @dataclass
 class ParseFacts:
     """Facts recorded during the parse for readers of its result.
@@ -124,7 +147,12 @@ class ParseFacts:
     # declaration handles, never an alias, so one lookup is final.
     buffer_refs: dict[ir.Expr, tuple[BufferRef, ...]] = field(default_factory=dict)
     # Maps a buffer declaration handle -> that declaration's resolved facts.
-    buffer_decls: dict[ir.Expr, TileGroupFacts] = field(default_factory=dict)
+    buffer_decls: dict[ir.Expr, TileGroupFacts | TensorFacts] = field(default_factory=dict)
+    # Maps the (lineno, col_offset) of a kernel-body node -> the ops parsed under it, in
+    # order. A key holding an empty list is a call that was expanded and reaches no buffer.
+    op_accesses: dict[tuple[int, int] | None, list[OpAccess]] = field(default_factory=dict)
+    # Maps the (lineno, col_offset) of a kernel-body `if` test -> (is_const, value).
+    if_const_map: dict[tuple[int, int], tuple[bool, object]] = field(default_factory=dict)
 
 
 class ASTParser(
@@ -151,6 +179,7 @@ class ASTParser(
         strict_ssa: bool = False,
         closure_vars: dict[str, Any] | None = None,
         auto_mutex: bool = False,
+        auto_pipeline: bool = False,
         debug_info: ir.IRDebugInfo | None = None,
         tilingkey_consts: dict[str, int] | None = None,
         datatype_consts: dict[str, Any] | None = None,
@@ -171,6 +200,9 @@ class ASTParser(
             strict_ssa: If True, enforce SSA (single assignment). If False (default), allow reassignment.
             closure_vars: Optional variables from the enclosing scope for dynamic shape resolution
             auto_mutex: If True, automatically insert mutex lock/unlock around buffer-managed tile ops.
+            auto_pipeline: If True, this is the automatic pipeline's probe parse: collect the
+                facts only the pipeline reads (compile-time if conditions) and warn about
+                code it cannot track.
             void_return_only: If True, reject return values and non-None return annotations.
             void_return_context: User-facing name used only in diagnostics
                 (for example, "@pl.jit" or "@pl.vector_function").
@@ -255,6 +287,8 @@ class ASTParser(
         # Maps group Expr objects -> (depth, mutex_ids, memory).
         self.tile_group_meta: dict[ir.Expr, tuple] = {}
         self.parse_facts = ParseFacts()
+        # Where an op parsed from here on is recorded: the kernel-body node it sits under.
+        self._access_site: tuple[int, int] | None = None
         # Parser-only constant environment. Runtime bindings remain exclusively in
         # ScopeManager as Vars; this map records constants by physical SSA name.
         self.const_env: dict[str, ir.Expr] = {}
@@ -288,6 +322,7 @@ class ASTParser(
         self._tuple_select_cache: dict[tuple[str, int], ir.Var] = {}
 
         self._auto_mutex = auto_mutex
+        self._auto_pipeline = auto_pipeline
         self._mutex_id_manager = mutex_id_manager
         self._parsed_expr_cache: dict[ast.expr, Any] = {}
         self._gemm_counter = 0
@@ -302,17 +337,15 @@ class ASTParser(
 
         self._current_node: ast.AST | None = None
 
-        # Pipeline constant-branch probe: when enabled, parse_if_statement
-        # records {(lineno, col_offset) of test: (is_const, value)} for every if in the
-        # kernel body. Off by default so a normal parse is unaffected; the pipeline
-        # transform turns it on for a probe run.
-        self.collect_if_const: bool = False
-        self.if_const_map: dict[tuple[int, int], tuple[bool, object]] = {}
-
     @property
     def auto_mutex_enabled(self) -> bool:
         """Return whether automatic mutex emission is enabled."""
         return self._auto_mutex
+
+    @property
+    def auto_pipeline_enabled(self) -> bool:
+        """Return whether this is the automatic pipeline's probe parse."""
+        return self._auto_pipeline
 
     @property
     def target(self) -> ir.SectionKind:
@@ -401,6 +434,7 @@ class ASTParser(
         func_type: ir.FunctionType = ir.FunctionType.Opaque,
         callsite_param_types: dict[str, ir.Type] | None = None,
         const_param_values: dict[str, ir.Expr] | None = None,
+        callsite_param_buffers: dict[str, tuple] | None = None,
         func_attrs: dict[str, Any] | None = None,
     ) -> ir.Function:
         """Parse function definition and build IR.
@@ -418,13 +452,21 @@ class ASTParser(
                 body (folding ``if`` conditions on it), and the parameter is
                 specialized out of the emitted signature.
 
+            callsite_param_buffers: The buffers each call-site argument reaches,
+                keyed by parameter name, supplied while instantiating a SIMD VF
+                function for the automatic pipeline's probe parse. A parameter
+                then reaches the caller's buffer, so the ops of the body are
+                recorded against it like the caller's own.
+
             func_attrs: Attributes attached to the parsed IR function.
 
         Returns:
             IR Function object
         """
         if (
-            callsite_param_types is not None or const_param_values is not None
+            callsite_param_types is not None
+            or const_param_values is not None
+            or callsite_param_buffers is not None
         ) and func_type not in (
             ir.FunctionType.SimtVF,
             ir.FunctionType.SimtCallee,
@@ -432,7 +474,8 @@ class ASTParser(
             ir.FunctionType.SimdCallee,
         ):
             raise NotSupported(
-                "callsite_param_types/const_param_values is only supported for SIMT/SIMD VF functions"
+                "callsite_param_types/const_param_values/callsite_param_buffers is only "
+                "supported for SIMT/SIMD VF functions"
             )
 
         func_name = func_def.name
@@ -488,6 +531,13 @@ class ASTParser(
                     continue
                 callsite_type = callsite_param_types.get(arg.arg) if callsite_param_types is not None else None
                 self._parse_function_param(arg, f, parameter_index, callsite_type)
+                if callsite_param_buffers:
+                    # The parameter reaches whatever the caller passed, so an op of this body
+                    # is recorded against the caller's buffer rather than against a tile with
+                    # no declaration behind it.
+                    refs = callsite_param_buffers.get(arg.arg)
+                    if refs:
+                        self.parse_facts.buffer_refs[self.lookup_expr_by_name(arg.arg)] = refs
 
             # Give closure tuples a function-entry array-materialization anchor.
             self._hoist_closure_tuples()
@@ -556,6 +606,10 @@ class ASTParser(
             stmt: AST statement node
         """
         self._current_node = stmt
+        # Where the ops this statement emits are recorded, while it is the kernel body's own.
+        # A vector function body is parsed at its call site and keeps the site handed to it.
+        if not self.inline_call_stack and not self._in_vf_body():
+            self._access_site = (stmt.lineno, stmt.col_offset)
         # Publish where this statement was written, for anything raised below that
         # passed no span of its own. A compound statement is excluded: its span
         # covers the whole suite, so an error from deep inside the body would
@@ -680,7 +734,7 @@ class ASTParser(
         refs = self.parse_facts.buffer_refs.get(expr)
         if refs is not None:
             return refs
-        if expr in self.tile_group_meta:
+        if expr in self.parse_facts.buffer_decls:
             return (BufferRef(expr, None),)
         return ()
 
@@ -696,8 +750,59 @@ class ASTParser(
         return None
 
     def is_runtime_slot(self, expr) -> bool:
-        """Whether ``expr`` refers to a buffer slot that is not known at compile time."""
+        """Whether ``expr`` is a tile referring to a buffer slot not known at compile time.
+
+        Only a tile has a slot; a whole buffer declaration carries no slot of its own.
+        """
+        if not isinstance(getattr(expr, "type", None), ir.TileType):
+            return False
         return bool(self.buffer_refs_of(expr)) and self.static_slot(expr) is None
+
+    def _record_op_access(
+        self,
+        op_name: str,
+        operands: list[tuple[int | None, str | None, Any]],
+        keyword_names: tuple[str, ...],
+        span: ir.Span,
+    ) -> None:
+        """Record one emitted op, from the arguments of it that reach a buffer.
+
+        Only the automatic pipeline reads these records, so nothing is recorded without
+        auto_pipeline. ``operands`` holds (position, keyword, parsed value) as the call wrote
+        them. An op no argument of which reaches a buffer is not recorded. A tile that
+        resolves to no declaration is recorded with no buffers, so a consumer needing its
+        buffer can tell it apart from an argument that is not a tile at all, and is warned
+        about: the pipeline inserts no sync for it.
+        """
+        if not self._auto_pipeline:
+            return
+        recorded = []
+        reaches_buffer = False
+        untracked = None
+        for position, keyword, value in operands:
+            refs = self.buffer_refs_of(value)
+            if refs:
+                reaches_buffer = True
+            elif not isinstance(getattr(value, "type", None), ir.TileType):
+                continue
+            elif untracked is None:
+                untracked = keyword if keyword is not None else f"#{position}"
+            recorded.append(Operand(position, keyword, refs))
+        if untracked is not None:
+            shown = op_name if op_name.startswith("vf.") else f"pl.{op_name}"
+            _warn_located(
+                f"pipeline: argument {untracked} of `{shown}()` is a tile that no "
+                f"pl.make_tile_group() declaration provides, so the automatic pipeline inserts "
+                f"no sync for it. Declare the tiles taking part in the pipeline with "
+                f"pl.make_tile_group().",
+                UntrackedTile,
+                span,
+            )
+        if not reaches_buffer:
+            return
+        self.parse_facts.op_accesses.setdefault(self._access_site, []).append(
+            OpAccess(op_name, tuple(recorded), keyword_names, self._in_vf_body(), span)
+        )
 
     def _validate_tiling_params(
         self,

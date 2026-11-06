@@ -143,10 +143,10 @@ class AssignmentParserMixin:
             )
             self._transfer_tile_group_metadata(item_expr, tuple_var)
             var = self.builder.let(elt.id, item_expr, span=span)
-            self.scope_manager.define_var(elt.id, var, span=span)
             const_item = value_expr.elements[i] if isinstance(value_expr, ir.MakeTuple) else item_expr
             self._transfer_tile_group_metadata(var, const_item)
             self._update_var_envs(var, const_item)
+            self.scope_manager.define_var(elt.id, var, span=span)
 
     def _parse_name_assignment(self, var_name: str, stmt: ast.Assign) -> None:
         span = self.span_tracker.get_span(stmt)
@@ -328,3 +328,4 @@ class AssignmentParserMixin:
         from pypto_pro.ir.op.block_ops import _ir_setval
         setval_call = _ir_setval(container_expr, index_expr, value_expr, span=span)
         self.builder.emit(ir.EvalStmt(setval_call, span))
+        self._record_op_access("setval", [(0, None, container_expr)], (), span)

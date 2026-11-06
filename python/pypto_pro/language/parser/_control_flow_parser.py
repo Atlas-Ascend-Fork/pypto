@@ -552,9 +552,9 @@ class ControlFlowParserMixin:
 
     def _record_if_const(self, test_node: ast.expr, is_const: bool, value) -> None:
         """Record each ``if`` condition's compile-time constness for the auto-pipeline's branch pruning."""
-        if not getattr(self, "collect_if_const", False) or self.inline_call_stack:
+        if not self.auto_pipeline_enabled or self.inline_call_stack or self._in_vf_body():
             return
-        self.if_const_map[(test_node.lineno, test_node.col_offset)] = (is_const, value)
+        self.parse_facts.if_const_map[(test_node.lineno, test_node.col_offset)] = (is_const, value)
 
     def parse_if_statement(self, stmt: ast.If) -> None:
         """Parse an IfStmt using only its reachable Yield predecessors."""

@@ -801,6 +801,12 @@ class ExpressionParserMixin:
         base_expr = self.parse_expression(attr.value)
         if attr.attr == "shape" and isinstance(base_expr, ir.Expr) and isinstance(base_expr.type, ir.TensorType):
             return ir.MakeTuple(list(base_expr.type.shape), span)
+        if attr.attr == "stride" and isinstance(base_expr, ir.Expr) and isinstance(base_expr.type, ir.TensorType):
+            # Every axis, read the way tensor.stride[axis] reads one.
+            return ir.MakeTuple(
+                [self._tensor_stride_axis(base_expr, axis, span) for axis in range(len(base_expr.type.shape))],
+                span,
+            )
         if isinstance(base_expr, ir.Expr):
             lowered = self.lower_attr_access(base_expr, attr.attr, span)
             if lowered is not None:
@@ -809,8 +815,8 @@ class ExpressionParserMixin:
         raise InvalidShape(
             f"Standalone attribute access not supported: {ast.unparse(attr)}",
             span=span,
-            hint="Attribute access is supported on named tuples, structs, Tensor values (tensor.shape), "
-            "tiling parameters, or enum constants",
+            hint="Attribute access is supported on named tuples, structs, Tensor values "
+            "(tensor.shape, tensor.stride, and either indexed), tiling parameters, or enum constants",
             parser_retry=True,
         )
 
@@ -856,6 +862,11 @@ class ExpressionParserMixin:
             if isinstance(base_expr, ir.Expr) and isinstance(base_expr.type, ir.TensorType):
                 return self._parse_tensor_shape_subscript(base_expr, subscript.slice, span)
 
+        if isinstance(subscript.value, ast.Attribute) and subscript.value.attr == "stride":
+            base_expr = self.parse_expression(subscript.value.value)
+            if isinstance(base_expr, ir.Expr) and isinstance(base_expr.type, ir.TensorType):
+                return self._parse_tensor_stride_subscript(base_expr, subscript.slice, span)
+
         value_expr = self.parse_expression(subscript.value)
 
         # A tile-group handle is a named tuple, so this must precede the TupleType
@@ -882,6 +893,7 @@ class ExpressionParserMixin:
                 ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee, ir.FunctionType.SimtKernel
             )
             result = _ir_getval(value_expr, index_expr, preserve_dtype=is_simt, span=span)
+            self._record_op_access("getval", [(0, None, value_expr)], (), span)
             result = self._materialize_nested_expr(result, span)
             return result
 
@@ -1108,6 +1120,60 @@ class ExpressionParserMixin:
                 parser_retry=True,
             )
         return tensor_type.shape[axis]
+
+    def _parse_tensor_stride_subscript(
+        self,
+        base_expr: ir.Expr,
+        index_node: ast.expr,
+        span: ir.Span,
+    ) -> ir.Expr:
+        """Resolve ``tensor.stride[index]`` to the step of that axis."""
+        success, axis = self.expr_evaluator.try_eval_expr(index_node)
+        if not success or type(axis) is not int:
+            raise InvalidType(
+                "tensor.stride index must be a compile-time integer",
+                span=span,
+                hint="Use tensor.stride[0], tensor.stride[-1], or a compile-time integer expression",
+            )
+
+        original_axis = axis
+        rank = len(base_expr.type.shape)
+        if axis < 0:
+            axis += rank
+        if axis < 0 or axis >= rank:
+            raise InvalidShape(
+                f"stride index {original_axis} out of range for tensor of rank {rank}",
+                span=span,
+                parser_retry=True,
+            )
+        return self._tensor_stride_axis(base_expr, axis, span)
+
+    def _tensor_stride_axis(self, base_expr: ir.Expr, axis: int, span: ir.Span) -> ir.Expr:
+        """The step of one axis of a tensor, for an ``axis`` already within its rank.
+
+        A view created with a stride reads it back. Without one, an ND tensor is laid
+        out contiguously in row-major order, so the step is the product of the inner
+        axes' extents. No runtime tensor operation is emitted.
+        """
+        shape = list(base_expr.type.shape)
+        tensor_view = base_expr.type.tensor_view
+        if tensor_view is not None and tensor_view.stride:
+            return tensor_view.stride[axis]
+        if tensor_view is not None and tensor_view.layout != ir.TensorLayout.ND:
+            raise InvalidType(
+                f"tensor.stride of a {tensor_view.layout} tensor requires an explicit stride",
+                span=span,
+                hint="Only an ND tensor has an implicit row-major stride; create the view with "
+                "pl.make_tensor(ptr, shape, stride).",
+            )
+        if axis == len(shape) - 1:
+            return ir.ConstInt(1, DataType.INT64, span)
+        step = shape[axis + 1]
+        for extent in shape[axis + 2:]:
+            operation = _make_binary("mul", step, extent, span)
+            folded = self._fold_const_binop("mul", operation, span)
+            step = folded if folded is not None else operation
+        return step
 
     def _parse_tile_valid_shape_subscript(
         self,
@@ -1445,6 +1511,8 @@ class ExpressionParserMixin:
             {},
             span,
         )
+        # A window onto a slot is that slot: an access to it is an access to its buffer.
+        self._transfer_tile_group_metadata(view_expr, container_expr)
 
         return view_expr
 

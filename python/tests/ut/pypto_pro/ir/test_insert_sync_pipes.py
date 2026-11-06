@@ -2,11 +2,9 @@
 # Licensed under the CANN Open Software License Agreement Version 2.0.
 """Backend pipe registrations and parameter-dependent InsertSync decisions."""
 
-import ast
-
 from pypto_pro.ir.op.block_ops import make_mutex_tile_expr
 from pypto_pro.runtime.pipeline._cross_core_scanner import (
-    _block_op_pipe,
+    _pipe_from_operand_memory,
     get_expands_pipe,
     get_move_pipe,
     get_op_pipe,
@@ -113,5 +111,5 @@ def test_store_pipe_matches_source(src, expected):
 def test_broadcast_pipe_matches_destination_in_both_sync_paths(name, dst, expected):
     assert get_expands_pipe(dst) == expected
     assert _insert_sync_pipes(name, [dst]) == {expected}
-    call = ast.parse(f"pl.{name}(tile, 0)").body[0].value
-    assert _block_op_pipe(name, call, {"tile": "buffer"}, {"buffer": dst}) == expected.name
+    shown = f"pl.{name}(tile, 0)"
+    assert _pipe_from_operand_memory(name, shown, None, lambda pos: dst if pos == 0 else None) == expected.name

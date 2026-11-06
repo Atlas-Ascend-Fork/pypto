@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import ast
 import contextlib
-import copy
 import inspect
 import textwrap
 
+from pypto_pro._errors import span_of
 from pypto_pro.language.parser._expr_evaluator import ExprEvaluator
 
 # ---------------------------------------------------------------------------
@@ -144,6 +144,30 @@ def stmt_header(stmt: ast.stmt) -> ast.AST:
     return stmt
 
 
+def buffer_decl_location(func_def: ast.FunctionDef, decl):
+    """Where an error about a buffer declaration points, and where the declaration itself
+    sits when that is elsewhere.
+
+    A declaration written in the kernel body is pointed at directly, with no second
+    location. One made inside a called function is pointed at the kernel-body code that
+    runs it (``decl.site``), and the declaration's own ``file:line`` is returned as well.
+    """
+    site = next(
+        (node for node in ast.walk(func_def)
+         if (getattr(node, "lineno", None), getattr(node, "col_offset", None)) == decl.site),
+        None,
+    )
+    site_span = span_of(site)
+    declared = decl.span
+    if (
+        site_span is None
+        or (declared.filename == site_span.filename
+            and site_span.begin_line <= declared.begin_line <= site_span.end_line)
+    ):
+        return declared, None
+    return site_span, f"{declared.filename}:{declared.begin_line}"
+
+
 def eval_const(node: ast.expr, closure_vars: dict):
     """Evaluate a constant expression node using closure_vars as namespace.
     Returns the value, or None if it cannot be evaluated (e.g. references a
@@ -152,43 +176,6 @@ def eval_const(node: ast.expr, closure_vars: dict):
         return ExprEvaluator(closure_vars).eval_expr(node)
     except Exception:
         return None
-
-
-def gm_slot_size(shape: ast.expr, stride: ast.expr | None, consts: dict) -> ast.expr | None:
-    """Elements one slot of a GM buffer spans: ``max(shape[i] * stride[i])``, or
-    ``prod(shape)`` without a stride.
-
-    A constant when it evaluates statically; None when shape or stride is neither written
-    as a list nor resolvable from ``consts``.
-    """
-    dims = _list_elts(shape, consts)
-    steps = _list_elts(stride, consts) if stride is not None else None
-    if dims is None or (stride is not None and steps is None):
-        return None
-    if steps is None:
-        size = dims[0]
-        for dim in dims[1:]:
-            size = ast.BinOp(left=size, op=ast.Mult(), right=dim)
-    else:
-        spans = [ast.BinOp(left=d, op=ast.Mult(), right=st) for d, st in zip(dims, steps)]
-        size = spans[0]
-        for span in spans[1:]:
-            size = ast.Call(func=ast.Name(id="max", ctx=ast.Load()), args=[size, span], keywords=[])
-    size = ast.fix_missing_locations(copy.deepcopy(size))
-    value = eval_const(size, {**consts, "max": max})
-    if isinstance(value, int) and not isinstance(value, bool):
-        return ast.Constant(value=value)
-    return size
-
-
-def _list_elts(node: ast.expr, consts: dict) -> list | None:
-    """The elements of a list written literally, or of one ``consts`` resolves it to."""
-    if isinstance(node, (ast.List, ast.Tuple)):
-        return node.elts
-    value = eval_const(node, consts)
-    if isinstance(value, (list, tuple)) and value:
-        return [ast.Constant(value=v) for v in value]
-    return None
 
 
 @contextlib.contextmanager

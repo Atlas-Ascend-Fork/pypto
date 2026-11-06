@@ -10,8 +10,15 @@
 # -----------------------------------------------------------------------------------------------------------
 """Parser and IR tests for pointer reinterpretation and tensor re-view APIs."""
 
+import ast
+from pathlib import Path
+import textwrap
+
+from pypto_pro._errors import InvalidShape, InvalidType
 import pypto_pro.language as pl
+from pypto_pro.language.parser._ast_parser import ASTParser
 import pytest
+from test_common import assert_ir_matches_dump
 
 from pypto.pypto_impl import ir
 
@@ -143,6 +150,142 @@ def test_make_tensor_view_of_view_ir():
     prog = _parse_kernel(_retensor_view_of_view_kernel)
     s = str(prog)
     assert s.count("ptr.make_tensor") == 2
+
+
+def _parse_body(body: str, params: str = "") -> tuple[ASTParser, ir.Function]:
+    """Parse a kernel body taking ``entry``, ``p`` and any extra ``params``."""
+    source = f"def kernel(entry: pl.DT_INT64, p: pl.Ptr[pl.DT_FP32]{params}):\n" + textwrap.indent(body, "    ")
+    parser = ASTParser(
+        source_file=__file__,
+        source_lines=source.splitlines(),
+        target=ir.SectionKind.Vector,
+        debug_info=ir.IRDebugInfo(),
+        closure_vars={"pl": pl},
+    )
+    return parser, parser.parse_function(ast.parse(source).body[0])
+
+
+def _parse_body_with_parser(body: str) -> ASTParser:
+    """Parse a kernel body and return the parser, for tests that read its parse facts."""
+    return _parse_body(body)[0]
+
+
+def test_make_tensor_with_pipeline_ids_is_recorded_as_a_buffer_declaration():
+    # Cross-core event IDs are read while parsing, so they are compile-time
+    # integers; a list and a tuple are both accepted spellings.
+    parser = _parse_body_with_parser(
+        "view = pl.make_tensor(p, [64, 128], depth=2, fwd_ids=[0, 1], bwd_ids=(2, 3))\n"
+    )
+    facts = list(parser.parse_facts.buffer_decls.values())
+    assert len(facts) == 1
+    assert (facts[0].depth, facts[0].fwd_ids, facts[0].bwd_ids) == (2, (0, 1), (2, 3))
+
+
+@pytest.mark.parametrize(
+    ("layout", "dims", "has_stride", "slot_size"),
+    [
+        ("[64, 128]", 2, False, 64 * 128),
+        ("[64, 128], [128, 1]", 2, True, 64 * 128),
+        ("[8, 64, 128]", 3, False, 8 * 64 * 128),
+        # `entry` is a runtime scalar, so one axis of these two cannot be measured.
+        ("[entry, 128]", 2, False, None),
+        ("[64, 128], [entry, 1]", 2, True, None),
+    ],
+)
+def test_make_tensor_records_its_slot_geometry(layout, dims, has_stride, slot_size):
+    parser = _parse_body_with_parser(
+        f"view = pl.make_tensor(p, {layout}, depth=2, fwd_ids=[0, 1], bwd_ids=[2, 3])\n"
+    )
+    facts = list(parser.parse_facts.buffer_decls.values())
+    assert (facts[0].dims, facts[0].has_stride, facts[0].slot_size) == (dims, has_stride, slot_size)
+    # A GM view's base is a runtime pointer.
+    assert facts[0].addrs is None
+    assert facts[0].memory == ir.MemorySpace.DDR
+
+
+def test_make_tensor_without_pipeline_ids_is_not_a_buffer_declaration():
+    parser = _parse_body_with_parser("view = pl.make_tensor(p, [64, 128], depth=2)\n")
+    assert parser.parse_facts.buffer_decls == {}
+
+
+@pytest.mark.parametrize("ids_parameter", ["fwd_ids", "bwd_ids"])
+def test_make_tensor_rejects_runtime_pipeline_ids(ids_parameter):
+    ids = {"fwd_ids": "[0]", "bwd_ids": "[1]"} | {ids_parameter: "[entry]"}
+    with pytest.raises(InvalidType, match=f"'{ids_parameter}' must be a compile-time"):
+        _parse_body_with_parser(
+            f"view = pl.make_tensor(p, [64, 128], depth=2, "
+            f"fwd_ids={ids['fwd_ids']}, bwd_ids={ids['bwd_ids']})\n"
+        )
+
+
+@pytest.mark.parametrize(
+    ("stride", "read_back", "slot_size"),
+    [
+        ("[128, 1]", "[v.stride[0], v.stride[1]]", 64 * 128),
+        ("[128, 1]", "[128, v.stride[-1]]", 64 * 128),
+        # `entry` is a runtime scalar, so the axis read back cannot be measured either.
+        ("[entry, 1]", "[v.stride[0], 1]", None),
+    ],
+)
+def test_tensor_stride_reads_back_the_declared_stride(stride, read_back, slot_size):
+    # Only `w` carries ids, so the facts recorded are its own, measured off `v`'s stride.
+    parser = _parse_body_with_parser(
+        f"v = pl.make_tensor(p, [64, 128], {stride})\n"
+        f"w = pl.make_tensor(p, [64, 128], {read_back}, depth=2, fwd_ids=[0, 1], bwd_ids=[2, 3])\n"
+    )
+    facts = list(parser.parse_facts.buffer_decls.values())
+    assert len(facts) == 1
+    assert (facts[0].has_stride, facts[0].slot_size) == (True, slot_size)
+
+
+def test_tensor_stride_reads_the_declared_or_the_row_major_step():
+    _, function = _parse_body(
+        # Without an explicit stride, each axis reads the row-major step.
+        "row_major = pl.make_tensor(p, [4, 64, 128])\n"
+        "leading = pl.make_tensor(p, [4, 2], [row_major.stride[0], row_major.stride[1]])\n"
+        "trailing = pl.make_tensor(p, [4, 2], [row_major.stride[-2], row_major.stride[-1]])\n"
+        # A runtime extent among the inner axes leaves the step as a runtime product.
+        "runtime_extent = pl.make_tensor(p, [4, entry, 128])\n"
+        "past_runtime = pl.make_tensor(p, [4, 2], [runtime_extent.stride[0], runtime_extent.stride[1]])\n"
+        # A kernel tensor parameter carries no stride either.
+        "param_axes = pl.make_tensor(p, [4, 2], [t.stride[0], t.stride[1]])\n"
+        # The whole stride reads every axis the way one axis reads.
+        "pitched = pl.make_tensor(p, [64, 128], [256, 1])\n"
+        "whole_declared = pl.make_tensor(p, [64, 128], pitched.stride)\n"
+        "whole_row_major = pl.make_tensor(p, [4, 64, 128], row_major.stride)\n"
+        "whole_param = pl.make_tensor(p, [64, 128], t.stride)\n",
+        params=", t: pl.Tensor[[64, 128], pl.DT_FP32]",
+    )
+    assert_ir_matches_dump(function, Path(__file__).with_name(f"{Path(__file__).stem}__tensor_stride.pypto"))
+    text = str(function)
+    for name, stride_text in [
+        ("leading", "8192 x 128"),
+        ("trailing", "128 x 1"),
+        ("past_runtime", "%_expr_tmp_7_0 x 128"),
+        ("param_axes", "128 x 1"),
+        ("whole_declared", "256 x 1"),
+        ("whole_row_major", "8192 x 128 x 1"),
+        ("whole_param", "128 x 1"),
+    ]:
+        assert f", {stride_text}, ND, %p_0>> %{name}_0 = " in text, name
+    assert "%_expr_tmp_7_0 = (%entry_0 mul 128)" in text
+
+
+@pytest.mark.parametrize("read", ["t.stride[0]", "t.stride"])
+def test_tensor_stride_of_a_non_nd_tensor_requires_an_explicit_stride(read):
+    with pytest.raises(InvalidType, match="requires an explicit stride"):
+        _parse_body(f"n = {read}\n", params=", t: pl.Tensor[[64, 128], pl.DT_FP32, pl.NZ]")
+
+
+@pytest.mark.parametrize("declaration", ["pl.make_tensor(p, [64, 128], [128, 1])", "pl.make_tensor(p, [64, 128])"])
+def test_tensor_stride_rejects_an_out_of_range_axis(declaration):
+    with pytest.raises(InvalidShape, match="stride index 5 out of range for tensor of rank 2"):
+        _parse_body_with_parser(f"v = {declaration}\nn = v.stride[5]\n")
+
+
+def test_tensor_stride_rejects_a_runtime_axis():
+    with pytest.raises(InvalidType, match="index must be a compile-time integer"):
+        _parse_body_with_parser("v = pl.make_tensor(p, [64, 128], [128, 1])\nn = v.stride[entry]\n")
 
 
 def test_make_ptr_accepts_tensor_argument():

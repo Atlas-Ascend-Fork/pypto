@@ -17,6 +17,7 @@ These ops emit PTO MLIR instructions (pto.addptr, pto.make_tensor_view)
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from pypto.pypto_impl import ir as _ir_core
@@ -24,7 +25,7 @@ from pypto.pypto_impl.ir import Call, DataType, Expr, Span
 
 from ..._errors import InvalidShape, InvalidType
 from .._operators import make_binary
-from .._utils import _const_int_value, _get_span_or_capture, _normalize_expr, _to_make_tuple
+from .._utils import _const_int_value, _get_span_or_capture, _is_int, _normalize_expr, _to_make_tuple
 from ._op_registry import op_impl
 
 
@@ -241,9 +242,95 @@ def addptr(ptr: Expr, offset: Expr, span: Span | None = None) -> Call:
     return _ir_core.create_op_call("ptr.addptr", [ptr, offset], {}, actual_span)
 
 
+@dataclass(frozen=True)
+class TensorFacts:
+    """One pl.make_tensor() buffer declaration's resolved facts.
+
+    Carries the same fields as a tile group's facts, so that a reader of either asks the
+    same questions.
+    """
+
+    memory: _ir_core.MemorySpace  # always DDR: a view over the workspace
+    depth: int | None  # None when the keyword is absent
+    addrs: tuple[int, ...] | None  # always None: the base is a runtime pointer
+    slot_size: int | None  # in elements; None when an axis is a runtime value
+    fwd_ids: tuple[int, ...] | None  # None when the keyword is absent
+    bwd_ids: tuple[int, ...] | None
+    span: Span
+    site: tuple[int, int] | None  # (lineno, col_offset) of the kernel-body statement or call parsing it
+    dims: int  # how many dimensions the view's shape has
+    has_stride: bool  # whether a stride was written beside it
+
+
+def _const_axes(layout: _ir_core.MakeTuple) -> list[int] | None:
+    """Each axis of a layout argument as a plain int, or None when one is a runtime value."""
+    values = []
+    for element in layout.elements:
+        if not isinstance(element, _ir_core.ConstInt):
+            return None
+        values.append(element.value)
+    return values
+
+
+def _slot_size(shape: _ir_core.MakeTuple, stride: _ir_core.MakeTuple) -> int | None:
+    """Elements one slot of a GM view spans: ``max(shape[i] * stride[i])``, or ``prod(shape)``
+    with no stride. None when any axis is a runtime value."""
+    dims = _const_axes(shape)
+    if dims is None:
+        return None
+    if not stride.elements:
+        size = 1
+        for dim in dims:
+            size *= dim
+        return size
+    steps = _const_axes(stride)
+    if steps is None:
+        return None
+    return max(dim * step for dim, step in zip(dims, steps))
+
+
 @op_impl("make_tensor")
 def _build_make_tensor(self, *args, span: Span, **kwargs):
-    return make_tensor(*args, span=span, **kwargs)
+    """Build the tensor view; one carrying cross-core event IDs is also a buffer declaration.
+
+    A view with neither fwd_ids nor bwd_ids declares no buffer and records no facts.
+    """
+    result = make_tensor(*args, span=span, **kwargs)
+    fwd_ids, bwd_ids = kwargs.get("fwd_ids"), kwargs.get("bwd_ids")
+    if fwd_ids is None and bwd_ids is None:
+        return result
+    depth = self.require_const_value(
+        kwargs.get("depth"), "depth", expects="integer",
+        check=lambda value: value is None or _is_int(value),
+        hint="depth must be known at compile time.",
+    )
+    decl_ids: dict[str, tuple[int, ...]] = {}
+    for ids_key, ids_value in (("fwd_ids", fwd_ids), ("bwd_ids", bwd_ids)):
+        if ids_value is None:
+            continue
+        ids = self.require_const_value(
+            ids_value, ids_key, expects="non-empty list of integers",
+            check=lambda value: (
+                isinstance(value, (list, tuple)) and bool(value) and all(_is_int(e) for e in value)
+            ),
+            hint="Cross-core event IDs are fixed while parsing; pass a literal list of "
+            "integers, or a variable bound to one.",
+        )
+        decl_ids[ids_key] = tuple(ids)
+    shape_tuple, stride_tuple = result.args[1], result.args[2]
+    self.parse_facts.buffer_decls[result] = TensorFacts(
+        memory=_ir_core.MemorySpace.DDR,
+        depth=depth,
+        addrs=None,
+        slot_size=_slot_size(shape_tuple, stride_tuple),
+        fwd_ids=decl_ids.get("fwd_ids"),
+        bwd_ids=decl_ids.get("bwd_ids"),
+        span=span,
+        site=self._access_site,
+        dims=len(shape_tuple.elements),
+        has_stride=bool(stride_tuple.elements),
+    )
+    return result
 
 
 @op_impl("make_ptr")

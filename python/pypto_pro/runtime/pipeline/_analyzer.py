@@ -14,7 +14,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
 
-from pypto.pypto_impl.ir import MemorySpace
+from pypto.pypto_impl.ir import SectionKind
 
 from ..._errors import InvalidArgument, InvalidOperation, InvalidType, KeyNotFound, NotSupported, current_span, span_of
 from ._astutil import (
@@ -30,29 +30,45 @@ from ._astutil import (
     stmt_header,
 )
 from ._cross_core_scanner import (
-    AccessScanTables,
+    AccessTables,
     CrossCoreSyncContext,
+    buffer_addr_ranges,
+    buffer_memory_spaces,
+    buffer_slot_counts,
+    cross_core_buffers,
     detect_addr_overlaps,
     reject_buffer_access_outside_stages,
-    scan_all_buffer_memory,
-    scan_all_tile_group_names,
-    scan_buffer_addr_ranges,
-    scan_buffer_decls,
-    scan_buffer_mutex_ids,
-    scan_buffer_slot_counts,
-    scan_cross_core_buffers,
-    scan_kernel_slot_to_buffer,
-    scan_stage_accesses,
-    scan_tuple_fields,
+    stage_accesses,
+    tile_group_names,
+    validate_bound_buffer_decls,
+    validate_distinct_buffer_names,
 )
 from ._stage import is_pipeline_stage
 from ._validate import (
+    reject_buffer_decls_in_loops,
     validate_kernel_buffers,
     validate_kernel_structure,
     validate_slot_picks,
     validate_structure,
 )
 from .config import PipelineConfig
+
+
+@dataclass(frozen=True)
+class ArgTypeFacts:
+    """The type an argument of a kernel-body call carries, as the probe parse saw it.
+
+    One record per argument rather than a table per side of the type: both sides are keyed by
+    the same argument position and filled from the same parsed value, and a reader asking
+    about a struct's fields is asking about that argument's type too.
+    """
+
+    # The IR type's class name.
+    kind: str
+    # The scalar dtype, when ``kind`` is "ScalarType".
+    dtype: object | None = None
+    # {field name: IR type} when the argument is a struct, None when it is not one.
+    fields: dict | None = None
 
 
 @dataclass
@@ -67,14 +83,36 @@ class KernelFacts:
     if_const_map: dict = field(default_factory=dict)
     # {name: (IR type class name, scalar dtype or None)}
     var_types: dict = field(default_factory=dict)
-    # {(lineno, col_offset) of a call argument: its parsed type}
+    # {(lineno, col_offset) of an argument a kernel-body call writes: ArgTypeFacts}
     arg_types: dict = field(default_factory=dict)
-    # {(struct variable, field name): the field's IR type}
-    field_types: dict = field(default_factory=dict)
-    # {buffer variable: its MemorySpace}, as the parser resolved target_memory
-    buffer_memory: dict = field(default_factory=dict)
-    # {(inlined function chain, variable name): the buffers the name holds a tile of}
-    name_buffers: dict = field(default_factory=dict)
+    # {kernel-body variable holding a buffer: the declared names it reaches}. More than one
+    # name when control flow merges two declarations. Only the GM slot selection reads this
+    # today; the tile-group slot paths still match on the name as written.
+    buffer_vars: dict = field(default_factory=dict)
+    # {target: {(lineno, col_offset) of a kernel-body node: [StageOpAccess, ...]}}. Per target
+    # because a parse expands only the sections belonging to the one it ran for.
+    op_accesses: dict = field(default_factory=dict)
+    # {declared name: TileGroupFacts | TensorFacts}, in source order. Merged over the targets:
+    # a declaration inside a section is only parsed by the target that section belongs to.
+    buffer_facts: dict = field(default_factory=dict)
+    # Declarations no kernel-body variable holds, which the pipeline refuses.
+    unbound_decls: list = field(default_factory=list)
+    # [(name, declaration, another declaration bound to the same name)], which the pipeline
+    # refuses: buffer_facts keeps one declaration per name.
+    same_name_decls: list = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class StageOpAccess:
+    """One op a parse emitted, with every buffer operand resolved to its declared name."""
+
+    op_name: str  # "move", "getval", "vf.load_align", ...
+    # ``(position among the positional arguments, keyword name, declared buffer names)`` per
+    # operand that reaches a buffer. No names means a tile resolving to no declaration.
+    operands: tuple
+    keyword_names: tuple  # every keyword the call wrote
+    in_vf: bool  # whether the op is inside a vector function
+    span: object
 
 
 @dataclass
@@ -124,8 +162,9 @@ class PipelineInfo:
     loop_index: int = 0
     stages: list[StageCall] = field(default_factory=list)
     ctx_fields: list[str] = field(default_factory=list)
-    # {ctx field: (fill expression, {sections to emit the fill in})}. ctx_fields comes from
-    # its keys, so a field cannot be declared without a source.
+    # {ctx field: (fill expression, {sections to emit the fill in}, {section kind: the
+    # initializer it is declared with there})}. ctx_fields comes from its keys, so a field
+    # cannot be declared without a source.
     ctx_sources: dict = field(default_factory=dict)
     # {struct variable: [field names]} per pl.struct passed to a stage. Its fields become ctx
     # fields under their own names, so a stage body reading `ri.ki` needs no rewriting.
@@ -143,15 +182,13 @@ class PipelineInfo:
     pipeline_loop_step: ast.expr | None = None
     # {variable: (IR type class name, scalar dtype or None)} from the parser probe.
     var_types: dict = field(default_factory=dict)
-    # {(lineno, col_offset) of a call argument: (IR type class name, scalar dtype or None)}.
+    # {(lineno, col_offset) of a call argument: ArgTypeFacts}.
     arg_types: dict = field(default_factory=dict)
-    # {(struct variable, field name): the field's IR type} from the parser probe.
-    field_types: dict = field(default_factory=dict)
+    # {kernel-body variable holding a buffer: the declared names it reaches}, from the probe.
+    buffer_vars: dict = field(default_factory=dict)
     # {struct variable: the pl.struct() call declaring it}, so a field an error rejects can be
     # pointed at.
     struct_defs: dict = field(default_factory=dict)
-    # {scalar variable: the stage argument it is passed as}.
-    scalar_arg_nodes: dict = field(default_factory=dict)
     # {name: {section kinds it is bound in}}. A name bound in a section is invisible to the
     # other target, so its ctx fill has to sit in that same section — one per section.
     var_sections: dict = field(default_factory=dict)
@@ -187,16 +224,15 @@ def analyze_pipeline(
     Kernel-level facts — declarations, scope, the sync context — are derived once and shared by
     reference with every loop's info; everything derived from a loop's stages is per loop.
 
-    Structure is validated before the buffer scan, so a malformed stage chain is reported as
-    such rather than as whatever the scan trips over.
+    Structure is validated before the buffers are resolved, so a malformed stage chain is
+    reported as such rather than as whatever the resolution trips over.
 
     Args:
         func_def: The kernel function's AST node
         closure_vars: Closure variables (module-level constants, stage functions)
         config: the pipeline configuration, whose preload must match the loops found here
         var_types: {name: (IR type class name, scalar dtype or None)} from the parser probe
-        arg_types: {(lineno, col_offset): its parsed type} for call arguments, from the probe
-        field_types: {(struct variable, field name): the field's IR type} from the parser probe
+        arg_types: {(lineno, col_offset): ArgTypeFacts} for call arguments, from the probe
 
     Returns:
         [PipelineInfo, ...], one per pipeline loop, in source order.
@@ -236,7 +272,7 @@ def analyze_pipeline(
         info.closure_vars = closure_vars
         info.var_types = facts.var_types
         info.arg_types = facts.arg_types
-        info.field_types = facts.field_types
+        info.buffer_vars = facts.buffer_vars
         info.var_sections = var_sections
         info.stages = stages
         _record_pipeline_loop_info(loop, info)
@@ -247,9 +283,7 @@ def analyze_pipeline(
         info.struct_args = _collect_struct_args(func_def, info)
         infos.append(info)
 
-    # Every buffer declaration, scanned once and shared by everything that reads them.
-    decls = scan_buffer_decls(func_def, facts.buffer_memory)
-    group_names = scan_all_tile_group_names(decls)
+    group_names = tile_group_names(facts.buffer_facts)
     sync = CrossCoreSyncContext()
     for info in infos:
         info.group_names = group_names
@@ -264,24 +298,27 @@ def analyze_pipeline(
     # Scan the cross-core buffer declarations for auto-sync. Sole writer of info.sync, which
     # the per-loop steps below read: what a group is called and how many slots it rotates
     # through are declaration facts, derived once.
-    # Every function a stage or a loop-body statement might call, resolved once.
-    callable_defs = _collect_callable_defs(closure_vars)
-    tables = _scan_kernel_buffers(sync, func_def, closure_vars, decls, group_names, callable_defs)
+    # Every plain function a stage or a loop-body statement might call, resolved once.
+    helper_func_defs = _collect_helper_func_defs(closure_vars)
+    tables = _resolve_kernel_buffers(
+        sync, func_def, closure_vars, group_names,
+        facts.buffer_facts, facts.unbound_decls, facts.same_name_decls,
+    )
 
     for info in infos:
         # Slots chosen outside the pipeline loop: their index travels through ctx. Ahead of the
-        # access scan so an unusable pick is reported as a pick, not as whichever op in a stage
+        # accesses so an unusable pick is reported as a pick, not as whichever op in a stage
         # body first failed to resolve the slot.
         info.outer_slots = _collect_outer_slots(info)
-        # What each stage touches, which is the one half of the scan that is per pipeline.
+        # What each stage touches, which is the one half that is per pipeline.
         if tables is not None:
-            _scan_loop_accesses(info, tables)
+            _resolve_loop_accesses(info, tables, facts)
             # And nothing outside a stage may touch what the graph tracks: its accesses would
-            # be scanned by nobody and synchronised by nobody, and its cursor would hand the
+            # be recorded against no stage and synchronised by nobody, and its cursor would hand
             # stages a slot that is not their task's.
             tracked = set(tables.cross_buffers) | tables.addr_shared
-            validate_slot_picks(info, tracked & info.group_names, tables.helper_func_defs)
-            reject_buffer_access_outside_stages(info.pipeline_loop.body, tables, info.group_names)
+            validate_slot_picks(info, tracked & info.group_names, helper_func_defs)
+            reject_buffer_access_outside_stages(info, facts.op_accesses, tables)
     # Every declared cross-core buffer must be used by SOME pipeline. The per-loop check in
     # validate_sync cannot see that: a buffer another loop uses is legitimately absent there.
     validate_kernel_buffers(sync, set().union(*(buffers_touched(i) for i in infos)))
@@ -296,65 +333,53 @@ def analyze_pipeline(
     return infos
 
 
-def _scan_kernel_buffers(
+def _resolve_kernel_buffers(
     sync: CrossCoreSyncContext,
     func_def: ast.FunctionDef,
     closure_vars: dict,
-    decls: list,
     group_names: set,
-    callable_defs: tuple,
-) -> AccessScanTables | None:
+    buffer_facts: dict,
+    unbound_decls: list,
+    same_name_decls: list,
+) -> AccessTables | None:
     """Fill ``sync`` from the kernel's buffer declarations; return the lookup tables.
 
-    The kernel-level half of the buffer scan: declarations, addresses and the name tables,
-    all of which every pipeline loop in the kernel shares. The per-loop half — what each
-    stage actually touches — is _scan_loop_accesses.
+    The kernel-level half: declarations, addresses and the name tables, all of which every
+    pipeline loop in the kernel shares. The per-loop half — what each stage actually touches —
+    is _resolve_loop_accesses.
 
-    Returns None when the kernel declares no cross-core buffer, which is also the point
-    the old single function returned early at: with nothing to hand over there is no sync
-    to plan, and the tables would have no reader.
+    Returns None when the kernel declares no cross-core buffer: with nothing to hand over
+    there is no sync to plan, and the tables would have no reader.
 
-    ``decls`` is the shared one-pass result from scan_buffer_decls. The order of the
-    scans below is the order their errors surface in, so it is deliberate: the cross-core
-    scan raises on an unusable declaration, the rest only collect what they can resolve.
+    ``buffer_facts`` is what the parse resolved for every declaration.
+    The three structural validations run before the cross-core resolution, so a malformed
+    declaration is reported as a declaration error rather than as a cross-core one.
     """
     # Filled before the early return below: _collect_outer_slots needs a slot count for
-    # local groups too. These scans raise on nothing — they skip declarations whose layout
-    # will not resolve — so their position decides nothing about which error a user sees.
-    sync.mutex_ids = scan_buffer_mutex_ids(decls, closure_vars)
-    sync.slot_counts = scan_buffer_slot_counts(decls, closure_vars)
-    sync.decl_stmts = {name: decl.stmt for decl in decls if decl.stmt is not None for name in decl.names}
+    # local groups too.
+    sync.slot_counts = buffer_slot_counts(buffer_facts)
+    sync.decl_spans = {name: decl.span for name, decl in buffer_facts.items()}
 
-    cross_buffers, lifted_ids = scan_cross_core_buffers(decls, closure_vars)
+    validate_bound_buffer_decls(func_def, unbound_decls)
+    validate_distinct_buffer_names(func_def, same_name_decls)
+    reject_buffer_decls_in_loops(func_def, buffer_facts)
+    cross_buffers, lifted_ids = cross_core_buffers(buffer_facts)
     sync.buffers = cross_buffers
     sync.lifted_ids = lifted_ids
     if not cross_buffers:
         return None
 
-    all_mem = scan_all_buffer_memory(decls)
+    all_mem = buffer_memory_spaces(buffer_facts)
 
     # Detect address overlaps involving cross-core buffers (for auto-sync of
     # address-reused buffers). Local-local overlaps are ignored.
-    sync.addr_ranges = scan_buffer_addr_ranges(decls, closure_vars)
-    sync.addr_overlaps = detect_addr_overlaps(sync.addr_ranges, set(cross_buffers.keys()), sync.decl_stmts)
+    sync.addr_ranges = buffer_addr_ranges(buffer_facts)
+    sync.addr_overlaps = detect_addr_overlaps(sync.addr_ranges, set(cross_buffers.keys()), sync.decl_spans)
 
-    vf_func_defs, helper_func_defs = callable_defs
-
-    # Slots taken from cross-core buffers in the kernel body (pipeline loop), for
-    # stages that receive a pre-taken slot instead of the buffer group itself.
-    return AccessScanTables(
+    return AccessTables(
         cross_buffers=cross_buffers,
         all_buffer_memory=all_mem,
         group_names=group_names,
-        kernel_slot_to_buffer={
-            **scan_kernel_slot_to_buffer(func_def, group_names),
-            **{name: name for name, mem in all_mem.items() if mem == MemorySpace.DDR},
-        },
-        # Members of an aggregate passed to a stage: the one hop that rejoins a tile to
-        # its declared group when the kernel bundles groups with pl.make_tuple.
-        tuple_fields=scan_tuple_fields(func_def),
-        vf_func_defs=vf_func_defs,
-        helper_func_defs=helper_func_defs,
         closure_vars=closure_vars,
         # Buffers sharing a physical region with another buffer, computed once for the
         # whole kernel. Not per stage: a region's members may be touched by different
@@ -369,8 +394,8 @@ def _scan_kernel_buffers(
 def buffers_touched(info: PipelineInfo) -> set:
     """Every buffer the stages of ONE pipeline touch.
 
-    Read off the stages' buffer_access, which is where the per-loop half of the buffer scan
-    put it (_scan_loop_accesses). Three readers ask this question — the kernel-level "is any
+    Read off the stages' buffer_access, which is where the per-loop half put it
+    (_resolve_loop_accesses). Three readers ask this question — the kernel-level "is any
     buffer unused" check, the event-id allocator ("which ids are taken here"), and the
     declaration builder ("which ids does this loop declare") — and they must agree, so they
     all come here rather than each writing the comprehension out.
@@ -378,12 +403,12 @@ def buffers_touched(info: PipelineInfo) -> set:
     return {access[0] for stage in info.stages for access in stage.buffer_access}
 
 
-def _scan_loop_accesses(info: PipelineInfo, tables: AccessScanTables) -> None:
+def _resolve_loop_accesses(info: PipelineInfo, tables: AccessTables, facts: KernelFacts) -> None:
     """Record what every stage of ONE pipeline touches, into each stage's buffer_access.
 
-    The per-loop half of the buffer scan (see _scan_kernel_buffers). Per stage rather than
-    per kernel because a stage belongs to exactly one pipeline, and the sync graph is built
-    from one pipeline's accesses.
+    The per-loop half (see _resolve_kernel_buffers). Per stage rather than per kernel because
+    a stage belongs to exactly one pipeline, and the sync graph is built from one pipeline's
+    accesses.
     """
     for stage in info.stages:
         if stage.func_def is None:
@@ -391,36 +416,33 @@ def _scan_loop_accesses(info: PipelineInfo, tables: AccessScanTables) -> None:
         # A node of the body resolves against the body's own tree; whatever cannot be pinned
         # to a node falls back to the call site.
         fn = info.closure_vars.get(stage.func_name)
+        target = SectionKind.Cube if stage.section_kind == "cube" else SectionKind.Vector
         with current_span(span_of(stage.call_node or stage.source_stmt)), spans_in_function(fn):
-            stage.buffer_access = scan_stage_accesses(stage.func_def, stage.args, tables)
+            stage.buffer_access = stage_accesses(stage, facts.op_accesses.get(target, {}), tables)
 
 
-def _collect_callable_defs(closure_vars: dict) -> tuple[dict, dict]:
-    """``(vf_func_defs, helper_func_defs)`` for every function a stage might call.
+def _collect_helper_func_defs(closure_vars: dict) -> dict:
+    """``{name: FunctionDef}`` for every plain function a stage might call.
 
-    Split by the DECORATOR alone: ``@pl.vector_function`` on one side, every other plain
-    function on the other. The access scan treats them differently — a vector function is one
-    atomic op whose parameter roles are read off its body, while a plain function is part of
-    the stage that called it and gets scanned through (see _scan_function).
+    Selected by the DECORATOR alone. A stage and a ``@pl.vector_function`` are left out: a
+    stage is an individual of its own, and a vector function is one atomic op rather than a
+    part of the stage that called it, so neither is searched as the caller's own body.
 
-    Stages are in neither, which the decorator settles on its own; nothing needs to be handed
-    in, so this is a kernel-level fact shared by every pipeline.
+    Nothing needs to be handed in, so this is a kernel-level fact shared by every pipeline.
 
-    Both come from ``closure_vars`` — the kernel's scope, captured by @pl.jit — and are turned
+    They come from ``closure_vars`` — the kernel's scope, captured by @pl.jit — and are turned
     back into ASTs by re-reading their source (see _astutil.get_funcdef), because a helper is
     defined outside the kernel and so is nowhere in the kernel's own tree.
     """
-    vf_func_defs: dict[str, ast.FunctionDef] = {}
     helper_func_defs: dict[str, ast.FunctionDef] = {}
     for name, val in closure_vars.items():
         if not callable(val) or is_pipeline_stage(val):
             continue
         func_def = get_funcdef(val)
-        if func_def is None:
+        if func_def is None or is_vf_function(func_def):
             continue
-        target = vf_func_defs if is_vf_function(func_def) else helper_func_defs
-        target[name] = func_def
-    return vf_func_defs, helper_func_defs
+        helper_func_defs[name] = func_def
+    return helper_func_defs
 
 
 def _record_pipeline_loop_info(stmt: ast.For, info: PipelineInfo) -> None:
@@ -720,14 +742,6 @@ def _collect_outer_slots(info: PipelineInfo) -> dict:
                 span=span_of(node),
             )
         group, kind = pick
-        if group not in slot_counts:
-            raise InvalidOperation(
-                f"pipeline: slot '{target.id}' is taken from tile group '{group}' outside "
-                f"the pipeline loop, but '{group}'s depth or mutex_ids could not be resolved "
-                f"statically, so the number of slots is unknown. The transform needs it to "
-                f"give each stage the slot from its own iteration.",
-                span=span_of(node),
-            )
         picked[target.id] = (group, kind, slot_counts[group])
 
     # Follow renames to a fixed point, so a chain of them resolves too.
@@ -847,10 +861,15 @@ def _derive_ctx_fields(info: PipelineInfo):
     (info.var_types), while "does this value change?" would mean reasoning about how it was
     produced, and a wrong answer there silently feeds a delayed stage the current beat's value.
 
+    A field is declared with the type its stage receives, read at the stage call. A call is
+    parsed by its own section's target only, so a name bound to different types in the two
+    sections declares the field differently in each.
+
     Sets two fields of ``info``:
 
       stage_arg_mapping  per argument — the ctx field it reads, or None if it passes through.
-      ctx_sources        per ctx field — its fill expression and the sections to emit it in.
+      ctx_sources        per ctx field — its fill expression, the sections to emit it in, and
+                         its initializer in each section.
     """
     struct_fields = {f for fields in info.struct_args.values() for f in fields}
     # A scalar whose name collides with a struct field is renamed. The struct's field names
@@ -866,19 +885,71 @@ def _derive_ctx_fields(info: PipelineInfo):
     info.ctx_sources = {}
     info.stage_arg_mapping = []
 
-    def register(field_name: str, fill: ast.expr, sections: set, init: ast.expr) -> None:
-        """Record a ctx field: what fills it, where, and the initializer it is declared with."""
-        info.ctx_sources[field_name] = (fill, sections, init)
+    # {variable: [(the argument naming it, the section of the stage it is handed to)]}
+    arg_sites: dict = {}
+    for stage in info.stages:
+        for arg in stage.args:
+            if isinstance(arg, ast.Name):
+                arg_sites.setdefault(arg.id, []).append((arg, stage.section_kind))
+
+    def register(field_name: str, fill: ast.expr, sections: set, inits: dict) -> None:
+        """Record a ctx field: what fills it, where, and the initializer it is declared with
+        in each section."""
+        info.ctx_sources[field_name] = (fill, sections, inits)
+
+    def both_sections(init: ast.expr) -> dict:
+        return {kind: init for kind in _SECTION_KINDS}
+
+    def per_section(name: str, init_of) -> dict:
+        """{section kind: initializer} for a field fed from ``name``, from ``init_of(argument)``
+        at each stage call handing it over. A section none of whose stages takes ``name``
+        declares the field, unread, with the other section's initializer."""
+        inits: dict = {}
+        for node, kind in arg_sites[name]:
+            init = init_of(node)
+            if ast.dump(inits.setdefault(kind, init)) != ast.dump(init):
+                raise InvalidOperation(
+                    f"pipeline: '{name}' is handed to two {kind} stages with different types, "
+                    f"but travels between them in one ctx field.\n"
+                    f"Pass a value of the same type to both, or a differently named one.",
+                    span=span_of(node),
+                )
+        fallback = next(iter(inits.values()))
+        return {kind: inits.get(kind, fallback) for kind in _SECTION_KINDS}
+
+    def call_type(node: ast.expr) -> ArgTypeFacts:
+        """The probe's record for the stage argument ``node``, keyed by its position."""
+        recorded = info.arg_types.get((node.lineno, node.col_offset))
+        if recorded is None:
+            raise KeyNotFound(
+                f"pipeline (internal): the stage argument `{ast.unparse(node)}` has no type "
+                f"recorded by the probe, so its ctx field's type cannot be decided. Please report."
+            )
+        return recorded
+
+    def fields_of_struct(struct_name: str, node: ast.expr) -> dict:
+        """The fields of the struct handed over at ``node``."""
+        fields = call_type(node).fields
+        if fields is None:
+            raise NotSupported(
+                f"pipeline: '{struct_name}' is handed to a stage as a struct whose fields travel "
+                f"in the pipeline context, but here it holds a value that is not a struct. A name "
+                f"a stage reads fields off must be a pl.struct() in every section it is passed in.",
+                span=span_of(node),
+            )
+        return fields
 
     def register_struct(struct_name: str) -> None:
         """Register a struct's fields under their own names, read as `<struct>.<field>`."""
         sections = info.var_sections.get(struct_name, set())
+        struct_def = info.struct_defs.get(struct_name)
         for fname in info.struct_args[struct_name]:
             register(
                 fname,
                 ast.Attribute(value=ast.Name(id=struct_name, ctx=ast.Load()), attr=fname, ctx=ast.Load()),
                 sections,
-                _struct_field_init(info.field_types.get((struct_name, fname)), info.struct_defs.get(struct_name)),
+                per_section(struct_name, lambda node: _struct_field_init(
+                    fields_of_struct(struct_name, node).get(fname), struct_def)),
             )
 
     def register_slot_index(slot_name: str) -> str:
@@ -890,7 +961,7 @@ def _derive_ctx_fields(info: PipelineInfo):
             fname,
             ast.Name(id=fname, ctx=ast.Load()),
             info.var_sections.get(group, set()),
-            ast.Constant(value=0),
+            both_sections(ast.Constant(value=0)),
         )
         return fname
 
@@ -901,7 +972,7 @@ def _derive_ctx_fields(info: PipelineInfo):
             fname,
             ast.Name(id=var_name, ctx=ast.Load()),
             info.var_sections.get(var_name, set()),
-            _scalar_field_init(info.var_types.get(var_name), info.scalar_arg_nodes.get(var_name)),
+            per_section(var_name, lambda node: _scalar_field_init(call_type(node), node)),
         )
         return fname
 
@@ -921,7 +992,6 @@ def _derive_ctx_fields(info: PipelineInfo):
                     arg_map.append(register_slot_index(arg.id))
                     continue
                 if _travels_in_ctx(arg, info):
-                    info.scalar_arg_nodes.setdefault(arg.id, arg)
                     arg_map.append(register_scalar(arg.id))
                 else:
                     arg_map.append(None)
@@ -932,14 +1002,8 @@ def _derive_ctx_fields(info: PipelineInfo):
                 # Unique because a stage function appears once per loop
                 # (_validate._check_unique_stage_names).
                 field_name = f"_pl_arg_{stage.func_name}_{argpos}"
-                recorded = info.arg_types.get((arg.lineno, arg.col_offset))
-                if recorded is None:
-                    raise KeyNotFound(
-                        f"pipeline (internal): the expression argument of stage "
-                        f"'{stage.func_name}' at position {argpos} was not typed by the probe, "
-                        f"so its ctx field's type cannot be decided. Please report."
-                    )
-                register(field_name, arg, {stage.section_kind}, _scalar_field_init(recorded, arg))
+                init = _scalar_field_init(call_type(arg), arg)
+                register(field_name, arg, {stage.section_kind}, both_sections(init))
                 arg_map.append(field_name)
             else:
                 arg_map.append(None)
@@ -952,14 +1016,18 @@ def _derive_ctx_fields(info: PipelineInfo):
 
 
 
-def _scalar_field_init(recorded, node=None) -> ast.expr:
-    """The initializer for a scalar ctx field, from a ``(type class name, scalar dtype)`` record.
+# The two targets a ctx field is declared for, as section kinds name them.
+_SECTION_KINDS = ("cube", "vector")
+
+
+def _scalar_field_init(recorded: ArgTypeFacts, node=None) -> ast.expr:
+    """The initializer for a scalar ctx field, from the argument's ArgTypeFacts.
 
     ``node`` is the user's argument, named in the error when the value is not a scalar.
     """
     from pypto.pypto_impl import ir
 
-    kind, dtype = recorded if isinstance(recorded, tuple) else (recorded, None)
+    kind, dtype = recorded.kind, recorded.dtype
     if kind != "ScalarType" or dtype is None:
         raise NotSupported(
             "pipeline: a value carried between stages has no scalar type, so it cannot travel in "
@@ -982,9 +1050,9 @@ def _struct_field_init(var_type, node=None) -> ast.expr:
     from pypto.pypto_impl import ir
 
     if isinstance(var_type, ir.ScalarType):
-        return _scalar_field_init(("ScalarType", var_type.dtype), node)
+        return _scalar_field_init(ArgTypeFacts("ScalarType", var_type.dtype), node)
     if isinstance(var_type, ir.TupleType) and var_type.types:
-        init = _scalar_field_init(("ScalarType", var_type.types[0].dtype), node)
+        init = _scalar_field_init(ArgTypeFacts("ScalarType", var_type.types[0].dtype), node)
         return ast.List(elts=[init] * len(var_type.types), ctx=ast.Load())
     raise NotSupported(
         "pipeline: a struct field carried between stages is not a scalar or a fixed-size array of "
@@ -993,18 +1061,20 @@ def _struct_field_init(var_type, node=None) -> ast.expr:
     )
 
 
-def _inline_chain(parser) -> tuple:
-    """The names of the inlined functions the parser currently sits in, outermost first."""
-    cache = parser.inline_func_cache
-    return tuple(cache[fid].func_def.name for fid in parser.inline_call_stack if fid in cache)
+def _decl_identity(decl) -> tuple:
+    """What tells one declaration from another across the targets' parses.
+
+    The span alone is shared by every declaration one factory function makes; the
+    kernel-body site calling it tells them apart.
+    """
+    span = decl.span
+    return (span.filename, span.begin_line, span.begin_column, decl.site)
 
 
-def _source_name(name: str) -> str:
-    """A name as it is written in the source: inlining prefixes locals with ``__inline_<n>_``."""
-    if not name.startswith("__inline_"):
-        return name
-    head, _, rest = name[len("__inline_"):].partition("_")
-    return rest if head.isdigit() and rest else name
+def _operand_names(operand, decl_names: dict) -> tuple:
+    """The declared names of the buffers one parsed operand reaches, in order."""
+    found = (decl_names[id(ref.buffer)] for ref in operand.buffers if id(ref.buffer) in decl_names)
+    return tuple(dict.fromkeys(found))
 
 
 def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
@@ -1019,9 +1089,11 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
     if_const = facts.if_const_map
     var_types = facts.var_types
     arg_types = facts.arg_types
-    field_types = facts.field_types
-    buffer_memory = facts.buffer_memory
-    name_buffers = facts.name_buffers
+    op_accesses = facts.op_accesses
+    buffer_facts = facts.buffer_facts
+    buffer_vars = facts.buffer_vars
+    unbound_decls = facts.unbound_decls
+    same_name_decls = facts.same_name_decls
     for target in (ir.SectionKind.Cube, ir.SectionKind.Vector):
         # The probe discards parsed IR, so AUTO placeholders do not need resolution.
         parser = ASTParser(
@@ -1033,6 +1105,7 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
             strict_ssa=kernel_def._strict_ssa,
             closure_vars=kernel_def._closure_vars,
             auto_mutex=kernel_def._auto_mutex,
+            auto_pipeline=True,
             debug_info=ir.IRDebugInfo(),
             tilingkey_consts=kernel_def._tilingkey_consts,
             datatype_consts=kernel_def._datatype_consts,
@@ -1042,17 +1115,15 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
             allow_early_return=True,
             mutex_id_manager=ir._AutoMutexIdManager() if kernel_def._auto_mutex else None,
         )
-        parser.collect_if_const = True
         # define_var is the single point where every name gets bound, so wrapping it here
         # harvests types without touching the parser itself.
         scope = parser.scope_manager
         original_define = scope.define_var
-        # {id(group handle IR): (declared name, bound at kernel scope)}, filled below. A
-        # kernel-scope name wins: a factory function binds the handle to a local of its own
-        # first, and that local is a synthetic return-value name.
+        # {id(declaration handle IR): the first kernel-body variable bound to that buffer}
         decl_names: dict = {}
-        # {(chain, name): [id(group handle IR), ...]}, resolved to names once the parse ends.
-        pending: dict = {}
+        # {kernel-body variable holding a buffer: the declaration handle ids it reaches},
+        # named below once decl_names is complete.
+        buffer_var_ids: dict = {}
 
         def _record_type(value):
             var_type = getattr(value, "type", None)
@@ -1065,56 +1136,99 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
             recorded = _record_type(value)
             if recorded is not None:
                 var_types.setdefault(name, recorded)
-            # A buffer's memory space, as target_memory resolved during the parse: written as a
-            # variable it is unreadable from the declaration's AST. tile_group_meta is keyed by
-            # IR expression; a name bound to anything else (a TileType, say) is not hashable.
-            meta = parser.tile_group_meta.get(value) if isinstance(value, ir.Expr) else None
-            origins = parser.buffers_of(value)
-            if meta is not None:
-                buffer_memory.setdefault(name, meta[2])
-                # Keyed by the handle the origins report, which is the declaration's own IR
-                # object, so that a name bound to a copy of it resolves to the same buffer.
-                outer = not parser.inline_call_stack
-                for group in origins:
-                    known = decl_names.get(id(group))
-                    if known is None or (outer and not known[1]):
-                        decl_names[id(group)] = (_source_name(name), outer)
-            # The buffers this name holds a tile of. Several mean a value the run selects
-            # between.
-            if origins:
-                key = (_inline_chain(parser), _source_name(name))
-                pending.setdefault(key, []).extend(id(group) for group in origins)
             var_type = getattr(value, "type", None)
-            if isinstance(var_type, ir.TupleType):
-                info = parser.debug_info.get_tuple_type_info(var_type)
-                if info is not None and info.kind == ir.TupleTypeKind.STRUCT:
-                    for fname, ftype in zip(info.fields, var_type.types):
-                        field_types.setdefault((name, fname), ftype)
+            origins = parser.buffers_of(value)
+            # Whether the value IS a buffer rather than a slot taken from one.
+            holds_buffer = (
+                not parser.inline_call_stack
+                and bool(origins)
+                and (parser.is_tile_group(value) or isinstance(var_type, ir.TensorType))
+            )
+            # A kernel-body variable names a buffer when it holds exactly that one buffer: a
+            # tile group handle, or a GM view. A tile taken from it, or a tuple of several
+            # buffers, names none.
+            if holds_buffer and len(origins) == 1:
+                decl_names.setdefault(id(origins[0]), name)
+            # Every variable holding a buffer, the declaration's own name included, so a
+            # consumer resolves an alias without having to follow the assignments itself.
+            if holds_buffer:
+                buffer_var_ids[name] = tuple(id(origin) for origin in origins)
             return _orig(name, value, allow_redef=allow_redef, span=span)
 
         scope.define_var = _define
 
-        # Record each call argument's parsed type, keyed by its source position.
+        def _struct_fields(expr):
+            """{field name: IR type} when ``expr`` is a struct, None when it is not one."""
+            var_type = getattr(expr, "type", None)
+            if not isinstance(var_type, ir.TupleType):
+                return None
+            info = parser.debug_info.get_tuple_type_info(var_type)
+            if info is None or info.kind != ir.TupleTypeKind.STRUCT:
+                return None
+            return dict(zip(info.fields, var_type.types))
+
+        # Record the type of each argument a kernel-body call writes, keyed by its position in
+        # the kernel's AST. A call inside an inlined function, or a parameter default, sits in
+        # another function's AST, whose positions count from its own first line and so can
+        # repeat a kernel position.
         original_bind = parser._bind_inline_arguments
 
         def _bind(func_name, func_def, call, span, _orig=original_bind):
             bound = _orig(func_name, func_def, call, span)
+            if parser.inline_call_stack:
+                return bound
+            written = {id(arg) for arg in call.args}
             for _param, (expr, arg_node) in bound.items():
+                if id(arg_node) not in written:
+                    continue
                 recorded = _record_type(expr)
-                if recorded is not None:
-                    arg_types.setdefault((arg_node.lineno, arg_node.col_offset), recorded)
+                if recorded is None:
+                    continue
+                kind, dtype = recorded
+                arg_types.setdefault(
+                    (arg_node.lineno, arg_node.col_offset),
+                    ArgTypeFacts(kind, dtype, _struct_fields(expr)),
+                )
             return bound
 
         parser._bind_inline_arguments = _bind
         parser.parse_function(kernel_def._func_def, func_type=kernel_def._func_type)
-        # Resolve the collected handles to names now that every declaration has been seen.
-        for key, group_ids in pending.items():
-            found = tuple(decl_names[gid][0] for gid in group_ids if gid in decl_names)
-            if found:
-                name_buffers[key] = tuple(dict.fromkeys(name_buffers.get(key, ()) + found))
+        # Each declaration this parse saw, under the name it is known by. The first target to
+        # see one wins; the same declaration parsed twice yields equal facts.
+        for handle, decl in parser.parse_facts.buffer_decls.items():
+            name = decl_names.get(id(handle))
+            if name is None:
+                unbound_decls.append(decl)
+                continue
+            known = buffer_facts.setdefault(name, decl)
+            if _decl_identity(known) != _decl_identity(decl):
+                same_name_decls.append((name, known, decl))
+        # The variables, now that every declaration this parse saw has its name. A declaration
+        # inside the other target's section is not seen here, so the targets' answers are
+        # unioned rather than one overwriting the other.
+        for name, handle_ids in buffer_var_ids.items():
+            reached = tuple(decl_names[i] for i in handle_ids if i in decl_names)
+            if reached:
+                buffer_vars[name] = tuple(dict.fromkeys(buffer_vars.get(name, ()) + reached))
+        op_accesses[target] = {
+            site: [
+                StageOpAccess(
+                    access.op_name,
+                    tuple(
+                        (operand.position, operand.keyword, _operand_names(operand, decl_names))
+                        for operand in access.operands
+                    ),
+                    access.keyword_names,
+                    access.in_vf,
+                    access.span,
+                )
+                for access in accesses
+            ]
+            for site, accesses in parser.parse_facts.op_accesses.items()
+        }
         # Merge, preferring a CONSTANT verdict: a target that skips a section never sees the
         # condition, so a later (False, None) must not clobber the other target's fold.
-        for k, v in parser.if_const_map.items():
+        for k, v in parser.parse_facts.if_const_map.items():
             existing = if_const.get(k)
             if existing is None or (not existing[0] and v[0]):
                 if_const[k] = v
@@ -1123,4 +1237,8 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
                 # to dynamic so a branch wrapping a stage reports CB3 rather than being pruned down a side
                 # that is right for one target only.
                 if_const[k] = (False, None)
+    # The kernel's source order, which the targets' parses do not produce on their own: readers
+    # emitting one statement per declaration must do so in a settled order. A declaration is
+    # placed by its site, so one a factory function makes sorts where the kernel calls it.
+    facts.buffer_facts = dict(sorted(buffer_facts.items(), key=lambda item: item[1].site or (0, 0)))
     return facts

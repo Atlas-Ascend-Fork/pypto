@@ -65,6 +65,7 @@ class TileGroupFacts:
     fwd_ids: tuple[int, ...] | None  # None when the keyword is absent
     bwd_ids: tuple[int, ...] | None
     span: ir.Span
+    site: tuple[int, int] | None  # (lineno, col_offset) of the kernel-body statement or call parsing it
 
 
 class BufferParserMixin:
@@ -375,6 +376,7 @@ class BufferParserMixin:
             fwd_ids=decl_ids.get("fwd_ids"),
             bwd_ids=decl_ids.get("bwd_ids"),
             span=span,
+            site=self._access_site,
         )
         return result
 

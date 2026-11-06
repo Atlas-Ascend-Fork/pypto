@@ -19,6 +19,7 @@ GM中多维张量类型标注，主要用于：
 - Kernel函数中GM张量参数的类型声明。
 - 配合[pypto_pro.language.load](../memory_data_movement/load.md)/[pypto_pro.language.store](../memory_data_movement/store.md)完成GM与L1 Buffer/UB/L0C Buffer之间的数据搬运。
 - 通过等号赋值创建别名，与原张量共享同一段GM内存，不产生数据拷贝。支持链式别名；别名一经创建即固定指向，之后将原变量名重新绑定到其他张量，不会改变已有别名的指向。
+- Kernel函数中读取张量的shape和stride，支持整体读取和按维度下标读取，不产生数据搬运。
 
 ## 函数原型
 
@@ -51,6 +52,19 @@ pypto_pro.language.Tensor.__init__(
 
 - 每个Tensor类型标注最多声明一个direction，取值只能为`pl.Input`或`pl.Output`。
 - 搬运约束详见[pypto_pro.language.load](../memory_data_movement/load.md)和[pypto_pro.language.store](../memory_data_movement/store.md)。
+- Kernel函数内支持下列四种shape与stride的读法，均只读取类型信息，不产生数据搬运：
+
+  | 写法 | 含义 |
+  |---|---|
+  | tensor.shape | 各维大小的序列，可直接作为[pypto_pro.language.make_tensor](../resource_management/make_tensor.md)的shape实参 |
+  | tensor.shape[i] | 第i维的大小，返回值类型为DT_INT64 |
+  | tensor.stride | 各维步长的序列，单位为元素，可直接作为[pypto_pro.language.make_tensor](../resource_management/make_tensor.md)的stride实参 |
+  | tensor.stride[i] | 第i维的步长，单位为元素 |
+
+  - 下标必须是编译期整数，支持负数下标，即tensor.shape[-1]和tensor.stride[-1]为最内层维；下标超出张量维数时报错。
+  - 类型标注声明的张量没有显式stride，按ND连续行主序推导：最内层维步长为1，其余各维步长等于其后各维大小的乘积，返回值类型为DT_INT64。
+  - [pypto_pro.language.make_tensor](../resource_management/make_tensor.md)创建的张量视图，显式传入stride时读回传入的表达式本身，省略stride时同样按行主序推导。
+  - Tensor只支持ND和NZ两种布局，其中只有ND布局有隐式的行主序步长。读取NZ布局张量的stride时报错；需要读取时用[pypto_pro.language.make_tensor](../resource_management/make_tensor.md)显式指定stride创建视图，之后即可读回。读取shape不受布局限制。
 
 ## 返回值说明
 
@@ -115,6 +129,26 @@ pl.load(input_tile, original_input_alias_chain, [0, 0])
 input_tensor = replacement_tensor
 pl.load(input_tile, original_input_alias, [0, 0])   # 仍从首次传入的input_tensor读取
 pl.load(replacement_tile, input_tensor, [0, 0])     # 从replacement_tensor读取
+```
+
+### 读取shape与stride
+
+```python
+import pypto_pro.language as pl
+
+# x为Kernel形参，声明为pl.Tensor[[64, 128], pl.DT_FP16]
+
+# 形参张量按ND行主序推导步长，[64, 128]的stride为[128, 1]
+m = x.shape[0]              # 64
+row_step = x.stride[0]      # 128，等于x.shape[1]
+last_step = x.stride[-1]    # 1
+
+# 整体读取可直接作为make_tensor的shape和stride实参
+same_view = pl.make_tensor(x, x.shape, x.stride)
+
+# 显式指定stride的视图读回传入值：行间留128个元素的Padding
+padded = pl.make_tensor(x, [64, 128], [256, 1])
+padded_row_step = padded.stride[0]   # 256
 ```
 
 ### DYNAMIC动态维度

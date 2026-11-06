@@ -14,13 +14,13 @@ need to already know:
 
 ``validate_kernel_structure``  every pipeline in the kernel, before any per-loop work
 ``validate_structure(info)``   after one pipeline's stages, sections, loop info and ctx
-                               fields are known, before any sync scanning
+                               fields are known, before the sync graph is built
 ``validate_sync(...)``         after the sync graph exists (see _sync_graph)
 ``validate_names(...)``        once the caller knows which variables it will introduce —
                                both emission paths, each passing its own names
 
 Format checks stay at their point of use: if a buffer's memory space or its id tuple
-cannot be resolved, scanning cannot continue, so those raise where they are read.
+cannot be resolved, the analysis cannot continue, so those raise where they are read.
 """
 
 from __future__ import annotations
@@ -28,7 +28,14 @@ from __future__ import annotations
 import ast
 
 from ..._errors import InvalidArgument, InvalidOperation, InvalidType, NotSupported, current_span, span_of
-from ._astutil import call_name, get_funcdef, slot_accessor, spans_in_function, stmt_header
+from ._astutil import (
+    buffer_decl_location,
+    call_name,
+    get_funcdef,
+    slot_accessor,
+    spans_in_function,
+    stmt_header,
+)
 
 
 def buffer_users(graph) -> dict:
@@ -69,7 +76,37 @@ def validate_kernel_buffers(sync, used: set) -> None:
                 f"stage in any pipeline loop touches it, so there is no cross-core handover "
                 f"to synchronise. Either drop those keywords or pass this buffer to the "
                 f"stages that share it.",
-                span=span_of(sync.decl_stmts.get(buf_name)),
+                span=sync.decl_spans.get(buf_name),
+            )
+
+
+def reject_buffer_decls_in_loops(func_def, buffer_facts: dict) -> None:
+    """A buffer declaration may not sit inside a loop of the kernel body.
+
+    ``site`` on each declaration's facts is where in the kernel body it was parsed: its
+    statement, or for one returned by a function, the call to that function.
+    """
+    in_loop = {
+        (node.lineno, node.col_offset)
+        for loop in _walk_skipping_defs(func_def)
+        if isinstance(loop, (ast.For, ast.While))
+        for node in _walk_skipping_defs(loop)
+        if hasattr(node, "lineno")
+    }
+    for name, decl in buffer_facts.items():
+        if decl.site in in_loop:
+            span, declared_at = buffer_decl_location(func_def, decl)
+            made_by = f" (declared at {declared_at})" if declared_at else ""
+            # A GM view has no on-chip addresses, and no slot cursor to restart.
+            restarts = "" if decl.addrs is None else (
+                "a tile group declared inside it restarts its slot rotation every iteration, and "
+            )
+            raise InvalidOperation(
+                f"pipeline: buffer '{name}'{made_by} is declared inside a loop. The pipeline uses "
+                f"one buffer across the whole loop, but {restarts}the drain after the loop runs "
+                f"stages that still use it.\n"
+                f"Move the declaration before the outermost loop.",
+                span=span,
             )
 
 
@@ -87,7 +124,6 @@ def validate_sync(graph, info, cycles, schedule) -> None:
     users = buffer_users(graph)
     _check_cross_core_users(info, users)
     _check_event_id_counts(graph, info)
-    _check_reuse_mutex_ids(graph, info)
     _check_slot_counts(graph, info, users, schedule)
     _check_stable_distances(graph)
     _check_no_deadlock_cycle(cycles)
@@ -124,7 +160,7 @@ def _check_slot_counts(graph, info, users: dict, schedule: list) -> None:
             f"its consumer '{consumer[1]}', so {needed} slots are live at once. Give it "
             f"{needed} slots (its depth or the length of mutex_ids, and of fwd_ids/bwd_ids "
             f"unless those are a single shared id), or lower `preload`.",
-            span=span_of(info.sync.decl_stmts.get(buf_name)),
+            span=info.sync.decl_spans.get(buf_name),
         )
 
 
@@ -221,7 +257,7 @@ def _check_cross_core_users(info, users: dict) -> None:
                 f"Each pipeline loop must hold a complete producer/consumer pair — its sync "
                 f"balances within the loop, so a handover reaching into another loop is not "
                 f"supported.",
-                span=span_of(info.sync.decl_stmts.get(buf_name)),
+                span=info.sync.decl_spans.get(buf_name),
             )
         if len(entries) > 2:
             raise InvalidOperation(
@@ -229,7 +265,7 @@ def _check_cross_core_users(info, users: dict) -> None:
                 f"{names}. One buffer variable carries one producer/consumer pair, since its "
                 f"event ids are resolved per buffer. Declare one tile_group per pair — they "
                 f"may share the same addrs and mutex_ids.",
-                span=span_of(info.sync.decl_stmts.get(buf_name)),
+                span=info.sync.decl_spans.get(buf_name),
             )
         sections = {e[2] for e in entries}
         if len(sections) == 1:
@@ -237,7 +273,7 @@ def _check_cross_core_users(info, users: dict) -> None:
                 f"pipeline: cross-core buffer '{buf_name}' is used only by "
                 f"'{sections.pop()}' stages {names}. Cross-core sync orders work across the "
                 f"cube/vector boundary; same-core ordering comes from auto_mutex instead.",
-                span=span_of(info.sync.decl_stmts.get(buf_name)),
+                span=info.sync.decl_spans.get(buf_name),
             )
         producer, consumer = entries[0], entries[1]
         if consumer[0] != producer[0] + 1:
@@ -248,7 +284,7 @@ def _check_cross_core_users(info, users: dict) -> None:
                 f"between. A cross-core buffer must be handed to the stage that follows "
                 f"its producer directly. Hand the data over through the stages in between, "
                 f"or move the two stages next to each other.",
-                span=span_of(info.sync.decl_stmts.get(buf_name)),
+                span=info.sync.decl_spans.get(buf_name),
             )
 
 
@@ -281,33 +317,8 @@ def _check_event_id_counts(graph, info) -> None:
                     f"but rotates through {slots} slots. Give it one id per slot "
                     f"({slots} of them), or a single id shared by all slots — any other "
                     f"count pairs a wait with the set of a different slot.",
-                    span=span_of(info.sync.decl_stmts.get(buf_name)),
+                    span=info.sync.decl_spans.get(buf_name),
                 )
-
-
-def _check_reuse_mutex_ids(graph, info) -> None:
-    """Buffers sharing a region must share their mutex ids.
-
-    A mutex locks an ADDRESS, so two buffers over the same memory holding different locks do
-    not exclude each other at all and the intra-core ordering auto_mutex provides silently
-    disappears.
-    """
-    by_region: dict = {}
-    for buf_name, region in graph.regions.items():
-        by_region.setdefault(region, []).append(buf_name)
-
-    for region, members in sorted(by_region.items()):
-        if len(members) < 2:
-            continue
-        ids_by_buf = {name: info.sync.mutex_ids.get(name) for name in sorted(members)}
-        distinct = {tuple(v) for v in ids_by_buf.values() if v is not None}
-        if len(distinct) > 1:
-            detail = ", ".join(f"{n}={v}" for n, v in ids_by_buf.items())
-            raise InvalidOperation(
-                f"pipeline: buffers sharing addresses must share mutex_ids, but region "
-                f"{region} has {detail}. A mutex locks the address, so different ids over "
-                f"one region give no mutual exclusion."
-            )
 
 
 def validate_names(func_def, framework_names: set) -> None:
@@ -419,8 +430,9 @@ def _check_no_nested_stage(func_def, info, stage_func_names: set) -> None:
     inner call; support for that was removed pending a redesign. Without it the inner stage
     reads as an ordinary helper call and its handovers go unsynchronised.
 
-    The search follows plain helper calls too: the access scan walks helpers but skips stage
-    names inside them, and the analyzer only lists the stages called in the pipeline loop, so
+    The search follows plain helper calls too: the parse expands helpers into the stage that
+    called them but leaves a nested stage alone, and the analyzer only lists the stages called
+    in the pipeline loop, so
     a stage buried behind a helper contributes nothing at all — no accesses, no sync, no beat.
     """
     stage_defs = {
@@ -631,7 +643,7 @@ def validate_slot_picks(info, tracked: set, helper_defs: dict) -> None:
     it the wrong event id.
 
     ``tracked`` is what the sync graph follows: cross-core buffers and the ones sharing
-    their address (AccessScanTables.tracks). A purely local group's rotation is the user's
+    their address (AccessTables.tracks). A purely local group's rotation is the user's
     own — nothing here indexes it, and auto_mutex orders the accesses whatever the cursor
     does.
 
