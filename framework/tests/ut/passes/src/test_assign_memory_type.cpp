@@ -3281,7 +3281,7 @@ TEST_F(AssignMemoryTypeTest, SplitReshapeSliceTargetRespectsArchitecture)
         SCOPED_TRACE(static_cast<int>(arch));
         Platform::Instance().GetSoc().SetNPUArch(arch);
         Platform::Instance().ReloadMemoryPaths(arch == NPUArch::DAV_3510 ? "3510" : "2201");
-        for (auto target : {MemoryType::MEM_L1, MemoryType::MEM_UB}) {
+        for (auto target : {MemoryType::MEM_L1, MemoryType::MEM_UB, MemoryType::MEM_DEVICE_DDR}) {
             SCOPED_TRACE(target);
             ComputationalGraphBuilder G;
             G.AddTensor(DT_FP16, {NUM_16, NUM_32}, MemoryType::MEM_UB, "tile");
@@ -3304,7 +3304,8 @@ TEST_F(AssignMemoryTypeTest, SplitReshapeSliceTargetRespectsArchitecture)
             pass.inserter.UpdateTensorTobeMap(output, slice, MemoryType::MEM_DEVICE_DDR);
             bool kept = false;
             ASSERT_EQ(pass.KeepSplitReshapeUb(reshape, input, output, kept), SUCCESS);
-            const bool expectedKept = arch == NPUArch::DAV_3510 || target == MemoryType::MEM_UB;
+            const bool expectedKept = target == MemoryType::MEM_UB ||
+                                      (arch == NPUArch::DAV_3510 && target == MemoryType::MEM_L1);
             EXPECT_EQ(kept, expectedKept);
             const auto expectedMemory = expectedKept ? MemoryType::MEM_UB : MemoryType::MEM_UNKNOWN;
             EXPECT_EQ(input->GetMemoryTypeOriginal(), expectedMemory);
@@ -3316,6 +3317,68 @@ TEST_F(AssignMemoryTypeTest, SplitReshapeSliceTargetRespectsArchitecture)
         }
     }
     Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+TEST_F(AssignMemoryTypeTest, SplitReshapeInfersUnknownSliceTargetsBeforeUbUpgrade)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    // GATHER requires DDR inputs; EXP requires UB. Keep both slice targets unknown
+    // until the pass infers them, including a mixed-consumer and parallel-input case.
+    for (bool hasDdrConsumer : {false, true}) {
+        for (bool parallelInput : {false, true}) {
+            for (bool hasUbConsumer : {false, true}) {
+                if ((!hasDdrConsumer && !hasUbConsumer) || (parallelInput && (!hasDdrConsumer || !hasUbConsumer))) {
+                    continue;
+                }
+                SCOPED_TRACE(hasDdrConsumer);
+                SCOPED_TRACE(parallelInput);
+                SCOPED_TRACE(hasUbConsumer);
+                ComputationalGraphBuilder G;
+                const Shape inputShape{NUM_16, NUM_32};
+                const Shape outputShape{NUM_32, NUM_16};
+                const Shape sliceShape{NUM_16, NUM_16};
+                ASSERT_TRUE(G.AddTensor(DT_FP16, inputShape, MemoryType::MEM_UNKNOWN, "tile"));
+                ASSERT_TRUE(G.AddTensor(DT_FP16, inputShape, MemoryType::MEM_UNKNOWN, "assembled"));
+                ASSERT_TRUE(G.AddTensor(DT_FP16, outputShape, MemoryType::MEM_UNKNOWN, "reshaped"));
+                ASSERT_TRUE(G.AddOp(Opcode::OP_VEC_DUP, {}, {"tile"}, "dup"));
+                ASSERT_TRUE(G.AddOp(Opcode::OP_CONTRACT, {"tile"}, {"assembled"}, "contract"));
+                G.GetOp("contract")
+                    ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 0}));
+                ASSERT_TRUE(G.AddOp(Opcode::OP_RESHAPE, {"assembled"}, {"reshaped"}, "reshape"));
+                if (hasDdrConsumer) {
+                    ASSERT_TRUE(G.AddTensor(DT_FP16, sliceShape, MemoryType::MEM_UNKNOWN, "ddr_slice_out"));
+                    ASSERT_TRUE(G.AddTensor(DT_INT32, sliceShape, MemoryType::MEM_DEVICE_DDR, "indices"));
+                    ASSERT_TRUE(G.AddTensor(DT_FP16, sliceShape, MemoryType::MEM_UNKNOWN, "gather_out"));
+                    ASSERT_TRUE(G.AddOp(Opcode::OP_SLICE, {parallelInput ? "assembled" : "reshaped"}, {"ddr_slice_out"},
+                                        "ddr_slice"));
+                    const Offset offset = parallelInput ? Offset{0, NUM_16} : Offset{NUM_16, 0};
+                    G.GetOp("ddr_slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(offset));
+                    ASSERT_TRUE(G.AddOp(Opcode::OP_GATHER, {"ddr_slice_out", "indices"}, {"gather_out"}, "gather"));
+                }
+                if (hasUbConsumer) {
+                    ASSERT_TRUE(G.AddTensor(DT_FP16, sliceShape, MemoryType::MEM_UNKNOWN, "ub_slice_out"));
+                    ASSERT_TRUE(G.AddTensor(DT_FP16, sliceShape, MemoryType::MEM_UNKNOWN, "exp_out"));
+                    ASSERT_TRUE(G.AddOp(Opcode::OP_SLICE, {"reshaped"}, {"ub_slice_out"}, "ub_slice"));
+                    G.GetOp("ub_slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}));
+                    ASSERT_TRUE(G.AddOp(Opcode::OP_EXP, {"ub_slice_out"}, {"exp_out"}, "exp"));
+                }
+
+                AssignMemoryType pass;
+                ASSERT_EQ(pass.RunOnFunction(*G.GetFunction()), SUCCESS);
+                ASSERT_EQ(pass.PostCheck(*G.GetFunction()), SUCCESS);
+                const auto expected = hasDdrConsumer ? MemoryType::MEM_DEVICE_DDR : MemoryType::MEM_UB;
+                EXPECT_EQ(G.GetTensor("assembled")->GetMemoryTypeOriginal(), expected);
+                EXPECT_EQ(G.GetTensor("reshaped")->GetMemoryTypeOriginal(), expected);
+                if (hasDdrConsumer) {
+                    EXPECT_EQ(G.GetTensor("ddr_slice_out")->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+                    EXPECT_EQ(G.GetOp("ddr_slice")->GetOpcode(), Opcode::OP_VIEW);
+                }
+                if (hasUbConsumer) {
+                    EXPECT_EQ(G.GetTensor("ub_slice_out")->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+                }
+            }
+        }
+    }
 }
 
 TEST_F(AssignMemoryTypeTest, SplitReshapeRespectsParallelInputConsumers)
@@ -3352,7 +3415,116 @@ TEST_F(AssignMemoryTypeTest, SplitReshapeRespectsParallelInputConsumers)
         EXPECT_EQ(kept, parallelMemory == MemoryType::MEM_UB);
         EXPECT_EQ(input->GetMemoryTypeOriginal(), kept ? MemoryType::MEM_UB : MemoryType::MEM_UNKNOWN);
         EXPECT_EQ(output->GetMemoryTypeOriginal(), kept ? MemoryType::MEM_UB : MemoryType::MEM_UNKNOWN);
+        EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, *G.GetOp("parallel_slice")),
+                  kept ? MemoryType::MEM_UB : MemoryType::MEM_DEVICE_DDR);
     }
+}
+
+TEST_F(AssignMemoryTypeTest, SplitReshapeParallelUbSliceAvoidsDdrRoundTrip)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    ComputationalGraphBuilder G;
+    const Shape inputShape{NUM_16, NUM_32};
+    const Shape outputShape{NUM_32, NUM_16};
+    const Shape sliceShape{NUM_16, NUM_16};
+    ASSERT_TRUE(G.AddTensor(DT_FP16, inputShape, MemoryType::MEM_UNKNOWN, "tile"));
+    ASSERT_TRUE(G.AddTensor(DT_FP16, inputShape, MemoryType::MEM_UNKNOWN, "assembled"));
+    ASSERT_TRUE(G.AddTensor(DT_FP16, outputShape, MemoryType::MEM_UNKNOWN, "reshaped"));
+    for (const auto& name : {"main_slice_out", "parallel_slice_out", "main_exp_out", "parallel_exp_out"}) {
+        ASSERT_TRUE(G.AddTensor(DT_FP16, sliceShape, MemoryType::MEM_UNKNOWN, name));
+    }
+    ASSERT_TRUE(G.AddOp(Opcode::OP_VEC_DUP, {}, {"tile"}, "dup"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_CONTRACT, {"tile"}, {"assembled"}, "contract"));
+    G.GetOp("contract")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 0}));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_RESHAPE, {"assembled"}, {"reshaped"}, "reshape"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_SLICE, {"reshaped"}, {"main_slice_out"}, "main_slice"));
+    G.GetOp("main_slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_SLICE, {"assembled"}, {"parallel_slice_out"}, "parallel_slice"));
+    G.GetOp("parallel_slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, NUM_16}));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_EXP, {"main_slice_out"}, {"main_exp_out"}, "main_exp"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_EXP, {"parallel_slice_out"}, {"parallel_exp_out"}, "parallel_exp"));
+
+    AssignMemoryType pass;
+    ASSERT_EQ(pass.RunOnFunction(*G.GetFunction()), SUCCESS);
+    ASSERT_EQ(pass.PostCheck(*G.GetFunction()), SUCCESS);
+    auto input = G.GetTensor("assembled");
+    auto& parallelSlice = *G.GetOp("parallel_slice");
+    EXPECT_EQ(input->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(G.GetTensor("parallel_slice_out")->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, parallelSlice), MemoryType::MEM_UB);
+    EXPECT_EQ(parallelSlice.iOperand.front(), input);
+    EXPECT_EQ(parallelSlice.GetOpcode(), Opcode::OP_VIEW);
+    for (auto& op : G.GetFunction()->Operations()) {
+        EXPECT_NE(op.GetOpcode(), Opcode::OP_CONTRACT);
+        for (const auto& tensor : op.oOperand) {
+            EXPECT_NE(tensor->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+        }
+    }
+}
+
+TEST_F(AssignMemoryTypeTest, SplitReshapeRejectedProducerPreservesParallelSliceRequirement)
+{
+    ComputationalGraphBuilder G;
+    ASSERT_TRUE(G.AddTensor(DT_FP16, {NUM_16, NUM_16}, MemoryType::MEM_UB, "tile"));
+    ASSERT_TRUE(G.AddTensor(DT_FP16, {NUM_16, NUM_32}, MemoryType::MEM_UNKNOWN, "assembled"));
+    ASSERT_TRUE(G.AddTensor(DT_FP16, {NUM_32, NUM_16}, MemoryType::MEM_UNKNOWN, "reshaped"));
+    ASSERT_TRUE(G.AddTensor(DT_FP16, {NUM_16, NUM_16}, MemoryType::MEM_UB, "main_out"));
+    ASSERT_TRUE(G.AddTensor(DT_FP16, {NUM_16, NUM_16}, MemoryType::MEM_UB, "parallel_out"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_CONTRACT, {"tile"}, {"assembled"}, "contract"));
+    // The unaligned producer prevents the UB upgrade even though both slices target UB.
+    G.GetOp("contract")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 1}));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_RESHAPE, {"assembled"}, {"reshaped"}, "reshape"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_SLICE, {"reshaped"}, {"main_out"}, "main_slice"));
+    G.GetOp("main_slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_SLICE, {"assembled"}, {"parallel_out"}, "parallel_slice"));
+    G.GetOp("parallel_slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, NUM_16}));
+
+    AssignMemoryType pass;
+    auto input = G.GetTensor("assembled");
+    auto& reshape = *G.GetOp("reshape");
+    auto& parallelSlice = *G.GetOp("parallel_slice");
+    pass.inserter.UpdateTensorTobeMap(input, reshape, MemoryType::MEM_DEVICE_DDR);
+    pass.inserter.UpdateTensorTobeMap(input, parallelSlice, MemoryType::MEM_DEVICE_DDR);
+    bool kept = false;
+    ASSERT_EQ(pass.KeepSplitReshapeUb(reshape, input, G.GetTensor("reshaped"), kept), SUCCESS);
+    EXPECT_FALSE(kept);
+    EXPECT_EQ(input->GetMemoryTypeOriginal(), MemoryType::MEM_UNKNOWN);
+    EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, reshape), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, parallelSlice), MemoryType::MEM_DEVICE_DDR);
+}
+
+TEST_F(AssignMemoryTypeTest, SplitReshapeParallelSlicePreservesL1SuccessorRules)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    Platform::Instance().ReloadMemoryPaths("3510");
+    for (auto parallelMemory : {MemoryType::MEM_UB, MemoryType::MEM_L1}) {
+        SCOPED_TRACE(parallelMemory);
+        ComputationalGraphBuilder G;
+        ASSERT_TRUE(G.AddTensor(DT_FP16, {NUM_16, NUM_32}, MemoryType::MEM_UB, "tile"));
+        ASSERT_TRUE(G.AddTensor(DT_FP16, {NUM_16, NUM_32}, MemoryType::MEM_UNKNOWN, "assembled"));
+        ASSERT_TRUE(G.AddTensor(DT_FP16, {NUM_32, NUM_16}, MemoryType::MEM_UNKNOWN, "reshaped"));
+        ASSERT_TRUE(G.AddTensor(DT_FP16, {NUM_32, NUM_16}, MemoryType::MEM_L1, "main_out"));
+        ASSERT_TRUE(G.AddTensor(DT_FP16, {NUM_16, NUM_32}, parallelMemory, "parallel_out"));
+        ASSERT_TRUE(G.AddOp(Opcode::OP_CONTRACT, {"tile"}, {"assembled"}, "contract"));
+        G.GetOp("contract")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 0}));
+        ASSERT_TRUE(G.AddOp(Opcode::OP_RESHAPE, {"assembled"}, {"reshaped"}, "reshape"));
+        ASSERT_TRUE(G.AddOp(Opcode::OP_SLICE, {"reshaped"}, {"main_out"}, "main_slice"));
+        G.GetOp("main_slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, MemoryType::MEM_L1));
+        ASSERT_TRUE(G.AddOp(Opcode::OP_SLICE, {"assembled"}, {"parallel_out"}, "parallel_slice"));
+        G.GetOp("parallel_slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, parallelMemory));
+
+        AssignMemoryType pass;
+        auto input = G.GetTensor("assembled");
+        auto& parallelSlice = *G.GetOp("parallel_slice");
+        pass.inserter.UpdateTensorTobeMap(input, parallelSlice, MemoryType::MEM_DEVICE_DDR);
+        bool kept = false;
+        ASSERT_EQ(pass.KeepSplitReshapeUb(*G.GetOp("reshape"), input, G.GetTensor("reshaped"), kept), SUCCESS);
+        EXPECT_EQ(kept, parallelMemory == MemoryType::MEM_UB);
+        EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, parallelSlice),
+                  kept ? MemoryType::MEM_UB : MemoryType::MEM_DEVICE_DDR);
+        EXPECT_EQ(G.GetTensor("main_out")->GetMemoryTypeOriginal(), MemoryType::MEM_L1);
+    }
+    Platform::Instance().ReloadMemoryPaths("2201");
 }
 
 TEST_F(AssignMemoryTypeTest, Conv1DGroupReshapeUsesDdr)

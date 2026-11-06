@@ -1540,6 +1540,7 @@ Status AssignMemoryType::KeepSplitReshapeUb(Operation& operation, const LogicalT
         if (consumer == &operation || consumer->GetOpcode() != Opcode::OP_SLICE) {
             continue;
         }
+        RETURN_IF_NOT_SUCCESS(InferSliceMemoryType(*consumer));
         auto attr = std::dynamic_pointer_cast<ViewOpAttribute>(consumer->GetOpAttribute());
         if (attr != nullptr && attr->GetTo() != MemoryType::MEM_UNKNOWN && attr->GetTo() != MemoryType::MEM_UB) {
             return SUCCESS;
@@ -1553,6 +1554,13 @@ Status AssignMemoryType::KeepSplitReshapeUb(Operation& operation, const LogicalT
     bool allProducersContract = std::all_of(producers.begin(), producers.end(), [](const auto& producer) {
         return producer != nullptr && producer->GetOpcode() == Opcode::OP_CONTRACT;
     });
+    // Slice targets depend on downstream requirements, not on the reshape's storage.
+    // Resolve them before upgrading so an unknown target cannot later become DDR.
+    for (auto* consumer : consumers) {
+        if (consumer != nullptr && consumer->GetOpcode() == Opcode::OP_SLICE) {
+            RETURN_IF_NOT_SUCCESS(InferSliceMemoryType(*consumer));
+        }
+    }
     const bool canUseReshapeUb2L1Path = CanUseReshapeUb2L1Path(output);
     bool allConsumersSlice = std::all_of(
         consumers.begin(), consumers.end(), [canUseReshapeUb2L1Path](const auto* consumer) {
@@ -1560,10 +1568,9 @@ Status AssignMemoryType::KeepSplitReshapeUb(Operation& operation, const LogicalT
                 return false;
             }
             auto viewOpAttribute = std::dynamic_pointer_cast<ViewOpAttribute>(consumer->GetOpAttribute());
-            if (viewOpAttribute == nullptr || viewOpAttribute->GetTo() != MemoryType::MEM_L1) {
-                return true;
-            }
-            return canUseReshapeUb2L1Path;
+            return viewOpAttribute != nullptr &&
+                   (viewOpAttribute->GetTo() == MemoryType::MEM_UB ||
+                    (viewOpAttribute->GetTo() == MemoryType::MEM_L1 && canUseReshapeUb2L1Path));
         });
     const size_t ubThreshold = static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) *
                                                    UB_THRESHOLD_ASSEMBLE);
@@ -1573,13 +1580,19 @@ Status AssignMemoryType::KeepSplitReshapeUb(Operation& operation, const LogicalT
         bool canKeepProducers = false;
         RETURN_IF_NOT_SUCCESS(CanKeepContractProducersInUb(input, canKeepProducers));
         if (canKeepProducers) {
-            MemoryPathUtils::ForceSetOriginal(input, MemoryType::MEM_UB, "InferSplitReshapeUb");
-            MemoryPathUtils::ForceSetRequirement(inserter, input, operation, MemoryType::MEM_UB, "InferSplitReshapeUb");
-            MemoryPathUtils::ForceSetOriginal(output, MemoryType::MEM_UB, "InferSplitReshapeUb");
+            constexpr const char* kReason = "InferSplitReshapeUb";
+            MemoryPathUtils::ForceSetOriginal(input, MemoryType::MEM_UB, kReason);
+            MemoryPathUtils::ForceSetRequirement(inserter, input, operation, MemoryType::MEM_UB, kReason);
+            // Commit parallel slice requirements only after the UB upgrade succeeds.
+            for (auto* consumer : input->GetConsumers()) {
+                if (consumer != nullptr && consumer->GetOpcode() == Opcode::OP_SLICE) {
+                    MemoryPathUtils::ForceSetRequirement(inserter, input, *consumer, MemoryType::MEM_UB, kReason);
+                }
+            }
+            MemoryPathUtils::ForceSetOriginal(output, MemoryType::MEM_UB, kReason);
             for (const auto& consumerOp : output->GetConsumers()) {
                 if (consumerOp != nullptr) {
-                    MemoryPathUtils::ForceSetRequirement(inserter, output, *consumerOp, MemoryType::MEM_UB,
-                                                         "InferSplitReshapeUb");
+                    MemoryPathUtils::ForceSetRequirement(inserter, output, *consumerOp, MemoryType::MEM_UB, kReason);
                 }
             }
             kept = true;
