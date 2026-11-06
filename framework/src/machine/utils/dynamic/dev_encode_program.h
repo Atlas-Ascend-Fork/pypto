@@ -27,6 +27,13 @@ class Function;
 namespace npu::tile_fwk::dynamic {
 
 inline constexpr uint64_t ALIGNMENT_32K = 32 * 1024;
+/*[AddSlabMeta] 新增元数据：类型个数超过该值时同步加大，并同步 SLAB_ALLOCATOR_MAX_CACHES*/
+inline constexpr uint32_t kSlabTypeBudgetCount = 16;
+
+struct SlabTypeBudget {
+    uint32_t estimatedObjs{0};
+    uint32_t estimatedPages{0};
+};
 
 struct EncodeDevAscendProgramInfo;
 
@@ -108,6 +115,8 @@ struct DevAscendProgram {
             uint32_t stitchSlabSize;
             uint32_t duppedStitchSlabSize{0};
             uint32_t stitchCacheStride{0};
+            // Per runtime slot, not multiplied by parallelism. Index is WsAicpuSlabMemType.
+            SlabTypeBudget slabTypeBudget[kSlabTypeBudgetCount]{};
 
             uint64_t Total() const { return general + dynamicCellMatch + stitchPool + duppedStitchPool; }
         } metadata;

@@ -32,6 +32,7 @@ inline constexpr uint32_t SUBMMIT_TASK_QUE_SIZE = 512;
 constexpr int32_t ALLOC_NUM_ONE_SLAB = 4;
 // Submit when live DUPPED_STITCH slots reach this percent of the isolated pool.
 inline constexpr uint32_t DUPPED_STITCH_POOL_SUBMIT_LIMIT = 80;
+inline constexpr uint32_t DUPPED_STITCH_BUDGET_PAGE_NUM = 4;
 
 struct DuppedStitchPoolUsage {
     uint32_t allocatedObjCount{0};      // live DUPPED_STITCH objs (in-flight + window)
@@ -398,7 +399,7 @@ public:
     WsAllocation SlabAlloc(uint32_t objSize, WsAicpuSlabMemType type);
 
     WsSlabStageAllocMem SlabGetStageAllocMem(bool keepTail, WsAicpuSlabMemType keepType);
-    void DumpSlabUsageBeforeSubmit(uint32_t taskId, DynDeviceTask* devTask);
+    void DumpSlabMetadataTree(uint32_t taskId) const;
 
     void SlabStageAllocMemSubmmit(DynDeviceTask* devTask);
 
@@ -420,7 +421,7 @@ private:
     void InitTensorAllocators(uintdevptr_t workspaceAddr, uint64_t tensorWorkspaceSize, DevAscendProgram* devProg);
 
     void InitAICoreSpilledMemory(uintdevptr_t workspaceAddr, DevAscendProgram* devProg);
-
+    /*[AddSlabMeta] 新增元数据：声明每一类对象大小*/
     uint32_t DevFunctionDuppedSlabMemObjSize();
 
     /*计算使用vector的元数据的数据结构大小*/
@@ -453,7 +454,7 @@ private:
     uint32_t PredCountSlabMemObjSize();
 
     uint32_t SkippableHubSlabMemObjSize();
-
+    /*[AddSlabMeta] 新增元数据：按下标插入函数指针，nullptr 只留给 COHERENT_SLAB_MEM_TYPE_BUTT*/
     uint32_t (DeviceWorkspaceAllocator::*slabMemObjSizeFunc[ToUnderlying(WsAicpuSlabMemType::SLAB_MEM_TYPE_BUTT)])() = {
         &DeviceWorkspaceAllocator::DevFunctionDuppedSlabMemObjSize,
         &DeviceWorkspaceAllocator::DynFuncDataSlabMemObjSize,

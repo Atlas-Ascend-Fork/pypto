@@ -395,3 +395,14 @@ TEST_F(SlabWsAllocatorTest, LimitMaxAllocatedCountAndAllocatedCount)
     EXPECT_EQ(allocator.GetAllocatedObjCount(0), 1u);
     EXPECT_EQ(allocator.GetUnPopAllocatedObjCount(0), 1u);
 }
+
+TEST_F(SlabWsAllocatorTest, GrantedPageSpanInsidePool)
+{
+    allocator.RegistCache(0, 64);
+    ASSERT_NE(allocator.Alloc(0), nullptr);
+    SlabWsAllocator::CacheStats stats = allocator.GetCacheStats(0);
+    SlabWsAllocator::PoolSpan pool = allocator.GetPoolSpan();
+    EXPECT_EQ(stats.slabCount, 1u);
+    EXPECT_GE(stats.pageAddrMin, pool.base);
+    EXPECT_LE(static_cast<uint64_t>(stats.pageAddrMax) + pool.pageSize, pool.end);
+}

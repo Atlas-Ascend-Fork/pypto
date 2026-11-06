@@ -106,7 +106,7 @@ DynDeviceTask* DeviceTaskContext::BuildDeviceTaskData(DeviceStitchContext& stitc
     PerfBegin(PERF_EVT_SLAB_MEM_SUBMIT);
     // cache allocated memory , when task finish will recycle
     dynTask->taskStageAllocMem = workspace_->SlabGetStageAllocMem(withoutTail, WsAicpuSlabMemType::DUPPED_FUNC_DATA);
-    DEV_IF_DEBUG { workspace_->DumpSlabUsageBeforeSubmit(taskId, dynTask); }
+    DEV_IF_INFO { workspace_->DumpSlabMetadataTree(taskId); }
     if (!devProg->ctrlFlowCacheAnchor->IsRecording()) {
         workspace_->SlabStageAllocMemSubmmit(dynTask);
     } else {

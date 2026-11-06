@@ -199,6 +199,7 @@ uint64_t CalcGeneralMetadataSlabWorkspace(DevAscendProgram* devProg)
     uint32_t slabSize = AlignUpSlab(workspace.CalcSlabMemObjmaxSize() * ALLOC_NUM_ONE_SLAB +
                                     SlabWsAllocator::FirstObjBaseOffset());
     uint32_t slabCapacity[ToUnderlying(WsAicpuSlabMemType::COHERENT_SLAB_MEM_TYPE_BUTT)];
+    /*[AddSlabMeta] 新增元数据：general 类型按枚举顺序补预计对象数，下标与 WsAicpuSlabMemType 一致*/
     size_t objUsedNum[ToUnderlying(WsAicpuSlabMemType::COHERENT_SLAB_MEM_TYPE_BUTT)]{
         MAX_STITCH_FUNC_NUM, // DevFunctionDupped: protocol max; runtime submits before exceeding
         1,                   // DynFuncData
@@ -209,6 +210,7 @@ uint64_t CalcGeneralMetadataSlabWorkspace(DevAscendProgram* devProg)
                                            ToUnderlying(WsAicpuSlabMemType::COHERENT_SLAB_MEM_TYPE_BUTT));
 
     for (int i = 0; i < ToUnderlying(WsAicpuSlabMemType::COHERENT_SLAB_MEM_TYPE_BUTT); i++) {
+        devProg->memBudget.metadata.slabTypeBudget[i] = {};
         MACHINE_LOGI("SlabCapacity[%d] is %u.", i, slabCapacity[i]);
         if (slabCapacity[i] == 0) {
             continue;
@@ -217,6 +219,8 @@ uint64_t CalcGeneralMetadataSlabWorkspace(DevAscendProgram* devProg)
         if (i == ToUnderlying(WsAicpuSlabMemType::DUPPED_FUNC_DATA)) {
             requiredSlabNum += 3;
         }
+        devProg->memBudget.metadata.slabTypeBudget[i].estimatedObjs = static_cast<uint32_t>(objUsedNum[i]);
+        devProg->memBudget.metadata.slabTypeBudget[i].estimatedPages = requiredSlabNum;
         MACHINE_LOGI("[workspaceSize] RequiredSlabNum[%d] is %u.", i, requiredSlabNum);
         generalMetadataSlabSize += static_cast<uint64_t>(requiredSlabNum) * slabSize;
     }
@@ -231,6 +235,7 @@ uint64_t CalcStitchWorkspace(DevAscendProgram& devProg, bool aicoreResolve)
 {
     DeviceWorkspaceAllocator workspace(&devProg);
     uint32_t slabCapacity[CALC_STITCH_NUM] = {0};
+    /*[AddSlabMeta] 新增元数据：stitch 类型按 READY_QUE 到 DUPPED_STITCH 之前的顺序补预计对象数*/
     uint32_t objUsedNum[CALC_STITCH_NUM] = {READY_QUEUE_SIZE,
                                             DIE_READY_QUEUE_SIZE * DIE_NUM,
                                             1,
@@ -240,12 +245,17 @@ uint64_t CalcStitchWorkspace(DevAscendProgram& devProg, bool aicoreResolve)
                                             aicoreResolve ? static_cast<uint32_t>(MAX_STITCH_FUNC_NUM) : 0};
     uint32_t slabSize = workspace.CalcStitchSlabMemObjmaxSize(slabCapacity);
     uint64_t stitchPoolSize = 0;
+    const uint32_t stitchTypeBase = ToUnderlying(WsAicpuSlabMemType::READY_QUE);
 
     for (size_t i = 0; i < CALC_STITCH_NUM; ++i) {
+        const uint32_t typeIndex = stitchTypeBase + static_cast<uint32_t>(i);
+        devProg.memBudget.metadata.slabTypeBudget[typeIndex] = {};
         if (slabCapacity[i] == 0) {
             continue;
         }
         uint32_t requiredSlabNum = ((objUsedNum[i] << 2) + slabCapacity[i] - 1) / slabCapacity[i];
+        devProg.memBudget.metadata.slabTypeBudget[typeIndex].estimatedObjs = objUsedNum[i] << 2;
+        devProg.memBudget.metadata.slabTypeBudget[typeIndex].estimatedPages = requiredSlabNum;
         stitchPoolSize += static_cast<uint64_t>(slabSize) * requiredSlabNum;
     }
     MACHINE_LOGD("[workspaceSize] Stitch pool size is %lu bytes, with slab size:%u bytes.", stitchPoolSize, slabSize);
@@ -256,7 +266,7 @@ uint64_t CalcDuppedStitchWorkspace(DevAscendProgram& devProg)
 {
     DeviceWorkspaceAllocator workspace(&devProg);
     uint32_t slabSize = workspace.CalcDuppedStitchSlabMemObjmaxSize();
-    uint64_t duppedStitchPoolSize = static_cast<uint64_t>(slabSize) << 2;
+    uint64_t duppedStitchPoolSize = static_cast<uint64_t>(slabSize) * DUPPED_STITCH_BUDGET_PAGE_NUM;
     MACHINE_LOGD("[workspaceSize] Dupped stitch pool size is %lu bytes, with slab size:%u bytes.", duppedStitchPoolSize,
                  slabSize);
     return (duppedStitchPoolSize + SLAB_ALIGN_GRANULARITY) * devProg.GetParallelism();

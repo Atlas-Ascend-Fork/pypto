@@ -15,10 +15,13 @@
 
 #include "machine/utils/dynamic/dev_workspace.h"
 
+#include <cinttypes>
 #include <set>
 #include <string>
 
 namespace npu::tile_fwk::dynamic {
+static_assert(ToUnderlying(WsAicpuSlabMemType::SLAB_MEM_TYPE_BUTT) <= kSlabTypeBudgetCount,
+              "slab type budget array is smaller than WsAicpuSlabMemType");
 namespace {
 uint64_t CeilDiv(uint64_t value, uint64_t divisor)
 {
@@ -791,6 +794,10 @@ uint32_t DeviceWorkspaceAllocator::CalcDuppedStitchSlabMemObjmaxSize()
     DEV_INFO("Dupped stitch slab size=%u bytes", slabMemObjmaxSize);
     if (devProg_ != nullptr) {
         devProg_->memBudget.metadata.duppedStitchSlabSize = slabMemObjmaxSize;
+        auto& budget = devProg_->memBudget.metadata.slabTypeBudget[ToUnderlying(WsAicpuSlabMemType::DUPPED_STITCH)];
+        uint32_t objsPerPage = SlabWsAllocator::CalcObjsPerSlab(slabMemObjmaxSize, objSize);
+        budget.estimatedPages = DUPPED_STITCH_BUDGET_PAGE_NUM;
+        budget.estimatedObjs = objsPerPage * DUPPED_STITCH_BUDGET_PAGE_NUM;
     }
     return slabMemObjmaxSize;
 }
@@ -899,12 +906,47 @@ WsSlabStageAllocMem DeviceWorkspaceAllocator::SlabGetStageAllocMem(bool keepTail
     return stageMem;
 }
 
-void DeviceWorkspaceAllocator::DumpSlabUsageBeforeSubmit(uint32_t taskId, DynDeviceTask* devTask)
+void DeviceWorkspaceAllocator::DumpSlabMetadataTree(uint32_t taskId) const
 {
-    DEV_VERBOSE_DEBUG("[workspace.slab.usage] before submit devTask, taskId=%u, devTask=%p. ", taskId, devTask);
-    metadataAllocators_.generalSlab.DumpSlabUsage("General metadata slab");
-    metadataAllocators_.stitchSlab.DumpSlabUsage("Stitch pool slab");
-    metadataAllocators_.duppedStitchSlab.DumpSlabUsage("Dupped stitch pool slab");
+    if (devProg_ == nullptr) {
+        return;
+    }
+    DEV_INFO("SlabMetadata taskId=%u", taskId);
+    uint32_t parallelism = devProg_->GetParallelism();
+    if (parallelism == 0) {
+        parallelism = 1;
+    }
+    const SlabWsAllocator* pools[] = {&metadataAllocators_.generalSlab, &metadataAllocators_.stitchSlab,
+                                      &metadataAllocators_.duppedStitchSlab};
+    const char* poolNames[] = {"generalPool", "stitchPool", "duppedStitchPool"};
+    for (uint32_t poolIdx = 0; poolIdx < 3; ++poolIdx) {
+        const SlabWsAllocator& pool = *pools[poolIdx];
+        SlabWsAllocator::PoolSpan span = pool.GetPoolSpan();
+        DEV_INFO("  %s: base=0x%" PRIx64 " end=0x%" PRIx64 " pageSize=%u pages=%u/%u", poolNames[poolIdx], span.base,
+                 span.end, span.pageSize, span.ownedPages, span.totalPages);
+        for (uint32_t type = 0; type < ToUnderlying(WsAicpuSlabMemType::SLAB_MEM_TYPE_BUTT); ++type) {
+            SlabWsAllocator::CacheStats stats = pool.GetCacheStats(type);
+            if (stats.objSize == 0) {
+                continue;
+            }
+            const SlabTypeBudget& budget = devProg_->memBudget.metadata.slabTypeBudget[type];
+            // Host snapshot is one slot. Pool bytes requested from Torch already scale by parallelism.
+            const uint64_t estimatedPages = static_cast<uint64_t>(budget.estimatedPages) * parallelism;
+            const uint32_t objsPerPage = SlabWsAllocator::CalcObjsPerSlab(span.pageSize, stats.objSize);
+            const uint64_t estimatedObjs = estimatedPages * objsPerPage;
+            if (estimatedPages == 0 && stats.allocatedObjCount == 0 && stats.slabCount == 0) {
+                continue;
+            }
+            DEV_INFO("    %s: objs: %u/%" PRIu64 " pages: %u/%" PRIu64, SlabMemTypeName(type), stats.allocatedObjCount,
+                     estimatedObjs, stats.slabCount, estimatedPages);
+            if (stats.slabCount == 0) {
+                continue;
+            }
+            const uint64_t addrBegin = static_cast<uint64_t>(stats.pageAddrMin);
+            const uint64_t addrEnd = static_cast<uint64_t>(stats.pageAddrMax) + span.pageSize;
+            DEV_INFO("      addr: 0x%" PRIx64 "-0x%" PRIx64, addrBegin, addrEnd);
+        }
+    }
 }
 
 void DeviceWorkspaceAllocator::SlabStageAllocMemSubmmit(DynDeviceTask* devTask)
@@ -1044,6 +1086,7 @@ void DeviceWorkspaceAllocator::InitAICoreSpilledMemory(uintdevptr_t workspaceAdd
                                          Range(stackWorkspaceBase_, stackWorkspaceBase_ + stackWorkspaceSize_))));
 }
 
+/*[AddSlabMeta] 新增元数据：表示元数据大小单位大小，当前配置不使用时返回 0*/
 uint32_t DeviceWorkspaceAllocator::DevFunctionDuppedSlabMemObjSize()
 {
     // Allocator is stack-local per launch, so maxDevFuncDuppedSize_ resets to 0.

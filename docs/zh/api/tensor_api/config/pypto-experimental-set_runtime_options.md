@@ -48,6 +48,7 @@ void：Set方法无返回值。设置成功即生效。
 
 - 类型安全：须为长度为3的list或tuple，元素为`[0, 1024]`内的整数，不能使用bool。
 - 作用范围：不要在`pypto.loop`内或kernel内设置。
+- 生效范围：该配置写在当前进程的全局配置中，不是某个kernel的局部配置。一次设置后会一直保留，后续编译的kernel都会读到同一组值。多轮连跑、或按不同入参分别配置时，用完须调用`pypto.reset_options()`恢复默认值`[0, 0, 0]`，否则前一个kernel的配置会作用到后面的kernel。`reset_options()`会把全部配置恢复为默认值，不只是本项。
 - 配置项相对关系：`stitch_function_max_num` 在不考虑内存占用情况下只考虑调优性能情况下使用；`max_workspace_kb`在有内存限制时按内存总量压缩内存时使用，可能降低并行度。精细化配置在上述两项之后使用，按三个子内存池分别设置。开启后`stitch_function_max_num`与`max_workspace_kb`均失效。
 
 ## 调用示例
@@ -55,6 +56,23 @@ void：Set方法无返回值。设置成功即生效。
 ```python
 pypto.experimental.set_runtime_options(stitch_function_num_per_pool=[64, 1, 1])
 ```
+
+多轮连跑时，每次设置只服务于紧接着要编译的那个kernel，调用结束后恢复默认值，再为下一个kernel单独设置：
+
+```python
+import pypto
+
+pypto.reset_options()
+pypto.experimental.set_runtime_options(stitch_function_num_per_pool=[64, 1, 1])
+kernel1(...)
+pypto.reset_options()
+
+pypto.experimental.set_runtime_options(stitch_function_num_per_pool=[32, 1, 1])
+kernel2(...)
+pypto.reset_options()
+```
+
+`pypto.reset_options()`之后，`pypto.experimental.get_runtime_options()["stitch_function_num_per_pool"]`回到`[0, 0, 0]`。
 
 ### 示例1: 精细Workspace模式 <a id="stitch_function_num_per_pool_detail"></a>
 

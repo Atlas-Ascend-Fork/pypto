@@ -21,7 +21,7 @@
 #include "machine/utils/device_log.h"
 #include "machine/device/dynamic/device_utils.h"
 #include "ws_allocator_basics.h"
-
+/*[AddSlabMeta] 新增元数据：general 插在 COHERENT_SLAB_MEM_TYPE_BUTT 之前，stitch 插在 DUPPED_STITCH 之前*/
 namespace npu::tile_fwk::dynamic {
 enum class WsAicpuSlabMemType : uint8_t {
     DUPPED_FUNC_DATA = 0,
@@ -41,6 +41,43 @@ enum class WsAicpuSlabMemType : uint8_t {
     DUPPED_STITCH, //  stitch pool for stitch edge
     SLAB_MEM_TYPE_BUTT
 };
+/*[AddSlabMeta] 新增元数据：补一个 case，名字与枚举一致*/
+inline const char* SlabMemTypeName(uint32_t type)
+{
+    switch (static_cast<WsAicpuSlabMemType>(type)) {
+        case WsAicpuSlabMemType::DUPPED_FUNC_DATA:
+            return "DUPPED_FUNC_DATA";
+        case WsAicpuSlabMemType::DYN_FUNC_DATA:
+            return "DYN_FUNC_DATA";
+        case WsAicpuSlabMemType::VEC_STITCHED_LIST:
+            return "VEC_STITCHED_LIST";
+        case WsAicpuSlabMemType::DEV_DYN_TASK:
+            return "DEV_DYN_TASK";
+        case WsAicpuSlabMemType::SHMEM_WAIT_UNTIL_CACHE:
+            return "SHMEM_WAIT_UNTIL_CACHE";
+        case WsAicpuSlabMemType::READY_QUE:
+            return "READY_QUE";
+        case WsAicpuSlabMemType::DIE_READY_QUE:
+            return "DIE_READY_QUE";
+        case WsAicpuSlabMemType::WRAP_QUEUE:
+            return "WRAP_QUEUE";
+        case WsAicpuSlabMemType::PER_CORE_PENDING_QUE:
+            return "PER_CORE_PENDING_QUE";
+        case WsAicpuSlabMemType::LOCAL_READY_QUE:
+            return "LOCAL_READY_QUE";
+        case WsAicpuSlabMemType::LOCAL_READY_MATRIX:
+            return "LOCAL_READY_MATRIX";
+        case WsAicpuSlabMemType::PRED_COUNT:
+            return "PRED_COUNT";
+        case WsAicpuSlabMemType::SKIPPABLE_HUB:
+            return "SKIPPABLE_HUB";
+        case WsAicpuSlabMemType::DUPPED_STITCH:
+            return "DUPPED_STITCH";
+        default:
+            return "INVALID";
+    }
+}
+/*[AddSlabMeta] 新增元数据：类型个数超过该值时同步加大，并同步 kSlabTypeBudgetCount*/
 constexpr int SLAB_ALLOCATOR_MAX_CACHES = 16;
 constexpr uint32_t SLAB_ALIGN_GRANULARITY = 64;
 
@@ -86,6 +123,9 @@ private:
         uint32_t allocatedObjCount{0};
         // Current-window objs still on stage list. Alloc ++; Pop -> 0 (keepTail -> 1).
         uint32_t unPopAllocatedObjCount{0};
+        // Bounding box of pages granted to this cache. Not an exclusive range.
+        uintptr_t pageAddrMin{0};
+        uintptr_t pageAddrMax{0};
 
         SlabCache() {}
         SlabCache(uint32_t size, uint32_t stride, SlabWsAllocator* alloc)
@@ -99,7 +139,9 @@ private:
               slabCount(0),
               totalObjCount(0),
               allocatedObjCount(0),
-              unPopAllocatedObjCount(0)
+              unPopAllocatedObjCount(0),
+              pageAddrMin(0),
+              pageAddrMax(0)
         {}
     };
 
@@ -255,7 +297,22 @@ public:
             cache.activeSlab = header;
             obj = static_cast<uint8_t*>(slabMem) + FirstObjBaseOffset();
 
-            // Update statistics for new slab
+            // Update statistics for new slab.
+            DEV_IF_INFO
+            {
+                uintptr_t pageAddr = reinterpret_cast<uintptr_t>(slabMem);
+                if (cache.slabCount == 0) {
+                    cache.pageAddrMin = pageAddr;
+                    cache.pageAddrMax = pageAddr;
+                } else {
+                    if (pageAddr < cache.pageAddrMin) {
+                        cache.pageAddrMin = pageAddr;
+                    }
+                    if (pageAddr > cache.pageAddrMax) {
+                        cache.pageAddrMax = pageAddr;
+                    }
+                }
+            }
             cache.slabCount++;
             cache.totalObjCount += header->totalCount;
             allocatedSlabCount_++;
@@ -421,7 +478,28 @@ public:
         uint32_t allocatedObjCount; // live objs (in-flight + window)
         uint32_t freeObjCount;      // carved but not live
         double usage;               // allocatedObjCount / totalObjCount
+        uintptr_t pageAddrMin{0};   // first granted page; 0 when slabCount == 0
+        uintptr_t pageAddrMax{0};   // last granted page base
     };
+
+    struct PoolSpan {
+        uint64_t base{0};
+        uint64_t end{0};
+        uint32_t pageSize{0};
+        uint32_t ownedPages{0};
+        uint32_t totalPages{0};
+    };
+
+    PoolSpan GetPoolSpan() const
+    {
+        PoolSpan span;
+        span.base = GetMemBase();
+        span.end = span.base + totalMemSize_;
+        span.pageSize = slabAlignSize_;
+        span.ownedPages = allocatedSlabCount_;
+        span.totalPages = totalSlabCount_;
+        return span;
+    }
 
     CacheStats GetCacheStats(uint32_t cacheType) const
     {
@@ -438,6 +516,8 @@ public:
         stats.freeObjCount = cache.totalObjCount - cache.allocatedObjCount;
         stats.usage = cache.totalObjCount > 0 ? (static_cast<double>(cache.allocatedObjCount) / cache.totalObjCount) :
                                                 0.0;
+        stats.pageAddrMin = cache.pageAddrMin;
+        stats.pageAddrMax = cache.pageAddrMax;
         return stats;
     }
 

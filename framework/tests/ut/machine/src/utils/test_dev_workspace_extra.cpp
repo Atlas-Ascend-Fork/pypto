@@ -414,7 +414,24 @@ TEST_F(DevWorkspaceTest, CalcDuppedStitchWorkspace_IsFourSlabs)
     uint64_t size = CalcDuppedStitchWorkspace(prog);
     uint32_t slabSize = prog.memBudget.metadata.duppedStitchSlabSize;
     EXPECT_GE(slabSize, 1024u * 1024u);
-    EXPECT_EQ(size, (static_cast<uint64_t>(slabSize) << 2) + SLAB_ALIGN_GRANULARITY);
+    EXPECT_EQ(size, (static_cast<uint64_t>(slabSize) * DUPPED_STITCH_BUDGET_PAGE_NUM) + SLAB_ALIGN_GRANULARITY);
+    const SlabTypeBudget& budget = prog.memBudget.metadata
+                                       .slabTypeBudget[ToUnderlying(WsAicpuSlabMemType::DUPPED_STITCH)];
+    DeviceWorkspaceAllocator allocator(&prog);
+    uint32_t objsPerPage = SlabWsAllocator::CalcObjsPerSlab(slabSize, allocator.DuppedStitchSlabMemObjSize());
+    EXPECT_EQ(budget.estimatedPages, DUPPED_STITCH_BUDGET_PAGE_NUM);
+    EXPECT_EQ(budget.estimatedObjs, objsPerPage * DUPPED_STITCH_BUDGET_PAGE_NUM);
+    EXPECT_GT(budget.estimatedObjs, 0u);
+}
+
+TEST_F(DevWorkspaceTest, CalcStitchWorkspace_RecordsReadyQueBudget)
+{
+    DevAscendProgram prog{};
+    prog.stitchFunctionsize = 8;
+    CalcStitchWorkspace(prog, false);
+    const SlabTypeBudget& budget = prog.memBudget.metadata.slabTypeBudget[ToUnderlying(WsAicpuSlabMemType::READY_QUE)];
+    EXPECT_EQ(budget.estimatedObjs, static_cast<uint32_t>(READY_QUEUE_SIZE) << 2);
+    EXPECT_GT(budget.estimatedPages, 0u);
 }
 
 TEST_F(DevWorkspaceTest, DuppedStitchPoolReachedSubmitLimit_UsesEightyPercent)

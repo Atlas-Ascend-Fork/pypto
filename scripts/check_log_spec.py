@@ -138,17 +138,29 @@ def in_scan_scope(path):
     )
 
 
+def git_stdout(args):
+    """Return git stdout decoded as UTF-8.
+
+    ``text=True`` alone uses the ANSI code page. On Chinese Windows that is
+    GBK, which rejects UTF-8 bytes in a staged diff. The reader thread then
+    dies and ``stdout`` stays None.
+    """
+    result = subprocess.run(
+        args,
+        capture_output=True,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return result.stdout or ""
+
+
 def staged_added(path):
     """Return (added line numbers, added line texts) for *path*'s staged diff."""
-    result = subprocess.run(
-        ["git", "diff", "--cached", "-U0", "--", path],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
     lines = set()
     texts = []
-    for line in result.stdout.splitlines():
+    for line in git_stdout(["git", "diff", "--cached", "-U0", "--", path]).splitlines():
         match = HUNK_RE.match(line)
         if match:
             start = int(match.group(1))
@@ -161,13 +173,7 @@ def staged_added(path):
 
 def staged_diff(files, context=4):
     """Return the staged diff (with context) for *files*."""
-    result = subprocess.run(
-        ["git", "diff", "--cached", f"-U{context}", "--"] + files,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.stdout
+    return git_stdout(["git", "diff", "--cached", f"-U{context}", "--", *files])
 
 
 FINDING_SCHEMA = (
@@ -256,6 +262,8 @@ def run_agent(agent, prompt, timeout, state):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
                 env=env,
             )
@@ -268,7 +276,7 @@ def run_agent(agent, prompt, timeout, state):
                 for line in process.stdout:
                     collected.append(line)
                     report_progress(line, state)
-            except (OSError, ValueError):
+            except (OSError, ValueError, UnicodeError):
                 pass
 
         thread = threading.Thread(target=reader, daemon=True)
