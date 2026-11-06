@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
+set(_pgo_vf_impl_dir "${CMAKE_CURRENT_SOURCE_DIR}/pgo_vf_impl")
 set(_pgo_vf_required_dirs
     pass_driver
     pass_interface
@@ -16,14 +17,18 @@ set(_pgo_vf_required_dirs
 
 set(_pgo_vf_skip FALSE)
 foreach(_dir IN LISTS _pgo_vf_required_dirs)
-    if(NOT IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${_dir}")
-        message(STATUS "pgo_vf: missing directory ${_dir}, enabling PGO_VF_SKIP")
+    if(NOT IS_DIRECTORY "${_pgo_vf_impl_dir}/${_dir}")
+        message(STATUS "pgo_vf: missing directory pgo_vf_impl/${_dir}, enabling PGO_VF_SKIP")
         set(_pgo_vf_skip TRUE)
         break()
     endif()
 endforeach()
 
 file(GLOB_RECURSE _sources CONFIGURE_DEPENDS *.cpp)
+if(_pgo_vf_skip)
+    list(FILTER _sources EXCLUDE REGEX "/pgo_vf_impl/")
+endif()
+
 if(NOT _sources)
     message(WARNING "pgo_vf: no sources under ${CMAKE_CURRENT_SOURCE_DIR}")
     return()
