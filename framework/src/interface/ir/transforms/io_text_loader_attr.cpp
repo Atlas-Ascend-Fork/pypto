@@ -479,6 +479,8 @@ bool IRTextParser::SetTensorAttrDict(const VarPtr& var, const std::map<std::stri
             SetValue(values.dynValidShape, value);
         } else if (key == "dynvalidoffset") {
             SetValue(values.dynOffset, value);
+        } else if (key == "memId") {
+            values.memId = static_cast<int>(AnyCast<int64_t>(value));
         } else {
             Error("unknown logical tensor attr: #" + key);
             return false;
@@ -486,6 +488,9 @@ bool IRTextParser::SetTensorAttrDict(const VarPtr& var, const std::map<std::stri
     }
     t->tensor->datatype = values.dtype;
     t->tensor->rawshape = values.shape;
+    if (values.memId >= 0 && t->tensor != nullptr) {
+        t->tensor->memoryId = values.memId;
+    }
     t->shape = values.shape;
     t->oriShape = values.shape;
     t->offset = values.offset.empty() ? npu::tile_fwk::Offset(values.shape.size(), 0) : values.offset;

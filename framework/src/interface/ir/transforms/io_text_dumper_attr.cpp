@@ -390,6 +390,9 @@ std::map<std::string, std::any> IRTextDumper::GetTensorAttrDict(const VarPtr& va
     if (!t->dynOffset_.empty()) {
         attrs["dynvalidoffset"] = t->dynOffset_;
     }
+    if (t->tensor != nullptr && t->tensor->memoryId != t->tensor->rawmagic) {
+        attrs["memId"] = t->tensor->memoryId;
+    }
     return attrs;
 }
 

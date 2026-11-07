@@ -382,6 +382,11 @@ VarPtr IRTextParser::ParseLogicalTensorVar(const std::string& varName)
     npu::tile_fwk::LogicalTensorPtr tensor = builder.CreateTensorVar(npu::tile_fwk::DT_INT64, {},
                                                                      npu::tile_fwk::TileOpFormat::TILEOP_ND, name);
     if (rawmagic >= 0) {
+        // Ctor set memoryId = rawmagic (pre-planning alias); keep that invariant when
+        // overriding rawmagic from the text, or the stale IdGen value leaks into dumps.
+        if (tensor->tensor->memoryId == tensor->tensor->rawmagic) {
+            tensor->tensor->memoryId = rawmagic;
+        }
         tensor->tensor->rawmagic = rawmagic;
     }
     VarPtr var = tensor;
