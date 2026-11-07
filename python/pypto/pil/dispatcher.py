@@ -114,6 +114,32 @@ def dispatch_call(call: Call, scope: Scope, ctx: BuildContext):
     pypto_impl.ClearSpan()
 
 
+def _bind_var_keyword(
+    func: Function, args: tuple, kwargs: dict, scope: Scope, caller: Scope, namemap: dict, supplied: set
+):
+    n_pos = func.n_positional
+    if len(args) > n_pos:
+        raise TypeError(f"{func.name}() takes {n_pos} positional argument(s) but {len(args)} were given")
+    for name, val in zip(func.params[:n_pos], args):
+        scope[name] = val
+        namemap[name] = caller.get_canonical_name(val)
+        supplied.add(name)
+
+    packed = {}
+    for name, val in kwargs.items():
+        if name in supplied:
+            raise TypeError(f"{func.name}() got multiple values for argument '{name}'")
+        if name in func.params:
+            if func.params.index(name) < func.n_posonly:
+                raise TypeError(f"{func.name}() got positional-only argument '{name}' as a keyword")
+            scope[name] = val
+            namemap[name] = caller.get_canonical_name(val)
+            supplied.add(name)
+        else:
+            packed[name] = val
+    scope[func.kwarg] = packed
+
+
 def call_function(func: Function, args: tuple, kwargs: dict, ctx: BuildContext):
     caller = Scope.current()
     if func.global_vars:
@@ -131,14 +157,17 @@ def call_function(func: Function, args: tuple, kwargs: dict, ctx: BuildContext):
 
     with scope.make_current():
         supplied = set()
-        for name, val in zip(func.params, args):
-            scope[name] = val
-            namemap[name] = caller.get_canonical_name(val)
-            supplied.add(name)
-        for name, val in kwargs.items():
-            scope[name] = val
-            namemap[name] = caller.get_canonical_name(val)
-            supplied.add(name)
+        if func.kwarg:
+            _bind_var_keyword(func, args, kwargs, scope, caller, namemap, supplied)
+        else:
+            for name, val in zip(func.params, args):
+                scope[name] = val
+                namemap[name] = caller.get_canonical_name(val)
+                supplied.add(name)
+            for name, val in kwargs.items():
+                scope[name] = val
+                namemap[name] = caller.get_canonical_name(val)
+                supplied.add(name)
 
         # apply default values for any params not supplied by the call
         for name, defval in zip(func.params, func.param_defaults):

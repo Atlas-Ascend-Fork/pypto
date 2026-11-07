@@ -7,6 +7,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 from dataclasses import dataclass, replace
+import logging as std_logging
 from types import SimpleNamespace
 
 import pytest
@@ -837,6 +838,105 @@ def test_pil_call_kwargs():
 
     pil.compile(f, {'a': 1, 'b': 2, 'c': 3})
     assert res[0] == (1, 2, 3)
+
+
+def test_helper_var_keyword_parsed():
+    """A non-entry helper may declare **kwargs. The entry kernel may not."""
+
+    def helper(a, /, b=1, *, k=2, **kw):
+        return kw.get("c")
+
+    func = pil.ast2pil(helper, entry_point=False)
+    assert func.params == ("a", "b", "k")
+    assert func.n_posonly == 1
+    assert func.n_positional == 2
+    assert func.kwarg == "kw"
+    assert func.param_defaults == (None, 1, 2)
+
+    def kernel(**kw):
+        _x = kw.get("a")
+
+    with pytest.raises(SyntaxError, match="vararg and kwarg not supported"):
+        pil.ast2pil(kernel)
+
+    def vararg_helper(*args):
+        return args[0]
+
+    with pytest.raises(SyntaxError, match="vararg and kwarg not supported"):
+        pil.ast2pil(vararg_helper, entry_point=False)
+
+
+def test_call_var_keyword(caplog):
+    """Keywords passed to a kernel helper land in its **kwargs dict."""
+    ans = []
+
+    def pack(**kw):
+        return kw.get("a") + kw["b"]
+
+    def mixed(a, b=1, *, k=10, **kw):
+        return a + b + k + kw.get("c", 0)
+
+    def foo(x):
+        ans.append(pack(a=x, b=2))
+        ans.append(mixed(x, c=4))
+        ans.append(mixed(x, b=7, k=3, c=1))
+
+        def nested(**kw):
+            return kw.get("a") + 1
+
+        ans.append(nested(a=x))
+
+    with caplog.at_level(std_logging.ERROR):
+        pil.compile(foo, 3, has_move=False)
+    assert "Failed to compile" not in caplog.text
+    assert ans == [5, 18, 14, 4]
+
+
+def test_call_var_keyword_tensor(caplog):
+    """A tensor passed by keyword is the object the helper computes on."""
+
+    def scale(**kw):
+        return kw.get("tensor") + kw["bias"]
+
+    def foo(x, y):
+        pypto.set_vec_tile_shapes(16, 16)
+        y[:] = scale(tensor=x, bias=1.0)
+
+    x = pypto.Tensor((4, 4), pypto.DT_FP32, "x")
+    y = pypto.Tensor((4, 4), pypto.DT_FP32, "y")
+    with caplog.at_level(std_logging.ERROR):
+        func = pil.compile(foo, x, y)
+    assert "Failed to compile" not in caplog.text
+    opcodes = {s.opcode for s in _tensor_ops_of(func.body)}
+    assert "ADDS" in opcodes
+
+
+def test_var_keyword_rejects_positional_only_keyword():
+    def helper(a, /, **kw):
+        return a + kw.get("b", 0)
+
+    def foo(x):
+        helper(a=x)
+
+    with pytest.raises(Exception, match="positional-only"):
+        pil.compile(foo, 1, has_move=False)
+
+
+def test_var_keyword_rejects_bad_positionals():
+    def helper(a, b=1, **kw):
+        return a + b
+
+    def too_many(x):
+        helper(x, 2, 3)
+
+    with pytest.raises(Exception, match="takes 2 positional"):
+        pil.compile(too_many, 1, has_move=False)
+
+    def dup(x):
+        helper(x, a=2)
+
+    with pytest.raises(Exception, match="multiple values"):
+        pil.compile(dup, 1, has_move=False)
 
 
 def test_pil_ifexpr():

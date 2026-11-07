@@ -107,7 +107,9 @@ std::string CompileSourceCode(const std::string& sourceFilePath, const std::stri
         std::accumulate(argsGcc.begin(), argsGcc.end(), std::string(), [](const std::string& a, const std::string& b) {
             return a.empty() ? b : a + " " + b;
         }).c_str());
-    FE_ASSERT(SafeExecCommand(argsGcc) == 0);
+    int gccRet = SafeExecCommand(argsGcc);
+    FE_ASSERT(gccRet == 0) << "CompileSourceCode compile assembly failed, ret=" << gccRet
+                           << ", source=" << sourceFilePath;
 
     std::vector<std::string> argsAs = {gcc, "-fno-stack-protector", "-O2"};
     AppendArmMarchFlag(argsAs, gcc);
@@ -117,7 +119,9 @@ std::string CompileSourceCode(const std::string& sourceFilePath, const std::stri
         std::accumulate(argsAs.begin(), argsAs.end(), std::string(), [](const std::string& a, const std::string& b) {
             return a.empty() ? b : a + " " + b;
         }).c_str());
-    FE_ASSERT(SafeExecCommand(argsAs) == 0);
+    int asRet = SafeExecCommand(argsAs);
+    FE_ASSERT(asRet == 0) << "CompileSourceCode assemble object failed, ret=" << asRet
+                          << ", assembly=" << assembleFilePath;
     return objectFilePath;
 }
 

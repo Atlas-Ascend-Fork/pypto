@@ -161,12 +161,23 @@ class Function:
     # Global values
     global_values: tuple[Any, ...]
 
-    # Parameter names (positional), used to bind call arguments for nested calls
+    # Parameter names, excluding *args / **kwargs. Positional-only, then
+    # positional-or-keyword, then keyword-only.
     params: tuple[str, ...] = ()
 
     # Default values aligned with `params` (None where no default); applied when
     # a nested call omits the argument.
     param_defaults: tuple = ()
+
+    # How many leading `params` are positional-only (before `/`).
+    n_posonly: int = 0
+
+    # How many leading `params` accept a positional argument. The rest are
+    # keyword-only.
+    n_positional: int = 0
+
+    # Name of the ``**kwargs`` parameter. None when the function has no var-keyword.
+    kwarg: Optional[str] = None
 
     def __str__(self):
         param_str = []
@@ -175,6 +186,8 @@ class Function:
                 param_str.append(f"{k}")
             else:
                 param_str.append(f"{k}={v}")
+        if self.kwarg:
+            param_str.append(f"**{self.kwarg}")
         return f"lambda {', '.join(param_str)}:\n" + str(self.body)
 
     def __call__(self, *args, **kwargs):

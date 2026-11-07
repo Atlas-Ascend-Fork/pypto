@@ -464,6 +464,9 @@ def test_visit_nested_function_def_all_arg_kinds():
     )
     # positional-only + positional-or-keyword + keyword-only, in source order
     assert g_fn.params == ('a', 'b', 'c', 'd', 'e', 'k')
+    assert g_fn.n_posonly == 2
+    assert g_fn.n_positional == 4
+    assert g_fn.kwarg is None
     # innermost function defaults is replaced by the actual values
     assert g_fn.param_defaults == (None, pir.Value(1), pir.Value(2), pir.Value(3), None, pir.Value(4))
 

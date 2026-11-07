@@ -181,9 +181,16 @@ def _pypto_loop_mode(node: ast.AST) -> Optional[str]:
     return None
 
 
-def _parse_params(ctx, func: Union[ast.FunctionDef, ast.Lambda], defaults, kwdefaults):
-    if func.args.vararg or func.args.kwarg:
+def _parse_params(ctx, func: Union[ast.FunctionDef, ast.Lambda], defaults, kwdefaults, *, allow_kwarg=False):
+    # The entry kernel keeps a fixed signature. A helper called from inside a
+    # kernel may pack leftover keywords into **kwargs. *args stays unsupported.
+    if func.args.vararg is not None:
         ctx.raise_error(func, "vararg and kwarg not supported")
+    kwarg = None
+    if func.args.kwarg is not None:
+        if not allow_kwarg:
+            ctx.raise_error(func, "vararg and kwarg not supported")
+        kwarg = func.args.kwarg.arg
 
     positional = [arg.arg for arg in func.args.posonlyargs + func.args.args]
     kwonly = [arg.arg for arg in func.args.kwonlyargs]
@@ -194,7 +201,8 @@ def _parse_params(ctx, func: Union[ast.FunctionDef, ast.Lambda], defaults, kwdef
     defvals[len(positional) - len(defaults):len(positional)] = defaults
     defvals[len(positional):] = [kwdefaults.get(name, None) for name in kwonly]
 
-    return tuple(positional + kwonly), tuple(defvals)
+    n_posonly = len(func.args.posonlyargs)
+    return tuple(positional + kwonly), tuple(defvals), n_posonly, len(positional), kwarg
 
 
 class Parser:
@@ -505,7 +513,9 @@ class Parser:
             if blk.jump is None:
                 new_ctx.set_jump(Jump.RETURN)
 
-        params, param_defaults = _parse_params(ctx, stmt, defaults, kwdefaults)
+        params, param_defaults, n_posonly, n_positional, kwarg = _parse_params(
+            ctx, stmt, defaults, kwdefaults, allow_kwarg=True
+        )
         func = Function(
             name=stmt.name,
             span=blk.span,
@@ -515,6 +525,9 @@ class Parser:
             global_values=(),
             params=params,
             param_defaults=param_defaults,
+            n_posonly=n_posonly,
+            n_positional=n_positional,
+            kwarg=kwarg,
         )
         ctx.store(stmt.name, func)
 
@@ -536,7 +549,9 @@ class Parser:
             new_ctx.store("$retval", value)
             new_ctx.set_jump(Jump.RETURN, value)
 
-        params, param_defaults = _parse_params(ctx, node, defaults, kwdefaults)
+        params, param_defaults, n_posonly, n_positional, kwarg = _parse_params(
+            ctx, node, defaults, kwdefaults, allow_kwarg=True
+        )
         func = Function(
             name="<lambda>",
             span=blk.span,
@@ -546,6 +561,9 @@ class Parser:
             global_values=(),
             params=params,
             param_defaults=param_defaults,
+            n_posonly=n_posonly,
+            n_positional=n_positional,
+            kwarg=kwarg,
         )
         return func
 
@@ -707,7 +725,9 @@ def ast2pil(pyfunc, entry_point: bool = True):
     global_vars = tuple(sorted(envs.keys()))
     global_values = [envs[k] for k in global_vars]
 
-    params, param_defaults = _parse_params(ctx, source.func_def, pyfunc.__defaults__, pyfunc.__kwdefaults__)
+    params, param_defaults, n_posonly, n_positional, kwarg = _parse_params(
+        ctx, source.func_def, pyfunc.__defaults__, pyfunc.__kwdefaults__, allow_kwarg=not entry_point
+    )
 
     return Function(
         name=pyfunc.__name__,
@@ -718,4 +738,7 @@ def ast2pil(pyfunc, entry_point: bool = True):
         global_values=tuple(global_values),
         params=params,
         param_defaults=param_defaults,
+        n_posonly=n_posonly,
+        n_positional=n_positional,
+        kwarg=kwarg,
     )
