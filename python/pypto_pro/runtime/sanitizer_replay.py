@@ -135,9 +135,17 @@ class ReplayContext:
 # ---------------------------------------------------------------------------
 
 
+# Sentinel fields default to -1; they and everything after them are optional, line/region default 0.
+_SENTINEL_FIELDS = frozenset({"acc_src_addr", "acc_valid_rows", "acc_valid_cols",
+                               "acc_src_valid_rows", "acc_src_valid_cols"})
+
+
 def _record_type(det_id: int, name: str, fields, wire: str):
-    defaults = (-1, 0, 0) if det_id == 7 else (0,)
-    cls = collections.namedtuple(name, list(fields) + ["region"], defaults=defaults)
+    names = list(fields) + ["region"]
+    sentinel = [wire_field in _SENTINEL_FIELDS for wire_field in names]
+    first = next((index for index, flag in enumerate(sentinel) if flag), len(names) - 1)
+    defaults = tuple(-1 if flag else 0 for flag in sentinel[first:])
+    cls = collections.namedtuple(name, names, defaults=defaults)
     cls.det_id = det_id
     cls.WIRE = wire
     cls.STRUCT = struct.Struct("<I" + "".join("I" if c == "u" else "i" for c in cls.WIRE))
@@ -182,7 +190,9 @@ SyncAccessRecord = RECORD_TYPES[8]
 #     (AccPhase and STPhase share the values); acc_addr is the Acc tile's
 #     memref addr (runtime value under TileGroup cursors) -- the pairing
 #     group key together with the region; acc_src_addr is matmul_acc's
-#     accumulator source tile addr (-1 for ops without one).
+#     accumulator source tile addr (-1 for ops without one). The acc/acc_src
+#     valid_rows/valid_cols describe both views at this operation
+#     for the in-place contract (-1 for non-accumulating operations).
 #   8 SyncAccess RecordSync: event_id is the runtime args[0] expression,
 #     set_pipe/wait_pipe the enum kwargs, is_src marks the signal direction.
 
@@ -592,15 +602,26 @@ def _check_in_place_acc_contract(token: _PhaseToken, ctx: ReplayContext) -> _Pha
     rec = token.record
     if rec.op_kind not in PHASE_ACC_KINDS:
         return None
-    if rec.acc_src_addr == PHASE_NO_ACC_SRC_ADDR or rec.acc_src_addr == rec.acc_addr:
+    if rec.acc_src_addr == PHASE_NO_ACC_SRC_ADDR:
         return None
+    addr_differs = rec.acc_addr != rec.acc_src_addr
+    shape_differs = (rec.acc_valid_rows, rec.acc_valid_cols) != (rec.acc_src_valid_rows, rec.acc_src_valid_cols)
+    if not addr_differs and not shape_differs:
+        return None
+    addr_detail = f"dst=0x{rec.acc_addr:x}, acc=0x{rec.acc_src_addr:x}"
+    shape_detail = (f"dst=({rec.acc_valid_rows}, {rec.acc_valid_cols}), "
+                    f"acc=({rec.acc_src_valid_rows}, {rec.acc_src_valid_cols})")
     tile_desc = f"region {rec.region}, Acc tile 0x{rec.acc_addr:x}"
+    if addr_differs and shape_differs:
+        message = (f"{tile_desc}: dst_tile and acc_tile differ in both address and valid_shape: "
+                   f"address {addr_detail}; valid_shape {shape_detail}")
+    elif addr_differs:
+        message = f"{tile_desc}: dst_tile and acc_tile differ in address: {addr_detail}"
+    else:
+        message = f"{tile_desc}: dst_tile and acc_tile differ in valid_shape: {shape_detail}"
     return _phase_issue(token.record_index, Finding(
-        "PHASE_MISMATCH",
-        f"matmul_acc writes {tile_desc} from accumulator tile 0x{rec.acc_src_addr:x}; "
-        f"dst and acc must be the same Tile",
-        ctx.location(rec.line),
-        hint="Pass the same Acc Tile as both dst_tile and acc_tile",
+        "PHASE_MISMATCH", message, ctx.location(rec.line),
+        hint="dst_tile and acc_tile must be the same Tile",
     ))
 
 

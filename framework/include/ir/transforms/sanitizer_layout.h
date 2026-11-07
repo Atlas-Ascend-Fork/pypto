@@ -34,7 +34,7 @@ enum class SanitizerDetection : uint32_t {
     ViewShape = 4,   // runtime view shape: dim[5], src_dim[5], fp/src bytes
     TileScalar = 5,  // tile scalar access: dims, linear offset
     TileDecl = 6,    // make_tile declaration: addr, size, space, numel
-    PhaseAccess = 7, // unit_flag phase: op_kind, phase, acc_addr/acc_src_addr (Acc memref addrs), line
+    PhaseAccess = 7, // unit_flag phase and accumulator address/valid_shape identity
     SyncAccess = 8,  // sync_src/sync_dst: event_id, set_pipe, wait_pipe, is_src
 };
 
@@ -103,7 +103,9 @@ constexpr SanitizerFieldLayout kTileDeclWire[] = {
 };
 
 constexpr SanitizerFieldLayout kPhaseAccessWire[] = {
-    {"op_kind", 'u'}, {"phase", 'u'}, {"acc_addr", 's'}, {"acc_src_addr", 's'}, {"line", 'u'},
+    {"op_kind", 'u'},        {"phase", 'u'},          {"acc_addr", 's'},           {"acc_src_addr", 's'},
+    {"acc_valid_rows", 's'}, {"acc_valid_cols", 's'}, {"acc_src_valid_rows", 's'}, {"acc_src_valid_cols", 's'},
+    {"line", 'u'},
 };
 
 constexpr SanitizerFieldLayout kSyncAccessWire[] = {

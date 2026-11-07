@@ -2303,7 +2303,7 @@ def test_phase_write_mixing_detected():
 #
 # 卡死类（A-2 / B 族）端到端时 kernel 在设备上等 flag 永久挂起，走不到回放，
 # 因此用记录流直测判定逻辑（覆盖 14 场景中所有卡死形态 + D-2 + 链中段覆盖写）。
-# 记录字段：op_kind / phase / acc_addr / acc_src_addr / line（acc_src_addr 默认 -1，region 默认 0）。
+# 记录字段全集见 ir.sanitizer_record_layouts()[7]；_pr 只填 op_kind/phase/acc_addr/line[/acc_src_addr]，其余取默认值。
 # =============================================================================
 
 _CTX = ReplayContext("ut.py")
@@ -2575,7 +2575,7 @@ def test_ut_phase_mode_and_kchain_findings_at_same_point_coexist():
     findings = check_phase_state_machine(recs, _CTX)
     assert len(findings) == 2
     assert any("mix phase and phase-less writes" in f.message for f in findings)
-    assert any("dst and acc must be the same Tile" in f.message for f in findings)
+    assert any("dst_tile and acc_tile differ" in f.message for f in findings)
 
 
 @pytest.mark.soc("950")
@@ -2616,7 +2616,7 @@ def test_ut_phase_out_of_place_acc_is_rejected_even_when_source_initialized():
     ]
     findings = check_phase_state_machine(recs, _CTX)
     assert len(findings) == 2
-    assert any("dst and acc must be the same Tile" in f.message for f in findings)
+    assert any("dst_tile and acc_tile differ" in f.message for f in findings)
     assert any("first write of a chain" in f.message for f in findings)
 
 
@@ -2626,7 +2626,7 @@ def test_ut_phase_out_of_place_acc_rejects_uninitialized_source_tile():
     recs = [_pr(2, 1, acc_addr=1, line=11, acc_src_addr=0)]
     findings = check_phase_state_machine(recs, _CTX)
     assert len(findings) == 2
-    assert any("dst and acc must be the same Tile" in f.message for f in findings)
+    assert any("dst_tile and acc_tile differ" in f.message for f in findings)
     assert any("first write of a chain" in f.message for f in findings)
 
 
@@ -2638,7 +2638,7 @@ def test_ut_phase_out_of_place_acc_contract_survives_flag_failure():
         _pr(2, 2, acc_addr=0, line=11, acc_src_addr=1),
     ]
     findings = check_phase_state_machine(recs, _CTX)
-    assert any("dst and acc must be the same Tile" in f.message for f in findings)
+    assert any("dst_tile and acc_tile differ" in f.message for f in findings)
     assert any(f.kind == "PHASE_DEADLOCK" for f in findings)
 
 
@@ -2649,7 +2649,7 @@ def test_ut_phase_mx_acc_out_of_place_is_rejected():
         [_pr(5, 2, acc_addr=1, line=12, acc_src_addr=0)], _CTX
     )
     assert len(findings) == 3
-    assert any("dst and acc must be the same Tile" in f.message for f in findings)
+    assert any("dst_tile and acc_tile differ" in f.message for f in findings)
     assert any("first write of a chain" in f.message for f in findings)
     assert any("unit_flag still set" in f.message for f in findings)
 

@@ -208,7 +208,8 @@ private:
     // acc_src_addr identity. acc_tile_idx picks the tile whose address lands
     // in acc_addr (0 = matmul dst, 1 = store/move src); acc_src_idx names
     // matmul_acc's accumulator source arg, or -1 when the op has no separate
-    // accumulator source.
+    // accumulator source. Accumulating ops also carry both tiles' current
+    // valid_shape for the in-place contract.
     StmtPtr RecordPhase(const CallPtr& call, PhaseOpKind kind, uint32_t accTileIdx, int32_t accSrcIdx = -1);
     StmtPtr RecordScalarAccess(const CallPtr& call);
     StmtPtr RecordValidShape(const CallPtr& call);
@@ -577,6 +578,8 @@ StmtPtr SanitizerInstrumenter::RecordPhase(const CallPtr& call, PhaseOpKind kind
     PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, accAddr != nullptr)
         << "sanitizer: Acc tile has no resolvable phase address";
     ExprPtr accSrcAddr = Int64Const(-1);
+    // Non-accumulating operations have no pair of tile views to compare.
+    std::vector<ExprPtr> accValidShapes(4, Int64Const(-1));
     if (accSrcIdx >= 0) {
         const auto srcIdx = static_cast<uint32_t>(accSrcIdx);
         PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, srcIdx < call->args_.size())
@@ -594,12 +597,17 @@ StmtPtr SanitizerInstrumenter::RecordPhase(const CallPtr& call, PhaseOpKind kind
         accSrcAddr = RuntimeTileAddr(call->args_[srcIdx]);
         PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, accSrcAddr != nullptr)
             << "sanitizer: accumulator source has no resolvable phase address";
+        const auto& dst = call->args_[accTileIdx];
+        const auto& src = call->args_[srcIdx];
+        // valid_shape can change after declaration or through a TileGroup slot.
+        accValidShapes = {TileDim(dst, 0), TileDim(dst, 1), TileDim(src, 0), TileDim(src, 1)};
     }
     std::vector<ExprPtr> fields;
     fields.push_back(Int64Const(static_cast<int64_t>(kind)));
     fields.push_back(Int64Const(phase));
     fields.push_back(std::move(accAddr));
     fields.push_back(accSrcAddr);
+    fields.insert(fields.end(), accValidShapes.begin(), accValidShapes.end());
     auto log = MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::PhaseAccess), std::move(fields), call->span_);
     return log;
 }
