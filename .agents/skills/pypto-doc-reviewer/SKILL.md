@@ -70,7 +70,7 @@ description: PyPTO 文档（docs/目录）质量检查，支持两种模式：�
 |------|----------|------|--------|-----|
 
 ### 问题列表
-**[1]** [CRITICAL] [维度/规则] 文件:行号
+**[1]** [CRITICAL] [维度][规则编号] 文件:行号
 - 问题：...
 - 建议：...
 
@@ -126,7 +126,7 @@ git diff remotes/upstream/<目标分支>...pr_<pr_number> -p -- docs/
 |------|----------|------|--------|-----|
 
 ### 问题列表
-**[1]** [CRITICAL] [芯片标签] docs/zh/api/.../pypto-xxx.md:45
+**[1]** [CRITICAL] [API文档写作规范][API-14] docs/zh/api/.../pypto-xxx.md:45
 - 问题：...
 - 建议：...
 ```
@@ -145,7 +145,7 @@ git diff remotes/upstream/<目标分支>...pr_<pr_number> -p -- docs/
 
 ```bash
 python3 <api_client.py路径> POST /repos/cann/pypto/pulls/<pr_number>/comments --config <配置路径> \
-  --data '{"body": "[级别] [维度/规则] 文件:行号\n问题：...\n建议：...", "path": "docs/zh/api/.../pypto-xxx.md", "position": 42, "side": "RIGHT"}'
+  --data '{"body": "[级别] [维度][规则编号] 文件:行号\n\n**问题**：...\n\n**建议**：...", "path": "docs/zh/api/.../pypto-xxx.md", "position": 42, "side": "RIGHT"}'
 ```
 
 - POST 字段为扁平的 `path`/`position`/`side`，勿写嵌套 position 对象（会被 400 拒绝）；`position` 为 PR head 侧**绝对行号**
