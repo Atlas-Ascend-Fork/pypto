@@ -529,6 +529,35 @@ private:
     void RemoveEventIdFromCrossCoreQueues(int eventId);
     Status RemoveSetIntraBlockAndOpDep(std::vector<IndexOp>& syncedOpLog);
     void AddCrossCoreForceSyncOps(size_t setIdx, std::vector<IndexOp>& syncedOpLog, Function& function);
+    static constexpr int CROSS_CORE_EVENT_NUM = 16;
+    using CrossCoreClock = std::array<uint64_t, CROSS_CORE_EVENT_NUM * NUM2>;
+    struct CrossCoreSnapshot {
+        CrossCoreClock consumed{};
+        int eventId{-1};
+        uint64_t generation{0};
+    };
+    struct CrossCoreBarrierPlan {
+        std::array<int, NUM2> handshakeIds{-1, -1};
+        size_t localCount{0};
+        bool globalBarrier{false};
+    };
+    bool UseCrossCoreProof() const;
+    static void MergeCrossCoreProof(CrossCoreClock& clock, const CrossCoreSnapshot& snapshot);
+    CrossCoreClock ProjectCrossCoreConsumption(size_t idx) const;
+    bool CanReuseCrossCoreEventId(int eventId, const CrossCoreClock& clock) const;
+    void RefreshCrossCoreEventIds(const PipeCoreRealEx& source, size_t pool, const CrossCoreClock& clock);
+    Status PlanCrossCoreBarriers(size_t idx, const std::array<size_t, NUM2>& demand, CrossCoreBarrierPlan& plan);
+    Status EnsureCrossCoreCapacity(Function& function, size_t idx, std::vector<IndexOp>& syncedOpLog);
+    Status GetCrossCoreBarrierBoundary(size_t idx, size_t instructionCount, const std::vector<IndexOp>& syncedOpLog,
+                                       uint64_t& insertIdx) const;
+    Status AddGlobalCrossCoreBarrier(Function& function, size_t boundary, uint64_t insertIdx,
+                                     std::vector<IndexOp>& syncedOpLog);
+    Status AddLocalCrossCoreBarrier(Function& function, size_t boundary, size_t pool, int eventId, uint64_t& insertIdx,
+                                    std::vector<IndexOp>& syncedOpLog);
+    Status RecordCrossCoreDrain(size_t boundary, const std::vector<IndexOp>& syncedOpLog, ReclaimBarrier barrier);
+    void ErasePendingCrossCoreSets(const std::unordered_set<Operation*>& removedSets);
+    Status RemovePendingCrossCoreSyncs(size_t pool, std::vector<IndexOp>& syncedOpLog);
+    Status ResetCrossCorePool(size_t pool, int handshakeId, std::vector<IndexOp>& syncedOpLog);
     void CreateForceSyncOp(Opcode opcode, PipeType pipe, CoreType core, AIVCore aivCore, uint64_t& insertIdx,
                            Function& function, std::vector<IndexOp>& syncedOpLog);
     void CreateBarAllOp(AIVCore aivCore, uint64_t& insertIdx, Function& function, std::vector<IndexOp>& syncedOpLog);
@@ -564,9 +593,14 @@ private:
     static std::vector<PipeCoreRealEx> cvPipeCoreEx;
 
     static constexpr int EVENT_NUM = 8;
-    static constexpr int CROSS_CORE_EVENT_NUM = 16;
     static constexpr int EVENT_ID7 = 7;
-    static constexpr int INTRA_CORE_START_EVENT_ID = 1;                            // 核内 eventid 使用 1 ~ 7
+    static constexpr int INTRA_CORE_START_EVENT_ID = 1; // 核内 eventid 使用 1 ~ 7
+    // Both directions share each physical slot. Proofs refer to a specific set generation.
+    std::array<std::optional<CoreType>, CROSS_CORE_EVENT_NUM * NUM2> crossCoreEventSenders_{};
+    CrossCoreClock crossCoreGenerations_{};
+    std::unordered_map<PipeCoreRealEx, CrossCoreClock, PipeCoreRealExHash> crossCoreConsumed_;
+    std::unordered_map<std::pair<size_t, size_t>, CrossCoreSnapshot, IndexVecHash> crossCoreSnapshots_;
+    bool enableLocalCrossCoreBarrier_{true};
     std::unordered_map<PipePairEx, std::vector<int>, PipePairExHash> doublePipeOp; // pipepair, opmagic
     std::queue<size_t> orderedOpList_;
     std::vector<Operation*> oriOpList_;

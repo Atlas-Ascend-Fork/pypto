@@ -811,8 +811,9 @@ Status PipeSync::EventInstanceTracker::RecordSet(const EventResource& resource, 
     auto it = eventInstanceByDep_.find({setIdx, waitIdx});
     if (!intraCore) {
         if (it != eventInstanceByDep_.end() || eventGeneration_[resource] == std::numeric_limits<uint64_t>::max()) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Invalid cross-core event instance for dependency %zu -> %zu.",
-                              setIdx, waitIdx);
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Invalid cross-core event instance for dependency %zu -> %zu, event %d.", setIdx, waitIdx,
+                              resource.eventId);
             return FAILED;
         }
         const auto index = eventInstances_.size();
@@ -1024,7 +1025,19 @@ Status PipeSync::AllocateIntraEvent(const PipePairEx& pp, int& eventId, size_t s
 
 Status PipeSync::RecordEventSet(const PipePairEx& pp, int eventId, size_t setIdx, size_t waitIdx, Operation& syncOp)
 {
-    return eventState_.RecordSet(GetEventResource(pp, eventId), pp, setIdx, waitIdx, syncOp, IsIntraCoreEvent(pp));
+    if (eventState_.RecordSet(GetEventResource(pp, eventId), pp, setIdx, waitIdx, syncOp, IsIntraCoreEvent(pp)) !=
+        SUCCESS) {
+        return FAILED;
+    }
+    if (UseCrossCoreProof()) {
+        auto& snapshot = crossCoreSnapshots_[{setIdx, waitIdx}];
+        snapshot.consumed = crossCoreConsumed_[pp.first];
+        if (pp.first.core != pp.second.core) {
+            snapshot.eventId = eventId;
+            snapshot.generation = crossCoreGenerations_[eventId];
+        }
+    }
+    return SUCCESS;
 }
 
 Status PipeSync::RecordEventWait(size_t setIdx, size_t waitIdx, Operation& syncOp)
@@ -1037,6 +1050,13 @@ Status PipeSync::RecordEventWait(size_t setIdx, size_t waitIdx, Operation& syncO
         // Preserve the original wait-return FIFO policy. Queue membership is
         // only a candidate: allocation still requires consumption at the source.
         GetFreeEventIdQueue(instance->pipes).push_back(instance->id.resource.eventId);
+    }
+    if (UseCrossCoreProof()) {
+        auto snapshot = crossCoreSnapshots_.find({setIdx, waitIdx});
+        if (snapshot != crossCoreSnapshots_.end()) {
+            MergeCrossCoreProof(crossCoreConsumed_[instance->pipes.second], snapshot->second);
+            crossCoreSnapshots_.erase(snapshot);
+        }
     }
     return SUCCESS;
 }
@@ -1613,6 +1633,12 @@ Status PipeSync::InjectSync(Function& function, const std::vector<Operation*>& o
         return FAILED;
     }
 
+    // A cross-core drain may retire a completed instance that carries an
+    // intra-core proof. Perform it before the final intra-core capacity check.
+    if (UseCrossCoreProof() && EnsureCrossCoreCapacity(function, idx, syncedOpLog) != SUCCESS) {
+        return FAILED;
+    }
+
     // No waits, sets, or CV force operations may commit when an intra-core
     // destination cannot be allocated for this operation.
     if (auto failure = AnalyzeIntraEventCapacity(depOps_[idx])) {
@@ -1967,6 +1993,10 @@ void PipeSync::ResetForReplay(const std::vector<DepOp>& plan, const std::vector<
     reclaimBarriers_.clear();
     freeEventId_.clear();
     crossCoreFreeEventId_.clear();
+    crossCoreEventSenders_.fill(std::nullopt);
+    crossCoreGenerations_.fill(0);
+    crossCoreConsumed_.clear();
+    crossCoreSnapshots_.clear();
     syncArriveStatus.clear();
     NoWaitCVPairs_.clear();
     setWaitPairMap_.clear();
@@ -2235,6 +2265,9 @@ Status PipeSync::SynDependency(int maxOverlapDepIdx, const DataDepInfo& depInfo,
         }
         return FAILED;
     }
+    // Rewritten dependencies cannot inherit an old cross-core consumption snapshot.
+    crossCoreSnapshots_.erase({set1, wait1});
+    crossCoreSnapshots_.erase({set2, wait2});
     GetFreeEventIdQueue(pipePairEx).push_back(eventId1);
     setWaitPairMap_.erase({set1, wait1});
     setWaitPairMap_.erase({set2, wait2});
@@ -2472,6 +2505,22 @@ Status PipeSync::GetEventId(const PipePairEx& pp, int& eventId, size_t setIdx, s
             return FAILED;
         }
         auto& cvEventIdQ = *cvEventIdQPtr;
+        if (UseCrossCoreProof()) {
+            const size_t pool = (pp.first.core == CoreType::AIV ? pp.first.aivCore : pp.second.aivCore) ==
+                                        AIVCore::AIV0 ?
+                                    0 :
+                                    1;
+            RefreshCrossCoreEventIds(pp.first, pool, crossCoreConsumed_[pp.first]);
+            if (cvEventIdQ.empty()) {
+                // InjectSync reserves the whole output group before emitting input waits.
+                // Draining here could cancel sets after those waits have already committed.
+                APASS_LOG_ERROR_F(Elements::Operation, "Cross-core ID reservation is exhausted at op %zu.", setIdx);
+                return FAILED;
+            }
+            eventId = cvEventIdQ.front();
+            ++crossCoreGenerations_[eventId];
+            crossCoreEventSenders_[eventId] = pp.first.core;
+        }
         if (!cvEventIdQ.empty()) {
             eventId = cvEventIdQ.front();
             cvEventIdQ.pop_front();
@@ -2616,6 +2665,7 @@ Status PipeSync::RemoveSetIntraBlockAndOpDep(std::vector<IndexOp>& syncedOpLog)
         if (eventState_.CancelPending(key.first, key.second) != SUCCESS) {
             return FAILED;
         }
+        crossCoreSnapshots_.erase(key);
         RemoveOpDep(depOps_[key.first], depOps_[key.second]);
         op->SetAsDeleted();
         setOpMap.erase(op);
@@ -2680,6 +2730,427 @@ void PipeSync::AddCrossCoreForceSyncOps(size_t setIdx, std::vector<IndexOp>& syn
     CreateForceSyncOp(Opcode::OP_FFTS_CROSS_CORE_SYNC, prevAiv1Pipe, CoreType::AIV, AIVCore::AIV1, insertIdx, function,
                       syncedOpLog);
     CreateBarAllOp(AIVCore::AIV1, insertIdx, function, syncedOpLog);
+}
+
+Status PipeSync::GetCrossCoreBarrierBoundary(size_t idx, size_t instructionCount,
+                                             const std::vector<IndexOp>& syncedOpLog, uint64_t& insertIdx) const
+{
+    if (idx == 0) {
+        APASS_LOG_ERROR_F(Elements::Operation, "Cannot insert a cross-core barrier before the first operation.");
+        return FAILED;
+    }
+    std::unordered_set<const Operation*> emitted;
+    insertIdx = 0;
+    for (const auto& entry : syncedOpLog) {
+        // EnqueueOp emits future VIEW/NOP operations eagerly. They do not belong to this prefix.
+        if (entry.first < idx * SEQUENCE_IDX) {
+            emitted.insert(&entry.second.get());
+            insertIdx = std::max(insertIdx, entry.first);
+        }
+    }
+    for (size_t i = 0; i < idx; ++i) {
+        if (emitted.count(oriOpList_[i]) == 0) {
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Cross-core barrier before op %zu requires a complete emitted prefix; op %zu is missing.",
+                              idx, i);
+            return FAILED;
+        }
+    }
+    const uint64_t waitAnchor = idx * SEQUENCE_IDX - HALF_SEQUENCE_IDX;
+    if (insertIdx >= waitAnchor || instructionCount >= waitAnchor - insertIdx) {
+        APASS_LOG_ERROR_F(
+            Elements::Operation,
+            "Insufficient sequence space before op %zu: need %zu slots, insertion %llu, wait anchor %llu.", idx,
+            instructionCount, static_cast<unsigned long long>(insertIdx), static_cast<unsigned long long>(waitAnchor));
+        return FAILED;
+    }
+    for (const auto& pending : NoWaitCVPairs_) {
+        if (pending.first.first >= idx || pending.first.second < idx) {
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Pending cross-core edge %zu -> %zu does not cross the barrier before op %zu.",
+                              pending.first.first, pending.first.second, idx);
+            return FAILED;
+        }
+    }
+    return SUCCESS;
+}
+
+bool PipeSync::UseCrossCoreProof() const
+{
+    return enableLocalCrossCoreBarrier_ && Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510;
+}
+
+void PipeSync::MergeCrossCoreProof(CrossCoreClock& clock, const CrossCoreSnapshot& snapshot)
+{
+    for (size_t id = 0; id < clock.size(); ++id) {
+        clock[id] = std::max(clock[id], snapshot.consumed[id]);
+    }
+    if (snapshot.eventId >= 0) {
+        clock[snapshot.eventId] = std::max(clock[snapshot.eventId], snapshot.generation);
+    }
+}
+
+PipeSync::CrossCoreClock PipeSync::ProjectCrossCoreConsumption(size_t idx) const
+{
+    const auto& current = depOps_[idx].selfPipeCore;
+    const PipeCoreRealEx source(current.pipeEnd, current.core, current.aivCore);
+    CrossCoreClock clock{};
+    auto known = crossCoreConsumed_.find(source);
+    if (known != crossCoreConsumed_.end()) {
+        clock = known->second;
+    }
+    // A multi-pipe operation does not establish entry-pipe -> exit-pipe FIFO order.
+    if (current.pipeStart == current.pipeEnd) {
+        for (size_t producer : depOps_[idx].waitPipe) {
+            auto snapshot = crossCoreSnapshots_.find({producer, idx});
+            if (snapshot != crossCoreSnapshots_.end()) {
+                MergeCrossCoreProof(clock, snapshot->second);
+            }
+        }
+    }
+    return clock;
+}
+
+bool PipeSync::CanReuseCrossCoreEventId(int eventId, const CrossCoreClock& clock) const
+{
+    return crossCoreGenerations_[eventId] != std::numeric_limits<uint64_t>::max() &&
+           (!crossCoreEventSenders_[eventId].has_value() ||
+            (crossCoreGenerations_[eventId] != 0 && clock[eventId] == crossCoreGenerations_[eventId]));
+}
+
+void PipeSync::RefreshCrossCoreEventIds(const PipeCoreRealEx& source, size_t pool, const CrossCoreClock& clock)
+{
+    auto& queue = crossCoreFreeEventId_[source][source.core == CoreType::AIC ? pool : 0];
+    const int base = static_cast<int>(pool) * CROSS_CORE_EVENT_NUM;
+    queue.erase(std::remove_if(queue.begin(), queue.end(),
+                               [&](int id) {
+                                   return id < base || id >= base + CROSS_CORE_EVENT_NUM ||
+                                          !CanReuseCrossCoreEventId(id, clock);
+                               }),
+                queue.end());
+    // Keep fresh IDs in FIFO order. Reusable IDs are appended deterministically.
+    for (int id = base; id < base + CROSS_CORE_EVENT_NUM; ++id) {
+        if (crossCoreEventSenders_[id].has_value() && CanReuseCrossCoreEventId(id, clock)) {
+            PushEventIdIfAbsent(queue, id);
+        }
+    }
+}
+
+Status PipeSync::PlanCrossCoreBarriers(size_t idx, const std::array<size_t, NUM2>& demand, CrossCoreBarrierPlan& plan)
+{
+    const auto& current = depOps_[idx].selfPipeCore;
+    const PipeCoreRealEx source(current.pipeEnd, current.core, current.aivCore);
+    const auto projected = ProjectCrossCoreConsumption(idx);
+    size_t exhaustedPools = 0;
+    for (size_t pool = 0; pool < demand.size(); ++pool) {
+        if (demand[pool] > CROSS_CORE_EVENT_NUM) {
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Operation %zu requires %zu cross-core IDs from pool %zu of size %d.", idx, demand[pool],
+                              pool, CROSS_CORE_EVENT_NUM);
+            return FAILED;
+        }
+        if (demand[pool] == 0) {
+            continue;
+        }
+        RefreshCrossCoreEventIds(source, pool, projected);
+        if (demand[pool] <= crossCoreFreeEventId_[source][current.core == CoreType::AIC ? pool : 0].size()) {
+            continue;
+        }
+        ++plan.localCount;
+        ++exhaustedPools;
+        const int base = static_cast<int>(pool) * CROSS_CORE_EVENT_NUM;
+        for (int id = base; id < base + CROSS_CORE_EVENT_NUM; ++id) {
+            if (!crossCoreEventSenders_[id].has_value() ||
+                crossCoreGenerations_[id] > std::numeric_limits<uint64_t>::max() - NUM2) {
+                continue;
+            }
+            // H remains available only on its final receiving S pipe, ordered after the final wait.
+            const bool canUseHandshake = source.pipe == PIPE_S && source.core != *crossCoreEventSenders_[id];
+            if (demand[pool] <= CROSS_CORE_EVENT_NUM - 1 + static_cast<size_t>(canUseHandshake)) {
+                plan.handshakeIds[pool] = id;
+                break;
+            }
+        }
+        plan.globalBarrier = plan.globalBarrier || plan.handshakeIds[pool] == -1;
+    }
+    // A single local handshake is scoped to one C/V pool. If both pools are
+    // exhausted for this operation, drain them together with the legacy
+    // cross-core barrier instead of emitting two independent local barriers.
+    plan.globalBarrier = plan.globalBarrier || exhaustedPools > 1;
+    return SUCCESS;
+}
+
+Status PipeSync::EnsureCrossCoreCapacity(Function& function, size_t idx, std::vector<IndexOp>& syncedOpLog)
+{
+    const auto& current = depOps_[idx].selfPipeCore;
+    std::array<size_t, NUM2> demand{};
+    for (size_t consumer : depOps_[idx].setPipe) {
+        const auto& target = depOps_[consumer].selfPipeCore;
+        if (current.core == target.core) {
+            continue;
+        }
+        const auto vector = current.core == CoreType::AIV ? current.aivCore : target.aivCore;
+        if (vector != AIVCore::AIV0 && vector != AIVCore::AIV1) {
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Cross-core dependency %zu -> %zu has invalid AIV core %d; expected AIV0 or AIV1.", idx,
+                              consumer, static_cast<int>(vector));
+            return FAILED;
+        }
+        ++demand[vector == AIVCore::AIV0 ? 0 : 1];
+    }
+    // A barrier can cancel an input wait that carried proof for the other pool. Recompute after each reset.
+    for (size_t attempt = 0;; ++attempt) {
+        CrossCoreBarrierPlan plan;
+        if (PlanCrossCoreBarriers(idx, demand, plan) != SUCCESS) {
+            return FAILED;
+        }
+        if (plan.localCount == 0) {
+            return SUCCESS;
+        }
+        if (attempt == NUM2) {
+            APASS_LOG_ERROR_F(Elements::Operation, "Cross-core capacity still insufficient at op %zu after %zu drains.",
+                              idx, attempt);
+            return FAILED;
+        }
+        constexpr size_t localInstructionCount = 6;
+        constexpr size_t globalInstructionCount = 12;
+        uint64_t insertIdx = 0;
+        if (GetCrossCoreBarrierBoundary(
+                idx, plan.globalBarrier ? globalInstructionCount : plan.localCount * localInstructionCount, syncedOpLog,
+                insertIdx) != SUCCESS) {
+            return FAILED;
+        }
+        if (plan.globalBarrier) {
+            if (AddGlobalCrossCoreBarrier(function, idx, insertIdx, syncedOpLog) != SUCCESS) {
+                return FAILED;
+            }
+            continue;
+        }
+        for (size_t pool = 0; pool < plan.handshakeIds.size(); ++pool) {
+            if (plan.handshakeIds[pool] == -1) {
+                continue;
+            }
+            if (AddLocalCrossCoreBarrier(function, idx, pool, plan.handshakeIds[pool], insertIdx, syncedOpLog) !=
+                SUCCESS) {
+                return FAILED;
+            }
+            if (ResetCrossCorePool(pool, plan.handshakeIds[pool], syncedOpLog) != SUCCESS) {
+                return FAILED;
+            }
+            APASS_LOG_DEBUG_F(Elements::Operation, "Inserted 1C1V barrier before op %zu for pool %zu with event ID %d.",
+                              idx, pool, plan.handshakeIds[pool]);
+        }
+    }
+}
+
+Status PipeSync::AddGlobalCrossCoreBarrier(Function& function, size_t boundary, uint64_t insertIdx,
+                                           std::vector<IndexOp>& syncedOpLog)
+{
+    for (const auto& pending : NoWaitCVPairs_) {
+        setWaitPairMap_.erase(pending.first);
+    }
+    if (RemoveSetIntraBlockAndOpDep(syncedOpLog) != SUCCESS) {
+        return FAILED;
+    }
+    std::vector<IndexOp> forceSyncs;
+    AddCrossCoreForceSyncOps(0, forceSyncs, function);
+    ReclaimBarrier barrier;
+    barrier.cores = {
+        {CoreType::AIC, AIVCore::UNSPECIFIED}, {CoreType::AIV, AIVCore::AIV0}, {CoreType::AIV, AIVCore::AIV1}};
+    for (auto& entry : forceSyncs) {
+        syncedOpLog.emplace_back(insertIdx + entry.first, entry.second);
+        barrier.ops.push_back(&entry.second.get());
+    }
+    if (RecordCrossCoreDrain(boundary, syncedOpLog, std::move(barrier)) != SUCCESS) {
+        return FAILED;
+    }
+    InitCVEventIdQ();
+    crossCoreEventSenders_.fill(std::nullopt);
+    crossCoreConsumed_.clear();
+    crossCoreSnapshots_.clear();
+    return SUCCESS;
+}
+
+Status PipeSync::RecordCrossCoreDrain(size_t boundary, const std::vector<IndexOp>& syncedOpLog, ReclaimBarrier barrier)
+{
+    if (barrier.ops.empty()) {
+        APASS_LOG_ERROR_F(Elements::Operation, "Cross-core drain before op %zu has no instructions.", boundary);
+        return FAILED;
+    }
+    const auto first = std::find_if(syncedOpLog.begin(), syncedOpLog.end(),
+                                    [&](const IndexOp& entry) { return &entry.second.get() == barrier.ops.front(); });
+    if (first == syncedOpLog.end()) {
+        APASS_LOG_ERROR_F(Elements::Operation, "Cross-core drain before op %zu is missing its first instruction.",
+                          boundary);
+        return FAILED;
+    }
+    std::unordered_set<Operation*> emitted;
+    for (const auto& entry : syncedOpLog) {
+        if (entry.first < first->first) {
+            emitted.insert(&entry.second.get());
+        }
+    }
+    std::vector<size_t> covered;
+    for (size_t i = 0; i < eventState_.Instances().size(); ++i) {
+        const auto& instance = eventState_.Instances()[i];
+        const CoreTypeDetail core{instance.pipes.first.core, instance.pipes.first.aivCore};
+        if (!instance.intraCore || instance.state != InstanceState::WaitInserted || instance.setIdx >= boundary ||
+            instance.waitIdx >= boundary ||
+            std::find(barrier.cores.begin(), barrier.cores.end(), core) == barrier.cores.end()) {
+            continue;
+        }
+        if (emitted.count(instance.setOp) == 0 || emitted.count(instance.waitOp) == 0) {
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Cross-core drain before op %zu is missing the emitted set or wait for %zu -> %zu.",
+                              boundary, instance.setIdx, instance.waitIdx);
+            return FAILED;
+        }
+        covered.push_back(i);
+    }
+    // A cancelled cross-core input may have carried intra-core capacity proof.
+    // The existing full drain covers completed waits on these cores instead;
+    // pending flags and consumed instances on other cores remain occupied.
+    for (auto index : covered) {
+        const auto& instance = eventState_.Instances()[index];
+        if (eventState_.RetireConsumed(instance.setIdx, instance.waitIdx) != SUCCESS) {
+            return FAILED;
+        }
+        PushEventIdIfAbsent(GetFreeEventIdQueue(instance.pipes), instance.id.resource.eventId);
+    }
+    reclaimBarriers_.push_back(std::move(barrier));
+    return SUCCESS;
+}
+
+Status PipeSync::AddLocalCrossCoreBarrier(Function& function, size_t boundary, size_t pool, int eventId,
+                                          uint64_t& insertIdx, std::vector<IndexOp>& syncedOpLog)
+{
+    const auto vector = pool == 0 ? AIVCore::AIV0 : AIVCore::AIV1;
+    const PipeCoreRealEx cubeSet(PIPE_FIX, CoreType::AIC);
+    const PipeCoreRealEx vectorSet(PIPE_MTE3, CoreType::AIV, vector);
+    const PipeCoreRealEx cubeWait(PIPE_S, CoreType::AIC);
+    const PipeCoreRealEx vectorWait(PIPE_S, CoreType::AIV, vector);
+    ReclaimBarrier barrier;
+    barrier.cores = {{CoreType::AIC, AIVCore::UNSPECIFIED}, {CoreType::AIV, vector}};
+    auto emit = [&](Opcode opcode, PipeCoreRealEx set, PipeCoreRealEx wait) {
+        auto& op = irBuilder_.CreateTensorOpStmt(function, opcode, {}, {});
+        if (opcode == Opcode::OP_BAR_ALL) {
+            // GenBarrier emits PIPE_ALL independently of coreType_. SetAIVCore below
+            // selects the executing core; retain the actual core in this metadata.
+            op.syncQueue_ = {PIPE_ALL, PIPE_ALL, set.core, set.core, -1, set.aivCore, set.aivCore};
+        } else {
+            GenSyncOp(set, wait, eventId, opcode == Opcode::OP_CV_SYNC_SRC, op);
+        }
+        op.SetAIVCore(opcode == Opcode::OP_CV_SYNC_DST ? wait.aivCore : set.aivCore);
+        syncedOpLog.emplace_back(++insertIdx, std::ref(op));
+        forceSyncOps_.insert(&op);
+        barrier.ops.push_back(&op);
+    };
+    emit(Opcode::OP_BAR_ALL, cubeSet, cubeWait);
+    emit(Opcode::OP_BAR_ALL, vectorSet, vectorWait);
+    // Reverse the old sender first; the return hop uses H in its old direction.
+    const bool oldCubeSender = *crossCoreEventSenders_[eventId] == CoreType::AIC;
+    const auto firstSet = oldCubeSender ? vectorSet : cubeSet;
+    const auto firstWait = oldCubeSender ? cubeWait : vectorWait;
+    const auto returnSet = oldCubeSender ? cubeSet : vectorSet;
+    const auto returnWait = oldCubeSender ? vectorWait : cubeWait;
+    emit(Opcode::OP_CV_SYNC_SRC, firstSet, firstWait);
+    emit(Opcode::OP_CV_SYNC_DST, firstSet, firstWait);
+    emit(Opcode::OP_CV_SYNC_SRC, returnSet, returnWait);
+    emit(Opcode::OP_CV_SYNC_DST, returnSet, returnWait);
+    return RecordCrossCoreDrain(boundary, syncedOpLog, std::move(barrier));
+}
+
+void PipeSync::ErasePendingCrossCoreSets(const std::unordered_set<Operation*>& removedSets)
+{
+    for (const auto& [edge, setOp] : NoWaitCVPairs_) {
+        if (removedSets.count(setOp) == 0) {
+            continue;
+        }
+        RemoveOpDep(depOps_[edge.first], depOps_[edge.second]);
+        setWaitPairMap_.erase(edge);
+        crossCoreSnapshots_.erase(edge);
+        setOpMap.erase(setOp);
+        setOp->SetAsDeleted();
+    }
+    NoWaitCVPairs_.erase(std::remove_if(NoWaitCVPairs_.begin(), NoWaitCVPairs_.end(),
+                                        [&](const auto& pending) { return removedSets.count(pending.second) != 0; }),
+                         NoWaitCVPairs_.end());
+}
+
+Status PipeSync::RemovePendingCrossCoreSyncs(size_t pool, std::vector<IndexOp>& syncedOpLog)
+{
+    const int base = static_cast<int>(pool) * CROSS_CORE_EVENT_NUM;
+    auto inPool = [base](int id) { return id >= base && id < base + CROSS_CORE_EVENT_NUM; };
+    auto stagedState = eventState_;
+    std::unordered_set<Operation*> removedSets;
+    for (const auto& [edge, setOp] : NoWaitCVPairs_) {
+        if (!inPool(setOp->syncQueue_.eventId_)) {
+            continue;
+        }
+        if (stagedState.CancelPending(edge.first, edge.second) != SUCCESS) {
+            return FAILED;
+        }
+        removedSets.insert(setOp);
+    }
+    eventState_ = std::move(stagedState);
+    ErasePendingCrossCoreSets(removedSets);
+    syncedOpLog.erase(std::remove_if(syncedOpLog.begin(), syncedOpLog.end(),
+                                     [&](const IndexOp& entry) { return removedSets.count(&entry.second.get()) != 0; }),
+                      syncedOpLog.end());
+    for (auto& [pipe, events] : syncArriveStatus) {
+        (void)pipe;
+        for (auto it = events.begin(); it != events.end();) {
+            if (it->srcCore.first != it->dstCore.first && inPool(it->eventId)) {
+                it = events.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    return SUCCESS;
+}
+
+Status PipeSync::ResetCrossCorePool(size_t pool, int handshakeId, std::vector<IndexOp>& syncedOpLog)
+{
+    if (RemovePendingCrossCoreSyncs(pool, syncedOpLog) != SUCCESS) {
+        return FAILED;
+    }
+    const int base = static_cast<int>(pool) * CROSS_CORE_EVENT_NUM;
+    const auto vector = pool == 0 ? AIVCore::AIV0 : AIVCore::AIV1;
+    const auto finalReceiver = *crossCoreEventSenders_[handshakeId] == CoreType::AIC ? CoreType::AIV : CoreType::AIC;
+    auto clearPool = [base](CrossCoreClock& clock) {
+        std::fill(clock.begin() + base, clock.begin() + base + CROSS_CORE_EVENT_NUM, 0);
+    };
+    for (auto& [pipe, clock] : crossCoreConsumed_) {
+        (void)pipe;
+        clearPool(clock);
+    }
+    for (auto& [edge, snapshot] : crossCoreSnapshots_) {
+        (void)edge;
+        clearPool(snapshot.consumed);
+    }
+    crossCoreGenerations_[handshakeId] += NUM2;
+    const PipeCoreRealEx receivingPipe(PIPE_S, finalReceiver,
+                                       finalReceiver == CoreType::AIV ? vector : AIVCore::UNSPECIFIED);
+    crossCoreConsumed_[receivingPipe][handshakeId] = crossCoreGenerations_[handshakeId];
+    for (const auto& pipe : cvPipeCoreEx) {
+        if (pipe.core != CoreType::AIC && pipe.aivCore != vector) {
+            continue;
+        }
+        auto& queue = crossCoreFreeEventId_[pipe][pipe.core == CoreType::AIC ? pool : 0];
+        queue.clear();
+        for (int id = base; id < base + CROSS_CORE_EVENT_NUM; ++id) {
+            if (id != handshakeId || (pipe.core == finalReceiver && pipe.pipe == PIPE_S)) {
+                queue.push_back(id);
+            }
+        }
+    }
+    for (int id = base; id < base + CROSS_CORE_EVENT_NUM; ++id) {
+        if (id != handshakeId) {
+            crossCoreEventSenders_[id].reset();
+        }
+    }
+    return SUCCESS;
 }
 
 bool PipeSync::HasFreeEventId(const PipePairEx& pp)
@@ -3397,6 +3868,7 @@ Status InsertSync::ApplyCvHardSync(Function* subGraphFunc, std::vector<Operation
 Status InsertSync::GenNewOpList(Function* subGraphFunc, std::vector<Operation*>& opListNew)
 {
     PipeSync ps;
+    ps.enableLocalCrossCoreBarrier_ = !cvHardSync_;
     std::vector<Operation*> syncedOpLogPtr;
     std::vector<Operation*> oriOpList(subGraphFunc->Operations(false).DuplicatedOpList());
     if (ps.InsertSync(*subGraphFunc, syncedOpLogPtr) != SUCCESS) {

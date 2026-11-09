@@ -4149,6 +4149,918 @@ TEST_F(InsertSyncTest, IntraExhaustionWithUnmergeableCrossCoreBoundariesReturnsP
     EXPECT_EQ(business, original);
     EXPECT_EQ(ps.ValidateEventReuse(ordered), SUCCESS);
 }
+TEST_F(InsertSyncTest, A5ExhaustionSynchronizesOnlyTheSelectedCorePair)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    for (auto vector : {AIVCore::AIV0, AIVCore::AIV1}) {
+        for (bool cubeFirst : {true, false}) {
+            auto [root, leaf] = SetupDebugFunc("A5LocalBarrier");
+            PipeSync ps;
+            ps.InitCVEventIdQ();
+            const PipeSync::PipeCore source = cubeFirst ?
+                                                  PipeSync::PipeCore(PIPE_FIX, PIPE_FIX, CoreType::AIC,
+                                                                     AIVCore::UNSPECIFIED) :
+                                                  PipeSync::PipeCore(PIPE_MTE3, PIPE_MTE3, CoreType::AIV, vector);
+            const PipeSync::PipeCore target = cubeFirst ?
+                                                  PipeSync::PipeCore(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, vector) :
+                                                  PipeSync::PipeCore(PIPE_MTE1, PIPE_MTE1, CoreType::AIC,
+                                                                     AIVCore::UNSPECIFIED);
+            constexpr size_t boundary = 16;
+            for (size_t i = 0; i < boundary * 2 + 2; ++i) {
+                auto& op = IRBuilder().CreateTensorOpStmt(*leaf, Opcode::OP_ADD, {}, {});
+                const auto& pipe = i <= boundary ? source : target;
+                op.SetAIVCore(pipe.aivCore);
+                ps.oriOpList_.push_back(&op);
+                ps.depOps_.emplace_back(i, pipe);
+            }
+            for (size_t i = 0; i <= boundary; ++i) {
+                ASSERT_EQ(ps.AddOpDep(ps.depOps_[i], ps.depOps_[boundary + 1 + i]), SUCCESS);
+            }
+            std::vector<IndexOp> synced;
+            for (size_t i = 0; i <= boundary; ++i) {
+                ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+                if (i < boundary) {
+                    EXPECT_TRUE(ps.forceSyncOps_.empty());
+                }
+            }
+            size_t bars = 0;
+            size_t cvSets = 0;
+            size_t cvWaits = 0;
+            std::vector<Operation*> forceSyncs;
+            for (const auto& entry : synced) {
+                const auto& op = entry.second.get();
+                EXPECT_NE(op.GetOpcode(), Opcode::OP_FFTS_CROSS_CORE_SYNC);
+                EXPECT_NE(op.GetOpcode(), Opcode::OP_WAIT_FLAG_DEV);
+                bars += op.GetOpcode() == Opcode::OP_BAR_ALL;
+                cvSets += op.GetOpcode() == Opcode::OP_CV_SYNC_SRC;
+                cvWaits += op.GetOpcode() == Opcode::OP_CV_SYNC_DST;
+                if (ps.forceSyncOps_.count(&entry.second.get()) != 0) {
+                    forceSyncs.push_back(&entry.second.get());
+                    EXPECT_TRUE(op.GetAIVCore() == vector || op.GetAIVCore() == AIVCore::UNSPECIFIED);
+                    EXPECT_LT(entry.first, boundary * SEQUENCE_IDX - HALF_SEQUENCE_IDX);
+                }
+            }
+            EXPECT_EQ(bars, 2U);
+            EXPECT_EQ(cvSets, 3U); // Two handshake sets and the current operation's set.
+            EXPECT_EQ(cvWaits, 2U);
+            EXPECT_EQ(ps.NoWaitCVPairs_.size(), 1U);
+            EXPECT_EQ(ps.setWaitPairMap_.size(), 1U);
+            const PipeSync::PipeCoreRealEx cube(PIPE_FIX, CoreType::AIC);
+            const auto otherVector = vector == AIVCore::AIV0 ? AIVCore::AIV1 : AIVCore::AIV0;
+            const size_t otherQueue = otherVector == AIVCore::AIV0 ? 0 : 1;
+            EXPECT_EQ(ps.crossCoreFreeEventId_[cube][otherQueue].size(), boundary);
+            ASSERT_EQ(forceSyncs.size(), 6U);
+            EXPECT_EQ(forceSyncs[0]->GetOpcode(), Opcode::OP_BAR_ALL);
+            EXPECT_EQ(forceSyncs[0]->syncQueue_.coreType_, CoreType::AIC);
+            EXPECT_EQ(forceSyncs[1]->GetOpcode(), Opcode::OP_BAR_ALL);
+            EXPECT_EQ(forceSyncs[1]->syncQueue_.coreType_, CoreType::AIV);
+            const auto reverseSender = cubeFirst ? CoreType::AIV : CoreType::AIC;
+            const auto oldSender = cubeFirst ? CoreType::AIC : CoreType::AIV;
+            for (size_t i = 2; i < forceSyncs.size(); ++i) {
+                const auto& sync = forceSyncs[i]->syncQueue_;
+                EXPECT_EQ(sync.eventId_, vector == AIVCore::AIV0 ? 0 : 16);
+                EXPECT_EQ(sync.coreType_, i < 4 ? reverseSender : oldSender);
+                if (i % 2 == 0) {
+                    EXPECT_EQ(forceSyncs[i]->GetOpcode(), Opcode::OP_CV_SYNC_SRC);
+                    EXPECT_EQ(sync.pipeId_, sync.coreType_ == CoreType::AIC ? PIPE_FIX : PIPE_MTE3);
+                } else {
+                    EXPECT_EQ(forceSyncs[i]->GetOpcode(), Opcode::OP_CV_SYNC_DST);
+                    EXPECT_EQ(sync.trigPipeId_, PIPE_S);
+                }
+            }
+            const int handshakeId = vector == AIVCore::AIV0 ? 0 : 16;
+            const auto finalReceiver = cubeFirst ? CoreType::AIV : CoreType::AIC;
+            for (const auto& pipe : ps.cvPipeCoreEx) {
+                if (pipe.core != CoreType::AIC && pipe.aivCore != vector) {
+                    continue;
+                }
+                const auto& queue = ps.crossCoreFreeEventId_[pipe][pipe.core == CoreType::AIC ? 1 - otherQueue : 0];
+                EXPECT_EQ(std::count(queue.begin(), queue.end(), handshakeId),
+                          pipe.core == finalReceiver && pipe.pipe == PIPE_S ? 1 : 0);
+            }
+        }
+    }
+}
+
+static size_t AppendLocalBarrierTestOp(PipeSync& ps, Function& function, const PipeSync::PipeCore& pipe)
+{
+    auto& op = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_ADD, {}, {});
+    op.SetAIVCore(pipe.aivCore);
+    const size_t idx = ps.oriOpList_.size();
+    ps.oriOpList_.push_back(&op);
+    ps.depOps_.emplace_back(idx, pipe);
+    return idx;
+}
+
+TEST_F(InsertSyncTest, A5BarrierPreservesConsumedEdgesOtherPoolAndIntraCoreState)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5BarrierPreservesState");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+    const PipeSync::PipeCore vector0(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCore vector1(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV1);
+    AppendLocalBarrierTestOp(ps, *leaf, cube);
+    AppendLocalBarrierTestOp(ps, *leaf, vector0); // Consume ID 0 before exhaustion.
+    for (size_t i = 0; i < 16; ++i) {
+        AppendLocalBarrierTestOp(ps, *leaf, cube);
+    }
+    for (size_t i = 0; i < 16; ++i) {
+        AppendLocalBarrierTestOp(ps, *leaf, vector0);
+    }
+    const size_t otherConsumer = AppendLocalBarrierTestOp(ps, *leaf, vector1);
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[1]), SUCCESS);
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[otherConsumer]), SUCCESS);
+    for (size_t i = 2; i < 18; ++i) {
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[i], ps.depOps_[i + 16]), SUCCESS);
+    }
+    const PipeSync::PipePairEx intra{{PIPE_MTE2, CoreType::AIV, AIVCore::AIV1}, {PIPE_V, CoreType::AIV, AIVCore::AIV1}};
+    ps.freeEventId_[intra] = {2, 4, 6};
+    std::vector<IndexOp> synced;
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 0, synced), SUCCESS);
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 1, synced), SUCCESS);
+    Operation* consumedSet = nullptr;
+    Operation* consumedWait = nullptr;
+    Operation* otherSet = nullptr;
+    for (auto& entry : synced) {
+        auto& op = entry.second.get();
+        if (op.GetOpcode() == Opcode::OP_CV_SYNC_DST) {
+            consumedWait = &op;
+        } else if (op.GetOpcode() == Opcode::OP_CV_SYNC_SRC) {
+            (op.syncQueue_.eventId_ == 0 ? consumedSet : otherSet) = &op;
+        }
+    }
+    ASSERT_NE(consumedSet, nullptr);
+    ASSERT_NE(consumedWait, nullptr);
+    ASSERT_NE(otherSet, nullptr);
+    const PipeSync::EventResource intraArrival{
+        1, {CoreType::AIV, AIVCore::AIV1}, {CoreType::AIV, AIVCore::AIV1}, PIPE_MTE2, PIPE_V};
+    ps.syncArriveStatus[intra.second].insert(intraArrival);
+    const PipeSync::PipeCoreRealEx cubePipe(PIPE_FIX, CoreType::AIC);
+    ps.crossCoreConsumed_[cubePipe][16] = 1;
+    for (size_t i = 2; i < 18; ++i) {
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+    }
+    EXPECT_FALSE(consumedSet->IsDeleted());
+    EXPECT_FALSE(consumedWait->IsDeleted());
+    EXPECT_FALSE(otherSet->IsDeleted());
+    EXPECT_EQ(ps.waitOpMap.at(consumedWait), ps.oriOpList_[0]);
+    EXPECT_EQ(ps.setWaitPairMap_.at({0, otherConsumer}), 16);
+    EXPECT_EQ(ps.NoWaitCVPairs_.size(), 2U);
+    EXPECT_EQ(ps.freeEventId_.at(intra), (std::deque<int>{2, 4, 6}));
+    EXPECT_EQ(ps.syncArriveStatus[intra.second].count(intraArrival), 1U);
+    EXPECT_EQ(ps.crossCoreConsumed_[cubePipe][16], 1U);
+    EXPECT_EQ(ps.crossCoreGenerations_[0], 3U);
+    EXPECT_FALSE(ps.CanReuseCrossCoreEventId(0, ps.crossCoreConsumed_[cubePipe]));
+    const PipeSync::PipeCoreRealEx receivingS(PIPE_S, CoreType::AIV, AIVCore::AIV0);
+    EXPECT_TRUE(ps.CanReuseCrossCoreEventId(0, ps.crossCoreConsumed_[receivingS]));
+    EXPECT_EQ(ps.crossCoreSnapshots_.at({0, otherConsumer}).consumed[0], 0U);
+    for (const auto& [pipe, events] : ps.syncArriveStatus) {
+        (void)pipe;
+        for (const auto& event : events) {
+            EXPECT_FALSE(event.srcCore.first != event.dstCore.first && event.eventId < 16);
+        }
+    }
+}
+
+TEST_F(InsertSyncTest, A5ConsecutiveBarriersKeepCurrentOutputSets)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5ConsecutiveBarriers");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+    const PipeSync::PipeCore vector(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    constexpr size_t producerCount = 32;
+    for (size_t i = 0; i < producerCount * 2; ++i) {
+        AppendLocalBarrierTestOp(ps, *leaf, i < producerCount ? cube : vector);
+    }
+    for (size_t i = 0; i < producerCount; ++i) {
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[i], ps.depOps_[i + producerCount]), SUCCESS);
+    }
+    std::vector<IndexOp> synced;
+    for (size_t i = 0; i < producerCount; ++i) {
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+    }
+    EXPECT_EQ(ps.forceSyncOps_.size(), 12U);
+    ASSERT_EQ(ps.NoWaitCVPairs_.size(), 1U);
+    EXPECT_EQ(ps.NoWaitCVPairs_[0].first, std::make_pair(producerCount - 1, producerCount * 2 - 1));
+    EXPECT_FALSE(ps.NoWaitCVPairs_[0].second->IsDeleted());
+    for (size_t i = producerCount; i < producerCount * 2; ++i) {
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+    }
+    EXPECT_TRUE(ps.NoWaitCVPairs_.empty());
+}
+
+TEST_F(InsertSyncTest, A5ReservesAllCurrentOutputsBeforeItsInputWaits)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5WholeOperationCapacity");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+    const PipeSync::PipeCore vector(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    for (size_t i = 0; i < 16; ++i) {
+        AppendLocalBarrierTestOp(ps, *leaf, cube);
+    }
+    ps.depOps_[15].selfPipeCore.pipeStart = PIPE_MTE1;
+    for (size_t i = 0; i < 16; ++i) {
+        AppendLocalBarrierTestOp(ps, *leaf, vector);
+    }
+    AppendLocalBarrierTestOp(ps, *leaf, {PIPE_V, PIPE_V, CoreType::AIV, AIVCore::AIV0});
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[15]), SUCCESS);
+    for (size_t i = 0; i < 16; ++i) {
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[i], ps.depOps_[i + 16]), SUCCESS);
+    }
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[15], ps.depOps_[32]), SUCCESS);
+    std::vector<IndexOp> synced;
+    for (size_t i = 0; i < 15; ++i) {
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+    }
+    EXPECT_TRUE(ps.forceSyncOps_.empty());
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 15, synced), SUCCESS);
+    EXPECT_EQ(ps.forceSyncOps_.size(), 6U);
+    EXPECT_EQ(ps.NoWaitCVPairs_.size(), 2U);
+    EXPECT_EQ(ps.depOps_[15].setPipe.size(), 2U);
+    EXPECT_EQ(ps.setWaitPairMap_.at({15, 31}), 1);
+    EXPECT_EQ(ps.setWaitPairMap_.at({15, 32}), 2);
+    bool hasInputWait = false;
+    for (const auto& entry : synced) {
+        const auto& op = entry.second.get();
+        if (op.GetOpcode() == Opcode::OP_SYNC_DST) {
+            hasInputWait = true;
+            EXPECT_GT(entry.first, 15 * SEQUENCE_IDX - HALF_SEQUENCE_IDX);
+        }
+        if (ps.forceSyncOps_.count(&entry.second.get()) != 0) {
+            EXPECT_LT(entry.first, 15 * SEQUENCE_IDX - HALF_SEQUENCE_IDX);
+        }
+    }
+    EXPECT_TRUE(hasInputWait);
+}
+
+TEST_F(InsertSyncTest, A5BothRequestedPoolsExhaustedUseOneGlobalBarrier)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5BothPoolsExhausted");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+    for (size_t i = 0; i < 17; ++i) {
+        AppendLocalBarrierTestOp(ps, *leaf, cube);
+    }
+    for (auto vector : {AIVCore::AIV0, AIVCore::AIV1}) {
+        for (size_t i = 0; i < 17; ++i) {
+            const auto consumer = AppendLocalBarrierTestOp(ps, *leaf, {PIPE_MTE2, PIPE_MTE2, CoreType::AIV, vector});
+            ASSERT_EQ(ps.AddOpDep(ps.depOps_[i], ps.depOps_[consumer]), SUCCESS);
+        }
+    }
+    std::vector<IndexOp> synced;
+    for (size_t i = 0; i < 17; ++i) {
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+        if (i < 16) {
+            EXPECT_TRUE(ps.forceSyncOps_.empty());
+        }
+    }
+    EXPECT_EQ(ps.forceSyncOps_.size(), 12U);
+    EXPECT_EQ(ps.NoWaitCVPairs_.size(), 2U);
+    EXPECT_EQ(ps.setWaitPairMap_.at({16, 33}), 0);
+    EXPECT_EQ(ps.setWaitPairMap_.at({16, 50}), 16);
+    size_t globalSets = 0;
+    size_t globalWaits = 0;
+    for (auto* op : ps.forceSyncOps_) {
+        globalSets += op->GetOpcode() == Opcode::OP_FFTS_CROSS_CORE_SYNC;
+        globalWaits += op->GetOpcode() == Opcode::OP_WAIT_FLAG_DEV;
+    }
+    EXPECT_EQ(globalSets, 3U);
+    EXPECT_EQ(globalWaits, 3U);
+    for (size_t i = 17; i < ps.oriOpList_.size(); ++i) {
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+    }
+    EXPECT_TRUE(ps.NoWaitCVPairs_.empty());
+}
+
+TEST_F(InsertSyncTest, A5ExhaustedUnrequestedPoolDoesNotForceBarrier)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    for (auto exhaustedVector : {AIVCore::AIV0, AIVCore::AIV1}) {
+        auto [root, leaf] = SetupDebugFunc("A5UnrequestedPool");
+        PipeSync ps;
+        ps.InitCVEventIdQ();
+        const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+        for (size_t i = 0; i < 17; ++i) {
+            AppendLocalBarrierTestOp(ps, *leaf, cube);
+        }
+        const auto otherVector = exhaustedVector == AIVCore::AIV0 ? AIVCore::AIV1 : AIVCore::AIV0;
+        for (size_t i = 0; i < 17; ++i) {
+            const auto vector = i < 16 ? exhaustedVector : otherVector;
+            const auto consumer = AppendLocalBarrierTestOp(ps, *leaf, {PIPE_MTE2, PIPE_MTE2, CoreType::AIV, vector});
+            ASSERT_EQ(ps.AddOpDep(ps.depOps_[i], ps.depOps_[consumer]), SUCCESS);
+        }
+        std::vector<IndexOp> synced;
+        for (size_t i = 0; i < ps.oriOpList_.size(); ++i) {
+            ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+            EXPECT_TRUE(ps.forceSyncOps_.empty());
+        }
+        EXPECT_TRUE(ps.NoWaitCVPairs_.empty());
+    }
+}
+
+TEST_F(InsertSyncTest, A5RejectsDemandBeyondOneCrossCorePool)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5CrossCoreDemandExceedsCapacity");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const auto producer = AppendLocalBarrierTestOp(ps, *leaf,
+                                                   {PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED});
+    PipeSync::CrossCoreBarrierPlan plan;
+    EXPECT_EQ(ps.PlanCrossCoreBarriers(producer, {PipeSync::CROSS_CORE_EVENT_NUM + 1, 0}, plan), FAILED);
+    EXPECT_EQ(plan.localCount, 0U);
+    EXPECT_FALSE(plan.globalBarrier);
+}
+
+TEST_F(InsertSyncTest, A5RejectsBarrierWithIncompleteEmittedPrefix)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5IncompleteCrossCoreBarrierPrefix");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const size_t boundary = PipeSync::CROSS_CORE_EVENT_NUM;
+    for (size_t i = 0; i <= boundary; ++i) {
+        AppendLocalBarrierTestOp(ps, *leaf, {PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED});
+    }
+    for (size_t i = 0; i <= boundary; ++i) {
+        const auto consumer = AppendLocalBarrierTestOp(ps, *leaf, {PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0});
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[i], ps.depOps_[consumer]), SUCCESS);
+    }
+    std::vector<IndexOp> synced;
+    for (size_t i = 0; i < boundary; ++i) {
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+    }
+    ASSERT_FALSE(synced.empty());
+    ASSERT_EQ(&synced.front().second.get(), ps.oriOpList_.front());
+    synced.erase(synced.begin());
+    const auto prefixSize = synced.size();
+    EXPECT_EQ(ps.EnsureCrossCoreCapacity(*leaf, boundary, synced), FAILED);
+    EXPECT_EQ(synced.size(), prefixSize);
+    EXPECT_EQ(ps.NoWaitCVPairs_.size(), boundary);
+    EXPECT_TRUE(ps.forceSyncOps_.empty());
+}
+
+TEST_F(InsertSyncTest, A5RejectsEmptyCrossCoreDrain)
+{
+    auto [root, leaf] = SetupDebugFunc("A5EmptyCrossCoreDrain");
+    PipeSync ps;
+    AppendLocalBarrierTestOp(ps, *leaf, {PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED});
+    const std::vector<IndexOp> synced{{0, std::ref(*ps.oriOpList_.front())}};
+    EXPECT_EQ(ps.RecordCrossCoreDrain(1, synced, {}), FAILED);
+    EXPECT_TRUE(ps.reclaimBarriers_.empty());
+}
+
+TEST_F(InsertSyncTest, A5ExhaustionWithBatchedIssuingAndFuturePassiveOperations)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    for (auto vector : {AIVCore::AIV0, AIVCore::AIV1}) {
+        auto [root, leaf] = SetupDebugFunc("A5ProductionExhaustion");
+        IRBuilder builder;
+        std::vector<Operation*> producers;
+        for (size_t i = 0; i < 17; ++i) {
+            producers.push_back(&builder.CreateTensorOpStmt(*leaf, Opcode::OP_L1_TO_L0A, {}, {}));
+        }
+        auto& futureNop = builder.CreateTensorOpStmt(*leaf, Opcode::OP_NOP, {}, {});
+        auto& futureView = builder.CreateTensorOpStmt(*leaf, Opcode::OP_VIEW, {}, {});
+        for (size_t i = 0; i < producers.size(); ++i) {
+            auto& consumer = builder.CreateTensorOpStmt(*leaf, Opcode::OP_CAST, {}, {});
+            consumer.SetAIVCore(vector);
+            auto token = builder.CreateTokenVar(ir::Span::Unknown());
+            producers[i]->result_token_ = {token};
+            consumer.tokens_.push_back(token);
+            auto& dependencies = leaf->GetVarDependency();
+            dependencies.AddProducer(token, std::static_pointer_cast<const ir::Stmt>(leaf->operations_[i]));
+            dependencies.AddConsumer(token, std::static_pointer_cast<const ir::Stmt>(leaf->operations_.back()));
+        }
+        PipeSync ps;
+        std::vector<Operation*> synced;
+        ASSERT_EQ(ps.InsertSync(*leaf, synced), SUCCESS);
+        EXPECT_EQ(ps.forceSyncOps_.size(), 6U);
+        EXPECT_EQ(std::count(synced.begin(), synced.end(), &futureNop), 1);
+        EXPECT_EQ(std::count(synced.begin(), synced.end(), &futureView), 1);
+        EXPECT_TRUE(ps.NoWaitCVPairs_.empty());
+        auto boundary = std::find(synced.begin(), synced.end(), producers.back());
+        ASSERT_NE(boundary, synced.end());
+        for (auto* force : ps.forceSyncOps_) {
+            EXPECT_LT(std::find(synced.begin(), synced.end(), force), boundary);
+        }
+    }
+}
+
+TEST_F(InsertSyncTest, A5LegacyFallbackPrecedesCurrentInputWaits)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5LegacyBoundary");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+    const PipeSync::PipeCore vector(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    AppendLocalBarrierTestOp(ps, *leaf, cube);
+    AppendLocalBarrierTestOp(ps, *leaf, {PIPE_MTE1, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED});
+    AppendLocalBarrierTestOp(ps, *leaf, vector);
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[1]), SUCCESS);
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[1], ps.depOps_[2]), SUCCESS);
+    std::vector<IndexOp> synced;
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 0, synced), SUCCESS);
+    // No occupied slot has a known sender, so the local protocol cannot use an existing ID.
+    ps.crossCoreFreeEventId_[{PIPE_FIX, CoreType::AIC}][0].clear();
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 1, synced), SUCCESS);
+    EXPECT_EQ(ps.forceSyncOps_.size(), 12U);
+    size_t legacySets = 0;
+    for (const auto& entry : synced) {
+        auto& op = entry.second.get();
+        legacySets += op.GetOpcode() == Opcode::OP_FFTS_CROSS_CORE_SYNC;
+        if (ps.forceSyncOps_.count(&op) != 0) {
+            EXPECT_LT(entry.first, SEQUENCE_IDX - HALF_SEQUENCE_IDX);
+        } else if (op.GetOpcode() == Opcode::OP_SYNC_DST) {
+            EXPECT_GT(entry.first, SEQUENCE_IDX - HALF_SEQUENCE_IDX);
+        }
+    }
+    EXPECT_EQ(legacySets, 3U);
+    EXPECT_EQ(ps.NoWaitCVPairs_.size(), 1U);
+}
+
+TEST_F(InsertSyncTest, A5AllocationFailureDoesNotDrainCommittedOutputs)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5ReservationFailure");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+    const PipeSync::PipeCore vector(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    for (size_t i = 0; i < 16; ++i) {
+        AppendLocalBarrierTestOp(ps, *leaf, cube);
+    }
+    for (size_t i = 0; i < 16; ++i) {
+        const auto consumer = AppendLocalBarrierTestOp(ps, *leaf, vector);
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[i], ps.depOps_[consumer]), SUCCESS);
+    }
+    std::vector<IndexOp> synced;
+    for (size_t i = 0; i < 16; ++i) {
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+    }
+    const auto emitted = synced.size();
+    const auto pending = ps.NoWaitCVPairs_;
+    const auto pairMap = ps.setWaitPairMap_;
+    // Simulate a broken reservation after emission; allocation must not cancel prior outputs.
+    int eventId = -1;
+    EXPECT_EQ(ps.GetEventId({{PIPE_FIX, CoreType::AIC}, {PIPE_MTE2, CoreType::AIV, AIVCore::AIV0}}, eventId, 15, 31,
+                            synced, *leaf),
+              FAILED);
+    EXPECT_EQ(synced.size(), emitted);
+    EXPECT_EQ(ps.NoWaitCVPairs_, pending);
+    EXPECT_EQ(ps.setWaitPairMap_, pairMap);
+    EXPECT_TRUE(ps.forceSyncOps_.empty());
+}
+
+TEST_F(InsertSyncTest, A5CrossCoreReuseFollowsConsumedBidirectionalChain)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    for (auto vector : {AIVCore::AIV0, AIVCore::AIV1}) {
+        auto [root, leaf] = SetupDebugFunc("A5ConsumedCrossCoreChain");
+        PipeSync ps;
+        ps.InitCVEventIdQ();
+        const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+        const PipeSync::PipeCore vec(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, vector);
+        constexpr size_t count = 40;
+        for (size_t i = 0; i < count; ++i) {
+            AppendLocalBarrierTestOp(ps, *leaf, i % 2 == 0 ? cube : vec);
+            if (i != 0) {
+                ASSERT_EQ(ps.AddOpDep(ps.depOps_[i - 1], ps.depOps_[i]), SUCCESS);
+            }
+        }
+        std::vector<IndexOp> synced;
+        for (size_t i = 0; i < count; ++i) {
+            ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+        }
+        EXPECT_TRUE(ps.forceSyncOps_.empty());
+        EXPECT_TRUE(ps.NoWaitCVPairs_.empty());
+        EXPECT_EQ(std::count_if(
+                      synced.begin(), synced.end(),
+                      [](const IndexOp& entry) { return entry.second.get().GetOpcode() == Opcode::OP_CV_SYNC_SRC; }),
+                  count - 1);
+        // A physical slot is shared by both directions; reuse needs its previous wait.
+        EXPECT_EQ(ps.setWaitPairMap_.at({0, 1}), ps.setWaitPairMap_.at({16, 17}));
+    }
+}
+
+TEST_F(InsertSyncTest, A5CrossCoreSnapshotDoesNotObserveLaterSenderWaits)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5FrozenCrossCoreProof");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+    const PipeSync::PipeCore vec(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    for (const auto& pipe : {vec, cube, vec, cube}) {
+        AppendLocalBarrierTestOp(ps, *leaf, pipe);
+    }
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[3]), SUCCESS);
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[1], ps.depOps_[2]), SUCCESS);
+    std::vector<IndexOp> synced;
+    for (size_t i = 0; i < 3; ++i) {
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+    }
+    const auto laterId = ps.setWaitPairMap_.at({1, 2});
+    const PipeSync::PipeCoreRealEx vectorPipe(PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCoreRealEx cubePipe(PIPE_FIX, CoreType::AIC);
+    EXPECT_EQ(ps.crossCoreConsumed_[vectorPipe][laterId], 1U);
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 3, synced), SUCCESS);
+    EXPECT_EQ(ps.crossCoreConsumed_[cubePipe][laterId], 0U);
+    EXPECT_TRUE(ps.crossCoreSnapshots_.empty());
+}
+
+TEST_F(InsertSyncTest, A5CrossCoreOldGenerationAndOtherPipesCannotAuthorizeReuse)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5CrossCoreGeneration");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+    const PipeSync::PipeCore vec(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCore vectorAlu(PIPE_V, PIPE_V, CoreType::AIV, AIVCore::AIV0);
+    for (const auto& pipe : {cube, vec, vectorAlu, cube}) {
+        AppendLocalBarrierTestOp(ps, *leaf, pipe);
+    }
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[1]), SUCCESS);
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[1], ps.depOps_[2]), SUCCESS);
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[1], ps.depOps_[3]), SUCCESS);
+    const PipeSync::PipeCoreRealEx vectorPipe(PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCoreRealEx aluPipe(PIPE_V, CoreType::AIV, AIVCore::AIV0);
+    ps.freeEventId_[{vectorPipe, aluPipe}] = {1};
+    std::vector<IndexOp> synced;
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 0, synced), SUCCESS);
+    // Select the consumed slot so that the earlier intra-core set carries its old generation.
+    ps.crossCoreFreeEventId_[vectorPipe][0] = {0};
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 1, synced), SUCCESS);
+    EXPECT_EQ(ps.setWaitPairMap_.at({1, 3}), 0);
+    EXPECT_EQ(ps.crossCoreGenerations_[0], 2U);
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 2, synced), SUCCESS);
+    EXPECT_EQ(ps.crossCoreConsumed_[aluPipe][0], 1U);
+    EXPECT_FALSE(ps.CanReuseCrossCoreEventId(0, ps.crossCoreConsumed_[aluPipe]));
+    EXPECT_FALSE(ps.CanReuseCrossCoreEventId(0, ps.crossCoreConsumed_[vectorPipe]));
+    const PipeSync::PipeCoreRealEx otherVector(PIPE_MTE2, CoreType::AIV, AIVCore::AIV1);
+    EXPECT_FALSE(ps.CanReuseCrossCoreEventId(0, ps.crossCoreConsumed_[otherVector]));
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 3, synced), SUCCESS);
+    EXPECT_TRUE(ps.CanReuseCrossCoreEventId(0, ps.crossCoreConsumed_[{PIPE_FIX, CoreType::AIC}]));
+    EXPECT_TRUE(ps.crossCoreSnapshots_.empty());
+}
+
+TEST_F(InsertSyncTest, A5CrossCoreInputProofDoesNotCrossMultiPipeOperation)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5CrossCoreMultiPipeProof");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+    const PipeSync::PipeCore vec(PIPE_MTE2, PIPE_MTE3, CoreType::AIV, AIVCore::AIV0);
+    AppendLocalBarrierTestOp(ps, *leaf, cube);
+    AppendLocalBarrierTestOp(ps, *leaf, vec);
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[1]), SUCCESS);
+    std::vector<IndexOp> synced;
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 0, synced), SUCCESS);
+    EXPECT_EQ(ps.ProjectCrossCoreConsumption(1)[0], 0U);
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 1, synced), SUCCESS);
+    const PipeSync::PipeCoreRealEx entry(PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    EXPECT_EQ(ps.crossCoreConsumed_[entry][0], 1U);
+    EXPECT_EQ(ps.ProjectCrossCoreConsumption(1)[0], 0U);
+}
+
+TEST_F(InsertSyncTest, A5CrossCoreConsumptionPropagatesThroughRealIntraCoreSync)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5CrossCoreIntraTransport");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+    const PipeSync::PipeCore vec(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCore alu(PIPE_V, PIPE_V, CoreType::AIV, AIVCore::AIV0);
+    for (const auto& pipe : {cube, vec, alu, cube}) {
+        const auto i = AppendLocalBarrierTestOp(ps, *leaf, pipe);
+        if (i != 0) {
+            ASSERT_EQ(ps.AddOpDep(ps.depOps_[i - 1], ps.depOps_[i]), SUCCESS);
+        }
+    }
+    const PipeSync::PipeCoreRealEx entry(PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCoreRealEx source(PIPE_V, CoreType::AIV, AIVCore::AIV0);
+    ps.freeEventId_[{entry, source}] = {1};
+    std::vector<IndexOp> synced;
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 0, synced), SUCCESS);
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 1, synced), SUCCESS);
+    ps.crossCoreFreeEventId_[source][0] = {0};
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 2, synced), SUCCESS);
+    EXPECT_EQ(ps.setWaitPairMap_.at({2, 3}), ps.setWaitPairMap_.at({0, 1}));
+    EXPECT_EQ(ps.crossCoreGenerations_[0], 2U);
+    EXPECT_TRUE(ps.forceSyncOps_.empty());
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 3, synced), SUCCESS);
+    EXPECT_TRUE(ps.crossCoreSnapshots_.empty());
+}
+
+TEST_F(InsertSyncTest, A5CrossCoreProofIsNotRecreatedAfterDependencyMerge)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5MergedCrossCoreProof");
+    PipeSync ps;
+    const PipeSync::PipeCore producer(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCore consumer(PIPE_V, PIPE_V, CoreType::AIV, AIVCore::AIV0);
+    for (const auto& pipe : {producer, producer, consumer, consumer}) {
+        AppendLocalBarrierTestOp(ps, *leaf, pipe);
+    }
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[2]), SUCCESS);
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[1], ps.depOps_[3]), SUCCESS);
+    const PipeSync::PipeCoreRealEx source(PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCoreRealEx target(PIPE_V, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipePairEx pair{source, target};
+    ps.freeEventId_[pair] = {1, 2};
+    ps.crossCoreConsumed_[source][0] = 1;
+    std::vector<IndexOp> synced;
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 0, synced), SUCCESS);
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 1, synced), SUCCESS);
+    PipeSync::DataDepInfo dependencies;
+    dependencies.opDepList = {{0, 2}, {1, 3}};
+    dependencies.setOpEventIdList = {1, 2};
+    for (size_t i = 0; i < synced.size(); ++i) {
+        if (synced[i].second.get().GetOpcode() == Opcode::OP_SYNC_SRC) {
+            dependencies.setOpIdList.push_back(i);
+        }
+    }
+    ASSERT_EQ(dependencies.setOpIdList.size(), 2U);
+    ASSERT_EQ(ps.SynDependency(0, dependencies, pair, synced), SUCCESS);
+    EXPECT_TRUE(ps.crossCoreSnapshots_.empty());
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 2, synced), SUCCESS);
+    EXPECT_EQ(ps.crossCoreConsumed_[target][0], 0U);
+}
+
+TEST_F(InsertSyncTest, A5CrossCoreBarrierRechecksProofLostByCancelledInputWait)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5CrossCoreCancelledProjection");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+    const PipeSync::PipeCore current(PIPE_M, PIPE_M, CoreType::AIC, AIVCore::UNSPECIFIED);
+    const PipeSync::PipeCore vec0(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCore vec1(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV1);
+    for (const auto& pipe : {cube, vec1, cube, vec0}) {
+        const auto i = AppendLocalBarrierTestOp(ps, *leaf, pipe);
+        if (i != 0) {
+            ASSERT_EQ(ps.AddOpDep(ps.depOps_[i - 1], ps.depOps_[i]), SUCCESS);
+        }
+    }
+    for (size_t i = 0; i < 15; ++i) {
+        AppendLocalBarrierTestOp(ps, *leaf, current);
+    }
+    constexpr size_t boundary = 18;
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[3], ps.depOps_[boundary]), SUCCESS);
+    for (size_t i = 4; i < boundary; ++i) {
+        for (const auto& vector : {vec0, vec1}) {
+            const auto consumer = AppendLocalBarrierTestOp(ps, *leaf, vector);
+            ASSERT_EQ(ps.AddOpDep(ps.depOps_[i], ps.depOps_[consumer]), SUCCESS);
+        }
+    }
+    // The input wait projects two reusable IDs per pool. Only pool 0 is short initially.
+    const PipeSync::PipeCore vecAlu(PIPE_V, PIPE_V, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCore vecStore(PIPE_MTE3, PIPE_MTE3, CoreType::AIV, AIVCore::AIV0);
+    for (const auto& vector : {vec0, vecAlu, vecStore, vec1}) {
+        const auto consumer = AppendLocalBarrierTestOp(ps, *leaf, vector);
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[boundary], ps.depOps_[consumer]), SUCCESS);
+    }
+    std::vector<IndexOp> synced;
+    for (size_t i = 0; i < boundary; ++i) {
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+    }
+    EXPECT_TRUE(ps.forceSyncOps_.empty());
+    const auto projected = ps.ProjectCrossCoreConsumption(boundary);
+    EXPECT_EQ(projected[16], 1U);
+    EXPECT_EQ(projected[17], 1U);
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, boundary, synced), SUCCESS);
+    EXPECT_EQ(ps.forceSyncOps_.size(), 12U);
+    EXPECT_TRUE(ps.depOps_[boundary].waitPipe.empty());
+    EXPECT_EQ(ps.NoWaitCVPairs_.size(), 4U);
+    for (auto* op : ps.forceSyncOps_) {
+        EXPECT_NE(op->GetOpcode(), Opcode::OP_FFTS_CROSS_CORE_SYNC);
+    }
+}
+
+TEST_F(InsertSyncTest, A5CrossCoreReuseSurvivesAtomicScopeAndVFTuning)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5CrossCoreFinalSyncOrder");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const PipeSync::PipeCore cube(PIPE_MTE1, PIPE_MTE1, CoreType::AIC, AIVCore::UNSPECIFIED);
+    const PipeSync::PipeCore vector(PIPE_V, PIPE_V, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCore load(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCoreRealEx loadPipe(PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCoreRealEx vectorPipe(PIPE_V, CoreType::AIV, AIVCore::AIV0);
+    ps.freeEventId_[{loadPipe, vectorPipe}] = {1, 2, 3, 4, 5, 6, 7};
+    constexpr size_t groups = 20;
+    for (size_t group = 0; group < groups; ++group) {
+        const auto producer = AppendLocalBarrierTestOp(ps, *leaf, cube);
+        ps.oriOpList_[producer]->SetOpCode(Opcode::OP_L1_TO_L0A);
+        const auto transport = AppendLocalBarrierTestOp(ps, *leaf, load);
+        ps.oriOpList_[transport]->SetOpCode(Opcode::OP_TRANSPOSE_MOVEIN);
+        const auto consumer = AppendLocalBarrierTestOp(ps, *leaf, vector);
+        const auto nextVector = AppendLocalBarrierTestOp(ps, *leaf, vector);
+        ps.oriOpList_[consumer]->SetAtomicScopeId(VF_SCOPE_A + group);
+        ps.oriOpList_[nextVector]->SetAtomicScopeId(VF_SCOPE_A + group);
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[producer], ps.depOps_[transport]), SUCCESS);
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[transport], ps.depOps_[consumer]), SUCCESS);
+        if (group != 0) {
+            ASSERT_EQ(ps.AddOpDep(ps.depOps_[consumer - 4], ps.depOps_[producer]), SUCCESS);
+        }
+    }
+    std::vector<IndexOp> synced;
+    for (size_t i = 0; i < ps.oriOpList_.size(); ++i) {
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+    }
+    EXPECT_TRUE(ps.forceSyncOps_.empty());
+    EXPECT_GT(ps.crossCoreGenerations_[0], 1U);
+    std::sort(synced.begin(), synced.end(), [](const IndexOp& a, const IndexOp& b) { return a.first < b.first; });
+    std::vector<Operation*> finalOps;
+    for (const auto& entry : synced) {
+        finalOps.push_back(&entry.second.get());
+    }
+    InsertSync syncPass;
+    ASSERT_EQ(syncPass.AdjustSyncByAtomicScope(finalOps, ps.forceSyncOps_), SUCCESS);
+    leaf->setOpMap = ps.setOpMap;
+    leaf->waitOpMap = ps.waitOpMap;
+    leaf->oriOpList = ps.oriOpList_;
+    TuneSyncForVF tune;
+    tune.opList_ = finalOps;
+    tune.GenPipeOpMap(leaf.get());
+    ASSERT_EQ(tune.ChangeOpSeq(leaf.get(), false), SUCCESS);
+    std::array<bool, 32> active{};
+    size_t sets = 0;
+    for (auto* op : tune.opList_) {
+        if (op->GetOpcode() == Opcode::OP_CV_SYNC_SRC) {
+            EXPECT_FALSE(active[op->syncQueue_.eventId_]);
+            active[op->syncQueue_.eventId_] = true;
+            ++sets;
+        } else if (op->GetOpcode() == Opcode::OP_CV_SYNC_DST) {
+            EXPECT_TRUE(active[op->syncQueue_.eventId_]);
+            active[op->syncQueue_.eventId_] = false;
+        }
+    }
+    EXPECT_EQ(sets, groups * 2 - 1);
+    EXPECT_TRUE(std::none_of(active.begin(), active.end(), [](bool value) { return value; }));
+    for (size_t group = 0; group < groups; ++group) {
+        Operation* transportSet = nullptr;
+        Operation* transportWait = nullptr;
+        Operation* crossSet = nullptr;
+        for (auto* op : tune.opList_) {
+            if (op->GetOpcode() == Opcode::OP_SYNC_SRC && ps.setOpMap.at(op) == ps.oriOpList_[group * 4 + 2]) {
+                transportSet = op;
+            } else if (op->GetOpcode() == Opcode::OP_SYNC_DST && ps.waitOpMap.at(op) == ps.oriOpList_[group * 4 + 1]) {
+                transportWait = op;
+            } else if (group + 1 < groups && op->GetOpcode() == Opcode::OP_CV_SYNC_SRC &&
+                       ps.setOpMap.at(op) == ps.oriOpList_[(group + 1) * 4]) {
+                crossSet = op;
+            }
+        }
+        ASSERT_NE(transportSet, nullptr);
+        ASSERT_NE(transportWait, nullptr);
+        const auto setPosition = std::find(tune.opList_.begin(), tune.opList_.end(), transportSet);
+        const auto waitPosition = std::find(tune.opList_.begin(), tune.opList_.end(), transportWait);
+        EXPECT_LT(setPosition, waitPosition);
+        if (group + 1 < groups) {
+            ASSERT_NE(crossSet, nullptr);
+            EXPECT_LT(waitPosition, std::find(tune.opList_.begin(), tune.opList_.end(), crossSet));
+        }
+    }
+}
+
+TEST_F(InsertSyncTest, A5CrossCoreBarrierPreservesIntraCapacityAfterCancellingInput)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    for (bool globalFallback : {false, true}) {
+        auto [root, leaf] = SetupDebugFunc("A5CrossCoreBarrierIntraCapacity");
+        PipeSync ps;
+        ps.InitCVEventIdQ();
+        const PipeSync::PipeCore cube(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+        const PipeSync::PipeCore math(PIPE_M, PIPE_M, CoreType::AIC, AIVCore::UNSPECIFIED);
+        const PipeSync::PipeCore vector(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+        const PipeSync::PipePairEx intra{{PIPE_M, CoreType::AIC}, {PIPE_FIX, CoreType::AIC}};
+        for (size_t i = 0; i < 7; ++i) {
+            AddEventTestDependency(ps, *leaf, intra);
+        }
+        const auto transport = AppendLocalBarrierTestOp(ps, *leaf, cube);
+        const auto returnSet = AppendLocalBarrierTestOp(ps, *leaf, vector);
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[transport], ps.depOps_[returnSet]), SUCCESS);
+        std::vector<size_t> pending;
+        for (size_t i = 0; i < 14; ++i) {
+            pending.push_back(AppendLocalBarrierTestOp(ps, *leaf, cube));
+        }
+        const auto boundary = AppendLocalBarrierTestOp(ps, *leaf, math);
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[returnSet], ps.depOps_[boundary]), SUCCESS);
+        for (auto producer : pending) {
+            const auto consumer = AppendLocalBarrierTestOp(ps, *leaf, vector);
+            ASSERT_EQ(ps.AddOpDep(ps.depOps_[producer], ps.depOps_[consumer]), SUCCESS);
+        }
+        for (const auto& target : {cube, vector, PipeSync::PipeCore(PIPE_V, PIPE_V, CoreType::AIV, AIVCore::AIV0),
+                                   PipeSync::PipeCore(PIPE_MTE3, PIPE_MTE3, CoreType::AIV, AIVCore::AIV0)}) {
+            const auto consumer = AppendLocalBarrierTestOp(ps, *leaf, target);
+            ASSERT_EQ(ps.AddOpDep(ps.depOps_[boundary], ps.depOps_[consumer]), SUCCESS);
+        }
+        std::vector<IndexOp> synced;
+        for (size_t i = 0; i < boundary; ++i) {
+            ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+        }
+        EXPECT_FALSE(ps.AnalyzeIntraEventCapacity(ps.depOps_[boundary]).has_value());
+        EXPECT_TRUE(ps.forceSyncOps_.empty());
+        if (globalFallback) {
+            // A handshake requires two fresh generations; force the legacy fallback.
+            ps.crossCoreGenerations_.fill(std::numeric_limits<uint64_t>::max() - 1);
+        }
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, boundary, synced), SUCCESS);
+        EXPECT_TRUE(ps.depOps_[boundary].waitPipe.empty());
+        EXPECT_EQ(ps.forceSyncOps_.size(), globalFallback ? 12U : 6U);
+        EXPECT_EQ(ps.eventState_.Find(returnSet, boundary), nullptr);
+        for (size_t i = boundary + 1; i < ps.oriOpList_.size(); ++i) {
+            ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+        }
+        std::sort(synced.begin(), synced.end(), [](const IndexOp& a, const IndexOp& b) { return a.first < b.first; });
+        std::vector<Operation*> ordered;
+        for (const auto& entry : synced) {
+            ordered.push_back(&entry.second.get());
+        }
+        EXPECT_EQ(ps.ValidateEventReuse(ordered), SUCCESS);
+    }
+}
+
+TEST_F(InsertSyncTest, A5ReplayDropsCrossCoreProofsAndSlotOccupancy)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5CrossCoreReplayReset");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    AppendLocalBarrierTestOp(ps, *leaf, {PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED});
+    AppendLocalBarrierTestOp(ps, *leaf, {PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0});
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[1]), SUCCESS);
+    const auto plan = ps.depOps_;
+    std::vector<IndexOp> synced;
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 0, synced), SUCCESS);
+    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 1, synced), SUCCESS);
+    ASSERT_TRUE(ps.crossCoreEventSenders_[0].has_value());
+    ASSERT_FALSE(ps.crossCoreConsumed_.empty());
+    ps.ResetForReplay(plan, {}, {});
+    EXPECT_TRUE(ps.crossCoreConsumed_.empty());
+    EXPECT_TRUE(ps.crossCoreSnapshots_.empty());
+    EXPECT_TRUE(std::all_of(ps.crossCoreGenerations_.begin(), ps.crossCoreGenerations_.end(),
+                            [](uint64_t generation) { return generation == 0; }));
+    EXPECT_TRUE(std::none_of(ps.crossCoreEventSenders_.begin(), ps.crossCoreEventSenders_.end(),
+                             [](const auto& sender) { return sender.has_value(); }));
+}
+
+TEST_F(InsertSyncTest, A5CrossCoreDrainPreservesPendingIntraAndOtherCore)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto [root, leaf] = SetupDebugFunc("A5CrossCoreDrainScope");
+    PipeSync ps;
+    ps.InitCVEventIdQ();
+    const auto pending = AppendLocalBarrierTestOp(ps, *leaf,
+                                                  {PIPE_MTE1, PIPE_MTE1, CoreType::AIC, AIVCore::UNSPECIFIED});
+    const auto other = AddEventTestDependency(
+        ps, *leaf, {{PIPE_MTE2, CoreType::AIV, AIVCore::AIV1}, {PIPE_V, CoreType::AIV, AIVCore::AIV1}});
+    std::vector<size_t> producers;
+    for (size_t i = 0; i < 17; ++i) {
+        producers.push_back(
+            AppendLocalBarrierTestOp(ps, *leaf, {PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED}));
+    }
+    const auto consumer = AppendLocalBarrierTestOp(ps, *leaf, {PIPE_M, PIPE_M, CoreType::AIC, AIVCore::UNSPECIFIED});
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[pending], ps.depOps_[consumer]), SUCCESS);
+    for (auto producer : producers) {
+        const auto target = AppendLocalBarrierTestOp(ps, *leaf, {PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV0});
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[producer], ps.depOps_[target]), SUCCESS);
+    }
+    std::vector<IndexOp> synced;
+    for (size_t i = 0; i < consumer; ++i) {
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+    }
+    EXPECT_EQ(ps.forceSyncOps_.size(), 6U);
+    ASSERT_NE(ps.eventState_.Find(pending, consumer), nullptr);
+    EXPECT_EQ(ps.eventState_.Find(pending, consumer)->state, PipeSync::InstanceState::Allocated);
+    ASSERT_NE(ps.eventState_.Find(other.first, other.second), nullptr);
+    EXPECT_EQ(ps.eventState_.Find(other.first, other.second)->state, PipeSync::InstanceState::WaitInserted);
+    for (size_t i = consumer; i < ps.oriOpList_.size(); ++i) {
+        ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+    }
+    std::sort(synced.begin(), synced.end(), [](const IndexOp& a, const IndexOp& b) { return a.first < b.first; });
+    std::vector<Operation*> ordered;
+    for (const auto& entry : synced) {
+        ordered.push_back(&entry.second.get());
+    }
+    EXPECT_EQ(ps.ValidateEventReuse(ordered), SUCCESS);
+}
+
 #undef private
 
 } // namespace tile_fwk
