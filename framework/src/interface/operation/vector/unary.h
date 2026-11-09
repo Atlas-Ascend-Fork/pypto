@@ -195,7 +195,7 @@ int64_t MultiplyLastTwoDims(const std::vector<int64_t>& vec)
     constexpr size_t ELEMENT_SIZE = sizeof(T);
     constexpr size_t ALIGN_ELEMENTS = ALIGN_SIZE / ELEMENT_SIZE;
     int64_t axis2 = (vec[vec.size() - 1] + ALIGN_ELEMENTS - 1) / ALIGN_ELEMENTS * ALIGN_ELEMENTS;
-    return axis2 * vec[vec.size() - NUM_VALUE_2];
+    return vec.size() <= 1 ? axis2 : axis2 * vec[vec.size() - NUM_VALUE_2];
 }
 
 template <UnaryOpType T>

@@ -35,6 +35,25 @@ struct SignOpMetaData {
     nlohmann::json test_data_;
 };
 
+static void SignOperationExeFunc1Dim(const std::vector<Tensor>& inputs, std::vector<Tensor>& outputs,
+                                     const OpFuncArgs* opArgs)
+{
+    FUNCTION("main", {inputs[0]}, {outputs[0]})
+    {
+        SymbolicScalar dim = inputs[0].GetShape()[0];
+        const auto* args = static_cast<const SignOpFuncArgs*>(opArgs);
+        const int viewShape = args->viewShape_[0];
+        LOOP("LOOP_L0_bIdx", FunctionType::DYNAMIC_LOOP, bIdx, LoopRange(0, CeilDiv(dim, viewShape), 1))
+        {
+            auto tileTensor = View(inputs[0], {viewShape}, {std::min(dim - bIdx * viewShape, viewShape)},
+                                   {bIdx * viewShape});
+            TileShape::Current().SetVecTile(args->tileShape_);
+            auto res = Sign(tileTensor);
+            Assemble(res, {bIdx * viewShape}, outputs[0]);
+        }
+    }
+}
+
 static void SignOperationExeFunc2Dims(const std::vector<Tensor>& inputs, std::vector<Tensor>& outputs,
                                       const OpFuncArgs* opArgs)
 {
@@ -151,10 +170,11 @@ static void SignOperationExeFunc4Dims(const std::vector<Tensor>& inputs, std::ve
 
 class SignOperationTest : public npu::tile_fwk::stest::TestSuite_STest_Ops_Aihac_param<SignOpMetaData> {};
 
-INSTANTIATE_TEST_SUITE_P(TestSign, SignOperationTest,
-                         ::testing::ValuesIn(GetOpMetaData<SignOpMetaData>(
-                             {SignOperationExeFunc2Dims, SignOperationExeFunc3Dims, SignOperationExeFunc4Dims},
-                             "Sign")));
+INSTANTIATE_TEST_SUITE_P(
+    TestSign, SignOperationTest,
+    ::testing::ValuesIn(GetOpMetaData<SignOpMetaData, 1>({SignOperationExeFunc1Dim, SignOperationExeFunc2Dims,
+                                                          SignOperationExeFunc3Dims, SignOperationExeFunc4Dims},
+                                                         "Sign")));
 
 TEST_P(SignOperationTest, TestSign)
 {

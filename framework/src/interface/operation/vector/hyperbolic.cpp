@@ -29,7 +29,7 @@ int64_t CmpResAlign(const std::vector<int64_t>& vec)
     constexpr size_t ALIGN_BIT = NUM_VALUE_8;
     int64_t axis2 = (vec[vec.size() - 1] + ALIGN_BIT - 1) / ALIGN_BIT * ALIGN_BIT;
     axis2 = (axis2 + ALIGN_SIZE - 1) / ALIGN_SIZE * ALIGN_SIZE;
-    return axis2 * vec[vec.size() - NUM_VALUE_2];
+    return vec.size() <= 1 ? axis2 : axis2 * vec[vec.size() - NUM_VALUE_2];
 }
 
 } // namespace
