@@ -692,7 +692,6 @@ void RootFunctionBuilder::BindExtraIncastStorage(Function* hiddenFunc, const Log
             if (hiddenInArgs[idx]->tensor == hiddenOutArgs[outIdx]->tensor) {
                 auto output = hiddenFunc->GetOutcast()[outIdx];
                 incast->tensor = output->tensor;
-                hiddenFunc->SetSameMemId(incast, output);
             }
         }
         program_.GetTensorSlotManager()->SetSameSlot(originalIncasts[idx], incast);
