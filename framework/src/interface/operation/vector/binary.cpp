@@ -352,6 +352,29 @@ int64_t GetOperationPrecisionType(const Operation& op)
     return static_cast<int64_t>(PrecisionType::INTRINSIC);
 }
 
+int64_t GetRemainderTmpCols(int64_t tileCols, DataType dtype, Opcode opcode, int64_t precisionType)
+{
+    const int64_t elementBytes = BytesOf(dtype);
+    const int64_t repeatCols = NUM_VALUE_256 / elementBytes;
+    const int64_t alignedCols = AlignUp(tileCols, repeatCols);
+    const int64_t maskBytes = (alignedCols + NUM_VALUE_8 - 1) / NUM_VALUE_8;
+    const int64_t legacyCols = alignedCols + AlignUp(maskBytes, NUM_VALUE_256) / elementBytes + repeatCols;
+    if (dtype != DT_FP32 || precisionType != static_cast<int64_t>(PrecisionType::HIGH_PRECISION) ||
+        Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_2201) {
+        return legacyCols;
+    }
+
+    // Match the A2/A3 pto-isa TREM and TREMS high-precision scratch layouts.
+    // One repeat needs an extra state vector. REMRS expands its dividend separately and calls TREM.
+    const int64_t vectorCount = std::max<int64_t>(1, tileCols / repeatCols);
+    const int64_t workVectors = opcode == Opcode::OP_REMS ? NUM_VALUE_2 : NUM_VALUE_3;
+    const int64_t maskCols = AlignUp(vectorCount * repeatCols / NUM_VALUE_8, BLOCK_SIZE) / elementBytes;
+    const int64_t addressCols = BLOCK_SIZE / elementBytes;
+    const int64_t stateCols = vectorCount == 1 ? repeatCols : 0;
+    const int64_t highPrecisionCols = workVectors * vectorCount * repeatCols + maskCols + addressCols + stateCols;
+    return std::max(legacyCols, highPrecisionCols);
+}
+
 REGISTER_OPERATION_TILED_FUNC(OP_ADD, Opcode::OP_ADD, BinaryOperationTileFunc<BinaryOpType::ADD>);
 REGISTER_OPERATION_TILED_FUNC(OP_SUB, Opcode::OP_SUB, BinaryOperationTileFunc<BinaryOpType::SUB>);
 REGISTER_OPERATION_TILED_FUNC(OP_MUL, Opcode::OP_MUL, BinaryOperationTileFunc<BinaryOpType::MUL>);

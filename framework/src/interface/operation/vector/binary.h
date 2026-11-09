@@ -231,6 +231,7 @@ void CheckBinOpOperandsValid(const LogicalTensorPtr& operand1, const LogicalTens
 void BinaryOperationOperandCheck(const std::vector<LogicalTensorPtr>& iOperand,
                                  const std::vector<LogicalTensorPtr>& oOperand);
 int64_t GetOperationPrecisionType(const Operation& op);
+int64_t GetRemainderTmpCols(int64_t tileCols, DataType dtype, Opcode opcode, int64_t precisionType);
 void BroadcastOperandTensor(LogicalTensorPtr& operand, LogicalTensorPtr& other, LogicalTensorPtr result,
                             Function& function, const TileShape& tileShape, std::vector<int64_t> dstShape = {});
 

@@ -48,11 +48,8 @@ void AddTiledBinaryOperation(Function& function, const TileShape& tileShape, Log
         op = &function.AddOperation(GetBinaryOpNameCode<T, false, false>(), {inputTile1, inputTile2},
                                     {resultTile, tempTensor});
     } else if (opName == "REM") {
-        int64_t alignSize = static_cast<int64_t>(NUM_VALUE_256 / BytesOf(result->Datatype()));
-        int64_t alignedLast = AlignUp(resultTileInfo.shape[shapeSize - 1], alignSize);
-        int64_t maskBytes = (alignedLast + NUM_VALUE_8 - 1) / NUM_VALUE_8;
-        int64_t maskFloats = AlignUp(maskBytes, NUM_VALUE_256) / static_cast<int64_t>(BytesOf(result->Datatype()));
-        int64_t tmpCols = alignedLast + maskFloats + alignSize;
+        int64_t tmpCols = GetRemainderTmpCols(resultTileInfo.shape[shapeSize - 1], result->Datatype(), Opcode::OP_REM,
+                                              precisionType);
         std::vector<int64_t> tmpShape{1, tmpCols};
         auto tmpTensor = std::make_shared<LogicalTensor>(function, result->Datatype(), tmpShape);
         op = &function.AddOperation(GetBinaryOpNameCode<T, false, false>(), {inputTile1, inputTile2},
