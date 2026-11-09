@@ -67,6 +67,7 @@ private:
 
     Status RunOnFunction(Function& function) override;
     void Init();
+    LogicalTensorPtr CreateSplitTensor(const LogicalTensorPtr& largeTensor, const Shape& shape, const Offset& offset);
     void EraseRedundantAssembleOp(Function& function);
     void RemoveOps(Function& function, std::vector<Operation*>& opList) const;
     void UpdateForRedundantAssemble(Operation& op);
@@ -140,6 +141,7 @@ private:
     std::unordered_set<int> mixedConsumerTensors_;
     IRBuilder irBuilder_;
     std::vector<Operation*> addedOps_;
+    std::map<LogicalTensorPtr, std::vector<SymbolicScalar>> splitValidShapes_;
 
     std::string idx;
 };

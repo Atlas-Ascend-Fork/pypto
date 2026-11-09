@@ -966,7 +966,8 @@ TEST_F(SplitLargeFanoutTensorTest, MtoM)
             auto input = op.GetIOperands().front();
             auto inputDynShape = input->GetDynValidShape();
             EXPECT_EQ(inputDynShape.size(), NUM_2);
-            EXPECT_EQ(inputDynShape[0].Dump(), "RUNTIME_Max(c, RUNTIME_Max(((c+64)*(c!=0)), 0))");
+            // The split extent follows the original large tensor, not the incoming writes.
+            EXPECT_EQ(inputDynShape[0].Concrete(), 128);
         }
     }
 }
@@ -1273,7 +1274,8 @@ TEST_F(SplitLargeFanoutTensorTest, PerfectlyMatchWithAll_Full)
             auto input = op.GetIOperands().front();
             auto inputDynShape = input->GetDynValidShape();
             EXPECT_EQ(inputDynShape.size(), NUM_2);
-            EXPECT_EQ(inputDynShape[0].Dump(), "RUNTIME_Max(a, RUNTIME_Max(((a+8)*(a!=0)), 0))");
+            // The split extent follows the original large tensor, not the incoming writes.
+            EXPECT_EQ(inputDynShape[0].Concrete(), 16);
         }
     }
 }
@@ -2823,6 +2825,170 @@ TEST_F(SplitLargeFanoutTensorTest, DuplicateAssembleInputKeepsOriginalRead)
                     << "Undriven tensor " << input->GetMagic() << " consumed by " << op.GetOpMagic();
             }
         }
+    }
+}
+
+TEST_F(SplitLargeFanoutTensorTest, SplitValidShapeDoesNotGrowWithFanIn)
+{
+    const auto valid = CreateTestScalarVar("split_valid_cols");
+    const std::vector<SymbolicScalar> largeValid{1, valid};
+    for (bool enableSlice : {false, true}) {
+        config::SetPassOption("enable_slice", enableSlice);
+        for (int64_t writesPerTile : {3, 63}) {
+            SCOPED_TRACE(::testing::Message() << "enableSlice=" << enableSlice << ", fanIn=" << writesPerTile);
+            ComputationalGraphBuilder graph;
+            AddTensorsWithDDR(graph, {{"large", {1, 252}}, {"head", {1, 63}}, {"tail", {1, 63}}});
+            auto large = graph.GetTensor("large");
+            large->UpdateDynValidShape(largeValid);
+            std::vector<std::string> inputs;
+            const int64_t inputCols = 126 / writesPerTile;
+            for (int64_t i = 0; i < writesPerTile * 2; ++i) {
+                auto name = "input_" + std::to_string(i);
+                AddTensorsWithDDR(graph, {{name, {1, inputCols}}});
+                auto input = graph.GetTensor(name);
+                input->UpdateDynValidShape(GetViewValidShape(largeValid, {0, i * inputCols}, {}, input->GetShape()));
+                graph.AddOp(enableSlice ? Opcode::OP_CONTRACT : Opcode::OP_ASSEMBLE, {name}, {"large"}, name);
+                graph.GetOp(name)->SetOpAttribute(
+                    std::make_shared<AssembleOpAttribute>(MemoryType::MEM_DEVICE_DDR, Offset{0, i * inputCols}));
+                inputs.push_back(name);
+            }
+            for (const auto& [name, offset] :
+                 std::vector<std::pair<std::string, Offset>>{{"head", {0, 0}}, {"tail", {0, 126}}}) {
+                graph.AddOp(enableSlice ? Opcode::OP_SLICE : Opcode::OP_VIEW, {"large"}, {name}, name);
+                auto shape = GetViewValidShape(largeValid, offset, {}, {1, 63});
+                graph.GetOp(name)->SetOpAttribute(std::make_shared<ViewOpAttribute>(
+                    offset, MemoryType::MEM_DEVICE_DDR, std::vector<SymbolicScalar>{}, shape));
+                graph.GetTensor(name)->UpdateDynValidShape(shape);
+            }
+            graph.SetInCast(inputs);
+            graph.SetOutCast({"head", "tail"});
+            auto* function = graph.GetFunction();
+            SplitLargeFanoutTensor pass;
+            ASSERT_EQ(pass.PreCheck(*function), SUCCESS);
+            ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+            ASSERT_EQ(pass.PostCheck(*function), SUCCESS);
+            for (const auto& [name, offset] :
+                 std::vector<std::pair<std::string, Offset>>{{"head", {0, 0}}, {"tail", {0, 126}}}) {
+                const auto& producers = graph.GetTensor(name)->GetProducers();
+                ASSERT_EQ(producers.size(), 1U);
+                auto* read = *producers.begin();
+                ASSERT_TRUE(IsViewLike(read->GetOpcode()));
+                auto tensor = read->GetIOperands().front();
+                ASSERT_NE(tensor, large);
+                ASSERT_EQ(tensor->GetShape(), (Shape{1, 126}));
+                ASSERT_EQ(tensor->GetDynValidShape().size(), 2U);
+                auto attr = std::dynamic_pointer_cast<ViewOpAttribute>(read->GetOpAttribute());
+                ASSERT_NE(attr, nullptr);
+                // Candidate tiles can start before the read; recover their original coordinates.
+                Offset tileOffset = offset;
+                for (size_t dim = 0; dim < tileOffset.size(); ++dim) {
+                    tileOffset[dim] -= attr->GetFromOffset()[dim];
+                }
+                auto expected = GetViewValidShape(largeValid, tileOffset, {}, tensor->GetShape());
+                EXPECT_EQ(tensor->GetDynValidShape()[1].Dump(), expected[1].Dump());
+                for (int64_t cols : {0, 1, 62, 63, 125, 126, 127, 251, 252}) {
+                    SymbolicClosure values;
+                    values.Insert(valid.Raw()->GetSymbolName(), cols);
+                    EXPECT_EQ(values.Evaluate(tensor->GetDynValidShape()[1]),
+                              std::min<int64_t>(std::max<int64_t>(cols - tileOffset[1], 0), 126));
+                }
+            }
+        }
+    }
+}
+
+TEST_F(SplitLargeFanoutTensorTest, CreateSplitTensorClipsStaticTailAndEmptyRegions)
+{
+    ComputationalGraphBuilder graph;
+    AddTensorsWithDDR(graph, {{"large", {16, 16}}});
+    auto large = graph.GetTensor("large");
+    large->UpdateDynValidShape({10, 13});
+    SplitLargeFanoutTensor pass;
+    auto tail = pass.CreateSplitTensor(large, {8, 8}, {8, 8});
+    EXPECT_EQ(tail->GetDynValidShape()[0].Concrete(), 2);
+    EXPECT_EQ(tail->GetDynValidShape()[1].Concrete(), 5);
+    auto empty = pass.CreateSplitTensor(large, {4, 4}, {12, 12});
+    EXPECT_EQ(empty->GetDynValidShape()[0].Concrete(), 0);
+    EXPECT_EQ(empty->GetDynValidShape()[1].Concrete(), 1);
+    pass.Init();
+    EXPECT_TRUE(pass.splitValidShapes_.empty());
+}
+
+TEST_F(SplitLargeFanoutTensorTest, OneToMFanoutUsesLargeTensorValidShape)
+{
+    const std::vector<SymbolicScalar> largeValid{CreateTestScalarVar("split_fanout_valid")};
+    for (bool enableSlice : {false, true}) {
+        config::SetPassOption("enable_slice", enableSlice);
+        ComputationalGraphBuilder graph;
+        AddTensorsWithDDR(graph, {{"input", {16}}, {"large", {32}}, {"left", {8}}, {"right", {8}}});
+        auto large = graph.GetTensor("large");
+        large->UpdateDynValidShape(largeValid);
+        graph.GetTensor("input")->UpdateDynValidShape(GetViewValidShape(largeValid, {16}, {}, {16}));
+        graph.AddOp(enableSlice ? Opcode::OP_CONTRACT : Opcode::OP_ASSEMBLE, {"input"}, {"large"}, "write");
+        graph.GetOp("write")->SetOpAttribute(
+            std::make_shared<AssembleOpAttribute>(MemoryType::MEM_DEVICE_DDR, Offset{16}));
+        for (const auto& [name, offset] :
+             std::vector<std::pair<std::string, Offset>>{{"left", {16}}, {"right", {24}}}) {
+            graph.AddOp(enableSlice ? Opcode::OP_SLICE : Opcode::OP_VIEW, {"large"}, {name}, name);
+            graph.GetOp(name)->SetOpAttribute(std::make_shared<ViewOpAttribute>(offset));
+        }
+        SplitLargeFanoutTensor pass;
+        pass.CreateOpFor1toM(*graph.GetFunction(), large, {16}, {16}, {graph.GetTensor("input")},
+                             {graph.GetTensor("left"), graph.GetTensor("right")});
+        auto expected = GetViewValidShape(largeValid, {16}, {}, {16});
+        for (const auto& name : {"left", "right"}) {
+            auto tensor = graph.GetOp(name)->GetIOperands().front();
+            ASSERT_NE(tensor, large);
+            ASSERT_EQ(tensor->GetDynValidShape().size(), 1U);
+            EXPECT_EQ(tensor->GetDynValidShape()[0].Dump(), expected[0].Dump());
+        }
+    }
+}
+
+TEST_F(SplitLargeFanoutTensorTest, MissingSplitValidShapeKeepsWriteInference)
+{
+    for (bool enableSlice : {false, true}) {
+        config::SetPassOption("enable_slice", enableSlice);
+        ComputationalGraphBuilder graph;
+        AddTensorsWithDDR(graph, {{"input", {4}}, {"large", {16}}, {"split", {8}}});
+        graph.GetTensor("input")->UpdateDynValidShape({3});
+        graph.GetTensor("large")->UpdateDynValidShape({10});
+        auto split = graph.GetTensor("split");
+        split->UpdateDynValidShape({});
+        graph.AddOp(enableSlice ? Opcode::OP_CONTRACT : Opcode::OP_ASSEMBLE, {"input"}, {"large"}, "write");
+        graph.GetOp("write")->SetOpAttribute(
+            std::make_shared<AssembleOpAttribute>(MemoryType::MEM_DEVICE_DDR, Offset{4}));
+        auto* write = AddNewAssembleOp(*graph.GetFunction(), graph.GetTensor("input"), graph.GetTensor("large"), {4},
+                                       split);
+        ASSERT_NE(write, nullptr);
+        ASSERT_EQ(split->GetDynValidShape().size(), 1U);
+        EXPECT_EQ(split->GetDynValidShape()[0].Concrete(), 3);
+    }
+}
+
+TEST_F(SplitLargeFanoutTensorTest, MissingLargeValidShapeKeepsWriteInference)
+{
+    for (bool enableSlice : {false, true}) {
+        config::SetPassOption("enable_slice", enableSlice);
+        ComputationalGraphBuilder graph;
+        AddTensorsWithDDR(graph, {{"a", {4}}, {"b", {4}}, {"large", {16}}, {"output", {8}}});
+        graph.GetTensor("large")->UpdateDynValidShape({});
+        for (const auto& [name, offset] : std::vector<std::pair<std::string, Offset>>{{"a", {0}}, {"b", {4}}}) {
+            graph.GetTensor(name)->UpdateDynValidShape({4});
+            graph.AddOp(enableSlice ? Opcode::OP_CONTRACT : Opcode::OP_ASSEMBLE, {name}, {"large"}, name);
+            graph.GetOp(name)->SetOpAttribute(
+                std::make_shared<AssembleOpAttribute>(MemoryType::MEM_DEVICE_DDR, offset));
+        }
+        graph.AddOp(enableSlice ? Opcode::OP_SLICE : Opcode::OP_VIEW, {"large"}, {"output"}, "read");
+        graph.GetOp("read")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0}));
+        SplitLargeFanoutTensor pass;
+        pass.CreateOpForMtoM(*graph.GetFunction(), graph.GetTensor("large"), {8}, {0},
+                             {graph.GetTensor("a"), graph.GetTensor("b")}, {graph.GetTensor("output")});
+        auto tensor = graph.GetOp("read")->GetIOperands().front();
+        ASSERT_EQ(tensor->GetDynValidShape().size(), 1U);
+        EXPECT_EQ(tensor->GetDynValidShape()[0].Concrete(), 8);
+        EXPECT_TRUE(pass.splitValidShapes_.empty());
+        EXPECT_EQ(pass.addedOps_.size(), 2U);
     }
 }
 
