@@ -15,6 +15,7 @@ import traceback
 from typing import Optional
 
 from .. import pypto_impl
+from .._utils import clear_source_location, set_source_location
 from .op_registry import dispatch
 from .parser import ast2pil
 from .pir import (
@@ -84,34 +85,38 @@ def dispatch_call(call: Call, scope: Scope, ctx: BuildContext):
         else:
             kwargs[k] = scope.resolve(v)
 
-    pypto_impl.SetSpan(call.span.filename, call.span.begin_line)
-    func = callee if isinstance(callee, Function) else _get_or_compile(callee)
-    if func is not None:
-        ctx.call_stack.append(call.span)
-        try:
-            ret = call_function(func, args, kwargs, ctx)
-        finally:
-            ctx.call_stack.pop()
-    else:
-        try:
-            ret = dispatch(callee, ctx, *args, **kwargs)
-        except (ReturnSignal, BreakSignal, ContinueSignal):
-            # control-flow signals are not dispatch errors; let them propagate.
-            raise
-        except DispatchError:
-            # already built by an inner dispatch_call; don't duplicate the stack.
-            raise
-        except Exception as e:
-            frames = [traceback.FrameSummary(s.filename, s.begin_line, "")
-                      for s in ctx.call_stack + [call.span]]
-            stack = "".join(traceback.format_list(frames))
-            raise DispatchError(f"{e}\n{callee}\n{stack}") from None
+    # Share the source-location depth with @op_wrapper. The wrapper then keeps
+    # this call span, and ClearSpan runs only after emit_tensor_stmts snapshots it.
+    set_source_location(filename=call.span.filename, lineno=call.span.begin_line)
+    try:
+        func = callee if isinstance(callee, Function) else _get_or_compile(callee)
+        if func is not None:
+            ctx.call_stack.append(call.span)
+            try:
+                ret = call_function(func, args, kwargs, ctx)
+            finally:
+                ctx.call_stack.pop()
+        else:
+            try:
+                ret = dispatch(callee, ctx, *args, **kwargs)
+            except (ReturnSignal, BreakSignal, ContinueSignal):
+                # control-flow signals are not dispatch errors; let them propagate.
+                raise
+            except DispatchError:
+                # already built by an inner dispatch_call; don't duplicate the stack.
+                raise
+            except Exception as e:
+                frames = [traceback.FrameSummary(s.filename, s.begin_line, "")
+                          for s in ctx.call_stack + [call.span]]
+                stack = "".join(traceback.format_list(frames))
+                raise DispatchError(f"{e}\n{callee}\n{stack}") from None
 
-    if call.result is not None:
-        scope.varmap[call.result.id] = ret
+        if call.result is not None:
+            scope.varmap[call.result.id] = ret
 
-    ctx.emit_tensor_stmts()
-    pypto_impl.ClearSpan()
+        ctx.emit_tensor_stmts()
+    finally:
+        clear_source_location()
 
 
 def _bind_var_keyword(

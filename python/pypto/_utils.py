@@ -118,18 +118,19 @@ def ceildiv(a: SymInt, b: SymInt) -> SymInt:
     return (a + b - 1) // b
 
 
-# only outer takes effect void avoid tensor.py hide source_location of user code
+# Stack-derived locations only apply at the outermost level, so a tensor.py
+# wrapper does not hide the caller's source location. An explicit filename
+# always applies, so a nested call can record its own span.
 _source_location_depth = 0
 
 
 def set_source_location(level: int = 1, filename=None, lineno=None):
     global _source_location_depth
-    if _source_location_depth == 0:
-        if filename is None:
-            frame = sys._getframe(level + 1)
-            filename = frame.f_code.co_filename
-            lineno = frame.f_lineno
+    if filename is not None:
         pypto_impl.SetSpan(filename, lineno)
+    elif _source_location_depth == 0:
+        frame = sys._getframe(level + 1)
+        pypto_impl.SetSpan(frame.f_code.co_filename, frame.f_lineno)
     _source_location_depth += 1
 
 

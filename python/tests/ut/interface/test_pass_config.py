@@ -176,3 +176,39 @@ class TestHashOrderConfig:
             assert label == "stage"
             assert filename == kernel.__code__.co_filename
             assert lineno == expected_lineno
+
+    @staticmethod
+    def test_source_location_records_kernel_call_site(monkeypatch):
+        """循环里经过 helper 的 pypto.mul，SetSpan 记的是用户调用点，不是框架派发代码"""
+        records = []
+        monkeypatch.setattr(pypto.pypto_impl, "SetSpan", lambda *args: records.append(args))
+
+        def scale(tile):
+            value = pypto.cast(tile, pypto.DT_FP32)
+            return pypto.mul(value, value)
+
+        def kernel(src, out):
+            pypto.set_vec_tile_shapes(16, 16)
+            for t_idx, unroll_length in pypto.loop_unroll(
+                0, 4, 1, name="t", idx_name="tIdx", unroll_list=[4, 1]
+            ):
+                tile = pypto.view(src, [unroll_length, 16], [t_idx * 16, 0])
+                scaled = scale(tile)
+                pypto.assemble(scaled, [t_idx * 16, 0], out)
+
+        src = pypto.tensor([64, 16], pypto.DT_FP32, "src")
+        out = pypto.tensor([64, 16], pypto.DT_FP32, "out")
+        pil.compile(kernel, src, out, create_new_logical_tensor=True)
+
+        scale_lines, scale_first = inspect.getsourcelines(scale)
+        mul_lineno = scale_first + next(i for i, line in enumerate(scale_lines) if "pypto.mul" in line)
+        kernel_lines, kernel_first = inspect.getsourcelines(kernel)
+        call_lineno = kernel_first + next(i for i, line in enumerate(kernel_lines) if "scale(tile)" in line)
+        loop_lineno = kernel_first + next(i for i, line in enumerate(kernel_lines) if "pypto.loop_unroll" in line)
+        assert records, "SetSpan should have been called"
+        assert any(filename == scale.__code__.co_filename and lineno == mul_lineno for filename, lineno in records)
+        assert any(filename == kernel.__code__.co_filename and lineno == call_lineno for filename, lineno in records)
+        assert any(filename == kernel.__code__.co_filename and lineno == loop_lineno for filename, lineno in records)
+        for filename, lineno in records:
+            assert not filename.endswith("op_registry.py")
+            assert not filename.endswith("dispatcher.py")
