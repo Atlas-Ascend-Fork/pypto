@@ -2469,10 +2469,7 @@ private:
             def.accessShape = *shape;
         }
         def.layout = backend::cce::MXLoadLayoutName(op);
-        if (!def.layout.empty()) {
-            // An MX load defaults its axes from the tensor rank, so the raw kwarg is not enough.
-            def.tileDims = backend::cce::MXLoadTileDims(op, ir::As<ir::TensorType>(op->args_[1]->GetType()));
-        } else if (op->HasKwarg("tile_dims")) {
+        if (op->HasKwarg("tile_dims")) {
             def.tileDims = op->GetKwarg<std::vector<int>>("tile_dims");
         }
         def.isTranspose = op->name_ == "block.load" && op->GetKwarg<bool>("is_transpose", false);

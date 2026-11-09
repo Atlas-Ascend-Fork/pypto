@@ -105,52 +105,6 @@ __aicore__ inline const __gm__ char* PyptoDumpMemoryName()
     }
 }
 
-template <pypto::aicore::DumpLayout Layout, typename T>
-__aicore__ inline bool PyptoGetContiguousTensorDumpInfo(const pypto::aicore::DumpTensorView& view, uint32_t* dumpShape,
-                                                        uint32_t& dumpSize)
-{
-    uint64_t logicalElements = 1U;
-    for (uint32_t axis = 0U; axis < view.rank; ++axis) {
-        const int64_t sourceExtent = view.sourceShape[axis];
-        if (sourceExtent <= 0 || view.offsets[axis] != 0 || view.shape[axis] != sourceExtent) {
-            return false;
-        }
-
-        const uint64_t extent = static_cast<uint64_t>(sourceExtent);
-        if (logicalElements > 0xffffffffULL / extent) {
-            return false;
-        }
-        logicalElements *= extent;
-        dumpShape[axis] = static_cast<uint32_t>(sourceExtent);
-    }
-
-    if constexpr (Layout == pypto::aicore::DumpLayout::NZ) {
-        if (view.sourceShape[view.rank - 2U] % view.innerRows != 0 ||
-            view.sourceShape[view.rank - 1U] % view.innerCols != 0) {
-            return false;
-        }
-    } else if constexpr (Layout == pypto::aicore::DumpLayout::ND) {
-        uint64_t expectedStride = 1U;
-        for (uint32_t axis = view.rank; axis > 0U; --axis) {
-            const uint32_t index = axis - 1U;
-            const uint64_t extent = static_cast<uint64_t>(view.sourceShape[index]);
-            const int64_t stride = view.stride[index];
-            if (stride <= 0 || (extent > 1U && static_cast<uint64_t>(stride) != expectedStride)) {
-                return false;
-            }
-            expectedStride *= extent;
-        }
-    } else {
-        return false;
-    }
-
-    if constexpr (std::is_same_v<T, float4_e2m1x2_t> || std::is_same_v<T, float4_e1m2x2_t>) {
-        logicalElements = (logicalElements + 1U) / 2U;
-    }
-    dumpSize = static_cast<uint32_t>(logicalElements);
-    return true;
-}
-
 template <uint32_t Rank>
 __aicore__ inline const __gm__ char* PyptoDumpTensorMetadataFormat()
 {
@@ -187,13 +141,7 @@ __aicore__ inline void PyptoDumpTensor(__gm__ T* src, uint32_t desc, const pypto
 {
     pipe_barrier(PIPE_ALL);
     PyptoPrintTensorMetadata<Layout, T>(view, std::make_index_sequence<Rank>{});
-    uint32_t dumpShape[K_MAX_SHAPE_DIM];
-    uint32_t dumpSize = 0U;
-    if (PyptoGetContiguousTensorDumpInfo<Layout, T>(view, dumpShape, dumpSize)) {
-        pypto::aicore::pto_dump_gm(src, desc, dumpSize, dumpShape, view.rank);
-    } else {
-        pypto::aicore::pto_dump_window<Layout>(src, desc, view);
-    }
+    pypto::aicore::pto_dump_window<Layout>(src, desc, view);
 }
 
 template <pypto::aicore::DumpLayout Layout, typename T>

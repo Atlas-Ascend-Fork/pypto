@@ -140,36 +140,18 @@ bool IsMXLoad(const ir::TensorTypePtr& tensorType, const ir::TileTypePtr& tileTy
     return hw.fractal == 32 && (layout == ir::TensorLayout::ZZ || layout == ir::TensorLayout::NN);
 }
 
-bool IsMXLoadCall(const ir::CallPtr& op)
-{
-    if (!op || op->name_ != "block.load" || op->args_.size() < 2) {
-        return false;
-    }
-    return IsMXLoad(ir::As<ir::TensorType>(op->args_[1]->GetType()), ir::As<ir::TileType>(op->args_[0]->GetType()));
-}
-
-std::vector<int> MXLoadTileDims(const ir::CallPtr& op, const ir::TensorTypePtr& tensorType)
-{
-    const int rank = static_cast<int>(tensorType->shape_.size());
-    // MX scale tensors carry a trailing physical phase axis of size 2.
-    PRO_CODEGEN_IRCHECK(ExternalError::INVALID_SHAPE, rank >= 3)
-        << "MX scale load requires at least two matrix axes and one physical phase axis at " << op->span_.ToString();
-    const auto phaseDim = ir::As<ir::ConstInt>(tensorType->shape_.back());
-    PRO_CODEGEN_IRCHECK(ExternalError::INVALID_SHAPE, phaseDim != nullptr && phaseDim->value_ == 2)
-        << "MX scale load trailing physical phase axis must be statically equal to 2 at " << op->span_.ToString();
-    const std::vector<int> tileDims = op->HasKwarg("tile_dims") ? op->GetKwarg<std::vector<int>>("tile_dims") :
-                                                                  std::vector<int>{rank - 3, rank - 2};
-    PRO_CODEGEN_IRCHECK(ExternalError::INVALID_SHAPE, tileDims[0] != rank - 1 && tileDims[1] != rank - 1)
-        << "MX scale load order cannot select the trailing physical phase axis at " << op->span_.ToString();
-    return tileDims;
-}
-
 std::string MXLoadLayoutName(const ir::CallPtr& op)
 {
-    if (!IsMXLoadCall(op)) {
+    if (op->name_ != "block.load") {
         return "";
     }
-    const auto& hw = ir::As<ir::TileType>(op->args_[0]->GetType())->hardwareInfo_.value();
+    auto tensorType = ir::As<ir::TensorType>(op->args_[1]->GetType());
+    auto tileType = ir::As<ir::TileType>(op->args_[0]->GetType());
+    if (!IsMXLoad(tensorType, tileType)) {
+        return "";
+    }
+
+    const auto& hw = tileType->hardwareInfo_.value();
     const bool isScaleA = GetTileTensorLayout(hw) == ir::TensorLayout::ZZ;
     const bool isDn = op->GetKwarg<bool>("is_transpose", false);
     return isScaleA ? (isDn ? "Layout::MX_A_DN" : "Layout::MX_A_ND") : (isDn ? "Layout::MX_B_DN" : "Layout::MX_B_ND");

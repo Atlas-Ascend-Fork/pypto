@@ -1,0 +1,116 @@
+// MX A ND
+#if defined(__DAV_CUBE__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void kernel_impl_cube(__gm__ float8_e8m0_t* scale_ptr)
+{
+
+    using scaleShapeDim5 = pto::TileShape2D<float8_e8m0_t, pto::DYNAMIC, pto::DYNAMIC, Layout::MX_A_ND>;
+    using scaleStrideDim5 = pto::Stride<pto::DYNAMIC, pto::DYNAMIC, pto::DYNAMIC, pto::DYNAMIC, 1>;
+    using scaleType = GlobalTensor<float8_e8m0_t, scaleShapeDim5, scaleStrideDim5, Layout::MX_A_ND>;
+    scaleType scale(scale_ptr, scaleShapeDim5(), scaleStrideDim5(1, 1, 3 * 2, 2, 1));
+
+    using out_Type = SyncedTile<Tile<TileType::Mat, float8_e8m0_t, 64, 6, BLayout::RowMajor, -1, -1, SLayout::RowMajor, 32, PadValue::Null, CompactMode::Normal>, 0>;
+    out_Type out{out_Type::PtoTile(64, 6), {}};
+    TASSIGN(out.tile, 0x0);
+    const scaleShapeDim5 scale_shape_0(static_cast<int64_t>(out.tile.GetValidRow()), static_cast<int64_t>(out.tile.GetValidCol()));
+    scale.SetShape<pto::GlobalTensorDim::DIM_2, pto::GlobalTensorDim::DIM_3>(scale_shape_0.shape[pto::GlobalTensorDim::DIM_2], scale_shape_0.shape[pto::GlobalTensorDim::DIM_3]);
+    TASSIGN(scale, scale_ptr + (4 * (3 * 2) + 1 * (2) + 0));
+    TLOAD(out.tile, scale);
+}
+#endif
+// MX A DN
+#if defined(__DAV_CUBE__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void kernel_impl_cube(__gm__ float8_e8m0_t* scale_ptr)
+{
+
+    using scaleShapeDim5 = pto::TileShape2D<float8_e8m0_t, pto::DYNAMIC, pto::DYNAMIC, Layout::MX_A_DN>;
+    using scaleStrideDim5 = pto::Stride<pto::DYNAMIC, pto::DYNAMIC, pto::DYNAMIC, pto::DYNAMIC, 1>;
+    using scaleType = GlobalTensor<float8_e8m0_t, scaleShapeDim5, scaleStrideDim5, Layout::MX_A_DN>;
+    scaleType scale(scale_ptr, scaleShapeDim5(), scaleStrideDim5(1, 1, 64 * 2, 2, 1));
+
+    using out_Type = SyncedTile<Tile<TileType::Mat, float8_e8m0_t, 64, 6, BLayout::RowMajor, -1, -1, SLayout::RowMajor, 32, PadValue::Null, CompactMode::Normal>, 0>;
+    out_Type out{out_Type::PtoTile(64, 6), {}};
+    TASSIGN(out.tile, 0x0);
+    const scaleShapeDim5 scale_shape_0(static_cast<int64_t>(out.tile.GetValidRow()), static_cast<int64_t>(out.tile.GetValidCol()));
+    scale.SetShape<pto::GlobalTensorDim::DIM_2, pto::GlobalTensorDim::DIM_3>(scale_shape_0.shape[pto::GlobalTensorDim::DIM_2], scale_shape_0.shape[pto::GlobalTensorDim::DIM_3]);
+    TASSIGN(scale, scale_ptr + (1 * (64 * 2) + 4 * (2) + 0));
+    TLOAD(out.tile, scale);
+}
+#endif
+// MX B ND
+#if defined(__DAV_CUBE__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void kernel_impl_cube(__gm__ float8_e8m0_t* scale_ptr)
+{
+
+    using scaleShapeDim5 = pto::TileShape2D<float8_e8m0_t, pto::DYNAMIC, pto::DYNAMIC, Layout::MX_B_ND>;
+    using scaleStrideDim5 = pto::Stride<pto::DYNAMIC, pto::DYNAMIC, pto::DYNAMIC, pto::DYNAMIC, 1>;
+    using scaleType = GlobalTensor<float8_e8m0_t, scaleShapeDim5, scaleStrideDim5, Layout::MX_B_ND>;
+    scaleType scale(scale_ptr, scaleShapeDim5(), scaleStrideDim5(1, 1, 64 * 2, 2, 1));
+
+    using out_Type = SyncedTile<Tile<TileType::Mat, float8_e8m0_t, 6, 64, BLayout::ColMajor, -1, -1, SLayout::ColMajor, 32, PadValue::Null, CompactMode::Normal>, 0>;
+    out_Type out{out_Type::PtoTile(6, 64), {}};
+    TASSIGN(out.tile, 0x0);
+    const scaleShapeDim5 scale_shape_0(static_cast<int64_t>(out.tile.GetValidRow()), static_cast<int64_t>(out.tile.GetValidCol()));
+    scale.SetShape<pto::GlobalTensorDim::DIM_2, pto::GlobalTensorDim::DIM_3>(scale_shape_0.shape[pto::GlobalTensorDim::DIM_2], scale_shape_0.shape[pto::GlobalTensorDim::DIM_3]);
+    TASSIGN(scale, scale_ptr + (1 * (64 * 2) + 4 * (2) + 0));
+    TLOAD(out.tile, scale);
+}
+#endif
+// MX B DN
+#if defined(__DAV_CUBE__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void kernel_impl_cube(__gm__ float8_e8m0_t* scale_ptr)
+{
+
+    using scaleShapeDim5 = pto::TileShape2D<float8_e8m0_t, pto::DYNAMIC, pto::DYNAMIC, Layout::MX_B_DN>;
+    using scaleStrideDim5 = pto::Stride<pto::DYNAMIC, pto::DYNAMIC, pto::DYNAMIC, pto::DYNAMIC, 1>;
+    using scaleType = GlobalTensor<float8_e8m0_t, scaleShapeDim5, scaleStrideDim5, Layout::MX_B_DN>;
+    scaleType scale(scale_ptr, scaleShapeDim5(), scaleStrideDim5(1, 1, 3 * 2, 2, 1));
+
+    using out_Type = SyncedTile<Tile<TileType::Mat, float8_e8m0_t, 6, 64, BLayout::ColMajor, -1, -1, SLayout::ColMajor, 32, PadValue::Null, CompactMode::Normal>, 0>;
+    out_Type out{out_Type::PtoTile(6, 64), {}};
+    TASSIGN(out.tile, 0x0);
+    const scaleShapeDim5 scale_shape_0(static_cast<int64_t>(out.tile.GetValidRow()), static_cast<int64_t>(out.tile.GetValidCol()));
+    scale.SetShape<pto::GlobalTensorDim::DIM_2, pto::GlobalTensorDim::DIM_3>(scale_shape_0.shape[pto::GlobalTensorDim::DIM_2], scale_shape_0.shape[pto::GlobalTensorDim::DIM_3]);
+    TASSIGN(scale, scale_ptr + (4 * (3 * 2) + 1 * (2) + 0));
+    TLOAD(out.tile, scale);
+}
+#endif

@@ -1350,27 +1350,26 @@ class ExpressionParserMixin:
                 hint="Replace `tile[a:a+1, b:b+1]` with `tile, [a, b]` in load_align/store_align",
             )
 
-        if isinstance(container_type, ir.TileType):
-            memref = container_type.memref
-            mem_space = memref.memory_space if memref is not None else None
-            hw_info = container_type.hardware_info
-            layout = _tile_layout(container_type)
-            allowed_layouts = {
-                ir.MemorySpace.Vec: {ir.TensorLayout.ND, ir.TensorLayout.DN, ir.TensorLayout.NZ},
-                ir.MemorySpace.Mat: {
-                    ir.TensorLayout.ND,
-                    ir.TensorLayout.DN,
-                    ir.TensorLayout.NZ,
-                    ir.TensorLayout.ZN,
-                },
-                ir.MemorySpace.Acc: {ir.TensorLayout.NZ},
-            }
-            if layout not in allowed_layouts.get(mem_space, set()):
-                raise InvalidFormat(
-                    "Tile slice supports Vec ND/DN/NZ, Mat ND/DN/NZ/ZN, and Acc NZ tiles",
-                    span=span,
-                    hint="Use pl.load with offset or pl.move with offset for unsupported tiles",
-                )
+        memref = container_type.memref
+        mem_space = memref.memory_space if memref is not None else None
+        hw_info = container_type.hardware_info
+        layout = _tile_layout(container_type)
+        allowed_layouts = {
+            ir.MemorySpace.Vec: {ir.TensorLayout.ND, ir.TensorLayout.DN, ir.TensorLayout.NZ},
+            ir.MemorySpace.Mat: {
+                ir.TensorLayout.ND,
+                ir.TensorLayout.DN,
+                ir.TensorLayout.NZ,
+                ir.TensorLayout.ZN,
+            },
+            ir.MemorySpace.Acc: {ir.TensorLayout.NZ},
+        }
+        if layout not in allowed_layouts.get(mem_space, set()):
+            raise InvalidFormat(
+                "Tile slice supports Vec ND/DN/NZ, Mat ND/DN/NZ/ZN, and Acc NZ tiles",
+                span=span,
+                hint="Use pl.load with offset or pl.move with offset for unsupported tiles",
+            )
 
         if not isinstance(slice_node, ast.Tuple):
             raise NotSupported(
@@ -1475,9 +1474,27 @@ class ExpressionParserMixin:
 
             new_shape_exprs.append(size)
 
-        if isinstance(container_type, ir.TileType) and layout in (ir.TensorLayout.NZ, ir.TensorLayout.ZN):
-            start_values = [_const_int_value(start) for start in dim_starts]
-            dtype_bits = int(container_type.dtype.get_bit())
+        start_values = [_const_int_value(start) for start in dim_starts]
+        dtype_bits = int(container_type.dtype.get_bit())
+
+        # Match pto::GetTileOffset: plain layouts use row/column strides,
+        # while boxed layouts must start at an inner-fractal boundary.
+        if layout in (ir.TensorLayout.ND, ir.TensorLayout.DN):
+            static_values = [*start_values, *(_const_int_value(dim) for dim in shape)]
+            if None not in static_values:
+                row_start, col_start, rows, cols = static_values
+                if layout == ir.TensorLayout.ND:
+                    element_offset = row_start * cols + col_start
+                else:
+                    element_offset = col_start * rows + row_start
+                if element_offset * dtype_bits % 256 != 0:
+                    raise InvalidShape(
+                        f"{mem_space.name} {layout.name} Tile slice start must produce a 32-byte-aligned "
+                        f"Tile address, got [{row_start}, {col_start}]",
+                        span=span,
+                    )
+
+        elif layout in (ir.TensorLayout.NZ, ir.TensorLayout.ZN):
             c0 = 256 // dtype_bits
             fractal = hw_info.fractal
             if mem_space == ir.MemorySpace.Acc or fractal == 1024:

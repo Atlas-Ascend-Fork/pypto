@@ -226,11 +226,11 @@ slice必须为二维，step仅支持1，起止位置不支持负数。各内存�
 
 | 内存空间 | 支持的layout | 起点对齐 |
 |:---|:---|:---|
-| UB | ND、DN、NZ | ND/DN无要求；NZ：行16、列C0 |
-| L1 Buffer | ND、DN、NZ、ZN | ND/DN无要求；NZ：行16、列C0；ZN：行C0、列16 |
+| UB | ND、DN、NZ | ND/DN：子视图起始地址须按32字节对齐；NZ：行16、列C0 |
+| L1 Buffer | ND、DN、NZ、ZN | ND/DN：子视图起始地址须按32字节对齐；NZ：行16、列C0；ZN：行C0、列16 |
 | L0C Buffer | NZ | 行列均16 |
 
-NZ/ZN子视图起点须按上表对齐，C0由dtype决定。前端仅检查编译期常量，运行时起点由调用方保证对齐。
+子视图起点须按上表对齐，C0由dtype决定。前端仅检查编译期常量，运行时起点由调用方保证对齐。
 
 L0A Buffer、L0B Buffer、L0A_MX Buffer和L0B_MX Buffer均暂不支持Tile子视图。
 

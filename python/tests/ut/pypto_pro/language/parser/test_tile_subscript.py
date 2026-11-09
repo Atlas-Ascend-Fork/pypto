@@ -136,6 +136,60 @@ def test_tile_slice_with_dynamic_valid_shape():
     _parse_vector_kernel(kernel)
 
 
+@pytest.mark.parametrize(
+    ("layout", "row_start", "col_start"),
+    [
+        (pl.ND, 0, 20),
+        (pl.DN, 20, 0),
+    ],
+)
+def test_plain_tile_slice_rejects_unaligned_address(layout, row_start, col_start):
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, layout=layout
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            _sub = tile[row_start:row_start + 32, col_start:col_start + 64]
+
+    with pytest.raises(InvalidShape, match="Tile slice start must produce a 32-byte-aligned Tile address"):
+        _parse_vector_kernel(kernel)
+
+
+@pytest.mark.parametrize(
+    ("layout", "row_start", "col_start"),
+    [
+        (pl.ND, 1, 16),
+        (pl.DN, 16, 1),
+    ],
+)
+def test_plain_tile_slice_accepts_aligned_address(layout, row_start, col_start):
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, layout=layout
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            _sub = tile[row_start:row_start + 32, col_start:col_start + 64]
+
+    _parse_vector_kernel(kernel)
+
+
+def test_plain_tile_slice_accepts_dynamic_start():
+    @pl.jit(auto_mutex=False)
+    def kernel(col_start: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            _sub = tile[0:32, col_start:128]
+
+    _parse_vector_kernel(kernel)
+
+
 def test_nz_tile_slice_accepts_fractal_aligned_start():
     @pl.jit(auto_mutex=False)
     def kernel(_jit_entry: pl.DT_INT64):
@@ -209,3 +263,17 @@ def test_nz_tile_slice_accepts_dynamic_start():
             _sub = tile[row_start:32, 16:32]
 
     _parse_vector_kernel(kernel)
+
+
+def test_nz_tile_slice_with_dynamic_row_rejects_unaligned_static_col():
+    @pl.jit(auto_mutex=False)
+    def kernel(row_start: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, layout=pl.NZ
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            _sub = tile[row_start:32, 1:32]
+
+    with pytest.raises(InvalidShape, match=r"NZ Tile slice start must align to \[16, 16\]"):
+        _parse_vector_kernel(kernel)

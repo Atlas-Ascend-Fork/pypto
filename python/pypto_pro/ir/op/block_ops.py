@@ -252,6 +252,59 @@ def _validate_nz_transfer_axes(
         raise InvalidFormat(f"{op_name}: NZ transfer only supports the last two tensor axes")
 
 
+def _resolve_mx_scale_load_dims(
+    dst_tile: Expr,
+    src_tensor: Expr,
+    offsets: Sequence[Expr],
+    tile_dims: list[int] | None,
+    order: list[int] | None,
+    op_name: str,
+) -> list[int] | None:
+    """Validate and resolve the matrix axes selected by an MX scale load.
+
+    An MX scale Tensor carries a trailing physical phase axis of static extent 2.
+    That axis is storage metadata: its offset must be a compile-time zero and it
+    cannot be selected as either Tile matrix axis.
+    """
+    dst_type = dst_tile.type
+    src_type = src_tensor.type
+    dst_mem = getattr(getattr(dst_type, "memref", None), "memory_space", None)
+    is_mx_load = (
+        src_type.dtype == DataType.FP8E8M0
+        and dst_type.dtype == DataType.FP8E8M0
+        and dst_mem == MemorySpace.Mat
+        and _tile_layout(dst_type) in (TensorLayout.ZZ, TensorLayout.NN)
+        and _hw_attr(getattr(dst_type, "hardware_info", None), "fractal") == _MX_SCALE_FRACTAL
+    )
+    if not is_mx_load:
+        return tile_dims
+
+    tensor_rank = len(src_type.shape)
+    if tensor_rank < 3:
+        raise InvalidShape(f"{op_name}: MX scale Tensor must contain two matrix axes and one physical phase axis")
+
+    phase_extent = _const_int_value(src_type.shape[-1])
+    if phase_extent != 2:
+        raise InvalidShape(
+            f"{op_name}: MX scale Tensor trailing physical phase axis must be statically equal to 2, "
+            f"got {phase_extent}"
+        )
+    if _const_int_value(offsets[-1]) != 0:
+        raise InvalidArgument(
+            f"{op_name}: MX scale Tensor physical phase axis offset must be a compile-time zero"
+        )
+
+    # With no explicit order, MX lowering selects the two axes immediately before
+    # the phase axis rather than the ordinary load default (the final two axes).
+    selected_dims = [tensor_rank - 3, tensor_rank - 2] if order is None else tile_dims
+    if tensor_rank - 1 in selected_dims:
+        raise InvalidShape(
+            f"{op_name}: MX scale order cannot select the trailing physical phase axis, "
+            f"got {selected_dims}"
+        )
+    return selected_dims
+
+
 def _ir_binary_cast(
     op_name: str,
     out: Expr,
@@ -300,9 +353,12 @@ def _ir_load(
 
     _, tile_dims, _ = _validate_load_operands(dst_tile, src_tensor, tile_dims, op_name)
     _validate_offsets(op_name, offsets_tuple.elements, src_tensor.type.shape)
-    _validate_nz_transfer_axes(src_tensor.type, tile_dims, op_name)
-    nd_inner = _validate_merged_row_load(dst_tile, src_tensor, tile_dims, op_name, order=order)
-    if nd_inner is not None and _const_int_value(offsets_tuple.elements[tile_dims[1]]) != 0:
+    resolved_tile_dims = _resolve_mx_scale_load_dims(
+        dst_tile, src_tensor, offsets_tuple.elements, tile_dims, order, op_name
+    )
+    _validate_nz_transfer_axes(src_tensor.type, resolved_tile_dims, op_name)
+    nd_inner = _validate_merged_row_load(dst_tile, src_tensor, resolved_tile_dims, op_name, order=order)
+    if nd_inner is not None and _const_int_value(offsets_tuple.elements[resolved_tile_dims[1]]) != 0:
         raise InvalidArgument(f"{op_name}: a merged-row load's middle axis offset must be a compile-time zero")
 
     kwargs: dict[str, Any] = _l2_cache_mode_attr(l2_cache_mode, TLoadL2Hint, op_name)
@@ -310,10 +366,9 @@ def _ir_load(
         kwargs["nd_inner"] = nd_inner
     if is_transpose:
         kwargs["is_transpose"] = is_transpose
-    # Specialized lowerings may use a different fallback, so preserve every
-    # explicitly supplied order, including the ordinary last-two-axes order.
-    if order is not None and tile_dims is not None:
-        kwargs["tile_dims"] = tile_dims
+    # Preserve explicit orders and MX-specific axis mappings in the IR.
+    if resolved_tile_dims is not None and (order is not None or resolved_tile_dims != tile_dims):
+        kwargs["tile_dims"] = resolved_tile_dims
     _check_layout_dtype(op_name, src_tensor, dst_tile, is_transpose=is_transpose)
     return _ir_core.create_op_call(block_ir_op(op_name), [dst_tile, src_tensor, offsets_tuple], kwargs, actual_span)
 
@@ -347,13 +402,16 @@ def _ir_load_tile(
         tile_dims,
         op_name,
     )
-    _validate_nz_transfer_axes(src_tensor.type, tile_dims, op_name)
     _validate_offsets(op_name, offsets_tuple.elements, src_tensor.type.shape, check_bounds=False)
+    resolved_tile_dims = _resolve_mx_scale_load_dims(
+        dst_tile, src_tensor, offsets_tuple.elements, tile_dims, order, op_name
+    )
+    _validate_nz_transfer_axes(src_tensor.type, resolved_tile_dims, op_name)
 
     abs_offsets = _compute_absolute_offsets(
         offsets_tuple,
         tile_shape,
-        tile_dims,
+        resolved_tile_dims,
         actual_span,
         access_size=access_size,
     )
@@ -362,8 +420,8 @@ def _ir_load_tile(
     kwargs: dict[str, Any] = _l2_cache_mode_attr(l2_cache_mode, TLoadL2Hint, op_name)
     if is_transpose:
         kwargs["is_transpose"] = is_transpose
-    if order is not None and tile_dims is not None:
-        kwargs["tile_dims"] = tile_dims
+    if resolved_tile_dims is not None and (order is not None or resolved_tile_dims != tile_dims):
+        kwargs["tile_dims"] = resolved_tile_dims
     return _ir_core.create_op_call(block_ir_op("load"), [dst_tile, src_tensor, abs_offsets], kwargs, actual_span)
 
 
@@ -664,60 +722,44 @@ def _check_move_shape_compat(
 ) -> None:
     """Validate src/dst tile shape compatibility for ``block.move``.
 
-    Rules (from hardware semantics; see test_matmul_perf_asw_4k_dn_move_offset
-    comment: "TEXTRACT allows src wide / dst narrow, TMOV requires shape equality"):
+    Rules follow the PTO ISA dispatch:
 
-    - ``acc_to_vec_mode`` set (Acc→Vec split move): shape governed by split mode,
-      not plain equality. Skip (safe — declared shapes may not reflect valid_shape).
+    - ``acc_to_vec_mode`` set (Acc→Vec split move): shape is governed by the
+      split mode and runtime valid shape.
     - ``offset`` given (TEXTRACT sub-block extraction): ``dst <= src`` per-dim.
-    - No ``offset`` (plain TMOV): ``dst == src``, or — for 2D tiles — a transpose
-      ``dst == src[::-1]`` (i.e. ``[M,N] → [N,M]``). Mat→Left / Mat→Right moves
-      realize the transpose via fractal conversion (see
-      test_insert_zn_transpose_left/right.py and
-      test_fa_perf_tkv_preload_nbuf.py:221 where Right[TKV,TD] ← Mat[TD,TKV]).
+    - No ``offset`` with a Mat source: ``dst == src``. PTO-ISA enforces equal
+      physical Rows/Cols for every Mat-source TMOV.
+    - Other TMOV paths derive their transfer extent from runtime valid shapes;
+      there is no generic equal-shape or transposed-shape requirement.
 
     The complete ``offset + transfer extent`` window is not checked here because
     the effective extent may be set dynamically. Runtime DFX handles that bound.
     """
     out_type = out.type
     src_type = src.type
-    if not isinstance(out_type, _IRTileType) or not isinstance(src_type, _IRTileType):
-        raise InvalidType(
-            f"pl.move: both dst and src must be Tiles, got dst={type(out_type).__name__}, src={type(src_type).__name__}"
-        )
     dst_shape = _tile_shape_ints(out_type)
     src_shape = _tile_shape_ints(src_type)
     if dst_shape is None or src_shape is None:
         return  # symbolic shape — cannot verify statically
-    if len(dst_shape) != len(src_shape):
-        raise InvalidShape(
-            f"pl.move: dst tile rank {len(dst_shape)} != src tile rank {len(src_shape)} "
-            f"(dst shape={dst_shape}, src shape={src_shape})."
-        )
     if acc_to_vec_mode is not None:
         return  # Acc→Vec split mode: shape relation determined by mode
-    if offset is not None:
-        for axis, (d, s) in enumerate(zip(dst_shape, src_shape)):
-            if d > s:
-                raise InvalidType(
-                    f"pl.move: with offset, dst dim {axis} ({d}) exceeds src dim ({s}) "
-                    f"— dst must be a sub-rectangle of src "
-                    f"(dst shape={dst_shape}, src shape={src_shape})."
-                )
-    else:
-        # Plain TMOV: shapes must match, OR — for 2D tiles — be a transpose
-        # ([M,N] → [N,M]). Mat→Left / Mat→Right moves realize the transpose via
-        # fractal conversion; see test_fa_perf_tkv_preload_nbuf.py:221
-        # (Right[TKV,TD] ← Mat[TD,TKV]) and test_insert_zn_transpose_*.py.
-        if dst_shape != src_shape:
-            is_2d_transpose = len(dst_shape) == 2 and dst_shape == src_shape[::-1]
-            if not is_2d_transpose:
-                raise InvalidShape(
-                    f"pl.move: dst tile shape {dst_shape} != src tile shape {src_shape} "
-                    f"— without offset, move requires equal shapes "
-                    f"or a 2D transpose [M,N]->[N,M] "
-                    f"(use offset= for sub-block extraction)."
-                )
+    src_mem = getattr(getattr(src_type, "memref", None), "memory_space_", None)
+    if offset is None:
+        if src_mem == MemorySpace.Mat and dst_shape != src_shape:
+            raise InvalidShape(
+                f"pl.move: dst tile shape {dst_shape} != src tile shape {src_shape} "
+                "— without offset, a Mat-source move requires equal shapes.",
+                span=actual_span,
+            )
+        return
+    for axis, (d, s) in enumerate(zip(dst_shape, src_shape)):
+        if d > s:
+            raise InvalidShape(
+                f"pl.move: with offset, dst dim {axis} ({d}) exceeds src dim ({s}) "
+                f"— dst must be a sub-rectangle of src "
+                f"(dst shape={dst_shape}, src shape={src_shape}).",
+                span=actual_span,
+            )
 
 
 def _maybe_dispatch_to_insert(
@@ -743,8 +785,6 @@ def _maybe_dispatch_to_insert(
     src_shape = _tile_shape_ints(src_type)
     if dst_shape is None or src_shape is None:
         return False
-    if len(dst_shape) != len(src_shape):
-        return False
 
     dst_layout = _tile_layout(out_type)
     src_layout = _tile_layout(src_type)
@@ -765,7 +805,6 @@ def _maybe_dispatch_to_insert(
     src_mem = getattr(getattr(src_type, "memref", None), "memory_space_", None)
     is_equal_transpose_vec_mat = (
         layout_transpose
-        and len(dst_shape) == 2
         and dst_shape == src_shape[::-1]
         and src_mem == MemorySpace.Vec
         and out_mem == MemorySpace.Mat
@@ -1997,7 +2036,6 @@ _3510_MOVE_EXTRACT_COMMON_COMBOS = (
     ("Mat", "Left", TensorLayout.NZ, TensorLayout.NZ, DataType.FP32, DataType.FP32),
     ("Mat", "Left", TensorLayout.NZ, TensorLayout.NZ, DataType.FP4E1M2, DataType.FP4E1M2),
     ("Mat", "Left", TensorLayout.NZ, TensorLayout.NZ, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Mat", "Left", TensorLayout.NZ, TensorLayout.NZ, DataType.FP8E8M0, DataType.FP8E8M0),
     ("Mat", "Left", TensorLayout.ND, TensorLayout.NZ, DataType.INT8, DataType.INT8),
     ("Mat", "Left", TensorLayout.ND, TensorLayout.NZ, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
     ("Mat", "Left", TensorLayout.ND, TensorLayout.NZ, DataType.FP8E5M2, DataType.FP8E5M2),
@@ -2007,7 +2045,6 @@ _3510_MOVE_EXTRACT_COMMON_COMBOS = (
     ("Mat", "Left", TensorLayout.ND, TensorLayout.NZ, DataType.FP32, DataType.FP32),
     ("Mat", "Left", TensorLayout.ND, TensorLayout.NZ, DataType.FP4E1M2, DataType.FP4E1M2),
     ("Mat", "Left", TensorLayout.ND, TensorLayout.NZ, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Mat", "Left", TensorLayout.ND, TensorLayout.NZ, DataType.FP8E8M0, DataType.FP8E8M0),
     ("Mat", "Left", TensorLayout.ZN, TensorLayout.NZ, DataType.INT8, DataType.INT8),
     ("Mat", "Left", TensorLayout.ZN, TensorLayout.NZ, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
     ("Mat", "Left", TensorLayout.ZN, TensorLayout.NZ, DataType.FP8E5M2, DataType.FP8E5M2),
@@ -2017,7 +2054,6 @@ _3510_MOVE_EXTRACT_COMMON_COMBOS = (
     ("Mat", "Left", TensorLayout.ZN, TensorLayout.NZ, DataType.FP32, DataType.FP32),
     ("Mat", "Left", TensorLayout.ZN, TensorLayout.NZ, DataType.FP4E1M2, DataType.FP4E1M2),
     ("Mat", "Left", TensorLayout.ZN, TensorLayout.NZ, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Mat", "Left", TensorLayout.ZN, TensorLayout.NZ, DataType.FP8E8M0, DataType.FP8E8M0),
     # Mat -> Right.
     ("Mat", "Right", TensorLayout.NZ, TensorLayout.ZN, DataType.INT8, DataType.INT8),
     ("Mat", "Right", TensorLayout.NZ, TensorLayout.ZN, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
@@ -2028,7 +2064,6 @@ _3510_MOVE_EXTRACT_COMMON_COMBOS = (
     ("Mat", "Right", TensorLayout.NZ, TensorLayout.ZN, DataType.FP32, DataType.FP32),
     ("Mat", "Right", TensorLayout.NZ, TensorLayout.ZN, DataType.FP4E1M2, DataType.FP4E1M2),
     ("Mat", "Right", TensorLayout.NZ, TensorLayout.ZN, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Mat", "Right", TensorLayout.NZ, TensorLayout.ZN, DataType.FP8E8M0, DataType.FP8E8M0),
     ("Mat", "Right", TensorLayout.ZN, TensorLayout.ZN, DataType.INT8, DataType.INT8),
     ("Mat", "Right", TensorLayout.ZN, TensorLayout.ZN, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
     ("Mat", "Right", TensorLayout.ZN, TensorLayout.ZN, DataType.FP8E5M2, DataType.FP8E5M2),
@@ -2038,7 +2073,6 @@ _3510_MOVE_EXTRACT_COMMON_COMBOS = (
     ("Mat", "Right", TensorLayout.ZN, TensorLayout.ZN, DataType.FP32, DataType.FP32),
     ("Mat", "Right", TensorLayout.ZN, TensorLayout.ZN, DataType.FP4E1M2, DataType.FP4E1M2),
     ("Mat", "Right", TensorLayout.ZN, TensorLayout.ZN, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Mat", "Right", TensorLayout.ZN, TensorLayout.ZN, DataType.FP8E8M0, DataType.FP8E8M0),
     # Mat -> ScaleLeft.
     ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.INT8, DataType.INT8),
     ("Mat", "ScaleLeft", TensorLayout.ZZ, TensorLayout.ZZ, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
@@ -2140,7 +2174,6 @@ _3510_MOVE_COMBOS = (
     ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP32, DataType.FP32),
     ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP4E1M2, DataType.FP4E1M2),
     ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Mat", "Left", TensorLayout.ZZ, TensorLayout.NZ, DataType.FP8E8M0, DataType.FP8E8M0),
     ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.INT8, DataType.INT8),
     ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
     ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP8E5M2, DataType.FP8E5M2),
@@ -2150,7 +2183,6 @@ _3510_MOVE_COMBOS = (
     ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP32, DataType.FP32),
     ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP4E1M2, DataType.FP4E1M2),
     ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Mat", "Right", TensorLayout.ND, TensorLayout.ZN, DataType.FP8E8M0, DataType.FP8E8M0),
     ("Mat", "Right", TensorLayout.ZZ, TensorLayout.ZN, DataType.INT8, DataType.INT8),
     ("Mat", "Right", TensorLayout.ZZ, TensorLayout.ZN, DataType.FP8E4M3FN, DataType.FP8E4M3FN),
     ("Mat", "Right", TensorLayout.ZZ, TensorLayout.ZN, DataType.FP8E5M2, DataType.FP8E5M2),
@@ -2160,7 +2192,6 @@ _3510_MOVE_COMBOS = (
     ("Mat", "Right", TensorLayout.ZZ, TensorLayout.ZN, DataType.FP32, DataType.FP32),
     ("Mat", "Right", TensorLayout.ZZ, TensorLayout.ZN, DataType.FP4E1M2, DataType.FP4E1M2),
     ("Mat", "Right", TensorLayout.ZZ, TensorLayout.ZN, DataType.FP4E2M1, DataType.FP4E2M1),
-    ("Mat", "Right", TensorLayout.ZZ, TensorLayout.ZN, DataType.FP8E8M0, DataType.FP8E8M0),
 
     # Acc -> Vec DN layout rejected by TEXTRACT.
     ("Acc", "Vec", TensorLayout.NZ, TensorLayout.DN, DataType.FP32, DataType.FP16),

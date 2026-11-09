@@ -50,14 +50,14 @@ pypto_pro.language.move(
 
   | 源 → 目的 | 分形要求 | 数据类型要求 |
   |---|---|---|
-  | L1 Buffer → L0A/L0B Buffer（不配置offset） | 源支持ND、NZ、ZN、ZZ；L0A Buffer目的固定为NZ，L0B Buffer目的固定为ZN。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2、DT_FP8E8M0。 |
-  | L1 Buffer → L0A/L0B Buffer（配置offset） | L0A Buffer支持ND/NZ/ZN → NZ，L0B Buffer支持NZ/ZN → ZN。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2、DT_FP8E8M0。 |
+  | L1 Buffer → L0A/L0B Buffer（不配置offset） | 源支持ND、NZ、ZN、ZZ；L0A Buffer目的固定为NZ，L0B Buffer目的固定为ZN；源、目的Tile的物理shape必须相同。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2。 |
+  | L1 Buffer → L0A/L0B Buffer（配置offset） | L0A Buffer支持ND/NZ/ZN → NZ，L0B Buffer支持NZ/ZN → ZN。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2。 |
   | UB → UB（不配置offset） | 支持ND → ND、NZ → NZ、ND → NZ。 | 源与目的必须相同。<br>- ND → ND、NZ → NZ：支持DT_INT8、DT_INT16、DT_INT32、DT_UINT8、DT_UINT16、DT_UINT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。<br>- ND → NZ：支持DT_INT8、DT_UINT8、DT_INT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
   | UB → UB（配置offset） | 支持ND → ND、NZ → NZ。 | 源与目的必须相同，支持DT_INT8、DT_INT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
   | UB → L1 Buffer（不配置offset，或配置offset且目的Tile的shape不大于源Tile） | 源支持ND、NZ，目的不校验分形。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2、DT_FP8E8M0。 |
   | UB → L1 Buffer（配置offset且目的Tile的shape大于源Tile） | 源支持ND、NZ，目的不校验分形。 | 源与目的必须相同，支持DT_INT8、DT_INT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
-  | L1 Buffer → BiasTable Buffer | 目的layout固定为ND。 | 支持DT_INT32 → DT_INT32、DT_FP32 → DT_FP32、DT_FP16 → DT_FP32、DT_BF16 → DT_FP32。 |
-  | L1 Buffer → Fixpipe Buffer | 不校验分形。 | 目的必须为DT_INT64或DT_UINT64，源数据类型不做限制。 |
+  | L1 Buffer → BiasTable Buffer | 目的layout固定为ND；源、目的Tile的物理shape必须相同。 | 支持DT_INT32 → DT_INT32、DT_FP32 → DT_FP32、DT_FP16 → DT_FP32、DT_BF16 → DT_FP32。 |
+  | L1 Buffer → Fixpipe Buffer | 不校验分形；源、目的Tile的物理shape必须相同。 | 目的必须为DT_INT64或DT_UINT64，源数据类型不做限制。 |
   | L1 Buffer → L0A_MX Buffer | 源与目的分形均为ZZ。 | 源与目的必须相同，仅支持DT_FP8E8M0。 |
   | L1 Buffer → L0B_MX Buffer | 源与目的分形均为NN。 | 源与目的必须相同，仅支持DT_FP8E8M0。 |
   | L0C Buffer → UB（不配置offset，不配置scale） | NZ → ND，NZ → DN，NZ → NZ。 | 支持DT_FP32 → DT_FP32/DT_FP16/DT_BF16，以及DT_INT32 → DT_INT32。 |

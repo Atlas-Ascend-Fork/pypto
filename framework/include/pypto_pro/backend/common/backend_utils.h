@@ -74,14 +74,9 @@ bool IsNZTensorType(const ir::TensorTypePtr& tensorType);
 /// op -- TileShape2D maps rows/cols into layout-specific dims that the shared per-layout
 /// declaration cannot express -- so it never reads the prologue declaration.
 bool IsMXLoad(const ir::TensorTypePtr& tensorType, const ir::TileTypePtr& tileType);
-/// Whether *op* is a block.load that lowers through the MX path (see IsMXLoad).
-bool IsMXLoadCall(const ir::CallPtr& op);
 /// The Layout enum an MX load walks its tensor with: the A/B role comes from the destination
 /// tile's block layout, ND vs DN from the access order. Empty when *op* is not an MX load.
 std::string MXLoadLayoutName(const ir::CallPtr& op);
-/// The two tensor axes an MX load walks, defaulted from the rank when no order was given, with
-/// the MX preconditions checked (a trailing physical phase axis of 2, never selected as an axis).
-std::vector<int> MXLoadTileDims(const ir::CallPtr& op, const ir::TensorTypePtr& tensorType);
 int64_t GetNZInnerCols(const ir::DataType& dtype);
 void ValidateNZTransfer(const std::string& opName, const ir::CallPtr& op, const ir::ExprPtr& tileExpr,
                         const ir::MakeTuplePtr& offsets, const ir::TensorTypePtr& tensorType);

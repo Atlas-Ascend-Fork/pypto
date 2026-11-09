@@ -345,7 +345,9 @@ def move(
     Args:
         dst_tile: Destination Tile
         src_tile: Source Tile
-        offset: Optional ``[offset_m, offset_k]`` to extract a sub-block from a wider source Tile
+        offset: Optional ``[offset_m, offset_k]`` to extract a sub-block from a wider source Tile.
+            When the source is in Mat (L1) and no offset is specified, the source and destination
+            Tiles must have the same physical shape.
         acc_to_vec_mode: Acc→Vec mode — ``pl.AccToVecMode.SingleModeVec0``, ``pl.AccToVecMode.SingleModeVec1``,
             ``pl.AccToVecMode.DualModeSplitM``, ``pl.AccToVecMode.DualModeSplitN``;
             only meaningful when src is Acc and dst is Vec

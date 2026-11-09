@@ -1321,26 +1321,6 @@ TEST(BackendCCEBlockOutOps, InfersHighDimensionalMxScaleLoadFromDestinationAndOr
     EXPECT_CONTAINS(b_code, "TLOAD(out_b.tile, scale_b);");
 }
 
-TEST(BackendCCEBlockOutOps, RejectsMxScaleLoadSelectingPhysicalPhaseAxis)
-{
-    auto zz_hw = ir::HardwareInfo(ir::TileLayout::row_major, ir::TileLayout::row_major, 32);
-    auto zz_tile = MakeTileType({64, 2}, ir::DataType::FP8E8M0, MakeMemRef(ir::MemorySpace::Mat), zz_hw);
-    auto scale = MakeTensorVar("scale", {64, 1, 2}, ir::DataType::FP8E8M0);
-
-    EXPECT_THROW(
-        GenerateMxLoadKernel(scale, MakeVar("out", zz_tile), {0, 0, 0}, {{"tile_dims", std::vector<int>{1, 2}}}),
-        ir::ValueError);
-}
-
-TEST(BackendCCEBlockOutOps, RejectsMxScaleLoadWithInvalidPhysicalPhaseExtent)
-{
-    auto zz_hw = ir::HardwareInfo(ir::TileLayout::row_major, ir::TileLayout::row_major, 32);
-    auto zz_tile = MakeTileType({64, 2}, ir::DataType::FP8E8M0, MakeMemRef(ir::MemorySpace::Mat), zz_hw);
-    auto scale = MakeTensorVar("scale", {64, 1, 3}, ir::DataType::FP8E8M0);
-
-    EXPECT_THROW(GenerateMxLoadKernel(scale, MakeVar("out", zz_tile), {0, 0, 0}), ir::ValueError);
-}
-
 TEST(BackendCCEBlockOutOps, InfersAllMxScaleLayouts)
 {
     auto zz_hw = ir::HardwareInfo(ir::TileLayout::row_major, ir::TileLayout::row_major, 32);
@@ -1350,7 +1330,7 @@ TEST(BackendCCEBlockOutOps, InfersAllMxScaleLayouts)
 
     auto infer = [&](const std::vector<int64_t>& tensor_shape, const ir::TypePtr& tile,
                      const std::vector<int64_t>& offsets, bool is_transpose) {
-        std::vector<std::pair<std::string, std::any>> kwargs;
+        std::vector<std::pair<std::string, std::any>> kwargs{{"tile_dims", std::vector<int>{0, 1}}};
         if (is_transpose) {
             kwargs.emplace_back("is_transpose", true);
         }
@@ -1359,24 +1339,16 @@ TEST(BackendCCEBlockOutOps, InfersAllMxScaleLayouts)
     };
 
     const auto a_nd = infer({64, 3, 2}, zz_tile, {4, 1, 0}, false);
-    EXPECT_CONTAINS(a_nd, "Layout::MX_A_ND");
-    EXPECT_CONTAINS(a_nd, "scaleStrideDim5(1, 1, 3 * 2, 2, 1)");
-    EXPECT_CONTAINS(a_nd, "4 * (3 * 2) + 1 * (2) + 0");
-
     const auto a_dn = infer({3, 64, 2}, zz_tile, {1, 4, 0}, true);
-    EXPECT_CONTAINS(a_dn, "Layout::MX_A_DN");
-    EXPECT_CONTAINS(a_dn, "scaleStrideDim5(1, 1, 64 * 2, 2, 1)");
-    EXPECT_CONTAINS(a_dn, "1 * (64 * 2) + 4 * (2) + 0");
-
     const auto b_nd = infer({3, 64, 2}, nn_tile, {1, 4, 0}, false);
-    EXPECT_CONTAINS(b_nd, "Layout::MX_B_ND");
-    EXPECT_CONTAINS(b_nd, "scaleStrideDim5(1, 1, 64 * 2, 2, 1)");
-    EXPECT_CONTAINS(b_nd, "1 * (64 * 2) + 4 * (2) + 0");
-
     const auto b_dn = infer({64, 3, 2}, nn_tile, {4, 1, 0}, true);
-    EXPECT_CONTAINS(b_dn, "Layout::MX_B_DN");
-    EXPECT_CONTAINS(b_dn, "scaleStrideDim5(1, 1, 3 * 2, 2, 1)");
-    EXPECT_CONTAINS(b_dn, "4 * (3 * 2) + 1 * (2) + 0");
+
+    std::string generated;
+    AppendCodegenSection(generated, "MX A ND", a_nd);
+    AppendCodegenSection(generated, "MX A DN", a_dn);
+    AppendCodegenSection(generated, "MX B ND", b_nd);
+    AppendCodegenSection(generated, "MX B DN", b_dn);
+    EXPECT_EQ(generated, ReadCodegenGolden("mx_scale_layouts.pypto"));
 }
 
 TEST(BackendCCEBlockOutOps, InfersMxScaleLoadWithMiddleGroupAxis)

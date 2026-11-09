@@ -451,10 +451,8 @@ StmtPtr SanitizerInstrumenter::RecordGmAccess(const CallPtr& call)
     }
     // The tile's two valid-shape windows land on the tensor axes named by
     // win_ax0/win_ax1 (-1: that tile dim maps to no axis). Axis resolution
-    // delegates to the same single sources the backend consumes: the
-    // frontend's order decomposition (ascending tile_dims + is_transpose,
-    // reconstructed here), MXLoadTileDims for MX scale loads (phase-axis
-    // default included), and the generic trailing-axes default.
+    // follows the frontend's order decomposition (ascending tile_dims +
+    // is_transpose, reconstructed here) and the generic trailing-axes default.
     ExprPtr accRow = TileDim(tile, 0);
     ExprPtr accCol = TileDim(tile, 1);
     int32_t winAx0 = -1;
@@ -469,9 +467,7 @@ StmtPtr SanitizerInstrumenter::RecordGmAccess(const CallPtr& call)
         accCol = Int64Const(1);
     } else {
         std::vector<int> tileDims;
-        if (backend::cce::IsMXLoadCall(call)) {
-            tileDims = backend::cce::MXLoadTileDims(call, tensorType);
-        } else if (call->HasKwarg("tile_dims")) {
+        if (call->HasKwarg("tile_dims")) {
             tileDims = call->GetKwarg<std::vector<int>>("tile_dims");
         } else {
             tileDims = {static_cast<int>(ndim) - 2, static_cast<int>(ndim) - 1};
@@ -492,13 +488,11 @@ StmtPtr SanitizerInstrumenter::RecordGmAccess(const CallPtr& call)
         // element. The backend lowering expands A's second dimension or B's
         // first dimension by two; replay must compare logical group counts
         // against the GM tensor and keep the phase pair out of that window.
-        if (backend::cce::IsMXLoadCall(call)) {
-            const auto layout = backend::cce::MXLoadLayoutName(call);
-            if (layout.find("MX_A_") != std::string::npos) {
-                accCol = MakeFloorDiv(accCol, Int64Const(2), call->span_);
-            } else if (layout.find("MX_B_") != std::string::npos) {
-                accRow = MakeFloorDiv(accRow, Int64Const(2), call->span_);
-            }
+        const auto layout = backend::cce::MXLoadLayoutName(call);
+        if (layout.find("MX_A_") != std::string::npos) {
+            accCol = MakeFloorDiv(accCol, Int64Const(2), call->span_);
+        } else if (layout.find("MX_B_") != std::string::npos) {
+            accRow = MakeFloorDiv(accRow, Int64Const(2), call->span_);
         }
     }
     fields.push_back(std::move(accRow));

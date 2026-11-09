@@ -323,7 +323,8 @@ __aicore__ inline bool _prepare_dump_window_record(DumpWindowRecord<T>& record, 
     const uint64_t tlvBytes = sizeof(DumpTensorTlv) + alignedDataBytes;
     if (tlvBytes > record.blockInfo->ringBufLen || tlvBytes > 0xffffffffULL) {
         printf("[WARNING] dump_data desc=%u requires %llu bytes, but the per-core dump FIFO capacity is %u bytes; "
-               "data was not dumped.\n",
+               "data was not dumped. Increase the capacity before the first NPU operation with "
+               "pypto.set_debug_options(simd_printf_fifo_size_per_core=...).\n",
                desc, static_cast<unsigned long long>(tlvBytes), record.blockInfo->ringBufLen);
         return false;
     }
@@ -512,25 +513,51 @@ __aicore__ inline void _get_local_window_coordinate(const DumpTensorView& view, 
         row = physicalOffset % rows;
         col = physicalOffset / rows;
     } else {
-        const int64_t blockRows = rows / view.innerRows;
-        const int64_t blockCols = cols / view.innerCols;
-        const int64_t innerNumel = view.innerRows * view.innerCols;
-        const int64_t block = physicalOffset / innerNumel;
-        const int64_t inner = physicalOffset % innerNumel;
-        if constexpr (layout == DumpLayout::NZ) {
-            row = (block % blockRows) * view.innerRows + inner / view.innerCols;
-            col = (block / blockRows) * view.innerCols + inner % view.innerCols;
-        } else if constexpr (layout == DumpLayout::ZN) {
-            row = (block / blockCols) * view.innerRows + inner % view.innerRows;
-            col = (block % blockCols) * view.innerCols + inner / view.innerRows;
-        } else if constexpr (layout == DumpLayout::ZZ) {
-            row = (block / blockCols) * view.innerRows + inner / view.innerCols;
-            col = (block % blockCols) * view.innerCols + inner % view.innerCols;
+        // Boxed layouts have independent orders between blocks and within each block:
+        // NZ/NN: [column panel][row block][element], ZN/ZZ: [row block][column block][element].
+        // A final short row block is stored compactly, without padding to innerRows.
+        constexpr bool outerColMajor = layout == DumpLayout::NZ || layout == DumpLayout::NN;
+        constexpr bool innerRowMajor = layout == DumpLayout::NZ || layout == DumpLayout::ZZ;
+        const int64_t columnBlockCount = cols / view.innerCols;
+        const int64_t fullRowBlockCount = rows / view.innerRows;
+        const int64_t tailRowCount = rows % view.innerRows;
+        const int64_t elementsPerFullBlock = view.innerRows * view.innerCols;
+        int64_t rowBlockIndex;
+        int64_t columnBlockIndex;
+        int64_t currentBlockRows;
+        int64_t offsetInBlock;
+        if constexpr (outerColMajor) {
+            // Locate the element in one full-height column panel.
+            const int64_t elementsPerColumnPanel = rows * view.innerCols;
+            columnBlockIndex = physicalOffset / elementsPerColumnPanel;
+            const int64_t offsetInPanel = physicalOffset % elementsPerColumnPanel;
+            rowBlockIndex = offsetInPanel / elementsPerFullBlock;
+            offsetInBlock = offsetInPanel % elementsPerFullBlock;
+            const bool isTailRowBlock = tailRowCount != 0 && rowBlockIndex == fullRowBlockCount;
+            currentBlockRows = isTailRowBlock ? tailRowCount : view.innerRows;
         } else {
-            static_assert(layout == DumpLayout::NN, "unsupported local dump layout");
-            row = (block % blockRows) * view.innerRows + inner % view.innerRows;
-            col = (block / blockRows) * view.innerCols + inner / view.innerRows;
+            // Locate the element in one row of column blocks.
+            const int64_t elementsPerFullBlockRow = columnBlockCount * elementsPerFullBlock;
+            rowBlockIndex = physicalOffset / elementsPerFullBlockRow;
+            const bool isTailRowBlock = tailRowCount != 0 && rowBlockIndex == fullRowBlockCount;
+            currentBlockRows = isTailRowBlock ? tailRowCount : view.innerRows;
+            const int64_t elementsPerCurrentBlock = currentBlockRows * view.innerCols;
+            const int64_t offsetInBlockRow = physicalOffset % elementsPerFullBlockRow;
+            columnBlockIndex = offsetInBlockRow / elementsPerCurrentBlock;
+            offsetInBlock = offsetInBlockRow % elementsPerCurrentBlock;
         }
+
+        int64_t rowInBlock;
+        int64_t colInBlock;
+        if constexpr (innerRowMajor) {
+            rowInBlock = offsetInBlock / view.innerCols;
+            colInBlock = offsetInBlock % view.innerCols;
+        } else {
+            rowInBlock = offsetInBlock % currentBlockRows;
+            colInBlock = offsetInBlock / currentBlockRows;
+        }
+        row = rowBlockIndex * view.innerRows + rowInBlock;
+        col = columnBlockIndex * view.innerCols + colInBlock;
     }
 }
 
@@ -734,9 +761,8 @@ __aicore__ inline void _dump_tile_window_impl(SourcePtr input, uint32_t desc, co
                   "unsupported local dump layout");
     if (view.rank != 2U || view.sourceShape == nullptr || view.offsets == nullptr || view.shape == nullptr ||
         view.innerRows <= 0 || view.innerCols <= 0 || view.sourceShape[0] <= 0 || view.sourceShape[1] <= 0 ||
-        view.sourceShape[0] % view.innerRows != 0 || view.sourceShape[1] % view.innerCols != 0 || view.offsets[0] < 0 ||
-        view.offsets[1] < 0 || view.shape[0] <= 0 || view.shape[1] <= 0 ||
-        view.offsets[0] > view.sourceShape[0] - view.shape[0] ||
+        view.sourceShape[1] % view.innerCols != 0 || view.offsets[0] < 0 || view.offsets[1] < 0 || view.shape[0] <= 0 ||
+        view.shape[1] <= 0 || view.offsets[0] > view.sourceShape[0] - view.shape[0] ||
         view.offsets[1] > view.sourceShape[1] - view.shape[1]) {
         return;
     }

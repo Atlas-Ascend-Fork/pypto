@@ -26,18 +26,13 @@ from pypto_pro._errors import (
 )
 import pypto_pro.language as pl
 import pytest
+from test_common import assert_ir_matches_dump
 
 from pypto.pypto_impl import ir as _ir
 
 
 def _program_ir(func: ir.Function) -> str:
     return str(func)
-
-
-def _assert_ir_dump(node) -> None:
-    printed = str(node)
-    golden = Path(__file__).with_suffix(".pypto").read_text(encoding="utf-8")
-    assert printed.rstrip("\n") == golden.rstrip("\n")
 
 
 def _find_call(func: ir.Function, name: str):
@@ -981,31 +976,23 @@ def test_vec_to_vec_move_with_offset_rejects_tmov_only_layout_conversion():
         main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
-@pytest.mark.parametrize(
-    "src_layout,dst_memory,dst_layout",
-    [
-        (pl.ZZ, pl.MemorySpace.Left, pl.NZ),
-        (pl.ND, pl.MemorySpace.Right, pl.ZN),
-        (pl.ZZ, pl.MemorySpace.Right, pl.ZN),
-    ],
-)
-def test_mat_to_cube_move_with_offset_rejects_tmov_only_layout_conversion(src_layout, dst_memory, dst_layout):
-    """These Mat-to-Left/Right layouts are supported by TMOV but rejected by TEXTRACT."""
+def test_mat_to_cube_move_with_offset_rejects_tmov_only_layout_conversion():
+    """Mat ND-to-Right ZN is supported by TMOV but rejected by TEXTRACT."""
     with pytest.raises(InvalidType, match="move: unsupported layout/dtype combination"):
 
         @pl.jit(auto_mutex=False)
         def main(_jit_entry: pl.DT_INT64):
             src_type = pl.TileType(
                 shape=[64, 32],
-                dtype=pl.DT_FP8E8M0,
+                dtype=pl.DT_FP16,
                 target_memory=pl.MemorySpace.Mat,
-                layout=src_layout,
+                layout=pl.ND,
             )
             dst_type = pl.TileType(
                 shape=[32, 32],
-                dtype=pl.DT_FP8E8M0,
-                target_memory=dst_memory,
-                layout=dst_layout,
+                dtype=pl.DT_FP16,
+                target_memory=pl.MemorySpace.Right,
+                layout=pl.ZN,
             )
             src = pl.make_tile(src_type, addr=0x0000)
             dst = pl.make_tile(dst_type, addr=0x0000)
@@ -1043,6 +1030,60 @@ def test_mat_to_cube_move_without_offset_uses_move_layout_rules(
 
     program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
     assert_9201_golden(program.get_function(main.__name__))
+
+
+@pytest.mark.parametrize(
+    "src_layout,dst_memory,dst_layout",
+    [
+        (pl.NZ, pl.MemorySpace.Left, pl.NZ),
+        (pl.ZN, pl.MemorySpace.Right, pl.ZN),
+    ],
+)
+def test_mat_to_cube_move_without_offset_rejects_mismatched_shape(src_layout, dst_memory, dst_layout):
+    with pytest.raises(InvalidShape, match="a Mat-source move requires equal shapes"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[64, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=src_layout
+            )
+            dst_type = pl.TileType(
+                shape=[32, 64], dtype=pl.DT_FP16, target_memory=dst_memory, layout=dst_layout
+            )
+            src = pl.make_tile(src_type, addr=0x0000)
+            dst = pl.make_tile(dst_type, addr=0x0000)
+            pl.move(dst, src)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
+
+
+@pytest.mark.parametrize(
+    "dst_memory,dst_layout",
+    [(pl.MemorySpace.Left, pl.NZ), (pl.MemorySpace.Right, pl.ZN)],
+)
+@pytest.mark.parametrize(
+    "offset",
+    [pytest.param(None, id="move"), pytest.param([0, 0], id="extract")],
+)
+def test_mat_to_cube_move_and_extract_reject_fp8e8m0(dst_memory, dst_layout, offset):
+    with pytest.raises(InvalidType, match="move: unsupported layout/dtype combination"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[64, 64], dtype=pl.DT_FP8E8M0, target_memory=pl.MemorySpace.Mat, layout=pl.NZ
+            )
+            dst_type = pl.TileType(
+                shape=[64, 64], dtype=pl.DT_FP8E8M0, target_memory=dst_memory, layout=dst_layout
+            )
+            src = pl.make_tile(src_type, addr=0x0000)
+            dst = pl.make_tile(dst_type, addr=0x0000)
+            if offset is None:
+                pl.move(dst, src)
+            else:
+                pl.move(dst, src, offset=offset)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
 
 
 def test_vec_to_vec_move_rejects_unsupported_int64_dtype():
@@ -1320,6 +1361,20 @@ def test_move_src_larger_stays_move():
 
     ir_str = _program_ir(main)
     assert "block.move" in ir_str
+
+
+def test_move_with_offset_rejects_incomparable_shapes_as_invalid_shape():
+    with pytest.raises(InvalidShape, match="dst dim 0 .* exceeds src dim"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            dst_type = pl.TileType(shape=[64, 16], dtype=pl.DT_FP32)
+            src_type = pl.TileType(shape=[32, 32], dtype=pl.DT_FP32)
+            dst = pl.make_tile(dst_type, addr=0x30200)
+            src = pl.make_tile(src_type, addr=0x31200)
+            pl.move(dst, src, [0, 0])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
 def test_make_tile_missing_addr_rejected():
@@ -1756,7 +1811,7 @@ def test_non_column_dn_load_accepts_descending_order():
 
     program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     function = program.get_function(main.__name__)
-    _assert_ir_dump(_find_call(function, "block.load"))
+    assert_ir_matches_dump(_find_call(function, "block.load"), Path(__file__).with_suffix(".pypto"))
 
 
 def test_non_column_dn_load_tile_accepts_descending_order():
@@ -1770,7 +1825,7 @@ def test_non_column_dn_load_tile_accepts_descending_order():
 
     program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     function = program.get_function(main.__name__)
-    _assert_ir_dump(_find_call(function, "block.load"))
+    assert_ir_matches_dump(_find_call(function, "block.load"), Path(__file__).with_suffix(".pypto"))
 
 
 def test_if_merged_non_column_dn_load_requires_descending_order():
