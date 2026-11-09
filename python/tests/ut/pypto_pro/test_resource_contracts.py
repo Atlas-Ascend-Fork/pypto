@@ -20,7 +20,6 @@ from pypto_pro._errors import (
     InvalidTile,
     InvalidType,
     InvalidVal,
-    MutexMismatch,
     NotSupported,
     OutOfRange,
     current_span,
@@ -209,30 +208,8 @@ def _manual_alias_kernel(addrs, ids, auto_mutex=True, include_auto=False):
     return kernel
 
 
-@pytest.mark.parametrize("addrs,ids,auto_mutex,count", [
-    ([0, 0], [1, 2], True, 1),
-    ([0, 128], [1, 2], True, 1),
-    ([0, 0], [1, 1], True, 0),
-    ([0, 0], [[1, 2], [2, 3]], True, 0),
-    ([0, 256], [1, 1], True, 0),
-    ([0, 0], None, True, 0),
-    ([0, 0], None, False, 0),
-])
-def test_manual_mutex_warning_preserves_alias_and_reuse_contracts(addrs, ids, auto_mutex, count):
-    with warnings.catch_warnings(record=True) as recorded:
-        warnings.simplefilter("always", MutexMismatch)
-        _manual_alias_kernel(addrs, ids, auto_mutex).to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-    assert len(recorded) == count
-    if recorded:
-        assert recorded[0].category is MutexMismatch
-        assert recorded[0].filename == __file__
-
-
-def test_native_auto_alias_rejection_runs_before_manual_warning():
-    with warnings.catch_warnings(record=True) as recorded:
-        warnings.simplefilter("always", MutexMismatch)
-        with pytest.raises(InvalidOperation) as caught:
-            _manual_alias_kernel([0, 0], [1, 2], include_auto=True).to_kernel_def().parse_target_program(
-                ir.SectionKind.Vector)
+def test_native_auto_alias_rejection_preserves_mutex_id_validation():
+    with pytest.raises(InvalidOperation) as caught:
+        _manual_alias_kernel([0, 0], [1, 2], include_auto=True).to_kernel_def().parse_target_program(
+            ir.SectionKind.Vector)
     assert "overlapping address ranges must use the same mutex ID" in caught.value.message
-    assert not recorded

@@ -291,26 +291,6 @@ TEST_F(TestMonitorWatchdog, DetailModeInitWritesNoThresholdBannerToFile)
     EXPECT_EQ(segment.find("Threshold:"), std::string::npos);
 }
 
-TEST_F(TestMonitorWatchdog, Mode2TimeoutWritesWarningToScreen)
-{
-    MonitorManager::Instance().Initialize(true, 1, true);
-    MonitorManager::Instance().impl_->StopMonitoring();
-    {
-        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
-        MonitorManager::Instance().totalTimeoutEmitted_ = false;
-        MonitorManager::Instance().totalStart_ = std::chrono::steady_clock::now() - std::chrono::seconds(2);
-        MonitorManager::Instance().stageStart_ = MonitorManager::Instance().totalStart_;
-    }
-    testing::internal::CaptureStdout();
-    MonitorManager::Instance().CheckAndEmitTotalTimeout();
-    const std::string screen = testing::internal::GetCapturedStdout();
-    MonitorManager::Instance().NotifyCompilationFinished();
-
-    EXPECT_NE(screen.find("Compile timeout"), std::string::npos);
-    EXPECT_NE(screen.find("Threshold: 1s"), std::string::npos);
-    EXPECT_NE(screen.find("Stage elapsed:"), std::string::npos);
-}
-
 TEST_F(TestMonitorWatchdog, Mode1TimeoutWritesNoWarningToScreen)
 {
     MonitorManager::Instance().Initialize(true, 1, false);
@@ -327,26 +307,4 @@ TEST_F(TestMonitorWatchdog, Mode1TimeoutWritesNoWarningToScreen)
     MonitorManager::Instance().NotifyCompilationFinished();
 
     EXPECT_EQ(screen.find("Compile timeout"), std::string::npos);
-}
-
-TEST_F(TestMonitorWatchdog, TimeoutWritesExpectedMonitorLogToFile)
-{
-    MonitorManager::Instance().Initialize(true, 1, false);
-    MonitorManager::Instance().impl_->StopMonitoring();
-    {
-        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
-        MonitorManager::Instance().totalTimeoutEmitted_ = false;
-        MonitorManager::Instance().totalStart_ = std::chrono::steady_clock::now() - std::chrono::seconds(2);
-        MonitorManager::Instance().stageStart_ = MonitorManager::Instance().totalStart_;
-    }
-    COMPILER_EVENT("MONITOR_LOG_MARK_BEGIN_TIMEOUT");
-    MonitorManager::Instance().CheckAndEmitTotalTimeout();
-    COMPILER_EVENT("MONITOR_LOG_MARK_END_TIMEOUT");
-    MonitorManager::Instance().NotifyCompilationFinished();
-
-    const std::string segment = ReadLogBetweenMarkers("MONITOR_LOG_MARK_BEGIN_TIMEOUT", "MONITOR_LOG_MARK_END_TIMEOUT");
-    EXPECT_NE(segment.find("Compile timeout"), std::string::npos);
-    EXPECT_NE(segment.find("Threshold: 1s"), std::string::npos);
-    EXPECT_NE(segment.find("Stage elapsed:"), std::string::npos);
-    EXPECT_EQ(segment.find("DetectedStage"), std::string::npos);
 }

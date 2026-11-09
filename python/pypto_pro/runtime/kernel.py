@@ -371,7 +371,6 @@ class KernelDef:
                         str(exc),
                         span=span_of_spec_message(str(exc)) or mutex_id_manager.diagnostic_span,
                     ) from None
-            parser.warn_manual_mutex_aliases()
             if observer is not None:
                 observer(program, parser)
             return program, parser.matched_target
