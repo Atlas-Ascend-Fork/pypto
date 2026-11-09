@@ -444,6 +444,15 @@ static MergeKind SelectMergeKind(const Tensor& operand, const std::vector<int>& 
     AxisSegments seg = SplitAxisSegments(operand, perm, srcValid);
     plan.transposeDims = perm;
     if (TryBuild2DMergedPlan(operand, seg, perm, srcValid, plan)) {
+        // 动态函数下的 2D 合轴（TransposeViaMerge 的 is2DDynamic 分支）会把列 tile 设为完整
+        // T2 = plan.inputShape.back()；T2 末维字节不是 BLOCK_SIZE 对齐时（如 fp32 T2=93 ->
+        // 372B），Reshape/View 物化产生的 FwkOp 会触发 CheckFwkOpTileShape 的对齐门禁
+        // （Quantize colwise 视图 [*,*,93] 复现）。此时保守退回多级转置（基线行为），
+        // 不引入 padded 中间体，保持 tile 对齐不变量。
+        if (!IsStaticFunction() &&
+            plan.inputShape.back() * BytesOf(operand.GetStorage()->Datatype()) % BLOCK_SIZE != 0) {
+            return MergeKind::None;
+        }
         return MergeKind::TwoD;
     }
     if (!HasMergeableBatchDims(seg) || !IsContiguousForMerge(operand) || !IsStaticFunction()) {
@@ -500,6 +509,15 @@ static Tensor TransposeMerged2DDynamic(const Tensor& self, const MergedTranspose
     chunkBudget = std::max<int64_t>(chunkBudget, UbBytes() / 4);
     // 合轴后的 result 恒为 [pre, cols, rows]（3D），其它情况不做分块，保持原路径。
     bool canChunk = resultShape.size() == NUM_VALUE_3;
+    int64_t colChunk = std::max<int64_t>(1, std::min(chunkBudget / std::max<int64_t>(colMatBytes, 1), cols));
+    // 段数上限：cols 巨大而预算把段压得极小时（如 [128,3,24576] fp32 转置末两维约 1536 段、
+    // [16,896,16384] colwise 约 16384 段），分块会展开数千次 View/Reshape/InnerTranspose/Assemble，
+    // 编译期调度不收敛（表现为 jit 编译挂死，内核未提交即超时）。超限回退整块路径：单 op 的宽
+    // tile 由调度器按 vecTile 分块执行，是引入列分块前的既有行为，实测可正常编译运行。
+    constexpr int64_t MERGE_2D_MAX_CHUNKS = 64;
+    if (canChunk && (cols + colChunk - 1) / colChunk > MERGE_2D_MAX_CHUNKS) {
+        canChunk = false;
+    }
     if (!canChunk || matBytes <= chunkBudget) {
         auto tmp3D = Reshape(tmpOutput, tmp3DShape, tmp3DValid);
         TileShape::Current().SetVecTile({colTile, pre, rows});
@@ -508,7 +526,6 @@ static Tensor TransposeMerged2DDynamic(const Tensor& self, const MergedTranspose
         TileShape::Current().SetVecTile(outerVecTile);
         return result;
     }
-    int64_t colChunk = std::max<int64_t>(1, std::min(chunkBudget / std::max<int64_t>(colMatBytes, 1), cols));
     std::vector<int64_t> tmpChunkShape = {0, pre * rows};
     std::vector<int64_t> tmpChunkOffset = {0, 0};
     std::vector<int64_t> tmpChunk3DShape = {0, pre, rows};
