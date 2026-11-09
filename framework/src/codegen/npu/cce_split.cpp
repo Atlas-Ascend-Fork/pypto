@@ -28,9 +28,12 @@ bool CountsTowardSplitThreshold(const CceSplitRegion& region)
     return region.effect == CceSplitEffect::NON_SYNC_OP || region.effect == CceSplitEffect::EXTERNAL_STATE;
 }
 
-std::string Declaration(const std::string& name, const std::string& parameters)
+std::string Declaration(const std::string& name, const std::string& parameters, bool isPart)
 {
-    return "extern \"C\" [aicore] void " + name + parameters;
+    // Runtime must not register internal parts as kernel entry points.
+    const std::string visibility = isPart ? "__attribute__((visibility(\"hidden\"))) " : "";
+    const std::string attribute = isPart ? "__aicore__" : "[aicore]";
+    return "extern \"C\" " + attribute + " " + visibility + "void " + name + parameters;
 }
 
 // Scan identifiers only against names supplied by codegen. This does not infer
@@ -208,7 +211,7 @@ CceSplitPlan PlanCceSplit(const CceOriginalFunctionBody& body, const std::string
         CceGeneratedSegment part;
         const auto partNumber = std::to_string(plan.parts.size());
         part.name = kernelName + "_part" + std::string(partNumberWidth - partNumber.size(), '0') + partNumber;
-        const std::string wrapper = prefix + Declaration(part.name, parameters) + " {\n";
+        const std::string wrapper = prefix + Declaration(part.name, parameters, true) + " {\n";
         std::string source;
         std::unordered_set<size_t> selected;
         std::vector<size_t> preambleOrder;
@@ -268,9 +271,11 @@ CceSplitPlan PlanCceSplit(const CceOriginalFunctionBody& body, const std::string
         return plan;
     }
     plan.header = "#pragma once\n";
-    plan.entry = prefix + Declaration(kernelName, parameters) + " {\n";
+    plan.entry = prefix + Declaration(kernelName, parameters, false) + " {\n";
     for (const auto& part : plan.parts) {
-        plan.header += Declaration(part.name, parameters) + ";\n";
+        plan.header += Declaration(part.name, parameters, true) + ";\n";
+        // Bisheng can drop visibility attributes on aicore functions; enforce ELF visibility as well.
+        plan.header += "asm(\".hidden " + part.name + "\");\n";
         // Keep arguments in sync with CodeGenNPU::GenFuncHeader (codegen_npu.cpp) parameter names and order.
         plan.entry += part.name + "(param, GMStackBase, hcclContext, taskStat);\n";
     }

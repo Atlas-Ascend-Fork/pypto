@@ -93,6 +93,22 @@ TEST(CceSplitPlanner, TopLevelOperationAllowsSplitAndOversize)
     EXPECT_EQ(plan.parts[0].source.find("leaf_part1("), std::string::npos);
 }
 
+TEST(CceSplitPlanner, InternalPartsAreHiddenAndEntryRemainsVisible)
+{
+    const auto plan = Plan(Body());
+    ASSERT_EQ(plan.parts.size(), 2U);
+    for (const auto& part : plan.parts) {
+        const std::string declaration = "extern \"C\" __aicore__ __attribute__((visibility(\"hidden\"))) void " +
+                                        part.name + "(";
+        EXPECT_NE(plan.header.find(declaration), std::string::npos);
+        EXPECT_NE(plan.header.find("asm(\".hidden " + part.name + "\");"), std::string::npos);
+        EXPECT_NE(part.source.find(declaration), std::string::npos);
+        EXPECT_NE(plan.entry.find(part.name + "(param, GMStackBase, hcclContext, taskStat);"), std::string::npos);
+    }
+    EXPECT_NE(plan.entry.find("extern \"C\" [aicore] void leaf("), std::string::npos);
+    EXPECT_EQ(plan.entry.find("visibility"), std::string::npos);
+}
+
 TEST(CceSplitPlanner, OrdinaryBarrierDoesNotBlockSplitting)
 {
     auto body = Body();
