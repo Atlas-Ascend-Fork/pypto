@@ -860,9 +860,9 @@ void CCECodegen::EmitSingleFunctionSignature(const ir::FunctionPtr& func)
             sig << "__gm__ uint8_t* " << paramName << "_ptr";
             context_.RegisterVar(param, paramName);
         } else if (std::dynamic_pointer_cast<const ir::WindowType>(param->GetType())) {
-            // Window param: raw GM byte pointer to the device dist::Window
+            // Window param: raw GM byte pointer to the device pypto::dist::Window
             // descriptor the host wrote at create_window. Field reads (dist.window_get)
-            // cast it to the embedded dist::Window copy, so only the pointer name is
+            // cast it to the embedded pypto::dist::Window copy, so only the pointer name is
             // addressable in C++.
             std::string paramName = context_.SanitizeName(param);
             std::string ptrName = paramName + "_ptr";

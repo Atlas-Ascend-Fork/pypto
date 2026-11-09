@@ -388,7 +388,7 @@ void BindTypeClass(py::module_& ir)
 
     // WindowType - const shared_ptr; opaque handle to a distributed window
     auto windowTypeClass = py::class_<WindowType, Type, std::shared_ptr<WindowType>>(
-        ir, "WindowType", "Opaque distributed-window handle type (device dist::Window descriptor)");
+        ir, "WindowType", "Opaque distributed-window handle type");
     windowTypeClass.def(py::init<>(), "Create a window type");
     windowTypeClass.def_static("get", &GetWindowType, "Get the singleton WindowType instance");
     BindFields<WindowType>(windowTypeClass);

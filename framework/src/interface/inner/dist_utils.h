@@ -14,7 +14,7 @@
 #include <cstdint>
 
 namespace dist {
-// Scalar field index -> Window member name (nullptr = not a scalar field).
+// User-visible window scalars: field index -> descriptor member name.
 constexpr const char* WindowScalarFieldName(int32_t idx)
 {
     switch (idx) {
@@ -22,23 +22,10 @@ constexpr const char* WindowScalarFieldName(int32_t idx)
             return "rank";
         case 1:
             return "nrank";
-        case 2:
-            return "num_signals";
-        case 3:
-            return "size";
-        case 4:
-            return "jetty_ptrs";
-        case 5:
-            return "buffer_ptr";
-        case 6:
-            return "signal_offset";
-        case 7:
-            return "barrier_offset";
         default:
-            return nullptr; // 8: remote_ptrs is an inline array, not a scalar field
+            return nullptr;
     }
 }
 
-// Scalar fields 0-2 (rank, nrank, num_signals) are int32; every other member is int64.
-constexpr bool WindowFieldIsInt32(int32_t idx) { return idx >= 0 && idx <= 2; }
+constexpr bool WindowFieldIsInt32(int32_t idx) { return idx >= 0 && idx <= 1; }
 } // namespace dist

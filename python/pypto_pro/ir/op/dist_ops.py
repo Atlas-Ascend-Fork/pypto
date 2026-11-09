@@ -138,12 +138,22 @@ def _coord_scale(block_idx, dim, span):
 
 
 @op_impl("dist.make_dtensor")
-def _build_make_dtensor(self, window, offset, shape, dtype, *, span: Span | None = None):
-    """``dt = pld.make_dtensor(win, offset, shape, dtype)`` -> parse-time DTensor handle."""
+def _build_make_dtensor(self, window, region, offset, shape, dtype, *, span: Span | None = None):
+    """``dt = pld.make_dtensor(win, region, offset, shape, dtype)`` -> parse-time DTensor handle.
+
+    ``region`` is a tensor kernel parameter the host registered with
+    ``Window.register_memory``; ``offset`` is relative to that region's base.
+    """
     from ...language.distribute import DTensor
 
-    if not isinstance(window, _ir_core.Var):
+    if not isinstance(window, _ir_core.Var) or not isinstance(window.type, _ir_core.WindowType):
         raise InvalidType("pld.make_dtensor win must be a kernel window parameter", span=span)
+    if not isinstance(region, _ir_core.Var) or not isinstance(region.type, _ir_core.TensorType):
+        raise InvalidType(
+            "pld.make_dtensor region must be a tensor kernel parameter registered by "
+            "Window.register_memory (locals and intermediates are not registered regions)",
+            span=span,
+        )
     if not isinstance(getattr(shape, "type", None), _ir_core.TupleType):
         raise InvalidType("pld.make_dtensor shape must be a list of ints or integer scalar expressions", span=span)
     dims = tuple(_shape_dim(dim, span) for dim in _to_make_tuple(shape, span).elements)
@@ -151,7 +161,7 @@ def _build_make_dtensor(self, window, offset, shape, dtype, *, span: Span | None
         raise InvalidVal(f"pld.make_dtensor shape must have 1-5 positive dims, got {dims}", span=span)
     if isinstance(getattr(offset, "type", None), _ir_core.TupleType):
         raise InvalidType(
-            "pld.make_dtensor offset is a scalar byte offset into the payload, not a coordinate list",
+            "pld.make_dtensor offset is a scalar byte offset into the registered region, not a coordinate list",
             span=span,
         )
     byte_offset = _int_operand(offset, "pld.make_dtensor", "offset", span)
@@ -159,7 +169,7 @@ def _build_make_dtensor(self, window, offset, shape, dtype, *, span: Span | None
         raise InvalidVal(f"pld.make_dtensor offset must be >= 0 bytes, got {byte_offset.value}", span=span)
     if not isinstance(dtype, _ir_core.DataType):
         raise InvalidType("pld.make_dtensor dtype must be a pl.DT_* constant", span=span)
-    return DTensor(window, byte_offset, dims, dtype)
+    return DTensor(window, region, byte_offset, dims, dtype)
 
 
 def _order_axes(self, order, api):
@@ -299,7 +309,7 @@ def _build_transfer(self, tile, dtensor, offset, peer, order, *, op_name, api, i
         kwargs["atomic"] = atomic
     return _ir_core.create_op_call(
         op_name,
-        [dtensor.window, dtensor.byte_offset, offsets_tuple, shape_tuple, tile, peer],
+        [dtensor.window, dtensor.region, dtensor.byte_offset, offsets_tuple, shape_tuple, tile, peer],
         kwargs,
         span,
     )
@@ -580,6 +590,9 @@ def _parse_channel(parser, call):
                 span=span,
             )
 
+    # ubbuf may be use by simt code, update the max_vec_tile_end
+    parser.max_vec_tile_end = max(parser.max_vec_tile_end, ub_addr + CHANNEL_UB_BYTES)
+
     peer_ir = peer if peer is not None else _normalize_expr(-1, span)
     create = _ir_core.create_op_call("dist.channel", [window, peer_ir], {"ub_addr": ub_addr}, span)
     return _ChannelCreate(window, ub_addr, create)
@@ -633,7 +646,7 @@ def _build_channel_write(parser, call, channel):
         num_bytes_arg = _shape_byte_count(source.type.shape, dtensor.dtype, span)
         return _ir_core.create_op_call(
             "dist.channel_write",
-            [channel.token, dtensor.byte_offset, num_bytes_arg, source],
+            [channel.token, dtensor.region, dtensor.byte_offset, num_bytes_arg, source],
             {"dtype": dtensor.dtype, "submit": submit, "timeout_cycles": timeout},
             span,
         )
@@ -642,7 +655,7 @@ def _build_channel_write(parser, call, channel):
     # The scalar rides inline in the WQE; no MTE3 flush is needed.
     return _ir_core.create_op_call(
         "dist.channel_write_value",
-        [channel.token, dtensor.byte_offset, value],
+        [channel.token, dtensor.region, dtensor.byte_offset, value],
         {"dtype": dtensor.dtype, "submit": submit, "timeout_cycles": timeout},
         span,
     )
@@ -694,6 +707,7 @@ def _build_channel_write_notify(parser, call, channel):
         "dist.channel_write_notify",
         [
             channel.token,
+            dtensor.region,
             dtensor.byte_offset,
             num_bytes_arg,
             source,
@@ -823,7 +837,7 @@ def _build_atomic(self, dtensor, peer, offset, values, *, op_name, api, value_na
     shape_tuple = _to_make_tuple(dtensor.shape, span)
     return _ir_core.create_op_call(
         op_name,
-        [dtensor.window, dtensor.byte_offset, offsets_arg, shape_tuple, peer_operand, *parsed_values],
+        [dtensor.window, dtensor.region, dtensor.byte_offset, offsets_arg, shape_tuple, peer_operand, *parsed_values],
         {"dtype": dtype},
         span,
     )

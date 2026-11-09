@@ -1009,6 +1009,18 @@ class TokenType(Type):
         ...
 
 
+class WindowType(Type):
+    """Opaque distributed-window handle type (the device window descriptor)."""
+
+    def __init__(self) -> None:
+        """Create a window type."""
+
+    @staticmethod
+    def get() -> WindowType:
+        """Get the singleton WindowType instance."""
+        ...
+
+
 class LogicalTensorType(Type):
     """Logical tensor type"""
 

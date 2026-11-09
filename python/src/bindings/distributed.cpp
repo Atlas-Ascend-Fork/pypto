@@ -168,14 +168,26 @@ void BindDistributed(py::module_& m)
     py::class_<WindowContext, std::shared_ptr<WindowContext>>(dist, "Window", py::dynamic_attr())
         .def("rank", &WindowContext::Rank, "This rank's index in the group.")
         .def("nrank", &WindowContext::NRank, "Group size.")
-        .def("size", &WindowContext::Size, "Payload size in bytes (data region only).")
-        .def("num_signals", &WindowContext::NumSignals, "Reserved signal-slot count.")
-        .def("data_ptr", &WindowContext::DataPtr,
-             "Device address of the device-side Window descriptor (host handle; in-kernel "
-             "win.data_ptr() reads the payload base instead).")
+        .def("data_ptr", &WindowContext::DataPtr, "Device address of the device-side Window descriptor (host handle).")
         .def("support_multi_issuer", &WindowContext::SupportsMultiIssuer,
              "True when every peer shares one local UBC_CTP endpoint, so any AIV may issue engine "
              "writes to any peer; False when each peer needs a single issuer AIV.")
+        .def("connected", &WindowContext::Connected, "True once connect() has completed.")
+        .def(
+            "register_memory",
+            [](WindowContext& win, int64_t tensorAddr, int64_t size, const std::string& name, int32_t protocol) {
+                win.RegisterMemory(tensorAddr, size, name, protocol);
+            },
+            py::arg("tensor_addr"), py::arg("size"), py::arg("name"), py::arg("protocol"),
+            "Register one existing device memory region in place (zero-copy, local, before connect()). "
+            "protocol is a bitmask: 1 = UB_MEM, 2 = URMA, 3 = both. The name is the engine memTag.")
+        .def(
+            "connect",
+            [](WindowContext& win) {
+                py::gil_scoped_release gil;
+                win.Connect();
+            },
+            "All-rank collective: register regions, exchange peer bases, build channels; seals the region set.")
         .def("__str__", &WindowContext::ToString)
         .def(
             "close",
@@ -188,23 +200,10 @@ void BindDistributed(py::module_& m)
 
     dist.def(
         "create_window",
-        [](int32_t rank, int32_t nrank, int64_t size, int64_t bufferSize, int64_t numSignals, int64_t deviceAddr,
-           int64_t streamAddr, const std::string& hcclGroupName, const std::string& name, int32_t layer) {
-            std::shared_ptr<WindowContext> win;
-            {
-                // Collective setup blocks for seconds (AllGather barriers, channel connect);
-                // don't stall other Python threads while polling.
-                py::gil_scoped_release gil;
-                win = CreateWindow(rank, nrank, size, bufferSize, numSignals, deviceAddr, streamAddr, hcclGroupName,
-                                   name, layer);
-            }
-            return win;
-        },
-        py::arg("rank"), py::arg("nrank"), py::arg("size"), py::arg("buffer_size"), py::arg("num_signals"),
-        py::arg("device_addr"), py::arg("stream"), py::arg("hccl_name"), py::arg("name") = std::string(),
-        py::arg("layer") = -1,
-        "Register a symmetric window on the HCCL comm and build its connections. layer < 0 "
-        "auto-selects the top net layer; an explicit layer must exist in the rank graph.");
+        [](int32_t rank, int32_t nrank, int64_t streamAddr, const std::string& hcclGroupName, const std::string& name,
+           int32_t layer) { return CreateWindow(rank, nrank, streamAddr, hcclGroupName, name, layer); },
+        py::arg("rank"), py::arg("nrank"), py::arg("stream"), py::arg("hccl_name"), py::arg("name") = std::string(),
+        py::arg("layer") = -1, "Create a symmetric window for specific layer");
 
     dist.def(
         "dump_topology",

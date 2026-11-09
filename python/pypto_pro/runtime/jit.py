@@ -923,6 +923,10 @@ def _build_launch_entry(compiled: "CompiledKernel"):
                     raise InvalidType(
                         f"arg[{index}] '{slot[2]}': expected a pld.Window, got {type(arg).__name__}"
                     )
+                if not arg.connected():
+                    raise InvalidOperation(
+                        f"arg[{index}] '{slot[2]}': window is not connected; call win.connect() before launching"
+                    )
                 append(arg.data_ptr())
                 continue
             _, _, name, expected_dtypes, rank, consts, dyn_dims, pack = slot

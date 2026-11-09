@@ -73,12 +73,14 @@
 #define DISTRIBUTED_EVENT(...) PYPTO_HOST_LOG_WITHOUT_LEVEL_CHECK(DLOG_INFO, DISTRIBUTED, __VA_ARGS__)
 #define DISTRIBUTED_LOGD_FULL(...) PYPTO_HOST_SPLIT_LOG(DLOG_DEBUG, DISTRIBUTED, __VA_ARGS__)
 
-// Fatal distributed check: prints the message and aborts (exit). Unlike CHECK (which throws),
-// a failed distributed setup deadlocks the whole job, so fail fast. Chain details with <<, e.g.
-// DIST_CHECK(ret == HCOMM_SUCCESS) << "HcclCommMemReg failed, ret=" << ret;
 #ifndef DIST_CHECK
-#define DIST_CHECK(cond) \
-    (cond) ? 0 : npu::tile_fwk::AssertInfo() = npu::tile_fwk::ErrorMessage() << "CHECK FAILED: " #cond "\n"
+// clang-format off
+#define DIST_CHECK(cond)                                                                                            \
+    (cond) ? 0 :                                                                                                    \
+             npu::tile_fwk::Error(__func__, __FILE__, __LINE__,                                                     \
+                                  npu::tile_fwk::GetBacktrace(0, /* 64 is maxFrames */ 64)) =                       \
+                 npu::tile_fwk::ErrorMessage() << "CHECK FAILED: " #cond "\n"
+// clang-format on
 #endif
 
 #define SIMULATION_LOGD(...) PYPTO_SIM_LOG(DLOG_DEBUG, SIMULATION, __VA_ARGS__)

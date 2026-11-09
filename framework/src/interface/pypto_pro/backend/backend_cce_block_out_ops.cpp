@@ -1527,20 +1527,23 @@ static std::string MakeBlockOutGatherMaskCodegenCCE(const ir::CallPtr& op, codeg
 static std::string MakeDistTransferCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase, bool isGet)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 6)
-        << op->name_ << " requires 6 arguments: window, base_bytes, offsets, shape, tile, peer";
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 7)
+        << op->name_ << " requires 7 arguments: window, memory, base_bytes, offsets, shape, tile, peer";
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << op->name_ << " requires the Vector target";
 
     auto windowVar = ir::As<ir::Var>(op->args_[0]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, windowVar != nullptr) << op->name_ << " window must be a Var";
-    auto offsetsTuple = ir::As<ir::MakeTuple>(op->args_[2]);
+    auto memVar = ir::As<ir::Var>(op->args_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, memVar != nullptr)
+        << op->name_ << " memory must be a tensor Var (a registered region)";
+    auto offsetsTuple = ir::As<ir::MakeTuple>(op->args_[3]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, offsetsTuple != nullptr)
         << op->name_ << " offsets must be a tuple of element coordinates";
-    auto shapeTuple = ir::As<ir::MakeTuple>(op->args_[3]);
+    auto shapeTuple = ir::As<ir::MakeTuple>(op->args_[4]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, shapeTuple != nullptr && !shapeTuple->elements_.empty())
         << op->name_ << " shape must be a tuple of view dimensions";
-    auto tileType = ir::As<ir::TileType>(op->args_[4]->GetType());
+    auto tileType = ir::As<ir::TileType>(op->args_[5]->GetType());
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tileType != nullptr) << op->name_ << " tile must be a TileType";
     const bool isFractal = tileType->hardwareInfo_.has_value() &&
                            tileType->hardwareInfo_->slayout != ir::TileLayout::none_box;
@@ -1557,17 +1560,20 @@ static std::string MakeDistTransferCodegenCCE(const ir::CallPtr& op, codegen::Co
         tileDims = op->GetKwarg<std::vector<int>>("tile_dims");
     }
 
-    const std::string baseBytes = codegen.GetExprAsCode(op->args_[1]);
-    const std::string tile = cce::GetOperandAsCode(codegen, op->args_[4]);
-    const std::string peer = codegen.GetExprAsCode(op->args_[5]);
+    const std::string baseBytes = codegen.GetExprAsCode(op->args_[2]);
+    const std::string tile = cce::GetOperandAsCode(codegen, op->args_[5]);
+    const std::string peer = codegen.GetExprAsCode(op->args_[6]);
     const std::string winPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
     const std::string dtypeStr = tileType->dtype_.ToCTypeString();
     // DTensor base: the peer's payload base + the view's scalar byte offset; the
     // element-coordinate offsets below are then applied as typed pointer arithmetic.
+    // The device resolves the region from the memory tensor parameter the kernel holds.
+    const std::string memPtr = codegen.GetPointer(codegen.GetVarName(memVar));
     const std::string remoteBase = "reinterpret_cast<__gm__ " + dtypeStr +
                                    "*>(reinterpret_cast<__gm__ uint8_t*>(pypto::dist::remote_ptr<" + dtypeStr +
-                                   ">(reinterpret_cast<__gm__ dist::Window*>(" + winPtr + "), " + peer + ")) + " +
-                                   baseBytes + ")";
+                                   ">(reinterpret_cast<__gm__ pypto::dist::Window*>(" + winPtr +
+                                   "), pypto::dist::region_of(reinterpret_cast<__gm__ pypto::dist::Window*>(" + winPtr +
+                                   "), reinterpret_cast<int64_t>(" + memPtr + ")), " + peer + ")) + " + baseBytes + ")";
 
     const std::string inst = codegen.BindDistGlobalTensor(viewType, offsetsTuple, tileDims, isTranspose,
                                                           tileType->shape_, remoteBase, tile);

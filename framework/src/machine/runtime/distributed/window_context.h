@@ -17,35 +17,37 @@
 namespace npu::tile_fwk::Distributed {
 class WindowContext {
 public:
-    WindowContext(int32_t rank, int32_t nrank, int64_t size, int64_t numSignals, int64_t bufferSize, void* buffer,
-                  void* stream);
+    WindowContext(int32_t rank, int32_t nrank, void* stream, const std::string& hcclGroupName, const std::string& name,
+                  int32_t layer);
     ~WindowContext();
     WindowContext(const WindowContext&) = delete;
     WindowContext& operator=(const WindowContext&) = delete;
 
     int32_t Rank() const;
     int32_t NRank() const;
-    int64_t Size() const;
-    int64_t NumSignals() const;
-    // Device address of the dist::Window descriptor written at creation.
     int64_t DataPtr() const;
     // True when all peers share one local UBC_CTP endpoint, so every AIV owns a private
     // jetty and may issue engine writes to any peer. False on multi-endpoint topologies,
     // where each peer has one jetty and a single issuer AIV.
     bool SupportsMultiIssuer() const;
+    // True once Connect() has completed. Kernels must not launch before that.
+    bool Connected() const;
+
+    // Register one memory region in place (local; before Connect()). protocol is a
+    // kPolicyUbMem | kPolicyUrma bitmask; the caller keeps the memory alive.
+    void RegisterMemory(int64_t tensorPtr, int64_t size, const std::string& name, int32_t protocol);
+    // All-rank collective: register regions, exchange peer bases, build channels.
+    void Connect();
 
     std::string ToString() const;
     void Close(); // all-rank collective teardown; best-effort, never throws
-
-    void Setup(const std::string& hcclGroupName, const std::string& name, int32_t layer);
 
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
 
-std::shared_ptr<WindowContext> CreateWindow(int32_t rank, int32_t nrank, int64_t size, int64_t bufferSize,
-                                            int64_t numSignals, int64_t deviceAddr, int64_t streamAddr,
+std::shared_ptr<WindowContext> CreateWindow(int32_t rank, int32_t nrank, int64_t streamAddr,
                                             const std::string& hcclGroupName, const std::string& name, int32_t layer);
 
 std::string GetGroupTopology(const std::string& hcclGroupName, int32_t rank, int32_t nrank, int32_t layer);

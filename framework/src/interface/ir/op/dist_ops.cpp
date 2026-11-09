@@ -16,6 +16,7 @@
 
 #include <any>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -26,6 +27,7 @@
 #include "interface/inner/dist_utils.h"
 #include "ir/expr.h"
 #include "ir/kind_traits.h"
+#include "ir/memref.h"
 #include "ir/op_registry.h"
 #include "ir/scalar_expr.h"
 #include "ir/span.h"
@@ -88,7 +90,7 @@ TypePtr DeduceBarrierType(const std::vector<ExprPtr>& args, const std::vector<st
 
 REGISTER_OP("dist.window_get")
     .set_op_category("DistOp")
-    .set_description("Read one scalar field of the device dist::Window descriptor")
+    .set_description("Read one scalar field of the device pypto::dist::Window descriptor")
     .add_argument("window", "Window handle (WindowType)")
     .add_argument("field", "Field index (compile-time constant integer)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
@@ -116,21 +118,24 @@ const auto kIsIntScalar = [](const ExprPtr& expr) {
 TypePtr DeduceDistTransferType(const std::vector<ExprPtr>& args,
                                const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x6)
-        << "requires 6 arguments [window, base_bytes, offsets, shape, tile, peer], but got " << args.size();
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x7)
+        << "requires 7 arguments [window, memory, base_bytes, offsets, shape, tile, peer], but got " << args.size();
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<WindowType>(args[0]->GetType()))
         << "window must be WindowType, but got " << args[0]->GetType()->TypeName();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[1]))
-        << "base_bytes must be an integer scalar, but got " << args[1]->GetType()->TypeName();
-    auto offsets = As<MakeTuple>(args[2]);
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[1]->GetType()))
+        << "memory must be a tensor kernel parameter registered with Window.register_memory, but got "
+        << args[1]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[2]))
+        << "base_bytes must be an integer scalar, but got " << args[2]->GetType()->TypeName();
+    auto offsets = As<MakeTuple>(args[3]);
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsets != nullptr)
-        << "offsets must be a tuple of element coordinates, but got " << args[2]->GetType()->TypeName();
+        << "offsets must be a tuple of element coordinates, but got " << args[3]->GetType()->TypeName();
     for (const auto& coord : offsets->elements_) {
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(coord)) << "offset coordinates must be integer scalars";
     }
-    auto shape = As<MakeTuple>(args[3]);
+    auto shape = As<MakeTuple>(args[4]);
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, shape != nullptr)
-        << "shape must be a tuple of view dimensions, but got " << args[3]->GetType()->TypeName();
+        << "shape must be a tuple of view dimensions, but got " << args[4]->GetType()->TypeName();
     PRO_IR_CHECK(ExternalError::INVALID_SHAPE, !shape->elements_.empty() && shape->elements_.size() <= 5)
         << "DTensor view shape must have 1-5 dimensions";
     for (const auto& dim : shape->elements_) {
@@ -141,11 +146,11 @@ TypePtr DeduceDistTransferType(const std::vector<ExprPtr>& args,
                 << "DTensor view shape dims must be positive";
         }
     }
-    auto tileType = As<TileType>(args[4]->GetType());
+    auto tileType = As<TileType>(args[5]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, tileType != nullptr)
-        << "tile must be a TileType, but got " << args[4]->GetType()->TypeName();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[5]))
-        << "peer must be an integer scalar, but got " << args[5]->GetType()->TypeName();
+        << "tile must be a TileType, but got " << args[5]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[6]))
+        << "peer must be an integer scalar, but got " << args[6]->GetType()->TypeName();
 
     bool hasDtype = false;
     for (const auto& [name, value] : kwargs) {
@@ -183,7 +188,9 @@ REGISTER_OP("dist.get")
     .set_description("One-sided tile load from a peer's window; element-coordinate addressed like block.load "
                      "")
     .add_argument("window", "Window handle (WindowType)")
-    .add_argument("base_bytes", "DTensor view start, scalar byte offset into the payload (integer scalar)")
+    .add_argument("region_id", "Registered memory region tensor parameter (TensorType); selects the region on "
+                               "device")
+    .add_argument("base_bytes", "DTensor view start, scalar byte offset into the region (integer scalar)")
     .add_argument("offsets", "Per-axis element coordinates inside the DTensor view (tuple of integer scalars)")
     .add_argument("shape", "DTensor view dimensions, compile-time or runtime integer scalars (tuple)")
     .add_argument("tile", "Destination tile (TileType)")
@@ -347,7 +354,9 @@ REGISTER_OP("dist.put")
     .set_description("One-sided tile store into a peer's window; element-coordinate addressed like block.store "
                      "")
     .add_argument("window", "Window handle (WindowType)")
-    .add_argument("base_bytes", "DTensor view start, scalar byte offset into the payload (integer scalar)")
+    .add_argument("region_id", "Registered memory region tensor parameter (TensorType); selects the region on "
+                               "device")
+    .add_argument("base_bytes", "DTensor view start, scalar byte offset into the region (integer scalar)")
     .add_argument("offsets", "Per-axis element coordinates inside the DTensor view (tuple of integer scalars)")
     .add_argument("shape", "DTensor view dimensions, compile-time or runtime integer scalars (tuple)")
     .add_argument("tile", "Source tile (TileType)")
@@ -459,17 +468,21 @@ ChannelWriteKwargs ParseChannelWriteKwargs(const std::vector<std::pair<std::stri
 TypePtr DeduceDistChannelWriteType(const std::vector<ExprPtr>& args,
                                    const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x4)
-        << "dist.channel_write requires 4 arguments [channel, base_bytes, num_bytes, tensor], but got " << args.size();
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x5)
+        << "dist.channel_write requires 5 arguments [channel, memory, base_bytes, num_bytes, tensor], but got "
+        << args.size();
     CheckChannelOperand(args, "dist.channel_write");
-    for (size_t i = 1; i <= 2; ++i) {
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[1]->GetType()))
+        << "dist.channel_write memory must be a TensorType (registered region), but got "
+        << args[1]->GetType()->TypeName();
+    for (size_t i = 2; i <= 3; ++i) {
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[i]))
             << "dist.channel_write argument " << i << " must be an integer scalar, but got "
             << args[i]->GetType()->TypeName();
     }
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[3]->GetType()))
-        << "dist.channel_write tensor must be a TensorType, but got " << args[3]->GetType()->TypeName();
-    (void)ParseChannelWriteKwargs(kwargs, args[3], "dist.channel_write", true);
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[4]->GetType()))
+        << "dist.channel_write tensor must be a TensorType, but got " << args[4]->GetType()->TypeName();
+    (void)ParseChannelWriteKwargs(kwargs, args[4], "dist.channel_write", true);
     return GetNoneType();
 }
 
@@ -535,6 +548,8 @@ REGISTER_OP("dist.channel_write")
                      "(destination bound at channel creation); submit=true publishes immediately, "
                      "submit=false stages the WQE")
     .add_argument("channel", "Channel handle (opaque integer token)")
+    .add_argument("region_id", "Registered memory region tensor parameter (TensorType); selects the region on "
+                               "device")
     .add_argument("base_bytes", "DTensor view start, scalar byte offset into the payload (integer scalar)")
     .add_argument("num_bytes", "Transfer length in bytes (integer scalar)")
     .add_argument("tensor", "Local GM source tensor (TensorType)")
@@ -575,19 +590,23 @@ namespace {
 TypePtr DeduceDistChannelWriteValueType(const std::vector<ExprPtr>& args,
                                         const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x3)
-        << "dist.channel_write_value requires 3 arguments [channel, base_bytes, value], but got " << args.size();
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x4)
+        << "dist.channel_write_value requires 4 arguments [channel, memory, base_bytes, value], but got "
+        << args.size();
     CheckChannelOperand(args, "dist.channel_write_value");
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[1]))
-        << "dist.channel_write_value base_bytes must be an integer scalar, but got " << args[1]->GetType()->TypeName();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsNumericScalar(args[2]))
-        << "dist.channel_write_value value must be a numeric scalar, but got " << args[2]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[1]->GetType()))
+        << "dist.channel_write_value memory must be a TensorType (registered region), but got "
+        << args[1]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[2]))
+        << "dist.channel_write_value base_bytes must be an integer scalar, but got " << args[2]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsNumericScalar(args[3]))
+        << "dist.channel_write_value value must be a numeric scalar, but got " << args[3]->GetType()->TypeName();
 
     const auto parsed = ParseChannelWriteKwargs(kwargs, nullptr, "dist.channel_write_value", true);
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsSupportedScalarDType(parsed.dtype))
         << "dist.channel_write_value does not support dtype " << parsed.dtype.ToString()
         << "; supported: INT32/UINT32/INT64/UINT64/FP32";
-    const auto valueType = As<ScalarType>(args[2]->GetType());
+    const auto valueType = As<ScalarType>(args[3]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, !(parsed.dtype.IsInt() && valueType->dtype_.IsFloat()))
         << "dist.channel_write_value integer destination requires an integer value, but got "
         << valueType->dtype_.ToString();
@@ -597,38 +616,44 @@ TypePtr DeduceDistChannelWriteValueType(const std::vector<ExprPtr>& args,
 TypePtr DeduceDistChannelWriteNotifyType(const std::vector<ExprPtr>& args,
                                          const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x6)
-        << "dist.channel_write_notify requires 6 arguments [channel, base_bytes, num_bytes, tensor, slot, val], "
-        << "but got " << args.size();
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x7)
+        << "dist.channel_write_notify requires 7 arguments [channel, memory, base_bytes, num_bytes, tensor, slot, "
+           "val], but got "
+        << args.size();
     CheckChannelOperand(args, "dist.channel_write_notify");
-    for (size_t i = 1; i <= 2; ++i) {
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[1]->GetType()))
+        << "dist.channel_write_notify memory must be a TensorType (registered region), but got "
+        << args[1]->GetType()->TypeName();
+    for (size_t i = 2; i <= 3; ++i) {
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[i]))
             << "dist.channel_write_notify argument " << i << " must be an integer scalar, but got "
             << args[i]->GetType()->TypeName();
     }
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[3]->GetType()))
-        << "dist.channel_write_notify tensor must be a TensorType, but got " << args[3]->GetType()->TypeName();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[4]))
-        << "dist.channel_write_notify slot must be an integer scalar, but got " << args[4]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[4]->GetType()))
+        << "dist.channel_write_notify tensor must be a TensorType, but got " << args[4]->GetType()->TypeName();
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[5]))
-        << "dist.channel_write_notify val must be an integer scalar, but got " << args[5]->GetType()->TypeName();
-    (void)ParseChannelWriteKwargs(kwargs, args[3], "dist.channel_write_notify", false);
+        << "dist.channel_write_notify slot must be an integer scalar, but got " << args[5]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[6]))
+        << "dist.channel_write_notify val must be an integer scalar, but got " << args[6]->GetType()->TypeName();
+    (void)ParseChannelWriteKwargs(kwargs, args[4], "dist.channel_write_notify", false);
     return GetNoneType();
 }
 
 TypePtr DeduceAtomicType(const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x6 || args.size() == 0x7)
-        << "dist.atomic_* requires 6 or 7 arguments [window, base_bytes, offsets, shape, peer, value(s)], "
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x7 || args.size() == 0x8)
+        << "dist.atomic_* requires 7 or 8 arguments [window, memory, base_bytes, offsets, shape, peer, value(s)], "
         << "but got " << args.size();
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<WindowType>(args[0]->GetType()))
         << "dist.atomic_* requires window to be WindowType, but got " << args[0]->GetType()->TypeName();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[1]))
-        << "dist.atomic_* base_bytes must be an integer scalar, but got " << args[1]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[1]->GetType()))
+        << "dist.atomic_* memory must be a TensorType (registered region), but got " << args[1]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[2]))
+        << "dist.atomic_* base_bytes must be an integer scalar, but got " << args[2]->GetType()->TypeName();
 
-    auto shape = As<MakeTuple>(args[3]);
+    auto shape = As<MakeTuple>(args[4]);
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, shape != nullptr)
-        << "dist.atomic_* shape must be a tuple of view dimensions, but got " << args[3]->GetType()->TypeName();
+        << "dist.atomic_* shape must be a tuple of view dimensions, but got " << args[4]->GetType()->TypeName();
     PRO_IR_CHECK(ExternalError::INVALID_SHAPE, !shape->elements_.empty() && shape->elements_.size() <= 5)
         << "DTensor view shape must have 1-5 dimensions";
     for (const auto& dim : shape->elements_) {
@@ -640,7 +665,7 @@ TypePtr DeduceAtomicType(const std::vector<ExprPtr>& args, const std::vector<std
         }
     }
 
-    auto offsets = As<MakeTuple>(args[2]);
+    auto offsets = As<MakeTuple>(args[3]);
     if (offsets != nullptr) {
         for (const auto& coord : offsets->elements_) {
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(coord))
@@ -650,16 +675,16 @@ TypePtr DeduceAtomicType(const std::vector<ExprPtr>& args, const std::vector<std
             << "offset coordinate count (" << offsets->elements_.size()
             << ") must equal the DTensor view dimension count (" << shape->elements_.size() << ")";
     } else {
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[2]))
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[3]))
             << "offset must be a tuple of element coordinates or an integer linear offset, but got "
-            << args[2]->GetType()->TypeName();
+            << args[3]->GetType()->TypeName();
     }
 
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[4]))
-        << "dist.atomic_* peer must be an integer scalar, but got " << args[4]->GetType()->TypeName();
-    for (size_t i = 5; i < args.size(); ++i) {
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[5]))
+        << "dist.atomic_* peer must be an integer scalar, but got " << args[5]->GetType()->TypeName();
+    for (size_t i = 6; i < args.size(); ++i) {
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsNumericScalar(args[i]))
-            << "dist.atomic_* value operand " << (i - 5) << " must be a numeric scalar, but got "
+            << "dist.atomic_* value operand " << (i - 6) << " must be a numeric scalar, but got "
             << args[i]->GetType()->TypeName();
     }
 
@@ -689,6 +714,8 @@ REGISTER_OP("dist.channel_write_value")
                      "(inline WQE; destination bound at channel creation); the value is cast to the "
                      "DTensor dtype")
     .add_argument("channel", "Channel handle (opaque integer token)")
+    .add_argument("region_id", "Registered memory region tensor parameter (TensorType); selects the region on "
+                               "device")
     .add_argument("base_bytes", "DTensor view start, scalar byte offset into the payload (integer scalar)")
     .add_argument("value", "Scalar word to write (numeric scalar)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
@@ -702,6 +729,8 @@ REGISTER_OP("dist.channel_write_notify")
                      "completion (one WriteWithNotify WQE, born published; destination bound at channel "
                      "creation)")
     .add_argument("channel", "Channel handle (opaque integer token)")
+    .add_argument("region_id", "Registered memory region tensor parameter (TensorType); selects the region on "
+                               "device")
     .add_argument("base_bytes", "DTensor view start, scalar byte offset into the payload (integer scalar)")
     .add_argument("num_bytes", "Transfer length in bytes (integer scalar)")
     .add_argument("tensor", "Local GM source tensor (TensorType)")
@@ -716,7 +745,9 @@ REGISTER_OP("dist.atomic_add")
     .set_op_category("DistOp")
     .set_description("Remote atomic fetch-add on one window word; returns the pre-op value")
     .add_argument("window", "Window handle (WindowType)")
-    .add_argument("base_bytes", "DTensor view start, scalar byte offset into the payload (integer scalar)")
+    .add_argument("region_id", "Registered memory region tensor parameter (TensorType); selects the region on "
+                               "device")
+    .add_argument("base_bytes", "DTensor view start, scalar byte offset into the region (integer scalar)")
     .add_argument("offsets", "Per-axis element coordinates (tuple) or a scalar linear element offset")
     .add_argument("shape", "DTensor view dimensions (tuple of integer scalars)")
     .add_argument("peer", "Target rank (integer scalar)")
@@ -730,7 +761,9 @@ REGISTER_OP("dist.atomic_exchange")
     .set_op_category("DistOp")
     .set_description("Remote atomic exchange on one window word; returns the pre-op value")
     .add_argument("window", "Window handle (WindowType)")
-    .add_argument("base_bytes", "DTensor view start, scalar byte offset into the payload (integer scalar)")
+    .add_argument("region_id", "Registered memory region tensor parameter (TensorType); selects the region on "
+                               "device")
+    .add_argument("base_bytes", "DTensor view start, scalar byte offset into the region (integer scalar)")
     .add_argument("offsets", "Per-axis element coordinates (tuple) or a scalar linear element offset")
     .add_argument("shape", "DTensor view dimensions (tuple of integer scalars)")
     .add_argument("peer", "Target rank (integer scalar)")
@@ -744,7 +777,9 @@ REGISTER_OP("dist.atomic_cas")
     .set_op_category("DistOp")
     .set_description("Remote atomic compare-and-swap on one window word; returns the pre-op value")
     .add_argument("window", "Window handle (WindowType)")
-    .add_argument("base_bytes", "DTensor view start, scalar byte offset into the payload (integer scalar)")
+    .add_argument("region_id", "Registered memory region tensor parameter (TensorType); selects the region on "
+                               "device")
+    .add_argument("base_bytes", "DTensor view start, scalar byte offset into the region (integer scalar)")
     .add_argument("offsets", "Per-axis element coordinates (tuple) or a scalar linear element offset")
     .add_argument("shape", "DTensor view dimensions (tuple of integer scalars)")
     .add_argument("peer", "Target rank (integer scalar)")

@@ -19,6 +19,8 @@ operands, enum and literal kwargs, explicit ``None`` defaults, view-dtyped
 atomic value literals, and the diagnostics raised for malformed calls.
 """
 
+import enum
+
 from pypto_pro import ir
 from pypto_pro._errors import InvalidArgument, InvalidOperation, InvalidShape, InvalidType, InvalidVal
 import pypto_pro.language as pl
@@ -39,6 +41,19 @@ def _op_calls(func, op_name):
         if value is not None and isinstance(value, ir.Call) and value.name == op_name:
             calls.append(value)
     return calls
+
+
+# =============================================================================
+# Protocol — the pld-level region access-tier selector
+# =============================================================================
+
+
+def test_protocol_enum_members():
+    assert pld.Protocol.UB_MEM == 1
+    assert pld.Protocol.URMA == 2
+    assert {m.name for m in pld.Protocol} == {"UB_MEM", "URMA"}
+    assert issubclass(pld.Protocol, enum.IntFlag)
+    assert int(pld.Protocol.UB_MEM | pld.Protocol.URMA) == 3
 
 
 # =============================================================================
@@ -103,18 +118,18 @@ def test_barrier_timeout_must_be_compile_time():
 
 def test_make_dtensor_shape_must_be_positive_and_bounded():
     @pl.jit(arch="3510", auto_mutex=False)
-    def zero_dim(win: pld.Window):
+    def zero_dim(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            pld.make_dtensor(win, 0, [0, 8], pl.DT_INT32)
+            pld.make_dtensor(win, buf, 0, [0, 8], pl.DT_INT32)
 
     with pytest.raises(InvalidVal) as caught:
         _parse(zero_dim)
     assert "must have 1-5 positive dims" in str(caught.value)
 
     @pl.jit(arch="3510", auto_mutex=False)
-    def six_dims(win: pld.Window):
+    def six_dims(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            pld.make_dtensor(win, 0, [1, 8, 2, 4, 8, 16], pl.DT_INT32)
+            pld.make_dtensor(win, buf, 0, [1, 8, 2, 4, 8, 16], pl.DT_INT32)
 
     with pytest.raises(InvalidVal) as caught:
         _parse(six_dims)
@@ -123,18 +138,18 @@ def test_make_dtensor_shape_must_be_positive_and_bounded():
 
 def _dtensor_kernel(shape):
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            pld.make_dtensor(win, 0, shape, pl.DT_INT32)
+            pld.make_dtensor(win, buf, 0, shape, pl.DT_INT32)
 
     return kernel
 
 
 def test_make_dtensor_rejects_coordinate_offset():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            pld.make_dtensor(win, [0, 0], [1, 8], pl.DT_INT32)
+            pld.make_dtensor(win, buf, [0, 0], [1, 8], pl.DT_INT32)
 
     with pytest.raises(InvalidType) as caught:
         _parse(kernel)
@@ -143,9 +158,9 @@ def test_make_dtensor_rejects_coordinate_offset():
 
 def test_make_dtensor_negative_offset_is_rejected():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            pld.make_dtensor(win, -64, [1, 8], pl.DT_INT32)
+            pld.make_dtensor(win, buf, -64, [1, 8], pl.DT_INT32)
 
     with pytest.raises(InvalidVal) as caught:
         _parse(kernel)
@@ -170,12 +185,12 @@ def test_signal_rejects_negative_literal():
 
 def test_transfer_ops_parse():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
             tt = pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
             t = pl.make_tile(tt, addr=0)
             t2 = pl.make_tile(tt, addr=32)
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.put(dt, t, [0, 0], 1)
             pld.get(t2, dt, [0, 0], 1)
             pld.put_tile(dt, t, [0, 0], 1)
@@ -191,11 +206,11 @@ def test_transfer_offsets_may_come_from_a_variable():
     """Parity with pl.load: offsets are operands, not syntax."""
 
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
             tt = pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
             t = pl.make_tile(tt, addr=0)
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             off = [0, 0]
             pld.put(dt, t, off, 1)
 
@@ -204,15 +219,15 @@ def test_transfer_offsets_may_come_from_a_variable():
 
 def test_put_tile_block_indices_lower_to_scaled_offsets():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
             tt = pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
             t = pl.make_tile(tt, addr=0)
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.put_tile(dt, t, [2, 3], 1)
 
     call = _op_calls(_parse(kernel), "dist.put")[0]
-    offsets = call.args[2].elements
+    offsets = call.args[3].elements
     # axis 0 maps onto tile rows (extent 1), axis 1 onto cols (extent 8): each block
     # index lowers to an offset expression scaled by its axis extent.
     assert [type(e).__name__ for e in offsets] == ["Mul", "Mul"]
@@ -220,11 +235,11 @@ def test_put_tile_block_indices_lower_to_scaled_offsets():
 
 def test_get_offset_rank_must_match_view():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
             tt = pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
             t = pl.make_tile(tt, addr=0)
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.get(t, dt, [0], 1)
 
     with pytest.raises(InvalidArgument) as caught:
@@ -234,11 +249,11 @@ def test_get_offset_rank_must_match_view():
 
 def test_get_static_offset_bounds_check():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
             tt = pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
             t = pl.make_tile(tt, addr=0)
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.get(t, dt, [0, 99], 1)
 
     with pytest.raises(InvalidShape) as caught:
@@ -248,11 +263,11 @@ def test_get_static_offset_bounds_check():
 
 def test_get_order_arity_is_checked():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
             tt = pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
             t = pl.make_tile(tt, addr=0)
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.get(t, dt, [0, 0], 1, order=[1])
 
     with pytest.raises(InvalidShape) as caught:
@@ -262,11 +277,11 @@ def test_get_order_arity_is_checked():
 
 def test_put_atomic_mode_lowers_to_the_atomic_kwarg():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
             tt = pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
             t = pl.make_tile(tt, addr=0)
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.put(dt, t, [0, 0], 1, atomic_mode=pl.AtomicType.AtomicAdd)
             pld.put(dt, t, [0, 0], 1)  # default: overwrite, no atomic attribute
 
@@ -278,11 +293,11 @@ def test_put_atomic_mode_lowers_to_the_atomic_kwarg():
 
 def test_put_tile_accepts_atomic_mode_too():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
             tt = pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
             t = pl.make_tile(tt, addr=0)
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.put_tile(dt, t, [0, 0], 1, atomic_mode=pl.AtomicType.AtomicAdd)
 
     call = _op_calls(_parse(kernel), "dist.put")[0]
@@ -293,11 +308,11 @@ def test_put_atomic_mode_must_be_an_atomic_type_member():
     """A raw int (parsed as ConstInt) is rejected; only the enum member lowers."""
 
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
             tt = pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
             t = pl.make_tile(tt, addr=0)
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.put(dt, t, [0, 0], 1, atomic_mode=1)
 
     with pytest.raises(InvalidType) as caught:
@@ -309,11 +324,11 @@ def test_put_atomic_add_rejects_unsupported_dtype():
     """The MTE3 atomic-add engine covers 8/16/32-bit ints and fp16/bf16/fp32, not 64-bit."""
 
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT64]):
         with pl.section_vector():
             tt = pl.TileType(shape=[1, 8], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec)
             t = pl.make_tile(tt, addr=0)
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT64)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT64)
             pld.put(dt, t, [0, 0], 1, atomic_mode=pl.AtomicType.AtomicAdd)
 
     with pytest.raises(InvalidType) as caught:
@@ -325,11 +340,11 @@ def test_get_has_no_atomic_mode():
     """A load cannot accumulate; the kwarg is put-only and the gate rejects it on get."""
 
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
             tt = pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
             t = pl.make_tile(tt, addr=0)
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.get(t, dt, [0, 0], 1, atomic_mode=pl.AtomicType.AtomicAdd)
 
     with pytest.raises(InvalidArgument) as caught:
@@ -487,26 +502,26 @@ def test_wait_cmp_accepts_variable_bound_enum():
 
 def test_atomic_value_operand_keeps_the_parsed_form():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.atomic_add(dt, 1, [0, 0], 5)
 
     call = _op_calls(_parse(kernel), "dist.atomic_add")[0]
-    value = call.args[5]
+    value = call.args[6]
     assert isinstance(value, ir.ConstInt)
     assert int(value.value) == 5
 
 
 def test_atomic_sub_negates_in_the_view_dtype():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.atomic_sub(dt, 1, [0, 0], 5)
 
     call = _op_calls(_parse(kernel), "dist.atomic_add")[0]
-    value = call.args[5]
+    value = call.args[6]
     assert isinstance(value, ir.ConstInt)
     assert value.type.dtype == pl.DT_INT32
     assert int(value.value) == -5
@@ -514,61 +529,61 @@ def test_atomic_sub_negates_in_the_view_dtype():
 
 def test_atomic_unsigned_sub_wraps_modulo_2n():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_UINT32]):
         with pl.section_vector():
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_UINT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_UINT32)
             pld.atomic_sub(dt, 1, [0, 0], 5)
 
     call = _op_calls(_parse(kernel), "dist.atomic_add")[0]
-    value = call.args[5]
+    value = call.args[6]
     assert value.type.dtype == pl.DT_UINT32
     assert int(value.value) == (-5) % (1 << 32)
 
 
 def test_atomic_cas_expect_and_desired_operands():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.atomic_cas(dt, 1, [0, 0], 3, 7)
 
     call = _op_calls(_parse(kernel), "dist.atomic_cas")[0]
-    expect, desired = call.args[5], call.args[6]
+    expect, desired = call.args[6], call.args[7]
     assert (int(expect.value), int(desired.value)) == (3, 7)
 
 
 def test_atomic_scalar_linear_offset_form():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.atomic_add(dt, 1, 3, 5)
 
     call = _op_calls(_parse(kernel), "dist.atomic_add")[0]
-    assert isinstance(call.args[2], ir.ConstInt)
-    assert int(call.args[2].value) == 3
+    assert isinstance(call.args[3], ir.ConstInt)
+    assert int(call.args[3].value) == 3
 
 
 def test_atomic_offsets_may_come_from_a_variable():
     """Parity with pl.load: per-axis offsets are operands, not syntax."""
 
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             off = [0, 0]
             pld.atomic_add(dt, 1, off, 5)
 
     call = _op_calls(_parse(kernel), "dist.atomic_add")[0]
-    assert isinstance(call.args[2], ir.MakeTuple)
-    assert len(call.args[2].elements) == 2
+    assert isinstance(call.args[3], ir.MakeTuple)
+    assert len(call.args[3].elements) == 2
 
 
 def test_atomic_rejects_float_value_for_int_view():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             pld.atomic_add(dt, 1, [0, 0], 1.5)
 
     with pytest.raises(InvalidType) as caught:
@@ -578,9 +593,9 @@ def test_atomic_rejects_float_value_for_int_view():
 
 def test_star_args_are_rejected_generically():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
             vals = [1, 5]
             pld.atomic_add(dt, 1, [0, 0], *vals)
 
@@ -596,9 +611,9 @@ def test_star_args_are_rejected_generically():
 
 def test_channel_lifecycle_parses():
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window, src: pl.Tensor[[1, 8], pl.DT_INT32]):
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32], src: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, dst, 0, [1, 8], pl.DT_INT32)
             sig = pld.signal(win, 0)
             ch = pld.channel(win, 64, peer=1)
             ch.write(dt, src, submit=False)
@@ -610,8 +625,8 @@ def test_channel_lifecycle_parses():
     assert _op_calls(func, "dist.channel")
     writes = _op_calls(func, "dist.channel_write")
     assert writes
-    # No per-call peer: [channel, base_bytes, num_bytes, tensor] — the channel binds it.
-    assert len(writes[0].args) == 4
+    # No per-call peer: [channel, region, base_bytes, num_bytes, tensor] — the channel binds it.
+    assert len(writes[0].args) == 5
     assert _op_calls(func, "dist.channel_submit")
     assert _op_calls(func, "dist.channel_drain")
 
@@ -620,9 +635,9 @@ def test_channel_transfers_reject_per_call_peer():
     """The channel binds its destination at creation; transfers take no peer argument."""
 
     @pl.jit(arch="3510", auto_mutex=False)
-    def write_kernel(win: pld.Window, src: pl.Tensor[[1, 8], pl.DT_INT32]):
+    def write_kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32], src: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, dst, 0, [1, 8], pl.DT_INT32)
             ch = pld.channel(win, 64, peer=1)
             ch.write(1, dt, src)
 
@@ -631,9 +646,9 @@ def test_channel_transfers_reject_per_call_peer():
     assert "ch.write requires (dtensor, tensor or scalar)" in str(caught.value)
 
     @pl.jit(arch="3510", auto_mutex=False)
-    def write_notify_kernel(win: pld.Window, src: pl.Tensor[[1, 8], pl.DT_INT32]):
+    def write_notify_kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32], src: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():
-            dt = pld.make_dtensor(win, 0, [1, 8], pl.DT_INT32)
+            dt = pld.make_dtensor(win, dst, 0, [1, 8], pl.DT_INT32)
             sig = pld.signal(win, 0)
             ch = pld.channel(win, 64, peer=1)
             ch.write_notify(1, dt, src, sig, 1)

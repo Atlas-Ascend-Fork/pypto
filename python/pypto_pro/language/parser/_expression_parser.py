@@ -57,11 +57,7 @@ def _is_enum_value(value: Any) -> bool:
 class ExpressionParserMixin:
     """Mixin containing expression, attribute, and subscript parsing."""
 
-    # Window metadata accessors -> field index in the device dist::Window
-    # descriptor (framework/include/tilefwk/distribute_context.h; indices also encode the
-    # C++ side's dist.window_get field table, interface/inner/dist_utils.h).
-    # data_ptr maps to buffer_ptr, the payload base.
-    _WINDOW_ACCESSOR_FIELDS = {"rank": 0, "nrank": 1, "num_signals": 2, "size": 3, "data_ptr": 5}
+    _WINDOW_ACCESSOR_FIELDS = {"rank": 0, "nrank": 1}
 
     def lookup_expr_by_name(self, name: str) -> Any | None:
         """Resolve a parser name to its current expression."""
@@ -1565,8 +1561,8 @@ class ExpressionParserMixin:
         """Route ``xxx.f(...)`` to an op func when ``xxx`` is a tile-group handle or a window.
 
         Tile-group handle: next/current/previous (each returns a bare tile).
-        Window handle: rank/nrank/num_signals/size/data_ptr, each a scalar
-        GM read of the device dist::Window descriptor (dist.window_get).
+        Window handle: rank/nrank, each a scalar GM read of the device dist::Window
+        descriptor (dist.window_get).
         Returns the IR result, or None when not routed.
         """
         if not isinstance(node.func, ast.Attribute):
@@ -1585,7 +1581,7 @@ class ExpressionParserMixin:
                     raise InvalidOperation(
                         f"Window accessor '.{method}()' takes no arguments",
                         span=span,
-                        hint="Use win.rank() / win.nrank() / win.size() / win.num_signals() / win.data_ptr()",
+                        hint="Use win.rank() / win.nrank()",
                     )
                 field = ir.ConstInt(self._WINDOW_ACCESSOR_FIELDS[method], DataType.INT64, span)
                 return ir.create_op_call("dist.window_get", [obj, field], {}, span)

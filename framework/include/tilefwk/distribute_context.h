@@ -13,26 +13,35 @@
 
 #include <cstdint>
 
-namespace dist {
+namespace pypto::dist {
 constexpr int kNumMaxRanks = 256;         // max ranks per window (remote_ptrs array size)
 constexpr int64_t kL2CacheLineSize = 512; // L2 cache line size, one signal slot per line
 
-struct Window {
-    int rank;
-    int nrank;
-    int num_signals;  // reserved signal-slot count (win.num_signals())
-    int num_jetties;  // local jetties: multi-issuer = AIV count; per-peer = nrank - 1
-    int multi_issuer; // 0: one jetty per peer 1: one jetty per AIV
-    int64_t size;
-    int64_t jetty_ptrs;
-    int64_t buffer_ptr;                // this window's data region base
-    int64_t signal_offset;             // signal region offset from remote_ptrs[rank], 512B aligned
-    int64_t barrier_offset;            // barrier region offset from remote_ptrs[rank] (Barrier layout below)
-    int64_t remote_ptrs[kNumMaxRanks]; // peer window base addresses, indexed by rank
+constexpr int32_t kPolicyUbMem = 1; // direct peer-VA memory-semantic tier
+constexpr int32_t kPolicyUrma = 2;  // jetty / WQE remote-memory-access tier
+
+struct RegionEntry {
+    int64_t remote_ptrs[kNumMaxRanks]; // per-rank UB_MEM base; 0 if the region is not on that plane
+    int64_t size;                      // bytes; identical on every rank
+    int32_t policy;                    // kPolicyUbMem | kPolicyUrma bitmask
+    int32_t urma_index;                // position in the channel remote-handle list; -1 = not URMA
 };
 
+struct Window {
+    int32_t rank;
+    int32_t nrank;
+    int32_t num_jetties;  // local jetties: multi-issuer = AIV count; per-peer = nrank - 1
+    int32_t multi_issuer; // 0: one jetty per peer 1: one jetty per AIV
+    int32_t num_regions;  // control region included; == 1 + user regions
+    int32_t reserved;     // keep the descriptor 8-byte aligned
+    int64_t region_table; // GM address of RegionEntry[num_regions]
+    int64_t jetty_ptrs;   // GM address of the channel table
+};
+
+// Control-region layout (relative to region 0's base): the Barrier is the first 512B
+// slot (offset 0); signal slot i follows at (i + 1) * 512B.
 struct Barrier {
     alignas(kL2CacheLineSize) int64_t barrier_counter; // offset 0
     int32_t barrier_signals[2];                        // offsets 8, 12
 };
-} // namespace dist
+} // namespace pypto::dist

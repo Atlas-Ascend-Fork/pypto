@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "create_window",
+    "register_memory",
     "dump_topology",
     "barrier",
     "make_dtensor",
@@ -42,6 +43,7 @@ __all__ = [
     "Channel",
     "CHANNEL_UB_BYTES",
     "NotifyOp",
+    "Protocol",
     "Cmp",
 ]
 
@@ -63,17 +65,26 @@ class NotifyOp(enum.IntEnum):
     ATOMIC_ADD = 1
 
 
-class DTensor:
-    """Parse-time handle of a typed window-payload view (device-only).
+class Protocol(enum.IntFlag):
+    """Engine plane selection for a registered memory region: UB_MEM (direct peer-VA),
+    URMA (jetty/WQE). Combine with ``|`` to register on both planes."""
 
-    Built only by :func:`make_dtensor` inside a kernel; the transfer ops dissolve it
-    into their IR ops, so it has no runtime representation.
+    UB_MEM = 1
+    URMA = 2
+
+
+class DTensor:
+    """Parse-time handle of a typed view over a registered memory region (device-only).
+
+    Built only by :func:`make_dtensor` inside a kernel over a tensor parameter that
+    the host registered with ``Window.register_memory``.
     """
 
-    __slots__ = ("window", "byte_offset", "shape", "dtype")
+    __slots__ = ("window", "region", "byte_offset", "shape", "dtype")
 
-    def __init__(self, window, byte_offset, shape, dtype):
+    def __init__(self, window, region, byte_offset, shape, dtype):
         self.window = window
+        self.region = region
         self.byte_offset = byte_offset
         self.shape = shape
         self.dtype = dtype
@@ -179,12 +190,18 @@ def barrier(
 
 
 @_api_decl
-def make_dtensor(win: Window, offset, shape, dtype) -> DTensor:
-    """Typed view of ``win``'s payload for one-sided transfers (device-only).
+def make_dtensor(win: Window, region, offset, shape, dtype) -> DTensor:
+    """Typed view of a registered memory region for one-sided transfers (device-only).
+
+    The view addresses the region the host registered for ``region`` with
+    ``Window.register_memory``; the device resolves that region from the tensor
+    parameter's base address, so one kernel serves any region assignment.
 
     Args:
         win: the owning window.
-        offset: byte offset of the view start, relative to the payload base (naturally
+        region: a tensor kernel parameter the host registered on ``win``. Locals and
+            intermediates are rejected — they are not registered regions.
+        offset: byte offset of the view start, relative to the region base (naturally
             aligned for ``dtype``).
         shape: element shape, 1-5 dims; compile-time ints or in-kernel integer scalars.
         dtype: element dtype (must match the tile used in ``get``/``put``).
@@ -260,7 +277,8 @@ def signal(win: Window, idx) -> Signal:
 
     ``wait`` spins on the local window's slot; ``notify`` targets the same slot index
     on a peer's window. ``idx`` is a compile-time int or an in-kernel expression in
-    ``[0, win.num_signals())`` (runtime bounds-checked).
+    the control region's signal slots, i.e. every 512 B slot except the Barrier slot
+    (runtime bounds-checked).
     """
 
 
@@ -381,10 +399,6 @@ def atomic_cas(dtensor: DTensor, peer: int, offset, expect, desired) -> int:
     """
 
 
-def _align_up(x: int, alignment: int) -> int:
-    return (x + alignment - 1) & ~(alignment - 1)
-
-
 def _get_hccl_name(group: "dist.ProcessGroup") -> str:
     import torch
     import torch.distributed as dist
@@ -393,47 +407,65 @@ def _get_hccl_name(group: "dist.ProcessGroup") -> str:
     return group._get_backend(torch.device("npu")).get_hccl_comm_name(dist.get_rank())
 
 
-def create_window(group: "dist.ProcessGroup", size: int, num_signals=15, name=None, layer: int = -1):
-    """Create a symmetric window for communication between ranks in ``group``.
+def register_memory(win: Window, tensor, name, protocol: Protocol):
+    """Register an existing NPU tensor's storage in place (zero-copy, local, before connect).
 
-    All-rank collective: every rank must call it (same order across several windows),
-    and pass the same ``layer`` value on every rank. ``size`` is rounded up to a multiple
-    of 512; the signal area is framework-managed and zeroed here.
-
-    Args:
-        group: ``torch.distributed`` process group with the ``hccl`` backend.
-        size: payload size in bytes.
-        num_signals: number of signal slots to reserve (default 15).
-        name: optional window name, part of the registration uid.
-        layer: HCCL net layer to build the window's channels on; ``-1`` (default)
-            auto-selects the top layer (the inter-server network when present). Pass
-            e.g. ``0`` to force the intra-server mesh for single-server groups.
-            Valid ids are listed by :func:`dump_topology`.
-
-    Returns:
-        the :class:`Window`
+    Tensor form of :meth:`Window.register_memory`: validates the tensor and passes its
+    address/size to the window. ``name`` is the engine memTag (every rank must register
+    the same names); ``protocol`` selects the engine plane(s). The caller keeps owning
+    the tensor and must keep it alive while the window is in use.
     """
     import torch
 
-    size = _align_up(size, _L2_CACHE_LINE_SIZE)  # C++ requires a 512B-aligned payload size
-    signal_size = _L2_CACHE_LINE_SIZE * (num_signals + 1)  # extra space for signals
-    buffer_size = _align_up(size + signal_size, 1 << 21)  # align to 2M
-    device_buffer = torch.empty(buffer_size, dtype=torch.uint8, device='npu')
+    if not isinstance(tensor, torch.Tensor):
+        raise TypeError(f"tensor must be a torch.Tensor, got {type(tensor).__name__}")
+    if tensor.device.type != "npu":
+        raise ValueError(f"tensor must live on an NPU device, got {tensor.device}")
+    if not tensor.is_contiguous():
+        raise ValueError("tensor must be contiguous")
 
+    size = tensor.numel() * tensor.element_size()
+    win.register_memory(tensor.data_ptr(), size, name, int(protocol))
+
+
+def create_window(group: "dist.ProcessGroup", num_signals=15, name=None, layer: int = -1):
+    """Create a communication window over ``group`` (local; not a collective).
+
+    The window allocates only its control region: signal slots plus one framework barrier
+    slot, pre-zeroed and kept as ``win.control_buffer``. Payload memory is not allocated —
+    register existing NPU tensors in place with :func:`register_memory` and keep them
+    alive while the window is in use. Then call ``win.connect()`` (all-rank collective)
+    before launching kernels.
+
+    Region names are the engine memTags, so every rank must register the same names, and
+    every window on a comm needs a distinct ``name``.
+
+    Args:
+        group: ``torch.distributed`` process group with the ``hccl`` backend.
+        num_signals: signal slots to reserve (default 15); one barrier slot is added.
+        name: optional window name, used as the control-region tag prefix
+            (``"<name>_signal"``, or ``"<hccl_name>_signal"`` when unnamed).
+        layer: HCCL net layer for the window's channels; ``-1`` auto-selects the top
+            layer, explicit ids are listed by :func:`dump_topology`.
+
+    Returns:
+        :class:`Window`: register payloads, then call :meth:`Window.connect`.
+    """
+    import torch
+
+    hccl_name = _get_hccl_name(group)
     rank = group.rank()
     win = pypto_impl.dist.create_window(
         rank,
         group.size(),
-        size,
-        buffer_size,
-        num_signals,
-        device_buffer.data_ptr(),
         torch.npu.current_stream().npu_stream,
-        _get_hccl_name(group),
+        hccl_name,
         name or "",
         layer,
     )
-    win.device_buffer = device_buffer
+
+    win.control_buffer = torch.zeros(_L2_CACHE_LINE_SIZE * (num_signals + 1), dtype=torch.uint8, device='npu')
+    register_memory(win, win.control_buffer, (name or hccl_name) + "_signal", Protocol.UB_MEM | Protocol.URMA)
     return win
 
 
