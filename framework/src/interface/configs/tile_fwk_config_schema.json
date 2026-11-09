@@ -173,7 +173,7 @@
                 },
                 "auto_mix_partition": {
                     "type": "integer",
-                    "default": 0,
+                    "default": 1,
                     "label": {
                         "zh": "控制ReduceCopyMerge Pass中的自动混合子图切分行为。0：不进行自动CV Mix合图；1：进行自动CV Mix合图，合并后子图Cube op数不超过2000且Vector op数不超过2240。",
                         "en": "Controls the automatic mixed subgraph partitioning behavior in the ReduceCopyMerge Pass. 0: disable auto CV Mix merging; 1: enable auto CV Mix merging, Cube ops <= 2000 and Vector ops <= 2240 per merged subgraph."

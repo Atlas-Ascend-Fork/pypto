@@ -262,7 +262,7 @@ pypto.experimental.set_operation_options(combine_axis=False)
 
 ### Mix 合图问题（仅 A5）
 
-仅针对 A5（设备 ID `d806`）。如果算子实现中开启了自动 CV Mix 合图（`pypto.experimental.auto_mix_partition(1)`），可以尝试关闭合图，观察精度问题是否消失：
+仅针对 A5（设备 ID `d806`）。自动 CV Mix 合图默认开启（`auto_mix_partition` 默认为 1），可以尝试关闭合图，观察精度问题是否消失：
 
 ```python
 pypto.experimental.auto_mix_partition(0)

@@ -17,6 +17,8 @@ import sys
 import pytest
 import torch
 
+import pypto
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 if not hasattr(torch, "npu"):
     pytest.skip("torch_npu not installed", allow_module_level=True)
@@ -43,6 +45,7 @@ def _generate_block_sparse_mask(batch, head_num_q, num_q_blocks, num_kv_blocks, 
 @pytest.mark.soc("950")
 def test_bsa_fwd_minimal(monkeypatch):
     """S256 Sparse50; pass_verify vs BSA O golden (l/m skipped — host LSE form differs)."""
+    pypto.experimental.auto_mix_partition(0)
     b, hq, hkv, sq, skv, sparsity = 1, 4, 2, 256, 256, 0.5
     torch.manual_seed(42)
     num_qb = math.ceil(sq / _CFG.block_shape_x)

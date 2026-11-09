@@ -27,7 +27,7 @@ def auto_mix_partition(value: int):
         Experimental. Controls the automatic CV Mix subgraph merging in the
         ReduceCopyMerge pass. 0 disables auto CV Mix graph merging; 1 enables
         it with Cube ops <= 2000 and Vector ops <= 2240 per merged subgraph.
-        Defaults to 0. This is an experimental feature that may change or be
+        Defaults to 1. This is an experimental feature that may change or be
         removed in future releases.
     """
     if isinstance(value, bool) or not isinstance(value, int) or value not in (0, 1):
