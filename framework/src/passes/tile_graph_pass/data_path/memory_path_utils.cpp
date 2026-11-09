@@ -260,6 +260,50 @@ bool MemoryPathUtils::IsDynamicReshape(Operation& operation, const LogicalTensor
     return false;
 }
 
+bool MemoryPathUtils::HasConvProducer(const LogicalTensorPtr& tensor)
+{
+    if (tensor == nullptr) {
+        return false;
+    }
+    return std::any_of(tensor->GetProducers().begin(), tensor->GetProducers().end(), [](const Operation* producer) {
+        if (producer == nullptr) {
+            return false;
+        }
+        if (producer->GetBoolAttribute(OpAttributeKey::isConv)) {
+            return true;
+        }
+        if (producer->GetOpcode() != Opcode::OP_CONTRACT) {
+            return false;
+        }
+        return std::any_of(producer->GetIOperands().begin(), producer->GetIOperands().end(), HasConvProducer);
+    });
+}
+
+bool MemoryPathUtils::HasConvConsumer(const LogicalTensorPtr& tensor)
+{
+    if (tensor == nullptr) {
+        return false;
+    }
+    return std::any_of(tensor->GetConsumers().begin(), tensor->GetConsumers().end(), [](const Operation* consumer) {
+        if (consumer == nullptr) {
+            return false;
+        }
+        if (consumer->GetBoolAttribute(OpAttributeKey::isConv)) {
+            return true;
+        }
+        if (consumer->GetOpcode() != Opcode::OP_SLICE) {
+            return false;
+        }
+        return std::any_of(consumer->GetOOperands().begin(), consumer->GetOOperands().end(), HasConvConsumer);
+    });
+}
+
+// L0C2UB大于2维场景仅支持卷积
+bool MemoryPathUtils::IsL0C2UbSupportedShape(const LogicalTensorPtr& tensor)
+{
+    return tensor != nullptr && (tensor->GetShape().size() == SHAPE_DIM2 || HasConvProducer(tensor));
+}
+
 bool MemoryPathUtils::CheckUBTileShape(const LogicalTensorPtr& moveTensor)
 {
     if (moveTensor == nullptr || moveTensor->GetShape().size() < 2) {

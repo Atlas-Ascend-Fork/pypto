@@ -54,14 +54,21 @@ size_t ShapeNumel(const Shape& shape)
     return elems;
 }
 
+// UB2L1 允许 rank>2 的 batch matmul tile 时要求 batch 轴 (末两维之前的全部维度) 均为 1
+bool AllBatchAxesAreOne(const Shape& shape)
+{
+    return std::all_of(shape.begin(), shape.end() - SHAPE_DIM2, [](int64_t dim) { return dim == 1; });
+}
+
 // L0C 分形 (外轴, 内轴) 按物理布局取值: 二维 matmul tile 即 (M, N); conv 多维 tile (NCHW/NCDHW)
 // 对应 M = 除 C 外全部维度乘积 (N·D·H·W), N = C 维, 与 ConstrucCopyOutTile 的 L0C (M, N) 映射一致;
 // 只取末两维会丢失 N/C/D 前导维, 导致容量估算严重偏小
-std::pair<size_t, size_t> GetNzOuterInnerAxes(const Shape& shape)
+// batch matmul UB2L1的Batch轴限制为1，取最后两根轴计算
+std::pair<size_t, size_t> GetNzOuterInnerAxes(const Shape& shape, bool isConv)
 {
     constexpr size_t kConvChannelIdx = 1;
-    if (shape.size() == SHAPE_DIM2) {
-        return {static_cast<size_t>(shape[0]), static_cast<size_t>(shape[1])};
+    if ((shape.size() > SHAPE_DIM2 && !isConv) || shape.size() == SHAPE_DIM2) {
+        return {static_cast<size_t>(shape[shape.size() - SHAPE_DIM2]), static_cast<size_t>(shape.back())};
     }
     size_t outer = 1;
     for (size_t i = 0; i < shape.size(); ++i) {
@@ -647,7 +654,7 @@ Status AssignMemoryType::ProcessUB2L1SmallToLarge(Function& function)
             continue;
         }
         RETURN_IF_NOT_SUCCESS(TryUpgradeSliceContractPath(op, MemoryType::MEM_UB, MemoryType::MEM_L1,
-                                                          "ProcessUB2L1SmallToLarge", true, false, true));
+                                                          "ProcessUB2L1SmallToLarge", false, false, true));
     }
     return SUCCESS;
 }
@@ -655,9 +662,17 @@ Status AssignMemoryType::ProcessUB2L1SmallToLarge(Function& function)
 bool AssignMemoryType::ShouldSkipUB2L1SmallToLarge(const LogicalTensorPtr& iOperand,
                                                    const LogicalTensorPtr& oOperand) const
 {
+    // UB2L1 仅支持 batch 轴全 1 的非 conv 多维 tile (batch matmul);
+    const bool isConv = MemoryPathUtils::HasConvConsumer(oOperand);
+    if (oOperand != nullptr && oOperand->GetShape().size() > SHAPE_DIM2 &&
+        (isConv || !AllBatchAxesAreOne(oOperand->GetShape()))) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "Reject UB-to-L1 tensor[%d]: rank>2 conv tile or non-unit batch axes.",
+                          oOperand->GetMagic());
+        return true;
+    }
     const size_t UB_LIMIT = static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) *
                                                 UB_THRESHOLD_NORMAL);
-    size_t tensorSize = IsSliceMode() ? CalcNZTensorSize(iOperand) : CalcNZTensorSizeLegacy(iOperand);
+    size_t tensorSize = IsSliceMode() ? CalcNZTensorSize(iOperand, isConv) : CalcNZTensorSizeLegacy(iOperand);
     if (tensorSize > UB_LIMIT) {
         APASS_LOG_DEBUG_F(Elements::Tensor, "Reject UB-to-L1 tensor[%d]: storage %zu bytes exceeds UB limit %zu bytes.",
                           iOperand->GetMagic(), tensorSize, UB_LIMIT);
@@ -690,7 +705,7 @@ Status AssignMemoryType::ProcessUB2L1LargeToSmall(Function& function)
             continue;
         }
         RETURN_IF_NOT_SUCCESS(TryUpgradeSingleContractSlicePath(op, MemoryType::MEM_UB, MemoryType::MEM_L1,
-                                                                "ProcessUB2L1LargeToSmall", true, false, true));
+                                                                "ProcessUB2L1LargeToSmall", false, false, true));
     }
     return SUCCESS;
 }
@@ -899,7 +914,8 @@ Status AssignMemoryType::TryUpgradeSliceContractPath(Operation& sliceOp, MemoryT
             return SUCCESS;
         }
         if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_UB &&
-            !(isLiteNpu ? inserter.IsL0C2UbLiteNPUSupportedDtype(input) : inserter.IsL0C2UbSupportedDtype(input))) {
+            (!MemoryPathUtils::IsL0C2UbSupportedShape(input) ||
+             !(isLiteNpu ? inserter.IsL0C2UbLiteNPUSupportedDtype(input) : inserter.IsL0C2UbSupportedDtype(input)))) {
             return SUCCESS;
         }
         if (isLiteNpu && sourceType == MemoryType::MEM_L1 && targetType == MemoryType::MEM_UB &&
@@ -995,23 +1011,36 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
     // assemble-output UB limit and the middle carries no NZ copy there.
     if (sourceType != targetType && middle->GetShape().size() >= kMatrixShapeDimCount) {
         if (sourceType == MemoryType::MEM_UB) {
+            const bool isConv = MemoryPathUtils::HasConvConsumer(middle);
+            if (middleShape.size() > SHAPE_DIM2 && (isConv || !AllBatchAxesAreOne(middleShape))) {
+                APASS_LOG_DEBUG_F(Elements::Operation,
+                                  "Skip %s: op[%d] middle tensor[%d], rank>2 conv tile or non-unit batch axes.",
+                                  reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
+                return SUCCESS;
+            }
             const size_t ubLimit = static_cast<size_t>(
                 Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) * UB_THRESHOLD_NORMAL);
-            if (CalcNZTensorSize(middle) > ubLimit) {
+            if (CalcNZTensorSize(middle, isConv) > ubLimit) {
                 APASS_LOG_DEBUG_F(Elements::Operation,
                                   "Skip %s: op[%d] middle tensor[%d], storage %zu bytes exceeds UB limit %zu bytes.",
-                                  reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic(), CalcNZTensorSize(middle),
-                                  ubLimit);
+                                  reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic(),
+                                  CalcNZTensorSize(middle, isConv), ubLimit);
                 return SUCCESS;
             }
         } else if (sourceType == MemoryType::MEM_L0C) {
+            const bool isConv = MemoryPathUtils::HasConvProducer(input);
+            if (middleShape.size() > SHAPE_DIM2 && !isConv) {
+                APASS_LOG_DEBUG_F(Elements::Operation, "Skip %s: op[%d] middle tensor[%d], rank>2 batch matmul tile.",
+                                  reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
+                return SUCCESS;
+            }
             const size_t l0cLimit = static_cast<size_t>(
                 Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_L0C) * L0C_THRESHOLD);
-            if (CalcNzStorageSize(middle) > l0cLimit) {
+            if (CalcNzStorageSize(middle, isConv) > l0cLimit) {
                 APASS_LOG_DEBUG_F(Elements::Operation,
                                   "Skip %s: op[%d] middle tensor[%d], storage %zu bytes exceeds L0C limit %zu bytes.",
                                   reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic(),
-                                  CalcNzStorageSize(middle), l0cLimit);
+                                  CalcNzStorageSize(middle, isConv), l0cLimit);
                 return SUCCESS;
             }
         }
@@ -1095,7 +1124,7 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
                 Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) * UB_THRESHOLD_NORMAL);
             int64_t copyInModeValue = 0;
             // MXMatmul场景K轴非64对齐不支持UB2L1直连（MX补齐仅由DDR路径支持），回退DDR
-            if (CalcNZTensorSize(input) > ubLimit ||
+            if (CalcNZTensorSize(input, MemoryPathUtils::HasConvConsumer(middle)) > ubLimit ||
                 (consumer->GetAttr<int64_t>("op_attr_copy_in_mode", copyInModeValue) && copyInModeValue == 0) ||
                 MemoryPathUtils::IsMxPaddingMode(*consumer)) {
                 APASS_LOG_DEBUG_F(
@@ -1109,7 +1138,7 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
     return ApplySingleContractSliceUpgrade(contractOp, sourceType, targetType, reason);
 }
 
-size_t AssignMemoryType::CalcNzAlignedSize(const LogicalTensorPtr& tensor) const
+size_t AssignMemoryType::CalcNzAlignedSize(const LogicalTensorPtr& tensor, bool isConv) const
 {
     constexpr int64_t kC0AlignBytes = 32;
     const auto& shape = tensor->GetShape();
@@ -1118,8 +1147,7 @@ size_t AssignMemoryType::CalcNzAlignedSize(const LogicalTensorPtr& tensor) const
     }
     DataType dtype = tensor->Datatype();
     int64_t bytes = BytesOf(dtype);
-    // 外轴/内轴按 L0C 物理布局取值: conv 多维 tile 为 (N·D·H·W, C), 二维 matmul tile 为 (M, N)
-    auto [outer, inner] = GetNzOuterInnerAxes(shape);
+    auto [outer, inner] = GetNzOuterInnerAxes(shape, isConv);
     // 外轴对齐：INT8/FP8 对齐到 32，其他对齐到 16
     size_t outerAlign = (dtype == DT_INT8 || dtype == DT_UINT8 || dtype == DT_FP8) ? 32 : 16;
     // 内轴对齐：C0 size = 32 / 元素字节数
@@ -1136,7 +1164,7 @@ size_t AssignMemoryType::CalcNzAlignedSize(const LogicalTensorPtr& tensor) const
     return alignedOuter * alignedInner * static_cast<size_t>(bytes);
 }
 
-size_t AssignMemoryType::CalcNZTensorSize(const LogicalTensorPtr& tensor) const
+size_t AssignMemoryType::CalcNZTensorSize(const LogicalTensorPtr& tensor, bool isConv) const
 {
     constexpr int64_t kAlignBytes = 4;
     const auto& shape = tensor->GetShape();
@@ -1147,14 +1175,14 @@ size_t AssignMemoryType::CalcNZTensorSize(const LogicalTensorPtr& tensor) const
     // ND 为全量元素数 (全部维度乘积): conv 多维 tile 不能只取末两维, 否则丢失 N/C/D 前导维
     size_t numel = ShapeNumel(shape);
     size_t ndSize = numel * static_cast<size_t>(bytes);
-    size_t nzSize = CalcNzAlignedSize(tensor);
+    size_t nzSize = CalcNzAlignedSize(tensor, isConv);
     if (nzSize == 0) {
         return numel * static_cast<size_t>(bytes > 0 ? bytes : kAlignBytes);
     }
     return ndSize + nzSize;
 }
 
-size_t AssignMemoryType::CalcNzStorageSize(const LogicalTensorPtr& tensor) const
+size_t AssignMemoryType::CalcNzStorageSize(const LogicalTensorPtr& tensor, bool isConv) const
 {
     constexpr int64_t kAlignBytes = 4;
     const auto& shape = tensor->GetShape();
@@ -1162,7 +1190,7 @@ size_t AssignMemoryType::CalcNzStorageSize(const LogicalTensorPtr& tensor) const
         return 0;
     }
     int64_t bytes = BytesOf(tensor->Datatype());
-    size_t nzSize = CalcNzAlignedSize(tensor);
+    size_t nzSize = CalcNzAlignedSize(tensor, isConv);
     if (nzSize == 0) {
         // C0 无法推导时退化为 ND 全量大小 (全部维度乘积)
         return ShapeNumel(shape) * static_cast<size_t>(bytes > 0 ? bytes : kAlignBytes);

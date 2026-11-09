@@ -1504,6 +1504,7 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallConv4DOversizedMiddleDdrFallb
     auto& contractOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_CONTRACT, {convL0cOut}, {middle});
     contractOp.SetOpAttribute(
         std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{0, 0, 0, 0}));
+    contractOp.SetAttribute(OpAttributeKey::isConv, true);
     for (int64_t i = 0; i < sliceNum; i++) {
         auto& sliceOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_SLICE, {middle}, {ubOuts[i]});
         sliceOp.SetOpAttribute(
@@ -1557,6 +1558,7 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallConv5DOversizedMiddleDdrFallb
     auto& contractOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_CONTRACT, {convL0cOut}, {middle});
     contractOp.SetOpAttribute(
         std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{0, 0, 0, 0, 0}));
+    contractOp.SetAttribute(OpAttributeKey::isConv, true);
     for (int64_t i = 0; i < sliceNum; i++) {
         auto& sliceOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_SLICE, {middle}, {ubOuts[i]});
         sliceOp.SetOpAttribute(
@@ -1598,6 +1600,11 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBSmallToLargeConv4DMiddleUpgrade)
     auto dynShapeMiddle = CreateTestConstIntVector(shapeMiddle);
     auto convL0cOut = IRBuilder().CreateTensorVar(DT_FP16, shapeIn, dynShapeIn);
     convL0cOut->SetMemoryTypeBoth(MemoryType::MEM_L0C, true);
+    auto convL0cSrc = IRBuilder().CreateTensorVar(DT_FP16, shapeIn, dynShapeIn);
+    convL0cSrc->SetMemoryTypeBoth(MemoryType::MEM_L0C, true);
+    auto& transFormatOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_TRANS_FORMAT_L0C, {convL0cSrc},
+                                                         {convL0cOut});
+    transFormatOp.SetAttribute(OpAttributeKey::isConv, true);
     auto middle = IRBuilder().CreateTensorVar(DT_FP16, shapeMiddle, dynShapeMiddle);
     constexpr int64_t sliceNum = NUM_16 / NUM_8;
     std::vector<std::shared_ptr<LogicalTensor>> ubOuts;
@@ -1609,6 +1616,7 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBSmallToLargeConv4DMiddleUpgrade)
     auto& contractOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_CONTRACT, {convL0cOut}, {middle});
     contractOp.SetOpAttribute(
         std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{0, 0, 0, 0}));
+    contractOp.SetAttribute(OpAttributeKey::isConv, true);
     for (int64_t i = 0; i < sliceNum; i++) {
         auto& sliceOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_SLICE, {middle}, {ubOuts[i]});
         sliceOp.SetOpAttribute(
@@ -2858,6 +2866,181 @@ TEST_F(AssignMemoryTypeTest, TestUB2L1On2201NoDirectPath)
     Platform::Instance().ReloadMemoryPaths("2201");
 }
 
+TEST_F(AssignMemoryTypeTest, TestUB2L1LargeToSmallMultiDimensional)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    Platform::Instance().ReloadMemoryPaths("3510");
+    // Cover each batch axis independently, including the second batch axis in 4D.
+    // Each case specifies batch shape, convolution layout, and expected direct-path support.
+    const std::vector<std::tuple<Shape, bool, bool>> cases{
+        {{}, false, true},      {{1}, false, true},     {{1, 1}, false, true}, {{2}, false, false},
+        {{2, 1}, false, false}, {{1, 2}, false, false}, {{1}, true, false},    {{1, 1}, true, false}};
+    for (size_t caseIndex = 0; caseIndex < cases.size(); ++caseIndex) {
+        SCOPED_TRACE(caseIndex);
+        const auto& [batchShape, isConv, expectDirect] = cases[caseIndex];
+        const size_t rank = batchShape.size() + 2;
+        auto name = "TestUB2L1LargeToSmallMultiDimensional" + std::to_string(caseIndex);
+        auto function = std::make_shared<Function>(Program::GetInstance(), name, name, nullptr);
+        Program::GetInstance().InsertFuncToFunctionMap(name, function);
+        Shape inputShape = batchShape;
+        inputShape.resize(rank, 1);
+        inputShape[rank - 2] = NUM_64;
+        inputShape[rank - 1] = NUM_64;
+        Shape outputShape = batchShape;
+        outputShape.resize(rank, 1);
+        outputShape[rank - 2] = NUM_32;
+        outputShape[rank - 1] = NUM_32;
+        auto input = IRBuilder().CreateTensorVar(DT_FP16, inputShape, CreateTestConstIntVector(inputShape));
+        input->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+        auto middle = IRBuilder().CreateTensorVar(DT_FP16, inputShape, CreateTestConstIntVector(inputShape));
+        auto& contract = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {input}, {middle});
+        contract.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, Offset(rank, 0)));
+        std::vector<Operation*> slices;
+        std::vector<Offset> offsets;
+        for (int row = 0; row < NUM_2; ++row) {
+            for (int col = 0; col < NUM_2; ++col) {
+                auto output = IRBuilder().CreateTensorVar(DT_FP16, outputShape, CreateTestConstIntVector(outputShape));
+                Offset offset(rank, 0);
+                offset[rank - 2] = row * NUM_32;
+                offset[rank - 1] = col * NUM_32;
+                auto& slice = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_SLICE, {middle}, {output});
+                slice.SetOpAttribute(std::make_shared<ViewOpAttribute>(offset, MemoryType::MEM_L1));
+                if (isConv) {
+                    slice.SetAttribute(OpAttributeKey::isConv, true);
+                }
+                slices.push_back(&slice);
+                offsets.push_back(offset);
+            }
+        }
+
+        AssignMemoryType assignMemoryType;
+        ASSERT_EQ(assignMemoryType.RunOnFunction(*function), SUCCESS);
+        EXPECT_EQ(middle->GetMemoryTypeOriginal(), expectDirect ? MemoryType::MEM_UB : MemoryType::MEM_DEVICE_DDR);
+        EXPECT_EQ(CountMemoryPath(function.get(), MemoryType::MEM_UB, MemoryType::MEM_L1), expectDirect ? 4 : 0);
+        if (!expectDirect) {
+            continue;
+        }
+        EXPECT_EQ(contract.GetOpcode(), Opcode::OP_ASSEMBLE);
+        EXPECT_EQ(CountMemoryPath(function.get(), MemoryType::MEM_UB, MemoryType::MEM_DEVICE_DDR), 0);
+        for (size_t i = 0; i < slices.size(); ++i) {
+            EXPECT_EQ(slices[i]->oOperand.front()->GetMemoryTypeOriginal(), MemoryType::MEM_L1);
+            ASSERT_EQ(GenerateMoveOp().ProcessViewOp(*function, *slices[i]), SUCCESS);
+            EXPECT_EQ(slices[i]->GetOpcode(), Opcode::OP_UB_COPY_L1);
+            auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(slices[i]->GetOpAttribute());
+            ASSERT_NE(copyAttr, nullptr);
+            auto fromOffset = OpImmediate::ToSpecified(copyAttr->GetFromOffset());
+            auto toOffset = OpImmediate::ToSpecified(copyAttr->GetToOffset());
+            ASSERT_EQ(fromOffset.size(), rank);
+            ASSERT_EQ(toOffset.size(), rank);
+            for (size_t dim = 0; dim < rank; ++dim) {
+                EXPECT_EQ(fromOffset[dim].Concrete(), offsets[i][dim]);
+                EXPECT_EQ(toOffset[dim].Concrete(), 0);
+            }
+        }
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+TEST_F(AssignMemoryTypeTest, TestUB2L1SmallToLargeMultiDimensional)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    Platform::Instance().ReloadMemoryPaths("3510");
+    // Cover each batch axis independently, including the second batch axis in 4D.
+    // Each case specifies batch shape, convolution layout, and expected direct-path support.
+    const std::vector<std::tuple<Shape, bool, bool>> cases{
+        {{}, false, true},      {{1}, false, true},     {{1, 1}, false, true}, {{2}, false, false},
+        {{2, 1}, false, false}, {{1, 2}, false, false}, {{1}, true, false},    {{1, 1}, true, false}};
+    for (size_t caseIndex = 0; caseIndex < cases.size(); ++caseIndex) {
+        SCOPED_TRACE(caseIndex);
+        const auto& [batchShape, isConv, expectDirect] = cases[caseIndex];
+        const size_t rank = batchShape.size() + 2;
+        auto name = "TestUB2L1SmallToLargeMultiDimensional" + std::to_string(caseIndex);
+        auto function = std::make_shared<Function>(Program::GetInstance(), name, name, nullptr);
+        Program::GetInstance().InsertFuncToFunctionMap(name, function);
+        Shape inputShape = batchShape;
+        inputShape.resize(rank, 1);
+        inputShape[rank - 2] = NUM_32;
+        inputShape[rank - 1] = NUM_32;
+        Shape middleShape = batchShape;
+        middleShape.resize(rank, 1);
+        middleShape[rank - 2] = NUM_64;
+        middleShape[rank - 1] = NUM_64;
+        auto middle = IRBuilder().CreateTensorVar(DT_FP16, middleShape, CreateTestConstIntVector(middleShape));
+        auto output = IRBuilder().CreateTensorVar(DT_FP16, middleShape, CreateTestConstIntVector(middleShape));
+        for (int row = 0; row < NUM_2; ++row) {
+            for (int col = 0; col < NUM_2; ++col) {
+                auto input = IRBuilder().CreateTensorVar(DT_FP16, inputShape, CreateTestConstIntVector(inputShape));
+                input->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+                auto& contract = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {input}, {middle});
+                Offset offset(rank, 0);
+                offset[rank - 2] = row * NUM_32;
+                offset[rank - 1] = col * NUM_32;
+                contract.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, offset));
+            }
+        }
+        auto& slice = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_SLICE, {middle}, {output});
+        slice.SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset(rank, 0), MemoryType::MEM_L1));
+        if (isConv) {
+            slice.SetAttribute(OpAttributeKey::isConv, true);
+        }
+
+        AssignMemoryType assignMemoryType;
+        ASSERT_EQ(assignMemoryType.RunOnFunction(*function), SUCCESS);
+        EXPECT_EQ(output->GetMemoryTypeOriginal(), MemoryType::MEM_L1);
+        EXPECT_EQ(middle->GetMemoryTypeOriginal(), expectDirect ? MemoryType::MEM_L1 : MemoryType::MEM_DEVICE_DDR);
+        EXPECT_EQ(CountMemoryPath(function.get(), MemoryType::MEM_UB, MemoryType::MEM_L1), expectDirect ? 4 : 0);
+        if (expectDirect) {
+            EXPECT_EQ(slice.GetOpcode(), Opcode::OP_VIEW);
+            EXPECT_EQ(CountMemoryPath(function.get(), MemoryType::MEM_UB, MemoryType::MEM_DEVICE_DDR), 0);
+            std::vector<Operation*> contracts(middle->GetProducers().begin(), middle->GetProducers().end());
+            GenerateMoveOp generateMoveOp;
+            for (auto* contract : contracts) {
+                generateMoveOp.CreateMoveOpForAssemble(*function, *contract);
+                EXPECT_EQ(contract->GetOpcode(), Opcode::OP_UB_COPY_L1);
+                auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(contract->GetOpAttribute());
+                ASSERT_NE(copyAttr, nullptr);
+                EXPECT_EQ(copyAttr->GetFromOffset().size(), rank);
+                EXPECT_EQ(copyAttr->GetToOffset().size(), rank);
+            }
+        }
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+TEST_F(AssignMemoryTypeTest, TestBatchMatmulNzStorageUsesLastTwoAxes)
+{
+    AssignMemoryType pass;
+    for (const Shape& shape : std::vector<Shape>{{32, 64}, {1, 32, 64}, {1, 1, 32, 64}}) {
+        SCOPED_TRACE(shape.size());
+        auto tensor = IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+        // FP16: M=32 (plus one padded row), N=64, two bytes per element.
+        EXPECT_EQ(pass.CalcNzStorageSize(tensor, false), 33U * 64U * 2U);
+        EXPECT_EQ(pass.CalcNZTensorSize(tensor, false), (32U + 33U) * 64U * 2U);
+    }
+}
+
+TEST_F(AssignMemoryTypeTest, TestConvNzStoragePreservesChannelAxis)
+{
+    auto name = "TestConvNzStoragePreservesChannelAxis";
+    auto function = std::make_shared<Function>(Program::GetInstance(), name, name, nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap(name, function);
+    Shape shape{1, NUM_32, NUM_8, NUM_8};
+    auto input = IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+    auto output = IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+    auto& slice = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_SLICE, {input}, {output});
+    slice.SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset(shape.size(), 0), MemoryType::MEM_L1));
+    slice.SetAttribute(OpAttributeKey::isConv, true);
+
+    AssignMemoryType pass;
+    // N*H*W=64, C=32; retain the padded outer row and both FP16 bytes.
+    EXPECT_EQ(pass.CalcNzStorageSize(input, true), 65U * 32U * 2U);
+    EXPECT_EQ(pass.CalcNZTensorSize(input, true), (64U + 65U) * 32U * 2U);
+}
+
 TEST_F(AssignMemoryTypeTest, TestUB2L1SmallToLarge)
 {
     // 设置 A5 平台
@@ -3211,7 +3394,7 @@ TEST_F(AssignMemoryTypeTest, ReshapeOutputUsesUbWithMixedViewConsumers)
     EXPECT_EQ(viewOpAttr->GetTo(), MemoryType::MEM_L1);
 }
 
-TEST_F(AssignMemoryTypeTest, ReshapeL1SlicePathKeepsUbOnDav3510)
+TEST_F(AssignMemoryTypeTest, ReshapeL1SlicePathIsNotKeptInUb)
 {
     // Main path: incast -> SLICE -> EXP -> CONTRACT -> RESHAPE ->
     // (UB->L1) SLICE -> (L1->L0A) SLICE -> A_MUL_B -> CONTRACT -> outcast.
@@ -3219,10 +3402,10 @@ TEST_F(AssignMemoryTypeTest, ReshapeL1SlicePathKeepsUbOnDav3510)
     // (L1->L0B) SLICE.
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     Platform::Instance().ReloadMemoryPaths("3510");
-    auto function = std::make_shared<Function>(Program::GetInstance(), "ReshapeL1SlicePathKeepsUbOnDav3510",
-                                               "ReshapeL1SlicePathKeepsUbOnDav3510", nullptr);
+    auto function = std::make_shared<Function>(Program::GetInstance(), "ReshapeL1SlicePathIsNotKeptInUb",
+                                               "ReshapeL1SlicePathIsNotKeptInUb", nullptr);
     ASSERT_NE(function, nullptr);
-    Program::GetInstance().InsertFuncToFunctionMap("ReshapeL1SlicePathKeepsUbOnDav3510", function);
+    Program::GetInstance().InsertFuncToFunctionMap("ReshapeL1SlicePathIsNotKeptInUb", function);
 
     const Shape aShape{2, NUM_32};
     const Shape bShape{NUM_32, NUM_32};
@@ -3270,52 +3453,9 @@ TEST_F(AssignMemoryTypeTest, ReshapeL1SlicePathKeepsUbOnDav3510)
     ASSERT_EQ(assignMemoryType.RunOnFunction(*function), SUCCESS);
     ASSERT_EQ(assignMemoryType.PostCheck(*function), SUCCESS);
 
-    EXPECT_EQ(reshapeInput->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
-    EXPECT_EQ(reshapeOutput->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
-    Platform::Instance().ReloadMemoryPaths("2201");
-}
-
-TEST_F(AssignMemoryTypeTest, SplitReshapeSliceTargetRespectsArchitecture)
-{
-    for (auto arch : {NPUArch::DAV_3510, NPUArch::DAV_2201}) {
-        SCOPED_TRACE(static_cast<int>(arch));
-        Platform::Instance().GetSoc().SetNPUArch(arch);
-        Platform::Instance().ReloadMemoryPaths(arch == NPUArch::DAV_3510 ? "3510" : "2201");
-        for (auto target : {MemoryType::MEM_L1, MemoryType::MEM_UB, MemoryType::MEM_DEVICE_DDR}) {
-            SCOPED_TRACE(target);
-            ComputationalGraphBuilder G;
-            G.AddTensor(DT_FP16, {NUM_16, NUM_32}, MemoryType::MEM_UB, "tile");
-            G.AddTensor(DT_FP16, {NUM_16, NUM_32}, MemoryType::MEM_UNKNOWN, "assembled");
-            G.AddTensor(DT_FP16, {NUM_32, NUM_16}, MemoryType::MEM_UNKNOWN, "reshaped");
-            G.AddTensor(DT_FP16, {NUM_32, NUM_16}, target, "slice_out");
-            G.AddOp(Opcode::OP_CONTRACT, {"tile"}, {"assembled"}, "contract");
-            G.GetOp("contract")
-                ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, Offset{0, 0}));
-            G.AddOp(Opcode::OP_RESHAPE, {"assembled"}, {"reshaped"}, "reshape");
-            G.AddOp(Opcode::OP_SLICE, {"reshaped"}, {"slice_out"}, "slice");
-            G.GetOp("slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, target));
-
-            AssignMemoryType pass;
-            auto input = G.GetTensor("assembled");
-            auto output = G.GetTensor("reshaped");
-            auto& reshape = *G.GetOp("reshape");
-            auto& slice = *G.GetOp("slice");
-            pass.inserter.UpdateTensorTobeMap(input, reshape, MemoryType::MEM_DEVICE_DDR);
-            pass.inserter.UpdateTensorTobeMap(output, slice, MemoryType::MEM_DEVICE_DDR);
-            bool kept = false;
-            ASSERT_EQ(pass.KeepSplitReshapeUb(reshape, input, output, kept), SUCCESS);
-            const bool expectedKept = target == MemoryType::MEM_UB ||
-                                      (arch == NPUArch::DAV_3510 && target == MemoryType::MEM_L1);
-            EXPECT_EQ(kept, expectedKept);
-            const auto expectedMemory = expectedKept ? MemoryType::MEM_UB : MemoryType::MEM_UNKNOWN;
-            EXPECT_EQ(input->GetMemoryTypeOriginal(), expectedMemory);
-            EXPECT_EQ(output->GetMemoryTypeOriginal(), expectedMemory);
-            const auto expectedRequirement = expectedKept ? MemoryType::MEM_UB : MemoryType::MEM_DEVICE_DDR;
-            EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, reshape), expectedRequirement);
-            EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(output, slice), expectedRequirement);
-            EXPECT_EQ(G.GetTensor("slice_out")->GetMemoryTypeOriginal(), target);
-        }
-    }
+    // The L1 slice is a real copy-in boundary
+    // And must prevent the reshape output from being forced to UB by KeepSplitReshapeUb.
+    EXPECT_NE(reshapeOutput->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
     Platform::Instance().ReloadMemoryPaths("2201");
 }
 
@@ -3519,9 +3659,8 @@ TEST_F(AssignMemoryTypeTest, SplitReshapeParallelSlicePreservesL1SuccessorRules)
         pass.inserter.UpdateTensorTobeMap(input, parallelSlice, MemoryType::MEM_DEVICE_DDR);
         bool kept = false;
         ASSERT_EQ(pass.KeepSplitReshapeUb(*G.GetOp("reshape"), input, G.GetTensor("reshaped"), kept), SUCCESS);
-        EXPECT_EQ(kept, parallelMemory == MemoryType::MEM_UB);
-        EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, parallelSlice),
-                  kept ? MemoryType::MEM_UB : MemoryType::MEM_DEVICE_DDR);
+        EXPECT_EQ(kept, false);
+        EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, parallelSlice), MemoryType::MEM_DEVICE_DDR);
         EXPECT_EQ(G.GetTensor("main_out")->GetMemoryTypeOriginal(), MemoryType::MEM_L1);
     }
     Platform::Instance().ReloadMemoryPaths("2201");
@@ -4470,6 +4609,59 @@ TEST_F(AssignMemoryTypeTest, ShapeTransportFallbackRankMismatchIntercept)
         << "L0C→L1 path should not exist when rank mismatch";
     EXPECT_GT(CountMemoryPath(func.get(), MemoryType::MEM_L0C, MemoryType::MEM_DEVICE_DDR), 0)
         << "L0C→DDR path should exist after rank mismatch intercept";
+}
+
+TEST_F(AssignMemoryTypeTest, ConvLayoutDetectionUsesDirectTransportMarks)
+{
+    ComputationalGraphBuilder G;
+    Shape shape{NUM_1, NUM_64, NUM_64};
+    G.AddTensors(DataType::DT_FP32, shape,
+                 {MemoryType::MEM_L0C, MemoryType::MEM_L0C, MemoryType::MEM_UB, MemoryType::MEM_UB},
+                 {"source", "middle", "tile", "result"});
+    G.AddOp(Opcode::OP_CONTRACT, {"source"}, {"middle"}, "contract");
+    G.AddOp(Opcode::OP_SLICE, {"middle"}, {"tile"}, "slice");
+    G.AddOp(Opcode::OP_ADD, {"tile", "tile"}, {"result"}, "add");
+    // 初始无标记: 各 tensor 直接邻接均无 isConv, rank>2 的 L0C2UB shape 校验拒绝
+    EXPECT_FALSE(MemoryPathUtils::HasConvProducer(G.GetTensor("source")));
+    EXPECT_FALSE(MemoryPathUtils::HasConvConsumer(G.GetTensor("source")));
+    EXPECT_FALSE(MemoryPathUtils::IsL0C2UbSupportedShape(G.GetTensor("source")));
+    // slice (middle 的直接 consumer) 带 isConv: 仅 middle 的直接 consumer 判定命中;
+    // source 与 slice 之间隔着 contract, 不穿透
+    G.GetOp("slice")->SetAttribute(OpAttributeKey::isConv, true);
+    EXPECT_TRUE(MemoryPathUtils::HasConvConsumer(G.GetTensor("middle")));
+    EXPECT_FALSE(MemoryPathUtils::HasConvConsumer(G.GetTensor("source")));
+    EXPECT_FALSE(MemoryPathUtils::HasConvProducer(G.GetTensor("middle")));
+    EXPECT_FALSE(MemoryPathUtils::IsL0C2UbSupportedShape(G.GetTensor("middle")));
+    // contract (middle 的直接 producer) 带 isConv: middle 按直接 producer 判 conv,
+    // L0C2UB shape 校验放行
+    G.GetOp("contract")->SetAttribute(OpAttributeKey::isConv, true);
+    EXPECT_TRUE(MemoryPathUtils::HasConvProducer(G.GetTensor("middle")));
+    EXPECT_TRUE(MemoryPathUtils::HasConvConsumer(G.GetTensor("source")));
+    EXPECT_TRUE(MemoryPathUtils::IsL0C2UbSupportedShape(G.GetTensor("middle")));
+    // 计算 op (add) 不参与 conv 判定, result 直接邻接无 isConv 标记; nullptr 安全
+    EXPECT_FALSE(MemoryPathUtils::HasConvProducer(G.GetTensor("result")));
+    EXPECT_FALSE(MemoryPathUtils::HasConvConsumer(G.GetTensor("result")));
+    EXPECT_FALSE(MemoryPathUtils::HasConvProducer(nullptr));
+    EXPECT_FALSE(MemoryPathUtils::HasConvConsumer(nullptr));
+}
+
+TEST_F(AssignMemoryTypeTest, L0C2UbRejectsBatchedMatricesButAllowsConvolutionTiles)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    for (const Shape& shape : std::vector<Shape>{{NUM_64, NUM_64},
+                                                 {NUM_1, NUM_64, NUM_64},
+                                                 {NUM_1, NUM_1, NUM_64, NUM_64},
+                                                 {NUM_1, NUM_1, NUM_1, NUM_64, NUM_64}}) {
+        ComputationalGraphBuilder G;
+        G.AddTensors(DataType::DT_FP32, shape, {MemoryType::MEM_L0C, MemoryType::MEM_L0C}, {"source", "result"});
+        G.AddOp(Opcode::OP_A_MUL_B, {"source", "source"}, {"result"}, "producer");
+        EXPECT_EQ(MemoryPathUtils::IsL0C2UbSupportedShape(G.GetTensor("result")), shape.size() == 2);
+        G.GetOp("producer")->SetAttribute(OpAttributeKey::isConv, true);
+        EXPECT_TRUE(MemoryPathUtils::IsL0C2UbSupportedShape(G.GetTensor("result")));
+        G.GetOp("producer")->SetAttribute(OpAttributeKey::isConv, false);
+        EXPECT_EQ(MemoryPathUtils::IsL0C2UbSupportedShape(G.GetTensor("result")), shape.size() == 2);
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
 }
 
 // 3510 L0C→UB 整除放行：matmul(32,128,L0C) → VIEW(L0C 透明) → ASSEMBLE(L0C→UB) → ADD(UB)

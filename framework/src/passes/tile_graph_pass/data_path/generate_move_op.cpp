@@ -253,9 +253,10 @@ Status GenerateMoveOp::ProcessDefault(Function& function, Operation& op, ViewOpA
     }
     if (op.GetOpcode() == Opcode::OP_UB_COPY_L1) {
         ProcessUB2L1(function, op);
-        SetUB2L1CopyAttr(
-            op, op.GetOOperands()[0]->GetShape(), OpImmediate::Specified(viewOpAttribute->GetFromTensorOffset()),
-            OpImmediate::Specified(ZERO_OFFSET), Matrix::CopyMode::EXTRACT, viewOpAttribute->GetToDynValidShape());
+        SetUB2L1CopyAttr(op, op.GetOOperands()[0]->GetShape(),
+                         OpImmediate::Specified(viewOpAttribute->GetFromTensorOffset()),
+                         OpImmediate::Specified(Offset(op.oOperand.front()->GetShape().size(), 0)),
+                         Matrix::CopyMode::EXTRACT, viewOpAttribute->GetToDynValidShape());
         return SUCCESS;
     }
     if (op.GetOpcode() == Opcode::OP_L0C_TO_L1) {
@@ -518,7 +519,8 @@ bool GenerateMoveOp::TryInsertModeDispatch(Function& function, Operation& op, As
     if (inputMemtype == MemoryType::MEM_UB && outputMemtype == MemoryType::MEM_L1) {
         SetOpcodeByMemPath(op, inputMemtype, outputMemtype);
         ProcessUB2L1(function, op); // 先进行 ND2NZ 转换
-        SetUB2L1CopyAttr(op, op.GetIOperands()[0]->GetShape(), OpImmediate::Specified(ZERO_OFFSET),
+        SetUB2L1CopyAttr(op, op.GetIOperands()[0]->GetShape(),
+                         OpImmediate::Specified(Offset(op.iOperand.front()->GetShape().size(), 0)),
                          OpImmediate::Specified(assembleOpAttribute->GetToTensorOffset()), Matrix::CopyMode::INSERT);
         return true;
     }
@@ -738,8 +740,10 @@ Status GenerateMoveOp::CreateMoveOpForConvert(Function& function, Operation& op)
     Status status = SetOpcodeByMemPath(op, from, to);
     if (op.GetOpcode() == Opcode::OP_UB_COPY_L1) {
         ProcessUB2L1(function, op);
-        SetUB2L1CopyAttr(op, op.GetOOperands()[0]->GetShape(), OpImmediate::Specified(ZERO_OFFSET),
-                         OpImmediate::Specified(ZERO_OFFSET), Matrix::CopyMode::MOVE);
+        SetUB2L1CopyAttr(op, op.GetOOperands()[0]->GetShape(),
+                         OpImmediate::Specified(Offset(op.iOperand.front()->GetShape().size(), 0)),
+                         OpImmediate::Specified(Offset(op.oOperand.front()->GetShape().size(), 0)),
+                         Matrix::CopyMode::MOVE);
     }
     if (op.GetOpcode() == Opcode::OP_L0C_TO_L1) {
         SetL0C2L1CopyAttr(op, op.GetOOperands()[0]->GetShape(), OpImmediate::Specified(ZERO_OFFSET),

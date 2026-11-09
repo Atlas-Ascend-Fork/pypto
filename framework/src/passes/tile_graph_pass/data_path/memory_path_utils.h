@@ -122,6 +122,12 @@ public:
 
     static bool IsDynamicReshape(Operation& operation, const LogicalTensorPtr& output);
 
+    static bool HasConvProducer(const LogicalTensorPtr& tensor);
+
+    static bool HasConvConsumer(const LogicalTensorPtr& tensor);
+
+    static bool IsL0C2UbSupportedShape(const LogicalTensorPtr& tensor);
+
     static bool CheckUBTileShape(const LogicalTensorPtr& moveTensor);
 
     static bool CheckUBConvTileShape(const LogicalTensorPtr& moveTensor);

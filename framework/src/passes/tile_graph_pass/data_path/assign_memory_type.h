@@ -152,7 +152,6 @@ private:
 
     Status KeepSplitReshapeUb(Operation& operation, const LogicalTensorPtr& input, const LogicalTensorPtr& output,
                               bool& kept);
-    bool CanUseReshapeUb2L1Path(const LogicalTensorPtr& output);
 
     Status ApplyOversizedLocalBufferFallback(Function& function);
 
@@ -214,9 +213,9 @@ private:
     Status ApplySingleContractSliceUpgrade(Operation& contractOp, MemoryType sourceType, MemoryType targetType,
                                            const std::string& reason);
     bool CanUseL0C2L1UpgradePath(Operation& operation);
-    size_t CalcNZTensorSize(const LogicalTensorPtr& tensor) const;
-    size_t CalcNzStorageSize(const LogicalTensorPtr& tensor) const;
-    size_t CalcNzAlignedSize(const LogicalTensorPtr& tensor) const;
+    size_t CalcNZTensorSize(const LogicalTensorPtr& tensor, bool isConv) const;
+    size_t CalcNzStorageSize(const LogicalTensorPtr& tensor, bool isConv) const;
+    size_t CalcNzAlignedSize(const LogicalTensorPtr& tensor, bool isConv) const;
     Status CalcLineOffset(const Shape& shape, const Offset& offset, int64_t& lineOffset) const;
 
     bool HasNonZeroOffsetElement(const Offset& offset) const;

@@ -280,16 +280,16 @@ TEST_F(AssignMemoryTypeTokenTest, WritableInplaceReshapeAdvancedL0cToUbKeepsStor
     auto func = std::make_shared<Function>(Program::GetInstance(), "AdvancedWritableReshape", "AdvancedWritableReshape",
                                            nullptr);
     IRBuilder builder;
-    auto base = builder.CreateTensorVar(DT_FP32, {32, 16});
-    auto alias = builder.CreateTensorVar(DT_FP32, {32, 1, 16});
+    auto base = builder.CreateTensorVar(DT_FP32, {32, 1, 16});
+    auto alias = builder.CreateTensorVar(DT_FP32, {32, 16});
     base->SetMemoryTypeBoth(MemoryType::MEM_UB);
     alias->SetMemoryTypeBoth(MemoryType::MEM_UB);
     auto& reshape = func->AddRawOperation(Opcode::OP_RESHAPE, {base}, {alias});
     reshape.SetAttribute("op_attr_isInplace", true);
-    auto patch = builder.CreateTensorVar(DT_FP32, {8, 1, 8});
+    auto patch = builder.CreateTensorVar(DT_FP32, {8, 8});
     patch->SetMemoryTypeBoth(MemoryType::MEM_L0C);
     auto& write = func->AddRawOperation(Opcode::OP_CONTRACT, {patch}, {alias});
-    write.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_L0C, std::vector<int64_t>{8, 0, 1}));
+    write.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_L0C, std::vector<int64_t>{8, 1}));
 
     AssignMemoryType pass;
     bool aligned = true;

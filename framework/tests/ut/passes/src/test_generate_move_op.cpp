@@ -1639,6 +1639,70 @@ TEST_F(GenerateMoveOpPassTest, ProcessUB2L1GemvSkipND2NZ)
     EXPECT_TRUE(hasIsGemv && isGemv != 0);
 }
 
+TEST_F(GenerateMoveOpPassTest, UB2L1CopyOffsetsMatchOperandRank)
+{
+    for (size_t rank = 2; rank <= 4; ++rank) {
+        for (auto mode : {Matrix::CopyMode::EXTRACT, Matrix::CopyMode::INSERT, Matrix::CopyMode::MOVE}) {
+            SCOPED_TRACE(rank);
+            SCOPED_TRACE(static_cast<int>(mode));
+            auto name = "UB2L1Offsets" + std::to_string(rank) + "_" + std::to_string(static_cast<int>(mode));
+            auto function = std::make_shared<Function>(Program::GetInstance(), name, name, nullptr);
+            Program::GetInstance().InsertFuncToFunctionMap(name, function);
+            Shape smallShape(rank, 1);
+            smallShape[rank - 2] = NUM_32;
+            smallShape[rank - 1] = NUM_32;
+            Shape largeShape(rank, 1);
+            largeShape[rank - 2] = NUM_64;
+            largeShape[rank - 1] = NUM_64;
+            const auto& inputShape = mode == Matrix::CopyMode::EXTRACT ? largeShape : smallShape;
+            const auto& outputShape = mode == Matrix::CopyMode::INSERT ? largeShape : smallShape;
+            auto input = CreateTestLogicalTensor(MEM_UB, TileOpFormat::TILEOP_ND, inputShape);
+            auto output = CreateTestLogicalTensor(MEM_L1, TileOpFormat::TILEOP_NZ, outputShape);
+            Offset expectedFrom(rank, 0);
+            Offset expectedTo(rank, 0);
+            Offset tileOffset(rank, 0);
+            tileOffset[rank - 2] = NUM_32;
+            tileOffset[rank - 1] = NUM_32;
+            GenerateMoveOp pass;
+            Operation* copy = nullptr;
+            if (mode == Matrix::CopyMode::EXTRACT) {
+                expectedFrom = tileOffset;
+                auto& op = function->AddOperation(Opcode::OP_VIEW, {input}, {output});
+                op.SetOpAttribute(std::make_shared<ViewOpAttribute>(tileOffset, MEM_L1));
+                ASSERT_EQ(pass.A23CreateMoveOpForView(*function, op), SUCCESS);
+                copy = &op;
+            } else if (mode == Matrix::CopyMode::INSERT) {
+                expectedTo = tileOffset;
+                auto& op = function->AddOperation(Opcode::OP_CONTRACT, {input}, {output});
+                op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(tileOffset));
+                ASSERT_EQ(pass.CreateMoveOpForAssemble(*function, op), SUCCESS);
+                copy = &op;
+            } else {
+                auto& op = function->AddOperation(Opcode::OP_CONVERT, {input}, {output});
+                op.SetOpAttribute(std::make_shared<ConvertOpAttribute>(MEM_UB, MEM_L1));
+                // CONVERT inherits its subgraph ID from a downstream consumer.
+                auto cubeInput = CreateTestLogicalTensor(MEM_L0A, TileOpFormat::TILEOP_NZ, outputShape);
+                auto& consumer = function->AddOperation(Opcode::OP_VIEW, {output}, {cubeInput});
+                consumer.SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset(rank, 0), MEM_L0A));
+                ASSERT_EQ(pass.CreateMoveOpForConvert(*function, op), SUCCESS);
+                copy = &op;
+            }
+            ASSERT_EQ(copy->GetOpcode(), Opcode::OP_UB_COPY_L1);
+            EXPECT_EQ(copy->GetIntAttribute(OpAttributeKey::localCopyLocalMode), static_cast<int64_t>(mode));
+            auto attr = std::dynamic_pointer_cast<CopyOpAttribute>(copy->GetOpAttribute());
+            ASSERT_NE(attr, nullptr);
+            auto fromOffset = OpImmediate::ToSpecified(attr->GetFromOffset());
+            auto toOffset = OpImmediate::ToSpecified(attr->GetToOffset());
+            ASSERT_EQ(fromOffset.size(), rank);
+            ASSERT_EQ(toOffset.size(), rank);
+            for (size_t dim = 0; dim < rank; ++dim) {
+                EXPECT_EQ(fromOffset[dim].Concrete(), expectedFrom[dim]);
+                EXPECT_EQ(toOffset[dim].Concrete(), expectedTo[dim]);
+            }
+        }
+    }
+}
+
 TEST_F(GenerateMoveOpPassTest, UB2L1ViewPreservesDynamicValidShape)
 {
     auto func = std::make_shared<Function>(Program::GetInstance(), "UB2L1Dynamic", "UB2L1Dynamic", nullptr);
