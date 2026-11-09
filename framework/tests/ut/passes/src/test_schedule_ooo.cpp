@@ -39,6 +39,8 @@
 #include "passes/block_graph_pass/schedule_ooo/pre_schedule/core_assign.h"
 #include "passes/block_graph_pass/schedule_ooo/pre_schedule/prior_dfs_sort.h"
 #include "passes/block_graph_pass/schedule_ooo/pre_schedule/task_splitter.h"
+#include "passes/block_graph_pass/schedule_ooo/pre_schedule/vf_affinity_sort.h"
+#include "passes/pass_utils/pass_common_defs.h"
 #include "passes/pass_utils/pass_utils.h"
 #include "passes/block_graph_pass/schedule_ooo/schedule_ooo.h"
 #include "passes/tile_graph_pass/graph_constraint/infer_dyn_shape.h"
@@ -4783,6 +4785,107 @@ TEST_F(ScheduleOoOTest, SortOpsEmptyInput)
     OptimizeSort sort(emptyOps, *currFunctionPtr);
     EXPECT_EQ(sort.SortOps(), SUCCESS);
     EXPECT_TRUE(sort.GetOperations().empty());
+}
+
+// 三 scope fan-in 汇聚端到端——跨 scope 数据流:
+//   CopyIn1 -> Add1 -> Add2 -------------+-> Add3 -> Add4 -> CopyOut(back 侧单例)
+//   CopyIn2 --^                           ^
+//   CopyIn3 ------------------------------+
+//   CopyIn4 -> Add5 -> Add6 --------------+
+//   CopyIn5 --^
+//   其中 {Add1, Add2} 归 scope A, {Add3, Add4} 归 scope B, {Add5, Add6} 归 scope C,
+//   Add2 -> Add3 与 Add6 -> Add3 为跨 scope 边, scope B 是 A/C 两分支的 fan-in 汇聚点。
+// 预期: 商图 fan-in 点 B 的前驱 {A, C} 走 优先级/entryCount/branchNetRelease/snId 排序后
+//   输出 A 块 -> C 块 -> B 块 -> CopyOut, 各 scope 内 alloc 前置且数据流有序。
+TEST_F(ScheduleOoOTest, VfAffinitySortScopeChain)
+{
+    constexpr int vfScopeA = VF_CLUSTER_ID_START + 100;
+    constexpr int vfScopeB = VF_CLUSTER_ID_START + 200;
+    constexpr int vfScopeC = VF_CLUSTER_ID_START + 150;
+    ComputationalGraphBuilder subGraph;
+    std::vector<std::string> tensorNames{"in1", "in2", "in3", "a1", "a2", "a3", "a4", "a5", "a6",
+                                         "a7",  "in4", "in5", "c1", "c2", "c3", "c4", "out"};
+    std::vector<MemoryType> tensorMemTypes{
+        MEM_DEVICE_DDR, MEM_DEVICE_DDR, MEM_DEVICE_DDR, MEM_UB, MEM_UB, MEM_UB, MEM_UB, MEM_UB,        MEM_UB,
+        MEM_UB,         MEM_DEVICE_DDR, MEM_DEVICE_DDR, MEM_UB, MEM_UB, MEM_UB, MEM_UB, MEM_DEVICE_DDR};
+    std::vector<Opcode> opCodes{Opcode::OP_UB_ALLOC, Opcode::OP_UB_ALLOC, Opcode::OP_UB_ALLOC, Opcode::OP_UB_ALLOC,
+                                Opcode::OP_UB_ALLOC, Opcode::OP_UB_ALLOC, Opcode::OP_UB_ALLOC, Opcode::OP_COPY_IN,
+                                Opcode::OP_COPY_IN,  Opcode::OP_COPY_IN,  Opcode::OP_ADD,      Opcode::OP_ADD,
+                                Opcode::OP_ADD,      Opcode::OP_ADD,      Opcode::OP_COPY_OUT, Opcode::OP_UB_ALLOC,
+                                Opcode::OP_UB_ALLOC, Opcode::OP_UB_ALLOC, Opcode::OP_UB_ALLOC, Opcode::OP_COPY_IN,
+                                Opcode::OP_COPY_IN,  Opcode::OP_ADD,      Opcode::OP_ADD};
+    std::vector<std::vector<std::string>> ioperands{{},
+                                                    {},
+                                                    {},
+                                                    {},
+                                                    {},
+                                                    {},
+                                                    {},
+                                                    {"in1"},
+                                                    {"in2"},
+                                                    {"in3"},
+                                                    {"a1", "a2"},
+                                                    {"a3"},
+                                                    {"a4", "a5", "c4"},
+                                                    {"a6"},
+                                                    {"a7"},
+                                                    {},
+                                                    {},
+                                                    {},
+                                                    {},
+                                                    {"in4"},
+                                                    {"in5"},
+                                                    {"c1", "c2"},
+                                                    {"c3"}};
+    std::vector<std::vector<std::string>> ooperands{{"a1"}, {"a2"}, {"a3"}, {"a4"}, {"a5"}, {"a6"}, {"a7"},  {"a1"},
+                                                    {"a2"}, {"a5"}, {"a3"}, {"a4"}, {"a6"}, {"a7"}, {"out"}, {"c1"},
+                                                    {"c2"}, {"c3"}, {"c4"}, {"c1"}, {"c2"}, {"c3"}, {"c4"}};
+    std::vector<std::string> opNames{"AllocA1", "AllocA2", "AllocA3", "AllocA4", "AllocB1", "AllocB2",
+                                     "AllocB3", "CopyIn1", "CopyIn2", "CopyIn3", "Add1",    "Add2",
+                                     "Add3",    "Add4",    "CopyOut", "AllocC1", "AllocC2", "AllocC3",
+                                     "AllocC4", "CopyIn4", "CopyIn5", "Add5",    "Add6"};
+    EXPECT_EQ(subGraph.AddTensors(DT_FP32, {64, 64}, tensorMemTypes, tensorNames, 0), true);
+    EXPECT_EQ(subGraph.AddOps(opCodes, ioperands, ooperands, opNames, true), true);
+    subGraph.GetOp("Add1")->SetAtomicScopeId(vfScopeA);
+    subGraph.GetOp("Add2")->SetAtomicScopeId(vfScopeA);
+    subGraph.GetOp("Add3")->SetAtomicScopeId(vfScopeB);
+    subGraph.GetOp("Add4")->SetAtomicScopeId(vfScopeB);
+    subGraph.GetOp("Add5")->SetAtomicScopeId(vfScopeC);
+    subGraph.GetOp("Add6")->SetAtomicScopeId(vfScopeC);
+    Function* function = subGraph.GetFunction();
+    ASSERT_NE(function, nullptr);
+
+    OptimizeSort sort(function->Operations().DuplicatedOpList(), *function);
+    EXPECT_EQ(sort.SortOps(), SUCCESS);
+    auto result = sort.GetOperations();
+    ASSERT_EQ(result.size(), 23U);
+    // scope A 链: alloc/copyin 前置, Add1 在 Add2 之前。
+    EXPECT_EQ(result[0], subGraph.GetOp("AllocA1"));
+    EXPECT_EQ(result[1], subGraph.GetOp("CopyIn1"));
+    EXPECT_EQ(result[2], subGraph.GetOp("AllocA2"));
+    EXPECT_EQ(result[3], subGraph.GetOp("CopyIn2"));
+    EXPECT_EQ(result[4], subGraph.GetOp("AllocA3"));
+    EXPECT_EQ(result[5], subGraph.GetOp("AllocA4"));
+    EXPECT_EQ(result[6], subGraph.GetOp("Add1"));
+    EXPECT_EQ(result[7], subGraph.GetOp("Add2"));
+    // scope C 链: fan-in 汇聚点排序后 C 整体在 A 之后 B 之前, alloc/copyin 前置, Add5 在 Add6 之前。
+    EXPECT_EQ(result[8], subGraph.GetOp("AllocC1"));
+    EXPECT_EQ(result[9], subGraph.GetOp("CopyIn4"));
+    EXPECT_EQ(result[10], subGraph.GetOp("AllocC2"));
+    EXPECT_EQ(result[11], subGraph.GetOp("CopyIn5"));
+    EXPECT_EQ(result[12], subGraph.GetOp("AllocC3"));
+    EXPECT_EQ(result[13], subGraph.GetOp("AllocC4"));
+    EXPECT_EQ(result[14], subGraph.GetOp("Add5"));
+    EXPECT_EQ(result[15], subGraph.GetOp("Add6"));
+    // scope B 链: alloc/copyin 前置, Add3 在 Add4 之前。
+    EXPECT_EQ(result[16], subGraph.GetOp("AllocB1"));
+    EXPECT_EQ(result[17], subGraph.GetOp("CopyIn3"));
+    EXPECT_EQ(result[18], subGraph.GetOp("AllocB2"));
+    EXPECT_EQ(result[19], subGraph.GetOp("AllocB3"));
+    EXPECT_EQ(result[20], subGraph.GetOp("Add3"));
+    EXPECT_EQ(result[21], subGraph.GetOp("Add4"));
+    // back 侧 CopyOut 排最后。
+    EXPECT_EQ(result[22], subGraph.GetOp("CopyOut"));
 }
 
 // 参考真实场景 mla_prolog_quant Unroll128 的 kr_cache 量化写回(dump: op[38965/38968/38971/38974]),

@@ -12,8 +12,8 @@
 #include "passes/pass_log/pass_log.h"
 
 #include <algorithm>
+#include <functional>
 #include <map>
-#include <queue>
 #include <set>
 
 namespace npu::tile_fwk {
@@ -161,7 +161,7 @@ int64_t VfAffinitySort::GetBranchNetRelease(Operation* op)
     if (it != branchReleaseCache_.end()) {
         return it->second;
     }
-    // 断环占位: 依赖图若带环, 递归回到未完成的 op 时直接取 0 贡献; 环由上层 Kahn/size 检查报出。
+    // 断环占位: 依赖图若带环, 递归回到未完成的 op 时直接取 0 贡献; 环由上层商图回边检测报出。
     branchReleaseCache_[op] = 0;
     int64_t total = 0;
     if (!IsVfOp(op)) {
@@ -177,56 +177,33 @@ int64_t VfAffinitySort::GetBranchNetRelease(Operation* op)
     return total;
 }
 
-int VfAffinitySort::GetFrontScope(Operation* op)
+std::set<int> VfAffinitySort::GetFrontScopeSet(Operation* op)
 {
-    auto it = frontScopeCache_.find(op);
-    if (it != frontScopeCache_.end()) {
+    auto it = frontScopeSetCache_.find(op);
+    if (it != frontScopeSetCache_.end()) {
         return it->second;
     }
-    // 断环占位: 递归回到未完成的 op 时取 0(无 vf scope); 环由上层 Kahn/size 检查报出。
-    frontScopeCache_[op] = 0;
-    int scopeId = 0;
+    // 断环占位: 依赖图若带环, 正在访问的 op 按空集合参与, 环由上层商图回边检测报出。
+    if (frontScopeVisiting_.count(op) > 0) {
+        return {};
+    }
+    frontScopeVisiting_.insert(op);
+    std::set<int> scopes;
     for (auto* succ : state_.depManager.GetSuccessors(op)) {
         if (opSet_.count(succ) == 0) {
             continue;
         }
         if (IsVfOp(succ)) {
-            scopeId = succ->GetAtomicScopeId();
+            scopes.insert(succ->GetAtomicScopeId());
         } else {
-            scopeId = GetFrontScope(succ);
-        }
-        if (scopeId >= VF_CLUSTER_ID_START) {
-            break;
-        }
-    }
-    frontScopeCache_[op] = scopeId;
-    return scopeId;
-}
-
-int VfAffinitySort::GetBackScope(Operation* op)
-{
-    auto it = backScopeCache_.find(op);
-    if (it != backScopeCache_.end()) {
-        return it->second;
-    }
-    // 断环占位: 递归回到未完成的 op 时取 0(无 vf scope); 环由上层 Kahn/size 检查报出。
-    backScopeCache_[op] = 0;
-    int scopeId = 0;
-    for (auto* pred : state_.depManager.GetPredecessors(op)) {
-        if (opSet_.count(pred) == 0) {
-            continue;
-        }
-        if (IsVfOp(pred)) {
-            scopeId = pred->GetAtomicScopeId();
-        } else {
-            scopeId = GetBackScope(pred);
-        }
-        if (scopeId >= VF_CLUSTER_ID_START) {
-            break;
+            for (auto scopeId : GetFrontScopeSet(succ)) {
+                scopes.insert(scopeId);
+            }
         }
     }
-    backScopeCache_[op] = scopeId;
-    return scopeId;
+    frontScopeVisiting_.erase(op);
+    frontScopeSetCache_[op] = scopes;
+    return scopes;
 }
 
 void VfAffinitySort::ReverseDfs(Operation* op, std::unordered_set<Operation*>& visited, std::vector<Operation*>& result)
@@ -246,14 +223,19 @@ void VfAffinitySort::ReverseDfs(Operation* op, std::unordered_set<Operation*>& v
         int priorA = GetNodePriority(a);
         int priorB = GetNodePriority(b);
         if (priorA != priorB) {
-            return priorA < priorB;
+            return priorA > priorB;
         }
         int entryA = GetEntryCount(a);
         int entryB = GetEntryCount(b);
         if (entryA != entryB) {
             return entryA > entryB;
         }
-        return GetBranchNetRelease(a) > GetBranchNetRelease(b);
+        int64_t releaseA = GetBranchNetRelease(a);
+        int64_t releaseB = GetBranchNetRelease(b);
+        if (releaseA != releaseB) {
+            return releaseA > releaseB;
+        }
+        return a->GetOpMagic() < b->GetOpMagic();
     });
 
     for (auto* pred : preds) {
@@ -341,11 +323,35 @@ Status VfAffinitySort::SortOneSuperNode(const std::vector<Operation*>& ops, std:
     return st;
 }
 
-Status VfAffinitySort::SortMultiScope(std::vector<Operation*>& result)
+Status VfAffinitySort::SortScope(std::vector<Operation*>& result)
 {
-    // 1. 每个 op 归属一个超节点：scope op → atomicScopeId；非 vf op → 就近 scope / 单例
-    std::unordered_map<Operation*, int> opToSuperNode;
-    std::map<int, std::vector<Operation*>> superNodeToOps;
+    // 1. 每个 op 归属一个超节点: scope op → atomicScopeId;
+    OpToSuperNodeMap opToSuperNode;
+    SuperNodeToOpsMap superNodeToOps;
+    AssignSuperNodes(opToSuperNode, superNodeToOps);
+
+    // 2. 构建超节点粗粒度图
+    std::map<int, int> snToIdx;
+    std::vector<int> snIds;
+    std::vector<std::set<int>> inGraph;
+    std::vector<std::set<int>> outGraph;
+    SuperNodeWitness quotientWitness;
+    BuildSuperNodeGraph(opToSuperNode, superNodeToOps, snToIdx, snIds, inGraph, outGraph, quotientWitness);
+
+    // 3. 块间排序: 商图反向 DFS, 与 fine 层同构——出口超节点反向递归、后序 append;
+    //    fan-in 点按 优先级/entryCount/branchNetRelease/snId 镜像 fine 层排序前驱分支;
+    //    fan-out 不排序, 保持 DFS 自然序; 在栈节点重入(回边)即报环错, visited 计数兜底断开 sink 的环。
+    std::vector<int> topo;
+    if (SortSuperNodeTopo(superNodeToOps, snIds, inGraph, outGraph, quotientWitness, topo) != SUCCESS) {
+        return FAILED;
+    }
+
+    // 4. 逐超节点排序并拼接
+    return AppendSortedSuperNodes(topo, snIds, superNodeToOps, result);
+}
+
+void VfAffinitySort::AssignSuperNodes(OpToSuperNodeMap& opToSuperNode, SuperNodeToOpsMap& superNodeToOps)
+{
     for (auto* op : operations) {
         if (IsVfOp(op)) {
             opToSuperNode[op] = op->GetAtomicScopeId();
@@ -356,10 +362,10 @@ Status VfAffinitySort::SortMultiScope(std::vector<Operation*>& result)
         if (IsVfOp(op)) {
             continue;
         }
-        int scopeId = GetFrontScope(op);
-        int frontScopeId = scopeId < VF_CLUSTER_ID_START ? GetBackScope(op) : -1;
-        if (scopeId < VF_CLUSTER_ID_START) {
-            scopeId = frontScopeId;
+        int scopeId = 0;
+        auto frontScopes = GetFrontScopeSet(op);
+        if (frontScopes.size() == 1) {
+            scopeId = *frontScopes.begin();
         }
         if (scopeId >= VF_CLUSTER_ID_START) {
             opToSuperNode[op] = scopeId;
@@ -370,70 +376,130 @@ Status VfAffinitySort::SortMultiScope(std::vector<Operation*>& result)
     for (auto* op : operations) {
         superNodeToOps[opToSuperNode[op]].push_back(op);
     }
+}
 
-    // 2. 构建超节点粗粒度图
-    std::map<int, int> snToIdx;
-    std::vector<int> snIds;
+void VfAffinitySort::BuildSuperNodeGraph(const OpToSuperNodeMap& opToSuperNode, const SuperNodeToOpsMap& superNodeToOps,
+                                         std::map<int, int>& snToIdx, std::vector<int>& snIds,
+                                         std::vector<std::set<int>>& inGraph, std::vector<std::set<int>>& outGraph,
+                                         SuperNodeWitness& quotientWitness)
+{
     for (auto& [sn, ops] : superNodeToOps) {
         (void)ops;
         snToIdx[sn] = static_cast<int>(snIds.size());
         snIds.push_back(sn);
     }
     int n = static_cast<int>(snIds.size());
-    std::vector<std::set<int>> inGraph(n);
-    std::vector<std::set<int>> outGraph(n);
+    inGraph.resize(n);
+    outGraph.resize(n);
     for (auto* op : operations) {
-        // alloc 是 buffer 占位而非数据流节点, alloc→写者边不参与超节点投影,
-        // 否则跨 scope 共享 tensor 的 alloc 会制造方向相反的超节点边 (成环)。
-        if (IsAllocOpCode(op->GetOpcode())) {
-            continue;
-        }
-        int srcIdx = snToIdx[opToSuperNode[op]];
+        int srcIdx = snToIdx.at(opToSuperNode.at(op));
         for (auto* succ : state_.depManager.GetSuccessors(op)) {
             if (opSet_.count(succ) == 0 || IsAllocOpCode(succ->GetOpcode())) {
                 continue;
             }
-            int dstIdx = snToIdx[opToSuperNode[succ]];
+            int dstIdx = snToIdx.at(opToSuperNode.at(succ));
             if (srcIdx != dstIdx) {
-                outGraph[srcIdx].insert(dstIdx);
+                if (outGraph[srcIdx].insert(dstIdx).second) {
+                    quotientWitness[{srcIdx, dstIdx}] = {op, succ};
+                }
                 inGraph[dstIdx].insert(srcIdx);
             }
         }
     }
+}
 
-    // 3. Kahn 拓扑排序（纯拓扑，无贪心）
-    std::vector<int> indeg(n, 0);
-    for (int i = 0; i < n; i++) {
-        indeg[i] = static_cast<int>(inGraph[i].size());
-    }
-    std::queue<int> q;
-    for (int i = 0; i < n; i++) {
-        if (indeg[i] == 0) {
-            q.push(i);
-        }
-    }
-    std::vector<int> topo;
+Status VfAffinitySort::SortSuperNodeTopo(const SuperNodeToOpsMap& superNodeToOps, const std::vector<int>& snIds,
+                                         const std::vector<std::set<int>>& inGraph,
+                                         const std::vector<std::set<int>>& outGraph,
+                                         const SuperNodeWitness& quotientWitness, std::vector<int>& topo)
+{
+    int n = static_cast<int>(snIds.size());
     topo.reserve(n);
-    while (!q.empty()) {
-        int u = q.front();
-        q.pop();
+    // 超节点优先级: 单 op 超节点查 preNodePriority, 多 op 超节点默认 10 (镜像 fine 层)。
+    auto getSnPriority = [&](int idx) -> int {
+        const auto& ops = superNodeToOps.at(snIds[idx]);
+        if (ops.size() == 1) {
+            return GetNodePriority(ops[0]);
+        }
+        return 10;
+    };
+    // fan-in 分支度量取商边 witness 的 src op, 复用 op 级缓存 (语义与 fine 层 5.3 一致)。
+    auto getEdgeEntryCount = [&](int srcIdx, int dstIdx) -> int {
+        auto wit = quotientWitness.find({srcIdx, dstIdx});
+        if (wit == quotientWitness.end()) {
+            return 0;
+        }
+        return GetEntryCount(wit->second.first);
+    };
+    auto getEdgeRelease = [&](int srcIdx, int dstIdx) -> int64_t {
+        auto wit = quotientWitness.find({srcIdx, dstIdx});
+        if (wit == quotientWitness.end()) {
+            return 0;
+        }
+        return GetBranchNetRelease(wit->second.first);
+    };
+    // 环检测: 两态标记(0 未访问, 1 在栈, 2 已完成), pred 仍在栈上即回边→环, 直接 FAILED。
+    std::vector<int> color(n, 0);
+    std::function<Status(int)> dfs = [&](int u) -> Status {
+        if (color[u] == 2) {
+            return SUCCESS;
+        }
+        if (color[u] == 1) {
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "VfAffinitySort: super-node graph has cycle (back edge revisits %d).", u);
+            return FAILED;
+        }
+        color[u] = 1;
+        std::vector<int> preds(inGraph[u].begin(), inGraph[u].end());
+        std::sort(preds.begin(), preds.end(), [&](int a, int b) {
+            int priA = getSnPriority(a);
+            int priB = getSnPriority(b);
+            if (priA != priB) {
+                return priA > priB;
+            }
+            int entryA = getEdgeEntryCount(a, u);
+            int entryB = getEdgeEntryCount(b, u);
+            if (entryA != entryB) {
+                return entryA > entryB;
+            }
+            int64_t releaseA = getEdgeRelease(a, u);
+            int64_t releaseB = getEdgeRelease(b, u);
+            if (releaseA != releaseB) {
+                return releaseA > releaseB;
+            }
+            return a < b;
+        });
+        for (int p : preds) {
+            if (dfs(p) != SUCCESS) {
+                return FAILED;
+            }
+        }
+        color[u] = 2;
         topo.push_back(u);
-        for (int v : outGraph[u]) {
-            if (--indeg[v] == 0) {
-                q.push(v);
+        return SUCCESS;
+    };
+    for (int i = 0; i < n; i++) {
+        if (outGraph[i].empty()) {
+            if (dfs(i) != SUCCESS) {
+                return FAILED;
             }
         }
     }
+    // visited 计数兜底: 与所有 sink 断开的环不会被任何 dfs 触达, 计数必然不足。
     if (static_cast<int>(topo.size()) != n) {
         APASS_LOG_ERROR_F(Elements::Operation, "VfAffinitySort: super-node graph has cycle (%d vs %d).",
                           static_cast<int>(topo.size()), n);
         return FAILED;
     }
+    return SUCCESS;
+}
 
-    // 4. 逐超节点排序并拼接
+Status VfAffinitySort::AppendSortedSuperNodes(const std::vector<int>& topo, const std::vector<int>& snIds,
+                                              const SuperNodeToOpsMap& superNodeToOps, std::vector<Operation*>& result)
+{
     for (int idx : topo) {
         int sn = snIds[idx];
-        auto& ops = superNodeToOps[sn];
+        const auto& ops = superNodeToOps.at(sn);
         if (sn < 0 && ops.size() == 1 && !IsVfOp(ops[0])) {
             result.push_back(ops[0]);
             continue;
@@ -453,8 +519,8 @@ Status VfAffinitySort::DoSortOps()
     branchReleaseCache_.clear();
     frontCache_.clear();
     backCache_.clear();
-    frontScopeCache_.clear();
-    backScopeCache_.clear();
+    frontScopeSetCache_.clear();
+    frontScopeVisiting_.clear();
     for (auto* op : operations) {
         opSet_.insert(op);
         if (IsVfOp(op)) {
@@ -463,45 +529,12 @@ Status VfAffinitySort::DoSortOps()
     }
     APASS_LOG_INFO_F(Elements::Operation, "VfAffinitySort: %zu ops, %zu vf ops.", operations.size(), vfOpSet_.size());
 
-    std::set<int> scopeIds;
-    for (auto* op : operations) {
-        if (IsVfOp(op)) {
-            scopeIds.insert(op->GetAtomicScopeId());
-        }
-    }
-
+    // 单 scope 同样走 SortScope: 全部 op 落进唯一 scope 超节点, 输出与旧单 scope 路径一致
+    // (同一 ReverseDfs + PostProcess 于同一 op 集合); 孤立 op 由报错放宽为单例。
     std::vector<Operation*> result;
     result.reserve(operations.size());
-    if (scopeIds.size() <= 1) {
-        std::vector<Operation*> exits;
-        for (auto* op : operations) {
-            bool hasSucc = false;
-            for (auto* succ : state_.depManager.GetSuccessors(op)) {
-                if (opSet_.count(succ) > 0) {
-                    hasSucc = true;
-                    break;
-                }
-            }
-            if (!hasSucc) {
-                exits.push_back(op);
-            }
-        }
-        std::unordered_set<Operation*> visited;
-        for (auto* op : exits) {
-            ReverseDfs(op, visited, result);
-        }
-        if (result.size() != operations.size()) {
-            APASS_LOG_ERROR_F(Elements::Operation, "VfAffinitySort: ordered %zu vs %zu ops (cycle?).", result.size(),
-                              operations.size());
-            return FAILED;
-        }
-        if (PostProcess(result) != SUCCESS) {
-            return FAILED;
-        }
-    } else {
-        if (SortMultiScope(result) != SUCCESS) {
-            return FAILED;
-        }
+    if (SortScope(result) != SUCCESS) {
+        return FAILED;
     }
 
     operations = std::move(result);

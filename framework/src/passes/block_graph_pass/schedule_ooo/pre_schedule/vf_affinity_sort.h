@@ -13,6 +13,8 @@
 
 #include "optimize_sort.h"
 
+#include <map>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -23,6 +25,10 @@ public:
     using OptimizeSort::OptimizeSort;
 
 private:
+    using OpToSuperNodeMap = std::unordered_map<Operation*, int>;
+    using SuperNodeToOpsMap = std::map<int, std::vector<Operation*>>;
+    using SuperNodeWitness = std::map<std::pair<int, int>, std::pair<Operation*, Operation*>>;
+
     Status DoSortOps() override;
     bool IsVfOp(Operation* op) const;
     bool IsFrontNonVfOp(Operation* op);
@@ -32,9 +38,17 @@ private:
     int GetNodePriority(Operation* op) const;
     int64_t GetOutSize(Operation* op) const;
     int64_t GetBranchNetRelease(Operation* op);
-    int GetFrontScope(Operation* op);
-    int GetBackScope(Operation* op);
-    Status SortMultiScope(std::vector<Operation*>& result);
+    std::set<int> GetFrontScopeSet(Operation* op);
+    Status SortScope(std::vector<Operation*>& result);
+    void AssignSuperNodes(OpToSuperNodeMap& opToSuperNode, SuperNodeToOpsMap& superNodeToOps);
+    void BuildSuperNodeGraph(const OpToSuperNodeMap& opToSuperNode, const SuperNodeToOpsMap& superNodeToOps,
+                             std::map<int, int>& snToIdx, std::vector<int>& snIds, std::vector<std::set<int>>& inGraph,
+                             std::vector<std::set<int>>& outGraph, SuperNodeWitness& quotientWitness);
+    Status SortSuperNodeTopo(const SuperNodeToOpsMap& superNodeToOps, const std::vector<int>& snIds,
+                             const std::vector<std::set<int>>& inGraph, const std::vector<std::set<int>>& outGraph,
+                             const SuperNodeWitness& quotientWitness, std::vector<int>& topo);
+    Status AppendSortedSuperNodes(const std::vector<int>& topo, const std::vector<int>& snIds,
+                                  const SuperNodeToOpsMap& superNodeToOps, std::vector<Operation*>& result);
     Status SortOneSuperNode(const std::vector<Operation*>& ops, std::vector<Operation*>& out);
     void ReverseDfs(Operation* op, std::unordered_set<Operation*>& visited, std::vector<Operation*>& result);
     Status PostProcess(std::vector<Operation*>& result);
@@ -43,8 +57,10 @@ private:
     std::unordered_set<Operation*> vfOpSet_;
     std::unordered_map<Operation*, int> entryCountCache_;
     std::unordered_map<Operation*, int64_t> branchReleaseCache_;
-    std::unordered_map<Operation*, int> frontScopeCache_;
-    std::unordered_map<Operation*, int> backScopeCache_;
+    std::unordered_map<Operation*, std::set<int>> frontScopeSetCache_;
+    std::unordered_map<Operation*, std::set<int>> backScopeSetCache_;
+    std::unordered_set<Operation*> frontScopeVisiting_;
+    std::unordered_set<Operation*> backScopeVisiting_;
     std::unordered_map<Operation*, bool> frontCache_;
     std::unordered_map<Operation*, bool> backCache_;
 };
