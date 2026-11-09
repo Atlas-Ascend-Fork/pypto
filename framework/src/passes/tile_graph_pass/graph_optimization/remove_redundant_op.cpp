@@ -101,7 +101,8 @@ bool HasAtomicWriteSemantic(const Operation& op)
     return op.HasAttr(RMW_MODE_ATTR_ADD) || op.HasAttr(RMW_MODE_ATTR_MIN) || op.HasAttr(RMW_MODE_ATTR_MAX);
 }
 
-bool CanRemoveAssembleByWriteRelation(Function& function, const Operation& op)
+bool CanRemoveAssembleByWriteRelation(const remove_redundant_op_internal::AssembleOutputRawIndex& rawAssembleIndex,
+                                      const Operation& op)
 {
     if (op.GetOpcode() != Opcode::OP_ASSEMBLE || op.GetOOperands().empty()) {
         return true;
@@ -112,7 +113,7 @@ bool CanRemoveAssembleByWriteRelation(Function& function, const Operation& op)
                           assembleOutput->GetMagic());
         return false;
     }
-    if (remove_redundant_op_internal::HasOtherAssembleOutputOnSameRaw(function, assembleOutput, &op)) {
+    if (remove_redundant_op_internal::HasSiblingAssembleOutputOnRaw(rawAssembleIndex, assembleOutput)) {
         APASS_LOG_DEBUG_F(Elements::Operation,
                           "assemble op[%d]'s output raw[%d] has another assemble output, skip removing.",
                           op.GetOpMagic(), assembleOutput->GetRawMagic());
@@ -267,6 +268,13 @@ bool RemoveRedundantOp::ProcessRedundantOpWithoutDynShape(Operation& op) const
 Status RemoveRedundantOp::RemoveDummyOp(Function& function)
 {
     bool anyRemoved = false;
+    // CanRemoveAssembleByWriteRelation used to scan every operation for every
+    // ASSEMBLE candidate.  Large fanout expansion can produce hundreds of
+    // thousands of operations, making that check quadratic.  The index is
+    // immutable for this pass invocation; deleted operations are harmless
+    // because a sibling found in the snapshot still conservatively prevents
+    // removal.
+    const auto rawAssembleIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(function);
     for (auto& op : function.Operations()) {
         // Keep the snapshot read before a partial overwrite of the same raw tensor.
         if ((op.GetOpcode() == Opcode::OP_VIEW || op.GetOpcode() == Opcode::OP_SLICE) &&
@@ -279,7 +287,7 @@ Status RemoveRedundantOp::RemoveDummyOp(Function& function)
         } else if (matchOpcodeWithoutDynshape.find(op.GetOpcode()) != matchOpcodeWithoutDynshape.end()) {
             canRemove = ProcessRedundantOpWithoutDynShape(op);
             if (canRemove && op.GetOpcode() == Opcode::OP_ASSEMBLE) {
-                canRemove = CanRemoveAssembleByWriteRelation(function, op);
+                canRemove = CanRemoveAssembleByWriteRelation(rawAssembleIndex, op);
             }
         }
         // outcast tensor 的 ASSEMBLE 不能移除（当 input 有其他 consumer 时）：

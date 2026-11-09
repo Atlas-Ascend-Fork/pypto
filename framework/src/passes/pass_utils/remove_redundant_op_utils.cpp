@@ -1375,7 +1375,15 @@ Status RemoveRedundantOpUtils::ProcessImpl(Function& function, std::vector<Opera
 void RemoveRedundantOpUtils::RefreshRedundancyQueries(
     Function& function, std::unordered_map<int, std::unordered_set<int>>& rawAssembleIndex)
 {
-    rawAssembleIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(function);
+    // The index is a conservative snapshot built before processing the
+    // candidate list.  The rewrites here only delete the matched view/assemble
+    // cascade or create a view-like operation; they do not create a new
+    // ASSEMBLE output.  Rebuilding this index after every rewrite scans the
+    // whole function repeatedly and becomes quadratic for large fanout graphs.
+    // Keeping the snapshot may only retain an already deleted sibling, which
+    // safely rejects an optimization; it cannot make a new sibling invisible.
+    (void)function;
+    (void)rawAssembleIndex;
     ClearRedundancyQueryCache();
     handledPerfectMatchPairs_.clear();
 }
@@ -2621,6 +2629,11 @@ Status RemoveRedundantOpUtils::ProcessSingleContractMultiSlice(Function& functio
             *contractOutput->GetProducers().begin() != op) {
             // A contract output assembled from several slice-contract chains has no unique layout owner.
             // Keeping the chains materialized is required because their offsets cannot be composed independently.
+            continue;
+        }
+        // Bypassing the slice consumers must not remove an observable output write. Check the raw
+        // tensor as outcasts can be represented by another logical version after SplitRawTensor.
+        if (function.IsFromOutCast(contractOutput)) {
             continue;
         }
         auto consumers = contractOutput->GetConsumers();

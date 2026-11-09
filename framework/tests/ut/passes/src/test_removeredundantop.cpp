@@ -1833,6 +1833,54 @@ TEST_F(TestRemoveRedundantOpPass, ContractMultiSliceShouldBypassFullAndGenerateV
     EXPECT_EQ(viewAttr->GetFromOffset(), partOffset);
 }
 
+TEST_F(TestRemoveRedundantOpPass, ContractSlicePreservesOutputWrite)
+{
+    for (bool dynamicOutput : {false, true}) {
+        for (bool aliasOutcast : {false, true}) {
+            SCOPED_TRACE(testing::Message() << "dynamic=" << dynamicOutput << ", alias=" << aliasOutcast);
+            auto function = std::make_shared<Function>(Program::GetInstance(), "ContractSliceOutcast",
+                                                       "ContractSliceOutcast", nullptr);
+            const Shape tileShape{kNumExpFour, kNumExpSix};
+            const Shape outputShape{dynamicOutput ? kNumNegOne : kNumExpFour, kNumExpSix};
+            const Offset zeroOffset{kNumZero, kNumZero};
+            auto outputValid = CreateTestConstIntVector(outputShape);
+            if (dynamicOutput) {
+                outputValid[0] = CreateTestScalarVar("output_rows");
+            }
+            auto input = IRBuilder().CreateTensorVar(DT_FP32, tileShape, CreateTestConstIntVector(tileShape));
+            auto computed = IRBuilder().CreateTensorVar(DT_FP32, tileShape, CreateTestConstIntVector(tileShape));
+            auto middle = IRBuilder().CreateTensorVar(DT_FP32, outputShape, outputValid);
+            auto sliced = IRBuilder().CreateTensorVar(DT_FP32, tileShape, CreateTestConstIntVector(tileShape));
+            auto result = IRBuilder().CreateTensorVar(DT_FP32, tileShape, CreateTestConstIntVector(tileShape));
+            auto outcast = aliasOutcast ? IRBuilder().CreateTensorVar(middle->GetRawTensor(), zeroOffset, outputShape,
+                                                                      outputValid) :
+                                          middle;
+            PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {input}, {computed});
+            PassOperationUtils::AddOperation(
+                *function, Opcode::OP_CONTRACT, {computed}, {middle},
+                [&zeroOffset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset)); });
+            PassOperationUtils::AddOperation(
+                *function, Opcode::OP_SLICE, {middle}, {sliced}, [&zeroOffset, &tileShape](Operation& op) {
+                    op.SetOpAttribute(std::make_shared<ViewOpAttribute>(
+                        zeroOffset, SymbolicScalar::FromConcrete(zeroOffset), CreateTestConstIntVector(tileShape)));
+                });
+            auto& consumer = PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {sliced}, {result});
+            function->inCasts_ = {input};
+            function->outCasts_ = {outcast, result};
+
+            std::vector<Operation*> newOps;
+            bool updated = false;
+            ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, updated), SUCCESS);
+            EXPECT_FALSE(updated);
+            EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumOne);
+            EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumOne);
+            ASSERT_EQ(middle->GetProducers().size(), kSizeOne);
+            EXPECT_EQ((*middle->GetProducers().begin())->GetIOperands().front(), computed);
+            EXPECT_EQ(consumer.GetInputOperand(kSizeZero), sliced);
+        }
+    }
+}
+
 void VerifyMatmulContractMultiSliceNotFolded(Opcode matmulOpcode)
 {
     auto function = std::make_shared<Function>(Program::GetInstance(), "TestMatmulContractMultiSlice",
@@ -3480,8 +3528,8 @@ TEST_F(TestRemoveRedundantOpPass, CanMigrateRemovedOpsWithoutTokens)
     EXPECT_TRUE(function->GetVarDependency().Empty());
 }
 
-// A refresh removes deleted outputs while preserving the live output on the same raw tensor.
-TEST_F(TestRemoveRedundantOpPass, RefreshRedundancyQueriesRebuildsIndexAndClearsCaches)
+// Refreshing mutable queries preserves the conservative snapshot of assemble outputs.
+TEST_F(TestRemoveRedundantOpPass, RefreshRedundancyQueriesPreservesIndexAndClearsCaches)
 {
     ViewAssembleQueryGraph g;
     auto sibling = IRBuilder().CreateTensorVar(g.end->GetRawTensor(), g.offset, g.shape, std::vector<SymbolicScalar>{});
@@ -3501,10 +3549,12 @@ TEST_F(TestRemoveRedundantOpPass, RefreshRedundancyQueriesRebuildsIndexAndClears
     EXPECT_TRUE(utils.viewInputSummaryCache_.empty());
     EXPECT_TRUE(utils.dataReplaceCache_.empty());
     EXPECT_TRUE(utils.handledPerfectMatchPairs_.empty());
-    ASSERT_EQ(rawIndex.at(g.end->GetRawMagic()).size(), kNumOne);
+    // A deleted sibling may remain in the raw-output snapshot and conservatively reject later
+    // candidates, while the mutable query caches must still be invalidated.
+    ASSERT_EQ(rawIndex.at(g.end->GetRawMagic()).size(), kNumTwo);
     EXPECT_EQ(rawIndex.at(g.end->GetRawMagic()).count(g.end->magic), kNumOne);
-    EXPECT_EQ(rawIndex.at(g.end->GetRawMagic()).count(sibling->magic), kNumZero);
-    EXPECT_FALSE(utils.ShouldSkipViewAssembleCandidate(*g.function, *g.view, *g.assemble, g.start, g.end, rawIndex));
+    EXPECT_EQ(rawIndex.at(g.end->GetRawMagic()).count(sibling->magic), kNumOne);
+    EXPECT_TRUE(utils.ShouldSkipViewAssembleCandidate(*g.function, *g.view, *g.assemble, g.start, g.end, rawIndex));
     bool operationUpdated = false;
     bool graphUpdated = true;
     EXPECT_TRUE(utils.ProcessPerfectMatch(*g.function, g.start, g.end, false, operationUpdated, graphUpdated));
@@ -3513,7 +3563,7 @@ TEST_F(TestRemoveRedundantOpPass, RefreshRedundancyQueriesRebuildsIndexAndClears
 
     g.assemble->SetAsDeleted();
     utils.RefreshRedundancyQueries(*g.function, rawIndex);
-    EXPECT_EQ(rawIndex.count(g.end->GetRawMagic()), kNumZero);
+    EXPECT_EQ(rawIndex.at(g.end->GetRawMagic()).size(), kNumTwo);
 }
 
 // Deleted assemble producers must not keep an invalid cached verdict after refresh.
