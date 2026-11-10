@@ -21,6 +21,7 @@ import torch.distributed as dist
 
 _WS_BYTES = 1 << 20  # payload region registered for the remote-transfer tests
 _PROTOCOL = pld.Protocol.UB_MEM | pld.Protocol.URMA  # the workspace is used by both tiers
+_ST_MAX_RANKS = 4  # world size of the distributed ST launches; sizes static readback buffers
 
 
 def init_dist(rank, nrank):
@@ -360,7 +361,11 @@ def shift_load_left_urma(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8
 def write_submit_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
                         src: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE],
                         out: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE]):
-    """Canonical handshake: submit=True + drain, then notify the consumer and wait."""
+    """Canonical handshake: submit=True + drain, then notify the consumer and wait.
+
+    The consumer reads its window back between the wait and the trailing barrier so the
+    check depends on the wait alone — not on the barrier or the kernel-exit sync.
+    """
     with pl.section_vector():
         tile_type = pl.TileType(shape=[1, _SHIFT_N], dtype=_SHIFT_DTYPE, target_memory=pl.MemorySpace.Vec)
         tg = pl.make_tile_group(type=tile_type, addrs=_SHIFT_N * 2, mutex_ids=[0])
@@ -374,9 +379,9 @@ def write_submit_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8]
         ch.drain()                       # release: data visible before the signal
         pld.notify(sig_done, peer, 1, op=pld.NotifyOp.ATOMIC_ADD)
         pld.wait(sig_done, 1, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
-        pld.barrier(win)
-        pld.get(t2, dt, [0, 0], me)
+        pld.get(t2, dt, [0, 0], me)      # the signal already guarantees the payload
         pl.store(out, t2, [0, 0])
+        pld.barrier(win)
 
 
 def shift_right_urma_worker(rank, nrank):
@@ -442,17 +447,468 @@ def test_write_submit(world_size: int = 4):
     torch.multiprocessing.spawn(write_submit_worker, args=(nprocs,), nprocs=nprocs)
 
 
+_WI_ROWS = 8
+_WI_ELEMS = 16
+_WI_SLOT = _WI_ROWS * _WI_ELEMS * 2          # 256 B per sub-case, three slots
+_WI_IDX_SRC_UB = 0x1000                      # channel scratch starts at 0x2000
+_WI_IDX_DST_UB = 0x1400
+_WI_PERM_A = (3, 1, 7, 5, 0, 6, 2, 4)        # gather: source row ids
+_WI_PERM_B = (0, 5, 2, 7, 1, 4, 6, 3)        # scatter: destination row ids (unique)
+_WI_BUF = 1 << 20                            # payload region every rank registers as "wi"
+
+
+def _wi_setup(rank, nrank):
+    torch.npu.set_device(rank)
+    group = init_dist(rank, nrank)
+    win = pld.create_window(group)
+    buf = torch.zeros(_WI_BUF, dtype=torch.uint8, device='npu')
+    pld.register_memory(win, buf, "wi", _PROTOCOL)
+    win.connect()
+    return win, buf
+
+
+@pl.jit(auto_mutex=False)
+def write_indexed_kernel(win: pld.Window,
+                         wi: pl.Tensor[[_WI_BUF], pl.DT_UINT8],
+                         src: pl.Tensor[[_WI_ROWS, _WI_ELEMS], _SHIFT_DTYPE],
+                         src_idx: pl.Tensor[[1, _WI_ROWS], pl.DT_INT32],
+                         dst_idx: pl.Tensor[[1, _WI_ROWS], pl.DT_INT32],
+                         out: pl.Tensor[[_WI_ROWS, _WI_ELEMS], _SHIFT_DTYPE]):
+    with pl.section_vector():
+        it_src = pl.make_tile(
+            pl.TileType(shape=[1, _WI_ROWS], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
+            addr=_WI_IDX_SRC_UB)
+        it_dst = pl.make_tile(
+            pl.TileType(shape=[1, _WI_ROWS], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
+            addr=_WI_IDX_DST_UB)
+        ret = pl.make_tile(
+            pl.TileType(shape=[_WI_ROWS, _WI_ELEMS], dtype=_SHIFT_DTYPE, target_memory=pl.MemorySpace.Vec),
+            addr=0x800)
+        pl.load(it_src, src_idx, [0, 0])
+        pl.load(it_dst, dst_idx, [0, 0])
+        # The index tables are read by the scalar pipe inside write_indexed.
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.S, event_id=4)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.S, event_id=4)
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=7)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=7)
+
+        me, nr = win.rank(), win.nrank()
+        ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
+        dt_g = pld.make_dtensor(win, wi, 0, [_WI_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
+        dt_s = pld.make_dtensor(win, wi, _WI_SLOT, [_WI_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
+        dt_gs = pld.make_dtensor(win, wi, 2 * _WI_SLOT, [_WI_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
+
+        ch.write_indexed(dt_g, src, src_indices=it_src, count=_WI_ROWS)
+        ch.drain()
+        ch.write_indexed(dt_s, src, dst_indices=it_dst, count=_WI_ROWS)
+        ch.drain()
+        ch.write_indexed(dt_gs, src, src_indices=it_src, dst_indices=it_dst, count=_WI_ROWS, submit=False)
+        ch.submit()
+        ch.drain()
+        pld.barrier(win)
+        pld.get(ret, dt_g, [0, 0], me)
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
+        pl.store(out, ret, [0, 0])
+
+
+def write_indexed_worker(rank, nrank):
+    torch.npu.set_device(rank)
+    win, buf = _wi_setup(rank, nrank)
+    rows = torch.arange(_WI_ROWS, dtype=torch.float32) + rank * 10
+    src = rows.view(-1, 1).repeat(1, _WI_ELEMS).to(torch.bfloat16).npu()
+    src_idx = torch.tensor(_WI_PERM_A, dtype=torch.int32).view(1, _WI_ROWS).npu()
+    dst_idx = torch.tensor(_WI_PERM_B, dtype=torch.int32).view(1, _WI_ROWS).npu()
+    out = torch.zeros((_WI_ROWS, _WI_ELEMS), dtype=torch.bfloat16).npu()
+
+    write_indexed_kernel[None, 1](win, buf, src, src_idx, dst_idx, out)
+    torch.npu.synchronize()
+
+    prev = (rank - 1) % nrank
+    prev_rows = torch.arange(_WI_ROWS, dtype=torch.float32) + prev * 10
+    prev_src = prev_rows.view(-1, 1).repeat(1, _WI_ELEMS).to(torch.bfloat16)
+    perm_a = torch.tensor(_WI_PERM_A)
+    perm_b = torch.tensor(_WI_PERM_B)
+    exp_g = prev_src[perm_a]
+    exp_s = torch.zeros_like(prev_src)
+    exp_s[perm_b] = prev_src
+    exp_gs = torch.zeros_like(prev_src)
+    exp_gs[perm_b] = prev_src[perm_a]
+
+    payload = buf.view(torch.bfloat16).view(-1, _WI_ELEMS).cpu()
+    assert torch.equal(payload[0:_WI_ROWS], exp_g), f"[rank {rank}] gather slot mismatch"
+    assert torch.equal(payload[_WI_ROWS:2 * _WI_ROWS], exp_s), f"[rank {rank}] scatter slot mismatch"
+    assert torch.equal(payload[2 * _WI_ROWS:3 * _WI_ROWS], exp_gs), f"[rank {rank}] gather-scatter slot mismatch"
+    assert torch.equal(out.cpu(), exp_g), f"[rank {rank}] device readback mismatch"
+    print(f"[rank {rank}] write_indexed ok", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_write_indexed(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(write_indexed_worker, args=(nprocs,), nprocs=nprocs)
+
+
+_WI_REPEAT_LAUNCHES = 3
+_WI_DRAIN_TIMEOUT = 2_000_000_000  # device cycles; a stalled CQE fails the test instead of hanging
+
+
+@pl.jit(auto_mutex=False)
+def write_indexed_repeat_kernel(win: pld.Window,
+                                wi: pl.Tensor[[_WI_BUF], pl.DT_UINT8],
+                                src: pl.Tensor[[_WI_ROWS, _WI_ELEMS], _SHIFT_DTYPE],
+                                src_idx: pl.Tensor[[1, _WI_ROWS], pl.DT_INT32],
+                                out: pl.Tensor[[_WI_ROWS, _WI_ELEMS], _SHIFT_DTYPE]):
+    with pl.section_vector():
+        it_src = pl.make_tile(
+            pl.TileType(shape=[1, _WI_ROWS], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
+            addr=_WI_IDX_SRC_UB)
+        ret = pl.make_tile(
+            pl.TileType(shape=[_WI_ROWS, _WI_ELEMS], dtype=_SHIFT_DTYPE, target_memory=pl.MemorySpace.Vec),
+            addr=0x800)
+        pl.load(it_src, src_idx, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.S, event_id=4)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.S, event_id=4)
+
+        me, nr = win.rank(), win.nrank()
+        ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
+        dt = pld.make_dtensor(win, wi, 0, [_WI_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
+        ch.write_indexed(dt, src, src_indices=it_src, count=_WI_ROWS)
+        ch.drain(_WI_DRAIN_TIMEOUT)
+        pld.barrier(win, _WI_DRAIN_TIMEOUT)
+        pld.get(ret, dt, [0, 0], me)
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
+        pl.store(out, ret, [0, 0])
+
+
+@pl.jit(auto_mutex=False)
+def write_indexed_one_kernel(win: pld.Window,
+                             wi: pl.Tensor[[_WI_BUF], pl.DT_UINT8],
+                             src: pl.Tensor[[1, _WI_ELEMS], _SHIFT_DTYPE],
+                             src_idx: pl.Tensor[[1, _WI_ROWS], pl.DT_INT32],
+                             out: pl.Tensor[[1, _WI_ELEMS], _SHIFT_DTYPE]):
+    with pl.section_vector():
+        it_src = pl.make_tile(
+            pl.TileType(shape=[1, _WI_ROWS], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
+            addr=_WI_IDX_SRC_UB)
+        ret = pl.make_tile(
+            pl.TileType(shape=[1, _WI_ELEMS], dtype=_SHIFT_DTYPE, target_memory=pl.MemorySpace.Vec),
+            addr=0x800)
+        pl.load(it_src, src_idx, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.S, event_id=4)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.S, event_id=4)
+
+        me, nr = win.rank(), win.nrank()
+        ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
+        dt = pld.make_dtensor(win, wi, 0, [1, _WI_ELEMS], _SHIFT_DTYPE)
+        # One indexed row per launch, so consecutive launches advance the SQ head
+        # by one and the second launch reuses physical slot 1.
+        ch.write_indexed(dt, src, src_indices=it_src, count=1)
+        ch.drain(_WI_DRAIN_TIMEOUT)
+        pld.barrier(win, _WI_DRAIN_TIMEOUT)
+        pld.get(ret, dt, [0, 0], me)
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
+        pl.store(out, ret, [0, 0])
+
+
+def write_indexed_repeat_worker(rank, nrank):
+    """Relaunch the indexed writer on the same window/channel and recheck the payload.
+
+    The single-launch tests cannot catch SQ/CQ accounting that only breaks when the
+    packed head and completion counters carry over from a previous launch.
+    """
+    torch.npu.set_device(rank)
+    win, buf = _wi_setup(rank, nrank)
+    src_idx = torch.tensor(_WI_PERM_A, dtype=torch.int32).view(1, _WI_ROWS).npu()
+    out = torch.zeros((_WI_ROWS, _WI_ELEMS), dtype=torch.bfloat16).npu()
+    perm_a = torch.tensor(_WI_PERM_A)
+    prev = (rank - 1) % nrank
+
+    for it in range(_WI_REPEAT_LAUNCHES):
+        rows = torch.arange(_WI_ROWS, dtype=torch.float32) + rank * 10 + it * 100
+        src = rows.view(-1, 1).repeat(1, _WI_ELEMS).to(torch.bfloat16).npu()
+        write_indexed_repeat_kernel[None, 1](win, buf, src, src_idx, out)
+        torch.npu.synchronize()
+
+        prev_rows = torch.arange(_WI_ROWS, dtype=torch.float32) + prev * 10 + it * 100
+        exp = prev_rows.view(-1, 1).repeat(1, _WI_ELEMS).to(torch.bfloat16)[perm_a]
+        payload = buf.view(torch.bfloat16).view(-1, _WI_ELEMS).cpu()
+        assert torch.equal(payload[0:_WI_ROWS], exp), f"[rank {rank}] repeat {it} gather mismatch"
+        assert torch.equal(out.cpu(), exp), f"[rank {rank}] repeat {it} readback mismatch"
+
+    # count=1 twice: launch 0 lands in SQ slot 0, launch 1 in slot 1.
+    one_idx = torch.zeros((1, _WI_ROWS), dtype=torch.int32).npu()
+    one_out = torch.zeros((1, _WI_ELEMS), dtype=torch.bfloat16).npu()
+    for it in range(2):
+        src = (torch.tensor([[rank * 10 + it * 100]], dtype=torch.float32)
+               .repeat(1, _WI_ELEMS).to(torch.bfloat16).npu())
+        write_indexed_one_kernel[None, 1](win, buf, src, one_idx, one_out)
+        torch.npu.synchronize()
+
+        exp = (torch.tensor([[prev * 10 + it * 100]], dtype=torch.float32)
+               .repeat(1, _WI_ELEMS).to(torch.bfloat16))
+        payload = buf.view(torch.bfloat16).view(-1, _WI_ELEMS).cpu()
+        assert torch.equal(payload[0:1], exp), f"[rank {rank}] count=1 launch {it} mismatch"
+        assert torch.equal(one_out.cpu(), exp), f"[rank {rank}] count=1 launch {it} readback mismatch"
+
+    print(f"[rank {rank}] write_indexed repeat ok", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_write_indexed_repeat(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(write_indexed_repeat_worker, args=(nprocs,), nprocs=nprocs)
+
+
+_WI_DTYPE_ROWS = 64
+
+
+@pl.jit(auto_mutex=False)
+def write_indexed_dtype_kernel(win: pld.Window,
+                               wi: pl.Tensor[[_WI_BUF], pl.DT_UINT8],
+                               src: pl.Tensor[[_WI_DTYPE_ROWS, _WI_ELEMS], _SHIFT_DTYPE],
+                              src_idx: pl.Tensor[[1, _WI_DTYPE_ROWS], pl.DT_INT32],
+                              src_idx64: pl.Tensor[[1, _WI_DTYPE_ROWS], pl.DT_INT64],
+                              out: pl.Tensor[[_WI_DTYPE_ROWS, _WI_ELEMS], _SHIFT_DTYPE]):
+    with pl.section_vector():
+        it_src = pl.make_tile(
+            pl.TileType(shape=[1, _WI_DTYPE_ROWS], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
+            addr=0x1000)
+        it_src64 = pl.make_tile(
+            pl.TileType(shape=[1, _WI_DTYPE_ROWS], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec),
+            addr=0x1600)
+        ret = pl.make_tile(
+            pl.TileType(shape=[_WI_DTYPE_ROWS, _WI_ELEMS], dtype=_SHIFT_DTYPE, target_memory=pl.MemorySpace.Vec),
+            addr=0x800)
+        pl.load(it_src, src_idx, [0, 0])
+        pl.load(it_src64, src_idx64, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.S, event_id=4)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.S, event_id=4)
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=7)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=7)
+
+        me, nr = win.rank(), win.nrank()
+        ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
+        dt_g = pld.make_dtensor(win, wi, 0, [_WI_DTYPE_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
+        dt_64 = pld.make_dtensor(win, wi, 2048, [_WI_DTYPE_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
+        ch.write_indexed(dt_g, src, src_indices=it_src, count=_WI_DTYPE_ROWS)
+        ch.drain()
+        ch.write_indexed(dt_64, src, src_indices=it_src64, count=_WI_DTYPE_ROWS)
+        ch.drain()
+        pld.barrier(win)
+        pld.get(ret, dt_g, [0, 0], me)
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
+        pl.store(out, ret, [0, 0])
+
+
+def write_indexed_dtype_worker(rank, nrank):
+    torch.npu.set_device(rank)
+    win, buf = _wi_setup(rank, nrank)
+    rows = torch.arange(_WI_DTYPE_ROWS, dtype=torch.float32) + rank * 10
+    src = rows.view(-1, 1).repeat(1, _WI_ELEMS).to(torch.bfloat16).npu()
+    perm_a = [(i * 37) % _WI_DTYPE_ROWS for i in range(_WI_DTYPE_ROWS)]
+    src_idx = torch.tensor(perm_a, dtype=torch.int32).view(1, _WI_DTYPE_ROWS).npu()
+    src_idx64 = torch.tensor(perm_a, dtype=torch.int64).view(1, _WI_DTYPE_ROWS).npu()
+    out = torch.zeros((_WI_DTYPE_ROWS, _WI_ELEMS), dtype=torch.bfloat16).npu()
+
+    write_indexed_dtype_kernel[None, 1](win, buf, src, src_idx, src_idx64, out)
+    torch.npu.synchronize()
+
+    prev = (rank - 1) % nrank
+    prev_rows = torch.arange(_WI_DTYPE_ROWS, dtype=torch.float32) + prev * 10
+    prev_src = prev_rows.view(-1, 1).repeat(1, _WI_ELEMS).to(torch.bfloat16)
+    exp = prev_src[torch.tensor(perm_a)]
+    payload = buf.view(torch.bfloat16).view(-1, _WI_ELEMS).cpu()
+    assert torch.equal(payload[0:_WI_DTYPE_ROWS], exp), f"[rank {rank}] dtype int32 gather slot mismatch"
+    assert torch.equal(payload[_WI_DTYPE_ROWS:2 * _WI_DTYPE_ROWS], exp), f"[rank {rank}] dtype int64 slot mismatch"
+    assert torch.equal(out.cpu(), exp), f"[rank {rank}] dtype device readback mismatch"
+    print(f"[rank {rank}] write_indexed_dtype ok", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_write_indexed_dtype(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(write_indexed_dtype_worker, args=(nprocs,), nprocs=nprocs)
+
+
+_WI_COUNT_ROWS = 13
+_WI_COUNT_IDX = 16
+_WI_COUNT_STRIDE = 512
+
+
+@pl.jit(auto_mutex=False)
+def write_indexed_count_kernel(win: pld.Window,
+                               wi: pl.Tensor[[_WI_BUF], pl.DT_UINT8],
+                               src: pl.Tensor[[_WI_COUNT_ROWS, _WI_ELEMS], _SHIFT_DTYPE],
+                               idx: pl.Tensor[[1, _WI_COUNT_IDX], pl.DT_INT32],
+                               n0: pl.DT_INT32, n1: pl.DT_INT32, n2: pl.DT_INT32, n3: pl.DT_INT32,
+                               out: pl.Tensor[[_WI_COUNT_ROWS, _WI_ELEMS], _SHIFT_DTYPE]):
+    with pl.section_vector():
+        it = pl.make_tile(
+            pl.TileType(shape=[1, _WI_COUNT_IDX], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
+            addr=0x1000)
+        ret = pl.make_tile(
+            pl.TileType(shape=[_WI_COUNT_ROWS, _WI_ELEMS], dtype=_SHIFT_DTYPE, target_memory=pl.MemorySpace.Vec),
+            addr=0x800)
+        pl.load(it, idx, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.S, event_id=4)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.S, event_id=4)
+
+        me, nr = win.rank(), win.nrank()
+        ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
+        dt0 = pld.make_dtensor(win, wi, 0 * _WI_COUNT_STRIDE, [_WI_COUNT_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
+        dt1 = pld.make_dtensor(win, wi, 1 * _WI_COUNT_STRIDE, [_WI_COUNT_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
+        dt2 = pld.make_dtensor(win, wi, 2 * _WI_COUNT_STRIDE, [_WI_COUNT_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
+        dt3 = pld.make_dtensor(win, wi, 3 * _WI_COUNT_STRIDE, [_WI_COUNT_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
+        ch.write_indexed(dt0, src, src_indices=it, count=n0)
+        ch.write_indexed(dt1, src, src_indices=it, count=n1)
+        ch.write_indexed(dt2, src, src_indices=it, count=n2)
+        ch.write_indexed(dt3, src, src_indices=it, count=n3)
+        ch.drain()
+        pld.barrier(win)
+        pld.get(ret, dt2, [0, 0], me)
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
+        pl.store(out, ret, [0, 0])
+
+
+def write_indexed_count_worker(rank, nrank):
+    torch.npu.set_device(rank)
+    win, buf = _wi_setup(rank, nrank)
+    rows = torch.arange(_WI_COUNT_ROWS, dtype=torch.float32) + rank * 10
+    src = rows.view(-1, 1).repeat(1, _WI_ELEMS).to(torch.bfloat16).npu()
+    perm = [(i * 5) % _WI_COUNT_ROWS for i in range(_WI_COUNT_ROWS)]
+    idx = torch.tensor(perm + [0] * (_WI_COUNT_IDX - _WI_COUNT_ROWS), dtype=torch.int32).view(
+        1, _WI_COUNT_IDX).npu()
+    out = torch.zeros((_WI_COUNT_ROWS, _WI_ELEMS), dtype=torch.bfloat16).npu()
+    counts = (0, 1, 12, 13)
+
+    write_indexed_count_kernel[None, 1](win, buf, src, idx, *counts, out)
+    torch.npu.synchronize()
+
+    prev = (rank - 1) % nrank
+    prev_rows = torch.arange(_WI_COUNT_ROWS, dtype=torch.float32) + prev * 10
+    prev_src = prev_rows.view(-1, 1).repeat(1, _WI_ELEMS).to(torch.bfloat16)
+    payload = buf.view(torch.bfloat16)
+    for slot, n in enumerate(counts):
+        start = slot * _WI_COUNT_STRIDE // 2
+        got = payload[start:start + _WI_COUNT_ROWS * _WI_ELEMS].view(-1, _WI_ELEMS).cpu()
+        exp = torch.zeros_like(got)
+        if n > 0:
+            exp[:n] = prev_src[torch.tensor(perm[:n])]
+        assert torch.equal(got, exp), f"[rank {rank}] count={n} slot mismatch"
+    assert torch.equal(out.cpu()[:12], prev_src[torch.tensor(perm[:12])]), f"[rank {rank}] count readback mismatch"
+    print(f"[rank {rank}] write_indexed_count ok", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_write_indexed_count(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(write_indexed_count_worker, args=(nprocs,), nprocs=nprocs)
+
+
+_WI_LARGE_ROWS = 192
+_WI_LARGE_UB = 0x8000
+_WI_LARGE_IDX_UB = 0x1000
+
+
+@pl.jit(auto_mutex=False)
+def write_indexed_large_kernel(win: pld.Window,
+                               wi: pl.Tensor[[_WI_BUF], pl.DT_UINT8],
+                               src: pl.Tensor[[_WI_LARGE_ROWS, _WI_ELEMS], _SHIFT_DTYPE],
+                               idx: pl.Tensor[[1, _WI_LARGE_ROWS], pl.DT_INT32],
+                               out: pl.Tensor[[_WI_LARGE_ROWS, _WI_ELEMS], _SHIFT_DTYPE]):
+    with pl.section_vector():
+        it = pl.make_tile(
+            pl.TileType(shape=[1, _WI_LARGE_ROWS], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
+            addr=_WI_LARGE_IDX_UB)
+        ret = pl.make_tile(
+            pl.TileType(shape=[_WI_LARGE_ROWS, _WI_ELEMS], dtype=_SHIFT_DTYPE, target_memory=pl.MemorySpace.Vec),
+            addr=_WI_LARGE_UB)
+        pl.load(it, idx, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.S, event_id=4)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.S, event_id=4)
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=7)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, event_id=7)
+
+        me, nr = win.rank(), win.nrank()
+        ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
+        dt = pld.make_dtensor(win, wi, 0, [_WI_LARGE_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
+        ch.write_indexed(dt, src, src_indices=it, count=_WI_LARGE_ROWS)
+        ch.drain()
+        pld.barrier(win)
+        pld.get(ret, dt, [0, 0], me)
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
+        pl.store(out, ret, [0, 0])
+
+
+def write_indexed_large_worker(rank, nrank):
+    torch.npu.set_device(rank)
+    win, buf = _wi_setup(rank, nrank)
+    rows = torch.arange(_WI_LARGE_ROWS, dtype=torch.float32) + rank * 10
+    src = rows.view(-1, 1).repeat(1, _WI_ELEMS).to(torch.bfloat16).npu()
+    perm = [(i * 37) % _WI_LARGE_ROWS for i in range(_WI_LARGE_ROWS)]
+    idx = torch.tensor(perm, dtype=torch.int32).view(1, _WI_LARGE_ROWS).npu()
+    out = torch.zeros((_WI_LARGE_ROWS, _WI_ELEMS), dtype=torch.bfloat16).npu()
+
+    write_indexed_large_kernel[None, 1](win, buf, src, idx, out)
+    torch.npu.synchronize()
+
+    prev = (rank - 1) % nrank
+    prev_rows = torch.arange(_WI_LARGE_ROWS, dtype=torch.float32) + prev * 10
+    prev_src = prev_rows.view(-1, 1).repeat(1, _WI_ELEMS).to(torch.bfloat16)
+    exp = prev_src[torch.tensor(perm)]
+    payload = buf.view(torch.bfloat16).view(-1, _WI_ELEMS).cpu()
+    assert torch.equal(payload[0:_WI_LARGE_ROWS], exp), f"[rank {rank}] large indexed slot mismatch"
+    assert torch.equal(out.cpu(), exp), f"[rank {rank}] large indexed readback mismatch"
+    print(f"[rank {rank}] write_indexed_large ok", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_write_indexed_large(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(write_indexed_large_worker, args=(nprocs,), nprocs=nprocs)
+
+
 _WV_INT64_BASE = 0     # one int64 word per rank
 _WV_FP32_BASE = 1024   # one fp32 word per rank, no overlap with the int64 region
 
 
 @pl.jit(auto_mutex=True)
 def write_value_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
-                       out: pl.Tensor[[1], pl.DT_INT64]):
+                       out: pl.Tensor[[_ST_MAX_RANKS, 1], pl.DT_INT64],
+                       out_f32: pl.Tensor[[_ST_MAX_RANKS * 2, 1], pl.DT_FP32]):
     with pl.section_vector():
         me, nr = win.rank(), win.nrank()
         peer = (me + 1) % nr
         ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
+        # One word per rank; the tile row needs 32 B, so the readback covers all ranks
+        # (8 fp32 slots or 4 int64 slots).
+        tg_i64 = pl.make_tile_group(
+            type=pl.TileType(shape=[_ST_MAX_RANKS, 1], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec),
+            addrs=0, mutex_ids=[0])
+        tg_f32 = pl.make_tile_group(
+            type=pl.TileType(shape=[_ST_MAX_RANKS * 2, 1], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec),
+            addrs=0x100, mutex_ids=[1])
 
         # int64 word at a runtime byte offset: stage the inline WQE, then publish it
         dt_i64 = pld.make_dtensor(win, ws, _WV_INT64_BASE + me * 8, [1], pl.DT_INT64)
@@ -465,7 +921,14 @@ def write_value_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
 
         ch.drain()
         pld.barrier(win)
-        out[0] = me
+        # Read the received words back right after the barrier: the check must not lean
+        # on the kernel-exit synchronization.
+        rb_i64 = pld.make_dtensor(win, ws, _WV_INT64_BASE, [_ST_MAX_RANKS, 1], pl.DT_INT64)
+        rb_f32 = pld.make_dtensor(win, ws, _WV_FP32_BASE, [_ST_MAX_RANKS * 2, 1], pl.DT_FP32)
+        pld.get(tg_i64.current(), rb_i64, [0, 0], me)
+        pld.get(tg_f32.current(), rb_f32, [0, 0], me)
+        pl.store(out, tg_i64.current(), [0, 0])
+        pl.store(out_f32, tg_f32.current(), [0, 0])
 
 
 def write_value_worker(rank, nrank):
@@ -475,16 +938,27 @@ def write_value_worker(rank, nrank):
     ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
     pld.register_memory(win, ws, "ws", _PROTOCOL)
     win.connect()
-    out = torch.full((1,), -1, dtype=torch.int64).npu()
+    out = torch.full((_ST_MAX_RANKS, 1), -1, dtype=torch.int64).npu()
+    out_f32 = torch.full((_ST_MAX_RANKS * 2, 1), -1.0, dtype=torch.float32).npu()
 
-    write_value_kernel[None, 1](win, ws, out)
+    write_value_kernel[None, 1](win, ws, out, out_f32)
     torch.npu.synchronize()
-    assert out.cpu().tolist() == [rank], f"[rank {rank}] write_value kernel did not complete"
+    prev = (rank - 1) % nrank
+    # The kernel read the words back directly after the barrier, so this is what the
+    # consumer saw at the sync point — not what the window holds after the kernel exits.
+    # Rank r writes r + 100 into slot r of every window.
+    at_barrier = out.cpu().view(-1).tolist()[:nrank]
+    assert at_barrier == [r + 100 for r in range(nrank)], (
+        f"[rank {rank}] write_value at barrier got {at_barrier}, expected {[r + 100 for r in range(nrank)]}"
+    )
+    at_barrier_f32 = out_f32.cpu().view(-1).tolist()[:nrank]
+    assert at_barrier_f32 == [1.5] * nrank, (
+        f"[rank {rank}] fp32 at barrier got {at_barrier_f32}, expected {[1.5] * nrank}"
+    )
 
     # Each rank writes one word to its successor, so this window must hold the previous
     # rank's word in that rank's slot. The payload is uninitialized otherwise, so check
     # only the word we own an expectation for.
-    prev = (rank - 1) % nrank
     got_i64 = ws[_WV_INT64_BASE:_WV_INT64_BASE + 8 * nrank].view(torch.int64).cpu()
     assert got_i64[prev].item() == prev + 100, (
         f"[rank {rank}] int64 word {prev} got {got_i64.tolist()}, expected {prev + 100}"
@@ -509,19 +983,34 @@ def test_write_value(world_size: int = 4):
 
 @pl.jit(auto_mutex=True)
 def two_region_kernel(win: pld.Window, ra: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
-                      rb: pl.Tensor[[_WS_BYTES], pl.DT_UINT8], out: pl.Tensor[[1], pl.DT_INT64]):
+                      rb: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                      out: pl.Tensor[[_ST_MAX_RANKS * 2, 1], pl.DT_INT64]):
     """One word into each of two independently registered regions."""
     with pl.section_vector():
         me, nr = win.rank(), win.nrank()
         peer = (me + 1) % nr
         ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
+        # One word per rank; the tile row needs 32 B, so the readback covers all ranks.
+        tg_a = pl.make_tile_group(
+            type=pl.TileType(shape=[_ST_MAX_RANKS, 1], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec),
+            addrs=0, mutex_ids=[0])
+        tg_b = pl.make_tile_group(
+            type=pl.TileType(shape=[_ST_MAX_RANKS, 1], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec),
+            addrs=0x100, mutex_ids=[1])
         dt_a = pld.make_dtensor(win, ra, me * 8, [1], pl.DT_INT64)
         dt_b = pld.make_dtensor(win, rb, me * 8, [1], pl.DT_INT64)
         ch.write(dt_a, me + 100)
         ch.write(dt_b, me + 200)
         ch.drain()
         pld.barrier(win)
-        out[0] = me
+        # Read both regions back right after the barrier: the check must not lean on the
+        # kernel-exit synchronization.
+        rd_a = pld.make_dtensor(win, ra, 0, [_ST_MAX_RANKS, 1], pl.DT_INT64)
+        rd_b = pld.make_dtensor(win, rb, 0, [_ST_MAX_RANKS, 1], pl.DT_INT64)
+        pld.get(tg_a.current(), rd_a, [0, 0], me)
+        pld.get(tg_b.current(), rd_b, [0, 0], me)
+        pl.store(out, tg_a.current(), [0, 0])
+        pl.store(out, tg_b.current(), [_ST_MAX_RANKS, 0])
 
 
 def two_region_worker(rank, nrank):
@@ -533,13 +1022,25 @@ def two_region_worker(rank, nrank):
     pld.register_memory(win, ra, "ra", _PROTOCOL)
     pld.register_memory(win, rb, "rb", _PROTOCOL)
     win.connect()
-    out = torch.full((1,), -1, dtype=torch.int64).npu()
+    out = torch.full((_ST_MAX_RANKS * 2, 1), -1, dtype=torch.int64).npu()
 
     two_region_kernel[None, 1](win, ra, rb, out)
     torch.npu.synchronize()
-    assert out.cpu().tolist() == [rank], f"[rank {rank}] two_region kernel did not complete"
-
     prev = (rank - 1) % nrank
+    # The kernel read both regions back directly after the barrier, so this is what the
+    # consumer saw at the sync point — not what they hold after the kernel exits.
+    # Rank r writes r + 100 / r + 200 into slot r of every window.
+    at_barrier = out.cpu().view(-1).tolist()
+    exp_a = [r + 100 for r in range(nrank)]
+    exp_b = [r + 200 for r in range(nrank)]
+    assert at_barrier[0:nrank] == exp_a, (
+        f"[rank {rank}] region 'ra' at barrier got {at_barrier[0:nrank]}, expected {exp_a}"
+    )
+    assert at_barrier[_ST_MAX_RANKS:_ST_MAX_RANKS + nrank] == exp_b, (
+        f"[rank {rank}] region 'rb' at barrier got {at_barrier[_ST_MAX_RANKS:_ST_MAX_RANKS + nrank]}, "
+        f"expected {exp_b}"
+    )
+
     got_a = ra[prev * 8:(prev + 1) * 8].view(torch.int64).cpu().item()
     got_b = rb[prev * 8:(prev + 1) * 8].view(torch.int64).cpu().item()
     assert got_a == prev + 100, f"[rank {rank}] region 'ra' word {prev} got {got_a}, expected {prev + 100}"
@@ -770,12 +1271,15 @@ _AG_SHARD = 1024    # per-rank shard (4096 elements over 4 ranks; offsets stay r
 
 @pl.jit(auto_mutex=True)
 def all_gather_signals_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
-                              src: pl.Tensor[[1, _AG_SHARD], pl.DT_BF16]):
+                              src: pl.Tensor[[1, _AG_SHARD], pl.DT_BF16],
+                              out: pl.Tensor[[_ST_MAX_RANKS, _AG_SHARD], pl.DT_BF16]):
     with pl.section_vector():
         me, nr = win.rank(), win.nrank()
         tile_type = pl.TileType(shape=[1, _AG_SHARD], dtype=pl.DT_BF16, target_memory=pl.MemorySpace.Vec)
         tg = pl.make_tile_group(type=tile_type, addrs=0, mutex_ids=[0])
+        tg_rcv = pl.make_tile_group(type=tile_type, addrs=_AG_SHARD * 2, mutex_ids=[1])
         t = tg.current()
+        t_rcv = tg_rcv.current()
         sig_done = pld.signal(win, 0)
         pl.load(t, src, [0, 0])
         dt = pld.make_dtensor(win, ws, 0, [nr, _AG_SHARD], pl.DT_BF16)
@@ -783,6 +1287,11 @@ def all_gather_signals_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_
             pld.put(dt, t, [me, 0], r)
             pld.notify(sig_done, r, 1, op=pld.NotifyOp.ATOMIC_ADD)
         pld.wait(sig_done, nr, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
+        # Read the shards back the moment every rank's arrival proves they landed:
+        # the check must not lean on the kernel-exit synchronization.
+        for r in pl.range(nr):
+            pld.get(t_rcv, dt, [r, 0], me)
+            pl.store(out, t_rcv, [r, 0])
 
 
 def all_gather_signals_worker(rank, nrank):
@@ -793,14 +1302,23 @@ def all_gather_signals_worker(rank, nrank):
     pld.register_memory(win, ws, "ws", _PROTOCOL)
     win.connect()
     src = torch.full((1, _AG_SHARD), float(rank), dtype=torch.bfloat16).npu()
+    out = torch.zeros((_ST_MAX_RANKS, _AG_SHARD), dtype=torch.bfloat16).npu()
 
-    all_gather_signals_kernel[None, 1](win, ws, src)
+    all_gather_signals_kernel[None, 1](win, ws, src, out)
     torch.npu.synchronize()
 
-    gathered = ws[:nrank * _AG_SHARD * 2].view(torch.bfloat16).cpu().view(1, nrank * _AG_SHARD)
     expect = torch.cat(
         [torch.full((1, _AG_SHARD), float(r), dtype=torch.bfloat16) for r in range(nrank)], dim=1
     )
+    # The kernel readback happens directly after the arrival wait, so this is what the
+    # consumer saw at wait time — not what the window holds after the kernel exits.
+    at_wait = out.cpu()[:nrank].view(1, nrank * _AG_SHARD)
+    assert torch.equal(at_wait, expect), (
+        f"[rank {rank}] all_gather at wait got {at_wait[0, :4].tolist()}...{at_wait[0, -4:].tolist()}, "
+        f"expected shards 0..{nrank - 1}"
+    )
+
+    gathered = ws[:nrank * _AG_SHARD * 2].view(torch.bfloat16).cpu().view(1, nrank * _AG_SHARD)
     assert torch.equal(gathered, expect), (
         f"[rank {rank}] all_gather window got {gathered[0, :4].tolist()}...{gathered[0, -4:].tolist()}, "
         f"expected shards 0..{nrank - 1}"
@@ -1010,6 +1528,11 @@ if __name__ == '__main__':
     test_shift_load_right_urma()
     test_shift_load_left_urma()
     test_write_submit()
+    test_write_indexed()
+    test_write_indexed_repeat()
+    test_write_indexed_dtype()
+    test_write_indexed_count()
+    test_write_indexed_large()
     test_write_value()
     test_two_regions()
     test_write_notify()

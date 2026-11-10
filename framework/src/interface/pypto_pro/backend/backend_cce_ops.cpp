@@ -1894,6 +1894,70 @@ static std::string MakeDistChannelWriteCodegenCCE(const ir::CallPtr& op, codegen
     return "";
 }
 
+static std::string MakeDistChannelWriteIndexedCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 8)
+        << "dist.channel_write_indexed requires 8 arguments [channel, region, base_bytes, tensor, count, "
+           "row_bytes, src_indices, dst_indices], but got "
+        << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
+        << "dist.channel_write_indexed requires the Vector target (the write engine runs on the AIV)";
+
+    auto tensorVar = ir::As<ir::Var>(op->args_[3]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensorVar)
+        << "dist.channel_write_indexed source must be a tensor Var";
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
+                               ir::As<ir::TensorType>(tensorVar->GetType()))
+        << "dist.channel_write_indexed source must have TensorType";
+    auto regionVar = ir::As<ir::Var>(op->args_[1]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, regionVar)
+        << "dist.channel_write_indexed region must be a Var";
+
+    const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
+    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
+
+    // An index side is either a real Tile or the 0 sentinel; that is a compile-time
+    // property, so the helper takes it as template parameters instead of runtime flags.
+    // Both tables share the single IndexT of the device helper (IR enforces one dtype).
+    const bool hasSrcIndex = ir::As<ir::TileType>(op->args_[6]->GetType()) != nullptr;
+    const bool hasDstIndex = ir::As<ir::TileType>(op->args_[7]->GetType()) != nullptr;
+    auto indexCType = [&op](size_t index) {
+        auto tileType = ir::As<ir::TileType>(op->args_[index]->GetType());
+        return tileType != nullptr ? tileType->dtype_.ToCTypeString() : std::string();
+    };
+    const std::string indexType = hasSrcIndex ? indexCType(6) : (hasDstIndex ? indexCType(7) : "int32_t");
+    auto indexPtr = [&codegen, &op](size_t index, bool present, const std::string& type) {
+        if (!present) {
+            return std::string("nullptr");
+        }
+        return "reinterpret_cast<__ubuf__ " + type + "*>(" + cce::GetOperandAsCode(codegen, op->args_[index]) +
+               ".data())";
+    };
+
+    const std::string channel = codegen.GetExprAsCode(op->args_[0]);
+    const std::string tensorPtr = codegen.GetPointer(codegen.GetVarName(tensorVar));
+    // The destination region is a per-call operand (multi-region windows), resolved by
+    // its kernel tensor parameter like channel_write; only one row stride exists in the
+    // IR (contiguous rows).
+    const std::string commonArgs = "pypto::dist::region_of(" + channel + ".win_, reinterpret_cast<int64_t>(" +
+                                   codegen.GetPointer(codegen.GetVarName(regionVar)) + ")), static_cast<int64_t>(" +
+                                   codegen.GetExprAsCode(op->args_[2]) + "), reinterpret_cast<__gm__ uint8_t*>(" +
+                                   tensorPtr + "), " + indexPtr(6, hasSrcIndex, indexType) + ", " +
+                                   indexPtr(7, hasDstIndex, indexType) + ", ";
+
+    // The SIMT encoder builds every row's single-SGE WQEBB directly in the GM SQ;
+    // only one row stride exists in the IR (contiguous rows).
+    codegen.Emit(channel + ".WriteIndexed<" + indexType + ", " + (hasSrcIndex ? "true" : "false") + ", " +
+                 (hasDstIndex ? "true" : "false") + ", " + DistTimeoutLiteral(timeoutCycles) + ", " +
+                 (submit ? "true" : "false") + ">(" + commonArgs + "static_cast<uint64_t>(" +
+                 codegen.GetExprAsCode(op->args_[5]) + "), static_cast<uint64_t>(" +
+                 codegen.GetExprAsCode(op->args_[5]) + "), static_cast<uint64_t>(" +
+                 codegen.GetExprAsCode(op->args_[5]) + "), static_cast<uint64_t>(" +
+                 codegen.GetExprAsCode(op->args_[4]) + "));");
+    return "";
+}
+
 static std::string MakeDistChannelWriteValueCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
@@ -1997,6 +2061,12 @@ REGISTER_BACKEND_OP(BackendCCE, "dist.channel_write")
     .set_pipe(ir::PipeType::MTE3)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeDistChannelWriteCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "dist.channel_write_indexed")
+    .set_pipe(ir::PipeType::MTE3)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistChannelWriteIndexedCodegenCCE(op, codegen);
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "dist.channel_write_value")

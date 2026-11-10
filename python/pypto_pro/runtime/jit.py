@@ -1905,6 +1905,8 @@ def _add_kernel_header(result: CodegenResult) -> CodegenResult:
         header += "#include <basic_api/kernel_operator_common_intf.h>\n"
     if "AscendC::ICachePreLoad" in result.content:
         header += "#include <basic_api/kernel_operator_cache_intf.h>\n"
+    if any(spec.kind == ParamKind.WINDOW for spec in result.param_specs):
+        header += "#if defined(__DAV_VEC__)\n#include <pypto_distribute.h>\n#endif\n"
     if not result.simt_kernel:
         # PTO headers contain namespace directives of their own, so all AscendC
         # interfaces must be parsed before pto-inst.hpp introduces PTO names.

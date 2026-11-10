@@ -373,6 +373,12 @@ bool IsSupportedScalarDType(const DataType& dtype)
            dtype == DataType::UINT64 || dtype == DataType::FP32;
 }
 
+bool IsSupportedIndexDType(const DataType& dtype)
+{
+    return dtype == DataType::INT32 || dtype == DataType::INT64 || dtype == DataType::UINT32 ||
+           dtype == DataType::UINT64;
+}
+
 const auto kIsNumericScalar = [](const ExprPtr& expr) {
     auto scalar = As<ScalarType>(expr->GetType());
     return scalar != nullptr && (scalar->dtype_.IsInt() || scalar->dtype_.IsFloat());
@@ -486,6 +492,133 @@ TypePtr DeduceDistChannelWriteType(const std::vector<ExprPtr>& args,
     return GetNoneType();
 }
 
+TypePtr DeduceDistChannelWriteIndexedType(const std::vector<ExprPtr>& args,
+                                          const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x8)
+        << "dist.channel_write_indexed requires 8 arguments [channel, region, base_bytes, tensor, count, "
+           "row_bytes, src_indices, dst_indices], but got "
+        << args.size();
+    CheckChannelOperand(args, "dist.channel_write_indexed");
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[1]->GetType()))
+        << "dist.channel_write_indexed region must be a TensorType (registered region), but got "
+        << args[1]->GetType()->TypeName();
+    for (size_t i : {size_t{2}, size_t{4}, size_t{5}}) {
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[i]))
+            << "dist.channel_write_indexed argument " << i << " must be an integer scalar, but got "
+            << args[i]->GetType()->TypeName();
+    }
+    auto tensorType = As<TensorType>(args[3]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensorType != nullptr)
+        << "dist.channel_write_indexed tensor must be a TensorType, but got " << args[3]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_SHAPE, !tensorType->shape_.empty())
+        << "dist.channel_write_indexed tensor must have a row axis";
+
+    // An index side is a 1-D int32/int64 UB Tile, or the 0 sentinel when that side
+    // uses the row number j directly. Presence is a compile-time property.
+    bool hasSrcIndex = false;
+    bool hasDstIndex = false;
+    std::optional<DataType> srcIndexDType;
+    std::optional<DataType> dstIndexDType;
+    for (size_t i = 6; i <= 7; ++i) {
+        const char* name = i == 6 ? "src_indices" : "dst_indices";
+        auto tileType = As<TileType>(args[i]->GetType());
+        if (tileType == nullptr) {
+            const auto sentinel = As<ConstInt>(args[i]);
+            PRO_IR_CHECK(ExternalError::INVALID_TYPE, sentinel != nullptr && sentinel->value_ == 0)
+                << "dist.channel_write_indexed " << name << " must be a Tile or the compile-time 0 sentinel, but got "
+                << args[i]->GetType()->TypeName();
+            continue;
+        }
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsSupportedIndexDType(tileType->dtype_))
+            << "dist.channel_write_indexed " << name << " must be an INT32/INT64/UINT32/UINT64 Tile, but got "
+            << tileType->dtype_.ToString();
+        // A 1-D logical table is spelled [N] or, because tile allocation only takes
+        // rank-2 shapes, [N, 1] / [1, N] with a static unit axis.
+        bool isOneDimensional = tileType->shape_.size() == 1;
+        if (tileType->shape_.size() == 2) {
+            const auto first = As<ConstInt>(tileType->shape_[0]);
+            const auto second = As<ConstInt>(tileType->shape_[1]);
+            isOneDimensional = (first != nullptr && first->value_ == 1) || (second != nullptr && second->value_ == 1);
+        }
+        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, isOneDimensional)
+            << "dist.channel_write_indexed " << name
+            << " must be a 1-D row-index Tile ([N] or the rank-2 [N, 1] / [1, N] spelling), but got rank "
+            << tileType->shape_.size();
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE,
+                     tileType->memref_.has_value() && (*tileType->memref_)->memorySpace_ == MemorySpace::Vec)
+            << "dist.channel_write_indexed " << name << " must live in UB (MemorySpace::Vec)";
+        if (i == 6) {
+            hasSrcIndex = true;
+            srcIndexDType = tileType->dtype_;
+        } else {
+            hasDstIndex = true;
+            dstIndexDType = tileType->dtype_;
+        }
+    }
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, hasSrcIndex || hasDstIndex)
+        << "dist.channel_write_indexed requires src_indices or dst_indices; use dist.channel_write for a "
+           "contiguous copy";
+    // The device helper has one IndexT, so both tables must be read at the same element size.
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE,
+                 !srcIndexDType.has_value() || !dstIndexDType.has_value() || *srcIndexDType == *dstIndexDType)
+        << "dist.channel_write_indexed src_indices and dst_indices must share one dtype, but got "
+        << (srcIndexDType.has_value() ? srcIndexDType->ToString() : "none") << " and "
+        << (dstIndexDType.has_value() ? dstIndexDType->ToString() : "none");
+
+    if (const auto rowBytes = As<ConstInt>(args[5])) {
+        PRO_IR_CHECK(ExternalError::INVALID_VAL, rowBytes->value_ > 0)
+            << "dist.channel_write_indexed row_bytes must be positive, but got " << rowBytes->value_;
+        PRO_IR_CHECK(ExternalError::INVALID_VAL, rowBytes->value_ % 32 == 0)
+            << "dist.channel_write_indexed row_bytes must be a multiple of 32 bytes, but got " << rowBytes->value_;
+        PRO_IR_CHECK(ExternalError::INVALID_VAL, rowBytes->value_ <= 256 * 1024 * 1024)
+            << "dist.channel_write_indexed row_bytes must be <= 256 MiB, but got " << rowBytes->value_;
+    }
+
+    // Static capacity cross-check when both the count and the table length are known.
+    auto indexCapacity = [](const ExprPtr& arg) -> std::optional<int64_t> {
+        auto tileType = As<TileType>(arg->GetType());
+        if (tileType == nullptr) {
+            return std::nullopt;
+        }
+        const auto& shape = tileType->shape_;
+        if (shape.size() == 1) {
+            const auto length = As<ConstInt>(shape[0]);
+            return length != nullptr ? std::optional<int64_t>(length->value_) : std::nullopt;
+        }
+        if (shape.size() == 2) {
+            const auto first = As<ConstInt>(shape[0]);
+            const auto second = As<ConstInt>(shape[1]);
+            if (second != nullptr && second->value_ == 1 && first != nullptr) {
+                return first->value_;
+            }
+            if (first != nullptr && first->value_ == 1 && second != nullptr) {
+                return second->value_;
+            }
+        }
+        return std::nullopt;
+    };
+    if (const auto count = As<ConstInt>(args[4])) {
+        PRO_IR_CHECK(ExternalError::INVALID_VAL, count->value_ >= 0)
+            << "dist.channel_write_indexed count must be >= 0, but got " << count->value_;
+        auto checkCapacity = [&count](const std::optional<int64_t>& capacity, const char* subject) {
+            PRO_IR_CHECK(ExternalError::INVALID_VAL, !capacity.has_value() || count->value_ <= *capacity)
+                << "dist.channel_write_indexed count " << count->value_ << " exceeds the " << subject << " capacity "
+                << (capacity.has_value() ? *capacity : 0);
+        };
+        if (hasSrcIndex) {
+            checkCapacity(indexCapacity(args[6]), "src_indices");
+        } else if (const auto rows = As<ConstInt>(tensorType->shape_[0])) {
+            checkCapacity(rows->value_, "source row");
+        }
+        if (hasDstIndex) {
+            checkCapacity(indexCapacity(args[7]), "dst_indices");
+        }
+    }
+    (void)ParseChannelWriteKwargs(kwargs, args[3], "dist.channel_write_indexed", true);
+    return GetNoneType();
+}
+
 TypePtr DeduceDistChannelSubmitType(const std::vector<ExprPtr>& args,
                                     const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
@@ -556,6 +689,23 @@ REGISTER_OP("dist.channel_write")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceDistChannelWriteType(args, kwargs);
+    });
+
+REGISTER_OP("dist.channel_write_indexed")
+    .set_op_category("DistOp")
+    .set_description("Async indexed row writes through the channel's URMA jetty: row j copies "
+                     "src[src_indices[j]] to dst[dst_indices[j]] (missing table -> j); index tables "
+                     "are 1-D int32/int64/uint32/uint64 UB Tiles, count is a runtime scalar")
+    .add_argument("channel", "Channel handle (opaque integer token)")
+    .add_argument("base_bytes", "DTensor view start, scalar byte offset into the payload (integer scalar)")
+    .add_argument("tensor", "Local GM source tensor (TensorType)")
+    .add_argument("count", "Runtime number of valid rows (integer scalar)")
+    .add_argument("row_bytes", "Bytes of one row payload, used as the row stride (integer scalar)")
+    .add_argument("src_indices", "Row-index Tile (1-D int32/int64/uint32/uint64, UB) or the 0 sentinel")
+    .add_argument("dst_indices", "Row-index Tile (1-D int32/int64/uint32/uint64, UB) or the 0 sentinel")
+    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceDistChannelWriteIndexedType(args, kwargs);
     });
 
 REGISTER_OP("dist.channel_submit")

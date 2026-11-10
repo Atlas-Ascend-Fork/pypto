@@ -1601,7 +1601,7 @@ class ExpressionParserMixin:
                 return ir.create_op_call("dist.window_get", [obj, field], {}, span)
         return None
 
-    _CHANNEL_METHODS = frozenset({"write", "write_notify", "submit", "drain", "is_exclusive"})
+    _CHANNEL_METHODS = frozenset({"write", "write_indexed", "write_notify", "submit", "drain", "is_exclusive"})
 
     def _route_channel_method(self, node: ast.Call):
         """Route ``ch.<method>(...)`` when ``ch`` resolves to a pld.Channel handle.

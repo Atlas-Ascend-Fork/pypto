@@ -104,6 +104,32 @@ __aicore__ inline void cpu_relax()
     }
 }
 
+// Typed bypass-cache load/store of a device cell, addressed either by its GM byte
+// address or by a typed __gm__ pointer.
+template <typename T>
+__aicore__ inline T LoadDev(uint64_t addr)
+{
+    return static_cast<T>(ld_dev(reinterpret_cast<__gm__ T*>(addr), 0));
+}
+
+template <typename T>
+__aicore__ inline T LoadDev(__gm__ T* addr)
+{
+    return static_cast<T>(ld_dev(addr, 0));
+}
+
+template <typename T>
+__aicore__ inline void StoreDev(uint64_t addr, T value)
+{
+    st_dev(value, reinterpret_cast<__gm__ T*>(addr), 0);
+}
+
+template <typename T>
+__aicore__ inline void StoreDev(__gm__ T* addr, T value)
+{
+    st_dev(value, addr, 0);
+}
+
 template <int32_t kNotifyOp, bool kFlushStore = true>
 __aicore__ inline void notify(__gm__ Window* win, int64_t slot, int64_t val, int32_t peer)
 {
@@ -157,7 +183,7 @@ __aicore__ inline void wait(__gm__ Window* win, int64_t slot, int64_t val, int64
     __gm__ uint64_t* addr = signal_addr(win, win->rank, slot);
     const int64_t t0 = get_sys_cnt();
     while (true) {
-        const int64_t sig = static_cast<int64_t>(ld_dev(addr, 0));
+        const int64_t sig = static_cast<int64_t>(LoadDev(addr));
         if (cmp<kCmp>(sig, val)) {
             break;
         }
@@ -169,9 +195,6 @@ __aicore__ inline void wait(__gm__ Window* win, int64_t slot, int64_t val, int64
         }
         cpu_relax();
     }
-
-    // Enforce ordering between the wait and subsequent instructions.
-    dsb(DSB_DDR);
 }
 
 template <int32_t kNotifyOp, bool kFlushStore = true>
@@ -209,18 +232,18 @@ __aicore__ inline void barrier(__gm__ Window* win)
     if constexpr (kSyncLocal) {
         // Local AIV-core exchange only — never between ranks; the cross-rank ordering
         // comes solely from the software signal exchange in the leader section below.
-        SYNCALL<SyncCoreType::AIVOnly>();
+        AscendC::SyncAll();
     }
 
     if (get_block_idx() * get_subblockdim() + get_subblockid() == 0) {
         __gm__ Barrier* bar = reinterpret_cast<__gm__ Barrier*>(remote_control_ptr(win, win->rank));
         __gm__ uint64_t* counter = reinterpret_cast<__gm__ uint64_t*>(&bar->barrier_counter);
-        const int64_t cnt = static_cast<int64_t>(ld_dev(counter, 0));
+        const int64_t cnt = static_cast<int64_t>(LoadDev(counter));
         int32_t phase = static_cast<int32_t>(cnt & 1);
         int32_t sign = static_cast<int32_t>((cnt >> 1) & 1);
         int32_t delta = sign ? -1 : 1;
         int32_t target = sign ? 0 : win->nrank;
-        st_dev(static_cast<uint64_t>(cnt + 1), counter, 0);
+        StoreDev(counter, static_cast<uint64_t>(cnt + 1));
 
         __gm__ uint32_t* sig_addr = reinterpret_cast<__gm__ uint32_t*>(&bar->barrier_signals[phase]);
         const int64_t slot_off = reinterpret_cast<int64_t>(sig_addr) - reinterpret_cast<int64_t>(bar);
@@ -228,7 +251,7 @@ __aicore__ inline void barrier(__gm__ Window* win)
 
         const int64_t t0 = get_sys_cnt();
         while (true) {
-            int32_t sig = static_cast<int32_t>(ld_dev(sig_addr, 0));
+            int32_t sig = static_cast<int32_t>(LoadDev(sig_addr));
             if (sig == target) {
                 break;
             }
@@ -241,7 +264,7 @@ __aicore__ inline void barrier(__gm__ Window* win)
     }
 
     if constexpr (kSyncLocal) {
-        SYNCALL<SyncCoreType::AIVOnly>();
+        AscendC::SyncAll();
     }
 }
 
@@ -283,29 +306,138 @@ __aicore__ inline T atomic_cas(__gm__ Window* win, int32_t region, int32_t peer,
 }
 
 #if defined(PYPTO_DIST_HAVE_JETTY)
+// SQE wire layout: one 64B WQEBB holds a 48B HcommUrmaSqeCtx header (words 0-5)
+// followed by one 16B HcommUrmaSgeCtx (words 6-7). Every indexed row is one such
+// single-SGE WQEBB.
+constexpr uint32_t kDistWqebbBytes = 64U;
+constexpr uint64_t kDistMaxTransferBytes = 256ULL * 1024ULL * 1024ULL;
+
+// SQE word0 flag byte (bits 16-23). A batch body uses odr=1 with no fence/cqe;
+// the last SQE carries odr=5, fence=1, cqe=1 (0b00101101 = 0x2D = URMA_DEFAULT_CFG),
+// so one AdvanceSq commits the whole batch and accounts for exactly one CQE.
+// RingDoorbell publishes the committed prefix.
+constexpr uint64_t kDistSqeBodyFlags = 1ULL << 16U;
+constexpr uint64_t kDistSqeFinalFlags = 0x2DULL << 16U;
+constexpr uint64_t kDistSqeBase = kDistSqeBodyFlags | (1ULL << 28U) | (1ULL << 29U);
+constexpr uint32_t kDistOpWrite = static_cast<uint32_t>(AscendC::HcommUrmaOpCode::WRITE);
+
+// write_indexed builds one single-SGE 64B WQEBB per row directly in the jetty SQ
+// in GM. One lane owns one SQE word, so eight lanes cover one WQEBB; each warp
+// therefore writes four contiguous WQEBBs.
+constexpr uint32_t kDistSimtWarps = 8U;
+constexpr uint32_t kDistSimtThreads = 32U * kDistSimtWarps;
+constexpr uint32_t kDistWqebbWords = kDistWqebbBytes / sizeof(uint64_t);
+constexpr uint32_t kDistSimtRowsPerPass = kDistSimtThreads / kDistWqebbWords;
+constexpr uint32_t kDistSimtMaxChunkWqebbs = 1024U;
+constexpr uint32_t kDistNearFullThreshold = 10U;
+
+// Scalar-prepared SQE words 0..4; the worker ORs the per-row owner bit and the
+// final-batch flags into word 0 and fills word 7 (SGE source VA).
+struct Wqebb {
+    uint64_t words[kDistWqebbWords];
+};
+
+struct WriteIndexedParams {
+    uint64_t src_base;
+    uint64_t dst_base;
+    uint64_t row_bytes;
+    uint64_t src_stride;
+    uint64_t dst_stride;
+    uint32_t count;
+    uint32_t sq_depth;
+    uint32_t sq_seq;
+};
+
+static_assert(sizeof(Wqebb) <= kDistWqebbBytes, "SQE header must fit one WQEBB");
+
+template <typename IndexT, bool kHasSrcIndex, bool kHasDstIndex>
+__simt_vf__ __launch_bounds__(kDistSimtThreads) inline void write_indexed_simt(__gm__ uint64_t* sq,
+                                                                               __ubuf__ const Wqebb* hdr,
+                                                                               __ubuf__ const IndexT* src_indices,
+                                                                               __ubuf__ const IndexT* dst_indices,
+                                                                               WriteIndexedParams args)
+{
+    uint32_t tid = threadIdx.y * 32U + threadIdx.x;
+    uint32_t lane = tid & (kDistWqebbWords - 1U);
+    uint32_t group = tid / kDistWqebbWords;
+    const uint64_t header = lane < 5U ? hdr->words[lane] : 0ULL;
+
+    for (uint32_t row = group; row < args.count; row += kDistSimtRowsPerPass) {
+        uint32_t seq = args.sq_seq + row;
+        uint32_t phys = seq & (args.sq_depth - 1U);
+        uint64_t word = header;
+
+        if (lane == 0U) {
+            // Header word 0 must have owner and final-only flags cleared.
+            word |= static_cast<uint64_t>((seq + 1U) & 0xFFFFU);
+            word |= (seq & args.sq_depth) == 0U ? (1ULL << 31U) : 0ULL;
+            word |= row + 1U == args.count ? kDistSqeFinalFlags : 0ULL;
+        } else if (lane == 5U) {
+            uint64_t index = static_cast<uint64_t>(row);
+            if constexpr (kHasDstIndex) {
+                index = static_cast<uint64_t>(dst_indices[row]);
+            }
+            word = args.dst_base + index * args.dst_stride;
+        } else if (lane == 6U) {
+            word = args.row_bytes;
+        } else if (lane == 7U) {
+            uint64_t index = static_cast<uint64_t>(row);
+            if constexpr (kHasSrcIndex) {
+                index = static_cast<uint64_t>(src_indices[row]);
+            }
+            word = args.src_base + index * args.src_stride;
+        }
+        __stg<ST_L2CacheType::L2_CACHE_HINT_NORMAL_FV, L1CacheType::NON_CACHEABLE>(
+            sq + static_cast<uint64_t>(phys) * kDistWqebbWords + lane, word);
+    }
+
+    __threadfence();
+}
+
 struct Channel {
     __gm__ Window* win_;
     uint32_t jetty_idx_;
+    __ubuf__ AscendC::HcommJettyInfo* info_;
+    __ubuf__ uint8_t* stage_;
     AscendC::HcommJetty jetty_;
     AscendC::HcommPeer peer_;
 
     __aicore__ inline Channel(__gm__ Window* w, __ubuf__ uint8_t* ubuf, int32_t peer)
         : win_(w),
           jetty_idx_(JettyOf(w, peer)),
-          jetty_(JettyInfo(ubuf), UbufSqe(ubuf), reinterpret_cast<GM_ADDR>(w->jetty_ptrs), jetty_idx_),
+          info_(JettyInfo(ubuf)),
+          stage_(UbufSqe(ubuf)),
+          jetty_(info_, stage_, reinterpret_cast<GM_ADDR>(w->jetty_ptrs), jetty_idx_),
           peer_(JettyPeerInfo(ubuf), reinterpret_cast<GM_ADDR>(win_->jetty_ptrs), jetty_idx_)
 
     {
         pypto_assert(peer != -1 || win_->multi_issuer != 0,
                      "dist.channel: window has no per-AIV jetty (multi_issuer == 0); pass peer=\n");
+        if (info_->numWqebbBytes != kDistWqebbBytes || info_->numCqeBytes == 0U || info_->sqDepth == 0U ||
+            (info_->sqDepth & (info_->sqDepth - 1U)) != 0U || info_->cqDepth <= kDistNearFullThreshold) {
+            pypto_panic("dist.channel: unsupported jetty (wqebb %u, cqe %u, sqDepth %u, cqDepth %u)\n",
+                        info_->numWqebbBytes, info_->numCqeBytes, info_->sqDepth, info_->cqDepth);
+        }
     }
 
     template <int64_t kTimeoutCycles, bool kSubmit>
     __aicore__ inline void Write(int32_t region, int64_t base_bytes, __gm__ uint8_t* src, int64_t num_bytes)
     {
+        constexpr int64_t kMaxChunkBytes = static_cast<int64_t>(kDistMaxTransferBytes);
         GM_ADDR dst = RemoteOf(region) + base_bytes;
-        int32_t ret = jetty_.Write<kTimeoutCycles, false>(peer_, dst, src, static_cast<uint64_t>(num_bytes));
-        pypto_assert(ret == AscendC::HCOMM_SUCCESS, "dist.channel.write failed, ret %d\n", ret);
+
+        for (int64_t offset = 0; offset < num_bytes;) {
+            int64_t bytes = num_bytes - offset;
+            if (bytes > kMaxChunkBytes) {
+                bytes = kMaxChunkBytes;
+            }
+            int32_t ret = jetty_.Write<kTimeoutCycles, false>(peer_, dst + offset, src + offset,
+                                                              static_cast<uint64_t>(bytes));
+            if (ret != AscendC::HCOMM_SUCCESS) {
+                pypto_panic("dist.channel.write failed, ret %d\n", ret);
+            }
+            offset += bytes;
+        }
         if constexpr (kSubmit) {
             Submit();
         }
@@ -316,7 +448,9 @@ struct Channel {
     {
         GM_ADDR dst = RemoteOf(region) + base_bytes;
         int32_t ret = jetty_.WriteValue<kTimeoutCycles, T, false>(peer_, dst, value);
-        pypto_assert(ret == AscendC::HCOMM_SUCCESS, "dist.channel.write_value failed, ret %d\n", ret);
+        if (ret != AscendC::HCOMM_SUCCESS) {
+            pypto_panic("dist.channel.write_value failed, ret %d\n", ret);
+        }
         if constexpr (kSubmit) {
             Submit();
         }
@@ -333,8 +467,57 @@ struct Channel {
         GM_ADDR notify_addr = RemoteOf(kControlRegion) + (signal_slot + 1) * kL2CacheLineSize;
         int32_t ret = jetty_.WriteWithNotify<kTimeoutCycles>(peer_, dst, src, static_cast<uint64_t>(num_bytes),
                                                              notify_addr, static_cast<uint64_t>(val));
-        pypto_assert(ret == AscendC::HCOMM_SUCCESS, "dist.channel.write_notify failed, ret %d\n", ret);
+        if (ret != AscendC::HCOMM_SUCCESS) {
+            pypto_panic("dist.channel.write_notify failed, ret %d\n", ret);
+        }
         dsb(DSB_DDR);
+    }
+
+    template <typename IndexT, bool kHasSrcIndex, bool kHasDstIndex, int64_t kTimeoutCycles, bool kSubmit>
+    __aicore__ inline void WriteIndexed(int32_t region, int64_t base_bytes, GM_ADDR src_base,
+                                        __ubuf__ IndexT* src_indices, __ubuf__ IndexT* dst_indices, uint64_t row_bytes,
+                                        uint64_t src_stride, uint64_t dst_stride, uint64_t count)
+    {
+        static_assert(std::is_same_v<IndexT, int32_t> || std::is_same_v<IndexT, int64_t> ||
+                          std::is_same_v<IndexT, uint32_t> || std::is_same_v<IndexT, uint64_t>,
+                      "write_indexed indices must be a 32/64-bit integer type");
+        // count == 0 is a complete no-op: no WQE, no CQE, no doorbell.
+        if (count == 0ULL) {
+            return;
+        }
+        if (count > 0x7FFFFFFFULL) {
+            pypto_panic("dist.channel.write_indexed count %llu exceeds INT32_MAX\n",
+                        static_cast<unsigned long long>(count));
+        }
+        // The SIMT encoder publishes at most kDistSimtMaxChunkWqebbs rows per
+        // AdvanceSq, so the ring must hold one full chunk.
+        if (info_->sqDepth < kDistSimtMaxChunkWqebbs) {
+            pypto_panic("dist.channel.write_indexed requires sqDepth >= %u WQEBBs, got %u\n", kDistSimtMaxChunkWqebbs,
+                        info_->sqDepth);
+        }
+
+        if (row_bytes == 0ULL || (row_bytes % 32ULL) != 0ULL || row_bytes > kDistMaxTransferBytes) {
+            pypto_panic("dist.channel.write_indexed invalid row_bytes %llu (must be a positive multiple of 32 "
+                        "bytes, <= 256 MiB)\n",
+                        static_cast<unsigned long long>(row_bytes));
+        }
+        if (src_stride < row_bytes || dst_stride < row_bytes) {
+            pypto_panic("dist.channel.write_indexed strides (%llu, %llu) must be >= row_bytes %llu\n",
+                        static_cast<unsigned long long>(src_stride), static_cast<unsigned long long>(dst_stride),
+                        static_cast<unsigned long long>(row_bytes));
+        }
+
+        if constexpr (!kHasSrcIndex && !kHasDstIndex) {
+            if (src_stride == row_bytes && dst_stride == row_bytes) {
+                Write<kTimeoutCycles, kSubmit>(region, base_bytes, src_base, static_cast<int64_t>(count * row_bytes));
+                return;
+            }
+        }
+
+        GM_ADDR dst_base = RemoteOf(region) + base_bytes;
+        WriteIndexedSimt<IndexT, kHasSrcIndex, kHasDstIndex, kTimeoutCycles, kSubmit>(
+            src_base, dst_base, src_indices, dst_indices, row_bytes, src_stride, dst_stride,
+            static_cast<uint32_t>(count));
     }
 
     // Publish is a release fence: the doorbell store must be visible before the next op.
@@ -347,34 +530,185 @@ struct Channel {
     template <int64_t kTimeoutCycles>
     __aicore__ inline void Drain()
     {
-        int32_t ret = jetty_.Drain<kTimeoutCycles>();
-        pypto_assert(ret == AscendC::HCOMM_SUCCESS, "dist.channel.drain failed, ret %d\n", ret);
+        PollCqUntil<kTimeoutCycles>(static_cast<uint32_t>(info_->packedHead >> 32U));
     }
 
     __aicore__ inline bool IsExclusive() const { return win_->multi_issuer != 0; }
 
 private:
-    __aicore__ inline static int32_t JettyOf(__gm__ Window* win, int32_t peer)
+    template <int64_t kTimeoutCycles>
+    __aicore__ inline void PollCqUntil(uint32_t target)
     {
-        if (peer >= 0) {
-            return peer < win->rank ? peer : peer - 1;
-        } else {
-            return get_block_idx() * get_subblockdim() + get_subblockid();
+        uint32_t tail = LoadDev<uint32_t>(info_->cqTailAddr);
+        uint32_t released = LoadDev<uint32_t>(info_->completionTailAddr);
+
+        while (tail != target) {
+            auto* cqe = reinterpret_cast<__gm__ uint32_t*>(
+                info_->cqBaseAddr + static_cast<uint64_t>(tail & (info_->cqDepth - 1U)) * info_->numCqeBytes);
+
+            uint32_t phase = (tail / info_->cqDepth) & 1U;
+            int64_t start = get_sys_cnt();
+            uint32_t header;
+
+            do {
+                header = LoadDev(cqe);
+                if (((header >> 2U) & 1U) != phase) {
+                    break;
+                }
+                if constexpr (kTimeoutCycles > 0) {
+                    if (get_sys_cnt() - start >= kTimeoutCycles) {
+                        pypto_panic("dist.channel PollCq timeout, tail %u, target %u\n", tail, target);
+                    }
+                }
+                cpu_relax();
+            } while (true);
+
+            if ((header >> 16U) != 0U) {
+                pypto_panic("dist.channel CQE failed, status %u, substatus %u\n", header >> 24U,
+                            (header >> 16U) & 0xFFU);
+            }
+
+            // CQE word 1 carries the completed SQ WQEBB index; rebuild the free-running
+            // release count from it, mirroring Hcomm SIMT PollCqEntry.
+            uint32_t completed = LoadDev(cqe + 1) & (info_->sqDepth - 1U);
+            released += (completed + info_->sqDepth - (released & (info_->sqDepth - 1U))) & (info_->sqDepth - 1U);
+            ++released;
+            ++tail;
+        }
+
+        StoreDev<uint32_t>(info_->cqTailAddr, tail);
+        StoreDev<uint32_t>(info_->cqDoorbellAddr, tail & 0xFFFFFFU);
+        StoreDev<uint32_t>(info_->completionTailAddr, released);
+        dsb(DSB_DDR);
+    }
+
+    // Reserve SQ/CQ capacity for one indexed chunk.
+    template <int64_t kTimeoutCycles>
+    __aicore__ inline bool TryReserve(uint32_t wqebbs, uint32_t completions)
+    {
+        uint32_t sqDepth = info_->sqDepth;
+        uint32_t cqLimit = info_->cqDepth - kDistNearFullThreshold - completions;
+
+        uint32_t head = static_cast<uint32_t>(info_->packedHead);
+        uint32_t expected = static_cast<uint32_t>(info_->packedHead >> 32U);
+        int64_t start = get_sys_cnt();
+        bool published = false;
+
+        while (true) {
+            uint32_t sqTail = LoadDev<uint32_t>(info_->completionTailAddr);
+            uint32_t cqTail = LoadDev<uint32_t>(info_->cqTailAddr);
+            uint32_t usedSq = head - sqTail;
+            uint32_t usedCq = expected - cqTail;
+
+            if (usedSq <= sqDepth && wqebbs <= sqDepth - usedSq && usedCq <= cqLimit) {
+                return true;
+            }
+
+            // Capacity pressure: publish earlier pending writes.
+            if (!published) {
+                Submit();
+                published = true;
+            }
+            // No completion left to reclaim (equality), or the CQ counters disagree.
+            pypto_assert(cqTail < expected, "dist.channel: SQ/CQ accounting inconsistent\n");
+
+            if constexpr (kTimeoutCycles > 0) {
+                if (get_sys_cnt() - start >= kTimeoutCycles) {
+                    pypto_panic("dist.channel TryReserve timeout, wqebbs %u, usedSq %u, usedCq %u\n", wqebbs, usedSq,
+                                usedCq);
+                }
+            }
+
+            // Reclaim one completion, then recheck both capacities.
+            PollCqUntil<kTimeoutCycles>(cqTail + 1U);
         }
     }
 
-    __aicore__ inline static GM_ADDR RemoteOf(__gm__ Window* win, int32_t peer, int32_t region)
+    __aicore__ inline static uint32_t JettyOf(__gm__ Window* win, int32_t peer)
     {
-        uint64_t entry = reinterpret_cast<__gm__ uint64_t*>(win->jetty_ptrs)[peer];
-        pypto_assert(entry != 0, "dist.channel: jetty table entry %d is null\n", peer);
+        if (peer >= 0) {
+            return static_cast<uint32_t>(peer < win->rank ? peer : peer - 1);
+        }
+        return static_cast<uint32_t>(get_block_idx() * get_subblockdim() + get_subblockid());
+    }
+
+    __aicore__ inline static GM_ADDR RemoteOf(__gm__ Window* win, uint32_t jettyIdx, int32_t region)
+    {
+        uint64_t entry = reinterpret_cast<__gm__ uint64_t*>(win->jetty_ptrs)[jettyIdx];
+        pypto_assert(entry != 0, "dist.channel: jetty table entry %u is null\n", jettyIdx);
         auto* channel = reinterpret_cast<__gm__ AscendC::ChannelEntity*>(entry);
         int32_t urma_index = region_entry(win, region)->urma_index;
-        pypto_assert(urma_index >= 0 && urma_index < (int32_t)channel->remoteBufferNum,
+        pypto_assert(urma_index >= 0 && urma_index < static_cast<int32_t>(channel->remoteBufferNum),
                      "dist.channel: urma_index %d out of range\n", urma_index);
         auto* remote_buf = channel->remoteBufferAddr + urma_index;
         return reinterpret_cast<GM_ADDR>(remote_buf->bufferInfo.rma.addr);
     }
 
+    // Every index form: the worker writes the WQEs into the GM SQ, the scalar side
+    // only fences and publishes one chunk (one AdvanceSq, one CQE) at a time. Each
+    // row is a single-SGE 64B WQEBB; the worker applies the ring
+    // mask per row, so a chunk may cross the physical wrap (but never exceeds sqDepth,
+    // which would overwrite a slot twice inside one chunk).
+    template <typename IndexT, bool kHasSrcIndex, bool kHasDstIndex, int64_t kTimeoutCycles, bool kSubmit>
+    __aicore__ inline void WriteIndexedSimt(GM_ADDR src_base, GM_ADDR dst_base, __ubuf__ IndexT* src_indices,
+                                            __ubuf__ IndexT* dst_indices, uint64_t row_bytes, uint64_t src_stride,
+                                            uint64_t dst_stride, uint32_t count)
+    {
+        auto* hdr = reinterpret_cast<__ubuf__ Wqebb*>(stage_);
+        WriteIndexedParams args{};
+        args.row_bytes = row_bytes;
+        args.src_stride = src_stride;
+        args.dst_stride = dst_stride;
+        args.sq_depth = info_->sqDepth;
+        uint64_t src_base_addr = reinterpret_cast<uint64_t>(src_base);
+        uint64_t dst_base_addr = reinterpret_cast<uint64_t>(dst_base);
+        __gm__ uint64_t* sq_base = reinterpret_cast<__gm__ uint64_t*>(info_->sqBaseAddr);
+
+        if constexpr (kHasSrcIndex || kHasDstIndex) {
+            set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+            wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+        }
+
+        hdr->words[0] = kDistSqeBase | (static_cast<uint64_t>(kDistOpWrite) << 40U);
+        hdr->words[1] = peer_.peerInfo->tpIdNumSgesRemoteTokenId | (1ULL << 24U);
+        hdr->words[2] = peer_.peerInfo->remoteEid[0];
+        hdr->words[3] = peer_.peerInfo->remoteEid[1];
+        hdr->words[4] = peer_.peerInfo->remoteTokenValueUdf;
+        set_flag(PIPE_S, PIPE_V, EVENT_ID0);
+        wait_flag(PIPE_S, PIPE_V, EVENT_ID0);
+
+        uint32_t done = 0;
+        uint32_t chunk = kDistSimtMaxChunkWqebbs;
+        while (done < count) {
+            if (count - done < chunk) {
+                chunk = count - done;
+            }
+            if (!TryReserve<kTimeoutCycles>(chunk, 1U)) {
+                pypto_panic("dist.channel.write_indexed: cannot reserve %u SQ WQEBBs\n", chunk);
+            }
+            args.count = chunk;
+            args.sq_seq = static_cast<uint32_t>(info_->packedHead);
+            args.src_base = src_base_addr + (kHasSrcIndex ? 0ULL : static_cast<uint64_t>(done) * src_stride);
+            args.dst_base = dst_base_addr + (kHasDstIndex ? 0ULL : static_cast<uint64_t>(done) * dst_stride);
+            __ubuf__ IndexT* src_chunk = kHasSrcIndex ? src_indices + done : nullptr;
+            __ubuf__ IndexT* dst_chunk = kHasDstIndex ? dst_indices + done : nullptr;
+
+            cce::async_invoke<write_indexed_simt<IndexT, kHasSrcIndex, kHasDstIndex>>(
+                cce::dim3{32, kDistSimtWarps}, sq_base, hdr, src_chunk, dst_chunk, args);
+            // The V-pipe marker is queued behind the worker, so this wait fires when
+            // every lane store has completed.
+            set_flag(PIPE_V, PIPE_S, EVENT_ID0);
+            wait_flag(PIPE_V, PIPE_S, EVENT_ID0);
+
+            jetty_.AdvanceSq(chunk);
+            if constexpr (kSubmit) {
+                Submit();
+            }
+            done += chunk;
+        }
+    }
+
+private:
     __aicore__ inline GM_ADDR RemoteOf(int32_t region) const { return RemoteOf(win_, jetty_idx_, region); }
 
     __aicore__ inline static __ubuf__ AscendC::HcommJettyPeerInfo* JettyPeerInfo(__ubuf__ uint8_t* base)

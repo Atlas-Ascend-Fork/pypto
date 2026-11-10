@@ -133,6 +133,48 @@ class Channel(NamedTuple):
         """
 
     @_api_decl
+    def write_indexed(self, dtensor: DTensor, src, /, *, src_indices=None, dst_indices=None,
+                      count: int, submit: bool = True, timeout: int | None = None) -> None:
+        """Asynchronously write selected rows to a remote DTensor.
+
+        Copies ``count`` rows from ``src`` to ``dtensor`` using optional
+        source and destination row indices. If an index table is omitted,
+        sequential row indices ``[0, count)`` are used.
+
+        Args:
+            dtensor: Remote destination DTensor.
+            src: Source tensor with the same dtype and row shape as ``dtensor``.
+            src_indices: Optional 1-D UB Tile of source row indices.
+            dst_indices: Optional 1-D UB Tile of destination row indices.
+            count: Number of rows to transfer. Zero is a no-op.
+            submit: If True, submit the generated WQEs immediately.
+                Otherwise, queue them for a later ``submit()``.
+            timeout: Optional timeout for queue operations.
+
+        Notes:
+            - At least one index table must be provided.
+            - Indices are row numbers, not byte offsets. They must address rows
+              of the corresponding tensor; an out-of-range index reads or writes
+              outside the view.
+            - Index tables must reside in UB (``pl.MemorySpace.Vec``) and be
+              ready before the call. Load GM index tables into UB first.
+            - Supported index dtypes: int32, int64, uint32, uint64. When both
+              tables are present they must share one dtype.
+            - Both tensors must be row-major and have contiguous rows. The row
+              payload (axes after the row axis) must match ``dtensor``; its size
+              must be a multiple of 32 bytes and at most 256 MiB.
+            - Each row is one single-SGE WQEBB. A SIMT worker encodes the WQEs
+              directly in the channel's GM send queue; only the 5-word SQE
+              header is staged in UB. Rows are published in chunks of at most
+              1024 (the jetty SQ depth must be at least 1024), one CQE per
+              chunk; a chunk may wrap the SQ ring. Intermediate chunks are
+              published when the queue is full even with ``submit=False``.
+            - ``count`` must fit in int32; the device traps above ``INT32_MAX``.
+            - The number of generated WQEs must fit the channel queue when
+              ``submit=False``.
+        """
+
+    @_api_decl
     def write_notify(self, dtensor: DTensor, src, signal: Signal, val, /, *,
                      timeout: int | None = None) -> None:
         """Fused write whose completion writes the signal in hardware (device-only).
@@ -151,7 +193,8 @@ class Channel(NamedTuple):
         """Wait for engine completion of this channel's writes (device-only).
 
         Same scope as :meth:`submit`. ``timeout`` is a compile-time device-cycle
-        bound; expiry traps the AIV. ``None`` waits forever.
+        bound; expiry traps the AIV. ``None`` waits forever. WQEs staged with
+        ``submit=False`` are not published implicitly.
         """
 
     @_api_decl
@@ -341,7 +384,7 @@ def notify_all(signal: Signal, val, *, op: NotifyOp = NotifyOp.SET, flush_store:
 
 
 @_api_decl
-def channel(win: Window, buffer: int, peer: int | None = None) -> Channel:
+def channel(win: Window, buffer: int, /, *, peer: int | None = None) -> Channel:
     """Open one write-engine channel of ``win``, backed by a UB scratch buffer (device-only).
 
     Must be the RHS of a simple assignment, outside control flow — the C++ object lives
@@ -354,7 +397,9 @@ def channel(win: Window, buffer: int, peer: int | None = None) -> Channel:
     Args:
         win: the owning window.
         buffer: UB scratch address, >= ``pld.CHANNEL_UB_BYTES`` (256) bytes, 64-byte
-            aligned, not overlapping any Tile or another channel's scratch. Compile-time.
+            aligned, not overlapping any Tile or another channel's scratch. The first
+            128 bytes hold the peer/jetty headers; :meth:`write_indexed` keeps its SQE
+            header above them. Compile-time.
         peer: destination rank for the per-peer form (compile-time or in-kernel integer).
             ``peer == win.rank()`` is rejected at runtime. Omit for multi-issuer.
     """

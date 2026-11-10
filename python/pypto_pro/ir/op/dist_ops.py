@@ -505,6 +505,17 @@ def _shape_byte_count(shape, dtype, span):
     return total
 
 
+def _static_shape_byte_count(shape, dtype):
+    """Byte size of a fully static shape, or None when any dim is runtime."""
+    total = 1
+    for dim in shape:
+        value = _const_int_value(dim)
+        if value is None:
+            return None
+        total *= value
+    return total * dtype.get_bit() // 8
+
+
 def _parse_write_scalar(source, node, dtype, *, api="ch.write"):
     """Scalar write form: one word cast to the DTensor dtype, inline in the WQE."""
     if dtype not in _ATOMIC_DTYPES:
@@ -648,6 +659,283 @@ def _build_channel_write(parser, call, channel):
     )
 
 
+_INDEX_DTYPES = (
+    _ir_core.DataType.INT32,
+    _ir_core.DataType.INT64,
+    _ir_core.DataType.UINT32,
+    _ir_core.DataType.UINT64,
+)
+
+
+def _check_dense_stride(type_, stride, api, name, span):
+    """Reject explicitly strided views: v1 copies dense row-major rows only."""
+    shape = list(type_.shape)
+    strides = list(stride) if stride else []
+    if len(strides) != len(shape):
+        return
+    expected = 1
+    for axis in range(len(shape) - 1, -1, -1):
+        actual = _const_int_value(strides[axis])
+        dim = _const_int_value(shape[axis])
+        if actual is None:
+            return
+        if actual != expected:
+            raise InvalidShape(
+                f"{api} {name} must be dense row-major, but axis {axis} has stride {actual} "
+                f"(expected {expected})",
+                span=span,
+            )
+        if dim is None:
+            return
+        expected *= dim
+
+
+def _check_tensor_source_layout(source, api, span):
+    """v1 payload reads assume a contiguous ND source tensor."""
+    tensor_view = getattr(source.type, "tensor_view", None)
+    if tensor_view is None:
+        return
+    layout = getattr(tensor_view, "layout", None)
+    if layout is not None and layout != _ir_core.Layout.ND:
+        raise InvalidType(
+            f"{api} v1 supports contiguous row-major (ND) sources only, got layout {layout}",
+            span=span,
+        )
+    _check_dense_stride(source.type, getattr(tensor_view, "stride", None), api, "source", span)
+
+
+def _check_index_tile_layout(tile_type, api, arg_name, span):
+    """The index Tile must be a flat array so data()[j] is logical row-index j."""
+    hardware_info = getattr(tile_type, "hardware_info", None)
+    if hardware_info is None:
+        return
+    slayout = getattr(hardware_info, "slayout", None)
+    if slayout is not None and slayout != _ir_core.TileLayout.none_box:
+        raise InvalidType(
+            f"{api} {arg_name} must use a flat (none_box) tile layout, got {slayout}", span=span
+        )
+
+
+def _index_table_length(tile_type, api, arg_name, span):
+    """Length of the 1-D row-index table stored in a (possibly rank-2) UB Tile.
+
+    Tile allocation only accepts rank-2 shapes, so a 1-D logical table is spelled
+    ``[N, 1]`` or ``[1, N]``; the unit axis is not part of the logical length.
+    """
+    shape = list(tile_type.shape)
+    if len(shape) == 1:
+        return shape[0]
+    if len(shape) == 2:
+        first = _const_int_value(shape[0])
+        second = _const_int_value(shape[1])
+        if second == 1:
+            return shape[0]
+        if first == 1:
+            return shape[1]
+    raise InvalidShape(
+        f"{api} {arg_name} must be a 1-D row-index Tile ([N] or the rank-2 [N, 1] / [1, N] "
+        f"spelling), got shape rank {len(shape)}",
+        span=span,
+    )
+
+
+def _channel_index_operand(value, api, arg_name, span):
+    """v1 index table: one contiguous 1-D UB Tile with a 32/64-bit integer dtype."""
+    tile_type = getattr(value, "type", None)
+    if not isinstance(tile_type, _ir_core.TileType):
+        raise InvalidType(
+            f"{api} {arg_name} must be a 1-D int32/int64/uint32/uint64 UB Tile or None; "
+            "copy a GM index table into a UB Tile with pl.load first",
+            span=span,
+        )
+    _index_table_length(tile_type, api, arg_name, span)
+    if tile_type.dtype not in _INDEX_DTYPES:
+        raise InvalidType(
+            f"{api} {arg_name} must be an INT32/INT64/UINT32/UINT64 Tile, got {tile_type.dtype}",
+            span=span,
+        )
+    _check_index_tile_layout(tile_type, api, arg_name, span)
+    memref = getattr(tile_type, "memref", None)
+    space = getattr(memref, "memory_space", None) if memref is not None else None
+    if space != _ir_core.MemorySpace.Vec:
+        raise InvalidType(
+            f"{api} {arg_name} must live in UB (MemorySpace.Vec), got {space}; "
+            "copy a GM index table into a UB Tile with pl.load first",
+            span=span,
+        )
+    return value
+
+
+def _int_kwarg_operand(value, api, arg_name, span):
+    """Keyword operand that is either a folded int constant or an integer scalar."""
+    if _is_int(value):
+        return _normalize_expr(value, span)
+    return _int_operand(value, api, arg_name, span)
+
+
+def _check_index_capacity(api, span, count, capacity, subject):
+    if count is not None and capacity is not None and count > capacity:
+        raise InvalidVal(
+            f"{api} count {count} exceeds the {subject} capacity {capacity}", span=span
+        )
+
+
+def _build_channel_write_indexed(parser, call, channel):
+    """``ch.write_indexed(dtensor, tensor, *, src_indices=, dst_indices=, count=, submit=, timeout=)``."""
+    span = parser.span_tracker.get_span(call)
+    kwargs_parsed = _parse_op_kwargs(parser, call)
+    for name in kwargs_parsed:
+        if name not in ("src_indices", "dst_indices", "count", "submit", "timeout"):
+            raise InvalidArgument(
+                f"ch.write_indexed does not accept keyword argument '{name}'", span=span
+            )
+    if any(isinstance(a, ast.Starred) for a in call.args):
+        raise InvalidArgument("ch.write_indexed does not accept star-args", span=span)
+    if len(call.args) != 2:
+        raise InvalidArgument(
+            f"ch.write_indexed requires (dtensor, tensor), got {len(call.args)} arguments after the channel",
+            span=span,
+            hint="The destination peer is bound when the channel is opened: pld.channel(win, buffer, peer=...)",
+        )
+
+    dtensor = _channel_dtensor(parser, "ch.write_indexed", call.args[0], channel, span)
+    source = parser.parse_expression(call.args[1])
+    if not isinstance(source, _ir_core.Var) or not isinstance(source.type, _ir_core.TensorType):
+        raise InvalidType(
+            "ch.write_indexed source must be a kernel GM tensor (the payload rows are read from GM), "
+            f"got {ast.unparse(call.args[1])}",
+            span=span,
+        )
+    if source.type.dtype != dtensor.dtype:
+        raise InvalidType(
+            f"ch.write_indexed source dtype {source.type.dtype} does not match the DTensor view dtype "
+            f"{dtensor.dtype}",
+            span=span,
+        )
+    _check_tensor_source_layout(source, "ch.write_indexed", span)
+
+    src_shape = list(source.type.shape)
+    if not src_shape:
+        raise InvalidShape(
+            "ch.write_indexed source must have at least one dimension (the row axis)", span=span
+        )
+    if len(src_shape) != len(dtensor.shape):
+        raise InvalidShape(
+            f"ch.write_indexed source rank {len(src_shape)} does not match the DTensor view rank "
+            f"{len(dtensor.shape)}",
+            span=span,
+        )
+    if len(src_shape) < 2:
+        raise InvalidShape(
+            "ch.write_indexed source must have a row payload axis (rank >= 2); a rank-1 source "
+            "has no per-row payload",
+            span=span,
+        )
+    for axis, (dst_dim, src_dim) in enumerate(zip(dtensor.shape[1:], src_shape[1:]), start=1):
+        dst_const = _const_int_value(dst_dim)
+        src_const = _const_int_value(src_dim)
+        if dst_const is not None and src_const is not None and dst_const != src_const:
+            raise InvalidShape(
+                f"ch.write_indexed payload axis {axis} differs: source {src_const}, "
+                f"DTensor view {dst_const}",
+                span=span,
+            )
+
+    submit = kwargs_parsed.get("submit", True)
+    if not isinstance(submit, bool):
+        raise InvalidType(f"ch.write_indexed submit must be a compile-time bool, got {submit!r}", span=span)
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write_indexed", span, minimum=1)
+
+    if "count" not in kwargs_parsed:
+        raise InvalidArgument(
+            "ch.write_indexed requires the 'count' keyword",
+            span=span,
+            hint="count is the runtime number of valid rows; pass 0 for a complete no-op.",
+        )
+    count_value = _const_int_value(kwargs_parsed["count"])
+    if count_value is not None and count_value < 0:
+        raise InvalidVal(f"ch.write_indexed count must be >= 0, got {count_value}", span=span)
+    count_arg = _int_kwarg_operand(kwargs_parsed["count"], "ch.write_indexed", "count", span)
+    if count_arg.type.dtype not in _INDEX_DTYPES:
+        raise InvalidType(
+            f"ch.write_indexed count must be a 32/64-bit integer scalar, got {count_arg.type.dtype}",
+            span=span,
+        )
+
+    src_index = _none_value(kwargs_parsed.get("src_indices"))
+    dst_index = _none_value(kwargs_parsed.get("dst_indices"))
+    if src_index is not None:
+        src_index = _channel_index_operand(src_index, "ch.write_indexed", "src_indices", span)
+    if dst_index is not None:
+        dst_index = _channel_index_operand(dst_index, "ch.write_indexed", "dst_indices", span)
+    if src_index is None and dst_index is None:
+        raise InvalidArgument(
+            "ch.write_indexed requires src_indices or dst_indices",
+            span=span,
+            hint="Use ch.write(dtensor, src) for one contiguous copy.",
+        )
+
+    if src_index is not None:
+        src_capacity = _const_int_value(
+            _index_table_length(src_index.type, "ch.write_indexed", "src_indices", span)
+        )
+    else:
+        src_capacity = _const_int_value(src_shape[0])
+    if dst_index is not None:
+        dst_capacity = _const_int_value(
+            _index_table_length(dst_index.type, "ch.write_indexed", "dst_indices", span)
+        )
+    else:
+        dst_capacity = _const_int_value(dtensor.shape[0])
+    src_subject = "src_indices" if src_index is not None else "source rows"
+    dst_subject = "dst_indices" if dst_index is not None else "destination rows"
+    _check_index_capacity("ch.write_indexed", span, count_value, src_capacity, src_subject)
+    _check_index_capacity("ch.write_indexed", span, count_value, dst_capacity, dst_subject)
+
+    # Row addresses are index * row stride; v1 accepts contiguous row payloads only,
+    # so the row stride is the payload byte size on both sides.
+    sentinel = _normalize_expr(0, span)
+    actual_row_bytes = _static_shape_byte_count(src_shape[1:], dtensor.dtype)
+    if actual_row_bytes is not None:
+        if actual_row_bytes <= 0:
+            raise InvalidVal(
+                f"ch.write_indexed row_bytes must be positive, got {actual_row_bytes}", span=span
+            )
+        if actual_row_bytes % 32:
+            raise InvalidVal(
+                f"ch.write_indexed row_bytes must be a multiple of 32 bytes, got {actual_row_bytes}; "
+                "pad the payload rows",
+                span=span,
+            )
+        if actual_row_bytes > 256 * 1024 * 1024:
+            raise InvalidVal(
+                f"ch.write_indexed row_bytes must be <= 256 MiB, got {actual_row_bytes}", span=span
+            )
+        row_bytes = _normalize_expr(actual_row_bytes, span)
+    else:
+        row_bytes = _shape_byte_count(src_shape[1:], dtensor.dtype, span)
+
+    # write_indexed lowers to the header's SIMT device worker, which is invisible
+    # to the DSL's tile tracking; mark the kernel here so its UB provision is
+    # sized for the channel scratch.
+    parser.requires_simt = True
+    return _ir_core.create_op_call(
+        "dist.channel_write_indexed",
+        [
+            channel.token,
+            dtensor.region,
+            dtensor.byte_offset,
+            source,
+            count_arg,
+            row_bytes,
+            src_index if src_index is not None else sentinel,
+            dst_index if dst_index is not None else sentinel,
+        ],
+        {"dtype": dtensor.dtype, "submit": submit, "timeout_cycles": timeout},
+        span,
+    )
+
+
 def _build_channel_write_notify(parser, call, channel):
     """``ch.write_notify(dtensor, tensor, signal, val, timeout=)`` -> channel_write_notify."""
     from ...language.distribute import Signal
@@ -742,6 +1030,8 @@ def parse_channel_method(parser, channel, method, call):
     """Dispatch ``ch.<method>(...)`` (receiver-routed by the parser)."""
     if method == "write":
         return _build_channel_write(parser, call, channel)
+    if method == "write_indexed":
+        return _build_channel_write_indexed(parser, call, channel)
     if method == "write_notify":
         return _build_channel_write_notify(parser, call, channel)
     if method == "submit":
