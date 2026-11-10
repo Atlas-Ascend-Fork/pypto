@@ -3634,12 +3634,16 @@ class TileType:
 # - L0B (Right) buffer:  512-byte alignment
 # - L0C (Acc) buffer:     64-byte alignment
 # - Vec (UB) buffer:      32-byte alignment
+# - BiasTable (Bias):     64-byte alignment
+# - Fixpipe (Scaling):    128-byte alignment
 _MEMORY_ALIGNMENT: dict[MemorySpace, int] = {
     MemorySpace.Mat: 32,
     MemorySpace.Vec: 32,
     MemorySpace.Left: 512,
     MemorySpace.Right: 512,
     MemorySpace.Acc: 64,
+    MemorySpace.Bias: 64,
+    MemorySpace.Scaling: 128,
     MemorySpace.ScaleLeft: 32,
     MemorySpace.ScaleRight: 32,
 }
@@ -3656,7 +3660,7 @@ def _validate_tile_addr_alignment(
     """
     required = _MEMORY_ALIGNMENT.get(target_memory)
     if required is None:
-        return  # DDR / Scaling / Bias — no enforced alignment
+        return  # DDR has no enforced tile alignment
     if addr % required != 0:
         mem_name = str(target_memory).replace("MemorySpace.", "")
         raise InvalidTile(

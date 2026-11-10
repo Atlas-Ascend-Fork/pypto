@@ -189,19 +189,21 @@ def test_builder_gives_each_tile_its_own_memref_id():
 
 
 @pytest.mark.parametrize(
-    ("memory_space", "alignment"),
+    ("memory_space", "alignment", "shape", "dtype"),
     [
-        (pl.MemorySpace.Vec, 32),
-        (pl.MemorySpace.Mat, 32),
-        (pl.MemorySpace.Acc, 64),
-        (pl.MemorySpace.Left, 512),
-        (pl.MemorySpace.Right, 512),
+        (pl.MemorySpace.Vec, 32, [64, 64], pl.DT_FP16),
+        (pl.MemorySpace.Mat, 32, [64, 64], pl.DT_FP16),
+        (pl.MemorySpace.Acc, 64, [64, 64], pl.DT_FP16),
+        (pl.MemorySpace.Left, 512, [64, 64], pl.DT_FP16),
+        (pl.MemorySpace.Right, 512, [64, 64], pl.DT_FP16),
+        (pl.MemorySpace.Bias, 64, [1, 16], pl.DT_FP32),
+        (pl.MemorySpace.Scaling, 128, [1, 16], pl.DT_INT64),
     ],
 )
-def test_builder_enforces_the_alignment_of_each_memory_space(memory_space, alignment):
-    make_mutex_tile_expr([64, 64], pl.DT_FP16, memory_space, addr=alignment)
+def test_builder_enforces_the_alignment_of_each_memory_space(memory_space, alignment, shape, dtype):
+    make_mutex_tile_expr(shape, dtype, memory_space, addr=alignment)
     with pytest.raises(ValueError, match=f"not {alignment}-byte aligned"):
-        make_mutex_tile_expr([64, 64], pl.DT_FP16, memory_space, addr=alignment // 2)
+        make_mutex_tile_expr(shape, dtype, memory_space, addr=alignment // 2)
 
 
 def test_builder_leaves_unaligned_spaces_alone():
@@ -610,6 +612,26 @@ def test_misaligned_left_addr_is_rejected():
         pl.load(t, x, [0, 0])
 
     with pytest.raises(InvalidTile, match="not 512-byte aligned"):
+        _parse_kernel(k)
+
+
+def test_misaligned_bias_addr_is_rejected():
+    @pl.jit
+    def k(x: pl.Tensor[[1, 16], pl.DT_FP32]):
+        tt = pl.TileType(shape=[1, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Bias)
+        pl.make_tile(tt, addr=0x01)
+
+    with pytest.raises(InvalidTile, match="not 64-byte aligned"):
+        _parse_kernel(k)
+
+
+def test_misaligned_scaling_addr_is_rejected():
+    @pl.jit
+    def k(x: pl.Tensor[[1, 16], pl.DT_INT64]):
+        tt = pl.TileType(shape=[1, 16], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Scaling)
+        pl.make_tile(tt, addr=0x01)
+
+    with pytest.raises(InvalidTile, match="not 128-byte aligned"):
         _parse_kernel(k)
 
 

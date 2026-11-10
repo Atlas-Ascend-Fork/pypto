@@ -1778,7 +1778,8 @@ def make_tile(
         tile_type: ``pl.TileType`` descriptor — the only accepted spelling of the
             Tile's shape/dtype/memory space/layout
         addr: Required byte offset within the memory space. Fixed at parse time,
-            and aligned to that space (32B Vec/Mat, 512B Left/Right, 64B Acc)
+            and aligned to that space (32B Vec/Mat, 512B Left/Right, 64B Acc/Bias,
+            128B Scaling)
     Example::
 
         tt = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
