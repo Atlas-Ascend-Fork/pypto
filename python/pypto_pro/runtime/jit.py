@@ -72,9 +72,6 @@ KERNEL_HEADER_SINGLE = """\
 
 #include <cstdint>
 #include <pypto_block_meta.h>
-#include <pto/pto-inst.hpp>
-
-using namespace pto;
 """
 
 KERNEL_HEADER_SIMT = """\
@@ -1905,9 +1902,13 @@ def _add_kernel_header(result: CodegenResult) -> CodegenResult:
     if any(tok in result.content for tok in ("AscendC::WaitPreTaskEnd", "AscendC::SetNextTaskStart")):
         # Early-start inter-task sync (SK cap bits 1/2) lives in the AscendC common
         # interface header, which pto-inst.hpp does not pull in.
-        header += "\n#include <basic_api/kernel_operator_common_intf.h>\n"
+        header += "#include <basic_api/kernel_operator_common_intf.h>\n"
     if "AscendC::ICachePreLoad" in result.content:
-        header += "\n#include <basic_api/kernel_operator_cache_intf.h>\n"
+        header += "#include <basic_api/kernel_operator_cache_intf.h>\n"
+    if not result.simt_kernel:
+        # PTO headers contain namespace directives of their own, so all AscendC
+        # interfaces must be parsed before pto-inst.hpp introduces PTO names.
+        header += "#include <pto/pto-inst.hpp>\n\nusing namespace pto;\n"
     return dataclasses.replace(
         result,
         content=f"{header}\n{result.content.lstrip()}",
