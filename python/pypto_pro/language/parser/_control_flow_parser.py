@@ -19,7 +19,15 @@ from pypto.pypto_impl import ir
 from pypto.pypto_impl.ir import DataType
 from pypto_pro.ir._limits import INT64_MAX, INT64_MIN, from_storage_int
 
-from ..._errors import InvalidArgument, InvalidOperation, InvalidType, InvalidVal, NotSupported, OutOfRange
+from ..._errors import (
+    InvalidArgument,
+    InvalidOperation,
+    InvalidType,
+    InvalidVal,
+    NotSupported,
+    OutOfRange,
+    current_span,
+)
 from ._expr_evaluator import ExprEvaluator
 from ._scope_manager import (
     ConstantState,
@@ -645,10 +653,10 @@ class ControlFlowParserMixin:
 
         # Check if this is pl.section_vector() or pl.section_cube()
         if attr == "section_vector":
-            self._parse_target_section(stmt.body, ir.SectionKind.Vector, span)
+            self._parse_target_section(stmt.body, ir.SectionKind.Vector)
             return
         if attr == "section_cube":
-            self._parse_target_section(stmt.body, ir.SectionKind.Cube, span)
+            self._parse_target_section(stmt.body, ir.SectionKind.Cube)
             return
 
         # Unsupported context manager
@@ -733,7 +741,6 @@ class ControlFlowParserMixin:
         self,
         body: list[ast.stmt],
         kind: ir.SectionKind,
-        span,
     ) -> None:
         """Project a Cube/Vector section into the current target Program."""
         if kind != self.target:
@@ -905,14 +912,8 @@ class ControlFlowParserMixin:
             lo = INT64_MIN
             hint = "pl.range() bounds must fit int64."
 
-        check_in_range(
-            value,
-            lo,
-            hi,
-            subject=f"pl.range() {subject}",
-            span=self.span_tracker.get_span(node),
-            hint=hint,
-        )
+        with current_span(self.span_tracker.get_span(node)):
+            check_in_range(value, lo, hi, subject=f"pl.range() {subject}", hint=hint)
 
     def _check_range_overflow(self, start: Any, stop: Any, step: Any, call: ast.Call) -> None:
         """Reject a loop whose variable would overflow its type on the final step."""

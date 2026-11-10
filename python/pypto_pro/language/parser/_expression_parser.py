@@ -113,7 +113,7 @@ class ExpressionParserMixin:
         if dtype.is_float():
             # Folding must not change a program's meaning: a result the dtype cannot represent would
             # otherwise become inf (or a wrapped integer, on the branch below) with no diagnostic.
-            check_fits_dtype(float(value), dtype, subject="float constant", span=span)
+            check_fits_dtype(float(value), dtype, subject="float constant")
             return ir.ConstFloat(float(value), dtype, span)
         return make_const_int(int(value), dtype, span=span)
 
@@ -212,9 +212,8 @@ class ExpressionParserMixin:
         try:
             # Publish where this expression was written, so anything raised while
             # parsing it reports that location even when it never passed a span of
-            # its own. The op dispatcher publishes a finer one (per argument) for
-            # the ops it handles, and an inner expression publishes over an outer
-            # one, so the innermost location still wins; this only fills the gaps
+            # its own. Nested expressions publish over their enclosing expression,
+            # so the innermost active location wins; this also covers paths
             # the dispatcher does not reach -- hand-written ``@op_impl`` handlers,
             # method calls, builtin min/max, subscripts.
             with current_span(self.span_tracker.get_span(expr)):
@@ -246,7 +245,9 @@ class ExpressionParserMixin:
             if _is_enum_value(value):
                 result = value
             else:
-                result = self.expr_evaluator.python_value_to_ir(value, self.span_tracker.get_span(expr))
+                span = self.span_tracker.get_span(expr)
+                with current_span(span):
+                    result = self.expr_evaluator.python_value_to_ir(value, span)
 
         if nested:
             result = self._materialize_nested_expr(result, self.span_tracker.get_span(expr))
@@ -335,7 +336,7 @@ class ExpressionParserMixin:
         elif isinstance(value, int):
             return make_const_int(value, span=span)
         elif isinstance(value, float):
-            check_fits_dtype(value, DataType.DEFAULT_CONST_FLOAT, subject="float constant", span=span)
+            check_fits_dtype(value, DataType.DEFAULT_CONST_FLOAT, subject="float constant")
             return ir.ConstFloat(value, DataType.DEFAULT_CONST_FLOAT, span)
         elif isinstance(value, str):
             return value
@@ -1204,7 +1205,6 @@ class ExpressionParserMixin:
         value: ir.Expr,
         kind: str,
         axis: int,
-        span: ir.Span,
         upper_bound: ir.Expr | None = None,
     ) -> int | None:
         """Validate an index or slice bound and return its static value when available."""
@@ -1212,7 +1212,6 @@ class ExpressionParserMixin:
         if not (isinstance(value_type, ir.ScalarType) and value_type.dtype.is_int()):
             raise InvalidType(
                 f"{kind} for axis {axis} must be an integer scalar, got {value_type}",
-                span=span,
                 parser_retry=True,
             )
 
@@ -1220,7 +1219,6 @@ class ExpressionParserMixin:
         if value_int is not None and value_int < 0:
             raise InvalidVal(
                 f"{kind} for axis {axis} must be non-negative, got {value_int}",
-                span=span,
                 hint="Use an index greater than or equal to 0; Tile and Tensor subscripts do not "
                 "support Python-style negative indexing",
             )
@@ -1229,7 +1227,6 @@ class ExpressionParserMixin:
         if value_int is not None and upper_value is not None and value_int >= upper_value:
             raise OutOfRange(
                 f"{kind} {value_int} for axis {axis} is out of range for dimension size {upper_value}",
-                span=span,
                 hint=f"Use an index in [0, {upper_value})",
                 parser_retry=True,
             )
@@ -1265,7 +1262,7 @@ class ExpressionParserMixin:
                     hint="Use A[i, j] for scalar access or A[x:, :] for sub-view",
                 )
             index = self.parse_expression(slice_node)
-            self._validate_subscript_value(index, "Subscript index", 0, span, shape[0])
+            self._validate_subscript_value(index, "Subscript index", 0, shape[0])
             return index
 
         # A[i, j, ...] — multi-dimensional coordinate
@@ -1281,7 +1278,7 @@ class ExpressionParserMixin:
         indices = [self.parse_expression(e) for e in elts]
 
         for axis, index in enumerate(indices):
-            self._validate_subscript_value(index, "Subscript index", axis, span, shape[axis])
+            self._validate_subscript_value(index, "Subscript index", axis, shape[axis])
 
         offset = indices[-1]
         stride = shape[-1]
@@ -1416,14 +1413,14 @@ class ExpressionParserMixin:
                     )
             start = ir.ConstInt(0, DataType.INT64, span) if s.lower is None else self.parse_expression(s.lower)
             dim_starts.append(start)
-            start_val = self._validate_subscript_value(start, "Tile slice start", i, span)
+            start_val = self._validate_subscript_value(start, "Tile slice start", i)
 
             # Compute slice size: upper - start (upper defaults to shape[i]).
             # Clamp upper to shape[i] (Python slice semantics): a[16:77] on a
             # length-64 dim becomes a[16:64], not an error.
             upper = shape[i] if s.upper is None else self.parse_expression(s.upper)
             shape_val = _const_int_value(shape[i])
-            upper_val = self._validate_subscript_value(upper, "Tile slice end", i, span)
+            upper_val = self._validate_subscript_value(upper, "Tile slice end", i)
             effective_upper_val = upper_val
             if shape_val is not None:
                 effective_upper_val = (

@@ -47,9 +47,20 @@ from pypto.pypto_impl.ir import (
 from pypto.pypto_impl.ir import TileType as _IRTileType  # IR-level TileType (C++ binding);
 from pypto_pro.ir._utils import (
     _const_int_value,
+    _const_int_values,
+    _const_scalar_value,
     _is_int,
+    _is_int_type,
+    _is_none,
+    _normalize_expr,
     _to_make_tuple,
+    require_const_bool,
     require_const_int,
+    require_const_int_list,
+    require_const_number,
+    require_dtype_in,
+    require_dtypes_match,
+    require_enum,
     require_int,
     require_scalar_dtype,
     unwrap_type,
@@ -69,8 +80,6 @@ from ..._errors import (
     OutOfRange,
     PyptoProError,
     _warn_located,
-    argument_span,
-    current_span,
     message_of,
 )
 
@@ -79,33 +88,20 @@ from ..._errors import (
 from ._op_registry import op_impl, op_impl_ast
 
 
-def _prepare_scale(self, kwargs):
-    scale = kwargs.get("scale")
-    if isinstance(getattr(scale, "type", None), _ir_core.NoneType):
-        kwargs["scale"] = None
-        return
+def _prepare_scale(scale: Expr | None) -> Expr | None:
+    if _is_none(scale):
+        return None
     if isinstance(scale, (_ir_core.ConstInt, _ir_core.ConstFloat, _ir_core.ConstBool)):
-        value = self.require_const_value(
-            scale, "scale", expects="number",
-            check=lambda value: isinstance(value, (int, float)) and not isinstance(value, bool),
-            hint="Use a numeric scale or a supported runtime scalar.",
+        value = require_const_number(scale, subject="'scale'")
+        scale = ConstInt(
+            _encode_deq_scalar(float(value)), DataType.UINT64, scale.span,
         )
-        kwargs["scale"] = ConstInt(
-            _encode_deq_scalar(float(value)), DataType.UINT64, argument_span("scale", scale.span),
-        )
-    _validate_scaling_tile(kwargs.get("scale"))
+    _validate_scaling_tile(scale)
+    return scale
 
 
-def _prepare_order(self, kwargs):
-    if "order" not in kwargs:
-        return
-    order = self.require_const_value(
-        kwargs["order"], "order", expects="integer list",
-        check=lambda value: isinstance(value, (list, tuple)) and all(_is_int(axis) for axis in value),
-        hint="order selects tensor axes at compile time; pass a constant list "
-        "(e.g. order=[1, 3]) or a variable bound to one, not a runtime value.",
-    )
-    kwargs["order"] = list(order)
+def _prepare_order(order: Expr | None) -> list[int] | None:
+    return None if order is None else require_const_int_list(order, subject="order")
 
 
 def _span() -> Span:
@@ -318,8 +314,8 @@ def _ir_binary_cast(
     # The fused multiply is computed in the source domain: both sources must
     # share one dtype (the out dtype differs by design -- it is target_type).
     lhs_dt = getattr(lhs.type, "dtype", None)
-    _check_dtype(op_name, lhs_dt, _CAST_BINARY_SRC_DTYPES[op_name])
-    _check_dtype_match(op_name, lhs_dt, getattr(rhs.type, "dtype", None))
+    require_dtype_in(lhs_dt, _CAST_BINARY_SRC_DTYPES[op_name], subject=op_name)
+    require_dtypes_match([getattr(rhs.type, "dtype", None)], lhs_dt, subject=op_name)
     out_dt = getattr(out.type, "dtype", None)
     if isinstance(target_type, DataType) and out_dt is not None and out_dt != target_type:
         raise InvalidType(
@@ -430,7 +426,7 @@ def _encode_deq_scalar(scale: float) -> int:
     return scale_bits
 
 
-def _resolve_scale_param(scale: Expr | None, span: Span) -> tuple[Expr | None, Expr | None]:
+def _resolve_scale_param(scale: Expr | None) -> tuple[Expr | None, Expr | None]:
     if scale is None:
         return None, None
     scale_type = getattr(scale, "type", None)
@@ -481,10 +477,9 @@ def _ir_store(
     if _src_mem is not None and _src_mem not in (_ir_core.MemorySpace.Vec, _ir_core.MemorySpace.Acc):
         raise InvalidOperation(f"{op_name}: src tile must be in Vec (UB) or Acc (L0C) memory, got {_src_mem.name}")
 
-    if phase is not None and not isinstance(phase, STPhase):
-        raise InvalidArgument(f"{op_name}: invalid phase value {phase!r}, expected STPhase")
-    if not isinstance(atomic, AtomicType):
-        raise InvalidType(f"{op_name}: invalid atomic value {atomic!r}, expected AtomicType")
+    if phase is not None:
+        require_enum(phase, STPhase, subject=f"{op_name}: phase")
+    require_enum(atomic, AtomicType, subject=f"{op_name}: atomic")
 
     tensor_ndim = len(dst_tensor.type.shape)
     tile_shape = list(src_tile.type.shape)
@@ -495,7 +490,7 @@ def _ir_store(
     _validate_nz_transfer_axes(dst_tensor.type, tile_dims, op_name)
     _validate_offsets(op_name, offsets_tuple.elements, dst_tensor.type.shape)
 
-    pre_quant_scalar, fp_tile = _resolve_scale_param(scale, actual_span)
+    pre_quant_scalar, fp_tile = _resolve_scale_param(scale)
     is_quant = pre_quant_scalar is not None or fp_tile is not None
     _check_layout_dtype(op_name, src_tile, dst_tensor, quant=is_quant)
     if relu_pre_mode is not None and _src_mem is not None and _src_mem != _ir_core.MemorySpace.Acc:
@@ -548,10 +543,9 @@ def _ir_store_tile(
     if _src_mem is not None and _src_mem not in (_ir_core.MemorySpace.Vec, _ir_core.MemorySpace.Acc):
         raise InvalidOperation(f"{op_name}: src tile must be in Vec (UB) or Acc (L0C) memory, got {_src_mem.name}")
 
-    if phase is not None and not isinstance(phase, STPhase):
-        raise InvalidArgument(f"{op_name}: invalid phase value {phase!r}, expected STPhase")
-    if not isinstance(atomic, AtomicType):
-        raise InvalidType(f"{op_name}: invalid atomic value {atomic!r}, expected AtomicType")
+    if phase is not None:
+        require_enum(phase, STPhase, subject=f"{op_name}: phase")
+    require_enum(atomic, AtomicType, subject=f"{op_name}: atomic")
 
     tensor_ndim = len(dst_tensor.type.shape)
     tile_shape = list(src_tile.type.shape)
@@ -570,7 +564,7 @@ def _ir_store_tile(
     )
     _validate_offsets(op_name, abs_offsets.elements, dst_tensor.type.shape)
 
-    pre_quant_scalar, fp_tile = _resolve_scale_param(scale, actual_span)
+    pre_quant_scalar, fp_tile = _resolve_scale_param(scale)
     is_quant = pre_quant_scalar is not None or fp_tile is not None
     _check_layout_dtype(op_name, src_tile, dst_tensor, quant=is_quant)
     if relu_pre_mode is not None and _src_mem is not None and _src_mem != _ir_core.MemorySpace.Acc:
@@ -613,7 +607,7 @@ def _check_init_output_count(name: str, expr: Expr) -> None:
     at CCE compile time as ``ptr + 1.5f``; reject it here with a span instead.
     """
     expr_type = getattr(expr, "type", None)
-    if isinstance(expr_type, _ir_core.ScalarType) and expr_type.dtype.is_int():
+    if _is_int_type(expr_type):
         return
     if isinstance(expr_type, _ir_core.ScalarType):
         got = f"a {expr_type.dtype} scalar"
@@ -669,7 +663,6 @@ def _ir_init_output(self,
     if self.target != _ir_core.SectionKind.Vector:
         raise InvalidOperation(
             "init_output must be called inside 'with pl.section_vector():'",
-            span=actual_span,
             hint="init_output is a Vector-pipe op; a sectionless kernel is shared by Cube and "
                  "Vector, which emits it into the Cube (AIC) target and fails to compile.",
         )
@@ -677,7 +670,7 @@ def _ir_init_output(self,
     if not isinstance(tensor.type, _ir_core.TensorType):
         raise InvalidVal(f"init_output: tensor must be a Tensor, got {type(tensor.type).__name__}")
     tensor_dtype = getattr(tensor.type, "dtype", None)
-    _check_dtype("init_output", tensor_dtype, _INIT_OUTPUT_DTYPES)
+    require_dtype_in(tensor_dtype, _INIT_OUTPUT_DTYPES, subject="init_output")
 
     offset_expr = ConstInt(0, DataType.INT64, actual_span) if offset is None else offset
     size_expr = size
@@ -691,7 +684,7 @@ def _ir_init_output(self,
     # value to check. Same policy as pl.expands, which lowers through TEXPANDS too.
     from pypto_pro.language.parser.diagnostics import check_const_expr_fits_dtype
 
-    check_const_expr_fits_dtype(value_expr, tensor_dtype, span=actual_span, api="pl.init_output")
+    check_const_expr_fits_dtype(value_expr, tensor_dtype, api="pl.init_output")
 
     return _ir_core.create_op_call(
         block_ir_op("init_output"),
@@ -709,8 +702,7 @@ def _tile_shape_ints(tile_type: "_IRTileType") -> list[int] | None:
     True/False dim would slip through ``isinstance(dim, int)`` as 1/0 and be
     compared as a real static dim.
     """
-    shape = [_const_int_value(dim) for dim in tile_type.shape]
-    return None if any(dim is None for dim in shape) else shape
+    return _const_int_values(tile_type.shape)
 
 
 def _check_move_shape_compat(
@@ -836,8 +828,8 @@ def _ir_move(
         if len(offset_tuple.elements) != 2:
             raise InvalidArgument("move: offset must contain exactly 2 elements")
 
-    if phase is not None and not isinstance(phase, STPhase):
-        raise InvalidArgument(f"move: invalid phase value {phase!r}, expected STPhase")
+    if phase is not None:
+        require_enum(phase, STPhase, subject="move: phase")
 
     if _maybe_dispatch_to_insert(dst_tile, src_tile, offset_tuple, acc_to_vec_mode):
         actual_offset = offset_tuple if offset_tuple is not None else [0, 0]
@@ -905,7 +897,7 @@ def _ir_move(
     if offset_tuple is not None:
         _validate_offsets("move", offset_tuple.elements, src_tile.type.shape)
 
-    pre_quant_scalar, fp_tile = _resolve_scale_param(scale, actual_span)
+    pre_quant_scalar, fp_tile = _resolve_scale_param(scale)
     if fp_tile is not None and (_src_mem, _dst_mem) not in {
         (MemorySpace.Acc, MemorySpace.Vec),
         (MemorySpace.Acc, MemorySpace.Mat),
@@ -974,8 +966,8 @@ def _ir_insert(
     phase: STPhase | None = None,
 ) -> Expr:
     actual_span = span or _span()
-    if phase is not None and not isinstance(phase, STPhase):
-        raise InvalidArgument(f"insert: invalid phase value {phase!r}, expected STPhase")
+    if phase is not None:
+        require_enum(phase, STPhase, subject="insert: phase")
 
     dst_mem = getattr(getattr(dst_tile.type, "memref", None), "memory_space_", None)
     src_mem = getattr(getattr(src_tile.type, "memref", None), "memory_space_", None)
@@ -988,7 +980,7 @@ def _ir_insert(
     if _is_fractal_transpose(_tile_layout(dst_tile.type), _tile_layout(src_tile.type)):
         dst_shape = dst_shape[::-1]
     _validate_offsets("insert", [row, col], dst_shape)
-    pre_quant_scalar, fp_tile = _resolve_scale_param(scale, actual_span)
+    pre_quant_scalar, fp_tile = _resolve_scale_param(scale)
     _check_layout_dtype("insert", src_tile, dst_tile, quant=pre_quant_scalar is not None or fp_tile is not None)
     _validate_transfer_offset_alignment("insert", "insert", src_tile, dst_tile, (row, col))
 
@@ -1007,93 +999,93 @@ def _ir_insert(
 
 def _ir_sel(out: Expr, mask: Expr, lhs: Expr, rhs: Expr, tmp: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("sel", dt, _SEL_DTYPES)
+    require_dtype_in(dt, _SEL_DTYPES, subject="sel")
     # AscendC SelectImpl enforces dst/src0/src1 to share one type via its
     # template; the byte-mask tile is intentionally not dtype-constrained.
-    _check_dtype_match("sel", dt, getattr(lhs.type, "dtype", None), getattr(rhs.type, "dtype", None))
+    require_dtypes_match([getattr(lhs.type, "dtype", None), getattr(rhs.type, "dtype", None)], dt, subject="sel")
     return _ir_core.create_op_call(block_ir_op("sel"), [out, mask, lhs, rhs, tmp], {}, span or _span())
 
 
 def _ir_sels(out: Expr, mask: Expr, src: Expr, tmp: Expr, scalar: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("sels", dt, _SEL_DTYPES)
-    _check_dtype_match("sels", dt, getattr(src.type, "dtype", None))
+    require_dtype_in(dt, _SEL_DTYPES, subject="sels")
+    require_dtypes_match([getattr(src.type, "dtype", None)], dt, subject="sels")
     actual_span = span or _span()
     from pypto_pro.language.parser.diagnostics import check_const_expr_fits_dtype
 
-    check_const_expr_fits_dtype(scalar, dt, span=actual_span, api="pl.select")
+    check_const_expr_fits_dtype(scalar, dt, api="pl.select")
     return _ir_core.create_op_call(block_ir_op("sels"), [out, mask, src, tmp, scalar], {}, actual_span)
 
 
 @op_impl("neg")
 def _ir_neg(self, out: Expr, src: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("neg", dt, _NEG_DTYPES)
-    _check_dtype_match("neg", dt, getattr(src.type, "dtype", None))
+    require_dtype_in(dt, _NEG_DTYPES, subject="neg")
+    require_dtypes_match([getattr(src.type, "dtype", None)], dt, subject="neg")
     return _ir_core.create_op_call(block_ir_op("neg"), [out, src], {}, span or _span())
 
 
 @op_impl("not_")
 def _ir_not(self, out: Expr, src: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("not", dt, _BITWISE_DTYPES)
-    _check_dtype_match("not", dt, getattr(src.type, "dtype", None))
+    require_dtype_in(dt, _BITWISE_DTYPES, subject="not")
+    require_dtypes_match([getattr(src.type, "dtype", None)], dt, subject="not")
     return _ir_core.create_op_call(block_ir_op("not"), [out, src], {}, span or _span())
 
 
 @op_impl("abs")
 def _ir_abs(self, out: Expr, src: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("abs", dt, _ABS_DTYPES)
-    _check_dtype_match("abs", dt, getattr(src.type, "dtype", None))
+    require_dtype_in(dt, _ABS_DTYPES, subject="abs")
+    require_dtypes_match([getattr(src.type, "dtype", None)], dt, subject="abs")
     return _ir_core.create_op_call(block_ir_op("abs"), [out, src], {}, span or _span())
 
 
 @op_impl("relu")
 def _ir_relu(self, out: Expr, src: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("relu", dt, _RELU_DTYPES)
-    _check_dtype_match("relu", dt, getattr(src.type, "dtype", None))
+    require_dtype_in(dt, _RELU_DTYPES, subject="relu")
+    require_dtypes_match([getattr(src.type, "dtype", None)], dt, subject="relu")
     return _ir_core.create_op_call(block_ir_op("relu"), [out, src], {}, span or _span())
 
 
 @op_impl("exp")
 def _ir_exp(self, out: Expr, src: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("exp", dt, _FLOAT_UNARY_DTYPES)
-    _check_dtype_match("exp", dt, getattr(src.type, "dtype", None))
+    require_dtype_in(dt, _FLOAT_UNARY_DTYPES, subject="exp")
+    require_dtypes_match([getattr(src.type, "dtype", None)], dt, subject="exp")
     return _ir_core.create_op_call(block_ir_op("exp"), [out, src], {}, span or _span())
 
 
 @op_impl("log")
 def _ir_log(self, out: Expr, src: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("log", dt, _FLOAT_UNARY_DTYPES)
-    _check_dtype_match("log", dt, getattr(src.type, "dtype", None))
+    require_dtype_in(dt, _FLOAT_UNARY_DTYPES, subject="log")
+    require_dtypes_match([getattr(src.type, "dtype", None)], dt, subject="log")
     return _ir_core.create_op_call(block_ir_op("log"), [out, src], {}, span or _span())
 
 
 @op_impl("sqrt")
 def _ir_sqrt(self, out: Expr, src: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("sqrt", dt, _FLOAT_UNARY_DTYPES)
-    _check_dtype_match("sqrt", dt, getattr(src.type, "dtype", None))
+    require_dtype_in(dt, _FLOAT_UNARY_DTYPES, subject="sqrt")
+    require_dtypes_match([getattr(src.type, "dtype", None)], dt, subject="sqrt")
     return _ir_core.create_op_call(block_ir_op("sqrt"), [out, src], {}, span or _span())
 
 
 @op_impl("rsqrt")
 def _ir_rsqrt(self, out: Expr, src: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("rsqrt", dt, _FLOAT_UNARY_DTYPES)
-    _check_dtype_match("rsqrt", dt, getattr(src.type, "dtype", None))
+    require_dtype_in(dt, _FLOAT_UNARY_DTYPES, subject="rsqrt")
+    require_dtypes_match([getattr(src.type, "dtype", None)], dt, subject="rsqrt")
     return _ir_core.create_op_call(block_ir_op("rsqrt"), [out, src], {}, span or _span())
 
 
 @op_impl("recip")
 def _ir_recip(self, out: Expr, src: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("recip", dt, _RECIP_DTYPES)
-    _check_dtype_match("recip", dt, getattr(src.type, "dtype", None))
+    require_dtype_in(dt, _RECIP_DTYPES, subject="recip")
+    require_dtypes_match([getattr(src.type, "dtype", None)], dt, subject="recip")
     return _ir_core.create_op_call(block_ir_op("recip"), [out, src], {}, span or _span())
 
 
@@ -1101,8 +1093,8 @@ def _ir_recip(self, out: Expr, src: Expr, *, span: Span | None = None) -> Expr:
 def _ir_axpy(self, out: Expr, src: Expr, alpha: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
     src_dt = getattr(src.type, "dtype", None)
-    _check_dtype("axpy", dt, _AXPY_DTYPES)
-    _check_dtype("axpy", src_dt, _AXPY_DTYPES)
+    require_dtype_in(dt, _AXPY_DTYPES, subject="axpy")
+    require_dtype_in(src_dt, _AXPY_DTYPES, subject="axpy")
     if dt != src_dt:
         if not (dt == DataType.FP32 and src_dt == DataType.FP16):
             raise InvalidType(
@@ -1114,23 +1106,23 @@ def _ir_axpy(self, out: Expr, src: Expr, alpha: Expr, *, span: Span | None = Non
     actual_span = span or _span()
     from pypto_pro.language.parser.diagnostics import check_const_expr_fits_dtype
 
-    check_const_expr_fits_dtype(alpha, dt, span=actual_span, api="pl.axpy")
+    check_const_expr_fits_dtype(alpha, dt, api="pl.axpy")
     return _ir_core.create_op_call(block_ir_op("axpy"), [out, src, alpha], {}, actual_span)
 
 
 @op_impl("add_relu")
 def _ir_add_relu(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("add_relu", dt, _RELU_DTYPES)
-    _check_dtype_match("add_relu", dt, getattr(lhs.type, "dtype", None), getattr(rhs.type, "dtype", None))
+    require_dtype_in(dt, _RELU_DTYPES, subject="add_relu")
+    require_dtypes_match([getattr(lhs.type, "dtype", None), getattr(rhs.type, "dtype", None)], dt, subject="add_relu")
     return _ir_core.create_op_call(block_ir_op("add_relu"), [out, lhs, rhs], {}, span or _span())
 
 
 @op_impl("sub_relu")
 def _ir_sub_relu(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("sub_relu", dt, _RELU_DTYPES)
-    _check_dtype_match("sub_relu", dt, getattr(lhs.type, "dtype", None), getattr(rhs.type, "dtype", None))
+    require_dtype_in(dt, _RELU_DTYPES, subject="sub_relu")
+    require_dtypes_match([getattr(lhs.type, "dtype", None), getattr(rhs.type, "dtype", None)], dt, subject="sub_relu")
     return _ir_core.create_op_call(block_ir_op("sub_relu"), [out, lhs, rhs], {}, span or _span())
 
 
@@ -1138,8 +1130,12 @@ def _ir_sub_relu(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = N
 def _ir_fused_mul_add(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None) -> Expr:
     # TMADD semantics: out = lhs * out + rhs (out is an in-place operand).
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("fused_mul_add", dt, _FLOAT_UNARY_DTYPES)
-    _check_dtype_match("fused_mul_add", dt, getattr(lhs.type, "dtype", None), getattr(rhs.type, "dtype", None))
+    require_dtype_in(dt, _FLOAT_UNARY_DTYPES, subject="fused_mul_add")
+    require_dtypes_match(
+        [getattr(lhs.type, "dtype", None), getattr(rhs.type, "dtype", None)],
+        dt,
+        subject="fused_mul_add",
+    )
     return _ir_core.create_op_call(block_ir_op("fused_mul_add"), [out, lhs, rhs], {}, span or _span())
 
 
@@ -1147,8 +1143,12 @@ def _ir_fused_mul_add(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | Non
 def _ir_fused_mul_add_relu(self, out: Expr, a: Expr, b: Expr, *, span: Span | None = None) -> Expr:
     # TMADD + ReLU fusion: out = relu(a * out + b).
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("fused_mul_add_relu", dt, _FLOAT_UNARY_DTYPES)
-    _check_dtype_match("fused_mul_add_relu", dt, getattr(a.type, "dtype", None), getattr(b.type, "dtype", None))
+    require_dtype_in(dt, _FLOAT_UNARY_DTYPES, subject="fused_mul_add_relu")
+    require_dtypes_match(
+        [getattr(a.type, "dtype", None), getattr(b.type, "dtype", None)],
+        dt,
+        subject="fused_mul_add_relu",
+    )
     return _ir_core.create_op_call(block_ir_op("fused_mul_add_relu"), [out, a, b], {}, span or _span())
 
 
@@ -1156,23 +1156,27 @@ def _ir_fused_mul_add_relu(self, out: Expr, a: Expr, b: Expr, *, span: Span | No
 def _ir_mul_add_dst(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None) -> Expr:
     # TMULA semantics: out = lhs * rhs + out (out is an in-place accumulator).
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("mul_add_dst", dt, _FLOAT_UNARY_DTYPES)
-    _check_dtype_match("mul_add_dst", dt, getattr(lhs.type, "dtype", None), getattr(rhs.type, "dtype", None))
+    require_dtype_in(dt, _FLOAT_UNARY_DTYPES, subject="mul_add_dst")
+    require_dtypes_match(
+        [getattr(lhs.type, "dtype", None), getattr(rhs.type, "dtype", None)],
+        dt,
+        subject="mul_add_dst",
+    )
     return _ir_core.create_op_call(block_ir_op("mul_add_dst"), [out, lhs, rhs], {}, span or _span())
 
 
 @op_impl("xor")
 def _ir_xor(self, out: Expr, lhs: Expr, rhs: Expr, tmp: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("xor", dt, _BITWISE_DTYPES)
+    require_dtype_in(dt, _BITWISE_DTYPES, subject="xor")
     if not isinstance(getattr(rhs, "type", None), _ir_core.TileType):
         from pypto_pro.language.parser.diagnostics import check_const_expr_fits_dtype
 
-        _check_dtype_match("xor", dt, getattr(lhs.type, "dtype", None))
-        check_const_expr_fits_dtype(rhs, dt, span=span, api="pl.xor")
+        require_dtypes_match([getattr(lhs.type, "dtype", None)], dt, subject="xor")
+        check_const_expr_fits_dtype(rhs, dt, api="pl.xor")
         # TXORS carries a trailing unused tmp operand in the pto-isa signature.
         return _ir_core.create_op_call(block_ir_op("xors"), [out, lhs, rhs, tmp], {}, span or _span())
-    _check_dtype_match("xor", dt, getattr(lhs.type, "dtype", None), getattr(rhs.type, "dtype", None))
+    require_dtypes_match([getattr(lhs.type, "dtype", None), getattr(rhs.type, "dtype", None)], dt, subject="xor")
     return _ir_core.create_op_call(block_ir_op("xor"), [out, lhs, rhs, tmp], {}, span or _span())
 
 
@@ -1181,38 +1185,31 @@ def _ir_expands(self, out: Expr, scalar: Expr, *, span: Span | None = None) -> E
     from pypto_pro.language.parser.diagnostics import check_const_expr_fits_dtype
 
     out_dtype = getattr(out.type, "dtype", None)
-    _check_dtype("expands", out_dtype, _EXPANDS_DTYPES)
+    require_dtype_in(out_dtype, _EXPANDS_DTYPES, subject="expands")
     # The splat value lands in the out tile, so it has to be representable there. Without this the
     # scalar was only bounded by the IR storage band, which is far wider than a narrow tile dtype.
-    check_const_expr_fits_dtype(scalar, out_dtype, span=span, api="pl.expands")
+    check_const_expr_fits_dtype(scalar, out_dtype, api="pl.expands")
     return _ir_core.create_op_call(block_ir_op("expands"), [out, scalar], {}, span or _span())
 
 
 @op_impl("row_sum")
 def _ir_row_sum(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(src.type, "dtype", None)
-    _check_dtype("row_sum", dt, _SUM_DTYPES)
-    _check_dtype_match("row_sum", getattr(out.type, "dtype", None), dt)
+    require_dtype_in(dt, _SUM_DTYPES, subject="row_sum")
+    require_dtypes_match([dt], getattr(out.type, "dtype", None), subject="row_sum")
     return _ir_core.create_op_call(block_ir_op("row_sum"), [out, src, tmp], {}, span or _span())
 
 
 @op_impl("col_sum")
 def _ir_col_sum(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(src.type, "dtype", None)
-    _check_dtype("col_sum", dt, _SUM_DTYPES)
-    _check_dtype_match("col_sum", getattr(out.type, "dtype", None), dt)
+    require_dtype_in(dt, _SUM_DTYPES, subject="col_sum")
+    require_dtypes_match([dt], getattr(out.type, "dtype", None), subject="col_sum")
     return _ir_core.create_op_call(block_ir_op("col_sum"), [out, src, tmp], {}, span or _span())
 
 
-def _validate_validshape_bounds(
-    tile: Expr,
-    valid_shape: Sequence[Expr],
-) -> None:
-    """Validate that a Tile supports runtime valid-shape updates and that dimensions are in bounds.
-
-    Each dimension must be an integer scalar. Bounds are checked when the value
-    is constant; upper bounds also require a constant tile dimension.
-    """
+def _validate_validshape_bounds(tile: Expr, valid_shape: Sequence[Expr]) -> None:
+    """Check each valid dimension against the tile's static bounds when available."""
     tile_type = getattr(tile, "type", None)
     if isinstance(tile_type, _IRTileType) and tile_type.tile_view is not None:
         if any(isinstance(dim, ConstInt) and dim.value != -1 for dim in tile_type.tile_view.valid_shape):
@@ -1223,9 +1220,10 @@ def _validate_validshape_bounds(
 
     for i, (dim_name, dim) in enumerate(zip(("row", "col"), valid_shape, strict=True)):
         upper_bound = _const_int_value(tile_type.shape[i]) if isinstance(tile_type, _IRTileType) else None
-        with current_span(argument_span("shape", getattr(dim, "span", None))):
-            # Zero denotes an empty valid region, e.g. a fillpad source.
-            require_int(dim, subject=f"set_validshape {dim_name}", lower_bound=0, upper_bound=upper_bound)
+        # Zero denotes an empty valid region, e.g. a fillpad source.
+        require_int(
+            dim, subject=f"set_validshape {dim_name}", lower_bound=0, upper_bound=upper_bound,
+        )
 
 
 def _ir_set_validshape(
@@ -1240,7 +1238,7 @@ def _ir_set_validshape(
     return _ir_core.create_op_call(block_ir_op("set_validshape"), [tile, shape_0, shape_1], {}, actual_span)
 
 
-def _check_scalar_access_supported(op_name: str, container: Expr, span: Span) -> None:
+def _check_scalar_access_supported(op_name: str, container: Expr) -> None:
     """Validate the container constraints for scalar getval/setval access."""
     tile_type = container.type
     if isinstance(tile_type, _IRTileType):
@@ -1250,12 +1248,11 @@ def _check_scalar_access_supported(op_name: str, container: Expr, span: Span) ->
 
             raise InvalidOperation(
                 f"{op_name}: Tile element access requires a Vec-memory Tile (UB), got {memory_space.name}",
-                span=span,
                 parser_retry=True,
             )
 
     require_scalar_dtype(
-        container.type.dtype, subject=f"{op_name} does not support container", span=span,
+        container.type.dtype, subject=f"{op_name} does not support container",
     )
 
 
@@ -1422,20 +1419,6 @@ def _build_store_kwargs(
     if phase is not None:
         kwargs["phase"] = phase
     return kwargs
-
-
-def _check_dtype(op_name: str, dtype: DataType | None, allowed: tuple[DataType, ...]) -> None:
-    if dtype is not None and dtype not in allowed:
-        allowed_names = ", ".join(str(d) for d in allowed)
-        raise InvalidType(
-            f"{op_name}: unsupported dtype {dtype}, supported: {allowed_names}"
-        )
-
-
-def _check_dtype_match(op_name: str, dt: DataType | None, *others: DataType | None) -> None:
-    for i, other in enumerate(others):
-        if other is not None and other != dt:
-            raise InvalidType(f"{op_name}: dtype mismatch between arg0 ({dt}) and arg{i + 1} ({other})")
 
 
 # Per-op supported dtype sets (aligned with ISA static_assert constraints)
@@ -1608,12 +1591,11 @@ def _ir_getval(
 
         raise InvalidVal(
             f"getval: 'container' must be a Tile or Tensor, got {type(_ctype).__name__}",
-            span=actual_span,
             hint="getval reads a scalar from a Tile/Tensor slot; to access a struct/tiling "
             "field, use attribute access (e.g. tiling.axis1) instead.",
             parser_retry=True,
         )
-    _check_scalar_access_supported("getval", container, actual_span)
+    _check_scalar_access_supported("getval", container)
     kwargs = {"preserve_dtype": True} if preserve_dtype else {}
     return _ir_core.create_op_call(block_ir_op("getval"), [container, offset], kwargs, actual_span)
 
@@ -1625,15 +1607,14 @@ def _ir_setval(container: Expr, offset: Expr, value: Expr, *, span: Span | None 
 
         raise InvalidVal(
             f"setval: 'container' must be a Tile or Tensor, got {type(_ctype).__name__}",
-            span=actual_span,
             hint="setval writes a scalar into a Tile/Tensor slot; to write a struct/tiling "
             "field, use attribute assignment (e.g. tiling.axis1 = ...) instead.",
             parser_retry=True,
         )
-    _check_scalar_access_supported("setval", container, actual_span)
+    _check_scalar_access_supported("setval", container)
     from pypto_pro.language.parser.diagnostics import check_const_expr_fits_dtype
 
-    check_const_expr_fits_dtype(value, container.type.dtype, span=actual_span, api="pl.setval")
+    check_const_expr_fits_dtype(value, container.type.dtype, api="pl.setval")
     return _ir_core.create_op_call(block_ir_op("setval"), [container, offset, value], {}, actual_span)
 
 
@@ -1766,26 +1747,32 @@ def _ir_mul_cast(self,
 
 def _ir_cmp(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, cmp_mode: int | Expr = 0) -> Expr:
     dt = getattr(lhs.type, "dtype", None)
-    _check_dtype("cmp", dt, _CMP_DTYPES)
-    _check_dtype_match("cmp", dt, getattr(rhs.type, "dtype", None))
+    require_dtype_in(dt, _CMP_DTYPES, subject="cmp")
+    require_dtypes_match([getattr(rhs.type, "dtype", None)], dt, subject="cmp")
+    if _is_int(cmp_mode):
+        cmp_mode = _normalize_expr(cmp_mode, span)
+    cmp_mode = require_const_int(cmp_mode, subject="cmp_mode")
     return _ir_core.create_op_call(
         block_ir_op("cmp"),
         [out, lhs, rhs],
-        {"cmp_mode": require_const_int(cmp_mode, subject="cmp_mode")},
+        {"cmp_mode": cmp_mode},
         span or _span(),
     )
 
 
 def _ir_cmps(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, cmp_mode: int | Expr = 0) -> Expr:
     dt = getattr(lhs.type, "dtype", None)
-    _check_dtype("cmps", dt, _CMP_DTYPES)
+    require_dtype_in(dt, _CMP_DTYPES, subject="cmps")
     from pypto_pro.language.parser.diagnostics import check_const_expr_fits_dtype
 
-    check_const_expr_fits_dtype(rhs, dt, span=span, api="pl.cmps")
+    check_const_expr_fits_dtype(rhs, dt, api="pl.cmps")
+    if _is_int(cmp_mode):
+        cmp_mode = _normalize_expr(cmp_mode, span)
+    cmp_mode = require_const_int(cmp_mode, subject="cmp_mode")
     return _ir_core.create_op_call(
         block_ir_op("cmps"),
         [out, lhs, rhs],
-        {"cmp_mode": require_const_int(cmp_mode, subject="cmp_mode")},
+        {"cmp_mode": cmp_mode},
         span or _span(),
     )
 
@@ -1822,14 +1809,14 @@ def _ir_quant(self,
 ) -> Expr:
     # 3510 TQUANT: INT8_SYM converts FP32→INT8, INT8_ASYM converts FP32→UINT8;
     # both consume FP32 scale/offset tiles.
-    _check_dtype("quant", getattr(src.type, "dtype", None), (DataType.FP32,))
-    _check_dtype("quant", getattr(scale.type, "dtype", None), (DataType.FP32,))
+    require_dtype_in(getattr(src.type, "dtype", None), (DataType.FP32,), subject="quant")
+    require_dtype_in(getattr(scale.type, "dtype", None), (DataType.FP32,), subject="quant")
     if mode == QuantMode.SYM:
-        _check_dtype("quant", getattr(out.type, "dtype", None), (DataType.INT8,))
+        require_dtype_in(getattr(out.type, "dtype", None), (DataType.INT8,), subject="quant")
     elif mode == QuantMode.ASYM:
-        _check_dtype("quant", getattr(out.type, "dtype", None), (DataType.UINT8,))
+        require_dtype_in(getattr(out.type, "dtype", None), (DataType.UINT8,), subject="quant")
         if offset is not None:
-            _check_dtype("quant", getattr(offset.type, "dtype", None), (DataType.FP32,))
+            require_dtype_in(getattr(offset.type, "dtype", None), (DataType.FP32,), subject="quant")
     ins = [out, src, scale]
     if mode == QuantMode.ASYM:
         if offset is None:
@@ -1841,21 +1828,21 @@ def _ir_quant(self,
 @op_impl("dequant")
 def _ir_dequant(self, out: Expr, src: Expr, scale: Expr, offset: Expr, *, span: Span | None = None) -> Expr:
     # 3510 TDEQUANT: FP32 output from INT8/INT16 sources with FP32 scale/offset tiles.
-    _check_dtype("dequant", getattr(out.type, "dtype", None), (DataType.FP32,))
-    _check_dtype("dequant", getattr(src.type, "dtype", None), (DataType.INT8, DataType.INT16))
-    _check_dtype("dequant", getattr(scale.type, "dtype", None), (DataType.FP32,))
-    _check_dtype("dequant", getattr(offset.type, "dtype", None), (DataType.FP32,))
+    require_dtype_in(getattr(out.type, "dtype", None), (DataType.FP32,), subject="dequant")
+    require_dtype_in(getattr(src.type, "dtype", None), (DataType.INT8, DataType.INT16), subject="dequant")
+    require_dtype_in(getattr(scale.type, "dtype", None), (DataType.FP32,), subject="dequant")
+    require_dtype_in(getattr(offset.type, "dtype", None), (DataType.FP32,), subject="dequant")
     return _ir_core.create_op_call(block_ir_op("dequant"), [out, src, scale, offset], {}, span or _span())
 
 
 @op_impl("ssbuf_store")
-def _ir_ssbuf_store(self, *args: Expr, span: Span | None = None) -> Expr:
-    return _ir_core.create_op_call(block_ir_op("ssbuf_store"), list(args), {}, span or _span())
+def _ir_ssbuf_store(self, struct_var: Expr, offset: Expr, /, *, span: Span | None = None) -> Expr:
+    return _ir_core.create_op_call(block_ir_op("ssbuf_store"), [struct_var, offset], {}, span or _span())
 
 
 @op_impl("ssbuf_load")
-def _ir_ssbuf_load(self, *args: Expr, span: Span | None = None) -> Expr:
-    return _ir_core.create_op_call(block_ir_op("ssbuf_load"), list(args), {}, span or _span())
+def _ir_ssbuf_load(self, struct_var: Expr, offset: Expr, /, *, span: Span | None = None) -> Expr:
+    return _ir_core.create_op_call(block_ir_op("ssbuf_load"), [struct_var, offset], {}, span or _span())
 
 
 _LAYOUT_TO_BS: dict[Layout, tuple[int, int]] = {
@@ -1945,7 +1932,8 @@ def _static_last_axis(shape: "Sequence[int] | _ir_core.MakeTuple") -> "int | Non
     dims = shape.elements if isinstance(shape, _ir_core.MakeTuple) else shape
     if not dims:
         return None
-    return _const_int_value(dims[-1])
+    last = dims[-1]
+    return last if _is_int(last) else _const_int_value(last)
 
 
 def _validate_subbyte_tile_shape(tt: "TileType") -> None:
@@ -3770,8 +3758,8 @@ def tile_slot_size(shape: "Sequence[int] | _ir_core.MakeTuple", dtype: DataType)
     integers.
     """
     dims = list(shape.elements) if isinstance(shape, _ir_core.MakeTuple) else list(shape)
-    static_dims = [_const_int_value(dim) for dim in dims]
-    if any(dim is None for dim in static_dims):
+    static_dims = _const_shape_ints(dims)
+    if static_dims is None:
         raise DynamicShapeUnsupported(f"tile shape must contain compile-time integers, got {dims}")
     if any(dim <= 0 for dim in static_dims):
         raise InvalidShape(f"tile shape dimensions must be positive, got {static_dims}")
@@ -3781,16 +3769,13 @@ def tile_slot_size(shape: "Sequence[int] | _ir_core.MakeTuple", dtype: DataType)
     return (elems * int(dtype.get_bit()) + 7) // 8
 
 
-def _const_shape_ints(shape) -> "list[int] | None":
-    """Extract compile-time ints from a tile shape (list/tuple or MakeTuple of ConstInt).
-
-    Returns None when any element is not a compile-time integer constant.
-    """
+def _const_shape_ints(shape) -> list[int] | None:
+    """Read descriptor dimensions represented by Python ints or IR constants."""
     values = shape.elements if isinstance(shape, _ir_core.MakeTuple) else shape
     if not isinstance(values, (list, tuple)):
         return None
-    ints = [_const_int_value(value) for value in values]
-    return None if any(value is None for value in ints) else ints
+    dims = [value if _is_int(value) else _const_int_value(value) for value in values]
+    return None if any(value is None for value in dims) else dims
 
 
 # Tile config constants, mirrored from pto_tile.hpp TileConfig.
@@ -4050,8 +4035,8 @@ def make_mutex_tile_expr(
                 "Use a static positive shape in pl.TileType.",
                 span=span,
             ) from exc
-    addr = require_const_int(addr, subject="make_mutex_tile_expr addr")
-    size = require_const_int(size, subject="make_mutex_tile_expr size")
+    addr = _descriptor_integer(addr, "make_mutex_tile_expr addr")
+    size = _descriptor_integer(size, "make_mutex_tile_expr size")
     _validate_tile_addr_alignment(addr, target_memory, span)
     _validate_tile_addr_capacity(addr, size, target_memory, span)
     global mem_id
@@ -4069,9 +4054,16 @@ def make_mutex_tile_expr(
 
 # Keep AST registration: parse shape dimensions without materializing the outer
 # list/tuple as runtime IR, which would introduce unnecessary tuple anchors.
+def _descriptor_integer(value, subject: str) -> int:
+    """Decode a constant in the legacy descriptor parser, which owns Python values."""
+    constant = _const_scalar_value(value)
+    if not _is_int(constant):
+        raise InvalidType(f"{subject} must be a compile-time integer constant")
+    return constant
+
+
 @op_impl_ast("TileType")
 def _parse_tile_type(self, call: ast.Call):
-    span = self.span_tracker.get_span(call)
     kwargs = {}
     for keyword in call.keywords:
         node = keyword.value
@@ -4079,42 +4071,42 @@ def _parse_tile_type(self, call: ast.Call):
             kwargs[keyword.arg] = [self.parse_expression(element) for element in node.elts]
         else:
             kwargs[keyword.arg] = self.parse_expression(node)
-    self._check_declared_types("TileType", [], kwargs, span, self.span_tracker.argument_spans(call))
-    shape_hint = (
-        "TileType shape/valid_shape must contain compile-time constants; "
-        "use pl.set_validshape() for a runtime valid shape."
-    )
+    self._check_declared_types("TileType", [], kwargs)
     for key, value in kwargs.items():
-        is_shape = key in ("shape", "valid_shape")
-        elements = getattr(value, "elements", value)
-        if is_shape and isinstance(elements, (list, tuple)):
-            shape_node = next(keyword.value for keyword in call.keywords if keyword.arg == key)
-            element_nodes = (
-                shape_node.elts if isinstance(shape_node, (ast.List, ast.Tuple)) else [shape_node] * len(elements)
-            )
-            element_spans = {
-                f"{key}[{index}]": self.span_tracker.get_span(node) for index, node in enumerate(element_nodes)
-            }
-            with current_span(span, element_spans):
-                kwargs[key] = [self.require_const_value(
-                    element, f"{key}[{index}]", expects="integer", check=_is_int, hint=shape_hint,
-                ) for index, element in enumerate(elements)]
-        else:
-            kwargs[key] = self.require_const_value(
-                value, key, expects="integer list" if is_shape else "value",
-                hint=shape_hint if is_shape else "TileType attributes must be known at compile time.",
-            )
+        if _is_none(value):
+            kwargs[key] = None
+        elif key in ("shape", "valid_shape"):
+            elements = getattr(value, "elements", value)
+            try:
+                if not isinstance(elements, (list, tuple)):
+                    raise InvalidType(f"{key} must be a list or tuple")
+                dimensions = []
+                for index, element in enumerate(elements):
+                    dimensions.append(_descriptor_integer(element, f"{key}[{index}]"))
+                kwargs[key] = dimensions
+            except InvalidType as error:
+                error.hint = (
+                    "TileType shape/valid_shape must contain compile-time constants; "
+                    "use pl.set_validshape() for a runtime valid shape."
+                )
+                raise
+        elif key in ("fractal", "compact", "pad"):
+            if key != "pad" or not isinstance(value, TilePad):
+                kwargs[key] = _descriptor_integer(value, key)
     return TileType(**kwargs)
 
 
 @op_impl("make_tile")
 def _build_make_tile(self, tile_type, /, *, addr, span: Span) -> Expr:
     kwargs = vars(tile_type).copy()
-    kwargs["addr"] = self.require_const_value(
-        addr, "addr", expects="integer", check=_is_int,
-        hint="addr is fixed while parsing; pass a literal, or a variable bound to "
-        "literals/constants — not a runtime value such as a tensor shape or loop index",
-    )
+    try:
+        kwargs["addr"] = require_const_int(addr, subject="'addr'")
+    except InvalidType as error:
+        error.hint = (
+            "addr is fixed while parsing; pass a literal, or a variable bound to "
+            "literals/constants — not a runtime value such as a tensor shape or loop index"
+        )
+        raise
     tile = make_mutex_tile_expr(**kwargs, span=span)
     self._record_tile_high_water(tile)
     return tile
@@ -4144,12 +4136,11 @@ def _ir_reinterpret(
     """Keep the runtime source explicit; the backend binds its current address."""
     actual_span = span or _span()
     if not isinstance(src.type, _IRTileType):
-        raise InvalidType(f"reinterpret: expected a Tile, got {type(src.type).__name__}", span=span)
+        raise InvalidType(f"reinterpret: expected a Tile, got {type(src.type).__name__}")
     source_type = src.type
     if source_type.memref is None:
         raise InvalidArgument(
             "reinterpret: source tile has no MemRef (bind it with pl.make_tile first)",
-            span=span,
         )
     new_shape = list(shape) if shape is not None else _static_shape_ints(source_type.shape, "reinterpret: source")
     new_dtype = dtype if dtype is not None else source_type.dtype
@@ -4169,18 +4160,19 @@ def _ir_reinterpret(
 
 
 @op_impl("reinterpret")
-def _build_reinterpret(self, src: Expr, /, *, span: Span, **kwargs) -> Expr:
+def _build_reinterpret(
+    self, tile: Expr, /, *, dtype: DataType | None = None, shape: Expr | None = None,
+    layout: TensorLayout | None = None, span: Span,
+) -> Expr:
+    kwargs = {"dtype": dtype, "shape": shape, "layout": layout}
     for key, value in kwargs.items():
-        if isinstance(getattr(value, "type", None), _ir_core.NoneType):
+        if _is_none(value):
             kwargs[key] = None
 
     new_shape = kwargs.get("shape")
-    shape_span = argument_span("shape", getattr(new_shape, "span", span))
     if new_shape is not None:
-        new_shape = self.require_const_value(
-            new_shape, "shape", expects="integer list",
-            hint="Use a constant shape; use pl.set_validshape() for runtime windows.",
-            error=InvalidShape,
+        new_shape = require_const_int_list(
+            new_shape, subject="shape", min_length=1,
         )
         kwargs["shape"] = new_shape
 
@@ -4193,30 +4185,20 @@ def _build_reinterpret(self, src: Expr, /, *, span: Span, **kwargs) -> Expr:
     if kwargs.get("dtype") is not None and kwargs.get("shape") is None:
         raise InvalidShape(
             "pl.reinterpret() 'shape' is required when 'dtype' changes",
-            span=argument_span("dtype", span),
             hint="state the new element count explicitly: pl.reinterpret(tile, dtype=..., shape=[rows, cols])",
-        )
-
-    if new_shape is not None and not (
-        isinstance(new_shape, (list, tuple)) and len(new_shape) > 0 and all(_is_int(d) for d in new_shape)
-    ):
-        raise InvalidShape(
-            "pl.reinterpret() 'shape' must be a non-empty list of compile-time integers",
-            span=shape_span,
-            hint="e.g. shape=[32, 128]; runtime shapes are not supported — use pl.set_validshape() for runtime windows",
         )
 
     # All override args are validated once above, before dispatch: neither the
     # tile branch nor the tile_group branch re-validates them. The "is a Tile"
     # check lives in _ir_reinterpret, which both branches go through.
-    if self.is_tile_group(src):
-        return self._build_reinterpreted_group(src, kwargs, span)
+    if self.is_tile_group(tile):
+        return self._build_reinterpreted_group(tile, kwargs, span)
 
-    new_tile = _ir_reinterpret(src, shape=new_shape, dtype=kwargs.get("dtype"), layout=kwargs.get("layout"), span=span)
+    new_tile = _ir_reinterpret(tile, shape=new_shape, dtype=kwargs.get("dtype"), layout=kwargs.get("layout"), span=span)
 
     # The reinterpreted tile aliases the same buffer, so it inherits the source's
     # group origin (same propagation pattern as GetItemExpr in _expression_parser).
-    self._transfer_tile_group_metadata(new_tile, src)
+    self._transfer_tile_group_metadata(new_tile, tile)
     return new_tile
 
 
@@ -4388,7 +4370,7 @@ def _create_tile_scalar_op(
 
         target_op = block_ir_op(scalar_op)
         out_dtype = getattr(getattr(out, "type", None), "dtype", None)
-        check_const_expr_fits_dtype(rhs, out_dtype, span=span, api=f"pl.{tile_op}")
+        check_const_expr_fits_dtype(rhs, out_dtype, api=f"pl.{tile_op}")
     return _ir_core.create_op_call(target_op, [out, lhs, rhs], kwargs, span)
 
 
@@ -4396,8 +4378,9 @@ def _create_dim_op(
     args: list[Expr], *, row_op: str, col_op: str, dim: int | Expr = 0, span: Span | None = None,
 ) -> Expr:
     """Dispatch to row-wise or col-wise IR op based on dim."""
-    with current_span(argument_span("dim", span)):
-        dim = require_const_int(dim, subject="'dim'", lower_bound=0, upper_bound=1)
+    if _is_int(dim):
+        dim = _normalize_expr(dim, span)
+    dim = require_const_int(dim, subject="'dim'", lower_bound=0, upper_bound=1)
     op_name = col_op.removeprefix("col_")
     src_dtype = getattr(getattr(args[1], "type", None), "dtype", None)
     dtype_sets = _DIM_REDUCE_DTYPES.get(op_name)
@@ -4467,8 +4450,8 @@ def _ir_ge(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None) -
 @op_impl("sum")
 def _ir_sum(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
-    _check_dtype("sum", dt, _SUM_DTYPES)
-    _check_dtype_match("sum", getattr(out.type, "dtype", None), dt)
+    require_dtype_in(dt, _SUM_DTYPES, subject="sum")
+    require_dtypes_match([dt], getattr(out.type, "dtype", None), subject="sum")
     return _create_dim_op([out, src, tmp], row_op="row_sum", col_op="col_sum", dim=dim, span=span)
 
 
@@ -4477,7 +4460,7 @@ def _ir_prod(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None,
     # TROWPROD and TCOLPROD admit different dtype sets on 3510; validate per dim
     # (TROWPROD: half/float/int16/int32; TCOLPROD adds uint16/uint32/bfloat16).
     dt = getattr(src.type, "dtype", None)
-    _check_dtype_match("prod", getattr(out.type, "dtype", None), dt)
+    require_dtypes_match([dt], getattr(out.type, "dtype", None), subject="prod")
     return _create_dim_op([out, src, tmp], row_op="row_prod", col_op="col_prod", dim=dim, span=span)
 
 
@@ -4485,8 +4468,8 @@ def _ir_prod(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None,
 def _ir_argmax(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     # 3510 TROWARGMAX/TROWARGMIN (3-arg idx-only form): half/float source,
     # 32-bit index destination.
-    _check_dtype("argmax", getattr(src.type, "dtype", None), _FLOAT_UNARY_DTYPES)
-    _check_dtype("argmax", getattr(out.type, "dtype", None), _ARG_IDX32_DTYPES)
+    require_dtype_in(getattr(src.type, "dtype", None), _FLOAT_UNARY_DTYPES, subject="argmax")
+    require_dtype_in(getattr(out.type, "dtype", None), _ARG_IDX32_DTYPES, subject="argmax")
     return _create_dim_op([out, src, tmp], row_op="row_argmax", col_op="col_argmax", dim=dim, span=span)
 
 
@@ -4494,8 +4477,8 @@ def _ir_argmax(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = Non
 def _ir_argmin(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     # 3510 TROWARGMIN/TCOLARGMIN (3-arg idx-only form): half/float source,
     # 32-bit index destination.
-    _check_dtype("argmin", getattr(src.type, "dtype", None), _FLOAT_UNARY_DTYPES)
-    _check_dtype("argmin", getattr(out.type, "dtype", None), _ARG_IDX32_DTYPES)
+    require_dtype_in(getattr(src.type, "dtype", None), _FLOAT_UNARY_DTYPES, subject="argmin")
+    require_dtype_in(getattr(out.type, "dtype", None), _ARG_IDX32_DTYPES, subject="argmin")
     return _create_dim_op([out, src, tmp], row_op="row_argmin", col_op="col_argmin", dim=dim, span=span)
 
 
@@ -4558,48 +4541,48 @@ def _build_col_expand_mul(self, out: Expr, src: Expr, col_vec: Expr, *, span: Sp
 @op_impl("expand_max")
 def _ir_expand_max(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
-    _check_dtype("expand_max", dt, _ROW_EXPAND_DTYPES)
-    _check_dtype_match("expand_max", dt, getattr(out.type, "dtype", None))
+    require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_max")
+    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_max")
     return _create_dim_op([out, src, scalar], row_op="row_expand_max", col_op="col_expand_max", dim=dim, span=span)
 
 
 @op_impl("expand_min")
 def _ir_expand_min(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
-    _check_dtype("expand_min", dt, _ROW_EXPAND_DTYPES)
-    _check_dtype_match("expand_min", dt, getattr(out.type, "dtype", None))
+    require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_min")
+    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_min")
     return _create_dim_op([out, src, scalar], row_op="row_expand_min", col_op="col_expand_min", dim=dim, span=span)
 
 
 @op_impl("expand_mul")
 def _ir_expand_mul(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
-    _check_dtype("expand_mul", dt, _ROW_EXPAND_DTYPES)
-    _check_dtype_match("expand_mul", dt, getattr(out.type, "dtype", None))
+    require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_mul")
+    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_mul")
     return _create_dim_op([out, src, scalar], row_op="row_expand_mul", col_op="col_expand_mul", dim=dim, span=span)
 
 
 @op_impl("expand_sub")
 def _ir_expand_sub(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
-    _check_dtype("expand_sub", dt, _ROW_EXPAND_DTYPES)
-    _check_dtype_match("expand_sub", dt, getattr(out.type, "dtype", None))
+    require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_sub")
+    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_sub")
     return _create_dim_op([out, src, scalar], row_op="row_expand_sub", col_op="col_expand_sub", dim=dim, span=span)
 
 
 @op_impl("expand_div")
 def _ir_expand_div(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
-    _check_dtype("expand_div", dt, _ROW_EXPAND_DTYPES)
-    _check_dtype_match("expand_div", dt, getattr(out.type, "dtype", None))
+    require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_div")
+    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_div")
     return _create_dim_op([out, src, scalar], row_op="row_expand_div", col_op="col_expand_div", dim=dim, span=span)
 
 
 @op_impl("expand_add")
 def _ir_expand_add(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
-    _check_dtype("expand_add", dt, _ROW_EXPAND_DTYPES)
-    _check_dtype_match("expand_add", dt, getattr(out.type, "dtype", None))
+    require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_add")
+    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_add")
     return _create_dim_op([out, src, scalar], row_op="row_expand_add", col_op="col_expand_add", dim=dim, span=span)
 
 
@@ -4609,8 +4592,8 @@ def _ir_expand_expdif(
 ) -> Expr:
     # TROWEXPANDEXPDIF/TCOLEXPANDEXPDIF only provide half/float variants.
     dt = getattr(src.type, "dtype", None)
-    _check_dtype("expand_expdif", dt, _FLOAT_UNARY_DTYPES)
-    _check_dtype_match("expand_expdif", dt, getattr(out.type, "dtype", None))
+    require_dtype_in(dt, _FLOAT_UNARY_DTYPES, subject="expand_expdif")
+    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_expdif")
     return _create_dim_op(
         [out, src, scalar], row_op="row_expand_expdif", col_op="col_expand_expdif", dim=dim, span=span
     )
@@ -4623,24 +4606,24 @@ def _ir_expand_expdif(
 @op_impl("partadd")
 def _ir_partadd(self, out: Expr, src0: Expr, src1: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("partadd", dt, _BINARY_DTYPES)
-    _check_dtype_match("partadd", dt, getattr(src0.type, "dtype", None), getattr(src1.type, "dtype", None))
+    require_dtype_in(dt, _BINARY_DTYPES, subject="partadd")
+    require_dtypes_match([getattr(src0.type, "dtype", None), getattr(src1.type, "dtype", None)], dt, subject="partadd")
     return _ir_core.create_op_call(block_ir_op("partadd"), [out, src0, src1], {}, span or _span())
 
 
 @op_impl("partmax")
 def _ir_partmax(self, out: Expr, src0: Expr, src1: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("partmax", dt, _BINARY_DTYPES)
-    _check_dtype_match("partmax", dt, getattr(src0.type, "dtype", None), getattr(src1.type, "dtype", None))
+    require_dtype_in(dt, _BINARY_DTYPES, subject="partmax")
+    require_dtypes_match([getattr(src0.type, "dtype", None), getattr(src1.type, "dtype", None)], dt, subject="partmax")
     return _ir_core.create_op_call(block_ir_op("partmax"), [out, src0, src1], {}, span or _span())
 
 
 @op_impl("partmin")
 def _ir_partmin(self, out: Expr, src0: Expr, src1: Expr, *, span: Span | None = None) -> Expr:
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("partmin", dt, _BINARY_DTYPES)
-    _check_dtype_match("partmin", dt, getattr(src0.type, "dtype", None), getattr(src1.type, "dtype", None))
+    require_dtype_in(dt, _BINARY_DTYPES, subject="partmin")
+    require_dtypes_match([getattr(src0.type, "dtype", None), getattr(src1.type, "dtype", None)], dt, subject="partmin")
     return _ir_core.create_op_call(block_ir_op("partmin"), [out, src0, src1], {}, span or _span())
 
 
@@ -4648,29 +4631,38 @@ def _ir_partmin(self, out: Expr, src0: Expr, src1: Expr, *, span: Span | None = 
 def _ir_partmul(self, out: Expr, src0: Expr, src1: Expr, *, span: Span | None = None) -> Expr:
     # TPARTMUL (3510) has no 8-bit variants.
     dt = getattr(out.type, "dtype", None)
-    _check_dtype("partmul", dt, _MUL_DTYPES)
-    _check_dtype_match("partmul", dt, getattr(src0.type, "dtype", None), getattr(src1.type, "dtype", None))
+    require_dtype_in(dt, _MUL_DTYPES, subject="partmul")
+    require_dtypes_match([getattr(src0.type, "dtype", None), getattr(src1.type, "dtype", None)], dt, subject="partmul")
     return _ir_core.create_op_call(block_ir_op("partmul"), [out, src0, src1], {}, span or _span())
 
 
 @op_impl("gather")
-def _ir_gather(self, out: Expr, src: Expr, indices_or_k_value: Expr, tmp_or_cdst: Expr = None, tmp: Expr = None,
-               *, span: Span | None = None, **kwargs) -> Expr:
-    for key in ("cmp_mode", "offset"):
-        if key in kwargs:
-            with current_span(argument_span(key, span)):
-                kwargs[key] = require_const_int(kwargs[key], subject=f"'{key}'")
-    if "cmp_mode" in kwargs:
+def _ir_gather(
+    self, out: Expr, src: Expr, indices_or_k_value: Expr, tmp_or_cdst: Expr | None = None,
+    tmp: Expr | None = None, *, cmp_mode: Expr | None = None, offset: Expr | None = None,
+    span: Span | None = None,
+) -> Expr:
+    # An omitted cmp_mode selects the index form, even though the public default is 0.
+    kwargs = {}
+    if cmp_mode is not None:
+        kwargs["cmp_mode"] = require_const_int(
+            cmp_mode, subject="'cmp_mode'",
+        )
+    if offset is not None:
+        kwargs["offset"] = require_const_int(
+            offset, subject="'offset'",
+        )
+    if cmp_mode is not None:
         # Compare form (TGATHER with CmpMode): 32-bit counter destination.
         # IR args: [out, src, k_value, cdst, tmp]
-        _check_dtype("gather", getattr(out.type, "dtype", None), _ARG_IDX32_DTYPES)
+        require_dtype_in(getattr(out.type, "dtype", None), _ARG_IDX32_DTYPES, subject="gather")
     else:
         # Index form (TGATHER CheckValid): dst/src share one dtype; index tiles
         # are 16/32-bit integers and 64-bit data requires a 32-bit index.
         # IR args: [out, src, indices] or [out, src, indices, tmp]
-        _check_dtype_match("gather", getattr(src.type, "dtype", None), getattr(out.type, "dtype", None))
+        require_dtypes_match([getattr(out.type, "dtype", None)], getattr(src.type, "dtype", None), subject="gather")
         idx_dt = getattr(indices_or_k_value.type, "dtype", None)
-        _check_dtype("gather", idx_dt, _GATHER_IDX_DTYPES)
+        require_dtype_in(idx_dt, _GATHER_IDX_DTYPES, subject="gather")
         src_dt = getattr(src.type, "dtype", None)
         if src_dt is not None and idx_dt is not None and src_dt.get_bit() == 64 and idx_dt.get_bit() != 32:
             raise InvalidType(f"gather: 64-bit data requires a 32-bit index tile, got {idx_dt}")
@@ -4688,25 +4680,31 @@ def _ir_gatherb(self, out: Expr, src: Expr, offsets: Expr, *, span: Span | None 
     out_dt = getattr(out.type, "dtype", None)
     if out_dt is not None and out_dt.get_bit() not in (8, 16, 32):
         raise InvalidType(f"gatherb: unsupported out dtype {out_dt}, supported: b8/b16/b32")
-    _check_dtype("gatherb", getattr(offsets.type, "dtype", None), _ARG_IDX32_DTYPES)
+    require_dtype_in(getattr(offsets.type, "dtype", None), _ARG_IDX32_DTYPES, subject="gatherb")
     return _ir_core.create_op_call(block_ir_op("gatherb"), [out, src, offsets], {}, span or _span())
 
 
 @op_impl("gathermask")
-def _ir_gathermask(self, out: Expr, src: Expr, *, span: Span | None = None, **kwargs) -> Expr:
-    with current_span(argument_span("pattern_mode", span)):
-        kwargs["pattern_mode"] = require_const_int(kwargs["pattern_mode"], subject="'pattern_mode'")
-    _check_dtype_match("gathermask", getattr(src.type, "dtype", None), getattr(out.type, "dtype", None))
-    return _ir_core.create_op_call(block_ir_op("gathermask"), [out, src], kwargs, span or _span())
+def _ir_gathermask(
+    self, out: Expr, src: Expr, *,
+    pattern_mode: Expr, span: Span | None = None,
+) -> Expr:
+    pattern_mode = require_const_int(
+        pattern_mode, subject="'pattern_mode'",
+    )
+    require_dtypes_match([getattr(out.type, "dtype", None)], getattr(src.type, "dtype", None), subject="gathermask")
+    return _ir_core.create_op_call(
+        block_ir_op("gathermask"), [out, src], {"pattern_mode": pattern_mode}, span or _span(),
+    )
 
 
 @op_impl("scatter")
 def _ir_scatter(self, out: Expr, src: Expr, idx: Expr, *, span: Span | None = None) -> Expr:
     # TSCATTER (3510) index pairing: b8→b16, b16→b16, b32→b32, b64→b32.
     src_dt = getattr(src.type, "dtype", None)
-    _check_dtype_match("scatter", src_dt, getattr(out.type, "dtype", None))
+    require_dtypes_match([getattr(out.type, "dtype", None)], src_dt, subject="scatter")
     idx_dt = getattr(idx.type, "dtype", None)
-    _check_dtype("scatter", idx_dt, _GATHER_IDX_DTYPES)
+    require_dtype_in(idx_dt, _GATHER_IDX_DTYPES, subject="scatter")
     if src_dt is not None and idx_dt is not None:
         required_idx_bit = {8: 16, 16: 16, 32: 32, 64: 32}.get(src_dt.get_bit())
         if required_idx_bit is not None and idx_dt.get_bit() != required_idx_bit:
@@ -4720,62 +4718,70 @@ def _ir_scatter(self, out: Expr, src: Expr, idx: Expr, *, span: Span | None = No
 def _ir_sort32(self, dst: Expr, src: Expr, idx: Expr, tmp: Expr | None = None, *, span: Span | None = None) -> Expr:
     # TSORT32 (3510): half/float values with uint32 indices.
     dt = getattr(src.type, "dtype", None)
-    _check_dtype("sort32", dt, _SORT_DTYPES)
-    _check_dtype_match("sort32", dt, getattr(dst.type, "dtype", None))
-    _check_dtype("sort32", getattr(idx.type, "dtype", None), (DataType.UINT32,))
+    require_dtype_in(dt, _SORT_DTYPES, subject="sort32")
+    require_dtypes_match([getattr(dst.type, "dtype", None)], dt, subject="sort32")
+    require_dtype_in(getattr(idx.type, "dtype", None), (DataType.UINT32,), subject="sort32")
     args = [dst, src, idx] + ([tmp] if tmp is not None else [])
     return _ir_core.create_op_call(block_ir_op("sort32"), args, {}, span or _span())
 
 
 @op_impl("mrgsort")
-def _ir_mrgsort(self, dst: Expr, src: Expr, *, span: Span | None = None, **kwargs) -> Expr:
-    with current_span(argument_span("block_len", span)):
-        kwargs["block_len"] = require_const_int(kwargs["block_len"], subject="'block_len'")
+def _ir_mrgsort(
+    self, dst: Expr, src: Expr, *,
+    block_len: Expr, span: Span | None = None,
+) -> Expr:
+    block_len = require_const_int(
+        block_len, subject="'block_len'",
+    )
     # TMRGSORT (3510): half/float only.
     dt = getattr(src.type, "dtype", None)
-    _check_dtype("mrgsort", dt, _SORT_DTYPES)
-    _check_dtype_match("mrgsort", dt, getattr(dst.type, "dtype", None))
-    return _ir_core.create_op_call(block_ir_op("mrgsort"), [dst, src], kwargs, span or _span())
+    require_dtype_in(dt, _SORT_DTYPES, subject="mrgsort")
+    require_dtypes_match([getattr(dst.type, "dtype", None)], dt, subject="mrgsort")
+    return _ir_core.create_op_call(block_ir_op("mrgsort"), [dst, src], {"block_len": block_len}, span or _span())
 
 
 @op_impl("mrgsort2")
 def _ir_mrgsort2(
-    self, src0: Expr, src1: Expr, dst: Expr, tmp: Expr, *args: Expr, span: Span | None = None, **kwargs,
+    self, src0: Expr, src1: Expr, dst: Expr, tmp: Expr, *args: Expr,
+    exhausted: Expr | None = None, span: Span | None = None,
 ) -> Expr:
-    if "exhausted" in kwargs:
-        kwargs["exhausted"] = self.require_const_value(
-            kwargs["exhausted"], "exhausted", expects="bool",
-            hint="exhausted must be known at compile time.",
-        )
+    # None marks omission so the default does not add a new IR attribute.
+    kwargs = {}
+    if exhausted is not None:
+        kwargs["exhausted"] = require_const_bool(exhausted, subject="'exhausted'")
     # TMRGSORT (3510): half/float only. Reorder to the backend argument layout
     # [dst, src0, tmp, src1, ...] — the plain fall-through produced misordered
     # IR args that the CCE codegen read as (dst=src0, src0=src1, tmp=dst, src1=tmp).
     dt = getattr(src0.type, "dtype", None)
-    _check_dtype("mrgsort2", dt, _SORT_DTYPES)
-    _check_dtype_match(
-        "mrgsort2", dt, getattr(src1.type, "dtype", None), getattr(dst.type, "dtype", None),
-        *(getattr(arg.type, "dtype", None) for arg in args),
+    require_dtype_in(dt, _SORT_DTYPES, subject="mrgsort2")
+    require_dtypes_match(
+        [
+            getattr(src1.type, "dtype", None),
+            getattr(dst.type, "dtype", None),
+            *(getattr(arg.type, "dtype", None) for arg in args),
+        ],
+        dt,
+        subject="mrgsort2",
     )
     return _ir_core.create_op_call(block_ir_op("mrgsort2"), [dst, src0, tmp, src1, *args], kwargs, span or _span())
 
 
 @op_impl("histogram")
-def _ir_histogram(self, dst: Expr, src: Expr, idx: Expr, *, span: Span | None = None, **kwargs) -> Expr:
-    kwargs["is_msb"] = self.require_const_value(
-        kwargs["is_msb"], "is_msb", expects="bool",
-        hint="is_msb must be known at compile time.",
-    )
+def _ir_histogram(
+    self, dst: Expr, src: Expr, idx: Expr, *, is_msb: Expr, span: Span | None = None,
+) -> Expr:
+    is_msb = require_const_bool(is_msb, subject="'is_msb'")
     # THISTOGRAM (3510): u16/u32 source, u8 filter index, u32 bin destination.
-    _check_dtype("histogram", getattr(src.type, "dtype", None), _HISTOGRAM_SRC_DTYPES)
-    _check_dtype("histogram", getattr(idx.type, "dtype", None), _HISTOGRAM_IDX_DTYPES)
-    _check_dtype("histogram", getattr(dst.type, "dtype", None), _HISTOGRAM_DST_DTYPES)
-    return _ir_core.create_op_call(block_ir_op("histogram"), [dst, src, idx], kwargs, span or _span())
+    require_dtype_in(getattr(src.type, "dtype", None), _HISTOGRAM_SRC_DTYPES, subject="histogram")
+    require_dtype_in(getattr(idx.type, "dtype", None), _HISTOGRAM_IDX_DTYPES, subject="histogram")
+    require_dtype_in(getattr(dst.type, "dtype", None), _HISTOGRAM_DST_DTYPES, subject="histogram")
+    return _ir_core.create_op_call(block_ir_op("histogram"), [dst, src, idx], {"is_msb": is_msb}, span or _span())
 
 
 @op_impl("fill_index")
 def _ir_fill_index(self, out: Expr, start: Expr, *, span: Span | None = None) -> Expr:
     # TCI (3510): 16/32-bit integer tiles.
-    _check_dtype("fill_index", getattr(out.type, "dtype", None), _FILL_INDEX_DTYPES)
+    require_dtype_in(getattr(out.type, "dtype", None), _FILL_INDEX_DTYPES, subject="fill_index")
     return _ir_core.create_op_call(block_ir_op("fill_index"), [out, start], {}, span or _span())
 
 
@@ -4813,8 +4819,8 @@ def _check_tile_memory_space(
 
 
 def _validate_acc_phase(op_name: str, phase: AccPhase | None) -> None:
-    if phase is not None and not isinstance(phase, AccPhase):
-        raise InvalidArgument(f"{op_name}: invalid phase value {phase!r}, expected AccPhase")
+    if phase is not None:
+        require_enum(phase, AccPhase, subject=f"{op_name}: phase")
 
 
 def _ir_matmul(dst: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, phase: AccPhase | None = None) -> Expr:
@@ -4866,10 +4872,13 @@ def _ir_matmul_bias(
 
 
 @op_impl("matmul")
-def _build_matmul(self, *args: Expr, span: Span, **kwargs) -> Expr:
-    if len(args) == 4:
-        return _ir_matmul_bias(*args, **kwargs, span=span)
-    return _ir_matmul(*args, **kwargs, span=span)
+def _build_matmul(
+    self, dst_tile: Expr, lhs_tile: Expr, rhs_tile: Expr, bias_tile: Expr | None = None, /,
+    *, phase: AccPhase | None = None, span: Span,
+) -> Expr:
+    if bias_tile is not None:
+        return _ir_matmul_bias(dst_tile, lhs_tile, rhs_tile, bias_tile, phase=phase, span=span)
+    return _ir_matmul(dst_tile, lhs_tile, rhs_tile, phase=phase, span=span)
 
 
 _MX_FP8_DTYPES = (DataType.FP8E4M3FN, DataType.FP8E5M2)
@@ -5033,10 +5042,7 @@ def _ir_matmul_mx_acc(
 @op_impl("set_saturation_flag")
 def _ir_set_saturation_flag(self, mode: Any, enable: Any, *, span: Span | None = None) -> Expr:
     actual_span = span or _span()
-    enable = self.require_const_value(
-        enable, "enable", expects="bool",
-        hint="enable must be known at compile time.",
-    )
+    enable = require_const_bool(enable, subject="'enable'")
     kwargs = {"mode": int(mode), "enable": enable}
     return _ir_core.create_op_call("set_saturation_flag", [], kwargs, actual_span)
 
@@ -5070,29 +5076,51 @@ def _ir_reset_ctrl_spr(self, start_bit: Expr, end_bit: Expr, *, span: Span | Non
 
 
 @op_impl("load")
-def _build_load(self, *args, span, **kwargs):
-    _prepare_order(self, kwargs)
-    return _ir_load(*args, span=span, **kwargs)
+def _build_load(
+    self, dst_tile: Expr, src_tensor: Expr, /, offsets: Expr,
+    *, order: Expr | None = None, l2_cache_mode: TLoadL2Hint | None = None, span: Span,
+) -> Expr:
+    order = _prepare_order(order)
+    return _ir_load(dst_tile, src_tensor, offsets, order=order, l2_cache_mode=l2_cache_mode, span=span)
 
 
 @op_impl("load_tile")
-def _build_load_tile(self, *args, span, **kwargs):
-    _prepare_order(self, kwargs)
-    return _ir_load_tile(*args, span=span, **kwargs)
+def _build_load_tile(
+    self, dst_tile: Expr, src_tensor: Expr, /, tile_offsets: Expr,
+    *, order: Expr | None = None, l2_cache_mode: TLoadL2Hint | None = None, span: Span,
+) -> Expr:
+    order = _prepare_order(order)
+    return _ir_load_tile(dst_tile, src_tensor, tile_offsets, order=order, l2_cache_mode=l2_cache_mode, span=span)
 
 
 @op_impl("store")
-def _build_store(self, *args, span, **kwargs):
-    _prepare_scale(self, kwargs)
-    _prepare_order(self, kwargs)
-    return _ir_store(*args, span=span, **kwargs)
+def _build_store(
+    self, dst_tensor: Expr, src_tile: Expr, /, offsets: Expr, *,
+    relu_pre_mode: ReluPreMode | None = None, scale: Expr | None = None, order: Expr | None = None,
+    atomic: AtomicType = AtomicType.AtomicNone, phase: STPhase | None = None,
+    l2_cache_mode: TStoreL2Hint | None = None, span: Span,
+) -> Expr:
+    scale = _prepare_scale(scale)
+    order = _prepare_order(order)
+    return _ir_store(
+        dst_tensor, src_tile, offsets, relu_pre_mode=relu_pre_mode, scale=scale,
+        order=order, atomic=atomic, phase=phase, l2_cache_mode=l2_cache_mode, span=span,
+    )
 
 
 @op_impl("store_tile")
-def _build_store_tile(self, *args, span, **kwargs):
-    _prepare_scale(self, kwargs)
-    _prepare_order(self, kwargs)
-    return _ir_store_tile(*args, span=span, **kwargs)
+def _build_store_tile(
+    self, dst_tensor: Expr, src_tile: Expr, /, tile_offsets: Expr, *,
+    relu_pre_mode: ReluPreMode | None = None, scale: Expr | None = None, order: Expr | None = None,
+    atomic: AtomicType = AtomicType.AtomicNone, phase: STPhase | None = None,
+    l2_cache_mode: TStoreL2Hint | None = None, span: Span,
+) -> Expr:
+    scale = _prepare_scale(scale)
+    order = _prepare_order(order)
+    return _ir_store_tile(
+        dst_tensor, src_tile, tile_offsets, relu_pre_mode=relu_pre_mode, scale=scale,
+        order=order, atomic=atomic, phase=phase, l2_cache_mode=l2_cache_mode, span=span,
+    )
 
 
 @op_impl("dynamic_input_ptr")
@@ -5106,36 +5134,55 @@ def _build_dynamic_input_dim(self, x: Expr, i: Expr, axis: Expr, /, *, span: Spa
 
 
 @op_impl("move")
-def _build_move(self, *args, span, **kwargs):
-    _prepare_scale(self, kwargs)
-    return _ir_move(*args, span=span, **kwargs)
+def _build_move(
+    self, dst_tile: Expr, src_tile: Expr, /, offset: Expr | None = None, *,
+    acc_to_vec_mode: AccToVecMode | None = None, relu_pre_mode: ReluPreMode | None = None,
+    scale: Expr | None = None, phase: STPhase | None = None, span: Span,
+) -> Expr:
+    scale = _prepare_scale(scale)
+    return _ir_move(
+        dst_tile, src_tile, offset, acc_to_vec_mode=acc_to_vec_mode, relu_pre_mode=relu_pre_mode,
+        scale=scale, phase=phase, span=span,
+    )
 
 
 @op_impl("insert")
-def _build_insert(self, *args, span, **kwargs):
-    _prepare_scale(self, kwargs)
-    return _ir_insert(*args, span=span, **kwargs)
+def _build_insert(
+    self, dst_tile: Expr, src_tile: Expr, /, offset: Expr, *,
+    relu_pre_mode: ReluPreMode | None = None, scale: Expr | None = None,
+    phase: STPhase | None = None, span: Span,
+) -> Expr:
+    scale = _prepare_scale(scale)
+    return _ir_insert(dst_tile, src_tile, offset, relu_pre_mode=relu_pre_mode, scale=scale, phase=phase, span=span)
 
 
 @op_impl("getval")
-def _build_getval(self, *args, span: Span, **kwargs):
-    return _ir_getval(*args, span=span, **kwargs)
+def _build_getval(self, container: Expr, offset: Expr, *, span: Span) -> Expr:
+    return _ir_getval(container, offset, span=span)
 
 
 @op_impl("setval")
-def _build_setval(self, *args, span: Span, **kwargs):
-    return _ir_setval(*args, span=span, **kwargs)
+def _build_setval(self, container: Expr, offset: Expr, value: Expr, *, span: Span) -> Expr:
+    return _ir_setval(container, offset, value, span=span)
 
 
 @op_impl("matmul_mx")
-def _build_matmul_mx(self, *args, span: Span, **kwargs):
-    result = _ir_matmul_mx(*args, span=span, **kwargs)
-    self._check_mx_plane_slots("matmul_mx", args, kwargs, span)
+def _build_matmul_mx(
+    self, dst_tile: Expr, lhs_tile: Expr, rhs_tile: Expr, /, scale_a: Expr, scale_b: Expr,
+    bias_tile: Expr | None = None, *, phase: AccPhase | None = None, span: Span,
+) -> Expr:
+    result = _ir_matmul_mx(
+        dst_tile, lhs_tile, rhs_tile, scale_a, scale_b, bias_tile, phase=phase, span=span,
+    )
+    self._check_mx_plane_slots("matmul_mx", (dst_tile, lhs_tile, rhs_tile, scale_a, scale_b))
     return result
 
 
 @op_impl("matmul_mx_acc")
-def _build_matmul_mx_acc(self, *args, span: Span, **kwargs):
-    result = _ir_matmul_mx_acc(*args, span=span, **kwargs)
-    self._check_mx_plane_slots("matmul_mx_acc", args, kwargs, span)
+def _build_matmul_mx_acc(
+    self, dst_tile: Expr, acc_tile: Expr, lhs_tile: Expr, rhs_tile: Expr, /, scale_a: Expr, scale_b: Expr,
+    *, phase: AccPhase | None = None, span: Span,
+) -> Expr:
+    result = _ir_matmul_mx_acc(dst_tile, acc_tile, lhs_tile, rhs_tile, scale_a, scale_b, phase=phase, span=span)
+    self._check_mx_plane_slots("matmul_mx_acc", (dst_tile, acc_tile, lhs_tile, rhs_tile, scale_a, scale_b))
     return result

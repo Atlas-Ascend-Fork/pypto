@@ -10,8 +10,13 @@
 # -----------------------------------------------------------------------------------------------------------
 """Smoke tests for parser-provided operation spans."""
 
+import ast
+
 from pypto_pro import ir
+from pypto_pro._errors import InvalidType, OutOfRange
 import pypto_pro.language as pl
+from pypto_pro.language.parser._ast_parser import ASTParser
+import pytest
 
 
 def _call_spans(func):
@@ -52,3 +57,30 @@ def test_parser_passes_valid_spans_to_operations():
         if span.end_line == span.begin_line:
             assert span.end_column >= span.begin_column
     assert spans[0][1].begin_line != spans[1][1].begin_line
+
+
+@pytest.mark.parametrize(
+    ("source", "closure_vars", "error_type", "reason"),
+    [
+        ("huge", {"huge": 1e100}, OutOfRange, "float constant"),
+        ("bad_type()", {"bad_type": object}, InvalidType, "Unsupported closure variable type: object"),
+    ],
+)
+def test_python_fallback_errors_keep_expression_span(tmp_path, source, closure_vars, error_type, reason):
+    source_file = tmp_path / "fallback.py"
+    source_file.write_text(source + "\n", encoding="utf-8")
+    parser = ASTParser(
+        source_file=str(source_file),
+        source_lines=[source],
+        target=ir.SectionKind.Vector,
+        debug_info=ir.IRDebugInfo(),
+        closure_vars=closure_vars,
+    )
+
+    with pytest.raises(error_type, match=reason) as exc_info:
+        parser.parse_expression(ast.parse(source, mode="eval").body)
+
+    assert exc_info.value.span is not None
+    assert exc_info.value.span["filename"] == str(source_file)
+    assert exc_info.value.span["line"] == 1
+    assert exc_info.value.span["column"] == 1

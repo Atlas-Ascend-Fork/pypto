@@ -69,7 +69,7 @@ def test_split_n_rejects_accumulator_in_other_memory_spaces(tmp_path, space):
     assert "acc must be in L0C (Acc)" in caught.value.message
     span = caught.value.span
     line = Path(span["filename"]).read_text().splitlines()[span["begin_line"] - 1]
-    assert line[span["begin_column"] - 1:span["end_column"]] == "bad"
+    assert line[span["begin_column"] - 1:span["end_column"]].startswith("pl.gemm(")
 
 
 def test_split_n_rejects_dynamic_address_even_with_reused_mutex_id(tmp_path):
@@ -124,15 +124,18 @@ def test_invalid_calls_report_the_gemm_location(tmp_path, call, kwargs, error, m
     ("splitk=0", InvalidVal, "0"),
     ("splitn=24", InvalidVal, "24"),
     ("k=192", InvalidVal, "192"),
+    ("m=48, splitn=32", NotSupported, "48"),
+    ("splitk=32", InvalidVal, "la"),
+    ("bias=c, init=False", InvalidVal, "c"),
 ])
-def test_invalid_parameter_keeps_its_exact_source_span(tmp_path, option, error, marked):
+def test_invalid_parameter_keeps_the_call_source_span(tmp_path, option, error, marked):
     with pytest.raises(error) as raised:
         parse_gemm(tmp_path, f"pl.gemm(c, a, b, l0a=la, l0b=lb, {option})")
     span = raised.value.span
     lines = Path(span["filename"]).read_text().splitlines()
     assert span["begin_line"] == span["end_line"]
     assert "pl.gemm(" in lines[span["begin_line"] - 1]
-    assert lines[span["begin_line"] - 1][span["begin_column"] - 1:span["end_column"]] == marked
+    assert lines[span["begin_line"] - 1][span["begin_column"] - 1:span["end_column"]].startswith("pl.gemm(")
 
 
 def test_call_error_inherits_the_statement_span(tmp_path):
@@ -152,6 +155,9 @@ def test_mx_static_k_alignment(tmp_path, k):
                f"pl.gemm_mx(c, a, b, s1, s2, l0a=la, l0b=lb, scale_a=sa, scale_b=sb, k={k})",
                mx=True)
     assert re.search("multiple of 64", caught.value.message)
+    span = caught.value.span
+    line = Path(span["filename"]).read_text().splitlines()[span["begin_line"] - 1]
+    assert line[span["begin_column"] - 1:span["end_column"]].startswith("pl.gemm_mx(")
 
 
 @pytest.mark.parametrize("option", ["splitk=64", "splitn=32"])
@@ -161,6 +167,9 @@ def test_mx_unsupported_options_are_explicit(tmp_path, option):
                f"pl.gemm_mx(c, a, b, s1, s2, l0a=la, l0b=lb, scale_a=sa, scale_b=sb, {option})",
                mx=True)
     assert re.search("does not split", caught.value.message)
+    span = caught.value.span
+    line = Path(span["filename"]).read_text().splitlines()[span["begin_line"] - 1]
+    assert line[span["begin_column"] - 1:span["end_column"]].startswith("pl.gemm_mx(")
 
 
 def test_mx_bias_requires_initialization(tmp_path):
@@ -171,6 +180,9 @@ def test_mx_bias_requires_initialization(tmp_path):
             mx=True,
         )
     assert re.search("bias only with init=True", caught.value.message)
+    span = caught.value.span
+    line = Path(span["filename"]).read_text().splitlines()[span["begin_line"] - 1]
+    assert line[span["begin_column"] - 1:span["end_column"]].startswith("pl.gemm_mx(")
 
 
 def test_mx_runtime_slot_pairing_still_checks_every_possible_address(tmp_path):

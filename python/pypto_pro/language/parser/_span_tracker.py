@@ -111,22 +111,6 @@ class SpanTracker:
             start + len(name) - 1,
         )
 
-    def argument_spans(self, call: "ast.Call") -> dict:
-        """Where each argument of *call* was written, keyed for ``argument_span``.
-
-        Keywords are keyed by name and positional arguments by their index, which
-        is what a builder knows about the value it is rejecting. Published by the
-        op dispatcher so builders -- which see values, not syntax -- can still
-        point at the argument rather than at the whole call.
-        """
-        spans: dict = {}
-        for index, node in enumerate(call.args):
-            spans[index] = self.get_span(node)
-        for keyword in call.keywords:
-            if keyword.arg is not None:
-                spans[keyword.arg] = self.get_span(keyword.value)
-        return spans
-
     def get_multiline_span(self, start_node: ast.AST, end_node: ast.AST) -> ir.Span:
         """Get span covering multiple lines.
 

@@ -15,14 +15,24 @@ from __future__ import annotations
 
 __all__ = [
     "_const_int_value",
+    "_const_int_values",
+    "_const_scalar_value",
     "_get_span_or_capture",
     "_is_int",
+    "_is_int_type",
+    "_is_none",
     "_normalize_expr",
     "_normalize_shape",
     "_to_make_tuple",
     "require_const_bool",
     "require_const_int",
+    "require_const_int_list",
+    "require_const_number",
+    "require_dtype_in",
+    "require_dtypes_match",
+    "require_enum",
     "require_int",
+    "require_list",
     "require_scalar_dtype",
     "unwrap_type",
 ]
@@ -30,57 +40,75 @@ __all__ = [
 
 from collections.abc import Sequence
 import inspect
+from typing import TypeVar
 
 from pypto.pypto_impl import ir as _ir
 from pypto.pypto_impl.ir import DataType
 
-from .._errors import InvalidType, InvalidVal, NotSupported
+from .._errors import InvalidType, InvalidVal, NotSupported, get_current_span
+
+_EnumT = TypeVar("_EnumT")
 
 
-def require_scalar_dtype(dtype: DataType, *, subject: str, span: _ir.Span | None = None) -> None:
+def require_scalar_dtype(dtype: DataType, *, subject: str) -> None:
     """Reject storage-only formats at a scalar construction or access boundary."""
     if dtype.is_storage_only():
         raise NotSupported(
             f"{subject} dtype {dtype}; low-precision types are storage-only "
             "and cannot be used in scalar expressions",
-            span=span,
             hint="Use a supported scalar dtype; for supported FP8/FP4 register conversions, use pl.Vf.astype",
             parser_retry=True,
         )
 
 
-def _const_int_value(value: object) -> int | None:
-    """Return a compile-time integer value, or ``None`` for a runtime expression."""
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
+def _is_none(value: object) -> bool:
+    return value is None or isinstance(value, _ir.Expr) and isinstance(value.type, _ir.NoneType)
+
+
+def _const_scalar_value(value: object):
+    """Unwrap a scalar constant; leave runtime expressions unchanged."""
+    if isinstance(value, _ir.ConstBool):
+        return bool(value.value)
     if isinstance(value, _ir.ConstInt):
-        return value.value
+        return bool(value.value) if value.type.dtype == DataType.BOOL else int(value.value)
+    if isinstance(value, _ir.ConstFloat):
+        return float(value.value)
+    if isinstance(value, _ir.Cast):
+        operand = _const_scalar_value(value.operand)
+        if isinstance(operand, (bool, int, float)):
+            dtype = value.type.dtype
+            if dtype == DataType.BOOL:
+                return bool(operand)
+            if dtype.is_int():
+                return int(operand)
+            if dtype.is_float():
+                return float(operand)
+    return value
+
+
+def _const_int_value(value: _ir.Expr) -> int | None:
+    """Extract an IR integer constant; return None for other inputs."""
+    if isinstance(value, _ir.ConstInt):
+        return int(_const_scalar_value(value))
     return None
 
 
-def require_const_bool(value: object, *, subject: str) -> bool:
-    """Require a compile-time boolean value."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, _ir.ConstBool):
-        return bool(value.value)
-    if isinstance(value, _ir.ConstInt) and value.type.dtype == DataType.BOOL:
-        return bool(value.value)
-    raise InvalidType(f"{subject} must be a compile-time boolean constant")
+def _const_int_values(values: Sequence[_ir.Expr]) -> list[int] | None:
+    """Extract IR integer dimensions; return None if any element is not constant."""
+    constants = [_const_int_value(value) for value in values]
+    return None if any(value is None for value in constants) else constants
 
 
 def require_const_int(
-    value: object,
+    value: _ir.Expr,
     *,
     subject: str,
     lower_bound: int | None = None,
     upper_bound: int | None = None,
 ) -> int:
     """Require a compile-time integer and validate its inclusive bounds."""
-    const_value = _const_int_value(value)
-    if const_value is None:
+    const_value = _const_scalar_value(value) if isinstance(value, _ir.Expr) else None
+    if not _is_int(const_value):
         raise InvalidType(f"{subject} must be a compile-time integer constant")
     if lower_bound is not None and const_value < lower_bound:
         raise InvalidVal(f"{subject} must be at least {lower_bound}, got {const_value}")
@@ -90,7 +118,7 @@ def require_const_int(
 
 
 def require_int(
-    value: object,
+    value: _ir.Expr,
     *,
     subject: str,
     lower_bound: int | None = None,
@@ -109,10 +137,101 @@ def require_int(
             upper_bound=upper_bound,
         )
 
-    value_type = getattr(value, "type", None)
-    if isinstance(value_type, _ir.ScalarType) and value_type.dtype.is_int():
+    if _is_int_type(getattr(value, "type", None)):
         return None
     raise InvalidType(f"{subject} must be an integer scalar")
+
+
+def require_list(
+    value: _ir.Expr,
+    *,
+    subject: str,
+    min_length: int = 0,
+) -> list:
+    """Read an IR tuple without emitting statements; reject Python containers."""
+    if not isinstance(value, _ir.Expr) or not isinstance(value.type, _ir.TupleType):
+        raise InvalidType(f"{subject} must be an IR tuple")
+    elements = list(_to_make_tuple(value, get_current_span()).elements)
+    if len(elements) < min_length:
+        raise InvalidVal(f"{subject} must contain at least {min_length} elements, got {len(elements)}")
+    return elements
+
+
+def require_const_int_list(
+    value: _ir.Expr,
+    *,
+    subject: str,
+    lower_bound: int | None = None,
+    upper_bound: int | None = None,
+    min_length: int = 0,
+) -> list[int]:
+    """Require integer constants and check each element against inclusive bounds."""
+    elements = require_list(value, subject=subject, min_length=min_length)
+    constants = []
+    for index, element in enumerate(elements):
+        constants.append(require_const_int(
+            element, subject=f"{subject}[{index}]", lower_bound=lower_bound, upper_bound=upper_bound,
+        ))
+    return constants
+
+
+def require_const_bool(value: _ir.Expr, *, subject: str) -> bool:
+    """Require a boolean constant without accepting integer 0/1."""
+    constant = _const_scalar_value(value) if isinstance(value, _ir.Expr) else None
+    if not isinstance(constant, bool):
+        raise InvalidType(f"{subject} must be a compile-time bool")
+    return constant
+
+
+def require_const_number(
+    value: _ir.Expr,
+    *,
+    subject: str,
+    lower_bound: int | float | None = None,
+    upper_bound: int | float | None = None,
+) -> int | float:
+    """Require a numeric constant, excluding bool, and check inclusive bounds."""
+    constant = _const_scalar_value(value) if isinstance(value, _ir.Expr) else None
+    if isinstance(constant, bool) or not isinstance(constant, (int, float)):
+        raise InvalidType(f"{subject} must be a compile-time number")
+    if lower_bound is not None and constant < lower_bound:
+        raise InvalidVal(f"{subject} must be at least {lower_bound}, got {constant}")
+    if upper_bound is not None and constant > upper_bound:
+        raise InvalidVal(f"{subject} must be at most {upper_bound}, got {constant}")
+    return constant
+
+
+def require_enum(
+    value: object, enum_class: type[_EnumT], *, subject: str,
+) -> _EnumT:
+    """Require an instance of the specified enum class; integers are not converted."""
+    if not isinstance(value, enum_class):
+        raise InvalidType(
+            f"{subject} must be a {enum_class.__name__}, got {type(value).__name__}",
+        )
+    return value
+
+
+def require_dtype_in(
+    dtype: DataType | None, allowed_dtypes: tuple[DataType, ...], *, subject: str,
+) -> None:
+    """Check a known dtype against the caller's supported types."""
+    if dtype is not None and dtype not in allowed_dtypes:
+        allowed_names = ", ".join(str(d) for d in allowed_dtypes)
+        raise InvalidType(
+            f"{subject}: unsupported dtype {dtype}, supported: {allowed_names}",
+        )
+
+
+def require_dtypes_match(
+    dtypes: Sequence[DataType | None], expected_dtype: DataType | None, *, subject: str,
+) -> None:
+    """Require each known dtype in the sequence to match expected_dtype."""
+    for index, dtype in enumerate(dtypes):
+        if dtype is not None and dtype != expected_dtype:
+            raise InvalidType(
+                f"{subject}: dtype mismatch at index {index}: expected {expected_dtype}, got {dtype}",
+            )
 
 
 def unwrap_type(ty: _ir.Type) -> _ir.Type:
@@ -154,6 +273,11 @@ def _get_span_or_capture(span: _ir.Span | None = None, frame_offset: int = 1) ->
 def _is_int(value: object) -> bool:
     """Whether *value* is a plain integer (bool is not, despite subclassing int)."""
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_int_type(value_type: object) -> bool:
+    """Whether an IR type describes an integer scalar."""
+    return isinstance(value_type, _ir.ScalarType) and value_type.dtype.is_int()
 
 
 def _normalize_expr(

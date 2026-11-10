@@ -173,7 +173,7 @@ def test_tile_type_shape_bool_rejected():
 def test_tile_type_bad_dtype_direct_construction_rejected():
     # dtype=0 in kernel source resolves to DataType.BOOL (a valid enum value), so
     # the direct-construction path is the right place to probe a non-DataType dtype.
-    with pytest.raises(TypeError, match="dtype must be a pl.DT_\\* / DataType value"):
+    with pytest.raises(TypeError, match=r"TileType dtype must be a pl\.DT_\* / DataType value"):
         _ = pl.TileType(shape=[64], dtype="fp16", target_memory=pl.MemorySpace.Vec)
 
 
@@ -252,7 +252,7 @@ def test_tile_type_bad_fractal_rejected():
         pl.load(g.next(), x, [0])
 
     # Python counts True as an int, so the gate lets it by and the builder judges it
-    with pytest.raises(InvalidType, match="fractal must be an integer"):
+    with pytest.raises(InvalidType, match="fractal must be a compile-time integer"):
         _parse(k)
 
 
@@ -296,7 +296,7 @@ def test_make_tile_group_negative_addrs_rejected():
         g = pl.make_tile_group(type=tt, addrs=-0x100, mutex_ids=[0])
         pl.load(g.next(), x, [0])
 
-    with pytest.raises(InvalidArgument, match="addrs must be non-negative integers"):
+    with pytest.raises(InvalidVal, match="addrs must be at least 0"):
         _parse(k)
 
 
@@ -318,7 +318,7 @@ def test_make_tile_group_float_in_addrs_list_rejected():
         g = pl.make_tile_group(type=tt, addrs=[0, 0.5], mutex_ids=[0, 1])
         pl.load(g.next(), x, [0])
 
-    with pytest.raises(InvalidType, match="addrs.*must be a compile-time integer, or list of integers"):
+    with pytest.raises(InvalidType, match=r"addrs\[1\] must be a compile-time integer"):
         _parse(k)
 
 
@@ -329,7 +329,7 @@ def test_make_tile_group_bool_addrs_rejected():
         g = pl.make_tile_group(type=tt, addrs=True, mutex_ids=[0])
         pl.load(g.next(), x, [0])
 
-    with pytest.raises(InvalidType, match="addrs.*must be a compile-time integer, or list of integers"):
+    with pytest.raises(InvalidType, match=r"addrs must be a compile-time integer"):
         _parse(k)
 
 
@@ -362,7 +362,7 @@ def test_make_tile_group_bool_mutex_id_rejected():
         g = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[True])
         pl.load(g.next(), x, [0])
 
-    with pytest.raises(InvalidType, match="mutex_ids must be ints, got True"):
+    with pytest.raises(InvalidType, match=r"mutex_ids\[0\] must be a compile-time integer"):
         _parse(k)
 
 

@@ -30,8 +30,8 @@ from pypto.pypto_impl.ir import (
     SyncCoreType,
 )
 
-from ..._errors import InvalidArgument, InvalidOperation, InvalidType, NotSupported, current_span
-from .._utils import _get_span_or_capture, require_int
+from ..._errors import InvalidArgument, InvalidOperation, InvalidType, NotSupported
+from .._utils import _get_span_or_capture, _is_int, _normalize_expr, require_const_bool, require_enum, require_int
 from ._op_registry import op_impl
 
 # Hardware resource ranges, inclusive on both ends. These are the single definition of each limit;
@@ -75,42 +75,40 @@ _3510_AIV_SYNC_WAIT_PIPES = {
 
 def _validate_integer_id(value: Expr, span: Span, *, name: str, max_id: int) -> int | None:
     """Validate an IR integer ID and its statically known bounds."""
-    with current_span(span):
-        constant = require_int(value, subject=name)
-        if constant is not None:
-            _check_id_range(constant, max_id, name, span=span)
+    operand = _normalize_expr(value, span) if _is_int(value) else value
+    constant = require_int(operand, subject=name)
+    if constant is not None:
+        _check_id_range(constant, max_id, name)
     return constant
 
 
-def _validate_concrete_pipe(pipe: PipeType, name: str, span: Span | None = None) -> None:
-    if not isinstance(pipe, PipeType):
-        raise InvalidType(f"{name} must be a PipeType, got {type(pipe).__name__}", span=span)
+def _validate_concrete_pipe(pipe: PipeType, name: str) -> None:
+    require_enum(pipe, PipeType, subject=name)
     if pipe == PipeType.ALL:
-        raise InvalidArgument(f"{name} must identify one concrete pipe, got PipeType.ALL", span=span)
+        raise InvalidArgument(f"{name} must identify one concrete pipe, got PipeType.ALL")
 
 
-def _require_bool(value: object, name: str, *, span: Span | None = None) -> bool:
+def _require_bool(value: object, name: str) -> bool:
     """Return *value* only when it is already a Python bool (no truthiness coercion)."""
     if not isinstance(value, bool):
-        raise InvalidType(f"{name} must be a bool, got {type(value).__name__}", span=span)
+        raise InvalidType(f"{name} must be a bool, got {type(value).__name__}")
     return value
 
 
-def _check_id_range(value: int, max_id: int, name: str, *, min_id: int = 0, span: Span | None = None) -> None:
+def _check_id_range(value: int, max_id: int, name: str, *, min_id: int = 0) -> None:
     """Reject a hardware resource id outside its inclusive range."""
     from pypto_pro.language.parser.diagnostics import check_in_range
 
-    check_in_range(value, min_id, max_id, subject=name, span=span)
+    check_in_range(value, min_id, max_id, subject=name)
 
 
 def _validate_sync_pipes(
     set_pipe: PipeType,
     wait_pipe: PipeType,
     target: _ir_core.SectionKind,
-    span: Span | None = None,
 ) -> None:
-    _validate_concrete_pipe(set_pipe, "set_pipe", span)
-    _validate_concrete_pipe(wait_pipe, "wait_pipe", span)
+    _validate_concrete_pipe(set_pipe, "set_pipe")
+    _validate_concrete_pipe(wait_pipe, "wait_pipe")
     if set_pipe == wait_pipe:
         raise InvalidOperation(f"set_pipe and wait_pipe must differ, got {set_pipe}")
 
@@ -259,7 +257,7 @@ def wait_pre_task_end(*, force: bool = True, span: Span | None = None) -> Call:
         Call expression for system.wait_pre_task_end.
     """
     actual_span = _get_span_or_capture(span)
-    kwargs: dict[str, object] = {"force": _require_bool(force, "force", span=actual_span)}
+    kwargs: dict[str, object] = {"force": _require_bool(force, "force")}
     return _ir_core.create_op_call("system.wait_pre_task_end", [], kwargs, actual_span)
 
 
@@ -287,7 +285,7 @@ def set_next_task_start(*, force: bool = True, span: Span | None = None) -> Call
         Call expression for system.set_next_task_start.
     """
     actual_span = _get_span_or_capture(span)
-    kwargs: dict[str, object] = {"force": _require_bool(force, "force", span=actual_span)}
+    kwargs: dict[str, object] = {"force": _require_bool(force, "force")}
     return _ir_core.create_op_call("system.set_next_task_start", [], kwargs, actual_span)
 
 
@@ -458,7 +456,7 @@ def _create_mutex_op(
     actual_span: Span,
 ) -> Call:
     """Create one user-requested manual mutex operation."""
-    _validate_concrete_pipe(pipe, "pipe", actual_span)
+    _validate_concrete_pipe(pipe, "pipe")
     _validate_integer_id(
         mutex_id, actual_span, name="mutex_id", max_id=MAX_MUTEX_ID
     )
@@ -567,47 +565,60 @@ def set_mm_layout_transform(*, enabled: bool, span: Span | None = None) -> Call:
 # Value-facing implementations
 # ---------------------------------------------------------------------------
 
-def _build_system_sync(op_name: str, *, context, span: Span, **kwargs):
-    _validate_sync_pipes(kwargs["set_pipe"], kwargs["wait_pipe"], context.target, span)
-    return _create_sync_op(op_name, **kwargs, span=span)
+def _build_system_sync(
+    op_name: str, *, context, set_pipe: PipeType, wait_pipe: PipeType, event_id: Expr, span: Span,
+) -> Call:
+    _validate_sync_pipes(set_pipe, wait_pipe, context.target)
+    return _create_sync_op(op_name, set_pipe=set_pipe, wait_pipe=wait_pipe, event_id=event_id, span=span)
 
 
 @op_impl("system.sync_src")
-def _build_system_sync_src(self, *, span: Span, **kwargs):
-    return _build_system_sync("system.sync_src", context=self, span=span, **kwargs)
+def _build_system_sync_src(
+    self, *, set_pipe: PipeType, wait_pipe: PipeType, event_id: Expr, span: Span,
+) -> Call:
+    return _build_system_sync(
+        "system.sync_src", context=self, set_pipe=set_pipe, wait_pipe=wait_pipe, event_id=event_id, span=span,
+    )
 
 
 @op_impl("system.sync_dst")
-def _build_system_sync_dst(self, *, span: Span, **kwargs):
-    return _build_system_sync("system.sync_dst", context=self, span=span, **kwargs)
+def _build_system_sync_dst(
+    self, *, set_pipe: PipeType, wait_pipe: PipeType, event_id: Expr, span: Span,
+) -> Call:
+    return _build_system_sync(
+        "system.sync_dst", context=self, set_pipe=set_pipe, wait_pipe=wait_pipe, event_id=event_id, span=span,
+    )
 
 
 @op_impl("system.wait_pre_task_end")
-def _build_system_wait_pre_task_end(self, *, force: bool = True, span: Span):
-    force = self.require_const_value(
-        force, "force", expects="bool",
-        hint="force selects the early-start template argument at compile time; "
-        "pass a bool literal, e.g. force=True.",
-    )
+def _build_system_wait_pre_task_end(self, *, force: Expr | None = None, span: Span):
+    try:
+        force = True if force is None else require_const_bool(force, subject="force")
+    except InvalidType as error:
+        error.hint = (
+            "force selects the early-start template argument at compile time; "
+            "pass a bool literal, e.g. force=True."
+        )
+        raise
     return wait_pre_task_end(force=force, span=span)
 
 
 @op_impl("system.set_next_task_start")
-def _build_system_set_next_task_start(self, *, force: bool = True, span: Span):
-    force = self.require_const_value(
-        force, "force", expects="bool",
-        hint="force selects the early-start template argument at compile time; "
-        "pass a bool literal, e.g. force=True.",
-    )
+def _build_system_set_next_task_start(self, *, force: Expr | None = None, span: Span):
+    try:
+        force = True if force is None else require_const_bool(force, subject="force")
+    except InvalidType as error:
+        error.hint = (
+            "force selects the early-start template argument at compile time; "
+            "pass a bool literal, e.g. force=True."
+        )
+        raise
     return set_next_task_start(force=force, span=span)
 
 
 @op_impl("system.set_mm_layout_transform")
 def _build_system_set_mm_layout_transform(self, *, enabled, span: Span):
-    enabled = self.require_const_value(
-        enabled, "enabled", expects="bool",
-        hint="enabled must be known at compile time.",
-    )
+    enabled = require_const_bool(enabled, subject="enabled")
     return set_mm_layout_transform(enabled=enabled, span=span)
 
 
@@ -672,28 +683,37 @@ def _build_bar_all(self, *, span: Span):
 
 
 @op_impl("system.set_cross_core")
-def _build_set_cross_core(self, *args, span: Span, **kwargs):
-    return set_cross_core(*args, span=span, **kwargs)
+def _build_set_cross_core(
+    self, *, pipe: PipeType, event_id: Expr,
+    sync_mode: CrossCoreSyncMode = CrossCoreSyncMode.INTRA_BLOCK, span: Span,
+) -> Call:
+    return set_cross_core(pipe=pipe, event_id=event_id, sync_mode=sync_mode, span=span)
 
 
 @op_impl("system.wait_cross_core")
-def _build_wait_cross_core(self, *args, span: Span, **kwargs):
-    return wait_cross_core(*args, span=span, **kwargs)
+def _build_wait_cross_core(
+    self, *, pipe: PipeType, event_id: Expr,
+    sync_mode: CrossCoreSyncMode = CrossCoreSyncMode.INTRA_BLOCK, span: Span,
+) -> Call:
+    return wait_cross_core(pipe=pipe, event_id=event_id, sync_mode=sync_mode, span=span)
 
 
 @op_impl("system.sync_all")
-def _build_sync_all(self, *args, span: Span, **kwargs):
-    return sync_all(*args, span=span, **kwargs)
+def _build_sync_all(self, *, core_type: SyncCoreType = SyncCoreType.MIX, span: Span) -> Call:
+    return sync_all(core_type=core_type, span=span)
 
 
 @op_impl("system.dcci")
-def _build_dcci(self, *args, span: Span, **kwargs):
-    return dcci(*args, span=span, **kwargs)
+def _build_dcci(
+    self, target: Expr, offset: Expr | None = None, *, cache_line: CacheLine = CacheLine.ENTIRE_DATA_CACHE,
+    dst: DcciDst = DcciDst.AUTO, span: Span,
+) -> Call:
+    return dcci(target, offset, cache_line=cache_line, dst=dst, span=span)
 
 
 @op_impl("system.dsb")
-def _build_dsb(self, *args, span: Span, **kwargs):
-    return dsb(*args, span=span, **kwargs)
+def _build_dsb(self, *, scope: MemDsb = MemDsb.ALL, span: Span) -> Call:
+    return dsb(scope=scope, span=span)
 
 
 @op_impl("system.icache_preload")
@@ -703,21 +723,20 @@ def _build_icache_preload(self, prefetch_len, *, span: Span):
         if self.target == _ir_core.SectionKind.Cube
         else MAX_AIV_ICACHE_PRELOAD_LEN
     )
-    with current_span(span):
-        require_int(
-            prefetch_len,
-            subject="prefetch_len",
-            lower_bound=0,
-            upper_bound=max_len,
-        )
+    require_int(
+        prefetch_len,
+        subject="prefetch_len",
+        lower_bound=0,
+        upper_bound=max_len,
+    )
     return icache_preload(prefetch_len, span=span)
 
 
 @op_impl("system.mutex_lock")
-def _build_mutex_lock(self, *args, span: Span, **kwargs):
-    return mutex_lock(*args, span=span, **kwargs)
+def _build_mutex_lock(self, *, pipe: PipeType, mutex_id: Expr, span: Span) -> Call:
+    return mutex_lock(pipe=pipe, mutex_id=mutex_id, span=span)
 
 
 @op_impl("system.mutex_unlock")
-def _build_mutex_unlock(self, *args, span: Span, **kwargs):
-    return mutex_unlock(*args, span=span, **kwargs)
+def _build_mutex_unlock(self, *, pipe: PipeType, mutex_id: Expr, span: Span) -> Call:
+    return mutex_unlock(pipe=pipe, mutex_id=mutex_id, span=span)

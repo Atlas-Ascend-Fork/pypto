@@ -62,7 +62,7 @@ def _simt_builder(builder, *args, span, **kwargs):
         if builder in (cast, bitcast):
             message = message.replace(f"simt.{builder.__name__}", f"pl.simt.{builder.__name__}()")
         raise (error_class_of_spec_message(message) or CommonExternal)(
-            message, span=span, parser_retry=True,
+            message, parser_retry=True,
         ) from error
 
 
@@ -80,7 +80,6 @@ def _adapt_simt_constant(self, op_name: str, argument_name: str, value: Expr, dt
     if dtype.is_int() and isinstance(value, _ir_core.ConstFloat):
         raise InvalidType(
             f"pl.{op_name}() requires an integer {argument_name} for dtype {dtype}",
-            span=argument_span,
             parser_retry=True,
         )
     literal = from_storage_int(value.value, value.type.dtype) if isinstance(value, _ir_core.ConstInt) else value.value
@@ -106,12 +105,11 @@ def _build_atomic_call(self, builder, target: Expr, offset: Expr, operands, span
     if len(indices) != len(shape):
         raise InvalidShape(
             f"Subscript has {len(indices)} indices but container has rank {len(shape)}",
-            span=span,
             hint=f"Use {len(shape)} indices to match the container shape",
             parser_retry=True,
         )
     for axis, index in enumerate(indices):
-        self._validate_subscript_value(index, "Subscript index", axis, span, shape[axis])
+        self._validate_subscript_value(index, "Subscript index", axis, shape[axis])
 
     linear_offset = indices[-1]
     stride = shape[-1]
@@ -147,18 +145,16 @@ def _parse_simt_launch(parser: Any, call: ast.Call, local_name: str, callee_temp
         _ir_core.FunctionType.SimtCallee,
         _ir_core.FunctionType.SimtKernel,
     ):
-        raise NotSupported("Nested SIMT vector-function invocation is not supported", span=span)
+        raise NotSupported("Nested SIMT vector-function invocation is not supported")
     if parser.target != _ir_core.SectionKind.Vector:
         raise InvalidOperation(
             "SIMT vector functions must be invoked inside 'with pl.section_vector():'",
-            span=span,
             hint="SIMT vector functions execute on AIV and cannot be invoked from Cube or shared kernel code.",
         )
 
     if call.keywords or any(isinstance(arg, ast.Starred) for arg in call.args):
         raise InvalidArgument(
             "SIMT vector-function invocation accepts positional arguments only",
-            span=span,
             hint="Use: simt_func[threads](arg0, arg1, ...)",
         )
 
@@ -166,7 +162,6 @@ def _parse_simt_launch(parser: Any, call: ast.Call, local_name: str, callee_temp
         raise InvalidVal(
             f"'{local_name}' is not a launchable "
             '@pl.vector_function(mode="simt", max_threads=...)',
-            span=parser.span_tracker.get_span(call.func.value),
             parser_retry=True,
         )
 
@@ -175,7 +170,6 @@ def _parse_simt_launch(parser: Any, call: ast.Call, local_name: str, callee_temp
         if not 1 <= len(threads_node.elts) <= 3:
             raise InvalidShape(
                 "SIMT thread configuration must contain one to three dimensions",
-                span=parser.span_tracker.get_span(threads_node),
                 hint="Use simt_func[N](...), simt_func[x, y](...), or simt_func[x, y, z](...).",
             )
         thread_nodes = list(threads_node.elts)
@@ -184,8 +178,8 @@ def _parse_simt_launch(parser: Any, call: ast.Call, local_name: str, callee_temp
     thread_dims = [parser.parse_expression(dim) for dim in thread_nodes]
 
     launch_args = [parser.parse_expression(arg) for arg in call.args]
-    callee = parser._instantiate_simt_function(local_name, callee_template, launch_args, span)
-    parser._validate_vf_function_arguments(callee, launch_args, call.args, span, kind="SIMT function")
+    callee = parser._instantiate_simt_function(local_name, callee_template, launch_args)
+    parser._validate_vf_function_arguments(callee, launch_args, kind="SIMT function")
     result = _simt_builder(launch, callee, threads=tuple(thread_dims), args=launch_args, span=span)
     parser.requires_simt = True
     return result
@@ -947,109 +941,484 @@ def _build_bitcast(self, value: Expr, dtype, *, span: Span) -> Expr:
     return _simt_builder(bitcast, value, dtype, span=span)
 
 
-def _register_scalar_math_parser(op_name: str, builder: Callable[..., Call]) -> None:
-    """Register scalar math after the shared declaration check."""
-    @op_impl(op_name)
-    def _impl(self, *args: Expr, span: Span, **kwargs) -> Expr:
-        return _simt_builder(builder, *args, **kwargs, span=span)
+@op_impl("simt.abs")
+def _build_simt_abs(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(abs, value, span=span)
 
 
-_register_scalar_math_parser("simt.abs", abs)
-_register_scalar_math_parser("simt.min", min)
-_register_scalar_math_parser("simt.max", max)
-_register_scalar_math_parser("simt.sqrt", sqrt)
-_register_scalar_math_parser("simt.rsqrt", rsqrt)
-_register_scalar_math_parser("simt.exp", exp)
-_register_scalar_math_parser("simt.exp2", exp2)
-_register_scalar_math_parser("simt.log", log)
-_register_scalar_math_parser("simt.log2", log2)
-_register_scalar_math_parser("simt.log1p", log1p)
-_register_scalar_math_parser("simt.sin", sin)
-_register_scalar_math_parser("simt.cos", cos)
-_register_scalar_math_parser("simt.tanh", tanh)
-_register_scalar_math_parser("simt.floor", floor)
-_register_scalar_math_parser("simt.ceil", ceil)
-_register_scalar_math_parser("simt.trunc", trunc)
-_register_scalar_math_parser("simt.isnan", isnan)
-_register_scalar_math_parser("simt.isinf", isinf)
-_register_scalar_math_parser("simt.isfinite", isfinite)
-_register_scalar_math_parser("simt.popcount", popcount)
-_register_scalar_math_parser("simt.mul_hi", mul_hi)
-_register_scalar_math_parser("simt.exp10", exp10)
-_register_scalar_math_parser("simt.log10", log10)
-_register_scalar_math_parser("simt.rcp", rcp)
-_register_scalar_math_parser("simt.tan", tan)
-_register_scalar_math_parser("simt.atan", atan)
-_register_scalar_math_parser("simt.expm1", expm1)
-_register_scalar_math_parser("simt.logb", logb)
-_register_scalar_math_parser("simt.cosh", cosh)
-_register_scalar_math_parser("simt.acos", acos)
-_register_scalar_math_parser("simt.sinh", sinh)
-_register_scalar_math_parser("simt.asin", asin)
-_register_scalar_math_parser("simt.cbrt", cbrt)
-_register_scalar_math_parser("simt.max_nan", max_nan)
-_register_scalar_math_parser("simt.min_nan", min_nan)
-_register_scalar_math_parser("simt.atan2", atan2)
-_register_scalar_math_parser("simt.copysign", copysign)
-_register_scalar_math_parser("simt.nextafter", nextafter)
-_register_scalar_math_parser("simt.tanpi", tanpi)
-_register_scalar_math_parser("simt.atanh", atanh)
-_register_scalar_math_parser("simt.cospi", cospi)
-_register_scalar_math_parser("simt.acosh", acosh)
-_register_scalar_math_parser("simt.sinpi", sinpi)
-_register_scalar_math_parser("simt.asinh", asinh)
-_register_scalar_math_parser("simt.rcbrt", rcbrt)
-_register_scalar_math_parser("simt.ilogb", ilogb)
-_register_scalar_math_parser("simt.signbit", signbit)
-_register_scalar_math_parser("simt.brev", brev)
-_register_scalar_math_parser("simt.byte_perm", byte_perm)
-_register_scalar_math_parser("simt.clz", clz)
-_register_scalar_math_parser("simt.cyl_bessel_i0", cyl_bessel_i0)
-_register_scalar_math_parser("simt.cyl_bessel_i1", cyl_bessel_i1)
-_register_scalar_math_parser("simt.equ", equ)
-_register_scalar_math_parser("simt.erf", erf)
-_register_scalar_math_parser("simt.erfc", erfc)
-_register_scalar_math_parser("simt.erfcinv", erfcinv)
-_register_scalar_math_parser("simt.erfcx", erfcx)
-_register_scalar_math_parser("simt.erfinv", erfinv)
-_register_scalar_math_parser("simt.fdim", fdim)
-_register_scalar_math_parser("simt.ffs", ffs)
-_register_scalar_math_parser("simt.fma_relu", fma_relu)
-_register_scalar_math_parser("simt.geu", geu)
-_register_scalar_math_parser("simt.gtu", gtu)
-_register_scalar_math_parser("simt.hadd", hadd)
-_register_scalar_math_parser("simt.hypot", hypot)
-_register_scalar_math_parser("simt.j0", j0)
-_register_scalar_math_parser("simt.j1", j1)
-_register_scalar_math_parser("simt.jn", jn)
-_register_scalar_math_parser("simt.ldexp", ldexp)
-_register_scalar_math_parser("simt.leu", leu)
-_register_scalar_math_parser("simt.lgamma", lgamma)
-_register_scalar_math_parser("simt.ltu", ltu)
-_register_scalar_math_parser("simt.mul24", mul24)
-_register_scalar_math_parser("simt.mul_i32_to_i64", mul_i32_to_i64)
-_register_scalar_math_parser("simt.norm3d", norm3d)
-_register_scalar_math_parser("simt.norm4d", norm4d)
-_register_scalar_math_parser("simt.normcdf", normcdf)
-_register_scalar_math_parser("simt.normcdfinv", normcdfinv)
-_register_scalar_math_parser("simt.pow", pow)
-_register_scalar_math_parser("simt.remainder", remainder)
-_register_scalar_math_parser("simt.rhadd", rhadd)
-_register_scalar_math_parser("simt.rhypot", rhypot)
-_register_scalar_math_parser("simt.rnorm3d", rnorm3d)
-_register_scalar_math_parser("simt.rnorm4d", rnorm4d)
-_register_scalar_math_parser("simt.sad", sad)
-_register_scalar_math_parser("simt.saturate", saturate)
-_register_scalar_math_parser("simt.scalbn", scalbn)
-_register_scalar_math_parser("simt.tgamma", tgamma)
-_register_scalar_math_parser("simt.y0", y0)
-_register_scalar_math_parser("simt.y1", y1)
-_register_scalar_math_parser("simt.yn", yn)
-_register_scalar_math_parser("simt.fmod", fmod)
-_register_scalar_math_parser("simt.fma", fma)
-_register_scalar_math_parser("simt.warp_reduce_add", warp_reduce_add)
-_register_scalar_math_parser("simt.warp_reduce_max", warp_reduce_max)
-_register_scalar_math_parser("simt.warp_reduce_min", warp_reduce_min)
+@op_impl("simt.min")
+def _build_simt_min(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(min, lhs, rhs, span=span)
+
+
+@op_impl("simt.max")
+def _build_simt_max(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(max, lhs, rhs, span=span)
+
+
+@op_impl("simt.sqrt")
+def _build_simt_sqrt(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(sqrt, value, span=span)
+
+
+@op_impl("simt.rsqrt")
+def _build_simt_rsqrt(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(rsqrt, value, span=span)
+
+
+@op_impl("simt.exp")
+def _build_simt_exp(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(exp, value, span=span)
+
+
+@op_impl("simt.exp2")
+def _build_simt_exp2(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(exp2, value, span=span)
+
+
+@op_impl("simt.log")
+def _build_simt_log(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(log, value, span=span)
+
+
+@op_impl("simt.log2")
+def _build_simt_log2(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(log2, value, span=span)
+
+
+@op_impl("simt.log1p")
+def _build_simt_log1p(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(log1p, value, span=span)
+
+
+@op_impl("simt.sin")
+def _build_simt_sin(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(sin, value, span=span)
+
+
+@op_impl("simt.cos")
+def _build_simt_cos(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(cos, value, span=span)
+
+
+@op_impl("simt.tanh")
+def _build_simt_tanh(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(tanh, value, span=span)
+
+
+@op_impl("simt.floor")
+def _build_simt_floor(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(floor, value, span=span)
+
+
+@op_impl("simt.ceil")
+def _build_simt_ceil(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(ceil, value, span=span)
+
+
+@op_impl("simt.trunc")
+def _build_simt_trunc(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(trunc, value, span=span)
+
+
+@op_impl("simt.isnan")
+def _build_simt_isnan(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(isnan, value, span=span)
+
+
+@op_impl("simt.isinf")
+def _build_simt_isinf(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(isinf, value, span=span)
+
+
+@op_impl("simt.isfinite")
+def _build_simt_isfinite(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(isfinite, value, span=span)
+
+
+@op_impl("simt.popcount")
+def _build_simt_popcount(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(popcount, value, span=span)
+
+
+@op_impl("simt.mul_hi")
+def _build_simt_mul_hi(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(mul_hi, lhs, rhs, span=span)
+
+
+@op_impl("simt.exp10")
+def _build_simt_exp10(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(exp10, value, span=span)
+
+
+@op_impl("simt.log10")
+def _build_simt_log10(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(log10, value, span=span)
+
+
+@op_impl("simt.rcp")
+def _build_simt_rcp(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(rcp, value, span=span)
+
+
+@op_impl("simt.tan")
+def _build_simt_tan(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(tan, value, span=span)
+
+
+@op_impl("simt.atan")
+def _build_simt_atan(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(atan, value, span=span)
+
+
+@op_impl("simt.expm1")
+def _build_simt_expm1(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(expm1, value, span=span)
+
+
+@op_impl("simt.logb")
+def _build_simt_logb(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(logb, value, span=span)
+
+
+@op_impl("simt.cosh")
+def _build_simt_cosh(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(cosh, value, span=span)
+
+
+@op_impl("simt.acos")
+def _build_simt_acos(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(acos, value, span=span)
+
+
+@op_impl("simt.sinh")
+def _build_simt_sinh(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(sinh, value, span=span)
+
+
+@op_impl("simt.asin")
+def _build_simt_asin(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(asin, value, span=span)
+
+
+@op_impl("simt.cbrt")
+def _build_simt_cbrt(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(cbrt, value, span=span)
+
+
+@op_impl("simt.max_nan")
+def _build_simt_max_nan(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(max_nan, lhs, rhs, span=span)
+
+
+@op_impl("simt.min_nan")
+def _build_simt_min_nan(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(min_nan, lhs, rhs, span=span)
+
+
+@op_impl("simt.atan2")
+def _build_simt_atan2(self, y: Expr, x: Expr, *, span: Span) -> Expr:
+    return _simt_builder(atan2, y, x, span=span)
+
+
+@op_impl("simt.copysign")
+def _build_simt_copysign(self, magnitude: Expr, sign: Expr, *, span: Span) -> Expr:
+    return _simt_builder(copysign, magnitude, sign, span=span)
+
+
+@op_impl("simt.nextafter")
+def _build_simt_nextafter(self, value: Expr, direction: Expr, *, span: Span) -> Expr:
+    return _simt_builder(nextafter, value, direction, span=span)
+
+
+@op_impl("simt.tanpi")
+def _build_simt_tanpi(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(tanpi, value, span=span)
+
+
+@op_impl("simt.atanh")
+def _build_simt_atanh(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(atanh, value, span=span)
+
+
+@op_impl("simt.cospi")
+def _build_simt_cospi(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(cospi, value, span=span)
+
+
+@op_impl("simt.acosh")
+def _build_simt_acosh(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(acosh, value, span=span)
+
+
+@op_impl("simt.sinpi")
+def _build_simt_sinpi(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(sinpi, value, span=span)
+
+
+@op_impl("simt.asinh")
+def _build_simt_asinh(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(asinh, value, span=span)
+
+
+@op_impl("simt.rcbrt")
+def _build_simt_rcbrt(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(rcbrt, value, span=span)
+
+
+@op_impl("simt.ilogb")
+def _build_simt_ilogb(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(ilogb, value, span=span)
+
+
+@op_impl("simt.signbit")
+def _build_simt_signbit(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(signbit, value, span=span)
+
+
+@op_impl("simt.brev")
+def _build_simt_brev(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(brev, value, span=span)
+
+
+@op_impl("simt.byte_perm")
+def _build_simt_byte_perm(self, lhs: Expr, rhs: Expr, selector: Expr, *, span: Span) -> Expr:
+    return _simt_builder(byte_perm, lhs, rhs, selector, span=span)
+
+
+@op_impl("simt.clz")
+def _build_simt_clz(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(clz, value, span=span)
+
+
+@op_impl("simt.cyl_bessel_i0")
+def _build_simt_cyl_bessel_i0(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(cyl_bessel_i0, value, span=span)
+
+
+@op_impl("simt.cyl_bessel_i1")
+def _build_simt_cyl_bessel_i1(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(cyl_bessel_i1, value, span=span)
+
+
+@op_impl("simt.equ")
+def _build_simt_equ(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(equ, lhs, rhs, span=span)
+
+
+@op_impl("simt.erf")
+def _build_simt_erf(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(erf, value, span=span)
+
+
+@op_impl("simt.erfc")
+def _build_simt_erfc(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(erfc, value, span=span)
+
+
+@op_impl("simt.erfcinv")
+def _build_simt_erfcinv(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(erfcinv, value, span=span)
+
+
+@op_impl("simt.erfcx")
+def _build_simt_erfcx(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(erfcx, value, span=span)
+
+
+@op_impl("simt.erfinv")
+def _build_simt_erfinv(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(erfinv, value, span=span)
+
+
+@op_impl("simt.fdim")
+def _build_simt_fdim(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(fdim, lhs, rhs, span=span)
+
+
+@op_impl("simt.ffs")
+def _build_simt_ffs(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(ffs, value, span=span)
+
+
+@op_impl("simt.fma_relu")
+def _build_simt_fma_relu(self, lhs: Expr, rhs: Expr, addend: Expr, *, span: Span) -> Expr:
+    return _simt_builder(fma_relu, lhs, rhs, addend, span=span)
+
+
+@op_impl("simt.geu")
+def _build_simt_geu(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(geu, lhs, rhs, span=span)
+
+
+@op_impl("simt.gtu")
+def _build_simt_gtu(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(gtu, lhs, rhs, span=span)
+
+
+@op_impl("simt.hadd")
+def _build_simt_hadd(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(hadd, lhs, rhs, span=span)
+
+
+@op_impl("simt.hypot")
+def _build_simt_hypot(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(hypot, lhs, rhs, span=span)
+
+
+@op_impl("simt.j0")
+def _build_simt_j0(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(j0, value, span=span)
+
+
+@op_impl("simt.j1")
+def _build_simt_j1(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(j1, value, span=span)
+
+
+@op_impl("simt.jn")
+def _build_simt_jn(self, order: Expr, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(jn, order, value, span=span)
+
+
+@op_impl("simt.ldexp")
+def _build_simt_ldexp(self, value: Expr, exponent: Expr, *, span: Span) -> Expr:
+    return _simt_builder(ldexp, value, exponent, span=span)
+
+
+@op_impl("simt.leu")
+def _build_simt_leu(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(leu, lhs, rhs, span=span)
+
+
+@op_impl("simt.lgamma")
+def _build_simt_lgamma(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(lgamma, value, span=span)
+
+
+@op_impl("simt.ltu")
+def _build_simt_ltu(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(ltu, lhs, rhs, span=span)
+
+
+@op_impl("simt.mul24")
+def _build_simt_mul24(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(mul24, lhs, rhs, span=span)
+
+
+@op_impl("simt.mul_i32_to_i64")
+def _build_simt_mul_i32_to_i64(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(mul_i32_to_i64, lhs, rhs, span=span)
+
+
+@op_impl("simt.norm3d")
+def _build_simt_norm3d(self, x: Expr, y: Expr, z: Expr, *, span: Span) -> Expr:
+    return _simt_builder(norm3d, x, y, z, span=span)
+
+
+@op_impl("simt.norm4d")
+def _build_simt_norm4d(self, x: Expr, y: Expr, z: Expr, w: Expr, *, span: Span) -> Expr:
+    return _simt_builder(norm4d, x, y, z, w, span=span)
+
+
+@op_impl("simt.normcdf")
+def _build_simt_normcdf(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(normcdf, value, span=span)
+
+
+@op_impl("simt.normcdfinv")
+def _build_simt_normcdfinv(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(normcdfinv, value, span=span)
+
+
+@op_impl("simt.pow")
+def _build_simt_pow(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(pow, lhs, rhs, span=span)
+
+
+@op_impl("simt.remainder")
+def _build_simt_remainder(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(remainder, lhs, rhs, span=span)
+
+
+@op_impl("simt.rhadd")
+def _build_simt_rhadd(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(rhadd, lhs, rhs, span=span)
+
+
+@op_impl("simt.rhypot")
+def _build_simt_rhypot(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(rhypot, lhs, rhs, span=span)
+
+
+@op_impl("simt.rnorm3d")
+def _build_simt_rnorm3d(self, x: Expr, y: Expr, z: Expr, *, span: Span) -> Expr:
+    return _simt_builder(rnorm3d, x, y, z, span=span)
+
+
+@op_impl("simt.rnorm4d")
+def _build_simt_rnorm4d(self, x: Expr, y: Expr, z: Expr, w: Expr, *, span: Span) -> Expr:
+    return _simt_builder(rnorm4d, x, y, z, w, span=span)
+
+
+@op_impl("simt.sad")
+def _build_simt_sad(self, lhs: Expr, rhs: Expr, addend: Expr, *, span: Span) -> Expr:
+    return _simt_builder(sad, lhs, rhs, addend, span=span)
+
+
+@op_impl("simt.saturate")
+def _build_simt_saturate(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(saturate, value, span=span)
+
+
+@op_impl("simt.scalbn")
+def _build_simt_scalbn(self, value: Expr, exponent: Expr, *, span: Span) -> Expr:
+    return _simt_builder(scalbn, value, exponent, span=span)
+
+
+@op_impl("simt.tgamma")
+def _build_simt_tgamma(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(tgamma, value, span=span)
+
+
+@op_impl("simt.y0")
+def _build_simt_y0(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(y0, value, span=span)
+
+
+@op_impl("simt.y1")
+def _build_simt_y1(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(y1, value, span=span)
+
+
+@op_impl("simt.yn")
+def _build_simt_yn(self, order: Expr, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(yn, order, value, span=span)
+
+
+@op_impl("simt.fmod")
+def _build_simt_fmod(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    return _simt_builder(fmod, lhs, rhs, span=span)
+
+
+@op_impl("simt.fma")
+def _build_simt_fma(self, lhs: Expr, rhs: Expr, addend: Expr, *, span: Span) -> Expr:
+    return _simt_builder(fma, lhs, rhs, addend, span=span)
+
+
+@op_impl("simt.warp_reduce_add")
+def _build_simt_warp_reduce_add(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(warp_reduce_add, value, span=span)
+
+
+@op_impl("simt.warp_reduce_max")
+def _build_simt_warp_reduce_max(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(warp_reduce_max, value, span=span)
+
+
+@op_impl("simt.warp_reduce_min")
+def _build_simt_warp_reduce_min(self, value: Expr, *, span: Span) -> Expr:
+    return _simt_builder(warp_reduce_min, value, span=span)
 
 
 @op_impl("simt.lane_id")
@@ -1087,16 +1456,22 @@ def _build_warp_active_mask(self, *, span: Span):
     return warp_active_mask(span=span)
 
 
-def _register_warp_predicate_impl(op_name: str, builder: Callable[..., Call]) -> None:
-    @op_impl(op_name)
-    def _impl(self, predicate: Expr, *, span: Span) -> Expr:
-        predicate = _adapt_simt_constant(self, op_name, "predicate", predicate, _ir_core.DataType.INT32)
-        return _simt_builder(builder, predicate, span=span)
+@op_impl("simt.warp_all")
+def _build_warp_all(self, predicate: Expr, *, span: Span) -> Expr:
+    predicate = _adapt_simt_constant(self, "simt.warp_all", "predicate", predicate, _ir_core.DataType.INT32)
+    return _simt_builder(warp_all, predicate, span=span)
 
 
-_register_warp_predicate_impl("simt.warp_all", warp_all)
-_register_warp_predicate_impl("simt.warp_any", warp_any)
-_register_warp_predicate_impl("simt.warp_ballot", warp_ballot)
+@op_impl("simt.warp_any")
+def _build_warp_any(self, predicate: Expr, *, span: Span) -> Expr:
+    predicate = _adapt_simt_constant(self, "simt.warp_any", "predicate", predicate, _ir_core.DataType.INT32)
+    return _simt_builder(warp_any, predicate, span=span)
+
+
+@op_impl("simt.warp_ballot")
+def _build_warp_ballot(self, predicate: Expr, *, span: Span) -> Expr:
+    predicate = _adapt_simt_constant(self, "simt.warp_ballot", "predicate", predicate, _ir_core.DataType.INT32)
+    return _simt_builder(warp_ballot, predicate, span=span)
 
 
 @op_impl("simt.warp_shfl")
@@ -1119,20 +1494,44 @@ def _build_warp_shfl_xor(self, value: Expr, lane_mask: Expr, width: Expr | None 
     return _build_warp_shuffle(self, warp_shfl_xor, value, lane_mask, width, "lane_mask", _ir_core.DataType.INT32, span)
 
 
-def _register_atomic_value_impl(op_name: str, builder: Callable[..., Call]) -> None:
-    @op_impl(op_name)
-    def _impl(self, target: Expr, offset: Expr, value: Expr, *, span: Span) -> Expr:
-        return _build_atomic_call(self, builder, target, offset, [("value", value)], span)
+@op_impl("simt.atomic_add")
+def _build_atomic_add(self, target: Expr, offset: Expr, value: Expr, *, span: Span) -> Expr:
+    return _build_atomic_call(self, atomic_add, target, offset, [("value", value)], span)
 
 
-_register_atomic_value_impl("simt.atomic_add", atomic_add)
-_register_atomic_value_impl("simt.atomic_sub", atomic_sub)
-_register_atomic_value_impl("simt.atomic_exch", atomic_exch)
-_register_atomic_value_impl("simt.atomic_max", atomic_max)
-_register_atomic_value_impl("simt.atomic_min", atomic_min)
-_register_atomic_value_impl("simt.atomic_and", atomic_and)
-_register_atomic_value_impl("simt.atomic_or", atomic_or)
-_register_atomic_value_impl("simt.atomic_xor", atomic_xor)
+@op_impl("simt.atomic_sub")
+def _build_atomic_sub(self, target: Expr, offset: Expr, value: Expr, *, span: Span) -> Expr:
+    return _build_atomic_call(self, atomic_sub, target, offset, [("value", value)], span)
+
+
+@op_impl("simt.atomic_exch")
+def _build_atomic_exch(self, target: Expr, offset: Expr, value: Expr, *, span: Span) -> Expr:
+    return _build_atomic_call(self, atomic_exch, target, offset, [("value", value)], span)
+
+
+@op_impl("simt.atomic_max")
+def _build_atomic_max(self, target: Expr, offset: Expr, value: Expr, *, span: Span) -> Expr:
+    return _build_atomic_call(self, atomic_max, target, offset, [("value", value)], span)
+
+
+@op_impl("simt.atomic_min")
+def _build_atomic_min(self, target: Expr, offset: Expr, value: Expr, *, span: Span) -> Expr:
+    return _build_atomic_call(self, atomic_min, target, offset, [("value", value)], span)
+
+
+@op_impl("simt.atomic_and")
+def _build_atomic_and(self, target: Expr, offset: Expr, value: Expr, *, span: Span) -> Expr:
+    return _build_atomic_call(self, atomic_and, target, offset, [("value", value)], span)
+
+
+@op_impl("simt.atomic_or")
+def _build_atomic_or(self, target: Expr, offset: Expr, value: Expr, *, span: Span) -> Expr:
+    return _build_atomic_call(self, atomic_or, target, offset, [("value", value)], span)
+
+
+@op_impl("simt.atomic_xor")
+def _build_atomic_xor(self, target: Expr, offset: Expr, value: Expr, *, span: Span) -> Expr:
+    return _build_atomic_call(self, atomic_xor, target, offset, [("value", value)], span)
 
 
 @op_impl("simt.atomic_inc")

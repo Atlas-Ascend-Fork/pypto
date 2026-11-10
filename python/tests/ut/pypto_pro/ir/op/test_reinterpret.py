@@ -353,7 +353,7 @@ def test_reinterpret_shape_with_loop_var_rejected_in_loop():
             pl.load_tile(t2, a, [i, 0])
             pl.store_tile(out, t2, [i, 0])
 
-    with pytest.raises(InvalidShape, match="compile-time integer"):
+    with pytest.raises(InvalidType, match="compile-time integer"):
         _parse_kernel(k)
 
 
@@ -364,7 +364,7 @@ def test_runtime_shape_is_rejected():
         t = pl.make_tile(tt, addr=0)
         pl.load(pl.reinterpret(t, shape=[x.shape[0], 16]), x, [0, 0])
 
-    with pytest.raises(InvalidShape, match="compile-time integer"):
+    with pytest.raises(InvalidType, match="compile-time integer"):
         _parse_kernel(k)
 
 
@@ -438,7 +438,7 @@ def test_group_runtime_shape_rejected():
         c0 = g2.next()
         pl.load(c0, a, [0, 0])
 
-    with pytest.raises(InvalidShape, match="compile-time integer"):
+    with pytest.raises(InvalidType, match="compile-time integer"):
         _parse_kernel(k)
 
 

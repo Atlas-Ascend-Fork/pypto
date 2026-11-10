@@ -1088,22 +1088,27 @@ def test_make_tile_group_rejects_bool_mutex_id(mutex_ids):
         tt = pl.TileType(shape=[32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         pl.make_tile_group(type=tt, addrs=0, mutex_ids=mutex_ids)
 
-    with pytest.raises(InvalidType, match=r"mutex_ids must be ints, got"):
+    with pytest.raises(InvalidType, match=r"mutex_ids.*must be a compile-time integer"):
         _parse_kernel(k)
 
 
 @pytest.mark.parametrize(
-    "mutex_ids",
-    [[-1], [32], [[0, -1]], [[0, 32]]],
+    "mutex_ids,message",
+    [
+        ([-1], r"mutex_ids\[0\] must be at least 0, got -1"),
+        ([32], r"mutex_ids\[0\] must be at most 31, got 32"),
+        ([[0, -1]], r"mutex_ids\[0\]\[1\] must be at least 0, got -1"),
+        ([[0, 32]], r"mutex_ids\[0\]\[1\] must be at most 31, got 32"),
+    ],
     ids=["single-negative", "single-too-large", "multi-negative", "multi-too-large"],
 )
-def test_make_tile_group_rejects_out_of_range_mutex_id(mutex_ids):
+def test_make_tile_group_rejects_out_of_range_mutex_id(mutex_ids, message):
     @pl.jit(auto_mutex=True)
     def k(gm_q: pl.Tensor[[32], pl.DT_FP16]):
         tt = pl.TileType(shape=[32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
         pl.make_tile_group(type=tt, addrs=0, mutex_ids=mutex_ids)
 
-    with pytest.raises(OutOfRange, match=r"mutex_ids element must be in \[0, 31\]"):
+    with pytest.raises(InvalidVal, match=message):
         _parse_kernel(k)
 
 

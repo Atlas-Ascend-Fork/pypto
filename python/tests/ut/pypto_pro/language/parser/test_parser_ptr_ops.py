@@ -211,7 +211,7 @@ def test_make_tensor_without_pipeline_ids_is_not_a_buffer_declaration():
 @pytest.mark.parametrize("ids_parameter", ["fwd_ids", "bwd_ids"])
 def test_make_tensor_rejects_runtime_pipeline_ids(ids_parameter):
     ids = {"fwd_ids": "[0]", "bwd_ids": "[1]"} | {ids_parameter: "[entry]"}
-    with pytest.raises(InvalidType, match=f"'{ids_parameter}' must be a compile-time"):
+    with pytest.raises(InvalidType, match=rf"'{ids_parameter}'\[0\] must be a compile-time"):
         _parse_body_with_parser(
             f"view = pl.make_tensor(p, [64, 128], depth=2, "
             f"fwd_ids={ids['fwd_ids']}, bwd_ids={ids['bwd_ids']})\n"

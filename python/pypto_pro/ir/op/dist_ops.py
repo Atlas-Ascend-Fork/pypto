@@ -24,6 +24,8 @@ from .._utils import (
     _normalize_expr,
     _to_make_tuple,
     require_const_bool,
+    require_const_int,
+    require_const_int_list,
 )
 from ._op_registry import op_impl, op_impl_ast
 
@@ -47,7 +49,7 @@ def barrier(
     return _ir_core.create_op_call(
         "dist.barrier", [window],
         {
-            "timeout_cycles": _timeout_value(timeout, "pld.barrier", actual_span),
+            "timeout_cycles": _timeout_value(timeout, "pld.barrier"),
             "sync_local": sync_local,
             "flush_store": flush_store,
         },
@@ -60,24 +62,24 @@ def _build_barrier(self, window, timeout=None, *, sync_local=None, flush_store=N
     timeout = _none_value(timeout)
     timeout_cycles = None
     if timeout is not None:
-        timeout_cycles = self.require_const_value(
-            timeout, "timeout", expects="integer", check=_is_int,
-            hint="timeout is a compile-time device-cycle bound; pass a literal or a variable "
-            "bound to one, not a runtime value.",
-        )
+        try:
+            timeout_cycles = require_const_int(timeout, subject="timeout")
+        except InvalidType as error:
+            error.hint = (
+                "timeout is a compile-time device-cycle bound; pass a literal or a variable "
+                "bound to one, not a runtime value."
+            )
+            raise
     flags = {}
     for name, value in (("sync_local", sync_local), ("flush_store", flush_store)):
         if value is None:
             continue
-        flags[name] = self.require_const_value(
-            value, name, expects="bool", check=_is_bool,
-            hint=f"{name} is a compile-time flag; pass a True/False literal or a variable bound to one.",
-        )
+        try:
+            flags[name] = require_const_bool(value, subject=name)
+        except InvalidType as error:
+            error.hint = f"{name} is a compile-time flag; pass a True/False literal or a variable bound to one."
+            raise
     return barrier(window, timeout_cycles, span=span, **flags)
-
-
-def _is_bool(value):
-    return isinstance(value, bool)
 
 
 def _none_value(value):
@@ -99,7 +101,7 @@ def _parse_op_kwargs(parser, call):
     return kwargs
 
 
-def _shape_dim(dim, span):
+def _shape_dim(dim):
     """DTensor view dim: compile-time int (folded) or a runtime integer scalar expression."""
     value = _const_int_value(dim)
     if value is not None:
@@ -109,7 +111,6 @@ def _shape_dim(dim, span):
         return dim
     raise InvalidType(
         "pld.make_dtensor shape dims must be integers or integer scalar expressions",
-        span=span,
     )
 
 
@@ -118,17 +119,16 @@ def _coord_elements(value, api, arg_name, expected_len=None, span=None):
     try:
         offsets = _to_make_tuple(value, span)
     except InvalidType:
-        raise InvalidType(f"{api} {arg_name} must be a list of per-axis coordinates", span=span) from None
+        raise InvalidType(f"{api} {arg_name} must be a list of per-axis coordinates") from None
     coords = list(offsets.elements)
     if expected_len is not None and len(coords) != expected_len:
         raise InvalidArgument(
             f"{api} {arg_name} has {len(coords)} coordinates, but the DTensor view has {expected_len} axes",
-            span=span,
         )
     for coord in coords:
         if isinstance(coord, _ir_core.Expr):
             continue
-        raise InvalidType(f"{api} {arg_name} coordinates must be integers or in-kernel expressions", span=span)
+        raise InvalidType(f"{api} {arg_name} coordinates must be integers or in-kernel expressions")
     return coords
 
 
@@ -147,46 +147,42 @@ def _build_make_dtensor(self, window, region, offset, shape, dtype, *, span: Spa
     from ...language.distribute import DTensor
 
     if not isinstance(window, _ir_core.Var) or not isinstance(window.type, _ir_core.WindowType):
-        raise InvalidType("pld.make_dtensor win must be a kernel window parameter", span=span)
+        raise InvalidType("pld.make_dtensor win must be a kernel window parameter")
     if not isinstance(region, _ir_core.Var) or not isinstance(region.type, _ir_core.TensorType):
         raise InvalidType(
             "pld.make_dtensor region must be a tensor kernel parameter registered by "
             "Window.register_memory (locals and intermediates are not registered regions)",
-            span=span,
         )
     if not isinstance(getattr(shape, "type", None), _ir_core.TupleType):
-        raise InvalidType("pld.make_dtensor shape must be a list of ints or integer scalar expressions", span=span)
-    dims = tuple(_shape_dim(dim, span) for dim in _to_make_tuple(shape, span).elements)
+        raise InvalidType("pld.make_dtensor shape must be a list of ints or integer scalar expressions")
+    dims = tuple(_shape_dim(dim) for dim in _to_make_tuple(shape, span).elements)
     if not dims or any(_is_int(dim) and dim <= 0 for dim in dims) or len(dims) > 5:
-        raise InvalidVal(f"pld.make_dtensor shape must have 1-5 positive dims, got {dims}", span=span)
+        raise InvalidVal(f"pld.make_dtensor shape must have 1-5 positive dims, got {dims}")
     if isinstance(getattr(offset, "type", None), _ir_core.TupleType):
         raise InvalidType(
             "pld.make_dtensor offset is a scalar byte offset into the registered region, not a coordinate list",
-            span=span,
         )
-    byte_offset = _int_operand(offset, "pld.make_dtensor", "offset", span)
+    byte_offset = _int_operand(offset, "pld.make_dtensor", "offset")
     if isinstance(byte_offset, _ir_core.ConstInt) and byte_offset.value < 0:
-        raise InvalidVal(f"pld.make_dtensor offset must be >= 0 bytes, got {byte_offset.value}", span=span)
+        raise InvalidVal(f"pld.make_dtensor offset must be >= 0 bytes, got {byte_offset.value}")
     if not isinstance(dtype, _ir_core.DataType):
-        raise InvalidType("pld.make_dtensor dtype must be a pl.DT_* constant", span=span)
+        raise InvalidType("pld.make_dtensor dtype must be a pl.DT_* constant")
     return DTensor(window, region, byte_offset, dims, dtype)
 
 
-def _order_axes(self, order, api):
+def _order_axes(order):
     """``order=`` tuple operand -> Python axis list (compile-time), ``None`` passthrough."""
     order = _none_value(order)
     if order is None:
         return None
-    return list(
-        self.require_const_value(
-            order,
-            "order",
-            expects="integer list",
-            check=lambda value: isinstance(value, (list, tuple)) and all(_is_int(axis) for axis in value),
-            hint="order selects tensor axes at compile time; pass a constant list "
-            "(e.g. order=[1, 3]) or a variable bound to one, not a runtime value.",
+    try:
+        return require_const_int_list(order, subject="order")
+    except InvalidType as error:
+        error.hint = (
+            "order selects tensor axes at compile time; pass a constant list "
+            "(e.g. order=[1, 3]) or a variable bound to one, not a runtime value."
         )
-    )
+        raise
 
 
 _PUT_ATOMIC_DTYPES = (
@@ -199,19 +195,19 @@ _PUT_ATOMIC_DTYPES = (
 )
 
 
-def _put_atomic_mode(atomic_mode, api, dtype, span):
+def _put_atomic_mode(atomic_mode, api, dtype):
     """``atomic_mode=`` enum -> int for the IR ``atomic`` kwarg (0 = AtomicNone, unset)."""
     if atomic_mode is None:
         return 0
     if not isinstance(atomic_mode, _ir_core.AtomicType):
-        raise InvalidType(f"{api} atomic_mode must be a pl.AtomicType member, got {atomic_mode!r}", span=span)
+        raise InvalidType(f"{api} atomic_mode must be a pl.AtomicType member, got {atomic_mode!r}")
     atomic = int(atomic_mode)
     if atomic == int(_ir_core.AtomicType.AtomicNone):
         return 0
     if dtype not in _PUT_ATOMIC_DTYPES:
         supported = "/".join(str(d) for d in _PUT_ATOMIC_DTYPES)
         raise InvalidType(
-            f"{api} atomic_mode=AtomicAdd does not support dtype {dtype}; supported: {supported}", span=span
+            f"{api} atomic_mode=AtomicAdd does not support dtype {dtype}; supported: {supported}"
         )
     return atomic
 
@@ -221,54 +217,52 @@ def _build_transfer(self, tile, dtensor, offset, peer, order, *, op_name, api, i
     from ...language.distribute import DTensor
     from .block_ops import _resolve_order, _static_shape_ints
 
-    order = _order_axes(self, order, api)
+    order = _order_axes(order)
 
     if not isinstance(dtensor, DTensor):
         name = "second" if op_name == "dist.get" else "first"
         raise InvalidType(
-            f"{api} {name} argument must be a pld.DTensor built by pld.make_dtensor", span=span
+            f"{api} {name} argument must be a pld.DTensor built by pld.make_dtensor"
         )
     if not isinstance(tile, _ir_core.Expr) or not isinstance(tile.type, _ir_core.TileType):
-        raise InvalidType(f"{api} tile must be an in-kernel tile expression", span=span)
+        raise InvalidType(f"{api} tile must be an in-kernel tile expression")
     if tile.type.dtype != dtensor.dtype:
         raise InvalidType(
             f"{api} tile dtype {tile.type.dtype} does not match the DTensor view dtype {dtensor.dtype}",
-            span=span,
         )
     if not isinstance(peer, _ir_core.Expr):
-        raise InvalidType(f"{api} peer must be an in-kernel expression", span=span)
+        raise InvalidType(f"{api} peer must be an in-kernel expression")
 
     view_ndim = len(dtensor.shape)
     tile_ndim = len(tile.type.shape)
     if view_ndim == 1:
         if order is not None:
-            raise InvalidArgument(f"{api}: order is not supported for a rank-1 DTensor view", span=span)
+            raise InvalidArgument(f"{api}: order is not supported for a rank-1 DTensor view")
         tile_dims, is_transpose = None, False
     else:
         tile_dims, is_transpose = _resolve_order(order, view_ndim, tile_ndim, api)
         if order is None:
             if tile_ndim > view_ndim:
                 raise InvalidShape(
-                    f"{api}: Tile rank {tile_ndim} exceeds the DTensor view rank {view_ndim}", span=span
+                    f"{api}: Tile rank {tile_ndim} exceeds the DTensor view rank {view_ndim}"
                 )
         else:
             if len(tile_dims) != tile_ndim:
                 raise InvalidShape(
                     f"{api}: order must name one axis per Tile dimension ({tile_ndim}), got {tile_dims}; "
                     "a merged-row order has no single block stride",
-                    span=span,
                 )
             if len(set(tile_dims)) != len(tile_dims):
-                raise InvalidShape(f"{api}: order axes must be unique, got {tile_dims}", span=span)
+                raise InvalidShape(f"{api}: order axes must be unique, got {tile_dims}")
             if any(axis < 0 or axis >= view_ndim for axis in tile_dims):
                 raise InvalidShape(
-                    f"{api}: order axis out of range for the DTensor view rank {view_ndim}: {tile_dims}", span=span
+                    f"{api}: order axis out of range for the DTensor view rank {view_ndim}: {tile_dims}"
                 )
     if is_tile:
         try:
             tile_shape = _static_shape_ints(tile.type.shape, api)
         except InvalidType as exc:
-            raise InvalidType(f"{api}: tile-block offsets need a static tile shape ({exc})", span=span) from None
+            raise InvalidType(f"{api}: tile-block offsets need a static tile shape ({exc})") from None
         block_offsets = _coord_elements(offset, api, "tile_offsets", expected_len=view_ndim, span=span)
         if tile_dims is None:
             # Rank-1 view: the Tile shape supplies the extent (block.load's access_size rule).
@@ -287,11 +281,10 @@ def _build_transfer(self, tile, dtensor, offset, peer, order, *, op_name, api, i
     # the runtime valid window clips it — same contract as load).
     for axis, (coord, dim) in enumerate(zip(coords, dtensor.shape)):
         coord_value = _const_int_value(coord)
-        dim_value = _const_int_value(dim)
+        dim_value = dim if _is_int(dim) else _const_int_value(dim)
         if coord_value is not None and dim_value is not None and not 0 <= coord_value < dim_value:
             raise InvalidShape(
                 f"{api}: offset[{axis}] ({coord_value}) is outside the DTensor view shape[{axis}] ({dim_value})",
-                span=span,
             )
     offsets_tuple = _to_make_tuple(coords, span)
     shape_tuple = _to_make_tuple(dtensor.shape, span)
@@ -304,7 +297,7 @@ def _build_transfer(self, tile, dtensor, offset, peer, order, *, op_name, api, i
         kwargs["is_transpose"] = True
     if tile_dims is not None:
         kwargs["tile_dims"] = tile_dims
-    atomic = _put_atomic_mode(atomic_mode, api, dtensor.dtype, span)
+    atomic = _put_atomic_mode(atomic_mode, api, dtensor.dtype)
     if atomic:
         kwargs["atomic"] = atomic
     return _ir_core.create_op_call(
@@ -351,34 +344,34 @@ def _build_dist_put_tile(self, dtensor, tile, tile_offsets, peer, *, order=None,
     )
 
 
-def _window_param(window, api, arg_name, span):
+def _window_param(window, api, arg_name):
     """A parsed operand that must be a kernel window parameter (``pld.Window`` Var)."""
     if not isinstance(window, _ir_core.Var) or not isinstance(window.type, _ir_core.WindowType):
-        raise InvalidType(f"{api} {arg_name} must be a kernel window parameter", span=span)
+        raise InvalidType(f"{api} {arg_name} must be a kernel window parameter")
     return window
 
 
-def _int_operand(value, api, arg_name, span):
+def _int_operand(value, api, arg_name):
     """A parsed operand that must be an integer scalar expression."""
     value_type = getattr(value, "type", None)
     if isinstance(value, _ir_core.Expr) and isinstance(value_type, _ir_core.ScalarType) and value_type.dtype.is_int():
         return value
-    raise InvalidType(f"{api} {arg_name} must be an integer or an integer scalar expression", span=span)
+    raise InvalidType(f"{api} {arg_name} must be an integer or an integer scalar expression")
 
 
 def _parse_int_operand(parser, node, api, arg_name):
     """Parse a positional operand that must be an int or an integer scalar expression."""
-    return _int_operand(parser.parse_expression(node), api, arg_name, parser.span_tracker.get_span(node))
+    return _int_operand(parser.parse_expression(node), api, arg_name)
 
 
-def _enum_kwarg_to_int(value, api, arg_name, span):
+def _enum_kwarg_to_int(value, api, arg_name):
     """Enum member (``pld.NotifyOp.SET``, ``pld.Cmp.GE``) or an int literal -> int."""
     if isinstance(value, _ir_core.ConstInt):
         return int(value.value)
     enum_value = getattr(value, "value", None)
     if enum_value is not None and _is_int(enum_value):
         return enum_value
-    raise InvalidType(f"{api} {arg_name} must be an enum value or an int, got {value!r}", span=span)
+    raise InvalidType(f"{api} {arg_name} must be an enum value or an int, got {value!r}")
 
 
 @op_impl("dist.signal")
@@ -386,40 +379,42 @@ def _build_signal(self, window, idx, *, span: Span | None = None):
     """``sig = pld.signal(win, idx)`` -> dist.signal."""
     from ...language.distribute import Signal
 
-    window = _window_param(window, "pld.signal", "win", span)
-    slot = _int_operand(idx, "pld.signal", "idx", span)
+    window = _window_param(window, "pld.signal", "win")
+    slot = _int_operand(idx, "pld.signal", "idx")
     if isinstance(slot, _ir_core.ConstInt) and slot.value < 0:
-        raise InvalidVal(f"pld.signal idx must be >= 0, got {slot.value}", span=span)
+        raise InvalidVal(f"pld.signal idx must be >= 0, got {slot.value}")
     return Signal(window, slot)
 
 
 @op_impl("dist.notify")
-def _build_notify(self, signal, peer, val=None, *, op=None, flush_store=True, span: Span | None = None):
+def _build_notify(self, signal, peer, val=None, *, op=None, flush_store=None, span: Span | None = None):
     """``pld.notify(signal, peer, val[, op=, flush_store=])`` / local form -> dist.notify."""
     from ...language.distribute import NotifyOp, Signal
 
     val = _none_value(val)
     if not isinstance(signal, Signal):
-        raise InvalidType("pld.notify first argument must be a pld.Signal built by pld.signal", span=span)
+        raise InvalidType("pld.notify first argument must be a pld.Signal built by pld.signal")
     if val is None:
         # Local form: the second positional argument is the value; the peer is this
         # rank, read from the window descriptor at runtime.
-        val_operand = _int_operand(peer, "pld.notify", "val", span)
+        val_operand = _int_operand(peer, "pld.notify", "val")
         field = _ir_core.ConstInt(0, _ir_core.DataType.INT64, span)
         peer_operand = _ir_core.create_op_call("dist.window_get", [signal.window, field], {}, span)
     else:
-        peer_operand = _int_operand(peer, "pld.notify", "peer", span)
-        val_operand = _int_operand(val, "pld.notify", "val", span)
+        peer_operand = _int_operand(peer, "pld.notify", "peer")
+        val_operand = _int_operand(val, "pld.notify", "val")
 
-    notify_op = _enum_kwarg_to_int(op if op is not None else NotifyOp.SET, "pld.notify", "op", span)
+    notify_op = _enum_kwarg_to_int(op if op is not None else NotifyOp.SET, "pld.notify", "op")
     if notify_op not in (int(NotifyOp.SET), int(NotifyOp.ATOMIC_ADD)):
         raise InvalidVal(
-            f"pld.notify op must be NotifyOp.SET or NotifyOp.ATOMIC_ADD, got {notify_op}", span=span
+            f"pld.notify op must be NotifyOp.SET or NotifyOp.ATOMIC_ADD, got {notify_op}"
         )
 
     kwargs = {
         "notify_op": notify_op,
-        "flush_store": require_const_bool(flush_store, subject="pld.notify 'flush_store'"),
+        "flush_store": True if flush_store is None else require_const_bool(
+            flush_store, subject="pld.notify 'flush_store'",
+        ),
     }
     return _ir_core.create_op_call(
         "dist.notify",
@@ -430,21 +425,23 @@ def _build_notify(self, signal, peer, val=None, *, op=None, flush_store=True, sp
 
 
 @op_impl("dist.notify_all")
-def _build_notify_all(self, signal, val, *, op=None, flush_store=True, span: Span | None = None):
+def _build_notify_all(self, signal, val, *, op=None, flush_store=None, span: Span | None = None):
     """``pld.notify_all(signal, val[, op=, flush_store=])`` -> dist.notify_all."""
     from ...language.distribute import NotifyOp, Signal
 
     if not isinstance(signal, Signal):
-        raise InvalidType("pld.notify_all first argument must be a pld.Signal built by pld.signal", span=span)
-    val_operand = _int_operand(val, "pld.notify_all", "val", span)
-    notify_op = _enum_kwarg_to_int(op if op is not None else NotifyOp.SET, "pld.notify_all", "op", span)
+        raise InvalidType("pld.notify_all first argument must be a pld.Signal built by pld.signal")
+    val_operand = _int_operand(val, "pld.notify_all", "val")
+    notify_op = _enum_kwarg_to_int(op if op is not None else NotifyOp.SET, "pld.notify_all", "op")
     if notify_op not in (int(NotifyOp.SET), int(NotifyOp.ATOMIC_ADD)):
         raise InvalidVal(
-            f"pld.notify_all op must be NotifyOp.SET or NotifyOp.ATOMIC_ADD, got {notify_op}", span=span
+            f"pld.notify_all op must be NotifyOp.SET or NotifyOp.ATOMIC_ADD, got {notify_op}"
         )
     kwargs = {
         "notify_op": notify_op,
-        "flush_store": require_const_bool(flush_store, subject="pld.notify_all 'flush_store'"),
+        "flush_store": True if flush_store is None else require_const_bool(
+            flush_store, subject="pld.notify_all 'flush_store'",
+        ),
     }
     return _ir_core.create_op_call(
         "dist.notify_all",
@@ -454,17 +451,17 @@ def _build_notify_all(self, signal, val, *, op=None, flush_store=True, span: Spa
     )
 
 
-def _cmp_kwarg(cmp, api, span):
+def _cmp_kwarg(cmp, api):
     """``cmp=`` enum/int -> CmpMode integer (0-5)."""
     from ...language.distribute import Cmp
 
-    cmp_mode = _enum_kwarg_to_int(cmp if cmp is not None else Cmp.EQ, api, "cmp", span)
+    cmp_mode = _enum_kwarg_to_int(cmp if cmp is not None else Cmp.EQ, api, "cmp")
     if not 0 <= cmp_mode <= 5:
-        raise InvalidVal(f"{api} cmp must be a pld.Cmp member (0-5), got {cmp_mode}", span=span)
+        raise InvalidVal(f"{api} cmp must be a pld.Cmp member (0-5), got {cmp_mode}")
     return cmp_mode
 
 
-def _timeout_value(timeout, api, span, *, minimum=0):
+def _timeout_value(timeout, api, *, minimum=0):
     """``timeout=`` compile-time cycles (``None`` -> 0 = forever)."""
     timeout = _none_value(timeout)
     if timeout is None:
@@ -472,13 +469,12 @@ def _timeout_value(timeout, api, span, *, minimum=0):
     if isinstance(timeout, _ir_core.ConstInt):
         timeout = int(timeout.value)
     if not _is_int(timeout):
-        raise InvalidType(f"{api} timeout must be an int or None, got {timeout!r}", span=span)
+        raise InvalidType(f"{api} timeout must be an int or None, got {timeout!r}")
     if not minimum <= timeout <= _MAX_TIMEOUT_CYCLES:
         forever = " (None = forever)" if minimum else ""
         raise InvalidVal(
             f"{api} timeout must be in [{minimum}, {_MAX_TIMEOUT_CYCLES}] device cycles"
             f"{forever}, but got {timeout}",
-            span=span,
         )
     return timeout
 
@@ -489,14 +485,14 @@ def _build_wait(self, signal, val, *, cmp=None, timeout=None, span: Span | None 
     from ...language.distribute import Signal
 
     if not isinstance(signal, Signal):
-        raise InvalidType("pld.wait first argument must be a pld.Signal built by pld.signal", span=span)
-    val_operand = _int_operand(val, "pld.wait", "val", span)
-    cmp_mode = _cmp_kwarg(cmp, "pld.wait", span)
+        raise InvalidType("pld.wait first argument must be a pld.Signal built by pld.signal")
+    val_operand = _int_operand(val, "pld.wait", "val")
+    cmp_mode = _cmp_kwarg(cmp, "pld.wait")
 
     return _ir_core.create_op_call(
         "dist.wait",
         [signal.window, _normalize_expr(signal.slot, span), val_operand],
-        {"cmp": cmp_mode, "timeout_cycles": _timeout_value(timeout, "pld.wait", span)},
+        {"cmp": cmp_mode, "timeout_cycles": _timeout_value(timeout, "pld.wait")},
         span,
     )
 
@@ -509,12 +505,12 @@ def _shape_byte_count(shape, dtype, span):
     return total
 
 
-def _parse_write_scalar(source, node, dtype, span, *, api="ch.write"):
+def _parse_write_scalar(source, node, dtype, *, api="ch.write"):
     """Scalar write form: one word cast to the DTensor dtype, inline in the WQE."""
     if dtype not in _ATOMIC_DTYPES:
         supported = "/".join(str(d) for d in _ATOMIC_DTYPES)
         raise InvalidType(
-            f"{api} scalar form does not support dtype {dtype}; supported: {supported}", span=span
+            f"{api} scalar form does not support dtype {dtype}; supported: {supported}"
         )
     source_type = getattr(source, "type", None)
     if isinstance(source, _ir_core.Expr) and isinstance(source_type, _ir_core.ScalarType) and (
@@ -524,12 +520,10 @@ def _parse_write_scalar(source, node, dtype, span, *, api="ch.write"):
             raise InvalidType(
                 f"{api} scalar must be an integer for dtype {dtype}, "
                 f"got a {source_type.dtype} scalar",
-                span=span,
             )
         return source
     raise InvalidType(
         f"{api} source must be a kernel GM tensor or an int/float scalar, got {ast.unparse(node)}",
-        span=span,
     )
 
 
@@ -547,12 +541,11 @@ class _ChannelCreate:
 
 def _require_const_int(parser, node, api, arg_name):
     """Compile-time integer argument (a literal or a folded constant)."""
-    span = parser.span_tracker.get_span(node)
     value = parser.parse_expression(node)
     constant = _const_int_value(value)
     if constant is None:
         raise InvalidType(
-            f"{api} {arg_name} must be a compile-time integer, got {ast.unparse(node)}", span=span
+            f"{api} {arg_name} must be a compile-time integer, got {ast.unparse(node)}"
         )
     return constant
 
@@ -568,16 +561,14 @@ def _parse_channel(parser, call):
     if len(call.args) != 2:
         raise InvalidArgument(
             f"pld.channel requires (win, buffer), got {len(call.args)} arguments",
-            span=span,
         )
 
-    window = _window_param(parser.parse_expression(call.args[0]), "pld.channel", "win", span)
+    window = _window_param(parser.parse_expression(call.args[0]), "pld.channel", "win")
     ub_addr = _require_const_int(parser, call.args[1], "pld.channel", "buffer")
     if ub_addr < 0 or ub_addr % 64:
         raise InvalidVal(
             f"pld.channel buffer must be a non-negative 64-byte aligned address of at least "
             f"{CHANNEL_UB_BYTES} bytes, got {ub_addr}",
-            span=span,
         )
 
     peer = None
@@ -587,7 +578,6 @@ def _parse_channel(parser, call):
             raise InvalidVal(
                 f"pld.channel peer must be a destination rank, got {peer.value}; "
                 "omit 'peer' for the multi-issuer (per-AIV jetty) form",
-                span=span,
             )
 
     # ubbuf may be use by simt code, update the max_vec_tile_end
@@ -598,7 +588,7 @@ def _parse_channel(parser, call):
     return _ChannelCreate(window, ub_addr, create)
 
 
-def _channel_dtensor(parser, api, node, channel, span):
+def _channel_dtensor(parser, api, node, channel):
     """Parse and validate the DTensor destination of a channel transfer."""
     from ...language.distribute import DTensor
 
@@ -606,10 +596,9 @@ def _channel_dtensor(parser, api, node, channel, span):
     if not isinstance(dtensor, DTensor):
         raise InvalidType(
             f"{api} destination must be a pld.DTensor built by pld.make_dtensor, got {ast.unparse(node)}",
-            span=span,
         )
     if dtensor.window.name != channel.window.name:
-        raise InvalidType(f"{api} DTensor must belong to the channel's window", span=span)
+        raise InvalidType(f"{api} DTensor must belong to the channel's window")
     return dtensor
 
 
@@ -619,21 +608,20 @@ def _build_channel_write(parser, call, channel):
     kwargs_parsed = _parse_op_kwargs(parser, call)
     for name in kwargs_parsed:
         if name not in ("submit", "timeout"):
-            raise InvalidArgument(f"ch.write does not accept keyword argument '{name}'", span=span)
+            raise InvalidArgument(f"ch.write does not accept keyword argument '{name}'")
     if any(isinstance(a, ast.Starred) for a in call.args):
-        raise InvalidArgument("ch.write does not accept star-args", span=span)
+        raise InvalidArgument("ch.write does not accept star-args")
     if len(call.args) != 2:
         raise InvalidArgument(
             f"ch.write requires (dtensor, tensor or scalar), got {len(call.args)} arguments after the channel",
-            span=span,
             hint="The destination peer is bound when the channel is opened: pld.channel(win, buffer, peer=...)",
         )
 
-    dtensor = _channel_dtensor(parser, "ch.write", call.args[0], channel, span)
+    dtensor = _channel_dtensor(parser, "ch.write", call.args[0], channel)
     submit = kwargs_parsed.get("submit", True)
     if not isinstance(submit, bool):
-        raise InvalidType(f"ch.write submit must be a compile-time bool, got {submit!r}", span=span)
-    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write", span, minimum=1)
+        raise InvalidType(f"ch.write submit must be a compile-time bool, got {submit!r}")
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write", minimum=1)
 
     source = parser.parse_expression(call.args[1])
     if isinstance(source, _ir_core.Var) and isinstance(source.type, _ir_core.TensorType):
@@ -641,7 +629,6 @@ def _build_channel_write(parser, call, channel):
             raise InvalidType(
                 f"ch.write source dtype {source.type.dtype} does not match the DTensor view dtype "
                 f"{dtensor.dtype}",
-                span=span,
             )
         num_bytes_arg = _shape_byte_count(source.type.shape, dtensor.dtype, span)
         return _ir_core.create_op_call(
@@ -651,7 +638,7 @@ def _build_channel_write(parser, call, channel):
             span,
         )
 
-    value = _parse_write_scalar(source, call.args[1], dtensor.dtype, span, api="ch.write")
+    value = _parse_write_scalar(source, call.args[1], dtensor.dtype, api="ch.write")
     # The scalar rides inline in the WQE; no MTE3 flush is needed.
     return _ir_core.create_op_call(
         "dist.channel_write_value",
@@ -669,38 +656,35 @@ def _build_channel_write_notify(parser, call, channel):
     kwargs_parsed = _parse_op_kwargs(parser, call)
     for name in kwargs_parsed:
         if name != "timeout":
-            raise InvalidArgument(f"ch.write_notify does not accept keyword argument '{name}'", span=span)
+            raise InvalidArgument(f"ch.write_notify does not accept keyword argument '{name}'")
     if any(isinstance(a, ast.Starred) for a in call.args):
-        raise InvalidArgument("ch.write_notify does not accept star-args", span=span)
+        raise InvalidArgument("ch.write_notify does not accept star-args")
     if len(call.args) != 4:
         raise InvalidArgument(
             f"ch.write_notify requires (dtensor, tensor, signal, val), got {len(call.args)} arguments "
             "after the channel",
-            span=span,
             hint="The destination peer is bound when the channel is opened: pld.channel(win, buffer, peer=...)",
         )
 
-    dtensor = _channel_dtensor(parser, "ch.write_notify", call.args[0], channel, span)
+    dtensor = _channel_dtensor(parser, "ch.write_notify", call.args[0], channel)
     source = parser.parse_expression(call.args[1])
     if not isinstance(source, _ir_core.Var) or not isinstance(source.type, _ir_core.TensorType):
         raise InvalidType(
             "ch.write_notify tensor must be a kernel GM tensor (the fused WQE reads its source "
             f"from GM; use ch.write for the scalar-word form), got {ast.unparse(call.args[1])}",
-            span=span,
         )
     if source.type.dtype != dtensor.dtype:
         raise InvalidType(
             f"ch.write_notify source dtype {source.type.dtype} does not match the DTensor view dtype "
             f"{dtensor.dtype}",
-            span=span,
         )
     signal = parser.parse_expression(call.args[2])
     if not isinstance(signal, Signal):
-        raise InvalidType("ch.write_notify signal must be a pld.Signal built by pld.signal", span=span)
+        raise InvalidType("ch.write_notify signal must be a pld.Signal built by pld.signal")
     if signal.window.name != channel.window.name:
-        raise InvalidType("ch.write_notify signal must belong to the channel's window", span=span)
+        raise InvalidType("ch.write_notify signal must belong to the channel's window")
     val = _parse_int_operand(parser, call.args[3], "ch.write_notify", "val")
-    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write_notify", span, minimum=1)
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write_notify", minimum=1)
 
     num_bytes_arg = _shape_byte_count(source.type.shape, dtensor.dtype, span)
     return _ir_core.create_op_call(
@@ -723,7 +707,7 @@ def _build_channel_submit(parser, call, channel):
     """``ch.submit()`` -> dist.channel_submit."""
     span = parser.span_tracker.get_span(call)
     if call.args or call.keywords:
-        raise InvalidArgument("ch.submit takes no arguments", span=span)
+        raise InvalidArgument("ch.submit takes no arguments")
     return _ir_core.create_op_call("dist.channel_submit", [channel.token], {}, span)
 
 
@@ -733,14 +717,14 @@ def _build_channel_drain(parser, call, channel):
     kwargs_parsed = _parse_op_kwargs(parser, call)
     for name in kwargs_parsed:
         if name != "timeout":
-            raise InvalidArgument(f"ch.drain does not accept keyword argument '{name}'", span=span)
+            raise InvalidArgument(f"ch.drain does not accept keyword argument '{name}'")
     if len(call.args) > 1:
-        raise InvalidArgument("ch.drain accepts at most one positional timeout", span=span)
+        raise InvalidArgument("ch.drain accepts at most one positional timeout")
     if call.args:
         if "timeout" in kwargs_parsed:
-            raise InvalidArgument("ch.drain timeout given both positionally and by keyword", span=span)
+            raise InvalidArgument("ch.drain timeout given both positionally and by keyword")
         kwargs_parsed = {"timeout": _require_const_int(parser, call.args[0], "ch.drain", "timeout")}
-    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.drain", span, minimum=1)
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.drain", minimum=1)
     return _ir_core.create_op_call(
         "dist.channel_drain", [channel.token], {"timeout_cycles": timeout}, span
     )
@@ -750,7 +734,7 @@ def _build_channel_is_exclusive(parser, call, channel):
     """``ch.is_exclusive()`` -> dist.channel_is_exclusive (runtime bool)."""
     span = parser.span_tracker.get_span(call)
     if call.args or call.keywords:
-        raise InvalidArgument("ch.is_exclusive takes no arguments", span=span)
+        raise InvalidArgument("ch.is_exclusive takes no arguments")
     return _ir_core.create_op_call("dist.channel_is_exclusive", [channel.token], {}, span)
 
 
@@ -767,7 +751,7 @@ def parse_channel_method(parser, channel, method, call):
     if method == "is_exclusive":
         return _build_channel_is_exclusive(parser, call, channel)
     raise InvalidOperation(
-        f"pld.Channel has no method '{method}'", span=parser.span_tracker.get_span(call)
+        f"pld.Channel has no method '{method}'"
     )
 
 
@@ -797,12 +781,11 @@ def _atomic_value(value, api, arg_name, dtype, span, *, negate=False):
     if not isinstance(value, _ir_core.Expr) or not isinstance(value_type, _ir_core.ScalarType) or not (
         value_type.dtype.is_int() or value_type.dtype.is_float()
     ):
-        raise InvalidType(f"{api} {arg_name} must be an int/float or a scalar expression", span=span)
+        raise InvalidType(f"{api} {arg_name} must be an int/float or a scalar expression")
     if dtype.is_int() and value_type.dtype.is_float():
         raise InvalidType(
             f"{api} {arg_name} must be an integer for dtype {dtype}, "
             f"got a {value_type.dtype} scalar",
-            span=span,
         )
     return _negate_atomic_expr(value, dtype, span) if negate else value
 
@@ -813,7 +796,7 @@ def _atomic_offsets(offset, dtensor, api, span):
         # One coordinate per view axis; each may be a constant or a runtime expression.
         coords = _coord_elements(offset, api, "offset", expected_len=len(dtensor.shape), span=span)
         return _to_make_tuple(coords, span)
-    return _int_operand(offset, api, "offset", span)
+    return _int_operand(offset, api, "offset")
 
 
 def _build_atomic(self, dtensor, peer, offset, values, *, op_name, api, value_names, negate=False, span=None):
@@ -821,14 +804,14 @@ def _build_atomic(self, dtensor, peer, offset, values, *, op_name, api, value_na
 
     if not isinstance(dtensor, DTensor):
         raise InvalidType(
-            f"{api} first argument must be a pld.DTensor built by pld.make_dtensor", span=span
+            f"{api} first argument must be a pld.DTensor built by pld.make_dtensor"
         )
     dtype = dtensor.dtype
     if dtype not in _ATOMIC_DTYPES:
         supported = "/".join(str(d) for d in _ATOMIC_DTYPES)
-        raise InvalidType(f"{api} does not support dtype {dtype}; supported: {supported}", span=span)
+        raise InvalidType(f"{api} does not support dtype {dtype}; supported: {supported}")
 
-    peer_operand = _int_operand(peer, api, "peer", span)
+    peer_operand = _int_operand(peer, api, "peer")
     offsets_arg = _atomic_offsets(offset, dtensor, api, span)
     parsed_values = [
         _atomic_value(value, api, name, dtype, span, negate=negate)

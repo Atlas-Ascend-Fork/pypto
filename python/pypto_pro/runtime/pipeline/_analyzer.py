@@ -1173,8 +1173,8 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
         # repeat a kernel position.
         original_bind = parser._bind_inline_arguments
 
-        def _bind(func_name, func_def, call, span, _orig=original_bind):
-            bound = _orig(func_name, func_def, call, span)
+        def _bind(func_name, func_def, call, _orig=original_bind):
+            bound = _orig(func_name, func_def, call)
             if parser.inline_call_stack:
                 return bound
             written = {id(arg) for arg in call.args}

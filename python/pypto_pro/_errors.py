@@ -34,7 +34,7 @@ __all__ = [
     "MutexMismatch",
     "UntrackedTile",
     "warn_check_skipped",
-    "argument_span",
+    "get_current_span",
     "remembered_span",
     "source_lines_of",
     "span_of",
@@ -128,17 +128,11 @@ def _origin_of_caller(depth: int) -> tuple[str, str]:
 # threads compiling separate kernels stay independent.
 _CURRENT_SPAN: contextvars.ContextVar = contextvars.ContextVar("pypto_pro_current_span", default=None)
 
-# Where each argument of that call was written: {keyword name or position: Span}.
-# An op builder is handed values, not syntax, so this is the only way for it to
-# say which argument an error is about.
-_CURRENT_ARGUMENTS: contextvars.ContextVar = contextvars.ContextVar("pypto_pro_current_arguments", default=None)
-
-
 _SPAN_ATTR = "_pypto_pro_span"
 
 
 @contextlib.contextmanager
-def current_span(span: ir.Span | None, arguments: dict | None = None):
+def current_span(span: ir.Span | None):
     """Publish *span* as the DSL location for errors raised inside this block.
 
     An error built inside the block picks the span up on construction. One that
@@ -150,7 +144,6 @@ def current_span(span: ir.Span | None, arguments: dict | None = None):
     an outer one leaves that alone, so the innermost location wins.
     """
     token = _CURRENT_SPAN.set(span)
-    arg_token = _CURRENT_ARGUMENTS.set(arguments)
     try:
         yield
     except BaseException as error:
@@ -161,24 +154,12 @@ def current_span(span: ir.Span | None, arguments: dict | None = None):
                 pass  # an exception type that does not take attributes
         raise
     finally:
-        _CURRENT_ARGUMENTS.reset(arg_token)
         _CURRENT_SPAN.reset(token)
 
 
-def argument_span(name: str | int, fallback: ir.Span | None = None) -> ir.Span | None:
-    """Where the caller wrote argument *name*, or *fallback* if that is unknown.
-
-    Op builders receive values; the syntax that produced them stays with the
-    parser. The dispatcher publishes it here so a builder that knows which
-    argument it is rejecting can point at it, instead of at the whole call.
-    *name* is the keyword, or the position for an argument passed positionally.
-    Returns *fallback* when the builder was called directly rather than parsed.
-    """
-    arguments = _CURRENT_ARGUMENTS.get()
-    if arguments is None:
-        return fallback
-    written = arguments.get(name)
-    return written if written is not None else fallback
+def get_current_span() -> ir.Span | None:
+    """Source location selected by the active parser or validation context."""
+    return _CURRENT_SPAN.get()
 
 
 # How to turn an AST node into a Span, for code that walks a kernel's syntax

@@ -31,7 +31,7 @@ def op_impl(name: str) -> Callable:
     """Register a builder with parsed operands and keyword-only ``span``.
 
     Ordinary operands use parse_expression. Convert static instruction attributes
-    in the implementation with require_const_value when Python values are needed.
+    in the implementation with typed require_* helpers when Python values are needed.
     """
     def decorator(func: Callable) -> Callable:
         if name in _OP_REGISTRY or name in _AST_OP_REGISTRY:

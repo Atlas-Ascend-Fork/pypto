@@ -21,6 +21,7 @@ dispatch gate, and an interpreter error wrapped by the kernel entry.
 
 from __future__ import annotations
 
+import ast
 import pathlib
 import re
 
@@ -83,6 +84,22 @@ class Rendered:
         offset = caret.index("^") - caret.index("|")
         start = quoted.index("|") + offset
         return quoted[start:start + caret.count("^")]
+
+
+    def assert_call_location(self, expected_callee: str):
+        """Business validation inherits the active call, independent of its operand label."""
+        assert self.loc, self.text
+        source = pathlib.Path(self.loc["file"]).read_text(encoding="utf-8")
+        line, column = int(self.loc["line"]), int(self.loc["col"])
+        calls = [
+            node for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call) and ast.unparse(node.func) == expected_callee
+            and node.lineno == line and node.col_offset + 1 == column
+        ]
+        assert len(calls) == 1, self.text
+        call = calls[0]
+        assert self.error.span["end_line"] == call.end_lineno, self.text
+        assert self.error.span["end_column"] == call.end_col_offset, self.text
 
 
 def _render(kernel, section=ir.SectionKind.Vector) -> Rendered:
@@ -162,7 +179,7 @@ def test_a_builder_check_outside_the_dispatch_gate_still_gets_a_location():
     assert "pl.TileType(" in rendered.caret_under()
 
 
-def test_a_keyword_check_points_at_the_value_that_keyword_was_given():
+def test_a_keyword_check_inherits_the_call_location():
     @pl.jit
     def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
         group = pl.make_tile_group(
@@ -174,11 +191,11 @@ def test_a_keyword_check_points_at_the_value_that_keyword_was_given():
 
     rendered = _render(kernel, ir.SectionKind.Cube)
     assert rendered.loc, rendered.text
-    assert rendered.caret_under() == "-1"
+    rendered.assert_call_location("pl.make_tile_group")
     assert "addrs=-1," in "".join(rendered.preview)
 
 
-def test_a_positional_check_points_at_that_argument():
+def test_a_positional_check_inherits_the_call_location():
     @pl.jit
     def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
         _bad = pl.const("not a number", pl.DT_INT32)
@@ -187,7 +204,7 @@ def test_a_positional_check_points_at_that_argument():
 
     rendered = _render(kernel)
     assert isinstance(rendered.error, InvalidType)
-    assert rendered.caret_under() == '"not a number"'
+    rendered.assert_call_location("pl.const")
 
 
 def test_the_location_line_names_this_test_file_and_the_offending_line():
@@ -380,7 +397,7 @@ def test_the_caret_lines_up_under_the_text_it_marks():
     assert quoted.index("|") == caret.index("|"), (
         f"gutters differ:\n{quoted!r}\n{caret!r}"
     )
-    assert quoted[caret.index("^"):caret.index("^") + caret.count("^")] == "-1"
+    rendered.assert_call_location("pl.make_tile_group")
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +445,7 @@ def test_a_keyword_check_points_at_a_list_value_too():
 
     rendered = _render(kernel, ir.SectionKind.Cube)
     assert isinstance(rendered.error, InvalidShape)
-    assert rendered.caret_under() == "[0, 0x4000]"
+    rendered.assert_call_location("pl.make_tile_group")
 
 
 def test_a_keyword_check_points_at_a_wrongly_typed_value():
@@ -439,7 +456,7 @@ def test_a_keyword_check_points_at_a_wrongly_typed_value():
 
     rendered = _render(kernel, ir.SectionKind.Cube)
     assert isinstance(rendered.error, InvalidType)
-    assert rendered.caret_under() == "123"
+    rendered.assert_call_location("pl.make_tile_group")
 
 
 def test_a_positional_check_points_at_the_second_argument():
@@ -451,7 +468,7 @@ def test_a_positional_check_points_at_the_second_argument():
 
     rendered = _render(kernel)
     assert isinstance(rendered.error, InvalidType)
-    assert rendered.caret_under() == '"not a dtype"'
+    rendered.assert_call_location("pl.const")
 
 
 def test_a_positional_check_points_at_the_first_argument_of_make_tile():
@@ -462,7 +479,7 @@ def test_a_positional_check_points_at_the_first_argument_of_make_tile():
 
     rendered = _render(kernel)
     assert isinstance(rendered.error, InvalidType)
-    assert rendered.caret_under() == '"not a tile type"'
+    rendered.assert_call_location("pl.make_tile")
 
 
 def test_an_unsupported_keyword_is_marked_at_the_keyword_itself():
@@ -479,7 +496,7 @@ def test_an_unsupported_keyword_is_marked_at_the_keyword_itself():
 
     rendered = _render(kernel)
     assert isinstance(rendered.error, InvalidArgument)
-    assert rendered.caret_under() == "no_such_keyword"
+    rendered.assert_call_location("pl.make_tile")
     assert "no_such_keyword" in rendered.head["reason"]
 
 
@@ -496,7 +513,7 @@ def test_an_unsupported_group_keyword_is_marked_the_same_way():
 
     rendered = _render(kernel, ir.SectionKind.Cube)
     assert isinstance(rendered.error, InvalidArgument)
-    assert rendered.caret_under() == "no_such_keyword"
+    rendered.assert_call_location("pl.make_tile_group")
 
 
 def test_more_cpp_checks_carry_their_own_source_and_the_qualified_enum():
@@ -603,7 +620,7 @@ def test_the_module_tag_follows_the_file_that_raised():
     """PRO_PARSER for the parser, PRO_IR for builders and IR, PRO_RUNTIME for the entry."""
 
     @pl.jit
-    def from_the_parser(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+    def from_the_shared_validator(x: pl.Tensor[[64, 64], pl.DT_FP16]):
         group = pl.make_tile_group(
             type=pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
             addrs=-1,
@@ -624,7 +641,7 @@ def test_the_module_tag_follows_the_file_that_raised():
         pl.load(tile, x, [0, 0])
         pl.row_sum(out, tile, no_such_keyword=5)
 
-    assert _render(from_the_parser, ir.SectionKind.Cube).head["module"] == "PRO_PARSER"
+    assert _render(from_the_shared_validator, ir.SectionKind.Cube).head["module"] == "PRO_IR"
     assert _render(from_a_builder).head["module"] == "PRO_IR"
     assert _render(from_the_entry).head["module"] == "PRO_RUNTIME"
 
@@ -680,7 +697,7 @@ def test_an_argument_past_the_last_declared_one_is_the_one_marked():
 
     rendered = _render(kernel)
     assert "too many positional arguments" in rendered.head["reason"]
-    assert rendered.caret_under() == "99"
+    rendered.assert_call_location("pl.load")
 
 
 def test_a_keyword_only_argument_given_positionally_is_named_in_the_hint():
@@ -693,7 +710,7 @@ def test_a_keyword_only_argument_given_positionally_is_named_in_the_hint():
 
     rendered = _render(kernel)
     assert "too many positional arguments" in rendered.head["reason"]
-    assert rendered.caret_under() == "[1, 0]"
+    rendered.assert_call_location("pl.load")
     assert rendered.hint.endswith("order, l2_cache_mode must be passed by keyword")
 
 
@@ -705,7 +722,7 @@ def test_a_near_miss_keyword_is_offered_the_name_it_resembles():
 
     rendered = _render(kernel)
     assert "unexpected keyword argument 'oder'" in rendered.head["reason"]
-    assert rendered.caret_under() == "oder"
+    rendered.assert_call_location("pl.load")
     assert rendered.hint.startswith("did you mean 'order'?")
 
 
@@ -718,7 +735,7 @@ def test_a_keyword_resembling_nothing_is_only_told_what_the_op_accepts():
         pl.load(tile, x, [0, 0], zzzz=1)
 
     rendered = _render(kernel)
-    assert rendered.caret_under() == "zzzz"
+    rendered.assert_call_location("pl.load")
     assert "did you mean" not in rendered.hint
     # dst_tile and src_tensor are positional-only, so neither can be named
     assert rendered.hint == "pl.load() takes offsets, order, l2_cache_mode"
@@ -732,7 +749,7 @@ def test_a_keyword_repeating_a_positional_argument_names_that_position():
 
     rendered = _render(kernel)
     assert "multiple values for argument 'offsets'" in rendered.head["reason"]
-    assert rendered.caret_under() == "offsets"
+    rendered.assert_call_location("pl.load")
     assert rendered.hint == "'offsets' is already given as positional argument 3"
 
 
@@ -773,7 +790,7 @@ def test_a_positional_only_parameter_written_as_a_keyword_is_named():
     assert rendered.head["reason"] == (
         "pl.load() 'dst_tile' parameter is positional only, but was passed as a keyword"
     )
-    assert rendered.caret_under() == "dst_tile"
+    rendered.assert_call_location("pl.load")
     assert rendered.hint == "write it by position: pl.load(dst_tile, src_tensor, offsets)"
 
 
@@ -828,7 +845,7 @@ def test_a_vf_assignment_is_checked_although_it_never_reaches_the_dispatcher():
     rendered = _render(kernel)
     # the namespace is written as the user imports it, without a pl. prefix
     assert rendered.head["reason"].startswith("vf.abs()")
-    assert rendered.caret_under() == "mdoe"
+    rendered.assert_call_location("vf.abs")
     assert rendered.hint.startswith("did you mean 'mode'?")
 
 
@@ -870,7 +887,7 @@ def test_the_type_gate_names_the_role_the_argument_was_declared_in():
     assert rendered.head["module"] == "PRO_PARSER"
     assert rendered.head["code"] == "00001"
     assert rendered.head["reason"] == "pl.abs: out expects Tile, got TensorType"
-    assert rendered.caret_under() == "x"
+    rendered.assert_call_location("pl.abs")
 
 
 def test_a_tile_where_a_tensor_belongs_is_named_the_same_way():
@@ -881,7 +898,7 @@ def test_a_tile_where_a_tensor_belongs_is_named_the_same_way():
 
     rendered = _render(kernel)
     assert rendered.head["reason"] == "pl.load: src_tensor expects Tensor, got TileType"
-    assert rendered.caret_under() == "tile"
+    rendered.assert_call_location("pl.load")
 
 
 def test_a_shape_given_as_one_number_is_refused_before_it_is_unpacked():
@@ -898,7 +915,7 @@ def test_a_shape_given_as_one_number_is_refused_before_it_is_unpacked():
 
     rendered = _render(kernel)
     assert rendered.head["reason"] == "pl.TileType: shape expects Shape, got a int64 scalar"
-    assert rendered.caret_under() == "64"
+    rendered.assert_call_location("pl.TileType")
 
 
 def test_an_enum_from_the_wrong_family_is_named_by_the_family_it_came_from():
@@ -912,7 +929,7 @@ def test_an_enum_from_the_wrong_family_is_named_by_the_family_it_came_from():
 
     rendered = _render(kernel)
     assert rendered.head["reason"] == "pl.system.sync_src: set_pipe expects PipeType, got SyncCoreType"
-    assert rendered.caret_under() == "pl.SyncCoreType.AIV_ONLY"
+    rendered.assert_call_location("pl.system.sync_src")
 
 
 def test_either_branch_of_a_declared_union_is_accepted():
@@ -964,7 +981,7 @@ def test_an_offset_rejects_bool_in_either_call_form(as_keyword):
     rendered = _render(kernel)
     assert isinstance(rendered.error, InvalidType)
     assert rendered.head["reason"] == "pl.load: offsets expects Offset, got a bool scalar"
-    assert rendered.caret_under() == "True"
+    rendered.assert_call_location("pl.load")
 
 
 @pytest.mark.parametrize("as_keyword", [False, True])
@@ -986,7 +1003,7 @@ def test_load_offset_rejects_scalar_int(as_keyword):
     rendered = _render(kernel)
     assert isinstance(rendered.error, InvalidType)
     assert rendered.head["reason"] == "pl.load: offsets expects Offset, got a int64 scalar"
-    assert rendered.caret_under() == "1"
+    rendered.assert_call_location("pl.load")
 
 
 @pytest.mark.parametrize("as_keyword", [False, True])
@@ -1008,7 +1025,7 @@ def test_dcci_offset_rejects_bool_in_either_call_form(as_keyword):
     assert rendered.head["reason"] == (
         "pl.system.dcci: offset expects Optional[Union[Sequence[int], int]], got a bool scalar"
     )
-    assert rendered.caret_under() == "True"
+    rendered.assert_call_location("pl.system.dcci")
 
 
 @pytest.mark.parametrize("as_keyword", [False, True])
@@ -1030,7 +1047,7 @@ def test_move_offset_requires_a_sequence(as_keyword):
     rendered = _render(kernel)
     assert isinstance(rendered.error, InvalidType)
     assert rendered.head["reason"] == "pl.move: offset expects Optional[Offset], got a int64 scalar"
-    assert rendered.caret_under() == "1"
+    rendered.assert_call_location("pl.move")
 
 
 def test_an_int_parameter_accepts_the_scalar_a_loop_index_parses_into():
@@ -1082,7 +1099,7 @@ def test_a_float_scalar_is_not_the_int_a_parameter_declared():
     rendered = _render(kernel)
     assert isinstance(rendered.error, InvalidType)
     assert rendered.head["reason"] == "pl.getval: offset expects int, got a fp32 scalar"
-    assert rendered.caret_under() == "f"
+    rendered.assert_call_location("pl.getval")
 
 
 def test_a_condition_the_kernel_computes_is_the_bool_the_declaration_means():
@@ -1106,7 +1123,7 @@ def test_an_assert_message_must_be_a_string_rather_than_a_number():
 
     rendered = _render(kernel)
     assert rendered.head["reason"] == "pl.pto_assert: format_str expects Optional[str], got a int64 scalar"
-    assert rendered.caret_under() == "123"
+    rendered.assert_call_location("pl.pto_assert")
 
 
 def test_a_dump_flag_must_be_a_string():
@@ -1118,7 +1135,7 @@ def test_a_dump_flag_must_be_a_string():
 
     rendered = _render(kernel)
     assert rendered.head["reason"] == "pl.dump_data: flag expects Optional[str], got a int64 scalar"
-    assert rendered.caret_under() == "123"
+    rendered.assert_call_location("pl.dump_data")
 
 
 def test_dump_offsets_name_the_axes_so_a_word_is_refused():
@@ -1130,7 +1147,7 @@ def test_dump_offsets_name_the_axes_so_a_word_is_refused():
 
     rendered = _render(kernel)
     assert rendered.head["reason"] == "pl.dump_data: offsets expects Optional[Offset], got str"
-    assert rendered.caret_under() == '"row"'
+    rendered.assert_call_location("pl.dump_data")
 
 
 def test_every_shape_a_dump_is_written_in_is_accepted():
@@ -1147,3 +1164,69 @@ def test_every_shape_a_dump_is_written_in_is_accepted():
         pl.dump_data(x)
 
     kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("keyword", [False, True])
+@pytest.mark.parametrize("dimension", ["row", "col"])
+def test_validshape_bounds_report_the_dimension_at_the_call(keyword, dimension):
+    row_value = 17 if dimension == "row" else 16
+    col_value = 17 if dimension == "col" else 16
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(x: pl.Tensor[[1], pl.DT_FP16]):
+        tile_type = pl.TileType(shape=[16, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        tile = pl.make_tile(tile_type, addr=0)
+        rows = row_value
+        cols = col_value
+        if keyword:
+            pl.set_validshape(tile, shape=[rows, cols])
+        else:
+            pl.set_validshape(tile, [rows, cols])
+
+    rendered = _render(kernel)
+    assert f"set_validshape {dimension} must be at most 16, got 17" in rendered.head["reason"]
+    rendered.assert_call_location("pl.set_validshape")
+    assert "pl.set_validshape" in "".join(rendered.preview)
+
+
+def test_validshape_variable_argument_reports_the_call_instead_of_its_definition():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(x: pl.Tensor[[1], pl.DT_FP16]):
+        tile_type = pl.TileType(shape=[16, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        tile = pl.make_tile(tile_type, addr=0)
+        bad_shape = [17, 16]
+        pl.set_validshape(tile, bad_shape)
+
+    rendered = _render(kernel)
+    rendered.assert_call_location("pl.set_validshape")
+    assert "pl.set_validshape(tile, bad_shape)" in "".join(rendered.preview)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_mutex_id_error_reports_the_actual_row_and_element(nested):
+    @pl.jit(arch="3510")
+    def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+        tt = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat)
+        bad_id = -1
+        if nested:
+            pl.make_tile_group(type=tt, addrs=0, mutex_ids=[[0], [1, bad_id]])
+        else:
+            pl.make_tile_group(type=tt, addrs=0, mutex_ids=[0, bad_id])
+
+    rendered = _render(kernel, ir.SectionKind.Cube)
+    subject = "mutex_ids[1][1]" if nested else "mutex_ids[1]"
+    assert f"{subject} must be at least 0" in rendered.head["reason"]
+    rendered.assert_call_location("pl.make_tile_group")
+    assert "pl.make_tile_group" in "".join(rendered.preview)
+
+
+def test_group_depth_error_reports_the_call():
+    @pl.jit(arch="3510")
+    def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
+        tt = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat)
+        bad_depth = 0
+        pl.make_tile_group(type=tt, addrs=0, mutex_ids=[0], depth=bad_depth)
+
+    rendered = _render(kernel, ir.SectionKind.Cube)
+    assert "depth must be at least 1" in rendered.head["reason"]
+    rendered.assert_call_location("pl.make_tile_group")

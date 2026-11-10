@@ -107,6 +107,23 @@ def test_kernel_stops_at_first_over_capacity_declaration(acc_addr, probe):
         assert "_vec = pl.make_tile(vec_type, addr=0x40000)" in source.readlines()[location["line"] - 1]
 
 
+def test_probe_records_inline_helper_argument_types():
+    from pypto_pro.runtime.pipeline._analyzer import probe_kernel_facts
+
+    def helper(value: pl.DT_INT32) -> pl.DT_INT32:
+        return value
+
+    @pl.jit(arch="3510")
+    def kernel(value: pl.DT_INT32):
+        with pl.section_vector():
+            _result = helper(value)
+
+    facts = probe_kernel_facts(kernel.to_kernel_def())
+    assert any(
+        fact.kind == "ScalarType" and fact.dtype == pl.DT_INT32 for fact in facts.arg_types.values()
+    )
+
+
 def test_builder_error_inherits_the_active_call_span():
     with current_span(ir.Span("direct_kernel.py", 19, 4)):
         with pytest.raises(InvalidType) as caught:

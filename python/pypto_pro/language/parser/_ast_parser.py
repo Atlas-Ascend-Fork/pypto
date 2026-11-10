@@ -577,13 +577,13 @@ class ASTParser(
                     parser_retry=True,
                 )
             for annotated, actual in zip(annotated_return_types, inferred):
-                _check_type_compatible(
-                    annotated,
-                    actual,
-                    what="Return",
-                    name=func_name,
-                    span=return_span,
-                )
+                with current_span(return_span):
+                    _check_type_compatible(
+                        annotated,
+                        actual,
+                        what="Return",
+                        name=func_name,
+                    )
 
         attrs = dict(result.attrs)
         attrs.update(func_attrs or {})
@@ -842,7 +842,8 @@ class ASTParser(
                 hint="Tile, Ptr, tuple, and tiling parameters are not supported.",
             )
         subject = f"SIMT kernel Tensor parameter '{param_name}'"
-        _validate_simt_tensor_type(param_type, subject, param_span)
+        with current_span(param_span):
+            _validate_simt_tensor_type(param_type, subject)
         if any(not isinstance(dim, ir.ConstInt) for dim in param_type.shape):
             raise InvalidType(f"{subject} requires a static shape", span=param_span)
 
@@ -891,9 +892,10 @@ class ASTParser(
                 annotated_type = self.type_resolver.resolve_param_type(
                     arg.annotation, parameter_name=param_name, parameter_index=parameter_index
                 )
-                _check_type_compatible(
-                    annotated_type, callsite_type, what="SIMT parameter", name=param_name, span=param_span
-                )
+                with current_span(param_span):
+                    _check_type_compatible(
+                        annotated_type, callsite_type, what="SIMT parameter", name=param_name
+                    )
             param_type = self._attach_ptr_to_tensor_type(param_name, callsite_type, param_span)
             param_var = f.param(param_name, param_type, param_span)
             self.scope_manager.define_var(param_name, param_var, allow_redef=True)

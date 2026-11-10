@@ -445,7 +445,7 @@ def test_notify_flush_store_must_be_compile_time():
 
     with pytest.raises(InvalidType) as caught:
         _parse(kernel)
-    assert "'flush_store' must be a compile-time boolean constant" in str(caught.value)
+    assert "'flush_store' must be a compile-time bool" in str(caught.value)
 
 
 def test_notify_all_requires_a_signal_handle():

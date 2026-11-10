@@ -158,6 +158,7 @@ def runtime(monkeypatch):
         TileType=_TileType, TensorType=type("TensorType", (_TileType,), {}),
         TupleType=_TupleType, PtrType=type("PtrType", (), {}), NoneType=_NoneType,
         WindowType=type("WindowType", (), {}),
+        Cast=type("Cast", (_Expr,), {}),
         Span=_Span, DataType=_DType, MemorySpace=types.SimpleNamespace(Vec="vec"),
         FunctionType=types.SimpleNamespace(
             SimtVF="simt", SimtCallee="simt_callee", SimtKernel="simt_kernel",
@@ -174,32 +175,51 @@ def runtime(monkeypatch):
     module("pypto.pypto_impl.ir", **ir.__dict__, Call=_Expr, Function=_Expr)
     ir.RoundMode = enum.Enum("RoundMode", ["CAST_NONE"])
     module("pypto_pro.ir._limits", from_storage_int=lambda value, dtype: value)
-    utils = module(
-        "pypto_pro.ir._utils", _get_span_or_capture=lambda span: span or _Span(),
-        _const_int_value=lambda value: value.value if isinstance(value, _ConstInt) else None,
-        _normalize_expr=lambda value, span: value,
-        _to_make_tuple=lambda value, span: value if isinstance(value, _MakeTuple) else _MakeTuple(value, span),
-    )
     error_names = (
         "CommonExternal", "InvalidArgument", "InvalidOperation", "InvalidShape",
         "InvalidType", "InvalidVal", "NotSupported", "OutOfRange",
     )
-    errors = module("pypto_pro._errors", **{name: type(name, (_DispatchError,), {}) for name in error_names})
+    errors = module("pypto_pro._errors")
+    # Use the production ambient-location helpers rather than a second implementation.
+    import contextvars
+    error_tree = ast.parse((_SOURCE / "_errors.py").read_text(encoding="utf-8"))
+    context_names = {"_CURRENT_SPAN", "_SPAN_ATTR"}
+    context_functions = {"current_span", "get_current_span"}
+    context_nodes = [
+        node for node in error_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in context_functions
+        or isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+        and node.target.id in context_names
+        or isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id in context_names for target in node.targets
+        )
+    ]
+    context_tree = ast.Module(body=[
+        ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), *context_nodes,
+    ], type_ignores=[])
+    errors.__dict__.update(contextlib=contextlib, contextvars=contextvars, ir=ir)
+    exec(compile(ast.fix_missing_locations(context_tree), "_error_context_helpers", "exec"), errors.__dict__)
+
+    class AmbientDispatchError(_DispatchError):
+        def __init__(self, message, *, span=None, **kwargs):
+            super().__init__(message, span=span if span is not None else errors._CURRENT_SPAN.get(), **kwargs)
+
+    errors.__dict__.update({name: type(name, (AmbientDispatchError,), {}) for name in error_names})
     errors.error_class_of_spec_message = lambda message: None
     ambient = []
+    production_current_span = errors.current_span
 
     @contextlib.contextmanager
-    def current_span(span, arguments=None):
-        ambient.append((span, arguments))
+    def current_span(span):
+        ambient.append((span, None))
         try:
-            yield
+            with production_current_span(span):
+                yield
         finally:
             ambient.pop()
 
     errors.current_span = current_span
-    errors.argument_span = lambda name, fallback=None: (
-        (ambient[-1][1] or {}).get(name, fallback) if ambient else fallback
-    )
+    utils = load("pypto_pro.ir._utils", "ir/_utils.py")
     api = module("pypto_pro.language._api")
     simt = types.SimpleNamespace()
     module("pypto_pro.language._simt_api", Simt=simt)
@@ -232,7 +252,8 @@ def runtime(monkeypatch):
     helper_names = {
         "_dispatch_ast_op",
         "_dispatch_op", "_check_declared_params", "_check_declared_types", "_validate_op_scope",
-        "require_const_value", "parse_op_call",
+        "parse_op_call",
+        "_parse_simt_template_call", "_parse_simd_template_call", "_instantiate_simd_function",
     }
     call_tree = ast.parse((_SOURCE / "language/parser/_call_parser.py").read_text(encoding="utf-8"))
     mixin = next(node for node in call_tree.body if isinstance(node, ast.ClassDef) and node.name == "CallParserMixin")
@@ -249,18 +270,20 @@ def runtime(monkeypatch):
         and node.name in ("parse_list", "parse_tuple_literal", "_validate_subscript_value")
     )
     helper_module = ast.Module(body=[
-        ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), helper_class,
+        ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0),
+        next(node for node in call_tree.body if isinstance(node, ast.FunctionDef) and node.name == "_is_const_arg"),
+        helper_class,
     ], type_ignores=[])
     namespace = {
         "ast": ast, "ir": ir, "inspect": inspect, "_argument_checker": checker,
         "_const_int_value": utils._const_int_value,
         "_OP_REGISTRY": registry._OP_REGISTRY, "_AST_OP_REGISTRY": registry._AST_OP_REGISTRY,
-        "ExprEvaluator": types.SimpleNamespace(ir_to_python_value=_constant_value), **errors.__dict__,
+        "ExprEvaluator": types.SimpleNamespace(ir_to_python_value=_constant_value),
+        **errors.__dict__,
     }
     exec(compile(ast.fix_missing_locations(helper_module), "_call_parser_helpers", "exec"), namespace)
 
     class Parser(namespace["ParserHelpers"]):
-        _VF_OP_DST_COUNT = {}
         _auto_mutex = False
 
         def __init__(self, source, values=None):
@@ -339,7 +362,7 @@ def runtime(monkeypatch):
         ], type_ignores=[])
         function_globals = {
             "ast": ast, "ir": ir, "_ir_core": ir,
-            "require_scalar_dtype": getattr(utils, "require_scalar_dtype", None),
+            **{name: value for name, value in vars(utils).items() if not name.startswith("__")},
             **errors.__dict__, **extra,
         }
         exec(compile(ast.fix_missing_locations(module_tree), relative, "exec"), function_globals)
@@ -352,7 +375,7 @@ def runtime(monkeypatch):
     utils.require_scalar_dtype = tuple_helpers.require_scalar_dtype
 
     return types.SimpleNamespace(
-        registry=registry, Parser=Parser, errors=errors, ir=ir,
+        registry=registry, Parser=Parser, errors=errors, ir=ir, utils=utils,
         declare=declare, ambient=ambient, load=load, simt_module=simt_module, load_functions=load_functions,
     )
 
@@ -375,6 +398,7 @@ def test_builder_receives_ir_for_operands_and_static_keyword_attributes(runtime)
     lhs, rhs, axis = parser.run("example")
     assert lhs is x and rhs.value == 3 and axis.value == 2
     assert parser.evaluated == ["x", "3", "2"]
+    assert parser.recorded == [("example", [(0, None, lhs), (1, None, rhs), (None, "axis", axis)], ("axis",))]
     assert runtime.ambient == []
 
 
@@ -407,9 +431,7 @@ def test_boolean_keyword_is_ir_until_its_builder_requires_a_constant(runtime, so
     @runtime.registry.op_impl("example")
     def build(self, *, flag, span):
         assert isinstance(flag, _Expr) and flag.type.dtype is _DType.BOOL
-        return self.require_const_value(
-            flag, "flag", expects="bool", check=lambda value: type(value) is bool, hint="Use a constant",
-        )
+        return runtime.utils.require_const_bool(flag, subject="flag")
 
     assert runtime.Parser(source).run("example") is ("True" in source)
 
@@ -439,27 +461,26 @@ def test_declared_enum_rejects_an_integer_without_a_parameter_name_table(runtime
     source = "pl.example(selection=1)"
     with pytest.raises(runtime.errors.InvalidType, match="selection expects") as error:
         runtime.Parser(source).run("example")
-    assert error.value.span.begin_column == source.index("1") + 1
+    assert error.value.span.begin_column == 1
     enum_value = runtime.ir.RoundMode.CAST_NONE
     assert runtime.Parser("pl.example(selection=choice)", {"choice": enum_value}).run("example") is enum_value
 
 
 def test_order_builder_extracts_integer_list_and_rejects_runtime_axes(runtime):
     helpers = runtime.load_functions(
-        "ir/op/block_ops.py", ("_prepare_order",), _is_int=lambda value: type(value) is int,
+        "ir/op/block_ops.py", ("_prepare_order",),
     )
 
     @runtime.registry.op_impl("example")
-    def build(self, *, span, **kwargs):
-        helpers._prepare_order(self, kwargs)
-        return kwargs.get("order")
+    def build(self, *, order=None, span):
+        return helpers._prepare_order(order)
 
     assert runtime.Parser("pl.example()").run("example") is None
     assert runtime.Parser("pl.example(order=[1, 0])").run("example") == [1, 0]
     source = "pl.example(order=[1, axis])"
-    with pytest.raises(runtime.errors.InvalidType, match="compile-time integer list") as error:
+    with pytest.raises(runtime.errors.InvalidType, match="compile-time integer") as error:
         runtime.Parser(source, {"axis": _Expr(_ScalarType(_DType.INT64))}).run("example")
-    assert error.value.span.begin_column == source.index("[") + 1
+    assert error.value.span.begin_column == 1
 
 
 @pytest.mark.parametrize("sequence", ['["auto", 3]', '("auto", 3)'])
@@ -519,14 +540,17 @@ def test_literal_scale_keeps_float_bit_encoding_and_runtime_bits_stay_ir(runtime
 
     @runtime.registry.op_impl("example")
     def build(self, *, scale, span):
-        kwargs = {"scale": scale}
-        helpers._prepare_scale(self, kwargs)
-        return helpers._resolve_scale_param(kwargs["scale"], span)
+        scale = helpers._prepare_scale(scale)
+        return helpers._resolve_scale_param(scale)
 
     expected = struct.unpack("!I", struct.pack("!f", scale))[0]
     encoded, tile = runtime.Parser(f"pl.example(scale={scale})").run("example")
     assert tile is None and isinstance(encoded, _ConstInt)
     assert encoded.type.dtype == _DType.UINT64 and encoded.value == expected
+    operand_span = _Span(begin_column=24, end_column=28)
+    operand = _ConstFloat(float(scale), _DType.FP32, operand_span)
+    encoded_operand, _ = runtime.Parser("pl.example(scale=operand)", {"operand": operand}).run("example")
+    assert encoded_operand.span is operand_span
     bits = _Expr(_ScalarType(_DType.INT32))
     assert runtime.Parser("pl.example(scale=bits)", {"bits": bits}).run("example") == (bits, None)
     assert runtime.Parser("pl.example(scale=None)").run("example") == (None, None)
@@ -539,7 +563,7 @@ def test_literal_scale_keeps_float_bit_encoding_and_runtime_bits_stay_ir(runtime
 def test_cross_core_constant_and_runtime_ids_keep_their_instruction_forms(runtime, operation, pipe):
     runtime.ir.create_op_call = lambda name, args, attrs, span: (name, args, attrs)
     integer_helpers = runtime.load_functions(
-        "ir/_utils.py", ("_const_int_value", "require_const_int", "require_int"), _ir=runtime.ir,
+        "ir/_utils.py", ("_const_int_value", "_is_int_type", "require_const_int", "require_int"), _ir=runtime.ir,
     )
     helpers = runtime.load_functions(
         "ir/op/system_ops.py", (operation, f"_build_{operation}", "_validate_integer_id"),
@@ -586,7 +610,7 @@ def test_value_type_gate_runs_before_the_builder(runtime):
     parser = runtime.Parser("pl.example(tile)", {"tile": _Expr(_TileType(_DType.FP32))})
     with pytest.raises(runtime.errors.InvalidType, match="expects.*int") as error:
         parser.run("example")
-    assert error.value.span.begin_column == 12
+    assert error.value.span.begin_column == 1
 
 
 def test_specific_builder_type_checks_can_supply_their_own_diagnostics(runtime):
@@ -596,9 +620,7 @@ def test_specific_builder_type_checks_can_supply_their_own_diagnostics(runtime):
 
     @runtime.registry.op_impl("example")
     def build(self, value, *, span):
-        return self.require_const_value(
-            value, 0, expects="integer", check=lambda v: type(v) is int, hint="Use a literal",
-        )
+        return runtime.utils.require_const_int(value, subject="value")
 
     parser = runtime.Parser("pl.example(value)", {"value": _Expr(_ScalarType(_DType.INT64))})
     with pytest.raises(runtime.errors.InvalidType, match="must be a compile-time integer"):
@@ -609,29 +631,29 @@ def test_specific_builder_type_checks_can_supply_their_own_diagnostics(runtime):
 def test_const_diagnostic_prefers_the_call_site_over_the_variable_definition(runtime, source, key):
     @runtime.registry.op_impl("example")
     def build(self, value, *, span):
-        return self.require_const_value(value, key, expects="integer", hint="Use a constant")
+        return runtime.utils.require_const_int(value, subject="value")
 
     definition_span = _Span(filename="definition.py", begin_line=7, end_line=7)
     value = _Expr(_ScalarType(_DType.INT64), definition_span)
     parser = runtime.Parser(source, {"value": value})
-    with pytest.raises(runtime.errors.InvalidType, match="got 'value'") as error:
+    with pytest.raises(runtime.errors.InvalidType, match="compile-time integer") as error:
         parser.run("example")
     assert error.value.span.filename == "test.py"
     assert error.value.span.begin_line == 1
-    assert error.value.span.begin_column == source.rindex("value") + 1
+    assert error.value.span.begin_column == 1
     assert value.span is definition_span
 
 
-def test_shape_element_diagnostic_keeps_its_source_location(runtime):
+def test_shape_element_diagnostic_uses_call_context(runtime):
     @runtime.registry.op_impl("example")
     def build(self, *, shape, span):
-        return self.require_const_value(shape.elements[1], "shape[1]", expects="integer", hint="Use a constant")
+        return runtime.utils.require_const_int(shape.elements[1], subject="shape[1]")
 
     value = _Expr(_ScalarType(_DType.INT64), _Span(begin_column=22, end_column=22))
     parser = runtime.Parser("pl.example(shape=[1, x])", {"x": value})
-    with pytest.raises(runtime.errors.InvalidType, match=r"'shape\[1\]' must be a compile-time integer") as error:
+    with pytest.raises(runtime.errors.InvalidType, match=r"shape\[1\] must be a compile-time integer") as error:
         parser.run("example")
-    assert error.value.span.begin_column == 22
+    assert error.value.span.begin_column == 1
 
 
 def test_builder_uses_ir_source_and_span_without_inspecting_its_signature(runtime, monkeypatch):
@@ -671,6 +693,61 @@ def test_duplicate_registration_is_rejected(runtime):
     runtime.registry.op_impl("example")(build)
     with pytest.raises(runtime.errors.InvalidOperation, match="Duplicate"):
         runtime.registry.op_impl("example")(build)
+
+
+@pytest.mark.parametrize("written", ["False", "runtime_flag", "[1, 2]", "None"])
+def test_ssa_vf_builder_lowers_constants_and_preserves_runtime_attributes(runtime, written):
+    def declaration(*, flag):
+        pass
+    runtime.declare("vf.example", declaration)
+    vf_ops = runtime.load("pypto_pro.ir.op.vf_ops", "ir/op/vf_ops.py")
+    runtime.registry.op_impl("vf.example")(vf_ops._make_vf_builder("vf.example"))
+    runtime.ir.create_op_call = lambda name, args, attrs, span: attrs
+    flag = _Expr(_ScalarType(_DType.BOOL))
+    parser = runtime.Parser(f"vf.example(flag={written})", {"runtime_flag": flag})
+    parser._current_func_type = runtime.ir.FunctionType.SimdVF
+    result = parser.parse_op_call(parser.call)
+    expected = {"False": False, "runtime_flag": flag, "[1, 2]": (1, 2), "None": None}[written]
+    assert result["flag"] == expected
+
+
+def test_ssa_vf_scalar_range_check_uses_diagnostic_without_span_argument(runtime, monkeypatch):
+    checked = []
+
+    def check(value, dtype, *, api):
+        checked.append((value, dtype, api))
+
+    diagnostics = sys.modules["pypto_pro.language.parser.diagnostics"]
+    monkeypatch.setattr(diagnostics, "check_const_expr_fits_dtype", check, raising=False)
+    helpers = runtime.load("pypto_pro.ir.op.vf_ops", "ir/op/vf_ops.py")
+    value = _ConstInt(1)
+    helpers._check_vf_scalar_operands("adds", [value], _DType.INT32)
+    assert checked == [(value, _DType.INT32, "vf.adds")]
+
+
+@pytest.mark.parametrize("mode", ["simt", "simd"])
+def test_vf_template_calls_use_shared_validation_without_error_span_arguments(runtime, mode):
+    value = _Expr(_ScalarType(_DType.INT32))
+    parser = runtime.Parser("helper(1, value)", {"value": value})
+    callee = types.SimpleNamespace(name="helper", return_types=[])
+    checked = []
+    parser._validate_vf_function_arguments = lambda fn, args, *, kind: checked.append((fn, args, kind))
+    if mode == "simt":
+        runtime.ir.Op = lambda name: name
+        parser._instantiate_simt_function = lambda name, fn, args: callee
+        parser._make_call_with_return_type = lambda op, args, returns, span: (op, args)
+        _, args = parser._parse_simt_template_call("helper", object(), parser.call)
+        assert args[0].value == 1 and args[1] is value
+        expected_kind = "SIMT function"
+    else:
+        parser._instantiate_simd_function = lambda name, fn, args, func_type: callee
+        result, args, span = parser._parse_simd_template_call(
+            "helper", object(), parser.call, runtime.ir.FunctionType.SimdVF,
+        )
+        assert result is callee and args == [value]
+        assert span.begin_column == 1
+        expected_kind = "VF function"
+    assert checked == [(callee, args, expected_kind)]
 
 
 @pytest.mark.parametrize("source", ["pl.example(*xs)", "pl.example(**xs)"])
@@ -923,7 +1000,7 @@ def test_atomic_type_gate_rejects_scalar_target(runtime):
     parser = runtime.Parser(source, {"scalar": _Expr(_ScalarType(_DType.INT32))})
     with pytest.raises(runtime.errors.InvalidType, match=r"target expects Union\[Tile, Tensor\]") as error:
         parser.run("simt.atomic_add")
-    assert error.value.span.begin_column == source.index("scalar") + 1
+    assert error.value.span.begin_column == 1
 
 
 @pytest.mark.parametrize("op_name", ["thread_idx", "syncthreads", "cast", "sqrt", "atomic_add", "warp_all", "launch"])
@@ -959,7 +1036,7 @@ def test_simt_scope_accepts_simt_function_kinds(runtime, function_type):
 def test_indexed_simt_launch_passes_scope_validation_in_an_ordinary_kernel(runtime):
     parser = runtime.Parser("entry[1](undefined)")
     parser._current_func_type = "ordinary_kernel"
-    parser._validate_op_scope("simt.launch", parser.call)
+    parser._validate_op_scope("simt.launch")
     assert parser.evaluated == []
 
 
@@ -970,7 +1047,7 @@ def test_simt_operations_remain_forbidden_inside_inline_vf(runtime, op_name):
     parser._TILE_GROUP_ACCESSORS = frozenset()
     parser._VF_SCALAR_PL_OPS = frozenset()
     with pytest.raises(runtime.errors.NotSupported, match="is not supported inside @pl.vector_function"):
-        parser._validate_op_scope(op_name, parser.call)
+        parser._validate_op_scope(op_name)
     assert parser.evaluated == []
 
 
@@ -992,14 +1069,14 @@ def test_production_simt_scalar_diagnostic_uses_the_declaration(runtime, source,
         parser.run(f"simt.{op_name}")
     name = "value" if op_name == "abs" else "rhs"
     assert f"{name} expects Union[int, float]" in str(error.value)
-    assert error.value.span.begin_column == source.index("tile") + 1
+    assert error.value.span.begin_column == 1
 
 
 @pytest.mark.parametrize("shape", ["[1, 32]", "(1, 32)"])
 def test_tile_type_legacy_parser_parses_dimensions_without_a_tuple_anchor(runtime, shape):
     helpers = runtime.load_functions(
-        "ir/op/block_ops.py", ("_parse_tile_type",),
-        TileType=lambda **kwargs: kwargs, _is_int=lambda value: type(value) is int,
+        "ir/op/block_ops.py", ("_parse_tile_type", "_descriptor_integer"),
+        TileType=lambda **kwargs: kwargs,
     )
     runtime.registry.op_impl_ast("TileType")(helpers._parse_tile_type)
     source = f"pl.TileType(shape={shape}, valid_shape=[1, 16], dtype=dtype)"
@@ -1012,8 +1089,8 @@ def test_tile_type_legacy_parser_parses_dimensions_without_a_tuple_anchor(runtim
 
 def test_tile_type_runtime_shape_dimension_keeps_its_diagnostic(runtime):
     helpers = runtime.load_functions(
-        "ir/op/block_ops.py", ("_parse_tile_type",),
-        TileType=lambda **kwargs: kwargs, _is_int=lambda value: type(value) is int,
+        "ir/op/block_ops.py", ("_parse_tile_type", "_descriptor_integer"),
+        TileType=lambda **kwargs: kwargs,
     )
     runtime.registry.op_impl_ast("TileType")(helpers._parse_tile_type)
     source = "pl.TileType(shape=[1, n], dtype=dtype)"
@@ -1022,7 +1099,7 @@ def test_tile_type_runtime_shape_dimension_keeps_its_diagnostic(runtime):
     parser = runtime.Parser(source, {"n": value, "dtype": _DType.INT32})
     with pytest.raises(runtime.errors.InvalidType, match="must be a compile-time integer") as error:
         parser.run("TileType")
-    assert error.value.span.begin_column == source.index("n]") + 1
+    assert error.value.span.begin_column == 1
 
 
 def test_legacy_adds_still_reaches_native_ir_validation(runtime):
@@ -1052,3 +1129,404 @@ def test_registered_implementations_have_no_ast_parsing_or_tables():
                 for child in ast.walk(node):
                     if isinstance(child, ast.Attribute):
                         assert child.attr not in ("parse_expression", "parse_op_kwargs"), path
+
+
+@pytest.mark.parametrize("value", [0, 31])
+def test_integer_primitives_accept_inclusive_bounds_and_runtime_values(runtime, value):
+    constant = _ConstInt(value)
+    assert runtime.utils.require_const_int(constant, subject="value", lower_bound=0, upper_bound=31) == value
+    assert runtime.utils.require_int(constant, subject="value", lower_bound=0, upper_bound=31) == value
+    dynamic = _Expr(_ScalarType(_DType.INT64))
+    assert runtime.utils.require_int(dynamic, subject="value", lower_bound=0, upper_bound=31) is None
+    with pytest.raises(runtime.errors.InvalidType, match="compile-time integer"):
+        runtime.utils.require_const_int(dynamic, subject="value")
+
+
+@pytest.mark.parametrize("value, bound", [(-1, "at least 0"), (32, "at most 31")])
+def test_constant_integer_list_primitive_checks_each_element(runtime, value, bound):
+    values = _MakeTuple([_ConstInt(0), _ConstInt(value)], _Span())
+    with pytest.raises(runtime.errors.InvalidVal, match=r"ids\[1\] must be " + bound):
+        runtime.utils.require_const_int_list(values, subject="ids", lower_bound=0, upper_bound=31)
+
+
+@pytest.mark.parametrize("kind", ["python", "const_bool", "bool_const_int"])
+def test_integer_primitives_do_not_accept_boolean_constants(runtime, kind):
+    value = {"python": True, "const_bool": _ConstBool(True), "bool_const_int": _ConstInt(1, _DType.BOOL)}[kind]
+    for require in (runtime.utils.require_int, runtime.utils.require_const_int):
+        with pytest.raises(runtime.errors.InvalidType, match="integer"):
+            require(value, subject="value")
+    if kind == "python":
+        with pytest.raises(runtime.errors.InvalidType, match="compile-time bool"):
+            runtime.utils.require_const_bool(value, subject="value")
+    else:
+        assert runtime.utils.require_const_bool(value, subject="value") is True
+
+
+@pytest.mark.parametrize("container", [list, tuple])
+def test_sequence_primitives_reject_python_containers(runtime, container):
+    values = container([_ConstInt(3)])
+    for require in (runtime.utils.require_list, runtime.utils.require_const_int_list):
+        with pytest.raises(runtime.errors.InvalidType, match="must be an IR tuple"):
+            require(values, subject="axes")
+
+
+def test_sequence_primitives_report_short_ir_tuples_as_invalid_values(runtime):
+    values = _MakeTuple([], _Span())
+    for require in (runtime.utils.require_list, runtime.utils.require_const_int_list):
+        with pytest.raises(runtime.errors.InvalidVal, match="must contain at least 1 elements"):
+            require(values, subject="axes", min_length=1)
+
+
+def test_constant_integer_lists_reject_runtime_elements(runtime):
+    dynamic = _Expr(_ScalarType(_DType.INT64))
+    constant = _ConstInt(3)
+    values = _MakeTuple([constant, dynamic], _Span())
+    with pytest.raises(runtime.errors.InvalidType, match=r"axes\[1\] must be a compile-time integer"):
+        runtime.utils.require_const_int_list(values, subject="axes")
+    assert runtime.utils.require_const_int_list(_MakeTuple([constant], _Span()), subject="axes") == [3]
+
+
+@pytest.mark.parametrize("entry", ["tensor_view", "printf", "wait_pre_task_end", "_mutex_op"])
+def test_ir_validation_preserves_local_or_ambient_error_span(runtime, entry):
+    source_span = _Span(begin_column=7)
+    outer_span = _Span(begin_column=2)
+    if entry == "tensor_view":
+        helpers = runtime.load_functions(
+            "ir/op/ptr_ops.py", (entry,), Expr=_Expr, _get_span_or_capture=lambda span: span,
+        )
+        args, kwargs = (_Expr(_ScalarType(_DType.INT32)), 0, [1]), {}
+    elif entry == "printf":
+        helpers = runtime.load_functions(
+            "ir/op/debug_ops.py", (entry, "_normalize_location_flag"), _get_span_or_capture=lambda span: span,
+        )
+        args, kwargs = (None,), {}
+    elif entry == "wait_pre_task_end":
+        helpers = runtime.load_functions(
+            "ir/op/system_ops.py", (entry, "_require_bool"), _get_span_or_capture=lambda span: span,
+        )
+        args, kwargs = (), {"force": "invalid"}
+    else:
+        helpers = runtime.load_functions(
+            "ir/op/system_ops.py", (entry, "_create_mutex_op", "_validate_concrete_pipe"),
+            _get_span_or_capture=lambda span, **kwargs: span, PipeType=enum.Enum("PipeType", ["V", "ALL"]),
+        )
+        args, kwargs = ("system.mutex_lock",), {"pipe": 0, "mutex_id": _ConstInt(0)}
+
+    with runtime.errors.current_span(outer_span):
+        with pytest.raises(runtime.errors.InvalidType) as caught:
+            getattr(helpers, entry)(*args, **kwargs, span=source_span)
+        assert runtime.errors.get_current_span() is outer_span
+    # Local constructor errors can use the existing IR span; shared validators use the caller's context.
+    expected_span = source_span if entry in ("tensor_view", "printf") else outer_span
+    assert caught.value.span is expected_span
+
+
+def test_enum_primitive_rejects_integers_and_members_of_another_enum(runtime):
+    expected = enum.IntEnum("Expected", {"VALUE": 1})
+    other = enum.IntEnum("Other", {"VALUE": 1})
+    assert runtime.utils.require_enum(expected.VALUE, expected, subject="mode") is expected.VALUE
+    for value in (1, other.VALUE, _ConstInt(1)):
+        with pytest.raises(runtime.errors.InvalidType, match="must be a Expected"):
+            runtime.utils.require_enum(value, expected, subject="mode")
+
+
+def test_const_int_sequence_probe_only_extracts_ir_constants(runtime):
+    constant = _ConstInt(3)
+    dynamic = _Expr(_ScalarType(_DType.INT64))
+    assert runtime.utils._const_int_values([constant, _ConstInt(4)]) == [3, 4]
+    assert runtime.utils._const_int_values([]) == []
+    for values in ([3, 4], [constant, 4], [constant, dynamic]):
+        assert runtime.utils._const_int_values(values) is None
+
+
+def test_legacy_tile_type_shape_probe_keeps_python_dimensions(runtime):
+    helpers = runtime.load_functions("ir/op/block_ops.py", ("_const_shape_ints", "_static_last_axis"))
+    assert helpers._const_shape_ints([3, 4]) == [3, 4]
+    assert helpers._const_shape_ints([3, _ConstInt(4)]) == [3, 4]
+    assert helpers._const_shape_ints([3, True]) is None
+    assert helpers._static_last_axis([_Expr(_ScalarType(_DType.INT64)), 4]) == 4
+
+
+def test_const_int_probe_only_accepts_ir_integer_constants(runtime):
+    bool_carrier = _ConstInt(1, _DType.BOOL)
+    cast = runtime.ir.Cast(_ScalarType(_DType.INT64), _Span())
+    cast.operand = _ConstInt(3)
+
+    for value in (0, 3, True, False):
+        assert runtime.utils._const_int_value(value) is None
+    assert runtime.utils._const_int_value(_ConstInt(3)) == 3
+    assert runtime.utils._const_int_value(bool_carrier) == 1
+    assert runtime.utils._const_int_value(cast) is None
+    assert runtime.utils.require_const_int(cast, subject="value") == 3
+    with pytest.raises(runtime.errors.InvalidType, match="compile-time integer"):
+        runtime.utils.require_const_int(bool_carrier, subject="value")
+
+
+@pytest.mark.parametrize("source", [
+    "pl.example(tile, [rows, 16])",
+    "pl.example(tile, shape=[rows, 16])",
+])
+def test_dispatch_reports_parameter_errors_at_the_call(runtime, source):
+    def declaration(tile, /, shape):
+        pass
+    runtime.declare("example", declaration)
+
+    @runtime.registry.op_impl("example")
+    def build(self, tile, shape, *, span):
+        # The diagnostic label deliberately does not name a public parameter.
+        runtime.utils.require_const_int(shape.elements[0], subject="valid row", upper_bound=16)
+
+    rows = _ConstInt(17, span=_Span(filename="definition.py", begin_line=7, end_line=7))
+    parser = runtime.Parser(source, {"tile": _Expr(_TileType(_DType.INT32)), "rows": rows})
+    with pytest.raises(runtime.errors.InvalidVal, match="valid row must be at most 16") as caught:
+        parser.run("example")
+    assert parser.span_tracker.get_source_text(caught.value.span) == source
+    assert caught.value.span.filename == "test.py"
+    assert rows.span.filename == "definition.py"
+    assert runtime.ambient == []
+
+
+
+
+@pytest.mark.parametrize("name,value", [
+    ("require_int", 3), ("require_const_int", 3),
+    ("require_const_bool", True), ("require_const_number", 1.5),
+])
+def test_scalar_validators_reject_host_values(runtime, name, value):
+    with pytest.raises(runtime.errors.InvalidType):
+        getattr(runtime.utils, name)(value, subject="operand")
+
+
+@pytest.mark.parametrize("source,marked", [
+    ("pl.example([[0], [1, bad]])", "bad"),
+    ("pl.example(ids=[[0], [1, bad]])", "bad"),
+    ("pl.example(ids=values)", "values"),
+])
+def test_nested_list_validation_reports_indices_at_the_call(runtime, source, marked):
+    def declaration(ids):
+        pass
+    runtime.declare("example", declaration)
+
+    @runtime.registry.op_impl("example")
+    def build(self, ids, *, span):
+        for index, row in enumerate(runtime.utils.require_list(ids, subject="groups")):
+            runtime.utils.require_const_int_list(row, subject=f"groups[{index}]", lower_bound=0)
+
+    bad = _ConstInt(-1, span=_Span(filename="definition.py"))
+    values = _MakeTuple([_MakeTuple([_ConstInt(0)], _Span()), _MakeTuple([_ConstInt(1), bad], _Span())], _Span())
+    parser = runtime.Parser(source, {"bad": bad, "values": values})
+    with pytest.raises(runtime.errors.InvalidVal, match=r"groups\[1\]\[1\]") as caught:
+        parser.run("example")
+    assert parser.span_tracker.get_source_text(caught.value.span) == source
+    assert runtime.errors.get_current_span() is None
+    assert runtime.ambient == []
+
+
+def test_dispatch_binds_written_arguments_once(runtime):
+    def declaration(value):
+        pass
+    runtime.declare("example", declaration)
+    declared = sys.modules["pypto_pro.language._api"].example
+    original = declared.bind_declared
+    calls = []
+
+    def bind(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    declared.bind_declared = bind
+
+    @runtime.registry.op_impl("example")
+    def build(self, value, *, span):
+        return value
+
+    runtime.Parser("pl.example(3)").run("example")
+    assert sum(isinstance(args[0], ast.AST) for args, _ in calls) == 1
+
+
+def test_automatic_span_restores_context_after_an_exception(runtime):
+    outer = _Span(filename="outer.py", begin_line=3, end_line=3)
+    inner = _Span(filename="inner.py", begin_line=8, end_line=8)
+    with runtime.errors.current_span(outer):
+        with pytest.raises(runtime.errors.InvalidVal) as caught:
+            with runtime.errors.current_span(inner):
+                raise runtime.errors.InvalidVal("bad operand")
+        assert caught.value.span is inner
+        assert runtime.errors.InvalidVal("outer").span is outer
+    assert runtime.errors.get_current_span() is None
+
+
+@pytest.mark.parametrize("bias_form", ["omitted", "positional", "keyword"])
+def test_matmul_mx_builder_preserves_optional_bias(runtime, bias_form):
+    def declaration(dst_tile, lhs_tile, rhs_tile, /, scale_a, scale_b, bias_tile=None, *, phase=None):
+        pass
+    runtime.declare("matmul_mx", declaration)
+    calls = []
+    slot_checks = []
+
+    def construct(dst, lhs, rhs, scale_a, scale_b, bias=None, *, phase, span):
+        calls.append((dst, lhs, rhs, scale_a, scale_b, bias, phase, span))
+        return bias
+
+    helpers = runtime.load_functions("ir/op/block_ops.py", ("_build_matmul_mx",), _ir_matmul_mx=construct)
+    runtime.registry.op_impl("matmul_mx")(helpers._build_matmul_mx)
+    operands = {name: _Expr(_TileType(_DType.FP32)) for name in ("dst", "lhs", "rhs", "sa", "sb", "bias")}
+    suffix = {"omitted": "", "positional": ", bias", "keyword": ", bias_tile=bias"}[bias_form]
+    parser = runtime.Parser(f"pl.matmul_mx(dst, lhs, rhs, sa, sb{suffix})", operands)
+    parser._check_mx_plane_slots = lambda op_name, args: slot_checks.append((op_name, args))
+    expected_bias = None if bias_form == "omitted" else operands["bias"]
+    assert parser.run("matmul_mx") is expected_bias
+    assert calls[0][:6] == tuple(operands[name] for name in ("dst", "lhs", "rhs", "sa", "sb")) + (expected_bias,)
+    assert parser.span_tracker.get_source_text(calls[0][-1]) == ast.unparse(parser.call)
+    assert slot_checks == [("matmul_mx", tuple(operands[name] for name in ("dst", "lhs", "rhs", "sa", "sb")))]
+
+
+@pytest.mark.parametrize("operation", ["load", "load_tile", "store", "store_tile"])
+@pytest.mark.parametrize("explicit_hint", [False, True])
+def test_transfer_builders_forward_l2_cache_mode(runtime, operation, explicit_hint):
+    def construct(*args, **kwargs):
+        return args, kwargs
+
+    helpers = runtime.load_functions(
+        "ir/op/block_ops.py", (f"_build_{operation}",),
+        **{f"_ir_{operation}": construct},
+        _prepare_order=lambda value: value, _prepare_scale=lambda value: value,
+        AtomicType=types.SimpleNamespace(AtomicNone="none"),
+    )
+    values = [_Expr(), _Expr(), _MakeTuple([_ConstInt(0)], _Span())]
+    hint = object()
+    kwargs = {"l2_cache_mode": hint} if explicit_hint else {}
+    span = _Span()
+    args, attributes = getattr(helpers, f"_build_{operation}")(None, *values, span=span, **kwargs)
+    assert args == tuple(values)
+    assert attributes["l2_cache_mode"] is (hint if explicit_hint else None)
+    assert attributes["span"] is span
+
+
+@pytest.mark.parametrize("operation", ["notify", "notify_all"])
+@pytest.mark.parametrize("flag", ["default", "true", "false", "dynamic"])
+def test_notify_flush_store_keeps_default_and_requires_ir_boolean(runtime, monkeypatch, operation, flag):
+    class Signal:
+        window = _Expr()
+        slot = 0
+
+    distribute = sys.modules["pypto_pro.language.distribute"]
+    monkeypatch.setattr(distribute, "Signal", Signal, raising=False)
+    monkeypatch.setattr(distribute, "NotifyOp", enum.IntEnum("NotifyOp", {"SET": 0, "ATOMIC_ADD": 1}), raising=False)
+    runtime.ir.create_op_call = lambda name, args, attrs, span: attrs
+    helpers = runtime.load_functions(
+        "ir/op/dist_ops.py", (f"_build_{operation}", "_enum_kwarg_to_int", "_none_value"),
+        _int_operand=lambda value, api, name: value, __package__="pypto_pro.ir.op",
+    )
+    operands = [Signal(), _ConstInt(1)]
+    if operation == "notify":
+        operands.append(_ConstInt(2))
+    kwargs = {} if flag == "default" else {"flush_store": (
+        _Expr(_ScalarType(_DType.BOOL)) if flag == "dynamic" else _ConstBool(flag == "true")
+    )}
+    builder = getattr(helpers, f"_build_{operation}")
+    with runtime.errors.current_span(_Span()):
+        if flag == "dynamic":
+            with pytest.raises(runtime.errors.InvalidType, match="compile-time bool"):
+                builder(None, *operands, span=_Span(), **kwargs)
+        else:
+            attrs = builder(None, *operands, span=_Span(), **kwargs)
+            assert attrs["flush_store"] is (flag != "false")
+
+
+def test_storage_only_scalar_validation_uses_automatic_span(runtime):
+    dtype = types.SimpleNamespace(is_storage_only=lambda: True)
+    span = _Span(filename="scalar.py")
+    with runtime.errors.current_span(span):
+        with pytest.raises(runtime.errors.NotSupported, match="storage-only") as caught:
+            runtime.utils.require_scalar_dtype(dtype, subject="scalar")
+    assert caught.value.span is span
+
+
+@pytest.mark.parametrize("target,maximum", [("cube", 15), ("vector", 7)])
+@pytest.mark.parametrize("offset", [0, 1])
+def test_icache_preload_uses_target_bounds_and_automatic_span(runtime, target, maximum, offset):
+    helpers = runtime.load_functions(
+        "ir/op/system_ops.py", ("_build_icache_preload",),
+        MAX_AIC_ICACHE_PRELOAD_LEN=15, MAX_AIV_ICACHE_PRELOAD_LEN=7,
+        icache_preload=lambda value, span: value,
+    )
+    parser = types.SimpleNamespace(target=target)
+    value = _ConstInt(maximum + offset)
+    span = _Span()
+    with runtime.errors.current_span(span):
+        if offset:
+            with pytest.raises(runtime.errors.InvalidVal, match=f"at most {maximum}") as caught:
+                helpers._build_icache_preload(parser, value, span=span)
+            assert caught.value.span is span
+        else:
+            assert helpers._build_icache_preload(parser, value, span=span) is value
+
+
+@pytest.mark.parametrize("auto_pipeline", [False, True])
+def test_cached_vf_reparses_accesses_only_for_pipeline_analysis(runtime, auto_pipeline):
+    parser = runtime.Parser("pl.foo()")
+    def fn():
+        pass
+
+    cached = object()
+    kind = runtime.ir.FunctionType.SimdVF
+    parser.vf_func_cache = {(id(fn), kind, ()): cached}
+    parser.auto_pipeline_enabled = auto_pipeline
+    reparsed, registered = [], []
+    parser._instantiate_vf_body = lambda *args, **kwargs: (reparsed.append(args) or object(), [])
+    parser._register_vf_external = registered.append
+    assert parser._instantiate_simd_function("foo", fn, [], kind) is cached
+    assert len(reparsed) == int(auto_pipeline)
+    assert registered == [cached]
+
+
+@pytest.mark.parametrize("ids_key", ["fwd_ids", "bwd_ids"])
+@pytest.mark.parametrize("ids_kind", ["constants", "omitted", "runtime", "empty"])
+def test_make_tensor_preserves_pipeline_buffer_facts(runtime, monkeypatch, ids_key, ids_kind):
+    span = _Span()
+    shape = _MakeTuple([_ConstInt(4), _ConstInt(8)], span)
+    handle = _Expr()
+    handle.args = [None, shape, _MakeTuple([], span)]
+    monkeypatch.setattr(runtime.ir.MemorySpace, "DDR", "ddr", raising=False)
+    helpers = runtime.load_functions(
+        "ir/op/ptr_ops.py", ("_build_make_tensor", "_slot_size", "_const_axes"),
+        make_tensor=lambda *args, **kwargs: handle, TensorFacts=types.SimpleNamespace,
+    )
+    parser = types.SimpleNamespace(parse_facts=types.SimpleNamespace(buffer_decls={}), _access_site=(9, 4))
+    ids = {
+        "constants": _MakeTuple([_ConstInt(1), _ConstInt(2)], span),
+        "omitted": _Expr(_NoneType()),
+        "runtime": _MakeTuple([_Expr(_ScalarType(_DType.INT32))], span),
+        "empty": _MakeTuple([], span),
+    }[ids_kind]
+    with runtime.errors.current_span(span):
+        if ids_kind in ("runtime", "empty"):
+            expected = runtime.errors.InvalidType if ids_kind == "runtime" else runtime.errors.InvalidVal
+            with pytest.raises(expected) as caught:
+                helpers._build_make_tensor(parser, None, shape, depth=_ConstInt(2), span=span, **{ids_key: ids})
+            assert caught.value.span is span
+            assert parser.parse_facts.buffer_decls == {}
+            return
+        actual = helpers._build_make_tensor(parser, None, shape, depth=_ConstInt(2), span=span, **{ids_key: ids})
+    assert actual is handle
+    if ids_kind == "omitted":
+        assert parser.parse_facts.buffer_decls == {}
+    else:
+        facts = parser.parse_facts.buffer_decls[handle]
+        assert getattr(facts, ids_key) == (1, 2)
+        assert (facts.depth, facts.slot_size, facts.dims, facts.has_stride) == (2, 32, 2, False)
+        assert (facts.site, facts.span, facts.memory) == ((9, 4), span, "ddr")
+
+
+@pytest.mark.parametrize("container", [list, tuple])
+def test_dtype_constraints_follow_the_checked_objects(runtime, container):
+    dtype = _DType.INT32
+    allowed = (_DType.INT32, _DType.FP32)
+    runtime.utils.require_dtype_in(dtype, allowed, subject="test")
+    runtime.utils.require_dtypes_match(container([dtype, None, dtype]), dtype, subject="test")
+    runtime.utils.require_dtypes_match(container([]), dtype, subject="test")
+    with pytest.raises(runtime.errors.InvalidType, match="unsupported dtype"):
+        runtime.utils.require_dtype_in(_DType.BOOL, allowed, subject="test")
+    with pytest.raises(runtime.errors.InvalidType, match="dtype mismatch at index 2"):
+        runtime.utils.require_dtypes_match(container([dtype, None, _DType.FP32]), dtype, subject="test")

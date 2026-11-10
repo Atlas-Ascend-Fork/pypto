@@ -22,7 +22,7 @@ from ..._errors import InvalidType
 from ._op_registry import op_impl
 
 
-def _check_vf_scalar_operands(op_name: str, args: list, dtype: _ir_core.DataType | None, span: _ir_core.Span) -> None:
+def _check_vf_scalar_operands(op_name: str, args: list, dtype: _ir_core.DataType | None) -> None:
     """Reject a literal scalar operand of ``vf.<op_name>`` that ``dtype`` cannot represent.
 
     Non-constant operands carry no value to check and are skipped. Only the
@@ -34,7 +34,7 @@ def _check_vf_scalar_operands(op_name: str, args: list, dtype: _ir_core.DataType
     from ...language.parser.diagnostics import check_const_expr_fits_dtype
 
     for arg in args:
-        check_const_expr_fits_dtype(arg, dtype, span=span, api=f"vf.{op_name}")
+        check_const_expr_fits_dtype(arg, dtype, api=f"vf.{op_name}")
 
 
 def _infer_src_dtype(parsed_src_args: list) -> _ir_core.DataType | None:
@@ -106,7 +106,7 @@ def _make_vf_scalar_builder(full_name: str) -> Callable:
 
     def builder(self, *args: Any, span: _ir_core.Span, **kwargs: Any) -> _ir_core.Expr:
         result = build(self, *args, span=span, **kwargs)
-        _check_vf_scalar_operands(full_name[3:], list(args), getattr(result.type, "dtype", None), span)
+        _check_vf_scalar_operands(full_name[3:], list(args), getattr(result.type, "dtype", None))
         return result
 
     return builder
@@ -149,7 +149,7 @@ def _make_implicit_acc_builder(full_name: str) -> Callable:
         else:
             result = _make_vf_call(full_name, args, kwargs, span)
         if full_name == "vf.axpy":
-            _check_vf_scalar_operands("axpy", list(args), _infer_src_dtype(list(args)), span)
+            _check_vf_scalar_operands("axpy", list(args), _infer_src_dtype(list(args)))
         return result
 
     return builder
@@ -158,7 +158,7 @@ def _make_implicit_acc_builder(full_name: str) -> Callable:
 @op_impl("vf.muls_cast")
 def _build_vf_muls_cast(self, *args: Any, span: _ir_core.Span, **kwargs: Any) -> _ir_core.Expr:
     result = _make_vf_call("vf.muls_cast", args, kwargs, span)
-    _check_vf_scalar_operands("muls_cast", list(args), _infer_src_dtype(list(args)), span)
+    _check_vf_scalar_operands("muls_cast", list(args), _infer_src_dtype(list(args)))
     return result
 
 

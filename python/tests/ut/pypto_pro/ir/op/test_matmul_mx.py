@@ -431,7 +431,7 @@ def test_matmul_mx_skips_address_check_without_explicit_memref():
 @pytest.mark.parametrize("phase", [ir.STPhase.Final, 7])
 def test_matmul_mx_rejects_invalid_phase(phase):
     t = _mx_tiles()
-    with pytest.raises(ValueError, match="invalid phase value.*expected AccPhase"):
+    with pytest.raises(InvalidType, match="phase must be a AccPhase"):
         _ir_matmul_mx(
             t["dst"], t["lhs"], t["rhs"], t["scale_a"], t["scale_b"], phase=phase
         )
@@ -439,7 +439,7 @@ def test_matmul_mx_rejects_invalid_phase(phase):
 
 def test_matmul_mx_acc_rejects_invalid_phase():
     t = _mx_tiles()
-    with pytest.raises(ValueError, match="invalid phase value.*expected AccPhase"):
+    with pytest.raises(InvalidType, match="phase must be a AccPhase"):
         _ir_matmul_mx_acc(
             t["dst"],
             t["acc"],

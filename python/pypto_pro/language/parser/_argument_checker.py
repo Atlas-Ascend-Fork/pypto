@@ -97,7 +97,7 @@ def _keyword_names(signature: inspect.Signature) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def check_declared_params(op_name: str, call: ast.Call, span: ir.Span, span_tracker: Any) -> None:
+def check_declared_params(op_name: str, call: ast.Call) -> None:
     """Bind the call's parameters to its declaration, before any argument is parsed.
 
     The rule is the declaration's own binding; AST nodes supply the written
@@ -108,10 +108,10 @@ def check_declared_params(op_name: str, call: ast.Call, span: ir.Span, span_trac
     for argument in call.args:
         if isinstance(argument, ast.Starred):
             raise InvalidArgument(
-                f"{spelled(op_name)}() does not support argument unpacking", span=span_tracker.get_span(argument),
+                f"{spelled(op_name)}() does not support argument unpacking",
             )
     if any(keyword.arg is None for keyword in call.keywords):
-        raise InvalidArgument(f"{spelled(op_name)}() does not support argument unpacking", span=span)
+        raise InvalidArgument(f"{spelled(op_name)}() does not support argument unpacking")
     declared = declared_api(op_name)
     if declared is None:
         return
@@ -119,18 +119,16 @@ def check_declared_params(op_name: str, call: ast.Call, span: ir.Span, span_trac
         # Binding AST nodes checks only names/counts; it never evaluates them.
         declared.bind_declared(*call.args, **{kw.arg: kw.value for kw in call.keywords})
     except TypeError as error:
-        _reject_declared_params(op_name, declared, call, span, span_tracker, error)
+        _reject_declared_params(op_name, declared, call, error)
 
 
 def _reject_declared_params(
     op_name: str,
     declared: Callable,
     call: ast.Call,
-    span: ir.Span,
-    span_tracker: Any,
     error: TypeError,
 ) -> None:
-    """Report a declaration binding error at the argument that caused it.
+    """Report a declaration binding error using the active call context.
 
     The declaration's binding checks the call; this function only locates the
     error and supplies a hint. Python compilation rejects repeated keywords.
@@ -158,10 +156,10 @@ def _reject_declared_params(
     ]
     reason = str(error)
     if unexpected:
-        marked: str | int | None = unexpected[0]
+        marked = unexpected[0]
         # Binding reports whichever fault it meets first, and a keyword nobody
         # declared usually reads as a required one missing. Name the keyword the
-        # caller actually wrote, so the reason and the mark agree.
+        # caller actually wrote in the diagnostic.
         reason = f"got an unexpected keyword argument '{marked}'"
         names = _keyword_names(signature)
         close = difflib.get_close_matches(marked, [n for n in names if n not in given], n=1)
@@ -172,27 +170,14 @@ def _reject_declared_params(
         marked = duplicated[0]
         hint = f"'{marked}' is already given as positional argument {positional.index(marked) + 1}"
     elif as_keyword:
-        # Naming a positional-only parameter is a fault of the name, and the binding
-        # already words it; only where to point is left to decide.
-        marked = as_keyword[0]
         hint = f"write it by position: {_required_form(op_name, signature)}"
     elif not takes_var_positional and len(call.args) > len(positional):
-        marked = len(positional)
         hint = _required_form(op_name, signature)
         if keyword_only:
             hint += f"; {', '.join(keyword_only)} must be passed by keyword"
     else:
-        # An argument the call never wrote: the call itself is the only location.
-        marked = None
         hint = _required_form(op_name, signature)
-    if marked is None:
-        located = span
-    elif isinstance(marked, str):
-        # Both keyword faults are faults of the name, so the name is what is marked.
-        located = span_tracker.call_keyword_name_span(call, marked, span)
-    else:
-        located = span_tracker.call_argument_span(call, marked, span)
-    raise InvalidArgument(f"{spelled(op_name)}() {reason}", span=located, hint=hint) from error
+    raise InvalidArgument(f"{spelled(op_name)}() {reason}", hint=hint) from error
 
 
 # ---------------------------------------------------------------------------
@@ -386,24 +371,10 @@ def describe_value(value: Any) -> str:
     return type(value).__name__
 
 
-def _written_as(kwargs: dict, name: str, signature: inspect.Signature) -> str | int:
-    """Locate an argument using the parsed call's keyword names."""
-    if name in kwargs:
-        return name
-    positional = [
-        parameter_name
-        for parameter_name, parameter in signature.parameters.items()
-        if parameter.kind in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
-    ]
-    return positional.index(name) if name in positional else 0
-
-
 def check_declared_types(
     op_name: str,
     args: list,
     kwargs: dict,
-    span: ir.Span,
-    argument_spans: dict,
 ) -> None:
     """Check parsed values without changing the arguments passed to the builder."""
     declared = declared_api(op_name)
@@ -423,8 +394,6 @@ def check_declared_types(
         allowed = accepted_types(str(parameter.annotation), declared)
         if allowed is None or value_kind(value) in allowed:
             continue
-        marked = _written_as(kwargs, name, signature)
         raise InvalidType(
             f"{spelled(op_name)}: {name} expects {parameter.annotation}, got {describe_value(value)}",
-            span=argument_spans.get(marked, span),
         )

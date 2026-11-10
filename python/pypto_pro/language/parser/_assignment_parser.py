@@ -40,7 +40,6 @@ class AssignmentParserMixin:
         if not isinstance(stmt.target, ast.Name):
             raise NotSupported(
                 "Only simple variable assignments supported",
-                span=self.span_tracker.get_span(stmt.target),
                 hint="Use a simple variable name for assignment targets",
             )
 
@@ -51,7 +50,6 @@ class AssignmentParserMixin:
         if stmt.value is None:
             raise InvalidArgument(
                 "Annotated assignment with no value is not supported",
-                span=self.span_tracker.get_span(stmt),
                 hint="Provide a value for the assignment",
                 parser_retry=True,
             )
@@ -76,7 +74,6 @@ class AssignmentParserMixin:
         if len(stmt.targets) != 1:
             raise NotSupported(
                 f"Unsupported assignment: {ast.unparse(stmt)}",
-                span=self.span_tracker.get_span(stmt),
                 hint="Use simple variable assignments or tuple unpacking",
             )
 
@@ -101,7 +98,6 @@ class AssignmentParserMixin:
 
         raise NotSupported(
             f"Unsupported assignment target: {ast.unparse(stmt)}",
-            span=span,
             hint="Only `var = ...`, `a.field = ...` (struct), `tensor[i] = ...`, "
             "or tuple unpacking are supported",
         )
@@ -112,7 +108,6 @@ class AssignmentParserMixin:
         if not isinstance(value_expr, ir.Expr) or not isinstance(value_expr.type, ir.TupleType):
             raise InvalidType(
                 f"Cannot unpack non-tuple value: {ast.unparse(stmt.value)}",
-                span=span,
                 parser_retry=True,
             )
         expected = len(value_expr.type.types)
@@ -120,7 +115,6 @@ class AssignmentParserMixin:
         if actual != expected:
             raise InvalidShape(
                 f"Cannot unpack tuple with {expected} items into {actual} targets",
-                span=span,
                 parser_retry=True,
             )
         tuple_var = self.builder.let(f"_tuple_tmp_{self._tuple_idx_counter}", value_expr, span=span)
@@ -131,7 +125,6 @@ class AssignmentParserMixin:
             if not isinstance(elt, ast.Name):
                 raise InvalidType(
                     f"Tuple unpacking target must be a variable name, got {ast.unparse(elt)}",
-                    span=self.span_tracker.get_span(elt),
                     hint="Use simple variable names in tuple unpacking: a, b, c = func()",
                 )
             if elt.id == "_":
@@ -155,7 +148,6 @@ class AssignmentParserMixin:
         if value_expr is None:
             raise InvalidOperation(
                 f"Cannot assign void function result to '{var_name}'",
-                span=span,
                 hint="Functions used as expressions must return a value",
                 parser_retry=True,
             )
@@ -207,7 +199,6 @@ class AssignmentParserMixin:
         if not self._is_struct_value(base):
             raise InvalidOperation(
                 f"Cannot assign field '{field_name}': the target is not a struct",
-                span=span,
                 hint="Field assignment is only supported on pl.struct() or pl.struct_array() elements, "
                 "e.g. s.field = v or arr[i].field = v.",
                 parser_retry=True,
@@ -216,14 +207,12 @@ class AssignmentParserMixin:
         if field_name not in fields:
             raise InvalidVal(
                 f"Struct has no field '{field_name}'",
-                span=span,
                 parser_retry=True,
             )
         value_expr = self.parse_expression(stmt.value)
         if not isinstance(value_expr, ir.Expr):
             raise InvalidVal(
                 f"Right-hand side of '{ast.unparse(target)}' must be an IR expression",
-                span=span,
                 parser_retry=True,
             )
         field_idx = fields.index(field_name)
@@ -232,7 +221,6 @@ class AssignmentParserMixin:
         if not ir.structural_equal(field_type, value_expr.type, enable_auto_mapping=False):
             raise InvalidType(
                 f"Struct field '{field_name}' expects type {field_type}, got {value_expr.type}",
-                span=span,
                 hint="Assign a value whose type matches the field.",
             )
         if self._is_array_field(field_type):
@@ -252,7 +240,6 @@ class AssignmentParserMixin:
         if not isinstance(value_expr, ir.Expr):
             raise InvalidType(
                 "Right-hand side of subscript assignment must be an IR expression",
-                span=span,
                 parser_retry=True,
             )
         # Struct (or struct_array element) array-field element write:
@@ -265,7 +252,6 @@ class AssignmentParserMixin:
                 if not self._is_struct_value(base):
                     raise InvalidOperation(
                         f"Cannot assign field '{field_name}': the target is not a struct",
-                        span=span,
                         hint="Field assignment is only supported on pl.struct() or pl.struct_array() elements, "
                         "e.g. s.field = v or arr[i].field = v.",
                         parser_retry=True,
@@ -273,7 +259,6 @@ class AssignmentParserMixin:
                 if field_name not in fields:
                     raise InvalidVal(
                         f"Struct has no field '{field_name}'",
-                        span=span,
                         parser_retry=True,
                     )
                 field_type = base.type.types[fields.index(field_name)]
@@ -282,7 +267,6 @@ class AssignmentParserMixin:
                 if not self._is_array_field(field_type):
                     raise InvalidOperation(
                         f"Cannot subscript struct field '{field_name}': field is not an array",
-                        span=span,
                         hint="Only array fields (e.g. field=[0, 0, 0, 0]) support element assignment",
                         parser_retry=True,
                     )
@@ -290,7 +274,6 @@ class AssignmentParserMixin:
                 if isinstance(target.slice, ast.Tuple):
                     raise InvalidShape(
                         "Multi-dimensional subscript is not supported for struct array fields",
-                        span=span,
                         hint="Use a scalar index like s.arr[0]",
                     )
                 index_expr = self.parse_expression(target.slice)
@@ -300,13 +283,11 @@ class AssignmentParserMixin:
                     raise OutOfRange(
                         f"Array field '{field_name}' index {index_expr.value} out of bounds "
                         f"for {len(field_type.types)} elements",
-                        span=span,
                     )
                 elem_type = field_type.types[0]
                 if not ir.structural_equal(elem_type, value_expr.type, enable_auto_mapping=False):
                     raise InvalidType(
                         f"Struct field '{field_name}' expects type {elem_type}, got {value_expr.type}",
-                        span=span,
                         hint="Assign a value whose type matches the field.",
                     )
                 call = ir.create_op_call(
@@ -320,7 +301,6 @@ class AssignmentParserMixin:
         if not isinstance(container_type, (ir.TileType, ir.TensorType)):
             raise InvalidType(
                 f"Subscript assignment requires Tile or Tensor, got {type(container_type).__name__}",
-                span=span,
                 hint="Only Tile and Tensor support element assignment via A[i] = v",
                 parser_retry=True,
             )

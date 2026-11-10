@@ -25,7 +25,16 @@ from pypto.pypto_impl.ir import Call, DataType, Expr, Span
 
 from ..._errors import InvalidShape, InvalidType
 from .._operators import make_binary
-from .._utils import _const_int_value, _get_span_or_capture, _is_int, _normalize_expr, _to_make_tuple
+from .._utils import (
+    _const_int_value,
+    _get_span_or_capture,
+    _is_int,
+    _is_none,
+    _normalize_expr,
+    _to_make_tuple,
+    require_const_int,
+    require_const_int_list,
+)
 from ._op_registry import op_impl
 
 
@@ -130,11 +139,12 @@ def _tensor_strides(tensor_type: _ir_core.TensorType, span: Span) -> list:
     return strides
 
 
-def _linear_coordinate(coords: Sequence[int | Expr], strides: Sequence[int | Expr], span: Span) -> Expr:
+def _linear_coordinate(coords: Sequence[Expr], strides: Sequence[int | Expr], span: Span) -> Expr:
     """Row-major linear element offset of per-axis coordinates."""
     total: int | Expr = 0
     for coord, stride in zip(coords, strides):
-        coord_value, stride_value = _const_int_value(coord), _const_int_value(stride)
+        coord_value = _const_int_value(coord)
+        stride_value = stride if _is_int(stride) else _const_int_value(stride)
         term: int | Expr = (
             coord_value * stride_value
             if coord_value is not None and stride_value is not None
@@ -290,33 +300,27 @@ def _slot_size(shape: _ir_core.MakeTuple, stride: _ir_core.MakeTuple) -> int | N
 
 
 @op_impl("make_tensor")
-def _build_make_tensor(self, *args, span: Span, **kwargs):
+def _build_make_tensor(
+    self, ptr: Expr, shape: Expr, stride: Expr | None = None, dtype: DataType | None = None, *,
+    depth: Expr | None = None, fwd_ids: Expr | None = None, bwd_ids: Expr | None = None, span: Span,
+) -> Call:
     """Build the tensor view; one carrying cross-core event IDs is also a buffer declaration.
 
     A view with neither fwd_ids nor bwd_ids declares no buffer and records no facts.
     """
-    result = make_tensor(*args, span=span, **kwargs)
-    fwd_ids, bwd_ids = kwargs.get("fwd_ids"), kwargs.get("bwd_ids")
-    if fwd_ids is None and bwd_ids is None:
-        return result
-    depth = self.require_const_value(
-        kwargs.get("depth"), "depth", expects="integer",
-        check=lambda value: value is None or _is_int(value),
-        hint="depth must be known at compile time.",
+    result = make_tensor(
+        ptr, shape, stride, dtype, depth=depth, fwd_ids=fwd_ids, bwd_ids=bwd_ids, span=span,
     )
+    if _is_none(fwd_ids) and _is_none(bwd_ids):
+        return result
+    depth = None if _is_none(depth) else require_const_int(depth, subject="'depth'")
     decl_ids: dict[str, tuple[int, ...]] = {}
     for ids_key, ids_value in (("fwd_ids", fwd_ids), ("bwd_ids", bwd_ids)):
-        if ids_value is None:
+        if _is_none(ids_value):
             continue
-        ids = self.require_const_value(
-            ids_value, ids_key, expects="non-empty list of integers",
-            check=lambda value: (
-                isinstance(value, (list, tuple)) and bool(value) and all(_is_int(e) for e in value)
-            ),
-            hint="Cross-core event IDs are fixed while parsing; pass a literal list of "
-            "integers, or a variable bound to one.",
-        )
-        decl_ids[ids_key] = tuple(ids)
+        decl_ids[ids_key] = tuple(require_const_int_list(
+            ids_value, subject=f"'{ids_key}'", min_length=1,
+        ))
     shape_tuple, stride_tuple = result.args[1], result.args[2]
     self.parse_facts.buffer_decls[result] = TensorFacts(
         memory=_ir_core.MemorySpace.DDR,
@@ -334,15 +338,15 @@ def _build_make_tensor(self, *args, span: Span, **kwargs):
 
 
 @op_impl("make_ptr")
-def _build_make_ptr(self, *args, span: Span, **kwargs):
-    return make_ptr(*args, span=span, **kwargs)
+def _build_make_ptr(self, ptr: Expr, dtype: DataType | None = None, *, span: Span) -> Call:
+    return make_ptr(ptr, dtype, span=span)
 
 
 @op_impl("tensor_view")
-def _build_tensor_view(self, *args, span: Span, **kwargs):
-    return tensor_view(*args, span=span, **kwargs)
+def _build_tensor_view(self, tensor: Expr, offset: Expr, shape: Expr, *, span: Span) -> Call:
+    return tensor_view(tensor, offset, shape, span=span)
 
 
 @op_impl("addptr")
-def _build_addptr(self, *args, span: Span, **kwargs):
-    return addptr(*args, span=span, **kwargs)
+def _build_addptr(self, ptr: Expr, offset: Expr, *, span: Span) -> Call:
+    return addptr(ptr, offset, span=span)

@@ -249,8 +249,11 @@ def test_simt_kernel_parser_rejects_unsupported_parameters(annotation, error_typ
         debug_info=ir.IRDebugInfo(),
         closure_vars={"pl": pl},
     )
-    with pytest.raises(error_type, match=message):
+    with pytest.raises(error_type, match=message) as exc_info:
         parser.parse_function(ast.parse(source).body[0], func_type=ir.FunctionType.SimtKernel)
+    assert exc_info.value.span is not None
+    assert exc_info.value.span["filename"] == __file__
+    assert exc_info.value.span["line"] == 1
 
 
 def test_simt_indexed_invocation_rejects_keyword_arguments():
@@ -691,8 +694,11 @@ def test_simt_callee_rejects_return_incompatible_with_annotation():
         with pl.section_vector():
             entry[32](value)
 
-    with pytest.raises(InvalidVal, match="Return 'bad_return' annotated as"):
+    with pytest.raises(InvalidVal, match="Return 'bad_return' annotated as") as exc_info:
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert exc_info.value.span is not None
+    assert exc_info.value.span["filename"] == __file__
+    assert "def bad_return" in str(exc_info.value)
 
 
 def test_simt_callee_rejects_inconsistent_return_types_across_paths():

@@ -19,8 +19,14 @@ from typing import Any
 from pypto.pypto_impl import ir as _ir_core
 from pypto.pypto_impl.ir import Call, DataType, Expr, ScalarType, Span, TensorType, TileType
 
-from ..._errors import InvalidArgument, InvalidShape, InvalidType, InvalidVal, NotSupported, argument_span
-from .._utils import _const_int_value, _get_span_or_capture, _to_make_tuple, require_int
+from ..._errors import (
+    InvalidArgument,
+    InvalidShape,
+    InvalidType,
+    InvalidVal,
+    NotSupported,
+)
+from .._utils import _const_int_value, _get_span_or_capture, _to_make_tuple, require_const_bool, require_int
 from ._op_registry import op_impl
 
 _INTEGER_CONVERSIONS = {"d", "i", "u", "x"}
@@ -172,7 +178,9 @@ def _validate_dump_offsets_shapes(
             shape_expr,
             subject=f"debug.{op_name} shape at axis {idx}",
             lower_bound=1,
-            upper_bound=input_extent - offset_value if input_extent is not None and offset_value is not None else None,
+            upper_bound=(
+                input_extent - offset_value if input_extent is not None and offset_value is not None else None
+            ),
         )
 
 
@@ -191,16 +199,19 @@ def dump_data(
     show_location = _normalize_location_flag(loc, "dump_data")
     data_type = data.type
     if flag is not None and not isinstance(flag, str):
-        raise InvalidType(f"debug.dump_data requires str flag, but got {type(flag).__name__}")
+        raise InvalidType(f"debug.dump_data requires str flag, but got {type(flag).__name__}", span=actual_span)
     if not isinstance(data_type, (TensorType, TileType)):
-        raise InvalidType(f"debug.dump_data requires Tensor or Tile input, but got {type(data_type).__name__}")
+        raise InvalidType(
+            f"debug.dump_data requires Tensor or Tile input, but got {type(data_type).__name__}", span=actual_span,
+        )
     if data_type.dtype in _UNSUPPORTED_DUMP_DTYPES:
         dtype_name = f"DT_{data_type.dtype.to_string().upper()}"
         raise NotSupported(
-            f"debug.dump_data does not support {dtype_name}; use DT_FP4E2M1 or DT_FP4E1M2 for packed FP4 data"
+            f"debug.dump_data does not support {dtype_name}; use DT_FP4E2M1 or DT_FP4E1M2 for packed FP4 data",
+            span=actual_span,
         )
     if (offsets is None) != (shapes is None):
-        raise InvalidArgument("debug.dump_data offsets and shapes must be provided together")
+        raise InvalidArgument("debug.dump_data offsets and shapes must be provided together", span=actual_span)
 
     dump_kwargs: dict[str, Any] = {"show_location": show_location}
     if flag:
@@ -211,7 +222,9 @@ def dump_data(
     else:
         op_name = "debug.dump_tile"
         if data_type.memref is None:
-            raise InvalidArgument("debug.dump_data requires Tile input to have an allocated memory space")
+            raise InvalidArgument(
+                "debug.dump_data requires Tile input to have an allocated memory space", span=actual_span,
+            )
         memory_space = data_type.memref.memory_space_
         if memory_space in (
             _ir_core.MemorySpace.Left,
@@ -219,7 +232,7 @@ def dump_data(
             _ir_core.MemorySpace.ScaleLeft,
             _ir_core.MemorySpace.ScaleRight,
         ):
-            raise NotSupported(f"debug.dump_data does not support {memory_space.name} tiles")
+            raise NotSupported(f"debug.dump_data does not support {memory_space.name} tiles", span=actual_span)
         if section == _ir_core.SectionKind.Vector and memory_space != _ir_core.MemorySpace.Vec:
             raise NotSupported(
                 f"pl.dump_data of a {memory_space.name} tile is not allowed in a Vector section; "
@@ -251,7 +264,9 @@ def printf(format_str: str, *args: Expr, loc: bool = False, span: Span | None = 
     actual_span = _get_span_or_capture(span)
     show_location = _normalize_location_flag(loc, "printf")
     if not isinstance(format_str, str):
-        raise InvalidType(f"debug.printf requires string format literal, but got {type(format_str).__name__}")
+        raise InvalidType(
+            f"debug.printf requires string format literal, but got {type(format_str).__name__}", span=actual_span,
+        )
 
     _validate_printf_arguments(format_str, args, op_name="printf")
 
@@ -274,14 +289,16 @@ def pto_assert(
     if not isinstance(condition_type, ScalarType) or condition_type.dtype != DataType.BOOL:
         raise InvalidType(
             "debug.pto_assert requires a scalar bool condition, "
-            f"but got {type(condition_type).__name__}({getattr(condition_type, 'dtype', condition_type)})"
+            f"but got {type(condition_type).__name__}({getattr(condition_type, 'dtype', condition_type)})",
+            span=actual_span,
         )
 
     if condition_text is None:
         condition_text = "condition"
     if not isinstance(condition_text, str):
         raise InvalidType(
-            f"debug.pto_assert requires string condition_text metadata, but got {type(condition_text).__name__}"
+            f"debug.pto_assert requires string condition_text metadata, but got {type(condition_text).__name__}",
+            span=actual_span,
         )
 
     normalized_args: list[Expr] = []
@@ -289,7 +306,10 @@ def pto_assert(
         format_value = ""
     else:
         if not isinstance(format_str, str):
-            raise InvalidType(f"debug.pto_assert requires string literal format, but got {type(format_str).__name__}")
+            raise InvalidType(
+                f"debug.pto_assert requires string literal format, but got {type(format_str).__name__}",
+                span=actual_span,
+            )
         normalized_args = list(args)
         _validate_printf_arguments(format_str, normalized_args, op_name="pto_assert")
         format_value = format_str
@@ -314,36 +334,31 @@ def trap(*, span: Span | None = None) -> Call:
 
 
 @op_impl("dump_data")
-def _build_dump_data(self, *args: Expr, span: Span, **kwargs):
-    if "loc" in kwargs:
-        kwargs["loc"] = self.require_const_value(
-            kwargs["loc"], "loc", expects="bool",
-            hint="loc must be known at compile time.",
-        )
-    return dump_data(*args, section=self.target, **kwargs, span=span)
+def _build_dump_data(
+    self, data: Expr, offsets: Expr | None = None, shapes: Expr | None = None, *,
+    workspace: Expr | None = None, loc: Expr | None = None, flag: str | None = None, span: Span,
+) -> Call:
+    loc = False if loc is None else require_const_bool(loc, subject="loc")
+    return dump_data(
+        data, offsets, shapes, workspace=workspace, loc=loc, flag=flag, section=self.target, span=span,
+    )
 
 
 @op_impl("pto_assert")
-def _build_pto_assert(self, *args: Expr, span: Span, **kwargs):
-    if "loc" in kwargs:
-        kwargs["loc"] = self.require_const_value(
-            kwargs["loc"], "loc", expects="bool",
-            hint="loc must be known at compile time.",
-        )
-    condition = args[0] if args else kwargs.get("condition")
-    condition_span = argument_span(0 if args else "condition", getattr(condition, "span", span))
+def _build_pto_assert(
+    self, condition: Expr, /, format_str: str | None = None, *args: Expr,
+    loc: Expr | None = None, span: Span,
+) -> Call:
+    loc = False if loc is None else require_const_bool(loc, subject="loc")
+    condition_span = self.span_tracker.call_argument_span(self._current_node, 0, span)
     condition_text = self.span_tracker.get_source_text(condition_span)
-    return pto_assert(*args, condition_text=condition_text or None, **kwargs, span=span)
+    return pto_assert(condition, format_str, *args, condition_text=condition_text or None, loc=loc, span=span)
 
 
 @op_impl("printf")
-def _build_printf(self, *args, span: Span, **kwargs):
-    if "loc" in kwargs:
-        kwargs["loc"] = self.require_const_value(
-            kwargs["loc"], "loc", expects="bool",
-            hint="loc must be known at compile time.",
-        )
-    return printf(*args, span=span, **kwargs)
+def _build_printf(self, format_str: str, *args: Expr, loc: Expr | None = None, span: Span) -> Call:
+    loc = False if loc is None else require_const_bool(loc, subject="loc")
+    return printf(format_str, *args, loc=loc, span=span)
 
 
 @op_impl("trap")

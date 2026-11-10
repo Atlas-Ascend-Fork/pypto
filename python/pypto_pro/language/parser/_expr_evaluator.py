@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from pypto.pypto_impl import ir
 from pypto.pypto_impl.ir import DataType
-from pypto_pro.ir._utils import _to_make_tuple
+from pypto_pro.ir._utils import _const_scalar_value, _to_make_tuple
 
 from ..._errors import InvalidOperation, InvalidType, InvalidVal, PyptoProError, RuntimeFailure, message_of
 from .diagnostics import check_fits_dtype, make_const_int
@@ -94,7 +94,6 @@ class ExprEvaluator:
             InvalidVal: If the expression cannot be resolved
             RuntimeFailure: If evaluating the expression fails
         """
-        span = self._get_span(node)
         expr_str = ast.unparse(node)
 
         try:
@@ -110,14 +109,12 @@ class ExprEvaluator:
         except NameError as e:
             raise InvalidVal(
                 f"Cannot resolve expression '{expr_str}': {e}",
-                span=span,
                 hint=self._unresolved_hint(node),
                 parser_retry=True,
             ) from e
         except Exception as e:
             raise RuntimeFailure(
                 f"Failed to evaluate expression '{expr_str}': {message_of(e)}",
-                span=span,
                 parser_retry=True,
             ) from e
 
@@ -160,7 +157,6 @@ class ExprEvaluator:
             if kind == "runtime":
                 raise InvalidOperation(
                     f"'{sub.id}' is a runtime value, not known while parsing",
-                    span=self._get_span(node),
                     parser_retry=True,
                 )
             found, value = (True, value) if kind == "parse_time" else self.ir_to_python_value(value)
@@ -184,29 +180,9 @@ class ExprEvaluator:
         """
         if isinstance(expr, ir.Expr) and isinstance(expr.type, ir.NoneType):
             return (True, None)
-        if isinstance(expr, ir.ConstBool):
-            return (True, bool(expr.value))
-        if isinstance(expr, ir.ConstInt):
-            # A bool may be carried as a BOOL-typed ConstInt; keep it a bool so it
-            # round-trips through python_value_to_ir unchanged.
-            if expr.type.dtype == DataType.BOOL:
-                return (True, bool(expr.value))
-            return (True, int(expr.value))
-        if isinstance(expr, ir.ConstFloat):
-            return (True, float(expr.value))
-        if isinstance(expr, ir.Cast):
-            # A cast of a constant is still constant; apply the cast to the value.
-            found, value = cls.ir_to_python_value(expr.operand)
-            if not found or not isinstance(value, (bool, int, float)):
-                return (False, None)
-            dtype = expr.type.dtype
-            if dtype == DataType.BOOL:
-                return (True, bool(value))
-            if dtype.is_int():
-                return (True, int(value))
-            if dtype.is_float():
-                return (True, float(value))
-            return (False, None)
+        if isinstance(expr, (ir.ConstBool, ir.ConstInt, ir.ConstFloat, ir.Cast)):
+            value = _const_scalar_value(expr)
+            return (False, None) if isinstance(value, ir.Expr) else (True, value)
         if isinstance(expr, ir.MakeTuple):
             elements = []
             for element in expr.elements:
@@ -261,7 +237,7 @@ class ExprEvaluator:
         if isinstance(value, int):
             return make_const_int(value, span=span)
         if isinstance(value, float):
-            check_fits_dtype(value, DataType.DEFAULT_CONST_FLOAT, subject="float constant", span=span)
+            check_fits_dtype(value, DataType.DEFAULT_CONST_FLOAT, subject="float constant")
             return ir.ConstFloat(value, DataType.DEFAULT_CONST_FLOAT, span)
         if isinstance(value, ir.Expr):
             return value
@@ -274,7 +250,6 @@ class ExprEvaluator:
             return _to_make_tuple([self.python_value_to_ir(elt, span) for elt in value], span)
         raise InvalidType(
             f"Unsupported closure variable type: {type(value).__name__}",
-            span=span,
             hint="Closure variables must be None, str, int, float, bool, list, tuple, or IR expressions",
             parser_retry=True,
         )

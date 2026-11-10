@@ -21,7 +21,13 @@ from dataclasses import dataclass
 
 from pypto.pypto_impl import ir
 from pypto.pypto_impl.ir import DataType
-from pypto_pro.ir._utils import _is_int, _to_make_tuple
+from pypto_pro.ir._utils import (
+    _is_none,
+    _to_make_tuple,
+    require_const_int,
+    require_const_int_list,
+    require_list,
+)
 from pypto_pro.ir.op._op_registry import op_impl
 from pypto_pro.ir.op.block_ops import TileType as _TileType
 from pypto_pro.ir.op.block_ops import _ir_reinterpret
@@ -37,18 +43,11 @@ from ..._errors import (
     InvalidVal,
     OutOfRange,
     PyptoProError,
-    argument_span,
     message_of,
 )
 from ._tuple_type_registry import TupleTypeKind
-from .diagnostics import check_in_range
 
 _TILE_GROUP_TYPE_NAME = "tile_group"
-
-
-def _is_int_sequence(value) -> bool:
-    """Whether *value* is a non-empty tuple of plain integers."""
-    return isinstance(value, tuple) and bool(value) and all(_is_int(e) for e in value)
 
 
 @dataclass(frozen=True)
@@ -71,70 +70,44 @@ class BufferParserMixin:
     # --- helpers --------------------------------------------------------------
 
     @staticmethod
-    def _normalize_mutex_ids(mutex_ids, span: ir.Span) -> tuple[tuple[int, ...], ...]:
-        """Normalize mutex IDs to one fixed-size tuple per tile slot."""
-        normalized_mutex_ids = []
-        for mutex_id in mutex_ids:
-            if isinstance(mutex_id, (list, tuple)):
-                tile_mutex_ids = tuple(mutex_id)
-                if not tile_mutex_ids:
-                    raise InvalidVal(
-                        "make_tile_group() mutex ID sequence for a tile must not be empty", span=span,
-                        parser_retry=True,
-                    )
-            else:
-                tile_mutex_ids = (mutex_id,)
-
-            for value in tile_mutex_ids:
-                if not _is_int(value):
-                    raise InvalidType(f"mutex_ids must be ints, got {value!r}", span=span, parser_retry=True)
-                check_in_range(value, 0, MAX_MUTEX_ID, subject="mutex_ids element", span=span)
+    def _normalize_mutex_ids(mutex_ids) -> tuple[tuple[int, ...], ...]:
+        """Check already parsed mutex ID groups for a consistent per-slot layout."""
+        for tile_mutex_ids in mutex_ids:
+            if not tile_mutex_ids:
+                raise InvalidVal(
+                    "make_tile_group() mutex ID sequence for a tile must not be empty",
+                    parser_retry=True,
+                )
             if len(set(tile_mutex_ids)) != len(tile_mutex_ids):
                 raise InvalidVal(
                     f"make_tile_group() mutex IDs for one tile must not contain duplicates: {tile_mutex_ids}",
-                    span=span,
                     parser_retry=True,
                 )
-            normalized_mutex_ids.append(tile_mutex_ids)
 
-        expected_mutex_id_count = len(normalized_mutex_ids[0])
-        for tile_mutex_ids in normalized_mutex_ids[1:]:
+        expected_mutex_id_count = len(mutex_ids[0])
+        for tile_mutex_ids in mutex_ids[1:]:
             if len(tile_mutex_ids) != expected_mutex_id_count:
                 raise InvalidArgument(
                     f"all tiles in a tile group must have the same mutex ID count: "
                     f"{expected_mutex_id_count} and {len(tile_mutex_ids)}",
-                    span=span,
                     parser_retry=True,
                 )
-        return tuple(normalized_mutex_ids)
+        return mutex_ids
 
-    @staticmethod
-    def _validate_depth(depth, span: ir.Span) -> None:
-        if isinstance(depth, bool) or not isinstance(depth, int) or depth <= 0:
-            raise InvalidType(
-                f"make_tile_group() depth must be a positive compile-time integer, got {depth!r}",
-                span=span,
-                parser_retry=True,
-            )
 
     def _parse_mutex_ids_and_depth(
         self,
         raw_mutex_ids,
         depth: int | None,
-        mutex_ids_span: ir.Span,
-        depth_span: ir.Span,
         span: ir.Span,
     ) -> tuple[ir.MakeTuple | None, int]:
         """Validate and lower one tile group's mutex IDs, inferring depth when omitted."""
-        if depth is not None:
-            self._validate_depth(depth, depth_span)
 
         if not self._auto_mutex and (
             raw_mutex_ids == "auto" or isinstance(raw_mutex_ids, (list, tuple)) and raw_mutex_ids
         ):
             raise InvalidOperation(
                 "Configuring mutex_ids requires @pl.jit(auto_mutex=True)",
-                span=mutex_ids_span,
                 parser_retry=True,
             )
 
@@ -143,13 +116,11 @@ class BufferParserMixin:
                 raise InvalidArgument(
                     'make_tile_group() string mutex_ids only supports "auto", '
                     f"got {raw_mutex_ids!r}",
-                    span=mutex_ids_span,
                     parser_retry=True,
                 )
             if depth is None:
                 raise InvalidArgument(
                     'make_tile_group() depth is required when mutex_ids is "auto", None, or empty',
-                    span=mutex_ids_span,
                     parser_retry=True,
                 )
             auto_mutex_ids = []
@@ -169,25 +140,16 @@ class BufferParserMixin:
             if depth is None:
                 raise InvalidArgument(
                     'make_tile_group() depth is required when mutex_ids is "auto", None, or empty',
-                    span=mutex_ids_span,
                     parser_retry=True,
                 )
             return None, depth
 
-        if not isinstance(raw_mutex_ids, (list, tuple)):
-            raise InvalidType(
-                'make_tile_group() mutex_ids must be "auto", a list, tuple, or None',
-                span=mutex_ids_span,
-                parser_retry=True,
-            )
-
-        normalized_mutex_ids = self._normalize_mutex_ids(raw_mutex_ids, mutex_ids_span)
+        normalized_mutex_ids = self._normalize_mutex_ids(raw_mutex_ids)
         if depth is None:
             depth = len(normalized_mutex_ids)
         elif len(normalized_mutex_ids) != depth:
             raise InvalidShape(
                 f"make_tile_group() mutex_ids length {len(normalized_mutex_ids)} must equal depth {depth}",
-                span=mutex_ids_span,
                 parser_retry=True,
             )
         return (
@@ -240,38 +202,47 @@ class BufferParserMixin:
         span: ir.Span,
     ) -> ir.Expr:
         tile_type = type
-        mutex_ids_span = argument_span("mutex_ids", getattr(mutex_ids, "span", span))
-        depth_span = argument_span("depth", getattr(depth, "span", span))
-        mutex_ids = self.require_const_value(
-            mutex_ids, "mutex_ids", expects="mutex configuration",
-            hint='Use "auto", None, or a constant sequence of mutex IDs.',
-        )
-        depth = self.require_const_value(
-            depth, "depth", expects="integer", check=lambda value: value is None or _is_int(value),
-            hint="depth must be known at compile time.",
-        )
         group_target = (
             ir.SectionKind.Vector
             if tile_type.target_memory == ir.MemorySpace.Vec
             else ir.SectionKind.Cube
+        )
+        if _is_none(mutex_ids):
+            mutex_ids = None
+        elif not isinstance(mutex_ids, str):
+            check_bounds = group_target == self.target and self._auto_mutex
+            mutex_id_groups = []
+            rows = require_list(mutex_ids, subject="mutex_ids")
+            for index, row in enumerate(rows):
+                subject = f"mutex_ids[{index}]"
+                if isinstance(row.type, ir.TupleType):
+                    ids = require_const_int_list(
+                        row, subject=subject, lower_bound=0 if check_bounds else None,
+                        upper_bound=MAX_MUTEX_ID if check_bounds else None,
+                    )
+                else:
+                    ids = (require_const_int(
+                        row, subject=subject, lower_bound=0 if check_bounds else None,
+                        upper_bound=MAX_MUTEX_ID if check_bounds else None,
+                    ),)
+                mutex_id_groups.append(tuple(ids))
+            mutex_ids = tuple(mutex_id_groups)
+        depth = None if _is_none(depth) else require_const_int(
+            depth, subject="depth", lower_bound=1,
         )
 
         if group_target == self.target:
             mutex_id_irs, depth = self._parse_mutex_ids_and_depth(
                 mutex_ids,
                 depth,
-                mutex_ids_span,
-                depth_span,
                 span,
             )
         else:
             mutex_id_irs = None
             if depth is not None:
-                self._validate_depth(depth, depth_span)
                 if isinstance(mutex_ids, (list, tuple)) and mutex_ids and len(mutex_ids) != depth:
                     raise InvalidShape(
                         f"make_tile_group() mutex_ids length {len(mutex_ids)} must equal depth {depth}",
-                        span=mutex_ids_span,
                         parser_retry=True,
                     )
             elif isinstance(mutex_ids, (list, tuple)) and mutex_ids:
@@ -279,34 +250,33 @@ class BufferParserMixin:
             else:
                 raise InvalidArgument(
                     'make_tile_group() depth is required when mutex_ids is "auto", None, or empty',
-                    span=mutex_ids_span,
                     parser_retry=True,
                 )
 
         slot_size = self._tile_type_slot_size(tile_type)
         # addrs: a single base address -> contiguous tiles (base + i*slot_size);
         # a list -> one explicit address per tile (non-contiguous).
-        addrs_span = argument_span("addrs", getattr(addrs, "span", span))
-        addrs = self.require_const_value(
-            addrs, "addrs", expects="integer, or list of integers",
-            check=lambda value: _is_int(value) or _is_int_sequence(value),
-            hint="addrs is fixed while parsing; pass a literal, or a variable bound to "
-            "literals/constants — not a runtime value such as a tensor shape or loop index",
-        )
-        for addr in (list(addrs) if isinstance(addrs, (list, tuple)) else [addrs]):
-            if addr < 0:
-                raise InvalidArgument(
-                    f"make_tile_group() addrs must be non-negative integers, got {addr!r}",
-                    span=addrs_span,
-                    parser_retry=True,
+        try:
+            if isinstance(addrs.type, ir.TupleType):
+                addrs = require_const_int_list(
+                    addrs, subject="addrs", lower_bound=0, min_length=1,
                 )
-        if isinstance(addrs, (list, tuple)):
+            else:
+                addrs = require_const_int(
+                    addrs, subject="addrs", lower_bound=0,
+                )
+        except InvalidType as error:
+            error.hint = (
+                "addrs is fixed while parsing; pass a literal, or a variable bound to "
+                "literals/constants — not a runtime value such as a tensor shape or loop index"
+            )
+            raise
+        if isinstance(addrs, list):
             tile_addrs = list(addrs)
             if len(tile_addrs) != depth:
                 raise InvalidShape(
                     f"make_tile_group() addrs length {len(tile_addrs)} must equal "
                     f"depth/len(mutex_ids) {depth}",
-                    span=addrs_span,
                     parser_retry=True,
                 )
         else:
@@ -318,14 +288,7 @@ class BufferParserMixin:
         for ids_key, ids_value in (("fwd_ids", fwd_ids), ("bwd_ids", bwd_ids)):
             if ids_value is None:
                 continue
-            ids = self.require_const_value(
-                ids_value, ids_key, expects="non-empty list of integers",
-                check=lambda value: (
-                    _is_int_sequence(tuple(value)) if isinstance(value, (list, tuple)) else False
-                ),
-                hint="Cross-core event IDs are fixed while parsing; pass a literal list of "
-                "integers, or a variable bound to one.",
-            )
+            ids = require_const_int_list(ids_value, subject=ids_key, min_length=1)
             decl_ids[ids_key] = tuple(ids)
         result = self._build_tile_group_ir(
             tile_type,
@@ -385,7 +348,7 @@ class BufferParserMixin:
 
     def _build_reinterpreted_group(self, group, kwargs: dict, span: ir.Span) -> ir.Expr:
         """Create independent descriptors while retaining the source cursor."""
-        depth, mutex_ids, memory = self._group_meta(group, span)
+        depth, mutex_ids, memory = self._group_meta(group)
         tiles = self.lower_attr_access(group, "tiles", span)
         values = []
         for i in range(depth):
@@ -409,12 +372,12 @@ class BufferParserMixin:
             ir.EvalStmt(ir.create_op_call("struct.set", [cursor_struct, new_val], {"field": "cursor"}, span), span)
         )
 
-    def _group_meta(self, group_var, span: ir.Span) -> tuple:
+    def _group_meta(self, group_var) -> tuple:
         meta = self.tile_group_meta.get(group_var)
         if meta is None:
             raise InvalidType(
                 "tile group handle has no group metadata; it must come directly from pl.make_tile_group()",
-                span=span, parser_retry=True,
+                parser_retry=True,
             )
         return meta
 
@@ -429,7 +392,7 @@ class BufferParserMixin:
 
     def _lower_group_accessor(self, group_var, method_name: str, span: ir.Span):
         """Select a complete bound tile using the rotating cursor."""
-        depth, _mutex_ids, _memory = self._group_meta(group_var, span)
+        depth, _mutex_ids, _memory = self._group_meta(group_var)
         tiles = self.lower_attr_access(group_var, "tiles", span)
         if depth == 1:
             # Single tile: no cursor or modulo; optional mutex metadata stays static.
@@ -457,9 +420,9 @@ class BufferParserMixin:
 
     def lower_group_subscript(self, group_var, slice_node: ast.expr, span: ir.Span) -> ir.Expr:
         """Select a complete tile without advancing or wrapping the index."""
-        depth, _mutex_ids, _memory = self._group_meta(group_var, span)
+        depth, _mutex_ids, _memory = self._group_meta(group_var)
         tiles = self.lower_attr_access(group_var, "tiles", span)
-        index_expr = self._reject_non_index_subscript(slice_node, span)
+        index_expr = self._reject_non_index_subscript(slice_node)
 
         if isinstance(index_expr, ir.ConstInt):
             slot = int(index_expr.value)
@@ -467,7 +430,6 @@ class BufferParserMixin:
                 raise OutOfRange(
                     f"tile group index {index_expr.value} is out of range for a "
                     f"{depth}-tile group",
-                    span=span,
                     hint=f"Valid indices are in [0, {depth})",
                     parser_retry=True,
                 )
@@ -483,7 +445,7 @@ class BufferParserMixin:
         self._bind_buffer_ref(tile, group_var, None)
         return tile
 
-    def _reject_non_index_subscript(self, slice_node: ast.expr, span: ir.Span) -> ir.Expr:
+    def _reject_non_index_subscript(self, slice_node: ast.expr) -> ir.Expr:
         """Parse and validate one integer tile-group index."""
         index_expr = self.parse_expression(slice_node)
         index_type = getattr(index_expr, "type", None)
@@ -491,7 +453,6 @@ class BufferParserMixin:
             actual_type = index_type if index_type is not None else type(index_expr).__name__
             raise InvalidType(
                 f"tile group index must be an integer scalar, but got {actual_type}",
-                span=span,
                 hint="Use an integer scalar expression, for example g[0] or g[i]",
                 parser_retry=True,
             )

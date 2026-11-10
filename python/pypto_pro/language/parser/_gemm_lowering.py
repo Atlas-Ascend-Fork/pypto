@@ -21,7 +21,7 @@ import copy
 from pypto.pypto_impl import ir
 
 from ..._errors import current_span
-from ...ir._utils import require_const_int
+from ...ir._utils import require_const_bool, require_const_int
 from ...ir.op.block_ops import _check_tile_memory_space, _tile_layout
 from ._argument_checker import declared_api
 from .diagnostics import InvalidArgument, InvalidType, InvalidVal, NotSupported
@@ -73,7 +73,7 @@ def lower_gemm(parser, stmt: ast.Expr) -> list[ast.stmt] | None:
         prefix = f"_pl_gemm{parser._gemm_counter}_"
         if not any(name.startswith(prefix) for name in parser._gemm_used_names):
             break
-    with current_span(parser.span_tracker.get_span(call), parser.span_tracker.argument_spans(call)):
+    with current_span(parser.span_tracker.get_span(call)):
         return _GemmCall(parser, stmt, op).lower()
 
 
@@ -101,9 +101,6 @@ class _GemmCall:
             alias = self.prefix + "api"
             parser.expr_evaluator.closure_vars[alias] = language
             self.base = _name(alias)
-
-    def span(self, node):
-        return self.parser.span_tracker.get_span(node)
 
     def attr(self, name):
         node = copy.deepcopy(self.base)
@@ -191,16 +188,16 @@ class _GemmCall:
         if not isinstance(node, ast.Name):
             raise NotSupported(
                 f"{self.api} needs the operand '{flag}' works on bound to a variable",
-                span=self.span(node), hint="Assign the operand to a variable before this call",
+                hint="Assign the operand to a variable before this call",
             )
         value = self.value(node)
         declared = getattr(value, "type", None)
         if not isinstance(declared, ir.TileType):
-            raise InvalidType(f"{self.api} '{flag}' needs a Tile", span=self.span(node))
+            raise InvalidType(f"{self.api} '{flag}' needs a Tile")
         dims = declared.shape
         if len(dims) != 2 or not all(isinstance(d, ir.ConstInt) for d in dims):
             raise InvalidVal(
-                f"{self.api} '{flag}' needs two compile-time dimensions", span=self.span(node)
+                f"{self.api} '{flag}' needs two compile-time dimensions"
             )
         return tuple(d.value for d in dims)
 
@@ -209,15 +206,13 @@ class _GemmCall:
         if declared is None or declared.hardware_info.compact != ir.CompactMode.normal:
             raise InvalidVal(
                 f"{self.api} needs '{ast.unparse(node)}' declared with compact=1 {reason}",
-                span=self.span(node),
                 hint="Narrowed Tiles must use the multiply's compact layout",
             )
 
     def static_int(self, name):
         node = self.keywords[name]
         value = self.parser.parse_expression(node)
-        with current_span(self.span(node)):
-            return require_const_int(value, subject=f"{self.api} '{name}'", lower_bound=1)
+        return require_const_int(value, subject=f"{self.api} '{name}'", lower_bound=1)
 
     def known_int(self, node):
         if node is None:
@@ -229,21 +224,20 @@ class _GemmCall:
         found, value = ((True, node.value) if isinstance(node, ast.Constant)
                         else self.parser.expr_evaluator.try_eval_expr(node))
         if found and (not isinstance(value, int) or isinstance(value, bool)):
-            raise InvalidType(f"{self.api} effective extents must be integers", span=self.span(node))
+            raise InvalidType(f"{self.api} effective extents must be integers")
         return value if found else None
 
     def arguments(self):
         for node in self.call.args:
             if isinstance(node, ast.Starred):
-                raise NotSupported(f"{self.api} does not take *args", span=self.span(node))
+                raise NotSupported(f"{self.api} does not take *args")
         for keyword in self.call.keywords:
             key, node = keyword.arg, keyword.value
             if key is None:
-                raise NotSupported(f"{self.api} does not take **kwargs", span=self.span(node))
+                raise NotSupported(f"{self.api} does not take **kwargs")
             if self.mx and key in ("splitn", "splitk"):
-                raise NotSupported("pl.gemm_mx() does not split", span=self.span(node),
-                                   hint="Use explicit native operations")
-        self.parser._check_declared_params(self.op, self.call, self.span(self.call))
+                raise NotSupported("pl.gemm_mx() does not split", hint="Use explicit native operations")
+        self.parser._check_declared_params(self.op, self.call)
         bound = declared_api(self.op).bind_declared(
             *self.call.args, **{kw.arg: kw.value for kw in self.call.keywords}
         ).arguments
@@ -262,20 +256,17 @@ class _GemmCall:
             value = default
             if node is not None:
                 value = self.parser.parse_expression(node)
-                value = self.parser.require_const_value(
-                    value, key, expects="bool", check=lambda value: isinstance(value, bool),
-                    hint="Use True, False, or a boolean value known at compile time.",
-                )
+                value = require_const_bool(value, subject=key)
             flags[key] = value
         self.init = flags["init"]
         self.trans_a, self.trans_b = flags["trans_a"], flags["trans_b"]
         if "bias" in self.keywords and not self.init:
-            raise InvalidVal(f"{self.api} takes a bias only with init=True", span=self.span(self.keywords["bias"]))
+            raise InvalidVal(f"{self.api} takes a bias only with init=True")
         if "splitn" in self.keywords and "splitk" in self.keywords:
             raise InvalidArgument("pl.gemm() 'splitn' and 'splitk' are mutually exclusive")
         if "splitn" in self.keywords and "m" in self.keywords:
             raise NotSupported(
-                "pl.gemm() cannot combine 'm' with 'splitn'", span=self.span(self.keywords["m"]),
+                "pl.gemm() cannot combine 'm' with 'splitn'",
                 hint="Narrowing M changes the pitch between accumulator column strips",
             )
 
@@ -286,12 +277,11 @@ class _GemmCall:
             raise NotSupported(
                 f"{self.api} '{flag}': the operand is a tile selected by a runtime index; "
                 "the transpose alias would silently bind to slot 0",
-                span=self.span(node),
                 hint="Reinterpret the whole TileGroup as ZN first, then select a slot without this flag",
             )
         if _tile_layout(value.type) != ir.Layout.NZ:
             raise NotSupported(
-                f"{self.api} '{flag}' requires an NZ L1 Tile", span=self.span(node),
+                f"{self.api} '{flag}' requires an NZ L1 Tile",
                 hint="A ZN view already represents the transpose; pass it without this flag",
             )
         return self.call_op("reinterpret", [node], shape=_list([_const(cols), _const(rows)]), layout=self.attr("ZN"))
@@ -300,7 +290,7 @@ class _GemmCall:
         node = self.operands[key] if key == "acc" else self.keywords[key]
         declared = self.type(node)
         if declared is None or len(declared.shape) != 2:
-            raise InvalidType(f"{self.api} '{key}' needs a two-dimensional Tile", span=self.span(node))
+            raise InvalidType(f"{self.api} '{key}' needs a two-dimensional Tile")
         known = [self.known_int(dim) for dim in dims]
         if any(known[i] is None or not isinstance(declared.shape[i], ir.ConstInt)
                or known[i] != declared.shape[i].value for i in compact_axes):
@@ -364,7 +354,6 @@ class _GemmCall:
             ):
                 raise InvalidType(
                     f"{self.api} '{key}' needs a Tile with two compile-time dimensions",
-                    span=self.span(self.operands[key]),
                 )
             shapes.append([d.value for d in declared.shape])
         a, b = shapes
@@ -383,13 +372,10 @@ class _GemmCall:
                 if not isinstance(scalar_type, ir.ScalarType) or not (
                     scalar_type.dtype.is_int() or scalar_type.dtype == ir.DataType.INDEX
                 ):
-                    raise InvalidType(
-                        f"{self.api} '{axis}' must be an integer scalar", span=self.span(node)
-                    )
+                    raise InvalidType(f"{self.api} '{axis}' must be an integer scalar")
             if known is not None and not 0 < known <= size:
                 raise InvalidVal(
                     f"{self.api} '{axis}' is {known}, outside the declared extent 1..{size}",
-                    span=self.span(node),
                 )
             self.bind(axis, _const(known) if known is not None else node)
         for node, axes, sizes in (
@@ -410,13 +396,13 @@ class _GemmCall:
                     if known is not None and isinstance(actual, ir.ConstInt) and known > actual.value:
                         raise InvalidVal(
                             f"{self.api} '{axis}' is {known}, past '{ast.unparse(node)}' "
-                            f"capacity {actual.value}", span=self.span(self.keywords[axis]),
+                            f"capacity {actual.value}",
                         )
                     continue
                 if isinstance(actual, ir.ConstInt) and actual.value != size:
                     raise InvalidVal(
                         f"{self.api} '{ast.unparse(node)}' {axis.upper()} extent must match "
-                        f"the L1 operand ({size}), got {actual.value}", span=self.span(node),
+                        f"the L1 operand ({size}), got {actual.value}",
                         hint="Supply an explicit effective extent for a partial multiply",
                     )
 
@@ -432,7 +418,7 @@ class _GemmCall:
         if known is not None and known % _MX_K_UNIT:
             raise InvalidVal(
                 f"{self.api} 'k' is {known}, which is not a multiple of {_MX_K_UNIT}",
-                span=self.span(node), hint="Pad K or use a non-MX multiply for the tail",
+                hint="Pad K or use a non-MX multiply for the tail",
             )
 
     def narrow_planes(self):
@@ -462,13 +448,11 @@ class _GemmCall:
     def check_staging_split(self, key, axis, split):
         declared = self.type(self.keywords[key])
         if declared is None or len(declared.shape) != 2:
-            raise InvalidType(f"{self.api} '{key}' needs a two-dimensional staging Tile",
-                              span=self.span(self.keywords[key]))
+            raise InvalidType(f"{self.api} '{key}' needs a two-dimensional staging Tile")
         size = declared.shape[axis]
         if not isinstance(size, ir.ConstInt) or size.value != split:
             raise InvalidVal(
                 f"{self.api} '{key}' dimension {axis} must equal the split size {split}",
-                span=self.span(self.keywords[key]),
                 hint="The staging move's physical width must match the generated loop step",
             )
 
@@ -522,11 +506,10 @@ class _GemmCall:
         if split % 16:
             raise InvalidVal(
                 f"pl.gemm() 'splitn' must be a multiple of 16, got {split}",
-                span=self.span(self.keywords["splitn"]),
             )
         if "bias" in self.keywords:
             raise NotSupported(
-                "pl.gemm() cannot combine 'bias' with 'splitn'", span=self.span(self.keywords["bias"]),
+                "pl.gemm() cannot combine 'bias' with 'splitn'",
                 hint="Stage the corresponding bias strip in an explicit N loop",
             )
         self.check_staging_split("l0b", 1, split)
@@ -538,23 +521,21 @@ class _GemmCall:
                 f"pl.gemm() cannot split along N: the accumulator holds {cols} columns and l1b holds {b_cols}",
             )
         value = self.value(acc_node)
-        with current_span(self.span(acc_node)):
-            _check_tile_memory_space(self.api, "acc", value, ir.MemorySpace.Acc, "L0C (Acc)")
+        _check_tile_memory_space(self.api, "acc", value, ir.MemorySpace.Acc, "L0C (Acc)")
         if self.parser.is_runtime_slot(value):
             raise NotSupported(
                 "pl.gemm() cannot split along N through a runtime-selected accumulator",
-                span=self.span(acc_node), hint="Use a static accumulator slot; strips need fixed addresses",
+                hint="Use a static accumulator slot; strips need fixed addresses",
             )
         addr = value.type.memref.addr
         if not isinstance(addr, ir.ConstInt):
-            raise NotSupported("pl.gemm() cannot split along N through a computed address", span=self.span(acc_node))
+            raise NotSupported("pl.gemm() cannot split along N through a computed address")
         limit = self.static_int("n") if "n" in self.keywords else cols
         count, tail = divmod(limit, split)
         tail16 = ((tail + 15) // 16) * 16
         if count == 0:
             raise InvalidVal(
                 f"pl.gemm() 'splitn' is {split}, wider than the {limit} columns to write",
-                span=self.span(self.keywords["splitn"]),
                 hint="Drop splitn and pass the extent as n",
             )
         if count * split + tail16 > cols:
@@ -600,7 +581,7 @@ class _GemmCall:
 
     def lower(self):
         self.arguments()
-        self.parser._validate_op_scope("matmul_mx" if self.mx else "matmul", self.call)
+        self.parser._validate_op_scope("matmul_mx" if self.mx else "matmul")
         self.resolve_types()
         self.check_shapes()
         self.bind("acc", self.operands["acc"])

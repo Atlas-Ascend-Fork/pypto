@@ -43,7 +43,7 @@ from pypto_pro.ir._limits import (
     to_storage_int,
 )
 
-from ...._errors import OutOfRange
+from ...._errors import OutOfRange, current_span
 
 
 def _format(value: int | float) -> str:
@@ -76,7 +76,6 @@ def check_in_range(
     hi: int | float,
     *,
     subject: str,
-    span: ir.Span | None = None,
     api: str | None = None,
     hint: str | None = None,
     error: type[Exception] | None = None,
@@ -91,7 +90,7 @@ def check_in_range(
     message = range_message(value, lo, hi, subject=subject, api=api)
     if error is not None:
         raise error(message)
-    raise OutOfRange(message, span=span, hint=hint)
+    raise OutOfRange(message, hint=hint)
 
 
 def check_fits_dtype(
@@ -99,7 +98,6 @@ def check_fits_dtype(
     dtype: ir.DataType,
     *,
     subject: str = "scalar operand",
-    span: ir.Span | None = None,
     api: str | None = None,
 ) -> None:
     """Reject *value* unless *dtype* can represent it.
@@ -113,12 +111,11 @@ def check_fits_dtype(
         return
     raise OutOfRange(
         range_message(value, limits.lo, limits.hi, subject=subject, api=api, dtype=dtype),
-        span=span,
         hint=hint,
     )
 
 
-def check_ir_int(value: int, *, subject: str = "integer constant", span: ir.Span | None = None) -> int:
+def check_ir_int(value: int, *, subject: str = "integer constant") -> int:
     """Reject an integer the IR cannot carry, and return its storage image.
 
     ``ir.ConstInt`` holds an ``int64_t`` that doubles as the bit pattern of a ``uint64_t``, so the band
@@ -128,7 +125,6 @@ def check_ir_int(value: int, *, subject: str = "integer constant", span: ir.Span
     if not fits_storage_int(value):
         raise OutOfRange(
             range_message(value, INT64_MIN, UINT64_MAX, subject=subject),
-            span=span,
             hint="a constant must be representable as either int64 or uint64",
         )
     return to_storage_int(value)
@@ -139,7 +135,6 @@ def check_const_expr_fits_dtype(
     dtype: ir.DataType | None,
     *,
     subject: str = "scalar operand",
-    span: ir.Span | None = None,
     api: str | None = None,
 ) -> None:
     """Check a parsed expression against *dtype* when, and only when, it is a literal constant.
@@ -155,7 +150,7 @@ def check_const_expr_fits_dtype(
         value = expr.value
     else:
         return
-    check_fits_dtype(value, dtype, subject=subject, span=span or getattr(expr, "span", None), api=api)
+    check_fits_dtype(value, dtype, subject=subject, api=api)
 
 
 def make_const_int(
@@ -171,9 +166,10 @@ def make_const_int(
     With no dtype, values use ``INT64`` unless they require ``UINT64``. A dtype the caller named explicitly
     is taken at its word: the value has to fit it.
     """
-    if dtype is None:
-        storage = check_ir_int(value, subject=subject, span=span)
-        settled = ir.DataType.UINT64 if value > INT64_MAX else ir.DataType.INT64
-        return ir.ConstInt(storage, settled, span)
-    check_fits_dtype(value, dtype, subject=subject, span=span, api=api)
-    return ir.ConstInt(to_storage_int(value), dtype, span)
+    with current_span(span):
+        if dtype is None:
+            storage = check_ir_int(value, subject=subject)
+            settled = ir.DataType.UINT64 if value > INT64_MAX else ir.DataType.INT64
+            return ir.ConstInt(storage, settled, span)
+        check_fits_dtype(value, dtype, subject=subject, api=api)
+        return ir.ConstInt(to_storage_int(value), dtype, span)

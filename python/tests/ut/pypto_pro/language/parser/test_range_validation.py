@@ -114,8 +114,13 @@ def test_vf_rejects_stop_above_uint16():
     def kernel(x: pl.Tensor[[64], pl.DT_FP32]):
         vf_body()
 
-    with pytest.raises(OutOfRange, match=r"pl\.range\(\) stop must be in \[0, 65535\]"):
+    with pytest.raises(OutOfRange, match=r"pl\.range\(\) stop must be in \[0, 65535\]") as caught:
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert caught.value.span is not None
+    assert caught.value.span["filename"] == __file__
+    with open(__file__, encoding="utf-8") as source_file:
+        line = source_file.readlines()[caught.value.span["line"] - 1]
+    assert "for _ in pl.range(" in line
 
 
 def test_vf_rejects_negative_start():
@@ -250,8 +255,13 @@ def test_rejects_non_positive_step(step):
         for _ in pl.range(0, 10, step):
             pl.system.bar_all()
 
-    with pytest.raises(OutOfRange, match=r"pl\.range\(\) step must be in \[1,"):
+    with pytest.raises(OutOfRange, match=r"pl\.range\(\) step must be in \[1,") as caught:
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert caught.value.span is not None
+    assert caught.value.span["filename"] == __file__
+    with open(__file__, encoding="utf-8") as source_file:
+        line = source_file.readlines()[caught.value.span["line"] - 1]
+    assert "for _ in pl.range(" in line
 
 
 @pytest.mark.parametrize("step", [1.0, True])
