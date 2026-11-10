@@ -51,8 +51,8 @@ void LargeBitmap::ResizeBits(const size_t newSize)
 void LargeBitmap::ClearBit(const size_t bitIdx)
 {
     if (bitIdx >= size_) {
-        APASS_LOG_WARN_F(Elements::Function,
-                         "Func LargeBitmap::ClearBit bitIdx %zu is not valid, total size is %zu bits.", bitIdx, size_);
+        APASS_LOG_DEBUG_F(Elements::Function,
+                          "Func LargeBitmap::ClearBit bitIdx %zu is not valid, total size is %zu bits.", bitIdx, size_);
         return;
     }
     bits_[bitIdx >> RIGHT_SHIFT_SIZE] &= ~(1UL << (bitIdx % BITS_EACH_VALUE));

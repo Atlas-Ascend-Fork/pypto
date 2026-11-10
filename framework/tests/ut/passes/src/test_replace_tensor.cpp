@@ -2193,5 +2193,103 @@ TEST_F(ReplaceTensorTest, MemoryIdLinkedAliasWithExistingActualRawMagicIsNotOver
     EXPECT_EQ(graph.originalRaw->actualRawmagic, -1);
 }
 
+/*
+ * connectedIncast -> COPY_IN(offset=0,0) -> ASSEMBLE(offset=0,0) -> output1 [outcast, rawmagic R]
+ *                \-> COPY_IN(offset=8,0) -> ASSEMBLE(offset=0,0) -> output2 [outcast, rawmagic R]
+ * unconnectedIncast [incast, no op connection] shares rawmagic R.
+ * output1 -> MULS -> COPY_OUT(offset=0,0) --+
+ * output2 -> MULS -> COPY_OUT(offset=8,0) --+-> outcast
+ * The first ASSEMBLE produces a token consumed by the second ASSEMBLE.
+ */
+inline void ConstructUnconnectedIncastGraph(std::shared_ptr<Function>& function)
+{
+    Shape tileShape = {kNumEight, 32}, inputShape = {kNumSixteen, 32};
+    std::vector<Offset> tileOffsets = {{kNumZero, kNumZero}, {kNumEight, kNumZero}};
+    auto makeTensor = [](const Shape& shape, MemoryType memoryType, std::shared_ptr<RawTensor> raw = nullptr) {
+        if (raw == nullptr) {
+            raw = std::make_shared<RawTensor>(DT_FP32, shape);
+        }
+        auto tensor = IRBuilder().CreateTensorVar(raw, Offset(shape.size(), kNumZero), shape,
+                                                  CreateTestConstIntVector(shape));
+        tensor->SetMemoryTypeBoth(memoryType, true);
+        return tensor;
+    };
+    auto connectedIncast = makeTensor(inputShape, MEM_DEVICE_DDR);
+    auto sharedRaw = std::make_shared<RawTensor>(DT_FP32, tileShape);
+    auto unconnectedIncast = makeTensor(tileShape, MEM_DEVICE_DDR, sharedRaw);
+    auto copyInShape = OpImmediate::Specified(tileShape);
+    LogicalTensors assembleOutputs;
+    std::vector<Operation*> assembleOps;
+    for (size_t i = 0; i < tileOffsets.size(); ++i) {
+        auto input = makeTensor(tileShape, MEM_UB);
+        auto output = makeTensor(tileShape, MEM_UB, sharedRaw);
+        auto& copyIn = PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_IN, {connectedIncast}, {input});
+        copyIn.SetOpAttribute(std::make_shared<CopyOpAttribute>(OpImmediate::Specified(tileOffsets[i]), MEM_UB,
+                                                                copyInShape, copyInShape));
+        auto& assemble = PassOperationUtils::AddOperation(*function, Opcode::OP_ASSEMBLE, {input}, {output});
+        assemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UB, Offset(tileShape.size(), kNumZero)));
+        assembleOutputs.push_back(output);
+        assembleOps.push_back(&assemble);
+    }
+    auto outcast = makeTensor(inputShape, MEM_DEVICE_DDR);
+    function->inCasts_ = {connectedIncast, unconnectedIncast};
+    function->outCasts_ = {assembleOutputs[0], outcast, assembleOutputs[1]};
+    auto copyOutShape = OpImmediate::Specified(tileShape);
+    auto copyOutRawShape = OpImmediate::Specified(inputShape);
+    for (size_t i = 0; i < tileOffsets.size(); ++i) {
+        auto output = makeTensor(tileShape, MEM_UB);
+        auto& muls = PassOperationUtils::AddOperation(*function, Opcode::OP_MULS, {assembleOutputs[i]}, {output});
+        muls.SetAttribute(OpAttributeKey::scalar, Element(DT_FP32, 5.0f));
+        auto& copyOut = PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_OUT, {output}, {outcast});
+        copyOut.SetOpAttribute(std::make_shared<CopyOpAttribute>(MEM_UB, OpImmediate::Specified(tileOffsets[i]),
+                                                                 copyOutShape, copyOutRawShape));
+    }
+    auto token = IRBuilder().CreateTokenVar(ir::Span::Unknown());
+    assembleOps[0]->result_token_ = {token};
+    assembleOps[1]->tokens_ = {token};
+    function->GetVarDependency().AddProducer(token, ToStmt(*assembleOps[0]));
+    function->GetVarDependency().AddConsumer(token, ToStmt(*assembleOps[1]));
+}
+
+TEST_F(ReplaceTensorTest, CheckUnconnectedIncast)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "IncastSibling", "IncastSibling", nullptr);
+    ConstructUnconnectedIncastGraph(function);
+    auto sharedRaw = function->inCasts_[1]->GetRawTensor();
+    auto unconnectedIncast = function->inCasts_[1];
+    std::vector<Operation*> assembleOps;
+    for (auto& op : function->Operations()) {
+        if (op.GetOpcode() == Opcode::OP_ASSEMBLE) {
+            assembleOps.push_back(&op);
+        }
+    }
+    ASSERT_EQ(assembleOps.size(), 2U);
+    ASSERT_NE(assembleOps[0], nullptr);
+    ASSERT_NE(assembleOps[1], nullptr);
+    auto token = assembleOps[0]->result_token_.front();
+    auto firstMulsConsumers = assembleOps[0]->GetOutputOperand(0)->GetConsumers();
+    ASSERT_FALSE(firstMulsConsumers.empty());
+    auto* firstMuls = *firstMulsConsumers.begin();
+    ASSERT_NE(firstMuls, nullptr);
+    auto secondCopyInProducers = assembleOps[1]->GetInputOperand(0)->GetProducers();
+    ASSERT_FALSE(secondCopyInProducers.empty());
+    auto* secondCopyIn = *secondCopyInProducers.begin();
+    ASSERT_NE(secondCopyIn, nullptr);
+    ASSERT_EQ(firstMuls->GetOpcode(), Opcode::OP_MULS);
+    ASSERT_EQ(secondCopyIn->GetOpcode(), Opcode::OP_COPY_IN);
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    for (auto* assemble : assembleOps) {
+        EXPECT_EQ(assemble->GetOutputOperand(0)->GetRawMagic(), sharedRaw->rawmagic);
+    }
+    EXPECT_EQ(unconnectedIncast->GetRawMagic(), sharedRaw->rawmagic);
+    ASSERT_EQ(firstMuls->result_token_.size(), 1U);
+    ASSERT_EQ(secondCopyIn->tokens_.size(), 1U);
+    EXPECT_NE(firstMuls->result_token_.front(), token);
+    EXPECT_EQ(secondCopyIn->tokens_.front(), firstMuls->result_token_.front());
+    EXPECT_FALSE(function->GetVarDependency().HasDependency(token));
+    CheckTokenDependencies(*function);
+}
+
 } // namespace tile_fwk
 } // namespace npu

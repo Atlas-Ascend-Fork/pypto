@@ -72,9 +72,14 @@ class UnionFind {
 public:
     explicit UnionFind(std::unordered_map<LogicalTensorPtr, int>& tensorToOrderIndex)
     {
-        for (auto it = tensorToOrderIndex.begin(); it != tensorToOrderIndex.end(); it++) {
-            parentMap[it->first] = it->first;
-            rankMap[it->first] = 1;
+        for (const auto& entry : tensorToOrderIndex) {
+            const auto& tensor = entry.first;
+            if (tensor == nullptr) {
+                // Null operands are not valid union-find vertices.
+                continue;
+            }
+            parentMap.emplace(tensor, tensor);
+            rankMap.emplace(tensor, 1);
         }
     }
 
@@ -85,21 +90,25 @@ public:
         if (xRoot == yRoot) {
             return;
         }
-        if (rankMap[xRoot] < rankMap[yRoot]) {
+        if (rankMap.at(xRoot) < rankMap.at(yRoot)) {
             parentMap[xRoot] = yRoot;
-        } else if (rankMap[xRoot] > rankMap[yRoot]) {
+        } else if (rankMap.at(xRoot) > rankMap.at(yRoot)) {
             parentMap[yRoot] = xRoot;
         } else {
             parentMap[yRoot] = xRoot;
-            rankMap[xRoot]++;
+            rankMap.at(xRoot)++;
         }
     }
 
-    std::vector<LogicalTensors> GetGroups() const
+    std::vector<LogicalTensors> GetGroups()
     {
         std::unordered_map<LogicalTensorPtr, LogicalTensors> rootToGroup;
         for (const auto& pair : parentMap) {
             LogicalTensorPtr obj = pair.first;
+            if (obj == nullptr) {
+                // Keep any legacy null key out of the returned tensor groups.
+                continue;
+            }
             LogicalTensorPtr root = Find(obj);
             rootToGroup[root].push_back(obj);
         }
@@ -111,14 +120,19 @@ public:
     }
 
 private:
-    LogicalTensorPtr Find(const LogicalTensorPtr& x) const
+    LogicalTensorPtr Find(const LogicalTensorPtr& x)
     {
-        if (parentMap[x] != x) {
-            parentMap[x] = Find(parentMap[x]);
+        if (x == nullptr) {
+            // A null tensor has no representative in the disjoint set.
+            return nullptr;
         }
-        return parentMap[x];
+        auto it = parentMap.find(x);
+        if (it->second != x) {
+            it->second = Find(it->second);
+        }
+        return it->second;
     }
-    mutable std::unordered_map<LogicalTensorPtr, LogicalTensorPtr> parentMap;
+    std::unordered_map<LogicalTensorPtr, LogicalTensorPtr> parentMap;
     std::unordered_map<LogicalTensorPtr, int> rankMap;
 };
 

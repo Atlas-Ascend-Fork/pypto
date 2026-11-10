@@ -1165,17 +1165,27 @@ std::unordered_map<LogicalTensorPtr, int> ReplaceTensor::BuildTensorOrderIndexMa
 {
     std::unordered_map<LogicalTensorPtr, int> tensorToOrderIndex;
     int index = 0;
+    auto addTensor = [&tensorToOrderIndex, &index](const LogicalTensorPtr& tensor) {
+        // Skip null entries and retain the first-seen order used by base selection.
+        if (tensor != nullptr && !tensorToOrderIndex.count(tensor)) {
+            tensorToOrderIndex[tensor] = index++;
+        }
+    };
     for (const auto& op : function.Operations()) {
         for (const auto& inTensor : op.GetIOperands()) {
-            if (!tensorToOrderIndex.count(inTensor)) {
-                tensorToOrderIndex[inTensor] = index++;
-            }
+            addTensor(inTensor);
         }
         for (const auto& outTensor : op.GetOOperands()) {
-            if (!tensorToOrderIndex.count(outTensor)) {
-                tensorToOrderIndex[outTensor] = index++;
-            }
+            addTensor(outTensor);
         }
+    }
+    // tensors may be disconnected from all ops while sharing rawmagic with an Assemble output.
+    // Pre-register them because UnionFind::Find requires every tensor to have an initialized root.
+    for (const auto& tensor : function.GetIncast()) {
+        addTensor(tensor);
+    }
+    for (const auto& tensor : function.GetOutcast()) {
+        addTensor(tensor);
     }
     return tensorToOrderIndex;
 }
