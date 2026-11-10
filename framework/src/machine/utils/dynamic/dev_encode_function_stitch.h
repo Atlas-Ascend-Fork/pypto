@@ -337,22 +337,96 @@ static uint32_t CellMatchFill(const uint64_t offset[DEV_SHAPE_DIM_MAX], const ui
     return 0;
 }
 
+enum class CellMatchFillPath : uint8_t { Fast = 0, Slow = 1 };
+
+// Fast: no range args. Slow: trailing offset/shape; NORMAL_WRITE uses range compact/store.
+template <CellMatchFillPath kFillPath, typename... RangeArgs>
 inline uint32_t CellMatchHandleFillEnhanceExec(int cellIndex, uint64_t* cellMatchTableData, uint32_t myOpType,
                                                uint64_t updateTagId, uint32_t taskId, uint32_t maxCount,
-                                               const DevCellMatchTableDesc& desc)
+                                               const DevCellMatchTableDesc& desc, RangeArgs... rangeArgs)
 {
-    DEV_VERBOSE_DEBUG("CellMatchHandleFillEnhanceExec: cell[%d], cellMatchTableData=%p", cellIndex, cellMatchTableData);
+    DEV_VERBOSE_DEBUG("CellMatchHandleFillEnhanceExec<%u>: cell[%d], opType=%u, maxCount=%u, tagId=%lx",
+                      static_cast<unsigned>(kFillPath), cellIndex, myOpType, maxCount, updateTagId);
     uint64_t cellMemBase = CellMatchCellIndexToMemBase(static_cast<uint64_t>(cellIndex), desc);
     uint64_t meta = cellMatchTableData[cellMemBase];
     uint32_t curActiveOpType = CellMatchGetCurrentOpType(meta);
     uint32_t curActiveOpCount = CellMatchGetCurrentOpCount(meta);
     uint64_t curTagId = CellMatchGetTagId(meta);
-    uint32_t targetCount = 0, targetIndex = 0;
+    const bool sameTag = (curTagId == updateTagId);
     if (maxCount == 0) {
         DEV_VERBOSE_DEBUG("Skip fill in cell[%d], opType=%u, maxCount=0", cellIndex, myOpType);
         return 0;
     }
 
+    uint32_t targetCount = 0;
+    uint32_t targetIndex = 0;
+
+    if constexpr (kFillPath == CellMatchFillPath::Slow) {
+        const uint64_t* const rangeArgsArr[] = {rangeArgs...};
+        const uint64_t* offset = rangeArgsArr[0];
+        const uint64_t* shape = rangeArgsArr[1];
+        if (myOpType == CELL_MATCH_OP_TYPE_NORMAL_WRITE) {
+            uint32_t existing = 0;
+            if (sameTag && curActiveOpType == CELL_MATCH_OP_TYPE_NORMAL_WRITE) {
+                existing = curActiveOpCount;
+            } else if (sameTag) {
+                uint32_t prevType = CellMatchGetPrevMutexOpType(meta);
+                uint32_t prevCount = CellMatchGetPrevMutexOpCount(meta);
+                if (prevType == CELL_MATCH_OP_TYPE_NORMAL_WRITE) {
+                    existing = prevCount;
+                }
+            }
+
+            int dims = desc.GetDimensionSize();
+            const uint64_t rangeWordStride = static_cast<uint64_t>(dims) * 2u;
+            uint64_t* rangeBase = cellMatchTableData + cellMemBase + desc.writeOpRangeBase;
+            uint32_t dst = 0;
+            for (uint32_t i = 0; i < existing; ++i) {
+                uint64_t* storedPairs = rangeBase + static_cast<uint64_t>(i) * rangeWordStride;
+                if (CellMatchWriteOpRangesOverlap(offset, shape, storedPairs, dims)) {
+                    continue;
+                }
+                if (i != dst) {
+                    uint64_t opId = CellMatchGetOpId(cellMatchTableData, cellMemBase, CELL_MATCH_OP_TYPE_NORMAL_WRITE,
+                                                     i, desc);
+                    CellMatchAddOpId(cellMatchTableData, cellMemBase, opId, dst, CELL_MATCH_OP_TYPE_NORMAL_WRITE, desc);
+                    uint64_t* dstPairs = rangeBase + static_cast<uint64_t>(dst) * rangeWordStride;
+                    for (int k = 0; k < dims * 2; ++k) {
+                        dstPairs[k] = storedPairs[k];
+                    }
+                }
+                dst++;
+            }
+            DEV_ASSERT(CtrlErr::CELL_MATCH_FILL_OP_NOT_ENOUGH, dst < maxCount);
+            targetIndex = dst;
+            targetCount = dst + 1;
+
+            if (!sameTag) {
+                CellMatchSetPrevMutexOpType(meta, CELL_MATCH_OP_TYPE_NONE);
+                CellMatchSetPrevMutexOpCount(meta, CELL_MATCH_INVALID_OP_COUNT);
+            } else if (curActiveOpType != CELL_MATCH_OP_TYPE_NORMAL_WRITE &&
+                       curActiveOpType != CELL_MATCH_OP_TYPE_NONE) {
+                CellMatchSetPrevMutexOpType(meta, curActiveOpType);
+                CellMatchSetPrevMutexOpCount(meta, curActiveOpCount);
+            }
+            CellMatchSetCurrentOpType(meta, CELL_MATCH_OP_TYPE_NORMAL_WRITE);
+            CellMatchSetCurrentOpCount(meta, targetCount);
+            CellMatchSetTagId(meta, updateTagId);
+
+            uint64_t fullTaskId = (static_cast<uint64_t>(updateTagId) << CELL_MATCH_META_TAGID_SHIFT32) | taskId;
+            CellMatchAddOpId(cellMatchTableData, cellMemBase, fullTaskId, targetIndex, CELL_MATCH_OP_TYPE_NORMAL_WRITE,
+                             desc);
+            CellMatchStoreWriteOpRange(cellMatchTableData, cellMemBase, targetIndex, offset, shape, desc);
+            cellMatchTableData[cellMemBase] = meta;
+            DEV_VERBOSE_DEBUG(
+                "Slow fill cell[%d]: kept=%u existing=%u taskId=0x%lx (Tagid=%lx, funcIdx=%u, opIdx=%u), index=%u",
+                cellIndex, targetCount, existing, fullTaskId, updateTagId, FuncID(taskId), taskId & TASKID_TASK_MASK,
+                targetIndex);
+            return 0;
+        }
+    }
+
+    // Fast path body (also Slow-table read/atomic).
     if (CellMatchIsMutexOp(myOpType, curActiveOpType)) {
         CellMatchSetCurrentOpType(meta, myOpType);
         CellMatchSetPrevMutexOpType(meta, curActiveOpType);
@@ -362,7 +436,7 @@ inline uint32_t CellMatchHandleFillEnhanceExec(int cellIndex, uint64_t* cellMatc
         DEV_VERBOSE_DEBUG("Update mutex op: cell[%d], prev mutex type=%u (count=%u), active=%u (count=1)", cellIndex,
                           curActiveOpType, curActiveOpCount, myOpType);
     } else {
-        targetCount = (curTagId != updateTagId) ? 1 : curActiveOpCount + 1;
+        targetCount = sameTag ? curActiveOpCount + 1 : 1;
         if (targetCount <= maxCount) {
             targetIndex = targetCount - 1;
             DEV_VERBOSE_DEBUG("Update multi-concurrent op : cell[%d], active=%u, count=%u -> %u", cellIndex, myOpType,
@@ -374,8 +448,7 @@ inline uint32_t CellMatchHandleFillEnhanceExec(int cellIndex, uint64_t* cellMatc
         }
     }
 
-    if (curTagId != updateTagId) {
-        // set pre mutex op as dirtry data, it's invalid
+    if (!sameTag) {
         CellMatchSetPrevMutexOpType(meta, CELL_MATCH_OP_TYPE_NONE);
         CellMatchSetPrevMutexOpCount(meta, CELL_MATCH_INVALID_OP_COUNT);
     }
@@ -422,14 +495,28 @@ static uint32_t CellMatchFillEnhance(const uint64_t offset[DEV_SHAPE_DIM_MAX], c
         uint32_t maxCount = cellMatchTableDesc.GetCacheOpMaxCount(opType);
         uint32_t taskId = MakeTaskID(std::get<2>(argsTuple), operationIdx);
 
+        if (unlikely(CellMatchIsNormalWriteSlowPath(cellMatchTableDesc))) {
+            struct HandleFillEnhanceSlow {
+                static inline uint32_t Process(int cellIndex, const DevCellMatchTableDesc& desc, uint64_t* data,
+                                               uint64_t tagId, uint32_t taskId, uint32_t type, uint32_t maxCount,
+                                               const uint64_t* fillOffset, const uint64_t* fillShape)
+                {
+                    return CellMatchHandleFillEnhanceExec<CellMatchFillPath::Slow>(
+                        cellIndex, data, type, tagId, taskId, maxCount, desc, fillOffset, fillShape);
+                }
+            };
+            return CellMatchHandle<HandleFillEnhanceSlow>(offset, shape, cellMatchTableDesc, cellMatchTableData, tagId,
+                                                          taskId, opType, maxCount, offset, shape);
+        }
+
         struct HandleFillEnhance {
             static inline uint32_t Process(int cellIndex, const DevCellMatchTableDesc& desc, uint64_t* data,
                                            uint64_t tagId, uint32_t taskId, uint32_t type, uint32_t maxCount)
             {
-                return CellMatchHandleFillEnhanceExec(cellIndex, data, type, tagId, taskId, maxCount, desc);
+                return CellMatchHandleFillEnhanceExec<CellMatchFillPath::Fast>(cellIndex, data, type, tagId, taskId,
+                                                                               maxCount, desc);
             }
         };
-
         return CellMatchHandle<HandleFillEnhance>(offset, shape, cellMatchTableDesc, cellMatchTableData, tagId, taskId,
                                                   opType, maxCount);
     }

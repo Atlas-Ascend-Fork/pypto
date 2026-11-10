@@ -505,6 +505,7 @@ private:
                                    const std::vector<int>& tInplaceSlotIndexList, bool fillContent);
     void InitUpdateSlot(uintdevptr_t& initOffset, const std::vector<std::vector<uint8_t>>& devEncodeListInput,
                         const std::unordered_map<Function*, int>& rootFuncKeyDict,
+                        const std::unordered_map<int, std::unordered_map<Function*, int>>& slotRootIncastDict,
                         const std::unordered_map<int, std::unordered_map<Function*, int>>& slotRootOutcastDict,
                         const std::vector<int>& tPartialUpdateSlotIndexList, bool fillContent,
                         const std::unordered_map<int, SlotMaskEntry>* stitchUpdateSlotMaskMap);

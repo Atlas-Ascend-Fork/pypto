@@ -81,6 +81,8 @@ struct DevCellMatchTableDesc {
     uint32_t cacheOpMaxCount[CELL_MATCH_OP_TYPE_MAX_NUM]{1, 0, 0};
     uint32_t opMemLayOutIndex[CELL_MATCH_OP_TYPE_MAX_NUM]{};
     uint32_t cellUint64Size{2};
+    // Slow-path only: base of per-writer (offset, shape) pairs. 0 on Fast path.
+    uint32_t writeOpRangeBase{0};
 
     int GetDimensionSize() const { return cellShape.dimSize; }
 
@@ -115,13 +117,19 @@ struct DevCellMatchTableDesc {
             opMemLayOutIndex[i] = offset;
             offset += cacheOpMaxCount[i];
         }
+        // Fast: count==1, no range tail. Slow: count>1, append (offset,shape) per writer.
+        uint32_t normalWriteCount = cacheOpMaxCount[0];
+        int dims = cellShape.dimSize;
+        if (normalWriteCount > 1) {
+            writeOpRangeBase = offset;
+            offset += normalWriteCount * static_cast<uint32_t>(dims) * 2u;
+        } else {
+            writeOpRangeBase = 0;
+        }
         cellUint64Size = offset;
     }
 
-    bool MaybeHaveAtomic() const
-    {
-        return GetCacheOpMaxCount(1) > 0; // ATOMIC_WRITE
-    }
+    bool MaybeHaveAtomic() const { return GetCacheOpMaxCount(1) > 0; }
 };
 
 static inline std::string DumpMemLayOut(const DevCellMatchTableDesc& tableDesc)

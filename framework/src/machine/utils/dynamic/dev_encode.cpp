@@ -36,6 +36,7 @@
 #include "tilefwk/pypto_fwk_log.h"
 #include "tilefwk/error_code.h"
 
+#include <numeric>
 #include <stdexcept>
 
 #include <algorithm>
@@ -43,6 +44,7 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <unordered_map>
@@ -3056,9 +3058,60 @@ static Opcode GetFullCoverProducerOpcodeForOutcast(const DevAscendFunction& devF
     return Opcode::OP_UNKNOWN;
 }
 
-static void InitPartialUpdateCellMatch(const std::vector<const DevAscendFunctionOutcast*>& outcastList,
-                                       const std::vector<Opcode>& outcastOpcodeList,
-                                       DevCellMatchTableDesc* partialUpdateCellMatchTableDesc)
+struct CellMatchShapeGate {
+    int64_t writeOpShapeGcd[DEV_SHAPE_DIM_MAX]{};
+    int64_t writeOpShapeMax[DEV_SHAPE_DIM_MAX]{};
+    int64_t readOpShapeMin[DEV_SHAPE_DIM_MAX]{};
+};
+
+// Caller guarantees 0 <= d < dim && d < DEV_SHAPE_DIM_MAX.
+static bool TryGetImmediateUseShapeDim(const DevAscendFunction& func, const DevAscendFunctionCallOperandUse& use,
+                                       int dim, int d, int64_t* value)
+{
+    const SymInt& s = func.GetSymoffset(use.offsetAttrIdx + dim)[d];
+    if (s.IsExpression()) {
+        return false;
+    }
+    int64_t v = static_cast<int64_t>(s.Value());
+    if (v <= 0) {
+        return false;
+    }
+    *value = v;
+    return true;
+}
+
+static void AccumulateWriteOpShapeGate(const DevAscendFunction& func, const DevAscendFunctionCallOperandUse& use,
+                                       int dim, CellMatchShapeGate* gate)
+{
+    for (int d = 0; d < dim && d < DEV_SHAPE_DIM_MAX; ++d) {
+        int64_t v = 0;
+        if (!TryGetImmediateUseShapeDim(func, use, dim, d, &v)) {
+            continue;
+        }
+        int64_t& gcdSlot = gate->writeOpShapeGcd[d];
+        gcdSlot = gcdSlot == 0 ? v : std::gcd(gcdSlot, v);
+        gate->writeOpShapeMax[d] = std::max(gate->writeOpShapeMax[d], v);
+    }
+}
+
+static void AccumulateReadOpShapeGate(const DevAscendFunction& func, const DevAscendFunctionCallOperandUse& use,
+                                      int dim, CellMatchShapeGate* gate)
+{
+    for (int d = 0; d < dim && d < DEV_SHAPE_DIM_MAX; ++d) {
+        int64_t v = 0;
+        if (!TryGetImmediateUseShapeDim(func, use, dim, d, &v)) {
+            continue;
+        }
+        int64_t& minSlot = gate->readOpShapeMin[d];
+        minSlot = minSlot == 0 ? v : std::min(minSlot, v);
+    }
+}
+
+static uint32_t InitPartialUpdateCellMatch(const std::vector<const DevAscendFunctionOutcast*>& outcastList,
+                                           const std::vector<Opcode>& outcastOpcodeList,
+                                           const std::vector<CellMatchShapeGate>& writeOpGates,
+                                           const std::vector<CellMatchShapeGate>& readOpGates,
+                                           DevCellMatchTableDesc* partialUpdateCellMatchTableDesc)
 {
     std::vector<int> tensorShape;
     for (size_t index = 0; index < outcastList.size(); index++) {
@@ -3102,12 +3155,53 @@ static void InitPartialUpdateCellMatch(const std::vector<const DevAscendFunction
         cellShape.push_back(mergeDim);
     }
     partialUpdateCellMatchTableDesc->SetCellShape(cellShape);
+    // Per-dim factor: 1 if cell<=1, divides, or minReadOp>=maxWriteOp (0 on either side = covered);
+    // else 2. NORMAL_WRITE capacity = product (2^N). Empty write gates are skipped for divides.
+    uint32_t normalWriteCount = 1;
+    int dims = static_cast<int>(cellShape.size());
+    for (int d = 0; d < dims && d < DEV_SHAPE_DIM_MAX; ++d) {
+        int cell = cellShape[static_cast<size_t>(d)];
+        if (cell <= 1) {
+            continue;
+        }
+        bool divides = false;
+        for (size_t index = 0; index < writeOpGates.size(); ++index) {
+            int64_t writeOpShapeGcd = writeOpGates[index].writeOpShapeGcd[d];
+            if (writeOpShapeGcd <= 0) {
+                continue;
+            }
+            if (writeOpShapeGcd % cell != 0) {
+                divides = false;
+                break;
+            }
+            divides = true;
+        }
+        if (divides) {
+            continue;
+        }
+        int64_t maxWriteOp = 0;
+        int64_t minReadOp = 0;
+        for (const CellMatchShapeGate& writeOpGate : writeOpGates) {
+            maxWriteOp = std::max(maxWriteOp, writeOpGate.writeOpShapeMax[d]);
+        }
+        for (const CellMatchShapeGate& readOpGate : readOpGates) {
+            int64_t readOpShape = readOpGate.readOpShapeMin[d];
+            if (readOpShape > 0) {
+                minReadOp = minReadOp == 0 ? readOpShape : std::min(minReadOp, readOpShape);
+            }
+        }
+        if (minReadOp == 0 || maxWriteOp == 0 || minReadOp >= maxWriteOp) {
+            continue;
+        }
+        normalWriteCount *= 2;
+    }
 
     std::vector<int> strideShape;
     for (size_t i = 0; i < tensorShape.size(); i++) {
         strideShape.push_back(cellShape[i] != 0 ? tensorShape[i] / cellShape[i] : 0);
     }
     partialUpdateCellMatchTableDesc->SetStrideShape(strideShape);
+    return normalWriteCount;
 }
 static void DumpFullCoverCellTableForNonPartialSlots(
     const std::vector<std::vector<uint8_t>>& devEncodeListInput,
@@ -3400,12 +3494,26 @@ static void InitSingleFullCoverSlot(DevAscendProgram* prog, int slotIndex,
 static int InitSinglePartialUpdateSlot(
     DevAscendProgram* prog, int slotIndex, const std::vector<std::vector<uint8_t>>& devEncodeListInput,
     const std::unordered_map<Function*, int>& rootFuncKeyDict,
+    const std::unordered_map<int, std::unordered_map<Function*, int>>& slotRootIncastDict,
     const std::unordered_map<int, std::unordered_map<Function*, int>>& slotRootOutcastDict,
     const std::unordered_map<int, SlotMaskEntry>* stitchUpdateSlotMaskMap, int totalCellMatchSize, bool fillContent,
     topo_dump::SlotCellTableCsvWriter* slotCellTable)
 {
+    auto maskIt = stitchUpdateSlotMaskMap->find(slotIndex);
+    uint8_t stitchCtrlBitMask = (maskIt != stitchUpdateSlotMaskMap->end()) ? maskIt->second.mask : STITCH_CTRL_NONE;
+    if (stitchCtrlBitMask == STITCH_CTRL_NONE) {
+        if (fillContent) {
+            FillEmptyPartialUpdateStub(prog, slotIndex);
+        }
+        return 0;
+    }
+    uint32_t maxReadCount = maskIt->second.maxReadCount;
+    bool hasAtomicWrite = maskIt->second.hasAtomicWrite;
+
     std::vector<const DevAscendFunctionOutcast*> outcastList;
     std::vector<Opcode> outcastOpcodeList;
+    std::vector<CellMatchShapeGate> writeOpGates;
+    std::vector<CellMatchShapeGate> readOpGates;
 
     ASSERT(DevCommonErr::PARAM_CHECK_FAILED, slotRootOutcastDict.count(slotIndex))
         << "slotIndex: " << slotIndex << " not found in slotRootOutcastDict";
@@ -3419,23 +3527,38 @@ static int InitSinglePartialUpdateSlot(
         auto& outcast = devFunc->GetOutcast(outcastIndex);
         outcastList.push_back(&outcast);
         outcastOpcodeList.push_back(GetFullCoverProducerOpcodeForOutcast(*devFunc, outcast));
-    }
-
-    auto maskIt = stitchUpdateSlotMaskMap->find(slotIndex);
-    uint8_t stitchCtrlBitMask = (maskIt != stitchUpdateSlotMaskMap->end()) ? maskIt->second.mask : STITCH_CTRL_NONE;
-    if (stitchCtrlBitMask == STITCH_CTRL_NONE) {
-        if (fillContent) {
-            FillEmptyPartialUpdateStub(prog, slotIndex);
+        CellMatchShapeGate writeOpGate;
+        int outDim = outcast.dim;
+        for (size_t i = 0; i < outcast.producerConsumerList.size(); ++i) {
+            const auto& use = devFunc->At(outcast.producerConsumerList, i);
+            if (use.opType == CellMatchOpType::READ) {
+                continue;
+            }
+            AccumulateWriteOpShapeGate(*devFunc, use, outDim, &writeOpGate);
         }
-        return 0;
+        writeOpGates.push_back(writeOpGate);
     }
-    uint32_t maxReadCount = maskIt->second.maxReadCount;
-    bool hasAtomicWrite = maskIt->second.hasAtomicWrite;
+    if (slotRootIncastDict.count(slotIndex) != 0) {
+        for (auto& [root, incastIndex] : slotRootIncastDict.at(slotIndex)) {
+            ASSERT(DevCommonErr::PARAM_CHECK_FAILED, rootFuncKeyDict.count(root))
+                << "root: " << root << " not found in rootFuncKeyDict";
+            int funcKey = rootFuncKeyDict.find(root)->second;
+            DevAscendFunction* devFunc = reinterpret_cast<DevAscendFunction*>(
+                const_cast<uint8_t*>(devEncodeListInput[funcKey].data()));
+            const auto& incast = devFunc->GetIncast(incastIndex);
+            CellMatchShapeGate readOpGate;
+            int inDim = incast.dim;
+            for (size_t i = 0; i < incast.consumerList.size(); ++i) {
+                AccumulateReadOpShapeGate(*devFunc, devFunc->At(incast.consumerList, i), inDim, &readOpGate);
+            }
+            readOpGates.push_back(readOpGate);
+        }
+    }
 
     DevCellMatchTableDesc partialUpdateCellMatchTableDesc;
-    InitPartialUpdateCellMatch(outcastList, outcastOpcodeList, &partialUpdateCellMatchTableDesc);
-
-    partialUpdateCellMatchTableDesc.SetCacheOpMaxCount({CELL_MATCH_MAX_NORMAL_WRITE_COUNT,
+    uint32_t normalWriteCount = InitPartialUpdateCellMatch(outcastList, outcastOpcodeList, writeOpGates, readOpGates,
+                                                           &partialUpdateCellMatchTableDesc);
+    partialUpdateCellMatchTableDesc.SetCacheOpMaxCount({normalWriteCount,
                                                         hasAtomicWrite ? CELL_MATCH_MAX_ATOMIC_WRITE_COUNT : 0U,
                                                         outcastList.size() > 1 ? maxReadCount : 0u});
 
@@ -3456,6 +3579,7 @@ static int InitSinglePartialUpdateSlot(
 void DevAscendProgram::InitUpdateSlot(
     uintdevptr_t& initOffset, const std::vector<std::vector<uint8_t>>& devEncodeListInput,
     const std::unordered_map<Function*, int>& rootFuncKeyDict,
+    const std::unordered_map<int, std::unordered_map<Function*, int>>& slotRootIncastDict,
     const std::unordered_map<int, std::unordered_map<Function*, int>>& slotRootOutcastDict,
     const std::vector<int>& tPartialUpdateSlotIndexList, bool fillContent,
     const std::unordered_map<int, SlotMaskEntry>* stitchUpdateSlotMaskMap)
@@ -3480,8 +3604,8 @@ void DevAscendProgram::InitUpdateSlot(
     for (uint32_t slotIndex = 0; slotIndex < slotSize; slotIndex++) {
         if (partialSlotSet.count(static_cast<int>(slotIndex))) {
             totalCellMatchSize += InitSinglePartialUpdateSlot(
-                this, static_cast<int>(slotIndex), devEncodeListInput, rootFuncKeyDict, slotRootOutcastDict,
-                stitchUpdateSlotMaskMap, totalCellMatchSize, fillContent, &slotCellTable);
+                this, static_cast<int>(slotIndex), devEncodeListInput, rootFuncKeyDict, slotRootIncastDict,
+                slotRootOutcastDict, stitchUpdateSlotMaskMap, totalCellMatchSize, fillContent, &slotCellTable);
         } else {
             InitSingleFullCoverSlot(this, static_cast<int>(slotIndex), stitchUpdateSlotMaskMap, fillContent);
         }
@@ -3566,8 +3690,8 @@ struct EncodeDevAscendProgramInfo {
             dyndevAttr->startArgsInputSymbolIndexList, dyndevAttr->inoutLink.assembleSlotIndexList,
             dyndevAttr->inoutLink.inplaceSlotIndexList, fillContent);
         devProg->InitUpdateSlot(initOffset, dyndevAttr->devEncodeList, dyndevAttr->rootFuncKeyDict,
-                                dyndevAttr->slotRootOutcastDict, dyndevAttr->inoutLink.partialUpdateSlotIdexList,
-                                fillContent, stitchUpdateSlotMaskMap);
+                                dyndevAttr->slotRootIncastDict, dyndevAttr->slotRootOutcastDict,
+                                dyndevAttr->inoutLink.partialUpdateSlotIdexList, fillContent, stitchUpdateSlotMaskMap);
         devProg->InitPrefetchInfoList(initOffset, dyndevAttr->l2InfoList, fillContent);
         devProg->InitDisableL2List(initOffset, dyndevAttr->disableL2List, fillContent);
         devProg->valueDependInputIndices = dyndevAttr->valueDependInputIndices;
