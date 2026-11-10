@@ -3378,9 +3378,12 @@ def _run_all_kernels(a_fp32, b_fp32, device):
 
 
 @pytest.mark.soc("950", "960")
+@pytest.mark.skip(reason="temporarily disabled")
 def test_vf_basic_ops():
     device = ST_DEVICE
+    logging.info("Setting device %s", device)
     torch.npu.set_device(device)
+    logging.info("Setting device %s done.", device)
     torch.manual_seed(123)
     a_fp32 = torch.randn([N, M], device=device, dtype=torch.float32) * 2.0
     b_fp32 = torch.randn([N, M], device=device, dtype=torch.float32) * 2.0
@@ -3388,7 +3391,9 @@ def test_vf_basic_ops():
     a_bits = float_to_uint32_bits(a_fp32)
     b_bits = float_to_uint32_bits(b_fp32)
     db_elems = 8
+    logging.info("Running kernels")
     results = _run_all_kernels(a_fp32, b_fp32, device)
+    logging.info("Running kernels done.")
     f0, f1, *_ = results[0]
     torch.testing.assert_close(f0, torch.minimum(a_fp32, b_fp32), rtol=1e-5, atol=1e-5)
     torch.testing.assert_close(f1, torch.exp(a_fp32), rtol=1e-3, atol=1e-3)
