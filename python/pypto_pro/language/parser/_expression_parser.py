@@ -1155,7 +1155,7 @@ class ExpressionParserMixin:
         tensor_view = base_expr.type.tensor_view
         if tensor_view is not None and tensor_view.stride:
             return tensor_view.stride[axis]
-        if tensor_view is not None and tensor_view.layout != ir.TensorLayout.ND:
+        if tensor_view is not None and tensor_view.layout != ir.Layout.ND:
             raise InvalidType(
                 f"tensor.stride of a {tensor_view.layout} tensor requires an explicit stride",
                 span=span,
@@ -1355,14 +1355,14 @@ class ExpressionParserMixin:
         hw_info = container_type.hardware_info
         layout = _tile_layout(container_type)
         allowed_layouts = {
-            ir.MemorySpace.Vec: {ir.TensorLayout.ND, ir.TensorLayout.DN, ir.TensorLayout.NZ},
+            ir.MemorySpace.Vec: {ir.Layout.ND, ir.Layout.DN, ir.Layout.NZ},
             ir.MemorySpace.Mat: {
-                ir.TensorLayout.ND,
-                ir.TensorLayout.DN,
-                ir.TensorLayout.NZ,
-                ir.TensorLayout.ZN,
+                ir.Layout.ND,
+                ir.Layout.DN,
+                ir.Layout.NZ,
+                ir.Layout.ZN,
             },
-            ir.MemorySpace.Acc: {ir.TensorLayout.NZ},
+            ir.MemorySpace.Acc: {ir.Layout.NZ},
         }
         if layout not in allowed_layouts.get(mem_space, set()):
             raise InvalidFormat(
@@ -1479,11 +1479,11 @@ class ExpressionParserMixin:
 
         # Match pto::GetTileOffset: plain layouts use row/column strides,
         # while boxed layouts must start at an inner-fractal boundary.
-        if layout in (ir.TensorLayout.ND, ir.TensorLayout.DN):
+        if layout in (ir.Layout.ND, ir.Layout.DN):
             static_values = [*start_values, *(_const_int_value(dim) for dim in shape)]
             if None not in static_values:
                 row_start, col_start, rows, cols = static_values
-                if layout == ir.TensorLayout.ND:
+                if layout == ir.Layout.ND:
                     element_offset = row_start * cols + col_start
                 else:
                     element_offset = col_start * rows + row_start
@@ -1494,12 +1494,12 @@ class ExpressionParserMixin:
                         span=span,
                     )
 
-        elif layout in (ir.TensorLayout.NZ, ir.TensorLayout.ZN):
+        elif layout in (ir.Layout.NZ, ir.Layout.ZN):
             c0 = 256 // dtype_bits
             fractal = hw_info.fractal
             if mem_space == ir.MemorySpace.Acc or fractal == 1024:
                 inner_rows, inner_cols = 16, 16
-            elif layout == ir.TensorLayout.NZ:
+            elif layout == ir.Layout.NZ:
                 inner_rows, inner_cols = 16, c0
             else:
                 inner_rows, inner_cols = c0, 16

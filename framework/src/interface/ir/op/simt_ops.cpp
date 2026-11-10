@@ -507,7 +507,7 @@ TypePtr DeduceSimtLaunchType(const std::vector<ExprPtr>& args,
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensorType->dtype_.GetBit() >= 8)
                 << "simt.launch Tensor argument has a sub-byte element dtype";
             PRO_IR_CHECK(ExternalError::INVALID_FORMAT,
-                         tensorType->tensor_view_.has_value() && tensorType->tensor_view_->layout == TensorLayout::ND)
+                         tensorType->tensor_view_.has_value() && tensorType->tensor_view_->layout == Layout::ND)
                 << "simt.launch Tensor argument must use ND layout";
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<Var>(args[i]) != nullptr)
                 << "simt.launch Tensor argument must be a Var";

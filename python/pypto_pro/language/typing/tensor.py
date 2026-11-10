@@ -16,7 +16,7 @@ __all__ = ["Tensor"]
 
 from collections.abc import Sequence
 
-from pypto.pypto_impl.ir import DataType, Expr, MemRef, TensorLayout
+from pypto.pypto_impl.ir import DataType, Expr, Layout, MemRef
 from pypto_pro.language.typing.direction import TensorDirection
 from pypto_pro.language.typing.shape import _ShapePolicy
 
@@ -57,7 +57,7 @@ class Tensor:
         shape: Sequence[int | _ShapePolicy | EllipsisType] | None = None,
         dtype: DataType | None = None,
         expr: Expr | TensorDirection | None = None,
-        layout: TensorLayout | None = None,
+        layout: Layout | None = None,
         memref: MemRef | None = None,
         _annotation_only: bool = False,
     ):

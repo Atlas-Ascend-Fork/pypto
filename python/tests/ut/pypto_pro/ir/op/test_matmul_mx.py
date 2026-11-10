@@ -29,10 +29,10 @@ _MEMREF_IDS = count()
 
 
 _LAYOUT_HARDWARE = {
-    ir.TensorLayout.NZ: (ir.TileLayout.col_major, ir.TileLayout.row_major),
-    ir.TensorLayout.ZN: (ir.TileLayout.row_major, ir.TileLayout.col_major),
-    ir.TensorLayout.NN: (ir.TileLayout.col_major, ir.TileLayout.col_major),
-    ir.TensorLayout.ZZ: (ir.TileLayout.row_major, ir.TileLayout.row_major),
+    ir.Layout.NZ: (ir.TileLayout.col_major, ir.TileLayout.row_major),
+    ir.Layout.ZN: (ir.TileLayout.row_major, ir.TileLayout.col_major),
+    ir.Layout.NN: (ir.TileLayout.col_major, ir.TileLayout.col_major),
+    ir.Layout.ZZ: (ir.TileLayout.row_major, ir.TileLayout.row_major),
 }
 
 
@@ -46,9 +46,9 @@ def _tile(name, shape, dtype, memory_space, addr=0, *, layout=None, fractal=None
         next(_MEMREF_IDS),
     )
     if layout is None and memory_space == ir.MemorySpace.ScaleLeft:
-        layout, fractal = ir.TensorLayout.ZZ, 32
+        layout, fractal = ir.Layout.ZZ, 32
     elif layout is None and memory_space == ir.MemorySpace.ScaleRight:
-        layout, fractal = ir.TensorLayout.NN, 32
+        layout, fractal = ir.Layout.NN, 32
     hardware_info = None
     if layout is not None:
         blayout, slayout = _LAYOUT_HARDWARE[layout]
@@ -81,7 +81,7 @@ def test_load_rejects_order_selecting_mx_physical_phase_axis():
     src = _tensor("scale", [64, 1, 2], DataType.FP8E8M0)
     dst = _tile(
         "scale_l1", [64, 2], DataType.FP8E8M0, ir.MemorySpace.Mat,
-        layout=ir.TensorLayout.ZZ, fractal=32,
+        layout=ir.Layout.ZZ, fractal=32,
     )
 
     with pytest.raises(InvalidShape, match="cannot select the trailing physical phase axis"):
@@ -92,7 +92,7 @@ def test_load_rejects_invalid_mx_physical_phase_extent():
     src = _tensor("scale", [64, 1, 3], DataType.FP8E8M0)
     dst = _tile(
         "scale_l1", [64, 2], DataType.FP8E8M0, ir.MemorySpace.Mat,
-        layout=ir.TensorLayout.ZZ, fractal=32,
+        layout=ir.Layout.ZZ, fractal=32,
     )
 
     with pytest.raises(InvalidShape, match="must be statically equal to 2"):
@@ -103,7 +103,7 @@ def test_load_rejects_mx_tensor_without_physical_phase_axis():
     src = _tensor("scale", [64, 2], DataType.FP8E8M0)
     dst = _tile(
         "scale_l1", [64, 2], DataType.FP8E8M0, ir.MemorySpace.Mat,
-        layout=ir.TensorLayout.ZZ, fractal=32,
+        layout=ir.Layout.ZZ, fractal=32,
     )
 
     with pytest.raises(InvalidShape, match="must contain two matrix axes and one physical phase axis"):
@@ -114,7 +114,7 @@ def test_load_accepts_default_mx_matrix_axes():
     src = _tensor("scale", [64, 1, 2], DataType.FP8E8M0)
     dst = _tile(
         "scale_l1", [64, 2], DataType.FP8E8M0, ir.MemorySpace.Mat,
-        layout=ir.TensorLayout.ZZ, fractal=32,
+        layout=ir.Layout.ZZ, fractal=32,
     )
 
     call = _ir_load(dst, src, [0, 0, 0])
@@ -126,7 +126,7 @@ def test_load_rejects_nonzero_mx_physical_phase_offset():
     src = _tensor("scale", [64, 1, 2], DataType.FP8E8M0)
     dst = _tile(
         "scale_l1", [64, 2], DataType.FP8E8M0, ir.MemorySpace.Mat,
-        layout=ir.TensorLayout.ZZ, fractal=32,
+        layout=ir.Layout.ZZ, fractal=32,
     )
 
     with pytest.raises(InvalidArgument, match="physical phase axis offset must be a compile-time zero"):
@@ -137,7 +137,7 @@ def test_load_tile_rejects_order_selecting_mx_physical_phase_axis():
     src = _tensor("scale", [64, 1, 2], DataType.FP8E8M0)
     dst = _tile(
         "scale_l1", [64, 2], DataType.FP8E8M0, ir.MemorySpace.Mat,
-        layout=ir.TensorLayout.ZZ, fractal=32,
+        layout=ir.Layout.ZZ, fractal=32,
     )
 
     with pytest.raises(InvalidShape, match="cannot select the trailing physical phase axis"):
@@ -148,7 +148,7 @@ def test_load_tile_rejects_invalid_mx_physical_phase_extent():
     src = _tensor("scale", [64, 1, 3], DataType.FP8E8M0)
     dst = _tile(
         "scale_l1", [64, 2], DataType.FP8E8M0, ir.MemorySpace.Mat,
-        layout=ir.TensorLayout.ZZ, fractal=32,
+        layout=ir.Layout.ZZ, fractal=32,
     )
 
     with pytest.raises(InvalidShape, match="must be statically equal to 2"):
@@ -159,7 +159,7 @@ def test_load_tile_rejects_mx_tensor_without_physical_phase_axis():
     src = _tensor("scale", [64, 2], DataType.FP8E8M0)
     dst = _tile(
         "scale_l1", [64, 2], DataType.FP8E8M0, ir.MemorySpace.Mat,
-        layout=ir.TensorLayout.ZZ, fractal=32,
+        layout=ir.Layout.ZZ, fractal=32,
     )
 
     with pytest.raises(InvalidShape, match="must contain two matrix axes and one physical phase axis"):
@@ -170,7 +170,7 @@ def test_load_tile_uses_default_mx_matrix_axes_for_block_offsets():
     src = _tensor("scale", [128, 16, 2], DataType.FP8E8M0)
     dst = _tile(
         "scale_l1", [64, 4], DataType.FP8E8M0, ir.MemorySpace.Mat,
-        layout=ir.TensorLayout.ZZ, fractal=32,
+        layout=ir.Layout.ZZ, fractal=32,
     )
 
     call = _ir_load_tile(dst, src, [1, 2, 0])
@@ -184,7 +184,7 @@ def test_load_tile_rejects_nonzero_mx_physical_phase_offset_with_default_order()
     src = _tensor("scale", [128, 16, 2], DataType.FP8E8M0)
     dst = _tile(
         "scale_l1", [64, 4], DataType.FP8E8M0, ir.MemorySpace.Mat,
-        layout=ir.TensorLayout.ZZ, fractal=32,
+        layout=ir.Layout.ZZ, fractal=32,
     )
 
     with pytest.raises(InvalidArgument, match="physical phase axis offset must be a compile-time zero"):
@@ -195,7 +195,7 @@ def test_load_tile_requires_compile_time_zero_mx_physical_phase_offset():
     src = _tensor("scale", [128, 16, 2], DataType.FP8E8M0)
     dst = _tile(
         "scale_l1", [64, 4], DataType.FP8E8M0, ir.MemorySpace.Mat,
-        layout=ir.TensorLayout.ZZ, fractal=32,
+        layout=ir.Layout.ZZ, fractal=32,
     )
     phase_offset = ir.Var("phase_offset", ir.ScalarType(DataType.INT64), ir.Span.unknown())
 
@@ -310,11 +310,11 @@ def test_matmul_mx_acc_rejects_mismatched_acc_fractal():
     t = _mx_tiles()
     t["dst"] = _tile(
         "dst", [64, 64], DataType.FP32, ir.MemorySpace.Acc,
-        layout=ir.TensorLayout.NZ, fractal=1024,
+        layout=ir.Layout.NZ, fractal=1024,
     )
     t["acc"] = _tile(
         "acc", [64, 64], DataType.FP32, ir.MemorySpace.Acc,
-        layout=ir.TensorLayout.NZ, fractal=512,
+        layout=ir.Layout.NZ, fractal=512,
     )
 
     with pytest.raises(InvalidType, match=r"acc_tile type must match dst_tile type"):
@@ -454,10 +454,10 @@ def test_matmul_mx_acc_rejects_invalid_phase():
 @pytest.mark.parametrize(
     "target_memory,layout,shape",
     [
-        (ir.MemorySpace.Mat, ir.TensorLayout.ZZ, [64, 2]),
-        (ir.MemorySpace.Mat, ir.TensorLayout.NN, [2, 64]),
-        (ir.MemorySpace.ScaleLeft, ir.TensorLayout.ZZ, [64, 2]),
-        (ir.MemorySpace.ScaleRight, ir.TensorLayout.NN, [2, 64]),
+        (ir.MemorySpace.Mat, ir.Layout.ZZ, [64, 2]),
+        (ir.MemorySpace.Mat, ir.Layout.NN, [2, 64]),
+        (ir.MemorySpace.ScaleLeft, ir.Layout.ZZ, [64, 2]),
+        (ir.MemorySpace.ScaleRight, ir.Layout.NN, [2, 64]),
     ],
 )
 @pytest.mark.parametrize("arch", ["3510", "9201"])
@@ -472,10 +472,10 @@ def test_mx_scale_tile_defaults_to_fractal_32(target_memory, layout, shape, monk
 @pytest.mark.parametrize(
     "target_memory,layout,shape",
     [
-        (ir.MemorySpace.Mat, ir.TensorLayout.ZZ, [64, 2]),
-        (ir.MemorySpace.Mat, ir.TensorLayout.NN, [2, 64]),
-        (ir.MemorySpace.ScaleLeft, ir.TensorLayout.ZZ, [64, 2]),
-        (ir.MemorySpace.ScaleRight, ir.TensorLayout.NN, [2, 64]),
+        (ir.MemorySpace.Mat, ir.Layout.ZZ, [64, 2]),
+        (ir.MemorySpace.Mat, ir.Layout.NN, [2, 64]),
+        (ir.MemorySpace.ScaleLeft, ir.Layout.ZZ, [64, 2]),
+        (ir.MemorySpace.ScaleRight, ir.Layout.NN, [2, 64]),
     ],
 )
 @pytest.mark.parametrize("arch", ["3510", "9201"])

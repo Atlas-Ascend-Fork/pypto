@@ -1,0 +1,56 @@
+#if defined(__DAV_CUBE__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void k_impl_cube(__gm__ half* x_0_ptr)
+{
+
+    int64_t _tuple_anchor_0_0[] = {static_cast<int64_t>(0)};
+    using _tg_g_tiles_0_0_Type = SyncedTile<Tile<TileType::Vec, half, 64, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0>;
+    _tg_g_tiles_0_0_Type _tg_g_tiles_0_0{_tg_g_tiles_0_0_Type::PtoTile(64, 64), {}};
+    TASSIGN(_tg_g_tiles_0_0.tile, 0x0);
+    SyncedTile<Tile<TileType::Vec, half, 64, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0> _tg_g_tiles_0[] = {static_cast<SyncedTile<Tile<TileType::Vec, half, 64, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0>>(_tg_g_tiles_0_0)};
+    return;
+}
+#endif
+
+#if defined(__DAV_VEC__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void k_impl_vector(__gm__ half* x_0_ptr)
+{
+
+    int64_t _tuple_anchor_0_0[] = {static_cast<int64_t>(0)};
+    using _tg_g_tiles_0_0_Type = SyncedTile<Tile<TileType::Vec, half, 64, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 1>;
+    _tg_g_tiles_0_0_Type _tg_g_tiles_0_0{_tg_g_tiles_0_0_Type::PtoTile(64, 64), {0}};
+    TASSIGN(_tg_g_tiles_0_0.tile, 0x0);
+    SyncedTile<Tile<TileType::Vec, half, 64, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 1> _tg_g_tiles_0[] = {static_cast<SyncedTile<Tile<TileType::Vec, half, 64, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 1>>(_tg_g_tiles_0_0)};
+    return;
+}
+#endif
+
+
+__aicore__ inline void k_impl(__gm__ half* x_0)
+{
+#if defined(__DAV_CUBE__)
+    k_impl_cube(x_0);
+#endif
+#if defined(__DAV_VEC__)
+    k_impl_vector(x_0);
+#endif
+}

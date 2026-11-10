@@ -116,14 +116,14 @@ def test_shape_override_keeps_footprint():
 
 def test_layout_override_updates_blayout_slayout():
     src = _src_tile([64, 64], pl.DT_FP16, addr=0x2000, size=8192)
-    new = _ir_reinterpret(src, layout=pl.TensorLayout.NZ, span=_span())
+    new = _ir_reinterpret(src, layout=pl.Layout.NZ, span=_span())
     assert int(new.type.hardware_info.blayout) == 2
     assert int(new.type.hardware_info.slayout) == 1
 
 
 def test_layout_is_inherited_when_not_overridden():
     """A tile declared NZ keeps its layout unless layout= is given."""
-    src = _src_tile([64, 64], pl.DT_FP16, addr=0x2000, size=8192, layout=pl.TensorLayout.NZ)
+    src = _src_tile([64, 64], pl.DT_FP16, addr=0x2000, size=8192, layout=pl.Layout.NZ)
     new = _ir_reinterpret(src, shape=[32, 128], span=_span())
     assert int(new.type.hardware_info.blayout) == 2
     assert int(new.type.hardware_info.slayout) == 1
@@ -131,7 +131,7 @@ def test_layout_is_inherited_when_not_overridden():
 
 def test_fractal_pad_compact_are_inherited():
     """hardware_info fields (fractal/pad/compact) carry over unless overridden."""
-    src = _src_tile([64, 64], pl.DT_FP16, addr=0x2000, size=8192, layout=pl.TensorLayout.NZ,
+    src = _src_tile([64, 64], pl.DT_FP16, addr=0x2000, size=8192, layout=pl.Layout.NZ,
                     fractal=1024, pad=pl.TilePad.null, compact=0)
     new = _ir_reinterpret(src, shape=[32, 128], span=_span())
     hw = new.type.hardware_info
@@ -142,7 +142,7 @@ def test_fractal_pad_compact_are_inherited():
 
 def test_combined_override():
     src = _src_tile([64, 64], pl.DT_FP16, addr=0x2000, size=8192)
-    new = _ir_reinterpret(src, shape=[32, 64], dtype=pl.DT_FP32, layout=pl.TensorLayout.ND, span=_span())
+    new = _ir_reinterpret(src, shape=[32, 64], dtype=pl.DT_FP32, layout=pl.Layout.ND, span=_span())
     assert [int(d.value) for d in new.type.shape] == [32, 64]
     assert new.type.dtype == pl.DT_FP32
     assert int(new.type.hardware_info.blayout) == 1
@@ -286,7 +286,7 @@ def test_layout_via_binding():
     def k(a: pl.Tensor[[64, 64], pl.DT_FP16]):
         tt = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.ZN)
         t = pl.make_tile(tt, addr=0)
-        ly = pl.TensorLayout.NZ
+        ly = pl.Layout.NZ
         pl.load(pl.reinterpret(t, shape=[64, 64], layout=ly), a, [0, 0])
 
     assert _kernel_ir(k)  # parses fine with layout from a variable
@@ -449,7 +449,7 @@ def test_group_layout_override_updates_slot_encoding():
     def k(a: pl.Tensor[[64, 64], pl.DT_FP16]):
         tt = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ)
         db = pl.make_tile_group(type=tt, addrs=[0, 0x4000], mutex_ids=[0, 1])
-        g2 = pl.reinterpret(db, shape=[64, 32], layout=pl.TensorLayout.NZ)
+        g2 = pl.reinterpret(db, shape=[64, 32], layout=pl.Layout.NZ)
         c0 = g2.next()
         pl.load(c0, a, [0, 0])
 

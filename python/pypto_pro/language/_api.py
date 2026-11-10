@@ -46,7 +46,7 @@ from pypto.ir import (
 from pypto_pro.ir.op.block_ops import FillPadMode
 
 from .._errors import InvalidOperation
-from . import MemorySpace, TensorLayout, TilePad
+from . import Layout, MemorySpace, TilePad
 from .typing import Ptr
 
 # ---------------------------------------------------------------------------
@@ -1297,7 +1297,7 @@ def set_validshape(tile: "Tile | TileGroup", /, shape: Shape) -> None:
 
 @_api_decl
 def reinterpret(tile: "Tile | TileGroup", /, *, dtype: Optional[DType] = None, shape: Optional[Shape] = None,
-                layout: Optional[TensorLayout] = None) -> "Tile | TileGroup":
+                layout: Optional[Layout] = None) -> "Tile | TileGroup":
     """Reinterpret a Tile or tile_group's dtype/shape/layout metadata without data movement.
 
     Returns a new handle using the source tile's current runtime address,
@@ -1840,7 +1840,7 @@ def TileType(  # noqa: N802 -- the user writes pl.TileType(...), a class constru
     dtype: DType,
     target_memory: MemorySpace = MemorySpace.Vec,
     valid_shape: Optional[Shape] = None,
-    layout: Optional[TensorLayout] = None,
+    layout: Optional[Layout] = None,
     fractal: Optional[int] = None,
     pad: Optional[Union[TilePad, int]] = None,
     compact: Optional[int] = 1,
@@ -1854,11 +1854,13 @@ def TileType(  # noqa: N802 -- the user writes pl.TileType(...), a class constru
         shape: Tile shape per axis
         dtype: Element data type, e.g. ``pl.DT_FP16``
         target_memory: On-chip memory space the tile occupies
-        valid_shape: Optional smaller shape actually holding data
-        layout: Optional tensor layout (NZ/ZN/NN/ZZ)
-        fractal: Optional fractal size
+        valid_shape: Optional smaller shape actually holding data (not supported by conv-layout tiles)
+        layout: Optional tensor layout (ND/DN/NZ/ZN/NN/ZZ), or a conv layout
+            (NC1HWC0/NDC1HWC0/FRACTAL_Z/FRACTAL_Z_3D) for a multi-dim L1 ConvTile
+        fractal: Optional fractal size (not supported by conv-layout tiles)
         pad: Optional padding mode, a ``pl.TilePad`` or the integer 0/1/2/3 standing for one
-        compact: Optional compact flag
+            (not supported by conv-layout tiles)
+        compact: Optional compact flag (conv-layout tiles are always normal mode)
     """
 
 

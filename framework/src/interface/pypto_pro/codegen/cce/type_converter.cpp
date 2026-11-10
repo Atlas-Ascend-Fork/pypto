@@ -111,6 +111,11 @@ std::string TypeConverter::ConvertTileType(const ir::MutexTileTypePtr& tileType,
 
 std::string TypeConverter::ConvertPtoTileType(const ir::TileTypePtr& tileType, int64_t rows, int64_t cols) const
 {
+    // A conv-layout TileType is a multi-dim pto::ConvTile; its shape is carried entirely by
+    // ConvTileShape<...> and pto has no (rows, cols) constructor form for it.
+    if (tileType->hardwareInfo_.has_value() && tileType->hardwareInfo_->convLayout >= 0) {
+        return ConvertConvTileType(tileType);
+    }
     std::ostringstream typeAlias;
     if (!tileType->memref_.has_value()) {
         // No memref: IfStmt return variable or intermediate tile.
@@ -196,6 +201,48 @@ std::string TypeConverter::ConvertPtoTileType(const ir::TileTypePtr& tileType, i
     typeAlias << ">";
 
     return typeAlias.str();
+}
+
+namespace {
+// Whether a Layout ordinal is one of the conv data layouts that select the pto::ConvTile path.
+bool IsConvLayout(const int layout)
+{
+    switch (static_cast<ir::Layout>(layout)) {
+        case ir::Layout::NC1HWC0:
+        case ir::Layout::NDC1HWC0:
+        case ir::Layout::FRACTAL_Z:
+        case ir::Layout::FRACTAL_Z_3D:
+            return true;
+        default:
+            return false;
+    }
+}
+} // namespace
+
+std::string TypeConverter::ConvertConvTileType(const ir::TileTypePtr& tileType) const
+{
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tileType->hardwareInfo_.has_value())
+        << "conv TileType is missing hardware_info (conv_layout)";
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, IsConvLayout(tileType->hardwareInfo_->convLayout))
+        << "TileType carries an unknown conv layout ordinal " << tileType->hardwareInfo_->convLayout;
+    // EnumToString spells the value "Layout::<VALUE>" (PYPTO_DECLARE_ENUM), which is the pto
+    // spelling under the pto:: namespace.
+    const char* ptoLayout = ir::EnumToString(static_cast<ir::Layout>(tileType->hardwareInfo_->convLayout));
+
+    // BufferSize is the element count (the layout-shaped dimensions are already the packed
+    // physical form), matching pto TileStorageBytes<ConvTile> = bufferSize * sizeof(DType).
+    int64_t bufferSize = 1;
+    std::string shapeParams;
+    for (size_t i = 0; i < tileType->shape_.size(); ++i) {
+        auto dim = ir::As<ir::ConstInt>(tileType->shape_[i]);
+        bufferSize *= dim->value_;
+        shapeParams += (i ? ", " : "") + std::to_string(dim->value_);
+    }
+
+    std::ostringstream oss;
+    oss << "ConvTile<TileType::Mat, " << tileType->dtype_.ToCTypeString() << ", " << bufferSize
+        << ", pto::" << ptoLayout << ", ConvTileShape<" << shapeParams << ">>";
+    return oss.str();
 }
 
 std::string TypeConverter::ConvertMemorySpaceToTileType(ir::MemorySpace space) const

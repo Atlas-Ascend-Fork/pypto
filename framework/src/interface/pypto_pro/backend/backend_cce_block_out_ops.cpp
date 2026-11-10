@@ -482,8 +482,8 @@ static std::string MakeBlockOutLoadCodegenCCE(const ir::CallPtr& op, codegen::Co
         const auto& outHw = outTileType->hardwareInfo_.value();
         const auto outLayout = cce::GetTileTensorLayout(outHw);
         const bool isTranspose = op->GetKwarg<bool>("is_transpose", false);
-        const bool isZnDst = outLayout == ir::TensorLayout::ZN;
-        const bool isNzDst = outLayout == ir::TensorLayout::NZ;
+        const bool isZnDst = outLayout == ir::Layout::ZN;
+        const bool isNzDst = outLayout == ir::Layout::NZ;
         CHECK(isTranspose ? isZnDst : isNzDst)
             << "block.load: merged-row is_transpose requires a ZN destination when true "
                "and an NZ destination when false";

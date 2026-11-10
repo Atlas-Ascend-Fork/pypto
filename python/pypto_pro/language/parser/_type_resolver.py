@@ -89,9 +89,9 @@ class TypeResolver:
         }
     )
 
-    _LAYOUT_MAP: dict[str, "ir.TensorLayout"] = {
-        "ND": ir.TensorLayout.ND,
-        "NZ": ir.TensorLayout.NZ,
+    _LAYOUT_MAP: dict[str, "ir.Layout"] = {
+        "ND": ir.Layout.ND,
+        "NZ": ir.Layout.NZ,
     }
 
     _MEMORY_SPACE_MAP: dict[str, "ir.MemorySpace"] = {
@@ -708,9 +708,9 @@ class TypeResolver:
     def _validate_tensor_layout(
         self,
         shape: list[int] | list[ir.Expr],
-        layout: ast.expr | "ir.TensorLayout",
+        layout: ast.expr | "ir.Layout",
         source_node: ast.expr | None = None,
-    ) -> "ir.TensorLayout":
+    ) -> "ir.Layout":
         """Resolve and validate a Tensor layout and its shape constraints."""
         layout_node = layout if isinstance(layout, ast.expr) else None
         node = layout_node if layout_node is not None else source_node
@@ -727,7 +727,7 @@ class TypeResolver:
                     parser_retry=True,
                 )
 
-        if not isinstance(layout, ir.TensorLayout):
+        if not isinstance(layout, ir.Layout):
             if isinstance(layout_node, ast.Attribute):
                 raise InvalidArgument(
                     f"Unknown layout: {layout_node.attr}",
@@ -743,7 +743,7 @@ class TypeResolver:
                     parser_retry=True,
                 )
             raise InvalidType(
-                f"Tensor layout must be a TensorLayout, got {type(layout).__name__}",
+                f"Tensor layout must be a Layout, got {type(layout).__name__}",
                 span=span,
                 hint="Tensor only supports pl.ND and pl.NZ",
                 parser_retry=True,
@@ -756,7 +756,7 @@ class TypeResolver:
                 parser_retry=True,
             )
 
-        if layout == ir.TensorLayout.NZ and len(shape) < 2:
+        if layout == ir.Layout.NZ and len(shape) < 2:
             raise InvalidShape(
                 "NZ Tensor requires rank >= 2",
                 span=span,

@@ -689,15 +689,19 @@ static inline const npu::tile_fwk::BiMap<npu::tile_fwk::SymbolicOpcode>& GetSymb
     return dict;
 }
 
-static inline const npu::tile_fwk::BiMap<TensorLayout>& GetTensorLayoutDict()
+static inline const npu::tile_fwk::BiMap<Layout>& GetLayoutDict()
 {
-    static npu::tile_fwk::BiMap<TensorLayout> dict{{
-        {TensorLayout::ND, "ND"},
-        {TensorLayout::DN, "DN"},
-        {TensorLayout::NZ, "NZ"},
-        {TensorLayout::ZN, "ZN"},
-        {TensorLayout::NN, "NN"},
-        {TensorLayout::ZZ, "ZZ"},
+    static npu::tile_fwk::BiMap<Layout> dict{{
+        {Layout::ND, "ND"},
+        {Layout::DN, "DN"},
+        {Layout::NZ, "NZ"},
+        {Layout::ZN, "ZN"},
+        {Layout::NN, "NN"},
+        {Layout::ZZ, "ZZ"},
+        {Layout::NC1HWC0, "NC1HWC0"},
+        {Layout::NDC1HWC0, "NDC1HWC0"},
+        {Layout::FRACTAL_Z, "FRACTAL_Z"},
+        {Layout::FRACTAL_Z_3D, "FRACTAL_Z_3D"},
     }};
     return dict;
 }

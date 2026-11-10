@@ -258,7 +258,7 @@ const char* CompactModeToPythonName(CompactMode compact)
     }
 }
 
-const char* TensorLayoutToPythonName(TensorLayout layout)
+const char* LayoutToPythonName(Layout layout)
 {
     const char* full = EnumToString(layout);
     const char* sep = std::strstr(full, "::");
@@ -1227,6 +1227,10 @@ std::string IRPrinter::PrintHardwareInfo(const HardwareInfo& hwInfo)
     oss << ", fractal=" << hwInfo.fractal;
     oss << ", pad=" << prefix_ << ".TilePad." << TilePadToPythonName(hwInfo.pad);
     oss << ", compact=" << prefix_ << ".CompactMode." << CompactModeToPythonName(hwInfo.compact);
+    if (hwInfo.convLayout >= 0) {
+        // Printed only for conv tiles so the text of every other tile stays unchanged.
+        oss << ", conv_layout=" << prefix_ << ".Layout." << LayoutToPythonName(static_cast<Layout>(hwInfo.convLayout));
+    }
     oss << ")";
     return oss.str();
 }
@@ -1242,7 +1246,7 @@ std::string IRPrinter::PrintTensorView(const TensorView& tensorView)
     }
     oss << "stride=[";
     PrintExprList(oss, tensorView.stride);
-    oss << "], layout=" << prefix_ << ".TensorLayout." << TensorLayoutToPythonName(tensorView.layout);
+    oss << "], layout=" << prefix_ << ".Layout." << LayoutToPythonName(tensorView.layout);
     oss << ")";
     return oss.str();
 }

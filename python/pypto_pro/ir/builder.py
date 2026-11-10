@@ -650,7 +650,7 @@ class IRBuilder:
     def tensor_view(
         self,
         stride: Sequence[int | ir.Expr],
-        layout: ir.TensorLayout,
+        layout: ir.Layout,
         span: ir.Span | None = None,
     ) -> ir.TensorView:
         """Create a TensorView with normalized stride expressions.
@@ -665,7 +665,7 @@ class IRBuilder:
 
         Example:
             >>> stride = [1, 256]
-            >>> tv = ib.tensor_view(stride, ir.TensorLayout.ND)
+            >>> tv = ib.tensor_view(stride, ir.Layout.ND)
         """
         actual_span = span if span is not None else self.capture_call_span()
         stride_exprs = [_normalize_expr(s, actual_span) for s in stride]
@@ -698,7 +698,7 @@ class IRBuilder:
             >>> memref = ib.memref(ir.MemorySpace.DDR, 0x1000, 1024)
             >>> tensor_t = ib.tensor_type([64, 128], DataType.FP32, memref=memref)
             >>> # Tensor type with tensor_view
-            >>> tv = ib.tensor_view([1, 64], ir.TensorLayout.ND)
+            >>> tv = ib.tensor_view([1, 64], ir.Layout.ND)
             >>> tensor_t = ib.tensor_type([64, 128], DataType.FP32, tensor_view=tv)
         """
         actual_span = span if span is not None else self.capture_call_span()

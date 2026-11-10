@@ -32,7 +32,7 @@ def test_tensor_type_with_memref_and_tensorview_print():
 
     addr = ir.ConstInt(0x5000, DataType.INT64, span)
     memref = ir.MemRef(ir.MemorySpace.Left, addr, 4096, 42)
-    tensor_view = ir.TensorView(stride, ir.TensorLayout.NZ)
+    tensor_view = ir.TensorView(stride, ir.Layout.NZ)
     tensor_type = ir.TensorType(shape, DataType.FP16, memref=memref, tensor_view=tensor_view)
 
     printed = str(tensor_type)

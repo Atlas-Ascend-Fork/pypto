@@ -15,6 +15,10 @@ of surfacing as opaque device/runtime failures (bad addresses, zero/negative
 tile sizes, misaligned base-address expansion, ...).
 """
 
+import os
+from pathlib import Path
+import re
+
 from pypto_pro._errors import (
     InvalidArgument,
     InvalidShape,
@@ -30,6 +34,25 @@ from pypto.pypto_impl import ir
 
 def _parse(kernel_def) -> ir.Program:
     return kernel_def.to_kernel_def().parse_target_program(ir.SectionKind.Vector)[0]
+
+
+_GOLDEN_DIR = Path(__file__).parent / "test_tile_type_validation_ir"
+
+
+def _ir_golden(kernel_def, golden_name: str) -> str:
+    """Whole-program IR text (memref ids normalized), compared against the .pypto golden.
+
+    Set PYPTO_RENDER_IR=1 to (re)generate the golden files.
+    """
+    printed = re.sub(r"memref_id=\d+", "memref_id=<id>", str(_parse(kernel_def)))
+    golden_path = _GOLDEN_DIR / f"{golden_name}.pypto"
+    if os.environ.get("PYPTO_RENDER_IR"):
+        golden_path.parent.mkdir(parents=True, exist_ok=True)
+        golden_path.write_text(printed.rstrip("\n") + "\n", encoding="utf-8")
+        return printed
+    golden = golden_path.read_text(encoding="utf-8")
+    assert printed.rstrip("\n") == golden.rstrip("\n")
+    return printed
 
 
 # ---------------------------------------------------------------------------
@@ -472,3 +495,152 @@ def test_valid_compact_row_plus_one_allowed():
 
     ir_str = str(_parse(k))
     assert "block.make_mutex_tile" in ir_str
+
+
+# ---------------------------------------------------------------------------
+# pl.TileType conv layouts: multi-dim => pto::ConvTile (L1-only, layout-shaped)
+# ---------------------------------------------------------------------------
+
+
+def _conv_tt(**kwargs):
+    return pl.TileType(**kwargs)
+
+
+def test_conv_nc1hwc0_declared_and_grouped():
+    """A multi-dim NC1HWC0 TileType parses and can be allocated in L1."""
+
+    @pl.jit
+    def k(x: pl.Tensor[[64], pl.DT_FP16]):
+        tt = pl.TileType(
+            shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+            target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0,
+        )
+        g = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[0])
+        _ = g.next()
+
+    ir_str = _ir_golden(k, "test_conv_nc1hwc0_declared_and_grouped")
+    assert "block.make_mutex_tile" in ir_str
+
+
+def test_conv_layered_groups_allocated():
+    """L1 ConvTile + L0A/L0B/L0C 2-D tiles allocate as separate multi-buffer groups."""
+
+    @pl.jit(auto_mutex=True)
+    def k(x: pl.Tensor[[64], pl.DT_FP16]):
+        fmap = pl.TileType(shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+                           target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0)
+        l0a = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left)
+        l0b = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Right)
+        l0c = pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc)
+        g1 = pl.make_tile_group(type=fmap, addrs=0x00000, depth=2, mutex_ids="auto")
+        g2 = pl.make_tile_group(type=l0a, addrs=0x0000, depth=2, mutex_ids="auto")
+        g3 = pl.make_tile_group(type=l0b, addrs=0x0000, depth=2, mutex_ids="auto")
+        g4 = pl.make_tile_group(type=l0c, addrs=0x0000, depth=2, mutex_ids="auto")
+        _ = (g1.next(), g2.next(), g3.next(), g4.next())
+
+    ir_str = _ir_golden(k, "test_conv_layered_groups_allocated")
+    # depth=2 slots per group, 4 groups.
+    assert ir_str.count("block.make_mutex_tile") >= 8
+
+
+@pytest.mark.parametrize(
+    "shape,dtype,layout",
+    [
+        ([1, 4, 8, 8, 16], pl.DT_FP16, pl.Layout.NC1HWC0),
+        ([2, 4, 8, 8, 32], pl.DT_INT8, pl.Layout.NC1HWC0),
+        ([64, 4, 16, 16], pl.DT_FP16, pl.Layout.FRACTAL_Z),
+        ([4, 8, 8, 64, 16], pl.DT_FP16, pl.Layout.FRACTAL_Z),
+        ([1, 2, 4, 8, 8, 16], pl.DT_FP16, pl.Layout.NDC1HWC0),
+        ([64, 4, 16, 16], pl.DT_FP16, pl.Layout.FRACTAL_Z_3D),
+    ],
+)
+def test_conv_layout_shapes_accepted(shape, dtype, layout):
+    tt = _conv_tt(shape=shape, dtype=dtype, target_memory=pl.MemorySpace.Mat, layout=layout)
+    assert tt.layout == layout
+
+
+def test_conv_layout_requires_l1():
+    with pytest.raises(InvalidVal, match="must live in L1"):
+        _conv_tt(shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+                 target_memory=pl.MemorySpace.Vec, layout=pl.Layout.NC1HWC0)
+
+
+def test_conv_layout_rank_mismatch_rejected():
+    with pytest.raises(InvalidShape, match="requires shape rank 5"):
+        _conv_tt(shape=[2, 4, 8, 16], dtype=pl.DT_FP16,
+                 target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0)
+
+
+def test_conv_layout_inner_c0_rejected():
+    # fp16 C0 is 16; a last axis of 8 is not a whole 32-byte block.
+    with pytest.raises(InvalidShape, match="requires its last dimension"):
+        _conv_tt(shape=[1, 4, 8, 8, 8], dtype=pl.DT_FP16,
+                 target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0)
+
+
+def test_conv_fractal_z_inner_box_rejected():
+    # FRACTAL_Z_3D 4D is [C1DHW, N/16, 16, C0]; the 16 is fixed.
+    with pytest.raises(InvalidShape, match="requires its second-to-last dimension"):
+        _conv_tt(shape=[64, 4, 8, 16], dtype=pl.DT_FP16,
+                 target_memory=pl.MemorySpace.Mat, layout=pl.Layout.FRACTAL_Z_3D)
+
+
+@pytest.mark.parametrize("n", [1, 15, 20, 63])
+def test_conv_fractal_z_5d_rejects_n_not_multiple_of_16(n):
+    # FRACTAL_Z 5D is [C1, H, W, N, C0]. The packed layout pads N to the 16-element box, so a
+    # non-multiple N would leave BufferSize = Πdims short of the box the layout occupies.
+    with pytest.raises(InvalidShape, match=r"requires its N dimension to be a multiple of 16"):
+        _conv_tt(shape=[4, 8, 8, n, 16], dtype=pl.DT_FP16,
+                 target_memory=pl.MemorySpace.Mat, layout=pl.Layout.FRACTAL_Z)
+
+
+@pytest.mark.parametrize("n", [16, 32])
+def test_conv_fractal_z_5d_accepts_aligned_n(n):
+    tt = _conv_tt(shape=[4, 8, 8, n, 16], dtype=pl.DT_FP16,
+                  target_memory=pl.MemorySpace.Mat, layout=pl.Layout.FRACTAL_Z)
+    assert tt.layout == pl.Layout.FRACTAL_Z
+
+
+def test_multi_dim_without_conv_layout_rejected():
+    """A multi-dim tile without a conv layout is rejected by the IR rank-2 gate."""
+
+    @pl.jit
+    def k(x: pl.Tensor[[64], pl.DT_FP16]):
+        # Layout-less Vec tile: passes the 2-D checks, so the IR rank-2 gate rejects it.
+        tt = pl.TileType(shape=[1, 64, 1], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        g = pl.make_tile_group(type=tt, addrs=0, mutex_ids=[0])
+        _ = g.next()
+
+    with pytest.raises(NotSupported, match="TileType only supports rank-2 shape"):
+        _parse(k)
+
+
+def test_conv_layout_dtype_not_supported_rejected():
+    with pytest.raises(InvalidType, match="only support dtypes"):
+        _conv_tt(shape=[1, 4, 8, 8, 8], dtype=pl.DT_INT4,
+                 target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0)
+
+
+def test_conv_layout_rejects_fractal_argument():
+    with pytest.raises(InvalidVal, match="drop the 'fractal' argument"):
+        _conv_tt(shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+                 target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0, fractal=512)
+
+
+def test_conv_layout_rejects_valid_shape_argument():
+    with pytest.raises(InvalidVal, match="drop the 'valid_shape' argument"):
+        _conv_tt(shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+                 target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0,
+                 valid_shape=[1, 4, 8, 8, 16])
+
+
+def test_conv_layout_rejects_pad_argument():
+    with pytest.raises(InvalidVal, match="drop the 'pad' argument"):
+        _conv_tt(shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+                 target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0, pad=1)
+
+
+def test_conv_layout_rejects_non_normal_compact():
+    with pytest.raises(InvalidVal, match="drop the 'compact' argument"):
+        _conv_tt(shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+                 target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0, compact=2)

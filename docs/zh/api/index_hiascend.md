@@ -308,7 +308,7 @@
       - [pypto_pro.language.TLoadL2Hint](pro_api/SIMD-API/basic_data_structures/TLoadL2Hint.md)
       - [pypto_pro.language.TStoreL2Hint](pro_api/SIMD-API/basic_data_structures/TStoreL2Hint.md)
       - [pypto_pro.language.Tensor](pro_api/SIMD-API/basic_data_structures/Tensor.md)
-      - [pypto_pro.language.TensorLayout](pro_api/SIMD-API/basic_data_structures/TensorLayout.md)
+      - [pypto_pro.language.Layout](pro_api/SIMD-API/basic_data_structures/Layout.md)
       - [pypto_pro.language.TilePad](pro_api/SIMD-API/basic_data_structures/TilePad.md)
       - [pypto_pro.language.TileType](pro_api/SIMD-API/basic_data_structures/TileType.md)
     - [Memory数据搬运](pro_api/SIMD-API/memory_data_movement/index.md)

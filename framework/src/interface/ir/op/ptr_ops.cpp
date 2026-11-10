@@ -196,7 +196,7 @@ TypePtr DeduceMakeTensorType([[maybe_unused]] const std::vector<ExprPtr>& args,
             << (innermost != nullptr ? std::to_string(innermost->value_) : std::string("a runtime stride"));
     }
 
-    TensorView tv(stride, TensorLayout::ND, args[0]);
+    TensorView tv(stride, Layout::ND, args[0]);
     return std::make_shared<TensorType>(shapeTuple->elements_, resultDtype, std::nullopt, tv);
 }
 

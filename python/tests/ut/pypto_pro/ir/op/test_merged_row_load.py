@@ -391,7 +391,7 @@ def test_merged_load_rejects_strided_columns():
 
     tile = make_mutex_tile_expr([M, D], pl.DT_FP16, pl.MemorySpace.Mat, addr=0, layout=pl.NZ)
     stride = [ir.ConstInt(v, pl.DT_INT64, ir.Span.unknown()) for v in [98304, 1536, 512, 256, 2]]
-    view = ir.TensorView(stride, ir.TensorLayout.ND)
+    view = ir.TensorView(stride, ir.Layout.ND)
     tensor = ir.Var("x", ir.TensorType([B, S, N, G, D], pl.DT_FP16, None, view), ir.Span.unknown())
     with pytest.raises(InvalidArgument, match="column stride.*1"):
         _ir_load(tile, tensor, [0] * 5, order=[1, 3, 4])

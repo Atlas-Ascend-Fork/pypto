@@ -556,7 +556,7 @@ IRTextParserOptionalTensorViewPtr IRTextParser::ParserTensorTypeTensorView()
         MUST_VALID(stride, ParseShape());
         MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunComma));
         MUST_VALID(layoutStr, ParseIdent());
-        TensorLayout layout = GetTensorLayoutDict().Find(layoutStr->data, TensorLayout::ND);
+        Layout layout = GetLayoutDict().Find(layoutStr->data, Layout::ND);
         if (CheckToken(IRTextLexerTokenKind::PunComma, true)) {
             MUST_VALID(ptrExpr, ParseExpr());
             tensorView = TensorView(validShape->data, stride->data, layout, ptrExpr);
@@ -623,7 +623,30 @@ IRTextParserOptionalHardwareInfoPtr IRTextParser::ParseTileTypeHardwareInfo()
         MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunComma));
         MUST_VALID(compactStr, ParseIdent());
         CompactMode compact = GetCompactModeDict().Find(compactStr->data, CompactMode::null);
-        hwInfo = HardwareInfo(blayout, slayout, fractal, pad, compact);
+        // Optional 6th field: conv data layout (dumped only for conv tiles; absent in older text).
+        int convLayout = -1;
+        if (CheckToken(IRTextLexerTokenKind::PunComma)) {
+            MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunComma));
+            MUST_VALID(convLayoutStr, ParseIdent());
+            // The field's domain is exactly the conv layouts: an unknown name must not fall
+            // back to a default (every dict value is a valid Layout ordinal >= 0), and
+            // a known-but-non-conv name must not become a conv tile either -- either would
+            // make the tile carry a layout the dumper never writes.
+            if (!GetLayoutDict().Count(convLayoutStr->data)) {
+                return Error("unknown conv layout: " + convLayoutStr->data);
+            }
+            convLayout = static_cast<int>(GetLayoutDict().Find(convLayoutStr->data, Layout::ND));
+            switch (static_cast<Layout>(convLayout)) {
+                case Layout::NC1HWC0:
+                case Layout::NDC1HWC0:
+                case Layout::FRACTAL_Z:
+                case Layout::FRACTAL_Z_3D:
+                    break;
+                default:
+                    return Error("not a conv layout: " + convLayoutStr->data);
+            }
+        }
+        hwInfo = HardwareInfo(blayout, slayout, fractal, pad, compact, convLayout);
     }
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunGt));
     return std::make_shared<IRTextParserOptionalHardwareInfoPtr::element_type>(hwInfo);

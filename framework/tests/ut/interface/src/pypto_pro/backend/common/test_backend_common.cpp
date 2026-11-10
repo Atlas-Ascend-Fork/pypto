@@ -51,15 +51,15 @@ TEST(BackendCommonTest, SupportsPointerPrintfConversion)
 TEST(BackendCommonTest, ResolvesTileTensorLayout)
 {
     using ir::HardwareInfo;
-    using ir::TensorLayout;
+    using ir::Layout;
     using ir::TileLayout;
 
-    EXPECT_EQ(cce::GetTileTensorLayout(HardwareInfo(TileLayout::row_major, TileLayout::none_box)), TensorLayout::ND);
-    EXPECT_EQ(cce::GetTileTensorLayout(HardwareInfo(TileLayout::col_major, TileLayout::none_box)), TensorLayout::DN);
-    EXPECT_EQ(cce::GetTileTensorLayout(HardwareInfo(TileLayout::col_major, TileLayout::row_major)), TensorLayout::NZ);
-    EXPECT_EQ(cce::GetTileTensorLayout(HardwareInfo(TileLayout::row_major, TileLayout::col_major)), TensorLayout::ZN);
-    EXPECT_EQ(cce::GetTileTensorLayout(HardwareInfo(TileLayout::col_major, TileLayout::col_major)), TensorLayout::NN);
-    EXPECT_EQ(cce::GetTileTensorLayout(HardwareInfo(TileLayout::row_major, TileLayout::row_major)), TensorLayout::ZZ);
+    EXPECT_EQ(cce::GetTileTensorLayout(HardwareInfo(TileLayout::row_major, TileLayout::none_box)), Layout::ND);
+    EXPECT_EQ(cce::GetTileTensorLayout(HardwareInfo(TileLayout::col_major, TileLayout::none_box)), Layout::DN);
+    EXPECT_EQ(cce::GetTileTensorLayout(HardwareInfo(TileLayout::col_major, TileLayout::row_major)), Layout::NZ);
+    EXPECT_EQ(cce::GetTileTensorLayout(HardwareInfo(TileLayout::row_major, TileLayout::col_major)), Layout::ZN);
+    EXPECT_EQ(cce::GetTileTensorLayout(HardwareInfo(TileLayout::col_major, TileLayout::col_major)), Layout::NN);
+    EXPECT_EQ(cce::GetTileTensorLayout(HardwareInfo(TileLayout::row_major, TileLayout::row_major)), Layout::ZZ);
     EXPECT_FALSE(cce::GetTileTensorLayout(HardwareInfo(TileLayout::none_box, TileLayout::none_box)).has_value());
 }
 

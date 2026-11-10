@@ -102,7 +102,7 @@ ir::CallPtr MakeManualMutexCall(const std::string& name, const ir::ExprPtr& mute
 }
 
 ir::VarPtr MakeTensorVar(const std::string& name, const std::vector<int64_t>& shape, ir::DataType dtype,
-                         ir::TensorLayout layout = ir::TensorLayout::ND, std::vector<ir::ExprPtr> strides = {})
+                         ir::Layout layout = ir::Layout::ND, std::vector<ir::ExprPtr> strides = {})
 {
     auto ptr = MakeVar(name + "_base", std::make_shared<const ir::PtrType>(dtype));
     ir::TensorView view(std::move(strides), layout, ptr);
@@ -112,7 +112,7 @@ ir::VarPtr MakeTensorVar(const std::string& name, const std::vector<int64_t>& sh
 }
 
 ir::VarPtr MakeDynamicTensorVar(const std::string& name, std::vector<ir::ExprPtr> shape, ir::DataType dtype,
-                                ir::TensorLayout layout = ir::TensorLayout::ND, std::vector<ir::ExprPtr> strides = {})
+                                ir::Layout layout = ir::Layout::ND, std::vector<ir::ExprPtr> strides = {})
 {
     auto ptr = MakeVar(name + "_base", std::make_shared<const ir::PtrType>(dtype));
     ir::TensorView view(std::move(strides), layout, ptr);
@@ -1232,7 +1232,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorDynamicFullWindowUsesDeclaredShapeAndStri
     auto rows = MakeVar("rows", index_type);
     auto cols = MakeVar("cols", index_type);
     auto tensor = MakeDynamicTensorVar("data", std::vector<ir::ExprPtr>{rows, cols}, ir::DataType::FP16,
-                                       ir::TensorLayout::ND);
+                                       ir::Layout::ND);
     auto call = std::make_shared<const ir::Call>(
         "debug.dump_tensor",
         std::vector<ir::ExprPtr>{tensor, MakeTuple({MakeConstInt(0), MakeConstInt(0)}), MakeTuple({rows, cols})},
@@ -1266,8 +1266,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorUsesExplicitDynamicStride)
 {
     auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INDEX);
     auto row_stride = MakeVar("row_stride", index_type);
-    auto tensor = MakeTensorVar("strided", {8, 16}, ir::DataType::FP16, ir::TensorLayout::ND,
-                                {row_stride, MakeConstInt(1)});
+    auto tensor = MakeTensorVar("strided", {8, 16}, ir::DataType::FP16, ir::Layout::ND, {row_stride, MakeConstInt(1)});
     auto call = std::make_shared<const ir::Call>(
         "debug.dump_tensor",
         std::vector<ir::ExprPtr>{tensor, MakeTuple({MakeConstInt(0), MakeConstInt(0)}),
@@ -1294,7 +1293,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorKeepsDeclaredNdLayoutForSingleColumn)
 
 TEST(BackendCceOpsTest, DebugDumpTensorNzStaticWindowUsesCommonView)
 {
-    auto tensor = MakeTensorVar("nz_data", {32, 64}, ir::DataType::FP16, ir::TensorLayout::NZ);
+    auto tensor = MakeTensorVar("nz_data", {32, 64}, ir::DataType::FP16, ir::Layout::NZ);
     auto call = std::make_shared<const ir::Call>(
         "debug.dump_tensor",
         std::vector<ir::ExprPtr>{tensor, MakeTuple({MakeConstInt(16), MakeConstInt(16)}),
@@ -1312,7 +1311,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorNzStaticWindowUsesCommonView)
 
 TEST(BackendCceOpsTest, DebugDumpTensorFullNzUsesLogicalShapeAndPhysicalStride)
 {
-    auto tensor = MakeTensorVar("nz_data", {100, 100}, ir::DataType::FP16, ir::TensorLayout::NZ);
+    auto tensor = MakeTensorVar("nz_data", {100, 100}, ir::DataType::FP16, ir::Layout::NZ);
     auto call = std::make_shared<const ir::Call>("debug.dump_tensor", std::vector<ir::ExprPtr>{tensor},
                                                  ir::Span::Unknown());
 
@@ -1325,7 +1324,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorFullNzUsesLogicalShapeAndPhysicalStride)
 
 TEST(BackendCceOpsTest, DebugDumpTensorNzUnalignedRowOffsetUsesCommonView)
 {
-    auto tensor = MakeTensorVar("nz_data", {32, 64}, ir::DataType::FP16, ir::TensorLayout::NZ);
+    auto tensor = MakeTensorVar("nz_data", {32, 64}, ir::DataType::FP16, ir::Layout::NZ);
     auto call = std::make_shared<const ir::Call>(
         "debug.dump_tensor",
         std::vector<ir::ExprPtr>{tensor, MakeTuple({MakeConstInt(1), MakeConstInt(0)}),
@@ -1342,7 +1341,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorNzAllowsArbitraryWindowShapeAndRejectsMis
 {
     auto make_call = [](const std::vector<int64_t>& tensor_shape, int64_t col_offset,
                         const std::vector<int64_t>& window_shape) {
-        auto tensor = MakeTensorVar("nz_data", tensor_shape, ir::DataType::FP16, ir::TensorLayout::NZ);
+        auto tensor = MakeTensorVar("nz_data", tensor_shape, ir::DataType::FP16, ir::Layout::NZ);
         return std::make_shared<const ir::Call>(
             "debug.dump_tensor",
             std::vector<ir::ExprPtr>{tensor, MakeTuple({MakeConstInt(0), MakeConstInt(col_offset)}),
@@ -1365,7 +1364,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorNzDynamicShapeUsesCommonView)
     auto rows = MakeVar("rows", index_type);
     auto cols = MakeVar("cols", index_type);
     auto tensor = MakeDynamicTensorVar("nz_data", std::vector<ir::ExprPtr>{rows, cols}, ir::DataType::FP16,
-                                       ir::TensorLayout::NZ);
+                                       ir::Layout::NZ);
     auto call = std::make_shared<const ir::Call>(
         "debug.dump_tensor",
         std::vector<ir::ExprPtr>{tensor, MakeTuple({MakeConstInt(0), MakeConstInt(0)}), MakeTuple({rows, cols})},
@@ -1379,7 +1378,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorNzDynamicShapeUsesCommonView)
 
 TEST(BackendCceOpsTest, DebugDumpTensorHighDimensionalNzUsesUnifiedWindowMetadata)
 {
-    auto tensor = MakeTensorVar("nz_data", {2, 3, 32, 64}, ir::DataType::FP16, ir::TensorLayout::NZ);
+    auto tensor = MakeTensorVar("nz_data", {2, 3, 32, 64}, ir::DataType::FP16, ir::Layout::NZ);
     auto call = std::make_shared<const ir::Call>(
         "debug.dump_tensor",
         std::vector<ir::ExprPtr>{tensor,
@@ -1403,7 +1402,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorHighDimensionalDynamicNzUsesUnifiedWindow
     auto rows = MakeVar("rows", index_type);
     auto cols = MakeVar("cols", index_type);
     auto tensor = MakeDynamicTensorVar("nz_data", std::vector<ir::ExprPtr>{batch, heads, rows, cols},
-                                       ir::DataType::FP16, ir::TensorLayout::NZ);
+                                       ir::DataType::FP16, ir::Layout::NZ);
     auto call = std::make_shared<const ir::Call>(
         "debug.dump_tensor",
         std::vector<ir::ExprPtr>{tensor,

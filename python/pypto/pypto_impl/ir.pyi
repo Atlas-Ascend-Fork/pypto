@@ -6,11 +6,10 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-from typing import Any, Dict, Final, List, Optional, Sequence, Tuple, Union, overload
 import enum
-from .. import pypto_impl
-from .. import SymbolicScalar
+from typing import Any, Dict, Final, List, Optional, Sequence, Tuple, Union, overload
 
+from .. import SymbolicScalar, pypto_impl
 
 class _AutoMutexIdManager:
     """Collect TileGroups, allocate automatic mutex IDs, and resolve placeholders."""
@@ -920,7 +919,7 @@ class MemorySpace(enum.IntEnum):
     """MX scale buffer in L0B."""
 
 
-class TensorLayout(enum.IntEnum):
+class Layout(enum.IntEnum):
     """Tensor layout type enumeration."""
 
     ND = ...
@@ -931,6 +930,27 @@ class TensorLayout(enum.IntEnum):
 
     NZ = ...
     """NZ layout."""
+
+    ZN = ...
+    """ZN layout (Tile only)."""
+
+    NN = ...
+    """NN layout (Tile only)."""
+
+    ZZ = ...
+    """ZZ layout (Tile only)."""
+
+    NC1HWC0 = ...
+    """NC1HWC0 layout (ConvTile only)."""
+
+    NDC1HWC0 = ...
+    """NDC1HWC0 layout (ConvTile only)."""
+
+    FRACTAL_Z = ...
+    """FRACTAL_Z layout (ConvTile only)."""
+
+    FRACTAL_Z_3D = ...
+    """FRACTAL_Z_3D layout (ConvTile only)."""
 
 
 class PipeType(enum.IntEnum):

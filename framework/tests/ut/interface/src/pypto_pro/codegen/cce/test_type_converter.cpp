@@ -10,13 +10,34 @@
 
 #include "gtest/gtest.h"
 
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "codegen/cce/type_converter.h"
+#include "core/dtype.h"
+#include "ir/expr.h"
+#include "ir/scalar_expr.h"
+#include "ir/span.h"
+#include "ir/type.h"
+#include "tilefwk/error.h"
 
 namespace pypto {
 namespace codegen {
+
+namespace {
+ir::TileTypePtr ConvTile(const std::vector<int64_t>& shape, ir::DataType dtype, ir::Layout layout)
+{
+    std::vector<ir::ExprPtr> dims;
+    for (int64_t d : shape) {
+        dims.push_back(std::make_shared<ir::ConstInt>(d, ir::DataType::INT64, ir::Span::Unknown()));
+    }
+    ir::HardwareInfo hw;
+    hw.convLayout = static_cast<int>(layout);
+    return std::make_shared<ir::TileType>(dims, dtype, std::nullopt, std::nullopt, hw);
+}
+} // namespace
 
 TEST(TypeConverterTest, ConvertsAllCastRoundModesThroughEnumReflection)
 {
@@ -30,6 +51,17 @@ TEST(TypeConverterTest, ConvertsAllCastRoundModesThroughEnumReflection)
         EXPECT_EQ(converter.ConvertCastRoundMode(static_cast<int>(i)), expected[i]);
     }
     EXPECT_EQ(converter.ConvertCastRoundMode(99), "UNKNOWN");
+}
+
+// The conv tile's shape contract (per-layout rank/C0/16 rules) is validated by the Python
+// front end for DSL-built tiles (pypto_pro/ir/op/block_ops.py); codegen emits the declared
+// shape as given.
+TEST(TypeConverterTest, ConvTileTypeEmittedFromDeclaredShape)
+{
+    TypeConverter converter;
+    // Valid NC1HWC0 [N, C1, H, W, C0]: C0 = 32B / 2B = 16 for FP16.
+    EXPECT_EQ(converter.ConvertPtoTileType(ConvTile({1, 4, 8, 8, 16}, ir::DataType::FP16, ir::Layout::NC1HWC0), 0, 0),
+              "ConvTile<TileType::Mat, half, 4096, pto::Layout::NC1HWC0, ConvTileShape<1, 4, 8, 8, 16>>");
 }
 
 } // namespace codegen

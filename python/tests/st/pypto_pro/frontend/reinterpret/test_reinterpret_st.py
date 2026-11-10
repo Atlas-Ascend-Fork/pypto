@@ -143,7 +143,7 @@ def nz_to_zn_matmul_kernel(
         pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE1, event_id=0)
 
         # The same NZ buffer re-declared as [K0, M0] ZN — hardware reads B' = A^T.
-        t2r = pl.reinterpret(t2.current(), shape=[k0, m0], layout=pl.TensorLayout.ZN)
+        t2r = pl.reinterpret(t2.current(), shape=[k0, m0], layout=pl.Layout.ZN)
         pl.move(l0a.current(), t1.current())
         pl.move(l0b.current(), t2r)
         pl.system.sync_src(set_pipe=pl.PipeType.MTE1, wait_pipe=pl.PipeType.M, event_id=0)

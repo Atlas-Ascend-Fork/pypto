@@ -428,6 +428,11 @@ static std::string MakeBlockDynamicInputDimCodegenCCE(const ir::CallPtr& op, cod
 
 static std::string TileConstructorArgs(codegen::CCECodegen& codegen, const ir::TileTypePtr& type)
 {
+    // A conv-layout tile is a pto::ConvTile whose whole shape is carried by ConvTileShape<...>;
+    // pto's ConvTile has no (dims...) constructor form for static shapes, so emit no ctor args.
+    if (type->hardwareInfo_.has_value() && type->hardwareInfo_->convLayout >= 0) {
+        return "";
+    }
     std::vector<std::string> dims;
     for (size_t i = 0; i < type->shape_.size(); ++i) {
         ir::ExprPtr valid = type->tileView_ && i < type->tileView_->validShape.size() ? type->tileView_->validShape[i] :

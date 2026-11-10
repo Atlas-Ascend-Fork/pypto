@@ -57,7 +57,7 @@ pypto_pro.language.load(
 
 - NZ搬运约束：
 
-  - src_tensor声明为NZ时，dst_tile必须为NZ，且只支持从src_tensor的最后两个维度正序搬运，不支持通过降序order转置。NZ的物理排布和Tensor shape约束详见[TensorLayout](../basic_data_structures/TensorLayout.md)。
+  - src_tensor声明为NZ时，dst_tile必须为NZ，且只支持从src_tensor的最后两个维度正序搬运，不支持通过降序order转置。NZ的物理排布和Tensor shape约束详见[Layout](../basic_data_structures/Layout.md)。
   - dst_tile的shape和valid_shape中，M必须按16对齐，N必须按src_tensor数据类型对应的C0对齐；N方向的offset也必须按C0对齐。
 
 - MX矩阵乘量化系数搬运约束：

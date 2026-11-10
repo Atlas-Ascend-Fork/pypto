@@ -38,8 +38,8 @@ def _make_resolver(
 @pytest.mark.parametrize(
     "layout_str, expected_layout",
     [
-        ("pl.NZ", ir.TensorLayout.NZ),
-        ("pl.ND", ir.TensorLayout.ND),
+        ("pl.NZ", ir.Layout.NZ),
+        ("pl.ND", ir.Layout.ND),
     ],
 )
 def test_resolve_tensor_with_layout(layout_str, expected_layout):
@@ -93,26 +93,26 @@ def test_resolve_layout_bare_name():
 
     assert isinstance(result, ir.TensorType)
     assert result.tensor_view is not None
-    assert result.tensor_view.layout == ir.TensorLayout.NZ
+    assert result.tensor_view.layout == ir.Layout.NZ
 
 
 def test_resolve_layout_from_closure():
     """Layout from closure variable."""
-    resolver = _make_resolver(closure_vars={"my_layout": ir.TensorLayout.NZ})
+    resolver = _make_resolver(closure_vars={"my_layout": ir.Layout.NZ})
     node = ast.parse("pl.Tensor[[64, 128], pl.DT_FP16, my_layout]", mode="eval").body
     result = resolver.resolve_type(node)
 
     assert isinstance(result, ir.TensorType)
     assert result.tensor_view is not None
-    assert result.tensor_view.layout == ir.TensorLayout.NZ
+    assert result.tensor_view.layout == ir.Layout.NZ
 
 
 def test_resolve_layout_closure_invalid_type():
-    """Non-TensorLayout closure variable raises error."""
+    """Non-Layout closure variable raises error."""
     resolver = _make_resolver(closure_vars={"my_layout": "NZ"})
     node = ast.parse("pl.Tensor[[64, 128], pl.DT_FP16, my_layout]", mode="eval").body
 
-    with pytest.raises(InvalidType, match="must be a TensorLayout"):
+    with pytest.raises(InvalidType, match="must be a Layout"):
         resolver.resolve_type(node)
 
 
@@ -126,7 +126,7 @@ def test_resolve_tensor_layout_with_dynamic_shape():
     assert isinstance(result.shape[0], ir.Var)
     assert result.shape[0].name == "__pypto_dyn_x_0"
     assert result.tensor_view is not None
-    assert result.tensor_view.layout == ir.TensorLayout.NZ
+    assert result.tensor_view.layout == ir.Layout.NZ
 
 
 def test_resolve_tensor_rejects_dn_with_shape_variable():
@@ -203,7 +203,7 @@ def test_policy_helper_parameter_rejects_non_layout_value():
     ).body
     actual = ir.TensorType([64, 128], DataType.FP16)
 
-    with pytest.raises(InvalidType, match="Tensor layout must be a TensorLayout, got str"):
+    with pytest.raises(InvalidType, match="Tensor layout must be a Layout, got str"):
         resolver.validate_policy_parameter_type(node, "x", actual)
 
 
@@ -224,7 +224,7 @@ def test_function_with_tensor_layout():
     assert isinstance(param_type, ir.TensorType)
     assert param_type.dtype == DataType.FP16
     assert param_type.tensor_view is not None
-    assert param_type.tensor_view.layout == ir.TensorLayout.NZ
+    assert param_type.tensor_view.layout == ir.Layout.NZ
 
 
 def test_function_mixed_layout_and_no_layout():
@@ -245,7 +245,7 @@ def test_function_mixed_layout_and_no_layout():
     assert isinstance(a_type, ir.TensorType)
     assert isinstance(b_type, ir.TensorType)
     assert a_type.tensor_view is not None
-    assert a_type.tensor_view.layout == ir.TensorLayout.NZ
+    assert a_type.tensor_view.layout == ir.Layout.NZ
     assert b_type.tensor_view is not None
 
 
@@ -264,7 +264,7 @@ def test_program_with_tensor_layout():
     param_type = compute.params[0].type
     assert isinstance(param_type, ir.TensorType)
     assert param_type.tensor_view is not None
-    assert param_type.tensor_view.layout == ir.TensorLayout.NZ
+    assert param_type.tensor_view.layout == ir.Layout.NZ
 
 
 def test_function_layout_from_closure_variable():
@@ -283,14 +283,14 @@ def test_function_layout_from_closure_variable():
     param_type = func.params[0].type
     assert isinstance(param_type, ir.TensorType)
     assert param_type.tensor_view is not None
-    assert param_type.tensor_view.layout == ir.TensorLayout.NZ
+    assert param_type.tensor_view.layout == ir.Layout.NZ
 
 
 @pytest.mark.parametrize(
     "layout, expected",
     [
-        (pl.NZ, ir.TensorLayout.NZ),
-        (pl.ND, ir.TensorLayout.ND),
+        (pl.NZ, ir.Layout.NZ),
+        (pl.ND, ir.Layout.ND),
     ],
 )
 def test_parametrized_layout(layout, expected):
@@ -332,7 +332,7 @@ def test_backward_compat_bare_layout():
 
     assert isinstance(result, ir.TensorType)
     assert result.tensor_view is not None
-    assert result.tensor_view.layout == ir.TensorLayout.NZ
+    assert result.tensor_view.layout == ir.Layout.NZ
 
 
 def test_backward_compat_memref():

@@ -1,4 +1,4 @@
-# pypto_pro.language.TensorLayout
+# pypto_pro.language.Layout
 
 ## 产品支持情况
 
@@ -18,18 +18,23 @@
 
 - **GM Tensor**支持ND、NZ，默认ND。
 - **Tile**支持ND、DN、NZ、ZN、NN、ZZ，默认值由内存空间决定。
+- **卷积Tile（ConvTile）**支持NC1HWC0、NDC1HWC0、FRACTAL_Z、FRACTAL_Z_3D，须在多维Tile上使用且仅可放在L1；详见[pypto_pro.language.TileType](TileType.md)。
 
 ## 原型定义
 
 ```python
 PYPTO_DECLARE_ENUM(
-    TensorLayout,
+    Layout,
     ND,
     DN,
     NZ,
     ZN,
     NN,
-    ZZ
+    ZZ,
+    NC1HWC0,
+    NDC1HWC0,
+    FRACTAL_Z,
+    FRACTAL_Z_3D
 )
 ```
 
@@ -43,10 +48,16 @@ PYPTO_DECLARE_ENUM(
 | ZN | ZN分形排列。仅支持用于Tile，典型用于L0B Buffer和转置搬入时的L1 Buffer。 |
 | ZZ | ZZ分形排列。仅支持用于Tile，用于MX矩阵乘中左量化系数矩阵在L1 Buffer和L0A_MX Buffer中的布局。 |
 | NN | NN分形排列。仅支持用于Tile，用于MX矩阵乘中右量化系数矩阵在L1 Buffer和L0B_MX Buffer中的布局。 |
+| NC1HWC0 | 卷积fmap布局，逻辑形状[N, C1, H, W, C0]（5维）。**仅支持用于卷积Tile（ConvTile）**，须在L1（MemorySpace.Mat），C0 = 32B / sizeof(dtype)。 |
+| NDC1HWC0 | 3D卷积fmap布局，逻辑形状[N, D, C1, H, W, C0]（6维）。**仅支持用于卷积Tile**，须在L1，C0同上。 |
+| FRACTAL_Z | 卷积weight布局，逻辑形状[C1HW, N/16, 16, C0]（4维）或[C1, H, W, N, C0]（5维）。**仅支持用于卷积Tile**，须在L1；4维时倒数第二维固定为16。 |
+| FRACTAL_Z_3D | 3D卷积weight布局，逻辑形状[C1DHW, N/16, 16, C0]（4维）。**仅支持用于卷积Tile**，须在L1；倒数第二维固定为16。 |
 
 ## 约束说明
 
 - GM Tensor仅支持ND（行主序，默认）和NZ（分形布局）。
+
+- NC1HWC0、NDC1HWC0、FRACTAL_Z、FRACTAL_Z_3D为**卷积布局**，只在卷积Tile（ConvTile）上有效：Tile须为多维（rank > 2）、target_memory须为MemorySpace.Mat（L1）。多维Tile若使用非卷积布局会报错；普通Tiles不支持多维形态。
 
 - NZ只声明GM内存的布局，不会把普通ND buffer自动转换成NZ。调用Kernel前，输入buffer必须已经按NZ物理顺序完成packing；NZ输出也必须使用按NZ格式分配的buffer。高维NZ Tensor的最后两轴固定解释为[M, N]，所有前导轴均作为batch轴，不支持在layout中指定任意分形轴。
 

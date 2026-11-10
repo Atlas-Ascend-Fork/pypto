@@ -102,7 +102,7 @@ py::dict ReadAttributes(const std::vector<std::pair<std::string, std::any>>& att
     py::dict result;
     for (const auto& [key, value] : attrs) {
         result[py::str(key)] = AnyToPyObject<int, int64_t, uint64_t, bool, float, double, std::string, DataType,
-                                             MemorySpace, TilePad, TensorLayout, PipeType, ExprPtr, std::vector<int>,
+                                             MemorySpace, TilePad, Layout, PipeType, ExprPtr, std::vector<int>,
                                              std::vector<int64_t>, std::vector<std::string>, std::vector<ExprPtr>>(
             value, key);
     }
@@ -190,8 +190,8 @@ std::any ConvertAttr(const py::object& attr)
         return py::cast<DataType>(attr);
     } else if (py::isinstance<MemorySpace>(attr)) {
         return py::cast<MemorySpace>(attr);
-    } else if (py::isinstance<TensorLayout>(attr)) {
-        return py::cast<TensorLayout>(attr);
+    } else if (py::isinstance<Layout>(attr)) {
+        return py::cast<Layout>(attr);
     } else if (py::isinstance<py::bool_>(attr)) {
         return py::cast<bool>(attr);
     } else if (py::isinstance<py::int_>(attr)) {
@@ -427,22 +427,26 @@ void BindTypeClass(py::module_& ir)
         },
         py::arg("other"), "Check if this ShapedType shares the same MemRef object with another ShapedType");
 
-    // TensorLayout enum - must be before TensorView and TensorType
-    py::enum_<TensorLayout>(ir, "TensorLayout", "Tensor layout enumeration")
-        .value("ND", TensorLayout::ND, "ND layout")
-        .value("DN", TensorLayout::DN, "DN layout")
-        .value("NZ", TensorLayout::NZ, "NZ layout")
-        .value("ZN", TensorLayout::ZN, "ZN layout (Tile only)")
-        .value("NN", TensorLayout::NN, "NN layout (Tile only)")
-        .value("ZZ", TensorLayout::ZZ, "ZZ layout (Tile only)")
+    // Layout enum - must be before TensorView and TensorType
+    py::enum_<Layout>(ir, "Layout", "Tensor layout enumeration")
+        .value("ND", Layout::ND, "ND layout")
+        .value("DN", Layout::DN, "DN layout")
+        .value("NZ", Layout::NZ, "NZ layout")
+        .value("ZN", Layout::ZN, "ZN layout (Tile only)")
+        .value("NN", Layout::NN, "NN layout (Tile only)")
+        .value("ZZ", Layout::ZZ, "ZZ layout (Tile only)")
+        .value("NC1HWC0", Layout::NC1HWC0, "ConvTile fmap layout [N, C1, H, W, C0]")
+        .value("NDC1HWC0", Layout::NDC1HWC0, "ConvTile 3D fmap layout [N, D, C1, H, W, C0]")
+        .value("FRACTAL_Z", Layout::FRACTAL_Z, "ConvTile weight layout [C1HW, N/16, 16, C0]")
+        .value("FRACTAL_Z_3D", Layout::FRACTAL_Z_3D, "ConvTile 3D weight layout [C1DHW, N/16, 16, C0]")
         .export_values();
 
     // TensorView - struct for tensor view information - must be before TensorType
     py::class_<TensorView>(ir, "TensorView", "Tensor view representation with stride and layout")
         .def(py::init<>(), "Create an empty tensor view")
-        .def(py::init<const std::vector<ExprPtr>&, TensorLayout>(), py::arg("stride"), py::arg("layout"),
+        .def(py::init<const std::vector<ExprPtr>&, Layout>(), py::arg("stride"), py::arg("layout"),
              "Create a tensor view with stride and layout")
-        .def(py::init<const std::vector<ExprPtr>&, const std::vector<ExprPtr>&, TensorLayout>(), py::arg("valid_shape"),
+        .def(py::init<const std::vector<ExprPtr>&, const std::vector<ExprPtr>&, Layout>(), py::arg("valid_shape"),
              py::arg("stride"), py::arg("layout"), "Create a tensor view with valid_shape, stride and layout")
         .def_readwrite("valid_shape", &TensorView::validShape, "Valid shape dimensions")
         .def_readwrite("stride", &TensorView::stride, "Stride for each dimension")
@@ -988,7 +992,9 @@ Members:
         .def_readwrite("slayout", &HardwareInfo::slayout, "Scatter layout")
         .def_readwrite("fractal", &HardwareInfo::fractal, "Fractal size")
         .def_readwrite("pad", &HardwareInfo::pad, "Pad mode")
-        .def_readwrite("compact", &HardwareInfo::compact, "Compact mode");
+        .def_readwrite("compact", &HardwareInfo::compact, "Compact mode")
+        .def_readwrite("conv_layout", &HardwareInfo::convLayout,
+                       "Conv data layout ordinal for a pto::ConvTile (-1 = not a conv tile)");
 
     // TileView - struct for tile view information
     py::class_<TileView>(ir, "TileView", "Tile view representation with valid shape")

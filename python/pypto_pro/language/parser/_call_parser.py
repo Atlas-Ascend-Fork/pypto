@@ -398,7 +398,7 @@ def _validate_simt_tensor_type(tensor_type: ir.TensorType, subject: str, span: i
             parser_retry=True,
         )
     tensor_view = tensor_type.tensor_view
-    if tensor_view is None or tensor_view.layout != ir.TensorLayout.ND:
+    if tensor_view is None or tensor_view.layout != ir.Layout.ND:
         raise InvalidVal(
             f"{subject} requires ND layout",
             span=span,

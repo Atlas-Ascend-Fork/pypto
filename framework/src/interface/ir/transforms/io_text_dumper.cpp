@@ -133,7 +133,7 @@ void IRTextDumper::VisitType_(const TensorTypePtr& op)
         PrintShape(tv.validShape);
         stream_ << IR_PUN_COMMA << " ";
         PrintShape(tv.stride);
-        stream_ << IR_PUN_COMMA << " " << GetTensorLayoutDict().Find(tv.layout);
+        stream_ << IR_PUN_COMMA << " " << GetLayoutDict().Find(tv.layout);
         if (tv.ptr.has_value()) {
             stream_ << IR_PUN_COMMA << " ";
             VisitExpr(tv.ptr.value());
@@ -161,6 +161,10 @@ void IRTextDumper::VisitType_(const TileTypePtr& op)
         stream_ << IR_PUN_COMMA << " " << hw.fractal;
         stream_ << IR_PUN_COMMA << " " << GetTilePadDict().Find(hw.pad);
         stream_ << IR_PUN_COMMA << " " << GetCompactModeDict().Find(hw.compact);
+        if (hw.convLayout >= 0) {
+            // Optional 6th field, dumped only for conv tiles so existing text stays unchanged.
+            stream_ << IR_PUN_COMMA << " " << GetLayoutDict().Find(static_cast<Layout>(hw.convLayout));
+        }
     }
     stream_ << IR_PUN_GT;
     stream_ << IR_PUN_GT;

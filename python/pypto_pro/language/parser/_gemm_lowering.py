@@ -289,7 +289,7 @@ class _GemmCall:
                 span=self.span(node),
                 hint="Reinterpret the whole TileGroup as ZN first, then select a slot without this flag",
             )
-        if _tile_layout(value.type) != ir.TensorLayout.NZ:
+        if _tile_layout(value.type) != ir.Layout.NZ:
             raise NotSupported(
                 f"{self.api} '{flag}' requires an NZ L1 Tile", span=self.span(node),
                 hint="A ZN view already represents the transpose; pass it without this flag",

@@ -46,6 +46,18 @@ public:
     [[nodiscard]] std::string ConvertPtoTileType(const ir::TileTypePtr& tileType, int64_t rows, int64_t cols) const;
 
     /**
+     * \brief Convert a multi-dim conv TileType to a pto-isa ConvTile declaration
+     *
+     * Emits ``ConvTile<TileType::Mat, <ctype>, <BufferSize>, pto::Layout::<X>, ConvTileShape<...>>``.
+     * The pto layout comes from ``hardware_info.conv_layout``; ``BufferSize`` is the element
+     * count (Product of the layout-shaped dimensions).
+     *
+     * \param tileType The ir::TileTypePtr (must carry hardware_info.conv_layout >= 0)
+     * \return pto-isa ConvTile declaration string
+     */
+    [[nodiscard]] std::string ConvertConvTileType(const ir::TileTypePtr& tileType) const;
+
+    /**
      * \brief Convert MemorySpace to pto-isa TileType string
      *
      * Maps PyPTO MemorySpace to pto-isa TileType enum values:

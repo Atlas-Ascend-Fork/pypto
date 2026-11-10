@@ -12,6 +12,7 @@ CrossCoreSyncMode
 DataType
 DcciDst
 FillPadMode
+Layout
 MemorySpace
 PipeType
 Ptr
@@ -23,7 +24,6 @@ SyncCoreType
 TLoadL2Hint
 TStoreL2Hint
 Tensor
-TensorLayout
 TilePad
 TileType
 ```

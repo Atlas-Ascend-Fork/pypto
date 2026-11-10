@@ -68,7 +68,7 @@ struct AccessArgIndices {
 AccessArgIndices ResolveAccessArgIndices(const std::string& opName);
 
 /// Derive the Tile's ND/DN/NZ/ZN/NN/ZZ layout from its block/scatter layout pair.
-std::optional<ir::TensorLayout> GetTileTensorLayout(const ir::HardwareInfo& hardwareInfo);
+std::optional<ir::Layout> GetTileTensorLayout(const ir::HardwareInfo& hardwareInfo);
 bool IsNZTensorType(const ir::TensorTypePtr& tensorType);
 /// Whether a block.load is an MX scale load. Such a load declares its own GlobalTensor at the
 /// op -- TileShape2D maps rows/cols into layout-specific dims that the shared per-layout

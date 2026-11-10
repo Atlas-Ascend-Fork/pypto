@@ -73,31 +73,31 @@ std::string GetOperandAsCode(codegen::CCECodegen& codegen, const ir::ExprPtr& ex
     return value;
 }
 
-std::optional<ir::TensorLayout> GetTileTensorLayout(const ir::HardwareInfo& hardwareInfo)
+std::optional<ir::Layout> GetTileTensorLayout(const ir::HardwareInfo& hardwareInfo)
 {
     switch (hardwareInfo.slayout) {
         case ir::TileLayout::none_box:
             if (hardwareInfo.blayout == ir::TileLayout::row_major) {
-                return ir::TensorLayout::ND;
+                return ir::Layout::ND;
             }
             if (hardwareInfo.blayout == ir::TileLayout::col_major) {
-                return ir::TensorLayout::DN;
+                return ir::Layout::DN;
             }
             break;
         case ir::TileLayout::row_major:
             if (hardwareInfo.blayout == ir::TileLayout::row_major) {
-                return ir::TensorLayout::ZZ;
+                return ir::Layout::ZZ;
             }
             if (hardwareInfo.blayout == ir::TileLayout::col_major) {
-                return ir::TensorLayout::NZ;
+                return ir::Layout::NZ;
             }
             break;
         case ir::TileLayout::col_major:
             if (hardwareInfo.blayout == ir::TileLayout::row_major) {
-                return ir::TensorLayout::ZN;
+                return ir::Layout::ZN;
             }
             if (hardwareInfo.blayout == ir::TileLayout::col_major) {
-                return ir::TensorLayout::NN;
+                return ir::Layout::NN;
             }
             break;
         default:
@@ -123,8 +123,7 @@ AccessArgIndices ResolveAccessArgIndices(const std::string& opName)
 
 bool IsNZTensorType(const ir::TensorTypePtr& tensorType)
 {
-    return tensorType && tensorType->tensor_view_.has_value() &&
-           tensorType->tensor_view_->layout == ir::TensorLayout::NZ;
+    return tensorType && tensorType->tensor_view_.has_value() && tensorType->tensor_view_->layout == ir::Layout::NZ;
 }
 
 bool IsMXLoad(const ir::TensorTypePtr& tensorType, const ir::TileTypePtr& tileType)
@@ -137,7 +136,7 @@ bool IsMXLoad(const ir::TensorTypePtr& tensorType, const ir::TileTypePtr& tileTy
 
     const auto& hw = tileType->hardwareInfo_.value();
     const auto layout = GetTileTensorLayout(hw);
-    return hw.fractal == 32 && (layout == ir::TensorLayout::ZZ || layout == ir::TensorLayout::NN);
+    return hw.fractal == 32 && (layout == ir::Layout::ZZ || layout == ir::Layout::NN);
 }
 
 std::string MXLoadLayoutName(const ir::CallPtr& op)
@@ -152,7 +151,7 @@ std::string MXLoadLayoutName(const ir::CallPtr& op)
     }
 
     const auto& hw = tileType->hardwareInfo_.value();
-    const bool isScaleA = GetTileTensorLayout(hw) == ir::TensorLayout::ZZ;
+    const bool isScaleA = GetTileTensorLayout(hw) == ir::Layout::ZZ;
     const bool isDn = op->GetKwarg<bool>("is_transpose", false);
     return isScaleA ? (isDn ? "Layout::MX_A_DN" : "Layout::MX_A_ND") : (isDn ? "Layout::MX_B_DN" : "Layout::MX_B_ND");
 }
@@ -172,7 +171,7 @@ void ValidateNZTransfer(const std::string& opName, const ir::CallPtr& op, const 
 
     auto tileType = ir::As<ir::TileType>(tileExpr->GetType());
     const auto& hw = tileType->hardwareInfo_.value();
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_FORMAT, GetTileTensorLayout(hw) == ir::TensorLayout::NZ)
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_FORMAT, GetTileTensorLayout(hw) == ir::Layout::NZ)
         << opName << ": GM NZ transfer requires an NZ Tile layout";
 
     const size_t ndim = tensorType->shape_.size();

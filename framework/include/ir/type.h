@@ -225,22 +225,22 @@ using RegTypePtr = std::shared_ptr<const RegType>;
 struct TensorView {
     std::vector<ExprPtr> validShape; ///< Valid shape dimensions (symbolic or constant)
     std::vector<ExprPtr> stride;     ///< Stride for each dimension
-    TensorLayout layout;             ///< Tensor layout type
+    Layout layout;                   ///< Tensor layout type
     std::optional<ExprPtr> ptr;      ///< Source pointer (set for ptr.make_tensor-created views)
 
-    TensorView() : layout(TensorLayout::ND) {}
+    TensorView() : layout(Layout::ND) {}
 
-    TensorView(std::vector<ExprPtr> strideIn, TensorLayout layoutIn) : stride(std::move(strideIn)), layout(layoutIn) {}
+    TensorView(std::vector<ExprPtr> strideIn, Layout layoutIn) : stride(std::move(strideIn)), layout(layoutIn) {}
 
-    TensorView(std::vector<ExprPtr> strideIn, TensorLayout layoutIn, ExprPtr ptrExpr)
+    TensorView(std::vector<ExprPtr> strideIn, Layout layoutIn, ExprPtr ptrExpr)
         : stride(std::move(strideIn)), layout(layoutIn), ptr(std::move(ptrExpr))
     {}
 
-    TensorView(std::vector<ExprPtr> validShapeIn, std::vector<ExprPtr> strideIn, TensorLayout layoutIn)
+    TensorView(std::vector<ExprPtr> validShapeIn, std::vector<ExprPtr> strideIn, Layout layoutIn)
         : validShape(std::move(validShapeIn)), stride(std::move(strideIn)), layout(layoutIn)
     {}
 
-    TensorView(std::vector<ExprPtr> validShapeIn, std::vector<ExprPtr> strideIn, TensorLayout layoutIn, ExprPtr ptrExpr)
+    TensorView(std::vector<ExprPtr> validShapeIn, std::vector<ExprPtr> strideIn, Layout layoutIn, ExprPtr ptrExpr)
         : validShape(std::move(validShapeIn)), stride(std::move(strideIn)), layout(layoutIn), ptr(std::move(ptrExpr))
     {}
 
@@ -311,13 +311,22 @@ struct HardwareInfo {
     uint64_t fractal = kDefaultFractal;         ///< Fractal size
     TilePad pad = TilePad::null;                ///< Pad mode
     CompactMode compact = CompactMode::normal;  ///< Compact mode
+    /// Conv data layout for a multi-dim pto::ConvTile (Layout ordinal; -1 = not a
+    /// conv tile). blayout/slayout do not describe a conv tile, so the conv layout is
+    /// carried here instead; see Layout and pto/common/type.hpp Layout.
+    int convLayout = -1;
 
     HardwareInfo() = default;
 
     HardwareInfo(TileLayout blayoutIn, TileLayout slayoutIn = TileLayout::none_box,
                  uint64_t fractalIn = kDefaultFractal, TilePad padIn = TilePad::null,
-                 CompactMode compactIn = CompactMode::normal)
-        : blayout(blayoutIn), slayout(slayoutIn), fractal(fractalIn), pad(padIn), compact(compactIn)
+                 CompactMode compactIn = CompactMode::normal, int convLayoutIn = -1)
+        : blayout(blayoutIn),
+          slayout(slayoutIn),
+          fractal(fractalIn),
+          pad(padIn),
+          compact(compactIn),
+          convLayout(convLayoutIn)
     {}
 
     static constexpr auto GetFieldDescriptors()
@@ -326,7 +335,8 @@ struct HardwareInfo {
                                reflection::UsualField(&HardwareInfo::slayout, "slayout"),
                                reflection::UsualField(&HardwareInfo::fractal, "fractal"),
                                reflection::UsualField(&HardwareInfo::pad, "pad"),
-                               reflection::UsualField(&HardwareInfo::compact, "compact"));
+                               reflection::UsualField(&HardwareInfo::compact, "compact"),
+                               reflection::UsualField(&HardwareInfo::convLayout, "conv_layout"));
     }
 };
 

@@ -81,7 +81,7 @@ def test_tensor_direction_accepts_any_optional_position_after_dtype(code):
 
     assert isinstance(result, ir.TensorType)
     assert result.memref is not None
-    assert result.tensor_view.layout == ir.TensorLayout.ND
+    assert result.tensor_view.layout == ir.Layout.ND
     assert resolver.param_directions == {3: pl.Output}
 
 

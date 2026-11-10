@@ -799,6 +799,9 @@ bool StructuralEqualImpl<AssertMode>::EqualType(const TypePtr& lhs, const TypePt
             if (lhsHw.compact != rhsHw.compact) {
                 return IRAssert({}, "HardwareInfo compact mismatch");
             }
+            if (lhsHw.convLayout != rhsHw.convLayout) {
+                return IRAssert({}, "HardwareInfo convLayout mismatch");
+            }
         }
         return true;
     } else if (auto lhsPtr = As<PtrType>(lhs)) {

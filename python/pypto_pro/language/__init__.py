@@ -35,13 +35,17 @@ __all__ = [
     "MemorySpace",
     "TilePad",
     "PipeType",
-    "TensorLayout",
+    "Layout",
     "ND",
     "DN",
     "NZ",
     "ZN",
     "NN",
     "ZZ",
+    "NC1HWC0",
+    "NDC1HWC0",
+    "FRACTAL_Z",
+    "FRACTAL_Z_3D",
     "Input",
     "Output",
     "ReluPreMode",
@@ -284,10 +288,10 @@ from pypto.ir import (
 from pypto.pypto_impl.ir import (
     DataType,
     FunctionType,
+    Layout,
     MemorySpace,
     MemRef,
     PipeType,
-    TensorLayout,
     TilePad,
 )
 from pypto_pro.ir.op.block_ops import FillPadMode, TileType
@@ -490,9 +494,13 @@ def make_tuple(**kwargs: Any) -> Any:
     return SimpleNamespace(**kwargs)
 
 
-ND = TensorLayout.ND
-DN = TensorLayout.DN
-NZ = TensorLayout.NZ
-ZN = TensorLayout.ZN
-NN = TensorLayout.NN
-ZZ = TensorLayout.ZZ
+ND = Layout.ND
+DN = Layout.DN
+NZ = Layout.NZ
+ZN = Layout.ZN
+NN = Layout.NN
+ZZ = Layout.ZZ
+NC1HWC0 = Layout.NC1HWC0
+NDC1HWC0 = Layout.NDC1HWC0
+FRACTAL_Z = Layout.FRACTAL_Z
+FRACTAL_Z_3D = Layout.FRACTAL_Z_3D

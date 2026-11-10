@@ -96,6 +96,58 @@ TEST_F(IoTextDumpRoundTripTest, MutexTileTypePreservesCount)
     }
 }
 
+TEST_F(IoTextDumpRoundTripTest, ConvTileTypePreservesConvLayout)
+{
+    const auto shape = std::vector<ExprPtr>{
+        std::make_shared<ConstInt>(64, DataType::INT64, Sp()), std::make_shared<ConstInt>(4, DataType::INT64, Sp()),
+        std::make_shared<ConstInt>(16, DataType::INT64, Sp()), std::make_shared<ConstInt>(16, DataType::INT64, Sp())};
+    HardwareInfo hw;
+    hw.convLayout = static_cast<int>(Layout::FRACTAL_Z_3D);
+    auto type = std::make_shared<TileType>(shape, DataType::FP16, std::nullopt, std::nullopt, hw);
+    std::string error;
+    const auto text = TextDumpType(type);
+    EXPECT_NE(text.find("FRACTAL_Z_3D"), std::string::npos) << text;
+    auto loaded = TextLoadType(text, error);
+    ASSERT_TRUE(error.empty()) << error;
+    ASSERT_NE(loaded, nullptr);
+    EXPECT_EQ(TextDumpType(loaded), text);
+    auto loaded_tile = std::dynamic_pointer_cast<const TileType>(loaded);
+    ASSERT_NE(loaded_tile, nullptr);
+    ASSERT_TRUE(loaded_tile->hardwareInfo_.has_value());
+    EXPECT_EQ(loaded_tile->hardwareInfo_->convLayout, static_cast<int>(Layout::FRACTAL_Z_3D));
+
+    // A plain tile keeps the 5-field hw_info form and loads back with convLayout = -1.
+    auto plain = std::make_shared<TileType>(std::vector<ExprPtr>{std::make_shared<ConstInt>(4, DataType::INT64, Sp()),
+                                                                 std::make_shared<ConstInt>(8, DataType::INT64, Sp())},
+                                            DataType::FP32, std::nullopt, std::nullopt, HardwareInfo());
+    const auto plain_text = TextDumpType(plain);
+    EXPECT_NE(plain_text.find("hw_info<row_major, none_box, 512, null, normal>"), std::string::npos) << plain_text;
+    auto plain_loaded = TextLoadType(plain_text, error);
+    ASSERT_TRUE(error.empty()) << error;
+    auto plain_tile = std::dynamic_pointer_cast<const TileType>(plain_loaded);
+    ASSERT_NE(plain_tile, nullptr);
+    ASSERT_TRUE(plain_tile->hardwareInfo_.has_value());
+    EXPECT_EQ(plain_tile->hardwareInfo_->convLayout, -1);
+    EXPECT_EQ(TextDumpType(plain_loaded), plain_text);
+}
+
+TEST_F(IoTextDumpRoundTripTest, RejectsInvalidConvLayoutName)
+{
+    // The 6th hw_info field's domain is exactly the conv layouts: an unknown name must be
+    // rejected (every dict fallback is a valid Layout ordinal >= 0), and so must a
+    // known-but-non-conv name -- either would silently turn the tile into a conv tile
+    // carrying a layout the dumper never writes.
+    for (const auto* name : {"GARBAGE", "ND", "ZZ"}) {
+        std::string error;
+        auto loaded = TextLoadType("tile<1 x 4 x 8 x 8 x 16, half, tile_view<-1 x -1 x -1 x -1 x -1>, "
+                                   "hw_info<row_major, none_box, 512, null, normal, " +
+                                       std::string(name) + ">>",
+                                   error);
+        EXPECT_EQ(loaded, nullptr) << name;
+        EXPECT_FALSE(error.empty()) << name << ": " << error;
+    }
+}
+
 // ---- Expression round-trip ----
 TEST_F(IoTextDumpRoundTripTest, TestExprRoundTrip)
 {

@@ -58,7 +58,7 @@ pypto_pro.language.store(
   | L0C Buffer → GM（不配置scale） | NZ → ND，NZ → NZ。 | 支持DT_FP32 → DT_FP32/DT_FP16/DT_BF16，以及DT_INT32 → DT_INT32/DT_FP16/DT_BF16。 |
   | L0C Buffer → GM（配置scale） | NZ → ND，NZ → NZ。 | 支持DT_FP32 → DT_INT8/DT_UINT8/DT_HF8/DT_FP8E4M3FN/DT_FP16/DT_BF16/DT_FP32，以及DT_INT32 → DT_INT8/DT_UINT8/DT_FP16/DT_BF16。 |
 
-- GM NZ布局：其物理排布、分形轴和完整Tensor的shape约束见[TensorLayout](../basic_data_structures/TensorLayout.md)。store还需满足以下NZ搬运约束：
+- GM NZ布局：其物理排布、分形轴和完整Tensor的shape约束见[Layout](../basic_data_structures/Layout.md)。store还需满足以下NZ搬运约束：
     - TileShape和valid M/N须满足M按16、N按目标Tensor dtype对应的C0对齐，N方向offset也须按C0对齐。
     - L0C Buffer中的Tile直接写回GM时，若一次写入多个N分形（valid N大于C0），写回范围须覆盖目标Tensor完整的NZ物理M轴。若部分M跨多个N分形时，需先搬到UB，再从UB写回GM。
 

@@ -79,7 +79,7 @@ ir::TileTypePtr MakeSimtTileType(ir::DataType dtype = ir::DataType::FP32, int64_
 ir::TensorTypePtr MakeSimtTensorType(const std::string& name, ir::DataType dtype = ir::DataType::FP32)
 {
     auto ptr = Var(name + "_base", std::make_shared<const ir::PtrType>(dtype));
-    ir::TensorView view({}, ir::TensorLayout::ND, ptr);
+    ir::TensorView view({}, ir::Layout::ND, ptr);
     return std::make_shared<const ir::TensorType>(std::vector<int64_t>{256}, dtype,
                                                   std::optional<ir::MemRefPtr>(std::nullopt),
                                                   std::optional<ir::TensorView>(view));

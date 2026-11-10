@@ -83,10 +83,15 @@ TypePtr DeduceBlockCreateMutexTileType([[maybe_unused]] const std::vector<ExprPt
         << "The operator " << opName
         << " requires first argument to be a MakeTuple expression with static shape values, but got "
         << args[0]->TypeName();
-    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, shapeTuple->elements_.size() == 0x2)
-        << "TileType only supports rank-2 shape; "
-        << "for a 1-D tensor with shape [N], use TileType shape [N, 1] or [1, N], "
-        << "and keep the same convention for all tile shapes of that tensor";
+    // Conv data layout (Layout ordinal) for a multi-dim pto::ConvTile; -1 = not a conv tile.
+    int conv_layout = GetOpKwarg<int>(kwargs, "conv_layout", -1);
+    if (conv_layout < 0) {
+        // Every non-conv tile is rank-2.
+        PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, shapeTuple->elements_.size() == 0x2)
+            << "TileType only supports rank-2 shape; "
+            << "for a 1-D tensor with shape [N], use TileType shape [N, 1] or [1, N], "
+            << "and keep the same convention for all tile shapes of that tensor";
+    }
 
     // Validate all elements are ConstInt (static compile-time constants)
     std::vector<ExprPtr> tileShape;
@@ -133,6 +138,10 @@ TypePtr DeduceBlockCreateMutexTileType([[maybe_unused]] const std::vector<ExprPt
     int compact = GetOpKwarg<int>(kwargs, "compact", -1);
     if (compact >= 0) {
         hwInfo.compact = static_cast<CompactMode>(compact);
+    }
+
+    if (conv_layout >= 0) {
+        hwInfo.convLayout = conv_layout;
     }
     // If explicit memref kwargs are provided (addr + size + id), attach a MemRef to the TileType.
     // This allows the PTO codegen to emit pto.alloc_tile with base_addr directly from the IR,
@@ -411,6 +420,7 @@ REGISTER_OP("block.make_mutex_tile")
     .set_attr<int>("fractal")
     .set_attr<int>("pad")
     .set_attr<int>("compact")
+    .set_attr<int>("conv_layout")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceBlockCreateMutexTileType(args, kwargs, "block.make_mutex_tile");

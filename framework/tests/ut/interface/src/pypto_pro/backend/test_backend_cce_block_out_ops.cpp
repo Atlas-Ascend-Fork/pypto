@@ -88,7 +88,7 @@ ir::TypePtr MakeTensorType(std::vector<int64_t> shape = {32, 32}, ir::DataType d
 }
 
 ir::VarPtr MakeTensorVar(const std::string& name, const std::vector<int64_t>& shape, ir::DataType dtype,
-                         ir::TensorLayout layout = ir::TensorLayout::ND)
+                         ir::Layout layout = ir::Layout::ND)
 {
     auto ptr = MakeVar(name + "_base", std::make_shared<const ir::PtrType>(dtype));
     ir::TensorView view({}, layout, ptr);
@@ -897,7 +897,7 @@ TEST(BackendCCEBlockOutOps, InitOutput_NzTensorUsesFlatNdView)
 {
     TestableCCECodegen codegen(ir::SectionKind::Vector);
     codegen.RegisterPointer("tensor", "raw_ptr");
-    auto tensor = MakeTensorVar("tensor", {128, 128}, ir::DataType::FP16, ir::TensorLayout::NZ);
+    auto tensor = MakeTensorVar("tensor", {128, 128}, ir::DataType::FP16, ir::Layout::NZ);
     auto call = MakeCall("block.init_output", {tensor, MakeConstInt(0), MakeConstInt(128 * 128), MakeConstInt(0)});
     auto* info = BackendCCE::Instance().GetOpInfo("block.init_output");
     ASSERT_NE(info, nullptr);
@@ -917,7 +917,7 @@ TEST(BackendCCEBlockOutOps, GeneratesInitOutputDynamicShapeFallback)
 {
     auto dim = MakeVar("m", std::make_shared<const ir::ScalarType>(ir::DataType::INT64));
     auto base = MakeVar("tensor_base", std::make_shared<const ir::PtrType>(ir::DataType::FP32));
-    ir::TensorView view({}, ir::TensorLayout::ND, base);
+    ir::TensorView view({}, ir::Layout::ND, base);
     auto tensor_type = std::make_shared<const ir::TensorType>(std::vector<ir::ExprPtr>{dim, dim}, ir::DataType::FP32,
                                                               std::optional<ir::MemRefPtr>(std::nullopt),
                                                               std::optional<ir::TensorView>(view));
@@ -1104,7 +1104,7 @@ TEST(BackendCCEBlockOutOps, MergedLoadPreservesWideSourceStrides)
                                             MakeConstInt(1)};
         auto tensor_type = std::make_shared<const ir::TensorType>(std::vector<int64_t>{1, 2, 1, 16, 64},
                                                                   ir::DataType::FP16, std::nullopt,
-                                                                  ir::TensorView(strides, ir::TensorLayout::ND));
+                                                                  ir::TensorView(strides, ir::Layout::ND));
         auto tensor = MakeVar("tensor", tensor_type);
         const auto hw = ir::HardwareInfo(ir::TileLayout::col_major, ir::TileLayout::row_major, 512);
         auto out = MakeVar("out", MakeTileType({32, 64}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Mat), hw));
@@ -1145,7 +1145,7 @@ TEST(BackendCCEBlockOutOps, GeneratesHighDimensionalNzLoadAndStore)
     auto nz_hw = ir::HardwareInfo(ir::TileLayout::col_major, ir::TileLayout::row_major, 512);
     auto tile_type = MakeTileType({32, 32}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Vec), nz_hw);
     auto tile = MakeVar("tile", tile_type);
-    auto tensor = MakeTensorVar("tensor", {2, 3, 64, 64}, ir::DataType::FP16, ir::TensorLayout::NZ);
+    auto tensor = MakeTensorVar("tensor", {2, 3, 64, 64}, ir::DataType::FP16, ir::Layout::NZ);
     auto offsets = MakeOffsets({1, 2, 16, 16});
     auto load = MakeCall("block.load", {tile, tensor, offsets});
     auto store = MakeCall("block.store", {tensor, tile, offsets});
@@ -1169,7 +1169,7 @@ TEST(BackendCCEBlockOutOps, GeneratesFp8NzLoadAndStore)
     auto nz_hw = ir::HardwareInfo(ir::TileLayout::col_major, ir::TileLayout::row_major, 512);
     auto tile = MakeVar("tile",
                         MakeTileType({16, 32}, ir::DataType::FP8E4M3FN, MakeMemRef(ir::MemorySpace::Vec), nz_hw));
-    auto tensor = MakeTensorVar("tensor", {64, 64}, ir::DataType::FP8E4M3FN, ir::TensorLayout::NZ);
+    auto tensor = MakeTensorVar("tensor", {64, 64}, ir::DataType::FP8E4M3FN, ir::Layout::NZ);
     auto offsets = MakeOffsets(16, 32);
     auto load = MakeCall("block.load", {tile, tensor, offsets});
     auto store = MakeCall("block.store", {tensor, tile, offsets});
@@ -1189,7 +1189,7 @@ TEST(BackendCCEBlockOutOps, GeneratesPackedFp4NzLoadAndStore)
 {
     auto nz_hw = ir::HardwareInfo(ir::TileLayout::col_major, ir::TileLayout::row_major, 512);
     auto tile = MakeVar("tile", MakeTileType({16, 64}, ir::DataType::FP4E2M1, MakeMemRef(ir::MemorySpace::Vec), nz_hw));
-    auto tensor = MakeTensorVar("tensor", {70, 130}, ir::DataType::FP4E2M1, ir::TensorLayout::NZ);
+    auto tensor = MakeTensorVar("tensor", {70, 130}, ir::DataType::FP4E2M1, ir::Layout::NZ);
     auto offsets = MakeOffsets(48, 64);
     auto load = MakeCall("block.load", {tile, tensor, offsets});
     auto store = MakeCall("block.store", {tensor, tile, offsets});
@@ -1211,7 +1211,7 @@ TEST(BackendCCEBlockOutOps, GeneratesPackedFp4NzLoadAndStore)
 
 TEST(BackendCCEBlockOutOps, RejectsUnsupportedNzTileLayoutAndTranspose)
 {
-    auto tensor = MakeTensorVar("tensor", {64, 64}, ir::DataType::FP16, ir::TensorLayout::NZ);
+    auto tensor = MakeTensorVar("tensor", {64, 64}, ir::DataType::FP16, ir::Layout::NZ);
     auto nd_hw = ir::HardwareInfo(ir::TileLayout::row_major, ir::TileLayout::none_box, 0);
     auto nd_tile = MakeVar("nd_tile",
                            MakeTileType({32, 32}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Vec), nd_hw));
@@ -1228,7 +1228,7 @@ TEST(BackendCCEBlockOutOps, RejectsUnsupportedNzTileLayoutAndTranspose)
 
 TEST(BackendCCEBlockOutOps, RejectsMisalignedNzTransferWindow)
 {
-    auto tensor = MakeTensorVar("tensor", {64, 64}, ir::DataType::FP16, ir::TensorLayout::NZ);
+    auto tensor = MakeTensorVar("tensor", {64, 64}, ir::DataType::FP16, ir::Layout::NZ);
     auto nz_hw = ir::HardwareInfo(ir::TileLayout::col_major, ir::TileLayout::row_major, 512);
     auto make_load = [&](const std::vector<int64_t>& tile_shape, int64_t col_offset) {
         auto tile = MakeVar("tile",
@@ -1247,7 +1247,7 @@ TEST(BackendCCEBlockOutOps, PadsNonAlignedNzTensorShapeAndRejectsInvalidOffsetRa
     auto tile = MakeVar("tile", MakeTileType({16, 16}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Vec), nz_hw));
 
     auto generate_load = [&](const std::vector<int64_t>& tensor_shape, const std::vector<int64_t>& offsets) {
-        auto tensor = MakeTensorVar("tensor", tensor_shape, ir::DataType::FP16, ir::TensorLayout::NZ);
+        auto tensor = MakeTensorVar("tensor", tensor_shape, ir::DataType::FP16, ir::Layout::NZ);
         auto load = MakeCall("block.load", {tile, tensor, MakeOffsets(offsets)});
         return GenerateKernel({MakeTileAssign(tile), std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown())},
                               {tensor}, ir::SectionKind::Vector);
@@ -1259,14 +1259,14 @@ TEST(BackendCCEBlockOutOps, PadsNonAlignedNzTensorShapeAndRejectsInvalidOffsetRa
     EXPECT_CONTAINS(generated, "tensorStrideDim5(80, 64)");
     EXPECT_CONTAINS(generated, "1 * 3 * 80 * 64 + 2 * 80 * 64 + 48 * 80 + 64 * 16");
 
-    auto tensor = MakeTensorVar("high_dim_tensor", {2, 3, 64, 64}, ir::DataType::FP16, ir::TensorLayout::NZ);
+    auto tensor = MakeTensorVar("high_dim_tensor", {2, 3, 64, 64}, ir::DataType::FP16, ir::Layout::NZ);
     auto load = MakeCall("block.load", {tile, tensor, MakeOffsets(0, 0)});
     EXPECT_THROW(RunCodegen("block.load", load), npu::tile_fwk::Error);
 }
 
 TEST(BackendCCEBlockOutOps, RejectsUnsafeAccNzDirectStoreWindow)
 {
-    auto tensor = MakeTensorVar("tensor", {64, 64}, ir::DataType::FP32, ir::TensorLayout::NZ);
+    auto tensor = MakeTensorVar("tensor", {64, 64}, ir::DataType::FP32, ir::Layout::NZ);
     auto nz_hw = ir::HardwareInfo(ir::TileLayout::col_major, ir::TileLayout::row_major, 1024);
     auto unsafe_tile = MakeVar("unsafe",
                                MakeTileType({32, 16}, ir::DataType::FP32, MakeMemRef(ir::MemorySpace::Acc), nz_hw));

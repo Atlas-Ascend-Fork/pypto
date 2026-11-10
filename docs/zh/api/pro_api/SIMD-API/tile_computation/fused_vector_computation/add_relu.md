@@ -57,7 +57,7 @@ def add_relu_kernel(a: pl.Tensor[[64, 64], pl.DT_FP32], b: pl.Tensor[[64, 64], p
       shape=[64, 64],
       dtype=pl.DT_FP32,
       target_memory=pl.MemorySpace.Vec,
-      layout=pl.TensorLayout.ND,
+      layout=pl.Layout.ND,
     )
     tile_a = pl.make_tile_group(type=tt, addrs=0x0000, mutex_ids=[0])
     tile_b = pl.make_tile_group(type=tt, addrs=0x4000, mutex_ids=[1])
