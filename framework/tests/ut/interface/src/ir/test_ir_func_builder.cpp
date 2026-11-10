@@ -280,24 +280,31 @@ TEST_F(IrFuncBuilderTest, TestConstructAssembleSlotList_ContinuationBranchKeepsE
     IrFuncSetup setup("ContinuationBranchKeepsExistingSlot");
 
     auto input = setup.MakeParam("input");
+    auto out = setup.MakeParam("out");
     auto local = setup.MakeLocal("local");
     setup.AddDassemble(input, local, Offset{0, 0});
-    auto initBody = std::make_shared<ir::SeqStmts>(setup.stmts, Sp());
+    auto initStmts = setup.stmts;
     setup.stmts.clear();
 
-    auto updated = setup.builder.CreateTensorVar(*setup.fwkFunc, local->GetRawTensor(), local->GetOffset(),
-                                                 local->GetShape(), local->GetDynValidShape());
+    auto updated = setup.builder.CreateTensorVar(*setup.fwkFunc, DT_FP32, {TILE, TILE}, TileOpFormat::TILEOP_ND,
+                                                 "updated");
     auto& updateOp = setup.fwkFunc->AddRawOperation(Opcode::OP_ADD, {local, input}, {updated}, Sp());
     setup.stmts.push_back(std::static_pointer_cast<const ir::Stmt>(updateOp.shared_from_this()));
     auto localVersion = setup.builder.CreateTensorVar(*setup.fwkFunc, local->GetRawTensor(), local->GetOffset(),
                                                       local->GetShape(), local->GetDynValidShape());
     setup.AddDassemble(updated, localVersion, Offset{0, 0});
+    setup.stmts.push_back(std::make_shared<ir::YieldStmt>(std::vector<ir::ExprPtr>{localVersion}, Sp()));
     auto continuationBody = std::make_shared<ir::SeqStmts>(setup.stmts, Sp());
-    setup.stmts.clear();
+    setup.stmts = initStmts;
 
+    auto unchangedBody = std::make_shared<ir::SeqStmts>(
+        std::vector<ir::StmtPtr>{std::make_shared<ir::YieldStmt>(std::vector<ir::ExprPtr>{local}, Sp())}, Sp());
+    auto result = setup.builder.CreateTensorVar(*setup.fwkFunc, local->GetRawTensor(), local->GetOffset(),
+                                                local->GetShape(), local->GetDynValidShape());
     auto cond = std::make_shared<ir::ConstInt>(1, ir::DataType::INT64, Sp());
-    setup.stmts.push_back(std::make_shared<ir::IfStmt>(cond, initBody, std::optional<ir::SeqStmtsPtr>{continuationBody},
-                                                       std::vector<ir::VarPtr>{}, Sp()));
+    setup.stmts.push_back(std::make_shared<ir::IfStmt>(
+        cond, continuationBody, std::optional<ir::SeqStmtsPtr>{unchangedBody}, std::vector<ir::VarPtr>{result}, Sp()));
+    setup.AddDassemble(result, out, Offset{0, 0});
 
     auto irFunc = setup.BuildIrFunction("ContinuationBranchKeepsExistingSlot");
     auto irProg = std::make_shared<ir::Program>(std::vector<ir::FunctionPtr>{irFunc}, "test", Sp());
@@ -306,20 +313,19 @@ TEST_F(IrFuncBuilderTest, TestConstructAssembleSlotList_ContinuationBranchKeepsE
     (void)createRoot(irProg);
 
     auto hiddenFuncs = FindHiddenFuncs();
-    ASSERT_EQ(hiddenFuncs.size(), 2u);
-    auto localSlot = Program::GetInstance().GetTensorSlotManager()->GetSlotTensor(local)->Id();
+    ASSERT_EQ(hiddenFuncs.size(), 3u);
+    auto slotManager = Program::GetInstance().GetTensorSlotManager();
+    auto localSlot = slotManager->GetSlotTensor(local)->Id();
+    EXPECT_EQ(slotManager->GetSlotTensor(localVersion)->Id(), localSlot);
+    EXPECT_EQ(slotManager->GetSlotTensor(result)->Id(), localSlot);
+    EXPECT_EQ(CollectConstructAssembleSlots(), std::vector<int>{localSlot});
     for (auto* hiddenFunc : hiddenFuncs) {
         auto scope = hiddenFunc->Parent().GetSlotScope();
         ASSERT_NE(scope, nullptr);
-        bool isContinuation = false;
-        for (auto& op : hiddenFunc->Operations(false)) {
-            isContinuation = isContinuation || op.GetOpcode() == Opcode::OP_ADD;
-        }
-        if (isContinuation) {
-            EXPECT_TRUE(std::any_of(scope->ioslot.incastSlot.begin(), scope->ioslot.incastSlot.end(),
-                                    [localSlot](const auto& slots) {
-                                        return std::find(slots.begin(), slots.end(), localSlot) != slots.end();
-                                    }));
+        bool readsLocal = std::any_of(
+            scope->ioslot.incastSlot.begin(), scope->ioslot.incastSlot.end(),
+            [localSlot](const auto& slots) { return std::find(slots.begin(), slots.end(), localSlot) != slots.end(); });
+        if (readsLocal) {
             EXPECT_TRUE(scope->constructAssembleSlotList.empty());
         } else {
             EXPECT_EQ(scope->constructAssembleSlotList, std::vector<int>{localSlot});
@@ -339,8 +345,8 @@ TEST_F(IrFuncBuilderTest, TestConstructAssembleSlotList_MixedParamAndIntermediat
     auto out = setup.MakeParam("out");
     auto aux = setup.MakeLocal("aux");
 
-    setup.AddDassemble(a, aux);
-    setup.AddDassemble(aux, out);
+    setup.AddDassemble(a, aux, Offset{0, 0});
+    setup.AddDassemble(aux, out, Offset{0, 0});
 
     auto irFunc = setup.BuildIrFunction("MixedParamAndIntermediate");
     auto irProg = std::make_shared<ir::Program>(std::vector<ir::FunctionPtr>{irFunc}, "test", Sp());
@@ -356,7 +362,6 @@ TEST_F(IrFuncBuilderTest, TestConstructAssembleSlotList_MixedParamAndIntermediat
     auto slotManager = Program::GetInstance().GetTensorSlotManager();
     EXPECT_EQ(slotManager->assembleSlotSet.size(), 1u);
     EXPECT_EQ(slotManager->assembleSlotSet.count(TensorSlot::CreateTensor(*slotManager->GetSlotTensor(out))), 1u);
-    EXPECT_EQ(slotManager->GetSlotTensor(aux, false), nullptr);
 }
 
 TEST_F(IrFuncBuilderTest, TestAssembleSlotSharedByOutputVersions)

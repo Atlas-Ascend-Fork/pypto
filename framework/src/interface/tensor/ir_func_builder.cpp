@@ -28,6 +28,7 @@
 #include "ir/kind_traits.h"
 #include "ir/type.h"
 #include "ir/transforms/base/mutator.h"
+#include "ir/transforms/base/visitor.h"
 #include "ir/transforms/utils/stmt_utils.h"
 
 #include <functional>
@@ -35,6 +36,28 @@
 using namespace pypto;
 
 namespace npu::tile_fwk {
+
+class RawTensorSlotLinker : public ir::IRVisitor {
+public:
+    explicit RawTensorSlotLinker(TensorSlotManager& slotManager) : slotManager_(slotManager) {}
+
+protected:
+    void VisitVarLike_(const ir::VarPtr& var) override
+    {
+        auto tensor = AsLogicalTensor(var);
+        if (tensor == nullptr) {
+            return;
+        }
+        auto [it, inserted] = firstByRaw_.emplace(tensor->GetRawTensor().get(), tensor);
+        if (!inserted && it->second != tensor) {
+            slotManager_.SetSameSlot(it->second, tensor);
+        }
+    }
+
+private:
+    TensorSlotManager& slotManager_;
+    std::unordered_map<const RawTensor*, LogicalTensorPtr> firstByRaw_;
+};
 
 class StmtTransformer : public ir::IRMutator {
 public:
@@ -982,6 +1005,9 @@ ir::StmtPtr RootFunctionBuilder::TransformBody(ir::StmtPtr stmt)
 
     consumedTensors_.clear();
 
+    // Link SSA versions before tensor-op segments become placeholder calls.
+    RawTensorSlotLinker linker(*program_.GetTensorSlotManager());
+    linker.VisitStmt(stmt);
     auto irTree = StmtTransformer(*this).Apply(stmt, "");
     LinkControlFlowSlots(irTree);
     LinkReturnSlots(irTree);
