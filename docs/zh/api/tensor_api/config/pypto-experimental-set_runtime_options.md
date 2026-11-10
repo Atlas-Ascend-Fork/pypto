@@ -38,7 +38,7 @@ set_runtime_options(
 
 | 参数名 | 输入/输出 | 说明 |
 |--------|-----------|------|
-| stitch_function_num_per_pool | 输入 | 含义：用于分别控制Workspace中三个子内存池的容量大小，格式为`[root_inner, assemble_outcast, exclusive_outcast]`。配置的大小决定每个内存池可容纳的最大stitch构建loop迭代的数量。<br> 说明：根据算子运行时各个子内存池实际使用情况分别精细控制预留的容量大小，可通过该配置达到在满足目标性能时降低内存，或者在优先内存使用时提升性能的目的。<br> 配置方法：`[0, 0, 0]`表示关闭；任一元素非0即开启。开启后，某一维为0表示不为该子内存池预留容量。若算子存在该内存池对应类型的中间Tensor，编译会因容量不足失败，须将该维至少配为1；仅当算子没有该类型Tensor时才可配0。三个子内存池含义及对应的Tensor类型见[示例1](#stitch_function_num_per_pool_detail)。<br> 使用场景：<br> （1）并行度已满足预期，需要进行精细化内存控制，以达到保证性能的同时又降低内存的目的：先用`stitch_function_max_num`将并行度调至目标性能，再按推荐值分别下调三个子内存池，降低内存使用量。<br> （2）优先内存场景下，期望通过精细化内存控制，提升性能：先用`max_workspace_kb`控制内存总量，再精细化控制真正限制stitch构建loop迭代数量的子内存池大小，提升性能。<br> 具体调参步骤见[调优方法](#workspace_tuning_method)。<br> 类型：list of int，固定3个元素<br> 取值范围：每个元素 0～1024<br> 默认值：`[0, 0, 0]`<br> 影响Pass范围：NA |
+| stitch_function_num_per_pool | 输入 | 含义：用于分别控制Workspace中三个子内存池的容量大小，格式为`[root_inner, assemble_outcast, exclusive_outcast]`。配置的大小决定每个内存池可容纳的最大stitch构建loop迭代的数量。<br> 说明：根据算子运行时各个子内存池实际使用情况分别精细控制预留的容量大小，可通过该配置达到在满足目标性能时降低内存，或者在优先内存使用时提升性能的目的。<br> 配置方法：`[0, 0, 0]`表示关闭；任一元素非0即开启，算子无内存需求时，无需开启。开启后，某一维为0表示不为该子内存池预留容量。若算子存在该内存池对应类型的中间Tensor，编译会因容量不足失败，须将该维至少配为1；仅当算子没有该类型Tensor时才可配0。三个子内存池含义及对应的Tensor类型见[示例1](#stitch_function_num_per_pool_detail)。<br> 使用场景：<br> （1）并行度已满足预期，需要进行精细化内存控制，以达到保证性能的同时又降低内存的目的：先用`stitch_function_max_num`将并行度调至目标性能，再按推荐值分别下调三个子内存池，降低内存使用量。<br> （2）优先内存场景下，期望通过精细化内存控制，提升性能：先用`max_workspace_kb`控制内存总量，再精细化控制真正限制stitch构建loop迭代数量的子内存池大小，提升性能。<br> 具体调参步骤见[调优方法](#workspace_tuning_method)。<br> 类型：list of int，固定3个元素<br> 取值范围：每个元素 0～1024<br> 默认值：`[0, 0, 0]`<br> 影响Pass范围：NA |
 
 ## 返回值说明
 
@@ -48,7 +48,8 @@ void：Set方法无返回值。设置成功即生效。
 
 - 类型安全：须为长度为3的list或tuple，元素为`[0, 1024]`内的整数，不能使用bool。
 - 作用范围：不要在`pypto.loop`内或kernel内设置。
-- 生效范围：该配置写在当前进程的全局配置中，不是某个kernel的局部配置。一次设置后会一直保留，后续编译的kernel都会读到同一组值。多轮连跑、或按不同入参分别配置时，用完须调用`pypto.reset_options()`恢复默认值`[0, 0, 0]`，否则前一个kernel的配置会作用到后面的kernel。`reset_options()`会把全部配置恢复为默认值，不只是本项。
+- 生效范围：该配置写在当前进程的全局配置中，不是某个kernel的局部配置。它只在kernel编译时读取一次，并写入该次编译得到的Workspace预算。一次设置后会一直保留，后续发生编译的kernel都会读到同一组值。多轮连跑、或按不同入参分别配置时，用完须调用[pypto.reset_options()](./pypto-reset_options.md)恢复默认值`[0, 0, 0]`，否则下一次编译仍会读到上一轮的值。`pypto.reset_options()`会把全部配置恢复为默认值，不只是本项。
+- 编译缓存：同一kernel再次调用时，若JIT入参没有变化、命中编译缓存，则不会重新编译，也不会重新读取本配置。此时无论调用前是否改了`stitch_function_num_per_pool`，也无论调用后是否执行了`pypto.reset_options()`，实际使用的都是首次编译时写入的池大小。只有入参或shape变化并触发重编译时，新的配置值才会生效。
 - 配置项相对关系：`stitch_function_max_num` 在不考虑内存占用情况下只考虑调优性能情况下使用；`max_workspace_kb`在有内存限制时按内存总量压缩内存时使用，可能降低并行度。精细化配置在上述两项之后使用，按三个子内存池分别设置。开启后`stitch_function_max_num`与`max_workspace_kb`均失效。
 
 ## 调用示例
@@ -62,6 +63,7 @@ pypto.experimental.set_runtime_options(stitch_function_num_per_pool=[64, 1, 1])
 ```python
 import pypto
 
+# kernel1、kernel2为用户已定义的@pypto.frontend.jit核函数
 pypto.reset_options()
 pypto.experimental.set_runtime_options(stitch_function_num_per_pool=[64, 1, 1])
 kernel1(...)
@@ -72,7 +74,7 @@ kernel2(...)
 pypto.reset_options()
 ```
 
-`pypto.reset_options()`之后，`pypto.experimental.get_runtime_options()["stitch_function_num_per_pool"]`回到`[0, 0, 0]`。
+调用[pypto.reset_options()](./pypto-reset_options.md)之后，[pypto.experimental.get_runtime_options()](./pypto-experimental-get_runtime_options.md)返回的`stitch_function_num_per_pool`回到`[0, 0, 0]`。
 
 ### 示例1: 精细Workspace模式 <a id="stitch_function_num_per_pool_detail"></a>
 
@@ -154,7 +156,7 @@ grep -rE "\[Workspace Runtime (Pool|Tuning|Summary|Recommendation)\]" ./wk
 | `[Workspace Runtime Summary]` | 整次执行各池的最大实际占用与容量上限 | 各池`peak`、`capacity` |
 | `[Workspace Runtime Recommendation]` | 整次执行结束后的配置建议，以及某个内存池配置值加1时增加的内存 | `recommendedDepths`、`rawPerParallelBytes`、`nextDepthTotalBytes` |
 
-`recommendedDepths={rootInner, assembleOutcast, exclusive}`按顺序对应`stitch_function_num_per_pool`的三个元素。`actualDepths`为当前各个内存池生效大小。
+`recommendedDepths={rootInner, assembleOutcast, exclusive}`按顺序对应`stitch_function_num_per_pool`的三个元素。`actualDepths`为当前各个内存池生效大小。若三个池实际需求都是0，不输出`recommendedDepths`，改为提示无需配置`stitch_function_num_per_pool`，保持默认`[0, 0, 0]`，继续使用`stitch_function_max_num`或`max_workspace_kb`。
 
 ### 场景1：并行度已满足预期，精细化控制以降低内存
 

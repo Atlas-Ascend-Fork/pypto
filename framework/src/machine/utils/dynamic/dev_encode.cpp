@@ -385,9 +385,33 @@ void DevAscendFunction::InitRawTensorAndMemoryRequirement(
             auto& encoded = *GetRawTensor(idx);
             // shmem need to drop budget
             bool dropBudget = ShouldDropBudget(outcastRawList, slot, runtimeSlotKindSetList, rawTensor, encoded);
-            // inplace (basically reshape) need to drop budget
-            bool isInplace = param.devRoot->outIncastLinkMap.count(rawTensor);
-            isInplace |= rawTensor->actualRawmagic != -1 && rawTensor->actualRawmagic != rawTensor->rawmagic;
+            // inplace (basically reshape) need to drop independent budget (maxStaticMemReq -> 0).
+            //
+            // outIncastLinkMap has two distinct shapes:
+            //   1) map[dst] = src, dst != src
+            //      True alias (e.g. reshape inplace): dst reuses another raw's storage; drop dst's
+            //      independent size budget so exclusive/rootInner does not double-count.
+            //   2) map[raw] = raw (key == value)
+            //      Same raw appears on both root incast and outcast (typical loop-carried Assemble:
+            //      multiple logical versions share one RawTensor that is both in and out). This is
+            //      storage pass-through, not "reuse someone else's buffer". maxStaticMemReq is a
+            //      *size* estimate for that raw; self-link must NOT clear it to 0, otherwise
+            //      NeedAlloc assemble slot capacity collected from maxStaticMemReq becomes 0.
+            const auto linkIt = param.devRoot->outIncastLinkMap.find(rawTensor);
+            const bool hitOutIncastLinkMap = linkIt != param.devRoot->outIncastLinkMap.end();
+            const bool selfLink = hitOutIncastLinkMap && linkIt->second == rawTensor;
+            if (selfLink) {
+                MACHINE_LOGI("[RawBudgetReuse] self-link pass-through (Assemble both in&out): root=%s "
+                             "symbol=%s rawmagic=%d memoryId=%d inIncast=%d inOutcast=%d "
+                             "linkSrcRawmagic=%d -> keep maxStaticMemReq (not inplace drop)",
+                             param.devRoot->GetRawName().c_str(), rawTensor->symbol.c_str(), rawTensor->GetRawMagic(),
+                             rawTensor->memoryId, static_cast<int>(incastRawList.count(rawTensor)),
+                             static_cast<int>(outcastRawList.count(rawTensor)), linkIt->second->GetRawMagic());
+            }
+            const bool hitActualRawAlias = rawTensor->actualRawmagic != -1 &&
+                                           rawTensor->actualRawmagic != rawTensor->rawmagic;
+            // Self-link is pass-through: do not treat as inplace budget drop.
+            bool isInplace = (hitOutIncastLinkMap && !selfLink) || hitActualRawAlias;
             EncodeRawShape(expressionTable, &encoded, rawTensor, !dropBudget && !isInplace,
                            param.devRoot->GetRawName());
         }

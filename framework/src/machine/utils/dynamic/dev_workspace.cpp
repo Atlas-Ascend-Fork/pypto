@@ -638,6 +638,18 @@ void DeviceWorkspaceAllocator::LogTuningSummary() const
                                           tensorBudget.devTaskInnerExclusiveOutcasts +
                                           tensorBudget.BoundaryAndInnerTemporalOutcastSlotNum() * slotBytes;
     const uint64_t tensorAlignedPerParallel = AlignUp(tensorRawPerParallel, ALIGNMENT_32K);
+    const uint64_t recommendedRootInner = AtLeastRequiredDepth(maxRootInnerDepth,
+                                                               tensorBudget.workspacePool.rootInnerUnitBytes);
+    const uint64_t recommendedAssemble = RecommendAssembleOutcastDepth(
+        maxInnerTemporalDepth, tensorBudget.workspacePool.assembleSlotsPerDepth);
+    const uint64_t recommendedExclusive = AtLeastRequiredDepth(maxExclusiveDepth,
+                                                               tensorBudget.workspacePool.exclusiveOutcastUnitBytes);
+    if (recommendedRootInner == 0 && recommendedAssemble == 0 && recommendedExclusive == 0) {
+        DEV_INFO("[Workspace Runtime Recommendation] Tensor workspace demand is 0. "
+                 "stitch_function_num_per_pool is not needed. Keep the default [0, 0, 0] and continue using "
+                 "stitch_function_max_num or max_workspace_kb.");
+        return;
+    }
     const auto nextDepthTotalBytes = [&](uint64_t depthBytes) {
         return (AlignUp(tensorRawPerParallel + depthBytes, ALIGNMENT_32K) - tensorAlignedPerParallel) *
                tensorBudget.parallelism;
@@ -650,11 +662,8 @@ void DeviceWorkspaceAllocator::LogTuningSummary() const
              "}, parallelism=%u}.",
              tensorBudget.workspacePool.stitchFunctionNumPerPool[0],
              tensorBudget.workspacePool.stitchFunctionNumPerPool[1],
-             tensorBudget.workspacePool.stitchFunctionNumPerPool[2],
-             AtLeastRequiredDepth(maxRootInnerDepth, tensorBudget.workspacePool.rootInnerUnitBytes),
-             RecommendAssembleOutcastDepth(maxInnerTemporalDepth, tensorBudget.workspacePool.assembleSlotsPerDepth),
-             AtLeastRequiredDepth(maxExclusiveDepth, tensorBudget.workspacePool.exclusiveOutcastUnitBytes),
-             rootInnerDepthBytes, innerTemporalDepthBytes, exclusiveDepthBytes,
+             tensorBudget.workspacePool.stitchFunctionNumPerPool[2], recommendedRootInner, recommendedAssemble,
+             recommendedExclusive, rootInnerDepthBytes, innerTemporalDepthBytes, exclusiveDepthBytes,
              nextDepthTotalBytes(rootInnerDepthBytes), nextDepthTotalBytes(innerTemporalDepthBytes),
              nextDepthTotalBytes(exclusiveDepthBytes), tensorBudget.parallelism);
 }

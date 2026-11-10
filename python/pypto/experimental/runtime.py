@@ -18,6 +18,13 @@ from typing import Dict, List, Optional, Union
 
 from ..config import get_current_scope, set_options
 
+# Experimental runtime keys exposed by get_runtime_options. Stable runtime options such as
+# stitch_function_max_num stay on @jit(runtime_options=...) and are not returned here.
+# Register a new experimental option here when it is added to set_runtime_options.
+_EXPERIMENTAL_RUNTIME_OPTIONS = (
+    "stitch_function_num_per_pool",
+)
+
 
 def _validate_stitch_function_num_per_pool(value) -> List[int]:
     """Validate the runtime option stitch_function_num_per_pool.
@@ -62,13 +69,15 @@ def set_runtime_options(
 
 def get_runtime_options() -> Dict[str, Union[str, int, List[int], Dict[int, int]]]:
     """
-    Get runtime options.
+    Get experimental runtime options.
 
     Returns
     -------
     Dict[str, Union[str, int, List[int], Dict[int, int]]]
-        All runtime options
+        Registered experimental runtime options. Currently only stitch_function_num_per_pool.
+        Stable @jit runtime options are not included.
     """
 
     scope = get_current_scope()
-    return scope.get_runtime_options()
+    runtime_options = scope.get_runtime_options()
+    return {key: runtime_options[key] for key in _EXPERIMENTAL_RUNTIME_OPTIONS if key in runtime_options}

@@ -90,11 +90,20 @@ def test_operation_option():
 def test_runtime_option_stitch_function_num_per_pool():
     pypto.reset_options()
     # default [0, 0, 0] is provided by the runtime section of tile_fwk_config.json
-    assert get_runtime_options()["stitch_function_num_per_pool"] == [0, 0, 0]
+    option = get_runtime_options()
+    assert set(option) == {"stitch_function_num_per_pool"}
+    assert option["stitch_function_num_per_pool"] == [0, 0, 0]
     assert "stitch_function_num_per_pool" not in get_operation_options()
+
+    pypto.set_options(runtime_options={"stitch_function_max_num": 32, "max_workspace_kb": 128})
+    option = get_runtime_options()
+    assert set(option) == {"stitch_function_num_per_pool"}
+    assert "stitch_function_max_num" not in option
+    assert "max_workspace_kb" not in option
 
     set_runtime_options(stitch_function_num_per_pool=[64, 1, 1])
     option = get_runtime_options()
+    assert set(option) == {"stitch_function_num_per_pool"}
     assert option["stitch_function_num_per_pool"] == [64, 1, 1]
 
     pypto.reset_options()
