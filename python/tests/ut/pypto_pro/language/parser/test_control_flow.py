@@ -1499,6 +1499,32 @@ def test_for_allows_used_loop_variable_with_runtime_bound():
         func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
+def test_vf_allows_tile_alias_outside_a_branch():
+    """A Tile alias outside a branch stays supported in a VF body."""
+
+    @pl.vector_function
+    def probe_vf(src, dst, count):
+        t = src
+        mask = vf.update_mask(64, dtype=pl.DT_FP32)
+        reg = vf.load_align(t, 0)
+        vf.store_align(dst, reg, mask, 0)
+
+    @pl.jit(auto_mutex=True)
+    def func(
+        x: pl.Tensor[[1, 128], pl.DT_FP32],
+        y: pl.Tensor[[1, 128], pl.DT_FP32],
+        count: pl.DT_INT64,
+    ):
+        tile_type = pl.TileType(shape=[1, 128], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+        outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+        with pl.section_vector():
+            probe_vf(inputs.next(), outputs.next(), count)
+
+    program, _ = func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert program.get_function(func.__name__) is not None
+
+
 def test_chained_comparison_is_rejected():
     with pytest.raises(NotSupported, match="Only simple comparisons supported"):
 

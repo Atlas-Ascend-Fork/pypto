@@ -108,11 +108,6 @@ def row_argmax_kernel(
         addrs=0x0000,
         mutex_ids=[0],
     )
-    tile_tmp = pl.make_tile_group(
-        type=pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
-        addrs=0x4000,
-        mutex_ids=[1],
-    )
     tile_out = pl.make_tile_group(
         type=pl.TileType(shape=[64, 1], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
         addrs=0x8000,
@@ -120,10 +115,9 @@ def row_argmax_kernel(
     )
     with pl.section_vector():
         cur_a = tile_a.current()
-        cur_tmp = tile_tmp.current()
         cur_out = tile_out.current()
         pl.load(cur_a, x, [0, 0])
-        pl.argmax(cur_out, cur_a, cur_tmp)
+        pl.argmax(cur_out, cur_a)
         pl.store(z, cur_out, [0, 0])
 
 
@@ -137,11 +131,6 @@ def row_argmin_kernel(
         addrs=0x0000,
         mutex_ids=[0],
     )
-    tile_tmp = pl.make_tile_group(
-        type=pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
-        addrs=0x4000,
-        mutex_ids=[1],
-    )
     tile_out = pl.make_tile_group(
         type=pl.TileType(shape=[64, 1], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
         addrs=0x8000,
@@ -149,10 +138,9 @@ def row_argmin_kernel(
     )
     with pl.section_vector():
         cur_a = tile_a.current()
-        cur_tmp = tile_tmp.current()
         cur_out = tile_out.current()
         pl.load(cur_a, x, [0, 0])
-        pl.argmin(cur_out, cur_a, cur_tmp)
+        pl.argmin(cur_out, cur_a)
         pl.store(z, cur_out, [0, 0])
 
 
@@ -268,11 +256,6 @@ def col_argmax_kernel(
         addrs=0x0000,
         mutex_ids=[0],
     )
-    tile_tmp = pl.make_tile_group(
-        type=pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
-        addrs=0x4000,
-        mutex_ids=[1],
-    )
     tile_out = pl.make_tile_group(
         type=pl.TileType(shape=[1, 128], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
         addrs=0x8000,
@@ -280,10 +263,9 @@ def col_argmax_kernel(
     )
     with pl.section_vector():
         cur_a = tile_a.current()
-        cur_tmp = tile_tmp.current()
         cur_out = tile_out.current()
         pl.load(cur_a, x, [0, 0])
-        pl.argmax(cur_out, cur_a, cur_tmp, dim=1)
+        pl.argmax(cur_out, cur_a, dim=1)
         pl.store(z, cur_out, [0, 0])
 
 
@@ -297,11 +279,6 @@ def col_argmin_kernel(
         addrs=0x0000,
         mutex_ids=[0],
     )
-    tile_tmp = pl.make_tile_group(
-        type=pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
-        addrs=0x4000,
-        mutex_ids=[1],
-    )
     tile_out = pl.make_tile_group(
         type=pl.TileType(shape=[1, 128], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
         addrs=0x8000,
@@ -309,10 +286,9 @@ def col_argmin_kernel(
     )
     with pl.section_vector():
         cur_a = tile_a.current()
-        cur_tmp = tile_tmp.current()
         cur_out = tile_out.current()
         pl.load(cur_a, x, [0, 0])
-        pl.argmin(cur_out, cur_a, cur_tmp, dim=1)
+        pl.argmin(cur_out, cur_a, dim=1)
         pl.store(z, cur_out, [0, 0])
 
 

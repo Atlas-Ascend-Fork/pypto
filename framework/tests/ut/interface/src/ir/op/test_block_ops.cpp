@@ -1609,8 +1609,7 @@ TEST_F(BlockOpsOutReductionTest, BlockRowArgmax_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_argmax",
-                           {MakeTileVar("o", {16, 1}, DataType::INT32), MakeTileVar("t", {16, 32}, DataType::FP16),
-                            MakeTileVar("tmp", {16, 1}, DataType::INT32)},
+                           {MakeTileVar("o", {16, 1}, DataType::INT32), MakeTileVar("t", {16, 32}, DataType::FP16)},
                            Sp());
     EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
@@ -1708,8 +1707,7 @@ TEST_F(BlockOpsOutReductionTest, BlockRowArgmin_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.row_argmin",
-                           {MakeTileVar("o", {16, 1}, DataType::INT32), MakeTileVar("t", {16, 32}, DataType::FP16),
-                            MakeTileVar("tmp", {16, 1}, DataType::INT32)},
+                           {MakeTileVar("o", {16, 1}, DataType::INT32), MakeTileVar("t", {16, 32}, DataType::FP16)},
                            Sp());
     EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
@@ -1718,8 +1716,7 @@ TEST_F(BlockOpsOutReductionTest, BlockColArgmax_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_argmax",
-                           {MakeTileVar("o", {1, 32}, DataType::INT32), MakeTileVar("t", {16, 32}, DataType::FP16),
-                            MakeTileVar("tmp", {1, 32}, DataType::INT32)},
+                           {MakeTileVar("o", {1, 32}, DataType::INT32), MakeTileVar("t", {16, 32}, DataType::FP16)},
                            Sp());
     EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
@@ -1728,8 +1725,7 @@ TEST_F(BlockOpsOutReductionTest, BlockColArgmin_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto call = reg.Create("block.col_argmin",
-                           {MakeTileVar("o", {1, 32}, DataType::INT32), MakeTileVar("t", {16, 32}, DataType::FP16),
-                            MakeTileVar("tmp", {1, 32}, DataType::INT32)},
+                           {MakeTileVar("o", {1, 32}, DataType::INT32), MakeTileVar("t", {16, 32}, DataType::FP16)},
                            Sp());
     EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }

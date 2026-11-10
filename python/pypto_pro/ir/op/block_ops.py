@@ -1486,7 +1486,7 @@ _COL_PROD_DTYPES: tuple[DataType, ...] = (
     DataType.INT16, DataType.UINT16, DataType.INT32, DataType.UINT32,
     DataType.FP16, DataType.FP32, DataType.BF16,
 )
-# TROWARGMAX/TROWARGMIN (3510) 3-arg idx-only form: half/float source, 32-bit index.
+# TROWARGMAX/TROWARGMIN (3510) 2-arg idx-only form: half/float source, 32-bit index.
 _ARG_IDX32_DTYPES: tuple[DataType, ...] = (DataType.INT32, DataType.UINT32)
 # TGATHER/TSCATTER index tiles are 16/32-bit integers.
 _GATHER_IDX_DTYPES: tuple[DataType, ...] = (
@@ -4162,7 +4162,7 @@ def _ir_reinterpret(
 @op_impl("reinterpret")
 def _build_reinterpret(
     self, tile: Expr, /, *, dtype: DataType | None = None, shape: Expr | None = None,
-    layout: TensorLayout | None = None, span: Span,
+    layout: Layout | None = None, span: Span,
 ) -> Expr:
     kwargs = {"dtype": dtype, "shape": shape, "layout": layout}
     for key, value in kwargs.items():
@@ -4465,21 +4465,21 @@ def _ir_prod(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None,
 
 
 @op_impl("argmax")
-def _ir_argmax(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
-    # 3510 TROWARGMAX/TROWARGMIN (3-arg idx-only form): half/float source,
+def _ir_argmax(self, out: Expr, src: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
+    # 3510 TROWARGMAX/TROWARGMIN (2-arg idx-only form): half/float source,
     # 32-bit index destination.
     require_dtype_in(getattr(src.type, "dtype", None), _FLOAT_UNARY_DTYPES, subject="argmax")
     require_dtype_in(getattr(out.type, "dtype", None), _ARG_IDX32_DTYPES, subject="argmax")
-    return _create_dim_op([out, src, tmp], row_op="row_argmax", col_op="col_argmax", dim=dim, span=span)
+    return _create_dim_op([out, src], row_op="row_argmax", col_op="col_argmax", dim=dim, span=span)
 
 
 @op_impl("argmin")
-def _ir_argmin(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
-    # 3510 TROWARGMIN/TCOLARGMIN (3-arg idx-only form): half/float source,
+def _ir_argmin(self, out: Expr, src: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
+    # 3510 TROWARGMIN/TCOLARGMIN (2-arg idx-only form): half/float source,
     # 32-bit index destination.
     require_dtype_in(getattr(src.type, "dtype", None), _FLOAT_UNARY_DTYPES, subject="argmin")
     require_dtype_in(getattr(out.type, "dtype", None), _ARG_IDX32_DTYPES, subject="argmin")
-    return _create_dim_op([out, src, tmp], row_op="row_argmin", col_op="col_argmin", dim=dim, span=span)
+    return _create_dim_op([out, src], row_op="row_argmin", col_op="col_argmin", dim=dim, span=span)
 
 
 # Fixed-axis spellings were previously handled by the block-op fallback.
@@ -4542,7 +4542,9 @@ def _build_col_expand_mul(self, out: Expr, src: Expr, col_vec: Expr, *, span: Sp
 def _ir_expand_max(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
     require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_max")
-    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_max")
+    require_dtypes_match(
+        [getattr(out.type, "dtype", None), getattr(scalar.type, "dtype", None)], dt, subject="expand_max"
+    )
     return _create_dim_op([out, src, scalar], row_op="row_expand_max", col_op="col_expand_max", dim=dim, span=span)
 
 
@@ -4550,7 +4552,9 @@ def _ir_expand_max(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | Non
 def _ir_expand_min(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
     require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_min")
-    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_min")
+    require_dtypes_match(
+        [getattr(out.type, "dtype", None), getattr(scalar.type, "dtype", None)], dt, subject="expand_min"
+    )
     return _create_dim_op([out, src, scalar], row_op="row_expand_min", col_op="col_expand_min", dim=dim, span=span)
 
 
@@ -4558,7 +4562,9 @@ def _ir_expand_min(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | Non
 def _ir_expand_mul(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
     require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_mul")
-    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_mul")
+    require_dtypes_match(
+        [getattr(out.type, "dtype", None), getattr(scalar.type, "dtype", None)], dt, subject="expand_mul"
+    )
     return _create_dim_op([out, src, scalar], row_op="row_expand_mul", col_op="col_expand_mul", dim=dim, span=span)
 
 
@@ -4566,7 +4572,9 @@ def _ir_expand_mul(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | Non
 def _ir_expand_sub(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
     require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_sub")
-    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_sub")
+    require_dtypes_match(
+        [getattr(out.type, "dtype", None), getattr(scalar.type, "dtype", None)], dt, subject="expand_sub"
+    )
     return _create_dim_op([out, src, scalar], row_op="row_expand_sub", col_op="col_expand_sub", dim=dim, span=span)
 
 
@@ -4574,7 +4582,9 @@ def _ir_expand_sub(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | Non
 def _ir_expand_div(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
     require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_div")
-    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_div")
+    require_dtypes_match(
+        [getattr(out.type, "dtype", None), getattr(scalar.type, "dtype", None)], dt, subject="expand_div"
+    )
     return _create_dim_op([out, src, scalar], row_op="row_expand_div", col_op="col_expand_div", dim=dim, span=span)
 
 
@@ -4582,7 +4592,9 @@ def _ir_expand_div(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | Non
 def _ir_expand_add(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
     require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_add")
-    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_add")
+    require_dtypes_match(
+        [getattr(out.type, "dtype", None), getattr(scalar.type, "dtype", None)], dt, subject="expand_add"
+    )
     return _create_dim_op([out, src, scalar], row_op="row_expand_add", col_op="col_expand_add", dim=dim, span=span)
 
 
@@ -4593,7 +4605,9 @@ def _ir_expand_expdif(
     # TROWEXPANDEXPDIF/TCOLEXPANDEXPDIF only provide half/float variants.
     dt = getattr(src.type, "dtype", None)
     require_dtype_in(dt, _FLOAT_UNARY_DTYPES, subject="expand_expdif")
-    require_dtypes_match([getattr(out.type, "dtype", None)], dt, subject="expand_expdif")
+    require_dtypes_match(
+        [getattr(out.type, "dtype", None), getattr(scalar.type, "dtype", None)], dt, subject="expand_expdif"
+    )
     return _create_dim_op(
         [out, src, scalar], row_op="row_expand_expdif", col_op="col_expand_expdif", dim=dim, span=span
     )

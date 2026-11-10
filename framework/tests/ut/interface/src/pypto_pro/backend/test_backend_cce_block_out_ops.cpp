@@ -326,13 +326,26 @@ TEST_P(RowReductionOpTest, EmitsCorrectCode)
     auto code = RunCodegen(p.op_name, call);
     EXPECT_CONTAINS(code, p.cce_op + "(dst.tile, tile.tile, tmp.tile);");
 }
-INSTANTIATE_TEST_SUITE_P(
-    BlockOutRowReductionOps, RowReductionOpTest,
-    ::testing::Values(SimpleOpParam{"block.row_sum", "TROWSUM"}, SimpleOpParam{"block.row_max", "TROWMAX"},
-                      SimpleOpParam{"block.row_min", "TROWMIN"}, SimpleOpParam{"block.row_prod", "TROWPROD"},
-                      SimpleOpParam{"block.row_argmax", "TROWARGMAX"}, SimpleOpParam{"block.row_argmin", "TROWARGMIN"},
-                      SimpleOpParam{"block.col_argmax", "TCOLARGMAX"},
-                      SimpleOpParam{"block.col_argmin", "TCOLARGMIN"}));
+INSTANTIATE_TEST_SUITE_P(BlockOutRowReductionOps, RowReductionOpTest,
+                         ::testing::Values(SimpleOpParam{"block.row_sum", "TROWSUM"},
+                                           SimpleOpParam{"block.row_max", "TROWMAX"},
+                                           SimpleOpParam{"block.row_min", "TROWMIN"},
+                                           SimpleOpParam{"block.row_prod", "TROWPROD"}));
+
+class ArgReductionOpTest : public ::testing::TestWithParam<SimpleOpParam> {};
+TEST_P(ArgReductionOpTest, ReusesSrcAsTmp)
+{
+    auto& p = GetParam();
+    auto tile = MakeTileType();
+    auto call = MakeCall(p.op_name, {MakeVar("dst", tile), MakeVar("tile", tile)});
+    auto code = RunCodegen(p.op_name, call);
+    EXPECT_CONTAINS(code, p.cce_op + "(dst.tile, tile.tile, tile.tile);");
+}
+INSTANTIATE_TEST_SUITE_P(BlockOutArgReductionOps, ArgReductionOpTest,
+                         ::testing::Values(SimpleOpParam{"block.row_argmax", "TROWARGMAX"},
+                                           SimpleOpParam{"block.row_argmin", "TROWARGMIN"},
+                                           SimpleOpParam{"block.col_argmax", "TCOLARGMAX"},
+                                           SimpleOpParam{"block.col_argmin", "TCOLARGMIN"}));
 
 class RowColExpandOpTest : public ::testing::TestWithParam<SimpleOpParam> {};
 TEST_P(RowColExpandOpTest, EmitsCorrectCode)

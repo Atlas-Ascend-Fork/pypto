@@ -19,7 +19,7 @@
 ## 函数原型
 
 ```python
-pypto_pro.language.argmin(out: Tile, src: Tile, tmp: Tile, *, dim: int=0) -> None
+pypto_pro.language.argmin(out: Tile, src: Tile, *, dim: int=0) -> None
 ```
 
 ## 参数说明
@@ -28,7 +28,6 @@ pypto_pro.language.argmin(out: Tile, src: Tile, tmp: Tile, *, dim: int=0) -> Non
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存放每行或者每列最小元素的索引值，支持的数据类型详见[约束说明](#约束说明)。<br>如果src的shape为[M, N]，dim=0时shape为[M, 1]；dim=1时shape为[1, N]。 |
 | src | 输入 | 源操作数，Tile类型，支持的数据类型详见[约束说明](#约束说明)。 |
-| tmp | 输入 | 兼容性临时Tile，当前调用仍须提供。建议使用与src相同的数据类型、Shape和有效Shape。 |
 | dim | 输入 | 查找维度，0表示获取每行最小值对应列索引，1表示获取每列最小值对应行索引。 |
 
 ## 返回值说明
@@ -59,18 +58,14 @@ def row_argmin_kernel(
     tile_a = pl.make_tile_group(
         type=pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
         addrs=0x0000, mutex_ids=[0])
-    tile_tmp = pl.make_tile_group(
-        type=pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
-        addrs=0x4000, mutex_ids=[1])
     tile_out = pl.make_tile_group(
         type=pl.TileType(shape=[64, 1], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
         addrs=0x8000, mutex_ids=[2])
     with pl.section_vector():
         cur_a = tile_a.current()
-        cur_tmp = tile_tmp.current()
         cur_out = tile_out.current()
         pl.load(cur_a, x, [0, 0])
-        pl.argmin(cur_out, cur_a, cur_tmp)
+        pl.argmin(cur_out, cur_a)
         pl.store(z, cur_out, [0, 0])
 ```
 
@@ -97,18 +92,14 @@ def col_argmin_kernel(
     tile_a = pl.make_tile_group(
         type=pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
         addrs=0x0000, mutex_ids=[0])
-    tile_tmp = pl.make_tile_group(
-        type=pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
-        addrs=0x4000, mutex_ids=[1])
     tile_out = pl.make_tile_group(
         type=pl.TileType(shape=[1, 128], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec),
         addrs=0x8000, mutex_ids=[2])
     with pl.section_vector():
         cur_a = tile_a.current()
-        cur_tmp = tile_tmp.current()
         cur_out = tile_out.current()
         pl.load(cur_a, x, [0, 0])
-        pl.argmin(cur_out, cur_a, cur_tmp, dim=1)
+        pl.argmin(cur_out, cur_a, dim=1)
         pl.store(z, cur_out, [0, 0])
 ```
 

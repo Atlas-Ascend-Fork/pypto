@@ -1186,6 +1186,69 @@ TEST(CCECodegenTest, HoistsAutoDeclaredVFDestinations)
     EXPECT_LT(first_decl, firstAdd);
 }
 
+TEST(CCECodegenTest, RejectsTilePhiInVfIf)
+{
+    // Kernel codegen represents a Tile phi as SyncedTile while a __simd_vf__
+    // body uses raw __ubuf__ pointers, so a Tile merged across if/else cannot
+    // be emitted. The rejection belongs to codegen, next to the scalar-phi check.
+    auto tileType = std::make_shared<const ir::TileType>(std::vector<int64_t>{16, 16}, ir::DataType::FP16,
+                                                         std::optional<ir::MemRefPtr>(std::nullopt),
+                                                         std::optional<ir::TileView>(std::nullopt));
+    auto tile0 = MakeVar("tile0", tileType);
+    auto tile1 = MakeVar("tile1", tileType);
+    auto phi = MakeVar("tile_phi", tileType);
+    auto condition = MakeVar("condition", std::make_shared<const ir::ScalarType>(ir::DataType::BOOL));
+    auto thenYield = std::make_shared<const ir::YieldStmt>(std::vector<ir::ExprPtr>{tile0}, ir::Span::Unknown());
+    auto elseYield = std::make_shared<const ir::YieldStmt>(std::vector<ir::ExprPtr>{tile1}, ir::Span::Unknown());
+    auto ifStmt = std::make_shared<const ir::IfStmt>(condition, thenYield, std::optional<ir::StmtPtr>(elseYield),
+                                                     std::vector<ir::VarPtr>{phi}, ir::Span::Unknown());
+    auto vfBody = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{ifStmt}, ir::Span::Unknown());
+    auto program = MakeVfProgram("vf_body", vfBody, {tile0, tile1, condition}, {tile0, tile1, condition},
+                                 {tile0, tile1, condition});
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    try {
+        (void)codegen.GenerateSingle(program, npu::tile_fwk::NPUArch::DAV_3510);
+        FAIL() << "Expected a Tile phi inside a VF body to fail code generation";
+    } catch (const std::exception& error) {
+        EXPECT_NE(std::string(error.what()).find("Tile phi"), std::string::npos);
+    }
+}
+
+TEST(CCECodegenTest, EmitsRegisterParametersInVfSignature)
+{
+    // SIMD VF/callee register parameters are passed through the caller's
+    // register storage by reference (RtWrap<T>&), not copied into UB.
+    auto regType = std::make_shared<const ir::RegType>(ir::RegKind::VecReg, ir::DataType::FP32);
+    auto calleeReg = MakeVar("callee_reg", regType);
+    auto vfReg = MakeVar("vf_reg", regType);
+    auto calleeBody = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{}, ir::Span::Unknown());
+    auto call = std::make_shared<const ir::Call>("callee", std::vector<ir::ExprPtr>{vfReg}, ir::GetNoneType(),
+                                                 ir::Span::Unknown());
+    auto vfBody = std::make_shared<const ir::SeqStmts>(
+        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown())}, ir::Span::Unknown());
+    auto calleeFunc = std::make_shared<const ir::Function>("callee", std::vector<ir::VarPtr>{calleeReg},
+                                                           std::vector<ir::TypePtr>{}, calleeBody, ir::Span::Unknown(),
+                                                           ir::FunctionType::SIMD_CALLEE, false);
+    auto vfFunc = std::make_shared<const ir::Function>("vf_body", std::vector<ir::VarPtr>{vfReg},
+                                                       std::vector<ir::TypePtr>{}, vfBody, ir::Span::Unknown(),
+                                                       ir::FunctionType::SIMD_VF, false);
+    auto kernelFunc = std::make_shared<const ir::Function>(
+        "kernel", std::vector<ir::VarPtr>{}, std::vector<ir::TypePtr>{},
+        std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{}, ir::Span::Unknown()), ir::Span::Unknown(),
+        ir::FunctionType::IN_CORE, true);
+    auto program = std::make_shared<const ir::Program>(std::vector<ir::FunctionPtr>{calleeFunc, vfFunc, kernelFunc},
+                                                       "test_program", ir::Span::Unknown(),
+                                                       std::make_shared<ir::IRDebugInfo>());
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    std::string generated = codegen.GenerateSingle(program, npu::tile_fwk::NPUArch::DAV_3510);
+
+    EXPECT_NE(generated.find("__simd_callee__ inline void callee(RtWrap<float>& callee_reg)"), std::string::npos);
+    EXPECT_NE(generated.find("__simd_vf__ inline void vf_body(RtWrap<float>& vf_reg)"), std::string::npos);
+    EXPECT_NE(generated.find("callee(vf_reg);"), std::string::npos);
+}
+
 TEST(CCECodegenTest, HoistsDynamicVFLoopBoundAsUint16)
 {
     // In a __simd_vf__ body a non-constant loop bound is hoisted into a const

@@ -278,6 +278,23 @@ static std::string MakeBlockOutRowReductionCodegenCCE(const std::string& cceOpNa
 }
 
 // ============================================================================
+// Helper: Block explicit-output arg-reduction op  - args = [dst, tile]
+// Emits: OP(dst, tile, tile); the 3510 instruction's tmp operand is ignored,
+// so reuse src and avoid a separate UB allocation.
+// ============================================================================
+static std::string MakeBlockOutArgReductionCodegenCCE(const std::string& cceOpName, const ir::CallPtr& op,
+                                                      codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
+        << cceOpName << ": expected 2 args (dst, tile), got " << op->args_.size();
+    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    std::string tile = cce::GetOperandAsCode(codegen, op->args_[1]);
+    codegen.Emit(cceOpName + "(" + dst + ", " + tile + ", " + tile + ");");
+    return "";
+}
+
+// ============================================================================
 // Helper: Block explicit-output col-reduction op  - args = [dst, tile, tmp]
 // TCOLMAX emits: TCOLMAX(dst, tile);          ->2-arg form (no tmp)
 // TCOLSUM emits: TCOLSUM(dst, tile, tmp, false); ->4-arg form
@@ -2133,25 +2150,25 @@ REGISTER_BACKEND_OP(BackendCCE, "block.col_reduce")
 REGISTER_BACKEND_OP(BackendCCE, "block.row_argmax")
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeBlockOutRowReductionCodegenCCE("TROWARGMAX", op, codegen);
+        return MakeBlockOutArgReductionCodegenCCE("TROWARGMAX", op, codegen);
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "block.row_argmin")
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeBlockOutRowReductionCodegenCCE("TROWARGMIN", op, codegen);
+        return MakeBlockOutArgReductionCodegenCCE("TROWARGMIN", op, codegen);
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "block.col_argmax")
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeBlockOutRowReductionCodegenCCE("TCOLARGMAX", op, codegen);
+        return MakeBlockOutArgReductionCodegenCCE("TCOLARGMAX", op, codegen);
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "block.col_argmin")
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeBlockOutRowReductionCodegenCCE("TCOLARGMIN", op, codegen);
+        return MakeBlockOutArgReductionCodegenCCE("TCOLARGMIN", op, codegen);
     });
 
 // ============================================================================

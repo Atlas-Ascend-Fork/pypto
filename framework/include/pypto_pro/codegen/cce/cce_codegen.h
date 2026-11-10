@@ -577,12 +577,6 @@ private:
 
     int tileOffsetCounter_ = 0; ///< Counter for unique tile-offset GetItemExpr temp names
 
-    // Tile type dedup: maps tile_type_str ->alias name already emitted
-    std::map<std::string, std::string> emittedTileTypes_;
-
-    /// Track emitted tile reference aliases to avoid C++ redefinition errors
-    std::set<std::string> emittedTileAliases_;
-
     // Tuple Var C++ name -> the MakeTuple that was assigned to it.
     // Populated during body codegen by VisitStmt_(AssignStmtPtr) on tuple-typed lhs:
     // VisitExpr(rhs) drives currentTuple_ through MakeTuple literals, tuple-var aliases,

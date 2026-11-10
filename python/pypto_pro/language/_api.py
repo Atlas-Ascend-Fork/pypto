@@ -1008,25 +1008,23 @@ def sum(out: Tile, src: Tile, tmp: Tile, *, dim: int = 0) -> None:
 
 
 @_api_decl
-def argmax(out: Tile, src: Tile, tmp: Tile, *, dim: int = 0) -> None:
+def argmax(out: Tile, src: Tile, *, dim: int = 0) -> None:
     """Argmax reduction along the specified dimension.
 
     Args:
         out: Destination Tile
         src: Source Tile
-        tmp: Workspace Tile (required by hardware)
         dim: Reduction dimension — 0=row (last axis), 1=column (first axis)
     """
 
 
 @_api_decl
-def argmin(out: Tile, src: Tile, tmp: Tile, *, dim: int = 0) -> None:
+def argmin(out: Tile, src: Tile, *, dim: int = 0) -> None:
     """Argmin reduction along the specified dimension.
 
     Args:
         out: Destination Tile
         src: Source Tile
-        tmp: Workspace Tile (required by hardware)
         dim: Reduction dimension — 0=row (last axis), 1=column (first axis)
     """
 

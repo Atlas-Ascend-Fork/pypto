@@ -73,6 +73,8 @@ VF bodies, with VF-specific restrictions: pl.range bounds in [0, 65535], no
       and the vf-input flag) while the merged scalar phi is consumed again as
       a vf argument within the same loop iteration (runtime scalar phi
       rejected by the SIMD VF codegen interception)
+  46. a Tile assigned in a runtime if/else branch (Tile phi rejected by the
+      codegen: merging Tile values is not supported in a SIMD VF body)
 
 Requires an Ascend 950 (3510) device; skips otherwise.
 """
@@ -575,6 +577,37 @@ def _branch_phi_kernel(
         pl.load(src, x, [0, 0])
         pl.load(dst, y, [0, 0])
         _branch_phi_vf(src, dst, count)
+        pl.store(y, dst, [0, 0])
+
+
+@pl.vector_function
+def _branch_tile_phi_vf(src, dst, count):
+    # A Tile assigned in a runtime if/else branch would be a Tile phi. CCE
+    # codegen rejects it: kernel codegen represents tiles as SyncedTile, while
+    # a __simd_vf__ body uses raw __ubuf__ pointers.
+    t = src
+    if count > 0:
+        t = dst
+    mask = vf.update_mask(64, dtype=pl.DT_FP32)
+    reg = vf.load_align(t, 0)
+    vf.store_align(dst, reg, mask, 0)
+
+
+@pl.jit(auto_mutex=True)
+def _branch_tile_phi_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _branch_tile_phi_vf(src, dst, count)
         pl.store(y, dst, [0, 0])
 
 
@@ -1620,6 +1653,20 @@ def test_if_branch_scalar_phi():
     y = torch.full((1, N), SENTINEL, device=device)
     with pytest.raises(NotSupported, match="runtime scalar phi"):
         _branch_phi_kernel[None, 1](x, y, count)
+
+
+@pytest.mark.soc("950", "960")
+def test_if_branch_tile_phi():
+    """A Tile assigned in a runtime if/else branch is a Tile phi, which
+    codegen rejects: merging Tile values is not supported in a SIMD VF body."""
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    count = N
+    y = torch.full((1, N), SENTINEL, device=device)
+    with pytest.raises(NotSupported, match="merging Tile values across an if/else is not supported"):
+        _branch_tile_phi_kernel[None, 1](x, y, count)
 
 
 @pytest.mark.soc("950", "960")

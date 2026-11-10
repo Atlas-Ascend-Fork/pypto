@@ -45,6 +45,8 @@ pypto_pro.language.scatter(out: Tile, src: Tile, idx: Tile) -> None
   | DT_FP16、DT_BF16、DT_INT16、DT_UINT16 | DT_INT16、DT_UINT16 | 16 bit数据使用16 bit索引。 |
   | DT_INT8、DT_UINT8 | DT_INT16、DT_UINT16 | 8 bit数据使用16 bit索引。 |
 
+- out、src和idx地址不得重叠。
+
 ## 调用示例
 
 ### 基本用法

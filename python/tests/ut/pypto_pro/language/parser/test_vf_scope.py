@@ -227,6 +227,34 @@ def test_nested_vector_helpers_restore_caller_scope(after):
         _check_ir_snapshot(str(program), "test_nested_vector_helpers_restore_caller_scope")
 
 
+def test_vf_helper_accepts_register_parameter():
+    @pl.vector_function
+    def _store_reg(dst, reg):
+        mask = vf.update_mask(64, dtype=pl.DT_FP32)
+        vf.store_align(dst, reg, mask, 0)
+
+    @pl.vector_function
+    def _load_store(src, dst):
+        reg = vf.load_align(src, 0)
+        _store_reg(dst, reg)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(n: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        src = pl.make_tile(tile_type, addr=0x0000)
+        dst = pl.make_tile(tile_type, addr=0x1000)
+        with pl.section_vector():
+            _load_store(src, dst)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    func = program.get_function(kernel.__name__)
+    calls = [
+        stmt.expr for stmt in func.body.stmts
+        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == "simd.call"
+    ]
+    assert [call.kwargs["callee"] for call in calls] == ["_load_store"]
+
+
 # One helper per accessor: the parser reads these from source, so the cursor call has to be
 # spelled literally -- a getattr(group, name)() indirection never reaches the tile-group route.
 @pl.vector_function
@@ -279,3 +307,17 @@ def test_tile_group_accessor_is_rejected_inside_vector_function(advance, accesso
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     assert error.value.span["line"] == inspect.getsourcelines(advance)[1] + 2
     assert "pass it to the vector function" in error.value.hint
+
+
+def test_register_parameter_types_match_codegen_type():
+    from pypto_pro.language.parser._call_parser import _types_compatible
+
+    fp16 = ir.RegType(ir.RegKind.VecReg, ir.DataType.FP16)
+    fp32 = ir.RegType(ir.RegKind.VecReg, ir.DataType.FP32)
+    mask_u16 = ir.RegType(ir.RegKind.PredReg, ir.DataType.UINT16)
+    mask_fp32 = ir.RegType(ir.RegKind.PredReg, ir.DataType.FP32)
+    assert _types_compatible(fp16, fp16)
+    assert not _types_compatible(fp16, fp32)
+    assert not _types_compatible(fp16, mask_u16)
+    # MaskReg is a fixed C++ type; its dtype is only a placeholder.
+    assert _types_compatible(mask_u16, mask_fp32)

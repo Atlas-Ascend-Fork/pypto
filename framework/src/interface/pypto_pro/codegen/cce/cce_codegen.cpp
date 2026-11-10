@@ -535,10 +535,17 @@ std::string CCECodegen::BuildVfFunctionSignature(const ir::FunctionPtr& func)
                 sig << ", uint32_t " << paramName << "__valid_row";
                 sig << ", uint32_t " << paramName << "__valid_col";
             }
+        } else if (auto regType = ir::As<ir::RegType>(param->GetType())) {
+            // SIMD VF/callee register parameters are passed by reference so the
+            // callee can use the caller's register storage directly.
+            PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, !isSimt)
+                << "SIMT function '" << func->name_ << "' does not support register parameters";
+            sig << GetGeneratedType(param->GetType()) << "& " << paramName;
         } else {
             PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, false)
                 << (isSimt ? "SIMT function '" : "SIMD VF function '") << func->name_
-                << "' supports only TensorType, TileType, and ScalarType parameters";
+                << (isSimt ? "' supports only TensorType, TileType, and ScalarType parameters" :
+                             "' supports only TensorType, TileType, ScalarType, and RegType parameters");
         }
         context_.RegisterVar(param, paramName);
     }
@@ -1209,6 +1216,10 @@ void CCECodegen::EmitFullPhiIf(const ir::IfStmtPtr& op)
         PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR,
                           !IsInSimdContext() || scalarTy == nullptr || IsBoolDtype(scalarTy->dtype_))
             << "if/else producing a runtime scalar phi is not supported inside a SIMD VF function";
+        auto tileTy = ir::As<ir::TileType>(returnVar->GetType());
+        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, !IsInSimdContext() || tileTy == nullptr)
+            << "if/else producing a Tile phi is not supported inside a SIMD VF function: "
+               "merging Tile values across an if/else is not supported";
     }
 
     // Declare the phi slots before the `if`: a phi has no initial value, but its C++ shape

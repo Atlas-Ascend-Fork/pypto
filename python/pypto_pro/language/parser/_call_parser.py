@@ -366,6 +366,15 @@ def _types_compatible(annotated: ir.Type, actual: ir.Type) -> bool:
         return _dtypes_compatible(annotated.dtype, actual.dtype)
     if isinstance(annotated, ir.PtrType) and isinstance(actual, ir.PtrType):
         return _dtypes_compatible(annotated.dtype, actual.dtype)
+    if isinstance(annotated, ir.RegType) and isinstance(actual, ir.RegType):
+        if annotated.regtype != actual.regtype:
+            return False
+        # MaskReg is a fixed C++ type and its dtype is a non-semantic
+        # placeholder; other register kinds carry the element type that
+        # selects the generated intrinsic.
+        if annotated.regtype == ir.RegKind.PredReg:
+            return True
+        return annotated.dtype == actual.dtype
     # TensorType / TileType both derive from ShapedType; compare dtype, ignore shape/memref.
     if isinstance(annotated, ir.ShapedType) and isinstance(actual, ir.ShapedType):
         return type(annotated) is type(actual) and _dtypes_compatible(annotated.dtype, actual.dtype)

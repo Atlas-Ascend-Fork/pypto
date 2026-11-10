@@ -203,10 +203,9 @@ REGISTER_OP("block.col_reduce")
         .set_description("Block explicit-output " #direction "-wise " description)                        \
         .add_argument("out", "Pre-allocated output index tile (TileType)")                                \
         .add_argument("tile", "Input tile (TileType)")                                                    \
-        .add_argument("tmp", "Scratch tile required by hardware (TileType)")                              \
         .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,                              \
                           [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) { \
-            return DeduceBlockOutType(args, kwargs, "block." #direction "_" #opSuffix, 3);                \
+            return DeduceBlockOutType(args, kwargs, "block." #direction "_" #opSuffix, 2);                \
         })
 
 REGISTER_BLOCK_REDUCE_IDX(row, argmax, "argmax: out[i,0] = argmax_j(tile[i,j])");

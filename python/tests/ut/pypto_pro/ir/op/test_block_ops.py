@@ -2027,3 +2027,24 @@ def test_store_tile_accepts_explicit_2_element_order():
     main_program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     ir_str = _program_ir(main_program.get_function(main.__name__))
     assert "block.store" in ir_str
+
+
+# ---------------------------------------------------------------------------
+# Expand scalar dtype contract
+# ---------------------------------------------------------------------------
+
+
+def test_expand_mul_rejects_scalar_dtype_mismatch():
+    with pytest.raises(InvalidType, match="expand_mul: dtype mismatch"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(shape=[128, 128], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+            scalar_type = pl.TileType(shape=[128, 1], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+            out_type = pl.TileType(shape=[128, 128], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+            src = pl.make_tile(src_type, addr=0x0000)
+            scalar = pl.make_tile(scalar_type, addr=0x10000)
+            out = pl.make_tile(out_type, addr=0x20000)
+            pl.expand_mul(out, src, scalar, dim=0)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
