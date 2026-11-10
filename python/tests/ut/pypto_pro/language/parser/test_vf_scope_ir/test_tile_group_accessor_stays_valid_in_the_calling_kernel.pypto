@@ -1,4 +1,4 @@
-function kernel incast(tensor<1 x 128, float, tensor_view<, , ND, %x_ptr>> %x_0) outcast() #entry(false) #type(Opaque) {
+function kernel incast(tensor<1 x 128, float, tensor_view<, , ND, %x_ptr>> %x_0) outcast() #entry(false) #type(pro) {
     tuple<int64_t, int64_t> %_tuple_anchor_0_0 = tuple(0, 512);
     tuple<int64_t, int64_t> %_tuple_anchor_1_0 = tuple(0, 1);
     mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1> %_tg_group_tiles_0_0 = block.make_mutex_tile(tuple(1, 128), tuple(), tuple(0), dtype=float, target_memory=Vec, compact=1, memref_addr=0, memref_size=512, memref_id=<id>);

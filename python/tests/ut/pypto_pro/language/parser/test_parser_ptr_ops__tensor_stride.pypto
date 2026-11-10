@@ -1,4 +1,4 @@
-function kernel incast(int64_t %entry_0, ptr<float> %p_0, tensor<64 x 128, float, tensor_view<, , ND, %t_ptr>> %t_0) outcast() #entry(false) #type(Opaque) {
+function kernel incast(int64_t %entry_0, ptr<float> %p_0, tensor<64 x 128, float, tensor_view<, , ND, %t_ptr>> %t_0) outcast() #entry(false) #type(pro) {
     tuple<int64_t, int64_t, int64_t> %_tuple_anchor_0_0 = tuple(4, 64, 128);
     tensor<4 x 64 x 128, float, tensor_view<, , ND, %p_0>> %row_major_0 = ptr.make_tensor(%p_0, tuple(4, 64, 128), tuple());
     tuple<int64_t, int64_t> %_tuple_anchor_1_0 = tuple(4, 2);

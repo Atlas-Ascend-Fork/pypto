@@ -1,5 +1,5 @@
 program #entry() {
-    function every_accepted_spelling incast(tensor<256 x 128, half, tensor_view<, , ND, %src_ptr>> %src_0, ptr<uint8_t> %ws_0) outcast() #entry(false) #type(Opaque) {
+    function every_accepted_spelling incast(tensor<256 x 128, half, tensor_view<, , ND, %src_ptr>> %src_0, ptr<uint8_t> %ws_0) outcast() #entry(false) #type(pro) {
         tuple<int64_t, int64_t> %_tuple_anchor_0_0 = tuple(64, 128);
         tuple<int64_t, int64_t> %_tuple_anchor_1_0 = tuple(0, 1);
         tuple<int64_t, int64_t> %_tuple_anchor_2_0 = tuple(2, 3);

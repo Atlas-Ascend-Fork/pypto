@@ -1,5 +1,5 @@
 program #entry() {
-    function k incast(tensor<64, half, tensor_view<, , ND, %x_ptr>> %x_0) outcast() #entry(false) #type(Opaque) {
+    function k incast(tensor<64, half, tensor_view<, , ND, %x_ptr>> %x_0) outcast() #entry(false) #type(pro) {
         mutex_tile<tile<1 x 4 x 8 x 8 x 16, half, tile_view<-1 x -1 x -1 x -1 x -1>, hw_info<row_major, none_box, 512, null, normal, NC1HWC0>>, 0> %_tg_g1_tiles_0_0 = block.make_mutex_tile(tuple(1, 4, 8, 8, 16), tuple(), tuple(), dtype=half, target_memory=Mat, compact=1, conv_layout=6, memref_addr=0, memref_size=8192, memref_id=<id>);
         mutex_tile<tile<1 x 4 x 8 x 8 x 16, half, tile_view<-1 x -1 x -1 x -1 x -1>, hw_info<row_major, none_box, 512, null, normal, NC1HWC0>>, 0> %_tg_g1_tiles_1_0 = block.make_mutex_tile(tuple(1, 4, 8, 8, 16), tuple(), tuple(), dtype=half, target_memory=Mat, compact=1, conv_layout=6, memref_addr=8192, memref_size=8192, memref_id=<id>);
         tuple<mutex_tile<tile<1 x 4 x 8 x 8 x 16, half, tile_view<-1 x -1 x -1 x -1 x -1>, hw_info<row_major, none_box, 512, null, normal, NC1HWC0>>, 0>, mutex_tile<tile<1 x 4 x 8 x 8 x 16, half, tile_view<-1 x -1 x -1 x -1 x -1>, hw_info<row_major, none_box, 512, null, normal, NC1HWC0>>, 0>> %_tg_g1_tiles_0 = tuple(%_tg_g1_tiles_0_0, %_tg_g1_tiles_1_0);

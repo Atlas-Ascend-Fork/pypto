@@ -1,4 +1,4 @@
-function round_trip incast(tensor<64, float, tensor_view<, , ND, %x_ptr>> %x_0, tensor<64, float, tensor_view<, , ND, %y_ptr>> %y_0) outcast() #entry(false) #type(Opaque) {
+function round_trip incast(tensor<64, float, tensor_view<, , ND, %x_ptr>> %x_0, tensor<64, float, tensor_view<, , ND, %y_ptr>> %y_0) outcast() #entry(false) #type(pro) {
     tuple<int64_t> %_tuple_anchor_0_0 = tuple(64);
     tuple<int64_t> %_tuple_anchor_1_0 = tuple(1);
     tensor<64, float, tensor_view<, 1, ND, %x_0>> %sum_val_0 = ptr.make_tensor(%x_0, tuple(64), tuple(1));

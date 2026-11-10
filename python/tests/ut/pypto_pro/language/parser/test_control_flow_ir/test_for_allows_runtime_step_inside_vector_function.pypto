@@ -1,5 +1,5 @@
 program #entry() {
-    function func incast(tensor<1 x 128, float, tensor_view<, , ND, %x_ptr>> %x_0, tensor<1 x 128, float, tensor_view<, , ND, %y_ptr>> %y_0, int64_t %count_0, int64_t %step_0) outcast() #entry(false) #type(Opaque) {
+    function func incast(tensor<1 x 128, float, tensor_view<, , ND, %x_ptr>> %x_0, tensor<1 x 128, float, tensor_view<, , ND, %y_ptr>> %y_0, int64_t %count_0, int64_t %step_0) outcast() #entry(false) #type(pro) {
         tuple<int64_t, int64_t> %closure_allowed_0 = tuple(5, 6);
         tuple<int64_t> %_tuple_anchor_0_0 = tuple(0);
         tuple<int64_t> %_tuple_anchor_1_0 = tuple(0);

@@ -1,4 +1,4 @@
-function matmul_mx_bias incast(tile<64 x 64, float, tile_view<-1 x -1>, hw_info<>> %dst, tile<64 x 64, float8_e4m3_t, tile_view<-1 x -1>, hw_info<>> %lhs, tile<64 x 64, float8_e5m2_t, tile_view<-1 x -1>, hw_info<>> %rhs, tile<64 x 2, float8_e8m0_t, tile_view<-1 x -1>, hw_info<row_major, row_major, 32, null, normal>> %scale_a, tile<2 x 64, float8_e8m0_t, tile_view<-1 x -1>, hw_info<col_major, col_major, 32, null, normal>> %scale_b, tile<1 x 64, float, tile_view<-1 x -1>, hw_info<>> %bias) outcast() #entry(false) #type(Opaque) {
+function matmul_mx_bias incast(tile<64 x 64, float, tile_view<-1 x -1>, hw_info<>> %dst, tile<64 x 64, float8_e4m3_t, tile_view<-1 x -1>, hw_info<>> %lhs, tile<64 x 64, float8_e5m2_t, tile_view<-1 x -1>, hw_info<>> %rhs, tile<64 x 2, float8_e8m0_t, tile_view<-1 x -1>, hw_info<row_major, row_major, 32, null, normal>> %scale_a, tile<2 x 64, float8_e8m0_t, tile_view<-1 x -1>, hw_info<col_major, col_major, 32, null, normal>> %scale_b, tile<1 x 64, float, tile_view<-1 x -1>, hw_info<>> %bias) outcast() #entry(false) #type(pro) {
     block.matmul_mx(%dst, %lhs, %rhs, %scale_a, %scale_b, %bias);
     return;
 }

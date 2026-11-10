@@ -1,5 +1,5 @@
 program #entry() {
-    function grouped_copy incast(tensor<1 x 64, float, tensor_view<, , ND, %a_ptr>> %a_0, tensor<1 x 64, float, tensor_view<, , ND, %out_ptr>> %out_0) outcast() #entry(false) #type(Opaque) {
+    function grouped_copy incast(tensor<1 x 64, float, tensor_view<, , ND, %a_ptr>> %a_0, tensor<1 x 64, float, tensor_view<, , ND, %out_ptr>> %out_0) outcast() #entry(false) #type(pro) {
         tuple<int64_t, int64_t> %_tuple_anchor_0_0 = tuple(0, 256);
         mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1> %_tg_group_tiles_0_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(0), dtype=float, target_memory=Vec, compact=1, memref_addr=0, memref_size=256, memref_id=<id>);
         mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1> %_tg_group_tiles_1_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(1), dtype=float, target_memory=Vec, compact=1, memref_addr=256, memref_size=256, memref_id=<id>);

@@ -641,6 +641,44 @@ void IRTextDumper::VisitStmt_(const StmtPtr& op)
 // ---------------------------------------------------------------------------
 // Function / Program
 // ---------------------------------------------------------------------------
+namespace {
+
+/// pypto_pro assignments always hold a Call; tensor's bare statement calls do not.
+class ProDialectDetector : public IRVisitor {
+public:
+    bool found = false;
+
+    void VisitStmt_(const AssignStmtPtr& op) override
+    {
+        found = found || As<Call>(op->value_) != nullptr;
+        if (!found) {
+            IRVisitor::VisitStmt_(op);
+        }
+    }
+
+    void VisitStmt_(const EvalStmtPtr& op) override
+    {
+        if (auto call = As<Call>(op->expr_)) {
+            found = found || call->name_.find('.') != std::string::npos || !call->kwargs_.empty();
+        }
+        if (!found) {
+            IRVisitor::VisitStmt_(op);
+        }
+    }
+
+private:
+    using IRVisitor::VisitStmt_;
+};
+
+bool IsProFunction(const FunctionPtr& func)
+{
+    ProDialectDetector detector;
+    detector.VisitStmt(func->body_);
+    return detector.found;
+}
+
+} // namespace
+
 void IRTextDumper::VisitFunction(const FunctionPtr& func)
 {
     stream_ << GetIndent() << IR_KW_FUNCTION << " " << func->name_;
@@ -660,7 +698,12 @@ void IRTextDumper::VisitFunction(const FunctionPtr& func)
         PrintType(func->returnTypes_[i]);
     }
     stream_ << IR_PUN_RPAREN;
-    PrintAttrDict(GetFunctionAttrDict(func));
+    auto attrs = GetFunctionAttrDict(func);
+    if (func->funcType_ == FunctionType::OPAQUE && IsProFunction(func)) {
+        // Opaque is the only role tensor and pypto_pro share; record the dialect there.
+        attrs[IR_KW_TYPE] = std::string("pro");
+    }
+    PrintAttrDict(attrs);
     PrintBody(func->body_);
 }
 

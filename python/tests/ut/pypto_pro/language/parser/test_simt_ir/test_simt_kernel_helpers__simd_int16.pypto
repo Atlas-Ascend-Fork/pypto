@@ -13,7 +13,7 @@ program #entry() {
         block.setval(%dst_0, %index_0, %_expr_tmp_0_0);
         return;
     }
-    function host incast(tensor<32, int16_t, tensor_view<, , ND, %dst_ptr>> %dst_0, tensor<32, int16_t, tensor_view<, , ND, %src_ptr>> %src_0) outcast() #entry(false) #type(Opaque) {
+    function host incast(tensor<32, int16_t, tensor_view<, , ND, %dst_ptr>> %dst_0, tensor<32, int16_t, tensor_view<, , ND, %src_ptr>> %src_0) outcast() #entry(false) #type(pro) {
         simt.launch(32, 1, 1, %dst_0, %src_0, callee=mixed, max_threads=32);
         return;
     }

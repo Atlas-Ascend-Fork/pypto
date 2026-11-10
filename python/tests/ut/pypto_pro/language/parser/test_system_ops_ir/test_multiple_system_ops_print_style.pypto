@@ -1,4 +1,4 @@
-function main incast(tensor<64, float, tensor_view<, , ND, %x_ptr>> %x_0) outcast() #entry(false) #type(Opaque) {
+function main incast(tensor<64, float, tensor_view<, , ND, %x_ptr>> %x_0) outcast() #entry(false) #type(pro) {
     system.sync_src_dyn(0, set_pipe=1, wait_pipe=4);
     system.sync_dst_dyn(0, set_pipe=4, wait_pipe=2);
     system.bar_all();

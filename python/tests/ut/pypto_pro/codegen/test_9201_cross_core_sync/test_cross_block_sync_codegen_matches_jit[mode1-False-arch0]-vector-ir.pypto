@@ -1,5 +1,5 @@
 program #entry() {
-    function kernel incast(int32_t %event_id_0) outcast() #entry(false) #type(Opaque) {
+    function kernel incast(int32_t %event_id_0) outcast() #entry(false) #type(pro) {
         system.set_cross_core(pipe=2, event_id=3, sync_mode=1);
         return;
     }

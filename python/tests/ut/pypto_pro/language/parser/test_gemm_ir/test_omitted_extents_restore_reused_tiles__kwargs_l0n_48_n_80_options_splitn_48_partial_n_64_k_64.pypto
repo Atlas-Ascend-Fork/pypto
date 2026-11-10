@@ -1,4 +1,4 @@
-function kernel incast(tensor<1, half, tensor_view<, , ND, %arg_ptr>> %arg_0, int32_t %extent_0) outcast() #entry(false) #type(Opaque) {
+function kernel incast(tensor<1, half, tensor_view<, , ND, %arg_ptr>> %arg_0, int32_t %extent_0) outcast() #entry(false) #type(pro) {
     tuple<int64_t, int64_t> %_tuple_anchor_0_0 = tuple(0, 1);
     mutex_tile<tile<64 x 128, half, tile_view<-1 x -1>, hw_info<col_major, row_major, 512, null, null>>, 1> %_tg_ga_tiles_0_0 = block.make_mutex_tile(tuple(64, 128), tuple(), tuple(0), dtype=half, target_memory=Mat, blayout=2, slayout=1, compact=0, memref_addr=0, memref_size=16384, memref_id=<id>);
     mutex_tile<tile<64 x 128, half, tile_view<-1 x -1>, hw_info<col_major, row_major, 512, null, null>>, 1> %_tg_ga_tiles_1_0 = block.make_mutex_tile(tuple(64, 128), tuple(), tuple(1), dtype=half, target_memory=Mat, blayout=2, slayout=1, compact=0, memref_addr=16384, memref_size=16384, memref_id=<id>);
@@ -154,7 +154,7 @@ function kernel incast(tensor<1, half, tensor_view<, , ND, %arg_ptr>> %arg_0, in
     }
     return;
 }
-function kernel incast(tensor<1, half, tensor_view<, , ND, %arg_ptr>> %arg_0, int32_t %extent_0) outcast() #entry(false) #type(Opaque) {
+function kernel incast(tensor<1, half, tensor_view<, , ND, %arg_ptr>> %arg_0, int32_t %extent_0) outcast() #entry(false) #type(pro) {
     tuple<int64_t, int64_t> %_tuple_anchor_0_0 = tuple(0, 1);
     mutex_tile<tile<64 x 128, half, tile_view<-1 x -1>, hw_info<col_major, row_major, 512, null, null>>, 1> %_tg_ga_tiles_0_0 = block.make_mutex_tile(tuple(64, 128), tuple(), tuple(0), dtype=half, target_memory=Mat, blayout=2, slayout=1, compact=0, memref_addr=0, memref_size=16384, memref_id=<id>);
     mutex_tile<tile<64 x 128, half, tile_view<-1 x -1>, hw_info<col_major, row_major, 512, null, null>>, 1> %_tg_ga_tiles_1_0 = block.make_mutex_tile(tuple(64, 128), tuple(), tuple(1), dtype=half, target_memory=Mat, blayout=2, slayout=1, compact=0, memref_addr=16384, memref_size=16384, memref_id=<id>);

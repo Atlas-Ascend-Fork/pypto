@@ -1,5 +1,5 @@
 program #entry() {
-    function kern incast(tensor<256 x 128, half, tensor_view<, , ND, %src_ptr>> %src_0, ptr<uint8_t> %ws_0) outcast() #entry(false) #type(Opaque) {
+    function kern incast(tensor<256 x 128, half, tensor_view<, , ND, %src_ptr>> %src_0, ptr<uint8_t> %ws_0) outcast() #entry(false) #type(pro) {
         bool %__inline_0_returned_0 = false;
         tuple<int64_t, int64_t> %_tuple_anchor_0_0 = tuple(64, 128);
         tuple<int64_t, int64_t> %_tuple_anchor_1_0 = tuple(4, 5);

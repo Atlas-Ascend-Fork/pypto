@@ -7,7 +7,7 @@ program #entry() {
         vf.store_align(%dst_0, %result_0, %mask_0);
         return;
     }
-    function _shift_kernel incast(ptr<int32_t> %x_0) outcast() #entry(false) #type(Opaque) {
+    function _shift_kernel incast(ptr<int32_t> %x_0) outcast() #entry(false) #type(pro) {
         mutex_tile<tile<1 x 64, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=int32_t, target_memory=Vec, compact=1, memref_addr=0, memref_size=256, memref_id=<id>);
         mutex_tile<tile<1 x 64, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %shift_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=int32_t, target_memory=Vec, compact=1, memref_addr=256, memref_size=256, memref_id=<id>);
         mutex_tile<tile<1 x 64, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=int32_t, target_memory=Vec, compact=1, memref_addr=512, memref_size=256, memref_id=<id>);

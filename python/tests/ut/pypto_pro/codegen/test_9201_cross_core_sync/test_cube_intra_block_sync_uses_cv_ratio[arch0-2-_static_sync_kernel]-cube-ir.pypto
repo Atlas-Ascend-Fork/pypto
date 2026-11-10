@@ -1,5 +1,5 @@
 program #entry() {
-    function _static_sync_kernel incast(tensor<1, int32_t, tensor_view<, , ND, %x_ptr>> %x_0) outcast() #entry(false) #type(Opaque) {
+    function _static_sync_kernel incast(tensor<1, int32_t, tensor_view<, , ND, %x_ptr>> %x_0) outcast() #entry(false) #type(pro) {
         system.set_cross_core(pipe=5, event_id=3, sync_mode=2);
         system.wait_cross_core(pipe=5, event_id=3, sync_mode=2);
         return;
