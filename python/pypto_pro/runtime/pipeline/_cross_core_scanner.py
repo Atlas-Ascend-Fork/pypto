@@ -38,7 +38,7 @@ from ..._errors import (
     OutOfRange,
     span_of,
 )
-from ._astutil import buffer_decl_location, stmt_header
+from ._astutil import buffer_decl_location, loop_body_sites, stmt_header
 
 if TYPE_CHECKING:
     from pypto_pro.ir.op.ptr_ops import TensorFacts
@@ -288,13 +288,18 @@ def _validate_event_id_range(name: str, label: str, ids: tuple, span) -> None:
 
 
 def validate_bound_buffer_decls(func_def: ast.FunctionDef, unbound_decls: list) -> None:
-    """Refuse a buffer declaration that no kernel-body variable holds.
+    """Refuse a buffer declaration inside a loop that no kernel-body variable holds.
 
     The pipeline identifies every buffer by the kernel-body variable bound to its
     declaration, so one declared inside a stage, inside a function a stage calls, or
-    handed straight to a call as an argument has nothing to be tracked by.
+    handed straight to a call as an argument has nothing to be tracked by. Only a
+    declaration whose ``site`` is in a loop is the pipeline's to track; one made outside
+    every loop belongs to code the pipeline does not analyse.
     """
+    in_loop = loop_body_sites(func_def)
     for decl in sorted(unbound_decls, key=lambda decl: decl.site or (0, 0)):
+        if decl.site not in in_loop:
+            continue
         # Only a GM view sits in DDR, and only make_tensor declares one.
         written = "pl.make_tensor()" if decl.memory == MemorySpace.DDR else "pl.make_tile_group()"
         span, declared_at = buffer_decl_location(func_def, decl)

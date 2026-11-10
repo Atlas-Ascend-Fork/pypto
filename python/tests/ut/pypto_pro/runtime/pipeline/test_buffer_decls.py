@@ -190,6 +190,25 @@ def test_a_gm_slot_shape_taken_off_another_tensor_folds_into_the_slot_size():
     assert "gm.shape)" in pick, pick
 
 
+@pl.jit(arch="3510", auto_mutex=True, pipeline=_CONFIG, name="decl_in_kernel_helper")
+def in_kernel_helper(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT_UINT8]):
+    gm = _gm(ws)
+    ub = _ub()
+    mat = _mat()
+    with pl.section_vector():
+        _warm_up(src)
+    for i in pl.range(0, NT):
+        with pl.section_vector():
+            produce(i, src, gm, ub)
+        with pl.section_cube():
+            consume(i, gm, mat)
+
+
+def test_a_declaration_outside_every_loop_is_left_to_the_code_that_made_it():
+    # _warm_up declares its own group and keeps it: nothing the pipeline tracks.
+    assert set(transform(in_kernel_helper).facts.buffer_facts) == {"gm", "ub", "mat"}
+
+
 # ---------------------------------------------------------------------------
 # Refused: no kernel-body variable holds the buffer.
 # ---------------------------------------------------------------------------
@@ -239,20 +258,6 @@ def gm_passed_directly(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.D
             consume(i, _gm(ws), mat)
 
 
-@pl.jit(arch="3510", auto_mutex=True, pipeline=_CONFIG, name="decl_in_kernel_helper")
-def in_kernel_helper(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT_UINT8]):
-    gm = _gm(ws)
-    ub = _ub()
-    mat = _mat()
-    with pl.section_vector():
-        _warm_up(src)
-    for i in pl.range(0, NT):
-        with pl.section_vector():
-            produce(i, src, gm, ub)
-        with pl.section_cube():
-            consume(i, gm, mat)
-
-
 @pytest.mark.parametrize(
     ("kernel", "pointed_at"),
     [
@@ -262,7 +267,6 @@ def in_kernel_helper(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT_
         (in_stage_helper, "produce_through_helper(i, src, gm)"),
         (passed_directly, "produce(i, src, gm, _ub())"),
         (gm_passed_directly, "produce(i, src, _gm(ws), ub)"),
-        (in_kernel_helper, "_warm_up(src)"),
     ],
 )
 def test_a_declaration_no_kernel_variable_holds_is_refused(kernel, pointed_at):

@@ -154,6 +154,43 @@ def _build_system_sync_stmt(fn_name: str, pipe_name: str, event_id: ast.expr) ->
     return ast.Expr(value=call, lineno=0)
 
 
+def _cross_loop_barrier(info: PipelineInfo, loop_count: int) -> list[ast.stmt]:
+    """The whole-core barrier that closes this pipeline loop off — empty for the last one.
+
+    It goes at the very end of the loop's tail, after the sync drain has collected every
+    permit, so the next pipeline starts with both cores aligned on the buffers it reuses.
+    """
+    if info.loop_index >= loop_count - 1:
+        return []
+    return [_build_sync_all_stmt()]
+
+
+def _build_sync_all_stmt() -> ast.stmt:
+    """Build `pl.system.sync_all(core_type=pl.SyncCoreType.MIX)`.
+
+    MIX because the statement sits at the kernel's top level, which both core types execute.
+    """
+    call = ast.Call(
+        func=ast.Attribute(
+            value=ast.Attribute(value=ast.Name(id="pl", ctx=ast.Load()), attr="system", ctx=ast.Load()),
+            attr="sync_all",
+            ctx=ast.Load(),
+        ),
+        args=[],
+        keywords=[
+            ast.keyword(
+                arg="core_type",
+                value=ast.Attribute(
+                    value=ast.Attribute(value=ast.Name(id="pl", ctx=ast.Load()), attr="SyncCoreType", ctx=ast.Load()),
+                    attr="MIX",
+                    ctx=ast.Load(),
+                ),
+            ),
+        ],
+    )
+    return ast.Expr(value=call, lineno=0)
+
+
 # The serial path's task counter, playing the role the ctx slot's _pl_task_id plays in the
 # full pipeline: the running task number that indexes each buffer's event-id tuple. A plain
 # variable because that path has no ctx to carry it in.
@@ -368,11 +405,11 @@ def transform_pipeline(
         sync = _build_sync_plan(info)
         if preload == 0:
             # Validation mode: keep the serial loop, only auto-insert cross-core sync.
-            _transform_serial(new_func.body, info, sync)
+            _transform_serial(new_func.body, info, sync, len(infos))
         else:
             # ctx ring buffer depth = max_delay + 1
             depth = max((s.delay for s in info.stages), default=0) + 1
-            _transform_body(new_func.body, info, depth, sync)
+            _transform_body(new_func.body, info, depth, sync, len(infos))
 
     ast.fix_missing_locations(new_func)
     return new_func
@@ -469,13 +506,20 @@ def _build_counter_incr(name: str) -> ast.stmt:
     )
 
 
-def _transform_serial(func_body: list[ast.stmt], info: PipelineInfo, sync: SyncPlan) -> None:
+def _transform_serial(
+    func_body: list[ast.stmt],
+    info: PipelineInfo,
+    sync: SyncPlan,
+    loop_count: int,
+) -> None:
     """Serial mode (preload 0): keep the loop structure, only auto-insert cross-core sync.
 
       1. Stage-to-stage sync goes INSIDE the pipeline loop: wait/set around each stage call,
          indexed by `_pl_sync_id % slot_count`.
       2. decls (lifted ids + `_pl_sync_id = 0`) + pre-fire go BEFORE the OUTERMOST loop and
          the sync drain AFTER it, so they run once and `_pl_sync_id` advances continuously.
+
+    The cross-loop barrier closes the tail off after that drain (_cross_loop_barrier).
 
     No ctx / guard / delay.
     """
@@ -494,7 +538,7 @@ def _transform_serial(func_body: list[ast.stmt], info: PipelineInfo, sync: SyncP
         func_body, info,
         transform_loop=transform_loop,
         before_loop=_build_serial_decls(info, sync) + sync_prefire,
-        after_loop=sync_drain,
+        after_loop=sync_drain + _cross_loop_barrier(info, loop_count),
     )
 
 
@@ -719,6 +763,7 @@ def _transform_body(
     info: PipelineInfo,
     depth: int,
     sync: SyncPlan,
+    loop_count: int,
 ) -> None:
     """Full-pipeline transform, on the shared _place_around_pipeline_loop skeleton:
 
@@ -726,7 +771,8 @@ def _transform_body(
          buffer + delay + is_valid guards).
       2. Declarations (_pl_ctx_arr, _pl_task_id, lifted ids, pre-fire) go BEFORE the
          OUTERMOST loop; AFTER it come the drain BEATS that let the delayed stages catch up,
-         then the sync DRAIN that balances set(bwd)/wait(bwd).
+         then the sync DRAIN that balances set(bwd)/wait(bwd), then the cross-loop barrier
+         (_cross_loop_barrier).
     """
     # Make the index behind every outside-the-loop slot pick explicit first, so the ctx can
     # carry it and each stage re-selects its own beat's slot.
@@ -744,7 +790,7 @@ def _transform_body(
         before_loop=_build_declarations(info, depth, sync) + sync_prefire,
         # Drain beats first, then the sync drain: the beats emit the set(bwd) the last
         # tasks still owe, which the waits in the sync drain then consume.
-        after_loop=_build_drain_beats(info, depth, sync) + sync_drain,
+        after_loop=_build_drain_beats(info, depth, sync) + sync_drain + _cross_loop_barrier(info, loop_count),
     )
 
 

@@ -33,8 +33,9 @@ The cross-core handover runs vector -> cube: the vector stage writes a Mat buffe
 consume — they are the other half of a pair, which every pipeline loop has to hold — while
 the numbers this test checks are produced and stored by the vector side.
 
-The whole-core barrier between the two loops is the user's own, as it always is: the
-framework synchronises inside a pipeline loop, never between two of them.
+The whole-core barrier between the two loops is inserted by the framework: every pipeline
+loop but the last gets a ``pl.system.sync_all(core_type=pl.SyncCoreType.MIX)`` after its
+drain. Neither kernel below writes one, which is what makes that insertion visible here.
 """
 
 import logging
@@ -187,8 +188,6 @@ def four_stage_kernel(
         with pl.section_cube():
             a_use_hi(i, a_hi, a_left)
 
-    pl.system.sync_all(core_type=pl.SyncCoreType.MIX)
-
     for j in pl.range(0, NT):
         with pl.section_vector():
             b_prep_lo(j, src, out, b_lo, b_ub)
@@ -244,8 +243,6 @@ def mixed_preload_kernel(
             a_prep_lo(i, src, out, a_lo, a_ub)
         with pl.section_cube():
             a_use_lo(i, a_lo, a_left)
-
-    pl.system.sync_all(core_type=pl.SyncCoreType.MIX)
 
     for j in pl.range(0, NT):
         with pl.section_vector():

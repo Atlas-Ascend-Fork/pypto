@@ -32,9 +32,11 @@ from ._astutil import (
     buffer_decl_location,
     call_name,
     get_funcdef,
+    loop_body_sites,
     slot_accessor,
     spans_in_function,
     stmt_header,
+    walk_skipping_defs,
 )
 
 
@@ -86,13 +88,7 @@ def reject_buffer_decls_in_loops(func_def, buffer_facts: dict) -> None:
     ``site`` on each declaration's facts is where in the kernel body it was parsed: its
     statement, or for one returned by a function, the call to that function.
     """
-    in_loop = {
-        (node.lineno, node.col_offset)
-        for loop in _walk_skipping_defs(func_def)
-        if isinstance(loop, (ast.For, ast.While))
-        for node in _walk_skipping_defs(loop)
-        if hasattr(node, "lineno")
-    }
+    in_loop = loop_body_sites(func_def)
     for name, decl in buffer_facts.items():
         if decl.site in in_loop:
             span, declared_at = buffer_decl_location(func_def, decl)
@@ -347,7 +343,7 @@ def _check_name_collisions(func_def, framework_names: set) -> None:
         )
 
 
-def validate_kernel_structure(infos: list, preload) -> None:
+def validate_kernel_structure(infos: list, preload, func_def) -> None:
     """Structural checks about the KERNEL as a whole, not about one pipeline.
 
     Handed every pipeline the kernel holds, so it can check how they sit together; run from
@@ -358,6 +354,7 @@ def validate_kernel_structure(infos: list, preload) -> None:
     """
     _check_preload_count(preload, len(infos))
     _check_distinct_outer_loops(infos)
+    _check_barrier_placement(infos, func_def)
 
 
 def _check_preload_count(preload, loop_count: int) -> None:
@@ -400,6 +397,32 @@ def _check_distinct_outer_loops(infos: list) -> None:
                 f"Move one of them out, or put the stages of both into a single loop.",
                 span=span_of(info.pipeline_loop.iter),
             )
+
+
+def _check_barrier_placement(infos: list, func_def) -> None:
+    """Every pipeline but the last must hang off a loop that sits in the kernel body itself.
+
+    The whole-core barrier between two consecutive pipelines goes where that pipeline's drain
+    goes — right after its outermost enclosing loop. A ``pl.system.sync_all`` with
+    ``core_type=MIX`` may not sit inside a ``with pl.section_*()`` block, and inside a branch
+    it would be reached by only some of the cores, so the statement list holding that loop has
+    to be the kernel body.
+
+    The last pipeline needs no barrier, so where it sits is not this check's business.
+    """
+    for info in infos[:-1]:
+        outer = info.outer_loop
+        if outer is None or any(stmt is outer for stmt in func_def.body):
+            continue
+        raise InvalidOperation(
+            "pipeline: this pipeline loop is followed by another one, so the framework "
+            "places a whole-core `pl.system.sync_all` between them, but the loop is nested "
+            "inside a `with` block or a branch rather than sitting in the kernel body, and "
+            "the barrier cannot go there: a MIX sync_all must not be inside a section block, "
+            "and inside a branch only some cores would reach it.\n"
+            "Move this pipeline loop (and its enclosing loop, if any) out to the kernel body.",
+            span=span_of(info.pipeline_loop.iter),
+        )
 
 
 def validate_structure(info, func_def=None, stage_func_names: set | None = None) -> None:
@@ -581,7 +604,7 @@ def _check_no_return_in_loop(info) -> None:
     outer = info.outer_loop
     if outer is None:
         return
-    for node in _walk_skipping_defs(outer):
+    for node in walk_skipping_defs(outer):
         if not isinstance(node, ast.Return):
             continue
         header = ast.unparse(outer).splitlines()[0].rstrip(":")
@@ -602,15 +625,6 @@ def _check_no_return_in_loop(info) -> None:
             f"leaving those stages unrun and the cross-core sync unpaired.\n{fix}",
             span=span_of(node),
         )
-
-
-def _walk_skipping_defs(node):
-    """ast.walk without descending into nested function or lambda bodies."""
-    for child in ast.iter_child_nodes(node):
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            continue
-        yield child
-        yield from _walk_skipping_defs(child)
 
 
 def _check_alternating_sections(info) -> None:

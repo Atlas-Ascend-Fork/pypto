@@ -133,7 +133,7 @@ for ki in pl.range(0, N_ITER):
         stage4(ki, sub_id, out, out_vec_db)
 ```
 
-一个kernel内可以写多个独立的for循环，每个循环各自做流水变换，互不影响，多个循环按源码顺序先后执行，preload可以逐循环配置（见下一节）。
+一个kernel内可以写多个独立的for循环，每个循环各自做流水变换，互不影响，多个循环按源码顺序先后执行，preload可以逐循环配置（见下一节）。相邻两条流水之间的全核同步由框架自动插入，不需要手写。
 
 ```python
 import pypto_pro.language as pl
@@ -144,7 +144,7 @@ for ki in pl.range(0, N_ITER):        # 第一条流水
     with pl.section_vector():
         stage2(ki, ...)
 
-pl.system.sync_all(core_type=pl.SyncCoreType.MIX)
+# 此处的全核同步由框架自动插入，无需手写
 
 for kj in pl.range(0, M_ITER):        # 第二条流水
     with pl.section_cube():
@@ -158,7 +158,7 @@ for kj in pl.range(0, M_ITER):        # 第二条流水
 > - 同一条流水的stage调用需要放在同一个for循环内，循环步长必须为正，不支持倒序迭代。每个`section_cube()`或`section_vector()`块只能包含一个stage调用，各stage需要按Cube、Vector严格交替排列；第一个stage与最后一个stage之间不能插入其他语句。
 > - 流水循环体内不能直接获取或操作跨核Buffer，以及与跨核Buffer复用地址的核内Buffer，应把这些操作放进stage函数。同一个stage函数在一条流水中只能调用一次，不同stage函数不能重名。
 > - 可以用if语句控制stage是否执行，但条件必须是编译期常量。在流水循环外调用`group.next()`取Tile时，需要使用单独的赋值语句，不能嵌入其他表达式；同一个变量只能取一次Tile，需要多个Tile时应使用多个变量。
-> - 一个kernel可以包含多个独立的流水循环，但这些循环不能嵌在同一个外层循环中，循环之间需要手动插入全核同步。kernel内不要使用以`_pl_`开头的框架保留变量名。
+> - 一个kernel可以包含多个独立的流水循环，但这些循环不能嵌在同一个外层循环中，循环之间的全核同步由框架自动插入。kernel内不要使用以`_pl_`开头的框架保留变量名。
 
 ### 开启流水变换
 

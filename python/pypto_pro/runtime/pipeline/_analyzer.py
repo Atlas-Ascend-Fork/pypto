@@ -291,7 +291,7 @@ def analyze_pipeline(
 
     # Two gates for the checks that need only the parsed structure (see _validate): one
     # about the kernel as a whole, one per pipeline.
-    validate_kernel_structure(infos, config.preload)
+    validate_kernel_structure(infos, config.preload, func_def)
     for info in infos:
         validate_structure(info, func_def, stage_func_names)
 

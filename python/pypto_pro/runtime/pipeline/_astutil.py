@@ -144,6 +144,29 @@ def stmt_header(stmt: ast.stmt) -> ast.AST:
     return stmt
 
 
+def walk_skipping_defs(node):
+    """ast.walk without descending into nested function or lambda bodies."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        yield child
+        yield from walk_skipping_defs(child)
+
+
+def loop_body_sites(func_def: ast.FunctionDef) -> set[tuple[int, int]]:
+    """The ``(lineno, col_offset)`` of every node inside a loop of the kernel body.
+
+    Membership answers whether a buffer declaration's ``site`` is in a loop.
+    """
+    return {
+        (node.lineno, node.col_offset)
+        for loop in walk_skipping_defs(func_def)
+        if isinstance(loop, (ast.For, ast.While))
+        for node in walk_skipping_defs(loop)
+        if hasattr(node, "lineno")
+    }
+
+
 def buffer_decl_location(func_def: ast.FunctionDef, decl):
     """Where an error about a buffer declaration points, and where the declaration itself
     sits when that is elsewhere.
