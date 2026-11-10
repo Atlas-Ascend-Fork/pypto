@@ -1,0 +1,26 @@
+{
+    "PyptoInit": {
+        "opInfo": {
+            "computeCost": "100",
+            "engine": "DNN_VM_AICPU",
+            "flagAsync": "False",
+            "flagPartial": "False",
+            "functionName": "DynPyptoKernelServerInit",
+            "kernelSo": "libpypto_aicpu.so",
+            "opKernelLib": "KFCKernel",
+            "userDefined": "False"
+        }
+    },
+    "PyptoRun": {
+        "opInfo": {
+            "computeCost": "100",
+            "engine": "DNN_VM_AICPU",
+            "flagAsync": "False",
+            "flagPartial": "False",
+            "functionName": "DynPyptoKernelServer",
+            "kernelSo": "libpypto_aicpu.so",
+            "opKernelLib": "KFCKernel",
+            "userDefined": "False"
+        }
+    }
+}

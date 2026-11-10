@@ -21,6 +21,9 @@ file(GLOB_RECURSE _Runtime_Srcs *.cpp)
 file(GLOB _Bundle_Load_Srcs ${CMAKE_CURRENT_SOURCE_DIR}/bundle/*.cpp)
 list(REMOVE_ITEM _Runtime_Srcs ${_Bundle_Load_Srcs})
 file(GLOB_RECURSE _Device_Srcs ${PTO_FWK_SRC_ROOT}/framework/src/machine/device/*.cpp)
+# AICPU 侧入口只在 device 包(tile_fwk_device_server)和 UT 中编译, 不进入 host runtime
+list(REMOVE_ITEM _Device_Srcs
+    "${PTO_FWK_SRC_ROOT}/framework/src/machine/device/machine_interface/pypto_aicpu_interface.cpp")
 file(GLOB _Device_Utils_Srcs
     ${PTO_FWK_SRC_ROOT}/framework/src/machine/utils/dynamic/dev_encode_function.cpp
     ${PTO_FWK_SRC_ROOT}/framework/src/machine/utils/dynamic/dev_encode_function_dupped_data.cpp

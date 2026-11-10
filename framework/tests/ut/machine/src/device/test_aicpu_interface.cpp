@@ -14,10 +14,6 @@
  */
 
 #include <gtest/gtest.h>
-#include <filesystem>
-#include <fstream>
-#include <unistd.h>
-#include <vector>
 #include <dlfcn.h>
 
 #define private public
@@ -28,57 +24,37 @@ using namespace npu::tile_fwk;
 
 extern "C" uint32_t DynPyptoKernelServerNull(void* args);
 
-TEST(PyptoAicpuInterfaceTest, NullInitArgReturnsError) { EXPECT_EQ(DynPyptoKernelServerNull(nullptr), 1U); }
+TEST(PyptoAicpuInterfaceTest, NullInitArgReturnsError)
+{
+    EXPECT_EQ(DynPyptoKernelServerNull(nullptr), static_cast<uint32_t>(DevCommonErr::NULLPTR));
+}
 
 TEST(PyptoAicpuInterfaceTest, ExecuteBeforeLoadReturnsError)
 {
-    EXPECT_EQ(DynPyptoKernelServer(nullptr), 1U);
-    EXPECT_EQ(DynPyptoKernelServerInit(nullptr), 1U);
+    constexpr uint32_t execFailed = static_cast<uint32_t>(ServerKernelErr::KERNEL_EXEC_FAILED);
+    EXPECT_EQ(DynPyptoKernelServer(nullptr), execFailed);
+    EXPECT_EQ(DynPyptoKernelServerInit(nullptr), execFailed);
 }
 
 namespace {
 int MockKernelFunc(void*) { return 0; }
 } // namespace
 
-class BackendServerHandleManagerTest : public testing::Test {
-protected:
-    std::string root_;
-    std::string soDir_;
-    std::string soPath_;
-
-    void SetUp() override
-    {
-        const auto* testInfo = ::testing::UnitTest::GetInstance()->current_test_info();
-        root_ = "/tmp/aicpu_kernels_" + std::to_string(getpid()) + "_" + testInfo->test_suite_name() + "_" +
-                testInfo->name();
-        soDir_ = root_ + "/0/aicpu_kernels_device";
-        soPath_ = soDir_ + "/libpypto_server0.so";
-        std::filesystem::create_directories(soDir_);
-    }
-    void TearDown() override
-    {
-        std::error_code ec;
-        std::filesystem::remove_all(root_, ec);
-    }
-};
+class BackendServerHandleManagerTest : public testing::Test {};
 
 TEST_F(BackendServerHandleManagerTest, SaveSoFile_ShortLenAndWriteFail)
 {
     BackendServerHandleManager mgr;
     EXPECT_EQ(mgr.SaveSoFile(nullptr, 0), true);
     char data[] = "test_so_data";
-    mgr.pyptoServerSoName_ = soPath_;
     EXPECT_EQ(mgr.SaveSoFile(data, sizeof(data) - 1), true);
     EXPECT_EQ(mgr.firstCreatSo_, true);
+    EXPECT_GE(mgr.fileFd_, 0);
+    EXPECT_EQ(mgr.pyptoServerSoName_.rfind("/proc/self/fd/", 0), 0U);
 
     BackendServerHandleManager mgrFail;
-    mgrFail.firstCreatSo_ = false;
-    mgrFail.pyptoServerSoName_ = soPath_;
-    std::error_code ec;
-    std::filesystem::remove(soPath_, ec);
-    std::filesystem::create_symlink("/dev/full", soPath_, ec);
-    std::vector<char> bigData(8192, 'A');
-    EXPECT_EQ(mgrFail.SaveSoFile(bigData.data(), bigData.size()), false);
+    EXPECT_EQ(mgrFail.SaveSoFile(reinterpret_cast<char*>(1), 8192), false);
+    EXPECT_EQ(mgrFail.fileFd_, -1);
 }
 
 TEST_F(BackendServerHandleManagerTest, SetTileFwkKernelMap_AlreadyLoaded)

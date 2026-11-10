@@ -63,12 +63,12 @@ public:
 // DEV_ERROR 分支。
 TEST_F(TestDynamicDeviceRunner, DynPyptoKernelServer_ReturnsErrorWhenKernelNotLoaded)
 {
-    EXPECT_EQ(DynPyptoKernelServer(nullptr), 1U);
+    EXPECT_EQ(DynPyptoKernelServer(nullptr), static_cast<uint32_t>(ServerKernelErr::KERNEL_EXEC_FAILED));
 }
 
 TEST_F(TestDynamicDeviceRunner, DynPyptoKernelServerInit_ReturnsErrorWhenKernelNotLoaded)
 {
-    EXPECT_EQ(DynPyptoKernelServerInit(nullptr), 1U);
+    EXPECT_EQ(DynPyptoKernelServerInit(nullptr), static_cast<uint32_t>(ServerKernelErr::KERNEL_EXEC_FAILED));
 }
 
 TEST_F(TestDynamicDeviceRunner, TestInitArgs)
@@ -87,7 +87,7 @@ TEST_F(TestDynamicDeviceRunner, test_pypto_kernel_server_null)
     devKernelArgs.aicpuSoLen = 2;
     pyptoKernelArgs.cfgdata = static_cast<int64_t*>(static_cast<void*>(&devKernelArgs));
     auto ret = DynPyptoKernelServerNull(&pyptoKernelArgs);
-    EXPECT_EQ(ret, 1);
+    EXPECT_EQ(ret, static_cast<uint32_t>(DevCommonErr::FILE_ERROR));
 }
 
 TEST_F(TestDynamicDeviceRunner, DISABLED_test_dump_device_perf)
@@ -164,5 +164,5 @@ TEST_F(TestDynamicDeviceRunner, test_static) { EXPECT_EQ(StaticTileFwkBackendKer
 
 TEST_F(TestDynamicDeviceRunner, DynPyptoKernelServerNull_RejectsNullArgs)
 {
-    EXPECT_EQ(DynPyptoKernelServerNull(nullptr), 1U);
+    EXPECT_EQ(DynPyptoKernelServerNull(nullptr), static_cast<uint32_t>(DevCommonErr::NULLPTR));
 }

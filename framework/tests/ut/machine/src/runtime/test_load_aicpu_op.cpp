@@ -21,6 +21,7 @@
 #include "machine/runtime/runner/load_aicpu_op.h"
 #undef private
 #include "tilefwk/aicpu_common.h"
+#include "utils/file_utils.h"
 
 using namespace npu::tile_fwk;
 
@@ -105,7 +106,7 @@ TEST(LoadAicpuOpTest, LaunchBuiltInOpWithHostArgs_InvalidFuncName_Throws)
 TEST(LoadAicpuOpTest, GetBuiltInOpBinHandle_ValidPath_PopulatesFuncMap)
 {
     LoadAicpuOp op;
-    EXPECT_EQ(op.GetBuiltInOpBinHandle(nullptr), 0);
+    EXPECT_EQ(op.GetBuiltInOpBinHandle(nullptr, GetPyptoLibPath() + "/pypto_op_info.json"), 0);
     EXPECT_EQ(op.builtInFuncMap_.size(), 2U);
     EXPECT_TRUE(op.builtInFuncMap_.count("PyptoInit") > 0);
     EXPECT_TRUE(op.builtInFuncMap_.count("PyptoRun") > 0);

@@ -135,9 +135,9 @@ int LoadAicpuOp::LaunchAicpuServerInit(int64_t* devArgsAddr)
     return RuntimeStreamSynchronize(aicpuStream);
 }
 
-int LoadAicpuOp::GetBuiltInOpBinHandle(int64_t* devArgsAddr)
+int LoadAicpuOp::GetBuiltInOpBinHandle(int64_t* devArgsAddr, const std::string& opInfoPath)
 {
-    builtInOpJsonPath_ = GetPyptoLibPath() + "/pypto_op_info.json";
+    builtInOpJsonPath_ = opInfoPath;
     if (RealPath(builtInOpJsonPath_).empty()) {
         MACHINE_LOGE(DevCommonErr::FILE_ERROR, "JsonPath[%s] is empty", builtInOpJsonPath_.c_str());
         return static_cast<int>(DevCommonErr::FILE_ERROR);

@@ -42,6 +42,9 @@ include python/CMakeLists.txt
 include python/src/CMakeLists.txt
 include python/pypto/_which_cmake.py
 
+# scripts
+include scripts/package/pypto/sign.xml
+
 # others
 include build_ci.py
 include CMakeLists.txt

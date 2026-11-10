@@ -12,6 +12,9 @@ set(_Target ${PTO_Fwk_STestNamePrefix}_distributed_ops)
 
 file(GLOB_RECURSE _Sources src/*.cpp)
 file(GLOB_RECURSE _Device_Srcs ${PTO_FWK_SRC_ROOT}/framework/src/machine/device/*.cpp)
+# AICPU 侧入口只在 device 包(tile_fwk_server)和 UT 中编译
+list(REMOVE_ITEM _Device_Srcs
+    "${PTO_FWK_SRC_ROOT}/framework/src/machine/device/machine_interface/pypto_aicpu_interface.cpp")
 list(APPEND _Sources ${_Device_Srcs})
 
 get_target_property(GTest_Gtest_Inc GTest::gtest INTERFACE_INCLUDE_DIRECTORIES)

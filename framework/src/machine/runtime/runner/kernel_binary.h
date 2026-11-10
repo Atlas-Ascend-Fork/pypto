@@ -35,6 +35,10 @@
 
 namespace npu::tile_fwk::dynamic {
 
+namespace detail {
+bool IsPyptoAicpuKernelConfigured();
+} // namespace detail
+
 class KernelBinary {
 public:
     KernelBinary(std::shared_ptr<Function> func, std::vector<std::shared_ptr<Function>> pinnedGraph = {});
@@ -122,6 +126,7 @@ private:
     bool EnsureRingEventsCreated(bool isCapture);
 
     static void InitDeviceArgs();
+    static void InitAicpuOp(int64_t* devArgsAddr);
     static int InitDeviceArgs(DeviceArgs& args);
     static int InitDeviceArgsCore(DeviceArgs& args);
     static void GetAicoreRegs(const ArchInfo archInfo, std::vector<int64_t>& regs, std::vector<int64_t>& regsPmu);

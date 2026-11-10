@@ -11,13 +11,31 @@
 #ifndef TILE_FWK_AICPU_INTERFACE_H
 #define TILE_FWK_AICPU_INTERFACE_H
 
+#include <sys/mman.h>
+#include <unistd.h>
+#include <cerrno>
 #include <cstdint>
-#include <fstream>
+#include <cstring>
 #include <dlfcn.h>
 #include <string>
 #include <unordered_map>
 #include <mutex>
+#include "securec.h"
 #include "machine/utils/device_log.h"
+
+/* 该 shim 需要独立加载, 不能依赖 backend server so 中的符号。
+ * device 侧不用 DEV_ERROR: 它内部会触发 DEV_ATRACE, 从而引用 DeviceTrace。 */
+#ifdef __DEVICE__
+#define PYPTO_SHIM_ERROR(errCode, fmt, ...)                                                 \
+    do {                                                                                    \
+        if (IsLogEnableError()) {                                                           \
+            dlog_error(LOG_MOD_ID, "%lu %s\nErrCode: F%05X! " fmt, GET_TID(), __FUNCTION__, \
+                       static_cast<uint32_t>(errCode) & 0xFFFFF, ##__VA_ARGS__);            \
+        }                                                                                   \
+    } while (false)
+#else
+#define PYPTO_SHIM_ERROR(errCode, fmt, ...) DEV_ERROR(errCode, fmt, ##__VA_ARGS__)
+#endif
 
 using TileFwkKernelServelEnty = int (*)(void*);
 namespace npu::tile_fwk {
@@ -26,6 +44,7 @@ const std::string dynServerKernelInitFun = "DynTileFwkBackendKernelServerInit";
 const uint64_t dyInitFuncKey = 2;
 const uint64_t dyExecFuncKey = 3;
 const uint64_t minSoLen = 1;
+constexpr uint32_t MemFilePathLen = 64;
 
 class BackendServerHandleManager {
 public:
@@ -36,28 +55,42 @@ public:
             DEV_WARN("so len %lu less than minSoLen %lu or first create, no need to copy", len, minSoLen);
             return true;
         }
-        if (pyptoServerSoName_.empty()) {
-            pyptoServerSoName_ = "/usr/lib64/aicpu_kernels/0/aicpu_kernels_device/libpypto_server" +
-                                 std::to_string(deviceId) + ".so";
-        }
-        std::ofstream file(pyptoServerSoName_, std::ios::out | std::ios::binary);
-        DEV_DEBUG("Begin to create server.so");
-        if (!file) {
-            DEV_ERROR(DevCommonErr::FILE_ERROR, "#sche.task.pre.init.resource: Couldn't create file [%s]",
-                      pyptoServerSoName_.c_str());
+
+        std::string memFdName = "libpypto_server" + std::to_string(deviceId) + ".so";
+        fileFd_ = memfd_create(memFdName.c_str(), MFD_CLOEXEC);
+        DEV_DEBUG("Begin to create server.so in memfd [%s], data ptr [%p], len [%lu]", memFdName.c_str(), data, len);
+        if (fileFd_ < 0) {
+            int error = errno;
+            PYPTO_SHIM_ERROR(DevCommonErr::FILE_ERROR,
+                             "#sche.task.pre.init.resource: Create memfd [%s] failed for device[%u], "
+                             "errno[%d]: %s",
+                             memFdName.c_str(), deviceId, error, std::strerror(error));
             return false;
         }
 
-        // write bin to file
-        file.write(data, len);
-
-        if (!file) {
-            DEV_ERROR(DevCommonErr::FILE_ERROR, "#sche.task.pre.init.resource: Write to file [%s] not success",
-                      pyptoServerSoName_.c_str());
+        // write bin to memfd
+        ssize_t writtenSize = write(fileFd_, data, len);
+        if (static_cast<uint64_t>(writtenSize) != len) {
+            PYPTO_SHIM_ERROR(DevCommonErr::FILE_ERROR,
+                             "#sche.task.pre.init.resource: Write memfd [%s] short write, fd[%ld], "
+                             "expected[%lu], actual[%ld]",
+                             memFdName.c_str(), static_cast<long>(fileFd_), len, static_cast<long>(writtenSize));
+            CloseMemFd();
             return false;
         }
+
+        char memFilePath[MemFilePathLen] = {0};
+        int ret = snprintf_s(memFilePath, sizeof(memFilePath), sizeof(memFilePath) - 1, "/proc/self/fd/%ld",
+                             static_cast<long>(fileFd_));
+        if (ret < 0) {
+            PYPTO_SHIM_ERROR(DevCommonErr::FILE_ERROR,
+                             "#sche.task.pre.init.resource: Build memfd path for [%s] failed, fd[%ld], ret[%d]",
+                             memFdName.c_str(), static_cast<long>(fileFd_), ret);
+            CloseMemFd();
+            return false;
+        }
+        pyptoServerSoName_ = memFilePath;
         DEV_DEBUG("Create device[%u] server so [%s] success", deviceId, pyptoServerSoName_.c_str());
-        file.close();
         firstCreatSo_ = true;
         return true;
     }
@@ -79,9 +112,10 @@ public:
     {
         auto func = GetTileFwkKernelFunc(funcKey);
         if (func == nullptr) {
-            DEV_ERROR(DevCommonErr::NULLPTR, "#sche.func.exec: kernel func[%lu] is invalid, cannot get from so %s",
-                      funcKey, pyptoServerSoName_.c_str());
-            return -1;
+            PYPTO_SHIM_ERROR(DevCommonErr::NULLPTR,
+                             "#sche.func.exec: kernel func[%lu] is invalid, cannot get from so %s", funcKey,
+                             pyptoServerSoName_.c_str());
+            return static_cast<int32_t>(DevCommonErr::NULLPTR);
         }
         return func(args);
     }
@@ -89,20 +123,46 @@ public:
     ~BackendServerHandleManager()
     {
         if (soHandle_) {
-            DEV_INFO("Close handle");
-            (void)dlclose(soHandle_);
+            DEV_INFO("Close handle [%s]", pyptoServerSoName_.c_str());
+            if (dlclose(soHandle_) != 0) {
+                const char* error = dlerror();
+                DEV_WARN("Close so [%s] failed, dlerror: %s", pyptoServerSoName_.c_str(),
+                         error == nullptr ? "unknown" : error);
+            }
+            soHandle_ = nullptr;
         }
+        CloseMemFd();
     }
 
 private:
+    void CloseMemFd()
+    {
+        if (fileFd_ < 0) {
+            return;
+        }
+        if (close(fileFd_) != 0) {
+            int error = errno;
+            DEV_WARN("Close memfd fd[%ld] failed, errno[%d]: %s", static_cast<long>(fileFd_), error,
+                     std::strerror(error));
+        }
+        fileFd_ = -1;
+    }
+
     void LoadTileFwkKernelFunc(const std::string& kernelName)
     {
+        std::string dlOpenError;
         if (soHandle_ == nullptr) {
             soHandle_ = dlopen(pyptoServerSoName_.c_str(), RTLD_LAZY | RTLD_DEEPBIND);
+            if (soHandle_ == nullptr) {
+                const char* error = dlerror();
+                dlOpenError = (error == nullptr) ? "unknown" : error;
+            }
+            CloseMemFd();
         }
         if (!soHandle_) {
-            DEV_ERROR(DevCommonErr::NULLPTR, "#sche.task.pre.kernel.load: Cannot open so %s",
-                      pyptoServerSoName_.c_str());
+            PYPTO_SHIM_ERROR(DevCommonErr::NULLPTR, "#sche.task.pre.kernel.load: Cannot open so [%s], dlerror: %s",
+                             pyptoServerSoName_.empty() ? "<empty path>" : pyptoServerSoName_.c_str(),
+                             dlOpenError.c_str());
             return;
         }
         uint64_t funcKey = 0;
@@ -120,9 +180,16 @@ private:
         TileFwkKernelServelEnty tileFwkServrFuncEnty = reinterpret_cast<TileFwkKernelServelEnty>(
             dlsym(soHandle_, kernelName.c_str()));
         if (tileFwkServrFuncEnty == nullptr) {
-            DEV_ERROR(DevCommonErr::NULLPTR, "#sche.task.pre.kernel.load: Current KernelName [%s] is null",
-                      kernelName.c_str());
-            (void)dlclose(soHandle_);
+            const char* error = dlerror();
+            PYPTO_SHIM_ERROR(DevCommonErr::NULLPTR,
+                             "#sche.task.pre.kernel.load: Cannot find symbol [%s] in so [%s], dlerror: %s",
+                             kernelName.c_str(), pyptoServerSoName_.c_str(), (error == nullptr) ? "unknown" : error);
+            if (dlclose(soHandle_) != 0) {
+                const char* closeError = dlerror();
+                DEV_WARN("Close so [%s] failed, dlerror: %s", pyptoServerSoName_.c_str(),
+                         closeError == nullptr ? "unknown" : closeError);
+            }
+            soHandle_ = nullptr;
             return;
         }
         DEV_INFO("kernelName=%s has been loaded", kernelName.c_str());
@@ -136,7 +203,7 @@ private:
         if (iter != kernelKey2FuncHandle_.end()) {
             return iter->second;
         }
-        DEV_ERROR(DevCommonErr::NULLPTR, "#sche.kernel.check: Function[%lu] is null.", funcKey);
+        PYPTO_SHIM_ERROR(DevCommonErr::NULLPTR, "#sche.kernel.check: Function[%lu] is null.", funcKey);
         return nullptr;
     }
 
@@ -145,6 +212,7 @@ private:
     void* soHandle_ = nullptr;
     bool firstCreatSo_ = false;
     bool firstLoadSo_ = false;
+    int64_t fileFd_ = -1;
     std::string pyptoServerSoName_;
 };
 

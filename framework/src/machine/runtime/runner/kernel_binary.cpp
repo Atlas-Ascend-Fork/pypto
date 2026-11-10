@@ -67,7 +67,41 @@ constexpr uint32_t AICPU_NUM_OF_RUN_AICPU_TASKS = 1;
 std::vector<uint8_t> g_aicpuSoOverride;
 DeviceArgs g_deviceArgs;
 std::once_flag g_initOnce;
+
 } // namespace
+
+namespace detail {
+bool IsPyptoAicpuKernelConfigured()
+{
+    std::string aicpuPath = GetEnvVar("ASCEND_AICPU_PATH");
+    if (aicpuPath.empty()) {
+        aicpuPath = GetEnvVar("ASCEND_HOME_PATH");
+    }
+    if (aicpuPath.empty()) {
+        return false;
+    }
+    const std::string iniPath = aicpuPath + "/conf/ascend_package_load.ini";
+    bool readSuccess = false;
+    const std::vector<uint8_t> iniContent = ReadFile(iniPath, &readSuccess);
+    if (!readSuccess) {
+        MACHINE_LOGD("Cannot read %s.", iniPath.c_str());
+        return false;
+    }
+    std::istringstream iniStream(std::string(iniContent.begin(), iniContent.end()));
+    const std::string namePrefix = "name:";
+    std::string line;
+    while (std::getline(iniStream, line)) {
+        const size_t pos = line.find_first_not_of(" \t");
+        if (pos == std::string::npos || line.compare(pos, namePrefix.size(), namePrefix) != 0) {
+            continue;
+        }
+        if (line.find("pypto_aicpu.tar.gz") != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace detail
 
 KernelBinary::KernelBinary(std::shared_ptr<Function> func, std::vector<std::shared_ptr<Function>> pinnedGraph)
     : dynFunc(std::move(func)), pinnedGraph_(std::move(pinnedGraph))
@@ -730,6 +764,24 @@ int KernelBinary::InitDeviceArgs(DeviceArgs& args)
     return InitDeviceArgsCore(args);
 }
 
+void KernelBinary::InitAicpuOp(int64_t* devArgsAddr)
+{
+    std::string opInfoPath = GetPyptoLibPath() + "/pypto_op_info.json";
+    if (g_deviceArgs.archInfo == ArchInfo::DAV_3510) {
+        // 为了保持兼容性 事先判断是否配置了白名单
+        if (detail::IsPyptoAicpuKernelConfigured()) {
+            opInfoPath = GetPyptoLibPath() + "/pypto_aicpu.json";
+        }
+    }
+    if (LoadAicpuOp::GetInstance().GetBuiltInOpBinHandle(devArgsAddr, opInfoPath) != 0) {
+        MACHINE_LOGE(DevCommonErr::GET_HANDLE_FAILED,
+                     "Get builtInOp [%s] Function handle failed,"
+                     " please update CANN toolkit package",
+                     opInfoPath.c_str());
+        ASSERT(false);
+    }
+}
+
 void KernelBinary::InitDeviceArgs()
 {
     std::call_once(g_initOnce, []() {
@@ -742,13 +794,11 @@ void KernelBinary::InitDeviceArgs()
             ASSERT(false);
         }
         if (config::GetRuntimeOption<int64_t>(CFG_RUN_MODE) != CFG_RUN_MODE_SIM) {
-            if (LoadAicpuOp::GetInstance().GetBuiltInOpBinHandle(devArgsAddr) != 0) {
-                MACHINE_LOGE(DevCommonErr::GET_HANDLE_FAILED, "Get builtInOp Funchandle failed\n");
-                ASSERT(false);
-            }
+            InitAicpuOp(devArgsAddr);
             FedProfManager::GetInstance().AicpuProfDumpThreadStart();
             AdumpRegExceptionDump();
         }
+        return 0;
     });
 }
 

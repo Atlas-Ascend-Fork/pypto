@@ -37,6 +37,8 @@ add_subdirectory(dynamic)
 file(GLOB_RECURSE _Device_Srcs *.cpp)
 file(GLOB_RECURSE _Stub_Srcs stub/*.cpp)
 list(REMOVE_ITEM _Device_Srcs ${_Stub_Srcs})
+file(GLOB_RECURSE _MachineInterface_Srcs machine_interface/*.cpp)
+list(REMOVE_ITEM _Device_Srcs ${_MachineInterface_Srcs})
 
 add_library(tile_fwk_server SHARED)
 target_sources(tile_fwk_server PRIVATE ${_Device_Srcs} ${_Device_Utils_Srcs})
@@ -82,6 +84,8 @@ target_link_options(tile_fwk_server
             -s
 )
 set_target_properties(tile_fwk_server PROPERTIES OUTPUT_NAME tilefwk_backend_server)
+
+add_subdirectory(machine_interface)
 
 install(TARGETS tile_fwk_server LIBRARY DESTINATION lib COMPONENT pypto)
 install(FILES ${PTO_FWK_SRC_ROOT}/framework/src/machine/runtime/runner/pypto_op_info.json DESTINATION lib COMPONENT pypto)

@@ -90,6 +90,76 @@ pypto_install_package() {
 }
 
 
+pypto_install_aicpu_kernel() {
+    local _whl="$1"
+    local _aicpu_root="${ASCEND_AICPU_PATH:-${PKG_INSTALL_PATH}}"
+    local _dst_dir="${_aicpu_root}/opp/built-in/op_impl/aicpu/kernel"
+    local _dst_file="${_dst_dir}/pypto_aicpu.tar.gz"
+    local _tmp_file=""
+
+    if [ ! -f "${_whl}" ]; then
+        comm_log "ERROR" "ERR_NO:0x0080;ERR_DES:install pypto_aicpu.tar.gz failed, whl ${_whl} is not exist."
+        exit 1
+    fi
+
+    if ! python3 - "${_whl}" <<'PYEOF'
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1]) as zf:
+    sys.exit(0 if "pypto/lib/pypto_aicpu.tar.gz" in zf.namelist() else 1)
+PYEOF
+    then
+        comm_log "INFO" "pypto_aicpu.tar.gz is not included in ${_whl}, keep the installed one."
+        return 0
+    fi
+
+    _tmp_file="$(mktemp "${TMPDIR:-/tmp}/pypto_aicpu.XXXXXX")" || {
+        comm_log "ERROR" "ERR_NO:0x0001;ERR_DES:create temporary file for pypto_aicpu.tar.gz failed."
+        exit 1
+    }
+
+    if ! python3 - "${_whl}" "${_tmp_file}" <<'PYEOF'
+import shutil
+import sys
+import zipfile
+
+whl, dst = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(whl) as zf, zf.open("pypto/lib/pypto_aicpu.tar.gz") as src:
+    with open(dst, "wb") as out:
+        shutil.copyfileobj(src, out)
+PYEOF
+    then
+        rm -f "${_tmp_file}"
+        comm_log "ERROR" "ERR_NO:0x0080;ERR_DES:extract pypto_aicpu.tar.gz from ${_whl} failed."
+        exit 1
+    fi
+
+    if ! mkdir -p "${_dst_dir}"; then
+        rm -f "${_tmp_file}"
+        comm_log "ERROR" "ERR_NO:0x0001;ERR_DES:create directory ${_dst_dir} failed."
+        exit 1
+    fi
+
+    if [ -f "${_dst_file}" ]; then
+        comm_log "INFO" "replace existing pypto_aicpu.tar.gz: ${_dst_file}"
+    fi
+
+    if ! cp -f "${_tmp_file}" "${_dst_file}"; then
+        rm -f "${_tmp_file}"
+        comm_log "ERROR" "ERR_NO:0x0080;ERR_DES:install pypto_aicpu.tar.gz to ${_dst_dir} failed."
+        exit 1
+    fi
+    if ! chmod 644 "${_dst_file}"; then
+        rm -f "${_tmp_file}"
+        comm_log "ERROR" "ERR_NO:0x0001;ERR_DES:set permission 644 for ${_dst_file} failed."
+        exit 1
+    fi
+    rm -f "${_tmp_file}"
+    comm_log "INFO" "install signed pypto_aicpu.tar.gz to ${_dst_file} successfully!"
+}
+
+
 custom_install() {
     if [ ! -d "${PKG_SHARE_INFO_INSTALL_PATH}" ]; then
         comm_log "ERROR" "ERR_NO:0x0001;ERR_DES:${LOG_PKG_NAME} directory ${PKG_SHARE_INFO_INSTALL_PATH} is not exist."
@@ -109,6 +179,7 @@ custom_install() {
     fi
 
     pypto_install_package "${pypto_whl_path}" "${PKG_WHL_INSTALL_PATH}"
+    pypto_install_aicpu_kernel "${pypto_whl_path}"
 
     comm_log "INFO" "The ${LOG_PKG_NAME} extension module installed successfully!"
 

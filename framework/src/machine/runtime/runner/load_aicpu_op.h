@@ -50,7 +50,7 @@ public:
     static int LaunchWithHostArgs(void* funcHandle, const AicpuLaunchDesc& desc);
     int LaunchBuiltInOp(const AicpuLaunchDesc& desc, const std::string& funcName) const;
     int LaunchBuiltInOpWithHostArgs(const AicpuLaunchDesc& desc, const std::string& funcName) const;
-    int GetBuiltInOpBinHandle(int64_t* devArgsAddr);
+    int GetBuiltInOpBinHandle(int64_t* devArgsAddr, const std::string& opInfoPath);
     int LaunchCustomOp([[maybe_unused]] const AicpuLaunchDesc& desc, [[maybe_unused]] std::string& OpType) const;
     int LaunchAicpuServerInit(int64_t* devArgsAddr);
     void CustomAiCpuSoLoad();
