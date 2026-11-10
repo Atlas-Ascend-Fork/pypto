@@ -28,7 +28,7 @@ pypto_pro.language.gt(out: Tile, lhs: Tile, rhs: Union[Tile, int, float]) -> Non
 |---|---|---|
 | out | 输出 | 目的操作数，UB Tile，采用行主序布局，保存按位压缩的比较结果。数据类型不限定为DT_UINT8，通常使用DT_UINT8；存储空间须覆盖所有有效元素对应的掩码位。 |
 | lhs | 输入 | 左操作数，UB Tile，采用行主序布局。支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_FP32、DT_BF16。 |
-| rhs | 输入 | 右操作数，Tile、int或float类型，也支持对应的运行时数值标量表达式。传入Tile时须位于UB，采用行主序布局，数据类型、Shape和有效Shape与lhs一致；传入标量时须能用lhs的元素类型表示。 |
+| rhs | 输入 | 右操作数，Tile、int或float类型，也支持运行时数值标量表达式。传入Tile时须位于UB，采用行主序布局，数据类型、Shape和有效Shape与lhs一致；传入常量时须能用lhs的元素类型表示，传入运行时标量时，其取值将按lhs的元素类型转换，须在可表示范围内，否则精度损失未定义。 |
 
 ## 返回值说明
 
@@ -37,6 +37,8 @@ pypto_pro.language.gt(out: Tile, lhs: Tile, rhs: Union[Tile, int, float]) -> Non
 ## 约束说明
 
 out保存按位压缩的掩码，不能按逐元素0/1数值Tile解释。需要数值结果时，可与[pypto_pro.language.select](../selection/select.md)配合使用。
+
+- out不可与lhs或Tile类型的rhs使用相同的UB起始地址：掩码按位打包写入该地址后，会就地覆盖这两路输入的前若干字节，输入数据被破坏，此时结果未定义。
 
 ## 调用示例
 

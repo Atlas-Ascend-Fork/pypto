@@ -31,9 +31,9 @@ pypto_pro.language.xor(
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| out | 输出 | 目的操作数，Tile类型，存放逐元素按位异或的结果。数据类型与lhs一致，rhs为Tile时也须与rhs一致；支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32或DT_UINT32。shape与lhs一致，rhs为Tile时也须与rhs一致。 |
+| out | 输出 | 目的操作数，Tile类型，存放逐元素按位异或的结果。数据类型与lhs一致，rhs为Tile时也须与rhs一致；支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64和DT_UINT64。shape与lhs一致，rhs为Tile时也须与rhs一致。 |
 | lhs | 输入 | 左操作数，Tile类型。数据类型与out一致。 |
-| rhs | 输入 | 右操作数，Tile类型或整型标量。为Tile时采用row-major布局，valid_shape与out一致，shape与out、lhs一致，数据类型与out一致。 |
+| rhs | 输入 | 右操作数，Tile、整型常量或运行时整型标量表达式。为Tile时采用row-major布局，valid_shape与out一致，shape与out、lhs一致，数据类型与out一致；传入常量时取值须在out数据类型的可表示范围内；传入运行时标量时，其取值将按out的元素类型转换，须在可表示范围内，否则结果未定义。 |
 | tmp | 输入 | 兼容性参数，Tile类型。 |
 
 ## 约束说明

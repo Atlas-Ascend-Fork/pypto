@@ -38,7 +38,7 @@ pypto_pro.language.maximum(
 |---|---|---|
 | out | 输出 | 目的操作数，Tile类型，存放逐元素计算结果或归约结果。逐元素模式下数据类型与lhs一致，支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_BF16和DT_FP32；归约模式下数据类型与lhs一致，dim=0时shape为[行数, 1]，dim=1时shape为[1, 列数]。 |
 | lhs | 输入 | Tile类型。逐元素模式下为左操作数；归约模式下为源操作数，必须为二维Tile，dim=0时支持DT_INT8、DT_UINT8、DT_INT16、DT_INT32、DT_FP16、DT_FP32、DT_INT64和DT_UINT64，dim=1时还支持DT_UINT16、DT_UINT32和DT_BF16。 |
-| rhs | 输入 | Tile、整型或浮点型常量，或相应类型的运行时标量表达式。逐元素模式下为右操作数，Tile-Tile时数据类型与out一致且shape与out、lhs一致；归约模式下为临时Tile。 |
+| rhs | 输入 | Tile、整型或浮点型常量，或运行时标量表达式。逐元素模式下为右操作数，Tile-Tile时数据类型与out一致且shape与out、lhs一致；传入常量时取值须在out数据类型的可表示范围内，传入运行时标量时，其取值将按out的元素类型转换，须在可表示范围内，否则精度损失未定义；归约模式下为临时Tile。 |
 | dim | 输入 | 可选，归约维度。未传入时执行逐元素计算；传入0时沿最后一维归约；传入1时沿第一维归约。 |
 
 ## 约束说明
