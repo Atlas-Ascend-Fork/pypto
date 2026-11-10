@@ -11,6 +11,33 @@ torch 算子与 ONNX 节点无需手写：在 `op.py` 中以配置形式声明�
 `onnx_spec=OnnxSymbolicSpec(...)`），pypto 会在导出期间自动生成。`torch_defn`（`run_demo.py` 使用的 CPU
 参考实现）也在那里声明。
 
+## 依赖说明
+
+`export_demo.py` 的导出链路依赖 `onnx`，它是**可选依赖**：仅本 ONNX 导出示例需要，PyPTO 核心与
+`run_demo.py` 的 CPU/设备运行路径都不依赖它（`pypto.extensions.torch_custom_op_litenpu` 对 `onnx`
+采用函数内懒加载）。首次导出前请先安装：
+
+```bash
+pip install onnx
+```
+
+未安装时 `export_demo.py` 会报 `ModuleNotFoundError: No module named 'onnx'`。
+
+## 版本要求
+
+本示例依赖 `pypto.extensions.torch_custom_op_litenpu`（含 `ExportedCustomOp`、`common/run.py` 等），该扩展
+目前仅在 PyPTO 源码 `master` 上提供，随 CANN 9.2.0 版本发布的 PyPTO 不包含这些模块。运行前请先确认实际
+加载的是从本仓库源码编译安装的 PyPTO，而不是随 CANN 安装的 PyPTO：
+
+```bash
+python3 -c "import pypto; print(pypto.__file__)"
+```
+
+若输出指向 CANN 安装路径（例如 `.../Ascend/.../site-packages/pypto`），说明加载的是随包旧版，请参考
+《[编译安装](../../../../docs/zh/install/build_and_install.md)》从本仓库源码编译安装 PyPTO 后再运行。运行中若报
+`ModuleNotFoundError: No module named 'pypto.extensions...'` 或
+`AttributeError: ... has no attribute 'ExportedCustomOp'`，同属版本不匹配，请按上述方式重装，而不是示例或源码缺陷。
+
 请在本目录（`examples/03_advanced/exported_custom_op_litenpu/onnx/`）下运行：
 
 ```bash

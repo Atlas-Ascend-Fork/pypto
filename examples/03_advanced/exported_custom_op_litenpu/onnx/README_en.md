@@ -13,6 +13,37 @@ You do not write the torch op or the ONNX node yourself: you declare them as con
 generates them automatically during export. `torch_defn` (the CPU reference `run_demo.py` uses) is
 declared there too.
 
+## Dependencies
+
+The export path in `export_demo.py` depends on `onnx`, an **optional dependency**: only this ONNX export
+demo needs it. pypto core and the CPU/device run path of `run_demo.py` do not
+(`pypto.extensions.torch_custom_op_litenpu` imports `onnx` lazily inside functions). Install it before the
+first export:
+
+```bash
+pip install onnx
+```
+
+Without it, `export_demo.py` raises `ModuleNotFoundError: No module named 'onnx'`.
+
+## Version requirement
+
+This demo depends on `pypto.extensions.torch_custom_op_litenpu` (providing `ExportedCustomOp`,
+`common/run.py`, and more), which currently ships only on the PyPTO `master` source; the PyPTO released with
+CANN 9.2.0 does not contain these modules. Before running, confirm you are using a PyPTO built and installed
+from this repository's source, not the PyPTO installed with CANN:
+
+```bash
+python3 -c "import pypto; print(pypto.__file__)"
+```
+
+If the path points into a CANN install (e.g. `.../Ascend/.../site-packages/pypto`), the bundled older copy
+is loaded: build and install PyPTO from this repository's source following
+[Build and install](../../../../docs/en/install/build_and_install.md), then rerun. Errors like
+`ModuleNotFoundError: No module named 'pypto.extensions...'` or
+`AttributeError: ... has no attribute 'ExportedCustomOp'` also mean a version mismatch — reinstall as above
+rather than treating them as a demo or source defect.
+
 Run from this directory (`examples/03_advanced/exported_custom_op_litenpu/onnx/`):
 
 ```bash
