@@ -69,6 +69,7 @@ def test_argument_dependent_ops_have_no_fixed_pipe(name):
         ("add", P.V),
         ("sum", P.V),
         ("select", P.V),
+        ("fill_index", P.S),
         ("getval", P.S),
         ("setval", P.S),
         ("make_tile", P.S),

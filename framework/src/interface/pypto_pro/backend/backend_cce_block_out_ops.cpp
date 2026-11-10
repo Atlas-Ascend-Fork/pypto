@@ -2003,8 +2003,9 @@ REGISTER_BACKEND_OP(BackendCCE, "block.expands").f_codegen([](const ir::CallPtr&
     return MakeBlockOutExpandsCodegenCCE(op, codegen);
 });
 
+// The TCI overload without a temporary tile writes UB through scalar stores.
 REGISTER_BACKEND_OP(BackendCCE, "block.fill_index")
-    .set_pipe(ir::PipeType::V)
+    .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeBlockOutFillIndexCodegenCCE(op, codegen);
     });
