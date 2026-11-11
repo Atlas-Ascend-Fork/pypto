@@ -52,44 +52,60 @@ public:
     }
 };
 
-TEST_F(AssignMemoryTypeTokenTest, GetLogicalTensorsByRawTensorBasic)
+TEST_F(AssignMemoryTypeTokenTest, InferAssemblePropagatesOnlyToPhysicalRawSiblings)
 {
-    TileShape::Current().SetVecTile({32, 32});
-    std::vector<int64_t> shape{32, 32};
-    Tensor input(DT_FP32, shape, "input");
-    Tensor output(DT_FP32, shape, "output");
-    FUNCTION("AmtTokenBasic")
-    {
-        Tensor a = Exp(input);
-        output = Add(a, Element(DT_FP32, 1.0));
+    auto raw = std::make_shared<RawTensor>(DT_FP32, std::vector<int64_t>{32, 32}, TileOpFormat::TILEOP_ND);
+    auto aliasRaw = std::make_shared<RawTensor>(DT_FP32, std::vector<int64_t>{32, 32}, TileOpFormat::TILEOP_ND);
+    raw->actualRawmagic = aliasRaw->rawmagic;
+    AssignMemoryType pass;
+    // Reuse the pass and the physical key across functions with different logical tensors.
+    for (auto memoryType : {MEM_UB, MEM_L1}) {
+        auto function = std::make_shared<Function>(Program::GetInstance(), "InferPhysicalRaw", "InferPhysicalRaw",
+                                                   nullptr);
+        IRBuilder builder;
+        auto input = builder.CreateTensorVar(DT_FP32, {16, 32});
+        auto output = builder.CreateTensorVar(raw, {0, 0}, {16, 32}, {});
+        auto sibling = builder.CreateTensorVar(raw, {16, 0}, {16, 32}, {});
+        auto alias = builder.CreateTensorVar(aliasRaw, {0, 0}, {16, 32}, {});
+        input->SetMemoryTypeOriginal(memoryType, true);
+        auto& assemble = function->AddRawOperation(Opcode::OP_ASSEMBLE, {input}, {output});
+        assemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UNKNOWN, std::vector<int64_t>{0, 0}));
+        function->outCasts_ = {sibling, alias};
+
+        pass.Init(*function);
+        ASSERT_EQ(pass.InferUncertainMemoryTypes(*function), SUCCESS);
+        EXPECT_EQ(output->GetMemoryTypeOriginal(), memoryType);
+        EXPECT_EQ(sibling->GetMemoryTypeOriginal(), memoryType);
+        EXPECT_EQ(alias->GetMemoryTypeOriginal(), MEM_UNKNOWN);
     }
-    Function* func = Program::GetInstance().GetFunctionByRawName("TENSOR_AmtTokenBasic");
-    ASSERT_NE(func, nullptr);
-
-    AssignMemoryType amt;
-    auto opList = func->Operations(false).DuplicatedOpList();
-    ASSERT_GE(opList.size(), 2);
-
-    auto tensors = amt.GetLogicalTensorsByRawTensor(*func, opList[0]->oOperand.front());
-    EXPECT_FALSE(tensors.empty());
-
-    auto inputTensors = amt.GetLogicalTensorsByRawTensor(*func, opList[0]->iOperand.front());
-    EXPECT_FALSE(inputTensors.empty());
 }
 
-TEST_F(AssignMemoryTypeTokenTest, GetLogicalTensorsByRawTensorNullInput)
+TEST_F(AssignMemoryTypeTokenTest, UpgradeRejectsOutcastRawSiblings)
 {
-    TileShape::Current().SetVecTile({32, 32});
-    std::vector<int64_t> shape{32, 32};
-    Tensor input(DT_FP32, shape, "input");
-    Tensor output(DT_FP32, shape, "output");
-    FUNCTION("AmtTokenNull") { output = Exp(input); }
-    Function* func = Program::GetInstance().GetFunctionByRawName("TENSOR_AmtTokenNull");
-    ASSERT_NE(func, nullptr);
+    Function function(Program::GetInstance(), "UpgradeRejectsOutcastRawSiblings", "UpgradeRejectsOutcastRawSiblings",
+                      nullptr);
+    const Shape shape{16, 32};
+    IRBuilder builder;
+    auto outcast = builder.CreateTensorVar(DT_FP32, shape);
+    auto sibling = builder.CreateTensorVar(outcast->GetRawTensor(), Offset{0, 0}, shape, {});
+    auto alias = builder.CreateTensorVar(DT_FP32, shape);
+    auto unrelated = builder.CreateTensorVar(DT_FP32, shape);
+    alias->GetRawTensor()->actualRawmagic = outcast->GetRawMagic();
+    for (const auto& tensor : {sibling, alias, unrelated}) {
+        tensor->SetMemoryTypeOriginal(MEM_DEVICE_DDR, true);
+    }
+    function.outCasts_ = {outcast};
 
-    AssignMemoryType amt;
-    auto result = amt.GetLogicalTensorsByRawTensor(*func, nullptr);
-    EXPECT_TRUE(result.empty());
+    AssignMemoryType pass;
+    pass.Init(function);
+    EXPECT_FALSE(pass.CanUseMiddleTensorForUpgrade(sibling, MEM_L1));
+    EXPECT_FALSE(pass.CanUseMiddleTensorForUpgrade(alias, MEM_L1));
+    EXPECT_TRUE(pass.CanUseMiddleTensorForUpgrade(unrelated, MEM_L1));
+
+    function.outCasts_.clear();
+    pass.Init(function);
+    EXPECT_TRUE(pass.CanUseMiddleTensorForUpgrade(sibling, MEM_L1));
+    EXPECT_TRUE(pass.CanUseMiddleTensorForUpgrade(alias, MEM_L1));
 }
 
 TEST_F(AssignMemoryTypeTokenTest, ResolveInconsistentRawTensorMemoryTypesFallback)
@@ -120,6 +136,7 @@ TEST_F(AssignMemoryTypeTokenTest, ResolveInconsistentRawTensorMemoryTypesFallbac
     lt2->SetMemoryTypeOriginal(MemoryType::MEM_L0A, true);
 
     AssignMemoryType amt;
+    amt.Init(*func);
     EXPECT_EQ(amt.ResolveInconsistentRawTensorMemoryTypes(*func), SUCCESS);
 
     EXPECT_EQ(lt1->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
@@ -151,6 +168,7 @@ TEST_F(AssignMemoryTypeTokenTest, ResolveInconsistentRawTensorMemoryTypesConsist
     lt2->SetMemoryTypeOriginal(MemoryType::MEM_L1, true);
 
     AssignMemoryType amt;
+    amt.Init(*func);
     EXPECT_EQ(amt.ResolveInconsistentRawTensorMemoryTypes(*func), SUCCESS);
 
     EXPECT_EQ(lt1->GetMemoryTypeOriginal(), MemoryType::MEM_L1);
@@ -177,6 +195,7 @@ TEST_F(AssignMemoryTypeTokenTest, ResolveInconsistentRawTensorMemoryTypesPreserv
     alias->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
 
     AssignMemoryType pass;
+    pass.Init(*function);
     ASSERT_EQ(pass.ResolveInconsistentRawTensorMemoryTypes(*function), SUCCESS);
     EXPECT_EQ(first->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
     EXPECT_EQ(second->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
@@ -332,6 +351,7 @@ TEST_F(AssignMemoryTypeTokenTest, WritableReshapeChainFollowsRawVersionDdrFallba
         versionWrite.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UB, shared->GetOffset()));
 
         AssignMemoryType pass;
+        pass.Init(*func);
         ASSERT_EQ(pass.InferReshapeMemoryType(reshape), SUCCESS);
         ASSERT_EQ(pass.InferReshapeMemoryType(nextReshape), SUCCESS);
         ASSERT_EQ(base->GetMemoryTypeOriginal(), MemoryType::MEM_UB);

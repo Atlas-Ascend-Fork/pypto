@@ -2553,6 +2553,37 @@ TEST_F(AssignMemoryTypeTest, SingleReshapeSliceFanoutPreservesDdrBoundary)
     EXPECT_EQ(graph.GetTensor("reshaped")->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
 }
 
+TEST_F(AssignMemoryTypeTest, DdrMultiReshapeKeepsOutcastBoundary)
+{
+    AssignMemoryType pass;
+    for (const std::vector<std::string>& outcasts : {std::vector<std::string>{"reshaped"}, {"viewed"}, {}}) {
+        SCOPED_TRACE(testing::PrintToString(outcasts));
+        ComputationalGraphBuilder graph;
+        graph.AddTensor(DT_FP16, {NUM_16, NUM_16}, MEM_UB, "input");
+        graph.AddTensor(DT_FP16, {NUM_16, NUM_16}, MEM_DEVICE_DDR, "assembled");
+        graph.AddTensor(DT_FP16, {NUM_8, NUM_32}, MEM_DEVICE_DDR, "reshaped");
+        graph.AddTensor(DT_FP16, {NUM_8, NUM_32}, MEM_DEVICE_DDR, "viewed");
+        graph.AddTensor(DT_FP16, {NUM_16, NUM_16}, MEM_DEVICE_DDR, "branchReshaped");
+        graph.AddTensor(DT_FP16, {NUM_16, NUM_16}, MEM_UB, "output");
+        graph.AddOp(Opcode::OP_CONTRACT, {"input"}, {"assembled"}, "contract");
+        graph.AddOp(Opcode::OP_RESHAPE, {"assembled"}, {"reshaped"}, "firstReshape");
+        graph.AddOp(Opcode::OP_VIEW, {"reshaped"}, {"viewed"}, "view");
+        graph.AddOp(Opcode::OP_RESHAPE, {"viewed"}, {"branchReshaped"}, "branchReshape");
+        graph.AddOp(Opcode::OP_SLICE, {"branchReshaped"}, {"output"}, "slice");
+        graph.GetOp("contract")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UB, Offset{0, 0}));
+        graph.GetOp("view")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}));
+        graph.GetOp("slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, MEM_UB));
+        ASSERT_TRUE(graph.SetOutCast(outcasts));
+
+        pass.Init(*graph.GetFunction());
+        ASSERT_EQ(pass.ProcessDdrMultiReshape(*graph.GetFunction()), SUCCESS);
+        auto expected = outcasts.empty() ? MEM_UB : MEM_DEVICE_DDR;
+        for (const auto* name : {"assembled", "reshaped", "viewed", "branchReshaped"}) {
+            EXPECT_EQ(graph.GetTensor(name)->GetMemoryTypeOriginal(), expected) << name;
+        }
+    }
+}
+
 TEST_F(AssignMemoryTypeTest, DdrMultiReshapeWithDirectSlice)
 {
     auto function = std::make_shared<Function>(Program::GetInstance(), "DdrMultiReshapeWithDirectSlice",
@@ -4414,6 +4445,41 @@ TEST_F(AssignMemoryTypeTest, L1DdrL1ContractSliceDowngradeToLayoutOps)
     EXPECT_EQ(l1SliceOp.GetOpcode(), Opcode::OP_VIEW);
     EXPECT_EQ(l0aSliceOp.GetOpcode(), Opcode::OP_SLICE);
     EXPECT_EQ(l0aOutput->GetMemoryTypeOriginal(), MemoryType::MEM_L0A);
+}
+
+TEST_F(AssignMemoryTypeTest, OutcastMiddleIsNotUpgradedByContractSlicePath)
+{
+    PrepareA5Platform();
+    config::SetPassOption(ENABLE_SLICE, true);
+    auto function = std::make_shared<Function>(Program::GetInstance(), "OutcastMiddleIsNotUpgradedByContractSlicePath",
+                                               "OutcastMiddleIsNotUpgradedByContractSlicePath", nullptr);
+    ASSERT_NE(function, nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("OutcastMiddleIsNotUpgradedByContractSlicePath", function);
+
+    const Shape shape{NUM_32, NUM_64};
+    const auto validShape = CreateTestConstIntVector(shape);
+    auto ubInput = IRBuilder().CreateTensorVar(DT_FP32, shape, validShape);
+    auto outcastMiddle = IRBuilder().CreateTensorVar(DT_FP32, shape, validShape);
+    auto l1Output = IRBuilder().CreateTensorVar(DT_FP32, shape, validShape);
+    ubInput->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+
+    auto& contract = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {ubInput}, {outcastMiddle});
+    contract.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, Offset{0, 0}));
+    auto& slice = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_SLICE, {outcastMiddle}, {l1Output});
+    slice.SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, MemoryType::MEM_L1));
+    function->outCasts_ = {outcastMiddle};
+
+    AssignMemoryType assignMemoryType;
+    ASSERT_EQ(assignMemoryType.RunOnFunction(*function), SUCCESS);
+    EXPECT_EQ(outcastMiddle->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(outcastMiddle->GetMemoryTypeToBe(), MemoryType::MEM_DEVICE_DDR);
+    EXPECT_EQ(contract.GetOOperands().front(), outcastMiddle);
+    EXPECT_EQ(slice.GetIOperands().front(), outcastMiddle);
+    EXPECT_EQ(l1Output->GetMemoryTypeOriginal(), MemoryType::MEM_L1);
+    EXPECT_EQ(assignMemoryType.PostCheck(*function), SUCCESS);
+
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+    Platform::Instance().ReloadMemoryPaths("2201");
 }
 
 TEST_F(AssignMemoryTypeTest, TestUB2L1AssembleDirectPathNotDdrFallback)

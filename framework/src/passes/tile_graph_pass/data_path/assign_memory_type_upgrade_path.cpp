@@ -113,7 +113,7 @@ Status AssignMemoryType::ProcessDdrMultiReshape(Function& function)
         auto contractInput = contract.iOperand.front();
         auto contractOutput = contract.oOperand.front();
         if (contractOutput->GetProducers().size() != 1 || contractInput->GetMemoryTypeOriginal() != kUbMemoryType ||
-            contractOutput->GetConsumers().size() != 1) {
+            contractOutput->GetConsumers().size() != 1 || IsOutCastTensor(contractOutput)) {
             continue;
         }
         bool aligned = false;
@@ -127,7 +127,7 @@ Status AssignMemoryType::ProcessDdrMultiReshape(Function& function)
             continue;
         }
         auto firstReshapeOutput = firstReshape->oOperand.front();
-        if (firstReshapeOutput->GetConsumers().empty()) {
+        if (firstReshapeOutput->GetConsumers().empty() || IsOutCastTensor(firstReshapeOutput)) {
             continue;
         }
 
@@ -155,7 +155,7 @@ Status AssignMemoryType::ProcessDdrMultiReshape(Function& function)
                 break;
             }
             auto viewOutput = branch->oOperand.front();
-            if (viewOutput->GetConsumers().empty()) {
+            if (viewOutput->GetConsumers().empty() || IsOutCastTensor(viewOutput)) {
                 matches = false;
                 break;
             }
@@ -167,7 +167,7 @@ Status AssignMemoryType::ProcessDdrMultiReshape(Function& function)
                     break;
                 }
                 auto reshapeOutput = reshape->oOperand.front();
-                if (reshapeOutput->GetConsumers().empty()) {
+                if (reshapeOutput->GetConsumers().empty() || IsOutCastTensor(reshapeOutput)) {
                     matches = false;
                     break;
                 }
@@ -244,7 +244,7 @@ Status AssignMemoryType::ProcessL1DdrL1(Function& function)
             continue;
         }
         auto middle = contract.oOperand.front();
-        if (middle == nullptr || !visitedOutputs.insert(middle).second ||
+        if (middle == nullptr || IsOutCastTensor(middle) || !visitedOutputs.insert(middle).second ||
             (middle->GetMemoryTypeOriginal() != MemoryType::MEM_UNKNOWN &&
              middle->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) ||
             MemoryPathUtils::IsOversizedLocalBuffer(middle, MemoryType::MEM_L1, false, true) ||
@@ -712,12 +712,17 @@ Status AssignMemoryType::ProcessUB2L1LargeToSmall(Function& function)
 
 bool AssignMemoryType::CanUseMiddleTensorForUpgrade(const LogicalTensorPtr& middle, MemoryType targetType) const
 {
-    if (middle == nullptr || targetType == MemoryType::MEM_UNKNOWN) {
+    if (middle == nullptr || targetType == MemoryType::MEM_UNKNOWN || IsOutCastTensor(middle)) {
         return false;
     }
     MemoryType currentType = middle->GetMemoryTypeOriginal();
     return currentType == MemoryType::MEM_UNKNOWN || currentType == MemoryType::MEM_DEVICE_DDR ||
            currentType == targetType;
+}
+
+bool AssignMemoryType::IsOutCastTensor(const LogicalTensorPtr& tensor) const
+{
+    return tensor != nullptr && outcastRawMagics_.has_value() && outcastRawMagics_->count(tensor->GetRawMagic()) != 0;
 }
 
 bool AssignMemoryType::HasOnlyContractProducers(const LogicalTensorPtr& tensor) const

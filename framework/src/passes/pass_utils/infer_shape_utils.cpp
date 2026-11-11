@@ -13,8 +13,6 @@
  * \brief 公共的 InferShape 方法实现
  */
 
-#include <algorithm>
-#include <unordered_map>
 #include <unordered_set>
 #include "infer_shape_utils.h"
 
@@ -30,24 +28,18 @@ Status InferShapeUtils::InferShape(Function& function, const std::vector<Operati
         return SUCCESS;
     }
 
-    std::unordered_map<const Operation*, size_t> opToIndex;
-    opToIndex.reserve(sortedOperations.size());
-    for (size_t index = 0; index < sortedOperations.size(); ++index) {
-        opToIndex.emplace(&sortedOperations[index], index);
-    }
-
+    std::unordered_set<Operation*> remaining(targetOps.begin(), targetOps.end());
+    remaining.erase(nullptr);
     std::vector<Operation*> opList;
-    std::unordered_set<Operation*> targetOpSet;
-    opList.reserve(targetOps.size());
-    for (const auto op : targetOps) {
-        if (op != nullptr && opToIndex.find(op) != opToIndex.end() && targetOpSet.insert(op).second) {
-            opList.push_back(op);
+    opList.reserve(remaining.size());
+    for (auto& op : sortedOperations) {
+        if (remaining.erase(&op) != 0) {
+            opList.push_back(&op);
+        }
+        if (remaining.empty()) {
+            break;
         }
     }
-
-    std::sort(opList.begin(), opList.end(), [&opToIndex](const Operation* lhs, const Operation* rhs) {
-        return opToIndex.at(lhs) < opToIndex.at(rhs);
-    });
     for (auto* op : opList) {
         InferShapeRegistry::GetInstance().CallInferShapeFunc(op);
     }

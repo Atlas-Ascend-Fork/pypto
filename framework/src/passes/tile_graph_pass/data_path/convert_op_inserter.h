@@ -95,7 +95,7 @@ public:
     Status RecordConflict(Function& function);
 
     // 根据已记录的converts插入OP_CONVERT
-    void InsertConvertOps(Function& function);
+    void InsertConvertOps(Function& function, std::vector<Operation*>* addedOps = nullptr);
 
     // 将插入的OP_CONVERT转化为Slice和Contract，后续GenerateMoveOp时会转化为copy类Op
     bool CreateMoveOpForConvert(Operation& op);
@@ -108,7 +108,7 @@ public:
                                     Operation* op) const;
 
     // 对外总接口
-    Status DoInsertion(Function& function);
+    Status DoInsertion(Function& function, std::vector<Operation*>* addedOps = nullptr);
 
     // 构建转换路径
     Status ConstructPath(MemoryType from, MemoryType to, std::vector<MemoryType>& paths,

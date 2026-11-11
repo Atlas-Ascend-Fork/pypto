@@ -638,9 +638,12 @@ bool ConvertInserter::CreateMoveOpForConvert(Operation& op)
     return false;
 }
 
-void ConvertInserter::InsertConvertOps(Function& function)
+void ConvertInserter::InsertConvertOps(Function& function, std::vector<Operation*>* addedOps)
 {
     APASS_LOG_INFO_F(Elements::Operation, "--- Need to insert %zu convert operations ---", converts.size());
+    if (addedOps != nullptr) {
+        addedOps->reserve(addedOps->size() + converts.size());
+    }
     for (const auto& c : converts) {
         IRBuilder builder;
         auto& convertOp = builder.CreateTensorOpStmt(function, Opcode::OP_CONVERT, {c.input}, {c.output});
@@ -648,6 +651,9 @@ void ConvertInserter::InsertConvertOps(Function& function)
         if (!CreateMoveOpForConvert(convertOp)) {
             auto producerScopeInfo = (*(c.input->GetProducers().begin()))->GetScopeInfo();
             convertOp.SetScopeInfo(producerScopeInfo); // convert 是拷贝出操作，和producer一个子图
+        }
+        if (addedOps != nullptr) {
+            addedOps->push_back(&convertOp);
         }
     }
 }
@@ -668,7 +674,7 @@ std::shared_ptr<AssembleOpAttribute> ConvertInserter::BuildMoveOutAttrForConvert
 }
 
 // 对外总接口
-Status ConvertInserter::DoInsertion(Function& function)
+Status ConvertInserter::DoInsertion(Function& function, std::vector<Operation*>* addedOps)
 {
     ClearPlanningState();
     FilterConflictTensor();
@@ -676,7 +682,7 @@ Status ConvertInserter::DoInsertion(Function& function)
     if (status != SUCCESS) {
         return status;
     }
-    InsertConvertOps(function);
+    InsertConvertOps(function, addedOps);
     APASS_LOG_INFO_F(Elements::Function, "After Insert Convert, total op Num: %zu.", function.GetOperationSize());
     return SUCCESS;
 }

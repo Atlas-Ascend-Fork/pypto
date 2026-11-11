@@ -16,6 +16,7 @@
 #ifndef TILE_FWK_ASSIGN_MEMORY_TYPE_H
 #define TILE_FWK_ASSIGN_MEMORY_TYPE_H
 
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_set>
@@ -38,6 +39,7 @@ private:
     Status PreCheck(Function& function) override;
     Status PostCheck(Function& function) override;
     Status RunOnFunction(Function& function) override;
+    void Init(Function& function);
     Status InsertConvertOpsAndInferShape(Function& function);
 
     Status AssignConfirmedMemoryTypes(Function& function);
@@ -82,13 +84,9 @@ private:
 
     bool HasDifferentConsumerRequirement(const LogicalTensorPtr& tensor, MemoryType targetType) const;
 
-    Status InferAssembleMemoryType(Function& function, Operation& operation,
-                                   std::unordered_set<LogicalTensorPtr>& inferredAssembleOutputs);
+    Status InferAssembleMemoryType(Operation& operation, std::unordered_set<LogicalTensorPtr>& inferredAssembleOutputs);
 
-    // 后续有公共方法后替换为通过 rawTensor 查找所有 logicalTensor 的公共接口
-    TensorSet GetLogicalTensorsByRawTensor(Function& function, const LogicalTensorPtr& tensor) const;
-
-    void PropagateMemoryTypeToRawTensorSiblings(Function& function, const LogicalTensorPtr& output,
+    void PropagateMemoryTypeToRawTensorSiblings(const LogicalTensorPtr& output,
                                                 std::unordered_set<LogicalTensorPtr>& inferredAssembleOutputs);
 
     Status ResolveInconsistentRawTensorMemoryTypes(Function& function);
@@ -204,6 +202,7 @@ private:
                                              const std::string& reason, bool requireMatrixShape, bool checkUbTileShape,
                                              bool checkUb2L1Constraints);
     bool CanUseMiddleTensorForUpgrade(const LogicalTensorPtr& middle, MemoryType targetType) const;
+    bool IsOutCastTensor(const LogicalTensorPtr& tensor) const;
     bool HasOnlyContractProducers(const LogicalTensorPtr& tensor) const;
     bool HasOnlySliceConsumers(const LogicalTensorPtr& tensor) const;
     bool IsSliceOutputTarget(Operation& sliceOp, MemoryType targetType) const;
@@ -275,6 +274,15 @@ private:
     AssignMemoryTypeMode mode_ = AssignMemoryTypeMode::SLICE_CONTRACT;
     ConvertInserter inserter{mode_};
     AssignMemoryTypeChecker checker;
+
+    // 按物理 rawmagic 索引当前函数的逻辑张量，供 assemble 推导传播内存类型。
+    // 每次运行由 Init 按当前函数的逻辑张量建表，供 assemble 推导和 raw 类型一致性处理复用。
+    // 期间只更新内存类型和需求，张量归属与物理 rawmagic 不变。
+    RawMagicTensorMap assembleTensorsByRaw_;
+
+    // Init 按 GetRawMagic 记录当前函数的 outcast（含 actualRawmagic 别名），保护同 raw 张量的 DDR 边界。
+    // 未初始化与当前函数没有 outcast 是两种状态。
+    std::optional<std::unordered_set<int>> outcastRawMagics_;
 };
 static constexpr double UB_THRESHOLD_ASSEMBLE = 0.35;
 static constexpr double UB_THRESHOLD_NORMAL = 1.0;

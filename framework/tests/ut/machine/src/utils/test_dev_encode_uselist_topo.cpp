@@ -10,7 +10,7 @@
 
 /*!
  * \file test_dev_encode_uselist_topo.cpp
- * \brief Pred-count sort can place a reader before its writer. useList topo order puts the write first.
+ * \brief Pred-count sort can reverse outcast dependencies. useList emits them in dependency order.
  */
 
 #include <gtest/gtest.h>
@@ -64,8 +64,8 @@ std::vector<OpMark> Collect(DevAscendFunction* func, const DevLocalVector<DevAsc
 
 } // namespace
 
-// 写依赖两个 add，pred 更大；读只依赖这个写，pred 更小。
-// callList 按 pred 个数排序，读会排到写前面。useList 按拓扑序填写，写回到读前面。
+// 首次写依赖两个 Add；Cube 读取它的计算结果并写 out 的另一个 tile。
+// callList 按前驱数量排序，首次写排在后面；useList 必须按依赖顺序记录两次写和读。
 TEST(UseListTopoEmitOrderTest, PredCountSortPutsReaderBeforeWriter)
 {
     Program::GetInstance().Reset();
@@ -73,12 +73,14 @@ TEST(UseListTopoEmitOrderTest, PredCountSortPutsReaderBeforeWriter)
     config::SetPlatformConfig(KEY_ENABLE_AIHAC_BACKEND, true);
     config::SetRuntimeOption(STITCH_FUNCTION_MAX_NUM, 64);
     TileShape::Current().SetVecTile(kTile, kTile);
+    TileShape::Current().SetCubeTile({kTile, kTile}, {kTile, kTile}, {kTile, kTile});
 
-    Tensor a(DT_FP32, {kTile * 2, kTile}, "a");
-    Tensor b(DT_FP32, {kTile * 2, kTile}, "b");
-    Tensor out(DT_FP32, {kTile * 2, kTile}, "out");
-    Tensor scaled(DT_FP32, {kTile * 2, kTile}, "scaled");
-    FUNCTION("pred_count_reader_first", {a, b}, {out, scaled})
+    Tensor a(DT_FP16, {kTile * 2, kTile}, "a");
+    Tensor b(DT_FP16, {kTile * 2, kTile}, "b");
+    Tensor weight(DT_FP16, {kTile, kTile}, "weight");
+    Tensor out(DT_FP16, {kTile * 2, kTile}, "out");
+    Tensor scaled(DT_FP16, {kTile * 2, kTile}, "scaled");
+    FUNCTION("pred_count_reader_first", {a, b, weight}, {out, scaled})
     {
         LOOP("PV_W", FunctionType::DYNAMIC_LOOP, i, LoopRange(1), std::set<int>{1})
         {
@@ -86,9 +88,12 @@ TEST(UseListTopoEmitOrderTest, PredCountSortPutsReaderBeforeWriter)
             auto tileB = View(b, {kTile, kTile}, {i * kTile, 0});
             auto x = Add(tileA, tileA);
             auto y = Add(tileB, tileB);
-            Assemble(Add(x, y), {i * kTile, 0}, out);
+            auto sum = Add(x, y);
+            Assemble(sum, {i * kTile, 0}, out);
+            // The Cube writer depends on the first writer through sum, without reading back out.
+            Assemble(Matrix::Matmul(DT_FP16, sum, weight), {i * kTile + kTile, 0}, out);
             auto written = View(out, {kTile, kTile}, {i * kTile, 0});
-            Assemble(Mul(written, Element(DT_FP32, 1.5f)), {i * kTile, 0}, scaled);
+            Assemble(Mul(written, Element(DT_FP16, 1.5f)), {i * kTile, 0}, scaled);
         }
     }
 
@@ -126,26 +131,30 @@ TEST(UseListTopoEmitOrderTest, PredCountSortPutsReaderBeforeWriter)
             }
         }
     }
-    ASSERT_EQ(matchCount, 1);
+    ASSERT_EQ(matchCount, 1) << "expected exactly one outcast used across subgraphs for both writes and reads";
 
-    // operationIdx 是 callList 下标。按下标排回去，就是拓扑排序之前的顺序。
+    // operationIdx 是 callList 下标；useList 按拓扑序填写时不修改这些下标。
     std::vector<OpMark> callListOrder = useListOrder;
     std::sort(callListOrder.begin(), callListOrder.end(),
               [](const OpMark& lhs, const OpMark& rhs) { return lhs.idx < rhs.idx; });
     constexpr int kReadOp = 2;
-    constexpr int kWriteOp = 3;
-    // callList：pred count 把读排在写前面。
-    EXPECT_EQ(Dump(callListOrder), "R2,W3");
-    // useList：拓扑序把写放回读前面。
-    EXPECT_EQ(Dump(useListOrder), "W3,R2");
-    // 读的 pred 更小，所以上面的乱序来自 pred count。
-    EXPECT_LT(devFunc->GetOperationDepGraphPredCount(kReadOp), devFunc->GetOperationDepGraphPredCount(kWriteOp));
+    constexpr int kSecondWriteOp = 3;
+    constexpr int kFirstWriteOp = 4;
+    EXPECT_EQ(Dump(callListOrder), "R2,W3,W4");
+    EXPECT_EQ(Dump(useListOrder), "W4,W3,R2");
+    EXPECT_LT(devFunc->GetOperationDepGraphPredCount(kReadOp), devFunc->GetOperationDepGraphPredCount(kFirstWriteOp));
+    EXPECT_LT(devFunc->GetOperationDepGraphPredCount(kSecondWriteOp),
+              devFunc->GetOperationDepGraphPredCount(kFirstWriteOp));
 
-    bool writeReachesRead = false;
-    const auto& succList = devFunc->GetOperationDepGraphSuccList(kWriteOp);
-    for (size_t i = 0; i < succList.size(); ++i) {
-        writeReachesRead = writeReachesRead || static_cast<int>(devFunc->At(succList, i)) == kReadOp;
-    }
-    // W3 是 R2 的前驱，拓扑序必须先写后读。
-    EXPECT_TRUE(writeReachesRead);
+    auto hasSuccessor = [devFunc](int opIdx, int successorIdx) {
+        const auto& successors = devFunc->GetOperationDepGraphSuccList(opIdx);
+        for (size_t i = 0; i < successors.size(); ++i) {
+            if (static_cast<int>(devFunc->At(successors, i)) == successorIdx) {
+                return true;
+            }
+        }
+        return false;
+    };
+    EXPECT_TRUE(hasSuccessor(kFirstWriteOp, kSecondWriteOp));
+    EXPECT_TRUE(hasSuccessor(kSecondWriteOp, kReadOp));
 }

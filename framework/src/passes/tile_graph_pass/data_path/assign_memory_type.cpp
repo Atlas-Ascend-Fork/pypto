@@ -28,7 +28,6 @@
 #include "passes/pass_log/pass_log.h"
 #include "passes/pass_utils/checker_utils.h"
 #include "passes/pass_utils/pass_utils.h"
-#include "passes/pass_utils/graph_utils.h"
 #include "passes/tile_graph_pass/data_path/memory_path_utils.h"
 #include "tilefwk/tilefwk.h"
 
@@ -43,11 +42,28 @@
     } while (0)
 
 namespace npu::tile_fwk {
-Status AssignMemoryType::RunOnFunction(Function& function)
+void AssignMemoryType::Init(Function& function)
 {
     mode_ = config::EnableSlice() ? AssignMemoryTypeMode::SLICE_CONTRACT : AssignMemoryTypeMode::VIEW_ASSEMBLE;
     inserter = ConvertInserter(mode_);
+    assembleTensorsByRaw_.clear();
+    for (const auto& tensor : GraphUtils::GetAllTensors(function)) {
+        if (tensor->tensor != nullptr) {
+            assembleTensorsByRaw_[tensor->tensor->rawmagic].insert(tensor);
+        }
+    }
+    outcastRawMagics_.emplace();
+    for (const auto& tensor : function.GetOutcast()) {
+        if (tensor != nullptr) {
+            outcastRawMagics_->insert(tensor->GetRawMagic());
+        }
+    }
+}
+
+Status AssignMemoryType::RunOnFunction(Function& function)
+{
     APASS_LOG_INFO_F(Elements::Function, "===> Start AssignMemoryType.");
+    Init(function);
     function.SortOperations(SortOperationsMode::LIGHTWEIGHT);
     if (IsSliceMode()) {
         RETURN_IF_NOT_SUCCESS(AssignConfirmedMemoryTypes(function));
@@ -576,6 +592,15 @@ Status AssignMemoryType::InferReshapeL0C2UBAndUB2L1PatternLiteNPU(Operation& op)
     auto& producers = input->GetProducers();
     auto& consumers = output->GetConsumers();
 
+    auto hasOutcastOperand = [this](const Operation* move) {
+        return move != nullptr && ((!move->iOperand.empty() && IsOutCastTensor(move->iOperand.front())) ||
+                                   (!move->oOperand.empty() && IsOutCastTensor(move->oOperand.front())));
+    };
+    if (IsSliceMode() && (IsOutCastTensor(input) || IsOutCastTensor(output) ||
+                          std::any_of(producers.begin(), producers.end(), hasOutcastOperand))) {
+        return SUCCESS;
+    }
+
     // l0c2ub / l12ub pattern (batchmatmul case)，结构见 InferCubeToVecSourceType 注释。
     // 仅按 cube 输出驻留类型区分：宏指令 (kirin9050, 无 L0C) 为 L1 (l12ub)，
     // 普通 lite NPU 为 L0C (l0c2ub)，producer contract 输入随之设为 L1/L0C。
@@ -601,7 +626,8 @@ Status AssignMemoryType::InferReshapeL0C2UBAndUB2L1PatternLiteNPU(Operation& op)
     // MXMatmul 场景 K 轴非 64 对齐不支持 UB2L1 直连（MX 补齐仅由 DDR 路径支持），回退 DDR。
     if (IsReshapeVecToCubeUB2L1Pattern(op) && MemoryPathUtils::FitsTensorInUb(output) &&
         AreAllMoveOpsInputOutputShapeIdentical(consumers) && inserter.IsUb2L1LiteNPUSupportedDtype(output) &&
-        !MemoryPathUtils::HasMxPaddingModeConsumer(output)) {
+        !MemoryPathUtils::HasMxPaddingModeConsumer(output) &&
+        (!IsSliceMode() || std::none_of(consumers.begin(), consumers.end(), hasOutcastOperand))) {
         ApplyReshapeVecToCubeUpgrade(op, producers, consumers);
         return SUCCESS;
     }
@@ -611,6 +637,10 @@ Status AssignMemoryType::InferReshapeL0C2UBAndUB2L1PatternLiteNPU(Operation& op)
 
 Status AssignMemoryType::InferUncertainMemoryTypes(Function& function)
 {
+    if (!outcastRawMagics_.has_value()) {
+        APASS_LOG_WARN_F(Elements::Function,
+                         "AssignMemoryType inference called before Init; outcast protection is unavailable.");
+    }
     std::unordered_set<LogicalTensorPtr> inferredAssembleOutputs;
     for (auto& op : function.Operations()) {
         switch (op.GetOpcode()) {
@@ -624,7 +654,7 @@ Status AssignMemoryType::InferUncertainMemoryTypes(Function& function)
                 RETURN_IF_NOT_SUCCESS(InferViewTypeMemoryType(op));
                 break;
             case Opcode::OP_ASSEMBLE:
-                RETURN_IF_NOT_SUCCESS(InferAssembleMemoryType(function, op, inferredAssembleOutputs));
+                RETURN_IF_NOT_SUCCESS(InferAssembleMemoryType(op, inferredAssembleOutputs));
                 break;
             case Opcode::OP_CONTRACT:
                 RETURN_IF_NOT_SUCCESS(InferContractMemoryType(op));
@@ -987,7 +1017,7 @@ bool AssignMemoryType::CanUseDirectViewPath(Operation& operation, MemoryType fro
     return isDirectPath;
 }
 
-Status AssignMemoryType::InferAssembleMemoryType(Function& function, Operation& operation,
+Status AssignMemoryType::InferAssembleMemoryType(Operation& operation,
                                                  std::unordered_set<LogicalTensorPtr>& inferredAssembleOutputs)
 {
     if (operation.GetOpcode() != Opcode::OP_ASSEMBLE)
@@ -1007,7 +1037,7 @@ Status AssignMemoryType::InferAssembleMemoryType(Function& function, Operation& 
         return SUCCESS;
     }
     RETURN_IF_NOT_SUCCESS(InferAssembleMemoryType(operation));
-    PropagateMemoryTypeToRawTensorSiblings(function, operation.oOperand.front(), inferredAssembleOutputs);
+    PropagateMemoryTypeToRawTensorSiblings(output, inferredAssembleOutputs);
     return SUCCESS;
 }
 
@@ -1045,21 +1075,17 @@ Status AssignMemoryType::InferAssembleMemoryType(Operation& operation)
     return SetParallelAssembleInputRequirements(output, inputRequirement, "InferAssembleInputRequirement");
 }
 
-TensorSet AssignMemoryType::GetLogicalTensorsByRawTensor(Function& function, const LogicalTensorPtr& tensor) const
-{
-    if (tensor == nullptr || tensor->tensor == nullptr) {
-        return {};
-    }
-    return GraphUtils::GetTensorsByRawMagic(function, tensor->tensor->rawmagic);
-}
-
 void AssignMemoryType::PropagateMemoryTypeToRawTensorSiblings(
-    Function& function, const LogicalTensorPtr& output, std::unordered_set<LogicalTensorPtr>& inferredAssembleOutputs)
+    const LogicalTensorPtr& output, std::unordered_set<LogicalTensorPtr>& inferredAssembleOutputs)
 {
-    if (output == nullptr) {
+    if (output == nullptr || output->tensor == nullptr) {
         return;
     }
-    auto siblings = GetLogicalTensorsByRawTensor(function, output);
+    auto tensorsIt = assembleTensorsByRaw_.find(output->tensor->rawmagic);
+    if (tensorsIt == assembleTensorsByRaw_.end()) {
+        return;
+    }
+    const auto& siblings = tensorsIt->second;
     if (siblings.size() <= 1) {
         return;
     }
@@ -1085,13 +1111,6 @@ Status AssignMemoryType::ResolveInconsistentRawTensorMemoryTypes(Function& funct
             return producer != nullptr && IsAssembleLike(producer->GetOpcode());
         });
     };
-    RawMagicTensorMap tensorsByRaw;
-    for (const auto& tensor : GraphUtils::GetAllTensors(function)) {
-        if (tensor->tensor != nullptr) {
-            // Match physical rawmagic, without following actualRawmagic aliases.
-            tensorsByRaw[tensor->tensor->rawmagic].insert(tensor);
-        }
-    }
     std::unordered_set<int64_t> visitedRawMagic;
     for (auto& op : function.Operations()) {
         if (!IsAssembleLike(op.GetOpcode())) {
@@ -1108,7 +1127,7 @@ Status AssignMemoryType::ResolveInconsistentRawTensorMemoryTypes(Function& funct
         if (!visitedRawMagic.insert(rawMagic).second) {
             continue;
         }
-        const auto& siblings = tensorsByRaw.at(rawMagic);
+        const auto& siblings = assembleTensorsByRaw_.at(rawMagic);
         if (siblings.size() <= 1) {
             continue;
         }
@@ -1359,6 +1378,10 @@ Status AssignMemoryType::ResolveWritableReshapeMemoryTypes(Function& function)
         }
     }
     std::unordered_set<int64_t> visited;
+    std::unordered_map<int, std::vector<size_t>> reshapeIndicesByInputMagic;
+    for (size_t i = 0; i < reshapes.size(); ++i) {
+        reshapeIndicesByInputMagic[reshapes[i]->iOperand.front()->GetMagic()].push_back(i);
+    }
     for (auto raw : writableRaws) {
         if (visited.count(raw) != 0) {
             continue;
@@ -1410,11 +1433,19 @@ Status AssignMemoryType::ResolveWritableReshapeMemoryTypes(Function& function)
         for (const auto& tensor : tensors) {
             MemoryPathUtils::ForceSetOriginal(tensor, storageType, "ResolveWritableReshape");
         }
-        for (auto* reshape : reshapes) {
-            if (tensors.count(reshape->iOperand.front()) != 0) {
-                MemoryPathUtils::ForceSetRequirement(inserter, reshape->iOperand.front(), *reshape, storageType,
-                                                     "ResolveWritableReshape");
+        // TensorSet membership uses logical magic. Restore the original reshape order for writes.
+        std::vector<size_t> componentReshapeIndices;
+        for (const auto& tensor : tensors) {
+            auto it = reshapeIndicesByInputMagic.find(tensor->GetMagic());
+            if (it != reshapeIndicesByInputMagic.end()) {
+                componentReshapeIndices.insert(componentReshapeIndices.end(), it->second.begin(), it->second.end());
             }
+        }
+        std::sort(componentReshapeIndices.begin(), componentReshapeIndices.end());
+        for (auto index : componentReshapeIndices) {
+            auto* reshape = reshapes[index];
+            MemoryPathUtils::ForceSetRequirement(inserter, reshape->iOperand.front(), *reshape, storageType,
+                                                 "ResolveWritableReshape");
         }
     }
     return SUCCESS;
@@ -1497,7 +1528,7 @@ Status AssignMemoryType::KeepSplitReshapeUb(Operation& operation, const LogicalT
                                             const LogicalTensorPtr& output, bool& kept)
 {
     kept = false;
-    if (input == nullptr || output == nullptr) {
+    if (input == nullptr || output == nullptr || IsOutCastTensor(input) || IsOutCastTensor(output)) {
         return SUCCESS;
     }
     // A parallel copy-in branch still needs its original memory boundary. Keeping
@@ -2018,18 +2049,9 @@ Status AssignMemoryType::MarkA5SimtGatherElement(Function& function)
 
 Status AssignMemoryType::InsertConvertOpsAndInferShape(Function& function)
 {
-    std::unordered_set<Operation*> existingOps;
-    for (auto& op : function.Operations()) {
-        existingOps.insert(&op);
-    }
-    RETURN_IF_NOT_SUCCESS(inserter.DoInsertion(function));
-    function.SortOperations(SortOperationsMode::LIGHTWEIGHT);
     std::vector<Operation*> addedOps;
-    for (auto& op : function.Operations(false)) {
-        if (existingOps.find(&op) == existingOps.end()) {
-            addedOps.push_back(&op);
-        }
-    }
+    RETURN_IF_NOT_SUCCESS(inserter.DoInsertion(function, &addedOps));
+    function.SortOperations(SortOperationsMode::LIGHTWEIGHT);
     if (!addedOps.empty()) {
         if (InferShapeUtils::InferShape(function, addedOps) != SUCCESS) {
             APASS_LOG_ERROR_F(Elements::Function, "InferShape for added ops failed.");
