@@ -103,6 +103,8 @@ public:
         DEV_VERBOSE_DEBUG("#trace.dtask.built: dtaskId %lu", dynTask->GetIndex());
 
         if (AicoreResolveEnabled()) {
+            // Host emulation has no DrcoDeviceTaskReadyQueue consumer skip.
+            DEV_IF_NONDEVICE { return 0; }
             if (!ctx->devProg->ctrlFlowCacheAnchor->IsRecording()) {
                 int ret;
                 if (ParallelModeEnabled()) {
