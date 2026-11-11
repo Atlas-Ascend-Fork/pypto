@@ -559,6 +559,7 @@
       - [pypto_pro.language.system.wait_cross_core](pro_api/SIMD-API/synchronization/wait_cross_core.md)
       - [pypto_pro.language.system.wait_pre_task_end](pro_api/SIMD-API/synchronization/wait_pre_task_end.md)
     - [缓存控制](pro_api/SIMD-API/cache_control/index.md)
+      - [系统缓存概述](pro_api/SIMD-API/cache_control/system_cache_overview.md)
       - [pypto_pro.language.system.dcci](pro_api/SIMD-API/cache_control/dcci.md)
       - [pypto_pro.language.system.icache_preload](pro_api/SIMD-API/cache_control/icache_preload.md)
     - [系统访问变量](pro_api/SIMD-API/system_variables/index.md)

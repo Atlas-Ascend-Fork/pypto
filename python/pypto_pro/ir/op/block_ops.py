@@ -124,12 +124,23 @@ class FillPadMode(enum.Enum):
     INPLACE = 2
 
 
-def _l2_cache_mode_attr(l2_cache_mode, expected_type: type, op_name: str) -> dict[str, int]:
+def _l2_cache_mode_attr(
+    l2_cache_mode, expected_type: type, op_name: str, *, dst_tile: Expr | None = None
+) -> dict[str, int]:
     if l2_cache_mode is None or isinstance(getattr(l2_cache_mode, "type", None), _ir_core.NoneType):
         return {}
     if not isinstance(l2_cache_mode, expected_type):
         raise InvalidType(
             f"{op_name}: l2_cache_mode expects {expected_type.__name__}, got {type(l2_cache_mode).__name__}"
+        )
+    dst_mem = getattr(getattr(getattr(dst_tile, "type", None), "memref", None), "memory_space", None)
+    if dst_mem == MemorySpace.Mat and l2_cache_mode in (
+        TLoadL2Hint.NotAllocClean,
+        TLoadL2Hint.NotAllocDrop,
+    ):
+        raise InvalidArgument(
+            f"{op_name}: L1 loads support only NormalFirstVictim, NormalLastVictim, "
+            "NormalPersistent, or NotAllocKeep"
         )
     return {"l2_cache_mode": l2_cache_mode.value}
 
@@ -357,7 +368,9 @@ def _ir_load(
     if nd_inner is not None and _const_int_value(offsets_tuple.elements[resolved_tile_dims[1]]) != 0:
         raise InvalidArgument(f"{op_name}: a merged-row load's middle axis offset must be a compile-time zero")
 
-    kwargs: dict[str, Any] = _l2_cache_mode_attr(l2_cache_mode, TLoadL2Hint, op_name)
+    kwargs: dict[str, Any] = _l2_cache_mode_attr(
+        l2_cache_mode, TLoadL2Hint, op_name, dst_tile=dst_tile
+    )
     if nd_inner is not None:
         kwargs["nd_inner"] = nd_inner
     if is_transpose:
@@ -413,7 +426,9 @@ def _ir_load_tile(
     )
     _validate_offsets(op_name, abs_offsets.elements, src_tensor.type.shape)
     _check_layout_dtype("load_tile", src_tensor, dst_tile, is_transpose=is_transpose)
-    kwargs: dict[str, Any] = _l2_cache_mode_attr(l2_cache_mode, TLoadL2Hint, op_name)
+    kwargs: dict[str, Any] = _l2_cache_mode_attr(
+        l2_cache_mode, TLoadL2Hint, op_name, dst_tile=dst_tile
+    )
     if is_transpose:
         kwargs["is_transpose"] = is_transpose
     if resolved_tile_dims is not None and (order is not None or resolved_tile_dims != tile_dims):

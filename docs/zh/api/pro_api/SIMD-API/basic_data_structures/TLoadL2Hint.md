@@ -20,11 +20,11 @@ GM数据读取的L2 Cache策略枚举，用于load和load_tile接口。该参数
 
 ```python
 PYPTO_DECLARE_ENUM(TLoadL2Hint,
-    NormalFirstVictim,  # 默认策略，正常分配L2 Cache，优先淘汰。
-    NormalLastVictim,   # 正常分配L2 Cache，降低被淘汰的优先级。
-    NormalPersistent,   # 正常分配L2 Cache，并使用持久化策略。
-    NotAllocKeep,       # 不分配新的L2 Cache行，并使用Keep策略。
-    NotAllocClean,      # 不分配新的L2 Cache行，并使用Clean策略。
-    NotAllocDrop        # 不分配新的L2 Cache行，并使用Drop策略。
+    NormalFirstVictim,  # 启用L2 Cache，并且将分配的Cache Line标记为高替换优先级。
+    NormalLastVictim,   # 启用L2 Cache，并且将分配的Cache Line标记为低替换优先级。
+    NormalPersistent,   # 启用L2 Cache；被标记为驻留模式的Cache Line只能被其他同样标记为驻留模式的Cache Line替换。
+    NotAllocKeep,       # 不启用L2 Cache，每次直接从GM读取，并且保持已有Cache Line的状态不变。
+    NotAllocClean,      # 不启用L2 Cache；若L2 Cache中已有同地址缓存，则保留并标记为Clean，移出时直接丢弃。
+    NotAllocDrop        # 不启用L2 Cache；若L2 Cache中已有同地址缓存，则直接丢弃。
 )
 ```

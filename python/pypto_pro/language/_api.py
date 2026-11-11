@@ -138,7 +138,10 @@ def load(
             Merged orders are currently unsupported for Vec (UB), load_tile and store.
             A UB reinterpret can reshape already packed data, but cannot gather separated GM regions.
         l2_cache_mode: Optional L2 cache hint for this GM read. ``None`` uses the PTO-ISA default
-            ``TLoadL2Hint.NormalFirstVictim``.
+            ``TLoadL2Hint.NormalFirstVictim``. GM → UB supports ``NormalFirstVictim``,
+            ``NormalLastVictim``, ``NormalPersistent``, ``NotAllocKeep``, ``NotAllocClean``, and
+            ``NotAllocDrop``; GM → L1 Buffer supports ``NormalFirstVictim``, ``NormalLastVictim``,
+            ``NormalPersistent``, and ``NotAllocKeep``.
     """
 
 
@@ -168,7 +171,10 @@ def load_tile(
             descending order (e.g. ``[1, 0]``) loads with transposition (DN layout).
             Default: last N axes ascending (N = Tile ndim), i.e. no transposition.
         l2_cache_mode: Optional L2 cache hint for this GM read. ``None`` uses the PTO-ISA default
-            ``TLoadL2Hint.NormalFirstVictim``.
+            ``TLoadL2Hint.NormalFirstVictim``. GM → UB supports ``NormalFirstVictim``,
+            ``NormalLastVictim``, ``NormalPersistent``, ``NotAllocKeep``, ``NotAllocClean``, and
+            ``NotAllocDrop``; GM → L1 Buffer supports ``NormalFirstVictim``, ``NormalLastVictim``,
+            ``NormalPersistent``, and ``NotAllocKeep``.
     """
 
 
@@ -219,7 +225,8 @@ def store(
             ``pl.AtomicType.AtomicAdd`` (atomic accumulate)
         phase: Fixpipe drain phase — ``pl.STPhase.Partial`` or ``pl.STPhase.Final``
         l2_cache_mode: Optional L2 cache hint for this GM write. ``None`` uses the PTO-ISA default
-            ``TStoreL2Hint.NormalFirstVictim``.
+            ``TStoreL2Hint.NormalFirstVictim``. UB → GM and L0C Buffer → GM support
+            ``NormalFirstVictim``, ``NormalLastVictim``, ``NormalPersistent``, and ``NotAllocClean``.
     """
 
 
@@ -267,7 +274,8 @@ def store_tile(
             ``pl.AtomicType.AtomicAdd`` (atomic accumulate)
         phase: Fixpipe drain phase — ``pl.STPhase.Partial`` or ``pl.STPhase.Final``
         l2_cache_mode: Optional L2 cache hint for this GM write. ``None`` uses the PTO-ISA default
-            ``TStoreL2Hint.NormalFirstVictim``.
+            ``TStoreL2Hint.NormalFirstVictim``. UB → GM and L0C Buffer → GM support
+            ``NormalFirstVictim``, ``NormalLastVictim``, ``NormalPersistent``, and ``NotAllocClean``.
     """
 
 

@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 
 from pypto_pro import ir
-from pypto_pro._errors import InvalidType
+from pypto_pro._errors import InvalidArgument, InvalidType
 import pypto_pro.language as pl
 import pytest
 
@@ -70,3 +70,44 @@ def test_l2_cache_mode_rejects_wrong_hint_type():
 
     with pytest.raises(InvalidType, match="l2_cache_mode expects TLoadL2Hint"):
         invalid.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pl.jit(arch="3510", auto_mutex=False)
+def l1_load_not_alloc_keep_kernel(src: pl.Tensor[[16, 16], pl.DT_FP16]):
+    tt = pl.TileType(
+        shape=[16, 16],
+        dtype=pl.DT_FP16,
+        target_memory=pl.MemorySpace.Mat,
+        layout=pl.NZ,
+    )
+    tile = pl.make_tile(tt, addr=0)
+    with pl.section_cube():
+        pl.load(tile, src, [0, 0], l2_cache_mode=pl.TLoadL2Hint.NotAllocKeep)
+
+
+def test_l1_load_accepts_not_alloc_keep():
+    program, _ = l1_load_not_alloc_keep_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
+    printed = re.sub(r"memref_id=\d+", "memref_id=<id>", str(program))
+    golden = Path(__file__).with_name("test_l1_load_not_alloc_keep.pypto").read_text(encoding="utf-8")
+    assert printed.rstrip("\n") == golden.rstrip("\n")
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [pl.TLoadL2Hint.NotAllocClean, pl.TLoadL2Hint.NotAllocDrop],
+)
+def test_l1_load_rejects_unsupported_l2_cache_mode(mode):
+    @pl.jit(arch="3510", auto_mutex=False)
+    def invalid(src: pl.Tensor[[16, 16], pl.DT_FP16]):
+        tt = pl.TileType(
+            shape=[16, 16],
+            dtype=pl.DT_FP16,
+            target_memory=pl.MemorySpace.Mat,
+            layout=pl.NZ,
+        )
+        tile = pl.make_tile(tt, addr=0)
+        with pl.section_cube():
+            pl.load(tile, src, [0, 0], l2_cache_mode=mode)
+
+    with pytest.raises(InvalidArgument, match="L1 loads support only"):
+        invalid.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
