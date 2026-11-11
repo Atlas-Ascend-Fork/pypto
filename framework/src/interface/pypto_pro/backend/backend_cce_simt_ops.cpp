@@ -1020,18 +1020,35 @@ std::string MakeSimtCbrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
+std::string BuildSimtNanMinMax(const std::string& lhs, const std::string& rhs, const ir::DataType& dtype,
+                               const char* comparison, const char* intrinsic)
+{
+    std::ostringstream s;
+    s << "({auto __nan_lhs = (" << lhs << "); auto __nan_rhs = (" << rhs << ");"
+      << "__isnan(__nan_lhs) ? __nan_lhs : (__isnan(__nan_rhs) ? __nan_rhs : ";
+    if (dtype == ir::DataType::FP16) {
+        s << "(__nan_lhs " << comparison << " __nan_rhs ? __nan_lhs : __nan_rhs)";
+    } else {
+        s << intrinsic << "(__nan_lhs, __nan_rhs)";
+    }
+    s << ");})";
+    return s.str();
+}
+
 std::string MakeSimtMaxNanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    return std::string("__hmax_nan(") + codegen.GetExprAsCode(op->args_[0]) + ", " +
-           codegen.GetExprAsCode(op->args_[1]) + ")";
+    const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
+    return BuildSimtNanMinMax(codegen.GetExprAsCode(op->args_[0]), codegen.GetExprAsCode(op->args_[1]), dtype,
+                              ">=", "__max");
 }
 
 std::string MakeSimtMinNanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    return std::string("__hmin_nan(") + codegen.GetExprAsCode(op->args_[0]) + ", " +
-           codegen.GetExprAsCode(op->args_[1]) + ")";
+    const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
+    return BuildSimtNanMinMax(codegen.GetExprAsCode(op->args_[0]), codegen.GetExprAsCode(op->args_[1]), dtype,
+                              "<=", "__min");
 }
 
 std::string MakeSimtAtan2CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
@@ -1601,7 +1618,9 @@ std::string MakeSimtPopcountCodegenCCE(const ir::CallPtr& op, codegen::CodegenBa
     if (input.dtype == ir::DataType::UINT32) {
         return "__popc((unsigned int)(" + input.operand + "))";
     }
-    return "__popc((unsigned long long)(" + input.operand + "))";
+    return "({uint64_t __pop_value = (" + input.operand +
+           ");"
+           "__popc((unsigned int)__pop_value) + __popc((unsigned int)(__pop_value >> 32));})";
 }
 
 std::string MakeSimtMulHiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
@@ -1618,8 +1637,12 @@ std::string MakeSimtMulHiCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
         intrinsic = "__umulhi";
         operandType = "unsigned int";
     } else if (input.dtype == ir::DataType::INT64) {
-        intrinsic = "__mul64hi";
-        operandType = "long long";
+        return "({uint64_t __mul_lhs = (uint64_t)(" + input.operand + "), __mul_rhs = (uint64_t)(" + rhs +
+               ");"
+               "uint64_t __mul_high = __umul64hi((unsigned long long)__mul_lhs, (unsigned long long)__mul_rhs);"
+               "if (__mul_lhs >> 63) { __mul_high -= __mul_rhs; }"
+               "if (__mul_rhs >> 63) { __mul_high -= __mul_lhs; }"
+               "(int64_t)__mul_high;})";
     } else {
         intrinsic = "__umul64hi";
         operandType = "unsigned long long";
@@ -1708,7 +1731,8 @@ std::string MakeSimtMinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
         return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __fminf(" + a + ", " + b + ")))";
     }
     if (dtype == ir::DataType::FP16) {
-        return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __hmin_nan(" + a + ", " + b + ")))";
+        return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : ((" + a + ") <= (" + b + ") ? (" +
+               a + ") : (" + b + "))))";
     }
     return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __min(" + a + ", " + b + ")))";
 }
@@ -1728,7 +1752,8 @@ std::string MakeSimtMaxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
         return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __fmaxf(" + a + ", " + b + ")))";
     }
     if (dtype == ir::DataType::FP16) {
-        return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __hmax_nan(" + a + ", " + b + ")))";
+        return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : ((" + a + ") >= (" + b + ") ? (" +
+               a + ") : (" + b + "))))";
     }
     return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __max(" + a + ", " + b + ")))";
 }
@@ -1827,8 +1852,13 @@ std::string MakeSimtClzCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
-    const char* cppType = dtype == ir::DataType::INT32 ? "int" : "long long";
-    return "__clz((" + std::string(cppType) + ")(" + operand + "))";
+    if (dtype == ir::DataType::INT32) {
+        return "__clz((int)(" + operand + "))";
+    }
+    return "({uint64_t __bits = (uint64_t)(" + operand +
+           ");"
+           "uint32_t __low = (uint32_t)__bits, __high = (uint32_t)(__bits >> 32);"
+           "__high == 0 ? __clz((int)__low) + 32 : __clz((int)__high);})";
 }
 
 std::string MakeSimtFfsCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
@@ -1836,8 +1866,13 @@ std::string MakeSimtFfsCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
-    const char* cppType = dtype == ir::DataType::INT32 ? "int" : "long long";
-    return "__ffs((" + std::string(cppType) + ")(" + operand + "))";
+    if (dtype == ir::DataType::INT32) {
+        return "__ffs((int)(" + operand + "))";
+    }
+    return "({uint64_t __bits = (uint64_t)(" + operand +
+           ");"
+           "uint32_t __low = (uint32_t)__bits, __high = (uint32_t)(__bits >> 32);"
+           "__low != 0 ? __ffs((int)__low) : (__high != 0 ? __ffs((int)__high) + 32 : 0);})";
 }
 
 std::string MakeSimtBytePermCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
@@ -1856,10 +1891,13 @@ std::string MakeSimtSadCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     const std::string addend = codegen.GetExprAsCode(op->args_[2]);
-    const char* intrinsic = dtype == ir::DataType::INT32 ? "__sad" : "__usad";
-    const char* operandType = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
-    return std::string(intrinsic) + "((" + operandType + ")(" + lhs + "), (" + operandType + ")(" + rhs +
-           "), (unsigned int)(" + addend + "))";
+    const char* operandType = dtype == ir::DataType::INT32 ? "int64_t" : "uint64_t";
+    std::ostringstream s;
+    s << "({" << operandType << " __sad_lhs = (" << operandType << ")(" << lhs << "), __sad_rhs = (" << operandType
+      << ")(" << rhs << ");"
+      << "uint64_t __distance = __sad_lhs > __sad_rhs ? __sad_lhs - __sad_rhs : __sad_rhs - __sad_lhs;"
+      << "(uint32_t)__distance + (uint32_t)(" << addend << ");})";
+    return s.str();
 }
 
 std::string MakeSimtMul24CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
@@ -1868,9 +1906,15 @@ std::string MakeSimtMul24CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
-    const char* intrinsic = dtype == ir::DataType::INT32 ? "__mul24" : "__umul24";
-    const char* operandType = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
-    return std::string(intrinsic) + "((" + operandType + ")(" + lhs + "), (" + operandType + ")(" + rhs + "))";
+    std::ostringstream s;
+    s << "({uint32_t __mul_lhs = (uint32_t)(" << lhs << ") & 0x00ffffffu;"
+      << "uint32_t __mul_rhs = (uint32_t)(" << rhs << ") & 0x00ffffffu;";
+    if (dtype == ir::DataType::INT32) {
+        s << "__mul_lhs = (uint32_t)((int32_t)(__mul_lhs << 8) >> 8);"
+          << "__mul_rhs = (uint32_t)((int32_t)(__mul_rhs << 8) >> 8);";
+    }
+    s << "(" << dtype.ToCTypeString() << ")(__mul_lhs * __mul_rhs);})";
+    return s.str();
 }
 
 std::string MakeSimtHaddCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
@@ -1879,9 +1923,12 @@ std::string MakeSimtHaddCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
-    const char* intrinsic = dtype == ir::DataType::INT32 ? "__hadd" : "__uhadd";
-    const char* operandType = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
-    return std::string(intrinsic) + "((" + operandType + ")(" + lhs + "), (" + operandType + ")(" + rhs + "))";
+    const std::string operandType = dtype.ToCTypeString();
+    std::ostringstream s;
+    s << "({" << operandType << " __avg_lhs = (" << operandType << ")(" << lhs << "), __avg_rhs = (" << operandType
+      << ")(" << rhs << ");"
+      << "(__avg_lhs & __avg_rhs) + ((__avg_lhs ^ __avg_rhs) >> 1);})";
+    return s.str();
 }
 
 std::string MakeSimtRhaddCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
@@ -1890,9 +1937,12 @@ std::string MakeSimtRhaddCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase&
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
-    const char* intrinsic = dtype == ir::DataType::INT32 ? "__rhadd" : "__urhadd";
-    const char* operandType = dtype == ir::DataType::INT32 ? "int" : "unsigned int";
-    return std::string(intrinsic) + "((" + operandType + ")(" + lhs + "), (" + operandType + ")(" + rhs + "))";
+    const std::string operandType = dtype.ToCTypeString();
+    std::ostringstream s;
+    s << "({" << operandType << " __avg_lhs = (" << operandType << ")(" << lhs << "), __avg_rhs = (" << operandType
+      << ")(" << rhs << ");"
+      << "(__avg_lhs & __avg_rhs) + ((__avg_lhs ^ __avg_rhs) >> 1) + ((__avg_lhs ^ __avg_rhs) & 1);})";
+    return s.str();
 }
 
 std::string MakeSimtFmaReluCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
@@ -1901,41 +1951,46 @@ std::string MakeSimtFmaReluCodegenCCE(const ir::CallPtr& op, codegen::CodegenBas
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
     const std::string addend = codegen.GetExprAsCode(op->args_[2]);
-    return "__hfma_relu((" + lhs + "), (" + rhs + "), (" + addend + "))";
+    const auto dtype = ir::As<ir::ScalarType>(op->GetType())->dtype_;
+    const std::string value = "((" + dtype.ToCTypeString() + ")__fma((" + lhs + "), (" + rhs + "), (" + addend + ")))";
+    return BuildSimtNanMinMax(value, "((" + dtype.ToCTypeString() + ")0.0f)", dtype, ">=", "__max");
 }
 
 std::string MakeSimtUnorderedCompareCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase,
-                                               const char* intrinsic)
+                                               const char* comparison)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string lhs = codegen.GetExprAsCode(op->args_[0]);
     const std::string rhs = codegen.GetExprAsCode(op->args_[1]);
-    return std::string(intrinsic) + "((" + lhs + "), (" + rhs + "))";
+    return "({auto __cmp_lhs = (" + lhs + "); auto __cmp_rhs = (" + rhs +
+           ");"
+           "(__cmp_lhs " +
+           comparison + " __cmp_rhs) || __isnan(__cmp_lhs) || __isnan(__cmp_rhs);})";
 }
 
 std::string MakeSimtEquCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, "__hequ");
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, "==");
 }
 
 std::string MakeSimtLeuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, "__hleu");
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, "<=");
 }
 
 std::string MakeSimtGeuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, "__hgeu");
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, ">=");
 }
 
 std::string MakeSimtLtuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, "__hltu");
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, "<");
 }
 
 std::string MakeSimtGtuCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, "__hgtu");
+    return MakeSimtUnorderedCompareCodegenCCE(op, codegenBase, ">");
 }
 
 std::string MakeSimtNormSqrtFP32Codegen(const std::string& operand)
@@ -3286,7 +3341,9 @@ std::string MakeSimtSaturateCodegenCCE(const ir::CallPtr& op, codegen::CodegenBa
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const std::string operand = codegen.GetExprAsCode(op->args_[0]);
-    return "__saturatef((float)(" + operand + "))";
+    return "({float __sat_value = (float)(" + operand +
+           ");"
+           "__isnan(__sat_value) ? 0.0f : __fmaxf(0.0f, __fminf(1.0f, __sat_value));})";
 }
 
 std::string MakeSimtMulI32ToI64CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)

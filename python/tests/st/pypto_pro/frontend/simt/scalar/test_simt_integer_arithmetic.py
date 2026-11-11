@@ -101,10 +101,10 @@ def simt_hadd_tile(
 @pytest.mark.soc("950")
 def test_hadd_all_supported_dtypes_with_tile_operands():
     torch.npu.set_device(ST_DEVICE)
-    signed_lhs = [-100, -50, -1, 0, 1, 50, 100, 200] * 8
-    signed_rhs = [10, -20, 30, -40, 50, -60, 70, -80] * 8
-    unsigned_lhs = list(range(ELEMENTS))
-    unsigned_rhs = list(reversed(range(ELEMENTS)))
+    signed_lhs = [-(1 << 31), (1 << 31) - 1, -(1 << 31), -1, 0, 1, -3, 200] * 8
+    signed_rhs = [-(1 << 31), (1 << 31) - 1, (1 << 31) - 1, 0, 1, 2, -2, -80] * 8
+    unsigned_lhs = [0, 0xFFFFFFFF, 0xFFFFFFFF, 1, 0x80000000, 3, 4, 7] * 8
+    unsigned_rhs = [0, 0xFFFFFFFF, 0, 0, 0x7FFFFFFF, 2, 4, 8] * 8
     inputs = (
         torch.tensor(signed_lhs, dtype=torch.int32).reshape(1, ELEMENTS),
         torch.tensor(signed_rhs, dtype=torch.int32).reshape(1, ELEMENTS),
@@ -200,10 +200,10 @@ def simt_rhadd_tile(
 @pytest.mark.soc("950")
 def test_rhadd_all_supported_dtypes_with_tile_operands():
     torch.npu.set_device(ST_DEVICE)
-    signed_lhs = [-100, -50, -1, 0, 1, 50, 100, 200] * 8
-    signed_rhs = [10, -20, 30, -40, 50, -60, 70, -80] * 8
-    unsigned_lhs = list(range(ELEMENTS))
-    unsigned_rhs = list(reversed(range(ELEMENTS)))
+    signed_lhs = [-(1 << 31), (1 << 31) - 1, -(1 << 31), -1, 0, 1, -3, 200] * 8
+    signed_rhs = [-(1 << 31), (1 << 31) - 1, (1 << 31) - 1, 0, 1, 2, -2, -80] * 8
+    unsigned_lhs = [0, 0xFFFFFFFF, 0xFFFFFFFF, 1, 0x80000000, 3, 4, 7] * 8
+    unsigned_rhs = [0, 0xFFFFFFFF, 0, 0, 0x7FFFFFFF, 2, 4, 8] * 8
     inputs = (
         torch.tensor(signed_lhs, dtype=torch.int32).reshape(1, ELEMENTS),
         torch.tensor(signed_rhs, dtype=torch.int32).reshape(1, ELEMENTS),
@@ -309,20 +309,22 @@ def simt_sad_tile(
 @pytest.mark.soc("950")
 def test_sad_all_supported_dtypes_with_tile_operands():
     torch.npu.set_device(ST_DEVICE)
-    signed_lhs = torch.tensor([-100, -50, -1, 0, 1, 50, 100, 200] * 8, dtype=torch.int32)
-    signed_rhs = torch.tensor([10, -20, 30, -40, 50, -60, 70, -80] * 8, dtype=torch.int32)
-    unsigned_lhs = torch.tensor(list(range(ELEMENTS)), dtype=torch.uint32)
-    unsigned_rhs = torch.tensor(list(reversed(range(ELEMENTS))), dtype=torch.uint32)
+    signed_lhs = torch.tensor([-(1 << 31), (1 << 31) - 1, -1, 0, 1, 50, 100, 200] * 8, dtype=torch.int32)
+    signed_rhs = torch.tensor([(1 << 31) - 1, -(1 << 31), 30, -40, 50, -60, 70, -80] * 8, dtype=torch.int32)
+    unsigned_lhs = torch.tensor([0, 0xFFFFFFFF, 0x80000000, 1, 2, 3, 4, 5] * 8, dtype=torch.uint32)
+    unsigned_rhs = torch.tensor([0xFFFFFFFF, 0, 0, 0, 2, 1, 0, 8] * 8, dtype=torch.uint32)
     addend = torch.tensor(list(range(ELEMENTS)), dtype=torch.uint32)
     inputs = tuple(value.reshape(1, ELEMENTS) for value in (signed_lhs, signed_rhs, unsigned_lhs, unsigned_rhs, addend))
     outputs = tuple(torch.empty((1, ELEMENTS), dtype=torch.uint32, device=ST_DEVICE) for _ in range(2))
     simt_sad_tile(*(value.to(ST_DEVICE) for value in inputs), *outputs)
     torch.npu.synchronize()
     expected_i32 = torch.tensor(
-        [abs(int(x) - int(y)) + int(z) for x, y, z in zip(signed_lhs, signed_rhs, addend)], dtype=torch.uint32
+        [(abs(int(x) - int(y)) + int(z)) & 0xFFFFFFFF for x, y, z in zip(signed_lhs, signed_rhs, addend)],
+        dtype=torch.uint32,
     )
     expected_u32 = torch.tensor(
-        [abs(int(x) - int(y)) + int(z) for x, y, z in zip(unsigned_lhs, unsigned_rhs, addend)], dtype=torch.uint32
+        [(abs(int(x) - int(y)) + int(z)) & 0xFFFFFFFF for x, y, z in zip(unsigned_lhs, unsigned_rhs, addend)],
+        dtype=torch.uint32,
     )
     torch.testing.assert_close(outputs[0].cpu(), expected_i32.reshape(1, ELEMENTS), rtol=0, atol=0)
     torch.testing.assert_close(outputs[1].cpu(), expected_u32.reshape(1, ELEMENTS), rtol=0, atol=0)

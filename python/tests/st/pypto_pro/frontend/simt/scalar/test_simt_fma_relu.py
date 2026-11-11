@@ -102,6 +102,8 @@ def test_fma_relu_all_supported_dtypes_with_tile_operands():
     torch.npu.set_device(ST_DEVICE)
     lhs = torch.linspace(-4.0, 4.0, ELEMENTS)
     rhs = torch.linspace(3.0, -3.0, ELEMENTS)
+    lhs[:8] = torch.tensor([float("nan"), 1.0, float("inf"), float("-inf"), 0.0, -0.0, -1.0, 1.0])
+    rhs[:8] = torch.tensor([1.0, float("nan"), -1.0, -1.0, float("inf"), 1.0, 1.0, 1.0])
 
     def golden(x, y):
         return torch.clamp(x * y + x, min=0.0)

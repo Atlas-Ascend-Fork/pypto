@@ -111,8 +111,8 @@ def test_mul24_all_supported_dtypes_with_tile_operands():
     torch.npu.set_device(ST_DEVICE)
     signed_lhs = [-(1 << 31), -8388609, -8388608, -1, 0, 1, 8388607, (1 << 31) - 1] * 8
     signed_rhs = [-1, 2, -3, 4, 5, -6, 7, -8] * 8
-    unsigned_lhs = list(range(ELEMENTS))
-    unsigned_rhs = list(reversed(range(ELEMENTS)))
+    unsigned_lhs = [0, 1, 0xFFFFFF, 0x1000000, 0xFFFFFFFF, 0x800000, 7, 42] * 8
+    unsigned_rhs = [0xFFFFFFFF, 2, 0xFFFFFF, 3, 0xFFFFFFFF, 0x800000, 8, 42] * 8
     inputs = (
         torch.tensor(signed_lhs, dtype=torch.int32).reshape(1, ELEMENTS),
         torch.tensor(signed_rhs, dtype=torch.int32).reshape(1, ELEMENTS),
@@ -126,8 +126,9 @@ def test_mul24_all_supported_dtypes_with_tile_operands():
     expected_i32 = torch.tensor(
         [signed_mul24_golden(x, y) for x, y in zip(signed_lhs, signed_rhs)], dtype=torch.int32
     ).reshape(1, ELEMENTS)
-    expected_u32 = torch.tensor([x * y for x, y in zip(unsigned_lhs, unsigned_rhs)], dtype=torch.uint32).reshape(
-        1, ELEMENTS
-    )
+    expected_u32 = torch.tensor(
+        [((x & 0xFFFFFF) * (y & 0xFFFFFF)) & 0xFFFFFFFF for x, y in zip(unsigned_lhs, unsigned_rhs)],
+        dtype=torch.uint32,
+    ).reshape(1, ELEMENTS)
     torch.testing.assert_close(out_i32.cpu(), expected_i32, rtol=0, atol=0)
     torch.testing.assert_close(out_u32.cpu(), expected_u32, rtol=0, atol=0)

@@ -903,7 +903,7 @@ def test_fp16_scalar_math_codegen_maps_cce_intrinsics_without_simt_headers():
     cpp = _compile_to_cce(_fp16_math_codegen_kernel)
     function = _simt_function_source(cpp, "_fp16_math_intrinsics")
 
-    for intrinsic in ("__hmin_nan(", "__cvt_float<", "__cvt_half<"):
+    for intrinsic in ("__cvt_float<", "__cvt_half<"):
         assert intrinsic in function
     assert "simt_api/" not in cpp
 
@@ -1053,11 +1053,15 @@ def test_bf16_exp_log_reciprocal_codegen_is_self_contained():
     assert "__cvt_bfloat16_t<" in function
 
 
-def test_nan_select_codegen_uses_low_precision_intrinsics():
+def test_nan_select_codegen_is_self_contained():
     cpp = _compile_to_cce(_nan_intrinsics_codegen_kernel)
 
-    assert "__hmax_nan(" in cpp
-    assert "__hmin_nan(" in cpp
+    assert "__hmax_nan(" not in cpp
+    assert "__hmin_nan(" not in cpp
+    assert "__isnan(__nan_lhs) ? __nan_lhs" in cpp
+    assert "__isnan(__nan_rhs) ? __nan_rhs" in cpp
+    assert "__nan_lhs >= __nan_rhs" in cpp
+    assert "__nan_lhs <= __nan_rhs" in cpp
     assert "__cvt_float<" not in cpp
     assert "simt_api/" not in cpp
 
@@ -1108,7 +1112,8 @@ def test_bessel_rounding_and_saturate_codegen_is_self_contained():
     assert "simt_api/" not in cpp
     assert "__cvt_int64_t<ROUND::R, RoundingSaturation::RS_ENABLE_VALUE>(" in function
     assert "__cvt_int64_t<ROUND::A, RoundingSaturation::RS_ENABLE_VALUE>(" in function
-    assert "__saturatef(" in function
+    assert "__saturatef(" not in function
+    assert "__isnan(__sat_value) ? 0.0f : __fmaxf(0.0f, __fminf(1.0f, __sat_value))" in function
     for wrapper in ("j0f(", "j1f(", "y0f(", "y1f(", "jnf(", "ynf("):
         assert wrapper not in function
 
@@ -1354,41 +1359,56 @@ def test_mul_i32_to_i64_codegen_uses_cce_intrinsic():
     assert "__mul_i32toi64((unsigned int)(" in cpp
 
 
-def test_integer_bit_arithmetic_codegen_uses_cce_intrinsics():
+def test_integer_bit_arithmetic_codegen_is_self_contained():
     cpp = _compile_to_cce(_integer_bit_arithmetic_codegen_kernel)
 
     assert "simt_api/" not in cpp
-    for intrinsic in (
-        "__brev",
-        "__clz",
-        "__ffs",
-        "__byte_perm",
-        "__sad",
-        "__usad",
-        "__mul24",
-        "__umul24",
-        "__hadd",
-        "__uhadd",
-        "__rhadd",
-        "__urhadd",
-    ):
+    for intrinsic in ("__brev", "__clz", "__ffs", "__byte_perm"):
         assert f"{intrinsic}(" in cpp
+    for wrapper in ("__sad", "__usad", "__mul24", "__umul24", "__hadd", "__uhadd", "__rhadd", "__urhadd"):
+        assert f"{wrapper}(" not in cpp
+    for expression in (
+        "__high == 0 ? __clz((int)__low) + 32 : __clz((int)__high)",
+        "__low != 0 ? __ffs((int)__low)",
+        "(__high != 0 ? __ffs((int)__high) + 32 : 0)",
+        "int64_t __sad_lhs",
+        "uint64_t __sad_lhs",
+        "(uint32_t)__distance + (uint32_t)(",
+        "& 0x00ffffffu",
+        "(uint32_t)((int32_t)(__mul_lhs << 8) >> 8)",
+        "(__mul_lhs * __mul_rhs)",
+        "(__avg_lhs & __avg_rhs) + ((__avg_lhs ^ __avg_rhs) >> 1)",
+        "+ ((__avg_lhs ^ __avg_rhs) & 1)",
+    ):
+        assert expression in cpp
 
 
-def test_fp16_fma_comparison_codegen_uses_cce_intrinsics():
+def test_fp16_fma_comparison_codegen_is_self_contained():
     cpp = _compile_to_cce(_fp16_fma_comparison_codegen_kernel)
 
     assert "simt_api/" not in cpp
-    for intrinsic in ("__hfma_relu", "__hequ", "__hleu", "__hgeu", "__hltu", "__hgtu"):
-        assert f"{intrinsic}(" in cpp
+    for wrapper in ("__hfma_relu", "__hequ", "__hleu", "__hgeu", "__hltu", "__hgtu"):
+        assert f"{wrapper}(" not in cpp
+    assert "__fma(" in cpp
+    assert "__isnan(__nan_lhs) ? __nan_lhs" in cpp
+    for comparison in ("==", "<=", ">=", "<", ">"):
+        assert f"(__cmp_lhs {comparison} __cmp_rhs) || __isnan(__cmp_lhs) || __isnan(__cmp_rhs)" in cpp
+    assert cpp.count("auto __cmp_lhs = (") == 5
+    assert cpp.count("auto __cmp_rhs = (") == 5
 
 
-def test_bf16_fma_comparison_codegen_uses_cce_intrinsics():
+def test_bf16_fma_comparison_codegen_is_self_contained():
     cpp = _compile_to_cce(_bf16_fma_comparison_codegen_kernel)
 
     assert "simt_api/" not in cpp
-    for intrinsic in ("__hfma_relu", "__hequ", "__hleu", "__hgeu", "__hltu", "__hgtu"):
-        assert f"{intrinsic}(" in cpp
+    for wrapper in ("__hfma_relu", "__hequ", "__hleu", "__hgeu", "__hltu", "__hgtu"):
+        assert f"{wrapper}(" not in cpp
+    assert "__fma(" in cpp
+    assert "__isnan(__nan_lhs) ? __nan_lhs" in cpp
+    for comparison in ("==", "<=", ">=", "<", ">"):
+        assert f"(__cmp_lhs {comparison} __cmp_rhs) || __isnan(__cmp_lhs) || __isnan(__cmp_rhs)" in cpp
+    assert cpp.count("auto __cmp_lhs = (") == 5
+    assert cpp.count("auto __cmp_rhs = (") == 5
 
 
 def test_fp32_binary_math_codegen_is_self_contained():

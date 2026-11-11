@@ -673,14 +673,14 @@ TEST(CCESimtCodegenTest, GeneratesRegisteredSynchronizationScalarCastAndMathOper
         "__isinf(",
         "__isfinite(",
         "__popc((unsigned int)(",
-        "__popc((unsigned long long)(",
+        "__popc((unsigned int)(__pop_value >> 32))",
         "__mulhi(",
         "__umulhi(",
-        "__mul64hi(",
+        "__mul_high -= __mul_rhs;",
         "__umul64hi(",
         "__fma(",
-        "__hmin_nan(",
-        "__hmax_nan(",
+        "__isnan(__nan_lhs) ? __nan_lhs",
+        "__isnan(__nan_rhs) ? __nan_rhs",
         "__min(",
         "__max(",
         "min((int64_t)",
@@ -690,6 +690,9 @@ TEST(CCESimtCodegenTest, GeneratesRegisteredSynchronizationScalarCastAndMathOper
     EXPECT_EQ(generated.find("pypto_simt_"), std::string::npos);
     for (const auto& intrinsic : scalar_intrinsics) {
         EXPECT_NE(generated.find(intrinsic), std::string::npos) << intrinsic;
+    }
+    for (const auto& wrapper : {"__mul64hi(", "__popc((unsigned long long)(", "__hmin_nan(", "__hmax_nan("}) {
+        EXPECT_EQ(generated.find(wrapper), std::string::npos) << wrapper;
     }
     const std::vector<std::string> cast_intrinsics = {
         "__cvt_half<ROUND::R, RoundingSaturation::RS_DISABLE_VALUE>(",
