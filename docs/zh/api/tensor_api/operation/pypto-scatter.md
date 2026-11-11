@@ -61,8 +61,8 @@ scatter\_的non-inplace版本，可参考[pypto.scatter\_](pypto-scatter_.md)
 
 ## 约束说明
 
-1. 请参考[pypto.scatter_](pypto-scatter_.md)的约束说明。
-2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 请参考[pypto.scatter_](pypto-scatter_.md)的约束说明。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

@@ -57,13 +57,13 @@ index_select(input: Tensor, dim: int, index: Tensor) -> Tensor
 
 ## 约束说明
 
-1. index必须是整数类型（DT\_INT32或DT\_INT64），值为合法索引，即不能超出input.shape[dim]；
+- index必须是整数类型（DT\_INT32或DT\_INT64），值为合法索引，即不能超出input.shape[dim]；
 
-2. dim为int类型，取值范围：-input.dim <= dim < input.dim。支持负数，负值会被解释为dim + input.dim；
+- dim为int类型，取值范围：-input.dim <= dim < input.dim。支持负数，负值会被解释为dim + input.dim；
 
-3. input.shape的dim轴viewshape不可切，要求viewshape\[dim\] \>= input.shape\[dim\]，其余维度的Shape大小不做限制。该约束来自index_select的算子语义：dim轴作为索引源，需要在当前view中整体可见，而不是当前实现的额外限制。若dim轴按照小于input.shape\[dim\] 的viewshape切分，index可能引用当前view之外的数据，导致结果精度错误或AI Core Error；
+- input.shape的dim轴viewshape不可切，要求viewshape\[dim\] \>= input.shape\[dim\]，其余维度的Shape大小不做限制。该约束来自index_select的算子语义：dim轴作为索引源，需要在当前view中整体可见，而不是当前实现的额外限制。若dim轴按照小于input.shape\[dim\] 的viewshape切分，index可能引用当前view之外的数据，导致结果精度错误或AI Core Error；
 
-4. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_INT8，DT_INT16，DT_INT32，DT_UINT8，DT_UINT16，DT_UINT32，DT_FP16，DT_FP32，DT_BF16，DT_BOOL，DT_FP8E4M3，DT_FP8E5M2，DT_FP8E8M0
    <!-- end id4 -->
@@ -73,9 +73,9 @@ index_select(input: Tensor, dim: int, index: Tensor) -> Tensor
    <!-- npu="910b" id6 -->
    - Atlas A2系列产品：DT_INT8，DT_INT16，DT_INT32，DT_UINT8，DT_UINT16，DT_UINT32，DT_FP16，DT_FP32，DT_BF16
    <!-- end id6 -->
-5. TileShape的维度与result相同，用于切分result。TileShape设置需保证result不超过UB大小，具体用法详见[TileShape设置示例](#tileshape设置示例)。
+- TileShape的维度与result相同，用于切分result。TileShape设置需保证result不超过UB大小，具体用法详见[TileShape设置示例](#tileshape设置示例)。
 
-6. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

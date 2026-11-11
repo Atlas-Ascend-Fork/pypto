@@ -48,10 +48,10 @@ ceil_div(self: Tensor, other: Union[Tensor, int]) -> Tensor
 
 ## 约束说明
 
-1. self和other类型应该相同。
-2. 支持多维度广播。
-3. self和other中的值域范围需要在\[-2^24, 2^24\]范围内，以确保在计算过程中能精确转换为float32，**other不能为0**，整数除法为0时结果由芯片决定，可能为INT32_MAX或INT32_MIN。
-4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- self和other类型应该相同。
+- 支持多维度广播。
+- self和other中的值域范围需要在\[-2^24, 2^24\]范围内，以确保在计算过程中能精确转换为float32，**other不能为0**，整数除法为0时结果由芯片决定，可能为INT32_MAX或INT32_MIN。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

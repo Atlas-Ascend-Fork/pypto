@@ -43,7 +43,7 @@ neg(input: Tensor) -> Tensor
 
 ## 约束说明
 
-1. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_FP32，DT_FP16，DT_BF16，DT_INT32，DT_INT16，DT_INT64。
    <!-- end id4 -->
@@ -62,7 +62,7 @@ neg(input: Tensor) -> Tensor
    <!-- npu="9050" id12 -->
    - Kirin9050处理器系列产品：DT_INT16，DT_INT32，DT_FP16，DT_FP32。
    <!-- end id12 -->
-2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

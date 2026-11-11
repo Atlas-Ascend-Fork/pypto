@@ -40,12 +40,12 @@ pypto_pro.language.mrgsort(dst: Tile, src: Tile, *, block_len: int) -> None
 
 ## 约束说明
 
-1. src.valid_shape[1]必须是4 * block_len的整数倍。每连续4个块构成一组四路归并，多个组彼此独立。
-2. repeatTimes = src.valid_shape[1] / (4 * block_len)必须位于[1,255]。
-3. src中每个输入块必须预先按value降序排列。通常先用[sort32](sort32.md)生成有序记录，再逐级增大block_len调用mrgsort。
-4. src和dst须使用互不重叠且按32字节对齐的UB区域；本接口不保证原地归并结果。
-5. 结果按value降序排列；value相同时，index较小的记录排在前面。NaN的相对顺序由底层浮点比较行为决定。
-6. block_len及相关shape约束按Tile存储元素计算，不得误用value-index记录数；换算后的每块value-index记录数不得超过4095。
+- src.valid_shape[1]必须是4 * block_len的整数倍。每连续4个块构成一组四路归并，多个组彼此独立。
+- repeatTimes = src.valid_shape[1] / (4 * block_len)必须位于[1,255]。
+- src中每个输入块必须预先按value降序排列。通常先用[sort32](sort32.md)生成有序记录，再逐级增大block_len调用mrgsort。
+- src和dst须使用互不重叠且按32字节对齐的UB区域；本接口不保证原地归并结果。
+- 结果按value降序排列；value相同时，index较小的记录排在前面。NaN的相对顺序由底层浮点比较行为决定。
+- block_len及相关shape约束按Tile存储元素计算，不得误用value-index记录数；换算后的每块value-index记录数不得超过4095。
 
 ## 调用示例
 

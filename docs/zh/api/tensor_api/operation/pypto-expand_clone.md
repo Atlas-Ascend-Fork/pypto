@@ -50,12 +50,12 @@ expand_clone(
 
 ## 约束说明
 
-1. 支持多维广播，输入Tensor被广播的轴的Shape大小要为1。
-2. input的viewshape与input维度相同，viewshape\[dim\]=1，input\[dim\]=1，其中dim为被拓展轴，其余维度不做限制。举例如下：
-    1. \[a,1\] 拓展到\[a,5\]，其中dim=1，表示在dim 1上进行拓展。
-    2. len\(viewshape\)=2并且viewshape\[dim\]=1
+- 支持多维广播，输入Tensor被广播的轴的Shape大小要为1。
+- input的viewshape与input维度相同，viewshape\[dim\]=1，input\[dim\]=1，其中dim为被拓展轴，其余维度不做限制。举例如下：
+    - \[a,1\] 拓展到\[a,5\]，其中dim=1，表示在dim 1上进行拓展。
+    - len\(viewshape\)=2并且viewshape\[dim\]=1
 
-3. 关于valid\_shape的说明：
+- 关于valid\_shape的说明：
 
     在动态图场景中，假设Tensor input \[a,1\] 扩展到 \[a,5\]，并设置ViewShape为 \[a,2\]，框架会通过pypto.loop循环生成 \[a,2\] 分块，并按偏移量拼接。此时若未传入valid\_shape，代码将默认生成全 \[a,2\] 的Tensor（如pypto.expand\_clone\(input, \[a,2\]\)）。
 
@@ -65,8 +65,8 @@ expand_clone(
 
     其中b\_idx表示循环索引。
 
-4. TileShape的维度与result维度相同，用于切分result。
-5. TileShape的大小形状无额外约束，只需保证不超过ub size。
+- TileShape的维度与result维度相同，用于切分result。
+- TileShape的大小形状无额外约束，只需保证不超过ub size。
 
 ## 调用示例
 

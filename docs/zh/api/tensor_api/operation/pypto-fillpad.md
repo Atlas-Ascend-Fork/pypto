@@ -47,10 +47,10 @@ fillpad(input: Tensor, mode: str = "constant", value: Union[float, int] = 0) -> 
 
 ## 约束说明
 
-1. mode当前**仅支持`'constant'`（常量填充）模式**，其他模式暂不支持。
-2. value支持任意浮点数值或整数值，填充值的数据类型会自动转换为与输入Tensor一致。
-3. 如果`input`不是Tensor类型，将抛出`TypeError`。
-4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- mode当前**仅支持`'constant'`（常量填充）模式**，其他模式暂不支持。
+- value支持任意浮点数值或整数值，填充值的数据类型会自动转换为与输入Tensor一致。
+- 如果`input`不是Tensor类型，将抛出`TypeError`。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

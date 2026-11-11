@@ -43,7 +43,7 @@ clone(input: Tensor) -> Tensor
 
 ## 约束说明
 
-1. 输入Tensor和输出Tensor类型应该相同。
+- 输入Tensor和输出Tensor类型应该相同。
 
 ## 调用示例
 

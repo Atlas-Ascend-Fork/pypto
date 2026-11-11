@@ -45,10 +45,10 @@ input为DT_FP16，DT_BF16，DT_FP32等类型时，输出数据类型和输入inp
 
 ## 约束说明
 
-1. dim：指定计算累积和的维度，必须在输入Tensor input的有效维度范围内，其值需满足-input.dim <= dim < input.dim；
-2. input的dim轴ViewShape不可切分，其余维度不做限制；
-3. TileShape的维度与input相同，所有输入和输出的TileShape大小总和不能超过UB内存的大小。
-4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- dim：指定计算累积和的维度，必须在输入Tensor input的有效维度范围内，其值需满足-input.dim <= dim < input.dim；
+- input的dim轴ViewShape不可切分，其余维度不做限制；
+- TileShape的维度与input相同，所有输入和输出的TileShape大小总和不能超过UB内存的大小。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

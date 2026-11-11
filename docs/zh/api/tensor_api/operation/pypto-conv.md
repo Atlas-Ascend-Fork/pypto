@@ -62,9 +62,9 @@ conv(input_conv, weight, out_dtype, strides, paddings, dilations, *, groups=1, t
 
 ## 约束说明
 
-1. 缓存空间约束：调用conv接口前，必须通过pypto.set_conv_tile_shapes接口设置L1/L0层级的卷积TileShape切分大小。
+- 缓存空间约束：调用conv接口前，必须通过pypto.set_conv_tile_shapes接口设置L1/L0层级的卷积TileShape切分大小。
 
-2. 动态轴切分约束：
+- 动态轴切分约束：
 
     <!-- npu="950" id10 -->
     - Ascend 950PR&950DT系列产品：前端循环切分时，Batch、Cout、Dout、Hout、Wout维度需要小于或等于out shape对应维度大小；不支持前端循环切分Cin。
@@ -76,7 +76,7 @@ conv(input_conv, weight, out_dtype, strides, paddings, dilations, *, groups=1, t
     - Atlas A2系列产品：不支持前端循环切分Cin。
     <!-- end id6 -->
 
-3. 数据类型约束：
+- 数据类型约束：
 
     <!-- npu="950" id7 -->
     - Ascend 950PR&950DT系列产品：支持的数据类型为DT_FP16、DT_BF16、DT_FP32。input_conv、weight、bias和out的数据类型需要相同。

@@ -46,24 +46,24 @@ index_put_(input: Tensor, indices: tuple, values: Tensor, accumulate: bool = Fal
 
 ## 约束说明
 
-1. indices中的一维Tensor维度相同，不支持broadcast。indices中第i个Tensor中的值须小于input中第i-1维的Shape大小。当indices的选取会对同一个位置进行重复更新时，结果是未确定的。
+- indices中的一维Tensor维度相同，不支持broadcast。indices中第i个Tensor中的值须小于input中第i-1维的Shape大小。当indices的选取会对同一个位置进行重复更新时，结果是未确定的。
 
-2. values不支持broadcast，其第0维的shape须和indices中一维Tensor的shape相同。若values的维度大于等于2，那么其除第0维外的后i个维度（i>0）和input后i个维度的shape完全相同。
+- values不支持broadcast，其第0维的shape须和indices中一维Tensor的shape相同。若values的维度大于等于2，那么其除第0维外的后i个维度（i>0）和input后i个维度的shape完全相同。
 
-3. input的维度、indices中Tensor的个数和values的维度之间需满足：(input.shape.size) + 1 = (indices.size) + (values.shape.size)。
+- input的维度、indices中Tensor的个数和values的维度之间需满足：(input.shape.size) + 1 = (indices.size) + (values.shape.size)。
 
-4. input和values的数据类型须相同。
+- input和values的数据类型须相同。
 
-5. viewshape为一维，针对indices中的每个一维Tensor和values的第0维进行切分，values的其它维度不做切分。
+- viewshape为一维，针对indices中的每个一维Tensor和values的第0维进行切分，values的其它维度不做切分。
 
-6. TileShape的维度不超过values的维度，针对indices中的每个一维Tensor和values进行切分。indices和values的TileShape大小总和不能超过UB内存的大小。
+- TileShape的维度不超过values的维度，针对indices中的每个一维Tensor和values进行切分。indices和values的TileShape大小总和不能超过UB内存的大小。
 
-7. accumulate为True时，input和values的数据类型仅支持DT_BF16、DT_FP16、DT_FP32、DT_INT8、DT_INT16、DT_INT32。
+- accumulate为True时，input和values的数据类型仅支持DT_BF16、DT_FP16、DT_FP32、DT_INT8、DT_INT16、DT_INT32。
 
-8. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 <!-- npu="x90,9030,9050" id6 -->
-9. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="9030" id12 -->
    - Kirin9030处理器系列产品：
       - input/values：DT_FP16，DT_FP32，DT_INT8，DT_INT16，DT_INT32
@@ -82,7 +82,7 @@ index_put_(input: Tensor, indices: tuple, values: Tensor, accumulate: bool = Fal
 <!-- end id6 -->
 
 <!-- npu="x90,9030,9050" id7 -->
-10. accumulate支持说明：
+- accumulate支持说明：
     <!-- npu="9030" id14 -->
     - Kirin9030处理器系列产品：不支持，必须设置为False
     <!-- end id14 -->
@@ -94,7 +94,7 @@ index_put_(input: Tensor, indices: tuple, values: Tensor, accumulate: bool = Fal
     <!-- end id17 -->
 <!-- end id7 -->
 
-11. 设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记V为values的Tile在第0维上的大小（不超过TileShape第0维），indicesType为indices的数据类型，则使用临时空间大小为：
+- 设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记V为values的Tile在第0维上的大小（不超过TileShape第0维），indicesType为indices的数据类型，则使用临时空间大小为：
     <!-- npu="950" id18 -->
     - Ascend 950PR&950DT系列产品：当input的维度与indices中Tensor的个数相同、input数据类型为DT_FP32、DT_FP16或DT_BF16，且indices的数据类型为DT_INT32或DT_UINT32时，使用临时空间大小为`V * sizeof(indicesType)`字节；其余情况无临时空间使用。
     <!-- end id18 -->

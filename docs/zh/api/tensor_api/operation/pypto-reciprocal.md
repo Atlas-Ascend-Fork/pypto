@@ -46,9 +46,9 @@ pypto.reciprocal(input, precision_type=pypto.PrecisionType.HIGH_PRECISION) -> Te
 
 ## 约束说明
 
-1. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 <!-- npu="x90,9030,9050" id6 -->
-2. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="9030" id7 -->
    - Kirin9030处理器系列产品：DT_FP16，DT_FP32。
    <!-- end id7 -->

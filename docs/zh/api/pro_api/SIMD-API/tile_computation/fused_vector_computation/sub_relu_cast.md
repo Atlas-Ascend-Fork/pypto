@@ -63,9 +63,9 @@ pypto_pro.language.sub_relu_cast(
 
 ## 约束说明
 
-1. lhs会被覆盖，后续不能再依赖其调用前的值。rhs和out应使用与lhs互不重叠的UB区域；本接口不保证任意地址重叠时的结果。
-2. 接口只定义valid_shape有效区域内的结果，不应依赖有效区域外的内容。
-3. target_type和mode必须在编译期确定，不能使用运行时Scalar或Tensor动态选择。
+- lhs会被覆盖，后续不能再依赖其调用前的值。rhs和out应使用与lhs互不重叠的UB区域；本接口不保证任意地址重叠时的结果。
+- 接口只定义valid_shape有效区域内的结果，不应依赖有效区域外的内容。
+- target_type和mode必须在编译期确定，不能使用运行时Scalar或Tensor动态选择。
 
 ## 调用示例
 

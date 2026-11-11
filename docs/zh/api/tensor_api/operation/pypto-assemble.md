@@ -49,11 +49,11 @@ assemble(inputs: List[Tuple[Tensor, List[Union[int, SymbolicScalar]]]], out: Ten
 
 ## 约束说明
 
-1. 输出Tensor out的valid shape需由用户在调用assemble前确保正确，该接口不会自动推导。
-2. 输入张量input和输出张量out的维度数量需要一致。
-3. 当多个assemble对同一out的重叠区域存在写后写依赖，且这些写回分布在不同loop迭代或不同function中时，默认`parallel=False`已保证写回按依赖顺序串行执行，框架会在对应outcast上标记`NORMAL`，供后续调度按串行写处理。若写回区域互不重叠、可安全并行，应显式传入`parallel=True`。
+- 输出Tensor out的valid shape需由用户在调用assemble前确保正确，该接口不会自动推导。
+- 输入张量input和输出张量out的维度数量需要一致。
+- 当多个assemble对同一out的重叠区域存在写后写依赖，且这些写回分布在不同loop迭代或不同function中时，默认`parallel=False`已保证写回按依赖顺序串行执行，框架会在对应outcast上标记`NORMAL`，供后续调度按串行写处理。若写回区域互不重叠、可安全并行，应显式传入`parallel=True`。
 <!-- npu="x90,9030,9050" id6 -->
-4. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="9030" id7 -->
    - Kirin9030处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16，DT_INT8。
    <!-- end id7 -->

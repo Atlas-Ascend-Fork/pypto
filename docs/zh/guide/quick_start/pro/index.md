@@ -6,3 +6,4 @@
 
 softmax_simd
 softmax_simt
+```

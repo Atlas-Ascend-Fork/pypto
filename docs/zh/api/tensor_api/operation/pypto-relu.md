@@ -47,7 +47,7 @@ relu(input: Tensor) -> Tensor
 
 ## 约束说明
 
-1. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_INT16，DT_INT32，DT_INT64，DT_FP16，DT_FP32，DT_BF16。
    <!-- end id4 -->
@@ -57,7 +57,7 @@ relu(input: Tensor) -> Tensor
    <!-- npu="910b" id6 -->
    - Atlas A2系列产品：DT_INT16，DT_INT32，DT_FP16，DT_FP32，DT_BF16。
    <!-- end id6 -->
-2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

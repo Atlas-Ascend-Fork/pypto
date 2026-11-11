@@ -65,8 +65,8 @@ def quant_hif4(
 
 ## 约束说明
 
-1. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-2. 若设置ViewShape和TileShape，维度必须与输入一致，且ViewShape和TileShape的尾轴需要64对齐。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 若设置ViewShape和TileShape，维度必须与输入一致，且ViewShape和TileShape的尾轴需要64对齐。
 
 ## 调用示例
 

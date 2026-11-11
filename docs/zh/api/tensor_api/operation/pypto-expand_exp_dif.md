@@ -48,8 +48,8 @@ expand_exp_dif(input: Tensor, other: Tensor) -> Tensor
 
 ## 约束说明
 
-1. input和other都为Tensor时，数据类型应该相同。
-2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- input和other都为Tensor时，数据类型应该相同。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

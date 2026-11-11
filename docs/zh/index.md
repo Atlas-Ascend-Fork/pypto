@@ -11,3 +11,4 @@ PyPTO（发音：pai p-t-o）是CANN推出的一款面向AI加速器的高效算
 install/index
 guide/index
 api/index
+```

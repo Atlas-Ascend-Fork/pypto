@@ -53,12 +53,12 @@ reshape(input: Tensor,shape: List[int],*,valid_shape: Optional[List[Union[int, S
 
 ## 约束说明
 
-1. view生成的张量执行reshape，仅允许inplace为False。
-2. inplace为True时，reshape通常需单独置于loop (1)中，无其他类型的operation并列时，可省略loop (1)，框架自动补齐，见示例2。
-3. inplace为True的输出，不可作为函数最终输出。
-4. inplace=False仅适配静态shape；inplace=True兼容静态shape和动态shape。
+- view生成的张量执行reshape，仅允许inplace为False。
+- inplace为True时，reshape通常需单独置于loop (1)中，无其他类型的operation并列时，可省略loop (1)，框架自动补齐，见示例2。
+- inplace为True的输出，不可作为函数最终输出。
+- inplace=False仅适配静态shape；inplace=True兼容静态shape和动态shape。
 <!-- npu="x90,9030,9050" id6 -->
-5. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="9030" id7 -->
    - Kirin9030处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16，DT_INT8
    <!-- end id7 -->

@@ -69,15 +69,15 @@ quant_mx(
 
 ## 约束说明
 
-1. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-2. 若设置TileShape，其维度必须与输入一致。
-3. `axis=-1`且`performance_mode=True`时，view shape尾轴必须满足256字节对齐并能整切运行时shape尾轴，且TileShape尾轴必须等于view shape尾轴。
-4. `axis=-1`且`performance_mode=False`时，输入尾轴必须是64的倍数；TileShape尾轴只需为正数，无需等于view shape尾轴或满足256字节对齐。
-5. `axis=-2`要求输入至少为二维。view shape、运行时有效shape和TileShape的次尾轴必须为正数且是64的倍数，不支持次尾轴尾块。
-6. `axis=-2`且`quant_dtype=DT_FP8E4M3`时，view shape和TileShape的尾轴只需为正数，不要求256字节对齐，且TileShape尾轴无需等于view shape尾轴。
-7. `axis=-2`且`quant_dtype=DT_FP4_E2M1`时，view shape和TileShape的尾轴必须为64的倍数，即打包后每行满足32字节对齐。
-8. `axis=-2`时，`performance_mode=True`和`performance_mode=False`的约束相同。
-9. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。若TileShape为\[a,b,c,d\]，inputType为input数据类型，CeilDiv\(x, m\)表示将x除以m的结果向上取整，则使用临时空间大小为：
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 若设置TileShape，其维度必须与输入一致。
+- `axis=-1`且`performance_mode=True`时，view shape尾轴必须满足256字节对齐并能整切运行时shape尾轴，且TileShape尾轴必须等于view shape尾轴。
+- `axis=-1`且`performance_mode=False`时，输入尾轴必须是64的倍数；TileShape尾轴只需为正数，无需等于view shape尾轴或满足256字节对齐。
+- `axis=-2`要求输入至少为二维。view shape、运行时有效shape和TileShape的次尾轴必须为正数且是64的倍数，不支持次尾轴尾块。
+- `axis=-2`且`quant_dtype=DT_FP8E4M3`时，view shape和TileShape的尾轴只需为正数，不要求256字节对齐，且TileShape尾轴无需等于view shape尾轴。
+- `axis=-2`且`quant_dtype=DT_FP4_E2M1`时，view shape和TileShape的尾轴必须为64的倍数，即打包后每行满足32字节对齐。
+- `axis=-2`时，`performance_mode=True`和`performance_mode=False`的约束相同。
+- 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。若TileShape为\[a,b,c,d\]，inputType为input数据类型，CeilDiv\(x, m\)表示将x除以m的结果向上取整，则使用临时空间大小为：
    - axis为最后一维（-1）时，记`E = a * b * c * CeilDiv(d, 32)`：input数据类型为DT_FP32时使用临时空间大小为`3 * E * sizeof(inputType)`字节，input数据类型为DT_FP16或DT_BF16时使用临时空间大小为`2 * E * sizeof(inputType)`字节。
    - axis为次尾轴（-2）时，记`E = a * b * (c / 64) * d`，使用临时空间大小为`2 * E * sizeof(inputType)`字节。
 

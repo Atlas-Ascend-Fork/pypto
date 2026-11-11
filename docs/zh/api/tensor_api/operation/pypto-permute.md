@@ -44,13 +44,13 @@ permute(input: Tensor, perm: list[int]) -> Tensor
 
 ## 约束说明
 
-1. 输入Tensor和输出Tensor的数据类型必须相同。
-2. 64位整型格式限制：DT_INT64、DT_UINT64不支持NZ（Fractal-Z）格式，仅支持ND格式。
-3. TileShape尾轴32字节对齐约束（仅无需实际排列的场景）：当permute判定为无需实际排列、直接返回输入Tensor时（即输入为1维Tensor，或perm为恒等排列），TileShape的最后一维的字节数必须对齐到32字节（BLOCK_SIZE）。即：`TileShape最后一维元素数 × sizeof(数据类型) % 32 == 0`。
+- 输入Tensor和输出Tensor的数据类型必须相同。
+- 64位整型格式限制：DT_INT64、DT_UINT64不支持NZ（Fractal-Z）格式，仅支持ND格式。
+- TileShape尾轴32字节对齐约束（仅无需实际排列的场景）：当permute判定为无需实际排列、直接返回输入Tensor时（即输入为1维Tensor，或perm为恒等排列），TileShape的最后一维的字节数必须对齐到32字节（BLOCK_SIZE）。即：`TileShape最后一维元素数 × sizeof(数据类型) % 32 == 0`。
 
    说明：此场景直接返回输入Tensor（`return self`），但后续流程中的TILE_REGISTER_COPY仍会校验TileShape尾轴的32字节对齐。若未满足此约束，将报错：`CHECK FAILED: lastDimBytes % BLOCK_SIZE == 0`。
 
-4. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_FP16，DT_BF16，DT_FP32，DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_INT32，DT_UINT32，DT_INT64，DT_UINT64，DT_BOOL，DT_FP8E4M3，DT_FP8E5M2，DT_HF8，DT_FP8E8M0
    <!-- end id4 -->
@@ -60,7 +60,7 @@ permute(input: Tensor, perm: list[int]) -> Tensor
    <!-- npu="910b" id6 -->
    - Atlas A2系列产品：DT_FP16，DT_BF16，DT_FP32，DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_INT32，DT_UINT32，DT_INT64，DT_UINT64，DT_BOOL
    <!-- end id6 -->
-5. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

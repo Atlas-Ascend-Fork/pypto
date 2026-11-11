@@ -73,9 +73,9 @@ result：Tensor，Shape由输入的广播得到，详细广播场景可看上文
 
 ## 约束说明
 
-1. 当input或other为float标量时，float会自动转换为DT_FP32的Element。若另一个参数为Tensor且其数据类型不是DT_FP32（如DT_FP16、DT_BF16等），将触发类型不一致拦截报错，不支持此种用法。请使用Element构建与Tensor一致的数据类型，例如：`pypto.Element(pypto.DT_FP16, 1.0)`。
-2. condition、input（如果是tensor）、other（如果是tensor）的维度必须相同。例如condition：[64]，input：[2, 64]，other：[2, 64]这种情况非法，应当设置为condition：[1, 64]，input：[2, 64]，other：[2, 64]。
-3. input和other的Tensor、Element数据类型说明：
+- 当input或other为float标量时，float会自动转换为DT_FP32的Element。若另一个参数为Tensor且其数据类型不是DT_FP32（如DT_FP16、DT_BF16等），将触发类型不一致拦截报错，不支持此种用法。请使用Element构建与Tensor一致的数据类型，例如：`pypto.Element(pypto.DT_FP16, 1.0)`。
+- condition、input（如果是tensor）、other（如果是tensor）的维度必须相同。例如condition：[64]，input：[2, 64]，other：[2, 64]这种情况非法，应当设置为condition：[1, 64]，input：[2, 64]，other：[2, 64]。
+- input和other的Tensor、Element数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_INT32，DT_FP32，DT_INT16，DT_FP16，DT_BF16，DT_UINT8，DT_INT8，DT_INT64，DT_UINT64
    <!-- end id4 -->
@@ -94,8 +94,8 @@ result：Tensor，Shape由输入的广播得到，详细广播场景可看上文
    <!-- npu="9050" id12 -->
    - Kirin9050处理器系列产品：DT_INT16，DT_INT32，DT_FP16，DT_FP32
    <!-- end id12 -->
-4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-5. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。使用临时空间大小为固定值：当input数据类型为DT_FP32或DT_BF16时，为12448字节；其余情况为8352字节。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。使用临时空间大小为固定值：当input数据类型为DT_FP32或DT_BF16时，为12448字节；其余情况为8352字节。
 
 ## 调用示例
 

@@ -43,10 +43,10 @@ cos(input: Tensor) -> Tensor
 
 ## 约束说明
 
-1. 输入Tensor和输出Tensor类型应该相同。
-2. 由于存在临时内存使用，TileShape大小有额外约束，假设TileShape为\[a,b,c,d\]，那么5\*a\*b\*c\*d\*sizeof\(DT_FP32\) < UB。
-3. input支持的输入范围为[-65504.0,65504.0]。
-4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 输入Tensor和输出Tensor类型应该相同。
+- 由于存在临时内存使用，TileShape大小有额外约束，假设TileShape为\[a,b,c,d\]，那么5\*a\*b\*c\*d\*sizeof\(DT_FP32\) < UB。
+- input支持的输入范围为[-65504.0,65504.0]。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

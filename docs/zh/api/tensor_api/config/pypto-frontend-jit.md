@@ -80,13 +80,13 @@ def kernel_function(...):
 
 ## 约束说明
 
-1. 张量参数，必须使用类型注解指定为`pypto.Tensor`类型
-2. 动态维度必须使用`pypto.DYNAMIC`或`pypto.DYN`在参数注解中标记，未标记时，默认按静态维度处理
-3. tensor format用format标记，format支持非显式标记(参考示例1中的a)，默认为pypto.TileOpFormat.TILEOP_ND；
+- 张量参数，必须使用类型注解指定为`pypto.Tensor`类型
+- 动态维度必须使用`pypto.DYNAMIC`或`pypto.DYN`在参数注解中标记，未标记时，默认按静态维度处理
+- tensor format用format标记，format支持非显式标记(参考示例1中的a)，默认为pypto.TileOpFormat.TILEOP_ND；
    format显式标记时，性能更优，要求传入的torch tensor与pypto.Tensor声明的format一致，能获得更优的性能；
-4. 张量参数在前，非张量参数（如`scalar`、`tiling`）在后
-5. 非张量参数支持keyword传参、位置参数、使用默认值
-6. 配置项使用限制说明：
+- 张量参数在前，非张量参数（如`scalar`、`tiling`）在后
+- 非张量参数支持keyword传参、位置参数、使用默认值
+- 配置项使用限制说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：最大可用aicpu数量为7（具体最大数量取决于具体的型号）；支持全部运行时配置项；run_mode支持0（NPU执行）和1（模拟器执行）。
    <!-- end id4 -->

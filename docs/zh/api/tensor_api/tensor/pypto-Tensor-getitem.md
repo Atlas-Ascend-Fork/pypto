@@ -45,19 +45,19 @@ __getitem__(self, key, *, valid_shape: Optional[List[Union[int, SymbolicScalar]]
 
 ## 约束说明
 
-1. 对于slice（切片对象，格式为start:end:step），当前功能暂时不支持step设置,值默认固定为1。
+- 对于slice（切片对象，格式为start:end:step），当前功能暂时不支持step设置,值默认固定为1。
 
    未支持示例：a\[1:2:2, :\]。
 
-2. 当前功能暂时不支持bool类型索引。
+- 当前功能暂时不支持bool类型索引。
 
    未支持示例：a\[True, False, True, False\]。
 
-3. 当前功能暂时不支持Tensor类型索引。
+- 当前功能暂时不支持Tensor类型索引。
 
    未支持示例：a\[b\]，\(b = pypto.Tensor\(\[2\], pypto.DT\_INT32\)\)。
 
-4. 省略号（...）在索引中最多出现一个，且索引个数不能超过Tensor的维度数。
+- 省略号（...）在索引中最多出现一个，且索引个数不能超过Tensor的维度数。
 
 ## 调用示例
 

@@ -41,8 +41,8 @@ index_add_ub(input: Tensor, dim: int, index: Tensor, source: Tensor, *, alpha: U
 
 ## 约束说明
 
-1. 请参考[pypto.index_add__ub](pypto-index_add__ub.md)的约束说明。
-2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 请参考[pypto.index_add__ub](pypto-index_add__ub.md)的约束说明。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

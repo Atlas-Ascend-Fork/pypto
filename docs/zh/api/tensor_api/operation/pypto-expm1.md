@@ -46,8 +46,8 @@ expm1(input: Tensor) -> Tensor
 
 ## 约束说明
 
-1. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-2. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape最后一维为W，倒数第二维为H（一维TileShape取H为1），W对齐到8记为WAlign，则使用临时空间大小为：
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape最后一维为W，倒数第二维为H（一维TileShape取H为1），W对齐到8记为WAlign，则使用临时空间大小为：
    - 输入数据类型为DT_FP32时：固定为32字节；
    - 其余情况：`H * WAlign * sizeof(DT_FP32)`字节。
 

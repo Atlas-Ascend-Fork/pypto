@@ -49,7 +49,7 @@ zeros(*size: Union[int, Sequence[int]], dtype: Optional[DataType] = None) -> Ten
 
 ## 约束说明
 
-1. `tileshape`的维度需要与输出result维度相同，用于切分result。
+- `tileshape`的维度需要与输出result维度相同，用于切分result。
 
 ## 调用示例
 

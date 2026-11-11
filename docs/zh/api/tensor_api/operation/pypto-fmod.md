@@ -49,10 +49,10 @@ fmod(input: Tensor, other: Union[Tensor, float], precision_type: PrecisionType =
 
 ## 约束说明
 
-1. input和other数据类型应相同。
-2. other为数字的时候，不支持隐式转换。
-3. other不支持nan、inf等特殊值。
-4. precision_type使用说明：
+- input和other数据类型应相同。
+- other为数字的时候，不支持隐式转换。
+- other不支持nan、inf等特殊值。
+- precision_type使用说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：支持高精度模式
    <!-- end id4 -->
@@ -62,7 +62,7 @@ fmod(input: Tensor, other: Union[Tensor, float], precision_type: PrecisionType =
    <!-- npu="910b" id6 -->
    - Atlas A2系列产品：不支持高精度模式，默认使用指令模式 `INTRINSIC`。
    <!-- end id6 -->
-5. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

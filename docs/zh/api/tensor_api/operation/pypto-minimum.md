@@ -55,7 +55,7 @@ minimum(
 
 ## 约束说明
 
-1. 两个输入均为Tensor类型时，支持的数据类型如下：
+- 两个输入均为Tensor类型时，支持的数据类型如下：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_INT32，DT_UINT32，DT_FP32，DT_INT16，DT_UINT16，DT_FP16，DT_BF16，DT_UINT8，DT_INT8，DT_INT64，DT_UINT64
    <!-- end id4 -->
@@ -74,7 +74,7 @@ minimum(
    <!-- npu="9050" id17 -->
    - Kirin9050处理器系列产品：DT_INT32，DT_INT16，DT_FP16，DT_FP32
    <!-- end id17 -->
-2. 一个输入为Tensor，另一个输入为Element类型时，支持的数据类型如下：
+- 一个输入为Tensor，另一个输入为Element类型时，支持的数据类型如下：
    <!-- npu="950" id7 -->
    - Ascend 950PR&950DT系列产品：DT_INT32，DT_INT16，DT_FP16，DT_FP32，DT_BF16，DT_INT64，DT_UINT64
    <!-- end id7 -->
@@ -93,7 +93,7 @@ minimum(
    <!-- npu="9050" id18 -->
    - Kirin9050处理器系列产品：DT_INT32，DT_INT16，DT_FP16，DT_FP32
    <!-- end id18 -->
-3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

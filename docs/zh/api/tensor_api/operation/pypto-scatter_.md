@@ -63,19 +63,19 @@ scatter_(input: Tensor, dim: int, index: Tensor, src: Union[float, Element, Tens
 
 ## 约束说明
 
-1. broadcast约束：input和index不支持broadcast；
+- broadcast约束：input和index不支持broadcast；
 
-2. input.shape的dim轴不可切，viewshape的维度与input维度相同，要求viewshape\[dim\] \>= max\( input.shape\[dim\], index.shape\[dim\] \)，其余维度的Shape大小不做限制；
+- input.shape的dim轴不可切，viewshape的维度与input维度相同，要求viewshape\[dim\] \>= max\( input.shape\[dim\], index.shape\[dim\] \)，其余维度的Shape大小不做限制；
 
-3. input.shape的dim轴不可切，TileShape的维度与input维度相同，TileShape\[dim\] \>= viewshape\[dim\]，其余维度的Shape大小不做限制，input index和result都会在UB中，需满足所有输入和输出的TileShape大小总和不能超过UB内存的大小。
+- input.shape的dim轴不可切，TileShape的维度与input维度相同，TileShape\[dim\] \>= viewshape\[dim\]，其余维度的Shape大小不做限制，input index和result都会在UB中，需满足所有输入和输出的TileShape大小总和不能超过UB内存的大小。
 
-4. input.shape和index.shape的非dim轴切分，需满足viewshape[non dim]切分后，input和index的非dim轴切分块数相同。TileShape切分时，也需要保证input和index的非dim轴切分块数相同。
+- input.shape和index.shape的非dim轴切分，需满足viewshape[non dim]切分后，input和index的非dim轴切分块数相同。TileShape切分时，也需要保证input和index的非dim轴切分块数相同。
 
-5. src为Tensor，reduce为None，且当index中存在指向相同位置的不唯一索引时，行为是不确定的，将从src中任意选择一个值写入。
+- src为Tensor，reduce为None，且当index中存在指向相同位置的不唯一索引时，行为是不确定的，将从src中任意选择一个值写入。
 
-6. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
-7. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记index的Tile在最后一维上的大小为I（当dim为最后一维时，dim轴不切分，I为index最后一维的完整大小；否则I不超过TileShape最后一维），记indexType为index的数据类型，则使用临时空间大小为：`I * sizeof(indexType)`字节。
+- 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记index的Tile在最后一维上的大小为I（当dim为最后一维时，dim轴不切分，I为index最后一维的完整大小；否则I不超过TileShape最后一维），记indexType为index的数据类型，则使用临时空间大小为：`I * sizeof(indexType)`字节。
 
 ## 调用示例
 

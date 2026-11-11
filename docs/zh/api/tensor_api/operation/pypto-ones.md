@@ -49,7 +49,7 @@ ones(*size: Union[int, Sequence[int]], dtype: Optional[DataType] = None) -> Tens
 
 ## 约束说明
 
-1. `TileShape`的维度需要与输出result维度相同，用于切分result。
+- `TileShape`的维度需要与输出result维度相同，用于切分result。
 
 ## 调用示例
 

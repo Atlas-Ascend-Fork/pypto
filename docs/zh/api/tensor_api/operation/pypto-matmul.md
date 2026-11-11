@@ -123,6 +123,7 @@ matmul(input, mat2, out_dtype, *, a_trans = False, b_trans = False, c_matrix_nz 
 
 <!-- npu="9030" id9 -->
 ### Kirin9030处理器系列产品支持的数据类型
+
 | input | mat2 | out_dtype | bias_tensor |
 |:------|:-----|:----------|:------------|
 | DT_FP16 | DT_FP16 | DT_FP16 | DT_FP16 |
@@ -131,6 +132,7 @@ matmul(input, mat2, out_dtype, *, a_trans = False, b_trans = False, c_matrix_nz 
 
 <!-- npu="x90" id10 -->
 ### KirinX90处理器系列产品支持的数据类型
+
 | input | mat2 | out_dtype | bias_tensor |
 |:------|:-----|:----------|:------------|
 | DT_FP16 | DT_FP16 | DT_FP16 | DT_FP32 |

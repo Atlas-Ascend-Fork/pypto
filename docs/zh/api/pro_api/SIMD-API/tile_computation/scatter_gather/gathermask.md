@@ -39,7 +39,7 @@ pypto_pro.language.gathermask(out: Tile, src: Tile, *, pattern_mode: int) -> Non
 - pattern_mode必须在编译期确定，取值为1～7。
 - out与src的数据类型相同，采用行主序布局，并满足相应Tile的对齐要求。
 - 对8、16、32位元素，每行抽取的列数由pattern_mode确定，out须为该结果提供连续存储空间。
-- 对64位元素，各源有效行的抽取结果连续拼接写出，不按out的物理列数插入行间填充。设每行选中K个元素、有效行数为R，应提供R * K个元素的连续空间，例如使用有效Shape为[1, R * K]的目标Tile。
+- 对64位元素，各源有效行的抽取结果连续拼接写出，不按out的物理列数插入行间填充。设每行选中K个元素、有效行数为R，应提供R*K个元素的连续空间，例如使用有效Shape为[1, R*K]的目标Tile。
 
 ## 调用示例
 

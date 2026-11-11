@@ -35,6 +35,7 @@ set_codegen_options(*,
 
 <!-- npu="x90,9030,9050" id14 -->
 Kirin专用函数原型：
+
 ```python
 set_codegen_options(*,
                     soc_version: str = None) -> None

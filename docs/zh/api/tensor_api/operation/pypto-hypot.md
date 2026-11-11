@@ -48,10 +48,10 @@ hypot(input: Tensor, other: Tensor) -> Tensor
 
 ## 约束说明
 
-1. input和other都为Tensor时，数据类型应该相同。
-2. 对于BF16和FP16类型，内部计算可能会提升精度以避免中间溢出。
-3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-4. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape最后一维为W，`W * sizeof(DT_FP32)`向上对齐到32记为A，则使用临时空间大小为`2 * A`字节。
+- input和other都为Tensor时，数据类型应该相同。
+- 对于BF16和FP16类型，内部计算可能会提升精度以避免中间溢出。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape最后一维为W，`W * sizeof(DT_FP32)`向上对齐到32记为A，则使用临时空间大小为`2 * A`字节。
 
 ## 调用示例
 

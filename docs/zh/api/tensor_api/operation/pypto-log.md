@@ -44,7 +44,7 @@ pypto.log(input, precision_type=pypto.PrecisionType.INTRINSIC) -> Tensor
 
 ## 约束说明
 
-1. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

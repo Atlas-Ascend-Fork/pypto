@@ -51,15 +51,15 @@ atomic_add(src: Tensor, offsets: List[Union[int, SymbolicScalar]], dst: Tensor) 
 
 ## 约束说明
 
-1. 输出Tensor dst的valid shape需由用户在调用atomic_add前确保正确，该接口不会自动推导。
+- 输出Tensor dst的valid shape需由用户在调用atomic_add前确保正确，该接口不会自动推导。
 
-2. offsets的长度需等于src/dst的维度数，即 $len(offsets) == src.dim == dst.dim$，否则会产生编译报错。
+- offsets的长度需等于src/dst的维度数，即 $len(offsets) == src.dim == dst.dim$，否则会产生编译报错。
 
-3. 在调用atomic_add前，需保证dst对应区域的数据已有效，否则会导致未定义行为。
+- 在调用atomic_add前，需保证dst对应区域的数据已有效，否则会导致未定义行为。
 
-4. 为保证写入区域不越界，对任意维度 $i$ 需满足 $offsets[i] + src.shape[i] \le dst.shape[i]$，否则会导致未定义行为。
+- 为保证写入区域不越界，对任意维度 $i$ 需满足 $offsets[i] + src.shape[i] \le dst.shape[i]$，否则会导致未定义行为。
 
-5. 当多个核并发对dst的重叠区域执行atomic_add时，各次累加的执行顺序不确定。
+- 当多个核并发对dst的重叠区域执行atomic_add时，各次累加的执行顺序不确定。
 
 ## 调用示例
 

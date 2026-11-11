@@ -51,7 +51,7 @@ pow(input: Tensor, other: Union[Tensor, int, float], precision_type: PrecisionTy
 
 ## 约束说明
 
-1. precision_type使用说明：
+- precision_type使用说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：支持
    <!-- end id4 -->
@@ -61,9 +61,9 @@ pow(input: Tensor, other: Union[Tensor, int, float], precision_type: PrecisionTy
    <!-- npu="910b" id6 -->
    - Atlas A2系列产品：不支持，默认使用指令模式 `INTRINSIC`
    <!-- end id6 -->
-2. 两个输入均为Tensor且输入类型为int8/uint8/int16时，两个输入参数数据类型需相同。
-3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-4. 临时空间使用说明：若TileShape为\[a,b,c,d\]，当输出数据类型为DT_INT32、DT_INT8、DT_UINT8、DT_INT16时需要临时空间大小为a\*b\*c\*d\*sizeof\(DT_FP32\)，其余情况需要的临时空间大小为
+- 两个输入均为Tensor且输入类型为int8/uint8/int16时，两个输入参数数据类型需相同。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 临时空间使用说明：若TileShape为\[a,b,c,d\]，当输出数据类型为DT_INT32、DT_INT8、DT_UINT8、DT_INT16时需要临时空间大小为a\*b\*c\*d\*sizeof\(DT_FP32\)，其余情况需要的临时空间大小为
    <!-- npu="950" id7 -->
    - Ascend 950PR&950DT系列产品：a\*b\*c\*d\*sizeof\(DT_FP32\)
    <!-- end id7 -->
@@ -73,15 +73,15 @@ pow(input: Tensor, other: Union[Tensor, int, float], precision_type: PrecisionTy
    <!-- npu="910b" id9 -->
    - Atlas A2系列产品：a\*b\*c\*\(2\*d+3\*d/8\)\*sizeof\(DT_FP32\)
    <!-- end id9 -->
-5. 输入Tensor的UB空间占用说明：当pow输出数据类型为DT_FP16、DT_BF16或DT_FP32时，两个输入（当指数为标量时，标量指数会被填充为与输入相同形状的DT_FP32 Tensor）均会被转换为DT_FP32后拷贝至UB，并且UB中的输入Tensor会先对最后一维做32字节对齐填充，再对倒数第二维做行填充。若TileShape为\[a,b,c,d\]，记 $d_{align}=CeilAlign(d, 8), k=d_{align}/8, p=\lceil8/k\rceil, c_{pad}=c+p-1$，则输入Tensor的实际UB空间占用为：
+- 输入Tensor的UB空间占用说明：当pow输出数据类型为DT_FP16、DT_BF16或DT_FP32时，两个输入（当指数为标量时，标量指数会被填充为与输入相同形状的DT_FP32 Tensor）均会被转换为DT_FP32后拷贝至UB，并且UB中的输入Tensor会先对最后一维做32字节对齐填充，再对倒数第二维做行填充。若TileShape为\[a,b,c,d\]，记 $d_{align}=CeilAlign(d, 8), k=d_{align}/8, p=\lceil8/k\rceil, c_{pad}=c+p-1$，则输入Tensor的实际UB空间占用为：
    <!-- npu="950" id12 -->
    - Ascend 950PR&950DT系列产品：无行填充，每个输入Tensor的实际UB空间占用为 $a*b*c*d_{align}*sizeof(DT\_FP32)$，两个输入合计为 $2*a*b*c*d_{align}*sizeof(DT\_FP32)$。
    <!-- end id12 -->
    <!-- npu="A3" id13 -->
-   - Atlas A3系列产品：每个输入Tensor的实际UB空间占用为 $a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)$，两个输入合计为 $2*a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)$。结合第4条的临时空间，总的UB空间占用需满足 $2*a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)+a*b*c*(2*d+3*d/8)*sizeof(DT\_FP32) <= UB$。
+   - Atlas A3系列产品：每个输入Tensor的实际UB空间占用为 $a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)$，两个输入合计为 $2*a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)$。结合上文“临时空间使用说明”，总的UB空间占用需满足 $2*a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)+a*b*c*(2*d+3*d/8)*sizeof(DT\_FP32) <= UB$。
    <!-- end id13 -->
    <!-- npu="910b" id14 -->
-   - Atlas A2系列产品：每个输入Tensor的实际UB空间占用为 $a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)$，两个输入合计为 $2*a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)$。结合第4条的临时空间，总的UB空间占用需满足 $2*a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)+a*b*c*(2*d+3*d/8)*sizeof(DT\_FP32) <= UB$。
+   - Atlas A2系列产品：每个输入Tensor的实际UB空间占用为 $a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)$，两个输入合计为 $2*a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)$。结合上文“临时空间使用说明”，总的UB空间占用需满足 $2*a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)+a*b*c*(2*d+3*d/8)*sizeof(DT\_FP32) <= UB$。
    <!-- end id14 -->
 
 ## 数据类型提升说明

@@ -57,12 +57,12 @@ interleave(input: Tensor, other: Tensor) -> Tuple[Tensor, Tensor]
 
 ## 约束说明
 
-1. `input` 和 `other` 的数据类型、维度数、Shape 必须一致。
-2. 支持的数据类型为：`DT_INT8`、`DT_UINT8`、`DT_INT16`、`DT_UINT16`、`DT_INT32`、`DT_UINT32`、`DT_FP16`、`DT_FP32`、`DT_BF16`。
-3. 当前支持 1 到 4 维 Tensor。
-4. 最后一个维度的 Shape 必须为偶数。
-5. 当 TileShape 有效配置时，TileShape 维度应与输入 Tensor 维度一致，且最后一维必须与输入 Tensor 的 Shape 最后一维相等；其他维可按切分需求设置。
-6. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- `input` 和 `other` 的数据类型、维度数、Shape 必须一致。
+- 支持的数据类型为：`DT_INT8`、`DT_UINT8`、`DT_INT16`、`DT_UINT16`、`DT_INT32`、`DT_UINT32`、`DT_FP16`、`DT_FP32`、`DT_BF16`。
+- 当前支持 1 到 4 维 Tensor。
+- 最后一个维度的 Shape 必须为偶数。
+- 当 TileShape 有效配置时，TileShape 维度应与输入 Tensor 维度一致，且最后一维必须与输入 Tensor 的 Shape 最后一维相等；其他维可按切分需求设置。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

@@ -45,11 +45,11 @@ transpose(input: Tensor, dim0: int, dim1: int) -> Tensor
 
 ## 约束说明
 
-1. TileShape和输入input维度一致，用于切分input。
+- TileShape和输入input维度一致，用于切分input。
 
-2. 输入维度dim0，dim1的取值范围为：-D ≤ dim ≤ D-1，其中D为input的维度数。
+- 输入维度dim0，dim1的取值范围为：-D ≤ dim ≤ D-1，其中D为input的维度数。
 
-3. 当前Transpose实现存在约束，只能支持以下场景转置：
+- 当前Transpose实现存在约束，只能支持以下场景转置：
 
    - 2维：任意轴
    - 3维：任意轴
@@ -57,11 +57,11 @@ transpose(input: Tensor, dim0: int, dim1: int) -> Tensor
    - 5维：支持：3轴和4轴，其他不支持
    - 无需实际转置的场景直接支持：当dim0和dim1相同，或dim0和dim1对应的输入shape维度均为1时，transpose结果与输入等价，不受前述4维/5维轴组合约束限制。
 
-4. TileShape尾轴32字节对齐约束（仅无需实际转置的场景）：当transpose判定为无需实际转置、直接返回输入Tensor时（即dim0==dim1，或两轴shape均为1），TileShape的最后一维的字节数必须对齐到32字节（BLOCK_SIZE）。即：`TileShape最后一维元素数 × sizeof(数据类型) % 32 == 0`。
+- TileShape尾轴32字节对齐约束（仅无需实际转置的场景）：当transpose判定为无需实际转置、直接返回输入Tensor时（即dim0==dim1，或两轴shape均为1），TileShape的最后一维的字节数必须对齐到32字节（BLOCK_SIZE）。即：`TileShape最后一维元素数 × sizeof(数据类型) % 32 == 0`。
 
     说明：此场景直接返回输入Tensor（`return self`），但后续流程中的TILE_REGISTER_COPY仍会校验TileShape尾轴的32字节对齐。若未满足此约束，将报错：`CHECK FAILED: lastDimBytes % BLOCK_SIZE == 0`。
 
-5. 涉及尾轴转置的场景，需要预留一块临时空间，用来搬运。
+- 涉及尾轴转置的场景，需要预留一块临时空间，用来搬运。
 
     示例：
 
@@ -75,7 +75,7 @@ transpose(input: Tensor, dim0: int, dim1: int) -> Tensor
 
     说明：动态 shape（维度为符号量，如用 view\_shape 整块覆盖输入的场景）下，末两维合轴转置的中间结果物化进 UB 时，末维同样按 32 字节对齐放大。框架会按 UB 容量对该中间结果自动做列分块（每段单独 reshape、转置并写回，单段占用不超过 UB 可用预算），避免出现 `Alloc tensor ... exceeds MEM_UB size ...` 的 UB 越界报错。
 
-6. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_FP16，DT_BF16，DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_FP32，DT_INT32，DT_UINT32，DT_HF8，DT_FP8E4M3，DT_FP8E5M2，DT_FP8E8M0
    <!-- end id4 -->
@@ -94,7 +94,7 @@ transpose(input: Tensor, dim0: int, dim1: int) -> Tensor
    <!-- npu="9050" id12 -->
    - Kirin9050处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16
    <!-- end id12 -->
-7. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

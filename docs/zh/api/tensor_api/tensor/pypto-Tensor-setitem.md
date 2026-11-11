@@ -44,21 +44,21 @@ __setitem__(self, key, value)
 
 ## 约束说明
 
-1. 对于slice（切片对象，格式为start:end:step），当前功能暂时不支持step设置，值默认固定为1。
+- 对于slice（切片对象，格式为start:end:step），当前功能暂时不支持step设置，值默认固定为1。
 
    未支持示例：a\[1:2:2, :\]。
 
-2. 当前功能暂时不支持bool类型索引。
+- 当前功能暂时不支持bool类型索引。
 
    未支持示例：a\[True, False, True, False\]。
 
-3. 当前功能暂时不支持Tensor类型索引。
+- 当前功能暂时不支持Tensor类型索引。
 
    未支持示例：a\[b\]，\(b = pypto.Tensor\(\[2\], pypto.DT\_INT32\)\)。
 
-4. 混合索引（int/SymbolicScalar与slice组合）赋值时，key中slice的个数必须与value的维度数一致。
+- 混合索引（int/SymbolicScalar与slice组合）赋值时，key中slice的个数必须与value的维度数一致。
 
-5. 单元素赋值时，value仅支持int或SymbolicScalar类型，暂不支持float类型。
+- 单元素赋值时，value仅支持int或SymbolicScalar类型，暂不支持float类型。
 
 ## 调用示例
 

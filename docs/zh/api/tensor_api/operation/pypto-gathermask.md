@@ -56,17 +56,17 @@ gathermask(self: Tensor, pattern_mode: int) -> Tensor
 
 ## 约束说明
 
-1. 当1 <= pattern_mode <= 2时：
+- 当1 <= pattern_mode <= 2时：
    - self.shape尾轴必须能被2整除
    - TileShape尾轴必须是2的整倍数
    - viewshape尾轴必须是2的整倍数
    - self.shape尾轴不做view切分
-2. 当3 <= pattern_mode <= 6时：
+- 当3 <= pattern_mode <= 6时：
    - self.shape尾轴必须是4的整倍数
    - TileShape尾轴必须是4的整倍数
    - viewshape尾轴必须是4的整倍数
    - self.shape尾轴不做view切分
-3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

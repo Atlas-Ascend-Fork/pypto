@@ -11,3 +11,4 @@ matmul_performance_guide
 debug_case_ffn
 performance_case_quantindexerprolog
 performance_case_GDR
+```

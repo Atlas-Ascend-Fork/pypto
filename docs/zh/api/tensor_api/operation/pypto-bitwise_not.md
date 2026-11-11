@@ -47,7 +47,7 @@ bitwise_not(input: Tensor) -> Tensor
 
 ## 约束说明
 
-1. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_INT32，DT_UINT32，DT_INT64，DT_UINT64
    <!-- end id4 -->
@@ -57,7 +57,7 @@ bitwise_not(input: Tensor) -> Tensor
    <!-- npu="910b" id6 -->
    - Atlas A2系列产品：DT_INT8，DT_UINT8，DT_INT16，DT_UINT16，DT_INT32，DT_UINT32
    <!-- end id6 -->
-2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

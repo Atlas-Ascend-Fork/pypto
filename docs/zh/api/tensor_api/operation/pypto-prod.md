@@ -49,10 +49,10 @@ prod(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
 
 ## 约束说明
 
-1. TileShape大小不超过64KB；
+- TileShape大小不超过64KB；
 
-2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-3. 设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。当axis为-1或输入最后一维时，记K为TileShape归约轴上的大小，记srcType为输入数据类型，则使用临时空间大小为`CeilAlign((K + 1) / 2, 128 / sizeof(srcType)) * sizeof(srcType)`字节，其中CeilAlign\(x, n\)表示将x向上对齐到n的倍数；axis为其余取值时不使用临时空间。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。当axis为-1或输入最后一维时，记K为TileShape归约轴上的大小，记srcType为输入数据类型，则使用临时空间大小为`CeilAlign((K + 1) / 2, 128 / sizeof(srcType)) * sizeof(srcType)`字节，其中CeilAlign\(x, n\)表示将x向上对齐到n的倍数；axis为其余取值时不使用临时空间。
 
 ## TileShape设置示例
 

@@ -48,9 +48,9 @@ signbit(input: Tensor) -> Tensor
 
 ## 约束说明
 
-1. TileShape与input维度保持一致；
-2. 由于存在临时内存使用，当输入数据类型为DT_FP32，TileShape大小有额外约束，假设TileShape为[a,b,c,d]，那么a*b*c*d*sizeof(self) + a*b*c*d*sizeof(FP16) + a*b*c*d*sizeof(UINT8) < UB。
-3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- TileShape与input维度保持一致；
+- 由于存在临时内存使用，当输入数据类型为DT_FP32，TileShape大小有额外约束，假设TileShape为[a,b,c,d]，那么a*b*c*d*sizeof(self) + a*b*c*d*sizeof(FP16) + a*b*c*d*sizeof(UINT8) < UB。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

@@ -58,9 +58,9 @@ amax(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
 
 ## 约束说明
 
-1. TileShape大小不超过64KB；
+- TileShape大小不超过64KB；
 
-2. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_FP16，DT_BF16，DT_FP32，DT_INT32，DT_INT16，DT_UINT8，DT_INT8，DT_INT64，DT_UINT64
    <!-- end id4 -->
@@ -79,8 +79,8 @@ amax(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
    <!-- npu="9050" id12 -->
    - Kirin9050处理器系列产品：DT_FP16，DT_FP32
    <!-- end id12 -->
-3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-4. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。当axis为-1或输入最后一维时，记TileShape倒数第二维为H（一维TileShape取H为1），记K为TileShape归约轴上的大小，记srcType为输入数据类型，则使用临时空间大小为：
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。当axis为-1或输入最后一维时，记TileShape倒数第二维为H（一维TileShape取H为1），记K为TileShape归约轴上的大小，记srcType为输入数据类型，则使用临时空间大小为：
    - K <= 128 / sizeof\(srcType\)：固定为32字节；
    - K <= 2 \* \(128 / sizeof\(srcType\)\)：`H * 128`字节；
    - 其余情况：记F为`K * sizeof(srcType) / 128`，使用临时空间大小为`H * (F / 2) * 128`字节。

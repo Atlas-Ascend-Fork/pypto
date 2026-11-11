@@ -52,9 +52,9 @@ online_softmax(scores: Tensor, scale: float) -> Tuple[Tensor, Tensor, Tensor]
 
 ## 约束说明
 
-1. 该接口为定制接口，不保证稳定性。
-2. scores 数据类型仅支持 DT_FP32。
-3. 当前版本不切分第0维，要求 scores.shape[0] <= vec_tile[0]。
+- 该接口为定制接口，不保证稳定性。
+- scores 数据类型仅支持 DT_FP32。
+- 当前版本不切分第0维，要求 scores.shape[0] <= vec_tile[0]。
 
 ## 调用示例
 

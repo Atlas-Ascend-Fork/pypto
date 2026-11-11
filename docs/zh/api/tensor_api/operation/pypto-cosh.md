@@ -47,12 +47,12 @@ cosh(input: Tensor) -> Tensor
 
 ## 约束说明
 
-1. 在综合考虑输入、输出及临时存储空间占用的前提下，TileShape大小需满足额外约束条件。假设TileShape为\[a,b,c,d\]，那么
+- 在综合考虑输入、输出及临时存储空间占用的前提下，TileShape大小需满足额外约束条件。假设TileShape为\[a,b,c,d\]，那么
 
     $$
     3*a*b*c*CeilAlign(d, 8)*sizeof(DT\_FP32) <= UB
     $$。
-2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

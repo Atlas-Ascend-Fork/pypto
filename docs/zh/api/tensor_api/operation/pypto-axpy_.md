@@ -53,15 +53,15 @@ axpy_(y: Tensor, x: Tensor, alpha: Union[int, float] = 1.0) -> Tensor
 
 ## 约束说明
 
-1. **dtype约束**：
+- **dtype约束**：
    - 相同dtype：支持DT_FP32 + DT_FP32、DT_FP16 + DT_FP16。
    - 混合dtype：仅支持DT_FP32 (y) + DT_FP16 (x)，其他组合不支持。
-2. **广播约束**：
+- **广播约束**：
    - y张量**不支持广播**。如果y的某个维度为1而x对应维度不为1，将报错。
    - x张量**支持广播**到y的形状。
-3. **Shape约束**：y和x的维度数必须相同（1-4维）。
-4. **Format约束**：y和x的Format必须一致。
-5. **原地更新注意**：由于AXPY是原地操作，y的原始值会被覆盖。如需保留原始y值，请提前clone：
+- **Shape约束**：y和x的维度数必须相同（1-4维）。
+- **Format约束**：y和x的Format必须一致。
+- **原地更新注意**：由于AXPY是原地操作，y的原始值会被覆盖。如需保留原始y值，请提前clone：
 
    ```python
    y_backup = pypto.clone(y)  # 备份原始y值
@@ -69,7 +69,7 @@ axpy_(y: Tensor, x: Tensor, alpha: Union[int, float] = 1.0) -> Tensor
    # 此时y_backup仍保留原始值，可用于后续计算
    ```
 
-6. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

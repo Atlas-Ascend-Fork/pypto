@@ -51,9 +51,9 @@ keepdim为True时，对应dim的shape规约为1，其他轴的shape不变；keep
 
 ## 约束说明
 
-1. input.shape的dim轴不可切，viewshape的维度与input维度相同，要求viewshape\[dim\] \== input.shape\[dim\]，其余维度的Shape大小不做限制
-2. dim中不支持重复值，且len(dim) <= input.dim
-3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- input.shape的dim轴不可切，viewshape的维度与input维度相同，要求viewshape\[dim\] \== input.shape\[dim\]，其余维度的Shape大小不做限制
+- dim中不支持重复值，且len(dim) <= input.dim
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

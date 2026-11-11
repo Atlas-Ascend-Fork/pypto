@@ -56,15 +56,15 @@ scatter_update(input: Tensor, dim: int, index: Tensor, src: Tensor) -> Tensor
 
 ## 约束说明
 
-1. broadcast约束：不支持broadcast。
-2. 索引约束：当index中包含指向同一目标位置的重复索引时，写入顺序以及最终写入结果不保证确定性。
-3. Tensor格式约束：Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-4. ViewShape约束：2维场景下ViewShape为\[viewB \* s, d\]，4维场景下ViewShape为\[viewB, viewS, 1, d\]，尾轴d不做切分。2维场景下，\[viewB \* s, d\]针对src做切分，其第0维是index的第1维s的倍数，\[viewB, s\]针对index做切分。4维场景下，\[viewB, viewS, 1, d\]针对src做切分，\[viewB, viewS\]针对index做切分。
-5. TileShape约束：
+- broadcast约束：不支持broadcast。
+- 索引约束：当index中包含指向同一目标位置的重复索引时，写入顺序以及最终写入结果不保证确定性。
+- Tensor格式约束：Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- ViewShape约束：2维场景下ViewShape为\[viewB \* s, d\]，4维场景下ViewShape为\[viewB, viewS, 1, d\]，尾轴d不做切分。2维场景下，\[viewB \* s, d\]针对src做切分，其第0维是index的第1维s的倍数，\[viewB, s\]针对index做切分。4维场景下，\[viewB, viewS, 1, d\]针对src做切分，\[viewB, viewS\]针对index做切分。
+- TileShape约束：
    - 2维场景下，TileShape为\[tileSize, tileD\]，设index.shape\[1\]为s。当TileShape\[0\]不大于s时，TileShape\[0\]必须是s的约数；当TileShape\[0\]大于s时，TileShape\[0\]必须是s的倍数。例如src为\[12, 64\]、index为\[3, 4\]时，TileShape可以为\[2, 64\]、\[4, 64\]或\[12, 64\]；当tileD小于d时，也可以取\[4, 32\]。
    - 4维场景下，TileShape为\[tileB, tileS, 1, tileD\]。
-6. 输入input和输出均常驻gm，不占用ub空间。输入index和输入src需要按TileShape切分后搬入ub，两个输入的tile块大小之和应小于ub限制。
-7. Tensor数据类型说明：
+- 输入input和输出均常驻gm，不占用ub空间。输入index和输入src需要按TileShape切分后搬入ub，两个输入的tile块大小之和应小于ub限制。
+- Tensor数据类型说明：
    <!-- npu="950" id6 -->
    - Ascend 950PR&950DT系列产品：DT_FP32，DT_FP16，DT_BF16，DT_FP8E4M3，DT_INT32，DT_INT16，DT_INT8。
    <!-- end id6 -->

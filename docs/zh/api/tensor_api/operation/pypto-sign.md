@@ -51,8 +51,8 @@ sign(input: Tensor) -> Tensor
 
 ## 约束说明
 
-1. TileShape与input维度保持一致；
-2. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。假设TileShape的最后两维为`H`和`W`（一维TileShape取`H = 1`），各数据类型对应的临时空间如下：
+- TileShape与input维度保持一致；
+- 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。假设TileShape的最后两维为`H`和`W`（一维TileShape取`H = 1`），各数据类型对应的临时空间如下：
 
    | 输入数据类型 | 实际工作数据类型 | 尾轴对齐长度 | 临时空间大小（字节） |
    |--------------|------------------|--------------|----------------------|
@@ -63,7 +63,7 @@ sign(input: Tensor) -> Tensor
    | `DT_INT16`、`DT_INT32`、`DT_INT64` | 与输入一致 | 不涉及 | `32` |
 
    浮点计算路径中的两块等大临时空间分别用于工作数据和比较掩码，额外的32字节用于标量临时块。`DT_BF16`输入在进入Sign TileOp前会通过AutoCast转换为`DT_FP32`，因此按`DT_FP32`路径申请临时空间；计算完成后，结果再转换回`DT_BF16`。
-3. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_FP16，DT_BF16，DT_FP32，DT_INT8，DT_INT16，DT_INT32，DT_INT64。
    <!-- end id4 -->
@@ -73,7 +73,7 @@ sign(input: Tensor) -> Tensor
    <!-- npu="910b" id6 -->
    - Atlas A2系列产品：DT_FP16，DT_BF16，DT_FP32，DT_INT8，DT_INT16，DT_INT32。
    <!-- end id6 -->
-4. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

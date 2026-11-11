@@ -43,8 +43,8 @@ atan(self: Tensor) -> Tensor
 
 ## 约束说明
 
-1. 由于存在临时内存使用，TileShape大小需满足：若TileShape为\[a,b,c,d\]，那么5\*a\*b\*c\*d\*sizeof\(DT_FP32\) < UB。
-2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 由于存在临时内存使用，TileShape大小需满足：若TileShape为\[a,b,c,d\]，那么5\*a\*b\*c\*d\*sizeof\(DT_FP32\) < UB。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

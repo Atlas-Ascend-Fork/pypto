@@ -41,8 +41,8 @@ get_operation_options() -> Dict[str, Union[str, int, List[int], Dict[int, int]]]
 
 ## 约束说明
 
-1. 返回值为Dict类型，包含operation的所有配置项信息。
-2. 不同配置项的类型可能不同：str、int、List[int]、Dict[int, int] 等。
+- 返回值为Dict类型，包含operation的所有配置项信息。
+- 不同配置项的类型可能不同：str、int、List[int]、Dict[int, int] 等。
 
 ## 调用示例
 

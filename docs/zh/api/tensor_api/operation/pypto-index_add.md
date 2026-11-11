@@ -41,7 +41,7 @@ index_add(input: Tensor, dim: int, index: Tensor, source: Tensor, *, alpha: Unio
 
 ## 约束说明
 
-1. 请参考[pypto.index_add_](pypto-index_add_.md)的约束说明。
+- 请参考[pypto.index_add_](pypto-index_add_.md)的约束说明。
 
 ## 调用示例
 

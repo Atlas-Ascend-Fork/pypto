@@ -53,15 +53,15 @@ gather(input: Tensor, dim: int, index: Tensor) -> Tensor
 
 ## 约束说明
 
-1. index.dim = input.dim，且index.shape\[i\] <= input.shape\[i\] (i != dim)，值为合法索引，即不能超出input.shape\[dim\]；
+- index.dim = input.dim，且index.shape\[i\] <= input.shape\[i\] (i != dim)，值为合法索引，即不能超出input.shape\[dim\]；
 
-2. dim: -input.dim <= dim < input.dim；
+- dim: -input.dim <= dim < input.dim；
 
-3. input.shape的dim轴不可切，要求viewshape\[dim\] \>= max\( input.shape\[dim\], index.shape\[dim\] \)，其余维度的Shape大小不做限制；
+- input.shape的dim轴不可切，要求viewshape\[dim\] \>= max\( input.shape\[dim\], index.shape\[dim\] \)，其余维度的Shape大小不做限制；
 
-4. TileShape的维度与index相同，用于切分input和index，input的dim轴不可切，且所有输入和输出的TileShape大小总和不能超过UB内存的大小；
+- TileShape的维度与index相同，用于切分input和index，input的dim轴不可切，且所有输入和输出的TileShape大小总和不能超过UB内存的大小；
 
-5. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_INT16，DT_INT32，DT_UINT16，DT_UINT32，DT_FP16，DT_FP32，DT_BF16
    <!-- end id4 -->
@@ -72,9 +72,9 @@ gather(input: Tensor, dim: int, index: Tensor) -> Tensor
    - Atlas A2系列产品：DT_INT16，DT_INT32，DT_UINT16，DT_UINT32，DT_FP16，DT_FP32，DT_BF16
    <!-- end id6 -->
 
-6. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
-7. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape最后一维为W，记align为32/sizeof\(index\)，W对齐到align记为WAlign，则使用临时空间（数据类型与index相同）大小为`2 * WAlign * sizeof(index)`字节。
+- 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape最后一维为W，记align为32/sizeof\(index\)，W对齐到align记为WAlign，则使用临时空间（数据类型与index相同）大小为`2 * WAlign * sizeof(index)`字节。
 
 ## 调用示例
 

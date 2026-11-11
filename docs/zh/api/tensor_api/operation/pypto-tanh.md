@@ -49,8 +49,8 @@ tanh(input: Tensor) -> Tensor
 
 ## 约束说明
 
-1. TileShape与input维度保持一致；
-2. 由于存在临时内存使用，当输入数据类型为DT_FP32，TileShape大小有额外约束，假设TileShape为 [...,H,W]（最后两维为H和W），那么：
+- TileShape与input维度保持一致；
+- 由于存在临时内存使用，当输入数据类型为DT_FP32，TileShape大小有额外约束，假设TileShape为 [...,H,W]（最后两维为H和W），那么：
     `input_size + output_size + 2 * (W_align8) * H * sizeof(float) + (W_align8 / 8) * H + 32 bytes < UB`
     其中，`W_align8 = (W + 7) / 8 * 8`
     （FP32：input + output + 2个float temp tile + 1个compare mask tile + 32 bytes对齐）
@@ -58,7 +58,7 @@ tanh(input: Tensor) -> Tensor
     对于DT_FP16/DT_BF16输入，需要满足：
     `input_size + output_size + 4 * (W_align8) * H * sizeof(float) + (W_align8 / 8) * H + 32 bytes < UB`
     （FP16/BF16：input + output + 4个float temp tile + 1个compare mask tile + 32 bytes对齐）
-3. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

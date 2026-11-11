@@ -48,12 +48,12 @@ pad(input: Tensor, pad: Sequence[int], mode: str = "constant", value: Union[floa
 
 ## 约束说明
 
-1. `pad`参数的长度必须为2或者4，`pad`参数中的填充大小序列的值必须为非负整数。负值填充不支持。如果传入负值，将抛出`ValueError`。
-2. 当前**仅支持多维情况下在右侧（Right）和底部（Bottom）进行填充，或者1维情况下在右侧（Right）填充**。<!-- npu="x90,9030,9050" id7 -->Kirin处理器系列产品额外支持左/上填充，即四边填充。<!-- end id7 -->即`pad`序列中向左和向上的填充量必须为0（例如格式必须为`(0, pad_right, 0, pad_bottom)`或者`(0, pad_right)` ）。
-3. mode当前**仅支持`'constant'`（常量填充）模式**，其他模式暂不支持。
-4. **整型类型不支持浮点值**：对于整型dtype（DT_INT8、DT_INT16、DT_INT32、DT_UINT8、DT_UINT16、DT_UINT32），`value`参数不支持传入float类型的值，PyPTO会抛出`ValueError`。如需填充整型的最小/最大值，请显式传入对应dtype的实际值（如`int32`填`-2147483648`，`int16`填`-32768`）。
-5. 如果`input`不是Tensor类型，或`pad`不是整数序列，将抛出`TypeError`。
-6. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- `pad`参数的长度必须为2或者4，`pad`参数中的填充大小序列的值必须为非负整数。负值填充不支持。如果传入负值，将抛出`ValueError`。
+- 当前**仅支持多维情况下在右侧（Right）和底部（Bottom）进行填充，或者1维情况下在右侧（Right）填充**。<!-- npu="x90,9030,9050" id7 -->Kirin处理器系列产品额外支持左/上填充，即四边填充。<!-- end id7 -->即`pad`序列中向左和向上的填充量必须为0（例如格式必须为`(0, pad_right, 0, pad_bottom)`或者`(0, pad_right)` ）。
+- mode当前**仅支持`'constant'`（常量填充）模式**，其他模式暂不支持。
+- **整型类型不支持浮点值**：对于整型dtype（DT_INT8、DT_INT16、DT_INT32、DT_UINT8、DT_UINT16、DT_UINT32），`value`参数不支持传入float类型的值，PyPTO会抛出`ValueError`。如需填充整型的最小/最大值，请显式传入对应dtype的实际值（如`int32`填`-2147483648`，`int16`填`-32768`）。
+- 如果`input`不是Tensor类型，或`pad`不是整数序列，将抛出`TypeError`。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

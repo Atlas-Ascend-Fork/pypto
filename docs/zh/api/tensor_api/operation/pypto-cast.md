@@ -181,11 +181,11 @@ Kirin9030/KirinX90/Kirin9050使用不同的CastMode体系，内部实现基于 `
 
 ### 其他约束
 
-1. 当cast前后类型相同的时候，某些场景下会产生空操作，不保证精度。
+- 当cast前后类型相同的时候，某些场景下会产生空操作，不保证精度。
 
-2. **DT_INT4（S4）特殊说明**：打包类型，每字节包含2个元素，仅支持与DT_FP16的相互转换。
+- **DT_INT4（S4）特殊说明**：打包类型，每字节包含2个元素，仅支持与DT_FP16的相互转换。
 
-3. **DT_FP4_E2M1/DT_FP4_E1M2特殊说明**：
+- **DT_FP4_E2M1/DT_FP4_E1M2特殊说明**：
     <!-- npu="950" id6 -->
     - Ascend 950PR&950DT系列产品：支持
     <!-- end id6 -->
@@ -209,7 +209,7 @@ Kirin9030/KirinX90/Kirin9050使用不同的CastMode体系，内部实现基于 `
     - 与Torch交互时，用torch.uint8承载打包数据，存储Shape为[m, n/2]；参数标注为`pypto.Tensor([], pypto.DT_FP4_E1M2)`或`pypto.Tensor([], pypto.DT_FP4_E2M1)`后，kernel内看到的逻辑Shape为[m, n]。
     - 仅支持与DT_BF16的相互转换
 
-4. **DT_HF8 (hifloat8)特殊说明**：
+- **DT_HF8 (hifloat8)特殊说明**：
     <!-- npu="950" id9 -->
     - Ascend 950PR&950DT系列产品：支持
     <!-- end id9 -->
@@ -231,15 +231,15 @@ Kirin9030/KirinX90/Kirin9050使用不同的CastMode体系，内部实现基于 `
     - 必须使用CAST_ROUND舍入模式（对应硬件的ROUND_A）
     - 如果指定其他CastMode，会自动回退到CAST_ROUND
 
-5. **不支持的CastMode处理**：
+- **不支持的CastMode处理**：
     - 当用户为某个转换指定了硬件不支持的CastMode时，框架不会报错
     - 框架会自动采用该转换的默认CastMode：
       - 浮点→整数：采用CAST_TRUNC
       - 其他场景：采用CAST_RINT
 
-6. **deq模式说明**：INT32→FP16转换使用deq模式，需要通过`set_deqscale`设置缩放因子，默认值为1.0。
-7. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-8. 设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。当input数据类型与dtype的转换组合为（DT_FP32→DT_INT16）、（DT_FP16→DT_INT16）或（DT_FP16→DT_INT8）三者之一，且satmode为SaturationMode.OFF时，使用临时空间大小为`min(H, 255) * CeilAlign(W + 64, 8) * 4`字节，其中W为输入Tile在最后一维上的大小，H为输入Tile在倒数第二维上的大小（输入为1维时H取1），CeilAlign\(x, n\)表示将x向上对齐到n的倍数；其余情况无临时空间使用。
+- **deq模式说明**：INT32→FP16转换使用deq模式，需要通过`set_deqscale`设置缩放因子，默认值为1.0。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。当input数据类型与dtype的转换组合为（DT_FP32→DT_INT16）、（DT_FP16→DT_INT16）或（DT_FP16→DT_INT8）三者之一，且satmode为SaturationMode.OFF时，使用临时空间大小为`min(H, 255) * CeilAlign(W + 64, 8) * 4`字节，其中W为输入Tile在最后一维上的大小，H为输入Tile在倒数第二维上的大小（输入为1维时H取1），CeilAlign\(x, n\)表示将x向上对齐到n的倍数；其余情况无临时空间使用。
 
 ## 调用示例
 

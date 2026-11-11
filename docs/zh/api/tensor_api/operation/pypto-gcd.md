@@ -44,9 +44,9 @@ gcd(input: Tensor, other: Union[Tensor, int]) -> Tensor
 
 ## 约束说明
 
-1. input和other数据类型相同。
-2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-3. 设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape最后一维为W，倒数第二维为H（一维TileShape取H为1），记M为`(W + 7) / 8`向上对齐到32的结果，则使用临时空间大小为：
+- input和other数据类型相同。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape最后一维为W，倒数第二维为H（一维TileShape取H为1），记M为`(W + 7) / 8`向上对齐到32的结果，则使用临时空间大小为：
    <!-- npu="950" id7 -->
    - Ascend 950PR&950DT系列产品：无临时空间使用。
    <!-- end id7 -->

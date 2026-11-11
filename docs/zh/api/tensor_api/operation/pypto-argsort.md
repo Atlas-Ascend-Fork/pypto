@@ -45,13 +45,13 @@ argsort(input: Tensor, dim: Optional[int]=None, descending: bool=False) -> Tenso
 
 ## 约束说明
 
-1. 当前不支持ViewShape在dim轴切分，即要求ViewShape[dim] = InputShape[dim]。
-2. 当前仅支持TileShape在dim轴上为32的倍数，即要求TileShape[dim] % 32 = 0。
-3. 记TileShape各维大小乘积除以TileShape[dim]为R，CeilAlign\(x, n\)表示将x向上对齐到n的倍数，则当Shape较大场景`R * CeilAlign(ViewShape[dim], 32) >= 6144`时，排序轴的Tile切分数量小于128。
-4. 对于四维输入，暂不支持在第0轴上进行排序。
-5. 排序时遇到相同值时，采用稳定排序返回对应的索引。
-6. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-7. 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。计算过程会将输入Tile转换为DT_FP32的中间结果。记TileShape各维大小乘积除以TileShape[dim]为R，ViewShape[dim]为K。当`R * CeilAlign(K, 32) < 6144`时，排序在UB中完成，使用临时空间大小为`(2 * R * CeilAlign(K, 32) + 2 * R * CeilAlign(K, 8) + 2 * CeilAlign(K, 32)) * sizeof(DT_FP32)`字节；当`R * CeilAlign(K, 32) >= 6144`时，排序在GM中完成，UB内临时空间可将上式中的K替换为`CeilAlign(TileShape[dim], 32)`进行估算。此外，接口内部会先将dim轴转置到最后一轴、排序后再转置还原，除上述临时空间外还会使用转置临时空间，参见[pypto.transpose](pypto-transpose.md)的约束说明。
+- 当前不支持ViewShape在dim轴切分，即要求ViewShape[dim] = InputShape[dim]。
+- 当前仅支持TileShape在dim轴上为32的倍数，即要求TileShape[dim] % 32 = 0。
+- 记TileShape各维大小乘积除以TileShape[dim]为R，CeilAlign\(x, n\)表示将x向上对齐到n的倍数，则当Shape较大场景`R * CeilAlign(ViewShape[dim], 32) >= 6144`时，排序轴的Tile切分数量小于128。
+- 对于四维输入，暂不支持在第0轴上进行排序。
+- 排序时遇到相同值时，采用稳定排序返回对应的索引。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。计算过程会将输入Tile转换为DT_FP32的中间结果。记TileShape各维大小乘积除以TileShape[dim]为R，ViewShape[dim]为K。当`R * CeilAlign(K, 32) < 6144`时，排序在UB中完成，使用临时空间大小为`(2 * R * CeilAlign(K, 32) + 2 * R * CeilAlign(K, 8) + 2 * CeilAlign(K, 32)) * sizeof(DT_FP32)`字节；当`R * CeilAlign(K, 32) >= 6144`时，排序在GM中完成，UB内临时空间可将上式中的K替换为`CeilAlign(TileShape[dim], 32)`进行估算。此外，接口内部会先将dim轴转置到最后一轴、排序后再转置还原，除上述临时空间外还会使用转置临时空间，参见[pypto.transpose](pypto-transpose.md)的约束说明。
 
 ## 调用示例
 

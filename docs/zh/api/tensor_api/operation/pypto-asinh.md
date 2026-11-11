@@ -47,12 +47,12 @@ asinh(input: Tensor) -> Tensor
 
 ## 约束说明
 
-1. 在综合考虑输入、输出及临时存储空间占用的前提下，TileShape大小需满足额外约束条件。假设TileShape为\[a,b,c,d\]，记 $d_{align}=CeilAlign(d, 8)$，$k=d_{align}/8$，$p=\lceil8/k\rceil$，$c_{pad}=c+p-1$，则总的UB空间占用为：
+- 在综合考虑输入、输出及临时存储空间占用的前提下，TileShape大小需满足额外约束条件。假设TileShape为\[a,b,c,d\]，记 $d_{align}=CeilAlign(d, 8)$，$k=d_{align}/8$，$p=\lceil8/k\rceil$，$c_{pad}=c+p-1$，则总的UB空间占用为：
 
    $$
    a*b*c_{pad}*d_{align}*sizeof(DT\_FP32)+5*a*b*c*d_{align}*sizeof(DT\_FP32) <= UB
    $$
-2. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

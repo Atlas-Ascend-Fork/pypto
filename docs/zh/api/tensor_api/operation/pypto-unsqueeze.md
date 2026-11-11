@@ -43,7 +43,7 @@ unsqueeze(input: Tensor, dim: int) -> Tensor
 输入Tensor不支持动态轴，即input的shape中的任何轴都不能标记为`pypto.DYNAMIC`。
 
 <!-- npu="x90,9030,9050" id6 -->
-1. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="9030" id7 -->
    - Kirin9030处理器系列产品：DT_FP16，DT_FP32，DT_INT32，DT_INT16，DT_INT8
    <!-- end id7 -->

@@ -50,11 +50,11 @@ gather_in_ub(param: Tensor, indices: Tensor, block_table: Tensor,
 
 ## 约束说明
 
-1. 该接口为定制接口，不保证稳定性。
-2. param、indices、block_table 均不支持空Tensor，仅支持两维。
-3. indices Shape 必须为 [1, k]。
-4. axis 参数仅支持 -2。
-5. Tensor数据类型说明：
+- 该接口为定制接口，不保证稳定性。
+- param、indices、block_table 均不支持空Tensor，仅支持两维。
+- indices Shape 必须为 [1, k]。
+- axis 参数仅支持 -2。
+- Tensor数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_INT8，DT_INT16，DT_INT32，DT_UINT8，DT_UINT16，DT_UINT32，DT_FP16，DT_FP32，DT_BF16，DT_BOOL，DT_FP8E4M3，DT_FP8E5M2，DT_FP8E8M0
    <!-- end id4 -->

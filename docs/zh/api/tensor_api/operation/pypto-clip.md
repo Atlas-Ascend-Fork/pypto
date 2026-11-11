@@ -65,10 +65,10 @@ $$
 
 ## 约束说明
 
-1. min / max的类型必须一致，同时为Element或同时为Tensor。
-2. min / max为Tensor类型时，其Shape大小必须满足可以广播到输入的Shape。
-3. min和max支持同时缺省，返回原值。
-4. Tensor数据类型说明：
+- min / max的类型必须一致，同时为Element或同时为Tensor。
+- min / max为Tensor类型时，其Shape大小必须满足可以广播到输入的Shape。
+- min和max支持同时缺省，返回原值。
+- Tensor数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_FP32，DT_FP16，DT_BF16，DT_INT32，DT_INT16，DT_INT64。
    <!-- end id4 -->
@@ -78,7 +78,7 @@ $$
    <!-- npu="910b" id6 -->
    - Atlas A2系列产品：DT_FP32，DT_FP16，DT_BF16，DT_INT32，DT_INT16。
    <!-- end id6 -->
-5. Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
+- Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
 
 ## 调用示例
 

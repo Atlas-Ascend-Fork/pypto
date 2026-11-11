@@ -46,7 +46,7 @@ full(size: List[int], fill_value: Union[int, float, Element], dtype: DataType, *
 
 ## 约束说明
 
-1. valid\_shape用于动态图场景。
+- valid\_shape用于动态图场景。
 
     在动态图场景中，若需生成 [5,5] 的Tensor并设置ViewShape为 [2,2]，框架会通过pypto.loop循环生成 [2,2] 分块，并按偏移量拼接。此时若未传入valid\_shape，代码将默认生成全 \[2,2\] 的Tensor（如pypto.full\(\[2,2\], 1, pypto.DT\_INT32\)）。
 
@@ -54,9 +54,9 @@ full(size: List[int], fill_value: Union[int, float, Element], dtype: DataType, *
 
     pypto.full\(\[2, 2\], 1, pypto.DT\_INT32, valid\_shape=\[pypto.min\(2, 5 - 2 \* b\_idx\), pypto.min\(2, 5 - 2 \* s\_idx\)\]\)，其中b\_idx和s\_idx表示循环索引。
 
-2. size的维度范围为1维到4维，即size的长度范围为\[1, 4\]。
+- size的维度范围为1维到4维，即size的长度范围为\[1, 4\]。
 
-3. Tensor数据类型说明：
+- Tensor数据类型说明：
    <!-- npu="950" id4 -->
    - Ascend 950PR&950DT系列产品：DT_FP32，DT_FP16，DT_BF16，DT_INT8，DT_INT16，DT_INT32，DT_UINT8，DT_UINT16，DT_UINT32，DT_BOOL。
    <!-- end id4 -->

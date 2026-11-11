@@ -65,10 +65,10 @@ online_softmax_update(
 
 ## 约束说明
 
-1. 该接口为定制接口，不保证稳定性。
-2. 所有输入Tensor数据类型仅支持 DT_FP32。
-3. current_output 需要与 previous_output 形状一致。
-4. 当前版本不切分第0维，要求 previous_output.shape[0] <= vec_tile[0]。
+- 该接口为定制接口，不保证稳定性。
+- 所有输入Tensor数据类型仅支持 DT_FP32。
+- current_output 需要与 previous_output 形状一致。
+- 当前版本不切分第0维，要求 previous_output.shape[0] <= vec_tile[0]。
 
 ## 调用示例
 
