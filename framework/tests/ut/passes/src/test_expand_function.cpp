@@ -381,4 +381,89 @@ TEST_F(TestExpandFunction, WriteTokenWaitsBeforeExpandedInputSlice)
     }
     EXPECT_GT(inputSlices, 0);
 }
+
+TEST_F(TestExpandFunction, InplaceIndexAddWaitsForEarlierRead)
+{
+    TileShape::Current().SetVecTile(8, 16);
+    Tensor self(DT_FP32, {16, 32}, "self");
+    Tensor src(DT_FP32, {8, 32}, "src");
+    Tensor indices(DT_INT32, {8}, "indices");
+    Tensor earlierRead;
+    FUNCTION("IndexAddReadDependency")
+    {
+        earlierRead = Add(self, self);
+        IndexAdd_(self, src, indices, 0, Element(DT_FP32, 1.0f));
+    }
+    auto* function = Program::GetInstance().GetFunctionByRawName("TENSOR_IndexAddReadDependency");
+    ASSERT_NE(function, nullptr);
+    auto operations = function->Operations(false).DuplicatedOpList();
+    auto read = std::find_if(operations.begin(), operations.end(),
+                             [](const auto* op) { return op->GetOpcode() == Opcode::OP_ADD; });
+    auto write = std::find_if(operations.begin(), operations.end(),
+                              [](const auto* op) { return op->GetOpcode() == Opcode::OP_INDEX_ADD; });
+    ASSERT_NE(read, operations.end());
+    ASSERT_NE(write, operations.end());
+    auto readToken = IRContext::Get().MakeSemanticToken("index_add_prior_read", ir::TokenKind::READ,
+                                                        ir::Span::Unknown());
+    (*read)->result_token_.push_back(readToken);
+    (*write)->tokens_.push_back(readToken);
+
+    ExpandFunction expandFunction;
+    ASSERT_EQ(expandFunction.RunOnFunction(*function), SUCCESS);
+
+    size_t tileIndexAddCount = 0;
+    for (auto& op : function->Operations(false)) {
+        if (op.GetOpcode() != Opcode::OP_INDEX_ADD) {
+            continue;
+        }
+        ++tileIndexAddCount;
+        EXPECT_FALSE(op.ProducerOpsByToken().empty());
+    }
+    EXPECT_EQ(tileIndexAddCount, 2UL);
+}
+
+TEST_F(TestExpandFunction, AssembleWaitsForInplaceIndexAddCompletion)
+{
+    TileShape::Current().SetVecTile(8, 16);
+    Tensor self(DT_FP32, {16, 32}, "self");
+    Tensor src(DT_FP32, {8, 32}, "src");
+    Tensor indices(DT_INT32, {8}, "indices");
+    FUNCTION("IndexAddAssembleDependency")
+    {
+        IndexAdd_(self, src, indices, 0, Element(DT_FP32, 1.0f));
+        Assemble(src, {8, 0}, self);
+    }
+    auto* function = Program::GetInstance().GetFunctionByRawName("TENSOR_IndexAddAssembleDependency");
+    ASSERT_NE(function, nullptr);
+    auto operations = function->Operations(false).DuplicatedOpList();
+    auto indexAdd = std::find_if(operations.begin(), operations.end(),
+                                 [](const auto* op) { return op->GetOpcode() == Opcode::OP_INDEX_ADD; });
+    auto assemble = std::find_if(operations.begin(), operations.end(),
+                                 [](const auto* op) { return op->GetOpcode() == Opcode::OP_ASSEMBLE; });
+    ASSERT_NE(indexAdd, operations.end());
+    ASSERT_NE(assemble, operations.end());
+    auto readToken = IRContext::Get().MakeSemanticToken("index_add_read", ir::TokenKind::READ, ir::Span::Unknown());
+    auto writeToken = IRContext::Get().MakeSemanticToken("index_add_write", ir::TokenKind::WRITE, ir::Span::Unknown());
+    (*indexAdd)->GetIOperands()[0]->AddReadToken(readToken);
+    (*indexAdd)->result_token_ = {readToken, writeToken};
+    (*assemble)->tokens_ = {readToken, writeToken};
+
+    ExpandFunction expandFunction;
+    ASSERT_EQ(expandFunction.RunOnFunction(*function), SUCCESS);
+
+    size_t waitingContractCount = 0;
+    for (auto& op : function->Operations(false)) {
+        if (op.GetOpcode() != Opcode::OP_CONTRACT || op.tokens_.empty()) {
+            continue;
+        }
+        ++waitingContractCount;
+        EXPECT_EQ(op.tokens_.size(), 4UL);
+        auto producers = op.ProducerOpsByToken();
+        EXPECT_EQ(producers.size(), 2UL);
+        for (const auto* producer : producers) {
+            EXPECT_EQ(producer->GetOpcode(), Opcode::OP_INDEX_ADD);
+        }
+    }
+    EXPECT_EQ(waitingContractCount, 1UL);
+}
 } // namespace npu::tile_fwk

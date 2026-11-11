@@ -2089,11 +2089,31 @@ void CollectInputTokens(const Operation& tileOp, const LogicalTensors& iOperands
     }
 }
 
-ExpandTokenPlan CollectExpandTokenPlan(Operation* currentTileOp, const LogicalTensors& iOperands,
+void CollectNormalTokens(const std::vector<ir::VarPtr>& src, std::vector<ir::VarPtr>& dst)
+{
+    for (const auto& token : src) {
+        auto type = token ? std::dynamic_pointer_cast<const ir::TokenType>(token->GetType()) : nullptr;
+        if (type == nullptr) {
+            continue;
+        }
+        auto normal = type->kind_ == ir::TokenKind::NORMAL ? token : GetPairedNormalToken(token);
+        if (std::find(dst.begin(), dst.end(), normal) == dst.end()) {
+            dst.push_back(normal);
+        }
+    }
+}
+
+ExpandTokenPlan CollectExpandTokenPlan(Operation* currentTileOp, Opcode opCode, const LogicalTensors& iOperands,
                                        const LogicalTensors& oOperands)
 {
     ExpandTokenPlan plan;
     if (currentTileOp == nullptr) {
+        return plan;
+    }
+    if (currentTileOp->GetOpcode() == Opcode::OP_INDEX_ADD && opCode == Opcode::OP_INDEX_ADD) {
+        // INDEX_ADD accesses GM directly, so dependencies belong to the actual op.
+        CollectNormalTokens(currentTileOp->result_token_, plan.opResultTokens);
+        CollectNormalTokens(currentTileOp->tokens_, plan.opInputTokens);
         return plan;
     }
     CollectResultTokens(*currentTileOp, iOperands, oOperands, plan);
@@ -2114,7 +2134,7 @@ void AssignMappedTokens(std::vector<ir::VarPtr>& dst,
 
 Operation& Function::AddOperation(const Opcode opCode, LogicalTensors iOperands, const LogicalTensors& oOperands)
 {
-    auto plan = CollectExpandTokenPlan(ExpandFunction::GetCurrentTileOp(), iOperands, oOperands);
+    auto plan = CollectExpandTokenPlan(ExpandFunction::GetCurrentTileOp(), opCode, iOperands, oOperands);
     CheckTensorDynamicShape(iOperands, opCode);
 
     for (auto& iOp : iOperands) {
