@@ -10,7 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 """Pypto custom-op discovery: load a model and find its pypto nodes.
 
-``load_model`` loads an ``.onnx`` artifact; ``find_pypto_nodes`` walks a loaded ONNX graph and returns
+``load_model`` loads an ``.onnx`` artifact; ``find_pypto_nodes`` walks a loaded ONNX model and returns
 the pypto custom-op nodes (deduped by op_type), gating each against the supported node layout version. Both
 delegate to pypto core's onnx node reader.
 """
@@ -41,9 +41,10 @@ def find_pypto_nodes(
     model: Any,
     op_types: Optional[Sequence[str]] = None,
 ) -> list:
-    """Return every pypto custom-op node in *model*, in graph order, deduped by op_type.
+    """Return every pypto custom-op node in *model*, in walk order, deduped by op_type.
 
     A node counts as pypto iff it carries the ``pypto_node_layout_version`` marker — nothing else does.
+    The walk is depth first, so the dedupe keeps the first occurrence of an op_type that it reaches.
     """
     if not isinstance(model, onnx.ModelProto):
         raise TypeError(f"find_pypto_nodes expects an onnx.ModelProto, got {type(model).__name__}")

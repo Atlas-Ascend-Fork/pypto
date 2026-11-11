@@ -1,39 +1,81 @@
-# Custom-Op Export and Deployment Demos
+# PyPTO Custom-Operator Integration Examples
 
-An end-to-end demo: author a pypto kernel as a `torch.ops` custom op, export it as an ONNX artifact, and
-build it into a deployable `libcust_opapi.so`. The demo side only authors and runs — the export session,
-the discovery logic and the `.so` build all come from
-[`tools/exported_custom_op_litenpu`](../../../tools/exported_custom_op_litenpu) (under `<repo root>/tools`, imported as
-the `exported_custom_op_litenpu` package).
+## Overview
 
-## Layout
+These examples integrate PyPTO kernels into Torch models through custom operators. They cover model execution in Python and export for deployment.
 
-- `onnx/` — ONNX export demos (one so far: `add`), one folder per demo. The per-demo file breakdown, the CLI flags and the authoring rules are in [`onnx/README_en.md`](onnx/README_en.md).
-- The system tests live in [`python/tests/st/examples/exported_custom_op_litenpu/`](../../../python/tests/st/examples/exported_custom_op_litenpu): `test_build_so_loads.py` proves the built `.so` is really loadable, and `test_demo_sweep.py` sweeps every demo's export and build stages.
+## Sample Features
 
-🔴 **One demo per process.** A demo's modules are plain top-level names (`kernel`, `op`, `model`), reached
-by putting the demo's own folder on `sys.path`. Two demos in one interpreter would therefore share those
-names — the first one imported wins, and the second silently reuses it and never registers its op. Demos
-also claim process-global `torch.ops.pypto.*` qualnames, several of which repeat across demos. Run each
-demo in its own process.
+- **Kernel implementation:** provide a PyPTO JIT kernel or a factory that creates one.
+- **Operator declaration:** associate the kernel with output shape and dtype inference, optional typed attributes, and an optional Torch reference implementation for CPU execution.
+- **Model composition:** call the registered custom operators from a Torch model. Export configuration and deployment steps are specific to the selected integration.
 
-## Running the demo
+## Code Structure
 
-```bash
-python3 onnx/add/export_demo.py /tmp/add.onnx         # export only, never runs
-python3 ../../../tools/exported_custom_op_litenpu/deploy/build_so_and_setup.py /tmp/add.onnx # build + place the .so
-python3 onnx/add/run_demo.py                          # run on cpu, never exports
+- [`onnx/`](onnx/README_en.md) — ONNX example catalogue, framework diagrams, execution and deployment instructions, and operator naming.
+- [`tools/exported_custom_op_litenpu/`](../../../tools/exported_custom_op_litenpu) — Shared export, build, setup, and execution helpers.
+- [`python/pypto/extensions/torch_custom_op_litenpu/`](../../../python/pypto/extensions/torch_custom_op_litenpu) — Custom-operator declarations, Torch registration and execution, and ONNX integration, installed with PyPTO.
+- [`python/tests/st/examples/exported_custom_op_litenpu/`](../../../python/tests/st/examples/exported_custom_op_litenpu) — System tests for export, build, and native library loading.
+
+### Typical Example Layout
+
+- `kernel.py`: kernel implementations or factories and implementation constants.
+- `op.py`: operator declarations, inference functions, CPU references, and declaration metadata.
+- `model.py`: model composition and configuration.
+- `export_demo.py`: export entry point, configuration, and checks.
+- `run_demo.py`: execution entry point for the example's supported modes.
+
+```mermaid
+flowchart TB
+    R["run_demo.py"]
+    E["export_demo.py"]
+    M["model.py"]
+    O["op.py"]
+    K["kernel.py"]
+    R --> M
+    E --> M
+    M --> O
+    O --> K
+    E -. operator metadata .-> O
+    E -. shared constants .-> K
+    R -. shared constants .-> K
 ```
 
-## Environment setup
+Arrows indicate direct imports. Solid edges show the common layout; dashed edges show additional imports used in some layouts, not imports that can be skipped at runtime.
+
+## Prerequisites
+
+Run each example in a separate Python process. Python's module cache and Torch's operator registry are process-global, so examples can conflict when loaded into the same interpreter.
+
+### PyPTO Version Requirement
+
+These examples depend on `pypto.extensions.torch_custom_op_litenpu` (providing `ExportedCustomOp`, `common/run.py`, and more). The PyPTO released with CANN 9.2.0 does not contain these modules. Before running, check which PyPTO installation is loaded:
+
+```bash
+python3 -c "import pypto; print(pypto.__file__)"
+```
+
+The path identifies the loaded installation; it does not confirm whether the required extension is available.
+
+Errors such as `ModuleNotFoundError: No module named 'pypto.extensions...'` or `AttributeError: ... has no attribute 'ExportedCustomOp'` may indicate a missing extension or API. If that is the cause, build and install PyPTO from this repository's source following the [environment setup](../../../docs/zh/install/prepare_environment.md) and [build and installation](../../../docs/zh/install/build_and_install.md) guides.
+
+### CANN Configuration
+
+For workflows that use CANN, initialize its environment in the current shell:
 
 ```bash
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
-export TILE_FWK_DEVICE_ID=0          # pick a free device id from `npu-smi info` for --device=npu
 ```
 
-Building the `.so` on a trimmed CANN environment also needs the GE external headers on the include path:
+For `--device=npu`, choose a free device from `npu-smi info` and set its ID:
 
 ```bash
-export PYPTO_EXTRA_INCLUDE_DIRS=<ge>/inc/graph_metadef/external
+export TILE_FWK_DEVICE_ID=0          # replace with the selected device ID
 ```
+
+## Authoring Conventions
+
+- Use consistent names for related operator functions, such as `add_kernel`, `add_infer_shape`, `add_infer_dtype`, and `add_torch`. A kernel factory can use `create_<name>_kernel`. Directory names describe example purpose and need not match every operator they contain.
+- For kernels defined directly with `@pypto.frontend.jit`, set `runtime_options={"run_mode": pypto.RunMode.SIM}` to avoid an import-time "NPU is not available" error.
+- Implementations must not depend on files in other demos. README text, comments, and docstrings should explain each demo directly, without comparisons with or instructions to consult other demos. Framework APIs, shared support libraries, and references to this common guide are allowed. Reusable modules should not import command-line entry points.
+- Helper modules and specialized layouts are allowed; document their additional relationships locally. Update affected diagrams when documented files, dependencies, or artifact handoffs change. Keep the Chinese and English guides aligned.

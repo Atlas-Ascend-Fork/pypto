@@ -241,3 +241,77 @@ def test_ge_standard_domain_rewrite():
     opsets = {imp.domain: imp.version for imp in m.opset_import}
     assert opsets["ai.onnx"] == 12       # mirrors the base ai.onnx opset
     assert opsets[""] == 12 and opsets["pypto"] == 1  # originals preserved
+
+
+# --- GE-compat rewrite, nested graphs ---
+# A standard node in an ``If`` branch carries ``domain == ""`` like a root one, which GE's onnx parser
+# rejects once a custom domain is imported (``domain_version[N] should be equal to one``).
+
+
+def _all_nodes_in_tree(graph: onnx.GraphProto):
+    """Every node of *graph* and of every graph nested in a node attribute (test-local, independent walk)."""
+    for node in graph.node:
+        yield node
+        for attr in node.attribute:
+            if attr.type == onnx.AttributeProto.GRAPH:
+                yield from _all_nodes_in_tree(attr.g)
+            elif attr.type == onnx.AttributeProto.GRAPHS:
+                for sub in attr.graphs:
+                    yield from _all_nodes_in_tree(sub)
+
+
+def _nested_mixed_model() -> onnx.ModelProto:
+    """Root ``Cast`` + ``If``; the pypto node in ``then_branch``, a ``Constant``/``Mul`` in ``else_branch``.
+
+    The shape a scripted ``torch.onnx.export`` of one data-dependent conditional actually produces.
+    """
+    pypto_node = _make_pypto_node(
+        "MyOp", node_domain="pypto",
+        export_record=_export_record("MyOp", domain="pypto", domain_opset_version=1),
+    )
+    del pypto_node.output[:]
+    pypto_node.output.extend(["b_out"])
+    then_branch = helper.make_graph([pypto_node], "then_g", [],
+                                    [helper.make_tensor_value_info("b_out", TensorProto.FLOAT, [4])])
+    const = helper.make_node(
+        "Constant", [], ["two"], name="const",
+        value=helper.make_tensor("two", TensorProto.FLOAT, [1], [2.0]))
+    else_branch = helper.make_graph(
+        [const, helper.make_node("Mul", ["in0", "two"], ["b_out"], name="mul_in_else")],
+        "else_g", [], [helper.make_tensor_value_info("b_out", TensorProto.FLOAT, [4])])
+    graph = helper.make_graph(
+        [helper.make_node("Cast", ["cond_in"], ["cond"], name="cast_at_root", to=TensorProto.BOOL),
+         helper.make_node("If", ["cond"], ["out0"], name="the_if",
+                          then_branch=then_branch, else_branch=else_branch)],
+        "nested_mixed",
+        [helper.make_tensor_value_info("in0", TensorProto.FLOAT, [4]),
+         helper.make_tensor_value_info("cond_in", TensorProto.BOOL, [])],
+        [helper.make_tensor_value_info("out0", TensorProto.FLOAT, [4])],
+    )
+    model = helper.make_model(
+        graph, opset_imports=[helper.make_opsetid("", 17), helper.make_opsetid("pypto", 1)], ir_version=9)
+    onnx.checker.check_model(model)   # an invalid fixture would make the rewrite result meaningless
+    return model
+
+
+def test_ge_standard_domain_rewrite_covers_nested_graphs():
+    m = _nested_mixed_model()
+
+    # Precondition, and the measurement the fix is judged against: 4 empty-domain nodes in the tree, of
+    # which only one (the root Cast) a root-graph-only rewrite would reach.
+    empty_before = [n.name for n in _all_nodes_in_tree(m.graph) if n.domain == ""]
+    assert sorted(empty_before) == ["cast_at_root", "const", "mul_in_else", "the_if"]
+    assert [n.name for n in m.graph.node if n.domain == ""] == ["cast_at_root", "the_if"]
+
+    _rewrite_standard_domain_for_ge(m, "ai.onnx")
+
+    # The discriminator: zero empty-domain nodes anywhere. A root-only rewrite leaves
+    # ['const', 'mul_in_else'] — the else_branch nodes GE then rejects.
+    assert [n.name for n in _all_nodes_in_tree(m.graph) if n.domain == ""] == []
+    domains = {n.name: n.domain for n in _all_nodes_in_tree(m.graph)}
+    assert domains["mul_in_else"] == "ai.onnx"    # inside else_branch, one graph down
+    assert domains["const"] == "ai.onnx"          # likewise
+    assert domains["cast_at_root"] == "ai.onnx"   # the root node the old rewrite already handled
+    assert domains["n"] == "pypto"      # "n" is _make_pypto_node's own name; the nested pypto node
+    assert _opsets(m)["ai.onnx"] == 17            # mirrors the base ai.onnx opset, added once
+    assert _opsets(m)[""] == 17 and _opsets(m)["pypto"] == 1

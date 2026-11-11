@@ -17,13 +17,17 @@ at finalize, recording the op's base ai.onnx opset in ``_ONNX_OPSET_FLOORS`` (re
 """
 from dataclasses import dataclass
 import inspect
+import logging
 from typing import Optional
 
-from ..common import return_annotations
+from ..common import return_annotations, torch_op
+from ..common.compile import _as_tuple_of
 from ..common.exported_custom_op import _build_node_meta_completer
 from ..common.finalize import _register_reset_hook, _register_synthesizer
 
 __all__ = ("recorded_onnx_opset_floor",)
+
+logger = logging.getLogger(__name__)
 
 
 # Base ai.onnx opset each ONNX symbolic registered at, keyed by the torch op qualified name (the
@@ -150,6 +154,69 @@ def _onnx_encode_attrs(attr_specs, attr_values):
     return out
 
 
+def _resolve_infer_shape_args(op, in_types, attr_values):
+    """Build ``infer_shape``'s positional args from the traced operands: tensor shapes, then attrs.
+
+    Each attr operand holds a constant, read back through the same ``_parse_arg`` + descriptor pair
+    ``_onnx_encode_attrs`` uses, so ``infer_shape`` receives ints rather than IR nodes.
+    """
+    import torch  # noqa: PLC0415 - optional dependency: only the symbolic path needs torch
+    from torch.onnx.symbolic_helper import _parse_arg  # noqa: PLC0415,PLC2701 - see _onnx_encode_attrs
+    attr_specs = getattr(op, "_attr_specs", ())
+    parsed = [_parse_arg(value, _ONNX_ATTR_ENCODING[_ATTR_ONNX_KIND[spec.type]].descriptor)
+              for spec, value in zip(attr_specs, attr_values)]
+    shapes = [torch.Size(t.sizes()) for t in in_types]
+    return torch_op._infer_shape_call_args(op, shapes, parsed)
+
+
+def _set_symbolic_output_type(op, inputs, attr_values, node_outputs, n_out) -> None:
+    """Annotate each of the synthesized node's outputs from the op's own infer funcs.
+
+    Load-bearing only when nested: the output becomes an ``If``/``Loop`` subgraph output, and torch
+    merges the branch types into the model output's, which ``onnx.checker`` rejects when it is missing
+    an element type or a shape. At the root graph the model output picks up a type from the trace.
+    """
+    if not inputs:
+        return
+    try:
+        in_types = [value.type() for value in inputs]
+        # Which operand feeds which output is not knowable here, so every output would take input 0's
+        # device. Operands that disagree on it make that a guess, and such an op cannot run either.
+        if len({str(t.device()) for t in in_types}) > 1:
+            raise ValueError(
+                f"pypto custom-op {op._torch_op_qualname!r}: operands are on more than one device, so an "
+                "ONNX output type cannot declare one. Put every operand on the same device."
+            )
+        dtypes = _as_tuple_of(op._infer_dtype_fn(*[t.dtype() for t in in_types]), n_out)
+        # An element type with no shape still satisfies an ``If`` branch whose sibling carries one.
+        if any(t.sizes() is None for t in in_types):
+            logger.warning(
+                "pypto: %s has an operand dimension the trace left unknown, so its ONNX output "
+                "declares an element type and no shape. Only a dynamic_axes export causes this: "
+                "infer_shape takes concrete shapes and has no value for an unknown dimension. "
+                "Export without dynamic_axes.", op._torch_op_qualname,
+            )
+            sizes = (None,) * n_out
+        else:
+            sizes = _as_tuple_of(
+                op._infer_shape_fn(*_resolve_infer_shape_args(op, in_types, attr_values)), n_out)
+        # Above one output g.op hands back a tuple of values; at one output it hands back the value.
+        outs = (node_outputs,) if n_out == 1 else tuple(node_outputs)
+        for value, dtype, size in zip(outs, dtypes, sizes):
+            # Input 0's type is the template: it carries the device, which ``prim::type`` reads off an
+            # output. Its strides ride along unreconciled; no exporter pass reads those.
+            value.setType(in_types[0].with_dtype(dtype)
+                          .with_sizes(None if size is None else list(size)))
+    except (AttributeError, RuntimeError, TypeError) as exc:
+        # An unknown dtype or rank (RuntimeError), a non-traced value (AttributeError) or None into
+        # ``torch.Size`` (TypeError) defeat the annotation; anything else is the op's own defect.
+        logger.warning(
+            "pypto: could not annotate the ONNX output type of %s (%s: %s); nesting this op inside an "
+            "If/Loop subgraph will fail onnx.checker, which requires the model output to declare both "
+            "an element type and a shape.", op._torch_op_qualname, type(exc).__name__, exc,
+        )
+
+
 def _synthesize_onnx(op, spec) -> None:
     """Synthesize + register the ONNX symbolic for *op* from *spec* (skipped if manually attached)."""
     if op._onnx_symbolic_attached:
@@ -178,8 +245,10 @@ def _synthesize_onnx(op, spec) -> None:
             *inputs, op_type=op_type, domain=domain, domain_opset_version=domain_opset_version,
         )
         attr_kwargs = _onnx_encode_attrs(attr_specs, attr_values)
-        return g.op(f"{domain}::{op_type}", *inputs, outputs=n_out,
-                    **node_meta_kwargs, **attr_kwargs)
+        out = g.op(f"{domain}::{op_type}", *inputs, outputs=n_out,
+                   **node_meta_kwargs, **attr_kwargs)
+        _set_symbolic_output_type(op, inputs, attr_values, out, n_out)
+        return out
 
     op._onnx_symbolic_attached = True
     import torch.onnx  # noqa: PLC0415 - optional dependency: only the synthesis path needs torch.onnx

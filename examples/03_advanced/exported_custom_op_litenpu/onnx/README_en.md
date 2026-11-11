@@ -1,22 +1,202 @@
-# onnx/
+# ONNX Export Examples
 
-Runnable ONNX export demos. Each demo is a FOLDER `<name>/` holding five files: `kernel.py` (the kernel
-body), `op.py` (inference + CPU reference + the `ExportedCustomOp(...)` declaration), `model.py` (the
-`nn.Module` + shape constants), `run_demo.py` (the RUN entry point) and `export_demo.py` (the EXPORT
-entry point). The import chain forks one-way, `kernel -> op -> model -> {export_demo, run_demo}`; nothing
-may import either entry point, since each runs as `__main__` and would declare the op twice if imported.
-`export_demo.py` exports the model to a `.onnx` custom-op artifact, and
-`tools/exported_custom_op_litenpu/deploy/build_so_and_setup.py` builds one `libcust_opapi.so` from that artifact and places it under `framework/onnx/` for ATC/GE discovery.
+These examples demonstrate declaring PyPTO custom operators, exporting ONNX models, and executing the models.
 
-You do not write the torch op or the ONNX node yourself: you declare them as config on
-`ExportedCustomOp` (`torch_op_qualname=` + `onnx_spec=OnnxSymbolicSpec(...)`) in `op.py` and pypto
-generates them automatically during export. `torch_defn` (the CPU reference `run_demo.py` uses) is
-declared there too.
+## Examples
 
-## Dependencies
+| Example | Purpose | Example-specific usage |
+|---|---|---|
+| [add/](add/) | Declares, exports, and executes an elementwise-addition custom operator. | — |
+| [nested_control_flow/](nested_control_flow/) | Demonstrates discovering addition, subtraction, and multiplication operators in nested ONNX `If` subgraphs. The root graph contains no PyPTO operators. | `run_demo.py` accepts `--branch` with `add`, `sub`, or `mul` to select the execution branch. See [export details](nested_control_flow/export_demo.py). |
 
-The export path in `export_demo.py` depends on `onnx`, an **optional dependency**: only this ONNX export
-demo needs it. pypto core and the CPU/device run path of `run_demo.py` do not
+“—” means no additional options or restrictions beyond the common running instructions.
+
+## Custom-Op Framework Overview
+
+The four diagrams below show how the framework supports these ONNX examples. They cover operator declaration and ONNX export, library build and setup, Python execution, and ATC/GE compilation and launch preparation.
+
+“Repository tools” refers to `tools/exported_custom_op_litenpu`; “Installed extension” refers to `pypto.extensions.torch_custom_op_litenpu`.
+
+**Framework diagram notation:** solid arrows point from a consumer to a module it uses; dashed arrows follow artifact handoffs.
+
+<details>
+<summary><strong>Operator declaration and ONNX export</strong> — click to expand diagram</summary>
+
+`ExportedCustomOp` combines the kernel, inference callbacks, optional typed attributes, and optional CPU reference (`torch_defn`); `torch_op_qualname` configures Torch registration and `onnx_spec=OnnxSymbolicSpec(...)` configures ONNX export. In these examples, importing the operator modules registers their Torch operators; export finalization generates and registers their ONNX symbolics.
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 320}}}%%
+flowchart TB
+    subgraph TOOLS["Repository tools"]
+        E["<b>export/onnx_export.py</b><br/>onnx_export_session()<br/>resolve_pypto_export_opset()"]
+    end
+
+    subgraph EXT["Installed extension"]
+        A["<b>common/exported_custom_op.py</b><br/>ExportedCustomOp"]
+        AS["<b>common/attr_spec.py</b><br/>AttrSpec<br/>Typed attribute declarations"]
+        KS["<b>common/kernel_snippet.py</b><br/>build_kernel_compile_snippet()"]
+        OS["<b>onnx/spec.py</b><br/>OnnxSymbolicSpec"]
+        T["<b>common/torch_op.py</b><br/>Torch registration and dispatch"]
+        F["<b>common/finalize.py</b><br/>finalize_pending_ops()<br/>Finalize ONNX export registration"]
+        O["<b>onnx/export.py</b><br/>ONNX symbolics"]
+    end
+
+    D["<b>User-defined operator modules</b><br/>op.py / kernel.py / helper modules<br/>Reference · inference · JIT kernel or factory"]
+
+    A -->|"Use kernel<br/>and callbacks"| D
+    A -->|"Generate snippet"| KS
+    A -->|"Use attributes"| AS
+    A -->|"Use export<br/>configuration"| OS
+    A -->|"Register<br/>Torch operator"| T
+    A -->|"Queue for<br/>export registration"| F
+    O -->|"Register<br/>ONNX synthesizer"| F
+    E -->|"Finalize<br/>declarations"| F
+    E -->|"Read opset floor"| O
+    E -->|"Enter export scope"| T
+
+    %% Invisible layout constraints only; these are not dependencies.
+    E ~~~ A
+
+    AS ~~~ OS
+    OS ~~~ KS
+    KS ~~~ D
+    T ~~~ F
+```
+
+</details>
+
+<details>
+<summary><strong>Custom-op library build and setup</strong> — click to expand diagram</summary>
+
+The build and setup tools process exported custom-op nodes and install the native library together with its kernel Python files.
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 320}}}%%
+flowchart TB
+    subgraph TOOLS["Repository tools"]
+        CMD["<b>deploy/build_so_and_setup.py</b><br/>Build, then set up"]
+        S["<b>deploy/setup.py</b><br/>setup_onnx_custom_op_so()<br/>Install library and kernel Python files"]
+        E["<b>export/onnx_export.py</b><br/>Export postprocessing"]
+        B["<b>deploy/build.py</b><br/>build_so_from_model()<br/>CMake compile and link"]
+        Q["<b>common/discovery.py</b><br/>find_pypto_nodes()"]
+        G["<b>deploy/codegen.py</b><br/>Per-operator C++ generation"]
+    end
+
+    subgraph EXT[" "]
+        EH["Installed extension"]:::heading
+        N["<b>common/node_reader.py</b><br/>iter_pypto_nodes() · metadata readers"]
+        W["<b>onnx/node_reader.py</b><br/>Graph traversal and attribute readers"]
+        AS["<b>common/attr_spec.py</b><br/>AttrSpec<br/>Typed attribute declarations"]
+    end
+
+    CMD -->|"Build"| B
+    CMD -->|"Set up"| S
+    B -.->|"Library and kernel Python files"| S
+    B -->|"Discover custom-op nodes"| Q
+    B -->|"Generate C++"| G
+    N -->|"Read ONNX nodes and metadata"| W
+    Q -->|"Find and check custom nodes"| N
+    B -->|"Read operator metadata"| N
+    E -->|"Validate custom nodes"| N
+    E -->|"Traverse nodes for GE domain rewrite"| W
+    G -->|"Revalidate attribute records"| AS
+
+    %% Invisible layout constraints only; these are not dependencies.
+    G ~~~ E
+    Q ~~~ E
+    E ~~~ EH
+    S ~~~ EH
+    EH ~~~ N
+    EH ~~~ AS
+
+    classDef heading fill:transparent,stroke:none,font-weight:bold
+```
+
+</details>
+
+<details>
+<summary><strong>Python execution: reference, simulator and NPU</strong> — click to expand diagram</summary>
+
+Torch dispatch selects the supplied reference implementation or PyPTO kernel execution under a simulator/NPU context. Python execution does not require ONNX export or building the ONNX custom-op library.
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 320}}}%%
+flowchart TB
+    subgraph TOOLS["Repository tools"]
+        R["<b>run/demo_run.py</b><br/>Run helpers"]
+    end
+
+    subgraph EXT["Installed extension"]
+        T["<b>common/torch_op.py</b><br/>Route Torch custom-op calls"]
+        U["<b>common/run.py</b><br/>pypto_run_context() · run_op()"]
+        C["<b>common/compile.py</b><br/>CompileEntry"]
+    end
+    D["<b>User-defined operator modules</b><br/>op.py / kernel.py / helper modules<br/>Reference · inference · JIT kernel or factory"]
+    P["<b>PyPTO framework APIs</b><br/>pypto.frontend · pypto.runtime · pypto.DT_*<br/>JIT execution · device runtime · data types"]
+
+    R -->|"Import run-context helper"| U
+    T -->|"Run kernel with SIM/NPU context"| U
+    U -->|"Prepare kernel / infer outputs"| C
+    C -->|"Call inference functions / factory"| D
+    U -->|"Use supplied JIT kernel"| D
+    T -->|"Call reference without a run context"| D
+    U -->|"Execute PyPTO kernel"| P
+    C -->|"Use PyPTO dtype constants"| P
+
+    %% Invisible layout constraints only; these are not dependencies.
+    R ~~~ T
+```
+
+</details>
+
+<details>
+<summary><strong>ATC/GE compilation and launch preparation</strong> — click to expand diagram</summary>
+
+ATC/GE invokes the installed library's inference and compilation callbacks to obtain kernel artifacts and launch information.
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 320}}}%%
+flowchart TB
+    GE["<b>ATC / GE</b><br/>Load installed custom-op library"]
+    subgraph NATIVE[" "]
+        NH["Host C++ code in the installed custom-op library"]:::heading
+        H["<b>Generated op_host/*.cpp</b><br/>InferShape() / InferDataType()"]
+        V["<b>deploy/vendors/pto_custom_op.cpp</b><br/>Compile() / DeclareLaunchArgs()"]
+    end
+    K["<b>Installed op_kernel/*.py</b><br/>Captured inference functions<br/>__pypto_compile()"]
+    C["<b>common/compile.py</b><br/>CompileEntry.__call__()"]
+    J["<b>pypto/frontend/parser/entry.py</b><br/>JitCallableWrapper.build_kernel()"]
+    OUT["<b>For GE</b><br/>Compiled kernel and launch description"]:::artifact
+
+    GE -->|"Infer shapes and dtypes"| H
+    GE -->|"Compile and prepare launch"| V
+    H -->|"Call captured inference functions"| K
+    V -->|"Call Python compilation entry"| K
+    K -->|"Delegate kernel compilation"| C
+    C -->|"Build kernel artifact"| J
+    V -.->|"Kernel and launch arguments"| OUT
+
+    %% Invisible layout constraints only.
+    GE ~~~ NH
+    NH ~~~ H
+    NH ~~~ V
+    classDef heading fill:transparent,stroke:none,font-weight:bold
+    classDef artifact fill:#f5f5f5,stroke:#666,stroke-dasharray:5 4
+```
+
+</details>
+
+## Running the Examples
+
+### Environment Setup
+
+First follow the [shared prerequisites in the parent guide](../README_en.md#prerequisites).
+The additional ONNX requirements are listed below.
+
+#### Dependencies
+
+The export path in `export_demo.py` depends on `onnx`, an **optional dependency**: ONNX export
+requires it. PyPTO core and the CPU/device run path of `run_demo.py` do not
 (`pypto.extensions.torch_custom_op_litenpu` imports `onnx` lazily inside functions). Install it before the
 first export:
 
@@ -26,54 +206,44 @@ pip install onnx
 
 Without it, `export_demo.py` raises `ModuleNotFoundError: No module named 'onnx'`.
 
-## Version requirement
+#### ATC/GE Requirements
 
-This demo depends on `pypto.extensions.torch_custom_op_litenpu` (providing `ExportedCustomOp`,
-`common/run.py`, and more), which currently ships only on the PyPTO `master` source; the PyPTO released with
-CANN 9.2.0 does not contain these modules. Before running, confirm you are using a PyPTO built and installed
-from this repository's source, not the PyPTO installed with CANN:
+Building and loading the ONNX custom-op library for ATC/GE requires compatible GE development headers and runtime libraries from CANN.
+
+### Execution
+
+Run each example in a separate Python process to avoid conflicts in Python's module cache and Torch's operator registry.
+
+Run from this directory (`examples/03_advanced/exported_custom_op_litenpu/onnx/`). The commands below use `add/`. For another example, replace `add/` in the script paths with its directory and follow its usage notes in the catalogue.
+
+**ONNX export and library setup**
+
+`export_demo.py` exports an ONNX model. `tools/exported_custom_op_litenpu/deploy/build_so_and_setup.py` builds the custom-op library `libcust_opapi.so` from it and installs the library under `framework/onnx/` and kernel Python files under `op_kernel/` for ATC/GE.
 
 ```bash
-python3 -c "import pypto; print(pypto.__file__)"
+python3 add/export_demo.py /tmp/add.onnx        # export the ONNX model
+python3 ../../../../tools/exported_custom_op_litenpu/deploy/build_so_and_setup.py /tmp/add.onnx
 ```
 
-If the path points into a CANN install (e.g. `.../Ascend/.../site-packages/pypto`), the bundled older copy
-is loaded: build and install PyPTO from this repository's source following
-[Build and install](../../../../docs/en/install/build_and_install.md), then rerun. Errors like
-`ModuleNotFoundError: No module named 'pypto.extensions...'` or
-`AttributeError: ... has no attribute 'ExportedCustomOp'` also mean a version mismatch — reinstall as above
-rather than treating them as a demo or source defect.
+**Python execution**
 
-Run from this directory (`examples/03_advanced/exported_custom_op_litenpu/onnx/`):
+`run_demo.py` executes the model using one of the following modes:
 
 ```bash
-python3 add/export_demo.py /tmp/add.onnx        # export only, never runs
-python3 ../../../../tools/exported_custom_op_litenpu/deploy/build_so_and_setup.py /tmp/add.onnx
 python3 add/run_demo.py                         # run on cpu (each op's torch_defn), never exports
 python3 add/run_demo.py --device=npu            # run the real kernels on a device
 python3 add/run_demo.py --soc_version=Kirin9030 # run on the env-level NPU simulator
 ```
 
-`run_demo.py` accepts `--device={cpu,npu}` and `--soc_version=<soc>`; `--soc_version` selects the
-env-level NPU simulator and pairs with `--device=cpu` or with `--device` omitted, never with
-`--device=npu`.
+Where supported, `run_demo.py` accepts `--device={cpu,npu}` and `--soc_version=<soc>`. The latter selects the environment-level NPU simulator and requires `--device=cpu` or an omitted `--device`; it cannot be combined with `--device=npu`.
 
-## Authoring rules
+## Operator Names
 
-A DIRECT `@pypto.frontend.jit` kernel SHOULD pin `runtime_options={"run_mode": pypto.RunMode.SIM}` on its
-decorator. The deployed `.so` is forced to SIM regardless, but the frontend defaults run_mode per-box at
-import, so pinning SIM avoids an import-time "NPU is not available" surprise on a CANN host.
+An operator declaration configures its Torch name and its ONNX type separately:
 
-Each single-pypto-op demo has ONE *stem* = `<compute>[_<attr>...]`, the compute first, then the
-attributes that distinguish this demo from the plain one. Every identifier derived from the demo uses
-that stem: the folder `<stem>` (no `_kernel` suffix), the kernel fn `<stem>_kernel` (or
-`create_<stem>_kernel` for a factory), the inference fns `<stem>_infer_shape` / `<stem>_infer_dtype`, the
-CPU reference `<stem>_torch`, and the torch registry key `pypto::<stem>`.
+| Configuration | Where it is used |
+|---|---|
+| `torch_op_qualname="pypto::add"` | The model calls the operator as `torch.ops.pypto.add(...)`. |
+| `OnnxSymbolicSpec(op_type="Add", ...)` | Export produces an ONNX node with type `PyptoCustomOpAdd`. |
 
-## op_type = the COMPUTE · torch_op_qualname = the UNIQUE per-op key
-
-`op_type` (the `OnnxSymbolicSpec(op_type=...)` string) names the COMPUTE and becomes the graph node type
-a consumer sees (`"Add"` -> `PyptoCustomOpAdd`), so it MAY repeat across demos that compute the same
-thing. `torch_op_qualname` (`"pypto::add"`) is the torch-registry key and carries the feature stem; it
-too repeats across demos exposing the same op, and the torch registry is process-global, which is why
-each demo must run in its own process.
+Set both fields explicitly. The framework adds the `PyptoCustomOp` prefix to the ONNX type; it does not derive that type from the Torch name.

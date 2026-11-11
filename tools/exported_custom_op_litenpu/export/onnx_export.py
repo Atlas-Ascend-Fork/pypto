@@ -35,6 +35,7 @@ from pypto.extensions.torch_custom_op_litenpu import (
     iter_pypto_nodes,
     recorded_onnx_opset_floor,
 )
+from pypto.extensions.torch_custom_op_litenpu.onnx.node_reader import iter_nodes_in_node_tree
 
 logger = logging.getLogger(__name__)
 
@@ -98,18 +99,14 @@ def finalize_pypto_onnx_nodes(model: onnx.ModelProto, nodes) -> None:
 
 
 def _rewrite_standard_domain_for_ge(model: onnx.ModelProto, standard_domain: str) -> None:
-    """GE-compat: give standard ONNX nodes an explicit (non-empty) ``domain``.
+    """GE-compat: give standard ONNX nodes an explicit (non-empty) ``domain``, nested ones included.
 
-    Standard ops are stored with ``domain == ""`` (ONNX's spelling of the ai.onnx domain). GE's
-    onnx parser only auto-maps an empty-domain node to ai.onnx when the model declares a single
-    opset domain; with a custom domain (pypto) also imported it errors. Rewriting "" to an explicit
-    string (and adding a matching ``opset_import``, mirroring the base ai.onnx opset version) makes
-    GE take its non-empty-domain lookup path. Must run AFTER ``onnx.checker``, since a domain like
-    "ai.onnx" is not a registered ONNX schema domain and the checker would reject it.
+    GE only auto-maps an empty domain to ai.onnx when one opset domain is declared; with pypto also
+    imported it errors. Must run AFTER ``onnx.checker``, which rejects an unregistered domain string.
     """
     base_version = next((imp.version for imp in model.opset_import if imp.domain == ""), None)
     rewrote = False
-    for node in model.graph.node:
+    for node in iter_nodes_in_node_tree(model.graph.node):
         if node.domain == "":
             node.domain = standard_domain
             rewrote = True

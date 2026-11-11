@@ -17,6 +17,7 @@ import onnx
 from onnx import TensorProto, helper
 import pytest
 
+from pypto.extensions.torch_custom_op_litenpu import extract_op_type as extract_op_type_attr
 from pypto.extensions.torch_custom_op_litenpu.common.node_meta import (
     _LOCAL_NODE_LAYOUT_VERSION,
     _LOCAL_PYPTO_VERSION,
@@ -80,7 +81,7 @@ def _build_onnx_model(*nodes: onnx.NodeProto) -> onnx.ModelProto:
         inputs=[helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])],
         outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
     )
-    # opset_imports kept minimal — find_pypto_nodes only walks graph.node.
+    # opset_imports kept minimal — these cases put every node in the root graph.
     return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 12)])
 
 
@@ -143,3 +144,102 @@ def test_find_pypto_nodes_onnx_does_not_gate_the_package_version():
     # attributes can be read.
     model = _build_onnx_model(_onnx_pypto_node("OpA", name="a1", pkg="999.0.0"))
     assert [n.name for n in find_pypto_nodes(model)] == ["a1"]
+
+
+# ---------------------------------------------------------------------------
+# Nested-graph discovery: a pypto node in an ``If`` branch must reach deploy.
+# ---------------------------------------------------------------------------
+
+_F32 = TensorProto.FLOAT
+
+
+def _vi(name: str) -> onnx.ValueInfoProto:
+    return helper.make_tensor_value_info(name, _F32, [1])
+
+
+def _checked_model(graph: onnx.GraphProto, *, extra_opsets=()) -> onnx.ModelProto:
+    """Assemble and validate: an invalid fixture would make any discovery result meaningless."""
+    opsets = [helper.make_opsetid("", 17), helper.make_opsetid("ai.onnx.contrib", 1)]
+    opsets += [helper.make_opsetid(domain, version) for domain, version in extra_opsets]
+    model = helper.make_model(graph, opset_imports=opsets, ir_version=9)
+    onnx.checker.check_model(model)
+    return model
+
+
+def _nested_pypto_node(op_type: str, *, name: str, outputs, inputs=("x",)) -> onnx.NodeProto:
+    """``_onnx_pypto_node`` with caller-chosen wiring, so it can sit inside a subgraph."""
+    node = _onnx_pypto_node(op_type, name=name)
+    del node.input[:]
+    node.input.extend(inputs)
+    del node.output[:]
+    node.output.extend(outputs)
+    return node
+
+
+def _root_control_model(op_type: str) -> onnx.ModelProto:
+    """The positive control: the identical marked node, at the root graph."""
+    node = _nested_pypto_node(op_type, name="at_root", outputs=["y"])
+    return _checked_model(helper.make_graph([node], "root_control", [_vi("x")], [_vi("y")]))
+
+
+def _if_nested_model(op_type: str) -> onnx.ModelProto:
+    marked = helper.make_graph(
+        [_nested_pypto_node(op_type, name="in_then", outputs=["b_out"])],
+        "then_g", [], [_vi("b_out")])
+    plain = helper.make_graph(
+        [helper.make_node("Identity", ["x"], ["b_out"], name="plain")], "else_g", [], [_vi("b_out")])
+    node = helper.make_node("If", ["cond"], ["y"], name="the_if", then_branch=marked, else_branch=plain)
+    return _checked_model(helper.make_graph(
+        [node], "if_nested",
+        [_vi("x"), helper.make_tensor_value_info("cond", TensorProto.BOOL, [])], [_vi("y")]))
+
+
+def test_find_pypto_nodes_reaches_a_node_in_an_if_branch():
+    # The paired root control is the evidence: without it a zero could equally be a broken fixture.
+    assert [n.name for n in find_pypto_nodes(_root_control_model("OpInIfBranch"))] == ["at_root"]
+    assert [extract_op_type_attr(n)
+            for n in find_pypto_nodes(_if_nested_model("OpInIfBranch"))] == ["OpInIfBranch"]
+
+
+def test_find_pypto_nodes_dedupes_a_root_and_a_nested_occurrence_keeping_the_root():
+    # One op_type at both depths, the shape a model calling it in a branch and again at the root gives.
+    # Deploy needs one entry per op_type, and the depth-first walk makes the kept one the root node.
+    branch = helper.make_graph(
+        [_nested_pypto_node("OpA", name="in_then", inputs=("t0",), outputs=["b_out"])],
+        "then_g", [], [_vi("b_out")])
+    plain = helper.make_graph(
+        [helper.make_node("Identity", ["t0"], ["b_out"], name="plain")], "else_g", [], [_vi("b_out")])
+    model = _checked_model(helper.make_graph(
+        [_nested_pypto_node("OpA", name="at_root", outputs=["t0"]),
+         helper.make_node("If", ["cond"], ["y"], name="the_if", then_branch=branch, else_branch=plain)],
+        "root_and_nested",
+        [_vi("x"), helper.make_tensor_value_info("cond", TensorProto.BOOL, [])], [_vi("y")]))
+    assert [n.name for n in find_pypto_nodes(model)] == ["at_root"]
+
+
+def test_find_pypto_nodes_op_types_filter_resolves_a_nested_node():
+    # The explicit-subset path must see nested nodes too: otherwise asking for an op that lives in a
+    # branch raises "op_types not found in model" even though the artifact carries it.
+    model = _if_nested_model("OpNested")
+    assert [extract_op_type_attr(n) for n in find_pypto_nodes(model, op_types=["OpNested"])] == ["OpNested"]
+
+
+def test_find_pypto_nodes_still_ignores_an_unmarked_nested_node():
+    # Negative case: descending into a subgraph does not relax the marker gate.
+    # In another framework's own imported domain, so the checker does not demand an ai.onnx schema for it
+    # (``_onnx_foreign_op_type_node`` leaves the domain empty, which only works for an unchecked model).
+    foreign = helper.make_node("SomeOtherOp", ["x"], ["foreign_out"],
+                               domain="other.framework", name="foreign_in_branch")
+    foreign.attribute.append(helper.make_attribute("op_type", "SomeOtherOp"))
+    branch = helper.make_graph([foreign], "then_g", [], [_vi("foreign_out")])
+    plain = helper.make_graph(
+        [helper.make_node("Identity", ["x"], ["foreign_out"], name="plain")],
+        "else_g", [], [_vi("foreign_out")])
+    model = _checked_model(
+        helper.make_graph(
+            [helper.make_node("If", ["cond"], ["y"], name="the_if",
+                              then_branch=branch, else_branch=plain)],
+            "neg_nested",
+            [_vi("x"), helper.make_tensor_value_info("cond", TensorProto.BOOL, [])], [_vi("y")]),
+        extra_opsets=[("other.framework", 1)])
+    assert not find_pypto_nodes(model)
