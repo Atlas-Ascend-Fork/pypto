@@ -41,7 +41,7 @@ pypto_pro.language.gather(
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
 | out | 输出 | 目的UB Tile。索引模式下，数据类型与src相同，Shape和有效Shape须与索引结果相匹配；比较模式下使用DT_INT32或DT_UINT32，保存选中的索引，容量须覆盖可能选中的全部元素。 |
-| src | 输入 | 源UB Tile。索引模式读取其扁平元素；比较模式支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_FP16、DT_FP32，比较规则及模式限制参见[约束说明](#约束说明)。 |
+| src | 输入 | 源UB Tile。索引模式支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_BF16、DT_FP32，64位数据须使用32位索引；比较模式支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_FP16、DT_FP32，比较规则及模式限制参见[约束说明](#约束说明)。 |
 | indices_or_k_value | 输入 | 索引模式下为索引Tile，支持DT_INT16、DT_UINT16、DT_INT32、DT_UINT32，索引以元素为单位；64位源数据须使用32位索引。比较模式下为整数阈值Tile，必须使用DT_UINT16或DT_UINT32，不要求与src同位宽，也不使用浮点Tile。阈值按源有效行的顺序连续存放，第i个元素对应src的第i行。 |
 | tmp_or_cdst | 输出 | 可选，默认None。索引模式下为兼容性临时Tile，可省略；比较模式下必须传入输出计数Tile，保存每行写入out的字节数，使用DT_INT32或DT_UINT32。32位索引的有效元素个数等于该字节数除以4。 |
 | tmp | 输入 | 可选，默认None。索引模式不传此参数；比较模式必须作为第五个位置参数提供兼容性临时Tile。 |

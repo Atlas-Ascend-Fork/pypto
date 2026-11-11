@@ -23,6 +23,7 @@ from pypto_pro._errors import (
     InvalidType,
     InvalidVal,
     NotSupported,
+    OutOfRange,
 )
 import pypto_pro.language as pl
 import pytest
@@ -2046,5 +2047,264 @@ def test_expand_mul_rejects_scalar_dtype_mismatch():
             scalar = pl.make_tile(scalar_type, addr=0x10000)
             out = pl.make_tile(out_type, addr=0x20000)
             pl.expand_mul(out, src, scalar, dim=0)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+# ---------------------------------------------------------------------------
+# histogram layout contract
+# ---------------------------------------------------------------------------
+
+
+def test_histogram_u16_idx_requires_dn():
+    with pytest.raises(InvalidFormat, match=r"histogram: idx must use layout DN"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[32, 128], dtype=pl.DT_UINT16, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            idx_type = pl.TileType(
+                shape=[32, 32], dtype=pl.DT_UINT8, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            dst_type = pl.TileType(
+                shape=[32, 256], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            src = pl.make_tile(src_type, addr=0x0000)
+            idx = pl.make_tile(idx_type, addr=0x3000)
+            dst = pl.make_tile(dst_type, addr=0x4000)
+            pl.histogram(dst, src, idx, is_msb=False)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_histogram_u32_lsb_idx_requires_nd():
+    with pytest.raises(InvalidFormat, match=r"histogram: idx must use layout ND"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[64, 64], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            idx_type = pl.TileType(
+                shape=[32, 64], dtype=pl.DT_UINT8, target_memory=pl.MemorySpace.Vec, layout=pl.DN
+            )
+            dst_type = pl.TileType(
+                shape=[64, 256], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            src = pl.make_tile(src_type, addr=0x0000)
+            idx = pl.make_tile(idx_type, addr=0x4000)
+            dst = pl.make_tile(dst_type, addr=0x5000)
+            pl.histogram(dst, src, idx, is_msb=False)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_histogram_src_requires_nd():
+    with pytest.raises(InvalidFormat, match=r"histogram: src must use layout ND"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[32, 128], dtype=pl.DT_UINT16, target_memory=pl.MemorySpace.Vec, layout=pl.DN
+            )
+            idx_type = pl.TileType(
+                shape=[32, 1], dtype=pl.DT_UINT8, target_memory=pl.MemorySpace.Vec, layout=pl.DN
+            )
+            dst_type = pl.TileType(
+                shape=[32, 256], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+            )
+            src = pl.make_tile(src_type, addr=0x0000)
+            idx = pl.make_tile(idx_type, addr=0x3000)
+            dst = pl.make_tile(dst_type, addr=0x4000)
+            pl.histogram(dst, src, idx, is_msb=False)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_histogram_u16_msb_skips_idx_layout():
+    @pl.jit(auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        src_type = pl.TileType(
+            shape=[32, 128], dtype=pl.DT_UINT16, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+        )
+        idx_type = pl.TileType(
+            shape=[1, 32], dtype=pl.DT_UINT8, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+        )
+        dst_type = pl.TileType(
+            shape=[32, 256], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+        )
+        src = pl.make_tile(src_type, addr=0x0000)
+        idx = pl.make_tile(idx_type, addr=0x3000)
+        dst = pl.make_tile(dst_type, addr=0x4000)
+        pl.histogram(dst, src, idx, is_msb=True)
+
+    main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_histogram_u32_msb_skips_idx_layout():
+    @pl.jit(auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        src_type = pl.TileType(
+            shape=[64, 64], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+        )
+        idx_type = pl.TileType(
+            shape=[64, 1], dtype=pl.DT_UINT8, target_memory=pl.MemorySpace.Vec, layout=pl.DN
+        )
+        dst_type = pl.TileType(
+            shape=[64, 256], dtype=pl.DT_UINT32, target_memory=pl.MemorySpace.Vec, layout=pl.ND
+        )
+        src = pl.make_tile(src_type, addr=0x0000)
+        idx = pl.make_tile(idx_type, addr=0x4000)
+        dst = pl.make_tile(dst_type, addr=0x5000)
+        pl.histogram(dst, src, idx, is_msb=True)
+
+    main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+# ---------------------------------------------------------------------------
+# mrgsort block_len contract
+# ---------------------------------------------------------------------------
+
+
+def test_mrgsort_rejects_misaligned_block_len():
+    with pytest.raises(InvalidArgument, match=r"block_len \* sizeof.*multiple of 8"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[1, 1024], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec
+            )
+            dst_type = pl.TileType(
+                shape=[1, 1024], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec
+            )
+            src = pl.make_tile(src_type, addr=0x0000)
+            dst = pl.make_tile(dst_type, addr=0x1000)
+            pl.mrgsort(dst, src, block_len=251)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_mrgsort_rejects_out_of_range_records():
+    with pytest.raises(OutOfRange, match=r"must be in \[1, 4095\]"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[1, 1024], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec
+            )
+            dst_type = pl.TileType(
+                shape=[1, 1024], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec
+            )
+            src = pl.make_tile(src_type, addr=0x0000)
+            dst = pl.make_tile(dst_type, addr=0x1000)
+            pl.mrgsort(dst, src, block_len=0)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_mrgsort_accepts_valid_block_len():
+    @pl.jit(auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        src_type = pl.TileType(
+            shape=[1, 1024], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec
+        )
+        dst_type = pl.TileType(
+            shape=[1, 1024], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec
+        )
+        src = pl.make_tile(src_type, addr=0x0000)
+        dst = pl.make_tile(dst_type, addr=0x1000)
+        pl.mrgsort(dst, src, block_len=256)
+
+    main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_mrgsort_rejects_fp32_odd_block_len():
+    with pytest.raises(InvalidArgument, match=r"block_len \* sizeof.*multiple of 8"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(
+                shape=[1, 1024], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec
+            )
+            dst_type = pl.TileType(
+                shape=[1, 1024], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec
+            )
+            src = pl.make_tile(src_type, addr=0x0000)
+            dst = pl.make_tile(dst_type, addr=0x2000)
+            pl.mrgsort(dst, src, block_len=3)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("dtype", [pl.DT_FP4E2M1, pl.DT_FP4E1M2])
+def test_gathermask_rejects_unsupported_dtype(dtype):
+    with pytest.raises(InvalidType, match="gathermask: unsupported dtype"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            tile_type = pl.TileType(
+                shape=[64, 64], dtype=dtype, target_memory=pl.MemorySpace.Vec
+            )
+            src = pl.make_tile(tile_type, addr=0x0000)
+            out = pl.make_tile(tile_type, addr=0x4000)
+            pl.gathermask(out, src, pattern_mode=1)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("dtype", [pl.DT_INT64, pl.DT_UINT64])
+def test_partmul_rejects_64bit_dtype(dtype):
+    with pytest.raises(InvalidType, match="partmul: unsupported dtype"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            tile_type = pl.TileType(
+                shape=[64, 128], dtype=dtype, target_memory=pl.MemorySpace.Vec
+            )
+            src0 = pl.make_tile(tile_type, addr=0x0000)
+            src1 = pl.make_tile(tile_type, addr=0x4000)
+            out = pl.make_tile(tile_type, addr=0x8000)
+            pl.partmul(out, src0, src1)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("dtype", [pl.DT_INT8, pl.DT_UINT8])
+def test_expand_mul_rejects_8bit_dtype(dtype):
+    with pytest.raises(InvalidType, match="expand_mul: unsupported dtype"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            tile_type = pl.TileType(
+                shape=[64, 128], dtype=dtype, target_memory=pl.MemorySpace.Vec
+            )
+            vec_type = pl.TileType(
+                shape=[64, 1], dtype=dtype, target_memory=pl.MemorySpace.Vec
+            )
+            src = pl.make_tile(tile_type, addr=0x0000)
+            vec = pl.make_tile(vec_type, addr=0x8000)
+            out = pl.make_tile(tile_type, addr=0x10000)
+            pl.expand_mul(out, src, vec, dim=0)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("dtype", [pl.DT_INT8, pl.DT_UINT8, pl.DT_BF16])
+def test_expand_div_rejects_unsupported_dtype(dtype):
+    with pytest.raises(InvalidType, match="expand_div: unsupported dtype"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            tile_type = pl.TileType(
+                shape=[64, 128], dtype=dtype, target_memory=pl.MemorySpace.Vec
+            )
+            vec_type = pl.TileType(
+                shape=[64, 1], dtype=dtype, target_memory=pl.MemorySpace.Vec
+            )
+            src = pl.make_tile(tile_type, addr=0x0000)
+            vec = pl.make_tile(vec_type, addr=0x8000)
+            out = pl.make_tile(tile_type, addr=0x10000)
+            pl.expand_div(out, src, vec, dim=0)
 
         main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)

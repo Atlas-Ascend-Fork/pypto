@@ -1445,6 +1445,11 @@ _BINARY_DTYPES: tuple[DataType, ...] = (
 _MUL_DTYPES: tuple[DataType, ...] = tuple(
     d for d in _BINARY_DTYPES if d not in (DataType.INT8, DataType.UINT8)
 )
+# TPARTMUL (3510) has no 8-bit or 64-bit variants.
+_PARTMUL_DTYPES: tuple[DataType, ...] = (
+    DataType.INT16, DataType.UINT16, DataType.INT32, DataType.UINT32,
+    DataType.FP16, DataType.FP32, DataType.BF16,
+)
 _DIV_DTYPES: tuple[DataType, ...] = tuple(
     d for d in _MUL_DTYPES if d != DataType.BF16
 )
@@ -1484,6 +1489,14 @@ _INIT_OUTPUT_DTYPES: tuple[DataType, ...] = (
 # sizeof-based b8/b16/b32/b64 and the dedicated TROWEXPANDADD/MAX/MIN/MUL/
 # SUB/DIV (plus TCOLEXPANDADD via TCOLEXPANDOP) pin int64/uint64 explicitly.
 _ROW_EXPAND_DTYPES: tuple[DataType, ...] = _BINARY_DTYPES
+# TROWEXPANDMUL/TCOLEXPANDMUL have no 8-bit variants; TROWEXPANDDIV/
+# TCOLEXPANDDIV additionally have no bfloat16 variant.
+_EXPAND_MUL_DTYPES: tuple[DataType, ...] = tuple(
+    d for d in _ROW_EXPAND_DTYPES if d not in (DataType.INT8, DataType.UINT8)
+)
+_EXPAND_DIV_DTYPES: tuple[DataType, ...] = tuple(
+    d for d in _EXPAND_MUL_DTYPES if d != DataType.BF16
+)
 # Unary float math (TEXP/TLOG/TSQRT/TRSQRT: half/float only).
 _FLOAT_UNARY_DTYPES: tuple[DataType, ...] = (DataType.FP16, DataType.FP32)
 # TRECIP delegates to TDIVS(dst, 1, src), which also admits integer 1/x.
@@ -1506,6 +1519,16 @@ _ARG_IDX32_DTYPES: tuple[DataType, ...] = (DataType.INT32, DataType.UINT32)
 # TGATHER/TSCATTER index tiles are 16/32-bit integers.
 _GATHER_IDX_DTYPES: tuple[DataType, ...] = (
     DataType.INT16, DataType.UINT16, DataType.INT32, DataType.UINT32,
+)
+# TGATHER pattern path: pto-isa-declared source types.
+# HF8 is included per the ISA contract; some bisheng versions still lack the
+# __hif8 intrinsic overloads, which is tracked as a toolchain issue. FP4 has
+# no TGATHER support at all.
+_GATHERMASK_DTYPES: tuple[DataType, ...] = (
+    DataType.INT8, DataType.UINT8, DataType.INT16, DataType.UINT16,
+    DataType.INT32, DataType.UINT32, DataType.INT64, DataType.UINT64,
+    DataType.FP16, DataType.BF16, DataType.FP32,
+    DataType.FP8E4M3FN, DataType.FP8E5M2, DataType.HF8,
 )
 # TMRGSORT/TSORT32 (3510) operate on half/float only.
 _SORT_DTYPES: tuple[DataType, ...] = (DataType.FP16, DataType.FP32)
@@ -4580,7 +4603,7 @@ def _ir_expand_min(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | Non
 @op_impl("expand_mul")
 def _ir_expand_mul(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
-    require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_mul")
+    require_dtype_in(dt, _EXPAND_MUL_DTYPES, subject="expand_mul")
     require_dtypes_match(
         [getattr(out.type, "dtype", None), getattr(scalar.type, "dtype", None)], dt, subject="expand_mul"
     )
@@ -4600,7 +4623,7 @@ def _ir_expand_sub(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | Non
 @op_impl("expand_div")
 def _ir_expand_div(self, out: Expr, src: Expr, scalar: Expr, *, span: Span | None = None, dim: int | Expr = 0) -> Expr:
     dt = getattr(src.type, "dtype", None)
-    require_dtype_in(dt, _ROW_EXPAND_DTYPES, subject="expand_div")
+    require_dtype_in(dt, _EXPAND_DIV_DTYPES, subject="expand_div")
     require_dtypes_match(
         [getattr(out.type, "dtype", None), getattr(scalar.type, "dtype", None)], dt, subject="expand_div"
     )
@@ -4662,9 +4685,9 @@ def _ir_partmin(self, out: Expr, src0: Expr, src1: Expr, *, span: Span | None = 
 
 @op_impl("partmul")
 def _ir_partmul(self, out: Expr, src0: Expr, src1: Expr, *, span: Span | None = None) -> Expr:
-    # TPARTMUL (3510) has no 8-bit variants.
+    # TPARTMUL (3510) has no 8-bit or 64-bit variants.
     dt = getattr(out.type, "dtype", None)
-    require_dtype_in(dt, _MUL_DTYPES, subject="partmul")
+    require_dtype_in(dt, _PARTMUL_DTYPES, subject="partmul")
     require_dtypes_match([getattr(src0.type, "dtype", None), getattr(src1.type, "dtype", None)], dt, subject="partmul")
     return _ir_core.create_op_call(block_ir_op("partmul"), [out, src0, src1], {}, span or _span())
 
@@ -4725,7 +4748,9 @@ def _ir_gathermask(
     pattern_mode = require_const_int(
         pattern_mode, subject="'pattern_mode'",
     )
-    require_dtypes_match([getattr(out.type, "dtype", None)], getattr(src.type, "dtype", None), subject="gathermask")
+    src_dt = getattr(src.type, "dtype", None)
+    require_dtype_in(src_dt, _GATHERMASK_DTYPES, subject="gathermask")
+    require_dtypes_match([getattr(out.type, "dtype", None)], src_dt, subject="gathermask")
     return _ir_core.create_op_call(
         block_ir_op("gathermask"), [out, src], {"pattern_mode": pattern_mode}, span or _span(),
     )
@@ -4758,6 +4783,29 @@ def _ir_sort32(self, dst: Expr, src: Expr, idx: Expr, tmp: Expr | None = None, *
     return _ir_core.create_op_call(block_ir_op("sort32"), args, {}, span or _span())
 
 
+def _check_mrgsort_block_len(dt: DataType | None, block_len: int, span: Span | None) -> None:
+    """Validate block_len against TMRGSORT's fixed 8-byte record layout."""
+    if dt is None or dt.get_bit() % 8 != 0:
+        return
+    # The ISA computes numStructures = blockLen * sizeof(dtype) >> 3, so the
+    # block must contain a whole number of 8-byte structures.
+    block_bytes = block_len * (dt.get_bit() // 8)
+    if block_bytes % 8 != 0:
+        raise InvalidArgument(
+            f"mrgsort: block_len * sizeof({dt}) = {block_bytes} bytes is not a multiple of 8; "
+            f"block_len={block_len} is invalid for this dtype "
+            f"(FP16 requires a multiple of 4, FP32 a multiple of 2).",
+            span=span or _span(),
+        )
+    records = block_bytes // 8
+    if not 1 <= records <= 4095:
+        raise OutOfRange(
+            f"mrgsort: records per block = block_len * sizeof({dt}) / 8 = {records} "
+            f"must be in [1, 4095], got block_len={block_len}.",
+            span=span or _span(),
+        )
+
+
 @op_impl("mrgsort")
 def _ir_mrgsort(
     self, dst: Expr, src: Expr, *,
@@ -4770,6 +4818,7 @@ def _ir_mrgsort(
     dt = getattr(src.type, "dtype", None)
     require_dtype_in(dt, _SORT_DTYPES, subject="mrgsort")
     require_dtypes_match([getattr(dst.type, "dtype", None)], dt, subject="mrgsort")
+    _check_mrgsort_block_len(dt, block_len, span)
     return _ir_core.create_op_call(block_ir_op("mrgsort"), [dst, src], {"block_len": block_len}, span or _span())
 
 
@@ -4799,15 +4848,32 @@ def _ir_mrgsort2(
     return _ir_core.create_op_call(block_ir_op("mrgsort2"), [dst, src0, tmp, src1, *args], kwargs, span or _span())
 
 
+def _check_histogram_layout(what: str, expr: Expr, expected: Layout) -> None:
+    """Reject an explicitly wrong Tile layout for a histogram operand."""
+    layout = _operand_layout(expr.type)
+    if layout is not None and layout != expected:
+        raise InvalidFormat(
+            f"histogram: {what} must use layout {expected.name}, got {layout.name}"
+        )
+
+
 @op_impl("histogram")
 def _ir_histogram(
     self, dst: Expr, src: Expr, idx: Expr, *, is_msb: Expr, span: Span | None = None,
 ) -> Expr:
     is_msb = require_const_bool(is_msb, subject="'is_msb'")
     # THISTOGRAM (3510): u16/u32 source, u8 filter index, u32 bin destination.
-    require_dtype_in(getattr(src.type, "dtype", None), _HISTOGRAM_SRC_DTYPES, subject="histogram")
+    src_dt = getattr(src.type, "dtype", None)
+    require_dtype_in(src_dt, _HISTOGRAM_SRC_DTYPES, subject="histogram")
     require_dtype_in(getattr(idx.type, "dtype", None), _HISTOGRAM_IDX_DTYPES, subject="histogram")
     require_dtype_in(getattr(dst.type, "dtype", None), _HISTOGRAM_DST_DTYPES, subject="histogram")
+    _check_histogram_layout("src", src, Layout.ND)
+    _check_histogram_layout("dst", dst, Layout.ND)
+    if not is_msb:
+        if src_dt == DataType.UINT16:
+            _check_histogram_layout("idx", idx, Layout.DN)
+        elif src_dt == DataType.UINT32:
+            _check_histogram_layout("idx", idx, Layout.ND)
     return _ir_core.create_op_call(block_ir_op("histogram"), [dst, src, idx], {"is_msb": is_msb}, span or _span())
 
 

@@ -26,9 +26,9 @@ pypto_pro.language.expand_div(out: Tile, src: Tile, scalar: Tile, *, dim: int=0)
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| out | 输出 | 目的操作数，Tile类型，存放逐元素除法结果。<br>数据类型支持：DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_FP32、DT_BF16。<br>shape与src保持一致。<br>支持与src为同一Tile，实现in-place计算。 |
-| src | 输入 | 源操作数，Tile类型。<br>数据类型支持：DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_FP32、DT_BF16。|
-| scalar | 输入 | 广播的具体值，Tile类型，广播到每列或每行做逐元素除法。<br>数据类型支持：DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_FP32、DT_BF16。<br>数据类型须与out、src保持一致。<br>如果src的shape为[M, N]，dim=0时shape为[M, 1]；dim=1时shape为[1, N]。<br>元素值不能为0，否则硬件行为不确定。 |
+| out | 输出 | 目的操作数，Tile类型，存放逐元素除法结果。<br>数据类型支持：DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_FP32。<br>shape与src保持一致。<br>支持与src为同一Tile，实现in-place计算。 |
+| src | 输入 | 源操作数，Tile类型。<br>数据类型支持：DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_FP32。|
+| scalar | 输入 | 广播的具体值，Tile类型，广播到每列或每行做逐元素除法。<br>数据类型支持：DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP16、DT_FP32。<br>数据类型须与out、src保持一致。<br>如果src的shape为[M, N]，dim=0时shape为[M, 1]；dim=1时shape为[1, N]。<br>元素值不能为0，否则硬件行为不确定。 |
 | dim | 输入 | 广播方向，0表示沿列方向广播，1表示沿行方向广播。 |
 
 ## 返回值说明

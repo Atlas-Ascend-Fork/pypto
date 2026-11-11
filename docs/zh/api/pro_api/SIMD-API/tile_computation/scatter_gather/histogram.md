@@ -30,8 +30,8 @@ pypto_pro.language.histogram(dst: Tile, src: Tile, idx: Tile, *, is_msb: bool) -
 |---|---|---|
 | dst | 输出 | 目的UB Tile，数据类型为DT_UINT32，采用pypto_pro.language.ND布局。有效行数与src一致，每行提供256个累计计数桶，Shape为[行数, 256]。 |
 | src | 输入 | 源操作数，Tile类型，待统计的元素。dtype为DT_UINT16或DT_UINT32；shape任意；布局为pypto_pro.language.ND（行主序）。 |
-| idx | 输入 | 索引操作数，Tile类型，is_msb为False时用于过滤。dtype为DT_UINT8：src为DT_UINT16时，shape行数与src一致、列数为1，布局为pypto_pro.language.DN（列主序）；src为DT_UINT32且is_msb为True时不使用；src为DT_UINT32且is_msb为False时，shape行数为3、列数与src一致，布局为pypto_pro.language.ND（行主序）。 |
-| is_msb | 输入 | 编译期bool，必须显式传入。True统计最高字节：DT_UINT16为bits 15～8，DT_UINT32为bits 31～24，不执行高位过滤。False统计bits 7～0：DT_UINT16要求高字节与idx对应行值匹配；DT_UINT32要求byte3、byte2、byte1分别与idx的第0、1、2行过滤值匹配。 |
+| idx | 输入 | 索引操作数，Tile类型，is_msb为False时用于过滤。dtype为DT_UINT8：src为DT_UINT16时，shape行数与src一致、列数为1，布局为pypto_pro.language.DN（列主序），每行的单个字节对应该源行的过滤值；src为DT_UINT32且is_msb为True时不使用；src为DT_UINT32且is_msb为False时，shape行数为3、列数与src一致，布局为pypto_pro.language.ND（行主序），每行仅第0个元素作为过滤字节并广播到该行所有列，行内其余元素不参与过滤。 |
+| is_msb | 输入 | 编译期bool，必须显式传入。True统计最高字节：DT_UINT16为bits 15～8，DT_UINT32为bits 31～24，不执行高位过滤。False统计bits 7～0：DT_UINT16要求高字节与idx对应行值匹配；DT_UINT32要求byte3、byte2、byte1分别与idx的第0、1、2行的行首过滤值匹配（该值广播到所有列）。 |
 
 ## 返回值说明
 
