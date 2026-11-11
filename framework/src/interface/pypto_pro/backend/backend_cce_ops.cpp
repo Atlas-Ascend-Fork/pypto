@@ -2099,6 +2099,44 @@ REGISTER_BACKEND_OP(BackendCCE, "dist.channel_is_exclusive")
         return MakeDistChannelIsExclusiveCodegenCCE(op, codegen);
     });
 
+// Raw uint8 pointer to a registered region of a peer's window. Returns the pointer
+// expression so the result var maps to it (a following ptr.addptr / ptr.make_tensor
+// consumes it), like the ptr.* ops. Only the UB_MEM plane is directly addressable.
+static std::string MakeDistGetRemotePtrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
+        << "dist.get_remote_ptr requires 3 arguments: window, ptr, peer";
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
+        << "dist.get_remote_ptr requires the Vector target (the pointer is an AIV address)";
+
+    auto windowVar = ir::As<ir::Var>(op->args_[0]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, windowVar)
+        << "dist.get_remote_ptr requires window to be a Var";
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
+                               ir::As<ir::WindowType>(windowVar->GetType()))
+        << "dist.get_remote_ptr requires window to have WindowType";
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
+                               ir::As<ir::PtrType>(op->args_[1]->GetType()) != nullptr)
+        << "dist.get_remote_ptr requires a pointer operand";
+    auto ptrType = ir::As<ir::PtrType>(op->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
+                               ptrType != nullptr && ptrType->dtype_ == ir::DataType::UINT8)
+        << "dist.get_remote_ptr must produce a uint8 PtrType";
+
+    const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
+    const std::string window = "reinterpret_cast<__gm__ pypto::dist::Window*>(" + windowPtr + ")";
+    return "pypto::dist::remote_ub_ptr(" + window + ", reinterpret_cast<int64_t>(" +
+           cce::GetOperandAsCode(codegen, op->args_[1]) + "), static_cast<int32_t>(" +
+           codegen.GetExprAsCode(op->args_[2]) + "))";
+}
+
+REGISTER_BACKEND_OP(BackendCCE, "dist.get_remote_ptr")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistGetRemotePtrCodegenCCE(op, codegen);
+    });
+
 static std::string MakeDistAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase,
                                             const char* helper)
 {
@@ -2176,6 +2214,18 @@ REGISTER_BACKEND_OP(BackendCCE, "dist.atomic_cas")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeDistAtomicCodegenCCE(op, codegen, "pypto::dist::atomic_cas");
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "dist.atomic_min")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistAtomicCodegenCCE(op, codegen, "pypto::dist::atomic_min");
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "dist.atomic_max")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistAtomicCodegenCCE(op, codegen, "pypto::dist::atomic_max");
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "block.tile_valid_shape")

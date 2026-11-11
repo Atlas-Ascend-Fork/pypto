@@ -48,11 +48,45 @@ __aicore__ inline int32_t region_of(__gm__ Window* win, int64_t local_base)
     return -1;
 }
 
+// Region containing `local_ptr`, with its byte offset from the region base. The pointer
+// may sit anywhere inside a region, not only at its base; region sizes match across
+// ranks, so the same offset locates the byte in a peer's copy.
+__aicore__ inline int32_t region_of_ptr(__gm__ Window* win, int64_t local_ptr, int64_t* offset)
+{
+    __gm__ RegionEntry* table = reinterpret_cast<__gm__ RegionEntry*>(win->region_table);
+    for (int32_t i = 0; i < win->num_regions; ++i) {
+        const int64_t base = table[i].remote_ptrs[win->rank];
+        if (base != 0 && local_ptr >= base && local_ptr - base < table[i].size) {
+            *offset = local_ptr - base;
+            return i;
+        }
+    }
+    pypto_panic("dist: memory 0x%llx is not inside a registered region of this window\n",
+                static_cast<unsigned long long>(local_ptr));
+    return -1;
+}
+
 template <typename T>
 __aicore__ inline __gm__ T* remote_ptr(__gm__ Window* win, int32_t region, int32_t peer)
 {
     pypto_assert(peer >= 0 && peer < win->nrank, "dist: peer %d out of range [0, %d)\n", peer, win->nrank);
     return reinterpret_cast<__gm__ T*>(region_entry(win, region)->remote_ptrs[peer]);
+}
+
+// Byte pointer to `local_ptr`'s byte in the peer's copy of its region. The region and
+// in-region offset are resolved from the pointer at runtime; only the UB_MEM plane has
+// a direct peer-VA.
+__aicore__ inline __gm__ uint8_t* remote_ub_ptr(__gm__ Window* win, int64_t local_ptr, int32_t peer)
+{
+    int64_t offset = 0;
+    const int32_t region = region_of_ptr(win, local_ptr, &offset);
+    __gm__ RegionEntry* entry = region_entry(win, region);
+    pypto_assert((entry->policy & kPolicyUbMem) != 0,
+                 "dist.get_remote_ptr: region %d is not registered on the UB_MEM plane\n", region);
+    pypto_assert(peer >= 0 && peer < win->nrank, "dist: peer %d out of range [0, %d)\n", peer, win->nrank);
+    const int64_t base = entry->remote_ptrs[peer];
+    pypto_assert(base != 0, "dist.get_remote_ptr: region %d has no UB_MEM address for peer %d\n", region, peer);
+    return reinterpret_cast<__gm__ uint8_t*>(base + offset);
 }
 
 __aicore__ inline __gm__ uint8_t* remote_control_ptr(__gm__ Window* win, int32_t peer)
@@ -303,6 +337,20 @@ __aicore__ inline T atomic_cas(__gm__ Window* win, int32_t region, int32_t peer,
                                int64_t elem_offset, T expect, T desired)
 {
     return atomicCAS(atomic_addr<T>(win, region, peer, base_bytes, elem_offset), expect, desired);
+}
+
+template <typename T>
+__aicore__ inline T atomic_min(__gm__ Window* win, int32_t region, int32_t peer, int64_t base_bytes,
+                               int64_t elem_offset, T val)
+{
+    return atomicMin(atomic_addr<T>(win, region, peer, base_bytes, elem_offset), val);
+}
+
+template <typename T>
+__aicore__ inline T atomic_max(__gm__ Window* win, int32_t region, int32_t peer, int64_t base_bytes,
+                               int64_t elem_offset, T val)
+{
+    return atomicMax(atomic_addr<T>(win, region, peer, base_bytes, elem_offset), val);
 }
 
 #if defined(PYPTO_DIST_HAVE_JETTY)

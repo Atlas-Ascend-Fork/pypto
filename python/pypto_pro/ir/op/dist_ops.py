@@ -170,6 +170,30 @@ def _build_make_dtensor(self, window, region, offset, shape, dtype, *, span: Spa
     return DTensor(window, region, byte_offset, dims, dtype)
 
 
+@op_impl("dist.get_remote_ptr")
+def _build_get_remote_ptr(self, window, tensor, peer, *, span: Span | None = None):
+    """``ptr = pld.get_remote_ptr(win, tensor_or_ptr, peer)`` -> uint8 remote pointer."""
+    from .ptr_ops import make_ptr
+
+    window = _window_param(window, "pld.get_remote_ptr", "win")
+    peer_operand = _int_operand(peer, "pld.get_remote_ptr", "peer")
+    if isinstance(tensor, _ir_core.Expr) and isinstance(tensor.type, _ir_core.PtrType):
+        ptr = tensor
+    elif isinstance(tensor, _ir_core.Var) and isinstance(tensor.type, _ir_core.TensorType):
+        ptr = make_ptr(tensor, None, span=span)
+    else:
+        raise InvalidType(
+            "pld.get_remote_ptr first argument must be a kernel tensor parameter or a pl.Ptr "
+            "registered by Window.register_memory",
+        )
+    return _ir_core.create_op_call(
+        "dist.get_remote_ptr",
+        [window, ptr, peer_operand],
+        {},
+        span,
+    )
+
+
 def _order_axes(order):
     """``order=`` tuple operand -> Python axis list (compile-time), ``None`` passthrough."""
     order = _none_value(order)
@@ -770,7 +794,7 @@ def _int_kwarg_operand(value, api, arg_name, span):
     """Keyword operand that is either a folded int constant or an integer scalar."""
     if _is_int(value):
         return _normalize_expr(value, span)
-    return _int_operand(value, api, arg_name, span)
+    return _int_operand(value, api, arg_name)
 
 
 def _check_index_capacity(api, span, count, capacity, subject):
@@ -798,7 +822,7 @@ def _build_channel_write_indexed(parser, call, channel):
             hint="The destination peer is bound when the channel is opened: pld.channel(win, buffer, peer=...)",
         )
 
-    dtensor = _channel_dtensor(parser, "ch.write_indexed", call.args[0], channel, span)
+    dtensor = _channel_dtensor(parser, "ch.write_indexed", call.args[0], channel)
     source = parser.parse_expression(call.args[1])
     if not isinstance(source, _ir_core.Var) or not isinstance(source.type, _ir_core.TensorType):
         raise InvalidType(
@@ -844,7 +868,7 @@ def _build_channel_write_indexed(parser, call, channel):
     submit = kwargs_parsed.get("submit", True)
     if not isinstance(submit, bool):
         raise InvalidType(f"ch.write_indexed submit must be a compile-time bool, got {submit!r}", span=span)
-    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write_indexed", span, minimum=1)
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write_indexed", minimum=1)
 
     if "count" not in kwargs_parsed:
         raise InvalidArgument(
@@ -1149,4 +1173,22 @@ def _build_atomic_cas(self, dtensor, peer, offset, expect, desired, *, span: Spa
     return _build_atomic(
         self, dtensor, peer, offset, [expect, desired], op_name="dist.atomic_cas", api="pld.atomic_cas",
         value_names=("expect", "desired"), span=span,
+    )
+
+
+@op_impl("dist.atomic_min")
+def _build_atomic_min(self, dtensor, peer, offset, val, *, span: Span | None = None):
+    """``old = pld.atomic_min(dtensor, peer, offset, val)`` -> dist.atomic_min."""
+    return _build_atomic(
+        self, dtensor, peer, offset, [val], op_name="dist.atomic_min", api="pld.atomic_min",
+        value_names=("val",), span=span,
+    )
+
+
+@op_impl("dist.atomic_max")
+def _build_atomic_max(self, dtensor, peer, offset, val, *, span: Span | None = None):
+    """``old = pld.atomic_max(dtensor, peer, offset, val)`` -> dist.atomic_max."""
+    return _build_atomic(
+        self, dtensor, peer, offset, [val], op_name="dist.atomic_max", api="pld.atomic_max",
+        value_names=("val",), span=span,
     )

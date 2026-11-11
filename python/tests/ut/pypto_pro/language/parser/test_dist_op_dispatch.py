@@ -179,6 +179,88 @@ def test_signal_rejects_negative_literal():
 
 
 # =============================================================================
+# get_remote_ptr — device-side raw pointer over a registered region
+# =============================================================================
+
+
+def test_get_remote_ptr_returns_a_uint8_pointer_over_the_region_base():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            ptr = pld.get_remote_ptr(win, buf, 1)
+            view = pl.make_tensor(pl.addptr(ptr, 8), [1, 8], dtype=pl.DT_INT32)
+            tile = pl.make_tile(
+                pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec), addr=0)
+            pl.load(tile, view, [0, 0])
+
+    call = _op_calls(_parse(kernel), "dist.get_remote_ptr")[0]
+    assert isinstance(call.type, ir.PtrType)
+    assert call.type.dtype == pl.DT_UINT8
+    assert call.args[1].name == "ptr.make_ptr"
+    assert call.args[1].type.dtype == pl.DT_INT32
+    assert int(call.args[2].value) == 1
+
+
+def test_get_remote_ptr_accepts_a_pointer_parameter():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, workspace: pl.Ptr[pl.DT_INT32]):
+        with pl.section_vector():
+            ptr = pld.get_remote_ptr(win, workspace, 1)
+            pl.printf("%p\n", ptr)
+
+    call = _op_calls(_parse(kernel), "dist.get_remote_ptr")[0]
+    assert isinstance(call.args[1], ir.Var)
+    assert call.args[1].type.dtype == pl.DT_INT32
+
+
+def test_get_remote_ptr_supports_direct_pointer_arithmetic():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            off = pld.get_remote_ptr(win, buf, 1) + 4
+            view = pl.make_tensor(off, [1, 8], dtype=pl.DT_INT32)
+            tile = pl.make_tile(
+                pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec), addr=0)
+            pl.load(tile, view, [0, 0])
+
+    func = _parse(kernel)
+    remote = _op_calls(func, "dist.get_remote_ptr")[0]
+    assert remote.type.dtype == pl.DT_UINT8
+    addptr = _op_calls(func, "ptr.addptr")[0]
+    assert addptr.args[0].type.dtype == pl.DT_UINT8
+    assert int(addptr.args[1].value) == 4
+    assert len(_op_calls(func, "ptr.make_tensor")) == 1
+
+
+def test_get_remote_ptr_accepts_an_interior_pointer():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            ptr = pld.get_remote_ptr(win, pl.addptr(pl.make_ptr(buf), 8), 1)
+            pl.printf("%p\n", ptr)
+
+    func = _parse(kernel)
+    remote = _op_calls(func, "dist.get_remote_ptr")[0]
+    addptr = _op_calls(func, "ptr.addptr")[0]
+    assigned_to = {id(stmt.value): stmt.var.name for stmt in func.body.stmts if isinstance(stmt, ir.AssignStmt)}
+    # The interior-pointer expression is hoisted to a temp and passed as the ptr operand.
+    assert isinstance(remote.args[1], ir.Var)
+    assert remote.args[1].name == assigned_to[id(addptr)]
+    assert int(addptr.args[1].value) == 8
+
+
+def test_get_remote_ptr_rejects_a_non_region_operand():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            pld.get_remote_ptr(win, 7, 1)
+
+    with pytest.raises(InvalidType) as caught:
+        _parse(kernel)
+    assert "must be a kernel tensor parameter" in str(caught.value)
+
+
+# =============================================================================
 # get / put / get_tile / put_tile — tuple-operand offsets
 # =============================================================================
 
@@ -550,6 +632,39 @@ def test_atomic_cas_expect_and_desired_operands():
     call = _op_calls(_parse(kernel), "dist.atomic_cas")[0]
     expect, desired = call.args[6], call.args[7]
     assert (int(expect.value), int(desired.value)) == (3, 7)
+
+
+def test_atomic_min_max_build_distinct_ir_ops():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_INT32)
+            pld.atomic_min(dt, 1, [0, 0], 5)
+            pld.atomic_max(dt, 1, [0, 0], 7)
+
+    func = _parse(kernel)
+    for name, value in (
+        ("dist.atomic_min", 5),
+        ("dist.atomic_max", 7),
+    ):
+        calls = _op_calls(func, name)
+        assert len(calls) == 1
+        assert isinstance(calls[0].args[6], ir.ConstInt)
+        assert int(calls[0].args[6].value) == value
+        assert calls[0].kwargs["dtype"] == pl.DT_INT32
+
+
+def test_atomic_min_max_accept_float_view():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, buf: pl.Tensor[[1, 8], pl.DT_FP32]):
+        with pl.section_vector():
+            dt = pld.make_dtensor(win, buf, 0, [1, 8], pl.DT_FP32)
+            pld.atomic_min(dt, 1, [0, 0], 1.5)
+            pld.atomic_max(dt, 1, [0, 0], 2.5)
+
+    func = _parse(kernel)
+    for name in ("dist.atomic_min", "dist.atomic_max"):
+        assert len(_op_calls(func, name)) == 1
 
 
 def test_atomic_scalar_linear_offset_form():

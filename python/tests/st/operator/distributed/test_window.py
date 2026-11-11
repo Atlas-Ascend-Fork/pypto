@@ -1403,6 +1403,92 @@ def test_all_reduce(world_size: int = 4):
     torch.multiprocessing.spawn(all_reduce_worker, args=(nprocs,), nprocs=nprocs)
 
 
+_RP_ROWS = 8
+_RP_COLS = 16
+_RP_READ_OFF = 0     # this rank's prefilled slot; peers load it through the remote pointer
+_RP_WRITE_OFF = 4096  # slot peers store into; independent of the read slot
+_RP_BYTES = _RP_ROWS * _RP_COLS * 2  # fp16 payload
+
+
+def _rp_pattern(rank):
+    base = torch.arange(_RP_ROWS * _RP_COLS, dtype=torch.float32).reshape(_RP_ROWS, _RP_COLS)
+    return (base + rank * 1000).to(torch.float16)
+
+
+@pl.jit
+def remote_ptr_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                      src: pl.Tensor[[_RP_ROWS, _RP_COLS], pl.DT_FP16],
+                      out: pl.Tensor[[_RP_ROWS, _RP_COLS], pl.DT_FP16]):
+    with pl.section_vector():
+        me, nr = win.rank(), win.nrank()
+        peer = (me + 1) % nr
+        pld.barrier(win)  # every rank's host-side prefill is complete
+
+        tile_type = pl.TileType(shape=[_RP_ROWS, _RP_COLS], dtype=pl.DT_FP16,
+                                target_memory=pl.MemorySpace.Vec)
+        rd = pl.make_tile(tile_type, addr=0)
+        wr = pl.make_tile(tile_type, addr=_RP_BYTES)
+
+        # Ordinary pl.load through a raw remote pointer at the read slot.
+        rptr = pld.get_remote_ptr(win, ws, peer) + _RP_READ_OFF
+        rview = pl.make_tensor(rptr, [_RP_ROWS, _RP_COLS], dtype=pl.DT_FP16)
+        pl.load(rd, rview, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=2)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=2)
+        pl.store(out, rd, [0, 0])
+
+        # Ordinary pl.store through a raw remote pointer resolved from an interior local
+        # pointer (region base + write slot): the in-region offset must be preserved.
+        wptr = pld.get_remote_ptr(win, pl.addptr(pl.make_ptr(ws), _RP_WRITE_OFF), peer)
+        wview = pl.make_tensor(wptr, [_RP_ROWS, _RP_COLS], dtype=pl.DT_FP16)
+        pl.load(wr, src, [0, 0])
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=3)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=3)
+        pl.store(wview, wr, [0, 0])
+
+        pld.barrier(win)  # flush the remote store; every rank's write has landed
+
+
+def remote_ptr_worker(rank, nrank):
+    torch.npu.set_device(rank)
+    group = init_dist(rank, nrank)
+    win = pld.create_window(group)
+    ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
+    pld.register_memory(win, ws, "ws", _PROTOCOL)
+    win.connect()
+
+    peer = (rank + 1) % nrank
+    prev = (rank - 1) % nrank
+    own = _rp_pattern(rank)
+    ws[_RP_READ_OFF:_RP_READ_OFF + _RP_BYTES].view(torch.float16).copy_(own.view(-1).npu())
+    out = torch.full((_RP_ROWS, _RP_COLS), -1.0, dtype=torch.float16).npu()
+
+    remote_ptr_kernel[None, 1](win, ws, own.npu(), out)
+    torch.npu.synchronize()
+
+    got = out.cpu()
+    exp = _rp_pattern(peer)
+    assert torch.equal(got, exp), (
+        f"[rank {rank}] remote load got {got[0, :4].tolist()}..., expected {exp[0, :4].tolist()}"
+    )
+    got = ws[_RP_WRITE_OFF:_RP_WRITE_OFF + _RP_BYTES].view(torch.float16).cpu()
+    exp = _rp_pattern(prev).view(-1)
+    assert torch.equal(got, exp), (
+        f"[rank {rank}] remote store got {got[:4].tolist()}..., expected {exp[:4].tolist()}"
+    )
+    print(f"[rank {rank}] remote_ptr ok", flush=True)
+
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_remote_ptr(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(remote_ptr_worker, args=(nprocs,), nprocs=nprocs)
+
+
 _AT_INT64 = 0        # [add, exch, cas, failing cas, contended counter] @ 0,8,16,24,32
 _AT_UINT64 = 40      # [add, exch, cas] @ 40,48,56
 _AT_INT32 = 64       # [add, exch, cas] @ 64,68,72
@@ -1416,6 +1502,11 @@ _AT_NESTED = 200     # direct `out[i] = pld.atomic_add(...)` (setval-nested) pat
 _AT_SUB = 256        # int64 [7]: const 5, const -3, runtime offset/value
 _AT_SUB_U64 = 320    # uint64 modular wrap
 _AT_SUB_F32 = 328    # fp32
+_AT_MINMAX = 336     # int64 [4]: min/max sequences
+_AT_MINMAX_U64 = 368  # uint64 [2]
+_AT_MINMAX_F32 = 384  # fp32 [2]
+_AT_MINMAX_I32 = 392  # int32 [2]
+_AT_MINMAX_U32 = 400  # uint32 [2]
 
 
 @pl.jit
@@ -1475,6 +1566,31 @@ def atomic_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
         sub_f32 = pld.make_dtensor(win, ws, _AT_SUB_F32, [1], pl.DT_FP32)
         pld.atomic_sub(sub_f32, peer, [0], 0.5)  # -0.5
 
+        # atomic_min/max keep the smaller/larger value; a plain add would move both.
+        minmax = pld.make_dtensor(win, ws, _AT_MINMAX, [4], pl.DT_INT64)
+        pld.atomic_min(minmax, peer, 0, -5)      # 0 -> -5 (scalar linear offset)
+        pld.atomic_max(minmax, peer, [1], 9)     # 0 -> 9
+        pld.atomic_min(minmax, peer, [1], 4)     # 9 -> 4
+        pld.atomic_max(minmax, peer, [2], 3)     # 0 -> 3
+        pld.atomic_min(minmax, peer, [3], 8)     # 0 -> 0 (unchanged)
+
+        minmax_u64 = pld.make_dtensor(win, ws, _AT_MINMAX_U64, [2], pl.DT_UINT64)
+        pld.atomic_max(minmax_u64, peer, [0], 7)  # 0 -> 7
+        pld.atomic_min(minmax_u64, peer, [1], 9)  # 0 -> 0
+
+        minmax_i32 = pld.make_dtensor(win, ws, _AT_MINMAX_I32, [2], pl.DT_INT32)
+        pld.atomic_min(minmax_i32, peer, [0], -5)  # 0 -> -5
+        pld.atomic_max(minmax_i32, peer, [1], 9)   # 0 -> 9
+
+        minmax_u32 = pld.make_dtensor(win, ws, _AT_MINMAX_U32, [2], pl.DT_UINT32)
+        pld.atomic_min(minmax_u32, peer, [0], 5)   # 0 -> 0
+        pld.atomic_max(minmax_u32, peer, [1], 7)   # 0 -> 7
+
+        minmax_f32 = pld.make_dtensor(win, ws, _AT_MINMAX_F32, [2], pl.DT_FP32)
+        pld.atomic_max(minmax_f32, peer, [0], 2.5)  # 0 -> 2.5
+        pld.atomic_min(minmax_f32, peer, [0], 1.5)  # 2.5 -> 1.5
+        pld.atomic_min(minmax_f32, peer, [1], 2.5)  # 0 -> 0
+
         # Contended counter: every rank adds 1 to rank 0's word.
         shared = pld.make_dtensor(win, ws, 32, [1], pl.DT_INT64)
         old_shared = pld.atomic_add(shared, 0, [0], 1)
@@ -1505,6 +1621,23 @@ def atomic_worker(rank, nrank):
 
     atomic_kernel[None, 1](win, ws, out)
     torch.npu.synchronize()
+
+    # Every rank's payload received the min/max sequence from its predecessor.
+    i64 = ws.view(torch.int64)
+    got = i64[_AT_MINMAX // 8:_AT_MINMAX // 8 + 4].cpu().tolist()
+    assert got == [-5, 4, 3, 0], f"[rank {rank}] int64 min/max got {got}"
+    u64 = ws.view(torch.uint64)
+    got = u64[_AT_MINMAX_U64 // 8:_AT_MINMAX_U64 // 8 + 2].cpu().tolist()
+    assert got == [7, 0], f"[rank {rank}] uint64 min/max got {got}"
+    i32 = ws.view(torch.int32)
+    got = i32[_AT_MINMAX_I32 // 4:_AT_MINMAX_I32 // 4 + 2].cpu().tolist()
+    assert got == [-5, 9], f"[rank {rank}] int32 min/max got {got}"
+    u32 = ws.view(torch.uint32)
+    got = u32[_AT_MINMAX_U32 // 4:_AT_MINMAX_U32 // 4 + 2].cpu().tolist()
+    assert got == [0, 7], f"[rank {rank}] uint32 min/max got {got}"
+    f32 = ws.view(torch.float32)
+    got = f32[_AT_MINMAX_F32 // 4:_AT_MINMAX_F32 // 4 + 2].cpu().tolist()
+    assert got == [1.5, 0.0], f"[rank {rank}] fp32 min/max got {got}"
 
     win.close()
     dist.destroy_process_group()
@@ -1540,4 +1673,5 @@ if __name__ == '__main__':
     test_notify_wait()
     test_all_gather_signals()
     test_all_reduce()
+    test_remote_ptr()
     test_atomics()

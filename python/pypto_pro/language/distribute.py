@@ -14,6 +14,7 @@ from pypto import pypto_impl
 from pypto.ir import AtomicType, CmpMode
 
 from ._api import _api_decl
+from .typing import Ptr
 
 if TYPE_CHECKING:
     import torch.distributed as dist
@@ -33,10 +34,13 @@ __all__ = [
     "wait",
     "notify_all",
     "channel",
+    "get_remote_ptr",
     "atomic_add",
     "atomic_sub",
     "atomic_exchange",
     "atomic_cas",
+    "atomic_min",
+    "atomic_max",
     "Window",
     "DTensor",
     "Signal",
@@ -252,6 +256,32 @@ def make_dtensor(win: Window, region, offset, shape, dtype) -> DTensor:
 
 
 @_api_decl
+def get_remote_ptr(win: Window, tensor, peer: int) -> Ptr:
+    """Raw byte pointer to a registered region in a peer's window (device-only).
+
+    Returns a ``pl.Ptr[pl.DT_UINT8]`` to the same byte of ``peer``'s copy of the
+    region. The region and offset are resolved from the argument at run time, so it
+    may point anywhere inside it, not only at its base::
+
+        off = pld.get_remote_ptr(win, buf, peer) + 4
+        view = pl.make_tensor(off, [m, n], [n, 1], dtype=pl.DT_FP32)
+        pl.load(tile, view, [0, 0])
+
+        ptr = pl.addptr(pl.make_ptr(buf), 4096)  # interior pointer into the region
+        off = pld.get_remote_ptr(win, ptr, peer)  # peer base + 4096
+
+    The region must be registered on the UB_MEM plane; a URMA-only region traps at
+    runtime. Not ordered against get/put/jetty writes.
+
+    Args:
+        win: the owning window.
+        tensor: a tensor kernel parameter the host registered on ``win``, or a
+            ``pl.Ptr`` inside such a region.
+        peer: destination rank (compile-time or in-kernel integer).
+    """
+
+
+@_api_decl
 def get(tile, dtensor: DTensor, offset, peer: int, *, order=None) -> None:
     """Load a tile from a peer's window (device-only).
 
@@ -441,6 +471,24 @@ def atomic_cas(dtensor: DTensor, peer: int, offset, expect, desired) -> int:
     Stores ``desired`` if the word equals ``expect``. Returns the pre-op value — compare
     it with ``expect`` to learn whether the swap happened; this is a single CAS, not a
     retry loop. Same offset/dtype/alignment/ordering contract as :func:`atomic_add`.
+    """
+
+
+@_api_decl
+def atomic_min(dtensor: DTensor, peer: int, offset, val) -> int:
+    """Atomically keep the minimum of ``val`` and a word in a peer's window (device-only).
+
+    Returns the word's pre-op value. Same offset/dtype/alignment/ordering contract as
+    :func:`atomic_add`.
+    """
+
+
+@_api_decl
+def atomic_max(dtensor: DTensor, peer: int, offset, val) -> int:
+    """Atomically keep the maximum of ``val`` and a word in a peer's window (device-only).
+
+    Returns the word's pre-op value. Same offset/dtype/alignment/ordering contract as
+    :func:`atomic_add`.
     """
 
 

@@ -661,6 +661,22 @@ TypePtr DeduceDistChannelIsExclusiveType(const std::vector<ExprPtr>& args,
         << "dist.channel_is_exclusive accepts no keyword arguments";
     return std::make_shared<ScalarType>(DataType::BOOL);
 }
+
+TypePtr DeduceDistGetRemotePtrType(const std::vector<ExprPtr>& args,
+                                   const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x3)
+        << "dist.get_remote_ptr requires 3 arguments [window, ptr, peer], but got " << args.size();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<WindowType>(args[0]->GetType()))
+        << "dist.get_remote_ptr requires window to be WindowType, but got " << args[0]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<PtrType>(args[1]->GetType()))
+        << "dist.get_remote_ptr requires a pointer into a registered region, but got "
+        << args[1]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsIntScalar(args[2]))
+        << "dist.get_remote_ptr peer must be an integer scalar, but got " << args[2]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << "dist.get_remote_ptr accepts no keyword arguments";
+    return std::make_shared<PtrType>(DataType::UINT8);
+}
 } // namespace
 
 REGISTER_OP("dist.channel")
@@ -734,6 +750,19 @@ REGISTER_OP("dist.channel_is_exclusive")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceDistChannelIsExclusiveType(args, kwargs);
+    });
+
+REGISTER_OP("dist.get_remote_ptr")
+    .set_op_category("DistOp")
+    .set_description("Raw uint8 pointer to a registered region of a peer's window (UB_MEM plane), "
+                     "resolved from a local pointer into that region; advance with ptr.addptr and use "
+                     "through ptr.make_tensor")
+    .add_argument("window", "Window handle (WindowType)")
+    .add_argument("ptr", "Pointer into a registered memory region (PtrType); the region is resolved on device")
+    .add_argument("peer", "Target rank (integer scalar)")
+    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceDistGetRemotePtrType(args, kwargs);
     });
 
 namespace {
@@ -935,6 +964,38 @@ REGISTER_OP("dist.atomic_cas")
     .add_argument("peer", "Target rank (integer scalar)")
     .add_argument("expect", "Value the word must hold for the swap (numeric scalar)")
     .add_argument("desired", "Value stored on success (numeric scalar)")
+    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceAtomicType(args, kwargs);
+    });
+
+REGISTER_OP("dist.atomic_min")
+    .set_op_category("DistOp")
+    .set_description("Remote atomic min on one window word; returns the pre-op value")
+    .add_argument("window", "Window handle (WindowType)")
+    .add_argument("region_id", "Registered memory region tensor parameter (TensorType); selects the region on "
+                               "device")
+    .add_argument("base_bytes", "DTensor view start, scalar byte offset into the region (integer scalar)")
+    .add_argument("offsets", "Per-axis element coordinates (tuple) or a scalar linear element offset")
+    .add_argument("shape", "DTensor view dimensions (tuple of integer scalars)")
+    .add_argument("peer", "Target rank (integer scalar)")
+    .add_argument("val", "Candidate minimum (numeric scalar)")
+    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceAtomicType(args, kwargs);
+    });
+
+REGISTER_OP("dist.atomic_max")
+    .set_op_category("DistOp")
+    .set_description("Remote atomic max on one window word; returns the pre-op value")
+    .add_argument("window", "Window handle (WindowType)")
+    .add_argument("region_id", "Registered memory region tensor parameter (TensorType); selects the region on "
+                               "device")
+    .add_argument("base_bytes", "DTensor view start, scalar byte offset into the region (integer scalar)")
+    .add_argument("offsets", "Per-axis element coordinates (tuple) or a scalar linear element offset")
+    .add_argument("shape", "DTensor view dimensions (tuple of integer scalars)")
+    .add_argument("peer", "Target rank (integer scalar)")
+    .add_argument("val", "Candidate maximum (numeric scalar)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceAtomicType(args, kwargs);
