@@ -24,7 +24,10 @@
 
 #include "ir/kind_traits.h"
 #include "ir/memref.h"
+#include "ir/span.h"
 #include "ir/transforms/base/mutator.h"
+#include "ir/transforms/base/visitor.h"
+#include "ir/transforms/passes.h"
 #include "ir/type.h"
 #include "pypto_pro/error.h"
 
@@ -87,7 +90,6 @@ public:
         int64_t end;
         std::vector<int> manualIds;
         VarPtr placeholder;
-        std::string groupName;
         Span span;
 
         bool IsAuto() const { return placeholder != nullptr; }
@@ -112,7 +114,7 @@ public:
         std::array<int, kMutexIdCount> componentUsageById{};
     };
 
-    void CollectGroup(const std::vector<ExprPtr>& tiles, const MakeTuplePtr& mutexIds, const std::string& groupName)
+    void CollectGroup(const std::vector<ExprPtr>& tiles, const MakeTuplePtr& mutexIds)
     {
         Span span = tiles.empty() || tiles.front() == nullptr ? Span::Unknown() : tiles.front()->span_;
         PRO_PASS_INTERNAL_CHECK_WITH_SPAN(npu::tile_fwk::InternalError::PASS_INNER_ERROR,
@@ -123,7 +125,7 @@ public:
         // the same position.
         for (size_t index = 0; index < tiles.size(); ++index) {
             auto tileMutexId = ParseTileMutexId(mutexIds->elements_[index], span);
-            CollectTile(tiles[index], tileMutexId, groupName);
+            CollectTile(tiles[index], tileMutexId);
         }
     }
 
@@ -151,8 +153,6 @@ public:
         PlaceholderResolver resolver(replacements);
         return resolver.VisitProgram(program);
     }
-
-    Span DiagnosticSpan() const { return diagnosticSpan_; }
 
 private:
     TileMutexId ParseTileMutexId(const ExprPtr& value, const Span& fallbackSpan)
@@ -185,7 +185,7 @@ private:
         return TileMutexId{nullptr, std::move(manualIds)};
     }
 
-    void CollectTile(const ExprPtr& tile, const TileMutexId& tileMutexId, const std::string& groupName)
+    void CollectTile(const ExprPtr& tile, const TileMutexId& tileMutexId)
     {
         auto tileType = As<TileType>(tile->GetType());
         PRO_PASS_INTERNAL_CHECK_WITH_SPAN(
@@ -227,7 +227,7 @@ private:
         size_t tileIndex = tiles_.size();
         tiles_.push_back(TileRecord{memref->memorySpace_, address->value_,
                                     address->value_ + static_cast<int64_t>(memref->size_), tileMutexId.manualIds,
-                                    tileMutexId.placeholder, groupName, tile->span_});
+                                    tileMutexId.placeholder, tile->span_});
         tileToIndex_[tile.get()] = tileIndex;
         if (tileMutexId.IsAuto()) {
             placeholders_.insert(tileMutexId.placeholder.get());
@@ -291,11 +291,12 @@ private:
                         int64_t overlapEnd = std::min(left.end, right.end);
                         FailInvalidOperation(
                             std::string("mutex_ids=\"auto\" does not support crossing Tile address ranges: ") +
-                                "TileGroup '" + left.groupName + "' at line " + std::to_string(left.span.BeginLine()) +
-                                " uses " + HexRange(left.start, left.end) + "; TileGroup '" + right.groupName +
-                                "' at line " + std::to_string(right.span.BeginLine()) + " uses " +
-                                HexRange(right.start, right.end) + "; overlap is " +
-                                HexRange(overlapStart, overlapEnd) + "; possible buffer address trampling",
+                                MemorySpaceToString(left.memorySpace) + " Tile at line " +
+                                std::to_string(left.span.BeginLine()) + " uses " + HexRange(left.start, left.end) +
+                                "; " + MemorySpaceToString(right.memorySpace) + " Tile at line " +
+                                std::to_string(right.span.BeginLine()) + " uses " + HexRange(right.start, right.end) +
+                                "; overlap is " + HexRange(overlapStart, overlapEnd) +
+                                "; possible buffer address trampling",
                             right.span);
                     }
                 }
@@ -323,9 +324,9 @@ private:
             if (tile.manualIds.size() != 1) {
                 FailInvalidArgument(
                     std::string("when address-overlapping Tiles include a manually configured Tile, that Tile ") +
-                        "must have exactly one manual mutex ID; TileGroup '" + tile.groupName + "' at line " +
-                        std::to_string(tile.span.BeginLine()) +
-                        " has an overlapping Tile with multiple mutex IDs: mutex_ids=" + FormatIds(tile.manualIds),
+                        "must have exactly one manual mutex ID; " + MemorySpaceToString(tile.memorySpace) +
+                        " Tile at line " + std::to_string(tile.span.BeginLine()) + " uses " +
+                        HexRange(tile.start, tile.end) + " with mutex_ids=" + FormatIds(tile.manualIds),
                     tile.span);
             }
         }
@@ -337,11 +338,11 @@ private:
             if (tile.manualIds.front() != expected) {
                 FailInvalidOperation(
                     std::string("manual Tiles connected through overlapping address ranges must use the same ") +
-                        "mutex ID: TileGroup '" + expectedTile.groupName + "' at line " +
+                        "mutex ID: " + MemorySpaceToString(expectedTile.memorySpace) + " Tile at line " +
                         std::to_string(expectedTile.span.BeginLine()) + " uses " +
                         HexRange(expectedTile.start, expectedTile.end) + " with mutex_id=" + std::to_string(expected) +
-                        "; TileGroup '" + tile.groupName + "' at line " + std::to_string(tile.span.BeginLine()) +
-                        " uses " + HexRange(tile.start, tile.end) +
+                        "; " + MemorySpaceToString(tile.memorySpace) + " Tile at line " +
+                        std::to_string(tile.span.BeginLine()) + " uses " + HexRange(tile.start, tile.end) +
                         " with mutex_id=" + std::to_string(tile.manualIds.front()) + "; address-overlap component is " +
                         HexRange(component.start, component.end),
                     tile.span);
@@ -462,13 +463,13 @@ private:
 
     void FailInvalidArgument(const std::string& message, const Span& span)
     {
-        diagnosticSpan_ = span;
+        pro::SpanScope span_scope(span);
         PRO_IR_THROW(ValueError, ExternalError::INVALID_ARGUMENT) << message;
     }
 
     void FailInvalidOperation(const std::string& message, const Span& span)
     {
-        diagnosticSpan_ = span;
+        pro::SpanScope span_scope(span);
         PRO_IR_THROW(ValueError, ExternalError::INVALID_OPERATION) << message;
     }
 
@@ -476,22 +477,56 @@ private:
     std::unordered_map<const Expr*, size_t> tileToIndex_;
     std::unordered_set<const Var*> placeholders_;
     bool hasAuto_ = false;
-    Span diagnosticSpan_ = Span::Unknown();
 };
 
 AutoMutexIdManager::AutoMutexIdManager() : impl_(std::make_unique<Impl>()) {}
 
 AutoMutexIdManager::~AutoMutexIdManager() = default;
 
-void AutoMutexIdManager::CollectGroup(const std::vector<ExprPtr>& tiles, const MakeTuplePtr& mutexIds,
-                                      const std::string& groupName)
+void AutoMutexIdManager::CollectGroup(const std::vector<ExprPtr>& tiles, const MakeTuplePtr& mutexIds)
 {
-    impl_->CollectGroup(tiles, mutexIds, groupName);
+    impl_->CollectGroup(tiles, mutexIds);
 }
 
 ProgramPtr AutoMutexIdManager::AssignMutexIds(const ProgramPtr& program) { return impl_->AssignMutexIds(program); }
 
-Span AutoMutexIdManager::DiagnosticSpan() const { return impl_->DiagnosticSpan(); }
+namespace {
+class MutexDeclarationCollector final : public IRVisitor {
+public:
+    explicit MutexDeclarationCollector(AutoMutexIdManager& manager) : manager_(manager) {}
+
+private:
+    using IRVisitor::VisitStmt_;
+
+    AutoMutexIdManager& manager_;
+
+    void VisitStmt_(const AssignStmtPtr& stmt) override
+    {
+        auto call = As<Call>(stmt->value_);
+        if (!call || call->name_ != "block.make_mutex_tile") {
+            IRVisitor::VisitStmt_(stmt);
+            return;
+        }
+        auto ids = As<MakeTuple>(call->args_[2]);
+        if (!ids->elements_.empty()) {
+            auto rows = std::make_shared<MakeTuple>(std::vector<ExprPtr>{ids}, call->span_);
+            manager_.CollectGroup({stmt->var_}, rows);
+        }
+    }
+};
+} // namespace
+
+Pass pass::AllocateMutexIds()
+{
+    return CreateProgramPass(
+        [](const ProgramPtr& program) {
+            AutoMutexIdManager manager;
+            MutexDeclarationCollector collector(manager);
+            collector.VisitProgram(program);
+            return manager.AssignMutexIds(program);
+        },
+        "AllocateMutexIds");
+}
 
 } // namespace ir
 } // namespace pypto

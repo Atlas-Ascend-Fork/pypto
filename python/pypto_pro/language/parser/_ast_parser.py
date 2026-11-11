@@ -54,7 +54,6 @@ from ._type_resolver import TypeResolver
 # publishing it as the ambient location would underline the entire block.
 _COMPOUND_STATEMENTS = (ast.For, ast.While, ast.If, ast.With, ast.Try, ast.FunctionDef)
 
-AutoMutexIdManager = ir._AutoMutexIdManager
 
 
 def _snake_visit_name(node: ast.AST) -> str:
@@ -187,7 +186,6 @@ class ASTParser(
         void_return_only: bool = False,
         void_return_context: str = "this function",
         allow_early_return: bool = False,
-        mutex_id_manager: AutoMutexIdManager | None = None,
     ):
         """Initialize AST parser.
 
@@ -211,13 +209,9 @@ class ASTParser(
                 are void-only but allow early/multiple returns, while @pl.vector_function
                 and @pl.pipeline.stage are void-only and still require a single tail return.
             target: Required Cube/Vector target for target-specific parsing.
-            mutex_id_manager: Manager for mutex-ID planning and IR resolution in
-                this target parse.
         """
         if target not in (ir.SectionKind.Cube, ir.SectionKind.Vector):
             raise NotSupported(f"Unsupported parser target: {target}")
-        if auto_mutex and mutex_id_manager is None:
-            raise CommonInner("auto_mutex=True requires a mutex ID manager")
         self._target = target
         self.matched_target = False
         self.has_tile_function: bool = False
@@ -324,7 +318,6 @@ class ASTParser(
 
         self._auto_mutex = auto_mutex
         self._auto_pipeline = auto_pipeline
-        self._mutex_id_manager = mutex_id_manager
         self._parsed_expr_cache: dict[ast.expr, Any] = {}
         self._gemm_counter = 0
         self._gemm_used_names: set[str] = set()

@@ -13,9 +13,8 @@ import importlib
 import re
 from types import SimpleNamespace
 
-from pypto_pro._errors import CommonInner, InvalidArgument, InvalidOperation, InvalidType
+from pypto_pro._errors import InvalidArgument, InvalidOperation, InvalidType
 import pypto_pro.language as pl
-from pypto_pro.language.parser._ast_parser import ASTParser
 from pypto_pro.runtime.platform import NpuArch
 import pytest
 
@@ -67,11 +66,6 @@ def _bound_ids(program, function_name):
         if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call)
         and stmt.value.name == "block.make_mutex_tile" and stmt.value.args[2].elements
     ]
-
-
-def test_auto_mutex_parser_requires_mutex_id_manager():
-    with pytest.raises(CommonInner, match="auto_mutex=True requires a mutex ID manager"):
-        ASTParser(__file__, [], ir.SectionKind.Vector, auto_mutex=True)
 
 
 def test_auto_ids_are_planned_and_resolved_into_first_parse_ir():

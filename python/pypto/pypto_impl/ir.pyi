@@ -17,25 +17,6 @@ def PGOVFRun(  # noqa: N802
     """Run on function, or program when function is None; return (out_program, out_function)."""
     ...
 
-
-class _AutoMutexIdManager:
-    """Collect TileGroups, allocate automatic mutex IDs, and resolve placeholders."""
-
-    def __init__(self) -> None: ...
-
-    def collect_group(
-        self,
-        tiles: Sequence[Expr],
-        mutex_ids: MakeTuple,
-        group_name: str,
-    ) -> None: ...
-
-    def assign_mutex_ids(self, program: Program) -> Program: ...
-
-    @property
-    def diagnostic_span(self) -> Span: ...
-
-
 class DataType:
     """Data type representation for PyPTO tensors and operations"""
 
@@ -2619,6 +2600,10 @@ def type_equal(a: Expr, b: Expr) -> bool:
 
 
 class Pass:
+
+    @staticmethod
+    def allocate_mutex_ids() -> Pass:
+        """Allocate AUTO mutex IDs from declarations in a target program."""
 
     @staticmethod
     def insert_sync() -> Pass:

@@ -21,7 +21,6 @@
 #include "core/error.h"
 #include "interface/plugin/plugin.h"
 #include "interface/utils/common.h"
-#include "ir/transforms/auto_mutex_id_manager.h"
 #include "ir/transforms/ir_property.h"
 #include "ir/transforms/pass_context.h"
 #include "ir/transforms/passes.h"
@@ -66,13 +65,6 @@ void BindPasses(py::module_& m)
         py::arg("program"), py::arg("function"),
         "Run the PGO VF plugin on function, or program when function is None. "
         "Return (out_program, out_function), with the unused output set to None.");
-
-    py::class_<AutoMutexIdManager>(m, "_AutoMutexIdManager", "Internal whole-program automatic mutex-ID manager")
-        .def(py::init<>())
-        .def("collect_group", &AutoMutexIdManager::CollectGroup, py::arg("tiles"), py::arg("mutex_ids"),
-             py::arg("group_name"))
-        .def("assign_mutex_ids", &AutoMutexIdManager::AssignMutexIds, py::arg("program"))
-        .def_property_readonly("diagnostic_span", &AutoMutexIdManager::DiagnosticSpan);
 
     py::enum_<IRProperty>(m, "IRProperty", "Verifiable IR properties")
         .value("SSAForm", IRProperty::SSAForm, "IR is in SSA form")
@@ -155,6 +147,7 @@ void BindPasses(py::module_& m)
                     "Finalize dynamic functions built from new IR")
         .def_static("litenpu_dynamic_to_static", &pass::LitenpuDynamicToStatic,
                     "Convert device-side (Kirin) dynamic expressions to static (loop unroll)")
+        .def_static("allocate_mutex_ids", &pass::AllocateMutexIds, "Allocate AUTO mutex IDs from tile declarations")
         .def_static("insert_sync", &pass::InsertSync, "Insert mutex synchronization from tile bindings")
         .def_static("sanitizer", &pass::Sanitizer,
                     "Create a sanitizer instrumentation pass (stateless; every check value travels in the records)");

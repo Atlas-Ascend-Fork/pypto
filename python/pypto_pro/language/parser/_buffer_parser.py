@@ -329,8 +329,6 @@ class BufferParserMixin:
             self._record_tile_high_water(tile)
             value = self.builder.let(f"_tg_{var_name}_tiles_{i}", tile, span=span)
             tile_vars.append(value)
-        if self._auto_mutex and mutex_id_irs is not None:
-            self._mutex_id_manager.collect_group(tile_vars, mutex_id_irs, var_name)
         tiles = ir.MakeTuple(tile_vars, span)
         tiles_var = self.builder.let(f"_tg_{var_name}_tiles", tiles, span=span)
         elements, fields = [tiles_var], ["tiles"]

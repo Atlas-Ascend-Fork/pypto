@@ -283,6 +283,9 @@ Pass Sanitizer();
 
 /// Insert scalar mutex operations from explicit tile bindings after structural optimization.
 Pass InsertSync();
+
+/** Allocate AUTO mutex placeholders from declarations in one target Program. */
+Pass AllocateMutexIds();
 } // namespace pass
 
 /**

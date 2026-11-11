@@ -17,7 +17,6 @@
 
 #include "ir/expr.h"
 #include "ir/program.h"
-#include "ir/span.h"
 
 namespace pypto {
 namespace ir {
@@ -38,12 +37,9 @@ public:
     AutoMutexIdManager& operator=(const AutoMutexIdManager&) = delete;
 
     /** Collect a TileGroup using the mutex-ID expressions created by the frontend. */
-    void CollectGroup(const std::vector<ExprPtr>& tiles, const MakeTuplePtr& mutexIds, const std::string& groupName);
+    void CollectGroup(const std::vector<ExprPtr>& tiles, const MakeTuplePtr& mutexIds);
 
     ProgramPtr AssignMutexIds(const ProgramPtr& program);
-
-    /** Source span associated with the most recent user-facing planning failure. */
-    [[nodiscard]] Span DiagnosticSpan() const;
 
 private:
     class Impl;

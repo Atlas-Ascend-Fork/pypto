@@ -1113,7 +1113,6 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
             void_return_only=True,
             void_return_context="@pl.jit",
             allow_early_return=True,
-            mutex_id_manager=ir._AutoMutexIdManager() if kernel_def._auto_mutex else None,
         )
         # define_var is the single point where every name gets bound, so wrapping it here
         # harvests types without touching the parser itself.

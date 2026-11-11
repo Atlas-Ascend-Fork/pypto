@@ -102,7 +102,7 @@ def test_ops_are_recorded_only_for_the_automatic_pipeline(auto_pipeline):
     parser = ASTParser(
         kd._source_file, kd._source_lines, ir.SectionKind.Vector, kd._line_offset, kd._col_offset,
         closure_vars=kd._closure_vars, auto_mutex=True, auto_pipeline=auto_pipeline,
-        debug_info=ir.IRDebugInfo(), mutex_id_manager=ir._AutoMutexIdManager(),
+        debug_info=ir.IRDebugInfo(),
     )
     parser.parse_function(kd._func_def, func_type=kd._func_type)
     assert any(parser.parse_facts.op_accesses.values()) == auto_pipeline

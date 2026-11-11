@@ -43,8 +43,6 @@ from .._errors import (
     spec_head_of,
 )
 
-AutoMutexIdManager = ir._AutoMutexIdManager
-
 
 def _calculate_col_offset(source_lines: list[str]) -> int:
     """Calculate the column offset (indentation) of the first non-empty line.
@@ -280,9 +278,6 @@ class KernelDef:
         program_name = self._name if self._name is not None else self._func.__name__
 
         try:
-            # Each target parse owns one mutex ID manager, so Cube and Vector both use
-            # their own independent 0-31 mutex ID pool.
-            mutex_id_manager = AutoMutexIdManager() if self._auto_mutex else None
             # The Program owns one IRDebugInfo; share it with the parser so all
             # semantic tuple metadata lands in the table the Program carries.
             debug_info = ir.IRDebugInfo()
@@ -303,7 +298,6 @@ class KernelDef:
                 void_return_only=True,
                 void_return_context="@pl.jit",
                 allow_early_return=True,
-                mutex_id_manager=mutex_id_manager,
             )
 
             try:
@@ -369,14 +363,14 @@ class KernelDef:
             self._max_vec_tile_end = parser.max_vec_tile_end
             self._requires_simt = parser.requires_simt
             self._has_tile_function = parser.has_tile_function
-            if mutex_id_manager is not None:
+            if self._auto_mutex:
                 try:
-                    program = mutex_id_manager.assign_mutex_ids(program)
+                    program = ir.Pass.allocate_mutex_ids()(program)
                 except Exception as exc:
                     wrapper = error_class_of_spec_message(str(exc)) or CommonInner
                     raise wrapper(
                         str(exc),
-                        span=span_of_spec_message(str(exc)) or mutex_id_manager.diagnostic_span,
+                        span=span_of_spec_message(str(exc)) or program_span,
                     ) from None
             if observer is not None:
                 observer(program, parser)
