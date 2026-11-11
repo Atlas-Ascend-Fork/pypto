@@ -73,6 +73,8 @@ _read_installed_info() {
         [ -n "${_val}" ] && INSTALLED_ARG_INSTALL_FOR_ALL="${_val}"
         _val=$(grep -i "PyPTO_PyLocal=" "${ASCEND_INSTALL_INFO}" | cut -d"=" -f2-)
         [ -n "${_val}" ] && INSTALLED_ARG_PY_LOCAL="${_val}"
+        _val=$(grep -i "PyPTO_AICPU_Path=" "${ASCEND_INSTALL_INFO}" | cut -d"=" -f2-)
+        [ -n "${_val}" ] && INSTALLED_AICPU_PATH="${_val}"
     fi
     if [ -f "${INSTALLED_VERSION_FILE}" ]; then
         local _val
@@ -129,10 +131,11 @@ PKG_ARCH_NAME="${INSTALLED_PKG_ARCH_NAME:-${PKG_ARCH_NAME:-}}"
 if [ -z "${PKG_WHL_INSTALL_PATH}" ]; then
     PKG_WHL_INSTALL_PATH="${PKG_INSTALL_PATH}/python/site-packages"
 fi
+INSTALLED_AICPU_PATH="${INSTALLED_AICPU_PATH:-}"
 
 export ARG_QUIET ARG_MODE ARG_INSTALL_PATH ARG_INSTALL_FOR_ALL ARG_PY_LOCAL ARG_DOCKER_ROOT
 export PKG_VERSION_DIR_NAME PKG_INSTALL_PATH PKG_SHARE_INFO_INSTALL_PATH
-export PKG_IS_MULTI_VERSION PKG_VERSION PKG_ARCH_NAME PKG_WHL_INSTALL_PATH
+export PKG_IS_MULTI_VERSION PKG_VERSION PKG_ARCH_NAME PKG_WHL_INSTALL_PATH INSTALLED_AICPU_PATH
 
 # 已安装包内文件
 SOURCE_INSTALL_COMMON_PARSER="${PKG_SHARE_INFO_INSTALL_PATH}/script/install_common_parser.sh"

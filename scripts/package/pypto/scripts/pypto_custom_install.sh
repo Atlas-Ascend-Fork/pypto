@@ -92,10 +92,17 @@ pypto_install_package() {
 
 pypto_install_aicpu_kernel() {
     local _whl="$1"
-    local _aicpu_root="${ASCEND_AICPU_PATH:-${PKG_INSTALL_PATH}}"
-    local _dst_dir="${_aicpu_root}/opp/built-in/op_impl/aicpu/kernel"
-    local _dst_file="${_dst_dir}/pypto_aicpu.tar.gz"
+    local _aicpu_root=""
+    local _dst_dir=""
+    local _dst_file=""
     local _tmp_file=""
+
+    _aicpu_root="${ASCEND_AICPU_PATH:-${PKG_INSTALL_PATH}}"
+    if [ -n "${ASCEND_AICPU_PATH}" ] && [ -n "${ARG_DOCKER_ROOT}" ]; then
+        _aicpu_root=$(concat_docker_install_path "${ARG_DOCKER_ROOT}" "${ASCEND_AICPU_PATH}")
+    fi
+    _dst_dir="${_aicpu_root}/opp/built-in/op_impl/aicpu/kernel"
+    _dst_file="${_dst_dir}/pypto_aicpu.tar.gz"
 
     if [ ! -f "${_whl}" ]; then
         comm_log "ERROR" "ERR_NO:0x0080;ERR_DES:install pypto_aicpu.tar.gz failed, whl ${_whl} is not exist."
@@ -156,6 +163,9 @@ PYEOF
         exit 1
     fi
     rm -f "${_tmp_file}"
+    if [ -n "${ASCEND_AICPU_PATH}" ]; then
+        _update_install_param "PyPTO_AICPU_Path" "${ASCEND_AICPU_PATH}" "${PKG_INSTALL_INFO_FILE}" || true
+    fi
     comm_log "INFO" "install signed pypto_aicpu.tar.gz to ${_dst_file} successfully!"
 }
 

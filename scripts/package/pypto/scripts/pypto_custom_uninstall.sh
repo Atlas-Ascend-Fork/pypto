@@ -106,6 +106,50 @@ whl_uninstall_package() {
     fi
 }
 
+pypto_uninstall_aicpu_kernel() {
+    local _aicpu_root=""
+    local _kernel_dir=""
+    local _dst_file=""
+    local _dir=""
+
+    if [ -n "${INSTALLED_AICPU_PATH}" ]; then
+        _aicpu_root="${INSTALLED_AICPU_PATH}"
+        if [ -n "${ARG_DOCKER_ROOT}" ]; then
+            _aicpu_root=$(concat_docker_install_path "${ARG_DOCKER_ROOT}" "${INSTALLED_AICPU_PATH}")
+        fi
+    else
+        _aicpu_root="${PKG_INSTALL_PATH}"
+    fi
+    if [ -z "${_aicpu_root}" ]; then
+        comm_log "WARNING" "skip remove pypto_aicpu.tar.gz, install path is unknown."
+        return 0
+    fi
+
+    _kernel_dir="${_aicpu_root}/opp/built-in/op_impl/aicpu/kernel"
+    _dst_file="${_kernel_dir}/pypto_aicpu.tar.gz"
+    if [ ! -f "${_dst_file}" ]; then
+        comm_log "INFO" "pypto_aicpu.tar.gz is not installed, skip remove."
+        return 0
+    fi
+
+    if ! rm -f "${_dst_file}"; then
+        comm_log "WARNING" "remove ${_dst_file} failed."
+        return 0
+    fi
+    comm_log "INFO" "remove pypto_aicpu.tar.gz: ${_dst_file}"
+
+    for _dir in \
+        "${_kernel_dir}" \
+        "${_aicpu_root}/opp/built-in/op_impl/aicpu" \
+        "${_aicpu_root}/opp/built-in/op_impl" \
+        "${_aicpu_root}/opp/built-in" \
+        "${_aicpu_root}/opp"; do
+        rmdir "${_dir}" 2> /dev/null || true
+    done
+
+    return 0
+}
+
 ########################################################################################################################
 # 主流程
 ########################################################################################################################
@@ -119,13 +163,13 @@ custom_uninstall() {
     fi
 
     chmod +w -R "${PKG_WHL_INSTALL_PATH}/pypto" 2> /dev/null
-    chmod +w -R "${PKG_WHL_INSTALL_PATH}/pypto-*.dist-info" 2> /dev/null
+    chmod +w -R "${PKG_WHL_INSTALL_PATH}/pypto-"*.dist-info 2> /dev/null
 
     comm_log "INFO" "uninstall PyPTO tool begin..."
     whl_uninstall_package "${PYPTO_MODULE_NAME}" "${PKG_WHL_INSTALL_PATH}"
 
     rm -fr "${PKG_WHL_INSTALL_PATH}/pypto" 2> /dev/null
-    rm -fr "${PKG_WHL_INSTALL_PATH}/pypto-*.dist-info" 2> /dev/null
+    rm -fr "${PKG_WHL_INSTALL_PATH}/pypto-"*.dist-info 2> /dev/null
 
     comm_log "INFO" "PyPTO tool uninstalled successfully!"
 
@@ -134,6 +178,8 @@ custom_uninstall() {
         chmod u+w "${wheel_dir}" 2> /dev/null
         rm -f "${wheel_dir}/pypto-"*.whl 2> /dev/null
     fi
+
+    pypto_uninstall_aicpu_kernel
 
     _remove_dir_recursive "${PKG_INSTALL_PATH}" "${PKG_WHL_INSTALL_PATH}"
 
