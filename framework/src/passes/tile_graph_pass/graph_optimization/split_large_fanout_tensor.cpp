@@ -118,11 +118,6 @@ Status SplitLargeFanoutTensor::RunOnFunction(Function& function)
         return status;
     }
     RemoveObsoleteTokensAfterSplit(function);
-    // Local rewrites may infer shapes again. Restore the original large tensor's clipped valid shape
-    // before inferring the remaining added ops so their consumers see the compact expression.
-    for (const auto& [tensor, validShape] : splitValidShapes_) {
-        tensor->UpdateDynValidShape(validShape);
-    }
     if (!addedOps_.empty()) {
         if (InferShapeUtils::InferShape(function, addedOps_) != SUCCESS) {
             APASS_LOG_ERROR_F(Elements::Function, "InferShape for added ops failed.");
@@ -136,7 +131,6 @@ Status SplitLargeFanoutTensor::RunOnFunction(Function& function)
 void SplitLargeFanoutTensor::Init()
 {
     addedOps_.clear();
-    splitValidShapes_.clear();
     toInfoMap_.clear();
     fromInfoMap_.clear();
     toInfoIndexMap_.clear();
@@ -145,17 +139,6 @@ void SplitLargeFanoutTensor::Init()
     toShapes_.clear();
     fromShapes_.clear();
     mixedConsumerTensors_.clear();
-}
-
-LogicalTensorPtr SplitLargeFanoutTensor::CreateSplitTensor(const LogicalTensorPtr& largeTensor, const Shape& shape,
-                                                           const Offset& offset)
-{
-    auto validShape = GetViewValidShape(largeTensor->GetDynValidShape(), offset, {}, shape);
-    auto tensor = irBuilder_.CreateTensorVar(largeTensor->Datatype(), shape, validShape, largeTensor->Format());
-    if (!validShape.empty()) {
-        splitValidShapes_.emplace(tensor, validShape);
-    }
-    return tensor;
 }
 
 // 求最大公约数
@@ -449,22 +432,17 @@ Operation* AddNewAssembleOp(Function& function, LogicalTensorPtr overlap, Logica
     for (size_t j = 0; j < newAssembleOffset.size(); j++) {
         newAssembleOffset[j] -= lcmTileOffset[j];
     }
-    std::vector<std::vector<SymbolicScalar>> outDynShape;
-    // Keep write-by-write inference for an empty parent or a missing split valid shape.
-    if (!largeTensor->GetDynValidShape().empty() && !newTensor->GetDynValidShape().empty()) {
-        outDynShape.push_back(newTensor->GetDynValidShape());
-    }
     if (config::EnableSlice()) {
         auto newAssembleOp = AssembleOp{
             oldAssembleOpAttr->GetFrom(), newAssembleOffset, overlap, newTensor, oldAssembleOp,
             oldAssembleOp->GetOpcode()};
-        auto& newOp = GraphUtils::AddAssembleOperation(function, newAssembleOp, outDynShape);
+        auto& newOp = GraphUtils::AddAssembleOperation(function, newAssembleOp);
         InheritTokenFromOldAssemble(function, *oldAssembleOp, newOp);
         return &newOp;
     }
     auto newAssembleOp = AssembleOp{
         overlap->GetMemoryTypeOriginal(), newAssembleOffset, overlap, newTensor, nullptr, Opcode::OP_ASSEMBLE};
-    auto& newOp = GraphUtils::AddAssembleOperation(function, newAssembleOp, outDynShape);
+    auto& newOp = GraphUtils::AddAssembleOperation(function, newAssembleOp);
     InheritTokenFromOldAssemble(function, *oldAssembleOp, newOp);
     return &newOp;
 }
@@ -502,7 +480,8 @@ void SplitLargeFanoutTensor::CreateOpFor1toM(Function& function, const LogicalTe
                                   viewOp->GetOpMagic());
                 continue;
             }
-            auto newTensor = CreateSplitTensor(largeTensor, lcmTileShape, lcmTileOffset);
+            auto newTensor = irBuilder_.CreateTensorVar(largeTensor->Datatype(), lcmTileShape,
+                                                        std::vector<SymbolicScalar>{}, largeTensor->Format());
             if (AddNewAssembleOp(function, overlap, largeTensor, lcmTileOffset, newTensor) == nullptr) {
                 continue;
             }
@@ -526,15 +505,13 @@ void SplitLargeFanoutTensor::CreateOpFor1toM(Function& function, const LogicalTe
         }
         return;
     }
-    auto newTensor = CreateSplitTensor(largeTensor, lcmTileShape, lcmTileOffset);
+    auto newTensor = irBuilder_.CreateTensorVar(largeTensor->Datatype(), lcmTileShape, std::vector<SymbolicScalar>{},
+                                                largeTensor->Format());
     auto assembleOp = AddNewAssembleOp(function, overlap, largeTensor, lcmTileOffset, newTensor);
     if (assembleOp == nullptr) {
         return;
     }
-    // Track the source of the shape: AddNewAssembleOp may already have inferred a fallback value.
-    if (splitValidShapes_.count(newTensor) == 0) {
-        addedOps_.push_back(assembleOp);
-    }
+    addedOps_.push_back(assembleOp);
     APASS_LOG_DEBUG_F(Elements::Operation,
                       "In one-to-multiple situation, create a %s[%d], input is a "
                       "overlap[%d], output is a newTensor[%d].",
@@ -649,16 +626,14 @@ void SplitLargeFanoutTensor::CreateOpForMtoM(Function& function, const LogicalTe
                                              const Shape& lcmTileShape, const Offset& lcmTileOffset,
                                              const LogicalTensors& overlaps, const LogicalTensors& dualOverlaps)
 {
-    auto newTensor = CreateSplitTensor(largeTensor, lcmTileShape, lcmTileOffset);
+    auto newTensor = irBuilder_.CreateTensorVar(largeTensor->Datatype(), lcmTileShape, std::vector<SymbolicScalar>{},
+                                                largeTensor->Format());
     for (const auto& overlap : overlaps) {
         auto assembleOp = AddNewAssembleOp(function, overlap, largeTensor, lcmTileOffset, newTensor);
         if (assembleOp == nullptr) {
             continue;
         }
-        // Only shapes derived from the large tensor skip inference; fallback writes can also set a shape.
-        if (splitValidShapes_.count(newTensor) == 0) {
-            addedOps_.push_back(assembleOp);
-        }
+        addedOps_.push_back(assembleOp);
         APASS_LOG_INFO_F(Elements::Operation,
                          "In multiple-to-multiple situation, create a %s[%d], "
                          "input is a overlap[%d], output is a newTensor[%d].",
@@ -787,11 +762,8 @@ void SplitLargeFanoutTensor::CreateOpForMoreSplit(Function& function, const Logi
                                                   const std::vector<Shape>& gcdTileOffsets, const Offset& viewOpOffset)
 {
     for (auto& gcdTileOffset : gcdTileOffsets) {
-        Shape gcdTileOffsetForLarge = gcdTileOffset;
-        for (size_t j = 0; j < gcdTileOffsetForLarge.size(); j++) {
-            gcdTileOffsetForLarge[j] += viewOpOffset[j];
-        }
-        auto newGcdTensor = CreateSplitTensor(largeTensor, gcdShape, gcdTileOffsetForLarge);
+        auto newGcdTensor = irBuilder_.CreateTensorVar(largeTensor->Datatype(), gcdShape, std::vector<SymbolicScalar>{},
+                                                       largeTensor->Format());
         auto& newAssembleOp = PassOperationUtils::AddOperation(
             function, Opcode::OP_ASSEMBLE, {newGcdTensor}, {dualOverlap},
             [&largeTensor, &gcdTileOffset](Operation& op) {
@@ -805,6 +777,10 @@ void SplitLargeFanoutTensor::CreateOpForMoreSplit(Function& function, const Logi
         Shape newViewOffset = gcdTileOffset;
         for (size_t j = 0; j < newViewOffset.size(); j++) {
             newViewOffset[j] += viewOpOffset[j];
+        }
+        Shape gcdTileOffsetForLarge = gcdTileOffset;
+        for (size_t j = 0; j < gcdTileOffsetForLarge.size(); j++) {
+            gcdTileOffsetForLarge[j] += viewOpOffset[j];
         }
         FindOverlapAndCreateViewOp(function, overlaps, newGcdTensor, gcdTileOffsetForLarge, newViewOffset);
     }
