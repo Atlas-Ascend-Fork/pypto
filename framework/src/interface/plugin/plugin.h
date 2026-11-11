@@ -22,10 +22,11 @@
 #include <utility>
 #include <vector>
 
+#include "ir/program.h"
+
 namespace npu::tile_fwk {
 
 enum Status : uint32_t;
-class Function;
 
 enum class PluginKind : int {
     CODEGEN_SRC,
@@ -195,6 +196,9 @@ private:
 };
 
 using PluginCodegenSrc = Plugin<PluginKind::CODEGEN_SRC, int, const std::string&, std::string&>;
-using PluginPassPGOVF = SharedLibraryPlugin<PluginKind::PASS_PGO_VF, Status, Function&>;
+
+using PluginPassPGOVF = SharedLibraryPlugin<PluginKind::PASS_PGO_VF, Status, const pypto::ir::ProgramPtr&,
+                                            const pypto::ir::FunctionPtr&, pypto::ir::ProgramPtr&,
+                                            pypto::ir::FunctionPtr&>;
 
 } // namespace npu::tile_fwk

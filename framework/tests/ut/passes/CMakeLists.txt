@@ -18,6 +18,10 @@ PTO_Fwk_UTest_AddCaseLib(
         LINK_LIBRARIES
         LD_LIBRARIES_EXT pgo_vf
 )
+get_target_property(_pgo_vf_compile_definitions pgo_vf COMPILE_DEFINITIONS)
+if("PGO_VF_SKIP" IN_LIST _pgo_vf_compile_definitions)
+    set_source_files_properties(src/test_pgo_vf.cpp PROPERTIES COMPILE_DEFINITIONS PGO_VF_SKIP)
+endif()
 add_custom_command(
         TARGET ${_Target} PRE_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/config/pass/json

@@ -10,17 +10,21 @@
 
 /*!
  * \file pgo_vf_api.cpp
- * \brief Temporary identity implementation of the pgo_vf ABI.
+ * \brief Version and fallback implementations of the pgo_vf ABI.
  */
 
 #include "passes/block_graph_pass/pgo_vf/pgo_vf_api.h"
 
+#include "interface/utils/common.h"
+
 extern "C" const char* PLUGIN_GET_VERSION_NAME() { return npu::tile_fwk::kPgoVfVersion; }
 
 #ifdef PGO_VF_SKIP
-extern "C" PGO_VF_API npu::tile_fwk::Status PGOVFRunOnFunction(npu::tile_fwk::Function& function)
+extern "C" PGO_VF_API npu::tile_fwk::Status PGOVFRun(const pypto::ir::ProgramPtr&, const pypto::ir::FunctionPtr&,
+                                                     pypto::ir::ProgramPtr&, pypto::ir::FunctionPtr&)
 {
-    (void)function;
-    return static_cast<npu::tile_fwk::Status>(0);
+    CHECK(npu::tile_fwk::ExternalError::NOT_IMPLEMENTED_ERROR, false)
+        << "PGOVFRun is not implemented: the PGO VF implementation is unavailable.";
+    return npu::tile_fwk::FAILED;
 }
 #endif

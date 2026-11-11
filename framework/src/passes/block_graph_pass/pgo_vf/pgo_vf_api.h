@@ -19,9 +19,9 @@
 #include <cstdint>
 
 #include "interface/plugin/plugin_name.h"
+#include "ir/program.h"
 
 namespace npu::tile_fwk {
-class Function;
 enum Status : uint32_t;
 
 constexpr const char* kPgoVfVersion = "1.0.0";
@@ -38,9 +38,10 @@ extern "C" {
 // ABI version string; the host must verify it after dlopen.
 PGO_VF_API const char* PLUGIN_GET_VERSION_NAME();
 
-// Equivalent to Pass::RunOnFunction. Returns SUCCESS on success, FAILED on failure.
-// Exceptions are propagated to the caller.
-PGO_VF_API npu::tile_fwk::Status PGOVFRunOnFunction(npu::tile_fwk::Function& function);
+// Runs the function pipeline when function is non-null, otherwise runs the program pipeline.
+// Writes the corresponding output only on success; the other output is unchanged.
+PGO_VF_API npu::tile_fwk::Status PGOVFRun(const pypto::ir::ProgramPtr& program, const pypto::ir::FunctionPtr& function,
+                                          pypto::ir::ProgramPtr& outProgram, pypto::ir::FunctionPtr& outFunction);
 }
 
 #endif // PGO_VF_API_H

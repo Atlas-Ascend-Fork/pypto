@@ -1820,6 +1820,7 @@ def _parse_and_codegen_targets(
         the flag is carried on the returned CodegenResults."""
     programs = {}
     matched = {}
+    has_tile_function = {}
     requires_simt = False
     max_vec_tile_end = 0
     targets = (
@@ -1832,6 +1833,7 @@ def _parse_and_codegen_targets(
             target=target,
             bound_signature=bound_signature,
         )
+        has_tile_function[target] = kernel_def.has_tile_function
         requires_simt = requires_simt or kernel_def.requires_simt
         max_vec_tile_end = max(max_vec_tile_end, kernel_def.max_vec_tile_end)
     # Tensor directions are keyed by stable source parameter index; unspecified
@@ -1842,6 +1844,10 @@ def _parse_and_codegen_targets(
         matched = {target: True for target in targets}
 
     required_dynamic_ub_size = _infer_dynamic_ub_size(requires_simt, max_vec_tile_end)
+
+    for target in targets:
+        if matched.get(target) and programs.get(target) is not None and has_tile_function[target]:
+            programs[target], _ = ir.PGOVFRun(programs[target], None)
 
     if kernel_def._auto_mutex:
         from pypto.pypto_impl.ir import Pass as IRPass

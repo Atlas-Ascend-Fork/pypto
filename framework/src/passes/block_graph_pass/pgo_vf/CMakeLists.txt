@@ -44,12 +44,14 @@ target_include_directories(pgo_vf PRIVATE
     ${PTO_FWK_SRC_ROOT}/framework/src
     ${PTO_FWK_SRC_ROOT}/framework/src/interface
     ${PTO_FWK_SRC_ROOT}/framework/src/interface/machine/device)
-target_link_libraries(pgo_vf PRIVATE tile_fwk_interface tile_fwk_utils)
+target_link_libraries(pgo_vf PRIVATE tile_fwk_interface tile_fwk_utils tile_fwk_intf_pub)
 target_compile_options(pgo_vf PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
 target_link_options(pgo_vf PRIVATE
-    -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/pgo_vf.map
-    -Wl,--no-undefined
-    -Wl,-z,defs)
+    -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/pgo_vf.map)
+# Clang resolves ASan runtime symbols from the final executable, not the shared library.
+if(NOT (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND ENABLE_ASAN))
+    target_link_options(pgo_vf PRIVATE -Wl,--no-undefined -Wl,-z,defs)
+endif()
 set_target_properties(pgo_vf PROPERTIES
     OUTPUT_NAME pypto_pass_pgo_vf
     SOVERSION 1)

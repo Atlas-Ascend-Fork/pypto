@@ -19,6 +19,7 @@ __all__ = [
     "language",
     "InternalError",
     "DataType",
+    "PGOVFRun",
     "DT_BOOL",
     "DT_INT4",
     "DT_INT8",
@@ -46,6 +47,8 @@ __all__ = [
 from ._bootstrap import DataType, InternalError, codegen # noqa: I001
 from . import ir as ir
 from . import language as language
+
+PGOVFRun = ir.PGOVFRun
 
 DT_BF16 = DataType.BF16
 DT_BOOL = DataType.BOOL

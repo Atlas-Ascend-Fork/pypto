@@ -14,6 +14,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <dlfcn.h>
 #include <string>
 
 #include "tilefwk/function.h"
@@ -21,7 +22,9 @@
 #include "tilefwk/tilefwk.h"
 
 #include "interface/plugin/plugin.h"
+#include "interface/plugin/plugin_name.h"
 #include "interface/utils/string_utils.h"
+#include "utils/file_utils.h"
 
 using namespace npu::tile_fwk;
 
@@ -57,4 +60,29 @@ TEST(PluginTest, Basic)
     std::string code2 = "2";
     manager.RunPlugin<PluginCodegenSrc>("1", code2);
     EXPECT_EQ("2", code2);
+}
+
+TEST(PluginTest, SharedLibraryRejectsMissingLibrary)
+{
+    SharedLibrary library("pypto_plugin_ut_missing", "1.0.0");
+
+    EXPECT_FALSE(library.Load());
+    EXPECT_FALSE(library.Valid());
+    EXPECT_EQ(library.GetSymbolAddress(PLUGIN_STR(PLUGIN_GET_VERSION_NAME)), nullptr);
+    library.Unload();
+    EXPECT_FALSE(library.Valid());
+}
+
+TEST(PluginTest, SharedLibraryRejectsMissingVersion)
+{
+    const std::string path = GetPyptoLibPath() + "/libtile_fwk_utils.so";
+    void* handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    ASSERT_NE(handle, nullptr);
+    EXPECT_EQ(dlsym(handle, PLUGIN_STR(PLUGIN_GET_VERSION_NAME)), nullptr);
+    EXPECT_EQ(dlclose(handle), 0);
+
+    SharedLibrary library("tile_fwk_utils", "1.0.0");
+    EXPECT_FALSE(library.Load());
+    EXPECT_FALSE(library.Valid());
+    EXPECT_EQ(library.GetSymbolAddress(PLUGIN_STR(PLUGIN_GET_VERSION_NAME)), nullptr);
 }

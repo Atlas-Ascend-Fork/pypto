@@ -20,6 +20,7 @@
 
 #include "interface/plugin/plugin_name.h"
 #include "tilefwk/tilefwk_log.h"
+#include "utils/file_utils.h"
 
 namespace npu::tile_fwk {
 
@@ -39,7 +40,7 @@ bool SharedLibrary::Load()
         return true;
     }
 
-    std::string library = "lib" + libName_ + ".so";
+    const std::string library = GetPyptoLibPath() + "/lib" + libName_ + ".so";
     void* handle = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (handle == nullptr) {
         const char* error = dlerror();

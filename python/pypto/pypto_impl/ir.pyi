@@ -11,6 +11,13 @@ from typing import Any, Dict, Final, List, Optional, Sequence, Tuple, Union, ove
 
 from .. import SymbolicScalar, pypto_impl
 
+def PGOVFRun(  # noqa: N802
+    program: Optional[Program], function: Optional[Function]
+) -> Tuple[Optional[Program], Optional[Function]]:
+    """Run on function, or program when function is None; return (out_program, out_function)."""
+    ...
+
+
 class _AutoMutexIdManager:
     """Collect TileGroups, allocate automatic mutex IDs, and resolve placeholders."""
 

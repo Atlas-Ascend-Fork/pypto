@@ -89,6 +89,7 @@ def test_cube_and_vector_facts_are_aggregated_for_one_kernel(monkeypatch):
     class FakeKernelDef:
         _auto_mutex = False
         func_type = ir.FunctionType.Opaque
+        has_tile_function = False
 
         def __init__(self):
             self.last_param_directions = {}
@@ -102,7 +103,7 @@ def test_cube_and_vector_facts_are_aggregated_for_one_kernel(monkeypatch):
             else:
                 self.max_vec_tile_end = 8 * 1024
                 self.requires_simt = True
-            return SimpleNamespace(target=target), True
+            return ir.Program([], str(target), ir.Span.unknown()), True
 
     recorded_dynamic_ub = {}
 

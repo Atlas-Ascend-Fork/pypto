@@ -19,6 +19,8 @@
 
 #include "bindings/ir/bindings.h"
 #include "core/error.h"
+#include "interface/plugin/plugin.h"
+#include "interface/utils/common.h"
 #include "ir/transforms/auto_mutex_id_manager.h"
 #include "ir/transforms/ir_property.h"
 #include "ir/transforms/pass_context.h"
@@ -26,12 +28,45 @@
 #include "ir/transforms/sanitizer_layout.h"
 #include "ir/verifier/verification_error.h"
 #include "ir/verifier/verifier.h"
+#include "passes/block_graph_pass/pgo_vf/pgo_vf_api.h"
 
 namespace pypto {
 namespace ir {
 
+namespace {
+const std::shared_ptr<npu::tile_fwk::PluginPassPGOVF>& GetPGOVFPlugin()
+{
+    static const auto plugin = [&] {
+        using namespace npu::tile_fwk;
+        auto& manager = PluginManager::GetInstance();
+        auto plugins = manager.GetPlugin<PluginPassPGOVF>();
+        if (plugins.empty()) {
+            INTERNAL_CHECK(manager.AddSharedLibraryPlugin<PluginPassPGOVF>("pgo_vf", "pypto_pass_pgo_vf", kPgoVfVersion,
+                                                                           "PGOVFRun"))
+                << "Failed to load the PGO VF plugin";
+            plugins = manager.GetPlugin<PluginPassPGOVF>();
+        }
+        return plugins.front();
+    }();
+    return plugin;
+}
+} // namespace
+
 void BindPasses(py::module_& m)
 {
+    m.def(
+        "PGOVFRun",
+        [](const ProgramPtr& program, const FunctionPtr& function) {
+            ProgramPtr outProgram;
+            FunctionPtr outFunction;
+            const auto status = GetPGOVFPlugin()->Call(program, function, outProgram, outFunction);
+            INTERNAL_CHECK(status == npu::tile_fwk::SUCCESS) << "PGO VF pass failed with status " << status;
+            return py::make_tuple(outProgram, outFunction);
+        },
+        py::arg("program"), py::arg("function"),
+        "Run the PGO VF plugin on function, or program when function is None. "
+        "Return (out_program, out_function), with the unused output set to None.");
+
     py::class_<AutoMutexIdManager>(m, "_AutoMutexIdManager", "Internal whole-program automatic mutex-ID manager")
         .def(py::init<>())
         .def("collect_group", &AutoMutexIdManager::CollectGroup, py::arg("tiles"), py::arg("mutex_ids"),

@@ -141,6 +141,7 @@ if (ENABLE_FEATURE_PYTHON_FRONT_END)
             TARGETS     ${InstallTargets}
     )
     install(TARGETS pypto_impl LIBRARY DESTINATION "${PyPTO_WhlName}" COMPONENT pypto)
+    install(TARGETS pgo_vf LIBRARY DESTINATION "${PyPTO_WhlName}/lib" COMPONENT pypto)
 
     # 安装 配置文件
     install(FILES
@@ -509,6 +510,17 @@ if (ENABLE_FEATURE_PYTHON_FRONT_END)
         install(FILES
                     framework/src/passes/pass_utils/subfunc_utils.h
                 DESTINATION ${PyPTO_WhlName}/lib/framework/src/passes/pass_utils
+                COMPONENT pypto
+        )
+        install(FILES
+                    framework/src/interface/plugin/plugin.h
+                    framework/src/interface/plugin/plugin_name.h
+                DESTINATION ${PyPTO_WhlName}/lib/framework/src/interface/plugin
+                COMPONENT pypto
+        )
+        install(FILES
+                    framework/src/passes/block_graph_pass/pgo_vf/pgo_vf_api.h
+                DESTINATION ${PyPTO_WhlName}/lib/framework/src/passes/block_graph_pass/pgo_vf
                 COMPONENT pypto
         )
         install(FILES

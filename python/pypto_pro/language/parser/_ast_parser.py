@@ -220,6 +220,7 @@ class ASTParser(
             raise CommonInner("auto_mutex=True requires a mutex ID manager")
         self._target = target
         self.matched_target = False
+        self.has_tile_function: bool = False
         # Launch facts collected while this target Program is parsed. Tile
         # placement is compile-time constant, so keeping the Vec high-water
         # mark here avoids rediscovering it by walking the completed IR.

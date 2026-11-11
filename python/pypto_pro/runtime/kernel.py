@@ -225,6 +225,7 @@ class KernelDef:
         self._last_param_directions: dict[int, TensorDirection] = {}
         self._max_vec_tile_end = 0
         self._requires_simt = False
+        self._has_tile_function = False
 
     @property
     def func_def(self) -> ast.FunctionDef:
@@ -252,6 +253,11 @@ class KernelDef:
     def requires_simt(self) -> bool:
         """Whether parse_target_program emitted a SIMT launch."""
         return self._requires_simt
+
+    @property
+    def has_tile_function(self) -> bool:
+        """Whether the most recently parsed target contains a tile function."""
+        return self._has_tile_function
 
     @property
     def func_type(self) -> ir.FunctionType:
@@ -362,6 +368,7 @@ class KernelDef:
             self._last_param_directions = dict(parser.type_resolver.param_directions)
             self._max_vec_tile_end = parser.max_vec_tile_end
             self._requires_simt = parser.requires_simt
+            self._has_tile_function = parser.has_tile_function
             if mutex_id_manager is not None:
                 try:
                     program = mutex_id_manager.assign_mutex_ids(program)

@@ -4,7 +4,7 @@
 {
   global:
     GetVersion;
-    PGOVFRunOnFunction;
+    PGOVFRun;
   local:
     *;
 };
