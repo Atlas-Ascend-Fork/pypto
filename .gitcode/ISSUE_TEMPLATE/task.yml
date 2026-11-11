@@ -2,6 +2,7 @@ name: Task|任务跟踪
 description: 用于跟踪项目计划性工作（开发、重构、测试、环境搭建等），请使用此模板。
 title: "[Task|任务跟踪]: "
 labels: ["task"]
+type: "任务"
 body:
   - type: markdown
     attributes:
