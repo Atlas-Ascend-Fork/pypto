@@ -118,6 +118,8 @@ private:
     void ApplyMergeToGraph(const std::vector<int>& actualGroup);
     void MergeNodesInCachedGraph(int root, const std::set<int>& del);
     void UpdateOutput();
+    bool CheckTwoStageNmBenefit(const std::vector<int>& actualGroup,
+                                const std::set<std::pair<int, int>>& directPathRootPairs, std::set<int>& twoStageRoots);
     bool CheckLatencyConstraint(const std::vector<int>& actualGroup);
     bool CheckLoopPathConsistency(const std::vector<int>& actualGroup);
     bool CheckMergeBenefitByStructuralPattern(const std::vector<int>& actualGroup, bool allowSinkMerge);

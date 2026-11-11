@@ -1117,6 +1117,10 @@ bool MixGraphMerger::CheckNoExternalUseOfMergedInnerTensor(const std::vector<int
     return true;
 }
 
+// 多分支门槛: 2+ 个 root/branch 视为多分支(fan-in/fan-out)。tensor 层 N:M 判定、
+// sink 入边门槛与两阶段 N:M 的双侧最少 root 数共用。
+static constexpr int kMultiBranchThreshold = 2;
+
 // hinge 护栏分支数门槛: 2 路扇出为最常见良性拓扑(gqa cube->2 vec / mha 输出级 2:2 /
 // softmax 共享读端双写链), 已由 sink 定量门控与同通路门控把关; >=3 路互不可达扇出
 // 才构成 Unroll 型(mla_prolog_quant 8~16 路)并行度损失的主体。
@@ -1164,6 +1168,90 @@ static bool IsCrossCoreEndpointPair(EndpointCoreKind prodKind, EndpointCoreKind 
            (prodKind == EndpointCoreKind::AIV && consKind == EndpointCoreKind::AIC);
 }
 
+// 两阶段 N:M 收益评估: 组内须为严格两层完全二部结构(生产/消费侧各>=2 root, 无中间/孤立
+// root, 每个 prod->cons 均有调度依赖且带跨核直连证据 directPathRootPairs), 双侧并行损失
+// sum-max 均不超过 kSerialLossRatio x 对侧 max 时放行。twoStageRoots 输出结构成员全集,
+// 供 hinge 护栏按条目豁免(仅跳过端点与分支全落在结构内的条目)。
+bool MixGraphMerger::CheckTwoStageNmBenefit(const std::vector<int>& actualGroup,
+                                            const std::set<std::pair<int, int>>& directPathRootPairs,
+                                            std::set<int>& twoStageRoots)
+{
+    const std::set<int> group(actualGroup.begin(), actualGroup.end());
+    std::set<int> producers;
+    std::set<int> consumers;
+    for (int root : actualGroup) {
+        bool hasPred = false;
+        bool hasSucc = false;
+        for (int pred : mCachedInGraph[root]) {
+            hasPred = hasPred || (pred != root && group.count(pred) > 0);
+        }
+        for (int succ : mCachedOutGraph[root]) {
+            hasSucc = hasSucc || (succ != root && group.count(succ) > 0);
+        }
+        if (hasPred == hasSucc) {
+            APASS_LOG_DEBUG_F(Elements::Operation, "N:M staged unknown: root %d is intermediate or isolated.", root);
+            return false;
+        }
+        (hasSucc ? producers : consumers).insert(root);
+    }
+    if (producers.size() < kMultiBranchThreshold || consumers.size() < kMultiBranchThreshold) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "N:M staged unknown: one side below multi-branch threshold (prod=%zu, cons=%zu).",
+                          producers.size(), consumers.size());
+        return false;
+    }
+    for (int prod : producers) {
+        for (int cons : consumers) {
+            if (mCachedOutGraph[prod].count(cons) == 0) {
+                APASS_LOG_DEBUG_F(Elements::Operation, "N:M staged unknown: missing scheduler dependency %d -> %d.",
+                                  prod, cons);
+                return false;
+            }
+            if (directPathRootPairs.count({prod, cons}) == 0) {
+                APASS_LOG_DEBUG_F(Elements::Operation,
+                                  "N:M staged unknown: direct path missing on dependency %d -> %d.", prod, cons);
+                return false;
+            }
+        }
+    }
+    std::unordered_map<int, int64_t> latency;
+    for (int i = 0; i < mInput.numSubgraph; ++i) {
+        const int root = FindParent(i);
+        if (group.count(root) > 0) {
+            latency[root] += static_cast<int64_t>(mInput.subgraphAICLatency[i]) + mInput.subgraphAIVLatency[i];
+        }
+    }
+    int64_t prodSum = 0;
+    int64_t prodMax = 0;
+    int64_t consSum = 0;
+    int64_t consMax = 0;
+    for (int root : producers) {
+        prodSum += latency[root];
+        prodMax = std::max(prodMax, latency[root]);
+    }
+    for (int root : consumers) {
+        consSum += latency[root];
+        consMax = std::max(consMax, latency[root]);
+    }
+    // Use the opposite stage's maximum, not its sum: adding more parallel
+    // roots must not inflate the hinge budget. Both existing ratio gates must pass.
+    const int64_t prodLoss = prodSum - prodMax;
+    const int64_t consLoss = consSum - consMax;
+    const bool allowed = prodMax > 0 && consMax > 0 && prodLoss <= kSerialLossRatio * consMax &&
+                         consLoss <= kSerialLossRatio * prodMax;
+    APASS_LOG_DEBUG_F(Elements::Operation,
+                      "N:M staged: producers=%zu consumers=%zu prodLoss=%ld consLoss=%ld "
+                      "prodBudget=%ld consBudget=%ld decision=%s.",
+                      producers.size(), consumers.size(), prodLoss, consLoss, kSerialLossRatio * consMax,
+                      kSerialLossRatio * prodMax, allowed ? "allow" : "reject");
+    if (!allowed) {
+        return false;
+    }
+    twoStageRoots.insert(producers.begin(), producers.end());
+    twoStageRoots.insert(consumers.begin(), consumers.end());
+    return true;
+}
+
 bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>& actualGroup, bool allowSinkMerge)
 {
     // 两层结构 benefit 判定(不依赖 latency):
@@ -1175,7 +1263,6 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
     // sink 保护: actualGroup 内不产出 boundary tensor 的 root,
     //            统计其当前所有 producer root, >1 且串行损失(Σbranch − max)超过
     //            kSerialLossRatio × 合入root 才拒绝; 其余(损失可被 root 消化/全部归一 root)放行。
-    const int multiBranchThreshold = 2; // 2+ 个 root/branch 视为多分支(fan-in/fan-out)
     std::unordered_set<int> mergedRoot(actualGroup.begin(), actualGroup.end());
     ++mVisitStamp;
     std::set<int> allProdRoots;
@@ -1184,6 +1271,7 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
     bool hasSimpleTensorEdge = false;
     bool hasDirectPathEdge = false;
     bool hasCrossCoreEdge = false;
+    std::set<std::pair<int, int>> directPathRootPairs; // 跨核直连 root 对: N:M 放行证据须来自结构自身的边
     for (int root : actualGroup) {
         for (int tensorId : mRootToBoundaryTensorIds[root]) {
             if (mTensorVisitStamp[tensorId] == mVisitStamp) {
@@ -1232,6 +1320,9 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                     hasCrossCoreEdge = true;
                     const bool pairDirectPath = prod.directPath || cons.directPath;
                     hasDirectPathEdge = hasDirectPathEdge || pairDirectPath;
+                    if (pairDirectPath) {
+                        directPathRootPairs.insert({prodRoot, consRoot});
+                    }
                     APASS_LOG_DEBUG_F(Elements::Operation,
                                       "Cross-core endpoint pair on boundary tensor %d: prod sg%d -> cons sg%d, "
                                       "direct path %s.",
@@ -1239,11 +1330,11 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                                       pairDirectPath ? "hit" : "miss");
                 }
             }
-            // N:M tensor: 双侧均多 root
-            if (prodRoots.size() >= multiBranchThreshold && consRoots.size() >= multiBranchThreshold) {
-                APASS_LOG_DEBUG_F(Elements::Operation, "Structural merge skipped: N:M tensor %d (prod=%zu, cons=%zu).",
+            // Evaluate complete N:M candidates after collecting their scheduler dependencies.
+            if (prodRoots.size() >= kMultiBranchThreshold && consRoots.size() >= kMultiBranchThreshold) {
+                APASS_LOG_DEBUG_F(Elements::Operation,
+                                  "N:M tensor %d (prod=%zu, cons=%zu): defer to candidate stage evaluation.",
                                   info.tensorMagic, prodRoots.size(), consRoots.size());
-                return false;
             }
             // 建 root 级方向边 (prodRoot -> consRoot), 跳过 self-loop
             for (int prodRoot : prodRoots) {
@@ -1267,7 +1358,7 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
     // 推迟门控: 常规合并轮凡涉及 sink 的候选组一律推迟, 防止 sink 提前合入后逐轮吞并大量小子图;
     // 仅常规合并收敛后的 sink 尝试轮(allowSinkMerge=true)才执行上述检查并尝试合并。
     bool skipSinkProtection = false;
-    if (mGlobalOutputSinks.size() >= multiBranchThreshold) {
+    if (mGlobalOutputSinks.size() >= kMultiBranchThreshold) {
         skipSinkProtection = true;
         for (int sinkSg : mGlobalOutputSinks) {
             if (mergedRoot.count(FindParent(sinkSg)) == 0) {
@@ -1305,7 +1396,7 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                 }
             }
 
-            if (incomingRoots.size() < multiBranchThreshold) {
+            if (incomingRoots.size() < kMultiBranchThreshold) {
                 continue;
             }
             if (!allowSinkMerge) {
@@ -1325,24 +1416,28 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
             }
         }
     }
-    // N:M 保护: 整体 root 图同时存在 N:1 和 1:N 则拒绝
+    // N:M requires a special direct path and bounded loss on both dependency stages.
     bool hasNto1 = false;
     bool has1toN = false;
     for (const auto& pair : rootPreds) {
-        if (pair.second.size() >= multiBranchThreshold) {
+        if (pair.second.size() >= kMultiBranchThreshold) {
             hasNto1 = true;
             break;
         }
     }
     for (const auto& pair : rootSuccs) {
-        if (pair.second.size() >= multiBranchThreshold) {
+        if (pair.second.size() >= kMultiBranchThreshold) {
             has1toN = true;
             break;
         }
     }
+    std::set<int> twoStageRoots;
     if (hasNto1 && has1toN) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "Structural merge skipped: N:M root pattern.");
-        return false;
+        // 直连证据按 root 对在 CheckTwoStageNmBenefit 内逐边校验(每个 prod->cons 依赖均须
+        // 带直连), 不再用整候选聚合的 hasDirectPathEdge 作为放行依据。
+        if (!CheckTwoStageNmBenefit(actualGroup, directPathRootPairs, twoStageRoots)) {
+            return false;
+        }
     }
     // 并行分支串行化防护(实测依据: mla_prolog_quant automix, Unroll 展开后的扇出/扇入组把
     // 8~16 路可跨核并行的分支串进单 kernel, e2e +6.6%): 同一 hinge 端点(组内或组外的生产者/
@@ -1376,6 +1471,12 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
         }
     }
     for (const auto& kv : hingeToBranchRoots) {
+        // 仅当 hinge 端点及其全部分支都属于两阶段结构时, 该条目的双侧损失检查已由
+        // CheckTwoStageNmBenefit 覆盖; 组外 hinge 与混入结构外分支的条目仍走原有护栏。
+        if (hasNto1 && has1toN && twoStageRoots.count(kv.first) > 0 &&
+            std::includes(twoStageRoots.begin(), twoStageRoots.end(), kv.second.begin(), kv.second.end())) {
+            continue;
+        }
         if (kv.second.size() < kHingeBranchThreshold) {
             continue;
         }
@@ -1461,7 +1562,7 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
 // 串行损失达到 root 总 latency 的 kSerialLossRatio 倍时, 为省边界通信付出的代价
 // 远超 root 可消化的规模, 拒绝; 损失可被 root 规模消化时放行。
 // 相对判据随算子规模自适应, 无需绝对阈值标定。
-// 调用方需保证入边数 ≥ 2(multiBranchThreshold 门控)。
+// 调用方需保证入边数 ≥ 2(kMultiBranchThreshold 门控)。
 bool MixGraphMerger::IsSinkMergeUnbeneficial(int root, const std::set<int>& incomingRoots)
 {
     int64_t rootLatency = 0;

@@ -1859,6 +1859,137 @@ TEST_F(ReduceCopyTest, RunOnFunction_DisabledKeepsSubgraphs)
     EXPECT_EQ(function->GetTotalSubGraphCount(), 6);
 }
 
+// 两阶段 N:M 放行: {0,1}->{2,3} 完全二部 + 每对跨核直连 + 双侧损失在预算内, 合并到 2 root
+TEST_F(ReduceCopyTest, MixGraphMerger_TwoStageNmAllowCompleteBipartiteDirectPath)
+{
+    MergeInput input = BuildSimpleMergeInput(5, {{2, 3}, {2, 3}, {4}, {4}, {}}, {{0, 1, 2, 3}});
+    input.isEnforceMergeGroup = {false};
+    input.boundaryTensors = {{200,
+                              {0, 1},
+                              {2, 3},
+                              true,
+                              {},
+                              {},
+                              {{0, EndpointCoreKind::AIC, true}, {1, EndpointCoreKind::AIC, true}},
+                              {{2, EndpointCoreKind::AIV, true}, {3, EndpointCoreKind::AIV, true}}},
+                             {201, {2, 3}, {4}, true, {}, {}}};
+    input.subgraphToBoundaryTensorIds = {{0}, {0}, {0, 1}, {0, 1}, {1}};
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+    EXPECT_EQ(output.numSubgraphUpdated, 2);
+}
+
+// 缺失调度依赖: tensor 声称 1->3 有数据流但调度图无边(非完全二部), 拒绝合并
+TEST_F(ReduceCopyTest, MixGraphMerger_TwoStageNmRejectMissingDependency)
+{
+    MergeInput input = BuildSimpleMergeInput(5, {{2, 3}, {2}, {4}, {4}, {}}, {{0, 1, 2, 3}});
+    input.isEnforceMergeGroup = {false};
+    input.boundaryTensors = {{200,
+                              {0, 1},
+                              {2, 3},
+                              true,
+                              {},
+                              {},
+                              {{0, EndpointCoreKind::AIC, true}, {1, EndpointCoreKind::AIC, true}},
+                              {{2, EndpointCoreKind::AIV, true}, {3, EndpointCoreKind::AIV, true}}},
+                             {201, {2, 3}, {4}, true, {}, {}}};
+    input.subgraphToBoundaryTensorIds = {{0}, {0}, {0, 1}, {0, 1}, {1}};
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+    EXPECT_EQ(output.numSubgraphUpdated, 5);
+}
+
+// 单侧损失超预算: 生产侧重(各5000)消费侧轻(各10), prodLoss=5000 > 8*consMax=80, 拒绝
+TEST_F(ReduceCopyTest, MixGraphMerger_TwoStageNmRejectUnbalancedLoss)
+{
+    MergeInput input = BuildSimpleMergeInput(5, {{2, 3}, {2, 3}, {4}, {4}, {}}, {{0, 1, 2, 3}});
+    input.isEnforceMergeGroup = {false};
+    input.boundaryTensors = {{200,
+                              {0, 1},
+                              {2, 3},
+                              true,
+                              {},
+                              {},
+                              {{0, EndpointCoreKind::AIC, true}, {1, EndpointCoreKind::AIC, true}},
+                              {{2, EndpointCoreKind::AIV, true}, {3, EndpointCoreKind::AIV, true}}},
+                             {201, {2, 3}, {4}, true, {}, {}}};
+    input.subgraphToBoundaryTensorIds = {{0}, {0}, {0, 1}, {0, 1}, {1}};
+    input.subgraphAICLatency = {5000, 5000, 10, 10, 10};
+    input.subgraphAIVLatency = {0, 0, 0, 0, 0};
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+    EXPECT_EQ(output.numSubgraphUpdated, 5);
+}
+
+// 部分直连: 仅 (0,2)(0,3)(1,2) 对有直连资格, (1,3) 缺失即拒绝(逐对校验, 非整候选聚合)
+TEST_F(ReduceCopyTest, MixGraphMerger_TwoStageNmRejectPartialDirectPath)
+{
+    MergeInput input = BuildSimpleMergeInput(5, {{2, 3}, {2, 3}, {4}, {4}, {}}, {{0, 1, 2, 3}});
+    input.isEnforceMergeGroup = {false};
+    input.boundaryTensors = {{200,
+                              {0, 1},
+                              {2, 3},
+                              true,
+                              {},
+                              {},
+                              {{0, EndpointCoreKind::AIC, true}, {1, EndpointCoreKind::AIC, false}},
+                              {{2, EndpointCoreKind::AIV, true}, {3, EndpointCoreKind::AIV, false}}},
+                             {201, {2, 3}, {4}, true, {}, {}}};
+    input.subgraphToBoundaryTensorIds = {{0}, {0}, {0, 1}, {0, 1}, {1}};
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+    EXPECT_EQ(output.numSubgraphUpdated, 5);
+}
+
+// 结构内 hinge 条目豁免: 3:2 完全二部中消费端 3(latency=1)挂 3 个互不可达生产 root,
+// 原护栏标尺(8x1)会拒, 但该条目端点与分支全落在两阶段结构内, 由双侧损失检查覆盖, 允许合并
+TEST_F(ReduceCopyTest, MixGraphMerger_TwoStageNmExemptsIntraStructureHinge)
+{
+    MergeInput input = BuildSimpleMergeInput(6, {{3, 4}, {3, 4}, {3, 4}, {5}, {5}, {}}, {{0, 1, 2, 3, 4}});
+    input.isEnforceMergeGroup = {false};
+    input.boundaryTensors = {
+        {300,
+         {0, 1, 2},
+         {3, 4},
+         true,
+         {},
+         {},
+         {{0, EndpointCoreKind::AIC, true}, {1, EndpointCoreKind::AIC, true}, {2, EndpointCoreKind::AIC, true}},
+         {{3, EndpointCoreKind::AIV, true}, {4, EndpointCoreKind::AIV, true}}},
+        {301, {3, 4}, {5}, true, {}, {}}};
+    input.subgraphToBoundaryTensorIds = {{0}, {0}, {0}, {0, 1}, {0, 1}, {1}};
+    input.subgraphAICLatency = {50, 50, 50, 1, 50, 50};
+    input.subgraphAIVLatency = {50, 50, 50, 0, 50, 50};
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+    EXPECT_EQ(output.numSubgraphUpdated, 2);
+}
+
+// 组外 hinge 护栏恢复: N:M 本身达标, 但组外轻量 hinge 5 扇出 3 个互不可达生产 root
+// (串行损失 200 > 8*2=16), 结构外条目不被豁免, 仍拒绝
+TEST_F(ReduceCopyTest, MixGraphMerger_TwoStageNmHingeStillGuardsForeignFanout)
+{
+    MergeInput input = BuildSimpleMergeInput(7, {{3, 4}, {3, 4}, {3, 4}, {6}, {6}, {0, 1, 2}, {}}, {{0, 1, 2, 3, 4}});
+    input.isEnforceMergeGroup = {false};
+    input.boundaryTensors = {
+        {300,
+         {0, 1, 2},
+         {3, 4},
+         true,
+         {},
+         {},
+         {{0, EndpointCoreKind::AIC, true}, {1, EndpointCoreKind::AIC, true}, {2, EndpointCoreKind::AIC, true}},
+         {{3, EndpointCoreKind::AIV, true}, {4, EndpointCoreKind::AIV, true}}},
+        {301, {5}, {0, 1, 2}, true, {}, {}},
+        {302, {3, 4}, {6}, true, {}, {}}};
+    input.subgraphToBoundaryTensorIds = {{0, 1}, {0, 1}, {0, 1}, {0, 2}, {0, 2}, {1}, {2}};
+    input.subgraphAICLatency = {50, 50, 50, 50, 50, 1, 50};
+    input.subgraphAIVLatency = {50, 50, 50, 50, 50, 1, 50};
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+    EXPECT_EQ(output.numSubgraphUpdated, 7);
+}
+
 // 对照: 同上拓扑无 slotScope 时门控不启用, 全部合并到 1 子图 (mla / gqa-PATH0 场景)
 TEST_F(ReduceCopyTest, RunOnFunction_NoSlotScopeMergesAll)
 {
