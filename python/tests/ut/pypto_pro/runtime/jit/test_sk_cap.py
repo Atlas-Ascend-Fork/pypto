@@ -62,7 +62,10 @@ def test_none_means_no_superkernel_entry():
 
 
 def test_members_match_the_official_sk_bind_bits():
-    assert {member.name: int(member) for member in pl.SkCap} == {
+    members = {member.name: int(member) for member in pl.SkCap}
+    members["CAP_0_SK_ONLY"] = int(pl.SkCap.CAP_0_SK_ONLY)
+    assert members == {
+        "CAP_0_SK_ONLY": 0,
         "CAP_1_EARLY_START_WAIT": 1,
         "CAP_2_EARLY_START_SET": 2,
         "CAP_4_DISABLE_DCCI_ALL": 4,
@@ -74,6 +77,7 @@ def test_members_match_the_official_sk_bind_bits():
 @pytest.mark.parametrize(
     "sk_cap",
     [
+        pl.SkCap.CAP_0_SK_ONLY,
         pl.SkCap.CAP_1_EARLY_START_WAIT,
         pl.SkCap.CAP_2_EARLY_START_SET,
         pl.SkCap.CAP_1_EARLY_START_WAIT | pl.SkCap.CAP_2_EARLY_START_SET,
@@ -89,10 +93,10 @@ def test_valid_masks_pass_through(sk_cap):
     assert _resolve_sk_cap(sk_cap) == int(sk_cap)
 
 
-def test_zero_is_rejected():
-    """0 requests the entry while declaring no capability; None already means no entry."""
-    with pytest.raises(ValueError, match="sk_cap=0 declares no capability"):
-        _resolve_sk_cap(pl.SkCap(0))
+def test_zero_enables_sk_without_capabilities():
+    """0 requests the SK entry with cap=0; None still means no entry."""
+    assert _resolve_sk_cap(pl.SkCap.CAP_0_SK_ONLY) == 0
+    assert int(pl.SkCap.CAP_0_SK_ONLY) == 0
 
 
 def test_unknown_bits_are_rejected():
@@ -108,6 +112,13 @@ def test_raw_values_are_rejected(sk_cap):
         _resolve_sk_cap(sk_cap)
 
 
+@pytest.mark.parametrize("value", [-1, -2, -31, -32, -64])
+def test_negative_values_are_rejected(value):
+    """IntFlag normalizes negative values on newer Python; reject them at construction."""
+    with pytest.raises(ValueError, match="negative"):
+        pl.SkCap(value)
+
+
 @pytest.mark.parametrize("value", [32, 33, 64])
 def test_out_of_range_bits_are_rejected(value):
     """IntFlag builds pseudo-members for unknown values; the mask check rejects them."""
@@ -118,7 +129,7 @@ def test_out_of_range_bits_are_rejected(value):
 # ---------------------------------------------------------------------------
 # The mask reaches the SK_BIND record
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("sk_cap", [4, 4 | 16, 31])
+@pytest.mark.parametrize("sk_cap", [0, 4, 4 | 16, 31])
 def test_mask_is_written_into_sk_bind(sk_cap):
     assert _sk_bind_line(sk_cap) == f"SK_BIND(k, {sk_cap}, k_sk<0>, k_sk<1>, k_sk<2>, k_sk<3>);"
 
@@ -131,20 +142,14 @@ def test_bare_enable_is_the_callers_choice_of_mask():
 # ---------------------------------------------------------------------------
 # Sub-kernel block count normalization (MIX 1:2 AIV count vs logical block count)
 # ---------------------------------------------------------------------------
-def test_tile_block_num_is_normalized_from_aiv_granular_sk_count():
-    """``skNumBlocks`` is AIV-granular; Tile ``get_block_num()`` must stay logical."""
-    source = _make_sk_bind_block("k", [], _target(), sk_cap=4, uses_block_num=True)
+def test_tile_block_records_are_always_seeded():
+    """SK entries always seed both records; no usage detection is required."""
+    source = _make_sk_bind_block("k", [], _target(), sk_cap=4)
+    assert "__pypto_seed_block_idx((uint32_t)sysArgs->skBlockIdx);" in source
     assert (
         "__pypto_seed_block_num((uint32_t)(sysArgs->skNumBlocks / AscendC::GetTaskRatio()));"
         in source
     )
-
-
-def test_tile_block_idx_is_not_normalized():
-    """``skBlockIdx`` is already AIV-granular, matching ``get_block_idx()``."""
-    source = _make_sk_bind_block("k", [], _target(), sk_cap=4, uses_block_idx=True)
-    assert "__pypto_seed_block_idx((uint32_t)sysArgs->skBlockIdx);" in source
-    assert "__pypto_seed_block_num(" not in source
 
 
 # ---------------------------------------------------------------------------
@@ -157,17 +162,16 @@ def test_global_entry_takes_an_opaque_prelude_and_stays_sk_agnostic():
 
 
 def test_non_fused_entry_seeds_block_meta_records():
-    """The shared impl reads the pypto_block_meta.h records, so the non-fused entry must
-    seed them (the seed helpers exist in the SK build only)."""
-    source = _entry_code(4, uses_block_num=True, uses_block_idx=True)
+    """The shared impl reads the pypto_block_meta.h records, so the non-fused entry
+    always seeds both records in an SK build."""
+    source = _entry_code(4)
     assert "__pypto_seed_block_num((uint32_t)__pypto_raw_block_num());" in source
     assert "__pypto_seed_block_idx((uint32_t)__pypto_raw_block_idx());" in source
 
 
 def test_non_sk_build_does_not_reference_the_seed_helpers():
-    """The seed helpers exist in the __PYPTO_SK_BLOCK__ header branch only: without
-    sk_cap the entry must not reference them, even if the usage flags are set."""
-    source = _entry_code(None, uses_block_num=True, uses_block_idx=True)
+    """The seed helpers exist in the __PYPTO_SK_BLOCK__ header branch only."""
+    source = _entry_code(None)
     assert "__pypto_seed_block_num(" not in source
     assert "__pypto_seed_block_idx(" not in source
     # The entry itself is still rendered (the launcher always needs it).
@@ -215,6 +219,14 @@ def test_jit_accepts_cap_and_combination():
     assert combined._sk_cap == 4 | 16
 
 
+def test_jit_accepts_sk_only_cap():
+    @pl.jit(auto_mutex=False, sk_cap=pl.SkCap.CAP_0_SK_ONLY)
+    def kernel(x: pl.Tensor[[64], pl.DT_FP32]):
+        pl.system.bar_all()
+
+    assert kernel._sk_cap == 0
+
+
 def test_jit_defaults_to_no_superkernel_entry():
     @pl.jit(auto_mutex=False)
     def kernel(x: pl.Tensor[[64], pl.DT_FP32]):
@@ -241,10 +253,9 @@ def test_jit_rejects_raw_caps(sk_cap):
             pl.system.bar_all()
 
 
-@pytest.mark.parametrize("sk_cap", [pl.SkCap(0), pl.SkCap(32)])
-def test_jit_rejects_invalid_cap_values(sk_cap):
+def test_jit_rejects_invalid_cap_values():
     with pytest.raises(ValueError):
 
-        @pl.jit(auto_mutex=False, sk_cap=sk_cap)
+        @pl.jit(auto_mutex=False, sk_cap=pl.SkCap(32))
         def kernel(x: pl.Tensor[[64], pl.DT_FP32]):
             pl.system.bar_all()

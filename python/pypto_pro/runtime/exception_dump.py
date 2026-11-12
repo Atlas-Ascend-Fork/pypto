@@ -212,13 +212,12 @@ def _build_debug_compile_cmd(compiled: "CompiledKernel") -> str:
             target=target,
             enable_print_debug=has_print_debug,
             sk_cap=compiled.sk_cap,
-            ascend_home_path=ascend_home,
         )],
         *[shlex.quote(f) for f in cfg.build_llvm_args(arch)],
     ]
     cmd_parts.append("-g")
     cmd_parts.append(shlex.quote(caller_cpp))
-    cmd_parts.extend(shlex.quote(f) for f in cfg.runtime_link_args(ascend_home))
+    cmd_parts.extend(shlex.quote(f) for f in cfg.runtime_link_args())
     cmd_parts.extend(["-o", shlex.quote(so_path)])
 
     cmd = f"mkdir -p {shlex.quote(dump_dir)} && {' '.join(cmd_parts)}"

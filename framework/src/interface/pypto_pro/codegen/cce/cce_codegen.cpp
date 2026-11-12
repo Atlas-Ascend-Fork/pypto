@@ -2704,6 +2704,14 @@ void CCECodegen::EmitTilingStructCopy(const ir::FunctionPtr& func)
         PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, registeredName != nullptr)
             << "Tiling param '" << param->name_ << "' has no struct TupleTypeInfo in IRDebugInfo";
         const std::string& structName = *registeredName;
+        // The static compiler force-includes the Host Tiling result and defines CONST_TILING;
+        // keep a writable local copy because that entry passes nullptr for tiling_ptr. Emit the
+        // block unconditionally so JIT and binary recompilation share one source text.
+        emitter_.EmitLine("#ifdef CONST_TILING");
+        emitter_.EmitLine("GET_TILING_DATA_WITH_STRUCT(" + structName + ", " + name + "_constant, " + name + "_ptr);");
+        emitter_.EmitLine("PYPTO_ACLNN_CHECK_TILING_SIZE(" + structName + ", " + name + "_constant);");
+        emitter_.EmitLine(structName + " " + name + " = " + name + "_constant;");
+        emitter_.EmitLine("#else");
         emitter_.EmitLine("constexpr uint32_t " + name + "_all_bytes = sizeof(" + structName + ");");
         emitter_.EmitLine(structName + " " + name + ";");
         auto emitCubeCopy = [&]() {
@@ -2732,6 +2740,7 @@ void CCECodegen::EmitTilingStructCopy(const ir::FunctionPtr& func)
         } else {
             emitVectorCopy();
         }
+        emitter_.EmitLine("#endif");
         emitter_.EmitLine("");
     }
 }

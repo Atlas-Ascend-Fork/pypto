@@ -2356,7 +2356,8 @@ REGISTER_BACKEND_OP(BackendCCE, "system.vf_scope_args").f_codegen([](const ir::C
 // ============================================================================
 // Global Core Synchronization (sync_all)
 // ============================================================================
-// Delegates to pto-isa SYNCALL<SyncCoreType>().
+// Use AscendC for AIV/MIX so ordinary and SK entries share its synchronization protocol.
+// AIC-only retains PTO's dedicated barrier; AscendC::SyncAll<false>() is a MIX barrier.
 
 static std::string MakeSystemSyncAllCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
@@ -2364,15 +2365,11 @@ static std::string MakeSystemSyncAllCodegenCCE(const ir::CallPtr& op, codegen::C
 
     auto coreType = static_cast<ir::SyncCoreType>(op->HasKwarg("core_type") ? op->GetKwarg<int>("core_type") : 2);
 
-    std::string coreTypeTok;
-    if (coreType == ir::SyncCoreType::AIV_ONLY)
-        coreTypeTok = "SyncCoreType::AIVOnly";
-    else if (coreType == ir::SyncCoreType::AIC_ONLY)
-        coreTypeTok = "SyncCoreType::AICOnly";
-    else
-        coreTypeTok = "SyncCoreType::Mix";
-
-    codegen.Emit("SYNCALL<" + coreTypeTok + ">();");
+    if (coreType == ir::SyncCoreType::AIC_ONLY) {
+        codegen.Emit("SYNCALL<SyncCoreType::AICOnly>();");
+    } else {
+        codegen.Emit(coreType == ir::SyncCoreType::AIV_ONLY ? "AscendC::SyncAll();" : "AscendC::SyncAll<false>();");
+    }
     return "";
 }
 
@@ -2409,7 +2406,13 @@ REGISTER_BACKEND_OP(BackendCCE, "system.wait_pre_task_end")
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         auto& cceCodegen = dynamic_cast<codegen::CCECodegen&>(codegen);
         bool force = op->HasKwarg("force") ? op->GetKwarg<bool>("force") : false;
+        cceCodegen.Emit("#if defined(__PYPTO_ACLNN__)");
+        cceCodegen.Emit("AscendC::WaitPreTaskEnd();");
+        cceCodegen.Emit("#else");
+        cceCodegen.Emit("#if defined(__ASCENDC_ENABLE_WAIT_PRE_TASK_END)");
         cceCodegen.Emit(force ? "AscendC::WaitPreTaskEnd<true>();" : "AscendC::WaitPreTaskEnd();");
+        cceCodegen.Emit("#endif");
+        cceCodegen.Emit("#endif");
         return "";
     });
 
@@ -2422,8 +2425,14 @@ REGISTER_BACKEND_OP(BackendCCE, "system.set_next_task_start")
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         auto& cceCodegen = dynamic_cast<codegen::CCECodegen&>(codegen);
         bool force = op->HasKwarg("force") ? op->GetKwarg<bool>("force") : false;
+        cceCodegen.Emit("#if defined(__PYPTO_ACLNN__)");
+        cceCodegen.Emit("AscendC::SetNextTaskStart();");
+        cceCodegen.Emit("#else");
+        cceCodegen.Emit("#if defined(__ASCENDC_ENABLE_SET_NEXT_TASK_START)");
         cceCodegen.Emit(force ? "AscendC::SetNextTaskStart<PIPE_MTE3, PIPE_FIX, true>();" :
                                 "AscendC::SetNextTaskStart();");
+        cceCodegen.Emit("#endif");
+        cceCodegen.Emit("#endif");
         return "";
     });
 

@@ -31,6 +31,13 @@ CCE_BACKEND = "cce"
 PTO_DEBUG_ROOT = os.path.join(os.path.dirname(pypto.__file__), "lib", "include", "tilefwk", "pto_debug")
 
 
+def _ascend_home_path() -> str:
+    path = os.environ.get("ASCEND_HOME_PATH")
+    if not path:
+        raise RuntimeFailure("ASCEND_HOME_PATH is not set")
+    return path
+
+
 @dataclass(frozen=True)
 class KernelTarget:
     """Compiler target and its AIC/AIV participants per logical launch block.
@@ -93,14 +100,9 @@ class JitCompileConfig:
         enable_print_debug: bool,
         enable_simt: bool = False,
         sk_cap: SkCap | None = None,
-        ascend_home_path: str | None = None,
     ) -> list[str]:
-        """Build the complete bisheng flag list.
-
-        ``ascend_home_path`` is optional so callers that only need the compiler switches
-        can omit the include roots; when provided, the runtime/pypto/SK include flags are
-        appended so one call yields the full command line.
-        """
+        """Build the complete bisheng flag list."""
+        ascend_home_path = _ascend_home_path()
         variables = {
             "toolkit_home": toolkit_home,
             "mem_arch": self._memory_arch_flag(arch),
@@ -116,20 +118,36 @@ class JitCompileConfig:
         if sk_cap is not None:
             # Local import: jit imports this module, so importing the enum at module
             # scope would be circular. SkCap is defined before any flag build runs.
-            from .jit import EARLY_START_MASK
+            from .jit import EARLY_START_MASK, SkCap
 
             # SuperKernel compile switches: select the record-based pypto_block_meta.h
             # accessor implementation, and (for early-start bits 1/2) the config-matched
-            # V3 inter-task sync implementations.
+            # V3 inter-task sync implementations. The ENABLE macros also gate the emitted
+            # early-start calls so non-SK kernels keep them out of the binary.
             common.append("-D__PYPTO_SK_BLOCK__")
+            if sk_cap & SkCap.CAP_1_EARLY_START_WAIT:
+                common.append("-D__ASCENDC_ENABLE_WAIT_PRE_TASK_END")
+            if sk_cap & SkCap.CAP_2_EARLY_START_SET:
+                common.append("-D__ASCENDC_ENABLE_SET_NEXT_TASK_START")
             if sk_cap & EARLY_START_MASK:
                 common.append("-D__ASCENDC_SUPERKERNEL_EARLY_START_V3")
+            common.extend(["-mllvm", "-cce-aicore-merge-function=false"])
         flags = self._format_values(self.arch_flags, variables)
         if target.fat_object:
             flags.extend(self._format_values(self.fatobj_flags, variables))
         result = [*flags, *common]
-        if ascend_home_path is not None:
-            result.extend(self._runtime_include_flags(ascend_home_path, sk_cap))
+        include_vars = {"ascend_home": ascend_home_path}
+        result.extend(f"-I{path}" for path in self._format_values(self.runtime_include_dirs, include_vars))
+        import pypto_pro
+
+        pypto_include = os.path.join(os.path.dirname(pypto_pro.__file__), "include")
+        result.append(f"-I{pypto_include}")
+        result.append(f"-I{os.path.join(ascend_home_path, 'compiler', 'asc')}")
+        result.append(f"-I{os.path.join(ascend_home_path, 'compiler', 'asc', 'include')}")
+
+        fwk_include = device_framework_include_dir()
+        if fwk_include is not None:
+            result.append(f"-I{fwk_include}")
         return result
 
     def build_llvm_args(self, arch: NpuArch) -> list[str]:
@@ -138,27 +156,8 @@ class JitCompileConfig:
             raise InvalidVal(f"JIT compile config does not define llvm_arch_args for arch '{arch}'")
         return [*self.llvm_common_args, *arch_args]
 
-    def _runtime_include_flags(self, ascend_home_path: str, sk_cap: SkCap | None = None) -> list[str]:
-        variables = {"ascend_home": ascend_home_path}
-        flags = [f"-I{include_dir}" for include_dir in self._format_values(self.runtime_include_dirs, variables)]
-        import pypto_pro
-
-        pypto_include = os.path.join(os.path.dirname(pypto_pro.__file__), "include")
-        flags.append(f"-I{pypto_include}")
-        if sk_cap is not None:
-            # The SK branch of pypto_block_meta.h includes asc-devkit headers
-            # (kernel_operator.h); the JIT adds these roots under the same condition.
-            flags.append(f"-I{os.path.join(ascend_home_path, 'compiler', 'asc')}")
-            flags.append(f"-I{os.path.join(ascend_home_path, 'compiler', 'asc', 'include')}")
-
-        fwk_include = device_framework_include_dir()
-        if fwk_include is not None:
-            flags.append(f"-I{fwk_include}")
-
-        return flags
-
-    def runtime_link_args(self, ascend_home_path: str) -> list[str]:
-        variables = {"ascend_home": ascend_home_path}
+    def runtime_link_args(self) -> list[str]:
+        variables = {"ascend_home": _ascend_home_path()}
         link_args: list[str] = []
         for link_dir in self._format_values(self.link_dirs, variables):
             link_args.extend(["-L", link_dir])

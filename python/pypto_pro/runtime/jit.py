@@ -302,14 +302,6 @@ class CodegenResult:
     has_cube: bool = False
     has_vector: bool = False
     sanitizer: bool = False
-    # True when the body reads the Tile block count through the pypto_block_meta.h
-    # accessor (``__pypto_block_num_value()``; see _detect_sk_block_usage). In an SK
-    # build the global entry seeds its per-core record from the raw builtin and the
-    # __sk__ entry from sysArgs->skNumBlocks, with no trailing impl parameter.
-    uses_block_num: bool = False
-    # Same for the Tile block index (``__pypto_block_idx_value()``), word 1 of the same
-    # per-core record.
-    uses_block_idx: bool = False
     # Kernel source path (report locations; set by _codegen).
     source_file: str = ""
     # Per-variant launch configuration consumed while generating call_kernel.cpp;
@@ -1311,7 +1303,6 @@ def _build_bisheng_flags(
     enable_print_debug: bool,
     enable_simt: bool = False,
     sk_cap: SkCap | None = None,
-    ascend_home_path: str | None = None,
 ) -> list[str]:
     """Build bisheng flags using the compiler target already encoded in the launcher."""
     if has_cross_sync and not (target.aic_per_block and target.aiv_per_block):
@@ -1326,7 +1317,6 @@ def _build_bisheng_flags(
         enable_print_debug=enable_print_debug,
         enable_simt=enable_simt,
         sk_cap=sk_cap,
-        ascend_home_path=ascend_home_path,
     )
     return flags
 
@@ -1486,8 +1476,8 @@ class SkCap(IntFlag):
     """SuperKernel capability bits, one member per official ``SK_BIND`` bit.
 
     Values come from the official SK_BIND definition (asc-devkit ``SK_BIND.md``):
-    1 = early start wait, 2 = early start set, 4 = disable DCCI ALL, 8 = disable
-    batchmode check, 16 = blockdim scale up. Members combine with ``|`` into another
+    0 = SK binding only, 1 = early start wait, 2 = early start set, 4 = disable DCCI ALL,
+    8 = disable batchmode check, 16 = blockdim scale up. Members combine with ``|`` into another
     :class:`SkCap`, so ``pl.jit(sk_cap=...)`` takes either one member or a combination:
 
         @pl.jit(sk_cap=pl.SkCap.CAP_4_DISABLE_DCCI_ALL)
@@ -1498,11 +1488,18 @@ class SkCap(IntFlag):
     numeric form that can reach the enum at all.
     """
 
+    CAP_0_SK_ONLY = 0
     CAP_1_EARLY_START_WAIT = 1
     CAP_2_EARLY_START_SET = 2
     CAP_4_DISABLE_DCCI_ALL = 4
     CAP_8_DISABLE_BATCHMODE_CHECK = 8
     CAP_16_BLOCKDIM_SCALE_UP = 16
+
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, int) and value < 0:
+            raise ValueError(f"sk_cap does not accept negative values: {value}")
+        return super()._missing_(value)
 
 
 # Union of every declared capability bit. Kept as a plain int so that ``~VALID_MASK``
@@ -1519,17 +1516,14 @@ EARLY_START_MASK: SkCap = SkCap.CAP_1_EARLY_START_WAIT | SkCap.CAP_2_EARLY_START
 
 
 def _resolve_sk_cap(sk_cap: SkCap | None) -> SkCap | None:
-    """Validate ``pl.jit``'s ``sk_cap``: None = no superkernel entry, else the mask.
+    """Validate ``pl.jit``'s ``sk_cap``: None = no entry, 0 = SK binding only.
 
-    One parameter replaces the former ``sk_bind``/``sk_cap`` pair (the capability mask
-    only means anything once the kernel is bound), so "enabled" is ``sk_cap is not None``
-    and the conventional bare-enabled member is ``SkCap.CAP_4_DISABLE_DCCI_ALL``.
-
-    Only :class:`SkCap` members (or their ``|`` combinations) are accepted: the member
-    name is the contract, and ``isinstance`` rejects raw integers before any normalization.
-    ``0`` is refused because it would request the entry while declaring no capability,
-    which ``None`` already expresses as "no entry". The validated member is returned
-    unchanged so ``SkCap`` remains the type across the JIT and flag builder.
+    ``SkCap.CAP_0_SK_ONLY`` requests an SK entry with no capability bits; the
+    conventional bare-enabled member is ``SkCap.CAP_4_DISABLE_DCCI_ALL``. Only
+    :class:`SkCap` members (or their ``|`` combinations) are accepted: the member name
+    is the contract, and ``isinstance`` rejects raw integers before any normalization.
+    The validated member is returned unchanged so ``SkCap`` remains the type across the
+    JIT and flag builder.
     """
     if sk_cap is None:
         return None
@@ -1539,50 +1533,22 @@ def _resolve_sk_cap(sk_cap: SkCap | None) -> SkCap | None:
             f"{type(sk_cap).__name__}; pass e.g. pl.SkCap.CAP_4_DISABLE_DCCI_ALL"
         )
     mask = int(sk_cap)
-    if mask == 0:
-        raise ValueError(
-            "sk_cap=0 declares no capability; pass None for a kernel without a "
-            "superkernel entry, or pl.SkCap.CAP_4_DISABLE_DCCI_ALL for the conventional "
-            "binding"
-        )
     if mask & ~VALID_MASK:
         raise ValueError(f"sk_cap contains unknown capability bits: {mask:#b}")
     return sk_cap
 
 
 # SK block adaptation; the generated impl signatures stay unchanged.
-#
-# - Tile: the CCE backend emits the ``pypto_block_meta.h`` accessors unconditionally
-#   (``__pypto_block_num_value()`` / ``__pypto_block_idx_value()``). The compile-time
-#   ``-D__PYPTO_SK_BLOCK__`` flag selects the implementation: with it, the accessors read
-#   DCCI-guarded per-core ``__gm__`` records that the entries seed (the __sk__ entry from
-#   ``sysArgs->skNumBlocks`` / ``skBlockIdx``, the non-fused __global__ entry from the
-#   raw builtins); without it they are inline wrappers over the raw builtins. Nothing is
-#   rewritten here anymore: :func:`_detect_sk_block_usage` only reports whether the
-#   entries must seed, and the record/DCCI rationale lives in the header.
-# - SIMT: not adapted yet. Under a fused container the SIMT block grid (gridDim.x /
-#   blockIdx.x) would be the container's, so a SIMT kernel combined with ``sk_cap`` is
-#   rejected in :func:`_codegen` before any SK artifact is produced (see there).
-
-def _detect_sk_block_usage(content: str) -> tuple[bool, bool]:
-    """Report whether the kernel body uses the Tile block num/idx accessors.
-
-    The CCE backend emits the ``pypto_block_meta.h`` accessors unconditionally (the
-    header resolves SK record vs raw builtin from the compile-time ``__PYPTO_SK_BLOCK__``
-    flag), so the entries only need to know which of the two are present in order to seed
-    the SK records. The accessor definitions live in the header, never in the generated
-    content, so a plain substring test cannot alias.
-    """
-    return ("__pypto_block_num_value()" in content, "__pypto_block_idx_value()" in content)
-
+# The CCE backend emits the pypto_block_meta.h accessors unconditionally. The
+# -D__PYPTO_SK_BLOCK__ flag selects the record implementation; SK entries always seed
+# both records. SIMT VF must receive the adapted block count/index from the outer
+# SIMD kernel instead of reading gridDim/blockIdx directly.
 
 def _make_sk_bind_block(
     kernel_name: str,
     entry_params: list[tuple[str, str, bool]],
     target: KernelTarget,
     sk_cap: SkCap,
-    uses_block_num: bool = False,
-    uses_block_idx: bool = False,
 ) -> str:
     """Generate the superkernel adaptation block bound to the ``__global__`` entry.
 
@@ -1594,9 +1560,8 @@ def _make_sk_bind_block(
 
     The official ``basic_api/kernel_operator_sys_var_intf.h`` provides both
     ``sk::SkSystemArgs`` and ``SK_BIND``, so no local copy of the macro is emitted.
-    ``uses_block_num`` / ``uses_block_idx`` mark the Tile block accessors detected by
-    :func:`_detect_sk_block_usage`. The SK entry supplies the sub-kernel's own
-    count/index through the pypto_block_meta.h records.
+    The SK entry always supplies the sub-kernel's own count/index through the
+    pypto_block_meta.h records; no usage detection is needed.
     """
     args_struct = f"{kernel_name}_SkArgs"
     fields = []
@@ -1617,17 +1582,12 @@ def _make_sk_bind_block(
             sk_decls.append(device_decode)
     fields_src = "\n".join(fields) or "    char _empty;"
     call_args = ", ".join(sk_decls)
-    # ``sysArgs`` is needed to seed the sub-kernel count/index and to propagate the
-    # early-start sync config (cap bits 1/2, see below), so include it whenever any of
-    # those is in play. The SK framework passes (args, sysArgs) to every sknl entry, so
-    # declaring the parameter is always ABI-safe.
-    if uses_block_num or uses_block_idx or (sk_cap & EARLY_START_MASK):
-        sk_sig = (
-            f"__sk__ {target.entry_qualifier} AICORE void {kernel_name}_sk("
-            f"const {args_struct}* args, const sk::SkSystemArgs* sysArgs)"
-        )
-    else:
-        sk_sig = f"__sk__ {target.entry_qualifier} AICORE void {kernel_name}_sk(const {args_struct}* args)"
+    # ``sysArgs`` is always available to an SK entry and is needed for the block
+    # records and early-start config.
+    sk_sig = (
+        f"__sk__ {target.entry_qualifier} AICORE void {kernel_name}_sk("
+        f"const {args_struct}* args, const sk::SkSystemArgs* sysArgs)"
+    )
 
     sk_entries = ", ".join(f"{kernel_name}_sk<{i}>" for i in range(4))
 
@@ -1651,17 +1611,12 @@ def _make_sk_bind_block(
     # npugraph_ex super_kernel_optimize: plain and fused launches observed the same
     # AIV index set {0..31} and the same block num 16 at BLOCK_DIM=16 (SK log: node
     # bound with cap=4, taskRatio [1,2], numBlocks=16, vecNum=32).
-    if uses_block_idx:
-        sk_body = "    __pypto_seed_block_idx((uint32_t)sysArgs->skBlockIdx);\n" + sk_body
-    if uses_block_num:
-        # ``sysArgs->skNumBlocks`` is AIV-granular: on a MIX 1:2 vector core it is
-        # 2 * blockNum, while Tile's ``get_block_num()`` contract is the logical AI
-        # Core block count. ``GetTaskRatio()`` is exactly
-        # (AIV/AIC count) / (logical block count): 2 on a MIX AIV, 1 on AIC and on a
-        # pure AIV, so dividing restores the contract on every target.
-        sk_body = (
-            "    __pypto_seed_block_num((uint32_t)(sysArgs->skNumBlocks / AscendC::GetTaskRatio()));\n"
-        ) + sk_body
+    # ``skNumBlocks`` is AIV-granular; GetTaskRatio() restores the logical block count.
+    sk_body = (
+        "    __pypto_seed_block_idx((uint32_t)sysArgs->skBlockIdx);\n"
+        "    __pypto_seed_block_num((uint32_t)(sysArgs->skNumBlocks / AscendC::GetTaskRatio()));\n"
+        + sk_body
+    )
     return (
         f"#include <basic_api/kernel_operator_sys_var_intf.h>\n"
         f"#include <basic_api/kernel_common.h>\n"
@@ -1899,12 +1854,15 @@ def _add_kernel_header(result: CodegenResult) -> CodegenResult:
     ``pypto_block_meta.h`` (already in ``KERNEL_HEADER_SINGLE``) includes
     ``kernel_operator.h``, which pulls ``kernel_operator_common_intf.h`` (sync templates)
     and ``kernel_common.h`` (the block-local early-start config the non-fused entry
-    resets). Only a non-SK build that calls the sync ops needs the explicit include.
+    resets). Explicit interface includes also support ordinary kernels without that
+    SK prelude, including AIV/MIX sync_all through the block-sync interface.
     """
     header = KERNEL_HEADER_SINGLE
     header = KERNEL_HEADER_SIMT if result.simt_kernel else KERNEL_HEADER_SINGLE
     if result.needs_print_debug:
         header += "\n#define __ENABLE_PTO_PRINTF__ 1\n"
+    if "AscendC::SyncAll" in result.content:
+        header += "\n#include <basic_api/kernel_operator_block_sync_intf.h>\n"
     if any(tok in result.content for tok in ("AscendC::WaitPreTaskEnd", "AscendC::SetNextTaskStart")):
         # Early-start inter-task sync (SK cap bits 1/2) lives in the AscendC common
         # interface header, which pto-inst.hpp does not pull in.
@@ -1947,9 +1905,9 @@ def _dump_pipeline_generated_source(
     kernel_def._col_offset = 0
 
 
-def _runtime_link_args(ascend_home_path: str) -> list[str]:
+def _runtime_link_args() -> list[str]:
     """Build runtime link arguments for the configured JIT backend."""
-    return get_jit_compile_config().runtime_link_args(ascend_home_path)
+    return get_jit_compile_config().runtime_link_args()
 
 
 def _run_bisheng(
@@ -2014,10 +1972,7 @@ def _compile_shared_library(
     is required when the SK_BIND cap carries bits 1/2.
     """
     pto_lib_path = os.environ["ASCEND_TOOLKIT_HOME"]
-    ascend_home_path = os.environ.get("ASCEND_HOME_PATH")
-    if not ascend_home_path:
-        raise RuntimeFailure("ASCEND_HOME_PATH is not set")
-    link_args = _runtime_link_args(ascend_home_path)
+    link_args = _runtime_link_args()
     # The generated caller references the aclprof* tensor-info range interfaces
     # (aclprofStr2Id / aclprofRangePushEx / aclprofRangePop, declared in
     # acl/acl_prof.h); they are exported by libmsprofiler.so in the runtime lib
@@ -2034,7 +1989,6 @@ def _compile_shared_library(
         enable_print_debug=resolved_enable_print_debug,
         enable_simt=generated.simt_kernel,
         sk_cap=generated.sk_cap,
-        ascend_home_path=ascend_home_path,
     )
     if generated.sanitizer:
         flags.extend(["-D__PYPTO_SANITIZER__=1"])
@@ -2100,32 +2054,11 @@ def _codegen(
         bound_signature,
         sanitizer,
     )
-    if sk_cap is not None and source.requires_simt:
-        # Under a fused container the SIMT block grid would be the container's, and the
-        # SIMT adaptation is not implemented yet: reject the combination instead of
-        # silently partitioning work over the wrong grid.
-        raise NotSupported(
-            "sk_cap is not supported for SIMT kernels yet; remove sk_cap (or keep the "
-            "kernel on the SIMD path)"
-        )
     result = _assemble_cv_source(cube, vector)
     result.sanitizer = (cube is not None and cube.sanitizer) or (vector is not None and vector.sanitizer)
     result.source_file = getattr(source, "_source_file", "")
 
     result = _add_kernel_header(result)
-    if sk_cap is not None:
-        # Superkernel sub-kernels own only a subset of the container's blocks, so a
-        # kernel must not distribute work over the hardware (container-wide) grid.
-        # Tile block num/idx already go through the pypto_block_meta.h accessors emitted
-        # by the CCE backend (the -D__PYPTO_SK_BLOCK__ compile flag selects the SK record
-        # implementation); only their presence has to be detected here so the entries
-        # seed the records.
-        uses_block_num, uses_block_idx = _detect_sk_block_usage(result.content)
-        result = dataclasses.replace(
-            result,
-            uses_block_num=uses_block_num,
-            uses_block_idx=uses_block_idx,
-        )
     _write_codegen_artifacts(result)
     return result
 
@@ -2144,12 +2077,10 @@ def _make_sk_caller_parts(
     The prelude carries the standalone-launch fixes:
 
     - The shared impl reads its Tile block num/idx through the pypto_block_meta.h
-      accessors (SK record build; see _detect_sk_block_usage). In a fused container the
-      hardware grid is the container's, so the __sk__ entry supplies the sub-kernel's own
-      values from sysArgs; the non-fused __global__ entry has no sysArgs and seeds the
-      same per-core records from the raw builtins here (the seeds DCCI-flush each write).
-      Keeping one shared impl for both launch paths is what forces this seed to live in
-      the global entry.
+      accessors. In a fused container the hardware grid is the container's, so the
+      __sk__ entry supplies the sub-kernel's own values from sysArgs; the non-fused
+      __global__ entry has no sysArgs and seeds the same per-core records from the raw
+      builtins here. Both records are seeded unconditionally.
     - A plain (non-fused) launch must not inherit the block-local early-start config a
       previous superkernel task left on the same core: the V3 SetNextTaskStart /
       WaitPreTaskEnd implementations read it, and a stale non-zero value makes them emit
@@ -2162,17 +2093,13 @@ def _make_sk_caller_parts(
     prelude = ""
     if sk_cap & EARLY_START_MASK:
         prelude += "    g_super_kernel_early_start_config = 0;\n"
-    if cg.uses_block_num:
-        prelude += "    __pypto_seed_block_num((uint32_t)__pypto_raw_block_num());\n"
-    if cg.uses_block_idx:
-        prelude += "    __pypto_seed_block_idx((uint32_t)__pypto_raw_block_idx());\n"
+    prelude += "    __pypto_seed_block_idx((uint32_t)__pypto_raw_block_idx());\n"
+    prelude += "    __pypto_seed_block_num((uint32_t)__pypto_raw_block_num());\n"
     entries = _make_sk_bind_block(
         cg.kernel_name,
         cg.entry_params,
         target=target,
         sk_cap=sk_cap,
-        uses_block_num=cg.uses_block_num,
-        uses_block_idx=cg.uses_block_idx,
     )
     return prelude, entries
 
@@ -2514,10 +2441,10 @@ def jit(
             ACLGraph superkernel optimization; the conventional bare-enabled member is
             ``pl.SkCap.CAP_4_DISABLE_DCCI_ALL``. Members follow the official SK_BIND
             definition (asc-devkit ``SK_BIND.md``) and combine with ``|``:
-            ``CAP_1_EARLY_START_WAIT``, ``CAP_2_EARLY_START_SET``,
+            ``CAP_0_SK_ONLY``, ``CAP_1_EARLY_START_WAIT``, ``CAP_2_EARLY_START_SET``,
             ``CAP_4_DISABLE_DCCI_ALL``, ``CAP_8_DISABLE_BATCHMODE_CHECK``,
-            ``CAP_16_BLOCKDIM_SCALE_UP``. Plain integers are rejected; ``0`` is rejected
-            too (pass ``None`` instead).
+            ``CAP_16_BLOCKDIM_SCALE_UP``. Plain integers are rejected; use
+            ``CAP_0_SK_ONLY`` for an SK binding with no capability bits.
         schedmode: Kernel launch scheduling mode emitted as the ``__schedmode__(mode)``
             qualifier on the ``__global__`` entry (``0`` = normal/default, ``1`` = batch).
             Valid for both SIMT and Tile kernels. In SuperKernel fusion, ``schedmode=1``

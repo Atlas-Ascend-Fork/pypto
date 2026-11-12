@@ -22,6 +22,11 @@ import pytest
 jit = importlib.import_module("pypto_pro.runtime.jit")
 
 
+@pytest.fixture(autouse=True)
+def _ascend_home(monkeypatch):
+    monkeypatch.setenv("ASCEND_HOME_PATH", "/toolkit")
+
+
 @pytest.fixture
 def future_config():
     """A hypothetical 1:1 architecture (the unconfigured DAV_3003 slot) must coexist with 3510."""
@@ -231,23 +236,27 @@ def test_sk_switches_live_in_the_shared_flag_builders():
     """SK defines and asc-devkit include roots come from the centralized helpers."""
     target = get_jit_compile_config().resolve_kernel_target(NpuArch.DAV_3510, has_cube=False, has_vector=True)
 
-    def flags(sk_cap=None, ascend_home_path=None):
+    def flags(sk_cap=None):
         return jit._build_bisheng_flags(
             "/toolkit", NpuArch.DAV_3510, target,
             has_cross_sync=False, enable_print_debug=False,
-            sk_cap=sk_cap, ascend_home_path=ascend_home_path,
+            sk_cap=sk_cap,
         )
 
     assert "-D__PYPTO_SK_BLOCK__" not in flags()
+    assert "-D__PYPTO_SK_BLOCK__" in flags(0)
     assert "-D__PYPTO_SK_BLOCK__" in flags(4)
+    assert "-D__ASCENDC_SUPERKERNEL_EARLY_START_V3" not in flags(0)
     assert "-D__ASCENDC_SUPERKERNEL_EARLY_START_V3" not in flags(4)
     assert "-D__ASCENDC_SUPERKERNEL_EARLY_START_V3" in flags(3)
+    assert "-cce-aicore-merge-function=false" not in flags()
+    assert "-cce-aicore-merge-function=false" in flags(0)
+    assert "-cce-aicore-merge-function=false" in flags(4)
 
-    # Include roots come from the same builder and only when ascend_home_path is given.
-    assert "-I/toolkit/compiler/asc" not in flags()
-    combined = flags(4, ascend_home_path="/toolkit")
-    assert "-I/toolkit/compiler/asc" in combined
-    assert "-I/toolkit/compiler/asc/include" in combined
+    for sk_cap in (None, 0, 4):
+        combined = flags(sk_cap)
+        assert "-I/toolkit/compiler/asc" in combined
+        assert "-I/toolkit/compiler/asc/include" in combined
 
 
 def test_simt_frontend_flag_is_only_added_for_simt_kernels():
@@ -264,8 +273,9 @@ def test_simt_frontend_flag_is_only_added_for_simt_kernels():
     assert "--enable-simt" not in flags(False)
 
 
-def test_shared_library_forwards_sk_cap_into_compiler_flags(monkeypatch, tmp_path):
-    """The real build command must carry the SK switches via the shared builders."""
+@pytest.mark.parametrize("sk_cap", [None, 3])
+def test_shared_library_forwards_ascendc_dependencies(monkeypatch, tmp_path, sk_cap):
+    """Ordinary and SK build commands must resolve the emitted AscendC interfaces."""
     target = get_jit_compile_config().resolve_kernel_target(NpuArch.DAV_3510, has_cube=True, has_vector=True)
     monkeypatch.setenv("ASCEND_TOOLKIT_HOME", "/toolkit")
     monkeypatch.setenv("ASCEND_HOME_PATH", "/toolkit")
@@ -284,10 +294,10 @@ def test_shared_library_forwards_sk_cap_into_compiler_flags(monkeypatch, tmp_pat
         has_cube=True, has_vector=True,
     )
     jit._build_jit_so(cg, NpuArch.DAV_3510, clean_up=False, compile_timeout=30,
-                      target=target, sk_cap=3)
+                      target=target, sk_cap=sk_cap)
     flags = captured[0]
-    assert "-D__PYPTO_SK_BLOCK__" in flags
-    assert "-D__ASCENDC_SUPERKERNEL_EARLY_START_V3" in flags
+    assert ("-D__PYPTO_SK_BLOCK__" in flags) == (sk_cap is not None)
+    assert ("-D__ASCENDC_SUPERKERNEL_EARLY_START_V3" in flags) == (sk_cap is not None)
     assert "-I/toolkit/compiler/asc" in flags
     assert "-I/toolkit/compiler/asc/include" in flags
 
@@ -324,6 +334,24 @@ def test_icache_preload_codegen_includes_ascendc_cache_interface(tmp_path):
     result = jit._add_kernel_header(result)
     golden = Path(__file__).with_suffix(".pypto").read_text(encoding="utf-8")
     assert result.content.rstrip("\n") == golden.rstrip("\n")
+
+
+@pytest.mark.parametrize("call,needs_ascendc", [
+    ("AscendC::SyncAll();", True),
+    ("AscendC::SyncAll<false>();", True),
+    ("SYNCALL<SyncCoreType::AICOnly>();", False),
+])
+def test_sync_all_codegen_includes_its_interface_without_sk_prelude(tmp_path, call, needs_ascendc):
+    result = jit.CodegenResult(
+        build_dir=str(tmp_path), content=call, kernel_name="probe",
+        bisheng_cross_sync=True, needs_print_debug=False,
+        has_cube=False, has_vector=True,
+    )
+    source = jit._add_kernel_header(result).content
+    include = "#include <basic_api/kernel_operator_block_sync_intf.h>"
+    assert (include in source) == needs_ascendc
+    if needs_ascendc:
+        assert source.index(include) < source.index(call)
 
 
 def test_compilation_preserves_target_for_cached_launch_and_debug(monkeypatch, tmp_path):

@@ -69,15 +69,20 @@ model = torch.compile(
 
 ### 调度模式（schedmode）
 
-schedmode=1时，JIT在`__global__`入口生成`__schedmode__(1)`限定符（batch模式）。Kernel内使用pypto_pro.language.system.sync_all()且存在多流并发时建议设置为1，以降低死锁风险；参与融合时需同时设置CAP_8_DISABLE_BATCHMODE_CHECK。
+schedmode=1时，JIT在`__global__`入口生成`__schedmode__(1)`限定符（batch模式）。Kernel内使用pypto_pro.language.system.sync_all()且存在多流并发时建议设置为1，以降低死锁风险；对于实际没有调用全核同步但设置schedmode=1的算子，如果需要和启动核数更大的算子进行融合，需要设置CAP_8_DISABLE_BATCHMODE_CHECK来跳过对schedmode的校验。
 
 ### 核数按容器扩展
 
-设置CAP_16_BLOCKDIM_SCALE_UP后，Kernel按融合容器的核数启动，Kernel内需使用pypto_pro.language.get_block_num()动态确定实际核数，不能假设核数等于自身配置值。
+设置CAP_16_BLOCKDIM_SCALE_UP后，Kernel按融合容器的核数启动，Kernel内需使用pypto_pro.language.get_block_num()动态确定实际核数，不能假设核数等于自身配置值。算子需要自行保证在实际启动核数大于其原始核数时仍能正确执行。
+
+### SIMT VF适配 <a id="simt-vf-adaptation"></a>
+
+SIMD外层调用SIMT VF时，VF内不得读取`pypto_pro.language.simt.grid_dim()`或`pypto_pro.language.simt.block_idx()`。应由外层SIMD使用`pypto_pro.language.get_block_num() * pypto_pro.language.get_subblock_num()`和`pypto_pro.language.get_block_idx()`计算核数与核索引，并作为标量参数传入VF；helper调用链需要继续传递这些参数。
 
 ## 约束说明
 
-- SIMT kernel暂不支持SK适配，设置sk_cap会在编译阶段报错。
+- SIMD外层调用SIMT VF时，VF内不得残留`pypto_pro.language.simt.grid_dim()`/`pypto_pro.language.simt.block_idx()`跨核读取，否则SK容器下可能使用容器级核数或核索引。
+- 纯SIMT Kernel不支持直接参与SuperKernel融合：融合后子核按容器网格启动，Kernel内通过`pypto_pro.language.simt.grid_dim()`/`pypto_pro.language.simt.block_idx()`读到的是容器级线程块数和索引，结果不可靠（可能精度错误或越界）。如需融合，应改写为SIMD调用SIMT VF模式（详见[SIMT VF适配](#simt-vf-adaptation)一节）。
 - 图编译侧需开启SuperKernel优化，融合才会实际发生（详见[在torch.compile中开启SuperKernel](#enable-superkernel)一节）。
 - 早启的两个接口应在相邻子核中配合使用，详见[早启（Early-Start）交互](#early-start)一节。
 - sk_cap必须为pypto_pro.language.SkCap成员或其按位或组合，传入裸整数或非法位会被前端拒绝。

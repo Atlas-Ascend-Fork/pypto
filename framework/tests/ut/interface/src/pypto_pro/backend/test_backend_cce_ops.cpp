@@ -1090,7 +1090,7 @@ TEST(BackendCceOpsTest, SyncAllHardMix)
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_NE(generated.find("SYNCALL<SyncCoreType::Mix>();"), std::string::npos);
+    EXPECT_NE(generated.find("AscendC::SyncAll<false>();"), std::string::npos);
 }
 
 TEST(BackendCceOpsTest, SyncAllHardAIVOnly)
@@ -1102,7 +1102,7 @@ TEST(BackendCceOpsTest, SyncAllHardAIVOnly)
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_NE(generated.find("SYNCALL<SyncCoreType::AIVOnly>();"), std::string::npos);
+    EXPECT_NE(generated.find("AscendC::SyncAll();"), std::string::npos);
 }
 
 // ============================================================================

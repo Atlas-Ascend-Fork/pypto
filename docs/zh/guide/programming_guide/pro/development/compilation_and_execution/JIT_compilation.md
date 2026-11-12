@@ -58,15 +58,16 @@ max_mixed_blocks = min(max_cube_blocks, max_vector_blocks // 2)
 
 同一Kernel对象按照编译签名区分编译实例。以下信息可能产生不同实例：
 
-| 信息 | 对编译实例的影响 |
-| --- | --- |
-| Tensor固定维度 | 声明为固定值的维度在Kernel定义时编入IR，调用时Tensor的对应维度必须匹配。 |
-| pypto_pro.language.STATIC维度 | 运行时取值参与特化，值变化时生成新实例。 |
-| pypto_pro.language.DYNAMIC维度 | 维度值不参与特化，值变化时复用实例。 |
-| Scalar入参（DT_*） | 数据类型由Kernel参数标注确定，实参值在运行时传入；值变化时复用实例。 |
-| TilingKey | 每个合法Key对应一个专用实例。 |
-| datatype | 每组数据类型组合对应一个专用实例。 |
-| 编译目标 | 显式指定的目标在Kernel对象创建时确定；未指定时在首次启动时根据运行环境确定。不同目标使用不同的Kernel对象。 |
+
+| 信息                           | 对编译实例的影响                                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Tensor固定维度                 | 声明为固定值的维度在Kernel定义时编入IR，调用时Tensor的对应维度必须匹配。                                   |
+| pypto_pro.language.STATIC维度  | 运行时取值参与特化，值变化时生成新实例。                                                                   |
+| pypto_pro.language.DYNAMIC维度 | 维度值不参与特化，值变化时复用实例。                                                                       |
+| Scalar入参（DT_*）             | 数据类型由Kernel参数标注确定，实参值在运行时传入；值变化时复用实例。                                       |
+| TilingKey                      | 每个合法Key对应一个专用实例。                                                                              |
+| datatype                       | 每组数据类型组合对应一个专用实例。                                                                         |
+| 编译目标                       | 显式指定的目标在Kernel对象创建时确定；未指定时在首次启动时根据运行环境确定。不同目标使用不同的Kernel对象。 |
 
 静态与动态shape的声明方式参考[Tensor创建和操作](../tensor_creation_and_operations.md)。Scalar入参和TilingData字段都是运行时数据，它们的值变化不会单独产生编译实例。TilingData和TilingKey的区别参考[Tiling参数定义与传递](../tiling/tiling_parameter_definition.md)。
 
@@ -78,20 +79,21 @@ JIT复用范围限于当前Python进程。重新启动进程后会重新执行�
 
 `pypto_pro.language.jit`支持以下可配置参数：
 
-| 参数 | 类型 | 说明 | 默认值 |
-| --- | --- | --- | --- |
-| mode | str或None | 指定Kernel的编程模式。支持SIMD和SIMT编程，传入"simd"、None或省略时使用SIMD编程，传入"simt"时为SIMT编程。 | None |
-| arch | str | 指定编译目标。通常省略，由运行环境自动确定。 | None |
-| auto_mutex | bool | 是否根据TileGroup声明的mutex元数据，为框架能够识别的数据依赖自动插入同步。 | True |
-| name | str | 自定义Kernel名称，用于区分编译产物；未设置时使用被装饰函数的名称。 | None |
-| pipeline | pypto_pro.language.pipeline.PipelineConfig | 配置自动CV并行流水变换。 | None |
-| sanitizer | bool | 开启Kernel内存检测，检测GM访问越界、Tile访问越界、Tile内存区间重叠和mutex未正确配对，检测结果写入报告文件，详见[内存检测](../../debug/sanitizer.md)。 | False |
-| tiling_key | TilingKey定义类 | 绑定当前Kernel支持的TilingKey字段及其候选值。 | None |
-| datatype | dict[str, str] | 声明需要进行数据类型特化的Kernel参数，以及Kernel函数体中引用的数据类型变量名。 | None |
-| compile_timeout | int | 设置当前Kernel的编译超时时间，单位为秒。 | None（基础默认值为600秒） |
-| max_threads | int或None | SIMT kernel每个Thread Block允许的最大线程数，取值为[1, 2048]，SIMT模式必填，SIMD模式不接受该参数。 | None |
-| sk_cap | pypto_pro.language.SkCap | SuperKernel能力位。设置后除`__global__`入口外，额外生成`__sk__`入口和`SK_BIND`记录，Kernel可被图编译侧融合；按位或组合`CAP_1_EARLY_START_WAIT`、`CAP_2_EARLY_START_SET`、`CAP_4_DISABLE_DCCI_ALL`、`CAP_8_DISABLE_BATCHMODE_CHECK`、`CAP_16_BLOCKDIM_SCALE_UP`。只接受pypto_pro.language.SkCap成员及其按位或组合，不接受裸整数；SIMT Kernel不支持。 | None |
-| schedmode | int | Kernel调度模式，写入`__global__`入口的`__schedmode__(mode)`限定符：0为普通模式，1为batch模式。`schedmode=1`且需要参与融合时，应同时设置`CAP_8_DISABLE_BATCHMODE_CHECK`。 | 0 |
+
+| 参数            | 类型                                       | 说明                                                                                                                                                                                                                                                                                                                                                                                                                       | 默认值                    |
+| ----------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| mode            | str或None                                  | 指定Kernel的编程模式。支持SIMD和SIMT编程，传入"simd"、None或省略时使用SIMD编程，传入"simt"时为SIMT编程。                                                                                                                                                                                                                                                                                                                   | None                      |
+| arch            | str                                        | 指定编译目标。通常省略，由运行环境自动确定。                                                                                                                                                                                                                                                                                                                                                                               | None                      |
+| auto_mutex      | bool                                       | 是否根据TileGroup声明的mutex元数据，为框架能够识别的数据依赖自动插入同步。                                                                                                                                                                                                                                                                                                                                                 | True                      |
+| name            | str                                        | 自定义Kernel名称，用于区分编译产物；未设置时使用被装饰函数的名称。                                                                                                                                                                                                                                                                                                                                                         | None                      |
+| pipeline        | pypto_pro.language.pipeline.PipelineConfig | 配置自动CV并行流水变换。                                                                                                                                                                                                                                                                                                                                                                                                   | None                      |
+| sanitizer       | bool                                       | 开启Kernel内存检测，检测GM访问越界、Tile访问越界、Tile内存区间重叠和mutex未正确配对，检测结果写入报告文件，详见[内存检测](../../debug/sanitizer.md)。                                                                                                                                                                                                                                                                      | False                     |
+| tiling_key      | TilingKey定义类                            | 绑定当前Kernel支持的TilingKey字段及其候选值。                                                                                                                                                                                                                                                                                                                                                                              | None                      |
+| datatype        | dict[str, str]                             | 声明需要进行数据类型特化的Kernel参数，以及Kernel函数体中引用的数据类型变量名。                                                                                                                                                                                                                                                                                                                                             | None                      |
+| compile_timeout | int                                        | 设置当前Kernel的编译超时时间，单位为秒。                                                                                                                                                                                                                                                                                                                                                                                   | None（基础默认值为600秒） |
+| max_threads     | int或None                                  | SIMT kernel每个Thread Block允许的最大线程数，取值为[1, 2048]，SIMT模式必填，SIMD模式不接受该参数。                                                                                                                                                                                                                                                                                                                         | None                      |
+| sk_cap          | pypto_pro.language.SkCap                   | SuperKernel能力位。设置后除`__global__`入口外，额外生成`__sk__`入口和`SK_BIND`记录，Kernel可被图编译侧融合；按位或组合`CAP_0_SK_ONLY`、`CAP_1_EARLY_START_WAIT`、`CAP_2_EARLY_START_SET`、`CAP_4_DISABLE_DCCI_ALL`、`CAP_8_DISABLE_BATCHMODE_CHECK`、`CAP_16_BLOCKDIM_SCALE_UP`。`None`表示不生成SK入口，`CAP_0_SK_ONLY`表示只生成SK绑定、不启用其他特性。只接受pypto_pro.language.SkCap成员及其按位或组合，不接受裸整数。 | None                      |
+| schedmode       | int                                        | Kernel调度模式，写入`__global__`入口的`__schedmode__(mode)`限定符：0为普通模式，1为batch模式。                                                                                                                                                                                                                                                                                                                             | 0                         |
 
 ```python
 import pypto_pro.language as pl
@@ -108,19 +110,21 @@ def add_kernel(x, y, out):
 
 `pipeline`接收`pypto_pro.language.pipeline.PipelineConfig`对象，用于配置自动CV并行流水变换；未设置时不执行该变换。配置方法和使用约束参考[自动CV并行流水](../../advanced_programming/auto_parallel_pipeline.md)。
 
-`sk_cap`用于SuperKernel（SK）融合适配，取值为pypto_pro.language.SkCap的成员或其按位或组合，`None`表示不生成SK入口。设置后JIT在Host侧Launcher中额外生成`__sk__`入口与`SK_BIND`记录，并在编译阶段追加SK相关的头文件路径和编译宏；`kernel.cpp`内容与普通构建一致。能力位含义如下：
+`sk_cap`用于SuperKernel（SK）融合适配，取值为pypto_pro.language.SkCap的成员或其按位或组合，`None`表示不生成SK入口，`CAP_0_SK_ONLY`表示生成SK入口但不启用其他能力位。设置后JIT在Host侧Launcher中额外生成`__sk__`入口与`SK_BIND`记录，并在编译阶段追加SK相关的头文件路径和编译宏；`kernel.cpp`内容与普通构建一致。能力位含义如下：
 
-| 成员 | 位值 | 含义 |
-| --- | --- | --- |
-| `CAP_1_EARLY_START_WAIT` | 1 | 核内调用pypto_pro.language.system.wait_pre_task_end，允许调用点之前的指令与前序子核重叠 |
-| `CAP_2_EARLY_START_SET` | 2 | 核内调用pypto_pro.language.system.set_next_task_start，允许调用点之后的指令与后序子核重叠 |
-| `CAP_4_DISABLE_DCCI_ALL` | 4 | 框架跳过子核调用前后的DCCI，常作为只需完成绑定的默认取值 |
-| `CAP_8_DISABLE_BATCHMODE_CHECK` | 8 | 跳过`__schedmode__`检查，使`schedmode=1`的Kernel仍可参与融合 |
-| `CAP_16_BLOCKDIM_SCALE_UP` | 16 | 允许按容器核数启动，Kernel需按pypto_pro.language.get_block_num()动态确定核数 |
 
-`sk_cap`只声明Kernel可被融合，是否融合由图层决定；未融合时按普通Kernel执行，早启接口不产生效果。早启位需与配对子核中的接口配合使用（前序子核set、后序子核wait），且每个核、每个TilingKey分支只调用一次。SIMT Kernel暂不支持SK适配，设置`sk_cap`会在编译阶段报错。
+| 成员                            | 位值 | 含义                                                                                                                                      |
+| --------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CAP_0_SK_ONLY`                 | 0    | 只生成SK入口和`SK_BIND`，不启用早启、DCCI、batchmode或扩核特性                                                                            |
+| `CAP_1_EARLY_START_WAIT`        | 1    | 核内调用pypto_pro.language.system.wait_pre_task_end，允许调用点之前的指令与前序子核重叠                                                   |
+| `CAP_2_EARLY_START_SET`         | 2    | 核内调用pypto_pro.language.system.set_next_task_start，允许调用点之后的指令与后序子核重叠                                                 |
+| `CAP_4_DISABLE_DCCI_ALL`        | 4    | 框架跳过子核调用前后的DCCI，常作为只需完成绑定的默认取值                                                                                  |
+| `CAP_8_DISABLE_BATCHMODE_CHECK` | 8    | 跳过`__schedmode__`检查，使`schedmode=1`的Kernel仍可参与融合                                                                              |
+| `CAP_16_BLOCKDIM_SCALE_UP`      | 16   | 表示算子已自行支持核数向上扩展。融合后，SuperKernel会按自身的核数启动该算子；算子需要自行保证在实际启动核数大于其原始核数时仍能正确执行。 |
 
-`schedmode`只影响Kernel的下发方式：`0`为普通模式，`1`为batch模式，JIT据此在入口上生成`__schedmode__`限定符。Kernel内使用pypto_pro.language.system.sync_all()且存在多流并发时建议设置为`1`，以降低死锁风险；参与融合时需要配合`CAP_8_DISABLE_BATCHMODE_CHECK`，否则融合会被`__schedmode__`检查拒绝。
+`sk_cap`只声明Kernel可被融合，是否融合由图层决定；未融合时按普通Kernel执行，早启接口不产生效果。早启位需与配对子核中的接口配合使用（前序子核set、后序子核wait），且每个核、每个TilingKey分支只调用一次。
+
+`schedmode`只影响Kernel的下发方式：`0`为普通模式，`1`为batch模式，JIT据此在入口上生成`__schedmode__`限定符。Kernel内使用pypto_pro.language.system.sync_all()且存在多流并发时建议设置为`1`，以降低死锁风险。
 
 ## Kernel下发与同步
 
@@ -144,11 +148,12 @@ Stream和`block_dim`的完整说明参考[Kernel核函数](../kernel_function.md
 
 未设置`ASCEND_WORK_PATH`时，JIT产物以`./build/`为根目录；设置后，以`${ASCEND_WORK_PATH}/PYPTO_PRO/build/`为根目录。Kernel目录名称以`{kernel_name}__{arch}`开头；存在STATIC维度特化时追加`__shape_{hash}`；还会根据环境附加设备和分布式进程标识，例如`__d0`、`__r1`或`__d0_r1`。设备标识是当前NPU设备编号，Rank是分布式进程编号，不是Tensor的维度数。datatype和TilingKey实例还会分别使用`dt_{hash}`和`tk_{packed}`（未使用TilingKey时为`tk_none`）子目录。主要文件包括：
 
-| 文件 | 作用 |
-| --- | --- |
-| kernel.cpp | CodeGen生成的Device侧源码。 |
-| call_kernel.cpp | Host侧Launcher源码，负责参数打包和Kernel下发。 |
-| call_kernel_{hash}.so | 编译后的Launcher共享库。 |
-| *_tiling.h | 使用TilingData时生成的结构体头文件。 |
+
+| 文件                  | 作用                                           |
+| ----------------------- | ------------------------------------------------ |
+| kernel.cpp            | CodeGen生成的Device侧源码。                    |
+| call_kernel.cpp       | Host侧Launcher源码，负责参数打包和Kernel下发。 |
+| call_kernel_{hash}.so | 编译后的Launcher共享库。                       |
+| *_tiling.h            | 使用TilingData时生成的结构体头文件。           |
 
 编译失败时，优先结合错误日志和`kernel.cpp`定位解析、代码生成或工具链问题。编译成功后，中间源码默认保留在产物目录中，可用于核对生成代码。

@@ -17,10 +17,10 @@ The generated per-op wrapper (``ascendc_impl_build.py``) builds the exact same `
 the template wrapper and, instead of ``compile_op(src_cpp, ...)``, calls **this** with the PyPTO DSL ``.py``
 as ``cce_file``.
 
-The *only* PyPTO-specific difference is the kernel source: the template kernel is one
-``template<TEMPLATE_PARAMS> .cpp`` compiled N times; PyPTO folds each tilingkey to a constant and codegens
-a distinct concrete ``kernel.cpp`` per key. So this function does per-tilingkey codegen and compiles each
-concrete key, while **reusing the real ``asc_op_compile_base`` backend leaves** for everything else:
+PyPTO folds each tilingkey to a constant and generates a distinct concrete ``kernel.cpp`` per key.
+Static and combined SuperKernel requests go through ``aclnn_compile``: it wraps these implementations
+in a native template entry and delegates Host Tiling, static ABI, SK binding and linking to ``compile_op``.
+Ordinary dynamic binary compilation uses the backend leaves directly:
 
 - ``compile_pre_process`` / ``_add_op_compile_options_by_customized_json`` / ``_update_compile_option``
   (+ ``CompileOptionTuple``) — identical option preprocessing + ``global_var_storage`` / bisheng-path bootstrap;
@@ -206,10 +206,9 @@ def _write_tilingkey_header(schema, kernel_name: str, output_dir: str) -> None:
     )
 
 
-def _write_tilingdata_header(kernel, output_dir: str) -> None:
-    """Generate the TilingData header without running kernel codegen."""
-    from pypto.pypto_impl.codegen import CCECodegen
-    from pypto_pro.language.typing._tiling import get_tiling_fields, get_tiling_tuple_type, is_tiling_class
+def _binary_tiling_parameter(kernel):
+    """Resolve the single trailing Tiling parameter shared by Host and Device."""
+    from pypto_pro.language.typing._tiling import is_tiling_class
     from pypto_pro.runtime.shape_policy import _get_annotations
 
     func = kernel._func
@@ -232,6 +231,15 @@ def _write_tilingdata_header(kernel, output_dir: str) -> None:
     tiling_param_name, tiling_cls = tiling_params[0]
     if not parameter_names or parameter_names[-1] != tiling_param_name:
         raise InvalidOperation(f"tiling parameter '{tiling_param_name}' must be the last kernel parameter")
+    return tiling_param_name, tiling_cls
+
+
+def _write_tilingdata_header(kernel, output_dir: str) -> None:
+    """Generate the TilingData header without running kernel codegen."""
+    from pypto.pypto_impl.codegen import CCECodegen
+    from pypto_pro.language.typing._tiling import get_tiling_fields, get_tiling_tuple_type
+
+    _, tiling_cls = _binary_tiling_parameter(kernel)
 
     fields = get_tiling_fields(tiling_cls)
     tiling_type = get_tiling_tuple_type(tiling_cls)
@@ -717,6 +725,15 @@ def pypto_compile_op(
     dtype_consts = _validate_datatype_key(datatype_schema, dtype_key)
 
     ctx = op_context.get_context()
+
+    from asc_op_compile_base.common.buildcfg import get_current_build_config
+
+    if ctx.get_op_mode() in {"static", "prestatic"} or get_current_build_config("enable_super_kernel"):
+        from .aclnn_compile import compile_aclnn_kernel
+
+        return compile_aclnn_kernel(
+            kernel, op_info, opt.compile_options, op_compile_option, extend_options, arch, dtype_consts
+        )
 
     kernel_meta_dir = CommonUtility.get_kernel_meta_dir()
     distinct_tag = CommonUtility.get_distinct_filename_tag()

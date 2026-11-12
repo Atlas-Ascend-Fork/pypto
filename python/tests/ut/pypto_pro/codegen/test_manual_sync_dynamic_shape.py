@@ -487,9 +487,9 @@ def test_d02_d11_barrier_codegen(case_id, barrier, minimum_count, container):
 @pytest.mark.parametrize(
     "syncall",
     [
-        "SYNCALL<SyncCoreType::AIVOnly>()",
+        "AscendC::SyncAll()",
         "SYNCALL<SyncCoreType::AICOnly>()",
-        "SYNCALL<SyncCoreType::Mix>()",
+        "AscendC::SyncAll<false>()",
     ],
     ids=["E01-hard-aiv", "E02-hard-aic", "E03-hard-mix"],
 )
@@ -523,7 +523,7 @@ def test_h01_h05_auto_mutex_with_all_manual_sync_forms():
     assert "wait_flag(PIPE_MTE2, PIPE_V, (event_t)4);" in cpp
     assert "get_buf(PIPE_MTE2, 12, 0);" in cpp
     assert "rls_buf(PIPE_MTE2, 12, 0);" in cpp
-    assert "SYNCALL<SyncCoreType::AIVOnly>()" in cpp
+    assert "AscendC::SyncAll()" in cpp
     assert "pipe_barrier(PIPE_ALL);" in cpp
     assert "getFFTSMsg(1, 14)" in cpp
     assert "wait_flag_dev(PIPE_V, 14);" in cpp

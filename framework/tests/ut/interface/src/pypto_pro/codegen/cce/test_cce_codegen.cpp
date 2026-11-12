@@ -222,6 +222,35 @@ TEST(CCECodegenTest, EmitsTargetSpecificTilingStructCopy)
     EXPECT_NE(vector.find("copy_data_align64((uint8_t*)&tiling, (__ubuf__ uint8_t *)tiling_in_ub"), std::string::npos);
 }
 
+TEST(CCECodegenTest, StaticTilingBlockIsSharedByEveryCompilationMode)
+{
+    auto tuple_type = std::make_shared<const ir::TupleType>(
+        std::vector<ir::TypePtr>{std::make_shared<const ir::ScalarType>(ir::DataType::INT64),
+                                 std::make_shared<const ir::ScalarType>(ir::DataType::FP32)});
+    auto tiling = MakeVar("tiling", tuple_type);
+    auto debug_info = std::make_shared<ir::IRDebugInfo>();
+    debug_info->RegisterTupleTypeInfo(tuple_type,
+                                      {ir::TupleTypeKind::STRUCT, std::string("TestTiling"), {"rows", "scale"}});
+    auto program = MakeProgram(std::make_shared<const ir::ReturnStmt>(ir::Span::Unknown()), {tiling}, debug_info);
+    for (auto target : {ir::SectionKind::Cube, ir::SectionKind::Vector}) {
+        CCECodegen codegen(target);
+        auto binary = codegen.GenerateSingle(program, npu::tile_fwk::NPUArch::DAV_3510);
+        auto static_start = binary.find("#ifdef CONST_TILING");
+        auto dynamic_start = binary.find("#else", static_start);
+        ASSERT_NE(static_start, std::string::npos);
+        ASSERT_NE(dynamic_start, std::string::npos);
+        auto static_body = binary.substr(static_start, dynamic_start - static_start);
+        EXPECT_NE(static_body.find("GET_TILING_DATA_WITH_STRUCT(TestTiling, tiling_constant, tiling_ptr);"),
+                  std::string::npos);
+        EXPECT_NE(static_body.find("TestTiling tiling = tiling_constant;"), std::string::npos);
+        EXPECT_NE(static_body.find("PYPTO_ACLNN_CHECK_TILING_SIZE(TestTiling, tiling_constant);"), std::string::npos);
+        EXPECT_EQ(static_body.find("copy_data"), std::string::npos);
+        EXPECT_EQ(static_body.find("wait_flag"), std::string::npos);
+        EXPECT_NE(binary.find("copy_data_align64"), std::string::npos);
+        EXPECT_EQ(codegen.GenerateSingle(program, npu::tile_fwk::NPUArch::DAV_3510), binary);
+    }
+}
+
 TEST(CCECodegenTest, RejectsUnprojectedOrWrongTargetSections)
 {
     auto body = std::make_shared<const ir::ReturnStmt>(ir::Span::Unknown());
@@ -1387,6 +1416,30 @@ TEST(CCECodegenTest, AddsExpressionSpanToCodegenErrors)
         EXPECT_NE(message.find("Unknown call 'unknown.codegen.op'"), std::string::npos);
         EXPECT_NE(message.find("kernel.py"), std::string::npos);
         EXPECT_NE(message.find("42"), std::string::npos);
+    }
+}
+
+TEST(CCECodegenTest, GlobalSynchronizationPreservesCoreScope)
+{
+    for (const auto& [coreType, expected] : std::vector<std::pair<int, std::string>>{
+             {0, "AscendC::SyncAll();"}, {1, "SYNCALL<SyncCoreType::AICOnly>();"}, {2, "AscendC::SyncAll<false>();"}}) {
+        auto call = std::make_shared<const ir::Call>(
+            "system.sync_all", std::vector<ir::ExprPtr>{},
+            std::vector<std::pair<std::string, std::any>>{{"core_type", coreType}}, ir::Span::Unknown());
+        auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
+        auto program = MakeProgram(body);
+        for (auto arch : {npu::tile_fwk::NPUArch::DAV_3510, npu::tile_fwk::NPUArch::DAV_9201}) {
+            for (auto target : {ir::SectionKind::Cube, ir::SectionKind::Vector}) {
+                CCECodegen codegen(target);
+                auto generated = codegen.GenerateSingle(program, arch);
+                EXPECT_NE(generated.find(expected), std::string::npos);
+                if (coreType == 1) {
+                    EXPECT_EQ(generated.find("AscendC::SyncAll"), std::string::npos);
+                } else {
+                    EXPECT_EQ(generated.find("SYNCALL<"), std::string::npos);
+                }
+            }
+        }
     }
 }
 

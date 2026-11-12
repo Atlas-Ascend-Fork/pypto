@@ -11,7 +11,7 @@
 """CCE codegen smoke tests for system.sync_all.
 
 Each test compiles a @pl.jit with pl.system.sync_all() and verifies that the
-generated CCE C++ output contains the expected SYNCALL calls with the correct
+generated CCE C++ output contains the expected AscendC SyncAll calls with the correct
 core_type attribute. Covered cases include the default Mix and explicit AIVOnly.
 """
 
@@ -61,13 +61,13 @@ def _sync_all_aiv_only_kernel(
 def test_sync_all_mix_cce():
     cpp = _compile_to_cce(_sync_all_mix_kernel)
     logging.info("CCE C++ output:\n%s", cpp)
-    assert "SYNCALL<SyncCoreType::Mix>()" in cpp
+    assert "AscendC::SyncAll<false>()" in cpp
 
 
 def test_sync_all_aiv_only_cce():
     cpp = _compile_to_cce(_sync_all_aiv_only_kernel)
     logging.info("CCE C++ output:\n%s", cpp)
-    assert "SYNCALL<SyncCoreType::AIVOnly>()" in cpp
+    assert "AscendC::SyncAll()" in cpp
 
 
 # ---------------------------------------------------------------------------

@@ -12,6 +12,12 @@
  * \file pypto_block_meta.h
  * \brief Block num / block idx accessors for PyPTO kernels (SuperKernel-aware).
  *
+ * ACLNN recompilation defines ``__PYPTO_ACLNN__`` and uses AscendC's native grid
+ * accessors. The OPC pipeline specializes the count and provides the SK index.
+ * Under the same flag this header also carries the ACLNN static-build Tiling size
+ * check and the temporary PTO block-intrinsic adaptation; the compatibility was
+ * previously provided by pypto_aclnn_compat.h.
+ *
  * The CCE backend emits these accessors unconditionally, so the generated kernel source
  * is identical for SK and non-SK builds. The compile flag ``-D__PYPTO_SK_BLOCK__`` (added
  * by the JIT whenever ``sk_cap`` is configured, together with the asc-devkit include
@@ -32,7 +38,41 @@
 #pragma once
 #include <cstdint>
 
-#ifdef __PYPTO_SK_BLOCK__
+#if defined(__PYPTO_ACLNN__)
+
+#include "kernel_operator.h"
+
+// CANN 9.3's static GET_TILING_DATA_WITH_STRUCT materializes this byte array.
+// convert_from_bytes alone does not reject a Host/Device layout-size mismatch.
+// Check before accepting a binary compiled against another Host Tiling branch.
+#define PYPTO_ACLNN_CHECK_TILING_SIZE(type, name) \
+    static_assert(sizeof(type) == sizeof(__ascendc_arr_##name), "PyPTO Host/Device Tiling sizes differ")
+
+// PTO headers contain unused sync/communication helpers that read the raw launch
+// grid. CANN checks all preprocessed functions before dead-code removal. Adapt those
+// reads while including PTO, then restore the caller's macro state.
+// GetBlockIdx is linear on AIV; dividing by the sub-block count preserves the raw
+// group-index convention expected inside those PTO helpers.
+#pragma push_macro("get_block_num")
+#pragma push_macro("get_block_idx")
+#pragma push_macro("get_task_ration")
+#undef get_block_num
+#undef get_block_idx
+#undef get_task_ration
+#define get_block_num() AscendC::GetBlockNum()
+#define get_block_idx() (AscendC::GetBlockIdx() / AscendC::GetSubBlockNum())
+#define get_task_ration() AscendC::GetTaskRatio()
+#include <pto/pto-inst.hpp>
+#pragma pop_macro("get_task_ration")
+#pragma pop_macro("get_block_idx")
+#pragma pop_macro("get_block_num")
+
+// The AscendC OPC pipeline specializes the sub-kernel block count and compiles the
+// SK entry with its native block-index convention. No process-global GM state is needed.
+static __aicore__ inline int64_t __pypto_block_num_value() { return AscendC::GetBlockNum(); }
+static __aicore__ inline int64_t __pypto_block_idx_value() { return AscendC::GetBlockIdx(); }
+
+#elif defined(__PYPTO_SK_BLOCK__)
 
 #include "kernel_operator.h"
 

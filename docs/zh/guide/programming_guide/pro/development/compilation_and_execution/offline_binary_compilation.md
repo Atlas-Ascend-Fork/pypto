@@ -99,6 +99,59 @@ def add_example(
 
 TilingData和TilingKey的字段规则参考[Tiling参数定义与传递](../tiling/tiling_parameter_definition.md)。Kernel参数和执行域的定义参考[Kernel核函数](../kernel_function.md)。
 
+## ACLNN静态Kernel与SuperKernel再次编译
+
+该流程复用原生静态编译和SuperKernel组合编译流程。
+图后端采集实际ACLNN输入后，通过OPP中的编译wrapper调用`pypto_compile_op()`。
+PyPTO生成各TilingKey的计算实现和AscendC模板入口，由原生`compile_op()`完成Host Tiling、
+静态入口、SuperKernel绑定、链接与元数据生成。
+
+再次编译的部署环境需要提供匹配的PyPTO Python包、binding和C++ backend，以及算子包内的以下内容：
+
+- Python编译wrapper和可导入的DSL源码及其依赖。
+- 与Host Tiling编译时一致的TilingData、TilingKey生成头。
+- OpDef配置、Host Tiling共享库和ACLNN调用接口。
+
+静态模式需要确定的输入、输出shape，以及满足要求的值依赖信息。编译器将本次Host Tiling结果
+转换为Device常量，静态外部入口由原生编译器省略Tiling指针。普通Tensor内容和地址仍为运行期参数。
+缺省optional Tensor在外部入口中省略，在调用内部计算实现时按原型槽位恢复为`nullptr`。
+
+SuperKernel需要使用静态普通入口和子核一起编译的combined流程。ACLNN路径不再要求算子声明
+`sk_cap`：CAP_1/2由源码中的`WaitPreTaskEnd`/`SetNextTaskStart`和
+`super_kernel_optimize_options={"early_start": 1}`触发；CAP_4由
+`dcci_disable_on_kernel`匹配子核符号后由原生编译侧处理。算子即使保留`sk_cap`，
+ACLNN也会忽略它，不要依赖`sk_cap`控制ACLNN能力。JIT模式仍通过`pypto_pro.language.jit(sk_cap=...)`
+声明能力；ACLNN自动路径不使用`sk_cap`。
+当前ACLNN自动路径已支持CAP_1/CAP_2，仍不支持CAP_8/CAP_16；不支持动态shape与
+SuperKernel组合、动态Tensor列表、MC2、依赖计算结果的输出shape，以及SIMT与
+SuperKernel组合。AIC-only的SuperKernel同步尚未单独验证。
+
+图侧可以使用以下配置发起再次编译；仅静态编译时关闭`super_kernel_optimize`：
+
+```python
+import npugraph_ex
+import torch
+import torch_npu
+
+config = npugraph_ex.CompilerConfig()
+config.static_kernel_compile = True
+config.super_kernel_optimize = True
+config.super_kernel_optimize_options = {
+    "early_start": 1,
+    "dcci_disable_on_kernel": [".*<kernel_symbol_fragment>.*"],
+}
+# 修改算子源码、生成头或PyPTO backend后，验证时显式禁用旧静态编译缓存。
+config.disable_static_kernel_compile_cache = True
+compiled = torch.compile(model, backend=npugraph_ex.get_npu_backend(compiler_config=config))
+```
+
+`early_start`仅在源码真实调用早启接口时生效；`dcci_disable_on_kernel`按需配置，
+匹配的是生成后的子核符号名而不是`op_type`。不需要时从字典中移除对应项。
+
+验证时应同时确认目标算子的静态安装包、安装与reselect结果、捕获图中的静态Kernel名称，
+以及SuperKernel优化前后的节点变化。部分图后端在再次编译失败后会继续运行普通binary；
+单独的精度通过或图级开关开启不能证明静态编译或融合已生效。
+
 ## 配置CMakeLists.txt
 
 在`op_host/CMakeLists.txt`中调用`enable_pypto_kernel(<op_file>)`，并将该调用放在`add_modules_sources`或`add_modules_sources_with_soc`之前：
