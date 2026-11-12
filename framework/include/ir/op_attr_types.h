@@ -130,6 +130,8 @@ PYPTO_DECLARE_ENUM(ReluPreMode, NormalRelu)
 
 PYPTO_DECLARE_ENUM(AtomicType, AtomicNone, AtomicAdd)
 
+PYPTO_DECLARE_ENUM(AtomicRMWMode, ADD, SUB, EXCH, MAX, MIN, INC, DEC, AND, OR, XOR)
+
 PYPTO_DECLARE_ENUM(STPhase, Unspecified, Partial, Final)
 
 PYPTO_DECLARE_ENUM(AccPhase, Unspecified, Partial, Final)

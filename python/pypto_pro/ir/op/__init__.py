@@ -16,6 +16,7 @@ This module organizes IR operations by category.
 """
 
 __all__ = [
+    "atomic",
     "block",
     "debug",
     "dist",
@@ -27,6 +28,7 @@ __all__ = [
 ]
 
 
+from . import atomic_ops as atomic
 from . import block_ops as block
 from . import debug_ops as debug
 from . import dist_ops as dist

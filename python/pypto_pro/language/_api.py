@@ -1295,6 +1295,100 @@ def setval(container: "Tile | Tensor", offset: int, value: Union[int, float]) ->
 
 
 @_api_decl
+def atomic_add(tensor: Tensor, offset: int, value: Union[int, float]) -> Scalar:
+    """Atomically add ``value`` to one GM Tensor element and return its pre-op value.
+
+    Supported element dtypes: INT32, UINT32, FP32, INT64, UINT64.
+    """
+
+
+@_api_decl
+def atomic_sub(tensor: Tensor, offset: int, value: Union[int, float]) -> Scalar:
+    """Atomically subtract ``value`` from one GM Tensor element and return its pre-op value.
+
+    Supported element dtypes: INT32, UINT32, FP32, INT64, UINT64.
+    """
+
+
+@_api_decl
+def atomic_exch(tensor: Tensor, offset: int, value: Union[int, float]) -> Scalar:
+    """Atomically replace one GM Tensor element with ``value`` and return its pre-op value.
+
+    Supported element dtypes: INT32, UINT32, FP32, INT64, UINT64.
+    """
+
+
+@_api_decl
+def atomic_max(tensor: Tensor, offset: int, value: Union[int, float]) -> Scalar:
+    """Atomically keep the maximum of one GM Tensor element and ``value``; return the pre-op value.
+
+    Supported element dtypes: INT32, UINT32, FP32, INT64, UINT64.
+    """
+
+
+@_api_decl
+def atomic_min(tensor: Tensor, offset: int, value: Union[int, float]) -> Scalar:
+    """Atomically keep the minimum of one GM Tensor element and ``value``; return the pre-op value.
+
+    Supported element dtypes: INT32, UINT32, FP32, INT64, UINT64.
+    """
+
+
+@_api_decl
+def atomic_inc(tensor: Tensor, offset: int, limit: Union[int, float]) -> Scalar:
+    """Atomically increment a wrapping counter element and return its pre-op value.
+
+    The new value is ``0`` when the old value is greater than or equal to
+    ``limit``, otherwise ``old + 1``. Supported element dtypes: UINT32, UINT64.
+    """
+
+
+@_api_decl
+def atomic_dec(tensor: Tensor, offset: int, limit: Union[int, float]) -> Scalar:
+    """Atomically decrement a wrapping counter element and return its pre-op value.
+
+    The new value is ``limit`` when the old value is zero or greater than
+    ``limit``, otherwise ``old - 1``. Supported element dtypes: UINT32, UINT64.
+    """
+
+
+@_api_decl
+def atomic_and(tensor: Tensor, offset: int, value: Union[int, float]) -> Scalar:
+    """Atomically apply bitwise AND to one GM Tensor element and return its pre-op value.
+
+    Supported element dtypes: INT32, UINT32, INT64, UINT64.
+    """
+
+
+@_api_decl
+def atomic_or(tensor: Tensor, offset: int, value: Union[int, float]) -> Scalar:
+    """Atomically apply bitwise OR to one GM Tensor element and return its pre-op value.
+
+    Supported element dtypes: INT32, UINT32, INT64, UINT64.
+    """
+
+
+@_api_decl
+def atomic_xor(tensor: Tensor, offset: int, value: Union[int, float]) -> Scalar:
+    """Atomically apply bitwise XOR to one GM Tensor element and return its pre-op value.
+
+    Supported element dtypes: INT32, UINT32, INT64, UINT64.
+    """
+
+
+@_api_decl
+def atomic_cas(tensor: Tensor, offset: int, compare: Union[int, float], value: Union[int, float]) -> Scalar:
+    """Atomically compare and exchange one GM Tensor element; return its pre-op value.
+
+    ``value`` is stored when the element equals ``compare``; otherwise the
+    element is unchanged. Compare the returned pre-op value with ``compare`` to
+    learn whether the swap happened — this is a single CAS, not a retry loop.
+
+    Supported element dtypes: INT32, UINT32, FP32, INT64, UINT64.
+    """
+
+
+@_api_decl
 def set_validshape(tile: "Tile | TileGroup", /, shape: Shape) -> None:
     """Set the valid shape of a Tile or tile_group (for partial-tile / tail-block operations).
 

@@ -586,6 +586,18 @@ void BindTypeClass(py::module_& ir)
         .value("AtomicNone", ir::AtomicType::AtomicNone, "Overwrite (default)")
         .value("AtomicAdd", ir::AtomicType::AtomicAdd, "Atomic accumulate");
 
+    py::enum_<ir::AtomicRMWMode>(ir, "AtomicRMWMode", "Scalar read-modify-write kind for block.atomic_rmw")
+        .value("ADD", ir::AtomicRMWMode::ADD, "Atomically add")
+        .value("SUB", ir::AtomicRMWMode::SUB, "Atomically subtract")
+        .value("EXCH", ir::AtomicRMWMode::EXCH, "Atomically exchange")
+        .value("MAX", ir::AtomicRMWMode::MAX, "Atomically keep the maximum")
+        .value("MIN", ir::AtomicRMWMode::MIN, "Atomically keep the minimum")
+        .value("INC", ir::AtomicRMWMode::INC, "Atomically increment with wrap")
+        .value("DEC", ir::AtomicRMWMode::DEC, "Atomically decrement with wrap")
+        .value("AND", ir::AtomicRMWMode::AND, "Atomically bitwise AND")
+        .value("OR", ir::AtomicRMWMode::OR, "Atomically bitwise OR")
+        .value("XOR", ir::AtomicRMWMode::XOR, "Atomically bitwise XOR");
+
     py::enum_<ir::STPhase>(ir, "STPhase", "Fixpipe drain phase for store")
         .value("Unspecified", ir::STPhase::Unspecified, "Unspecified phase")
         .value("Partial", ir::STPhase::Partial, "Partial drain")

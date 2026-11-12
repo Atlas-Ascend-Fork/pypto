@@ -6,6 +6,7 @@
 
 basic_data_structures/index
 memory_data_movement/index
+atomic/index
 tile_computation/index
 Reg-API/index
 cube_computation/index

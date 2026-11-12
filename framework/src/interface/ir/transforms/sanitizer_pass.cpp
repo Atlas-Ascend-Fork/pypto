@@ -168,6 +168,8 @@ public:
             {"block.insert", tileAndPhaseInsert},
             {"block.getval", scalarBounds},
             {"block.setval", scalarBounds},
+            {"block.atomic_rmw", scalarBounds},
+            {"block.atomic_cas", scalarBounds},
             {"block.set_validshape", validshapeBounds},
             {"system.mutex_lock_dyn", mutexPairing},
             {"system.mutex_unlock_dyn", mutexPairing},
