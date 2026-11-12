@@ -25,6 +25,8 @@
 
 逐元素大于比较运算。
 
+pypto.gt与pypto.greater是同一操作的两个名称，二者完全等价：函数原型、参数、返回值与约束均一致，pypto.gt(a, b)与pypto.greater(a, b)的结果相同。除pypto.gt外，也可通过Tensor.greater方法（a.greater(b)）或大于运算符（a > b，内部经Tensor.__gt__调用Tensor.greater，再转发至pypto.greater）使用。
+
 ## 函数原型
 
 ```python
@@ -103,7 +105,7 @@ pypto.set_vec_tile_shapes(4, 16)
 ```python
 a = pypto.tensor([3], pypto.DT_FP32)
 b = pypto.tensor([3], pypto.DT_FP32)
-out = pypto.gt(a, b)
+out = pypto.gt(a, b)   # 等价于pypto.greater(a, b)、a.greater(b)、a > b
 ```
 
 结果示例如下：
