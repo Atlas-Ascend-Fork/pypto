@@ -318,6 +318,7 @@ Tensor ScatterUpdate(Tensor& dst, const Tensor& index, const Tensor& src, int ax
         Tensor resTmp(dst.GetStorage()->Datatype(), dst.GetStorage()->GetDynValidShape(), "", dst.Format());
         result = resTmp;
     }
+    result.GetStorage()->UpdateDynValidShape(dst.GetStorage()->GetDynValidShape());
 
     if (cacheMode == "PA_NZ") {
         axis = 1;

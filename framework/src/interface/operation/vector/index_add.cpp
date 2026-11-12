@@ -398,6 +398,7 @@ void IndexAdd_(Tensor& self, const Tensor& src, const Tensor& indices, int axis,
     DataType selfDataType = self.GetDataType();
     Element castedAlpha = Element(selfDataType, alpha.Cast<float>());
     Tensor result(selfDataType, self.GetShape());
+    result.GetStorage()->UpdateDynValidShape(self.GetStorage()->GetDynValidShape());
     CALL(IndexAdd, *Program::GetInstance().GetCurrentFunction(),
          {self.GetStorage(), src.GetStorage(), indices.GetStorage(), result.GetStorage(), axis, castedAlpha});
     self = result;

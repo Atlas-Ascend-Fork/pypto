@@ -176,6 +176,7 @@ void IndexPut_(Tensor& self, const std::vector<Tensor>& indices, const Tensor& v
         indicesLogical.push_back(indices[i].GetStorage());
     }
     Tensor dst(self.GetDataType(), self.GetShape());
+    dst.GetStorage()->UpdateDynValidShape(self.GetStorage()->GetDynValidShape());
     CALL(IndexPut, *Program::GetInstance().GetCurrentFunction(), self.GetStorage(), indicesLogical, values.GetStorage(),
          dst.GetStorage(), accumulate);
     Program::GetInstance().GetCurrentFunction()->SetSameMemId(self.GetStorage(), dst.GetStorage());
