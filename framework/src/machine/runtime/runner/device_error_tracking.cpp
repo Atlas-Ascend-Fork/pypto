@@ -192,7 +192,8 @@ bool IsPyPTOAicpuException(const AclRtExceptionInfo* exceptionInfo)
     }
     const char* functionName = exceptionInfo->expandInfo.u.aicpuInfo.functionName;
     return functionName != nullptr &&
-           std::strncmp(functionName, "DynTileFwkKernelServer", std::strlen("DynTileFwkKernelServer")) == 0;
+           (std::strncmp(functionName, "DynTileFwkKernelServer", std::strlen("DynTileFwkKernelServer")) == 0 ||
+            std::strncmp(functionName, "DynPyptoKernelServer", std::strlen("DynPyptoKernelServer")) == 0);
 }
 
 void PyPTOExceptionInfoCallBack(AclRtExceptionInfo* exceptionInfo)

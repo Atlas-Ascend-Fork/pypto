@@ -28,11 +28,12 @@ TEST_F(DeviceErrorTrackingTest, AicpuNamesMatchPrefix)
     RtExceptionInfo info = {};
     info.expandInfo.type = RtExceptionExpandType::AICPU;
     EXPECT_FALSE(IsPyPTOAicpuException(&info));
-    for (const char* name : {"DynTileFwkKernelServer", "DynTileFwkKernelServerInit", "DynTileFwkKernelServerOther"}) {
+    for (const char* name : {"DynTileFwkKernelServer", "DynTileFwkKernelServerInit", "DynTileFwkKernelServerOther",
+                             "DynPyptoKernelServer", "DynPyptoKernelServerInit", "DynPyptoKernelServerOther"}) {
         info.expandInfo.u.aicpuInfo.functionName = name;
         EXPECT_TRUE(IsPyPTOAicpuException(&info));
     }
-    for (const char* name : {"", "OtherKernel", "DynTileFwkKernel"}) {
+    for (const char* name : {"", "OtherKernel", "DynTileFwkKernel", "DynPyptoKernel"}) {
         info.expandInfo.u.aicpuInfo.functionName = name;
         EXPECT_FALSE(IsPyPTOAicpuException(&info));
     }

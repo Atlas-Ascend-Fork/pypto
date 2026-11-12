@@ -50,6 +50,14 @@ protected:
         ofs << content;
     }
 
+    void WriteTar()
+    {
+        const auto kernelDir = root_ / "opp" / "built-in" / "op_impl" / "aicpu" / "kernel";
+        std::filesystem::create_directories(kernelDir);
+        std::ofstream ofs(kernelDir / "pypto_aicpu.tar.gz");
+        ofs << "dummy";
+    }
+
     static std::string CurrentTestName()
     {
         const auto* info = testing::UnitTest::GetInstance()->current_test_info();
@@ -83,6 +91,7 @@ protected:
 TEST_F(PyptoAicpuKernelConfigTest, ConfiguredWhenNameMatches)
 {
     (void)setenv("ASCEND_AICPU_PATH", root_.c_str(), 1);
+    WriteTar();
     WriteIni("name:pypto_aicpu.tar.gz\ninstall_path:2\n");
     EXPECT_TRUE(detail::IsPyptoAicpuKernelConfigured());
 }
@@ -90,6 +99,7 @@ TEST_F(PyptoAicpuKernelConfigTest, ConfiguredWhenNameMatches)
 TEST_F(PyptoAicpuKernelConfigTest, NotConfiguredWhenNameDoesNotMatch)
 {
     (void)setenv("ASCEND_AICPU_PATH", root_.c_str(), 1);
+    WriteTar();
     WriteIni("name:other_kernel.tar.gz\ninstall_path:2\n");
     EXPECT_FALSE(detail::IsPyptoAicpuKernelConfigured());
 }
@@ -97,6 +107,7 @@ TEST_F(PyptoAicpuKernelConfigTest, NotConfiguredWhenNameDoesNotMatch)
 TEST_F(PyptoAicpuKernelConfigTest, NotConfiguredWhenIniMissing)
 {
     (void)setenv("ASCEND_AICPU_PATH", root_.c_str(), 1);
+    WriteTar();
     EXPECT_FALSE(detail::IsPyptoAicpuKernelConfigured());
 }
 
@@ -104,6 +115,7 @@ TEST_F(PyptoAicpuKernelConfigTest, FallsBackToAscendHomePath)
 {
     (void)unsetenv("ASCEND_AICPU_PATH");
     (void)setenv("ASCEND_HOME_PATH", root_.c_str(), 1);
+    WriteTar();
     WriteIni("name:pypto_aicpu.tar.gz\n");
     EXPECT_TRUE(detail::IsPyptoAicpuKernelConfigured());
 }
@@ -111,6 +123,7 @@ TEST_F(PyptoAicpuKernelConfigTest, FallsBackToAscendHomePath)
 TEST_F(PyptoAicpuKernelConfigTest, MatchesNameWithLeadingSpace)
 {
     (void)setenv("ASCEND_AICPU_PATH", root_.c_str(), 1);
+    WriteTar();
     WriteIni("  name:pypto_aicpu.tar.gz\n");
     EXPECT_TRUE(detail::IsPyptoAicpuKernelConfigured());
 }
@@ -118,6 +131,14 @@ TEST_F(PyptoAicpuKernelConfigTest, MatchesNameWithLeadingSpace)
 TEST_F(PyptoAicpuKernelConfigTest, NotConfiguredWhenOnlyPathContainsName)
 {
     (void)setenv("ASCEND_AICPU_PATH", root_.c_str(), 1);
+    WriteTar();
     WriteIni("package:pypto_aicpu.tar.gz\n");
+    EXPECT_FALSE(detail::IsPyptoAicpuKernelConfigured());
+}
+
+TEST_F(PyptoAicpuKernelConfigTest, NotConfiguredWhenTarMissing)
+{
+    (void)setenv("ASCEND_AICPU_PATH", root_.c_str(), 1);
+    WriteIni("name:pypto_aicpu.tar.gz\n");
     EXPECT_FALSE(detail::IsPyptoAicpuKernelConfigured());
 }

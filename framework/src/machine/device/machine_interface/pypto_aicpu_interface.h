@@ -8,8 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-#ifndef TILE_FWK_AICPU_INTERFACE_H
-#define TILE_FWK_AICPU_INTERFACE_H
+#ifndef PYPTO_AICPU_INTERFACE_H
+#define PYPTO_AICPU_INTERFACE_H
 
 #include <sys/mman.h>
 #include <unistd.h>

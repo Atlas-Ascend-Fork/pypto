@@ -592,6 +592,30 @@ TEST_F(DeviceExceptionDumpTest, TestAicpuExceptionWithZeroAddressTensor)
     EXPECT_EQ(dumpInfo.extraTensorNum, 1);
 }
 
+TEST_F(DeviceExceptionDumpTest, TestAicpuExceptionWithNewEntryName)
+{
+    std::vector<DevTensorData> tensors(1);
+    tensors[0].address = 0;
+    tensors[0].dataType = static_cast<int32_t>(DataType::DT_FP32);
+    tensors[0].shape.dim[0] = 16;
+    tensors[0].shape.dimSize = 1;
+
+    std::vector<uint8_t> buffer;
+    BuildAicpuArgBuffer(buffer, 1, tensors);
+    RtExceptionInfo exceptionInfo = {};
+    AdxExceptionDumpInfo dumpInfo = {};
+    uint32_t dumpSize = 1;
+    uint32_t realSize = 0;
+    AdxExceptionDumpMode mode = AdxExceptionDumpMode::ADX_DUMP_MODE_NONE;
+    exceptionInfo.expandInfo.type = RtExceptionExpandType::AICPU;
+    exceptionInfo.expandInfo.u.aicpuInfo.argAddr = buffer.data();
+    exceptionInfo.expandInfo.u.aicpuInfo.argsize = static_cast<uint32_t>(buffer.size());
+    exceptionInfo.expandInfo.u.aicpuInfo.functionName = "DynPyptoKernelServer";
+    auto ret = ExceptionDumpCallBack(&exceptionInfo, &dumpInfo, dumpSize, &realSize, &mode);
+    EXPECT_EQ(ret, 0);
+    EXPECT_STREQ(dumpInfo.kernelName, "DynPyptoKernelServer");
+}
+
 TEST_F(DeviceExceptionDumpTest, TestAicpuExceptionOfflineUsesOpName)
 {
     Program::GetInstance().SetLastFunction(nullptr);

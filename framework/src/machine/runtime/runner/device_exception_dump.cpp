@@ -306,7 +306,8 @@ int32_t GetAicpuExceptionDumpInfo(RtAicpuExDetailInfo& aicpuExcepitionInfo, AdxE
     }
 
     if (aicpuExcepitionInfo.functionName != nullptr &&
-        strncmp(aicpuExcepitionInfo.functionName, "DynTileFwkKernelServer", strlen("DynTileFwkKernelServer")) != 0) {
+        strncmp(aicpuExcepitionInfo.functionName, "DynTileFwkKernelServer", strlen("DynTileFwkKernelServer")) != 0 &&
+        strncmp(aicpuExcepitionInfo.functionName, "DynPyptoKernelServer", strlen("DynPyptoKernelServer")) != 0) {
         MACHINE_LOGI("Current exception info is not PyPTO");
         return 0;
     }

@@ -26,6 +26,7 @@ target_compile_options(tile_fwk_server_interface
             -march=armv8-a
             -shared
             -fPIC
+            -fvisibility=hidden
             -D__DEVICE__
             -Werror
             -fno-common

@@ -79,6 +79,10 @@ bool IsPyptoAicpuKernelConfigured()
     if (aicpuPath.empty()) {
         return false;
     }
+    std::string pyptoTarPath = aicpuPath + "/opp/built-in/op_impl/aicpu/kernel/pypto_aicpu.tar.gz";
+    if (RealPath(pyptoTarPath).empty()) {
+        return false;
+    }
     const std::string iniPath = aicpuPath + "/conf/ascend_package_load.ini";
     bool readSuccess = false;
     const std::vector<uint8_t> iniContent = ReadFile(iniPath, &readSuccess);
