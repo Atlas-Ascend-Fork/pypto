@@ -2325,54 +2325,88 @@ void RemoveRedundantOpUtils::ProcessSliceContractSliceSingle(Function& function,
     operationUpdated = true;
 }
 
+void RemoveRedundantOpUtils::QueuePromotedSliceContractFanout(Operation& promotedSlice, bool wasL1, bool revisit,
+                                                              std::unordered_set<Operation*>& skippedMixedFanouts,
+                                                              std::vector<Operation*>& promotedFanouts)
+{
+    if (revisit || skippedMixedFanouts.empty() || wasL1 || promotedSlice.IsDeleted() ||
+        !SliceRequiresL1(promotedSlice)) {
+        return;
+    }
+    // For a skipped fan-out, promotedSlice reads the upstream CONTRACT's output.
+    // Revisit that CONTRACT only if it is the sole producer; multiple CONTRACTs may write the same tensor.
+    const auto& producers = promotedSlice.GetIOperands().front()->GetProducers();
+    if (producers.size() == 1 && skippedMixedFanouts.erase(*producers.begin()) != 0) {
+        promotedFanouts.push_back(*producers.begin());
+    }
+}
+
+void RemoveRedundantOpUtils::ProcessSliceContractSliceCandidate(
+    Function& function, Operation* op, bool revisit,
+    const std::unordered_map<int, std::unordered_set<int>>& assembleRawIndex,
+    std::unordered_set<Operation*>& skippedMixedFanouts, std::vector<Operation*>& promotedFanouts,
+    std::vector<Operation*>& newOps, bool& operationUpdated)
+{
+    if (op == nullptr || op->GetOpcode() != Opcode::OP_CONTRACT) {
+        return;
+    }
+
+    SliceContractSliceChain chain;
+    if (!CollectSliceContractSliceChain(*op, chain)) {
+        return;
+    }
+    // 同 raw 的其他 assemble 输出或 CONTRACT/消费者 token 会阻止整链折叠；
+    // 前驱 SLICE 的 token 由 fold/compose 迁移。
+    if (remove_redundant_op_internal::HasSiblingAssembleOutputOnRaw(assembleRawIndex, chain.contractOutput) ||
+        HasAnyToken(*chain.contract) ||
+        std::any_of(chain.consumers.begin(), chain.consumers.end(),
+                    [](const Operation* consumer) { return HasAnyToken(*consumer); })) {
+        return;
+    }
+
+    const bool isFanout = chain.consumers.size() > 1;
+    const bool keepL1Fanout = isFanout && std::all_of(chain.consumers.begin(), chain.consumers.end(),
+                                                      [](const Operation* consumer) {
+                                                          return consumer != nullptr && SliceRequiresL1(*consumer);
+                                                      });
+    if (revisit && !keepL1Fanout) {
+        return;
+    }
+    // The prefix is a real copy. A matmul's L0C copy-out stays outside this chain;
+    // folding only reads linear-memory sourceTensor/contractInput.
+    std::vector<SliceContractSliceRewrite> rewrites;
+    bool canComposeOffsets = true;
+    if (!CollectSliceContractSliceRewrites(chain, isFanout, keepL1Fanout, rewrites, canComposeOffsets)) {
+        return;
+    }
+    const bool wasL1 = SliceRequiresL1(*chain.precedingSlice);
+    if (!isFanout) {
+        ProcessSliceContractSliceSingle(function, chain, rewrites.front(), newOps, operationUpdated);
+    } else if (ProcessSliceContractSliceFanout(function, chain, rewrites, keepL1Fanout, canComposeOffsets, newOps,
+                                               operationUpdated)) {
+        operationUpdated = true;
+    } else if (!keepL1Fanout && !canComposeOffsets &&
+               std::any_of(chain.consumers.begin(), chain.consumers.end(),
+                           [](const Operation* consumer) { return SliceRequiresL1(*consumer); })) {
+        skippedMixedFanouts.insert(op);
+    }
+    QueuePromotedSliceContractFanout(*chain.precedingSlice, wasL1, revisit, skippedMixedFanouts, promotedFanouts);
+}
+
 Status RemoveRedundantOpUtils::ProcessSliceContractSlice(Function& function, std::vector<Operation*>& newOps,
                                                          bool& operationUpdated)
 {
     auto opList = function.Operations().DuplicatedOpList();
     const auto assembleRawIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(function);
+    std::unordered_set<Operation*> skippedMixedFanouts;
+    std::vector<Operation*> promotedFanouts;
     for (auto* op : opList) {
-        if (op == nullptr || op->GetOpcode() != Opcode::OP_CONTRACT) {
-            continue;
-        }
-
-        SliceContractSliceChain chain;
-        if (!CollectSliceContractSliceChain(*op, chain)) {
-            continue;
-        }
-        // contract 输出存在同 raw 的其他 assemble 输出（拆分版本），或 CONTRACT/消费者携带 token
-        // 时，偏移合成无法保持版本/时序语义，保守放弃整条链。SLICE₁ 携带 token 是合法场景，
-        // 由 fold/compose 路径迁移处理。
-        if (remove_redundant_op_internal::HasSiblingAssembleOutputOnRaw(assembleRawIndex, chain.contractOutput) ||
-            HasAnyToken(*chain.contract) ||
-            std::any_of(chain.consumers.begin(), chain.consumers.end(),
-                        [](const Operation* consumer) { return HasAnyToken(*consumer); })) {
-            continue;
-        }
-
-        const bool isFanout = chain.consumers.size() > 1;
-        const bool keepL1Fanout = isFanout && std::all_of(chain.consumers.begin(), chain.consumers.end(),
-                                                          [](const Operation* consumer) {
-                                                              return consumer != nullptr && SliceRequiresL1(*consumer);
-                                                          });
-        // A slice-contract prefix is the expansion of a view (or an equal-size assemble): the preceding
-        // slice is always a real copy.  When its source is a materialized matmul result, the L0C copy-out
-        // contract stays outside the chain, and every rewrite below only reads linear-memory tensors
-        // (sourceTensor/contractInput), so folding is safe for single- and mixed-fanout consumers too.
-
-        std::vector<SliceContractSliceRewrite> rewrites;
-        bool canComposeOffsets = true;
-        if (!CollectSliceContractSliceRewrites(chain, isFanout, keepL1Fanout, rewrites, canComposeOffsets)) {
-            continue;
-        }
-
-        if (isFanout) {
-            if (ProcessSliceContractSliceFanout(function, chain, rewrites, keepL1Fanout, canComposeOffsets, newOps,
-                                                operationUpdated)) {
-                operationUpdated = true;
-            }
-            continue;
-        }
-        ProcessSliceContractSliceSingle(function, chain, rewrites.front(), newOps, operationUpdated);
+        ProcessSliceContractSliceCandidate(function, op, false, assembleRawIndex, skippedMixedFanouts, promotedFanouts,
+                                           newOps, operationUpdated);
+    }
+    for (auto* op : promotedFanouts) {
+        ProcessSliceContractSliceCandidate(function, op, true, assembleRawIndex, skippedMixedFanouts, promotedFanouts,
+                                           newOps, operationUpdated);
     }
     return SUCCESS;
 }

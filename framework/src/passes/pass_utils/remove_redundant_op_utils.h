@@ -86,6 +86,14 @@ private:
     Status ProcessSingleContractMultiSlice(Function& function, std::vector<Operation*>& newOps, bool& operationUpdated);
 
     static bool CollectSliceContractSliceChain(const Operation& contractOp, SliceContractSliceChain& chain);
+    static void QueuePromotedSliceContractFanout(Operation& promotedSlice, bool wasL1, bool revisit,
+                                                 std::unordered_set<Operation*>& skippedMixedFanouts,
+                                                 std::vector<Operation*>& promotedFanouts);
+    void ProcessSliceContractSliceCandidate(Function& function, Operation* op, bool revisit,
+                                            const std::unordered_map<int, std::unordered_set<int>>& assembleRawIndex,
+                                            std::unordered_set<Operation*>& skippedMixedFanouts,
+                                            std::vector<Operation*>& promotedFanouts, std::vector<Operation*>& newOps,
+                                            bool& operationUpdated);
     static bool ComposeSliceContractOffset(const SliceContractSliceChain& chain, const Operation& consumer,
                                            std::vector<int64_t>& composedOffset);
     static bool CollectSliceContractSliceRewrites(const SliceContractSliceChain& chain, bool isFanout,

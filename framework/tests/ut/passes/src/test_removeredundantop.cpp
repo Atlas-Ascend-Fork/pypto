@@ -4774,6 +4774,35 @@ L1FanoutFoldGraph BuildL1FanoutFoldGraph(const std::string& name, const std::vec
     return graph;
 }
 
+Operation& AddDownstreamL1PromotionChain(Function& function, const LogicalTensorPtr& input)
+{
+    const std::vector<int64_t> zero{0, 0};
+    const auto& shape = input->GetShape();
+    const auto makeTensor = [&] {
+        return IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+    };
+    auto pending = makeTensor();
+    auto& pendingSlice = PassOperationUtils::AddOperation(
+        function, Opcode::OP_SLICE, {input}, {pending},
+        [&](Operation& op) { op.SetOpAttribute(std::make_shared<ViewOpAttribute>(zero)); });
+    auto downstreamContract = makeTensor();
+    PassOperationUtils::AddOperation(
+        function, Opcode::OP_CONTRACT, {pending}, {downstreamContract},
+        [&](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zero)); });
+    auto l1Output = makeTensor();
+    PassOperationUtils::AddOperation(function, Opcode::OP_SLICE, {downstreamContract}, {l1Output}, [&](Operation& op) {
+        auto attr = std::make_shared<ViewOpAttribute>(zero);
+        attr->SetToType(MemoryType::MEM_L1);
+        op.SetOpAttribute(attr);
+        op.SetAttr(OpAttributeKey::copyInMode, static_cast<int64_t>(Matrix::CopyInMode::DN2NZ));
+    });
+    l1Output->SetMemoryTypeBoth(MemoryType::MEM_L1);
+    auto out = makeTensor();
+    PassOperationUtils::AddOperation(function, Opcode::OP_EXP, {l1Output}, {out});
+    function.outCasts_.push_back(out);
+    return pendingSlice;
+}
+
 std::vector<const Operation*> FindSlicesWithInput(const std::shared_ptr<Function>& function,
                                                   const LogicalTensorPtr& input)
 {
@@ -4840,6 +4869,52 @@ TEST_F(TestRemoveRedundantOpPass, SliceContractSliceL1FanoutAlignedMergedOffsetS
         EXPECT_EQ(attr->GetFromOffset(), (std::vector<int64_t>{kNumZero, kNumExpFour}));
     }
 }
+
+TEST_F(TestRemoveRedundantOpPass, SliceContractSliceRevisitsOnlyFullyPromotedFanout)
+{
+    for (bool keepUnknownBranch : {false, true}) {
+        SCOPED_TRACE(keepUnknownBranch);
+        const std::vector<int64_t> offset{0, 16};
+        const std::vector<int64_t> zero{0, 0};
+        auto graph = BuildL1FanoutFoldGraph("RevisitPromotedFanout", offset);
+        auto& function = *graph.function;
+        const auto& shape = graph.contractOutput->GetShape();
+        const auto makeTensor = [&] {
+            return IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+        };
+        auto* prefix = *graph.precedingOutput->GetProducers().begin();
+        auto prefixAttr = std::dynamic_pointer_cast<ViewOpAttribute>(prefix->GetOpAttribute());
+        // Keep fromDynOffset non-empty to force canComposeOffsets=false and exercise the revisit path;
+        // without it, the first pass composes the offset and folds the chain immediately.
+        prefixAttr->SetFromOffset(offset, CreateTestConstIntVector(offset));
+
+        auto& pendingSlice = AddDownstreamL1PromotionChain(function, graph.contractOutput);
+        if (keepUnknownBranch) {
+            auto unknown = makeTensor();
+            PassOperationUtils::AddOperation(
+                function, Opcode::OP_SLICE, {graph.contractOutput}, {unknown},
+                [&](Operation& op) { op.SetOpAttribute(std::make_shared<ViewOpAttribute>(zero)); });
+            auto other = makeTensor();
+            PassOperationUtils::AddOperation(function, Opcode::OP_EXP, {unknown}, {other});
+            function.outCasts_.push_back(other);
+        }
+
+        std::vector<Operation*> newOps;
+        bool updated = false;
+        ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(function, newOps, updated), SUCCESS);
+        EXPECT_TRUE(updated);
+        EXPECT_EQ(CountOpcode(graph.function, Opcode::OP_CONTRACT), keepUnknownBranch ? 1U : 0U);
+        EXPECT_EQ(pendingSlice.GetIOperands().front(), keepUnknownBranch ? graph.contractOutput : graph.input);
+        auto attr = std::dynamic_pointer_cast<ViewOpAttribute>(pendingSlice.GetOpAttribute());
+        ASSERT_NE(attr, nullptr);
+        EXPECT_EQ(attr->GetTo(), MemoryType::MEM_L1);
+        EXPECT_EQ(attr->GetFromOffset(), keepUnknownBranch ? zero : offset);
+        int64_t mode = 0;
+        EXPECT_TRUE(pendingSlice.GetAttr<int64_t>(OpAttributeKey::copyInMode, mode));
+        EXPECT_EQ(mode, static_cast<int64_t>(Matrix::CopyInMode::DN2NZ));
+    }
+}
+
 /*
 TestReduceAccViewWithMaxZeroClampShouldRemove
 viewIn{8,16}(DDR)[reduce_acc_view_dim,16]->view->viewOut{8,16}(DDR)[RUNTIME_Max(reduce_acc_view_dim,0),16]
