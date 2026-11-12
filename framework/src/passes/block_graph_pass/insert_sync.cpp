@@ -328,7 +328,7 @@ Status PipeSync::InsertSync(Function& function, std::vector<Operation*>& syncedO
     return ValidateEventReuse(syncedOpLog);
 }
 
-std::string PipeSync::DepOp::DumpDepOp(const std::vector<Operation*>& opLog)
+std::string PipeSyncTypes::DepOp::DumpDepOp(const std::vector<Operation*>& opLog)
 {
     std::stringstream ss;
     ss << "idx: " << idx << " opmagic: " << opLog[idx]->GetOpMagic() << ", " << opLog[idx]->GetOpcodeStr() << ", ";
@@ -344,7 +344,7 @@ std::string PipeSync::DepOp::DumpDepOp(const std::vector<Operation*>& opLog)
     return ss.str();
 }
 
-std::string PipeSync::IssueQueue::DumpIssueQueue(const std::vector<Operation*>& opLogPtr)
+std::string PipeSyncTypes::IssueQueue::DumpIssueQueue(const std::vector<Operation*>& opLogPtr)
 {
     std::stringstream ss;
     ss << " Op in this pipe: {";
@@ -355,7 +355,7 @@ std::string PipeSync::IssueQueue::DumpIssueQueue(const std::vector<Operation*>& 
     return ss.str();
 }
 
-std::string PipeSync::PipeDepInfo::DumpPipeDepInfo()
+std::string PipeSyncTypes::PipeDepInfo::DumpPipeDepInfo()
 {
     std::stringstream ss;
     ss << "    wait idx: " << waitIdx << "\n";
@@ -537,6 +537,7 @@ Status PipeSync::AdjustOpCfg(TileOpCfg& opcfg, const Operation& op)
 
 Status PipeSync::PipeDispatch(const std::vector<Operation*>& opLogPtr, std::vector<IndexOp>& syncedOpLog)
 {
+    replayRank_.clear();
     DataDependencySearcher dataDependencySearcher;
     dataDependencySearcher.ubTensorRangeMap = ubTensorRangeMap;
     for (size_t i = 0; i < opLogPtr.size(); i++) {
@@ -652,6 +653,9 @@ Status PipeSync::AddOpDep(DepOp& setOp, DepOp& waitOp, bool isMergeCvSyncBase)
     }
     setOp.setPipe.emplace_back(waitOpIdx);
     waitOp.waitPipe.emplace_back(setOpIdx);
+    if (!replayRank_.empty() && !PreservesReplayOrder(setOpIdx, waitOpIdx)) {
+        replayRank_.clear();
+    }
     return SUCCESS;
 }
 
@@ -676,10 +680,7 @@ Status PipeSync::AdjustOpDep(DepOp& op, size_t waitOpIdx, IssueQueue& issueQ, bo
 
     // Replay can introduce backward dependencies: original indices alone no
     // longer prove that delaying this wait to the next producer is acyclic.
-    auto candidate = depOps_;
-    candidate[nextOpIdx].setPipe.push_back(waitOpIdx);
-    std::vector<size_t> order;
-    if (!BuildReplayIssueOrder(candidate, order)) {
+    if (!CanAddReplayDependency(nextOpIdx, waitOpIdx)) {
         APASS_LOG_DEBUG_F(Elements::Operation, "Cannot AdjustOpDep because delaying the wait creates a cycle.");
         failedFlag = true;
         return SUCCESS;
@@ -696,7 +697,7 @@ Status PipeSync::AdjustOpDep(DepOp& op, size_t waitOpIdx, IssueQueue& issueQ, bo
     return SUCCESS;
 }
 
-Status PipeSync::EventInstanceTracker::RetireConsumed(size_t setIdx, size_t waitIdx)
+Status PipeSyncTypes::EventInstanceTracker::RetireConsumed(size_t setIdx, size_t waitIdx)
 {
     const auto* found = Find(setIdx, waitIdx);
     if (found == nullptr || found->state != InstanceState::WaitInserted) {
@@ -706,14 +707,15 @@ Status PipeSync::EventInstanceTracker::RetireConsumed(size_t setIdx, size_t wait
     }
     auto& instance = eventInstances_[eventInstanceByDep_.at({setIdx, waitIdx})];
     instance.state = InstanceState::Retired;
-    auto active = activeInstance_.find(instance.id.resource);
-    if (active != activeInstance_.end() && eventInstances_[active->second].id == instance.id) {
-        activeInstance_.erase(active);
+    auto& slot = slots_[instance.slot];
+    const auto* active = FindActive(slot);
+    if (active != nullptr && active->id == instance.id) {
+        slot.active.reset();
     }
     return SUCCESS;
 }
 
-void PipeSync::EventInstanceTracker::ForgetProofs()
+void PipeSyncTypes::EventInstanceTracker::ForgetProofs()
 {
     // A barrier is not permission to forward an old generation from a new set.
     // Keeping only active facts also bounds frozen proof propagation after force.
@@ -733,84 +735,137 @@ PipeSync::EventResource PipeSync::GetEventResource(const PipePairEx& pp, int eve
         eventId, {pp.first.core, pp.first.aivCore}, {pp.second.core, pp.second.aivCore}, pp.first.pipe, pp.second.pipe};
 }
 
-const PipeSync::EventInstance* PipeSync::EventInstanceTracker::Find(size_t setIdx, size_t waitIdx) const
+const PipeSyncTypes::EventInstance* PipeSyncTypes::EventInstanceTracker::Find(size_t setIdx, size_t waitIdx) const
 {
     auto it = eventInstanceByDep_.find({setIdx, waitIdx});
     return it == eventInstanceByDep_.end() ? nullptr : &eventInstances_[it->second];
 }
 
-void PipeSync::EventInstanceTracker::MergeConsumed(ConsumedInstances& destination,
-                                                   const ConsumedInstances& snapshot) const
+std::optional<size_t> PipeSyncTypes::EventInstanceTracker::FindSlot(const EventResource& resource) const
 {
-    for (const auto& id : snapshot) {
-        auto active = activeInstance_.find(id.resource);
-        if (active != activeInstance_.end() && eventInstances_[active->second].id == id) {
-            destination.insert(id);
+    const auto it = slotByResource_.find(resource);
+    return it == slotByResource_.end() ? std::nullopt : std::optional<size_t>(it->second);
+}
+
+size_t PipeSyncTypes::EventInstanceTracker::GetOrCreateSlot(const EventResource& resource)
+{
+    const auto [it, inserted] = slotByResource_.try_emplace(resource, slots_.size());
+    if (inserted) {
+        slots_.push_back({resource, 0, std::nullopt});
+    }
+    return it->second;
+}
+
+const PipeSyncTypes::EventInstance* PipeSyncTypes::EventInstanceTracker::FindActive(const EventSlot& slot) const
+{
+    return slot.active ? &eventInstances_[*slot.active] : nullptr;
+}
+
+const PipeSyncTypes::EventInstance* PipeSyncTypes::EventInstanceTracker::FindActive(const EventResource& resource) const
+{
+    const auto slot = FindSlot(resource);
+    return slot ? FindActive(slots_[*slot]) : nullptr;
+}
+
+void PipeSyncTypes::EventInstanceTracker::MergeConsumed(ConsumedInstances& destination,
+                                                        const ConsumedInstances& snapshot) const
+{
+    for (const auto& proof : snapshot) {
+        const auto* active = FindActive(slots_[proof.slot]);
+        if (active != nullptr && active->id.generation == proof.generation) {
+            destination.insert(proof);
         }
     }
 }
 
-PipeSync::ConsumedInstances PipeSync::EventInstanceTracker::Known(const PipeCoreRealEx& pipe) const
+const PipeSyncTypes::ConsumedInstances& PipeSyncTypes::EventInstanceTracker::KnownForAllocationCheck(
+    const PipeCoreRealEx& pipe) const
+{
+    static const ConsumedInstances empty;
+    auto it = knownConsumed_.find(pipe);
+    return it == knownConsumed_.end() ? empty : it->second;
+}
+
+PipeSyncTypes::ConsumedInstances PipeSyncTypes::EventInstanceTracker::Known(const PipeCoreRealEx& pipe) const
 {
     ConsumedInstances result;
-    auto it = knownConsumed_.find(pipe);
-    if (it != knownConsumed_.end()) {
-        MergeConsumed(result, it->second);
-    }
+    const auto& source = KnownForAllocationCheck(pipe);
+    result.reserve(source.size());
+    MergeConsumed(result, source);
     return result;
 }
 
-bool PipeSync::EventInstanceTracker::CanAllocate(const EventResource& resource, const ConsumedInstances& consumed) const
+bool PipeSyncTypes::EventInstanceTracker::CanAllocate(const EventResource& resource, const ConsumedInstances& consumed,
+                                                      bool requireActive) const
 {
-    auto generation = eventGeneration_.find(resource);
-    if (generation != eventGeneration_.end() && generation->second == std::numeric_limits<uint64_t>::max()) {
-        return false;
-    }
-    auto active = activeInstance_.find(resource);
-    if (active == activeInstance_.end()) {
-        return true;
-    }
-    const auto& instance = eventInstances_[active->second];
-    return generation != eventGeneration_.end() && generation->second == instance.id.generation &&
-           instance.state == InstanceState::WaitInserted && consumed.count(instance.id) != 0;
+    const auto slot = FindSlot(resource);
+    return CanAllocate(slot ? &slots_[*slot] : nullptr, consumed, requireActive);
 }
 
-Status PipeSync::EventInstanceTracker::Allocate(const EventResource& resource, const PipePairEx& pipes, size_t setIdx,
-                                                size_t waitIdx)
+bool PipeSyncTypes::EventInstanceTracker::CanAllocate(const EventSlot* slot, const ConsumedInstances& consumed,
+                                                      bool requireActive) const
 {
-    auto consumed = Known(pipes.first);
-    if (Find(setIdx, waitIdx) != nullptr || !CanAllocate(resource, consumed)) {
+    if (slot == nullptr) {
+        return !requireActive;
+    }
+    if (slot->generation == std::numeric_limits<uint64_t>::max()) {
+        return false;
+    }
+    const auto* instance = FindActive(*slot);
+    if (instance == nullptr) {
+        return !requireActive;
+    }
+    // Only the proof of the exact active generation can authorize reuse.
+    return instance->state == InstanceState::WaitInserted && slot->generation == instance->id.generation &&
+           consumed.count(instance->Proof()) != 0;
+}
+
+Status PipeSyncTypes::EventInstanceTracker::Allocate(const EventResource& resource, const PipePairEx& pipes,
+                                                     size_t setIdx, size_t waitIdx)
+{
+    return Allocate(resource, pipes, setIdx, waitIdx, Known(pipes.first));
+}
+
+Status PipeSyncTypes::EventInstanceTracker::Allocate(const EventResource& resource, const PipePairEx& pipes,
+                                                     size_t setIdx, size_t waitIdx, ConsumedInstances consumed)
+{
+    const auto existing = FindSlot(resource);
+    if (Find(setIdx, waitIdx) != nullptr || !CanAllocate(existing ? &slots_[*existing] : nullptr, consumed, false)) {
         APASS_LOG_ERROR_F(Elements::Operation, "Cannot allocate event %d for dependency %zu -> %zu.", resource.eventId,
                           setIdx, waitIdx);
         return FAILED;
     }
-    auto active = activeInstance_.find(resource);
-    if (active != activeInstance_.end()) {
-        auto& previous = eventInstances_[active->second];
-        consumed.erase(previous.id);
+    const size_t slotIndex = existing ? *existing : GetOrCreateSlot(resource);
+    auto& slot = slots_[slotIndex];
+    if (slot.active) {
+        auto& previous = eventInstances_[*slot.active];
+        consumed.erase(previous.Proof());
         previous.state = InstanceState::Retired;
     }
     const auto index = eventInstances_.size();
-    eventInstances_.push_back({{resource, ++eventGeneration_[resource]},
+    eventInstances_.push_back({{resource, ++slot.generation},
+                               slotIndex,
                                pipes,
                                setIdx,
                                waitIdx,
-                               consumed,
+                               std::move(consumed),
                                nullptr,
                                nullptr,
                                InstanceState::Allocated,
                                true});
-    activeInstance_[resource] = index;
+    slot.active = index;
     eventInstanceByDep_[{setIdx, waitIdx}] = index;
     return SUCCESS;
 }
 
-Status PipeSync::EventInstanceTracker::RecordSet(const EventResource& resource, const PipePairEx& pipes, size_t setIdx,
-                                                 size_t waitIdx, Operation& syncOp, bool intraCore)
+Status PipeSyncTypes::EventInstanceTracker::RecordSet(const EventResource& resource, const PipePairEx& pipes,
+                                                      size_t setIdx, size_t waitIdx, Operation& syncOp, bool intraCore)
 {
     auto it = eventInstanceByDep_.find({setIdx, waitIdx});
     if (!intraCore) {
-        if (it != eventInstanceByDep_.end() || eventGeneration_[resource] == std::numeric_limits<uint64_t>::max()) {
+        const auto slotIndex = it == eventInstanceByDep_.end() ? std::optional<size_t>(GetOrCreateSlot(resource)) :
+                                                                 std::nullopt;
+        if (!slotIndex || slots_[*slotIndex].generation == std::numeric_limits<uint64_t>::max()) {
             APASS_LOG_ERROR_F(Elements::Operation,
                               "Invalid cross-core event instance for dependency %zu -> %zu, event %d.", setIdx, waitIdx,
                               resource.eventId);
@@ -818,7 +873,8 @@ Status PipeSync::EventInstanceTracker::RecordSet(const EventResource& resource, 
         }
         const auto index = eventInstances_.size();
         auto snapshot = Known(pipes.first);
-        eventInstances_.push_back({{resource, ++eventGeneration_[resource]},
+        eventInstances_.push_back({{resource, ++slots_[*slotIndex].generation},
+                                   *slotIndex,
                                    pipes,
                                    setIdx,
                                    waitIdx,
@@ -845,7 +901,7 @@ Status PipeSync::EventInstanceTracker::RecordSet(const EventResource& resource, 
     return SUCCESS;
 }
 
-Status PipeSync::EventInstanceTracker::Consume(size_t setIdx, size_t waitIdx, Operation& syncOp)
+Status PipeSyncTypes::EventInstanceTracker::Consume(size_t setIdx, size_t waitIdx, Operation& syncOp)
 {
     auto it = eventInstanceByDep_.find({setIdx, waitIdx});
     if (it == eventInstanceByDep_.end()) {
@@ -858,18 +914,21 @@ Status PipeSync::EventInstanceTracker::Consume(size_t setIdx, size_t waitIdx, Op
         APASS_LOG_ERROR_F(Elements::Operation, "Invalid wait state for dependency %zu -> %zu.", setIdx, waitIdx);
         return FAILED;
     }
-    auto consumed = Known(instance.pipes.second);
+    auto& consumed = knownConsumed_[instance.pipes.second];
+    consumed.EraseIf([this](const ConsumptionProof& proof) {
+        const auto* active = FindActive(slots_[proof.slot]);
+        return active == nullptr || active->id.generation != proof.generation;
+    });
     MergeConsumed(consumed, instance.setSnapshot);
     if (instance.intraCore) {
-        consumed.insert(instance.id);
+        consumed.insert(instance.Proof());
     }
-    knownConsumed_[instance.pipes.second] = std::move(consumed);
     instance.waitOp = &syncOp;
     instance.state = InstanceState::WaitInserted;
     return SUCCESS;
 }
 
-Status PipeSync::EventInstanceTracker::CancelPending(size_t setIdx, size_t waitIdx)
+Status PipeSyncTypes::EventInstanceTracker::CancelPending(size_t setIdx, size_t waitIdx)
 {
     auto it = eventInstanceByDep_.find({setIdx, waitIdx});
     if (it == eventInstanceByDep_.end()) {
@@ -883,21 +942,22 @@ Status PipeSync::EventInstanceTracker::CancelPending(size_t setIdx, size_t waitI
         return FAILED;
     }
     if (instance.intraCore) {
-        auto active = activeInstance_.find(instance.id.resource);
-        if (active == activeInstance_.end() || !(eventInstances_[active->second].id == instance.id)) {
+        auto& slot = slots_[instance.slot];
+        const auto* active = FindActive(slot);
+        if (active == nullptr || !(active->id == instance.id)) {
             APASS_LOG_ERROR_F(Elements::Operation,
                               "Cannot cancel dependency %zu -> %zu: its event generation does not own the active slot.",
                               setIdx, waitIdx);
             return FAILED;
         }
-        activeInstance_.erase(active);
+        slot.active.reset();
     }
     instance.state = InstanceState::Cancelled;
     eventInstanceByDep_.erase(it);
     return SUCCESS;
 }
 
-Status PipeSync::EventInstanceTracker::MergePending(size_t set1, size_t wait1, size_t set2, size_t wait2)
+Status PipeSyncTypes::EventInstanceTracker::MergePending(size_t set1, size_t wait1, size_t set2, size_t wait2)
 {
     const auto* first = Find(set1, wait1);
     const auto* second = Find(set2, wait2);
@@ -936,28 +996,35 @@ PipeSync::ConsumedInstances PipeSync::ProjectConsumedInstances(const DepOp& op, 
         }
         eventState_.MergeConsumed(result, instance->setSnapshot);
         if (instance->intraCore) {
-            result.insert(instance->id);
+            result.insert(instance->Proof());
         }
     }
     return result;
 }
 
-std::vector<int> PipeSync::GetAvailableIntraEventIds(const PipePairEx& pp, const ConsumedInstances& consumed)
+PipeSync::IntraEventIds PipeSync::GetAvailableIntraEventIds(const PipePairEx& pp, const ConsumedInstances& consumed,
+                                                            size_t limit)
 {
-    std::vector<int> available;
-    auto appendIfAvailable = [&](int id) {
-        if (id >= INTRA_CORE_START_EVENT_ID && id <= GetMaxEventId(pp) &&
-            eventState_.CanAllocate(GetEventResource(pp, id), consumed) &&
-            std::find(available.begin(), available.end(), id) == available.end()) {
-            available.push_back(id);
+    IntraEventIds available;
+    std::array<bool, EVENT_NUM> seen{};
+    const int maxId = GetMaxEventId(pp);
+    auto appendIfAvailable = [&](int id, bool requireActive) {
+        if (id >= INTRA_CORE_START_EVENT_ID && id <= maxId && !seen[id]) {
+            seen[id] = true;
+            if (eventState_.CanAllocate(GetEventResource(pp, id), consumed, requireActive)) {
+                available.ids[available.count++] = id;
+            }
         }
+        return available.count == limit;
     };
     for (int id : GetFreeEventIdQueue(pp)) {
-        appendIfAvailable(id);
+        if (appendIfAvailable(id, false)) {
+            return available;
+        }
     }
-    for (int id = INTRA_CORE_START_EVENT_ID; id <= GetMaxEventId(pp); ++id) {
-        if (eventState_.HasActive(GetEventResource(pp, id))) {
-            appendIfAvailable(id);
+    for (int id = INTRA_CORE_START_EVENT_ID; id <= maxId; ++id) {
+        if (appendIfAvailable(id, true)) {
+            break;
         }
     }
     return available;
@@ -965,9 +1032,13 @@ std::vector<int> PipeSync::GetAvailableIntraEventIds(const PipePairEx& pp, const
 
 std::optional<PipeSync::IntraEventCapacityFailure> PipeSync::AnalyzeIntraEventCapacity(const DepOp& op)
 {
+    if (op.setPipe.empty()) {
+        return std::nullopt;
+    }
     const PipeCoreRealEx source(op.selfPipeCore.pipeEnd, op.selfPipeCore.core, op.selfPipeCore.aivCore);
-    const auto consumed = ProjectConsumedInstances(op, source);
-    std::unordered_map<PipePairEx, size_t, PipePairExHash> demand;
+    std::optional<ConsumedInstances> consumed;
+    // Neither the proof nor the capacity changes while checking this operation.
+    std::unordered_map<PipePairEx, std::pair<size_t, size_t>, PipePairExHash> capacity;
     for (auto waitIdx : op.setPipe) {
         const auto& target = depOps_[waitIdx].selfPipeCore;
         const PipePairEx pp{source, {target.pipeStart, target.core, target.aivCore}};
@@ -978,9 +1049,16 @@ std::optional<PipeSync::IntraEventCapacityFailure> PipeSync::AnalyzeIntraEventCa
             pp.first.aivCore != pp.second.aivCore) {
             return IntraEventCapacityFailure{op.idx, waitIdx, pp, 0, 0};
         }
-        const auto available = GetAvailableIntraEventIds(pp, consumed).size();
-        if (++demand[pp] > available) {
-            return IntraEventCapacityFailure{op.idx, waitIdx, pp, demand[pp], available};
+        auto [it, inserted] = capacity.try_emplace(pp, 0, 0);
+        auto& [required, available] = it->second;
+        if (inserted) {
+            if (!consumed) {
+                consumed.emplace(ProjectConsumedInstances(op, source));
+            }
+            available = GetAvailableIntraEventIds(pp, *consumed).size();
+        }
+        if (++required > available) {
+            return IntraEventCapacityFailure{op.idx, waitIdx, pp, required, available};
         }
     }
     return std::nullopt;
@@ -1007,14 +1085,15 @@ void PipeSync::LogIntraEventCapacityFailure(const IntraEventCapacityFailure& fai
 
 Status PipeSync::AllocateIntraEvent(const PipePairEx& pp, int& eventId, size_t setIdx, size_t waitIdx)
 {
-    const auto available = GetAvailableIntraEventIds(pp, eventState_.Known(pp.first));
+    auto consumed = eventState_.Known(pp.first);
+    const auto available = GetAvailableIntraEventIds(pp, consumed, 1);
     if (available.empty()) {
         APASS_LOG_ERROR_F(Elements::Operation, "No proven reusable intra-core event for dependency %zu -> %zu.", setIdx,
                           waitIdx);
         return FAILED;
     }
     const int id = available.front();
-    if (eventState_.Allocate(GetEventResource(pp, id), pp, setIdx, waitIdx) != SUCCESS) {
+    if (eventState_.Allocate(GetEventResource(pp, id), pp, setIdx, waitIdx, std::move(consumed)) != SUCCESS) {
         return FAILED;
     }
     auto& queue = GetFreeEventIdQueue(pp);
@@ -1066,6 +1145,7 @@ Status PipeSync::BuildEventDependencyGraph(const std::vector<Operation*>& opList
     // Reconstruct only real FIFO and matched set->wait edges. In particular,
     // never add a wait->next-set edge merely because the ID was reused.
     std::unordered_map<Operation*, std::pair<size_t, bool>> syncInstances;
+    syncInstances.reserve(eventState_.Instances().size() * 2);
     for (size_t i = 0; i < eventState_.Instances().size(); ++i) {
         const auto& instance = eventState_.Instances()[i];
         if (instance.state == InstanceState::Cancelled) {
@@ -1079,6 +1159,9 @@ Status PipeSync::BuildEventDependencyGraph(const std::vector<Operation*>& opList
         syncInstances.emplace(instance.waitOp, std::make_pair(i, false));
     }
     graph.positions.assign(eventState_.Instances().size(), {SIZE_MAX, SIZE_MAX});
+    graph.nodes.reserve(syncInstances.size());
+    graph.successors.reserve(syncInstances.size());
+    graph.inDegree.reserve(syncInstances.size());
     std::unordered_map<PipeCoreRealEx, size_t, PipeCoreRealExHash> lastInPipe;
     auto addEdge = [&](size_t from, size_t to) {
         graph.successors[from].push_back(to);
@@ -1133,6 +1216,9 @@ Status PipeSync::BuildEventDependencyGraph(const std::vector<Operation*>& opList
 
 Status PipeSync::AddReclaimBarrierEdges(const std::vector<Operation*>& opList, EventDependencyGraph& graph) const
 {
+    if (reclaimBarriers_.empty()) {
+        return SUCCESS;
+    }
     const auto realNodeCount = graph.nodes.size();
     auto addEdge = [&](size_t from, size_t to) {
         graph.successors[from].push_back(to);
@@ -1141,6 +1227,7 @@ Status PipeSync::AddReclaimBarrierEdges(const std::vector<Operation*>& opList, E
     // Reclaim regions are immutable. BAR.ALL drains the entire local prefix;
     // all local prefix waits complete before suffix instructions execute.
     std::unordered_map<Operation*, size_t> listPosition;
+    listPosition.reserve(opList.size());
     for (size_t i = 0; i < opList.size(); ++i) {
         listPosition[opList[i]] = i;
     }
@@ -1284,25 +1371,33 @@ Status PipeSync::ValidateEventReuse(const std::vector<Operation*>& opList) const
     return SUCCESS;
 }
 
-Status PipeSync::ProcessSameCoreCase(const PipePairEx& pp, EventIdProcessContext& ctx)
+Status PipeSync::ProcessSameCoreCase(const PipePairEx& pp, EventIdProcessContext& ctx,
+                                     std::optional<ConsumedInstances>& projected)
 {
-    auto consumed = ProjectConsumedInstances(ctx.op, pp.first);
-    ctx.issuenum.maxIssueNum[pp] = GetAvailableIntraEventIds(pp, consumed).size();
-    ctx.issuenum.currIssueNum.emplace(pp, 0);
-
+    const auto issued = ctx.issuenum.currIssueNum.try_emplace(pp, 0).first->second;
     // Reserve the complete outgoing group before PopFromQueue commits this op.
     const auto required = std::count_if(ctx.op.setPipe.begin(), ctx.op.setPipe.end(), [&](size_t idx) {
         const auto& target = depOps_[idx].selfPipeCore;
         return target.pipeStart == pp.second.pipe && target.core == pp.second.core &&
                target.aivCore == pp.second.aivCore;
     });
-    const auto issued = ctx.issuenum.currIssueNum[pp];
-    const auto available = ctx.issuenum.maxIssueNum[pp];
-    if (issued >= available || static_cast<size_t>(required) > available - issued) {
+    const auto needed = issued + std::max<size_t>(required, 1);
+    const auto* proofs = &eventState_.KnownForAllocationCheck(pp.first);
+    // With no same-pipe wait to apply, the exact generation lookup already ignores stale proofs.
+    if (!ctx.op.waitPipe.empty() && ctx.op.selfPipeCore.pipeStart == pp.first.pipe) {
+        if (!projected) {
+            projected.emplace(ProjectConsumedInstances(ctx.op, pp.first));
+        }
+        proofs = &*projected;
+    }
+    const auto available = GetAvailableIntraEventIds(pp, *proofs, needed).size();
+    if (available < needed) {
         if (!ctx.deadlock) {
             ctx.eventIdOk = false;
             return SUCCESS;
         }
+        // A yield can rewrite the waits used to project consumption.
+        projected.reset();
         if (AdjustOpDep(ctx.op, ctx.eleIdx, ctx.issueQ, ctx.failedFlag) != SUCCESS) {
             APASS_LOG_ERROR_F(Elements::Operation, "ProcessSameCoreCase failed at AdjustOpDep.");
             return FAILED;
@@ -1311,7 +1406,7 @@ Status PipeSync::ProcessSameCoreCase(const PipePairEx& pp, EventIdProcessContext
     return SUCCESS;
 }
 
-Status PipeSync::ProcessEventIdElement(EventIdProcessContext& ctx)
+Status PipeSync::ProcessEventIdElement(EventIdProcessContext& ctx, std::optional<ConsumedInstances>& projected)
 {
     auto& op = ctx.op;
     auto ele = ctx.eleIdx;
@@ -1329,7 +1424,7 @@ Status PipeSync::ProcessEventIdElement(EventIdProcessContext& ctx)
     if (!IsMixCvCore(currEx.core, eleEx.core) && (currEx.core != eleEx.core)) {
         return SUCCESS;
     }
-    return ProcessSameCoreCase(pp, ctx);
+    return ProcessSameCoreCase(pp, ctx, projected);
 }
 
 Status PipeSync::HandleEventID(DepOp& op, IssueQueue& issueQ, IssueNum& issuenum, bool& deadlock, bool& res,
@@ -1355,13 +1450,14 @@ Status PipeSync::HandleEventID(DepOp& op, IssueQueue& issueQ, IssueNum& issuenum
             }
         }
     }
-    std::vector<size_t> oriSetPipe = op.setPipe;
+    std::optional<ConsumedInstances> projected;
+    // Only the deadlock path can rewrite the dependencies during iteration.
+    const auto originalSetPipe = deadlock ? op.setPipe : std::vector<size_t>{};
+    const auto& oriSetPipe = deadlock ? originalSetPipe : op.setPipe;
     for (auto ele : oriSetPipe) {
         EventIdProcessContext ctx{op, ele, issueQ, issuenum, syncedOpLog, deadlock, eventIdOk, failedFlag};
-        if (ProcessEventIdElement(ctx) != SUCCESS) {
-            for (const auto& entry : originalDeps) {
-                depOps_[entry.first] = entry.second;
-            }
+        if (ProcessEventIdElement(ctx, projected) != SUCCESS) {
+            RestoreOpDeps(originalDeps);
             APASS_LOG_ERROR_F(Elements::Operation, "HandleEventID failed at ProcessEventIdElement.");
             return FAILED;
         }
@@ -1380,9 +1476,7 @@ Status PipeSync::HandleEventID(DepOp& op, IssueQueue& issueQ, IssueNum& issuenum
         res = eventIdOk;
     }
     if (!res) {
-        for (const auto& entry : originalDeps) {
-            depOps_[entry.first] = entry.second;
-        }
+        RestoreOpDeps(originalDeps);
     }
     return SUCCESS;
 }
@@ -1550,27 +1644,7 @@ Status PipeSync::InjectWaitFlag(Function& function, size_t idx, std::vector<Inde
                 break;
             }
         }
-        // 在插完waitflag后，需要更新syncArriveStatus, 以waitflag的pipecore为key
-        // 先创建当前eventid对应的EventResource:
-        if (UpdateSyncArriveStatus(eventId, setPipe, currPipe, setPipeRealEx, currPipeRealEx) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Operation, "InjectWaitFlag failed at function UpdateSyncArriveStatus.");
-            return FAILED;
-        }
     }
-    return SUCCESS;
-}
-
-Status PipeSync::UpdateSyncArriveStatus(int eventId, const PipeCore& setPipe, const PipeCore& currPipe,
-                                        const PipeCoreRealEx& setPipeRealEx, const PipeCoreRealEx& currPipeRealEx)
-{
-    EventResource eventResource{eventId,
-                                {setPipe.core, setPipe.aivCore},
-                                {currPipe.core, currPipe.aivCore},
-                                setPipe.pipeEnd,
-                                currPipe.pipeStart};
-    syncArriveStatus[currPipeRealEx].insert(eventResource);
-    syncArriveStatus[currPipeRealEx].insert(syncArriveStatus[setPipeRealEx].begin(),
-                                            syncArriveStatus[setPipeRealEx].end());
     return SUCCESS;
 }
 
@@ -1680,7 +1754,7 @@ int PipeSync::GetMaxEventId(const PipePairEx& pp)
 }
 
 Status PipeSync::ProcessDeadLock(uint64_t& eventIdDeadlockEnterTimes, bool& eventIdDeadlock,
-                                 std::vector<IndexOp>& syncedOpLog)
+                                 std::vector<IndexOp>& syncedOpLog, bool* mergeSearchExhausted)
 {
     eventIdDeadlockEnterTimes++;
     APASS_LOG_INFO_F(Elements::Operation, "Event reuse stall: attempt=%lu, emitted=%zu, pending=%zu.",
@@ -1689,9 +1763,15 @@ Status PipeSync::ProcessDeadLock(uint64_t& eventIdDeadlockEnterTimes, bool& even
     if (eventIdDeadlockEnterTimes > DEADLOCK_TIME_THRESHOLD) {
         eventIdDeadlock = true;
     }
-    if (RelaxFakeDataDep(syncedOpLog) != SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Operation, "ProcessDeadLock failed at function RelaxFakeDataDep.");
-        return FAILED;
+    if (mergeSearchExhausted == nullptr || !*mergeSearchExhausted) {
+        bool merged = false;
+        if (RelaxFakeDataDep(syncedOpLog, merged) != SUCCESS) {
+            APASS_LOG_ERROR_F(Elements::Operation, "ProcessDeadLock failed at function RelaxFakeDataDep.");
+            return FAILED;
+        }
+        if (mergeSearchExhausted != nullptr) {
+            *mergeSearchExhausted = !merged;
+        }
     }
     if (eventIdDeadlockEnterTimes >= EVENTID_DEADLOCK_ENTER_TIME) {
         if (!orderedOpList_.empty()) {
@@ -1729,26 +1809,93 @@ Status PipeSync::IssueOpPipeSeq(Function& function, const std::vector<Operation*
     return SUCCESS;
 }
 
-bool PipeSync::BuildReplayIssueOrder(const std::vector<DepOp>& plan, std::vector<size_t>& order) const
+void PipeSync::CacheReplayOrder(const std::vector<size_t>& order)
 {
-    std::vector<std::vector<size_t>> successors(plan.size());
+    if (order.size() != depOps_.size()) {
+        replayRank_.clear();
+        return;
+    }
+    replayRank_.resize(order.size());
+    replayBoundary_.resize(order.size());
+    for (size_t i = 0; i < order.size(); ++i) {
+        replayRank_[order[i]] = i;
+    }
+    size_t maxRank = 0;
+    for (size_t i = 0; i < order.size(); ++i) {
+        maxRank = std::max(maxRank, replayRank_[i]);
+        // A cross-core endpoint must separate all lower indices from all higher ones.
+        replayBoundary_[i] = maxRank == i && replayRank_[i] == i;
+    }
+}
+
+bool PipeSync::PreservesReplayOrder(size_t from, size_t to) const
+{
+    if (replayRank_[from] >= replayRank_[to]) {
+        return false;
+    }
+    const auto& source = depOps_[from].selfPipeCore;
+    const auto& target = depOps_[to].selfPipeCore;
+    return (replayBoundary_[from] && replayBoundary_[to]) ||
+           IsIntraCoreEvent(
+               {{source.pipeEnd, source.core, source.aivCore}, {target.pipeStart, target.core, target.aivCore}});
+}
+
+bool PipeSync::CanAddReplayDependency(size_t from, size_t to)
+{
+    if (!replayRank_.empty() && PreservesReplayOrder(from, to)) {
+        return true;
+    }
+    std::vector<size_t> order;
+    if (!BuildReplayIssueOrder(depOps_, order, std::make_pair(from, to))) {
+        return false;
+    }
+    CacheReplayOrder(order);
+    return true;
+}
+
+void PipeSync::RestoreOpDeps(const std::unordered_map<size_t, DepOp>& originalDeps)
+{
+    for (const auto& [idx, dep] : originalDeps) {
+        depOps_[idx] = dep;
+        if (!replayRank_.empty() && std::any_of(dep.setPipe.begin(), dep.setPipe.end(), [this, idx = idx](size_t to) {
+                return !PreservesReplayOrder(idx, to);
+            })) {
+            replayRank_.clear();
+        }
+    }
+}
+
+bool PipeSync::BuildReplayIssueOrder(const std::vector<DepOp>& plan, std::vector<size_t>& order,
+                                     std::optional<std::pair<size_t, size_t>> extraDependency) const
+{
+    // A flat edge list avoids allocating a separate buffer for each operation.
+    std::vector<size_t> firstEdge(plan.size(), SIZE_MAX);
+    std::vector<std::pair<size_t, size_t>> edges;
+    edges.reserve(plan.size());
     std::vector<size_t> remaining(plan.size(), 0);
     auto addEdge = [&](size_t from, size_t to) {
-        successors[from].push_back(to);
+        edges.emplace_back(to, firstEdge[from]);
+        firstEdge[from] = edges.size() - 1;
         ++remaining[to];
     };
     std::unordered_map<PipeCoreRealEx, size_t, PipeCoreRealExHash> lastInPipe;
     std::vector<bool> crossCoreBoundary(plan.size(), false);
+    auto addDependency = [&](const DepOp& op, size_t waitIdx) {
+        addEdge(op.idx, waitIdx);
+        const auto& source = op.selfPipeCore;
+        const auto& target = plan[waitIdx].selfPipeCore;
+        if (!IsIntraCoreEvent(
+                {{source.pipeEnd, source.core, source.aivCore}, {target.pipeStart, target.core, target.aivCore}})) {
+            crossCoreBoundary[op.idx] = true;
+            crossCoreBoundary[waitIdx] = true;
+        }
+    };
     for (const auto& op : plan) {
         for (auto waitIdx : op.setPipe) {
-            addEdge(op.idx, waitIdx);
-            const auto& source = op.selfPipeCore;
-            const auto& target = plan[waitIdx].selfPipeCore;
-            if (!IsIntraCoreEvent(
-                    {{source.pipeEnd, source.core, source.aivCore}, {target.pipeStart, target.core, target.aivCore}})) {
-                crossCoreBoundary[op.idx] = true;
-                crossCoreBoundary[waitIdx] = true;
-            }
+            addDependency(op, waitIdx);
+        }
+        if (extraDependency && extraDependency->first == op.idx) {
+            addDependency(op, extraDependency->second);
         }
         // Preserve both endpoints of multi-pipe operations conservatively.
         const auto& core = op.selfPipeCore;
@@ -1783,11 +1930,14 @@ bool PipeSync::BuildReplayIssueOrder(const std::vector<DepOp>& plan, std::vector
         }
     }
     order.clear();
+    order.reserve(plan.size());
     while (!ready.empty()) {
         const auto idx = ready.top();
         ready.pop();
         order.push_back(idx);
-        for (auto next : successors[idx]) {
+        // All successors become ready before the next pop; the min-heap preserves replay order.
+        for (auto edge = firstEdge[idx]; edge != SIZE_MAX; edge = edges[edge].second) {
+            const auto next = edges[edge].first;
             if (--remaining[next] == 0) {
                 ready.push(next);
             }
@@ -1877,10 +2027,11 @@ bool PipeSync::AdvanceReturningWaitForReplay(std::vector<DepOp>& plan, const Int
             continue;
         }
         bool returnsSlot = false;
-        for (const auto& id : instance.setSnapshot) {
-            if (id.resource == GetEventResource(failure.pipes, id.resource.eventId) &&
-                eventState_.HasActive(id.resource) && eventState_.CanAllocate(id.resource, instance.setSnapshot) &&
-                !eventState_.CanAllocate(id.resource, consumed)) {
+        for (const auto& proof : instance.setSnapshot) {
+            const auto& resource = eventState_.ProofResource(proof);
+            if (resource == GetEventResource(failure.pipes, resource.eventId) && eventState_.HasActive(resource) &&
+                eventState_.CanAllocate(resource, instance.setSnapshot) &&
+                !eventState_.CanAllocate(resource, consumed)) {
                 returnsSlot = true;
                 break;
             }
@@ -1913,6 +2064,36 @@ bool PipeSync::AdvanceReturningWaitForReplay(std::vector<DepOp>& plan, const Int
     return false;
 }
 
+bool PipeSync::RewriteReturningDependency(std::vector<DepOp>& candidate, size_t consumer,
+                                          const IntraEventCapacityFailure& failure)
+{
+    const auto& pipes = failure.pipes;
+    const auto blocked = failure.setIdx;
+    auto& targets = candidate[consumer].setPipe;
+    // AddOpDep keeps one wait per destination pipe. Only the entry pipe matters here;
+    // the consumer above must be a single-pipe op so its completed wait precedes this set.
+    const auto oldWait = std::find_if(targets.begin(), targets.end(), [&](size_t idx) {
+        const auto& target = candidate[idx].selfPipeCore;
+        return target.pipeStart == pipes.first.pipe && target.core == pipes.first.core &&
+               target.aivCore == pipes.first.aivCore;
+    });
+    if (oldWait != targets.end()) {
+        // Destination FIFO covers the old wait after moving it earlier.
+        // Keeping both edges would require two IDs in the reverse pool.
+        if (*oldWait <= blocked) {
+            // The existing return already reaches blocked through destination FIFO.
+            return false;
+        }
+        auto& sources = candidate[*oldWait].waitPipe;
+        sources.erase(std::remove(sources.begin(), sources.end(), consumer), sources.end());
+        *oldWait = blocked;
+    } else {
+        targets.push_back(blocked);
+    }
+    candidate[blocked].waitPipe.push_back(consumer);
+    return true;
+}
+
 bool PipeSync::AddReturningDependencyForReplay(std::vector<DepOp>& plan, const IntraEventCapacityFailure& failure,
                                                std::vector<size_t>& order) const
 {
@@ -1942,28 +2123,9 @@ bool PipeSync::AddReturningDependencyForReplay(std::vector<DepOp>& plan, const I
             continue;
         }
         auto candidate = plan;
-        auto& targets = candidate[consumer].setPipe;
-        // AddOpDep keeps one wait per destination pipe. Only the entry pipe matters here;
-        // the consumer above must be a single-pipe op so its completed wait precedes this set.
-        const auto oldWait = std::find_if(targets.begin(), targets.end(), [&](size_t idx) {
-            const auto& target = candidate[idx].selfPipeCore;
-            return target.pipeStart == pipes.first.pipe && target.core == pipes.first.core &&
-                   target.aivCore == pipes.first.aivCore;
-        });
-        if (oldWait != targets.end()) {
-            // Destination FIFO covers the old wait after moving it earlier.
-            // Keeping both edges would require two IDs in the reverse pool.
-            if (*oldWait <= blocked) {
-                // The existing return already reaches blocked through destination FIFO.
-                continue;
-            }
-            auto& sources = candidate[*oldWait].waitPipe;
-            sources.erase(std::remove(sources.begin(), sources.end(), consumer), sources.end());
-            *oldWait = blocked;
-        } else {
-            targets.push_back(blocked);
+        if (!RewriteReturningDependency(candidate, consumer, failure)) {
+            continue;
         }
-        candidate[blocked].waitPipe.push_back(consumer);
         if (!BuildReplayIssueOrder(candidate, order)) {
             continue;
         }
@@ -1978,6 +2140,7 @@ void PipeSync::ResetForReplay(const std::vector<DepOp>& plan, const std::vector<
                               const std::vector<size_t>& order)
 {
     depOps_ = plan;
+    CacheReplayOrder(order);
     issueState_ = queues;
     std::unordered_set<size_t> queued;
     for (const auto& queue : queues) {
@@ -1997,7 +2160,6 @@ void PipeSync::ResetForReplay(const std::vector<DepOp>& plan, const std::vector<
     crossCoreGenerations_.fill(0);
     crossCoreConsumed_.clear();
     crossCoreSnapshots_.clear();
-    syncArriveStatus.clear();
     NoWaitCVPairs_.clear();
     setWaitPairMap_.clear();
     setOpMap.clear();
@@ -2009,6 +2171,7 @@ Status PipeSync::IssueSyncOp(Function& function, const std::vector<Operation*>& 
                              std::vector<IndexOp>& syncedOpLog, size_t& totalIssued, size_t& allIssued)
 {
     bool eventIdDeadlock = false;
+    bool mergeSearchExhausted = false;
     uint64_t eventIdDeadlockEnterTimes = 0;
     // Keep the pre-emission plan: pending-only recovery may have already edited
     // the working dependencies when a consumed pool eventually exhausts.
@@ -2026,13 +2189,12 @@ Status PipeSync::IssueSyncOp(Function& function, const std::vector<Operation*>& 
         totalIssued += issued;
         // eventIdDeadlockEnterTimes eventIdDeadlock syncedOpLog
         if (issued == 0) {
-            if (!orderedOpList_.empty()) {
+            if (eventIdDeadlockEnterTimes + 1 >= EVENTID_DEADLOCK_ENTER_TIME && !orderedOpList_.empty()) {
                 const auto failure = AnalyzeIntraEventCapacity(depOps_[orderedOpList_.front()]);
                 std::vector<size_t> replayOrder;
-                if (eventIdDeadlockEnterTimes + 1 >= EVENTID_DEADLOCK_ENTER_TIME && failure &&
-                    (AdvanceReturningWaitForReplay(replayPlan, *failure, replayOrder) ||
-                     MergeDependenciesForReplay(replayPlan, failure->pipes, replayOrder) ||
-                     AddReturningDependencyForReplay(replayPlan, *failure, replayOrder))) {
+                if (failure && (AdvanceReturningWaitForReplay(replayPlan, *failure, replayOrder) ||
+                                MergeDependenciesForReplay(replayPlan, failure->pipes, replayOrder) ||
+                                AddReturningDependencyForReplay(replayPlan, *failure, replayOrder))) {
                     // A failed attempt's snapshots and generated ops must never
                     // survive into the rebuilt event-instance graph.
                     for (auto& op : function.Operations(false)) {
@@ -2045,6 +2207,7 @@ Status PipeSync::IssueSyncOp(Function& function, const std::vector<Operation*>& 
                     function.EraseOperations(true, false);
                     totalIssued = 0;
                     eventIdDeadlock = false;
+                    mergeSearchExhausted = false;
                     eventIdDeadlockEnterTimes = 0;
                     InitCVEventIdQ();
                     APASS_LOG_INFO_F(Elements::Operation,
@@ -2052,20 +2215,24 @@ Status PipeSync::IssueSyncOp(Function& function, const std::vector<Operation*>& 
                     continue;
                 }
                 // Drain only after pending merges, yielding and replay recovery have failed.
-                if (eventIdDeadlockEnterTimes + 1 >= EVENTID_DEADLOCK_ENTER_TIME && failure &&
+                if (failure &&
                     ReclaimIntraCoreEvents(function, orderedOpList_.front(), failure->pipes, syncedOpLog) == SUCCESS) {
                     eventIdDeadlock = false;
+                    mergeSearchExhausted = false;
                     eventIdDeadlockEnterTimes = 0;
                     continue;
                 }
             }
-            if (ProcessDeadLock(eventIdDeadlockEnterTimes, eventIdDeadlock, syncedOpLog) != SUCCESS) {
+            // With no committed issue or recovery, yielding has rolled back its edits.
+            if (ProcessDeadLock(eventIdDeadlockEnterTimes, eventIdDeadlock, syncedOpLog, &mergeSearchExhausted) !=
+                SUCCESS) {
                 APASS_LOG_ERROR_F(Elements::Operation, "IssueOp failed at function ProcessDeadLock.");
                 return FAILED;
             }
             continue;
         }
         eventIdDeadlock = false;
+        mergeSearchExhausted = false;
         eventIdDeadlockEnterTimes = 0;
     }
     return SUCCESS;
@@ -2206,6 +2373,34 @@ bool PipeSync::FindMaxOverlap(DataDepInfo& depInfo, int& maxOverlapDepIdx)
     return true;
 }
 
+Status PipeSync::MergePendingDependencies(int set1, int wait1, int set2, int wait2, int eventId1, int eventId2)
+{
+    std::unordered_map<size_t, DepOp> originalDeps{{static_cast<size_t>(set1), depOps_[set1]},
+                                                   {static_cast<size_t>(wait1), depOps_[wait1]},
+                                                   {static_cast<size_t>(set2), depOps_[set2]},
+                                                   {static_cast<size_t>(wait2), depOps_[wait2]}};
+    // AddOpDep may replace another wait on set2's target pipe. Keep its
+    // reverse dependency available even if a later tracker transition fails.
+    for (auto waitIdx : depOps_[set2].setPipe) {
+        originalDeps.emplace(waitIdx, depOps_[waitIdx]);
+    }
+    APASS_LOG_INFO_F(Elements::Operation,
+                     "Event reuse pending merge: (%d,%d), id=%d and (%d,%d), id=%d become (%d,%d).", set1, wait1,
+                     eventId1, set2, wait2, eventId2, set2, wait1);
+    RemoveOpDep(depOps_[set1], depOps_[wait1]);
+    RemoveOpDep(depOps_[set2], depOps_[wait2]);
+    if (AddOpDep(depOps_[set2], depOps_[wait1]) != SUCCESS) {
+        RestoreOpDeps(originalDeps);
+        APASS_LOG_ERROR_F(Elements::Operation, "RelaxFakeDataDep failed at function AddOpDep.");
+        return FAILED;
+    }
+    if (eventState_.MergePending(set1, wait1, set2, wait2) != SUCCESS) {
+        RestoreOpDeps(originalDeps);
+        return FAILED;
+    }
+    return SUCCESS;
+}
+
 Status PipeSync::SynDependency(int maxOverlapDepIdx, const DataDepInfo& depInfo, const PipePairEx& pipePairEx,
                                std::vector<IndexOp>& syncedOpLog)
 {
@@ -2238,31 +2433,7 @@ Status PipeSync::SynDependency(int maxOverlapDepIdx, const DataDepInfo& depInfo,
         APASS_LOG_ERROR_F(Elements::Operation, "CoreType is not same, SynDependency failed.");
         return FAILED;
     }
-    std::unordered_map<size_t, DepOp> originalDeps{{static_cast<size_t>(set1), depOps_[set1]},
-                                                   {static_cast<size_t>(wait1), depOps_[wait1]},
-                                                   {static_cast<size_t>(set2), depOps_[set2]},
-                                                   {static_cast<size_t>(wait2), depOps_[wait2]}};
-    // AddOpDep may replace another wait on set2's target pipe. Keep its
-    // reverse dependency available even if a later tracker transition fails.
-    for (auto waitIdx : depOps_[set2].setPipe) {
-        originalDeps.emplace(waitIdx, depOps_[waitIdx]);
-    }
-    APASS_LOG_INFO_F(Elements::Operation,
-                     "Event reuse pending merge: (%d,%d), id=%d and (%d,%d), id=%d become (%d,%d).", set1, wait1,
-                     eventId1, set2, wait2, eventId2, set2, wait1);
-    RemoveOpDep(depOps_[set1], depOps_[wait1]);
-    RemoveOpDep(depOps_[set2], depOps_[wait2]);
-    if (AddOpDep(depOps_[set2], depOps_[wait1]) != SUCCESS) {
-        for (const auto& entry : originalDeps) {
-            depOps_[entry.first] = entry.second;
-        }
-        APASS_LOG_ERROR_F(Elements::Operation, "RelaxFakeDataDep failed at function AddOpDep.");
-        return FAILED;
-    }
-    if (eventState_.MergePending(set1, wait1, set2, wait2) != SUCCESS) {
-        for (const auto& entry : originalDeps) {
-            depOps_[entry.first] = entry.second;
-        }
+    if (MergePendingDependencies(set1, wait1, set2, wait2, eventId1, eventId2) != SUCCESS) {
         return FAILED;
     }
     // Rewritten dependencies cannot inherit an old cross-core consumption snapshot.
@@ -2291,24 +2462,39 @@ Status PipeSync::GetDepInfo(std::vector<IndexOp>& syncedOpLog, const PipePairEx&
     // Exhausted slots can already have a wait, without a returning proof.
     // Only pending waits may participate in dependency merging.
     std::unordered_map<Operation*, const EventInstance*> pending;
-    for (const auto& instance : eventState_.Instances()) {
-        if (instance.intraCore && instance.pipes == pipePairEx && instance.state == InstanceState::Allocated &&
-            instance.setOp != nullptr && !depOps_[instance.waitIdx].issued) {
-            pending.emplace(instance.setOp, &instance);
+    // Each directed slot has at most one pending generation. Look it up
+    // directly instead of walking the history of retired and cancelled sets.
+    for (int id = INTRA_CORE_START_EVENT_ID; id <= GetMaxEventId(pipePairEx); ++id) {
+        const auto* instance = eventState_.FindActive(GetEventResource(pipePairEx, id));
+        if (instance != nullptr && instance->state == InstanceState::Allocated && instance->setOp != nullptr &&
+            !depOps_[instance->waitIdx].issued) {
+            pending.emplace(instance->setOp, instance);
         }
     }
     depInfo.opDepList.clear();
     depInfo.setOpIdList.clear();
     depInfo.setOpEventIdList.clear();
-    for (size_t i = 0; i < syncedOpLog.size(); ++i) {
+    if (pending.empty()) {
+        return SUCCESS;
+    }
+    // Each generated set occurs once in the log. Pending sets are usually near
+    // its tail; stop once all are found, then restore the original candidate order.
+    size_t remaining = pending.size();
+    for (size_t i = syncedOpLog.size(); i-- > 0;) {
         auto it = pending.find(&syncedOpLog[i].second.get());
         if (it != pending.end()) {
             const auto& instance = *it->second;
             depInfo.opDepList.emplace_back(instance.setIdx, instance.waitIdx);
             depInfo.setOpIdList.push_back(static_cast<int>(i));
             depInfo.setOpEventIdList.push_back(instance.id.resource.eventId);
+            if (--remaining == 0) {
+                break;
+            }
         }
     }
+    std::reverse(depInfo.opDepList.begin(), depInfo.opDepList.end());
+    std::reverse(depInfo.setOpIdList.begin(), depInfo.setOpIdList.end());
+    std::reverse(depInfo.setOpEventIdList.begin(), depInfo.setOpEventIdList.end());
     return SUCCESS;
 }
 
@@ -2322,8 +2508,8 @@ std::vector<PipeSync::PipeCoreRealEx> PipeSync::cvPipeCoreEx = {
     {PIPE_M, CoreType::AIC, AIVCore::UNSPECIFIED},    {PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED},
 };
 
-std::string PipeSync::DataDepInfo::DumpDataDepInfo(const std::vector<IndexOp>& syncedOpLog,
-                                                   const std::vector<Operation*>& oriOpList)
+std::string PipeSyncTypes::DataDepInfo::DumpDataDepInfo(const std::vector<IndexOp>& syncedOpLog,
+                                                        const std::vector<Operation*>& oriOpList)
 {
     std::stringstream ss;
     ss << "    CV_SYNC_SRC magic: ";
@@ -2344,7 +2530,7 @@ std::string PipeSync::DataDepInfo::DumpDataDepInfo(const std::vector<IndexOp>& s
     return ss.str();
 }
 
-Status PipeSync::RelaxFakeDataDep(std::vector<IndexOp>& syncedOpLog)
+Status PipeSync::RelaxFakeDataDep(std::vector<IndexOp>& syncedOpLog, bool& merged)
 {
     // 合并阈值。只有前后两个set-wait对之间的重叠（以op数量度量）超过该阈值时，才对这两个set-wait对进行合并。
     std::vector<PipePairEx> dataDepPairEx;
@@ -2421,6 +2607,7 @@ Status PipeSync::RelaxFakeDataDep(std::vector<IndexOp>& syncedOpLog)
             APASS_LOG_ERROR_F(Elements::Operation, "SynDependency failed.");
             return FAILED;
         }
+        merged = true;
     }
 
     return SUCCESS;
@@ -2525,8 +2712,6 @@ Status PipeSync::GetEventId(const PipePairEx& pp, int& eventId, size_t setIdx, s
             eventId = cvEventIdQ.front();
             cvEventIdQ.pop_front();
             RemoveEventIdFromCrossCoreQueues(eventId);
-            // 更新syncArriveStatus，将其中所有该srcCore和dstcore或者反向的该eventid都删除
-            RemoveEventResourceFromSyncArriveStatus(pp, eventId);
             return SUCCESS;
         }
 
@@ -2544,29 +2729,14 @@ Status PipeSync::GetEventId(const PipePairEx& pp, int& eventId, size_t setIdx, s
         eventId = newCvEventIdQPtr->front();
         newCvEventIdQPtr->pop_front();
         RemoveEventIdFromCrossCoreQueues(eventId);
-        // 更新syncArriveStatus，将其中所有该srcCore和dstcore或者反向的该eventid都删除
-        RemoveEventResourceFromSyncArriveStatus(pp, eventId);
         return SUCCESS;
     }
 
     return AllocateIntraEvent(pp, eventId, setIdx, waitIdx);
 }
 
-Status PipeSync::ReclaimIntraCoreEvents(Function& function, size_t boundary, const PipePairEx& pp,
-                                        std::vector<IndexOp>& syncedOpLog)
+size_t PipeSync::FindReclaimPrefix(size_t boundary, const std::unordered_set<Operation*>& emitted) const
 {
-    const bool lite = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
-    if (boundary == 0 || boundary >= depOps_.size() || !IsIntraCoreEvent(pp) ||
-        (!lite && (pp.first.core != pp.second.core || pp.first.aivCore != pp.second.aivCore))) {
-        return FAILED;
-    }
-    const auto blockedIdx = boundary;
-    // Replay may issue a later producer before an earlier consumer. Drain only
-    // a complete original-order prefix, not the entire issued scheduling prefix.
-    std::unordered_set<Operation*> emitted;
-    for (const auto& entry : syncedOpLog) {
-        emitted.insert(&entry.second.get());
-    }
     for (size_t i = 0; i < boundary; ++i) {
         if (emitted.count(oriOpList_[i]) == 0) {
             boundary = i;
@@ -2587,11 +2757,13 @@ Status PipeSync::ReclaimIntraCoreEvents(Function& function, size_t boundary, con
             }
         }
     }
-    if (boundary == 0) {
-        return FAILED;
-    }
-    auto stagedState = eventState_;
-    std::vector<size_t> covered;
+    return boundary;
+}
+
+Status PipeSync::StageReclaimedEvents(size_t boundary, const PipePairEx& pp, bool lite,
+                                      const std::unordered_set<Operation*>& emitted, EventInstanceTracker& stagedState,
+                                      std::vector<size_t>& covered) const
+{
     for (size_t i = 0; i < eventState_.Instances().size(); ++i) {
         const auto& instance = eventState_.Instances()[i];
         if (!instance.intraCore || instance.state != InstanceState::WaitInserted ||
@@ -2607,6 +2779,12 @@ Status PipeSync::ReclaimIntraCoreEvents(Function& function, size_t boundary, con
         }
         covered.push_back(i);
     }
+    return SUCCESS;
+}
+
+bool PipeSync::HasReclaimCapacity(size_t blockedIdx, size_t boundary, const PipePairEx& pp,
+                                  const EventInstanceTracker& stagedState, size_t covered)
+{
     // Pending sets are deliberately preserved: a drain does not consume flags
     // whose waits are still in the suffix, and cannot authorize their reuse.
     const auto consumed = ProjectConsumedInstances(depOps_[blockedIdx], pp.first);
@@ -2624,8 +2802,35 @@ Status PipeSync::ReclaimIntraCoreEvents(Function& function, size_t boundary, con
     }
     APASS_LOG_INFO_F(Elements::Operation,
                      "Event reuse prefix drain: blocked=%zu, boundary=%zu, covered=%zu, available=%zu, required=%zu.",
-                     blockedIdx, boundary, covered.size(), available, required);
-    if (covered.empty() || available < required) {
+                     blockedIdx, boundary, covered, available, required);
+    return covered != 0 && available >= required;
+}
+
+Status PipeSync::ReclaimIntraCoreEvents(Function& function, size_t boundary, const PipePairEx& pp,
+                                        std::vector<IndexOp>& syncedOpLog)
+{
+    const bool lite = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
+    if (boundary == 0 || boundary >= depOps_.size() || !IsIntraCoreEvent(pp) ||
+        (!lite && (pp.first.core != pp.second.core || pp.first.aivCore != pp.second.aivCore))) {
+        return FAILED;
+    }
+    const auto blockedIdx = boundary;
+    // Replay may issue a later producer before an earlier consumer. Drain only
+    // a complete original-order prefix, not the entire issued scheduling prefix.
+    std::unordered_set<Operation*> emitted;
+    for (const auto& entry : syncedOpLog) {
+        emitted.insert(&entry.second.get());
+    }
+    boundary = FindReclaimPrefix(boundary, emitted);
+    if (boundary == 0) {
+        return FAILED;
+    }
+    auto stagedState = eventState_;
+    std::vector<size_t> covered;
+    if (StageReclaimedEvents(boundary, pp, lite, emitted, stagedState, covered) != SUCCESS) {
+        return FAILED;
+    }
+    if (!HasReclaimCapacity(blockedIdx, boundary, pp, stagedState, covered.size())) {
         return FAILED;
     }
     uint64_t insertIdx = boundary * SEQUENCE_IDX - RECLAIM_PREFIX_OFFSET;
@@ -2676,7 +2881,6 @@ Status PipeSync::RemoveSetIntraBlockAndOpDep(std::vector<IndexOp>& syncedOpLog)
     }
     NoWaitCVPairs_.clear();
     crossCoreFreeEventId_.clear();
-    syncArriveStatus.clear();
     return SUCCESS;
 }
 
@@ -2898,6 +3102,9 @@ Status PipeSync::EnsureCrossCoreCapacity(Function& function, size_t idx, std::ve
         }
         ++demand[vector == AIVCore::AIV0 ? 0 : 1];
     }
+    if (demand[0] == 0 && demand[1] == 0) {
+        return SUCCESS;
+    }
     // A barrier can cancel an input wait that carried proof for the other pool. Recompute after each reset.
     for (size_t attempt = 0;; ++attempt) {
         CrossCoreBarrierPlan plan;
@@ -3097,16 +3304,6 @@ Status PipeSync::RemovePendingCrossCoreSyncs(size_t pool, std::vector<IndexOp>& 
     syncedOpLog.erase(std::remove_if(syncedOpLog.begin(), syncedOpLog.end(),
                                      [&](const IndexOp& entry) { return removedSets.count(&entry.second.get()) != 0; }),
                       syncedOpLog.end());
-    for (auto& [pipe, events] : syncArriveStatus) {
-        (void)pipe;
-        for (auto it = events.begin(); it != events.end();) {
-            if (it->srcCore.first != it->dstCore.first && inPool(it->eventId)) {
-                it = events.erase(it);
-            } else {
-                ++it;
-            }
-        }
-    }
     return SUCCESS;
 }
 
@@ -3155,7 +3352,8 @@ Status PipeSync::ResetCrossCorePool(size_t pool, int handshakeId, std::vector<In
 
 bool PipeSync::HasFreeEventId(const PipePairEx& pp)
 {
-    return !GetAvailableIntraEventIds(pp, eventState_.Known(pp.first)).empty();
+    // CanAllocate looks up the exact active generation, so stale proofs cannot match.
+    return !GetAvailableIntraEventIds(pp, eventState_.KnownForAllocationCheck(pp.first), 1).empty();
 }
 
 bool PipeSync::BufOverlap(const TileRange& range1, const TileRange& range2) const
@@ -3369,25 +3567,6 @@ void PipeSync::InitCVEventIdQ()
     }
 }
 
-void PipeSync::RemoveEventResourceFromSyncArriveStatus(const PipePairEx& pp, int eventId)
-{
-    CoreTypeDetail firstCore{pp.first.core, pp.first.aivCore};
-    CoreTypeDetail secondCore{pp.second.core, pp.second.aivCore};
-
-    for (auto& [key, eventSet] : syncArriveStatus) {
-        (void)key;
-        for (auto it = eventSet.begin(); it != eventSet.end();) {
-            bool matchForward = (it->srcCore == firstCore && it->dstCore == secondCore && it->eventId == eventId);
-            bool matchReverse = (it->srcCore == secondCore && it->dstCore == firstCore && it->eventId == eventId);
-            if (matchForward || matchReverse) {
-                it = eventSet.erase(it);
-            } else {
-                ++it;
-            }
-        }
-    }
-}
-
 void PipeSync::PushEventIdIfAbsent(std::deque<int>& queue, int eventId)
 {
     if (std::find(queue.begin(), queue.end(), eventId) == queue.end()) {
@@ -3395,61 +3574,16 @@ void PipeSync::PushEventIdIfAbsent(std::deque<int>& queue, int eventId)
     }
 }
 
-Status PipeSync::RecycleCrossCoreEventIds(const PipeCoreRealEx& currPipeRealEx)
-{
-    if (crossCoreFreeEventId_.count(currPipeRealEx) == 0) {
-        APASS_LOG_ERROR_F(
-            Elements::Operation,
-            "crossCoreFreeEventId_ does not contain the given PipeCoreRealEx, RecycleCrossCoreEventIds failed.");
-        return FAILED;
-    }
-
-    auto& eventSet = syncArriveStatus[currPipeRealEx];
-    auto& queues = crossCoreFreeEventId_[currPipeRealEx];
-
-    // 先按确定顺序（eventId 升序）收集再入队，保证结果跨环境一致。
-    std::vector<int> recycledToQueue0;
-    std::vector<int> recycledToQueue1;
-    for (const auto& er : eventSet) {
-        if (er.srcCore == er.dstCore) {
-            continue;
-        }
-        if (currPipeRealEx.core == CoreType::AIC) {
-            if (er.eventId < CROSS_CORE_EVENT_NUM) {
-                recycledToQueue0.push_back(er.eventId);
-            } else {
-                recycledToQueue1.push_back(er.eventId);
-            }
-        } else if (currPipeRealEx.aivCore == AIVCore::AIV0) {
-            if (er.eventId < CROSS_CORE_EVENT_NUM) {
-                recycledToQueue0.push_back(er.eventId);
-            }
-        } else if (currPipeRealEx.aivCore == AIVCore::AIV1) {
-            if (er.eventId >= CROSS_CORE_EVENT_NUM) {
-                recycledToQueue0.push_back(er.eventId);
-            }
-        }
-    }
-    std::sort(recycledToQueue0.begin(), recycledToQueue0.end());
-    std::sort(recycledToQueue1.begin(), recycledToQueue1.end());
-    for (int id : recycledToQueue0) {
-        PushEventIdIfAbsent(queues[0], id);
-    }
-    for (int id : recycledToQueue1) {
-        PushEventIdIfAbsent(queues[NUM1], id);
-    }
-    return SUCCESS;
-}
-
 // 该函数仅用于核内同步
 std::deque<int>& PipeSync::GetFreeEventIdQueue(const PipePairEx& pp)
 {
-    if (freeEventId_.count(pp) == 0) {
+    auto [it, inserted] = freeEventId_.try_emplace(pp);
+    if (inserted) {
         for (int i = INTRA_CORE_START_EVENT_ID; i <= GetMaxEventId(pp); i++) {
-            freeEventId_[pp].push_back(i);
+            it->second.push_back(i);
         }
     }
-    return freeEventId_[pp];
+    return it->second;
 }
 
 void PipeSync::AddPhaseOp1(Function& function, const std::vector<Operation*>& srcLog, std::vector<Operation*>& dstLog,

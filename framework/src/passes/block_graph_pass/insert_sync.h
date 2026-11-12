@@ -27,16 +27,13 @@
 #include "interface/inner/tilefwk.h"
 #include "interface/program/program.h"
 #include "interface/operation/opcode.h"
+#include "passes/block_graph_pass/insert_sync_types.h"
 #include "passes/pass_interface/pass.h"
 
 namespace npu {
 namespace tile_fwk {
 constexpr uint64_t EVENTID_DEADLOCK_ENTER_TIME = 5;
 constexpr uint64_t DEADLOCK_TIME_THRESHOLD = 2;
-constexpr uint64_t LEFT_OFFSET1 = 32;
-constexpr uint64_t LEFT_OFFSET2 = 16;
-constexpr uint64_t LEFT_OFFSET3 = 8;
-constexpr uint64_t LEFT_OFFSET4 = 24;
 constexpr uint64_t MAX_POP = 8;
 // 两个op之间插入的set_flag/wait_flag数量的最大值为192
 // Reserve separate slots for the previous op's sets, a reclaim barrier, and this op's waits.
@@ -98,7 +95,6 @@ private:
     std::unordered_map<const Operation*, int> opIndices_;
 };
 
-using IndexOp = std::pair<uint64_t, std::reference_wrapper<Operation>>;
 enum class PipeSeq {
     AIC_MTE2 = 0,
     AIC_MTE1,
@@ -131,310 +127,63 @@ private:
     friend class TuneSyncForVF;
     friend class InsertSync;
 
-    struct PipeCoreReal {
-        PipeCoreReal(PipeType p, CoreType c) : pipe(p), core(c) {}
-        PipeType pipe;
-        CoreType core;
-
-        bool operator==(const PipeCoreReal& t) const { return (this->pipe == t.pipe && this->core == t.core); }
-
-        bool operator!=(const PipeCoreReal& t) const { return !(*this == t); }
-    };
-
-    // 包含AIVCore类型的PipeCoreReal
-    struct PipeCoreRealEx {
-        PipeCoreRealEx(PipeType p, CoreType c, AIVCore a = AIVCore::UNSPECIFIED) : pipe(p), core(c), aivCore(a) {}
-        PipeCoreRealEx(PipeCoreReal p, AIVCore a = AIVCore::UNSPECIFIED) : pipe(p.pipe), core(p.core), aivCore(a) {}
-        PipeType pipe;
-        CoreType core;
-        AIVCore aivCore{AIVCore::UNSPECIFIED};
-
-        bool operator==(const PipeCoreRealEx& t) const
-        {
-            return (this->pipe == t.pipe && this->core == t.core && this->aivCore == t.aivCore);
-        }
-
-        bool operator!=(const PipeCoreRealEx& t) const { return !(*this == t); }
-    };
-
-    struct PipeCoreRealExCompare {
-        bool operator()(const PipeCoreRealEx& lhs, const PipeCoreRealEx& rhs) const
-        {
-            if (lhs.core != rhs.core) {
-                return static_cast<uint64_t>(lhs.core) < static_cast<uint64_t>(rhs.core);
-            }
-            if (lhs.pipe != rhs.pipe) {
-                return static_cast<uint64_t>(lhs.pipe) < static_cast<uint64_t>(rhs.pipe);
-            }
-            return static_cast<int>(lhs.aivCore) < static_cast<int>(rhs.aivCore);
-        }
-    };
-
-    struct PipeCoreRealCompare {
-        bool operator()(const PipeCoreReal& lhs, const PipeCoreReal& rhs) const
-        {
-            return ((static_cast<uint64_t>(lhs.core) << LEFT_OFFSET2) |
-                    (static_cast<uint64_t>(lhs.pipe) << LEFT_OFFSET3)) <
-                   ((static_cast<uint64_t>(rhs.core) << LEFT_OFFSET2) |
-                    (static_cast<uint64_t>(rhs.pipe) << LEFT_OFFSET3));
-        }
-    };
-
-    struct PipeCore {
-        PipeCore(PipeType ps, PipeType pe, CoreType c, AIVCore a) : pipeStart(ps), pipeEnd(pe), core(c), aivCore(a) {}
-        PipeType pipeStart;
-        PipeType pipeEnd;
-        CoreType core;
-        AIVCore aivCore;
-
-        bool operator==(const PipeCore& t) const
-        {
-            return (this->pipeStart == t.pipeStart && this->pipeEnd == t.pipeEnd && this->core == t.core &&
-                    this->aivCore == t.aivCore);
-        }
-
-        bool operator!=(const PipeCore& t) const { return !(*this == t); }
-    };
-
-    struct PipeCoreCompare {
-        bool operator()(const PipeCore& lhs, const PipeCore& rhs) const
-        {
-            return ((static_cast<uint64_t>(lhs.core) << LEFT_OFFSET1) |
-                    (static_cast<uint64_t>(lhs.pipeStart) << LEFT_OFFSET4) |
-                    (static_cast<uint64_t>(lhs.pipeEnd) << LEFT_OFFSET2) |
-                    (static_cast<uint64_t>(lhs.aivCore) << LEFT_OFFSET3)) <
-                   ((static_cast<uint64_t>(rhs.core) << LEFT_OFFSET1) |
-                    (static_cast<uint64_t>(rhs.pipeStart) << LEFT_OFFSET4) |
-                    (static_cast<uint64_t>(rhs.pipeEnd) << LEFT_OFFSET2) |
-                    (static_cast<uint64_t>(rhs.aivCore) << LEFT_OFFSET3));
-        }
-    };
-
-    using PipePair = std::pair<PipeCoreReal, PipeCoreReal>; // setPipe, waitPipe
-    using PipePairEx = std::pair<PipeCoreRealEx, PipeCoreRealEx>;
-    using CoreTypeDetail = std::pair<CoreType, AIVCore>;
-    using CorePair = std::pair<CoreTypeDetail, CoreTypeDetail>;
-
-    struct PipePairHash {
-        std::size_t operator()(const PipePair& pp) const noexcept
-        {
-            std::size_t res = 0;
-            HashCombine(res, pp.first.pipe);
-            HashCombine(res, pp.first.core);
-            HashCombine(res, pp.second.pipe);
-            HashCombine(res, pp.second.core);
-            return res;
-        };
-    };
-
-    struct PipePairExHash {
-        std::size_t operator()(const PipePairEx& pp) const noexcept
-        {
-            std::size_t res = 0;
-            HashCombine(res, pp.first.pipe);
-            HashCombine(res, pp.first.core);
-            HashCombine(res, pp.first.aivCore);
-            HashCombine(res, pp.second.pipe);
-            HashCombine(res, pp.second.core);
-            HashCombine(res, pp.second.aivCore);
-            return res;
-        };
-    };
-
-    struct CorePairHash {
-        std::size_t operator()(const CorePair& pp) const noexcept
-        {
-            std::size_t res = 0;
-            HashCombine(res, pp.first.first);
-            HashCombine(res, pp.first.second);
-            HashCombine(res, pp.second.first);
-            HashCombine(res, pp.second.second);
-            return res;
-        };
-    };
-
-    struct IndexVecHash {
-        std::size_t operator()(const std::pair<size_t, size_t>& pp) const noexcept
-        {
-            std::size_t res = 0;
-            HashCombine(res, pp.first);
-            HashCombine(res, pp.second);
-            return res;
-        };
-    };
-
-    struct DepOp {
-        DepOp(size_t i, PipeCore pipeCore) : idx(i), selfPipeCore(pipeCore) {}
-        size_t idx = SIZE_MAX;       // idx in oplog
-        size_t idxInPipe = SIZE_MAX; // idx in the pipe belonging to
-        PipeCore selfPipeCore;
-        bool issued{false};
-
-        std::vector<size_t> setPipe;  // this op will set_flag for op in setPipe; 后
-        std::vector<size_t> waitPipe; // this op will wait_flag for op in waitPipe; 前
-        std::string DumpDepOp(const std::vector<Operation*>& opLog);
-    };
-
-    struct IssueQueue {
-        explicit IssueQueue(PipeCoreRealEx pipe) : selfPipeCore(pipe) {}
-        PipeCoreRealEx selfPipeCore;
-        size_t currOp{0};
-        std::vector<size_t> ops;
-        std::string DumpIssueQueue(const std::vector<Operation*>& opLogPtr);
-    };
-
-    struct PipeDepInfo {
-        size_t waitIdx;
-        std::map<PipeCoreRealEx, size_t, PipeCoreRealExCompare> setPipes;
-        std::string DumpPipeDepInfo();
-    };
-
-    struct DataDepInfo {
-        PipeType setp;
-        CoreType setc;
-        PipeType waitp;
-        CoreType waitc;
-        AIVCore setaivc;
-        AIVCore waitaivc;
-        std::vector<int> setOpIdList{};      // 对应sync_src/cv_sync_src在syncedOpLog中的idx
-        std::vector<int> setOpEventIdList{}; // eventid
-        // sync_src/cv_sync_src对应的setop和waitop的idx pair {setop idx, waitop idx}
-        std::vector<std::pair<int, int>> opDepList{};
-        std::string DumpDataDepInfo(const std::vector<IndexOp>& syncedOpLog, const std::vector<Operation*>& oriOpList);
-    };
-
-    struct IssueNum {
-        // max op can be issued this round
-        std::unordered_map<PipePairEx, size_t, PipePairExHash> maxIssueNum;
-        // already issued op this round
-        std::unordered_map<PipePairEx, size_t, PipePairExHash> currIssueNum;
-        // max cv op can be issued this round
-        std::unordered_map<CorePair, size_t, CorePairHash> maxCvIssueNum;
-        // already issued cv op this round
-        std::unordered_map<CorePair, size_t, CorePairHash> currCvIssueNum;
-    };
-
-    // HandleEventID 辅助结构：封装处理上下文
-    struct EventIdProcessContext {
-        DepOp& op;
-        size_t eleIdx;
-        IssueQueue& issueQ;
-        IssueNum& issuenum;
-        std::vector<IndexOp>& syncedOpLog;
-        bool deadlock;
-        bool eventIdOk{true};
-        bool failedFlag{false};
-    };
-
-    struct EventResource {
-        int eventId;
-        CoreTypeDetail srcCore;
-        CoreTypeDetail dstCore;
-        PipeType srcPipe;
-        PipeType dstPipe;
-
-        bool operator==(const EventResource& other) const
-        {
-            return eventId == other.eventId && srcCore == other.srcCore && dstCore == other.dstCore &&
-                   srcPipe == other.srcPipe && dstPipe == other.dstPipe;
-        }
-    };
-
-    struct EventResourceHash {
-        std::size_t operator()(const EventResource& er) const noexcept
-        {
-            std::size_t res = 0;
-            HashCombine(res, er.eventId);
-            HashCombine(res, er.srcCore.first);
-            HashCombine(res, er.srcCore.second);
-            HashCombine(res, er.dstCore.first);
-            HashCombine(res, er.dstCore.second);
-            HashCombine(res, er.srcPipe);
-            HashCombine(res, er.dstPipe);
-            return res;
-        }
-    };
-
-    struct PipeCoreRealExHash {
-        std::size_t operator()(const PipeCoreRealEx& p) const noexcept
-        {
-            std::size_t res = 0;
-            HashCombine(res, p.pipe);
-            HashCombine(res, p.core);
-            HashCombine(res, p.aivCore);
-            return res;
-        }
-    };
-
-    // EventResource already identifies a directed, physical intra-core slot.
-    // A consumed generation must never authorize reuse of a newer instance.
-    struct EventInstanceId {
-        EventResource resource;
-        uint64_t generation;
-        bool operator==(const EventInstanceId& other) const
-        {
-            return resource == other.resource && generation == other.generation;
-        }
-    };
-    struct EventInstanceIdHash {
-        size_t operator()(const EventInstanceId& id) const noexcept
-        {
-            auto hash = EventResourceHash{}(id.resource);
-            HashCombine(hash, id.generation);
-            return hash;
-        }
-    };
-    using ConsumedInstances = std::unordered_set<EventInstanceId, EventInstanceIdHash>;
-    enum class InstanceState { Allocated, WaitInserted, Retired, Cancelled };
-    struct EventInstance {
-        EventInstanceId id;
-        PipePairEx pipes;
-        size_t setIdx;
-        size_t waitIdx;
-        ConsumedInstances setSnapshot;
-        Operation* setOp{nullptr};
-        Operation* waitOp{nullptr};
-        InstanceState state{InstanceState::Allocated};
-        bool intraCore;
-    };
-
-    // Owns all event-instance transitions; the scheduler only reads instances.
-    class EventInstanceTracker {
-    public:
-        const std::vector<EventInstance>& Instances() const { return eventInstances_; }
-        const EventInstance* Find(size_t setIdx, size_t waitIdx) const;
-        ConsumedInstances Known(const PipeCoreRealEx& pipe) const;
-        void MergeConsumed(ConsumedInstances& destination, const ConsumedInstances& snapshot) const;
-        bool HasActive(const EventResource& resource) const { return activeInstance_.count(resource) != 0; }
-        bool CanAllocate(const EventResource& resource, const ConsumedInstances& consumed) const;
-        Status Allocate(const EventResource& resource, const PipePairEx& pipes, size_t setIdx, size_t waitIdx);
-        Status RecordSet(const EventResource& resource, const PipePairEx& pipes, size_t setIdx, size_t waitIdx,
-                         Operation& syncOp, bool intraCore);
-        Status Consume(size_t setIdx, size_t waitIdx, Operation& syncOp);
-        Status CancelPending(size_t setIdx, size_t waitIdx);
-        Status MergePending(size_t set1, size_t wait1, size_t set2, size_t wait2);
-        Status RetireConsumed(size_t setIdx, size_t waitIdx);
-        void ForgetProofs();
-
-    private:
-        std::vector<EventInstance> eventInstances_;
-        std::unordered_map<EventResource, size_t, EventResourceHash> activeInstance_;
-        std::unordered_map<EventResource, uint64_t, EventResourceHash> eventGeneration_;
-        std::unordered_map<PipeCoreRealEx, ConsumedInstances, PipeCoreRealExHash> knownConsumed_;
-        std::unordered_map<std::pair<size_t, size_t>, size_t, IndexVecHash> eventInstanceByDep_;
-    };
+    using PipeCoreReal = PipeSyncTypes::PipeCoreReal;
+    using PipeCoreRealEx = PipeSyncTypes::PipeCoreRealEx;
+    using PipeCoreRealExCompare = PipeSyncTypes::PipeCoreRealExCompare;
+    using PipeCoreRealCompare = PipeSyncTypes::PipeCoreRealCompare;
+    using PipeCore = PipeSyncTypes::PipeCore;
+    using PipeCoreCompare = PipeSyncTypes::PipeCoreCompare;
+    using PipePair = PipeSyncTypes::PipePair;
+    using PipePairEx = PipeSyncTypes::PipePairEx;
+    using CoreTypeDetail = PipeSyncTypes::CoreTypeDetail;
+    using CorePair = PipeSyncTypes::CorePair;
+    using PipePairHash = PipeSyncTypes::PipePairHash;
+    using PipePairExHash = PipeSyncTypes::PipePairExHash;
+    using CorePairHash = PipeSyncTypes::CorePairHash;
+    using IndexVecHash = PipeSyncTypes::IndexVecHash;
+    using DepOp = PipeSyncTypes::DepOp;
+    using IssueQueue = PipeSyncTypes::IssueQueue;
+    using PipeDepInfo = PipeSyncTypes::PipeDepInfo;
+    using DataDepInfo = PipeSyncTypes::DataDepInfo;
+    using IssueNum = PipeSyncTypes::IssueNum;
+    using EventIdProcessContext = PipeSyncTypes::EventIdProcessContext;
+    using EventResource = PipeSyncTypes::EventResource;
+    using EventResourceHash = PipeSyncTypes::EventResourceHash;
+    using PipeCoreRealExHash = PipeSyncTypes::PipeCoreRealExHash;
+    using EventInstanceId = PipeSyncTypes::EventInstanceId;
+    using ConsumedInstances = PipeSyncTypes::ConsumedInstances;
+    using InstanceState = PipeSyncTypes::InstanceState;
+    using EventInstance = PipeSyncTypes::EventInstance;
+    using EventInstanceTracker = PipeSyncTypes::EventInstanceTracker;
 
     struct ReclaimBarrier {
         std::vector<Operation*> ops;
         std::vector<CoreTypeDetail> cores;
     };
     std::vector<ReclaimBarrier> reclaimBarriers_;
+    size_t FindReclaimPrefix(size_t boundary, const std::unordered_set<Operation*>& emitted) const;
+    Status StageReclaimedEvents(size_t boundary, const PipePairEx& pp, bool lite,
+                                const std::unordered_set<Operation*>& emitted, EventInstanceTracker& stagedState,
+                                std::vector<size_t>& covered) const;
+    bool HasReclaimCapacity(size_t blockedIdx, size_t boundary, const PipePairEx& pp,
+                            const EventInstanceTracker& stagedState, size_t covered);
     Status ReclaimIntraCoreEvents(Function& function, size_t boundary, const PipePairEx& pp,
                                   std::vector<IndexOp>& syncedOpLog);
     bool IsIntraCoreEvent(const PipePairEx& pp) const;
     EventResource GetEventResource(const PipePairEx& pp, int eventId) const;
     ConsumedInstances ProjectConsumedInstances(const DepOp& op, const PipeCoreRealEx& source) const;
-    std::vector<int> GetAvailableIntraEventIds(const PipePairEx& pp, const ConsumedInstances& consumed);
+    static constexpr int EVENT_ID7 = 7;
+    static constexpr int EVENT_NUM = EVENT_ID7 + 1;
+    static constexpr int INTRA_CORE_START_EVENT_ID = 1; // 核内 eventid 使用 1 ~ 7
+    struct IntraEventIds {
+        std::array<int, EVENT_NUM> ids{};
+        size_t count{0};
+        bool empty() const { return count == 0; }
+        size_t size() const { return count; }
+        int front() const { return ids.front(); }
+    };
+    IntraEventIds GetAvailableIntraEventIds(const PipePairEx& pp, const ConsumedInstances& consumed,
+                                            size_t limit = EVENT_NUM);
     Status AllocateIntraEvent(const PipePairEx& pp, int& eventId, size_t setIdx, size_t waitIdx);
     Status RecordEventSet(const PipePairEx& pp, int eventId, size_t setIdx, size_t waitIdx, Operation& syncOp);
     Status RecordEventWait(size_t setIdx, size_t waitIdx, Operation& syncOp);
@@ -458,11 +207,18 @@ private:
     Status ValidateEventGraphAcyclic(const EventDependencyGraph& graph) const;
     Status ValidateEventReuseOrder(const EventDependencyGraph& graph) const;
     Status ValidateEventReuse(const std::vector<Operation*>& opList) const;
-    bool BuildReplayIssueOrder(const std::vector<DepOp>& plan, std::vector<size_t>& order) const;
+    bool BuildReplayIssueOrder(const std::vector<DepOp>& plan, std::vector<size_t>& order,
+                               std::optional<std::pair<size_t, size_t>> extraDependency = std::nullopt) const;
+    void CacheReplayOrder(const std::vector<size_t>& order);
+    bool PreservesReplayOrder(size_t from, size_t to) const;
+    bool CanAddReplayDependency(size_t from, size_t to);
+    void RestoreOpDeps(const std::unordered_map<size_t, DepOp>& originalDeps);
     bool MergeDependenciesForReplay(std::vector<DepOp>& plan, const PipePairEx& pipes,
                                     std::vector<size_t>& order) const;
     bool AdvanceReturningWaitForReplay(std::vector<DepOp>& plan, const IntraEventCapacityFailure& failure,
                                        std::vector<size_t>& order) const;
+    static bool RewriteReturningDependency(std::vector<DepOp>& candidate, size_t consumer,
+                                           const IntraEventCapacityFailure& failure);
     bool AddReturningDependencyForReplay(std::vector<DepOp>& plan, const IntraEventCapacityFailure& failure,
                                          std::vector<size_t>& order) const;
     void ResetForReplay(const std::vector<DepOp>& plan, const std::vector<IssueQueue>& queues,
@@ -485,8 +241,9 @@ private:
     Status AdjustOpDep(DepOp& op, size_t waitOpIdx, IssueQueue& issueQ, bool& failedFlag);
     Status HandleEventID(DepOp& op, IssueQueue& issueQ, IssueNum& issuenum, bool& deadlock, bool& res,
                          std::vector<IndexOp>& syncedOpLog);
-    Status ProcessEventIdElement(EventIdProcessContext& ctx);
-    Status ProcessSameCoreCase(const PipePairEx& pp, EventIdProcessContext& ctx);
+    Status ProcessEventIdElement(EventIdProcessContext& ctx, std::optional<ConsumedInstances>& projected);
+    Status ProcessSameCoreCase(const PipePairEx& pp, EventIdProcessContext& ctx,
+                               std::optional<ConsumedInstances>& projected);
     Status PopFromQueue(IssueQueue& issueQ, std::vector<size_t>& poped, bool& deadlock,
                         std::vector<IndexOp>& syncedOpLog);
     Status InjectWaitFlag(Function& function, size_t idx, std::vector<IndexOp>& syncedOpLog);
@@ -499,11 +256,12 @@ private:
                        size_t& totalIssued, size_t& allIssued);
     Status IssueOp(Function& function, const std::vector<Operation*>& opLogPtr, std::vector<IndexOp>& syncedOpLog);
     Status ProcessDeadLock(uint64_t& eventIdDeadlockEnterTimes, bool& eventIdDeadlock,
-                           std::vector<IndexOp>& syncedOpLog);
+                           std::vector<IndexOp>& syncedOpLog, bool* mergeSearchExhausted = nullptr);
+    Status MergePendingDependencies(int set1, int wait1, int set2, int wait2, int eventId1, int eventId2);
     Status SynDependency(int maxOverlapDepIdx, const DataDepInfo& depInfo, const PipePairEx& pipePairEx,
                          std::vector<IndexOp>& syncedOpLog);
     Status GetDepInfo(std::vector<IndexOp>& syncedOpLog, const PipePairEx& pipePairEx, DataDepInfo& depInfo);
-    Status RelaxFakeDataDep(std::vector<IndexOp>& syncedOpLog);
+    Status RelaxFakeDataDep(std::vector<IndexOp>& syncedOpLog, bool& merged);
     bool CheckIssuedOp(const DepOp& op);
     bool FindMaxOverlap(DataDepInfo& depInfo, int& maxOverlapDepIdx);
     bool GenSyncOp(PipeCoreRealEx set, PipeCoreRealEx wait, int eventId, bool isSet, Operation& op);
@@ -520,11 +278,7 @@ private:
     void FindDep(DepOp& op, const std::vector<Operation*>& opLogPtr, size_t idx,
                  DataDependencySearcher& dataDependencySearcher);
     void InitCVEventIdQ();
-    Status RecycleCrossCoreEventIds(const PipeCoreRealEx& currPipeRealEx);
     static void PushEventIdIfAbsent(std::deque<int>& queue, int eventId);
-    Status UpdateSyncArriveStatus(int eventId, const PipeCore& setPipe, const PipeCore& currPipe,
-                                  const PipeCoreRealEx& setPipeRealEx, const PipeCoreRealEx& currPipeRealEx);
-    void RemoveEventResourceFromSyncArriveStatus(const PipePairEx& pp, int eventId);
     std::deque<int>* GetCrossCoreEventIdQPtr(const PipePairEx& pp);
     void RemoveEventIdFromCrossCoreQueues(int eventId);
     Status RemoveSetIntraBlockAndOpDep(std::vector<IndexOp>& syncedOpLog);
@@ -573,6 +327,9 @@ private:
     PipeCoreRealEx NormalizeToAICCoreForCVMixSync(PipeCoreRealEx p) const;
 
     std::vector<DepOp> depOps_;
+    // A nonempty rank certifies that the current dependencies admit this order.
+    std::vector<size_t> replayRank_;
+    std::vector<bool> replayBoundary_;
     // Cube: MTE2, MTE1, M, FIX, Vector: MTE2, V, MTE3
     std::vector<IssueQueue> issueState_;
     std::unordered_map<PipePairEx, std::deque<int>, PipePairExHash> freeEventId_;
@@ -580,8 +337,6 @@ private:
 
     // set pipe可用的eventid
     std::unordered_map<PipeCoreRealEx, std::array<std::deque<int>, NUM2>, PipeCoreRealExHash> crossCoreFreeEventId_;
-    std::unordered_map<PipeCoreRealEx, std::unordered_set<EventResource, EventResourceHash>, PipeCoreRealExHash>
-        syncArriveStatus;
     std::vector<std::pair<std::pair<size_t, size_t>, Operation*>> NoWaitCVPairs_;
 
     std::unordered_map<std::pair<size_t, size_t>, int, IndexVecHash> setWaitPairMap_;
@@ -592,9 +347,6 @@ private:
     static std::vector<PipePair> mixCVDataDepPair;
     static std::vector<PipeCoreRealEx> cvPipeCoreEx;
 
-    static constexpr int EVENT_NUM = 8;
-    static constexpr int EVENT_ID7 = 7;
-    static constexpr int INTRA_CORE_START_EVENT_ID = 1; // 核内 eventid 使用 1 ~ 7
     // Both directions share each physical slot. Proofs refer to a specific set generation.
     std::array<std::optional<CoreType>, CROSS_CORE_EVENT_NUM * NUM2> crossCoreEventSenders_{};
     CrossCoreClock crossCoreGenerations_{};

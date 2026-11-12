@@ -614,7 +614,7 @@ TEST_F(InsertSyncTest, TestHandleEventID)
 
     // HandleEventID - Test AdjustOpDep path
     // Set up conditions to trigger AdjustOpDep:
-    // 1. currIssueNum >= maxIssueNum (both set to 8)
+    // 1. needed exceeds the available intra-core event ID count
     // 2. deadlock = true
     // 3. issueQ has enough elements for nextOp
     bool eventIdDeadlock = true;
@@ -630,8 +630,7 @@ TEST_F(InsertSyncTest, TestHandleEventID)
                                            eleOp.selfPipeCore.aivCore);
     PipeSync::PipePairEx pp{currPipeCoreEx, elePipeCoreEx};
 
-    // Pre-set issuenum to trigger AdjustOpDep: currIssueNum >= maxIssueNum
-    issuenum.maxIssueNum[pp] = IS_NUM8;
+    // Exceed the available intra-core event ID count to trigger AdjustOpDep.
     issuenum.currIssueNum[pp] = IS_NUM8;
 
     // Verify initial state before HandleEventID
@@ -911,58 +910,6 @@ TEST_F(InsertSyncTest, TestGetDepInfoWithNoPendingEvents)
     EXPECT_EQ(ps.PipeSeqName(PipeSeq::AIV1_S), "AIV1_S");
 }
 
-TEST_F(InsertSyncTest, TestRecycleCrossCoreEventIds)
-{
-    PipeSync ps;
-    ps.InitCVEventIdQ();
-
-    // 场景1: currPipeRealEx 不在 crossCoreFreeEventId_ 中 -> 返回 FAILED
-    PipeSync::PipeCoreRealEx notExistPipe(PIPE_V, CoreType::AIV, AIVCore::UNSPECIFIED);
-    EXPECT_EQ(ps.RecycleCrossCoreEventIds(notExistPipe), FAILED);
-
-    using CoreDetail = PipeSync::CoreTypeDetail;
-    auto makeEr = [](int id, CoreDetail src, CoreDetail dst) {
-        return PipeSync::EventResource{id, src, dst, PIPE_S, PIPE_V};
-    };
-    CoreDetail aicCore{CoreType::AIC, AIVCore::UNSPECIFIED};
-    CoreDetail aiv0Core{CoreType::AIV, AIVCore::AIV0};
-    CoreDetail aiv1Core{CoreType::AIV, AIVCore::AIV1};
-
-    // 场景2: AIC core - 覆盖 srcCore==dstCore(continue) + eventId<16(queue0) + eventId>=16(queue1)
-    PipeSync::PipeCoreRealEx pcAIC(PIPE_S, CoreType::AIC, AIVCore::UNSPECIFIED);
-    ps.syncArriveStatus[pcAIC].clear();
-    ps.crossCoreFreeEventId_[pcAIC][0].clear();
-    ps.crossCoreFreeEventId_[pcAIC][1].clear();
-    ps.syncArriveStatus[pcAIC].insert(makeEr(IS_NUM5, aicCore, aicCore));   // srcCore==dstCore -> continue
-    ps.syncArriveStatus[pcAIC].insert(makeEr(IS_NUM3, aicCore, aiv0Core));  // eventId<16 -> queue0
-    ps.syncArriveStatus[pcAIC].insert(makeEr(IS_NUM20, aicCore, aiv1Core)); // eventId>=16 -> queue1
-    EXPECT_EQ(ps.RecycleCrossCoreEventIds(pcAIC), SUCCESS);
-    EXPECT_EQ(ps.crossCoreFreeEventId_[pcAIC][0].size(), static_cast<size_t>(IS_NUM1));
-    EXPECT_EQ(ps.crossCoreFreeEventId_[pcAIC][0].front(), IS_NUM3);
-    EXPECT_EQ(ps.crossCoreFreeEventId_[pcAIC][1].size(), static_cast<size_t>(IS_NUM1));
-    EXPECT_EQ(ps.crossCoreFreeEventId_[pcAIC][1].front(), IS_NUM20);
-
-    // 场景3: AIV0 core - 覆盖 eventId<16(queue0) + eventId>=16(跳过)
-    PipeSync::PipeCoreRealEx pcAIV0(PIPE_S, CoreType::AIV, AIVCore::AIV0);
-    ps.syncArriveStatus[pcAIV0].clear();
-    ps.crossCoreFreeEventId_[pcAIV0][0].clear();
-    ps.syncArriveStatus[pcAIV0].insert(makeEr(IS_NUM9, aicCore, aiv0Core));  // eventId<16 -> queue0
-    ps.syncArriveStatus[pcAIV0].insert(makeEr(IS_NUM29, aicCore, aiv0Core)); // eventId>=16 -> 跳过
-    EXPECT_EQ(ps.RecycleCrossCoreEventIds(pcAIV0), SUCCESS);
-    EXPECT_EQ(ps.crossCoreFreeEventId_[pcAIV0][0].size(), static_cast<size_t>(IS_NUM1));
-    EXPECT_EQ(ps.crossCoreFreeEventId_[pcAIV0][0].front(), IS_NUM9);
-
-    // 场景4: AIV1 core - 覆盖 eventId>=16(queue0) + eventId<16(跳过)
-    PipeSync::PipeCoreRealEx pcAIV1(PIPE_S, CoreType::AIV, AIVCore::AIV1);
-    ps.syncArriveStatus[pcAIV1].clear();
-    ps.crossCoreFreeEventId_[pcAIV1][0].clear();
-    ps.syncArriveStatus[pcAIV1].insert(makeEr(IS_NUM30, aicCore, aiv1Core)); // eventId>=16 -> queue0
-    ps.syncArriveStatus[pcAIV1].insert(makeEr(IS_NUM10, aicCore, aiv1Core)); // eventId<16 -> 跳过
-    EXPECT_EQ(ps.RecycleCrossCoreEventIds(pcAIV1), SUCCESS);
-    EXPECT_EQ(ps.crossCoreFreeEventId_[pcAIV1][0].size(), static_cast<size_t>(IS_NUM1));
-    EXPECT_EQ(ps.crossCoreFreeEventId_[pcAIV1][0].front(), IS_NUM30);
-}
-
 // Helper: create root + leaf Function pair for enableDebug tests
 static std::pair<std::shared_ptr<Function>, std::shared_ptr<Function>> SetupDebugFunc(const std::string& name)
 {
@@ -1124,7 +1071,9 @@ TEST_F(InsertSyncTest, IntraCoreReuseRequiresCurrentGenerationToReturnToSource)
     ASSERT_EQ(ps.InjectSetFlag(function, back.first, synced), SUCCESS);
     // The returning wait is visible to the op's preflight, but has not committed.
     const auto projected = ps.ProjectConsumedInstances(ps.depOps_[back.second], a);
-    EXPECT_EQ(ps.GetAvailableIntraEventIds({a, b}, projected), std::vector<int>({1}));
+    const auto available = ps.GetAvailableIntraEventIds({a, b}, projected);
+    ASSERT_EQ(available.size(), 1U);
+    EXPECT_EQ(available.front(), 1);
     EXPECT_TRUE(ps.GetAvailableIntraEventIds({a, b}, ps.eventState_.Known(a)).empty());
     ASSERT_EQ(ps.InjectWaitFlag(function, back.second, synced), SUCCESS);
     ASSERT_EQ(ps.InjectSetFlag(function, second.first, synced), SUCCESS);
@@ -1239,7 +1188,7 @@ TEST_F(InsertSyncTest, EventWaitUsesFrozenSetSnapshot)
     const auto bc = AddEventTestDependency(ps, function, {b, c});
     std::vector<IndexOp> synced;
     ASSERT_EQ(ps.InjectSetFlag(function, ab.first, synced), SUCCESS);
-    const auto oldId = ps.eventState_.Instances()[0].id;
+    const auto oldId = ps.eventState_.Instances()[0].Proof();
     ASSERT_EQ(ps.InjectSetFlag(function, bc.first, synced), SUCCESS);
     ASSERT_EQ(ps.InjectWaitFlag(function, ab.second, synced), SUCCESS);
     ASSERT_EQ(ps.eventState_.Known(b).count(oldId), 1U);
@@ -1291,7 +1240,7 @@ TEST_F(InsertSyncTest, IntraCoreExhaustionDoesNotCommitWaitOrForce)
     EXPECT_EQ(synced.size(), before);
     EXPECT_FALSE(ps.depOps_[pending.second].issued);
     EXPECT_EQ(ps.eventState_.Instances()[0].state, PipeSync::InstanceState::Allocated);
-    EXPECT_EQ(ps.eventState_.Known(b).count(ps.eventState_.Instances()[0].id), 0U);
+    EXPECT_EQ(ps.eventState_.Known(b).count(ps.eventState_.Instances()[0].Proof()), 0U);
     EXPECT_TRUE(ps.forceSyncOps_.empty());
     EXPECT_TRUE(ps.crossCoreFreeEventId_.empty());
 }
@@ -1478,6 +1427,42 @@ TEST_F(InsertSyncTest, YieldRejectsDependencyCycleAfterReplay)
     EXPECT_EQ(ps.depOps_[1].setPipe, std::vector<size_t>({3}));
     EXPECT_EQ(ps.depOps_[3].waitPipe, std::vector<size_t>({1}));
     EXPECT_TRUE(ps.BuildReplayIssueOrder(ps.depOps_, order));
+}
+
+TEST_F(InsertSyncTest, CachedReplayOrderRejectsNewCrossCoreBoundary)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    PipeSync ps;
+    ps.depOps_.emplace_back(0, PipeSync::PipeCore{PIPE_M, PIPE_M, CoreType::AIC, AIVCore::UNSPECIFIED});
+    for (auto pipe : {PIPE_V, PIPE_MTE2, PIPE_MTE3}) {
+        ps.depOps_.emplace_back(ps.depOps_.size(), PipeSync::PipeCore{pipe, pipe, CoreType::AIV, AIVCore::AIV0});
+    }
+    ps.depOps_[2].setPipe = {1};
+    ps.depOps_[1].waitPipe = {2};
+    std::vector<size_t> order;
+    ASSERT_TRUE(ps.BuildReplayIssueOrder(ps.depOps_, order));
+    ASSERT_EQ(order, std::vector<size_t>({0, 2, 1, 3}));
+    ps.CacheReplayOrder(order);
+
+    // The new boundary at op1 would require it to precede op2.
+    EXPECT_FALSE(ps.CanAddReplayDependency(0, 1));
+    EXPECT_TRUE(ps.CanAddReplayDependency(0, 3));
+}
+
+TEST_F(InsertSyncTest, RestoredDependenciesInvalidateReplayOrder)
+{
+    PipeSync ps;
+    for (auto pipe : {PIPE_V, PIPE_MTE2}) {
+        ps.depOps_.emplace_back(ps.depOps_.size(), PipeSync::PipeCore{pipe, pipe, CoreType::AIV, AIVCore::AIV0});
+    }
+    ps.depOps_[1].setPipe = {0};
+    ps.depOps_[0].waitPipe = {1};
+    const auto original = std::unordered_map<size_t, PipeSync::DepOp>{{0, ps.depOps_[0]}, {1, ps.depOps_[1]}};
+    ps.RemoveOpDep(ps.depOps_[1], ps.depOps_[0]);
+    ASSERT_TRUE(ps.CanAddReplayDependency(0, 1));
+
+    ps.RestoreOpDeps(original);
+    EXPECT_FALSE(ps.CanAddReplayDependency(0, 1));
 }
 
 TEST_F(InsertSyncTest, ReplayMergeRejectsBackwardEmissionEvenWithoutCycle)
@@ -2096,11 +2081,11 @@ TEST_F(InsertSyncTest, EventTrackerRejectsCancellingAnotherGenerationSlot)
     auto newer = original;
     ++newer.id.generation;
     ps.eventState_.eventInstances_.push_back(newer);
-    ps.eventState_.activeInstance_[original.id.resource] = 1;
+    ps.eventState_.slots_[original.slot].active = 1;
     EXPECT_EQ(ps.eventState_.CancelPending(dep.first, dep.second), FAILED);
     ASSERT_NE(ps.eventState_.Find(dep.first, dep.second), nullptr);
     EXPECT_EQ(ps.eventState_.Find(dep.first, dep.second)->state, PipeSync::InstanceState::Allocated);
-    EXPECT_EQ(ps.eventState_.activeInstance_.at(original.id.resource), 1U);
+    EXPECT_EQ(ps.eventState_.slots_[original.slot].active, 1U);
     EXPECT_FALSE(ps.eventState_.CanAllocate(original.id.resource, {}));
 }
 
@@ -2155,7 +2140,7 @@ TEST_F(InsertSyncTest, EventTrackerRejectsCancellingConsumedInstance)
     ASSERT_NE(instance, nullptr);
     EXPECT_EQ(instance->state, PipeSync::InstanceState::WaitInserted);
     EXPECT_TRUE(ps.eventState_.HasActive(instance->id.resource));
-    EXPECT_EQ(ps.eventState_.Known(pipes.first).count(instance->id), 0U);
+    EXPECT_EQ(ps.eventState_.Known(pipes.first).count(instance->Proof()), 0U);
 }
 
 TEST_F(InsertSyncTest, InvalidWaitGroupDoesNotConsumeEarlierWait)
@@ -2198,7 +2183,7 @@ TEST_F(InsertSyncTest, EventTrackerFiltersRetiredProofFromDelayedSnapshot)
     };
     ASSERT_EQ(emit(ab, 0, 1), SUCCESS);
     ASSERT_EQ(tracker.Consume(0, 1, makeOp()), SUCCESS);
-    const auto old = tracker.Find(0, 1)->id;
+    const auto old = tracker.Find(0, 1)->Proof();
     ASSERT_EQ(emit(bc, 2, 7), SUCCESS); // This snapshot contains the first AB generation.
     ASSERT_EQ(emit(ba, 3, 4), SUCCESS);
     ASSERT_EQ(tracker.Consume(3, 4, makeOp()), SUCCESS);
@@ -2266,6 +2251,44 @@ TEST_F(InsertSyncTest, IntraCoreFailedYieldRestoresAllDependencies)
     EXPECT_TRUE(synced.empty());
 }
 
+TEST_F(InsertSyncTest, PendingMergeCandidatesPreserveLogOrderAcrossSlotReuse)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto funcs = SetupDebugFunc("PendingMergeCandidatesPreserveLogOrderAcrossSlotReuse");
+    auto& function = *funcs.second;
+    PipeSync ps;
+    const PipeSync::PipeCoreRealEx a(PIPE_MTE2, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipeCoreRealEx b(PIPE_V, CoreType::AIV, AIVCore::AIV0);
+    const PipeSync::PipePairEx pipes{a, b};
+    ps.freeEventId_[pipes] = {1, 2, 3};
+    const auto retired = AddEventTestDependency(ps, function, pipes);
+    const auto pending = AddEventTestDependency(ps, function, pipes);
+    const auto cancelled = AddEventTestDependency(ps, function, pipes);
+    const auto reused = AddEventTestDependency(ps, function, pipes);
+    std::vector<IndexOp> synced;
+    ASSERT_EQ(ps.InjectSetFlag(function, retired.first, synced), SUCCESS);
+    ASSERT_EQ(ps.InjectWaitFlag(function, retired.second, synced), SUCCESS);
+    ASSERT_EQ(ps.eventState_.RetireConsumed(retired.first, retired.second), SUCCESS);
+    ASSERT_EQ(ps.InjectSetFlag(function, pending.first, synced), SUCCESS);
+    ASSERT_EQ(ps.InjectSetFlag(function, cancelled.first, synced), SUCCESS);
+    ASSERT_EQ(ps.eventState_.CancelPending(cancelled.first, cancelled.second), SUCCESS);
+    ps.freeEventId_[pipes] = {1};
+    ASSERT_EQ(ps.InjectSetFlag(function, reused.first, synced), SUCCESS);
+    std::reverse(synced.begin(), synced.end());
+    PipeSync::DataDepInfo info;
+    ASSERT_EQ(ps.GetDepInfo(synced, pipes, info), SUCCESS);
+    EXPECT_EQ(info.opDepList,
+              (std::vector<std::pair<int, int>>{{reused.first, reused.second}, {pending.first, pending.second}}));
+    EXPECT_EQ(info.setOpIdList, std::vector<int>({0, 2}));
+    EXPECT_EQ(info.setOpEventIdList, std::vector<int>({1, 2}));
+    ASSERT_EQ(ps.InjectWaitFlag(function, pending.second, synced), SUCCESS);
+    ASSERT_EQ(ps.InjectWaitFlag(function, reused.second, synced), SUCCESS);
+    ASSERT_EQ(ps.GetDepInfo(synced, pipes, info), SUCCESS);
+    EXPECT_TRUE(info.opDepList.empty());
+    EXPECT_TRUE(info.setOpIdList.empty());
+    EXPECT_TRUE(info.setOpEventIdList.empty());
+}
+
 TEST_F(InsertSyncTest, IntraCoreMergeCancelsOnlyPendingInstanceAndRebindsWait)
 {
     NpuArchScope archScope(NPUArch::DAV_3510);
@@ -2299,9 +2322,11 @@ TEST_F(InsertSyncTest, IntraCoreMergeCancelsOnlyPendingInstanceAndRebindsWait)
     EXPECT_EQ(ps.setWaitPairMap_.count({0, 3}), 0U);
     EXPECT_EQ(ps.setWaitPairMap_.count({1, 4}), 0U);
     ASSERT_EQ(ps.InjectWaitFlag(function, 3, synced), SUCCESS);
-    EXPECT_EQ(ps.eventState_.Known(b).count(ps.eventState_.Instances()[0].id), 0U);
-    EXPECT_EQ(ps.eventState_.Known(b).count(ps.eventState_.Instances()[1].id), 1U);
-    EXPECT_EQ(ps.GetAvailableIntraEventIds(pipes, ps.eventState_.Known(a)), std::vector<int>({1}));
+    EXPECT_EQ(ps.eventState_.Known(b).count(ps.eventState_.Instances()[0].Proof()), 0U);
+    EXPECT_EQ(ps.eventState_.Known(b).count(ps.eventState_.Instances()[1].Proof()), 1U);
+    const auto available = ps.GetAvailableIntraEventIds(pipes, ps.eventState_.Known(a));
+    ASSERT_EQ(available.size(), 1U);
+    EXPECT_EQ(available.front(), 1);
     ASSERT_EQ(ps.GetDepInfo(synced, pipes, depInfo), SUCCESS);
     EXPECT_TRUE(depInfo.opDepList.empty());
     std::vector<Operation*> ordered;
@@ -2385,7 +2410,7 @@ TEST_F(InsertSyncTest, MultiPipeOpDoesNotInventConsumptionEdge)
     ASSERT_EQ(ps.InjectWaitFlag(function, forward.second, synced), SUCCESS);
     ASSERT_EQ(ps.InjectSetFlag(function, back.first, synced), SUCCESS);
     ps.depOps_[back.second].selfPipeCore.pipeEnd = PIPE_MTE3;
-    const auto oldId = ps.eventState_.Instances()[0].id;
+    const auto oldId = ps.eventState_.Instances()[0].Proof();
     EXPECT_EQ(ps.ProjectConsumedInstances(ps.depOps_[back.second], a).count(oldId), 1U);
     EXPECT_EQ(ps.ProjectConsumedInstances(ps.depOps_[back.second], c).count(oldId), 0U);
     ASSERT_EQ(ps.InjectWaitFlag(function, back.second, synced), SUCCESS);
@@ -2399,7 +2424,8 @@ TEST_F(InsertSyncTest, EventGenerationOverflowDoesNotAllocate)
     PipeSync ps;
     const PipeSync::PipePairEx pipes{{PIPE_MTE2, CoreType::AIV, AIVCore::AIV0}, {PIPE_V, CoreType::AIV, AIVCore::AIV0}};
     ps.freeEventId_[pipes] = {1};
-    ps.eventState_.eventGeneration_[ps.GetEventResource(pipes, 1)] = std::numeric_limits<uint64_t>::max();
+    const auto slot = ps.eventState_.GetOrCreateSlot(ps.GetEventResource(pipes, 1));
+    ps.eventState_.slots_[slot].generation = std::numeric_limits<uint64_t>::max();
     std::vector<IndexOp> synced;
     int eventId = -1;
     size_t waitIdx = 1;
@@ -2430,7 +2456,10 @@ TEST_F(InsertSyncTest, IntraCoreReusePreservesWaitQueueOrder)
     EXPECT_TRUE(ps.GetAvailableIntraEventIds({a, b}, ps.eventState_.Known(a)).empty());
     ASSERT_EQ(ps.InjectSetFlag(function, back.first, synced), SUCCESS);
     ASSERT_EQ(ps.InjectWaitFlag(function, back.second, synced), SUCCESS);
-    EXPECT_EQ(ps.GetAvailableIntraEventIds({a, b}, ps.eventState_.Known(a)), std::vector<int>({2, 1}));
+    const auto available = ps.GetAvailableIntraEventIds({a, b}, ps.eventState_.Known(a));
+    ASSERT_EQ(available.size(), 2U);
+    EXPECT_EQ(available.ids[0], 2);
+    EXPECT_EQ(available.ids[1], 1);
 }
 
 TEST_F(InsertSyncTest, VFTuningPreservesEventReuseProofOrder)
@@ -4294,9 +4323,6 @@ TEST_F(InsertSyncTest, A5BarrierPreservesConsumedEdgesOtherPoolAndIntraCoreState
     ASSERT_NE(consumedSet, nullptr);
     ASSERT_NE(consumedWait, nullptr);
     ASSERT_NE(otherSet, nullptr);
-    const PipeSync::EventResource intraArrival{
-        1, {CoreType::AIV, AIVCore::AIV1}, {CoreType::AIV, AIVCore::AIV1}, PIPE_MTE2, PIPE_V};
-    ps.syncArriveStatus[intra.second].insert(intraArrival);
     const PipeSync::PipeCoreRealEx cubePipe(PIPE_FIX, CoreType::AIC);
     ps.crossCoreConsumed_[cubePipe][16] = 1;
     for (size_t i = 2; i < 18; ++i) {
@@ -4309,19 +4335,12 @@ TEST_F(InsertSyncTest, A5BarrierPreservesConsumedEdgesOtherPoolAndIntraCoreState
     EXPECT_EQ(ps.setWaitPairMap_.at({0, otherConsumer}), 16);
     EXPECT_EQ(ps.NoWaitCVPairs_.size(), 2U);
     EXPECT_EQ(ps.freeEventId_.at(intra), (std::deque<int>{2, 4, 6}));
-    EXPECT_EQ(ps.syncArriveStatus[intra.second].count(intraArrival), 1U);
     EXPECT_EQ(ps.crossCoreConsumed_[cubePipe][16], 1U);
     EXPECT_EQ(ps.crossCoreGenerations_[0], 3U);
     EXPECT_FALSE(ps.CanReuseCrossCoreEventId(0, ps.crossCoreConsumed_[cubePipe]));
     const PipeSync::PipeCoreRealEx receivingS(PIPE_S, CoreType::AIV, AIVCore::AIV0);
     EXPECT_TRUE(ps.CanReuseCrossCoreEventId(0, ps.crossCoreConsumed_[receivingS]));
     EXPECT_EQ(ps.crossCoreSnapshots_.at({0, otherConsumer}).consumed[0], 0U);
-    for (const auto& [pipe, events] : ps.syncArriveStatus) {
-        (void)pipe;
-        for (const auto& event : events) {
-            EXPECT_FALSE(event.srcCore.first != event.dstCore.first && event.eventId < 16);
-        }
-    }
 }
 
 TEST_F(InsertSyncTest, A5ConsecutiveBarriersKeepCurrentOutputSets)
