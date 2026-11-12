@@ -1673,7 +1673,8 @@ struct EncodeDevAscendFunctionInfo {
         return data;
     }
 
-    void UpdateCellMatchShape(DevCellMatchTableDesc& cellMatchTableDesc, const std::vector<int64_t>& shape)
+    void FastSlowStitchCheckUpdateCellShape(DevCellMatchTableDesc& cellMatchTableDesc,
+                                            const std::vector<int64_t>& shape)
     {
         auto& cellMatchShape = cellMatchTableDesc.cellShape;
         for (size_t index = 0; index < shape.size(); ++index) {
@@ -1834,7 +1835,7 @@ struct EncodeDevAscendFunctionInfo {
 
                     auto shape = callAttrSucc->GetLinearImmediateArgList(coaIndex + outcastOpAttr.dim,
                                                                          coaIndex + outcastOpAttr.dim * 0x2, false);
-                    UpdateCellMatchShape(outcastOpAttr.cellMatchTableDesc, shape);
+                    FastSlowStitchCheckUpdateCellShape(outcastOpAttr.cellMatchTableDesc, shape);
                     MACHINE_LOGD("Minimal shape for outcast %d rawtensor magic %d consumer op %d %d is %s.\n", o->magic,
                                  o->GetRawMagic(), succOpIdx, succOp->GetOpMagic(),
                                  IntVecToStr(ShapeToVector(outcastOpAttr.cellMatchTableDesc.cellShape)).c_str());
@@ -1962,7 +1963,7 @@ struct EncodeDevAscendFunctionInfo {
                     UNUSED(use.opType);
                     auto shape = callAttr->GetLinearImmediateArgList(use.offsetAttrIdx + dimSize,
                                                                      use.offsetAttrIdx + dimSize * 2, false);
-                    UpdateCellMatchShape(outcastOpAttr.cellMatchTableDesc, shape);
+                    FastSlowStitchCheckUpdateCellShape(outcastOpAttr.cellMatchTableDesc, shape);
                     MACHINE_LOGD("Minimal shape for outcast %d rawtensor magic %d op %zu %d is %s.\n", o->magic,
                                  o->GetRawMagic(), i, op.GetOpMagic(),
                                  IntVecToStr(ShapeToVector(outcastOpAttr.cellMatchTableDesc.cellShape)).c_str());
@@ -2060,7 +2061,7 @@ struct EncodeDevAscendFunctionInfo {
                          IntVecToStr(shape).c_str());
         } else {
             incastOpAttr.useList.emplace_back(opIdx, coaIndex, CellMatchOpType::READ);
-            UpdateCellMatchShape(incastOpAttr.cellMatchTableDesc, shape);
+            FastSlowStitchCheckUpdateCellShape(incastOpAttr.cellMatchTableDesc, shape);
             MACHINE_LOGD("Partial incast consumer: incast %d rawtensor magic %d coaIndex %d op %zu %d cellShape %s.\n",
                          index->magic, index->GetRawMagic(), coaIndex, opIdx, op.GetOpMagic(),
                          IntVecToStr(ShapeToVector(incastOpAttr.cellMatchTableDesc.cellShape)).c_str());
@@ -3060,15 +3061,18 @@ static Opcode GetFullCoverProducerOpcodeForOutcast(const DevAscendFunction& devF
     return Opcode::OP_UNKNOWN;
 }
 
-struct CellMatchShapeGate {
-    int64_t writeOpShapeGcd[DEV_SHAPE_DIM_MAX]{};
-    int64_t writeOpShapeMax[DEV_SHAPE_DIM_MAX]{};
+// Compile-time read/write shape stats that set NORMAL_WRITE capacity (1 = Fast, >1 = Slow).
+// Grep prefix: FastSlowStitchCheck
+struct FastSlowStitchCheckShapeGate {
+    int64_t allWriteOpShapeGcd[DEV_SHAPE_DIM_MAX]{};
+    int64_t allWriteOpShapeMax[DEV_SHAPE_DIM_MAX]{};
     int64_t readOpShapeMin[DEV_SHAPE_DIM_MAX]{};
 };
 
 // Caller guarantees 0 <= d < dim && d < DEV_SHAPE_DIM_MAX.
-static bool TryGetImmediateUseShapeDim(const DevAscendFunction& func, const DevAscendFunctionCallOperandUse& use,
-                                       int dim, int d, int64_t* value)
+static bool FastSlowStitchCheckTryGetUseShapeDim(const DevAscendFunction& func,
+                                                 const DevAscendFunctionCallOperandUse& use, int dim, int d,
+                                                 int64_t* value)
 {
     const SymInt& s = func.GetSymoffset(use.offsetAttrIdx + dim)[d];
     if (s.IsExpression()) {
@@ -3082,26 +3086,29 @@ static bool TryGetImmediateUseShapeDim(const DevAscendFunction& func, const DevA
     return true;
 }
 
-static void AccumulateWriteOpShapeGate(const DevAscendFunction& func, const DevAscendFunctionCallOperandUse& use,
-                                       int dim, CellMatchShapeGate* gate)
+// All write op types: NORMAL_WRITE and ATOMIC_WRITE. Caller does not pass READ.
+static void FastSlowStitchCheckAccumulateAllWriteOpShape(const DevAscendFunction& func,
+                                                         const DevAscendFunctionCallOperandUse& use, int dim,
+                                                         FastSlowStitchCheckShapeGate* gate)
 {
     for (int d = 0; d < dim && d < DEV_SHAPE_DIM_MAX; ++d) {
         int64_t v = 0;
-        if (!TryGetImmediateUseShapeDim(func, use, dim, d, &v)) {
+        if (!FastSlowStitchCheckTryGetUseShapeDim(func, use, dim, d, &v)) {
             continue;
         }
-        int64_t& gcdSlot = gate->writeOpShapeGcd[d];
+        int64_t& gcdSlot = gate->allWriteOpShapeGcd[d];
         gcdSlot = gcdSlot == 0 ? v : std::gcd(gcdSlot, v);
-        gate->writeOpShapeMax[d] = std::max(gate->writeOpShapeMax[d], v);
+        gate->allWriteOpShapeMax[d] = std::max(gate->allWriteOpShapeMax[d], v);
     }
 }
 
-static void AccumulateReadOpShapeGate(const DevAscendFunction& func, const DevAscendFunctionCallOperandUse& use,
-                                      int dim, CellMatchShapeGate* gate)
+static void FastSlowStitchCheckAccumulateReadOpShape(const DevAscendFunction& func,
+                                                     const DevAscendFunctionCallOperandUse& use, int dim,
+                                                     FastSlowStitchCheckShapeGate* gate)
 {
     for (int d = 0; d < dim && d < DEV_SHAPE_DIM_MAX; ++d) {
         int64_t v = 0;
-        if (!TryGetImmediateUseShapeDim(func, use, dim, d, &v)) {
+        if (!FastSlowStitchCheckTryGetUseShapeDim(func, use, dim, d, &v)) {
             continue;
         }
         int64_t& minSlot = gate->readOpShapeMin[d];
@@ -3109,11 +3116,11 @@ static void AccumulateReadOpShapeGate(const DevAscendFunction& func, const DevAs
     }
 }
 
-static uint32_t InitPartialUpdateCellMatch(const std::vector<const DevAscendFunctionOutcast*>& outcastList,
-                                           const std::vector<Opcode>& outcastOpcodeList,
-                                           const std::vector<CellMatchShapeGate>& writeOpGates,
-                                           const std::vector<CellMatchShapeGate>& readOpGates,
-                                           DevCellMatchTableDesc* partialUpdateCellMatchTableDesc)
+static uint32_t FastSlowStitchCheckInitPartialUpdate(const std::vector<const DevAscendFunctionOutcast*>& outcastList,
+                                                     const std::vector<Opcode>& outcastOpcodeList,
+                                                     const std::vector<FastSlowStitchCheckShapeGate>& allWriteOpGates,
+                                                     const std::vector<FastSlowStitchCheckShapeGate>& readOpGates,
+                                                     DevCellMatchTableDesc* partialUpdateCellMatchTableDesc)
 {
     std::vector<int> tensorShape;
     for (size_t index = 0; index < outcastList.size(); index++) {
@@ -3157,7 +3164,7 @@ static uint32_t InitPartialUpdateCellMatch(const std::vector<const DevAscendFunc
         cellShape.push_back(mergeDim);
     }
     partialUpdateCellMatchTableDesc->SetCellShape(cellShape);
-    // Per-dim factor: 1 if cell<=1, divides, or minReadOp>=maxWriteOp (0 on either side = covered);
+    // Per-dim factor: 1 if cell<=1, divides, or minReadOp>=maxAllWriteOp (0 on either side = covered);
     // else 2. NORMAL_WRITE capacity = product (2^N). Empty write gates are skipped for divides.
     uint32_t normalWriteCount = 1;
     int dims = static_cast<int>(cellShape.size());
@@ -3167,12 +3174,12 @@ static uint32_t InitPartialUpdateCellMatch(const std::vector<const DevAscendFunc
             continue;
         }
         bool divides = false;
-        for (size_t index = 0; index < writeOpGates.size(); ++index) {
-            int64_t writeOpShapeGcd = writeOpGates[index].writeOpShapeGcd[d];
-            if (writeOpShapeGcd <= 0) {
+        for (size_t index = 0; index < allWriteOpGates.size(); ++index) {
+            int64_t allWriteOpShapeGcd = allWriteOpGates[index].allWriteOpShapeGcd[d];
+            if (allWriteOpShapeGcd <= 0) {
                 continue;
             }
-            if (writeOpShapeGcd % cell != 0) {
+            if (allWriteOpShapeGcd % cell != 0) {
                 divides = false;
                 break;
             }
@@ -3181,18 +3188,18 @@ static uint32_t InitPartialUpdateCellMatch(const std::vector<const DevAscendFunc
         if (divides) {
             continue;
         }
-        int64_t maxWriteOp = 0;
+        int64_t maxAllWriteOp = 0;
         int64_t minReadOp = 0;
-        for (const CellMatchShapeGate& writeOpGate : writeOpGates) {
-            maxWriteOp = std::max(maxWriteOp, writeOpGate.writeOpShapeMax[d]);
+        for (const FastSlowStitchCheckShapeGate& allWriteOpGate : allWriteOpGates) {
+            maxAllWriteOp = std::max(maxAllWriteOp, allWriteOpGate.allWriteOpShapeMax[d]);
         }
-        for (const CellMatchShapeGate& readOpGate : readOpGates) {
+        for (const FastSlowStitchCheckShapeGate& readOpGate : readOpGates) {
             int64_t readOpShape = readOpGate.readOpShapeMin[d];
             if (readOpShape > 0) {
                 minReadOp = minReadOp == 0 ? readOpShape : std::min(minReadOp, readOpShape);
             }
         }
-        if (minReadOp == 0 || maxWriteOp == 0 || minReadOp >= maxWriteOp) {
+        if (minReadOp == 0 || maxAllWriteOp == 0 || minReadOp >= maxAllWriteOp) {
             continue;
         }
         normalWriteCount *= 2;
@@ -3514,8 +3521,8 @@ static int InitSinglePartialUpdateSlot(
 
     std::vector<const DevAscendFunctionOutcast*> outcastList;
     std::vector<Opcode> outcastOpcodeList;
-    std::vector<CellMatchShapeGate> writeOpGates;
-    std::vector<CellMatchShapeGate> readOpGates;
+    std::vector<FastSlowStitchCheckShapeGate> allWriteOpGates;
+    std::vector<FastSlowStitchCheckShapeGate> readOpGates;
 
     ASSERT(DevCommonErr::PARAM_CHECK_FAILED, slotRootOutcastDict.count(slotIndex))
         << "slotIndex: " << slotIndex << " not found in slotRootOutcastDict";
@@ -3529,16 +3536,16 @@ static int InitSinglePartialUpdateSlot(
         auto& outcast = devFunc->GetOutcast(outcastIndex);
         outcastList.push_back(&outcast);
         outcastOpcodeList.push_back(GetFullCoverProducerOpcodeForOutcast(*devFunc, outcast));
-        CellMatchShapeGate writeOpGate;
+        FastSlowStitchCheckShapeGate allWriteOpGate;
         int outDim = outcast.dim;
         for (size_t i = 0; i < outcast.producerConsumerList.size(); ++i) {
             const auto& use = devFunc->At(outcast.producerConsumerList, i);
             if (use.opType == CellMatchOpType::READ) {
                 continue;
             }
-            AccumulateWriteOpShapeGate(*devFunc, use, outDim, &writeOpGate);
+            FastSlowStitchCheckAccumulateAllWriteOpShape(*devFunc, use, outDim, &allWriteOpGate);
         }
-        writeOpGates.push_back(writeOpGate);
+        allWriteOpGates.push_back(allWriteOpGate);
     }
     if (slotRootIncastDict.count(slotIndex) != 0) {
         for (auto& [root, incastIndex] : slotRootIncastDict.at(slotIndex)) {
@@ -3548,18 +3555,19 @@ static int InitSinglePartialUpdateSlot(
             DevAscendFunction* devFunc = reinterpret_cast<DevAscendFunction*>(
                 const_cast<uint8_t*>(devEncodeListInput[funcKey].data()));
             const auto& incast = devFunc->GetIncast(incastIndex);
-            CellMatchShapeGate readOpGate;
+            FastSlowStitchCheckShapeGate readOpGate;
             int inDim = incast.dim;
             for (size_t i = 0; i < incast.consumerList.size(); ++i) {
-                AccumulateReadOpShapeGate(*devFunc, devFunc->At(incast.consumerList, i), inDim, &readOpGate);
+                FastSlowStitchCheckAccumulateReadOpShape(*devFunc, devFunc->At(incast.consumerList, i), inDim,
+                                                         &readOpGate);
             }
             readOpGates.push_back(readOpGate);
         }
     }
 
     DevCellMatchTableDesc partialUpdateCellMatchTableDesc;
-    uint32_t normalWriteCount = InitPartialUpdateCellMatch(outcastList, outcastOpcodeList, writeOpGates, readOpGates,
-                                                           &partialUpdateCellMatchTableDesc);
+    uint32_t normalWriteCount = FastSlowStitchCheckInitPartialUpdate(outcastList, outcastOpcodeList, allWriteOpGates,
+                                                                     readOpGates, &partialUpdateCellMatchTableDesc);
     partialUpdateCellMatchTableDesc.SetCacheOpMaxCount({normalWriteCount,
                                                         hasAtomicWrite ? CELL_MATCH_MAX_ATOMIC_WRITE_COUNT : 0U,
                                                         outcastList.size() > 1 ? maxReadCount : 0u});

@@ -22,9 +22,9 @@
  *      - bit 32-41: slot alloc iter id, When the slot tensor memory is reallocated, the iter id changes accordingly
  *      - bit 42-63: Stitch devtask id
  * NORMAL_WRITE layout (partial-update cell match) is one of two paths:
- * - Fast path: normalMax == 1, writeOpRangeBase == 0. One writer per cell; mutex overwrite.
+ * - Fast path: normalMax == 1, normalWriteOpRangeBase == 0. One writer per cell; mutex overwrite.
  * - Slow path: normalMax == 2^N (N = dims with cell length > 1 that fail the fast gate),
- *   writeOpRangeBase != 0. Multiple writers; each stores (offset, shape); overlap replace/append.
+ *   normalWriteOpRangeBase != 0. Multiple writers; each stores (offset, shape); overlap replace/append.
  * - uint64[1 .. normalMax]:     Normal-write op-id list
  * - uint64[1+normalMax ..]:      Atomic-write op-id list
  * - uint64[1+normalMax+atomicMax ..]: Read op-id list
@@ -187,25 +187,26 @@ inline void CellMatchAddOpId(uint64_t* cellMatchTableData, uint64_t cellMemBase,
     cellMatchTableData[cellMemBase + desc.opMemLayOutIndex[opType] + index] = taskId;
 }
 
-// Slow NORMAL_WRITE layout: capacity > 1 (UpdateCellMemLayOut also sets writeOpRangeBase). Else Fast.
+// Slow NORMAL_WRITE layout: capacity > 1 (UpdateCellMemLayOut also sets normalWriteOpRangeBase). Else Fast.
 inline bool CellMatchIsNormalWriteSlowPath(const DevCellMatchTableDesc& desc)
 {
     return desc.GetCacheOpMaxCount(CELL_MATCH_OP_TYPE_NORMAL_WRITE) > 1;
 }
 
 // Base of one NORMAL_WRITE's interleaved (offset,shape) pairs in the Slow-path tail.
-inline uint64_t* CellMatchWriteOpRangeBase(uint64_t* cellMatchTableData, uint64_t cellMemBase, uint32_t writeOpIndex,
-                                           const DevCellMatchTableDesc& desc)
+inline uint64_t* CellMatchNormalWriteOpRangeBase(uint64_t* cellMatchTableData, uint64_t cellMemBase,
+                                                 uint32_t normalWriteOpIndex, const DevCellMatchTableDesc& desc)
 {
     int dims = desc.GetDimensionSize();
-    return cellMatchTableData + cellMemBase + desc.writeOpRangeBase +
-           static_cast<uint64_t>(writeOpIndex) * static_cast<uint64_t>(dims) * 2u;
+    return cellMatchTableData + cellMemBase + desc.normalWriteOpRangeBase +
+           static_cast<uint64_t>(normalWriteOpIndex) * static_cast<uint64_t>(dims) * 2u;
 }
 
-inline void CellMatchStoreWriteOpRange(uint64_t* cellMatchTableData, uint64_t cellMemBase, uint32_t writeOpIndex,
-                                       const uint64_t* offset, const uint64_t* shape, const DevCellMatchTableDesc& desc)
+inline void CellMatchStoreNormalWriteOpRange(uint64_t* cellMatchTableData, uint64_t cellMemBase,
+                                             uint32_t normalWriteOpIndex, const uint64_t* offset, const uint64_t* shape,
+                                             const DevCellMatchTableDesc& desc)
 {
-    uint64_t* dst = CellMatchWriteOpRangeBase(cellMatchTableData, cellMemBase, writeOpIndex, desc);
+    uint64_t* dst = CellMatchNormalWriteOpRangeBase(cellMatchTableData, cellMemBase, normalWriteOpIndex, desc);
     int dims = desc.GetDimensionSize();
     for (int d = 0; d < dims; ++d) {
         dst[d * 2] = offset[d];
@@ -213,9 +214,9 @@ inline void CellMatchStoreWriteOpRange(uint64_t* cellMatchTableData, uint64_t ce
     }
 }
 
-// Contiguous (offset,shape) vs one write-op's interleaved pairs already in the cell.
-inline bool CellMatchWriteOpRangesOverlap(const uint64_t* offset, const uint64_t* shape, const uint64_t* storedPairs,
-                                          int dims)
+// NORMAL_WRITE only. Contiguous (offset,shape) vs one stored normal-write range.
+inline bool CellMatchNormalWriteOpRangesOverlap(const uint64_t* offset, const uint64_t* shape,
+                                                const uint64_t* storedPairs, int dims)
 {
     for (int d = 0; d < dims; ++d) {
         uint64_t offB = storedPairs[d * 2];

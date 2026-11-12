@@ -81,8 +81,8 @@ struct DevCellMatchTableDesc {
     uint32_t cacheOpMaxCount[CELL_MATCH_OP_TYPE_MAX_NUM]{1, 0, 0};
     uint32_t opMemLayOutIndex[CELL_MATCH_OP_TYPE_MAX_NUM]{};
     uint32_t cellUint64Size{2};
-    // Slow-path only: base of per-writer (offset, shape) pairs. 0 on Fast path.
-    uint32_t writeOpRangeBase{0};
+    // Slow-path only: base of per-NORMAL_WRITE (offset, shape) pairs. Atomic write has no range. 0 on Fast path.
+    uint32_t normalWriteOpRangeBase{0};
 
     int GetDimensionSize() const { return cellShape.dimSize; }
 
@@ -121,10 +121,10 @@ struct DevCellMatchTableDesc {
         uint32_t normalWriteCount = cacheOpMaxCount[0];
         int dims = cellShape.dimSize;
         if (normalWriteCount > 1) {
-            writeOpRangeBase = offset;
+            normalWriteOpRangeBase = offset;
             offset += normalWriteCount * static_cast<uint32_t>(dims) * 2u;
         } else {
-            writeOpRangeBase = 0;
+            normalWriteOpRangeBase = 0;
         }
         cellUint64Size = offset;
     }

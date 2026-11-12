@@ -148,7 +148,7 @@ bool HasWriteRange(const std::vector<uint64_t>& table, const DevCellMatchTableDe
     uint64_t base = CellMatchCellIndexToMemBase(static_cast<uint64_t>(cell), desc);
     uint32_t count = WriterCount(table, desc, cell);
     for (uint32_t i = 0; i < count; ++i) {
-        const uint64_t* pairs = CellMatchWriteOpRangeBase(const_cast<uint64_t*>(table.data()), base, i, desc);
+        const uint64_t* pairs = CellMatchNormalWriteOpRangeBase(const_cast<uint64_t*>(table.data()), base, i, desc);
         if (pairs[0] == off0 && pairs[2] == off1 && pairs[1] == shp0 && pairs[3] == shp1) {
             return true;
         }
@@ -214,8 +214,8 @@ int CountOverlap(std::vector<uint64_t>& table, const DevCellMatchTableDesc& desc
     int hit = 0;
     for (uint32_t i = 0; i < count; ++i) {
         uint64_t opId = CellMatchGetOpId(table.data(), base, CELL_MATCH_OP_TYPE_NORMAL_WRITE, i, desc);
-        const uint64_t* storedPairs = CellMatchWriteOpRangeBase(table.data(), base, i, desc);
-        if (CellMatchWriteOpRangesOverlap(access.offset, access.shape, storedPairs, dims) &&
+        const uint64_t* storedPairs = CellMatchNormalWriteOpRangeBase(table.data(), base, i, desc);
+        if (CellMatchNormalWriteOpRangesOverlap(access.offset, access.shape, storedPairs, dims) &&
             FuncID(static_cast<uint32_t>(opId)) != access.funcIdx) {
             ++hit;
         }
@@ -264,7 +264,7 @@ TEST(CellMatchMultiWrite, TailMultipleOfCellUsesOneWriter)
     EXPECT_EQ(desc.GetCellShape(1), kHidden);
     EXPECT_EQ(desc.GetStrideShape(0), 5);
     EXPECT_EQ(desc.GetStrideShape(1), 1);
-    EXPECT_EQ(desc.writeOpRangeBase, 0u);
+    EXPECT_EQ(desc.normalWriteOpRangeBase, 0u);
     EXPECT_EQ(desc.cellUint64Size, 2u);
     ExpectReaderMask(*slot.update);
 
@@ -307,7 +307,7 @@ TEST(CellMatchMultiWrite, ReadAtLeastMaxWriteForcesOneWriter)
     EncodedOutcast slot;
     ASSERT_TRUE(FindEncoded(48, 1u, 0u, &slot));
     const DevCellMatchTableDesc& desc = slot.update->cellMatchTableDesc;
-    EXPECT_EQ(desc.writeOpRangeBase, 0u);
+    EXPECT_EQ(desc.normalWriteOpRangeBase, 0u);
     EXPECT_EQ(desc.cellUint64Size, 2u);
     ExpectReaderMask(*slot.update);
 }
@@ -344,7 +344,7 @@ TEST(CellMatchMultiWrite, TailNotMultipleOfCellKeepsTwoWriters)
     EXPECT_EQ(desc.GetCellShape(1), kHidden);
     EXPECT_EQ(desc.GetStrideShape(0), 3);
     EXPECT_EQ(desc.GetStrideShape(1), 1);
-    EXPECT_EQ(desc.writeOpRangeBase, 3u);
+    EXPECT_EQ(desc.normalWriteOpRangeBase, 3u);
     EXPECT_EQ(desc.cellUint64Size, 11u);
     ExpectReaderMask(*slot.update);
 
@@ -391,7 +391,7 @@ TEST(CellMatchMultiWrite, TwoDimCornerKeepsFourWriters)
     EXPECT_EQ(desc.GetCellShape(1), 15);
     EXPECT_EQ(desc.GetStrideShape(0), 5);
     EXPECT_EQ(desc.GetStrideShape(1), 5);
-    EXPECT_EQ(desc.writeOpRangeBase, 5u);
+    EXPECT_EQ(desc.normalWriteOpRangeBase, 5u);
     EXPECT_EQ(desc.cellUint64Size, 21u);
     ExpectReaderMask(*slot.update);
 
@@ -433,7 +433,7 @@ TEST(CellMatchMultiWrite, CrossRootOverlapSelectsWriters)
     EncodedOutcast slot;
     ASSERT_TRUE(FindEncoded(48, 2u, 0u, &slot));
     const DevCellMatchTableDesc& desc = slot.update->cellMatchTableDesc;
-    EXPECT_NE(desc.writeOpRangeBase, 0u);
+    EXPECT_NE(desc.normalWriteOpRangeBase, 0u);
     ExpectReaderMask(*slot.update);
 
     std::vector<uint64_t> table;
@@ -486,7 +486,7 @@ TEST(CellMatchMultiWrite, MiddleShapeNotMultipleOfCellUsesTwoWriters)
 
     EncodedOutcast slot;
     ASSERT_TRUE(FindEncoded(12, 2u, 0u, &slot));
-    EXPECT_NE(slot.update->cellMatchTableDesc.writeOpRangeBase, 0u);
+    EXPECT_NE(slot.update->cellMatchTableDesc.normalWriteOpRangeBase, 0u);
     ExpectReaderMask(*slot.update);
 }
 
@@ -515,7 +515,7 @@ TEST(CellMatchMultiWrite, AtomicAddsAppendInsteadOfReplace)
     EncodedOutcast slot;
     ASSERT_TRUE(FindEncoded(kHidden, 1u, CELL_MATCH_MAX_ATOMIC_WRITE_COUNT, &slot));
     const DevCellMatchTableDesc& desc = slot.update->cellMatchTableDesc;
-    EXPECT_EQ(desc.writeOpRangeBase, 0u);
+    EXPECT_EQ(desc.normalWriteOpRangeBase, 0u);
     EXPECT_EQ(desc.cellUint64Size, 1u + 1u + CELL_MATCH_MAX_ATOMIC_WRITE_COUNT);
     ExpectReaderMask(*slot.update);
 

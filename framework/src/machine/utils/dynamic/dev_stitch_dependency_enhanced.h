@@ -146,7 +146,7 @@ inline void CellMatchStitchOverlappingNormalWrites(uint64_t cellMemBase, uint64_
                       MakeTaskID(devCurrIdx, operationIdx), slotIdx);
     int dims = desc.GetDimensionSize();
     const uint64_t rangeWordStride = static_cast<uint64_t>(dims) * 2u;
-    uint64_t* rangeBase = cellMatchTableData + cellMemBase + desc.writeOpRangeBase;
+    uint64_t* rangeBase = cellMatchTableData + cellMemBase + desc.normalWriteOpRangeBase;
     for (uint32_t i = 0; i < writerCount; ++i) {
         uint64_t opId = CellMatchGetOpId(cellMatchTableData, cellMemBase, CELL_MATCH_OP_TYPE_NORMAL_WRITE, i, desc);
         if (opId == AICORE_TASK_INIT) {
@@ -158,7 +158,7 @@ inline void CellMatchStitchOverlappingNormalWrites(uint64_t cellMemBase, uint64_
             continue;
         }
         const uint64_t* storedPairs = rangeBase + static_cast<uint64_t>(i) * rangeWordStride;
-        if (!CellMatchWriteOpRangesOverlap(offset, shape, storedPairs, dims)) {
+        if (!CellMatchNormalWriteOpRangesOverlap(offset, shape, storedPairs, dims)) {
             continue;
         }
 
