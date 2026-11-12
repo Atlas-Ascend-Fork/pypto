@@ -1,0 +1,10 @@
+function main incast(tensor<64 x 64, half, tensor_view<, , ND, %src_ptr>> %src_0, tensor<64 x 64, float, tensor_view<, , ND, %output_ptr>> %output_0) outcast() #entry(false) #type(pro) {
+    mutex_tile<tile<64 x 64, half, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_tile_0 = block.make_mutex_tile(tuple(64, 64), tuple(), tuple(), dtype=half, target_memory=Vec, compact=1, memref_addr=0, memref_size=8192, memref_id=<id>);
+    mutex_tile<tile<64 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %out_tile_0 = block.make_mutex_tile(tuple(64, 64), tuple(), tuple(), dtype=float, target_memory=Vec, compact=1, memref_addr=16384, memref_size=16384, memref_id=<id>);
+    tuple<int64_t, int64_t> %_tuple_anchor_0_0 = tuple(0, 0);
+    block.load(%src_tile_0, %src_0, tuple(0, 0));
+    block.axpy(%out_tile_0, %src_tile_0, 1000.0);
+    tuple<int64_t, int64_t> %_tuple_anchor_1_0 = tuple(0, 0);
+    tensor<64 x 64, float, tensor_view<, , ND, %output_ptr>> %_test_result_0 = block.store(%output_0, %out_tile_0, tuple(0, 0));
+    return;
+}

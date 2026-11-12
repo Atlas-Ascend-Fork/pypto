@@ -720,6 +720,23 @@ def _tile_shape_ints(tile_type: "_IRTileType") -> list[int] | None:
     return _const_int_values(tile_type.shape)
 
 
+def _tile_valid_shape_ints(tile_type: "_IRTileType") -> list[int] | None:
+    """Declared valid shape of a tile, when every dimension is a compile-time constant.
+
+    Returns None when the valid shape is omitted, dynamic (-1) or only known at runtime (for
+    example a tile narrowed later by ``pl.set_validshape``): the declared ``shape`` is only an
+    upper bound, so comparing it would reject layouts the runtime valid shapes satisfy.
+    """
+    view = getattr(tile_type, "tile_view", None)
+    valid = getattr(view, "valid_shape", None) if view is not None else None
+    if not valid:
+        return None
+    ints = [_const_int_value(dim) for dim in valid]
+    if any(dim is None or dim == -1 for dim in ints):
+        return None  # dynamic (-1) or not statically known
+    return ints
+
+
 def _check_move_shape_compat(
     out: Expr,
     src: Expr,
@@ -1116,12 +1133,15 @@ def _ir_axpy(self, out: Expr, src: Expr, alpha: Expr, *, span: Span | None = Non
                 f"axpy: dtype mismatch between out ({dt}) and src ({src_dt}). "
                 f"Supported: same type, or src=FP16 + out=FP32."
             )
-    # TAXPY takes the multiplier in the src dtype (the half upconvert path
-    # keeps a half scalar), so the scalar must be representable there.
+    # TAXPY takes the multiplier in the src dtype (the half upconvert path keeps a half
+    # scalar), so the scalar must be representable there -- checking it against the out
+    # dtype lets an fp16-infinite multiplier such as 70000.0 through on the fp16->fp32 path.
+    # A reachable src with no src dtype implies out has none either (the mismatch check
+    # above rejects every other combination), so src_dt alone carries the scalar dtype.
     actual_span = span or _span()
     from pypto_pro.language.parser.diagnostics import check_const_expr_fits_dtype
 
-    check_const_expr_fits_dtype(alpha, dt, api="pl.axpy")
+    check_const_expr_fits_dtype(alpha, src_dt, api="pl.axpy")
     return _ir_core.create_op_call(block_ir_op("axpy"), [out, src, alpha], {}, actual_span)
 
 
@@ -1659,7 +1679,8 @@ def _ir_setval(container: Expr, offset: Expr, value: Expr, *, span: Span | None 
 def _check_transpose_align(out: Expr, src: Expr, dt: DataType | None) -> None:
     """TTRANS (3510) statically asserts ``Cols * sizeof(T) % 32 == 0`` on both tiles.
 
-    The swap always targets the last two dimensions; static-only (dynamic
+    Both tiles are rank 2 by IR construction (TileType only supports rank-2
+    shapes), so the two axes are simply rows and cols; static-only (dynamic
     shapes are skipped — never over-rejects).
     """
     if dt is None or dt.get_bit() % 8 != 0:
@@ -1670,9 +1691,9 @@ def _check_transpose_align(out: Expr, src: Expr, dt: DataType | None) -> None:
         if not isinstance(tile_type, _ir_core.TileType):
             continue
         shape = _tile_shape_ints(tile_type)
-        if shape is None or len(shape) < 2:
+        if shape is None:
             continue
-        for axis in (len(shape) - 2, len(shape) - 1):
+        for axis in (0, 1):
             if (shape[axis] * esz) % 32 != 0:
                 raise InvalidType(
                     f"transpose: dimension {axis} of the tile ({shape[axis]} x {esz}B = "
@@ -1683,19 +1704,74 @@ def _check_transpose_align(out: Expr, src: Expr, dt: DataType | None) -> None:
 
 @op_impl("transpose")
 def _ir_transpose(self, out: Expr, src: Expr, *, span: Span | None = None) -> Expr:
+    actual_span = span or _span()
     dt = getattr(out.type, "dtype", None)
     if dt is not None and dt.get_bit() not in (8, 16, 32):
-        raise InvalidType(f"transpose: unsupported dtype {dt}, supported: b8/b16/b32")
+        raise InvalidType(f"transpose: unsupported dtype {dt}, supported: b8/b16/b32", span=actual_span)
     src_dt = getattr(src.type, "dtype", None)
-    if src_dt is not None and dt is not None and src_dt.get_bit() != dt.get_bit():
-        raise InvalidType(f"transpose: dtype size mismatch between dst ({dt}) and src ({src_dt})")
+    # transpose.md requires out.dtype == src.dtype; a same-size pair (fp16/bf16) must not slip
+    # through to a late backend compile error.
+    if src_dt is not None and dt is not None and src_dt != dt:
+        raise InvalidType(
+            f"transpose: dtype mismatch between dst ({dt}) and src ({src_dt}); dtype must match src",
+            span=actual_span,
+        )
+    # Tiles are rank 2 by IR construction (TileType only supports rank-2 shapes;
+    # rejected when the tile is created — memory.cpp), so a statically known
+    # shape below is always [rows, cols]: no N-dim generalization is needed.
     _check_transpose_align(out, src, dt)
+    # transpose.md: out.shape must be src.shape with the two axes swapped.
+    out_shape = _tile_shape_ints(out.type) if isinstance(out.type, _IRTileType) else None
+    src_shape = _tile_shape_ints(src.type) if isinstance(src.type, _IRTileType) else None
+    if out_shape is not None and src_shape is not None:
+        expected = [src_shape[1], src_shape[0]]
+        if out_shape != expected:
+            raise InvalidShape(
+                f"transpose: out shape {out_shape} is not the transpose of src shape {src_shape} (shape mismatch)",
+                span=actual_span,
+            )
+    # transpose.md: out must not be the same tile as src.
     return _ir_core.create_op_call(
         block_ir_op("transpose"),
         [out, src],
         {},
-        span or _span(),
+        actual_span,
     )
+
+
+# Supported (src, dst) dtype pairs for the tile-level cast, from
+# docs/zh/api/pro_api/SIMD-API/tile_computation/type_conversion/cast.md
+# (the supported-conversions table: pairs not listed there are unsupported). Checked
+# before codegen so an unsupported pair fails at IR build, not in bisheng.
+_CAST_SUPPORTED_PAIRS: frozenset[tuple[str, str]] = frozenset(
+    (getattr(DataType, _src).to_string(), getattr(DataType, _dst).to_string())
+    for _src, _dsts in {
+        "FP32": ("FP32", "FP16", "BF16", "INT16", "INT32", "INT64", "FP8E4M3FN", "FP8E5M2", "HF8"),
+        "FP16": ("FP32", "INT8", "UINT8", "INT16", "INT32", "HF8"),
+        "BF16": ("FP32", "INT32", "FP16", "FP4E2M1", "FP4E1M2"),
+        "FP4E2M1": ("BF16",),
+        "FP4E1M2": ("BF16",),
+        "UINT8": ("FP16", "UINT16"),
+        "INT8": ("FP16", "INT16", "INT32"),
+        "INT16": ("FP16", "FP32", "UINT32", "INT32", "UINT8"),
+        "INT32": ("FP32", "INT64", "UINT8", "INT16", "UINT16"),
+        "UINT32": ("UINT8", "UINT16", "INT16"),
+        "INT64": ("FP32", "INT32"),
+        "FP8E4M3FN": ("FP32",),
+        "FP8E5M2": ("FP32",),
+        "HF8": ("FP32",),
+    }.items()
+    for _dst in _dsts
+)
+
+# The f32 -> fp8 conversions round to nearest even in hardware: the CCE intrinsic rejects every
+# other mode ("The 4th argument of this vcvt (f322e5m2) can only be: ROUND_R"), so pto-isa's
+# cast32to8 family hard-codes ROUND_R. Reject the rest here rather than let the requested mode be
+# dropped silently. CAST_NONE means "the path's default rule", which is RNE for float->float.
+_CAST_RINT_ONLY_PAIRS: frozenset[tuple[str, str]] = frozenset(
+    (DataType.FP32.to_string(), getattr(DataType, _dst).to_string()) for _dst in ("FP8E4M3FN", "FP8E5M2")
+)
+_CAST_RINT_ONLY_MODES: frozenset[RoundMode] = frozenset({RoundMode.CAST_NONE, RoundMode.CAST_RINT})
 
 
 @op_impl("cast")
@@ -1704,14 +1780,60 @@ def _ir_cast(self,
     src: Expr,
     *,
     span: Span | None = None,
-    mode: RoundMode = RoundMode.CAST_ROUND,
+    mode: RoundMode | None = None,
 ) -> Expr:
+    actual_span = span or _span()
+    if isinstance(getattr(mode, "type", None), _ir_core.NoneType):
+        # An explicitly passed None arrives as the argument checker's NoneType placeholder
+        # (the same normalization _prepare_scale/_build_reinterpret apply); it means the
+        # same as omitting the kwarg, not a placeholder to forward to the op call.
+        mode = None
     target_type = out.type.dtype
+    src_dtype = getattr(src.type, "dtype", None)
+    pair = None
+    if src_dtype is not None:
+        pair = (src_dtype.to_string(), target_type.to_string())
+        if pair not in _CAST_SUPPORTED_PAIRS:
+            raise NotSupported(
+                f"cast: unsupported dtype conversion {src_dtype} -> {target_type}",
+                hint="the source/target dtype combination is not in the supported set; "
+                "see the cast API reference for the list of valid pairs.",
+                span=actual_span,
+            )
+    if pair in _CAST_RINT_ONLY_PAIRS:
+        # An unasked-for mode means this path's only real behaviour: round to nearest even.
+        if mode is None:
+            mode = RoundMode.CAST_RINT
+        elif mode not in _CAST_RINT_ONLY_MODES:
+            # Same contract as the vf.astype path's check for this conversion (INVALID_TYPE).
+            raise InvalidType(
+                f"cast: FP32 -> {target_type} only supports CAST_RINT/CAST_NONE, got {mode}",
+                hint="this conversion rounds to nearest even in hardware, so "
+                "CAST_FLOOR/CAST_CEIL/CAST_TRUNC/CAST_ROUND/CAST_ODD cannot be honoured -- "
+                "use CAST_RINT or CAST_NONE.",
+                span=actual_span,
+            )
+    elif mode is None:
+        mode = RoundMode.CAST_ROUND
+    # cast.md: src's valid region must cover the out.valid_shape conversion region. The check
+    # only fires when both valid shapes are declared constants: an omitted or dynamic valid shape
+    # (narrowed later by pl.set_validshape) has no static value to compare, and cast.md allows the
+    # physical shapes of src and out to differ.
+    out_shape = _tile_valid_shape_ints(out.type) if isinstance(out.type, _IRTileType) else None
+    src_shape = _tile_valid_shape_ints(src.type) if isinstance(src.type, _IRTileType) else None
+    if out_shape is not None and src_shape is not None and len(out_shape) == len(src_shape):
+        if any(s < o for s, o in zip(src_shape, out_shape)):
+            raise InvalidShape(
+                f"cast: src valid shape {src_shape} does not cover out valid shape {out_shape}; "
+                f"the src valid region must cover the out.valid_shape conversion region",
+                span=actual_span,
+            )
+
     return _ir_core.create_op_call(
         block_ir_op("cast"),
         [out, src],
         {"target_type": target_type, "mode": mode},
-        span or _span(),
+        actual_span,
     )
 
 

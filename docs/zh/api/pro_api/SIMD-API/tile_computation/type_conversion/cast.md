@@ -29,7 +29,7 @@ pypto_pro.language.cast(
     out: Tile,
     src: Tile,
     *,
-    mode: RoundMode = pl.RoundMode.CAST_ROUND,
+    mode: Optional[RoundMode] = None,
 ) -> None
 ```
 
@@ -39,7 +39,7 @@ pypto_pro.language.cast(
 |---|---|---|
 | out | 输出 | 目标操作数，须为UB Tile，目标数据类型由out.dtype确定。out.valid_shape指定本次转换的有效区域；src必须包含与该区域对应的有效元素，且源、目的Tile的形状和布局应满足逐元素对应访问要求。支持的数据类型组合见[支持的数据类型转换](#支持的数据类型转换)。调用完成后，out的有效区域被转换结果覆盖。 |
 | src | 输入 | 源操作数，须为UB Tile。其有效区域必须覆盖out.valid_shape指定的转换区域，并保证该区域内的每个元素均可由out中的相同逻辑坐标访问。源、目的Tile的物理shape和行跨度可以不同，但均须为转换区域提供足够的存储空间。 |
-| mode | 输入 | 可选，[pypto_pro.language.RoundMode](../../basic_data_structures/RoundMode.md)枚举类型，必须是编译期可确定的RoundMode枚举值。默认值为pypto_pro.language.RoundMode.CAST_ROUND。该参数只在转换路径涉及舍入时影响结果；各枚举值语义见RoundMode，不同转换路径的支持情况见[舍入模式](#舍入模式)和[支持的数据类型转换](#支持的数据类型转换)。 |
+| mode | 输入 | 可选，[pypto_pro.language.RoundMode](../../basic_data_structures/RoundMode.md)枚举类型，必须是编译期可确定的RoundMode枚举值。缺省（不传或显式传None）时按路径取默认舍入：DT_FP32 -> DT_FP8E4M3FN/DT_FP8E5M2为CAST_RINT，其余路径为CAST_ROUND。该参数只在转换路径涉及舍入时影响结果；各枚举值语义见RoundMode，不同转换路径的支持情况见[舍入模式](#舍入模式)和[支持的数据类型转换](#支持的数据类型转换)。 |
 
 ## 约束说明
 
@@ -55,11 +55,12 @@ RoundMode各枚举值的通用语义参见[pypto_pro.language.RoundMode](../../b
 
 - 对不涉及舍入的类型扩展或整数窄化路径，mode不参与结果计算，建议使用CAST_NONE表达意图。
 - DT_FP16/DT_FP32 -> DT_HF8路径固定采用CAST_ROUND；传入其他mode不会改变该路径的舍入行为。
+- DT_FP32 -> DT_FP8E4M3FN/DT_FP8E5M2路径固定采用CAST_RINT，未显式传入mode时同样按CAST_RINT处理；该路径的硬件转换只支持就近偶舍入，传入CAST_ROUND、CAST_FLOOR、CAST_CEIL、CAST_TRUNC或CAST_ODD会报错。CAST_NONE等价于CAST_RINT。
 - 除DT_FP32 -> DT_FP16外，对其他路径传入CAST_ODD不会执行奇数舍入，而会回退到CAST_NONE对应的默认规则：浮点数转整数使用CAST_TRUNC，其他路径使用CAST_RINT。
 
 ### 支持的数据类型转换
 
-源/目的数据类型支持组合如下表所示，未列出的组合不支持。表中“支持的有效舍入模式”表示能够实际改变舍入结果的模式；CAST_NONE可用于所有已列出的转换，并按上一节所述规则处理。接口缺省传入CAST_ROUND。
+源/目的数据类型支持组合如下表所示，未列出的组合不支持。表中“支持的有效舍入模式”表示能够实际改变舍入结果的模式；CAST_NONE可用于所有已列出的转换，并按上一节所述规则处理。接口缺省传入CAST_ROUND，DT_FP32 -> DT_FP8E4M3FN/DT_FP8E5M2除外（其缺省舍入见[舍入模式](#舍入模式)）。
 
 | 源数据类型 | 目的数据类型 | 支持的有效舍入模式 | 特殊说明 |
 |---|---|---|---|
@@ -67,7 +68,7 @@ RoundMode各枚举值的通用语义参见[pypto_pro.language.RoundMode](../../b
 | DT_FP32 | DT_FP16 | CAST_RINT、CAST_ROUND、CAST_FLOOR、CAST_CEIL、CAST_TRUNC、CAST_ODD | - |
 | DT_FP32 | DT_BF16 | CAST_RINT、CAST_ROUND、CAST_FLOOR、CAST_CEIL、CAST_TRUNC | - |
 | DT_FP32 | DT_INT16、DT_INT32、DT_INT64 | CAST_RINT、CAST_ROUND、CAST_FLOOR、CAST_CEIL、CAST_TRUNC | CAST_NONE使用CAST_TRUNC |
-| DT_FP32 | DT_FP8E4M3FN、DT_FP8E5M2 | CAST_RINT、CAST_ROUND、CAST_FLOOR、CAST_CEIL、CAST_TRUNC | - |
+| DT_FP32 | DT_FP8E4M3FN、DT_FP8E5M2 | CAST_RINT | 该路径硬件仅支持就近偶舍入（RNE），传入其他舍入模式将报错 |
 | DT_FP32 | DT_HF8 | 固定CAST_ROUND | 其他mode不改变舍入行为 |
 | DT_FP16 | DT_FP32 | 不涉及舍入 | 类型扩展，mode不影响结果 |
 | DT_FP16 | DT_INT8、DT_UINT8、DT_INT16、DT_INT32 | CAST_RINT、CAST_ROUND、CAST_FLOOR、CAST_CEIL、CAST_TRUNC | CAST_NONE使用CAST_TRUNC |

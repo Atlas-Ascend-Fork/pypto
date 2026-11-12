@@ -168,3 +168,93 @@ def test_tile_min_still_works():
     test_tile_min = test_tile_min_program.get_function(test_tile_min.__name__)
 
     assert isinstance(test_tile_min, ir.Function)
+
+
+def test_scalar_bf16_element_copy_is_still_allowed():
+    """A bf16 element read and write is a plain copy: no conversion to lower."""
+
+    @pl.jit(auto_mutex=False)
+    def kernel(data: pl.Tensor[[1, 32], pl.DT_BF16]):
+        with pl.section_vector():
+            value = pl.getval(data, 0)
+            pl.setval(data, 2, value)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function = program.get_function("kernel")
+    loads = [
+        stmt.value for stmt in function.body.stmts
+        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call) and stmt.value.name == "block.getval"
+    ]
+    assert len(loads) == 1
+    assert loads[0].type.dtype == pl.DT_BF16
+
+
+def test_tile_level_bf16_ops_are_still_allowed():
+    """bf16 tiles lower to vector intrinsics, and a bf16 constant is a folded literal."""
+
+    @pl.jit(auto_mutex=False)
+    def kernel(data: pl.Tensor[[1, 32], pl.DT_BF16]):
+        with pl.section_vector():
+            tile_type = pl.TileType(shape=[1, 32], dtype=pl.DT_BF16, target_memory=pl.MemorySpace.Vec)
+            lhs = pl.make_tile(tile_type, addr=0)
+            rhs = pl.make_tile(tile_type, addr=64)
+            out = pl.make_tile(tile_type, addr=128)
+            pl.minimum(out, lhs, rhs)
+            pl.setval(out, 0, pl.const(1.5, pl.DT_BF16))
+            pl.store(data, out, [0, 0])
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function = program.get_function("kernel")
+    calls = [
+        stmt.value.name for stmt in function.body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and not stmt.targets) and isinstance(stmt.value, ir.Call)
+    ]
+    assert "block.minimum" in calls
+
+
+def test_tile_scalar_op_keeps_a_runtime_bf16_scalar():
+    """A tile-scalar op takes the scalar in the tile element type: no conversion to lower."""
+
+    @pl.jit(auto_mutex=False)
+    def kernel(data: pl.Tensor[[1, 32], pl.DT_BF16], out: pl.Tensor[[1, 32], pl.DT_BF16]):
+        tile_type = pl.TileType(shape=[1, 32], dtype=pl.DT_BF16, target_memory=pl.MemorySpace.Vec)
+        src = pl.make_tile(tile_type, addr=0)
+        dst = pl.make_tile(tile_type, addr=64)
+        with pl.section_vector():
+            pl.load(src, data, [0, 0])
+            value = pl.getval(data, 0)
+            pl.add(dst, src, value)
+            pl.store(out, dst, [0, 0])
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function = program.get_function("kernel")
+    adds = [
+        stmt.value for stmt in function.body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "block.adds"
+    ]
+    assert len(adds) == 1
+    assert any(isinstance(arg.type, ir.ScalarType) and arg.type.dtype == pl.DT_BF16 for arg in adds[0].args)
+
+
+def test_simt_function_keeps_scalar_bf16():
+    """A SIMT function has a native scalar bf16."""
+
+    @pl.vector_function(mode="simt", max_threads=1)
+    def vf_body(dst, src):
+        lhs = src[0, 0]
+        rhs = src[0, 1]
+        pl.simt.atomic_add(dst, [0, 0], lhs + rhs)
+        pl.simt.atomic_add(dst, [0, 1], pl.simt.min(lhs, rhs))
+
+    @pl.jit
+    def kernel(dst: pl.Tensor[[1, 32], pl.DT_BF16], src: pl.Tensor[[1, 32], pl.DT_BF16]):
+        with pl.section_vector():
+            vf_body[1](dst, src)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function = program.get_function("vf_body")
+    assigns = [stmt.value for stmt in function.body.stmts if isinstance(stmt, ir.AssignStmt)]
+    assert any(isinstance(value, ir.Add) and value.type.dtype == pl.DT_BF16 for value in assigns)
+    assert any(isinstance(value, ir.Call) and value.name == "simt.min" for value in assigns)

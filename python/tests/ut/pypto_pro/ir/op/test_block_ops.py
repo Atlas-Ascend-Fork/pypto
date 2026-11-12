@@ -1237,6 +1237,20 @@ def test_manual_transpose():
     assert "block.transpose" in _program_ir(main)
 
 
+def test_transpose_rejects_a_non_transposed_out_shape():
+    with pytest.raises(InvalidShape, match="is not the transpose of src shape"):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            src_type = pl.TileType(shape=[16, 32], dtype=pl.DT_FP16)
+            dst_type = pl.TileType(shape=[16, 32], dtype=pl.DT_FP16)
+            src = pl.make_tile(src_type, addr=0x0000)
+            dst = pl.make_tile(dst_type, addr=0x0020)
+            pl.transpose(dst, src)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
 def test_get_block_idx_without_prefix():
     @pl.jit(auto_mutex=False)
     def main(output: pl.Tensor[[1], pl.DT_INT64]):
@@ -1383,7 +1397,10 @@ def test_move_with_offset_rejects_incomparable_shapes_as_invalid_shape():
 
 
 def test_make_tile_missing_addr_rejected():
-    with pytest.raises(InvalidArgument, match="missing a required argument: 'addr'"):
+    # Python spells the bind() TypeError differently per version: 3.10
+    # "missing 1 required keyword-only argument", 3.11 "missing a required
+    # argument", 3.12+ "missing a required keyword-only argument".
+    with pytest.raises(InvalidArgument, match=r"missing (?:a|1) required(?: keyword-only)? argument: 'addr'"):
 
         @pl.jit(auto_mutex=False)
         def main(
@@ -2053,6 +2070,150 @@ def test_expand_mul_rejects_scalar_dtype_mismatch():
             pl.expand_mul(out, src, scalar, dim=0)
 
         main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("dst_dtype", [pl.DT_FP8E4M3FN, pl.DT_FP8E5M2])
+@pytest.mark.parametrize(
+    "mode",
+    [
+        pl.RoundMode.CAST_ROUND,
+        pl.RoundMode.CAST_FLOOR,
+        pl.RoundMode.CAST_CEIL,
+        pl.RoundMode.CAST_TRUNC,
+        pl.RoundMode.CAST_ODD,
+    ],
+)
+def test_cast_fp32_to_fp8_rejects_direction_rounding(mode, dst_dtype):
+    # The f32->fp8 CCE intrinsic takes ROUND_R only, so pto-isa's cast32to8 drops the mode.
+    # Requesting anything else has to fail here instead of silently rounding to nearest even.
+    with pytest.raises(InvalidType, match=r"only supports CAST_RINT/CAST_NONE"):
+
+        @pl.jit(auto_mutex=False)
+        def main(src: pl.Tensor[[1, 64], pl.DT_FP32], output: pl.Tensor[[1, 64], dst_dtype]):
+            src_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP32)
+            dst_type = pl.TileType(shape=[1, 64], dtype=dst_dtype)
+            src_tile = pl.make_tile(src_type, addr=0x0000)
+            dst_tile = pl.make_tile(dst_type, addr=0x0100)
+            pl.load(src_tile, src, [0, 0])
+            pl.cast(dst_tile, src_tile, mode=mode)
+            _test_result = pl.store(output, dst_tile, [0, 0])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_cast_fp32_to_fp8_defaults_to_rint():
+    @pl.jit(auto_mutex=False)
+    def main(src: pl.Tensor[[1, 64], pl.DT_FP32], output: pl.Tensor[[1, 64], pl.DT_FP8E5M2]):
+        src_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP32)
+        dst_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP8E5M2)
+        src_tile = pl.make_tile(src_type, addr=0x0000)
+        dst_tile = pl.make_tile(dst_type, addr=0x0100)
+        pl.load(src_tile, src, [0, 0])
+        pl.cast(dst_tile, src_tile)
+        _test_result = pl.store(output, dst_tile, [0, 0])
+
+    main_program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    call = _find_call(main_program.get_function(main.__name__), "block.cast")
+
+    assert int(call.kwargs["mode"]) == int(pl.RoundMode.CAST_RINT)
+
+
+@pytest.mark.parametrize("mode", [pl.RoundMode.CAST_NONE, pl.RoundMode.CAST_RINT])
+def test_cast_fp32_to_fp8_accepts_explicit_nearest_even_modes(mode):
+    @pl.jit(auto_mutex=False)
+    def main(src: pl.Tensor[[1, 64], pl.DT_FP32], output: pl.Tensor[[1, 64], pl.DT_FP8E5M2]):
+        src_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP32)
+        dst_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP8E5M2)
+        src_tile = pl.make_tile(src_type, addr=0x0000)
+        dst_tile = pl.make_tile(dst_type, addr=0x0100)
+        pl.load(src_tile, src, [0, 0])
+        pl.cast(dst_tile, src_tile, mode=mode)
+        _test_result = pl.store(output, dst_tile, [0, 0])
+
+    main_program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    call = _find_call(main_program.get_function(main.__name__), "block.cast")
+
+    assert int(call.kwargs["mode"]) == int(mode)
+
+
+def test_cast_fp32_to_fp16_keeps_direction_rounding():
+    @pl.jit(auto_mutex=False)
+    def main(src: pl.Tensor[[1, 64], pl.DT_FP32], output: pl.Tensor[[1, 64], pl.DT_FP16]):
+        src_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP32)
+        dst_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP16)
+        src_tile = pl.make_tile(src_type, addr=0x0000)
+        dst_tile = pl.make_tile(dst_type, addr=0x0100)
+        pl.load(src_tile, src, [0, 0])
+        pl.cast(dst_tile, src_tile, mode=pl.RoundMode.CAST_FLOOR)
+        _test_result = pl.store(output, dst_tile, [0, 0])
+
+    main_program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    call = _find_call(main_program.get_function(main.__name__), "block.cast")
+
+    assert int(call.kwargs["mode"]) == int(pl.RoundMode.CAST_FLOOR)
+
+
+def test_axpy_rejects_multiplier_the_half_scalar_cannot_hold():
+    # TAXPY keeps the multiplier in the src dtype on the fp16->fp32 path, so an FP32-finite
+    # 70000.0 saturates to inf in the fp16 scalar.
+    with pytest.raises(OutOfRange, match=r"pl\.axpy"):
+
+        @pl.jit(auto_mutex=False)
+        def main(src: pl.Tensor[[64, 64], pl.DT_FP16], output: pl.Tensor[[64, 64], pl.DT_FP32]):
+            src_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16)
+            out_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP32)
+            src_tile = pl.make_tile(src_type, addr=0x0000)
+            out_tile = pl.make_tile(out_type, addr=0x4000)
+            pl.load(src_tile, src, [0, 0])
+            pl.axpy(out_tile, src_tile, 70000.0)
+            _test_result = pl.store(output, out_tile, [0, 0])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_cast_rejects_src_valid_region_smaller_than_out():
+    # cast.md: src's valid region must cover the out.valid_shape conversion region.
+    with pytest.raises(InvalidShape, match=r"does not cover"):
+
+        @pl.jit(auto_mutex=False)
+        def main(src: pl.Tensor[[64, 64], pl.DT_FP32], output: pl.Tensor[[64, 128], pl.DT_FP32]):
+            src_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, valid_shape=[64, 64])
+            dst_type = pl.TileType(shape=[64, 128], dtype=pl.DT_FP32, valid_shape=[64, 128])
+            src_tile = pl.make_tile(src_type, addr=0x0000)
+            dst_tile = pl.make_tile(dst_type, addr=0x4000)
+            pl.load(src_tile, src, [0, 0])
+            pl.cast(dst_tile, src_tile, mode=pl.RoundMode.CAST_NONE)
+            _test_result = pl.store(output, dst_tile, [0, 0])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize(
+    "out_dtype, expected_mode",
+    [
+        (pl.DT_FP8E4M3FN, pl.RoundMode.CAST_RINT),
+        (pl.DT_FP8E5M2, pl.RoundMode.CAST_RINT),
+        (pl.DT_FP16, pl.RoundMode.CAST_ROUND),
+    ],
+)
+def test_cast_explicit_none_mode_resolves_like_omitted(out_dtype, expected_mode):
+    # An explicitly passed None arrives as the argument checker's NoneType placeholder,
+    # not as the Python None of an omitted kwarg; it must resolve through the same
+    # per-path default instead of leaking the placeholder into the op call.
+    @pl.jit(auto_mutex=False)
+    def main(src: pl.Tensor[[1, 64], pl.DT_FP32], output: pl.Tensor[[1, 64], out_dtype]):
+        src_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP32)
+        dst_type = pl.TileType(shape=[1, 64], dtype=out_dtype)
+        src_tile = pl.make_tile(src_type, addr=0x0000)
+        dst_tile = pl.make_tile(dst_type, addr=0x0100)
+        pl.load(src_tile, src, [0, 0])
+        pl.cast(dst_tile, src_tile, mode=None)
+        _test_result = pl.store(output, dst_tile, [0, 0])
+
+    main_program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    call = _find_call(main_program.get_function(main.__name__), "block.cast")
+
+    assert int(call.kwargs["mode"]) == int(expected_mode)
 
 
 # ---------------------------------------------------------------------------

@@ -630,7 +630,7 @@ def fillpad(out: Tile, src: Tile, *, mode: FillPadMode = FillPadMode.NORMAL) -> 
 
 
 @_api_decl
-def cast(out: Tile, src: Tile, *, mode: RoundMode = RoundMode.CAST_ROUND) -> None:
+def cast(out: Tile, src: Tile, *, mode: Optional[RoundMode] = None) -> None:
     """Cast Tile to a different data type.
 
     The target dtype is inferred from ``out`` tile's dtype.
@@ -640,7 +640,11 @@ def cast(out: Tile, src: Tile, *, mode: RoundMode = RoundMode.CAST_ROUND) -> Non
         src: Source Tile
         mode: Rounding mode — ``pl.RoundMode.CAST_NONE``, ``pl.RoundMode.CAST_RINT``, ``pl.RoundMode.CAST_ROUND``,
             ``pl.RoundMode.CAST_FLOOR``, ``pl.RoundMode.CAST_CEIL``,
-            ``pl.RoundMode.CAST_TRUNC``, ``pl.RoundMode.CAST_ODD``
+            ``pl.RoundMode.CAST_TRUNC``, ``pl.RoundMode.CAST_ODD``.
+            Per-path support follows the cast API reference: ``DT_FP32`` to ``DT_FP8E4M3FN``/``DT_FP8E5M2``
+            rounds to nearest even only, so there only ``CAST_RINT``/``CAST_NONE`` are accepted (and an
+            omitted ``mode`` resolves to ``CAST_RINT`` there, while every other path defaults to
+            ``CAST_ROUND``).
     """
 
 

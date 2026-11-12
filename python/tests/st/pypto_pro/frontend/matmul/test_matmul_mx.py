@@ -952,7 +952,9 @@ def _make_mx_insert_kernel(dtype_label):
                     set_pipe=pl.PipeType.V, wait_pipe=pl.PipeType.MTE3, event_id=3
                 )
             else:
-                pl.cast(mx_vec_nd, acc_vec, mode=pl.RoundMode.CAST_ROUND)
+                # FP32 -> FP8E4M3FN/E5M2 hardware only rounds to nearest even:
+                # the cast API reference allows CAST_RINT/CAST_NONE there.
+                pl.cast(mx_vec_nd, acc_vec, mode=pl.RoundMode.CAST_RINT)
                 pl.move(mx_vec_nz, mx_vec_nd)
             # TINSERT source and destination are both NZ and have the same dtype.
             pl.insert(result_l1, mx_vec_nz, [row_offset, 0])
